@@ -18,6 +18,7 @@ export type SettingsSection =
   | 'design-systems'
   | 'remote'
   | 'companion-relay'
+  | 'connectors'
   | 'agents'
   | 'skills'
   | 'media-catalog'
@@ -363,6 +364,14 @@ export const SETTINGS_GROUPS: NavGroup[] = [
         subtitle: 'relay E2E · QR',
         aliases: ['companion', 'relay', 'mobile', 'celular', 'e2e', 'qr'],
       },
+      {
+        id: 'connectors',
+        icon: 'ARM',
+        pixelIcon: 'split-right',
+        title: 'Conectores',
+        subtitle: 'arms · grok bot · cursor',
+        aliases: ['arms', 'connector', 'conector', 'grok bot', 'cursor', 'externo'],
+      },
     ],
   },
 ];
@@ -398,6 +407,7 @@ const SETTINGS_SECTION_PILLAR: Record<SettingsSection, SettingsNavPillarId> = {
   audit: 'system',
   remote: 'system',
   'companion-relay': 'system',
+  connectors: 'system',
   labs: 'system',
 };
 

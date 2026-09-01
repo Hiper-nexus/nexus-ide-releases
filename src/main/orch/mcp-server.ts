@@ -98,6 +98,36 @@ import {
   writeMcpConfigFile,
 } from "./hooks-gen";
 import { handleHookStatusHttp } from "./hook-status-endpoint";
+import { authenticateArmsToken } from "../connectors/arms-token-store";
+import { handleArmsJsonRpc, markArmsBoot } from "../connectors/arms-endpoint";
+import { emitAppEvent } from "../connectors/app-events";
+const ARMS_RUNTIME_FILE = path.join(os.homedir(), ".nexus", "arms-runtime.json");
+
+/**
+ * Porta viva do loopback server para o bin nexus-arms descobrir o app sem
+ * token no arquivo (o token entra por env na config do conector externo).
+ * Sem segredo aqui — só a porta e o instante do boot.
+ */
+function writeArmsRuntimeDescriptor(boundPort: number): void {
+  try {
+    fs.mkdirSync(path.dirname(ARMS_RUNTIME_FILE), { recursive: true });
+    fs.writeFileSync(
+      ARMS_RUNTIME_FILE,
+      `${JSON.stringify({ schemaVersion: 1, port: boundPort, at: Date.now() }, null, 2)}\n`,
+      { mode: 0o644 },
+    );
+  } catch (error) {
+    console.warn("[arms] runtime descriptor write failed:", error);
+  }
+}
+
+function removeArmsRuntimeDescriptor(): void {
+  try {
+    fs.rmSync(ARMS_RUNTIME_FILE, { force: true });
+  } catch {
+    /* best effort */
+  }
+}
 import {
   getAgentSemanticStatusBySession,
   isSessionInjectableIdle,
@@ -1442,6 +1472,30 @@ export function startMcpServer(): Promise<void> {
   const candidate = http.createServer((req, res) => {
     void (async () => {
       const url = req.url ?? "";
+      // Nexus Arms PRIMEIRO: token dedicado, não é bearer de sessão de pane.
+      // Nexus Arms: conector externo (Grok Bot/Cursor). Token dedicado — NÃO é
+      // um bearer de sessão de pane; este endpoint só serve observação de app.
+      if (url === "/arms/mcp" && req.method === "POST") {
+        const armsHeader = req.headers.authorization;
+        const armsToken = armsHeader?.startsWith("Bearer ")
+          ? armsHeader.slice("Bearer ".length).trim()
+          : null;
+        if (!armsToken || !authenticateArmsToken(armsToken)) {
+          sendJson(res, 401, { error: "invalid or missing Arms token" });
+          return;
+        }
+        try {
+          const body = JSON.parse(await readBody(req));
+          sendJson(res, 200, handleArmsJsonRpc(body));
+        } catch {
+          sendJson(
+            res,
+            400,
+            { jsonrpc: "2.0", id: null, error: { code: -32700, message: "parse error" } },
+          );
+        }
+        return;
+      }
       const ctx = bearerContext(req);
       if (!ctx) {
         sendJson(res, 401, { error: "missing or unknown bearer token" });
@@ -1482,6 +1536,9 @@ export function startMcpServer(): Promise<void> {
       }
       port = boundPort;
       console.log(`[orch] embedded MCP server on ${mcpUrl()}`);
+      writeArmsRuntimeDescriptor(boundPort);
+      markArmsBoot();
+      emitAppEvent('app.boot', { port: boundPort });
     })
     .catch((error: unknown) => {
       if (candidate.listening) {
@@ -1518,6 +1575,7 @@ export function stopMcpServer(): void {
   server?.close();
   server = null;
   port = 0;
+  removeArmsRuntimeDescriptor();
 }
 
 export function getMcpRuntimeInfo(): McpRuntimeInfo {

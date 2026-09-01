@@ -364,6 +364,22 @@ export interface NexusApi {
       cb: (payload: { path: string; isDir: boolean }) => void,
     ): Unsubscribe;
   };
+  arms: {
+    /** Estado do token Arms (nunca devolve o valor). */
+    status(): Promise<{
+      configured: boolean;
+      revoked: boolean;
+      createdAt: number | null;
+      rotatedAt: number | null;
+      lastUsedAt: number | null;
+    }>;
+    /** Gera token novo — plaintext volta exatamente uma vez. */
+    generate(): Promise<{ token: string; createdAt: number }>;
+    /** Rotaciona (invalida o anterior); plaintext volta uma vez. */
+    rotate(): Promise<{ token: string; createdAt: number }>;
+    /** Revoga: o conector externo passa a recusar. */
+    revoke(): Promise<{ ok: boolean }>;
+  };
   billing: {
     get(): Promise<LicenseState>;
     openCheckout(request: CheckoutRequest['plan'] | CheckoutRequest): Promise<{ ok: boolean; error?: string }>;

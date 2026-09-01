@@ -59,6 +59,7 @@ import {
 import { DesignSystemsSection } from './DesignSystemsSection';
 import { HarnessSection } from './HarnessSection';
 import { CompanionRelaySection } from './CompanionRelaySection';
+import { ArmsSection } from './ArmsSection';
 import { LabsSection } from './LabsSection';
 import {
   SettingsSectionTitleProvider,
@@ -151,6 +152,8 @@ function SettingsSectionContent({
       return <RemoteSection />;
     case 'companion-relay':
       return <CompanionRelaySection />;
+    case 'connectors':
+      return <ArmsSection />;
     case 'labs':
       return <LabsSection />;
     case 'agents':

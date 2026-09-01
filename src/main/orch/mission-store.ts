@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { emitAppEvent } from '../connectors/app-events';
 import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
 import type Database from 'better-sqlite3';
@@ -1828,6 +1829,14 @@ export class ScopedMissionStore {
       return result.changes === 1 ? next : null;
     }).immediate();
     if (!updated) return null;
+    if (updated.status !== undefined || updated.intentState !== undefined) {
+      emitAppEvent('mission.state', {
+        missionId: id.slice(0, 128),
+        status: updated.status,
+        intentState: updated.intentState ?? null,
+      });
+    }
+
     this.#binding.emitChange();
     return cloneMission(updated);
   }

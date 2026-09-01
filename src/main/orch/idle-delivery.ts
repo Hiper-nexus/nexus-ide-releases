@@ -30,6 +30,9 @@ import {
   HANDOFF_DELIVERY_RETRY_BACKOFF_MS,
   MAX_HANDOFF_DELIVERY_ATTEMPTS,
 } from './handoff-delivery-policy';
+import { emitAppEvent } from '../connectors/app-events';
+
+const announcedHandoffSubmits = new Set<string>();
 
 /** Re-exportado para testes e políticas de re-arm calendarem pelo mesmo valor. */
 export { HANDOFF_DELIVERY_RETRY_BACKOFF_MS };
@@ -1215,6 +1218,20 @@ export function onHandoffSubmitted(
     });
   }
   if (isDiagnosticDriverHandoff(handoff)) return null;
+  // Um evento por handoff: onHandoffSubmitted também roda a cada re-arm da
+  // entrega (F-112) e o feed Arms ficava repetindo o mesmo submit 17×.
+  if (!announcedHandoffSubmits.has(handoff.id)) {
+    announcedHandoffSubmits.add(handoff.id);
+    if (announcedHandoffSubmits.size > 512) {
+      const oldestAnnounced = announcedHandoffSubmits.values().next().value;
+      if (oldestAnnounced !== undefined) announcedHandoffSubmits.delete(oldestAnnounced);
+    }
+    emitAppEvent('handoff.submitted', {
+      handoffId: handoff.id.slice(0, 128),
+      ...(handoff.missionId ? { missionId: handoff.missionId.slice(0, 128) } : {}),
+      status: handoff.status,
+    });
+  }
   const authority = targetAuthority(handoff, scope, overrideStores);
   if (!authority) return null; // No trusted orchestrator — stays listed as pending.
   // Maestro's own submit must not paste back into the same PTY.

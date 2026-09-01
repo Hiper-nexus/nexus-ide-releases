@@ -29,6 +29,8 @@ export const TERMINAL_THEME_IDS = [
   'nexus-pink-city',
   'nexus-dark',
   'nexus-light',
+  'nexus-gray',
+  'nexus-red',
   'dracula',
   'solarized-dark',
 ] as const;

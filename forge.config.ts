@@ -266,6 +266,9 @@ const config: ForgeConfig = {
     // o arquivo em extraResource permite inspeção/override sem rebuild).
     extraResource: [
       'scripts/design-system-sensor.mjs',
+      // Conector externo Arms (Settings › Conectores): MCP stdio para
+      // orquestradores fora dos panes (Grok Bot, Cursor).
+      'bin/nexus-arms.mjs',
       'resources/wake',
       'resources/mission-shims',
       'resources/model-ranking.json',

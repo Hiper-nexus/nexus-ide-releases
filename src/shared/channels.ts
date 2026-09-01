@@ -182,6 +182,17 @@ export const ADAPTER_CHANNELS = {
   rescan: 'adapter:rescan',
 } as const;
 
+export const ARMS_CHANNELS = {
+  /** invoke: renderer → main. Estado do token Arms (nunca devolve o valor). */
+  status: 'arms:status',
+  /** invoke: renderer → main. Gera token novo; plaintext volta UMA vez. */
+  generate: 'arms:generate',
+  /** invoke: renderer → main. Rotaciona (invalida o anterior). */
+  rotate: 'arms:rotate',
+  /** invoke: renderer → main. Revoga; conector externo passa a recusar. */
+  revoke: 'arms:revoke',
+} as const;
+
 export const AGENT_HOOK_CHANNELS = {
   /** invoke: provider hook status → pane activity (never evidence). */
   ingestStatus: 'agent-hook:ingestStatus',

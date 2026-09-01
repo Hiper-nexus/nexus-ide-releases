@@ -204,6 +204,20 @@
   --btn-primary-hover: #ffffff;
 }
 
+[data-theme='nexus-gray'] {
+  --text-faint: #8b9098;
+  --btn-primary: #e4e6ea;
+  --btn-primary-ink: #141518;
+  --btn-primary-hover: #f5f6f8;
+}
+
+[data-theme='nexus-red'] {
+  --text-faint: #947c7f;
+  --btn-primary: #f2e6e7;
+  --btn-primary-ink: #120c0d;
+  --btn-primary-hover: #faf0f1;
+}
+
 /* Ajustes de sinal para o tema claro (ui-theme.ts seta data-theme no <html>):
    verdes/âmbares de dark não seguram contraste sobre branco. */
 [data-theme='nexus-light'] {

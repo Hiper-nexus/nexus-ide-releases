@@ -1,4 +1,5 @@
 import type { WebContents } from "electron";
+import { emitAppEvent } from '../connectors/app-events';
 import type {
   OrchPaneSpawnRequest,
   OrchPaneSpawnResult,
@@ -2170,6 +2171,10 @@ export function requestPaneSpawn(
     console.info(
       `[pane-registry] spawn requested id=${requestId} mission=${options.missionId ?? "none"} role=${options.role ?? "none"} owner=${owner.id}`,
     );
+    emitAppEvent('pane.spawned', {
+      missionId: options.missionId?.slice(0, 128) ?? null,
+      role: options.role?.slice(0, 32) ?? null,
+    });
     const timer = setTimeout(() => {
       void settlePendingSpawnFailure(
         requestId,

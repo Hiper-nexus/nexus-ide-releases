@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import {
+  ARMS_CHANNELS,
   PTY_CHANNELS,
   BROWSER_CHANNELS,
   DESIGN_WRITEBACK_CHANNELS,
@@ -610,6 +611,12 @@ const api: NexusApi = {
       ipcRenderer.invoke(WINDOW_CHANNELS.openTerminalPath, path),
     onDeepOpenPath: (cb: (payload: { path: string; isDir: boolean }) => void) =>
       addListener(deepOpenListeners, cb),
+  },
+  arms: {
+    status: () => ipcRenderer.invoke(ARMS_CHANNELS.status),
+    generate: () => ipcRenderer.invoke(ARMS_CHANNELS.generate),
+    rotate: () => ipcRenderer.invoke(ARMS_CHANNELS.rotate),
+    revoke: () => ipcRenderer.invoke(ARMS_CHANNELS.revoke),
   },
   pty: {
     spawn: (req: SpawnRequest): Promise<SpawnResult> =>

@@ -112,6 +112,57 @@ const SOLARIZED_DARK: ITheme = {
   brightWhite: '#fdf6e3',
 };
 
+// Nexus Gray (paridade 1.3: tema Cinza) — neutro de baixa saturação.
+const NEXUS_GRAY: ITheme = {
+  background: '#141518',
+  foreground: '#e4e6ea',
+  cursor: '#e4e6ea',
+  cursorAccent: '#141518',
+  selectionBackground: '#3a3d44',
+  black: '#141518',
+  red: '#e06c6c',
+  green: '#7fbf8e',
+  yellow: '#c9b06b',
+  blue: '#7d95c9',
+  magenta: '#b18ccf',
+  cyan: '#7cb9c9',
+  white: '#e4e6ea',
+  brightBlack: '#5c6069',
+  brightRed: '#ef8c8c',
+  brightGreen: '#98d3a6',
+  brightYellow: '#dcc287',
+  brightBlue: '#9aafcfd',
+  brightMagenta: '#c6a7de',
+  brightCyan: '#9ccfdd',
+  brightWhite: '#f5f6f8',
+};
+
+// Nexus Red (paridade 1.3.9: 4º tema Vermelho) — trabalho noturno, acento
+// quente sem estourar contraste no grid escuro.
+const NEXUS_RED: ITheme = {
+  background: '#120c0d',
+  foreground: '#f2e6e7',
+  cursor: '#f2e6e7',
+  cursorAccent: '#120c0d',
+  selectionBackground: '#4a262a',
+  black: '#120c0d',
+  red: '#ff7b72',
+  green: '#9fbf87',
+  yellow: '#d2a85f',
+  blue: '#a08fbf',
+  magenta: '#d98aa6',
+  cyan: '#8fb4bf',
+  white: '#f2e6e7',
+  brightBlack: '#6e5255',
+  brightRed: '#ff9a92',
+  brightGreen: '#b3d39c',
+  brightYellow: '#e3c07d',
+  brightBlue: '#b6a7d1',
+  brightMagenta: '#e6a5bc',
+  brightCyan: '#a9cbd5',
+  brightWhite: '#faf0f1',
+};
+
 /** Selectable terminal palettes (TERMINAL module of the settings drawer). */
 export const TERMINAL_THEMES: Record<
   TerminalThemeId,
@@ -120,6 +171,8 @@ export const TERMINAL_THEMES: Record<
   'nexus-pink-city': { label: 'Pink City', theme: TERMINAL_THEME },
   'nexus-dark': { label: 'Nexus Dark', theme: TERMINAL_THEME },
   'nexus-light': { label: 'Nexus Light', theme: NEXUS_LIGHT },
+  'nexus-gray': { label: 'Nexus Gray', theme: NEXUS_GRAY },
+  'nexus-red': { label: 'Nexus Red', theme: NEXUS_RED },
   dracula: { label: 'Dracula', theme: DRACULA },
   'solarized-dark': { label: 'Solarized Dark', theme: SOLARIZED_DARK },
 };

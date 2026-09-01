@@ -1,4 +1,5 @@
 import type { PaneRegistryEntry, PaneSnapshot } from "../../shared/orch-types";
+import { emitAppEvent } from '../connectors/app-events';
 import type { PaneSessionState } from "../../shared/types";
 import { getSessionState } from "../pty/pty-manager";
 
@@ -113,6 +114,7 @@ export function recordPaneSessionState(
 
 export function recordPaneSessionExit(sessionId: string): void {
   sessionStates.delete(sessionId);
+  emitAppEvent('pane.exited', { sessionId: sessionId.slice(0, 128) });
   const buffer = buffers.get(sessionId);
   if (buffer) {
     buffer.exited = true;

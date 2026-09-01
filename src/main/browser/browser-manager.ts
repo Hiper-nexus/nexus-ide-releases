@@ -140,12 +140,18 @@ const pendingBoundsByKey = new Map<
 const ELEMENT_SHOT_PADDING = 8;
 const DNS_TIMEOUT_MS = 3_000;
 const securedSessions = new WeakSet<Session>();
-// Emulação mobile do preview responsivo: breakpoint ≤480 troca UA + métricas
-// para o site servir o layout mobile REAL (não só a largura estreitada).
+// Emulação de device do preview responsivo (paridade 1.3.3: mobile E tablet):
+// breakpoint ≤480 = iPhone; 481–1024 = iPad. UA + métricas trocam para o site
+// servir o layout REAL do dispositivo (não só a largura estreitada).
 const MOBILE_EMULATION_MAX_WIDTH = 480;
 const MOBILE_EMULATION_HEIGHT = 844;
 const MOBILE_EMULATION_USER_AGENT =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) ' +
+  'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
+const TABLET_EMULATION_MAX_WIDTH = 1024;
+const TABLET_EMULATION_HEIGHT = 1366;
+const TABLET_EMULATION_USER_AGENT =
+  'Mozilla/5.0 (iPad; CPU OS 17_5 like Mac OS X) ' +
   'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
 const originalUserAgents = new Map<string, string>();
 const BROWSER_DESTROY_PROOF_TIMEOUT_MS = 2_000;
@@ -1775,18 +1781,27 @@ export function registerBrowserIpc(runtimeManager: ProjectRuntimeManager): void 
     if (wc.isDestroyed()) throw new Error('browser pane is unavailable');
     const key = browserKey(scope, parsed.data.paneId);
     const width = parsed.data.width;
-    const emulate = width !== null && width <= MOBILE_EMULATION_MAX_WIDTH;
+    const tablet =
+      width !== null &&
+      width > MOBILE_EMULATION_MAX_WIDTH &&
+      width <= TABLET_EMULATION_MAX_WIDTH;
+    const emulate = width !== null && (width <= MOBILE_EMULATION_MAX_WIDTH || tablet);
     if (emulate) {
       // Guarda o UA original UMA vez por pane para restaurar no desligamento.
       if (!originalUserAgents.has(key)) {
         originalUserAgents.set(key, wc.getUserAgent());
       }
-      wc.setUserAgent(MOBILE_EMULATION_USER_AGENT);
+      wc.setUserAgent(
+        tablet ? TABLET_EMULATION_USER_AGENT : MOBILE_EMULATION_USER_AGENT,
+      );
+      const emulatedHeight = tablet
+        ? TABLET_EMULATION_HEIGHT
+        : MOBILE_EMULATION_HEIGHT;
       wc.enableDeviceEmulation({
         screenPosition: 'mobile',
-        screenSize: { width, height: MOBILE_EMULATION_HEIGHT },
+        screenSize: { width, height: emulatedHeight },
         viewPosition: { x: 0, y: 0 },
-        viewSize: { width, height: MOBILE_EMULATION_HEIGHT },
+        viewSize: { width, height: emulatedHeight },
         deviceScaleFactor: 0,
         scale: 1,
       });

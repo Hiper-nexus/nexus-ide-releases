@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { emitAppEvent } from '../connectors/app-events';
 import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import {
@@ -1434,7 +1435,11 @@ export class ScopedHandoffStore {
   }
 
   markDelivered(rawId: string): boolean {
-    return this.markSubmitted(rawId);
+    const delivered = this.markSubmitted(rawId);
+    if (delivered) {
+      emitAppEvent('handoff.delivered', { handoffId: rawId.slice(0, 128) });
+    }
+    return delivered;
   }
 
   /**
@@ -1762,6 +1767,10 @@ export class ScopedHandoffStore {
       .run(this.#binding.now(), this.#binding.now(), id, missionId);
     if (result.changes === 0) return false;
     this.#binding.emitChange();
+    emitAppEvent('handoff.consumed', {
+      handoffId: id.slice(0, 128),
+      missionId: missionId.slice(0, 128),
+    });
     return true;
   }
 

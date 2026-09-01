@@ -203,7 +203,7 @@ describe('SettingsWorkspace contracts', () => {
     }
   });
 
-  it('keeps all 30 canonical nav rows available and filters them through search', async () => {
+  it('keeps all 31 canonical nav rows available and filters them through search', async () => {
     useProductNavigationStore.getState().openSettings('account');
     const host = mount(<SettingsWorkspace />);
     await settleSectionEffects();
@@ -213,7 +213,7 @@ describe('SettingsWorkspace contracts', () => {
     );
     expect(nav).not.toBeNull();
     expect(search).not.toBeNull();
-    expect(nav?.querySelectorAll('.settings-nav__item')).toHaveLength(30);
+    expect(nav?.querySelectorAll('.settings-nav__item')).toHaveLength(31);
     if (!search) throw new Error('Settings search is unavailable');
 
     setSearchValue(search, 'xterm');
@@ -330,7 +330,7 @@ describe('SettingsWorkspace contracts', () => {
     expect(scrollingGroups).not.toBeNull();
     expect(
       scrollingGroups?.querySelectorAll('.settings-nav__item'),
-    ).toHaveLength(30);
+    ).toHaveLength(31);
     expect(scrollingGroups?.contains(brand)).toBe(false);
     expect(scrollingGroups?.contains(search)).toBe(false);
   });

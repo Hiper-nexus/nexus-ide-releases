@@ -1,4 +1,5 @@
 import './macos-activation-policy';
+import { registerArmsIpc } from './connectors/arms-ipc';
 import path from "node:path";
 import {
   app,
@@ -522,6 +523,7 @@ function bootstrap(): void {
   registerOrientationIpc();
   registerContextDraftIpc();
   registerProviderIpc();
+  registerArmsIpc();
   registerFilesIpc();
   registerAccountIpc();
   registerCostIpc();

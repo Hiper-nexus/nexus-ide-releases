@@ -1,0 +1,54 @@
+{
+  "kind": "cli-pty",
+  "id": "muse",
+  "label": "Muse Code",
+  "version": "1.0.0",
+  "icon": "◆",
+  "bin": "muse",
+  "auth": {
+    "method": "file",
+    "loginHint": "muse login (credenciais em ~/.config/muse/auth.json)"
+  },
+  "spawn": {
+    "interactive": ["muse"],
+    "headless": ["muse", "exec", "{{PROMPT}}"],
+    "ptyRequired": true,
+    "resumeArgs": ["resume", "--last"],
+    "resumeIdArgs": ["resume"],
+    "extraArgs": []
+  },
+  "env": {
+    "static": {},
+    "passthrough": [],
+    "ephemeralHome": false
+  },
+  "models": {
+    "flag": "--model",
+    "list": [],
+    "default": ""
+  },
+  "control": {
+    "permission": {
+      "arg": "--approval-mode",
+      "modes": {
+        "auto": "never",
+        "default": "on-request",
+        "untrusted": "untrusted"
+      },
+      "yolo": ["--yolo"],
+      "safe": ["--approval-mode", "on-request"],
+      "default": ""
+    },
+    "effort": {
+      "arg": "--reasoning-effort ",
+      "levels": ["low", "medium", "high", "xhigh"]
+    }
+  },
+  "quirks": {
+    "altScreen": true,
+    "requiresNoAutoUpdate": false,
+    "approvalFlag": "--approval-mode",
+    "mcpAutoload": true,
+    "nexusMcp": "autoload"
+  }
+}
