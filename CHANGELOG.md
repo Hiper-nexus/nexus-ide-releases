@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.72.1 — Grid grande, memória honesta
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+Benchmark mediu (16/32/64 panes): o app aguenta grids enormes sem congelar.
+Acima de 24 panes vivos, um pane que sai da tela descarta o terminal e
+guarda só o snapshot + saída pendente; ao voltar, o conteúdo é restaurado
+pela mesma trilha do restore de layout. PTY e sessões seguem intactos.
+
 ## 0.72.0 — Braço externo
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._

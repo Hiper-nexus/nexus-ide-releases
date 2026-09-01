@@ -13,50 +13,31 @@ export interface AppRelease {
 }
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.72.0',
-  date: '2026-08-31',
-  codename: 'Braço externo',
+  version: '0.72.1',
+  date: '2026-09-01',
+  codename: 'Grid grande, memória honesta',
   summary:
-    'Nexus Arms: quem dirige de fora (Grok Bot, Cursor) passa a ver o ' +
-    'app em JSON e receber eventos com cursor por MCP stdio — token ' +
-    'dedicado, observação por construção.',
+    'Medimos: 16/32/64 panes sem congelar (a promessa do motor nativo não ' +
+    'reproduz aqui). Acima de 24 panes, pane oculto hiberna: só snapshot e ' +
+    'saída pendente ficam, e o conteúdo volta ao retornar à tela.',
   highlights: [
     {
-      title: 'Conector Arms',
+      title: 'Hibernação de pane oculto',
       detail:
-        'Token em Configurações › Conectores (hash em disco; o valor ' +
-        'aparece uma vez). O bin nexus-arms fala MCP stdio com qualquer ' +
-        'cliente externo — app fechado responde erro limpo, sem travar.',
+        'Grids grandes (24+ panes): o que sai da tela descarta o terminal e ' +
+        'guarda snapshot (até 256KB) + buffer de saída. Reidratação reusa a ' +
+        'trilha provada do restore de layout, com guarda de largura e replay ' +
+        'do ring do main.',
     },
     {
-      title: 'Eventos com cursor',
+      title: 'Benchmark no lugar de opinião',
       detail:
-        'pane.spawned/exited, handoff.submitted/delivered/consumed e ' +
-        'mission.state numa fila com cursor monotônico — o orquestrador ' +
-        'sabe que aconteceu sem ler terminal.',
-    },
-    {
-      title: 'Observação mínima por construção',
-      detail:
-        'O endpoint Arms só conhece app_observe e app_events: metadado de ' +
-        'missões, panes e handoffs. O token jamais poderia chamar spawn, ' +
-        'write ou files.',
+        '32 panes: 926MB RSS, heap 53MB, ~0,5s por pane. Sobreviveu a 64 ' +
+        'panes vivos. Números documentados no repo — a conversa Rust ficou ' +
+        'sem premissa.',
     },
   ],
-  fixes: [
-    {
-      title: 'Preview com tablet',
-      detail:
-        'Larguras 481–1024 emulam iPad (UA + métricas) no preview ' +
-        'responsivo, não só iPhone.',
-    },
-    {
-      title: 'Temas Cinza e Vermelho + Muse',
-      detail:
-        'Dois temas novos no terminal e na UI, e adapter Muse Code (a CLI ' +
-        'instalada passa a abrir pane).',
-    },
-  ],
+  fixes: [],
 };
 export const RELEASE_06100: AppRelease = {
   version: '0.61.0',
