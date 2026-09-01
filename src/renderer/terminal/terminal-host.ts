@@ -121,6 +121,18 @@ interface Host {
   serialize: SerializeAddon;
   ro: ResizeObserver;
   sessionId: string | null;
+  kind: 'shell' | 'cli-agent';
+  /**
+   * Hibernação de pane oculto (virtualização): em grids grandes o xterm de
+   * um pane que saiu da tela é descartado e só o snapshot + o buffer de
+   * output pendente ficam. `cols` guarda a largura do snapshot (o replay só
+   * é legível na mesma geometria — ver pendingScrollbackCols).
+   */
+  virtualized: {
+    cols: number;
+    snapshot: string;
+    pendingOutput: string;
+  } | null;
   /** Relive do Maestro: não despejar [nexus] no PTY. */
   quietSpawn?: boolean;
   /** Spawn adiado até o slot ter caixa real (F-009). */
@@ -319,7 +331,14 @@ const MAX_PERSISTED_SCROLLBACK = 256_000;
 
 setTerminalSnapshotProvider((paneId) => {
   const host = hosts.get(paneId);
-  if (!host || host.disposed || !host.opened) return undefined;
+  if (!host || host.disposed) return undefined;
+  if (host.virtualized) {
+    return {
+      data: host.virtualized.snapshot.slice(-MAX_PERSISTED_SCROLLBACK),
+      cols: host.virtualized.cols,
+    };
+  }
+  if (!host.opened) return undefined;
   try {
     flushTerminalOutput(host.term);
     return {
@@ -396,7 +415,7 @@ function themeOf(settings: TerminalSettings) {
 export function applyTerminalSettings(settings: TerminalSettings): void {
   currentSettings = settings;
   for (const [paneId, host] of hosts) {
-    if (host.disposed) continue;
+    if (host.disposed || host.virtualized) continue;
     host.term.options.theme = themeOf(settings);
     host.term.options.fontFamily = fontFamilyOf(settings);
     host.term.options.fontSize = settings.fontSize;
@@ -899,6 +918,14 @@ function startSpawn(
       host.cleanups.push(
         window.nexus.pty.onData(res.sessionId, (data) => {
           adoptionTape?.retain(data);
+          if (host.virtualized) {
+            // Pane hibernado: xterm descartado; reter saída no buffer do
+            // estado e sair antes do scheduler (o ring do main cobre o resto).
+            host.virtualized.pendingOutput = (
+              host.virtualized.pendingOutput + data
+            ).slice(-HIBERNATE_PENDING_OUTPUT_CHARS);
+            return;
+          }
           const policy = terminalOutputPolicy({
             kind: pane.kind,
             isFocused:
@@ -1340,7 +1367,7 @@ function makeResizeObserver(paneId: string, host: Host): ResizeObserver {
  */
 function refitAllHosts(reason: RefitReason): void {
   for (const host of hosts.values()) {
-    if (host.disposed || !host.opened) continue;
+    if (host.disposed || !host.opened || host.virtualized) continue;
     const before = { cols: host.term.cols, rows: host.term.rows };
     try {
       host.fit.fit();
@@ -1409,6 +1436,117 @@ useLayoutStore.subscribe((next, prev) => {
   }
 });
 
+/**
+ * Abaixo deste número de hosts vivos NADA é hibernado: o custo por pane é
+ * pequeno (medido 09/09: ~10-15MB/pane RSS, heap 53MB com 32 panes) e o
+ * risco não se paga. Acima, panes OCULTOS trocam o xterm por snapshot.
+ */
+export const HIBERNATE_MIN_LIVE_HOSTS = 24;
+
+/** Saída PTY retida enquanto o pane hiberna (chars; ~64KB por pane). */
+export const HIBERNATE_PENDING_OUTPUT_CHARS = 64_000;
+
+export interface HibernationDecision {
+  readonly liveHosts: number;
+  readonly isPaneVisible: boolean;
+  readonly opened: boolean;
+  readonly disposed: boolean;
+  readonly hasSession: boolean;
+  readonly spawnPending: boolean;
+}
+
+/** Pura — unit-testada. Hiberna só grid grande, pane oculto e já spawned. */
+export function shouldHibernateHost(input: HibernationDecision): boolean {
+  return (
+    input.liveHosts >= HIBERNATE_MIN_LIVE_HOSTS &&
+    !input.isPaneVisible &&
+    input.opened &&
+    !input.disposed &&
+    input.hasSession &&
+    !input.spawnPending
+  );
+}
+
+function liveHostCount(): number {
+  let live = 0;
+  for (const host of hosts.values()) {
+    if (!host.disposed) live += 1;
+  }
+  return live;
+}
+
+/**
+ * Descarta o xterm de um pane oculto e guarda snapshot + buffer de saída.
+ * O PTY (main) segue vivo; o host.term vira um xterm NOVO e não-aberto, então
+ * todo guard existente (`!host.opened`, pendingScrollback, replay por fit)
+ * passa a valer na reidratação — a mesma trilha do restore de layout.
+ */
+function virtualizeHost(host: Host): void {
+  if (host.disposed || host.virtualized) return;
+  let snapshot = '';
+  let cols = host.term.cols;
+  try {
+    snapshot = host.serialize.serialize().slice(-MAX_PERSISTED_SCROLLBACK);
+    cols = host.term.cols;
+    host.term.dispose();
+  } catch {
+    return; // terminal em estado ímpar — não hibernar é seguro
+  }
+  webglPool.suspend(host.paneId);
+  const built = buildTerminal(host.kind);
+  host.term = built.term;
+  host.fit = built.fit;
+  host.search = built.search;
+  host.serialize = built.serialize;
+  host.inputVisibility = new TerminalInputVisibilityController({
+    term: host.term,
+    classList: host.element.classList,
+  });
+  host.opened = false;
+  host.reportedGrid = null;
+  host.virtualized = { cols, snapshot, pendingOutput: '' };
+}
+
+/** Reidrata um pane hibernado que voltou à tela. */
+function rehydrateHost(host: Host): void {
+  const state = host.virtualized;
+  if (!state || host.disposed) return;
+  host.virtualized = null;
+  host.pendingScrollback = state.snapshot;
+  host.pendingScrollbackCols = state.cols;
+  host.hasVisibleContent = true;
+  try {
+    host.term.open(host.element);
+  } catch {
+    return;
+  }
+  host.opened = true;
+  registerWebglLease(host.paneId, host);
+  wireHostTerminalListeners(host);
+  // Flush do snapshot acontece no primeiro fit (largura definitiva); o output
+  // retido entra depois dele, e o ring do main cobre o que estourar o buffer.
+  requestAnimationFrame(() => {
+    if (host.disposed || !host.opened) return;
+    flushPendingScrollback(host);
+    if (state.pendingOutput.length > 0) {
+      writeTerminalOutput(host.term, state.pendingOutput, {
+        foreground: true,
+        latencySensitive: true,
+      });
+    }
+    if (host.sessionId) void window.nexus.pty.replay(host.sessionId).catch(() => {});
+  });
+}
+
+function wireHostTerminalListeners(host: Host): void {
+  host.term.onTitleChange((title) =>
+    useLayoutStore.getState().setTitle(host.paneId, title),
+  );
+  host.term.onScroll((viewportY) => {
+    host.inputVisibility.onScroll(viewportY, host.term.buffer.active.baseY);
+  });
+}
+
 function createShellHost(pane: PaneModel): Host {
   const element = document.createElement('div');
   element.className = 'term-host';
@@ -1428,6 +1566,9 @@ function createShellHost(pane: PaneModel): Host {
     serialize,
     ro: null as unknown as ResizeObserver,
     sessionId: null,
+    // createHostForKind só rota shell/cli-agent; browser nunca cria host.
+    kind: pane.kind as 'shell' | 'cli-agent',
+    virtualized: null,
     reportedGrid: null,
     isVisible: true,
     spawnGeneration: 0,
@@ -1483,6 +1624,9 @@ function createCliAgentHost(pane: PaneModel): Host {
     serialize,
     ro: null as unknown as ResizeObserver,
     sessionId: null,
+    // createHostForKind só rota shell/cli-agent; browser nunca cria host.
+    kind: pane.kind as 'shell' | 'cli-agent',
+    virtualized: null,
     reportedGrid: null,
     isVisible: true,
     spawnGeneration: 0,
@@ -1736,7 +1880,7 @@ export function setTerminalShutdownNoticeMode(): void {
     '\r\n\x1b[36m[nexus] encerrando o app — as missões continuam no rail ' +
     'e retomam sozinhas no próximo boot.\x1b[0m';
   for (const host of hosts.values()) {
-    if (host.disposed) continue;
+    if (host.disposed || host.virtualized) continue;
     try {
       host.term.writeln(message);
     } catch {
@@ -1915,6 +2059,25 @@ export function setHostVisibility(paneId: string, isVisible: boolean): void {
       webglPool.suspend(paneId);
     }
     host.term.options.cursorBlink = false;
+    if (
+      shouldHibernateHost({
+        liveHosts: liveHostCount(),
+        isPaneVisible: false,
+        opened: host.opened,
+        disposed: host.disposed,
+        hasSession: host.sessionId !== null,
+        spawnPending:
+          host.spawnWhenMeasurable === true ||
+          !host.spawnStarted ||
+          heldSpawnPanes.has(paneId),
+      })
+    ) {
+      virtualizeHost(host);
+    }
+    return;
+  }
+  if (host.virtualized) {
+    rehydrateHost(host);
     return;
   }
   if (!host.opened) return;
