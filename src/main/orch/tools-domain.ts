@@ -1741,6 +1741,16 @@ const recipesLintTool: McpToolDef = {
   handler: async (args, _ctx, invocation) => {
     assertMcpInvocationCurrent(invocation);
     let target = args.recipe;
+    if (typeof target === 'string') {
+      try {
+        target = JSON.parse(target);
+      } catch {
+        return {
+          valid: false,
+          errors: [{ path: 'recipe', message: 'String JSON inválida para recipe' }],
+        };
+      }
+    }
     if (!target && args.squadId) {
       target = getSquad(String(args.squadId)) as Record<string, unknown> | null;
       if (!target) {
@@ -1784,10 +1794,18 @@ const recipesFormatTool: McpToolDef = {
   },
   handler: async (args, _ctx, invocation) => {
     assertMcpInvocationCurrent(invocation);
-    if (!args.recipe || typeof args.recipe !== 'object') {
+    let target = args.recipe;
+    if (typeof target === 'string') {
+      try {
+        target = JSON.parse(target);
+      } catch {
+        throw new Error('Informe "recipe" como um JSON válido');
+      }
+    }
+    if (!target || typeof target !== 'object') {
       throw new Error('Informe "recipe" como um objeto válido');
     }
-    const result = squadSchema.safeParse(args.recipe);
+    const result = squadSchema.safeParse(target);
     if (!result.success) {
       const errorMsg = result.error.issues
         .map((i) => `${i.path.join('.')}: ${i.message}`)

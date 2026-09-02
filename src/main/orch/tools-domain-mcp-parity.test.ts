@@ -60,6 +60,25 @@ describe('T7 Superfície MCP (cron aliases, recipes lint/format, perf events)', 
       expect(result.errors.length).toBeGreaterThan(0);
       expect(result.errors.some((e) => e.path.includes('id'))).toBe(true);
     });
+
+    it('aceita recipe passado como string JSON', async () => {
+      const validJson = JSON.stringify({
+        id: 'json-squad',
+        name: 'JSON Squad',
+        createdAt: '1700000000',
+        builtin: false,
+        orchestratorInstructions: 'Instruções',
+        agents: [{ id: 'orch', agentName: 'Orch', category: 'orchestrator', cli: 'claude', effort: 'high' }],
+      });
+
+      const result = await lintTool.handler(
+        { recipe: validJson },
+        {} as never,
+        { current: true } as never,
+      );
+
+      expect(result).toMatchObject({ valid: true });
+    });
   });
 
   describe('nexus_recipes_format', () => {
@@ -92,6 +111,25 @@ describe('T7 Superfície MCP (cron aliases, recipes lint/format, perf events)', 
       expect(typeof result.formattedJson).toBe('string');
       expect(result.formattedJson).toContain('"id": "format-squad"');
       expect(result.squad).toBeDefined();
+    });
+
+    it('formata squad passado como string JSON', async () => {
+      const validJson = JSON.stringify({
+        id: 'format-json-squad',
+        name: 'Format JSON Squad',
+        createdAt: '1700000000',
+        builtin: false,
+        orchestratorInstructions: 'Instruções',
+        agents: [{ id: 'orch', agentName: 'Orch', category: 'orchestrator', cli: 'claude', effort: 'medium' }],
+      });
+
+      const result = (await formatTool.handler(
+        { recipe: validJson },
+        {} as never,
+        { current: true } as never,
+      )) as { formattedJson: string; squad: unknown };
+
+      expect(result.formattedJson).toContain('"id": "format-json-squad"');
     });
 
     it('rejeita dados não-squad lançando erro descritivo', async () => {
