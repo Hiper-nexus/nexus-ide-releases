@@ -20,6 +20,7 @@ import {
   restoreSessionAuthority,
   rotateContextRevisionAuthority,
 } from './gate';
+import { requiresSpawnGate } from './spawn-home-policy';
 import { testProjectScope } from './__tests__/scope-fixture';
 
 function token(label: string, role: 'worker' | 'orchestrator' | 'user') {
@@ -539,5 +540,34 @@ describe('token registry + stop gate', () => {
         role: 'orchestrator',
       }),
     ).toBe(false);
+  });
+
+  describe('allowedSkills semantics (T6)', () => {
+    it('treats [] as a hard gate where NO skills are allowed', () => {
+      expect(isSkillAllowed([], 'ponytail')).toBe(false);
+      expect(isSkillAllowed([], 'impeccable')).toBe(false);
+      expect(isSkillAllowed([], 'review')).toBe(false);
+    });
+
+    it('treats null/omitted as unrestricted where ANY skill is allowed', () => {
+      expect(isSkillAllowed(null, 'ponytail')).toBe(true);
+      expect(isSkillAllowed(null, 'impeccable')).toBe(true);
+      expect(isSkillAllowed(null, 'any-custom-skill')).toBe(true);
+    });
+
+    it('treats populated array as an allowlist permitting only listed skills', () => {
+      const list = ['impeccable', 'ponytail'];
+      expect(isSkillAllowed(list, 'impeccable')).toBe(true);
+      expect(isSkillAllowed(list, 'IMPECCABLE')).toBe(true);
+      expect(isSkillAllowed(list, 'ponytail')).toBe(true);
+      expect(isSkillAllowed(list, 'review')).toBe(false);
+      expect(isSkillAllowed(list, 'blocked')).toBe(false);
+    });
+
+    it('arms requiresSpawnGate when allowedSkills is [] but not when null', () => {
+      expect(requiresSpawnGate({ role: 'worker', allowedSkills: [] })).toBe(true);
+      expect(requiresSpawnGate({ role: 'worker', allowedSkills: ['review'] })).toBe(true);
+      expect(requiresSpawnGate({ role: 'worker', allowedSkills: null })).toBe(false);
+    });
   });
 });
