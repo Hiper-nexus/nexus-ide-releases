@@ -110,6 +110,9 @@ const REQUIRES_EXPLICIT_ALLOW = new Set([
   "agent_spec_write",
   "catalog_install",
   "cron",
+  "cron_schedule",
+  "cron_list",
+  "cron_cancel",
 ]);
 
 const ORCHESTRATOR_DENIED_TOOLS = new Set([
@@ -147,7 +150,19 @@ export function isToolAllowed(
     // rest of the toolset is unrestricted.
     return (
       allowedTools !== null &&
-      allowedTools.some((allowed) => canonicalToolName(allowed) === canonical)
+      allowedTools.some((allowed) => {
+        const allowedCanonical = canonicalToolName(allowed);
+        if (allowedCanonical === canonical) return true;
+        if (
+          allowedCanonical === 'cron' &&
+          (canonical === 'cron_schedule' ||
+            canonical === 'cron_list' ||
+            canonical === 'cron_cancel')
+        ) {
+          return true;
+        }
+        return false;
+      })
     );
   }
   if (allowedTools === null) return true;

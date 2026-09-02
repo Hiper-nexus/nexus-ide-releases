@@ -26,7 +26,10 @@ export function collectPerfSnapshot(): PerfSnapshot {
       uptimeSec: process.uptime(),
       ...mem,
     },
-    appMetrics: app.getAppMetrics().map((metric) => ({
+    appMetrics: (typeof app?.getAppMetrics === 'function'
+      ? app.getAppMetrics()
+      : []
+    ).map((metric) => ({
       pid: metric.pid,
       type: metric.type,
       memory: {

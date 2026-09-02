@@ -65,6 +65,8 @@ import {
   strArray,
 } from './tool-util';
 import { buildHandoffTools } from './tools-handoff';
+import { squadSchema } from '../../shared/orch-types';
+import { collectPerfSnapshot } from '../perf/perf-ipc';
 import { canCompleteConsultLane, canCompleteOpsLane } from '../../shared/mission-intent';
 import { isTaskQueueManagedMission } from './task-dispatch-authority';
 import {
@@ -1636,6 +1638,184 @@ const cronTool: McpToolDef = {
   },
 };
 
+const cronScheduleTool: McpToolDef = {
+  name: 'nexus_cron_schedule',
+  description:
+    'Agendar tarefa periódica no cron persistido (alias de conveniência para nexus_cron create). ' +
+    'Requer schedule (5 campos cron), name, brief e squadId ou agentName.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      name: { type: 'string' },
+      schedule: { type: 'string' },
+      brief: { type: 'string' },
+      workspacePath: { type: 'string' },
+      executionMode: { type: 'string', enum: ['shared', 'local'] },
+      agentName: { type: 'string' },
+      squadId: { type: 'string' },
+    },
+    required: ['name', 'schedule', 'brief'],
+  },
+  handler: async (args, ctx, invocation) => {
+    assertMcpInvocationCurrent(invocation);
+    const agentName = str(args, 'agentName');
+    const squadId = str(args, 'squadId');
+    if (!agentName && !squadId) {
+      throw new Error('informe agentName OU squadId');
+    }
+    const requestedMode = str(args, 'executionMode');
+    if (
+      requestedMode !== undefined &&
+      requestedMode !== 'shared' &&
+      requestedMode !== 'local'
+    ) {
+      throw new Error('executionMode deve ser "shared" ou "local"');
+    }
+    const created = await addCronJob(
+      {
+        name: requireStr(args, 'name'),
+        schedule: requireStr(args, 'schedule'),
+        brief: requireStr(args, 'brief'),
+        workspacePath: str(args, 'workspacePath'),
+        executionMode: requestedMode ?? 'shared',
+        agentName,
+        squadId,
+      },
+      ctx.scope,
+      invocation,
+    );
+    assertMcpInvocationCurrent(invocation);
+    reportCronReversal(ctx, { action: 'create', created: cronSnapshot(created) });
+    return created;
+  },
+};
+
+const cronListTool: McpToolDef = {
+  name: 'nexus_cron_list',
+  description: 'Listar jobs agendados no cron persistido (alias de conveniência para nexus_cron list).',
+  inputSchema: {
+    type: 'object',
+    properties: {},
+  },
+  handler: async (_args, ctx, invocation) => {
+    assertMcpInvocationCurrent(invocation);
+    return listCronJobs(ctx.scope);
+  },
+};
+
+const cronCancelTool: McpToolDef = {
+  name: 'nexus_cron_cancel',
+  description: 'Cancelar job agendado no cron persistido (alias de conveniência para nexus_cron delete).',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      id: { type: 'string' },
+    },
+    required: ['id'],
+  },
+  handler: async (args, ctx, invocation) => {
+    assertMcpInvocationCurrent(invocation);
+    const id = requireStr(args, 'id');
+    const beforeDelete = findCronJob(ctx.scope, id);
+    const deleted = await deleteCronJob(id, ctx.scope, invocation);
+    assertMcpInvocationCurrent(invocation);
+    if (beforeDelete) {
+      reportCronReversal(ctx, { action: 'delete', before: beforeDelete });
+    }
+    return { deleted, id };
+  },
+};
+
+const recipesLintTool: McpToolDef = {
+  name: 'nexus_recipes_lint',
+  description:
+    'Valida a definição de um squad ou recipe contra o squadSchema (Zod). ' +
+    'Aceita objeto JSON direto ou id de squad existente no catálogo.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      recipe: { type: 'object', description: 'Definição do squad/recipe em formato de objeto' },
+      squadId: { type: 'string', description: 'ID de squad para carregar e validar' },
+    },
+  },
+  handler: async (args, _ctx, invocation) => {
+    assertMcpInvocationCurrent(invocation);
+    let target = args.recipe;
+    if (!target && args.squadId) {
+      target = getSquad(String(args.squadId)) as Record<string, unknown> | null;
+      if (!target) {
+        return {
+          valid: false,
+          errors: [{ path: 'squadId', message: `Squad ${String(args.squadId)} não encontrado` }],
+        };
+      }
+    }
+    if (!target || typeof target !== 'object') {
+      return {
+        valid: false,
+        errors: [{ path: '', message: 'Informe "recipe" (objeto) ou "squadId" válido' }],
+      };
+    }
+    const result = squadSchema.safeParse(target);
+    if (result.success) {
+      return { valid: true, squad: result.data };
+    }
+    return {
+      valid: false,
+      errors: result.error.issues.map((issue) => ({
+        path: issue.path.join('.'),
+        message: issue.message,
+      })),
+    };
+  },
+};
+
+const recipesFormatTool: McpToolDef = {
+  name: 'nexus_recipes_format',
+  description:
+    'Formata e normaliza a definição de um squad/recipe de acordo com o squadSchema. ' +
+    'Devolve o squad normalizado e JSON formatado.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      recipe: { type: 'object', description: 'Definição de squad a formatar' },
+    },
+    required: ['recipe'],
+  },
+  handler: async (args, _ctx, invocation) => {
+    assertMcpInvocationCurrent(invocation);
+    if (!args.recipe || typeof args.recipe !== 'object') {
+      throw new Error('Informe "recipe" como um objeto válido');
+    }
+    const result = squadSchema.safeParse(args.recipe);
+    if (!result.success) {
+      const errorMsg = result.error.issues
+        .map((i) => `${i.path.join('.')}: ${i.message}`)
+        .join('; ');
+      throw new Error(`Recipe inválido para formatação: ${errorMsg}`);
+    }
+    return {
+      formattedJson: JSON.stringify(result.data, null, 2),
+      squad: result.data,
+    };
+  },
+};
+
+const perfEventsTool: McpToolDef = {
+  name: 'nexus_perf_events',
+  description:
+    'Consulta snapshot recente de eventos e telemetria de performance do sistema ' +
+    '(processo, memória, sessões PTY ativas, browser views e métricas da warm pool de panes).',
+  inputSchema: {
+    type: 'object',
+    properties: {},
+  },
+  handler: async (_args, _ctx, invocation) => {
+    assertMcpInvocationCurrent(invocation);
+    return collectPerfSnapshot();
+  },
+};
+
 export function buildDomainTools(): McpToolDef[] {
   return [
     routeTaskTool,
@@ -1663,5 +1843,11 @@ export function buildDomainTools(): McpToolDef[] {
     remoteSpawnTool,
     ...buildBrowserTools(),
     cronTool,
+    cronScheduleTool,
+    cronListTool,
+    cronCancelTool,
+    recipesLintTool,
+    recipesFormatTool,
+    perfEventsTool,
   ];
 }
