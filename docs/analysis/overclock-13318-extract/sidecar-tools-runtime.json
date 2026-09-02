@@ -1,0 +1,2159 @@
+{
+  "result": {
+    "tools": [
+      {
+        "name": "handoff_submit",
+        "description": "REQUIRED FINAL CALL for a worker pane (spawned by another agent and given a task): call it as your VERY LAST action before going idle, or the orchestrator waits forever — idle terminal output does NOT signal completion. status: \"done\" | \"blocked\" | \"error\" | \"progress\" (NON-TERMINAL stream note — no wake, not completion, only registers in handoff_list). summary = 1–2 SENTENCES, the CONCLUSION ITSELF — your answer condensed, never a description of the work (\"wrote a guide about X\" is wrong; the guide's conclusion, condensed, is right). It lands in the delegator's conversation. Write your FULL answer as your normal reply in YOUR OWN pane BEFORE calling this — that is where it lives and where the delegator reads it. Do NOT copy the answer into artifacts (artifacts = structured data / file paths only, never a copy of your prose) and do NOT write it to a file unless the task asked for a file. If you were BLOCKED (missing API key/capability, tool unavailable) and produced nothing, submit status \"blocked\" with the reason — never \"done\": a done without delivery makes the orchestrator build on work that does not exist. For code/deploy/wiring work ALSO fill `evidence` so the orchestrator can REVIEW instead of trusting your word: commands run with real exit codes, files changed, one line each on deployed/wired/tested citing HOW. Large diffs/logs go in `evidence.evidenceFile`, never in artifacts. For a pure answer (question, analysis) evidence is NOT needed — never fabricate it. AFTER this call, your turn is OVER: close with ONE short natural line and stop; never send any ack BEFORE the tool result. Do NOT restate, re-send or expand the answer you already gave — the delegator has it. Do NOT call this tool again for the same task.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "paneId": {
+              "type": "string",
+              "description": "paneId of the submitting worker. Omit to use the caller pane."
+            },
+            "summary": {
+              "type": "string",
+              "description": "1–2 SENTENCES — the CONCLUSION itself (your answer/result condensed), never a description of the work: \"I wrote X about Y\" is wrong; the X, condensed, is right. An answer that already fits in 1–2 sentences goes VERBATIM — no commentary (\"42\" → summary \"42\") — and in the task's language. It lands verbatim in the delegator's conversation. Longer output does NOT go here: the full answer goes in `fullText` and structured output in `artifacts`."
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "done",
+                "blocked",
+                "error",
+                "progress"
+              ],
+              "description": "Completion status. \"progress\" is a non-terminal stream note — no wake, no evidence gate."
+            },
+            "artifacts": {
+              "description": "Optional structured output (files changed, results, error details, etc.)."
+            },
+            "to": {
+              "type": "string",
+              "description": "paneId to WAKE instead of your spawner — use when the briefing says \"when done, report to pane-NNN\" (C-060). Only the wake destination changes (the spawner still sees it in handoff_list); a dead/unknown/out-of-scope target falls back to the spawner. Omit = wake the spawner."
+            },
+            "briefId": {
+              "type": "string",
+              "description": "briefId of the brief-file you executed (delegation by pointer, C-036), so the orchestrator opens request + your `## Resultado` in one file. Omit for inline tasks. Defaults evidence.evidenceFile to the brief-file path."
+            },
+            "evidence": {
+              "type": "object",
+              "description": "Optional structured PROOF for the orchestrator review gate. References (paths/commands/exit codes), not prose. Large diffs/logs go in a file referenced by evidenceFile — never pasted inline.",
+              "properties": {
+                "checks": {
+                  "type": "array",
+                  "description": "Itemized acceptance checks. Each cites how to verify (path/command).",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "requirement": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "done",
+                          "partial",
+                          "skipped"
+                        ]
+                      },
+                      "verify": {
+                        "type": "string",
+                        "description": "Command or file:line that proves it."
+                      }
+                    },
+                    "required": [
+                      "requirement",
+                      "status",
+                      "verify"
+                    ]
+                  }
+                },
+                "commands": {
+                  "type": "array",
+                  "description": "Commands actually run as proof, with real exit codes.",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "cmd": {
+                        "type": "string"
+                      },
+                      "exitCode": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "cmd",
+                      "exitCode"
+                    ]
+                  }
+                },
+                "files": {
+                  "type": "array",
+                  "description": "Files changed (git diff --stat style).",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string"
+                      },
+                      "added": {
+                        "type": "integer"
+                      },
+                      "removed": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "path"
+                    ]
+                  }
+                },
+                "evidenceFile": {
+                  "type": "string",
+                  "description": "Absolute path to a file holding the full diff / command output / logs."
+                },
+                "deployed": {
+                  "type": "string",
+                  "description": "One line: how deploy was proven."
+                },
+                "wired": {
+                  "type": "string",
+                  "description": "One line: how end-to-end wiring was proven."
+                },
+                "tested": {
+                  "type": "string",
+                  "description": "One line: how tests were proven (cmd + result)."
+                }
+              }
+            },
+            "fullText": {
+              "type": "string",
+              "maxLength": 65536,
+              "description": "FULL text of a LONG answer (>280 chars) — stored in the task record for later consultation (handoff_list with full:true); it never travels to the delegator by default. Pass your complete answer here unchanged when you also pass a condensed summary. Short answers need neither."
+            },
+            "attach": {
+              "type": "boolean",
+              "description": "(system) Internal attach mode used by the Overclock close hook — workers never set this."
+            },
+            "sessionId": {
+              "type": "string",
+              "description": "(system) CLI session id attached by the close hook — workers never set this."
+            },
+            "transcript": {
+              "type": "string",
+              "description": "(system) transcript path attached by the close hook — workers never set this."
+            }
+          },
+          "required": [
+            "summary",
+            "status"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "handoff_list",
+        "description": "Returns handoff entries submitted by worker panes (via handoff_submit or worker_exited). Each entry may carry an `evidence` object (commands run + exit codes, files changed, deployed/wired/tested proofs, and an evidenceFile path to the full diff/logs). REVIEW GATE before accepting a \"done\": use that evidence to confirm the work is deployed, wired end-to-end, and matches the contract — Read the evidenceFile for the full diff rather than re-deriving it; re-invoke the worker for any unproven claim. Non-blocking snapshot — returns immediately. By default scoped to the caller mission (fallback: caller workspace) — same model as pane_list. Within that scope, only the orchestrator's own workers + handoffs ADDRESSED to the caller via `to` (C-060). Cross-mission / global registry only with explicit opt-in: scope=all_workspaces or allowCrossCaller:true. Pass missionId and/or workspacePath to target a SPECIFIC boundary (cross access when named).",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "panes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Filter by paneId — returns ALL of that worker's tasks, newest first. The registry is TASK-granular: 1 pane accumulates N tasks (fichas) over its life; a pane id names the WORKER, never one task."
+            },
+            "ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Filter by TASK id — the \"h-N\" ids the wake messages cite (e.g. [\"h-9\"]). Addresses ONE specific task (history-addressable, returns even superseded deliveries). A pane-N id passed here is auto-routed to the panes filter. Scoped to the caller's own workers, same as panes."
+            },
+            "delegator": {
+              "type": "string",
+              "description": "Audit filter: ALL activities delegated BY this paneId (entry.to = delegator), full history including pending — \"o que o pane-Y mandou fazer e o que voltou\". Each entry carries prompt (the ask), status, summary (the conclusion). Combine with full:true for fullText. Same visibility scoping as panes/ids."
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "caller_mission",
+                "caller_workspace",
+                "all_workspaces"
+              ],
+              "description": "List scope. Default is caller_mission when the MCP session has a mission, otherwise caller_workspace. Use all_workspaces only with explicit intent (same as allowCrossCaller:true). Ignored when workspacePath or missionId is passed."
+            },
+            "workspacePath": {
+              "type": "string",
+              "description": "Explicit target workspace (cross-boundary access when named). Overrides scope/default."
+            },
+            "missionId": {
+              "type": "string",
+              "description": "Explicit target mission (cross-boundary access when named). Overrides scope/default."
+            },
+            "full": {
+              "type": "boolean",
+              "description": "Include the stored fullText (the complete long answer) of the matched entries. Only honoured together with an ids/panes filter — never on broad listings (context safety). Default false: fullText NEVER travels unless explicitly requested."
+            },
+            "allowCrossCaller": {
+              "type": "boolean",
+              "description": "Explicit bypass of caller + mission scoping — see the global registry regardless of ids/panes/no-filter (default false). Equivalent to scope=all_workspaces for the mission boundary; also skips workersOfCaller filter."
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_task",
+        "description": "Deterministic orchestration primitive in one call: spawn a worker pane, brief it, wait for an authoritative handoff, validate it against a schema, recover on failure. Prefer it over manual pane_spawn + pane_write + handoff_list when you want validated output. Only an explicit handoff_submit status:\"done\" counts as success — dead/timeout respawns, schema mismatch re-prompts the same pane with the errors (bounded by retries). Runs persist as task-files under .overclock-app/briefs/; pass `taskId` alone to READ one back instead of spawning. Returns the validated artifacts + outcome metadata.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "taskId": {
+              "type": "string",
+              "description": "Read mode: id of a previously recorded task-file. When set, all other params are ignored."
+            },
+            "objective": {
+              "type": "string",
+              "description": "The single thing the worker must accomplish. Required unless `taskId` is set."
+            },
+            "context": {
+              "type": "string",
+              "description": "Background the worker needs to do the job. Brief like a colleague who just arrived."
+            },
+            "format": {
+              "type": "string",
+              "description": "How the answer should be shaped, when no schema is given."
+            },
+            "maxSize": {
+              "type": "string",
+              "description": "Soft size limit for the answer, e.g. \"under 200 words\"."
+            },
+            "schema": {
+              "type": "object",
+              "description": "JSON Schema the worker handoff artifacts must satisfy. When set, the worker is instructed to return matching structured output and the result is validated; a mismatch triggers a correction re-prompt."
+            },
+            "agent": {
+              "type": "string",
+              "description": "Worker CLI/agent (claude, codex, gemini, ...). Defaults to the session default."
+            },
+            "model": {
+              "type": "string",
+              "description": "Model override for the worker pane."
+            },
+            "providerId": {
+              "type": "string",
+              "description": "Provider override for the worker pane."
+            },
+            "cwd": {
+              "type": "string",
+              "description": "Working directory for the worker pane."
+            },
+            "refute": {
+              "type": "string",
+              "description": "Adversarial template: a claim the worker must try to REFUTE (skeptic bias). Useful for verification tasks."
+            },
+            "retries": {
+              "type": "number",
+              "description": "Recovery budget shared across respawn (dead/timeout) and correction re-prompt (invalid). Default 1."
+            },
+            "timeoutMs": {
+              "type": "number",
+              "description": "Handoff wait ceiling in ms. Default 120000."
+            },
+            "bootTimeoutMs": {
+              "type": "number",
+              "description": "Max wait for a fresh worker pane TUI to settle before sending the prompt. Default 20000."
+            },
+            "closeOnDone": {
+              "type": "boolean",
+              "description": "Close the worker pane after a successful validated handoff. Default false (visible panes stay)."
+            },
+            "label": {
+              "type": "string",
+              "description": "Display label for progress logs."
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_workflow",
+        "description": "Recipe torre-fanout: 1 streaming pipeline per triage cluster, no barrier — phase 1 an ephemeral subagent diagnoses the cluster and registers TASK/items/<ID>.md; phase 2 spawns VISIBLE worker panes (1 per plan) with pointer briefing, reporting to the orchestrator. Use when triage found 2+ independent clusters; 1 cluster stays inline. Returns progress, outcomes and paneIds.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "recipe": {
+              "type": "string",
+              "enum": [
+                "torre-fanout"
+              ],
+              "description": "Workflow recipe. torre-fanout = Torre de Controle v4 fan-out (analysis + dispatch per cluster)."
+            },
+            "clusters": {
+              "type": "array",
+              "description": "Triage clusters (2+). Each becomes one independent pipeline. Shared-file symptoms must already share a cluster.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "description": "Stable cluster id from triage (e.g. \"cluster-auth\")."
+                  },
+                  "title": {
+                    "type": "string",
+                    "description": "Short cluster title / hypothesis of root cause."
+                  },
+                  "symptoms": {
+                    "type": "string",
+                    "description": "Symptoms/reports in this cluster (multi-line OK). Include evidence paths."
+                  },
+                  "lane": {
+                    "type": "string",
+                    "description": "Optional file/lane boundary for anti-collision."
+                  },
+                  "files": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Optional file boundary declared at triage."
+                  },
+                  "model": {
+                    "type": "string",
+                    "description": "Analysis model override for this cluster (bias-proportional harness)."
+                  },
+                  "effort": {
+                    "type": "string",
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high",
+                      "xhigh",
+                      "max"
+                    ],
+                    "description": "Analysis effort override for this cluster."
+                  },
+                  "agent": {
+                    "type": "string",
+                    "description": "Analysis CLI/agent override (claude, codex, grok, …)."
+                  },
+                  "context": {
+                    "type": "string",
+                    "description": "Extra cluster context (open items that already match, related evidence)."
+                  }
+                },
+                "required": [
+                  "id",
+                  "title",
+                  "symptoms"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "handoffTo": {
+              "type": "string",
+              "description": "Orchestrator paneId that must receive worker handoffs (style reportsTo). Required for torre-fanout."
+            },
+            "concurrency": {
+              "type": "number",
+              "description": "Max pipelines (and nested worker spawns per expansion) in flight. Configurable valve — default is min(16, cores-2). Canonical Torre scenario needs ≥13."
+            },
+            "analysisTimeoutMs": {
+              "type": "number",
+              "description": "Handoff wait ceiling for each analysis subagent (ms). Default 600000 (10 min)."
+            },
+            "cwd": {
+              "type": "string",
+              "description": "Working directory for analysis + workers. Defaults to workspace root."
+            }
+          },
+          "required": [
+            "recipe",
+            "clusters",
+            "handoffTo"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "pane_spawn",
+        "description": "Open a new agent pane in the Overclock grid. A \"pane\" is THIS Overclock object — NOT a tmux/zellij/terminal split, window or shell job: never satisfy a pane request with a shell command. ONE pane per call. For N panes use pane_spawn_many — ONE call with the N panes, never N pane_spawn calls (N calls recompute the grid N times and resize every other pane each time). CLONE BY DEFAULT: every config field is optional; the pane inherits your CLI, account, model, effort, mode and workspace/cwd. Pass a field only to DEVIATE. DECLARE THE INTENT — schema-enforced, exactly one: `prompt` = first task, delivered in the argv at BIRTH so the pane wakes ALREADY EXECUTING it (ONE call replaces spawn + pane_write); `idle: true` = deliberately empty pane. Returns paneId. Claude workers report their own handoff (the app teaches them per session) — do NOT add handoff instructions to a claude prompt; for NON-claude CLIs end the prompt with \"finally call handoff_submit({summary, status, artifacts})\". If a worker goes quiet without reporting, ASK it via pane_write — never read its terminal to fish for the result. Do NOT announce the call before it or narrate it after: call, then END YOUR TURN silently — the handoff wakes you with the result.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "agent": {
+              "type": "string",
+              "enum": [
+                "claude",
+                "codex",
+                "gemini",
+                "kimi",
+                "antigravity",
+                "cursor",
+                "copilot",
+                "grok",
+                "opencode",
+                "kiro",
+                "muse",
+                "shell"
+              ],
+              "description": "CLI host. OMIT THIS FIELD unless the human explicitly NAMED a CLI — omitted = faithful clone of the caller (same CLI/account/model), which is what 'abre um pane' means. Passing agent when the human didn't name one breaks the clone (measured: copilot chefe passing agent:'claude' spawned the wrong CLI). agent='codex' without providerId prefers an enabled local Codex provider; pass providerId='codex-cli' for Codex cloud/ChatGPT, 'antigravity-cli' for Google Antigravity."
+            },
+            "providerId": {
+              "type": "string",
+              "description": "Provider id from ~/.overclock-app/providers.json. Omit for the built-in 'claude-oauth'. Common: 'codex-cli', 'antigravity-cli', 'ollama-codex-local', 'mimo-*', or any custom provider."
+            },
+            "model": {
+              "type": "string",
+              "description": "Model id. For claude-oauth: 'claude-fable-5' | 'claude-opus-4-8' | 'claude-sonnet-4-6' | 'claude-opus-4-7' | 'claude-haiku-4-5'. For MIMO: 'mimo-v2.5-pro' | 'mimo-v2-pro' | 'mimo-omni'. For antigravity-cli: 'gemini-3.5-flash-high' | 'gemini-3.5-flash-low' | 'gemini-3.1-pro-high' | 'gemini-3.1-pro-low' | 'claude-sonnet-4-6-thinking' | 'claude-opus-4-6-thinking' | 'gpt-oss-120b-medium'. Optional — falls back to the provider's spawn default (the model the USER last picked in + PANE, or the provider's factory default)."
+            },
+            "prompt": {
+              "type": "string",
+              "description": "First task, delivered in the CLI argv AT BIRTH (the pane boots already executing it). Multi-line OK. REQUIRED unless idle:true. Briefing discipline (same as pane_write): a POINTER ('executa TASK/items/F-016.md'), never an inflated re-explanation of the item. RELAY FAITHFULLY: pass the TASK the child must do. If YOU were told \"abre N panes e pede X\", `prompt` is X — never the meta-order to open panes (that loops: F-573). Never add or tighten constraints (\"250 caracteres\" must NOT become \"exatamente 250\")."
+            },
+            "idle": {
+              "type": "boolean",
+              "description": "True ONLY for a deliberately EMPTY pane (e.g. the user will type in it themselves). Mutually exclusive with `prompt`. If you have work for the pane, pass `prompt` instead."
+            },
+            "effort": {
+              "type": "string",
+              "enum": [
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ],
+              "description": "Reasoning effort applied AT SPAWN via CLI flag (claude/codex: low..max; grok: low..high; gemini/antigravity have no knob — ignored). ALWAYS set effort/model HERE, never via /effort or /model in a pane_write after boot: those overwrite the USER'S GLOBAL DEFAULT and can race the TUI boot into a hung selector."
+            },
+            "cwd": {
+              "type": "string",
+              "description": "Absolute working directory. Defaults to the workspace ROOT of the calling session — NOT the caller's own cwd; when spawning FROM a worker pane always pass an explicit absolute cwd (inherited context can point at a mission dir/worktree). Only paths inside the active workspace: a cwd outside it makes the pane invisible in the grid."
+            },
+            "autoCloseOnHandoff": {
+              "type": "boolean",
+              "description": "Kill the worker pane 30s after a CLEAN done handoff (blocked/error panes stay open). Default false. Independent of mission completion: worker panes are collected when the mission is marked done even if this is false (F-295)."
+            },
+            "delegateOnly": {
+              "type": "boolean",
+              "description": "Spawn as a pure-delegator orchestrator: execution tools (Read/Edit/Bash/…) are stripped at launch. Use with squadRole:\"orchestrator\" and squadCallable:[]. Pair with cwd to isolate it in an external folder."
+            },
+            "squadRole": {
+              "type": "string",
+              "description": "Squad role (e.g. \"orchestrator\"). Required when delegateOnly:true so the pane registers in the squad tree."
+            },
+            "squadCallable": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              },
+              "description": "Agents this orchestrator may spawn via pane_spawn({persona}). [] = no preset roster (discovered at runtime)."
+            },
+            "persona": {
+              "type": "string",
+              "description": "Catalog agent name to embody as this pane's persona — resolves its systemPrompt/CLI/model/skills (same lookup the old agent_invoke did). Omit for a plain pane."
+            },
+            "resume": {
+              "type": "string",
+              "description": "Resume a CLOSED worker with its context intact: pass the task id (\"h-N\") or the old paneId (\"pane-N\"). The new pane relaunches that worker's CLI session (e.g. claude --resume / codex resume) — same files, conversation AND persona/identity in its head, zero re-briefing. USE THIS for any adjustment/follow-up on a deliverable whose worker was already closed. Combine with prompt (the adjustment). Works across CLIs (claude, codex, gemini, …)."
+            },
+            "chefe": {
+              "type": "string",
+              "enum": [
+                "scout",
+                "builder",
+                "reviewer",
+                "controller"
+              ],
+              "description": "AGENTIC missions (piloto T1) ONLY — route this task to the área CHEFE instead of a plain worker: spawns the chefe if not yet alive, routes to it if already running (reuse). controller is Torre-only; scout/builder/reviewer are Cadeia-only. Combine with prompt (the task). Squad missions never use this — spawn roster workers via persona."
+            },
+            "missionId": {
+              "type": "string",
+              "description": "Bind the new pane to a SPECIFIC mission instead of the caller's (foreign key). Normally OMIT — a spawn inherits the caller's mission automatically."
+            },
+            "allowedSkills": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Skills the pane MUST LOAD (F-639) and the hard whitelist (PreToolUse gate blocks any other; wins over roster/persona preset). claude: the worker is ordered to invoke the Skill tool for each and the load is audited at handoff (never-loaded skill = flagged as imitation). Other CLIs: the SKILL.md body is inlined into the birth instructions (no Skill tool to trace). Omit for unrestricted."
+            },
+            "expectSiblings": {
+              "type": "number",
+              "description": "OVKA-138 — LAST RESORT when you cannot use pane_spawn_many: how many panes this SAME wave will have in total. Declare it on the FIRST call of the wave and the grid is reserved for N up front, so every pane lands on a fixed rect instead of re-planning (and resizing every sibling) on each arrival. Prefer pane_spawn_many, which needs no hint."
+            },
+            "allowChildSpawns": {
+              "type": "number",
+              "description": "F-573: how many panes THIS new pane may itself spawn. Omit = 0 when the pane is a worker (born with prompt from another pane) — it must do the task and handoff_submit, not open grandchildren. Pass N (or a large number) only when you are authorizing a sub-orchestrator. Human-opened panes are already unlimited."
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "pane_spawn_many",
+        "description": "Open N agent panes in the Overclock grid in ONE call. USE THIS WHENEVER YOU WANT MORE THAN ONE PANE — N panes = ONE pane_spawn_many, never N pane_spawn calls. Why it is not the same: pane_spawn only returns after the pane boots, so N separate calls arrive seconds apart and the grid is recomputed N times, resizing every other pane each time. pane_spawn_many plans the final grid ONCE and every pane is born at its final size. Each entry follows the SAME rules as pane_spawn: CLONE BY DEFAULT (every config field optional, inherited from you) and DECLARE THE INTENT (`prompt` = first task, the pane wakes ALREADY EXECUTING it; `idle: true` = deliberately empty pane). Returns one receipt line per pane. Do NOT announce the call before it or narrate it after: call, then END YOUR TURN silently.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "panes": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 24,
+              "description": "One entry per pane, in the order they should land in the grid.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "prompt": {
+                    "type": "string",
+                    "description": "First task for THIS pane, delivered in the CLI argv at birth. REQUIRED unless idle:true. Briefing discipline (same as pane_spawn): a POINTER, never an inflated re-explanation of the item."
+                  },
+                  "idle": {
+                    "type": "boolean",
+                    "description": "True ONLY for a deliberately EMPTY pane. Mutually exclusive with `prompt`."
+                  },
+                  "agent": {
+                    "type": "string",
+                    "enum": [
+                      "claude",
+                      "codex",
+                      "gemini",
+                      "kimi",
+                      "antigravity",
+                      "cursor",
+                      "copilot",
+                      "grok",
+                      "opencode",
+                      "kiro",
+                      "muse",
+                      "shell"
+                    ],
+                    "description": "CLI host. OMIT unless the human explicitly NAMED a CLI — omitted = faithful clone of the caller."
+                  },
+                  "providerId": {
+                    "type": "string",
+                    "description": "Provider id from ~/.overclock-app/providers.json. Omit to inherit."
+                  },
+                  "model": {
+                    "type": "string",
+                    "description": "Model id. Omit to inherit the caller's."
+                  },
+                  "effort": {
+                    "type": "string",
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high",
+                      "xhigh",
+                      "max"
+                    ],
+                    "description": "Reasoning effort applied AT SPAWN via CLI flag. Omit to inherit."
+                  },
+                  "cwd": {
+                    "type": "string",
+                    "description": "Absolute working directory inside the active workspace."
+                  },
+                  "persona": {
+                    "type": "string",
+                    "description": "Catalog agent name to embody as this pane's persona."
+                  },
+                  "missionId": {
+                    "type": "string",
+                    "description": "Bind this pane to a SPECIFIC mission instead of the caller's."
+                  },
+                  "allowedSkills": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Hard skill whitelist for this pane."
+                  },
+                  "allowChildSpawns": {
+                    "type": "number",
+                    "description": "F-573: how many panes THIS new pane may itself spawn."
+                  },
+                  "autoCloseOnHandoff": {
+                    "type": "boolean",
+                    "description": "Kill the worker pane 30s after a CLEAN done handoff."
+                  },
+                  "squadRole": {
+                    "type": "string",
+                    "description": "Squad role (e.g. \"orchestrator\")."
+                  },
+                  "delegateOnly": {
+                    "type": "boolean",
+                    "description": "Spawn as a pure-delegator orchestrator."
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              }
+            },
+            "missionId": {
+              "type": "string",
+              "description": "Mission for the WHOLE wave (per-pane missionId wins). Normally OMIT — the wave inherits yours."
+            },
+            "cwd": {
+              "type": "string",
+              "description": "Working directory for the WHOLE wave (per-pane cwd wins)."
+            }
+          },
+          "required": [
+            "panes"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "pane_write",
+        "description": "Type text into another pane's terminal as if the user had typed it. Use this to send a prompt/question to a sub-agent pane you spawned. By default the text is submitted (Enter pressed), using bracketed paste for agent TUIs when possible. Pass submit=false to leave the cursor parked (rare). ORCHESTRATION: after sending a task assignment, end your turn — the result arrives automatically when the worker calls handoff_submit (the worker's Stop hook blocks it from stopping until it does); collect it with handoff_list (lossless, no blocking wait needed). DELEGATION BY POINTER (opt-in, cost-efficient): pass `brief` instead of `text` to persist the full briefing to a file under the target workspace (.overclock-app/briefs/) and send the worker only a one-line pointer. The worker executes the file and writes its result back into that same file's ## Resultado section, then handoff_submit({ briefId }). Returns { briefId, briefPath }. Use for large/reviewable delegations; plain `text` stays inline. By default only writable when the target pane is in the caller mission/workspace — pass allowCrossMission/allowCrossWorkspace to confirm a deliberate cross-boundary write.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "paneId": {
+              "type": "string",
+              "description": "Target paneId (from pane_spawn)."
+            },
+            "text": {
+              "type": "string",
+              "description": "Text to type into the pane. Omit when using `brief` (pointer mode). RELAY FAITHFULLY: pass the human's ask as given — never add or tighten constraints they did not state (e.g. \"250 caracteres\" must NOT become \"exatamente 250\": the added \"exactly\" sent a worker into a char-counting retry loop, measured 2026-07-26)."
+            },
+            "brief": {
+              "type": "string",
+              "description": "Full briefing to persist as a file; the worker receives only a pointer line (delegation by pointer). Overrides `text`."
+            },
+            "submit": {
+              "type": "boolean",
+              "description": "If true (default) appends Enter so the prompt is submitted. False leaves text in the input."
+            },
+            "allowCrossMission": {
+              "type": "boolean",
+              "description": "Must be true to write to a pane belonging to a different mission than the caller."
+            },
+            "allowCrossWorkspace": {
+              "type": "boolean",
+              "description": "Must be true to write to a pane belonging to a different workspace than the caller."
+            }
+          },
+          "required": [
+            "paneId"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "pane_write_many",
+        "description": "Submit prompts to multiple panes in one MCP call. Use this before pane_wait_many so parallel workers start within the same orchestration turn. Like pane_write, the worker contract footer (handoff_submit instruction) is auto-appended to each task assignment unless the prompt already mentions it. F-292: entries for the SAME paneId are serialized (write N confirmed before write N+1) so two texts never paste into one input; multi-line \"/command\\n<body>\" is auto-split like pane_write.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "writes": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 20,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "paneId": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string",
+                    "description": "Text to type. Omit when using `brief` (pointer mode)."
+                  },
+                  "brief": {
+                    "type": "string",
+                    "description": "Full briefing to persist as a file; the worker gets only a pointer line (delegation by pointer, C-036). Overrides `text`."
+                  },
+                  "submit": {
+                    "type": "boolean",
+                    "description": "Default true. False leaves text parked in the target input."
+                  }
+                },
+                "required": [
+                  "paneId"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "allowCrossMission": {
+              "type": "boolean",
+              "description": "Must be true if any target pane belongs to a different mission than the caller."
+            },
+            "allowCrossWorkspace": {
+              "type": "boolean",
+              "description": "Must be true if any target pane belongs to a different workspace than the caller."
+            }
+          },
+          "required": [
+            "writes"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "pane_read",
+        "description": "Read a pane's recent CONVERSATION. Claude panes with a known session read the last N clean MESSAGES from the session transcript (❯ user / ● assistant, no TUI frames, no repaints, no composer drafts — C-194). Other panes (shell, non-claude CLIs, remote) fall back to the LOGICAL terminal buffer (scrollback + viewport, F-252 ring) — screen text, may carry TUI artifacts. lastN selects the trailing window (default 80, max 1000); a partial notice opens the result when there is more history. For complete worker results prefer handoff_list / handoff_submit artifacts. This is the non-blocking progress check for one pane: call with handoffOnly/preferHandoff to extract a complete OVERCLOCK_HANDOFF v1 block without waiting. For parallel panes, prefer pane_read_many or pane_wait_many so MCP batches reads and the model does not run a slow polling loop. By default only readable when the target pane is in the caller mission/workspace — pass allowCrossMission/allowCrossWorkspace to confirm a deliberate cross-boundary read.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "paneId": {
+              "type": "string",
+              "description": "Target paneId."
+            },
+            "lastN": {
+              "type": "number",
+              "description": "Number of trailing logical lines to return after compact filtering. Default 80. Max 1000. When the buffer holds more than lastN lines, the response is prefixed with a partial-read notice."
+            },
+            "includeRawLines": {
+              "type": "boolean",
+              "description": "Debug only. If true, include the raw filtered line array. Default false to avoid noisy transcripts."
+            },
+            "preferHandoff": {
+              "type": "boolean",
+              "description": "Default true. When a complete \"### OVERCLOCK_HANDOFF v1\" block is present, return that block instead of noisy terminal tail."
+            },
+            "handoffOnly": {
+              "type": "boolean",
+              "description": "If true, return only a complete OVERCLOCK_HANDOFF block or a clear no-handoff result."
+            },
+            "allowCrossMission": {
+              "type": "boolean",
+              "description": "Must be true to read a pane belonging to a different mission than the caller."
+            },
+            "allowCrossWorkspace": {
+              "type": "boolean",
+              "description": "Must be true to read a pane belonging to a different workspace than the caller."
+            }
+          },
+          "required": [
+            "paneId"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "pane_read_many",
+        "description": "[FALLBACK] Read compact output/status from multiple panes in one MCP call. For orchestration prefer handoff_list (structured, instant). Use pane_read_many only when workers cannot call handoff_submit and you need raw terminal output.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "panes": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 20,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "paneId": {
+                    "type": "string"
+                  },
+                  "match": {
+                    "type": "string",
+                    "description": "Optional substring to detect in this pane output."
+                  },
+                  "caseSensitive": {
+                    "type": "boolean",
+                    "description": "Default false."
+                  }
+                },
+                "required": [
+                  "paneId"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "lastN": {
+              "type": "number",
+              "description": "Number of trailing lines to inspect per pane. Default 120. Max 1000."
+            },
+            "includeTail": {
+              "type": "boolean",
+              "description": "If true, include compact terminal tails. Default false to avoid noisy/sensitive output."
+            },
+            "allowCrossMission": {
+              "type": "boolean",
+              "description": "Must be true if any target pane belongs to a different mission than the caller."
+            },
+            "allowCrossWorkspace": {
+              "type": "boolean",
+              "description": "Must be true if any target pane belongs to a different workspace than the caller."
+            }
+          },
+          "required": [
+            "panes"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "pane_wait_idle",
+        "description": "Block until the target pane has produced output after the last submitted pane_write and then becomes output-idle. BOOT CONFIRMATION ONLY — use only to confirm a single quick command ran (e.g. a shell command or pane boot). Maximum wait is 15s. NEVER use to wait for a worker result: after delegating, end your turn instead. Results are delivered automatically when the worker calls handoff_submit; collect with handoff_list. For squad orchestration, pane_wait_idle is blocked — it would prevent the handoff poke from being delivered while the await is pending.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "paneId": {
+              "type": "string",
+              "description": "Target paneId."
+            },
+            "poll": {
+              "type": "boolean",
+              "description": "If true, return the current pane status immediately without blocking."
+            },
+            "timeoutMs": {
+              "type": "number",
+              "description": "Max wait in milliseconds for blocking mode. Default 15000 (15s). Hard cap 15s. Keep short — this is for boot confirmation only."
+            },
+            "allowCrossMission": {
+              "type": "boolean",
+              "description": "Must be true to wait on a pane belonging to a different mission than the caller."
+            },
+            "allowCrossWorkspace": {
+              "type": "boolean",
+              "description": "Must be true to wait on a pane belonging to a different workspace than the caller."
+            }
+          },
+          "required": [
+            "paneId"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "pane_wait_many",
+        "description": "[FALLBACK] Prefer handoff_list for worker results — structured + lossless the moment a worker reports. Use pane_wait_many only when workers cannot call handoff_submit (legacy prompts or third-party agents) and you need terminal-output matching. Polls readPane internally; slower than handoff_list.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "panes": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 20,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "paneId": {
+                    "type": "string"
+                  },
+                  "match": {
+                    "type": "string",
+                    "description": "Substring that marks this pane complete. For panes written through pane_write/pane_write_many, matching starts after the submitted prompt echo to avoid false positives. If omitted, idle/done/dead status marks completion."
+                  },
+                  "caseSensitive": {
+                    "type": "boolean",
+                    "description": "Default false."
+                  }
+                },
+                "required": [
+                  "paneId"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "returnOn": {
+              "type": "string",
+              "enum": [
+                "any",
+                "all"
+              ],
+              "description": "Default any. any returns as soon as at least one new pane completes."
+            },
+            "timeoutMs": {
+              "type": "number",
+              "description": "Max wait in milliseconds. Default 30000. Max 600000."
+            },
+            "pollIntervalMs": {
+              "type": "number",
+              "description": "Internal MCP polling interval. Default 100ms. Min 50ms, max 5000ms."
+            },
+            "lastN": {
+              "type": "number",
+              "description": "Trailing lines to inspect per pane. Default 120. Max 1000."
+            },
+            "includeTail": {
+              "type": "boolean",
+              "description": "If true, include compact terminal tails in snapshots. Default false."
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "caller_workspace",
+                "all_workspaces"
+              ],
+              "description": "Default caller_workspace. all_workspaces also implies allowCrossMission/allowCrossWorkspace."
+            },
+            "allowCrossMission": {
+              "type": "boolean",
+              "description": "Must be true if any target pane belongs to a different mission than the caller."
+            },
+            "allowCrossWorkspace": {
+              "type": "boolean",
+              "description": "Must be true if any target pane belongs to a different workspace than the caller."
+            }
+          },
+          "required": [
+            "panes"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "pane_list",
+        "description": "List every active pane in the current Overclock workspace with its id, agent, provider, model, cwd, and status. Use this to discover paneIds and poll non-blocking progress/status while coordinating multiple panes; combine with pane_read handoffOnly/preferHandoff to process completed handoffs immediately. By default this is scoped to the caller mission/workspace — mirrors pane_close. Pass workspacePath and/or missionId to target a SPECIFIC one explicitly (cross-boundary access) instead of widening scope to all_workspaces and filtering client-side.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scope": {
+              "type": "string",
+              "enum": [
+                "caller_mission",
+                "caller_workspace",
+                "all_workspaces"
+              ],
+              "description": "List scope. Default is caller_mission when the MCP session has a mission, otherwise caller_workspace. Use all_workspaces only with explicit intent. Ignored when workspacePath or missionId is passed."
+            },
+            "workspacePath": {
+              "type": "string",
+              "description": "Explicit target workspace (cross-boundary access, always allowed when named). Overrides scope/default — returns only panes in this workspace."
+            },
+            "missionId": {
+              "type": "string",
+              "description": "Explicit target mission (cross-boundary access, always allowed when named). Overrides scope/default — returns only panes in this mission."
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "pane_close",
+        "description": "Force-close a pane by id. Kills the underlying PTY process (SIGTERM, SIGKILL fallback) and removes the pane from the grid. Use this to clean up panes that are stuck, idle, or orchestration leftovers. By default this is scoped to the caller mission/workspace and refuses to close the caller pane itself. Returns ok=true even if the pane was already gone.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "paneId": {
+              "type": "string",
+              "description": "Target paneId from pane_spawn / pane_list."
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "caller_mission",
+                "caller_workspace",
+                "all_workspaces"
+              ],
+              "description": "Close scope. Default is caller_mission when the MCP session has a mission, otherwise caller_workspace. Use all_workspaces only with explicit intent."
+            },
+            "allowSelfClose": {
+              "type": "boolean",
+              "description": "Must be true to close the pane that owns this MCP session."
+            },
+            "allowCrossWorkspace": {
+              "type": "boolean",
+              "description": "Compatibility flag. Prefer scope=all_workspaces for cross-workspace closes."
+            },
+            "allowCrossMission": {
+              "type": "boolean",
+              "description": "Compatibility flag. Prefer scope=caller_workspace to close another mission in the same workspace."
+            }
+          },
+          "required": [
+            "paneId"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "pane_whoami",
+        "description": "FALLBACK — your identity is ALREADY in your system prompt, under \"## Identidade deste pane\" (paneId, mission, workspace, cwd, who spawned you, role, harness), written at spawn. Answer from there; call this ONLY when that block is missing or looks stale. Then it resolves THIS pane's identity live from the backend — paneId, missionId (+title), workspacePath, callerPaneId (who spawned it), best-effort role. Never use pane_list to find yourself: listing every mission/pane to locate your own entry wastes tokens. No args.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "pane_list_providers",
+        "description": "List every LLM provider configured in this Overclock install (built-in OAuth + user-saved entries). Returns id, label, type, host, and available models for each. Call this BEFORE pane_spawn whenever you intend to pass a non-default providerId/model — unknown ids are rejected with an error and saved providers vary per machine.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_mission_list",
+        "description": "List missions currently known to the Overclock mission backend. YOUR OWN mission (id/title/type/squadId/workDir) comes from pane_whoami — NEVER call this to find yourself. Scoped by DEFAULT to the caller workspace (F-058), newest first, capped at 12 — pass limit for more, allWorkspaces: true for a global list, or workspacePath to target another workspace explicitly.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "draft",
+                "in_progress",
+                "blocked",
+                "done",
+                "archived"
+              ],
+              "description": "Optional status filter."
+            },
+            "limit": {
+              "type": "number",
+              "description": "Optional max missions to return (1-200). Default 12, newest first."
+            },
+            "workspacePath": {
+              "type": "string",
+              "description": "Explicit target workspace. Overrides the default (caller workspace)."
+            },
+            "allWorkspaces": {
+              "type": "boolean",
+              "description": "List missions across ALL workspaces. Default false: scoped to the caller workspace."
+            },
+            "includeArchived": {
+              "type": "boolean",
+              "description": "Include archived missions. Default false (archived are dead state — F-058)."
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_mission_create",
+        "description": "Create a NEW mission record. Creating a mission is an EXPLICIT act: call this ONLY when the human explicitly asked for a new mission, or when no mission is active in the workspace. When a mission is already active, do NOT create another — panes/squads you spawn inherit the caller's missionId automatically (overclock_squad_spawn binds to it by default), so spawning never requires a mission_create first. Ownership: this MCP path is for AGENT-initiated missions (e.g. squad-former); human-initiated missions go through the MissionWizard UI (IPC), not this tool. The mission is born in YOUR workspace (worktreePath if you pass one, otherwise the calling pane's workspace) — never in whatever workspace tab the human happens to be looking at. C-290: an explicit worktreePath MUST be a registered workspace (overclock_workspace_list / overclock_workspace_add) — otherwise the mission's panes are born invisible and the call is refused.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string",
+              "description": "Short mission title, e.g. \"Implement payment flow\"."
+            },
+            "description": {
+              "type": "string",
+              "description": "Optional mission summary. Helps future model/agent routing."
+            },
+            "worktreePath": {
+              "type": "string",
+              "description": "Absolute path of the workspace/worktree used by this mission. Required for mission spawn unless main process adds path inference."
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "draft",
+                "in_progress",
+                "blocked",
+                "done",
+                "archived"
+              ],
+              "description": "Optional initial status."
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "libre",
+                "squad",
+                "agentic"
+              ],
+              "description": "C-195: mission type — decides pane-spawn behavior inside it. Omit for libre (default)."
+            }
+          },
+          "required": [
+            "title"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_mission_get",
+        "description": "Read one mission by id, including linked worktreePath used for mission-bound pane spawn.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "Mission identifier."
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_mission_set_status",
+        "description": "Advance a mission state when orchestration starts, blocks, or finishes. status=done (ready_to_integrate) marks mission panes as done and schedules collection of worker panes (F-295). status=archived tears down all owned panes immediately (F-239). ALSO sets the mission WORK DIR (sticky): pass workDir (relative to the workspace or absolute) BEFORE delegating file-producing work — every worker spawned after receives it automatically in its prompt, so no worker invents its own folder. Changing workDir later also sticks. workDir may be passed alone (no status change).",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "Mission identifier."
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "draft",
+                "in_progress",
+                "blocked",
+                "done",
+                "archived"
+              ],
+              "description": "Next mission state. done → ready_to_integrate + collect workers; archived → full pane teardown. Optional when only setting workDir."
+            },
+            "workDir": {
+              "type": "string",
+              "description": "Sticky mission work directory — where ALL file output of this mission lives. Declare it ONCE before delegating; workers spawned after receive it automatically. Empty string clears."
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_model_list",
+        "description": "List the worker models + reasoning-effort tiers available for overclock_agent_invoke, with a \"use when\" per option. As a chefe, this is STEP 1 of harness selection — call it, pick the model+effort that fit THIS sub-task, THEN overclock_agent_list (pick the agent) and overclock_skill_list (pick the skill), THEN invoke. Choosing the model is your call, per task; default DOWN (sonnet/medium) and escalate UP only with a concrete reason.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "Optional — the task in a few words (e.g. \"the shared contract\", \"bulk recon\"). The menu is small; this is just to focus your pick."
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_agent_list",
+        "description": "Find installed Overclock agents to delegate to. Pass `query` to SEARCH by need (e.g. \"static code review for bug hunting\") — returns the most relevant agents ranked first with a short description, instead of dumping the whole pool. Pass `area` to scope to your squad role (orchestrator | builder | scout | reviewer). Combine both to search within your area. A chefe should SEARCH by the task need, not list-and-parse everything.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "area": {
+              "type": "string",
+              "description": "Scope to agents whose catalog category matches this squad role. Legacy \"executor\" is normalized to \"builder\"."
+            },
+            "query": {
+              "type": "string",
+              "description": "What this task needs, in a few words (e.g. \"trace a cross-file race\", \"static code review\", \"map an unfamiliar module\"). Ranks agents by relevance and returns the top matches — much easier than reading every agent in the pool."
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_skill_list",
+        "description": "Find skills installed in the local Overclock catalog. Pass `query` to SEARCH by need (e.g. \"frontend React design system\") — returns the most relevant skills ranked first, capped at 15, instead of dumping all 50+. Pass `area` to scope by category (builder | scout | reviewer). If the caller's mission has an allowedSkills allowlist, ONLY those skills are returned. A chefe should SEARCH by task need, not list-and-parse everything.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "What this task needs, in a few words (e.g. \"static analysis bug hunting\", \"React UI component\"). Ranks skills by relevance and returns the top 15 — much easier than reading every skill."
+            },
+            "area": {
+              "type": "string",
+              "description": "Scope to skills whose category matches this squad role (builder | scout | reviewer)."
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_agent_get",
+        "description": "Retrieve full spec of a specific agent (description, systemPrompt, model). Skill scoping lives in the squad preset (allowedSkills per member), not on the agent.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Agent name (matches frontmatter name)"
+            },
+            "cli": {
+              "type": "string",
+              "enum": [
+                "claude",
+                "codex",
+                "antigravity"
+              ],
+              "description": "Optional CLI filter when name exists in multiple CLIs"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_catalog_install",
+        "description": "Install an agent or skill from the Overclock marketplace (aitmpl) into the TARGET CLI. Marketplace install requires active plan + connection to app.overclock.sh (server builds the plan; this host only writes files locally). Pass targetCli to install for Codex or Antigravity — the default is claude, and installing for the wrong CLI is what makes an agent resolve to the wrong host at spawn time (F-580). Skips when the target already exists. After install, triggers a catalog rescan so the new entry appears in overclock_agent_list / overclock_skill_list.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "agent",
+                "skill"
+              ],
+              "description": "Whether to install an agent (single .md into the CLI's agents/ dir) or a skill (dir into the CLI's skills/ dir)."
+            },
+            "slug": {
+              "type": "string",
+              "description": "Catalog slug, e.g. \"deep-research-team\" or \"ai-research/ai-agents-architect\"."
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "aitmpl"
+              ],
+              "description": "Source catalog. Currently only \"aitmpl\" (davila7/claude-code-templates). Defaults to \"aitmpl\"."
+            },
+            "targetCli": {
+              "type": "string",
+              "enum": [
+                "claude",
+                "codex",
+                "antigravity"
+              ],
+              "description": "Target CLI. claude → ~/.claude, codex → ~/.codex, antigravity → ~/.gemini. Defaults to \"claude\". These are the CLIs the catalog scans; other spawn hosts (gemini, kimi, grok, cursor, copilot, opencode) have no scanner, so installing for them is rejected instead of silently landing in ~/.claude."
+            }
+          },
+          "required": [
+            "kind",
+            "slug"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_marketplace_search",
+        "description": "Search the Overclock marketplace (overclock.sh) for agents and skills. The ONLY allowed external source for agent/skill discovery. Requires active plan + connection to app.overclock.sh.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "q": {
+              "type": "string",
+              "description": "Search query. Omit to list everything."
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "agent",
+                "skill"
+              ],
+              "description": "Filter by component kind."
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_media_providers",
+        "description": "Returns which image/video generation providers have an API key configured (Settings → API Keys) AND, per provider, the REAL selectedModel (the user-selected/default model id) plus enabledModels (every model id the user enabled). Model ids only — never the API key. Call this BEFORE pinning a squad's imageProvider/videoProvider so you only offer providers the user can actually run, AND before flagging any model capability gap: CHECK selectedModel/enabledModels — do NOT assume the code default. Only surface a gap when the enabled model truly lacks a required capability (e.g. video needs endImageUrl but the enabled model is not Kling). Image: openai-image (gpt-image), google-image (nano-banana). Video: replicate-video (Seedance/Kling via Replicate).",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "image",
+                "video",
+                "audio"
+              ],
+              "description": "Filter to ONE media family. Generating an image? Pass \"image\" — you get only image providers, not the full catalog. Omit for all families."
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_vault_list",
+        "description": "Lists the RESOURCES the user registered in the Overclock vault (nickname, type, provider, description) and the NAMES of the secret environment variables already injected into this pane. Call this when the user refers to a machine/service by a nickname you do not recognise (e.g. \"access vps-1\", \"deploy to vps-1\") — the nickname resolves here. A resource of type \"vps\" is reachable with `ssh <alias>` (the vault maintains the ssh host alias); its address, port and user are deliberately NOT exposed. Secret VALUES are never returned by any tool: reference an env var by name (e.g. $GITHUB_TOKEN) and let the process read it. NEVER print, echo, cat or otherwise reveal a secret value or a server address — the user streams this terminal live.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "vps",
+                "api",
+                "database",
+                "service",
+                "other"
+              ],
+              "description": "Filter to one resource type. Omit for everything."
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_perf_events",
+        "description": "Returns the most recent OPEN EPISODES measured by the Overclock event tracker — how many events the app sent when a pane (or a wave of panes) was opened. Each episode has: kind (single | wave), n (panes born), durMs, totalEvents and the per-channel breakdown in four directions — r2s (renderer→sidecar WS invokes), s2r (sidecar→renderer events), r2rust (Tauri commands), rust2r (Rust→renderer messages) — plus commits (React), resizes, gridChange and blockMaxMs (worst UI stall in the episode). Use it to answer \"how many events did the last open cost?\" and to compare before/after a perf fix. Empty list means the jsonl is off for this instance (it only writes in dev or with OVERCLOCK_PERF_EVENTS=1) or no pane was opened yet in this workspace.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "last": {
+              "type": "number",
+              "description": "How many episodes to return, most recent first. Default 10, max 500."
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_squad_save",
+        "description": "Persist a SquadPreset to squads.json (upsert by id) and trigger a UI refresh. Use after assembling a new squad so it appears in the Overclock squad picker.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "Unique preset id (uuid or slug)."
+            },
+            "name": {
+              "type": "string",
+              "description": "Human-readable squad name."
+            },
+            "agents": {
+              "type": "array",
+              "description": "Ordered list of squad members.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "agentName": {
+                    "type": "string"
+                  },
+                  "category": {
+                    "type": "string"
+                  },
+                  "cli": {
+                    "type": "string"
+                  },
+                  "model": {
+                    "type": "string"
+                  },
+                  "effort": {
+                    "type": "string"
+                  },
+                  "allowedSkills": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Skill whitelist for this member (hard gate). Absent = unrestricted."
+                  },
+                  "delegateOnly": {
+                    "type": "boolean",
+                    "description": "Pure delegator — spawned without execution tools (Read/Edit/Bash/…)."
+                  },
+                  "invocable": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "agentNames this member is allowed to invoke (carried for downstream scoping)."
+                  },
+                  "leaf": {
+                    "type": "boolean",
+                    "description": "Leaf executor — spawned without pane-spawn tools (depth-cap)."
+                  }
+                },
+                "required": [
+                  "id",
+                  "agentName"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "createdAt": {
+              "type": "number",
+              "description": "Unix timestamp (ms) when the preset was created."
+            },
+            "orchestratorInstructions": {
+              "type": "string",
+              "description": "User-defined instructions appended to the orchestrator system prompt."
+            },
+            "nativeInstructions": {
+              "type": "string",
+              "description": "System-level playbook prepended before orchestratorInstructions — hidden in the editor UI."
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "agents",
+            "createdAt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_squad_list",
+        "description": "List all saved squad presets (squads.json) — id, name, agents/roster and orchestrator config. Use to discover which squads exist before firing one with overclock_squad_spawn.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_squad_get",
+        "description": "Read one squad preset by id — full roster, orchestrator config and squad-level instructions. Use to inspect a squad before spawning it.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "Squad preset id (from overclock_squad_list)."
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_squad_spawn",
+        "description": "Fire a saved squad by id WITHOUT the UI: reads the preset, builds the worker roster, binds the squad to the caller's active mission (or the explicit missionId), and spawns ONLY the orchestrator pane. The workers are invoked on demand by the orchestrator via overclock_agent_invoke. A NEW mission is created ONLY when createMission:true is passed or when no active mission exists — creating a mission is an explicit act, never a side effect of spawning. Returns the missionId and the orchestrator paneId. Pass `input` to hand the squad its task: it is delivered to the orchestrator at BIRTH (same channel as pane_spawn `prompt`) — no pane_write needed. Without `input` the orchestrator is born idle and you must pane_write the task yourself. C-293: pass `cli` (optionally with `model`/`providerId`/`effort`) to run THIS EXISTING squad on another CLI for this round only — the override dresses the WHOLE roster (orchestrator + workers), exactly like flipping the CLI on the squad in the MissionWizard. The saved preset is NEVER modified: never clone a squad with overclock_squad_save just to change CLI. F-660: pass `workspacePath` to say WHERE the squad is born. Without a caller pane AND without workspacePath (and without missionId) the call is REFUSED with squad_workspace_ambiguo — never a silent fallback to an old active workspace (which produced an invisible orchestrator).",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "Squad preset id to spawn (from overclock_squad_list)."
+            },
+            "workspacePath": {
+              "type": "string",
+              "description": "F-660 — ABSOLUTE path (or ssh:// URL) of the workspace where the orchestrator must be born. Omitted → the caller pane/session workspace anchors it; with NO caller and no missionId the spawn is REFUSED (squad_workspace_ambiguo) instead of inheriting an old active workspace, which made the squad invisible to the human."
+            },
+            "missionId": {
+              "type": "string",
+              "description": "Optional existing mission to attach the squad to. Omitted → the squad BINDS to the caller's active mission (inherits the missionId); a new mission is created only if none is active."
+            },
+            "createMission": {
+              "type": "boolean",
+              "description": "Explicitly create a NEW mission for this squad instead of binding to the caller's active mission. Pass true ONLY when the human explicitly asked for a new mission."
+            },
+            "cli": {
+              "type": "string",
+              "enum": [
+                "claude",
+                "codex",
+                "gemini",
+                "kimi",
+                "antigravity",
+                "cursor",
+                "copilot",
+                "grok",
+                "opencode",
+                "kiro",
+                "muse"
+              ],
+              "description": "C-293 — run this squad on another CLI FOR THIS ROUND. Applied to the orchestrator AND every worker (the squad is uniform by definition, same as the wizard lock). Switching CLI CLEARS the preset model/account (they are CLI-bound); pass model/providerId to set new ones. The saved preset is untouched. C-295: a BUILTIN squad only runs on an ELIGIBLE cli — claude, codex, kimi, cursor or grok. Any other cli on a builtin squad is REFUSED with squad_cli_not_eligible (never a silent fallback); squads you build yourself accept any cli."
+            },
+            "model": {
+              "type": "string",
+              "description": "Model for the whole roster this round. REQUIRES `cli` (a model only exists inside its CLI — F-425). Omitted with `cli` set → each pane takes the new CLI default."
+            },
+            "providerId": {
+              "type": "string",
+              "description": "Account/provider id for the whole roster this round (providers.json). REQUIRES `cli`. Omitted → the CLI default account."
+            },
+            "effort": {
+              "type": "string",
+              "enum": [
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ],
+              "description": "Reasoning effort for the whole roster this round. Silently dropped for CLIs with no effort knob (gemini/antigravity) — the receipt reports what was applied."
+            },
+            "input": {
+              "type": "string",
+              "description": "The goal/brief for the squad. F-640: ALWAYS delivered to the orchestrator as its first task (the pane wakes already executing it); when a NEW mission is created it is also stored as the mission objective. Omit only if you intend to pane_write the task afterwards."
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_squad_delete",
+        "description": "Delete a squad preset from squads.json by id. C-293: without this the list only GREW — the toolbox had save/list/get/spawn and no way back, so every CLI variation left a clone behind (13 duplicates measured 2026-08-25). Builtin (factory) squads are REFUSED: they are part of the install, not user data. To run an existing squad on another CLI, do NOT clone-and-delete — pass `cli` to overclock_squad_spawn.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "Squad preset id to delete (from overclock_squad_list)."
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_image_generate",
+        "description": "Generate an image from a text prompt using the image API configured in Overclock (Settings → API Keys). The image is saved into the current workspace. On success the result includes absolute `path` and `uri` (file://). ALWAYS show the user the absolute `path` (or `uri`) so they can click it in the terminal to open the image — do not paraphrase as a bare filename only. Pass `imageUrl` (an http(s) URL or a local file path) to do image-to-image / edit / reference — the provider routes through its edit endpoint (Gemini nano-banana / OpenAI gpt-image). The provider defaults to the one selected for this squad; pass `provider` to override. Requires that provider's key to be set, otherwise returns an error telling the user to configure it. Requires an active Overclock subscription and connection to app.overclock.sh (recipe is server-side).",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "prompt": {
+              "type": "string",
+              "description": "Text description of the image to generate (or the edit instruction when imageUrl is set)."
+            },
+            "imageUrl": {
+              "type": "string",
+              "description": "Optional source image for image-to-image / edit. Accepts an http(s) URL or a local file path (relative paths resolve against the workspace)."
+            },
+            "provider": {
+              "type": "string",
+              "enum": [
+                "google-image",
+                "openai-image"
+              ],
+              "description": "Override the image provider. Default = the squad-selected provider, then google-image. Both providers use an API key configured in Settings → API Keys."
+            },
+            "outPath": {
+              "type": "string",
+              "description": "Optional output file path. Relative paths resolve against the workspace. Defaults to generated-<timestamp>.png."
+            },
+            "model": {
+              "type": "string",
+              "description": "Optional model override — must be one of the provider's ACTIVE models configured in Settings → API Keys. Omit to use the provider's configured default."
+            },
+            "aspect": {
+              "type": "string",
+              "enum": [
+                "16:9",
+                "9:16",
+                "1:1",
+                "4:3",
+                "3:4"
+              ],
+              "description": "Desired aspect ratio. Gemini honors natively; OpenAI maps to nearest supported size (16:9→1536x1024, 9:16→1024x1536, 1:1→1024x1024). Omit = provider default."
+            }
+          },
+          "required": [
+            "prompt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_audio_generate",
+        "description": "Generate spoken audio (text-to-speech) from text using the audio provider configured in Overclock (Settings → API Keys). The audio file is saved into the current workspace and the path is returned. Defaults to the squad-selected provider, then ElevenLabs. Requires that provider's key to be set, otherwise returns an error telling the user to configure it. Requires an active Overclock subscription and connection to app.overclock.sh (recipe is server-side).",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "prompt": {
+              "type": "string",
+              "description": "The text to speak."
+            },
+            "voiceId": {
+              "type": "string",
+              "description": "Optional voice id (provider-specific). Defaults to the configured voice."
+            },
+            "provider": {
+              "type": "string",
+              "enum": [
+                "elevenlabs"
+              ],
+              "description": "Override the audio provider. Default = the squad-selected provider, then elevenlabs."
+            },
+            "outPath": {
+              "type": "string",
+              "description": "Optional output file path. Relative paths resolve against the workspace. Defaults to generated-<timestamp>.mp3."
+            }
+          },
+          "required": [
+            "prompt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_video_generate",
+        "description": "Generate a video from a text prompt using Replicate (configured in Settings → API Keys). Generation is async and can take a few minutes; the finished mp4 is downloaded into the workspace and the file path is returned. If the call times out, the job is still running on Replicate — call again with recoverJobId to resume without re-submitting. Requires an active Overclock subscription and connection to app.overclock.sh (recipe is server-side).",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "prompt": {
+              "type": "string",
+              "description": "Text description of the video to generate (describe only what MOVES — do not re-describe a static start frame)."
+            },
+            "imageUrl": {
+              "type": "string",
+              "description": "Optional source image (the START frame) for image-to-video. http(s) URL or local file path."
+            },
+            "endImageUrl": {
+              "type": "string",
+              "description": "Optional END frame (Kling models only). Pass BOTH imageUrl + endImageUrl to interpolate a controlled motion from start to end — the correct way to author a deliberate scrub/transition with a defined landing state. Ignored by non-Kling models."
+            },
+            "provider": {
+              "type": "string",
+              "enum": [
+                "replicate-video"
+              ],
+              "description": "Video provider. Only replicate-video is supported."
+            },
+            "outPath": {
+              "type": "string",
+              "description": "Optional output file path. Relative paths resolve against the workspace. Defaults to generated-<timestamp>.mp4."
+            },
+            "recoverJobId": {
+              "type": "string",
+              "description": "Replicate prediction ID from a prior timed-out call. Skips submit and re-polls the existing job until complete, then downloads the mp4."
+            },
+            "model": {
+              "type": "string",
+              "description": "Optional model override — must be one of the provider's ACTIVE models configured in Settings → API Keys. Omit to use the provider's configured default."
+            }
+          },
+          "required": [
+            "prompt"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_navigate",
+        "description": "Drive the Overclock app UI programmatically: workspace tabs, missions, screens, panes, the MissionWizard (squad / agentic runs) and the Files/Sessions views. Pick the action with `target` (each option is documented there); `workspace-create` is the ONLY allowed workspace-creation path (the folder appears on screen). Use `wizard-cancel` directly when the user says \"cancela\"/\"fecha\" with the wizard open — never ask \"where to?\". Query resolution (workspace/mission/pane): exact id → exact title → title contains (case-insensitive); zero or 2+ matches never navigate, they return candidates. This drives the UI, not panes — spawning/managing panes is pane_spawn/pane_list.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "target": {
+              "type": "string",
+              "enum": [
+                "workspace",
+                "workspace-open",
+                "workspace-create",
+                "mission",
+                "mission-new",
+                "screen",
+                "pane",
+                "run-squad",
+                "run-agentic",
+                "home",
+                "wizard-advance",
+                "wizard-set",
+                "wizard-fire",
+                "wizard-cancel",
+                "dialog-dismiss",
+                "view-files",
+                "view-sessions",
+                "tab-close",
+                "tab-next",
+                "tab-prev",
+                "tab-switch",
+                "back"
+              ],
+              "description": "What to navigate to. Unless noted, no query is needed. workspace-open (alias: workspace): switch to an EXISTING workspace tab — query = name or path; never creates. workspace-create: VISIBLY create + open a workspace — query = absolute path (instead of a silent mkdir+attach). run-agentic: MissionWizard in agentic mode — query = absolute workspace path. run-squad: MissionWizard summon — query = squad preset id. mission: select a mission — query = id/title. screen: query = grid|catalog|settings. pane: query = pane id/title. home / view-files / view-sessions / back: overview, Files view, Sessions view, previous view. tab-close: query optional (empty = active tab; else index/path/name); last close falls back to Home. tab-next / tab-prev: cycle, wrapping. tab-switch: query = 1-based index. mission-new: open the Nova Missão modal at the mode-choice step. wizard-advance: next step. wizard-fire: press Iniciar. wizard-cancel: press Cancelar. dialog-dismiss: close whatever modal is on TOP right now (What's New, Nova Missão, the folder picker) without having to know which one — after it, app_observe returns dialog:null. The login/licence gate is NOT dismissible: it answers ok:false telling you to ask the human, because only a valid session clears it. wizard-set: set one or MORE fields in the OPEN wizard in a single call — query is \"key:value\", or several comma-separated (\"mode:livre,count:1,clis:claude\"), applied IN ORDER so the wizard walks to a fireable step in one breath. Commas inside a value are kept (clis:claude,codex); goal: takes the rest of the query. Keys: mode:livre|squad|agentico · count:N (snaps to 1|2|4|8|16|32|64|128) · clis:claude,codex (Livre: even split across panes; Agêntico: adds to the CLI allowlist; clis:none clears) · squad:<name|id> · goal:<text> · midia:google,replicate,openai,eleven · style:<name|id> (e.g. \"torre-de-controle\") · model:<query> · account:<query> (the last two narrow Livre pane allocation)."
+            },
+            "query": {
+              "type": "string",
+              "description": "Workspace path/name (workspace-open/workspace-create/run-agentic), mission id/title, screen name (grid | catalog | settings), pane id/title, or squad preset id (run-squad). workspace-create and run-agentic require an ABSOLUTE path (e.g. /Users/foo/benchmark/run-1)."
+            },
+            "model": {
+              "type": "string",
+              "description": "For run-agentic: model for the orchestrator (e.g. \"claude-opus-4-8\"). Omit for default."
+            },
+            "goal": {
+              "type": "string",
+              "description": "For run-agentic: high-level goal pre-filled in the agentic wizard dialog."
+            }
+          },
+          "required": [
+            "target"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_status",
+        "description": "FIRST call of any external orchestrator session. Returns {running, version, sidecar{port,mcp,pid}, workspacePath, mission, dialog, gated}. `gated` always declares the capabilities that exist but stay behind the local-diagnostics gate (e.g. app_screenshot: diagnostic-only), so a client whose diagnostics are OFF can tell \"does not exist\" from \"exists, gated\" — it is present even when the desktop is closed. Never throws: when the desktop is closed it answers running:false plus a hint instead of failing, so you can tell the human to open the app rather than guessing. Cheap — call it before app_observe when you only need \"is it alive?\". No args.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "app_observe",
+        "description": "Read the live app state as JSON — workspace, screen, mission, open dialog (step, fields, options, canFire), panes, skin, busy. This REPLACES taking a screenshot to find out what is on screen: it returns zero image bytes and lists what the UI would offer right now (mission modes, this machine's providers+models, squads), so you can read the Nova Missão wizard without even opening it. Use scope to narrow (app | wizard | skins | panes). dialog covers EVERY modal on screen, not just the wizard: id is one of mission-new | whats-new | license | new-workspace (close the dismissible ones with overclock_navigate target:\"dialog-dismiss\"; the license gate only the human clears). instance {version, pid} says WHICH app answered — it matches the pid in ~/.overclock-app/sidecar.json, so dev and prod on the same machine are never confused. uiReportStale:true means the renderer has not reported yet: WAIT a moment and observe again — it is never a reason to take a screenshot, which knows strictly less than this tool. If you find yourself wanting app_screenshot to DECIDE a next step, use this instead — screenshots are proof for a human, never a control channel.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scope": {
+              "type": "string",
+              "enum": [
+                "app",
+                "wizard",
+                "skins",
+                "panes"
+              ],
+              "description": "Slice of the tree to return. Default \"app\" (whole tree)."
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "app_events",
+        "description": "Event queue for an orchestrator running OUTSIDE the app: what happened since your cursor. Types: pane.idle, pane.handoff, pane.error, pane.closed, dialog.opened, dialog.closed, skin.changed, mission.changed. Pass the returned `cursor` back as `since` to get only what is new — the same cursor twice returns an empty list. Events carry POINTERS only (paneId, handoffId, missionId, skinId), never terminal output or prompts: read the worker result with handoff_list, the screen with app_observe. This replaces polling handoff_list/pane_read (and replaces screenshots entirely) to learn that a pane finished. `dropped > 0` means your cursor fell out of the bounded ring — reconcile with app_observe/pane_list.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "since": {
+              "type": "number",
+              "description": "Seq of the last event you already read. Omit on the first call to get the most recent events."
+            },
+            "limit": {
+              "type": "number",
+              "description": "Max events to return. Default 200. Max 1000."
+            },
+            "types": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "pane.idle",
+                  "pane.handoff",
+                  "pane.error",
+                  "pane.closed",
+                  "dialog.opened",
+                  "dialog.closed",
+                  "skin.changed",
+                  "mission.changed"
+                ]
+              },
+              "description": "Optional type filter. Unknown values are ignored."
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_skin_list",
+        "description": "Lists the skins the theme selector actually offers on this machine, plus which one is active. The list comes from the live UI, so a newly shipped skin shows up here without any tool change. No args.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_skin_get",
+        "description": "Returns the skin (theme) currently applied to the app. No args.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_skin_apply",
+        "description": "Switches the app skin. Only reports applied:true after the UI CONFIRMS the change — it never claims success blind. Confirm independently with app_observe (scope \"skins\") if you want a second read; a screenshot is not needed and is not proof of anything you cannot read here.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "Skin id from overclock_skin_list (e.g. \"dark\", \"gray\", \"light\", \"red\")."
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_clarify",
+        "description": "Call when you are blocked on ambiguity, missing information, or need human approval before continuing. Unlike handoff_submit, this does NOT end your task — your pane stays alive. The orchestrator will relay the question to the human and write the answer back to you via pane_write. After receiving the answer, continue your work and call handoff_submit when done. Use sparingly: only when the blocker genuinely requires human judgment (not for technical lookups you can do yourself).",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "paneId": {
+              "type": "string",
+              "description": "paneId of the asking worker. Omit to use the caller pane."
+            },
+            "question": {
+              "type": "string",
+              "description": "The specific question or decision you need the human to answer. Be concrete."
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "missing_info",
+                "ambiguous",
+                "approach_choice",
+                "risk_confirmation"
+              ],
+              "description": "Category: missing_info (fact you need), ambiguous (underspecified requirement), approach_choice (pick one of N valid options), risk_confirmation (dangerous action needs approval)."
+            },
+            "suggestions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Optional ordered list of suggested answers rendered as clickable chips for the human."
+            }
+          },
+          "required": [
+            "question",
+            "kind"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_open_browser",
+        "description": "Open a deliverable in the Overclock internal browser pane. Creates a tracked pane visible in pane_list. Accepts EITHER a live URL (http:// or https://) OR a LOCAL ABSOLUTE PATH to a built site (e.g. the workspace folder containing index.html) — the sidecar spins up a local HTTP server automatically for local paths. Use this as the FIRST step when the mission is complete: open the deliverable here, then call handoff_submit(done).",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "description": "URL or absolute local path to open. Live URL: \"https://example.com\". Local built site: absolute path to the workspace/dist folder (e.g. \"/Users/foo/workspace\") — served automatically via local HTTP."
+            },
+            "missionId": {
+              "type": "string",
+              "description": "Mission to attach the pane to. Defaults to the caller's mission."
+            },
+            "workspacePath": {
+              "type": "string",
+              "description": "Workspace path. Defaults to the caller's cwd."
+            }
+          },
+          "required": [
+            "url"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_catalog_uncategorized",
+        "description": "List installed skills/agents that have NOT yet been categorized (no overlay row). Returns each item's identity_key, type, name, file path and a capped description blurb — the blurb is the classification contract (categorize from it; deep-read the file at `path` only when the blurb is insufficient). Built for SPLIT work: the scout first calls with `countOnly:true` to get the totals, partitions the count into slices, then spawns one leaf worker per slice — each worker calls with its own `offset`/`limit`, reads every file at `path`, and calls overclock_catalog_overlay_write. A bare call (no params) is capped to a page so it can never overflow the response.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "skill",
+                "agent"
+              ],
+              "description": "Filter to one kind. Omit for both."
+            },
+            "countOnly": {
+              "type": "boolean",
+              "description": "Return only the totals { skill, agent, total } — no rows. Use this FIRST to size the fan-out."
+            },
+            "offset": {
+              "type": "number",
+              "description": "Skip this many items (0-based) — the start of this worker's slice."
+            },
+            "limit": {
+              "type": "number",
+              "description": "Max items to return (this worker's slice size). Defaults to a safe page cap."
+            }
+          }
+        }
+      },
+      {
+        "name": "overclock_catalog_status",
+        "description": "Returns the catalog state (empty/partial/full) and the immersion directive (catalog/update/none). The piloto reads this at the front door to decide whether to offer organizing the Cardápio.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_catalog_overlay_write",
+        "description": "Persist L1 categorization for one or more items. Each row: identity_key, type, name, category = the execution ROLE the item plays — one of scout (research/extract/map), builder (constructs the deliverable), reviewer (verifies/judges); unknown values are coerced to \"builder\". purpose (pra que serve), when_to_use (quando usar). INSERT OR REPLACE keyed on identity_key. Returns {written}. Never writes to the user's skill files — overlay only.",
+        "inputSchema": {
+          "type": "object",
+          "required": [
+            "rows"
+          ],
+          "properties": {
+            "rows": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "identity_key",
+                  "type",
+                  "name",
+                  "category",
+                  "purpose",
+                  "when_to_use"
+                ],
+                "properties": {
+                  "identity_key": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "skill",
+                      "agent"
+                    ]
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "category": {
+                    "type": "string"
+                  },
+                  "purpose": {
+                    "type": "string"
+                  },
+                  "when_to_use": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "name": "overclock_catalog_inventory",
+        "description": "Return the full categorized inventory (all overlay rows): identity_key, type, name, category, purpose, when_to_use. Used by the scout to synthesize stacks WITHOUT reading files — purposes are already distilled here. Each item also carries `path` (primary installation file path) so the scout can re-read all bodies on a user-requested full reorganization.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {}
+        }
+      },
+      {
+        "name": "overclock_catalog_stacks_write",
+        "description": "Persist L2 synthesized stacks (full replace of the stack set). Each stack: id, name, summary, member_keys[], intake_questions[], parallel_groups[]. Returns {written}. An empty array is a no-op that keeps the prior stacks.",
+        "inputSchema": {
+          "type": "object",
+          "required": [
+            "stacks"
+          ],
+          "properties": {
+            "stacks": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "name",
+                  "member_keys"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "summary": {
+                    "type": "string"
+                  },
+                  "member_keys": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "intake_questions": {
+                    "type": "array"
+                  },
+                  "parallel_groups": {
+                    "type": "array"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "name": "overclock_stack_get",
+        "description": "Fetch one stack (members + intake_questions + parallel_groups) by id from the capability overlay. Use at the start of a stack run to load the briefing questions and the parallel execution groups. Read-only.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "The stack id (from the capabilityMap / stack selection)."
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_recipe_list",
+        "description": "List the predefined Overclock \"build-it\" recipes (id, name, deliverable). These are baked-in agentic workflows the front door offers as chips and the build chef can run via [RECIPE-RUN id=<id>]. Always available (no catalog organization required). Read-only.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_recipe_get",
+        "description": "Fetch one recipe (scopeTemplate + ordered steps with pinned harness [agent/skills/model/effort], media tiers, fan-out, and human-approval gates) by id. Use at the start of a [RECIPE-RUN] so the build chef can sequence the steps deterministically. Read-only.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "The recipe id (e.g. \"site\")."
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_recipe_save",
+        "description": "Persist a user-composed recipe (origin:\"user\") so it appears in overclock_recipe_list alongside the baked-in recipes. Use after a piloto run to save a custom workflow for future reuse. Upserts by id — resaving with the same id overwrites.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "Stable slug/uuid that uniquely identifies this recipe."
+            },
+            "name": {
+              "type": "string",
+              "description": "Human-readable recipe name (front-door chip label)."
+            },
+            "deliverable": {
+              "type": "string",
+              "description": "One-line description of the recipe output."
+            },
+            "scopeTemplate": {
+              "type": "string",
+              "description": "The [SCOPE] template the piloto fills from intake answers."
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "guided",
+                "pinned"
+              ],
+              "description": "guided = spine/interview; pinned = fixed steps."
+            },
+            "spine": {
+              "type": "array",
+              "description": "Ordered phases (guided mode). Each phase has role, label, and pool.",
+              "items": {
+                "type": "object"
+              }
+            },
+            "intake": {
+              "type": "array",
+              "description": "Intake interview questions (guided mode). Each has key + question.",
+              "items": {
+                "type": "object"
+              }
+            },
+            "gates": {
+              "type": "array",
+              "description": "Human-approval gates. Each has after (phase label) + ask (question).",
+              "items": {
+                "type": "object"
+              }
+            },
+            "bundledAgents": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Agent names this recipe requires."
+            },
+            "bundledSkills": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Skill identity keys this recipe requires."
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "deliverable"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_workspace_list",
+        "description": "List the folders registered as Overclock workspaces (most recently opened first), with the active one flagged. Use it to check a path IS a workspace before spawning panes / creating a mission there — an unregistered path yields a pane nobody can see.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_workspace_add",
+        "description": "Register a folder as an Overclock WORKSPACE — exactly what the human does with \"Adicionar workspace\" in the UI. Do this BEFORE spawning panes or creating a mission in a folder that is not already a workspace: a pane whose workspace is not registered/active does not appear in the grid (it runs, invisibly). Idempotent: calling it twice on the same folder does not duplicate the entry (nor the tab). By default the folder must already exist — pass create: true to have it created. By default it also OPENS the workspace tab in the top bar so the human can see it — without switching the active workspace (pass open: false to only register it in recents).",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "Absolute path of the folder to register as a workspace."
+            },
+            "create": {
+              "type": "boolean",
+              "description": "Create the directory when it does not exist (default false — a missing folder is a clear error, never a silent mkdir)."
+            },
+            "open": {
+              "type": "boolean",
+              "description": "Open the workspace tab in the top bar so it is visible (default true). Never steals focus: the active workspace stays where it is. Pass false to only register in recents."
+            }
+          },
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false
+        }
+      }
+    ]
+  },
+  "jsonrpc": "2.0",
+  "id": 627262
+}

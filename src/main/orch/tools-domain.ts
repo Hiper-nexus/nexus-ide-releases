@@ -33,7 +33,9 @@ import { missionStatusSchema, type SquadAgent } from '../../shared/orch-types';
 import { missionResultSchema } from '../../shared/mission-engine-contract';
 import { buildClarify } from '../../shared/clarify';
 import { emitClarifyQuestion } from './clarify-flow';
-import { findAgent, getSquad, listAgents, saveSquad } from './squad-store';
+import { findAgent, getSquad, listAgents, listSquads, saveSquad } from './squad-store';
+import { BUILTIN_SQUADS } from './builtin-squads';
+import { PersistenceUnavailableError } from '../persistence/persistence-error';
 import { pinUniqueSealedRosterOnDecision } from '../../shared/sealed-agent-runtime';
 import { DEFAULT_TODO_LIST } from './todo-store';
 import { getProjectDomainStores } from './project-domain-store-registry';
@@ -1834,6 +1836,135 @@ const perfEventsTool: McpToolDef = {
   },
 };
 
+const recipeListTool: McpToolDef = {
+  name: 'nexus_recipe_list',
+  description:
+    'List all predefined and user-composed recipes (id, name, deliverable, bundledAgents, bundledSkills). ' +
+    'Read-only.',
+  inputSchema: {
+    type: 'object',
+    properties: {},
+    additionalProperties: false,
+  },
+  handler: async (_args, _ctx, invocation) => {
+    assertMcpInvocationCurrent(invocation);
+    const map = new Map<string, (typeof BUILTIN_SQUADS)[number]>();
+    for (const s of BUILTIN_SQUADS) map.set(s.id, s);
+    for (const s of listSquads()) map.set(s.id, s);
+    const squads = [...map.values()];
+    return {
+      recipes: squads.map((s) => ({
+        id: s.id,
+        name: s.name,
+        deliverable: s.name,
+        bundledAgents: s.agents.map((a) => a.agentName),
+        bundledSkills: Array.from(new Set(s.agents.flatMap((a) => a.allowedSkills ?? []))),
+      })),
+    };
+  },
+};
+
+const recipeGetTool: McpToolDef = {
+  name: 'nexus_recipe_get',
+  description:
+    'Fetch one recipe by id with its complete squad definition, ordered roles, allowed skills and native instructions.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      id: { type: 'string', description: 'The recipe id (e.g. "absurd-landing", "qa-swarm")' },
+    },
+    required: ['id'],
+    additionalProperties: false,
+  },
+  handler: async (args, _ctx, invocation) => {
+    assertMcpInvocationCurrent(invocation);
+    const id = requireStr(args, 'id');
+    const squad = getSquad(id) ?? BUILTIN_SQUADS.find((s) => s.id === id) ?? null;
+    if (!squad) {
+      throw new Error(`recipe not found: ${id}`);
+    }
+    return {
+      id: squad.id,
+      name: squad.name,
+      deliverable: squad.name,
+      squad,
+      nativeInstructions: squad.nativeInstructions,
+      bundledAgents: squad.agents.map((a) => a.agentName),
+      bundledSkills: Array.from(new Set(squad.agents.flatMap((a) => a.allowedSkills ?? []))),
+    };
+  },
+};
+
+const recipeSaveTool: McpToolDef = {
+  name: 'nexus_recipe_save',
+  description:
+    'Persist a user-composed recipe so it appears in nexus_recipe_list alongside baked-in recipes. ' +
+    'Upserts by id — resaving with the same id overwrites.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      id: { type: 'string', description: 'Stable slug/uuid that uniquely identifies this recipe' },
+      name: { type: 'string', description: 'Human-readable recipe name' },
+      deliverable: { type: 'string', description: 'One-line description of the recipe output' },
+      orchestratorInstructions: { type: 'string' },
+      nativeInstructions: { type: 'string' },
+      agents: { type: 'array', items: { type: 'object' } },
+    },
+    required: ['id', 'name'],
+    additionalProperties: false,
+  },
+  handler: async (args, _ctx, invocation) => {
+    assertMcpInvocationCurrent(invocation);
+    const id = requireStr(args, 'id');
+    const name = requireStr(args, 'name');
+    const existing = getSquad(id) ?? BUILTIN_SQUADS.find((s) => s.id === id) ?? null;
+    const squadInput = {
+      id,
+      name,
+      createdAt: existing?.createdAt ?? Date.now().toString(),
+      builtin: false,
+      orchestratorInstructions: str(args, 'orchestratorInstructions') ?? existing?.orchestratorInstructions ?? '',
+      nativeInstructions: str(args, 'nativeInstructions') ?? existing?.nativeInstructions,
+      agents: Array.isArray(args.agents) ? args.agents : (existing?.agents ?? []),
+    };
+    const parsed = squadSchema.safeParse(squadInput);
+    if (!parsed.success) {
+      const issues = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
+      throw new Error(`invalid recipe schema: ${issues}`);
+    }
+    try {
+      saveSquad(parsed.data);
+    } catch (err) {
+      if (err instanceof PersistenceUnavailableError) {
+        return { ok: true, id, recipe: parsed.data, persisted: false };
+      }
+      throw err;
+    }
+    return { ok: true, id, recipe: parsed.data, persisted: true };
+  },
+};
+
+const workspaceListTool: McpToolDef = {
+  name: 'nexus_workspace_list',
+  description:
+    'List active and known project workspaces with the active root path and scope identifiers. ' +
+    'Check this before spawning panes or creating missions.',
+  inputSchema: {
+    type: 'object',
+    properties: {},
+    additionalProperties: false,
+  },
+  handler: async (_args, ctx, invocation) => {
+    assertMcpInvocationCurrent(invocation);
+    return {
+      activeWorkspace: ctx.scope.rootRealPath,
+      projectId: ctx.scope.projectId,
+      checkoutId: ctx.scope.checkoutId,
+      version: ctx.scope.version,
+    };
+  },
+};
+
 export function buildDomainTools(): McpToolDef[] {
   return [
     routeTaskTool,
@@ -1867,5 +1998,9 @@ export function buildDomainTools(): McpToolDef[] {
     recipesLintTool,
     recipesFormatTool,
     perfEventsTool,
+    recipeListTool,
+    recipeGetTool,
+    recipeSaveTool,
+    workspaceListTool,
   ];
 }

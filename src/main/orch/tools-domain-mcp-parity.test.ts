@@ -162,4 +162,83 @@ describe('T7 Superfície MCP (cron aliases, recipes lint/format, perf events)', 
       expect(snapshot.warmPool).toHaveProperty('readyCount');
     });
   });
+
+  describe('recipes e workspace (paridade de runtime 57 tools)', () => {
+    const listTool = tools.find((t) => t.name === 'nexus_recipe_list')!;
+    const getTool = tools.find((t) => t.name === 'nexus_recipe_get')!;
+    const saveTool = tools.find((t) => t.name === 'nexus_recipe_save')!;
+    const wsTool = tools.find((t) => t.name === 'nexus_workspace_list')!;
+
+    it('nexus_recipe_list lista os squads builtin como receitas', async () => {
+      const res = (await listTool.handler(
+        {},
+        {} as never,
+        { current: true } as never,
+      )) as { recipes: Array<{ id: string; name: string }> };
+
+      expect(Array.isArray(res.recipes)).toBe(true);
+      expect(res.recipes.length).toBeGreaterThan(0);
+      expect(res.recipes.some((r) => r.id === 'qa-swarm')).toBe(true);
+      expect(res.recipes.some((r) => r.id === 'cinema-site')).toBe(true);
+    });
+
+    it('nexus_recipe_get busca uma receita existente por id', async () => {
+      const res = (await getTool.handler(
+        { id: 'qa-swarm' },
+        {} as never,
+        { current: true } as never,
+      )) as { id: string; name: string; squad: unknown };
+
+      expect(res.id).toBe('qa-swarm');
+      expect(res.name).toBe('QA Swarm');
+      expect(res.squad).toBeDefined();
+    });
+
+    it('nexus_recipe_save persiste uma receita customizada válida', async () => {
+      const res = (await saveTool.handler(
+        {
+          id: 'custom-recipe-test',
+          name: 'Custom Recipe Test',
+          deliverable: 'Teste de receita',
+          orchestratorInstructions: 'Instruções da receita',
+          agents: [
+            {
+              id: 'orch',
+              agentName: 'Orchestrator',
+              category: 'orchestrator',
+              cli: 'claude',
+              effort: 'medium',
+            },
+          ],
+        },
+        {} as never,
+        { current: true } as never,
+      )) as { ok: boolean; id: string; recipe?: { name: string } };
+
+      expect(res.ok).toBe(true);
+      expect(res.id).toBe('custom-recipe-test');
+      expect(res.recipe?.name).toBe('Custom Recipe Test');
+    });
+
+    it('nexus_workspace_list devolve escopo e caminho ativo do workspace', async () => {
+      const fakeCtx = {
+        scope: {
+          rootRealPath: '/path/to/project',
+          projectId: 'proj-123',
+          checkoutId: 'chk-456',
+          version: '0.73.0',
+        },
+      };
+
+      const res = (await wsTool.handler(
+        {},
+        fakeCtx as never,
+        { current: true } as never,
+      )) as { activeWorkspace: string; projectId: string; checkoutId: string };
+
+      expect(res.activeWorkspace).toBe('/path/to/project');
+      expect(res.projectId).toBe('proj-123');
+      expect(res.checkoutId).toBe('chk-456');
+    });
+  });
 });
