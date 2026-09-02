@@ -274,6 +274,11 @@ const config: ForgeConfig = {
       'resources/model-ranking.json',
       // Pacote de ~15 pets Codex v2 offline (manifest + sheets/*.webp).
       'resources/pets',
+      'resources/qa-swarm',
+      'resources/qa-vision',
+      'resources/absurd-landing',
+      'resources/cinema-site',
+      'resources/squad-former',
       ...(process.platform === 'darwin'
         ? ['resources/native/darwin/nexus-pty-supervisor']
         : []),

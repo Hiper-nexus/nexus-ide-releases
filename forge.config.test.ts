@@ -74,3 +74,14 @@ describe('mission shim packaging', () => {
     );
   });
 });
+
+describe('squad presets resources packaging', () => {
+  it('ships the squad resource directories on every Forge target', () => {
+    const extra = forgeConfig.packagerConfig?.extraResource ?? [];
+    expect(extra).toContain('resources/qa-swarm');
+    expect(extra).toContain('resources/qa-vision');
+    expect(extra).toContain('resources/absurd-landing');
+    expect(extra).toContain('resources/cinema-site');
+    expect(extra).toContain('resources/squad-former');
+  });
+});

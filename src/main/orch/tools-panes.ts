@@ -13,7 +13,7 @@ import {
   waitForIdle,
   waitForNextIdle,
 } from './pane-registry';
-import { inspectSessionLease, orchWriteSession } from '../pty/pty-manager';
+import { inspectSessionLease, orchWriteSession, sessionLeaseRegistry } from '../pty/pty-manager';
 import {
   listAdapterInfos,
 } from '../adapters/adapter-registry';
@@ -1263,6 +1263,13 @@ const paneClose: McpToolDef = {
     const scope = str(args, 'scope');
     if (!scope) {
       const info = authorizePaneRef(ctx, requireStr(args, 'paneId'), 'close');
+      const startKey = str(args, 'startKey');
+      if (startKey && info.sessionId) {
+        const auth = sessionLeaseRegistry.authorizeKill(info.sessionId, startKey);
+        if (!auth.ok) {
+          throw new Error(`pane_close refused: ${auth.reason}`);
+        }
+      }
       if (!(await requestPaneClose(info.paneId))) {
         throw new Error('no renderer window available');
       }

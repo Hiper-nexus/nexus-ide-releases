@@ -53,38 +53,21 @@ export const MECHANICAL_HANDOFF_CLOSED_BY = 'turn-end';
 
 // ── Turn boundary + double-fire dedup (estado por sessão física) ──────────
 
+import {
+  attachToExistingHandoff,
+  getHandoffAttachments,
+  clearHandoffAttachmentsForTest,
+} from './handoff-attachments';
+export {
+  attachToExistingHandoff,
+  getHandoffAttachments,
+  clearHandoffAttachmentsForTest,
+};
+
 const turnStartBySession = new Map<string, AgentTurnStartEntry>();
 const lastStopSignatureBySession = new Map<string, string>();
-const attachmentsByHandoffId = new Map<string, Array<Record<string, unknown>>>();
 
 let turnStartTap: (() => void) | null = null;
-
-/**
- * Consulta artefatos anexados a um handoff via modo attach.
- */
-export function getHandoffAttachments(
-  handoffId: string,
-): readonly Record<string, unknown>[] {
-  return attachmentsByHandoffId.get(handoffId) ?? [];
-}
-
-const MAX_ATTACHMENTS_CACHE = 200;
-
-/**
- * Anexa artefato a um handoff existente com bounding de cache (FIFO).
- */
-export function attachToExistingHandoff(
-  handoffId: string,
-  artifact: Record<string, unknown>,
-): void {
-  const list = attachmentsByHandoffId.get(handoffId) ?? [];
-  list.push(artifact);
-  attachmentsByHandoffId.set(handoffId, list);
-  if (attachmentsByHandoffId.size > MAX_ATTACHMENTS_CACHE) {
-    const oldestKey = attachmentsByHandoffId.keys().next().value;
-    if (oldestKey) attachmentsByHandoffId.delete(oldestKey);
-  }
-}
 
 /**
  * Liga a captura de fronteira de turno. Idempotente; chamado no init da
@@ -103,7 +86,7 @@ export function startTurnEndHandoffClosure(): void {
 export function __resetTurnEndHandoffForTests(): void {
   turnStartBySession.clear();
   lastStopSignatureBySession.clear();
-  attachmentsByHandoffId.clear();
+  clearHandoffAttachmentsForTest();
 }
 
 /** Test-only: injeta uma fronteira de turno. */

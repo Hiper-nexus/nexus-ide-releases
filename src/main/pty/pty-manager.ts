@@ -278,11 +278,14 @@ export function startSessionMortalityReconciler(): void {
         }));
       const staleLeases = sessionLeaseRegistry
         .reapStaleLeases(10 * 60_000)
-        .filter(
-          (l) =>
-            sessions.has(l.sessionId) &&
-            !physicalTerminationFlights.has(l.sessionId),
-        )
+        .filter((l) => {
+          const s = sessions.get(l.sessionId);
+          return (
+            s &&
+            !physicalTerminationFlights.has(l.sessionId) &&
+            !s.persistentTmuxName
+          );
+        })
         .map((l) => ({
           sessionId: l.sessionId,
           spawnedAtMs: l.bornAtMs,

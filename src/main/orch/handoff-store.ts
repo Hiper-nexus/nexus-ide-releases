@@ -56,6 +56,7 @@ import {
   type ReceiptChainVerification,
 } from "../../shared/receipt-chain";
 import type { AgentAttestation } from "../../shared/agent-attestation";
+import { getHandoffAttachments } from "./handoff-attachments";
 
 const identifierSchema = z
   .string()
@@ -2155,7 +2156,10 @@ export class ScopedHandoffStore {
       status: row.status,
       claimTrust: "untrusted",
       summary: row.summary,
-      artifacts: parseJsonArray(row.artifacts_json, "handoff artifacts"),
+      artifacts: [
+        ...parseJsonArray(row.artifacts_json, "handoff artifacts"),
+        ...getHandoffAttachments(row.id),
+      ],
       evidenceIds,
       evidenceTrust: !wasTrusted
         ? "unverified"

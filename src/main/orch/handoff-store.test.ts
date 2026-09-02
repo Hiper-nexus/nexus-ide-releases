@@ -14,6 +14,7 @@ import type { TrustedEvidence } from "../context/sensor-broker";
 import { testProjectScope } from "./__tests__/scope-fixture";
 import { createScopedHandoffStore } from "./handoff-store";
 import { createScopedMissionStore } from "./mission-store";
+import { attachToExistingHandoff } from "./handoff-attachments";
 
 let baseDir = "";
 const managers: ProjectRuntimeManager[] = [];
@@ -905,5 +906,43 @@ describe("scoped handoff store", () => {
       .list({ missionId: "mission-scoped-ghost", includeDelivered: true })
       .find((handoff) => handoff.id === otherWorkerGhost.id);
     expect(stillQueued?.deliveryState).toBe("queued");
+  });
+
+  it("get e list mesclam artefatos anexados via modo attach sem violar a trigger imutável", () => {
+    const scope = testProjectScope();
+    const runtimeManager = manager();
+    const missions = createScopedMissionStore(runtimeManager, scope, {
+      idFactory: () => "mission-append",
+    });
+    missions.create({ title: "Append test" });
+    const handoffs = createScopedHandoffStore(runtimeManager, scope, {
+      now: () => 1_000,
+      idFactory: () => "handoff-append-1",
+    });
+
+    const initial = handoffs.submit({
+      missionId: "mission-append",
+      sessionId: "session-append",
+      status: "success",
+      fromAgent: "Worker",
+      summary: "Primeiro turno",
+      artifacts: [{ turn: 1, done: true }],
+    });
+
+    expect(initial.artifacts).toHaveLength(1);
+
+    attachToExistingHandoff("handoff-append-1", {
+      auto: true,
+      closedBy: "turn-end-attach",
+      fullText: "output delta anexado no mesmo turno",
+    });
+
+    const reloaded = handoffs.get("handoff-append-1");
+    expect(reloaded).not.toBeNull();
+    expect(reloaded?.artifacts).toHaveLength(2);
+    expect(reloaded?.artifacts[1]).toMatchObject({
+      closedBy: "turn-end-attach",
+      fullText: "output delta anexado no mesmo turno",
+    });
   });
 });

@@ -856,6 +856,7 @@ const RAW_SQUADS: Squad[] = [
       '8. allowedSkills: Vincula o worker folha, nunca o chef.\n' +
       '9. Sub-prompts em inglês em todos os níveis internos; chat com humano em pt-BR.\n' +
       '10. Cleanup obrigatório: Cada nível fecha seus filhos com nexus_pane_close após colher o handoff.\n',
+    nativeInstructions: 'Playbook: resources/qa-swarm/PLAYBOOK.md',
     agents: [
       {
         id: 'orch',
@@ -870,6 +871,8 @@ const RAW_SQUADS: Squad[] = [
         category: 'scout',
         cli: 'codex',
         effort: 'medium',
+        allowedTools: ['nexus_pane_spawn', 'nexus_pane_write', 'nexus_pane_close'],
+        allowedSkills: ['clean-code'],
       },
       {
         id: 'reviewer',
@@ -877,6 +880,8 @@ const RAW_SQUADS: Squad[] = [
         category: 'reviewer',
         cli: 'codex',
         effort: 'high',
+        allowedTools: ['nexus_pane_spawn', 'nexus_pane_write', 'nexus_pane_close'],
+        allowedSkills: ['clean-code'],
       },
       {
         id: 'builder',
@@ -884,6 +889,8 @@ const RAW_SQUADS: Squad[] = [
         category: 'executor',
         cli: 'codex',
         effort: 'medium',
+        allowedTools: ['nexus_pane_spawn', 'nexus_pane_write', 'nexus_pane_close'],
+        allowedSkills: ['clean-code'],
       },
       {
         id: 'observer',
@@ -891,6 +898,8 @@ const RAW_SQUADS: Squad[] = [
         category: 'reviewer',
         cli: 'codex',
         effort: 'low',
+        allowedTools: ['nexus_pane_spawn', 'nexus_pane_write', 'nexus_pane_close'],
+        allowedSkills: ['clean-code'],
       },
       {
         id: 'worker',
@@ -898,6 +907,7 @@ const RAW_SQUADS: Squad[] = [
         category: 'executor',
         cli: 'codex',
         effort: 'medium',
+        allowedSkills: ['clean-code'],
       },
     ],
   },
@@ -908,15 +918,13 @@ const RAW_SQUADS: Squad[] = [
     builtin: true,
     orchestratorInstructions:
       '# QA Vision — Contrato de Bug Tracking em Arquivos\n' +
-      'Você é o orquestrador do QA Vision. O estado da missão vive no contrato de arquivos, não no contexto.\n\n' +
-      '## Contrato e Regras:\n' +
-      '1. 1 bug = 1 arquivo docs/qa/items/F-XXX.md. Nunca apense a um único ledger.\n' +
-      '2. Ciclo de vida: aberto -> corrigido -> validado | reaberto | precisa-decisao (precisa-decisão sobe para o humano imediatamente).\n' +
-      '3. Fan-out dinâmico: 1 resolvedor por cluster de arquivos afetados.\n' +
-      '4. Faixas de ID por reviewer: F-0XX para navegador, F-1XX/2XX/3XX/4XX para reviewers estáticos.\n' +
-      '5. 1 commit por finding contendo o ID na mensagem (ex: "fix(pty): F-114 ...").\n' +
-      '6. git add específico por arquivo corrigido, nunca git add -A ou git add .\n' +
-      '7. Validação obrigatória antes de marcar corrigido: npx tsc --noEmit e teste focado.\n',
+      'Você é o Maestro do QA Vision. 1 bug = 1 arquivo docs/qa/items/F-XXX.md. Nunca faça append de achados em lista única.\n\n' +
+      '## Regras do Contrato:\n' +
+      '1. Arquivos F-XXX.md: cada achado vive em docs/qa/items/F-XXX.md com status (aberto/corrigido/falso-positivo).\n' +
+      '2. Faixas de ID por reviewer: cada reviewer recebe uma faixa exclusiva (ex. F-100 a F-199) para evitar colisões.\n' +
+      '3. Validação antes de marcar corrigido: execute npx tsc --noEmit e npx vitest run path/to/file.test.ts.\n' +
+      '4. 1 commit por finding: cada finding commitado individualmente (fix(qa): F-XXX ...), nunca git add -A ou git add .\n',
+    nativeInstructions: 'Playbook: resources/qa-vision/PLAYBOOK.md',
     agents: [
       {
         id: 'orch',
@@ -926,25 +934,28 @@ const RAW_SQUADS: Squad[] = [
         effort: 'high',
       },
       {
-        id: 'navigator',
-        agentName: 'Navegador Visual',
+        id: 'navegador',
+        agentName: 'Navegador & Visão',
         category: 'reviewer',
         cli: 'codex',
         effort: 'high',
+        allowedTools: ['nexus_pane_write'],
       },
       {
-        id: 'reviewer',
+        id: 'estatico',
         agentName: 'Reviewer Estático',
         category: 'reviewer',
         cli: 'codex',
         effort: 'medium',
+        allowedTools: ['nexus_pane_write'],
       },
       {
-        id: 'resolver',
-        agentName: 'Resolvedor de Bugs',
+        id: 'resolvedor',
+        agentName: 'Resolvedor F-XXX',
         category: 'executor',
         cli: 'codex',
-        effort: 'medium',
+        effort: 'high',
+        allowedTools: ['nexus_pane_write'],
       },
     ],
   },
@@ -955,13 +966,14 @@ const RAW_SQUADS: Squad[] = [
     builtin: true,
     orchestratorInstructions:
       '# Absurd Landing — High-Impact Web Design\n' +
-      'Você é o orquestrador do squad Absurd Landing. Conduz a criação de landing pages ' +
-      'de impacto excepcional, anti-AI-slop, com copy afiado, layout provocativo e código frontend impecável.\n\n' +
+      'Você é o maestro do squad Absurd Landing. Coordena um pipeline com gates estritos por etapa: ' +
+      'Copywriting de alta persuasão, Design anti-AI-slop e Engenharia frontend impecável.\n\n' +
       '## Pipeline:\n' +
-      '1. UX & Content: Pesquisa de público e copy provocativo (content-marketer / ux-researcher).\n' +
-      '2. UI Design & Design System: Tokens, paleta e wireframe com design references autênticas.\n' +
-      '3. Frontend Engineering: Implementação React/Tailwind limpa, responsiva e performática.\n' +
-      '4. Screenshot Review: Análise visual antes de entregar.\n',
+      '1. UX & Content: Pesquisa de público, hooks e copy persuasivo (Content Marketer).\n' +
+      '2. UI Design & Design System: Design tokens, hierarquia visual e composição (UI Designer).\n' +
+      '3. Frontend Engineering: Implementação React/Tailwind limpa, responsiva e performática (Frontend Engineer).\n' +
+      '4. Screenshot Review: Validação visual via capturas reais e auditoria contra slop (Screenshot Reviewer).\n',
+    nativeInstructions: 'Playbook: resources/absurd-landing/PLAYBOOK.md',
     agents: [
       {
         id: 'orch',
@@ -977,6 +989,7 @@ const RAW_SQUADS: Squad[] = [
         category: 'architect',
         cli: 'codex',
         effort: 'medium',
+        allowedTools: ['nexus_pane_write'],
         allowedSkills: ['impeccable', 'dembrandt'],
       },
       {
@@ -985,6 +998,7 @@ const RAW_SQUADS: Squad[] = [
         category: 'architect',
         cli: 'codex',
         effort: 'high',
+        allowedTools: ['nexus_pane_write', 'nexus_image_generate'],
         allowedSkills: ['impeccable', 'dembrandt'],
       },
       {
@@ -993,6 +1007,7 @@ const RAW_SQUADS: Squad[] = [
         category: 'executor',
         cli: 'codex',
         effort: 'high',
+        allowedTools: ['nexus_pane_write'],
         allowedSkills: ['impeccable'],
       },
       {
@@ -1001,6 +1016,7 @@ const RAW_SQUADS: Squad[] = [
         category: 'reviewer',
         cli: 'codex',
         effort: 'medium',
+        allowedTools: ['nexus_pane_write'],
         allowedSkills: ['check-work'],
       },
     ],
@@ -1019,6 +1035,7 @@ const RAW_SQUADS: Squad[] = [
       '2. Produção de Mídia: Assets visuais e áudio coordenados via governed media tools.\n' +
       '3. Web Builder: Arquitetura frontend com canvas/WebGL, scroll cinematográfico e performance 60fps.\n' +
       '4. Editor: Montagem, timing e polimento final.\n',
+    nativeInstructions: 'Playbook: resources/cinema-site/PLAYBOOK.md',
     agents: [
       {
         id: 'orch',
@@ -1034,6 +1051,7 @@ const RAW_SQUADS: Squad[] = [
         category: 'architect',
         cli: 'codex',
         effort: 'high',
+        allowedTools: ['nexus_media_providers', 'nexus_image_generate'],
         allowedSkills: ['nexus-visual-media'],
       },
       {
@@ -1042,6 +1060,7 @@ const RAW_SQUADS: Squad[] = [
         category: 'architect',
         cli: 'codex',
         effort: 'medium',
+        allowedTools: ['nexus_media_providers', 'nexus_image_generate'],
         allowedSkills: ['nexus-visual-media'],
       },
       {
@@ -1050,6 +1069,7 @@ const RAW_SQUADS: Squad[] = [
         category: 'executor',
         cli: 'codex',
         effort: 'high',
+        allowedTools: ['nexus_media_providers'],
         allowedSkills: ['impeccable'],
       },
       {
@@ -1058,6 +1078,7 @@ const RAW_SQUADS: Squad[] = [
         category: 'reviewer',
         cli: 'codex',
         effort: 'medium',
+        allowedTools: ['nexus_media_providers', 'nexus_image_generate'],
         allowedSkills: ['nexus-visual-media'],
       },
     ],

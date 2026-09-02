@@ -16,7 +16,7 @@
 | 4 | **Doutrina qa-swarm** | Cadeia de 3 níveis de pane + 1 tier de WF, 1:1:N chef por função, DECISION GATE não-discricionário, END YOUR TURN | **P1** | Copiar prompts (texto) |
 | 5 | **Contrato qa-vision** | 1 arquivo `F-XXX.md` por bug (nunca ledger), fan-out dinâmico por file cluster, faixas de ID por reviewer, hub HTTP live view | **P1** | Copiar prompts + reimplementar hub |
 | 6 | **Squad-former + team-assembly** | SquadPreset canônico, gates de proveniência/consentimento, binding de skill por membro (`allowedSkills`), espelho de skill cross-CLI | **P1** | Clonar skill + adaptar schema |
-| 7 | **Superfície MCP (tools novas)** | cron, memory, recipes, skins, stacks, vault, catalog, missions, perf_events, clarify, media generate | **P2** | Reimplementar por tool |
+| 7 | **Superfície MCP (tools novas)** | recipes, skins, stacks, vault, catalog, missions, perf_events, clarify, media generate (cron e memory são código dormente que não registra nem no app real — ver §8) | **P2** | Reimplementar por tool — schemas exatos em `overclock-13318-extract/sidecar-tools-runtime.json` |
 | 8 | **Pipelines absurd-landing / cinema-site** | Pipeline fixo com GATE por etapa, red-line brief (intenção, não execução) | **P2** | Copiar prompts |
 | 9 | **pty:\* eventos completos** | readRawTail, replay, resync, wake, hibernate, readSerialized | **P3** | Parcial no Nexus; fechar gaps |
 | 10 | **overdrive** | Control plane de pane no processo Rust (mirrorless, sem renderer) | **P3** | Arquitetural; avaliar depois |
@@ -202,25 +202,52 @@ Regras de ouro do assembly: exatamente 1 orquestrador; skills SEMPRE no `allowed
 
 ---
 
-## 8. P2 — Superfície MCP completa do sidecar (61 tools)
+## 8. P2 — Superfície MCP completa do sidecar (57 tools em runtime)
 
-Ferramentas extraídas do jsc. O Nexus tem pane_*/handoff_*/agent_* — faltam (agrupadas):
+**Verificado em runtime (2026-09-02):** o sidecar 1.3.18 foi bootado standalone (sem o app Tauri) e interrogado por MCP Streamable HTTP — `initialize` → `tools/list`. Resultado: **57 tools com schema JSON completo** (nomes, parâmetros, defaults, enums, required), capturadas em [`overclock-13318-extract/sidecar-tools-runtime.json`](overclock-13318-extract/sidecar-tools-runtime.json). A contagem anterior ("61") era de análise de strings — **overcount**.
+
+**Controle de produção:** o app real (Tauri conectado, WS no ar) expõe **exatamente as mesmas 57 tools** — diff zero contra o boot standalone, tanto em `/mcp/claude` quanto em `/mcp` e `/mcp/orchestrator`. O conjunto também **não varia por cliente**: `/mcp/codex`, `/mcp/gemini`, `/mcp/cursor` etc. devolvem todos as mesmas 57. O agente do `mcp-config.sidecar.json` real aponta para esse mesmo endpoint `/mcp/claude` com Bearer token.
+
+### As 8 tools fantasmas (listadas por strings, nunca registradas)
+
+`overclock_cron_create/delete/list`, `overclock_memory_read/write`, `overclock_logo`, `redline_pick_account`, `bridge_chat_history` — **não registram nem no app real desta máquina** (chamadas diretas respondem `unknown tool`). Gating comprovado:
+
+- `redline_pick_account`: Redline não instalado — log de boot: *"Redline não encontrado — panes abrem sem o MCP do Redline"* (registro condicionado à presença do app externo).
+- `overclock_cron_*`: exigem `cronStore` inicializado — erro no código: *"Cron backend is not wired. Ensure the sidecar has cronStore initialised."* O arquivo `crons.json` jamais foi criado neste install; o env `OVERCLOCK_CRONS_JSON` sozinho NÃO ativa o registro (testado).
+- `overclock_memory_read/write`: a tabela `shared_memory` **nunca foi criada** no `messages.db` deste install (schema completo existe no código: scope/key/content_hash/supersedes/is_current, com `memory_recall/remember/forget` internos).
+- `bridge_chat_history`: é **tabela** no `messages.db` (vazia, FK para tasks) — chat do remote-bridge; a tool lê essa persistência.
+- `overclock_logo`: dormente; o código tem sistema de feature-flags chamado **"DESPENSA (ingredientes habilitados)"** com log "logo habilitado".
+
+### Duas classes de dependência do host
+
+1. **Registro incondicional + falha na CHAMADA** (tool lista, call sem app falha): `overclock_navigate` ("bridge.navigate not wired"), `overclock_squad_spawn/delete/save/get/list` ("bridge.squadX not wired"), `overclock_vault_list`, `overclock_recipe_save`, `overclock_perf_events`, `overclock_media_providers`, `overclock_catalog_install` ("appServerCall not wired"), geração de image/video/audio ("not available in this host").
+2. **Funcionam até standalone** com dados locais (verificado em boot sem app): `overclock_squad_list` (5 factory squads C-141), `overclock_vault_list`, `overclock_catalog_status` (27 itens), `overclock_recipe_get` (valida input), `overclock_status`.
+
+### As 57 tools reais (grupos que interessam ao port)
 
 | Grupo | Tools | Nota de port |
 |-------|-------|--------------|
-| **Cron** | `overclock_cron_create/delete/list` | Nexus tem ScheduleWakeup de sessão; cron PERSISTENTE de app é novo |
-| **Memória** | `overclock_memory_read/write` | memória cross-missão do app; Nexus tem auto-memory por projeto |
-| **Recipes** | `overclock_recipe_get/list/save` | workflows salvos e reusáveis — casa com o Workflow do Nexus |
-| **Skins** | `overclock_skin_apply/get/list` | temas do app |
-| **Stacks** | `overclock_stack_get` | stack de providers por contexto |
-| **Vault** | `overclock_vault_list` | credenciais |
-| **Catalog** | `overclock_catalog_install/inventory/overlay_write/stacks_write/status/uncategorized` | instalação de agentes/skills de marketplace (aitmpl); overlay = customização local |
-| **Missões** | `overclock_mission_create/get/list/set_status` | Nexus tem missões no runtime.sqlite3 — expor como tool é o delta |
-| **Media** | `overclock_image/video/audio_generate`, `overclock_media_providers` | render com provider + outPath; keys em Settings |
-| **Diálogo** | `overclock_clarify` | pergunta ao humano com schema (`overclock_clarifySchema`) — Nexus tem pane_ask |
-| **Outras** | `overclock_logo`, `overclock_model_list`, `overclock_navigate`, `overclock_open_browser`, `overclock_perf_events`, `overclock_status`, `overclock_task`, `overclock_workflow`, `overclock_workspace_add/list`, `redline_pick_account`, `bridge_chat_history` | perf_events = telemetria de performance consultável pelo agente |
+| **Pane (Nexus já tem)** | `pane_spawn`, `pane_spawn_many` (≤24), `pane_write`, `pane_write_many` (≤20), `pane_read`, `pane_read_many`, `pane_wait_idle` (cap 15s), `pane_wait_many`, `pane_list`, `pane_close`, `pane_whoami`, `pane_list_providers` | Nexus tem o núcleo; faltam as variantes `_many` e `pane_whoami` |
+| **Handoff (Nexus já tem)** | `handoff_submit` (required: summary+status; status enum done/blocked/error/**progress** — "progress is a non-terminal stream note — no wake, no evidence gate"; `to` = wake C-060; `briefId` = delegação C-036; `evidence`{checks,commands,files,evidenceFile,deployed,wired,tested}; fullText ≤65536), `handoff_list` | C-194.1 já portado (52c59f08); o enum progress + evidence estruturada são os deltas |
+| **Task/Workflow** | `overclock_task` (taskId OU objective; schema validado com re-prompt de correção; retries=1, timeoutMs=120000, bootTimeoutMs=20000, closeOnDone=false), `overclock_workflow` (recipe enum `torre-fanout`, concurrency=min(16, cores-2), analysisTimeoutMs=600000) | casa com Workflow do Nexus |
+| **Missões** | `overclock_mission_create/get/list/set_status` (type enum libre/squad/agentic C-195; status draft/in_progress/blocked/done/**archived** = F-058 dead state) | Nexus tem missões no runtime.sqlite3 — expor como tool é o delta |
+| **Squad** | `overclock_squad_save/get/list/spawn/delete` | ver classe 1 acima — squad_spawn precisa do app |
+| **Agent/Skill** | `overclock_agent_get/list`, `overclock_skill_list` | |
+| **Recipes** | `overclock_recipe_get/list/save` (save exige id+name+deliverable) | workflows reusáveis — casam com Workflow |
+| **Catalog** | `overclock_catalog_install/inventory/overlay_write/stacks_write/status/uncategorized` | marketplace (aitmpl) + overlay local |
+| **Skins/Stacks** | `overclock_skin_apply/get/list`, `overclock_stack_get` | temas e stack de providers |
+| **Vault** | `overclock_vault_list` | credenciais (não expõe segredos) |
+| **Media** | `overclock_image/video/audio_generate`, `overclock_media_providers` | "cada media capability é ACTIVE só quando há provider+key" |
+| **Modelos/UI** | `overclock_model_list`, `overclock_navigate`, `overclock_open_browser`, `overclock_clarify`, `overclock_status` | clarify = pane_ask do Nexus |
+| **Telemetria/Eventos** | `overclock_perf_events`, `app_events` (fila com cursor), `app_observe` (diagnóstico local/dev) | agente consulta a própria telemetria — benchmark honesto de dentro |
+| **Workspace** | `overclock_workspace_add/list` | |
+| **Spawn (schema rico)** | `pane_spawn` com agent enum [claude, codex, gemini, kimi, antigravity, cursor, copilot, grok, opencode, kiro, muse, shell], effort enum low→max, `allowChildSpawns` (F-573), prompt entregue "in the CLI argv AT BIRTH", cwd = workspace ROOT, idle XOR prompt | modelos enumerados: claude-fable-5, claude-opus-4-8/4-7/4-6-thinking, claude-sonnet-4-6(-thinking), claude-haiku-4-5, mimo-v2.5-pro/omni, gemini-3.5-flash, gemini-3.1-pro, gpt-oss-120b-medium |
 
 `overclock_perf_events` merece nota: os `[perf-events]` (warm-pool prontos=, bootando=) são consumíveis COMO TOOL — o agente pode perguntar a própria telemetria do sistema. Isso é o que permite benchmark honesto de dentro.
+
+### Receita de boot standalone do sidecar (para reproduzir a extração)
+
+O sidecar 1.3.18 boota **sem o app Tauri** com o contrato: `WS_TOKEN` (qualquer valor, obrigatório) + `OVERCLOCK_FILE_READ_BINARY_CAPABILITY`/`OVERCLOCK_FILE_READ_TEXT_CAPABILITY` (presença, valores arbitrários) + `OVERCLOCK_KEYSTORE_VIA_STDIN=1` com o keystore.key **decodificado de base64** (32 bytes crus) no stdin + `HOME`/`OVERCLOCK_HOME`/`OVERCLOCK_DATA_DIR` em cópias scratch + processo pai **persistente** (o sidecar se auto-descarta órfão: *"parent gone (ppid=1) — dispose then exit"*). Descritor sai em `$HOME/.overclock-app/sidecar.json` (port, token Bearer interno ≠ WS_TOKEN, `orchestrator`, `armsCommand`). Interrogação: POST JSON-RPC em `http://127.0.0.1:PORT/mcp/claude` com `Accept: application/json, text/event-stream` (**ambos**, senão HTTP 406) — respostas vêm em SSE (`data:` lines).
 
 ---
 
@@ -258,11 +285,11 @@ Clonados completos em [`overclock-13318-extract/resources/absurd-landing/`](over
 
 1. **Semana 1 (P0):** lease registry no pty-manager (menor, mata o pane fantasma de verdade) → warm pool com retarget-durante-boot + telemetria obrigatória
 2. **Semana 2 (P1):** port do handoff-stop/deliver evoluído (código clonável; F-355 payload-primário primeiro — corrida de flush é o bug latente) → squad presets qa-swarm/qa-vision/absurd-landing/cinema-site como texto
-3. **Depois (P2):** tools MCP por grupo (cron persistente e recipes primeiro — casam com Workflow), hub HTTP do qa-vision
+3. **Depois (P2):** tools MCP por grupo (recipes e vault primeiro — casam com Workflow; cron está dormente até no Overclock original, não registra em runtime), hub HTTP do qa-vision
 4. **Avaliar (P3):** overdrive mirrorless vs hibernação atual
 
 ## Pendências de auditoria (anotadas durante o trabalho)
 
 - cinema/PLAYBOOK.md e os skills individuais de arsenal/cinema-site não lidos na íntegra (estão clonados em `overclock-13318-extract/resources/`)
 - `kimi-mcp-bridge.mjs` e `overclock-doctor.mjs` clonados mas não dissecados linha a linha
-- O jsc não foi decompilado — análise por strings cobre nomes e mensagens, não corpo de funções; warm-pool/lease/overdrive são padrões confirmados por evidência de strings, não código-fonte
+- ~~O jsc não foi decompilado~~ **Fechado em 02/09/2026:** o jsc foi carregado em runtime (bytenode sob o node 22.16.0 embutido do app), o sidecar bootou standalone e toda a superfície MCP foi extraída por introspecção viva — 57 tools com schemas completos em [`overclock-13318-extract/sidecar-tools-runtime.json`](overclock-13318-extract/sidecar-tools-runtime.json), validadas contra o app real conectado (diff zero). Corpos de função seguem ilegíveis (bytecode), mas a superfície de §8 agora tem precisão de código. Padrões warm-pool/lease/overdrive continuam confirmados só por strings

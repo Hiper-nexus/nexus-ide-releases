@@ -48,7 +48,7 @@ O app analisado era Overclock 1.3.18 (Tauri + sidecar Node). O Nexus é Electron
 | T4 | Doutrina qa-swarm | `extract/resources/qa-swarm/**` (5 agents + PLAYBOOK) | preset/doutrina em texto + squads | **a fazer (P1)** |
 | T5 | Contrato qa-vision | `extract/resources/qa-vision/**` (3 agents + PLAYBOOK) | agents do usuário JÁ EXISTEM em `~/.claude/agents/qa-*.md`; falta o contrato | **a fazer (P1, parcial)** |
 | T6 | Semântica `allowedSkills` | `extract/resources/squad-former/skills/overclock-squad-team-assembly/SKILL.md` | `src/shared/orch-types.ts:118`, `src/main/orch/agent-plugin-skill-mirror.ts` | **verificar + fechar (P1)** |
-| T7 | Tools MCP (cron, recipes…) | strings no dossiê §8 + `extract/arms-mcp/**` | `src/main/orch/mcp-server.ts`, `src/main/mcp-hub/` | a fazer (P2) |
+| T7 | Tools MCP (recipes, vault…) | **schemas exatos em `extract/sidecar-tools-runtime.json`** (57 tools extraídas em runtime) + `extract/arms-mcp/**` | `src/main/orch/mcp-server.ts`, `src/main/mcp-hub/` | a fazer (P2) |
 | T8 | Pipelines absurd-landing / cinema-site | `extract/resources/absurd-landing/**`, `extract/resources/cinema-site/**` | presets em texto | a fazer (P2) |
 | T9 | Gaps pty:* + overdrive | dossiê §10 | `src/main/pty/` | avaliar (P3) |
 
@@ -323,19 +323,21 @@ bate com a tabela acima.
 
 ### T7 — Superfície MCP (P2)
 
-**Fontes**: dossiê §8 (61 tools agrupadas; cron persistente, memory, recipes, skins,
-stacks, vault, catalog com overlay, missions, perf_events consumível PELO agent, media
-generate, clarify) + `extract/arms-mcp/**` para o formato de definição de tool.
+**Fontes**: dossiê §8 (**57 tools em runtime**, schemas exatos em
+`extract/sidecar-tools-runtime.json` — extraídas por introspecção viva do sidecar
+bootado standalone e validadas contra o app real, diff zero) +
+`extract/arms-mcp/**` para o formato de definição de tool.
 
 **Alvo**: `src/main/orch/mcp-server.ts`, `src/main/mcp-hub/`, e o padrão de tools em
 `src/main/orch/tools-handoff.ts`.
 
-**Prioridade dentro da task**: (1) **cron persistente** (jobs agendados que sobrevivem
-restart, consumíveis pelo orquestrador — hoje o Nexus só tem ScheduleWakeup de sessão);
-(2) **recipes** (payloads de prompt reutilizáveis); (3) **memory/vault** (só se não
-colidir com o que já existe em `src/main/memory/`); (4) o resto conforme demanda.
-`perf_events` consumível pelo agent é a joia escondida: o agente lê as próprias
-métricas de runtime para se auto-diagnosticar.
+**Prioridade dentro da task**: (1) **recipes** (payloads de prompt reutilizáveis);
+(2) **vault** (se não colidir com o que já existe em `src/main/memory/`); (3) o resto
+conforme demanda. **Cron NÃO existe em runtime no Overclock** — as 3 tools cron são
+código dormente que não registra nem no app real (dossiê §8, "tools fantasmas");
+portá-las é inventar feature nova, não paridade — só fazer se o Nexus quiser cron de
+verdade. `perf_events` consumível pelo agent é a joia escondida: o agente lê as
+próprias métricas de runtime para se auto-diagnosticar.
 
 Cada tool nova entra no vocabulário permitido (não deixe bypass de autoridade).
 Tools de orquestrador seguem o padrão de gate de papel que já existe.
@@ -372,7 +374,7 @@ etapas antes de inventar formato novo.
 T1 (lease)  ──► T2 (warm pool)     [ambos no pty; lease primeiro: menor e mata o pane-fantasma]
 T6 (allowedSkills) ──► T4, T5      [semântica verificada antes de montar squads que dependem dela]
 T3 (handoff delta)                 [independente; pode rodar em paralelo com qualquer um]
-T7, T8                              [depois dos P0/P1; T7 começa pelo cron]
+T7, T8                              [depois dos P0/P1; T7 começa pelas recipes — cron é dormente]
 T9                                  [opcional, por demanda de campo]
 ```
 
