@@ -86,6 +86,7 @@ import {
 } from "./pane-registry";
 import {
   getOwnedAgentSessionInfo,
+  inspectSessionLease,
   listAgentSessions,
   orchWriteSession,
 } from '../pty/pty-manager';
@@ -2867,6 +2868,13 @@ export function registerOrchIpc(): void {
   ipcMain.handle(ORCH_CHANNELS.hooksList, (event) => {
     requireLiveRendererWorkspaceScope(event.sender);
     return listHookHomes();
+  });
+  ipcMain.handle(ORCH_CHANNELS.sessionLeaseInspect, (event, raw) => {
+    requireLiveRendererWorkspaceScope(event.sender);
+    if (!raw || typeof raw !== "object") return null;
+    const sessionId = (raw as Record<string, unknown>).sessionId;
+    if (typeof sessionId !== "string" || !sessionId.trim()) return null;
+    return inspectSessionLease(sessionId.trim());
   });
 
   const designSystemsSearchSchema = z.object({

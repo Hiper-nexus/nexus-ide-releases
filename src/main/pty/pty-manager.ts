@@ -21,6 +21,7 @@ import {
   isConnectedAndWritable,
 } from "./session-liveness";
 import { createMortalityReconciler } from "./session-mortality-reconciler";
+import { sessionLeaseRegistry, type SessionLease } from "./session-lease-registry";
 import type { ProjectExecutionScope } from "../../shared/types";
 import type { SquadCliPolicy } from "../../shared/settings-types";
 import { sharedAgentAuthFamily } from "../../shared/agent-auth-family";
@@ -170,6 +171,8 @@ interface Session {
    * Defaults true whenever persistentTmuxName is set.
    */
   killPersistentOnFinalize?: boolean;
+  /** Unique opaque lease key issued at physical spawn time. */
+  startKey?: string;
 }
 
 export interface OwnedAgentSessionInfo {
@@ -258,8 +261,8 @@ let mortalityTimer: ReturnType<typeof setInterval> | null = null;
 export function startSessionMortalityReconciler(): void {
   if (mortalityTimer) return;
   const reconciler = createMortalityReconciler({
-    listCandidates: () =>
-      [...sessions.entries()]
+    listCandidates: () => {
+      const activeCandidates = [...sessions.entries()]
         .filter(
           ([sessionId, session]) =>
             classifySessionLiveness(session.state) === "live" &&
@@ -271,7 +274,28 @@ export function startSessionMortalityReconciler(): void {
         .map(([sessionId, session]) => ({
           sessionId,
           spawnedAtMs: session.spawnedAtMs,
-        })),
+        }));
+      const staleLeases = sessionLeaseRegistry
+        .reapStaleLeases(10 * 60_000)
+        .filter(
+          (l) =>
+            sessions.has(l.sessionId) &&
+            !physicalTerminationFlights.has(l.sessionId),
+        )
+        .map((l) => ({
+          sessionId: l.sessionId,
+          spawnedAtMs: l.bornAtMs,
+        }));
+      const seen = new Set<string>();
+      const combined: { sessionId: string; spawnedAtMs: number }[] = [];
+      for (const c of [...activeCandidates, ...staleLeases]) {
+        if (!seen.has(c.sessionId)) {
+          seen.add(c.sessionId);
+          combined.push(c);
+        }
+      }
+      return combined;
+    },
     probeLiveness: (sessionIds) => {
       const probe = ptyHost?.probeLiveness;
       if (!probe) return Promise.resolve(null);
@@ -936,6 +960,7 @@ function finalizeSession(
     return;
   }
   sessions.delete(sessionId);
+  sessionLeaseRegistry.revokeLease(sessionId);
   lastInputOrigins.delete(sessionId);
   if (s.idleTimer) clearTimeout(s.idleTimer);
   if (s.hookBusyTimer) clearTimeout(s.hookBusyTimer);
@@ -973,6 +998,7 @@ function finalizeSession(
 
 export interface SpawnedSession {
   sessionId: string;
+  startKey?: string;
   resumeMode?: "exact" | "latest" | "unsupported" | "fresh-context";
 }
 
@@ -1039,8 +1065,10 @@ export function spawnSession(
       lastBackpressureWarnAt: 0,
       shellIntegrationCleanup: [...cleanupPaths],
     };
+    const lease = sessionLeaseRegistry.issueLease(sessionId, { kind: "shell" });
+    session.startKey = lease.startKey;
     sessions.set(sessionId, session);
-    return { sessionId };
+    return { sessionId, startKey: lease.startKey };
   } catch (err) {
     cleanupShellIntegrationPaths(cleanupPaths);
     throw err;
@@ -2235,6 +2263,8 @@ export function spawnAgentSession(
         }
       : {}),
   };
+  const lease = sessionLeaseRegistry.issueLease(sessionId, { kind: adapter.id });
+  session.startKey = lease.startKey;
   sessions.set(sessionId, session);
   publishObserverFrame({
     sessionId,
@@ -2282,7 +2312,7 @@ export function spawnAgentSession(
       console.warn("[pty-manager] session dictation hook threw:", err);
     }
   }
-  return { sessionId, ...(resumeMode ? { resumeMode } : {}) };
+  return { sessionId, startKey: lease.startKey, ...(resumeMode ? { resumeMode } : {}) };
 }
 
 /**
@@ -2701,7 +2731,11 @@ export function resizeSession(
   }
 }
 
-export function killSession(wc: WebContents, sessionId: string): void {
+export function killSession(
+  wc: WebContents,
+  sessionId: string,
+  options: { force?: boolean; startKey?: string } = { force: true },
+): void {
   const session = ownedSession(wc, sessionId);
   if (!session) return;
   if (
@@ -2711,6 +2745,15 @@ export function killSession(wc: WebContents, sessionId: string): void {
   ) {
     // A renderer may close its visual leaf, but mission process lifecycle is
     // owned by the coordinator and explicit main-process control APIs.
+    return;
+  }
+  const auth = sessionLeaseRegistry.authorizeKill(sessionId, options.startKey, {
+    force: options.force ?? true,
+  });
+  if (!auth.ok) {
+    console.warn(
+      `[pty-lease] refuse kill (${auth.reason}) sessionId=${sessionId}`,
+    );
     return;
   }
   destroySession(sessionId, session);
@@ -2794,9 +2837,22 @@ export function orchResizeSession(
 }
 
 /** Trusted main-process kill (MCP pane_close on a session-only target). */
-export function orchKillSession(sessionId: string): boolean {
+export function orchKillSession(
+  sessionId: string,
+  options: { startKey?: string; force?: boolean } = {},
+): boolean {
   const session = sessions.get(sessionId);
   if (!session) return false;
+  const auth = sessionLeaseRegistry.authorizeKill(sessionId, options.startKey, {
+    force: options.force,
+  });
+  if (!auth.ok) {
+    console.warn(
+      `[pty-lease] refuse kill (${auth.reason}) sessionId=${sessionId}` +
+        (options.startKey ? ` providedKey=${options.startKey}` : " (no startKey provided)"),
+    );
+    return false;
+  }
   destroySession(sessionId, session);
   return true;
 }
@@ -3177,3 +3233,13 @@ export function listLiveSessionLocations(): ReadonlyArray<{
     ),
   );
 }
+
+export function inspectSessionLease(sessionId: string): SessionLease | null {
+  return sessionLeaseRegistry.inspectLease(sessionId);
+}
+
+export function getSessionLeaseMetrics() {
+  return sessionLeaseRegistry.getMetrics();
+}
+
+export { sessionLeaseRegistry };

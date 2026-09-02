@@ -13,7 +13,7 @@ import {
   waitForIdle,
   waitForNextIdle,
 } from './pane-registry';
-import { orchWriteSession } from '../pty/pty-manager';
+import { inspectSessionLease, orchWriteSession } from '../pty/pty-manager';
 import {
   listAdapterInfos,
 } from '../adapters/adapter-registry';
@@ -1387,6 +1387,26 @@ const paneWaitMany: McpToolDef = {
     }
     return Promise.all(waits);
   },
+const sessionLeaseInspect: McpToolDef = {
+  name: 'nexus_session_lease_inspect',
+  description:
+    'Inspect the active physical lease and startKey proof for a session ID. ' +
+    'Returns the lease metadata if active, or null if unleased or terminated.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      sessionId: {
+        type: 'string',
+        description: 'Session ID to inspect lease for',
+      },
+    },
+    required: ['sessionId'],
+  },
+  handler: async (args) => {
+    const sessionId = requireStr(args, 'sessionId');
+    const lease = inspectSessionLease(sessionId);
+    return { ok: true, lease };
+  },
 };
 
 export function buildPaneTools(): McpToolDef[] {
@@ -1404,6 +1424,7 @@ export function buildPaneTools(): McpToolDef[] {
     paneClose,
     paneWaitIdle,
     paneWaitMany,
+    sessionLeaseInspect,
   ];
 }
 

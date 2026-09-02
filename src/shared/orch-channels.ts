@@ -81,6 +81,7 @@ export const ORCH_CHANNELS = {
   hooksList: 'orch:hooks.list',
   designSystemsSearch: 'orch:designSystems.search',
   designSystemsImport: 'orch:designSystems.import',
+  sessionLeaseInspect: 'orch:session.leaseInspect',
 
   // Main → renderer
   paneSpawnRequest: 'orch:pane.spawnRequest',

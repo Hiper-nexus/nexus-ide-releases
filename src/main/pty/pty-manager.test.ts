@@ -207,6 +207,7 @@ import {
   registeredOrchestratorSessionsForMission,
   orchWriteSession,
   writeSession,
+  inspectSessionLease,
 } from "./pty-manager";
 import type {
   PtyHost,
@@ -2063,7 +2064,7 @@ describe("cli-agent spawn argv hardening", () => {
     expect(
       listAgentSessions().filter((session) => session.adapterId === "claude"),
     ).toHaveLength(1);
-    orchKillSession(first.sessionId);
+    orchKillSession(first.sessionId, { startKey: first.startKey });
   });
 
   it("terminate-with-proof releases the exclusive fence after the orchestrator turned non-live (2026-08-17 wedge)", async () => {
@@ -2153,8 +2154,8 @@ describe("cli-agent spawn argv hardening", () => {
     expect(
       listAgentSessions().filter((session) => session.adapterId === "claude"),
     ).toHaveLength(2);
-    orchKillSession(first.sessionId);
-    orchKillSession(second.sessionId);
+    orchKillSession(first.sessionId, { startKey: first.startKey });
+    orchKillSession(second.sessionId, { startKey: second.startKey });
   });
 
   it("revokes a stubborn PTY bearer but keeps exclusivity until process-tree proof", async () => {
@@ -4337,5 +4338,63 @@ describe("cli-agent spawn argv hardening", () => {
 
     killSession(owner, sessionId);
     vi.useRealTimers();
+  });
+
+  describe("Session Lease Registry & startKey lifecycle in pty-manager", () => {
+    it("spawns with a startKey and allows orchKillSession with matching startKey", async () => {
+      const h = fakeHost();
+      setPtyHost(h.host);
+      const trusted = trustedSpawn();
+      const spawned = spawnSession(
+        fakeWc(),
+        { kind: "shell", cols: 80, rows: 24 },
+        { scope: trusted.scope, cwd: trusted.cwd, shell: "/bin/zsh" },
+      );
+
+      expect(spawned.startKey).toBeDefined();
+      expect(typeof spawned.startKey).toBe("string");
+
+      const lease = inspectSessionLease(spawned.sessionId);
+      expect(lease).not.toBeNull();
+      expect(lease?.startKey).toBe(spawned.startKey);
+
+      // Kill with matching startKey succeeds
+      const killed = orchKillSession(spawned.sessionId, {
+        startKey: spawned.startKey,
+      });
+      expect(killed).toBe(true);
+      await orchTerminateSession(spawned.sessionId);
+      expect(getSessionState(spawned.sessionId)).toBeNull();
+    });
+
+    it("refuses orchKillSession when startKey is omitted or mismatched, but allows force", async () => {
+      const h = fakeHost();
+      setPtyHost(h.host);
+      const trusted = trustedSpawn();
+      const spawned = spawnSession(
+        fakeWc(),
+        { kind: "shell", cols: 80, rows: 24 },
+        { scope: trusted.scope, cwd: trusted.cwd, shell: "/bin/zsh" },
+      );
+
+      // Omitted startKey
+      const refusedNoKey = orchKillSession(spawned.sessionId);
+      expect(refusedNoKey).toBe(false);
+
+      // Mismatched startKey
+      const refusedMismatch = orchKillSession(spawned.sessionId, {
+        startKey: "sk_fake_key_1234",
+      });
+      expect(refusedMismatch).toBe(false);
+
+      // Session is still alive
+      expect(getSessionState(spawned.sessionId)).not.toBeNull();
+
+      // Human operator bypass with force: true succeeds
+      const forceKilled = orchKillSession(spawned.sessionId, { force: true });
+      expect(forceKilled).toBe(true);
+      await orchTerminateSession(spawned.sessionId);
+      expect(getSessionState(spawned.sessionId)).toBeNull();
+    });
   });
 });
