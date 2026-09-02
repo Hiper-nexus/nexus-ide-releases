@@ -8,9 +8,12 @@ vi.mock('./worker-delivery-board', () => ({
 import {
   __noteTurnStartForTests,
   __resetTurnEndHandoffForTests,
+  attachToExistingHandoff,
   buildMechanicalHandoffPayload,
+  condenseFullText,
   countRecentWorkerHandoffs,
   decideTurnEndClosure,
+  getHandoffAttachments,
   harvestTurnReplyText,
   MECHANICAL_HANDOFF_CLOSED_BY,
   MECHANICAL_HANDOFF_FULLTEXT_CAP,
@@ -157,7 +160,7 @@ describe('countRecentWorkerHandoffs (dedup por encarnação física)', () => {
 });
 
 describe('buildMechanicalHandoffPayload (regra 1.2.3)', () => {
-  it('resposta curta viaja INTEIRA no summary, verbatim', () => {
+  it('resposta curta viaja INTEIRA no summary, e fullText é preservado', () => {
     const short = 'Ok, deploy concluído sem erros.';
     const payload = buildMechanicalHandoffPayload({ replyText: short });
     expect(payload.status).toBe('success');
@@ -165,7 +168,7 @@ describe('buildMechanicalHandoffPayload (regra 1.2.3)', () => {
     const artifact = payload.artifacts[0] as Record<string, unknown>;
     expect(artifact.auto).toBe(true);
     expect(artifact.closedBy).toBe(MECHANICAL_HANDOFF_CLOSED_BY);
-    expect(artifact.fullText).toBeUndefined();
+    expect(artifact.fullText).toBe(short);
   });
 
   it('summary curto demais recebe o enxerto honesto (mínimo de 20 do store)', () => {
@@ -181,15 +184,20 @@ describe('buildMechanicalHandoffPayload (regra 1.2.3)', () => {
     expect(payload.summary).toContain('resposta longa');
     expect(payload.summary).toContain(String(long.replace(/\s+/g, ' ').trim().length));
     expect(payload.summary).not.toContain(long.slice(0, 100));
+    expect(payload.summary.length).toBeLessThanOrEqual(MECHANICAL_HANDOFF_VERBATIM_LIMIT);
     const artifact = payload.artifacts[0] as Record<string, unknown>;
-    expect(artifact.fullText).toBe(long.slice(0, MECHANICAL_HANDOFF_FULLTEXT_CAP));
+    expect(artifact.fullText).toBe(long);
   });
 
-  it('íntegra respeita o teto físico de 60k', () => {
-    const huge = 'x'.repeat(90_000);
+  it('resposta gigante (>60k) aplica condense mecânico determinístico head 20k + tail 20k', () => {
+    const huge = 'A'.repeat(30_000) + 'B'.repeat(40_000);
     const payload = buildMechanicalHandoffPayload({ replyText: huge });
     const artifact = payload.artifacts[0] as Record<string, unknown>;
-    expect((artifact.fullText as string).length).toBe(MECHANICAL_HANDOFF_FULLTEXT_CAP);
+    const fullText = artifact.fullText as string;
+    expect(fullText.length).toBeLessThanOrEqual(MECHANICAL_HANDOFF_FULLTEXT_CAP);
+    expect(fullText).toContain('30000 caracteres omitidos');
+    expect(fullText.startsWith('A'.repeat(20_000))).toBe(true);
+    expect(fullText.endsWith('B'.repeat(20_000))).toBe(true);
   });
 
   it('carrega sessionId e transcript nos artifacts quando existem', () => {
@@ -335,5 +343,46 @@ describe('constantes da régua', () => {
     expect(MECHANICAL_HANDOFF_VERBATIM_LIMIT).toBe(280);
     expect(MECHANICAL_HANDOFF_FULLTEXT_CAP).toBe(60_000);
     expect(MECHANICAL_HANDOFF_MARK).toBe('[auto]');
+  });
+});
+
+describe('condenseFullText (T3)', () => {
+  it('preserva texto menor ou igual ao cap', () => {
+    const text = 'Texto pequeno para o teste.';
+    expect(condenseFullText(text)).toBe(text);
+  });
+
+  it('aplica condense determinístico em textos maiores que 60k', () => {
+    const head = 'H'.repeat(20_000);
+    const middle = 'M'.repeat(30_000);
+    const tail = 'T'.repeat(20_000);
+    const text = head + middle + tail;
+    const condensed = condenseFullText(text);
+
+    expect(condensed.length).toBeLessThan(70_000);
+    expect(condensed).toContain('30000 caracteres omitidos');
+    expect(condensed.startsWith(head)).toBe(true);
+    expect(condensed.endsWith(tail)).toBe(true);
+  });
+});
+
+describe('modo attach (T3)', () => {
+  it('anexa artefato a handoff existente em envio duplo sem criar card duplicado', () => {
+    __resetTurnEndHandoffForTests();
+    const handoffId = 'handoff-turn-1';
+    attachToExistingHandoff(handoffId, {
+      auto: true,
+      closedBy: 'turn-end-attach',
+      attachedAt: Date.now(),
+      fullText: 'Segundo envio do mesmo turno.',
+    });
+
+    const attachments = getHandoffAttachments(handoffId);
+    expect(attachments).toHaveLength(1);
+    expect(attachments[0]).toMatchObject({
+      auto: true,
+      closedBy: 'turn-end-attach',
+      fullText: 'Segundo envio do mesmo turno.',
+    });
   });
 });

@@ -55,8 +55,30 @@ export const MECHANICAL_HANDOFF_CLOSED_BY = 'turn-end';
 
 const turnStartBySession = new Map<string, AgentTurnStartEntry>();
 const lastStopSignatureBySession = new Map<string, string>();
+const attachmentsByHandoffId = new Map<string, Array<Record<string, unknown>>>();
 
 let turnStartTap: (() => void) | null = null;
+
+/**
+ * Consulta artefatos anexados a um handoff via modo attach.
+ */
+export function getHandoffAttachments(
+  handoffId: string,
+): readonly Record<string, unknown>[] {
+  return attachmentsByHandoffId.get(handoffId) ?? [];
+}
+
+/**
+ * Anexa artefato a um handoff existente.
+ */
+export function attachToExistingHandoff(
+  handoffId: string,
+  artifact: Record<string, unknown>,
+): void {
+  const list = attachmentsByHandoffId.get(handoffId) ?? [];
+  list.push(artifact);
+  attachmentsByHandoffId.set(handoffId, list);
+}
 
 /**
  * Liga a captura de fronteira de turno. Idempotente; chamado no init da
@@ -75,6 +97,7 @@ export function startTurnEndHandoffClosure(): void {
 export function __resetTurnEndHandoffForTests(): void {
   turnStartBySession.clear();
   lastStopSignatureBySession.clear();
+  attachmentsByHandoffId.clear();
 }
 
 /** Test-only: injeta uma fronteira de turno. */
@@ -265,11 +288,31 @@ export interface MechanicalHandoffPayload extends PtyStreamHandoffPayload {
 }
 
 /**
+ * Condense mecânico determinístico quando o texto passa do teto físico (60k).
+ * Preserva head 20k + tail 20k com marcador de caracteres omitidos.
+ */
+export function condenseFullText(
+  text: string,
+  cap = MECHANICAL_HANDOFF_FULLTEXT_CAP,
+): string {
+  if (text.length <= cap) return text;
+  const headSize = 20_000;
+  const tailSize = 20_000;
+  const omitted = text.length - (headSize + tailSize);
+  return (
+    text.slice(0, headSize) +
+    `\n\n[... ${omitted} caracteres omitidos ...]\n\n` +
+    text.slice(-tailSize)
+  );
+}
+
+/**
  * Regra de entrega: ≤280 viaja INTEIRA no summary (verbatim, cópia por código
  * — o modelo re-gera e parafraseia até quando cabe); >280 viaja a VERDADE +
  * ponteiro, íntegra em artifacts[0].fullText. Summary precisa de ≥20 chars
  * (summarizeForPersistence) — o enxerto "Resposta do worker:" só entra quando
- * o verbatim é curto demais para o mínimo do store.
+ * o verbatim é curto demais para o mínimo do store. O fullText é preservado em
+ * artifacts[0].fullText.
  */
 export function buildMechanicalHandoffPayload(
   input: MechanicalHandoffInput,
@@ -278,6 +321,7 @@ export function buildMechanicalHandoffPayload(
   const artifacts: Record<string, unknown> = {
     auto: true,
     closedBy: MECHANICAL_HANDOFF_CLOSED_BY,
+    fullText: condenseFullText(input.replyText),
   };
   if (input.sessionId) artifacts.sessionId = input.sessionId;
   if (input.transcriptPath) artifacts.transcript = input.transcriptPath;
@@ -291,7 +335,9 @@ export function buildMechanicalHandoffPayload(
     summary =
       `${MECHANICAL_HANDOFF_MARK} concluiu — resposta longa, ${flat.length} ` +
       'chars. Íntegra em artifacts[0].fullText.';
-    artifacts.fullText = input.replyText.slice(0, MECHANICAL_HANDOFF_FULLTEXT_CAP);
+    if (summary.length > MECHANICAL_HANDOFF_VERBATIM_LIMIT) {
+      summary = summary.slice(0, MECHANICAL_HANDOFF_VERBATIM_LIMIT);
+    }
   }
   return {
     status: 'success',
@@ -422,18 +468,26 @@ export async function handleTurnEndMechanicalHandoff(input: {
 
     let handoffsSinceTurnStart = 0;
     let dedupUnavailable = false;
+    let existingUnconsumedHandoff: Handoff | null = null;
     if (ctx?.missionId) {
       try {
         const suite = getProjectDomainStores(ctx.scope);
         const windowStart = turnStart?.observedAt ?? 0;
-        handoffsSinceTurnStart = countRecentWorkerHandoffs(
-          suite.handoffs.list({ missionId: ctx.missionId, includeDelivered: true }),
-          {
-            sessionId,
-            workerIncarnationId: ctx.workerIncarnationId,
-            windowStart,
-          },
-        );
+        const recentHandoffs = suite.handoffs
+          .list({ missionId: ctx.missionId, includeDelivered: true })
+          .filter((handoff) => {
+            if (handoff.createdAt < windowStart) return false;
+            const sameSession = handoff.sessionId === sessionId;
+            const sameIncarnation =
+              ctx.workerIncarnationId !== undefined &&
+              handoff.workerIncarnationId === ctx.workerIncarnationId;
+            return sameSession || sameIncarnation;
+          });
+        handoffsSinceTurnStart = recentHandoffs.length;
+        if (handoffsSinceTurnStart > 0) {
+          existingUnconsumedHandoff =
+            recentHandoffs.find((h) => h.deliveryState !== 'consumed') ?? null;
+        }
       } catch (error) {
         // Fail-closed (doutrina Overclock): na dúvida NÃO fecha — um turno
         // sem fechamento mecânico é recuperável; um handoff duplicado envenena
@@ -442,6 +496,40 @@ export async function handleTurnEndMechanicalHandoff(input: {
         console.warn(
           '[turn-end-handoff] dedup query falhou (fail-closed, pula fechamento):',
           error,
+        );
+      }
+    }
+
+    // Modo attach: segundo envio no mesmo turno para a mesma sessão anexa ao handoff existente
+    if (
+      existingUnconsumedHandoff &&
+      replyText.trim() &&
+      !isRedelivery &&
+      ctx?.missionId
+    ) {
+      try {
+        const attachedArtifact: Record<string, unknown> = {
+          auto: true,
+          closedBy: 'turn-end-attach',
+          attachedAt: Date.now(),
+          fullText: condenseFullText(replyText),
+        };
+        if (sessionId) attachedArtifact.sessionId = sessionId;
+        if (transcriptPath) attachedArtifact.transcript = transcriptPath;
+
+        attachToExistingHandoff(
+          existingUnconsumedHandoff.id,
+          attachedArtifact,
+        );
+        lastStopSignatureBySession.set(sessionId, signature);
+        console.info(
+          `[turn-end-handoff] ${sessionId}: anexado ao handoff ${existingUnconsumedHandoff.id} (modo attach)`,
+        );
+        return;
+      } catch (err) {
+        console.warn(
+          `[turn-end-handoff] ${sessionId}: falha no modo attach:`,
+          err,
         );
       }
     }
