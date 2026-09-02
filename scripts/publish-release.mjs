@@ -312,7 +312,7 @@ export function verifyResumableGitHubDraft(
   return release;
 }
 
-export function verifyRemoteMain(raw, expectedCommitSha) {
+export function verifyRemoteMain(raw, expectedCommitSha, { root = process.cwd(), isAncestor } = {}) {
   const matches = String(raw)
     .trim()
     .split(/\r?\n/)
@@ -320,9 +320,22 @@ export function verifyRemoteMain(raw, expectedCommitSha) {
     .map((line) => line.trim().split(/\s+/))
     .filter((parts) => parts[1] === 'refs/heads/main');
   if (
-    matches.length !== 1 ||
-    matches[0][0] !== expectedCommitSha
+    matches.length !== 1
   ) {
+    throw new Error('origin/main does not match the verified release commit');
+  }
+  const remoteSha = matches[0][0];
+  if (remoteSha === expectedCommitSha) {
+    return expectedCommitSha;
+  }
+  const check = isAncestor
+    ? isAncestor(expectedCommitSha, remoteSha)
+    : spawnSync(
+        'git',
+        ['merge-base', '--is-ancestor', expectedCommitSha, remoteSha],
+        { cwd: root },
+      ).status === 0;
+  if (!check) {
     throw new Error('origin/main does not match the verified release commit');
   }
   return expectedCommitSha;
@@ -1037,11 +1050,27 @@ function createRepositoryPublisher(root, canonicalRepo) {
   return {
     push({ commitSha, tag, tagObjectSha }) {
       verifyOrigin();
-      run('git', buildAtomicReleasePushArgs({
-        commitSha,
-        tag,
-        tagObjectSha,
-      }), root);
+      const remoteMain = runCapture(
+        'git',
+        ['ls-remote', '--exit-code', 'origin', 'refs/heads/main'],
+        root,
+      ).trim().split(/\s+/)[0];
+      const mainContainsCommit =
+        remoteMain === commitSha ||
+        spawnSync(
+          'git',
+          ['merge-base', '--is-ancestor', commitSha, remoteMain],
+          { cwd: root },
+        ).status === 0;
+      if (mainContainsCommit) {
+        run('git', ['push', 'origin', `${tagObjectSha}:refs/tags/${tag}`], root);
+      } else {
+        run('git', buildAtomicReleasePushArgs({
+          commitSha,
+          tag,
+          tagObjectSha,
+        }), root);
+      }
     },
     verify({ commitSha, tag, tagObjectSha }) {
       verifyOrigin();
@@ -1052,6 +1081,7 @@ function createRepositoryPublisher(root, canonicalRepo) {
           root,
         ),
         commitSha,
+        { root },
       );
       verifyRemoteTag(
         runCapture(

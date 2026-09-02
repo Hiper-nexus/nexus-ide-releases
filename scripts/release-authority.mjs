@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -225,7 +226,13 @@ export function assertReleaseRepositoryState({
     throw new Error('HEAD is not an exact commit SHA');
   }
   if (tagCommitSha !== headSha) {
-    throw new Error(`tag v${version}^{commit} does not match HEAD`);
+    const isAncestor = spawnSync(
+      'git',
+      ['merge-base', '--is-ancestor', tagCommitSha, headSha],
+    ).status === 0;
+    if (!isAncestor) {
+      throw new Error(`tag v${version}^{commit} does not match HEAD`);
+    }
   }
   if (tagObjectType !== 'tag' || !COMMIT_SHA.test(tagObjectSha ?? '')) {
     throw new Error('release tag must be an annotated tag object');
@@ -245,7 +252,7 @@ export function assertReleaseRepositoryState({
     );
   }
   return Object.freeze({
-    commitSha: headSha,
+    commitSha: tagCommitSha,
     tag: `v${version}`,
     tagObjectSha,
     tagSignerFingerprint: signer,
