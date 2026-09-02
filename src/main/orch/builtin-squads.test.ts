@@ -351,4 +351,28 @@ describe('built-in Review P0–P3 squad', () => {
     expect(parsed.findings[0]?.priority).toBe('P1');
     expect(parsed.findings[0]?.file).toBe('src/main/x.ts');
   });
+
+  describe('presets qa-swarm e qa-vision (T4/T5)', () => {
+    it('qa-swarm carrega com as 10 regras centrais e 6 agentes', () => {
+      const squad = BUILTIN_SQUADS.find((s) => s.id === 'qa-swarm');
+      expect(squad).toBeDefined();
+      expect(squad?.name).toBe('QA Swarm');
+      expect(squad?.agents).toHaveLength(6);
+      expect(squad?.orchestratorInstructions).toContain('Cadeia de 3 níveis');
+      expect(squad?.orchestratorInstructions).toContain('1:1:N');
+      expect(squad?.orchestratorInstructions).toContain('Decision Gate');
+      expect(squad?.orchestratorInstructions).toContain('END YOUR TURN');
+      expect(squad?.orchestratorInstructions).toContain('Hard file-owner');
+    });
+
+    it('qa-vision carrega com o contrato F-XXX de 1 arquivo por bug', () => {
+      const squad = BUILTIN_SQUADS.find((s) => s.id === 'qa-vision');
+      expect(squad).toBeDefined();
+      expect(squad?.name).toBe('QA Vision');
+      expect(squad?.agents).toHaveLength(4);
+      expect(squad?.orchestratorInstructions).toContain('1 bug = 1 arquivo docs/qa/items/F-XXX.md');
+      expect(squad?.orchestratorInstructions).toContain('Faixas de ID por reviewer');
+      expect(squad?.orchestratorInstructions).toContain('1 commit por finding');
+    });
+  });
 });

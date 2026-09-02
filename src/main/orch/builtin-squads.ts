@@ -7,6 +7,8 @@ import { applySquadModelDefault } from '../../shared/squad-model-defaults';
 import {
   NEXUS_PLAN_SQUAD_ID,
   NEXUS_STORY_IMPLEMENTATION_SQUAD_ID,
+  NEXUS_QA_SWARM_SQUAD_ID,
+  NEXUS_QA_VISION_SQUAD_ID,
 } from '../../shared/builtin-squad-ids';
 import { withGuidedSkillDefaults } from './guided-squad-skills';
 
@@ -826,6 +828,118 @@ const RAW_SQUADS: Squad[] = [
       {
         id: 'coder',
         agentName: 'Coder',
+        category: 'executor',
+        cli: 'codex',
+        effort: 'medium',
+      },
+    ],
+  },
+  {
+    id: NEXUS_QA_SWARM_SQUAD_ID,
+    name: 'QA Swarm',
+    createdAt: SEED_TS,
+    builtin: true,
+    orchestratorInstructions:
+      '# QA-Swarm — Doutrina de 10 Regras\n' +
+      'Você é o orquestrador-geral (L0) do QA-Swarm. Você ROUTE e SYNTHESIZE; NUNCA ' +
+      'executa código, roda testes ou edita arquivos no seu pane.\n\n' +
+      '## As 10 Regras Centrais:\n' +
+      '1. Cadeia de 3 níveis: L0 Geral -> L1 Sub-orquestrador (scout, reviewer, builder, observer) -> L2 Worker (único que executa).\n' +
+      '2. Regra de ouro: Sub-orquestrador NUNCA executa /workflow no próprio pane (runs at L2).\n' +
+      '3. 1:1:N: Um chef por função (scout, reviewer, builder, observer). Reúsa o mesmo chef via nexus_pane_write, nunca re-spawna.\n' +
+      '4. Decision Gate não-discricionário: Classifique (trivial, bounded, moderate, complex) e provisione modo e modelo explicitamente.\n' +
+      '5. END YOUR TURN: Após spawnar, encerre o turno; aguarde handoff ou observer. Nunca nexus_pane_wait_idle.\n' +
+      '6. Handoff evidence-mandatory: Commit-hash, tsc result, files e cmds são obrigatórios. Sem evidência = re-invoke.\n' +
+      '7. Hard file-owner: Builders paralelos têm zero arquivos compartilhados. git add cirúrgico, nunca git add -A.\n' +
+      '8. allowedSkills: Vincula o worker folha, nunca o chef.\n' +
+      '9. Sub-prompts em inglês em todos os níveis internos; chat com humano em pt-BR.\n' +
+      '10. Cleanup obrigatório: Cada nível fecha seus filhos com nexus_pane_close após colher o handoff.\n',
+    agents: [
+      {
+        id: 'orch',
+        agentName: 'Maestro L0',
+        category: 'orchestrator',
+        cli: 'claude',
+        effort: 'high',
+      },
+      {
+        id: 'scout',
+        agentName: 'Scout L1',
+        category: 'scout',
+        cli: 'codex',
+        effort: 'medium',
+      },
+      {
+        id: 'reviewer',
+        agentName: 'Reviewer L1',
+        category: 'reviewer',
+        cli: 'codex',
+        effort: 'high',
+      },
+      {
+        id: 'builder',
+        agentName: 'Builder L1',
+        category: 'executor',
+        cli: 'codex',
+        effort: 'medium',
+      },
+      {
+        id: 'observer',
+        agentName: 'Observer L1',
+        category: 'reviewer',
+        cli: 'codex',
+        effort: 'low',
+      },
+      {
+        id: 'worker',
+        agentName: 'Executor L2',
+        category: 'executor',
+        cli: 'codex',
+        effort: 'medium',
+      },
+    ],
+  },
+  {
+    id: NEXUS_QA_VISION_SQUAD_ID,
+    name: 'QA Vision',
+    createdAt: SEED_TS,
+    builtin: true,
+    orchestratorInstructions:
+      '# QA Vision — Contrato de Bug Tracking em Arquivos\n' +
+      'Você é o orquestrador do QA Vision. O estado da missão vive no contrato de arquivos, não no contexto.\n\n' +
+      '## Contrato e Regras:\n' +
+      '1. 1 bug = 1 arquivo docs/qa/items/F-XXX.md. Nunca apense a um único ledger.\n' +
+      '2. Ciclo de vida: aberto -> corrigido -> validado | reaberto | precisa-decisao (precisa-decisão sobe para o humano imediatamente).\n' +
+      '3. Fan-out dinâmico: 1 resolvedor por cluster de arquivos afetados.\n' +
+      '4. Faixas de ID por reviewer: F-0XX para navegador, F-1XX/2XX/3XX/4XX para reviewers estáticos.\n' +
+      '5. 1 commit por finding contendo o ID na mensagem (ex: "fix(pty): F-114 ...").\n' +
+      '6. git add específico por arquivo corrigido, nunca git add -A ou git add .\n' +
+      '7. Validação obrigatória antes de marcar corrigido: npx tsc --noEmit e teste focado.\n',
+    agents: [
+      {
+        id: 'orch',
+        agentName: 'Maestro Vision',
+        category: 'orchestrator',
+        cli: 'claude',
+        effort: 'high',
+      },
+      {
+        id: 'navigator',
+        agentName: 'Navegador Visual',
+        category: 'reviewer',
+        cli: 'codex',
+        effort: 'high',
+      },
+      {
+        id: 'reviewer',
+        agentName: 'Reviewer Estático',
+        category: 'reviewer',
+        cli: 'codex',
+        effort: 'medium',
+      },
+      {
+        id: 'resolver',
+        agentName: 'Resolvedor de Bugs',
         category: 'executor',
         cli: 'codex',
         effort: 'medium',
