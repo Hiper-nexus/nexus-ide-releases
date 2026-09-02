@@ -1253,6 +1253,10 @@ const paneClose: McpToolDef = {
           'Explicit close scope (coordination parity): the caller NAMES what ' +
           'closes; nothing implicit.',
       },
+      startKey: {
+        type: 'string',
+        description: 'Optional startKey proof issued when session was spawned',
+      },
     },
   },
   handler: async (args, ctx) => {

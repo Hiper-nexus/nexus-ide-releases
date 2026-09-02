@@ -68,8 +68,10 @@ export function getHandoffAttachments(
   return attachmentsByHandoffId.get(handoffId) ?? [];
 }
 
+const MAX_ATTACHMENTS_CACHE = 200;
+
 /**
- * Anexa artefato a um handoff existente.
+ * Anexa artefato a um handoff existente com bounding de cache (FIFO).
  */
 export function attachToExistingHandoff(
   handoffId: string,
@@ -78,6 +80,10 @@ export function attachToExistingHandoff(
   const list = attachmentsByHandoffId.get(handoffId) ?? [];
   list.push(artifact);
   attachmentsByHandoffId.set(handoffId, list);
+  if (attachmentsByHandoffId.size > MAX_ATTACHMENTS_CACHE) {
+    const oldestKey = attachmentsByHandoffId.keys().next().value;
+    if (oldestKey) attachmentsByHandoffId.delete(oldestKey);
+  }
 }
 
 /**

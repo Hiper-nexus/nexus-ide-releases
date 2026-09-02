@@ -22,6 +22,7 @@ import {
 } from "./session-liveness";
 import { createMortalityReconciler } from "./session-mortality-reconciler";
 import { sessionLeaseRegistry, type SessionLease } from "./session-lease-registry";
+import { warmPool } from "./warm-pool";
 import type { ProjectExecutionScope } from "../../shared/types";
 import type { SquadCliPolicy } from "../../shared/settings-types";
 import { sharedAgentAuthFamily } from "../../shared/agent-auth-family";
@@ -3242,4 +3243,9 @@ export function getSessionLeaseMetrics() {
   return sessionLeaseRegistry.getMetrics();
 }
 
-export { sessionLeaseRegistry };
+export { sessionLeaseRegistry, warmPool };
+
+warmPool.setIsAliveFn((sessionId) => sessions.has(sessionId));
+warmPool.setDestroyFn((sessionId, startKey) => {
+  orchKillSession(sessionId, { startKey, force: !startKey });
+});

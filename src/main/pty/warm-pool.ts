@@ -23,6 +23,7 @@ export interface WarmPoolOptions {
   readonly minCpuHeadroom?: number;
   readonly spawnFn?: (cli: string) => Promise<WarmSession | null>;
   readonly destroyFn?: (sessionId: string, startKey?: string) => void;
+  readonly isAliveFn?: (sessionId: string) => boolean;
 }
 
 const DEFAULT_MAX_AGE_MS = 10 * 60_000; // 10 minutes
@@ -34,6 +35,7 @@ export class WarmPool {
   private readonly minCpuHeadroom: number;
   private spawnFn?: (cli: string) => Promise<WarmSession | null>;
   private destroyFn?: (sessionId: string, startKey?: string) => void;
+  private isAliveFn?: (sessionId: string) => boolean;
   private targetSizeOverride: number | null = null;
 
   private metrics: WarmPoolMetrics = {
@@ -51,6 +53,7 @@ export class WarmPool {
     this.minCpuHeadroom = options.minCpuHeadroom ?? DEFAULT_MIN_CPU_HEADROOM;
     this.spawnFn = options.spawnFn;
     this.destroyFn = options.destroyFn;
+    this.isAliveFn = options.isAliveFn;
   }
 
   setSpawnFn(fn: (cli: string) => Promise<WarmSession | null>): void {
@@ -59,6 +62,10 @@ export class WarmPool {
 
   setDestroyFn(fn: (sessionId: string, startKey?: string) => void): void {
     this.destroyFn = fn;
+  }
+
+  setIsAliveFn(fn: (sessionId: string) => boolean): void {
+    this.isAliveFn = fn;
   }
 
   /**
@@ -154,8 +161,12 @@ export class WarmPool {
     this.evictStale();
 
     const queue = this.queues.get(cli);
-    if (queue && queue.length > 0) {
+    while (queue && queue.length > 0) {
       const session = queue.shift()!;
+      if (this.isAliveFn && !this.isAliveFn(session.sessionId)) {
+        this.destroyFn?.(session.sessionId, session.startKey);
+        continue;
+      }
       this.metrics.hits += 1;
       this.updateReadyCount();
       // Background replenishment if CPU has headroom

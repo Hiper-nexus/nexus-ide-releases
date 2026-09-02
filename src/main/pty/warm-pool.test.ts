@@ -132,4 +132,28 @@ describe('WarmPool', () => {
 
     vi.restoreAllMocks();
   });
+
+  it('take skips and destroys session if isAliveFn reports dead', () => {
+    pool.setWarmPoolSize(2);
+    pool.put({
+      sessionId: 'session-dead',
+      startKey: 'sk-dead',
+      cli: 'claude',
+      bornAtMs: Date.now(),
+      cwd: '/workspace',
+    });
+    pool.put({
+      sessionId: 'session-alive',
+      startKey: 'sk-alive',
+      cli: 'claude',
+      bornAtMs: Date.now(),
+      cwd: '/workspace',
+    });
+
+    pool.setIsAliveFn((id) => id === 'session-alive');
+
+    const taken = pool.take('claude');
+    expect(taken?.sessionId).toBe('session-alive');
+    expect(destroyedSessions).toContain('session-dead');
+  });
 });
