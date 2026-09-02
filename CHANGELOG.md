@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.73.0 — Paridade Overclock 1.33.18 e Super Swarm
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+Incorporação das inovações e doutrinas do Overclock 1.33.18:
+- **Warm Pool de Panes (P0)**: sessões PTY pré-aquecidas sob demanda com validação de liveness, expiração de stale (10min) e reposição assíncrona condicionada a folga mínima de CPU (>=25%).
+- **Lease Registry (startKey)**: tokens criptográficos por spawn PTY impedem que requisições concorrentes de kill atinjam sessões recicladas ou recém-criadas.
+- **Handoff Mecânico com Preservação de fullText e Modo Attach**: texto integral preservado até 60KB (com condense determinístico 20k head + 20k tail para payloads gigantes) e anexação de múltiplos artefatos por turno sem duplicação de handoffs.
+- **Squads Builtin com Skills Guiadas**: qa-swarm (10 regras L0-L2), qa-vision (protocolo F-XXX), absurd-landing e cinema-site com recursos embutidos.
+- **Superfície MCP Expandida**: aliases cron persistentes, validação/formatação de recipes de squads e telemetria unificada via perf_events.
+
 ## 0.72.1 — Grid grande, memória honesta
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._

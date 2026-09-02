@@ -12,7 +12,7 @@ export interface AppRelease {
   fixes: ReleaseNote[];
 }
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_0721: AppRelease = {
   version: '0.72.1',
   date: '2026-09-01',
   codename: 'Grid grande, memória honesta',
@@ -38,6 +38,49 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
   fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.73.0',
+  date: '2026-09-02',
+  codename: 'Paridade Overclock 1.33.18 e Super Swarm',
+  summary:
+    'Incorporação das inovações do Overclock 1.33.18: warm pool de panes CPU-aware (~80ms spawn), ' +
+    'session lease registry com startKey anticorrida, handoff mecânico com preservação de fullText e modo attach, ' +
+    'squads embutidos qa-swarm, qa-vision, absurd-landing e cinema-site, e expansão da superfície MCP.',
+  highlights: [
+    {
+      title: 'Warm Pool de Panes CPU-Aware',
+      detail:
+        'Sessões PTY pré-aquecidas sob demanda com validação de liveness, expiração de stale (10min) ' +
+        'e reposição assíncrona condicionada a folga mínima de CPU (>=25%).',
+    },
+    {
+      title: 'Lease Registry com startKey',
+      detail:
+        'Tokens criptográficos de posse física por spawn PTY impedem que requisições lentas de kill ' +
+        'destruam sessões recicladas ou reencarnadas concorrentemente.',
+    },
+    {
+      title: 'Delta de Handoff e Modo Attach',
+      detail:
+        'fullText preservado integralmente até 60KB (com condense determinístico 20k head + 20k tail para textos gigantes) ' +
+        'e anexação de múltiplos artefatos por turno sem duplicação de handoffs na base SQLite.',
+    },
+    {
+      title: 'Presets de Squads e Superfície MCP',
+      detail:
+        'Presets builtin qa-swarm (10 regras L0-L2), qa-vision (protocolo F-XXX), absurd-landing e cinema-site com skills guiadas. ' +
+        'Novas ferramentas MCP: aliases cron persistentes, lint/format de recipes de squad e telemetria perf_events.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Proteção contra corridas de fechamento de pane',
+      detail:
+        'nexus_pane_close agora aceita startKey e valida ownership antes de finalizar processos de sessão.',
+    },
+  ],
 };
 export const RELEASE_06100: AppRelease = {
   version: '0.61.0',
