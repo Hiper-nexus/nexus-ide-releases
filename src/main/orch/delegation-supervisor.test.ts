@@ -482,4 +482,21 @@ describe('shouldRearmHandoffDelivery — chef idle com pendente durável re-arma
       }),
     ).toBe(false);
   });
+
+  it('F-113: chef em stale-busy re-arma handoff pendente', () => {
+    expect(
+      shouldRearmHandoffDelivery({
+        ...base,
+        orchestratorPaneState: 'busy',
+        orchestratorStaleBusy: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldRearmHandoffDelivery({
+        ...base,
+        orchestratorPaneState: 'busy',
+        orchestratorStaleBusy: false,
+      }),
+    ).toBe(false);
+  });
 });

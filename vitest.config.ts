@@ -14,6 +14,7 @@ export default defineConfig({
       // Vendored skill suites (archify) run under their own `node --test`
       // runner (see assets/skills/archify/package.json), not under vitest.
       'assets/**',
+      'docs/analysis/overclock-13318-extract/**',
     ],
     setupFiles: ['./src/test/vitest.setup.ts'],
     // The root run also collects server PGlite suites, and `server/vitest.config.ts`

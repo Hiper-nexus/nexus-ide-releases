@@ -38,8 +38,10 @@ const announcedHandoffSubmits = new Set<string>();
 export { HANDOFF_DELIVERY_RETRY_BACKOFF_MS };
 import {
   getAgentSemanticStatusBySession,
+  getAgentTurnStartSequence,
   isSessionInjectableIdle,
   tapAgentSemanticStatus,
+  tapAgentTurnStart,
 } from './agent-status';
 
 /**
@@ -85,6 +87,8 @@ interface PendingEnter {
   retryTimer?: ReturnType<typeof setTimeout>;
   acceptanceTimer?: ReturnType<typeof setTimeout>;
   submitStarted?: boolean;
+  submitTurnSequence?: number;
+  submitStartedAt?: number;
 }
 
 interface PendingDeliveryStart {
@@ -101,6 +105,7 @@ let nextOwnerKey = 1;
 let untapState: (() => void) | null = null;
 let untapExit: (() => void) | null = null;
 let untapSemanticStatus: (() => void) | null = null;
+let untapTurnStart: (() => void) | null = null;
 let unsubscribeScopeChanges: (() => void) | null = null;
 let recoverDefectiveRuntime: HandoffDeliveryRuntimeRecovery | null = null;
 const runtimeRecoveryAttempts = new Map<
@@ -658,6 +663,33 @@ function handleSubmitNotAccepted(
       clearPendingEnter(pending);
       return;
     }
+
+    // F-113: Prova de aceite alternativa — se o observador de turnos registrou
+    // novo turn-start após a submissão, OU se o status semântico passou a 'working'
+    // após o submitStartedAt, o Maestro comprovadamente ingeriu o prompt.
+    const currentSeq = getAgentTurnStartSequence(pending.authority.sessionId);
+    const semantic = getAgentSemanticStatusBySession(pending.authority.sessionId);
+    const hasTurnProgress =
+      (pending.submitTurnSequence !== undefined && currentSeq > pending.submitTurnSequence) ||
+      (semantic?.status === 'working' &&
+        pending.submitStartedAt !== undefined &&
+        semantic.updatedAt >= pending.submitStartedAt);
+
+    if (hasTurnProgress) {
+      let accepted = false;
+      try {
+        accepted = stores.handoffs.acceptDeliveryAttempt({
+          attemptId: pending.attemptId,
+          handoffId: pending.handoffId,
+        });
+      } catch {
+        accepted = false;
+      }
+      if (accepted) {
+        clearPendingEnter(pending);
+        return;
+      }
+    }
   }
   stores.handoffs.failDeliveryAttempt({
     attemptId: pending.attemptId,
@@ -707,6 +739,8 @@ function submitDelivery(
   // Linearize before write(): a fake/test transport may publish busy
   // synchronously from the CR, and that edge is the acceptance proof.
   pending.submitStarted = true;
+  pending.submitStartedAt = Date.now();
+  pending.submitTurnSequence = getAgentTurnStartSequence(authority.sessionId);
   const submitted = orchWriteSession(authority.sessionId, '\r', {
     markInputBusy: false,
   });
@@ -917,6 +951,9 @@ export function initIdleDelivery(): void {
     }
   });
   untapSemanticStatus = tapAgentSemanticStatus((entry) => {
+    if (entry.status === 'working') {
+      acceptPendingEnters(entry.sessionId);
+    }
     if (
       (entry.status === 'idle' || entry.status === 'completed') &&
       canPasteHandoff(entry.sessionId)
@@ -926,6 +963,9 @@ export function initIdleDelivery(): void {
     } else {
       requeuePendingDeliveryStarts(entry.sessionId);
     }
+  });
+  untapTurnStart = tapAgentTurnStart((entry) => {
+    acceptPendingEnters(entry.sessionId);
   });
   untapExit = tapSessionExit((sessionId) => {
     lastMailboxDrainAt.delete(sessionId);
@@ -1030,10 +1070,12 @@ export function shutdownIdleDelivery(): void {
   untapState?.();
   untapExit?.();
   untapSemanticStatus?.();
+  untapTurnStart?.();
   unsubscribeScopeChanges?.();
   untapState = null;
   untapExit = null;
   untapSemanticStatus = null;
+  untapTurnStart = null;
   unsubscribeScopeChanges = null;
   queues.clear();
   lastMailboxDrainAt.clear();

@@ -17,9 +17,18 @@ const paneMocks = vi.hoisted(() => ({
 const semanticMocks = vi.hoisted(() => ({
   injectable: true,
   status: 'idle' as 'idle' | 'completed' | 'awaiting-input' | 'working',
+  updatedAt: Date.now(),
+  turnSequence: 0,
   taps: [] as Array<(entry: {
     sessionId: string;
     status: 'idle' | 'completed' | 'awaiting-input' | 'working';
+    updatedAt?: number;
+  }) => void>,
+  turnStartTaps: [] as Array<(entry: {
+    sessionId: string;
+    paneId: string;
+    sequence: number;
+    observedAt: number;
   }) => void>,
 }));
 
@@ -121,7 +130,21 @@ vi.mock('./agent-status', () => ({
   }),
   getAgentSemanticStatusBySession: vi.fn(() => ({
     status: semanticMocks.status,
+    updatedAt: semanticMocks.updatedAt,
   })),
+  getAgentTurnStartSequence: vi.fn(() => semanticMocks.turnSequence),
+  tapAgentTurnStart: vi.fn((tap: (entry: {
+    sessionId: string;
+    paneId: string;
+    sequence: number;
+    observedAt: number;
+  }) => void) => {
+    semanticMocks.turnStartTaps.push(tap);
+    return () => {
+      const idx = semanticMocks.turnStartTaps.indexOf(tap);
+      if (idx >= 0) semanticMocks.turnStartTaps.splice(idx, 1);
+    };
+  }),
   tapAgentSemanticStatus: vi.fn((tap: (entry: {
     sessionId: string;
     status: 'idle' | 'completed' | 'awaiting-input' | 'working';
@@ -1365,6 +1388,86 @@ describe('idle delivery authority and lifecycle', { timeout: 60_000 }, () => {
       String(call[1]).includes('handoff_id=handoff-a'),
     ).length;
     expect(pastesAfter).toBe(pastesBefore);
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('prova de aceite via turn-start tap sem borda busy do TUI (F-113)', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    const pending = handoff();
+    storeMocks.handoffs.set(pending.id, pending);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(pending, scope);
+    await advanceUntilSubmitted(delivery);
+
+    // PTY continua 'idle' (TUI não pintou borda busy), mas o hook nativo emitiu turn-start
+    for (const tap of semanticMocks.turnStartTaps) {
+      tap({
+        sessionId: 'orchestrator-session',
+        paneId: 'orchestrator-pane',
+        sequence: 1,
+        observedAt: Date.now(),
+      });
+    }
+
+    const attempts = [...storeMocks.deliveryAttempts.values()];
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0].state).toBe('accepted');
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('prova de aceite via semantic status working sem borda busy do TUI (F-113)', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    const pending = handoff();
+    storeMocks.handoffs.set(pending.id, pending);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(pending, scope);
+    await advanceUntilSubmitted(delivery);
+
+    // Semantic status mudou para working sem borda busy no PTY
+    for (const tap of semanticMocks.taps) {
+      tap({
+        sessionId: 'orchestrator-session',
+        status: 'working',
+        updatedAt: Date.now(),
+      });
+    }
+
+    const attempts = [...storeMocks.deliveryAttempts.values()];
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0].state).toBe('accepted');
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('prova de aceite via turn sequence progress na expiração do timeout (F-113)', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    const pending = handoff();
+    storeMocks.handoffs.set(pending.id, pending);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+
+    delivery.onHandoffSubmitted(pending, scope);
+    await advanceUntilSubmitted(delivery);
+
+    // Turn sequence avançou enquanto aguardava
+    semanticMocks.turnSequence = 2;
+
+    await vi.advanceTimersByTimeAsync(
+      delivery.SUBMIT_ACCEPTANCE_WINDOW_MS + 1_000,
+    );
+
+    const attempts = [...storeMocks.deliveryAttempts.values()];
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0].state).toBe('accepted');
     delivery.shutdownIdleDelivery();
   });
 });

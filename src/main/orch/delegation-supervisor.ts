@@ -26,6 +26,10 @@ import {
 } from './zero-delivery-watchdog';
 import { flushAllNexusTaskFailClosedRetries } from './nexus-task-fail-closed-recovery';
 import {
+  getAgentSemanticStatusBySession,
+  SEMANTIC_WORKING_VETO_MS,
+} from './agent-status';
+import {
   persistLeftoverIsolation,
   shouldSkipLeftoverRemount,
   isFreshIniciarKickoff,
@@ -159,13 +163,18 @@ export function shouldRearmHandoffDelivery(input: {
   readonly pendingDeliverableHandoffs: number;
   readonly lastRearmAt: number;
   readonly now: number;
+  readonly orchestratorStaleBusy?: boolean;
 }): boolean {
   if (input.pendingDeliverableHandoffs <= 0) return false;
   // Workers vivos NÃO são requisito: o TTL pós-handoff fecha o pane do
   // worker (~30s) e o caso clássico de fila perdida é Maestro idle +
   // handoff durable queued com ZERO workers. Exigir workerPaneCount>0
   // (8c3580c1) deixava o re-arm morto exatamente depois da entrega limpa.
-  if (input.orchestratorPaneState !== 'idle') return false;
+  // F-113: tolerante a stale-busy (semantic status idle/completed ou timeout do working)
+  const isOrchIdleOrStale =
+    input.orchestratorPaneState === 'idle' ||
+    (input.orchestratorPaneState === 'busy' && Boolean(input.orchestratorStaleBusy));
+  if (!isOrchIdleOrStale) return false;
   // F-112: o fast lane marca done no MESMO segundo do handoff; se a entrega
   // ao Maestro falhar depois disso, o gate de pending/running matava o
   // re-arm para sempre. `done` aguardando revisão do operador re-arma;
@@ -185,6 +194,7 @@ function rearmStuckHandoffDelivery(
   mission: Mission,
   orchestratorPaneState: string | undefined,
   now: number,
+  orchestratorStaleBusy = false,
 ): void {
   let pendingDeliverable = 0;
   try {
@@ -203,6 +213,7 @@ function rearmStuckHandoffDelivery(
       pendingDeliverableHandoffs: pendingDeliverable,
       lastRearmAt: handoffRearmLastRun.get(mission.id) ?? 0,
       now,
+      orchestratorStaleBusy,
     })
   ) {
     return;
@@ -213,7 +224,7 @@ function rearmStuckHandoffDelivery(
     if (rearmed > 0) {
       console.warn(
         `[delegation-supervisor] re-arm de ${rearmed} handoff(s) pendente(s) ` +
-        `para o Maestro idle (mission=${mission.id}) — a fila em memória tinha ` +
+        `para o Maestro idle (mission=${mission.id}${orchestratorStaleBusy ? ', stale-busy' : ''}) — a fila em memória tinha ` +
         'se perdido e o SQLite é a verdade',
       );
     }
@@ -475,12 +486,24 @@ function scanSuite(suite: ProjectDomainStoreSuite, now: number): void {
     }
 
     // Re-arm de handoff: Maestro idle + pendente durable, COM OU SEM workers.
-    // Independente do chef-idle (que exige workers vivos para o watchdog).
-    if (
-      orchestratorPaneState === 'idle' &&
-      (mission.status === 'pending' || mission.status === 'running')
-    ) {
-      rearmStuckHandoffDelivery(suite, mission, orchestratorPaneState, now);
+    // F-113: tolerante a stale-busy (semantic status idle/completed ou timeout do working).
+    const orchSessionId = mission.orchestratorSessionId;
+    const orchSemantic = orchSessionId ? getAgentSemanticStatusBySession(orchSessionId) : null;
+    const orchestratorStaleBusy =
+      orchestratorPaneState === 'busy' &&
+      (orchSemantic?.status === 'idle' ||
+        orchSemantic?.status === 'completed' ||
+        (orchSemantic?.status === 'working' &&
+          now - orchSemantic.updatedAt > SEMANTIC_WORKING_VETO_MS));
+    const isOrchIdleOrStale = orchestratorPaneState === 'idle' || orchestratorStaleBusy;
+
+    const rearmStatusEligible =
+      mission.status === 'pending' ||
+      mission.status === 'running' ||
+      (mission.status === 'done' && !wasMissionApprovedByOperator(mission));
+
+    if (isOrchIdleOrStale && rearmStatusEligible) {
+      rearmStuckHandoffDelivery(suite, mission, orchestratorPaneState, now, orchestratorStaleBusy);
     }
 
     // Chef-idle: orchestrator is idle while workers are present. This state is
