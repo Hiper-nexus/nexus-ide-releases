@@ -374,5 +374,21 @@ describe('built-in Review P0–P3 squad', () => {
       expect(squad?.orchestratorInstructions).toContain('Faixas de ID por reviewer');
       expect(squad?.orchestratorInstructions).toContain('1 commit por finding');
     });
+
+    it('absurd-landing e cinema-site carregam com pipelines de design e mídia (T8)', () => {
+      const landing = BUILTIN_SQUADS.find((s) => s.id === 'absurd-landing');
+      expect(landing).toBeDefined();
+      expect(landing?.name).toBe('Absurd Landing');
+      expect(landing?.agents).toHaveLength(5);
+      expect(landing?.orchestratorInstructions).toContain('UX & Content');
+      expect(landing?.orchestratorInstructions).toContain('UI Design & Design System');
+
+      const cinema = BUILTIN_SQUADS.find((s) => s.id === 'cinema-site');
+      expect(cinema).toBeDefined();
+      expect(cinema?.name).toBe('Cinema Site');
+      expect(cinema?.agents).toHaveLength(5);
+      expect(cinema?.orchestratorInstructions).toContain('Direção Criativa');
+      expect(cinema?.orchestratorInstructions).toContain('Produção de Mídia');
+    });
   });
 });

@@ -9,6 +9,8 @@ import {
   NEXUS_STORY_IMPLEMENTATION_SQUAD_ID,
   NEXUS_QA_SWARM_SQUAD_ID,
   NEXUS_QA_VISION_SQUAD_ID,
+  NEXUS_ABSURD_LANDING_SQUAD_ID,
+  NEXUS_CINEMA_SITE_SQUAD_ID,
 } from '../../shared/builtin-squad-ids';
 import { withGuidedSkillDefaults } from './guided-squad-skills';
 
@@ -943,6 +945,120 @@ const RAW_SQUADS: Squad[] = [
         category: 'executor',
         cli: 'codex',
         effort: 'medium',
+      },
+    ],
+  },
+  {
+    id: NEXUS_ABSURD_LANDING_SQUAD_ID,
+    name: 'Absurd Landing',
+    createdAt: SEED_TS,
+    builtin: true,
+    orchestratorInstructions:
+      '# Absurd Landing — High-Impact Web Design\n' +
+      'Você é o orquestrador do squad Absurd Landing. Conduz a criação de landing pages ' +
+      'de impacto excepcional, anti-AI-slop, com copy afiado, layout provocativo e código frontend impecável.\n\n' +
+      '## Pipeline:\n' +
+      '1. UX & Content: Pesquisa de público e copy provocativo (content-marketer / ux-researcher).\n' +
+      '2. UI Design & Design System: Tokens, paleta e wireframe com design references autênticas.\n' +
+      '3. Frontend Engineering: Implementação React/Tailwind limpa, responsiva e performática.\n' +
+      '4. Screenshot Review: Análise visual antes de entregar.\n',
+    agents: [
+      {
+        id: 'orch',
+        agentName: 'Maestro Landing',
+        category: 'orchestrator',
+        cli: 'claude',
+        effort: 'high',
+        allowedSkills: ['impeccable', 'dembrandt'],
+      },
+      {
+        id: 'marketer',
+        agentName: 'Content Marketer',
+        category: 'architect',
+        cli: 'codex',
+        effort: 'medium',
+        allowedSkills: ['impeccable', 'dembrandt'],
+      },
+      {
+        id: 'designer',
+        agentName: 'UI Designer',
+        category: 'architect',
+        cli: 'codex',
+        effort: 'high',
+        allowedSkills: ['impeccable', 'dembrandt'],
+      },
+      {
+        id: 'frontend',
+        agentName: 'Frontend Engineer',
+        category: 'executor',
+        cli: 'codex',
+        effort: 'high',
+        allowedSkills: ['impeccable'],
+      },
+      {
+        id: 'reviewer',
+        agentName: 'Screenshot Reviewer',
+        category: 'reviewer',
+        cli: 'codex',
+        effort: 'medium',
+        allowedSkills: ['check-work'],
+      },
+    ],
+  },
+  {
+    id: NEXUS_CINEMA_SITE_SQUAD_ID,
+    name: 'Cinema Site',
+    createdAt: SEED_TS,
+    builtin: true,
+    orchestratorInstructions:
+      '# Cinema Site — Web Experiences com Mídia Cinematográfica\n' +
+      'Você é o diretor do squad Cinema Site. Conduz experiências web imersivas com mídia ' +
+      'cinematográfica (vídeo, áudio, transições e direção de arte profunda).\n\n' +
+      '## Pipeline:\n' +
+      '1. Direção Criativa: Roteiro, moodboard e storyboard cinemático.\n' +
+      '2. Produção de Mídia: Assets visuais e áudio coordenados via governed media tools.\n' +
+      '3. Web Builder: Arquitetura frontend com canvas/WebGL, scroll cinematográfico e performance 60fps.\n' +
+      '4. Editor: Montagem, timing e polimento final.\n',
+    agents: [
+      {
+        id: 'orch',
+        agentName: 'Diretor Geral',
+        category: 'orchestrator',
+        cli: 'claude',
+        effort: 'high',
+        allowedSkills: ['nexus-visual-media'],
+      },
+      {
+        id: 'creative',
+        agentName: 'Diretor Criativo',
+        category: 'architect',
+        cli: 'codex',
+        effort: 'high',
+        allowedSkills: ['nexus-visual-media'],
+      },
+      {
+        id: 'dp',
+        agentName: 'Diretor de Fotografia',
+        category: 'architect',
+        cli: 'codex',
+        effort: 'medium',
+        allowedSkills: ['nexus-visual-media'],
+      },
+      {
+        id: 'builder',
+        agentName: 'Site Builder',
+        category: 'executor',
+        cli: 'codex',
+        effort: 'high',
+        allowedSkills: ['impeccable'],
+      },
+      {
+        id: 'editor',
+        agentName: 'Editor & Finishing',
+        category: 'reviewer',
+        cli: 'codex',
+        effort: 'medium',
+        allowedSkills: ['nexus-visual-media'],
       },
     ],
   },
