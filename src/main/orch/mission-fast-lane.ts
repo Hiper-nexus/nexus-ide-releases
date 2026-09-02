@@ -86,6 +86,7 @@ import {
   advanceFastLaneStoryTaskFromWorkerDone,
 } from './mission-story-plan';
 import { assertPreSpawnProbe, PreSpawnProbeError } from '../pty/pre-spawn-probe';
+import { warmPool } from '../pty/warm-pool';
 import {
   hasRuntimeKey,
   listProviderSettings,
@@ -972,6 +973,7 @@ async function spawnAgentPane(
       });
       if (!decision.allowed) return { error: decision.reason };
     }
+    warmPool.take(agent.cli);
   }
 
   const spawn = await requestPaneSpawn({

@@ -276,6 +276,15 @@ export interface PerfSnapshot {
     livePtySessions: number;
     browserViews: number;
   };
+  warmPool?: {
+    hits: number;
+    misses: number;
+    readyCount: number;
+    minHeadroom: number;
+    skippedByCpu: number;
+    evictedStale: number;
+    replenished: number;
+  };
 }
 
 export interface RecipeLintIssue {

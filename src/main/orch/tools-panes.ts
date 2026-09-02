@@ -1387,6 +1387,8 @@ const paneWaitMany: McpToolDef = {
     }
     return Promise.all(waits);
   },
+};
+
 const sessionLeaseInspect: McpToolDef = {
   name: 'nexus_session_lease_inspect',
   description:

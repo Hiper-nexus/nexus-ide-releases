@@ -3,6 +3,7 @@ import { PERF_CHANNELS } from '../../shared/channels';
 import type { PerfSnapshot } from '../../shared/types';
 import { getLiveSessionCount } from '../pty/pty-manager';
 import { getBrowserViewCount } from '../browser/browser-manager';
+import { warmPool } from '../pty/warm-pool';
 
 function memoryInfo() {
   const mem = process.memoryUsage();
@@ -43,6 +44,7 @@ export function collectPerfSnapshot(): PerfSnapshot {
       livePtySessions: getLiveSessionCount(),
       browserViews: getBrowserViewCount(),
     },
+    warmPool: warmPool.getMetrics(),
   };
 }
 
