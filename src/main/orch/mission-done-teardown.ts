@@ -2,11 +2,13 @@
  * Teardown híbrido no done da missão (F-106, decisão de produto 23/08).
  *
  * Quando a missão vira 'done' o resultado já é durável no SQLite. Workers
- * idle encerram após WORKER_POST_DONE_TTL_MS (paridade Overclock 1.2.4):
- * qualquer trabalho novo (o operador mandou algo no pane → busy) cancela o
- * timer; voltar a idle rearma. O ORQUESTRADOR PERMANECE — matá-lo no done
- * lacrava o ajuste pós-entrega (F-106 revertido, F-108). Quem fecha o
- * Maestro é só o humano.
+ * idle encerram após WORKER_POST_DONE_TTL_MS (paridade Overclock 1.2.4) —
+ * mas SÓ depois da aprovação do humano ("Marcar como feito"): enquanto a
+ * entrega espera revisão ("Aguardando você") os terminais ficam para
+ * inspeção e ajuste. Qualquer trabalho novo (o operador mandou algo no
+ * pane → busy) cancela o timer; voltar a idle rearma. O ORQUESTRADOR
+ * PERMANECE — matá-lo no done lacrava o ajuste pós-entrega (F-106 revertido,
+ * F-108). Quem fecha o Maestro é só o humano.
  *
  * Fail-safe por construção:
  * - opt-out via feature.mission.doneTeardown (default ON; E2E real-mission
@@ -24,6 +26,7 @@ import fs from 'node:fs';
 import type { Mission, PaneSnapshot } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
+import { missionAwaitsOperatorReview } from '../../shared/mission-recovery-policy';
 import { tapSessionExit } from '../pty/pty-manager';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import {
@@ -63,6 +66,16 @@ export interface MissionDoneTeardownDeps {
     scope: ProjectExecutionScope,
     missionId: string,
   ) => string | null;
+  /**
+   * True enquanto a entrega espera a revisão do humano ("Aguardando você").
+   * Nesse estado os terminais ficam — o operador pode inspecionar o que foi
+   * feito e pedir ajuste; o TTL de fechamento só arma após a aprovação
+   * ("Marcar como feito").
+   */
+  readonly isAwaitingOperatorReview: (
+    scope: ProjectExecutionScope,
+    missionId: string,
+  ) => boolean;
   readonly isIdle: (sessionId: string) => boolean;
   readonly closePane: (
     request: MissionPaneCloseRequest,
@@ -107,6 +120,10 @@ export function productionMissionDoneTeardownDeps(): Omit<
     getAuthority: (sessionId) => getPaneRuntimeAuthorityBySession(sessionId),
     missionStatus: (scope, missionId) =>
       getProjectDomainStores(scope).missions.get(missionId)?.status ?? null,
+    isAwaitingOperatorReview: (scope, missionId) => {
+      const mission = getProjectDomainStores(scope).missions.get(missionId);
+      return mission ? missionAwaitsOperatorReview(mission) : false;
+    },
     isIdle: (sessionId) => isSessionInjectableIdle(sessionId),
     openDeliverable: (scope, missionId) => {
       const mission = getProjectDomainStores(scope).missions.get(missionId);
@@ -176,6 +193,12 @@ function workerIsClosablePostDone(
   if (!authority.missionId || !authority.scope) return null;
   if (authority.sessionId !== sessionId) return null;
   if (deps.missionStatus(authority.scope, authority.missionId) !== 'done') {
+    return null;
+  }
+  // "Aguardando você": a entrega ainda não foi revisada — fechar workers
+  // agora apagaria os terminais que o operador precisa inspecionar (e a
+  // superfície do "Pedir um ajuste"). O TTL só vale após a aprovação.
+  if (deps.isAwaitingOperatorReview(authority.scope, authority.missionId)) {
     return null;
   }
   return authority;
@@ -273,6 +296,9 @@ function handleMissionDone(
   }
 }
 
+/** Última aprovação vista por missão — "Marcar como feito" carimba a descrição sem mudar o status. */
+const lastApprovedByMission = new Map<string, boolean>();
+
 function handleMissionsBroadcast(
   deps: MissionDoneTeardownDeps,
   scopeKey: string,
@@ -282,25 +308,36 @@ function handleMissionsBroadcast(
     const key = `${scopeKey}|${mission.id}`;
     const previous = lastStatusByMission.get(key);
     lastStatusByMission.set(key, mission.status);
+    const approvedNow = !missionAwaitsOperatorReview(mission);
+    const approvedBefore = lastApprovedByMission.get(key);
+    lastApprovedByMission.set(key, approvedNow);
     // Só transição observada neste processo: seed/replay (previous ===
     // undefined) nunca dispara teardown em missão antiga já done.
-    if (previous === undefined || previous === 'done') continue;
+    if (previous === undefined) continue;
     if (mission.status !== 'done') continue;
     const scope = deps.parseScope(scopeKey);
     if (!scope) continue;
-    // Mecânica antes do teardown: abrir a entrega não pode depender de a LLM
-    // ter obedecido a um pedido no prompt (voo do operador 23/08 — a landing
-    // não abriu). Best-effort: nunca derruba o teardown.
-    try {
-      deps.openDeliverable?.(scope, mission.id);
-    } catch (error) {
-      deps.log(
-        `[mission-done] abrir entrega falhou: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
+    if (previous !== 'done') {
+      // Mecânica antes do teardown: abrir a entrega não pode depender de a
+      // LLM ter obedecido a um pedido no prompt (voo do operador 23/08 — a
+      // landing não abriu). Best-effort: nunca derruba o teardown.
+      try {
+        deps.openDeliverable?.(scope, mission.id);
+      } catch (error) {
+        deps.log(
+          `[mission-done] abrir entrega falhou: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+      handleMissionDone(deps, scope, mission.id);
+      continue;
     }
-    handleMissionDone(deps, scope, mission.id);
+    // done → done com aprovação tardia ("Marcar como feito"): a revisão
+    // terminou e os terminais já puderam ser inspecionados — arma o TTL agora.
+    if (approvedBefore === false && approvedNow) {
+      handleMissionDone(deps, scope, mission.id);
+    }
   }
 }
 
@@ -335,4 +372,5 @@ export function shutdownMissionDoneTeardown(): void {
   untapExit = null;
   for (const sessionId of [...armed.keys()]) cancelTimer(sessionId);
   lastStatusByMission.clear();
+  lastApprovedByMission.clear();
 }

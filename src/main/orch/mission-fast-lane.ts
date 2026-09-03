@@ -13,6 +13,7 @@ import type { Mission, Squad, SquadAgent } from '../../shared/orch-types';
 import { isUiMissionText } from '../../shared/mission-work-kind';
 import {
   MISSION_RUNTIME_CLOSED_MARKER,
+  missionAwaitsAdjustment,
   wasMissionRuntimeClosedByOperator,
 } from '../../shared/mission-recovery-policy';
 import { stripMissionVerdictParagraph } from '../../shared/mission-block-cause';
@@ -1695,6 +1696,35 @@ function startWatcher(
 // ── Respawn do orquestrador ────────────────────────────────────────────────
 
 /**
+ * "Pedir um ajuste": o Maestro religa para OUVIR o operador, não para
+ * re-executar. O kickoff completo abaixo manda delegar e concluir — sem este
+ * bloco de espera NA FRENTE, ele obedece as ordens permanentes e sai rodando
+ * sozinho antes de saber qual é o ajuste.
+ */
+export const ADJUSTMENT_WAIT_FIRST =
+  '## AGUARDE O OPERADOR (esta ordem vence as instruções de delegação abaixo)\n' +
+  'Você foi religado porque o operador clicou "Pedir um ajuste". NÃO spawne workers, NÃO re-execute o objetivo, NÃO conclua a missão. ' +
+  'Leia nexus_handoff_list({full:true}) para contexto e ESPERE a orientação dele no chat. Só aja depois que ele disser qual é o ajuste.';
+
+/** Monta o prompt do Maestro religado — puro para teste. */
+export function buildRespawnPrompt(input: {
+  readonly basePrompt: string;
+  readonly awaitingAdjustment: boolean;
+  readonly note?: string;
+}): string {
+  return [
+    input.awaitingAdjustment ? ADJUSTMENT_WAIT_FIRST : '',
+    input.basePrompt,
+    input.note
+      ? `## CONTINUIDADE\nVocê foi religado automaticamente. ${input.note} ` +
+        'Consulte nexus_handoff_list e o estado da missão antes de agir.'
+      : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+/**
  * Respawna o orquestrador de uma missão running cujo runtime morreu
  * (exit do Maestro, restart do app, pane vazio). Cura split-brain de intent
  * ANTES do spawn — sem isso o reconciler de autoridade de 1s mata o
@@ -1736,8 +1766,8 @@ async function respawnFastLaneOrchestrator(
   assertFastLaneMaestroMcp(orchestrator.cli);
 
   const sealedPlanTitles = sealFastLanePlanTitles(stores, live, squad);
-  const prompt = [
-    agentPrompt(
+  const prompt = buildRespawnPrompt({
+    basePrompt: agentPrompt(
       orchestrator,
       live,
       roster.map((agent) => agent.agentName),
@@ -1746,13 +1776,9 @@ async function respawnFastLaneOrchestrator(
       squad,
       sealedPlanTitles,
     ),
-    options.note
-      ? `## CONTINUIDADE\nVocê foi religado automaticamente. ${options.note} ` +
-          'Consulte nexus_handoff_list e o estado da missão antes de agir.'
-      : '',
-  ]
-    .filter(Boolean)
-    .join('\n');
+    awaitingAdjustment: missionAwaitsAdjustment(live),
+    note: options.note,
+  });
 
   // P0-1 (2026-08-17): NUNCA spawnar por cima de um orquestrador registrado.
   // A cerca do pty-manager conta QUALQUER sessão registrada (exited/
@@ -2292,6 +2318,10 @@ export async function dispatchFastLaneFirstWave(
     const stores = getProjectDomainStores(scope);
     const mission = stores.missions.get(missionId);
     if (!mission || mission.status !== 'running') return 0;
+    // "Pedir um ajuste": a missão reabriu para o operador DESCREVER o ajuste.
+    // Disparar a first-wave aqui seria mandar prompt e sair rodando sozinho
+    // antes de saber o quê — o Maestro religa digitável e espera no chat.
+    if (missionAwaitsAdjustment(mission)) return 0;
     const squad = mission.squadId ? getSquad(mission.squadId) : null;
     if (!squad) return 0;
     const sealedTasks = stores.tasks.list(missionId);

@@ -965,8 +965,15 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
       stashPendingContinuity(newPane.id, options.continuityPack);
     }
     const pivotId = targetId ?? firstPaneId(currentRoot);
+    // splitPane com pivô fora da árvore é no-op silencioso — sem a garantia o
+    // id devolvido seria de um pane que não existe (mesmo contrato de
+    // addShellPane/addBrowserPane via rootWithPaneGuaranteed).
     const root = pivotId
-      ? splitPane(currentRoot, pivotId, 'row', newPane)
+      ? rootWithPaneGuaranteed(
+          splitPane(currentRoot, pivotId, 'row', newPane),
+          currentRoot,
+          newPane,
+        )
       : splitPane(initialTree(), firstPaneId(initialTree()) ?? '', 'row', newPane);
 
     const existingPanes = listPanes(currentRoot);

@@ -47,6 +47,18 @@ describe('parseDeepLink', () => {
     expect(parseDeepLink('nexus://auth/' + 'a'.repeat(5000))).toBeNull();
   });
 
+  it('sequência malformada no path NÃO lança — vira link inválido (null)', () => {
+    expect(() => parseDeepLink('nexus://license/%E0%A4%A')).not.toThrow();
+    expect(parseDeepLink('nexus://license/%E0%A4%A')).toBeNull();
+    expect(() => parseDeepLink('nexus://auth/%E0%A4%A')).not.toThrow();
+    expect(parseDeepLink('nexus://auth/%E0%A4%A')).toBeNull();
+    // token na query continua válido mesmo com path quebrado
+    expect(parseDeepLink('nexus://license/%E0%A4%A?token=tok')).toEqual({
+      kind: 'license',
+      token: 'tok',
+    });
+  });
+
   it('auth carrega o ?state= do binding local (e rejeita state perigoso)', () => {
     expect(parseDeepLink('nexus://auth/code1?state=nonce-1')).toEqual({
       kind: 'auth',

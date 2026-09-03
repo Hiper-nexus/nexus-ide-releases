@@ -132,6 +132,27 @@ import type {
  * fanned out to per-session subscribers so callbacks stay scoped to one pane.
  */
 
+/**
+ * Entrega isolada por listener: um subscriber que lança NÃO aborta os demais
+ * nem propaga para dentro do handler IPC — antes, o primeiro throw no
+ * `forEach` calava todos os listeners seguintes. Itera sobre cópia para
+ * unsubscribe durante a entrega não pular ninguém.
+ */
+function emitToListeners<TArgs extends unknown[]>(
+  listeners: Iterable<(...args: TArgs) => void> | undefined,
+  label: string,
+  ...args: TArgs
+): void {
+  if (!listeners) return;
+  for (const cb of Array.from(listeners)) {
+    try {
+      cb(...args);
+    } catch (error) {
+      console.error(`[preload] listener "${label}" falhou`, error);
+    }
+  }
+}
+
 type DataCb = (data: string) => void;
 type ExitCb = (event: { exitCode: number; signal?: number }) => void;
 type StateCb = (state: PaneSessionState) => void;
@@ -159,7 +180,7 @@ const deepOpenListeners = new Set<(payload: { path: string; isDir: boolean }) =>
 ipcRenderer.on(
   WINDOW_CHANNELS.deepOpenPath,
   (_event, payload: { path: string; isDir: boolean }) =>
-    deepOpenListeners.forEach((cb) => cb(payload)),
+    emitToListeners(deepOpenListeners, 'deepOpenListeners', payload),
 );
 
 function clearPtySequenceState(sessionId: string): void {
@@ -187,7 +208,7 @@ function warnPtyGapThrottled(sessionId: string, detail: string): void {
 }
 
 function emitContiguousPtyData(sessionId: string, sequence: number, data: string): void {
-  dataSubs.get(sessionId)?.forEach((cb) => cb(data));
+  emitToListeners(dataSubs.get(sessionId), 'dataSubs', data);
   ipcRenderer.send(PTY_CHANNELS.acknowledge, { sessionId, sequence });
 }
 
@@ -217,7 +238,7 @@ function deliverRecoveredPtyData(sessionId: string, events: PtyDataEvent[]): voi
       sessionId,
       `recover resumed at sequence ${first.sequence} past the high-water mark`,
     );
-    dataSubs.get(sessionId)?.forEach((cb) => cb(PTY_GAP_NOTICE));
+    emitToListeners(dataSubs.get(sessionId), 'dataSubs', PTY_GAP_NOTICE);
     for (const chunk of buffer.acceptHole(first.sequence)) {
       emitContiguousPtyData(sessionId, chunk.sequence, chunk.data);
     }
@@ -239,7 +260,7 @@ function deliverPtyData(payload: PtyDataEvent): void {
       sessionId,
       `gap buffer over budget; resumed at sequence ${buffer.highWater}`,
     );
-    dataSubs.get(sessionId)?.forEach((cb) => cb(PTY_GAP_NOTICE));
+    emitToListeners(dataSubs.get(sessionId), 'dataSubs', PTY_GAP_NOTICE);
   } else if (result.chunks.length === 0 && payload.sequence > buffer.highWater) {
     // Buffered behind a hole: pull it immediately (quiet cadence is a
     // backstop only). Single-flighted — one recover per session at a time.
@@ -264,30 +285,31 @@ setInterval(() => {
 
 ipcRenderer.on(PTY_CHANNELS.exit, (_event, payload: PtyExitEvent) => {
   clearPtySequenceState(payload.sessionId);
-  exitSubs.get(payload.sessionId)?.forEach((cb) =>
-    cb({ exitCode: payload.exitCode, signal: payload.signal }),
-  );
+  emitToListeners(exitSubs.get(payload.sessionId), 'exitSubs', {
+    exitCode: payload.exitCode,
+    signal: payload.signal,
+  });
 });
 
 ipcRenderer.on(PTY_CHANNELS.stateChange, (_event, payload: PtyStateChangeEvent) => {
-  stateSubs.get(payload.sessionId)?.forEach((cb) => cb(payload.state));
+  emitToListeners(stateSubs.get(payload.sessionId), 'stateSubs', payload.state);
 });
 
 ipcRenderer.on(BROWSER_CHANNELS.state, (_event, payload: BrowserPaneState) => {
-  browserStateListeners.forEach((cb) => cb(payload));
+  emitToListeners(browserStateListeners, 'browserStateListeners', payload);
 });
 
 ipcRenderer.on(
   BROWSER_CHANNELS.designEvent,
   (_event, payload: BrowserDesignEventPayload) => {
-    browserDesignListeners.forEach((cb) => cb(payload));
+    emitToListeners(browserDesignListeners, 'browserDesignListeners', payload);
   },
 );
 
 ipcRenderer.on(
   DEV_SERVER_CHANNELS.detected,
   (_event, payload: DevServerDetectedPayload) => {
-    devServerListeners.forEach((cb) => cb(payload));
+    emitToListeners(devServerListeners, 'devServerListeners', payload);
   },
 );
 
@@ -313,7 +335,7 @@ function subscribe<T>(
 const adapterChangedListeners = new Set<AdapterChangedCb>();
 
 ipcRenderer.on(ADAPTER_CHANNELS.changed, (_event, payload: AdapterInfo[]) => {
-  adapterChangedListeners.forEach((cb) => cb(payload));
+  emitToListeners(adapterChangedListeners, 'adapterChangedListeners', payload);
 });
 
 // Voice event fan-out. Kept as plain listener sets so callbacks stay scoped and
@@ -322,16 +344,16 @@ const pttStartListeners = new Set<() => void>();
 const pttStopListeners = new Set<() => void>();
 const pttToggleListeners = new Set<() => void>();
 ipcRenderer.on(VOICE_CHANNELS.pttToggle, () =>
-  pttToggleListeners.forEach((cb) => cb()),
+  emitToListeners(pttToggleListeners, 'pttToggleListeners'),
 );
 
 const wakeDetectedListeners = new Set<() => void>();
 ipcRenderer.on(VOICE_CHANNELS.wakeDetected, () =>
-  wakeDetectedListeners.forEach((cb) => cb()),
+  emitToListeners(wakeDetectedListeners, 'wakeDetectedListeners'),
 );
 const narrateListeners = new Set<(event: import('../shared/voice-ipc').VoiceNarrationEvent) => void>();
 ipcRenderer.on(VOICE_CHANNELS.narrate, (_e, event: import('../shared/voice-ipc').VoiceNarrationEvent) =>
-  narrateListeners.forEach((cb) => cb(event)),
+  emitToListeners(narrateListeners, 'narrateListeners', event),
 );
 
 const voiceInfoListeners = new Set<(info: VoiceRuntimeInfo) => void>();
@@ -351,51 +373,51 @@ const liveAudioOutListeners = new Set<(event: JarvisLiveAudioOutEvent) => void>(
 const updateStateListeners = new Set<(state: UpdateState) => void>();
 
 ipcRenderer.on(VOICE_CHANNELS.liveAudioOut, (_event, payload: JarvisLiveAudioOutEvent) =>
-  liveAudioOutListeners.forEach((cb) => cb(payload)),
+  emitToListeners(liveAudioOutListeners, 'liveAudioOutListeners', payload),
 );
 ipcRenderer.on(UPDATE_CHANNELS.state, (_event, state: UpdateState) =>
-  updateStateListeners.forEach((cb) => cb(state)),
+  emitToListeners(updateStateListeners, 'updateStateListeners', state),
 );
-ipcRenderer.on(VOICE_CHANNELS.pttStart, () => pttStartListeners.forEach((cb) => cb()));
-ipcRenderer.on(VOICE_CHANNELS.pttStop, () => pttStopListeners.forEach((cb) => cb()));
+ipcRenderer.on(VOICE_CHANNELS.pttStart, () => emitToListeners(pttStartListeners, 'pttStartListeners'));
+ipcRenderer.on(VOICE_CHANNELS.pttStop, () => emitToListeners(pttStopListeners, 'pttStopListeners'));
 ipcRenderer.on(VOICE_CHANNELS.infoChanged, (_event, info: VoiceRuntimeInfo) =>
-  voiceInfoListeners.forEach((cb) => cb(info)),
+  emitToListeners(voiceInfoListeners, 'voiceInfoListeners', info),
 );
 ipcRenderer.on(VOICE_CHANNELS.liveState, (_event, state: JarvisLiveState) =>
-  liveStateListeners.forEach((cb) => cb(state)),
+  emitToListeners(liveStateListeners, 'liveStateListeners', state),
 );
 ipcRenderer.on(
   VOICE_CHANNELS.liveTranscript,
   (_event, event: JarvisLiveTranscriptEvent) =>
-    liveTranscriptListeners.forEach((cb) => cb(event)),
+    emitToListeners(liveTranscriptListeners, 'liveTranscriptListeners', event),
 );
 ipcRenderer.on(
   VOICE_CHANNELS.jarvisTranscriptAppend,
   (_event, event: JarvisTranscriptAppendEvent) =>
-    transcriptAppendListeners.forEach((cb) => cb(event)),
+    emitToListeners(transcriptAppendListeners, 'transcriptAppendListeners', event),
 );
 ipcRenderer.on(VOICE_CHANNELS.liveToolCall, (_event, event: JarvisLiveToolEvent) =>
-  liveToolCallListeners.forEach((cb) => cb(event)),
+  emitToListeners(liveToolCallListeners, 'liveToolCallListeners', event),
 );
 ipcRenderer.on(
   VOICE_CHANNELS.liveToolCancelled,
   (_event, event: JarvisLiveToolCancellationEvent) =>
-    liveToolCancelledListeners.forEach((cb) => cb(event)),
+    emitToListeners(liveToolCancelledListeners, 'liveToolCancelledListeners', event),
 );
 ipcRenderer.on(
   VOICE_CHANNELS.liveToolResult,
   (_event, event: JarvisLiveToolResultEvent) =>
-    liveToolResultListeners.forEach((cb) => cb(event)),
+    emitToListeners(liveToolResultListeners, 'liveToolResultListeners', event),
 );
 ipcRenderer.on(
   VOICE_CHANNELS.liveToolTurnComplete,
   (_event, event: JarvisLiveToolTurnCompleteEvent) =>
-    liveToolTurnCompleteListeners.forEach((cb) => cb(event)),
+    emitToListeners(liveToolTurnCompleteListeners, 'liveToolTurnCompleteListeners', event),
 );
 ipcRenderer.on(
   VOICE_CHANNELS.liveInterrupted,
   (_event, event: JarvisLiveInterruptEvent) =>
-    liveInterruptedListeners.forEach((cb) => cb(event)),
+    emitToListeners(liveInterruptedListeners, 'liveInterruptedListeners', event),
 );
 
 function addListener<T>(set: Set<T>, cb: T): () => void {
@@ -430,76 +452,76 @@ const paneLoginStuckListeners = new Set<(event: PaneLoginStuckEvent) => void>();
 const agentWaitingListeners = new Set<(event: AgentWaitingEvent) => void>();
 
 ipcRenderer.on(ORCH_CHANNELS.paneSpawnRequest, (_e, req: OrchPaneSpawnRequest) =>
-  paneSpawnRequestListeners.forEach((cb) => cb(req)),
+  emitToListeners(paneSpawnRequestListeners, 'paneSpawnRequestListeners', req),
 );
 ipcRenderer.on(
   ORCH_CHANNELS.panePresentationRequest,
   (_e, req: MissionPanePresentationRequest) =>
-    panePresentationRequestListeners.forEach((cb) => cb(req)),
+    emitToListeners(panePresentationRequestListeners, 'panePresentationRequestListeners', req),
 );
 ipcRenderer.on(
   ORCH_CHANNELS.paneRecoveryRequest,
   (_e, req: MissionPaneRecoveryRequest) =>
-    paneRecoveryRequestListeners.forEach((cb) => cb(req)),
+    emitToListeners(paneRecoveryRequestListeners, 'paneRecoveryRequestListeners', req),
 );
 ipcRenderer.on(ORCH_CHANNELS.browserOpenRequest, (_e, req: BrowserPaneOpenRequest) =>
-  browserOpenRequestListeners.forEach((cb) => cb(req)),
+  emitToListeners(browserOpenRequestListeners, 'browserOpenRequestListeners', req),
 );
 ipcRenderer.on(ORCH_CHANNELS.paneCloseRequest, (_e, request: PaneCloseRequest) =>
-  paneCloseRequestListeners.forEach((cb) => cb(request)),
+  emitToListeners(paneCloseRequestListeners, 'paneCloseRequestListeners', request),
 );
 ipcRenderer.on(
   ORCH_CHANNELS.missionChanged,
   (_e, items: MissionSummarySnapshot[]) =>
-    missionChangedListeners.forEach((cb) => cb(items)),
+    emitToListeners(missionChangedListeners, 'missionChangedListeners', items),
 );
 ipcRenderer.on(ORCH_CHANNELS.missionsChanged, (_e, missions: Mission[]) =>
-  missionsChangedListeners.forEach((cb) => cb(missions)),
+  emitToListeners(missionsChangedListeners, 'missionsChangedListeners', missions),
 );
 ipcRenderer.on(ORCH_CHANNELS.handoffsChanged, (_e, handoffs: Handoff[]) =>
-  handoffsChangedListeners.forEach((cb) => cb(handoffs)),
+  emitToListeners(handoffsChangedListeners, 'handoffsChangedListeners', handoffs),
 );
 ipcRenderer.on(ORCH_CHANNELS.todosChanged, (_e, lists: TodoList[]) =>
-  todosChangedListeners.forEach((cb) => cb(lists)),
+  emitToListeners(todosChangedListeners, 'todosChangedListeners', lists),
 );
 ipcRenderer.on(ORCH_CHANNELS.squadsChanged, (_e, squads: Squad[]) =>
-  squadsChangedListeners.forEach((cb) => cb(squads)),
+  emitToListeners(squadsChangedListeners, 'squadsChangedListeners', squads),
 );
 ipcRenderer.on(ORCH_CHANNELS.bgTaskEvent, (_e, event: BgTaskEventPayload) =>
-  bgTaskEventListeners.forEach((cb) => cb(event)),
+  emitToListeners(bgTaskEventListeners, 'bgTaskEventListeners', event),
 );
 ipcRenderer.on(ORCH_CHANNELS.paneLoginStuck, (_e, event: PaneLoginStuckEvent) =>
-  paneLoginStuckListeners.forEach((cb) => cb(event)),
+  emitToListeners(paneLoginStuckListeners, 'paneLoginStuckListeners', event),
 );
 ipcRenderer.on(ORCH_CHANNELS.agentWaiting, (_e, event: AgentWaitingEvent) =>
-  agentWaitingListeners.forEach((cb) => cb(event)),
+  emitToListeners(agentWaitingListeners, 'agentWaitingListeners', event),
 );
 
 const settingsChangedListeners = new Set<(settings: TerminalSettings) => void>();
 ipcRenderer.on(SETTINGS_CHANNELS.changed, (_e, settings: TerminalSettings) =>
-  settingsChangedListeners.forEach((cb) => cb(settings)),
+  emitToListeners(settingsChangedListeners, 'settingsChangedListeners', settings),
 );
 
 const audioSettingsChangedListeners = new Set<(audio: AudioSettings) => void>();
 ipcRenderer.on(SETTINGS_CHANNELS.audioChanged, (_e, audio: AudioSettings) =>
-  audioSettingsChangedListeners.forEach((cb) => cb(audio)),
+  emitToListeners(audioSettingsChangedListeners, 'audioSettingsChangedListeners', audio),
 );
 
 const uiSettingsChangedListeners = new Set<(ui: UiSettings) => void>();
 ipcRenderer.on(SETTINGS_CHANNELS.uiChanged, (_e, ui: UiSettings) =>
-  uiSettingsChangedListeners.forEach((cb) => cb(ui)),
+  emitToListeners(uiSettingsChangedListeners, 'uiSettingsChangedListeners', ui),
 );
 
 const workspaceChangedListeners = new Set<(state: WorkspaceState) => void>();
 ipcRenderer.on(WORKSPACE_CHANNELS.changed, (_e, state: WorkspaceState) =>
-  workspaceChangedListeners.forEach((cb) => cb(state)),
+  emitToListeners(workspaceChangedListeners, 'workspaceChangedListeners', state),
 );
 
 const providersChangedListeners = new Set<
   (list: ProviderSettingsInfo[]) => void
 >();
 ipcRenderer.on(PROVIDER_CHANNELS.changed, (_e, list: ProviderSettingsInfo[]) =>
-  providersChangedListeners.forEach((cb) => cb(list)),
+  emitToListeners(providersChangedListeners, 'providersChangedListeners', list),
 );
 
 const productFlagsChangedListeners = new Set<
@@ -508,7 +530,7 @@ const productFlagsChangedListeners = new Set<
 ipcRenderer.on(
   PRODUCT_WAVE_CHANNELS.flagsChanged,
   (_e, list: ProductFlagResolutionRow[]) =>
-    productFlagsChangedListeners.forEach((cb) => cb(list)),
+    emitToListeners(productFlagsChangedListeners, 'productFlagsChangedListeners', list),
 );
 
 const accountsChangedListeners = new Set<(list: AccountInfo[]) => void>();
@@ -516,24 +538,24 @@ const failoverListeners = new Set<(event: FailoverEvent) => void>();
 const accountActivatedListeners = new Set<(event: AccountActivatedEvent) => void>();
 const costChangedListeners = new Set<(snapshot: CostSnapshot) => void>();
 ipcRenderer.on(ACCOUNT_CHANNELS.changed, (_e, list: AccountInfo[]) =>
-  accountsChangedListeners.forEach((cb) => cb(list)),
+  emitToListeners(accountsChangedListeners, 'accountsChangedListeners', list),
 );
 ipcRenderer.on(ACCOUNT_CHANNELS.failover, (_e, event: FailoverEvent) =>
-  failoverListeners.forEach((cb) => cb(event)),
+  emitToListeners(failoverListeners, 'failoverListeners', event),
 );
 ipcRenderer.on(ACCOUNT_CHANNELS.activated, (_e, event: AccountActivatedEvent) =>
-  accountActivatedListeners.forEach((cb) => cb(event)),
+  emitToListeners(accountActivatedListeners, 'accountActivatedListeners', event),
 );
 ipcRenderer.on(COST_CHANNELS.changed, (_e, snapshot: CostSnapshot) =>
-  costChangedListeners.forEach((cb) => cb(snapshot)),
+  emitToListeners(costChangedListeners, 'costChangedListeners', snapshot),
 );
 const usageChangedListeners = new Set<(snapshot: UsageSnapshot) => void>();
 ipcRenderer.on(USAGE_CHANNELS.changed, (_e, snapshot: UsageSnapshot) =>
-  usageChangedListeners.forEach((cb) => cb(snapshot)),
+  emitToListeners(usageChangedListeners, 'usageChangedListeners', snapshot),
 );
 const quotaChangedListeners = new Set<(snapshot: QuotaFleetSnapshot) => void>();
 ipcRenderer.on(QUOTA_CHANNELS.changed, (_e, snapshot: QuotaFleetSnapshot) =>
-  quotaChangedListeners.forEach((cb) => cb(snapshot)),
+  emitToListeners(quotaChangedListeners, 'quotaChangedListeners', snapshot),
 );
 const gamificationChangedListeners = new Set<
   (snapshot: GamificationSnapshot) => void
@@ -541,16 +563,16 @@ const gamificationChangedListeners = new Set<
 ipcRenderer.on(
   GAMIFICATION_CHANNELS.changed,
   (_e, snapshot: GamificationSnapshot) =>
-    gamificationChangedListeners.forEach((cb) => cb(snapshot)),
+    emitToListeners(gamificationChangedListeners, 'gamificationChangedListeners', snapshot),
 );
 
 const notesChangedListeners = new Set<(event: NotesChangedEvent) => void>();
 ipcRenderer.on(NOTE_CHANNELS.changed, (_e, event: NotesChangedEvent) =>
-  notesChangedListeners.forEach((cb) => cb(event)),
+  emitToListeners(notesChangedListeners, 'notesChangedListeners', event),
 );
 const pipesChangedListeners = new Set<(pipes: Pipe[]) => void>();
 ipcRenderer.on(PIPE_CHANNELS.changed, (_e, pipes: Pipe[]) =>
-  pipesChangedListeners.forEach((cb) => cb(pipes)),
+  emitToListeners(pipesChangedListeners, 'pipesChangedListeners', pipes),
 );
 
 const api: NexusApi = {

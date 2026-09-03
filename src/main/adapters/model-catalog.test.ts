@@ -146,6 +146,47 @@ describe('published catalog JSON', () => {
     );
   });
 
+  it('ships glm-5.3-flash (2026-08-26) and claude-fable-5-1/mythos-5-1 (2026-09-01)', () => {
+    for (const catalog of [BUILTIN_MODEL_CATALOG, PUBLISHED_MODEL_CATALOG]) {
+      expect(
+        modelCatalogInfo(catalog, 'glm', 'glm-5.3-flash'),
+      ).toMatchObject({
+        id: 'glm-5.3-flash',
+        availability: 'cheap',
+        costTier: 'low',
+      });
+      expect(
+        modelCatalogInfo(catalog, 'claude', 'claude-fable-5-1'),
+      ).toMatchObject({
+        id: 'claude-fable-5-1',
+        availability: 'paid',
+        costTier: 'high',
+      });
+      const mythos = modelCatalogInfo(catalog, 'claude', 'claude-mythos-5-1');
+      expect(mythos?.availability).toBe('api-only');
+      expect(isModelBlockedForAutoRouting(mythos)).toBe(true);
+    }
+    // Fable 5.1 é GA: participa do roteamento automático.
+    expect(
+      isModelBlockedForAutoRouting(
+        modelCatalogInfo(BUILTIN_MODEL_CATALOG, 'claude', 'claude-fable-5-1'),
+      ),
+    ).toBe(false);
+  });
+
+  it('ships gpt-6-astra (2026-09-03) como trusted-access, fora do roteamento automático', () => {
+    for (const catalog of [BUILTIN_MODEL_CATALOG, PUBLISHED_MODEL_CATALOG]) {
+      const astra = modelCatalogInfo(catalog, 'codex', 'gpt-6-astra');
+      expect(astra?.availability).toBe('api-only');
+      expect(astra?.costTier).toBe('high');
+      expect(isModelBlockedForAutoRouting(astra)).toBe(true);
+    }
+    // Default do codex segue estável durante o rollout.
+    expect(BUILTIN_MODEL_CATALOG.adapters?.codex?.default).toBe(
+      'gpt-5.6-terra',
+    );
+  });
+
   it('keeps the AGY published default aligned with its current 3.7 family', () => {
     const agy = PUBLISHED_MODEL_CATALOG.adapters?.agy;
     const ids = agy?.models?.map((model) => model.id) ?? [];

@@ -59,6 +59,12 @@ describe('orchestrator doctrine', () => {
     expect(text).toMatch(/clean/);
   });
 
+  it('ensina que revisão/análise read-only abre em paralelo (não serializa)', () => {
+    const text = buildOrchestratorDoctrine(squad(), mission());
+    expect(text).toMatch(/readOnly:true/);
+    expect(text).toMatch(/paralelo/);
+  });
+
   it('carrega a nota de voz PT/tradução respondendo em PT-BR', () => {
     const text = buildOrchestratorDoctrine(squad(), mission());
     expect(text).toMatch(/ditar em PT|ditado traduzido/i);

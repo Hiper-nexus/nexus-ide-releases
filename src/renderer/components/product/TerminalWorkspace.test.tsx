@@ -48,8 +48,26 @@ const browserRuntime = vi.hoisted(() => ({
 vi.mock('../../terminal/terminal-host', () => terminalRuntime);
 vi.mock('../../browser/browser-host', () => browserRuntime);
 vi.mock('../CanvasView', () => ({
-  CanvasView: () => <div className="canvas-container" />,
+  CanvasView: (props: {
+    visiblePaneIds?: ReadonlySet<string>;
+    onPaneCreated?: (paneId: string) => void;
+  }) => {
+    (globalThis as Record<string, unknown>).__nexusCanvasViewProps = props;
+    return <div className="canvas-container" />;
+  },
 }));
+
+function canvasViewProps(): {
+  visiblePaneIds?: ReadonlySet<string>;
+  onPaneCreated?: (paneId: string) => void;
+} {
+  return (
+    ((globalThis as Record<string, unknown>).__nexusCanvasViewProps as {
+      visiblePaneIds?: ReadonlySet<string>;
+      onPaneCreated?: (paneId: string) => void;
+    }) ?? {}
+  );
+}
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
@@ -312,5 +330,85 @@ describe('TerminalWorkspace contracts', () => {
     unmount(mission);
     const standalone = mount(<TerminalWorkspace />);
     expect(boardReturnButtons(standalone.host)).toHaveLength(0);
+  });
+});
+
+describe('TerminalWorkspace em missão — "+ Pane" do operador', () => {
+  const worker: PaneModel = {
+    id: 'pane-w1',
+    kind: 'cli-agent',
+    title: 'Worker',
+    adapterId: 'grok',
+    missionId: 'm-1',
+  };
+
+  beforeEach(() => {
+    // O picker rola a opção ativa para a vista; jsdom não implementa.
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: vi.fn(),
+    });
+    useLayoutStore.setState({
+      root: buildGridTree([worker]),
+      focusedPaneId: worker.id,
+      maximizedPaneId: null,
+    });
+  });
+
+  afterEach(() => {
+    Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
+  });
+
+  function attachedIds(): string[] {
+    return terminalRuntime.attachHost.mock.calls.map(
+      ([pane]) => (pane as PaneModel).id,
+    );
+  }
+
+  it('mostra só o pane da missão antes do operador criar algo', () => {
+    mount(<TerminalWorkspace missionId="m-1" />);
+
+    expect(attachedIds()).toEqual(['pane-w1']);
+  });
+
+  it('canvas: terminal criado na vista da missão é fixado no filtro', () => {
+    useLayoutStore.setState({ viewKind: 'canvas' });
+    mount(<TerminalWorkspace missionId="m-1" />);
+
+    expect([...(canvasViewProps().visiblePaneIds ?? [])]).toEqual(['pane-w1']);
+    expect(typeof canvasViewProps().onPaneCreated).toBe('function');
+
+    // A barra do canvas cria o shell e avisa: o id entra no filtro da vista.
+    act(() => canvasViewProps().onPaneCreated?.('pane-op'));
+    expect([...(canvasViewProps().visiblePaneIds ?? [])]).toEqual(
+      expect.arrayContaining(['pane-w1', 'pane-op']),
+    );
+  });
+
+  it('o Terminal criado pelo picker monta na vista da missão (com PTY)', () => {
+    const { host } = mount(<TerminalWorkspace missionId="m-1" />);
+    expect(attachedIds()).toEqual(['pane-w1']);
+
+    const trigger = host.querySelector<HTMLButtonElement>(
+      '[data-testid="pane-picker-trigger"]',
+    );
+    if (!trigger) throw new Error('no "+ Pane" trigger rendered');
+    act(() => trigger.click());
+    const entry = host.querySelector<HTMLButtonElement>(
+      '[data-testid="pane-picker-entry-type:terminal"]',
+    );
+    if (!entry) throw new Error('no Terminal entry rendered');
+    act(() => entry.click());
+
+    // Regressão: o filtro da missão escondia o shell criado (sem PaneLeaf,
+    // sem PTY — "não abre, não faz nada"). Fixado, ele monta ao lado.
+    // (attachHost pode refogar no remount do reshaping — a prova estável é
+    // o slot montado no DOM, não a contagem de chamadas.)
+    expect(host.querySelectorAll('.pane__terminal')).toHaveLength(2);
+    expect(attachedIds()).toContain('pane-w1');
+    const shellAttached = terminalRuntime.attachHost.mock.calls.some(
+      ([pane]) => (pane as PaneModel).kind === 'shell',
+    );
+    expect(shellAttached).toBe(true);
   });
 });

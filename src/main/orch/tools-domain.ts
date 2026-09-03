@@ -617,7 +617,8 @@ const missionSpawnPaneTool: McpToolDef = {
       readOnly: {
         type: 'boolean',
         description:
-          'Spawn with provider-native read-only enforcement. Required before PREVC execution.',
+          'Spawn with provider-native read-only enforcement. Required before PREVC execution. ' +
+          'Read-only workers spawn in parallel even with an active writer — use for review/analysis that edits nothing.',
       },
     },
     required: ['missionId'],

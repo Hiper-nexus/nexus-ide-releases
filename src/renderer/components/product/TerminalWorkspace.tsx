@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CanvasView } from '../CanvasView';
 import { PaneGrid } from '../PaneGrid';
 import { useLayoutStore } from '../../state/layout-store';
@@ -46,6 +46,21 @@ export function TerminalWorkspace({
     : 'Missão';
   const paneMissions = useOrchStore((state) => state.paneMissions);
   const layoutRoot = useLayoutStore((state) => state.root);
+  // Panes que o operador abriu pelo "+ Pane" DENTRO desta vista. O filtro da
+  // missão esconderia shells soltos e agentes sem missão — o pane nascia no
+  // layout canônico mas nunca montava (sem PaneLeaf, sem PTY): "não abre, não
+  // faz nada". Fixar o id aqui o mantém visível ao lado dos panes da missão.
+  const [operatorPinIds, setOperatorPinIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  useEffect(() => {
+    setOperatorPinIds(new Set());
+  }, [missionId]);
+  const handlePaneCreated = useCallback((paneId: string) => {
+    setOperatorPinIds((previous) =>
+      previous.has(paneId) ? previous : new Set(previous).add(paneId),
+    );
+  }, []);
   const visiblePaneIds = useMemo(() => {
     if (!missionId) return undefined;
     const visible = selectMissionTerminalPanes(
@@ -53,8 +68,10 @@ export function TerminalWorkspace({
       missionId,
       paneMissions,
     );
-    return new Set(visible.map((pane) => pane.id));
-  }, [layoutRoot, missionId, paneMissions]);
+    const ids = new Set(visible.map((pane) => pane.id));
+    for (const pinned of operatorPinIds) ids.add(pinned);
+    return ids;
+  }, [layoutRoot, missionId, paneMissions, operatorPinIds]);
 
   return (
     <section
@@ -91,9 +108,15 @@ export function TerminalWorkspace({
 
       <div className="terminal-workspace__surface">
         {viewKind === 'canvas' ? (
-          <CanvasView visiblePaneIds={visiblePaneIds} />
+          <CanvasView
+            visiblePaneIds={visiblePaneIds}
+            onPaneCreated={handlePaneCreated}
+          />
         ) : (
-          <PaneGrid visiblePaneIds={visiblePaneIds} />
+          <PaneGrid
+            visiblePaneIds={visiblePaneIds}
+            onPaneCreated={handlePaneCreated}
+          />
         )}
       </div>
     </section>

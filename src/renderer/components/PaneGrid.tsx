@@ -39,8 +39,11 @@ function renderNode(node: LayoutNode): React.ReactNode {
 
 export function PaneGrid({
   visiblePaneIds,
+  onPaneCreated,
 }: {
   readonly visiblePaneIds?: ReadonlySet<string>;
+  /** Repassado ao picker: o id do pane que o operador acabou de criar. */
+  readonly onPaneCreated?: (paneId: string) => void;
 } = {}) {
   const root = useLayoutStore((s) => s.root);
   const maximizedPaneId = useLayoutStore((s) => s.maximizedPaneId);
@@ -77,7 +80,7 @@ export function PaneGrid({
     <div className={`grid${maximizedPane ? ' grid--pane-maximized' : ''}`}>
       {maximizedPane ? <PaneLeaf pane={maximizedPane} /> : renderNode(displayRoot)}
       {/* Controle flutuante da grelha: abrir um pane novo sem sair do trabalho. */}
-      <PanePicker />
+      <PanePicker onPaneCreated={onPaneCreated} />
     </div>
   );
 }

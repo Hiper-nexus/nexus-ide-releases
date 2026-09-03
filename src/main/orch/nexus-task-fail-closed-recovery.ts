@@ -1,5 +1,6 @@
 import type { Mission, SquadAgent } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
+import { missionAwaitsAdjustment } from '../../shared/mission-recovery-policy';
 import { listPaneSnapshots, requestPaneSpawn } from './pane-registry';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { getSquad } from './squad-store';
@@ -351,6 +352,10 @@ export async function flushNexusTaskFailClosedRetry(
     if (!mission || (mission.status !== 'running' && mission.status !== 'pending')) {
       return null;
     }
+    // "Pedir um ajuste": a missão reabriu para o operador DESCREVER o ajuste.
+    // Descarregar retries enfileirados aqui seria o runtime spawnando sozinho
+    // (worker duplicado refazendo trabalho já entregue) antes de saber o quê.
+    if (missionAwaitsAdjustment(mission)) return null;
     const squad = mission.squadId ? getSquad(mission.squadId) : null;
     if (!squad) return null;
     const live = liveSpawnedWorkers(missionId);

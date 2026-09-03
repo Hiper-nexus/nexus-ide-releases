@@ -215,16 +215,19 @@ function paneStateRecord(): Record<string, string | undefined> {
   return record;
 }
 
-/** Abre o pane pela ação que JÁ existe na store — o picker não cria panes. */
-export function runPanePickerIntent(intent: PanePickerIntent): void {
+/**
+ * Abre o pane pela ação que JÁ existe na store — o picker não cria panes.
+ * Devolve o id do pane criado (undefined quando a store recusou), para que
+ * vistas filtradas (ex.: Terminais da missão) possam mostrar o pane novo em
+ * vez de criá-lo invisível.
+ */
+export function runPanePickerIntent(intent: PanePickerIntent): string | undefined {
   const layout = useLayoutStore.getState();
   if (intent.kind === 'terminal') {
-    layout.addShellPane();
-    return;
+    return layout.addShellPane();
   }
   if (intent.kind === 'browser') {
-    layout.addBrowserPane();
-    return;
+    return layout.addBrowserPane();
   }
   const orch = useOrchStore.getState();
   const panes = listPanes(layout.root);
@@ -245,13 +248,17 @@ export function runPanePickerIntent(intent: PanePickerIntent): void {
     toAccountLabel: accountLabelOf(intent.accountId, DEFAULT_ACCOUNT_LABEL),
   });
   if (planned.accountId || planned.continuityPack) {
-    layout.spawnAgent(intent.adapterId, intent.model, planned);
-    return;
+    return layout.spawnAgent(intent.adapterId, intent.model, planned);
   }
-  layout.spawnAgent(intent.adapterId, intent.model);
+  return layout.spawnAgent(intent.adapterId, intent.model);
 }
 
-export function PanePicker() {
+export function PanePicker({
+  onPaneCreated,
+}: {
+  /** Chamado com o id do pane criado — vistas filtradas o tornam visível. */
+  readonly onPaneCreated?: (paneId: string) => void;
+} = {}) {
   const providers = useProviderStore((state) => state.providers);
   const accounts = useAccountStore((state) => state.accounts);
   const pendingOpen = usePanePickerStore((state) => state.pendingOpen);
@@ -340,7 +347,8 @@ export function PanePicker() {
 
   const runEntry = (entry: PanePickerEntry) => {
     setOpen(false);
-    runPanePickerIntent(entry.intent);
+    const paneId = runPanePickerIntent(entry.intent);
+    if (paneId) onPaneCreated?.(paneId);
   };
 
   const onKeyDown = (event: React.KeyboardEvent) => {

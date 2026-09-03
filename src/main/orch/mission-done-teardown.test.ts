@@ -31,6 +31,7 @@ vi.mock('../pty/pty-manager', () => ({
   },
 }));
 
+import { MISSION_OPERATOR_APPROVED_MARKER } from '../../shared/mission-recovery-policy';
 import {
   initMissionDoneTeardown,
   shutdownMissionDoneTeardown,
@@ -48,6 +49,15 @@ const scopeKey = JSON.stringify(scope);
 
 function missionFor(status: string, id = 'mission-1'): Mission {
   return { id, status, title: 'Missão' } as unknown as Mission;
+}
+
+function approvedMissionFor(status: string, id = 'mission-1'): Mission {
+  return {
+    id,
+    status,
+    title: 'Missão',
+    description: `Entrega revisada.\n\n${MISSION_OPERATOR_APPROVED_MARKER}`,
+  } as unknown as Mission;
 }
 
 function paneFor(
@@ -99,6 +109,7 @@ interface Harness {
     enabled: boolean;
     idle: boolean;
     status: string;
+    awaitingReview: boolean;
     panes: PaneSnapshot[];
     authority: PaneRuntimeAuthority | null;
   };
@@ -109,6 +120,7 @@ function harness(overrides: Partial<Harness['state']> = {}): Harness {
     enabled: true,
     idle: true,
     status: 'done',
+    awaitingReview: false,
     panes: [],
     authority: authorityFor('pty-w1'),
     ...overrides,
@@ -127,6 +139,7 @@ function harness(overrides: Partial<Harness['state']> = {}): Harness {
     listMissionPanes: () => state.panes,
     getAuthority: () => state.authority,
     missionStatus: () => state.status,
+    isAwaitingOperatorReview: () => state.awaitingReview,
     isIdle: () => state.idle,
     closePane: (request) => {
       closed.push(request);
@@ -222,6 +235,43 @@ describe('mission-done-teardown (F-106: orquestrador permanece, worker idle 30s 
     h.state.idle = false; // operador mandou algo sem transição observada
     vi.advanceTimersByTime(WORKER_POST_DONE_TTL_MS + 1);
     expect(h.closed).toHaveLength(0);
+  });
+
+  it('"Aguardando você" NÃO fecha worker — terminais ficam para inspeção e ajuste', () => {
+    const h = harness({
+      awaitingReview: true,
+      panes: [paneFor('pane-w1', 'worker', 'pty-w1')],
+    });
+    initMissionDoneTeardown(h.deps);
+    transitionToDone(h);
+    vi.advanceTimersByTime(WORKER_POST_DONE_TTL_MS * 2);
+    expect(h.closed).toHaveLength(0);
+
+    // Nem o tap de status (worker ficou idle depois) arma enquanto revisa.
+    emitStatus('pty-w1', 'idle');
+    vi.advanceTimersByTime(WORKER_POST_DONE_TTL_MS * 2);
+    expect(h.closed).toHaveLength(0);
+  });
+
+  it('"Marcar como feito" tardio arma o TTL e fecha o worker', () => {
+    const h = harness({
+      awaitingReview: true,
+      panes: [paneFor('pane-w1', 'worker', 'pty-w1')],
+    });
+    initMissionDoneTeardown(h.deps);
+    transitionToDone(h);
+    vi.advanceTimersByTime(WORKER_POST_DONE_TTL_MS * 2);
+    expect(h.closed).toHaveLength(0);
+
+    // O humano aprovou: revisão terminou, terminais já puderam ser vistos.
+    h.state.awaitingReview = false;
+    h.emitMissions([approvedMissionFor('done')]);
+    vi.advanceTimersByTime(WORKER_POST_DONE_TTL_MS + 1);
+    expect(h.closed).toHaveLength(1);
+    expect(h.closed[0]).toMatchObject({
+      paneId: 'pane-pty-w1',
+      role: 'worker',
+    });
   });
 
   it('missão que reabre (done → running) não fecha worker no disparo', () => {

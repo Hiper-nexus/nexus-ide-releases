@@ -180,8 +180,11 @@ function CanvasCommandBar({
  */
 export function CanvasView({
   visiblePaneIds,
+  onPaneCreated,
 }: {
   readonly visiblePaneIds?: ReadonlySet<string>;
+  /** Chamado com o id do terminal criado na barra — vistas filtradas o tornam visível. */
+  readonly onPaneCreated?: (paneId: string) => void;
 } = {}) {
   const root = useLayoutStore((s) => s.root);
   const focusedPaneId = useLayoutStore((s) => s.focusedPaneId);
@@ -190,6 +193,12 @@ export function CanvasView({
   const updateCanvasNodeLayout = useLayoutStore((s) => s.updateCanvasNodeLayout);
   const setCanvasViewport = useLayoutStore((s) => s.setCanvasViewport);
   const addShellPane = useLayoutStore((s) => s.addShellPane);
+  // Mesmo contrato do picker no grid: o terminal criado DENTRO da vista
+  // filtrada da missão precisa ser fixado nela, senão nasce invisível.
+  const handleAddTerminal = useCallback(() => {
+    const paneId = addShellPane();
+    if (paneId) onPaneCreated?.(paneId);
+  }, [addShellPane, onPaneCreated]);
   const paneStates = useSessionStateStore((s) => s.paneStates);
   const paneMissions = useOrchStore((s) => s.paneMissions);
 
@@ -447,7 +456,7 @@ export function CanvasView({
         activeMissionCount={activeMissionCount}
         pipeCount={edges.length}
         onCenter={centerPanes}
-        onAddTerminal={addShellPane}
+        onAddTerminal={handleAddTerminal}
       />
       <ReactFlow
         nodes={nodes}

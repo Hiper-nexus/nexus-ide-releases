@@ -163,7 +163,7 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     id: FEATURE_FLAG_IDS.missionDoneTeardown,
     owner: 'orch',
     description:
-      'Teardown híbrido no done da missão (F-106, reversão 23/08): orquestrador PERMANECE (superfície de ajuste pós-entrega); workers idle encerram ~30s depois, cancelados por qualquer trabalho novo. DEFAULT-ON. Opt-out via override de flag para E2E real-mission, igual workerHandoffTtl.',
+      'Teardown híbrido no done da missão (F-106, reversão 23/08): orquestrador PERMANECE (superfície de ajuste pós-entrega); workers idle encerram ~30s depois da APROVAÇÃO ("Marcar como feito") — enquanto "Aguardando você", terminais ficam para inspeção; cancelados por qualquer trabalho novo. DEFAULT-ON. Opt-out via override de flag para E2E real-mission, igual workerHandoffTtl.',
     channel: 'dev',
     createdAt: '2026-08-23',
     removeAfter: '2027-03-31',

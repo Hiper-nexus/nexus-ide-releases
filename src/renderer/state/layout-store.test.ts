@@ -652,6 +652,15 @@ describe('layout-store split pivot vs. the id it hands back', () => {
       listPanes(useLayoutStore.getState().root).map((pane) => pane.id),
     ).toContain(paneId);
   });
+
+  it('spawnAgent never returns the id of a pane it failed to insert', () => {
+    const paneId = useLayoutStore.getState().spawnAgent('claude', 'opus');
+
+    expect(paneId).toBeDefined();
+    expect(
+      listPanes(useLayoutStore.getState().root).map((pane) => pane.id),
+    ).toContain(paneId);
+  });
 });
 
 describe('layout-store persistence key vs. the tree it owns', () => {

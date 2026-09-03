@@ -19,6 +19,19 @@ export type DeepLink =
   | { kind: 'open'; path: string }
   | { kind: 'auth'; code: string; state: string | null };
 
+/**
+ * decodeURIComponent fora de try/catch lançava URIError síncrono no
+ * main-process para links como nexus://license/%E0%A4%A — em vez de cair no
+ * `return null` de link inválido. Centralizado aqui, nunca lança.
+ */
+function safeDecodePath(pathname: string): string | null {
+  try {
+    return decodeURIComponent(pathname.replace(/^\/+/, ''));
+  } catch {
+    return null;
+  }
+}
+
 export function parseDeepLink(raw: string): DeepLink | null {
   let url: URL;
   try {
@@ -31,8 +44,7 @@ export function parseDeepLink(raw: string): DeepLink | null {
 
   if (host === 'license') {
     const token =
-      url.searchParams.get('token') ??
-      decodeURIComponent(url.pathname.replace(/^\/+/, ''));
+      url.searchParams.get('token') ?? safeDecodePath(url.pathname);
     if (!token || token.length > TOKEN_MAX || !SAFE_TOKEN.test(token)) {
       return null;
     }
@@ -51,7 +63,7 @@ export function parseDeepLink(raw: string): DeepLink | null {
     // trocado por tokens no backend. O state é o nonce que o PRÓPRIO app
     // gerou ao iniciar o login; a validação contra o pendente acontece no
     // auth-client. Mesmo rigor dos demais: conjunto seguro + teto.
-    const code = decodeURIComponent(url.pathname.replace(/^\/+/, ''));
+    const code = safeDecodePath(url.pathname);
     if (!code || code.length > TOKEN_MAX || !SAFE_TOKEN.test(code)) return null;
     const state = url.searchParams.get('state');
     if (state !== null && (state.length > TOKEN_MAX || !SAFE_TOKEN.test(state))) {

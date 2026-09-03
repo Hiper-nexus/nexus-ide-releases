@@ -32,6 +32,9 @@ describe('priceForModel', () => {
     expect(priceForModel('claude-opus-5')).toEqual(
       MODEL_PRICES['claude-opus-5'],
     );
+    expect(priceForModel('glm-5.3-flash')).toEqual(
+      MODEL_PRICES['glm-5.3-flash'],
+    );
   });
 
   it('strips provider namespaces before matching', () => {

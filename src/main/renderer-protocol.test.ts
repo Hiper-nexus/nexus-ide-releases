@@ -155,6 +155,20 @@ describe('renderer protocol handler', () => {
     expect(await response.text()).not.toContain('do not expose');
   });
 
+  it('serves symlinks that resolve inside the root from the same fd', async () => {
+    await symlink(
+      path.join(rendererRoot, 'index.html'),
+      path.join(rendererRoot, 'assets', 'alias.html'),
+    );
+
+    const response = await handler(
+      new Request(`${RENDERER_PROTOCOL_SCHEME}://${RENDERER_PROTOCOL_HOST}/assets/alias.html`),
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain('id="root"');
+  });
+
   it('blocks symlinks that resolve outside the renderer root', async () => {
     await symlink(outsideFile, path.join(rendererRoot, 'assets', 'escaped.txt'));
 

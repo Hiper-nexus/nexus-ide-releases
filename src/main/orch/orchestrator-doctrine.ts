@@ -59,10 +59,9 @@ const DOCTRINE_BASE = [
   '• FECHO: entrega-resposta sem arquivo: submeta VOCÊ o handoff final ' +
     '(success, evidência citada) — é ele que conclui a missão.',
   '• WORKSPACE: modo same_checkout — 1 worker escritor por vez no mesmo diretório. ' +
+    'Revisão/análise sem edição: spawn com readOnly:true — abre em paralelo. ' +
     'Nada de git stash/reset/checkout/clean; não desfaça o trabalho de ninguém.',
-  '• VOZ: o operador pode ditar em PT; o input pode chegar como inglês traduzido e ' +
-    'otimizado para execução — trate como ditado traduzido de tarefa de software e ' +
-    'responda em PT-BR.',
+  '• VOZ: ditado traduzido pode chegar em inglês; responda em PT-BR.',
 ].join('\n');
 
 export interface MaestroKickoffBriefInput {

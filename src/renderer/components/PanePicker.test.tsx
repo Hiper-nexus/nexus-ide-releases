@@ -331,6 +331,16 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     expect(spawnAgent).not.toHaveBeenCalled();
   });
 
+  it('runPanePickerIntent devolve o id criado para vistas filtradas o exibirem', () => {
+    expect(runPanePickerIntent({ kind: 'terminal' })).toBe('pane-shell');
+    expect(runPanePickerIntent({ kind: 'browser' })).toBe('pane-browser');
+
+    spawnAgent.mockReturnValueOnce('pane-agent');
+    expect(
+      runPanePickerIntent({ kind: 'agent', adapterId: 'codex', model: 'x' }),
+    ).toBe('pane-agent');
+  });
+
   it('setas movem a seleção e Enter abre a linha ativa', () => {
     mount();
     openMenu();

@@ -262,6 +262,21 @@ describe('canonical mission preload bridge', () => {
     ]);
   });
 
+  it('um listener que lança NÃO cala os demais (entrega isolada)', async () => {
+    const api = await loadPreloadApi();
+    const failing = vi.fn(() => {
+      throw new Error('subscriber quebrado');
+    });
+    const healthy = vi.fn();
+    api.orch.onMissionsChanged(failing);
+    api.orch.onMissionsChanged(healthy);
+
+    expect(() =>
+      emitIpc(ORCH_CHANNELS.missionsChanged, [{ id: 'm' }]),
+    ).not.toThrow();
+    expect(healthy).toHaveBeenCalledWith([{ id: 'm' }]);
+  });
+
   it('stops changed delivery after an idempotent double unsubscribe', async () => {
     const api = await loadPreloadApi();
     const listener = vi.fn();

@@ -71,6 +71,15 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
     claude: {
       models: [
         { id: 'claude-opus-5', availability: 'paid', costTier: 'high', source: 'bundled' },
+        { id: 'claude-fable-5-1', availability: 'paid', costTier: 'high', source: 'bundled' },
+        {
+          id: 'claude-mythos-5-1',
+          availability: 'api-only',
+          costTier: 'high',
+          source: 'bundled',
+          warning:
+            'Trusted-access only: not used for automatic routing unless the user selects it manually.',
+        },
         {
           id: 'claude-fable-5',
           availability: 'api-only',
@@ -87,6 +96,14 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
     codex: {
       default: 'gpt-5.6-terra',
       models: [
+        {
+          id: 'gpt-6-astra',
+          availability: 'api-only',
+          costTier: 'high',
+          source: 'bundled',
+          warning:
+            'Trusted-access rollout (2026-09-03): not used for automatic routing unless the user selects it manually.',
+        },
         { id: 'gpt-5.6-sol', availability: 'paid', costTier: 'high', source: 'bundled' },
         { id: 'gpt-5.6-terra', availability: 'paid', costTier: 'high', source: 'bundled' },
         { id: 'gpt-5.6-luna', availability: 'paid', costTier: 'medium', source: 'bundled' },
@@ -113,6 +130,7 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
       default: 'glm-5.3',
       models: [
         { id: 'glm-5.3', availability: 'cheap', costTier: 'low', source: 'bundled' },
+        { id: 'glm-5.3-flash', availability: 'cheap', costTier: 'low', source: 'bundled' },
         { id: 'glm-5.2', availability: 'cheap', costTier: 'low', source: 'bundled' },
         { id: 'glm-4.7', availability: 'cheap', costTier: 'low', source: 'bundled' },
         { id: 'glm-4.5-air', availability: 'cheap', costTier: 'low', source: 'bundled' },

@@ -36,6 +36,8 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   kimi: { inputPerM: 0.6, outputPerM: 2.5 },
   moonshot: { inputPerM: 0.6, outputPerM: 2.5 },
   deepseek: { inputPerM: 0.27, outputPerM: 1.1 },
+  // GLM-5.3-Flash list price (Z.ai, 2026-08-26).
+  'glm-5.3-flash': { inputPerM: 0.07, outputPerM: 0.25 },
   glm: { inputPerM: 0.6, outputPerM: 2.2 },
   grok: { inputPerM: 3, outputPerM: 15 },
   qwen: { inputPerM: 0.4, outputPerM: 1.2 },

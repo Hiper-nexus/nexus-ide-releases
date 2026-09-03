@@ -60,7 +60,15 @@ function requestLiveEndUserAudio(): Promise<void> {
   return window.nexus.voice
     .liveEndUserAudio()
     .then((state) => useVoiceStore.getState().setLiveState(state))
-    .catch(() => {});
+    .catch((error) => {
+      // Silenciar aqui deixava o UI preso em estado Live inconsistente e o
+      // defeito indiagnosticável — registra e expõe o erro na store.
+      const message = errMsg(error);
+      logVoiceEvent('error', 'live.endUserAudioFailed', 'falha ao encerrar áudio do usuário Live', {
+        error: message,
+      });
+      liveStatus('error', message);
+    });
 }
 
 /** Flushes provider-side input as soon as capture pauses. */
@@ -74,7 +82,13 @@ export function liveEndTurn(): void {
   void window.nexus.voice
     .liveEndTurn()
     .then((state) => useVoiceStore.getState().setLiveState(state))
-    .catch(() => {})
+    .catch((error) => {
+      const message = errMsg(error);
+      logVoiceEvent('error', 'live.endTurnFailed', 'falha ao encerrar turno Live', {
+        error: message,
+      });
+      liveStatus('error', message);
+    })
     .finally(() => {
       void clearJarvisMcpSession();
     });

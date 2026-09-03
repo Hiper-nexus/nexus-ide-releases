@@ -1,4 +1,4 @@
-import { readFile, realpath, stat } from 'node:fs/promises';
+import { open, realpath } from 'node:fs/promises';
 import path from 'node:path';
 import type { CustomScheme, Protocol } from 'electron';
 
@@ -169,18 +169,28 @@ export function createRendererProtocolHandler(
       return plainResponse(403, 'Forbidden');
     }
 
+    let handle: Awaited<ReturnType<typeof open>> | null = null;
     try {
-      const fileStat = await stat(realCandidate);
+      // Re-resolve IMEDIATAMENTE antes de abrir: entre o realpath() da
+      // checagem acima e o uso, um symlink/rename local trocaria o alvo
+      // (TOCTOU — a checagem incidiria num arquivo e a leitura noutro).
+      // Stat e leitura saem do MESMO fd, sem re-resolver por nome.
+      const freshCandidate = await realpath(candidate);
+      if (!isInside(realRoot, freshCandidate)) {
+        return plainResponse(403, 'Forbidden');
+      }
+      handle = await open(freshCandidate, 'r');
+      const fileStat = await handle.stat();
       if (!fileStat.isFile()) {
         return plainResponse(404, 'Not found');
       }
 
       const headers = {
-        'cache-control': IMMUTABLE_ASSET_RE.test(path.basename(realCandidate))
+        'cache-control': IMMUTABLE_ASSET_RE.test(path.basename(freshCandidate))
           ? 'public, max-age=31536000, immutable'
           : 'no-store',
         'content-length': String(fileStat.size),
-        'content-type': contentTypeFor(realCandidate),
+        'content-type': contentTypeFor(freshCandidate),
         'cross-origin-resource-policy': 'same-origin',
         'referrer-policy': 'no-referrer',
         'x-content-type-options': 'nosniff',
@@ -190,12 +200,14 @@ export function createRendererProtocolHandler(
         return new Response(null, { status: 200, headers });
       }
 
-      const data = await readFile(realCandidate);
+      const data = await handle.readFile();
       return new Response(new Uint8Array(data), { status: 200, headers });
     } catch (error) {
       return isMissingFileError(error)
         ? plainResponse(404, 'Not found')
         : plainResponse(500, 'Internal error');
+    } finally {
+      await handle?.close().catch(() => {});
     }
   };
 }
