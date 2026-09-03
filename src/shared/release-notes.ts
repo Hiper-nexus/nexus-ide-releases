@@ -40,7 +40,7 @@ export const RELEASE_0721: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_0730: AppRelease = {
   version: '0.73.0',
   date: '2026-09-02',
   codename: 'Paridade Overclock 1.33.18 e Super Swarm',
@@ -79,6 +79,73 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'Proteção contra corridas de fechamento de pane',
       detail:
         'nexus_pane_close agora aceita startKey e valida ownership antes de finalizar processos de sessão.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.74.0',
+  date: '2026-09-03',
+  codename: 'BridgeSpace 3.4.18 Parity & Autonomous Swarm Engine',
+  summary:
+    'Port completo dos 10 domínios do BridgeSpace 3.4.18: design tokens com elevação glass/depth hierarchy, ' +
+    'terminal ghost assist com refinery assist, shell integration para macOS login shell (.zprofile) e OSC 9;9, ' +
+    'drop-box watcher de agent hooks com ingest offline tolerante a falhas, swarm mailbox com escrita transcript-first ' +
+    'e anti-social chatter filter, knowledge graph MCP com detecção de órfãos e sugestão de conexões, e sentinela de sobrevivência de sessão.',
+  highlights: [
+    {
+      title: 'Design Tokens & Glass Depth Hierarchy',
+      detail:
+        'Hierarquia de profundidade em 3 níveis (--shadow-card-rest, focus, drag), tokens semânticos de blur e raio, ' +
+        'classes surface-card e modal-radial-halo para consistência visual sem dependência de Tailwind arbitrário.',
+    },
+    {
+      title: 'Terminal Ghost Assist & Refinery',
+      detail:
+        'Sugestões inline com posicionamento tipográfico por célula (xterm render service), aceitação via Tab e Right Arrow, ' +
+        'aceitação por palavra via Option+Right Arrow, cancelamento no Escape e integração com o Command Refinery.',
+    },
+    {
+      title: 'Shell Integration Hardened (macOS Login Shell & OSC 9;9)',
+      detail:
+        'Geração de .zprofile sob ZDOTDIR customizado para herdar /etc/zprofile e path_helper no macOS (-l), ' +
+        'e notificação de troca de diretório atual via OSC 9;9 com parsing robusto.',
+    },
+    {
+      title: 'Agent Hooks Drop-Box Watcher',
+      detail:
+        'Canal resiliente de drop-box em disco (~/.nexus/agent-hooks/global/) com escrita atômica, normalização de status ' +
+        'e ingestão com fallback quando o socket HTTP do hook server estiver momentaneamente saturado.',
+    },
+    {
+      title: 'Swarm Mailbox & Scope-Freeze',
+      detail:
+        'Protocolo de mensageria multi-agente transcript-first (escrita do log antes do inbox) com limite de até 40 arquivos ' +
+        'por worker, limite de ciclos de revisão antes de escalonamento para o operador e filtro de ruído anti-social.',
+    },
+    {
+      title: 'Knowledge Graph MCP & Backlinks',
+      detail:
+        'Ferramentas nexus_memory_backlinks, nexus_memory_orphans e nexus_memory_suggest_connections ' +
+        'com suporte a wikilinks com alias [[Title|Alias]] e pontuação de similaridade semântica de tokens.',
+    },
+    {
+      title: 'Session Alive Sentinel & Detecção de Queda',
+      detail:
+        'Heartbeat atômico contínuo registra memória RSS arredondada, panes ativos e flag de expectedExit, ' +
+        'permitindo recuperação automática e diagnóstico de saídas anômalas no próximo boot.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Prevenção de travamento na ingestão de hooks',
+      detail:
+        'Processamento particionado em lotes de 100 arquivos com debounce para não bloquear o event loop em rajadas.',
+    },
+    {
+      title: 'Compatibilidade com Electron powerSaveBlocker em testes',
+      detail:
+        'Chamadas ao blocker em agent-awake-service tornadas opcionais para execução segura em ambientes headless.',
     },
   ],
 };

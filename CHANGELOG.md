@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.74.0 — BridgeSpace 3.4.18 Parity & Autonomous Swarm Engine
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+Incorporação dos 10 domínios do BridgeSpace 3.4.18 e orquestração de missões autônomas:
+- **Design Tokens & Glass Depth Hierarchy**: Tokens de sombra em 3 níveis (`--shadow-card-rest`, `--shadow-card-focus`, `--shadow-card-drag`), escala semântica de blur (`--blur-sm..3xl`), bordas e cantos arredondados padronizados, além das classes utilitárias `.surface-card` e `.modal-radial-halo`.
+- **Terminal Ghost Assist & Command Refinery**: Assistente de autocompletion inline com medição precisa de fonte via Xterm render service, aceitação com Tab/Seta Direita, aceitação de palavra com Option+Seta Direita, descarte com Escape e sanitização de comandos com detecção de `cd` redundante.
+- **Shell Integration Hardened (macOS Login Shell & OSC 9;9)**: Geração de `.zprofile` e `.zshenv` sob `ZDOTDIR` customizado preservando a herança de `/etc/zprofile` e `path_helper` no macOS (`zsh -l`), e notificação instantânea de diretório de trabalho via escape sequence OSC 9;9.
+- **Agent Hooks Drop-Box Watcher**: Ingestão atômica offline com escrita segura via arquivo temporário em `~/.nexus/agent-hooks/global/`, particionamento em lotes de 100 arquivos com debounce contra starvation e mapeamento canônico bidirecional de estados (`running` → `working`, etc.).
+- **Swarm Mailbox & Scope-Freeze**: Protocolo de comunicação multi-agente transcript-first (log durável gravado antes do inbox de destino), guarda de escopo rígida limitando modificações a até 40 arquivos por worker, limite de ciclos de revisão antes de escalonamento para o operador e filtro anti-social chatter para diffs enxutos.
+- **Knowledge Graph MCP (nexusmemory)**: Novas ferramentas MCP (`nexus_memory_backlinks`, `nexus_memory_orphans` e `nexus_memory_suggest_connections`) para exploração de decisões e memórias com pontuação de similaridade semântica e suporte a wikilinks com alias (`[[Title|Alias]]`).
+- **Session Alive Sentinel & Recuperação de Queda**: Monitor de sobrevivência do processo gravando batimentos atômicos contínuos em `session.alive.v1.json`, permitindo detecção de encerramentos anômalos no próximo boot e garantindo limpeza de arquivos temporários órfãos.
+- **Simulação E2E de Missões**: Suíte de validação executando missões simples (Fast-Lane/Direct) e complexas (Swarm + Story Plan + Review + Merge Queue) de início ao fim com 100% de sucesso.
+
 ## 0.73.0 — Paridade Overclock 1.33.18 e Super Swarm
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
