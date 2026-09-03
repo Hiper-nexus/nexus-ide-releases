@@ -127,16 +127,32 @@ export class TerminalInputState {
     return null;
   }
 
+  #tailMarkerBuffer = "";
+
   ingestPtyMarkers(data: string): void {
-    if (data.includes("\x1b]133;A")) {
+    const combined = this.#tailMarkerBuffer + data;
+    const idxA = combined.lastIndexOf("\x1b]133;A");
+    const idxB = combined.lastIndexOf("\x1b]133;B");
+    const idxC = combined.lastIndexOf("\x1b]133;C");
+    const idxD = combined.lastIndexOf("\x1b]133;D");
+
+    const maxIdx = Math.max(idxA, idxB, idxC, idxD);
+    if (maxIdx === -1) {
+      this.#tailMarkerBuffer = combined.slice(-8);
+      return;
+    }
+
+    this.#tailMarkerBuffer = combined.slice(maxIdx + 6).slice(-8);
+
+    if (maxIdx === idxA) {
       this.#phase = "typing";
       this.resetBuffer();
       this.invalidateGhost("prompt_start");
-    } else if (data.includes("\x1b]133;B") || data.includes("\x1b]133;C")) {
+    } else if (maxIdx === idxB || maxIdx === idxC) {
       this.#phase = "executing";
       this.resetBuffer();
       this.invalidateGhost("command_start");
-    } else if (data.includes("\x1b]133;D")) {
+    } else if (maxIdx === idxD) {
       this.#phase = "executing";
       this.invalidateGhost("command_finished");
     }

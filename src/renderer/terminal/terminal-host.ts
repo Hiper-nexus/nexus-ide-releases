@@ -726,6 +726,47 @@ async function ensurePaneAccountPin(
   }
 }
 
+function setupGhostAssist(host: Host, cwd?: string): void {
+  if (host.ghostAssist) {
+    try {
+      host.ghostAssist.dispose();
+    } catch {}
+    host.ghostAssist = undefined;
+  }
+  const ga = new TerminalGhostAssist({
+    terminal: host.term,
+    screenElement: host.element,
+    context: {
+      getCwd: () => cwd || listPanes(useLayoutStore.getState().root).find((p) => p.id === host.paneId)?.cwd || '',
+      getShell: () => '',
+    },
+    writeToPty: (chunk) => {
+      if (host.sessionId) {
+        window.nexus.pty.write(host.sessionId, chunk);
+      }
+    },
+    localLookup: async (prefix) => {
+      if (!host.sessionId || !window.nexus?.terminalBlock?.suggest) return null;
+      try {
+        const r = await window.nexus.terminalBlock.suggest({
+          sessionId: host.sessionId,
+          paneId: host.paneId,
+          prefix,
+          limit: 1,
+        });
+        return r.suggestions?.[0]?.command ?? null;
+      } catch {
+        return null;
+      }
+    },
+  });
+  host.ghostAssist = ga;
+  host.cleanups.push(() => {
+    ga.dispose();
+    if (host.ghostAssist === ga) host.ghostAssist = undefined;
+  });
+}
+
 function startSpawn(
   pane: PaneModel,
   host: Host,
@@ -915,38 +956,7 @@ function startSpawn(
       let adoptionTape = res.adopted ? createAdoptionRepaintTape() : null;
 
       if (!host.ghostAssist && pane.kind === 'shell') {
-        const ga = new TerminalGhostAssist({
-          terminal: host.term,
-          screenElement: host.element,
-          context: {
-            getCwd: () => pane.cwd || '',
-            getShell: () => '',
-          },
-          writeToPty: (chunk) => {
-            if (host.sessionId) {
-              window.nexus.pty.write(host.sessionId, chunk);
-            }
-          },
-          localLookup: async (prefix) => {
-            if (!host.sessionId || !window.nexus?.terminalBlock?.suggest) return null;
-            try {
-              const r = await window.nexus.terminalBlock.suggest({
-                sessionId: host.sessionId,
-                paneId: host.paneId,
-                prefix,
-                limit: 1,
-              });
-              return r.suggestions?.[0]?.command ?? null;
-            } catch {
-              return null;
-            }
-          },
-        });
-        host.ghostAssist = ga;
-        host.cleanups.push(() => {
-          ga.dispose();
-          if (host.ghostAssist === ga) host.ghostAssist = undefined;
-        });
+        setupGhostAssist(host, pane.cwd);
       }
 
       // Shared output scheduler: focused pane is latency-sensitive (immediate
@@ -1541,6 +1551,12 @@ function liveHostCount(): number {
  */
 function virtualizeHost(host: Host): void {
   if (host.disposed || host.virtualized) return;
+  if (host.ghostAssist) {
+    try {
+      host.ghostAssist.dispose();
+    } catch {}
+    host.ghostAssist = undefined;
+  }
   let snapshot = '';
   let cols = host.term.cols;
   try {
@@ -1581,6 +1597,9 @@ function rehydrateHost(host: Host): void {
   host.opened = true;
   registerWebglLease(host.paneId, host);
   wireHostTerminalListeners(host);
+  if (host.kind === 'shell') {
+    setupGhostAssist(host);
+  }
   // Flush do snapshot acontece no primeiro fit (largura definitiva); o output
   // retido entra depois dele, e o ring do main cobre o que estourar o buffer.
   requestAnimationFrame(() => {

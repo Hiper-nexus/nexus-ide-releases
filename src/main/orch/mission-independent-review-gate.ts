@@ -4,6 +4,7 @@ import {
   parseReviewFindings,
   type ReviewFindings,
 } from './review-findings';
+import { checkReviewCycleLimit } from './swarm-protocol';
 
 /**
  * Gate civil: missão standard/ops com squad NÃO fica Concluída sem revisão
@@ -279,11 +280,14 @@ export function evaluateIndependentReviewGate(input: {
     isNegativeReviewHandoff(handoff),
   );
   if (rejected) {
+    const cycleLimit = checkReviewCycleLimit(reviewerHandoffs.length);
+    const reason = cycleLimit.escalateToOperator
+      ? `Limite de ciclos de revisão atingido (${cycleLimit.currentCycle}). Escalonando para intervenção do operador humano.`
+      : 'A revisão encontrou risco. Corrija com um novo trabalhador — não marque como concluída.';
     return {
       ok: false,
       code: 'review_rejected',
-      reason:
-        'A revisão encontrou risco. Corrija com um novo trabalhador — não marque como concluída.',
+      reason,
     };
   }
 

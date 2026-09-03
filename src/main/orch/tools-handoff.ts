@@ -1,3 +1,4 @@
+import path from "node:path";
 import {
   canSubmitMissionHandoff,
   hasCurrentApprovedDispatchContract,
@@ -10,6 +11,11 @@ import {
   embedTelemetryArtifact,
   sanitizeHandoffTelemetry,
 } from "../../shared/handoff-telemetry";
+import {
+  filterAntiSocialChatter,
+  enforceScopeRules,
+  writeSwarmMailboxMessage,
+} from "./swarm-protocol";
 import { markHandoffSubmitted, type GateRole } from "./gate";
 import { onHandoffSubmitted } from "./idle-delivery";
 import {
@@ -225,10 +231,11 @@ const handoffSubmitTool: McpToolDef = {
       );
     }
     // A plan handoff is the exact physical PRD/architecture/story payload.
-    // Other lanes retain compact operational summaries.
+    // Other lanes retain compact operational summaries without anti-social noise.
+    const cleanSummary = filterAntiSocialChatter(rawSummary).clean;
     const summary = isPlanHandoff
-      ? rawSummary
-      : compactText(rawSummary, { maxChars: 4_000 }).text;
+      ? cleanSummary
+      : compactText(cleanSummary, { maxChars: 4_000 }).text;
     const rawEvidenceIds = args.evidenceIds;
     if (
       rawEvidenceIds !== undefined &&
@@ -401,6 +408,41 @@ const handoffSubmitTool: McpToolDef = {
         const diskFiles = collectFilesModified(ctx.scope.rootRealPath);
         const filesModified =
           declaredFiles.length > 0 ? declaredFiles : diskFiles;
+        if (filesModified.length > 0) {
+          const scopeCheck = enforceScopeRules({
+            ownedFiles: ((boundDispatch as unknown as Record<string, unknown>)?.ownedFiles as string[]) ?? [],
+            modifiedFiles: filesModified,
+          });
+          if (!scopeCheck.allowed) {
+            console.warn(
+              `[swarm-protocol] scope-freeze boundary notice: ${scopeCheck.violations.join(", ")}`,
+            );
+          }
+        }
+        try {
+          const swarmsDir = path.join(
+            ctx.scope.rootRealPath,
+            ".nexus",
+            "swarms",
+            ctx.missionId,
+          );
+          writeSwarmMailboxMessage({
+            baseDir: swarmsDir,
+            message: {
+              sender: fromAgent,
+              recipient: mission.orchestratorSessionId ?? "orchestrator",
+              content: summary,
+              payload: {
+                handoffStatus: status,
+                workerIncarnationId: ctx.workerIncarnationId,
+                handoffId: handoff.id,
+              },
+            },
+            nudgeRecipient: true,
+          });
+        } catch {
+          // Swarm mailbox logging is best-effort alongside durable SQLite handoff
+        }
         const advanced = advanceFastLaneStoryTaskFromHandoff(suite, {
           missionId: ctx.missionId,
           fromAgent,
