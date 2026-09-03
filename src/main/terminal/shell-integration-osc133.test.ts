@@ -32,14 +32,15 @@ describe('Osc133Scanner', () => {
     ]);
   });
 
-  it('parses cwd from OSC 133 P and OSC 7', () => {
+  it('parses cwd from OSC 133 P, OSC 7, and OSC 9;9', () => {
     const scanner = new Osc133Scanner();
     const events = scanner.push(
-      '\x1b]133;P;cwd=/Users/dev/proj\x07\x1b]7;file://host/tmp/work\x07',
+      '\x1b]133;P;cwd=/Users/dev/proj\x07\x1b]7;file://host/tmp/work\x07\x1b]9;9;/Users/dev/iterm\x07',
     );
     expect(events).toEqual([
       { kind: 'cwd', path: '/Users/dev/proj' },
       { kind: 'cwd', path: '/tmp/work' },
+      { kind: 'cwd', path: '/Users/dev/iterm' },
     ]);
   });
 

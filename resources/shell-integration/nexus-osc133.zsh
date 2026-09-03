@@ -35,6 +35,7 @@ __nexus_precmd() {
   __nexus_osc "133;A"
   if [[ -n "$PWD" ]]; then
     __nexus_osc "133;P;cwd=$(__nexus_osc_escape "$PWD")"
+    __nexus_osc "9;9;$(__nexus_osc_escape "$PWD")"
   fi
 }
 

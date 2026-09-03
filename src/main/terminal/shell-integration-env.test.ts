@@ -41,9 +41,15 @@ describe('shell integration env', () => {
     expect(shellIntegrationBootstrapCommand('/bin/zsh')).toBeNull();
     if (cleanupPaths.length > 0) {
       expect(env.ZDOTDIR).toBeTruthy();
+      expect(env.__NX_ORIG_ZDOTDIR).toBeTruthy();
       expect(fs.existsSync(env.ZDOTDIR!)).toBe(true);
       const rc = fs.readFileSync(`${env.ZDOTDIR}/.zshrc`, 'utf8');
       expect(rc).toContain('nexus-osc133.zsh');
+      const profile = fs.readFileSync(`${env.ZDOTDIR}/.zprofile`, 'utf8');
+      expect(profile).toContain('/etc/zprofile');
+      expect(profile).toContain('.zprofile');
+      const zshenv = fs.readFileSync(`${env.ZDOTDIR}/.zshenv`, 'utf8');
+      expect(zshenv).toContain('.zshenv');
       cleanupShellIntegrationPaths(cleanupPaths);
     }
   });
