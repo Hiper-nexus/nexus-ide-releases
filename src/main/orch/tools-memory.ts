@@ -1,5 +1,3 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
@@ -20,9 +18,7 @@ import type { McpToolDef } from './mcp-protocol';
 
 function resolveMemoryProjectionRoot(ctx: AgentGateContext): string {
   const store = getWorkspaceMemoryStore(ctx.scope);
-  return fs.existsSync(path.join(ctx.scope.rootRealPath, '.nexus-memory'))
-    ? ctx.scope.rootRealPath
-    : store.projectionRoot;
+  return store.projectionRoot;
 }
 
 /**

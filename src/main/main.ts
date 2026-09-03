@@ -783,6 +783,7 @@ if (!wireDeepLinks()) {
         const userDataPath = app.getPath("userData");
         sessionAliveSentinel = new SessionAliveSentinel({
           userDataPath,
+          getActivePanes: () => liveRuntimeProcessSummary().total,
           onPriorCrashDetected: (prior) => {
             console.warn(
               `[nexus] detected ungraceful exit from prior session (pid ${prior.pid}, rss ${prior.rssMb}MB, uptime ${Math.round((prior.lastPulse - prior.startTime) / 1000)}s)`,

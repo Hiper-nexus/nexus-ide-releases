@@ -27,7 +27,7 @@ export const canonicalHookEnvelopeSchema = z
     agentType: z.string().max(128).optional(),
     resumeCommand: z.string().max(1024).optional(),
   })
-  .strict();
+  .passthrough();
 
 export type CanonicalHookEnvelope = z.infer<
   typeof canonicalHookEnvelopeSchema
@@ -123,6 +123,7 @@ export class AgentHookDropBoxWatcher {
   readonly #onError?: (error: unknown, filePath: string) => void;
   #watcher: fs.FSWatcher | null = null;
   #drainTimer: ReturnType<typeof setTimeout> | null = null;
+  #pollingTimer: ReturnType<typeof setInterval> | null = null;
   #disposed = false;
 
   constructor(options: AgentHookDropBoxOptions = {}) {
@@ -152,6 +153,9 @@ export class AgentHookDropBoxWatcher {
       });
     } catch (err) {
       console.warn("[hook-drop-box] failed to watch directory, falling back to polling:", err);
+      this.#pollingTimer = setInterval(() => {
+        this.drain();
+      }, 1000);
     }
   }
 
@@ -185,7 +189,32 @@ export class AgentHookDropBoxWatcher {
       const filePath = path.join(this.#dropDir, filename);
       try {
         const rawContent = fs.readFileSync(filePath, "utf8");
-        const json = JSON.parse(rawContent);
+        const json = JSON.parse(rawContent) as Record<string, unknown>;
+
+        // Handle raw Claude / agent hook payloads
+        if (json.hook_event_name || (typeof json.session_id === "string" && !json.sessionId)) {
+          const sid =
+            (typeof json.sessionId === "string" && json.sessionId) ||
+            (typeof json.session_id === "string" && json.session_id) ||
+            (filename.includes("--") ? filename.split("--")[0] : "unknown-pane");
+          ingestAgentHookStatus(sid, json, { pathname: "/hook/claude" });
+          processedCount++;
+          try {
+            fs.unlinkSync(filePath);
+          } catch {}
+          continue;
+        }
+
+        const sid =
+          (typeof json.sessionId === "string" && json.sessionId) ||
+          (filename.includes("--") ? filename.split("--")[0] : "");
+        if (!json.sessionId && sid) {
+          json.sessionId = sid;
+        }
+        if (typeof json.timestamp !== "number") {
+          json.timestamp = Date.now();
+        }
+
         const envelope = canonicalHookEnvelopeSchema.parse(json);
 
         const mappedState = mapCanonicalStatusToAgentState(
@@ -197,10 +226,9 @@ export class AgentHookDropBoxWatcher {
           agentType: envelope.agentType,
           providerSession: envelope.nativeSessionId
             ? {
-                sessionId: envelope.nativeSessionId,
-                configDir: envelope.configDir,
+                key: "session_id" as const,
+                id: envelope.nativeSessionId,
                 transcriptPath: envelope.transcriptPath,
-                resumeCommand: envelope.resumeCommand,
               }
             : undefined,
         };
@@ -234,6 +262,10 @@ export class AgentHookDropBoxWatcher {
     if (this.#drainTimer) {
       clearTimeout(this.#drainTimer);
       this.#drainTimer = null;
+    }
+    if (this.#pollingTimer) {
+      clearInterval(this.#pollingTimer);
+      this.#pollingTimer = null;
     }
     if (this.#watcher) {
       try {
