@@ -1,0 +1,3 @@
+cwd|command|cwd_project_root|total_count|success_count|distinct_days|last_day|first_used|last_used|last_branch|dismissed_count|last_dismissed_at|last_decayed_at
+/Users/cleofasrocha|ai||1|0|1|20648|1783990877109|1783990877109||0||
+/Users/cleofasrocha|printf 'bridge-analysis-ok\n'||1|0|1|20648|1783990328390|1783990328390||0||

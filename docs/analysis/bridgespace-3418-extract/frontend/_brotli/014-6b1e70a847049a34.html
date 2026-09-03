@@ -1,0 +1,74 @@
+<!DOCTYPE html><html lang="en"><head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/svg+xml" href="/assets/bridgespace-icon-D3nbhgh9.svg">
+    <title>BridgeSpace</title>
+    <style>
+      html, body {
+        height: 100%;
+        margin: 0;
+        /* Touchscreen laptops (Lenovo/WebView2, WebKitGTK): without this the
+         * document is the only over-scrollable surface, so a finger-pan that
+         * escapes a panel elastically lifts the whole app (net-zero scroll).
+         * Containing it here makes per-panel touch scrolling the only motion. */
+        overscroll-behavior: none;
+        /* Default to dark; the inline bootstrap below flips this to light
+         * for users on a light theme before the first paint. */
+        background: #000000;
+        color: #FAFAFA;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      #root {
+        min-height: 100%;
+      }
+      @keyframes bspin { to { transform: rotate(360deg) } }
+      .boot-spinner {
+        width: 32px; height: 32px;
+        border: 2px solid currentColor;
+        border-top-color: transparent;
+        border-radius: 50%;
+        animation: bspin 1s linear infinite;
+        opacity: 0.8;
+      }
+    </style>
+    <script>
+      // Pre-React theme bootstrap. Reads the persisted theme id and flips
+      // body bg to the right shade *before* the first paint. The full
+      // CSS-variable setup runs from src/renderer/themes/bootstrap.ts as
+      // soon as JS modules execute; this inline script just prevents the
+      // black-flash for light-theme users.
+      (function () {
+        try {
+          var id = localStorage.getItem('bridgemind-theme') || '';
+          // Light theme ids known at HTML parse time. Keep in sync with
+          // mode === 'light' entries in builtin-themes.json.
+          var LIGHT_IDS = ['light','warp-light','solarized-light','gruvbox-light','marble','pink-city','snowy','received-referral-reward'];
+          if (LIGHT_IDS.indexOf(id) !== -1) {
+            document.documentElement.style.colorScheme = 'light';
+            document.documentElement.style.background = '#FFFFFF';
+            // body inherits via the rule above once it parses
+            var s = document.createElement('style');
+            s.textContent = 'html,body{background:#FFFFFF;color:#1A1D26}';
+            document.head.appendChild(s);
+          }
+        } catch (_) { /* ignore */ }
+      })();
+    </script>
+    <script type="module" crossorigin="" src="/assets/index-D0sLjlYW.js"></script>
+    <link rel="stylesheet" crossorigin="" href="/assets/index-D74TX2y4.css">
+  </head>
+  <body>
+    <div id="root">
+      <div style="display:flex;flex-direction:column;height:100vh;width:100vw">
+        <div style="height:28px;width:100%;flex-shrink:0"></div>
+        <div style="display:flex;flex:1;align-items:center;justify-content:center">
+          <div style="display:flex;flex-direction:column;align-items:center;gap:16px;color:#3b82f6">
+            <div class="boot-spinner"></div>
+            <p style="font-size:14px;margin:0;color:inherit;opacity:0.6">Loading...</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  
+
+</body></html>

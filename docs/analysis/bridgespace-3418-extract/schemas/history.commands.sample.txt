@@ -1,0 +1,3 @@
+id|command|cwd|cwd_project_root|shell|exit_code|duration_ms|ts_started|ts_ended|git_branch|session_id|redacted_at
+1|printf 'bridge-analysis-ok\n'|/Users/cleofasrocha|||||1783990328390|||term_117c2ca5637c45b485ae8fd0625b98c5|
+2|ai|/Users/cleofasrocha|||||1783990877109|||term_f1eca4e8ae33466a857d613fe826f28f|

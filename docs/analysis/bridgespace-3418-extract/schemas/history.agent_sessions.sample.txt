@@ -1,0 +1,6 @@
+id|session_id|workspace_id|cwd|agent_id|native_session_id|resume_command|spawn_command|title|last_prompt|status|ts_started|ts_updated|ts_ended|config_dir|transcript_path|pane_id|app_instance
+1|term_252121ee0a1e40ee820ad71bee3d0812||/Users/cleofasrocha|codex|||codex|||ended|1783450045873|1783989456621|||||
+2|term_71a08acf4d8e4d078b1ad5b90ea0a4aa||/Users/cleofasrocha|grok|||grok|||ended|1783450045873|1783989456621|||||
+3|term_8adaff4381af4ca98e21425574342a4b||/Users/cleofasrocha|bridgecode|||bridgecode|||ended|1783450045873|1783989456621|||||
+4|term_d051c5d49e90439289b2d94d63ce972c||/Users/cleofasrocha|claude|70517d6e-9b0c-4966-93ff-a032751be61f|claude --resume 70517d6e-9b0c-4966-93ff-a032751be61f|claude|||ended|1783450045873|1783989456621|||/Users/cleofasrocha/.claude/projects/-Users-cleofasrocha/70517d6e-9b0c-4966-93ff-a032751be61f.jsonl||
+5|term_f1eca4e8ae33466a857d613fe826f28f||/Users/cleofasrocha/dev/nexus-ide|claude|019f5e25-b845-7ee3-a9ce-ebaee53ba340|claude --resume 019f5e25-b845-7ee3-a9ce-ebaee53ba340||Turn complete|Turn complete|ended|1783990959016|1783997298439|1783997298439||/Users/cleofasrocha/.grok/sessions/%2FUsers%2Fcleofasrocha%2Fdev%2Fnexus-ide/019f5e25-b845-7ee3-a9ce-ebaee53ba340/updates.jsonl||

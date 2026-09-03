@@ -1,0 +1,4 @@
+key|value
+last_maintenance_ts|1788428711697
+last_maintenance_pruned|0
+missed_capture_count|2

@@ -1,0 +1,82 @@
+[
+  {
+    "archivedAt" : "2026-09-03T09:49:42Z",
+    "thread" : {
+      "createdAt" : "2026-09-03T09:49:38Z",
+      "id" : "4C7DDD3D-B7E2-47DE-84B0-035AAD3F2A0C",
+      "items" : [
+
+      ],
+      "mode" : "acceptEdits",
+      "places" : [
+
+      ],
+      "plan" : false,
+      "provider" : "claude",
+      "providerOptions" : [
+        {
+          "id" : "effort",
+          "value" : "high"
+        }
+      ],
+      "status" : "idle",
+      "title" : "New chat",
+      "updatedAt" : "2026-09-03T09:49:38Z",
+      "usage" : {
+        "costUsd" : 0,
+        "inputTokens" : 0,
+        "outputTokens" : 0
+      }
+    }
+  },
+  {
+    "archivedAt" : "2026-09-03T09:49:41Z",
+    "thread" : {
+      "createdAt" : "2026-09-03T09:47:08Z",
+      "id" : "6B59D177-31D5-4EF5-92E6-9CC8F6B58147",
+      "items" : [
+        {
+          "attachments" : [
+
+          ],
+          "createdAt" : "2026-09-03T09:49:28Z",
+          "id" : "user-4C10619B",
+          "kind" : "user",
+          "streaming" : false,
+          "text" : "ola"
+        },
+        {
+          "attachments" : [
+
+          ],
+          "createdAt" : "2026-09-03T09:49:33Z",
+          "id" : "1b5dd36d-msg_011CegJBuqHCdTt19g56uVCf-text-0",
+          "kind" : "assistant",
+          "streaming" : false,
+          "text" : "Olá! Como posso ajudar?"
+        }
+      ],
+      "mode" : "acceptEdits",
+      "places" : [
+
+      ],
+      "plan" : false,
+      "provider" : "claude",
+      "providerOptions" : [
+        {
+          "id" : "effort",
+          "value" : "high"
+        }
+      ],
+      "resumeCursor" : "32a35472-a266-43cb-b65e-5b2d92840e9a",
+      "status" : "idle",
+      "title" : "ola",
+      "updatedAt" : "2026-09-03T09:49:34Z",
+      "usage" : {
+        "costUsd" : 0.3142878,
+        "inputTokens" : 2,
+        "outputTokens" : 15
+      }
+    }
+  }
+]

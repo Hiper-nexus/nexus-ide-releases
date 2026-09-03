@@ -1,0 +1,1 @@
+import{i}from"./index-D0sLjlYW.js";import"./vendor-markdown-Bdv7O72I.js";import"./vendor-react-aMSrFcz-.js";async function a(t=0){await i("plugin:process|exit",{code:t})}async function e(){await i("plugin:process|restart")}export{a as exit,e as relaunch};

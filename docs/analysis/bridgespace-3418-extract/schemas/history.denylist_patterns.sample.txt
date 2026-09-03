@@ -1,0 +1,6 @@
+id|kind|pattern|added_at
+1|cwd_glob|~/.ssh/**|1783352431
+2|cwd_glob|~/.aws/**|1783352431
+3|cwd_glob|~/.config/gcloud/**|1783352431
+4|cwd_glob|~/.config/op/**|1783352431
+5|cwd_glob|~/.gnupg/**|1783352431

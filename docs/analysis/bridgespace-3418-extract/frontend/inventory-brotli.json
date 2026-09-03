@@ -1,0 +1,533 @@
+[
+  {
+    "file": "001-a95f5830378d3d50.js",
+    "offset": 20029543,
+    "compLen": 2282,
+    "decompLen": 8005,
+    "sha16": "a95f5830378d3d50",
+    "type": "js",
+    "head": "import{j as e}from\"./vendor-markdown-Bdv7O72I.js\";import{X as b,a as l,L as m}from\"./AuthenticatedSh"
+  },
+  {
+    "file": "002-b5b604e12c859324.js",
+    "offset": 20031862,
+    "compLen": 943,
+    "decompLen": 2261,
+    "sha16": "b5b604e12c859324",
+    "type": "js",
+    "head": "import{k as _}from\"./index-D0sLjlYW.js\";const S=1.5;function L(t){return typeof t.confident==\"boolea"
+  },
+  {
+    "file": "003-64cfb7c590f2be96.js",
+    "offset": 20032830,
+    "compLen": 7764,
+    "decompLen": 26055,
+    "sha16": "64cfb7c590f2be96",
+    "type": "js",
+    "head": "import{j as e,r as x}from\"./vendor-markdown-Bdv7O72I.js\";import{aR as O,aS as S,as as U,T as P,c as "
+  },
+  {
+    "file": "004-227c1de35a53b9c4.js",
+    "offset": 20040628,
+    "compLen": 26922,
+    "decompLen": 88711,
+    "sha16": "227c1de35a53b9c4",
+    "type": "js",
+    "head": "import{r as l,j as X}from\"./vendor-markdown-Bdv7O72I.js\";import{D as hs,L as ms,a as ps,o as gs}from"
+  },
+  {
+    "file": "005-816127e03f35e5da.js",
+    "offset": 20067575,
+    "compLen": 29559,
+    "decompLen": 100608,
+    "sha16": "816127e03f35e5da",
+    "type": "js",
+    "head": "import{L as o,E as r,a as t}from\"./index-BKqHHGoJ.js\";import{q as s,t as $,L as w,w as d,x as Z,y as"
+  },
+  {
+    "file": "006-f6fce438debd3c89.js",
+    "offset": 20097167,
+    "compLen": 2777,
+    "decompLen": 8488,
+    "sha16": "f6fce438debd3c89",
+    "type": "js",
+    "head": "import{r as h,j as e}from\"./vendor-markdown-Bdv7O72I.js\";import{w as j,x as f,s,T as k,y as N,z as _"
+  },
+  {
+    "file": "007-ab3dbae77f4760fd.js",
+    "offset": 20099979,
+    "compLen": 940,
+    "decompLen": 1923,
+    "sha16": "ab3dbae77f4760fd",
+    "type": "js",
+    "head": "import{j as e}from\"./vendor-markdown-Bdv7O72I.js\";import{c as n,L as c}from\"./AuthenticatedShell-B6g"
+  },
+  {
+    "file": "008-58b7a2c6069a9fb9.js",
+    "offset": 20100963,
+    "compLen": 4005,
+    "decompLen": 11709,
+    "sha16": "58b7a2c6069a9fb9",
+    "type": "js",
+    "head": "import{r as n,j as e}from\"./vendor-markdown-Bdv7O72I.js\";import{h as X,l as D}from\"./index-D0sLjlYW."
+  },
+  {
+    "file": "009-70baa1ec6a4e7a4e.js",
+    "offset": 20104994,
+    "compLen": 291,
+    "decompLen": 524,
+    "sha16": "70baa1ec6a4e7a4e",
+    "type": "js",
+    "head": "import{c as e}from\"./AuthenticatedShell-B6g16bmQ.js\";/** * @license lucide-react v0.562.0 - ISC * "
+  },
+  {
+    "file": "010-46a6f52c99c5c203.js",
+    "offset": 20105310,
+    "compLen": 289,
+    "decompLen": 736,
+    "sha16": "46a6f52c99c5c203",
+    "type": "js",
+    "head": "import{i}from\"./index-D0sLjlYW.js\";import{I as r,t as n}from\"./image-DDPYVuVT.js\";import\"./vendor-ma"
+  },
+  {
+    "file": "011-3aa5855c525e804b.js",
+    "offset": 20105624,
+    "compLen": 832,
+    "decompLen": 2377,
+    "sha16": "3aa5855c525e804b",
+    "type": "js",
+    "head": "import{i,N as f}from\"./index-D0sLjlYW.js\";import\"./vendor-markdown-Bdv7O72I.js\";import\"./vendor-reac"
+  },
+  {
+    "file": "012-2737ac5c6d3f7835.js",
+    "offset": 20106481,
+    "compLen": 11973,
+    "decompLen": 30838,
+    "sha16": "2737ac5c6d3f7835",
+    "type": "js",
+    "head": "import{L as s,E as R,a as Y,C as x}from\"./index-BKqHHGoJ.js\";import{q as w,t as O,L as d,u as k,v as"
+  },
+  {
+    "file": "013-cd00a0b046d75200.js",
+    "offset": 20118492,
+    "compLen": 2345,
+    "decompLen": 6968,
+    "sha16": "cd00a0b046d75200",
+    "type": "js",
+    "head": "import{r,j as e}from\"./vendor-markdown-Bdv7O72I.js\";import{h as C,l as S}from\"./index-D0sLjlYW.js\";i"
+  },
+  {
+    "file": "014-6b1e70a847049a34.html",
+    "offset": 20120837,
+    "compLen": 1361,
+    "decompLen": 3285,
+    "sha16": "6b1e70a847049a34",
+    "type": "html",
+    "head": "<!DOCTYPE html><html lang=\"en\"><head> <meta charset=\"UTF-8\"> <meta name=\"viewport\" content=\""
+  },
+  {
+    "file": "015-a772cd083751d26e.js",
+    "offset": 20122223,
+    "compLen": 5355,
+    "decompLen": 12749,
+    "sha16": "a772cd083751d26e",
+    "type": "js",
+    "head": "import{L as W,E as i,C as B}from\"./index-BKqHHGoJ.js\";import{q as U,t as n,L as b,S as E,w as C,x as"
+  },
+  {
+    "file": "016-a16153bcda074069.js",
+    "offset": 20127602,
+    "compLen": 388,
+    "decompLen": 951,
+    "sha16": "a16153bcda074069",
+    "type": "js",
+    "head": "import{c as a}from\"./AuthenticatedShell-B6g16bmQ.js\";/** * @license lucide-react v0.562.0 - ISC * "
+  },
+  {
+    "file": "017-3c3645409fe20451.js",
+    "offset": 20128028,
+    "compLen": 15009,
+    "decompLen": 53756,
+    "sha16": "3c3645409fe20451",
+    "type": "js",
+    "head": "const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=[\"assets/index-D74TX2y4.css\",\"assets/MainApp"
+  },
+  {
+    "file": "018-2c86a7c854ef289f.js",
+    "offset": 20143073,
+    "compLen": 392,
+    "decompLen": 844,
+    "sha16": "2c86a7c854ef289f",
+    "type": "js",
+    "head": "import{c as e}from\"./AuthenticatedShell-B6g16bmQ.js\";/** * @license lucide-react v0.562.0 - ISC * "
+  },
+  {
+    "file": "019-1ae492eb1c2d5c19.svg",
+    "offset": 20143502,
+    "compLen": 849,
+    "decompLen": 4578,
+    "sha16": "1ae492eb1c2d5c19",
+    "type": "svg",
+    "head": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"256\" height=\"256\" viewBox=\"0 0 256 256\" fill=\"none\"> "
+  },
+  {
+    "file": "020-e7e980a537603a9b.txt",
+    "offset": 20144377,
+    "compLen": 5742,
+    "decompLen": 38915,
+    "sha16": "e7e980a537603a9b",
+    "type": "txt",
+    "head": ".sw-root{--sw-shadow-rest: inset 0 1px 0 0 color-mix(in srgb, #fff 6%, transparent), 0 10px 24px -12"
+  },
+  {
+    "file": "021-d09bf2f7661bcde2.js",
+    "offset": 20150145,
+    "compLen": 6248,
+    "decompLen": 21204,
+    "sha16": "d09bf2f7661bcde2",
+    "type": "js",
+    "head": "import{n as f,bp as I}from\"./MainApp-Bsp7gQmz.js\";import\"./vendor-markdown-Bdv7O72I.js\";import\"./ind"
+  },
+  {
+    "file": "022-54490f241338bf47.js",
+    "offset": 20156418,
+    "compLen": 293,
+    "decompLen": 614,
+    "sha16": "54490f241338bf47",
+    "type": "js",
+    "head": "import{R as o,i as e}from\"./index-D0sLjlYW.js\";class s extends o{constructor(n){super(n)}static asyn"
+  },
+  {
+    "file": "023-02cab52937bd44e5.js",
+    "offset": 20156736,
+    "compLen": 14877,
+    "decompLen": 44206,
+    "sha16": "02cab52937bd44e5",
+    "type": "js",
+    "head": "import{P as st,M as Q,Q as v,V as it,K as Ee,q as Ie,T as H,S as ot,t as m,r as F,E as P,W as z,L as"
+  },
+  {
+    "file": "024-fa6a3f6bbae7bcf1.js",
+    "offset": 20171638,
+    "compLen": 163,
+    "decompLen": 256,
+    "sha16": "fa6a3f6bbae7bcf1",
+    "type": "js",
+    "head": "import{i}from\"./index-D0sLjlYW.js\";import\"./vendor-markdown-Bdv7O72I.js\";import\"./vendor-react-aMSrF"
+  },
+  {
+    "file": "025-2299812fb142316e.js",
+    "offset": 20171826,
+    "compLen": 10894,
+    "decompLen": 25887,
+    "sha16": "2299812fb142316e",
+    "type": "js",
+    "head": "import{L as w,E as p,a as Y}from\"./index-BKqHHGoJ.js\";import{q as x,t as r,L as q,w as j,x as G,z as"
+  },
+  {
+    "file": "026-220fee03253929b6.js",
+    "offset": 20182761,
+    "compLen": 1702,
+    "decompLen": 4919,
+    "sha16": "220fee03253929b6",
+    "type": "js",
+    "head": "import{r as s,j as e}from\"./vendor-markdown-Bdv7O72I.js\";import{getLaunchUpdateState as k,subscribeL"
+  },
+  {
+    "file": "027-76791d451fcf062c.js",
+    "offset": 20184488,
+    "compLen": 23347,
+    "decompLen": 70859,
+    "sha16": "76791d451fcf062c",
+    "type": "js",
+    "head": "import{L as o,E as a}from\"./index-BKqHHGoJ.js\";import{q as Z,t as Q,L as _,w as q,x as l,z as r,B as"
+  },
+  {
+    "file": "028-3585d93d01446db5.css",
+    "offset": 20207861,
+    "compLen": 712,
+    "decompLen": 2111,
+    "sha16": "3585d93d01446db5",
+    "type": "css",
+    "head": ".bc-root{--bc-accent: #a78bfa;--bc-accent-strong: #8b5cf6;--bc-accent-rgb: 167 139 250}.bc-atmospher"
+  },
+  {
+    "file": "029-10a994815ef575d9.js",
+    "offset": 20208610,
+    "compLen": 96656,
+    "decompLen": 428728,
+    "sha16": "10a994815ef575d9",
+    "type": "js",
+    "head": "/** * Copyright (c) 2014-2024 The xterm.js authors. All rights reserved. * @license MIT * * Copy"
+  },
+  {
+    "file": "030-5ae428228494abf1.js",
+    "offset": 20305296,
+    "compLen": 5172,
+    "decompLen": 23081,
+    "sha16": "5ae428228494abf1",
+    "type": "js",
+    "head": "import{r as l,j as e}from\"./vendor-markdown-Bdv7O72I.js\";import{a as i,S as W,L as T,e as L,h as A}f"
+  },
+  {
+    "file": "031-c2a311e8fa1338de.txt",
+    "offset": 20310492,
+    "compLen": 786825,
+    "decompLen": 857691,
+    "sha16": "c2a311e8fa1338de",
+    "type": "txt",
+    "head": "\b\u0007\u0012\u0007pytorch\u001a\u00061.12.1:��4 A \u000fonnx::Flatten_0\u0012 onnx::Gemm_11\u001a Flatten_0\"\u0007Flatten* \u0004axis\u0018\u0001�\u0001\u0002 f onnx::"
+  },
+  {
+    "file": "032-24f6060f947d5bb5.txt",
+    "offset": 21099073,
+    "compLen": 68899,
+    "decompLen": 23428,
+    "sha16": "24f6060f947d5bb5",
+    "type": "txt",
+    "head": "�>�$�\u0010\u001c�Ä��{��z�Ѿm?\u001c�lǍ�\u001a�8�\u001a׋��s7q��7I�p%�\u0014�Ӿ��|z��\u0006\u000f\u0017x��ϥY/���`�o��sw�X��\"4���'cv��\u0017�t����"
+  },
+  {
+    "file": "033-d3526752bf9df225.txt",
+    "offset": 21170166,
+    "compLen": 80602,
+    "decompLen": 49734,
+    "sha16": "d3526752bf9df225",
+    "type": "txt",
+    "head": "�xҿ\u001e���$n �\b7^X�廕����\\�/�̷�w��碏P[�\u0000ծ�s��1pc� ��}�^��\u0007�u\u0007����f\u0006��̮���!\u001f�XҐ[��a��|a�i��� �"
+  },
+  {
+    "file": "034-5191a61bc520c616.txt",
+    "offset": 21251297,
+    "compLen": 45724,
+    "decompLen": 45720,
+    "sha16": "5191a61bc520c616",
+    "type": "txt",
+    "head": "�� ���\\���\u0014<6B\u000fg����+��6 ve�8�^_�ħ��\u0017~�� r<�F xn5�\u0017����@9kӬ [ݛ\u0004��I��\u0012>eR;4_��ٝ�\u0010��\u00157\u001fy �\u0017��c�"
+  },
+  {
+    "file": "035-b79b12400f6ead93.txt",
+    "offset": 21297895,
+    "compLen": 839106,
+    "decompLen": 825289,
+    "sha16": "b79b12400f6ead93",
+    "type": "txt",
+    "head": "\u0014Z�z��MQ �^L \u0016��(?\u0013��D���R\\\u001bv\u001a�u�h�apߞ/,�\u0007n}Q\u0019�4UB�;re�h����Ca���\u0002=~�O��}�T�쀛܅�g�\u000f�t�\u0018�����a"
+  },
+  {
+    "file": "036-9819df18475868dd.txt",
+    "offset": 22137709,
+    "compLen": 114980,
+    "decompLen": 56503,
+    "sha16": "9819df18475868dd",
+    "type": "txt",
+    "head": "�������z���x�~\u0000�-P�n} �ϕ�lْ�LA�\u0002��U�U�� \u0011��q�P-L��\u000e\u0007>�Uk�P׳�VL�G��[N�\u001f��O�E\u00024����Ͱ��&I4 �\u001e��"
+  },
+  {
+    "file": "037-4a5f9c9b364eebf6.txt",
+    "offset": 22253009,
+    "compLen": 53044,
+    "decompLen": 53040,
+    "sha16": "4a5f9c9b364eebf6",
+    "type": "txt",
+    "head": "���ܿԇ�ae�:H�L������I|�ܭ�\u0016\u0013 >'�Agm'�� \u001a�\\�ǃ�{Ṇ\u0003�o\u001d'S�Lp�k |��\u0003�r���.t� �v� ε�N�p)}\u0015x\u000e��l�ҝJ"
+  },
+  {
+    "file": "038-5094ba6cf9d1a9bb.txt",
+    "offset": 22307093,
+    "compLen": 26175,
+    "decompLen": 26171,
+    "sha16": "5094ba6cf9d1a9bb",
+    "type": "txt",
+    "head": "p�r�HQC k:D8��\u0018Y�t\u0004�D\u000e�`^:l\b�Aޥ��kA�!=��f�eV9 ���@�Z\u0015|_�\u0018��\u0007���\u0016��\u000eC�L�\u0017��#C�z:qA�%9K�1c�[�_� ��3"
+  },
+  {
+    "file": "039-bc7045f6e948f4fd.js",
+    "offset": 22333639,
+    "compLen": 37761,
+    "decompLen": 158594,
+    "sha16": "bc7045f6e948f4fd",
+    "type": "js",
+    "head": "const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=[\"assets/index-D74TX2y4.css\",\"assets/MainApp"
+  },
+  {
+    "file": "040-acdcfaae63b86887.js",
+    "offset": 22371428,
+    "compLen": 247,
+    "decompLen": 348,
+    "sha16": "acdcfaae63b86887",
+    "type": "js",
+    "head": "import{c as o}from\"./AuthenticatedShell-B6g16bmQ.js\";/** * @license lucide-react v0.562.0 - ISC * "
+  },
+  {
+    "file": "041-07560b57f4467e58.png",
+    "offset": 22371709,
+    "compLen": 21715,
+    "decompLen": 22075,
+    "sha16": "07560b57f4467e58",
+    "type": "png",
+    "head": "�PNG \u001a \u0000\u0000\u0000 IHDR\u0000\u0000\u0006�\u0000\u0000\u0001Q\b\u0003\u0000\u0000\u00002Ԭ�\u0000\u0000\u0000\u0004gAMA\u0000\u0000�� �a\u0005\u0000\u0000\u0000 cHRM\u0000\u0000z&\u0000\u0000��\u0000\u0000�\u0000\u0000\u0000��\u0000\u0000u0\u0000\u0000�`\u0000\u0000:�\u0000\u0000\u0017p��Q<\u0000\u0000\u0000KPLT"
+  },
+  {
+    "file": "042-314c3647bf92fec1.js",
+    "offset": 22393449,
+    "compLen": 12826,
+    "decompLen": 42917,
+    "sha16": "314c3647bf92fec1",
+    "type": "js",
+    "head": "import{r as n,j as e}from\"./vendor-markdown-Bdv7O72I.js\";import{c as Ke,e as We,X as Ze,a as f,S as "
+  },
+  {
+    "file": "043-dbb67d30158e4ca6.js",
+    "offset": 22406307,
+    "compLen": 1413,
+    "decompLen": 3833,
+    "sha16": "dbb67d30158e4ca6",
+    "type": "js",
+    "head": "import{r as o,g as _}from\"./vendor-markdown-Bdv7O72I.js\";var s={exports:{}},i={};/** * @license Rea"
+  },
+  {
+    "file": "044-1c36714eb3b5b92f.js",
+    "offset": 22407745,
+    "compLen": 17385,
+    "decompLen": 45151,
+    "sha16": "1c36714eb3b5b92f",
+    "type": "js",
+    "head": "import{L as D,E as h,C as L}from\"./index-BKqHHGoJ.js\";import{q as H,t as n,u as B,r as K,L as M,w as"
+  },
+  {
+    "file": "045-b0d59c1f084d1c87.js",
+    "offset": 22425163,
+    "compLen": 646,
+    "decompLen": 1492,
+    "sha16": "b0d59c1f084d1c87",
+    "type": "js",
+    "head": "import{B as c,E as r}from\"./AuthenticatedShell-B6g16bmQ.js\";const i=\"bridgespace-auto-update-on-laun"
+  },
+  {
+    "file": "046-686e2236e33c09e9.js",
+    "offset": 22425834,
+    "compLen": 5377,
+    "decompLen": 18344,
+    "sha16": "686e2236e33c09e9",
+    "type": "js",
+    "head": "import{BS_HOOK_MARKER as l,getAgentNotifyHelperPath as E,buildHookCommand as b,readJsonOrEmpty as u,"
+  },
+  {
+    "file": "047-c547d06a3773c56c.js",
+    "offset": 22431253,
+    "compLen": 2599,
+    "decompLen": 7021,
+    "sha16": "c547d06a3773c56c",
+    "type": "js",
+    "head": "import{C as O}from\"./MainApp-Bsp7gQmz.js\";import\"./vendor-markdown-Bdv7O72I.js\";import\"./index-D0sLj"
+  },
+  {
+    "file": "048-48fc9bb617e2daa7.js",
+    "offset": 22433877,
+    "compLen": 15317,
+    "decompLen": 40782,
+    "sha16": "48fc9bb617e2daa7",
+    "type": "js",
+    "head": "import{L as r}from\"./index-BKqHHGoJ.js\";import{q as e,t as O,L as s,w as X,x as l,y as Y,z as $,A as"
+  },
+  {
+    "file": "049-28ffddde8810ab54.js",
+    "offset": 22449219,
+    "compLen": 8567,
+    "decompLen": 26372,
+    "sha16": "28ffddde8810ab54",
+    "type": "js",
+    "head": "import{P as L,K as $,M as E,O as j,Q as y,T as S,J as G}from\"./vendor-codemirror-DGS4eVZj.js\";var N="
+  },
+  {
+    "file": "050-71e83be4a1a562dc.js",
+    "offset": 22457811,
+    "compLen": 31428,
+    "decompLen": 86977,
+    "sha16": "71e83be4a1a562dc",
+    "type": "js",
+    "head": "import{L as M,E as X,a as w,C as E}from\"./index-BKqHHGoJ.js\";import{q as A,t as e,a as C,r as f,E as"
+  },
+  {
+    "file": "051-947fd86198613de6.js",
+    "offset": 22489264,
+    "compLen": 78392,
+    "decompLen": 288315,
+    "sha16": "947fd86198613de6",
+    "type": "js",
+    "head": "import{r as at,R as vt,j as v,b as sr}from\"./vendor-markdown-Bdv7O72I.js\";import{r as zg}from\"./vend"
+  },
+  {
+    "file": "052-855494a425be8b7d.js",
+    "offset": 22567691,
+    "compLen": 1541,
+    "decompLen": 3419,
+    "sha16": "855494a425be8b7d",
+    "type": "js",
+    "head": "function X(t){return t.replace(/\\x1b\\[[0-9;]*[a-zA-Z]|\\x1b\\][^\\x07\\x1b]*(?:\\x07|\\x1b\\\\)|\\x1b[()][AB0"
+  },
+  {
+    "file": "053-9315c0409402db2d.js",
+    "offset": 22569268,
+    "compLen": 1817,
+    "decompLen": 4426,
+    "sha16": "9315c0409402db2d",
+    "type": "js",
+    "head": "import{c_ as N}from\"./MainApp-Bsp7gQmz.js\";import\"./vendor-markdown-Bdv7O72I.js\";import\"./index-D0sL"
+  },
+  {
+    "file": "054-8601964bc365eb43.js",
+    "offset": 22571119,
+    "compLen": 1445,
+    "decompLen": 3705,
+    "sha16": "8601964bc365eb43",
+    "type": "js",
+    "head": "const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=[\"assets/index-D74TX2y4.css\",\"assets/MainApp"
+  },
+  {
+    "file": "055-f62ec76984076322.txt",
+    "offset": 22572584,
+    "compLen": 773025,
+    "decompLen": 773020,
+    "sha16": "f62ec76984076322",
+    "type": "txt",
+    "head": "nnx�ՙ\u0010� P�8\u0000\u0000��\u001e� 8�8\u0000\u0000��\u001f^:��? �\u0010\u0018��\u0003\u0000@�8@U�CB��j�\u001f~��?���?���\u0003\u0003\u0018w\u0000\u0000\u0000@026153��������wptrvqus����"
+  },
+  {
+    "file": "056-4e5d81c1b9d8ffa3.txt",
+    "offset": 23346939,
+    "compLen": 52144,
+    "decompLen": 52140,
+    "sha16": "4e5d81c1b9d8ffa3",
+    "type": "txt",
+    "head": "�\u0010�btr�����\u0004�ÇU:G�� '�i7/g���ד.\\�:N\u0012V\u001aݛ|Л[�a \u0000\u000f\b�|�9�8k� \u001b��le:0tYTliL9u�=�=�3��*�Z-��f\u0003/\u001fX �mE"
+  },
+  {
+    "file": "057-ce3fc89f120ebe66.txt",
+    "offset": 23399988,
+    "compLen": 37312,
+    "decompLen": 37308,
+    "sha16": "ce3fc89f120ebe66",
+    "type": "txt",
+    "head": "BJЄV\u0003M��^T%;M�.�S�(;H\u0011u��7b�0\b�6�ǟ�5�\u0013dOG״ն���\bM\u0014�Y\u000f���ۙ��'���v���̴uo�5� 9\u000fޘ��_o�P]������!��"
+  },
+  {
+    "file": "058-9e48ddbed122b3e1.txt",
+    "offset": 23437372,
+    "compLen": 190271,
+    "decompLen": 168858,
+    "sha16": "9e48ddbed122b3e1",
+    "type": "txt",
+    "head": "<�\u0010�A��aV�jP��h�V 2*��\b�\u001a�\u001b\u001b�c4+���F|�>�S�\u0016��<���|�:W�\u0014��\u0003� b\u0006*���p�\u0007�����\u0012��\u0014�0���\u0013?K�$�r�H2%�R6*"
+  },
+  {
+    "file": "059-3dbc4f9541472713.txt",
+    "offset": 23628808,
+    "compLen": 80292,
+    "decompLen": 21894,
+    "sha16": "3dbc4f9541472713",
+    "type": "txt",
+    "head": "�0�.CU�2̫��ʿ�ˮgX���Ҵ:�U ^�Xՠ5�U Xc]\u0015�c^����P���� ��'�~�(��}��\u001d���CI}h]��'j\u0018β �I&ù�@n ҥ�|VE�"
+  }
+]
