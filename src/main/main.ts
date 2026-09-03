@@ -344,10 +344,12 @@ import {
   startAgentHookHttpServer,
   stopAgentHookHttpServer,
 } from './agent-hooks/hook-http-server';
+import { AgentHookDropBoxWatcher } from './agent-hooks/hook-drop-box';
 import {
   readActiveGpuFallbackMarker,
 } from './crash-reporting/gpu-fallback-marker';
 import { readCrashReportPending } from './crash-reporting/crash-report-pending';
+import { SessionAliveSentinel } from './crash-reporting/session-alive-sentinel';
 import {
   authorizeAppQuit,
   closeNeedsConfirmation,
@@ -358,6 +360,8 @@ import { trace } from "./observability/main-trace";
 import { startMainThreadHangWatchdog } from "./hang-watchdog/main-thread-hang-watchdog";
 
 let projectRuntimeManager: ProjectRuntimeManager | null = null;
+let hookDropBoxWatcher: AgentHookDropBoxWatcher | null = null;
+let sessionAliveSentinel: SessionAliveSentinel | null = null;
 
 function traceBootstrap(phase: string): void {
   if (process.env.NEXUS_BOOT_TRACE === '1') {
@@ -777,10 +781,21 @@ if (!wireDeepLinks()) {
     if (!isAutomatedReleaseTest()) {
       try {
         const userDataPath = app.getPath("userData");
+        sessionAliveSentinel = new SessionAliveSentinel({
+          userDataPath,
+          onPriorCrashDetected: (prior) => {
+            console.warn(
+              `[nexus] detected ungraceful exit from prior session (pid ${prior.pid}, rss ${prior.rssMb}MB, uptime ${Math.round((prior.lastPulse - prior.startTime) / 1000)}s)`,
+            );
+          },
+        });
+        sessionAliveSentinel.start();
         configureAgentRuntimeUserDataPath(userDataPath);
         bootstrapManagedAgentHooks({ enabled: false });
         const hookServer = await startAgentHookHttpServer({ userDataPath });
         configureAgentHookEndpointPath(hookServer.endpointFilePath);
+        hookDropBoxWatcher = new AgentHookDropBoxWatcher();
+        hookDropBoxWatcher.start();
         void resolveManagedHookConsent({
           userDataPath,
           prompt: async () => {
@@ -1089,6 +1104,11 @@ function shutdown(): Promise<void> {
     stopRemoteBridge();
     configureAgentHookEndpointPath(null);
     await stopAgentHookHttpServer().catch(() => {});
+    hookDropBoxWatcher?.dispose();
+    hookDropBoxWatcher = null;
+    sessionAliveSentinel?.markExpectedExit();
+    sessionAliveSentinel?.dispose();
+    sessionAliveSentinel = null;
     disposeAgentAwakeService();
     closeAdapterRegistry();
     closeVoiceIpc();
