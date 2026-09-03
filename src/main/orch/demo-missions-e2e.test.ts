@@ -30,9 +30,7 @@ import {
   readSessionAliveMarker,
 } from '../crash-reporting/session-alive-sentinel';
 import {
-  listOrphans,
   backlinks,
-  extractWikilinks,
   writeCanonicalMemoryProjection,
 } from '../memory/nexus-memory';
 
@@ -92,7 +90,7 @@ describe('Demo & Mission E2E Simulation (Simple and Complex)', () => {
       source: 'typed',
       goal: 'Adicionar endpoint de health check',
       acceptanceCriteria: ['GET /health retorna 200 OK'],
-      risk: 'low',
+      risk: 'normal',
       executionMode: 'assisted',
       contextPolicy: 'minimal',
       budgets: {
@@ -106,27 +104,26 @@ describe('Demo & Mission E2E Simulation (Simple and Complex)', () => {
       squadRevisionHash: squadAuth.hash,
     };
 
+    const missionPanes = [
+      {
+        paneId: 'pane-worker-1',
+        role: 'worker' as const,
+        agentId: agent.id,
+        state: 'idle' as const,
+      },
+    ];
+
     const mission: Mission = {
       id: 'mission-simple-demo',
       title: 'Missão Rápida: Health Check',
+      description: '',
       status: 'running',
       intentState: 'executing',
       intentVersion: 1,
       squadId: squad.id,
       intentContract: intent,
-      dispatchAuthority: {
-        dispatchId: 'disp-simple-1',
-        generation: 1,
-        live: true,
-      },
-      panes: [
-        {
-          id: 'pane-worker-1',
-          role: 'worker',
-          agentId: agent.id,
-          state: 'idle',
-        },
-      ],
+      milestones: [],
+      learnings: '',
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -134,7 +131,7 @@ describe('Demo & Mission E2E Simulation (Simple and Complex)', () => {
     // 2. Runtime Sentinel inicializado
     const sentinel = new SessionAliveSentinel({
       userDataPath: tempDir,
-      getActivePanes: () => mission.panes.length,
+      getActivePanes: () => missionPanes.length,
     });
     sentinel.start();
 
@@ -281,16 +278,22 @@ describe('Demo & Mission E2E Simulation (Simple and Complex)', () => {
       agents: [maestro, implementer, reviewer],
     };
 
+    const complexPanes = [
+      { paneId: 'pane-maestro', role: 'orchestrator' as const, agentId: maestro.id, state: 'busy' as const },
+      { paneId: 'pane-coder', role: 'worker' as const, agentId: implementer.id, state: 'idle' as const },
+      { paneId: 'pane-reviewer', role: 'worker' as const, agentId: reviewer.id, state: 'idle' as const },
+    ];
+
     const mission: Mission = {
       id: 'mission-complex-swarm-demo',
       title: 'Missão Complexa: Arquitetura e Refatoração',
+      description: '',
       status: 'running',
+      intentState: 'executing',
+      intentVersion: 1,
       squadId: squad.id,
-      panes: [
-        { id: 'pane-maestro', role: 'orchestrator', agentId: maestro.id, state: 'busy' },
-        { id: 'pane-coder', role: 'worker', agentId: implementer.id, state: 'idle' },
-        { id: 'pane-reviewer', role: 'worker', agentId: reviewer.id, state: 'idle' },
-      ],
+      milestones: [],
+      learnings: '',
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -379,10 +382,10 @@ describe('Demo & Mission E2E Simulation (Simple and Complex)', () => {
 
     // 6. Finalização e Teardown gracioso da missão complexa
     mission.status = 'done';
-    for (const p of mission.panes) {
+    for (const p of complexPanes) {
       p.state = 'idle';
     }
     expect(mission.status).toBe('done');
-    expect(mission.panes.every((p) => p.state === 'idle')).toBe(true);
+    expect(complexPanes.every((p) => p.state === 'idle')).toBe(true);
   });
 });
