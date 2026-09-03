@@ -180,9 +180,11 @@ export class AgentAwakeService {
       }
     }
     try {
-      const id = this.blocker.start('prevent-display-sleep')
-      this.blockerId = id
-      this.reconcileBlocker('post-start')
+      const id = this.blocker?.start?.('prevent-display-sleep')
+      if (id !== undefined) {
+        this.blockerId = id
+        this.reconcileBlocker('post-start')
+      }
     } catch (err) {
       this.logger.warn('[agent-awake] failed to start blocker', {
         reason,
