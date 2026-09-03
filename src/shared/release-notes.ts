@@ -83,7 +83,7 @@ export const RELEASE_0730: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_0740: AppRelease = {
   version: '0.74.0',
   date: '2026-09-03',
   codename: 'BridgeSpace 3.4.18 Parity & Autonomous Swarm Engine',
@@ -146,6 +146,47 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'Compatibilidade com Electron powerSaveBlocker em testes',
       detail:
         'Chamadas ao blocker em agent-awake-service tornadas opcionais para execução segura em ambientes headless.',
+    },
+  ],
+};
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.74.1',
+  date: '2026-09-03',
+  codename: 'Operador no controle',
+  summary:
+    'O runtime não decide mais pelo operador: pane criado na vista da missão monta ao lado ' +
+    'dos panes dela, workers só encerram após "Marcar como feito", "Pedir um ajuste" religa ' +
+    'o Maestro digitável esperando a orientação, revisão read-only paraleliza, catálogo com ' +
+    'glm-5.3-flash, claude-fable-5-1/mythos-5-1 e gpt-6-astra, e auditoria de robustez main/preload/voz.',
+  highlights: [
+    {
+      title: 'Pane do operador na vista da missão',
+      detail:
+        'Abrir Terminal pelo "+ Pane" (grid) ou "+ terminal" (canvas) dentro dos Terminais ' +
+        'da missão fixa o pane novo na vista — antes ele nascia invisível, sem PTY. ' +
+        'spawnAgent com garantia anti-pivô-fantasma.',
+    },
+    {
+      title: '"Pedir um ajuste" espera você',
+      detail:
+        'Reabrir missão concluída religa o Maestro para ouvir, não para re-executar: hold na ' +
+        'first-wave, no flush de retries do fail-closed e ordem de espera no prompt. ' +
+        'Teardown de workers só após a aprovação.',
+    },
+    {
+      title: 'Catálogo de modelos em dia',
+      detail:
+        'glm-5.3-flash, claude-fable-5-1/mythos-5-1 e gpt-6-astra selecionáveis (trusted-access ' +
+        'fora do roteamento automático); preço do flash no estimador de custo.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Auditoria main-process e preload',
+      detail:
+        'Deep-link com path malformado vira link inválido em vez de URIError; protocolo do ' +
+        'renderer lê do mesmo fd com re-resolve (TOCTOU); listeners do preload com entrega ' +
+        'isolada; erro ao encerrar Live registrado e exposto na store.',
     },
   ],
 };

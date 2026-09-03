@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.74.1 — Operador no controle
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+- **Pane do operador na vista da missão**: "+ Pane" e "+ terminal" (grid e canvas) montam ao lado dos panes da missão em vez de nascer invisíveis; garantia anti-pivô-fantasma no `spawnAgent`.
+- **Teardown pós-aprovação**: workers só encerram ~30s após "Marcar como feito"; enquanto "Aguardando você", os terminais ficam para inspeção e ajuste.
+- **"Pedir um ajuste" não executa sozinho**: hold na first-wave, no flush de retries do fail-closed e ordem de espera no Maestro religado.
+- **Revisão em paralelo**: doutrina ensina spawn `readOnly:true` para análise sem edição.
+- **Catálogo**: glm-5.3-flash, claude-fable-5-1/mythos-5-1, gpt-6-astra (trusted-access fora do roteamento automático).
+- **Auditoria**: deep-link sem `URIError`, renderer-protocol sem TOCTOU, preload isola listeners, voz expõe erro de encerramento Live.
+
 ## 0.74.0 — BridgeSpace 3.4.18 Parity & Autonomous Swarm Engine
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
