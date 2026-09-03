@@ -4,6 +4,7 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import { SearchAddon } from '@xterm/addon-search';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import { attachTerminalPathLinks } from './terminal-path-links';
+import { TerminalGhostAssist } from './terminal-ghost-assist';
 import '@xterm/xterm/css/xterm.css';
 import type { PaneModel } from '../../shared/types';
 import type { TerminalSettings } from '../../shared/settings-types';
@@ -150,6 +151,7 @@ interface Host {
   disposed: boolean;
   /** Keeps the live composer visible and repairs missed interactive paints. */
   inputVisibility: TerminalInputVisibilityController;
+  ghostAssist?: TerminalGhostAssist;
   cleanups: Array<() => void>;
   /** Live WebGL addon while this host holds a lease from the pool. */
   webgl?: WebglAddon;
@@ -912,12 +914,48 @@ function startSpawn(
       // unacked-only). See adoption-repaint.ts.
       let adoptionTape = res.adopted ? createAdoptionRepaintTape() : null;
 
+      if (!host.ghostAssist && pane.kind === 'shell') {
+        const ga = new TerminalGhostAssist({
+          terminal: host.term,
+          screenElement: host.element,
+          context: {
+            getCwd: () => pane.cwd || '',
+            getShell: () => '',
+          },
+          writeToPty: (chunk) => {
+            if (host.sessionId) {
+              window.nexus.pty.write(host.sessionId, chunk);
+            }
+          },
+          localLookup: async (prefix) => {
+            if (!host.sessionId || !window.nexus?.terminalBlock?.suggest) return null;
+            try {
+              const r = await window.nexus.terminalBlock.suggest({
+                sessionId: host.sessionId,
+                paneId: host.paneId,
+                prefix,
+                limit: 1,
+              });
+              return r.suggestions?.[0]?.command ?? null;
+            } catch {
+              return null;
+            }
+          },
+        });
+        host.ghostAssist = ga;
+        host.cleanups.push(() => {
+          ga.dispose();
+          if (host.ghostAssist === ga) host.ghostAssist = undefined;
+        });
+      }
+
       // Shared output scheduler: focused pane is latency-sensitive (immediate
       // write); hidden panes queue with a bounded backlog so concurrent agent
       // floods cannot pin the renderer. See terminal-output-scheduler.ts.
       host.cleanups.push(
         window.nexus.pty.onData(res.sessionId, (data) => {
           adoptionTape?.retain(data);
+          host.ghostAssist?.ingestPtyData(data);
           if (host.virtualized) {
             // Pane hibernado: xterm descartado; reter saída no buffer do
             // estado e sair antes do scheduler (o ring do main cobre o resto).
@@ -1212,6 +1250,26 @@ function startSpawn(
         host.inputVisibility.onUserInput();
         if (host.opened) webglPool.touch(pane.id);
         flushTerminalOutput(host.term);
+
+        // Terminal ghost assist: accept completion on Right Arrow or Tab, dismiss on Escape
+        if (host.ghostAssist) {
+          if (data === '\x1b[C' || data === '\t') {
+            if (host.ghostAssist.tryAcceptGhost()) {
+              return;
+            }
+          } else if (data === '\x1b[1;3C' || data === '\x1bf') {
+            if (host.ghostAssist.tryAcceptGhostWord()) {
+              return;
+            }
+          } else if (data === '\x1b') {
+            if (host.ghostAssist.state.visibleTail()) {
+              host.ghostAssist.dismiss('escape_key');
+              return;
+            }
+          }
+          host.ghostAssist.ingestUserInput(data);
+        }
+
         if (!host.sessionId) {
           const keyAction = decideExitedPaneKey({
             hasSession: false,
