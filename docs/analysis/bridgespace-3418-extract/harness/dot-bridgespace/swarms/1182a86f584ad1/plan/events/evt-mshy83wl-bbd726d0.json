@@ -1,0 +1,10 @@
+{
+  "id": "evt-mshy83wl-bbd726d0",
+  "type": "task_updated",
+  "timestamp": 1786046925765,
+  "actorLabel": "Coordinator 1",
+  "task": {
+    "id": "task-mshxodn6-bd7ea16c",
+    "status": "review"
+  }
+}

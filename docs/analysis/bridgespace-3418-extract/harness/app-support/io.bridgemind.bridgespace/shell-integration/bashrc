@@ -1,0 +1,6 @@
+# BridgeSpace Terminal - Shell Integration Loader
+BRIDGESPACE_INTEGRATION_DIR="${BRIDGESPACE_SHELL_INTEGRATION_DIR:-/Users/cleofasrocha/Library/Application Support/io.bridgemind.bridgespace/shell-integration}"
+if [[ -z "$BRIDGESPACE_FAST_SHELL" && -f "$HOME/.bashrc" ]]; then
+  source "$HOME/.bashrc"
+fi
+source "$BRIDGESPACE_INTEGRATION_DIR/integration.bash"

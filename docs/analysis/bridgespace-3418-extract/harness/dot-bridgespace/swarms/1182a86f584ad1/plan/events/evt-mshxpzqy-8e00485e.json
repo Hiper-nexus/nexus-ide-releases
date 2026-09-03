@@ -1,0 +1,13 @@
+{
+  "id": "evt-mshxpzqy-8e00485e",
+  "type": "task_note_added",
+  "timestamp": 1786046080570,
+  "actorLabel": "Builder 1",
+  "taskId": "task-mshxodn6-bd7ea16c",
+  "note": {
+    "id": "note-mshxpzqw-0f1a408e",
+    "agentLabel": "Builder 1",
+    "text": "Recon feito: Info.plist lido (v3.4.18, schemes bridgespace/bridgespace-dev, ATS localhost), strings -a cacheado (43.8k linhas, 90 assets embutidos). Agora: mapear plugins Tauri, crates Rust, comandos invoke e confirmar no log runtime.",
+    "timestamp": 1786046080569
+  }
+}

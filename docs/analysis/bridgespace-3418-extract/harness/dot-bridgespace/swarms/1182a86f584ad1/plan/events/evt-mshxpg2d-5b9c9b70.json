@@ -1,0 +1,13 @@
+{
+  "id": "evt-mshxpg2d-5b9c9b70",
+  "type": "task_note_added",
+  "timestamp": 1786046055061,
+  "actorLabel": "Builder 2",
+  "taskId": "task-mshxodop-0039c9e5",
+  "note": {
+    "id": "note-mshxpg2c-caea0725",
+    "agentLabel": "Builder 2",
+    "text": "Recon feito: 12 tools em server.cjs:21726-21945 (bundle esbuild com zod+MCP SDK inline; logica real no tail). Plano: ler SKILL.md integral + tail de server.cjs por offset/grep -> mapear transporte stdio, tabela de tools, hub .bridgememory, walk-up discovery, runtime gate, busca full-scan, graph ops. Saida: bridge-reverse-swarm/F2-bridgememory-mcp.md",
+    "timestamp": 1786046055061
+  }
+}

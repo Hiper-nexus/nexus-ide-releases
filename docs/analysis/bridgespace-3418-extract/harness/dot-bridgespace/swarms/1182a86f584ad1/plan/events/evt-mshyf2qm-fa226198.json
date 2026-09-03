@@ -1,0 +1,13 @@
+{
+  "id": "evt-mshyf2qm-fa226198",
+  "type": "task_note_added",
+  "timestamp": 1786047250846,
+  "actorLabel": "Builder 3",
+  "taskId": "task-mshxodxz-eee85a77",
+  "note": {
+    "id": "note-mshyf2qm-b44b61f9",
+    "agentLabel": "Builder 3",
+    "text": "Consolidar F1–F6 sem nova análise: extrair achados/citações/lacunas, explicitar método [str]/[sym], premissas refutadas, privacidade F3, orquestração frontend e dependências cruzadas F2.",
+    "timestamp": 1786047250846
+  }
+}

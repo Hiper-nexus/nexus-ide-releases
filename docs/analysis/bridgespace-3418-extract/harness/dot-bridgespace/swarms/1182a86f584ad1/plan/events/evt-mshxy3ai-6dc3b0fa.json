@@ -1,0 +1,13 @@
+{
+  "id": "evt-mshxy3ai-6dc3b0fa",
+  "type": "task_note_added",
+  "timestamp": 1786046458410,
+  "actorLabel": "Builder 4",
+  "taskId": "task-mshxodw2-7745caf0",
+  "note": {
+    "id": "note-mshxy3ai-95023d8a",
+    "agentLabel": "Builder 4",
+    "text": "evidencias Info.plist+strings/assets coletadas; redigindo F6-produto-ui.md",
+    "timestamp": 1786046458410
+  }
+}

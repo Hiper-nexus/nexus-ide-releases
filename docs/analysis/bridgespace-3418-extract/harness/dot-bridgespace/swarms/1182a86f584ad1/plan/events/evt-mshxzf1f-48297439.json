@@ -1,0 +1,13 @@
+{
+  "id": "evt-mshxzf1f-48297439",
+  "type": "task_note_added",
+  "timestamp": 1786046520291,
+  "actorLabel": "Coordinator 1",
+  "taskId": "task-mshxodu9-c6de07ec",
+  "note": {
+    "id": "note-mshxzf1e-b85f87e2",
+    "agentLabel": "Coordinator 1",
+    "text": "Reatribuida de Builder 1 para Builder 4 (B4 livre apos F4+F6; B1 ainda em F1)",
+    "timestamp": 1786046520291
+  }
+}

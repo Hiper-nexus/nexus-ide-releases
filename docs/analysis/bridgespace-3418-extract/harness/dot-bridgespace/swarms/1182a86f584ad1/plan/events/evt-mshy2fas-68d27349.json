@@ -1,0 +1,13 @@
+{
+  "id": "evt-mshy2fas-68d27349",
+  "type": "task_note_added",
+  "timestamp": 1786046660596,
+  "actorLabel": "Builder 1",
+  "taskId": "task-mshxodn6-bd7ea16c",
+  "note": {
+    "id": "note-mshy2far-2c4a811d",
+    "agentLabel": "Builder 1",
+    "text": "F1-tauri-ipc.md escrito (~380 linhas, pt-BR). Superficie IPC extraida do manifesto ACL embutido: 177 comandos, validados byte-a-byte contra o binario. Tauri 2.10.3 + 12 plugins + 200 crates com versao. Layout de modulos Rust recuperado de paths de panic. Achado-chave: nenhum comando/simbolo de swarm no Rust -> swarm e 100% frontend.",
+    "timestamp": 1786046660595
+  }
+}

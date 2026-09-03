@@ -1,0 +1,13 @@
+{
+  "id": "evt-mshyufka-73d6de93",
+  "type": "task_note_added",
+  "timestamp": 1786047967306,
+  "actorLabel": "Builder 3",
+  "taskId": "task-mshxodxz-eee85a77",
+  "note": {
+    "id": "note-mshyufka-84b7d7a9",
+    "agentLabel": "Builder 3",
+    "text": "Validação parcial OK: 42 lacunas exatas, 6 links relativos resolvem, 5 achados obrigatórios presentes, varreduras de secrets/DB/code verbatim sem hits. Revisando consistência de citações e Markdown.",
+    "timestamp": 1786047967306
+  }
+}

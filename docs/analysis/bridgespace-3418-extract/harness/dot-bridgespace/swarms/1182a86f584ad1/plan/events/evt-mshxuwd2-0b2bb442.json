@@ -1,0 +1,13 @@
+{
+  "id": "evt-mshxuwd2-0b2bb442",
+  "type": "task_note_added",
+  "timestamp": 1786046309462,
+  "actorLabel": "Coordinator 1",
+  "taskId": "task-mshxodxz-eee85a77",
+  "note": {
+    "id": "note-mshxuwd2-29efee3d",
+    "agentLabel": "Coordinator 1",
+    "text": "INTEGRADOR passa para Builder 3; segue bloqueada ate F1-F6 done",
+    "timestamp": 1786046309462
+  }
+}

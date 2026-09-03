@@ -1,0 +1,13 @@
+{
+  "id": "evt-mshxpogd-b17f0be8",
+  "type": "task_note_added",
+  "timestamp": 1786046065933,
+  "actorLabel": "Builder 3",
+  "taskId": "task-mshxodqf-50b6788e",
+  "note": {
+    "id": "note-mshxpogd-5b87402e",
+    "agentLabel": "Builder 3",
+    "text": "Mapear hooks Claude/agentes, formatos de eventos, drop-box JSON e integração shell OSC 133/9;9 com citações linha a linha; documentar em pt-BR sem dados sensíveis.",
+    "timestamp": 1786046065933
+  }
+}

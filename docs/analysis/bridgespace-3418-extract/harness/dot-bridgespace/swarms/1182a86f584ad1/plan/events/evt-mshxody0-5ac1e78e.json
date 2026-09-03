@@ -1,0 +1,24 @@
+{
+  "id": "evt-mshxody0-5ac1e78e",
+  "type": "task_created",
+  "timestamp": 1786046005656,
+  "actorLabel": "Coordinator 1",
+  "task": {
+    "id": "task-mshxodxz-eee85a77",
+    "goalId": "goal-primary",
+    "title": "INTEGRADOR — consolidar MAPA_DO_BRIDGE.md",
+    "status": "assigned",
+    "ownerAgentLabel": "Builder 4",
+    "ownedFiles": [
+      "bridge-reverse-swarm/MAPA_DO_BRIDGE.md"
+    ],
+    "acceptanceCriteria": [
+      "MAPA_DO_BRIDGE.md em pt-BR: sumário executivo",
+      "lista consolidada de LACUNAS no topo",
+      "índice com links relativos para F1-F6",
+      "resumo de cada frente (o que faz / como / onde / o que vale portar)",
+      "seção final de padrões portáveis priorizados. Sem contradições entre frentes. DEPENDS_ON: F1-F6 concluídas."
+    ],
+    "dependsOn": []
+  }
+}

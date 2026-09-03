@@ -1,0 +1,13 @@
+{
+  "id": "evt-mshxovhw-73f59682",
+  "type": "task_note_added",
+  "timestamp": 1786046028404,
+  "actorLabel": "Builder 4",
+  "taskId": "task-mshxods5-8ae13e44",
+  "note": {
+    "id": "note-mshxovhw-4f823ec0",
+    "agentLabel": "Builder 4",
+    "text": "schema history.db + App Support + runtime files; write F4-dados-runtime.md",
+    "timestamp": 1786046028404
+  }
+}

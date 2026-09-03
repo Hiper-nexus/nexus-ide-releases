@@ -1,0 +1,13 @@
+{
+  "id": "evt-mshyeho7-149779a5",
+  "type": "task_note_added",
+  "timestamp": 1786047223543,
+  "actorLabel": "Coordinator 1",
+  "taskId": "task-mshxodxz-eee85a77",
+  "note": {
+    "id": "note-mshyeho6-8ee2794d",
+    "agentLabel": "Coordinator 1",
+    "text": "DESBLOQUEADA: F1-F6 todas done e verificadas pelo Coordinator",
+    "timestamp": 1786047223542
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "id": "evt-mshylu0q-daf73da1",
+  "type": "task_note_added",
+  "timestamp": 1786047566138,
+  "actorLabel": "Builder 3",
+  "taskId": "task-mshxodxz-eee85a77",
+  "note": {
+    "id": "note-mshylu0q-b39b6fc6",
+    "agentLabel": "Builder 3",
+    "text": "MAPA v1.1 em construção: sumário, 42 lacunas únicas, premissas refutadas, cruzamentos F2, método [str]/[sym] e índice F1–F6 já escritos. Próximo: seis seções e prioridades portáveis.",
+    "timestamp": 1786047566138
+  }
+}

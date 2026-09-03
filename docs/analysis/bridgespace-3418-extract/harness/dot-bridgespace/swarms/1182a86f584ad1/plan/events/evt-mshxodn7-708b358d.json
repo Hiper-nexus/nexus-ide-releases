@@ -1,0 +1,23 @@
+{
+  "id": "evt-mshxodn7-708b358d",
+  "type": "task_created",
+  "timestamp": 1786046005267,
+  "actorLabel": "Coordinator 1",
+  "task": {
+    "id": "task-mshxodn6-bd7ea16c",
+    "goalId": "goal-primary",
+    "title": "F1 — App Tauri & superfície IPC",
+    "status": "assigned",
+    "ownerAgentLabel": "Builder 1",
+    "ownedFiles": [
+      "bridge-reverse-swarm/F1-tauri-ipc.md"
+    ],
+    "acceptanceCriteria": [
+      "F1-tauri-ipc.md em pt-BR com (a) visão geral (b) componentes mapeados: Info.plist (bundle id/schemes/ATS/capabilities)",
+      "plugins Tauri e crates Rust via strings",
+      "comandos IPC invoke",
+      "confirmações no log runtime (c) padrões portáveis (d) lacunas. Toda afirmação cita fonte (arquivo:linha ou strings+termo)."
+    ],
+    "dependsOn": []
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "id": "evt-mshy28rm-5a544008",
+  "type": "task_note_added",
+  "timestamp": 1786046652130,
+  "actorLabel": "Builder 4",
+  "taskId": "task-mshxodu9-c6de07ec",
+  "note": {
+    "id": "note-mshy28rm-e7fbf573",
+    "agentLabel": "Builder 4",
+    "text": "F5-swarm-missoes.md: scope on-disk, bs-mail/bs-swarm/bs-notify, assets swarm*, env vars, orquestracao; lacuna swarm-pane literal",
+    "timestamp": 1786046652130
+  }
+}

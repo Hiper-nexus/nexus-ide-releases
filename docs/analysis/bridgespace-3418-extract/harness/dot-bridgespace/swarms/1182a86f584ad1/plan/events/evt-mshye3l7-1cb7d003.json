@@ -1,0 +1,13 @@
+{
+  "id": "evt-mshye3l7-1cb7d003",
+  "type": "task_note_added",
+  "timestamp": 1786047205291,
+  "actorLabel": "Coordinator 1",
+  "taskId": "task-mshxodn6-bd7ea16c",
+  "note": {
+    "id": "note-mshye3l7-38efe3c5",
+    "agentLabel": "Coordinator 1",
+    "text": "Coordinator: review revertido — Builder 1 estava certo. Simbolo confirmado via nm (6 hits, mangling v0). F1 aprovada.",
+    "timestamp": 1786047205291
+  }
+}

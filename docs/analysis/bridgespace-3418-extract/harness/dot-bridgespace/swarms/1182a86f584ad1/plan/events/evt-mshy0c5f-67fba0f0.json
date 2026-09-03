@@ -1,0 +1,10 @@
+{
+  "id": "evt-mshy0c5f-67fba0f0",
+  "type": "task_updated",
+  "timestamp": 1786046563203,
+  "actorLabel": "Builder 3",
+  "task": {
+    "id": "task-mshxodqf-50b6788e",
+    "status": "done"
+  }
+}

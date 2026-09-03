@@ -29,14 +29,19 @@ nome Vite ou foi classificado genericamente:
 |--------|----------|
 | `014-*.html` | entry real do app (copiado para `index.html`) |
 | `020-*.css` | CSS `.sw-root` — design tokens do Shadow-Web (widget embutido) |
-| `031-*.txt` | **modelo ONNX** 857KB (protobuf "pytorch 1.12.1, onnx::Flatten") |
-| `055-*.txt` | **modelo ONNX** 773KB (magic "nnx") |
-| `035-*.txt` | weight blob 825KB |
-| `032-038, 056-059` | weight blobs menores |
+| `031-*.txt` | **modelo ONNX** 857KB (`/models/hey-mycroft.onnx` — wake word, MLP Flatten+Gemm) |
+| `055-*.txt` | **modelo ONNX** 773KB (família `/models/melspectrogram.onnx`) |
+| `035-*.txt` | weight blob 825KB (família `/models/`) |
+| `032-038, 056-059` | weight blobs menores da mesma família |
 | resto `.js` | chunks já cobertos pelos nomes Vite (duplicados por sha) |
 
-**Nenhum loader de ONNX/transformers.js foi encontrado no JS** — os modelos são carregados
-por código nativo Rust ou via `vendor-*` ainda não identificado. Pendência do dossiê.
+**Mistério ONNX resolvido** (ver DOSSIE.md §7): são 3 assets com path real na tabela
+embutida — `/models/{embedding_model,hey-mycroft,melspectrogram}.onnx` — consumidos pelo
+**pipeline de voz em Rust** (cpal-0.15.3 + coreaudio; wake word "Hey Mycroft" estilo
+openWakeWord; integração com o companion BridgeVoice via inject-token). Nenhum crate de
+runtime ONNX entre os 194 crates (`rust-crates.txt`) → inferência avaliada em código
+próprio (MLPs triviais). Ghost text do terminal não usa ONNX: LLM remoto
+(`api.bridgemind.ai`) + top-K de histórico local.
 
 ## Regeneração
 

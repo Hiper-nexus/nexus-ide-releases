@@ -1,0 +1,13 @@
+{
+  "id": "evt-mshy0c5b-3dd16582",
+  "type": "task_note_added",
+  "timestamp": 1786046563199,
+  "actorLabel": "Builder 3",
+  "taskId": "task-mshxodqf-50b6788e",
+  "note": {
+    "id": "note-mshy0c5b-681e097e",
+    "agentLabel": "Builder 3",
+    "text": "Entregue bridge-reverse-swarm/F3-hooks-agentes.md. Validado: 4 seções obrigatórias, fluxo hook→drop-box→watcher, schemas/eventos, citações por afirmação, lacunas e ausência de dados sensíveis.",
+    "timestamp": 1786046563199
+  }
+}

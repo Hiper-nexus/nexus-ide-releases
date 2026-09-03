@@ -1,0 +1,13 @@
+{
+  "id": "evt-mshxsm7w-fd0c6a4b",
+  "type": "task_note_added",
+  "timestamp": 1786046203004,
+  "actorLabel": "Builder 4",
+  "taskId": "task-mshxods5-8ae13e44",
+  "note": {
+    "id": "note-mshxsm7w-d412cae3",
+    "agentLabel": "Builder 4",
+    "text": "F4-dados-runtime.md: schema history.db, refinery decay/dismiss, dual redaction, runtime.session, App Support heartbeat/auth/mobile/shell-integration",
+    "timestamp": 1786046203004
+  }
+}

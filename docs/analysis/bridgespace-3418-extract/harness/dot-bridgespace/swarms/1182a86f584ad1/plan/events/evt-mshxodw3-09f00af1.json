@@ -1,0 +1,28 @@
+{
+  "id": "evt-mshxodw3-09f00af1",
+  "type": "task_created",
+  "timestamp": 1786046005587,
+  "actorLabel": "Coordinator 1",
+  "task": {
+    "id": "task-mshxodw2-7745caf0",
+    "goalId": "goal-primary",
+    "title": "F6 — Linha de produtos & UI/UX",
+    "status": "assigned",
+    "ownerAgentLabel": "Builder 3",
+    "ownedFiles": [
+      "bridge-reverse-swarm/F6-produto-ui.md"
+    ],
+    "acceptanceCriteria": [
+      "F6-produto-ui.md em pt-BR com (a) visão geral (b) quem-é-quem dos 6 produtos com fonte",
+      "UI/UX conceitual (workspace types",
+      "pane",
+      "swarm",
+      "mission",
+      "context files)",
+      "overlay JS (__bridgeInspector/__bridgePicker/__bridge_modal)",
+      "title-set hack",
+      "microinterações (c) padrões portáveis (d) lacunas. Fonte: strings+termo / asset:linha / Info.plist."
+    ],
+    "dependsOn": []
+  }
+}

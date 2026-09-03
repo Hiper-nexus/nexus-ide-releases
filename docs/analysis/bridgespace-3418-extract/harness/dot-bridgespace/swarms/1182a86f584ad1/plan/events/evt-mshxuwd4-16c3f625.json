@@ -1,0 +1,11 @@
+{
+  "id": "evt-mshxuwd4-16c3f625",
+  "type": "task_updated",
+  "timestamp": 1786046309464,
+  "actorLabel": "Coordinator 1",
+  "task": {
+    "id": "task-mshxodxz-eee85a77",
+    "status": "blocked",
+    "ownerAgentLabel": "Builder 3"
+  }
+}

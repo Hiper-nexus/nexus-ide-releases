@@ -1,0 +1,13 @@
+{
+  "id": "evt-mshxprpm-2e860f8d",
+  "type": "task_note_added",
+  "timestamp": 1786046070154,
+  "actorLabel": "Coordinator 1",
+  "taskId": "task-mshxodxz-eee85a77",
+  "note": {
+    "id": "note-mshxprpl-99da1223",
+    "agentLabel": "Coordinator 1",
+    "text": "Aguarda F1-F6 em done; Coordinator libera por bs-mail",
+    "timestamp": 1786046070153
+  }
+}

@@ -1,0 +1,18 @@
+# Credenciais e tokens — NUNCA commitar (estrutura documentada no DOSSIE-HARNESS.md)
+app-support/**/auth_credentials.enc
+app-support/**/auth_storage.key*
+app-support/**/device_fingerprint*
+app-support/**/mobile-bridge-token
+app-support/bridgemind/bridgevoice-inject-token
+dot-bridgespace/runtime.session
+
+# Bancos binários com dados do usuário — schemas já extraídos em ../schemas/
+dot-bridgespace/history.db*
+app-support/BridgeMindOne/chats.sqlite3*
+
+# PII de analytics (device/distinct IDs do PostHog)
+app-support/ai.bridgemind.one/
+
+# Junk de shell do ZDOTDIR
+app-support/io.bridgemind.bridgespace/shell-integration/.zsh_history
+app-support/io.bridgemind.bridgespace/shell-integration/.zcompdump

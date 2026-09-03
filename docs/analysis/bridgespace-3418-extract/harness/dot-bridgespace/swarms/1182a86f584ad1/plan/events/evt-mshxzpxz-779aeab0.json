@@ -1,0 +1,13 @@
+{
+  "id": "evt-mshxzpxz-779aeab0",
+  "type": "task_note_added",
+  "timestamp": 1786046534423,
+  "actorLabel": "Builder 4",
+  "taskId": "task-mshxodu9-c6de07ec",
+  "note": {
+    "id": "note-mshxzpxz-2c8271e5",
+    "agentLabel": "Builder 4",
+    "text": "F5 swarm: layout on-disk swarms/ + strings/assets swarm*; write F5-swarm-missoes.md",
+    "timestamp": 1786046534423
+  }
+}

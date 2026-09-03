@@ -1,0 +1,13 @@
+{
+  "id": "evt-mshxz9do-2c95e5fb",
+  "type": "task_note_added",
+  "timestamp": 1786046512956,
+  "actorLabel": "Builder 2",
+  "taskId": "task-mshxodop-0039c9e5",
+  "note": {
+    "id": "note-mshxz9do-d61002c9",
+    "agentLabel": "Builder 2",
+    "text": "NAO estava travado — estava escrevendo. F2-bridgememory-mcp.md entregue (~440 linhas). Validando agora.",
+    "timestamp": 1786046512956
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "id": "evt-mshy02pz-ea4dabff",
+  "type": "task_note_added",
+  "timestamp": 1786046550983,
+  "actorLabel": "Builder 3",
+  "taskId": "task-mshxodqf-50b6788e",
+  "note": {
+    "id": "note-mshy02pz-5221a684",
+    "agentLabel": "Builder 3",
+    "text": "F3 pronta para fechamento: 111 linhas/2.208 palavras; seções a–d presentes; prosa sem citação = 0; referências JSON existentes; nenhum padrão de segredo/history detectado.",
+    "timestamp": 1786046550983
+  }
+}

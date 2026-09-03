@@ -1,0 +1,26 @@
+{
+  "id": "evt-mshxodu9-acd724ff",
+  "type": "task_created",
+  "timestamp": 1786046005521,
+  "actorLabel": "Coordinator 1",
+  "task": {
+    "id": "task-mshxodu9-c6de07ec",
+    "goalId": "goal-primary",
+    "title": "F5 — Swarm / missões",
+    "status": "assigned",
+    "ownerAgentLabel": "Builder 1",
+    "ownedFiles": [
+      "bridge-reverse-swarm/F5-swarm-missoes.md"
+    ],
+    "acceptanceCriteria": [
+      "F5-swarm-missoes.md em pt-BR com (a) visão geral (b) swarmMailboxInit/swarmMailWatcher/swarmPlanWatcher/swarmScopeMigration/swarmSessionResume/spawnSwarmAgent",
+      "pane virtual swarm-pane-*",
+      "vars injetadas (SWARM_AGENT_NAME",
+      "BRIDGESPACE_SWARM_SCOPE_ID)",
+      "mission wizard",
+      "layout on-disk do swarm scope",
+      "ciclo de vida de mensagens (c) padrões portáveis (d) lacunas. Fonte: strings+termo ou caminho:linha."
+    ],
+    "dependsOn": []
+  }
+}

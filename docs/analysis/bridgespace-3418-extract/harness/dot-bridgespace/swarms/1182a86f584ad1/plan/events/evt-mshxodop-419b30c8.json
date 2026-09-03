@@ -1,0 +1,26 @@
+{
+  "id": "evt-mshxodop-419b30c8",
+  "type": "task_created",
+  "timestamp": 1786046005321,
+  "actorLabel": "Coordinator 1",
+  "task": {
+    "id": "task-mshxodop-0039c9e5",
+    "goalId": "goal-primary",
+    "title": "F2 — BridgeMemory MCP (server.cjs + SKILL.md)",
+    "status": "assigned",
+    "ownerAgentLabel": "Builder 2",
+    "ownedFiles": [
+      "bridge-reverse-swarm/F2-bridgememory-mcp.md"
+    ],
+    "acceptanceCriteria": [
+      "F2-bridgememory-mcp.md em pt-BR com (a) visão geral (b) transporte stdio",
+      "tabela das ~12 tools (nome/params/efeito/linha)",
+      "modelo de hub .bridgememory + Markdown/H1/wikilinks",
+      "descoberta walk-up+fallback",
+      "runtime gate constant-time",
+      "persistência/busca full-scan",
+      "graph ops (c) padrões portáveis (d) lacunas. Fonte arquivo:linha em cada afirmação. Parafrasear — zero código verbatim."
+    ],
+    "dependsOn": []
+  }
+}

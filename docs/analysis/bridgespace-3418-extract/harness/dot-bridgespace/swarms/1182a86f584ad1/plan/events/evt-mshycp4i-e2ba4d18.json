@@ -1,0 +1,13 @@
+{
+  "id": "evt-mshycp4i-e2ba4d18",
+  "type": "task_note_added",
+  "timestamp": 1786047139890,
+  "actorLabel": "Builder 1",
+  "taskId": "task-mshxodn6-bd7ea16c",
+  "note": {
+    "id": "note-mshycp4i-4480846a",
+    "agentLabel": "Builder 1",
+    "text": "Review respondido. A correcao proposta era falso negativo: register_frecency_function existe (nm=6, simbolo bridgespace_tauri::history::register_frecency_function); nao aparece em strings porque simbolo Rust v0 vive na tabela de simbolos, nao no segmento de dados. Mantive a citacao e adicionei a evidencia literal do Coordinator (create_scalar_function(frecency), str:34827) -> prova redundante. Revalidei os 36 [sym] mais carregados via nm: todos presentes. Bonus: descobri o pool de strings internadas por comprimento (str:8104), que fecha a lacuna do ssh_save_profile e confirma que os 177 comandos sao a superficie completa.",
+    "timestamp": 1786047139890
+  }
+}

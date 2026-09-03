@@ -1,0 +1,13 @@
+{
+  "id": "evt-mshyowr5-7e371d2f",
+  "type": "task_note_added",
+  "timestamp": 1786047709649,
+  "actorLabel": "Builder 3",
+  "taskId": "task-mshxodxz-eee85a77",
+  "note": {
+    "id": "note-mshyowr5-f17a7ee4",
+    "agentLabel": "Builder 3",
+    "text": "MAPA v1.1: topo completo + seções F1, F2 e F3 redigidas com o que/como/onde/portar e citações. Em andamento: F4–F6, ranking de padrões e validação final.",
+    "timestamp": 1786047709649
+  }
+}

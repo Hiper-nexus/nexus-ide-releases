@@ -1,0 +1,13 @@
+{
+  "id": "evt-mshy83wh-c04a51b3",
+  "type": "task_note_added",
+  "timestamp": 1786046925761,
+  "actorLabel": "Coordinator 1",
+  "taskId": "task-mshxodn6-bd7ea16c",
+  "note": {
+    "id": "note-mshy83wh-c67b1ae2",
+    "agentLabel": "Coordinator 1",
+    "text": "Coordinator: 1 correcao obrigatoria — simbolo register_frecency_function nao existe no binario; usar create_scalar_function(frecency)",
+    "timestamp": 1786046925761
+  }
+}

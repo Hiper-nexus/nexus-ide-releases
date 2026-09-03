@@ -1,0 +1,28 @@
+{
+  "id": "evt-mshxods6-92a97b09",
+  "type": "task_created",
+  "timestamp": 1786046005446,
+  "actorLabel": "Coordinator 1",
+  "task": {
+    "id": "task-mshxods5-8ae13e44",
+    "goalId": "goal-primary",
+    "title": "F4 — Modelo de dados & runtime",
+    "status": "assigned",
+    "ownerAgentLabel": "Builder 4",
+    "ownedFiles": [
+      "bridge-reverse-swarm/F4-dados-runtime.md"
+    ],
+    "acceptanceCriteria": [
+      "F4-dados-runtime.md em pt-BR com (a) visão geral (b) schema do history.db por tabela/coluna descrito SEMANTICAMENTE (nunca valores/conteúdo)",
+      "command refinery (decay/dismiss/success)",
+      "redação dual-layer (denylist + redacted_at)",
+      "runtime.session",
+      "bridgememory.active",
+      "App Support (session.alive.v1.json",
+      "auth_credentials.enc + auth_storage.key",
+      "mobile-bridge",
+      "shell-integration) (c) padrões portáveis (d) lacunas. Fonte: schema SQL / caminho de arquivo."
+    ],
+    "dependsOn": []
+  }
+}

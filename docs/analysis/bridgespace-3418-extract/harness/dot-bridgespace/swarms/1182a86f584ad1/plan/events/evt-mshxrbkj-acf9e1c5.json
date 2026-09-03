@@ -1,0 +1,13 @@
+{
+  "id": "evt-mshxrbkj-acf9e1c5",
+  "type": "task_note_added",
+  "timestamp": 1786046142547,
+  "actorLabel": "Builder 2",
+  "taskId": "task-mshxodop-0039c9e5",
+  "note": {
+    "id": "note-mshxrbki-1eaaff22",
+    "agentLabel": "Builder 2",
+    "text": "Fonte real isolada: bundle esbuild preserva paths de modulo — src/runtimeGate.ts (21015-21070), src/wikilinks.ts (21079-21193), src/hub.ts (21195-21652), src/tools.ts (21653-21977), src/index.ts (21978-22013). ~1000 linhas de codigo proprio; resto e zod+MCP SDK vendorizado. 12 tools confirmadas. Gate validado ao vivo via hub_status (retornou hub:null, nao runtime-unavailable). Escrevendo o doc.",
+    "timestamp": 1786046142546
+  }
+}

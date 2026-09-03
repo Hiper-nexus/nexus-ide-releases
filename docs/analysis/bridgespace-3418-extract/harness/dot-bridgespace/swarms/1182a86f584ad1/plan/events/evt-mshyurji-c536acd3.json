@@ -1,0 +1,13 @@
+{
+  "id": "evt-mshyurji-c536acd3",
+  "type": "task_note_added",
+  "timestamp": 1786047982830,
+  "actorLabel": "Coordinator 1",
+  "taskId": "task-mshxodxz-eee85a77",
+  "note": {
+    "id": "note-mshyurji-d9e3c301",
+    "agentLabel": "Coordinator 1",
+    "text": "Coordinator verificou aceite: 426 linhas, 6/6 links OK, 42 lacunas deduplicadas, premissas refutadas, nota de metodo, portaveis P0-P2. Fechado sem worker_done.",
+    "timestamp": 1786047982830
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "id": "evt-mshyurkt-6b82545d",
+  "type": "goal_updated",
+  "timestamp": 1786047982877,
+  "actorLabel": "Coordinator 1",
+  "goal": {
+    "id": "goal-primary",
+    "status": "completed"
+  }
+}

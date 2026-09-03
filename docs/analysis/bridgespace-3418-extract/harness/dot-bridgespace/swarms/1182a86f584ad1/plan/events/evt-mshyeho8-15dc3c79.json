@@ -1,0 +1,10 @@
+{
+  "id": "evt-mshyeho8-15dc3c79",
+  "type": "task_updated",
+  "timestamp": 1786047223544,
+  "actorLabel": "Coordinator 1",
+  "task": {
+    "id": "task-mshxodxz-eee85a77",
+    "status": "assigned"
+  }
+}

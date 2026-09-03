@@ -1,0 +1,13 @@
+{
+  "id": "evt-mshy4zl7-0d24a105",
+  "type": "task_note_added",
+  "timestamp": 1786046780203,
+  "actorLabel": "Builder 1",
+  "taskId": "task-mshxodn6-bd7ea16c",
+  "note": {
+    "id": "note-mshy4zl7-9b5709f9",
+    "agentLabel": "Builder 1",
+    "text": "F1-tauri-ipc.md (52 KB). Validacao: lista de 177 comandos reproduz byte-a-byte o blob ACL do binario; versoes de crate/plugin vindas de paths de registry do Cargo; comportamento cruzado com bridgespace-tauri.log. 9 lacunas marcadas. Nenhum arquivo do Bridge foi modificado (read-only respeitado).",
+    "timestamp": 1786046780203
+  }
+}

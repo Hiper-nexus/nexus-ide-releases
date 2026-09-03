@@ -1,0 +1,13 @@
+{
+  "id": "evt-mshxrlq2-ed3a1e1b",
+  "type": "task_note_added",
+  "timestamp": 1786046155706,
+  "actorLabel": "Builder 3",
+  "taskId": "task-mshxodqf-50b6788e",
+  "note": {
+    "id": "note-mshxrlq2-2bc4ac2f",
+    "agentLabel": "Builder 3",
+    "text": "Evidências coletadas: adapters completos, envelopes JSON sanitizados, loaders zsh/bash/PowerShell e marcadores do host compilado; iniciando redação.",
+    "timestamp": 1786046155706
+  }
+}

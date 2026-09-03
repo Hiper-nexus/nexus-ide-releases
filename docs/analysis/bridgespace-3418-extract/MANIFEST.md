@@ -26,11 +26,21 @@
 
 ```
 frontend/   assets carved do binário (HTML/JS/CSS/SVG/fontes/imagens)
-harness/    cópia integral de ~/.bridgespace
-mcp/        bridgememory-mcp + configs de MCP
+            + rust-crates.txt (194 crates) + rust-internal-crates.txt
+harness/    espelho de ~/.bridgespace (dot-bridgespace/) + App Support
+            (app-support/) — SEM secrets (.gitignore curado: auth/tokens/
+            fingerprints/db binários/PII posthog/zsh_history excluídos)
+mcp/        bridgememory-mcp (server.cjs + SKILL.md) + SURFACE.md
 schemas/    SQLite dumps + session/configs + comandos Tauri (superfície IPC)
-visual/     screenshots runtime + tokens capturados
-scripts/    scripts de extração reproduzíveis
+visual/     20 screenshots runtime
+binaries/   sha256 + tamanhos dos binários-fonte
+scripts/    scripts de extração reproduzíveis (20)
+DOSSIE.md   visão geral P0-P3 (ONNX §7 RESOLVIDO: pipeline de voz local)
+DOSSIE-FRONTEND.md arquitetura do frontend (React 19, camadas, stores, IPC)
+DOSSIE-HARNESS.md  harness detalhado (hooks, MCP, swarms, portabilidade §5)
+DESIGN-SYSTEM.md   design system reconstituído (Tailwind v4.2.1, componentes, temas)
+DESIGN-TOKENS.md   315 CSS custom properties + cores por frequência
+PLANO.md    portabilidade T1-T10 (design system, ghost, hooks, swarm, MCP, voz)
 ```
 
 ## Nota de licença

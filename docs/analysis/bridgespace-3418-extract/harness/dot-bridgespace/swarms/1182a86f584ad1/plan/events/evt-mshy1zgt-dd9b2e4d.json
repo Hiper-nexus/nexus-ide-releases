@@ -1,0 +1,13 @@
+{
+  "id": "evt-mshy1zgt-dd9b2e4d",
+  "type": "task_note_added",
+  "timestamp": 1786046640077,
+  "actorLabel": "Builder 4",
+  "taskId": "task-mshxodu9-c6de07ec",
+  "note": {
+    "id": "note-mshy1zgt-ca13db1f",
+    "agentLabel": "Builder 4",
+    "text": "layout on-disk + bs-mail/bs-swarm CLIs + assets swarm*; redigindo F5",
+    "timestamp": 1786046640077
+  }
+}

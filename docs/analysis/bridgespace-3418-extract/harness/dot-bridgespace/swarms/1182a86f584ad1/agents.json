@@ -1,0 +1,22 @@
+[
+  {
+    "label": "Coordinator 1",
+    "role": "coordinator"
+  },
+  {
+    "label": "Builder 1",
+    "role": "builder"
+  },
+  {
+    "label": "Builder 2",
+    "role": "builder"
+  },
+  {
+    "label": "Builder 3",
+    "role": "builder"
+  },
+  {
+    "label": "Builder 4",
+    "role": "builder"
+  }
+]

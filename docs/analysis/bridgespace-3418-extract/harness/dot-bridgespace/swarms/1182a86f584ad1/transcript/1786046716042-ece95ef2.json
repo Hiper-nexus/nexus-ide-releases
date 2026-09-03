@@ -1,0 +1,1 @@
+{"id":"1786046716042-ece95ef2","from":"Coordinator 1","to":"Builder 1","body":"Status check: F1 esta em 'review' e o arquivo tem 50 KB no disco. Se terminou, marque done e mande worker_done — o INTEGRADOR esta bloqueado esperando so voce e o F2. Se faltar pouco, responda so com o ETA. Nao expanda escopo.","type":"message","timestamp":"1786046716"}

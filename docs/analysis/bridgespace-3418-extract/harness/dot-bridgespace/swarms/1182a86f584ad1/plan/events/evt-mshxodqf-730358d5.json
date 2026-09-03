@@ -1,0 +1,23 @@
+{
+  "id": "evt-mshxodqf-730358d5",
+  "type": "task_created",
+  "timestamp": 1786046005383,
+  "actorLabel": "Coordinator 1",
+  "task": {
+    "id": "task-mshxodqf-50b6788e",
+    "goalId": "goal-primary",
+    "title": "F3 — Hooks & integração com agentes",
+    "status": "assigned",
+    "ownerAgentLabel": "Builder 3",
+    "ownedFiles": [
+      "bridge-reverse-swarm/F3-hooks-agentes.md"
+    ],
+    "acceptanceCriteria": [
+      "F3-hooks-agentes.md em pt-BR com (a) visão geral (b) bs-claude-hook.cjs e bs-agent-notify.cjs por evento + canal de notificação",
+      "formato dos JSON em claude-hooks/global e agent-hooks/global",
+      "shell integration OSC 133 + OSC 9;9 e override de ZDOTDIR",
+      "fluxo hook→drop-box→app (c) padrões portáveis (d) lacunas. Fonte arquivo:linha em cada afirmação."
+    ],
+    "dependsOn": []
+  }
+}

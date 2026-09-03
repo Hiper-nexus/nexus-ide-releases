@@ -1,0 +1,13 @@
+{
+  "id": "evt-mshysac4-62300b45",
+  "type": "task_note_added",
+  "timestamp": 1786047867220,
+  "actorLabel": "Builder 3",
+  "taskId": "task-mshxodxz-eee85a77",
+  "note": {
+    "id": "note-mshysac4-20eb5092",
+    "agentLabel": "Builder 3",
+    "text": "MAPA v1.1 completo em draft (426 linhas/6.856 palavras): 42 lacunas, método, índice, F1–F6 e 12 padrões priorizados. Validação final de citações, aliases, links e sensíveis em andamento.",
+    "timestamp": 1786047867220
+  }
+}

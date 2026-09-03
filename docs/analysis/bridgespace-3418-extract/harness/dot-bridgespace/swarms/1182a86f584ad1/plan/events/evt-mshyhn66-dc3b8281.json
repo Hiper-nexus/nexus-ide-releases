@@ -1,0 +1,13 @@
+{
+  "id": "evt-mshyhn66-dc3b8281",
+  "type": "task_note_added",
+  "timestamp": 1786047370638,
+  "actorLabel": "Builder 3",
+  "taskId": "task-mshxodxz-eee85a77",
+  "note": {
+    "id": "note-mshyhn66-cd86dc8e",
+    "agentLabel": "Builder 3",
+    "text": "F1–F6 lidas integralmente. Catálogo: 42 lacunas únicas abertas após deduplicação, premissas BridgeBoard/swarm-pane refutadas e 4 cruzamentos F2 explicitamente não resolvidos/limitados. Iniciando MAPA v1.1.",
+    "timestamp": 1786047370638
+  }
+}

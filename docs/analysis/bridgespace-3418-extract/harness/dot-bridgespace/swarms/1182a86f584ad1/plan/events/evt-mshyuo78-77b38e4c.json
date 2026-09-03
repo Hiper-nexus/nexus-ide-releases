@@ -1,0 +1,13 @@
+{
+  "id": "evt-mshyuo78-77b38e4c",
+  "type": "task_note_added",
+  "timestamp": 1786047978500,
+  "actorLabel": "Builder 3",
+  "taskId": "task-mshxodxz-eee85a77",
+  "note": {
+    "id": "note-mshyuo78-54dbb198",
+    "agentLabel": "Builder 3",
+    "text": "Entregue bridge-reverse-swarm/MAPA_DO_BRIDGE.md (MAPA DO BRIDGE v1.1). Coordinator aprovou: integração F1–F6, 42 lacunas deduplicadas, 6 links, premissas/vereditos/método/padrões completos; scans sensíveis limpos.",
+    "timestamp": 1786047978500
+  }
+}

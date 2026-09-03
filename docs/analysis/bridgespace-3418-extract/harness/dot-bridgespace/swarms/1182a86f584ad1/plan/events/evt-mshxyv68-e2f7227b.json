@@ -1,0 +1,13 @@
+{
+  "id": "evt-mshxyv68-e2f7227b",
+  "type": "task_note_added",
+  "timestamp": 1786046494544,
+  "actorLabel": "Builder 3",
+  "taskId": "task-mshxodqf-50b6788e",
+  "note": {
+    "id": "note-mshxyv68-e1dc519d",
+    "agentLabel": "Builder 3",
+    "text": "Documento F3 concluído; revisão final validando nomes reais de drop files, esquemas sem valores sensíveis e cobertura hook→watcher. Corrigida uma referência de termId digitada incorretamente.",
+    "timestamp": 1786046494544
+  }
+}
