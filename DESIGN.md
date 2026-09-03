@@ -75,11 +75,11 @@ via `color-mix` destes tokens; hex de papel em componente é dívida.
 - Espaço: `--space-1..8` (4→64px) com meios-degraus `--space-1-5`/`--space-2-5`
   (6/10px — a densidade real do cockpit, agora token, não literal).
   Tipo: `--text-2xs..hero` (10→34px).
-- Raio: `--radius-xs..2xl` (2→18px) + `--radius-round`. Cards ≤ `--radius-xl`.
-- Sombra: `--shadow-1..3` em duas camadas (contato curto + difusão larga) e
-  `--shadow-inset-hi` (filete de luz interno) aplicado com elas em superfícies
-  elevadas — menus, modais, painéis. z-index: ladder nomeada
-  (`--z-soft-overlay:45 … --z-confirm:1300`) — nunca valor solto.
+- Raio: `--radius-xs..2xl` (2→18px) + `--radius-round`. Cards: `--radius-card` (16px), glass: `--radius-glass` (20px).
+- Sombra: `--shadow-1..3` em duas camadas e papel funcional em superfícies elevadas:
+  `--shadow-card-rest`, `--shadow-card-focus`, `--shadow-card-drag` (com `--shadow-inset-hi` interno).
+- Vidro e blur: `--blur-sm..3xl` (8→64px), `--glass-bg`, `--glass-border`, `--glass-blur` (24px) e `--grid-dot`.
+  z-index: ladder nomeada (`--z-soft-overlay:45 … --z-confirm:1300`) — nunca valor solto.
 - `--bar-height: 44px`, `--toolbar-height: 30px`.
 
 ### Camada de overlay — a escada inteira, ancorada no topo
