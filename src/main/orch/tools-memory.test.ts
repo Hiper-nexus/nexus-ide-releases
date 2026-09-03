@@ -62,17 +62,23 @@ afterEach(() => {
 });
 
 describe('nexus_memory_* tools', () => {
-  it('registra as três tools no toolset central com as políticas esperadas', () => {
+  it('registra as seis tools no toolset central com as políticas esperadas', () => {
     const names = buildToolset().map((tool) => tool.name);
     expect(names).toEqual(
       expect.arrayContaining([
         'nexus_memory_retain',
         'nexus_memory_recall',
         'nexus_memory_stats',
+        'nexus_memory_backlinks',
+        'nexus_memory_orphans',
+        'nexus_memory_suggest_connections',
       ]),
     );
     expect(effectPolicyForTool('nexus_memory_recall')).toBe('read-only');
     expect(effectPolicyForTool('nexus_memory_stats')).toBe('read-only');
+    expect(effectPolicyForTool('nexus_memory_backlinks')).toBe('read-only');
+    expect(effectPolicyForTool('nexus_memory_orphans')).toBe('read-only');
+    expect(effectPolicyForTool('nexus_memory_suggest_connections')).toBe('read-only');
     // Mutação estreita permitida antes de contrato (memória local, validada).
     expect(effectPolicyForTool('nexus_memory_retain')).toBe(
       'bootstrap-authority',
@@ -234,5 +240,63 @@ describe('nexus_memory_* tools', () => {
     await expect(
       retain.handler({ content: 'should not persist' }, context('project-a')),
     ).rejects.toThrow(/feature\.memory\.workspaceMemory is disabled/);
+  });
+
+  it('consulta backlinks, orphans e suggest_connections pelo escopo do workspace', async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-wm-graph-'));
+    dirs.push(projectDir);
+
+    const ctx = context('project-graph', {
+      scope: {
+        version: 1,
+        installationId: 'installation-a',
+        projectId: 'project-graph',
+        checkoutId: 'checkout-graph',
+        rootRealPath: projectDir,
+        identitySource: 'manifest',
+      },
+    });
+
+    const retain = toolByName('nexus_memory_retain');
+    const backlinksTool = toolByName('nexus_memory_backlinks');
+    const orphansTool = toolByName('nexus_memory_orphans');
+    const suggestTool = toolByName('nexus_memory_suggest_connections');
+
+    // Retain note A linking to [[Architecture]] and note B linking to [[Architecture]]
+    await retain.handler(
+      { content: '# Architecture\nCore design specs for database engine.' },
+      ctx,
+    );
+    await retain.handler(
+      { content: '# Persistence\nUses [[Architecture]] for disk layout.' },
+      ctx,
+    );
+    await retain.handler(
+      { content: '# Isolated\nIndependent utility with no external ties.' },
+      ctx,
+    );
+
+    // Test backlinks
+    const backlinkRes = (await backlinksTool.handler(
+      { title: 'Architecture' },
+      ctx,
+    )) as { backlinksCount: number; backlinks: Array<{ title: string }> };
+    expect(backlinkRes.backlinksCount).toBe(1);
+    expect(backlinkRes.backlinks[0].title).toBe('Persistence');
+
+    // Test orphans: Isolated has 0 incoming and 0 outgoing links
+    const orphansRes = (await orphansTool.handler({}, ctx)) as {
+      orphansCount: number;
+      orphans: Array<{ title: string }>;
+    };
+    const orphanTitles = orphansRes.orphans.map((o) => o.title);
+    expect(orphanTitles).toContain('Isolated');
+
+    // Test suggest connections: Architecture and Persistence share "database" or other tokens
+    const suggestRes = (await suggestTool.handler(
+      { identifier: 'Architecture' },
+      ctx,
+    )) as { suggestions: Array<{ title: string }> };
+    expect(Array.isArray(suggestRes.suggestions)).toBe(true);
   });
 });

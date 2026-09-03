@@ -65,7 +65,12 @@ const WIKILINK_RE = /\[\[([^\]]{1,256})\]\]/g;
 export function extractWikilinks(body: string): string[] {
   const out = new Set<string>();
   for (const m of body.matchAll(WIKILINK_RE)) {
-    out.add(m[1].trim());
+    const raw = m[1].trim();
+    const pipeIdx = raw.indexOf('|');
+    const target = (pipeIdx >= 0 ? raw.slice(0, pipeIdx) : raw).trim();
+    if (target.length > 0) {
+      out.add(target);
+    }
   }
   return [...out];
 }
@@ -559,3 +564,107 @@ export function wikilinkCompletions(
     .filter((t) => t.toLowerCase().startsWith(p))
     .slice(0, 20);
 }
+
+const STOPWORDS = new Set([
+  'about', 'above', 'after', 'again', 'against', 'all', 'and', 'any', 'are',
+  'because', 'been', 'before', 'being', 'below', 'between', 'both', 'but', 'by',
+  'could', 'did', 'does', 'doing', 'down', 'during', 'each', 'few', 'for', 'from',
+  'further', 'had', 'has', 'have', 'having', 'here', 'how', 'into', 'itself',
+  'just', 'more', 'most', 'other', 'over', 'same', 'should', 'some', 'such',
+  'than', 'that', 'the', 'their', 'theirs', 'them', 'themselves', 'then',
+  'there', 'these', 'they', 'this', 'those', 'through', 'under', 'until',
+  'very', 'was', 'were', 'what', 'when', 'where', 'which', 'while', 'who',
+  'whom', 'why', 'with', 'would', 'para', 'como', 'mais', 'pelo', 'pela',
+  'este', 'esta', 'isso', 'aquilo', 'onde', 'quando', 'quem',
+]);
+
+function extractDistinctiveTokens(text: string): Set<string> {
+  const words = text.toLowerCase().match(/[a-z0-9_-]{4,}/g) ?? [];
+  return new Set(words.filter((w) => !STOPWORDS.has(w)));
+}
+
+export function listOrphans(
+  projectRoot: string,
+  dirname = DEFAULT_MEMORY_DIR,
+): MemoryNote[] {
+  const allNotes = listMemoryNotes(projectRoot, dirname);
+  const titles = new Set(allNotes.map((n) => n.title.toLowerCase()));
+
+  // Count incoming resolved links
+  const incoming = new Map<string, number>();
+  for (const t of titles) incoming.set(t, 0);
+
+  for (const n of allNotes) {
+    for (const link of n.wikilinks) {
+      const lower = link.toLowerCase();
+      if (incoming.has(lower)) {
+        incoming.set(lower, (incoming.get(lower) ?? 0) + 1);
+      }
+    }
+  }
+
+  // Orphan: 0 incoming AND 0 valid outgoing links
+  return allNotes.filter((n) => {
+    const inc = incoming.get(n.title.toLowerCase()) ?? 0;
+    const validOut = n.wikilinks.filter((w) => titles.has(w.toLowerCase())).length;
+    return inc === 0 && validOut === 0;
+  });
+}
+
+export interface ConnectionSuggestion {
+  readonly note: MemoryNote;
+  readonly score: number;
+  readonly sharedTerms: string[];
+}
+
+export function suggestConnections(
+  projectRoot: string,
+  identifier: string,
+  limit = 5,
+  dirname = DEFAULT_MEMORY_DIR,
+): ConnectionSuggestion[] {
+  const allNotes = listMemoryNotes(projectRoot, dirname);
+  const targetLower = identifier.toLowerCase();
+  const targetNote = allNotes.find(
+    (n) => n.id === identifier || n.title.toLowerCase() === targetLower,
+  );
+  if (!targetNote) return [];
+
+  const targetTokens = extractDistinctiveTokens(
+    `${targetNote.title} ${targetNote.body}`,
+  );
+  if (targetTokens.size === 0) return [];
+  const existingLinks = new Set(targetNote.wikilinks.map((w) => w.toLowerCase()));
+  existingLinks.add(targetNote.title.toLowerCase());
+
+  const suggestions: ConnectionSuggestion[] = [];
+
+  for (const other of allNotes) {
+    if (other.id === targetNote.id) continue;
+    if (existingLinks.has(other.title.toLowerCase())) continue;
+
+    const otherTokens = extractDistinctiveTokens(
+      `${other.title} ${other.body}`,
+    );
+
+    const shared: string[] = [];
+    for (const token of targetTokens) {
+      if (otherTokens.has(token)) {
+        shared.push(token);
+      }
+    }
+
+    if (shared.length > 0) {
+      suggestions.push({
+        note: other,
+        score: shared.length,
+        sharedTerms: shared.slice(0, 4),
+      });
+    }
+  }
+
+  return suggestions
+    .sort((a, b) => b.score - a.score || b.note.updatedAt - a.note.updatedAt)
+    .slice(0, limit);
+}
+

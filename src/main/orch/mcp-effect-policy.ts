@@ -43,6 +43,9 @@ const READ_ONLY_TOOLS = new Set([
   // contador de recall no banco de memória em userData (nunca no workspace).
   'memory_recall',
   'memory_stats',
+  'memory_backlinks',
+  'memory_orphans',
+  'memory_suggest_connections',
   'merge_status',
   'mission_get',
   'mission_list',

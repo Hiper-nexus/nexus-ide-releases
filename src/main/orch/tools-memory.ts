@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
@@ -8,8 +10,20 @@ import {
   MEMORY_KINDS,
   MEMORY_SCOPES,
 } from '../memory/workspace-memory';
+import {
+  backlinks,
+  listOrphans,
+  suggestConnections,
+} from '../memory/nexus-memory';
 import type { AgentGateContext } from './gate';
 import type { McpToolDef } from './mcp-protocol';
+
+function resolveMemoryProjectionRoot(ctx: AgentGateContext): string {
+  const store = getWorkspaceMemoryStore(ctx.scope);
+  return fs.existsSync(path.join(ctx.scope.rootRealPath, '.nexus-memory'))
+    ? ctx.scope.rootRealPath
+    : store.projectionRoot;
+}
 
 /**
  * Tools de memória agentic por workspace (entrega C2, design derivado do
@@ -211,6 +225,122 @@ const statsTool: McpToolDef = {
   },
 };
 
+const backlinksArgsSchema = z
+  .object({
+    title: z.string().trim().min(1).max(256),
+  })
+  .strict();
+
+const backlinksTool: McpToolDef = {
+  name: 'nexus_memory_backlinks',
+  description:
+    'Find all memory notes in this workspace that reference [[title]]. ' +
+    'Useful to explore knowledge graph relationships and discover dependent decisions.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      title: {
+        type: 'string',
+        description: 'Target memory title to find inbound wikilinks for.',
+      },
+    },
+    required: ['title'],
+  },
+  handler: async (args, ctx) => {
+    requireMemoryEnabled();
+    const input = backlinksArgsSchema.parse(args);
+    const root = resolveMemoryProjectionRoot(ctx);
+    const notes = backlinks(root, input.title);
+    return {
+      target: input.title,
+      backlinksCount: notes.length,
+      backlinks: notes.map((n) => ({
+        id: n.id,
+        title: n.title,
+        kind: n.kind,
+        updatedAt: n.updatedAt,
+      })),
+    };
+  },
+};
+
+const orphansTool: McpToolDef = {
+  name: 'nexus_memory_orphans',
+  description:
+    'Find disconnected memory notes in this workspace (notes with 0 inbound wikilinks and 0 outbound wikilinks). ' +
+    'Helps maintain an interconnected knowledge graph and connect isolated facts.',
+  inputSchema: { type: 'object', properties: {} },
+  handler: async (_args, ctx) => {
+    requireMemoryEnabled();
+    const root = resolveMemoryProjectionRoot(ctx);
+    const notes = listOrphans(root);
+    return {
+      orphansCount: notes.length,
+      orphans: notes.map((n) => ({
+        id: n.id,
+        title: n.title,
+        kind: n.kind,
+        updatedAt: n.updatedAt,
+      })),
+    };
+  },
+};
+
+const suggestConnectionsArgsSchema = z
+  .object({
+    identifier: z.string().trim().min(1).max(256),
+    limit: z.number().int().min(1).max(20).optional(),
+  })
+  .strict();
+
+const suggestConnectionsTool: McpToolDef = {
+  name: 'nexus_memory_suggest_connections',
+  description:
+    'Suggest notes in this workspace that share distinctive concepts with a given note, but are not yet linked. ' +
+    'Call this to enrich knowledge cross-referencing and synthesize insights across sessions.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      identifier: {
+        type: 'string',
+        description: 'Memory title or id to find suggestions for.',
+      },
+      limit: {
+        type: 'number',
+        description: 'Maximum number of suggestions (default 5, max 20).',
+      },
+    },
+    required: ['identifier'],
+  },
+  handler: async (args, ctx) => {
+    requireMemoryEnabled();
+    const input = suggestConnectionsArgsSchema.parse(args);
+    const root = resolveMemoryProjectionRoot(ctx);
+    const suggestions = suggestConnections(
+      root,
+      input.identifier,
+      input.limit ?? 5,
+    );
+    return {
+      target: input.identifier,
+      suggestions: suggestions.map((s) => ({
+        id: s.note.id,
+        title: s.note.title,
+        kind: s.note.kind,
+        score: s.score,
+        sharedTerms: s.sharedTerms,
+      })),
+    };
+  },
+};
+
 export function buildMemoryTools(): McpToolDef[] {
-  return [retainTool, recallTool, statsTool];
+  return [
+    retainTool,
+    recallTool,
+    statsTool,
+    backlinksTool,
+    orphansTool,
+    suggestConnectionsTool,
+  ];
 }
