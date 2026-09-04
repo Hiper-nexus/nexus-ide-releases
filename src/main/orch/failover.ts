@@ -106,9 +106,6 @@ const INSTANT_DEATH_TRIP = 2;
 const INSTANT_DEATH_WINDOW_MS = 10 * 60_000;
 /** adapterId → instantes das mortes instantâneas recentes. */
 const instantAuthDeaths = new Map<string, number[]>();
-/** adapterId → último emit do disjuntor (anti-spam de toast). */
-const instantDeathLastEmitAt = new Map<string, number>();
-const INSTANT_DEATH_EMIT_QUIET_MS = 60_000;
 
 function noteInstantAuthDeath(adapterId: string, now: number): number {
   const recent = (instantAuthDeaths.get(adapterId) ?? []).filter(
@@ -117,6 +114,15 @@ function noteInstantAuthDeath(adapterId: string, now: number): number {
   recent.push(now);
   instantAuthDeaths.set(adapterId, recent);
   return recent.length;
+}
+
+/**
+ * Re-login com blob fresco cura a causa do 401 — as mortes instantâneas
+ * ANTERIORES não podem contar contra a credencial nova, senão 1 morte
+ * legítima logo após o login já trava o failover de novo.
+ */
+export function resetInstantAuthDeaths(adapterId: string): void {
+  instantAuthDeaths.delete(adapterId);
 }
 
 interface FailoverAuthority {
@@ -806,25 +812,24 @@ function handleLimitHit(
             suppressed: 'instant-auth-death-breaker',
           }),
         );
-        const lastEmit = instantDeathLastEmitAt.get(adapterId) ?? 0;
-        if (now - lastEmit >= INSTANT_DEATH_EMIT_QUIET_MS) {
-          instantDeathLastEmitAt.set(adapterId, now);
-          emitFailover(authority, {
-            paneId: pane.paneId,
-            fromAccountLabel: current?.label ?? adapterId,
-            toAccountLabel: '',
-            // Sem ponteiro de re-login aqui: o toast de kind auth
-            // (blockedFailoverToastCopy) já instrui "Entre novamente em
-            // Configurações → Providers".
-            reason:
-              `${hit.reason} (sessão morreu com segundos de vida ` +
-              `${deaths}x seguidas — credencial provavelmente expirada)`,
-            kind: hit.kind,
-            switched: false,
-            fromAccountId: current?.id,
-            missionId: authority.missionId,
-          });
-        }
+        // Emite SEMPRE: suprimir aqui deixava o pane morrer sem nenhum
+        // feedback no renderer. Repetição idêntica não empilha toast — a
+        // store deduplica por kind+título+detalhe e troca no lugar.
+        emitFailover(authority, {
+          paneId: pane.paneId,
+          fromAccountLabel: current?.label ?? adapterId,
+          toAccountLabel: '',
+          // Sem ponteiro de re-login aqui: o toast de kind auth
+          // (blockedFailoverToastCopy) já instrui "Entre novamente em
+          // Configurações → Providers".
+          reason:
+            `${hit.reason} (sessão morreu com segundos de vida ` +
+            `${deaths}x seguidas — credencial provavelmente expirada)`,
+          kind: hit.kind,
+          switched: false,
+          fromAccountId: current?.id,
+          missionId: authority.missionId,
+        });
         return;
       }
     }
@@ -935,7 +940,6 @@ export function shutdownFailover(): void {
   // failover: sem isto, mortes de testes/sessões anteriores vazam para as
   // próximas e o trip dispara cedo demais.
   instantAuthDeaths.clear();
-  instantDeathLastEmitAt.clear();
   for (const key of [...pendingRetries.keys()]) cancelScheduledRetry(key);
   coalesceByFrom.clear();
   for (const [wc, onDestroyed] of destroyHandlers) {

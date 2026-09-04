@@ -129,6 +129,7 @@ import {
   initFailover,
   registerFailoverListener,
   requestSessionRecovery,
+  resetInstantAuthDeaths,
   shutdownFailover,
   unregisterFailoverListener,
 } from './failover';
@@ -1006,6 +1007,60 @@ describe('disjuntor de morte instantânea (401-loop multi-conta)', () => {
         (c[1] as { switched?: boolean }).switched === true,
     );
     expect(switchedTrue).toHaveLength(0);
+  });
+
+  it('trip repetido sempre emite e re-login zera a contagem', async () => {
+    const { detectLimit } = await import('./limit-detector');
+    const authHit = (buffer: string) =>
+      buffer.includes('LIMIT')
+        ? {
+            kind: 'auth' as const,
+            reason: 'invalid x-api-key',
+            cooldownMs: 60_000,
+          }
+        : null;
+    vi.mocked(detectLimit)
+      .mockImplementationOnce(authHit)
+      .mockImplementationOnce(authHit)
+      .mockImplementationOnce(authHit)
+      .mockImplementationOnce(authHit);
+    const scope = testProjectScope();
+    const owner = renderer(902);
+    renderers.push(owner);
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerFailoverListener(owner);
+    const fire = (n: number) => {
+      addPane({
+        owner,
+        paneId: `pane-trip-${n}`,
+        sessionId: `sess-trip-${n}`,
+        scope,
+      });
+      ptyMocks.dataTaps[0]!(`sess-trip-${n}`, 'LIMIT 401');
+    };
+    fire(1);
+    fire(2);
+    // 3ª morte seguida: trava de novo E emite de novo (sem janela muda —
+    // o toast deduplica no lugar, mas o pane nunca morre em silêncio).
+    fire(3);
+    const trips = owner.send.mock.calls.filter(
+      (c) =>
+        c[0] === ACCOUNT_CHANNELS.failover &&
+        (c[1] as { switched?: boolean }).switched === false,
+    );
+    expect(trips).toHaveLength(2);
+    // Re-login: a contagem antiga não vale contra a credencial nova.
+    resetInstantAuthDeaths('claude');
+    owner.send.mockClear();
+    fire(4);
+    expect(owner.send).toHaveBeenCalledWith(
+      ACCOUNT_CHANNELS.failover,
+      expect.objectContaining({
+        paneId: 'pane-trip-4',
+        switched: true,
+        toAccountId: 'account-b',
+      }),
+    );
   });
 });
 

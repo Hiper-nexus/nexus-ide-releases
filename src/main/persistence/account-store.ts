@@ -729,7 +729,10 @@ export async function ensureFreshClaudeSubscription(
       return false;
     }
     setSecret(CRED_PREFIX + accountId, updated);
-    claudeRefreshFailedAt.delete(accountId);
+    // Cura silenciosa deixava o badge "sessão expirada" pendurado com
+    // Configurações aberto: emite na transição true→false também. (A expiração
+    // por TTL é preguiçosa — aparece no próximo emit de qualquer origem.)
+    if (claudeRefreshFailedAt.delete(accountId)) emit();
     console.info('[accounts] claude oauth renovado para conta', account.label);
     return true;
   } catch {

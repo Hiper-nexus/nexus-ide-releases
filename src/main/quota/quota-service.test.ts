@@ -91,6 +91,7 @@ describe('QuotaService limit-hit expiry', () => {
         active: true,
         hasCredential: true,
         onCooldown: false,
+        needsRelogin: false,
       } as AccountInfo,
       {
         id: 'acc-b',
@@ -100,6 +101,7 @@ describe('QuotaService limit-hit expiry', () => {
         active: false,
         hasCredential: true,
         onCooldown: false,
+        needsRelogin: false,
       } as AccountInfo,
     ];
 
@@ -141,6 +143,7 @@ describe('QuotaService limit-hit expiry', () => {
         active: true,
         hasCredential: true,
         onCooldown: false,
+        needsRelogin: false,
       } as AccountInfo,
       {
         id: 'acc-b',
@@ -150,6 +153,7 @@ describe('QuotaService limit-hit expiry', () => {
         active: false,
         hasCredential: true,
         onCooldown: false,
+        needsRelogin: false,
       } as AccountInfo,
     ];
     const svc = new QuotaService({
@@ -181,6 +185,7 @@ describe('QuotaService limit-hit expiry', () => {
         active: true,
         hasCredential: true,
         onCooldown: true,
+        needsRelogin: false,
         cooldownUntil: HIT_AT + COOLDOWN_MS,
         lastError: 'Error: 401 OAuth access token has expired',
       } as AccountInfo,
@@ -294,6 +299,7 @@ describe('QuotaService live Claude OAuth usage', () => {
         active: true,
         hasCredential: true,
         onCooldown: false,
+        needsRelogin: false,
       } as AccountInfo,
       {
         id: 'acc-b',
@@ -303,6 +309,7 @@ describe('QuotaService live Claude OAuth usage', () => {
         active: false,
         hasCredential: true,
         onCooldown: false,
+        needsRelogin: false,
       } as AccountInfo,
     ];
 

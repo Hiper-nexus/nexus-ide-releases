@@ -27,6 +27,7 @@ import { listAccountQuota } from './account-quota';
 import {
   initFailover,
   registerFailoverListener,
+  resetInstantAuthDeaths,
   unregisterFailoverListener,
 } from '../orch/failover';
 import { z } from 'zod';
@@ -92,6 +93,7 @@ export function registerAccountIpc(): void {
     if (!parsed.success) return { ok: false, error: 'invalid label' };
     try {
       const account = addActiveClaudeAccount(parsed.data.label);
+      if (account) resetInstantAuthDeaths(account.adapterId);
       return account
         ? { ok: true, id: account.id, email: account.email }
         : {
@@ -137,6 +139,9 @@ export function registerAccountIpc(): void {
             'Nenhuma sessão ativa detectada para este provider.',
         };
       }
+      // Blob fresco do CLI vivo: as mortes instantâneas antigas não valem
+      // contra a credencial nova (ver resetInstantAuthDeaths).
+      resetInstantAuthDeaths(account.adapterId);
       broadcastActivated({
         accountId: account.id,
         adapterId: account.adapterId,

@@ -395,6 +395,27 @@ describe('renovação morta veta failover no escuro', () => {
     expect(hasRecentClaudeRefreshFailure(a.id)).toBe(true);
   });
 
+  it('sucesso do refresh emite onChanged quando havia marca (cura visível)', async () => {
+    const a = addSecondary('Conta B', 'b@example.test', oauthBlob('b-access'));
+    (deps as Record<string, unknown>).marked = [a];
+    deps.needsRefresh.mockReturnValue({ refreshToken: 'rt-b' });
+    deps.refreshBlob.mockResolvedValue(null);
+    const seen: number[] = [];
+    const off = onAccountsChange(() => {
+      seen.push(1);
+    });
+    try {
+      expect(await ensureFreshClaudeSubscription(a.id)).toBe(false);
+      expect(seen).toHaveLength(1);
+      deps.refreshBlob.mockResolvedValue(oauthBlob('b-access-2'));
+      expect(await ensureFreshClaudeSubscription(a.id)).toBe(true);
+      expect(hasRecentClaudeRefreshFailure(a.id)).toBe(false);
+      expect(seen).toHaveLength(2);
+    } finally {
+      off();
+    }
+  });
+
   it('sucesso do refresh limpa a marca', async () => {
     const a = addSecondary('Conta B', 'b@example.test', oauthBlob('b-access'));
     (deps as Record<string, unknown>).marked = [a];
