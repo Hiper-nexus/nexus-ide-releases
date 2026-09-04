@@ -1,7 +1,7 @@
 /* Nexus V2 product frame: continuous surfaces, quiet chrome and one canvas. */
 
 .nexus-shell {
-  --nexus-shell-rail-width: 200px;
+  --nexus-shell-rail-width: 250px;
   --nexus-shell-inspector-min: 360px;
   --nexus-shell-inspector-max: 440px;
   --nexus-shell-workspace-min: 640px;
@@ -68,10 +68,23 @@
 }
 
 .product-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
   min-width: 0;
   min-height: var(--bar-height);
   border-bottom: 1px solid var(--border);
   background: var(--bg-bar);
+}
+
+:root[data-platform='mac'] .product-header {
+  padding-top: calc(var(--space-6) + var(--space-2));
+  -webkit-app-region: drag;
+}
+
+:root[data-platform='mac'] .product-header > * {
+  -webkit-app-region: no-drag;
 }
 
 .nexus-shell__body {
@@ -198,6 +211,8 @@
   color: var(--text);
   font-size: var(--text-sm);
   font-weight: 600;
+  flex-shrink: 0;
+  white-space: nowrap;
   transition:
     background-color 160ms var(--ease-out-quart),
     color 160ms var(--ease-out-quart),
@@ -692,7 +707,7 @@
   font-size: 9px;
   font-weight: 600;
   color: #d4d4d8;
-  max-width: 65px;
+  max-width: 85px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -720,7 +735,7 @@
   background: rgba(255, 255, 255, 0.05);
   padding: 0 3px;
   border-radius: 2px;
-  max-width: 55px;
+  max-width: 65px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -949,7 +964,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 110px;
+  max-width: 135px;
 }
 
 .workspace-rail__quota-val {
@@ -960,6 +975,10 @@
 
 .workspace-rail__quota-val--ok {
   color: var(--state-ready, #10b981);
+}
+
+.workspace-rail__quota-val--unknown {
+  color: var(--text-dim);
 }
 
 .workspace-rail__quota-val--warn {
@@ -985,6 +1004,124 @@
 
 .workspace-rail__quota-bar--ok {
   background: var(--state-ready, #10b981);
+}
+
+.workspace-rail__quota-bar--unknown {
+  background: var(--text-dim);
+}
+
+/* Linha de janelas estilo Orca ("5 Horas 35% · Semanal 41%"). */
+.workspace-rail__quota-line {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 9px;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+}
+
+/* Linha do agente com o logo da LLM (herança visual Orca). */
+.workspace-rail__agent-btn .provider-logo {
+  flex-shrink: 0;
+}
+
+/* Seletor unificado de LLM (logo + uso + modelos por provider). */
+.model-picker {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.model-picker__empty {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.model-picker__provider {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.model-picker__provider-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.model-picker__provider-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.model-picker__provider-quota {
+  margin-left: auto;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-picker__models {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.model-picker__model {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 6px 8px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs, 3px);
+  font-size: 12px;
+  color: var(--text-main);
+  cursor: pointer;
+  text-align: left;
+}
+
+.model-picker__model:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.model-picker__model--selected {
+  border-color: var(--border, rgba(255, 255, 255, 0.15));
+  background: var(--surface-hover);
+}
+
+.model-picker__model:disabled {
+  cursor: not-allowed;
+  color: var(--text-dim);
+}
+
+.model-picker__model-name {
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-picker__model-default {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.model-picker__model-reason {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workspace-rail__quota-bar--warn {

@@ -264,8 +264,8 @@ artefatos locais temporários; não entram no produto nem no repositório.
 Reproduzir composição, densidade e fluxo — nunca marca, logo, copy, sprites ou
 outros assets do Overclock:
 
-- **Rail compacto e hierárquico.** Largura persistente de `184px` (faixa
-  permitida: 160–200px). Workspace/missão é a linha principal; agentes aparecem
+- **Rail compacto e hierárquico.** Largura persistente de `250px` (faixa
+  permitida: 200–280px). Workspace/missão no padrão card Orca; agentes aparecem
   aninhados apenas quando existem. Seleção usa fill sutil + borda de 1px; os
   demais itens não ganham card próprio.
 - **Canvas é o protagonista.** Terminal, editor ou entrega ocupam o restante.

@@ -9,6 +9,9 @@ import {
 } from './WorkspaceRail';
 import { useTerminalGridDialogStore } from '../../state/terminal-grid-dialog-store';
 import { useQuotaStore } from '../../state/quota-store';
+import { useAdapterStore } from '../../state/adapter-store';
+import { useLayoutStore } from '../../state/layout-store';
+import { createLeaf, createPane } from '../../lib/split-tree';
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -515,5 +518,121 @@ describe('WorkspaceRail', () => {
 
     const conn = host.querySelector('.workspace-rail__cockpit-conn');
     expect(conn?.textContent).toContain('Local');
+  });
+
+  it('mostra as duas janelas de quota estilo Orca e a barra da pior janela', () => {
+    const now = Date.now();
+    act(() => {
+      useQuotaStore.getState().receive({
+        updatedAt: now,
+        entries: [
+          {
+            id: 'claude',
+            adapterId: 'claude',
+            label: 'Claude',
+            installed: true,
+            onCooldown: false,
+            updatedAt: now,
+            windows: [
+              {
+                kind: 'hours',
+                label: '5 Horas',
+                usedRatio: 0.35,
+                source: 'provider-api',
+                confidence: 'high',
+              },
+              {
+                kind: 'weekly',
+                label: 'Semanal',
+                usedRatio: 0.41,
+                source: 'provider-api',
+                confidence: 'high',
+              },
+            ],
+          },
+        ],
+        worstUsedRatio: 0.41,
+        highUsageCount: 0,
+        unknownCount: 0,
+      });
+    });
+
+    const { host } = renderRail();
+    const cockpit = host.querySelector('.workspace-rail__cockpit');
+    expect(cockpit?.textContent).toContain('5 Horas 35% · Semanal 41%');
+    // A barra e o valor refletem a PIOR janela (41%), não a primeira.
+    expect(cockpit?.textContent).toContain('41%');
+  });
+
+  it('missão selecionada abre com agentes visíveis e logo da LLM (estilo Orca)', () => {
+    const previousRoot = useLayoutStore.getState().root;
+    const pane = {
+      ...createPane('cli-agent', undefined, 'claude'),
+      id: 'pane-orca',
+      title: 'running checkout regression',
+      missionId: 'mission-running',
+    };
+    act(() => {
+      useLayoutStore.setState({ root: createLeaf(pane) });
+      useAdapterStore.getState().receive([
+        {
+          id: 'claude',
+          kind: 'cli-pty',
+          label: 'Claude',
+          icon: '◆',
+          models: { list: ['sonnet'], default: 'sonnet' },
+          installed: true,
+          installCommand: 'npm i -g claude',
+          idleTimeoutMs: 800,
+          orchestratorCapable: true,
+        },
+      ]);
+    });
+
+    try {
+      const { host } = renderRail({
+        selection: { kind: 'mission', missionId: 'mission-running' },
+      });
+      // Sem clicar no toggle: a lista de agentes já está aberta.
+      const agents = host.querySelector('.workspace-rail__agents-list');
+      expect(agents).not.toBeNull();
+      expect(agents?.textContent).toContain('running checkout regression');
+      const logo = host.querySelector(
+        '.workspace-rail__agent-btn [role="img"]',
+      );
+      expect(logo?.getAttribute('aria-label')).toBe('Logo Claude');
+    } finally {
+      act(() => {
+        useLayoutStore.setState({ root: previousRoot });
+        useAdapterStore.getState().receive([]);
+      });
+    }
+  });
+
+  it('sem metadados do adapter, mantém o selo de texto da CLI', () => {
+    const previousRoot = useLayoutStore.getState().root;
+    const pane = {
+      ...createPane('cli-agent', undefined, 'minha-cli'),
+      id: 'pane-unknown',
+      title: 'tarefa obscura',
+      missionId: 'mission-running',
+    };
+    act(() => {
+      useLayoutStore.setState({ root: createLeaf(pane) });
+      useAdapterStore.getState().receive([]);
+    });
+
+    try {
+      const { host } = renderRail({
+        selection: { kind: 'mission', missionId: 'mission-running' },
+      });
+      expect(
+        host.querySelector('.workspace-rail__agent-adapter')?.textContent,
+      ).toBe('minha-cli');
+    } finally {
+      act(() => {
+        useLayoutStore.setState({ root: previousRoot });
+      });
+    }
   });
 });

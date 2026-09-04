@@ -113,7 +113,7 @@ describe('Nexus V2 shell and product workspace style contracts', () => {
 
       const railWidth = styleLengthPx(shell, '--nexus-shell-rail-width');
       expect(railWidth).toBeGreaterThanOrEqual(160);
-      expect(railWidth).toBeLessThanOrEqual(200);
+      expect(railWidth).toBeLessThanOrEqual(280);
     },
   );
 

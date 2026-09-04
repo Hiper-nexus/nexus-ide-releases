@@ -36,6 +36,7 @@ import { useOrchStore } from './state/orch-store';
 import { useSettingsController } from './state/settings-store';
 import { useWorkspaceController, useWorkspaceStore } from './state/workspace-store';
 import { useProviderController } from './state/provider-store';
+import { useAdapterController } from './state/adapter-store';
 import { reconcileHosts } from './terminal/terminal-host';
 import {
   gateRestoredAgents,
@@ -267,6 +268,7 @@ export function App() {
   useSettingsController();
   useWorkspaceController();
   useProviderController();
+  useAdapterController();
   useAccountController();
   useCostController();
   useUsageSync();

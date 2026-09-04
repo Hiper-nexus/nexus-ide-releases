@@ -16,7 +16,9 @@ import { useOrchStore } from '../../state/orch-store';
 import { useSessionStateStore } from '../../state/session-state-store';
 import { useGitScmStore } from '../../state/git-scm-store';
 import { useQuotaStore } from '../../state/quota-store';
-import { windowDisplay } from '../../lib/quota-display';
+import { useAdapterStore } from '../../state/adapter-store';
+import { shortWindowsLine } from '../../lib/quota-display';
+import { ProviderLogo } from '../ProviderLogo';
 import { useTerminalGridDialogStore } from '../../state/terminal-grid-dialog-store';
 import { useCommandPaletteStore } from '../../state/command-palette-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
@@ -213,8 +215,21 @@ function WorkspaceGroup({
   const root = useLayoutStore((s) => s.root);
   const paneStates = useSessionStateStore((s) => s.paneStates);
   const currentBranch = useGitScmStore((s) => s.branch);
+  const adapters = useAdapterStore((s) => s.adapters);
   const allPanes = useMemo(() => listPanes(root), [root]);
-  const [expandedMissions, setExpandedMissions] = useState<Record<string, boolean>>({});
+  const adapterMetaById = useMemo(() => {
+    const map = new Map<string, { label: string; icon: string }>();
+    for (const adapter of adapters) {
+      map.set(adapter.id, { label: adapter.label, icon: adapter.icon });
+    }
+    return map;
+  }, [adapters]);
+  // Estilo Orca: a missão selecionada já abre com os agentes visíveis.
+  const [expandedMissions, setExpandedMissions] = useState<
+    Record<string, boolean>
+  >(() =>
+    selection?.kind === 'mission' ? { [selection.missionId]: true } : {},
+  );
 
   return (
     <section
@@ -405,6 +420,9 @@ function WorkspaceGroup({
                               <ul className="workspace-rail__agents-list">
                                 {missionPanes.map((pane) => {
                                   const state = paneStates.get(pane.id) ?? 'idle';
+                                  const adapterMeta = pane.adapterId
+                                    ? adapterMetaById.get(pane.adapterId)
+                                    : undefined;
                                   return (
                                     <li
                                       key={pane.id}
@@ -423,14 +441,25 @@ function WorkspaceGroup({
                                         <span
                                           className={`workspace-rail__agent-dot workspace-rail__agent-dot--${state}`}
                                         />
-                                        <span className="workspace-rail__agent-title">
+                                        {pane.adapterId ? (
+                                          <ProviderLogo
+                                            adapterId={pane.adapterId}
+                                            label={
+                                              adapterMeta?.label ?? pane.adapterId
+                                            }
+                                            fallback={adapterMeta?.icon}
+                                            size="xs"
+                                          />
+                                        ) : null}
+                                        <span className="workspace-rail__agent-name">
                                           {pane.title || 'Agente'}
                                         </span>
-                                        {pane.adapterId && (
-                                          <span className="workspace-rail__agent-badge">
+                                        {pane.adapterId &&
+                                        !adapterMeta ? (
+                                          <span className="workspace-rail__agent-adapter">
                                             {pane.adapterId}
                                           </span>
-                                        )}
+                                        ) : null}
                                       </button>
                                     </li>
                                   );
@@ -714,29 +743,51 @@ export function WorkspaceRail({
             </div>
             <div className="workspace-rail__cockpit-bars">
               {quotaEntries.slice(0, 2).map((entry) => {
-                const primaryWindow = entry.windows[0];
-                const d = primaryWindow ? windowDisplay(primaryWindow) : null;
+                let worst: number | null = null;
+                for (const window of entry.windows) {
+                  if (window.usedRatio === null) continue;
+                  if (worst === null || window.usedRatio > worst) {
+                    worst = window.usedRatio;
+                  }
+                }
+                if (entry.onCooldown) worst = 1;
+                const tone =
+                  worst === null
+                    ? 'unknown'
+                    : worst >= 0.8
+                      ? 'danger'
+                      : worst >= 0.5
+                        ? 'warn'
+                        : 'ok';
+                const percentLabel =
+                  worst === null ? '—' : `${Math.round(worst * 100)}%`;
+                // Estilo Orca: todas as janelas ("5 Horas 35% · Semanal 41%").
+                const line = shortWindowsLine(entry);
                 return (
                   <div key={entry.id} className="workspace-rail__quota-item">
                     <div className="workspace-rail__quota-info">
                       <span className="workspace-rail__quota-name">{entry.label}</span>
                       <span
-                        className={`workspace-rail__quota-val workspace-rail__quota-val--${
-                          d?.tone ?? 'ok'
-                        }`}
+                        className={`workspace-rail__quota-val workspace-rail__quota-val--${tone}`}
                       >
-                        {d ? d.percentLabel : '—'}
+                        {percentLabel}
                       </span>
                     </div>
+                    {line ? (
+                      <span
+                        className="workspace-rail__quota-line"
+                        title={line}
+                      >
+                        {line}
+                      </span>
+                    ) : null}
                     <div className="workspace-rail__quota-track">
                       <div
-                        className={`workspace-rail__quota-bar workspace-rail__quota-bar--${
-                          d?.tone ?? 'ok'
-                        }`}
+                        className={`workspace-rail__quota-bar workspace-rail__quota-bar--${tone}`}
                         style={{
                           width: `${Math.min(
                             100,
-                            Math.max(0, (d?.barRatio ?? 0) * 100),
+                            Math.max(0, (worst ?? 0) * 100),
                           )}%`,
                         }}
                       />
