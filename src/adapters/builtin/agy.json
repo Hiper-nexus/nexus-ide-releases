@@ -47,6 +47,8 @@
   "models": {
     "flag": "--model",
     "list": [
+      "gemini-3.8-flash-high",
+      "gemini-3.8-pro-high",
       "gemini-3.7-flash-high",
       "gemini-3.7-flash-medium",
       "gemini-3.7-flash-low",
@@ -87,6 +89,15 @@
     "nexusMcp": "none"
   },
   "control": {
+    "effort": {
+      "arg": "--effort",
+      "levels": [
+        "low",
+        "medium",
+        "high",
+        "max"
+      ]
+    },
     "permission": {
       "arg": "",
       "modes": {},
@@ -95,6 +106,10 @@
       ],
       "safe": [
         "--sandbox"
+      ],
+      "readOnly": [
+        "--mode",
+        "plan"
       ],
       "default": ""
     }

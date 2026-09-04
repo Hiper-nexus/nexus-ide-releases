@@ -78,6 +78,20 @@ describe('mission intent gate', () => {
     ).toBe(true);
   });
 
+  it('allows mission_set_status to transition pending mission to running when intent is dispatched', () => {
+    const pendingDispatched: Mission = {
+      ...dispatched,
+      status: 'pending',
+    };
+    expect(
+      assertMissionIntentAllowsTool(
+        'nexus_mission_set_status',
+        { mission: pendingDispatched },
+        { status: 'running' },
+      ).ok,
+    ).toBe(true);
+  });
+
   it('consult lane allows reads, diagnostics and spawn; only explicit contract denies block', () => {
     const consult: Mission = {
       ...dispatched,

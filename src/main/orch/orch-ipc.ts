@@ -1768,18 +1768,11 @@ export function registerOrchIpc(): void {
     // Posse de apresentação é do main, não do payload: só quem realmente
     // mostra a sessão pode falar por ela.
     const info = getOwnedAgentSessionInfo(event.sender, sessionId);
-    if (!info?.missionId) return false;
-    const scope = requireLiveRendererWorkspaceScope(event.sender);
-    const missions = getProjectDomainStores(scope).missions;
-    const mission = missions.get(info.missionId);
-    // Voo real 23/08: no done o operador PODE continuar digitando no pane para
-    // pedir ajustes ("termina isso", "corrige X"). Recusar no done deixava o
-    // pane com o erro "o main recusou a digitação" e impedia qualquer ajuste
-    // pós-entrega. Apenas missões 'failed' ou inexistentes são recusadas.
-    if (!mission || mission.status === "failed") {
-      return false;
-    }
-    return orchWriteSession(sessionId, data, { markInputBusy: true });
+    if (!info) return false;
+    return orchWriteSession(sessionId, data, {
+      markInputBusy: true,
+      inputOrigin: "human",
+    });
   });
 
   ipcMain.on(ORCH_CHANNELS.panesSync, (event, raw) => {

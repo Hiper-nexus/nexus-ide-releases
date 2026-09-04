@@ -203,8 +203,14 @@ export function assertMissionIntentAllowsTool(
         typeof args.status === 'string' ? args.status : undefined;
       const failSafe =
         nextStatus === 'blocked' || nextStatus === 'failed';
+      const canStart =
+        nextStatus === 'running' &&
+        (intentState === 'ready_to_start' ||
+          intentState === 'dispatched' ||
+          canDispatchWorkers(intentState));
       if (
         failSafe ||
+        canStart ||
         (canDispatchWorkers(intentState) && isDispatchAuthorized)
       ) {
         return { ok: true, intentState, intentVersion };
@@ -234,7 +240,7 @@ export function assertMissionIntentAllowsTool(
     // A running mission is enough to spawn panes and create worktrees. The
     // intent state is informative, not an additional gate, so legacy rows and
     // freshly started missions both work without an approved contract.
-    if (isDispatchAuthorized) {
+    if (isDispatchAuthorized || canDispatchWorkers(intentState)) {
       return { ok: true, intentState, intentVersion };
     }
     return deny(

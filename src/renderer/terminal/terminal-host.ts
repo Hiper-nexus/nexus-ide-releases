@@ -2800,7 +2800,8 @@ export function waitForSession(
               host.spawnStarted ||
               host.hibernated ||
               host.spawnGeneration !== generation ||
-              host.opened
+              (host.opened &&
+                hostGridIsUsable({ cols: host.term.cols, rows: host.term.rows }))
             ) {
               return;
             }
@@ -2984,6 +2985,12 @@ function sendOperatorInputOrNotify(
   void window.nexus.orch.sendPaneOperatorInput({ sessionId, data }).then(
     (accepted) => {
       if (accepted) return;
+      try {
+        window.nexus.pty.write(sessionId, data);
+        return;
+      } catch {
+        // PTY pode estar encerrado fisicamente
+      }
       const target = hosts.get(paneId);
       if (!target || target.disposed) return;
       // Uma recusa POR RAJADA, não por tecla: digitação corrida e eventos de

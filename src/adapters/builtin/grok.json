@@ -48,6 +48,7 @@
   "models": {
     "flag": "--model",
     "list": [
+      "grok-4.6",
       "grok-composer-2.5-fast",
       "grok-4.5",
       "grok-4.1",
@@ -104,6 +105,8 @@
         "workspace"
       ],
       "readOnly": [
+        "--permission-mode",
+        "plan",
         "--sandbox",
         "read-only"
       ],

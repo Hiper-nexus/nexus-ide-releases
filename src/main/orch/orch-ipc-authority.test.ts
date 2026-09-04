@@ -3974,14 +3974,16 @@ describe('teclado do operador em pane de missão', () => {
     ]);
   });
 
-  it('recusa missão em estado failed', async () => {
+  it('permite digitação mesmo com missão em estado failed (recuperação pelo operador)', async () => {
     const { handler, sender } = setup();
     const sessionId = livePane(sender);
     harness.operatorInput.missions.set('mission-1', { status: 'failed' });
     expect(
       handler({ sender }, { sessionId, data: 'x' }),
-    ).toBe(false);
-    expect(harness.operatorInput.writes).toEqual([]);
+    ).toBe(true);
+    expect(harness.operatorInput.writes).toEqual([
+      { sessionId, data: 'x' },
+    ]);
   });
 
   it('recusa payload acima do teto de digitação', async () => {
