@@ -336,6 +336,7 @@ function ProviderRow({
   provider,
   selected,
   accountCount,
+  needsRelogin,
   loginBusy,
   installBusy,
   onSelect,
@@ -345,15 +346,16 @@ function ProviderRow({
   provider: ProviderSettingsInfo;
   selected: boolean;
   accountCount: number;
+  needsRelogin: boolean;
   loginBusy: boolean;
   installBusy: boolean;
   onSelect: () => void;
   onLogin: () => void;
   onInstall: () => void;
 }) {
-  const status = providerStatusLabel(provider);
+  const status = providerStatusLabel(provider, { needsRelogin });
   const models = modelCountLabel(provider);
-  const cta = providerRowCta(provider);
+  const cta = providerRowCta(provider, { needsRelogin });
   const ctaBusy = cta?.kind === 'login' ? loginBusy : installBusy;
 
   return (
@@ -398,7 +400,7 @@ function ProviderRow({
           disabled={ctaBusy}
           onClick={onLogin}
           title="Abre um terminal e roda o login desta CLI. Quem guarda a sessão é a própria ferramenta."
-          aria-label={`Entrar em ${provider.label}`}
+          aria-label={`${cta.label} — ${provider.label}`}
           data-testid={`prov-login-${provider.adapterId}`}
         >
           {ctaBusy ? 'Abrindo…' : cta.label}
@@ -687,6 +689,16 @@ export function ProvidersPanel() {
     return map;
   }, [accounts]);
 
+  // Sessão morta (refresh falhou) por adapter: a linha "conectada" ganha
+  // status + CTA de re-login em vez de fingir saúde.
+  const reloginByAdapter = useMemo(() => {
+    const set = new Set<string>();
+    for (const a of accounts) {
+      if (a.needsRelogin) set.add(a.adapterId);
+    }
+    return set;
+  }, [accounts]);
+
   const detectedLabel = useMemo(
     () => tabDetectedLabel(tab, providers, visible.length),
     [tab, providers, visible.length],
@@ -700,8 +712,13 @@ export function ProvidersPanel() {
         await window.nexus.adapters.rescan();
       }
       await hydrate();
+      // O badge "N contas" e o status de sessão vêm da account store — sem
+      // este hydrate o pós-login mostrava a linha stale até outro reload.
+      await useAccountStore.getState().hydrate();
     } catch (err) {
       console.warn('[providers] refresh failed:', err);
+      // Spinner parava sem feedback: o operador achava que o login não pegou.
+      setLoginNotice('Não consegui reexaminar as CLIs. Tente de novo.');
     } finally {
       setRefreshing(false);
     }
@@ -938,6 +955,7 @@ export function ProvidersPanel() {
                 provider={p}
                 selected={p.adapterId === selectedId}
                 accountCount={accountCountByAdapter.get(p.adapterId) ?? 0}
+                needsRelogin={reloginByAdapter.has(p.adapterId)}
                 loginBusy={loginBusyId === p.adapterId}
                 installBusy={provisioning === p.label}
                 onSelect={() => setSelectedId(p.adapterId)}

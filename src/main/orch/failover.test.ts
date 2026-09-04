@@ -995,7 +995,9 @@ describe('disjuntor de morte instantânea (401-loop multi-conta)', () => {
         paneId: 'pane-instant-2',
         switched: false,
         kind: 'auth',
-        reason: expect.stringContaining('Providers'),
+        // O ponteiro "Entre novamente em Providers" entra no toast
+        // (blockedFailoverToastCopy); o evento carrega só o diagnóstico.
+        reason: expect.stringContaining('segundos de vida'),
       }),
     );
     const switchedTrue = owner.send.mock.calls.filter(

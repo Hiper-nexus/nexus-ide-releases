@@ -87,6 +87,7 @@ describe('ProvidersPanel hub', () => {
           active: true,
           hasCredential: true,
           onCooldown: false,
+          needsRelogin: false,
           email: 'retornoja@gmail.com',
         },
       ],

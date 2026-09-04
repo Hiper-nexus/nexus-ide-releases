@@ -106,6 +106,8 @@ import {
   ensureSubscriptionActive,
   hasRecentClaudeRefreshFailure,
   initAccountStore,
+  listAccountInfos,
+  onAccountsChange,
   prepareAccountForSpawn,
   startClaudeSubscriptionFreshness,
 } from './account-store';
@@ -435,6 +437,32 @@ describe('renovação morta veta failover no escuro', () => {
 
     expect(hasRecentClaudeRefreshFailure(a.id)).toBe(false);
     expect(prepareAccountForSpawn('claude', a.id).ok).toBe(true);
+  });
+
+  it('listAccountInfos projeta needsRelogin e a marca emite onChanged só na transição', async () => {
+    const a = addSecondary('Conta B', 'b@example.test', oauthBlob('b-access'));
+    (deps as Record<string, unknown>).marked = [a];
+    deps.needsRefresh.mockReturnValue({ refreshToken: 'rt-b' });
+    deps.refreshBlob.mockResolvedValue(null);
+    const seen: number[] = [];
+    const off = onAccountsChange(() => {
+      seen.push(1);
+    });
+    try {
+      expect(
+        listAccountInfos().find((i) => i.id === a.id)?.needsRelogin,
+      ).toBe(false);
+      expect(await ensureFreshClaudeSubscription(a.id)).toBe(false);
+      expect(
+        listAccountInfos().find((i) => i.id === a.id)?.needsRelogin,
+      ).toBe(true);
+      expect(seen).toHaveLength(1);
+      // Segunda falha seguida não re-emite (anti-spam do sweeper de 15min).
+      expect(await ensureFreshClaudeSubscription(a.id)).toBe(false);
+      expect(seen).toHaveLength(1);
+    } finally {
+      off();
+    }
   });
 
   it('marca expira após a janela (TTL)', async () => {

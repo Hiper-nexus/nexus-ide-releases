@@ -813,10 +813,12 @@ function handleLimitHit(
             paneId: pane.paneId,
             fromAccountLabel: current?.label ?? adapterId,
             toAccountLabel: '',
+            // Sem ponteiro de re-login aqui: o toast de kind auth
+            // (blockedFailoverToastCopy) já instrui "Entre novamente em
+            // Configurações → Providers".
             reason:
               `${hit.reason} (sessão morreu com segundos de vida ` +
-              `${deaths}x seguidas — credencial provavelmente expirada; ` +
-              'entre novamente em Configurações › Providers)',
+              `${deaths}x seguidas — credencial provavelmente expirada)`,
             kind: hit.kind,
             switched: false,
             fromAccountId: current?.id,

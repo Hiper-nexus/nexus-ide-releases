@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useLayoutStore } from '../state/layout-store';
 import { useToastStore } from '../state/toast-store';
+import { useProductNavigationStore } from '../state/product-navigation-store';
 import { useOrchStore } from '../state/orch-store';
 import { listPanes } from '../lib/split-tree';
 import { respawnWithResume, getScrollbackExcerpt } from '../terminal/terminal-host';
@@ -33,11 +34,16 @@ export function useFailoverController(): void {
           return;
         }
         const copy = blockedFailoverToastCopy(event);
-        push(
-          'error',
-          copy.title,
-          copy.detail,
-        );
+        // O texto já diz "Configurações → Providers" — a ação leva até lá
+        // (toast com ação ganha TTL de 20s em vez de 7s).
+        push('error', copy.title, {
+          detail: copy.detail,
+          action: {
+            label: 'Abrir Providers',
+            onClick: () =>
+              useProductNavigationStore.getState().openSettings('providers'),
+          },
+        });
         return;
       }
       const pane = listPanes(useLayoutStore.getState().root).find(

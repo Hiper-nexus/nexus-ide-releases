@@ -40,6 +40,12 @@ export interface AccountInfo extends Account {
   active: boolean;
   hasCredential: boolean;
   onCooldown: boolean;
+  /**
+   * A credencial existe no vault mas a renovação falhou (ex.: refresh OAuth
+   * morto) — spawn nesta conta é 401 garantido. A UI mostra "sessão
+   * expirada — entre novamente" em vez do enganoso "pronta".
+   */
+  needsRelogin: boolean;
 }
 
 export const addAccountSchema = z.object({

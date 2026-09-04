@@ -49,6 +49,9 @@ function accountKindLabel(a: AccountInfo): string {
 }
 
 function accountState(a: AccountInfo): 'active' | 'cooldown' | 'warn' | 'ready' {
+  // Sessão morta vence até o "ativo": o LED tem de acusar antes do próximo
+  // spawn queimar um pane num 401 garantido.
+  if (a.needsRelogin) return 'warn';
   if (a.active) return 'active';
   if (a.onCooldown) return 'cooldown';
   if (!a.hasCredential) return 'warn';
@@ -480,6 +483,14 @@ export function AccountsManager({
                 {!account.hasCredential && (
                   <span className="acct__warn">sem credencial</span>
                 )}
+                {account.needsRelogin && (
+                  <span
+                    className="acct__warn"
+                    title="A renovação do token falhou — qualquer terminal novo nesta conta cai em 401"
+                  >
+                    sessão expirada — entre novamente
+                  </span>
+                )}
                 {role === 'active' &&
                   panel.showActiveEmUsoPill &&
                   !account.onCooldown &&
@@ -501,6 +512,17 @@ export function AccountsManager({
         </div>
         {!isRenaming && (
           <div className="acct__actions">
+            {account.needsRelogin && loginCommand && (
+              <button
+                type="button"
+                className="settings-btn settings-btn--primary acct__action"
+                onClick={() => void openLoginTerminal()}
+                disabled={busy}
+                title="Abre o terminal de login desta CLI de novo"
+              >
+                Entrar novamente
+              </button>
+            )}
             {role === 'active' ? (
               <button
                 type="button"
@@ -516,13 +538,20 @@ export function AccountsManager({
                 type="button"
                 className="settings-btn settings-btn--primary acct__action"
                 onClick={() => void useAccount(account.id)}
-                disabled={busy || account.onCooldown || !account.hasCredential}
+                disabled={
+                  busy ||
+                  account.onCooldown ||
+                  !account.hasCredential ||
+                  account.needsRelogin
+                }
                 title={
-                  account.onCooldown
-                    ? 'Em cooldown — indisponível até o limite passar'
-                    : !account.hasCredential
-                      ? 'Sem credencial salva'
-                      : 'Tornar esta a conta em uso'
+                  account.needsRelogin
+                    ? 'Sessão expirada — entre novamente antes de usar'
+                    : account.onCooldown
+                      ? 'Em cooldown — indisponível até o limite passar'
+                      : !account.hasCredential
+                        ? 'Sem credencial salva'
+                        : 'Tornar esta a conta em uso'
                 }
               >
                 Usar

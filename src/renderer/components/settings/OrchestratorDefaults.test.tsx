@@ -51,6 +51,7 @@ function account(id: string, adapterId: string, label: string): AccountInfo {
     active: false,
     hasCredential: true,
     onCooldown: false,
+    needsRelogin: false,
   };
 }
 

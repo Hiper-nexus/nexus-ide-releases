@@ -675,6 +675,23 @@ export function clearClaudeRefreshFailure(accountId: string): void {
 }
 
 /**
+ * Marca a falha e avisa a UI — antes este caminho era `console.warn` puro e
+ * o operador só descobria no próximo 401/spawn. O `emit` empurra o novo
+ * `needsRelogin` pelo `onChanged` para Configurações aberto; só na transição
+ * (sweeper de 15min + retries reinsistiriam no mesmo flag e spammariam).
+ */
+function markClaudeRefreshFailed(account: { id: string; label: string }): void {
+  const already = hasRecentClaudeRefreshFailure(account.id);
+  claudeRefreshFailedAt.set(account.id, Date.now());
+  console.warn(
+    '[accounts] claude oauth NÃO renovado para conta',
+    account.label,
+    '— entre novamente em Configurações › Providers',
+  );
+  if (!already) emit();
+}
+
+/**
  * Renova o blob OAuth de uma conta Claude SECUNDÁRIA perto de expirar e grava
  * o resultado (refresh token rotacionado) de volta no vault. A conta que é o
  * login nativo do Keychain NUNCA é renovada por aqui — rotacionar a linhagem
@@ -707,14 +724,8 @@ export async function ensureFreshClaudeSubscription(
     const updated = await refreshImpl(blob, now);
     if (!updated) {
       // Tentativa real falhou (rede ou refresh rotacionado/consumido): marca
-      // para o failover não queimar sessões nesta conta, e avisa — antes este
-      // caminho era silêncio total e o operador só descobria no 401.
-      claudeRefreshFailedAt.set(accountId, Date.now());
-      console.warn(
-        '[accounts] claude oauth NÃO renovado para conta',
-        account.label,
-        '— entre novamente em Configurações › Providers',
-      );
+      // para o failover não queimar sessões nesta conta, e avisa a UI.
+      markClaudeRefreshFailed(account);
       return false;
     }
     setSecret(CRED_PREFIX + accountId, updated);
@@ -722,12 +733,7 @@ export async function ensureFreshClaudeSubscription(
     console.info('[accounts] claude oauth renovado para conta', account.label);
     return true;
   } catch {
-    claudeRefreshFailedAt.set(accountId, Date.now());
-    console.warn(
-      '[accounts] claude oauth NÃO renovado para conta',
-      account.label,
-      '— entre novamente em Configurações › Providers',
-    );
+    markClaudeRefreshFailed(account);
     return false;
   } finally {
     claudeRefreshInFlight.delete(accountId);
@@ -1469,5 +1475,8 @@ export function listAccountInfos(): AccountInfo[] {
         ? hasSecret(KEY_PREFIX + a.id)
         : hasSecret(CRED_PREFIX + a.id),
     onCooldown: Boolean(a.cooldownUntil && a.cooldownUntil > now),
+    // Conta com refresh morto parece saudável (blob existe, sem cooldown)
+    // mas todo spawn nela é 401 — a UI precisa do flag para pedir re-login.
+    needsRelogin: hasRecentClaudeRefreshFailure(a.id, now),
   }));
 }

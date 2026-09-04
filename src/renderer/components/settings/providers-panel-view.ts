@@ -106,7 +106,18 @@ export function modelCountLabel(provider: ProviderSettingsInfo): string {
   return `${ready}/${total}`;
 }
 
-export function providerStatusLabel(provider: ProviderSettingsInfo): {
+/**
+ * Conta com credencial morta (refresh falhou) num provider que se diz
+ * conectado: a linha não pode continuar "conectado".
+ */
+export interface ProviderAccountHealth {
+  readonly needsRelogin?: boolean;
+}
+
+export function providerStatusLabel(
+  provider: ProviderSettingsInfo,
+  health?: ProviderAccountHealth,
+): {
   readonly label: string;
   readonly tone: 'ok' | 'warn' | 'muted' | 'danger';
 } {
@@ -116,6 +127,9 @@ export function providerStatusLabel(provider: ProviderSettingsInfo): {
   if (!provider.enabled) return { label: 'desligada', tone: 'muted' };
   if (provider.authStrategy === 'login-needed') {
     return { label: 'precisa login', tone: 'warn' };
+  }
+  if (health?.needsRelogin) {
+    return { label: 'sessão expirada', tone: 'danger' };
   }
   return { label: 'conectado', tone: 'ok' };
 }
@@ -128,6 +142,7 @@ export type ProviderRowCta =
 /** One operator action per row — or none when there is nothing to do. */
 export function providerRowCta(
   provider: ProviderSettingsInfo,
+  health?: ProviderAccountHealth,
 ): ProviderRowCta | null {
   if (!provider.installed && isLocalCliProvider(provider)) {
     return provider.canAutoInstall
@@ -138,6 +153,11 @@ export function providerRowCta(
   if (provider.authStrategy === 'login-needed') {
     if (provider.loginCommand) return { kind: 'login', label: 'Entrar' };
     if (provider.keyEnvVar) return { kind: 'key', label: 'Colar chave' };
+  }
+  // Linha "conectada" com sessão morta: o CTA some se depender só do
+  // provider — a conta avisa que o re-login é pelo mesmo terminal de login.
+  if (health?.needsRelogin && provider.loginCommand) {
+    return { kind: 'login', label: 'Entrar novamente' };
   }
   if (
     !isLocalCliProvider(provider) &&

@@ -71,6 +71,7 @@ function account(
     active: true,
     hasCredential: true,
     onCooldown: false,
+    needsRelogin: false,
     ...opts,
   };
 }

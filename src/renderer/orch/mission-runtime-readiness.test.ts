@@ -93,6 +93,7 @@ function account(
     active: false,
     hasCredential: true,
     onCooldown: false,
+    needsRelogin: false,
     ...overrides,
   };
 }

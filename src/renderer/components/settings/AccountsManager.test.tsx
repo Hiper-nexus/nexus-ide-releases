@@ -37,6 +37,7 @@ function account(patch: Partial<AccountInfo> = {}): AccountInfo {
     active: true,
     hasCredential: true,
     onCooldown: false,
+    needsRelogin: false,
     ...patch,
   };
 }
@@ -350,6 +351,39 @@ describe('AccountsManager', () => {
     expect(liveRow?.textContent).toContain('sessão do CLI');
     const otherRow = rows.find((r) => r.textContent?.includes('Pessoal'));
     expect(otherRow?.textContent).not.toContain('sessão do CLI');
+    act(() => root.unmount());
+  });
+
+  it('conta com sessão expirada pede re-login e bloqueia Usar', async () => {
+    useAccountStore.setState({
+      accounts: [
+        account({
+          id: 'acct-1',
+          label: 'Trabalho',
+          active: false,
+          needsRelogin: true,
+        }),
+      ],
+    });
+
+    const { host, root } = mount();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const rows = [...host.querySelectorAll('.acct__row')];
+    const row = rows.find((r) => r.textContent?.includes('Trabalho'));
+    expect(row?.textContent).toContain('sessão expirada — entre novamente');
+    expect(row?.getAttribute('data-state')).toBe('warn');
+    const relogin = [...(row?.querySelectorAll('button') ?? [])].find((b) =>
+      b.textContent?.includes('Entrar novamente'),
+    );
+    expect(relogin).toBeTruthy();
+    const use = [...(row?.querySelectorAll('button') ?? [])].find(
+      (b) => b.textContent === 'Usar',
+    );
+    expect(use?.disabled).toBe(true);
+    expect(use?.title).toContain('entre novamente');
     act(() => root.unmount());
   });
 

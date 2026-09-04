@@ -19,6 +19,7 @@ function account(patch: Partial<AccountInfo> = {}): AccountInfo {
     active: false,
     hasCredential: true,
     onCooldown: false,
+    needsRelogin: false,
     ...patch,
   };
 }

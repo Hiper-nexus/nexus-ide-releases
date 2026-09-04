@@ -10,7 +10,9 @@ import { listAccountInfos } from './account-store';
 export function listAccountQuota(): AccountQuotaInfo[] {
   return listAccountInfos().map((a) => {
     let status: AccountQuotaInfo['status'] = 'inactive';
-    if (!a.hasCredential) status = 'no-credential';
+    // Refresh morto = spawn recusado no prepare: oferecer como 'ready' no
+    // switcher queimaria uma sessão num 401 garantido.
+    if (!a.hasCredential || a.needsRelogin) status = 'no-credential';
     else if (a.onCooldown) status = 'cooldown';
     else if (a.active) status = 'ready';
     else status = 'inactive';

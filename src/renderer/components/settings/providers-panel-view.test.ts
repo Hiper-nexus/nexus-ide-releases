@@ -194,4 +194,25 @@ describe('providers-panel-view', () => {
     ).toEqual({ kind: 'key', label: 'Colar chave' });
     expect(providerRowCta(claude)).toBeNull();
   });
+
+  it('linha conectada com sessão morta pede re-login, não finge saúde', () => {
+    const connected = { ...claude, loginCommand: 'claude auth login' };
+    expect(providerRowCta(connected)).toBeNull();
+    expect(providerRowCta(connected, { needsRelogin: true })).toEqual({
+      kind: 'login',
+      label: 'Entrar novamente',
+    });
+    // Sem comando de login não há para onde levar: sem CTA.
+    expect(
+      providerRowCta(claude, { needsRelogin: true }),
+    ).toBeNull();
+    expect(providerStatusLabel(connected, { needsRelogin: true })).toEqual({
+      label: 'sessão expirada',
+      tone: 'danger',
+    });
+    expect(providerStatusLabel(connected)).toEqual({
+      label: 'conectado',
+      tone: 'ok',
+    });
+  });
 });
