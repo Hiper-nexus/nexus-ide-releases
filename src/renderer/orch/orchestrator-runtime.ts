@@ -96,7 +96,10 @@ export function resolveOrchestratorRuntime(
       account.id === input.defaultAccountId &&
       account.adapterId === input.adapterId &&
       account.hasCredential &&
-      !account.onCooldown,
+      !account.onCooldown &&
+      // Morta não fixa: undefined devolve a decisão ao spawn (conta ativa),
+      // e o prepare veta com motivo acionável em vez de 401 mudo.
+      !account.needsRelogin,
   );
   return {
     model:

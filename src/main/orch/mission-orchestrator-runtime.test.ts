@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { AccountInfo } from '../../shared/account-types';
 import { cliPtyAdapterSchema } from '../../shared/adapter-types';
 import type { Squad } from '../../shared/orch-types';
 import {
@@ -373,5 +374,90 @@ describe('mission orchestrator runtime authority', () => {
         productionDeps('governed'),
       ),
     ).toThrow(/Nexus MCP/i);
+  });
+
+  it('sessão expirada nunca vence a cadeia de contas do orquestrador', () => {
+    const codexAdapter = cliPtyAdapterSchema.parse({
+      ...customAdapter,
+      id: 'codex',
+      label: 'Codex',
+      bin: 'codex',
+      detect: 'codex --version',
+      install: { method: 'manual', command: 'install codex' },
+      quirks: { mcpAutoload: true },
+    });
+    const maestro = {
+      id: 'maestro',
+      agentName: 'Maestro',
+      category: 'orchestrator',
+      cli: 'codex',
+      model: 'gpt-5.6-terra',
+    } as const;
+    const dead: AccountInfo = {
+      id: 'acc-dead',
+      adapterId: 'codex',
+      label: 'Morta',
+      mode: 'subscription',
+      upstream: 'codex',
+      createdAt: 1,
+      active: true,
+      hasCredential: true,
+      onCooldown: false,
+      needsRelogin: true,
+    };
+    const healthy: AccountInfo = {
+      ...dead,
+      id: 'acc-healthy',
+      label: 'Saudável',
+      active: false,
+      needsRelogin: false,
+    };
+    const depsFor = (accounts: readonly AccountInfo[]) => ({
+      ...productionDeps('governed'),
+      getAdapter: () => codexAdapter,
+      listAdapterInfos: () => [
+        {
+          id: codexAdapter.id,
+          kind: codexAdapter.kind,
+          label: codexAdapter.label,
+          icon: codexAdapter.icon,
+          models: codexAdapter.models,
+          installed: true,
+          installCommand: 'install codex',
+          idleTimeoutMs: 500,
+          orchestratorCapable: true,
+          taskHandoffCapable: true,
+          missionControlCapable: true,
+          orchestrationEvidence: 'verified' as const,
+          autonomousWorkspaceWriteCapable: false,
+          capabilities: {
+            launchable: true,
+            promptInjectable: true,
+            statusObservable: true,
+            resumable: false,
+            autonomousReadOnly: false,
+            governedWriter: false,
+            verifiedMaestro: false,
+          },
+        },
+      ],
+      listAccountInfos: () => [...accounts],
+    });
+    // Ativa morta perde para saudável em espera em qualquer degrau.
+    expect(
+      resolveProductionMissionOrchestratorRuntime(
+        squad,
+        { ...maestro },
+        depsFor([dead, healthy]),
+      ).accountId,
+    ).toBe('acc-healthy');
+    // Só morta: erro cita o re-login, não só cooldown.
+    expect(() =>
+      resolveProductionMissionOrchestratorRuntime(
+        squad,
+        { ...maestro },
+        depsFor([dead]),
+      ),
+    ).toThrow(/sessão expirada/);
   });
 });

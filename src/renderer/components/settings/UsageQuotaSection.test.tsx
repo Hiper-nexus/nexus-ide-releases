@@ -325,6 +325,36 @@ describe('UsageQuotaSection', () => {
     act(() => root.unmount());
   });
 
+  it('conta com sessão expirada ganha badge na linha de cota', async () => {
+    useAccountStore.setState({
+      accounts: [
+        {
+          id: 'acc-1',
+          adapterId: 'codex',
+          label: 'Plus',
+          mode: 'subscription',
+          upstream: 'codex',
+          email: 'user@example.com',
+          active: true,
+          createdAt: 1723630000000,
+          onCooldown: false,
+          needsRelogin: true,
+          hasCredential: true,
+        },
+      ],
+    });
+
+    const { host, root } = mount();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(host.textContent).toContain('sessão expirada');
+    act(() => root.unmount());
+  });
+
   it('mantém a linha "CLI nativo" quando a sessão viva NÃO é conta salva', async () => {
     useAccountStore.setState({
       accounts: [

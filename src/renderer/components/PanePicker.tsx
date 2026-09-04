@@ -132,7 +132,12 @@ export function buildPanePickerEntries(
           section: 'clis',
           group: provider.label,
           adapterId: provider.adapterId,
-          label: account?.label ?? DEFAULT_ACCOUNT_LABEL,
+          // Conta morta continua escolhível (o prepare veta com motivo), mas
+          // nunca com o nome limpo — o sufixo honesto evita o 401 surpresa.
+          label:
+            account?.needsRelogin && account.label
+              ? `${account.label} (sessão expirada)`
+              : (account?.label ?? DEFAULT_ACCOUNT_LABEL),
           detail: modelLabel,
           icon: 'plus',
           keywords: [

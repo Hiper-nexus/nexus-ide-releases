@@ -260,20 +260,21 @@ export function resolveProductionMissionOrchestratorRuntime(
   const accounts = deps.listAccountInfos().filter(
     (account) => account.adapterId === adapterId,
   );
+  // Sessão expirada não é elegível em nenhum degrau: renovação morta é 401
+  // garantido, e o prepare vetaria depois com erro em vez de cair na irmã.
+  const usable = (candidate: (typeof accounts)[number]): boolean =>
+    candidate.hasCredential &&
+    !candidate.onCooldown &&
+    !candidate.needsRelogin;
   const account =
     accounts.find(
       (candidate) =>
-        candidate.id === settings.defaultAccountId &&
-        candidate.hasCredential &&
-        !candidate.onCooldown,
+        candidate.id === settings.defaultAccountId && usable(candidate),
     ) ??
     accounts.find(
-      (candidate) =>
-        candidate.active && candidate.hasCredential && !candidate.onCooldown,
+      (candidate) => candidate.active && usable(candidate),
     ) ??
-    accounts.find(
-      (candidate) => candidate.hasCredential && !candidate.onCooldown,
-    );
+    accounts.find((candidate) => usable(candidate));
   if (!deps.isProviderEnabled(adapterId)) {
     throw new Error(
       `${adapter.label} está desativado em Configurações › Providers.`,
@@ -285,8 +286,14 @@ export function resolveProductionMissionOrchestratorRuntime(
     !account &&
     !operatorChoice
   ) {
+    const anyExpired = accounts.some(
+      (candidate) => candidate.needsRelogin,
+    );
     throw new Error(
-      'Nenhuma conta do orquestrador tem credencial válida fora de cooldown.',
+      'Nenhuma conta do orquestrador tem credencial válida fora de cooldown.' +
+        (anyExpired
+          ? ' Há sessão expirada — entre novamente em Configurações › Providers.'
+          : ''),
     );
   }
   const sealedModel = runtimeComesFromRoster

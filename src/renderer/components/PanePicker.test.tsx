@@ -307,6 +307,26 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     });
   });
 
+  it('conta com sessão expirada aparece nomeada, nunca com nome limpo', () => {
+    useAccountStore.setState({
+      accounts: [
+        account('acc-1', 'claude', 'Conta 1', { needsRelogin: true }),
+      ],
+    } as never);
+    mount();
+    openMenu();
+    type('claude');
+
+    expect(
+      optionLabels().some((label) => label.includes('Conta 1 (sessão expirada)')),
+    ).toBe(true);
+    expect(
+      optionLabels().some(
+        (label) => label.includes('Conta 1') && !label.includes('expirada'),
+      ),
+    ).toBe(false);
+  });
+
   it('CLI sem catálogo de modelos ainda oferece uma linha que abre', () => {
     mount();
     openMenu();

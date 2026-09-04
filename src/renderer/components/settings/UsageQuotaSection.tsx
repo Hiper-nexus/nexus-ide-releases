@@ -16,10 +16,13 @@ import { emailFromAuthDetail } from './account-default-label';
 function EntryCard({
   entry,
   email,
+  needsRelogin,
 }: {
   entry: ProviderQuotaEntry;
   /** E-mail da conta do vault (entries de CLI nativo não têm conta). */
   email?: string;
+  /** Refresh morto (lido do vault, não do snapshot de cota). */
+  needsRelogin?: boolean;
 }) {
   return (
     <li
@@ -48,6 +51,14 @@ function EntryCard({
         {entry.onCooldown && (
           <span className="quota-entry__badge quota-entry__badge--warn">
             cooldown
+          </span>
+        )}
+        {needsRelogin && (
+          <span
+            className="quota-entry__badge quota-entry__badge--warn"
+            title="A renovação do token falhou — entre novamente em Providers"
+          >
+            sessão expirada
           </span>
         )}
       </div>
@@ -283,6 +294,12 @@ export function UsageQuotaSection() {
                 e.accountId
                   ? accounts.find((a) => a.id === e.accountId)?.email
                   : undefined
+              }
+              needsRelogin={
+                e.accountId
+                  ? accounts.find((a) => a.id === e.accountId)?.needsRelogin ===
+                    true
+                  : false
               }
             />
           ))}

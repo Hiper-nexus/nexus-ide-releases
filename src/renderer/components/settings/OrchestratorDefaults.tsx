@@ -357,7 +357,10 @@ export function OrchestratorDefaults() {
               </option>
             )}
             {providerAccounts.map((account) => {
-              const unavailable = account.onCooldown || !account.hasCredential;
+              const unavailable =
+                account.onCooldown ||
+                !account.hasCredential ||
+                account.needsRelogin;
               return (
                 <option
                   key={account.id}
@@ -365,11 +368,13 @@ export function OrchestratorDefaults() {
                   disabled={unavailable}
                 >
                   {account.label}
-                  {account.onCooldown
-                    ? " (cooldown)"
-                    : !account.hasCredential
-                      ? " (sem credencial)"
-                      : ""}
+                  {account.needsRelogin
+                    ? " (sessão expirada)"
+                    : account.onCooldown
+                      ? " (cooldown)"
+                      : !account.hasCredential
+                        ? " (sem credencial)"
+                        : ""}
                 </option>
               );
             })}

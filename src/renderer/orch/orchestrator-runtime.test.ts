@@ -219,6 +219,15 @@ describe('resolveOrchestratorRuntime', () => {
         accounts: [account({ onCooldown: true })],
       }).accountId,
     ).toBeUndefined();
+    // Sessão expirada não fixa default: a decisão volta ao spawn/ativa.
+    expect(
+      resolveOrchestratorRuntime({
+        adapterId: 'claude',
+        defaultModel: '',
+        defaultAccountId: 'acct-work',
+        accounts: [account({ needsRelogin: true })],
+      }).accountId,
+    ).toBeUndefined();
 
     expect(
       resolveOrchestratorRuntime({

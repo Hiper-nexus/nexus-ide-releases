@@ -214,6 +214,58 @@ describe("OrchestratorDefaults", () => {
     act(() => root.unmount());
   });
 
+  it("conta com sessão expirada aparece desabilitada e nomeada no default", async () => {
+    const saved: OrchSettings = {
+      ...DEFAULT_ORCH_SETTINGS,
+      missionDriverActiveMode: false,
+      defaultAdapterId: "codex",
+      defaultModel: "",
+      defaultAccountId: "",
+    };
+    const adapters = [adapter("codex", "Codex", ["gpt-5.4"])];
+    Object.defineProperty(window, "nexus", {
+      configurable: true,
+      value: {
+        settings: {
+          orchGet: vi.fn(async () => saved),
+          orchSet: vi.fn(async () => saved),
+        },
+        adapters: {
+          list: vi.fn(async () => adapters),
+          onChanged: vi.fn(() => vi.fn()),
+        },
+        providers: {
+          list: vi.fn(async () => adapters.map((value) => provider(value))),
+          onChanged: vi.fn(() => vi.fn()),
+        },
+        accounts: {
+          list: vi.fn(async () => [
+            {
+              ...account("codex-dead", "codex", "Codex morta"),
+              needsRelogin: true,
+            },
+            account("codex-work", "codex", "Codex trabalho"),
+          ]),
+          onChanged: vi.fn(() => vi.fn()),
+        },
+      },
+    });
+
+    const { host, root } = mount();
+    await flushEffects();
+
+    const accountSelect = host.querySelector<HTMLSelectElement>(
+      'select[aria-label="Conta do orquestrador"]',
+    );
+    const texts = [...accountSelect!.options].map((option) => option.text);
+    expect(texts).toContain("Codex morta (sessão expirada)");
+    const dead = [...accountSelect!.options].find((option) =>
+      option.text.includes("Codex morta"),
+    );
+    expect(dead?.disabled).toBe(true);
+    act(() => root.unmount());
+  });
+
   it("keeps a declared but unverified coordinator visible and unavailable", async () => {
     const saved: OrchSettings = {
       ...DEFAULT_ORCH_SETTINGS,
