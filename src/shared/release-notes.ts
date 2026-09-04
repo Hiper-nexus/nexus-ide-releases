@@ -149,7 +149,7 @@ export const RELEASE_0740: AppRelease = {
     },
   ],
 };
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_0741: AppRelease = {
   version: '0.74.1',
   date: '2026-09-03',
   codename: 'Operador no controle',
@@ -187,6 +187,48 @@ export const CURRENT_RELEASE: AppRelease = {
         'Deep-link com path malformado vira link inválido em vez de URIError; protocolo do ' +
         'renderer lê do mesmo fd com re-resolve (TOCTOU); listeners do preload com entrega ' +
         'isolada; erro ao encerrar Live registrado e exposto na store.',
+    },
+  ],
+};
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.74.2',
+  date: '2026-09-04',
+  codename: 'Pane abre, login aparece',
+  summary:
+    'Abrir pane manual funciona em todas as CLIs (inclusive sem catálogo de modelos) e ' +
+    'sessão expirada aparece onde o operador olha: status e botão "Entrar novamente" na ' +
+    'linha do provider, badge na conta, e toast de failover com ação para Providers. ' +
+    'Disjuntor trava o 401-loop multi-conta na 2ª morte instantânea seguida.',
+  highlights: [
+    {
+      title: 'Pane manual em todas as CLIs',
+      detail:
+        'Builder único do payload de spawn limpa strings vazias que o validador ' +
+        'rejeitava (o caso do muse sem catálogo); erro de validação agora cita o ' +
+        'campo. As 11 CLIs cli-pty instaladas abrem pane com PTY.',
+    },
+    {
+      title: 'Sessão expirada visível com re-login',
+      detail:
+        'Conta com renovação de token falhando ganha status "sessão expirada", CTA ' +
+        '"Entrar novamente" na linha do provider e na conta, botão "Usar" bloqueado ' +
+        'e chip do switcher sem o falso "pronta". A falha de refresh avisa a UI ' +
+        'aberta na hora, sem esperar o próximo 401.',
+    },
+    {
+      title: 'Disjuntor do 401-loop multi-conta',
+      detail:
+        '1ª morte instantânea de auth ainda troca de conta (caso legítimo); a 2ª ' +
+        'seguida trava o failover com diagnóstico, e o toast leva a Providers ' +
+        'com um clique.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Handoff sem eco acumulado',
+      detail:
+        'Packs de failover anteriores impressos no scrollback são podados do ' +
+        'excerpt — o prompt de continuidade para de crescer a cada ciclo.',
     },
   ],
 };

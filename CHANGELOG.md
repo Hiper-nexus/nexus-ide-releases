@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.74.2 — Pane abre, login aparece
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+- **Pane manual em todas as CLIs**: builder único do spawn limpa strings vazias que o validador rejeitava (muse sem catálogo); erro de validação cita o campo.
+- **Sessão expirada visível**: status + "Entrar novamente" na linha do provider e na conta, "Usar" bloqueado, switcher sem falso "pronta"; falha de refresh avisa a UI na hora.
+- **Disjuntor do 401-loop**: 1ª morte instantânea troca de conta, 2ª seguida trava com diagnóstico; toast com ação "Abrir Providers".
+- **Handoff sem eco**: packs anteriores podados do excerpt de continuidade.
+
 ## 0.74.1 — Operador no controle
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
