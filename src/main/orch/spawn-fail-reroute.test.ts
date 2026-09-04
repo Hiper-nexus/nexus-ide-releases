@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   civilianSpawnFailMessage,
   isLikelyBootSpawnFailure,
+  isQuotaHighUsage,
   selectSpawnFailSuccessor,
 } from './spawn-fail-reroute';
 
@@ -84,6 +85,14 @@ describe('spawn-fail reroute', () => {
       quotaWorstRatioByCli: { claude: 0.9, codex: 0.85 },
     });
     expect(successor?.cli).toBe('claude');
+  });
+
+  it('null explícito (desconhecida) vence chave com outra capitalização', () => {
+    expect(isQuotaHighUsage('claude', { claude: null, Claude: 0.95 })).toBe(
+      false,
+    );
+    expect(isQuotaHighUsage('claude', { Claude: 0.95 })).toBe(true);
+    expect(isQuotaHighUsage('claude', undefined)).toBe(false);
   });
 
   it('mensagem civil em PT com sucessor', () => {

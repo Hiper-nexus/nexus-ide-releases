@@ -12,6 +12,7 @@ import { useQuotaStore } from '../../state/quota-store';
 import { useAdapterStore } from '../../state/adapter-store';
 import { useLayoutStore } from '../../state/layout-store';
 import { createLeaf, createPane } from '../../lib/split-tree';
+import type { LayoutNode } from '../../../shared/types';
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -605,6 +606,72 @@ describe('WorkspaceRail', () => {
       act(() => {
         useLayoutStore.setState({ root: previousRoot });
         useAdapterStore.getState().receive([]);
+      });
+    }
+  });
+
+  it('navegar para outra missão expande os agentes dela (sync pós-mount)', () => {
+    const previousRoot = useLayoutStore.getState().root;
+    const paneA = {
+      ...createPane('cli-agent', undefined, 'claude'),
+      id: 'pane-a',
+      title: 'agente A',
+      missionId: 'mission-running',
+    };
+    const paneB = {
+      ...createPane('cli-agent', undefined, 'claude'),
+      id: 'pane-b',
+      title: 'agente B',
+      missionId: 'mission-blocked',
+    };
+    const twoPaneRoot: LayoutNode = {
+      kind: 'split',
+      id: 'split-1',
+      direction: 'row',
+      children: [createLeaf(paneA), createLeaf(paneB)],
+    };
+    act(() => {
+      useLayoutStore.setState({ root: twoPaneRoot });
+    });
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    const renderWith = (missionId: string) => {
+      act(() => {
+        root.render(
+          <WorkspaceRail
+            activeWorkspaces={activeWorkspaces}
+            recentWorkspaces={[]}
+            selection={{ kind: 'mission', missionId }}
+            onCreateNew={vi.fn()}
+            onSelectWorkspace={vi.fn()}
+            onSelectMission={vi.fn()}
+            onOpenTaskBoard={vi.fn()}
+            onOpenMemory={vi.fn()}
+            onOpenSettings={vi.fn()}
+            onOpenTerminals={vi.fn()}
+          />,
+        );
+      });
+    };
+
+    const agentLists = () =>
+      [...host.querySelectorAll('.workspace-rail__agents-list')].map(
+        (el) => el.textContent ?? '',
+      );
+
+    try {
+      renderWith('mission-running');
+      expect(agentLists().some((t) => t.includes('agente A'))).toBe(true);
+      expect(agentLists().some((t) => t.includes('agente B'))).toBe(false);
+      // Navegou para B depois do mount: os agentes dela expandem sozinhos.
+      renderWith('mission-blocked');
+      expect(agentLists().some((t) => t.includes('agente B'))).toBe(true);
+    } finally {
+      act(() => {
+        root.unmount();
+        useLayoutStore.setState({ root: previousRoot });
       });
     }
   });

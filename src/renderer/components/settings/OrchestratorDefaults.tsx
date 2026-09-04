@@ -316,6 +316,15 @@ export function OrchestratorDefaults() {
             Maestro verificado abaixo.
           </p>
         )}
+        {!providerUnavailable && missingModel && (
+          <p
+            className="settings-orchestrator__saved-unavailable"
+            role="status"
+          >
+            Salvo: {defaults.defaultModel} (indisponível) — escolha outro
+            modelo abaixo.
+          </p>
+        )}
         <ModelPicker
           options={pickerOptions}
           quotaLineByAdapterId={quotaLineByAdapterId}

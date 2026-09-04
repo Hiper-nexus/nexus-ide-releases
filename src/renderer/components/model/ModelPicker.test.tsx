@@ -77,9 +77,9 @@ describe('ModelPicker', () => {
     const onSelect = vi.fn();
     const host = render(<ModelPicker options={OPTIONS} onSelect={onSelect} />);
     const locked = host.querySelector<HTMLButtonElement>(
-      '.model-picker__model--locked',
+      '.model-picker__model:disabled',
     );
-    expect(locked?.disabled).toBe(true);
+    expect(locked).not.toBeNull();
     expect(locked?.textContent).toContain('codex login');
     act(() => {
       locked?.click();
@@ -91,7 +91,7 @@ describe('ModelPicker', () => {
     const onSelect = vi.fn();
     const host = render(<ModelPicker options={OPTIONS} onSelect={onSelect} />);
     const ready = host.querySelectorAll<HTMLButtonElement>(
-      '.model-picker__model:not(.model-picker__model--locked)',
+      '.model-picker__model:not(:disabled)',
     );
     act(() => {
       ready[0]?.click();

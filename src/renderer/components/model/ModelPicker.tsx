@@ -118,7 +118,7 @@ export function ModelPicker({
                       }
                       className={`model-picker__model${
                         isSelected ? ' model-picker__model--selected' : ''
-                      }${disabled ? ' model-picker__model--locked' : ''}`}
+                      }`}
                       title={option.reason ?? `${option.adapterLabel} · ${option.model}`}
                       aria-label={
                         disabled

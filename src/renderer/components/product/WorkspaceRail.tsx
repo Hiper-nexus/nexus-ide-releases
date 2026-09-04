@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type {
   MissionLifecycleState,
   MissionStateReason,
@@ -225,11 +225,19 @@ function WorkspaceGroup({
     return map;
   }, [adapters]);
   // Estilo Orca: a missão selecionada já abre com os agentes visíveis.
+  const selectedMissionId =
+    selection?.kind === 'mission' ? selection.missionId : null;
   const [expandedMissions, setExpandedMissions] = useState<
     Record<string, boolean>
-  >(() =>
-    selection?.kind === 'mission' ? { [selection.missionId]: true } : {},
-  );
+  >(() => (selectedMissionId ? { [selectedMissionId]: true } : {}));
+  // O inicializador do useState roda uma vez: sem isto, navegar para outra
+  // missão depois do mount nunca expandia os agentes dela.
+  useEffect(() => {
+    if (!selectedMissionId) return;
+    setExpandedMissions((prev) =>
+      prev[selectedMissionId] ? prev : { ...prev, [selectedMissionId]: true },
+    );
+  }, [selectedMissionId]);
 
   return (
     <section

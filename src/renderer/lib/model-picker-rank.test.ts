@@ -4,6 +4,7 @@ import type { ProviderSettingsInfo } from '../../shared/provider-settings-types'
 import type { ProviderQuotaEntry } from '../../shared/quota-types';
 import {
   authViewForModel,
+  compareCost,
   costRankForModel,
   rankModelOptions,
   worstQuotaFor,
@@ -157,6 +158,56 @@ describe('model-picker-rank', () => {
     expect(costRankForModel(blocked, 'api-x')).toBe(Number.POSITIVE_INFINITY);
   });
 
+  it('compareCost nunca retorna NaN (dois bloqueados desempatam adiante)', () => {
+    expect(compareCost(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY)).toBe(0);
+    expect(compareCost(Number.POSITIVE_INFINITY, 3)).toBeGreaterThan(0);
+    expect(compareCost(1, Number.POSITIVE_INFINITY)).toBeLessThan(0);
+    expect(compareCost(1, 3)).toBeLessThan(0);
+  });
+
+  it('dois modelos api-only ordenam pelo desempate seguinte, determinístico', () => {
+    const blocked = (id: string, label: string) =>
+      adapter({
+        id,
+        label,
+        models: {
+          list: [`${id}-x`],
+          default: `${id}-x`,
+          info: { [`${id}-x`]: { id: `${id}-x`, availability: 'api-only' } },
+        },
+      });
+    const first = rankModelOptions({
+      adapters: [blocked('b', 'Beta'), blocked('a', 'Alfa')],
+      providers: [
+        provider({ adapterId: 'b' }),
+        provider({ adapterId: 'a', label: 'Alfa' }),
+      ],
+      quotaEntries: [],
+    });
+    const second = rankModelOptions({
+      adapters: [blocked('a', 'Alfa'), blocked('b', 'Beta')],
+      providers: [
+        provider({ adapterId: 'a', label: 'Alfa' }),
+        provider({ adapterId: 'b' }),
+      ],
+      quotaEntries: [],
+    });
+    // Ordem independe da entrada: Alfa antes de Beta (label).
+    expect(first.map((o) => o.adapterId)).toEqual(['a', 'b']);
+    expect(second.map((o) => o.adapterId)).toEqual(['a', 'b']);
+  });
+
+  it('authReadyModels com espaço em branco ainda casa o modelo', () => {
+    const view = authViewForModel(
+      provider({
+        authStrategy: 'login-needed',
+        authReadyModels: ['  gpt-x  '],
+      }),
+      'gpt-x',
+    );
+    expect(view).toEqual({ ready: true });
+  });
+
   it('pior janela agrega todas as janelas; cooldown = 1', () => {
     expect(worstQuotaFor([quotaEntry('claude', [0.2, 0.7])], 'claude')).toBe(0.7);
     expect(worstQuotaFor([quotaEntry('claude', [null])], 'claude')).toBeNull();
@@ -165,5 +216,14 @@ describe('model-picker-rank', () => {
       onCooldown: true,
     };
     expect(worstQuotaFor([cooling], 'claude')).toBe(1);
+  });
+
+  it('compareCost desempatador lida com valores infinitos sem gerar NaN', () => {
+    expect(compareCost(1, 2)).toBeLessThan(0);
+    expect(compareCost(2, 1)).toBeGreaterThan(0);
+    expect(compareCost(1, 1)).toBe(0);
+    expect(compareCost(1, Infinity)).toBe(-1);
+    expect(compareCost(Infinity, 1)).toBe(1);
+    expect(compareCost(Infinity, Infinity)).toBe(0);
   });
 });

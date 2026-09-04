@@ -1,6 +1,7 @@
 import type { TaskPlanAgentSnapshot } from "./task-store";
 import type { TaskProviderRerouteDirective } from "./task-dispatch-codec";
 import { QUOTA_HIGH_USAGE_THRESHOLD } from "../../shared/quota-types";
+import { quotaWorstForCli } from "./spawn-fail-reroute";
 
 export const PROVIDER_REROUTE_MARKER = "[NEXUS_PROVIDER_REROUTE]";
 
@@ -40,8 +41,7 @@ export function selectProviderRerouteCandidate(
   const exhausted = new Set(input.exhaustedAdapterIds);
   const quota = input.quotaWorstRatioByCli;
   const isQuotaHigh = (cli: string): boolean => {
-    if (!quota) return false;
-    const worst = quota[cli.toLowerCase()] ?? quota[cli] ?? null;
+    const worst = quotaWorstForCli(cli, quota);
     return worst !== null && worst >= QUOTA_HIGH_USAGE_THRESHOLD;
   };
   const candidates: TaskPlanAgentSnapshot[] = [];

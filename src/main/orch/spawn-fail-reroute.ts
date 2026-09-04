@@ -24,15 +24,36 @@ const PREFERRED_REROUTE_CLIS = ['claude', 'codex'] as const;
  */
 export type QuotaWorstRatioByCli = Readonly<Record<string, number | null>>;
 
+/**
+ * Pior quota conhecida para uma CLI, case-insensitive. `in` em vez de `??`:
+ * um null explícito (desconhecida) na chave exata ou minúscula vence e NÃO
+ * cai em variante com outra capitalização; a varredura é último recurso.
+ */
+export function quotaWorstForCli(
+  cli: string,
+  quotaWorstRatioByCli: QuotaWorstRatioByCli | undefined,
+): number | null {
+  if (!quotaWorstRatioByCli) return null;
+  if (cli in quotaWorstRatioByCli) {
+    return quotaWorstRatioByCli[cli] ?? null;
+  }
+  const lower = cli.toLowerCase();
+  if (lower in quotaWorstRatioByCli) {
+    return quotaWorstRatioByCli[lower] ?? null;
+  }
+  const variant = Object.keys(quotaWorstRatioByCli).find(
+    (key) => key.toLowerCase() === lower,
+  );
+  if (variant !== undefined) return quotaWorstRatioByCli[variant] ?? null;
+  return null;
+}
+
 export function isQuotaHighUsage(
   cli: string,
   quotaWorstRatioByCli: QuotaWorstRatioByCli | undefined,
   threshold = QUOTA_HIGH_USAGE_THRESHOLD,
 ): boolean {
-  if (!quotaWorstRatioByCli) return false;
-  const key = cli.toLowerCase();
-  const worst =
-    quotaWorstRatioByCli[key] ?? quotaWorstRatioByCli[cli] ?? null;
+  const worst = quotaWorstForCli(cli, quotaWorstRatioByCli);
   return worst !== null && worst >= threshold;
 }
 

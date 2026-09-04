@@ -51,7 +51,10 @@ export function authViewForModel(
   }
   if (provider.authStrategy !== 'login-needed') return { ready: true };
   if (Array.isArray(provider.authReadyModels)) {
-    if (provider.authReadyModels.includes(model.trim())) {
+    const readyModels = new Set(
+      provider.authReadyModels.map((ready) => ready.trim()),
+    );
+    if (readyModels.has(model.trim())) {
       return { ready: true };
     }
     const login = provider.loginCommand?.trim();
@@ -103,6 +106,20 @@ function quotaPenalty(worst: number | null): number {
   return worst;
 }
 
+/**
+ * Comparador à prova de Infinity: `Inf - Inf` é NaN (falsy, cai no próximo
+ * critério por acidente). Explícito aqui — bloqueado sempre perde, empate
+ * de bloqueados desempata nos critérios seguintes.
+ */
+export function compareCost(a: number, b: number): number {
+  const finiteA = Number.isFinite(a);
+  const finiteB = Number.isFinite(b);
+  if (finiteA && finiteB) return a - b;
+  if (finiteA) return -1;
+  if (finiteB) return 1;
+  return 0;
+}
+
 export function rankModelOptions(
   input: RankModelOptionsInput,
 ): RankedModelOption[] {
@@ -136,7 +153,7 @@ export function rankModelOptions(
   return options.sort(
     (a, b) =>
       readyRank(a.ready) - readyRank(b.ready) ||
-      a.costRank - b.costRank ||
+      compareCost(a.costRank, b.costRank) ||
       quotaPenalty(a.quotaWorst) - quotaPenalty(b.quotaWorst) ||
       a.adapterLabel.localeCompare(b.adapterLabel) ||
       a.model.localeCompare(b.model),

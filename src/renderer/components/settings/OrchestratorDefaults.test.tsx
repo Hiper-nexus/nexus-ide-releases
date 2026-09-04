@@ -527,6 +527,8 @@ describe("OrchestratorDefaults", () => {
     expect(host.textContent).toContain(
       "O modelo salvo não está mais disponível",
     );
+    // O fantasma continua nomeado (nunca some em silêncio do picker).
+    expect(host.textContent).toContain("Salvo: claude-opus-5 (indisponível)");
     expect(host.textContent).not.toContain("Claude · pronto");
     act(() => root.unmount());
   });
