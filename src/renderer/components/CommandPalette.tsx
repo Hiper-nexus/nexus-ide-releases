@@ -7,6 +7,7 @@ import { useOrchStore } from '../state/orch-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { useMissionSetupStore } from '../state/mission-setup-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
+import { useTerminalGridDialogStore } from '../state/terminal-grid-dialog-store';
 import { missionChromeTitle } from '../../shared/mission-identity';
 import { listPanes } from '../lib/split-tree';
 import { filterPaletteActions } from '../lib/command-palette-filter';
@@ -174,6 +175,48 @@ export function CommandPalette() {
       },
       '',
       'shell novo',
+    );
+    tool(
+      'terminal-grid',
+      'Iniciar grid de terminais (escolher quantidade)…',
+      'terminal',
+      () => {
+        useTerminalGridDialogStore.getState().open({ initialCount: 2 });
+      },
+      '',
+      'grid terminais mosaico quantidade split layout',
+    );
+    tool(
+      'promote-orchestrator',
+      'Tornar painel focado o orquestrador',
+      'crown',
+      () => {
+        const root = useLayoutStore.getState().root;
+        const focusedId = useLayoutStore.getState().focusedPaneId;
+        const p = listPanes(root).find((item) => item.id === focusedId) ?? listPanes(root)[0];
+        if (p) {
+          const destination = useProductNavigationStore.getState().destination;
+          const resolvedMissionId =
+            p.missionId ??
+            (destination.kind === 'mission' ? destination.missionId : undefined) ??
+            useOrchStore.getState().paneMissions[p.id] ??
+            useOrchStore.getState().missions.find((m) => m.status === 'running' || m.status === 'blocked')?.id ??
+            useOrchStore.getState().missions[0]?.id;
+
+          if (resolvedMissionId) {
+            void window.nexus?.orch?.promoteMissionOrchestrator?.({
+              missionId: resolvedMissionId,
+              paneId: p.id,
+            });
+            layout.promoteMissionPaneRole(resolvedMissionId, p.id);
+            useOrchStore.getState().bindPaneMission(p.id, resolvedMissionId);
+          } else {
+            layout.setPaneRole(p.id, 'orchestrator');
+          }
+        }
+      },
+      '',
+      'orquestrador líder coordenador promover promote orchestrator',
     );
     tool(
       'browser',

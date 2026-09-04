@@ -891,3 +891,49 @@ describe('layout-store spawnAgent continuity', () => {
     expect(takePendingContinuity(paneId!)).toBeUndefined();
   });
 });
+
+describe('layout-store role assignment and promotion', () => {
+  it('setPaneRole turns the target pane into orchestrator and others into worker', () => {
+    const pane1: PaneModel = { id: 'p1', kind: 'shell', title: 'term 1' };
+    const pane2: PaneModel = { id: 'p2', kind: 'shell', title: 'term 2' };
+    seedLayout({
+      root: buildGridTree([pane1, pane2]),
+      focusedPaneId: pane1.id,
+      maximizedPaneId: null,
+      hydrated: true,
+      viewKind: 'grid',
+      canvasNodeLayouts: {},
+      canvasViewport: { x: 0, y: 0, zoom: 1 },
+    });
+
+    useLayoutStore.getState().setPaneRole('p1', 'orchestrator');
+    let panes = listPanes(useLayoutStore.getState().root);
+    expect(panes.find((p) => p.id === 'p1')?.role).toBe('orchestrator');
+
+    // Promove p2: p2 vira orchestrator e p1 vira worker
+    useLayoutStore.getState().setPaneRole('p2', 'orchestrator');
+    panes = listPanes(useLayoutStore.getState().root);
+    expect(panes.find((p) => p.id === 'p2')?.role).toBe('orchestrator');
+    expect(panes.find((p) => p.id === 'p1')?.role).toBe('worker');
+  });
+
+  it('promoteMissionPaneRole binds missionId and promotes target', () => {
+    const pane1: PaneModel = { id: 'p1', kind: 'cli-agent', title: 'agent 1' };
+    const pane2: PaneModel = { id: 'p2', kind: 'cli-agent', title: 'agent 2' };
+    seedLayout({
+      root: buildGridTree([pane1, pane2]),
+      focusedPaneId: pane1.id,
+      maximizedPaneId: null,
+      hydrated: true,
+      viewKind: 'grid',
+      canvasNodeLayouts: {},
+      canvasViewport: { x: 0, y: 0, zoom: 1 },
+    });
+
+    useLayoutStore.getState().promoteMissionPaneRole('mission-alpha', 'p1');
+    const panes = listPanes(useLayoutStore.getState().root);
+    const p1 = panes.find((p) => p.id === 'p1');
+    expect(p1?.role).toBe('orchestrator');
+    expect(p1?.missionId).toBe('mission-alpha');
+  });
+});

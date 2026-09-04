@@ -103,4 +103,32 @@ describe('PaneToolbar hibernate/wake regression', () => {
     expect(power.hibernateHost).not.toHaveBeenCalled();
     act(() => root.unmount());
   });
+
+  it('exibe o botão "Tornar Orquestrador" em qualquer pane ativo que não seja líder', () => {
+    const { host, root } = mount();
+    const promoteBtn = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="Tornar Orquestrador"]',
+    );
+    expect(promoteBtn).not.toBeNull();
+    expect(promoteBtn?.textContent).toContain('Tornar Orquestrador');
+    act(() => root.unmount());
+  });
+
+  it('exibe o botão "Orquestrador" ativo quando o pane tem papel orchestrator', () => {
+    const orchPane: PaneModel = {
+      ...pane,
+      role: 'orchestrator',
+    };
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    act(() => root.render(<PaneToolbar pane={orchPane} isFocused />));
+
+    const leaderBtn = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="Orquestrador"]',
+    );
+    expect(leaderBtn).not.toBeNull();
+    expect(leaderBtn?.classList.contains('toolbar__btn--active')).toBe(true);
+    act(() => root.unmount());
+  });
 });

@@ -733,15 +733,32 @@ export class RendererMissionAuthority {
       return { ok: false, error: "pane_unavailable" };
     }
     if (
-      owned.info.missionId !== missionId ||
-      !sameScope(rendererScope, owned.info.scope)
+      !sameScope(rendererScope, owned.info.scope) ||
+      (owned.info.missionId && owned.info.missionId !== missionId)
     ) {
       return { ok: false, error: "pane_mission_mismatch" };
     }
-    const spec = suite.missionPanes.promotePaneToOrchestrator(
+    let spec = suite.missionPanes.promotePaneToOrchestrator(
       missionId,
       owned.paneId,
     );
+    if (!spec) {
+      try {
+        spec = suite.missionPanes.record({
+          missionId,
+          paneId: owned.paneId,
+          adapterId: owned.info.adapterId,
+          role: "orchestrator",
+          agentName: owned.info.agentName ?? "Orquestrador",
+          model: owned.info.model,
+          accountId: owned.info.accountId,
+          effort: owned.info.effort,
+          cwd: owned.info.cwd,
+        });
+      } catch {
+        spec = null;
+      }
+    }
     if (!spec) return { ok: false, error: "pane_mission_mismatch" };
 
     const rebound = suite.missions.rebindOrchestratorSession(

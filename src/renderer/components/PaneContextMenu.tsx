@@ -8,6 +8,7 @@ import {
 import { useContextualPanelNavStore } from "../state/contextual-panel-nav-store";
 import { useOrchStore } from "../state/orch-store";
 import { useToastStore } from "../state/toast-store";
+import { useLayoutStore } from "../state/layout-store";
 import { useProductNavigationStore } from "../state/product-navigation-store";
 import { submitLivePanePrompt } from "../terminal/submit-live-pane-prompt";
 import {
@@ -192,6 +193,42 @@ export function PaneContextMenu({
     icon: "files",
     run: () => openContextualTab("git", { focus: true }),
   });
+
+  if (pane.role !== "orchestrator") {
+    actions.push({
+      id: "promote-orchestrator",
+      label: "Tornar este painel o orquestrador",
+      detail: "Define este painel como líder para coordenar o time.",
+      icon: "crown",
+      run: async () => {
+        const destination = useProductNavigationStore.getState().destination;
+        const orchStore = useOrchStore.getState();
+        const layoutStore = useLayoutStore.getState();
+        const resolvedMissionId =
+          pane.missionId ??
+          (destination.kind === "mission" ? destination.missionId : undefined) ??
+          orchStore.paneMissions[pane.id] ??
+          orchStore.missions.find((m) => m.status === "running" || m.status === "blocked")?.id ??
+          orchStore.missions[0]?.id;
+
+        if (resolvedMissionId) {
+          try {
+            await window.nexus?.orch?.promoteMissionOrchestrator?.({
+              missionId: resolvedMissionId,
+              paneId: pane.id,
+            });
+          } catch {
+            // fallback
+          }
+          layoutStore.promoteMissionPaneRole(resolvedMissionId, pane.id);
+          orchStore.bindPaneMission(pane.id, resolvedMissionId);
+        } else {
+          layoutStore.setPaneRole(pane.id, "orchestrator");
+        }
+        pushToast("success", "Orquestrador definido", "Este painel agora é o orquestrador líder.");
+      },
+    });
+  }
 
   actions.push({
     id: "copy-output",

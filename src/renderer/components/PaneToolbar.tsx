@@ -20,6 +20,7 @@ import { PixelIcon, type PixelIconName } from './PixelIcon';
 import { requestPaneClose } from '../terminal/pane-close-guard';
 import { askConfirm } from '../state/confirm-store';
 import { useOrchStore } from '../state/orch-store';
+import { useProductNavigationStore } from '../state/product-navigation-store';
 import { AgentAvatar, resolveAgentCategory } from './AgentAvatar';
 import { ProviderLogo } from './ProviderLogo';
 import { CommandBlockMenu } from './CommandBlockMenu';
@@ -148,6 +149,10 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
   const toggleMaximizePane = useLayoutStore((s) => s.toggleMaximizePane);
   const renameTitle = useLayoutStore((s) => s.renameTitle);
   const promoteMissionPaneRole = useLayoutStore((s) => s.promoteMissionPaneRole);
+  const setPaneRole = useLayoutStore((s) => s.setPaneRole);
+  const destination = useProductNavigationStore((s) => s.destination);
+  const activeMissions = useOrchStore((s) => s.missions);
+  const paneMissions = useOrchStore((s) => s.paneMissions);
   // Slot posicional ⌘1-9: derivado do layout AO VIVO — recalcula quando panes
   // abrem/fecham, exatamente como o atalho resolve o alvo.
   const paneSlot = useLayoutStore((s) =>
@@ -224,51 +229,59 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
   const actions = useMemo((): ToolbarAction[] => {
     const list: ToolbarAction[] = [];
 
-    if (pane.kind === 'cli-agent' && pane.missionId && !isVacancy) {
+    if (pane.kind !== 'browser' && !isVacancy) {
       if (pane.role === 'orchestrator') {
         list.push({
           id: 'mission-leader',
-          label: 'Líder',
-          detail: 'Orquestrador atual da missão',
+          label: 'Orquestrador',
+          detail: 'Orquestrador atual (coordena tarefas e recebe delegações)',
           icon: 'crown',
           active: true,
           primary: true,
           run: () => {},
         });
       } else {
-        const missionId = pane.missionId;
         list.push({
           id: 'promote-orchestrator',
-          label: 'Promover',
-          detail: 'Promover a orquestrador (líder da missão nesta sessão)',
+          label: 'Tornar Orquestrador',
+          detail: 'Tornar este painel o orquestrador líder',
           icon: 'crown-outline',
           primary: true,
           run: () => {
             void askConfirm({
-              title: 'Promover este pane?',
-              body: 'Este pane passa a liderar a missão e recebe os próximos handoffs.',
-              confirmLabel: 'Promover',
+              title: 'Tornar este painel o orquestrador?',
+              body: 'Este painel passa a liderar o squad, coordenar tarefas e receber handoffs.',
+              confirmLabel: 'Tornar Orquestrador',
             }).then(async (ok) => {
               if (!ok) return;
-              const result = await window.nexus.orch.promoteMissionOrchestrator({
-                missionId,
-                paneId: pane.id,
-              });
-              if (!result.ok) {
-                await askConfirm({
-                  title: 'Promoção não aplicada',
-                  body: result.error ?? 'O pane não tem autoridade viva para esta missão.',
-                  confirmLabel: 'OK',
-                });
-                return;
-              }
-              promoteMissionPaneRole(missionId, pane.id);
-              if (result.warning) {
-                await askConfirm({
-                  title: 'Promoção aplicada com aviso',
-                  body: result.warning,
-                  confirmLabel: 'OK',
-                });
+              const resolvedMissionId =
+                pane.missionId ??
+                (destination.kind === 'mission' ? destination.missionId : undefined) ??
+                paneMissions[pane.id] ??
+                activeMissions.find((m) => m.status === 'running' || m.status === 'blocked')?.id ??
+                activeMissions[0]?.id;
+
+              if (resolvedMissionId) {
+                let result: { ok: boolean; warning?: string; error?: string } | null = null;
+                try {
+                  result = await window.nexus?.orch?.promoteMissionOrchestrator?.({
+                    missionId: resolvedMissionId,
+                    paneId: pane.id,
+                  });
+                } catch {
+                  // Promoção direta de layout se IPC indisponível
+                }
+                promoteMissionPaneRole(resolvedMissionId, pane.id);
+                useOrchStore.getState().bindPaneMission(pane.id, resolvedMissionId);
+                if (result && !result.ok && result.warning) {
+                  await askConfirm({
+                    title: 'Aviso de promoção',
+                    body: result.warning,
+                    confirmLabel: 'OK',
+                  });
+                }
+              } else {
+                setPaneRole(pane.id, 'orchestrator');
               }
             });
           },
@@ -387,6 +400,10 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
     isMaximized,
     paneState,
     promoteMissionPaneRole,
+    setPaneRole,
+    destination,
+    paneMissions,
+    activeMissions,
     split,
     toggleMaximizePane,
   ]);

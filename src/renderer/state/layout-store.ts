@@ -111,6 +111,7 @@ interface LayoutState {
   /** Pin the account used by this pane (used by account failover + resume). */
   setAccountId(paneId: string, accountId: string | undefined): void;
   promoteMissionPaneRole(missionId: string, paneId: string): void;
+  setPaneRole(paneId: string, role: 'orchestrator' | 'worker' | undefined): void;
   /**
    * Convert a dead mission/agent pane into an operator shell in place.
    * Clears mission role/adapter binding so the host can spawn a login shell.
@@ -1191,10 +1192,25 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
   promoteMissionPaneRole: (missionId, paneId) => {
     let root = get().root;
     for (const pane of listPanes(root)) {
-      if (pane.missionId !== missionId) continue;
+      if (pane.missionId && pane.missionId !== missionId) continue;
       const role = pane.id === paneId ? 'orchestrator' : 'worker';
-      root = updatePane(root, pane.id, { role });
+      const mId = pane.id === paneId ? (pane.missionId ?? missionId) : pane.missionId;
+      root = updatePane(root, pane.id, { role, missionId: mId });
     }
+    set({ root });
+    persist();
+  },
+
+  setPaneRole: (paneId, role) => {
+    let root = get().root;
+    if (role === 'orchestrator') {
+      for (const p of listPanes(root)) {
+        if (p.role === 'orchestrator' && p.id !== paneId) {
+          root = updatePane(root, p.id, { role: 'worker' });
+        }
+      }
+    }
+    root = updatePane(root, paneId, { role });
     set({ root });
     persist();
   },

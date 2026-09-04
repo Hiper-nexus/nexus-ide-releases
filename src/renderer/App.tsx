@@ -15,6 +15,8 @@ import {
 import { CommandPalette } from './components/CommandPalette';
 import { useCommandPaletteStore } from './state/command-palette-store';
 import { ConfirmDialog } from './components/ConfirmDialog';
+import { TerminalGridDialog } from './components/TerminalGridDialog';
+import { useTerminalGridDialogStore } from './state/terminal-grid-dialog-store';
 import { OverlayLayer } from './overlay/overlay-layer';
 import { OrchestrationModeDialog } from './components/OrchestrationModeDialog';
 import { MediaStudioPanel } from './components/MediaStudioPanel';
@@ -919,8 +921,7 @@ export function App() {
             navigation.openTerminal();
           }}
           onOpenShellTerminal={() => {
-            navigation.openTerminal();
-            useLayoutStore.getState().addShellPane();
+            useTerminalGridDialogStore.getState().open({ initialCount: 2, replaceExisting: true });
           }}
           onOpenTaskBoard={navigation.openTaskBoard}
           onOpenMemory={navigation.openMemory}
@@ -1184,6 +1185,7 @@ export function App() {
               <AttentionInbox />
               <KeyboardCheatsheet />
               <ConfirmDialog />
+              <TerminalGridDialog />
             </OverlayLayer>
             <Toasts />
             {dropActive ? (
