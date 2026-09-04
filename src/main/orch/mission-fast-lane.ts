@@ -49,7 +49,8 @@ import {
   getProjectDomainStores,
   type ProjectDomainStoreSuite,
 } from './project-domain-store-registry';
-import { getSquad } from './squad-store';
+import { getSquad, listSquads } from './squad-store';
+import { PET_STUDIO_SQUAD_ID } from '../../shared/pet-studio';
 import { missionEngineForScope } from './mission-engine-registry';
 import { redeliverPendingHandoffs } from './idle-delivery';
 import { maybeCompleteFastLaneOnDelivery } from './civilian-delivery-completion';
@@ -1731,6 +1732,15 @@ export function buildRespawnPrompt(input: {
  * orquestrador recém-nascido. O novo Maestro recebe nota de continuidade e
  * decide o resto pelas tools dele (handoffs pendentes, replanejamento, done).
  */
+function resolveFastLaneSquad(squadId?: string): import('../../shared/orch-types').Squad | null {
+  return (
+    (squadId ? getSquad(squadId) : null) ??
+    getSquad('nexus-fullstack') ??
+    listSquads().find((candidate) => candidate.id !== PET_STUDIO_SQUAD_ID) ??
+    null
+  );
+}
+
 async function respawnFastLaneOrchestrator(
   scope: ProjectExecutionScope,
   mission: Mission,
@@ -1757,7 +1767,7 @@ async function respawnFastLaneOrchestrator(
     live = stores.missions.update(mission.id, { status: 'running' }) ?? current;
   }
 
-  const squad = mission.squadId ? getSquad(mission.squadId) : null;
+  const squad = resolveFastLaneSquad(mission.squadId);
   const roster = orderedRoster(squad?.agents ?? []);
   const orchestrator = roster.find((agent) => agent.category === 'orchestrator');
   if (!orchestrator) {
@@ -2105,7 +2115,7 @@ export async function fastLaneBootstrap(
     );
   }
 
-  const squad = mission.squadId ? getSquad(mission.squadId) : null;
+  const squad = resolveFastLaneSquad(mission.squadId);
   const roster = orderedRoster(squad?.agents ?? []);
   if (roster.length === 0) {
     throw new Error('a missão não tem equipe salva para abrir terminais');

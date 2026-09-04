@@ -35,6 +35,7 @@ import { buildClarify } from '../../shared/clarify';
 import { emitClarifyQuestion } from './clarify-flow';
 import { findAgent, getSquad, listAgents, listSquads, saveSquad } from './squad-store';
 import { BUILTIN_SQUADS } from './builtin-squads';
+import { PET_STUDIO_SQUAD_ID } from '../../shared/pet-studio';
 import { PersistenceUnavailableError } from '../persistence/persistence-error';
 import { pinUniqueSealedRosterOnDecision } from '../../shared/sealed-agent-runtime';
 import { DEFAULT_TODO_LIST } from './todo-store';
@@ -246,10 +247,14 @@ const missionCreateTool: McpToolDef = {
       );
     }
     const stores = getProjectDomainStores(ctx.scope);
+    const rawSquadId = str(args, 'squadId');
+    const defaultSquadId =
+      listSquads().find((s) => s.id === 'nexus-fullstack')?.id ??
+      listSquads().find((s) => s.id !== PET_STUDIO_SQUAD_ID)?.id;
     const mission = stores.missions.create({
       title: requireStr(args, 'title'),
       description: str(args, 'description'),
-      squadId: str(args, 'squadId'),
+      squadId: rawSquadId || defaultSquadId,
       milestones: strArray(args, 'milestones'),
       orchestratorSessionId: ctx.sessionId,
     });

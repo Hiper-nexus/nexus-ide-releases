@@ -334,8 +334,12 @@ function assertCurrentPersistedPaneAuthority(
     runtimeManager,
     persisted.scope,
   ).get(persisted.missionId);
+  const targetSquadId =
+    mission?.squadId ??
+    listSquads().find((candidate) => candidate.id === "nexus-fullstack")?.id ??
+    listSquads().find((candidate) => candidate.id !== PET_STUDIO_SQUAD_ID)?.id;
   const squads = listSquads().filter(
-    (candidate) => candidate.id === mission?.squadId,
+    (candidate) => candidate.id === targetSquadId,
   );
   const currentSeal =
     mission && squads.length === 1
@@ -366,27 +370,29 @@ function assertCurrentPersistedPaneAuthority(
   const seal = persisted.authoritySeal;
   const detail = !mission
     ? "missão ausente no store"
-    : squads.length !== 1
-      ? `squad '${mission.squadId ?? "?"}' indisponível`
-      : !currentSeal
-        ? `seal atual nulo (status=${mission.status}/${mission.intentState ?? "?"} — missão precisa estar running)`
-        : !seal
-          ? "pane sem authoritySeal persistido (legado)"
-          : spawnFenceMismatches([
-              ["intentVersion", seal.intentVersion, currentSeal.intentVersion],
-              [
-                "intentContractHash",
-                seal.intentContractHash,
-                currentSeal.intentContractHash,
-              ],
-              [
-                "squadRevisionHash",
-                seal.squadRevisionHash,
-                currentSeal.squadRevisionHash,
-              ],
-              ["contextRevision", seal.contextRevision, currentSeal.contextRevision],
-              ["contractHash", seal.contractHash, currentSeal.contractHash],
-            ]).join("; ");
+    : mission.status !== "running"
+      ? `status=${mission.status}/${mission.intentState ?? "?"} — missão precisa estar running`
+      : squads.length !== 1
+        ? `squad '${mission.squadId ?? targetSquadId ?? "?"}' indisponível`
+        : !currentSeal
+          ? `seal atual nulo (status=${mission.status}/${mission.intentState ?? "?"} — missão precisa estar running)`
+          : !seal
+            ? "pane sem authoritySeal persistido (legado)"
+            : spawnFenceMismatches([
+                ["intentVersion", seal.intentVersion, currentSeal.intentVersion],
+                [
+                  "intentContractHash",
+                  seal.intentContractHash,
+                  currentSeal.intentContractHash,
+                ],
+                [
+                  "squadRevisionHash",
+                  seal.squadRevisionHash,
+                  currentSeal.squadRevisionHash,
+                ],
+                ["contextRevision", seal.contextRevision, currentSeal.contextRevision],
+                ["contractHash", seal.contractHash, currentSeal.contractHash],
+              ]).join("; ");
   throw new Error(
     "stale or legacy persisted mission pane authority; replane and approve " +
       `the current revision — divergências: ${detail}`,
@@ -437,6 +443,7 @@ export function authorizeMainOwnedAgentSpawn(
   let persistedPane: ScopedMissionPaneSpec | null = null;
   if (
     !pending &&
+    canonicalRequest.kind !== "shell" &&
     canonicalRequest.paneId &&
     (
       canonicalRequest.resume ||

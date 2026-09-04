@@ -824,7 +824,6 @@ function startSpawn(
       }
       if (!res.ok) {
         const isPersistedMissionAuthorityRefresh =
-          Boolean(missionId) &&
           /persisted mission pane authority/i.test(res.error);
         if (isPersistedMissionAuthorityRefresh) {
           // Uma sync. O spawn que já era restorePersistedAuthority — ou a
@@ -834,7 +833,7 @@ function startSpawn(
           // Missão terminal não precisa de resume/sync/unlock: sem este guard
           // o fim de turno de uma missão JÁ concluída entrava na máquina de
           // restore e despejava sync-notice → unlock → shell em cascata.
-          if (await missionTerminalAuthoritative(missionId!)) {
+          if (missionId && (await missionTerminalAuthoritative(missionId))) {
             useSessionStateStore.getState().setPaneState(pane.id, 'exited');
             return null;
           }
@@ -842,15 +841,17 @@ function startSpawn(
             `[mission-restore] stale pane ${pane.id} was not restarted:`,
             res.error,
           );
-          const action = decideStaleAuthorityRecovery({
-            restorePersistedAuthority,
-            autoResumeAlreadySpent: missionAutoResumeSpent.has(missionId!),
-          });
-          if (action === 'sync-once') {
+          const action = missionId
+            ? decideStaleAuthorityRecovery({
+                restorePersistedAuthority,
+                autoResumeAlreadySpent: missionAutoResumeSpent.has(missionId),
+              })
+            : 'unlock-keyboard';
+          if (action === 'sync-once' && missionId) {
             host.term.writeln(
               `\r\n\x1b[36m${STALE_AUTHORITY_SYNC_NOTICE}\x1b[0m`,
             );
-            void routeBlockedMissionToResume(host, missionId!).then(
+            void routeBlockedMissionToResume(host, missionId).then(
               (resumed) => {
                 if (!resumed && !host.disposed) {
                   void unlockRetiredMissionPane(pane, host);
@@ -1314,6 +1315,15 @@ function startSpawn(
       host.spawnStarted = false;
       const message = err instanceof Error ? err.message : String(err);
       recordPaneSpawnError(pane.id, message);
+      if (/persisted mission pane authority/i.test(message)) {
+        console.warn(
+          `[mission-restore] stale pane ${pane.id} threw authority error:`,
+          message,
+        );
+        void unlockRetiredMissionPane(pane, host);
+        useSessionStateStore.getState().setPaneState(pane.id, 'exited');
+        return null;
+      }
       host.term.writeln(
         `\r\n\x1b[31m[nexus] failed to start: ${message}\x1b[0m`,
       );
