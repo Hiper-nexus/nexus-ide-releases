@@ -11,8 +11,7 @@ import { useTerminalGridDialogStore } from '../../state/terminal-grid-dialog-sto
 import { useQuotaStore } from '../../state/quota-store';
 import { useAdapterStore } from '../../state/adapter-store';
 import { useLayoutStore } from '../../state/layout-store';
-import { createLeaf, createPane } from '../../lib/split-tree';
-import type { LayoutNode } from '../../../shared/types';
+import { buildGridTree, createLeaf, createPane } from '../../lib/split-tree';
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -624,12 +623,7 @@ describe('WorkspaceRail', () => {
       title: 'agente B',
       missionId: 'mission-blocked',
     };
-    const twoPaneRoot: LayoutNode = {
-      kind: 'split',
-      id: 'split-1',
-      direction: 'row',
-      children: [createLeaf(paneA), createLeaf(paneB)],
-    };
+    const twoPaneRoot = buildGridTree([paneA, paneB]);
     act(() => {
       useLayoutStore.setState({ root: twoPaneRoot });
     });
