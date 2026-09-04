@@ -1,3 +1,4 @@
+import { useMemo, useState } from 'react';
 import type {
   MissionLifecycleState,
   MissionStateReason,
@@ -9,6 +10,15 @@ import {
   missionLifecycleLabel,
 } from '../../lib/mission-lifecycle-copy';
 import { missionChromeTitle } from '../../../shared/mission-identity';
+import { listPanes } from '../../lib/split-tree';
+import { useLayoutStore } from '../../state/layout-store';
+import { useOrchStore } from '../../state/orch-store';
+import { useSessionStateStore } from '../../state/session-state-store';
+import { useGitScmStore } from '../../state/git-scm-store';
+import { useQuotaStore } from '../../state/quota-store';
+import { windowDisplay } from '../../lib/quota-display';
+import { useTerminalGridDialogStore } from '../../state/terminal-grid-dialog-store';
+import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { NexusMark } from '../NexusMark';
 import { PixelIcon, type PixelIconName } from '../PixelIcon';
 
@@ -198,6 +208,13 @@ function WorkspaceGroup({
   if (workspaces.length === 0) return null;
   const labelId = `workspace-rail-${group}-label`;
 
+  const paneMissions = useOrchStore((s) => s.paneMissions);
+  const root = useLayoutStore((s) => s.root);
+  const paneStates = useSessionStateStore((s) => s.paneStates);
+  const currentBranch = useGitScmStore((s) => s.branch);
+  const allPanes = useMemo(() => listPanes(root), [root]);
+  const [expandedMissions, setExpandedMissions] = useState<Record<string, boolean>>({});
+
   return (
     <section
       className="workspace-rail__group"
@@ -276,6 +293,10 @@ function WorkspaceGroup({
                       selection?.kind === 'mission' &&
                       selection.missionId === mission.id;
                     const chromeTitle = missionChromeTitle(mission.title);
+                    const missionPanes = allPanes.filter(
+                      (p) => (p.missionId ?? paneMissions[p.id]) === mission.id,
+                    );
+                    const isExpanded = expandedMissions[mission.id] ?? false;
 
                     return (
                       <li key={mission.id}>
@@ -306,8 +327,15 @@ function WorkspaceGroup({
                               <span className="workspace-rail__row-label">
                                 {chromeTitle}
                               </span>
-                              <span className="workspace-rail__mission-status">
-                                {status.label}
+                              <span className="workspace-rail__mission-meta-line">
+                                <span className="workspace-rail__mission-status">
+                                  {status.label}
+                                </span>
+                                {workspace.id === currentWorkspaceId && currentBranch ? (
+                                  <span className="workspace-rail__mission-branch">
+                                    {currentBranch}
+                                  </span>
+                                ) : null}
                               </span>
                             </span>
                           </button>
@@ -328,6 +356,76 @@ function WorkspaceGroup({
                             </button>
                           ) : null}
                         </div>
+
+                        {missionPanes.length > 0 && (
+                          <div className="workspace-rail__agents-block">
+                            <button
+                              type="button"
+                              className="workspace-rail__agents-toggle"
+                              aria-label={`${missionPanes.length} agentes nesta missão`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setExpandedMissions((prev) => ({
+                                  ...prev,
+                                  [mission.id]: !isExpanded,
+                                }));
+                              }}
+                            >
+                              <span className="workspace-rail__agents-pill">
+                                <PixelIcon name="users" size={10} />
+                                <span>
+                                  {missionPanes.length}{' '}
+                                  {missionPanes.length === 1 ? 'agente' : 'agentes'}
+                                </span>
+                              </span>
+                              <span
+                                className={`workspace-rail__agents-chevron${
+                                  isExpanded
+                                    ? ' workspace-rail__agents-chevron--open'
+                                    : ''
+                                }`}
+                              >
+                                <PixelIcon name="chevron-down" size={9} />
+                              </span>
+                            </button>
+                            {isExpanded && (
+                              <ul className="workspace-rail__agents-list">
+                                {missionPanes.map((pane) => {
+                                  const state = paneStates.get(pane.id) ?? 'idle';
+                                  return (
+                                    <li
+                                      key={pane.id}
+                                      className="workspace-rail__agent-item"
+                                    >
+                                      <button
+                                        type="button"
+                                        className="workspace-rail__agent-btn"
+                                        title={`Focar ${pane.title || 'agente'}`}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          useLayoutStore.getState().focus(pane.id);
+                                          useProductNavigationStore.getState().openTerminal();
+                                        }}
+                                      >
+                                        <span
+                                          className={`workspace-rail__agent-dot workspace-rail__agent-dot--${state}`}
+                                        />
+                                        <span className="workspace-rail__agent-title">
+                                          {pane.title || 'Agente'}
+                                        </span>
+                                        {pane.adapterId && (
+                                          <span className="workspace-rail__agent-badge">
+                                            {pane.adapterId}
+                                          </span>
+                                        )}
+                                      </button>
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            )}
+                          </div>
+                        )}
                       </li>
                     );
                   })}
@@ -381,6 +479,10 @@ export function WorkspaceRail({
   const taskBoardSelected = isSelected(selection, 'task-board');
   const memorySelected = isSelected(selection, 'memory');
   const settingsSelected = isSelected(selection, 'settings');
+
+  const layoutRoot = useLayoutStore((s) => s.root);
+  const totalPanes = listPanes(layoutRoot).length;
+  const quotaEntries = useQuotaStore((s) => s.snapshot.entries);
 
   return (
     <nav className="workspace-rail__navigation" aria-label="Destinos do Nexus">
@@ -490,18 +592,35 @@ export function WorkspaceRail({
           </li>
         ) : null}
         <li>
-          <button
-            type="button"
-            className={`workspace-rail__row workspace-rail__fixed-row${
-              terminalsSelected ? ' workspace-rail__row--selected' : ''
-            }`}
-            aria-current={terminalsSelected ? 'page' : undefined}
-            aria-label="Abrir Terminais"
-            onClick={onOpenTerminals}
-          >
-            <PixelIcon name="terminal" size={12} />
-            <span className="workspace-rail__row-label">Terminais</span>
-          </button>
+          <div className="workspace-rail__fixed-row-wrap">
+            <button
+              type="button"
+              className={`workspace-rail__row workspace-rail__fixed-row${
+                terminalsSelected ? ' workspace-rail__row--selected' : ''
+              }`}
+              aria-current={terminalsSelected ? 'page' : undefined}
+              aria-label="Abrir Terminais"
+              onClick={onOpenTerminals}
+            >
+              <PixelIcon name="terminal" size={12} />
+              <span className="workspace-rail__row-label">Terminais</span>
+              {totalPanes > 0 ? (
+                <span className="workspace-rail__row-count">{totalPanes}</span>
+              ) : null}
+            </button>
+            <button
+              type="button"
+              className="workspace-rail__row-grid-action"
+              aria-label="Grade de terminais (escolher quantidade)"
+              title="Abrir grade de terminais"
+              onClick={(e) => {
+                e.stopPropagation();
+                useTerminalGridDialogStore.getState().open({ initialCount: 2 });
+              }}
+            >
+              <PixelIcon name="plus" size={10} />
+            </button>
+          </div>
         </li>
         <li>
           <button
@@ -546,18 +665,83 @@ export function WorkspaceRail({
             <span className="workspace-rail__row-count">{attentionCount}</span>
           </button>
         ) : null}
-        <button
-          type="button"
-          className={`workspace-rail__row workspace-rail__settings${
-            settingsSelected ? ' workspace-rail__row--selected' : ''
-          }`}
-          aria-current={settingsSelected ? 'page' : undefined}
-          aria-label="Abrir Configurações"
-          onClick={onOpenSettings}
-        >
-          <PixelIcon name="config" size={12} />
-          <span className="workspace-rail__row-label">Configurações</span>
-        </button>
+
+        {quotaEntries.length > 0 ? (
+          <div
+            className="workspace-rail__cockpit"
+            onClick={onOpenSettings}
+            role="button"
+            tabIndex={0}
+            aria-label="Ver uso de cotas nas Configurações"
+            title="Cotas de IA disponíveis — clique para detalhes"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onOpenSettings?.();
+              }
+            }}
+          >
+            <div className="workspace-rail__cockpit-header">
+              <span className="workspace-rail__cockpit-title">Cotas</span>
+              <span className="workspace-rail__cockpit-detail-hint">Ver</span>
+            </div>
+            <div className="workspace-rail__cockpit-bars">
+              {quotaEntries.slice(0, 2).map((entry) => {
+                const primaryWindow = entry.windows[0];
+                const d = primaryWindow ? windowDisplay(primaryWindow) : null;
+                return (
+                  <div key={entry.id} className="workspace-rail__quota-item">
+                    <div className="workspace-rail__quota-info">
+                      <span className="workspace-rail__quota-name">{entry.label}</span>
+                      <span
+                        className={`workspace-rail__quota-val workspace-rail__quota-val--${
+                          d?.tone ?? 'ok'
+                        }`}
+                      >
+                        {d ? d.percentLabel : '—'}
+                      </span>
+                    </div>
+                    <div className="workspace-rail__quota-track">
+                      <div
+                        className={`workspace-rail__quota-bar workspace-rail__quota-bar--${
+                          d?.tone ?? 'ok'
+                        }`}
+                        style={{
+                          width: `${Math.min(
+                            100,
+                            Math.max(0, (d?.barRatio ?? 0) * 100),
+                          )}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
+
+        <div className="workspace-rail__cockpit-status">
+          <button
+            type="button"
+            className={`workspace-rail__row workspace-rail__settings${
+              settingsSelected ? ' workspace-rail__row--selected' : ''
+            }`}
+            aria-current={settingsSelected ? 'page' : undefined}
+            aria-label="Abrir Configurações"
+            onClick={onOpenSettings}
+          >
+            <PixelIcon name="config" size={12} />
+            <span className="workspace-rail__row-label">Configurações</span>
+          </button>
+          <div
+            className="workspace-rail__cockpit-conn"
+            title="Runtime local ativo e monitorado"
+          >
+            <span className="workspace-rail__cockpit-led" aria-hidden="true" />
+            <span className="workspace-rail__cockpit-conn-label">Local</span>
+          </div>
+        </div>
       </footer>
     </nav>
   );

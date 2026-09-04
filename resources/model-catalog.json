@@ -122,6 +122,12 @@
       "default": "grok-4.5",
       "models": [
         {
+          "id": "grok-4.6",
+          "availability": "paid",
+          "costTier": "high",
+          "source": "remote"
+        },
+        {
           "id": "grok-4.5",
           "availability": "paid",
           "costTier": "high",

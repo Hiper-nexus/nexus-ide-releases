@@ -7,6 +7,8 @@ import {
   type WorkspaceRailProps,
   type WorkspaceRailWorkspace,
 } from './WorkspaceRail';
+import { useTerminalGridDialogStore } from '../../state/terminal-grid-dialog-store';
+import { useQuotaStore } from '../../state/quota-store';
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -455,5 +457,63 @@ describe('WorkspaceRail', () => {
     expect(host.textContent).not.toMatch(
       /XP|nível|level|custo|provider|modelo|pane|worker|orquestrador/i,
     );
+  });
+
+  it('abre o diálogo de grade de terminais ao clicar no botão + da linha Terminais', () => {
+    useTerminalGridDialogStore.getState().close();
+    expect(useTerminalGridDialogStore.getState().isOpen).toBe(false);
+
+    const { host } = renderRail();
+    const plusBtn = host.querySelector<HTMLButtonElement>(
+      '.workspace-rail__row-grid-action',
+    );
+    expect(plusBtn).toBeTruthy();
+
+    act(() => {
+      plusBtn?.click();
+    });
+
+    expect(useTerminalGridDialogStore.getState().isOpen).toBe(true);
+    expect(useTerminalGridDialogStore.getState().options.initialCount).toBe(2);
+    useTerminalGridDialogStore.getState().close();
+  });
+
+  it('renderiza o cockpit Orca com status Local e cotas no rodapé', () => {
+    act(() => {
+      useQuotaStore.getState().receive({
+        updatedAt: Date.now(),
+        entries: [
+          {
+            id: 'claude',
+            adapterId: 'claude',
+            label: 'Claude',
+            installed: true,
+            onCooldown: false,
+            updatedAt: Date.now(),
+            windows: [
+              {
+                kind: 'hours',
+                label: '5 Horas',
+                usedRatio: 0.35,
+                source: 'provider-api',
+                confidence: 'high',
+              },
+            ],
+          },
+        ],
+        worstUsedRatio: 0.35,
+        highUsageCount: 0,
+        unknownCount: 0,
+      });
+    });
+
+    const { host } = renderRail();
+    const cockpit = host.querySelector('.workspace-rail__cockpit');
+    expect(cockpit).toBeTruthy();
+    expect(cockpit?.textContent).toContain('Claude');
+    expect(cockpit?.textContent).toContain('35%');
+
+    const conn = host.querySelector('.workspace-rail__cockpit-conn');
+    expect(conn?.textContent).toContain('Local');
   });
 });

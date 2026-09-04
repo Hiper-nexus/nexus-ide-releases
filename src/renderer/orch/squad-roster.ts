@@ -8,13 +8,14 @@ const LEGACY_ORCHESTRATOR_CLI = "claude";
 
 const WORKER_CLI_ORDER = [
   "codex",
+  "glm",
   "agy",
   "grok",
-  "kimi",
   "opencode",
   "aider",
-  "glm",
   "longcat",
+  "kimi",
+  "deepseek",
 ];
 
 type RosterAdapter = Pick<

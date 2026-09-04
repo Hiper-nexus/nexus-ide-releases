@@ -101,6 +101,17 @@ describe("workerCliPool", () => {
       ]),
     ).toEqual(["codex", "kimi", "claude"]);
   });
+
+  it("prioritizes reliable handoff CLIs (codex, glm) over kimi and deepseek in worker pool", () => {
+    expect(
+      workerCliPool([
+        adapter("kimi"),
+        adapter("glm"),
+        adapter("deepseek"),
+        adapter("codex"),
+      ]),
+    ).toEqual(["codex", "glm", "kimi", "deepseek"]);
+  });
 });
 
 describe("balanceSquadRosterCli", () => {

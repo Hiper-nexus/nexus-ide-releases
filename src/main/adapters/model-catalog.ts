@@ -113,7 +113,9 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
       ],
     },
     grok: {
+      default: 'grok-4.6',
       models: [
+        { id: 'grok-4.6', availability: 'paid', costTier: 'high', source: 'bundled' },
         {
           id: 'grok-4.5',
           availability: 'paid',
