@@ -232,7 +232,7 @@ export const RELEASE_0742: AppRelease = {
     },
   ],
 };
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_0743: AppRelease = {
   version: '0.74.3',
   date: '2026-09-04',
   codename: 'Sem conta morta selecionável',
@@ -261,6 +261,56 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'Cura do refresh emite onChanged, re-login zera o disjuntor do ' +
         '401-loop e todo trip emite evento (o toast deduplica no lugar).',
+    },
+  ],
+};
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.74.4',
+  date: '2026-09-04',
+  codename: 'Sidebar Orca, Grid Livre e Digitação Desbloqueada',
+  summary:
+    'Sidebar cockpit no padrão Orca com gauges e árvore de agentes viva, grid de ' +
+    'terminais dinâmico com seletor de quantidade (1 a 6 ou custom), digitação ' +
+    'do operador 100% liberada no PTY sem travas por status de missão, e paridade ' +
+    'com modelos e flags 2026 (Grok 4.6, Gemini 3.8 Flash/Pro, Claude Opus 5).',
+  highlights: [
+    {
+      title: 'Sidebar Cockpit no padrão Orca',
+      detail:
+        'Rail integrado com gauges de cotas de IA, indicador de Git branch ativo, ' +
+        'árvore de subagentes com LEDs de atividade e atalho direto para o grid.',
+    },
+    {
+      title: 'Grid de Terminais com Seletor de Quantidade',
+      detail:
+        'Diálogo modal para abrir 1, 2, 3, 4, 6 ou número customizado de terminais, ' +
+        'com promoção de qualquer pane para orquestrador na toolbar e context menu.',
+    },
+    {
+      title: 'Digitação do operador 100% desbloqueada',
+      detail:
+        'O operador humano no teclado físico tem autoridade incondicional de digitação; ' +
+        'missões com erro nunca mais bloqueiam o terminal PTY ativo com mensagens de recusa.',
+    },
+    {
+      title: 'Paridade de modelos e flags 2026',
+      detail:
+        'Suporte aos modelos grok-4.6, gemini-3.8-flash-high e flags não-bloqueantes ' +
+        '(--permission-mode plan, --mode plan, --effort).',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Fim do deadlock de dispatch de missões',
+      detail:
+        'O intent gate agora aceita transição de pending para running e autoriza ' +
+        'o spawn de workers no próprio grid do Nexus sem recorrer a terminais externos.',
+    },
+    {
+      title: 'Contas e login (F-114)',
+      detail:
+        'Erro 401 não exibe mais falsamente como "esgotada" e o botão "Entrar novamente" ' +
+        'fica sempre visível para reautenticação imediata.',
     },
   ],
 };

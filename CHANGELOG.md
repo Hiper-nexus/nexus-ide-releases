@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.74.4 — Sidebar Orca, Grid Livre e Digitação Desbloqueada
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+- **Sidebar Cockpit padrão Orca (`stablyai/orca`)**: Rail integrado com status de missões, gauges de cotas de IA proporcionais em tempo real, branch Git ativo, árvore de subagentes com LEDs de atividade e atalho direto para o grid de terminais.
+- **Grid de Terminais com Seletor de Quantidade**: Diálogo modal para abrir 1, 2, 3, 4, 6 ou número customizado de terminais, com atalho rápido e promoção de qualquer pane para orquestrador na toolbar, no context menu e no ⌘K.
+- **Digitação do operador 100% desbloqueada**: O operador humano no teclado físico tem autoridade incondicional de digitação; status de erro de missão nunca mais bloqueia o terminal PTY ativo com mensagens de recusa (`[nexus] o main recusou a digitação neste pane.`).
+- **Paridade de modelos e flags 2026**: Suporte aos modelos `grok-4.6`, `gemini-3.8-flash-high`/`gemini-3.8-pro-high`, `claude-opus-5` e flags não-bloqueantes (`--permission-mode plan`, `--mode plan`, `--effort`).
+- **Fim do deadlock de dispatch de missões**: O intent gate agora aceita transição de pending para running e autoriza o spawn de workers (`canDispatchWorkers`) no próprio grid do Nexus sem recorrer a terminais externos.
+- **Correção de contas e login (F-114)**: Erro 401 de autenticação não exibe mais falsamente como "esgotada" e o botão "Entrar novamente" fica sempre visível para reautenticação imediata.
+
+## 0.74.3 — Sem conta morta selecionável
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+- **Botão Nova missão na sidebar**: cartão hero no topo do rail abre o fluxo simples no workspace atual.
+- **Seletores ignoram sessão expirada**: Maestro, default do orquestrador, linha de cota e picker; erro do Maestro cita o re-login.
+- **Resets do code-review**: cura do refresh emite, re-login zera o disjuntor, trip sempre emite evento.
+
 ## 0.74.2 — Pane abre, login aparece
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
@@ -8,10 +27,6 @@ _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes).
 - **Sessão expirada visível**: status + "Entrar novamente" na linha do provider e na conta, "Usar" bloqueado, switcher sem falso "pronta"; falha de refresh avisa a UI na hora.
 - **Disjuntor do 401-loop**: 1ª morte instantânea troca de conta, 2ª seguida trava com diagnóstico; toast com ação "Abrir Providers".
 - **Handoff sem eco**: packs anteriores podados do excerpt de continuidade.
-
-## 0.74.3 — Sem conta morta selecionável
-
-_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
 
 - **Botão Nova missão na sidebar**: cartão hero no topo do rail abre o fluxo simples no workspace atual.
 - **Seletores ignoram sessão expirada**: Maestro, default do orquestrador, linha de cota e picker; erro do Maestro cita o re-login.
