@@ -6,6 +6,10 @@ import type { AdapterInfo } from "../../../shared/types";
 import { isVerifiedOrchestratorAdapter } from "../../orch/orchestrator-runtime";
 import { isAdapterModelAuthenticated } from "../../orch/mission-runtime-readiness";
 import { ProviderLogo } from "../ProviderLogo";
+import { ModelPicker } from "../model/ModelPicker";
+import { rankModelOptions } from "../../lib/model-picker-rank";
+import { shortWindowsLine } from "../../lib/quota-display";
+import { useQuotaStore } from "../../state/quota-store";
 
 type OrchestratorDefaultsValue = Pick<
   OrchSettings,
@@ -152,6 +156,26 @@ export function OrchestratorDefaults() {
     configuredProvider?.defaultModel ||
     selectedAdapter?.models.default ||
     "";
+  // Padrão efetivo do provider: escolher exatamente ele salva "" (seguir o
+  // provider), preservando a semântica antiga do "Padrão do provider".
+  const effectiveProviderDefault =
+    configuredProvider?.defaultModel ||
+    selectedAdapter?.models.default ||
+    "";
+  const quotaEntries = useQuotaStore((s) => s.snapshot.entries);
+  const pickerOptions = useMemo(
+    () => rankModelOptions({ adapters: capableAdapters, providers, quotaEntries }),
+    [capableAdapters, providers, quotaEntries],
+  );
+  const quotaLineByAdapterId = useMemo(() => {
+    const lines: Record<string, string> = {};
+    for (const entry of quotaEntries) {
+      if (lines[entry.adapterId] === undefined) {
+        lines[entry.adapterId] = shortWindowsLine(entry);
+      }
+    }
+    return lines;
+  }, [quotaEntries]);
   const runtimeAuthenticated = selectedAdapter
     ? isAdapterModelAuthenticated(
         selectedAdapter,
@@ -279,66 +303,57 @@ export function OrchestratorDefaults() {
         </p>
       )}
 
-      <div className="settings-orchestrator__grid">
-        <label className="settings-field">
-          Provider
-          <select
-            className="settings-input"
-            aria-label="Provider do orquestrador"
-            value={defaults.defaultAdapterId}
-            disabled={disabled || capableAdapters.length === 0}
-            onChange={(event) =>
+      <div className="settings-field">
+        <span className="settings-field__label" id="orchestrator-model-label">
+          Provider e modelo
+        </span>
+        {providerUnavailable && configuredAdapter && (
+          <p
+            className="settings-orchestrator__saved-unavailable"
+            role="status"
+          >
+            Salvo: {configuredAdapter.label} (indisponível) — escolha um
+            Maestro verificado abaixo.
+          </p>
+        )}
+        <ModelPicker
+          options={pickerOptions}
+          quotaLineByAdapterId={quotaLineByAdapterId}
+          selected={
+            selectedAdapter && selectedModel
+              ? {
+                  adapterId: defaults.defaultAdapterId,
+                  model: selectedModel,
+                }
+              : null
+          }
+          formatModelName={modelLabel}
+          onSelect={(option) => {
+            if (disabled) return;
+            if (option.adapterId !== defaults.defaultAdapterId) {
               void save({
-                defaultAdapterId: event.target.value,
+                defaultAdapterId: option.adapterId,
                 defaultModel: "",
                 defaultAccountId: "",
-              })
+              });
+              return;
             }
-          >
-            {providerUnavailable && defaults.defaultAdapterId && (
-              <option value={defaults.defaultAdapterId} disabled>
-                {configuredAdapter?.label ?? defaults.defaultAdapterId}{" "}
-                (indisponível)
-              </option>
-            )}
-            {capableAdapters.map((adapter) => (
-              <option key={adapter.id} value={adapter.id}>
-                {adapter.label}
-              </option>
-            ))}
-          </select>
-        </label>
+            void save({
+              defaultModel:
+                option.model === effectiveProviderDefault
+                  ? ""
+                  : option.model,
+            });
+          }}
+        />
+        {defaults.defaultModel === "" && effectiveProviderDefault && (
+          <p className="settings-field__note">
+            Seguindo o padrão do provider ({effectiveProviderDefault}).
+          </p>
+        )}
+      </div>
 
-        <label className="settings-field">
-          Modelo
-          <select
-            className="settings-input"
-            aria-label="Modelo do orquestrador"
-            value={defaults.defaultModel}
-            disabled={disabled || !selectedAdapter}
-            onChange={(event) =>
-              void save({ defaultModel: event.target.value })
-            }
-          >
-            <option value="">
-              Padrão do provider
-              {configuredProvider?.defaultModel || selectedAdapter?.models.default
-                ? ` (${configuredProvider?.defaultModel || selectedAdapter?.models.default})`
-                : ""}
-            </option>
-            {missingModel && (
-              <option value={defaults.defaultModel} disabled>
-                {defaults.defaultModel} (indisponível)
-              </option>
-            )}
-            {availableModels.map((model) => (
-              <option key={model} value={model}>
-                {modelLabel(defaults.defaultAdapterId, model)}
-              </option>
-            ))}
-          </select>
-        </label>
-
+      <div className="settings-orchestrator__grid">
         <label className="settings-field">
           Conta
           <select

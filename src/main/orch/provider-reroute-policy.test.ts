@@ -74,6 +74,32 @@ describe("selectProviderRerouteCandidate", () => {
     ).toMatchObject({ id: "exec-grok" });
   });
 
+  it("prefers a quota-fresh candidate of the same category", () => {
+    expect(
+      selectProviderRerouteCandidate({
+        currentAgentRef: "exec-codex",
+        agentCategory: "executor",
+        rosterAgents: ROSTER,
+        exhaustedAdapterIds: ["codex"],
+        isRouteResolvable: () => true,
+        quotaWorstRatioByCli: { kimi: 0.95, grok: 0.1 },
+      }),
+    ).toMatchObject({ id: "exec-grok", cli: "grok" });
+  });
+
+  it("unknown quota (null) keeps roster order", () => {
+    expect(
+      selectProviderRerouteCandidate({
+        currentAgentRef: "exec-codex",
+        agentCategory: "executor",
+        rosterAgents: ROSTER,
+        exhaustedAdapterIds: ["codex"],
+        isRouteResolvable: () => true,
+        quotaWorstRatioByCli: { kimi: null, grok: null },
+      }),
+    ).toMatchObject({ id: "exec-kimi", cli: "kimi" });
+  });
+
   it("returns null when every roster CLI of the category is exhausted", () => {
     expect(
       selectProviderRerouteCandidate({

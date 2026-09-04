@@ -440,6 +440,19 @@ export function modelRoutingRank(info: ModelCatalogEntryInfo | null | undefined)
   }
 }
 
+/**
+ * Auth-aware routing rank (herança Orca: a sessão nativa de cada CLI é o
+ * juiz). Um modelo sem auth pronta nunca vence — retorna +Infinity para
+ * tirá-lo da rota automática sem mexer no rank de custo dos demais.
+ */
+export function modelRoutingRankWithAuth(
+  info: ModelCatalogEntryInfo | null | undefined,
+  isAuthReady: boolean,
+): number {
+  if (!isAuthReady) return Number.POSITIVE_INFINITY;
+  return modelRoutingRank(info);
+}
+
 export function applyModelCatalogToAdapter(adapter: Adapter, catalog: ModelCatalog): Adapter {
   const adapterCatalog = catalog.adapters?.[adapter.id];
   if (!adapterCatalog) return adapter;

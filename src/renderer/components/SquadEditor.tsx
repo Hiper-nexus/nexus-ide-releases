@@ -6,6 +6,8 @@ import { applySquadEdit, type EditableAgent } from '../../shared/squad-edit';
 import { CloseButton } from './CloseButton';
 import { PixelIcon } from './PixelIcon';
 import { useFocusTrap } from '../lib/use-focus-trap';
+import { authViewForModel } from '../lib/model-picker-rank';
+import { useProviderStore } from '../state/provider-store';
 
 const CATEGORIES: AgentCategory[] = [
   'orchestrator',
@@ -57,6 +59,25 @@ export function SquadEditor({
   }, []);
 
   const installed = useMemo(() => adapters.filter((a) => a.installed), [adapters]);
+  // Mesmo motor do ModelPicker: sessão pronta por modelo, nunca inventada.
+  // Provider ausente (store ainda hidratando) = desconhecido, não bloqueado.
+  const providers = useProviderStore((s) => s.providers);
+  const providerById = useMemo(() => {
+    const map = new Map<string, (typeof providers)[number]>();
+    for (const provider of providers) map.set(provider.adapterId, provider);
+    return map;
+  }, [providers]);
+
+  function modelReady(cli: string, model: string): boolean | null {
+    return authViewForModel(providerById.get(cli), model).ready;
+  }
+
+  /** Primeiro modelo com sessão pronta; desconhecido conta como usável. */
+  function firstUsableModel(cli: string, models: string[]): string | undefined {
+    return (
+      models.find((model) => modelReady(cli, model) !== false) ?? models[0]
+    );
+  }
   const nameInputRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   // Tab preso no diálogo: sem isto o foco passeava pela app atrás do scrim.
@@ -205,7 +226,7 @@ export function SquadEditor({
               onChange={(e) => {
                 const cli = e.target.value;
                 const models = modelsFor(cli);
-                updateAgent(index, { cli, model: models[0] });
+                updateAgent(index, { cli, model: firstUsableModel(cli, models) });
               }}
             >
               {installed.map((a) => (
@@ -223,11 +244,23 @@ export function SquadEditor({
               aria-label="Modelo"
               onChange={(e) => updateAgent(index, { model: e.target.value })}
             >
-              {modelsFor(agent.cli).map((m) => (
-                <option key={m} value={m}>
-                  {m}
-                </option>
-              ))}
+              {modelsFor(agent.cli).map((m) => {
+                const view = authViewForModel(providerById.get(agent.cli), m);
+                return (
+                  <option
+                    key={m}
+                    value={m}
+                    disabled={view.ready === false}
+                    title={
+                      view.ready === false
+                        ? (view.reason ?? 'sessão necessária')
+                        : undefined
+                    }
+                  >
+                    {view.ready === false ? `${m} (login necessário)` : m}
+                  </option>
+                );
+              })}
               {agent.model && !modelsFor(agent.cli).includes(agent.model) && (
                 <option value={agent.model}>{agent.model}</option>
               )}

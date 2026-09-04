@@ -3,6 +3,8 @@
  * Sem toast vocabulary de PR69; só a frase acionável e o agente seguinte.
  */
 
+import { QUOTA_HIGH_USAGE_THRESHOLD } from '../../shared/quota-types';
+
 export interface SpawnFailRosterAgent {
   readonly id: string;
   readonly agentName: string;
@@ -13,6 +15,26 @@ export interface SpawnFailRosterAgent {
 }
 
 const PREFERRED_REROUTE_CLIS = ['claude', 'codex'] as const;
+
+/**
+ * Pior janela de quota conhecida por CLI (0..1, null = desconhecida).
+ * Só penaliza com sinal conhecido ≥ threshold — quota desconhecida ou
+ * inferida nunca desvia a rota sozinha (herança Orca: observabilidade
+ * primeiro, enforcement só com provider-api/limit-hit).
+ */
+export type QuotaWorstRatioByCli = Readonly<Record<string, number | null>>;
+
+export function isQuotaHighUsage(
+  cli: string,
+  quotaWorstRatioByCli: QuotaWorstRatioByCli | undefined,
+  threshold = QUOTA_HIGH_USAGE_THRESHOLD,
+): boolean {
+  if (!quotaWorstRatioByCli) return false;
+  const key = cli.toLowerCase();
+  const worst =
+    quotaWorstRatioByCli[key] ?? quotaWorstRatioByCli[cli] ?? null;
+  return worst !== null && worst >= threshold;
+}
 
 export function civilianSpawnFailMessage(input: {
   readonly deadAdapterId: string;
@@ -41,6 +63,8 @@ export function selectSpawnFailSuccessor(input: {
   readonly preferredCategory: string;
   readonly roster: readonly SpawnFailRosterAgent[];
   readonly exhaustedAdapterIds?: readonly string[];
+  /** Pior janela de quota por CLI. Ausente = comportamento anterior. */
+  readonly quotaWorstRatioByCli?: QuotaWorstRatioByCli;
 }): SpawnFailRosterAgent | null {
   const exhausted = new Set(
     (input.exhaustedAdapterIds ?? []).map((id) => id.toLowerCase()),
@@ -52,13 +76,17 @@ export function selectSpawnFailSuccessor(input: {
       agent.category === input.preferredCategory &&
       !exhausted.has(agent.cli.toLowerCase()),
   );
+  // Quota alta desvia para um fresco da mesma categoria; se todos estão em
+  // alta, mantém o pool cheio (fail-closed nunca piora a seleção).
+  const fresh = sameCategory.filter(
+    (agent) => !isQuotaHighUsage(agent.cli, input.quotaWorstRatioByCli),
+  );
+  const pool = fresh.length > 0 ? fresh : sameCategory;
   for (const preferred of PREFERRED_REROUTE_CLIS) {
-    const hit = sameCategory.find(
-      (agent) => agent.cli.toLowerCase() === preferred,
-    );
+    const hit = pool.find((agent) => agent.cli.toLowerCase() === preferred);
     if (hit) return hit;
   }
-  return sameCategory[0] ?? null;
+  return pool[0] ?? null;
 }
 
 export function isLikelyBootSpawnFailure(error: unknown): boolean {

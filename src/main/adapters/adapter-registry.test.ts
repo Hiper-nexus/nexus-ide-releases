@@ -10,6 +10,7 @@ import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import publishedModelCatalog from '../../../resources/model-catalog.json';
 import {
   adapterCapabilityMatrixForAdapter,
+  authMethodForAdapter,
   mergeAdapters,
   broadcastToListeners,
   orchestrationEvidenceForAdapter,
@@ -780,5 +781,39 @@ describe('mergeAdapters', () => {
     const user = buildAdapter('my-cli', 'My CLI');
     const merged = mergeAdapters([builtin], [user]);
     expect(merged.has('codex')).toBe(true);
+  });
+});
+
+describe('authMethodForAdapter', () => {
+  const buildAdapter = (id: string, label: string): Adapter =>
+    ({ ...MINIMAL_CLI_PTY, id, label }) as Adapter;
+
+  it('expõe o método declarado da CLI (oauth do claude, api_key do codex)', () => {
+    expect(authMethodForAdapter(buildAdapter('claude', 'Claude'))).toBe(
+      MINIMAL_CLI_PTY.auth.method,
+    );
+    const codex = {
+      ...MINIMAL_CLI_PTY,
+      id: 'codex',
+      auth: { ...MINIMAL_CLI_PTY.auth, method: 'api_key' },
+    } as Adapter;
+    expect(authMethodForAdapter(codex)).toBe('api_key');
+  });
+
+  it('api-provider sempre declara api_key', () => {
+    const provider = {
+      kind: 'api-provider',
+      id: 'glm',
+      label: 'GLM',
+      version: '1.0.0',
+      icon: '🌐',
+      endpoint: 'https://example.invalid/v1',
+      protocol: 'openai-chat',
+      auth: { method: 'api_key', header: 'x', scheme: 'y', envVar: 'Z', keychainKey: 'k' },
+      models: { flag: '--model', list: ['m'], default: 'm' },
+      streaming: true,
+      quirks: {},
+    } as unknown as Adapter;
+    expect(authMethodForAdapter(provider)).toBe('api_key');
   });
 });

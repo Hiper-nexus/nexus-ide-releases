@@ -271,6 +271,14 @@ export interface AdapterBinResolution {
   binPath: string | null;
 }
 
+/**
+ * Declared auth method for the renderer gate. Static metadata only — never
+ * proof of a live session (herança Orca: cada CLI usa sua sessão nativa).
+ */
+export function authMethodForAdapter(adapter: Adapter): string {
+  return adapter.kind === 'api-provider' ? 'api_key' : adapter.auth.method;
+}
+
 /** Build a trimmed AdapterInfo safe to send to the renderer. */
 function toAdapterInfo(
   adapter: Adapter,
@@ -292,6 +300,7 @@ function toAdapterInfo(
   );
   const modelList = [...staticIds, ...discovered];
   const capabilities = adapterCapabilityMatrixForAdapter(adapter, origin);
+  const authMethod = authMethodForAdapter(adapter);
   return {
     id: adapter.id,
     kind: adapter.kind,
@@ -306,6 +315,7 @@ function toAdapterInfo(
     resolvedBinPath: resolution.binPath,
     installCommand,
     loginHint,
+    authMethod,
     idleTimeoutMs: resolveIdleTimeoutMs(adapter),
     taskHandoffCapable: taskHandoffCapabilityForAdapter(adapter, origin),
     missionControlCapable: missionControlCapabilityForAdapter(adapter, origin),

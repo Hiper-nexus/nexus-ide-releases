@@ -14,6 +14,7 @@ import {
   mergeModelCatalogs,
   modelCatalogInfo,
   modelRoutingRank,
+  modelRoutingRankWithAuth,
   refreshRemoteModelCatalog,
   resolveModelCatalogUrl,
   seedLocalModelCatalogFromPublished,
@@ -95,6 +96,19 @@ describe('model catalog overlays', () => {
     });
 
     expect(partialPaid).toBeGreaterThanOrEqual(paidMedium);
+  });
+
+  it('tira da rota automática o modelo sem auth pronta, sem mexer no rank com auth', () => {
+    const free = { id: 'm', availability: 'free' } as const;
+    expect(modelRoutingRankWithAuth(free, false)).toBe(
+      Number.POSITIVE_INFINITY,
+    );
+    expect(modelRoutingRankWithAuth(free, true)).toBe(
+      modelRoutingRank(free),
+    );
+    expect(modelRoutingRankWithAuth(null, true)).toBe(
+      modelRoutingRank(null),
+    );
   });
 });
 

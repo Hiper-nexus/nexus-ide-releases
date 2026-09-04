@@ -9,8 +9,11 @@ import {
   civilianSpawnFailMessage,
   isLikelyBootSpawnFailure,
   selectSpawnFailSuccessor,
+  type QuotaWorstRatioByCli,
   type SpawnFailRosterAgent,
 } from './spawn-fail-reroute';
+import { requireQuotaService } from '../quota/quota-service';
+import { entryWorstRatio } from '../quota/quota-policy';
 import { emitWorkerSpawnFailed } from './spawn-fail-events';
 import {
   decideNexusTaskFailClosed,
@@ -52,6 +55,32 @@ interface PendingFanoutRetry {
 
 const pendingByMission = new Map<string, PendingFanoutRetry>();
 const inFlight = new Set<string>();
+
+/**
+ * Pior janela de quota por CLI a partir do último fleet snapshot (undefined
+ * em boot race — o reroute cai no comportamento sem quota, como failover.ts).
+ */
+function quotaWorstRatioByCli(): QuotaWorstRatioByCli | undefined {
+  try {
+    const snap = requireQuotaService().lastSnapshot();
+    if (!snap) return undefined;
+    const byCli: Record<string, number | null> = {};
+    for (const entry of snap.entries) {
+      const worst = entryWorstRatio(entry);
+      const key = entry.adapterId.toLowerCase();
+      const prev = byCli[key];
+      if (prev === undefined) {
+        byCli[key] = worst;
+      } else if (worst !== null && (prev === null || worst > prev)) {
+        byCli[key] = worst;
+      }
+    }
+    return byCli;
+  } catch {
+    /* quota service optional at boot race */
+    return undefined;
+  }
+}
 
 export function resetNexusTaskFailClosedForTests(): void {
   pendingByMission.clear();
@@ -148,6 +177,7 @@ export async function attemptQueuedRoleSpawns(input: {
       deadAdapterId: agent.cli,
       preferredCategory: role.category ?? agent.category,
       roster: input.roster,
+      quotaWorstRatioByCli: quotaWorstRatioByCli(),
     });
     rerouteNote = civilianSpawnFailMessage({
       deadAdapterId: agent.cli,

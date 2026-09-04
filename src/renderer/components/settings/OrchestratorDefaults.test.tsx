@@ -162,25 +162,22 @@ describe("OrchestratorDefaults", () => {
     const { host, root } = mount();
     await flushEffects();
 
-    const providerSelect = host.querySelector<HTMLSelectElement>(
-      'select[aria-label="Provider do orquestrador"]',
-    );
-    const model = host.querySelector<HTMLSelectElement>(
-      'select[aria-label="Modelo do orquestrador"]',
-    );
+    const radios = () =>
+      [...host.querySelectorAll<HTMLButtonElement>('[role="radio"]')];
     const accountSelect = host.querySelector<HTMLSelectElement>(
       'select[aria-label="Conta do orquestrador"]',
     );
-    expect(providerSelect?.value).toBe("codex");
-    expect([...providerSelect!.options].map((option) => option.text)).toEqual([
-      "Claude",
-      "Codex",
-    ]);
-    expect([...model!.options].map((option) => option.value)).toEqual([
-      "",
-      "gpt-5.4",
-      "gpt-5.3-codex",
-    ]);
+    // Picker unificado: um grupo por provider verificado, com logo e uso.
+    expect(
+      host.querySelector('section[aria-label="Claude"]'),
+    ).not.toBeNull();
+    expect(host.querySelector('section[aria-label="Codex"]')).not.toBeNull();
+    expect(host.querySelector('section[aria-label="Grok"]')).toBeNull();
+    const checked = () =>
+      host.querySelector<HTMLButtonElement>(
+        '[role="radio"][aria-checked="true"]',
+      );
+    expect(checked()?.getAttribute("aria-label")).toContain("gpt-5.4");
     expect([...accountSelect!.options].map((option) => option.value)).toEqual([
       "",
       "codex-work",
@@ -188,9 +185,12 @@ describe("OrchestratorDefaults", () => {
     expect(host.textContent).toContain("Codex · pronto");
     expect(host.textContent).not.toContain("MCP conectado");
 
+    const sonnet = radios().find(
+      (radio) => radio.getAttribute("aria-label") === "claude-sonnet",
+    );
+    expect(sonnet).toBeTruthy();
     await act(async () => {
-      providerSelect!.value = "claude";
-      providerSelect!.dispatchEvent(new Event("change", { bubbles: true }));
+      sonnet!.click();
       await Promise.resolve();
     });
 
@@ -199,18 +199,79 @@ describe("OrchestratorDefaults", () => {
       defaultModel: "",
       defaultAccountId: "",
     });
-    expect([...model!.options].map((option) => option.value)).toEqual([
-      "",
-      "claude-opus-5",
-      "claude-sonnet",
-    ]);
-    expect([...model!.options].map((option) => option.text)).toContain(
-      "Claude Opus 5 · claude-opus-5",
+    // Trocar de provider reseta para o padrão do provider — o picker mostra
+    // o efetivo selecionado e a nota "seguindo o padrão".
+    expect(checked()?.getAttribute("aria-label")).toContain("claude-opus-5");
+    expect(host.textContent).toContain("Claude Opus 5 · claude-opus-5");
+    expect(host.textContent).toContain(
+      "Seguindo o padrão do provider (claude-opus-5)",
     );
-    expect([...accountSelect!.options].map((option) => option.value)).toEqual([
+    const accountAfter = host.querySelector<HTMLSelectElement>(
+      'select[aria-label="Conta do orquestrador"]',
+    );
+    expect([...accountAfter!.options].map((option) => option.value)).toEqual([
       "",
       "claude-work",
     ]);
+    act(() => root.unmount());
+  });
+
+  it("modelo sem sessão aparece bloqueado no picker com o comando de login", async () => {
+    const saved: OrchSettings = {
+      ...DEFAULT_ORCH_SETTINGS,
+      missionDriverActiveMode: false,
+      defaultAdapterId: "codex",
+      defaultModel: "",
+      defaultAccountId: "",
+    };
+    const adapters = [
+      adapter("claude", "Claude", ["claude-sonnet"]),
+      adapter("codex", "Codex", ["gpt-5.4"]),
+    ];
+    Object.defineProperty(window, "nexus", {
+      configurable: true,
+      value: {
+        settings: {
+          orchGet: vi.fn(async () => saved),
+          orchSet: vi.fn(async () => saved),
+        },
+        adapters: {
+          list: vi.fn(async () => adapters),
+          onChanged: vi.fn(() => vi.fn()),
+        },
+        providers: {
+          list: vi.fn(async () => [
+            provider(adapters[0]!),
+            provider(adapters[1]!, {
+              authStrategy: "login-needed",
+              authReadyModels: [],
+              loginCommand: "codex login",
+            }),
+          ]),
+          onChanged: vi.fn(() => vi.fn()),
+        },
+        accounts: {
+          list: vi.fn(async () => []),
+          onChanged: vi.fn(() => vi.fn()),
+        },
+      },
+    });
+
+    const { host, root } = mount();
+    await flushEffects();
+
+    const codexGroup = host.querySelector('section[aria-label="Codex"]');
+    expect(codexGroup).not.toBeNull();
+    const locked = codexGroup!.querySelector<HTMLButtonElement>(
+      '[role="radio"]',
+    );
+    expect(locked?.disabled).toBe(true);
+    expect(locked?.getAttribute("aria-label")).toContain("codex login");
+    // O Claude com sessão pronta continua selecionável.
+    const ready = host
+      .querySelector('section[aria-label="Claude"]')!
+      .querySelector<HTMLButtonElement>('[role="radio"]');
+    expect(ready?.disabled).toBe(false);
     act(() => root.unmount());
   });
 
@@ -314,16 +375,13 @@ describe("OrchestratorDefaults", () => {
       "Kimi não concluiu o gate Nexus de Maestro",
     );
     expect(host.textContent).not.toContain("MCP conectado");
-    const providerSelect = host.querySelector<HTMLSelectElement>(
-      'select[aria-label="Provider do orquestrador"]',
-    );
-    expect(providerSelect?.selectedOptions[0]?.text).toBe(
-      "Kimi (indisponível)",
-    );
-    expect([...providerSelect!.options].map((option) => option.text)).toEqual([
-      "Kimi (indisponível)",
-      "Claude",
-    ]);
+    // O salvo indisponível continua visível (nunca troca em silêncio) e o
+    // picker oferece só Maestros verificados como substituição.
+    expect(host.textContent).toContain("Salvo: Kimi (indisponível)");
+    expect(host.querySelector('section[aria-label="Kimi"]')).toBeNull();
+    expect(
+      host.querySelector('section[aria-label="Claude"]'),
+    ).not.toBeNull();
     act(() => root.unmount());
   });
 
@@ -364,14 +422,14 @@ describe("OrchestratorDefaults", () => {
     const { host, root } = mount();
     await flushEffects();
 
-    const providerSelect = host.querySelector<HTMLSelectElement>(
-      'select[aria-label="Provider do orquestrador"]',
-    );
-    expect(providerSelect?.value).toBe("claude");
-    expect(providerSelect?.selectedOptions[0]?.text).toContain("indisponível");
+    expect(host.textContent).toContain("Salvo: Claude (indisponível)");
     expect(host.textContent).toContain(
       "Instale ou escolha um Maestro verificado",
     );
+    // O picker oferece o Codex instalado como substituição; o Claude
+    // desinstalado não aparece como opção.
+    expect(host.querySelector('section[aria-label="Codex"]')).not.toBeNull();
+    expect(host.querySelector('section[aria-label="Claude"]')).toBeNull();
     act(() => root.unmount());
   });
 

@@ -323,6 +323,27 @@ export interface AdapterInfo {
   resolvedBinPath?: string | null;
   installCommand: string;
   loginHint?: string;
+  /**
+   * Declared auth method (oauth/api_key/device_code/subscription/none).
+   * Static adapter metadata — it never proves a live session. Combine with
+   * ProviderSettingsInfo.authStrategy/authReadyModels (herança Orca: cada
+   * CLI usa sua sessão nativa) before presenting a model as ready.
+   */
+  authMethod?: string;
+  /**
+   * Adapter-level auth gate projected by main. true = at least one model is
+   * ready, false = login-needed sem modelo credentialless, null/undefined =
+   * unknown at the registry layer (renderer must consult provider-store).
+   * Optional only for rolling renderer/main compatibility.
+   */
+  authReady?: boolean | null;
+  /** Human reason when authReady === false (e.g. which login command). */
+  authReason?: string;
+  /**
+   * Fleet quota hint for ranking (worst known usedRatio, null = unknown).
+   * Observability only — reroute policies apply the 0.8 threshold.
+   */
+  quotaHint?: { worstRatio: number | null; highUsage: boolean };
   idleTimeoutMs: number;
   /**
    * Compatibility flag: true when the CLI declares a per-session Nexus MCP

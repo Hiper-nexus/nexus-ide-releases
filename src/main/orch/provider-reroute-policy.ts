@@ -1,5 +1,6 @@
 import type { TaskPlanAgentSnapshot } from "./task-store";
 import type { TaskProviderRerouteDirective } from "./task-dispatch-codec";
+import { QUOTA_HIGH_USAGE_THRESHOLD } from "../../shared/quota-types";
 
 export const PROVIDER_REROUTE_MARKER = "[NEXUS_PROVIDER_REROUTE]";
 
@@ -31,17 +32,30 @@ export interface ProviderRerouteCandidateInput {
 }
 
 export function selectProviderRerouteCandidate(
-  input: ProviderRerouteCandidateInput,
+  input: ProviderRerouteCandidateInput & {
+    /** Pior janela de quota por CLI. Ausente = ordem do roster. */
+    readonly quotaWorstRatioByCli?: Readonly<Record<string, number | null>>;
+  },
 ): TaskPlanAgentSnapshot | null {
   const exhausted = new Set(input.exhaustedAdapterIds);
+  const quota = input.quotaWorstRatioByCli;
+  const isQuotaHigh = (cli: string): boolean => {
+    if (!quota) return false;
+    const worst = quota[cli.toLowerCase()] ?? quota[cli] ?? null;
+    return worst !== null && worst >= QUOTA_HIGH_USAGE_THRESHOLD;
+  };
+  const candidates: TaskPlanAgentSnapshot[] = [];
   for (const agent of input.rosterAgents) {
     if (agent.category !== input.agentCategory) continue;
     if (agent.id === input.currentAgentRef) continue;
     if (exhausted.has(agent.cli)) continue;
     if (!input.isRouteResolvable(agent)) continue;
-    return agent;
+    candidates.push(agent);
   }
-  return null;
+  // Com sinal de quota, prefere um fresco da mesma categoria; se todos
+  // estão em alta, mantém a ordem do roster (fail-closed não piora).
+  const fresh = candidates.filter((agent) => !isQuotaHigh(agent.cli));
+  return (fresh.length > 0 ? fresh : candidates)[0] ?? null;
 }
 
 export function buildProviderRerouteDirective(input: {

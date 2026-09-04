@@ -56,6 +56,36 @@ describe('spawn-fail reroute', () => {
     expect(successor?.cli).toBe('codex');
   });
 
+  it('desvia de CLI em quota alta para um fresco da mesma categoria', () => {
+    const successor = selectSpawnFailSuccessor({
+      deadAdapterId: 'kimi',
+      preferredCategory: 'developer',
+      roster,
+      quotaWorstRatioByCli: { claude: 0.95, codex: 0.2 },
+    });
+    expect(successor?.cli).toBe('codex');
+  });
+
+  it('quota desconhecida (null) nunca desvia a rota', () => {
+    const successor = selectSpawnFailSuccessor({
+      deadAdapterId: 'kimi',
+      preferredCategory: 'developer',
+      roster,
+      quotaWorstRatioByCli: { claude: null, codex: null },
+    });
+    expect(successor?.cli).toBe('claude');
+  });
+
+  it('se todas estão em quota alta, mantém a seleção (fail-closed não piora)', () => {
+    const successor = selectSpawnFailSuccessor({
+      deadAdapterId: 'kimi',
+      preferredCategory: 'developer',
+      roster,
+      quotaWorstRatioByCli: { claude: 0.9, codex: 0.85 },
+    });
+    expect(successor?.cli).toBe('claude');
+  });
+
   it('mensagem civil em PT com sucessor', () => {
     expect(
       civilianSpawnFailMessage({
