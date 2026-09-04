@@ -190,7 +190,7 @@ export const RELEASE_0741: AppRelease = {
     },
   ],
 };
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_0742: AppRelease = {
   version: '0.74.2',
   date: '2026-09-04',
   codename: 'Pane abre, login aparece',
@@ -229,6 +229,38 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'Packs de failover anteriores impressos no scrollback são podados do ' +
         'excerpt — o prompt de continuidade para de crescer a cada ciclo.',
+    },
+  ],
+};
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.74.3',
+  date: '2026-09-04',
+  codename: 'Sem conta morta selecionável',
+  summary:
+    'Sessão expirada não entra em nenhum seletor: Maestro governado pula a ' +
+    'conta morta nos 3 degraus, default do orquestrador não fixa, linha de ' +
+    'cota e picker nomeiam. A sidebar ganha o botão Nova missão.',
+  highlights: [
+    {
+      title: 'Nova missão na sidebar',
+      detail:
+        'Cartão hero no topo do rail abre o fluxo simples (rascunho limpo + ' +
+        'setup) no workspace atual.',
+    },
+    {
+      title: 'Seletores ignoram sessão expirada',
+      detail:
+        'Maestro, default do orquestrador, linha de cota e picker tratam a ' +
+        'conta morta com nome e bloqueio — e o erro do Maestro cita o ' +
+        're-login em Providers.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Resets do code-review',
+      detail:
+        'Cura do refresh emite onChanged, re-login zera o disjuntor do ' +
+        '401-loop e todo trip emite evento (o toast deduplica no lugar).',
     },
   ],
 };

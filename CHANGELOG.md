@@ -8,7 +8,14 @@ _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes).
 - **Sessão expirada visível**: status + "Entrar novamente" na linha do provider e na conta, "Usar" bloqueado, switcher sem falso "pronta"; falha de refresh avisa a UI na hora.
 - **Disjuntor do 401-loop**: 1ª morte instantânea troca de conta, 2ª seguida trava com diagnóstico; toast com ação "Abrir Providers".
 - **Handoff sem eco**: packs anteriores podados do excerpt de continuidade.
-- **Limitação conhecida**: seletores automáticos (orquestrador default, Maestro) ainda podem apontar uma conta com sessão expirada — o spawn recusa com "entre novamente" em vez de cair em 401 mudo.
+
+## 0.74.3 — Sem conta morta selecionável
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+- **Botão Nova missão na sidebar**: cartão hero no topo do rail abre o fluxo simples no workspace atual.
+- **Seletores ignoram sessão expirada**: Maestro, default do orquestrador, linha de cota e picker; erro do Maestro cita o re-login.
+- **Resets do code-review**: cura do refresh emite, re-login zera o disjuntor, trip sempre emite evento.
 
 ## 0.74.1 — Operador no controle
 
