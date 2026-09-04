@@ -219,6 +219,95 @@
   overflow-y: auto;
 }
 
+/* CTA hero da sidebar: o caminho simples e fácil de fazer missão no
+   workspace. Acento é reservado ao vivo/interativo (§DESIGN) — e este é o
+   ato primário do rail. Degrada para cantos retos no tema pixel. */
+.workspace-rail__mission-cta {
+  appearance: none;
+  font: inherit;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-2);
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, transparent);
+  border-radius: var(--radius-lg);
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent) 22%, transparent),
+      transparent 72%
+    ),
+    color-mix(in srgb, var(--accent) 7%, transparent);
+  color: var(--text);
+  text-align: left;
+  transition:
+    border-color 160ms var(--ease-out-quart),
+    background-color 160ms var(--ease-out-quart),
+    transform 120ms var(--ease-out-quart);
+}
+
+.workspace-rail__mission-cta:hover {
+  border-color: var(--accent);
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent) 30%, transparent),
+      transparent 72%
+    ),
+    color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.workspace-rail__mission-cta:active {
+  transform: translateY(1px);
+}
+
+.workspace-rail__mission-cta:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.workspace-rail__mission-cta-icon {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-md);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.workspace-rail__mission-cta-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
+  gap: 1px;
+}
+
+.workspace-rail__mission-cta-title {
+  font-size: var(--text-sm);
+  font-weight: 650;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.workspace-rail__mission-cta-sub {
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+}
+
+.workspace-rail__mission-cta-plus {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--accent);
+}
+
 .workspace-rail__group + .workspace-rail__group {
   margin-top: var(--space-5);
 }

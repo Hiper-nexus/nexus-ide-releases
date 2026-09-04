@@ -403,6 +403,35 @@ export function WorkspaceRail({
       </header>
 
       <div className="workspace-rail__scroll">
+        <button
+          type="button"
+          className="workspace-rail__mission-cta"
+          aria-label="Criar nova missão neste workspace — descreva o objetivo"
+          title="Descreva o objetivo — o Nexus monta a equipe neste workspace"
+          data-testid="rail-new-mission"
+          onClick={onCreateNew}
+        >
+          <span
+            className="workspace-rail__mission-cta-icon"
+            aria-hidden="true"
+          >
+            <PixelIcon name="mission" size={15} />
+          </span>
+          <span className="workspace-rail__mission-cta-copy">
+            <span className="workspace-rail__mission-cta-title">
+              Nova missão
+            </span>
+            <span className="workspace-rail__mission-cta-sub">
+              Descreva o objetivo — o Nexus monta a equipe
+            </span>
+          </span>
+          <span
+            className="workspace-rail__mission-cta-plus"
+            aria-hidden="true"
+          >
+            <PixelIcon name="plus" size={11} />
+          </span>
+        </button>
         <WorkspaceGroup
           label="Em andamento"
           group="active"

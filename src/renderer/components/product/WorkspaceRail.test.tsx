@@ -331,6 +331,20 @@ describe('WorkspaceRail', () => {
     ).not.toMatch(/Precisa de você/);
   });
 
+  it('CTA hero Nova missão abre o mesmo fluxo simples no workspace', () => {
+    const { host, handlers } = renderRail();
+
+    const cta = host.querySelector<HTMLButtonElement>(
+      '[data-testid="rail-new-mission"]',
+    );
+    expect(cta?.textContent).toContain('Nova missão');
+    expect(cta?.textContent).toContain('o Nexus monta a equipe');
+    act(() => {
+      cta?.click();
+    });
+    expect(handlers.onCreateNew).toHaveBeenCalledOnce();
+  });
+
   it('routes Novo, workspaces, missions, fixed destinations and settings', () => {
     const { host, handlers } = renderRail();
 
