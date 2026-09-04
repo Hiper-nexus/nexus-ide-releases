@@ -942,3 +942,68 @@ describe('espera-pela-irmã + cooldown escopado (C1, derivado do oh-my-pi)', () 
  * nunca rodou. A espera-pela-irmã em si continua coberta no bloco C1 acima.
  */
 
+describe('disjuntor de morte instantânea (401-loop multi-conta)', () => {
+  it('troca na 1ª morte instantânea de auth e trava na 2ª seguida com motivo acionável', async () => {
+    const { detectLimit } = await import('./limit-detector');
+    const authHit = (buffer: string) =>
+      buffer.includes('LIMIT')
+        ? {
+            kind: 'auth' as const,
+            reason: 'invalid x-api-key',
+            cooldownMs: 60_000,
+          }
+        : null;
+    vi.mocked(detectLimit)
+      .mockImplementationOnce(authHit)
+      .mockImplementationOnce(authHit);
+    const scope = testProjectScope();
+    const owner = renderer(901);
+    renderers.push(owner);
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerFailoverListener(owner);
+    addPane({
+      owner,
+      paneId: 'pane-instant-1',
+      sessionId: 'sess-instant-1',
+      scope,
+    });
+
+    // 1ª morte instantânea: legítima (pane aberto em conta morta cai na irmã).
+    ptyMocks.dataTaps[0]!('sess-instant-1', 'LIMIT 401');
+    expect(owner.send).toHaveBeenCalledWith(
+      ACCOUNT_CHANNELS.failover,
+      expect.objectContaining({
+        paneId: 'pane-instant-1',
+        switched: true,
+        toAccountId: 'account-b',
+      }),
+    );
+
+    // 2ª sessão morre de auth com segundos de vida: o disjuntor trava em vez
+    // de queimar outro pane — sem nova troca, com motivo acionável.
+    addPane({
+      owner,
+      paneId: 'pane-instant-2',
+      sessionId: 'sess-instant-2',
+      scope,
+    });
+    owner.send.mockClear();
+    ptyMocks.dataTaps[0]!('sess-instant-2', 'LIMIT 401');
+    expect(owner.send).toHaveBeenCalledWith(
+      ACCOUNT_CHANNELS.failover,
+      expect.objectContaining({
+        paneId: 'pane-instant-2',
+        switched: false,
+        kind: 'auth',
+        reason: expect.stringContaining('Providers'),
+      }),
+    );
+    const switchedTrue = owner.send.mock.calls.filter(
+      (c) =>
+        c[0] === ACCOUNT_CHANNELS.failover &&
+        (c[1] as { switched?: boolean }).switched === true,
+    );
+    expect(switchedTrue).toHaveLength(0);
+  });
+});
+

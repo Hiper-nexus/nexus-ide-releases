@@ -7,6 +7,7 @@ import { attachTerminalPathLinks } from './terminal-path-links';
 import { TerminalGhostAssist } from './terminal-ghost-assist';
 import '@xterm/xterm/css/xterm.css';
 import type { PaneModel } from '../../shared/types';
+import { buildPtySpawnRequest } from './spawn-request';
 import type { TerminalSettings } from '../../shared/settings-types';
 import { DEFAULT_TERMINAL_SETTINGS } from '../../shared/settings-types';
 import {
@@ -795,32 +796,28 @@ function startSpawn(
         ? await ensurePaneAccountPin(pane)
         : pane.accountId;
       if (host.disposed || host.spawnGeneration !== generation) return null;
-      const spawnKind = pane.kind === 'cli-agent' ? 'cli-agent' : 'shell';
-      const res = await window.nexus.pty.spawn({
-        // Panes always live inside the active workspace: restored panes from
-        // older sessions (or the fresh initial tree) may lack a cwd — they
-        // must open in the workspace folder, never the user's home.
-        cwd: pane.cwd ?? getActiveWorkspacePath() ?? undefined,
-        shell:
-          pane.kind === 'shell' && currentSettings.shell !== ''
-            ? currentSettings.shell
-            : undefined,
-        cols: host.term.cols,
-        rows: host.term.rows,
-        kind: spawnKind,
-        resume,
-        resumeLatestOnly,
-        restorePersistedAuthority,
-        // paneId estável (layout persistido): com resume, o main retoma a
-        // sessão de provider CAPTURADA deste pane (`--resume <id>`).
-        paneId: pane.id,
-        adapterId: pane.adapterId,
-        model: pane.model,
-        accountId: accountId ?? pane.accountId,
-        effort: pane.effort,
-        orchRequestId: pane.orchRequestId,
-        missionId,
-      });
+      const res = await window.nexus.pty.spawn(
+        buildPtySpawnRequest({
+          pane,
+          cols: host.term.cols,
+          rows: host.term.rows,
+          // Panes always live inside the active workspace: restored panes from
+          // older sessions (or the fresh initial tree) may lack a cwd — they
+          // must open in the workspace folder, never the user's home.
+          cwd: pane.cwd ?? getActiveWorkspacePath() ?? undefined,
+          shell:
+            pane.kind === 'shell' && currentSettings.shell !== ''
+              ? currentSettings.shell
+              : undefined,
+          resume,
+          resumeLatestOnly,
+          restorePersistedAuthority,
+          // paneId estável (layout persistido): com resume, o main retoma a
+          // sessão de provider CAPTURADA deste pane (`--resume <id>`).
+          accountId: accountId ?? pane.accountId,
+          missionId,
+        }),
+      );
       if (host.disposed || host.spawnGeneration !== generation) {
         if (res.ok) window.nexus.pty.kill(res.sessionId);
         return null;

@@ -100,7 +100,11 @@ import {
   activateAccount,
   activeClaudeAuthEnv,
   addActiveSessionAccount,
+  clearClaudeRefreshFailure,
+  CLAUDE_REFRESH_FAILURE_SKIP_MS,
+  ensureFreshClaudeSubscription,
   ensureSubscriptionActive,
+  hasRecentClaudeRefreshFailure,
   initAccountStore,
   prepareAccountForSpawn,
   startClaudeSubscriptionFreshness,
@@ -356,5 +360,93 @@ describe('contrato de env OAuth de pane pinado', () => {
       'user:profile user:inference',
     );
     expect(activeEnv).not.toHaveProperty('CLAUDE_CODE_OAUTH_REFRESH_TOKEN');
+  });
+});
+
+describe('renovação morta veta failover no escuro', () => {
+  /** Conta secundária: o login nativo é de outro e-mail. */
+  function addSecondary(label: string, email: string, blob: string): Account {
+    const account = addClaudeAccount(label, email, blob);
+    deps.activeEmail = 'nativo@example.test';
+    clearClaudeRefreshFailure(account.id);
+    return account;
+  }
+
+  afterEach(() => {
+    // Mapa modular sobrevive entre testes do arquivo: limpa o que marcamos.
+    const marked = (deps as Record<string, unknown>).marked as
+      | Account[]
+      | undefined;
+    for (const account of marked ?? []) {
+      clearClaudeRefreshFailure(account.id);
+    }
+    delete (deps as Record<string, unknown>).marked;
+  });
+
+  it('falha real de refresh marca a conta (skips não marcam)', async () => {
+    const a = addSecondary('Conta B', 'b@example.test', oauthBlob('b-access'));
+    (deps as Record<string, unknown>).marked = [a];
+    deps.needsRefresh.mockReturnValue({ refreshToken: 'rt-b' });
+    deps.refreshBlob.mockResolvedValue(null);
+
+    expect(await ensureFreshClaudeSubscription(a.id)).toBe(false);
+    expect(hasRecentClaudeRefreshFailure(a.id)).toBe(true);
+  });
+
+  it('sucesso do refresh limpa a marca', async () => {
+    const a = addSecondary('Conta B', 'b@example.test', oauthBlob('b-access'));
+    (deps as Record<string, unknown>).marked = [a];
+    deps.needsRefresh.mockReturnValue({ refreshToken: 'rt-b' });
+    deps.refreshBlob.mockResolvedValue(null);
+    expect(await ensureFreshClaudeSubscription(a.id)).toBe(false);
+    expect(hasRecentClaudeRefreshFailure(a.id)).toBe(true);
+
+    deps.refreshBlob.mockResolvedValue(oauthBlob('b-access-2'));
+    expect(await ensureFreshClaudeSubscription(a.id)).toBe(true);
+    expect(hasRecentClaudeRefreshFailure(a.id)).toBe(false);
+  });
+
+  it('prepare recusa secundária com renovação falhando (motivo acionável)', async () => {
+    const a = addSecondary('Conta B', 'b@example.test', oauthBlob('b-access'));
+    (deps as Record<string, unknown>).marked = [a];
+    deps.needsRefresh.mockReturnValue({ refreshToken: 'rt-b' });
+    deps.refreshBlob.mockResolvedValue(null);
+    await ensureFreshClaudeSubscription(a.id);
+
+    const result = prepareAccountForSpawn('claude', a.id);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toMatch(/renovação de token falhando/);
+  });
+
+  it('re-login (blob fresco do CLI) limpa a marca e o prepare volta a ok', async () => {
+    const a = addSecondary('Conta B', 'b@example.test', oauthBlob('b-access'));
+    (deps as Record<string, unknown>).marked = [a];
+    deps.needsRefresh.mockReturnValue({ refreshToken: 'rt-b' });
+    deps.refreshBlob.mockResolvedValue(null);
+    await ensureFreshClaudeSubscription(a.id);
+    expect(hasRecentClaudeRefreshFailure(a.id)).toBe(true);
+
+    // Re-login: a sessão nativa agora é a conta B com blob fresco.
+    deps.activeEmail = 'b@example.test';
+    deps.keychain = oauthBlob('b-access-fresh');
+    addActiveSessionAccount('claude', 'Conta B');
+    deps.activeEmail = 'nativo@example.test';
+
+    expect(hasRecentClaudeRefreshFailure(a.id)).toBe(false);
+    expect(prepareAccountForSpawn('claude', a.id).ok).toBe(true);
+  });
+
+  it('marca expira após a janela (TTL)', async () => {
+    const a = addSecondary('Conta B', 'b@example.test', oauthBlob('b-access'));
+    (deps as Record<string, unknown>).marked = [a];
+    deps.needsRefresh.mockReturnValue({ refreshToken: 'rt-b' });
+    deps.refreshBlob.mockResolvedValue(null);
+    await ensureFreshClaudeSubscription(a.id);
+    expect(hasRecentClaudeRefreshFailure(a.id)).toBe(true);
+
+    const later = Date.now() + CLAUDE_REFRESH_FAILURE_SKIP_MS + 1000;
+    expect(hasRecentClaudeRefreshFailure(a.id, later)).toBe(false);
+    expect(prepareAccountForSpawn('claude', a.id, later).ok).toBe(true);
   });
 });

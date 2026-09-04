@@ -624,6 +624,17 @@ export function prepareAccountForSpawn(
     }
     return { ok: true, account, apiKey: null, authEnv: nativeEnv };
   }
+  // Renovação morta: trocar para esta conta é 401 garantido queimando uma
+  // sessão nova — recusa aqui para o failover tentar a irmã ou esperar com
+  // motivo acionável, em vez de descobrir no 401 do pane.
+  if (hasRecentClaudeRefreshFailure(account.id, now)) {
+    return {
+      ok: false,
+      error:
+        `conta "${account.label}" com renovação de token falhando — entre ` +
+        'novamente em Configurações › Providers',
+    };
+  }
   const authEnv = subscriptionAuthEnv(account);
   if (!authEnv) {
     return {
@@ -635,6 +646,33 @@ export function prepareAccountForSpawn(
 }
 
 const claudeRefreshInFlight = new Set<string>();
+
+/**
+ * Última falha de renovação por conta (só tentativas reais, nunca skips).
+ * Sem isto, uma secundária com refresh morto é escolhida de novo e de novo:
+ * cada failover queima uma sessão nova num 401 garantido, e o operador só
+ * descobre na hora do erro. Com o flag, o prepare recusa com motivo
+ * acionável ("entre novamente") e o failover tenta a irmã ou espera.
+ * Limpa no sucesso do refresh e no re-login (blob fresco do CLI vivo).
+ */
+const claudeRefreshFailedAt = new Map<string, number>();
+/** Janela em que a falha de renovação veta a conta no failover/spawn. */
+export const CLAUDE_REFRESH_FAILURE_SKIP_MS = 60 * 60 * 1000;
+
+export function hasRecentClaudeRefreshFailure(
+  accountId: string,
+  now = Date.now(),
+): boolean {
+  const failedAt = claudeRefreshFailedAt.get(accountId);
+  return (
+    failedAt !== undefined && now - failedAt < CLAUDE_REFRESH_FAILURE_SKIP_MS
+  );
+}
+
+/** Test seam + limpeza explícita. */
+export function clearClaudeRefreshFailure(accountId: string): void {
+  claudeRefreshFailedAt.delete(accountId);
+}
 
 /**
  * Renova o blob OAuth de uma conta Claude SECUNDÁRIA perto de expirar e grava
@@ -667,11 +705,29 @@ export async function ensureFreshClaudeSubscription(
   claudeRefreshInFlight.add(accountId);
   try {
     const updated = await refreshImpl(blob, now);
-    if (!updated) return false;
+    if (!updated) {
+      // Tentativa real falhou (rede ou refresh rotacionado/consumido): marca
+      // para o failover não queimar sessões nesta conta, e avisa — antes este
+      // caminho era silêncio total e o operador só descobria no 401.
+      claudeRefreshFailedAt.set(accountId, Date.now());
+      console.warn(
+        '[accounts] claude oauth NÃO renovado para conta',
+        account.label,
+        '— entre novamente em Configurações › Providers',
+      );
+      return false;
+    }
     setSecret(CRED_PREFIX + accountId, updated);
+    claudeRefreshFailedAt.delete(accountId);
     console.info('[accounts] claude oauth renovado para conta', account.label);
     return true;
   } catch {
+    claudeRefreshFailedAt.set(accountId, Date.now());
+    console.warn(
+      '[accounts] claude oauth NÃO renovado para conta',
+      account.label,
+      '— entre novamente em Configurações › Providers',
+    );
     return false;
   } finally {
     claudeRefreshInFlight.delete(accountId);
@@ -1051,6 +1107,8 @@ export function addActiveSessionAccount(
         saved.error ?? 'failed to persist account credential',
       );
     }
+    // Blob fresco vindo do CLI vivo: a renovação voltou a ser possível.
+    claudeRefreshFailedAt.delete(existing.id);
     try {
       if (isFileAuthAdapter(adapterId)) {
         materializeManagedHome(adapterId as FileAuthAdapterId, existing.id, blob);

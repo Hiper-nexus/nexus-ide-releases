@@ -88,8 +88,35 @@ const pendingRetries = new Map<string, ScheduledRetry>();
 
 interface SessionWatch {
   readonly authority: FailoverAuthority;
+  readonly startedAt: number;
   buffer: string;
   firedAt: number;
+}
+
+/**
+ * Disjuntor de morte instantânea: sessão que morre de auth com segundos de
+ * vida nasceu com credencial morta — trocar/respawnar de novo só queima outro
+ * pane e empilha outro handoff gigante. A 1ª morte ainda troca (caso legítimo:
+ * abrir pane em conta morta e cair na irmã saudável); a 2ª seguida trava o
+ * failover com motivo acionável até re-login. Sem isto, credencial morta nas
+ * duas contas = loop infinito entre panes novos (cada respawn zera o attempt).
+ */
+const INSTANT_DEATH_MS = 90_000;
+const INSTANT_DEATH_TRIP = 2;
+const INSTANT_DEATH_WINDOW_MS = 10 * 60_000;
+/** adapterId → instantes das mortes instantâneas recentes. */
+const instantAuthDeaths = new Map<string, number[]>();
+/** adapterId → último emit do disjuntor (anti-spam de toast). */
+const instantDeathLastEmitAt = new Map<string, number>();
+const INSTANT_DEATH_EMIT_QUIET_MS = 60_000;
+
+function noteInstantAuthDeath(adapterId: string, now: number): number {
+  const recent = (instantAuthDeaths.get(adapterId) ?? []).filter(
+    (at) => now - at < INSTANT_DEATH_WINDOW_MS,
+  );
+  recent.push(now);
+  instantAuthDeaths.set(adapterId, recent);
+  return recent.length;
 }
 
 interface FailoverAuthority {
@@ -673,7 +700,7 @@ function watchFor(authority: FailoverAuthority): [string, SessionWatch] {
   const key = watchKey(authority);
   let watch = watches.get(key);
   if (!watch) {
-    watch = { authority, buffer: '', firedAt: 0 };
+    watch = { authority, buffer: '', firedAt: 0, startedAt: Date.now() };
     watches.set(key, watch);
   }
   return [key, watch];
@@ -751,6 +778,54 @@ function handleLimitHit(
   // demais modelos; sem escopo o cooldown é global (comportamento legado).
   if (current) {
     setCooldown(current.id, now + hit.cooldownMs, hit.reason, hit.scope);
+  }
+
+  // Disjuntor de morte instantânea (401-loop multi-conta): sessão que morre
+  // de auth com segundos de vida nasceu com credencial morta — trocar para a
+  // irmã e respawnar só queima outro pane. A 1ª morte ainda troca (abrir pane
+  // em conta morta e cair na irmã saudável é legítimo); a 2ª seguida dentro
+  // da janela trava o failover com motivo acionável. O prepare da
+  // account-store já veta conta com refresh morto; isto cobre a credencial
+  // que morreu entre o prepare e o spawn. As entradas decaem pela janela, e
+  // o re-login limpa a causa (blob fresco).
+  if (hit.kind === 'auth') {
+    const sessionAgeMs = now - (watches.get(key)?.startedAt ?? now);
+    if (sessionAgeMs < INSTANT_DEATH_MS) {
+      const deaths = noteInstantAuthDeath(adapterId, now);
+      if (deaths >= INSTANT_DEATH_TRIP) {
+        console.info(
+          '[failover]',
+          JSON.stringify({
+            paneId: pane.paneId,
+            adapterId,
+            fromAccountId: current?.id ?? null,
+            reason: hit.reason,
+            sessionAgeMs,
+            deaths,
+            switched: false,
+            suppressed: 'instant-auth-death-breaker',
+          }),
+        );
+        const lastEmit = instantDeathLastEmitAt.get(adapterId) ?? 0;
+        if (now - lastEmit >= INSTANT_DEATH_EMIT_QUIET_MS) {
+          instantDeathLastEmitAt.set(adapterId, now);
+          emitFailover(authority, {
+            paneId: pane.paneId,
+            fromAccountLabel: current?.label ?? adapterId,
+            toAccountLabel: '',
+            reason:
+              `${hit.reason} (sessão morreu com segundos de vida ` +
+              `${deaths}x seguidas — credencial provavelmente expirada; ` +
+              'entre novamente em Configurações › Providers)',
+            kind: hit.kind,
+            switched: false,
+            fromAccountId: current?.id,
+            missionId: authority.missionId,
+          });
+        }
+        return;
+      }
+    }
   }
 
   performSwitch({
@@ -854,6 +929,11 @@ export function shutdownFailover(): void {
   untapExit = null;
   untapObserver = null;
   watches.clear();
+  // Estado do disjuntor de morte instantânea também é ciclo de vida do
+  // failover: sem isto, mortes de testes/sessões anteriores vazam para as
+  // próximas e o trip dispara cedo demais.
+  instantAuthDeaths.clear();
+  instantDeathLastEmitAt.clear();
   for (const key of [...pendingRetries.keys()]) cancelScheduledRetry(key);
   coalesceByFrom.clear();
   for (const [wc, onDestroyed] of destroyHandlers) {

@@ -24,6 +24,23 @@ export interface ContinuityPackInput {
 const MAX_EXCERPT = 2_400;
 const MAX_HINT = 600;
 
+/**
+ * Packs anteriores vêm impressos no scrollback (o handoff é digitado no CLI
+ * e ecoa). Sem a poda, cada ciclo de failover embutia o pack anterior e o
+ * prompt crescia a cada sessão nova — um pane recém-aberto, que ainda não
+ * recebeu nenhum pedido, herdava milhares de tokens.
+ */
+const NESTED_PACK_RE = new RegExp(
+  `\\${FAILOVER_HANDOFF_HEADER}[\\s\\S]*?${FAILOVER_HANDOFF_FOOTER}`,
+  'g',
+);
+
+export function stripNestedHandoffPacks(scrollback: string): string {
+  return scrollback
+    .replace(NESTED_PACK_RE, '[handoff anterior omitido]')
+    .replace(/[ \t]{2,}/g, ' ');
+}
+
 function clip(s: string, max: number): string {
   const t = s.replace(/\s+/g, ' ').trim();
   if (t.length <= max) return t;
@@ -51,7 +68,7 @@ export function buildContinuityPack(input: ContinuityPackInput): string {
   }
   if (input.scrollbackExcerpt) {
     lines.push(
-      `Recent terminal excerpt (may be partial):\n"""\n${clip(input.scrollbackExcerpt, MAX_EXCERPT)}\n"""`,
+      `Recent terminal excerpt (may be partial):\n"""\n${clip(stripNestedHandoffPacks(input.scrollbackExcerpt), MAX_EXCERPT)}\n"""`,
     );
   }
   lines.push(FAILOVER_HANDOFF_FOOTER);

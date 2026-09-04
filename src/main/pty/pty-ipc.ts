@@ -433,7 +433,14 @@ export function registerPtyIpc(): void {
   ipcMain.handle(PTY_CHANNELS.spawn, (event, raw): SpawnResult | Promise<SpawnResult> => {
     const parsed = spawnRequestSchema.safeParse(raw);
     if (!parsed.success) {
-      return { ok: false, error: "invalid spawn request" };
+      // Mensagem acionável: o opaco "invalid spawn request" escondia qual
+      // campo quebrou o contrato (ex.: model:'' de adapter sem catálogo).
+      // Só path+motivo do 1º problema — nunca o payload.
+      const first = parsed.error.issues[0];
+      const where = first
+        ? [...first.path.map(String), first.message].join(': ')
+        : 'unknown';
+      return { ok: false, error: `invalid spawn request (${where})` };
     }
     const req = parsed.data;
 
