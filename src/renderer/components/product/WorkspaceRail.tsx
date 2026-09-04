@@ -18,6 +18,7 @@ import { useGitScmStore } from '../../state/git-scm-store';
 import { useQuotaStore } from '../../state/quota-store';
 import { windowDisplay } from '../../lib/quota-display';
 import { useTerminalGridDialogStore } from '../../state/terminal-grid-dialog-store';
+import { useCommandPaletteStore } from '../../state/command-palette-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { NexusMark } from '../NexusMark';
 import { PixelIcon, type PixelIconName } from '../PixelIcon';
@@ -221,9 +222,14 @@ function WorkspaceGroup({
       data-rail-group={group}
       aria-labelledby={labelId}
     >
-      <span id={labelId} className="workspace-rail__group-title">
-        {label}
-      </span>
+      <div className="workspace-rail__group-header">
+        <span id={labelId} className="workspace-rail__group-title">
+          {label}
+        </span>
+        <span className="workspace-rail__group-pill">
+          {workspaces.reduce((acc, w) => acc + w.missions.length, 0)}
+        </span>
+      </div>
       <ul className="workspace-rail__workspace-list">
         {workspaces.map((workspace) => {
           const workspaceSelected =
@@ -299,7 +305,7 @@ function WorkspaceGroup({
                     const isExpanded = expandedMissions[mission.id] ?? false;
 
                     return (
-                      <li key={mission.id}>
+                      <li key={mission.id} className="workspace-rail__mission-card-item">
                         <div className="workspace-rail__workspace-row">
                           <button
                             type="button"
@@ -317,25 +323,32 @@ function WorkspaceGroup({
                               onSelectMission(mission.id, workspace.id)
                             }
                           >
-                            <span
-                              className="workspace-rail__mission-indicator"
-                              aria-hidden="true"
-                            >
-                              <PixelIcon name={status.icon} size={11} />
-                            </span>
-                            <span className="workspace-rail__mission-copy">
+                            <div className="workspace-rail__mission-card-top">
+                              <span
+                                className="workspace-rail__mission-indicator"
+                                aria-hidden="true"
+                              >
+                                <span className="workspace-rail__mission-dot" />
+                                <PixelIcon name={status.icon} size={11} className="workspace-rail__mission-icon-fallback" />
+                              </span>
                               <span className="workspace-rail__row-label">
                                 {chromeTitle}
                               </span>
+                            </div>
+                            <span className="workspace-rail__mission-copy">
                               <span className="workspace-rail__mission-meta-line">
-                                <span className="workspace-rail__mission-status">
-                                  {status.label}
+                                <span className="workspace-rail__mission-repo-chip" title={workspace.name}>
+                                  <span className="workspace-rail__mission-repo-mark" aria-hidden="true" />
+                                  <span className="workspace-rail__mission-repo-name">{workspace.name}</span>
                                 </span>
                                 {workspace.id === currentWorkspaceId && currentBranch ? (
-                                  <span className="workspace-rail__mission-branch">
+                                  <span className="workspace-rail__mission-branch" title={currentBranch}>
                                     {currentBranch}
                                   </span>
                                 ) : null}
+                                <span className="workspace-rail__mission-status">
+                                  {status.label}
+                                </span>
                               </span>
                             </span>
                           </button>
@@ -503,6 +516,20 @@ export function WorkspaceRail({
           <span>Novo</span>
         </button>
       </header>
+
+      <div className="workspace-rail__search-wrap">
+        <button
+          type="button"
+          className="workspace-rail__search-btn"
+          aria-label="Buscar missões e atalhos"
+          title="Buscar (⌘K)"
+          onClick={() => useCommandPaletteStore.getState().toggle()}
+        >
+          <PixelIcon name="search" size={11} />
+          <span className="workspace-rail__search-placeholder">Buscar</span>
+          <kbd className="workspace-rail__search-kbd">⌘K</kbd>
+        </button>
+      </div>
 
       <div className="workspace-rail__scroll">
         <button

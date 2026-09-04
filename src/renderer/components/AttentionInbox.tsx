@@ -142,7 +142,7 @@ export function AttentionInbox() {
           top: 'auto',
           right: 'auto',
           bottom: 16,
-          left: 'calc(var(--nexus-shell-rail-width, 184px) + 12px)',
+          left: 'calc(var(--nexus-shell-rail-width, 200px) + 12px)',
         }}
       >
         <header className="agent-notif__head">

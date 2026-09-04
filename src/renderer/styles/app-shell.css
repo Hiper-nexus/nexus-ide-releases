@@ -1,7 +1,7 @@
 /* Nexus V2 product frame: continuous surfaces, quiet chrome and one canvas. */
 
 .nexus-shell {
-  --nexus-shell-rail-width: 184px;
+  --nexus-shell-rail-width: 200px;
   --nexus-shell-inspector-min: 360px;
   --nexus-shell-inspector-max: 440px;
   --nexus-shell-workspace-min: 640px;
@@ -128,7 +128,7 @@
 
 .workspace-rail__navigation {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
   width: 100%;
   height: 100%;
   min-height: 0;
@@ -212,16 +212,58 @@
   transform: translateY(var(--radius-xs));
 }
 
+.workspace-rail__search-wrap {
+  padding: 6px var(--space-2) 4px;
+}
+
+.workspace-rail__search-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--text-faint);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.workspace-rail__search-btn:hover {
+  background: rgba(255, 255, 255, 0.065);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: var(--text);
+}
+
+.workspace-rail__search-placeholder {
+  flex: 1;
+  text-align: left;
+}
+
+.workspace-rail__search-kbd {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 4px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  font-size: 9px;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+}
+
 .workspace-rail__scroll {
   min-height: 0;
-  padding: var(--space-3) var(--space-2);
+  padding: var(--space-2) var(--space-2);
   overflow-x: hidden;
   overflow-y: auto;
 }
 
-/* CTA hero da sidebar: o caminho simples e fácil de fazer missão no
-   workspace. Acento é reservado ao vivo/interativo (§DESIGN) — e este é o
-   ato primário do rail. Degrada para cantos retos no tema pixel. */
+/* CTA hero da sidebar: no padrão Orca, um card clean e discreto */
 .workspace-rail__mission-cta {
   appearance: none;
   font: inherit;
@@ -230,17 +272,11 @@
   align-items: center;
   gap: var(--space-2);
   width: 100%;
-  margin: 0 0 var(--space-3);
-  padding: var(--space-2) var(--space-2);
-  border: 1px solid color-mix(in srgb, var(--accent) 42%, transparent);
-  border-radius: var(--radius-lg);
-  background:
-    linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--accent) 22%, transparent),
-      transparent 72%
-    ),
-    color-mix(in srgb, var(--accent) 7%, transparent);
+  margin: 0 0 var(--space-2);
+  padding: 6px 8px;
+  border: 1px dashed rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
   color: var(--text);
   text-align: left;
   transition:
@@ -250,14 +286,9 @@
 }
 
 .workspace-rail__mission-cta:hover {
-  border-color: var(--accent);
-  background:
-    linear-gradient(
-      135deg,
-      color-mix(in srgb, var(--accent) 30%, transparent),
-      transparent 72%
-    ),
-    color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: rgba(255, 255, 255, 0.28);
+  border-style: solid;
+  background: rgba(255, 255, 255, 0.065);
 }
 
 .workspace-rail__mission-cta:active {
@@ -273,11 +304,11 @@
   display: grid;
   flex: 0 0 auto;
   place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-md);
-  background: var(--accent);
-  color: var(--accent-ink);
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--accent, #38bdf8);
 }
 
 .workspace-rail__mission-cta-copy {
@@ -289,42 +320,60 @@
 }
 
 .workspace-rail__mission-cta-title {
-  font-size: var(--text-sm);
-  font-weight: 650;
-  line-height: 1.3;
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.2;
   white-space: nowrap;
 }
 
 .workspace-rail__mission-cta-sub {
   color: var(--text-faint);
-  font-size: var(--text-xs);
-  line-height: 1.4;
+  font-size: 10px;
+  line-height: 1.2;
 }
 
 .workspace-rail__mission-cta-plus {
   display: grid;
   flex: 0 0 auto;
   place-items: center;
-  color: var(--accent);
+  color: var(--text-faint);
 }
 
 .workspace-rail__group + .workspace-rail__group {
-  margin-top: var(--space-5);
+  margin-top: var(--space-4);
+}
+
+.workspace-rail__group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px var(--space-1) 4px;
+  margin-bottom: 2px;
 }
 
 .workspace-rail__group-title {
   display: block;
-  margin: 0 0 var(--space-2);
-  padding: 0 var(--space-2);
-  color: var(--text-faint);
-  /* Eyebrow do rail em VT323 — o toque de assinatura da superfície (§3:
-     piso 12px, um toque por tela). Se ler como ruído, volta a Inter 600. */
-  font-family: var(--font-pixel);
-  font-size: var(--text-sm);
-  font-weight: 400;
+  color: var(--text-dim, #71717a);
+  font-size: 10px;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.06em;
   line-height: 1.4;
+}
+
+.workspace-rail__group-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 4px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text-dim, #71717a);
+  font-size: 9px;
+  font-weight: 600;
+  font-family: var(--font-mono);
 }
 
 .workspace-rail__workspace-list,
@@ -473,36 +522,105 @@
 }
 
 .workspace-rail__mission-list {
-  margin: var(--space-1) 0 0 var(--space-4);
+  margin: 4px 0 6px 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.workspace-rail__mission-card-item {
+  width: 100%;
 }
 
 .workspace-rail__mission {
-  align-items: flex-start;
-  gap: var(--space-2);
-  min-height: var(--space-7);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+  width: 100%;
+  min-height: 44px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.035);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 140ms var(--ease-out-quart),
+    border-color 140ms var(--ease-out-quart),
+    transform 100ms ease;
 }
 
-.workspace-rail__mission-indicator {
-  display: grid;
-  flex: 0 0 auto;
-  place-items: center;
-  width: var(--space-4);
-  height: var(--space-4);
-  margin-top: var(--space-1);
-  color: var(--state-pending);
+.workspace-rail__mission:hover {
+  background: rgba(255, 255, 255, 0.075);
+  border-color: rgba(255, 255, 255, 0.14);
 }
 
-.workspace-rail__mission-copy {
-  display: grid;
-  gap: var(--space-1);
+.workspace-rail__mission.workspace-rail__row--selected {
+  background: rgba(255, 255, 255, 0.11);
+  border-color: rgba(255, 255, 255, 0.24);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+.workspace-rail__mission-card-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
   min-width: 0;
 }
 
-.workspace-rail__mission-status {
-  font-family: var(--font-mono);
-  font-size: var(--text-2xs);
-  font-weight: 600;
-  line-height: 1.2;
+.workspace-rail__mission-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+}
+
+.workspace-rail__mission-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-faint);
+  transition: background-color 140ms ease, box-shadow 140ms ease;
+}
+
+.workspace-rail__mission-icon-fallback {
+  display: none !important;
+}
+
+.workspace-rail__mission--running .workspace-rail__mission-dot {
+  background: #10b981;
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.7);
+}
+
+.workspace-rail__mission--ready .workspace-rail__mission-dot {
+  background: #06b6d4;
+  box-shadow: 0 0 4px rgba(6, 182, 212, 0.4);
+}
+
+.workspace-rail__mission--blocked .workspace-rail__mission-dot {
+  background: #f59e0b;
+  box-shadow: 0 0 4px rgba(245, 158, 11, 0.4);
+}
+
+.workspace-rail__mission--failed .workspace-rail__mission-dot {
+  background: #ef4444;
+  box-shadow: 0 0 5px rgba(239, 68, 68, 0.5);
+}
+
+.workspace-rail__mission--pending .workspace-rail__mission-dot {
+  background: #71717a;
+}
+
+.workspace-rail__mission--done .workspace-rail__mission-dot {
+  background: #10b981;
 }
 
 .workspace-rail__mission--running .workspace-rail__mission-indicator,
@@ -535,22 +653,84 @@
   color: var(--state-done);
 }
 
+.workspace-rail__mission .workspace-rail__row-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #f4f4f5;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-rail__mission-copy {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  width: 100%;
+}
+
 .workspace-rail__mission-meta-line {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
-  font-size: var(--text-2xs);
-  color: var(--text-muted);
+  gap: 4px;
+  font-size: 10px;
+  color: #71717a;
+  padding-left: 16px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.workspace-rail__mission-repo-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 9px;
+  font-weight: 600;
+  color: #d4d4d8;
+  max-width: 65px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.workspace-rail__mission-repo-mark {
+  width: 4px;
+  height: 4px;
+  border-radius: 1px;
+  background: #3b82f6;
+  flex-shrink: 0;
+}
+
+.workspace-rail__mission-repo-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workspace-rail__mission-branch {
   font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--text-dim);
-  background: var(--surface-overlay, rgba(255, 255, 255, 0.05));
-  padding: 0 4px;
-  border-radius: var(--radius-xs, 3px);
-  max-width: 90px;
+  font-size: 9.5px;
+  color: #a1a1aa;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 0 3px;
+  border-radius: 2px;
+  max-width: 55px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.workspace-rail__mission-status {
+  font-size: 9.5px;
+  font-weight: 500;
+  color: #a1a1aa;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
