@@ -48,7 +48,7 @@ function EntryCard({
         {!entry.installed && (
           <span className="quota-entry__badge">ausente</span>
         )}
-        {entry.onCooldown && (
+        {entry.onCooldown && !needsRelogin && (
           <span className="quota-entry__badge quota-entry__badge--warn">
             cooldown
           </span>

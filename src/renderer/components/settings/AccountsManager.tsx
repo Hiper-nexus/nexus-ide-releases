@@ -42,6 +42,16 @@ function cooldownLabel(a: AccountInfo): string {
   return mins >= 60 ? `~${Math.round(mins / 60)}h` : `${mins}min`;
 }
 
+function cooldownText(a: AccountInfo): string {
+  const time = cooldownLabel(a);
+  if (!time) return '';
+  const reason = a.lastError?.toLowerCase() ?? '';
+  if (/quota|cr[eé]dito|plano|saldo/i.test(reason)) {
+    return `cota esgotada · volta em ${time}`;
+  }
+  return `limite temporário · volta em ${time}`;
+}
+
 function accountKindLabel(a: AccountInfo): string {
   if (a.mode === 'subscription') return 'assinatura';
   if (!a.upstream || a.upstream === 'anthropic') return 'API key';
@@ -184,17 +194,19 @@ export function AccountsManager({
       if (!email) return; // sonda sem identidade: não há como dedupar
       const known = useAccountStore
         .getState()
-        .accounts.some(
+        .accounts.find(
           (a) =>
             a.adapterId === adapterId &&
             a.email?.trim().toLowerCase() === email.trim().toLowerCase(),
         );
-      if (known) return;
+      if (known && !known.needsRelogin && !known.onCooldown) return;
       const res = await addActiveSession(adapterId, email);
       if (!res.ok) return;
       await hydrate();
       showNotice(
-        `Conta ${email} salva no Nexus. Troque de conta no CLI e repita para juntar mais.`,
+        known
+          ? `Conta ${email} reautenticada e pronta no Nexus.`
+          : `Conta ${email} salva no Nexus. Troque de conta no CLI e repita para juntar mais.`,
         'ok',
       );
     } catch {
@@ -365,7 +377,9 @@ export function AccountsManager({
     setBusy(false);
     showNotice(
       res.ok
-        ? 'Conta ativada. Próximo terminal usa esta sessão.'
+        ? active?.id === id
+          ? 'Conta sincronizada com a sessão ativa da CLI.'
+          : 'Conta ativada. Próximo terminal usa esta sessão.'
         : (res.error ?? 'Não consegui ativar essa conta.'),
       res.ok ? 'ok' : 'err',
     );
@@ -475,25 +489,30 @@ export function AccountsManager({
                 {account.email && (
                   <span className="acct__email">{account.email}</span>
                 )}
-                {account.onCooldown && (
-                  <span className="acct__cooldown" title={account.lastError}>
-                    esgotada · volta em {cooldownLabel(account)}
-                  </span>
-                )}
-                {!account.hasCredential && (
-                  <span className="acct__warn">sem credencial</span>
-                )}
                 {account.needsRelogin && (
                   <span
                     className="acct__warn"
-                    title="A renovação do token falhou — qualquer terminal novo nesta conta cai em 401"
+                    title={
+                      account.lastError
+                        ? `Erro: ${account.lastError} — entre novamente`
+                        : 'A renovação do token falhou — qualquer terminal novo nesta conta cai em 401'
+                    }
                   >
                     sessão expirada — entre novamente
                   </span>
                 )}
+                {account.onCooldown && !account.needsRelogin && (
+                  <span className="acct__cooldown" title={account.lastError}>
+                    {cooldownText(account)}
+                  </span>
+                )}
+                {!account.hasCredential && !account.needsRelogin && (
+                  <span className="acct__warn">sem credencial</span>
+                )}
                 {role === 'active' &&
                   panel.showActiveEmUsoPill &&
                   !account.onCooldown &&
+                  !account.needsRelogin &&
                   account.hasCredential && (
                   <span className="acct__meta-quiet">próximo terminal</span>
                 )}

@@ -47,7 +47,7 @@ export async function openCliLoginTerminal(input: {
 
   let sessionId: string | null = null;
   try {
-    sessionId = await waitForSession(paneId);
+    sessionId = await waitForSession(paneId, 10_000);
   } catch {
     // A cópia de falha abaixo é a única mensagem anunciada ao operador.
   }

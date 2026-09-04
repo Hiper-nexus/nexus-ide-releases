@@ -490,4 +490,76 @@ describe('AccountsManager', () => {
     expect(save).toBeTruthy();
     act(() => root.unmount());
   });
+
+  it('diferencia limite temporário de cota esgotada na frase de cooldown', async () => {
+    useAccountStore.setState({
+      accounts: [
+        account({
+          id: 'acct-rl',
+          label: 'Rate Limited',
+          active: false,
+          onCooldown: true,
+          cooldownUntil: Date.now() + 5 * 60 * 1000,
+          lastError: '429 too many requests',
+        }),
+        account({
+          id: 'acct-quota',
+          label: 'Quota Hit',
+          active: false,
+          onCooldown: true,
+          cooldownUntil: Date.now() + 60 * 60 * 1000,
+          lastError: 'insufficient_quota',
+        }),
+      ],
+    });
+
+    const { host, root } = mount();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(host.textContent).toContain('limite temporário · volta em');
+    expect(host.textContent).toContain('cota esgotada · volta em');
+    act(() => root.unmount());
+  });
+
+  it('re-autentica conta conhecida quando estava com needsRelogin', async () => {
+    const addActiveSession = vi.fn(async () => ({ ok: true }));
+    useAccountStore.setState({
+      accounts: [
+        account({
+          id: 'acct-adm',
+          label: 'Conta Adm',
+          email: 'dev@example.com',
+          active: false,
+          needsRelogin: true,
+        }),
+      ],
+      addActiveSession,
+    } as never);
+
+    const { host, root } = mount();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const reloginBtn = [...host.querySelectorAll('button')].find((b) =>
+      b.textContent?.includes('Entrar novamente'),
+    );
+    expect(reloginBtn).toBeTruthy();
+    await act(async () => {
+      reloginBtn!.click();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      loginTerminal.finish!();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(addActiveSession).toHaveBeenCalledWith('claude', 'dev@example.com');
+    act(() => root.unmount());
+  });
 });

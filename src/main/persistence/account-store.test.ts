@@ -106,9 +106,11 @@ import {
   ensureSubscriptionActive,
   hasRecentClaudeRefreshFailure,
   initAccountStore,
+  isAuthCooldownReason,
   listAccountInfos,
   onAccountsChange,
   prepareAccountForSpawn,
+  setCooldown,
   startClaudeSubscriptionFreshness,
 } from './account-store';
 import type { Account } from '../../shared/account-types';
@@ -497,5 +499,56 @@ describe('renovação morta veta failover no escuro', () => {
     const later = Date.now() + CLAUDE_REFRESH_FAILURE_SKIP_MS + 1000;
     expect(hasRecentClaudeRefreshFailure(a.id, later)).toBe(false);
     expect(prepareAccountForSpawn('claude', a.id, later).ok).toBe(true);
+  });
+
+  it('isAuthCooldownReason identifica variações de erro de autenticação', () => {
+    expect(isAuthCooldownReason('Error: 401')).toBe(true);
+    expect(isAuthCooldownReason('401 Unauthorized')).toBe(true);
+    expect(isAuthCooldownReason('oauth token expired')).toBe(true);
+    expect(isAuthCooldownReason('rate limit exceeded')).toBe(false);
+    expect(isAuthCooldownReason('insufficient_quota')).toBe(false);
+  });
+
+  it('listAccountInfos projeta needsRelogin: true e onCooldown: false para erro 401', () => {
+    const a = addSecondary('Conta Adm', 'adm@example.test', oauthBlob('adm-access'));
+    setCooldown(a.id, Date.now() + 15 * 60 * 1000, 'Error: 401');
+
+    const info = listAccountInfos().find((i) => i.id === a.id);
+    expect(info?.onCooldown).toBe(false);
+    expect(info?.needsRelogin).toBe(true);
+  });
+
+  it('listAccountInfos não marca onCooldown nem needsRelogin na conta que é a sessão nativa viva', () => {
+    const b = addSecondary('Conta B', 'retornoja@gmail.com', oauthBlob('retorno-access'));
+    deps.activeEmail = 'retornoja@gmail.com';
+    deps.keychain = oauthBlob('retorno-access');
+    setCooldown(b.id, Date.now() + 15 * 60 * 1000, 'Error: 401');
+
+    const info = listAccountInfos().find((i) => i.id === b.id);
+    expect(info?.onCooldown).toBe(false);
+    expect(info?.needsRelogin).toBe(false);
+  });
+
+  it('addActiveSessionAccount para conta existente limpa cooldown e erros antigos', () => {
+    const b = addSecondary('Conta B', 'b@example.test', oauthBlob('b-old'));
+    setCooldown(b.id, Date.now() + 15 * 60 * 1000, 'Error: 401');
+
+    deps.activeEmail = 'b@example.test';
+    deps.keychain = oauthBlob('b-fresh');
+    const refreshed = addActiveSessionAccount('claude', 'Conta B');
+
+    expect(refreshed?.id).toBe(b.id);
+    expect(refreshed?.cooldownUntil).toBeUndefined();
+    expect(refreshed?.lastError).toBeUndefined();
+  });
+
+  it('activateAccount limpa auth cooldown da conta ativada', () => {
+    const adm = addSecondary('Conta Adm', 'adm@example.test', oauthBlob('adm-access'));
+    setCooldown(adm.id, Date.now() + 15 * 60 * 1000, 'Error: 401');
+
+    expect(activateAccount(adm.id)).toBe(true);
+    const info = listAccountInfos().find((i) => i.id === adm.id);
+    expect(info?.onCooldown).toBe(false);
+    expect(info?.needsRelogin).toBe(false);
   });
 });

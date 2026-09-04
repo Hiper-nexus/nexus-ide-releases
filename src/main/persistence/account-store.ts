@@ -503,9 +503,9 @@ export function claudeOAuthAccessToken(accountId?: string): string | null {
  * be able to spawn — 15 min of "cooling down" blocked the only recovery
  * they had after the 401 storm.
  */
-function isAuthCooldownReason(reason: string | undefined): boolean {
+export function isAuthCooldownReason(reason: string | undefined): boolean {
   if (!reason) return false;
-  return /401|oauth token (?:expired|revoked)|oauth access token has expired|not logged in|session expired|refresh token (?:expired|invalid|revoked)|authentication[_\s]?error|re-authenticate|please run \/login/i.test(
+  return /401|oauth token (?:expired|revoked)|oauth access token has expired|not logged in|session expired|refresh token (?:expired|invalid|revoked)|authentication[_\s]?error|re-authenticate|please run \/login|invalid[_\s]?(?:api[_\s]?key|x-api-key)|stored token for|token inv[aá]lido|n[aã]o autenticado/i.test(
     reason,
   );
 }
@@ -1118,13 +1118,19 @@ export function addActiveSessionAccount(
     }
     // Blob fresco vindo do CLI vivo: a renovação voltou a ser possível.
     claudeRefreshFailedAt.delete(existing.id);
+    clearCooldown(existing.id, 'sessão reautenticada no CLI');
     try {
       if (isFileAuthAdapter(adapterId)) {
         materializeManagedHome(adapterId as FileAuthAdapterId, existing.id, blob);
       }
       const nextAccounts = new Map(accounts);
       // Identidade pode ter chegado agora (capture antigo sem e-mail).
-      const refreshed: Account = { ...existing, email: email ?? existing.email };
+      const refreshed: Account = {
+        ...existing,
+        email: email ?? existing.email,
+        cooldownUntil: undefined,
+        lastError: undefined,
+      };
       nextAccounts.set(existing.id, refreshed);
       const nextActive = new Map(activeByAdapter);
       nextActive.set(adapterId, existing.id);
@@ -1344,6 +1350,12 @@ export function activateAccount(id: string): boolean {
   if (account.mode === 'subscription' && !ensureSubscriptionActive(account)) {
     return false;
   }
+  // Se a conta tinha cooldown de auth ou erro de sessão, a ativação/sincronização
+  // explícita pelo operador refuta o erro antigo:
+  claudeRefreshFailedAt.delete(id);
+  if (isAuthCooldownReason(account.lastError)) {
+    clearCooldown(id, 'conta sincronizada pelo operador');
+  }
   const nextActive = new Map(activeByAdapter);
   nextActive.set(account.adapterId, id);
   persistSnapshot(accounts, nextActive, 'activate');
@@ -1470,16 +1482,38 @@ export function setCooldown(
 
 export function listAccountInfos(): AccountInfo[] {
   const now = Date.now();
-  return listAccounts().map((a) => ({
-    ...a,
-    active: activeByAdapter.get(a.adapterId) === a.id,
-    hasCredential:
-      a.mode === 'api-key'
-        ? hasSecret(KEY_PREFIX + a.id)
-        : hasSecret(CRED_PREFIX + a.id),
-    onCooldown: Boolean(a.cooldownUntil && a.cooldownUntil > now),
-    // Conta com refresh morto parece saudável (blob existe, sem cooldown)
-    // mas todo spawn nela é 401 — a UI precisa do flag para pedir re-login.
-    needsRelogin: hasRecentClaudeRefreshFailure(a.id, now),
-  }));
+  const nativeClaude = activeClaudeEmail();
+  return listAccounts().map((a) => {
+    const isLiveNativeClaude =
+      a.adapterId === 'claude' &&
+      a.mode === 'subscription' &&
+      Boolean(nativeClaude && a.email && emailsEqual(a.email, nativeClaude));
+
+    const isAuthCooldown = isAuthCooldownReason(a.lastError);
+    const hasActiveCooldown = Boolean(a.cooldownUntil && a.cooldownUntil > now);
+
+    // Se a conta é a sessão nativa ativa da CLI e tinha cooldown ou erro de auth,
+    // o login vivo no Keychain refuta o erro antigo: agenda a limpeza.
+    if (isLiveNativeClaude && (hasActiveCooldown || isAuthCooldown)) {
+      queueMicrotask(() => {
+        clearCooldown(a.id, 'sessão confirmada ativa no Keychain');
+      });
+    }
+
+    const effectiveCooldown = hasActiveCooldown && !isLiveNativeClaude;
+    const authFailure = isAuthCooldown || hasRecentClaudeRefreshFailure(a.id, now);
+
+    return {
+      ...a,
+      active: activeByAdapter.get(a.adapterId) === a.id,
+      hasCredential:
+        a.mode === 'api-key'
+          ? hasSecret(KEY_PREFIX + a.id)
+          : hasSecret(CRED_PREFIX + a.id) || isLiveNativeClaude,
+      // onCooldown é apenas para limite real de cota / rate-limit — nunca para erro de auth/login:
+      onCooldown: effectiveCooldown && !isAuthCooldown,
+      // needsRelogin indica sessão expirada / 401 / refresh morto:
+      needsRelogin: !isLiveNativeClaude && authFailure,
+    };
+  });
 }
