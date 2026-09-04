@@ -264,7 +264,7 @@ export const RELEASE_0743: AppRelease = {
     },
   ],
 };
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_0744: AppRelease = {
   version: '0.74.4',
   date: '2026-09-04',
   codename: 'Sidebar Orca, Grid Livre e Digitação Desbloqueada',
@@ -311,6 +311,51 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'Erro 401 não exibe mais falsamente como "esgotada" e o botão "Entrar novamente" ' +
         'fica sempre visível para reautenticação imediata.',
+    },
+  ],
+};
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.0',
+  date: '2026-09-04',
+  codename: 'Herança Orca: ModelPicker unificado',
+  summary:
+    'Paridade visual completa com a sidebar Orca (cards, status dots, busca ⌘K, ' +
+    'tema obsidian, layout 250px macOS) e herança do modelo multi-LLM: ModelPicker ' +
+    'unificado com logo da LLM e uso em tempo real, quota de duas janelas no rail, ' +
+    'e reroute automático desviando de CLIs em quota alta.',
+  highlights: [
+    {
+      title: 'ModelPicker unificado estilo Orca',
+      detail:
+        'Um grupo por provider com logo, linha de uso e modelos ordenados por ' +
+        'sessão pronta, custo e quota livre. Modelos sem sessão aparecem bloqueados ' +
+        'com o comando de login — no Orquestrador, no Squad e no setup.',
+    },
+    {
+      title: 'Sidebar com logos e quota de duas janelas',
+      detail:
+        'Agentes mostram o logo da LLM, a missão selecionada abre com agentes ' +
+        'visíveis e o rodapé exibe as duas janelas ("5 Horas 35% · Semanal 41%") ' +
+        'com a barra na pior janela.',
+    },
+    {
+      title: 'Reroute desvia de quota alta',
+      detail:
+        'Falha de spawn re-roteia para CLI fresca da mesma categoria quando a ' +
+        'original está com quota ≥ 80%; quota desconhecida nunca desvia sozinha.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Layout cortado na sidebar e cabeçalho (F-118)',
+      detail:
+        'Largura 250px e alinhamento macOS corrigidos na sidebar e no cabeçalho.',
+    },
+    {
+      title: 'Code review pré-release',
+      detail:
+        'Comparador à prova de Infinity no rank, trim bilateral no auth, linha de ' +
+        'modelo salvo indisponível e lookup de quota com semântica explícita.',
     },
   ],
 };

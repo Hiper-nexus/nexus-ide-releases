@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.0 — Herança Orca: ModelPicker unificado
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+- **ModelPicker unificado estilo Orca**: um grupo por provider com logo, linha de uso e modelos ordenados por sessão pronta, custo e quota livre. Modelos sem sessão aparecem bloqueados com o comando de login.
+- **Sidebar com logos e quota de duas janelas**: agentes mostram o logo da LLM, missão selecionada abre com agentes visíveis, rodapé com as duas janelas e barra na pior janela. Layout 250px e alinhamento macOS (F-118).
+- **Reroute desvia de quota alta**: falha de spawn re-roteia para CLI fresca da mesma categoria quando a original está ≥ 80% de quota; quota desconhecida nunca desvia sozinha.
+- **Code review pré-release**: comparador à prova de Infinity, trim bilateral no auth, linha de modelo salvo indisponível e lookup de quota com semântica explícita.
+
 ## 0.74.4 — Sidebar Orca, Grid Livre e Digitação Desbloqueada
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
