@@ -2,7 +2,12 @@
 
 ## 0.76.2 — Configurações mais claras
 
-- Revisão dos 31 menus de configurações e dos submenus de voz, equipes e recursos dos agentes.
+- Explorador rolável de modelos com logos na preparação da missão, seleção explícita e navegação por teclado.
+- Kimi passa a usar --yolo; plugins antigos do Kimi e Qwen recebem a opção automática nativa.
+- Fluxos de trabalho com selos compactos e papéis legíveis em janelas menores.
+- Configurações reorganizadas em nove áreas, com navegação local e busca integrada.
+- Acesso permanente a Meus pets, inclusive com o mascote flutuante desligado.
+- Logos do Claude e Codex também no resumo de cotas da barra lateral.
 - Textos em português, filtros, detalhes técnicos recolhidos e melhor apresentação em janelas menores.
 - Logos locais para identificar ferramentas e serviços de IA.
 - Recuperação de falhas em mídia, referências de design e consulta de atualizações.

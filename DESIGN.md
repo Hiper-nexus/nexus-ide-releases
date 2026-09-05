@@ -304,3 +304,19 @@ a composição operacional observada sem copiar propriedade visual de terceiros.
   referência cria uma proposta; só a versão aplicada é contrato do projeto.
 - A regra de leitura do contrato visual é permanente no motor. O botão Design
   profissional adiciona orientação de acabamento, mas não desativa essa regra.
+
+### Organização das configurações
+
+A navegação principal agrupa as funções em nove áreas por finalidade. Cada
+área apresenta apenas suas seções; busca global encontra os destinos individuais.
+Não voltar à lista de dezenas de destinos na barra lateral. A biblioteca Meus
+pets tem acesso permanente e não depende de o mascote flutuante estar ligado.
+Catálogo de modelos de mídia e conexão dos serviços são funções distintas,
+com um caminho direto entre elas.
+
+### Exploração de modelos
+
+Na preparação da missão, a exploração visual é opcional e recolhível. Lista com
+logos locais, rolagem limitada ao painel e modelo atual destacado por acento e
+marca de seleção. Setas navegam; ativação explícita escolhe. Nunca iniciar missão
+ou mudar modelo apenas por rolagem. Movimento respeita prefers-reduced-motion.

@@ -1,6 +1,6 @@
 # Revisão integral dos menus de Configurações
 
-31 destinos da navegação percorridos no NexusIDE Dev, além de Perfil e mascote, das sete abas de Voz, das três abas de Providers, das três abas de Harness e do editor de equipe. A revisão preserva nomes próprios e dados fornecidos pelos catálogos. Capturas e árvores de acessibilidade foram conferidas na sessão de revisão; os testes não substituem essa observação.
+33 destinos distribuídos em nove áreas, percorridos novamente no NexusIDE Dev em 5/9/2026. Biblioteca de pets separada do perfil. A rodada inicial cobriu também das sete abas de Voz, das três abas de Providers, das três abas de Harness e do editor de equipe. A revisão preserva nomes próprios e dados fornecidos pelos catálogos. Capturas e árvores de acessibilidade foram conferidas na sessão de revisão; os testes não substituem essa observação.
 
 | Rota | Menu | Revisão |
 |---|---|---|
@@ -35,9 +35,20 @@
 | `remote` | Remoto | Servidores e acesso local identificados; termos simplificados; identidade da IA junto do seletor. |
 | `companion-relay` | Acesso pelo celular | Finalidade e recurso desligado explicados sem detalhes do transporte. |
 | `connectors` | Conectores | Finalidade e manutenção do acesso explicadas sem termos do protocolo. |
-| Perfil | Perfil e mascote | Painel percorrido; termos de progresso simplificados; editor de equipe também conferido com botão de fechar legível. |
+| `pets` | Meus pets | Biblioteca sempre visível, três pets existentes confirmados, atalhos e retornos do Pet Studio migrados. |
+| `agent-connection` | Conexão de agentes | ACP preservado como seção de Conexões externas. |
+| Perfil | Meu perfil | Painel percorrido; termos de progresso simplificados; editor de equipe também conferido com botão de fechar legível. |
 
 ## Verificação
+
+- Rodada final: 1.252 arquivos e 12.309 testes passaram em instalação Node isolada, incluindo os módulos nativos instalados e o patch canônico de PTY.
+- Typecheck, renderer sinks (zero sinks executáveis) e git diff --check passaram. Revisão independente sem achados críticos/importantes; centralização do explorador ao abrir corrigida e verificada no layout real.
+
+- Navegação real pelas 33 rotas: sem overflow horizontal na janela de 1512 px. Fluxos conferido também em 1100 px, com selos compactos e títulos legíveis.
+- Explorador de modelos na missão: rolagem, logos, destaque e teclado; seleção exige clique/ativação e não inicia missão.
+- O candidato anterior de v0.76.2 foi descartado; o pacote deve ser reconstruído no commit final.
+
+### Rodada inicial
 
 - 414 testes em 46 arquivos passaram na rodada final (Configurações, editores, voz e motor).
 - Typecheck e auditoria de sinks do renderer passaram; `git diff --check` sem erros.

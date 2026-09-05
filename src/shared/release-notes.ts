@@ -318,13 +318,16 @@ export const CURRENT_RELEASE: AppRelease = {
   version: '0.76.2',
   date: '2026-09-05',
   codename: 'Configurações mais claras',
-  summary: 'Revisão dos 31 menus de configurações, com linguagem simples, detalhes técnicos recolhidos e identificação visual dos serviços de IA.',
+  summary: 'Configurações organizadas em nove áreas, com acesso direto aos seus pets, busca integrada e identificação visual dos serviços de IA.',
   highlights: [
-    { title: 'Menus mais fáceis de entender', detail: 'Navegação em português, busca e filtros, edição de conexão recolhida e controles adaptados a janelas menores.' },
+    { title: 'Explore os modelos', detail: 'Lista rolável com logos na preparação da missão, destaque da seleção e controle por teclado.' },
+    { title: 'Menus mais fáceis de entender', detail: 'Nove áreas por finalidade substituem a lista extensa; cada área mostra suas próprias seções, com busca global e controles adaptados a janelas menores.' },
+    { title: 'Seus pets sempre acessíveis', detail: 'A biblioteca tem atalho próprio e continua visível mesmo com o mascote flutuante desligado.' },
     { title: 'Serviços de IA identificados', detail: 'Logos locais nas listas, seletores e editores, com modelos e estados de conexão legíveis.' },
     { title: 'Design do projeto como regra', detail: 'O motor orienta os agentes a ler o contrato visual antes de editar UI, mesmo com a orientação adicional de design desligada.' },
   ],
   fixes: [
+    { title: 'Aprovação automática nativa', detail: 'Kimi usa --yolo; plugins antigos do Kimi e Qwen recebem o argumento correto para evitar confirmações repetidas.' },
     { title: 'Falhas com recuperação', detail: 'Mídia, referências de design e atualizações informam falhas e permitem tentar novamente, sem anunciar sucesso indevido.' },
     { title: 'Equipes e regras organizadas', detail: 'Catálogos de modelos e opções avançadas deixam de dominar a tela; nomes de equipes e filtros continuam utilizáveis em janelas menores.' },
     { title: 'Contrato importado reconhecido', detail: 'Missões reconhecem DESIGN.md e o contrato aplicado em .context/docs/design-system.md, preservando a prioridade do arquivo da raiz.' },
