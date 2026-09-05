@@ -2,12 +2,15 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const harness = vi.hoisted(() => ({
+  workspace: { path: '/project' },
   close: vi.fn(),
   closeRuntime: vi.fn(),
   pruneMissionBindings: vi.fn(),
   paneMissions: {} as Record<string, string>,
   panes: [] as Array<{ id: string; kind: string; missionId?: string }>,
 }));
+
+vi.mock('../state/workspace-store', () => ({ useWorkspaceStore: { getState: () => ({ current: harness.workspace }) } }));
 
 vi.mock('../state/layout-store', () => ({
   useLayoutStore: {
@@ -34,6 +37,7 @@ import { closeMissionRuntimeAndPanes } from './close-mission-runtime';
 describe('closeMissionRuntimeAndPanes', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    harness.workspace = { path: '/project' };
     harness.panes = [
       { id: 'pane-a', kind: 'cli-agent', missionId: 'mission-a' },
       { id: 'pane-b', kind: 'cli-agent', missionId: 'mission-b' },
@@ -45,6 +49,32 @@ describe('closeMissionRuntimeAndPanes', () => {
     vi.stubGlobal('window', {
       nexus: { orch: { closeMissionRuntime: harness.closeRuntime } },
     });
+  });
+
+  it('does not sweep another workspace after an asynchronous shutdown', async () => {
+    let finish!: (value: { ok: boolean; terminatedSessionIds: string[] }) => void;
+    harness.closeRuntime.mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    const pending = closeMissionRuntimeAndPanes('mission-a');
+    harness.workspace = { path: '/other' };
+    finish({ ok: true, terminatedSessionIds: ['pty-a'] });
+    const result = await pending;
+    expect(result.ok).toBe(false);
+    expect(harness.close).not.toHaveBeenCalled();
+  });
+
+  it('does not sweep a new project when physical proof arrives after timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      let finish!: (value: { ok: boolean; terminatedSessionIds: string[] }) => void;
+      harness.closeRuntime.mockReturnValue(new Promise(resolve => { finish = resolve; }));
+      const pending = closeMissionRuntimeAndPanes('mission-a');
+      await vi.advanceTimersByTimeAsync(15_000);
+      await pending;
+      harness.workspace = { path: '/other' };
+      finish({ ok: true, terminatedSessionIds: ['pty-a'] });
+      await Promise.resolve();
+      expect(harness.close).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
   });
 
   it('closes only this mission panes after main proves physical shutdown', async () => {

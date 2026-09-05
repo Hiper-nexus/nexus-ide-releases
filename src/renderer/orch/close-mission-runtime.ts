@@ -1,6 +1,7 @@
 import type { MissionRuntimeCloseResult } from '../../shared/orch-types';
 import { listPanes } from '../lib/split-tree';
 import { useLayoutStore } from '../state/layout-store';
+import { useWorkspaceStore } from '../state/workspace-store';
 import { useOrchStore } from '../state/orch-store';
 
 const MISSION_CLOSE_UI_TIMEOUT_MS = 15_000;
@@ -60,6 +61,8 @@ export async function closeMissionRuntimeAndPanes(
   missionId: string,
   reason = 'mission-runtime-close',
 ): Promise<MissionRuntimeCloseResult> {
+  const workspace = useWorkspaceStore.getState().current;
+  const isCurrentWorkspace = () => useWorkspaceStore.getState().current === workspace;
   let result: MissionRuntimeCloseResult;
   try {
     const close = window.nexus.orch.closeMissionRuntime(missionId);
@@ -67,7 +70,7 @@ export async function closeMissionRuntimeAndPanes(
     void close.then(
       (lateResult) => {
         if (
-          didTimeOut &&
+          didTimeOut && isCurrentWorkspace() &&
           (lateResult.ok || isOrphanMissionPaneSweep(lateResult))
         ) {
           sweepMissionPanes(missionId, reason);
@@ -103,6 +106,9 @@ export async function closeMissionRuntimeAndPanes(
       terminatedSessionIds: [],
       error: error instanceof Error ? error.message : String(error),
     };
+  }
+  if (!isCurrentWorkspace()) {
+    return { ...result, ok: false, error: 'O projeto mudou durante o encerramento. A grade atual foi preservada.' };
   }
   if (!result.ok && !isOrphanMissionPaneSweep(result)) {
     return result;
