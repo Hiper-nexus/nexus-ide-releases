@@ -1,0 +1,57 @@
+.model-reel {
+  --model-reel-row: 64px;
+  --model-reel-motion: 220ms;
+  min-width: 0;
+  border-radius: var(--radius-lg);
+  background: var(--bg-bar);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.model-reel__viewport {
+  position: relative;
+  height: calc(var(--model-reel-row) * 3);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-snap-type: y proximity;
+  padding: var(--model-reel-row) var(--space-3);
+  box-sizing: content-box;
+  max-height: 24vh;
+}
+.model-reel__option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: var(--model-reel-row);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-dim);
+  text-align: left;
+  cursor: pointer;
+  scroll-snap-align: center;
+  transform: scale(.96);
+  transition: transform var(--model-reel-motion) var(--ease-out-expo);
+}
+.model-reel__option[aria-pressed='true'] {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  transform: scale(1);
+}
+.model-reel__option:hover:not(:disabled) { color: var(--text); background: var(--bg-elevated); transform: scale(1); }
+.model-reel__option:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; transform: scale(1); }
+.model-reel__option:active:not(:disabled) { transform: scale(.98); }
+.model-reel__option:disabled { cursor: not-allowed; }
+.model-reel__identity { display: grid; gap: var(--space-1); min-width: 0; flex: 1; }
+.model-reel__identity strong { font-size: var(--text-base); overflow-wrap: anywhere; font-weight: 600; }
+.model-reel__identity small { font-size: var(--text-xs); color: var(--text-dim); overflow-wrap: anywhere; }
+.model-reel__selection { color: var(--accent); }
+.model-reel__hint { display: block; padding: var(--space-2) var(--space-3); color: var(--text-dim); font-size: var(--text-xs); text-align: center; }
+@media (prefers-reduced-motion: reduce) {
+  .model-reel__option { transition: none; }
+}
+.mission-roster-row__model-explorer { flex-basis: 100%; min-width: 0; width: 100%; }
+.mission-roster-row__model-explorer summary { cursor: pointer; color: var(--text-dim); font-size: var(--text-xs); padding: var(--space-2) 0; }
+.mission-roster-row__model-explorer summary:focus-visible { outline: 2px solid var(--accent); }

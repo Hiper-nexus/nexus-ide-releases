@@ -772,7 +772,7 @@ export function WorkspaceRail({
                 return (
                   <div key={entry.id} className="workspace-rail__quota-item">
                     <div className="workspace-rail__quota-info">
-                      <span className="workspace-rail__quota-name">{entry.label}</span>
+                      <span className="workspace-rail__quota-name"><ProviderLogo adapterId={entry.adapterId} label={entry.label} size="xs" /><span>{entry.label}</span></span>
                       <span
                         className={`workspace-rail__quota-val workspace-rail__quota-val--${tone}`}
                       >

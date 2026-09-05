@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { ModelReel } from '../model/ModelReel';
 import type { AccountInfo } from '../../../shared/account-types';
 import {
   SQUAD_AGENT_INSTRUCTIONS_MAX_CHARS,
@@ -129,6 +130,7 @@ export function MissionSetupRosterRow({
   const fieldSuffix = agent.id.replace(/[^a-z0-9_-]/giu, '-');
 
   const [customModel, setCustomModel] = useState(false);
+  const [explorerOpen, setExplorerOpen] = useState(false);
 
   const handleToolChange = (nextCliId: string): void => {
     const adapter = candidates.find((item) => item.id === nextCliId);
@@ -301,6 +303,30 @@ export function MissionSetupRosterRow({
             </button>
           )}
         </div>
+
+          <details className="mission-roster-row__model-explorer" onToggle={(event) => setExplorerOpen(event.currentTarget.open)}>
+            <summary>Explorar modelos com logos</summary>
+            {explorerOpen && <ModelReel
+              options={candidates.flatMap((adapter) => readyModelsForPicker({
+                adapter,
+                provider: providers.find((item) => item.adapterId === adapter.id),
+              }).map((model) => ({
+                adapterId: adapter.id,
+                adapterLabel: adapter.label,
+                model,
+                ready: isAdapterModelAuthenticated(adapter, providers, model, accounts),
+                reason: 'Conecte a ferramenta para usar este modelo',
+              })))}
+              selected={{ adapterId: agent.cli, model: agent.model ?? selectedAdapter?.models.default ?? '' }}
+              onSelect={(option) => onChange({
+                ...agent,
+                cli: option.adapterId,
+                model: option.model,
+                effort: option.adapterId === agent.cli ? agent.effort
+                  : providers.find((item) => item.adapterId === option.adapterId)?.effort || undefined,
+              })}
+            />}
+          </details>
 
         {issue && (
           <p className="mission-setup__inline-error" role="status">
