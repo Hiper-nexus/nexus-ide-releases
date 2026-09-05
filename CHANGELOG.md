@@ -1,8 +1,7 @@
 # Changelog
 
-## 0.76.2 — Configurações mais claras
+## 0.76.3 — Configurações mais claras
 
-- Explorador rolável de modelos com logos na preparação da missão, seleção explícita e navegação por teclado.
 - Kimi passa a usar --yolo; plugins antigos do Kimi e Qwen recebem a opção automática nativa.
 - Fluxos de trabalho com selos compactos e papéis legíveis em janelas menores.
 - Configurações reorganizadas em nove áreas, com navegação local e busca integrada.

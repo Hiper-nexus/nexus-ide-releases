@@ -42,10 +42,9 @@
 ## Verificação
 
 - Rodada final: 1.252 arquivos e 12.309 testes passaram em instalação Node isolada, incluindo os módulos nativos instalados e o patch canônico de PTY.
-- Typecheck, renderer sinks (zero sinks executáveis) e git diff --check passaram. Revisão independente sem achados críticos/importantes; centralização do explorador ao abrir corrigida e verificada no layout real.
+- Typecheck, renderer sinks (zero sinks executáveis) e git diff --check passaram. Revisão independente sem achados críticos/importantes; a revisão seguinte do operador solicitou remover o explorador, conforme registro abaixo.
 
 - Navegação real pelas 33 rotas: sem overflow horizontal na janela de 1512 px. Fluxos conferido também em 1100 px, com selos compactos e títulos legíveis.
-- Explorador de modelos na missão: rolagem, logos, destaque e teclado; seleção exige clique/ativação e não inicia missão.
 - O candidato anterior de v0.76.2 foi descartado; o pacote deve ser reconstruído no commit final.
 
 ### Rodada inicial
@@ -61,3 +60,9 @@
 `missionDesignContext` usa o resolvedor canônico: DESIGN.md na raiz tem prioridade sobre `.context/docs/design-system.md`. O ponto compartilhado de abertura de agentes aplica `withWorkspaceDesignRule` também quando a carta opcional de Design profissional está desligada; a resolução considera o checkout de execução. A instrução exige leitura antes de editar UI e identificação da referência e da verificação visual na entrega. O catálogo complementa o contrato, e proposta ainda não aplicada não é tratada como autoridade.
 
 Isso estabelece a regra entregue ao agente, com teste da passagem pelo prompt inicial nativo do worker. Não é uma prova de que uma LLM arbitrária obedeceu em toda execução; o resultado de uma missão ainda deve ser verificado contra o contrato.
+
+## Correção após revisão do operador
+
+O explorador rolável foi rejeitado e removido. A preparação da missão mantém os seletores nativos anteriores e a opção de digitar um modelo. A publicação da v0.76.2 foi interrompida ainda em draft, antes do espelho público.
+
+A v0.76.3 restaura a seleção nativa. Testes do roster (11), typecheck e auditoria do renderer passaram após a reversão.

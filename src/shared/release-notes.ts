@@ -315,12 +315,11 @@ export const RELEASE_0744: AppRelease = {
   ],
 };
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.2',
+  version: '0.76.3',
   date: '2026-09-05',
   codename: 'Configurações mais claras',
   summary: 'Configurações organizadas em nove áreas, com acesso direto aos seus pets, busca integrada e identificação visual dos serviços de IA.',
   highlights: [
-    { title: 'Explore os modelos', detail: 'Lista rolável com logos na preparação da missão, destaque da seleção e controle por teclado.' },
     { title: 'Menus mais fáceis de entender', detail: 'Nove áreas por finalidade substituem a lista extensa; cada área mostra suas próprias seções, com busca global e controles adaptados a janelas menores.' },
     { title: 'Seus pets sempre acessíveis', detail: 'A biblioteca tem atalho próprio e continua visível mesmo com o mascote flutuante desligado.' },
     { title: 'Serviços de IA identificados', detail: 'Logos locais nas listas, seletores e editores, com modelos e estados de conexão legíveis.' },

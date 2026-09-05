@@ -123,7 +123,7 @@ afterEach(() => {
 describe('MissionSetupRosterRow', () => {
   it('keeps technical and role-instruction controls collapsed', () => {
     const host = renderRow(vi.fn());
-    const disclosures = [...host.querySelectorAll<HTMLDetailsElement>('.mission-roster-row__details')];
+    const disclosures = [...host.querySelectorAll('details')];
 
     expect(disclosures).toHaveLength(2);
     expect(disclosures.every((details) => !details.open)).toBe(true);
@@ -142,7 +142,7 @@ describe('MissionSetupRosterRow', () => {
     expect(
       host.querySelector('select[aria-label="Modelo para Revisar segurança"]'),
     ).not.toBeNull();
-    expect(host.querySelectorAll<HTMLDetailsElement>('.mission-roster-row__details')).toHaveLength(0);
+    expect(host.querySelectorAll('details')).toHaveLength(0);
     expect(host.textContent).not.toContain('Instruções para Revisar segurança');
     expect(host.textContent).not.toContain('Configurações técnicas');
   });
