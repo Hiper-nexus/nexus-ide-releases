@@ -6,6 +6,7 @@ import {
   resolvePlaceholders,
 } from '../../shared/adapter-types';
 import type { Adapter } from '../../shared/adapter-types';
+import { buildControlArgs } from './control-args';
 import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import publishedModelCatalog from '../../../resources/model-catalog.json';
 import {
@@ -465,9 +466,8 @@ describe('builtin adapters', () => {
     ]);
   });
 
-  it('uses Kimi Code prompt mode for headless without combining --auto and -p', () => {
-    // Real kimi-code rejects `Cannot combine --prompt with --auto`.
-    // Headless is non-interactive via -p only; interactive YOLO still uses --auto.
+  it('declares Kimi Code native --yolo approval while preserving headless prompt mode', () => {
+    // Verified against kimi 1.50.0 --help: --yolo/--yes/--auto-approve.
     expect(builtin('kimi')?.spawn?.headless).toEqual([
       'kimi',
       '--output-format',
@@ -476,7 +476,7 @@ describe('builtin adapters', () => {
       '{{PROMPT}}',
     ]);
     expect(builtin('kimi')?.spawn?.headless).not.toContain('--auto');
-    expect(builtin('kimi')?.control?.permission?.yolo).toEqual(['--auto']);
+    expect(builtin('kimi')?.control?.permission?.yolo).toEqual(['--yolo']);
   });
 
   it('separates declared MCP routes from operational orchestration evidence', () => {
@@ -792,6 +792,37 @@ describe('broadcastToListeners', () => {
 describe('mergeAdapters', () => {
   const buildAdapter = (id: string, label: string): Adapter =>
     ({ ...MINIMAL_CLI_PTY, id, label }) as Adapter;
+
+  it('supplies verified Qwen CLI approval args when a user plugin omits them', () => {
+    const qwen = { ...MINIMAL_CLI_PTY, id: 'qwen', bin: 'qwen' } as Adapter;
+    const loaded = mergeAdapters([], [qwen]).get('qwen');
+    expect(loaded?.kind === 'cli-pty' && loaded.control.permission?.yolo)
+      .toEqual(['--yolo']);
+    expect(qwen.kind === 'cli-pty' && qwen.control).toEqual({});
+  });
+
+  it('repairs legacy Kimi plugins and starts them in native automatic mode', () => {
+    const kimi = {
+      ...MINIMAL_CLI_PTY, id: 'kimi', bin: 'kimi',
+      control: { permission: { modes: {}, default: '', yolo: ['--auto'] } },
+    } as Adapter;
+    const loaded = mergeAdapters([], [kimi]).get('kimi');
+    expect(loaded?.kind === 'cli-pty' && buildControlArgs(loaded, {}))
+      .toEqual(['--yolo']);
+  });
+
+  it('preserves explicit plugin approval sequences', () => {
+    const qwen = {
+      ...MINIMAL_CLI_PTY, id: 'qwen', bin: 'qwen',
+      control: { permission: { modes: {}, default: '', yolo: ['-y'] } },
+    } as Adapter;
+    expect(mergeAdapters([], [qwen]).get('qwen')).toEqual(qwen);
+  });
+
+  it('does not guess approval flags for unrelated executables', () => {
+    const custom = { ...MINIMAL_CLI_PTY, id: 'qwen', bin: 'custom-wrapper' } as Adapter;
+    expect(mergeAdapters([], [custom]).get('qwen')).toEqual(custom);
+  });
 
   it('user adapter with same id overrides builtin', () => {
     const builtin = buildAdapter('claude', 'Claude (builtin)');

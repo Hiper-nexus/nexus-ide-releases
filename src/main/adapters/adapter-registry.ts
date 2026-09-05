@@ -223,6 +223,26 @@ function loadUserAdapters(): Adapter[] {
   }
 }
 
+/** Verified compatibility defaults for existing user CLI manifests. */
+function withNativeApprovalDefaults(adapter: Adapter): Adapter {
+  if (adapter.kind !== 'cli-pty') return adapter;
+  const permission = adapter.control.permission;
+  // Qwen CLI advertises --yolo; the API provider with the same id is unrelated.
+  const missingQwen = adapter.id === 'qwen' && adapter.bin === 'qwen'
+    && !permission?.yolo.length;
+  // Older Nexus Kimi manifests used --auto, which is not its approval flag.
+  const legacyKimi = adapter.id === 'kimi' && adapter.bin === 'kimi'
+    && (!permission?.yolo.length || permission.yolo.join(' ') === '--auto');
+  if (!missingQwen && !legacyKimi) return adapter;
+  return {
+    ...adapter,
+    control: {
+      ...adapter.control,
+      permission: { modes: {}, default: '', ...permission, yolo: ['--yolo'] },
+    },
+  };
+}
+
 /**
  * Merge builtin and user adapter arrays. User adapters with the same id as a
  * builtin override it; new ids are simply added. Pure function — testable without
@@ -233,8 +253,8 @@ export function mergeAdapters(
   user: readonly Adapter[],
 ): Map<string, Adapter> {
   const merged = new Map<string, Adapter>();
-  for (const a of builtins) merged.set(a.id, a);
-  for (const a of user) merged.set(a.id, a);
+  for (const a of builtins) merged.set(a.id, withNativeApprovalDefaults(a));
+  for (const a of user) merged.set(a.id, withNativeApprovalDefaults(a));
   return merged;
 }
 

@@ -100,7 +100,7 @@
       "arg": "",
       "modes": {},
       "yolo": [
-        "--auto"
+        "--yolo"
       ],
       "default": ""
     }
