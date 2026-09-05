@@ -5,6 +5,7 @@ import { useLayoutStore } from '../state/layout-store';
 import { buildGridTree, listPanes } from '../lib/split-tree';
 import { reconcileHosts } from '../terminal/terminal-host';
 import { reconcileBrowserPanes } from '../browser/browser-host';
+import { minimumPaneGridSize } from '../lib/pane-grid-size';
 import { PaneLeaf } from './PaneLeaf';
 import { PanePicker } from './PanePicker';
 
@@ -22,15 +23,14 @@ function renderNode(node: LayoutNode): React.ReactNode {
   const orientation = node.direction === 'row' ? 'horizontal' : 'vertical';
   const [a, b] = node.children;
 
-  // minSize baixo: com 6–12 panes a grelha binária ainda encolhe sem
-  // "engolir" um leaf (12% tornava 3+ splits na mesma dimensão ilegíveis).
+  const axis = node.direction === 'row' ? 'width' : 'height';
   return (
     <Group orientation={orientation} className="panel-group">
-      <Panel className="panel" minSize="6%" defaultSize="50%">
+      <Panel className="panel" minSize={`${minimumPaneGridSize(a)[axis]}px`} defaultSize="50%">
         {renderNode(a)}
       </Panel>
       <Separator className={`resize-handle resize-handle--${orientation}`} />
-      <Panel className="panel" minSize="6%" defaultSize="50%">
+      <Panel className="panel" minSize={`${minimumPaneGridSize(b)[axis]}px`} defaultSize="50%">
         {renderNode(b)}
       </Panel>
     </Group>
@@ -78,7 +78,13 @@ export function PaneGrid({
 
   return (
     <div className={`grid${maximizedPane ? ' grid--pane-maximized' : ''}`}>
-      {maximizedPane ? <PaneLeaf pane={maximizedPane} /> : renderNode(displayRoot)}
+      {maximizedPane ? <PaneLeaf pane={maximizedPane} /> : (
+        <div className="grid__scroll">
+          <div className="grid__sized" style={{ minWidth: minimumPaneGridSize(displayRoot).width, minHeight: minimumPaneGridSize(displayRoot).height }}>
+            {renderNode(displayRoot)}
+          </div>
+        </div>
+      )}
       {/* Controle flutuante da grelha: abrir um pane novo sem sair do trabalho. */}
       <PanePicker onPaneCreated={onPaneCreated} />
     </div>
