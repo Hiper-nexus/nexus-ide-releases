@@ -315,47 +315,45 @@ export const RELEASE_0744: AppRelease = {
   ],
 };
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.0',
-  date: '2026-09-04',
-  codename: 'Herança Orca: ModelPicker unificado',
+  version: '0.76.1',
+  date: '2026-09-05',
+  codename: 'Motor de missões e Settings confiáveis',
   summary:
-    'Paridade visual completa com a sidebar Orca (cards, status dots, busca ⌘K, ' +
-    'tema obsidian, layout 250px macOS) e herança do modelo multi-LLM: ModelPicker ' +
-    'unificado com logo da LLM e uso em tempo real, quota de duas janelas no rail, ' +
-    'e reroute automático desviando de CLIs em quota alta.',
+    'Correção do contrato real de missões multi-agente, com receipts por integrante, ' +
+    'roteamento usando credenciais consistentes e páginas internas de Settings/Cotas/Harness ' +
+    'mais honestas sobre estados conhecidos, desconhecidos e recuperáveis.',
   highlights: [
     {
-      title: 'ModelPicker unificado estilo Orca',
+      title: 'Missões exigem respostas reais',
       detail:
-        'Um grupo por provider com logo, linha de uso e modelos ordenados por ' +
-        'sessão pronta, custo e quota livre. Modelos sem sessão aparecem bloqueados ' +
-        'com o comando de login — no Orquestrador, no Squad e no setup.',
+        'Perguntas para a equipe agora usam o elenco aprovado como denominador, ' +
+        'recusam sucesso parcial e preservam receipts físicos por worker.',
     },
     {
-      title: 'Sidebar com logos e quota de duas janelas',
+      title: 'Settings e cotas honestas',
       detail:
-        'Agentes mostram o logo da LLM, a missão selecionada abre com agentes ' +
-        'visíveis e o rodapé exibe as duas janelas ("5 Horas 35% · Semanal 41%") ' +
-        'com a barra na pior janela.',
+        'Uso/Cotas não inventa progresso para janelas desconhecidas, mostra dados ' +
+        'com fornecedor e horário de observação e prioriza providers com quota real.',
     },
     {
-      title: 'Reroute desvia de quota alta',
+      title: 'Páginas internas revisadas',
       detail:
-        'Falha de spawn re-roteia para CLI fresca da mesma categoria quando a ' +
-        'original está com quota ≥ 80%; quota desconhecida nunca desvia sozinha.',
+        'Onboarding, Providers, Harness, Catálogo, Squads e páginas de produto ' +
+        'ganharam estados de erro/vazio/retry e layouts responsivos verificados.',
     },
   ],
   fixes: [
     {
-      title: 'Layout cortado na sidebar e cabeçalho (F-118)',
+      title: 'Roteamento e credenciais',
       detail:
-        'Largura 250px e alinhamento macOS corrigidos na sidebar e no cabeçalho.',
+        'Router e respostas diretas reutilizam o resolvedor dos providers, respeitam ' +
+        'providers desativados e evitam enviar chaves para fornecedores incompatíveis.',
     },
     {
-      title: 'Code review pré-release',
+      title: 'Recursos mortos removidos',
       detail:
-        'Comparador à prova de Infinity no rank, trim bilateral no auth, linha de ' +
-        'modelo salvo indisponível e lookup de quota com semântica explícita.',
+        'Controles Ralph/GoalDriver sem runtime ativo foram retirados; Squads permanecem ' +
+        'com aplicação real no preparo e aviso quando o time salvo está incompleto.',
     },
   ],
 };

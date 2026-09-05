@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.76.1 — Motor de missões e Settings confiáveis
+
+_Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
+
+- **Motor de missões com receipts reais**: perguntas para a equipe exigem respostas do elenco aprovado, recusam falso sucesso parcial e preservam bloqueios técnicos recuperáveis quando panes não nascem.
+- **Roteamento e credenciais consistentes**: o router usa o mesmo resolvedor de credenciais dos providers, respeita providers desativados e evita fan-out indevido para chaves de outro fornecedor.
+- **Settings e cotas honestas**: Uso/Cotas mostra janelas conhecidas antes das desconhecidas, não inventa barras para quota indisponível e evita deduplicar identidades nativas/salvas incorretamente.
+- **UI interna revisada**: onboarding, Providers, Harness, Catálogo, Squads, páginas internas e ações de pane ganharam estados de vazio/erro/retry, navegação estável e responsividade verificada.
+- **Limpeza de recursos mortos**: controles Ralph/GoalDriver sem runtime ativo foram removidos; Squads mantidos com aplicação real no preparo e aviso quando o time antigo está incompleto.
+
 ## 0.76.0 — Herança Orca: ModelPicker unificado
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
