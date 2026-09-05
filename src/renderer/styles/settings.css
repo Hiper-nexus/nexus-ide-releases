@@ -1365,6 +1365,7 @@
 
 .settings-pill-row {
   display: flex;
+  align-items: center;
   flex-wrap: wrap;
   gap: var(--space-1-5);
   margin: var(--space-2-5) 0;
@@ -3322,3 +3323,19 @@
 .settings-category-tabs__item:hover { background: var(--bg-elevated); color: var(--text); }
 .settings-category-tabs__item--active { background: var(--bg-elevated); border-color: var(--border-strong); color: var(--text); }
 .settings-category-tabs__item:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Workflow rows must stay legible in narrow settings panes. */
+.settings-recipes { min-width: 0; }
+.settings-recipes .settings-list__item { min-height: 0; padding: var(--space-3); }
+.settings-recipes .settings-list__head { flex-wrap: wrap; align-items: baseline; }
+.settings-recipes .settings-list__title { white-space: normal; overflow: visible; overflow-wrap: anywhere; }
+.settings-recipes__roles { color: var(--text-dim); font-size: var(--text-xs); overflow-wrap: anywhere; }
+.settings-recipes .settings-chip { align-self: center; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.settings-recipes__advanced { margin: var(--space-3) 0; }
+.settings-recipes summary { padding: var(--space-2) 0; color: var(--text-dim); cursor: pointer; }
+.settings-recipes summary:focus-visible { outline: 2px solid var(--accent); }
+.settings-recipes__stack-editor { display: grid; gap: var(--space-2); padding: var(--space-2) 0; }
+.settings-recipes__stack-editor .settings-input { width: 100%; min-width: 0; }
+.settings-recipes .settings-advanced-field { margin: var(--space-2) 0; }
+.settings-recipes .settings-list__item .settings-advanced-field { margin: 0; }
+.settings-recipes .settings-list__item summary { padding: var(--space-1) 0 0; }

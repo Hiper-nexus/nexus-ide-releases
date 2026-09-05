@@ -96,10 +96,10 @@ export function RecipesSection() {
   }
 
   return (
-    <section>
+    <section className="settings-recipes">
       <SettingsSectionTitle>Fluxos de trabalho</SettingsSectionTitle>
       <p className="settings-detail__hint">
-        Verifique se as equipes e os fluxos têm os recursos necessários para funcionar.
+        Equipes sugeridas para este projeto e seus requisitos.
       </p>
 
       <div className="settings-pill-row">
@@ -120,14 +120,17 @@ export function RecipesSection() {
         </span>
       </div>
 
-      <div className="settings-list__item">
+      <details className="settings-recipes__advanced">
+        <summary>Tecnologias do projeto</summary>
+      <div className="settings-recipes__stack-editor">
         <div className="settings-list__head">
-          <span className="settings-list__title">Tecnologias do projeto</span>
+          <label htmlFor="recipe-project-stacks" className="settings-list__title">Tecnologias separadas por vírgula</label>
           <button className="settings-btn" onClick={() => void saveStacks()}>
             Salvar
           </button>
         </div>
         <input
+          id="recipe-project-stacks"
           className="settings-input"
           value={manualStacks}
           placeholder="react, electron, rust"
@@ -135,13 +138,15 @@ export function RecipesSection() {
         />
       </div>
 
+      </details>
+
       {suggestions.length > 0 && (
         <ul className="settings-list">
           {suggestions.map((recipe) => (
             <li key={recipe.id} className="settings-list__item">
               <div className="settings-list__head">
                 <span className="settings-list__title">{recipe.title}</span>
-                <span className="settings-chip">{recipe.agents.join(' · ')}</span>
+                <span className="settings-recipes__roles">{recipe.agents.join(' · ')}</span>
               </div>
               <details className="settings-advanced-field"><summary>Recursos necessários</summary>
               <p className="settings-list__detail">
@@ -220,6 +225,7 @@ export function RecipesSection() {
       </details>
 
       {categories.length > 0 && (
+        <details className="settings-recipes__advanced"><summary>Agentes por especialidade</summary>
         <ul className="settings-list settings-list--compact">
           {categories.map(([category, count]) => (
             <li key={category} className="settings-list__item">
@@ -229,7 +235,7 @@ export function RecipesSection() {
               </div>
             </li>
           ))}
-        </ul>
+        </ul></details>
       )}
 
       {issues.length === 0 ? (
