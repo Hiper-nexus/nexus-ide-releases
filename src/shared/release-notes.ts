@@ -315,6 +315,23 @@ export const RELEASE_0744: AppRelease = {
   ],
 };
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.2',
+  date: '2026-09-05',
+  codename: 'Configurações mais claras',
+  summary: 'Revisão dos 31 menus de configurações, com linguagem simples, detalhes técnicos recolhidos e identificação visual dos serviços de IA.',
+  highlights: [
+    { title: 'Menus mais fáceis de entender', detail: 'Navegação em português, busca e filtros, edição de conexão recolhida e controles adaptados a janelas menores.' },
+    { title: 'Serviços de IA identificados', detail: 'Logos locais nas listas, seletores e editores, com modelos e estados de conexão legíveis.' },
+    { title: 'Design do projeto como regra', detail: 'O motor orienta os agentes a ler o contrato visual antes de editar UI, mesmo com a orientação adicional de design desligada.' },
+  ],
+  fixes: [
+    { title: 'Falhas com recuperação', detail: 'Mídia, referências de design e atualizações informam falhas e permitem tentar novamente, sem anunciar sucesso indevido.' },
+    { title: 'Equipes e regras organizadas', detail: 'Catálogos de modelos e opções avançadas deixam de dominar a tela; nomes de equipes e filtros continuam utilizáveis em janelas menores.' },
+    { title: 'Contrato importado reconhecido', detail: 'Missões reconhecem DESIGN.md e o contrato aplicado em .context/docs/design-system.md, preservando a prioridade do arquivo da raiz.' },
+  ],
+};
+
+export const RELEASE_0761: AppRelease = {
   version: '0.76.1',
   date: '2026-09-05',
   codename: 'Motor de missões e Settings confiáveis',

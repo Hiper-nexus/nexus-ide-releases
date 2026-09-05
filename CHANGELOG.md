@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.76.2 — Configurações mais claras
+
+- Revisão dos 31 menus de configurações e dos submenus de voz, equipes e recursos dos agentes.
+- Textos em português, filtros, detalhes técnicos recolhidos e melhor apresentação em janelas menores.
+- Logos locais para identificar ferramentas e serviços de IA.
+- Recuperação de falhas em mídia, referências de design e consulta de atualizações.
+- Regra permanente de leitura do contrato visual nas tarefas de UI, com suporte ao DESIGN.md e ao contrato importado aplicado.
+
 ## 0.76.1 — Motor de missões e Settings confiáveis
 
 _Para atualizar: baixe o DMG/ZIP abaixo e substitua o app (feche o Nexus antes)._
