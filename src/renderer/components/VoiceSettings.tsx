@@ -1,3 +1,5 @@
+import { VoiceServiceDetails } from './VoiceServiceDetails';
+import { ProviderLogo } from './ProviderLogo';
 import { useEffect, useRef, useState } from 'react';
 import { useVoiceStore } from '../voice/voice-store';
 import {
@@ -78,13 +80,13 @@ const VOICE_TABS: Array<{
   hint: string;
   icon: 'mic' | 'bolt' | 'sparkle' | 'users' | 'restart' | 'id-badge' | 'key';
 }> = [
-  { id: 'canal', label: 'Canal', hint: 'Estado e rota', icon: 'mic' },
-  { id: 'live', label: 'Live', hint: 'Wake e realtime', icon: 'bolt' },
-  { id: 'voz', label: 'Voz', hint: 'Timbre e fallbacks', icon: 'sparkle' },
+  { id: 'canal', label: 'Visão geral', hint: 'Conexão e serviços', icon: 'mic' },
+  { id: 'live', label: 'Conversa', hint: 'Ativação e resposta', icon: 'bolt' },
+  { id: 'voz', label: 'Voz', hint: 'Timbre da assistente', icon: 'sparkle' },
   { id: 'atendimento', label: 'Atendimento', hint: 'Fala e atalho', icon: 'users' },
-  { id: 'fallback', label: 'Fallback', hint: 'STT · TTS · cérebro', icon: 'restart' },
-  { id: 'persona', label: 'Persona', hint: 'Nome e estilo', icon: 'id-badge' },
-  { id: 'credenciais', label: 'Credenciais', hint: 'Chaves no cofre', icon: 'key' },
+  { id: 'fallback', label: 'Serviços', hint: 'Transcrição, voz e IA', icon: 'restart' },
+  { id: 'persona', label: 'Personalidade', hint: 'Nome e estilo', icon: 'id-badge' },
+  { id: 'credenciais', label: 'Chaves de acesso', hint: 'Conectar serviços', icon: 'key' },
 ];
 
 /**
@@ -651,10 +653,10 @@ export function VoiceSettings() {
         : 'Ative Jarvis Live para manter uma sessão de voz contínua.';
   const wakeMode =
     wakeWordOn && info?.wakeLockHolderPid
-      ? `wake word preso pelo PID ${info.wakeLockHolderPid}`
+      ? 'ativação por voz em uso por outra instância'
       : wakeWordOn
-        ? 'wake word on'
-        : 'wake word off';
+        ? 'ativação por voz ligada'
+        : 'ativação por voz desligada';
 
 return (
     <div
@@ -686,7 +688,7 @@ return (
               </span>
             </div>
             <p className="voice-settings__subtitle">
-              Console de voz: Live, wake word, persona e fallbacks.
+              Configure como conversar com a assistente e ouvir suas respostas.
             </p>
           </div>
           <CloseButton
@@ -697,7 +699,7 @@ return (
         </header>
 
         {!info ? (
-          <p className="agent-picker__empty">Carregando pipeline de voz…</p>
+          <p className="agent-picker__empty">Carregando configurações de voz…</p>
         ) : (
           <div className="voice-settings__shell">
             <nav className="voice-settings__nav" aria-label="Seções da Jarvis">
@@ -733,14 +735,14 @@ return (
                       <p>{liveConnectionDetail}</p>
                     </div>
                     <div className="voice-settings__route" aria-label="Rota de atendimento">
-                      <span>Wake</span>
+                      <span>Ativação por voz</span>
                       <i aria-hidden>→</i>
                       <strong>
-                        {realtimeConfigured ? liveTransportLabel : 'Pipeline clássico'}
+                        {realtimeConfigured ? liveTransportLabel : 'Conversa por etapas'}
                       </strong>
                       <i aria-hidden>→</i>
                       <span>
-                        {realtimeConfigured ? 'áudio ao vivo' : 'resposta por TTS'}
+                        {realtimeConfigured ? 'áudio ao vivo' : 'resposta falada'}
                       </span>
                     </div>
                     <div
@@ -748,15 +750,18 @@ return (
                       aria-label="Fallbacks configurados"
                     >
                       <span>
-                        <b>STT</b>
+                        <b>Transcrição</b>
+                        <ProviderLogo adapterId={activeStt} label={activeStt} size="xs" />
                         {activeStt}
                       </span>
                       <span>
-                        <b>TTS</b>
+                        <b>Voz</b>
+                        <ProviderLogo adapterId={activeTts} label={activeTts} size="xs" />
                         {activeTts}
                       </span>
                       <span>
-                        <b>Cérebro</b>
+                        <b>Inteligência</b>
+                        <ProviderLogo adapterId={activeBrain} label={activeBrain} size="xs" />
                         {activeBrain}
                       </span>
                     </div>
@@ -787,7 +792,7 @@ return (
               {activeTab === 'live' && (
                 <section className="voice-settings__pane" aria-label="Live e wake">
                   <div className="voice-settings__card-head voice-settings__card-head--block">
-                    <h4>Sessão Live</h4>
+                    <h4>Conversa contínua</h4>
                     <p>Aplicado na hora. Demais ajustes usam Salvar.</p>
                   </div>
                   <div className="voice-settings__toggle-stack">
@@ -901,11 +906,11 @@ return (
                   <div className="voice-settings__card-head voice-settings__card-head--block">
                     <h4>Timbre</h4>
                     <p>
-                      <strong>Gemini Live</strong> é o canal principal no dia a dia.
+                      Escolha a voz usada por cada serviço. Estas escolhas são salvas na hora.
                     </p>
                   </div>
                   <label className="agent-picker__label voice-settings__voice-primary">
-                    Voz Gemini Live
+                    <span><ProviderLogo adapterId="gemini" label="Gemini" size="xs" /> Voz Gemini Live</span>
                     <select
                       className="agent-picker__select"
                       value={geminiVoice}
@@ -923,10 +928,10 @@ return (
                     </select>
                   </label>
                   <details className="voice-settings__fallback-voices" open>
-                    <summary>Fallbacks se o Live cair</summary>
+                    <summary>Vozes dos outros serviços</summary>
                     <div className="voice-settings__form-grid">
                       <label className="agent-picker__label">
-                        OpenAI Realtime
+                        <span><ProviderLogo adapterId="openai" label="OpenAI" size="xs" /> OpenAI Realtime</span>
                         <select
                           className="agent-picker__select"
                           value={openaiVoice}
@@ -944,7 +949,7 @@ return (
                         </select>
                       </label>
                       <label className="agent-picker__label">
-                        TTS clássico
+                        Voz por etapas
                         <select
                           className="agent-picker__select"
                           value={ttsVoice}
@@ -986,15 +991,15 @@ return (
                       </select>
                     </label>
                     <label className="agent-picker__label">
-                      Roteamento
+                      Enviar ditado para
                       <select
                         className="agent-picker__select"
                         value={routing}
                         onChange={(e) => setRouting(e.target.value)}
                       >
                         <option value="jarvis">JARVIS (conversa)</option>
-                        <option value="focused-pane">pane focado</option>
-                        <option value="orchestrator">orquestrador</option>
+                        <option value="focused-pane">terminal selecionado</option>
+                        <option value="orchestrator">coordenador da missão</option>
                         <option value="ask">perguntar</option>
                       </select>
                     </label>
@@ -1010,10 +1015,10 @@ return (
                         }
                       >
                         <option value="english">
-                          Code — inglês otimizado p/ execução
+                          Inglês para executar tarefas
                         </option>
                         <option value="portuguese">
-                          Chat — português literal
+                          Português como foi falado
                         </option>
                       </select>
                     </label>
@@ -1059,8 +1064,8 @@ return (
                       Ditado EN (Space + Groq)
                     </button>
                     <p className="voice-settings__hint">
-                      Paridade NexusVoice: segura Espaço no terminal, fala, solta —
-                      prompt em inglês no pane ativo. Requer <code>GROQ_API_KEY</code>.
+                      Segure Espaço, fale e solte para enviar o texto em inglês ao terminal.
+                      Requer uma chave Groq.
                       Com este modo, Space não digita espaço no terminal.
                     </p>
                   </div>
@@ -1111,7 +1116,7 @@ return (
                     <span>
                       <strong>Exibição da JARVIS</strong>
                       <span>
-                        HUD arrastável nos cantos; em “só áudio” a voz roda sem visual.
+                        Escolha o tamanho do painel ou use só áudio, sem painel na tela.
                       </span>
                     </span>
                     <span
@@ -1147,12 +1152,12 @@ return (
               {activeTab === 'fallback' && (
                 <section className="voice-settings__pane" aria-label="Fallback clássico">
                   <div className="voice-settings__card-head voice-settings__card-head--block">
-                    <h4>Pipeline clássico</h4>
+                    <h4>Serviços de voz e inteligência</h4>
                     <p>Só quando o canal Live não estiver disponível.</p>
                   </div>
                   <div className="voice-settings__form-grid">
                     <label className="agent-picker__label">
-                      STT
+                      Transcrição da fala
                       <select
                         className="agent-picker__select"
                         value={sttProvider}
@@ -1166,7 +1171,7 @@ return (
                       </select>
                     </label>
                     <label className="agent-picker__label">
-                      TTS
+                      Resposta falada
                       <select
                         className="agent-picker__select"
                         value={ttsProvider}
@@ -1180,7 +1185,7 @@ return (
                       </select>
                     </label>
                     <label className="agent-picker__label">
-                      Cérebro
+                      Inteligência da assistente
                       <select
                         className="agent-picker__select"
                         value={jarvisBrainProvider}
@@ -1194,13 +1199,18 @@ return (
                       </select>
                     </label>
                   </div>
+                  <VoiceServiceDetails groups={[
+                    { label: 'Transcrição', providers: info.stt.chain },
+                    { label: 'Resposta falada', providers: info.tts.chain },
+                    { label: 'Inteligência', providers: info.jarvisBrain.chain },
+                  ]} />
                 </section>
               )}
 
               {activeTab === 'persona' && (
                 <section className="voice-settings__pane" aria-label="Persona Jarvis">
                   <div className="voice-settings__card-head voice-settings__card-head--block">
-                    <h4>Persona</h4>
+                    <h4>Personalidade</h4>
                     <p>Como a Jarvis se apresenta e fala com você.</p>
                   </div>
                   <div className="voice-settings__persona">
@@ -1243,14 +1253,14 @@ return (
                 <section className="voice-settings__pane" aria-label="Credenciais">
                   <div className="voice-settings__card-head voice-settings__card-head--block">
                     <h4>Cofre local</h4>
-                    <p>Chaves protegidas neste Mac. Colar substitui a salva.</p>
+                    <p>Cole a chave do serviço e selecione Salvar alterações. Remover chave tem efeito imediato.</p>
                   </div>
                   {info.keys.map((key) => {
                     const credentialLink = credentialLinkForEnv(key.envVar);
                     return (
                       <div className="voice-settings__key-row" key={key.envVar}>
                         <label className="agent-picker__label voice-settings__key-label">
-                          {key.envVar}
+                          <span><ProviderLogo adapterId={key.providers[0]?.replace(/-(realtime|live)$/, '') ?? ''} label={credentialLink?.label ?? key.providers[0] ?? 'Serviço'} size="xs" /> {credentialLink?.label ?? key.providers.join(' / ')}</span>
                           <input
                             className="agent-picker__select"
                             type="password"
@@ -1261,7 +1271,7 @@ return (
                             spellCheck={false}
                           />
                           <span className="voice-settings__key-meta">
-                            {key.providers.join(' / ')} · {keyStatusText(key)}
+                            {keyStatusText(key)} · {key.envVar}
                             {credentialLink && (
                               <>
                                 {' · '}
@@ -1272,7 +1282,7 @@ return (
                                     openExternalFromAnchor(e, credentialLink.url)
                                   }
                                 >
-                                  obter key em {credentialLink.label}
+                                  Obter chave
                                 </a>
                               </>
                             )}
@@ -1283,7 +1293,7 @@ return (
                           onClick={() => void clearKey(key.envVar)}
                           disabled={!key.hasStoredKey}
                         >
-                          Clear
+                          Remover chave
                         </button>
                       </div>
                     );
@@ -1300,7 +1310,7 @@ return (
         {info && (
           <div className="agent-picker__actions voice-settings__actions">
             <button className="agent-picker__btn" onClick={testVoice} disabled={testing}>
-              {testing ? 'Testando TTS…' : 'Testar TTS'}
+              {testing ? 'Testando voz…' : 'Ouvir teste de voz'}
             </button>
             <button
               className="agent-picker__btn"

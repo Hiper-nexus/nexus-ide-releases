@@ -186,11 +186,10 @@ export function CompanionRelaySection() {
 
   return (
     <section>
-      <SettingsSectionTitle>Companion mobile (relay E2E)</SettingsSectionTitle>
+      <SettingsSectionTitle>Acesso pelo celular</SettingsSectionTitle>
       <p className="settings-detail__hint">
-        Sala cega ponta-a-ponta: os frames viajam selados em AES-256-GCM e o
-        relay nunca vê o conteúdo. A chave da sala vive só no fragmento do link —
-        compartilhe pelo QR ou copie o link. Nada de chave/token aparece em log.
+        Conecte seu celular pelo QR code ou link. A conexão tem criptografia
+        de ponta a ponta; o servidor intermediário não lê o conteúdo.
       </p>
 
       {!flagOn && !running ? (
@@ -199,26 +198,21 @@ export function CompanionRelaySection() {
             <span className="settings-chip settings-chip--warn">recurso desligado</span>
           </div>
           <p className="settings-field__note">
-            O transporte relay está atrás da flag{' '}
-            <code>{FEATURE_FLAG_IDS.remoteRelayTransport}</code> (default OFF,
-            canal <code>dev</code>). Ative-a nas flags de produto para liberar
-            start/stop e o pareamento. Ele nunca aponta para um relay público: a
-            URL do relay é sempre explícita.
+            Ative Acesso pelo celular em Experimental para iniciar uma conexão.
+            O serviço exige um endereço de servidor configurado.
           </p>
         </div>
       ) : bridgeMissing ? (
         <div className="settings-field">
           <p className="settings-field__note settings-field__note--warning">
-            Ponte do relay indisponível neste preload (remote.relay). Recarregue
-            a janela; se persistir, o wiring do preload/tipos ainda não foi
-            costurado.
+            Não foi possível acessar o serviço de conexão. Reabra o app e tente novamente.
           </p>
         </div>
       ) : (
         <>
           {!flagOn && running && (
             <p className="settings-field__note settings-field__note--warning">
-              A flag do transporte foi desligada com uma sessão ativa. Ela
+              O recurso foi desligado com uma conexão ativa. Isso
               bloqueia novas sessões; use <strong>Parar</strong> abaixo para
               encerrar a atual agora.
             </p>
@@ -227,7 +221,7 @@ export function CompanionRelaySection() {
             <span className={`settings-chip settings-chip--${chip.tone}`}>{chip.label}</span>
             {running && (
               <span className="settings-chip">
-                {info?.guestCount ?? 0} guest(s)
+                {info?.guestCount ?? 0} dispositivos conectados
               </span>
             )}
           </div>

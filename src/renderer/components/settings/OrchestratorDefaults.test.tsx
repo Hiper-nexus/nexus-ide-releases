@@ -161,6 +161,11 @@ describe("OrchestratorDefaults", () => {
     const { host, root } = mount();
     await flushEffects();
 
+    const modelChoice = host.querySelector<HTMLDetailsElement>('.settings-orchestrator__model-choice');
+    expect(modelChoice?.open).toBe(false);
+    expect(modelChoice?.querySelector('summary')?.textContent).toContain('gpt-5.4');
+    act(() => { modelChoice!.open = true; });
+
     const radios = () =>
       [...host.querySelectorAll<HTMLButtonElement>('[role="radio"]')];
     const accountSelect = host.querySelector<HTMLSelectElement>(

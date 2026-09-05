@@ -1,3 +1,4 @@
+import { ProviderLogo, hasProviderLogo } from '../ProviderLogo';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type {
   AdapterInfo,
@@ -114,7 +115,7 @@ function InstalledList({ items, empty, enriched, kind, resetFilters }: {
       const note = kind ? enrichmentOf(enriched ?? null, kind, item.name) : undefined;
       return <li key={item.file} className="settings-list__item catalog-settings__resource">
         <div className="catalog-settings__resource-name">
-          <strong>{item.name}</strong>
+          <strong>{hasProviderLogo(item.name) && <ProviderLogo adapterId={item.name} label={item.name} size="xs" />} {item.name}</strong>
           <span>{harnessOrigin(item.file)}{note ? ` · ${FUNCTIONS.find(option => option.value === note.tier)?.label ?? note.tier}` : ''}</span>
         </div>
         <div className="catalog-settings__resource-detail">
@@ -164,7 +165,7 @@ function ResourceCatalogSection({ kind, title, description, children }: {
 export function AgentsSection() {
   const squadAgents = useOrchStore(state => state.squads.filter(squad => !isMissionRuntimeSquadId(squad.id)).reduce((count, squad) => count + squad.agents.length, 0));
   return <ResourceCatalogSection kind="agent" title="Agentes" description="Arquivos de agentes instalados para orientar as ferramentas de IA.">
-    <p className="catalog-settings__note">As equipes salvas têm {squadAgents} integrantes configurados. Consulte Squads para usar esses integrantes em uma missão.</p>
+    <p className="catalog-settings__note">As equipes salvas têm {squadAgents} integrantes configurados. Consulte Equipes para usar esses integrantes em uma missão.</p>
   </ResourceCatalogSection>;
 }
 
@@ -179,28 +180,25 @@ export function MediaCatalogSection() {
   const enabled = providers.filter((p) => p.hasKey);
   return (
     <section className="catalog-settings">
-      <SettingsSectionTitle>Mídia</SettingsSectionTitle>
+      <SettingsSectionTitle>Modelos de mídia</SettingsSectionTitle>
       <p className="settings-detail__hint">
-        Modelos de geração configurados no Nexus (
-        {enabled.length} com chave registrada de{' '}
-        {providers.length}). Configuração em Mídia.
+        Consulte modelos de imagem, vídeo e voz. {enabled.length} de {providers.length} serviços conectados.
       </p>
       <CatalogStatus {...catalog} reload={() => void catalog.reload()} label="Carregando modelos de mídia…" />
       {catalog.loading || catalog.error ? null : providers.length === 0 ? (
         <EmptyState
           icon="vision"
-          title="Nenhum provider de mídia"
+          title="Nenhum serviço de mídia"
           body={
             <p>
-              Providers de geração (imagem/vídeo/áudio) aparecem aqui. Configure
-              as keys em Settings → Mídia.
+              Conecte um serviço em Mídia para criar imagens, vídeos ou voz.
             </p>
           }
           action={
             <ActionCard
               icon="key"
               title="Abrir Mídia"
-              subtitle="keys de geração"
+              subtitle="Conectar serviços"
               variant="primary"
               size="sm"
               onClick={() =>
@@ -214,15 +212,17 @@ export function MediaCatalogSection() {
           {providers.map((p) => (
             <li key={p.id} className="settings-list__item">
               <div className="settings-list__head">
+                <ProviderLogo adapterId={p.id.split('-')[0]} label={p.label} size="sm" />
                 <span className="settings-list__title">{p.label}</span>
                 <span
                   className={`settings-chip ${p.hasKey ? 'settings-chip--ok' : 'settings-chip--warn'}`}
                 >
                   {p.hasKey ? 'chave registrada' : 'sem chave'}
                 </span>
-                <span className="settings-chip">{p.kind}</span>
+                <span className="settings-chip">{{ image: 'Imagem', video: 'Vídeo', audio: 'Voz' }[p.kind]}</span>
               </div>
-              <p className="settings-list__detail">{p.models.join(' · ')}</p>
+              <p className="settings-list__detail">Padrão: {p.defaultModel}</p>
+              <details className="settings-advanced-field"><summary>Ver {p.models.length} modelos disponíveis</summary><p className="settings-list__detail">{p.models.join(' · ')}</p></details>
             </li>
           ))}
         </ul>
@@ -304,6 +304,7 @@ export function LlmsSection({ adapters }: { adapters: AdapterInfo[] }) {
           {installed.map((a) => (
             <li key={a.id} className="settings-list__item">
               <div className="settings-list__head">
+                <ProviderLogo adapterId={a.id} label={a.label} size="sm" />
                 <span className="settings-list__title">{a.label}</span>
                 <span className="settings-chip settings-chip--ok">instalado</span>
               </div>
@@ -324,7 +325,8 @@ export function LlmsSection({ adapters }: { adapters: AdapterInfo[] }) {
             {absent.map((a) => (
               <li key={a.id} className="settings-list__item settings-installable__item">
                 <div className="settings-list__head settings-installable__head">
-                  <span className="settings-list__title">{a.label}</span>
+                  <ProviderLogo adapterId={a.id} label={a.label} size="sm" />
+                <span className="settings-list__title">{a.label}</span>
                   {a.installCommand ? (
                     <button
                       className="settings-btn settings-btn--sm"
@@ -479,7 +481,7 @@ export function ToolsSection() {
                     {tool.name}
                   </span>
                 </div>
-                <p className="settings-list__detail">{tool.description}</p>
+                <details className="settings-advanced-field"><summary>O que esta ferramenta faz</summary><p className="settings-list__detail">{tool.description}</p></details>
               </li>
             ))}
           </ul>
@@ -512,16 +514,19 @@ export function PluginsSection({ adapters }: { adapters: AdapterInfo[] }) {
 }
 
 export function HooksSection() {
-  return <FileCatalogSection title="Hooks" read={readHooks}
+  return <FileCatalogSection title="Eventos dos agentes" read={readHooks}
     description="Diretórios gerados para acompanhar eventos dos agentes. A presença de uma pasta não indica que uma sessão esteja ativa."
     empty="Nenhum diretório de hooks encontrado. Eles são gerados conforme os agentes precisam de eventos de execução." />;
 }
 
 export function RulesSection() {
+  const [query, setQuery] = useState('');
+  const [team, setTeam] = useState('');
   const squads = useOrchStore((s) => s.squads);
   const rows = squads.flatMap((squad) =>
     squad.agents.map((agent) => ({
       squad: squad.name,
+      squadId: squad.id,
       source: isMissionRuntimeSquadId(squad.id) ? 'Configuração de missão' : 'Equipe salva',
       agent: agent.agentName,
       tools:
@@ -534,12 +539,22 @@ export function RulesSection() {
           : agent.allowedSkills.join(', ') || 'Nenhuma declarada',
     })),
   );
+  const filteredRows = rows.filter(row =>
+    (!team || row.squadId === team) &&
+    `${row.agent} ${row.squad} ${row.tools} ${row.skills}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
+  );
   return (
     <section className="catalog-settings">
       <SettingsSectionTitle>Permissões declaradas</SettingsSectionTitle>
       <p className="settings-detail__hint">
         Configurações declaradas por agente em equipes e missões. A execução também aplica as políticas e os limites do Nexus.
       </p>
+      <div className="catalog-settings__filters">
+        <label className="settings-field">Buscar regras<input type="search" className="settings-input" value={query} onChange={event => setQuery(event.target.value)} placeholder="Agente, equipe ou recurso" /></label>
+        <label className="settings-field">Equipe<select className="settings-input" value={team} onChange={event => setTeam(event.target.value)}><option value="">Todas as equipes e missões</option>{squads.map(squad => <option key={squad.id} value={squad.id}>{squad.name}</option>)}</select></label>
+      </div>
+      <p className="catalog-settings__count" role="status">{filteredRows.length} de {rows.length} agentes</p>
+      {rows.length > 0 && filteredRows.length === 0 && <p>Nenhum agente corresponde aos filtros.</p>}
       {rows.length === 0 ? (
         <EmptyState
           icon="key"
@@ -564,7 +579,7 @@ export function RulesSection() {
         />
       ) : (
         <ul className="settings-list">
-          {rows.map((row, index) => (
+          {filteredRows.map((row, index) => (
             <li key={index} className="settings-list__item">
               <div className="settings-list__head">
                 <span className="settings-list__title">
@@ -573,7 +588,7 @@ export function RulesSection() {
                 </span>
               </div>
               <p className="catalog-settings__metadata">{row.source}</p>
-              <dl className="catalog-settings__permissions"><dt>Ferramentas</dt><dd>{row.tools}</dd><dt>Skills</dt><dd>{row.skills}</dd></dl>
+              <dl className="catalog-settings__permissions"><dt>Ferramentas</dt><dd>{row.tools}</dd><dt>Instruções</dt><dd>{row.skills}</dd></dl>
             </li>
           ))}
         </ul>

@@ -24,7 +24,7 @@ function AuditRow({
         </span>
         <StatusPill tone={tone}>{entry.result}</StatusPill>
         <StatusPill tone={entry.user_authorized ? 'ok' : 'warn'}>
-          {entry.user_authorized ? 'confirmado' : 'sem grant'}
+          {entry.user_authorized ? 'confirmado' : 'sem confirmação registrada'}
         </StatusPill>
       </div>
       <p className="settings-list__detail">
@@ -32,7 +32,7 @@ function AuditRow({
         {entry.error ? ` · ${entry.error}` : ''}
       </p>
       {!compact && (
-        <pre className="audit-row__args">{argsPreview(entry.args)}</pre>
+        <details className="settings-advanced-field"><summary>Dados da ação</summary><pre className="audit-row__args">{argsPreview(entry.args)}</pre></details>
       )}
     </li>
   );
@@ -80,8 +80,7 @@ export function AuditSection() {
         <div>
           <SettingsSectionTitle>Auditoria</SettingsSectionTitle>
           <p className="settings-detail__hint">
-            Leitura read-only dos eventos SQLite isolados por projeto e
-            checkout. Textos, comandos com segredos e tokens chegam mascarados.
+            Consulte as ações e confirmações deste projeto. Informações sensíveis são ocultadas.
           </p>
         </div>
         <button className="settings-btn" type="button" onClick={() => void refresh()} disabled={loading}>
@@ -90,11 +89,13 @@ export function AuditSection() {
       </div>
 
       {error && <p className="settings-error">{error}</p>}
+      <details className="settings-advanced-field"><summary>Origem e horário da consulta</summary>
       <p className="settings-field__note">
         Fonte: {snapshot?.path ?? 'aguardando'} · lido em {formatDate(snapshot?.readAt)}
       </p>
 
-      <h4 className="release-section-title">Confirmations</h4>
+      </details>
+      <h4 className="release-section-title">Confirmações</h4>
       <ul className="settings-list">
         {confirmations.length === 0 ? (
           <EmptyAuditRow>Nenhuma confirmação registrada.</EmptyAuditRow>

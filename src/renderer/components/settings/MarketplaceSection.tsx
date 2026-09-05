@@ -95,10 +95,8 @@ export function MarketplaceSection() {
     <section>
       <SettingsSectionTitle>Marketplace</SettingsSectionTitle>
       <p className="settings-detail__hint">
-        Catálogo aitmpl (davila7/claude-code-templates): {agents.length} agents
-        · {skills.length} skills. Instalação em 1 clique para ~/.claude
-        (agents/.md, skills/pasta), pulando o que já
-        existe.
+        Encontre agentes e instruções para suas ferramentas de IA.
+        A instalação preserva os arquivos que você já possui.
       </p>
 
       <div className="settings-row">
@@ -112,7 +110,7 @@ export function MarketplaceSection() {
                 setCategory('');
               }}
             >
-              {k === 'agent' ? `Agents (${agents.length})` : `Skills (${skills.length})`}
+              {k === 'agent' ? `Agentes (${agents.length})` : `Instruções (${skills.length})`}
             </button>
           ))}
         </div>

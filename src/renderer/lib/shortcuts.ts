@@ -42,7 +42,7 @@ export const SHORTCUTS: readonly ShortcutEntry[] = Object.freeze([
   Object.freeze({
     id: 'command-palette',
     keys: formatShortcut('mod', 'K'),
-    action: 'Command palette: panes, missões e ações',
+    action: 'Buscar terminais, missões e ações',
     group: 'command' as const,
     primary: true,
     short: 'comandos',
@@ -84,7 +84,7 @@ export const SHORTCUTS: readonly ShortcutEntry[] = Object.freeze([
   Object.freeze({
     id: 'focus-pane-n',
     keys: formatShortcut('mod', '1-9'),
-    action: 'Focar o N-ésimo pane',
+    action: 'Selecionar um terminal pelo número',
     group: 'fleet' as const,
     primary: true,
     short: 'focar',
@@ -92,7 +92,7 @@ export const SHORTCUTS: readonly ShortcutEntry[] = Object.freeze([
   Object.freeze({
     id: 'cycle-pane',
     keys: 'Ctrl+Tab / Ctrl+Shift+Tab',
-    action: 'Cicular para o próximo/anterior pane',
+    action: 'Ir para o próximo ou o terminal anterior',
     group: 'fleet' as const,
     primary: true,
     short: 'circular',
@@ -100,7 +100,7 @@ export const SHORTCUTS: readonly ShortcutEntry[] = Object.freeze([
   Object.freeze({
     id: 'split-right',
     keys: formatShortcut('mod', 'D'),
-    action: 'Dividir o pane à direita',
+    action: 'Dividir o terminal à direita',
     group: 'fleet' as const,
     primary: true,
     short: 'dividir',
@@ -109,20 +109,20 @@ export const SHORTCUTS: readonly ShortcutEntry[] = Object.freeze([
   Object.freeze({
     id: 'split-down',
     keys: formatShortcut('mod', 'shift', 'D'),
-    action: 'Dividir o pane abaixo',
+    action: 'Dividir o terminal abaixo',
     group: 'fleet' as const,
     viewKind: 'grid' as const,
   }),
   Object.freeze({
     id: 'close-pane',
     keys: formatShortcut('mod', 'W'),
-    action: 'Fechar o pane focado',
+    action: 'Fechar o terminal selecionado',
     group: 'fleet' as const,
   }),
   Object.freeze({
     id: 'rename-pane',
     keys: 'duplo-clique',
-    action: 'Renomear o pane (no título)',
+    action: 'Renomear o terminal (no título)',
     group: 'fleet' as const,
   }),
   Object.freeze({
@@ -134,7 +134,7 @@ export const SHORTCUTS: readonly ShortcutEntry[] = Object.freeze([
   Object.freeze({
     id: 'dismiss-overlay',
     keys: 'Esc',
-    action: 'Fechar overlay/dialog em foco',
+    action: 'Fechar o painel ou diálogo aberto',
     group: 'surfaces' as const,
   }),
   Object.freeze({
@@ -149,13 +149,13 @@ export const SHORTCUTS: readonly ShortcutEntry[] = Object.freeze([
   Object.freeze({
     id: 'voice-dictate',
     keys: 'Space (segurar)',
-    action: 'Ditado no pane focado (preset NexusVoice)',
+    action: 'Ditado no terminal selecionado (preset NexusVoice)',
     group: 'surfaces' as const,
   }),
   Object.freeze({
     id: 'voice-push-to-talk',
     keys: formatShortcut('mod', 'shift', 'Space'),
-    action: 'Push-to-talk Jarvis (padrão global)',
+    action: 'Falar com a assistente (atalho global)',
     group: 'surfaces' as const,
   }),
 ]);

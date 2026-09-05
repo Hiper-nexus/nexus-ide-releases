@@ -1,3 +1,4 @@
+import { resolveWorkspaceDesignContract } from './design-system-reader';
 import { isPaneMetaTask, extractMetaPaneQuestion } from '../../shared/pane-meta-task';
 import { getMissionRoutingHints } from '../../shared/mission-routing-advice';
 export { isPaneMetaTask, extractMetaPaneQuestion } from '../../shared/pane-meta-task';
@@ -520,9 +521,10 @@ export function missionDesignContext(
 ): string {
   try {
     const parts: string[] = [];
-    if (existsSync(join(workspaceRoot, 'DESIGN.md'))) {
+    const contract = resolveWorkspaceDesignContract(workspaceRoot);
+    if (contract) {
       parts.push(
-        'O projeto tem DESIGN.md na raiz — ele é a autoridade de estilo: leia antes de qualquer tela.',
+        `O projeto tem ${contract.path} — ele é a autoridade de estilo: leia antes de qualquer tela. Referências do catálogo complementam este contrato, sem substituir suas regras.`,
       );
     }
     const catalogRoot = join(home, '.design-references');
@@ -723,7 +725,7 @@ export function agentPrompt(
         'motor conclui sozinho. Nenhum pane sem resposta = missão não fecha.'
       : '';
   const uiNote = isUiMissionText(objective)
-    ? 'Este pedido envolve interface. Use o DESIGN.md do projeto e o catálogo de design como guia de estilo.'
+    ? 'Este pedido envolve interface. Antes de editar, leia o contrato de design do projeto (DESIGN.md ou .context/docs/design-system.md) e siga seus tokens e componentes. Use o catálogo apenas como complemento.'
     : '';
   // Missão de segurança não tinha doutrina nenhuma: `WORK_KINDS` não tem um
   // kind 'security' (ela sai como feature/unknown) e `resources/doctrines/`

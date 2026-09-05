@@ -1,3 +1,4 @@
+import { ProviderLogo } from '../ProviderLogo';
 import { useEffect, useMemo, useState } from 'react';
 import type { OrchSettings } from '../../../shared/settings-types';
 import type { AdapterInfo } from '../../../shared/types';
@@ -80,12 +81,13 @@ export function DoctorEngineSettings() {
     <div className="settings-orchestrator" aria-busy={busy}>
       <div className="settings-orchestrator__head">
         <div>
-          <h4 className="settings-orchestrator__title">Motor inteligente do Doctor</h4>
+          <h4 className="settings-orchestrator__title">Assistente de diagnóstico</h4>
           <p className="settings-orchestrator__summary">
-            Diagnostica incidentes; as recuperações seguras continuam locais e determinísticas.
+            Analisa problemas do app. As recuperações seguras são executadas pelo próprio Nexus.
           </p>
         </div>
         <span className={`settings-chip ${unavailable ? 'settings-chip--warn' : 'settings-chip--ok'}`}>
+          {configured && <ProviderLogo adapterId={configured.id} label={configured.label} size="xs" />}
           {value.doctorAdapterId === 'auto' ? 'Automático · recomendado' : unavailable ? 'Indisponível · fallback automático' : selected?.label}
         </span>
       </div>
@@ -121,7 +123,7 @@ export function DoctorEngineSettings() {
         </label>
       </div>
       <p className="settings-field__note">
-        Se o CLI, conta ou modelo falhar, o Nexus troca para a cadeia disponível. Nenhum cliente fica dependente do Grok.
+        Se o serviço escolhido falhar, o Nexus tenta outra opção disponível.
       </p>
     </div>
   );

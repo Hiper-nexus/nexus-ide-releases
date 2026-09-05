@@ -3,7 +3,8 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProductFlagResolutionRow } from '../../../shared/product-api';
-import { describeFlagReason, LabsSection } from './LabsSection';
+import { BUILTIN_FEATURE_FLAGS } from '../../../shared/feature-flags';
+import { describeFlagReason, LABS_FLAG_COPY, LabsSection } from './LabsSection';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
@@ -80,7 +81,7 @@ describe('LabsSection', () => {
     const switches = host.querySelectorAll('[role="switch"]');
     expect(switches[0]?.getAttribute('aria-checked')).toBe('true');
     expect(switches[1]?.getAttribute('aria-checked')).toBe('false');
-    expect(host.textContent).toContain('padrão do build');
+    expect(host.textContent).toContain('padrão do app');
   });
 
   it('toggles a flag via flagsSetOverride and reflects the returned list', async () => {
@@ -103,7 +104,7 @@ describe('LabsSection', () => {
     expect(
       host.querySelector('[role="switch"]')?.getAttribute('aria-checked'),
     ).toBe('true');
-    expect(host.textContent).toContain('override manual');
+    expect(host.textContent).toContain('escolha personalizada');
   });
 
   it('offers "Restaurar padrão" only for overrides and clears with null', async () => {
@@ -136,16 +137,24 @@ describe('LabsSection', () => {
 
     const toggle = host.querySelector<HTMLButtonElement>('[role="switch"]');
     expect(toggle?.disabled).toBe(true);
-    expect(host.textContent).toContain('kill switch');
+    expect(host.textContent).toContain('desativado pelo sistema');
   });
 });
 
 describe('describeFlagReason', () => {
   it('translates every known resolution reason', () => {
-    expect(describeFlagReason('default')).toBe('padrão do build');
-    expect(describeFlagReason('override')).toBe('override manual');
-    expect(describeFlagReason('kill-switch')).toBe('kill switch');
-    expect(describeFlagReason('channel-blocked')).toBe('bloqueada pelo canal');
+    expect(describeFlagReason('default')).toBe('padrão do app');
+    expect(describeFlagReason('override')).toBe('escolha personalizada');
+    expect(describeFlagReason('kill-switch')).toBe('desativado pelo sistema');
+    expect(describeFlagReason('channel-blocked')).toBe('indisponível nesta versão');
     expect(describeFlagReason('unknown-flag')).toBe('unknown-flag');
   });
+});
+
+
+it('gives every built-in experimental resource a readable label and explanation', () => {
+  for (const flag of BUILTIN_FEATURE_FLAGS) {
+    expect(LABS_FLAG_COPY[flag.id]?.title).toBeTruthy();
+    expect(LABS_FLAG_COPY[flag.id]?.hint).toBeTruthy();
+  }
 });

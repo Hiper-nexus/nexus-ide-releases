@@ -121,12 +121,12 @@ describe('ModelRankingSection', () => {
       await Promise.resolve();
     });
 
-    expect(host.textContent).toContain('Motor de ranking LLM');
-    expect(host.textContent).toContain('faixas de custo');
-    expect(host.textContent).toContain('default DOWN');
+    expect(host.textContent).toContain('Comparar modelos');
+    expect(host.textContent).toContain('Faixas de custo');
+    expect(host.textContent).toContain('estimativas, não avaliações reais');
     expect(host.textContent).toContain('nexus-v1');
     expect(host.textContent).toContain('3 modelos');
-    expect(host.textContent).toContain('1 com CLI live aqui');
+    expect(host.textContent).toContain('1 com ferramenta instalada');
 
     act(() => root.unmount());
   });
@@ -139,13 +139,13 @@ describe('ModelRankingSection', () => {
     });
 
     // Operational bands
-    expect(host.textContent).toContain('Faixas operacionais');
+    expect(host.textContent).toContain('Faixas de custo');
     expect(host.textContent).toContain('Rápido');
     expect(host.textContent).toContain('Equilibrado');
     expect(host.textContent).toContain('Profundo');
 
     // Mission picks
-    expect(host.textContent).toContain('Picks do radar por missão');
+    expect(host.textContent).toContain('Destaques por tipo de tarefa');
     expect(host.textContent).toContain('gpt-5-pro');
     expect(host.textContent).toContain('claude-3-7-sonnet');
     expect(host.textContent).toContain('grok-code-fast');
@@ -163,14 +163,14 @@ describe('ModelRankingSection', () => {
     const chips = host.querySelectorAll<HTMLButtonElement>('.rank-ops__chip');
     expect(chips.length).toBe(5);
 
-    const codingChip = Array.from(chips).find((c) => c.textContent?.includes('Coding'));
+    const codingChip = Array.from(chips).find((c) => c.textContent?.includes('Programação'));
     expect(codingChip).not.toBeUndefined();
 
     await act(async () => {
       codingChip?.click();
     });
 
-    expect(host.textContent).toContain('Corrida · Coding');
+    expect(host.textContent).toContain('Comparação · Programação');
     act(() => root.unmount());
   });
 

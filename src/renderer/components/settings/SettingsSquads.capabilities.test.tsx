@@ -307,8 +307,8 @@ describe('Settings → Squads retained management capability', () => {
     const host = renderSquads();
     await settle();
 
-    expect(host.textContent).toMatch(/Nenhum squad salvo/i);
-    expect(buttonByName(host, /Criar squad/i)).not.toBeNull();
+    expect(host.textContent).toMatch(/Nenhuma equipe salva/i);
+    expect(buttonByName(host, /Criar equipe/i)).not.toBeNull();
     expect(buttonByName(host, /Importar/i)).not.toBeNull();
     expect(buttonByName(host, /Exportar/i)?.disabled).toBe(true);
   });
@@ -317,7 +317,7 @@ describe('Settings → Squads retained management capability', () => {
     const host = renderSquads();
     await settle();
 
-    act(() => requiredButton(host, /Criar squad/i).click());
+    act(() => requiredButton(host, /Criar equipe/i).click());
     await settle();
     const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]');
     expect(dialog).not.toBeNull();
@@ -397,7 +397,7 @@ describe('Settings → Squads retained management capability', () => {
     );
     expect(squadMocks.deleteSquad).toHaveBeenCalledTimes(1);
     expect(
-      host.querySelector('[aria-label="Squads salvos"]')?.textContent ?? '',
+      host.querySelector('[aria-label="Equipes salvas"]')?.textContent ?? '',
     ).not.toMatch(/Equipe revisada/i);
   });
 
@@ -409,7 +409,7 @@ describe('Settings → Squads retained management capability', () => {
     const host = renderSquads();
     await settle();
 
-    act(() => requiredButton(host, /Criar squad/i).click());
+    act(() => requiredButton(host, /Criar equipe/i).click());
     await settle();
     const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]');
     expect(dialog).not.toBeNull();

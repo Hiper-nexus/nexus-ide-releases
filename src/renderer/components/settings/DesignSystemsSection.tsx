@@ -47,17 +47,20 @@ export function DesignSystemsSection() {
   async function load(search = '') {
     setLoading(true);
     setError(null);
-    const res = await window.nexus.orch.searchDesignSystems({
-      query: search,
-      limit: 50,
-      sort: 'popular',
-    });
-    setLoading(false);
-    if (!res.ok) {
-      setError(res.error ?? 'designmd.ai unavailable');
-      return;
+    try {
+      const res = await window.nexus.orch.searchDesignSystems({
+        query: search, limit: 50, sort: 'popular',
+      });
+      if (!res.ok) {
+        setError('Não foi possível buscar referências. Tente novamente.');
+        return;
+      }
+      setKits(res.kits);
+    } catch {
+      setError('Não foi possível buscar referências. Tente novamente.');
+    } finally {
+      setLoading(false);
     }
-    setKits(res.kits);
   }
 
   useEffect(() => {
@@ -77,21 +80,22 @@ export function DesignSystemsSection() {
 
   async function importKit(slug: string, targetPath?: string) {
     setImports((prev) => ({ ...prev, [slug]: { status: 'loading' } }));
-    const res = await window.nexus.orch.importDesignSystem({
-      identifier: slug,
-      ...(targetPath ? { targetPath } : {}),
-    });
-    setImports((prev) => ({
-      ...prev,
-      [slug]: res.ok
-        ? {
-            status: 'success',
-            draftId: res.draftId,
-            targetPath: res.targetPath,
-            servedBy: res.servedBy,
-          }
-        : { status: 'error', message: res.error },
-    }));
+    try {
+      const res = await window.nexus.orch.importDesignSystem({
+        identifier: slug,
+        ...(targetPath ? { targetPath } : {}),
+      });
+      setImports((prev) => ({
+        ...prev,
+        [slug]: res.ok
+          ? { status: 'success', draftId: res.draftId, targetPath: res.targetPath, servedBy: res.servedBy }
+          : { status: 'error', message: 'Não foi possível importar. Tente novamente.' },
+      }));
+    } catch {
+      setImports((prev) => ({ ...prev,
+        [slug]: { status: 'error', message: 'Não foi possível importar. Tente novamente.' },
+      }));
+    }
   }
 
   function importStatus(slug: string): ImportState {
@@ -100,19 +104,18 @@ export function DesignSystemsSection() {
 
   return (
     <section>
-      <SettingsSectionTitle>Design Systems</SettingsSectionTitle>
+      <SettingsSectionTitle>Referências de design</SettingsSectionTitle>
       <p className="settings-detail__hint">
-        Catálogo público de DESIGN.md no designmd.ai. Sem a chave
-        <code> external:designmd-api-key</code> o import cai automaticamente no
-        catálogo local e no getdesign — o chip mostra qual fonte serviu. Kits
-        importados viram ContextDrafts propostos para revisão independente.
+        Encontre estilos para orientar cores, fontes e componentes das suas interfaces.
+        A importação cria uma proposta para revisão antes de aplicar ao projeto.
       </p>
 
       <div className="settings-row">
         <input
           className="settings-input"
           value={query}
-          placeholder="buscar kits…"
+          placeholder="Buscar referências…"
+          aria-label="Buscar referências de design"
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter') void load(query);
@@ -128,48 +131,53 @@ export function DesignSystemsSection() {
       </div>
 
       {error && (
-        <p className="settings-detail__hint">
+        <p className="settings-detail__hint" role="alert">
           {error}{' '}
           <button className="settings-btn" onClick={() => void load(query)}>
-            tentar de novo
+            Tentar novamente
           </button>
         </p>
       )}
 
+      {loading && <p className="settings-skeleton" role="status">Buscando referências…</p>}
       <ul className="settings-list">
         {filtered.map((kit) => {
           const state = importStatus(kit.slug);
           return (
             <li key={kit.slug} className="settings-list__item">
               <div className="settings-list__head">
-                <span className="settings-list__title settings-list__title--mono">
+                <span className="settings-list__title">
                   {kit.name}
                 </span>
                 <span className="settings-chip">{kit.license}</span>
                 <span className="settings-chip settings-chip--ok">
-                  {kit.likeCount} likes
+                  {kit.likeCount} curtidas
                 </span>
               </div>
               <p className="settings-list__detail">{kit.description}</p>
-              <p className="settings-list__detail">
-                {kit.slug} · {kit.tags.join(' · ') || 'sem tags'}
-              </p>
+              <details className="settings-advanced-field">
+                <summary>Sobre a referência</summary>
+                <p className="settings-list__detail">{kit.slug} · {kit.tags.join(' · ') || 'Sem categorias'}</p>
+              </details>
               <div className="settings-row">
                 <button
                   className="settings-btn"
                   onClick={() => void importKit(kit.slug)}
                   disabled={state.status === 'loading'}
                 >
-                  {state.status === 'loading' ? 'Importando…' : 'Importar'}
+                  {state.status === 'loading' ? 'Importando…' : 'Importar referência'}
                 </button>
                 {state.status === 'success' && (
                   <>
                     <span className="settings-chip settings-chip--ok">
-                      Draft {state.draftId.slice(0, 8)} em {state.targetPath}
+                      Proposta criada · aguardando revisão
                     </span>
-                    <span className="settings-chip">
-                      via {SOURCE_LABELS[state.servedBy] ?? state.servedBy}
-                    </span>
+                    <details className="settings-advanced-field">
+                      <summary>Detalhes da importação</summary>
+                      <p className="settings-list__detail">Fonte: {SOURCE_LABELS[state.servedBy]}</p>
+                      <p className="settings-list__detail">Arquivo proposto: {state.targetPath}</p>
+                      <p className="settings-list__detail">Proposta: {state.draftId}</p>
+                    </details>
                   </>
                 )}
                 {state.status === 'error' && (
@@ -185,11 +193,10 @@ export function DesignSystemsSection() {
       {!loading && filtered.length === 0 && !error && (
         <EmptyState
           icon="grid"
-          title="Nenhum kit encontrado"
+          title="Nenhuma referência encontrada"
           body={
             <p>
-              Ajuste o filtro ou adicione um DESIGN.md / kit designmd no
-              projeto.
+              Tente outro nome ou estilo e selecione Buscar.
             </p>
           }
         />

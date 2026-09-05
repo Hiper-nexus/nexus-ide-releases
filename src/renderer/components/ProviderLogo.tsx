@@ -1,3 +1,7 @@
+import groqLogo from '../assets/provider-logos/groq.svg';
+import googleLogo from '../assets/provider-logos/google-color.svg';
+import replicateLogo from '../assets/provider-logos/replicate.svg';
+import elevenlabsLogo from '../assets/provider-logos/elevenlabs.svg';
 import claudeLogo from '../assets/provider-logos/claude.svg';
 import codexLogo from '../assets/provider-logos/codex.svg';
 import kimiLogo from '../assets/provider-logos/kimi.svg';
@@ -8,17 +12,22 @@ import aiderLogo from '../assets/provider-logos/aider.png';
 import antigravityLogo from '../assets/provider-logos/agy.svg';
 import opencodeLogo from '../assets/provider-logos/opencode.svg';
 import openclaudeLogo from '../assets/provider-logos/openclaude.svg';
-import qwenLogo from '../assets/provider-logos/qwen.svg';
-import geminiLogo from '../assets/provider-logos/gemini.svg';
-import deepseekLogo from '../assets/provider-logos/deepseek.svg';
+import qwenLogo from '../assets/provider-logos/qwen-color.svg';
+import geminiLogo from '../assets/provider-logos/gemini-color.svg';
+import deepseekLogo from '../assets/provider-logos/deepseek-color.svg';
 import sakanaLogo from '../assets/provider-logos/sakana.svg';
-import qoderLogo from '../assets/provider-logos/qoder.svg';
+import qoderLogo from '../assets/provider-logos/qoder-color.svg';
 import ompLogo from '../assets/provider-logos/omp.svg';
 import museLogo from '../assets/provider-logos/muse.svg';
 import primeAgentLogo from '../assets/provider-logos/prime-agent.svg';
-import cursorAgentLogo from '../assets/provider-logos/cursor-agent.svg';
+import cursorAgentLogo from '../assets/provider-logos/cursor.svg';
 
 const PROVIDER_LOGOS: Record<string, { src: string; mono?: boolean }> = {
+  groq: { src: groqLogo, mono: true },
+  google: { src: googleLogo },
+  openai: { src: codexLogo, mono: true },
+  replicate: { src: replicateLogo, mono: true },
+  elevenlabs: { src: elevenlabsLogo, mono: true },
   claude: { src: claudeLogo },
   codex: { src: codexLogo, mono: true },
   kimi: { src: kimiLogo },
@@ -27,6 +36,7 @@ const PROVIDER_LOGOS: Record<string, { src: string; mono?: boolean }> = {
   longcat: { src: longcatLogo },
   aider: { src: aiderLogo },
   agy: { src: antigravityLogo },
+  antigravity: { src: antigravityLogo },
   opencode: { src: opencodeLogo, mono: true },
   openclaude: { src: openclaudeLogo },
   // Marcas geométricas originais do Nexus (ver NOTICE.md): cada uma carrega a
@@ -40,8 +50,12 @@ const PROVIDER_LOGOS: Record<string, { src: string; mono?: boolean }> = {
   omp: { src: ompLogo },
   muse: { src: museLogo },
   'prime-agent': { src: primeAgentLogo },
-  'cursor-agent': { src: cursorAgentLogo },
+  'cursor-agent': { src: cursorAgentLogo, mono: true },
 };
+
+export function hasProviderLogo(adapterId: string): boolean {
+  return Object.hasOwn(PROVIDER_LOGOS, adapterId);
+}
 
 export function ProviderLogo({
   adapterId,
@@ -68,7 +82,7 @@ export function ProviderLogo({
       aria-label={`Logo ${label}`}
     >
       {logo ? (
-        <img src={logo.src} alt="" aria-hidden="true" />
+        <img src={logo.src} alt="" aria-hidden="true" width={24} height={24} />
       ) : (
         <span className="provider-logo__fallback" aria-hidden="true">
           {fallback || label.slice(0, 1).toUpperCase()}

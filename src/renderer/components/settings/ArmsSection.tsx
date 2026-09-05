@@ -89,10 +89,8 @@ export function ArmsSection(): React.ReactElement {
     <section className="settings-section" aria-label="Conectores">
       <SettingsSectionTitle>Conectores</SettingsSectionTitle>
       <p className="settings-detail__hint">
-        Token para orquestradores externos (Grok Bot, Cursor) observarem o
-        Nexus por MCP stdio: estado do app em JSON e eventos com cursor. Só
-        metadado — o conector nunca lê conteúdo de terminal, prompts ou
-        segredos.
+        Permita que ferramentas externas acompanhem o estado do Nexus.
+        Elas não recebem o conteúdo dos terminais, mensagens ou segredos.
       </p>
 
       {status === null ? (
@@ -183,9 +181,7 @@ export function ArmsSection(): React.ReactElement {
           {error && <p className="arms__error">{error}</p>}
 
           <p className="settings-detail__hint">
-            App fechado, token errado ou porta mudou? O conector responde
-            estado de erro limpo por chamada — a sessão do cliente externo
-            continua viva.
+            Mantenha o Nexus aberto enquanto usa a conexão. Você pode revogar o acesso a qualquer momento.
           </p>
         </div>
       )}

@@ -19,3 +19,14 @@ their respective owners.
 
 The application keeps these assets local so the settings UI works offline and
 does not contact provider domains merely to render an icon.
+
+- `google-color.svg`, `replicate.svg`, and `elevenlabs.svg` were sourced from
+  `@lobehub/icons-static-svg` 1.91.0 (MIT), without geometry changes.
+
+- `groq.svg` and `gemini-color.svg` were sourced from
+  `@lobehub/icons-static-svg` 1.91.0 (MIT). Gemini now uses this vendor mark;
+  the old `gemini.svg` remains an unused original identifier.
+
+- `deepseek-color.svg`, `qwen-color.svg`, `qoder-color.svg`, and `cursor.svg`
+  are vendor marks from `@lobehub/icons-static-svg` 1.91.0 (MIT), replacing
+  original identifiers for those services in ProviderLogo.

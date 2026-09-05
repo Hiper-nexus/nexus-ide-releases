@@ -1,15 +1,23 @@
 import { useEffect, useState } from 'react';
 import type { ReleaseReadinessSnapshot } from '../../../shared/ops-ipc';
-import type { UpdateState } from '../../../shared/update-ipc';
+import type { UpdatePhase, UpdateState } from '../../../shared/update-ipc';
 import { MetricTile, statusTone, StatusPill } from './ops-format';
+
+const UPDATE_LABELS: Record<UpdatePhase, string> = {
+  unsupported: 'Atualização manual', idle: 'Ainda não verificado', checking: 'Verificando',
+  uptodate: 'App atualizado', available: 'Nova versão disponível', downloading: 'Baixando',
+  ready: 'Pronto para reiniciar', error: 'Não foi possível atualizar',
+};
 
 export function UpdateReadinessPanel() {
   const [readiness, setReadiness] = useState<ReleaseReadinessSnapshot | null>(null);
   const [update, setUpdate] = useState<UpdateState | null>(null);
   const [checking, setChecking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const refresh = async (checkUpdate = false) => {
     setChecking(true);
+    setError(null);
     try {
       const [nextReadiness, nextUpdate] = await Promise.all([
         window.nexus.ops.releaseReadiness(),
@@ -17,6 +25,10 @@ export function UpdateReadinessPanel() {
       ]);
       setReadiness(nextReadiness);
       setUpdate(nextUpdate);
+    } catch {
+      setReadiness(null);
+      setUpdate(null);
+      setError('Não foi possível consultar as atualizações. Tente novamente.');
     } finally {
       setChecking(false);
     }
@@ -33,13 +45,14 @@ export function UpdateReadinessPanel() {
 
   return (
     <>
-      <h4 className="release-section-title">Readiness · update</h4>
+      <h4 className="release-section-title">Atualizações</h4>
+      {error && <p className="settings-error" role="alert">{error}</p>}
       <div className="ops-metric-grid">
         <MetricTile
-          label="Updater"
-          value={update?.phase ?? 'carregando'}
+          label="Atualização"
+          value={update ? UPDATE_LABELS[update.phase] : error ? 'Indisponível' : 'Carregando'}
           tone={update?.phase === 'error' ? 'danger' : update?.phase === 'ready' ? 'ok' : 'warn'}
-          detail={`source=${update?.source ?? readiness?.updateSource ?? 'none'}; install=${update?.canInstall ? 'sim' : 'dev/check-only'}`}
+          detail={update?.canInstall ? 'Instalação disponível neste app.' : 'Esta instância permite consultar atualizações.'}
         />
         <MetricTile
           label="Versão"
@@ -48,6 +61,7 @@ export function UpdateReadinessPanel() {
           detail={`package=${readiness?.packageVersion ?? '...'}; notes=${readiness?.releaseNotesVersion ?? '...'}`}
         />
       </div>
+      <details className="settings-advanced-field"><summary>Verificações técnicas da instalação</summary>
       <ul className="settings-list">
         {(readiness?.checks ?? []).map((check) => (
           <li key={check.id} className="settings-list__item release-note">
@@ -59,9 +73,10 @@ export function UpdateReadinessPanel() {
           </li>
         ))}
       </ul>
+      </details>
       <div className="settings-row">
         <button className="settings-btn" type="button" onClick={() => void refresh(true)} disabled={checking}>
-          {checking ? 'Checando' : 'Checar update'}
+          {checking ? 'Verificando…' : 'Verificar atualizações'}
         </button>
       </div>
     </>

@@ -137,7 +137,7 @@ export function AudioDeviceControls() {
             onChange={(inputDeviceId) => void updateAudio({ inputDeviceId })}
           />
           <span className="settings-field__note">
-            Fonte única do wake word, push-to-talk e Jarvis Live.
+            Usado para ditado, ativação por voz e conversa com a assistente.
           </span>
         </label>
 
@@ -150,11 +150,11 @@ export function AudioDeviceControls() {
             onChange={(outputDeviceId) => void updateAudio({ outputDeviceId })}
           />
           <span className="settings-field__note">
-            Respostas Classic, Realtime e prévias de voz saem por aqui.
+            Dispositivo usado para ouvir a assistente e as prévias de voz.
           </span>
           {audio.outputDeviceId !== 'default' && !canSelectOutput && (
             <span className="settings-field__note settings-field__note--warning">
-              Este runtime não consegue fixar uma saída específica; use Padrão do sistema.
+              Não é possível escolher uma saída neste sistema. Use Padrão do sistema.
             </span>
           )}
         </label>

@@ -26,15 +26,15 @@ function VisionConsentPanel({
           Permitir envio de imagem da tela para nuvem
         </p>
         <p className="ops-consent-panel__copy">
-          Quando ativo, o main libera a última captura bruta da janela Nexus
-          somente com token de consentimento. Ao desativar, o token é invalidado
-          e a captura bruta em memória é descartada.
+          Permite que a IA analise imagens da janela do Nexus nesta sessão.
+          Ao desativar, o envio é bloqueado e a imagem temporária é apagada.
         </p>
       </div>
       <button
         type="button"
         role="switch"
         aria-checked={active}
+        aria-label="Permitir envio de imagem da tela para nuvem"
         className={`ops-switch ${active ? 'ops-switch--on' : ''}`}
         disabled={pending}
         onClick={onToggle}
@@ -134,15 +134,14 @@ export function VisionSection() {
     <section>
       <div className="settings-detail__split-head">
         <div>
-          <SettingsSectionTitle>Vision</SettingsSectionTitle>
+          <SettingsSectionTitle>Captura de tela</SettingsSectionTitle>
           <p className="settings-detail__hint">
-            Jarvis só envia imagem da janela Nexus para provedores multimodais
-            quando você permite nesta sessão. Capturas locais e OCR continuam
-            limitados à janela do Nexus.
+            Escolha se a IA pode receber imagens da janela do Nexus.
+            A captura local permanece limitada a essa janela.
           </p>
         </div>
         <StatusPill tone={allowCloudImage ? 'ok' : 'warn'}>
-          {allowCloudImage ? 'consent ativo' : 'local only'}
+          {allowCloudImage ? 'Envio permitido' : 'Somente local'}
         </StatusPill>
       </div>
 
@@ -155,16 +154,16 @@ export function VisionSection() {
 
       <div className="ops-metric-grid">
         <MetricTile
-          label="Screen Recording"
+          label="Permissão de captura"
           value={permissionLabel(permission)}
           tone={permissionTone(permission)}
-          detail="Permissão macOS para capturar a janela Nexus."
+          detail="Acesso do sistema à captura da janela Nexus."
         />
         <MetricTile
-          label="Token de consent"
-          value={consentToken ? 'emitido' : 'inativo'}
+          label="Autorização da sessão"
+          value={consentToken ? 'Ativa' : 'Inativa'}
           tone={consentToken ? 'ok' : 'warn'}
-          detail={consentToken ? 'Válido só até desativar ou reiniciar.' : 'Imagem bruta não sai do main.'}
+          detail={consentToken ? 'Válido só até desativar ou reiniciar.' : 'Envio de imagens bloqueado.'}
         />
         <MetricTile
           label="Última captura"
@@ -178,7 +177,7 @@ export function VisionSection() {
           Testar captura local
         </button>
         <button className="settings-btn" type="button" onClick={() => void refreshPermission()}>
-          Rechecar permissão
+          Verificar permissão
         </button>
         {permission !== 'granted' && window.nexus.platform === 'darwin' && (
           <button
@@ -197,10 +196,8 @@ export function VisionSection() {
       </div>
       {permission !== 'granted' && window.nexus.platform === 'darwin' && (
         <p className="settings-field__note">
-          Fluxo: 1) “Pedir permissão ao macOS” registra o NexusIDE na lista de
-          Gravação de Tela (sem “+” nem buscar pasta); 2) nos Ajustes, vire a
-          chave do NexusIDE; 3) feche e reabra o app — o macOS só aplica a
-          permissão no próximo start.
+          Peça permissão, ative o NexusIDE em Gravação de Tela nos Ajustes
+          do Sistema e reabra o app.
         </p>
       )}
       {captureStatus && <p className="settings-field__note">{captureStatus}</p>}

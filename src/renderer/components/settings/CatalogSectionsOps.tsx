@@ -1,3 +1,4 @@
+import { ProviderLogo } from '../ProviderLogo';
 import { useEffect, useState } from 'react';
 import type {
   AgentSpecWriteRequest,
@@ -96,10 +97,9 @@ export function RecipesSection() {
 
   return (
     <section>
-      <SettingsSectionTitle>Recipes</SettingsSectionTitle>
+      <SettingsSectionTitle>Fluxos de trabalho</SettingsSectionTitle>
       <p className="settings-detail__hint">
-        Lint de squads/recipes contra catálogo local. Referências inexistentes
-        precisam de gap explícito no formato <code>gap:nome: motivo</code>.
+        Verifique se as equipes e os fluxos têm os recursos necessários para funcionar.
       </p>
 
       <div className="settings-pill-row">
@@ -108,7 +108,7 @@ export function RecipesSection() {
           onClick={() => setRefreshTick((tick) => tick + 1)}
           disabled={loading}
         >
-          {loading ? 'Atualizando…' : 'Atualizar lint'}
+          {loading ? 'Atualizando…' : 'Verificar recursos'}
         </button>
         {(overlay?.stacks.length ? overlay.stacks : ['workspace']).map((stack) => (
           <span key={stack} className="settings-chip">
@@ -116,13 +116,13 @@ export function RecipesSection() {
           </span>
         ))}
         <span className={`settings-chip ${overlay?.ok ? 'settings-chip--ok' : 'settings-chip--warn'}`}>
-          {overlay?.ok ? 'lint ok' : `${issues.length} issue(s)`}
+          {overlay?.ok ? 'Recursos verificados' : `${issues.length} pendências`}
         </span>
       </div>
 
       <div className="settings-list__item">
         <div className="settings-list__head">
-          <span className="settings-list__title">Overlay de stacks</span>
+          <span className="settings-list__title">Tecnologias do projeto</span>
           <button className="settings-btn" onClick={() => void saveStacks()}>
             Salvar
           </button>
@@ -143,33 +143,36 @@ export function RecipesSection() {
                 <span className="settings-list__title">{recipe.title}</span>
                 <span className="settings-chip">{recipe.agents.join(' · ')}</span>
               </div>
+              <details className="settings-advanced-field"><summary>Recursos necessários</summary>
               <p className="settings-list__detail">
-                tools: {recipe.tools.join(', ')}
+                Ferramentas: {recipe.tools.join(', ')}
               </p>
               {recipe.gaps.length > 0 && (
-                <p className="settings-list__detail">gaps: {recipe.gaps.join(', ')}</p>
+                <p className="settings-list__detail">Pendências: {recipe.gaps.join(', ')}</p>
               )}
+              </details>
             </li>
           ))}
         </ul>
       )}
 
+      <details className="settings-advanced-field"><summary>Criar um agente personalizado</summary>
       <div className="settings-list__item">
         <div className="settings-list__head">
-          <span className="settings-list__title">Agent spec writer</span>
+          <span className="settings-list__title">Criar arquivo de agente</span>
           <button
             className="settings-btn"
             onClick={() => void saveAgentSpec()}
             disabled={!agentSpec.name.trim()}
           >
-            Salvar agent
+            Salvar agente
           </button>
         </div>
         <div className="settings-form-grid">
           <input
             className="settings-input"
             value={agentSpec.name}
-            placeholder="nome-do-agent"
+            placeholder="Nome do agente"
             onChange={(e) => setAgentSpec((prev) => ({ ...prev, name: e.target.value }))}
           />
           <input
@@ -181,7 +184,7 @@ export function RecipesSection() {
           <input
             className="settings-input"
             value={agentSpec.effort}
-            placeholder="effort"
+            placeholder="Nível de raciocínio"
             onChange={(e) => setAgentSpec((prev) => ({ ...prev, effort: e.target.value }))}
           />
           <input
@@ -194,7 +197,7 @@ export function RecipesSection() {
         <input
           className="settings-input"
           value={(agentSpec.tools ?? []).join(', ')}
-          placeholder="tools separadas por vírgula"
+          placeholder="Ferramentas separadas por vírgula"
           onChange={(e) =>
             setAgentSpec((prev) => ({
               ...prev,
@@ -205,7 +208,7 @@ export function RecipesSection() {
         <textarea
           className="settings-textarea"
           value={agentSpec.systemPrompt}
-          placeholder="system prompt"
+          placeholder="Instruções do agente"
           onChange={(e) =>
             setAgentSpec((prev) => ({ ...prev, systemPrompt: e.target.value }))
           }
@@ -214,6 +217,7 @@ export function RecipesSection() {
           <p className="settings-list__detail">{agentSpecResult}</p>
         )}
       </div>
+      </details>
 
       {categories.length > 0 && (
         <ul className="settings-list settings-list--compact">
@@ -230,9 +234,10 @@ export function RecipesSection() {
 
       {issues.length === 0 ? (
         <p className="settings-detail__hint">
-          Nenhum problema encontrado em allowedTools/allowedSkills.
+          Nenhuma pendência nas ferramentas e instruções declaradas.
         </p>
       ) : (
+        <details className="settings-advanced-field"><summary>Ver {issues.length} pendências de configuração</summary>
         <ul className="settings-list">
           {issues.map((issue, index) => (
             <li key={`${issue.squadId}-${issue.agentId}-${issue.ref}-${index}`} className="settings-list__item">
@@ -248,7 +253,7 @@ export function RecipesSection() {
               </p>
             </li>
           ))}
-        </ul>
+        </ul>        </details>
       )}
     </section>
   );
@@ -280,7 +285,7 @@ export function ShortcutsSection() {
     <section className="catalog-settings catalog-settings--shortcuts">
       <SettingsSectionTitle>Atalhos</SettingsSectionTitle>
       <p className="settings-detail__hint">
-        Teclado e gestos do workspace — a mesma lista do cheatsheet (
+        Atalhos de teclado e mouse. Abra esta lista com (
         {formatShortcut('mod', '/')}).
       </p>
       {SHORTCUT_GROUP_ORDER.map((groupId) => (
@@ -388,8 +393,7 @@ export function RemoteSection() {
         <div>
           <SettingsSectionTitle>Remoto</SettingsSectionTitle>
           <p className="settings-detail__hint">
-            Conecte um servidor uma vez pelo apelido. O celular (bridge) fica
-            abaixo — é outra porta.
+            Conecte servidores pelo apelido ou acesse o Nexus pelo celular na rede local.
           </p>
         </div>
       </header>
@@ -409,10 +413,10 @@ export function RemoteSection() {
         <div className="settings-card__head">
           <div className="settings-card__titles">
             <h3 id="remote-bridge-title" className="settings-card__title">
-              Bridge mobile
+              Celular na rede local
             </h3>
             <p className="settings-card__subtitle">
-              Pareie o companion na mesma rede com código e QR.
+              Conecte o celular na mesma rede usando o código ou QR code.
             </p>
           </div>
           <span
@@ -433,7 +437,7 @@ export function RemoteSection() {
             }}
             title="Só este computador (127.0.0.1)"
           >
-            Iniciar (local)
+            Iniciar neste computador
           </button>
           <button
             type="button"
@@ -443,7 +447,7 @@ export function RemoteSection() {
             }}
             title="Expõe na rede local para o celular conectar — só faça em redes de confiança"
           >
-            Iniciar (LAN — celular)
+            Iniciar na rede local
           </button>
           <button
             type="button"
@@ -461,7 +465,7 @@ export function RemoteSection() {
               setInfo(await window.nexus.remote.bridgeRevokeTokens());
             }}
           >
-            Revogar tokens
+            Revogar acessos
           </button>
         </div>
 
@@ -573,7 +577,7 @@ export function RemoteSection() {
             </select>
           </label>
           <label className="settings-field">
-            <span className="settings-field__label">CLI</span>
+            <span className="settings-field__label"><ProviderLogo adapterId={cli} label={cli} size="xs" /> Ferramenta de IA</span>
             <select
               className="settings-input"
               value={cli}

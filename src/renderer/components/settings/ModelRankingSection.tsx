@@ -5,7 +5,6 @@ import { useProviderStore } from "../../state/provider-store";
 import { useQuotaStore } from "../../state/quota-store";
 import {
   OPERATIONAL_BAND_LABELS,
-  OPERATIONAL_DOCTRINE,
   RADAR_AXES,
   SORT_LABELS,
   SORT_MISSION,
@@ -316,7 +315,7 @@ function MissionPicks({
       label: SORT_MISSION.security,
       pick: pickForDimension(entries, "security"),
     },
-    { key: "value", label: "Melhor custo / overall", pick: pickValue(entries) },
+    { key: "value", label: "Relação entre custo e nota geral", pick: pickValue(entries) },
   ];
 
   return (
@@ -346,12 +345,12 @@ function MissionPicks({
                 size="sm"
               />
               <span className="rank-missions__kind">
-                {m.key === "value" ? "Value" : SORT_LABELS[m.key]}
+                {m.key === "value" ? "Custo e resultado" : SORT_LABELS[m.key]}
               </span>
             </span>
             <span className="rank-missions__model">{m.pick.modelId}</span>
             <span className="rank-missions__meta">
-              {m.label} · score {score}
+              {m.label} · nota {score}
             </span>
           </button>
         );
@@ -380,7 +379,7 @@ function BandBoard({
               {OPERATIONAL_BAND_LABELS[band]}
               <span className="rank-bands__count">{rows.length}</span>
             </h5>
-            <p className="rank-bands__hint">{OPERATIONAL_DOCTRINE.bands[band]}</p>
+            <p className="rank-bands__hint">{{ fast: 'Tarefas simples e repetitivas', balanced: 'Criação e manutenção no dia a dia', deep: 'Análises e problemas complexos' }[band]}</p>
             <ul className="rank-bands__list">
               {rows.slice(0, 4).map((entry) => (
                 <li key={entry.id}>
@@ -496,20 +495,17 @@ export function ModelRankingSection() {
     <section className="rank-ops" aria-labelledby="ranking-title">
       <header className="rank-ops__intro">
         <SettingsSectionTitle id="ranking-title">
-          Motor de ranking LLM
+          Comparar modelos
         </SettingsSectionTitle>
         <p className="settings-detail__hint">
-          O roteador usa faixas de custo (rápido / equilibrado / profundo) e a
-          regra default DOWN: não queimar modelo caro em trabalho mecânico. A
-          corrida abaixo é o radar Nexus-eval — hoje marcada como estimativa de
-          fixture, não auditoria. Score de fixture não entra no catálogo nem na
-          tabela de especialidade.
+          Compare modelos por tarefa e custo. As notas de demonstração são
+          estimativas, não avaliações reais, e não definem a escolha automática dos agentes.
         </p>
       </header>
 
       {loading && (
         <p className="rank-ops__status" role="status">
-          Carregando snapshot de eval…
+          Carregando comparação…
         </p>
       )}
       {error && (
@@ -535,7 +531,7 @@ export function ModelRankingSection() {
               ·
             </span>
             <span>
-              <strong>{liveCount}</strong> com CLI live aqui
+              <strong>{liveCount}</strong> com ferramenta instalada
             </span>
             <span className="rank-ops__sep" aria-hidden="true">
               ·
@@ -547,14 +543,14 @@ export function ModelRankingSection() {
 
           <div className="rank-ops__block">
             <h4 className="rank-ops__block-title">
-              Faixas operacionais · default DOWN
+              Faixas de custo
             </h4>
-            <p className="rank-ops__mission-hint">{OPERATIONAL_DOCTRINE.summary}</p>
+            <p className="rank-ops__mission-hint">Escolha uma faixa econômica para tarefas simples e reserve os modelos mais caros para problemas complexos.</p>
             <BandBoard entries={snapshot.entries} onSelect={setSelectedId} />
           </div>
 
           <div className="rank-ops__block">
-            <h4 className="rank-ops__block-title">Picks do radar por missão</h4>
+            <h4 className="rank-ops__block-title">Destaques por tipo de tarefa</h4>
             <MissionPicks entries={snapshot.entries} onSelect={setSelectedId} />
           </div>
 
@@ -580,7 +576,7 @@ export function ModelRankingSection() {
           <div className="rank-ops__stage">
             <div className="rank-ops__stage-main">
               <h4 className="rank-ops__block-title">
-                Corrida · {SORT_LABELS[sort]}
+                Comparação · {SORT_LABELS[sort]}
               </h4>
               <RaceChart
                 rows={rows}
@@ -596,7 +592,7 @@ export function ModelRankingSection() {
                 <RadarChart entry={selected} ghost={leader} />
               ) : (
                 <p className="rank-ops__status">
-                  Selecione um modelo na corrida.
+                  Selecione um modelo na lista.
                 </p>
               )}
             </div>
@@ -617,8 +613,8 @@ export function ModelRankingSection() {
                   <span className="rank-ops__detail-adapter">
                     {selected.adapterId}
                     {installed.has(selected.adapterId)
-                      ? " · CLI detectada neste host"
-                      : " · CLI não detectada / off"}
+                      ? " · ferramenta instalada"
+                      : " · ferramenta não detectada"}
                   </span>
                 </span>
               </div>

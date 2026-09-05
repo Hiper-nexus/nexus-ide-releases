@@ -288,3 +288,19 @@ outros assets do Overclock:
 Adaptação Nexus: manter Inter, VT323 pontual, contratos de autoridade, copy
 PT-BR e terminal real. O objetivo é entrar no Nexus e reconhecer imediatamente
 a composição operacional observada sem copiar propriedade visual de terceiros.
+
+## 12. Configurações para quem não conhece o motor
+
+- Cada menu começa com um título reconhecível e uma frase sobre sua finalidade.
+- Ações e escolhas comuns ficam visíveis. Catálogos de modelos, JSON, caminhos,
+  variáveis de ambiente, métricas internas e edição avançada ficam em detalhes
+  recolhíveis; listas longas têm busca ou filtro.
+- Use nomes em português na navegação e preserve os termos antigos como aliases
+  de busca. Nomes próprios de modelos, serviços e arquivos não são traduzidos.
+- Identifique ferramentas e modelos de IA com `ProviderLogo`. Prefira logos
+  oficiais locais, com procedência registrada, sem buscar imagens em rede ao
+  renderizar a tela. Estado deve continuar escrito ao lado da identidade.
+- Distingua instalado, conectado, autorizado e disponível. Importar uma
+  referência cria uma proposta; só a versão aplicada é contrato do projeto.
+- A regra de leitura do contrato visual é permanente no motor. O botão Design
+  profissional adiciona orientação de acabamento, mas não desativa essa regra.

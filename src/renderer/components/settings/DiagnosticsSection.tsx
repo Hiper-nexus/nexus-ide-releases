@@ -133,15 +133,15 @@ export function DiagnosticsSection() {
     <section>
       <SettingsSectionTitle>Diagnóstico</SettingsSectionTitle>
       <p className="settings-detail__hint">
-        Estado operacional de mic, permissões, wake engine, sessão realtime e
-        custo. A tela não abre o microfone sozinha; ela lê sinais já expostos.
+        Confira microfone, permissões e funcionamento da assistente.
+        Esta página não ativa o microfone.
       </p>
 
       <DoctorEngineSettings />
 
       <ContextDraftsSection />
 
-      <h4 className="release-section-title">Renderer e panes</h4>
+      <h4 className="release-section-title">Interface e terminais</h4>
       <TerminalPerformanceStatus />
 
       <div className="ops-metric-grid">
@@ -152,7 +152,7 @@ export function DiagnosticsSection() {
           detail={devices.error ?? `${devices.count} entrada(s) detectada(s)`}
         />
         <MetricTile
-          label="Device ativo"
+          label="Microfone selecionado"
           value={devices.activeLabel ?? (devices.count > 0 ? 'sem rótulo' : 'não detectado')}
           tone={devices.count > 0 ? 'ok' : 'warn'}
           detail="macOS só libera nomes após consentimento de microfone."
@@ -170,7 +170,7 @@ export function DiagnosticsSection() {
           detail="Necessário para Vision capturar a janela Nexus."
         />
         <MetricTile
-          label="Wake engine"
+          label="Ativação por voz"
           value={wakeState.value}
           tone={wakeState.tone}
           detail={info?.wakeWordEnabled ? 'Hey Jarvis habilitado.' : 'Wake word desligada.'}
@@ -179,7 +179,7 @@ export function DiagnosticsSection() {
           label="Sessão em tempo real"
           value={liveStatusLabel(liveState?.status)}
           tone={liveState?.realtimeReady ? 'ok' : 'warn'}
-          detail={liveState ? `${liveState.turns} turno(s), ativo ${formatAge(liveState.lastActiveAt)}` : 'Sem sessão live.'}
+          detail={liveState ? `${liveState.turns} turno(s), ativo ${formatAge(liveState.lastActiveAt)}` : 'Sem conversa contínua ativa.'}
         />
         <MetricTile
           label="Tokens reais"
@@ -189,7 +189,7 @@ export function DiagnosticsSection() {
         <MetricTile
           label="Latência p50"
           value={formatMs(percentile(latencyDeltas, 0.5))}
-          detail="Deltas entre eventos live recentes."
+          detail="Tempo entre eventos recentes."
         />
         <MetricTile
           label="Latência p95"
@@ -205,12 +205,12 @@ export function DiagnosticsSection() {
 
       <div className="ops-log-strip">
         <div>
-          <span className="ops-log-strip__label">Último transcript</span>
-          <p>{latestTranscript?.text || 'Sem transcript live recente.'}</p>
+          <span className="ops-log-strip__label">Última transcrição</span>
+          <p>{latestTranscript?.text || 'Nenhuma transcrição recente.'}</p>
         </div>
         <div>
-          <span className="ops-log-strip__label">Última tool</span>
-          <p>{liveTool?.summary || 'Nenhuma tool live registrada nesta sessão.'}</p>
+          <span className="ops-log-strip__label">Última ferramenta</span>
+          <p>{liveTool?.summary || 'Nenhuma ferramenta usada nesta sessão.'}</p>
         </div>
       </div>
 
@@ -237,7 +237,7 @@ export function DiagnosticsSection() {
           </span>
         )}
         <button className="settings-btn" type="button" onClick={() => void refresh()}>
-          Rechecar diagnóstico
+          Atualizar diagnóstico
         </button>
         <button className="settings-btn" type="button" onClick={() => window.nexus.voice.openMicSettings()}>
           Abrir privacidade do mic

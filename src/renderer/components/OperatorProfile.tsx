@@ -24,8 +24,8 @@ import { PixelIcon } from './PixelIcon';
 const XP_BREAKDOWN_COPY: Array<[string, string]> = [
   ['mission_green', 'missões verdes (verificadas)'],
   ['mission_done', 'missões concluídas'],
-  ['handoff_green', 'handoffs verificados'],
-  ['handoff_success', 'handoffs entregues'],
+  ['handoff_green', 'entregas verificadas'],
+  ['handoff_success', 'resultados entregues'],
   ['task_done', 'tasks concluídas'],
   ['agent_turn', 'turnos de agente entregues'],
   ['media_generated', 'mídias geradas'],
@@ -296,7 +296,7 @@ export function OperatorProfile() {
               {unlockedCount}/{achievements.length} conquistas
             </span>
             <span aria-hidden="true">·</span>
-            <span>{snapshot.streakDays}d de streak</span>
+            <span>{snapshot.streakDays} dias seguidos</span>
             <span aria-hidden="true">·</span>
             <span>{snapshot.shieldsLeft} escudos</span>
           </div>
@@ -364,7 +364,7 @@ export function OperatorProfile() {
         <div className="operator-profile__grid">
           <section
             className="operator-profile__section"
-            aria-label="Breakdown de XP"
+            aria-label="Detalhes dos pontos"
           >
             <h3>Entregas</h3>
             <ul className="operator-profile__list">
@@ -389,7 +389,7 @@ export function OperatorProfile() {
                 <span className="operator-profile__count">
                   {snapshot.streakDays}
                 </span>{' '}
-                dias úteis de streak
+                dias úteis seguidos
               </li>
               <li>
                 <span className="operator-profile__count">
@@ -444,7 +444,7 @@ export function OperatorProfile() {
         </section>
 
         <section className="operator-profile__section" aria-label="Skins">
-          <h3>Skins</h3>
+          <h3>Visuais do mascote</h3>
           <div className="operator-profile__skins">
             <button
               type="button"
@@ -473,7 +473,7 @@ export function OperatorProfile() {
             ))}
             {snapshot.skins.length === 0 && (
               <span className="operator-profile__hint-inline">
-                Desbloqueie skins ao completar conquistas.
+                Desbloqueie novos visuais ao completar conquistas.
               </span>
             )}
           </div>
@@ -505,7 +505,7 @@ export function OperatorProfile() {
           <span className="operator-profile__hint">
             Reabra este perfil a qualquer momento com{' '}
             {formatShortcut('mod', 'shift', 'O')}. O XP
-            é por checkout do projeto — cada pasta tem sua jornada.
+            é contado por pasta de projeto.
           </span>
           {ioMessage && (
             <span className="operator-profile__io" role="status">

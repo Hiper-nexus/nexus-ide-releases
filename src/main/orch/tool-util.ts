@@ -1,3 +1,4 @@
+import { withWorkspaceDesignRule } from './workspace-design-rule';
 import {
   getPaneAuthzInfo,
   listLivePaneNumbers,
@@ -1174,7 +1175,7 @@ export async function spawnPaneAndMaybePrompt(
     (Array.isArray(options.allowedTools) &&
       options.allowedTools.includes('nexus_merge_review_submit') &&
       !options.allowedTools.includes('nexus_handoff_submit'));
-  const finalPrompt = options.prompt
+  const handoffPrompt = options.prompt
     ? omitHandoff
       ? options.prompt
       : withHandoffContract(options.prompt, adapter, {
@@ -1186,6 +1187,13 @@ export async function spawnPaneAndMaybePrompt(
           systemDelivers:
             options.role === 'worker' && Boolean(options.missionId),
         })
+    : undefined;
+  const finalPrompt = handoffPrompt
+    ? withWorkspaceDesignRule(
+        handoffPrompt,
+        options.executionScope?.rootRealPath ?? options.scope.rootRealPath,
+        options.prompt,
+      )
     : undefined;
   // coordination parity (12/08): prompt entregue no argv de NASCENÇA para TODA
   // CLI que aceita — igual pane_spawn. Antes isso era restrito a 3 adapters

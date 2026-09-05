@@ -4,20 +4,44 @@ import { SettingsSectionTitle } from './SettingsSectionTitle';
 
 /**
  * Labs — todas as feature flags do produto com switch persistido.
- * Fonte de verdade é o registry do main (kill switch > canal > override >
+ * Fonte de verdade é o registry do main (desativado pelo sistema > canal > override >
  * default); aqui só se lê a resolução e se grava override via IPC. Sem uma
  * superfície destas, capability pronta atrás de flag é invisível ao operador.
  */
 
 /** Rótulos e dicas PT-BR por flag; ids novos caem no fallback (id cru). */
 export const LABS_FLAG_COPY: Record<string, { title: string; hint?: string }> = {
+  'feature.mission.warmupAdvisories': {
+    title: 'Preparar revisão durante a execução',
+    hint: 'Revisores preparam uma lista de verificações enquanto a missão é implementada.',
+  },
+  'feature.mission.doneTeardown': {
+    title: 'Liberar terminais após aprovação',
+    hint: 'Fecha agentes inativos após marcar a missão como feita. O coordenador continua disponível para ajustes.',
+  },
+  'feature.mission.workerHandoffEnforcement': {
+    title: 'Acompanhar entregas dos agentes',
+    hint: 'Lembra os agentes de entregar seus resultados e registra uma entrega automática quando necessário.',
+  },
+  'feature.pane.nonWorkerAutoClose': {
+    title: 'Fechar terminais inativos',
+    hint: 'Fecha terminais manuais e de ferramentas após o período de inatividade configurado.',
+  },
+  'feature.pty.persistentSession': {
+    title: 'Manter sessões ao fechar o app',
+    hint: 'Quando disponível, usa tmux para manter agentes em execução e reconectar ao reabrir o app.',
+  },
+  'feature.ui.projectOverview': {
+    title: 'Visão geral do projeto',
+    hint: 'Mostra o objetivo e uma visão dos agentes na página Projeto.',
+  },
   'feature.terminal.commandBlocks': {
     title: 'Blocos de comando no terminal',
-    hint: 'Integração OSC 133 no shell de novos terminais (menu "Cmds": copiar, re-executar, cwd).',
+    hint: 'Permite copiar e executar comandos novamente pelo menu do terminal. Vale para novos terminais.',
   },
   'feature.mission.eventJournal': {
-    title: 'Journal de eventos de missão',
-    hint: 'Registro append-only com replay/ACK na aba Missão do painel contextual.',
+    title: 'Histórico das missões',
+    hint: 'Acompanhe os acontecimentos de cada missão no painel lateral.',
   },
   'feature.search.mixer': {
     title: 'Busca unificada',
@@ -25,56 +49,56 @@ export const LABS_FLAG_COPY: Record<string, { title: string; hint?: string }> = 
   },
   'feature.ui.contextualPanel': {
     title: 'Painel contextual (direita)',
-    hint: 'Guarda-chuva das abas Busca/Skills/Editor/Memória/Missão/Git — Alt+] alterna.',
+    hint: 'Reúne busca, instruções, editor, memória, missões e Git no painel lateral.',
   },
   'feature.editor.codemirror': {
-    title: 'Editor de workspace',
-    hint: 'Abrir/editar arquivo com guarda de hash (UI atual em textarea; CM6 pendente).',
+    title: 'Editor de arquivos',
+    hint: 'Abra e edite arquivos com proteção contra alterações simultâneas.',
   },
   'feature.mcp.hub': {
-    title: 'MCP Hub + Across Tools sync',
-    hint: 'O sync escreve configs de outras ferramentas (Cursor/Claude/Codex) no seu HOME — sempre via dry-run → confirmação → backup.',
+    title: 'Compartilhar conexões de ferramentas',
+    hint: 'Atualiza as configurações de outras ferramentas de IA após prévia e confirmação, com cópia de segurança.',
   },
   'feature.skills.catalog': {
     title: 'Catálogo de skills',
     hint: 'Lista skills do workspace (.claude/.nexus) na aba Skills.',
   },
   'feature.memory.nexusMemory': {
-    title: 'Memória Markdown (.nexus-memory/)',
+    title: 'Notas em Markdown',
     hint: 'Cópia legível das notas deste workspace, guardada no app (não no repositório).',
   },
   'feature.memory.workspaceMemory': {
-    title: 'Memória agentic por workspace',
+    title: 'Memória do projeto',
     hint: 'Caderno deste workspace. Agentes podem buscar; o painel Memória lista e grava as notas.',
   },
   'feature.autonomy.profiles': {
     title: 'Perfis de autonomia',
-    hint: 'Backend pronto, ainda sem consumidor na UI — ligar não muda nada visível.',
+    hint: 'Ainda sem efeito na interface.',
   },
   'feature.remote.relayTransport': {
-    title: 'Companion via relay E2E',
-    hint: 'Libera a seção Companion mobile em Configurações → Sistema; exige URL wss:// de um relay hospedado (nunca usa relay público por default).',
+    title: 'Acesso pelo celular',
+    hint: 'Conecte o celular com criptografia de ponta a ponta. Exige configurar um servidor de conexão próprio.',
   },
   'orch.parallelScheduler': {
-    title: 'Scheduler paralelo de missões',
-    hint: 'Fan-out por worktrees com MergeQueue serial; só age com missão aprovada e plano selado.',
+    title: 'Execução paralela de missões',
+    hint: 'Distribui tarefas em cópias isoladas do projeto após aprovar a missão e o plano.',
   },
   'feature.mission.workerHandoffTtl': {
-    title: 'Worker TTL pós-handoff',
-    hint: 'Paridade Bridge (opt-in): worker idle com todos os handoffs consumidos fecha sozinho ~30s depois, liberando o pane. Qualquer trabalho novo cancela.',
+    title: 'Fechar agentes que terminaram',
+    hint: 'Fecha o terminal de um agente inativo cerca de 30 segundos após a entrega ser recebida. Novo trabalho cancela o fechamento.',
   },
 };
 
 export function describeFlagReason(reason: string): string {
   switch (reason) {
     case 'override':
-      return 'override manual';
+      return 'escolha personalizada';
     case 'default':
-      return 'padrão do build';
+      return 'padrão do app';
     case 'kill-switch':
-      return 'kill switch';
+      return 'desativado pelo sistema';
     case 'channel-blocked':
-      return 'bloqueada pelo canal';
+      return 'indisponível nesta versão';
     default:
       return reason;
   }
@@ -106,8 +130,10 @@ function FlagRow({
       <div>
         <p className="ops-consent-panel__title">{copy?.title ?? row.id}</p>
         <p className="ops-consent-panel__copy">
-          <code>{row.id}</code> · {describeFlagReason(row.reason)}
-          {copy?.hint ? <> — {copy.hint}</> : null}
+          {copy?.hint ?? 'Recurso experimental.'}
+        </p>
+        <p className="ops-consent-panel__copy">
+          {describeFlagReason(row.reason)}
         </p>
         {row.reason === 'override' ? (
           <button
@@ -190,16 +216,14 @@ export function LabsSection() {
 
   return (
     <section>
-      <SettingsSectionTitle>Labs</SettingsSectionTitle>
+      <SettingsSectionTitle>Experimental</SettingsSectionTitle>
       <p className="ops-consent-panel__copy">
-        Toda capability do produto atrás de flag, com o estado real resolvido
-        pelo main (kill switch &gt; canal &gt; override &gt; default). Mudanças
-        persistem e valem na hora para painéis; o que é preparado no boot (ex.:
-        integração de shell) vale para novos terminais ou após reiniciar.
+        Experimente recursos em desenvolvimento. Algumas mudanças exigem
+        abrir um novo terminal ou reiniciar o app.
       </p>
       {error ? <p className="labs-flags__error">{error}</p> : null}
       {rows === null ? (
-        <p className="ops-consent-panel__copy">Carregando flags…</p>
+        <p className="ops-consent-panel__copy">Carregando recursos…</p>
       ) : (
         rows.map((row) => (
           <FlagRow

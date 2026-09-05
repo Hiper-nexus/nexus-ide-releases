@@ -25,19 +25,19 @@ export {
 export type SortKey = RankingQualityDimension;
 
 export const SORT_LABELS: Record<SortKey, string> = {
-  overall: 'Overall',
-  coding: 'Coding',
-  reasoning: 'Reasoning',
-  frontend: 'Frontend',
-  security: 'Security',
+  overall: 'Geral',
+  coding: 'Programação',
+  reasoning: 'Raciocínio',
+  frontend: 'Interface',
+  security: 'Segurança',
 };
 
 export const SORT_MISSION: Record<SortKey, string> = {
-  overall: 'Default do roteador',
-  coding: 'Missões de código / refactor',
+  overall: 'Comparação geral dos modelos',
+  coding: 'Criação e melhoria de código',
   reasoning: 'Arquitetura e análise profunda',
-  frontend: 'UI, design systems, browser',
-  security: 'Review e hardening',
+  frontend: 'Telas, design e navegação',
+  security: 'Revisão e proteção do código',
 };
 
 export const RADAR_AXES: SortKey[] = [

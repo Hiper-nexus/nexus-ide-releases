@@ -1,3 +1,4 @@
+import { ProviderLogo } from './ProviderLogo';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { Squad, AgentCategory } from '../../shared/orch-types';
@@ -158,16 +159,16 @@ export function SquadEditor({
       role="dialog"
       ref={dialogRef}
       aria-modal="true"
-      aria-label={creating ? 'Criar squad' : `Editar ${squad.name}`}
+      aria-label={creating ? 'Criar equipe' : `Editar ${squad.name}`}
       aria-busy={busy}
     >
       <header className="squad-editor__head">
         <strong>
           {creating
-            ? 'Criar squad'
+            ? 'Criar equipe'
             : squad.builtin
               ? 'Duplicar e personalizar'
-              : 'Editar squad'}
+              : 'Editar equipe'}
         </strong>
         <CloseButton onClick={requestClose} label="Fechar editor" />
       </header>
@@ -223,10 +224,12 @@ export function SquadEditor({
             >
               {CATEGORIES.map((c) => (
                 <option key={c} value={c}>
-                  {c}
+                  {{ orchestrator: 'Coordenar', architect: 'Planejar', scout: 'Investigar', executor: 'Implementar', reviewer: 'Revisar' }[c]}
                 </option>
               ))}
             </select>
+            <div className="squad-editor__provider">
+              <ProviderLogo adapterId={agent.cli} label={adapters.find(adapter => adapter.id === agent.cli)?.label ?? agent.cli} size="sm" />
             <select
               className="squad-editor__input"
               value={agent.cli}
@@ -239,13 +242,14 @@ export function SquadEditor({
             >
               {installed.map((a) => (
                 <option key={a.id} value={a.id}>
-                  {a.id}
+                  {a.label}
                 </option>
               ))}
               {!installed.some((a) => a.id === agent.cli) && (
                 <option value={agent.cli}>{agent.cli} (não instalado)</option>
               )}
             </select>
+            </div>
             <select
               className="squad-editor__input"
               value={agent.model ?? ''}

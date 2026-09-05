@@ -410,3 +410,14 @@
     flex-direction: column;
   }
 }
+
+/* Keep the optional model catalog inside the settings viewport. */
+.settings-orchestrator__model-choice .model-picker {
+  max-block-size: 40vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-2);
+}
+
+.squad-editor__provider { display: flex; align-items: center; gap: var(--space-2); min-inline-size: 0; }
+.squad-editor__provider select { flex: 1; min-inline-size: 0; }

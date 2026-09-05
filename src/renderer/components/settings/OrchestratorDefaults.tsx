@@ -305,7 +305,7 @@ export function OrchestratorDefaults() {
 
       <div className="settings-field">
         <span className="settings-field__label" id="orchestrator-model-label">
-          Provider e modelo
+          Ferramenta e modelo
         </span>
         {providerUnavailable && configuredAdapter && (
           <p
@@ -325,6 +325,12 @@ export function OrchestratorDefaults() {
             modelo abaixo.
           </p>
         )}
+        <details className="settings-advanced-field settings-orchestrator__model-choice">
+          <summary>
+            {selectedAdapter && selectedModel
+              ? `${selectedAdapter.label} · ${modelLabel(selectedAdapter.id, selectedModel)}`
+              : 'Escolher ferramenta e modelo'}
+          </summary>
         <ModelPicker
           options={pickerOptions}
           quotaLineByAdapterId={quotaLineByAdapterId}
@@ -355,6 +361,7 @@ export function OrchestratorDefaults() {
             });
           }}
         />
+        </details>
         {defaults.defaultModel === "" && effectiveProviderDefault && (
           <p className="settings-field__note">
             Seguindo o padrão do provider ({effectiveProviderDefault}).
@@ -411,6 +418,7 @@ export function OrchestratorDefaults() {
         o mesmo provider.
       </p>
 
+      <details className="settings-advanced-field"><summary>Permissões de execução e conexão avançada</summary>
       <div className="settings-orchestrator__grid">
         <label className="settings-field">
           Liberdade de CLI no Squad
@@ -480,6 +488,7 @@ export function OrchestratorDefaults() {
         continuam intocados. Sem <code>NEXUS_AI_GATEWAY_API_KEY</code>, a
         credencial do provider é enviada ao gateway.
       </p>
+      </details>
     </div>
   );
 }

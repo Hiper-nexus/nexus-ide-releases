@@ -1,3 +1,4 @@
+import { ProviderLogo } from './ProviderLogo';
 import { useMemo, useState, type ReactNode } from 'react';
 import { MCP_ACROSS_TOOL_LABELS } from '../../shared/mcp-across-tools';
 import {
@@ -138,8 +139,8 @@ export function McpAcrossSyncControls({
 
   const syncLabel =
     plan && (plan.importIds.length > 0 || exportGaps > 0)
-      ? `Sync ${plan.importIds.length} → hub · ${exportGaps} gaps`
-      : 'Sync fill-gaps';
+      ? `Sincronizar ${plan.importIds.length + exportGaps} conexões`
+      : 'Sincronizar conexões';
 
   function toggleTool(tool: McpExportToolId) {
     onExportToolsChange(
@@ -264,7 +265,7 @@ export function McpAcrossSyncControls({
               disabled={locked}
               onClick={() => void onObserve()}
             >
-              {busy ? 'Observando…' : 'Observe'}
+              {busy ? 'Verificando…' : 'Atualizar'}
             </button>
             <button
               type="button"
@@ -280,7 +281,7 @@ export function McpAcrossSyncControls({
               disabled={locked || !plan}
               onClick={() => void runSync(false)}
             >
-              {syncing ? 'Sync…' : syncLabel}
+              {syncing ? 'Sincronizando…' : syncLabel}
             </button>
           </div>
         </div>
@@ -292,7 +293,7 @@ export function McpAcrossSyncControls({
           role="group"
           aria-label="Export fill-gaps para tools"
         >
-          <span className="mcp-ritual__export-label">Exportar gaps para</span>
+          <span className="mcp-ritual__export-label">Adicionar conexões ausentes em</span>
           <div className="mcp-ritual__export-chips">
             {toolsWithGaps.map((tool) => {
               const n = plan?.exportByTool[tool]?.length ?? 0;
@@ -306,9 +307,10 @@ export function McpAcrossSyncControls({
                   disabled={locked}
                   onClick={() => toggleTool(tool)}
                 >
+                  <ProviderLogo adapterId={tool === 'cursor' ? 'cursor-agent' : tool === 'claude-code' ? 'claude' : tool} label={MCP_ACROSS_TOOL_LABELS[tool]} size="xs" />
                   <span>{MCP_ACROSS_TOOL_LABELS[tool]}</span>
                   <em>
-                    {n} gap{n === 1 ? '' : 's'}
+                    {n} ausente{n === 1 ? '' : 's'}
                   </em>
                 </button>
               );

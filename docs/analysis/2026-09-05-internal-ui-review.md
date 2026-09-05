@@ -34,3 +34,31 @@ Catálogos (F-316) concluídos com64 testes: carregamento/erro/vazio, retry, fil
 A alteração final de ordenação de cotas passou em40 testes renderer/helper, typecheck e sinks0, sem alterar Main. A verificação visual real não mostrou overflow horizontal em1280×820. O app instalado em/Applications continua separado e não foi atualizado por esta revisão.
 
 O teste final pelo atalho da barra lateral revelou abertura incorreta de Minha conta. F-322 corrige a ligação para Uso e cotas;54 testes App/WorkspaceRail passaram, typecheck/sinks0 e clique real confirmaram a rota correta. O NexusIDE Dev ficou aberto nessa página para inspeção.
+
+## Continuação: linguagem e detalhes progressivos
+
+Alterações em andamento no worktree:
+
+- Mídia: conexão e chave de acesso em linguagem simples; modelos, variável de ambiente e ferramenta MCP ficam em detalhes recolhidos; removida indicação editorial fixa de modelos favoritos.
+- Captura de tela (antes Vision): explicação de envio à nuvem, autorização limitada à sessão e instruções de permissão sem termos internos de IPC/token. O controle de consentimento ganhou nome acessível explícito.
+- Experimental (antes Labs): cada recurso explica seu efeito; removidos IDs técnicos da apresentação principal, preservados em `data-flag-id`; estados de bloqueio e personalização continuam visíveis.
+
+Estas alterações ainda não têm conferência visual no aplicativo. Os testes de componentes não substituem essa conferência. A revisão global de todas as seções, o inventário de logos e a verificação do uso de design em todos os caminhos de missão permanecem abertos. Não interpretar as melhorias compartilhadas ou as tabelas anteriores como conclusão dessas três obrigações.
+
+### Conferência no Dev e segunda revisão de Mídia
+
+O Dev foi iniciado com CDP local em 9337 (sessão de execução 96346). A navegação nativa confirmou Mídia com seis serviços e Experimental com os recursos reais. A captura inicial mostrou que os formulários de conexão ainda dominavam Mídia: passaram a ser recolhidos em Gerenciar conexão/Conectar serviço, com botões compactos. Logos locais de Google, OpenAI, Replicate e ElevenLabs foram adicionados pelo componente compartilhado; a árvore de acessibilidade confirmou os seis serviços identificados por imagem e conexões recolhidas após HMR.
+
+Mídia também recebeu recuperação de erro de leitura e de atualização de chave: não relata remoção quando o IPC falha, libera o botão após rejeição e permite tentar novamente. Três testes focados cobrem detalhes recolhidos, retry de leitura e falhas de remoção.
+
+Experimental revelou seis IDs sem tradução no catálogo real; os textos foram completados e um teste verifica cobertura de todos os BUILTIN_FEATURE_FLAGS. A captura via automação apresentou atraso em relação à árvore de acessibilidade; a conferência visual final das alterações mais recentes ainda não está encerrada. Não houve criação de missão nem salvamento/remoção de credenciais durante a navegação.
+
+### Referências de design e vínculo com missões
+
+Design Systems foi renomeado para Referências de design. A introdução explica finalidade e revisão da proposta; IDs, caminho de destino e fonte ficam em detalhes. Busca e importação recuperam falhas de transporte (F-324).
+
+F-130 corrige o caminho rápido de missões para reconhecer o contrato aplicado em `.context/docs/design-system.md`, usando o resolvedor compartilhado; DESIGN.md na raiz continua prioritário. 53 testes Main passaram, incluindo regressão que falhava antes da alteração. Isso prova resolução e inclusão no prompt, não obediência da LLM nem cobertura de todos os caminhos de delegação. Essa verificação global continua pendente.
+
+## Cobertura integral após continuação
+
+A cobertura atual por destino está em `internal-settings-coverage.md`, com os 31 menus, Perfil e submenus percorridos. Foram revisados também Voz, Aparência, Terminal, Atalhos, Providers, comparação, Equipes/editor, MCPs, os catálogos, automação, Diagnóstico, Sistema, Auditoria e acesso remoto. A rodada final passou 414 testes em 46 arquivos, typecheck e auditoria do renderer. Uma revisão independente não encontrou regressões críticas/importantes; seu apontamento sobre diagnóstico de voz foi corrigido e testado. F-131 registra a regra permanente de leitura do contrato no caminho compartilhado dos agentes. O catálogo de modelos e configurações avançadas foi recolhido em Equipes, e a janela menor motivou correções de filtros e truncamento de nomes.

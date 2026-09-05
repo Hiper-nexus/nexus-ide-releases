@@ -12,22 +12,22 @@ import {
 type RealtimeTransport = Exclude<JarvisLiveTransport, 'classic'>;
 
 export function providerOption(provider: ResolvedProvider): string {
-  const tag = provider.available ? '' : ' (unavailable)';
+  const tag = provider.available ? 'Disponível' : 'Indisponível';
   const model = provider.model ? ` · ${provider.model}` : '';
-  return `${provider.provider}${model}${tag} — ${provider.reason}`;
+  return `${provider.provider}${model} · ${tag}`;
 }
 
 export function keyStatusText(key: VoiceApiKeyStatus): string {
-  if (key.hasStoredKey) return `saved ${key.keyMasked ?? '••••'}`;
-  if (key.hasEnv) return 'available from environment';
-  if (!key.secureStorageAvailable) return 'Keychain unavailable';
-  return 'not set';
+  if (key.hasStoredKey) return 'Chave salva';
+  if (key.hasEnv) return 'Configurada no ambiente';
+  if (!key.secureStorageAvailable) return 'Armazenamento seguro indisponível';
+  return 'Não configurada';
 }
 
 export function keyPlaceholder(key: VoiceApiKeyStatus): string {
-  if (key.hasStoredKey) return `Stored ${key.keyMasked ?? 'key'}; paste to replace`;
-  if (key.hasEnv) return 'Already set in environment; paste to override';
-  return `Paste ${key.envVar}`;
+  if (key.hasStoredKey) return 'Cole uma nova chave para substituir';
+  if (key.hasEnv) return 'Cole uma chave para usar no lugar da configuração do ambiente';
+  return 'Cole sua chave de acesso';
 }
 
 /**

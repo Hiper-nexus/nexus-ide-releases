@@ -299,6 +299,20 @@ describe('mission fast lane', () => {
     expect(missionDesignContext(emptyHome, emptyHome)).toBe('');
   });
 
+  it('points UI missions to the applied imported contract when the root contract is absent', () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'fastlane-imported-design-'));
+    const home = mkdtempSync(join(tmpdir(), 'fastlane-design-home-'));
+    mkdirSync(join(workspace, '.context', 'docs'), { recursive: true });
+    writeFileSync(join(workspace, '.context', 'docs', 'design-system.md'), '# Reviewed design');
+    const context = missionDesignContext(workspace, home);
+    expect(context).toContain('.context/docs/design-system.md');
+    expect(agentPrompt(agent(), mission({ description: 'Ajuste a interface da tela de login' }), [], false, context))
+      .toContain('.context/docs/design-system.md');
+    writeFileSync(join(workspace, 'DESIGN.md'), '# Root authority');
+    expect(missionDesignContext(workspace, home)).toContain('DESIGN.md');
+    expect(missionDesignContext(workspace, home)).not.toContain('.context/docs/design-system.md');
+  });
+
   it('missão sem cara de UI não carrega o catálogo de design', () => {
     const prompt = agentPrompt(
       agent(),

@@ -14,6 +14,8 @@ export default defineConfig({
       // Vendored skill suites (archify) run under their own `node --test`
       // runner (see assets/skills/archify/package.json), not under vitest.
       'assets/**',
+      // Archived QA artifacts may contain node:test examples, not product suites.
+      'docs/qa/evidence/**',
       'docs/analysis/overclock-13318-extract/**',
     ],
     setupFiles: ['./src/test/vitest.setup.ts'],

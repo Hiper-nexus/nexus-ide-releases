@@ -120,10 +120,10 @@ export function McpsSection() {
   return (
     <section className="arsenal-section mcp-ritual" aria-label="MCPs">
       <header className="arsenal-section__intro">
-        <SettingsSectionTitle>MCP Servers</SettingsSectionTitle>
+        <SettingsSectionTitle>Conexões de ferramentas</SettingsSectionTitle>
         <p className="settings-detail__hint">
-          Observe + Sync fill-gaps. Simular não escreve. Export só nas tools
-          marcadas. Nunca apaga; backup antes de cada write.
+          Compare as conexões entre suas ferramentas de IA. Simular mostra uma prévia;
+          sincronizar adiciona as conexões ausentes, com confirmação e cópia de segurança.
         </p>
       </header>
 
@@ -138,11 +138,11 @@ export function McpsSection() {
         status={
           <>
             <span className="mcp-ritual__banner-kicker">
-              <span className="mcp-ritual__banner-label">Across Tools</span>
+              <span className="mcp-ritual__banner-label">Conexões entre apps</span>
               {across ? (
                 across.driftCount > 0 ? (
                   <span className="mcp-ritual__pill mcp-ritual__pill--drift">
-                    {across.driftCount} drift
+                    {across.driftCount} diferenças
                   </span>
                 ) : (
                   <span className="mcp-ritual__pill mcp-ritual__pill--ok">
@@ -156,11 +156,11 @@ export function McpsSection() {
               )}
             </span>
             <span className="mcp-ritual__banner-line">
-              {across?.bannerLine ??
+              {across ? `${across.driftCount} conexões com diferenças entre os aplicativos.` :
                 (loading
-                  ? 'Calibrando probes e endpoint…'
+                  ? 'Verificando conexões…'
                   : running
-                    ? `${toolCount} tools prontas · ${plan?.summary ?? 'plano…'}`
+                    ? `${toolCount} ferramentas disponíveis`
                     : 'Agentes sem ferramentas até o servidor voltar.')}
             </span>
           </>
@@ -200,7 +200,7 @@ export function McpsSection() {
           Across Tools: {acrossError}
         </p>
       ) : null}
-      {across ? <McpAcrossToolsMatrix report={across} hideBanner /> : null}
+      {across ? <details className="settings-advanced-field"><summary>Comparar conexões por aplicativo</summary><McpAcrossToolsMatrix report={across} hideBanner /></details> : null}
 
       {hubError ? (
         <p className="settings-list__detail" role="note">
@@ -215,25 +215,28 @@ export function McpsSection() {
               <PixelIcon name="bolt" size={12} /> nexus (embutido)
             </span>
             <span
-              className={`prov__badge ${
+              className={`settings-chip ${
                 loading
-                  ? 'prov__badge--muted'
+                  ? ''
                   : running
-                    ? 'prov__badge--ok'
-                    : 'prov__badge--warn'
+                    ? 'settings-chip--ok'
+                    : 'settings-chip--warn'
               }`}
             >
               {loading ? '…' : running ? 'online' : 'offline'}
             </span>
           </div>
+          <details className="settings-advanced-field">
+          <summary>Detalhes da conexão local</summary>
           <p className="settings-list__detail">
-            Endpoint: <code>{mcpInfo?.url ?? '—'}</code>
+            Endereço: <code>{mcpInfo?.url ?? '—'}</code>
           </p>
           {hub?.path ? (
             <p className="settings-list__detail arsenal-card__hint">
               Hub: <code>{hub.path}</code>
             </p>
           ) : null}
+          </details>
           <div className="arsenal-card__actions" style={{ marginTop: 8 }}>
             <button
               type="button"
@@ -242,7 +245,7 @@ export function McpsSection() {
                 useProductNavigationStore.getState().openSettings('tools')
               }
             >
-              Ver tools
+              Ver ferramentas
             </button>
           </div>
         </li>

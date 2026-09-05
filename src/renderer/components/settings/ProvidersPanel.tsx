@@ -35,9 +35,9 @@ import {
 function modelLabel(provider: ProviderSettingsInfo, model: string): string {
   const info = provider.modelInfo?.[model];
   const tags = [
-    provider.customModels.includes(model) ? 'custom' : null,
-    info?.availability ?? null,
-    info?.costTier && info.costTier !== 'unknown' ? `cost:${info.costTier}` : null,
+    provider.customModels.includes(model) ? 'personalizado' : null,
+    info?.availability ? { free: 'gratuito', cheap: 'econômico', paid: 'pago', 'api-only': 'somente API', deprecated: 'descontinuado' }[info.availability] : null,
+    info?.costTier && info.costTier !== 'unknown' ? { free: 'sem custo', low: 'custo baixo', medium: 'custo médio', high: 'custo alto' }[info.costTier] : null,
   ].filter(Boolean);
   return tags.length > 0 ? `${model} (${tags.join(', ')})` : model;
 }

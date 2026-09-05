@@ -72,11 +72,11 @@ export function TerminalSection() {
     <section>
       <SettingsSectionTitle>Terminal</SettingsSectionTitle>
       <p className="settings-detail__hint">
-        Fonte e shell dos panes xterm. Paleta e modo pixel ficam em Aparência.
+        Ajuste o texto e o funcionamento dos terminais. As cores ficam em Aparência.
       </p>
 
       <label className="settings-field">
-        Desempenho dos panes
+        Desempenho dos terminais
         <select
           className="settings-input"
           value={terminal.performanceMode}
@@ -89,15 +89,18 @@ export function TerminalSection() {
           }
         >
           <option value="adaptive">Adaptativo — recomendado</option>
-          <option value="quality">Qualidade — pintar todos os panes</option>
+          <option value="quality">Qualidade — atualizar todos os terminais</option>
         </select>
         <span className="settings-field__note">
-          Adaptativo agrupa frames de agentes, estaciona panes fora de vista e
-          usa scrollback menor. Qualidade mantém todos os panes atualizando.
+          Adaptativo reduz o consumo de recursos nos terminais fora de vista.
+          Qualidade mantém todos os terminais atualizando.
         </span>
       </label>
 
-      <TerminalPerformanceStatus />
+      <details className="settings-advanced-field">
+        <summary>Detalhes de desempenho</summary>
+        <TerminalPerformanceStatus />
+      </details>
 
       <label className="settings-field">
         Fonte (vazio = padrão do sistema)
@@ -141,8 +144,7 @@ export function TerminalSection() {
           ))}
         </select>
         <span className="settings-field__note">
-          {shells.length} shell(s) detectado(s). Vale para novos panes; os já
-          abertos continuam no shell atual.
+          {shells.length} opções disponíveis. A mudança vale para novos terminais.
         </span>
       </label>
 
@@ -163,10 +165,9 @@ export function VoiceSection() {
   const openVoice = useVoiceStore((s) => s.openSettings);
   return (
     <section>
-      <SettingsSectionTitle>Voice</SettingsSectionTitle>
+      <SettingsSectionTitle>Voz</SettingsSectionTitle>
       <p className="settings-detail__hint">
-        Voz e captura: push-to-talk, STT (Groq/whisper), tradução PT→EN e
-        resposta falada (Jarvis). Config em ~/.nexus/plugins/voice.
+        Escolha o microfone e configure ditado, tradução e respostas faladas da assistente.
       </p>
       <AudioDeviceControls />
       <button
@@ -190,7 +191,7 @@ export function SystemSection() {
         <div>
           <SettingsSectionTitle>Sistema</SettingsSectionTitle>
           <p className="settings-detail__hint">
-            Versão atual, changelog e estado do pacote local instalado.
+            Veja a versão do app, as novidades e as atualizações disponíveis.
           </p>
         </div>
         <span className="release-version">v{release.version}</span>
@@ -205,7 +206,7 @@ export function SystemSection() {
         <p>{release.summary}</p>
       </div>
 
-      <h4 className="release-section-title">Changelog · melhorias</h4>
+      <h4 className="release-section-title">Melhorias desta versão</h4>
       <ul className="settings-list">
         {release.highlights.map((item) => (
           <li key={item.title} className="settings-list__item release-note">
@@ -217,7 +218,7 @@ export function SystemSection() {
         ))}
       </ul>
 
-      <h4 className="release-section-title">Changelog · correções</h4>
+      <h4 className="release-section-title">Correções desta versão</h4>
       <ul className="settings-list">
         {release.fixes.map((item) => (
           <li key={item.title} className="settings-list__item release-note">
@@ -507,7 +508,7 @@ export function SquadsSection() {
         onClick={openCreateEditor}
         disabled={operation !== null}
       >
-        Criar squad
+        Criar equipe
       </button>
       <button
         type="button"
@@ -530,13 +531,15 @@ export function SquadsSection() {
 
   return (
     <section>
-      <SettingsSectionTitle>Squads</SettingsSectionTitle>
+      <SettingsSectionTitle>Equipes</SettingsSectionTitle>
       <p className="settings-detail__hint">
         Salve integrantes e suas configurações para montar novas equipes.
       </p>
 
       <OrchestratorDefaults />
 
+      <details className="settings-advanced-field">
+        <summary>Comportamento dos agentes e estilo de trabalho</summary>
       <AgentSessionSettings />
 
       <h4 className="settings-section-heading">Padrões de execução</h4>
@@ -553,7 +556,7 @@ export function SquadsSection() {
         <OrchestrationToggle
           checked={designPro}
           title="Design profissional"
-          detail="Orienta os agentes a seguir o design system do projeto e consultar Impeccable em tarefas de UI."
+          detail="Adiciona orientações de acabamento visual. Seguir o contrato de design do projeto é uma regra permanente do motor."
           onChange={(checked) => {
             setDesignPro(checked);
             void window.nexus.settings.orchSet({ designPro: checked });
@@ -575,9 +578,7 @@ export function SquadsSection() {
             Perfil de design (tarefas de UI)
           </h4>
           <p className="settings-detail__hint">
-            Modula a carta de design injetada nos workers de UI. Dials no
-            neutro e direção Auto não adicionam nada ao prompt; as proibições
-            anti-genérico valem sempre.
+            Ajuste o estilo sugerido aos agentes. A direção automática segue as referências do projeto.
           </p>
           <label className="settings-field">
             Direção estética
@@ -606,7 +607,7 @@ export function SquadsSection() {
             }}
           />
           <DesignDial
-            label="Intensidade de motion"
+            label="Intensidade das animações"
             value={designMotion}
             onChange={(value) => {
               setDesignMotion(value);
@@ -624,18 +625,20 @@ export function SquadsSection() {
         </>
       )}
 
+      </details>
+
       <div className="settings-section-heading settings-section-heading--with-count">
-        <h4>Squads salvos</h4>
+        <h4>Equipes salvas</h4>
         <span className="settings-chip">{visibleSquads.length}</span>
       </div>
       {visibleSquads.length === 0 ? (
         <EmptyState
           className="settings-squads__empty"
           icon="users"
-          title="Nenhum squad salvo"
+          title="Nenhuma equipe salva"
           body={
             <p>
-              Crie uma equipe reutilizável ou importe um inventário de squads.
+              Crie uma equipe reutilizável ou importe suas equipes.
             </p>
           }
           action={managementActions}
@@ -643,7 +646,7 @@ export function SquadsSection() {
       ) : (
         <>
           {managementActions}
-          <ul className="settings-list" aria-label="Squads salvos">
+          <ul className="settings-list" aria-label="Equipes salvas">
             {visibleSquads.map((squad) => {
               const deleting = operation === `delete:${squad.id}`;
               return (
@@ -672,7 +675,7 @@ export function SquadsSection() {
                         disabled={operation !== null}
                         title={
                           squad.builtin
-                            ? 'Criar uma cópia editável deste squad'
+                            ? 'Criar uma cópia editável desta equipe'
                             : 'Editar nome, instruções e agentes'
                         }
                         onClick={() => {

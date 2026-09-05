@@ -649,15 +649,14 @@ export function PetSection() {
     <div className="settings-appearance__block">
       <p className="settings-appearance__label">Pet de mesa</p>
       <p className="settings-field__note settings-appearance__note">
-        Um companion pixel flutua sobre o desktop, avisa quando missões
-        terminam ou um agente morre, e dorme quando você quiser. Arraste-o
-        pela tela; clique nele para o menu.
+        Um mascote acompanha suas missões na área de trabalho.
+        Arraste para mover e clique para abrir as opções.
       </p>
 
       <label className="settings-toggle-card">
         <span className="settings-toggle-card__copy">
           <strong>Mostrar o pet</strong>
-          <span>Janela flutuante sempre no topo, fora da taskbar.</span>
+          <span>O mascote aparece sobre as outras janelas.</span>
         </span>
         <input
           type="checkbox"

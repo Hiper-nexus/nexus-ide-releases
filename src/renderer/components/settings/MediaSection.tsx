@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import type {
   MediaKind,
   MediaProviderInfo,
@@ -7,8 +7,10 @@ import type {
 import { credentialLinkForKeySlot } from '../../../shared/credential-links';
 import { openExternalFromAnchor } from '../../lib/open-external';
 import { useMediaStudioStore } from '../../state/media-studio-store';
+import { ProviderLogo } from '../ProviderLogo';
 import { ActionCard } from '../ActionCard';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
+import { useCatalogResource } from './use-catalog-resource';
 
 /**
  * Settings → Mídia: providers de geração (imagem/vídeo/voz) que viram MCP
@@ -49,28 +51,31 @@ function MediaKeyField({
     providerId: provider.id,
   });
 
-  async function save() {
+  async function updateKey(value: string) {
+    if (busy) return;
     setBusy(true);
-    const result = await window.nexus.media.setKey(provider.id, draft);
-    setBusy(false);
-    setDraft('');
-    setStatus(result.ok ? 'key salva no Keychain' : result.error ?? 'falhou');
-    onSaved();
-  }
-
-  async function clear() {
-    setBusy(true);
-    await window.nexus.media.setKey(provider.id, '');
-    setBusy(false);
-    setStatus('key removida');
-    onSaved();
+    setStatus(null);
+    try {
+      const result = await window.nexus.media.setKey(provider.id, value);
+      if (!result.ok) {
+        setStatus(value ? 'Não foi possível salvar a chave. Tente novamente.' : 'Não foi possível remover a chave. Tente novamente.');
+        return;
+      }
+      setDraft('');
+      setStatus(value ? 'Chave salva' : 'Chave removida');
+      onSaved();
+    } catch {
+      setStatus('Não foi possível atualizar a chave. Tente novamente.');
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
     <div className="prov__key">
       <div className="prov__key-row">
         <span className="prov__key-label">
-          API key <code className="prov__env"> → {provider.envVar}</code>
+          Chave de acesso
           {credentialLink && (
             <>
               {' · '}
@@ -81,7 +86,7 @@ function MediaKeyField({
                   openExternalFromAnchor(e, credentialLink.url)
                 }
               >
-                obter em {credentialLink.label}
+                Obter chave em {credentialLink.label}
               </a>
             </>
           )}
@@ -91,60 +96,43 @@ function MediaKeyField({
         <input
           className="settings-input"
           type="password"
+          aria-label={`Chave de acesso de ${provider.label}`}
           value={draft}
-          placeholder={provider.hasKey ? '•••• (substituir)' : 'colar API key'}
+          placeholder={provider.hasKey ? 'Cole uma nova chave para substituir' : 'Cole sua chave de acesso'}
           onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && draft && void save()}
+          onKeyDown={(e) => e.key === 'Enter' && !busy && draft && void updateKey(draft)}
         />
       </div>
-      <div className="action-card-row">
-        <ActionCard
-          icon="key"
-          title="Salvar key"
-          subtitle="Keychain seguro"
-          variant="primary"
-          size="sm"
-          onClick={() => void save()}
-          disabled={busy || !draft}
-        />
-        {provider.hasKey && (
-          <ActionCard
-            icon="close"
-            title="Limpar"
-            subtitle="Remove a key"
-            variant="danger"
-            size="sm"
-            onClick={() => void clear()}
-            disabled={busy}
-          />
-        )}
+      <div className="settings-row">
+        <button type="button" className="settings-btn settings-btn--primary"
+          onClick={() => void updateKey(draft)} disabled={busy || !draft}>
+          {busy ? 'Salvando…' : 'Salvar chave'}
+        </button>
+        {provider.hasKey && <button type="button" className="settings-btn"
+          onClick={() => void updateKey('')} disabled={busy}>Remover chave</button>}
       </div>
-      {status && <p className="prov__status">{status}</p>}
+      {status && <p className="prov__status" role="status">{status}</p>}
     </div>
   );
 }
 
+async function readMediaSettings() {
+  const [providers, totals] = await Promise.all([
+    window.nexus.media.listProviders(),
+    window.nexus.media.usageTotals(),
+  ]);
+  return { providers, totals };
+}
+
+const EMPTY_PROVIDERS: MediaProviderInfo[] = [];
+const EMPTY_TOTALS: MediaUsageTotals = { generations: 0, costUsd: 0 };
+
 export function MediaSection() {
-  const [providers, setProviders] = useState<MediaProviderInfo[]>([]);
-  const [totals, setTotals] = useState<MediaUsageTotals>({
-    generations: 0,
-    costUsd: 0,
-  });
-  const [loading, setLoading] = useState(true);
-
-  async function refresh() {
-    const [list, usage] = await Promise.all([
-      window.nexus.media.listProviders(),
-      window.nexus.media.usageTotals(),
-    ]);
-    setProviders(list);
-    setTotals(usage);
-    setLoading(false);
-  }
-
-  useEffect(() => {
-    void refresh();
-  }, []);
+  const { data, loading, error, reload: refresh } = useCatalogResource(
+    readMediaSettings, 'Não foi possível carregar os serviços de mídia.',
+  );
+  const providers = data?.providers ?? EMPTY_PROVIDERS;
+  const totals = data?.totals ?? EMPTY_TOTALS;
 
   const withKey = providers.filter((p) => p.hasKey).length;
   const byKind = useMemo(() => {
@@ -162,21 +150,19 @@ export function MediaSection() {
       <header className="arsenal-section__intro">
         <SettingsSectionTitle>Mídia</SettingsSectionTitle>
         <p className="settings-detail__hint">
-          Providers de imagem, vídeo e voz que viram MCP tools para os agentes.
-          A key fica no Keychain; o agente só recebe o caminho do arquivo
-          gerado no workspace.
+          Conecte serviços para criar imagens, vídeos e voz nas suas missões.
         </p>
       </header>
 
-      <div className="arsenal-fleet" role="status">
+      {!error && <div className="arsenal-fleet" role="status">
         <span className="arsenal-fleet__stat">
-          <strong>{loading ? '…' : providers.length}</strong> providers
+          <strong>{loading ? '…' : providers.length}</strong> serviços
         </span>
         <span className="arsenal-fleet__sep" aria-hidden="true">
           ·
         </span>
         <span className="arsenal-fleet__stat">
-          <strong>{withKey}</strong> com key
+          <strong>{withKey}</strong> conectados
         </span>
         {totals.generations > 0 && (
           <>
@@ -190,11 +176,16 @@ export function MediaSection() {
             </span>
           </>
         )}
-      </div>
+      </div>}
+
+      {error && <div role="alert">
+        <p className="settings-error">{error}</p>
+        <button type="button" className="settings-btn" onClick={() => void refresh()}>Tentar novamente</button>
+      </div>}
 
       {loading && (
         <p className="settings-detail__hint" role="status">
-          Carregando providers de mídia…
+          Carregando serviços de mídia…
         </p>
       )}
 
@@ -209,13 +200,13 @@ export function MediaSection() {
         />
       </div>
 
-      {!loading && providers.length === 0 && (
+      {!loading && !error && providers.length === 0 && (
         <p className="arsenal-empty">
-          Nenhum provider de mídia no inventário.
+          Nenhum serviço de mídia disponível.
         </p>
       )}
 
-      {byKind.map(({ kind, items }) => (
+      {!error && byKind.map(({ kind, items }) => (
         <div key={kind} className="arsenal-band">
           <h4 className="arsenal-band__label">
             {KIND_LABEL[kind]}{' '}
@@ -225,40 +216,44 @@ export function MediaSection() {
             {items.map((provider) => (
               <article key={provider.id} className="arsenal-media-card">
                 <div className="arsenal-media-card__head">
+                  <ProviderLogo adapterId={provider.id.split('-')[0]} label={provider.label} size="sm" />
                   <div className="arsenal-media-card__titles">
                     <span className="arsenal-media-card__name">
                       {provider.label}
                     </span>
-                    <code className="arsenal-media-card__tool">
-                      {TOOL_BY_KIND[provider.kind]}
-                    </code>
                   </div>
                   <span
-                    className={`prov__badge ${provider.hasKey ? 'prov__badge--ok' : 'prov__badge--warn'}`}
+                    className={`settings-chip ${provider.hasKey ? 'settings-chip--ok' : 'settings-chip--warn'}`}
                   >
-                    {provider.hasKey ? provider.maskedKey ?? 'ok' : 'sem key'}
+                    {provider.hasKey ? 'Conectado' : 'Não conectado'}
                   </span>
                 </div>
-                <p className="arsenal-media-card__meta">
-                  default: <code>{provider.defaultModel}</code>
-                </p>
-                <p className="arsenal-media-card__meta">
-                  modelos: {provider.models.join(' · ')}
-                </p>
-                <MediaKeyField
-                  provider={provider}
-                  onSaved={() => void refresh()}
-                />
+                <details className="settings-advanced-field">
+                  <summary>Modelos e detalhes técnicos</summary>
+                  <p className="arsenal-media-card__meta">
+                    Modelo padrão: <code>{provider.defaultModel}</code>
+                  </p>
+                  <p className="arsenal-media-card__meta">
+                    Disponíveis: {provider.models.join(' · ')}
+                  </p>
+                  <p className="arsenal-media-card__meta">
+                    Ferramenta: <code>{TOOL_BY_KIND[provider.kind]}</code>
+                  </p>
+                  <p className="arsenal-media-card__meta">
+                    Variável de ambiente: <code>{provider.envVar}</code>
+                  </p>
+                </details>
+                <details className="settings-advanced-field">
+                  <summary>{provider.hasKey ? 'Gerenciar conexão' : 'Conectar serviço'}</summary>
+                  <MediaKeyField provider={provider} onSaved={() => void refresh()} />
+                </details>
               </article>
             ))}
           </div>
         </div>
       ))}
 
-      <p className="settings-detail__hint arsenal-section__foot">
-        Imagem flagship: Seedream 5.0 Pro. Vídeo: Seedance, Veo, Kling, Sora…
-        Aliases: seedream, seedance, veo…
-      </p>
+
     </section>
   );
 }

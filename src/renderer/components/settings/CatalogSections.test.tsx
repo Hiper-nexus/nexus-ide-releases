@@ -1,8 +1,10 @@
 /** @vitest-environment jsdom */
+import type { Squad } from '../../../shared/orch-types';
+import { useOrchStore } from '../../state/orch-store';
 import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AgentsSection, SkillsSection, ToolsSection, PluginsSection, HooksSection } from './CatalogSections';
+import { AgentsSection, SkillsSection, ToolsSection, PluginsSection, HooksSection, RulesSection } from './CatalogSections';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -133,4 +135,27 @@ describe('catalog loading and recovery', () => {
     expect(filter!.value).toBe('todos');
     expect(host.textContent).toContain('interface-guide');
   });
+});
+
+
+it('filters declared permissions by team without changing the declarations', () => {
+  const previous = useOrchStore.getState().squads;
+  const makeTeam = (id: string, name: string): Squad => ({
+    id, name, createdAt: '1', builtin: false, orchestratorInstructions: '',
+    agents: [{ id: `${id}-agent`, agentName: `${name} agente`, category: 'executor', cli: 'codex', model: 'gpt-5.6-sol', allowedTools: null, allowedSkills: [] }],
+  });
+  const teams = [makeTeam('alpha', 'Equipe Alfa'), makeTeam('beta', 'Equipe Beta')];
+  useOrchStore.setState({ squads: teams });
+  try {
+    const host = mount(<RulesSection />);
+    expect(host.querySelectorAll('.settings-list__item')).toHaveLength(2);
+    const select = host.querySelector('select')!;
+    act(() => { select.value = 'beta'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+    expect(host.querySelectorAll('.settings-list__item')).toHaveLength(1);
+    expect(host.querySelector('.settings-list')?.textContent).toContain('Equipe Beta agente');
+    expect(host.querySelector('.settings-list')?.textContent).toContain('Sem lista específica');
+    expect(useOrchStore.getState().squads).toEqual(teams);
+  } finally {
+    act(() => useOrchStore.setState({ squads: previous }));
+  }
 });

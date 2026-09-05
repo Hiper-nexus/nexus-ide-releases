@@ -506,7 +506,7 @@ describe('agent pane workspace confinement', () => {
         adapterId: 'codex',
         missionId: 'm1',
         role: 'worker',
-        prompt: 'Implemente a tarefa e entregue o handoff.',
+        prompt: 'Implemente a interface da página e entregue o handoff.',
         scope,
         executionScope: taskExecutionScope,
       },
@@ -521,11 +521,14 @@ describe('agent pane workspace confinement', () => {
       expect.objectContaining({
         adapterId: 'codex',
         initialPrompt: expect.stringContaining(
-          'Implemente a tarefa e entregue o handoff.',
+          'Implemente a interface da página e entregue o handoff.',
         ),
       }),
     );
     expect(spawnOptions?.initialPrompt).toContain('nexus_handoff_submit');
+    expect(spawnOptions?.initialPrompt).toContain('Regra de design do projeto');
+    expect(spawnOptions?.initialPrompt).toContain('AGENTS.md');
+    expect(stubs.orchSettings.designPro).toBe(false);
     expect(stubs.writeSession).not.toHaveBeenCalled();
     expect(onPromptAccepted).toHaveBeenCalledWith(
       'pane-1',

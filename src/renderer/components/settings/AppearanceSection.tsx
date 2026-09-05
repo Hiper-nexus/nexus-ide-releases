@@ -24,9 +24,7 @@ export function AppearanceSection() {
     <section className="settings-appearance">
       <SettingsSectionTitle>Aparência</SettingsSectionTitle>
       <p className="settings-detail__hint">
-        Por defeito a UI é dark moderna (sans + cantos suaves). O modo pixel é
-        opt-in: cantos retos, VT323 e grid. A paleta aplica-se a barras, drawers
-        e painéis.
+        Escolha as cores do app e personalize o estilo da interface.
       </p>
 
       <div className="settings-appearance__preview" aria-hidden>
@@ -39,7 +37,7 @@ export function AppearanceSection() {
         />
         <span className="settings-appearance__preview-copy">
           <strong>Operador</strong>
-          <span>Mascote e ícones opcionais; o shell moderno é o default.</span>
+          <span>Personalize seu perfil e escolha um mascote.</span>
         </span>
       </div>
 
@@ -47,8 +45,7 @@ export function AppearanceSection() {
         <span className="settings-toggle-card__copy">
           <strong>Modo pixel</strong>
           <span>
-            Cantos retos, tipografia bitmap e grid mais evidente. Reversível a
-            qualquer momento.
+            Letras e cantos em estilo retrô. Você pode desativar quando quiser.
           </span>
         </span>
         <input
@@ -62,7 +59,7 @@ export function AppearanceSection() {
       <div className="settings-appearance__block">
         <p className="settings-appearance__label">Paleta do app</p>
         <p className="settings-field__note settings-appearance__note">
-          Mesmos presets do terminal; mudam a UI inteira e os panes abertos.
+          As cores são aplicadas ao app e aos terminais abertos.
         </p>
         <div className="settings-theme-grid">
           {TERMINAL_THEME_IDS.map((id: TerminalThemeId) => {

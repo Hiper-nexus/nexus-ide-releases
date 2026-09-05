@@ -1316,6 +1316,7 @@
 }
 
 .arsenal-media-card__titles {
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
@@ -3308,3 +3309,10 @@
 .account__load-state { padding: var(--space-5); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-elevated); }
 .account__load-state h3 { margin: 0 0 var(--space-2); font-size: var(--text-xl); }
 .account__load-state p { margin: 0 0 var(--space-4); max-width: 65ch; color: var(--text-dim); font-size: var(--text-lg); line-height: 1.6; }
+
+/* Reserve readable space for saved team names before wrapping their actions. */
+.settings-squads__row > .settings-list__title {
+  flex: 1 1 14rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

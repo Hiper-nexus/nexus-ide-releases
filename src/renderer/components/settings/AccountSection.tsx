@@ -350,7 +350,7 @@ export function AccountSection() {
             <div>
               <span className="account__zone-title">Time</span>
               <p className="account__zone-hint">
-                Squads e playbooks compartilhados com assentos do plano.
+                Compartilhe equipes e fluxos de trabalho com as pessoas do seu plano.
               </p>
             </div>
             {team?.team && (
@@ -540,8 +540,7 @@ export function AccountSection() {
       )}
 
       <p className="settings-detail__hint account__note">
-        Pagamentos via Stripe no NexusIDE Cloud. Contas CLI e hot-swap de
-        sessão ficam em Config → Providers.
+        Pagamentos processados pela Stripe. Gerencie suas contas de IA em Providers.
       </p>
     </section>
   );
