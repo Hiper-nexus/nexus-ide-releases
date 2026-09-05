@@ -923,6 +923,8 @@ const shutdownNotices = createShutdownNoticeController({
 });
 
 app.on("activate", () => {
+  // macOS may activate during launch; whenReady owns the first window.
+  if (!app.isReady()) return;
   startMacOSDockWatchdog();
   const mainWindows = BrowserWindow.getAllWindows().filter(
     (win) => !isPetWindow(win),
