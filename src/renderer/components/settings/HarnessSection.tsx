@@ -51,7 +51,7 @@ function InventoryGroups({ rows }: { rows: readonly HarnessInventoryRow[] }) {
   </div>;
 }
 
-export function HarnessSection() {
+export function HarnessSection({ overviewOnly = false }: { overviewOnly?: boolean } = {}) {
   const workspace = useWorkspaceStore(state => state.current);
   const mcpToolCount = useOrchStore(state => state.mcpInfo?.toolCount);
   const [view, setView] = useState<HarnessView>('arsenal');
@@ -116,20 +116,21 @@ export function HarnessSection() {
     event.currentTarget.querySelector<HTMLButtonElement>(`#harness-tab-${VIEWS[next].id}`)?.focus();
   }
 
+  const displayedView = overviewOnly ? 'arsenal' : view;
   return <section className="harness-settings">
     <header className="harness-settings__header">
-      <SettingsSectionTitle>Recursos e conexão dos agentes</SettingsSectionTitle>
-      <p>Confira as instruções instaladas, encontre fluxos de trabalho e escolha como conectar agentes ao Nexus.</p>
+      <SettingsSectionTitle>{overviewOnly ? 'Recursos instalados' : 'Recursos e conexão dos agentes'}</SettingsSectionTitle>
+      <p>{overviewOnly ? 'Encontre agentes e instruções disponíveis nesta máquina.' : 'Confira as instruções instaladas, encontre fluxos de trabalho e escolha como conectar agentes ao Nexus.'}</p>
     </header>
-    <div className="harness-settings__tabs" role="tablist" aria-label="Seções de Harness" onKeyDown={navigateTab}>
+    {!overviewOnly && <div className="harness-settings__tabs" role="tablist" aria-label="Seções de Harness" onKeyDown={navigateTab}>
       {VIEWS.map(item => <button key={item.id} id={`harness-tab-${item.id}`} type="button" role="tab"
         aria-selected={view === item.id} aria-controls="harness-panel" tabIndex={view === item.id ? 0 : -1}
         onClick={() => setView(item.id)}>{item.label}</button>)}
-    </div>
-    <div id="harness-panel" role="tabpanel" aria-labelledby={`harness-tab-${view}`}>
-      {view === 'acp' ? <AcpHarnessPanel /> : view === 'recipes' ? <SettingsSectionTitleProvider level={3}><RecipesSection /></SettingsSectionTitleProvider> : <>
+    </div>}
+    <div id="harness-panel" role={overviewOnly ? undefined : 'tabpanel'} aria-labelledby={overviewOnly ? undefined : `harness-tab-${view}`}>
+      {displayedView === 'acp' ? <AcpHarnessPanel /> : displayedView === 'recipes' ? <SettingsSectionTitleProvider level={3}><RecipesSection /></SettingsSectionTitleProvider> : <>
         <div className="harness-settings__inventory-heading">
-          <div><h3>Seu catálogo local</h3><p>Agentes e skills são instruções disponíveis para as ferramentas de IA. A classificação abaixo descreve sua finalidade.</p></div>
+          {!overviewOnly && <div><h3>Seu catálogo local</h3><p>Agentes e skills são instruções disponíveis para as ferramentas de IA. A classificação abaixo descreve sua finalidade.</p></div>}
           <button type="button" className="settings-btn" disabled={loading || enriching} onClick={() => void reload()}>{loading ? 'Carregando…' : 'Atualizar lista'}</button>
         </div>
         <div className="harness-settings__filters">

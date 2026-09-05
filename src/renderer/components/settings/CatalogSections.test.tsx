@@ -4,7 +4,7 @@ import { useOrchStore } from '../../state/orch-store';
 import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AgentsSection, SkillsSection, ToolsSection, PluginsSection, HooksSection, RulesSection } from './CatalogSections';
+import { AgentsSection, SkillsSection, ToolsSection, PluginsSection, HooksSection, RulesSection, MediaCatalogSection } from './CatalogSections';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -158,4 +158,18 @@ it('filters declared permissions by team without changing the declarations', () 
   } finally {
     act(() => useOrchStore.setState({ squads: previous }));
   }
+});
+
+
+it('keeps models separate and provides a direct route to media connections', async () => {
+  const { useProductNavigationStore } = await import('../../state/product-navigation-store');
+  const navigate = vi.spyOn(useProductNavigationStore.getState(), 'openSettings');
+  const listProviders = vi.fn(async () => [{ id: 'openai-image', kind: 'image', label: 'OpenAI', envVar: 'OPENAI_API_KEY', defaultModel: 'gpt-image-2', models: ['gpt-image-2'], hasKey: false, maskedKey: null }]);
+  Object.defineProperty(window, 'nexus', { configurable: true, value: { orch: api, media: { listProviders } } });
+  const host = mount(<MediaCatalogSection />);
+  await settle();
+  expect(host.querySelector('input[type="password"]')).toBeNull();
+  act(() => button(host, 'Configurar conexões de mídia').click());
+  expect(navigate).toHaveBeenCalledWith('media');
+  navigate.mockRestore();
 });

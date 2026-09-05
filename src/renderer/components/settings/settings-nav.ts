@@ -1,6 +1,7 @@
 export type SettingsSection =
   | 'account'
   | 'appearance'
+  | 'pets'
   | 'system'
   | 'terminal'
   | 'voice'
@@ -14,6 +15,7 @@ export type SettingsSection =
   | 'ranking'
   | 'squads'
   | 'harness'
+  | 'agent-connection'
   | 'marketplace'
   | 'design-systems'
   | 'remote'
@@ -72,12 +74,9 @@ function pillarGroup(
 }
 
 /**
- * Nav PLANA — todas as seções sempre visíveis, agrupadas por cabeçalho, sem
- * colapso aninhado. O modelo anterior ("Mais configurações" → grupos
- * colapsáveis → item) enterrava seções críticas em três cliques (achado de
- * operador: "para chegar no acesso remoto do celular tem que garimpar").
- * Uma lista rolável com cabeçalhos de seção + busca é o padrão dos settings
- * que o usuário já conhece (VS Code, BridgeMind).
+ * Complete destination registry for deep links and global settings search.
+ * The sidebar groups these routes through settings-categories; local section
+ * links expose each destination in at most two navigation choices.
  */
 export const SETTINGS_GROUPS: NavGroup[] = [
   pillarGroup('you', [
@@ -106,6 +105,10 @@ export const SETTINGS_GROUPS: NavGroup[] = [
       title: 'Aparência',
       subtitle: 'Temas, cores e aparência',
       aliases: ['pixel · tema · paleta', 'appearance', 'theme', 'visual', 'ui'],
+    },
+    {
+      id: 'pets', icon: 'PET', pixelIcon: 'user', title: 'Meus pets',
+      subtitle: 'Sua biblioteca de mascotes', aliases: ['pets', 'mascote', 'galeria', 'biblioteca'],
     },
     {
       id: 'terminal',
@@ -181,6 +184,7 @@ export const SETTINGS_GROUPS: NavGroup[] = [
       subtitle: 'Recursos, fluxos e agentes',
       aliases: ['arsenal · recipes', 'capabilities', 'enricher', 'enriquecedor', 'receitas'],
     },
+    { id: 'agent-connection', icon: 'ACP', pixelIcon: 'board', title: 'Conexão de agentes', subtitle: 'Terminal ou comunicação direta', aliases: ['acp', 'harness', 'conexão'] },
     {
       id: 'mcps',
       icon: 'MCP',
@@ -382,6 +386,7 @@ const SETTINGS_SECTION_PILLAR: Record<SettingsSection, SettingsNavPillarId> = {
   account: 'you',
   voice: 'you',
   appearance: 'app',
+  pets: 'app',
   terminal: 'app',
   shortcuts: 'app',
   providers: 'agents',
@@ -389,6 +394,7 @@ const SETTINGS_SECTION_PILLAR: Record<SettingsSection, SettingsNavPillarId> = {
   ranking: 'agents',
   squads: 'agents',
   harness: 'agents',
+  'agent-connection': 'agents',
   mcps: 'agents',
   tools: 'agents',
   media: 'agents',

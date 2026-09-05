@@ -12,11 +12,11 @@ const items = [
   { kind: 'skill', name: 'planejar-interface', file: '/example/.codex/skills/interface.md', size: 100, modifiedAt: 1 },
 ];
 const roots: Root[] = [];
-function mount() {
+function mount(overviewOnly = false) {
   const host = document.createElement('div');
   document.body.append(host);
   const root = createRoot(host); roots.push(root);
-  act(() => root.render(<HarnessSection />));
+  act(() => root.render(<HarnessSection overviewOnly={overviewOnly} />));
   return host;
 }
 async function flush() { await act(async () => { await Promise.resolve(); await Promise.resolve(); }); }
@@ -41,6 +41,12 @@ afterEach(() => {
   document.body.replaceChildren(); Reflect.deleteProperty(window, 'nexus'); vi.restoreAllMocks();
 });
 describe('HarnessSection', () => {
+  it('shows only the inventory when the settings shell already provides navigation', async () => {
+    const host = mount(true); await flush();
+    expect(host.querySelector('[role="tablist"]')).toBeNull();
+    expect(host.textContent).toContain('revisar-api');
+    expect(host.textContent).not.toContain('Fluxos prontos');
+  });
   it('shows loading instead of a false empty catalog before the request completes', () => {
     vi.mocked(window.nexus.orch.listInstalledCatalog).mockImplementation(() => new Promise(() => {}));
     const host = mount();

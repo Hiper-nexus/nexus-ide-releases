@@ -176,21 +176,32 @@ afterEach(() => {
 });
 
 describe('responsive settings navigation', () => {
-  it('keeps every page reachable through the compact selector', async () => {
+  it('keeps compact navigation at nine areas and opens their first section', async () => {
     const selectPage = vi.fn();
     const host = mount(<SettingsWorkspace section="appearance" onSectionChange={selectPage} />);
     await settleSectionEffects();
     const select = host.querySelector<HTMLSelectElement>('.settings-nav__compact select')!;
-    expect([...select.options].some(option => option.value === 'companion-relay')).toBe(true);
-    act(() => { select.value = 'usage-quota'; select.dispatchEvent(new Event('change', { bubbles: true })); });
-    expect(selectPage).toHaveBeenCalledWith('usage-quota');
+    expect(select.options).toHaveLength(9);
+    expect([...select.options].some(option => option.value === 'connections')).toBe(true);
+    act(() => { select.value = 'ai'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+    expect(selectPage).toHaveBeenCalledWith('providers');
+  });
+
+  it('opens the local pet library directly from the persistent footer', async () => {
+    const selectPage = vi.fn();
+    const host = mount(<SettingsWorkspace section="account" onSectionChange={selectPage} />);
+    await settleSectionEffects();
+    const action = host.querySelector<HTMLButtonElement>('.settings-nav__footer button');
+    expect(action?.textContent).toContain('Meus pets');
+    act(() => action?.click());
+    expect(selectPage).toHaveBeenCalledWith('pets');
   });
 
   it('keeps profile access through a plain-language action', async () => {
     const openProfile = vi.spyOn(useGamificationStore.getState(), 'openProfile').mockImplementation(() => {});
     const host = mount(<SettingsWorkspace section="appearance" />);
     await settleSectionEffects();
-    const action = [...host.querySelectorAll('button')].find(button => button.textContent?.trim() === 'Perfil e mascote');
+    const action = [...host.querySelectorAll('button')].find(button => button.textContent?.trim() === 'Meu perfil');
     expect(action).toBeDefined();
     act(() => action!.click());
     expect(openProfile).toHaveBeenCalledOnce();
@@ -209,8 +220,8 @@ describe('SettingsWorkspace contracts', () => {
     const cases: Array<[SettingsSection, RegExp, string]> = [
       ['account', /minha conta/i, 'Minha conta'],
       ['appearance', /^aparência$/i, 'Aparência'],
-      ['terminal', /^terminal$/i, 'Terminal'],
-      ['remote', /^remoto$/i, 'Remoto'],
+      ['terminal', /^terminal$/i, 'Sistema'],
+      ['remote', /^remoto$/i, 'Conexões externas'],
     ];
 
     for (const [section, heading, navTitle] of cases) {
@@ -228,7 +239,7 @@ describe('SettingsWorkspace contracts', () => {
     }
   });
 
-  it('keeps all 31 canonical nav rows available and filters them through search', async () => {
+  it('keeps nine primary areas and finds individual settings through search', async () => {
     useProductNavigationStore.getState().openSettings('account');
     const host = mount(<SettingsWorkspace />);
     await settleSectionEffects();
@@ -238,7 +249,7 @@ describe('SettingsWorkspace contracts', () => {
     );
     expect(nav).not.toBeNull();
     expect(search).not.toBeNull();
-    expect(nav?.querySelectorAll('.settings-nav__item')).toHaveLength(31);
+    expect(nav?.querySelectorAll('.settings-nav__item')).toHaveLength(9);
     if (!search) throw new Error('Settings search is unavailable');
 
     setSearchValue(search, 'xterm');
@@ -355,7 +366,7 @@ describe('SettingsWorkspace contracts', () => {
     expect(scrollingGroups).not.toBeNull();
     expect(
       scrollingGroups?.querySelectorAll('.settings-nav__item'),
-    ).toHaveLength(31);
+    ).toHaveLength(9);
     expect(scrollingGroups?.contains(brand)).toBe(false);
     expect(scrollingGroups?.contains(search)).toBe(false);
   });

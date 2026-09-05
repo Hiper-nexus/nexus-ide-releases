@@ -80,6 +80,14 @@ describe('PetSection — Criar pet com IA (hatch)', () => {
     delete (window as { nexus?: unknown }).nexus;
   });
 
+  it('keeps the local pet library visible when the desktop mascot is disabled', async () => {
+    window.nexus.pet.getPrefs = async () => ({ ...PREFS, enabled: false });
+    await act(async () => root.render(<PetSection />));
+    expect(host.textContent).toContain('Meus pets (1)');
+    expect(host.textContent).toContain('Codex Companion');
+    expect(installedApply).not.toHaveBeenCalled();
+  });
+
   it('prepares a visible Review without claiming an early start', async () => {
     await act(async () => {
       root.render(<PetSection />);

@@ -40,7 +40,7 @@ export interface ProductNavigationActions {
   openSettings(section?: SettingsSection): void;
   backFromSettings(): void;
   openPetReviewFromSettings(): void;
-  returnToSettingsSection(section: 'appearance'): void;
+  returnToSettingsSection(section: 'appearance' | 'pets'): void;
   closeWorkspace(): void;
 }
 

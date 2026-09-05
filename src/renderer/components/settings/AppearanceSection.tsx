@@ -5,7 +5,7 @@ import {
 import { TERMINAL_THEMES } from '../../styles/terminal-theme';
 import { useSettingsStore } from '../../state/settings-store';
 import { OperatorSprite } from '../OperatorSprite';
-import { PetSection } from './PetSection';
+import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
 
 /**
@@ -84,7 +84,7 @@ export function AppearanceSection() {
         </div>
       </div>
 
-      <PetSection />
+      <button type="button" className="settings-btn" onClick={() => useProductNavigationStore.getState().openSettings('pets')}>Abrir Meus pets</button>
     </section>
   );
 }

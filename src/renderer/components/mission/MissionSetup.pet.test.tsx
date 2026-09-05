@@ -244,7 +244,7 @@ describe('Mission Setup — ephemeral Pet Review', () => {
     expect(api.start).not.toHaveBeenCalled();
     expect(currentPetContext()).toBeNull();
     expect(useProductNavigationStore.getState()).toMatchObject({
-      destination: { kind: 'settings', section: 'appearance' },
+      destination: { kind: 'settings', section: 'pets' },
       settingsReturnDestination: { kind: 'terminal' },
     });
     useProductNavigationStore.getState().backFromSettings();
@@ -270,7 +270,7 @@ describe('Mission Setup — ephemeral Pet Review', () => {
     expect(api.start).not.toHaveBeenCalled();
     expect(useProductNavigationStore.getState().destination).toEqual({
       kind: 'settings',
-      section: 'appearance',
+      section: 'pets',
     });
   });
 

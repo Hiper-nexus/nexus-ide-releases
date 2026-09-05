@@ -451,7 +451,7 @@ export function MissionSetup() {
         clearEntryContext();
         useProductNavigationStore
           .getState()
-          .returnToSettingsSection('appearance');
+          .returnToSettingsSection('pets');
       }
       return;
     }
@@ -481,7 +481,7 @@ export function MissionSetup() {
       clearEntryContext();
       useProductNavigationStore
         .getState()
-        .returnToSettingsSection('appearance');
+        .returnToSettingsSection('pets');
       return;
     }
     if (draft.step === 'review' && !petStudioReview) setStep('team');
@@ -696,7 +696,7 @@ export function MissionSetup() {
       clearEntryContext();
       useProductNavigationStore
         .getState()
-        .returnToSettingsSection('appearance');
+        .returnToSettingsSection('pets');
       return;
     }
     setStep('team');

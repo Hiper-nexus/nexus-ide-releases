@@ -360,7 +360,7 @@ export function SquadsSection() {
 
   function useMembers(squad: Squad): void {
     if (squad.id === PET_STUDIO_SQUAD_ID) {
-      useProductNavigationStore.getState().openSettings('appearance');
+      useProductNavigationStore.getState().openSettings('pets');
       return;
     }
     const workspacePath = useWorkspaceStore.getState().current?.path;

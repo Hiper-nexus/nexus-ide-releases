@@ -281,13 +281,13 @@ describe('Settings → Squads retained management capability', () => {
     expect(useToastStore.getState().toasts.at(-1)?.detail).toBe('Adicione ao menos uma pessoa independente para verificar a entrega.');
   });
 
-  it('opens the dedicated appearance flow for Pet Studio without copying its authority into an ordinary mission', async () => {
+  it('opens the dedicated pet library for Pet Studio without copying its authority into an ordinary mission', async () => {
     useOrchStore.setState({ squads: [PET_STUDIO_SQUAD] });
     const host = renderSquads();
     await settle();
     expect(buttonByName(host, /Usar integrantes/i)).toBeNull();
     act(() => requiredButton(host, /Criar pet/i).click());
-    expect(useProductNavigationStore.getState().destination).toEqual({ kind: 'settings', section: 'appearance' });
+    expect(useProductNavigationStore.getState().destination).toEqual({ kind: 'settings', section: 'pets' });
     expect(useMissionSetupStore.getState().draft.roster).toEqual([]);
     expect(useMissionSetupStore.getState().entryContext).toBeNull();
   });

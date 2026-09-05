@@ -1,3 +1,6 @@
+import { AcpHarnessPanel } from './AcpHarnessPanel';
+import { SETTINGS_CATEGORIES, SETTINGS_SECTION_SHORT_LABELS, settingsCategoryFor } from './settings-categories';
+import { PetSection } from './PetSection';
 import {
   useEffect,
   useLayoutEffect,
@@ -134,6 +137,8 @@ function SettingsSectionContent({
       return <AccountSection />;
     case 'appearance':
       return <AppearanceSection />;
+    case 'pets':
+      return <section><SettingsSectionTitle>Meus pets</SettingsSectionTitle><PetSection /></section>;
     case 'system':
       return <SystemSection />;
     case 'terminal':
@@ -157,7 +162,9 @@ function SettingsSectionContent({
     case 'squads':
       return <SquadsSection />;
     case 'harness':
-      return <HarnessSection />;
+      return <HarnessSection overviewOnly />;
+    case 'agent-connection':
+      return <section><SettingsSectionTitle>Conexão de agentes</SettingsSectionTitle><AcpHarnessPanel /></section>;
     case 'marketplace':
       return <MarketplaceSection />;
     case 'design-systems':
@@ -296,6 +303,7 @@ export function SettingsSurface({
     squads: squadsCount,
     ...(mcpToolCount > 0 ? { tools: mcpToolCount, mcps: 1 } : {}),
   };
+  const category = settingsCategoryFor(section);
   const currentSectionTitle = SETTINGS_ITEMS.find(
     (item) => item.id === section,
   )?.title;
@@ -306,14 +314,12 @@ export function SettingsSurface({
       <nav className="settings-nav" aria-label="Configurações">
         <div className="settings-nav__body">
           <label className="settings-nav__compact">
-            <span>Página de configurações</span>
-            <select className="settings-input" value={section} onChange={(event) => {
-              const selected = SETTINGS_ITEMS.find(item => item.id === event.currentTarget.value);
-              if (selected) onSelectSection(selected.id);
+            <span>Área de configurações</span>
+            <select className="settings-input" value={category?.id ?? SETTINGS_CATEGORIES[0].id} onChange={(event) => {
+              const selected = SETTINGS_CATEGORIES.find(item => item.id === event.currentTarget.value);
+              if (selected) onSelectSection(selected.sections[0]);
             }}>
-              {SETTINGS_GROUPS.map(group => <optgroup key={group.label} label={group.label}>
-                {group.items.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
-              </optgroup>)}
+              {SETTINGS_CATEGORIES.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
             </select>
           </label>
           <div className="settings-nav__brand" aria-label="Configurações">
@@ -347,7 +353,7 @@ export function SettingsSurface({
               Nada encontrado para “{query}”.
             </p>
           ) : (
-            groups.map((group) => (
+            searching ? groups.map((group) => (
               <div key={group.label}>
                 <NavGroupHeading group={group} />
                 {group.items.map((item) => (
@@ -360,14 +366,20 @@ export function SettingsSurface({
                   />
                 ))}
               </div>
-            ))
+            )) : SETTINGS_CATEGORIES.map(item => {
+              const active = item.sections.includes(section);
+              const first = SETTINGS_ITEMS.find(entry => entry.id === (active ? section : item.sections[0]));
+              if (!first) return null;
+              return <NavRow key={item.id} item={{ ...first, title: item.title, subtitle: item.description, pixelIcon: item.icon }} active={active} onSelect={onSelectSection} />;
+            })
           )}
           </div>
         </div>
         <div className="settings-nav__footer">
           <div className="settings-nav__operator">
+            <button type="button" className="settings-nav__profile" onClick={() => onSelectSection('pets')}><PixelIcon name="grid" size={14} /> Meus pets</button>
             <button type="button" className="settings-nav__profile" onClick={openProfile}>
-              <PixelIcon name="user" size={14} /> Perfil e mascote
+              <PixelIcon name="user" size={14} /> Meu perfil
             </button>
           </div>
           {footerActionLabel ? (
@@ -400,6 +412,9 @@ export function SettingsSurface({
             {returnKeyboardHint ? <kbd>{returnKeyboardHint}</kbd> : null}
           </button>
         </header>
+        {category && category.sections.length > 1 && <nav className="settings-category-tabs" aria-label={`Seções de ${category.title}`}>
+          {category.sections.map(id => <button key={id} type="button" className={`settings-category-tabs__item ${section === id ? 'settings-category-tabs__item--active' : ''}`} aria-current={section === id ? 'page' : undefined} onClick={() => onSelectSection(id)}>{SETTINGS_SECTION_SHORT_LABELS[id] ?? SETTINGS_ITEMS.find(item => item.id === id)?.title}</button>)}
+        </nav>}
         <div ref={contentRef} className="settings-detail__content" data-settings-section={section}>
           <SettingsSectionTitleProvider level={sectionTitleLevel}>
             <SettingsSectionContent

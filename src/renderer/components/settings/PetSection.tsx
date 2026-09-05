@@ -666,8 +666,69 @@ export function PetSection() {
         />
       </label>
 
-      {prefs.enabled && (
-        <>
+          {installed && installed.length > 0 && (
+            <div className="settings-pet-library settings-pet-library--mine">
+              <div className="settings-pet-library__head">
+                <p className="settings-appearance__label">
+                  Meus pets ({installed.length})
+                </p>
+                <span className="settings-pet-library__path" title="Pasta local">
+                  ~/.codex/pets
+                </span>
+              </div>
+              <p className="settings-field__note">
+                Criados no Pet Studio. Clique para usar · × para apagar do
+                disco. O companion só muda quando você escolher.
+              </p>
+              <div className="settings-pet-library__grid" role="list">
+                {installed.map((entry) => (
+                  <LibraryPetCard
+                    key={entry.id}
+                    entry={entry}
+                    busy={installedBusyId === entry.id}
+                    active={
+                      installedActiveId === entry.id && prefs.preset === 'sheet'
+                    }
+                    onPick={() => void onApplyInstalledPet(entry.id)}
+                    onDelete={
+                      petApi.installedDelete
+                        ? () => void onDeleteInstalledPet(entry)
+                        : undefined
+                    }
+                    loadPreview={
+                      petApi.installedPreview
+                        ? (id) => petApi.installedPreview!(id)
+                        : undefined
+                    }
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="settings-pet-import" aria-label="Criar e importar pets">
+            <p className="settings-appearance__label">Criar e importar</p>
+
+            <div className="settings-row">
+              {petApi.pickImage && <button type="button" className="settings-btn settings-btn--primary" disabled={hatchBusy} onClick={() => void onHatchPet()}>{hatchBusy ? 'Preparando revisão…' : 'Criar pet com IA'}</button>}
+              <button type="button" className="settings-btn" onClick={() => void onPickSheetNative()}>Importar pet</button>
+            </div>
+            <details className="settings-advanced-field"><summary>Como criar e importar</summary>
+              <p className="settings-field__note">A criação com IA usa uma foto e começa após revisar a missão. Para importar, escolha uma imagem de poses do Codex ou petdex.</p>
+            </details>
+            <input
+              ref={sheetRef}
+              type="file"
+              accept="image/png,image/webp,image/jpeg"
+              hidden
+              onChange={(e) => {
+                void onPickSheet(e.target.files?.[0]);
+                e.target.value = '';
+              }}
+            />
+          </div>
+      <>
+          <details className="settings-advanced-field"><summary>Opções de exibição do mascote</summary>
           <label className="settings-toggle-card">
             <span className="settings-toggle-card__copy">
               <strong>Dormir</strong>
@@ -769,51 +830,10 @@ export function PetSection() {
             })}
           </div>
 
-          {installed && installed.length > 0 && (
-            <div className="settings-pet-library settings-pet-library--mine">
-              <div className="settings-pet-library__head">
-                <p className="settings-appearance__label">
-                  Meus pets ({installed.length})
-                </p>
-                <span className="settings-pet-library__path" title="Pasta local">
-                  ~/.codex/pets
-                </span>
-              </div>
-              <p className="settings-field__note">
-                Criados no Pet Studio. Clique para usar · × para apagar do
-                disco. O companion só muda quando você escolher.
-              </p>
-              <div className="settings-pet-library__grid" role="list">
-                {installed.map((entry) => (
-                  <LibraryPetCard
-                    key={entry.id}
-                    entry={entry}
-                    busy={installedBusyId === entry.id}
-                    active={
-                      installedActiveId === entry.id && prefs.preset === 'sheet'
-                    }
-                    onPick={() => void onApplyInstalledPet(entry.id)}
-                    onDelete={
-                      petApi.installedDelete
-                        ? () => void onDeleteInstalledPet(entry)
-                        : undefined
-                    }
-                    loadPreview={
-                      petApi.installedPreview
-                        ? (id) => petApi.installedPreview!(id)
-                        : undefined
-                    }
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
+          </details>
           {library && library.length > 0 && (
-            <div className="settings-pet-library">
-              <p className="settings-appearance__label">
-                Biblioteca inclusa ({library.length})
-              </p>
+            <details className="settings-pet-library">
+              <summary>Biblioteca inclusa ({library.length})</summary>
               <p className="settings-field__note">
                 Pets diversos já no app — um clique aplica o spritesheet e liga
                 o companion. Offline, sem baixar da galeria.
@@ -836,52 +856,9 @@ export function PetSection() {
                   />
                 ))}
               </div>
-            </div>
+            </details>
           )}
 
-          <div className="settings-pet-import" aria-label="Criar e importar pets">
-            <p className="settings-appearance__label">Criar e importar</p>
-            <p className="settings-field__note settings-pet-import__lead">
-              Três caminhos: gerar com IA, importar spritesheet local, ou
-              buscar na galeria da comunidade.
-            </p>
-            <div className="settings-pet-import__actions action-card-row">
-              {petApi.pickImage && (
-                <ActionCard
-                  icon="sparkle"
-                  title={hatchBusy ? 'Preparando revisão…' : 'Criar pet com IA'}
-                  subtitle="Foto → pet v2 completo"
-                  variant="primary"
-                  disabled={hatchBusy}
-                  onClick={() => void onHatchPet()}
-                />
-              )}
-              <ActionCard
-                icon="grid"
-                title="Importar spritesheet do Codex"
-                subtitle="Contrato v2 · ~/.codex/pets"
-                onClick={() => void onPickSheetNative()}
-              />
-            </div>
-            <p className="settings-field__note">
-              Criar com IA prepara uma revisão da missão que desenhará seu pet
-              em todas as poses a partir de uma foto. A criação só começa
-              depois da sua confirmação na etapa Revisar. Spritesheets Codex
-              v2 (8×11) e petdex (8×9) importam direto — inclusive os de
-              ~/.codex/pets. Os arquivos finais ficam locais; a geração usa o
-              provider Codex configurado.
-            </p>
-            <input
-              ref={sheetRef}
-              type="file"
-              accept="image/png,image/webp,image/jpeg"
-              hidden
-              onChange={(e) => {
-                void onPickSheet(e.target.files?.[0]);
-                e.target.value = '';
-              }}
-            />
-          </div>
           {petApi.galleryImport && (
             <div className="settings-pet-gallery">
               <p className="settings-appearance__label">Galeria da comunidade</p>
@@ -991,8 +968,7 @@ export function PetSection() {
               {importNote}
             </p>
           )}
-        </>
-      )}
+      </>
     </div>
   );
 }

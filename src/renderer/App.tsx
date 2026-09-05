@@ -702,7 +702,7 @@ export function App() {
     if (petApi.onOpenSettings) {
       offs.push(
         petApi.onOpenSettings(() => {
-          useProductNavigationStore.getState().openSettings('appearance');
+          useProductNavigationStore.getState().openSettings('pets');
         }),
       );
     }

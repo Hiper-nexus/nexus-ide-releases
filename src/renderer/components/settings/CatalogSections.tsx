@@ -184,6 +184,7 @@ export function MediaCatalogSection() {
       <p className="settings-detail__hint">
         Consulte modelos de imagem, vídeo e voz. {enabled.length} de {providers.length} serviços conectados.
       </p>
+      <div className="settings-row"><button type="button" className="settings-btn settings-btn--primary" onClick={() => useProductNavigationStore.getState().openSettings('media')}>Configurar conexões de mídia</button></div>
       <CatalogStatus {...catalog} reload={() => void catalog.reload()} label="Carregando modelos de mídia…" />
       {catalog.loading || catalog.error ? null : providers.length === 0 ? (
         <EmptyState
