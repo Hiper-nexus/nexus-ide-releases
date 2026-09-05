@@ -524,16 +524,20 @@ describe('App Nexus V2 cutover', () => {
 
   it('remove missão de outro projeto só depois de confirmar e ativar o projeto correto', async () => {
     openWorkspace();
-    const workspaceOpen = vi.spyOn(useWorkspaceStore.getState(), 'open').mockResolvedValue();
+    const workspaceOpen = vi.spyOn(useWorkspaceStore.getState(), 'open').mockImplementation(async (path) => {
+      useWorkspaceStore.setState({ current: { path, name: 'Neighbor', lastOpenedAt: 1 } });
+    });
     const removeMission = vi.fn().mockResolvedValue({ removed: true });
     Object.assign(window.nexus, { orch: { removeMission } });
     const host = mountApp();
     const remove = [...host.querySelectorAll('button')].find(button => button.textContent === 'Remover missão vizinha');
     await act(async () => {
       remove!.click();
+      remove!.click();
       await vi.dynamicImportSettled();
     });
     expect(useConfirmStore.getState().pending?.body).toContain('sessões do projeto atual serão encerradas');
+    expect(useConfirmStore.getState().queue).toHaveLength(0);
     expect(workspaceOpen).not.toHaveBeenCalled();
     expect(removeMission).not.toHaveBeenCalled();
     await act(async () => useConfirmStore.getState().decide(true));

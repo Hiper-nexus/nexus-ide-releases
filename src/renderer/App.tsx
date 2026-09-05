@@ -61,6 +61,7 @@ import { useFailoverController } from './orch/failover-controller';
 import { useAccountRestartController } from './orch/account-restart-controller';
 import { Toasts } from './components/Toasts';
 import { useVoiceStore } from './voice/voice-store';
+import { removeMissionVerified } from './orch/remove-mission-verified';
 import { requestPaneClose } from './terminal/pane-close-guard';
 import { NexusMark } from './components/NexusMark';
 import { PixelIcon } from './components/PixelIcon';
@@ -346,6 +347,7 @@ export function App() {
   // Each workspace owns its saved pane tree. A workspace identity change may
   // choose Terminal, but ordinary store refreshes never reset the active
   // product destination.
+  const pendingMissionRemovals = useRef(new Set<string>());
   const lastWorkspacePath = useRef<string | null | undefined>(undefined);
   useEffect(() => {
     if (!workspaceHydrated) return;
@@ -889,6 +891,9 @@ export function App() {
   }
 
   function removeMissionFromRail(missionId: string, workspaceId: string): void {
+    const key = JSON.stringify([workspaceId, missionId]);
+    if (pendingMissionRemovals.current.has(key)) return;
+    pendingMissionRemovals.current.add(key);
     const mission = [...activeWorkspaces, ...projectedRecents]
       .find((workspace) => workspace.id === workspaceId)
       ?.missions.find((entry) => entry.id === missionId);
@@ -913,8 +918,8 @@ export function App() {
           await useWorkspaceStore.getState().open(workspaceId);
         }
         // O main encerra o runtime (inclusive missão running) antes de apagar.
-        const result = await window.nexus.orch.removeMission(missionId);
-        if (result && result.removed === false) {
+        const removed = await removeMissionVerified(missionId, workspaceId);
+        if (!removed) {
           useToastStore
             .getState()
             .push('error', 'Não deu pra remover a missão', 'Tente de novo.');
@@ -930,7 +935,7 @@ export function App() {
           err instanceof Error ? err.message : String(err),
         );
       }
-    })();
+    })().finally(() => pendingMissionRemovals.current.delete(key));
   }
 
   if (!workspaceHydrated) return <BootScreen />;
