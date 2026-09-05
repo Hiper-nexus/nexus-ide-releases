@@ -1,0 +1,77 @@
+{
+  "environment": "NexusIDE Dev, isolated /tmp/nexus-engine-qa-data and /private/tmp/nexus-engine-proof",
+  "phase": "Before full team response gate and pane-question lane correction",
+  "passed": false,
+  "missions": [
+    {
+      "id": "mission-0a70e12c-f78d-4226-a21a-9b4a2f852bfa",
+      "title": "Pergunte aos panes quanto é 2 + 2 e consolide a resposta de cada integrante. Não altere arquivos.",
+      "status": "blocked",
+      "intentState": "blocked_user",
+      "createdAt": 1788561596703,
+      "updatedAt": 1788562611786,
+      "lane": "consult",
+      "maxWorkers": 0,
+      "routingAdvice": {
+        "source": "router",
+        "kind": "mission-question",
+        "question": "quanto é 2 + 2",
+        "readOnlyWorkers": true
+      },
+      "orchestratorRuntime": {
+        "adapterId": "agy",
+        "model": "gemini-3.1-pro-high",
+        "effort": "medium",
+        "readOnly": false,
+        "nativeReadOnly": false
+      },
+      "result": null,
+      "handoffs": [],
+      "paneCount": 0
+    },
+    {
+      "id": "mission-4b34930b-eb29-4209-9d0d-4171bbccef25",
+      "title": "Pergunte aos panes quanto é 2 + 2 e consolide a resposta de cada integrante. Não altere arquivos.",
+      "status": "done",
+      "intentState": "done",
+      "createdAt": 1788562782228,
+      "updatedAt": 1788562831237,
+      "lane": "consult",
+      "maxWorkers": 0,
+      "routingAdvice": {
+        "source": "router",
+        "kind": "mission-question",
+        "question": "quanto é 2 + 2",
+        "readOnlyWorkers": true
+      },
+      "orchestratorRuntime": {
+        "adapterId": "codex",
+        "model": "gpt-5.5",
+        "effort": "medium",
+        "readOnly": false,
+        "nativeReadOnly": false
+      },
+      "result": {
+        "outcome": "success",
+        "summary": "Consolidada a resposta do único pane integrante disponível na missão para a pergunta quanto é 2 + 2. (O integrante da equipe entregou.)",
+        "evidenceIds": [],
+        "artifactRefs": [
+          "README.md"
+        ]
+      },
+      "handoffs": [
+        {
+          "id": "handoff-b5852e3d-57e6-4da7-9681-13c1845816e0",
+          "from_agent": "Coordenar e revisar",
+          "status": "success",
+          "summary": "Consolidada a resposta do único pane integrante disponível na missão para a pergunta quanto é 2 + 2.",
+          "artifacts_json": "[{\"fullText\":\"Integrantes consultados: pane-mtnk3n7e-2 (Coordenar e revisar, orquestrador). Pergunta: quanto é 2 + 2. Resposta consolidada: 4. Evidência: nexus_mission_control listou apenas este pane na missão; nenhum arquivo foi alterado.\"},{\"kind\":\"overclock.fullText\",\"payload\":\"Consolidação: pane-mtnk3n7e-2, Coordenar e revisar, respondeu que 2 + 2 = 4. Não há outros panes listados na missão. Nenhum arquivo foi alterado.\"}]",
+          "created_at": 1788562831178,
+          "authority_origin": "agent",
+          "worker_incarnation_id": null
+        }
+      ],
+      "paneCount": 1
+    }
+  ]
+}

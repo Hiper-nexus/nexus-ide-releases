@@ -1,0 +1,46 @@
+TAP version 13
+# Subtest: soma números positivos
+ok 1 - soma números positivos
+  ---
+  duration_ms: 1.1565
+  type: 'test'
+  ...
+# Subtest: soma números negativos
+ok 2 - soma números negativos
+  ---
+  duration_ms: 0.0865
+  type: 'test'
+  ...
+# Subtest: rejeita NaN
+ok 3 - rejeita NaN
+  ---
+  duration_ms: 0.732083
+  type: 'test'
+  ...
+# Subtest: rejeita texto
+ok 4 - rejeita texto
+  ---
+  duration_ms: 0.152958
+  type: 'test'
+  ...
+# Subtest: rejeita números não-finitos (Infinity)
+ok 5 - rejeita números não-finitos (Infinity)
+  ---
+  duration_ms: 1.168792
+  type: 'test'
+  ...
+# Subtest: rejeita outros tipos não-numéricos
+ok 6 - rejeita outros tipos não-numéricos
+  ---
+  duration_ms: 0.324125
+  type: 'test'
+  ...
+1..6
+# tests 6
+# suites 0
+# pass 6
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 71.252

@@ -1,12 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type {
   AdapterInfo,
   EnrichedCatalogInfo,
-  HarnessTier,
   InstalledItemInfo,
   NativeToolInfo,
 } from '../../../shared/types';
-import type { MediaProviderInfo } from '../../../shared/media-types';
 import { isMissionRuntimeSquadId } from '../../../shared/orch-types';
 import { useOrchStore } from '../../state/orch-store';
 import { PixelIcon } from '../PixelIcon';
@@ -14,12 +12,13 @@ import { ActionCard, EmptyState } from '../ActionCard';
 import {
   catalogEmptyCta,
   catalogEmptyKindFromMessage,
-  catalogInstallableEmptyMessage,
 } from '../empty-cta-policy';
 import { useLayoutStore } from '../../state/layout-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { waitForSession, writeToPane } from '../../terminal/terminal-host';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
+import { useCatalogResource } from './use-catalog-resource';
+import { buildHarnessInventory, filterHarnessInventory, harnessOrigin, type HarnessTierFilter } from './harness-view-model';
 
 /**
  * CATALOG sections: locally installed components (agents/skills), the
@@ -31,269 +30,163 @@ function timeLabel(ts: number): string {
   return new Date(ts).toLocaleString();
 }
 
-function useInstalledCatalog(kind: string): InstalledItemInfo[] {
-  const [items, setItems] = useState<InstalledItemInfo[]>([]);
-  useEffect(() => {
-    let cancelled = false;
-    void window.nexus.orch.listInstalledCatalog().then((all) => {
-      if (!cancelled) setItems(all.filter((item) => item.kind === kind));
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [kind]);
-  return items;
-}
+const readInstalled = () => window.nexus.orch.listInstalledCatalog();
+const readDescriptions = () => window.nexus.orch.harnessEnriched();
+const readTools = () => window.nexus.orch.listNativeTools();
+const readPlugins = () => window.nexus.orch.listPluginFiles();
+const readHooks = () => window.nexus.orch.listHookHomes();
+const readMediaProviders = () => window.nexus.media.listProviders();
 
-const TIER_FILTERS: Array<HarnessTier | 'todos'> = [
-  'todos',
-  'scout',
-  'builder',
-  'reviewer',
+const FUNCTIONS: ReadonlyArray<{ value: HarnessTierFilter; label: string }> = [
+  { value: 'todos', label: 'Todas as funções' },
+  { value: 'scout', label: 'Investigar' },
+  { value: 'builder', label: 'Implementar' },
+  { value: 'reviewer', label: 'Revisar' },
+  { value: 'pendente', label: 'Sem classificação' },
 ];
 
-/**
- * Arsenal enriquecido (harness-enrich): anotações tier/blurb por item + a
- * ação "Enriquecer" que roda a passada de LLM sobre o arsenal instalado.
- */
-function useEnrichedCatalog(): {
-  enriched: EnrichedCatalogInfo | null;
-  enriching: boolean;
-  error: string | null;
-  runEnrich(): void;
-} {
-  const [enriched, setEnriched] = useState<EnrichedCatalogInfo | null>(null);
-  const [enriching, setEnriching] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    void window.nexus.orch.harnessEnriched().then((cat) => {
-      if (!cancelled) setEnriched(cat);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-  function runEnrich() {
-    if (enriching) return;
-    setEnriching(true);
-    setError(null);
-    void window.nexus.orch.harnessEnrich().then((res) => {
-      setEnriching(false);
-      if (res.ok && res.catalog) setEnriched(res.catalog);
-      else setError(res.error ?? 'enriquecimento falhou');
-    });
-  }
-  return { enriched, enriching, error, runEnrich };
-}
-
-function EnrichBar({
-  enriched,
-  enriching,
-  error,
-  runEnrich,
-  tier,
-  onTier,
-}: {
-  enriched: EnrichedCatalogInfo | null;
-  enriching: boolean;
-  error: string | null;
-  runEnrich(): void;
-  tier: HarnessTier | 'todos';
-  onTier(t: HarnessTier | 'todos'): void;
+function CatalogStatus({ loading, error, reload, label }: {
+  loading: boolean; error: string | null; reload(): void; label: string;
 }) {
-  return (
-    <div className="settings-enrich">
-      <div className="settings-enrich__row">
-        <button
-          className="settings-btn"
-          onClick={runEnrich}
-          disabled={enriching}
-          title="O LLM organiza o arsenal e anota papel + quando/como usar"
-        >
-          <PixelIcon name="sparkle" />
-          {enriching ? 'Enriquecendo…' : 'Enriquecer'}
-        </button>
-        {enriched && (
-          <span className="settings-detail__hint">
-            {enriched.items.length} itens anotados ·{' '}
-            {timeLabel(enriched.updatedAt)}
-          </span>
-        )}
-      </div>
-      {enriched && enriched.items.length > 0 && (
-        <div className="settings-enrich__filters">
-          <span className="settings-detail__hint">TIER</span>
-          {TIER_FILTERS.map((t) => (
-            <button
-              key={t}
-              className={`settings-chip ${tier === t ? 'settings-chip--ok' : ''}`}
-              onClick={() => onTier(t)}
-            >
-              {t}
-            </button>
-          ))}
-        </div>
-      )}
-      {error && <p className="settings-detail__hint">✗ {error}</p>}
-    </div>
-  );
+  if (loading) return <p className="catalog-settings__loading" role="status">{label}</p>;
+  if (!error) return null;
+  return <div className="catalog-settings__error" role="alert"><p>{error}</p><button type="button" className="settings-btn" onClick={reload}>Tentar novamente</button></div>;
 }
 
-function enrichmentOf(
-  enriched: EnrichedCatalogInfo | null,
-  kind: 'agent' | 'skill',
-  name: string,
-) {
-  return enriched?.items.find((i) => i.kind === kind && i.name === name);
+function useEnrichedCatalog() {
+  const resource = useCatalogResource(readDescriptions, 'Não foi possível carregar as descrições dos recursos.');
+  const [enriching, setEnriching] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const busy = useRef(false);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  async function runEnrich() {
+    if (busy.current) return;
+    busy.current = true;
+    setEnriching(true);
+    setActionError(null);
+    try {
+      const result = await window.nexus.orch.harnessEnrich();
+      if (!mounted.current) return;
+      if (!result.ok || !result.catalog) throw new Error('classification unavailable');
+      resource.accept(result.catalog);
+    } catch {
+      if (mounted.current) setActionError('Não foi possível gerar as descrições. Confira a conexão de IA e tente novamente.');
+    } finally {
+      busy.current = false;
+      if (mounted.current) setEnriching(false);
+    }
+  }
+  return { ...resource, enriched: resource.data, enriching, actionError, runEnrich };
 }
 
-function InstalledList({
-  items,
-  empty,
-  enriched,
-  kind,
-}: {
-  items: InstalledItemInfo[];
-  empty: string;
-  enriched?: EnrichedCatalogInfo | null;
-  kind?: 'agent' | 'skill';
+function EnrichBar({ enrich, disabled }: {
+  enrich: ReturnType<typeof useEnrichedCatalog>; disabled: boolean;
+}) {
+  return <details className="settings-enrich catalog-settings__advanced">
+    <summary>Descrições e classificação com IA</summary>
+    <p>Gerar descrições organiza o catálogo. Essa ação não executa os recursos nem altera permissões.</p>
+    <button type="button" className="settings-btn" onClick={() => void enrich.runEnrich()} disabled={disabled || enrich.loading || enrich.enriching}>
+      <PixelIcon name="sparkle" />{enrich.enriching ? 'Gerando descrições…' : 'Gerar descrições com IA'}
+    </button>
+    {enrich.enriched && <p className="catalog-settings__metadata">Última classificação: {timeLabel(enrich.enriched.updatedAt)}</p>}
+    <CatalogStatus loading={false} error={enrich.actionError} reload={() => void enrich.runEnrich()} label="" />
+  </details>;
+}
+
+function enrichmentOf(enriched: EnrichedCatalogInfo | null, kind: 'agent' | 'skill', name: string) {
+  return enriched?.items.find(item => item.kind === kind && item.name === name);
+}
+
+function InstalledList({ items, empty, enriched, kind, resetFilters }: {
+  items: InstalledItemInfo[]; empty: string; enriched?: EnrichedCatalogInfo | null;
+  kind?: 'agent' | 'skill'; resetFilters?: () => void;
 }) {
   if (items.length === 0) {
     const cta = catalogEmptyCta(catalogEmptyKindFromMessage(empty));
-    return (
-      <EmptyState
-        icon="sparkle"
-        title="Nada para mostrar"
-        body={<p>{empty}</p>}
-        action={
-          cta === 'marketplace' ? (
-            <ActionCard
-              icon="star"
-              title="Abrir Marketplace"
-              subtitle="Instalar agents e skills"
-              variant="primary"
-              size="sm"
-              onClick={() =>
-                useProductNavigationStore.getState().openSettings('marketplace')
-              }
-            />
-          ) : undefined
-        }
-      />
-    );
+    return <EmptyState icon={resetFilters ? 'search' : 'sparkle'} title={resetFilters ? 'Nenhum resultado para estes filtros' : 'Nenhum recurso nesta lista'} body={<p>{empty}</p>}
+      action={resetFilters ? <button type="button" className="settings-btn" onClick={resetFilters}>Limpar filtros</button>
+        : cta === 'marketplace' ? <ActionCard icon="star" title="Abrir Marketplace" subtitle="Instalar agentes e skills" variant="primary" size="sm" onClick={() => useProductNavigationStore.getState().openSettings('marketplace')} /> : undefined}
+    />;
   }
-  return (
-    <ul className="settings-list">
-      {items.map((item) => {
-        const note = kind ? enrichmentOf(enriched ?? null, kind, item.name) : undefined;
-        return (
-          <li key={item.file} className="settings-list__item">
-            <div className="settings-list__head">
-              <span className="settings-list__title">{item.name}</span>
-              {note && <span className="settings-chip settings-chip--ok">{note.tier}</span>}
-              <span className="settings-chip">{item.kind}</span>
-            </div>
-            {note && (
-              <p className="settings-list__detail">
-                {note.blurb}
-                {note.whenToUse ? ` — quando: ${note.whenToUse}` : ''}
-              </p>
-            )}
-            <p className="settings-list__detail">
-              {item.file} · {timeLabel(item.modifiedAt)}
-            </p>
-          </li>
-        );
-      })}
-    </ul>
-  );
+  return <ul className="settings-list catalog-settings__resources">
+    {items.map(item => {
+      const note = kind ? enrichmentOf(enriched ?? null, kind, item.name) : undefined;
+      return <li key={item.file} className="settings-list__item catalog-settings__resource">
+        <div className="catalog-settings__resource-name">
+          <strong>{item.name}</strong>
+          <span>{harnessOrigin(item.file)}{note ? ` · ${FUNCTIONS.find(option => option.value === note.tier)?.label ?? note.tier}` : ''}</span>
+        </div>
+        <div className="catalog-settings__resource-detail">
+          {note?.blurb && <p>{note.blurb}</p>}
+          <details><summary>Detalhes do recurso</summary>
+            {note?.whenToUse && <p><strong>Quando usar:</strong> {note.whenToUse}</p>}
+            <p className="catalog-settings__file">{item.file}</p>
+            <p className="catalog-settings__metadata">Modificado em {timeLabel(item.modifiedAt)}</p>
+          </details>
+        </div>
+      </li>;
+    })}
+  </ul>;
 }
 
-function tierFiltered(
-  items: InstalledItemInfo[],
-  enriched: EnrichedCatalogInfo | null,
-  kind: 'agent' | 'skill',
-  tier: HarnessTier | 'todos',
-): InstalledItemInfo[] {
-  if (tier === 'todos') return items;
-  return items.filter(
-    (item) => enrichmentOf(enriched, kind, item.name)?.tier === tier,
-  );
+function ResourceCatalogSection({ kind, title, description, children }: {
+  kind: 'agent' | 'skill'; title: string; description: string; children?: ReactNode;
+}) {
+  const catalog = useCatalogResource(readInstalled, 'Não foi possível carregar os recursos instalados.');
+  const enrich = useEnrichedCatalog();
+  const [query, setQuery] = useState('');
+  const [tier, setTier] = useState<HarnessTierFilter>('todos');
+  const items = (catalog.data ?? []).filter(item => item.kind === kind);
+  const visible = filterHarnessInventory(buildHarnessInventory(items, enrich.enriched), { query, kind, tier, origin: 'todas' }).map(row => row.item);
+  const filtered = Boolean(query.trim() || tier !== 'todos');
+  const resetFilters = () => { setQuery(''); setTier('todos'); };
+  return <section className="catalog-settings">
+    <header className="catalog-settings__header"><div><SettingsSectionTitle>{title}</SettingsSectionTitle><p className="settings-detail__hint">{description}</p></div>
+      <button type="button" className="settings-btn" disabled={catalog.loading} onClick={() => void catalog.reload()}>Atualizar lista</button>
+    </header>
+    <div className="catalog-settings__filters">
+      <label>Buscar recursos<input className="settings-input" type="search" aria-label="Buscar recursos" placeholder="Nome, origem ou descrição" value={query} onChange={event => setQuery(event.target.value)} /></label>
+      <label>Função<select className="settings-input" aria-label="Função do recurso" value={tier} disabled={enrich.loading} onChange={event => setTier(event.target.value as HarnessTierFilter)}>{FUNCTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+    </div>
+    <CatalogStatus {...catalog} reload={() => void catalog.reload()} label="Carregando recursos instalados…" />
+    <CatalogStatus loading={false} error={enrich.error} reload={() => void enrich.reload()} label="" />
+    {catalog.data !== null && !catalog.loading && !(catalog.error && items.length === 0) && <>
+      <InstalledList items={visible} enriched={enrich.enriched} kind={kind} resetFilters={filtered ? resetFilters : undefined}
+        empty={filtered ? 'Limpe os filtros para voltar à lista completa.' : `${kind === 'agent' ? 'Nenhum agente instalado.' : 'Nenhuma skill instalada.'} Use o Marketplace para adicionar recursos.`} />
+      <p className="catalog-settings__count">{visible.length} de {items.length} recursos</p>
+    </>}
+    <EnrichBar enrich={enrich} disabled={catalog.loading || items.length === 0} />
+    {children}
+  </section>;
 }
 
 export function AgentsSection() {
-  const items = useInstalledCatalog('agent');
-  const squadAgents = useOrchStore((s) =>
-    s.squads
-      .filter((squad) => !isMissionRuntimeSquadId(squad.id))
-      .reduce((count, squad) => count + squad.agents.length, 0),
-  );
-  const enrich = useEnrichedCatalog();
-  const [tier, setTier] = useState<HarnessTier | 'todos'>('todos');
-  const visible = tierFiltered(items, enrich.enriched, 'agent', tier);
-  return (
-    <section>
-      <SettingsSectionTitle>Agents</SettingsSectionTitle>
-      <p className="settings-detail__hint">
-        AI subagents instalados do catálogo ({items.length}) + {squadAgents}{' '}
-        agente(s) definidos em squads.
-      </p>
-      <EnrichBar {...enrich} tier={tier} onTier={setTier} />
-      <InstalledList
-        items={visible}
-        empty={catalogInstallableEmptyMessage('agent', items.length, tier)}
-        enriched={enrich.enriched}
-        kind="agent"
-      />
-    </section>
-  );
+  const squadAgents = useOrchStore(state => state.squads.filter(squad => !isMissionRuntimeSquadId(squad.id)).reduce((count, squad) => count + squad.agents.length, 0));
+  return <ResourceCatalogSection kind="agent" title="Agentes" description="Arquivos de agentes instalados para orientar as ferramentas de IA.">
+    <p className="catalog-settings__note">As equipes salvas têm {squadAgents} integrantes configurados. Consulte Squads para usar esses integrantes em uma missão.</p>
+  </ResourceCatalogSection>;
 }
 
 export function SkillsSection() {
-  const items = useInstalledCatalog('skill');
-  const enrich = useEnrichedCatalog();
-  const [tier, setTier] = useState<HarnessTier | 'todos'>('todos');
-  const visible = tierFiltered(items, enrich.enriched, 'skill', tier);
-  return (
-    <section>
-      <SettingsSectionTitle>Skills</SettingsSectionTitle>
-      <p className="settings-detail__hint">
-        Cache local de skills instaladas do catálogo ({items.length}).
-      </p>
-      <EnrichBar {...enrich} tier={tier} onTier={setTier} />
-      <InstalledList
-        items={visible}
-        empty={catalogInstallableEmptyMessage('skill', items.length, tier)}
-        enriched={enrich.enriched}
-        kind="skill"
-      />
-    </section>
-  );
+  return <ResourceCatalogSection kind="skill" title="Instruções (skills)" description="Instruções reutilizáveis instaladas nesta máquina. Seu uso durante uma missão respeita as regras de execução do Nexus." />;
 }
 
 /** Faixa MÍDIA do arsenal: modelos de geração habilitados (key presente). */
 export function MediaCatalogSection() {
-  const [providers, setProviders] = useState<MediaProviderInfo[]>([]);
-  useEffect(() => {
-    let cancelled = false;
-    void window.nexus.media.listProviders().then((list) => {
-      if (!cancelled) setProviders(list);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const catalog = useCatalogResource(readMediaProviders, 'Não foi possível carregar os modelos de mídia.');
+  const providers = catalog.data ?? [];
   const enabled = providers.filter((p) => p.hasKey);
   return (
-    <section>
+    <section className="catalog-settings">
       <SettingsSectionTitle>Mídia</SettingsSectionTitle>
       <p className="settings-detail__hint">
-        Modelos de geração que os agentes podem disparar via MCP (
-        {enabled.length} habilitado{enabled.length === 1 ? '' : 's'} de{' '}
-        {providers.length}). Keys em Settings → MÍDIA.
+        Modelos de geração configurados no Nexus (
+        {enabled.length} com chave registrada de{' '}
+        {providers.length}). Configuração em Mídia.
       </p>
-      {providers.length === 0 ? (
+      <CatalogStatus {...catalog} reload={() => void catalog.reload()} label="Carregando modelos de mídia…" />
+      {catalog.loading || catalog.error ? null : providers.length === 0 ? (
         <EmptyState
           icon="vision"
           title="Nenhum provider de mídia"
@@ -325,7 +218,7 @@ export function MediaCatalogSection() {
                 <span
                   className={`settings-chip ${p.hasKey ? 'settings-chip--ok' : 'settings-chip--warn'}`}
                 >
-                  {p.hasKey ? 'habilitado' : 'sem key'}
+                  {p.hasKey ? 'chave registrada' : 'sem chave'}
                 </span>
                 <span className="settings-chip">{p.kind}</span>
               </div>
@@ -374,11 +267,10 @@ export function LlmsSection({ adapters }: { adapters: AdapterInfo[] }) {
     useProductNavigationStore.getState().openTerminal();
   }
   return (
-    <section>
-      <SettingsSectionTitle>LLMs · CLIs</SettingsSectionTitle>
+    <section className="catalog-settings">
+      <SettingsSectionTitle>Ferramentas e modelos</SettingsSectionTitle>
       <p className="settings-detail__hint">
-        CLIs de IA instaladas nesta máquina ({installed.length}) — o arsenal de
-        execução que o roteador de tarefas distribui por custo.
+        Ferramentas de IA detectadas nesta máquina ({installed.length}) e modelos informados por cada integração.
       </p>
       {installError ? (
         <p className="settings-error" role="alert">
@@ -388,11 +280,10 @@ export function LlmsSection({ adapters }: { adapters: AdapterInfo[] }) {
       {installed.length === 0 ? (
         <EmptyState
           icon="terminal"
-          title="Nenhum LLM/CLI habilitado"
+          title="Nenhuma ferramenta de IA instalada"
           body={
             <p>
-              Instale uma CLI e configure a key em Providers para o roteador
-              funcionar.
+              Instale uma ferramenta de IA e configure sua conexão em Providers.
             </p>
           }
           action={
@@ -417,8 +308,9 @@ export function LlmsSection({ adapters }: { adapters: AdapterInfo[] }) {
                 <span className="settings-chip settings-chip--ok">instalado</span>
               </div>
               <p className="settings-list__detail">
-                {a.models.list.slice(0, 6).join(' · ') || 'modelos padrão do CLI'}
+                {a.models.list.slice(0, 6).join(' · ') || 'Modelos padrão da ferramenta'}
               </p>
+              {a.models.list.length > 6 && <details className="catalog-settings__model-list"><summary>Ver todos os {a.models.list.length} modelos</summary><p>{a.models.list.join(' · ')}</p></details>}
             </li>
           ))}
         </ul>
@@ -426,7 +318,7 @@ export function LlmsSection({ adapters }: { adapters: AdapterInfo[] }) {
       {absent.length > 0 && (
         <div className="settings-installable">
           <h4 className="settings-detail__title settings-installable__title">
-            Disponíveis para Instalação
+            Disponíveis para instalação
           </h4>
           <ul className="settings-list">
             {absent.map((a) => (
@@ -468,8 +360,8 @@ function toolFamily(name: string): string {
   const bare = name.replace(/^nexus_/, '');
   const head = bare.split('_')[0] ?? bare;
   if (head === 'terminal' || head === 'shell') return 'terminal';
-  if (head === 'file' || head === 'files' || head === 'fs') return 'files';
-  if (head === 'browser' || head === 'web') return 'browser';
+  if (head === 'file' || head === 'files' || head === 'fs') return 'arquivos';
+  if (head === 'browser' || head === 'web') return 'navegador';
   if (head === 'image' || head === 'video' || head === 'audio' || head === 'media') {
     return 'mídia';
   }
@@ -479,23 +371,10 @@ function toolFamily(name: string): string {
 }
 
 export function ToolsSection() {
-  const [tools, setTools] = useState<NativeToolInfo[]>([]);
+  const catalog = useCatalogResource(readTools, 'Não foi possível carregar as ferramentas MCP.');
+  const tools = catalog.data ?? [];
+  const { loading, error } = catalog;
   const [query, setQuery] = useState('');
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    void window.nexus.orch.listNativeTools().then((list) => {
-      if (!cancelled) {
-        setTools(list);
-        setLoading(false);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const filtered = tools.filter((tool) => {
     const q = query.trim().toLowerCase();
@@ -515,19 +394,20 @@ export function ToolsSection() {
   const families = Object.keys(grouped).sort((a, b) => a.localeCompare(b, 'pt'));
 
   return (
-    <section className="arsenal-section" aria-label="Tools">
-      <header className="arsenal-section__intro">
-        <SettingsSectionTitle>Tools</SettingsSectionTitle>
+    <section className="arsenal-section catalog-settings" aria-label="Ferramentas MCP">
+      <header className="catalog-settings__header">
+        <div>
+        <SettingsSectionTitle>Ferramentas MCP</SettingsSectionTitle>
         <p className="settings-detail__hint">
-          Ferramentas nativas do MCP embutido. Agentes chamam via{' '}
-          <code>nexus_*</code> ou alias curto — o bridge confirma ações
-          destrutivas quando a política exige.
+          Recursos disponíveis para os agentes. Cada execução respeita as permissões e os limites definidos pelo Nexus.
         </p>
+        </div>
+        <button type="button" className="settings-btn" disabled={loading} onClick={() => void catalog.reload()}>Atualizar lista</button>
       </header>
 
       <div className="arsenal-fleet" role="status">
         <span className="arsenal-fleet__stat">
-          <strong>{loading ? '…' : tools.length}</strong> tools
+          {catalog.data === null && error ? 'Contagem indisponível' : <><strong>{loading ? '…' : tools.length}</strong> ferramentas</>}
         </span>
         {query.trim() && (
           <>
@@ -542,28 +422,24 @@ export function ToolsSection() {
       </div>
 
       <label className="arsenal-search">
-        <span className="settings-visually-hidden">Filtrar tools</span>
+        <span className="settings-visually-hidden">Buscar ferramentas</span>
         <input
           className="settings-input arsenal-search__input"
           type="search"
           value={query}
-          placeholder="filtrar por nome ou descrição…"
+          placeholder="Nome ou descrição"
           onChange={(e) => setQuery(e.target.value)}
         />
       </label>
 
-      {loading && (
-        <p className="settings-detail__hint" role="status">
-          Carregando tools…
-        </p>
-      )}
+      <CatalogStatus {...catalog} reload={() => void catalog.reload()} label="Carregando ferramentas MCP…" />
 
-      {!loading && tools.length === 0 && (
+      {!loading && !error && tools.length === 0 && (
         <EmptyState
           icon="config"
-          title="Nenhuma tool registrada"
+          title="Nenhuma ferramenta registrada"
           body={
-            <p>Verifique se o MCP embutido subiu (Config → MCPs).</p>
+            <p>Confira a conexão MCP do Nexus para carregar as ferramentas.</p>
           }
           action={
             <ActionCard
@@ -580,11 +456,12 @@ export function ToolsSection() {
         />
       )}
 
-      {!loading && tools.length > 0 && filtered.length === 0 && (
+      {!loading && !error && tools.length > 0 && filtered.length === 0 && (
         <EmptyState
           icon="search"
           title={`Nada para “${query}”`}
           body={<p>Ajuste o filtro ou limpe a busca.</p>}
+          action={<button type="button" className="settings-btn" onClick={() => setQuery('')}>Limpar busca</button>}
         />
       )}
 
@@ -612,57 +489,32 @@ export function ToolsSection() {
   );
 }
 
+function FileCatalogSection({ title, description, read, empty }: {
+  title: string; description: string; read(): Promise<InstalledItemInfo[]>; empty: string;
+}) {
+  const catalog = useCatalogResource(read, `Não foi possível carregar o catálogo de ${title.toLocaleLowerCase()}.`);
+  return <section className="catalog-settings">
+    <header className="catalog-settings__header"><div><SettingsSectionTitle>{title}</SettingsSectionTitle><p className="settings-detail__hint">{description}</p></div>
+      <button type="button" className="settings-btn" disabled={catalog.loading} onClick={() => void catalog.reload()}>Atualizar lista</button>
+    </header>
+    <CatalogStatus {...catalog} reload={() => void catalog.reload()} label={`Carregando ${title.toLocaleLowerCase()}…`} />
+    {catalog.data !== null && !catalog.loading && !(catalog.error && catalog.data.length === 0) && <>
+      <InstalledList items={catalog.data} empty={empty} />
+      <p className="catalog-settings__count">{catalog.data.length} registros nesta lista</p>
+    </>}
+  </section>;
+}
+
 export function PluginsSection({ adapters }: { adapters: AdapterInfo[] }) {
-  const [files, setFiles] = useState<InstalledItemInfo[]>([]);
-  useEffect(() => {
-    let cancelled = false;
-    void window.nexus.orch.listPluginFiles().then((list) => {
-      if (!cancelled) setFiles(list);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-  return (
-    <section>
-      <SettingsSectionTitle>Plugins</SettingsSectionTitle>
-      <p className="settings-detail__hint">
-        {adapters.length} adapters ativos (builtin + usuário). Arquivos do
-        usuário em ~/.nexus/plugins ({files.length}) — hot-reload sem rebuild.
-      </p>
-      <InstalledList
-        items={files}
-        empty="Nenhum plugin de usuário — solte um JSON de adapter em ~/.nexus/plugins/adapters."
-      />
-    </section>
-  );
+  return <FileCatalogSection title="Plugins" read={readPlugins}
+    description={`${adapters.length} integrações reconhecidas. Esta lista mostra os arquivos locais de extensão do usuário.`}
+    empty="Nenhum plugin de usuário encontrado. Os arquivos de integração ficam em ~/.nexus/plugins/adapters." />;
 }
 
 export function HooksSection() {
-  const [homes, setHomes] = useState<InstalledItemInfo[]>([]);
-  useEffect(() => {
-    let cancelled = false;
-    void window.nexus.orch.listHookHomes().then((list) => {
-      if (!cancelled) setHomes(list);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-  return (
-    <section>
-      <SettingsSectionTitle>Hooks</SettingsSectionTitle>
-      <p className="settings-detail__hint">
-        Lifecycle scripts do skill-gate: workers Claude-like recebem $HOME
-        efêmero com hooks PreToolUse / PostToolUse / Stop; demais CLIs mantêm
-        o HOME real e usam o gate server-side. {homes.length} home(s) ativo(s).
-      </p>
-      <InstalledList
-        items={homes}
-        empty="Nenhum hook ativo — são gerados ao spawnar workers de squad com allowlist."
-      />
-    </section>
-  );
+  return <FileCatalogSection title="Hooks" read={readHooks}
+    description="Diretórios gerados para acompanhar eventos dos agentes. A presença de uma pasta não indica que uma sessão esteja ativa."
+    empty="Nenhum diretório de hooks encontrado. Eles são gerados conforme os agentes precisam de eventos de execução." />;
 }
 
 export function RulesSection() {
@@ -670,39 +522,38 @@ export function RulesSection() {
   const rows = squads.flatMap((squad) =>
     squad.agents.map((agent) => ({
       squad: squad.name,
+      source: isMissionRuntimeSquadId(squad.id) ? 'Configuração de missão' : 'Equipe salva',
       agent: agent.agentName,
       tools:
         agent.allowedTools == null
-          ? 'irrestrito'
-          : agent.allowedTools.join(', ') || '(nenhuma)',
+          ? 'Sem lista específica'
+          : agent.allowedTools.join(', ') || 'Nenhuma declarada',
       skills:
         agent.allowedSkills == null
-          ? 'irrestrito'
-          : agent.allowedSkills.join(', ') || '(nenhuma)',
+          ? 'Sem lista específica'
+          : agent.allowedSkills.join(', ') || 'Nenhuma declarada',
     })),
   );
   return (
-    <section>
-      <SettingsSectionTitle>Rules</SettingsSectionTitle>
+    <section className="catalog-settings">
+      <SettingsSectionTitle>Permissões declaradas</SettingsSectionTitle>
       <p className="settings-detail__hint">
-        Permissões por agente (allowlists do skill-gate). Enforcement duplo:
-        servidor MCP + hooks no cliente. null = irrestrito.
+        Configurações declaradas por agente em equipes e missões. A execução também aplica as políticas e os limites do Nexus.
       </p>
       {rows.length === 0 ? (
         <EmptyState
           icon="key"
-          title="Nenhuma regra"
+          title="Nenhuma declaração carregada"
           body={
             <p>
-              Salve squads com allowedTools/allowedSkills para ver permissões
-              por agente.
+              Consulte as equipes salvas para configurar os integrantes e suas instruções.
             </p>
           }
           action={
             <ActionCard
               icon="users"
               title="Abrir Squads"
-              subtitle="Orquestração e allowlists"
+              subtitle="Ver equipes configuradas"
               variant="primary"
               size="sm"
               onClick={() =>
@@ -721,8 +572,8 @@ export function RulesSection() {
                   <span className="settings-list__detail"> · {row.squad}</span>
                 </span>
               </div>
-              <p className="settings-list__detail">tools: {row.tools}</p>
-              <p className="settings-list__detail">skills: {row.skills}</p>
+              <p className="catalog-settings__metadata">{row.source}</p>
+              <dl className="catalog-settings__permissions"><dt>Ferramentas</dt><dd>{row.tools}</dd><dt>Skills</dt><dd>{row.skills}</dd></dl>
             </li>
           ))}
         </ul>

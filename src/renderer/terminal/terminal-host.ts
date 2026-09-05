@@ -2800,9 +2800,8 @@ export function waitForSession(
       if (!host.spawnStarted && !host.hibernated) {
         beginPaneSpawn(pane, host);
         if (!host.spawnStarted) {
-          // Slot 0×0: o attach/RO spawna na caixa real. Fallback headless
-          // SÓ se o leaf nunca montar (Terminais escondido) — forçar 80×24
-          // com o grid visível é o F-009.
+          // Give visible leaves time to measure their real grid. An opened
+          // xterm can still be hidden (Settings/Missions) and must start too.
           const generation = host.spawnGeneration;
           setTimeout(() => {
             if (
@@ -2810,11 +2809,16 @@ export function waitForSession(
               host.spawnStarted ||
               host.hibernated ||
               host.spawnGeneration !== generation ||
-              (host.opened &&
-                hostGridIsUsable({ cols: host.term.cols, rows: host.term.rows }))
+              heldSpawnPanes.has(pane.id) ||
+              !listPanes(useLayoutStore.getState().root).some(
+                (candidate) => candidate.id === pane.id,
+              )
             ) {
               return;
             }
+            // Preserve the actual visible size; hidden hosts use their
+            // initial grid until attach/ResizeObserver can fit them.
+            settleHostGrid(host);
             host.spawnWhenMeasurable = false;
             void startSpawn(
               pane,

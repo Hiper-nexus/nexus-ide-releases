@@ -7,6 +7,7 @@ import {
   readActiveClaudeCredential,
 } from './claude-credential';
 import { realUserHome } from '../path-resolver';
+import { openClaudeKeychainService, readNativeOAuthKeychain } from './native-oauth-keychain';
 import {
   peekKimiSeatReadiness,
   type AuthReadiness,
@@ -76,6 +77,7 @@ const CACHE_TTL_MS = 60_000;
 const AGY_AUTHORITATIVE_PROOF_TTL_MS = 5_000;
 const cache = new Map<string, { value: boolean; at: number }>();
 let claudeRefreshInFlight: Promise<ClaudeAuthRefreshResult> | null = null;
+let openClaudeRefreshInFlight: Promise<ClaudeAuthRefreshResult> | null = null;
 let agyRefreshInFlight: Promise<boolean> | null = null;
 
 export interface SubscriptionAuthDetectionOptions {
@@ -94,6 +96,8 @@ export interface SubscriptionAuthDetectionOptions {
   probeAgyKeychain?: boolean;
   /** Test seam mirroring `claudeKeychainProbe` for the AGY keychain route. */
   agyKeychainProbe?: () => boolean;
+  probeOpenClaudeKeychain?: boolean;
+  openClaudeKeychainProbe?: () => boolean;
 }
 
 export interface ClaudeAuthRefreshResult {
@@ -664,6 +668,30 @@ export function museAuthBlobIsUsable(blob: string): boolean {
   }
 }
 
+function museAuthPath(home: string): string {
+  return process.env.MUSE_AUTH_PATH?.trim() || path.join(
+    process.env.XDG_CONFIG_HOME?.trim() || path.join(home, '.config'), 'muse', 'auth.json',
+  );
+}
+
+/** Missing local proof is not logout when the CLI delegates tokens to Keychain. */
+export function subscriptionAuthStatusIsUnknown(adapterId: string, home = os.homedir()): boolean {
+  if (adapterId === 'muse') {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(museAuthPath(home), 'utf8')) as {
+        providers?: Record<string, { storage?: string; mechanism?: string }>;
+      };
+      return Object.values(parsed.providers ?? {}).some((provider) =>
+        provider?.storage === 'keychain' &&
+        (provider.mechanism === 'oauth' || provider.mechanism === 'api_key'));
+    } catch {
+      return false;
+    }
+  }
+  return process.platform === 'darwin' && ['claude', 'openclaude', 'agy'].includes(adapterId) &&
+    cachedSubscriptionAuth(adapterId) === null;
+}
+
 /** Prime Agent `~/.prime/agent/auth.json` — oauth access or stored key. */
 export function primeAuthBlobIsUsable(blob: string): boolean {
   try {
@@ -777,7 +805,18 @@ export function detectSubscriptionAuth(
     case 'openclaude':
       // Fork of Claude Code with a separate config home. Presence of
       // ~/.openclaude.json is identity/theme, not a live session.
-      return openclaudeCredentialsFileIsUsable(home);
+      if (openclaudeCredentialsFileIsUsable(home)) return true;
+      if (options.probeOpenClaudeKeychain === false) return false;
+      if (options.openClaudeKeychainProbe) return options.openClaudeKeychainProbe();
+      if (home !== os.homedir() || process.platform !== 'darwin') return false;
+      try {
+        return claudeCredentialBlobIsUsable(execFileSync('security', [
+          'find-generic-password', '-s',
+          openClaudeKeychainService(home, process.env.OPENCLAUDE_CONFIG_DIR), '-w',
+        ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5_000, killSignal: 'SIGKILL' }));
+      } catch {
+        return false;
+      }
     case 'aider':
       // Aider has no native OAuth/subscription session; it consumes provider
       // API keys. Treating its config directory as login would suppress every
@@ -796,7 +835,7 @@ export function detectSubscriptionAuth(
     case 'muse': {
       try {
         return museAuthBlobIsUsable(
-          fs.readFileSync(path.join(home, '.config', 'muse', 'auth.json'), 'utf8'),
+          fs.readFileSync(museAuthPath(home), 'utf8'),
         );
       } catch {
         return false;
@@ -845,7 +884,7 @@ export function hasSubscriptionAuth(
   model?: string,
 ): boolean {
   const hit = cachedSubscriptionAuth(adapterId, model);
-  if (hit !== null) return hit;
+  if (hit === true) return true;
   const value = detectSubscriptionAuth(
     adapterId,
     os.homedir(),
@@ -873,13 +912,15 @@ export function hasSubscriptionAuthForStatus(
   home = os.homedir(),
 ): boolean {
   const hit = cachedSubscriptionAuth(adapterId, model);
-  if (hit !== null) return hit;
-  if (adapterId !== 'claude' && adapterId !== 'agy') {
+  if (hit === true) return true;
+  if (adapterId !== 'claude' && adapterId !== 'agy' && adapterId !== 'openclaude') {
     return hasSubscriptionAuth(adapterId, model);
   }
 
   const fileBacked =
-    adapterId === 'agy'
+    adapterId === 'openclaude'
+      ? openclaudeCredentialsFileIsUsable(home)
+      : adapterId === 'agy'
       ? detectSubscriptionAuth(adapterId, home, model, {
           probeAgyKeychain: false,
         })
@@ -892,15 +933,17 @@ export function hasSubscriptionAuthForStatus(
 
 /**
  * Warm Claude's status cache outside the renderer's request-critical path.
- * Concurrent list calls share one `security` process. Failures remain
- * fail-closed and are cached for the normal short TTL.
+ * Concurrent list calls share one asynchronous `security` process. A miss
+ * can be refreshed after login; inaccessible Keychain remains unknown.
  */
 export function refreshClaudeSubscriptionAuthCache(
   home = os.homedir(),
-  keychainProbe: () => Promise<boolean> = claudeKeychainHasAsync,
+  keychainProbe: () => Promise<boolean> = () => process.platform === 'darwin'
+    ? readNativeOAuthKeychain('Claude Code-credentials') : Promise.resolve(false),
+  options: { authoritative?: boolean } = {},
 ): Promise<ClaudeAuthRefreshResult> {
   const cached = cachedSubscriptionAuth('claude');
-  if (cached !== null) {
+  if (cached === true && !options.authoritative) {
     return Promise.resolve({ value: cached, cacheUpdated: false });
   }
 
@@ -917,28 +960,40 @@ export function refreshClaudeSubscriptionAuthCache(
   }
 
   if (claudeRefreshInFlight) return claudeRefreshInFlight;
-  // Prefer a usable secret payload on the real home; fall back to the
-  // injected/async metadata probe for tests and TCC-limited environments.
+  // Require a usable payload, without blocking the Electron event loop.
   claudeRefreshInFlight = Promise.resolve()
-    .then(async () => {
-      if (home === os.homedir()) {
-        // Item Keychain presente com accessToken vazio NÃO é sessão
-        // (Claude Code zera o blob após invalid_grant). Metadata-only
-        // pintava "conectado" / authStrategy=subscription e o Maestro
-        // morria no probe fail-closed.
-        return claudeCredentialBlobIsUsable(readActiveClaudeCredential());
-      }
-      return keychainProbe();
-    })
-    .catch(() => false)
+    .then(() => keychainProbe())
     .then((value) => {
       cacheSubscriptionAuth('claude', value);
-      return { value, cacheUpdated: true };
+      return { value, cacheUpdated: value !== cached };
     })
+    .catch((error) => { cache.delete('claude'); throw error; })
     .finally(() => {
       claudeRefreshInFlight = null;
     });
   return claudeRefreshInFlight;
+}
+
+export function refreshOpenClaudeSubscriptionAuthCache(
+  home = os.homedir(),
+  keychainProbe: () => Promise<boolean> = () => process.platform === 'darwin'
+    ? readNativeOAuthKeychain(openClaudeKeychainService(home, process.env.OPENCLAUDE_CONFIG_DIR))
+    : Promise.resolve(false),
+  options: { authoritative?: boolean } = {},
+): Promise<ClaudeAuthRefreshResult> {
+  const cached = cachedSubscriptionAuth('openclaude');
+  if (cached === true && !options.authoritative) return Promise.resolve({ value: true, cacheUpdated: false });
+  if (openclaudeCredentialsFileIsUsable(home)) {
+    cacheSubscriptionAuth('openclaude', true);
+    return Promise.resolve({ value: true, cacheUpdated: true });
+  }
+  if (openClaudeRefreshInFlight) return openClaudeRefreshInFlight;
+  openClaudeRefreshInFlight = Promise.resolve().then(keychainProbe).then((value) => {
+    cacheSubscriptionAuth('openclaude', value);
+    return { value, cacheUpdated: value !== cached };
+  }).catch((error) => { cache.delete('openclaude'); throw error; })
+    .finally(() => { openClaudeRefreshInFlight = null; });
+  return openClaudeRefreshInFlight;
 }
 
 /** Warm AGY's Keychain-only status without blocking Electron's main loop. */
@@ -1023,5 +1078,6 @@ export async function warmKeychainOnlySubscriptionAuth(
 export function resetSubscriptionAuthCacheForTests(): void {
   cache.clear();
   claudeRefreshInFlight = null;
+  openClaudeRefreshInFlight = null;
   agyRefreshInFlight = null;
 }

@@ -199,7 +199,7 @@ export function TaskBoardWorkspace() {
 
   return (
     <section
-      className="product-workspace task-board-workspace"
+      className="product-workspace product-page task-board-workspace"
       aria-label="Quadro de tarefas"
     >
       <header className="product-workspace__header">
@@ -209,7 +209,7 @@ export function TaskBoardWorkspace() {
           </span>
           <div className="product-workspace__heading">
             <span className="product-workspace__context">
-              Execução do workspace
+              Missões e tarefas
             </span>
             <h1>Quadro</h1>
           </div>
@@ -225,6 +225,7 @@ export function TaskBoardWorkspace() {
               : `${todoCount} ${todoCount === 1 ? 'tarefa' : 'tarefas'} no fluxo`}
           </p>
         ) : null}
+        <div className="task-board-workspace__actions">
         {clearableCount > 0 ? (
           <div className="task-board-workspace__clear-group">
             {clearError ? (
@@ -254,8 +255,13 @@ export function TaskBoardWorkspace() {
                   ? 'Confirmar limpeza'
                   : `Limpar concluídas (${clearableCount})`}
             </button>
+            {clearArmed && !clearing ? (
+              <button type="button" className="task-board-workspace__cancel" aria-label="Cancelar limpeza" onClick={() => setClearArmed(false)}>Cancelar</button>
+            ) : null}
           </div>
         ) : null}
+        {!boardEmpty ? <button type="button" className="task-board-workspace__new" onClick={openNewMission}>Nova missão</button> : null}
+        </div>
       </header>
 
       <div className="product-workspace__content task-board-workspace__content">
@@ -263,7 +269,7 @@ export function TaskBoardWorkspace() {
           <EmptyState
             icon="board"
             title={emptyBeat.title}
-            body={emptyBeat.line}
+            body="As tarefas aparecem aqui conforme sua missão avança."
             className="task-board-workspace__empty"
             action={
               <ActionCard

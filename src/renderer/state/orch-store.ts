@@ -18,6 +18,8 @@ import { getActiveWorkspacePath } from './active-workspace';
 interface OrchState {
   missions: Mission[];
   missionSummaries: MissionSummarySnapshot[];
+  /** Empty is authoritative only after a canonical list or broadcast arrives. */
+  missionSummariesHydrated: boolean;
   handoffs: Handoff[];
   todoLists: TodoList[];
   squads: Squad[];
@@ -66,6 +68,7 @@ function acceptsWorkspacePayload(path: string | null): boolean {
 export const useOrchStore = create<OrchState>((set, get) => ({
   missions: [],
   missionSummaries: [],
+  missionSummariesHydrated: false,
   handoffs: [],
   todoLists: [],
   squads: [],
@@ -122,7 +125,7 @@ export const useOrchStore = create<OrchState>((set, get) => ({
           if (
             get().missionSummaries === hydrationBaseline.missionSummaries
           ) {
-            set({ missionSummaries });
+            set({ missionSummaries, missionSummariesHydrated: true });
           }
         },
         (reason) => {
@@ -231,6 +234,7 @@ export const useOrchStore = create<OrchState>((set, get) => ({
     set((s) => ({
       missions: [],
       missionSummaries: [],
+      missionSummariesHydrated: false,
       handoffs: [],
       todoLists: [],
       squads: [],
@@ -261,7 +265,7 @@ export const useOrchStore = create<OrchState>((set, get) => ({
   setMissionSummaries: (missionSummaries) => {
     const path = getActiveWorkspacePath();
     if (!acceptsWorkspacePayload(path)) return;
-    set({ missionSummaries });
+    set({ missionSummaries, missionSummariesHydrated: true });
   },
   setMissions: (missions) => {
     const path = getActiveWorkspacePath();

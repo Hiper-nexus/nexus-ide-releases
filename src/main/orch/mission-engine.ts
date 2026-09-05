@@ -142,6 +142,7 @@ export interface MissionEngine {
   prepare(
     scope: ProjectExecutionScope,
     request: MissionPrepareRequest,
+    assertCurrentScope?: () => void,
   ): Promise<MissionReview>;
   start(
     scope: ProjectExecutionScope,
@@ -177,6 +178,7 @@ export interface MissionEngine {
 export interface MainMissionEnginePorts {
   readonly arm: (
     request: MissionPrepareRequest,
+    assertCurrentScope?: () => void,
   ) => Promise<MissionArmResult>;
   readonly compile: (
     request: MissionPrepareRequest,
@@ -326,13 +328,17 @@ export class MainMissionEngine implements MissionEngine {
   async prepare(
     scope: ProjectExecutionScope,
     request: MissionPrepareRequest,
+    assertCurrentScope?: () => void,
   ): Promise<MissionReview> {
     this.#assertScope(scope);
     const parsedRequest = missionPrepareRequestSchema.parse(request);
     const safeRequest = canonicalPrepareRequest(parsedRequest);
+    assertCurrentScope?.();
 
     const armed = missionArmResultSchema.parse(
-      await this.#ports.arm(safeRequest),
+      await (assertCurrentScope
+        ? this.#ports.arm(safeRequest, assertCurrentScope)
+        : this.#ports.arm(safeRequest)),
     );
     try {
       const compiled = missionCompilationSchema.parse(

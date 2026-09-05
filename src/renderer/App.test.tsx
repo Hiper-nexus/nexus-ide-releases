@@ -44,10 +44,12 @@ vi.mock('./state/gamification-store', async (importActual) => ({
 }));
 
 
-vi.mock('./state/provider-store', () => ({
+vi.mock('./state/provider-store', async (importActual) => ({
+  ...(await importActual<Record<string, unknown>>()),
   useProviderController: () => undefined,
 }));
-vi.mock('./state/account-store', () => ({
+vi.mock('./state/account-store', async (importActual) => ({
+  ...(await importActual<Record<string, unknown>>()),
   useAccountController: () => undefined,
 }));
 vi.mock('./state/cost-store', () => ({
@@ -87,19 +89,28 @@ vi.mock('./components/product/Launcher', () => ({
   Launcher: ({
     onOpenWorkspace,
     onStartMission,
+    onOpenPane,
+    onOpenShellTerminal,
     onOpenTaskBoard,
     onOpenMemory,
+    onOpenProviders,
   }: {
     onOpenWorkspace: () => void;
     onStartMission: () => void;
+    onOpenPane: () => void;
+    onOpenShellTerminal: () => void;
     onOpenTaskBoard: () => void;
     onOpenMemory: () => void;
+    onOpenProviders: () => void;
   }) => (
     <section data-product-destination="launcher" aria-label="Launcher">
       <button type="button" onClick={onOpenWorkspace}>Abrir workspace</button>
       <button type="button" onClick={onStartMission}>Missão em equipe</button>
+      <button type="button" onClick={onOpenPane}>Montar meus terminais</button>
+      <button type="button" onClick={onOpenShellTerminal}>Terminal puro</button>
       <button type="button" onClick={onOpenTaskBoard}>Abrir Quadro</button>
       <button type="button" onClick={onOpenMemory}>Abrir Memória</button>
+      <button type="button" onClick={onOpenProviders}>Conectar uma IA</button>
     </section>
   ),
 }));
@@ -111,12 +122,14 @@ vi.mock('./components/product/WorkspaceRail', () => ({
     onOpenMemory,
     onOpenSettings,
     onOpenTerminals,
+    onRemoveMission,
   }: {
     onCreateNew: () => void;
     onOpenTaskBoard: () => void;
     onOpenMemory: () => void;
     onOpenSettings: () => void;
     onOpenTerminals: () => void;
+    onRemoveMission: (missionId: string, workspaceId: string) => void;
   }) => (
     <nav aria-label="Destinos do Nexus">
       <button type="button" onClick={onCreateNew}>Novo</button>
@@ -124,6 +137,7 @@ vi.mock('./components/product/WorkspaceRail', () => ({
       <button type="button" onClick={onOpenTaskBoard}>Quadro</button>
       <button type="button" onClick={onOpenMemory}>Memória</button>
       <button type="button" onClick={onOpenSettings}>Configurações</button>
+      <button type="button" onClick={() => onRemoveMission('neighbor-mission', '/tmp/neighbor')}>Remover missão vizinha</button>
     </nav>
   ),
 }));
@@ -266,6 +280,8 @@ import { useConfirmStore } from './state/confirm-store';
 import { useGamificationStore } from './state/gamification-store';
 import { useContextualPanelNavStore } from './state/contextual-panel-nav-store';
 import { useLayoutStore } from './state/layout-store';
+import { gateRestoredAgents } from './orch/restore-agents-gate';
+import { useTerminalGridDialogStore } from './state/terminal-grid-dialog-store';
 import { useMediaStudioStore } from './state/media-studio-store';
 import { useMissionSetupStore } from './state/mission-setup-store';
 import { useMissionInspectorStore } from './state/mission-inspector-store';
@@ -274,6 +290,7 @@ import { useProductNavigationStore } from './state/product-navigation-store';
 import { useToastStore } from './state/toast-store';
 import { useVoiceStore } from './voice/voice-store';
 import { useWorkspaceStore } from './state/workspace-store';
+import { setActiveWorkspacePath } from './state/active-workspace';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
@@ -302,6 +319,7 @@ function mountApp(): HTMLElement {
 }
 
 function openWorkspace(): void {
+  setActiveWorkspacePath('/tmp/nexus-workspace');
   useWorkspaceStore.setState({
     current: {
       path: '/tmp/nexus-workspace',
@@ -326,6 +344,9 @@ function openWorkspace(): void {
 beforeEach(() => {
   vi.useFakeTimers();
   vi.clearAllMocks();
+  setActiveWorkspacePath(null);
+  useMissionSetupStore.setState({ workspacePath: null });
+  vi.spyOn(useOrchStore.getState(), 'hydrateCrossWorkspace').mockResolvedValue();
   missionInspectorView.selectedTab = () =>
     useMissionInspectorStore.getState().tab;
   attentionHandler = null;
@@ -347,6 +368,7 @@ beforeEach(() => {
   });
 
   useWorkspaceStore.setState({ current: null, recents: [], hydrated: true });
+  useTerminalGridDialogStore.getState().close();
   useLayoutStore.setState({
     hydrated: false,
     viewKind: 'grid',
@@ -373,6 +395,7 @@ beforeEach(() => {
   useOrchStore.setState({
     missions: [],
     missionSummaries: [],
+    missionSummariesHydrated: false,
     boundWorkspacePath: null,
   } as never);
   useMediaStudioStore.setState({ open: false } as never);
@@ -395,6 +418,7 @@ afterEach(() => {
   window.localStorage.clear();
   vi.clearAllTimers();
   vi.useRealTimers();
+  vi.restoreAllMocks();
   if (originalNexusDescriptor) {
     Object.defineProperty(window, 'nexus', originalNexusDescriptor);
   } else {
@@ -403,6 +427,157 @@ afterEach(() => {
 });
 
 describe('App Nexus V2 cutover', () => {
+  it.each(['board', 'terminals'] as const)('returns to Início when the selected mission disappears from the %s snapshot', (surface) => {
+    openWorkspace();
+    useOrchStore.setState({
+      boundWorkspacePath: '/tmp/nexus-workspace',
+      missionSummariesHydrated: true,
+      missionSummaries: [{ id: 'mission-removed', title: 'Missão removida', state: 'running' }],
+    } as never);
+    useProductNavigationStore.setState({ destination: { kind: 'mission', missionId: 'mission-removed', surface } });
+    const host = mountApp();
+    act(() => useOrchStore.getState().setMissionSummaries([]));
+    expect(currentDestination(host)).toBe('launcher');
+  });
+
+  it('preserves another selected mission and other workspace summaries on removal', () => {
+    openWorkspace();
+    const kept = { id: 'mission-kept', title: 'Resultado válido', state: 'completed' };
+    const neighbor = [{ id: 'mission-neighbor', title: 'Vizinha', state: 'running' }];
+    useOrchStore.setState({
+      boundWorkspacePath: '/tmp/nexus-workspace', missionSummariesHydrated: true,
+      missionSummaries: [kept, { id: 'mission-removed', title: 'Removida', state: 'running' }],
+      crossWorkspaceSummaries: { '/tmp/neighbor': neighbor },
+    } as never);
+    useProductNavigationStore.getState().openMission('mission-kept');
+    const host = mountApp();
+    act(() => useOrchStore.getState().setMissionSummaries([kept] as never));
+    expect(currentDestination(host)).toBe('mission-board:mission-kept');
+    expect(useOrchStore.getState().crossWorkspaceSummaries['/tmp/neighbor']).toEqual(neighbor);
+  });
+
+  it('discards an attention callback captured before its mission was removed', () => {
+    openWorkspace();
+    useOrchStore.setState({
+      boundWorkspacePath: '/tmp/nexus-workspace', missionSummariesHydrated: true,
+      missionSummaries: [{ id: 'mission-stale', title: 'Removida', state: 'blocked_user' }],
+    } as never);
+    useProductNavigationStore.getState().openMemory();
+    mountApp();
+    act(() => attentionHandler?.({ kind: 'mission-blocked', title: 'Removida', at: 1, missionId: 'mission-stale' }));
+    const action = useToastStore.getState().toasts.find(toast => toast.action?.label === 'Abrir missão')?.action;
+    expect(action).toBeDefined();
+    act(() => useOrchStore.getState().setMissionSummaries([]));
+    act(() => { void action?.onClick(); });
+    expect(useProductNavigationStore.getState().destination).toEqual({ kind: 'memory' });
+  });
+
+  it('keeps mission navigation while its workspace summaries are still hydrating', () => {
+    openWorkspace();
+    useOrchStore.setState({ boundWorkspacePath: '/tmp/nexus-workspace', missionSummariesHydrated: false } as never);
+    useProductNavigationStore.getState().openMission('mission-loading');
+    const host = mountApp();
+    expect(currentDestination(host)).toBe('mission-board:mission-loading');
+    act(() => useOrchStore.getState().setMissionSummaries([]));
+    expect(currentDestination(host)).toBe('launcher');
+  });
+
+  it('does not use the previous workspace snapshot to reject a mission being opened in another workspace', () => {
+    openWorkspace();
+    useOrchStore.setState({ boundWorkspacePath: '/tmp/previous-workspace', missionSummariesHydrated: true } as never);
+    useProductNavigationStore.getState().openMission('mission-next');
+    const host = mountApp();
+    expect(currentDestination(host)).toBe('mission-board:mission-next');
+    act(() => {
+      useOrchStore.getState().resetProjectState();
+      useOrchStore.setState({ boundWorkspacePath: '/tmp/nexus-workspace' });
+    });
+    expect(currentDestination(host)).toBe('mission-board:mission-next');
+    act(() => useOrchStore.getState().setMissionSummaries([
+      { id: 'mission-next', title: 'Vizinha', state: 'completed' },
+    ] as never));
+    expect(currentDestination(host)).toBe('mission-board:mission-next');
+  });
+
+  it('clears a removed mission from the settings return destination without closing settings', () => {
+    openWorkspace();
+    useOrchStore.setState({ boundWorkspacePath: '/tmp/nexus-workspace', missionSummariesHydrated: true } as never);
+    useProductNavigationStore.getState().openMission('mission-removed');
+    useProductNavigationStore.getState().openSettings('providers');
+    mountApp();
+    expect(useProductNavigationStore.getState().destination).toEqual({ kind: 'settings', section: 'providers' });
+    act(() => useProductNavigationStore.getState().backFromSettings());
+    expect(useProductNavigationStore.getState().destination).toEqual({ kind: 'launcher' });
+  });
+
+  it('allows a newly created mission to open before its first canonical broadcast', () => {
+    openWorkspace();
+    useOrchStore.setState({ boundWorkspacePath: '/tmp/nexus-workspace', missionSummariesHydrated: true } as never);
+    const host = mountApp();
+    act(() => useProductNavigationStore.getState().openMission('mission-created'));
+    expect(currentDestination(host)).toBe('mission-board:mission-created');
+    act(() => useOrchStore.getState().setMissionSummaries([
+      { id: 'mission-created', title: 'Nova missão', state: 'running' },
+    ] as never));
+    expect(currentDestination(host)).toBe('mission-board:mission-created');
+  });
+
+  it('remove missão de outro projeto só depois de confirmar e ativar o projeto correto', async () => {
+    openWorkspace();
+    const workspaceOpen = vi.spyOn(useWorkspaceStore.getState(), 'open').mockResolvedValue();
+    const removeMission = vi.fn().mockResolvedValue({ removed: true });
+    Object.assign(window.nexus, { orch: { removeMission } });
+    const host = mountApp();
+    const remove = [...host.querySelectorAll('button')].find(button => button.textContent === 'Remover missão vizinha');
+    await act(async () => {
+      remove!.click();
+      await vi.dynamicImportSettled();
+    });
+    expect(useConfirmStore.getState().pending?.body).toContain('sessões do projeto atual serão encerradas');
+    expect(workspaceOpen).not.toHaveBeenCalled();
+    expect(removeMission).not.toHaveBeenCalled();
+    await act(async () => useConfirmStore.getState().decide(true));
+    expect(workspaceOpen).toHaveBeenCalledWith('/tmp/neighbor');
+    expect(removeMission).toHaveBeenCalledWith('neighbor-mission');
+    expect(workspaceOpen.mock.invocationCallOrder[0]).toBeLessThan(removeMission.mock.invocationCallOrder[0]);
+    expect(useProductNavigationStore.getState().destination.kind).not.toBe('mission');
+    workspaceOpen.mockRestore();
+  });
+
+  it('não entrega agentes recém-criados ao fluxo de restaurar sessões antigas', async () => {
+    let finishRestore!: (value: boolean) => void;
+    layoutEffects.switchWorkspaceLayoutWithFallback.mockImplementationOnce(
+      () => new Promise<boolean>(resolve => { finishRestore = resolve; }),
+    );
+    openWorkspace();
+    mountApp();
+    act(() => {
+      useLayoutStore.getState().setPanes([{ id: 'fresh-agent', kind: 'cli-agent', title: 'Codex', adapterId: 'codex' }]);
+    });
+    await act(async () => finishRestore(true));
+    expect(gateRestoredAgents).not.toHaveBeenCalled();
+  });
+
+  it('abre a configuração de IA pelo atalho de onboarding', () => {
+    const host = mountApp();
+    const action = [...host.querySelectorAll('button')].find(button => button.textContent === 'Conectar uma IA');
+    act(() => action!.click());
+    expect(useProductNavigationStore.getState().destination).toEqual({ kind: 'settings', section: 'providers' });
+  });
+
+  it.each(['Montar meus terminais', 'Terminal puro'])(
+    'abre a configuração de pasta e layout pelo Início em %s',
+    (label) => {
+      const host = mountApp();
+      const action = [...host.querySelectorAll('button')].find(button => button.textContent === label);
+      expect(action).toBeDefined();
+      act(() => action!.click());
+      expect(host.querySelector('[role="dialog"]')?.textContent).toContain('Escolha a pasta e os painéis');
+      expect(host.querySelector('[role="dialog"]')?.textContent).toContain('Quantos painéis você quer abrir?');
+      expect(useProductNavigationStore.getState().destination).toEqual({ kind: 'launcher' });
+    },
+  );
+
   it('boots without a workspace into one AppShell Launcher', () => {
     const host = mountApp();
 

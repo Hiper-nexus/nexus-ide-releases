@@ -8,13 +8,10 @@ import {
 } from "./mission-runtime-readiness";
 
 /**
- * Doutrina fluxo-por-padrão (2026-08-10): prontidão NÃO é mais um gate.
- * CLI instalada e não desligada pelo operador participa da missão — como
- * coordenação e como execução. Login ausente, modelo fora da lista, conta em
- * cooldown: nada disso esconde a ferramenta nem trava o passo Equipe; o
- * terminal do agente é quem mostra a conversa real de auth. As únicas recusas
- * que restam são físicas (não instalada) ou escolha explícita do operador
- * (provider desligado nas configurações).
+ * Installed CLIs remain available for manual selection and worker tasks.
+ * Coordinator suggestions additionally require Main's physical MCP contract.
+ * Authentication snapshots remain advisory because CLI sessions can outlive
+ * cached provider metadata.
  */
 
 function adapter(
@@ -99,7 +96,7 @@ function account(
 }
 
 describe("mission runtime readiness (doutrina fluxo-por-padrão)", () => {
-  it("toda CLI instalada vira rota operacional — coordenação e execução", () => {
+  it("keeps installed workers available and only suggests MCP-capable coordinators", () => {
     const adapters = [
       adapter("claude"),
       adapter("codex"),
@@ -121,11 +118,9 @@ describe("mission runtime readiness (doutrina fluxo-por-padrão)", () => {
       "codex",
       "kimi",
     ]);
-    // Capacidade de controle ORDENA (capaz primeiro), não filtra.
     expect(ready.verifiedMaestros.map((item) => item.id)).toEqual([
       "claude",
       "codex",
-      "kimi",
     ]);
     expect(ready.qualifiedWorkers.map((item) => item.id)).toEqual([
       "claude",
@@ -241,26 +236,25 @@ describe("mission runtime readiness (doutrina fluxo-por-padrão)", () => {
     ).toBe(true);
   });
 
-  it("CLI sem metadado de controle também coordena (metadado ordena, não filtra)", () => {
+  it.each([false, undefined])("does not offer a coordinator without Main eligibility (%s)", (capable) => {
     const workerOnly = adapter("worker-only", {
       orchestratorCapable: false,
       orchestrationEvidence: "unsupported",
       autonomousWorkspaceWriteCapable: false,
       taskHandoffCapable: true,
-      missionControlCapable: false,
+      missionControlCapable: capable,
     });
 
     const ready = missionRuntimeReadiness([workerOnly], [
       provider("worker-only"),
     ]);
 
-    expect(ready.verifiedMaestros.map((item) => item.id)).toEqual([
-      "worker-only",
-    ]);
+    expect(ready.verifiedMaestros).toEqual([]);
+    expect(ready.detectedAdapters).toEqual([workerOnly]);
     expect(ready.qualifiedWorkers.map((item) => item.id)).toEqual([
       "worker-only",
     ]);
-    expect(ready.hasOperationalRoute).toBe(true);
+    expect(ready.hasOperationalRoute).toBe(false);
   });
 
   it("a política governed não esconde ferramenta na UI — a fronteira física de spawn é quem a impõe", () => {
@@ -269,6 +263,7 @@ describe("mission runtime readiness (doutrina fluxo-por-padrão)", () => {
       orchestrationEvidence: "unsupported",
       autonomousWorkspaceWriteCapable: false,
       taskHandoffCapable: true,
+      missionControlCapable: true,
     });
 
     expect(

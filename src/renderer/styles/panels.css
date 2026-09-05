@@ -964,15 +964,14 @@
 
 .acct__login-hero {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
+  align-items: center;
   gap: var(--space-2-5);
-  padding: var(--space-3) var(--space-3);
-  border: 1px solid color-mix(in srgb, var(--warn, #e5c07b) 40%, var(--border));
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--warn, #e5c07b) 8%, transparent);
+  padding: 0;
 }
 
 .acct__login-hero-detail {
+  flex-basis: 100%;
   margin: 0;
   font-size: var(--text-xs);
   line-height: 1.45;
@@ -1317,139 +1316,34 @@
 .acct__add-zone {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2-5);
-  padding: var(--space-3) var(--space-3);
-  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--accent) 6%, var(--bg));
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--accent) 12%, transparent);
-}
-
-.acct__add-zone[data-open="true"] {
-  border-color: color-mix(in srgb, var(--accent) 65%, var(--border));
-  background: color-mix(in srgb, var(--accent) 9%, var(--bg));
-}
-
-.acct__add-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-2-5);
-}
-
-.acct__add-head-copy {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
+  gap: var(--space-2);
 }
 
 .acct__add-sub {
   margin: 0;
-  font-size: var(--text-xs);
-  line-height: 1.45;
   color: var(--text-dim);
-  max-width: 62ch;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  text-wrap: pretty;
 }
 
-.acct__add-sub strong {
-  color: var(--text);
-  font-weight: 650;
-}
-
-.acct__add-choices {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: var(--space-2-5);
-}
-
-.acct__add-choice {
+.acct__connection-actions {
   display: flex;
-  align-items: flex-start;
-  gap: var(--space-2-5);
-  width: 100%;
-  min-height: 64px;
-  padding: var(--space-3) var(--space-3);
-  text-align: left;
-  justify-content: flex-start;
-  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border-strong));
-  background: color-mix(
-    in srgb,
-    var(--bg-elevated, var(--bg)) 80%,
-    transparent
-  );
-  transition:
-    border-color 120ms ease,
-    background 120ms ease,
-    transform 120ms ease;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
 }
 
-.acct__add-choice:hover,
-.acct__add-choice:focus-visible {
-  border-color: color-mix(in srgb, var(--accent) 70%, var(--border));
-  background: color-mix(in srgb, var(--accent) 10%, var(--bg));
-  outline: none;
-}
-
-.acct__add-choice-icon {
-  flex: 0 0 auto;
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-strong);
-  background: color-mix(in srgb, var(--accent) 10%, var(--bg));
-  color: var(--accent);
-}
-
-.acct__add-choice-text {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  min-width: 0;
-  flex: 1 1 auto;
-}
-
-.acct__add-choice-text strong {
+.acct__connection-actions .settings-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  min-height: var(--space-6);
   font-size: var(--text-sm);
-  font-weight: 650;
-  color: var(--text);
 }
 
-.acct__add-choice-text span {
-  font-size: var(--text-xs);
-  color: var(--text-dim);
-  line-height: 1.4;
-}
-
-.acct__add-plus {
-  flex: 0 0 auto;
-  align-self: center;
-  width: 22px;
-  height: 22px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  font-size: var(--text-xl);
-  font-weight: 600;
-  line-height: 1;
-  color: var(--accent);
-  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-}
-
-.acct__add-footnote {
-  margin: 0;
-  font-size: var(--text-xs);
-  line-height: 1.45;
-  color: var(--text-dim);
-  max-width: 68ch;
-}
-
-.acct__add-footnote strong {
-  color: var(--text);
-  font-weight: 650;
+.acct__connection-actions .settings-btn--primary {
+  min-height: calc(var(--space-6) + var(--space-2));
 }
 
 .acct__form {
@@ -1482,6 +1376,11 @@
 }
 
 .acct__notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-2);
   margin: 0;
   padding: var(--space-2) var(--space-2-5);
   font-size: var(--text-xs);
@@ -1497,9 +1396,9 @@
 }
 
 .acct__notice--ok {
-  color: var(--ok, #7ee2a8);
-  border-color: color-mix(in srgb, var(--ok, #7ee2a8) 40%, var(--border));
-  background: color-mix(in srgb, var(--ok, #7ee2a8) 8%, transparent);
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 40%, var(--border));
+  background: color-mix(in srgb, var(--ok) 8%, transparent);
 }
 
 .acct__notice--err {
@@ -2126,159 +2025,3 @@
 .wizard__prepare-detail {
   margin-top: var(--space-2);
 }
-
-/* ---- Terminal Grid Presets Dialog ---- */
-.confirm__panel--terminal-grid {
-  max-width: 500px;
-  width: 100%;
-}
-
-.terminal-grid-dialog__header {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-3);
-  margin-bottom: var(--space-3);
-}
-
-.terminal-grid-dialog__icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius-md);
-  background: var(--surface-float);
-  border: 1px solid var(--border-soft);
-  color: var(--accent);
-  flex-shrink: 0;
-}
-
-.terminal-grid-dialog__presets {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: var(--space-2);
-  margin-bottom: var(--space-3);
-}
-
-.terminal-grid-dialog__preset-btn {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  padding: var(--space-2) var(--space-2-5);
-  border-radius: var(--radius-md);
-  border: 1px solid var(--border-soft);
-  background: var(--surface-float);
-  color: var(--text);
-  cursor: pointer;
-  transition: all 0.15s ease;
-  text-align: left;
-}
-
-.terminal-grid-dialog__preset-btn:hover {
-  border-color: var(--accent);
-  background: var(--surface-hover);
-}
-
-.terminal-grid-dialog__preset-btn--selected {
-  border-color: var(--accent);
-  background: rgb(124 134 255 / 0.1);
-  box-shadow: 0 0 0 1px var(--accent);
-}
-
-.terminal-grid-dialog__preset-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-}
-
-.terminal-grid-dialog__preset-label {
-  font-size: var(--text-sm);
-  font-weight: 600;
-}
-
-.terminal-grid-dialog__preset-tag {
-  font-size: var(--text-2xs);
-  padding: 1px 5px;
-  border-radius: var(--radius-xs);
-  background: var(--surface-inset);
-  color: var(--text-dim);
-  font-family: var(--font-mono);
-}
-
-.terminal-grid-dialog__preset-desc {
-  font-size: var(--text-xs);
-  color: var(--text-dim);
-  margin-top: 2px;
-}
-
-.terminal-grid-dialog__stepper-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--space-2) var(--space-2-5);
-  border-radius: var(--radius-md);
-  background: var(--surface-inset);
-  border: 1px solid var(--border-soft);
-  margin-bottom: var(--space-3);
-}
-
-.terminal-grid-dialog__stepper-label {
-  font-size: var(--text-sm);
-  color: var(--text-dim);
-}
-
-.terminal-grid-dialog__stepper {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.terminal-grid-dialog__step-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border-soft);
-  background: var(--surface-float);
-  color: var(--text);
-  font-size: var(--text-md);
-  cursor: pointer;
-  line-height: 1;
-}
-
-.terminal-grid-dialog__step-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.terminal-grid-dialog__step-btn:not(:disabled):hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.terminal-grid-dialog__step-value {
-  font-size: var(--text-sm);
-  font-weight: 600;
-  min-width: 80px;
-  text-align: center;
-  color: var(--text);
-}
-
-.terminal-grid-dialog__toggle {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  font-size: var(--text-xs);
-  color: var(--text-dim);
-  margin-bottom: var(--space-3);
-  cursor: pointer;
-}
-
-.terminal-grid-dialog__toggle input[type="checkbox"] {
-  cursor: pointer;
-  accent-color: var(--accent);
-}
-

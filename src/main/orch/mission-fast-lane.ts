@@ -1,7 +1,10 @@
+import { isPaneMetaTask, extractMetaPaneQuestion } from '../../shared/pane-meta-task';
+import { getMissionRoutingHints } from '../../shared/mission-routing-advice';
+export { isPaneMetaTask, extractMetaPaneQuestion } from '../../shared/pane-meta-task';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { promisify } from 'node:util';
+import { isDeepStrictEqual, promisify } from 'node:util';
 import {
   pickDesignReference,
   type DesignReferenceCandidate,
@@ -36,12 +39,14 @@ import { emitMissionEvent } from './mission-event-emit';
 import { buildMaestroKickoffBrief } from './orchestrator-doctrine';
 import {
   getSessionState,
+  getAgentSessionInfo,
   getSessionCwd,
   isPtySessionConnectedAndWritable,
   listAgentSessions,
   orchTerminateSession,
   registeredOrchestratorSessionsForMission,
 } from '../pty/pty-manager';
+import { getAcpDriverSession } from '../acp/acp-harness-driver';
 import { getAdapter } from '../adapters/adapter-registry';
 import { deliverAgentPrompt, proveNativeArgvBriefAccepted } from './tool-util';
 import { canUseNexusMcp } from './cli-mcp-inject';
@@ -126,6 +131,7 @@ import {
 } from './via-rapida-first-wave';
 import { firstWaveWorkerPrompt, metaPaneAskPrompt } from './via-rapida-walk';
 import { maybeApplyCivilianPronto } from './civilian-pronto';
+import { hashMissionIntentAuthority } from './mission-pane-authority';
 
 /**
  * Via Rápida de missão (2026-08-12) — motor limpo, modelo PULL.
@@ -206,6 +212,19 @@ function bindSpawnedMissionPane(
     readOnly?: boolean;
   },
 ): void {
+  const physical = role === 'worker'
+    ? getAgentSessionInfo(spawn.sessionId) ?? getAcpDriverSession(spawn.sessionId)?.agent
+    : undefined;
+  if (role === 'worker' && (!physical || physical.sessionId !== spawn.sessionId ||
+    physical.paneId !== spawn.paneId || physical.missionId !== mission.id ||
+    physical.role !== role || physical.agentName !== agent.agentName ||
+    physical.adapterId !== agent.cli || !isDeepStrictEqual(physical.scope, scope) ||
+    !physical.workerIncarnationId || !physical.authoritySeal ||
+    physical.authoritySeal.intentVersion !== mission.intentVersion ||
+    !mission.intentContract ||
+    physical.authoritySeal.intentContractHash !== hashMissionIntentAuthority(mission.intentContract))) {
+    throw new Error('first-wave worker physical spawn authority is missing or mismatched');
+  }
   const title = spawn.title?.trim() || agent.agentName;
   stores.missionPanes.record({
     missionId: mission.id,
@@ -216,10 +235,12 @@ function bindSpawnedMissionPane(
     cwd: scope.rootRealPath,
     title,
     agentName: agent.agentName,
+    workerIncarnationId: physical?.workerIncarnationId,
+    authoritySeal: physical?.authoritySeal,
     role,
-    allowedTools: agent.allowedTools ? [...agent.allowedTools] : null,
-    allowedSkills: agent.allowedSkills ? [...agent.allowedSkills] : null,
-    readOnly: spawn.readOnly === true,
+    allowedTools: physical ? physical.allowedTools : agent.allowedTools ? [...agent.allowedTools] : null,
+    allowedSkills: physical ? physical.allowedSkills : agent.allowedSkills ? [...agent.allowedSkills] : null,
+    readOnly: physical ? physical.readOnly : spawn.readOnly === true,
     executionScope: scope,
   });
 }
@@ -280,10 +301,8 @@ function resolveOrchestratorBriefDelivery(adapterId: string): 'argv' | 'paste' {
 }
 
 /**
- * Doutrina Overclock: quando todos os panes morreram e a missão segue
- * running, o watcher NUNCA bloqueia nem completa sozinho. Com orçamento,
- * respawna o orquestrador (que consome handoffs pendentes e decide o fim);
- * sem orçamento, mantém a missão viva e observando — só o operador para.
+ * A mission without live processes can retry within its recovery budget.
+ * Exhaustion is a recoverable technical block, never a successful delivery.
  */
 export function decideFastLaneEmptyPaneAction(input: {
   readonly status: Mission['status'];
@@ -291,12 +310,12 @@ export function decideFastLaneEmptyPaneAction(input: {
   readonly respawnBudgetLeft: number;
   /** Operador fechou o Maestro (✕ do pane). Não relança a missão inteira. */
   readonly operatorDismissedOrchestrator?: boolean;
-}): 'respawn-orchestrator' | 'keep-running-watching' {
+}): 'respawn-orchestrator' | 'keep-running-watching' | 'block-recovery-exhausted' {
   if (input.status !== 'running') return 'keep-running-watching';
   if (input.operatorDismissedOrchestrator) return 'keep-running-watching';
   return input.respawnBudgetLeft > 0
     ? 'respawn-orchestrator'
-    : 'keep-running-watching';
+    : 'block-recovery-exhausted';
 }
 
 /**
@@ -625,6 +644,18 @@ export function readableMissionAttachmentPath(snapshot: {
  * Prompt do kickoff. Maestro: briefing curto (objetivo / equipe / fim).
  * Worker: papel + objetivo. Contrato de handoff continua anexado à parte.
  */
+function missionCanDispatchWorkers(mission: Mission): boolean {
+  const contract = mission.intentContract;
+  return contract?.lane !== 'plan' && contract?.lane !== 'consult' && contract?.budgets?.maxWorkers !== 0;
+}
+
+function missionRoutingSkillNote(mission: Mission, agent: SquadAgent): string {
+  const { suggestedSkills } = getMissionRoutingHints(mission.intentContract, agent.allowedSkills);
+  return suggestedSkills.length > 0
+    ? `Skills sugeridas para esta tarefa: ${suggestedSkills.join(', ')}. Consulte as instruções das skills antes de usá-las; esta sugestão não amplia suas permissões.`
+    : '';
+}
+
 export function agentPrompt(
   agent: SquadAgent,
   mission: Mission,
@@ -636,12 +667,15 @@ export function agentPrompt(
 ): string {
   const objective = mission.description ?? '';
   const title = mission.title ?? objective.slice(0, 80);
+  const routingHints = getMissionRoutingHints(mission.intentContract);
+  const skillNote = missionRoutingSkillNote(mission, agent);
   // Missão-pergunta aos panes: contrato META-DE-PANE no lugar do plano selado
   // (redundância "1 entrega" repetindo o objetivo custava contexto sem
   // informação — 22/08, missão 1+1).
   const isMetaPaneMission =
     agent.category === 'orchestrator' &&
-    (isPaneMetaTask(objective) ||
+    missionCanDispatchWorkers(mission) &&
+    (routingHints.paneQuestion !== null || isPaneMetaTask(objective) ||
       isPaneMetaTask(title) ||
       sealedPlanTitles.some((storyTitle) => isPaneMetaTask(storyTitle)));
   // A doutrina anti-colapso existe para planos com VÁRIAS entregas (11
@@ -653,8 +687,8 @@ export function agentPrompt(
       ? sealedPlanTitles.length > 1
         ? [
             '### Plano selado (não colapse em papéis do squad)',
-            `São ${sealedPlanTitles.length} entregas — spawne UM worker por ` +
-              'task pendente; NÃO reduza a lista aos papéis do squad.',
+            `São ${sealedPlanTitles.length} entregas. Preserve cada tarefa e seus critérios; ` +
+              'não reduza a lista aos papéis do squad.',
             ...sealedPlanTitles.map(
               (storyTitle, index) => `${index + 1}. ${storyTitle}`,
             ),
@@ -673,12 +707,13 @@ export function agentPrompt(
   const metaPaneBlock = isMetaPaneMission
       ? 'META-DE-PANE: esta missão pergunta aos próprios panes — VOCÊ fecha ' +
         'com a evidência, a first-wave pergunta. ' +
-        `A first-wave já abriu UM pane por integrante (${teamWorkerNames.join(', ') || 'equipe'}) ` +
+        `O Nexus está inicializando UM pane por integrante (${teamWorkerNames.join(', ') || 'equipe'}) ` +
         'com a pergunta limpa e readOnly: true. NÃO spawne de novo o mesmo ' +
         'integrante. NÃO spawne ad-hoc (sem agentName). NÃO liste panes. ' +
-        'PRIMEIRO ATO: nexus_pane_ask em cada integrante. Se faltar alguém da ' +
-        'lista, spawne SÓ esse agentName com readOnly: true; senão ' +
-        'nexus_pane_ask. EXTRAIA do objetivo apenas a PERGUNTA (ex.: ' +
+        'Use nexus_pane_ask em cada integrante quando seu pane estiver disponível. ' +
+        'A ausência durante a inicialização não autoriza outro spawn. Só substitua um ' +
+        'integrante após falha confirmada, com o mesmo agentName e readOnly: true. ' +
+        'EXTRAIA do objetivo apenas a PERGUNTA (ex.: ' +
         '"quanto é 1+1?") — quem é perguntado recebe SÓ a pergunta. ' +
         'Aguarde a resposta de TODOS os panes, e só então FECHO: ' +
         'nexus_handoff_submit success com summary citando a resposta de CADA ' +
@@ -727,6 +762,8 @@ export function agentPrompt(
       title,
       objective: [
         objective,
+        routingHints.paneQuestion ? `Pergunta à equipe: ${routingHints.paneQuestion}` : '',
+        skillNote,
         mission.learnings
           ? `Aprendizados anteriores: ${mission.learnings}`
           : '',
@@ -750,6 +787,7 @@ export function agentPrompt(
       maxWorkers: mission.intentContract?.budgets?.maxWorkers,
       executorCount: executorCount ?? 3,
       sealedPlanTitles,
+      firstWaveDispatched: true,
       metaPane: isMetaPaneMission,
     });
   }
@@ -757,6 +795,7 @@ export function agentPrompt(
   return [
     `## Missão: ${title}`,
     `Objetivo: ${objective}`,
+    skillNote,
     mission.learnings ? `Aprendizados anteriores: ${mission.learnings}` : '',
     attachmentBlock,
     uiNote,
@@ -957,6 +996,7 @@ async function spawnAgentPane(
   const readOnly = spawnOpts?.readOnly === true;
   if (role === 'worker') {
     const isMeta =
+      getMissionRoutingHints(mission.intentContract).paneQuestion !== null ||
       isPaneMetaTask(mission.description ?? '') ||
       isPaneMetaTask(mission.title ?? '');
     if (isMeta) {
@@ -1425,11 +1465,8 @@ async function tickWatcher(state: WatcherState): Promise<void> {
       // Assinatura ilegível não recarrega orçamento — fail-closed.
     }
   }
-  // Se não há NENHUM pane vivo nesta missão: doutrina Overclock — a missão
-  // NUNCA é bloqueada nem completada pelo watcher. Com orçamento, o
-  // orquestrador é respawnado (ele consome handoffs pendentes e decide o
-  // fim da missão); sem orçamento, mantém running e observando. Só o
-  // operador para.
+  // No live processes: retry while budget remains, then expose the failure
+  // so the operator can fix its cause and explicitly resume the mission.
   if (livePanes.length === 0) {
     let pendingHandoffs = 0;
     try {
@@ -1469,10 +1506,19 @@ async function tickWatcher(state: WatcherState): Promise<void> {
         return; // watcher continua; próxima tick tenta com o orçamento restante.
       }
     }
-    console.warn(
-      `[fast-lane] nenhum pane vivo em ${state.missionId} e orçamento de ` +
-        'respawn esgotado; missão segue running — use Retomar no rail.',
-    );
+    if (action === 'block-recovery-exhausted') {
+      const current = stores.missions.get(state.missionId);
+      if (!current || current.status !== 'running') return;
+      missionEngineForScope(state.scope).blockTechnical(state.scope, {
+        missionId: current.id,
+        expectedStatus: current.status,
+        expectedIntentState: current.intentState ?? 'executing',
+        expectedUpdatedAt: current.updatedAt,
+        expectedIntentVersion: current.intentVersion ?? 0,
+        description: `${current.description ?? current.title}\n\n[NEXUS_FAILURE:terminal] A recuperação automática se esgotou após ${ORCHESTRATOR_RESPAWN_BUDGET} tentativas, sem nenhum painel vivo. O histórico e as entregas foram preservados. Confira o login e a saída das ferramentas de IA, depois clique em Retomar.`,
+      });
+      stopWatcher(state.scope, state.missionId);
+    }
     return;
   }
 
@@ -2265,58 +2311,6 @@ export async function maybeRedispatchFastLaneFirstWave(
  * First-wave no mesmo turno do Maestro. Só CLI AuthReadiness=present
  * ganha assento; LongCat sem chave é skip silencioso (sem toast).
  */
-/**
- * Task cujo destinatário são os PRÓPRIOS panes da missão (perguntar/chamar/
- * responder aos panes). Worker não tem ferramenta de pane — despachar essa
- * classe gera papelada honesta no lugar do efeito ("workers cannot create
- * panes", nota do próprio worker em 20/08). Ela fica com o Maestro, que tem
- * as ferramentas e a doutrina EXCEÇÃO/FECHO para executar e concluir.
- */
-export function isPaneMetaTask(title: string): boolean {
-  const text = title.normalize('NFC');
-  return (
-    /\b(?:pergunt|respond|cham)\w*\b[^.\n]{0,40}\bpanes?\b/iu.test(text) ||
-    /\bpanes?\b[^\n]{0,40}\b(?:pergunt|respond|cham)\w*/iu.test(text) ||
-    /\bcada\s+pane\b/iu.test(text) ||
-    // Ditado por voz vem com typo no verbo ("oergunta aos panes quwnto e
-    // 1+1" derrotou o padrão acima em campo, 20/08). A construção de
-    // destinatário ("aos panes") + carga interrogativa é evidência
-    // suficiente sem o verbo; task de código fala "do pane"/"o pane X" e
-    // não carrega interrogação.
-    (/\baos?\s+(?:todos\s+(?:os\s+)?)?panes\b/iu.test(text) &&
-      /\?|\bquanto|\bqual|\bquem\b|\bonde\b|\bquando\b|\d\s*\+\s*\d/iu.test(
-        text,
-      )) ||
-    // VOZ traduz para inglês: "How much is 2x2 and they have to answer you."
-    // Sem "pane" no texto a first-wave selava 1 entrega e abria só 1 writer.
-    /\bthey have to answer\b/iu.test(text) ||
-    /\bhave (?:them|everyone) answer\b/iu.test(text) ||
-    /\bask (?:the )?(?:panes?|team|workers?|agents?)\b/iu.test(text) ||
-    /\beach (?:one|pane|agent|worker)\b[^.\n]{0,60}\banswer/iu.test(text)
-  );
-}
-
-/** Pergunta que o worker recebe — sem o wrapper "pergunte aos panes / they have to answer". */
-export function extractMetaPaneQuestion(objective: string): string {
-  const text = objective.normalize('NFC').trim();
-  if (!text) return '';
-  const withoutAnswerTail = text
-    .replace(
-      /\s+and (?:they|everyone|each one) (?:must|should|have to) answer(?: you)?[.\s]*$/iu,
-      '',
-    )
-    .replace(/\bhave (?:them|everyone) answer[.\s]*$/iu, '')
-    .trim();
-  const ask = withoutAnswerTail.match(
-    /(?:pergunte|perguntar|ask)\b(?:\s+(?:the\s+|aos?\s+|a\s+)?(?:todos\s+(?:os\s+)?)?(?:panes?|team|workers?|agents?|cada\s+(?:um|pane)))?\s*[:.]?\s*(.+)/iu,
-  );
-  const extracted = (ask?.[1] ?? withoutAnswerTail)
-    .replace(/\s*[,.]?\s*(?:e\s+)?(?:aguarde|consolide|responda).*$/iu, '')
-    .replace(/[,\s]+$/u, '')
-    .trim();
-  return extracted || text;
-}
-
 export async function dispatchFastLaneFirstWave(
   scope: ProjectExecutionScope,
   missionId: string,
@@ -2328,6 +2322,7 @@ export async function dispatchFastLaneFirstWave(
     const stores = getProjectDomainStores(scope);
     const mission = stores.missions.get(missionId);
     if (!mission || mission.status !== 'running') return 0;
+    if (!missionCanDispatchWorkers(mission)) return 0;
     // "Pedir um ajuste": a missão reabriu para o operador DESCREVER o ajuste.
     // Disparar a first-wave aqui seria mandar prompt e sair rodando sozinho
     // antes de saber o quê — o Maestro religa digitável e espera no chat.
@@ -2379,8 +2374,9 @@ export async function dispatchFastLaneFirstWave(
         hasCredentiallessModel: readiness === 'present',
       });
     };
+    const routingHints = getMissionRoutingHints(mission.intentContract);
     const missionIsMeta =
-      isPaneMetaTask(mission.description ?? '') ||
+      routingHints.paneQuestion !== null || isPaneMetaTask(mission.description ?? '') ||
       isPaneMetaTask(mission.title ?? '') ||
       allTitles.some((storyTitle) => isPaneMetaTask(storyTitle));
     if (missionIsMeta) {
@@ -2391,7 +2387,7 @@ export async function dispatchFastLaneFirstWave(
             (key): key is string => typeof key === 'string' && key.length > 0,
           ),
         );
-      const question = extractMetaPaneQuestion(
+      const question = routingHints.paneQuestion ?? extractMetaPaneQuestion(
         mission.description || mission.title || allTitles[0] || '',
       );
       const wave = planMetaPaneAskSeats({
@@ -2487,13 +2483,13 @@ export async function dispatchFastLaneFirstWave(
       ) {
         break;
       }
-      const prompt = firstWaveWorkerPrompt({
+      const prompt = [firstWaveWorkerPrompt({
         mission,
         agentName: seat.agent.agentName,
         storyTitle: seat.storyTitle,
         storyIndex: seat.seatIndex,
         storyTotal: titles.length,
-      });
+      }), missionRoutingSkillNote(mission, seat.agent)].filter(Boolean).join('\n');
       const result = await spawnWriterWithCircuit(
         scope,
         mission,
@@ -2562,6 +2558,7 @@ export async function resumeFastLaneMission(
   }
   if (remountKind === 'operator') {
     clearOperatorDismissedPanes(missionId);
+    respawnBudgets.delete(watcherKey(scope, missionId));
   }
   const liveMaestroSessionId = liveOrchestratorSessionId(missionId);
   const freshKickoff = isThisProcessFreshKickoff(

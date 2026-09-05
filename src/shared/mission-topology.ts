@@ -1,3 +1,5 @@
+import { isPaneMetaTask, extractMetaPaneQuestion } from './pane-meta-task';
+
 export type StandardMissionTopology =
   | "delivery"
   | "team-read-only-fanout"
@@ -26,6 +28,8 @@ const TEAM_OUTPUT_ACTIVITY =
 
 const SHORT_PANE_SMOKE_TEST =
   /^(?:teste|testar|test)\s+(?:de\s+|the\s+)?panes?$/;
+
+const PANE_QUESTION_PAYLOAD = /^(?:quanto|qual|quais|quem|quando|onde|como|por\s+que|o\s+que|what|how|who|when|where|why)\b|^\d\s*[+*/×-]\s*\d/;
 
 const ROLE_RESPONSE_SUBJECT =
   /\b(?:papel|funcao|o\s*que\s+(?:\w+\s+){0,2}(?:faz|fazem)|oque\s+(?:\w+\s+){0,2}(?:faz|fazem)|role|what\s+(?:it|they|you)\s+do)\b/;
@@ -354,10 +358,15 @@ export function classifyStandardMissionTopology(
     EXPLICIT_READ_ONLY,
     " read-only ",
   );
+  const requestsMutation = MUTATING_ACTION.test(mutationCandidate) ||
+    PRODUCT_SURFACE_MUTATION.test(canonical);
+  const question = canonicalGoal(extractMetaPaneQuestion(goal));
+  if (isPaneMetaTask(goal) && PANE_QUESTION_PAYLOAD.test(question) && !requestsMutation) {
+    return 'team-read-only-fanout';
+  }
   if (
     canonical.length < 8 ||
-    MUTATING_ACTION.test(mutationCandidate) ||
-    PRODUCT_SURFACE_MUTATION.test(canonical) ||
+    requestsMutation ||
     (!TEAM_SCOPE.test(canonical) && !hasShortPaneSmokeTest) ||
     (!hasTeamResponse && !hasObservedTeamRuntime && !hasShortPaneSmokeTest) ||
     !hasClosedReadOnlyRequest

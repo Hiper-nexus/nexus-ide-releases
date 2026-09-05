@@ -118,7 +118,6 @@ describe("OrchestratorDefaults", () => {
   it("configures provider, model and account from the installed MCP-capable inventory", async () => {
     let saved: OrchSettings = {
       ...DEFAULT_ORCH_SETTINGS,
-      missionDriverActiveMode: false,
       defaultAdapterId: "codex",
       defaultModel: "gpt-5.4",
       defaultAccountId: "codex-work",
@@ -219,7 +218,6 @@ describe("OrchestratorDefaults", () => {
   it("modelo sem sessão aparece bloqueado no picker com o comando de login", async () => {
     const saved: OrchSettings = {
       ...DEFAULT_ORCH_SETTINGS,
-      missionDriverActiveMode: false,
       defaultAdapterId: "codex",
       defaultModel: "",
       defaultAccountId: "",
@@ -278,7 +276,6 @@ describe("OrchestratorDefaults", () => {
   it("conta com sessão expirada aparece desabilitada e nomeada no default", async () => {
     const saved: OrchSettings = {
       ...DEFAULT_ORCH_SETTINGS,
-      missionDriverActiveMode: false,
       defaultAdapterId: "codex",
       defaultModel: "",
       defaultAccountId: "",
@@ -330,7 +327,6 @@ describe("OrchestratorDefaults", () => {
   it("keeps a declared but unverified coordinator visible and unavailable", async () => {
     const saved: OrchSettings = {
       ...DEFAULT_ORCH_SETTINGS,
-      missionDriverActiveMode: false,
       defaultAdapterId: "kimi",
       defaultModel: "",
       defaultAccountId: "",
@@ -388,7 +384,6 @@ describe("OrchestratorDefaults", () => {
   it("keeps an unavailable saved provider visible instead of silently changing it", async () => {
     const saved: OrchSettings = {
       ...DEFAULT_ORCH_SETTINGS,
-      missionDriverActiveMode: false,
       defaultAdapterId: "claude",
       defaultModel: "",
       defaultAccountId: "",
@@ -436,7 +431,6 @@ describe("OrchestratorDefaults", () => {
   it("treats a usable managed account as runtime auth for the exact model", async () => {
     const saved: OrchSettings = {
       ...DEFAULT_ORCH_SETTINGS,
-      missionDriverActiveMode: false,
       defaultAdapterId: "claude",
       defaultModel: "claude-opus-5",
       defaultAccountId: "claude-work",
@@ -485,7 +479,6 @@ describe("OrchestratorDefaults", () => {
   it("does not let a managed account make a removed saved model ready", async () => {
     const saved: OrchSettings = {
       ...DEFAULT_ORCH_SETTINGS,
-      missionDriverActiveMode: false,
       defaultAdapterId: "claude",
       defaultModel: "claude-opus-5",
       defaultAccountId: "claude-work",

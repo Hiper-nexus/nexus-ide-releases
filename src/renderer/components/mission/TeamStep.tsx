@@ -92,8 +92,8 @@ function providerForAdapter(
 }
 
 /**
- * Snapshot ausente não reprova (fluxo-por-padrão / cache frio).
- * `login-needed` é o único estado em que o motor recusa o Maestro no spawn.
+ * Preferência para a recomendação automática; o snapshot pode envelhecer e
+ * não substitui o probe de autenticação do Main. Ausência não reprova.
  */
 export function isSeatedMissionCli(
   adapterId: string,
@@ -174,6 +174,18 @@ export function buildRecommendedMissionRoster({
       !ONE_SHOT_ONLY_WORKER_CLIS.has(adapter.id),
   );
   if (readyWorkers.length === 0) return null;
+  // Prefira ferramentas sem login pendente quando houver alternativas. O
+  // fallback preserva CLIs com sessão nativa que o snapshot ainda não refletiu.
+  const seatedWorkers = readyWorkers.filter((adapter) =>
+    isSeatedMissionCli(adapter.id, providers),
+  );
+  const preferredWorkers = seatedWorkers.length > 0 ? seatedWorkers : readyWorkers;
+  // Na equipe automática, prefira a integração física de MCP. A rota PTY
+  // continua disponível quando não houver alternativa e na escolha manual.
+  const mcpWorkers = preferredWorkers.filter(
+    (adapter) => adapter.missionControlCapable === true,
+  );
+  const workerRotation = mcpWorkers.length > 0 ? mcpWorkers : preferredWorkers;
 
   const roster: SquadAgent[] = [];
   const roles = recommendMissionRosterRoles({ objective, lane });
@@ -181,7 +193,7 @@ export function buildRecommendedMissionRoster({
     const adapter =
       role.category === 'orchestrator'
         ? coordinator
-        : readyWorkers[(index - 1) % readyWorkers.length];
+        : workerRotation[(index - 1) % workerRotation.length];
     if (!adapter) return null;
     const model =
       role.category === 'orchestrator'

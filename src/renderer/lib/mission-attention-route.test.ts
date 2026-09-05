@@ -5,6 +5,7 @@ import { useLayoutStore } from '../state/layout-store';
 import { useMissionInspectorStore } from '../state/mission-inspector-store';
 import { useOrchStore } from '../state/orch-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
+import { setActiveWorkspacePath } from '../state/active-workspace';
 import {
   attentionCauseForMissionState,
   MISSION_ATTENTION_ROUTE_MATRIX,
@@ -36,7 +37,8 @@ beforeEach(() => {
     tab: 'result',
     selectedAgentId: null,
   });
-  useOrchStore.setState({ paneMissions: {} });
+  setActiveWorkspacePath('/workspace');
+  useOrchStore.setState({ paneMissions: {}, missionSummaries: [], missionSummariesHydrated: false, boundWorkspacePath: '/workspace' });
   useLayoutStore.setState({
     root: buildGridTree([
       { id: 'shell-old', kind: 'shell', title: 'Terminal' },
@@ -50,6 +52,23 @@ beforeEach(() => {
 });
 
 describe('shared cause-aware mission attention route', () => {
+  it('ignores an obsolete mission target even when its pane binding is still present', () => {
+    useOrchStore.setState({ missionSummariesHydrated: true });
+    routeMissionAttention({ missionId: 'mission-next', cause: 'human-input', notificationPaneId: livePane.id });
+    expect(useProductNavigationStore.getState().destination).toEqual({ kind: 'terminal' });
+    expect(useMissionInspectorStore.getState().missionId).toBe('mission-old');
+  });
+
+  it('keeps a valid completed result addressable after its runtime panes are gone', () => {
+    useOrchStore.setState({
+      missionSummariesHydrated: true,
+      missionSummaries: [{ id: 'mission-result', title: 'Resultado', state: 'completed' }],
+    } as never);
+    routeMissionAttention({ missionId: 'mission-result', cause: 'completed' });
+    expect(useProductNavigationStore.getState().destination).toEqual({ kind: 'mission', missionId: 'mission-result', surface: 'board' });
+    expect(useMissionInspectorStore.getState().tab).toBe('result');
+  });
+
   it.each([
     ['human-question', 'chat'],
     ['human-input', 'chat'],

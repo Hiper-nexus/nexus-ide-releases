@@ -151,9 +151,9 @@ describe('UsageQuotaSection', () => {
     });
 
     expect(host.textContent).toContain('Uso e cotas');
-    expect(host.textContent).toContain('3 entradas');
-    expect(host.textContent).toContain('1 no limite');
-    expect(host.textContent).toContain('1 sem telemetria');
+    expect(host.textContent).toContain('3 conexões e contas');
+    expect(host.textContent).toContain('1 com uso elevado');
+    expect(host.textContent).toContain('1 sem cota informada');
 
     act(() => root.unmount());
   });
@@ -165,16 +165,16 @@ describe('UsageQuotaSection', () => {
       await Promise.resolve();
     });
 
-    expect(host.textContent).toContain('Claude · CLI nativo');
+    expect(host.textContent).toContain('Conexão atual');
     expect(host.textContent).toContain('Codex · Plus');
     expect(host.textContent).toContain('user@example.com');
-    expect(host.textContent).toContain('ausente');
-    expect(host.textContent).toContain('cooldown');
+    expect(host.textContent).toContain('Não instalada');
+    expect(host.textContent).toContain('Pausa temporária');
 
     // Windows percentages and unknown "—"
     expect(host.textContent).toContain('42%');
     expect(host.textContent).toContain('95%');
-    expect(host.textContent).toContain('—');
+    expect(host.textContent).toContain('Não informado');
 
     act(() => root.unmount());
   });
@@ -226,8 +226,8 @@ describe('UsageQuotaSection', () => {
       await Promise.resolve();
     });
 
-    expect(host.textContent).toContain('Nenhum CLI listado');
-    expect(host.textContent).toContain('Abrir Providers');
+    expect(host.textContent).toContain('Nenhuma cota disponível ainda');
+    expect(host.textContent).toContain('Ver conexões de IA');
 
     act(() => root.unmount());
   });
@@ -254,12 +254,37 @@ describe('UsageQuotaSection', () => {
     });
 
     expect(host.textContent).toContain('Não foi possível carregar as cotas.');
-    expect(host.textContent).toContain('Falha de conexão IPC');
+    expect(host.textContent).not.toContain('Falha de conexão IPC');
 
     act(() => root.unmount());
   });
 
-  it('dobra a linha "CLI nativo" para dentro da conta salva da mesma sessão', async () => {
+  it('hides old percentages after a failed refresh and restores them on retry', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { host, root } = mount();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(host.querySelectorAll('[role="progressbar"]').length).toBeGreaterThan(0);
+    vi.mocked(window.nexus.quota.refresh).mockRejectedValueOnce(new Error('fixture-only'));
+    await act(async () => { host.querySelector<HTMLButtonElement>('.quota-panel__refresh')!.click(); });
+    expect(host.querySelectorAll('[role="progressbar"]')).toHaveLength(0);
+    expect(host.textContent).toContain('Não foi possível carregar as cotas.');
+    await act(async () => { host.querySelector<HTMLButtonElement>('.quota-panel__refresh')!.click(); });
+    expect(host.querySelectorAll('[role="progressbar"]').length).toBeGreaterThan(0);
+    act(() => root.unmount());
+  });
+
+  it('identifies the quota supplier separately from the CLI owner', async () => {
+    const routed = { ...sampleSnapshot, entries: [{ ...sampleEntries[0], usageProviderId: 'glm' }] };
+    vi.mocked(window.nexus.quota.refresh).mockResolvedValue(routed);
+    const { host, root } = mount();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(host.textContent).toContain('Claude');
+    expect(host.textContent).toContain('GLM');
+    expect(host.querySelector('[data-adapter="claude"]')).not.toBeNull();
+    act(() => root.unmount());
+  });
+
+  it('não esconde a sessão nativa por inferir identidade apenas pelo e-mail', async () => {
     useAccountStore.setState({
       accounts: [
         {
@@ -317,11 +342,10 @@ describe('UsageQuotaSection', () => {
       await Promise.resolve();
     });
 
-    // A linha nativa do Claude sumiu (redundante com a conta salva)…
-    expect(host.textContent).not.toContain('Claude · CLI nativo');
-    // …as contas e adapters independentes continuam lá.
-    expect(host.querySelectorAll('.quota-entry').length).toBe(2);
-    expect(host.textContent).toContain('2 entradas');
+    expect(host.querySelector('[data-adapter="claude"]')).not.toBeNull();
+    expect(host.querySelectorAll('.quota-entry').length).toBe(3);
+    expect(host.textContent).toContain('3 conexões e contas');
+    expect(window.nexus.providers.authStatus).not.toHaveBeenCalled();
     act(() => root.unmount());
   });
 
@@ -351,7 +375,7 @@ describe('UsageQuotaSection', () => {
       await Promise.resolve();
     });
 
-    expect(host.textContent).toContain('sessão expirada');
+    expect(host.textContent).toContain('Entrar novamente');
     act(() => root.unmount());
   });
 
@@ -399,7 +423,7 @@ describe('UsageQuotaSection', () => {
       await Promise.resolve();
     });
 
-    expect(host.textContent).toContain('Claude · CLI nativo');
+    expect(host.textContent).toContain('Conexão atual');
     act(() => root.unmount());
   });
 

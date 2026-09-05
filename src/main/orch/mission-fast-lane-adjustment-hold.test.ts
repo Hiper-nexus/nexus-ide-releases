@@ -101,6 +101,16 @@ describe('buildRespawnPrompt — Maestro religado para ajuste espera', () => {
 });
 
 describe('dispatchFastLaneFirstWave — hold do "Pedir um ajuste"', () => {
+  it.each(['plan', 'consult'] as const)('não abre workers para a lane %s', async (lane) => {
+    harness.mission = {
+      ...runningMission('Faça uma análise direta.', `mission-${lane}`),
+      intentContract: { lane, budgets: { maxWorkers: 0 } },
+    } as Mission;
+    harness.getSquad.mockClear();
+    expect(await dispatchFastLaneFirstWave(scope, `mission-${lane}`)).toBe(0);
+    expect(harness.getSquad).not.toHaveBeenCalled();
+  });
+
   it('com marcador awaiting-adjustment NÃO dispara workers sozinho', async () => {
     harness.mission = runningMission(ADJUSTING, 'mission-adjust');
     harness.getSquad.mockClear();

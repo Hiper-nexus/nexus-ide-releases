@@ -2,12 +2,14 @@
 import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createLeaf, createPane } from '../../lib/split-tree';
+import { createLeaf, createPane, initialTree } from '../../lib/split-tree';
 import { useLayoutStore } from '../../state/layout-store';
 import { useMissionSetupStore } from '../../state/mission-setup-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { useSessionStateStore } from '../../state/session-state-store';
-import { ProjectOverview } from './ProjectOverview';
+import { useWorkspaceStore } from '../../state/workspace-store';
+import { useTerminalGridDialogStore } from '../../state/terminal-grid-dialog-store';
+import { ProjectOverview, ProjectOverviewConnected } from './ProjectOverview';
 
 vi.mock('../../terminal/pane-close-guard', () => ({
   requestPaneClose: vi.fn(),
@@ -70,6 +72,8 @@ describe('ProjectOverview', () => {
     }
     document.body.replaceChildren();
     vi.mocked(requestPaneClose).mockReset();
+    vi.restoreAllMocks();
+    useTerminalGridDialogStore.getState().close();
   });
 
   it('lists panes with status and focuses on click', () => {
@@ -116,5 +120,28 @@ describe('ProjectOverview', () => {
     ) as HTMLButtonElement;
     act(() => close.click());
     expect(requestPaneClose).toHaveBeenCalled();
+  });
+
+  it('treats a structural vacancy as an empty project and offers terminal setup', () => {
+    useLayoutStore.setState({ root: initialTree() });
+    const host = render(<ProjectOverview workspaceName="Demo" workspacePath="/tmp/demo" />);
+    expect(host.querySelector('.project-overview__session')).toBeNull();
+    expect(host.textContent).toContain('Nenhum painel aberto');
+    const action = [...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.includes('Montar terminais'));
+    expect(action).toBeDefined();
+    act(() => action!.click());
+    expect(useTerminalGridDialogStore.getState().isOpen).toBe(true);
+  });
+
+  it('offers a project picker and an actionable error when no workspace can be opened', async () => {
+    useWorkspaceStore.setState({ current: null });
+    const pick = vi.spyOn(useWorkspaceStore.getState(), 'pick').mockRejectedValue(new Error('unavailable'));
+    const host = render(<ProjectOverviewConnected />);
+    const action = [...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.includes('Escolher pasta'));
+    expect(action).toBeDefined();
+    await act(async () => action!.click());
+    expect(pick).toHaveBeenCalledOnce();
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('Não foi possível abrir o projeto');
+    expect(action?.disabled).toBe(false);
   });
 });

@@ -1,0 +1,67 @@
+[
+  {
+    "viewport": {
+      "width": 2111,
+      "height": 930
+    },
+    "workspace": 1850,
+    "hub": 1530,
+    "columns": "360px 1138px",
+    "rowButtons": 19,
+    "rows": 19,
+    "overlappingText": [],
+    "horizontalOverflow": false
+  },
+  {
+    "viewport": {
+      "width": 1826,
+      "height": 853
+    },
+    "workspace": 1565,
+    "hub": 1245,
+    "columns": "298.797px 914.203px",
+    "rowButtons": 19,
+    "rows": 19,
+    "overlappingText": [],
+    "horizontalOverflow": false
+  },
+  {
+    "viewport": {
+      "width": 1280,
+      "height": 853
+    },
+    "workspace": 1019,
+    "hub": 699,
+    "columns": "280px 387px",
+    "rowButtons": 19,
+    "rows": 19,
+    "overlappingText": [],
+    "horizontalOverflow": false
+  },
+  {
+    "viewport": {
+      "width": 760,
+      "height": 853
+    },
+    "workspace": 760,
+    "hub": 440,
+    "columns": "440px",
+    "rowButtons": 19,
+    "rows": 19,
+    "overlappingText": [],
+    "horizontalOverflow": false
+  },
+  {
+    "viewport": {
+      "width": 560,
+      "height": 853
+    },
+    "workspace": 560,
+    "hub": 528,
+    "columns": "528px",
+    "rowButtons": 19,
+    "rows": 19,
+    "overlappingText": [],
+    "horizontalOverflow": false
+  }
+]

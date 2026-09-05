@@ -38,9 +38,23 @@ function roleLabel(role: string): string {
   return role;
 }
 
+function AccountHeader() {
+  return (
+      <header className="account__intro">
+        <SettingsSectionTitle>Minha Conta</SettingsSectionTitle>
+        <p className="settings-detail__hint account__intro-hint">
+          Gerencie sua conta, equipe e assinatura do Nexus. As contas das
+          ferramentas de IA ficam em Providers.
+        </p>
+      </header>
+  );
+}
+
 export function AccountSection() {
   const [license, setLicense] = useState<LicenseState | null>(null);
   const [licenseLoading, setLicenseLoading] = useState(true);
+  const [licenseFailed, setLicenseFailed] = useState(false);
+  const [licenseRetry, setLicenseRetry] = useState(0);
   const [team, setTeam] = useState<TeamInfo | null>(null);
   const [teamLoading, setTeamLoading] = useState(false);
   const [joinCode, setJoinCode] = useState('');
@@ -55,15 +69,21 @@ export function AccountSection() {
   useEffect(() => {
     let cancelled = false;
     setLicenseLoading(true);
-    void window.nexus.billing.get().then((info) => {
-      if (cancelled) return;
-      setLicense(info);
-      setLicenseLoading(false);
-    });
+    setLicenseFailed(false);
+    void (async () => {
+      try {
+        const info = await window.nexus.billing.get();
+        if (!cancelled) setLicense(info);
+      } catch {
+        if (!cancelled) setLicenseFailed(true);
+      } finally {
+        if (!cancelled) setLicenseLoading(false);
+      }
+    })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [licenseRetry]);
 
   const isLoggedIn = Boolean(license?.email);
   // G7 (paridade 1.3.18): verificação de assinatura que falhou NÃO é falta de
@@ -86,6 +106,10 @@ export function AccountSection() {
       setTeamLoading(false);
       if (result.ok) setTeam(result.data ?? null);
       else setTeamError(result.error ?? 'Não foi possível carregar o time.');
+    }).catch(() => {
+      if (cancelled) return;
+      setTeamLoading(false);
+      setTeamError('Não foi possível carregar sua equipe.');
     });
     return () => {
       cancelled = true;
@@ -212,15 +236,22 @@ export function AccountSection() {
     }
   };
 
+  if (licenseLoading || licenseFailed) {
+    return <section className="account" aria-busy={licenseLoading}>
+      <AccountHeader />
+      <div className="account__load-state" role={licenseFailed ? 'alert' : 'status'}>
+        {licenseFailed ? <>
+          <h3>Não foi possível carregar sua conta</h3>
+          <p>Seu plano não pôde ser consultado agora. Tente novamente para ver os dados da conta.</p>
+          <button type="button" className="settings-btn settings-btn--primary" onClick={() => setLicenseRetry(value => value + 1)}>Tentar novamente</button>
+        </> : <><p>Carregando sua conta…</p><div className="settings-skeleton" aria-hidden="true"><span /><span /></div></>}
+      </div>
+    </section>;
+  }
+
   return (
     <section className="account">
-      <header className="account__intro">
-        <SettingsSectionTitle>Minha Conta</SettingsSectionTitle>
-        <p className="settings-detail__hint account__intro-hint">
-          Login Nexus, time e plano. Contas das CLIs (Claude, Codex, Kimi…)
-          ficam em Providers.
-        </p>
-      </header>
+      <AccountHeader />
 
       <div
         className={`account__identity ${licenseLoading ? 'account__identity--loading' : ''} ${isLoggedIn ? 'account__identity--in' : ''}`}
@@ -276,8 +307,8 @@ export function AccountSection() {
           <div className="account__login-copy">
             <span className="account__zone-title">Entrar</span>
             <p className="account__zone-hint">
-              Sincroniza plano, time e ranking entre máquinas. Não afeta logins
-              das CLIs no vault local.
+              Acesse seu plano e sua equipe em outras máquinas. As conexões
+              com ferramentas de IA são gerenciadas em Providers.
             </p>
           </div>
           <div className="account__login-buttons">
@@ -446,8 +477,8 @@ export function AccountSection() {
         <div className="account__plans-head">
           <span className="account__zone-title">Planos</span>
           <p className="account__zone-hint">
-            Checkout no navegador (Stripe). O plano local fica em
-            ~/.nexus/license.json.
+            Compare os planos. Ao assinar, o pagamento abre no navegador
+            pelo Stripe.
           </p>
         </div>
         <div className="account__plans">

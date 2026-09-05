@@ -158,16 +158,22 @@ export function taskHandoffCapabilityForAdapter(
 }
 
 /**
- * The Main-owned action/result protocol rides the same observable PTY facts as
- * physical worker handoff, but is published separately so Maestro eligibility
- * can never be inferred from a one-way completion route.
+ * Maestro startup requires the physical Nexus MCP route checked by
+ * canUseNexusMcp in cli-mcp-inject. PTY completion alone remains sufficient for
+ * workers, but cannot carry the coordinator's Nexus tool calls.
  */
 export function missionControlCapabilityForAdapter(
   adapter: Adapter,
   origin: AdapterOrigin,
 ): boolean {
+  if (adapter.kind !== 'cli-pty' || adapter.quirks.nexusMcp === 'agy') {
+    return false;
+  }
+  const hasPhysicalMcpRoute =
+    hasNexusMcpCapability(adapter.quirks) || adapter.bin === 'claude';
   const capabilities = adapterCapabilityMatrixForAdapter(adapter, origin);
   return (
+    hasPhysicalMcpRoute &&
     capabilities.launchable &&
     capabilities.promptInjectable &&
     capabilities.statusObservable

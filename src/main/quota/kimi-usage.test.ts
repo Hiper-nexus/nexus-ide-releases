@@ -29,6 +29,14 @@ const LIVE_USAGES = {
 };
 
 describe('parseKimiUsagesPayload', () => {
+  it('keeps an explicit one-day window separate from weekly quota', () => {
+    const windows = parseKimiUsagesPayload({ limits: [{
+      window: { duration: 1, timeUnit: 'TIME_UNIT_DAY' },
+      detail: { limit: '100', remaining: '75' },
+    }] });
+    expect(windows).toHaveLength(1);
+    expect(windows[0]).toMatchObject({ kind: 'session', label: 'Diário', usedRatio: 0.25 });
+  });
   it('maps weekly usage + 5h limit window (300 minutes)', () => {
     const w = parseKimiUsagesPayload(LIVE_USAGES);
     expect(w.find((x) => x.kind === 'weekly')?.usedRatio).toBe(0); // 100-100

@@ -1,0 +1,65 @@
+{
+  "missionId": "mission-44c8e8a9-2d0d-44b9-82b2-8dc06df0693f",
+  "goal": "Pergunte aos panes quanto é 1+1. Não altere arquivos.",
+  "status": "done",
+  "elapsedMs": 14653,
+  "expectedWorkers": 3,
+  "observedWorkerResponses": 3,
+  "responses": [
+    {
+      "agent": "Implementar motor",
+      "answer": "2",
+      "sessionId": "pty-mtnmgu7d-13",
+      "handoffId": "handoff-2e7575ef-cf3f-43c4-b011-fd69ae9972a3",
+      "receiptId": "pty-handoff-1a661a4b-2268-4e44-b7f9-91ab17981c8f"
+    },
+    {
+      "agent": "Verificar o resultado",
+      "answer": "2",
+      "sessionId": "pty-mtnmgue5-14",
+      "handoffId": "handoff-7f9c2b9b-af3a-4f55-8398-601e11bce57c",
+      "receiptId": "pty-handoff-9d914005-4423-46af-b14c-43ba6645c38a"
+    },
+    {
+      "agent": "Implementar interface",
+      "answer": "2",
+      "sessionId": "pty-mtnmgtvo-12",
+      "handoffId": "handoff-73f87b6a-90d5-4925-835f-e1a9a6950c5d",
+      "receiptId": "pty-handoff-c8cbaec5-af90-4407-9199-f550dc343536"
+    }
+  ],
+  "persistedReceipts": [
+    {
+      "receipt_id": "pty-handoff-c8cbaec5-af90-4407-9199-f550dc343536",
+      "handoff_id": "handoff-73f87b6a-90d5-4925-835f-e1a9a6950c5d",
+      "source": "pty-stream",
+      "mission_id": "mission-44c8e8a9-2d0d-44b9-82b2-8dc06df0693f",
+      "session_id": "pty-mtnmgtvo-12",
+      "worker_incarnation_id": "workerinc-mtnmgtq0-a",
+      "authority_sha256": "3a3c23ca7db157d5fdf62bd50004be424d989f6c82fb7d4f6819956dec5b5018",
+      "issued_at": 1788566770296
+    },
+    {
+      "receipt_id": "pty-handoff-1a661a4b-2268-4e44-b7f9-91ab17981c8f",
+      "handoff_id": "handoff-2e7575ef-cf3f-43c4-b011-fd69ae9972a3",
+      "source": "pty-stream",
+      "mission_id": "mission-44c8e8a9-2d0d-44b9-82b2-8dc06df0693f",
+      "session_id": "pty-mtnmgu7d-13",
+      "worker_incarnation_id": "workerinc-mtnmgu1p-d",
+      "authority_sha256": "6291cff1de13f361d7dc021cdd19a139f5599e68fe311f2a9df3b93358680447",
+      "issued_at": 1788566759546
+    },
+    {
+      "receipt_id": "pty-handoff-9d914005-4423-46af-b14c-43ba6645c38a",
+      "handoff_id": "handoff-7f9c2b9b-af3a-4f55-8398-601e11bce57c",
+      "source": "pty-stream",
+      "mission_id": "mission-44c8e8a9-2d0d-44b9-82b2-8dc06df0693f",
+      "session_id": "pty-mtnmgue5-14",
+      "worker_incarnation_id": "workerinc-mtnmgu8h-g",
+      "authority_sha256": "246ab07ee1fe613361ea9c59892a9d7420e177e014f69e24a2305f35cf4b50c3",
+      "issued_at": 1788566762188
+    }
+  ],
+  "captureMethod": "Native CLI transcript replies copied verbatim by turn-end reader and persisted with PTY authority receipts. Ephemeral transcript files removed after completion.",
+  "limits": "Development binary, not packaged/release proof; arithmetic only, no repository quality claim."
+}

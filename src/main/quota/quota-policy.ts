@@ -53,7 +53,7 @@ export function buildFleetSnapshot(
       if (allUnknown) unknownCount += 1;
     } else {
       if (worstUsedRatio === null || w > worstUsedRatio) worstUsedRatio = w;
-      if (w >= threshold || e.onCooldown) highUsageCount += 1;
+      if (w >= threshold) highUsageCount += 1;
     }
   }
   return {

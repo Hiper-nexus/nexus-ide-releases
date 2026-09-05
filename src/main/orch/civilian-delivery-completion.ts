@@ -6,7 +6,7 @@ import {
 } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
-import type { AgentCategory, Handoff, Mission, SquadAgent } from '../../shared/orch-types';
+import type { AgentCategory, Handoff, Mission, Squad, SquadAgent } from '../../shared/orch-types';
 import { PET_STUDIO_SQUAD_ID } from '../../shared/pet-studio';
 import { missionResultSchema } from '../../shared/mission-engine-contract';
 import type { ProjectExecutionScope } from '../../shared/types';
@@ -22,6 +22,7 @@ import {
 } from './project-domain-store-registry';
 import { missionEngineForScope } from './mission-engine-registry';
 import { getSquad } from './squad-store';
+import { inspectTeamQuestionCompletion, isTeamQuestionMission, type TeamQuestionPaneRuntime } from './mission-team-question-completion';
 import { classifySeatAuth } from '../adapters/seat-auth-readiness';
 import { detectSubscriptionAuthReadiness } from '../adapters/subscription-auth';
 import {
@@ -106,6 +107,8 @@ export interface CivilianDeliveryResult {
   readonly spawnedReviewers: readonly string[];
   readonly markedDoneTaskIds: readonly string[];
   readonly productFiles: readonly string[];
+  readonly reason?: string;
+  readonly missingTargets?: readonly string[];
 }
 
 export type CivilianRemainderTask = {
@@ -116,7 +119,7 @@ export type CivilianRemainderTask = {
   readonly queuedMs: number;
 };
 
-type LivePane = {
+type LivePane = TeamQuestionPaneRuntime & {
   readonly missionId?: string | null;
   readonly agentName?: string | null;
   readonly role?: 'orchestrator' | 'worker' | string;
@@ -1260,6 +1263,9 @@ export async function maybeCompleteFastLaneOnDelivery(
   } catch {
     return emptyResult();
   }
+  if (isFailClosedCivilianMission(mission, handoffs)) {
+    return emptyResult('refuse-fail-closed');
+  }
 
   const successHandoffs = handoffs.filter(
     (handoff) => handoff.status === 'success' || handoff.status === 'partial',
@@ -1274,6 +1280,17 @@ export async function maybeCompleteFastLaneOnDelivery(
   const panes =
     deps.listPanes?.() ??
     (typeof listPaneSnapshots === 'function' ? listPaneSnapshots() : []);
+  const teamQuestion = inspectTeamQuestionCompletion({
+    mission,
+    squad: isTeamQuestionMission(mission) && mission.squadId
+      ? (deps.getSquad ?? getSquad)(mission.squadId) as Squad | null : null,
+    panes: stores.missionPanes?.list?.(missionId) ?? [],
+    runtimePanes: panes,
+    handoffs,
+  });
+  if (!teamQuestion.ready) {
+    return { ...emptyResult('wait'), reason: teamQuestion.reason, missingTargets: teamQuestion.missingTargets };
+  }
   let planned: ReturnType<CivilianStores['tasks']['listPlannedTasks']> = [];
   try {
     planned = stores.tasks.listPlannedTasks(
@@ -1284,7 +1301,7 @@ export async function maybeCompleteFastLaneOnDelivery(
     planned = [];
   }
 
-  const rawFiles = [
+  const rawFiles = teamQuestion.applicable ? [] : [
     ...new Set(
       await (deps.listProductFiles?.(
         scope.rootRealPath,
@@ -1527,7 +1544,7 @@ export async function maybeCompleteFastLaneOnDelivery(
       inspection.remaining,
       engine,
       path ?? 'evidence',
-      handoffs,
+      teamQuestion.applicable ? teamQuestion.responses.map(({ handoff }) => handoff) : handoffs,
       autoReview.extras,
     );
   } catch (error) {

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   agyKeychainBlobIsUsable,
   agyKeychainCredentialIsUsable,
@@ -17,12 +17,22 @@ import {
   kimiCredentialsBlobIsUsable,
   refreshAgySubscriptionAuthCache,
   refreshClaudeSubscriptionAuthCache,
+  refreshOpenClaudeSubscriptionAuthCache,
+  subscriptionAuthStatusIsUnknown,
   resetSubscriptionAuthCacheForTests,
   resolveAuthStrategy,
   warmKeychainOnlySubscriptionAuth,
 } from './subscription-auth';
 
 const tempDirs: string[] = [];
+
+beforeEach(() => {
+  // Tests with an explicit fixture home exercise the default config paths.
+  // Individual override tests can opt in without inheriting the test runner's.
+  vi.stubEnv('OPENCLAUDE_CONFIG_DIR', '');
+  vi.stubEnv('XDG_CONFIG_HOME', '');
+  vi.stubEnv('MUSE_AUTH_PATH', '');
+});
 
 function tempHome(): string {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-provider-auth-'));
@@ -37,6 +47,7 @@ function touch(home: string, ...segments: string[]): void {
 }
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   resetSubscriptionAuthCacheForTests();
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -551,6 +562,69 @@ describe('detectSubscriptionAuth', () => {
       refreshAgySubscriptionAuthCache(home, asyncKeychainProbe),
     ).resolves.toEqual({ value: true, cacheUpdated: false });
     expect(asyncKeychainProbe).toHaveBeenCalledTimes(1);
+  });
+
+  it('refreshes Claude status after login despite a recent negative cache entry', async () => {
+    const home = tempHome();
+    const probe = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    await refreshClaudeSubscriptionAuthCache(home, probe);
+
+    await expect(refreshClaudeSubscriptionAuthCache(home, probe)).resolves.toEqual({
+      value: true,
+      cacheUpdated: true,
+    });
+    expect(hasSubscriptionAuthForStatus('claude', undefined, home)).toBe(true);
+  });
+
+  it('recognizes newly written credentials before the next background refresh', async () => {
+    const home = tempHome();
+    await refreshClaudeSubscriptionAuthCache(home, async () => false);
+    fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.claude', '.credentials.json'), JSON.stringify({
+      claudeAiOauth: { accessToken: 'test-after-login' },
+    }));
+    expect(hasSubscriptionAuthForStatus('claude', undefined, home)).toBe(true);
+  });
+
+  it('warms OpenClaude Keychain proof independently without freezing cold snapshots', async () => {
+    const home = tempHome();
+    const probe = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    expect(hasSubscriptionAuthForStatus('openclaude', undefined, home)).toBe(false);
+    await refreshOpenClaudeSubscriptionAuthCache(home, probe);
+    await expect(refreshOpenClaudeSubscriptionAuthCache(home, probe))
+      .resolves.toEqual({ value: true, cacheUpdated: true });
+    expect(hasSubscriptionAuthForStatus('openclaude', undefined, home)).toBe(true);
+    expect(hasSubscriptionAuthForStatus('claude', undefined, home)).toBe(false);
+  });
+
+  it('rechecks an explicit OpenClaude auth observation after logout', async () => {
+    const home = tempHome();
+    const probe = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    await refreshOpenClaudeSubscriptionAuthCache(home, probe);
+    await expect(refreshOpenClaudeSubscriptionAuthCache(home, probe, { authoritative: true }))
+      .resolves.toEqual({ value: false, cacheUpdated: true });
+    expect(hasSubscriptionAuthForStatus('openclaude', undefined, home)).toBe(false);
+  });
+
+  it('does not report an unavailable Claude Keychain as a missing login', async () => {
+    const home = tempHome();
+    await expect(refreshClaudeSubscriptionAuthCache(home, async () => {
+      throw new Error('Keychain unavailable');
+    })).rejects.toThrow('Keychain unavailable');
+    expect(subscriptionAuthStatusIsUnknown('claude', home)).toBe(process.platform === 'darwin');
+  });
+
+  it('reports Muse Keychain metadata as unverified, not a missing or verified token', () => {
+    const home = tempHome();
+    const authFile = path.join(home, '.config', 'muse', 'auth.json');
+    fs.mkdirSync(path.dirname(authFile), { recursive: true });
+    fs.writeFileSync(authFile, JSON.stringify({ providers: { meta: {
+      mechanism: 'oauth', storage: 'keychain',
+    } } }));
+    expect(detectSubscriptionAuth('muse', home)).toBe(false);
+    expect(subscriptionAuthStatusIsUnknown('muse', home)).toBe(true);
+    fs.writeFileSync(authFile, JSON.stringify({ providers: { meta: { user_email: 'test@example.com' } } }));
+    expect(subscriptionAuthStatusIsUnknown('muse', home)).toBe(false);
   });
 
   it('does not let a negative AGY status cache hide a login completed moments later', async () => {

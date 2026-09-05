@@ -598,7 +598,7 @@ describe('builtin adapters', () => {
     const parsed = cliPtyAdapterSchema.parse(MINIMAL_CLI_PTY);
 
     expect(taskHandoffCapabilityForAdapter(parsed, 'user')).toBe(true);
-    expect(missionControlCapabilityForAdapter(parsed, 'user')).toBe(true);
+    expect(missionControlCapabilityForAdapter(parsed, 'user')).toBe(false);
     expect(
       taskHandoffCapabilityForAdapter(
         {
@@ -631,6 +631,44 @@ describe('builtin adapters', () => {
         'user',
       ),
     ).toBe(false);
+  });
+
+  it.each([
+    ['claude', true],
+    ['codex', true],
+    ['agy', false],
+    ['aider', false],
+  ])('projects physical Nexus MCP coordinator eligibility for %s', (id, capable) => {
+    const raw = BUILTIN_ADAPTERS.find(
+      (item) => (item as { id?: string }).id === id,
+    );
+    const parsed = adapterSchema.parse(raw);
+
+    expect(taskHandoffCapabilityForAdapter(parsed, 'builtin')).toBe(true);
+    expect(missionControlCapabilityForAdapter(parsed, 'builtin')).toBe(capable);
+  });
+
+  it('admits custom Claude binaries even when their legacy metadata omits MCP', () => {
+    const parsed = cliPtyAdapterSchema.parse({
+      ...MINIMAL_CLI_PTY,
+      id: 'custom-claude',
+      bin: 'claude',
+    });
+
+    expect(missionControlCapabilityForAdapter(parsed, 'user')).toBe(true);
+  });
+
+  it('admits custom MCP declarations but rejects AGY even with autoload metadata', () => {
+    const parsed = cliPtyAdapterSchema.parse(MINIMAL_CLI_PTY);
+
+    expect(missionControlCapabilityForAdapter({
+      ...parsed,
+      quirks: { ...parsed.quirks, mcpAutoload: true },
+    }, 'user')).toBe(true);
+    expect(missionControlCapabilityForAdapter({
+      ...parsed,
+      quirks: { ...parsed.quirks, mcpAutoload: true, nexusMcp: 'agy' },
+    }, 'user')).toBe(false);
   });
 
   it.each([

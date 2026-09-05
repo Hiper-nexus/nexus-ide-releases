@@ -195,6 +195,14 @@ describe('providers-panel-view', () => {
     expect(providerRowCta(claude)).toBeNull();
   });
 
+  it('asks to verify an unknown session before offering another login', () => {
+    const cli = { ...claude, authStrategy: 'login-needed' as const, loginCommand: 'claude auth login' };
+    expect(providerRowCta(cli, { authState: 'unknown' })).toEqual({
+      kind: 'verify', label: 'Verificar sessão',
+    });
+    expect(providerRowCta(cli, { authState: 'checking' })).toBeNull();
+  });
+
   it('linha conectada com sessão morta pede re-login, não finge saúde', () => {
     const connected = { ...claude, loginCommand: 'claude auth login' };
     expect(providerRowCta(connected)).toBeNull();

@@ -102,6 +102,94 @@ describe('orchestrator doctrine', () => {
 // Campo (14/08): orquestrador respondeu SOZINHO tarefa trivial e a missão
 // parou até o SLA do supervisor. A doutrina agora fecha a brecha.
 describe('buildMaestroKickoffBrief', () => {
+  const directMission = {
+    title: 'Diagnóstico',
+    objective: 'Explique por que o processo encerrou.',
+    orchestratorName: 'Maestro',
+    teamNames: ['Maestro', 'Investigar'],
+  };
+
+  it('consulta permite resposta direta sem exigir um arquivo de plano ou delegação', () => {
+    const text = buildMaestroKickoffBrief({ ...directMission, lane: 'consult' });
+
+    expect(text).toMatch(/responda.*diretamente/i);
+    expect(text).toContain(directMission.objective);
+    expect(text).toMatch(/Não abra trabalhadores/);
+    expect(text).not.toMatch(/docs\/plan\.md|só documentação|NUNCA executa|TODO pedido.*worker/);
+    expect(text).toContain('nexus_handoff_submit');
+    expect(text).toContain('fullText');
+    expect(text).toMatch(/missionId.*note/);
+  });
+
+  it('planejamento produz o plano solicitado sem exigir execução por workers', () => {
+    const text = buildMaestroKickoffBrief({
+      ...directMission,
+      objective: 'Planeje a migração sem alterar o código.',
+      lane: 'plan',
+    });
+
+    expect(text).toMatch(/elabore.*plano.*objetivo/i);
+    expect(text).toMatch(/Não abra trabalhadores/);
+    expect(text).toContain('docs/plan.md');
+    expect(text).toContain('nexus_handoff_submit');
+    expect(text).not.toMatch(/NUNCA executa|TODO pedido.*worker|Para cada tarefa: nexus_pane_spawn/);
+  });
+
+  it('orçamento zero permite executar o objetivo sem transformá-lo em documentação', () => {
+    const text = buildMaestroKickoffBrief({
+      ...directMission,
+      objective: 'Corrija o parser e valide o resultado.',
+      lane: 'standard',
+      maxWorkers: 0,
+    });
+
+    expect(text).toMatch(/execute.*diretamente/i);
+    expect(text).toMatch(/Não abra trabalhadores/);
+    expect(text).not.toMatch(/docs\/plan\.md|só documentação|NUNCA executa|TODO pedido.*worker/);
+    expect(text).toContain('nexus_handoff_submit');
+    expect(text).toMatch(/recus|rejei|bloque/i);
+  });
+
+  it.each(['consult', 'plan'])('a doutrina avulsa respeita o modo direto %s da missão', (lane) => {
+    const text = buildOrchestratorDoctrine(squad(), mission({
+      intentContract: { lane } as Mission['intentContract'],
+    }));
+
+    expect(text).toMatch(/Não abra trabalhadores/);
+    expect(text).toContain('nexus_handoff_submit');
+    expect(text).not.toMatch(/NUNCA executa|TODO pedido.*worker/);
+  });
+
+  it.each([false, true])('primeira onda gerenciada pelo main não é duplicada (resume=%s)', (resume) => {
+    const text = buildMaestroKickoffBrief({
+      ...directMission,
+      resume,
+      firstWaveDispatched: true,
+      sealedPlanTitles: ['Investigar a causa', 'Validar a correção'],
+    });
+
+    expect(text).toMatch(/main.*inicialização/i);
+    expect(text).toMatch(/não duplique.*first-wave/i);
+    expect(text).toContain('nexus_handoff_list({full:true})');
+    expect(text).toMatch(/sem dispatch|ainda não despachad|não despachad/);
+    expect(text).not.toMatch(/Equipe para abrir|Para cada tarefa:|Spawne UM worker por task|JÁ abriu|já estão abertos/);
+    expect(text).toContain('nexus_handoff_submit');
+  });
+
+  it('preserva playbook verbatim, nota de segurança e voz nos modos diretos', () => {
+    const playbook = '\n  # Instruções originais\nRespeite o objetivo.\n  ';
+    const text = buildMaestroKickoffBrief({
+      ...directMission,
+      lane: 'consult',
+      playbook,
+      securityNote: 'SEGURANÇA: preserve os dados do usuário.',
+    });
+
+    expect(text).toContain(`verbatim):\n${playbook}`);
+    expect(text).toContain('SEGURANÇA: preserve os dados do usuário.');
+    expect(text).toContain('PT-BR');
+  });
+
   it('exporta o kickoff com tools de coordenação e a equipe', () => {
     const text = buildMaestroKickoffBrief({
       title: 'Prova',
@@ -141,12 +229,31 @@ describe('buildMaestroKickoffBrief', () => {
       ],
       metaPane: true,
     });
-    expect(text).toContain('first-wave JÁ abriu');
+    expect(text).toMatch(/main.*inicialização.*first-wave/);
+    expect(text).not.toMatch(/JÁ abriu|já estão abertos/);
     expect(text).toContain('NÃO chame nexus_pane_spawn');
     expect(text).toContain('NÃO liste panes');
     expect(text).toContain('nexus_pane_ask');
     expect(text).toContain('Implementar interface');
     expect(text).not.toMatch(/abra os panes da equipe/i);
+  });
+
+  it('ASK mantém respostas reais de todos os panes e seu fecho único mesmo com modo direto', () => {
+    const text = buildMaestroKickoffBrief({
+      ...directMission,
+      objective: 'Pergunte aos panes quanto é 2+2 e cite cada resposta.',
+      lane: 'consult',
+      maxWorkers: 0,
+      firstWaveDispatched: true,
+      metaPane: true,
+    });
+
+    expect(text).toContain('nexus_pane_ask');
+    expect(text).toContain('respostas de TODOS');
+    expect(text).toContain('um só nexus_handoff_submit');
+    expect(text).toContain('não chame set_status done');
+    expect(text).not.toMatch(/JÁ abriu|já estão abertos/);
+    expect(text).not.toMatch(/responda.*diretamente|NUNCA executa|docs\/plan\.md/);
   });
 });
 

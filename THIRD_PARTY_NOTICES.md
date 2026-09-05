@@ -231,6 +231,19 @@ Orca's Design Mode at the same pin:
 License text: `third_party/licenses/orca-MIT.txt`. Provenance ledger:
 `third_party/provenance/orca-5e1009.json`.
 
+## stablyai/orca (late worker report settlement policy)
+
+The precedence policy in `src/main/orch/provisional-worker-handoff.ts` is adapted
+from `src/main/runtime/orchestration/db/dispatch-context/worker-report-settlement.ts`
+at Orca commit `2f4f4578c828370f6413dc48f438a6b189f6190d`.
+A real late report may replace a provisional inferred failure. Nexus applies
+that policy through its existing physical receipt and dispatch CAS transaction;
+it does not copy the upstream database implementation or relax identity checks.
+
+Copyright (c) 2026 Lovecast Inc. MIT License.
+License text: `third_party/licenses/orca-MIT.txt`. Provenance ledger:
+`third_party/provenance/orca-2f4f457.json`.
+
 ## can1357/oh-my-pi (omp crossover harvest)
 
 Modules vendored/adapted from [can1357/oh-my-pi](https://github.com/can1357/oh-my-pi)

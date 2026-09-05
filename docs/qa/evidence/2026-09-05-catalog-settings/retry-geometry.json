@@ -1,0 +1,13 @@
+{
+  "calls": {
+    "installed": 2,
+    "harnessEnriched": 1
+  },
+  "alert": null,
+  "resources": 3,
+  "viewport": 900,
+  "bodyScroll": 900,
+  "pageWidth": 618,
+  "pageScroll": 618,
+  "filterHeight": 40
+}

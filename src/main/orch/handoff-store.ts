@@ -57,6 +57,7 @@ import {
 } from "../../shared/receipt-chain";
 import type { AgentAttestation } from "../../shared/agent-attestation";
 import { getHandoffAttachments } from "./handoff-attachments";
+import { PROVISIONAL_WORKER_HANDOFF_AUTHORS } from "./provisional-worker-handoff";
 
 const identifierSchema = z
   .string()
@@ -810,36 +811,12 @@ export class ScopedHandoffStore {
             createdAt,
           )
         : undefined;
+      this.#consumeProvisionalWorkerHandoffs(db, handoff);
       return { handoff, taskDispatch, replayed: false };
     });
 
     const committed = insert.immediate();
     if (!committed.replayed) {
-      if (
-        committed.handoff.status === "success" &&
-        committed.handoff.missionId &&
-        committed.handoff.sessionId
-      ) {
-        try {
-          const ghosts =
-            this.consumeSyntheticWatchdogFailures(
-              committed.handoff.missionId,
-              committed.handoff.sessionId,
-              committed.handoff.id,
-            );
-          if (ghosts > 0) {
-            console.warn(
-              `[handoff-store] ${ghosts} failure(s) sintético(s) do watchdog ` +
-                `consumidos pelo SUCCESS real (${committed.handoff.id})`,
-            );
-          }
-        } catch (error) {
-          console.warn(
-            "[handoff-store] supersede de watchdog-failure falhou (best-effort):",
-            error instanceof Error ? error.message : error,
-          );
-        }
-      }
       if (
         mcpBoundary?.dispatchTransition &&
         committed.handoff.status !== "success" &&
@@ -1444,39 +1421,50 @@ export class ScopedHandoffStore {
   }
 
   /**
-   * Antídoto do fantasma do login-stuck-watchdog (campo 23/08): o watchdog
-   * sintetiza um handoff FAILED quando o worker "trava no bootstrap de MCP",
-   * mas o worker pode se recuperar e entregar SUCCESS depois — o failed
-   * antigo fica QUEUED na fila representando um outcome que não existe,
-   * e o Maestro queima turnos de cobrança para resolver um fantasma.
-   * Um SUCCESS físico da mesma sessão consome os failures sintéticos
-   * anteriores: prova real vence diagnóstico antigo.
+   * Retire inferred failures only after the physical receipt and dispatch CAS.
+   * This runs in their transaction; immutable outcomes and receipts stay intact.
    */
-  consumeSyntheticWatchdogFailures(
-    rawMissionId: string,
-    rawSessionId: string,
-    keepHandoffId: string,
-  ): number {
-    const missionId = identifierSchema.parse(rawMissionId);
-    const sessionId = identifierSchema.parse(rawSessionId);
-    const keepId = identifierSchema.parse(keepHandoffId);
-    const result = this.#binding
-      .writeDatabase()
-      .prepare(
-        `UPDATE handoffs
+  #consumeProvisionalWorkerHandoffs(
+    db: Database.Database,
+    handoff: ScopedHandoff,
+  ): void {
+    if (
+      handoff.status !== "success" ||
+      !handoff.mcpProvenance ||
+      !handoff.missionId ||
+      !handoff.sessionId ||
+      !handoff.workerIncarnationId
+    ) {
+      return;
+    }
+    db.prepare(
+      `UPDATE handoffs
          SET delivery_state = 'consumed',
              acknowledged_at = COALESCE(acknowledged_at, ?),
              consumed_at = ?
          WHERE mission_id = ? AND session_id = ?
-           AND from_agent = 'nexus-watchdog'
-           AND status = 'failed'
+           AND worker_incarnation_id = ?
+           AND from_agent IN (?, ?)
+           AND status IN ('blocked', 'failed')
+           AND authority_origin = 'agent'
            AND id != ?
-           AND delivery_state IN ('queued', 'submitted')`,
-      )
-      .run(this.#binding.now(), this.#binding.now(), missionId, sessionId, keepId);
-    if (result.changes === 0) return 0;
-    this.#binding.emitChange();
-    return result.changes;
+           AND created_at <= ?
+           AND NOT EXISTS (
+             SELECT 1 FROM handoff_mcp_receipts receipt
+             WHERE receipt.handoff_id = handoffs.id
+           )
+           AND delivery_state IN ('queued', 'submitted', 'acknowledged')`,
+    )
+      .run(
+        handoff.createdAt,
+        handoff.createdAt,
+        handoff.missionId,
+        handoff.sessionId,
+        handoff.workerIncarnationId,
+        ...PROVISIONAL_WORKER_HANDOFF_AUTHORS,
+        handoff.id,
+        handoff.createdAt,
+      );
   }
 
 

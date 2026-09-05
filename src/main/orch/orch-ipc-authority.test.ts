@@ -1107,6 +1107,7 @@ describe('canonical MissionEngine IPC boundary', () => {
     expect(engine.prepare).toHaveBeenCalledWith(
       SCOPE_A,
       CANONICAL_PREPARE_REQUEST,
+      expect.any(Function),
     );
     expect(engine.start).toHaveBeenCalledWith(SCOPE_A, startInput);
     expect(engine.command).toHaveBeenCalledWith(SCOPE_A, command);
@@ -1119,6 +1120,17 @@ describe('canonical MissionEngine IPC boundary', () => {
     expect(harness.missionEngineForScope.mock.calls.every(
       ([scope]) => scope === SCOPE_A,
     )).toBe(true);
+  });
+
+  it('fences pending preparation against a renderer workspace switch', async () => {
+    const sender = owner(919);
+    harness.scopes.set(sender.id, SCOPE_A);
+    const engine = installCanonicalEngine(SCOPE_A);
+    await canonicalHandler(ORCH_CHANNELS.missionPrepare)({ sender }, CANONICAL_PREPARE_REQUEST);
+    const assertCurrentScope = (engine.prepare.mock.calls[0] as unknown[])[2] as () => void;
+    expect(() => assertCurrentScope()).not.toThrow();
+    harness.scopes.set(sender.id, SCOPE_B);
+    expect(() => assertCurrentScope()).toThrow();
   });
 
   it('holds the mission lifecycle lock until start admission finishes', async () => {

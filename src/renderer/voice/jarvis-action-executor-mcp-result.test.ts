@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { JarvisContext, JarvisReply } from '../../shared/voice-ipc';
 import type { SquadAgent } from '../../shared/orch-types';
+import { PET_STUDIO_SQUAD } from '../../shared/pet-studio';
 
 const {
   confirmCommand,
@@ -486,7 +487,7 @@ describe('Jarvis MCP result propagation', () => {
     });
   });
 
-  it('opens the canonical team picker without launching a squad', async () => {
+  it('opens the saved squad catalog with usable member actions instead of an empty team picker', async () => {
     workspaceState.current = { path: '/tmp/nexus', name: 'Nexus' };
     orchState.squads = [
       { id: 'navalha', name: 'Navalha', agents: [TEST_AGENT] },
@@ -498,13 +499,13 @@ describe('Jarvis MCP result propagation', () => {
     );
 
     expect(useProductNavigationStore.getState().destination).toEqual({
-      kind: 'mission-setup',
+      kind: 'settings', section: 'squads',
     });
     expect(useMissionSetupStore.getState().draft).toMatchObject({
       roster: [],
-      step: 'team',
     });
     expect(execution.toolResult).toMatchObject({ ok: true });
+    expect(execution.sayText).toContain('Usar integrantes');
   });
 
   it('copies a named saved squad into canonical mission setup', async () => {
@@ -525,6 +526,17 @@ describe('Jarvis MCP result propagation', () => {
       roster: [TEST_AGENT],
       step: 'mission',
     });
+    expect(execution.toolResult).toMatchObject({ ok: true });
+    expect(execution.sayText).toContain('Integrantes');
+    expect(execution.sayText).toContain('instruções globais');
+  });
+
+  it('routes a named Pet Studio squad to its dedicated appearance flow', async () => {
+    workspaceState.current = { path: '/tmp/nexus', name: 'Nexus' };
+    orchState.squads = [PET_STUDIO_SQUAD];
+    const execution = await executeJarvisAction({ say: '', action: { type: 'open_squad', squadName: PET_STUDIO_SQUAD.name } }, context);
+    expect(useProductNavigationStore.getState().destination).toEqual({ kind: 'settings', section: 'appearance' });
+    expect(useMissionSetupStore.getState().draft.roster).toEqual([]);
     expect(execution.toolResult).toMatchObject({ ok: true });
   });
 
@@ -554,6 +566,21 @@ describe('Jarvis MCP result propagation', () => {
     });
     expect(voiceState.openSettings).not.toHaveBeenCalled();
     expect(execution.toolResult).toMatchObject({ ok: false });
+  });
+
+  it('reports a rejected generated roster without claiming the team was applied', async () => {
+    workspaceState.current = { path: '/tmp/nexus', name: 'Nexus' };
+    vi.stubGlobal('window', { nexus: { orch: {
+      designSquad: vi.fn(async () => ({ ok: true, squad: {
+        id: 'generated-invalid', name: 'Equipe inválida',
+        agents: Array.from({ length: 13 }, (_, index) => ({ ...TEST_AGENT, id: `generated-${index}` })),
+      } })),
+    } } });
+    const result = await executeJarvisAction({ say: '', action: { type: 'design_squad' } }, context);
+    expect(result.toolResult?.ok).toBe(false);
+    expect(result.sayText).toMatch(/não foi possível aplicar/i);
+    expect(useMissionSetupStore.getState().draft.roster).toEqual([]);
+    expect(useProductNavigationStore.getState().destination.kind).not.toBe('mission-setup');
   });
 
   it('reroutes a structured mission mislabeled as run_command to the orchestrator', async () => {

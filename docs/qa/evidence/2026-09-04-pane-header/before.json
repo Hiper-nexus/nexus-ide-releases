@@ -1,0 +1,50 @@
+[
+  {
+    "closeRight": 207,
+    "density": "compact",
+    "hit": false,
+    "paneRight": 72,
+    "visible": false,
+    "width": 48
+  },
+  {
+    "closeRight": 271,
+    "density": "compact",
+    "hit": false,
+    "paneRight": 152,
+    "visible": false,
+    "width": 64
+  },
+  {
+    "closeRight": 351,
+    "density": "compact",
+    "hit": false,
+    "paneRight": 248,
+    "visible": false,
+    "width": 80
+  },
+  {
+    "closeRight": 447,
+    "density": "compact",
+    "hit": false,
+    "paneRight": 384,
+    "visible": false,
+    "width": 120
+  },
+  {
+    "closeRight": 583,
+    "density": "compact",
+    "hit": false,
+    "paneRight": 560,
+    "visible": false,
+    "width": 160
+  },
+  {
+    "closeRight": 810,
+    "density": "compact",
+    "hit": true,
+    "paneRight": 816,
+    "visible": true,
+    "width": 240
+  }
+]

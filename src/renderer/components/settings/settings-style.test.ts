@@ -34,6 +34,7 @@ function renderSettingsStyleFixture(): HTMLElement {
   const workspace = document.createElement('section');
   workspace.className = 'settings-workspace';
   workspace.innerHTML = `
+    <div class="settings-workspace__layout">
     <nav class="settings-nav" aria-label="Configurações">
       <button class="settings-nav__item" type="button">Aparência</button>
     </nav>
@@ -55,6 +56,7 @@ function renderSettingsStyleFixture(): HTMLElement {
         </div>
         <button class="btn-primary" type="button">Salvar harness</button>
       </div>
+    </div>
     </div>
   `;
   document.body.appendChild(workspace);
@@ -82,9 +84,11 @@ describe('Settings visual invariants', () => {
 
 
   it('keeps primary help and form copy at a readable caption floor', () => {
-    expect(rule('.settings-detail__hint')).toContain(
-      'font-size: var(--text-sm)',
-    );
+    installStyleContract(settingsStyleSources, { width: 1_400 });
+    const hint = document.createElement('p');
+    hint.className = 'settings-detail__hint';
+    document.body.appendChild(hint);
+    expect(styleLengthPx(hint, 'font-size')).toBeGreaterThanOrEqual(12);
     expect(rule('.settings-field')).toContain('font-size: var(--text-sm)');
     expect(rule('.settings-btn')).toContain('font-size: var(--text-sm)');
   });

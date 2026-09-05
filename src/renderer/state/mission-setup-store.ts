@@ -120,7 +120,7 @@ export interface MissionSetupStore {
   setAcceptance(acceptance: string): void;
   setTitle(title: string): void;
   setContextPaths(contextPaths: readonly string[]): void;
-  setRoster(roster: readonly SquadAgent[]): void;
+  setRoster(roster: readonly SquadAgent[]): boolean;
   setAdvancedLane(lane: MissionLane): void;
   setFreeAgentChoice(freeAgentChoice: boolean): void;
   setStep(step: MissionSetupStep): void;
@@ -637,12 +637,13 @@ export const useMissionSetupStore = create<MissionSetupStore>((set, get) => {
 
     setRoster: (roster) => {
       const parsed = strictRosterSchema.safeParse(roster);
-      if (!parsed.success) return;
+      if (!parsed.success) return false;
       const lane = get().draft.advanced.lane;
       const nextRoster = parsed.data.map((agent) =>
         cloneAgentForLane(agent, lane),
       );
       revise((draft) => ({ ...draft, roster: nextRoster }));
+      return true;
     },
 
     setAdvancedLane: (lane) => {

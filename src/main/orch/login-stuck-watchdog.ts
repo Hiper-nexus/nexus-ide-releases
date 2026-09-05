@@ -391,6 +391,7 @@ export function installLoginStuckWatchdog(
         pane.paneId !== event.paneId ||
         pane.kind !== 'cli-agent' ||
         pane.role !== 'worker' ||
+        !pane.workerIncarnationId ||
         !pane.missionId ||
         !pane.scope ||
         !rendererScope ||
@@ -410,6 +411,7 @@ export function installLoginStuckWatchdog(
           `sem eles — o Nexus já isola MCP ambient em workers Codex gated.`,
         missionId: pane.missionId,
         sessionId: pane.sessionId,
+        workerIncarnationId: pane.workerIncarnationId,
         fromAgent: 'nexus-watchdog',
       });
       onHandoffSubmitted(handoff, pane.scope);

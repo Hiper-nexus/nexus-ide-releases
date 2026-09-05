@@ -8,6 +8,7 @@ import {
   DEFAULT_UI_SETTINGS,
 } from '../../../shared/settings-types';
 import { useEphemeralDraftStore } from '../../state/ephemeral-draft-store';
+import { useGamificationStore } from '../../state/gamification-store';
 import { useOrchStore } from '../../state/orch-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { useSettingsStore } from '../../state/settings-store';
@@ -63,6 +64,7 @@ function installNexusBoundary(): void {
         list: vi.fn(async () => []),
         onChanged: vi.fn(() => vi.fn()),
       },
+      orch: { listPluginFiles: vi.fn(async () => []) },
       billing: {
         get: vi.fn(async () => ({
           plan: 'free',
@@ -171,6 +173,29 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   vi.clearAllMocks();
+});
+
+describe('responsive settings navigation', () => {
+  it('keeps every page reachable through the compact selector', async () => {
+    const selectPage = vi.fn();
+    const host = mount(<SettingsWorkspace section="appearance" onSectionChange={selectPage} />);
+    await settleSectionEffects();
+    const select = host.querySelector<HTMLSelectElement>('.settings-nav__compact select')!;
+    expect([...select.options].some(option => option.value === 'companion-relay')).toBe(true);
+    act(() => { select.value = 'usage-quota'; select.dispatchEvent(new Event('change', { bubbles: true })); });
+    expect(selectPage).toHaveBeenCalledWith('usage-quota');
+  });
+
+  it('keeps profile access through a plain-language action', async () => {
+    const openProfile = vi.spyOn(useGamificationStore.getState(), 'openProfile').mockImplementation(() => {});
+    const host = mount(<SettingsWorkspace section="appearance" />);
+    await settleSectionEffects();
+    const action = [...host.querySelectorAll('button')].find(button => button.textContent?.trim() === 'Perfil e mascote');
+    expect(action).toBeDefined();
+    act(() => action!.click());
+    expect(openProfile).toHaveBeenCalledOnce();
+    openProfile.mockRestore();
+  });
 });
 
 describe('SettingsWorkspace contracts', () => {
@@ -421,4 +446,27 @@ describe('SettingsWorkspace contracts', () => {
       section: 'account',
     });
   });
+});
+
+it.each(['llms', 'plugins'] as const)('shows a retry instead of an empty %s catalog when adapter loading fails', async (section) => {
+  vi.mocked(window.nexus.adapters.list).mockRejectedValueOnce(new Error('fixture failure'));
+  const host = mount(<SettingsWorkspace section={section} />);
+  await settleSectionEffects();
+  expect(host.textContent).toContain('Não foi possível carregar as ferramentas de IA.');
+  act(() => findButton(host, /Tentar novamente/).click());
+  await settleSectionEffects();
+  expect(window.nexus.adapters.list).toHaveBeenCalledTimes(2);
+  expect(host.textContent).not.toContain('Não foi possível carregar as ferramentas de IA.');
+});
+
+it.each([false, true])('preserves keyboard focus when adapters finish loading (user moved focus: %s)', async (movedFocus) => {
+  let finish!: (list: Awaited<ReturnType<typeof window.nexus.adapters.list>>) => void;
+  vi.mocked(window.nexus.adapters.list).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+  const host = mount(<SettingsWorkspace section="llms" />);
+  const pendingTitle = host.querySelector<HTMLElement>('.settings-detail__route-title')!;
+  expect(document.activeElement).toBe(pendingTitle);
+  const back = findButton(host, /Voltar ao destino anterior/);
+  if (movedFocus) act(() => back.focus());
+  await act(async () => finish([]));
+  expect(document.activeElement === (movedFocus ? back : host.querySelector('.settings-detail__route-title'))).toBe(true);
 });

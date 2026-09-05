@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -32,6 +33,7 @@ import {
   paneSlotOf,
 } from '../lib/split-tree';
 import { resolveModelChipLabel } from '../lib/pane-model-label';
+import { OverlayLayer } from '../overlay/overlay-layer';
 
 interface Props {
   pane: PaneModel;
@@ -41,6 +43,10 @@ interface Props {
 }
 
 type Density = 'full' | 'icons' | 'compact';
+const COMPACT_TOOLBAR_WIDTH = 360;
+const FULL_TOOLBAR_WIDTH = 760;
+const MENU_VIEWPORT_GUTTER = 8;
+const MENU_ANCHOR_GAP = 4;
 
 interface ToolbarAction {
   id: string;
@@ -119,6 +125,7 @@ function ToolbarBtn({
         .filter(Boolean)
         .join(' ')}
       aria-label={action.label}
+      role={menu ? 'menuitem' : undefined}
       data-tip={tipText(action)}
       onClick={(e: MouseEvent) => {
         e.stopPropagation();
@@ -171,9 +178,11 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
   const [draft, setDraft] = useState(pane.title);
   const [density, setDensity] = useState<Density>('full');
   const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPosition, setMenuPosition] = useState({ left: MENU_VIEWPORT_GUTTER, top: MENU_VIEWPORT_GUTTER });
   const [copiedId, setCopiedId] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const menuTriggerRef = useRef<HTMLButtonElement>(null);
 
   const adapterLabel = pane.adapterId
     ? `${pane.adapterId}${pane.model ? ` · ${pane.model}` : ''}`
@@ -194,8 +203,8 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
       // Thresholds altos: com 3+ panes na grelha a toolbar morre cedo e o
       // Fechar era empurrado para fora (overflow do .pane). Compact cedo.
       const w = entries[0]?.contentRect.width ?? 500;
-      if (w < 360) setDensity('compact');
-      else if (w < 580) setDensity('icons');
+      if (w < COMPACT_TOOLBAR_WIDTH) setDensity('compact');
+      else if (w < FULL_TOOLBAR_WIDTH) setDensity('icons');
       else setDensity('full');
     });
     ro.observe(el);
@@ -205,18 +214,42 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
   useEffect(() => {
     if (!menuOpen) return;
     const onDoc = (e: globalThis.MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+      if (
+        !menuRef.current?.contains(e.target as Node) &&
+        !menuTriggerRef.current?.contains(e.target as Node)
+      ) {
         setMenuOpen(false);
       }
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setMenuOpen(false);
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        setMenuOpen(false);
+        menuTriggerRef.current?.focus();
+        return;
+      }
+      if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
+      if (!menuRef.current?.contains(e.target as Node)) return;
+      const items = [...menuRef.current.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')];
+      if (items.length === 0) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      const current = Math.max(0, items.indexOf(document.activeElement as HTMLButtonElement));
+      const next = e.key === 'Home' ? 0
+        : e.key === 'End' ? items.length - 1
+          : e.key === 'ArrowUp' ? (current - 1 + items.length) % items.length
+            : (current + 1) % items.length;
+      items[next]?.focus();
     };
+    const onResize = () => setMenuOpen(false);
     document.addEventListener('mousedown', onDoc);
-    document.addEventListener('keydown', onKey);
+    document.addEventListener('keydown', onKey, { capture: true });
+    window.addEventListener('resize', onResize);
     return () => {
       document.removeEventListener('mousedown', onDoc);
-      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('keydown', onKey, { capture: true });
+      window.removeEventListener('resize', onResize);
     };
   }, [menuOpen]);
 
@@ -419,12 +452,11 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
     run: () => void requestPaneClose(pane.id),
   };
 
-  // Layout actions (split-right, split-down, maximize) are critical controls
-  // and must always stay visible on the toolbar. Telemetry/session actions
-  // (scroll-end, hibernate) go to overflow in icons/compact density.
+  // A narrow pane reserves room for its close pin and the menu trigger.
+  // Layout and mission actions remain available through the same menu.
   const overflow =
     density === 'compact'
-      ? actions.filter((a) => a.id === 'scroll-end' || a.id === 'hibernate' || a.id === 'restart')
+      ? actions
       : density === 'icons'
         ? actions.filter((a) => a.id === 'scroll-end' || a.id === 'hibernate')
         : [];
@@ -435,12 +467,27 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
         ? a.id === 'restart'
         : a.id === 'scroll-end' || a.id === 'hibernate' || a.id === 'restart',
   );
-  const missionVisible = actions.filter(
+  const missionVisible = density === 'compact' ? [] : actions.filter(
     (a) => a.id === 'mission-leader' || a.id === 'promote-orchestrator',
   );
-  const layoutVisible = actions.filter(
+  const layoutVisible = density === 'compact' ? [] : actions.filter(
     (a) => a.id === 'maximize' || a.id === 'split-right' || a.id === 'split-down',
   );
+
+  useLayoutEffect(() => {
+    if (!menuOpen || !menuRef.current || !menuTriggerRef.current) return;
+    const anchor = menuTriggerRef.current.getBoundingClientRect();
+    const menu = menuRef.current.getBoundingClientRect();
+    const below = anchor.bottom + MENU_ANCHOR_GAP;
+    setMenuPosition({
+      left: Math.max(MENU_VIEWPORT_GUTTER, Math.min(anchor.right - menu.width, window.innerWidth - menu.width - MENU_VIEWPORT_GUTTER)),
+      top: Math.max(MENU_VIEWPORT_GUTTER,
+        below + menu.height <= window.innerHeight - MENU_VIEWPORT_GUTTER
+          ? below : anchor.top - menu.height - MENU_ANCHOR_GAP,
+      ),
+    });
+    menuRef.current.querySelector<HTMLButtonElement>('button')?.focus();
+  }, [menuOpen, density]);
 
   function renderGroup(items: ToolbarAction[], aria: string) {
     if (items.length === 0) return null;
@@ -629,8 +676,9 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
         )}
         {renderGroup(layoutVisible, 'Layout')}
         {overflow.length > 0 && (
-          <div className="toolbar__more" ref={menuRef}>
+          <div className="toolbar__more">
             <button
+              ref={menuTriggerRef}
               type="button"
               className={`toolbar__btn nodrag${menuOpen ? ' toolbar__btn--active' : ''}`}
               aria-label="Mais ações do pane"
@@ -645,7 +693,8 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
               <PixelIcon name="more" size={11} />
             </button>
             {menuOpen && (
-              <div className="toolbar__menu" role="menu">
+              <OverlayLayer>
+              <div ref={menuRef} className="toolbar__menu" role="menu" style={menuPosition}>
                 <p className="toolbar__menu-head">Ações do pane</p>
                 {overflow.map((a) => (
                   <ToolbarBtn
@@ -654,6 +703,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
                       ...a,
                       run: () => {
                         setMenuOpen(false);
+                        menuTriggerRef.current?.focus();
                         a.run();
                       },
                     }}
@@ -662,6 +712,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
                   />
                 ))}
               </div>
+              </OverlayLayer>
             )}
           </div>
         )}

@@ -10,10 +10,6 @@ import { fetchClaudeOauthUsageWindows } from './claude-oauth-usage';
 import { fetchGlmUsageWindows } from './glm-usage';
 import { fetchKimiCodingUsageWindows } from './kimi-usage';
 import { fetchGrokUsageWindows } from './grok-usage';
-import {
-  fetchCodexUsageWindows,
-  parseCodexAuthJson,
-} from './codex-usage';
 import { knownWindow } from './quota-normalize';
 
 export type KeyShape =
@@ -36,22 +32,31 @@ export function classifyKeyShape(key: string): KeyShape {
   if (k.startsWith('sk-kimi-') || k.startsWith('sk-kimicode-')) {
     return 'kimi-coding';
   }
-  if (k.startsWith('xai-') || (k.startsWith('eyJ') && k.length > 100)) {
-    // JWT often used by grok OAuth; xai- prefix for API keys
-    if (k.startsWith('eyJ')) return 'xai';
-    return 'xai';
-  }
-  if (k.startsWith('sk-') && k.length >= 10) return 'openai';
-  // Z.ai coding keys are often hex-ish without sk- prefix (e.g. 43b72c…)
-  if (/^[a-f0-9]{32,64}$/i.test(k)) return 'zai';
-  // LongCat / Meituan often opaque long tokens
-  if (k.length >= 20) return 'unknown';
+  if (k.startsWith('xai-')) return 'xai';
+  if (k.startsWith('sk-proj-') || k.startsWith('sk-svcacct-')) return 'openai';
   return 'unknown';
 }
 
+type QuotaProvider = 'claude' | 'kimi' | 'grok' | 'glm' | 'longcat';
+const DECLARED_PROVIDERS = new Map<string, QuotaProvider>([
+  ['claude', 'claude'], ['anthropic', 'claude'],
+  ['kimi', 'kimi'], ['kimi-for-coding', 'kimi'], ['moonshotai', 'kimi'],
+  ['grok', 'grok'], ['xai', 'grok'],
+  ['glm', 'glm'], ['zai', 'glm'], ['zai-coding-plan', 'glm'], ['zhipu', 'glm'],
+  ['longcat', 'longcat'],
+]);
+
+function prefixProvider(shape: KeyShape): QuotaProvider | 'openai' | null {
+  if (shape === 'claude-oauth' || shape === 'anthropic-api') return 'claude';
+  if (shape === 'kimi-coding') return 'kimi';
+  if (shape === 'xai') return 'grok';
+  return shape === 'openai' ? 'openai' : null;
+}
+
 /**
- * Probe a single key against all known usage APIs that match its shape
- * (and a few best-effort fallbacks for unknown shapes).
+ * Probe only the configured provider. Prefixes may reject mismatches, never
+ * authorize a destination. Unverified JWTs require a provider-native resolver.
+ * Failure never sends the credential to another vendor.
  */
 export async function fetchWindowsForApiKey(
   key: string,
@@ -66,76 +71,19 @@ export async function fetchWindowsForApiKey(
   if (!token) return null;
   const fetchImpl = opts?.fetchImpl;
   const now = opts?.now ?? Date.now();
-  const shape = classifyKeyShape(token);
   const hint = opts?.adapterHint;
-
-  // Shape-specific first
-  if (shape === 'claude-oauth') {
-    const w = await fetchClaudeOauthUsageWindows(token, { fetchImpl, now });
-    if (w?.length) return w;
+  const provider = hint ? DECLARED_PROVIDERS.get(hint) : undefined;
+  const shape = classifyKeyShape(token);
+  const prefix = prefixProvider(shape);
+  if (!provider || (prefix && prefix !== provider) || token.startsWith('eyJ')) return null;
+  switch (provider) {
+    case 'claude': return shape === 'claude-oauth'
+      ? fetchClaudeOauthUsageWindows(token, { fetchImpl, now }) : null;
+    case 'kimi': return fetchKimiCodingUsageWindows(token, { fetchImpl, now });
+    case 'grok': return fetchGrokUsageWindows(token, { fetchImpl, now });
+    case 'longcat': return fetchLongcatUsageWindows(token, { fetchImpl, now });
+    case 'glm': return fetchGlmUsageWindows(token, { fetchImpl, now, platform: hint === 'zhipu' ? 'zhipu' : 'zai' });
   }
-  if (shape === 'kimi-coding' || hint === 'kimi') {
-    const w = await fetchKimiCodingUsageWindows(token, { fetchImpl, now });
-    if (w?.length) return w;
-  }
-  if (shape === 'xai' || hint === 'grok') {
-    const w = await fetchGrokUsageWindows(token, { fetchImpl, now });
-    if (w?.length) return w;
-  }
-  if (shape === 'zai' || hint === 'glm') {
-    for (const platform of ['zai', 'zhipu'] as const) {
-      const w = await fetchGlmUsageWindows(token, {
-        fetchImpl,
-        now,
-        platform,
-      });
-      if (w?.length) return w;
-    }
-  }
-
-  // Adapter-hinted: longcat tries GLM monitor then longcat URLs
-  if (hint === 'longcat' || shape === 'longcat') {
-    const lc = await fetchLongcatUsageWindows(token, { fetchImpl, now });
-    if (lc?.length) return lc;
-    // Some users put Z.ai keys under longcat by mistake — try glm too
-    for (const platform of ['zai', 'zhipu'] as const) {
-      const w = await fetchGlmUsageWindows(token, {
-        fetchImpl,
-        now,
-        platform,
-      });
-      if (w?.length) return w;
-    }
-  }
-
-  // OpenAI-shaped: no reliable used% without org billing key — skip invent.
-  // Unknown / anthropic-api: try GLM monitor (works for many coding plan keys)
-  // then longcat then kimi.
-  if (shape === 'unknown' || shape === 'anthropic-api' || shape === 'zai') {
-    for (const platform of ['zai', 'zhipu'] as const) {
-      const w = await fetchGlmUsageWindows(token, {
-        fetchImpl,
-        now,
-        platform,
-      });
-      if (w?.length) return w;
-    }
-    const lc = await fetchLongcatUsageWindows(token, { fetchImpl, now });
-    if (lc?.length) return lc;
-    const kimi = await fetchKimiCodingUsageWindows(token, { fetchImpl, now });
-    if (kimi?.length) return kimi;
-  }
-
-  // OpenAI key that is actually a full auth.json blob
-  if (token.startsWith('{')) {
-    const auth = parseCodexAuthJson(token);
-    if (auth) {
-      const w = await fetchCodexUsageWindows(auth, { fetchImpl, now });
-      if (w?.length) return w;
-    }
-  }
-
-  return null;
 }
 
 /**
@@ -207,8 +155,7 @@ export function parseGenericUsageJson(
     label: string,
   ): void => {
     if (typeof raw !== 'number' || !Number.isFinite(raw)) return;
-    const ratio =
-      raw > 1 ? Math.min(1, raw / 100) : Math.max(0, Math.min(1, raw));
+    const ratio = Math.max(0, Math.min(1, raw / 100));
     out.push(
       knownWindow({
         kind,

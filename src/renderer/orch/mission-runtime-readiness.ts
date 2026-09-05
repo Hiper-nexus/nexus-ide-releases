@@ -45,11 +45,9 @@ export function isAdapterModelAuthenticated(
 }
 
 /**
- * Toda CLI instalada participa. `missionControlCapable` deixou de FILTRAR e
- * virou apenas ORDENAÇÃO (capaz primeiro) — reprovar coordenador por metadado
- * de capacidade, com o binário instalado, era a trava histórica do passo
- * Equipe. A política (`governed`) continua valendo onde ela é fisicamente
- * imposta (fronteira de spawn); aqui ela não esconde mais ninguém.
+ * CLIs instaladas continuam disponíveis para execução e escolha manual.
+ * Coordenação exige a capacidade de MCP publicada pelo Main, que aplica o
+ * mesmo requisito físico no início da missão.
  */
 export function missionRuntimeReadiness(
   adapters: readonly AdapterInfo[],
@@ -64,12 +62,9 @@ export function missionRuntimeReadiness(
   const cliAdapters = authenticatedAdapters.filter(
     (adapter) => adapter.kind === "cli-pty",
   );
-  const byControlPreference = [...cliAdapters].sort(
-    (left, right) =>
-      Number(right.missionControlCapable === true) -
-      Number(left.missionControlCapable === true),
+  const verifiedMaestros = cliAdapters.filter(
+    (adapter) => adapter.missionControlCapable === true,
   );
-  const verifiedMaestros = byControlPreference;
   const qualifiedWorkers = cliAdapters;
   const readyProviders = authenticatedAdapters;
   return Object.freeze({
@@ -78,7 +73,7 @@ export function missionRuntimeReadiness(
     readyProviders: Object.freeze(readyProviders),
     verifiedMaestros: Object.freeze(verifiedMaestros),
     qualifiedWorkers: Object.freeze(qualifiedWorkers),
-    hasOperationalRoute: cliAdapters.length > 0,
+    hasOperationalRoute: verifiedMaestros.length > 0,
     multiProviderReady: readyProviders.length >= 2,
   });
 }

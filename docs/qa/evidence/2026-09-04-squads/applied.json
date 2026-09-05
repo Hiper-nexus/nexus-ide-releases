@@ -1,0 +1,28 @@
+{
+  "destination": {
+    "kind": "mission-setup"
+  },
+  "executionCalls": [],
+  "globalInstructionsCopied": false,
+  "members": [
+    {
+      "agentName": "Coordenador",
+      "category": "orchestrator",
+      "cli": "codex",
+      "model": "gpt-5.6-sol"
+    },
+    {
+      "agentName": "Implementador",
+      "category": "executor",
+      "cli": "codex",
+      "model": "gpt-5.6-sol"
+    },
+    {
+      "agentName": "Revisor",
+      "category": "reviewer",
+      "cli": "codex",
+      "model": "gpt-5.6-sol"
+    }
+  ],
+  "objective": "Corrigir o cadastro de clientes"
+}

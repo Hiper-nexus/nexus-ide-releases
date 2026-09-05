@@ -1,0 +1,66 @@
+[
+  {
+    "closeRight": 67,
+    "density": "compact",
+    "hit": true,
+    "paneRight": 72,
+    "visible": true,
+    "width": 48
+  },
+  {
+    "closeRight": 147,
+    "density": "compact",
+    "hit": true,
+    "paneRight": 152,
+    "visible": true,
+    "width": 64
+  },
+  {
+    "closeRight": 243,
+    "density": "compact",
+    "hit": true,
+    "paneRight": 248,
+    "visible": true,
+    "width": 80
+  },
+  {
+    "closeRight": 379,
+    "density": "compact",
+    "hit": true,
+    "paneRight": 384,
+    "visible": true,
+    "width": 120
+  },
+  {
+    "closeRight": 555,
+    "density": "compact",
+    "hit": true,
+    "paneRight": 560,
+    "visible": true,
+    "width": 160
+  },
+  {
+    "closeRight": 811,
+    "density": "compact",
+    "hit": true,
+    "paneRight": 816,
+    "visible": true,
+    "width": 240
+  },
+  {
+    "closeRight": 598,
+    "density": "icons",
+    "hit": true,
+    "paneRight": 604,
+    "visible": true,
+    "width": 580
+  },
+  {
+    "closeRight": 618,
+    "density": "icons",
+    "hit": true,
+    "paneRight": 624,
+    "visible": true,
+    "width": 600
+  }
+]

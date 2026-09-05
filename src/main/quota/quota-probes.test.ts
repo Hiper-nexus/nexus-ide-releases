@@ -30,15 +30,15 @@ describe('quota-probes', () => {
     expect(weekly?.usedRatio).toBeNull();
   });
 
-  it('ollama uses local-tokens source not fake weekly cloud %', () => {
+  it('reports token counts without inventing a quota denominator', () => {
     const w = probeProviderWindows({
       adapterId: 'ollama',
       localTokens: { inputTokens: 50_000, outputTokens: 10_000, costUsd: 0 },
     });
     const local = w.find((x) => x.kind === 'local');
     expect(local?.source).toBe('local-tokens');
-    expect(local?.usedRatio).not.toBeNull();
-    expect(local?.usedRatio).toBeGreaterThan(0);
+    expect(local?.usedRatio).toBeNull();
+    expect(local?.remainingLabel).toBe('60.000 tokens');
     // Must not invent a cloud weekly percentage for ollama
     const weekly = w.find((x) => x.kind === 'weekly' && x.source === 'provider-api');
     expect(weekly).toBeUndefined();

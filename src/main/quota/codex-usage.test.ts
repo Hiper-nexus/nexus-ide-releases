@@ -66,7 +66,7 @@ describe('parseCodexWhamUsage', () => {
     expect(weekly?.resetsAt).toBe(1784489178 * 1000);
   });
 
-  it('mirrors sole primary window onto the other codex slot so panel is not half-empty', () => {
+  it('does not invent a 5h quota when the provider reports only a weekly window', () => {
     const w = parseCodexWhamUsage(
       {
         rate_limit: {
@@ -81,7 +81,8 @@ describe('parseCodexWhamUsage', () => {
       NOW,
     );
     expect(w.find((x) => x.kind === 'weekly')?.usedRatio).toBe(0.06);
-    expect(w.find((x) => x.kind === 'hours')?.usedRatio).toBe(0.06);
+    expect(w.find((x) => x.kind === 'hours')).toBeUndefined();
+    expect(w).toHaveLength(1);
     expect(w.every((x) => x.source === 'provider-api')).toBe(true);
   });
 

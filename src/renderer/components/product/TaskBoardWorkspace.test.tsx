@@ -159,6 +159,27 @@ afterEach(() => {
 });
 
 describe('TaskBoardWorkspace contracts', () => {
+  it('keeps a new mission action visible while the board has work', () => {
+    const host = mount(<TaskBoardWorkspace />);
+    const action = host.querySelector<HTMLButtonElement>('.task-board-workspace__new');
+    expect(action).not.toBeNull();
+    act(() => action!.click());
+    expect(useProductNavigationStore.getState().destination).toEqual({ kind: 'mission-setup' });
+    expect(orchBoundary.setTodoStatus).not.toHaveBeenCalled();
+  });
+
+  it('lets the operator cancel an armed cleanup without changing the board', () => {
+    useOrchStore.setState({ todoLists: [TODO_LIST] });
+    const host = mount(<TaskBoardWorkspace />);
+    act(() => host.querySelector<HTMLButtonElement>('.task-board-workspace__clear')!.click());
+    const cancel = host.querySelector<HTMLButtonElement>('[aria-label="Cancelar limpeza"]');
+    expect(cancel).not.toBeNull();
+    act(() => cancel!.click());
+    expect(host.querySelector('.task-board-workspace__clear')?.textContent).toMatch(/Limpar concluídas/);
+    expect(orchBoundary.clearTodoBoard).not.toHaveBeenCalled();
+    expect(useOrchStore.getState().todoLists).toEqual([TODO_LIST]);
+  });
+
   it('shows a running mission on the board even before any task exists', () => {
     const host = mount(<TaskBoardWorkspace />);
 

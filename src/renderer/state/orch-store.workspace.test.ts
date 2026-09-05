@@ -44,6 +44,7 @@ describe('orch-store workspace isolation', () => {
     useOrchStore.setState({
       missions: [],
       missionSummaries: [],
+      missionSummariesHydrated: false,
       handoffs: [],
       todoLists: [],
       squads: [],
@@ -138,6 +139,7 @@ describe('orch-store workspace isolation', () => {
 
     expect(window.nexus.mission.list).toHaveBeenCalledOnce();
     expect(useOrchStore.getState().missionSummaries).toEqual(summaries);
+    expect(useOrchStore.getState().missionSummariesHydrated).toBe(true);
     expect(useOrchStore.getState().missions).toEqual([]);
   });
 

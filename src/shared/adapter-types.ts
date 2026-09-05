@@ -358,9 +358,9 @@ export interface AdapterInfo {
    */
   taskHandoffCapable?: boolean;
   /**
-   * Main owns a bidirectional PTY action/result channel for this CLI. The
-   * channel can invoke the governed Nexus tool dispatcher and return a final
-   * physical handoff without relying on provider MCP configuration.
+   * This CLI can invoke the Nexus tool dispatcher through a physical MCP
+   * integration. Coordination requires this bidirectional tool transport;
+   * a one-way PTY completion marker alone is not sufficient.
    *
    * This is deliberately separate from taskHandoffCapable: a CLI may remain a
    * worker/reviewer even when it cannot safely coordinate a whole mission.

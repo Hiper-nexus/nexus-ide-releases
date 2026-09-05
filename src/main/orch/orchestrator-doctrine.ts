@@ -39,7 +39,7 @@ const DOCTRINE_BASE = [
     '(nexus_pane_read) e cobre a entrega com nexus_pane_write ' +
     '("finalize com nexus_handoff_submit"). Vale só para worker PARADO — ' +
     'worker vivo continua fora de vigília.',
-  '• DELEGAÇÃO: abra cada worker com nexus_pane_spawn passando `prompt` — o pane ' +
+  '• DELEGAÇÃO: para trabalho sem dispatch, abra o worker com nexus_pane_spawn passando `prompt` — o pane ' +
     'nasce executando a tarefa (1 chamada, sem spawn+write). Relay FIEL do pedido ' +
     'humano: repasse a tarefa como veio, nunca adicione nem aperte restrições que ' +
     'o humano não pediu.',
@@ -49,15 +49,15 @@ const DOCTRINE_BASE = [
   // do objetivo é respondido no pane do orquestrador, por mais trivial que
   // pareça — se está no objetivo, é trabalho de worker.
   '• EXECUÇÃO: você NUNCA executa nem responde a tarefa no seu pane — TODO ' +
-    'pedido do objetivo, inclusive uma pergunta trivial, vira dispatch de ' +
-    'worker via nexus_pane_spawn. Seu texto próprio é só coordenação: plano, ' +
+    'pedido do objetivo, inclusive uma pergunta trivial, pertence a um dispatch de ' +
+    'worker; preserve os existentes. Seu texto próprio é só coordenação: plano, ' +
     'validação, veredito. EXCEÇÃO: meta-tarefa sobre os panes é SUA — worker ' +
     'não tem ferramenta de pane.',
   // Campo (20/08): resposta validada nos panes, missão eterna em running —
   // o worker já gastou seu único slot de handoff e ninguém mais submetia.
   // O Maestro PODE (canSubmitMissionHandoff aceita orchestrator).
   '• FECHO: entrega-resposta sem arquivo: submeta VOCÊ o handoff final ' +
-    '(success, evidência citada) — é ele que conclui a missão.',
+    '(success, evidência citada) — o motor valida a conclusão.',
   '• WORKSPACE: modo same_checkout — 1 worker escritor por vez no mesmo diretório. ' +
     'Revisão/análise sem edição: spawn com readOnly:true — abre em paralelo. ' +
     'Nada de git stash/reset/checkout/clean; não desfaça o trabalho de ninguém.',
@@ -79,6 +79,8 @@ export interface MaestroKickoffBriefInput {
   readonly maxWorkers?: number | null;
   readonly executorCount?: number | null;
   readonly sealedPlanTitles?: readonly string[];
+  /** O main gerencia a primeira onda, inclusive inicialização ainda em andamento. */
+  readonly firstWaveDispatched?: boolean;
   /**
    * Missão-pergunta aos panes (meta-de-pane): o contrato completo já vai no
    * objetivo — doutrina de delegação aqui é CONTRADIÇÃO ("VOCÊ executa" vs
@@ -91,14 +93,89 @@ export interface MaestroKickoffBriefInput {
 const META_PANE_DOCTRINE = [
   'DOUTRINA (missão de pergunta):',
   '• PRIMEIRO ATO: nexus_pane_ask em cada integrante com SÓ a pergunta. ' +
-    'NÃO liste panes, NÃO leia o grid, NÃO explique o plano — os panes ' +
-    'já estão abertos na first-wave.',
+    'NÃO liste panes, NÃO leia o grid, NÃO explique o plano — o main ' +
+    'gerencia a inicialização dos panes da first-wave. Ausência transitória não autoriza duplicar pane.',
   '• ESPERA sem loop: nexus_pane_ask envia, espera e devolve a resposta; ' +
     'wait serve só para confirmar boot de pane recém-aberto.',
   '• FECHO único: um só nexus_handoff_submit com as respostas de TODOS os ' +
     'panes citadas; não chame set_status done — o motor conclui sozinho.',
   '• VOZ: ditado pode chegar traduzido para inglês; responda em PT-BR.',
 ].join('\n');
+
+type DirectMode = 'consult' | 'plan' | 'solo';
+
+function directMode(
+  input: Pick<MaestroKickoffBriefInput, 'lane' | 'maxWorkers'>,
+): DirectMode | null {
+  if (input.lane === 'consult' || input.lane === 'plan') return input.lane;
+  return input.maxWorkers === 0 ? 'solo' : null;
+}
+
+const HANDOFF_COMPLETION =
+  'Submeta nexus_handoff_submit com status:"success" somente após validar a entrega real, ' +
+  'summary descritivo (mínimo 20 caracteres) e artifacts listando arquivos ou [{fullText: "resposta e evidência reais"}]. ' +
+  'Aceite do handoff não é confirmação de conclusão. Se a missão continuar running após o aceite, ' +
+  'nexus_mission_set_status exige missionId atual, status:"done" e note descritiva de ao menos 40 caracteres. ' +
+  'Respeite os gates: uma recusa exige resolver a causa ou registrar bloqueio, nunca anunciar sucesso sem confirmação do motor.';
+
+function buildDirectDoctrine(mode: DirectMode): string {
+  const execution = mode === 'consult'
+    ? 'CONSULTA: responda e analise diretamente no seu pane, conforme o objetivo. Não crie arquivos sem solicitação.'
+    : mode === 'plan'
+      ? 'PLANEJAMENTO: elabore diretamente o plano conforme o objetivo, sem implementar a solução. ' +
+        'Registre o plano em docs/plan.md (ou plan.md), exigido pelo gate desta modalidade, e inclua o plano completo no summary do handoff.'
+      : 'EXECUÇÃO SEM WORKERS: execute o objetivo diretamente no seu pane, dentro do escopo autorizado; o orçamento de workers é zero.';
+  return [
+    'DOUTRINA (execução direta):',
+    `• ${execution} Não abra trabalhadores.`,
+    `• FECHO: ${HANDOFF_COMPLETION}`,
+    '• WORKSPACE: preserve alterações existentes; nada de git stash/reset/checkout/clean para desfazer trabalho alheio.',
+    '• VOZ: ditado traduzido pode chegar em inglês; responda em PT-BR.',
+  ].join('\n');
+}
+
+function buildTeamCoordination(
+  input: MaestroKickoffBriefInput,
+  workers: readonly string[],
+): string {
+  const sealedCount = input.sealedPlanTitles?.length ?? 0;
+  const dispatchInstruction = input.firstWaveDispatched
+    ? 'O main gerencia a inicialização da first-wave, que pode estar parcial ou em andamento. ' +
+      'Não duplique a first-wave: colete e valide seus handoffs com nexus_handoff_list({full:true}). ' +
+      'Ausência momentânea de pane ou handoff não significa tarefa sem dispatch. ' +
+      'Abra novas tarefas somente após confirmar que ainda não foram despachadas; substituições exigem falha confirmada e justificativa.'
+    : 'Para cada tarefa ainda não despachada: nexus_pane_spawn({agentName, prompt}) — uma chamada só. NUNCA spawn + write.';
+  return [
+    '## ORQUESTRAÇÃO (modelo PULL)',
+    `Papel: você é ${input.orchestratorName}, o coordenador. Não execute o pedido — delegue.`,
+    `Equipe: ${workers.join(', ') || 'trabalhadores conforme o objetivo'}.`,
+    `1. ${dispatchInstruction}`,
+    '2. Encerre o turno. Quando acordar, valide via nexus_handoff_list({full:true}).',
+    '3. Worker parado sem handoff? Cobre: nexus_pane_read no pane dele + ' +
+      'nexus_pane_write pedindo o nexus_handoff_submit. Nunca fique em ' +
+      '"aguardando handoffs" com worker mudo já parado.',
+    `4. Quando todos entregarem e a validação estiver concluída: ${HANDOFF_COMPLETION}`,
+    sealedCount > 0
+      ? `Cada task selada pendente mantém sua entrega e seu dispatch; são ${sealedCount} entregas — não colapse em papéis nem duplique a first-wave.`
+      : '',
+  ].filter(Boolean).join('\n');
+}
+
+function buildMetaPaneCoordination(
+  input: MaestroKickoffBriefInput,
+  workers: readonly string[],
+): string {
+  return [
+    '## ORQUESTRAÇÃO (missão de pergunta aos panes)',
+    `Você é ${input.orchestratorName}. O main gerencia a inicialização da first-wave ` +
+      `da equipe (${workers.join(', ') || 'equipe'}), que pode estar em andamento. NÃO chame ` +
+      'nexus_pane_spawn. NÃO liste panes. PRIMEIRO ATO: nexus_pane_ask ' +
+      'em cada integrante com a pergunta. Depois colete com ' +
+      'nexus_handoff_list e feche com o handoff final.',
+    'O contrato completo está no bloco META-DE-PANE do objetivo — ele ' +
+      'VENCE qualquer regra geral de delegação.',
+  ].join('\n');
+}
 
 /**
  * Kickoff vivo do Maestro. Cabeçalho da missão + doutrina + playbook.
@@ -110,52 +187,14 @@ export function buildMaestroKickoffBrief(
   const workers = input.teamNames.filter(
     (name) => name !== input.orchestratorName,
   );
-  const playbook = input.playbook?.trim() ?? '';
-  const planOnly =
-    input.lane === 'plan' ||
-    input.lane === 'consult' ||
-    input.maxWorkers === 0;
-  const sealedCount = input.sealedPlanTitles?.length ?? 0;
-  const sealedHint =
-    sealedCount > 0
-      ? `Spawne UM worker por task selada pendente (first-wave). São ${sealedCount} entregas — não colapse em papéis.`
-      : '';
-
+  const playbook = input.playbook?.trim() ? input.playbook : '';
+  const mode = directMode(input);
   const metaPane = input.metaPane === true;
   const coordination = metaPane
-    ? [
-        '## ORQUESTRAÇÃO (missão de pergunta aos panes)',
-        `Você é ${input.orchestratorName}. A first-wave JÁ abriu os panes ` +
-          `da equipe (${workers.join(', ') || 'equipe'}). NÃO chame ` +
-          'nexus_pane_spawn. NÃO liste panes. PRIMEIRO ATO: nexus_pane_ask ' +
-          'em cada integrante com a pergunta. Depois colete com ' +
-          'nexus_handoff_list e feche com o handoff final.',
-        'O contrato completo está no bloco META-DE-PANE do objetivo — ele ' +
-          'VENCE qualquer regra geral de delegação.',
-      ].join('\n')
-    : planOnly
-    ? [
-        '## ORQUESTRAÇÃO (modelo PULL)',
-        `Papel: você é ${input.orchestratorName}. Esta missão é só documentação — ` +
-          'escreva o plano em docs/plan.md (ou plan.md). Não abra trabalhadores.',
-        'Quando o plano estiver pronto, chame nexus_mission_set_status({status:"done"}).',
-      ].join('\n')
-    : [
-        '## ORQUESTRAÇÃO (modelo PULL)',
-        `Papel: você é ${input.orchestratorName}, o coordenador. Não execute o pedido — delegue.`,
-        workers.length > 0
-          ? `Equipe para abrir: ${workers.join(', ')}.`
-          : 'Equipe: abra trabalhadores conforme o objetivo pedir.',
-        '1. Para cada tarefa: nexus_pane_spawn({agentName, prompt}) — uma chamada só. NUNCA spawn + write.',
-        '2. Encerre o turno. Quando acordar, valide via nexus_handoff_list({full:true}).',
-        '3. Worker parado sem handoff? Cobre: nexus_pane_read no pane dele + ' +
-          'nexus_pane_write pedindo o nexus_handoff_submit. Nunca fique em ' +
-          '"aguardando handoffs" com worker mudo já parado.',
-        '4. Quando todos entregarem: nexus_mission_set_status({status:"done"}).',
-        sealedHint,
-      ]
-        .filter(Boolean)
-        .join('\n');
+    ? buildMetaPaneCoordination(input, workers)
+    : mode
+      ? `## ORQUESTRAÇÃO (execução direta)\nPapel: você é ${input.orchestratorName}.`
+      : buildTeamCoordination(input, workers);
 
   return [
     `## Missão: ${input.title}`,
@@ -164,7 +203,7 @@ export function buildMaestroKickoffBrief(
     input.securityNote?.trim() || '',
     input.designContext?.trim() || '',
     coordination,
-    metaPane ? META_PANE_DOCTRINE : DOCTRINE_BASE,
+    metaPane ? META_PANE_DOCTRINE : mode ? buildDirectDoctrine(mode) : DOCTRINE_BASE,
     playbook
       ? `PLAYBOOK DO SQUAD (autoridade do operador, verbatim):\n${playbook}`
       : '',
@@ -180,9 +219,14 @@ export function buildMaestroKickoffBrief(
  */
 export function buildOrchestratorDoctrine(
   squad: Squad | null | undefined,
-  _mission: Mission,
+  mission: Mission,
 ): string {
-  const playbook = squad?.orchestratorInstructions?.trim();
-  if (!playbook) return DOCTRINE_BASE;
-  return `${DOCTRINE_BASE}\n\nPLAYBOOK DO SQUAD (autoridade do operador, verbatim):\n${playbook}`;
+  const mode = directMode({
+    lane: mission.intentContract?.lane,
+    maxWorkers: mission.intentContract?.budgets?.maxWorkers,
+  });
+  const doctrine = mode ? buildDirectDoctrine(mode) : DOCTRINE_BASE;
+  const playbook = squad?.orchestratorInstructions;
+  if (!playbook?.trim()) return doctrine;
+  return `${doctrine}\n\nPLAYBOOK DO SQUAD (autoridade do operador, verbatim):\n${playbook}`;
 }

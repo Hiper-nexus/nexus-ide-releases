@@ -38,6 +38,7 @@ const PROVIDER_API_TTL_MS = 60_000;
 const LIVE_PROBE_ADAPTERS: ReadonlySet<string> | 'all' = 'all';
 
 export interface QuotaServiceDeps {
+  resolveApiQuotaKey?: LiveUsageAuthResolvers['resolveApiQuotaKey'];
   listProviders: () => ProviderSettingsInfo[] | Promise<ProviderSettingsInfo[]>;
   listAccounts: () => AccountInfo[] | Promise<AccountInfo[]>;
   /** Optional token totals by adapterId for Ollama local bars. */
@@ -138,6 +139,40 @@ export interface RecordedLimitHit {
 interface CachedApiWindows {
   windows: QuotaWindow[];
   at: number;
+  usageProviderId?: string;
+  authMode: string;
+}
+
+interface ProbeIdentity extends EntryKey {
+  usageProviderId?: string;
+  authMode: string;
+  canProbe: boolean;
+}
+
+function apiCacheKey(input: ProbeIdentity): string {
+  return JSON.stringify([input.adapterId, input.accountId ?? null, input.usageProviderId ?? null, input.authMode, input.canProbe]);
+}
+
+function canProbeQuota(provider: ProviderSettingsInfo | undefined, account?: AccountInfo): boolean {
+  if (!provider || (account && account.adapterId !== provider.adapterId)) return false;
+  if (account?.mode === 'subscription') return true;
+  const upstream = (account?.upstream ?? provider.upstream)?.trim();
+  return !upstream || upstream === 'anthropic' || provider.routable === true;
+}
+
+function declaredQuotaUpstream(provider: ProviderSettingsInfo | undefined, account?: AccountInfo): string | undefined {
+  if (!canProbeQuota(provider, account)) return undefined;
+  if (account && account.mode !== 'api-key') return undefined;
+  const owner = provider?.adapterId ?? account?.adapterId;
+  if (provider?.routable) {
+    const upstream = (account?.upstream ?? provider.upstream)?.trim();
+    if (upstream && upstream !== 'anthropic' && upstream !== owner) return upstream;
+  }
+  return (account?.mode ?? provider?.authStrategy) === 'api-key' ? owner : undefined;
+}
+
+function quotaAuthMode(provider: ProviderSettingsInfo | undefined, account?: AccountInfo): string {
+  return account?.mode ?? provider?.authStrategy ?? 'unknown';
 }
 
 function entryId(k: EntryKey): string {
@@ -153,7 +188,9 @@ export class QuotaService {
   #lastSnapshot: QuotaFleetSnapshot | null = null;
   #stopped = false;
   /** In-flight refresh coalescing. */
-  #snapshotInFlight: Promise<QuotaFleetSnapshot> | null = null;
+  #snapshotInFlight: { generation: number; promise: Promise<QuotaFleetSnapshot> } | null = null;
+  #snapshotGeneration = 0;
+  #lastSnapshotGeneration = 0;
 
   constructor(deps: QuotaServiceDeps) {
     this.#deps = deps;
@@ -161,6 +198,7 @@ export class QuotaService {
 
   stop(): void {
     this.#stopped = true;
+    this.#snapshotGeneration += 1;
     if (this.#broadcastTimer) {
       clearTimeout(this.#broadcastTimer);
       this.#broadcastTimer = null;
@@ -215,20 +253,34 @@ export class QuotaService {
     // Coalesce concurrent snapshot() so one open of Settings doesn't fan-out
     // N parallel Anthropic calls.
     if (this.#snapshotInFlight && !opts?.forceApi) {
-      return this.#snapshotInFlight;
+      return this.#snapshotInFlight.promise;
     }
-    const run = this.#buildSnapshot(now, opts?.forceApi === true);
-    this.#snapshotInFlight = run;
+    const generation = ++this.#snapshotGeneration;
+    const run = this.#buildSnapshot(now, opts?.forceApi === true, generation);
+    const flight = { generation, promise: this.#resolveCurrentSnapshot(run, generation) };
+    this.#snapshotInFlight = flight;
     try {
-      return await run;
+      return await flight.promise;
     } finally {
-      if (this.#snapshotInFlight === run) this.#snapshotInFlight = null;
+      if (this.#snapshotInFlight === flight) this.#snapshotInFlight = null;
     }
+  }
+
+  async #resolveCurrentSnapshot(run: Promise<QuotaFleetSnapshot>, generation: number): Promise<QuotaFleetSnapshot> {
+    const snapshot = await run;
+    while (generation !== this.#snapshotGeneration) {
+      const latest = this.#snapshotInFlight;
+      if (latest && latest.generation !== generation) { await latest.promise; continue; }
+      if (this.#lastSnapshot && this.#lastSnapshotGeneration === this.#snapshotGeneration) return this.#lastSnapshot;
+      throw new Error('quota refresh was superseded or stopped');
+    }
+    return snapshot;
   }
 
   async #buildSnapshot(
     now: number,
     forceApi: boolean,
+    generation: number,
   ): Promise<QuotaFleetSnapshot> {
     const [providers, accounts] = await Promise.all([
       Promise.resolve(this.#deps.listProviders()),
@@ -240,6 +292,9 @@ export class QuotaService {
 
     const draft: Array<{
       adapterId: string;
+      usageProviderId?: string;
+      authMode: string;
+      canProbe: boolean;
       accountId?: string;
       label: string;
       installed: boolean;
@@ -260,8 +315,9 @@ export class QuotaService {
       const tok = tokens[p.adapterId];
       if (tok && tok.inputTokens + tok.outputTokens > 0) return true;
 
-      // 2. Installed physically and has active credentials/session
-      if (p.installed && p.authStrategy !== 'login-needed') return true;
+      // A cold native-auth observation must not prevent its quota resolver
+      // from checking the credential asynchronously.
+      if (p.installed && (p.authStrategy !== 'login-needed' || p.authState === 'unknown')) return true;
 
       return false;
     });
@@ -271,6 +327,9 @@ export class QuotaService {
       if (vault.length === 0) {
         draft.push({
           adapterId: p.adapterId,
+          usageProviderId: declaredQuotaUpstream(p),
+          authMode: quotaAuthMode(p),
+          canProbe: canProbeQuota(p),
           label: p.label,
           installed: p.installed,
           onCooldown: false,
@@ -281,6 +340,9 @@ export class QuotaService {
       // Bare system/CLI row so native login still shows % next to vault rows.
       draft.push({
         adapterId: p.adapterId,
+        usageProviderId: declaredQuotaUpstream(p),
+        authMode: quotaAuthMode(p),
+        canProbe: canProbeQuota(p),
         label: `${p.label} · CLI nativo`,
         installed: p.installed,
         onCooldown: false,
@@ -290,6 +352,9 @@ export class QuotaService {
         draft.push({
           adapterId: p.adapterId,
           accountId: a.id,
+          usageProviderId: declaredQuotaUpstream(p, a),
+          authMode: quotaAuthMode(p, a),
+          canProbe: canProbeQuota(p, a),
           label: `${p.label} · ${a.label}`,
           installed: p.installed,
           onCooldown: a.onCooldown,
@@ -308,6 +373,9 @@ export class QuotaService {
       draft.push({
         adapterId: a.adapterId,
         accountId: a.id,
+        usageProviderId: declaredQuotaUpstream(p, a),
+        authMode: quotaAuthMode(p, a),
+        canProbe: canProbeQuota(p, a),
         label: `${p?.label ?? a.adapterId} · ${a.label}`,
         installed: p?.installed ?? false,
         onCooldown: a.onCooldown,
@@ -320,20 +388,24 @@ export class QuotaService {
     }
 
     // Live provider APIs for every supported row (vault / keychain / launcher).
-    await this.#hydrateLiveApiWindows(draft, now, forceApi);
+    const observations = await this.#hydrateLiveApiWindows(draft, now, forceApi, generation);
 
     const entries: ProviderQuotaEntry[] = draft.map((d) =>
-      this.#buildEntry({ ...d, now }),
+      this.#buildEntry({ ...d, now }, observations.get(apiCacheKey(d)), generation === this.#snapshotGeneration && !this.#stopped),
     );
 
     entries.sort((a, b) => a.label.localeCompare(b.label, 'pt'));
     const snap = buildFleetSnapshot(entries, now);
-    this.#lastSnapshot = snap;
+    if (generation === this.#snapshotGeneration && !this.#stopped) {
+      this.#lastSnapshot = snap;
+      this.#lastSnapshotGeneration = generation;
+    }
     return snap;
   }
 
   #liveResolvers(): LiveUsageAuthResolvers {
     return {
+      resolveApiQuotaKey: this.#deps.resolveApiQuotaKey,
       resolveClaudeToken: this.#deps.resolveClaudeAccessToken,
       resolveCodexAuth: this.#deps.resolveCodexAuth,
       resolveCodexAuthCandidates: this.#deps.resolveCodexAuthCandidates,
@@ -354,28 +426,31 @@ export class QuotaService {
   }
 
   async #hydrateLiveApiWindows(
-    draft: ReadonlyArray<{ adapterId: string; accountId?: string }>,
+    draft: ReadonlyArray<ProbeIdentity>,
     now: number,
     forceApi: boolean,
-  ): Promise<void> {
+    generation: number,
+  ): Promise<Map<string, CachedApiWindows>> {
+    const observations = new Map<string, CachedApiWindows>();
     const rows =
       LIVE_PROBE_ADAPTERS === 'all'
         ? [...draft]
         : draft.filter((d) =>
             (LIVE_PROBE_ADAPTERS as ReadonlySet<string>).has(d.adapterId),
           );
-    if (rows.length === 0) return;
+    if (rows.length === 0) return observations;
 
     const resolvers = this.#liveResolvers();
     await Promise.all(
       rows.map(async (row) => {
-        const id = entryId({
-          adapterId: row.adapterId,
-          accountId: row.accountId,
-        });
+        if (!row.canProbe) return;
+        const id = apiCacheKey(row);
         if (!forceApi) {
           const cached = this.#apiCache.get(id);
-          if (cached && now - cached.at < PROVIDER_API_TTL_MS) return;
+          if (cached && now - cached.at < PROVIDER_API_TTL_MS) {
+            observations.set(id, cached);
+            return;
+          }
         }
         try {
           const windows = await fetchLiveProviderWindows(
@@ -383,18 +458,23 @@ export class QuotaService {
             row.accountId,
             resolvers,
             now,
+            row.usageProviderId,
+            row.authMode,
           );
           if (windows && windows.length > 0) {
-            this.#apiCache.set(id, { windows, at: now });
-          } else if (forceApi) {
-            // Force refresh failed — drop stale so UI does not show old %.
+            const observation = { windows, at: now, usageProviderId: row.usageProviderId, authMode: row.authMode };
+            observations.set(id, observation);
+            if (generation === this.#snapshotGeneration && !this.#stopped) this.#apiCache.set(id, observation);
+          } else if (generation === this.#snapshotGeneration && !this.#stopped) {
+            // A failed observation cannot renew an expired percentage.
             this.#apiCache.delete(id);
           }
         } catch {
-          if (forceApi) this.#apiCache.delete(id);
+          if (generation === this.#snapshotGeneration && !this.#stopped) this.#apiCache.delete(id);
         }
       }),
     );
+    return observations;
   }
 
   lastSnapshot(): QuotaFleetSnapshot | null {
@@ -403,6 +483,7 @@ export class QuotaService {
 
   #buildEntry(input: {
     adapterId: string;
+    usageProviderId?: string;
     accountId?: string;
     label: string;
     installed: boolean;
@@ -411,7 +492,7 @@ export class QuotaService {
     cooldownUntil?: number;
     tokens?: { inputTokens: number; outputTokens: number; costUsd: number };
     now: number;
-  }): ProviderQuotaEntry {
+  }, api: CachedApiWindows | undefined, allowCooldownRefutation: boolean): ProviderQuotaEntry {
     const id = entryId({
       adapterId: input.adapterId,
       accountId: input.accountId,
@@ -432,7 +513,6 @@ export class QuotaService {
       lastLimitHitAt: recorded?.at,
       now: input.now,
     });
-    const api = this.#apiCache.get(id);
     if (api?.windows.length) {
       windows = mergeWindows(windows, api.windows);
     }
@@ -447,6 +527,7 @@ export class QuotaService {
     let cooldownUntil = input.cooldownUntil;
     if (
       onCooldown &&
+      allowCooldownRefutation &&
       input.accountId &&
       this.#deps.clearRefutedCooldown &&
       api !== undefined &&
@@ -461,6 +542,7 @@ export class QuotaService {
       adapterId: input.adapterId,
       accountId: input.accountId,
       label: input.label,
+      ...(input.usageProviderId ? { usageProviderId: input.usageProviderId } : {}),
       installed: input.installed,
       onCooldown,
       ...(onCooldown && input.cooldownKind
@@ -468,7 +550,7 @@ export class QuotaService {
         : {}),
       cooldownUntil,
       windows: mergeWindows(defaultUnknownWindows(input.adapterId), windows),
-      updatedAt: input.now,
+      updatedAt: api?.at ?? input.now,
     };
   }
 
@@ -478,6 +560,7 @@ export class QuotaService {
       this.#broadcastTimer = null;
       void this.snapshot()
         .then((snap) => {
+          if (this.#stopped || snap !== this.#lastSnapshot) return;
           for (const win of BrowserWindow.getAllWindows()) {
             if (!win.isDestroyed() && !win.webContents.isCrashed()) {
               win.webContents.send(QUOTA_CHANNELS.changed, snap);
@@ -494,6 +577,7 @@ export class QuotaService {
   /** Force rebuild + live API re-probe + broadcast (UI refresh button). */
   async refresh(): Promise<QuotaFleetSnapshot> {
     const snap = await this.snapshot(Date.now(), { forceApi: true });
+    if (this.#stopped || snap !== this.#lastSnapshot) return snap;
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed() && !win.webContents.isCrashed()) {
         win.webContents.send(QUOTA_CHANNELS.changed, snap);

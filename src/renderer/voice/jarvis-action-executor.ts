@@ -1,5 +1,6 @@
 import type { JarvisAction, JarvisContext, JarvisReply } from '../../shared/voice-ipc';
-import type { SquadAgent } from '../../shared/orch-types';
+import { isMissionRuntimeSquadId, type SquadAgent } from '../../shared/orch-types';
+import { PET_STUDIO_SQUAD_ID } from '../../shared/pet-studio';
 import { useLayoutStore } from '../state/layout-store';
 import { listPanes } from '../lib/split-tree';
 import { useWorkspaceStore } from '../state/workspace-store';
@@ -111,7 +112,7 @@ function openCanonicalMissionSetup(
     setup.setObjective(prefill.objective);
   }
   if (prefill.roster !== undefined) {
-    useMissionSetupStore.getState().setRoster(prefill.roster);
+    if (!useMissionSetupStore.getState().setRoster(prefill.roster)) return false;
   }
   setup = useMissionSetupStore.getState();
   const step =
@@ -519,7 +520,7 @@ export async function executeJarvisAction(
     };
   } else if (action.type === 'open_squad_picker') {
     const workspace = useWorkspaceStore.getState().current;
-    const squads = useOrchStore.getState().squads;
+    const squads = useOrchStore.getState().squads.filter((squad) => !isMissionRuntimeSquadId(squad.id));
     if (!workspace) {
       sayText = 'Antes eu preciso de um projeto aberto. Quer abrir um dos recentes?';
       expectReply = true;
@@ -529,26 +530,26 @@ export async function executeJarvisAction(
       expectReply = true;
       toolResult = { tool: action.type, ok: false, summary: 'nenhum squad salvo' };
     } else {
-      const opened = openCanonicalMissionSetup({ step: 'team' });
-      if (opened) markEffect(control);
+      useProductNavigationStore.getState().openSettings('squads');
+      markEffect(control);
       const confirmed = await confirmUiState(
         () => useProductNavigationStore.getState().destination,
-        (destination) => destination.kind === 'mission-setup',
+        (destination) => destination.kind === 'settings' && destination.section === 'squads',
         control,
       );
       sayText = confirmed
-        ? 'Abrindo seus squads salvos. Qual você quer usar?'
-        : 'Tentei abrir a seleção de equipe, mas ainda não confirmei a tela.';
+        ? 'Catálogo de equipes aberto. Escolha Usar integrantes na equipe desejada.'
+        : 'Tentei abrir o catálogo de equipes, mas ainda não confirmei a tela.';
       toolResult = {
         tool: action.type,
         ok: confirmed,
         summary: confirmed
-          ? 'seleção de equipe aberta no setup canônico'
-          : 'setup de missão sem pós-condição confirmada',
+          ? 'catálogo de equipes aberto nas Configurações'
+          : 'catálogo de equipes sem pós-condição confirmada',
       };
     }
   } else if (action.type === 'open_squad') {
-    const squads = useOrchStore.getState().squads;
+    const squads = useOrchStore.getState().squads.filter((squad) => !isMissionRuntimeSquadId(squad.id));
     const resolution = resolveSquadByVoiceName(action.squadName, squads);
     if (resolution.kind === 'ambiguous') {
       const choices = resolution.candidates
@@ -560,23 +561,31 @@ export async function executeJarvisAction(
       toolResult = { tool: action.type, ok: false, summary: 'squad ambíguo' };
     } else if (resolution.kind === 'match') {
       const squad = resolution.squad;
+      if (squad.id === PET_STUDIO_SQUAD_ID) {
+        useProductNavigationStore.getState().openSettings('appearance');
+        markEffect(control);
+        return {
+          sayText: 'Abra Criar pet em Aparência para preparar o Pet Studio.',
+          toolResult: { tool: action.type, ok: true, summary: 'fluxo dedicado de pet aberto em Aparência' },
+        };
+      }
       const opened = openCanonicalMissionSetup({
         roster: squad.agents,
         step: 'mission',
       });
       if (!opened) {
         sayText =
-          'Antes eu preciso de um projeto aberto. Quer que eu abra um dos recentes? Diga o nome.';
+          'Não foi possível aplicar os integrantes. Confira o projeto aberto e as configurações dessa equipe.';
         expectReply = true;
         toolResult = { tool: action.type, ok: false, summary: 'sem workspace aberto' };
       } else {
         markEffect(control);
-        sayText = `Squad ${squad.name} selecionado. Qual é o objetivo da missão?`;
+        sayText = `Integrantes de ${squad.name} aplicados, sem as instruções globais do catálogo. Qual é o objetivo da missão?`;
         expectReply = true;
         toolResult = {
           tool: action.type,
           ok: true,
-          summary: `squad ${squad.name} copiado para o setup da missão`,
+          summary: `integrantes de ${squad.name} copiados para o setup da missão`,
         };
       }
     } else {
@@ -685,17 +694,23 @@ export async function executeJarvisAction(
         const result = await window.nexus.orch.designSquad(workspace.path);
         checkpoint(control);
         if (result.ok && result.squad) {
-          openCanonicalMissionSetup({
+          const opened = openCanonicalMissionSetup({
             roster: result.squad.agents,
             step: 'mission',
           });
+          if (!opened) {
+            return {
+              sayText: 'Não foi possível aplicar os integrantes gerados. Confira o projeto aberto e revise a equipe.',
+              toolResult: { tool: action.type, ok: false, summary: 'integrantes gerados não foram aplicados' },
+            };
+          }
           markEffect(control);
-          sayText = `Squad ${result.squad.name} pronto na revisão. Qual é o objetivo da missão?`;
+          sayText = `Integrantes de ${result.squad.name} preparados, sem as instruções globais do catálogo. Qual é o objetivo da missão?`;
           expectReply = true;
           toolResult = {
             tool: action.type,
             ok: true,
-            summary: `squad ${result.squad.name} copiado para o setup da missão`,
+            summary: `integrantes de ${result.squad.name} copiados para o setup da missão`,
           };
         } else {
           if (isMissingModelKeyError(result.error)) {

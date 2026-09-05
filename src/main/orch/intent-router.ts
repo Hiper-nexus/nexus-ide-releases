@@ -9,9 +9,12 @@
  * total: sem key, timeout ou JSON inválido devolve null e o fluxo atual
  * segue — o router nunca pode derrubar o caminho de missão que já existia.
  */
-import { loadLauncherProviderKey } from '../adapters/launcher-provider-manager';
-import { hasRuntimeKey } from '../persistence/provider-config-store';
-import { isPaneMetaTask } from './mission-fast-lane';
+import {
+  hasRuntimeKey,
+  isProviderEnabled,
+  resolveRuntimeApiKey,
+} from '../persistence/provider-config-store';
+import { isPaneMetaTask, extractMetaPaneQuestion } from '../../shared/pane-meta-task';
 
 export type IntentRoute =
   | { readonly kind: 'direct-answer'; readonly question: string }
@@ -110,7 +113,11 @@ export type RouterDeps = {
   readonly apiKey?: string | null;
   readonly model?: string;
   readonly timeoutMs?: number;
+  /** Entire classification chain, independent of each attempt timeout. */
+  readonly totalTimeoutMs?: number;
 };
+
+const DEFAULT_ROUTER_TIMEOUT_MS = 6_000;
 
 const ROUTER_SYSTEM_PROMPT = [
   'Você é um classificador de intenção. Responda SOMENTE JSON.',
@@ -134,7 +141,7 @@ export async function routeWithDeepSeek(
   const apiKey = deps.apiKey ?? null;
   if (!apiKey) return null;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), deps.timeoutMs ?? 6_000);
+  const timer = setTimeout(() => controller.abort(), deps.timeoutMs ?? DEFAULT_ROUTER_TIMEOUT_MS);
   try {
     const response = await (deps.fetchImpl ?? fetch)(
       'https://api.deepseek.com/chat/completions',
@@ -233,19 +240,26 @@ export async function routeIntent(
   // Guarda determinística ANTES de tudo: meta-de-pane ("pergunte aos panes…")
   // nunca é resposta direta — o operador pediu OS PANES, não uma resposta.
   // Com typo de ditado ("oergunta aos panes quwnto e 1+1") o Tier 0/1 pode
-  // errar; este predicado (mesmo do kickoff) é a autoridade. Null = missão.
-  if (isPaneMetaTask(objective)) return null;
+  // errar; o resultado tipado precisa acompanhar a preparação até o kickoff.
+  if (isPaneMetaTask(objective)) return { kind: 'mission-question', question: extractMetaPaneQuestion(objective), readOnlyWorkers: true };
   if (hasTrailingWorkAfterQuestion(objective)) return null;
   if (looksLikePureQuestion(objective)) {
     return { kind: 'direct-answer', question: extractQuestion(objective) ?? objective };
   }
   const hasKeyFor = deps.hasKeyFor ?? hasRuntimeKey;
-  const loadKeyFor = deps.loadKeyFor ?? loadLauncherProviderKey;
+  const loadKeyFor = deps.loadKeyFor ?? resolveRuntimeApiKey;
+  const deadline = Date.now() + (deps.totalTimeoutMs ?? DEFAULT_ROUTER_TIMEOUT_MS);
   for (const provider of ROUTER_PROVIDER_CHAIN) {
-    if (!hasKeyFor(provider.id)) continue;
+    if (Date.now() >= deadline) return null;
+    if (!isProviderEnabled(provider.id) || !hasKeyFor(provider.id)) continue;
     const apiKey = deps.apiKey ?? loadKeyFor(provider.id);
     if (!apiKey) continue;
-    const route = await classifyWithProvider(provider, objective, apiKey, deps);
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) return null;
+    const route = await classifyWithProvider(provider, objective, apiKey, {
+      ...deps,
+      timeoutMs: Math.min(deps.timeoutMs ?? DEFAULT_ROUTER_TIMEOUT_MS, remainingMs),
+    });
     if (route) return route;
   }
   return null;
@@ -278,7 +292,7 @@ async function classifyWithProvider(
     });
   }
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), deps.timeoutMs ?? 6_000);
+  const timer = setTimeout(() => controller.abort(), deps.timeoutMs ?? DEFAULT_ROUTER_TIMEOUT_MS);
   try {
     const response = await (deps.fetchImpl ?? fetch)(provider.endpoint, {
       method: 'POST',
@@ -442,9 +456,9 @@ export async function answerDirectQuestion(
   const text = question.trim();
   if (!text) return null;
   const hasKeyFor = deps.hasKeyFor ?? hasRuntimeKey;
-  const loadKeyFor = deps.loadKeyFor ?? loadLauncherProviderKey;
+  const loadKeyFor = deps.loadKeyFor ?? resolveRuntimeApiKey;
   for (const provider of ROUTER_PROVIDER_CHAIN) {
-    if (!hasKeyFor(provider.id)) continue;
+    if (!isProviderEnabled(provider.id) || !hasKeyFor(provider.id)) continue;
     const apiKey = deps.apiKey ?? loadKeyFor(provider.id);
     if (!apiKey) continue;
     const answer = await answerWithProvider(provider, text, apiKey, deps);

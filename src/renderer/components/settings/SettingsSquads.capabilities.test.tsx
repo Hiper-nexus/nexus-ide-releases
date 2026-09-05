@@ -6,6 +6,11 @@ import type { Squad } from '../../../shared/orch-types';
 import { useEphemeralDraftStore } from '../../state/ephemeral-draft-store';
 import { useOrchStore } from '../../state/orch-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
+import { useMissionSetupStore } from '../../state/mission-setup-store';
+import { useWorkspaceStore } from '../../state/workspace-store';
+import { useToastStore } from '../../state/toast-store';
+import { PET_STUDIO_SQUAD } from '../../../shared/pet-studio';
+import { missionDeliveryRosterIssue } from '../../../shared/mission-engine-contract';
 
 const squadMocks = vi.hoisted(() => ({
   askConfirm: vi.fn(),
@@ -23,8 +28,8 @@ vi.mock('./OrchestratorDefaults', () => ({
   OrchestratorDefaults: () => <div />,
 }));
 
-vi.mock('./MissionDriverSettings', () => ({
-  MissionDriverSettings: () => <div />,
+vi.mock('./AgentSessionSettings', () => ({
+  AgentSessionSettings: () => <div />,
 }));
 
 import { SettingsWorkspace } from './SettingsWorkspace';
@@ -161,7 +166,11 @@ function renderSquads(): HTMLDivElement {
 beforeEach(() => {
   vi.clearAllMocks();
   useEphemeralDraftStore.getState().clearAll();
+  useToastStore.setState({ toasts: [] });
   useOrchStore.setState({ squads: [], mcpInfo: null });
+  useWorkspaceStore.setState({ current: { path: '/tmp/squad-test', name: 'Squad test', lastOpenedAt: 1 }, hydrated: true });
+  useMissionSetupStore.getState().setWorkspace('/tmp/squad-test');
+  useMissionSetupStore.getState().resetWorkspace('/tmp/squad-test');
   useProductNavigationStore.setState({
     destination: { kind: 'settings', section: 'squads' },
     settingsReturnDestination: { kind: 'terminal' },
@@ -240,6 +249,60 @@ afterEach(() => {
 });
 
 describe('Settings → Squads retained management capability', () => {
+  it('applies saved members to mission setup while preserving the objective and leaving global instructions in the catalog', async () => {
+    const saved = squad('saved-members', 'Equipe de revisão');
+    saved.agents.push(
+      { ...saved.agents[0], id: 'executor', agentName: 'Implementador', category: 'executor' },
+      { ...saved.agents[0], id: 'reviewer', agentName: 'Revisor', category: 'reviewer' },
+    );
+    useOrchStore.setState({ squads: [saved] });
+    useMissionSetupStore.getState().setObjective('Corrigir o cadastro');
+    const host = renderSquads();
+    await settle();
+    expect(host.textContent).toContain('instruções globais');
+    act(() => requiredButton(host, /Usar integrantes/i).click());
+    expect(useProductNavigationStore.getState().destination).toEqual({ kind: 'mission-setup' });
+    expect(useMissionSetupStore.getState().draft).toMatchObject({ objective: 'Corrigir o cadastro', roster: saved.agents, step: 'mission' });
+    expect(JSON.stringify(useMissionSetupStore.getState().draft)).not.toContain(saved.orchestratorInstructions);
+    expect(useOrchStore.getState().squads).toEqual([saved]);
+    expect(squadMocks.saveSquad).not.toHaveBeenCalled();
+  });
+
+  it('preserves an older team without a reviewer and opens the team step for correction', async () => {
+    const saved = squad('old-members', 'Equipe antiga');
+    saved.agents.push({ ...saved.agents[0], id: 'executor', agentName: 'Implementador', category: 'executor' });
+    useOrchStore.setState({ squads: [saved] });
+    const host = renderSquads();
+    await settle();
+    act(() => requiredButton(host, /Usar integrantes/i).click());
+    expect(useMissionSetupStore.getState().draft.roster).toEqual(saved.agents);
+    expect(useMissionSetupStore.getState().draft.step).toBe('team');
+    expect(missionDeliveryRosterIssue(useMissionSetupStore.getState().draft.roster, 'standard')).toBe('reviewer-required');
+    expect(useToastStore.getState().toasts.at(-1)?.detail).toBe('Adicione ao menos uma pessoa independente para verificar a entrega.');
+  });
+
+  it('opens the dedicated appearance flow for Pet Studio without copying its authority into an ordinary mission', async () => {
+    useOrchStore.setState({ squads: [PET_STUDIO_SQUAD] });
+    const host = renderSquads();
+    await settle();
+    expect(buttonByName(host, /Usar integrantes/i)).toBeNull();
+    act(() => requiredButton(host, /Criar pet/i).click());
+    expect(useProductNavigationStore.getState().destination).toEqual({ kind: 'settings', section: 'appearance' });
+    expect(useMissionSetupStore.getState().draft.roster).toEqual([]);
+    expect(useMissionSetupStore.getState().entryContext).toBeNull();
+  });
+
+  it('keeps the catalog open and reports an unsupported roster instead of using the previous team', async () => {
+    const saved = squad('too-many', 'Equipe grande');
+    saved.agents = Array.from({ length: 13 }, (_, index) => ({ ...saved.agents[0], id: `agent-${index}`, agentName: `Agente ${index}` }));
+    useOrchStore.setState({ squads: [saved] });
+    const host = renderSquads();
+    await settle();
+    act(() => requiredButton(host, /Usar integrantes/i).click());
+    expect(useProductNavigationStore.getState().destination).toEqual({ kind: 'settings', section: 'squads' });
+    expect(announcementText(host)).toMatch(/não foi possível aplicar/i);
+    expect(useMissionSetupStore.getState().draft.roster).toEqual([]);
+  });
   it('renders an actionable empty inventory with create/import available and export disabled', async () => {
     const host = renderSquads();
     await settle();
@@ -266,6 +329,7 @@ describe('Settings → Squads retained management capability', () => {
     await settle();
 
     expect(squadMocks.saveSquad).toHaveBeenCalledTimes(1);
+    expect(squadMocks.saveSquad.mock.calls[0][0].agents.map((agent: { category: string }) => agent.category)).toEqual(['orchestrator', 'executor', 'reviewer']);
     expect(document.body.querySelector('[role="dialog"]')).toBeNull();
     expect(host.textContent).toMatch(/Equipe de confiabilidade/i);
     expect(announcementText(host)).toMatch(/criad|salv|atualiz/i);

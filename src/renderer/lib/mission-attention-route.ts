@@ -7,6 +7,7 @@ import {
 } from '../state/mission-inspector-store';
 import { useOrchStore } from '../state/orch-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
+import { getActiveWorkspacePath } from '../state/active-workspace';
 
 export type MissionAttentionCause =
   | 'human-question'
@@ -86,6 +87,14 @@ export function routeMissionAttention({
   cause,
   notificationPaneId,
 }: RouteMissionAttentionInput): void {
+  const orch = useOrchStore.getState();
+  if (
+    orch.missionSummariesHydrated &&
+    orch.boundWorkspacePath !== null &&
+    orch.boundWorkspacePath === getActiveWorkspacePath() &&
+    !orch.missionSummaries.some((mission) => mission.id === missionId)
+  ) return;
+
   const causeRoute = MISSION_ATTENTION_ROUTE_MATRIX[cause];
   useMissionInspectorStore
     .getState()

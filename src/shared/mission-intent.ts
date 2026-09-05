@@ -5,6 +5,7 @@ import {
   type IntentMappedMissionStatus,
 } from './mission-intent-projection';
 import { classifyStandardMissionTopology } from './mission-topology';
+import { missionRoutingAdviceSchema } from './mission-routing-advice';
 import {
   assertWavePackStoriesReady,
   freezeWavePackStoriesForContract,
@@ -333,6 +334,8 @@ export const missionIntentContractSchema = z.object({
   executionMode: missionExecutionModeSchema,
   /** Optional; missing/legacy contracts default to standard. */
   lane: missionLaneSchema.optional(),
+  /** Main-validated preparation advice; does not grant tools, skills or lanes. */
+  routingAdvice: missionRoutingAdviceSchema.optional(),
   /**
    * "Escolha livre de agentes" (opt-in por missão, análogo Bridge). Quando
    * true, o orquestrador pode nexus_pane_spawn QUALQUER adapter instalado +

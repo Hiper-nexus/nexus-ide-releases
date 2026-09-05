@@ -1,0 +1,413 @@
+npm notice run nexus-ide@0.76.0 npx
+npm notice run 'vitest' run src/main/adapters/adapter-registry.test.ts src/main/adapters/auth-probe.test.ts src/main/adapters/native-oauth-keychain.test.ts src/main/adapters/subscription-auth.test.ts src/main/orch/civilian-delivery-completion.test.ts src/main/orch/civilian-pronto.test.ts src/main/orch/handoff-store.test.ts src/main/orch/intent-router-credentials.test.ts src/main/orch/intent-router-matrix.test.ts src/main/orch/intent-router.test.ts src/main/orch/login-stuck-watchdog.test.ts src/main/orch/mission-engine-preparation.test.ts src/main/orch/mission-engine-production.test.ts src/main/orch/mission-engine.test.ts src/main/orch/mission-fast-lane-adjustment-hold.test.ts src/main/orch/mission-fast-lane-pane-binding.test.ts src/main/orch/mission-fast-lane-respawn-redelivery.test.ts src/main/orch/mission-fast-lane.test.ts src/main/orch/mission-team-question-completion.test.ts src/main/orch/orch-ipc-authority.test.ts src/main/orch/orchestrator-doctrine.test.ts src/main/orch/provisional-worker-handoff.test.ts src/main/orch/pty-stream-handoff.test.ts src/main/orch/turn-end-handoff.integration.test.ts src/main/orch/turn-end-handoff.test.ts src/main/persistence/provider-config-spawn.test.ts src/renderer/App.test.tsx src/renderer/components/AttentionInbox.test.tsx src/renderer/components/TerminalGridDialog.test.tsx src/renderer/components/mission/MissionBoard.test.tsx src/renderer/components/mission/MissionSetup.test.tsx src/renderer/components/product/Launcher.test.tsx src/renderer/components/product/TerminalWorkspace.test.tsx src/renderer/components/product/WorkspaceRail.test.tsx src/renderer/components/settings/AccountsManager.test.tsx src/renderer/components/settings/ProvidersPanel.test.tsx src/renderer/components/settings/accounts-login-view.test.ts src/renderer/components/settings/providers-panel-view.test.ts src/renderer/lib/mission-attention-route.test.ts src/renderer/lib/mission-lifecycle-copy.test.ts src/renderer/orch/mission-runtime-readiness.test.ts src/renderer/state/orch-store.test.ts src/renderer/state/orch-store.workspace.test.ts src/renderer/terminal/terminal-host.test.ts src/shared/attention-inbox.test.ts src/shared/mission-intent.test.ts src/shared/mission-routing-advice.test.ts src/shared/mission-topology.test.ts src/shared/pane-meta-task.test.ts
+
+ RUN  v3.2.6 /Users/cleofasrocha/dev/nexus-ide
+
+ ✓ src/shared/mission-topology.test.ts (70 tests) 24ms
+stderr | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] selo do plano de stories falhou: stores.tasks.createPlanAtomically is not a function
+
+stdout | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] orquestrador respawnado para mission-1 (session=session-1)
+
+stderr | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] selo do plano de stories falhou: stores.tasks.createPlanAtomically is not a function
+[fast-lane] first-wave falhou; Maestro segue: [vitest] No "listAdapters" export is defined on the "../adapters/adapter-registry" mock. Did you forget to return it from "vi.mock"?
+If you need to partially mock a module, you can use "importOriginal" helper inside:
+
+
+stdout | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] Pronto justified by all-workers-delivered (0/0)
+
+stderr | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[civilian-pronto] completeVerified recusou (mission=mission-1): Cannot read properties of undefined (reading 'trim')
+
+stdout | src/main/orch/turn-end-handoff.integration.test.ts > late physical Stop after provisional handoff > accepts the real answer once and retires its diagnostic (dispatch=false)
+[turn-end-handoff] late-worker-session: fechado mecanicamente (handoff handoff-8c44ef9c-b667-4845-abe4-082feca1d886)
+
+stderr | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] selo do plano de stories falhou: stores.tasks.createPlanAtomically is not a function
+
+stdout | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] orquestrador respawnado para mission-1 (session=session-2)
+
+stderr | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] selo do plano de stories falhou: stores.tasks.createPlanAtomically is not a function
+[fast-lane] first-wave falhou; Maestro segue: [vitest] No "listAdapters" export is defined on the "../adapters/adapter-registry" mock. Did you forget to return it from "vi.mock"?
+If you need to partially mock a module, you can use "importOriginal" helper inside:
+
+
+stdout | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] Pronto justified by all-workers-delivered (0/0)
+
+stderr | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] selo do plano de stories falhou: stores.tasks.createPlanAtomically is not a function
+
+stdout | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] orquestrador respawnado para mission-1 (session=session-3)
+
+stderr | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] selo do plano de stories falhou: stores.tasks.createPlanAtomically is not a function
+[fast-lane] first-wave falhou; Maestro segue: [vitest] No "listAdapters" export is defined on the "../adapters/adapter-registry" mock. Did you forget to return it from "vi.mock"?
+If you need to partially mock a module, you can use "importOriginal" helper inside:
+
+
+stdout | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] Pronto justified by all-workers-delivered (0/0)
+
+stderr | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] selo do plano de stories falhou: stores.tasks.createPlanAtomically is not a function
+
+stdout | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] orquestrador respawnado para mission-1 (session=session-4)
+
+stderr | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] selo do plano de stories falhou: stores.tasks.createPlanAtomically is not a function
+[fast-lane] first-wave falhou; Maestro segue: [vitest] No "listAdapters" export is defined on the "../adapters/adapter-registry" mock. Did you forget to return it from "vi.mock"?
+If you need to partially mock a module, you can use "importOriginal" helper inside:
+
+
+stdout | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] Pronto justified by all-workers-delivered (0/0)
+
+stdout | src/main/orch/turn-end-handoff.integration.test.ts > late physical Stop after provisional handoff > accepts the real answer once and retires its diagnostic (dispatch=false)
+[turn-end-handoff] late-worker-session: worker já entregou handoff neste turno
+
+stderr | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] selo do plano de stories falhou: stores.tasks.createPlanAtomically is not a function
+
+stdout | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] orquestrador respawnado para mission-1 (session=session-5)
+
+stderr | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] selo do plano de stories falhou: stores.tasks.createPlanAtomically is not a function
+[fast-lane] first-wave falhou; Maestro segue: [vitest] No "listAdapters" export is defined on the "../adapters/adapter-registry" mock. Did you forget to return it from "vi.mock"?
+If you need to partially mock a module, you can use "importOriginal" helper inside:
+
+
+stdout | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] Pronto justified by all-workers-delivered (0/0)
+
+stderr | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] selo do plano de stories falhou: stores.tasks.createPlanAtomically is not a function
+
+stdout | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] orquestrador respawnado para mission-1 (session=session-6)
+
+stderr | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] selo do plano de stories falhou: stores.tasks.createPlanAtomically is not a function
+[fast-lane] first-wave falhou; Maestro segue: [vitest] No "listAdapters" export is defined on the "../adapters/adapter-registry" mock. Did you forget to return it from "vi.mock"?
+If you need to partially mock a module, you can use "importOriginal" helper inside:
+
+
+stdout | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] Pronto justified by all-workers-delivered (0/0)
+
+stderr | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] selo do plano de stories falhou: stores.tasks.createPlanAtomically is not a function
+
+stdout | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] orquestrador respawnado para mission-1 (session=session-7)
+
+stderr | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] selo do plano de stories falhou: stores.tasks.createPlanAtomically is not a function
+[fast-lane] first-wave falhou; Maestro segue: [vitest] No "listAdapters" export is defined on the "../adapters/adapter-registry" mock. Did you forget to return it from "vi.mock"?
+If you need to partially mock a module, you can use "importOriginal" helper inside:
+
+
+stdout | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] Pronto justified by all-workers-delivered (0/0)
+
+stderr | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] selo do plano de stories falhou: stores.tasks.createPlanAtomically is not a function
+
+stdout | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] orquestrador respawnado para mission-1 (session=session-8)
+
+stderr | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] selo do plano de stories falhou: stores.tasks.createPlanAtomically is not a function
+[fast-lane] first-wave falhou; Maestro segue: [vitest] No "listAdapters" export is defined on the "../adapters/adapter-registry" mock. Did you forget to return it from "vi.mock"?
+If you need to partially mock a module, you can use "importOriginal" helper inside:
+
+
+stdout | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] Pronto justified by all-workers-delivered (0/0)
+
+stderr | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] selo do plano de stories falhou: stores.tasks.createPlanAtomically is not a function
+
+stdout | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] orquestrador respawnado para mission-1 (session=session-9)
+
+stderr | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] selo do plano de stories falhou: stores.tasks.createPlanAtomically is not a function
+[fast-lane] first-wave falhou; Maestro segue: [vitest] No "listAdapters" export is defined on the "../adapters/adapter-registry" mock. Did you forget to return it from "vi.mock"?
+If you need to partially mock a module, you can use "importOriginal" helper inside:
+
+
+stdout | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] Pronto justified by all-workers-delivered (0/0)
+
+stderr | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] selo do plano de stories falhou: stores.tasks.createPlanAtomically is not a function
+
+stdout | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] orquestrador respawnado para mission-1 (session=session-10)
+
+stderr | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] selo do plano de stories falhou: stores.tasks.createPlanAtomically is not a function
+[fast-lane] first-wave falhou; Maestro segue: [vitest] No "listAdapters" export is defined on the "../adapters/adapter-registry" mock. Did you forget to return it from "vi.mock"?
+If you need to partially mock a module, you can use "importOriginal" helper inside:
+
+
+stdout | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] Pronto justified by all-workers-delivered (0/0)
+
+stderr | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] selo do plano de stories falhou: stores.tasks.createPlanAtomically is not a function
+
+stdout | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] orquestrador respawnado para mission-1 (session=session-11)
+
+stderr | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] selo do plano de stories falhou: stores.tasks.createPlanAtomically is not a function
+[fast-lane] first-wave falhou; Maestro segue: [vitest] No "listAdapters" export is defined on the "../adapters/adapter-registry" mock. Did you forget to return it from "vi.mock"?
+If you need to partially mock a module, you can use "importOriginal" helper inside:
+
+
+stdout | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] Pronto justified by all-workers-delivered (0/0)
+
+stderr | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] selo do plano de stories falhou: stores.tasks.createPlanAtomically is not a function
+
+stdout | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] orquestrador respawnado para mission-1 (session=session-12)
+
+stderr | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] selo do plano de stories falhou: stores.tasks.createPlanAtomically is not a function
+[fast-lane] first-wave falhou; Maestro segue: [vitest] No "listAdapters" export is defined on the "../adapters/adapter-registry" mock. Did you forget to return it from "vi.mock"?
+If you need to partially mock a module, you can use "importOriginal" helper inside:
+
+
+stdout | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] Pronto justified by all-workers-delivered (0/0)
+
+stderr | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] selo do plano de stories falhou: stores.tasks.createPlanAtomically is not a function
+
+stdout | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] orquestrador respawnado para mission-1 (session=session-13)
+
+stderr | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs
+[fast-lane] selo do plano de stories falhou: stores.tasks.createPlanAtomically is not a function
+[fast-lane] first-wave falhou; Maestro segue: [vitest] No "listAdapters" export is defined on the "../adapters/adapter-registry" mock. Did you forget to return it from "vi.mock"?
+If you need to partially mock a module, you can use "importOriginal" helper inside:
+
+
+stderr | src/main/orch/mission-fast-lane-pane-binding.test.ts > first-wave physical pane binding > does not persist a worker with missing nonce
+[fast-lane] first-wave falhou; Maestro segue: first-wave worker physical spawn authority is missing or mismatched
+
+stdout | src/main/orch/turn-end-handoff.integration.test.ts > late physical Stop after provisional handoff > accepts the real answer once and retires its diagnostic (dispatch=true)
+[turn-end-handoff] late-worker-session: fechado mecanicamente (handoff handoff-bda6a7a0-2d6c-4dc0-ba49-ca3a64f2439a)
+
+stdout | src/main/orch/turn-end-handoff.integration.test.ts > late physical Stop after provisional handoff > accepts the real answer once and retires its diagnostic (dispatch=true)
+[turn-end-handoff] late-worker-session: worker já entregou handoff neste turno
+
+stderr | src/main/orch/mission-fast-lane-pane-binding.test.ts > first-wave physical pane binding > does not persist a worker with missing seal
+[fast-lane] first-wave falhou; Maestro segue: first-wave worker physical spawn authority is missing or mismatched
+
+ ✓ src/main/orch/handoff-store.test.ts (14 tests) 924ms
+stderr | src/main/orch/mission-fast-lane-pane-binding.test.ts > first-wave physical pane binding > does not persist a worker with different session
+[fast-lane] first-wave falhou; Maestro segue: first-wave worker physical spawn authority is missing or mismatched
+
+stderr | src/main/orch/turn-end-handoff.integration.test.ts > late physical Stop after provisional handoff > rejects a late answer from an old incarnation and preserves its diagnostic
+[turn-end-handoff] late-worker-session: submissão mecânica falhou: worker incarnation obsoleta: PTY stream não pertence ao dispatch físico atual
+
+stderr | src/main/orch/mission-fast-lane-pane-binding.test.ts > first-wave physical pane binding > does not persist a worker with different pane
+[fast-lane] first-wave falhou; Maestro segue: first-wave worker physical spawn authority is missing or mismatched
+
+stderr | src/main/orch/turn-end-handoff.integration.test.ts > late physical Stop after provisional handoff > rejects a late answer from an replaced dispatch and preserves its diagnostic
+[turn-end-handoff] late-worker-session: submissão mecânica falhou: handoff replay recusado: dispatch não possui handoff físico vinculado
+
+stderr | src/main/orch/mission-fast-lane-pane-binding.test.ts > first-wave physical pane binding > does not persist a worker with different mission
+[fast-lane] first-wave falhou; Maestro segue: first-wave worker physical spawn authority is missing or mismatched
+
+stderr | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > missão running sem orquestrador vivo → respawn chama redeliverPendingHandoffs
+[fast-lane] selo do plano de stories falhou: stores.tasks.createPlanAtomically is not a function
+
+stdout | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > missão running sem orquestrador vivo → respawn chama redeliverPendingHandoffs
+[fast-lane] orquestrador respawnado para mission-1 (session=session-1)
+
+stderr | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > missão running sem orquestrador vivo → respawn chama redeliverPendingHandoffs
+[fast-lane] selo do plano de stories falhou: stores.tasks.createPlanAtomically is not a function
+[fast-lane] first-wave falhou; Maestro segue: [vitest] No "listAdapters" export is defined on the "../adapters/adapter-registry" mock. Did you forget to return it from "vi.mock"?
+If you need to partially mock a module, you can use "importOriginal" helper inside:
+
+
+stdout | src/main/orch/turn-end-handoff.integration.test.ts > late physical Stop after provisional handoff > preserves a real worker block as the delivered outcome
+[turn-end-handoff] late-worker-session: anexado ao handoff handoff-666f0593-d390-4f92-b816-2f2f5a19d0ba (modo attach)
+
+stderr | src/main/orch/mission-fast-lane-pane-binding.test.ts > first-wave physical pane binding > does not persist a worker with different agent
+[fast-lane] first-wave falhou; Maestro segue: first-wave worker physical spawn authority is missing or mismatched
+
+stderr | src/main/orch/turn-end-handoff.integration.test.ts > late physical Stop after provisional handoff > does not treat a replaced dispatch session as ad-hoc (incarnation=late-worker-incarnation)
+[turn-end-handoff] late-worker-session: submissão mecânica falhou: worker incarnation obsoleta: dispatch pertence a outra sessão física
+
+stderr | src/main/orch/turn-end-handoff.integration.test.ts > late physical Stop after provisional handoff > does not treat a replaced dispatch session as ad-hoc (incarnation=replacement-incarnation)
+[turn-end-handoff] late-worker-session: submissão mecânica falhou: handoff_provenance: late worker has no current dispatch binding
+
+stderr | src/main/orch/mission-fast-lane-pane-binding.test.ts > first-wave physical pane binding > does not persist a worker with different checkout
+[fast-lane] first-wave falhou; Maestro segue: first-wave worker physical spawn authority is missing or mismatched
+
+stderr | src/main/orch/turn-end-handoff.integration.test.ts > late physical Stop after provisional handoff > preserves ambiguous diagnostics even when a previous pane is persisted (current pane=dispatched-pane)
+[turn-end-handoff] late-worker-session: submissão mecânica falhou: handoff_provenance: late worker has no current dispatch binding
+
+stderr | src/main/orch/mission-fast-lane-pane-binding.test.ts > first-wave physical pane binding > does not persist a worker with old intent hash
+[fast-lane] first-wave falhou; Maestro segue: first-wave worker physical spawn authority is missing or mismatched
+
+stderr | src/main/orch/turn-end-handoff.integration.test.ts > late physical Stop after provisional handoff > preserves ambiguous diagnostics even when a previous pane is persisted (current pane=replacement-pane)
+[turn-end-handoff] late-worker-session: submissão mecânica falhou: handoff_provenance: late worker has no current dispatch binding
+
+stdout | src/main/orch/mission-fast-lane-pane-binding.test.ts > first-wave physical pane binding > persists the original pty spawn authority and makes its later physical responses eligible
+[fast-lane] first-wave pergunta abriu 3 pane(s) read-only no mesmo turno do Maestro (mission-8aceae7b-bdcc-4b85-8bbb-f21a26438739)
+
+stdout | src/main/orch/turn-end-handoff.integration.test.ts > late physical Stop after provisional handoff > keeps ordinary ad-hoc submission available alongside unrelated dispatches
+[turn-end-handoff] late-worker-session: fechado mecanicamente (handoff handoff-b2f23aaf-2ab9-4d24-b30c-27bf8c3477f8)
+
+stdout | src/main/orch/mission-fast-lane-pane-binding.test.ts > first-wave physical pane binding > persists the original acp spawn authority and makes its later physical responses eligible
+[fast-lane] first-wave pergunta abriu 3 pane(s) read-only no mesmo turno do Maestro (mission-42b9fa11-22a6-4899-b5eb-fec65d3356f0)
+
+ ✓ src/main/orch/mission-fast-lane-pane-binding.test.ts (10 tests) 625ms
+stderr | src/main/orch/turn-end-handoff.integration.test.ts > late physical Stop after provisional handoff > does not use a missing diagnostic incarnation to bypass the replacement fence
+[turn-end-handoff] late-worker-session: submissão mecânica falhou: handoff_provenance: late worker has no current dispatch binding
+
+stderr | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > worker morto sem entrega conta mortalidade e jorna o evento (A1)
+[fast-lane] selo do plano de stories falhou: stores.tasks.createPlanAtomically is not a function
+
+stdout | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > worker morto sem entrega conta mortalidade e jorna o evento (A1)
+[fast-lane] orquestrador respawnado para mission-1 (session=session-1)
+
+stderr | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > worker morto sem entrega conta mortalidade e jorna o evento (A1)
+[fast-lane] selo do plano de stories falhou: stores.tasks.createPlanAtomically is not a function
+[fast-lane] first-wave falhou; Maestro segue: [vitest] No "listAdapters" export is defined on the "../adapters/adapter-registry" mock. Did you forget to return it from "vi.mock"?
+If you need to partially mock a module, you can use "importOriginal" helper inside:
+
+
+stderr | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > worker morto sem entrega conta mortalidade e jorna o evento (A1)
+[fast-lane] worker_done ignored — 0 files-modified and no MCP handoff (mission=mission-1)
+[fast-lane] worker pane-worker-morto (glm) morreu sem entregar — mortalidade 1 em mission-1
+
+stderr | src/main/orch/turn-end-handoff.integration.test.ts > late physical Stop after provisional handoff > rechecks the dispatch binding after asynchronous handoff preparation
+[turn-end-handoff] late-worker-session: submissão mecânica falhou: handoff_provenance: dispatch binding changed during handoff preparation
+
+ ✓ src/main/orch/turn-end-handoff.integration.test.ts (13 tests) 859ms
+stderr | src/main/orch/login-stuck-watchdog.test.ts > installLoginStuckWatchdog (wiring) > tracks busy agent sessions and surfaces the stuck state
+[login-stuck] pane p1 (claude) parado em "claude login menu" — sem saída nova por 2×15s
+
+stderr | src/main/orch/login-stuck-watchdog.test.ts > installLoginStuckWatchdog (wiring) > requires the current pane nonce for synthetic failure (current-worker-incarnation)
+[login-stuck] pane p1 (codex) parado em "mcp handshake failed" — sem saída nova por 2×15s
+[login-stuck] mcp-auth fail-fast handoff: p1 (mcp handshake failed)
+
+stderr | src/main/orch/login-stuck-watchdog.test.ts > installLoginStuckWatchdog (wiring) > requires the current pane nonce for synthetic failure (undefined)
+[login-stuck] pane p1 (codex) parado em "mcp handshake failed" — sem saída nova por 2×15s
+
+ ✓ src/main/orch/login-stuck-watchdog.test.ts (19 tests) 15ms
+ ✓ src/main/adapters/subscription-auth.test.ts (56 tests) 35ms
+stderr | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > worker que entregou antes de morrer é prova de vida, não mortalidade
+[fast-lane] selo do plano de stories falhou: stores.tasks.createPlanAtomically is not a function
+
+stdout | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > worker que entregou antes de morrer é prova de vida, não mortalidade
+[fast-lane] orquestrador respawnado para mission-1 (session=session-1)
+
+stderr | src/main/orch/mission-fast-lane-respawn-redelivery.test.ts > respawn do orquestrador re-entrega handoffs pendentes (A3) > worker que entregou antes de morrer é prova de vida, não mortalidade
+[fast-lane] selo do plano de stories falhou: stores.tasks.createPlanAtomically is not a function
+[fast-lane] first-wave falhou; Maestro segue: [vitest] No "listAdapters" export is defined on the "../adapters/adapter-registry" mock. Did you forget to return it from "vi.mock"?
+If you need to partially mock a module, you can use "importOriginal" helper inside:
+
+
+ ✓ src/main/orch/mission-fast-lane-respawn-redelivery.test.ts (4 tests) 3447ms
+   ✓ respawn do orquestrador re-entrega handoffs pendentes (A3) > encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs  2385ms
+   ✓ respawn do orquestrador re-entrega handoffs pendentes (A3) > worker morto sem entrega conta mortalidade e jorna o evento (A1)  497ms
+   ✓ respawn do orquestrador re-entrega handoffs pendentes (A3) > worker que entregou antes de morrer é prova de vida, não mortalidade  322ms
+ ✓ src/main/orch/intent-router-credentials.test.ts (26 tests) 80ms
+ ✓ src/main/orch/mission-engine.test.ts (21 tests) 31ms
+ ✓ src/main/orch/mission-engine-preparation.test.ts (28 tests) 42ms
+stdout | src/main/orch/orch-ipc-authority.test.ts > canonical MissionEngine IPC boundary > auto-confirms Encerrar and physically closes before reading the stopped snapshot
+[orch] mission runtime close auto-confirmed project=project-a mission=mission-stop-canonical sessions=0
+
+stdout | src/main/orch/orch-ipc-authority.test.ts > canonical MissionEngine IPC boundary > Encerrar does not open a native dialog and parks a running mission
+[orch] mission runtime close auto-confirmed project=project-a mission=mission-stop-denied sessions=0
+
+stdout | src/main/orch/orch-ipc-authority.test.ts > canonical MissionEngine IPC boundary > refuses a canonical stopped snapshot when physical exit is not proven
+[orch] mission runtime close auto-confirmed project=project-a mission=mission-stop-proof sessions=1
+
+ ✓ src/shared/mission-intent.test.ts (53 tests) 45ms
+ ✓ src/main/adapters/adapter-registry.test.ts (70 tests) 33ms
+stdout | src/main/orch/orch-ipc-authority.test.ts > mission runtime close IPC authority > closes an already-blocked physical runtime and preserves the mission row
+[orch] mission runtime close auto-confirmed project=project-a mission=mission-stuck sessions=1
+
+stdout | src/main/orch/orch-ipc-authority.test.ts > mission runtime close IPC authority > encerra mesmo quando a missão recebe escrita durável enquanto o modal está aberto
+[orch] mission runtime close auto-confirmed project=project-a mission=mission-viva sessions=1
+
+stderr | src/main/persistence/provider-config-spawn.test.ts > G3 — pane sem conta pinada nasce na conta com folga > usa a irmã mais livre indicada pelo snapshot de quota no lugar da ativa
+[spawn] conta ativa "Conta A" sem folga; pane nasce em "Conta B" (kimi)
+
+stderr | src/main/persistence/provider-config-spawn.test.ts > G3 — pane sem conta pinada nasce na conta com folga > nada livre com credencial cai no caminho legado sem recusar o pane
+[spawn] nenhuma conta livre com credencial para kimi; abrindo no caminho legado
+
+stderr | src/main/persistence/provider-config-spawn.test.ts > G9 — modelo salvo desconhecido não desce para o pane > default salvo fora da lista viva cai no default do adapter no spawn
+[agy] modelo salvo "gemini-9-turbo" desconhecido pela CLI; pane usa o default "gemini-3.7-flash-high" (preferência mantida)
+
+ ✓ src/main/persistence/provider-config-spawn.test.ts (29 tests) 18ms
+stderr | src/main/orch/orch-ipc-authority.test.ts > orchestration init/close epoch serialization > keeps a live start supervisor after a transient MCP failure
+[nexus] orchestration MCP bootstrap failed; retry remains supervised: {
+  attempt: 1,
+  nextRetryAt: 1788567799706,
+  error: 'temporary localhost bind failure'
+}
+
+ ✓ src/main/orch/orch-ipc-authority.test.ts (104 tests) 801ms
+ ✓ src/main/orch/pty-stream-handoff.test.ts (5 tests) 8ms
+ ✓ src/renderer/lib/mission-attention-route.test.ts (17 tests) 10ms
+ ✓ src/main/orch/mission-fast-lane.test.ts (44 tests) 31ms
+ ✓ src/main/orch/civilian-delivery-completion.test.ts (52 tests) 22ms
+ ✓ src/shared/mission-routing-advice.test.ts (10 tests) 12ms
+ ✓ src/main/orch/intent-router.test.ts (20 tests) 16ms
+ ✓ src/main/orch/intent-router-matrix.test.ts (41 tests) 11ms
+stdout | src/main/orch/mission-team-question-completion.test.ts > team-question automatic completion > accepts all three physically identified responses without attaching old files or the master claim
+[fast-lane] Pronto justified by all-workers-delivered (3/3)
+
+ ✓ src/main/orch/mission-team-question-completion.test.ts (27 tests) 29ms
+ ✓ src/main/orch/orchestrator-doctrine.test.ts (25 tests) 14ms
+ ✓ src/main/orch/civilian-pronto.test.ts (19 tests) 20ms
+ ✓ src/main/orch/mission-engine-production.test.ts (16 tests) 15ms
+ ✓ src/renderer/components/settings/accounts-login-view.test.ts (10 tests) 5ms
+ ✓ src/shared/pane-meta-task.test.ts (8 tests) 5ms
+ ✓ src/shared/attention-inbox.test.ts (6 tests) 4ms
+ ✓ src/main/adapters/native-oauth-keychain.test.ts (3 tests) 4ms
+ ✓ src/main/adapters/auth-probe.test.ts (4 tests) 3ms
+ ✓ src/main/orch/turn-end-handoff.test.ts (39 tests) 8ms
+ ✓ src/main/orch/provisional-worker-handoff.test.ts (7 tests) 2ms
+ ✓ src/renderer/components/settings/providers-panel-view.test.ts (11 tests) 5ms
+ ✓ src/renderer/lib/mission-lifecycle-copy.test.ts (5 tests) 4ms
+ ✓ src/renderer/orch/mission-runtime-readiness.test.ts (12 tests) 6ms
+ ✓ src/renderer/state/orch-store.test.ts (6 tests) 11ms
+ ✓ src/main/orch/mission-fast-lane-adjustment-hold.test.ts (7 tests) 4ms
+ ✓ src/renderer/components/mission/MissionBoard.test.tsx (26 tests) 206ms
+ ✓ src/renderer/components/TerminalGridDialog.test.tsx (12 tests) 331ms
+ ✓ src/renderer/App.test.tsx (35 tests) 367ms
+ ✓ src/renderer/components/product/WorkspaceRail.test.tsx (17 tests) 271ms
+ ✓ src/renderer/components/mission/MissionSetup.test.tsx (65 tests) 1277ms
+ ✓ src/renderer/components/settings/ProvidersPanel.test.tsx (9 tests) 135ms
+ ✓ src/renderer/components/product/TerminalWorkspace.test.tsx (8 tests) 209ms
+ ✓ src/renderer/state/orch-store.workspace.test.ts (12 tests) 111ms
+ ✓ src/renderer/components/settings/AccountsManager.test.tsx (17 tests) 173ms
+ ✓ src/renderer/components/product/Launcher.test.tsx (4 tests) 50ms
+ ✓ src/renderer/components/AttentionInbox.test.tsx (3 tests) 39ms
+ ✓ src/renderer/terminal/terminal-host.test.ts (10 tests) 17ms
+
+ Test Files  49 passed (49)
+      Tests  1129 passed (1129)
+   Start at  21:23:14
+   Duration  12.20s (transform 5.50s, setup 287ms, collect 21.33s, tests 10.41s, environment 5.42s, prepare 2.54s)

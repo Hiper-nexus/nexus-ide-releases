@@ -1,0 +1,23 @@
+{
+  "tool": "CodeRabbit CLI",
+  "findings": 3,
+  "resolutions": [
+    {
+      "file": "src/main/orch/civilian-pronto.ts",
+      "status": "fixed",
+      "validation": "RED/GREEN regressions and independent read-only review; integrated 1129 tests passed"
+    },
+    {
+      "file": "src/main/orch/civilian-delivery-completion.ts",
+      "status": "fixed",
+      "validation": "RED/GREEN regressions and independent read-only review; integrated 1129 tests passed"
+    },
+    {
+      "file": "src/shared/mission-topology.ts",
+      "status": "fixed",
+      "validation": "RED/GREEN regressions and independent read-only review; integrated 1129 tests passed"
+    }
+  ],
+  "independentReviewer": "review_mission_router",
+  "limits": "No production release. Later manual Muse native-auth attempt reviewed separately."
+}

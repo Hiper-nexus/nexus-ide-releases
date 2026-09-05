@@ -68,6 +68,7 @@ describe('orch-store canonical mission summaries', () => {
     useOrchStore.setState({
       missions: [],
       missionSummaries: [],
+      missionSummariesHydrated: false,
       boundWorkspacePath: '/workspace/a',
     });
   });
@@ -89,5 +90,13 @@ describe('orch-store canonical mission summaries', () => {
 
     expect(useOrchStore.getState().missionSummaries).toEqual([summary]);
     expect(useOrchStore.getState().missions).toEqual([legacyMission]);
+  });
+
+  it('distinguishes an authoritative empty snapshot from a workspace waiting for hydration', () => {
+    expect(useOrchStore.getState().missionSummariesHydrated).toBe(false);
+    useOrchStore.getState().setMissionSummaries([]);
+    expect(useOrchStore.getState().missionSummariesHydrated).toBe(true);
+    useOrchStore.getState().resetProjectState();
+    expect(useOrchStore.getState().missionSummariesHydrated).toBe(false);
   });
 });

@@ -112,6 +112,7 @@ export function modelCountLabel(provider: ProviderSettingsInfo): string {
  */
 export interface ProviderAccountHealth {
   readonly needsRelogin?: boolean;
+  readonly authState?: 'ok' | 'missing' | 'unknown' | 'checking';
 }
 
 export function providerStatusLabel(
@@ -125,6 +126,10 @@ export function providerStatusLabel(
     return { label: 'não instalada', tone: 'warn' };
   }
   if (!provider.enabled) return { label: 'desligada', tone: 'muted' };
+  if (health?.authState === 'ok') return { label: 'conectado', tone: 'ok' };
+  if (health?.authState === 'unknown') return { label: 'não verificado', tone: 'muted' };
+  if (health?.authState === 'checking') return { label: 'verificando…', tone: 'muted' };
+  if (health?.authState === 'missing') return { label: 'precisa login', tone: 'warn' };
   if (provider.authStrategy === 'login-needed') {
     return { label: 'precisa login', tone: 'warn' };
   }
@@ -136,6 +141,7 @@ export function providerStatusLabel(
 
 export type ProviderRowCta =
   | { readonly kind: 'login'; readonly label: string }
+  | { readonly kind: 'verify'; readonly label: string }
   | { readonly kind: 'key'; readonly label: string }
   | { readonly kind: 'install'; readonly label: string };
 
@@ -150,7 +156,10 @@ export function providerRowCta(
       : null;
   }
   if (!provider.enabled) return null;
-  if (provider.authStrategy === 'login-needed') {
+  if (health?.authState === 'ok') return null;
+  if (health?.authState === 'checking') return null;
+  if (health?.authState === 'unknown') return { kind: 'verify', label: 'Verificar sessão' };
+  if (health?.authState === 'missing' || provider.authStrategy === 'login-needed') {
     if (provider.loginCommand) return { kind: 'login', label: 'Entrar' };
     if (provider.keyEnvVar) return { kind: 'key', label: 'Colar chave' };
   }

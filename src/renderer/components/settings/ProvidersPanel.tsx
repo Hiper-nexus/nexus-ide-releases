@@ -1,17 +1,17 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react';
-import type { ProviderSettingsInfo } from '../../../shared/provider-settings-types';
+import type { AdapterAuthStatus, ProviderSettingsInfo } from '../../../shared/provider-settings-types';
 import { credentialLinkForKeySlot } from '../../../shared/credential-links';
 import { useAccountStore } from '../../state/account-store';
 import { useProviderStore } from '../../state/provider-store';
 import { openExternalFromAnchor } from '../../lib/open-external';
 import { ActionCard } from '../ActionCard';
 import { AccountsManager } from './AccountsManager';
-import { openCliLoginTerminal } from './cli-login-terminal';
 import { ProviderLogo } from '../ProviderLogo';
 import { PixelIcon } from '../PixelIcon';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
@@ -29,8 +29,7 @@ import {
 } from './providers-panel-view';
 
 /**
- * Providers hub — lista de CLIs com estado honesto e um CTA por linha.
- * Detalhe embaixo: contas, chave, avançado.
+ * Provider selection stays separate from the selected tool's account actions.
  */
 
 function modelLabel(provider: ProviderSettingsInfo, model: string): string {
@@ -337,26 +336,18 @@ function ProviderRow({
   selected,
   accountCount,
   needsRelogin,
-  loginBusy,
-  installBusy,
+  authState,
   onSelect,
-  onLogin,
-  onInstall,
 }: {
   provider: ProviderSettingsInfo;
   selected: boolean;
   accountCount: number;
   needsRelogin: boolean;
-  loginBusy: boolean;
-  installBusy: boolean;
+  authState: AdapterAuthStatus['state'] | 'checking';
   onSelect: () => void;
-  onLogin: () => void;
-  onInstall: () => void;
 }) {
-  const status = providerStatusLabel(provider, { needsRelogin });
+  const status = providerStatusLabel(provider, { needsRelogin, authState });
   const models = modelCountLabel(provider);
-  const cta = providerRowCta(provider, { needsRelogin });
-  const ctaBusy = cta?.kind === 'login' ? loginBusy : installBusy;
 
   return (
     <div
@@ -393,52 +384,19 @@ function ProviderRow({
           )}
         </span>
       </button>
-      {cta?.kind === 'login' && (
-        <button
-          type="button"
-          className="settings-btn settings-btn--primary prov-row__cta"
-          disabled={ctaBusy}
-          onClick={onLogin}
-          title="Abre um terminal e roda o login desta CLI. Quem guarda a sessão é a própria ferramenta."
-          aria-label={`${cta.label} — ${provider.label}`}
-          data-testid={`prov-login-${provider.adapterId}`}
-        >
-          {ctaBusy ? 'Abrindo…' : cta.label}
-        </button>
-      )}
-      {cta?.kind === 'install' && (
-        <button
-          type="button"
-          className="settings-btn settings-btn--primary prov-row__cta"
-          disabled={ctaBusy}
-          onClick={onInstall}
-          title="Instala a CLI pela fonte oficial (confirmação nativa mostra o comando)"
-          aria-label={`Instalar ${provider.label}`}
-          data-testid={`prov-install-${provider.adapterId}`}
-        >
-          {ctaBusy ? 'Instalando…' : cta.label}
-        </button>
-      )}
-      {cta?.kind === 'key' && (
-        <button
-          type="button"
-          className="settings-btn settings-btn--primary prov-row__cta"
-          onClick={onSelect}
-          title="Abre o campo para colar a chave desta CLI"
-          aria-label={`Colar chave de ${provider.label}`}
-          data-testid={`prov-key-${provider.adapterId}`}
-        >
-          {cta.label}
-        </button>
-      )}
+
     </div>
   );
 }
 
 function ProviderDetail({
   provider,
+  authStatus,
+  onAuthStatusChange,
 }: {
   provider: ProviderSettingsInfo;
+  authStatus: AdapterAuthStatus | null;
+  onAuthStatusChange: (status: AdapterAuthStatus) => void;
 }) {
   const setConfig = useProviderStore((s) => s.setConfig);
   const hydrateProviders = useProviderStore((s) => s.hydrate);
@@ -478,7 +436,7 @@ function ProviderDetail({
   const modelValue = selectModelValue(provider);
 
   return (
-    <div className="prov-detail" data-adapter={provider.adapterId}>
+    <section className="prov-detail" data-adapter={provider.adapterId} aria-label={`Configurar ${provider.label}`}>
       <header className="prov-detail__head">
         <ProviderLogo
           adapterId={provider.adapterId}
@@ -489,7 +447,7 @@ function ProviderDetail({
           <h4 className="prov-detail__title">{provider.label}</h4>
           <p className="prov-detail__sub">
             {provider.installed
-              ? `Detectado · ${provider.detectedBin || provider.adapterId}`
+              ? 'Instalada nesta máquina'
               : 'Não encontrado no PATH — instale a CLI ou aponte o binário em Avançado'}
           </p>
           {!provider.installed && provider.canAutoInstall && (
@@ -520,16 +478,27 @@ function ProviderDetail({
             <span className="prov__switch-thumb" />
           </span>
           <span className="prov__toggle-label">
-            {provider.enabled ? 'on' : 'off'}
+            {provider.enabled ? 'Ativa' : 'Desligada'}
           </span>
         </label>
       </header>
+
+      <div className="prov__block prov__block--accounts">
+        <AccountsManager
+          adapterId={provider.adapterId}
+          adapterLabel={provider.label}
+          authStatus={authStatus}
+          onAuthStatusChange={onAuthStatusChange}
+          loginCommand={provider.loginCommand}
+        />
+      </div>
 
       <div className="prov__block">
         <span className="prov__block-title">Modelo padrão</span>
         <label className="prov__field prov__field--wide">
           <select
             className="settings-input"
+            aria-label={`Modelo padrão de ${provider.label}`}
             value={modelValue}
             disabled={provider.models.length === 0}
             onChange={(e) => {
@@ -553,16 +522,6 @@ function ProviderDetail({
             </span>
           )}
         </label>
-        <div className="prov__field prov__field--wide">
-          <CustomModels provider={provider} />
-        </div>
-      </div>
-
-      <div className="prov__block prov__block--accounts">
-        <AccountsManager
-          adapterId={provider.adapterId}
-          adapterLabel={provider.label}
-        />
       </div>
 
       {(provider.keyEnvVar || provider.hasKey || !isLocalCliProvider(provider)) && (
@@ -590,6 +549,9 @@ function ProviderDetail({
         </button>
         {advancedOpen && (
           <div className="prov-advanced__body">
+            <div className="prov__field prov__field--wide">
+              <CustomModels provider={provider} />
+            </div>
             <div className="prov__block">
               <span className="prov__block-title">Modelo e execução</span>
               <div className="prov__grid">
@@ -644,9 +606,8 @@ function ProviderDetail({
         )}
       </div>
 
-      {provider.loginHint && <p className="prov__hint">{provider.loginHint}</p>}
       {riskWarning && <p className="prov__warn">{riskWarning}</p>}
-    </div>
+    </section>
   );
 }
 
@@ -664,8 +625,50 @@ export function ProvidersPanel() {
   const [showAbsent, setShowAbsent] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [loginBusyId, setLoginBusyId] = useState<string | null>(null);
-  const [loginNotice, setLoginNotice] = useState<string | null>(null);
+  const [catalogNotice, setCatalogNotice] = useState<string | null>(null);
+  const [authStatuses, setAuthStatuses] = useState<readonly AdapterAuthStatus[] | null>(null);
+
+  const acceptAuthStatus = useCallback((status: AdapterAuthStatus) => {
+    setAuthStatuses((current) => [
+      ...(current ?? []).filter((item) => item.adapterId !== status.adapterId),
+      status,
+    ]);
+  }, []);
+
+  useEffect(() => {
+    let alive = true;
+    void window.nexus.providers.authStatus().then(
+      (statuses) => { if (alive) setAuthStatuses(statuses); },
+      () => { if (alive) setAuthStatuses([]); },
+    );
+    return () => { alive = false; };
+  }, []);
+
+  // The main process publishes observed state after each auth probe. Consume
+  // that snapshot without probing again and creating a broadcast loop.
+  useEffect(() => {
+    setAuthStatuses((current) => {
+      let next = current;
+      for (const provider of providers) {
+        if (!provider.authState) continue;
+        const previous = next?.find((status) => status.adapterId === provider.adapterId);
+        if (previous?.state === provider.authState) continue;
+        next = [
+          ...(next ?? []).filter((status) => status.adapterId !== provider.adapterId),
+          {
+            adapterId: provider.adapterId,
+            state: provider.authState,
+            detail: provider.authState === 'ok'
+              ? 'Sessão verificada nesta máquina.'
+              : provider.authState === 'missing'
+                ? 'Entre nesta ferramenta para usar sua conta.'
+                : 'Não foi possível verificar a conexão.',
+          },
+        ];
+      }
+      return next;
+    });
+  }, [providers]);
 
   const visible = useMemo(
     () => filterProvidersForTab(providers, tab, { showAbsent }),
@@ -715,39 +718,14 @@ export function ProvidersPanel() {
       // O badge "N contas" e o status de sessão vêm da account store — sem
       // este hydrate o pós-login mostrava a linha stale até outro reload.
       await useAccountStore.getState().hydrate();
+      setAuthStatuses(await window.nexus.providers.authStatus());
     } catch (err) {
       console.warn('[providers] refresh failed:', err);
       // Spinner parava sem feedback: o operador achava que o login não pegou.
-      setLoginNotice('Não consegui reexaminar as CLIs. Tente de novo.');
+      setCatalogNotice('Não consegui reexaminar as CLIs. Tente de novo.');
     } finally {
       setRefreshing(false);
     }
-  }
-
-  /**
-   * Login sem atrito: o Nexus abre um terminal, roda o comando de login da
-   * própria CLI e reexamina as CLIs quando aquele terminal encerra. Nenhuma
-   * credencial passa pelo Nexus — quem guarda a sessão é a ferramenta.
-   */
-  async function startLogin(provider: ProviderSettingsInfo) {
-    const command = provider.loginCommand;
-    if (!command || loginBusyId !== null) return;
-    setLoginBusyId(provider.adapterId);
-    setLoginNotice(null);
-    const result = await openCliLoginTerminal({
-      command,
-      adapterId: provider.adapterId,
-      adapterLabel: provider.label,
-      onFinished: () => {
-        void refreshCatalog();
-      },
-    });
-    setLoginBusyId(null);
-    setLoginNotice(
-      result.ok
-        ? `${provider.label}: terminal aberto. Conclua o login lá. Quando a CLI confirmar, o card some sozinho.`
-        : `${provider.label}: ${result.error}`,
-    );
   }
 
   const missingInstallable = useMemo(
@@ -790,28 +768,6 @@ export function ProvidersPanel() {
     );
   }
 
-  async function installOne(provider: ProviderSettingsInfo) {
-    if (provisioning !== null) return;
-    setSelectedId(provider.adapterId);
-    setProvisionSummary(null);
-    setProvisioning(provider.label);
-    try {
-      const result = await window.nexus.providers.installCli(provider.adapterId);
-      setProvisionSummary(
-        result.ok
-          ? `${provider.label} instalada.`
-          : `${provider.label}: ${result.error ?? 'instalação falhou'}`,
-      );
-      await hydrate();
-    } catch (err) {
-      setProvisionSummary(
-        `${provider.label}: ${err instanceof Error ? err.message : 'instalação falhou'}`,
-      );
-    } finally {
-      setProvisioning(null);
-    }
-  }
-
   function onTabKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
     const order = PROVIDERS_HUB_TABS;
     const idx = order.indexOf(tab);
@@ -843,7 +799,7 @@ export function ProvidersPanel() {
         <div>
           <SettingsSectionTitle>Providers</SettingsSectionTitle>
           <p className="settings-detail__hint prov-hub__lede">
-            Estado de cada CLI e como entrar
+            Conecte suas ferramentas e defina os modelos que você quer usar.
           </p>
         </div>
         {missingInstallable.length > 0 && (
@@ -912,7 +868,7 @@ export function ProvidersPanel() {
           <div className="prov-hub__actions">
             <button
               type="button"
-              className="settings-btn settings-btn--primary"
+              className="settings-btn"
               disabled={refreshing}
               onClick={() => void refreshCatalog()}
               title="Reexamina PATH e caminhos absolutos das CLIs, auth e catálogo de modelos"
@@ -923,18 +879,23 @@ export function ProvidersPanel() {
           </div>
         </div>
 
+        <div className="prov-hub__workspace">
         {visible.length === 0 ? (
           <div className="prov-hub__empty" data-testid="prov-empty">
             {tab === 'clis' ? (
               <>
                 <p>
-                  Nenhuma CLI detectada no PATH. Instale Claude, Codex, Gemini ou
-                  outra e clique em <strong>Reexaminar CLIs</strong>.
+                  Nenhuma ferramenta de IA encontrada neste computador.
+                  Escolha uma para instalar ou use Reexaminar CLIs se já instalou uma.
                 </p>
                 <p className="prov-hub__empty-hint">
-                  Dica: o Nexus resolve caminhos absolutos em PATH, ~/.local/bin,
-                  ~/.kimi-code/bin, Homebrew, Volta/NVM/Bun e npm global.
+                  Você poderá entrar com sua conta na ferramenta escolhida.
                 </p>
+                {!showAbsent && (
+                  <button type="button" className="settings-btn settings-btn--primary" onClick={() => setShowAbsent(true)}>
+                    Ver ferramentas para instalar
+                  </button>
+                )}
               </>
             ) : tab === 'remote' ? (
               <p>Nenhum provider remoto/API configurado neste build.</p>
@@ -948,7 +909,7 @@ export function ProvidersPanel() {
             )}
           </div>
         ) : (
-          <div className="prov-row-list" role="list" data-testid="prov-tile-grid">
+          <div className="prov-row-list" role="list" aria-label="Ferramentas de IA" data-testid="prov-tile-grid">
             {visible.map((p) => (
               <ProviderRow
                 key={p.adapterId}
@@ -956,31 +917,33 @@ export function ProvidersPanel() {
                 selected={p.adapterId === selectedId}
                 accountCount={accountCountByAdapter.get(p.adapterId) ?? 0}
                 needsRelogin={reloginByAdapter.has(p.adapterId)}
-                loginBusy={loginBusyId === p.adapterId}
-                installBusy={provisioning === p.label}
+                authState={authStatuses?.find((status) => status.adapterId === p.adapterId)?.state
+                  ?? p.authState ?? (authStatuses === null ? 'checking' : 'unknown')}
                 onSelect={() => setSelectedId(p.adapterId)}
-                onLogin={() => void startLogin(p)}
-                onInstall={() => void installOne(p)}
               />
             ))}
           </div>
-        )}
-
-        {loginNotice && (
-          <p
-            className="settings-field__note prov-hub__login-notice"
-            role="status"
-            data-testid="prov-login-notice"
-          >
-            {loginNotice}
-          </p>
         )}
 
         {selected && (
           <ProviderDetail
             key={selected.adapterId}
             provider={selected}
+            authStatus={authStatuses === null ? null : authStatuses.find(
+              (status) => status.adapterId === selected.adapterId,
+            ) ?? { adapterId: selected.adapterId, state: selected.authState ?? 'unknown', detail: 'Não foi possível verificar a conexão.' }}
+            onAuthStatusChange={acceptAuthStatus}
           />
+        )}
+        </div>
+        {catalogNotice && (
+          <p
+            className="settings-field__note prov-hub__login-notice"
+            role="status"
+            data-testid="prov-login-notice"
+          >
+            {catalogNotice}
+          </p>
         )}
       </div>
     </section>

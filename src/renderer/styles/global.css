@@ -17,9 +17,12 @@
 @import './orchestration.css';
 @import './settings.css';
 @import './settings-controls.css';
+@import './harness-settings.css';
+@import './catalog-settings.css';
 @import './settings-appearance.css';
 @import './ui-actions.css';
 @import './panels.css';
+@import './terminal-setup.css';
 @import './endorphin.css';
 @import './endorphin-surfaces.css';
 @import './mcp-across-tools.css';

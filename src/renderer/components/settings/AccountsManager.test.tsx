@@ -100,9 +100,61 @@ describe('AccountsManager', () => {
     expect(host.textContent).toContain('conectado');
     expect(host.textContent).toContain('API key');
     expect(host.textContent).toMatch(/entrar com outra conta/i);
-    expect(host.textContent).toMatch(/salvar conta logada/i);
+    expect(host.textContent).toContain('Salvar esta conta');
     expect(host.textContent).not.toMatch(/abrir login da CLI/i);
     expect(host.textContent).not.toMatch(/1 ·/i);
+    act(() => root.unmount());
+  });
+
+  it('offers one save action for the current session, without duplicate account cards', async () => {
+    const { host, root } = mount();
+    await act(async () => { await Promise.resolve(); });
+
+    const saveActions = [...host.querySelectorAll('button')].filter((button) =>
+      /Salvar (esta conta|conta logada)/i.test(button.textContent ?? ''),
+    );
+    expect(saveActions).toHaveLength(1);
+    expect(host.querySelectorAll('.acct__add-choice')).toHaveLength(0);
+    expect(host.textContent).not.toContain('Adicionar a 2ª conta');
+    act(() => root.unmount());
+  });
+
+  it('offers an explicit retry when the login terminal could not open', async () => {
+    vi.mocked(openCliLoginTerminal).mockResolvedValueOnce({
+      ok: false, error: 'O terminal não ficou disponível. O login não foi iniciado.',
+    });
+    const { host, root } = mount();
+    await act(async () => { await Promise.resolve(); });
+    const login = [...host.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('Entrar com outra conta'),
+    );
+    await act(async () => { login!.click(); });
+
+    const retry = [...host.querySelectorAll('button')].find((button) =>
+      button.textContent === 'Tentar abrir novamente',
+    );
+    expect(retry).toBeTruthy();
+    await act(async () => { retry!.click(); });
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    expect(host.textContent).toContain('Terminal de login aberto');
+    act(() => root.unmount());
+  });
+
+  it('uses the login command supplied by a provider outside the built-in account table', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(<AccountsManager adapterId="custom-cli" adapterLabel="Custom CLI"
+        loginCommand="custom-cli auth login"
+        authStatus={{ adapterId: 'custom-cli', state: 'missing', detail: 'Entre na ferramenta.' }} />);
+    });
+    const login = host.querySelector<HTMLButtonElement>('[data-testid="acct-login-cta"]');
+    expect(login).toBeTruthy();
+    await act(async () => { login!.click(); });
+    expect(openCliLoginTerminal).toHaveBeenCalledWith(expect.objectContaining({
+      adapterId: 'custom-cli', command: 'custom-cli auth login',
+    }));
     act(() => root.unmount());
   });
 

@@ -1,0 +1,9 @@
+{
+  "executionCalls": [],
+  "roles": [
+    "orchestrator",
+    "executor"
+  ],
+  "step": "team",
+  "warning": "Adicione ao menos uma pessoa independente para verificar a entrega."
+}

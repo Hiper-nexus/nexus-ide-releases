@@ -164,10 +164,6 @@ export const orchSettingsSchema = z.object({
   /** Modo sóbrio: oculta HUD/celebrações/narração da gamificação (o XP
    *  continua acumulando em silêncio). */
   soberMode: z.boolean().default(false),
-  /** Mission driver ativo (Fase C): aplica efeitos autônomos (advance/complete/
-   *  signal-stall/respawn) com budget. Default true: o Ralph coordena missões
-   *  autopilot; false permanece como opt-out/shadow. Exige restart para aplicar. */
-  missionDriverActiveMode: z.boolean().default(true),
   /**
    * Autoaceita somente menus de boot conhecidos e assinados por adapter.
    * O default preserva o fluxo sem pane engolindo kickoff; false é o kill

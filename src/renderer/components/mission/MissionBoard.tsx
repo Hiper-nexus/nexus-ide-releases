@@ -897,6 +897,13 @@ export function MissionBoard({
             >
               Tentar novamente
             </button>
+            <button
+              type="button"
+              className="mission-board__button mission-board__button--secondary"
+              onClick={() => useProductNavigationStore.getState().openLauncher()}
+            >
+              Voltar ao Início
+            </button>
           </div>
         ) : (
           <p className="mission-board__loading" role="status" aria-live="polite">

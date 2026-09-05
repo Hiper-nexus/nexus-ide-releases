@@ -180,6 +180,7 @@ vi.mock('./MissionInspector', () => ({
 }));
 
 import { MissionBoard } from './MissionBoard';
+import { useProductNavigationStore } from '../../state/product-navigation-store';
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -514,6 +515,15 @@ afterEach(() => {
 });
 
 describe('MissionBoard canonical controller', () => {
+  it('provides an explicit exit to Início when the mission cannot be loaded', async () => {
+    api.snapshot.mockRejectedValue(new Error('Mission not found'));
+    useProductNavigationStore.getState().openMission('mission-alpha');
+    const { host } = mount();
+    await flush();
+    await click(buttonByName(host, 'Voltar ao Início'));
+    expect(useProductNavigationStore.getState().destination).toEqual({ kind: 'launcher' });
+  });
+
   it('loads through the top-level mission API and renders canonical header facts', async () => {
     const { host } = mount();
     await flush();

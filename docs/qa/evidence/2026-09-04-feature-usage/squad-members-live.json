@@ -1,0 +1,41 @@
+{
+  "destination": {
+    "kind": "mission-setup"
+  },
+  "roster": [
+    {
+      "cli": "claude",
+      "name": "Maestro",
+      "role": "orchestrator"
+    },
+    {
+      "cli": "codex",
+      "model": "gpt-5.6-terra",
+      "name": "Frontend",
+      "role": "executor"
+    },
+    {
+      "cli": "codex",
+      "model": "gpt-5.6-terra",
+      "name": "UX & Conteúdo",
+      "role": "architect"
+    },
+    {
+      "cli": "codex",
+      "model": "gpt-5.6-terra",
+      "name": "QA & Acessibilidade",
+      "role": "reviewer"
+    },
+    {
+      "cli": "codex",
+      "model": "gpt-5.6-terra",
+      "name": "Reviewer P0–P3",
+      "role": "reviewer"
+    }
+  ],
+  "step": "mission",
+  "flow": "Settings > Squads > Landing Page > Usar integrantes",
+  "missionStarted": false,
+  "scope": "Applies member configuration, not global squad instructions or arbitrary capability grants.",
+  "matchesSavedMemberIdentityModelAndInstructions": true
+}

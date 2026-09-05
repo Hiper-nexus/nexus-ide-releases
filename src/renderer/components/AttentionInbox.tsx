@@ -8,6 +8,7 @@ import {
 import { listPanes } from '../lib/split-tree';
 import {
   attentionCauseForMissionState,
+  attentionMissionIdForPane,
   routeMissionAttention,
 } from '../lib/mission-attention-route';
 import { useAttentionInboxStore } from '../state/attention-inbox-store';
@@ -54,9 +55,11 @@ function jump(item: AttentionItem): void {
     const pane = listPanes(useLayoutStore.getState().root).find(
       (candidate) => candidate.id === item.targetId,
     );
-    if (pane?.missionId) {
+    if (!pane) return;
+    const missionId = attentionMissionIdForPane(pane);
+    if (missionId) {
       routeMissionAttention({
-        missionId: pane.missionId,
+        missionId,
         cause: 'human-input',
         notificationPaneId: pane.id,
       });
@@ -92,6 +95,9 @@ export function AttentionInbox() {
   const waitingSnapshot = useAgentWaitingStore((s) => s.snapshot);
   const pr = useGitScmStore((s) => s.pr);
   const missions = useOrchStore((s) => s.missionSummaries);
+  const missionsHydrated = useOrchStore((s) => s.missionSummariesHydrated);
+  const paneMissions = useOrchStore((s) => s.paneMissions);
+  const layoutRoot = useLayoutStore((s) => s.root);
   const providers = useProviderStore((s) => s.providers);
 
   useEffect(() => {
@@ -107,10 +113,17 @@ export function AttentionInbox() {
   }, [open, setOpen]);
 
   const items = useMemo(
-    () =>
-      collectAttentionItems({
+    () => {
+      const panes = new Map(listPanes(layoutRoot).map((pane) => [pane.id, pane]));
+      const missionIds = new Set(missions.map((mission) => mission.id));
+      return collectAttentionItems({
         notifications,
-        waitingAgents: [...waitingSnapshot.entries.values()],
+        waitingAgents: [...waitingSnapshot.entries.values()].filter((entry) => {
+          const pane = panes.get(entry.paneId);
+          if (!pane) return false;
+          const missionId = pane.missionId ?? paneMissions[pane.id];
+          return !missionId || !missionsHydrated || missionIds.has(missionId);
+        }),
         pr: pr
           ? {
               number: pr.number,
@@ -121,8 +134,9 @@ export function AttentionInbox() {
           : null,
         missions,
         providers,
-      }),
-    [notifications, waitingSnapshot, pr, missions, providers],
+      });
+    },
+    [notifications, waitingSnapshot, pr, missions, missionsHydrated, paneMissions, layoutRoot, providers],
   );
 
   const setCount = useAttentionInboxStore((s) => s.setCount);

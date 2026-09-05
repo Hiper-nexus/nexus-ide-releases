@@ -23,6 +23,13 @@ function entry(
 }
 
 describe('quota-policy', () => {
+  it('does not count an auth cooldown as high quota when the provider reports low usage', () => {
+    const account = entry({ id: 'auth', adapterId: 'claude', onCooldown: true, cooldownKind: 'auth',
+      windows: [{ kind: 'weekly', label: 'Semanal', usedRatio: 0.1, source: 'provider-api', confidence: 'high' }],
+    });
+    expect(buildFleetSnapshot([account]).highUsageCount).toBe(0);
+    expect(quotaAvailabilityScore(account)).toBe(0);
+  });
   it('computes worst ratio and high usage', () => {
     const e = entry({
       id: 'claude:a',

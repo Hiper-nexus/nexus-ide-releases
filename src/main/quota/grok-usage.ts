@@ -262,8 +262,7 @@ export function parseGrokTeamsUsage(
   ] as const) {
     const raw = root[key];
     if (typeof raw === 'number' && Number.isFinite(raw)) {
-      const ratio =
-        raw > 1 ? Math.min(1, raw / 100) : Math.max(0, Math.min(1, raw));
+      const ratio = Math.max(0, Math.min(1, raw / 100));
       return [
         knownWindow({
           kind,

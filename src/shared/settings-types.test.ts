@@ -116,14 +116,28 @@ describe('orchSettingsSchema', () => {
     expect(DEFAULT_ORCH_SETTINGS.agentRestorePolicy).toBe('resume');
     // Intent-first is on by default: squad select does not burn tokens.
     expect(DEFAULT_ORCH_SETTINGS.intentFirstMissionRuntimeV1).toBe(true);
-    // Ralph coordinates autopilot missions unless the user explicitly opts out.
-    expect(DEFAULT_ORCH_SETTINGS.missionDriverActiveMode).toBe(true);
     // Known boot dialogs are handled by default, with an explicit persisted kill switch.
     expect(DEFAULT_ORCH_SETTINGS.cliPromptAutoResponderEnabled).toBe(true);
     // Autopilot floor: handoff crypto attestation is Hardened opt-in only.
     expect(DEFAULT_ORCH_SETTINGS.agentAttestationGate).toBe('off');
     expect(DEFAULT_ORCH_SETTINGS.squadCliPolicy).toBe('operator-choice');
     expect(DEFAULT_ORCH_SETTINGS.fastPath).toBe(true);
+  });
+
+  it('discards the retired driver preference without resetting valid legacy settings', () => {
+    const parsed = orchSettingsSchema.parse({
+      missionDriverActiveMode: false,
+      defaultAdapterId: 'codex',
+      defaultModel: 'gpt-5.6-sol',
+      agentRestorePolicy: 'pause',
+      cliPromptAutoResponderEnabled: false,
+    });
+    expect(parsed).toMatchObject({
+      defaultAdapterId: 'codex', defaultModel: 'gpt-5.6-sol',
+      agentRestorePolicy: 'pause', cliPromptAutoResponderEnabled: false,
+    });
+    expect(parsed).not.toHaveProperty('missionDriverActiveMode');
+    expect(DEFAULT_ORCH_SETTINGS).not.toHaveProperty('missionDriverActiveMode');
   });
 
   it('persists an explicit CLI prompt autoresponder kill switch', () => {

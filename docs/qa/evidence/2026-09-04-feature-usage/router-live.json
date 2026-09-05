@@ -1,0 +1,13 @@
+{
+  "flow": "window.nexus.mission.routeIntent through live DEV IPC",
+  "objective": "Crie uma landing page responsiva para uma cafeteria, com boa hierarquia visual, e revise a segurança do formulário de contato.",
+  "elapsedMs": 1247,
+  "result": {
+    "kind": "mission-work",
+    "skills": [
+      "impeccable",
+      "bridgesecurity"
+    ]
+  },
+  "proofScope": "Real classifier response; does not prove a worker read or applied the suggested skills."
+}

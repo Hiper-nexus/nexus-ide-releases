@@ -41,6 +41,150 @@ const LIVE_USAGE = {
 };
 
 describe('QuotaService limit-hit expiry', () => {
+  it.each([true, false])('never probes an incompatible or orphaned routed account (provider exists=%s)', async (exists) => {
+    const fetchImpl = vi.fn(async () => ({ ok: false, status: 403, json: async () => ({}), text: async () => '' }));
+    const svc = new QuotaService({
+      listProviders: () => exists ? [{ ...provider('grok'), routable: false, authStrategy: 'api-key' }] : [],
+      listAccounts: () => [{ id: 'foreign-route', adapterId: 'grok', mode: 'api-key', upstream: 'longcat', label: 'foreign fixture', onCooldown: false } as AccountInfo],
+      resolveGenericApiKeyCandidates: (_owner, accountId) => accountId ? ['fixture-longcat-owned-opaque'] : [],
+      resolveApiQuotaKey: ({ accountId }) => accountId ? 'fixture-longcat-owned-opaque' : null, fetchImpl,
+    });
+    const result = await svc.snapshot(HIT_AT);
+    expect(result.entries.find((entry) => entry.accountId === 'foreign-route')?.windows.every((w) => w.usedRatio === null)).toBe(true);
+    expect(fetchImpl.mock.calls.length).toBe(0);
+    svc.stop();
+  });
+  it.each(['claude', 'codex'])('does not read a native OAuth quota for a %s API-key origin', async (adapterId) => {
+    const resolveClaudeAccessToken = vi.fn(() => 'native-oauth-not-to-read');
+    const resolveCodexAuthCandidates = vi.fn(() => [{ accessToken: 'native-codex-not-to-read' }]);
+    const fetchImpl = vi.fn(async () => ({ ok: true, status: 200, json: async () => LIVE_USAGE, text: async () => '' }));
+    const svc = new QuotaService({
+      listProviders: () => [{ ...provider(adapterId), authStrategy: 'api-key', routable: false, upstream: 'anthropic' }],
+      listAccounts: () => [], resolveClaudeAccessToken, resolveCodexAuthCandidates, fetchImpl,
+    });
+    const result = await svc.snapshot(HIT_AT);
+    expect(result.entries[0].windows.every((w) => w.usedRatio === null)).toBe(true);
+    expect(resolveClaudeAccessToken.mock.calls.length + resolveCodexAuthCandidates.mock.calls.length).toBe(0);
+    expect(fetchImpl.mock.calls.length).toBe(0);
+    svc.stop();
+  });
+
+  it('does not consult subscription credentials for an exact Anthropic API-key account', async () => {
+    const resolvedAccounts: Array<string | undefined> = [];
+    const svc = new QuotaService({
+      listProviders: () => [{ ...provider('claude'), authStrategy: 'subscription', routable: true, upstream: 'anthropic' }],
+      listAccounts: () => [{ id: 'api-account', adapterId: 'claude', mode: 'api-key', upstream: 'anthropic', label: 'API', onCooldown: false } as AccountInfo],
+      resolveClaudeAccessToken: (accountId) => { resolvedAccounts.push(accountId); return null; },
+    });
+    const result = await svc.snapshot(HIT_AT);
+    expect(result.entries.find((entry) => entry.accountId === 'api-account')?.windows.every((w) => w.usedRatio === null)).toBe(true);
+    expect(resolvedAccounts).toEqual([undefined]);
+    svc.stop();
+  });
+
+  it('invalidates cached API quota when auth mode changes on the same explicit upstream', async () => {
+    let authStrategy: 'subscription' | 'api-key' = 'subscription';
+    const requests: string[] = [];
+    const svc = new QuotaService({
+      listProviders: () => [{ ...provider('claude'), routable: true, upstream: 'glm', authStrategy }],
+      listAccounts: () => [], resolveApiQuotaKey: () => 'owner-key',
+      fetchImpl: async (url) => { requests.push(url); return { ok: true, status: 200,
+        json: async () => ({ data: { limits: [{ type: 'TOKENS_LIMIT', unit: 3, number: 5, percentage: 12 }] } }), text: async () => '' };
+      },
+    });
+    await svc.snapshot(HIT_AT);
+    authStrategy = 'api-key';
+    await svc.snapshot(HIT_AT + 1_000);
+    expect(requests).toHaveLength(2);
+    svc.stop();
+  });
+  it('keeps installed native sessions eligible while their auth proof is still warming', async () => {
+    const svc = new QuotaService({
+      listProviders: () => [{ ...provider('claude'), authStrategy: 'login-needed', authState: 'unknown' }],
+      listAccounts: () => [],
+      resolveClaudeAccessToken: async () => 'native-test-token',
+      fetchImpl: async () => ({ ok: true, status: 200, json: async () => LIVE_USAGE, text: async () => '' }),
+    });
+    const result = await svc.snapshot(HIT_AT);
+    expect(result.entries).toHaveLength(1);
+    expect(result.entries[0].windows.find((w) => w.kind === 'hours')?.usedRatio).toBe(0.12);
+    svc.stop();
+  });
+  it('keeps adapter identity while routing an explicitly configured upstream quota', async () => {
+    const resolveClaudeAccessToken = vi.fn(async () => 'native-credential-not-to-use');
+    const resolveApiQuotaKey = vi.fn(() => 'routed-owner-key');
+    const svc = new QuotaService({
+      listProviders: () => [{ ...provider('claude', 'Claude'), routable: true, upstream: 'glm', authStrategy: 'api-key' }],
+      listAccounts: () => [], resolveClaudeAccessToken, resolveApiQuotaKey,
+      fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ data: { limits: [
+        { type: 'TOKENS_LIMIT', unit: 3, number: 5, percentage: 12 },
+      ] } }), text: async () => '' }),
+    });
+    const result = await svc.snapshot(HIT_AT);
+    expect(result.entries[0]).toMatchObject({ adapterId: 'claude', usageProviderId: 'glm' });
+    expect(result.entries[0].windows.find((w) => w.kind === 'hours')?.usedRatio).toBe(0.12);
+    expect(resolveClaudeAccessToken.mock.calls.length).toBe(0);
+    expect(resolveApiQuotaKey).toHaveBeenCalledWith({ adapterId: 'claude', accountId: undefined, usageProviderId: 'glm', authMode: 'api-key' });
+    svc.stop();
+  });
+
+  it('does not reuse a cached quota after the declared upstream changes', async () => {
+    let upstream = 'glm';
+    const svc = new QuotaService({
+      listProviders: () => [{ ...provider('claude'), routable: true, upstream }], listAccounts: () => [],
+      resolveApiQuotaKey: () => 'owner-key',
+      fetchImpl: async (url) => ({ ok: url.includes('api.z.ai'), status: url.includes('api.z.ai') ? 200 : 403,
+        json: async () => ({ data: { limits: [{ type: 'TOKENS_LIMIT', unit: 3, number: 5, percentage: 12 }] } }),
+        text: async () => '',
+      }),
+    });
+    const original = await svc.snapshot(HIT_AT);
+    expect(original.entries[0].windows.some((window) => window.source === 'provider-api')).toBe(true);
+    upstream = 'longcat';
+    const changed = await svc.snapshot(HIT_AT + 1_000);
+    expect(changed.entries[0].usageProviderId).toBe('longcat');
+    expect(changed.entries[0].windows.every((w) => w.usedRatio === null)).toBe(true);
+    svc.stop();
+  });
+
+  it('does not infer routed API quota from the default upstream or a subscription account', async () => {
+    const resolveGenericApiKeyCandidates = vi.fn(() => ['must-not-read']);
+    const svc = new QuotaService({
+      listProviders: () => [{ ...provider('claude'), routable: true, upstream: 'anthropic' }],
+      listAccounts: () => [{ id: 'subscription', adapterId: 'claude', mode: 'subscription', upstream: 'glm', label: 'saved', onCooldown: false } as AccountInfo],
+      resolveGenericApiKeyCandidates,
+    });
+    const result = await svc.snapshot(HIT_AT);
+    expect(result.entries.every((entry) => entry.usageProviderId === undefined)).toBe(true);
+    expect(resolveGenericApiKeyCandidates.mock.calls.length).toBe(0);
+    svc.stop();
+  });
+  it('drops an expired API reading when its normal refresh fails', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => LIVE_USAGE })
+      .mockResolvedValueOnce({ ok: false, status: 503 });
+    const svc = new QuotaService({
+      listProviders: () => [provider('claude')], listAccounts: () => [],
+      resolveClaudeAccessToken: () => 'test-token', fetchImpl,
+    });
+    const first = await svc.snapshot(HIT_AT);
+    expect(first.entries[0].windows.some((w) => w.source === 'provider-api')).toBe(true);
+    const expired = await svc.snapshot(HIT_AT + 60_001);
+    expect(expired.entries[0].windows.every((w) => w.usedRatio === null)).toBe(true);
+    svc.stop();
+  });
+
+  it('keeps the observation time of cached API readings instead of claiming a new observation', async () => {
+    const svc = new QuotaService({
+      listProviders: () => [provider('claude')], listAccounts: () => [],
+      resolveClaudeAccessToken: () => 'test-token',
+      fetchImpl: async () => ({ ok: true, status: 200, json: async () => LIVE_USAGE, text: async () => '' }),
+    });
+    await svc.snapshot(HIT_AT);
+    const cached = await svc.snapshot(HIT_AT + 1_000);
+    expect(cached.entries[0].updatedAt).toBe(HIT_AT);
+    svc.stop();
+  });
   it('applies noted hit while cooldown active, then recovers to unknown after expiry', async () => {
     const svc = new QuotaService({
       listProviders: () => [provider('claude', 'Claude')],

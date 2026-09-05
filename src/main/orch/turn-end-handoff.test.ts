@@ -157,6 +157,23 @@ describe('countRecentWorkerHandoffs (dedup por encarnação física)', () => {
     );
     expect(n).toBe(0);
   });
+
+  it.each(['nexus-watchdog', 'nexus-handoff-enforcement'])('não deduplica diagnóstico provisório de %s', (fromAgent) => {
+    expect(countRecentWorkerHandoffs(
+      [mk({ sessionId: 's1', fromAgent, status: 'blocked' })],
+      { sessionId: 's1', windowStart: 0 },
+    )).toBe(0);
+  });
+
+  it('mantém dedup para diagnóstico que possui receipt físico ou confirmação humana', () => {
+    expect(countRecentWorkerHandoffs(
+      [
+        mk({ sessionId: 's1', fromAgent: 'nexus-watchdog', status: 'failed', mcpProvenance: {} as Handoff['mcpProvenance'] }),
+        mk({ sessionId: 's1', fromAgent: 'nexus-handoff-enforcement', status: 'blocked', authorityOrigin: 'operator-confirmed' }),
+      ],
+      { sessionId: 's1', windowStart: 0 },
+    )).toBe(2);
+  });
 });
 
 describe('buildMechanicalHandoffPayload (regra 1.2.3)', () => {

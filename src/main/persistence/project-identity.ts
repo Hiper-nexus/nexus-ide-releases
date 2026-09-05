@@ -898,8 +898,8 @@ export function clearProjectExecutionScopeCache(): void {
 
 /**
  * Same as resolveProjectExecutionScope, but reuses the last result (ok or
- * throw) for PROJECT_EXECUTION_SCOPE_CACHE_TTL_MS. Cron/goal-driver tick
- * every 30s used to spawnSync git on the main thread and freeze CDP
+ * throw) for PROJECT_EXECUTION_SCOPE_CACHE_TTL_MS. Periodic scope lookups
+ * used to spawnSync git on the main thread and freeze CDP
  * (DEV 25/08: json/list hung while rev-list ETIMEDOUT). Negative entries
  * keep a timed-out git from blocking every subsequent tick.
  */

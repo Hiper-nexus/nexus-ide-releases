@@ -7,26 +7,20 @@ import { Launcher } from './Launcher';
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
-
-const mountedRoots: Root[] = [];
-
+const roots: Root[] = [];
 function render(node: ReactNode): HTMLElement {
   const host = document.createElement('div');
   document.body.appendChild(host);
   const root = createRoot(host);
-  mountedRoots.push(root);
+  roots.push(root);
   act(() => root.render(node));
   return host;
 }
-
 afterEach(() => {
-  for (const root of mountedRoots.splice(0)) {
-    act(() => root.unmount());
-  }
+  for (const root of roots.splice(0)) act(() => root.unmount());
   document.body.replaceChildren();
 });
-
-function renderLauncher() {
+function setup() {
   const handlers = {
     onOpenWorkspace: vi.fn(),
     onStartMission: vi.fn(),
@@ -34,85 +28,69 @@ function renderLauncher() {
     onOpenShellTerminal: vi.fn(),
     onOpenTaskBoard: vi.fn(),
     onOpenMemory: vi.fn(),
+    onOpenProviders: vi.fn(),
   };
-  const host = render(<Launcher {...handlers} />);
-  return { host, handlers };
+  return { host: render(<Launcher {...handlers} />), handlers };
 }
-
-describe('Launcher', () => {
-  it('offers the mission path plus pane, shell, folder, board and memory', () => {
-    const { host } = renderLauncher();
-    const buttons = [...host.querySelectorAll<HTMLButtonElement>('button')];
-
-    expect(buttons).toHaveLength(6);
-    expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual([
-      'Missão em equipe',
-      'Abrir um pane',
-      'Abrir terminal puro',
-      'Abrir uma pasta de projeto',
-      'Abrir Quadro',
-      'Abrir Memória',
-    ]);
-    expect(host.textContent).toContain(
-      'Já tenho arquivos no computador e quero trabalhar em cima deles.',
+function button(host: HTMLElement, label: string): HTMLButtonElement {
+  const found = [...host.querySelectorAll<HTMLButtonElement>('button')].find(
+    (b) =>
+      b.getAttribute('aria-label') === label || b.textContent?.trim() === label,
+  );
+  expect(found, label).toBeDefined();
+  return found!;
+}
+describe('Launcher onboarding', () => {
+  it('explains the first project and gives one clear AI starting action', () => {
+    const { host, handlers } = setup();
+    expect(host.querySelector('h1')?.textContent).toBe(
+      'O que você quer criar?',
     );
-    expect(host.textContent).toContain(
-      'Descreva o que você quer entregar e o Nexus organiza o trabalho.',
-    );
-    expect(host.textContent).toContain(
-      'Escolha a ferramenta (Claude, Codex…) à mão, sem abrir missão.',
-    );
-    expect(host.textContent).toContain('Shell do sistema, sem assistente.');
-    expect(host.textContent).toContain(
-      'Acompanhe tarefas e organize o que vem a seguir.',
-    );
-    expect(host.textContent).toContain(
-      'Consulte notas locais, decisões e referências do projeto.',
-    );
-  });
-
-  it('routes every action through its explicit callback', () => {
-    const { host, handlers } = renderLauncher();
-    const buttons = [...host.querySelectorAll<HTMLButtonElement>('button')];
-
-    for (const button of buttons) {
-      act(() => button.click());
-    }
-
-    expect(handlers.onOpenWorkspace).toHaveBeenCalledOnce();
+    expect(host.textContent).toContain('site, aplicativo');
+    act(() => button(host, 'Criar com IA').click());
     expect(handlers.onStartMission).toHaveBeenCalledOnce();
-    expect(handlers.onOpenPane).toHaveBeenCalledOnce();
-    expect(handlers.onOpenShellTerminal).toHaveBeenCalledOnce();
+    expect(handlers.onOpenPane).not.toHaveBeenCalled();
+    expect(handlers.onOpenWorkspace).not.toHaveBeenCalled();
+  });
+  it('explains three real steps and provides an actionable AI setup shortcut', () => {
+    const { host, handlers } = setup();
+    expect(host.querySelectorAll('.launcher__steps > li')).toHaveLength(3);
+    expect(host.textContent).toContain('Conte sua ideia');
+    expect(host.textContent).toContain('Prepare o projeto');
+    expect(host.textContent).toContain('Acompanhe e revise');
+    act(() => button(host, 'Conectar uma IA').click());
+    expect(handlers.onOpenProviders).toHaveBeenCalledOnce();
+    expect(handlers.onStartMission).not.toHaveBeenCalled();
+  });
+  it('keeps project and terminal shortcuts available without completing a tour', () => {
+    const { host, handlers } = setup();
+    for (const [label, handler] of [
+      ['Abrir projeto existente', handlers.onOpenWorkspace],
+      ['Montar meus terminais', handlers.onOpenPane],
+      ['Abrir terminal sem IA', handlers.onOpenShellTerminal],
+    ] as const) {
+      act(() => button(host, label).click());
+      expect(handler).toHaveBeenCalledOnce();
+    }
+  });
+  it('keeps organization tools under an optional disclosure and preserves their routes', () => {
+    const { host, handlers } = setup();
+    const details = host.querySelector('details');
+    expect(details?.open).toBe(false);
+    act(() => details!.querySelector('summary')!.click());
+    expect(details?.open).toBe(true);
+    act(() => button(host, 'Abrir Quadro de tarefas').click());
+    act(() => button(host, 'Abrir Memória do projeto').click());
     expect(handlers.onOpenTaskBoard).toHaveBeenCalledOnce();
     expect(handlers.onOpenMemory).toHaveBeenCalledOnce();
   });
-
-  it('uses native keyboard-focusable buttons and makes the mission action primary', () => {
-    const { host } = renderLauncher();
-    const buttons = [...host.querySelectorAll<HTMLButtonElement>('button')];
-    const mission = buttons.find(
-      (button) => button.getAttribute('aria-label') === 'Missão em equipe',
-    );
-
-    expect(buttons.every((button) => button.tabIndex === 0)).toBe(true);
-    mission?.focus();
-    expect(document.activeElement).toBe(mission);
-    expect(mission?.classList.contains('launcher-action--primary')).toBe(true);
-    expect(
-      buttons
-        .filter((button) => button !== mission)
-        .every(
-          (button) =>
-            !button.classList.contains('launcher-action--primary'),
-        ),
-    ).toBe(true);
-  });
-
-  it('does not expose legacy modes or operational jargon', () => {
-    const { host } = renderLauncher();
-
+  it('uses keyboard reachable controls and avoids orchestration jargon', () => {
+    const { host } = setup();
+    const primary = button(host, 'Criar com IA');
+    primary.focus();
+    expect(document.activeElement).toBe(primary);
     expect(host.textContent).not.toMatch(
-      /Autopilot|Free|Squad|PRD|orquestrador|worker|provider|XP|custo/i,
+      /\b(?:Autopilot|Squad|PRD|orquestrador|worker|provider|XP|handoff)\b/i,
     );
   });
 });

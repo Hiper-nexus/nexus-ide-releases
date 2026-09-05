@@ -277,7 +277,7 @@ const SHORTCUT_GROUP_ORDER: ShortcutGroupId[] = [
 
 export function ShortcutsSection() {
   return (
-    <section>
+    <section className="catalog-settings catalog-settings--shortcuts">
       <SettingsSectionTitle>Atalhos</SettingsSectionTitle>
       <p className="settings-detail__hint">
         Teclado e gestos do workspace — a mesma lista do cheatsheet (

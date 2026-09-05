@@ -1,0 +1,15 @@
+{
+  "date": "2026-09-04",
+  "cliVersion": "1.0.3-R2198.1",
+  "probe": "muse exec --json --provider meta --no-session-log --no-foreign-personal-context --disable-write --disable-shell --disable-web-tools --max-model-steps 1 --reasoning-effort minimal --workspace <empty-temporary-directory> <1+1 request>",
+  "environment": { "MUSE_NO_AUTO_UPDATE": "1" },
+  "timeoutMs": 30000,
+  "exitCode": 0,
+  "timedOut": false,
+  "elapsedMs": 4168,
+  "jsonEvents": 16,
+  "hasExactAnswer2": true,
+  "errorClasses": [],
+  "workspaceRemovedAfterProbe": true,
+  "claim": "Native Muse authentication and a model reply worked. Does not verify Nexus mission dispatch for Muse."
+}

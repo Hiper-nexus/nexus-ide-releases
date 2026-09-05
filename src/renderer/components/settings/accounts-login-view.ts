@@ -98,13 +98,15 @@ function accountsPanelHint(
     return `Verificando a sessão de ${name}…`;
   }
   if (!flags.askLogin) {
-    return 'A em uso abre o próximo terminal. Reserva entra no failover.';
+    return input.hasActiveVault
+      ? 'A conta em uso será aplicada ao próximo terminal.'
+      : 'A sessão desta ferramenta foi verificada nesta máquina.';
   }
   const dock = input.isClaude ? ' O app Claude no Dock não conta.' : '';
   if (flags.unverified) {
     return (
       `Não deu para verificar a sessão desta CLI.${dock} ` +
-      'Abra o login no terminal se precisar.'
+      'Use Verificar sessão para consultar novamente.'
     );
   }
   if (input.vaultCount > 0) {

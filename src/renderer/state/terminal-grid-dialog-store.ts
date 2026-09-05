@@ -2,7 +2,6 @@ import { create } from 'zustand';
 
 export interface TerminalGridDialogOptions {
   readonly initialCount?: number;
-  readonly replaceExisting?: boolean;
 }
 
 interface TerminalGridDialogStore {

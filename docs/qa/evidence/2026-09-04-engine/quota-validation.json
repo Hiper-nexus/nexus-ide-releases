@@ -1,0 +1,27 @@
+{
+  "date": "2026-09-04",
+  "validation": {
+    "testFiles": 21,
+    "passedTests": 255,
+    "areas": ["src/main/quota", "src/main/adapters/native-oauth-keychain.test.ts", "src/main/persistence/provider-config-spawn.test.ts", "src/main/adapters/subscription-auth.test.ts", "src/main/adapters/auth-probe.test.ts"],
+    "environment": "Temporary HOME and CLI config roots; empty key environment; mocked credential and HTTP dependencies",
+    "liveNetworkDuringUnitTests": false
+  },
+  "independentReplay": {
+    "date": "2026-09-05",
+    "result": "pass",
+    "covered": ["canonical owner/upstream key", "incompatible and orphaned account", "legitimate launcher upstream", "concurrent cache identity", "same-identity late response", "coalesced response and latest-only publication"],
+    "environment": "Closed VM with fictional credential sentinels and mocked transport; no real credentials or network"
+  },
+  "observationsBeforeFix": {
+    "codexUi": {"hoursUsedRatio": 0.55, "weeklyUsedRatio": 0.55, "sameResetOnBothWindows": true},
+    "claudeUi": {"authState": "ok", "hoursUsedRatio": null, "weeklyUsedRatio": null}
+  },
+  "priorReadOnlyClaudeProof": {
+    "httpStatus": 200,
+    "hoursUsedRatio": 0,
+    "weeklyUsedRatio": 0.11,
+    "credentialValuesRetained": false
+  },
+  "crossVendorRequestClaim": "Confirmed reachable code defect and mocked requests only; no assertion of an observed real cross-vendor request."
+}

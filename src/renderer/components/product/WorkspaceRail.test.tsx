@@ -93,6 +93,32 @@ function renderRail(overrides: Partial<WorkspaceRailProps> = {}) {
 }
 
 describe('WorkspaceRail', () => {
+  it('keeps destinations and settings outside the scrollable mission history', () => {
+    const { host } = renderRail({ onOpenLauncher: vi.fn(), projectEnabled: true, onOpenProject: vi.fn() });
+    const body = host.querySelector('.workspace-rail__scroll');
+    expect(body).not.toBeNull();
+    expect(body?.contains(host.querySelector('[data-rail-group="active"]'))).toBe(true);
+    expect(body?.contains(host.querySelector('[data-rail-group="recent"]'))).toBe(true);
+    expect(body?.contains(host.querySelector('[aria-label="Destinos fixos"]'))).toBe(false);
+    expect(body?.contains(host.querySelector('.workspace-rail__identity'))).toBe(false);
+    expect(body?.contains(host.querySelector('.workspace-rail__footer'))).toBe(false);
+  });
+
+  it('removes a mission from either group without selecting or opening it', () => {
+    const onRemoveMission = vi.fn();
+    const { host, handlers } = renderRail({ onRemoveMission });
+    for (const missionId of ['mission-running', 'mission-blocked', 'mission-done']) {
+      const remove = host.querySelector<HTMLButtonElement>(
+        `[data-action="remove-mission"][data-mission-id="${missionId}"]`,
+      );
+      expect(remove).not.toBeNull();
+      act(() => remove!.click());
+      expect(onRemoveMission).toHaveBeenLastCalledWith(missionId, missionId === 'mission-done' ? 'cometa' : 'atlas');
+    }
+    expect(handlers.onSelectMission).not.toHaveBeenCalled();
+    expect(handlers.onSelectWorkspace).not.toHaveBeenCalled();
+  });
+
   it('groups missions with valid non-heading labels and hides empty groups', () => {
     const { host } = renderRail();
     const active = host.querySelector('[data-rail-group="active"]');
@@ -254,7 +280,7 @@ describe('WorkspaceRail', () => {
     }
   });
 
-  it('missão completed aguardando revisão humana não diz Pronto no rail', () => {
+  it('missão completed aguardando revisão humana mostra a entrega pronta com tom de conclusão', () => {
     const { host } = renderRail({
       activeWorkspaces: [
         {
@@ -274,9 +300,10 @@ describe('WorkspaceRail', () => {
       recentWorkspaces: [],
     });
     const row = host.querySelector('[data-mission-id="mission-awaiting"]');
-    expect(row?.textContent).toContain('Aguardando você');
-    expect(row?.textContent).not.toContain('Pronto');
-    expect(row?.getAttribute('aria-label')).toBe('Landing. Aguardando você');
+    expect(row?.textContent).toContain('Pronto para revisar');
+    expect(row?.textContent).not.toContain('Aguardando você');
+    expect(row?.getAttribute('aria-label')).toBe('Landing. Pronto para revisar');
+    expect(row?.classList.contains('workspace-rail__mission--done')).toBe(true);
   });
 
   it('leftover isolado e Encerrar pintam Dormindo/Parou, nunca Precisa de você', () => {
@@ -510,11 +537,15 @@ describe('WorkspaceRail', () => {
       });
     });
 
-    const { host } = renderRail();
+    const onOpenUsageQuota = vi.fn();
+    const { host } = renderRail({ onOpenUsageQuota });
     const cockpit = host.querySelector('.workspace-rail__cockpit');
     expect(cockpit).toBeTruthy();
     expect(cockpit?.textContent).toContain('Claude');
     expect(cockpit?.textContent).toContain('35%');
+    act(() => (cockpit as HTMLElement).click());
+    act(() => cockpit!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })));
+    expect(onOpenUsageQuota).toHaveBeenCalledTimes(2);
 
     const conn = host.querySelector('.workspace-rail__cockpit-conn');
     expect(conn?.textContent).toContain('Local');

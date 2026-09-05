@@ -13,6 +13,9 @@ import {
   rosterIdentityMatches,
 } from './mission-engine-preparation';
 import { snapshotSquadAuthority } from './squad-authority-snapshot';
+import { PET_STUDIO_SQUAD } from '../../shared/pet-studio';
+
+vi.mock('./intent-router', () => ({ routeIntent: vi.fn(async () => null) }));
 
 const scope: ProjectExecutionScope = {
   version: 1,
@@ -169,6 +172,184 @@ function createCleanupHarness() {
   });
   return { store, preparation, discardRuntimeSquad };
 }
+
+function createRoutingHarness(
+  routeIntent: (objective: string) => Promise<unknown>,
+  squad: Squad = runtimeSquad,
+) {
+  const store = createStoreHarness();
+  const persistRuntimeSquad = vi.fn(() => squad);
+  const preparation = createMissionEnginePreparationPorts({
+    scope,
+    missions: store.missions,
+    deps: {
+      routeIntent,
+      now: () => 200,
+      persistRuntimeSquad,
+      getSquad: () => squad,
+      resolveRuntime: () => runtime,
+      discardRuntimeSquad: () => true,
+      sealPetStudioImage: () => sealedScreenshot,
+    },
+  });
+  const engine = new MainMissionEngine(scope, {
+    ...preparation,
+    readReviewFence: async () => null,
+    seal: async () => undefined,
+    bootstrap: async () => undefined,
+    retryKickoff: async () => undefined,
+    resume: async () => undefined,
+    stop: async () => undefined,
+    direct: async () => undefined,
+    answerQuestion: async () => undefined,
+    blockUser: () => undefined,
+    blockTechnical: () => undefined,
+    resumeTechnical: () => undefined,
+    completeVerified: () => undefined,
+    readSnapshotView: async () => { throw new Error('unused'); },
+    listSnapshotViews: async () => [],
+  });
+  return { store, preparation, engine, persistRuntimeSquad };
+}
+
+describe('mission routing before approval', () => {
+  it('does not persist a squad or mission when the renderer changes project during routing', async () => {
+    let finishRouting!: (route: unknown) => void;
+    let isCurrent = true;
+    const { engine, store, persistRuntimeSquad } = createRoutingHarness(() => new Promise(resolve => { finishRouting = resolve; }));
+    const pending = engine.prepare(scope, request, () => {
+      if (!isCurrent) throw new Error('renderer workspace changed');
+    });
+    const persistedBeforeReply = persistRuntimeSquad.mock.calls.length;
+    isCurrent = false;
+    finishRouting({ kind: 'mission-work', skills: [] });
+    await expect(pending).rejects.toThrow('renderer workspace changed');
+    expect(persistedBeforeReply).toBe(0);
+    expect(persistRuntimeSquad).not.toHaveBeenCalled();
+    expect(store.current()).toBeNull();
+  });
+
+  it('persists the routed question and includes it in the immutable review without changing authority', async () => {
+    const routed = {
+      kind: 'mission-question',
+      question: 'Qual é o problema no total do checkout?',
+      readOnlyWorkers: true,
+    };
+    const first = createRoutingHarness(async () => routed);
+    const review = await first.engine.prepare(scope, request);
+
+    expect(first.store.current()?.intentContract).toMatchObject({
+      goal: request.objective,
+      lane: 'standard',
+      budgets: { maxWorkers: 64 },
+      routingAdvice: { source: 'router', ...routed },
+      approvalReviewSha256: review.reviewSha256,
+    });
+    expect(review.objective).toBe(request.objective);
+    expect(review.roster).toEqual(runtimeSquad.agents);
+    expect(review.permissions.map(({ id }) => id)).toContain('workspace-write');
+    expect(review.warnings.join('\n')).toContain(routed.question);
+    const second = createRoutingHarness(async () => ({
+      ...routed, question: 'Qual teste reproduz o problema?',
+    }));
+    const secondReview = await second.engine.prepare(scope, request);
+    expect(secondReview.reviewSha256).not.toBe(review.reviewSha256);
+  });
+
+  it('waits for routing before creating the reviewable mission', async () => {
+    let finishRouting!: (route: unknown) => void;
+    let classifiedObjective: string | undefined;
+    const { store, preparation } = createRoutingHarness((objective) => {
+      classifiedObjective = objective;
+      return new Promise((resolve) => { finishRouting = resolve; });
+    });
+    const armed = preparation.arm(request);
+    expect(store.current()).toBeNull();
+    finishRouting({ kind: 'mission-work', skills: [] });
+    await armed;
+    expect(classifiedObjective).toBe(request.objective);
+    expect(store.current()?.intentContract?.routingAdvice).toEqual({
+      source: 'router', kind: 'mission-work', skills: [],
+    });
+  });
+
+  it('keeps only known skill suggestions already allowed by the prepared squad', async () => {
+    const squad: Squad = {
+      ...runtimeSquad,
+      agents: runtimeSquad.agents.map((agent) => ({
+        ...agent, allowedSkills: ['bridgesecurity'],
+      })),
+    };
+    const { store, engine } = createRoutingHarness(async () => ({
+      kind: 'mission-work',
+      skills: ['impeccable', 'bridgesecurity', 'arbitrary-command', 'bridgesecurity'],
+    }), squad);
+    const review = await engine.prepare(scope, request);
+
+    expect(store.current()?.intentContract?.routingAdvice).toEqual({
+      source: 'router', kind: 'mission-work', skills: ['bridgesecurity'],
+    });
+    expect(review.roster).toEqual(squad.agents);
+    expect(review.warnings.join('\n')).toContain('bridgesecurity');
+    expect(review.warnings.join('\n')).not.toContain('impeccable');
+  });
+
+  it.each([
+    ['unavailable', async (): Promise<unknown> => null],
+    ['invalid-result', async () => ({ kind: 'mission-question', question: '', readOnlyWorkers: false })],
+    ['invalid-result', async () => ({ kind: 'mission-work', skills: [], lane: 'ops', allowedTools: null })],
+    ['router-error', async () => { throw new Error('provider credential must not leak'); }],
+  ] as const)('keeps deterministic preparation visible when routing gives %s', async (reason, routeIntent) => {
+    const { store, engine } = createRoutingHarness(routeIntent);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const review = await engine.prepare(scope, request).finally(() => warn.mockRestore());
+
+    expect(store.current()?.intentContract?.routingAdvice).toEqual({
+      source: 'deterministic-fallback', kind: 'mission-work', reason,
+    });
+    expect(review.warnings.join('\n')).toContain('regras locais');
+    expect(review.warnings.join('\n')).not.toContain('credential');
+    expect(review.objective).toBe(request.objective);
+    expect(review.roster).toEqual(runtimeSquad.agents);
+    expect(store.current()?.intentContract?.lane).toBe('standard');
+  });
+
+  it.each(['consult', 'plan', 'ops'] as const)('preserves the explicit %s lane and free-agent choice after classification', async (lane) => {
+    const selectedRequest = { ...request, advanced: { lane, freeAgentChoice: false } };
+    const baseline = createRoutingHarness(async () => null);
+    const baselineReview = await baseline.engine.prepare(scope, selectedRequest);
+    const routed = createRoutingHarness(async () => ({
+      kind: 'mission-question', question: 'Qual é o estado atual?', readOnlyWorkers: true,
+    }));
+    const review = await routed.engine.prepare(scope, selectedRequest);
+    const baselineContract = baseline.store.current()!.intentContract!;
+    const routedContract = routed.store.current()!.intentContract!;
+
+    expect(routedContract.lane).toBe(lane);
+    expect(routedContract.freeAgentChoice).toBe(baselineContract.freeAgentChoice);
+    expect(routedContract.budgets).toEqual(baselineContract.budgets);
+    expect(routedContract.deniedTools).toEqual(baselineContract.deniedTools);
+    expect(review.permissions).toEqual(baselineReview.permissions);
+    expect(review.roster).toEqual(baselineReview.roster);
+  });
+
+  it('skips routing for Pet Studio and keeps its reviewed single-session contract', async () => {
+    const routeIntent = vi.fn(async () => {
+      throw new Error('Pet Studio must not call the router');
+    });
+    const { store, engine } = createRoutingHarness(routeIntent, structuredClone(PET_STUDIO_SQUAD));
+    const review = await engine.prepare(scope, {
+      ...request,
+      profile: { kind: 'pet-studio', referenceImagePath: sealedScreenshot.sourcePath! },
+    });
+
+    expect(store.current()?.intentContract?.routingAdvice).toBeUndefined();
+    expect(store.current()?.intentContract?.budgets.maxWorkers).toBe(0);
+    expect(review.roster).toEqual(PET_STUDIO_SQUAD.agents);
+    expect(review.warnings).toEqual(['A execução permanece em uma única sessão, sem delegação.']);
+    expect(routeIntent).not.toHaveBeenCalled();
+  });
+});
 
 describe('production MissionEngine preparation ports', () => {
   it('prepares, fences, and starts a real persisted mission without placeholder ports', async () => {

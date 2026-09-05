@@ -1,0 +1,30 @@
+{
+  "actions": [
+    {
+      "hit": true,
+      "label": "Tornar Orquestrador"
+    },
+    {
+      "hit": true,
+      "label": "Fim"
+    },
+    {
+      "hit": true,
+      "label": "Dormir"
+    },
+    {
+      "hit": true,
+      "label": "Ampliar"
+    },
+    {
+      "hit": true,
+      "label": "À direita"
+    },
+    {
+      "hit": true,
+      "label": "Abaixo"
+    }
+  ],
+  "outsidePane": true,
+  "withinViewport": true
+}

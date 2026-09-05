@@ -30,6 +30,7 @@ export function AcpHarnessPanel() {
   const [probePendingHarnessId, setProbePendingHarnessId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
+    setError(null);
     try {
       setOrch(await loadOrch());
       setError(null);
@@ -112,7 +113,7 @@ export function AcpHarnessPanel() {
     try {
       const parsed = JSON.parse(customJson) as Record<string, unknown>;
       const id = typeof parsed.id === 'string' ? parsed.id : '';
-      if (!id) throw new Error('definição custom exige id');
+      if (!id) throw new Error('A definição precisa de um identificador no campo id.');
       const nextCustoms = [
         ...customs.filter((entry) => entry.id !== id),
         parsed,
@@ -128,7 +129,7 @@ export function AcpHarnessPanel() {
       setError(
         cause instanceof Error
           ? cause.message
-          : 'JSON inválido — corrija e salve de novo',
+          : 'JSON inválido. Revise a definição e salve novamente.',
       );
     } finally {
       setBusy(false);
@@ -175,23 +176,26 @@ export function AcpHarnessPanel() {
 
   if (!orch) {
     return (
-      <div className="acp-harness" role="status">
-        Carregando configuração ACP…
+      <div className="acp-harness">
+        {error ? <div className="harness-settings__error" role="alert">
+          <p>Não foi possível carregar a configuração: {error}</p>
+          <button type="button" className="settings-btn" onClick={() => void refresh()}>Tentar novamente</button>
+        </div> : <p role="status">Carregando conexão dos agentes…</p>}
       </div>
     );
   }
 
   return (
-    <section className="acp-harness" aria-label="Runtime ACP / BYOH">
+    <section className="acp-harness" aria-label="Conexão de agentes ACP">
       <header className="acp-harness__header">
-        <h3>Runtime ACP</h3>
+        <h3>Como o Nexus abre seus agentes</h3>
         <p>
-          Transporte estruturado (stdio JSON-RPC). Quando ACP está ativo, o
-          spawn <strong>não</strong> cai para terminal/PTY em silêncio.
+          Use o terminal da ferramenta no dia a dia. A conexão ACP é uma opção
+          avançada para agentes que oferecem comunicação direta com o Nexus.
         </p>
       </header>
 
-      <div className="acp-harness__transport" role="group" aria-label="Transporte">
+      <div className="acp-harness__transport" role="group" aria-label="Forma de abrir agentes">
         <button
           type="button"
           className={transport === 'cli-pty' ? 'is-active' : undefined}
@@ -199,7 +203,7 @@ export function AcpHarnessPanel() {
           onClick={() => void setTransport('cli-pty')}
           aria-pressed={transport === 'cli-pty'}
         >
-          CLI / PTY (legado)
+          Terminal da ferramenta
         </button>
         <button
           type="button"
@@ -208,28 +212,30 @@ export function AcpHarnessPanel() {
           onClick={() => void setTransport('acp')}
           aria-pressed={transport === 'acp'}
         >
-          ACP
+          Conexão ACP
         </button>
       </div>
 
       {transport === 'acp' && (
         <p className="acp-harness__status" role="status">
           {selectedId
-            ? `Harness ativo: ${catalog.find((row) => row.id === selectedId)?.label ?? selectedId}`
-            : 'Selecione um harness para liberar o spawn ACP.'}
+            ? `Agente escolhido: ${catalog.find((row) => row.id === selectedId)?.label ?? selectedId}`
+            : 'Escolha um agente abaixo para usar a conexão ACP.'}
         </p>
       )}
 
       {transport === 'acp' && (
         <>
+          <p className="acp-harness__explanation">O agente precisa estar instalado e responder ao teste. Se a conexão ACP falhar, o Nexus informa o erro; não troca automaticamente para um terminal.</p>
           <ul className="acp-harness__list">
             {catalog.map((row) => (
               <li key={row.id}>
                 <div>
                   <strong>{row.label || row.id}</strong>
                   <span>
-                    {row.tier} · {row.command}
+                    {row.tier === 'custom' ? 'Personalizado' : 'Modelo de configuração'}
                   </span>
+                  <details><summary>Comando de inicialização</summary><code>{row.command}</code></details>
                 </div>
                 <div className="acp-harness__actions">
                   <button
@@ -237,15 +243,17 @@ export function AcpHarnessPanel() {
                     disabled={busy}
                     aria-pressed={selectedId === row.id}
                     onClick={() => void selectHarness(row.id)}
-                    title="Usar este harness no dispatch"
+                    title="Usar este agente"
+                    aria-label={`${selectedId === row.id ? 'Agente escolhido' : 'Selecionar agente'}: ${row.label}`}
                   >
-                    {selectedId === row.id ? 'Selecionado' : 'Selecionar'}
+                    {selectedId === row.id ? 'Escolhido' : 'Selecionar'}
                   </button>
                   <button
                     type="button"
                     disabled={busy}
                     onClick={() => void testConnection(row.id)}
-                    title="Testar conexão ACP (initialize)"
+                    title="Testar conexão deste agente"
+                    aria-label={`Testar conexão de ${row.label}`}
                   >
                     <PixelIcon name="sparkle" size={10} />
                     {probePendingHarnessId === row.id ? 'Testando…' : 'Testar'}
@@ -255,10 +263,10 @@ export function AcpHarnessPanel() {
                       type="button"
                       disabled={busy}
                       onClick={() => void removeCustom(row.id)}
-                      title="Remover harness custom"
+                      title="Remover agente personalizado"
                       aria-label={`Remover ${row.label}`}
                     >
-                      <PixelIcon name="trash" size={10} />
+                      Remover
                     </button>
                   )}
                 </div>
@@ -266,8 +274,11 @@ export function AcpHarnessPanel() {
             ))}
           </ul>
 
+          <details className="acp-harness__custom">
+          <summary>Adicionar agente personalizado</summary>
+          <p>Para integrações próprias. Salvar seleciona esta definição e ativa a conexão ACP.</p>
           <label className="acp-harness__editor">
-            <span>Nova definição custom (JSON)</span>
+            <span>Definição do agente (JSON)</span>
             <textarea
               value={customJson}
               onChange={(event) => setCustomJson(event.target.value)}
@@ -278,12 +289,13 @@ export function AcpHarnessPanel() {
           </label>
           <button
             type="button"
-            className="btn-primary"
+            className="settings-btn settings-btn--primary"
             disabled={busy}
             onClick={() => void saveCustom()}
           >
-            Validar e salvar
+            Salvar e usar definição
           </button>
+          </details>
         </>
       )}
 
@@ -294,12 +306,12 @@ export function AcpHarnessPanel() {
           }
           role="status"
         >
-          Probe {lastProbe.harnessId}: {lastProbe.detail}
+          Último teste de {catalog.find(row => row.id === lastProbe.harnessId)?.label ?? lastProbe.harnessId}: {lastProbe.ok ? 'conexão confirmada' : 'não conectou'}. {lastProbe.detail}
         </p>
       )}
       {error && (
         <p className="acp-harness__probe err" role="alert">
-          {error} — corrija e tente de novo.
+          {error}. Revise a configuração e tente novamente.
         </p>
       )}
     </section>

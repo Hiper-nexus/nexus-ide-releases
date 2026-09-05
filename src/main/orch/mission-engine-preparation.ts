@@ -45,6 +45,12 @@ import {
   prepareMissionRuntimeSquadSave,
 } from './squad-store';
 import { snapshotSquadAuthority } from './squad-authority-snapshot';
+import { routeIntent } from './intent-router';
+import {
+  missionRoutingReviewWarnings,
+  parseMissionRoutingAdvice,
+  type MissionRoutingAdvice,
+} from '../../shared/mission-routing-advice';
 
 /**
  * Identidade da equipe SEM os bytes de capacidade. allowedSkills/allowedTools
@@ -91,6 +97,7 @@ interface MissionPreparationStore {
 }
 
 export interface MissionEnginePreparationDeps {
+  readonly routeIntent: (objective: string) => Promise<unknown>;
   readonly now: () => number;
   readonly persistRuntimeSquad: (request: MissionPrepareRequest) => Squad;
   readonly getSquad: (squadId: string) => Squad | null;
@@ -302,6 +309,7 @@ function persistRuntimeSquad(request: MissionPrepareRequest): Squad {
 }
 
 const productionDeps: MissionEnginePreparationDeps = {
+  routeIntent,
   now: Date.now,
   persistRuntimeSquad,
   discardRuntimeSquad: (squad) =>
@@ -406,7 +414,7 @@ function warningsForMission(
   if (isExactPetStudioSquad(squad)) {
     return ['A execução permanece em uma única sessão, sem delegação.'];
   }
-  const warnings: string[] = [];
+  const warnings = missionRoutingReviewWarnings(contract.routingAdvice);
   if (contract.risk === 'sensitive') {
     warnings.push('O objetivo toca uma área sensível; efeitos continuam sujeitos aos gates do Nexus.');
   } else if (contract.risk === 'destructive') {
@@ -423,13 +431,33 @@ function warningsForMission(
   return warnings;
 }
 
+async function routeMissionPreparation(
+  objective: string,
+  classify: MissionEnginePreparationDeps['routeIntent'],
+): Promise<MissionRoutingAdvice> {
+  try {
+    return parseMissionRoutingAdvice(await classify(objective), null);
+  } catch {
+    console.warn('[mission-preparation] intent router failed; using local preparation rules');
+    return { source: 'deterministic-fallback', kind: 'mission-work', reason: 'router-error' };
+  }
+}
+
+function narrowRoutingAdvice(advice: MissionRoutingAdvice, squad: Squad): MissionRoutingAdvice {
+  if (advice.source !== 'router' || advice.kind !== 'mission-work') return advice;
+  const allowedSkills = squad.agents.some((agent) => agent.allowedSkills === null)
+    ? null
+    : squad.agents.flatMap((agent) => agent.allowedSkills ?? []);
+  return parseMissionRoutingAdvice({ kind: advice.kind, skills: advice.skills }, allowedSkills);
+}
+
 export function createMissionEnginePreparationPorts(input: {
   readonly scope: ProjectExecutionScope;
   readonly missions: MissionPreparationStore;
-  readonly deps?: MissionEnginePreparationDeps;
+  readonly deps?: Partial<MissionEnginePreparationDeps>;
 }): MissionEnginePreparationPorts {
   const { scope, missions } = input;
-  const deps = input.deps ?? productionDeps;
+  const deps = { ...productionDeps, ...input.deps };
   const sealPetStudioImage =
     deps.sealPetStudioImage ?? productionDeps.sealPetStudioImage!;
   const sealMissionContextAttachment =
@@ -506,8 +534,14 @@ export function createMissionEnginePreparationPorts(input: {
 
   return {
     discardUnfencedPreparation,
-    arm: async (rawRequest): Promise<MissionArmResult> => {
+    arm: async (rawRequest, assertCurrentScope): Promise<MissionArmResult> => {
       const parsedRequest = missionPrepareRequestSchema.parse(rawRequest);
+      const rawRoutingAdvice = parsedRequest.profile?.kind === 'pet-studio'
+        ? undefined
+        : await routeMissionPreparation(parsedRequest.objective, deps.routeIntent);
+      // The classifier may yield while the operator switches projects. No
+      // attachment, squad or mission may be persisted under the old authority.
+      assertCurrentScope?.();
       const petSnapshot =
         parsedRequest.profile?.kind === 'pet-studio'
           ? requireSealedPetStudioSnapshot(
@@ -549,6 +583,7 @@ export function createMissionEnginePreparationPorts(input: {
       if (petStudio && !isExactPetStudioSquad(squad)) {
         throw new Error('A autoridade preparada do Pet Studio não é canônica.');
       }
+      const routingAdvice = rawRoutingAdvice ? narrowRoutingAdvice(rawRoutingAdvice, squad) : undefined;
       const baseContract = compileIntentContract({
         goal: request.objective,
         source: 'typed',
@@ -587,6 +622,7 @@ export function createMissionEnginePreparationPorts(input: {
           : missionAttachmentSnapshots.length > 0
             ? {
                 ...baseContract,
+                routingAdvice,
                 attachmentPaths: missionAttachmentSnapshots.map(
                   (snapshot) => snapshot.path,
                 ),
@@ -594,7 +630,7 @@ export function createMissionEnginePreparationPorts(input: {
                   (snapshot) => ({ ...snapshot }),
                 ),
               }
-          : baseContract,
+          : { ...baseContract, routingAdvice },
       );
       let mission: Mission;
       try {

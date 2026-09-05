@@ -3,6 +3,16 @@ import { classifyStandardMissionTopology } from "./mission-topology";
 
 describe("classifyStandardMissionTopology", () => {
   it.each([
+    'Pergunte aos panes quanto é 1+1. Não altere arquivos.',
+    'Pergunte aos panes por que o céu é azul. Não altere arquivos.',
+    'Pergunte aos panes o que significa idempotência. Não altere arquivos.',
+    'Pergunte aos panes quanto é 2 + 2 e consolide a resposta de cada integrante. Não altere arquivos.',
+    'Ask the agents what is 2+2. Do not edit files.',
+  ])('keeps a question to panes as a team operation: %s', (objective) => {
+    expect(classifyStandardMissionTopology(objective)).toBe('team-read-only-fanout');
+  });
+
+  it.each([
     "teste de todos panes cada um me fala oque ele faz na missao",
     "Quero que cada agente diga qual é seu papel nesta missão",
     "Peça para toda a equipe analisar o contexto em paralelo, sem editar, e responder",

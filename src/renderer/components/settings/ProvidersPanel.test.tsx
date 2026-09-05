@@ -65,6 +65,19 @@ function mount(): { host: HTMLDivElement; root: Root } {
 }
 
 describe('ProvidersPanel hub', () => {
+  it('helps a first-time user find an AI without installing anything automatically', async () => {
+    useProviderStore.setState({ providers: [provider('claude', 'Claude', { installed: false, canAutoInstall: true })] });
+    const { host, root } = mount();
+    expect(host.textContent).toContain('Nenhuma ferramenta de IA encontrada neste computador');
+    const action = [...host.querySelectorAll('button')].find(button => button.textContent === 'Ver ferramentas para instalar');
+    expect(action).toBeDefined();
+    await act(async () => action!.click());
+    expect(host.querySelector('.prov-row')?.textContent).toContain('Claude');
+    expect(loginTerminal.openCliLoginTerminal).not.toHaveBeenCalled();
+    expect(window.nexus.providers.installCli).not.toHaveBeenCalled();
+    act(() => root.unmount());
+  });
+
   beforeEach(() => {
     useProviderStore.setState({
       providers: [
@@ -128,6 +141,56 @@ describe('ProvidersPanel hub', () => {
     act(() => root.unmount());
   });
 
+  it('uses the observed login state throughout the selected provider, ignoring a stale login hint', async () => {
+    useProviderStore.setState({ providers: [provider('claude', 'Claude', {
+      authStrategy: 'login-needed', loginCommand: 'claude auth login',
+      loginHint: 'A CLI claude não tem sessão.',
+    })] });
+    vi.mocked(window.nexus.providers.authStatus).mockResolvedValue([
+      { adapterId: 'claude', state: 'ok', detail: 'Logged in as dev@example.com' },
+    ]);
+    const { host, root } = mount();
+    await act(async () => { await Promise.resolve(); });
+
+    expect(host.querySelector('.prov-row__status')?.textContent).toBe('conectado');
+    expect(host.querySelector('.acct__status')?.textContent).toBe('conectado');
+    expect(host.textContent).not.toContain('não tem sessão');
+    expect(host.querySelector('[data-testid="prov-login-claude"]')).toBeNull();
+    act(() => root.unmount());
+  });
+
+  it('shows an unverified state consistently when the auth probe cannot confirm a session', async () => {
+    vi.mocked(window.nexus.providers.authStatus).mockResolvedValue([
+      { adapterId: 'claude', state: 'unknown', detail: 'Verificação indisponível.' },
+    ]);
+    const { host, root } = mount();
+    await act(async () => { await Promise.resolve(); });
+
+    expect(host.querySelector('.prov-row__status')?.textContent).toBe('não verificado');
+    expect(host.querySelector('.acct__status')?.textContent).toBe('não verificado');
+    expect(host.querySelector('.acct__implicit')).toBeNull();
+    act(() => root.unmount());
+  });
+
+  it('reconciles a newer provider snapshot without starting an auth probe loop', async () => {
+    vi.mocked(window.nexus.providers.authStatus).mockResolvedValue([
+      { adapterId: 'claude', state: 'ok', detail: 'Logged in as dev@example.com' },
+    ]);
+    const { host, root } = mount();
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => {
+      useProviderStore.setState({ providers: [provider('claude', 'Claude', {
+        authState: 'unknown', loginCommand: 'claude auth login',
+      })] });
+    });
+
+    expect(host.querySelector('.prov-row__status')?.textContent).toBe('não verificado');
+    expect(host.querySelector('.acct__status')?.textContent).toBe('não verificado');
+    expect(host.textContent).not.toContain('dev@example.com');
+    expect(window.nexus.providers.authStatus).toHaveBeenCalledTimes(1);
+    act(() => root.unmount());
+  });
+
   it('keeps power controls behind Avançado until expanded', async () => {
     const { host, root } = mount();
     expect(host.textContent).toContain('Contas');
@@ -177,7 +240,7 @@ describe('ProvidersPanel hub', () => {
     act(() => root.unmount());
   });
 
-  it('logs into a CLI from its own tile, running the command the adapter declares', async () => {
+  it('keeps the provider list for selection and opens login only from the selected detail', async () => {
     loginTerminal.openCliLoginTerminal.mockClear();
     useProviderStore.setState({
       providers: [
@@ -189,23 +252,59 @@ describe('ProvidersPanel hub', () => {
       ],
       hydrate: vi.fn(async () => undefined),
     } as never);
+    vi.mocked(window.nexus.providers.authStatus).mockResolvedValue([
+      { adapterId: 'claude', state: 'ok', detail: 'Sessão verificada.' },
+      { adapterId: 'codex', state: 'missing', detail: 'Precisa login.' },
+    ]);
     const { host, root } = mount();
+    await act(async () => { await Promise.resolve(); });
 
-    // Só a CLI que precisa de login (e sabe como) ganha o atalho no cartão.
-    expect(host.querySelector('[data-testid="prov-login-claude"]')).toBeNull();
-    const pill = host.querySelector<HTMLButtonElement>(
-      '[data-testid="prov-login-codex"]',
-    );
-    expect(pill).toBeTruthy();
-
-    await act(async () => pill!.click());
+    const rows = [...host.querySelectorAll('.prov-row')];
+    expect(rows.every((row) => row.querySelectorAll('button').length === 1)).toBe(true);
+    const codex = host.querySelector<HTMLButtonElement>('.prov-row__select[data-adapter="codex"]');
+    await act(async () => { codex!.click(); });
+    const login = host.querySelector<HTMLButtonElement>('.prov-detail [data-testid="acct-login-cta"]');
+    expect(login).toBeTruthy();
+    await act(async () => { login!.click(); });
 
     expect(loginTerminal.openCliLoginTerminal).toHaveBeenCalledWith(
       expect.objectContaining({ command: 'codex login', adapterId: 'codex' }),
     );
     expect(
-      host.querySelector('[data-testid="prov-login-notice"]')?.textContent,
-    ).toContain('terminal aberto');
+      host.querySelector('.acct__notice')?.textContent,
+    ).toContain('Terminal de login aberto');
+    act(() => root.unmount());
+  });
+
+  it('shows one verification action for the selected unknown provider, not one in every list row', async () => {
+    useProviderStore.setState({ providers: ['Cursor Agent', 'Gemini CLI', 'Muse Specialist'].map((label, index) =>
+      provider(`custom-${index}`, label, { authState: 'unknown', loginCommand: `custom-${index} login` }),
+    ) });
+    const { host, root } = mount();
+    await act(async () => { await Promise.resolve(); });
+
+    expect(host.querySelectorAll('.prov-row button')).toHaveLength(3);
+    expect([...host.querySelectorAll('button')].filter((button) =>
+      button.textContent === 'Verificar sessão',
+    )).toHaveLength(1);
+    expect([...host.querySelectorAll('.prov-row__name')].map((name) => name.textContent)).toEqual([
+      'Cursor Agent', 'Gemini CLI', 'Muse Specialist',
+    ]);
+    act(() => root.unmount());
+  });
+
+  it('keeps installation available in the selected detail without adding a list action', async () => {
+    useProviderStore.setState({ providers: [provider('kimi', 'Kimi', {
+      installed: false, canAutoInstall: true,
+    })] });
+    const { host, root } = mount();
+    const showAbsent = host.querySelector<HTMLInputElement>('.prov-hub__show-absent input');
+    await act(async () => { showAbsent!.click(); });
+    expect(host.querySelectorAll('.prov-row button')).toHaveLength(1);
+    const install = host.querySelector<HTMLButtonElement>('.prov-detail__install');
+    expect(install).toBeTruthy();
+    await act(async () => { install!.click(); });
+    expect(window.nexus.providers.installCli).toHaveBeenCalledWith('kimi');
     act(() => root.unmount());
   });
 });

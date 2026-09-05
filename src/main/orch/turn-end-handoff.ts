@@ -41,6 +41,7 @@ import {
 } from './pty-stream-handoff';
 import { tapAgentTurnStart, type AgentTurnStartEntry } from './agent-status';
 import type { Handoff } from '../../shared/orch-types';
+import { isProvisionalWorkerHandoff } from './provisional-worker-handoff';
 
 /** Teto da resposta que viaja inteira (mesma régua do Overclock). */
 export const MECHANICAL_HANDOFF_VERBATIM_LIMIT = 280;
@@ -421,14 +422,22 @@ export function countRecentWorkerHandoffs(
   handoffs: readonly Handoff[],
   probe: WorkerHandoffWindowProbe,
 ): number {
+  return recentWorkerHandoffs(handoffs, probe).length;
+}
+
+function recentWorkerHandoffs(
+  handoffs: readonly Handoff[],
+  probe: WorkerHandoffWindowProbe,
+): Handoff[] {
   return handoffs.filter((handoff) => {
+    if (isProvisionalWorkerHandoff(handoff)) return false;
     if (handoff.createdAt < probe.windowStart) return false;
     const sameSession = handoff.sessionId === probe.sessionId;
     const sameIncarnation =
       probe.workerIncarnationId !== undefined &&
       handoff.workerIncarnationId === probe.workerIncarnationId;
     return sameSession || sameIncarnation;
-  }).length;
+  });
 }
 
 /**
@@ -462,16 +471,10 @@ export async function handleTurnEndMechanicalHandoff(input: {
       try {
         const suite = getProjectDomainStores(ctx.scope);
         const windowStart = turnStart?.observedAt ?? 0;
-        const recentHandoffs = suite.handoffs
-          .list({ missionId: ctx.missionId, includeDelivered: true })
-          .filter((handoff) => {
-            if (handoff.createdAt < windowStart) return false;
-            const sameSession = handoff.sessionId === sessionId;
-            const sameIncarnation =
-              ctx.workerIncarnationId !== undefined &&
-              handoff.workerIncarnationId === ctx.workerIncarnationId;
-            return sameSession || sameIncarnation;
-          });
+        const recentHandoffs = recentWorkerHandoffs(
+          suite.handoffs.list({ missionId: ctx.missionId, includeDelivered: true }),
+          { sessionId, workerIncarnationId: ctx.workerIncarnationId, windowStart },
+        );
         handoffsSinceTurnStart = recentHandoffs.length;
         if (handoffsSinceTurnStart > 0) {
           existingUnconsumedHandoff =

@@ -57,7 +57,7 @@ function parseResetAt(data: Record<string, unknown>): number | undefined {
 
 function detailToWindow(
   data: Record<string, unknown>,
-  kind: 'hours' | 'weekly',
+  kind: 'hours' | 'weekly' | 'session',
   label: string,
   now: number,
 ): QuotaWindow | null {
@@ -84,7 +84,7 @@ function isFiveHourWindow(window: Record<string, unknown>): boolean {
   const unit = String(window.timeUnit ?? window.time_unit ?? '').toUpperCase();
   if (duration === null) return false;
   // Live CLI: duration=300 TIME_UNIT_MINUTE → 5h
-  if (unit.includes('MINUTE') && duration >= 240 && duration <= 360) return true;
+  if (unit.includes('MINUTE') && duration === 300) return true;
   if (unit.includes('HOUR') && duration === 5) return true;
   return false;
 }
@@ -93,9 +93,15 @@ function isWeeklyWindow(window: Record<string, unknown>): boolean {
   const duration = toInt(window.duration);
   const unit = String(window.timeUnit ?? window.time_unit ?? '').toUpperCase();
   if (duration === null) return false;
-  if (unit.includes('DAY') && (duration === 7 || duration === 1)) return true;
-  if (unit.includes('HOUR') && duration >= 168) return true;
+  if (unit.includes('DAY') && duration === 7) return true;
+  if (unit.includes('HOUR') && duration === 168) return true;
   return false;
+}
+
+function isDailyWindow(window: Record<string, unknown>): boolean {
+  const duration = toInt(window.duration);
+  const unit = String(window.timeUnit ?? window.time_unit ?? '').toUpperCase();
+  return (unit.includes('DAY') && duration === 1) || (unit.includes('HOUR') && duration === 24);
 }
 
 /**
@@ -149,6 +155,9 @@ export function parseKimiUsagesPayload(
         if (w) out.push(w);
       } else if (isWeeklyWindow(window)) {
         const w = detailToWindow(detail, 'weekly', 'Semanal', now);
+        if (w) out.push(w);
+      } else if (isDailyWindow(window)) {
+        const w = detailToWindow(detail, 'session', 'Diário', now);
         if (w) out.push(w);
       }
     }

@@ -832,7 +832,7 @@ describe("scoped handoff store", () => {
     expect(listenerB).not.toHaveBeenCalled();
   });
 
-  it("SUCCESS real da sessão consome failure sintético do watchdog ainda na fila", () => {
+  it("SUCCESS sem receipt físico não consome diagnóstico do watchdog", () => {
     const runtimeManager = manager();
     const scope = testProjectScope();
     let nextId = 0;
@@ -856,7 +856,7 @@ describe("scoped handoff store", () => {
     });
     expect(ghost.deliveryState).toBe("queued");
 
-    // Worker se recupera e entrega SUCCESS pela mesma sessão física.
+    // Apenas rotular um submit genérico como SUCCESS não prova resposta física.
     handoffs.submit({
       missionId: "mission-ghost",
       sessionId: "session-codex",
@@ -870,7 +870,7 @@ describe("scoped handoff store", () => {
         .list({ missionId: "mission-ghost", includeDelivered: true })
         .map((handoff) => [handoff.id, handoff.deliveryState]),
     );
-    expect(states.get(ghost.id)).toBe("consumed");
+    expect(states.get(ghost.id)).toBe("queued");
   });
 
   it("failure de OUTRA sessão não é consumido pelo sucesso alheio", () => {

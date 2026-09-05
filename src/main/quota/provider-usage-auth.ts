@@ -2,8 +2,8 @@
  * Resolve credentials for live provider usage probes.
  * Never logs secrets. Best-effort; empty list = skip network probe.
  *
- * Prefer multiple candidates (vault → launcher → env → system files) so a
- * stale vault key cannot shadow a working launcher/CLI login.
+ * Pinned rows use only that account. Unpinned rows may try the operator's
+ * configured vault, launcher, environment, and native login candidates.
  */
 
 import fs from 'node:fs';
@@ -21,6 +21,7 @@ import {
   type CodexChatGptAuth,
 } from './codex-usage';
 import { extractClaudeAccessToken } from './claude-oauth-usage';
+import { readNativeOAuthCredential } from '../adapters/native-oauth-keychain';
 
 const CRED_PREFIX = 'acctcred:';
 const KEY_PREFIX = 'acctkey:';
@@ -63,18 +64,32 @@ function pushUnique(out: string[], value: string | null | undefined): void {
   if (!out.includes(v)) out.push(v);
 }
 
+function declaredAnthropicToken(adapterId: string): string | null {
+  const expectedHost = adapterId === 'glm' ? 'api.z.ai'
+    : adapterId === 'longcat' ? 'api.longcat.chat' : null;
+  if (!expectedHost) return null;
+  try {
+    const url = new URL(process.env.ANTHROPIC_BASE_URL ?? '');
+    return url.protocol === 'https:' && url.hostname === expectedHost && !url.username && !url.password
+      ? process.env.ANTHROPIC_AUTH_TOKEN?.trim() || null : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Claude OAuth token for the renderer quota probe.
  *
- * This path runs during boot and must stay strictly cache/file-only:
+ * This path runs during boot and must never synchronously enter Keychain:
  * - an account-pinned probe may use only an already-decrypted vault entry;
- * - an unpinned probe may read Claude's file-backed credential.
+ * - an unpinned probe reads file credentials or the native Keychain asynchronously.
  *
  * The authoritative spawn path remains in account-store and may explicitly
  * consult/synchronise the native Keychain when a worker is actually launched.
  */
-export function resolveClaudeToken(accountId?: string): string | null {
+export async function resolveClaudeToken(accountId?: string): Promise<string | null> {
   if (accountId) {
+    if (getAccount(accountId)?.adapterId !== 'claude') return null;
     const blob = safeGetSecret(CRED_PREFIX + accountId);
     return blob ? extractClaudeAccessToken(blob) : null;
   }
@@ -82,13 +97,13 @@ export function resolveClaudeToken(accountId?: string): string | null {
   const blob = readText(
     path.join(os.homedir(), '.claude', '.credentials.json'),
   );
-  return blob ? extractClaudeAccessToken(blob) : null;
+  const fileToken = blob ? extractClaudeAccessToken(blob) : null;
+  if (fileToken || process.platform !== 'darwin') return fileToken;
+  const native = await readNativeOAuthCredential('Claude Code-credentials');
+  return native ? extractClaudeAccessToken(native) : null;
 }
 
-/**
- * All Codex ChatGPT auth candidates (account vault first, then system login).
- * Callers try each until usage API succeeds.
- */
+/** Codex auth for the exact account, or the unpinned native login. */
 export function resolveCodexAuthCandidates(
   accountId?: string,
 ): CodexChatGptAuth[] {
@@ -109,10 +124,10 @@ export function resolveCodexAuthCandidates(
       const blob = safeGetSecret(CRED_PREFIX + accountId);
       if (blob) add(parseCodexAuthJson(blob));
     }
+    return out;
   }
 
-  // Always include active CLI login so multi-account vault rows still get a
-  // live % when the vault blob is stale/missing.
+  // Only the unpinned row may observe the current system login.
   const system = readText(path.join(os.homedir(), '.codex', 'auth.json'));
   if (system) add(parseCodexAuthJson(system));
 
@@ -135,7 +150,9 @@ export function resolveProviderApiKeyCandidates(
   const out: string[] = [];
 
   if (accountId) {
+    if (getAccount(accountId)?.adapterId !== adapterId) return out;
     pushUnique(out, safeGetSecret(KEY_PREFIX + accountId));
+    return out;
   }
 
   pushUnique(out, safeGetKey(adapterId));
@@ -156,19 +173,20 @@ export function resolveProviderApiKeyCandidates(
       }
     }
     for (const envName of [
-      'ANTHROPIC_AUTH_TOKEN',
       'ZAI_API_KEY',
       'ZHIPU_API_KEY',
       'ZHIPUAI_API_KEY',
     ]) {
       pushUnique(out, process.env[envName]);
     }
+    pushUnique(out, declaredAnthropicToken(adapterId));
   }
 
   if (adapterId === 'longcat') {
-    for (const envName of ['ANTHROPIC_AUTH_TOKEN', 'LONGCAT_API_KEY']) {
+    for (const envName of ['LONGCAT_API_KEY']) {
       pushUnique(out, process.env[envName]);
     }
+    pushUnique(out, declaredAnthropicToken(adapterId));
   }
 
   if (adapterId === 'grok') {
@@ -228,6 +246,7 @@ export function resolveGrokAccessTokenCandidates(
 ): string[] {
   const out: string[] = [];
   if (accountId) {
+    if (getAccount(accountId)?.adapterId !== 'grok') return out;
     const blob = safeGetSecret(CRED_PREFIX + accountId);
     if (blob) {
       pushUnique(out, extractGrokKeyFromAuthJson(blob));
@@ -237,6 +256,7 @@ export function resolveGrokAccessTokenCandidates(
   for (const k of resolveProviderApiKeyCandidates('grok', accountId)) {
     pushUnique(out, k);
   }
+  if (accountId) return out;
   const system = readText(path.join(os.homedir(), '.grok', 'auth.json'));
   if (system) pushUnique(out, extractGrokKeyFromAuthJson(system));
   return out;
@@ -275,12 +295,14 @@ export function resolveKimiAccessTokenCandidates(
 ): string[] {
   const out: string[] = [];
   if (accountId) {
+    if (getAccount(accountId)?.adapterId !== 'kimi') return out;
     const blob = safeGetSecret(CRED_PREFIX + accountId);
     if (blob) pushUnique(out, extractKimiToken(blob));
   }
   for (const k of resolveProviderApiKeyCandidates('kimi', accountId)) {
     pushUnique(out, k);
   }
+  if (accountId) return out;
   for (const rel of [
     path.join('.kimi-code', 'credentials', 'kimi-code.json'),
     path.join('.kimi', 'credentials', 'kimi-code.json'),
@@ -310,11 +332,13 @@ export function resolveKimiOauthCreds(
   accountId?: string,
 ): KimiOauthCredsResolved | null {
   if (accountId) {
+    if (getAccount(accountId)?.adapterId !== 'kimi') return null;
     const blob = safeGetSecret(CRED_PREFIX + accountId);
     if (blob) {
       const c = parseKimiCredsBlob(blob);
       if (c) return c;
     }
+    return null;
   }
   for (const rel of [
     path.join('.kimi-code', 'credentials', 'kimi-code.json'),
@@ -368,11 +392,13 @@ export function resolveGeminiOauthCreds(
   accountId?: string,
 ): GeminiOauthCredsResolved | null {
   if (accountId) {
+    if (getAccount(accountId)?.adapterId !== 'agy') return null;
     const blob = safeGetSecret(CRED_PREFIX + accountId);
     if (blob) {
       const c = parseGeminiCredsBlob(blob);
       if (c) return c;
     }
+    return null;
   }
   const blob = readText(path.join(os.homedir(), '.gemini', 'oauth_creds.json'));
   if (blob) return parseGeminiCredsBlob(blob);

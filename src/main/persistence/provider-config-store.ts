@@ -61,6 +61,7 @@ import {
 import { execFile } from 'node:child_process';
 import {
   getKey,
+  getSecret,
   hasCachedSecret,
   hasSecret,
   isSecureStorageAvailable,
@@ -82,6 +83,8 @@ import {
   hasSubscriptionAuthForStatus,
   refreshAgySubscriptionAuthCache,
   refreshClaudeSubscriptionAuthCache,
+  refreshOpenClaudeSubscriptionAuthCache,
+  subscriptionAuthStatusIsUnknown,
   resolveAuthStrategy,
   type AuthDecision,
 } from '../adapters/subscription-auth';
@@ -99,12 +102,14 @@ import {
   ensureSubscriptionActive,
   fileSubscriptionAuthEnv,
   getActiveAccount,
+  getAccount,
   listAccounts,
   pickAvailableForFailover,
   prepareAccountForSpawn,
 } from './account-store';
 import { quotaAvailabilityScore } from '../quota/quota-policy';
 import { requireQuotaService } from '../quota/quota-service';
+import type { ApiQuotaKeyRequest } from '../quota/provider-live-usage';
 
 /**
  * Provider configuration hub: per-adapter enable/disable, binary-path
@@ -391,23 +396,51 @@ function effectiveProviderModel(
 function resolveApiKey(adapterId: string, upstream?: string): string | null {
   const fromVault = getKey(adapterId);
   if (fromVault) return fromVault;
+  return resolveApiKeyWithoutVault(adapterId, upstream);
+}
 
-  const fromLauncher = loadLauncherProviderKey(adapterId);
-  if (fromLauncher) return fromLauncher;
+/** Main-process request-time access; never expose the raw key through IPC. */
+export function resolveRuntimeApiKey(adapterId: string): string | null {
+  return resolveApiKey(adapterId);
+}
 
-  const route = upstream ?? configFor(adapterId).upstream;
-  if (route && route !== 'anthropic' && route !== adapterId) {
-    const viaUpstream = loadLauncherProviderKey(route);
-    if (viaUpstream) return viaUpstream;
+/** Main-only quota read using the same config and precedence as native spawn. */
+export function resolveQuotaApiKey(request: ApiQuotaKeyRequest): string | null {
+  const { adapterId, accountId, usageProviderId, authMode } = request;
+  if (!getAdapter(adapterId)) return null;
+  const account = accountId ? getAccount(accountId) : null;
+  if (accountId && (!account || account.adapterId !== adapterId || account.mode !== 'api-key')) return null;
+  const currentMode = account?.mode ?? authDecision(adapterId, undefined, { statusSnapshot: true }).strategy;
+  if (currentMode !== authMode) return null;
+  const upstream = (account?.upstream ?? configFor(adapterId).upstream).trim();
+  const hasRoute = Boolean(upstream && upstream !== 'anthropic');
+  if (hasRoute && !isRoutable(adapterId)) return null;
+  const target = hasRoute ? upstream : currentMode === 'api-key' ? adapterId : null;
+  if (target !== usageProviderId) return null;
+  if (account) {
+    const key = `acctkey:${account.id}`;
+    return hasCachedSecret(key) ? getSecret(key)?.trim() || null : null;
   }
+  // A cold owner credential could shadow every later source at spawn. Do not
+  // decrypt it here or substitute a different account while it is unavailable.
+  if (hasSecret(adapterId) && !hasCachedSecret(adapterId)) return null;
+  const cached = hasCachedSecret(adapterId) ? getKey(adapterId) : null;
+  if (cached) return cached;
+  return resolveApiKeyWithoutVault(adapterId, upstream, (name) => quotaEnvMatchesProvider(name, usageProviderId));
+}
 
-  for (const name of keyEnvVarsOf(adapterId)) {
-    const value = process.env[name];
-    if (typeof value === 'string' && value.trim().length > 0) {
-      return value.trim();
-    }
-  }
-  return null;
+function quotaEnvMatchesProvider(name: string, providerId: string): boolean {
+  if (['ZAI_API_KEY', 'ZHIPU_API_KEY', 'ZHIPUAI_API_KEY'].includes(name)) return ['glm', 'zai', 'zhipu'].includes(providerId);
+  if (name === 'LONGCAT_API_KEY') return providerId === 'longcat';
+  if (['KIMI_MODEL_API_KEY', 'KIMI_API_KEY', 'KIMI_CODING_API_KEY', 'MOONSHOT_API_KEY'].includes(name)) return providerId === 'kimi';
+  if (name === 'XAI_API_KEY') return providerId === 'grok';
+  if (!['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'].includes(name)) return false;
+  const host = providerId === 'glm' ? 'api.z.ai' : providerId === 'longcat' ? 'api.longcat.chat' : null;
+  if (!host) return false;
+  try {
+    const url = new URL(process.env.ANTHROPIC_BASE_URL ?? '');
+    return url.protocol === 'https:' && url.hostname === host && !url.username && !url.password;
+  } catch { return false; }
 }
 
 /** Exported for the pre-spawn credential probe (pty/pre-spawn-probe.ts). */
@@ -424,11 +457,15 @@ export function hasRuntimeKey(
   return resolveApiKeyWithoutVault(adapterId) !== null;
 }
 
-function resolveApiKeyWithoutVault(adapterId: string): string | null {
+function resolveApiKeyWithoutVault(
+  adapterId: string,
+  upstream = configFor(adapterId).upstream,
+  allowEnv?: (name: string) => boolean,
+): string | null {
   const fromLauncher = loadLauncherProviderKey(adapterId);
   if (fromLauncher) return fromLauncher;
 
-  const route = configFor(adapterId).upstream;
+  const route = upstream;
   if (route && route !== 'anthropic' && route !== adapterId) {
     const viaUpstream = loadLauncherProviderKey(route);
     if (viaUpstream) return viaUpstream;
@@ -437,6 +474,7 @@ function resolveApiKeyWithoutVault(adapterId: string): string | null {
   for (const name of keyEnvVarsOf(adapterId)) {
     const value = process.env[name];
     if (typeof value === 'string' && value.trim().length > 0) {
+      if (allowEnv && !allowEnv(name)) return null;
       return value.trim();
     }
   }
@@ -545,6 +583,8 @@ export interface ProviderPerSpawn {
   accountId?: string;
   model?: string;
   isolatedHome?: boolean;
+  /** Main-only: an explicitly requested pane may let Muse check its native auth. */
+  allowNativeAuthAttempt?: boolean;
 }
 
 /**
@@ -583,6 +623,7 @@ function buildProviderSpawnOverrides(
   preparedAccount: PreparedAccount | null,
   options: {
     decision?: AuthDecision;
+    nativeAuthAttempt?: boolean;
   } = {},
 ): ProviderSpawnOverrides {
   const cfg = configFor(adapterId);
@@ -633,6 +674,12 @@ function buildProviderSpawnOverrides(
         : null,
     extraArgs: [...controlArgsFor(adapterId, perSpawn.effort), ...cfg.extraArgs],
   };
+
+  if (options.nativeAuthAttempt) {
+    // Let the CLI access its own store without copying credentials or swapping
+    // to an implicit account. This is an attempt, not proof of authentication.
+    return { ...base, keyEnv: {}, suppressEnv: [] };
+  }
 
   // A per-pane account is exact. Claude is deliberately excluded from the
   // legacy implicit-active-account path: restoring an old OAuth snapshot can
@@ -777,7 +824,14 @@ function prepareProviderSpawnWithDecision(
   if (!infrastructure.ready) {
     return { ok: false, error: infrastructure.reason };
   }
-  const readiness = perSpawn.accountId
+  const nativeAuthAttempt =
+    adapterId === 'muse' &&
+    perSpawn.allowNativeAuthAttempt === true &&
+    perSpawn.isolatedHome === false &&
+    !perSpawn.accountId &&
+    spawnDecision?.strategy === 'login-needed' &&
+    subscriptionAuthStatusIsUnknown(adapterId);
+  const readiness = perSpawn.accountId || nativeAuthAttempt
     ? infrastructure
     : resolveProviderReadiness(adapterId, perSpawn.model, {
         decision: spawnDecision,
@@ -803,7 +857,7 @@ function prepareProviderSpawnWithDecision(
         adapterId,
         perSpawn,
         preparedAccount,
-        { decision: spawnDecision },
+        { decision: spawnDecision, nativeAuthAttempt },
       ),
     };
   } catch (err) {
@@ -1011,6 +1065,9 @@ function toInfo(
     models,
     adapter.models.default,
   );
+  const strategy = authDecision(adapterId, defaultModel, {
+    statusSnapshot: options.nonBlockingAuth === true,
+  }).strategy;
   return {
     adapterId,
     label: adapter.label,
@@ -1053,9 +1110,9 @@ function toInfo(
           }) ?? undefined)
         : undefined,
     secureStorageAvailable: isSecureStorageAvailable({ probe: false }),
-    authStrategy: authDecision(adapterId, defaultModel, {
-      statusSnapshot: options.nonBlockingAuth === true,
-    }).strategy,
+    authStrategy: strategy,
+    authState: strategy !== 'login-needed' ? 'ok' :
+      subscriptionAuthStatusIsUnknown(adapterId) ? 'unknown' : 'missing',
     upstream: cfg.upstream || 'anthropic',
     routable: isRoutable(adapterId),
     upstreams: listUpstreamProviders().map((p) => ({
@@ -1095,6 +1152,11 @@ function broadcast(): void {
   for (const wc of listeners) {
     if (!wc.isDestroyed()) wc.send(PROVIDER_CHANNELS.changed, snapshot);
   }
+}
+
+/** Publish observations refreshed through the dedicated auth-status endpoint. */
+export function notifyProviderAuthChanged(): void {
+  broadcast();
 }
 
 export function registerProviderListener(wc: WebContents): void {
@@ -1435,11 +1497,12 @@ export function registerProviderIpc(): void {
     // Keychain-only provider logins are warmed asynchronously. The immediate
     // snapshot stays metadata/cache-only and cannot freeze this IPC request
     // behind `security` for up to five seconds.
-    void Promise.all([
+    void Promise.allSettled([
       refreshClaudeSubscriptionAuthCache(),
+      refreshOpenClaudeSubscriptionAuthCache(),
       refreshAgySubscriptionAuthCache(),
     ]).then((results) => {
-      if (results.some(({ cacheUpdated }) => cacheUpdated)) broadcast();
+      if (results.some((result) => result.status === 'rejected' || result.value.cacheUpdated)) broadcast();
     });
     return listProviderSettingsForRenderer();
   });

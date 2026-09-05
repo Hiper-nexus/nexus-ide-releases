@@ -9,18 +9,28 @@ import type {
 } from '../../shared/quota-types';
 import { QUOTA_HIGH_USAGE_THRESHOLD } from '../../shared/quota-types';
 
+const percentageNumber = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 });
+function knownRatio(value: number | null): value is number {
+  return value !== null && Number.isFinite(value) && value >= 0 && value <= 1;
+}
+function percentLabel(ratio: number): string {
+  const value = ratio * 100;
+  if (value > 0 && value < 0.1) return '<0,1%';
+  if (value > 99.9 && value < 100) return '>99,9%';
+  return `${percentageNumber.format(value)}%`;
+}
+
 export function windowDisplay(w: QuotaWindow): {
   percentLabel: string;
   tone: 'ok' | 'warn' | 'danger' | 'unknown';
   barRatio: number;
 } {
-  if (w.usedRatio === null) {
+  if (!knownRatio(w.usedRatio)) {
     return { percentLabel: '—', tone: 'unknown', barRatio: 0 };
   }
-  const pct = Math.round(w.usedRatio * 100);
   const tone =
     w.usedRatio >= 0.8 ? 'danger' : w.usedRatio >= 0.5 ? 'warn' : 'ok';
-  return { percentLabel: `${pct}%`, tone, barRatio: w.usedRatio };
+  return { percentLabel: percentLabel(w.usedRatio), tone, barRatio: w.usedRatio };
 }
 
 /** Structured chip copy for a single-line bar pill (never multi-line). */
@@ -28,14 +38,14 @@ export function chipParts(
   snapshot: QuotaFleetSnapshot,
 ): { value: string } | null {
   if (snapshot.entries.length === 0) return null;
-  if (snapshot.worstUsedRatio === null) {
+  if (!knownRatio(snapshot.worstUsedRatio)) {
     if (snapshot.unknownCount > 0) return { value: '—' };
     return null;
   }
   if (snapshot.highUsageCount > 1) {
-    return { value: `${snapshot.highUsageCount} no limite` };
+    return { value: `${snapshot.highUsageCount} com uso elevado` };
   }
-  return { value: `${Math.round(snapshot.worstUsedRatio * 100)}%` };
+  return { value: percentLabel(snapshot.worstUsedRatio) };
 }
 
 export function chipLabel(snapshot: QuotaFleetSnapshot): string | null {
@@ -47,7 +57,7 @@ export function chipLabel(snapshot: QuotaFleetSnapshot): string | null {
 export function chipTone(
   snapshot: QuotaFleetSnapshot,
 ): 'ok' | 'warn' | 'danger' | 'unknown' {
-  if (snapshot.worstUsedRatio === null) return 'unknown';
+  if (!knownRatio(snapshot.worstUsedRatio)) return 'unknown';
   if (snapshot.worstUsedRatio >= QUOTA_HIGH_USAGE_THRESHOLD) return 'danger';
   if (snapshot.worstUsedRatio >= 0.5) return 'warn';
   return 'ok';
@@ -60,4 +70,9 @@ export function shortWindowsLine(entry: ProviderQuotaEntry): string {
     return `${w.label} ${d.percentLabel}${reset}`;
   });
   return parts.join(' · ');
+}
+
+export function prioritizeReportedQuotas(entries: readonly ProviderQuotaEntry[]): ProviderQuotaEntry[] {
+  const hasReportedQuota = (entry: ProviderQuotaEntry) => entry.windows.some(window => knownRatio(window.usedRatio));
+  return [...entries].sort((a, b) => Number(hasReportedQuota(b)) - Number(hasReportedQuota(a)));
 }

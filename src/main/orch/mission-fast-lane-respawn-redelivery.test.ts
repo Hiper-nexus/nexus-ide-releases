@@ -176,8 +176,12 @@ vi.mock('./squad-store', () => ({
 vi.mock('./mission-engine-registry', () => ({
   missionEngineForScope: () => ({
     completeVerified: vi.fn(),
-    blockTechnical: vi.fn(),
-    resumeTechnical: vi.fn(),
+    blockTechnical: (_scope: unknown, input: { description: string }) => {
+      liveMission = { ...liveMission, status: 'blocked', intentState: 'blocked_technical', description: input.description };
+    },
+    resumeTechnical: (_scope: unknown, input: { description: string }) => {
+      liveMission = { ...liveMission, status: 'running', intentState: 'executing', description: input.description };
+    },
   }),
 }));
 
@@ -225,6 +229,28 @@ afterEach(() => {
 });
 
 describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
+  it('encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs', async () => {
+    await fastLane.fastLaneBootstrap(scope, 'mission-1');
+    for (let attempt = 0; attempt < 11; attempt += 1) {
+      for (const sessionId of harness.sessionStates.keys()) harness.sessionStates.set(sessionId, 'exited');
+      await vi.advanceTimersByTimeAsync(15_000);
+    }
+    expect(liveMission.status).toBe('blocked');
+    expect(liveMission.intentState).toBe('blocked_technical');
+    expect(liveMission.description).toContain(mission.description);
+    expect(liveMission.description).toContain('recuperação automática');
+    const finalSpawnCount = harness.spawnCount;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(harness.spawnCount).toBe(finalSpawnCount);
+    expect(liveMission.status).not.toBe('done');
+    await fastLane.resumeFastLaneMission(scope, 'mission-1', { remountKind: 'operator' });
+    const resumedSpawns = harness.spawnCount;
+    for (const sessionId of harness.sessionStates.keys()) harness.sessionStates.set(sessionId, 'exited');
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(harness.spawnCount).toBeGreaterThan(resumedSpawns);
+    expect(liveMission.status).toBe('running');
+  });
+
   it('missão running sem orquestrador vivo → respawn chama redeliverPendingHandoffs', async () => {
     await fastLane.fastLaneBootstrap(scope, 'mission-1');
 

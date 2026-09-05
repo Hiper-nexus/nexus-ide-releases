@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   answerDirectQuestion,
   extractQuestion,
@@ -281,5 +281,31 @@ describe('answerDirectQuestion — responde sem missão, fail-open total', () =>
       }),
     ).toBeNull();
     expect(await answerDirectQuestion('   ')).toBeNull();
+  });
+});
+
+describe('aggregate classification deadline', () => {
+  it('shares one timeout across the provider fallback chain', async () => {
+    vi.useFakeTimers();
+    try {
+      const began = Date.now();
+      let finishedAt = 0;
+      const fetchImpl = vi.fn((_url: unknown, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+      }));
+      const route = routeIntent('Melhore o desempenho do site', {
+        timeoutMs: 100,
+        totalTimeoutMs: 100,
+        hasKeyFor: () => true,
+        loadKeyFor: () => 'fixture-only',
+        fetchImpl: fetchImpl as typeof fetch,
+      }).then(value => { finishedAt = Date.now(); return value; });
+      await vi.advanceTimersByTimeAsync(300);
+      expect(await route).toBeNull();
+      expect(finishedAt - began).toBeLessThanOrEqual(100);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -1,0 +1,33 @@
+{
+  "status": "blocked-by-runtime-channel",
+  "attempts": [
+    {
+      "command": "node resources/mission-shims/nx-shim.cjs handoff-submit <payload>",
+      "exitCode": 1,
+      "stderr": "canal nx indisponível: abra este comando dentro de um worker Nexus"
+    },
+    {
+      "command": "node resources/mission-shims/nx-shim.cjs handoff-submit <payload>",
+      "exitCode": 1,
+      "stderr": "canal nx indisponível: abra este comando dentro de um worker Nexus"
+    }
+  ],
+  "cause": "The Codex runner environment does not define NEXUS_SHIM_ROOT, NEXUS_SHIM_CAPABILITY_ID, or NEXUS_SHIM_SECRET, so the local shim cannot submit to Nexus mail/send from this process.",
+  "fallbackEvidence": [
+    ".superpowers/sdd/2026-09-04-mission-runtime-reliability/progress.md",
+    "docs/superpowers/plans/2026-09-04-mission-runtime-reliability.md",
+    "docs/analysis/2026-09-04-nexus-mission-engine-review.md",
+    "docs/analysis/2026-09-04-feature-usage-audit.md",
+    "docs/qa/evidence/2026-09-05-final-delivery/final-focused-tests.log",
+    "docs/qa/evidence/2026-09-05-final-delivery/final-typecheck.log",
+    "docs/qa/evidence/2026-09-05-final-delivery/final-sinks.log",
+    "docs/qa/evidence/2026-09-05-final-delivery/final-renderer-build.log",
+    "docs/qa/evidence/2026-09-05-final-delivery/coderabbit-integrated.log"
+  ],
+  "sanitizedIncident": {
+    "summary": "A process-environment inspection command printed runner environment variables to tool output while looking for Nexus shim context.",
+    "storedInRepo": false,
+    "valuesRepeatedInEvidence": false,
+    "recommendedAction": "Rotate credentials that were present in this runner environment before treating the transcript as clean."
+  }
+}

@@ -33,7 +33,7 @@ import { ProvidersPanel } from './ProvidersPanel';
 import { UsageQuotaSection } from './UsageQuotaSection';
 import { ModelRankingSection } from './ModelRankingSection';
 import { PixelIcon } from '../PixelIcon';
-import { OperatorHud } from '../OperatorHud';
+import { useGamificationStore } from '../../state/gamification-store';
 import { AccountSection } from './AccountSection';
 import { AppearanceSection } from './AppearanceSection';
 import { MediaSection } from './MediaSection';
@@ -62,6 +62,7 @@ import { CompanionRelaySection } from './CompanionRelaySection';
 import { ArmsSection } from './ArmsSection';
 import { LabsSection } from './LabsSection';
 import {
+  SettingsSectionTitle,
   SettingsSectionTitleProvider,
   type SettingsSectionTitleLevel,
 } from './SettingsSectionTitle';
@@ -111,10 +112,23 @@ function NavRow({
 function SettingsSectionContent({
   section,
   adapters,
+  adapterStatus,
+  onRetryAdapters,
 }: {
   section: SettingsSection;
   adapters: AdapterInfo[];
+  adapterStatus: "loading" | "ready" | "error";
+  onRetryAdapters: () => void;
 }) {
+  if ((section === "llms" || section === "plugins") && adapterStatus !== "ready") {
+    return <section className="settings-section">
+      <SettingsSectionTitle>{SETTINGS_ITEMS.find(item => item.id === section)?.title}</SettingsSectionTitle>
+      {adapterStatus === "loading"
+        ? <p role="status" className="settings-skeleton">Carregando ferramentas de IA…</p>
+        : <div role="alert"><p>Não foi possível carregar as ferramentas de IA.</p>
+            <button type="button" className="settings-btn" onClick={onRetryAdapters}>Tentar novamente</button></div>}
+    </section>;
+  }
   switch (section) {
     case 'account':
       return <AccountSection />;
@@ -211,12 +225,17 @@ export function SettingsSurface({
   detailRef,
   sectionTitleLevel,
 }: SettingsSurfaceProps) {
+  const openProfile = useGamificationStore(state => state.openProfile);
   const squadsCount = useOrchStore(
     (state) =>
       state.squads.filter((squad) => !isMissionRuntimeSquadId(squad.id)).length,
   );
   const mcpToolCount = useOrchStore((state) => state.mcpInfo?.toolCount ?? 0);
   const [adapters, setAdapters] = useState<AdapterInfo[]>([]);
+  const [adapterStatus, setAdapterStatus] = useState<"loading" | "ready" | "error">("loading");
+  const [adapterAttempt, setAdapterAttempt] = useState(0);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const replacedFocus = useRef<{ element: HTMLElement; section: string | undefined } | null>(null);
   const [query, setQuery] = useState(
     () => peekEphemeralDraft<{ query: string }>('settings-nav')?.query ?? '',
   );
@@ -242,26 +261,38 @@ export function SettingsSurface({
 
   useEffect(() => {
     const api = window.nexus?.adapters;
-    if (!api) return undefined;
-
+    if (!api) { setAdapterStatus('error'); return; }
     let cancelled = false;
-    void api
-      .list()
-      .then((list) => {
-        if (!cancelled) setAdapters(list);
-      })
-      .catch(() => {
-        if (!cancelled) setAdapters([]);
-      });
-    const unsubscribe = api.onChanged(setAdapters);
-    return () => {
-      cancelled = true;
-      unsubscribe();
+    let changed = false;
+    setAdapterStatus('loading');
+    const accept = (list: AdapterInfo[]) => {
+      if (cancelled) return;
+      const focused = document.activeElement;
+      if (focused instanceof HTMLElement && contentRef.current?.contains(focused)) {
+        replacedFocus.current = { element: focused, section: contentRef.current.dataset.settingsSection };
+      }
+      setAdapters(list);
+      setAdapterStatus('ready');
     };
-  }, []);
+    void api.list().then(list => {
+      if (!changed) accept(list);
+    }).catch(() => {
+      if (!cancelled && !changed) setAdapterStatus('error');
+    });
+    const unsubscribe = api.onChanged(list => { changed = true; accept(list); });
+    return () => { cancelled = true; unsubscribe(); };
+  }, [adapterAttempt]);
+
+  useLayoutEffect(() => {
+    const previous = replacedFocus.current;
+    replacedFocus.current = null;
+    if (!previous || previous.section !== section || previous.element.isConnected) return;
+    if (document.activeElement !== document.body) return;
+    contentRef.current?.querySelector<HTMLElement>('.settings-detail__route-title')?.focus();
+  }, [adapterStatus, section]);
 
   const badges: Partial<Record<SettingsSection, number>> = {
-    providers: adapters.length,
+    ...(adapterStatus === 'ready' ? { providers: adapters.length } : {}),
     squads: squadsCount,
     ...(mcpToolCount > 0 ? { tools: mcpToolCount, mcps: 1 } : {}),
   };
@@ -274,6 +305,17 @@ export function SettingsSurface({
     <>
       <nav className="settings-nav" aria-label="Configurações">
         <div className="settings-nav__body">
+          <label className="settings-nav__compact">
+            <span>Página de configurações</span>
+            <select className="settings-input" value={section} onChange={(event) => {
+              const selected = SETTINGS_ITEMS.find(item => item.id === event.currentTarget.value);
+              if (selected) onSelectSection(selected.id);
+            }}>
+              {SETTINGS_GROUPS.map(group => <optgroup key={group.label} label={group.label}>
+                {group.items.map(item => <option key={item.id} value={item.id}>{item.title}</option>)}
+              </optgroup>)}
+            </select>
+          </label>
           <div className="settings-nav__brand" aria-label="Configurações">
             <span className="settings-nav__brand-mark" aria-hidden>
               <PixelIcon name="config" size={14} />
@@ -324,7 +366,9 @@ export function SettingsSurface({
         </div>
         <div className="settings-nav__footer">
           <div className="settings-nav__operator">
-            <OperatorHud compact />
+            <button type="button" className="settings-nav__profile" onClick={openProfile}>
+              <PixelIcon name="user" size={14} /> Perfil e mascote
+            </button>
           </div>
           {footerActionLabel ? (
             <button
@@ -356,11 +400,13 @@ export function SettingsSurface({
             {returnKeyboardHint ? <kbd>{returnKeyboardHint}</kbd> : null}
           </button>
         </header>
-        <div className="settings-detail__content">
+        <div ref={contentRef} className="settings-detail__content" data-settings-section={section}>
           <SettingsSectionTitleProvider level={sectionTitleLevel}>
             <SettingsSectionContent
               section={section}
               adapters={adapters}
+              adapterStatus={adapterStatus}
+              onRetryAdapters={() => setAdapterAttempt(attempt => attempt + 1)}
             />
           </SettingsSectionTitleProvider>
         </div>
@@ -418,6 +464,7 @@ export function SettingsWorkspace({
       aria-label="Configurações do Nexus"
     >
       <h1 className="settings-visually-hidden">Configurações do Nexus</h1>
+      <div className="settings-workspace__layout">
       <SettingsSurface
         section={section}
         onSelectSection={onSectionChange ?? openSettings}
@@ -427,6 +474,7 @@ export function SettingsWorkspace({
         detailRef={detailRef}
         sectionTitleLevel={2}
       />
+      </div>
     </section>
   );
 }

@@ -48,6 +48,8 @@ export interface ProviderQuotaEntry {
   /** Stable list key: adapterId or adapterId:accountId */
   id: string;
   adapterId: string;
+  /** Declared API provider supplying quota; adapterId remains the owner of the row. */
+  usageProviderId?: string;
   accountId?: string;
   /** Display name (CLI label or account label). */
   label: string;

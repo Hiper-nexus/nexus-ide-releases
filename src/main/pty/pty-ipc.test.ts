@@ -169,7 +169,7 @@ vi.mock("../adapters/adapter-registry", () => ({
             },
           },
         }
-      : id === "opencode" || id === "custom" || id === "agy"
+      : id === "opencode" || id === "custom" || id === "agy" || id === "muse"
         ? {
             id,
             kind: "cli-pty",
@@ -187,8 +187,8 @@ vi.mock("../adapters/adapter-registry", () => ({
           }
         : null,
   isAdapterInstalled: () => true,
-  getAdapterResolvedBin: () => "/usr/local/bin/claude",
-  resolveAdapterBinary: () => "/usr/local/bin/claude",
+  getAdapterResolvedBin: (id: string) => id === 'muse' ? '/usr/local/bin/muse' : '/usr/local/bin/claude',
+  resolveAdapterBinary: (id: string) => id === 'muse' ? '/usr/local/bin/muse' : '/usr/local/bin/claude',
 }));
 
 vi.mock("../path-resolver", () => ({
@@ -408,6 +408,39 @@ describe("registerPtyIpc account fail-fast", () => {
       "pty-created",
       authorityDeps.scope,
     );
+  });
+
+  it('offers a native Muse auth attempt only for the already-authorized direct user pane', () => {
+    providerDeps.prepareProviderSpawn.mockReturnValueOnce({ ok: true, overrides: {} });
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+    const result = handler?.({ sender: { id: 7 } }, {
+      kind: 'cli-agent', adapterId: 'muse', cols: 100, rows: 30,
+    });
+    expect(result).toEqual({ ok: true, sessionId: 'pty-created' });
+    expect(providerDeps.prepareProviderSpawn).toHaveBeenCalledWith('muse', expect.objectContaining({
+      allowNativeAuthAttempt: true, isolatedHome: false,
+    }));
+    expect(ptyDeps.spawnAgentSession).toHaveBeenCalledWith(
+      expect.anything(), expect.anything(), expect.anything(), { binPath: '/usr/local/bin/muse' },
+      expect.objectContaining({ source: 'direct-user', context: null, scope: authorityDeps.scope }),
+    );
+  });
+
+  it('does not extend a mission-bound Muse request into a native-auth attempt', () => {
+    providerDeps.prepareProviderSpawn.mockReturnValueOnce({ ok: true, overrides: {} });
+    const original = sealedPendingSpawn();
+    const pending = { ...original, sealedRequest: { ...original.sealedRequest, adapterId: 'muse' } };
+    authorityDeps.claimPendingSpawnMeta.mockReturnValueOnce(pending);
+    authorityDeps.getMission.mockReturnValueOnce(approvedMissionForSpawn());
+    authorityDeps.resolveCwdForScope.mockReturnValueOnce('/workspace/a/packages/api');
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+    const result = handler?.({ sender: { id: 7 } }, {
+      ...pending.sealedRequest, kind: 'cli-agent', orchRequestId: 'orchspawn-1',
+      cols: 100, rows: 30,
+    });
+    expect(result).toEqual({ ok: true, sessionId: 'pty-created' });
+    expect(providerDeps.prepareProviderSpawn.mock.calls[0]?.[1])
+      .not.toHaveProperty('allowNativeAuthAttempt');
   });
 
   it("rejects renderer cwd outside the main-authorized project", () => {

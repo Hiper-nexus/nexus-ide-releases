@@ -65,6 +65,20 @@ describe('AccountSection', () => {
     act(() => root.unmount());
   });
 
+  it('offers recovery without showing purchase actions when the account cannot load', async () => {
+    vi.mocked(window.nexus.billing.get).mockRejectedValueOnce(new Error('internal-license-debug'));
+    const { host, root } = mount();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(host.textContent).toContain('Não foi possível carregar sua conta');
+    expect(host.textContent).not.toContain('internal-license-debug');
+    expect(host.querySelectorAll('.account__plan')).toHaveLength(0);
+    const retry = [...host.querySelectorAll('button')].find(button => button.textContent === 'Tentar novamente');
+    await act(async () => retry!.click());
+    expect(host.textContent).toContain('Conta local (sem login)');
+    expect(window.nexus.billing.openCheckout).not.toHaveBeenCalled();
+    act(() => root.unmount());
+  });
+
   it('oferece somente Free permanente e Pro promocional em reais', async () => {
     const { host, root } = mount();
     await act(async () => {

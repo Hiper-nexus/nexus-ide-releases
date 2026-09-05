@@ -9,7 +9,6 @@ import type { FailoverReasonKind } from '../../shared/account-types';
 import type { LimitHit } from '../orch/limit-detector';
 import {
   defaultUnknownWindows,
-  knownWindow,
   mergeWindows,
 } from './quota-normalize';
 import {
@@ -72,18 +71,17 @@ export function probeProviderWindows(input: ProbeInput): QuotaWindow[] {
     const tok =
       input.localTokens.inputTokens + input.localTokens.outputTokens;
     if (tok > 0) {
-      const ratio = Math.min(1, Math.log10(tok + 1) / 6.3); // ~2e6 → ~1
       const label =
         input.adapterId === 'ollama' ? 'Local' : 'Projeto';
       windows = mergeWindows(windows, [
-        knownWindow({
+        {
           kind: 'local',
           label,
-          usedRatio: ratio,
+          usedRatio: null,
           source: 'local-tokens',
-          confidence: 'low',
-          now,
-        }),
+          confidence: 'high',
+          remainingLabel: `${new Intl.NumberFormat('pt-BR').format(tok)} tokens`,
+        },
       ]);
     }
   }

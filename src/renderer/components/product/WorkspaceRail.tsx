@@ -4,7 +4,6 @@ import type {
   MissionStateReason,
 } from '../../../shared/mission-engine-contract';
 import {
-  MISSION_AWAITING_REVIEW_LABEL,
   MISSION_LIFECYCLE_LABELS,
   MISSION_RUNNING_ATTENTION_LABEL,
   missionLifecycleLabel,
@@ -17,7 +16,7 @@ import { useSessionStateStore } from '../../state/session-state-store';
 import { useGitScmStore } from '../../state/git-scm-store';
 import { useQuotaStore } from '../../state/quota-store';
 import { useAdapterStore } from '../../state/adapter-store';
-import { shortWindowsLine } from '../../lib/quota-display';
+import { prioritizeReportedQuotas, shortWindowsLine } from '../../lib/quota-display';
 import { ProviderLogo } from '../ProviderLogo';
 import { useTerminalGridDialogStore } from '../../state/terminal-grid-dialog-store';
 import { useCommandPaletteStore } from '../../state/command-palette-store';
@@ -31,7 +30,7 @@ export interface WorkspaceRailMission {
   status: MissionLifecycleState;
   needsAttention: boolean;
   stateReason?: Pick<MissionStateReason, 'code' | 'label'>;
-  /** Motor done, humano ainda não aprovou — o rail não pode dizer Pronto. */
+  /** Entrega pronta para revisar; o aceite humano continua pendente. */
   awaitsOperatorReview?: boolean;
 }
 
@@ -64,12 +63,13 @@ export interface WorkspaceRailProps {
    */
   onSelectMission: (missionId: string, workspaceId?: string) => void;
   onRemoveWorkspace?: (workspaceId: string) => void;
-  onRemoveMission?: (missionId: string) => void;
+  onRemoveMission?: (missionId: string, workspaceId: string) => void;
   projectEnabled?: boolean;
   onOpenProject?: () => void;
   onOpenTaskBoard: () => void;
   onOpenMemory: () => void;
   onOpenSettings: () => void;
+  onOpenUsageQuota?: () => void;
   /** Destino explícito do grid. Não é o nome do workspace. */
   onOpenTerminals: () => void;
   /**
@@ -170,9 +170,6 @@ function missionStatusDisplay(
     stateReason?.code,
     awaitsOperatorReview,
   );
-  if (label === MISSION_AWAITING_REVIEW_LABEL) {
-    return { label, icon: 'user', tone: 'blocked' };
-  }
   if (label === 'Dormindo' || label === 'Parou') {
     return {
       label,
@@ -194,7 +191,7 @@ interface WorkspaceGroupProps {
   onSelectWorkspace: (workspaceId: string) => void;
   onSelectMission: (missionId: string, workspaceId?: string) => void;
   onRemoveWorkspace?: (workspaceId: string) => void;
-  onRemoveMission?: (missionId: string) => void;
+  onRemoveMission?: (missionId: string, workspaceId: string) => void;
 }
 
 function WorkspaceGroup({
@@ -329,7 +326,7 @@ function WorkspaceGroup({
 
                     return (
                       <li key={mission.id} className="workspace-rail__mission-card-item">
-                        <div className="workspace-rail__workspace-row">
+                        <div className="workspace-rail__mission-row">
                           <button
                             type="button"
                             className={`workspace-rail__row workspace-rail__mission workspace-rail__mission--${status.tone}${
@@ -378,14 +375,14 @@ function WorkspaceGroup({
                           {onRemoveMission ? (
                             <button
                               type="button"
-                              className="workspace-rail__workspace-action"
+                              className="workspace-rail__mission-remove"
                               data-action="remove-mission"
                               data-mission-id={mission.id}
                               aria-label={`Remover missão ${mission.title}`}
                               title={`Remover "${mission.title}" — apaga a missão e o histórico`}
                               onClick={(event) => {
                                 event.stopPropagation();
-                                onRemoveMission(mission.id);
+                                onRemoveMission(mission.id, workspace.id);
                               }}
                             >
                               <PixelIcon name="trash" size={11} />
@@ -517,6 +514,7 @@ export function WorkspaceRail({
   onOpenTaskBoard,
   onOpenMemory,
   onOpenSettings,
+  onOpenUsageQuota,
   onOpenTerminals,
   onOpenLauncher,
   currentWorkspaceId,
@@ -733,7 +731,7 @@ export function WorkspaceRail({
         {quotaEntries.length > 0 ? (
           <div
             className="workspace-rail__cockpit"
-            onClick={onOpenSettings}
+            onClick={onOpenUsageQuota ?? onOpenSettings}
             role="button"
             tabIndex={0}
             aria-label="Ver uso de cotas nas Configurações"
@@ -741,7 +739,7 @@ export function WorkspaceRail({
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault();
-                onOpenSettings?.();
+                (onOpenUsageQuota ?? onOpenSettings)();
               }
             }}
           >
@@ -750,7 +748,7 @@ export function WorkspaceRail({
               <span className="workspace-rail__cockpit-detail-hint">Ver</span>
             </div>
             <div className="workspace-rail__cockpit-bars">
-              {quotaEntries.slice(0, 2).map((entry) => {
+              {prioritizeReportedQuotas(quotaEntries).slice(0, 2).map((entry) => {
                 let worst: number | null = null;
                 for (const window of entry.windows) {
                   if (window.usedRatio === null) continue;

@@ -3,6 +3,7 @@ import {
   fetchGrokUsageWindows,
   GROK_BILLING_URL,
   parseGrokBilling,
+  parseGrokTeamsUsage,
   windowsFromRateLimitHeaders,
 } from './grok-usage';
 
@@ -17,6 +18,9 @@ const BILLING_FIXTURE = {
 };
 
 describe('parseGrokBilling', () => {
+  it.each([0, 0.5, 1, 50, 100])('interprets explicit team percent %s on a 0–100 scale', (percent) => {
+    expect(parseGrokTeamsUsage({ used_percent: percent })[0]?.usedRatio).toBe(percent / 100);
+  });
   it('maps monthly used/limit from CLI billing response', () => {
     const w = parseGrokBilling(BILLING_FIXTURE, Date.parse('2026-07-13T00:00:00Z'));
     expect(w).toHaveLength(1);

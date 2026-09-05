@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountInfo } from '../../../shared/account-types';
+import type { AdapterAuthStatus } from '../../../shared/provider-settings-types';
 import { accountLoginCommandFor } from '../../../shared/account-login-commands';
 import { useAccountStore } from '../../state/account-store';
 import { useUsageStore } from '../../state/usage-store';
@@ -8,11 +9,6 @@ import { defaultAccountLabel, emailFromAuthDetail } from './account-default-labe
 import { accountsPanelView } from './accounts-login-view';
 import { PixelIcon } from '../PixelIcon';
 import { openCliLoginTerminal } from './cli-login-terminal';
-import {
-  apiKeyChoiceBlurb,
-  multiAccountAddCopy,
-  sessionChoiceBlurb,
-} from './multi-account-copy';
 
 /**
  * Multi-account manager for one adapter — the failover roster.
@@ -75,10 +71,17 @@ function formatAccountUsd(costUsd: number): string {
 export function AccountsManager({
   adapterId,
   adapterLabel,
+  authStatus,
+  onAuthStatusChange,
+  loginCommand: declaredLoginCommand,
 }: {
   adapterId: string;
   /** Nome legível do provider (Claude, AGY…). Fallback = adapterId. */
   adapterLabel?: string;
+  /** The Providers hub shares one observed state with its list and detail. */
+  authStatus?: AdapterAuthStatus | null;
+  onAuthStatusChange?: (status: AdapterAuthStatus) => void;
+  loginCommand?: string | null;
 }) {
   // Select the whole array (stable reference) and filter in a memo — a
   // selector that returns `.filter(...)` makes a NEW array every render, which
@@ -103,21 +106,27 @@ export function AccountsManager({
   const [key, setKey] = useState('');
   const [notice, setNotice] = useState<string | null>(null);
   const [noticeTone, setNoticeTone] = useState<'ok' | 'err' | 'info'>('info');
-  const [auth, setAuth] = useState<{ state: string; detail: string } | null>({
+  const [localAuth, setAuth] = useState<{ state: string; detail: string } | null>({
     state: 'checking',
     detail: 'Verificando a sessão desta CLI…',
   });
   const [busy, setBusy] = useState(false);
+  const [loginFailed, setLoginFailed] = useState(false);
   const [canSnapshot, setCanSnapshot] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
   const renameInputRef = useRef<HTMLInputElement>(null);
 
   const isClaude = adapterId === 'claude';
+  const auth = authStatus === undefined ? localAuth : authStatus ?? {
+    state: 'checking', detail: 'Verificando a sessão desta CLI…',
+  };
   const displayName = (adapterLabel?.trim() || adapterId).trim();
   const active = accounts.find((a) => a.active) ?? null;
   const standby = accounts.filter((a) => !a.active);
-  const loginCommand = accountLoginCommandFor(adapterId);
+  const loginCommand = declaredLoginCommand === undefined
+    ? accountLoginCommandFor(adapterId)
+    : declaredLoginCommand;
   // E-mail da sessão viva da CLI (quando a sonda expõe). Identifica QUAL
   // conta está logada no CLI agora — distingue as linhas do vault e alimenta
   // o auto-save pós-login.
@@ -166,14 +175,26 @@ export function AccountsManager({
       const list = await window.nexus?.providers?.authStatus();
       if (!list) return null;
       const mine = list.find((s) => s.adapterId === adapterId);
-      const next = mine
-        ? { state: mine.state, detail: mine.detail }
-        : null;
+      const next = mine ?? {
+        adapterId, state: 'unknown' as const, detail: 'Não foi possível verificar a conexão.',
+      };
       setAuth(next);
+      onAuthStatusChange?.(next);
       return next;
     } catch {
-      // Refresh de fundo: falhar aqui não pode derrubar a tela nem gritar.
+      const next = { adapterId, state: 'unknown' as const, detail: 'Não foi possível verificar a conexão.' };
+      setAuth(next);
+      onAuthStatusChange?.(next);
       return null;
+    }
+  }
+
+  async function verifyAuth() {
+    setBusy(true);
+    try {
+      await refreshAuth();
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -215,6 +236,7 @@ export function AccountsManager({
   }
 
   useEffect(() => {
+    if (authStatus !== undefined) return;
     let alive = true;
     void window.nexus.providers.authStatus().then(
       (list) => {
@@ -240,7 +262,7 @@ export function AccountsManager({
     return () => {
       alive = false;
     };
-  }, [adapterId]);
+  }, [adapterId, authStatus]);
 
   useEffect(() => {
     let alive = true;
@@ -263,6 +285,7 @@ export function AccountsManager({
   }
 
   function showNotice(message: string, tone: 'ok' | 'err' | 'info' = 'info') {
+    setLoginFailed(false);
     setNotice(message);
     setNoticeTone(tone);
   }
@@ -350,22 +373,24 @@ export function AccountsManager({
     if (!loginCommand) return;
     setBusy(true);
     showNotice('Abrindo o terminal de login…', 'info');
-    const result = await openCliLoginTerminal({
-      command: loginCommand,
-      adapterId,
-      adapterLabel: displayName,
-      onFinished: () => {
-        void autoSaveSessionAfterLogin();
-      },
-    });
-    setBusy(false);
-    if (result.ok) {
-      showNotice(
-        'Terminal de login aberto. Conclua no navegador da CLI.',
-        'info',
-      );
-    } else {
-      showNotice(result.error, 'err');
+    try {
+      const result = await openCliLoginTerminal({
+        command: loginCommand,
+        adapterId,
+        adapterLabel: displayName,
+        onFinished: () => { void autoSaveSessionAfterLogin(); },
+      });
+      if (result.ok) {
+        showNotice('Terminal de login aberto. Siga as instruções da ferramenta.', 'info');
+      } else {
+        showNotice(result.error, 'err');
+        setLoginFailed(true);
+      }
+    } catch {
+      showNotice('Não foi possível abrir o terminal de login.', 'err');
+      setLoginFailed(true);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -600,28 +625,14 @@ export function AccountsManager({
     );
   }
 
-  const vaultCount = accounts.length;
-  const hasEmUso = panel.loggedIn || Boolean(active);
-  const addCopy = multiAccountAddCopy({
-    vaultCount,
-    standbyCount: standby.length,
-    hasEmUso,
-  });
+  const hasUnsavedSession = panel.showSaveLoggedIn && !vaultHasLiveSession;
 
   return (
     <div className="acct" data-adapter={adapterId}>
       <div className="acct__head">
         <div className="acct__head-copy">
           <div className="acct__title-row">
-            <h4 className="acct__title">Contas e login · {displayName}</h4>
-            {panel.showMultiChip && (
-              <span
-                className={`acct__multi-chip${addCopy.chipOn ? ' acct__multi-chip--on' : ''}`}
-                title={addCopy.chipTitle}
-              >
-                {addCopy.chip}
-              </span>
-            )}
+            <h4 className="acct__title">Conexão e contas</h4>
           </div>
           <p className="acct__hint">{panel.hint}</p>
         </div>
@@ -632,15 +643,15 @@ export function AccountsManager({
         )}
       </div>
 
-      {panel.showLoginHero && (
+      {(panel.showLoginHero || auth?.state === 'unknown') && (
         <div className="acct__login-hero" role="status">
-          {auth?.detail && (
+          {auth?.detail && auth.state !== 'unknown' && (
             <p className="acct__login-hero-detail">{auth.detail}</p>
           )}
           <button
             type="button"
             className="settings-btn settings-btn--primary acct__login-cta"
-            onClick={() => void openLoginTerminal()}
+            onClick={() => auth?.state === 'unknown' ? void verifyAuth() : void openLoginTerminal()}
             disabled={busy}
             data-testid="acct-login-cta"
             title={
@@ -649,25 +660,14 @@ export function AccountsManager({
                 : undefined
             }
           >
-            {panel.loginCta}
+            {auth?.state === 'unknown' ? (busy ? 'Verificando…' : 'Verificar sessão') : panel.loginCta}
           </button>
+          {auth?.state === 'unknown' && loginCommand && (
+            <button type="button" className="settings-btn" disabled={busy} onClick={() => void openLoginTerminal()}>
+              Abrir login da CLI
+            </button>
+          )}
         </div>
-      )}
-
-      {panel.showSaveLoggedIn && liveEmail && !vaultHasLiveSession && (
-        <p className="acct__auth-detail" role="status">
-          A sessão atual ({liveEmail}) ainda não está salva no Nexus.
-          Se entrar com outra conta, o CLI substitui esta.
-          <button
-            type="button"
-            className="settings-btn acct__login-now"
-            onClick={() => void saveSessionToVault(liveEmail)}
-            disabled={busy}
-            title="Salva a sessão logada agora como conta no Nexus"
-          >
-            Salvar esta conta
-          </button>
-        </p>
       )}
 
       {(panel.showImplicitNative ||
@@ -687,12 +687,12 @@ export function AccountsManager({
               <div className="acct__body">
                 <div className="acct__identity">
                   <span className="acct__name">
-                    Sessão nativa de {displayName}
+                    {liveEmail ?? `Sessão nativa de ${displayName}`}
                   </span>
                   <span className="acct__pill">Em uso</span>
                 </div>
                 <p className="acct__meta-line">
-                  Login da CLI nesta máquina, ainda sem conta salva no Nexus.
+                  Sessão nativa de {displayName} nesta máquina.
                 </p>
               </div>
             </div>
@@ -747,93 +747,46 @@ export function AccountsManager({
       )}
 
       <div className="acct__add-zone" data-open={addMode !== null ? 'true' : 'false'}>
-        <div className="acct__add-head">
-          <div className="acct__add-head-copy">
-            <span className="acct__section-title">
-              {panel.needsLogin ? 'Outra forma' : addCopy.title}
-            </span>
-            <p className="acct__add-sub">
-              {panel.needsLogin
-                ? 'Se esta CLI autentica por chave, cole aqui. O login da assinatura é o botão acima.'
-                : addCopy.sub}
-            </p>
-          </div>
-        </div>
-
         {addMode === null && (
-          <div className="acct__add-choices">
-            {panel.showAddAnotherLogin && (
+          <>
+            {hasUnsavedSession && (
+              <p className="acct__add-sub">
+                Esta sessão ainda não está salva no Nexus. Salve antes de trocar de conta.
+              </p>
+            )}
+            <div className="acct__connection-actions">
+              {hasUnsavedSession && (
+                <button
+                  type="button"
+                  className="settings-btn settings-btn--primary"
+                  disabled={busy}
+                  onClick={() => liveEmail
+                    ? void saveSessionToVault(liveEmail)
+                    : setAddMode('subscription')}
+                >
+                  Salvar esta conta
+                </button>
+              )}
+              {panel.showAddAnotherLogin && (
+                <button
+                  type="button"
+                  className="settings-btn"
+                  onClick={() => void openLoginTerminal()}
+                  disabled={busy}
+                >
+                  {panel.loginCta}
+                </button>
+              )}
               <button
                 type="button"
-                className="settings-btn settings-btn--primary acct__add-choice"
-                onClick={() => void openLoginTerminal()}
+                className="settings-btn"
+                onClick={() => setAddMode('api-key')}
                 disabled={busy}
-                title={
-                  loginCommand
-                    ? `Abre um terminal com “${loginCommand}”`
-                    : undefined
-                }
               >
-                <span className="acct__add-choice-icon" aria-hidden="true">
-                  <PixelIcon name="user" size={14} />
-                </span>
-                <span className="acct__add-choice-text">
-                  <strong>{panel.loginCta}</strong>
-                  <span>
-                    Troca a sessão desta CLI. A conta anterior some do
-                    terminal até ser salva no Nexus.
-                  </span>
-                </span>
-                <span className="acct__add-plus" aria-hidden="true">
-                  →
-                </span>
+                <PixelIcon name="key" size={12} /> Adicionar API key
               </button>
-            )}
-            {panel.showSaveLoggedIn && (
-              <button
-                type="button"
-                className="settings-btn settings-btn--primary acct__add-choice"
-                onClick={() => setAddMode('subscription')}
-                title={`Salva a sessão atual de ${displayName} no Nexus`}
-              >
-                <span className="acct__add-choice-icon" aria-hidden="true">
-                  <PixelIcon name="id-badge" size={14} />
-                </span>
-                <span className="acct__add-choice-text">
-                  <strong>Salvar conta logada</strong>
-                  <span>
-                    {sessionChoiceBlurb({
-                      adapterLabel: displayName,
-                      hasEmUso,
-                      vaultCount,
-                    })}
-                  </span>
-                </span>
-                <span className="acct__add-plus" aria-hidden="true">
-                  +
-                </span>
-              </button>
-            )}
-            <button
-              type="button"
-              className="settings-btn acct__add-choice"
-              onClick={() => setAddMode('api-key')}
-              title={`Adicionar conta ${displayName} com API key`}
-            >
-              <span className="acct__add-choice-icon" aria-hidden="true">
-                <PixelIcon name="key" size={14} />
-              </span>
-              <span className="acct__add-choice-text">
-                <strong>API key</strong>
-                <span>
-                  {apiKeyChoiceBlurb({ hasEmUso, vaultCount })}
-                </span>
-              </span>
-              <span className="acct__add-plus" aria-hidden="true">
-                +
-              </span>
-            </button>
-          </div>
+            </div>
+          </>
         )}
 
         {addMode === 'subscription' && (
@@ -934,20 +887,25 @@ export function AccountsManager({
           </div>
         )}
 
-        {addMode === null && panel.loggedIn && (
-          <p className="acct__add-footnote">
-            A CLI guarda uma sessão. Salve no Nexus antes de entrar com outra.
-          </p>
-        )}
       </div>
 
       {notice && (
-        <p
+        <div
           className={`acct__notice acct__notice--${noticeTone}`}
           role={noticeTone === 'err' ? 'alert' : 'status'}
         >
-          {notice}
-        </p>
+          <span>{notice}</span>
+          {loginFailed && (
+            <button
+              type="button"
+              className="settings-btn"
+              onClick={() => void openLoginTerminal()}
+              disabled={busy}
+            >
+              Tentar abrir novamente
+            </button>
+          )}
+        </div>
       )}
     </div>
   );

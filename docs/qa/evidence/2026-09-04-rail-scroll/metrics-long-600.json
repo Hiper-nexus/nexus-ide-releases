@@ -1,0 +1,60 @@
+{
+  "clientHeight": 136,
+  "controls": [
+    {
+      "height": 32,
+      "hit": true,
+      "label": "Voltar ao Início",
+      "visible": true
+    },
+    {
+      "height": 32,
+      "hit": true,
+      "label": "Abrir Projeto",
+      "visible": true
+    },
+    {
+      "height": 32,
+      "hit": true,
+      "label": "Abrir Terminais",
+      "visible": true
+    },
+    {
+      "height": 22,
+      "hit": true,
+      "label": "Grade de terminais (escolher quantidade)",
+      "visible": true
+    },
+    {
+      "height": 32,
+      "hit": true,
+      "label": "Abrir Quadro",
+      "visible": true
+    },
+    {
+      "height": 32,
+      "hit": true,
+      "label": "Abrir Memória",
+      "visible": true
+    },
+    {
+      "height": 95,
+      "hit": true,
+      "label": "Ver uso de cotas nas Configurações",
+      "visible": true
+    },
+    {
+      "height": 32,
+      "hit": true,
+      "label": "Abrir Configurações",
+      "visible": true
+    }
+  ],
+  "height": 600,
+  "missions": 30,
+  "passed": true,
+  "positionsStable": true,
+  "recentFullyRevealed": true,
+  "scrollHeight": 1747,
+  "width": 900
+}

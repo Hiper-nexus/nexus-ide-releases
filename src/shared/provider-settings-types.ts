@@ -72,6 +72,8 @@ export interface ProviderSettingsInfo {
   /** Masked preview like "sk-…4a2f", or null when unset. */
   keyMasked: string | null;
   authMethod: string;
+  /** Observed login proof for display; unknown never means confirmed logout. */
+  authState?: AuthState;
   loginHint?: string;
   /**
    * Comando que autentica esta CLI num terminal ("codex login", "qwen"…).

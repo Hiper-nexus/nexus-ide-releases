@@ -1,0 +1,8 @@
+{
+  "destination": {
+    "kind": "launcher"
+  },
+  "hasDeadMissionError": false,
+  "hasRemovedMissionRow": false,
+  "mainHeading": "Launcher"
+}

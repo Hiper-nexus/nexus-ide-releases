@@ -56,6 +56,7 @@ export type AttentionInboxInput = {
     enabled: boolean;
     installed: boolean;
     authStrategy: string;
+    authState?: 'ok' | 'missing' | 'unknown';
   }>;
 };
 
@@ -108,7 +109,8 @@ export function collectAttentionItems(
     if (
       !provider.enabled ||
       !provider.installed ||
-      provider.authStrategy !== 'login-needed'
+      provider.authStrategy !== 'login-needed' ||
+      (provider.authState !== undefined && provider.authState !== 'missing')
     ) {
       continue;
     }

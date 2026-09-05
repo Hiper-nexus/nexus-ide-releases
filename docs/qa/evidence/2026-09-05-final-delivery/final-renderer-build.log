@@ -1,0 +1,60 @@
+npm notice run nexus-ide@0.76.0 npx
+npm notice run 'vite' build --config vite.renderer.config.ts --outDir /tmp/nexus-workspace-qa/renderer-final-dist
+vite v8.1.5 building client environment for production...
+[2Ktransforming...✓ 715 modules transformed.
+
+(!) outDir /tmp/nexus-workspace-qa/renderer-final-dist is not inside project root and will not be emptied.
+Use --emptyOutDir to override.
+
+rendering chunks...
+computing gzip size...
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/cursor-agent-ykv3qLS5.svg                0.23 kB │ gzip:   0.20 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/opencode-DBd2g-kp.svg                    0.23 kB │ gzip:   0.20 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/deepseek-DbkTrSPl.svg                    0.26 kB │ gzip:   0.22 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/muse-g8TgWNJ9.svg                        0.26 kB │ gzip:   0.21 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/openclaude-Nbtd5FRx.svg                  0.27 kB │ gzip:   0.21 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/qoder-bnWEcWPt.svg                       0.29 kB │ gzip:   0.23 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/gemini-Dyswi8-_.svg                      0.29 kB │ gzip:   0.22 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/prime-agent-B4Ll-Vuz.svg                 0.31 kB │ gzip:   0.23 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/sakana-BPvIoSe8.svg                      0.31 kB │ gzip:   0.23 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/omp-D2Fx5fAn.svg                         0.34 kB │ gzip:   0.24 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/qwen-BwccIwOO.svg                        0.36 kB │ gzip:   0.26 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/claude-D0FKA8SV.svg                      0.42 kB │ gzip:   0.29 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/pet.html                                        0.48 kB │ gzip:   0.30 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/grok-CXGI5ZJ8.svg                        0.75 kB │ gzip:   0.48 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/kimi-DUX2TEfP.svg                        0.77 kB │ gzip:   0.46 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/longcat-DDhBIGZ7.svg                     0.81 kB │ gzip:   0.47 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/index.html                                      1.30 kB │ gzip:   0.54 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/codex-L0iksW7i.svg                       1.68 kB │ gzip:   0.90 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/glm-BkIvBGzu.svg                         3.59 kB │ gzip:   1.44 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/agy-DgAQAdn3.svg                         7.63 kB │ gzip:   1.74 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/aider-B3zWnPj1.png                      15.22 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/scout-hSL9DrtO.png                      76.71 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/executor-pPTElGIr.png                   80.98 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/reviewer-BVnZmYlS.png                   81.10 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/architect-DmEBCTdE.png                  85.74 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/orchestrator-BVFvATpu.png               88.80 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/VT323-Regular-DICElq-Y.ttf             153.11 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/JetBrainsMono.var--VKQJH3W.ttf         187.20 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/Inter.var-VF2RPR_K.ttf                 876.57 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/pet-grnBfTpH.css                        15.89 kB │ gzip:   3.58 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/index-BVXcacmR.css                     433.31 kB │ gzip:  64.26 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/react-Cmu7wGaY.js                        0.64 kB │ gzip:   0.39 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/confirm-reopen-mission-COsFYMDv.js       2.67 kB │ gzip:   1.27 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/mission-reopen-saVE1ZsQ.js               4.25 kB │ gzip:   2.00 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/pet-DuMK-sQe.js                          8.97 kB │ gzip:   3.09 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/layout-store-D5yhnNNw.js                33.33 kB │ gzip:  12.38 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/mission-recovery-policy-D6daCQT5.js     88.67 kB │ gzip:  25.90 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/CoffeeCup-x0okeJmt.js                  161.25 kB │ gzip:  53.54 kB
+../../../../tmp/nexus-workspace-qa/renderer-final-dist/assets/index-B6sZg8RH.js                    1,780.33 kB │ gzip: 511.05 kB
+
+[33m[INEFFECTIVE_DYNAMIC_IMPORT] [0msrc/renderer/state/confirm-store.ts is dynamically imported by src/renderer/App.tsx but also statically imported by src/renderer/App.tsx, src/renderer/components/ConfirmDialog.tsx, src/renderer/components/McpAcrossSyncControls.tsx, src/renderer/components/PaneToolbar.tsx, src/renderer/components/TerminalGridDialog.tsx, ..., dynamic import will not move module into another chunk.
+
+[plugin builtin:vite-reporter]
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+[33m[INEFFECTIVE_DYNAMIC_IMPORT] [0msrc/renderer/orch/mission-list-action.ts is dynamically imported by src/renderer/App.tsx but also statically imported by src/renderer/components/mission/MissionBoard.tsx, dynamic import will not move module into another chunk.
+
+✓ built in 946ms

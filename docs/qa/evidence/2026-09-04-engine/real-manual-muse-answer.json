@@ -1,0 +1,14 @@
+{
+  "date": "2026-09-04",
+  "flow": "Sidebar + -> 1 terminal -> Next -> Muse Spark -> default model/account -> Open",
+  "paneId": "pane-f6ebcc31",
+  "sessionId": "pty-mtnng71j-5",
+  "workspace": "/private/tmp/nexus-engine-proof",
+  "prompt": "Quanto é 1+1? Responda apenas 2. Não use ferramentas nem altere arquivos.",
+  "answer": "2",
+  "commandSubmissionAccepted": true,
+  "credentialChangedByTest": false,
+  "authState": "unknown",
+  "proof": "Native Muse terminal rendered its reply through real Nexus PTY after user-authorized direct spawn.",
+  "limits": "Manual pane only; automatic mission dispatch with Muse is still restricted."
+}

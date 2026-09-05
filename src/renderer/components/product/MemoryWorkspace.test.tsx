@@ -111,6 +111,16 @@ afterEach(() => {
 });
 
 describe('MemoryWorkspace contracts', () => {
+  it('separates the note composer from the saved-memory area in the full page', async () => {
+    memoryBoundary.memoryList.mockResolvedValue([]);
+    const host = mount(<MemoryWorkspace />);
+    await settleMemoryEffects();
+    expect(host.querySelector('.product-pane__form h2')?.textContent).toBe('Nova memória');
+    const collection = host.querySelector('.product-pane__entries');
+    expect(collection?.querySelector('h2')?.textContent).toContain('Memórias salvas');
+    expect(collection?.querySelector('.memory-workspace__empty')).not.toBeNull();
+  });
+
   it('teaches the empty state and focuses the first-note form from its primary CTA', async () => {
     memoryBoundary.memoryList.mockResolvedValue([]);
     const host = mount(<MemoryWorkspace />);

@@ -14,11 +14,14 @@ describe('classifyKeyShape', () => {
     expect(classifyKeyShape('sk-kimi-coding-1')).toBe('kimi-coding');
     expect(classifyKeyShape('sk-proj-openai')).toBe('openai');
     expect(classifyKeyShape('xai-abc')).toBe('xai');
-    expect(classifyKeyShape('43b72c8730e745749469abcdef012345')).toBe('zai');
+    expect(classifyKeyShape('43b72c8730e745749469abcdef012345')).toBe('unknown');
   });
 });
 
 describe('parseGenericUsageJson', () => {
+  it.each([0, 0.5, 1, 50, 100])('interprets explicit percent %s on a 0–100 scale', (percent) => {
+    expect(parseGenericUsageJson({ used_percent: percent })[0]?.usedRatio).toBe(percent / 100);
+  });
   it('reads percent and used/limit', () => {
     const a = parseGenericUsageJson({ five_hour_percent: 40, weekly_percent: 10 });
     expect(a.find((w) => w.kind === 'hours')?.usedRatio).toBe(0.4);
@@ -54,6 +57,31 @@ describe('mergeWorstWindows', () => {
 });
 
 describe('fetchWindowsForApiKey', () => {
+  it.each(['sk-ant-api03-test-only', 'sk-ant-oat01-test-only', 'xai-test-only', 'sk-kimi-test-only', 'unknown-provider-key-test-only', '43b72c8730e745749469abcdef012345',
+    `eyJ${'a'.repeat(130)}`])('never sends an unbound credential to guessed vendor endpoints', async (key) => {
+    const fetchImpl = vi.fn(async () => ({ ok: false, status: 401, json: async () => ({}), text: async () => '' }));
+    expect(await fetchWindowsForApiKey(key, { fetchImpl })).toBeNull();
+    expect(fetchImpl.mock.calls.length).toBe(0);
+  });
+
+  it.each([
+    ['sk-ant-api03-test-only', 'longcat'], ['xai-test-only', 'kimi'], ['sk-ant-oat01-test-only', 'glm'],
+    [`eyJ${'a'.repeat(130)}`, 'grok'],
+  ])('does not send credentials with a mismatched or unverified issuer', async (key, adapterHint) => {
+    const fetchImpl = vi.fn(async () => ({ ok: false, status: 401, json: async () => ({}), text: async () => '' }));
+    expect(await fetchWindowsForApiKey(key, { fetchImpl, adapterHint })).toBeNull();
+    expect(fetchImpl.mock.calls.length).toBe(0);
+  });
+
+  it('does not fall back from LongCat to another vendor when its quota API fails', async () => {
+    const origins: string[] = [];
+    const fetchImpl = vi.fn(async (url: string) => {
+      origins.push(new URL(url).hostname);
+      return { ok: false, status: 401, json: async () => ({}), text: async () => '' };
+    });
+    await fetchWindowsForApiKey('longcat-test-only-credential', { fetchImpl, adapterHint: 'longcat' });
+    expect(new Set(origins)).toEqual(new Set(['api.longcat.chat']));
+  });
   it('routes z.ai-shaped keys to GLM monitor', async () => {
     const fetchImpl = vi.fn(async (url: string) => {
       if (String(url).includes('quota/limit')) {

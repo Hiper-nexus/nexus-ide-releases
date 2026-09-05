@@ -1,9 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const spawnDeps = vi.hoisted(() => ({
   prepareAccount: vi.fn(),
   runtimeKey: vi.fn<() => string | null>(() => 'sk-global-other-account'),
   hasSecret: vi.fn(() => false),
+  hasCachedSecret: vi.fn(() => false),
+  getSecret: vi.fn<() => string | null>(() => null),
+  getAccount: vi.fn(),
   launcherKey: vi.fn<(providerId: string) => string | null>(() => null),
   subscriptionAuthed: vi.fn<
     (adapterId: string, model?: string) => boolean
@@ -11,6 +14,7 @@ const spawnDeps = vi.hoisted(() => ({
   subscriptionStatusAuthed: vi.fn<
     (adapterId: string, model?: string) => boolean
   >(() => true),
+  subscriptionStatusUnknown: vi.fn(() => false),
   refreshAgyAuth: vi.fn(async () => ({
     value: true,
     cacheUpdated: true,
@@ -41,6 +45,21 @@ const spawnDeps = vi.hoisted(() => ({
     CLAUDE_CODE_OAUTH_TOKEN: 'oauth-active',
   })),
 }));
+
+vi.mock('node:os', async (importOriginal) => {
+  const mock = { ...(await importOriginal<typeof import('node:os')>()), homedir: () => '/fixture-quota-home' };
+  return { ...mock, default: mock };
+});
+vi.mock('node:fs', async (importOriginal) => {
+  const mock = {
+    ...(await importOriginal<typeof import('node:fs')>()),
+    readFileSync: () => JSON.stringify({ version: 3, providers: {
+      claude: { upstream: 'glm' }, opencode: { upstream: 'glm' }, aider: { upstream: 'glm' },
+    } }),
+    writeFileSync: vi.fn(), mkdirSync: vi.fn(), chmodSync: vi.fn(),
+  };
+  return { ...mock, default: mock };
+});
 
 const claudeAdapter = {
   id: 'claude',
@@ -127,6 +146,13 @@ const opencodeAdapter = {
   },
 };
 
+const museAdapter = {
+  ...kimiAdapter,
+  id: 'muse', label: 'Muse Code', bin: 'muse',
+  auth: { method: 'file', loginHint: 'muse login' },
+  env: { passthrough: [] },
+};
+
 const agyAdapter = {
   ...kimiAdapter,
   id: 'agy',
@@ -189,8 +215,14 @@ vi.mock('../adapters/adapter-registry', () => ({
       ? claudeAdapter
       : id === 'kimi'
         ? kimiAdapter
+      : id === 'muse'
+        ? museAdapter
       : id === 'opencode'
         ? opencodeAdapter
+        : id === 'aider'
+          ? { ...opencodeAdapter, id: 'aider', bin: 'aider' }
+        : id === 'grok'
+          ? { ...kimiAdapter, id: 'grok', bin: 'grok', env: { passthrough: ['XAI_API_KEY'] } }
         : id === 'agy'
           ? agyAdapter
         : id === 'local-agent'
@@ -202,6 +234,8 @@ vi.mock('../adapters/adapter-registry', () => ({
       ? '/usr/local/bin/claude'
       : id === 'kimi'
         ? '/Users/test/.kimi-code/bin/kimi'
+      : id === 'muse'
+        ? '/usr/local/bin/muse'
       : id === 'opencode'
         ? '/opt/homebrew/bin/opencode'
         : id === 'agy'
@@ -214,6 +248,8 @@ vi.mock('../adapters/adapter-registry', () => ({
       ? '/usr/local/bin/claude'
       : id === 'kimi'
         ? '/Users/test/.kimi-code/bin/kimi'
+      : id === 'muse'
+        ? '/usr/local/bin/muse'
       : id === 'opencode'
         ? '/opt/homebrew/bin/opencode'
         : id === 'agy'
@@ -225,6 +261,7 @@ vi.mock('../adapters/adapter-registry', () => ({
   listAdapters: () => [
     claudeAdapter,
     kimiAdapter,
+    museAdapter,
     opencodeAdapter,
     agyAdapter,
     credentiallessAdapter,
@@ -259,7 +296,8 @@ vi.mock('../adapters/custom-models', () => ({
 
 vi.mock('./secrets-store', () => ({
   getKey: spawnDeps.runtimeKey,
-  hasCachedSecret: () => false,
+  hasCachedSecret: spawnDeps.hasCachedSecret,
+  getSecret: spawnDeps.getSecret,
   hasSecret: spawnDeps.hasSecret,
   isSecureStorageAvailable: () => true,
   maskedKey: () => null,
@@ -282,8 +320,13 @@ vi.mock('../adapters/model-catalog', () => ({
 vi.mock('../adapters/subscription-auth', () => ({
   hasSubscriptionAuth: spawnDeps.subscriptionAuthed,
   hasSubscriptionAuthForStatus: spawnDeps.subscriptionStatusAuthed,
+  subscriptionAuthStatusIsUnknown: spawnDeps.subscriptionStatusUnknown,
   refreshAgySubscriptionAuthCache: spawnDeps.refreshAgyAuth,
   refreshClaudeSubscriptionAuthCache: vi.fn(async () => ({
+    value: true,
+    cacheUpdated: false,
+  })),
+  refreshOpenClaudeSubscriptionAuthCache: vi.fn(async () => ({
     value: true,
     cacheUpdated: false,
   })),
@@ -295,6 +338,7 @@ vi.mock('./account-store', () => ({
   accountKey: () => 'sk-active-other-account',
   ensureSubscriptionActive: spawnDeps.ensureSubscriptionActive,
   getActiveAccount: spawnDeps.getActiveAccount,
+  getAccount: spawnDeps.getAccount,
   listAccounts: spawnDeps.listAccounts,
   pickAvailableForFailover: spawnDeps.pickAvailableForFailover,
   prepareAccountForSpawn: spawnDeps.prepareAccount,
@@ -311,7 +355,10 @@ import {
   prepareProviderSpawnAuthoritative,
   providerAuthStrategyAuthoritativeAsync,
   providerReadiness,
+  initializeProviderConfigStore,
+  resolveQuotaApiKey,
 } from './provider-config-store';
+import { fetchLiveProviderWindows } from '../quota/provider-live-usage';
 
 describe('prepareProviderSpawn with a pane-pinned account', () => {
   beforeEach(() => {
@@ -321,6 +368,7 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
     spawnDeps.launcherKey.mockReturnValue(null);
     spawnDeps.subscriptionAuthed.mockReturnValue(true);
     spawnDeps.subscriptionStatusAuthed.mockReturnValue(true);
+    spawnDeps.subscriptionStatusUnknown.mockReturnValue(false);
     spawnDeps.refreshAgyAuth.mockResolvedValue({
       value: true,
       cacheUpdated: true,
@@ -338,6 +386,53 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
     spawnDeps.activeClaudeAuthEnv.mockReturnValue({
       CLAUDE_CODE_OAUTH_TOKEN: 'oauth-active',
     });
+  });
+
+  it('keeps unverified display state separate from the fail-closed spawn strategy', () => {
+    spawnDeps.subscriptionStatusAuthed.mockReturnValue(false);
+    spawnDeps.subscriptionStatusUnknown.mockReturnValue(true);
+    spawnDeps.resolveAuthStrategy.mockReturnValue({
+      strategy: 'login-needed', injectKey: false, suppressKeyEnv: false,
+    });
+    expect(listProviderSettings({ nonBlockingAuth: true }).find((p) => p.adapterId === 'claude'))
+      .toMatchObject({ authStrategy: 'login-needed', authState: 'unknown' });
+    spawnDeps.subscriptionStatusUnknown.mockReturnValue(false);
+    expect(listProviderSettings({ nonBlockingAuth: true }).find((p) => p.adapterId === 'claude'))
+      .toMatchObject({ authStrategy: 'login-needed', authState: 'missing' });
+  });
+
+  it('lets an explicitly chosen Muse try its native Keychain without claiming authenticated or injecting credentials', () => {
+    spawnDeps.subscriptionAuthed.mockReturnValue(false);
+    spawnDeps.subscriptionStatusAuthed.mockReturnValue(false);
+    spawnDeps.subscriptionStatusUnknown.mockReturnValue(true);
+    spawnDeps.runtimeKey.mockReturnValue(null);
+    spawnDeps.resolveAuthStrategy.mockReturnValue({
+      strategy: 'login-needed', injectKey: false, suppressKeyEnv: false,
+    });
+    spawnDeps.listAccounts.mockReturnValue([{ id: 'old-account' }]);
+
+    expect(prepareProviderSpawn('muse', { allowNativeAuthAttempt: true, isolatedHome: false }))
+      .toMatchObject({ ok: true, overrides: { binPath: '/usr/local/bin/muse', keyEnv: {}, suppressEnv: [] } });
+    expect(spawnDeps.pickAvailableForFailover).not.toHaveBeenCalled();
+    expect(spawnDeps.ensureSubscriptionActive).not.toHaveBeenCalled();
+    expect(listProviderSettings({ nonBlockingAuth: true }).find((p) => p.adapterId === 'muse'))
+      .toMatchObject({ authState: 'unknown', authStrategy: 'login-needed' });
+    expect(providerReadiness('muse').ready).toBe(false);
+  });
+
+  it.each([
+    ['muse', false, false, true],
+    ['muse', true, true, true],
+    ['muse', true, false, false],
+    ['kimi', true, false, true],
+  ])('keeps native-auth attempts bounded: %s explicit=%s isolated=%s unknown=%s', (id, explicit, isolated, unknown) => {
+    spawnDeps.subscriptionAuthed.mockReturnValue(false);
+    spawnDeps.subscriptionStatusUnknown.mockReturnValue(unknown);
+    spawnDeps.runtimeKey.mockReturnValue(null);
+    spawnDeps.resolveAuthStrategy.mockReturnValue({
+      strategy: 'login-needed', injectKey: false, suppressKeyEnv: false,
+    });
+    expect(prepareProviderSpawn(id, { allowNativeAuthAttempt: explicit, isolatedHome: isolated }).ok).toBe(false);
   });
 
   it('allows credentialless OpenCode only for an exact pinned first-party free model', () => {
@@ -1023,5 +1118,82 @@ describe('G9 — modelo salvo desconhecido não desce para o pane', () => {
     expect(
       effectiveDefaultModel('agy', '', known, 'gemini-3.7-flash-high'),
     ).toBe('gemini-3.7-flash-high');
+  });
+});
+
+describe('main-owned quota credential resolution', () => {
+  beforeAll(() => initializeProviderConfigStore());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    spawnDeps.getAccount.mockReturnValue(null);
+    spawnDeps.runtimeKey.mockReturnValue(null);
+    spawnDeps.getSecret.mockReturnValue(null);
+    spawnDeps.hasSecret.mockReturnValue(false);
+    spawnDeps.hasCachedSecret.mockReturnValue(false);
+    spawnDeps.launcherKey.mockImplementation((id) => id === 'glm' ? 'fixture-glm-owned-opaque' : null);
+    spawnDeps.resolveAuthStrategy.mockReturnValue({ strategy: 'api-key', injectKey: true, suppressKeyEnv: false });
+    vi.stubEnv('ANTHROPIC_AUTH_TOKEN', 'fixture-longcat-owned-opaque');
+    vi.stubEnv('ANTHROPIC_BASE_URL', 'https://api.longcat.chat/anthropic');
+    vi.stubEnv('ANTHROPIC_API_KEY', '');
+    vi.stubEnv('OPENAI_API_KEY', '');
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it.each(['claude', 'aider', 'opencode'])('resolves the configured %s→GLM launcher key before unrelated environment keys', (adapterId) => {
+    expect(resolveQuotaApiKey({ adapterId, usageProviderId: 'glm', authMode: 'api-key' }))
+      .toBe('fixture-glm-owned-opaque');
+  });
+
+  it.each(['claude', 'aider', 'opencode'])('sends only the canonical %s→GLM credential through the live quota path', async (adapterId) => {
+    const requests: Array<{ host: string; usesOwnedKey: boolean }> = [];
+    await fetchLiveProviderWindows(adapterId, undefined, {
+      resolveApiQuotaKey: resolveQuotaApiKey,
+      fetchImpl: async (url, init) => {
+        requests.push({ host: new URL(url).hostname, usesOwnedKey: init?.headers?.Authorization === 'fixture-glm-owned-opaque' });
+        return { ok: false, status: 403, json: async () => ({}), text: async () => '' };
+      },
+    }, 100, 'glm', 'api-key');
+    expect(requests).toEqual([{ host: 'api.z.ai', usesOwnedKey: true }]);
+  });
+
+  it('rejects an ambiguous generic environment credential when no configured upstream key exists', () => {
+    spawnDeps.launcherKey.mockReturnValue(null);
+    vi.stubEnv('ANTHROPIC_API_KEY', 'fixture-longcat-owned-opaque');
+    expect(resolveQuotaApiKey({ adapterId: 'claude', usageProviderId: 'glm', authMode: 'api-key' })).toBeNull();
+  });
+
+  it('does not fall past an encrypted owner key that is still cold', () => {
+    spawnDeps.hasSecret.mockReturnValue(true);
+    expect(resolveQuotaApiKey({ adapterId: 'claude', usageProviderId: 'glm', authMode: 'api-key' })).toBeNull();
+    expect(spawnDeps.runtimeKey.mock.calls.length).toBe(0);
+  });
+
+  it('rejects a stale destination or auth mode instead of retargeting a credential', () => {
+    expect(resolveQuotaApiKey({ adapterId: 'claude', usageProviderId: 'longcat', authMode: 'api-key' })).toBeNull();
+    expect(resolveQuotaApiKey({ adapterId: 'claude', usageProviderId: 'glm', authMode: 'subscription' })).toBeNull();
+  });
+
+  it('does not fall back to the global upstream for a missing pinned key', () => {
+    spawnDeps.getAccount.mockReturnValue({ id: 'saved', adapterId: 'claude', mode: 'api-key', upstream: 'glm' });
+    expect(resolveQuotaApiKey({ adapterId: 'claude', accountId: 'saved', usageProviderId: 'glm', authMode: 'api-key' })).toBeNull();
+    expect(spawnDeps.launcherKey.mock.calls.length).toBe(0);
+  });
+
+  it('reads only the exact pinned key after validating owner and upstream', () => {
+    spawnDeps.getAccount.mockReturnValue({ id: 'saved', adapterId: 'claude', mode: 'api-key', upstream: 'glm' });
+    spawnDeps.hasCachedSecret.mockReturnValue(true);
+    spawnDeps.getSecret.mockReturnValue('fixture-pinned-owned-key');
+    expect(resolveQuotaApiKey({ adapterId: 'claude', accountId: 'saved', usageProviderId: 'glm', authMode: 'api-key' }))
+      .toBe('fixture-pinned-owned-key');
+    expect(spawnDeps.getSecret).toHaveBeenCalledWith('acctkey:saved');
+    expect(spawnDeps.launcherKey.mock.calls.length).toBe(0);
+    expect(resolveQuotaApiKey({ adapterId: 'grok', accountId: 'saved', usageProviderId: 'glm', authMode: 'api-key' })).toBeNull();
+  });
+
+  it('rejects an incompatible routed account and an absent adapter before reading its key', () => {
+    spawnDeps.getAccount.mockReturnValue({ id: 'saved', adapterId: 'grok', mode: 'api-key', upstream: 'longcat' });
+    expect(resolveQuotaApiKey({ adapterId: 'grok', accountId: 'saved', usageProviderId: 'grok', authMode: 'api-key' })).toBeNull();
+    expect(resolveQuotaApiKey({ adapterId: 'missing', accountId: 'saved', usageProviderId: 'longcat', authMode: 'api-key' })).toBeNull();
+    expect(spawnDeps.getSecret.mock.calls.length).toBe(0);
   });
 });

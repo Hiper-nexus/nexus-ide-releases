@@ -186,15 +186,23 @@ export function SquadEditor({
           onChange={(e) => setName(e.target.value)}
         />
       </label>
-      <label className="squad-editor__field">
-        Instruções do orquestrador
-        <textarea
-          className="squad-editor__textarea"
-          value={instructions}
-          rows={4}
-          onChange={(e) => setInstructions(e.target.value)}
-        />
-      </label>
+      <details className="squad-editor__field">
+        <summary>Avançado: instruções globais</summary>
+        <p className="squad-editor__hint">
+          Estas instruções ficam na definição consultada via MCP.
+          Usar integrantes em Nova missão copia papéis, ferramentas, modelos e
+          instruções individuais. Permissões e skills seguem as regras de execução do Nexus.
+        </p>
+        <label className="squad-editor__field">
+          Instruções no catálogo MCP
+          <textarea
+            className="squad-editor__textarea"
+            value={instructions}
+            rows={4}
+            onChange={(e) => setInstructions(e.target.value)}
+          />
+        </label>
+      </details>
       <div className="squad-editor__roster">
         <span className="squad-editor__roster-label">Agentes</span>
         {agents.map((agent, index) => (

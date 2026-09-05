@@ -15,7 +15,6 @@ import {
   fetchCodexUsageWindows,
   type CodexChatGptAuth,
 } from './codex-usage';
-import { fetchGlmUsageWindows } from './glm-usage';
 import { fetchGrokUsageWindows } from './grok-usage';
 import { fetchAgyUsageWindows, type GeminiOauthCreds } from './agy-usage';
 import {
@@ -30,7 +29,16 @@ import {
 import { loadOpenCodeAuthKeys } from './opencode-auth';
 import { knownWindow } from './quota-normalize';
 
+export interface ApiQuotaKeyRequest {
+  adapterId: string;
+  accountId?: string;
+  usageProviderId: string;
+  authMode: string;
+}
+
 export interface LiveUsageAuthResolvers {
+  /** Main-owned exact credential selection; never a flattened multi-provider list. */
+  resolveApiQuotaKey?: (request: ApiQuotaKeyRequest) => string | null | Promise<string | null>;
   resolveClaudeToken?: (
     accountId?: string,
   ) => string | null | Promise<string | null>;
@@ -112,8 +120,17 @@ export async function fetchLiveProviderWindows(
   accountId: string | undefined,
   deps: LiveUsageAuthResolvers,
   now = Date.now(),
+  declaredUpstream?: string,
+  authMode = 'unknown',
 ): Promise<QuotaWindow[] | null> {
   const fetchImpl = deps.fetchImpl;
+  if (declaredUpstream) {
+    // API-key billing has no equivalent subscription quota on these routes.
+    // Never substitute the computer's OAuth session for this credential mode.
+    if (['claude', 'anthropic', 'codex', 'openai'].includes(declaredUpstream)) return null;
+    const key = await deps.resolveApiQuotaKey?.({ adapterId, accountId, usageProviderId: declaredUpstream, authMode });
+    return key ? fetchWindowsForApiKey(key, { fetchImpl, now, adapterHint: declaredUpstream }) : null;
+  }
 
   switch (adapterId) {
     case 'claude': {
@@ -145,15 +162,8 @@ export async function fetchLiveProviderWindows(
         accountId,
       );
       for (const key of keys) {
-        // Global Z.ai first, then CN BigModel.
-        for (const platform of ['zai', 'zhipu'] as const) {
-          const windows = await fetchGlmUsageWindows(key, {
-            fetchImpl,
-            now,
-            platform,
-          });
-          if (windows && windows.length > 0) return windows;
-        }
+        const windows = await fetchWindowsForApiKey(key, { fetchImpl, now, adapterHint: 'glm' });
+        if (windows && windows.length > 0) return windows;
       }
       return null;
     }
@@ -303,12 +313,12 @@ async function fetchOpenCodeFleetWindows(
   fetchImpl: FetchLike | undefined,
   now: number,
 ): Promise<QuotaWindow[] | null> {
-  const keys: string[] = [];
+  const keys = new Map<string, string | undefined>();
   // ONLY keys the user actually connected inside OpenCode auth.json —
   // never steal glm/kimi/claude keys from the launcher and paint them as
   // "OpenCode" when the user never installed/used OpenCode.
-  for (const e of loadOpenCodeAuthKeys()) {
-    if (!keys.includes(e.key)) keys.push(e.key);
+  for (const e of accountId ? [] : loadOpenCodeAuthKeys()) {
+    if (!keys.has(e.key)) keys.set(e.key, e.providerId);
   }
   // Optional: vault key stored under adapter id "opencode" itself.
   if (deps.resolveGenericApiKeyCandidates) {
@@ -316,13 +326,13 @@ async function fetchOpenCodeFleetWindows(
       deps.resolveGenericApiKeyCandidates('opencode', accountId),
     );
     for (const k of list ?? []) {
-      if (k?.trim() && !keys.includes(k.trim())) keys.push(k.trim());
+      if (k?.trim() && !keys.has(k.trim())) keys.set(k.trim(), undefined);
     }
   }
-  if (keys.length === 0) return null;
+  if (keys.size === 0) return null;
   const sets: QuotaWindow[][] = [];
-  for (const key of keys) {
-    const w = await fetchWindowsForApiKey(key, { fetchImpl, now });
+  for (const [key, adapterHint] of keys) {
+    const w = await fetchWindowsForApiKey(key, { fetchImpl, now, adapterHint });
     if (w?.length) sets.push(w);
   }
   if (sets.length === 0) return null;
@@ -392,8 +402,7 @@ export function parseKimiUsage(body: unknown, now = Date.now()): QuotaWindow[] {
     label: string,
   ): void => {
     if (typeof raw !== 'number' || !Number.isFinite(raw)) return;
-    const ratio =
-      raw > 1 ? Math.min(1, raw / 100) : Math.max(0, Math.min(1, raw));
+    const ratio = Math.max(0, Math.min(1, raw / 100));
     out.push(
       knownWindow({
         kind,

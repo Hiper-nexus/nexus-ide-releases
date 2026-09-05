@@ -9,6 +9,8 @@ import { useAgentWaitingStore } from '../state/agent-waiting-store';
 import { useGitScmStore } from '../state/git-scm-store';
 import { useOrchStore } from '../state/orch-store';
 import { useProviderStore } from '../state/provider-store';
+import { useLayoutStore } from '../state/layout-store';
+import { buildGridTree } from '../lib/split-tree';
 import { openCliLoginTerminal } from './settings/cli-login-terminal';
 
 vi.mock('./settings/cli-login-terminal', () => ({
@@ -35,7 +37,7 @@ describe('AttentionInbox', () => {
     useAgentNotificationStore.setState({ items: [], open: false });
     useAgentWaitingStore.getState().clear();
     useGitScmStore.setState({ pr: null } as never);
-    useOrchStore.setState({ missionSummaries: [] } as never);
+    useOrchStore.setState({ missionSummaries: [], missionSummariesHydrated: false, paneMissions: {} } as never);
     useProviderStore.setState({
       providers: [
         {
@@ -103,5 +105,30 @@ describe('AttentionInbox', () => {
         adapterId: 'claude',
       }),
     );
+  });
+
+  it('drops waiting entries for removed missions and closed panes while retaining global login and live standalone attention', () => {
+    useOrchStore.setState({
+      missionSummariesHydrated: true,
+      missionSummaries: [{ id: 'mission-removed', title: 'Removida', needsAttention: true }],
+      paneMissions: { 'pane-bound': 'mission-removed' },
+    } as never);
+    useLayoutStore.setState({ root: buildGridTree([
+      { id: 'pane-removed', kind: 'cli-agent', title: 'Removida', adapterId: 'codex', missionId: 'mission-removed' },
+      { id: 'pane-bound', kind: 'cli-agent', title: 'Binding antigo', adapterId: 'codex' },
+      { id: 'pane-live', kind: 'cli-agent', title: 'Avulso', adapterId: 'codex' },
+    ]) });
+    for (const paneId of ['pane-removed', 'pane-bound', 'pane-closed', 'pane-live']) {
+      useAgentWaitingStore.getState().apply({ source: 'semantic', sessionId: paneId, paneId, agentLabel: paneId, state: 'awaiting-input' });
+    }
+    const host = mount();
+    act(() => useOrchStore.setState({ missionSummaries: [] }));
+    expect(useAttentionInboxStore.getState().count).toBe(3);
+    expect(host.textContent).toContain('pane-live');
+    expect(host.textContent).toContain('Claude Code');
+    expect(host.textContent).toContain('Grok');
+    expect(host.textContent).not.toContain('pane-removed');
+    expect(host.textContent).not.toContain('pane-bound');
+    expect(host.textContent).not.toContain('pane-closed');
   });
 });

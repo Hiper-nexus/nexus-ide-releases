@@ -222,6 +222,8 @@ function spawnCliPtyAgentPane(
       effort: request.effort,
       accountId: request.accountId,
       model: request.model,
+      ...(adapter.id === 'muse' && authority.source === 'direct-user' && authority.context === null
+        ? { allowNativeAuthAttempt: true } : {}),
       // Mesmo predicado que o spawn hook usa para trocar o HOME — a credencial
       // do Claude depende dele (HOME efêmero não alcança a linhagem nativa).
       isolatedHome: shouldUseEphemeralHome(

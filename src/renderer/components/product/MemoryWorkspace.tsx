@@ -8,7 +8,7 @@ export interface MemoryWorkspaceProps {
 export function MemoryWorkspace({ className = '' }: MemoryWorkspaceProps = {}) {
   return (
     <section
-      className={`product-workspace memory-workspace ${className}`.trim()}
+      className={`product-workspace product-page memory-workspace ${className}`.trim()}
       aria-label="Memória do workspace"
     >
       <header className="product-workspace__header">
@@ -22,8 +22,7 @@ export function MemoryWorkspace({ className = '' }: MemoryWorkspaceProps = {}) {
           </div>
         </div>
         <p className="product-workspace__summary">
-          Caderno deste workspace. Missões e agentes podem consultar o que
-          você salvar. O Nexus guarda no app, não no repositório.
+          Decisões e contexto deste projeto que missões e agentes podem consultar.
         </p>
       </header>
       <div className="product-workspace__content memory-workspace__content">

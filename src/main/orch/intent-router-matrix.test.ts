@@ -82,7 +82,7 @@ describe('MATRIZ: router com missões reais de operador', () => {
       hasKeyFor: () => false,
       loadKeyFor: () => null,
     });
-    expect(route).toBeNull();
+    expect(route).toEqual({ kind: 'mission-question', question: 'quanto é 1+1', readOnlyWorkers: true });
   });
 
   it('ditado inglês "they have to answer you" também não vira resposta direta', async () => {
@@ -93,7 +93,7 @@ describe('MATRIZ: router com missões reais de operador', () => {
         loadKeyFor: () => null,
       },
     );
-    expect(route).toBeNull();
+    expect(route).toEqual({ kind: 'mission-question', question: 'How much is 2x2', readOnlyWorkers: true });
   });
 });
 
@@ -102,7 +102,7 @@ describe('EXTREMO: router sob ditado, typo e adversário', () => {
 
   it('meta-de-pane com TYPO de ditado nunca vira direct-answer (nem com Tier 1 disponível)', async () => {
     // "oergunta… quwnto…" derrotou regex de kickoff em campo (20/08). Com a
-    // guarda isPaneMetaTask ANTES do Tier 0/1, null é determinístico — nem
+    // guarda isPaneMetaTask ANTES do Tier 0/1, a rota é determinística — nem
     // uma LLM confusa consegue mandar para resposta direta.
     for (const typo of [
       'oergunta aos panes quwnto e 1+1',
@@ -119,7 +119,7 @@ describe('EXTREMO: router sob ditado, typo e adversário', () => {
           throw new Error('não deveria chamar rede');
         }) as unknown as typeof fetch,
       });
-      expect(route).toBeNull();
+      expect(route?.kind).toBe('mission-question');
       expect(tier1Called).toBe(false);
     }
   });

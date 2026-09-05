@@ -55,7 +55,7 @@
 
 .account__intro .settings-detail__title {
   margin-bottom: 0;
-  font-size: var(--text-2xl);
+  font-size: var(--text-3xl);
   font-weight: 650;
   letter-spacing: -0.02em;
   color: var(--text);
@@ -64,7 +64,7 @@
 .account__intro-hint {
   margin: 0;
   max-width: 60ch;
-  font-size: var(--text-md);
+  font-size: var(--text-lg);
   color: var(--text-dim);
   line-height: 1.5;
 }
@@ -80,7 +80,7 @@
 
 .account__zone-hint {
   margin: var(--space-1) 0 0;
-  font-size: var(--text-sm);
+  font-size: var(--text-md);
   color: var(--text-dim);
   line-height: 1.5;
   max-width: 56ch;

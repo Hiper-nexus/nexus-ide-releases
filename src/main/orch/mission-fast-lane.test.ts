@@ -56,6 +56,46 @@ function squad(overrides: Partial<Squad> = {}): Squad {
 }
 
 describe('mission fast lane', () => {
+  it.each(['consult', 'plan', 'ops'] as const)('keeps routed questions solo when %s has no worker budget', (lane) => {
+    const prompt = agentPrompt(
+      agent({ category: 'orchestrator' }),
+      mission({
+        description: 'pergunte aos panes quanto é 2+2',
+        intentContract: { lane, budgets: { maxWorkers: 0 }, routingAdvice: { source: 'router', kind: 'mission-question', question: 'Quanto é 2+2?', readOnlyWorkers: true } } as Mission['intentContract'],
+      }),
+      [], false,
+    );
+    expect(prompt).not.toContain('META-DE-PANE:');
+    expect(prompt).not.toContain('O Nexus está inicializando');
+    expect(prompt).toContain('Quanto é 2+2?');
+  });
+
+  it('uses the reviewed router question even without legacy pane keywords', () => {
+    const prompt = agentPrompt(
+      agent({ category: 'orchestrator', agentName: 'Coord' }),
+      mission({
+        description: 'Consulte a equipe e consolide os resultados.',
+        intentContract: {
+          routingAdvice: { source: 'router', kind: 'mission-question', question: 'Quanto é 2+2?', readOnlyWorkers: true },
+        } as Mission['intentContract'],
+      }),
+      ['Coord', 'Implementar motor'], false,
+    );
+    expect(prompt).toContain('META-DE-PANE');
+    expect(prompt).toContain('Quanto é 2+2?');
+    expect(prompt).not.toContain('TODO pedido do objetivo');
+  });
+
+  it('passes router skill hints only within the worker existing grants', () => {
+    const prompt = agentPrompt(
+      agent({ allowedSkills: ['bridgesecurity'] }),
+      mission({ intentContract: { routingAdvice: { source: 'router', kind: 'mission-work', skills: ['bridgesecurity', 'impeccable'] } } as Mission['intentContract'] }),
+      [], false,
+    );
+    expect(prompt).toContain('bridgesecurity');
+    expect(prompt).not.toContain('impeccable');
+  });
+
   it('é o caminho único: o motor cerimonial e o env de opt-out morreram', () => {
     process.env.NEXUS_CEREMONIAL_MISSIONS = '1';
     try {
@@ -180,7 +220,7 @@ describe('mission fast lane', () => {
     );
     expect(prompt).toContain('Plano selado');
     expect(prompt).toContain('São 20 entregas');
-    expect(prompt).toContain('NÃO reduza a lista aos papéis do squad');
+    expect(prompt).toMatch(/não reduza a lista aos papéis do squad/i);
     expect(prompt).toContain('Story 20 da waitlist');
     expect(prompt).toContain('task selada pendente');
   });
@@ -352,7 +392,7 @@ describe('mission fast lane', () => {
   });
 });
 
-describe('decideFastLaneEmptyPaneAction (doutrina: missão nunca morre sozinha)', () => {
+describe('decideFastLaneEmptyPaneAction', () => {
   it('com orçamento de respawn → respawna o orquestrador', () => {
     expect(
       decideFastLaneEmptyPaneAction({
@@ -373,14 +413,14 @@ describe('decideFastLaneEmptyPaneAction (doutrina: missão nunca morre sozinha)'
     ).toBe('respawn-orchestrator');
   });
 
-  it('sem orçamento → mantém running e observando (NUNCA bloqueia nem completa sozinho)', () => {
+  it('sem orçamento e sem processo vivo → expõe bloqueio recuperável', () => {
     expect(
       decideFastLaneEmptyPaneAction({
         status: 'running',
         pendingHandoffs: 0,
         respawnBudgetLeft: 0,
       }),
-    ).toBe('keep-running-watching');
+    ).toBe('block-recovery-exhausted');
   });
 
   it('orquestrador fechado pelo operador → não respawna a missão inteira', () => {
@@ -590,7 +630,8 @@ describe('kickoff meta-de-pane — um pane por integrante, TODOS respondem', () 
     expect(prompt).toContain('readOnly: true');
     expect(prompt).toContain('artifacts');
     expect(prompt).toContain('não chame set_status done');
-    expect(prompt).toContain('first-wave já abriu');
+    expect(prompt).toContain('O Nexus está inicializando');
+    expect(prompt).not.toContain('first-wave já abriu');
     expect(prompt).toContain('NÃO spawne de novo');
     expect(prompt).toContain('NÃO spawne ad-hoc');
     expect(prompt).toContain('sem agentName');

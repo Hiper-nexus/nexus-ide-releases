@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PaneLoginStuckEvent } from '../../shared/types';
+import type { OwnedPaneAuthzInfo } from './pane-registry';
+import { testProjectScope } from './__tests__/scope-fixture';
 
 const harness = vi.hoisted(() => ({
   stateTap: null as ((sessionId: string, state: string) => void) | null,
@@ -12,6 +14,9 @@ const harness = vi.hoisted(() => ({
   adapter: vi.fn(
     (_id: string): { kind: string; auth: { method: string } } | null => null,
   ),
+  ownedPane: vi.fn<() => OwnedPaneAuthzInfo | null>(() => null),
+  rendererScope: vi.fn(() => null as ReturnType<typeof testProjectScope> | null),
+  submit: vi.fn((_input: Record<string, unknown>) => ({ id: 'watchdog-handoff' })),
 }));
 
 vi.mock('../pty/pty-manager', () => ({
@@ -33,7 +38,7 @@ vi.mock('../pty/pty-manager', () => ({
 vi.mock('./pane-registry', () => ({
   readSessionOutput: (sessionId: string, lines?: number) =>
     harness.tail(sessionId, lines),
-  getOwnedPaneAuthzInfoBySession: () => null,
+  getOwnedPaneAuthzInfoBySession: () => harness.ownedPane(),
 }));
 
 vi.mock('./agent-status', () => ({
@@ -45,12 +50,12 @@ vi.mock('../adapters/adapter-registry', () => ({
 }));
 
 vi.mock('../persistence/renderer-workspace-scope', () => ({
-  getRendererWorkspaceScope: () => null,
+  getRendererWorkspaceScope: () => harness.rendererScope(),
 }));
 
 vi.mock('./project-domain-store-registry', () => ({
   getProjectDomainStores: () => ({
-    handoffs: { submit: vi.fn() },
+    handoffs: { submit: harness.submit },
   }),
 }));
 
@@ -354,6 +359,9 @@ describe('installLoginStuckWatchdog (wiring)', () => {
     harness.tail.mockReset().mockReturnValue('');
     harness.semantic.mockReset().mockReturnValue(null);
     harness.adapter.mockReset().mockReturnValue(null);
+    harness.ownedPane.mockReset().mockReturnValue(null);
+    harness.rendererScope.mockReset().mockReturnValue(null);
+    harness.submit.mockClear();
   });
 
   afterEach(() => {
@@ -426,5 +434,33 @@ describe('installLoginStuckWatchdog (wiring)', () => {
     disposeB();
     expect(harness.stateTap).not.toBeNull();
     disposeA();
+  });
+
+  it.each(['current-worker-incarnation', undefined])('requires the current pane nonce for synthetic failure (%s)', (workerIncarnationId) => {
+    const scope = testProjectScope();
+    harness.agentInfo.mockReturnValue({ paneId: 'p1', adapterId: 'codex' });
+    harness.ownedPane.mockReturnValue({
+      paneId: 'p1', sessionId: 's1', kind: 'cli-agent', role: 'worker',
+      missionId: 'mission-1', workerIncarnationId, scope,
+      owner: {} as OwnedPaneAuthzInfo['owner'],
+    });
+    harness.rendererScope.mockReturnValue(scope);
+    harness.tail.mockReturnValue('MCP server handshake failed; workerIncarnationId=forged-output');
+    const dispose = installLoginStuckWatchdog();
+    try {
+      harness.stateTap?.('s1', 'busy');
+      vi.advanceTimersByTime(60_000);
+
+      if (workerIncarnationId) {
+        expect(harness.submit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+          fromAgent: 'nexus-watchdog', status: 'failed',
+          missionId: 'mission-1', sessionId: 's1', workerIncarnationId,
+        }));
+      } else {
+        expect(harness.submit).not.toHaveBeenCalled();
+      }
+    } finally {
+      dispose();
+    }
   });
 });

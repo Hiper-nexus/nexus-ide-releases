@@ -25,6 +25,7 @@ import {
 } from '../../../shared/settings-types';
 import type { AdapterInfo } from '../../../shared/types';
 import { missionRuntimeReadiness } from '../../orch/mission-runtime-readiness';
+import * as missionAttachments from '../../lib/mission-attachments';
 import { planRemoveRosterAgent } from '../../orch/mission-roster-customize';
 import {
   missionSetupStorageKey,
@@ -75,7 +76,7 @@ function adapter(
     idleTimeoutMs: 1_000,
     orchestratorCapable: id === 'claude',
     taskHandoffCapable: true,
-    missionControlCapable: id === 'claude',
+    missionControlCapable: id === 'claude' || id === 'codex',
     autonomousWorkspaceWriteCapable: true,
     orchestrationEvidence: id === 'claude' ? 'verified' : 'unsupported',
     capabilities: {
@@ -313,6 +314,18 @@ async function flush(): Promise<void> {
   });
 }
 
+/** Observe the real digest/import promises; microtask flushes do not await WebCrypto. */
+function observeAttachmentWork(): () => Promise<void> {
+  const contentKeys = vi.spyOn(missionAttachments, 'missionAttachmentContentKey');
+  const stagedFiles = vi.spyOn(missionAttachments, 'stageMissionAttachment');
+  return async () => {
+    await act(async () => {
+      await Promise.all(contentKeys.mock.results.map((result) => result.value));
+      await Promise.all(stagedFiles.mock.results.map((result) => result.value));
+    });
+  };
+}
+
 function button(host: HTMLElement, name: string): HTMLButtonElement {
   const found = Array.from(host.querySelectorAll('button')).find((item) =>
     item.textContent?.includes(name),
@@ -391,6 +404,10 @@ beforeEach(() => {
   api.getOrchSettings.mockResolvedValue(ORCH_SETTINGS);
   api.prepare.mockResolvedValue(REVIEW);
   api.start.mockResolvedValue(SNAPSHOT);
+  api.importMissionAttachment.mockReset().mockImplementation(async (name: string) => ({
+    ok: true,
+    path: `.nexus/attachments/mission-context/token-${name}`,
+  }));
   installNexusApi();
 
   useWorkspaceStore.setState({
@@ -558,6 +575,82 @@ describe('recommended mission team', () => {
       roster?.find((agent) => agent.category === 'orchestrator')?.cli,
     ).toBe('codex');
   });
+
+  it('selects Codex over alphabetically earlier AGY and prefers workers without pending login', () => {
+    const agy = adapter('agy', { missionControlCapable: false });
+    const cursor = adapter('cursor-agent', { missionControlCapable: false });
+    const adapters = [agy, CLAUDE, CODEX, cursor];
+    const providers: ProviderSettingsInfo[] = adapters.map((item) => ({
+      ...provider(item),
+      ...(item.id === 'claude' || item.id === 'cursor-agent'
+        ? { authStrategy: 'login-needed' as const, authReadyModels: [] }
+        : {}),
+    }));
+    const readiness = missionRuntimeReadiness(adapters, providers, []);
+    const roster = buildRecommendedMissionRoster({
+      readiness,
+      providers,
+      accounts: [],
+      settings: ORCH_SETTINGS,
+      objective: 'Pergunte aos panes quanto é 2+2 e consolide as respostas',
+      lane: 'standard',
+    });
+
+    expect(roster?.find((agent) => agent.category === 'orchestrator')?.cli)
+      .toBe('codex');
+    expect(roster?.filter((agent) => agent.category !== 'orchestrator').length)
+      .toBeGreaterThan(0);
+    expect(roster?.every((agent) => agent.cli === 'codex')).toBe(true);
+    expect(readiness.qualifiedWorkers.map((item) => item.id))
+      .toEqual(['agy', 'claude', 'codex', 'cursor-agent']);
+  });
+
+  it('prefers workers with physical Nexus MCP over ready PTY-only alternatives', () => {
+    const cursor = adapter('cursor-agent', { missionControlCapable: false });
+    const deepseek = adapter('deepseek', { missionControlCapable: true });
+    const adapters = [CODEX, cursor, deepseek];
+    const providers = adapters.map(provider);
+    const readiness = missionRuntimeReadiness(adapters, providers, []);
+    const roster = buildRecommendedMissionRoster({
+      readiness,
+      providers,
+      accounts: [],
+      settings: { ...ORCH_SETTINGS, defaultAdapterId: 'codex' },
+      objective: 'Construir a experiência guiada de missão',
+      lane: 'standard',
+    });
+
+    expect(roster?.find((agent) => agent.category === 'orchestrator')?.cli)
+      .toBe('codex');
+    expect(roster?.filter((agent) => agent.category !== 'orchestrator')
+      .map((agent) => agent.cli)).toEqual(['codex', 'deepseek', 'codex']);
+    expect(readiness.qualifiedWorkers.map((item) => item.id))
+      .toEqual(['codex', 'cursor-agent', 'deepseek']);
+  });
+
+  it.each(['subscription', 'login-needed'] as const)(
+    'keeps a PTY-only worker with %s available when no alternative exists',
+    (authStrategy) => {
+      const cursor = adapter('cursor-agent', { missionControlCapable: false });
+      const providers: ProviderSettingsInfo[] = [
+        provider(CLAUDE),
+        { ...provider(cursor), authStrategy, authReadyModels: [] },
+      ];
+      const readiness = missionRuntimeReadiness([CLAUDE, cursor], providers, []);
+      const roster = buildRecommendedMissionRoster({
+        readiness,
+        providers,
+        accounts: [],
+        settings: ORCH_SETTINGS,
+        objective: 'Verifique os arquivos do projeto',
+        lane: 'standard',
+      });
+
+      expect(roster).not.toBeNull();
+      expect(roster?.filter((agent) => agent.category !== 'orchestrator')
+        .every((agent) => agent.cli === 'cursor-agent')).toBe(true);
+    },
+  );
 
   it('não reprova mais o roster por modelo sem autenticação (doutrina fluxo-por-padrão)', () => {
     // Antes, trocar o modelo para um valor fora de authReadyModels travava o
@@ -2048,6 +2141,7 @@ describe('Caminho Expresso', () => {
   });
 
   it('anexa áudio de fora do projeto como contexto relativo da missão', async () => {
+    const finishImports = observeAttachmentWork();
     const host = await renderAtExpress();
     const input = host.querySelector<HTMLInputElement>('input[type="file"]');
     expect(input).not.toBeNull();
@@ -2056,8 +2150,7 @@ describe('Caminho Expresso', () => {
     act(() => {
       input!.dispatchEvent(new Event('change', { bubbles: true }));
     });
-    await flush();
-    await flush();
+    await finishImports();
 
     expect(api.importMissionAttachment).toHaveBeenCalledTimes(1);
     expect(useMissionSetupStore.getState().draft.contextPaths).toEqual([
@@ -2067,6 +2160,7 @@ describe('Caminho Expresso', () => {
   });
 
   it('não duplica imagem colada enquanto o mesmo arquivo ainda está importando', async () => {
+    const finishImports = observeAttachmentWork();
     const pendingImport = deferred<{ ok: true; path: string }>();
     api.importMissionAttachment.mockImplementationOnce(
       async () => pendingImport.promise,
@@ -2103,16 +2197,21 @@ describe('Caminho Expresso', () => {
         }),
       );
     });
-    await flush();
+    try {
+      await act(async () => {
+        await vi.waitFor(() => {
+          expect(api.importMissionAttachment).toHaveBeenCalledTimes(1);
+        });
+      });
+    } finally {
+      pendingImport.resolve({
+        ok: true,
+        path: '.nexus/attachments/mission-context/token-print.png',
+      });
+      await finishImports();
+    }
 
     expect(api.importMissionAttachment).toHaveBeenCalledTimes(1);
-    pendingImport.resolve({
-      ok: true,
-      path: '.nexus/attachments/mission-context/token-print.png',
-    });
-    await flush();
-    await flush();
-
     expect(useMissionSetupStore.getState().draft.contextPaths).toEqual([
       '.nexus/attachments/mission-context/token-print.png',
     ]);
@@ -2120,6 +2219,7 @@ describe('Caminho Expresso', () => {
   });
 
   it('não duplica a mesma imagem colada duas vezes depois do import terminar', async () => {
+    const finishImports = observeAttachmentWork();
     const host = await renderAtExpress();
     const dropZone = host.querySelector<HTMLElement>(
       '.mission-attachment-picker__drop',
@@ -2147,8 +2247,12 @@ describe('Caminho Expresso', () => {
         }),
       );
     });
-    await flush();
-    await flush();
+    await finishImports();
+    await vi.waitFor(async () => {
+      await flush();
+      expect(useMissionSetupStore.getState().draft.contextPaths).toHaveLength(1);
+      expect(button(host, 'Anexar arquivo').disabled).toBe(false);
+    });
     act(() => {
       dropZone!.dispatchEvent(
         Object.assign(new Event('paste', { bubbles: true }), {
@@ -2161,8 +2265,7 @@ describe('Caminho Expresso', () => {
         }),
       );
     });
-    await flush();
-    await flush();
+    await finishImports();
 
     expect(api.importMissionAttachment).toHaveBeenCalledTimes(1);
     expect(useMissionSetupStore.getState().draft.contextPaths).toHaveLength(1);
@@ -2172,6 +2275,7 @@ describe('Caminho Expresso', () => {
   });
 
   it('mostra anexos do cliente no wizard avançado e importa áudio externo', async () => {
+    const finishImports = observeAttachmentWork();
     const host = render(<MissionSetup />);
     await flush();
 
@@ -2187,8 +2291,7 @@ describe('Caminho Expresso', () => {
     act(() => {
       input!.dispatchEvent(new Event('change', { bubbles: true }));
     });
-    await flush();
-    await flush();
+    await finishImports();
 
     expect(api.importMissionAttachment).toHaveBeenCalledTimes(1);
     expect(useMissionSetupStore.getState().draft.contextPaths).toEqual([

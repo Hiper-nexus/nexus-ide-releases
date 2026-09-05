@@ -45,6 +45,7 @@ import {
 } from "../../shared/pet-studio";
 import { assertIndependentReviewForDone } from "./mission-independent-review-gate";
 import { assertDeliveryArtifactsForDone } from "./mission-delivery-artifact-gate";
+import { assertTeamQuestionCompletion, teamQuestionResponseSummary, type TeamQuestionPaneRuntime } from "./mission-team-question-completion";
 import { requireRendererWorkspaceScope } from "../persistence/renderer-workspace-scope";
 import {
   revalidateSealedAttachmentSnapshots,
@@ -1300,6 +1301,46 @@ function transitionMissionEngineLifecycle(
   }
 }
 
+/** Final automatic completion boundary, shared by agents and civilian shortcuts. */
+export function completeVerifiedMission(
+  scope: ProjectExecutionScope,
+  stores: ProjectDomainStoreSuite,
+  input: MissionVerifiedCompletionInput,
+  deps: {
+    readonly getSquad?: typeof getSquad;
+    readonly listPanes?: () => readonly TeamQuestionPaneRuntime[];
+  } = {},
+): void {
+  const current = stores.missions.get(input.missionId);
+  let result = input.result;
+  if (current && input.operatorOverride !== true) {
+    const handoffs = stores.handoffs?.list?.({ missionId: current.id, includeDelivered: true }) ?? [];
+    const squad = current.squadId ? (deps.getSquad ?? getSquad)(current.squadId) : null;
+    const teamQuestion = assertTeamQuestionCompletion({
+      mission: current, squad, handoffs,
+      panes: stores.missionPanes?.list?.(current.id) ?? [],
+      runtimePanes: (deps.listPanes ?? listPaneSnapshots)(),
+    });
+    assertIndependentReviewForDone({
+      mission: current, squad, handoffs,
+      deliveryAttemptsOf: (handoffId) => stores.handoffs?.listDeliveryAttempts?.(handoffId) ?? [],
+      dispatches: stores.taskDispatches?.list?.(current.id) ?? [],
+    });
+    assertDeliveryArtifactsForDone({
+      lane: current.intentContract?.lane,
+      goal: current.description?.trim() || current.title?.trim() || '',
+      rootRealPath: scope.rootRealPath,
+      handoffs,
+    });
+    if (teamQuestion.applicable) {
+      result = { ...result, summary: teamQuestionResponseSummary(teamQuestion), artifactRefs: [], evidenceIds: [] };
+    }
+  }
+  transitionMissionEngineLifecycle(stores, input, {
+    status: 'done', intentState: 'done', learnings: input.learnings, result,
+  });
+}
+
 const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
   new MainMissionEngine(scope, {
     ...createMissionEnginePreparationPorts({
@@ -1579,36 +1620,7 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
         intentState: "executing",
         description: input.description,
       }),
-    completeVerified: (input: MissionVerifiedCompletionInput) => {
-      const current = stores.missions.get(input.missionId);
-      if (current && input.operatorOverride !== true) {
-        const handoffs =
-          stores.handoffs?.list?.({
-            missionId: input.missionId,
-            includeDelivered: true,
-          }) ?? [];
-        assertIndependentReviewForDone({
-          mission: current,
-          squad: current.squadId ? getSquad(current.squadId) : null,
-          handoffs,
-          deliveryAttemptsOf: (handoffId) =>
-            stores.handoffs?.listDeliveryAttempts?.(handoffId) ?? [],
-          dispatches: stores.taskDispatches?.list?.(input.missionId) ?? [],
-        });
-        assertDeliveryArtifactsForDone({
-          lane: current.intentContract?.lane,
-          goal: current.description?.trim() || current.title?.trim() || '',
-          rootRealPath: scope.rootRealPath,
-          handoffs,
-        });
-      }
-      return transitionMissionEngineLifecycle(stores, input, {
-        status: "done",
-        intentState: "done",
-        learnings: input.learnings,
-        result: input.result,
-      });
-    },
+    completeVerified: (input) => completeVerifiedMission(scope, stores, input),
     readSnapshotView: async (missionId) =>
       projectMissionEngineSnapshotView(scope, stores, missionId),
     listSnapshotViews: async () =>

@@ -2,6 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { collectAttentionItems } from './attention-inbox';
 
 describe('collectAttentionItems', () => {
+  it('requires confirmed missing auth when the provider supplies a diagnostic state', () => {
+    const base = { enabled: true, installed: true, authStrategy: 'login-needed' };
+    const items = collectAttentionItems({ notifications: [], missions: [], pr: null, providers: [
+      { ...base, adapterId: 'claude', label: 'Claude', authState: 'ok' },
+      { ...base, adapterId: 'muse', label: 'Muse', authState: 'unknown' },
+      { ...base, adapterId: 'openclaude', label: 'OpenClaude', authState: 'missing' },
+    ] });
+    expect(items.map((item) => item.targetId)).toEqual(['openclaude']);
+  });
   it('junta Enter, PR na fila, missão travada e CLI sem login', () => {
     const items = collectAttentionItems({
       notifications: [

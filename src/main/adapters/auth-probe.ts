@@ -5,12 +5,14 @@ import { execFile } from 'node:child_process';
 import { ipcMain } from 'electron';
 import { PROVIDER_CHANNELS } from '../../shared/provider-settings-types';
 import type { AdapterAuthStatus, AuthState } from '../../shared/provider-settings-types';
-import { listProviderSettings } from '../persistence/provider-config-store';
+import { listProviderSettings, notifyProviderAuthChanged } from '../persistence/provider-config-store';
 import {
   claudeOauthEmail,
-  detectSubscriptionAuth,
   hasSubscriptionAuth,
   refreshAgySubscriptionAuthCache,
+  refreshClaudeSubscriptionAuthCache,
+  refreshOpenClaudeSubscriptionAuthCache,
+  subscriptionAuthStatusIsUnknown,
 } from './subscription-auth';
 import { refreshKimiSeatReadiness } from './kimi-seat-probe';
 
@@ -22,8 +24,8 @@ import { refreshKimiSeatReadiness } from './kimi-seat-probe';
  * Logar de novo também dispensa navegador embutido: abrir um pane com a CLI
  * dispara o fluxo dela, que abre o navegador DO SISTEMA já logado.
  *
- * Claude: MUST match `detectSubscriptionAuth` — file-backed ~/.claude.json
- * oauthAccount is authoritative when Keychain is unreadable from Electron.
+ * A saved identity is not proof of login; unavailable credential storage is
+ * unknown. Refreshes also update the cache used by provider snapshots.
  */
 
 const HOME = os.homedir();
@@ -58,7 +60,7 @@ const OAUTH_PROBES: Record<
   claude: async () => {
     // Live session ≠ identity. Prefer the same detector as spawn readiness
     // (usable OAuth token / credentials file). Email alone is identity only.
-    if (detectSubscriptionAuth('claude', HOME)) {
+    if ((await refreshClaudeSubscriptionAuthCache(HOME, undefined, { authoritative: true })).value) {
       const email = claudeOauthEmail(HOME);
       return {
         state: 'ok',
@@ -137,12 +139,20 @@ const OAUTH_PROBES: Record<
           detail: 'sem credencial — rode `opencode auth login`',
         },
   openclaude: async () =>
-    hasSubscriptionAuth('openclaude')
-      ? { state: 'ok', detail: 'sessão OpenClaude em ~/.openclaude' }
+    (await refreshOpenClaudeSubscriptionAuthCache(HOME, undefined, { authoritative: true })).value
+      ? { state: 'ok', detail: 'sessão nativa OpenClaude detectada' }
       : {
           state: 'missing',
           detail: 'sem sessão — rode `openclaude auth login` ou `/provider`',
         },
+  muse: async () => {
+    if (hasSubscriptionAuth('muse')) return { state: 'ok', detail: 'credencial Muse local detectada' };
+    if (subscriptionAuthStatusIsUnknown('muse', HOME)) return {
+      state: 'unknown',
+      detail: 'Muse usa o Keychain; abra a CLI para verificar a sessão',
+    };
+    return { state: 'missing', detail: 'sem credencial Muse detectada — rode `muse login`' };
+  },
   aider: async () => ({
     state: 'missing',
     detail: 'Aider usa API key — cole a chave do provedor',
@@ -150,14 +160,17 @@ const OAUTH_PROBES: Record<
 };
 
 export async function probeAdapterAuth(): Promise<AdapterAuthStatus[]> {
-  const infos = listProviderSettings().filter((p) => p.adapterId !== 'shell');
-  return Promise.all(
+  const infos = listProviderSettings({ nonBlockingAuth: true }).filter((p) => p.adapterId !== 'shell');
+  const statuses = await Promise.all(
     infos.map(async (info): Promise<AdapterAuthStatus> => {
       const probe = OAUTH_PROBES[info.adapterId];
       if (probe) {
-        const { state, detail } = await probe();
+        const { state, detail } = await probe().catch(() => ({
+          state: 'unknown' as const,
+          detail: 'Não foi possível verificar a sessão agora. Verifique novamente.',
+        }));
         // Chave de API no cofre cobre a CLI mesmo sem sessão OAuth.
-        if (state === 'missing' && info.hasKey) {
+        if (state !== 'ok' && info.hasKey) {
           return {
             adapterId: info.adapterId,
             state: 'ok',
@@ -186,6 +199,8 @@ export async function probeAdapterAuth(): Promise<AdapterAuthStatus[]> {
       };
     }),
   );
+  notifyProviderAuthChanged();
+  return statuses;
 }
 
 export function registerAuthProbeIpc(): void {

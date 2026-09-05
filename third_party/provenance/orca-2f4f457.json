@@ -1,0 +1,27 @@
+{
+  "source": "stablyai/orca",
+  "upstreamCommit": "2f4f4578c828370f6413dc48f438a6b189f6190d",
+  "upstreamRepository": "https://github.com/stablyai/orca",
+  "license": "MIT",
+  "copyright": "Copyright (c) 2026 Lovecast Inc.",
+  "licenseFile": "third_party/licenses/orca-MIT.txt",
+  "importedAt": "2026-09-04",
+  "headerPolicy": "Adapted policy preserves the upstream pin and MIT attribution; Nexus retains its own schema and physical receipt/CAS authority.",
+  "files": [
+    {
+      "upstreamUrl": "https://github.com/stablyai/orca/blob/2f4f4578c828370f6413dc48f438a6b189f6190d/src/main/runtime/orchestration/db/dispatch-context/worker-report-settlement.ts",
+      "upstreamCommit": "2f4f4578c828370f6413dc48f438a6b189f6190d",
+      "originalSha256": "e01afd5a37ee7e550c5c121823c433a58f857967ba8a06a5b736f980691e9e8c",
+      "originalPath": "src/main/runtime/orchestration/db/dispatch-context/worker-report-settlement.ts",
+      "nexusPath": "src/main/orch/provisional-worker-handoff.ts",
+      "nexusSha256": "aa3c48567dd565609eeadf33d8a7760016d830b339860083d37c3a26e4364608",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 Lovecast Inc.",
+      "type": "adapted",
+      "changeSummary": "Adapts precedence of a real late worker report over a provisional inferred failure. Nexus recognizes only known synthetic authors with no physical provenance/operator confirmation; physical receipt and dispatch CAS must commit before diagnostic retirement. No upstream database implementation copied.",
+      "secondaryProvenance": [],
+      "importDate": "2026-09-04",
+      "status": "imported"
+    }
+  ]
+}

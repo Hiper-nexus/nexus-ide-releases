@@ -1831,7 +1831,9 @@ export function registerOrchIpc(): void {
   ipcMain.handle(ORCH_CHANNELS.missionPrepare, async (event, raw) => {
     const request = missionPrepareRequestSchema.parse(raw);
     const scope = requireLiveRendererWorkspaceScope(event.sender);
-    const review = await missionEngineForScope(scope).prepare(scope, request);
+    const review = await missionEngineForScope(scope).prepare(scope, request, () => {
+      requireLiveRendererWorkspaceScope(event.sender, scope);
+    });
     return missionReviewSchema.parse(review);
   });
   ipcMain.handle(ORCH_CHANNELS.missionStart, async (event, raw) => {

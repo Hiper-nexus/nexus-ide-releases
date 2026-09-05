@@ -276,7 +276,7 @@ describe('TerminalWorkspace contracts', () => {
     ).toEqual(['pane-maestro', 'pane-other'].sort());
   });
 
-  it('missão done sem aprovação humana mostra Aguardando você, não Pronto', () => {
+  it('missão done sem aprovação humana mostra Pronto para revisar', () => {
     useOrchStore.setState({
       missions: [
         {
@@ -310,7 +310,7 @@ describe('TerminalWorkspace contracts', () => {
     const context = host.querySelector(
       '.product-workspace__context',
     )?.textContent;
-    expect(context).toBe('Missão · Aguardando você');
+    expect(context).toBe('Missão · Pronto para revisar');
   });
 
   it('exposes exactly one return-to-board action only in mission context', () => {

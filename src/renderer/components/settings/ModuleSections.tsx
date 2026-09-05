@@ -2,6 +2,12 @@ import { useEffect, useState } from 'react';
 import { useSettingsStore } from '../../state/settings-store';
 import { askConfirm } from '../../state/confirm-store';
 import { useOrchStore } from '../../state/orch-store';
+import { useMissionSetupStore } from '../../state/mission-setup-store';
+import { useProductNavigationStore } from '../../state/product-navigation-store';
+import { useWorkspaceStore } from '../../state/workspace-store';
+import { useToastStore } from '../../state/toast-store';
+import { PET_STUDIO_SQUAD_ID } from '../../../shared/pet-studio';
+import { missionDeliveryRosterIssue } from '../../../shared/mission-engine-contract';
 import { useVoiceStore } from '../../voice/voice-store';
 import { CURRENT_RELEASE } from '../../../shared/release-notes';
 import type { DesignDirection } from '../../../shared/settings-types';
@@ -12,7 +18,7 @@ import {
 import { UpdateReadinessPanel } from './ObservabilitySections';
 import { AudioDeviceControls } from './AudioDeviceControls';
 import { OrchestratorDefaults } from './OrchestratorDefaults';
-import { MissionDriverSettings } from './MissionDriverSettings';
+import { AgentSessionSettings } from './AgentSessionSettings';
 import { TerminalPerformanceStatus } from './TerminalPerformanceStatus';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
 import { EmptyState } from '../ActionCard';
@@ -294,6 +300,14 @@ function createSquadDraft(): Squad {
         allowedSkills: [],
         allowedTools: null,
       },
+      {
+        id: `reviewer-${draftId}`,
+        agentName: 'Revisor',
+        category: 'reviewer',
+        cli: 'codex',
+        allowedSkills: [],
+        allowedTools: null,
+      },
     ],
   };
 }
@@ -341,6 +355,36 @@ export function SquadsSection() {
   function openCreateEditor() {
     setFeedback(null);
     setEditing(createSquadDraft());
+  }
+
+  function useMembers(squad: Squad): void {
+    if (squad.id === PET_STUDIO_SQUAD_ID) {
+      useProductNavigationStore.getState().openSettings('appearance');
+      return;
+    }
+    const workspacePath = useWorkspaceStore.getState().current?.path;
+    if (!workspacePath) {
+      setFeedback({ tone: 'error', message: 'Abra um projeto antes de usar estes integrantes.' });
+      return;
+    }
+    const setup = useMissionSetupStore.getState();
+    setup.clearEntryContext();
+    setup.setWorkspace(workspacePath);
+    if (!setup.setRoster(squad.agents)) {
+      setFeedback({ tone: 'error', message: 'Não foi possível aplicar os integrantes. Revise os agentes no editor e use uma equipe de até 12 pessoas.' });
+      return;
+    }
+    const { draft } = useMissionSetupStore.getState();
+    const issue = missionDeliveryRosterIssue(draft.roster, draft.advanced.lane);
+    setup.setStep(issue ? 'team' : 'mission');
+    useProductNavigationStore.getState().openMissionSetup();
+    if (issue) {
+      useToastStore.getState().push('warn', 'Complete a equipe',
+        issue === 'reviewer-required'
+          ? 'Adicione ao menos uma pessoa independente para verificar a entrega.'
+          : 'Adicione ao menos uma pessoa responsável por implementar ou executar a entrega.',
+      );
+    }
   }
 
   async function importSquads() {
@@ -488,20 +532,19 @@ export function SquadsSection() {
     <section>
       <SettingsSectionTitle>Squads</SettingsSectionTitle>
       <p className="settings-detail__hint">
-        Defina como os especialistas trabalham e mantenha squads reutilizáveis
-        sem sair das Configurações.
+        Salve integrantes e suas configurações para montar novas equipes.
       </p>
 
       <OrchestratorDefaults />
 
-      <MissionDriverSettings />
+      <AgentSessionSettings />
 
       <h4 className="settings-section-heading">Padrões de execução</h4>
       <div className="settings-toggle-list">
         <OrchestrationToggle
           checked={seniorMode}
           title="Disciplina sênior"
-          detail="Exige stack correta, testes e lint verdes, revisão de segurança e documentação viva."
+          detail="Orienta os agentes a validar a stack, executar testes e lint, revisar segurança e manter a documentação."
           onChange={(checked) => {
             setSeniorMode(checked);
             void window.nexus.settings.orchSet({ seniorMode: checked });
@@ -510,7 +553,7 @@ export function SquadsSection() {
         <OrchestrationToggle
           checked={designPro}
           title="Design profissional"
-          detail="Aplica o design system do projeto, estados completos e revisão Impeccable em tarefas de UI."
+          detail="Orienta os agentes a seguir o design system do projeto e consultar Impeccable em tarefas de UI."
           onChange={(checked) => {
             setDesignPro(checked);
             void window.nexus.settings.orchSet({ designPro: checked });
@@ -617,6 +660,14 @@ export function SquadsSection() {
                     <div className="settings-squads__row-actions">
                       <button
                         type="button"
+                        className="settings-btn settings-btn--primary"
+                        disabled={operation !== null}
+                        onClick={() => useMembers(squad)}
+                      >
+                        {squad.id === PET_STUDIO_SQUAD_ID ? 'Criar pet' : 'Usar integrantes'}
+                      </button>
+                      <button
+                        type="button"
                         className="settings-btn"
                         disabled={operation !== null}
                         title={
@@ -659,8 +710,10 @@ export function SquadsSection() {
         </p>
       ) : null}
       <p className="settings-field__note">
-        Squads criados ou importados ficam disponíveis para novas missões. Os
-        originais do Nexus continuam gerenciados pelo aplicativo.
+        Usar integrantes copia papéis, ferramentas, modelos e instruções
+        individuais para Nova missão. Permissões e skills seguem as regras de
+        execução do Nexus. As instruções globais permanecem no catálogo acessado
+        via MCP e não são aplicadas por essa ação.
       </p>
       {editing ? (
         <SquadEditor

@@ -1,12 +1,21 @@
 import { describe, expect, it, vi } from 'vitest';
 
+const authMocks = vi.hoisted(() => ({
+  claude: vi.fn(async () => ({ value: true, cacheUpdated: true })),
+  openclaude: vi.fn(async () => ({ value: true, cacheUpdated: true })),
+  changed: vi.fn(),
+}));
+
 vi.mock('electron', () => ({
   ipcMain: { handle: vi.fn() },
 }));
 
 vi.mock('../persistence/provider-config-store', () => ({
+  notifyProviderAuthChanged: authMocks.changed,
   listProviderSettings: () => [
     { adapterId: 'claude', installed: true, hasKey: false },
+    { adapterId: 'openclaude', installed: true, hasKey: false },
+    { adapterId: 'muse', installed: true, hasKey: false },
     { adapterId: 'grok', installed: true, hasKey: false },
     { adapterId: 'kimi', installed: true, hasKey: false },
     { adapterId: 'opencode', installed: true, hasKey: false },
@@ -21,6 +30,9 @@ vi.mock('./subscription-auth', () => ({
   detectSubscriptionAuth: (adapterId: string) =>
     adapterId === 'grok' || adapterId === 'claude',
   claudeOauthEmail: () => 'retornoja@gmail.com',
+  refreshClaudeSubscriptionAuthCache: authMocks.claude,
+  refreshOpenClaudeSubscriptionAuthCache: authMocks.openclaude,
+  subscriptionAuthStatusIsUnknown: (id: string) => id === 'muse',
   refreshAgySubscriptionAuthCache: async () => ({
     value: false,
     cacheUpdated: false,
@@ -38,6 +50,26 @@ vi.mock('./kimi-seat-probe', () => ({
 import { probeAdapterAuth } from './auth-probe';
 
 describe('probeAdapterAuth provider-specific diagnostics', () => {
+  it('shares refreshed Claude proof with snapshots and recognizes OpenClaude native auth', async () => {
+    const result = await probeAdapterAuth();
+    expect(result.find((entry) => entry.adapterId === 'openclaude')?.state).toBe('ok');
+    expect(authMocks.claude).toHaveBeenCalled();
+    expect(authMocks.changed).toHaveBeenCalled();
+  });
+
+  it('does not ask a Keychain-backed Muse session to log in without checking it', async () => {
+    const result = await probeAdapterAuth();
+    expect(result.find((entry) => entry.adapterId === 'muse')).toMatchObject({
+      state: 'unknown', detail: expect.stringContaining('Keychain'),
+    });
+  });
+
+  it('reports an inaccessible credential authority as unknown without failing all providers', async () => {
+    authMocks.claude.mockRejectedValueOnce(new Error('Keychain unavailable'));
+    const result = await probeAdapterAuth();
+    expect(result.find((entry) => entry.adapterId === 'claude')?.state).toBe('unknown');
+    expect(result.find((entry) => entry.adapterId === 'grok')?.state).toBe('ok');
+  });
   it('reports current login commands and treats Aider as API-key-only', async () => {
     const result = await probeAdapterAuth();
     const byId = Object.fromEntries(result.map((entry) => [entry.adapterId, entry]));

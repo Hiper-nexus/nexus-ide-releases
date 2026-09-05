@@ -222,6 +222,7 @@ import {
   initializeProviderConfigStore,
   listProviderSettings,
   maybeOfferFirstRunProvisioning,
+  resolveQuotaApiKey,
 } from "./persistence/provider-config-store";
 import {
   clearCooldown,
@@ -313,10 +314,6 @@ import {
   startCronLoop,
   stopCronLoop,
 } from "./orch/cron-runtime";
-import {
-  configureGoalDriver,
-  stopGoalDriverLoop,
-} from "./orch/goal-driver-io";
 import { createHttpCronBackendFromEnvironment } from "./orch/http-cron-backend";
 import {
   configureSyncRuntime,
@@ -413,8 +410,6 @@ function bootstrap(): void {
     );
   }
   // Loads ~/.nexus/settings.json before any runtime reads orchestration flags.
-  // The previous order configured Ralph in shadow on every restart regardless
-  // of the persisted missionDriverActiveMode value.
   registerSettingsIpc();
   initAdapterRegistry();
   initializeProviderConfigStore();
@@ -560,8 +555,9 @@ function bootstrap(): void {
     }, 6_000);
   }
   initQuotaService({
-    listProviders: () => listProviderSettings(),
+    listProviders: () => listProviderSettings({ nonBlockingAuth: true }),
     listAccounts: () => listAccountInfos(),
+    resolveApiQuotaKey: resolveQuotaApiKey,
     // Leitura provider-api fresca e saudável refuta cooldown persistido
     // (resíduo da cascata de limite fantasma) — a conta volta ao pool.
     clearRefutedCooldown: (accountId) =>
@@ -622,13 +618,6 @@ function bootstrap(): void {
     });
   // Cron: squads/agentes agendados (tick 60s, skip-if-stale) — time-driven.
   startCronLoop();
-  // Goal Driver: análogo GOAL-driven do cron. Coexiste com ele (loop/timer
-  // próprios). Dispara missão por PREDICADO sobre estado vivo (profundidade de
-  // fila, disponibilidade de provider, contagem de missões) em vez de por
-  // horário. Default SHADOW/observe: sem triggers persistidos e sem efeito
-  // autônomo — a autoridade de consentimento + store de triggers é a próxima
-  // fatia. Único gap real vs Ralph (spec 2026-07-13). Nunca um shell loop.
-  configureGoalDriver({ listScopes: knownCronScopes });
   // Deep link nexus:// vindo no lançamento a frio (após a janela existir) +
   // auto-updater (opt-in por ambiente; no-op sem servidor configurado).
   consumeLaunchDeepLink();
@@ -1075,7 +1064,6 @@ function shutdown(): Promise<void> {
     // exact exit observer and stores until PTY proof and reconciliation are
     // complete. A failed proof must leave the next retry operational.
     await stopCronLoop();
-    await stopGoalDriverLoop();
     // Cancela refreshes de projecao pendentes ANTES do teardown fisico: um
     // timer de debounce disparando apos closeAll reabriria o runtime SQLite.
     uninstallMissionDiskProjection();

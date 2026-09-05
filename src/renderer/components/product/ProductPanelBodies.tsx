@@ -367,29 +367,13 @@ export function MemoryPanelBody({
     }
   };
 
-  return (
-    <div className="product-pane" data-testid="product-memory">
-      {failure ? (
-        <div className="product-pane__error" role="alert">
-          <p>{failure.message}</p>
-          {failure.operation === 'load' ? (
-            <button
-              type="button"
-              className="product-pane__retry"
-              disabled={loading}
-              onClick={() => void reload()}
-            >
-              Tentar novamente
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-
+  const collection = (
+    <>
       {showOnboarding && !loading && !failure && notes.length === 0 ? (
         <EmptyState
           icon="file"
           title="Nenhuma memória ainda"
-          body="Escreva um título e o texto. Ao salvar, a nota entra nesta lista. O Nexus guarda nos dados do app para este workspace — não cria arquivo no git. Missões e agentes podem consultar."
+          body="Registre uma decisão, uma regra do projeto ou um aprendizado. As notas salvas aparecem aqui."
           className="memory-workspace__empty"
           action={
             <ActionCard
@@ -402,44 +386,6 @@ export function MemoryPanelBody({
           }
         />
       ) : null}
-
-      <div className="product-pane__form" aria-busy={saving || undefined}>
-        <label className="product-pane__field">
-          <span>Título da nota</span>
-          <input
-            ref={titleInputRef}
-            className="product-pane__input"
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-            placeholder="Ex.: Usar um único banco de domínio"
-            aria-label="Título da memória"
-          />
-        </label>
-        <label className="product-pane__field">
-          <span>O que deve ser lembrado</span>
-          <textarea
-            className="product-pane__textarea"
-            value={body}
-            onChange={(event) => setBody(event.target.value)}
-            placeholder="Decisão, contexto ou aprendizado para a próxima sessão"
-            rows={5}
-            aria-label="Corpo da memória"
-          />
-        </label>
-        <button
-          type="button"
-          className="product-pane__btn"
-          disabled={saving || title.trim().length === 0}
-          onClick={() => void remember()}
-        >
-          {saving ? 'Salvando…' : 'Salvar'}
-        </button>
-        <p className="product-pane__hint">
-          Salva neste workspace, nos dados do NexusIDE — não no repositório.
-          Agentes podem buscar estas notas.
-        </p>
-      </div>
-
       {loading ? (
         <p className="product-pane__loading" role="status">
           Carregando memórias…
@@ -484,6 +430,73 @@ export function MemoryPanelBody({
           })}
         </ul>
       ) : null}
+    </>
+  );
+
+  return (
+    <div className="product-pane" data-testid="product-memory">
+      {failure ? (
+        <div className="product-pane__error" role="alert">
+          <p>{failure.message}</p>
+          {failure.operation === 'load' ? (
+            <button
+              type="button"
+              className="product-pane__retry"
+              disabled={loading}
+              onClick={() => void reload()}
+            >
+              Tentar novamente
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div className="product-pane__form" aria-busy={saving || undefined}>
+        {presentation === 'full' ? <h2>Nova memória</h2> : null}
+        <label className="product-pane__field">
+          <span>Título da nota</span>
+          <input
+            ref={titleInputRef}
+            className="product-pane__input"
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+            placeholder="Ex.: Usar um único banco de domínio"
+            aria-label="Título da memória"
+          />
+        </label>
+        <label className="product-pane__field">
+          <span>O que deve ser lembrado</span>
+          <textarea
+            className="product-pane__textarea"
+            value={body}
+            onChange={(event) => setBody(event.target.value)}
+            placeholder="Decisão, contexto ou aprendizado para a próxima sessão"
+            rows={5}
+            aria-label="Corpo da memória"
+          />
+        </label>
+        <button
+          type="button"
+          className="product-pane__btn"
+          disabled={saving || title.trim().length === 0}
+          onClick={() => void remember()}
+        >
+          {saving ? 'Salvando…' : 'Salvar'}
+        </button>
+        <p className="product-pane__hint">
+          Salva nos dados do app para este projeto, não no repositório.
+        </p>
+      </div>
+
+      {presentation === 'full' ? (
+        <section className="product-pane__entries" aria-label="Caderno salvo">
+          <header className="product-pane__entries-heading">
+            <h2>Memórias salvas</h2>
+            {!loading && !failure ? <span>{notes.length}</span> : null}
+          </header>
+          {collection}
+        </section>
+      ) : collection}
     </div>
   );
 }

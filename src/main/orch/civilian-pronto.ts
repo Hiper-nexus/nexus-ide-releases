@@ -10,7 +10,7 @@ import { existsSync, readdirSync, statSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve } from 'node:path';
 import { missionResultSchema } from '../../shared/mission-engine-contract';
 import { holdsAwaitingOperatorAdjustment } from '../../shared/mission-recovery-policy';
-import type { Handoff, Mission } from '../../shared/orch-types';
+import type { Handoff, Mission, Squad } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { MissionEngine } from './mission-engine';
 import {
@@ -25,6 +25,8 @@ import {
 } from './civilian-delivery-completion';
 import { missionEngineForScope } from './mission-engine-registry';
 import { listPaneSnapshots } from './pane-registry';
+import { getSquad } from './squad-store';
+import { inspectTeamQuestionCompletion, isTeamQuestionMission, teamQuestionResponseSummary, type TeamQuestionCompletion, type TeamQuestionPaneRuntime } from './mission-team-question-completion';
 import { advanceSealedTasksFromFilesOnDisk } from './mission-story-plan';
 import {
   getProjectDomainStores,
@@ -102,6 +104,8 @@ export function decideCivilianPronto(input: {
   readonly hasQueuedHandoffs: boolean;
   readonly idleWorkersWithoutHandoff: number;
   readonly workersDelivered: boolean;
+  readonly deliveredWorkerCount?: number;
+  readonly expectedWorkerCount?: number;
   readonly orchestratorBusy: boolean;
   readonly awaitingOperatorAdjustment?: boolean;
 }): CivilianProntoDecision {
@@ -135,7 +139,7 @@ export function decideCivilianPronto(input: {
       ...base,
       action: 'pronto',
       path: 'handoffs',
-      reason: `all-workers-delivered (${sealedDone}/${sealedTotal})`,
+      reason: `all-workers-delivered (${input.deliveredWorkerCount ?? sealedDone}/${input.expectedWorkerCount ?? sealedTotal})`,
     };
   }
   if (input.boardAllDone && sealedTotal > 0) {
@@ -338,6 +342,7 @@ export function applyCivilianProntoDecision(input: {
   readonly productFiles: readonly string[];
   readonly engine: Pick<MissionEngine, 'completeVerified'>;
   readonly stores: Pick<ProjectDomainStoreSuite, 'missions' | 'handoffs' | 'missionPanes'>;
+  readonly teamQuestion?: TeamQuestionCompletion;
 }): boolean {
   if (input.decision.action !== 'pronto') return false;
   const files = toArtifactRefs(input.productFiles);
@@ -354,7 +359,9 @@ export function applyCivilianProntoDecision(input: {
   // aba Resultado. Ele continua inteiro no log (linha do fast-lane); aqui vai
   // a versão civil.
   const civilReason = civilProntoReason(input.decision.reason);
-  const baseSummary = orchestratorSummary
+  const baseSummary = input.teamQuestion?.applicable
+    ? teamQuestionResponseSummary(input.teamQuestion)
+    : orchestratorSummary
     ? `${orchestratorSummary} (${civilReason})`
     : consolidatedSummary
       ? `${consolidatedSummary} (${civilReason})`
@@ -386,12 +393,13 @@ export function applyCivilianProntoDecision(input: {
 
 export type CivilianProntoDependencies = {
   readonly getStores?: (scope: ProjectExecutionScope) => ProjectDomainStoreSuite;
-  readonly listPanes?: () => readonly {
+  readonly getSquad?: (squadId: string) => Squad | null;
+  readonly listPanes?: () => readonly (TeamQuestionPaneRuntime & {
     readonly missionId?: string | null;
     readonly agentName?: string | null;
     readonly role?: string;
     readonly state?: string | null;
-  }[];
+  })[];
   readonly listProductFiles?: (root: string) => readonly string[];
   readonly missionEngine?: Pick<MissionEngine, 'completeVerified'>;
 };
@@ -427,8 +435,23 @@ export function maybeApplyCivilianPronto(
   } catch {
     return empty('wait', 'handoffs-unreadable');
   }
+  if (failClosedHaystack(mission, handoffs)) {
+    return empty('refuse', 'fail-closed');
+  }
 
-  const files =
+  const panes = deps.listPanes?.() ??
+    (typeof listPaneSnapshots === 'function' ? listPaneSnapshots() : []);
+  const teamQuestion = inspectTeamQuestionCompletion({
+    mission,
+    squad: isTeamQuestionMission(mission) && mission.squadId
+      ? (deps.getSquad ?? getSquad)(mission.squadId) : null,
+    panes: stores.missionPanes?.list?.(missionId) ?? [],
+    runtimePanes: panes,
+    handoffs,
+  });
+  if (!teamQuestion.ready) return empty('wait', teamQuestion.reason);
+
+  const files = teamQuestion.applicable ? [] :
     deps.listProductFiles?.(scope.rootRealPath) ??
     walkProductFiles(scope.rootRealPath);
   try {
@@ -461,9 +484,6 @@ export function maybeApplyCivilianPronto(
     planned = [];
   }
 
-  const panes =
-    deps.listPanes?.() ??
-    (typeof listPaneSnapshots === 'function' ? listPaneSnapshots() : []);
   const missionPanes = panes.filter((pane) => pane.missionId === mission.id);
   const liveWriterBusy = missionPanes.some(
     (pane) =>
@@ -533,6 +553,10 @@ export function maybeApplyCivilianPronto(
     hasQueuedHandoffs,
     idleWorkersWithoutHandoff,
     workersDelivered,
+    ...(teamQuestion.applicable ? {
+      deliveredWorkerCount: teamQuestion.responses.length,
+      expectedWorkerCount: teamQuestion.responses.length + teamQuestion.missingTargets.length,
+    } : {}),
     orchestratorBusy,
     awaitingOperatorAdjustment: holdsAwaitingOperatorAdjustment(
       mission.description ?? '',
@@ -558,6 +582,7 @@ export function maybeApplyCivilianPronto(
       productFiles: files,
       engine,
       stores,
+      teamQuestion,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

@@ -1,0 +1,20 @@
+[
+  {
+    "adapterId": "claude",
+    "observed": "ok",
+    "snapshot": "ok",
+    "strategy": "subscription"
+  },
+  {
+    "adapterId": "openclaude",
+    "observed": "ok",
+    "snapshot": "ok",
+    "strategy": "subscription"
+  },
+  {
+    "adapterId": "muse",
+    "observed": "unknown",
+    "snapshot": "unknown",
+    "strategy": "login-needed"
+  }
+]

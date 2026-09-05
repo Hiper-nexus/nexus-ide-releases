@@ -47,6 +47,7 @@ import {
 import { compactText } from "./session-compaction";
 import type { TaskDispatchRecord } from "./task-dispatch-codec";
 import { getMissionEventRuntimeManager } from "./mission-event-emit";
+import { isProvisionalWorkerHandoff } from "./provisional-worker-handoff";
 import {
   extractLegacyHandoffsFromText,
   isPlaceholderSummary,
@@ -198,9 +199,10 @@ function findBoundDispatch(
   sessionId: string,
   workerIncarnationId: string | undefined,
 ): TaskDispatchRecord | undefined {
-  const sessionDispatches = suite.taskDispatches
-    .list(missionId)
-    .filter((dispatch) => dispatch.sessionId === sessionId);
+  const missionDispatches = suite.taskDispatches.list(missionId);
+  const sessionDispatches = missionDispatches.filter(
+    (dispatch) => dispatch.sessionId === sessionId,
+  );
   const boundDispatch = workerIncarnationId
     ? sessionDispatches.find(
         (dispatch) => dispatch.workerIncarnationId === workerIncarnationId,
@@ -216,7 +218,49 @@ function findBoundDispatch(
       "worker incarnation obsoleta: PTY stream não pertence ao dispatch físico atual",
     );
   }
+  if (!boundDispatch) {
+    assertUnboundLateWorkerCurrent(
+      suite,
+      missionId,
+      sessionId,
+      workerIncarnationId,
+      missionDispatches,
+    );
+  }
   return boundDispatch;
+}
+
+function assertUnboundLateWorkerCurrent(
+  suite: ProjectDomainStoreSuite,
+  missionId: string,
+  sessionId: string,
+  workerIncarnationId: string | undefined,
+  dispatches: readonly TaskDispatchRecord[],
+): void {
+  if (!workerIncarnationId || dispatches.length === 0) return;
+  if (
+    dispatches.some(
+      (dispatch) => dispatch.workerIncarnationId === workerIncarnationId,
+    )
+  ) {
+    throw new Error(
+      "worker incarnation obsoleta: dispatch pertence a outra sessão física",
+    );
+  }
+  const hasDiagnostic = suite.handoffs
+    .list({ missionId, includeDelivered: true })
+    .some(
+      (handoff) =>
+        handoff.sessionId === sessionId &&
+        isProvisionalWorkerHandoff(handoff),
+    );
+  if (!hasDiagnostic) return;
+  // Replacing a dispatch can erase its old session, nonce and pane binding.
+  // Neither a display name nor an unmatched persisted pane proves this was
+  // an independent ad-hoc worker. Preserve the diagnostic when ambiguous.
+  throw new Error(
+    "handoff_provenance: late worker has no current dispatch binding",
+  );
 }
 
 function assertCurrentHandoffOrigin(
@@ -402,6 +446,21 @@ async function persistPtyHandoff(
 ): Promise<PtyStreamHandoffResult> {
   const { auditContext, ctx, invocationId, rawArgs, sessionId } = prepared;
   return runInsidePtyStreamAgentTransport(sessionId, ctx, async () => {
+    // Recheck after the asynchronous HEAD read: an unbound worker must not
+    // cross into the generic path if its dispatch was replaced meanwhile.
+    if (
+      !prepared.dispatch &&
+      findBoundDispatch(
+        prepared.suite,
+        prepared.missionId,
+        sessionId,
+        ctx.workerIncarnationId,
+      )
+    ) {
+      throw new Error(
+        "handoff_provenance: dispatch binding changed during handoff preparation",
+      );
+    }
     auditIntent(
       auditContext,
       sessionId,

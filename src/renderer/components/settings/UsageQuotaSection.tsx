@@ -1,310 +1,306 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { useQuotaStore } from '../../state/quota-store';
 import { useAccountStore } from '../../state/account-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
-import { windowDisplay } from '../../lib/quota-display';
-import type { ProviderQuotaEntry } from '../../../shared/quota-types';
+import { prioritizeReportedQuotas, windowDisplay } from '../../lib/quota-display';
+import {
+  QUOTA_HIGH_USAGE_THRESHOLD,
+  type ProviderQuotaEntry,
+  type QuotaSource,
+  type QuotaWindow,
+} from '../../../shared/quota-types';
 import { ProviderLogo } from '../ProviderLogo';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
-import { emailFromAuthDetail } from './account-default-label';
 
-/**
- * Settings → Uso e cotas: fleet list of provider quota windows.
- * Unknown ratios render as "—" never fake 0%.
- */
-
+const SOURCE_LABELS: Record<QuotaSource, string> = {
+  'provider-api': 'Informado pelo serviço de IA',
+  'transcript-inferred': 'Estimado a partir da sessão',
+  'limit-hit': 'Limite sinalizado pela ferramenta',
+  'local-tokens': 'Contagem local de tokens',
+  cooldown: 'Pausa temporária',
+  unknown: 'Fonte indisponível',
+};
+const PROVIDER_LABELS: Record<string, string> = {
+  glm: 'GLM',
+  longcat: 'LongCat',
+  kimi: 'Kimi',
+  xai: 'xAI',
+  grok: 'Grok',
+  deepseek: 'DeepSeek',
+  openai: 'OpenAI',
+  anthropic: 'Anthropic',
+};
+function observationTime(value: number): string {
+  const date = new Date(value);
+  return value > 0 && Number.isFinite(date.getTime())
+    ? date.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
+    : 'Ainda sem consulta';
+}
+function hasQuota(entry: ProviderQuotaEntry): boolean {
+  return entry.windows.some(
+    (window) => windowDisplay(window).tone !== 'unknown',
+  );
+}
+function QuotaWindowRow({ window }: { window: QuotaWindow }) {
+  const display = windowDisplay(window);
+  const unknown = display.tone === 'unknown';
+  const local = window.source === 'local-tokens';
+  return (
+    <li className="quota-window" data-unknown={unknown}>
+      <span className="quota-window__name">{window.label}</span>
+      {unknown ? (
+        <span className="quota-window__unknown">
+          {local
+            ? window.remainingLabel || 'Contagem indisponível'
+            : 'Não informado'}
+        </span>
+      ) : (
+        <>
+          <span
+            className="quota-window__track"
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={display.barRatio * 100}
+            aria-valuetext={`${display.percentLabel} utilizado`}
+            aria-label={`${window.label}: consumo da cota`}
+          >
+            <span
+              className={`quota-window__fill quota-window__fill--${display.tone}`}
+              style={{ transform: `scaleX(${display.barRatio})` }}
+            />
+          </span>
+          <span
+            className={`quota-window__pct quota-window__pct--${display.tone}`}
+          >
+            {display.percentLabel}
+          </span>
+        </>
+      )}
+      <span className="quota-window__reset">
+        {local
+          ? 'Sem limite de conta informado'
+          : (window.remainingLabel ?? '')}
+      </span>
+    </li>
+  );
+}
 function EntryCard({
   entry,
   email,
   needsRelogin,
 }: {
   entry: ProviderQuotaEntry;
-  /** E-mail da conta do vault (entries de CLI nativo não têm conta). */
   email?: string;
-  /** Refresh morto (lido do vault, não do snapshot de cota). */
   needsRelogin?: boolean;
 }) {
+  const known = hasQuota(entry);
+  const state = needsRelogin
+    ? 'Entrar novamente'
+    : entry.onCooldown
+      ? 'Pausa temporária'
+      : known
+        ? 'Cota informada'
+        : 'Sem informação';
+  const label = entry.accountId
+    ? entry.label
+    : entry.label.replace(/\s*·\s*CLI nativo$/u, '');
   return (
     <li
       className={`quota-entry ${entry.onCooldown ? 'quota-entry--cool' : ''}`}
       data-adapter={entry.adapterId}
     >
-      <div className="quota-entry__head">
-        <ProviderLogo adapterId={entry.adapterId} label={entry.label} size="sm" />
+      <header className="quota-entry__head">
+        <ProviderLogo adapterId={entry.adapterId} label={label} size="sm" />
+        <div className="quota-entry__title">
+          <h3 className="quota-entry__label">{label}</h3>
+          <p className="quota-entry__origin">
+            {entry.accountId ? 'Conta salva no Nexus' : 'Conexão atual'}
+            {email ? ` · ${email}` : ''}
+          </p>
+        </div>
         <span
-          className={`quota-entry__led ${
-            entry.onCooldown
-              ? 'quota-entry__led--cool'
-              : entry.installed
-                ? 'quota-entry__led--on'
-                : 'quota-entry__led--off'
-          }`}
-          aria-hidden="true"
-        />
-        <span className="quota-entry__title">
-          <span className="quota-entry__label">{entry.label}</span>
-          {email && <span className="quota-entry__email">{email}</span>}
+          className={`quota-entry__badge ${needsRelogin || entry.onCooldown ? 'quota-entry__badge--warn' : ''}`}
+        >
+          {state}
         </span>
         {!entry.installed && (
-          <span className="quota-entry__badge">ausente</span>
+          <span className="quota-entry__badge">Não instalada</span>
         )}
-        {entry.onCooldown && !needsRelogin && (
-          <span className="quota-entry__badge quota-entry__badge--warn">
-            cooldown
-          </span>
-        )}
-        {needsRelogin && (
-          <span
-            className="quota-entry__badge quota-entry__badge--warn"
-            title="A renovação do token falhou — entre novamente em Providers"
-          >
-            sessão expirada
-          </span>
-        )}
+      </header>
+      {entry.usageProviderId && entry.usageProviderId !== entry.adapterId && (
+        <p className="quota-entry__origin">
+          Limites de{' '}
+          {PROVIDER_LABELS[entry.usageProviderId] ?? entry.usageProviderId}
+        </p>
+      )}
+      <div className="quota-entry__columns" aria-hidden="true">
+        <span>Período</span>
+        <span>Consumo utilizado</span>
+        <span>Renovação ou observação</span>
       </div>
       <ul className="quota-entry__windows">
-        {entry.windows.map((w) => {
-          const d = windowDisplay(w);
-          return (
-            <li key={`${w.kind}-${w.label}`} className="quota-window">
-              <span className="quota-window__name">{w.label}</span>
-              <span
-                className="quota-window__track"
-                role={d.tone === 'unknown' ? undefined : 'progressbar'}
-                aria-hidden={d.tone === 'unknown' ? true : undefined}
-                aria-valuemin={d.tone === 'unknown' ? undefined : 0}
-                aria-valuemax={d.tone === 'unknown' ? undefined : 100}
-                aria-valuenow={
-                  d.tone === 'unknown'
-                    ? undefined
-                    : Math.round(d.barRatio * 100)
-                }
-                aria-label={
-                  d.tone === 'unknown'
-                    ? undefined
-                    : `${w.label} ${d.percentLabel}`
-                }
-              >
-                <span
-                  className={`quota-window__fill quota-window__fill--${d.tone}`}
-                  style={{
-                    transform: `scaleX(${d.tone === 'unknown' ? 0 : d.barRatio})`,
-                  }}
-                />
-              </span>
-              <span
-                className={`quota-window__pct quota-window__pct--${d.tone}`}
-              >
-                {d.percentLabel}
-              </span>
-              {/* Sempre presente: célula vazia mantém as 4 colunas do grid e
-                  as barras alinhadas entre linhas e entre cards. */}
-              <span className="quota-window__reset">
-                {w.remainingLabel ?? ''}
-              </span>
-            </li>
-          );
-        })}
+        {entry.windows.map((window) => (
+          <QuotaWindowRow
+            key={`${window.kind}-${window.label}`}
+            window={window}
+          />
+        ))}
       </ul>
-      <p className="quota-entry__meta">
-        fontes:{' '}
-        {[...new Set(entry.windows.map((w) => w.source))].join(', ')}
-      </p>
+      {!known && (
+        <p className="quota-entry__missing">
+          Sem percentual disponível. Isso não significa que a conta está sem uso
+          ou sem saldo.
+        </p>
+      )}
+      <details className="quota-entry__meta">
+        <summary>Fonte e última consulta</summary>
+        <p>
+          {[
+            ...new Set(
+              entry.windows.map((window) => SOURCE_LABELS[window.source]),
+            ),
+          ].join(' · ')}
+        </p>
+        <p>
+          {known ? 'Observação dos dados' : 'Última tentativa'}:{' '}
+          {observationTime(entry.updatedAt)}
+        </p>
+      </details>
     </li>
   );
 }
 
-function statusLabel(
-  status: 'idle' | 'loading' | 'ready' | 'error',
-  updatedAt: number,
-): string {
-  if (status === 'loading') return 'a carregar…';
-  if (status === 'error') return 'falha ao carregar';
-  if (status === 'ready' && updatedAt && Number.isFinite(updatedAt)) {
-    const d = new Date(updatedAt);
-    if (!Number.isNaN(d.getTime())) {
-      return `atualizado ${d.toLocaleTimeString()}`;
-    }
-  }
-  if (status === 'idle') return 'ainda não carregado';
-  return 'sem dados';
-}
-
+/** Credential sources remain separate; matching an email never proves equal quota scope. */
 export function UsageQuotaSection() {
-  const snapshot = useQuotaStore((s) => s.snapshot);
-  const status = useQuotaStore((s) => s.status);
-  const error = useQuotaStore((s) => s.error);
-  const hydrate = useQuotaStore((s) => s.hydrate);
-  const refresh = useQuotaStore((s) => s.refresh);
-  const openSettings = useProductNavigationStore((s) => s.openSettings);
-  // Já hidratado no boot via useAccountController (App.tsx) — aqui é só lookup.
-  const accounts = useAccountStore((s) => s.accounts);
-  const loaded = status === 'ready' && snapshot.updatedAt > 0;
-
-  // E-mail da sessão viva por adapter (sonda de login — arquivo/subprocesso,
-  // nunca Keychain na main thread). É o que permite dobrar a linha "CLI
-  // nativo" para dentro da conta salva: com 2 contas Claude logadas, o
-  // operador via TRÊS linhas e lia "limites errados".
-  const [nativeEmailByAdapter, setNativeEmailByAdapter] = useState<
-    Record<string, string>
-  >({});
-  const probeNativeEmails = async () => {
-    try {
-      const list = await window.nexus?.providers?.authStatus();
-      if (!list) return;
-      const byAdapter: Record<string, string> = {};
-      for (const s of list) {
-        const email =
-          s.state === 'ok' ? emailFromAuthDetail(s.detail) : null;
-        if (email) byAdapter[s.adapterId] = email.trim().toLowerCase();
-      }
-      setNativeEmailByAdapter(byAdapter);
-    } catch {
-      // Sonda best-effort: sem ela, a linha nativa segue aparecendo.
-    }
-  };
-
-  // Always re-fetch when this settings panel is opened (boot hydrate can race
-  // before main IPC is ready, or the process was an old build).
+  const snapshot = useQuotaStore((state) => state.snapshot);
+  const status = useQuotaStore((state) => state.status);
+  const hydrate = useQuotaStore((state) => state.hydrate);
+  const refresh = useQuotaStore((state) => state.refresh);
+  const accounts = useAccountStore((state) => state.accounts);
+  const openSettings = useProductNavigationStore((state) => state.openSettings);
   useEffect(() => {
     void hydrate();
-    void probeNativeEmails();
   }, [hydrate]);
-
-  // A linha "CLI nativo" de um adapter é REDUNDANTE quando a sessão viva já é
-  // uma conta salva: os mesmos limites estão na linha da conta (com e-mail).
-  const entries = snapshot.entries.filter((e) => {
-    if (e.accountId) return true;
-    const native = nativeEmailByAdapter[e.adapterId];
-    if (!native) return true;
-    return !accounts.some(
-      (a) =>
-        a.adapterId === e.adapterId &&
-        a.email?.trim().toLowerCase() === native,
-    );
-  });
-
-  /** Atualizar refaz cota E sonda de sessão viva (a conta pode ter trocado). */
-  const refreshAll = async (): Promise<void> => {
-    await Promise.all([refresh(), probeNativeEmails()]);
-  };
-
+  const entries = prioritizeReportedQuotas(snapshot.entries);
+  const highUsageCount = entries.filter((entry) =>
+    entry.windows.some(
+      (window) =>
+        windowDisplay(window).barRatio >= QUOTA_HIGH_USAGE_THRESHOLD,
+    ),
+  ).length;
+  const unknownCount = entries.filter((entry) => !hasQuota(entry)).length;
+  const loading = status === 'loading';
   return (
-    <section className="quota-panel" aria-labelledby="quota-title">
+    <section
+      className="quota-panel"
+      aria-labelledby="quota-title"
+      aria-busy={loading}
+    >
       <header className="quota-panel__intro">
-        <SettingsSectionTitle id="quota-title">
-          Uso e cotas
-        </SettingsSectionTitle>
-        <p className="settings-detail__hint">
-          Só CLIs instaladas/ativas ou com conta no vault. Janelas padrão:{' '}
-          <strong>5 Horas</strong> + <strong>Semanal</strong> (Grok também{' '}
-          <strong>Mensal</strong> via billing). % só com fonte real; sem
-          telemetria mostra &quot;—&quot;, nunca 0% inventado. OpenCode só
-          aparece se estiver instalado.
-        </p>
-      </header>
-
-      <div className="quota-panel__fleet" role="status">
-        <span>
-          <strong>{entries.length}</strong> entradas
-        </span>
-        <span className="quota-panel__sep" aria-hidden="true">
-          ·
-        </span>
-        <span>
-          <strong>{snapshot.highUsageCount}</strong> no limite
-        </span>
-        <span className="quota-panel__sep" aria-hidden="true">
-          ·
-        </span>
-        <span>
-          <strong>{snapshot.unknownCount}</strong> sem telemetria
-        </span>
-        <span className="quota-panel__sep" aria-hidden="true">
-          ·
-        </span>
-        <span className="quota-panel__dim">
-          {statusLabel(status, snapshot.updatedAt)}
-        </span>
+        <div>
+          <SettingsSectionTitle id="quota-title">
+            Uso e cotas
+          </SettingsSectionTitle>
+          <p className="settings-detail__hint">
+            Veja quanto foi usado dos limites informados por cada serviço de IA.
+            Alguns serviços não disponibilizam todos os períodos.
+          </p>
+        </div>
         <button
           type="button"
-          className="settings-btn quota-panel__refresh"
-          disabled={status === 'loading'}
-          onClick={() => void refreshAll()}
+          className="settings-btn settings-btn--primary quota-panel__refresh"
+          disabled={loading}
+          onClick={() => void refresh()}
         >
-          {status === 'loading' ? 'A carregar…' : 'Atualizar'}
+          {loading ? 'Consultando…' : 'Atualizar cotas'}
         </button>
+      </header>
+      <div className="quota-panel__fleet" role="status">
+        {status !== 'error' && entries.length > 0 && (
+          <>
+            <span>
+              <strong>{entries.length}</strong> conexões e contas
+            </span>
+            <span>
+              <strong>{highUsageCount}</strong> com uso elevado
+            </span>
+            <span>
+              <strong>{unknownCount}</strong> sem cota informada
+            </span>
+          </>
+        )}
+        <span>
+          {loading
+            ? 'Consultando os serviços…'
+            : status === 'error'
+              ? 'Consulta indisponível'
+              : `Consulta: ${observationTime(snapshot.updatedAt)}`}
+        </span>
       </div>
-
-      {status === 'error' && (
-        <div className="quota-panel__empty quota-panel__empty--error" role="alert">
+      {status === 'error' ? (
+        <div
+          className="quota-panel__empty quota-panel__empty--error"
+          role="alert"
+        >
+          <strong>Não foi possível carregar as cotas.</strong>
           <p>
-            <strong>Não foi possível carregar as cotas.</strong>
+            Tente atualizar novamente. Se o problema continuar, confira a
+            conexão da ferramenta.
           </p>
-          <p>{error ?? 'Erro desconhecido.'}</p>
-          <p>
-            Reinicia o Nexus (fecha o app e corre de novo) e clica Atualizar.
-            Se Providers lista CLIs, o serviço de cotas deve listá-los aqui com
-            barras em &quot;—&quot; até haver sinal de limite real.
-          </p>
-          <button
-            type="button"
-            className="settings-btn settings-btn--primary"
-            onClick={() => void refreshAll()}
-          >
-            Tentar de novo
-          </button>
         </div>
-      )}
-
-      {status !== 'error' && entries.length === 0 && (
+      ) : entries.length === 0 ? (
         <div className="quota-panel__empty" role="status">
-          {!loaded && status === 'loading' ? (
-            <p>A carregar providers e janelas de cota…</p>
-          ) : !loaded ? (
-            <p>
-              Cotas ainda não chegaram do processo principal. Clica{' '}
-              <strong>Atualizar</strong> ou reinicia o app se continuar vazio.
-            </p>
+          {loading ? (
+            <>
+              <p>Consultando suas cotas…</p>
+              <div className="settings-skeleton" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+              </div>
+            </>
           ) : (
             <>
+              <strong>Nenhuma cota disponível ainda</strong>
               <p>
-                Nenhum CLI listado. Confirma em Providers que os adapters estão
-                habilitados (mesmo sem % de cota, devem aparecer aqui).
+                Conecte uma ferramenta de IA para consultar os limites que ela
+                disponibiliza.
               </p>
-              <button
-                type="button"
-                className="settings-btn settings-btn--primary"
-                onClick={() => openSettings('providers')}
-              >
-                Abrir Providers
-              </button>
             </>
           )}
         </div>
-      )}
-
-      {entries.length > 0 && (
+      ) : (
         <ul className="quota-panel__list">
-          {entries.map((e) => (
+          {entries.map((entry) => (
             <EntryCard
-              key={e.id}
-              entry={e}
+              key={entry.id}
+              entry={entry}
               email={
-                e.accountId
-                  ? accounts.find((a) => a.id === e.accountId)?.email
-                  : undefined
+                accounts.find((account) => account.id === entry.accountId)
+                  ?.email
               }
               needsRelogin={
-                e.accountId
-                  ? accounts.find((a) => a.id === e.accountId)?.needsRelogin ===
-                    true
-                  : false
+                accounts.find((account) => account.id === entry.accountId)
+                  ?.needsRelogin
               }
             />
           ))}
         </ul>
       )}
+      <footer className="quota-panel__help">
+        <p>
+          Cada linha identifica a conexão atual ou uma conta salva. Os
+          percentuais não são somados entre contas.
+        </p>
+        <button
+          type="button"
+          className="settings-btn"
+          onClick={() => openSettings('providers')}
+        >
+          Ver conexões de IA
+        </button>
+      </footer>
     </section>
   );
 }

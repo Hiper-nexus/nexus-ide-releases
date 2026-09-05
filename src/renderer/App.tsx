@@ -4,7 +4,6 @@ import {
   switchWorkspaceLayoutWithFallback,
   useLayoutStore,
 } from './state/layout-store';
-import { usePanePickerStore } from './state/pane-picker-store';
 import { VoiceHud } from './components/VoiceHud';
 import { VoiceSettings } from './components/VoiceSettings';
 import { DictationModeChip } from './components/DictationModeChip';
@@ -38,10 +37,7 @@ import { useWorkspaceController, useWorkspaceStore } from './state/workspace-sto
 import { useProviderController } from './state/provider-store';
 import { useAdapterController } from './state/adapter-store';
 import { reconcileHosts } from './terminal/terminal-host';
-import {
-  gateRestoredAgents,
-  resetRestoredAgentsGate,
-} from './orch/restore-agents-gate';
+import { resetRestoredAgentsGate } from './orch/restore-agents-gate';
 import {
   reconcileBrowserPanes,
   setBrowserPaneSuppression,
@@ -206,6 +202,12 @@ export function App() {
   const recentWorkspaces = useWorkspaceStore((state) => state.recents);
   const destination = useProductNavigationStore((state) => state.destination);
   const missionSummaries = useOrchStore((state) => state.missionSummaries);
+  const missionSummariesHydrated = useOrchStore(
+    (state) => state.missionSummariesHydrated,
+  );
+  const orchWorkspacePath = useOrchStore(
+    (state) => state.boundWorkspacePath,
+  );
   const orchMissions = useOrchStore((state) => state.missions);
   const crossWorkspaceSummaries = useOrchStore(
     (state) => state.crossWorkspaceSummaries,
@@ -301,6 +303,26 @@ export function App() {
     useProductNavigationStore.getState().openTerminal();
   }, [destination.kind, productFlags]);
 
+  // A newly created mission can open before its first broadcast. Reconcile
+  // on canonical refreshes, not navigation changes against an older list.
+  useEffect(() => {
+    if (
+      !missionSummariesHydrated ||
+      orchWorkspacePath !== currentWorkspace?.path
+    ) return;
+    const navigation = useProductNavigationStore.getState();
+    const isMissing = (target: ProductDestination | null): boolean =>
+      target?.kind === 'mission' &&
+      !missionSummaries.some((mission) => mission.id === target.missionId);
+    if (isMissing(navigation.destination)) {
+      navigation.openLauncher();
+    } else if (isMissing(navigation.settingsReturnDestination)) {
+      useProductNavigationStore.setState({
+        settingsReturnDestination: { kind: 'launcher' },
+      });
+    }
+  }, [missionSummaries, missionSummariesHydrated, orchWorkspacePath, currentWorkspace?.path]);
+
   // Rail multi-workspace (2026-08-17): missão ativa em workspace vizinho
   // precisa aparecer enquanto o operador está em outro lugar. Refresca quando
   // os recentes mudam e a cada 60s (missões mudam de estado em background).
@@ -362,15 +384,11 @@ export function App() {
 
     const isCurrentWorkspace = () =>
       useWorkspaceStore.getState().current?.path === path;
+    // The layout restore handler gates only panes read from disk. Reading the
+    // live tree after this promise settles also catches newly created agents.
     void switchWorkspaceLayoutWithFallback(path, {
       isCurrent: isCurrentWorkspace,
     })
-      .then(() => {
-        if (!isCurrentWorkspace()) return;
-        void gateRestoredAgents(
-          listPanes(useLayoutStore.getState().root),
-        );
-      })
       .catch(() => {
         if (!isCurrentWorkspace()) return;
         useToastStore.getState().push(
@@ -870,22 +888,30 @@ export function App() {
       });
   }
 
-  function removeMissionFromRail(missionId: string): void {
-    const mission = useOrchStore
-      .getState()
-      .missions.find((entry) => entry.id === missionId);
+  function removeMissionFromRail(missionId: string, workspaceId: string): void {
+    const mission = [...activeWorkspaces, ...projectedRecents]
+      .find((workspace) => workspace.id === workspaceId)
+      ?.missions.find((entry) => entry.id === missionId);
     const title = mission?.title ?? 'missão';
     void (async () => {
       const { askConfirm } = await import('./state/confirm-store');
       const { removeMissionPrompt } = await import(
         './orch/mission-list-action'
       );
+      const prompt = removeMissionPrompt({ title });
+      const changingWorkspace = useWorkspaceStore.getState().current?.path !== workspaceId;
       const confirmed = await askConfirm({
-        ...removeMissionPrompt({ title }),
+        ...prompt,
+        body: changingWorkspace
+          ? `${prompt.body} Para acessar este projeto, as sessões do projeto atual serão encerradas.`
+          : prompt.body,
         danger: true,
       });
       if (!confirmed) return;
       try {
+        if (useWorkspaceStore.getState().current?.path !== workspaceId) {
+          await useWorkspaceStore.getState().open(workspaceId);
+        }
         // O main encerra o runtime (inclusive missão running) antes de apagar.
         const result = await window.nexus.orch.removeMission(missionId);
         if (result && result.removed === false) {
@@ -919,14 +945,14 @@ export function App() {
           onOpenWorkspace={pickWorkspace}
           onStartMission={navigation.openNewMission}
           onOpenPane={() => {
-            usePanePickerStore.getState().requestOpen();
-            navigation.openTerminal();
+            useTerminalGridDialogStore.getState().open({ initialCount: 2 });
           }}
           onOpenShellTerminal={() => {
-            useTerminalGridDialogStore.getState().open({ initialCount: 2, replaceExisting: true });
+            useTerminalGridDialogStore.getState().open({ initialCount: 1 });
           }}
           onOpenTaskBoard={navigation.openTaskBoard}
           onOpenMemory={navigation.openMemory}
+          onOpenProviders={() => navigation.openSettings('providers')}
         />
       );
       break;
@@ -1144,6 +1170,7 @@ export function App() {
             onOpenTaskBoard={navigation.openTaskBoard}
             onOpenMemory={navigation.openMemory}
             onOpenSettings={() => navigation.openSettings()}
+            onOpenUsageQuota={() => navigation.openSettings('usage-quota')}
           />
         }
         header={

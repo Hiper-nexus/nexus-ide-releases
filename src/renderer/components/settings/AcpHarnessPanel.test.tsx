@@ -39,6 +39,17 @@ afterEach(() => {
 });
 
 describe('AcpHarnessPanel', () => {
+  it('shows a recoverable load error instead of an endless loading message', async () => {
+    const orchGet = vi.fn().mockRejectedValueOnce(new Error('Configuração indisponível')).mockResolvedValue(DEFAULT_ORCH_SETTINGS);
+    Object.defineProperty(window, 'nexus', { configurable: true, value: { settings: { orchGet } } });
+    const host = mount(); await flushEffects();
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('Configuração indisponível');
+    const retry = [...host.querySelectorAll('button')].find(button => button.textContent === 'Tentar novamente');
+    expect(retry).toBeTruthy();
+    act(() => retry!.click()); await flushEffects();
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    expect(host.textContent).toContain('Terminal da ferramenta');
+  });
   it('persists transport and harness selection through the real settings bridge', async () => {
     let saved: OrchSettings = {
       ...DEFAULT_ORCH_SETTINGS,
@@ -57,25 +68,25 @@ describe('AcpHarnessPanel', () => {
     const host = mount();
     await flushEffects();
 
-    expect(host.textContent).toContain('Runtime ACP');
+    expect(host.textContent).toContain('Conexão ACP');
     const acpButton = host.querySelector<HTMLButtonElement>(
       'button[aria-pressed="false"]:not([title])',
     );
-    expect(acpButton?.textContent).toBe('ACP');
+    expect(acpButton?.textContent).toBe('Conexão ACP');
 
     act(() => acpButton?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
     await flushEffects();
     expect(orchSet).toHaveBeenCalledWith({ agentTransport: 'acp' });
-    expect(host.textContent).toContain('Selecione um harness para liberar o spawn ACP.');
+    expect(host.textContent).toContain('Escolha um agente abaixo para usar a conexão ACP.');
 
     const selectButton = [...host.querySelectorAll<HTMLButtonElement>('button')].find(
-      (button) => button.title === 'Usar este harness no dispatch',
+      (button) => button.title === 'Usar este agente',
     );
     expect(selectButton).toBeDefined();
     act(() => selectButton?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
     await flushEffects();
     expect(orchSet).toHaveBeenLastCalledWith({ acpHarnessId: 'claude' });
-    expect(host.textContent).toContain('Harness ativo: Claude Code (ACP)');
+    expect(host.textContent).toContain('Agente escolhido: Claude Code (ACP)');
   });
 
   it('validates and saves a custom BYOH definition instead of only editing local state', async () => {
@@ -99,6 +110,10 @@ describe('AcpHarnessPanel', () => {
 
     const host = mount();
     await flushEffects();
+    const customDetails = host.querySelector<HTMLDetailsElement>('.acp-harness__custom');
+    expect(customDetails?.open).toBe(false);
+    act(() => customDetails!.querySelector('summary')!.click());
+    expect(customDetails?.open).toBe(true);
     const editor = host.querySelector<HTMLTextAreaElement>(
       'textarea[aria-label="JSON do harness custom"]',
     );
@@ -119,7 +134,7 @@ describe('AcpHarnessPanel', () => {
       editor!.dispatchEvent(new Event('input', { bubbles: true }));
     });
     const saveButton = [...host.querySelectorAll<HTMLButtonElement>('button')].find(
-      (button) => button.textContent?.includes('Validar e salvar'),
+      (button) => button.textContent?.includes('Salvar e usar definição'),
     );
     expect(saveButton).toBeDefined();
     act(() => saveButton?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
@@ -130,6 +145,6 @@ describe('AcpHarnessPanel', () => {
       acpHarnessId: 'local-runner',
       agentTransport: 'acp',
     });
-    expect(host.textContent).toContain('Harness ativo: Runner local');
+    expect(host.textContent).toContain('Agente escolhido: Runner local');
   });
 });

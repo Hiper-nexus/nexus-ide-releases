@@ -1,0 +1,10 @@
+{
+  "ok": true,
+  "paneId": "pane-981a743b",
+  "sessionId": "pty-mtnog3kz-11",
+  "flow": "Production openCliLoginTerminal starting from Settings, waiting for PTY, writing command, revealing terminal",
+  "commandExecuted": true,
+  "proof": "Harmless marker written by the real terminal command; checked independently on disk, then removed",
+  "credentialsChanged": false,
+  "temporaryPaneClosed": true
+}

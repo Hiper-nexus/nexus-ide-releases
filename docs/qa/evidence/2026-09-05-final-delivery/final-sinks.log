@@ -1,0 +1,3 @@
+npm notice run nexus-ide@0.76.0 security:renderer-sinks
+npm notice run node scripts/check-renderer-sinks.mjs
+renderer sink audit: 0 executable DOM sinks
