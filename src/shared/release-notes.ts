@@ -320,12 +320,14 @@ export const CURRENT_RELEASE: AppRelease = {
   codename: 'Configurações mais claras',
   summary: 'Configurações organizadas em nove áreas, com acesso direto aos seus pets, busca integrada e identificação visual dos serviços de IA.',
   highlights: [
+    { title: 'Limpar projeto', detail: 'Feche todos os panes ou apague todas as missões do projeto aberto com uma única confirmação. Os arquivos do projeto são preservados.' },
     { title: 'Menus mais fáceis de entender', detail: 'Nove áreas por finalidade substituem a lista extensa; cada área mostra suas próprias seções, com busca global e controles adaptados a janelas menores.' },
     { title: 'Seus pets sempre acessíveis', detail: 'A biblioteca tem atalho próprio e continua visível mesmo com o mascote flutuante desligado.' },
     { title: 'Serviços de IA identificados', detail: 'Logos locais nas listas, seletores e editores, com modelos e estados de conexão legíveis.' },
     { title: 'Design do projeto como regra', detail: 'O motor orienta os agentes a ler o contrato visual antes de editar UI, mesmo com a orientação adicional de design desligada.' },
   ],
   fixes: [
+    { title: 'Fechamento acessível', detail: 'Panes muito estreitos mantêm espaço para o botão de fechar; remoções repetidas não empilham confirmações.' },
     { title: 'Aprovação automática nativa', detail: 'Kimi usa --yolo; plugins antigos do Kimi e Qwen recebem o argumento correto para evitar confirmações repetidas.' },
     { title: 'Falhas com recuperação', detail: 'Mídia, referências de design e atualizações informam falhas e permitem tentar novamente, sem anunciar sucesso indevido.' },
     { title: 'Equipes e regras organizadas', detail: 'Catálogos de modelos e opções avançadas deixam de dominar a tela; nomes de equipes e filtros continuam utilizáveis em janelas menores.' },

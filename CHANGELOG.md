@@ -2,6 +2,10 @@
 
 ## 0.76.3 — Configurações mais claras
 
+- Limpar projeto: fechar todos os panes ou apagar todas as missões, com confirmação única e resultado parcial em caso de falha.
+- Panes estreitos preservam o botão de fechar; grades extensas ganham rolagem.
+- Pedidos duplicados de remoção não empilham confirmações; exclusões já concluídas são verificadas antes de mostrar erro.
+
 - Kimi passa a usar --yolo; plugins antigos do Kimi e Qwen recebem a opção automática nativa.
 - Fluxos de trabalho com selos compactos e papéis legíveis em janelas menores.
 - Configurações reorganizadas em nove áreas, com navegação local e busca integrada.

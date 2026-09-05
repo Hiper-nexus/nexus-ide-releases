@@ -21,6 +21,7 @@ import { ProviderLogo } from '../ProviderLogo';
 import { useTerminalGridDialogStore } from '../../state/terminal-grid-dialog-store';
 import { useCommandPaletteStore } from '../../state/command-palette-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
+import { WorkspaceCleanup } from './WorkspaceCleanup';
 import { NexusMark } from '../NexusMark';
 import { PixelIcon, type PixelIconName } from '../PixelIcon';
 
@@ -620,6 +621,7 @@ export function WorkspaceRail({
         />
       </div>
 
+      <WorkspaceCleanup />
       <ul className="workspace-rail__fixed" aria-label="Destinos fixos">
         {onOpenLauncher ? (
           <li>
