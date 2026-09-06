@@ -21,6 +21,45 @@ is_retryable_timestamp_failure() {
     'A timestamp was expected but was not found|timestamp (service|authority).*(unavailable|not available|timed out|timeout|connection|network)'
 }
 
+# Some networks advertise an unusable IPv6 route to Apple's TSA. Resolve only
+# Apple's public IPv4 addresses; codesign still validates Apple's signed token.
+resolve_apple_timestamp_ipv4() {
+  /usr/bin/python3 - <<'PYTHON'
+import ipaddress
+import socket
+import sys
+try:
+    for info in socket.getaddrinfo('timestamp.apple.com', 80, socket.AF_INET, socket.SOCK_STREAM):
+        address = ipaddress.ip_address(info[4][0])
+        if address.is_global:
+            print(address)
+            sys.exit(0)
+except OSError:
+    pass
+sys.exit(1)
+PYTHON
+}
+
+prefer_apple_timestamp_ipv4() {
+  is_sign_invocation "${command_args[@]}" || return 1
+  local arg ipv4 target
+  local retained=()
+  for arg in "${command_args[@]}"; do
+    case "$arg" in
+      --timestamp|--timestamp=http://timestamp.apple.com/ts01) ;;
+      --timestamp=*) return 1 ;;
+      *) retained+=("$arg") ;;
+    esac
+  done
+  ipv4="$(resolve_apple_timestamp_ipv4)" || return 1
+  [[ "$ipv4" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  local count=${#retained[@]}
+  (( count > 0 )) || return 1
+  target="${retained[$((count - 1))]}"
+  command_args=("${retained[@]:0:$((count - 1))}" "--timestamp=http://$ipv4/ts01" "$target")
+  return 0
+}
+
 is_correlated_post_timestamp_failure() {
   LC_ALL=C grep -Eiq 'internal error in Code Signing subsystem'
 }
@@ -204,6 +243,9 @@ for delay in 0 4 8 15 30 60 90 120 180 240; do
     exit "$last"
   fi
   if (( attempt < 10 )); then
+    if prefer_apple_timestamp_ipv4; then
+      printf '[codesign-retry] tentando IPv4 do serviço de timestamp da Apple.\n' >&2
+    fi
     target="${command_args[$((${#command_args[@]} - 1))]}"
     if is_dmg_container "$target"; then
       if ! has_force_flag "${command_args[@]}"; then
@@ -211,13 +253,13 @@ for delay in 0 4 8 15 30 60 90 120 180 240; do
         # `target` is the final positional argument supplied to codesign.
         command_args=("${command_args[@]:0:$((count - 1))}" --force "$target")
       fi
-      printf '[codesign-retry] TSA transitório no DMG; reassinando o contêiner com --force (%d/7).\n' \
+      printf '[codesign-retry] TSA transitório no DMG; reassinando o contêiner com --force (%d/10).\n' \
         "$attempt" >&2
     elif ! remove_partial_signature "$target"; then
       printf '[codesign-retry] não foi possível limpar a assinatura parcial; abortando.\n' >&2
       exit "$last"
     else
-      printf '[codesign-retry] falha transitória do TSA da Apple; nova tentativa limitada (%d/7).\n' \
+      printf '[codesign-retry] falha transitória do TSA da Apple; nova tentativa limitada (%d/10).\n' \
         "$attempt" >&2
     fi
   fi

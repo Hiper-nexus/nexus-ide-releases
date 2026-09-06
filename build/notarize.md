@@ -301,3 +301,15 @@ adequado apenas para instalações de desenvolvimento do repositório privado.
 Antes de prometer atualização automática, provisione e teste o feed em um
 domínio Nexus confiável. Este fluxo gera hoje apenas o ZIP `darwin-arm64`;
 `darwin-x64` continua indisponível até receber build e prova próprios.
+
+### Transporte de timestamp em redes com IPv6 indisponível
+
+Depois de uma falha explícita do TSA, o wrapper resolve um endereço IPv4 público
+de `timestamp.apple.com` e repete usando esse endereço do próprio serviço da Apple.
+Não altera a rede do sistema, não usa outro TSA e não desativa o timestamp.
+URLs de timestamp explicitamente configuradas pelo chamador são preservadas.
+A assinatura ainda precisa passar na verificação estrita, conter `Timestamp=` e
+ser aceita pela notarização e pelo Gatekeeper. O perfil permanece `nexus-notary`.
+
+Em 6/9/2026, o POST RFC3161 por IPv6 expirou; IPv4 recebeu `Granted`. O mesmo
+módulo nativo que falhava pelo hostname assinou e verificou com o IPv4 resolvido.

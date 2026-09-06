@@ -69,6 +69,7 @@ exit 0
     chmodSync(fakeCodesignPath, 0o755);
     const source = readFileSync(scriptPath, 'utf8')
       .replaceAll('/usr/bin/codesign', fakeCodesignPath)
+      .replace('set -u', 'resolve_apple_timestamp_ipv4() { return 1; }\nset -u')
       .replace('for delay in 0 4 8 15 30 60 90 120 180 240; do', 'for delay in 0 0 0; do')
       .replace('if (( attempt < 10 )); then', 'if (( attempt < 3 )); then');
     writeFileSync(wrapperPath, source);
@@ -117,6 +118,7 @@ exit 0
     chmodSync(fakeCodesignPath, 0o755);
     const source = readFileSync(scriptPath, 'utf8')
       .replaceAll('/usr/bin/codesign', fakeCodesignPath)
+      .replace('set -u', 'resolve_apple_timestamp_ipv4() { printf 17.32.213.161; }\nset -u')
       .replace('for delay in 0 4 8 15 30 60 90 120 180 240; do', 'for delay in 0 0; do')
       .replace('if (( attempt < 10 )); then', 'if (( attempt < 2 )); then');
     writeFileSync(wrapperPath, source);
@@ -131,7 +133,7 @@ exit 0
     expect(result.status).toBe(0);
     expect(readFileSync(statePath, 'utf8').trim().split('\n')).toEqual([
       `--sign fixture --timestamp ${targetPath}`,
-      `--sign fixture --timestamp --force ${targetPath}`,
+      `--sign fixture --timestamp=http://17.32.213.161/ts01 --force ${targetPath}`,
       `--verify --strict ${targetPath}`,
       `-d --verbose=4 ${targetPath}`,
     ]);
@@ -173,6 +175,7 @@ exit 1
     chmodSync(fakeCodesignPath, 0o755);
     const source = readFileSync(scriptPath, 'utf8')
       .replaceAll('/usr/bin/codesign', fakeCodesignPath)
+      .replace('set -u', 'resolve_apple_timestamp_ipv4() { return 1; }\nset -u')
       .replace('for delay in 0 4 8 15 30 60 90 120 180 240; do', 'for delay in 0 0; do')
       .replace('if (( attempt < 10 )); then', 'if (( attempt < 2 )); then');
     writeFileSync(wrapperPath, source);
@@ -193,5 +196,34 @@ exit 1
       `--verify --strict ${targetPath}`,
       `-d --verbose=4 ${targetPath}`,
     ]);
+  });
+});
+
+describe('Apple timestamp IPv4 transport fallback', () => {
+  function prepare(args, resolution = '17.32.213.161') {
+    return spawnSync('/bin/bash', ['-c', `
+      source "$1"
+      tsa_test_resolution="$2"
+      resolve_apple_timestamp_ipv4() { printf '%s' "$tsa_test_resolution"; }
+      command_args=("\${@:3}")
+      prefer_apple_timestamp_ipv4 || true
+      printf '%s\\n' "\${command_args[@]}"
+    `, 'tsa-test', scriptPath, resolution, ...args], { encoding: 'utf8' }).stdout.trim().split('\n');
+  }
+  it.each([{ timestamp: [] }, { timestamp: ['--timestamp'] }, { timestamp: ['--timestamp=http://timestamp.apple.com/ts01'] }])('pins only Apple default timestamp requests to its resolved IPv4 ($timestamp)', ({ timestamp }) => {
+    expect(prepare(['--sign', 'fixture', ...timestamp, '/tmp/target.dmg']))
+      .toEqual(['--sign', 'fixture', '--timestamp=http://17.32.213.161/ts01', '/tmp/target.dmg']);
+  });
+  it.each(['--timestamp=none', '--timestamp=http://custom.example/tsa'])('preserves explicit caller timestamp policy %s', (timestamp) => {
+    const args = ['--sign', 'fixture', timestamp, '/tmp/target.dmg'];
+    expect(prepare(args)).toEqual(args);
+  });
+  it('does not add signing arguments to verification commands', () => {
+    const args = ['--verify', '--strict', '/tmp/target.dmg'];
+    expect(prepare(args)).toEqual(args);
+  });
+  it('preserves the original request when DNS supplies no IPv4', () => {
+    const args = ['--sign', 'fixture', '--timestamp', '/tmp/target.dmg'];
+    expect(prepare(args, '')).toEqual(args);
   });
 });
