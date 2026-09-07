@@ -59,7 +59,13 @@ npm run rebuild:node           # rebuild native modules for Node (CI/tests)
 
 - **Visual design tokens and component styles**: `DESIGN.md`
 - **Architecture and module boundaries**: `docs/ARCHITECTURE.md`
-- **Security boundaries and threat model**: `docs/SECURITY.md`
+- **Security boundaries and threat model**: `docs/SECURITY.md` holds the
+  fail-closed contract and the ownership table. The substantive analysis lives
+  in `docs/security-audit-2026-07-16.md` (threat model and findings),
+  `docs/security/OWASP-ASVS-L2-PROFILE.md` (control profile), and
+  `docs/security-best-practices-report.md`. Read those before changing anything
+  under `src/main/orch/`, `src/main/pty/`, `src/main/runtime/`, or
+  `src/main/remote/`.
 - **QA bug workflow**: `docs/QA-PROTOCOL.md`
 - **Release readiness gate**: `docs/RELEASE-CHECKLIST.md`
 - **Co-located tests**: every source file has a `.test.ts` sibling — run it
