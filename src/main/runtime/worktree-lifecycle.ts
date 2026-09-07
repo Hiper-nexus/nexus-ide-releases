@@ -1,3 +1,8 @@
+// NOT WIRED: this module has no production call sites. Its only importers are
+// worktree-metadata.ts, mission-worktree-orchestrator.ts and its own test.
+// Production worktree removal goes through worktree-removal-safety.ts instead.
+// See docs/qa/items/F-404.md before wiring it up.
+import { existsSync } from 'node:fs';
 import {
   ProcessGitRunner,
   type GitRunner,
@@ -12,9 +17,23 @@ export const PROTECTED_BRANCHES: ReadonlySet<string> = new Set([
   'trunk',
 ]);
 
+/**
+ * `missing` and `unverifiable` are different facts and must not collapse into
+ * one another. A directory that is already gone is a known state where removal
+ * is moot and prune is the right action. A `git status` that failed for any
+ * other reason — index.lock held by a concurrent agent, timeout, permissions,
+ * corruption — means we do not know, and "do not know" never authorises a
+ * destructive operation. Same rule as the ptyd endpoint-ownership protocol in
+ * docs/architecture/pty-daemon-spec.md: never collapse "don't know" into a
+ * terminal answer.
+ */
+export type WorktreeStatusState = 'clean' | 'dirty' | 'missing' | 'unverifiable';
+
 export interface WorktreeStatusCheck {
-  readonly isClean: boolean;
+  readonly state: WorktreeStatusState;
   readonly dirtyFiles: readonly string[];
+  /** Present only when state is `unverifiable`. */
+  readonly reason?: string;
 }
 
 export class WorktreeDirtyStateError extends Error {
@@ -28,6 +47,17 @@ export class WorktreeDirtyStateError extends Error {
   }
 }
 
+export class WorktreeStatusUnknownError extends Error {
+  readonly reason: string;
+  constructor(worktreePath: string, reason: string) {
+    super(
+      `worktree at "${worktreePath}" could not be verified as clean (${reason}); refusing to remove. Pass force: true to override.`,
+    );
+    this.name = 'WorktreeStatusUnknownError';
+    this.reason = reason;
+  }
+}
+
 /**
  * Check if an isolated worktree is completely clean and safe for archiving/removal.
  */
@@ -35,34 +65,45 @@ export function checkWorktreeStatus(
   worktreePath: string,
   runner: GitRunner = new ProcessGitRunner(),
 ): WorktreeStatusCheck {
+  if (!existsSync(worktreePath)) {
+    return Object.freeze({
+      state: 'missing',
+      dirtyFiles: Object.freeze([]),
+    });
+  }
+
+  let result;
   try {
-    const result = runner.run(
+    result = runner.run(
       worktreePath,
       ['status', '--porcelain', '-uall'],
       { allowFailure: false },
     );
-
-    const lines = result.stdout
-      .split('\n')
-      .filter((l) => l.length >= 3);
-
-    if (lines.length === 0) {
-      return Object.freeze({ isClean: true, dirtyFiles: Object.freeze([]) });
-    }
-
-    const files = lines.map((line) => {
-      // porcelain status format: "XY <path>" where X and Y are 1 char each (can be space)
-      return line.slice(3).trim();
-    });
-
+  } catch (err) {
     return Object.freeze({
-      isClean: false,
-      dirtyFiles: Object.freeze(files),
+      state: 'unverifiable',
+      dirtyFiles: Object.freeze([]),
+      reason: err instanceof Error ? err.message : String(err),
     });
-  } catch {
-    // If git status fails (e.g. directory already gone or invalid), consider clean to allow prune
-    return Object.freeze({ isClean: true, dirtyFiles: Object.freeze([]) });
   }
+
+  const lines = result.stdout
+    .split('\n')
+    .filter((l) => l.length >= 3);
+
+  if (lines.length === 0) {
+    return Object.freeze({ state: 'clean', dirtyFiles: Object.freeze([]) });
+  }
+
+  const files = lines.map((line) => {
+    // porcelain status format: "XY <path>" where X and Y are 1 char each (can be space)
+    return line.slice(3).trim();
+  });
+
+  return Object.freeze({
+    state: 'dirty',
+    dirtyFiles: Object.freeze(files),
+  });
 }
 
 export interface ArchiveWorktreeOptions {
@@ -90,10 +131,18 @@ export function archiveWorktree(
   const meta = readWorktreeMetadata(options.worktreePath);
   const branchName = options.branchName ?? meta?.branchName;
 
-  // 1. Safety check
+  // 1. Safety check. `dirty` and `unverifiable` both refuse; only `force` overrides.
   const status = checkWorktreeStatus(options.worktreePath, runner);
-  if (!status.isClean && !options.force) {
-    throw new WorktreeDirtyStateError(options.worktreePath, status.dirtyFiles);
+  if (!options.force) {
+    if (status.state === 'dirty') {
+      throw new WorktreeDirtyStateError(options.worktreePath, status.dirtyFiles);
+    }
+    if (status.state === 'unverifiable') {
+      throw new WorktreeStatusUnknownError(
+        options.worktreePath,
+        status.reason ?? 'git status failed',
+      );
+    }
   }
 
   // 2. Remove worktree from main repo root
@@ -106,9 +155,11 @@ export function archiveWorktree(
   try {
     runner.run(options.mainRepoPath, removeArgs, { allowFailure: false });
   } catch (err) {
-    // If removal failed because the worktree directory is already deleted/missing,
-    // continue to prune so the stale registration is cleaned up.
-    if (!options.force && status.dirtyFiles.length > 0) {
+    // A worktree whose directory is already gone cannot be removed; prune still
+    // clears the stale registration, which is the outcome the caller wanted.
+    // Every other removal failure is real and must surface — returning ok:true
+    // over a worktree that still exists would be a false success.
+    if (status.state !== 'missing') {
       throw err;
     }
   }

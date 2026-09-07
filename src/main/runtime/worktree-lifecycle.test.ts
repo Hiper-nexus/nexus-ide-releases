@@ -1,17 +1,28 @@
-import { describe, expect, test, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import type { GitRunner, GitResult } from './git-command';
 import {
   archiveWorktree,
   checkWorktreeStatus,
   WorktreeDirtyStateError,
+  WorktreeStatusUnknownError,
 } from './worktree-lifecycle';
 
-function makeMockRunner(handlers: Record<string, Partial<GitResult>> = {}): GitRunner {
+interface MockOutcome extends Partial<GitResult> {
+  throws?: Error;
+}
+
+function makeMockRunner(handlers: Record<string, MockOutcome> = {}): GitRunner {
   return {
     run: vi.fn((_cwd: string, args: readonly string[]): GitResult => {
       const key = args.join(' ');
       const matchedKey = Object.keys(handlers).find((h) => key.includes(h));
       const res = matchedKey ? handlers[matchedKey] : undefined;
+      if (res?.throws) {
+        throw res.throws;
+      }
       return {
         status: res?.status ?? 0,
         stdout: res?.stdout ?? '',
@@ -21,14 +32,36 @@ function makeMockRunner(handlers: Record<string, Partial<GitResult>> = {}): GitR
   };
 }
 
+// checkWorktreeStatus asks the filesystem whether the worktree exists before it
+// asks git anything, so the clean/dirty/unverifiable cases need a real
+// directory. A fabricated path would read as `missing` and never reach git.
+const createdDirs: string[] = [];
+
+function makeExistingWorktreeDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'nexus-worktree-lifecycle-'));
+  createdDirs.push(dir);
+  return dir;
+}
+
+const MISSING_WORKTREE_PATH = join(tmpdir(), 'nexus-worktree-does-not-exist-8f2a1c');
+
+afterEach(() => {
+  while (createdDirs.length > 0) {
+    const dir = createdDirs.pop();
+    if (dir) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
+
 describe('checkWorktreeStatus', () => {
   test('returns clean when porcelain status is empty', () => {
     const runner = makeMockRunner({
       'status --porcelain': { stdout: '' },
     });
 
-    const status = checkWorktreeStatus('/tmp/wt', runner);
-    expect(status.isClean).toBe(true);
+    const status = checkWorktreeStatus(makeExistingWorktreeDir(), runner);
+    expect(status.state).toBe('clean');
     expect(status.dirtyFiles).toEqual([]);
   });
 
@@ -39,9 +72,30 @@ describe('checkWorktreeStatus', () => {
       },
     });
 
-    const status = checkWorktreeStatus('/tmp/wt', runner);
-    expect(status.isClean).toBe(false);
+    const status = checkWorktreeStatus(makeExistingWorktreeDir(), runner);
+    expect(status.state).toBe('dirty');
     expect(status.dirtyFiles).toEqual(['src/index.ts', 'new-file.txt']);
+  });
+
+  test('returns missing when the worktree directory is gone', () => {
+    const runner = makeMockRunner();
+
+    const status = checkWorktreeStatus(MISSING_WORKTREE_PATH, runner);
+    expect(status.state).toBe('missing');
+    expect(runner.run).not.toHaveBeenCalled();
+  });
+
+  test('returns unverifiable with the git failure reason instead of claiming clean', () => {
+    const runner = makeMockRunner({
+      'status --porcelain': {
+        throws: new Error('fatal: Unable to create index.lock: File exists'),
+      },
+    });
+
+    const status = checkWorktreeStatus(makeExistingWorktreeDir(), runner);
+    expect(status.state).toBe('unverifiable');
+    expect(status.reason).toContain('index.lock');
+    expect(status.dirtyFiles).toEqual([]);
   });
 });
 
@@ -53,28 +107,64 @@ describe('archiveWorktree', () => {
 
     expect(() =>
       archiveWorktree(
-        { mainRepoPath: '/repo', worktreePath: '/tmp/wt' },
+        { mainRepoPath: '/repo', worktreePath: makeExistingWorktreeDir() },
         runner,
       ),
     ).toThrow(WorktreeDirtyStateError);
+    expect(runner.run).not.toHaveBeenCalledWith(
+      '/repo',
+      expect.arrayContaining(['worktree', 'remove']),
+      expect.any(Object),
+    );
+  });
+
+  test('refuses to remove a worktree whose cleanliness could not be verified', () => {
+    const runner = makeMockRunner({
+      'status --porcelain': { throws: new Error('git status timed out') },
+    });
+
+    expect(() =>
+      archiveWorktree(
+        { mainRepoPath: '/repo', worktreePath: makeExistingWorktreeDir() },
+        runner,
+      ),
+    ).toThrow(WorktreeStatusUnknownError);
+    expect(runner.run).not.toHaveBeenCalledWith(
+      '/repo',
+      expect.arrayContaining(['worktree', 'remove']),
+      expect.any(Object),
+    );
+  });
+
+  test('force overrides an unverifiable status', () => {
+    const runner = makeMockRunner({
+      'status --porcelain': { throws: new Error('git status timed out') },
+      'worktree remove --force': { stdout: '' },
+      'worktree prune': { stdout: '' },
+    });
+
+    const result = archiveWorktree(
+      { mainRepoPath: '/repo', worktreePath: makeExistingWorktreeDir(), force: true },
+      runner,
+    );
+
+    expect(result.ok).toBe(true);
   });
 
   test('successfully removes clean worktree and prunes', () => {
+    const worktreePath = makeExistingWorktreeDir();
     const runner = makeMockRunner({
       'status --porcelain': { stdout: '' },
       'worktree remove': { stdout: '' },
       'worktree prune': { stdout: '' },
     });
 
-    const result = archiveWorktree(
-      { mainRepoPath: '/repo', worktreePath: '/tmp/wt' },
-      runner,
-    );
+    const result = archiveWorktree({ mainRepoPath: '/repo', worktreePath }, runner);
 
     expect(result.ok).toBe(true);
     expect(runner.run).toHaveBeenCalledWith(
       '/repo',
-      ['worktree', 'remove', '/tmp/wt'],
+      ['worktree', 'remove', worktreePath],
       expect.any(Object),
     );
     expect(runner.run).toHaveBeenCalledWith(
@@ -82,6 +172,20 @@ describe('archiveWorktree', () => {
       ['worktree', 'prune'],
       expect.any(Object),
     );
+  });
+
+  test('surfaces a removal failure on a worktree that still exists', () => {
+    const runner = makeMockRunner({
+      'status --porcelain': { stdout: '' },
+      'worktree remove': { throws: new Error('fatal: locked worktree') },
+    });
+
+    expect(() =>
+      archiveWorktree(
+        { mainRepoPath: '/repo', worktreePath: makeExistingWorktreeDir() },
+        runner,
+      ),
+    ).toThrow('locked worktree');
   });
 
   test('allows force removal when force: true is passed', () => {
@@ -92,14 +196,14 @@ describe('archiveWorktree', () => {
     });
 
     const result = archiveWorktree(
-      { mainRepoPath: '/repo', worktreePath: '/tmp/wt', force: true },
+      { mainRepoPath: '/repo', worktreePath: makeExistingWorktreeDir(), force: true },
       runner,
     );
 
     expect(result.ok).toBe(true);
     expect(runner.run).toHaveBeenCalledWith(
       '/repo',
-      ['worktree', 'remove', '--force', '/tmp/wt'],
+      ['worktree', 'remove', '--force', expect.any(String)],
       expect.any(Object),
     );
   });
@@ -115,7 +219,7 @@ describe('archiveWorktree', () => {
     const result = archiveWorktree(
       {
         mainRepoPath: '/repo',
-        worktreePath: '/tmp/wt',
+        worktreePath: makeExistingWorktreeDir(),
         branchName: 'task/auth',
         deleteBranch: true,
       },
@@ -141,7 +245,7 @@ describe('archiveWorktree', () => {
     const result = archiveWorktree(
       {
         mainRepoPath: '/repo',
-        worktreePath: '/tmp/wt',
+        worktreePath: makeExistingWorktreeDir(),
         branchName: 'main',
         deleteBranch: true,
       },
@@ -157,16 +261,13 @@ describe('archiveWorktree', () => {
     );
   });
 
-  test('gracefully handles worktree path that does not exist on disk', () => {
+  test('prunes the stale registration when the worktree directory is already gone', () => {
     const runner = makeMockRunner({
       'worktree prune': { stdout: '' },
     });
 
     const result = archiveWorktree(
-      {
-        mainRepoPath: '/repo',
-        worktreePath: '/tmp/nonexistent-wt-path-xyz',
-      },
+      { mainRepoPath: '/repo', worktreePath: MISSING_WORKTREE_PATH },
       runner,
     );
 
