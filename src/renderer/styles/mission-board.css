@@ -1577,12 +1577,12 @@
 }
 
 .agent-timeline__filter-btn:hover {
-  background: var(--surface-2, rgba(255, 255, 255, 0.05));
+  background: var(--surface-2, #16151a);
   color: var(--text);
 }
 
 .agent-timeline__filter-btn.is-active {
-  background: var(--surface-3, rgba(255, 255, 255, 0.12));
+  background: var(--surface-3, #201e25);
   color: var(--text);
   border-color: var(--border-strong);
 }

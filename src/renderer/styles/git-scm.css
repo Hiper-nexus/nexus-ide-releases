@@ -503,7 +503,7 @@
 }
 
 .git-scm__diff-gutter-action:hover {
-  background: var(--surface-3, rgba(255, 255, 255, 0.15));
+  background: var(--surface-3, #201e25);
   color: var(--text);
 }
 
