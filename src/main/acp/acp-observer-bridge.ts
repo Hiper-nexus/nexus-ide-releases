@@ -166,6 +166,8 @@ export function framesForSessionUpdate(
         payload: {
           callId: update.toolCallId,
           toolName: update.title ?? null,
+          toolKind: update.kind ?? null,
+          input: update.rawInput,
         },
       },
     ];
@@ -182,6 +184,7 @@ export function framesForSessionUpdate(
           payload: {
             callId: update.toolCallId,
             toolName: null,
+            input: update.content,
           },
         },
       ];
@@ -197,6 +200,7 @@ export function framesForSessionUpdate(
             callId: update.toolCallId,
             toolName: null,
             ok: mapped === 'result-ok',
+            content: update.content,
           },
         },
       ];

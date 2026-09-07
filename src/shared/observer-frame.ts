@@ -111,6 +111,10 @@ export interface ObserverToolCallPayload {
   callId: string;
   /** Tool name from the raw hook body; null when the CLI did not report one. */
   toolName: string | null;
+  /** Optional tool kind or category classification (e.g. shell, read, edit, etc.) */
+  toolKind?: string | null;
+  /** Raw or structured tool invocation parameters / command */
+  input?: unknown;
 }
 
 /** A tool finished (PostToolUse) or failed (PostToolUseFailure). */
@@ -122,6 +126,8 @@ export interface ObserverToolResultPayload {
   callId: string | null;
   toolName: string | null;
   ok: boolean;
+  /** Output, stderr, or response payload from the tool execution */
+  content?: unknown;
 }
 
 /** The pane's semantic status row changed (or was re-asserted). */

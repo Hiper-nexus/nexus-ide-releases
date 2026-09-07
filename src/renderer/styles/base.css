@@ -45,8 +45,35 @@
   --border-strong: rgb(255 255 255 / .16);
   --card-hi: rgb(255 255 255 / .05);
   --text: #faf7f9;
+  --text-main: var(--text);
   --text-dim: #aaa2a8;
   --text-faint: #928b90;
+
+  /* Superfícies tonais calibradas (escala Paseo/Nexus) */
+  --surface-0: #080709;
+  --surface-1: #121115;
+  --surface-2: #16151a;
+  --surface-3: #201e25;
+  --surface-sidebar: #0b0a0d;
+
+  /* Status semânticos calibrados (badges/textos com croma balanceado) */
+  --status-success: #6cb17b;
+  --status-danger: #d8847b;
+  --status-warning: #c09664;
+  --status-merged: #a890d5;
+  --status-running: var(--accent);
+
+  /* Status dots operacionais (6pt, 90% croma para foco imediato e leitura WCAG 3:1) */
+  --status-dot-success: #35c264;
+  --status-dot-danger: #f7796d;
+  --status-dot-warning: #db932e;
+  --status-dot-running: var(--accent);
+
+  /* Cores de inspeção de diff */
+  --diff-addition: #4ade80;
+  --diff-deletion: #ef4444;
+  --diff-addition-bg: rgba(74, 222, 128, 0.12);
+  --diff-deletion-bg: rgba(239, 68, 68, 0.12);
   /* Pink City signal: focus, live state and selection only. Dark ink keeps
      solid selected controls above AA without turning the CTA pink. */
   --accent: #ff4f8b;

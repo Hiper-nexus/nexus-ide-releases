@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react';
 import type {
   MissionAgentSnapshot, MissionEngineCommand, MissionSnapshot, MissionUnit,
 } from '../../../shared/mission-engine-contract';
@@ -9,6 +9,7 @@ import { useFilesStore } from '../../state/files-store';
 import { useOrchStore } from '../../state/orch-store';
 import { useContextualPanelNavStore } from '../../state/contextual-panel-nav-store';
 import { DirectionComposer } from './DirectionComposer';
+import { AgentActivityTimeline } from './AgentActivityTimeline';
 
 interface MissionInspectorProps {
   readonly snapshot: MissionSnapshot;
@@ -629,6 +630,7 @@ function ActivityProjection({
   readonly snapshot: MissionSnapshot;
   readonly events: readonly MissionEvent[];
 }) {
+  const [viewMode, setViewMode] = useState<'timeline' | 'canonical'>('canonical');
   const items = normalizedActivity(events, snapshot.id);
 
   if (items.length === 0) {
@@ -640,14 +642,30 @@ function ActivityProjection({
   }
 
   return (
-    <ol className="mission-inspector__activity-list">
-      {items.map((item) => (
-        <li key={item.eventId}>
-          <span className="mission-inspector__sequence">#{item.sequence}</span>{' '}
-          <span>{item.label}</span>
-        </li>
-      ))}
-    </ol>
+    <div className="mission-inspector__activity-wrap">
+      <div className="mission-inspector__activity-view-switcher" style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
+        <button
+          type="button"
+          className="product-pane__btn product-pane__btn--ghost"
+          style={{ fontSize: 10, padding: '2px 8px' }}
+          onClick={() => setViewMode((m) => (m === 'timeline' ? 'canonical' : 'timeline'))}
+        >
+          {viewMode === 'timeline' ? 'Lista simples' : 'Timeline detalhada'}
+        </button>
+      </div>
+      {viewMode === 'timeline' ? (
+        <AgentActivityTimeline events={events} missionId={snapshot.id} />
+      ) : (
+        <ol className="mission-inspector__activity-list">
+          {items.map((item) => (
+            <li key={item.eventId}>
+              <span className="mission-inspector__sequence">#{item.sequence}</span>{' '}
+              <span>{item.label}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
   );
 }
 

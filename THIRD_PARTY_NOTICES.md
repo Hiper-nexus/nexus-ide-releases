@@ -343,6 +343,23 @@ hashed fields are Nexus handoff-receipt columns. Copyright header and license
 reference: `third_party/licenses/buzz-APACHE-2.0.txt`; full license text:
 `third_party/licenses/Apache-2.0.txt`.
 
+## herdrdev/herdr — agent screen-state detection manifests
+
+The 21 declarative agent-state manifests under `resources/agent-detection/*.toml`
+are copied verbatim (plus an attribution header comment) from
+[`herdrdev/herdr`](https://github.com/herdrdev/herdr) at commit
+`702aa1e45527509bec73dad9b8d443f449c0379b` (`src/detect/manifests/`).
+Copyright remains with the Herdr contributors. The manifests are distributed
+under the Apache License 2.0.
+
+The evaluation engine in `src/main/detect/` is a TypeScript reimplementation of
+Herdr's manifest engine semantics (rule gates, regions, priority arbitration,
+idle fallback, anti-flicker); no Rust code is redistributed.
+
+The Apache License 2.0 text is included at
+`third_party/licenses/Apache-2.0.txt`. Provenance ledger:
+`third_party/provenance/herdr-702aa1e.json`.
+
 ## Impeccable (pbakaus/impeccable) — frontend visual audit skill
 
 NexusIDE bundles the complete `impeccable` design and visual audit skill, copied from [`pbakaus/impeccable`](https://github.com/pbakaus/impeccable) at commit `8259c28209b92792005cec14dad573df39f68eaf`. Copyright remains with the Impeccable contributors. The skill files are distributed under the Apache License 2.0.
@@ -350,3 +367,17 @@ NexusIDE bundles the complete `impeccable` design and visual audit skill, copied
 The Apache License 2.0 text and original third-party notices are included at `assets/skills/impeccable/LICENSE` and `assets/skills/impeccable/NOTICE.md`, and are mirrored to the client's local runtime skill folder upon bootstrap.
 
 The Apache License 2.0 text is also included at `third_party/licenses/Apache-2.0.txt`.
+
+## Paseo (getpaseo/paseo) — multi-agent orchestration, worktree lifecycle, activity timeline
+
+Select components and patterns are adapted from [`getpaseo/paseo`](https://github.com/getpaseo/paseo)
+at commit `a7a708bec99e935ee4b8c6f7314a4b9a9984cfa6`. Copyright remains with the
+Paseo contributors. Distributed under the Apache License 2.0.
+
+- **Design Tokens**: Calibrated surface and status dot color scales adapted from Paseo theme tokens into `DESIGN.md` and `src/renderer/styles/base.css`.
+- **Activity Timeline & Diff Review**: Interactive tool-card timeline (`AgentActivityTimeline`) and gutter inline annotations (`GitPanelBody`) adapted into the renderer.
+- **Git Worktree Isolation**: Branch slug sanitization (`src/shared/worktree-branch-slug.ts`), provenance metadata (`src/main/runtime/worktree-metadata.ts`), and lifecycle auto-archive (`src/main/runtime/worktree-lifecycle.ts`).
+- **ACP Harness Presets**: Cursor, OpenCode, Kimi, and Copilot presets added to `src/shared/harness-catalog.ts`.
+
+Provenance ledger: `third_party/provenance/paseo.json`. Full license: `third_party/licenses/Apache-2.0.txt`.
+

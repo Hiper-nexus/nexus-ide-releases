@@ -1545,6 +1545,182 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Agent Activity Timeline (estilo Paseo com tool cards estruturados) */
+.agent-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: 100%;
+}
+
+.agent-timeline__filters {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+
+.agent-timeline__filter-btn {
+  appearance: none;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-round);
+  padding: 3px 10px;
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.agent-timeline__filter-btn:hover {
+  background: var(--surface-2, rgba(255, 255, 255, 0.05));
+  color: var(--text);
+}
+
+.agent-timeline__filter-btn.is-active {
+  background: var(--surface-3, rgba(255, 255, 255, 0.12));
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.agent-timeline__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.agent-timeline__item {
+  width: 100%;
+}
+
+.agent-timeline__card {
+  width: 100%;
+  background: var(--surface-1, #121115);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg, 8px);
+  padding: 8px 12px;
+  text-align: left;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.agent-timeline__card.is-clickable {
+  cursor: pointer;
+}
+
+.agent-timeline__card.is-clickable:hover {
+  background: var(--surface-2, #16151a);
+  border-color: var(--border-strong);
+}
+
+.agent-timeline__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.agent-timeline__indicator {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm, 4px);
+  flex-shrink: 0;
+}
+
+.agent-timeline__indicator--running {
+  color: var(--status-running, var(--accent));
+  background: color-mix(in srgb, var(--status-running, var(--accent)) 12%, transparent);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--status-running, var(--accent)) 30%, transparent);
+}
+
+.agent-timeline__indicator--completed {
+  color: var(--status-success, #6cb17b);
+  background: color-mix(in srgb, var(--status-success, #6cb17b) 12%, transparent);
+}
+
+.agent-timeline__indicator--failed {
+  color: var(--status-danger, #d8847b);
+  background: color-mix(in srgb, var(--status-danger, #d8847b) 12%, transparent);
+}
+
+.agent-timeline__meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.agent-timeline__title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.agent-timeline__kind-badge {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+  flex-shrink: 0;
+}
+
+.agent-timeline__subtitle {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-timeline__sequence {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.agent-timeline__chevron {
+  display: grid;
+  place-items: center;
+  color: var(--text-faint);
+  transition: transform 150ms ease;
+  flex-shrink: 0;
+}
+
+.agent-timeline__chevron.is-open {
+  transform: rotate(180deg);
+}
+
+.agent-timeline__detail {
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border);
+}
+
+.agent-timeline__pre {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--surface-0, #080709);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 4px);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-dim);
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .mission-inspector__result-summary {
   margin: 0 0 var(--space-5);
   color: var(--text);

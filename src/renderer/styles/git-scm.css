@@ -449,18 +449,26 @@
   scrollbar-gutter: stable;
 }
 
+.git-scm__diff-row {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
 .git-scm__diff-line {
   display: grid;
-  grid-template-columns: 36px 1fr;
-  gap: 8px;
+  grid-template-columns: 18px 32px 1fr;
+  align-items: center;
+  gap: 6px;
   appearance: none;
   border: 0;
   background: transparent;
   color: inherit;
   text-align: left;
   width: 100%;
-  padding: 0 8px;
+  padding: 1px 8px;
   font: inherit;
+  position: relative;
 }
 
 .git-scm__diff-line.is-clickable {
@@ -472,12 +480,41 @@
   background: color-mix(in srgb, var(--accent, #ff4f8b) 12%, transparent);
 }
 
+.git-scm__diff-gutter-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-xs, 2px);
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease, background-color 120ms ease;
+}
+
+.git-scm__diff-line:hover .git-scm__diff-gutter-action,
+.git-scm__diff-line.is-selected .git-scm__diff-gutter-action {
+  opacity: 1;
+}
+
+.git-scm__diff-gutter-action:hover {
+  background: var(--surface-3, rgba(255, 255, 255, 0.15));
+  color: var(--text);
+}
+
 .git-scm__diff-line--add {
-  color: var(--ok, #7ee2a8);
+  background: var(--diff-addition-bg, rgba(74, 222, 128, 0.08));
+  color: var(--diff-addition, #4ade80);
 }
 
 .git-scm__diff-line--del {
-  color: var(--danger, #ff6b4a);
+  background: var(--diff-deletion-bg, rgba(239, 68, 68, 0.08));
+  color: var(--diff-deletion, #ef4444);
 }
 
 .git-scm__diff-line--hunk,
@@ -489,6 +526,8 @@
   color: var(--text-faint, #928b90);
   font-variant-numeric: tabular-nums;
   text-align: right;
+  font-size: 10.5px;
+  user-select: none;
 }
 
 .git-scm__diff-text {
@@ -497,17 +536,76 @@
   text-overflow: ellipsis;
 }
 
-.git-scm__diff-comment {
+/* Inline Review Comment & Editor (estilo Paseo) */
+.git-scm__diff-inline-editor {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 8px;
-  border-top: 1px solid var(--border, rgb(255 255 255 / .08));
+  padding: 8px 12px;
+  margin: 2px 8px 6px 48px;
+  background: var(--surface-2, #16151a);
+  border: 1px solid var(--border-strong, rgba(255, 255, 255, 0.16));
+  border-radius: var(--radius-md, 6px);
+  box-shadow: var(--shadow-2, 0 4px 12px rgba(0, 0, 0, 0.4));
 }
 
-.git-scm__diff-comment-label {
-  font-size: var(--text-2xs);
+.git-scm__diff-inline-comment {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  margin: 2px 8px 4px 48px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-1));
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: var(--radius-md, 6px);
+  font-size: var(--text-xs);
+  color: var(--text);
+}
+
+.git-scm__diff-inline-comment-body {
+  flex: 1;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.git-scm__diff-inline-comment-remove {
+  background: transparent;
+  border: 0;
   color: var(--text-dim);
+  cursor: pointer;
+  padding: 2px;
+  font-size: 11px;
+}
+
+.git-scm__diff-inline-comment-remove:hover {
+  color: var(--danger);
+}
+
+.git-scm__diff-inline-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.git-scm__diff-review-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--surface-sidebar, #0b0a0d);
+  border-top: 1px solid var(--border-strong);
+  font-size: var(--text-xs);
+}
+
+.git-scm__diff-review-counter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  font-weight: 500;
 }
 
 .git-scm__issues {

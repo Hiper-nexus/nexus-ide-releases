@@ -20,6 +20,7 @@ nunca SaaS de cards brancos, nunca IDE corporativo de 40 ícones na toolbar.
 | `--bg` | `#080709` | fundo raiz |
 | `--bg-elevated` | `#111013` | panes, cards |
 | `--bg-bar` | `#0d0b0f` | barras/chrome |
+| `--surface-0` / `--surface-1` / `--surface-2` / `--surface-3` / `--surface-sidebar` | `#080709` / `#121115` / `#16151a` / `#201e25` / `#0b0a0d` | escala tonal de elevação e calma |
 | `--border` / `--border-strong` | `rgb(255 255 255 / .08)` / `rgb(255 255 255 / .16)` | divisórias |
 | `--text` / `--text-dim` / `--text-faint` | `#faf7f9` / `#aaa2a8` / `#928b90` | hierarquia de texto com AA |
 | `--accent` | `#ff4f8b` | **só o que está vivo/interativo**: foco, agente ativo, item selecionado |
@@ -29,6 +30,9 @@ nunca SaaS de cards brancos, nunca IDE corporativo de 40 ícones na toolbar.
 | `--danger` | `#ff6b4a` | falha, destrutivo; distinto do rosa operacional |
 | `--design` | `#2f6ae0` | segunda voz: design mode |
 | `--ok` / `--live` / `--warn` / `--gold` | `#7ee2a8` / `#3ce08d` / `#e5c07b` / `#ffd166` | sinais |
+| `--status-success` / `--status-danger` / `--status-warning` / `--status-merged` | `#6cb17b` / `#d8847b` / `#c09664` / `#a890d5` | status calmos em badges/textos (croma 55-60%) |
+| `--status-dot-success` / `--status-dot-danger` / `--status-dot-warning` | `#35c264` / `#f7796d` / `#db932e` | status dots operacionais 6pt (croma 90%, WCAG 3:1) |
+| `--diff-addition` / `--diff-deletion` | `#4ade80` / `#ef4444` | realce de adições e deleções em diff |
 
 A base é **near-black neutra**, não azul-negro nem rosa tingido. Cor é sinal,
 nunca wallpaper. As bordas são branco translúcido de propósito: um fio de

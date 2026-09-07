@@ -1,0 +1,36 @@
+{
+  "source": "getpaseo/paseo",
+  "upstreamCommit": "a7a708bec99e935ee4b8c6f7314a4b9a9984cfa6",
+  "upstreamRepository": "https://github.com/getpaseo/paseo",
+  "license": "Apache-2.0",
+  "copyright": "Copyright remains with the Paseo contributors",
+  "licenseFile": "third_party/licenses/Apache-2.0.txt",
+  "importedAt": "2026-09-07",
+  "vendoringPolicy": "Adaptation of design tokens, activity timeline, inline diff review, git worktree branch slugging/lifecycle, and ACP agent presets. All code is adapted to Nexus architecture and type system; no external runtime dependencies added.",
+  "modules": [
+    {
+      "upstreamPath": "packages/protocol/src/branch-slug.ts",
+      "nexusPath": "src/shared/worktree-branch-slug.ts",
+      "type": "adapted",
+      "changeSummary": "Port of slugify and validateBranchSlug with git ref safety enhancements."
+    },
+    {
+      "upstreamPath": "packages/server/src/utils/worktree-metadata.ts",
+      "nexusPath": "src/main/runtime/worktree-metadata.ts",
+      "type": "adapted",
+      "changeSummary": "Atomic provenance metadata storage under .git/nexus/worktree.json."
+    },
+    {
+      "upstreamPath": "packages/server/src/server/auto-archive-on-merge/",
+      "nexusPath": "src/main/runtime/worktree-lifecycle.ts",
+      "type": "adapted",
+      "changeSummary": "Fail-closed worktree status check and safe pruning/removal."
+    },
+    {
+      "upstreamPath": "packages/server/src/server/agent/providers/acp-agent.ts",
+      "nexusPath": "src/shared/harness-catalog.ts",
+      "type": "adapted",
+      "changeSummary": "ACP harness catalog presets for cursor, opencode, kimi, and copilot."
+    }
+  ]
+}

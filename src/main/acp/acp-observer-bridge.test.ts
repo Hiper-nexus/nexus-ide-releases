@@ -22,21 +22,33 @@ describe('acp-observer-bridge', () => {
     expect(acpExitReasonFromError(error)).toBe('acp-timeout');
   });
 
-  it('maps tool_call update to tool_call and tool_result frames', () => {
+  it('maps tool_call update to tool_call and tool_result frames with input and content', () => {
     const frames = framesForSessionUpdate(scope, {
       sessionUpdate: 'tool_call',
       toolCallId: 'call-1',
       title: 'grep',
+      kind: 'search',
+      rawInput: { pattern: 'ObserverFrame' },
       status: 'pending',
     });
     expect(frames).toHaveLength(1);
     expect(frames[0]?.kind).toBe('tool_call');
+    if (frames[0]?.kind === 'tool_call') {
+      expect(frames[0].payload.toolKind).toBe('search');
+      expect(frames[0].payload.input).toEqual({ pattern: 'ObserverFrame' });
+    }
+
     const done = framesForSessionUpdate(scope, {
       sessionUpdate: 'tool_call_update',
       toolCallId: 'call-1',
       status: 'completed',
+      content: 'found 3 matches',
     });
     expect(done[0]?.kind).toBe('tool_result');
+    if (done[0]?.kind === 'tool_result') {
+      expect(done[0].payload.ok).toBe(true);
+      expect(done[0].payload.content).toBe('found 3 matches');
+    }
   });
 
   it('builds session_exited with acp reason', () => {

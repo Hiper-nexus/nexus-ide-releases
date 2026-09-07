@@ -143,6 +143,12 @@ function Section({
   );
 }
 
+interface DraftComment {
+  line: number;
+  text: string;
+  snippet: string;
+}
+
 function GitDiffAnnotator({
   diffText,
   path,
@@ -151,30 +157,68 @@ function GitDiffAnnotator({
   path: string;
 }) {
   const rows = useMemo(() => parseDiffViewLines(diffText), [diffText]);
-  const [selected, setSelected] = useState<number | null>(null);
-  const [note, setNote] = useState('');
+  const [activeLine, setActiveLine] = useState<number | null>(null);
+  const [activeNote, setActiveNote] = useState('');
+  const [drafts, setDrafts] = useState<DraftComment[]>([]);
   const [sending, setSending] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
-  const target =
-    selected === null ? null : diffLineCommentTarget(rows[selected] ?? { kind: 'meta', text: '' });
+  const activeTarget =
+    activeLine === null
+      ? null
+      : diffLineCommentTarget(rows[activeLine] ?? { kind: 'meta', text: '' });
 
-  async function send() {
-    if (!target || !note.trim()) return;
+  function handleOpenEditor(index: number) {
+    const target = diffLineCommentTarget(rows[index] ?? { kind: 'meta', text: '' });
+    if (!target) return;
+    setActiveLine(index);
+    setStatus(null);
+  }
+
+  function handleAddDraft() {
+    if (!activeTarget || !activeNote.trim()) return;
+    setDrafts((prev) => [
+      ...prev.filter((d) => d.line !== activeTarget.line),
+      {
+        line: activeTarget.line,
+        text: activeNote.trim(),
+        snippet: activeTarget.snippet,
+      },
+    ]);
+    setActiveNote('');
+    setActiveLine(null);
+  }
+
+  function handleRemoveDraft(line: number) {
+    setDrafts((prev) => prev.filter((d) => d.line !== line));
+  }
+
+  async function handleSendAll(specificComments?: DraftComment[]) {
+    const toSend = specificComments ?? (activeTarget && activeNote.trim()
+      ? [...drafts, { line: activeTarget.line, text: activeNote.trim(), snippet: activeTarget.snippet }]
+      : drafts);
+
+    if (toSend.length === 0) return;
     setSending(true);
     setStatus(null);
+
     try {
-      const ok = await sendAnnotationsToAgent([
-        {
-          path,
-          line: target.line,
-          body: `${note.trim()}\n\n> ${target.snippet}`.trim(),
-        },
-      ]);
-      setStatus(ok ? 'Comentário enviado ao agente.' : 'Não achei um agente para receber o comentário.');
+      const annotations = toSend.map((item) => ({
+        path,
+        line: item.line,
+        body: `${item.text}\n\n> ${item.snippet}`.trim(),
+      }));
+
+      const ok = await sendAnnotationsToAgent(annotations);
+      setStatus(
+        ok
+          ? `${annotations.length} comentário(s) enviado(s) ao agente.`
+          : 'Não achei um agente ativo para receber as revisões.',
+      );
       if (ok) {
-        setNote('');
-        setSelected(null);
+        setDrafts([]);
+        setActiveNote('');
+        setActiveLine(null);
       }
     } catch (err) {
       setStatus(gitErrorCopy(err, 'comment').message);
@@ -186,49 +230,121 @@ function GitDiffAnnotator({
   return (
     <div className="git-scm__diff-annotator">
       <div className="git-scm__diff-body git-scm__diff-lines" role="list">
-        {rows.map((row, index) => (
-          <DiffLine
-            key={`${index}:${row.kind}:${row.text.slice(0, 24)}`}
-            row={row}
-            selected={selected === index}
-            onSelect={() => {
-              if (!diffLineCommentTarget(row)) return;
-              setSelected(index);
-              setStatus(null);
-            }}
-          />
-        ))}
+        {rows.map((row, index) => {
+          const target = diffLineCommentTarget(row);
+          const lineDrafts = target ? drafts.filter((d) => d.line === target.line) : [];
+          const isEditorOpen = activeLine === index;
+
+          return (
+            <div key={`${index}:${row.kind}:${row.text.slice(0, 24)}`} className="git-scm__diff-row">
+              <DiffLine
+                row={row}
+                selected={isEditorOpen}
+                onSelect={() => handleOpenEditor(index)}
+              />
+
+              {lineDrafts.map((d) => (
+                <div key={d.line} className="git-scm__diff-inline-comment">
+                  <span className="git-scm__diff-inline-comment-body">
+                    <strong>Linha {d.line}:</strong> {d.text}
+                  </span>
+                  <button
+                    type="button"
+                    className="git-scm__diff-inline-comment-remove"
+                    title="Remover anotação"
+                    onClick={() => handleRemoveDraft(d.line)}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+
+              {isEditorOpen && target && (
+                <div className="git-scm__diff-inline-editor">
+                  <label className="git-scm__diff-comment-label">
+                    Anotação para linha {target.line}:
+                  </label>
+                  <textarea
+                    rows={2}
+                    className="product-pane__input git-scm__diff-comment-input"
+                    value={activeNote}
+                    onChange={(e) => setActiveNote(e.target.value)}
+                    placeholder="Instrução para o agente ajustar esta linha..."
+                    disabled={sending}
+                    autoFocus
+                  />
+                  <div className="git-scm__diff-inline-actions">
+                    <button
+                      type="button"
+                      className="product-pane__btn product-pane__btn--ghost"
+                      onClick={() => {
+                        setActiveLine(null);
+                        setActiveNote('');
+                      }}
+                      disabled={sending}
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      className="product-pane__btn"
+                      onClick={handleAddDraft}
+                      disabled={sending || !activeNote.trim()}
+                    >
+                      Guardar rascunho
+                    </button>
+                    <button
+                      type="button"
+                      className="product-pane__btn product-pane__btn--primary"
+                      onClick={() =>
+                        handleSendAll([
+                          {
+                            line: target.line,
+                            text: activeNote.trim(),
+                            snippet: target.snippet,
+                          },
+                        ])
+                      }
+                      disabled={sending || !activeNote.trim()}
+                    >
+                      {sending ? 'Enviando…' : 'Enviar agora'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
-      {target && (
-        <form
-          className="git-scm__diff-comment"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void send();
-          }}
-        >
-          <label className="git-scm__diff-comment-label" htmlFor="git-diff-comment">
-            Comentar linha {target.line}
-          </label>
-          <input
-            id="git-diff-comment"
-            className="product-pane__input git-scm__diff-comment-input"
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder="Comentar esta linha"
-            disabled={sending}
-          />
-          <button
-            type="submit"
-            className="product-pane__btn"
-            disabled={sending || !note.trim()}
-          >
-            {sending ? 'Enviando…' : 'Enviar ao agente'}
-          </button>
-        </form>
+
+      {drafts.length > 0 && (
+        <div className="git-scm__diff-review-bar">
+          <span className="git-scm__diff-review-counter">
+            📝 {drafts.length} revisão(ões) em rascunho
+          </span>
+          <div className="git-scm__diff-inline-actions">
+            <button
+              type="button"
+              className="product-pane__btn product-pane__btn--ghost"
+              onClick={() => setDrafts([])}
+              disabled={sending}
+            >
+              Descartar rascunhos
+            </button>
+            <button
+              type="button"
+              className="product-pane__btn product-pane__btn--primary"
+              onClick={() => handleSendAll()}
+              disabled={sending}
+            >
+              {sending ? 'Enviando…' : `Enviar todas ao agente (${drafts.length})`}
+            </button>
+          </div>
+        </div>
       )}
+
       {status && (
-        <p className="product-pane__meta" role="status">
+        <p className="product-pane__meta" role="status" style={{ padding: '4px 8px', margin: 0 }}>
           {status}
         </p>
       )}
@@ -255,25 +371,46 @@ function DiffLine({
   ]
     .filter(Boolean)
     .join(' ');
+
   if (!target) {
     return (
       <div className={className} role="listitem">
+        <span />
         <span className="git-scm__diff-gutter" />
         <span className="git-scm__diff-text">{row.text || ' '}</span>
       </div>
     );
   }
+
   return (
-    <button
-      type="button"
+    <div
       className={className}
       role="listitem"
       onClick={onSelect}
-      title={`Comentar linha ${lineNo}`}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onSelect();
+        }
+      }}
+      tabIndex={0}
+      title={`Comentar na linha ${lineNo}`}
     >
+      <button
+        type="button"
+        className="git-scm__diff-gutter-action"
+        title={`Adicionar comentário na linha ${lineNo}`}
+        aria-label={`Adicionar comentário na linha ${lineNo}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          onSelect();
+        }}
+      >
+        +
+      </button>
       <span className="git-scm__diff-gutter">{lineNo}</span>
       <span className="git-scm__diff-text">{row.text || ' '}</span>
-    </button>
+    </div>
   );
 }
 

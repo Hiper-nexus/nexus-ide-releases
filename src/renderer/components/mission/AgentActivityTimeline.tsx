@@ -1,0 +1,332 @@
+import { useMemo, useState } from 'react';
+import type { MissionEvent } from '../../../shared/mission-events';
+import { PixelIcon, type PixelIconName } from '../PixelIcon';
+
+export type ActivityCategory = 'all' | 'tools' | 'turns' | 'decisions';
+
+export type ToolKind = 'shell' | 'read' | 'edit' | 'write' | 'search' | 'plan' | 'task' | 'generic';
+
+export interface TimelineItemModel {
+  readonly id: string;
+  readonly sequence: number;
+  readonly occurredAt: number;
+  readonly category: 'tool' | 'turn' | 'decision' | 'status' | 'system';
+  readonly kind: ToolKind;
+  readonly title: string;
+  readonly subtitle?: string;
+  readonly status: 'running' | 'completed' | 'failed';
+  readonly detail?: string;
+  readonly icon: PixelIconName;
+}
+
+function classifyToolKind(toolName: string): { kind: ToolKind; label: string; icon: PixelIconName } {
+  const normalized = toolName.toLowerCase();
+  if (normalized.includes('bash') || normalized.includes('shell') || normalized.includes('terminal') || normalized.includes('exec')) {
+    return { kind: 'shell', label: 'Shell', icon: 'terminal' };
+  }
+  if (normalized.includes('read') || normalized.includes('view') || normalized.includes('cat')) {
+    return { kind: 'read', label: 'Leitura', icon: 'file' };
+  }
+  if (normalized.includes('edit') || normalized.includes('replace') || normalized.includes('patch')) {
+    return { kind: 'edit', label: 'Edição', icon: 'sparkle' };
+  }
+  if (normalized.includes('write') || normalized.includes('create') || normalized.includes('save')) {
+    return { kind: 'write', label: 'Escrita', icon: 'files' };
+  }
+  if (normalized.includes('grep') || normalized.includes('search') || normalized.includes('find')) {
+    return { kind: 'search', label: 'Busca', icon: 'search' };
+  }
+  if (normalized.includes('plan') || normalized.includes('todo')) {
+    return { kind: 'plan', label: 'Plano', icon: 'check' };
+  }
+  return { kind: 'generic', label: toolName || 'Ferramenta', icon: 'config' };
+}
+
+function stringifyPayload(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== 'object') return undefined;
+  const p = payload as Record<string, unknown>;
+  const output = p.output ?? p.result ?? p.stdout ?? p.content ?? p.error ?? p.reason;
+  if (typeof output === 'string' && output.trim()) return output.trim();
+  if (output && typeof output === 'object') {
+    try {
+      return JSON.stringify(output, null, 2);
+    } catch {
+      return String(output);
+    }
+  }
+  return undefined;
+}
+
+export function parseTimelineItems(events: readonly MissionEvent[], missionId: string): TimelineItemModel[] {
+  const items: TimelineItemModel[] = [];
+
+  for (const event of events) {
+    if (event.missionId !== missionId) continue;
+    const p = (event.payload ?? {}) as Record<string, unknown>;
+    const detail = stringifyPayload(p);
+
+    switch (event.type) {
+      case 'tool.invoked':
+      case 'observer.tool_call': {
+        const rawName = String(p.toolName ?? p.name ?? 'Ferramenta');
+        const classification = classifyToolKind(rawName);
+        const command = typeof p.command === 'string' ? p.command : (typeof p.input === 'string' ? p.input : undefined);
+        const filePath = typeof p.filePath === 'string' ? p.filePath : (typeof p.path === 'string' ? p.path : undefined);
+        const query = typeof p.query === 'string' ? p.query : undefined;
+
+        items.push({
+          id: event.id,
+          sequence: event.sequence,
+          occurredAt: event.occurredAt,
+          category: 'tool',
+          kind: classification.kind,
+          title: classification.label,
+          subtitle: command || filePath || query || (typeof p.toolInput === 'string' ? p.toolInput : undefined),
+          status: 'running',
+          detail,
+          icon: classification.icon,
+        });
+        break;
+      }
+
+      case 'tool.completed':
+      case 'observer.tool_result': {
+        const rawName = String(p.toolName ?? p.name ?? 'Ferramenta');
+        const classification = classifyToolKind(rawName);
+        const isOk = p.ok !== false && !p.error;
+
+        items.push({
+          id: event.id,
+          sequence: event.sequence,
+          occurredAt: event.occurredAt,
+          category: 'tool',
+          kind: classification.kind,
+          title: classification.label,
+          subtitle: isOk ? 'Concluída com sucesso' : 'Falha na execução',
+          status: isOk ? 'completed' : 'failed',
+          detail,
+          icon: classification.icon,
+        });
+        break;
+      }
+
+      case 'observer.turn_started':
+        items.push({
+          id: event.id,
+          sequence: event.sequence,
+          occurredAt: event.occurredAt,
+          category: 'turn',
+          kind: 'generic',
+          title: `Etapa ${p.turnSequence ?? ''}`.trim(),
+          subtitle: 'Iniciando raciocínio e execução',
+          status: 'running',
+          detail,
+          icon: 'status-busy',
+        });
+        break;
+
+      case 'observer.turn_ended':
+        items.push({
+          id: event.id,
+          sequence: event.sequence,
+          occurredAt: event.occurredAt,
+          category: 'turn',
+          kind: 'generic',
+          title: 'Etapa concluída',
+          subtitle: p.outcome === 'error' ? 'Terminou com erro' : 'Ações da etapa finalizadas',
+          status: p.outcome === 'error' ? 'failed' : 'completed',
+          detail,
+          icon: 'check',
+        });
+        break;
+
+      case 'agent.needs_input':
+        items.push({
+          id: event.id,
+          sequence: event.sequence,
+          occurredAt: event.occurredAt,
+          category: 'decision',
+          kind: 'task',
+          title: 'Decisão do operador solicitada',
+          subtitle: typeof p.prompt === 'string' ? p.prompt : 'O agente está aguardando instruções',
+          status: 'running',
+          detail,
+          icon: 'user',
+        });
+        break;
+
+      case 'observer.status_changed':
+        items.push({
+          id: event.id,
+          sequence: event.sequence,
+          occurredAt: event.occurredAt,
+          category: 'status',
+          kind: 'generic',
+          title: `Estado: ${String(p.status ?? 'atualizado')}`,
+          status: p.status === 'error' ? 'failed' : (p.status === 'completed' ? 'completed' : 'running'),
+          detail,
+          icon: 'status-busy',
+        });
+        break;
+
+      default:
+        // Outros eventos operacionais
+        items.push({
+          id: event.id,
+          sequence: event.sequence,
+          occurredAt: event.occurredAt,
+          category: 'system',
+          kind: 'generic',
+          title: event.type.replace(/[._]/g, ' '),
+          status: 'completed',
+          detail,
+          icon: 'status-idle',
+        });
+        break;
+    }
+  }
+
+  return items.sort((a, b) => a.sequence - b.sequence);
+}
+
+export function AgentActivityTimeline({
+  events,
+  missionId,
+}: {
+  readonly events: readonly MissionEvent[];
+  readonly missionId: string;
+}) {
+  const [filter, setFilter] = useState<ActivityCategory>('all');
+  const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
+
+  const allItems = useMemo(
+    () => parseTimelineItems(events, missionId),
+    [events, missionId],
+  );
+
+  const filteredItems = useMemo(() => {
+    if (filter === 'all') return allItems;
+    if (filter === 'tools') return allItems.filter((i) => i.category === 'tool');
+    if (filter === 'turns') return allItems.filter((i) => i.category === 'turn');
+    if (filter === 'decisions') return allItems.filter((i) => i.category === 'decision');
+    return allItems;
+  }, [allItems, filter]);
+
+  function toggleExpanded(id: string) {
+    setExpandedIds((prev) => ({ ...prev, [id]: !prev[id] }));
+  }
+
+  if (allItems.length === 0) {
+    return (
+      <p className="mission-inspector__empty" role="status">
+        Nenhuma atividade canônica segura foi registrada ainda.
+      </p>
+    );
+  }
+
+  return (
+    <div className="agent-timeline">
+      <div className="agent-timeline__filters" role="tablist" aria-label="Filtro de atividade">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={filter === 'all'}
+          className={`agent-timeline__filter-btn${filter === 'all' ? ' is-active' : ''}`}
+          onClick={() => setFilter('all')}
+        >
+          Todas ({allItems.length})
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={filter === 'tools'}
+          className={`agent-timeline__filter-btn${filter === 'tools' ? ' is-active' : ''}`}
+          onClick={() => setFilter('tools')}
+        >
+          Ferramentas ({allItems.filter((i) => i.category === 'tool').length})
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={filter === 'turns'}
+          className={`agent-timeline__filter-btn${filter === 'turns' ? ' is-active' : ''}`}
+          onClick={() => setFilter('turns')}
+        >
+          Etapas ({allItems.filter((i) => i.category === 'turn').length})
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={filter === 'decisions'}
+          className={`agent-timeline__filter-btn${filter === 'decisions' ? ' is-active' : ''}`}
+          onClick={() => setFilter('decisions')}
+        >
+          Decisões ({allItems.filter((i) => i.category === 'decision').length})
+        </button>
+      </div>
+
+      <ol className="agent-timeline__list">
+        {filteredItems.map((item) => {
+          const isExpanded = Boolean(expandedIds[item.id]);
+          const hasDetail = Boolean(item.detail);
+
+          return (
+            <li
+              key={item.id}
+              className={`agent-timeline__item agent-timeline__item--${item.status} agent-timeline__item--${item.kind}`}
+            >
+              <div
+                className={`agent-timeline__card${hasDetail ? ' is-clickable' : ''}`}
+                onClick={hasDetail ? () => toggleExpanded(item.id) : undefined}
+                onKeyDown={
+                  hasDetail
+                    ? (e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          toggleExpanded(item.id);
+                        }
+                      }
+                    : undefined
+                }
+                role={hasDetail ? 'button' : undefined}
+                tabIndex={hasDetail ? 0 : undefined}
+                aria-expanded={hasDetail ? isExpanded : undefined}
+              >
+                <div className="agent-timeline__header">
+                  <span className={`agent-timeline__indicator agent-timeline__indicator--${item.status}`}>
+                    <PixelIcon name={item.icon} size={12} />
+                  </span>
+
+                  <div className="agent-timeline__meta">
+                    <div className="agent-timeline__title-row">
+                      <span className="agent-timeline__kind-badge">{item.title}</span>
+                      {item.subtitle && (
+                        <span className="agent-timeline__subtitle" title={item.subtitle}>
+                          {item.subtitle}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <span className="agent-timeline__sequence">#{item.sequence}</span>
+
+                  {hasDetail && (
+                    <span className={`agent-timeline__chevron${isExpanded ? ' is-open' : ''}`}>
+                      <PixelIcon name="chevron-down" size={10} />
+                    </span>
+                  )}
+                </div>
+
+                {hasDetail && isExpanded && (
+                  <div className="agent-timeline__detail">
+                    <pre className="agent-timeline__pre">{item.detail}</pre>
+                  </div>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
