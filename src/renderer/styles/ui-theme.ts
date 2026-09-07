@@ -55,7 +55,13 @@ export const LEGACY_NEXUS_CYAN_PALETTE: UiPalette = {
   danger: "#ff7a90",
 };
 
-const PALETTES: Record<TerminalThemeId, UiPalette> = {
+/**
+ * Exported because `--bg`, `--bg-elevated` and `--bg-bar` are written inline by
+ * `applyUiTheme` and never declared in base.css, so anything that has to know a
+ * theme's real background — the palette contrast gate and palette-gen.test.ts —
+ * has to read them from here rather than from the stylesheet.
+ */
+export const PALETTES: Record<TerminalThemeId, UiPalette> = {
   // Pink City is the product default. The pink signal is reserved for live,
   // selected and focused state; the primary action stays neutral-white.
   "nexus-pink-city": {

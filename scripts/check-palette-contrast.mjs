@@ -1,0 +1,233 @@
+#!/usr/bin/env node
+/**
+ * Palette contrast gate — checks that every status token clears its documented
+ * contrast floor against the backgrounds it actually resolves to, per theme.
+ *
+ * Run with: node --import tsx scripts/check-palette-contrast.mjs
+ *
+ * Why this is a separate script and not a check inside design-system-sensor.mjs
+ * -----------------------------------------------------------------------------
+ * The sensor runs under plain `node` and is wired into a merge gate. This check
+ * needs the typed colour maths in src/renderer/styles/palette-gen.ts and the
+ * per-theme backgrounds in src/renderer/styles/ui-theme.ts, so it runs under
+ * tsx. Keeping them apart also keeps the sensor's contract unchanged.
+ *
+ * Why known gaps do not fail the build
+ * ------------------------------------
+ * The sensor's own header records the incident this avoids: an over-eager
+ * design gate flagged the project's own DESIGN.md and `merge-validation-coordinator`
+ * turned that exit 1 into a blocked merge. A gate the repository cannot pass is
+ * worse than no gate, because the cheapest way to pass it is to weaken it.
+ *
+ * So violations that are already registered as QA findings are reported under
+ * `knownGaps` with their finding id and do not affect the exit code. Any NEW
+ * violation fails. When a finding is fixed, delete its entry below — and
+ * scripts/check-palette-contrast.test.mjs asserts the list only shrinks.
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+import {
+  auditContrast,
+  contrastRatio,
+  NON_TEXT_CONTRAST_FLOOR,
+} from '../src/renderer/styles/palette-gen.ts';
+import { PALETTES } from '../src/renderer/styles/ui-theme.ts';
+
+const repositoryRoot = process.cwd();
+const BASE_CSS = path.join(repositoryRoot, 'src/renderer/styles/base.css');
+
+/** The tokens DESIGN.md §2 documents as holding a contrast floor. */
+const STATUS_TOKENS = [
+  '--status-success',
+  '--status-danger',
+  '--status-warning',
+  '--status-merged',
+  '--status-dot-success',
+  '--status-dot-danger',
+  '--status-dot-warning',
+];
+
+/**
+ * Surfaces the status tokens sit on. These are declared in base.css :root and
+ * are NOT part of UiPalette, so they resolve to the same values in every theme
+ * — which is itself finding F-337.
+ */
+const SURFACE_TOKENS = [
+  '--surface-sidebar',
+  '--surface-0',
+  '--surface-1',
+  '--surface-2',
+  '--surface-3',
+];
+
+/**
+ * Registered gaps. Key is `${themeId} ${token} ${background}`.
+ *
+ * F-338: nexus-light declares no --status-* override, so the dark band
+ *        (L=0.70/0.72) renders on a #f7f8fb background at 2.3-2.8:1 while
+ *        DESIGN.md §2 claims WCAG 3:1.
+ * F-337: --surface-* is declared once in :root and never overridden per theme,
+ *        so 35 declarations render near-black surfaces inside the light theme.
+ *        Those pairs pass the floor (dark on dark) and are reported as notes,
+ *        not gaps; the finding is the inconsistency, not a contrast failure.
+ *        F-337 is also what blocks fixing F-338 in isolation.
+ */
+const KNOWN_GAPS = new Map();
+for (const token of STATUS_TOKENS) {
+  for (const background of ['--bg', '--bg-elevated', '--bg-bar']) {
+    KNOWN_GAPS.set(`nexus-light ${token} ${background}`, 'F-338');
+  }
+}
+
+const HEX = /#[0-9a-fA-F]{6}/;
+
+function ruleBody(css, selector) {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return css.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`))?.[1] ?? '';
+}
+
+function declarations(body) {
+  const out = new Map();
+  for (const match of body.matchAll(/(--[A-Za-z0-9_-]+)\s*:\s*([^;]+);/g)) {
+    out.set(match[1], match[2].trim());
+  }
+  return out;
+}
+
+/** A token's value in a theme: the theme's own block, else the :root default. */
+function resolveCssToken(root, themeBlock, token) {
+  return themeBlock.get(token) ?? root.get(token) ?? null;
+}
+
+function isHex(value) {
+  return typeof value === 'string' && HEX.test(value) && value.length === 7;
+}
+
+function main() {
+  if (!fs.existsSync(BASE_CSS)) {
+    console.log(JSON.stringify({ ok: false, findings: [{ severity: 'high', message: `no base.css at ${BASE_CSS}` }] }, null, 2));
+    process.exit(1);
+  }
+  const css = fs.readFileSync(BASE_CSS, 'utf8');
+  const root = declarations(ruleBody(css, ':root'));
+
+  const findings = [];
+  const knownGaps = [];
+  const notes = [];
+  const themes = [];
+
+  for (const themeId of Object.keys(PALETTES)) {
+    const themeBlock = declarations(ruleBody(css, `[data-theme='${themeId}']`));
+    const palette = PALETTES[themeId];
+
+    // Backgrounds the status tokens can land on in this theme: the palette's
+    // own bg/bgElevated/bgBar (written inline by applyUiTheme, never in
+    // base.css) plus every surface token resolved through the cascade.
+    const backgrounds = [
+      { token: '--bg', value: palette.bg },
+      { token: '--bg-elevated', value: palette.bgElevated },
+      { token: '--bg-bar', value: palette.bgBar },
+    ];
+    for (const surface of SURFACE_TOKENS) {
+      const value = resolveCssToken(root, themeBlock, surface);
+      if (value) backgrounds.push({ token: surface, value });
+    }
+
+    const subjects = [];
+    const unresolved = [];
+    for (const token of STATUS_TOKENS) {
+      const value = resolveCssToken(root, themeBlock, token);
+      // --status-running is var(--accent), which is not a literal hex; the
+      // accent is the theme's own and is audited by ui-theme.test.ts instead.
+      if (value && isHex(value)) {
+        subjects.push({ token, value });
+      } else if (value && value.startsWith('var(')) {
+        notes.push(`${themeId}: ${token} is ${value}, an alias — audited via its target token`);
+      } else if (!value) {
+        unresolved.push(token);
+      }
+    }
+    if (unresolved.length > 0) {
+      findings.push({
+        severity: 'high',
+        message: `${themeId}: ${unresolved.length} status token(s) resolve to nothing: ${unresolved.join(', ')}`,
+      });
+    }
+
+    const usableBackgrounds = backgrounds.filter((b) => isHex(b.value));
+    const nonHex = backgrounds.filter((b) => !isHex(b.value));
+    for (const background of nonHex) {
+      notes.push(`${themeId}: ${background.token} is "${background.value}", not a 6-digit hex — skipped`);
+    }
+
+    const violations = auditContrast(subjects, usableBackgrounds, NON_TEXT_CONTRAST_FLOOR);
+    for (const violation of violations) {
+      const key = `${themeId} ${violation.subject} ${violation.background}`;
+      const finding = KNOWN_GAPS.get(key);
+      const entry = {
+        themeId,
+        token: violation.subject,
+        tokenValue: violation.subjectValue,
+        background: violation.background,
+        backgroundValue: violation.backgroundValue,
+        ratio: Number(violation.ratio.toFixed(2)),
+        floor: violation.floor,
+      };
+      if (finding) {
+        knownGaps.push({ ...entry, finding });
+      } else {
+        findings.push({
+          severity: 'high',
+          message:
+            `${themeId}: ${violation.subject} (${violation.subjectValue}) on ` +
+            `${violation.background} (${violation.backgroundValue}) is ` +
+            `${violation.ratio.toFixed(2)}:1, below the ${violation.floor}:1 floor ` +
+            `DESIGN.md §2 documents. Regenerate the family from a band in ` +
+            `palette-gen.ts; do not nudge this one hex.`,
+        });
+      }
+    }
+
+    // F-337 evidence: a light theme whose surfaces are still the dark :root
+    // values. Reported as a note because those pairs are dark-on-dark and pass
+    // the floor; the defect is the inconsistency, not a contrast failure.
+    const backgroundIsLight = contrastRatio(palette.bg, '#000000') > contrastRatio(palette.bg, '#ffffff');
+    const sidebar = resolveCssToken(root, themeBlock, '--surface-sidebar');
+    if (backgroundIsLight && sidebar && isHex(sidebar)) {
+      const surfaceIsDark = contrastRatio(sidebar, '#ffffff') > contrastRatio(sidebar, '#000000');
+      if (surfaceIsDark) {
+        notes.push(
+          `${themeId}: --bg is light (${palette.bg}) but --surface-sidebar resolves to the ` +
+          `dark :root value (${sidebar}); no theme overrides --surface-*. See F-337.`,
+        );
+      }
+    }
+
+    themes.push({
+      themeId,
+      statusTokensAudited: subjects.length,
+      backgroundsAudited: usableBackgrounds.length,
+      violations: violations.length,
+    });
+  }
+
+  const report = {
+    ok: findings.length === 0,
+    floor: NON_TEXT_CONTRAST_FLOOR,
+    themes,
+    findings,
+    knownGaps: {
+      count: knownGaps.length,
+      byFinding: knownGaps.reduce((acc, gap) => {
+        acc[gap.finding] = (acc[gap.finding] ?? 0) + 1;
+        return acc;
+      }, {}),
+      entries: knownGaps,
+    },
+    notes,
+  };
+  console.log(JSON.stringify(report, null, 2));
+  process.exit(findings.length === 0 ? 0 : 1);
+}
+
+main();
