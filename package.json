@@ -42,6 +42,7 @@
     "test:changed": "vitest run --changed",
     "eval:export-ranking": "node --import tsx scripts/export-public-ranking.mjs",
     "eval:benchmark:verify": "node --import tsx scripts/verify-nexus-benchmark.mjs",
+    "bench:vector-retrieval": "node scripts/benchmark-vector-retrieval.mjs",
     "start:forge": "electron-forge start"
   },
   "engines": {
