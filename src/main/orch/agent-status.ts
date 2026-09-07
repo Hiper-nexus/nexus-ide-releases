@@ -56,6 +56,11 @@ export interface AgentSemanticStatusEntry {
   notificationType?: NotificationType;
   message?: string;
   updatedAt: number;
+  /**
+   * Authority that produced this entry. Undefined equals 'hook' (entries
+   * created before the screen channel existed keep hook semantics).
+   */
+  source?: 'hook' | 'screen';
 }
 
 export interface AgentStatusApplyResult {
@@ -453,9 +458,13 @@ export function applyCanonicalHookEvent(input: {
     const paneId = resolvePaneId(sessionId);
     paneBySession.set(sessionId, paneId);
     const prev = statusByPane.get(paneId);
+    // The awaiting-input latch only protects HOOK-sourced latches. A
+    // screen-sourced latch must yield to the next hook event — hook
+    // authority wins over the screen (Herdr arbitration order).
     const preserveAwaitingInput =
       prev?.sessionId === sessionId &&
       prev.status === 'awaiting-input' &&
+      prev.source !== 'screen' &&
       event.kind === 'status' &&
       event.type !== 'stop' &&
       event.type !== 'error' &&
@@ -474,6 +483,7 @@ export function applyCanonicalHookEvent(input: {
           ? event.message.slice(0, 280)
           : undefined,
       updatedAt: input.now ?? Date.now(),
+      source: 'hook',
     };
     statusByPane.set(paneId, entry);
 
@@ -531,6 +541,126 @@ export function applyCanonicalHookEvent(input: {
     return { applied: true, transitioned, entry };
   } catch (err) {
     console.warn('[agent-status] reducer failed (hook event dropped):', err);
+    return { applied: false, transitioned: false, entry: null };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Screen-detection channel (additive; src/main/detect/).
+// Port of Herdr's hook×screen arbitration (src/terminal/state.rs
+// visible_blocker_overrides_hook): hook/authority wins over the screen,
+// EXCEPT a visible blocker on the screen that is NEWER than the hook's last
+// report forces `awaiting-input`. State vocabulary mapping: working→working,
+// blocked→awaiting-input, idle→idle, unknown→no event applied.
+// ---------------------------------------------------------------------------
+
+export type ScreenDetectedState = 'idle' | 'working' | 'blocked' | 'unknown';
+
+export interface ScreenDetectionEventInput {
+  sessionId: string;
+  state: ScreenDetectedState;
+  visibleIdle?: boolean;
+  visibleBlocker?: boolean;
+  visibleWorking?: boolean;
+  now?: number;
+}
+
+function semanticStatusForScreenState(
+  state: ScreenDetectedState,
+): AgentSemanticStatus | null {
+  switch (state) {
+    case 'working':
+      return 'working';
+    case 'blocked':
+      return 'awaiting-input';
+    case 'idle':
+      return 'idle';
+    case 'unknown':
+      return null;
+  }
+}
+
+/**
+ * Fold one screen-detection result into the pane's semantic status. Same
+ * total-function discipline as the hook reducer: any failure degrades to
+ * { applied: false } and can never break the PTY data pipeline.
+ */
+export function applyScreenDetectionEvent(
+  input: ScreenDetectionEventInput,
+): AgentStatusApplyResult {
+  try {
+    const { sessionId } = input;
+    if (!sessionId) return { applied: false, transitioned: false, entry: null };
+    const mapped = semanticStatusForScreenState(input.state);
+    if (mapped === null) return { applied: false, transitioned: false, entry: null };
+
+    const now = input.now ?? Date.now();
+    const paneId = resolvePaneId(sessionId);
+    paneBySession.set(sessionId, paneId);
+    const prev = statusByPane.get(paneId);
+    const prevForSession = prev?.sessionId === sessionId ? prev : undefined;
+    const hookAuthority =
+      prevForSession !== undefined && prevForSession.source !== 'screen';
+
+    if (hookAuthority) {
+      // visible_blocker_overrides_hook: only a fresh visible blocker demotes
+      // a hook report that itself is not already a blocker.
+      const blockerOverrides =
+        input.state === 'blocked' &&
+        input.visibleBlocker === true &&
+        now > prevForSession.updatedAt &&
+        prevForSession.status !== 'awaiting-input';
+      if (!blockerOverrides) {
+        return { applied: false, transitioned: false, entry: prevForSession };
+      }
+    }
+
+    const next = mapped;
+    const transitioned = prevForSession?.status !== next;
+    // Re-asserts refresh updatedAt (like hook re-publishes) so the
+    // semantic-working veto window stays fresh while the screen keeps
+    // reporting work; they never count as transitions.
+    const entry: AgentSemanticStatusEntry = {
+      status: next,
+      sessionId,
+      paneId,
+      notificationType: undefined,
+      message: undefined,
+      updatedAt: now,
+      source: 'screen',
+    };
+    statusByPane.set(paneId, entry);
+    publishSessionActivityState(sessionId, paneStateForStatus(next));
+
+    if (transitioned) {
+      for (const tap of statusTaps) {
+        try {
+          tap(entry);
+        } catch (err) {
+          console.warn('[agent-status] semantic status tap threw:', err);
+        }
+      }
+    }
+
+    try {
+      publishObserverFrame({
+        ...observerFrameScope(sessionId, paneId),
+        at: now,
+        kind: 'status_changed',
+        payload: {
+          paneId,
+          status: entry.status,
+          previousStatus: prevForSession?.status ?? null,
+          transitioned,
+        },
+      });
+    } catch (err) {
+      console.warn('[agent-status] screen status frame emission failed:', err);
+    }
+
+    return { applied: true, transitioned, entry };
+  } catch (err) {
+    console.warn('[agent-status] screen detection event dropped:', err);
     return { applied: false, transitioned: false, entry: null };
   }
 }

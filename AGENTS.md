@@ -18,6 +18,7 @@ are separate workspaces.
 | `scripts/` | Build, release, security, and dev-environment scripts |
 | `docs/` | Architecture, security, and design documentation |
 | `resources/` | Static resources and bundled assets (skills, shell integration) |
+| `resources/agent-detection/` | Herdr (Apache-2.0) agent screen-state manifests; evaluated by `src/main/detect/` |
 | `native/` | Native C code (darwin-pty-supervisor) |
 
 ## Security-Sensitive Core Boundary

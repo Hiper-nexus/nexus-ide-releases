@@ -279,6 +279,9 @@ const config: ForgeConfig = {
       'resources/absurd-landing',
       'resources/cinema-site',
       'resources/squad-former',
+      // Herdr (Apache-2.0) agent screen-state manifests avaliados por
+      // src/main/detect/ (ver THIRD_PARTY_NOTICES.md).
+      'resources/agent-detection',
       ...(process.platform === 'darwin'
         ? ['resources/native/darwin/nexus-pty-supervisor']
         : []),

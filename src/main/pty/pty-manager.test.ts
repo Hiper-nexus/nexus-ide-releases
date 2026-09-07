@@ -2505,6 +2505,30 @@ describe("cli-agent spawn argv hardening", () => {
         "/tmp/nexus-hooks/endpoint.env",
       );
       expect(h.specFor(sessionId).env.NEXUS_PANE_KEY).toBe(sessionId);
+      // Without a stable paneId no NEXUS_PANE_ID value is invented.
+      expect(h.specFor(sessionId).env.NEXUS_PANE_ID).toBeUndefined();
+      killSession(owner, sessionId);
+    } finally {
+      configureAgentHookEndpointPath(null);
+    }
+  });
+
+  it("injects the stable paneId as NEXUS_PANE_ID when the spawn has one", () => {
+    const h = fakeHost();
+    setPtyHost(h.host);
+    configureAgentHookEndpointPath("/tmp/nexus-hooks/endpoint.env");
+    const owner = fakeWc();
+    try {
+      const { sessionId } = spawnAgentSession(
+        owner,
+        { kind: "cli-agent", paneId: "pane-stable", cols: 80, rows: 24 },
+        makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }),
+        {},
+        trustedSpawn(),
+      );
+      const env = h.specFor(sessionId).env;
+      expect(env.NEXUS_PANE_ID).toBe("pane-stable");
+      expect(env.NEXUS_PANE_KEY).toBe(sessionId);
       killSession(owner, sessionId);
     } finally {
       configureAgentHookEndpointPath(null);

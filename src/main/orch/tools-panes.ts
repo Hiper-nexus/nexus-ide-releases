@@ -72,6 +72,13 @@ import {
   liveMissionWorkerCount,
   liveWorkerSeatKeys,
 } from './via-rapida-first-wave';
+import { AGENT_SEMANTIC_STATUSES } from './agent-status';
+import {
+  AGENT_PROMPT_EFFECT_TIMEOUT_MS,
+  promptAgentAndWait,
+  SEMANTIC_WAIT_DEFAULT_TIMEOUT_MS,
+  waitForSemanticStatus,
+} from './semantic-wait';
 
 export function coerceSpawnReadOnly<T extends { readOnly?: boolean }>(
   options: T,
@@ -83,7 +90,7 @@ export function coerceSpawnReadOnly<T extends { readOnly?: boolean }>(
   return options;
 }
 
-/** The 11 pane tools of the embedded MCP server (tool group 1). */
+/** The pane + agent-wait tools of the embedded MCP server (tool group 1). */
 
 /**
  * Teto de espera por chamada MCP. O cliente do Codex aborta tools/call que
@@ -1401,6 +1408,123 @@ const paneWaitMany: McpToolDef = {
   },
 };
 
+const AGENT_WAIT_UNTIL_SCHEMA = {
+  type: 'array',
+  items: { type: 'string', enum: [...AGENT_SEMANTIC_STATUSES] },
+  description:
+    'Semantic statuses that settle the wait ' +
+    '(default ["idle", "completed", "awaiting-input"]).',
+};
+
+const AGENT_TARGET_SCHEMA = {
+  type: 'string',
+  description:
+    'Agent pane: paneId, sessionId, or the short pane number the operator ' +
+    'sees in the header ("7" or "pane 7").',
+};
+
+const agentWait: McpToolDef = {
+  name: 'nexus_agent_wait',
+  description:
+    "Wait for a managed agent's SEMANTIC status (working | completed | " +
+    'awaiting-input | idle | error), event-driven with no polling — the ' +
+    'provider-hook state, unlike nexus_pane_wait_idle which only watches PTY ' +
+    'boot/quiet. Use it to wait for a turn to finish or for a permission ' +
+    'dialog to open. The wait is pinned to the exact agent occupying the ' +
+    'pane: if the session exits or a substitute process respawns in the pane, ' +
+    'the call fails with agent_not_running instead of matching the wrong ' +
+    'process. On timeout the current status is probed one last time before ' +
+    'the call fails with timeout.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      target: AGENT_TARGET_SCHEMA,
+      until: AGENT_WAIT_UNTIL_SCHEMA,
+      timeoutMs: {
+        type: 'number',
+        description: `Max wait in ms. Default ${SEMANTIC_WAIT_DEFAULT_TIMEOUT_MS}. Hard cap ${PANE_WAIT_TIMEOUT_CAP_MS} — on "timeout", call again to keep waiting.`,
+      },
+    },
+    required: ['target'],
+  },
+  handler: async (args, ctx, invocation) => {
+    const sessionId = authorizedSessionIdOf(ctx, requireStr(args, 'target'), 'wait');
+    const timeoutMs = Math.min(
+      num(args, 'timeoutMs') ?? SEMANTIC_WAIT_DEFAULT_TIMEOUT_MS,
+      PANE_WAIT_TIMEOUT_CAP_MS,
+    );
+    return waitForSemanticStatus(
+      { sessionId },
+      { until: strArray(args, 'until'), timeoutMs, signal: invocation?.signal },
+    );
+  },
+};
+
+const agentPrompt: McpToolDef = {
+  name: 'nexus_agent_prompt',
+  description:
+    'Atomic prompt+wait on a managed agent pane. Fails with agent_blocked ' +
+    'WITHOUT writing anything when the agent is already awaiting interactive ' +
+    'input (permission/question dialog) — answer that dialog first. The ' +
+    'prompt is written through the same path as nexus_pane_write; afterwards ' +
+    `an activity gate requires an observed effect within ${AGENT_PROMPT_EFFECT_TIMEOUT_MS}ms ` +
+    '(turn start or status transition), else agent_prompt_stalled. Pass ' +
+    'wait.until / wait.timeout_ms to also wait for the semantic status ' +
+    '(default until: idle, completed, awaiting-input); omit `wait` for ' +
+    'fire-and-forget submission confirmation. The whole call is pinned to ' +
+    'the exact agent: a respawned substitute in the same pane fails with ' +
+    'agent_not_running.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      target: AGENT_TARGET_SCHEMA,
+      text: { type: 'string', description: 'Prompt text (submitted with Enter).' },
+      wait: {
+        type: 'object',
+        properties: {
+          until: AGENT_WAIT_UNTIL_SCHEMA,
+          timeout_ms: {
+            type: 'number',
+            description: `Total budget in ms (submission + activity gate + status wait). Default ${SEMANTIC_WAIT_DEFAULT_TIMEOUT_MS}. Hard cap ${PANE_WAIT_TIMEOUT_CAP_MS}.`,
+          },
+        },
+      },
+    },
+    required: ['target', 'text'],
+  },
+  handler: async (args, ctx, invocation) => {
+    assertMcpInvocationCurrent(invocation);
+    const sessionId = authorizedSessionIdOf(ctx, requireStr(args, 'target'), 'write');
+    const text = withWorkerHandoffFooter(sessionId, requireStr(args, 'text'));
+    const waitArgs = args.wait as
+      | { until?: unknown; timeout_ms?: unknown }
+      | undefined;
+    const requestedTimeoutMs =
+      waitArgs &&
+      typeof waitArgs.timeout_ms === 'number' &&
+      Number.isFinite(waitArgs.timeout_ms)
+        ? waitArgs.timeout_ms
+        : SEMANTIC_WAIT_DEFAULT_TIMEOUT_MS;
+    return promptAgentAndWait({
+      sessionId,
+      text,
+      write: (targetSessionId, prompt) =>
+        injectPrompt(targetSessionId, prompt, invocation),
+      wait: waitArgs
+        ? {
+            until: Array.isArray(waitArgs.until)
+              ? waitArgs.until.filter(
+                  (status): status is string => typeof status === 'string',
+                )
+              : undefined,
+            timeoutMs: Math.min(requestedTimeoutMs, PANE_WAIT_TIMEOUT_CAP_MS),
+          }
+        : undefined,
+      signal: invocation?.signal,
+    });
+  },
+};
+
 const sessionLeaseInspect: McpToolDef = {
   name: 'nexus_session_lease_inspect',
   description:
@@ -1438,6 +1562,8 @@ export function buildPaneTools(): McpToolDef[] {
     paneClose,
     paneWaitIdle,
     paneWaitMany,
+    agentWait,
+    agentPrompt,
     sessionLeaseInspect,
   ];
 }

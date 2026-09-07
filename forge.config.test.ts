@@ -85,3 +85,11 @@ describe('squad presets resources packaging', () => {
     expect(extra).toContain('resources/squad-former');
   });
 });
+
+describe('agent detection manifests packaging', () => {
+  it('ships the Herdr agent-detection manifests on every Forge target', () => {
+    expect(forgeConfig.packagerConfig?.extraResource).toContain(
+      'resources/agent-detection',
+    );
+  });
+});

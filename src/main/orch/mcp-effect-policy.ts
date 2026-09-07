@@ -56,6 +56,9 @@ const READ_ONLY_TOOLS = new Set([
   'pane_read_many',
   'pane_wait_idle',
   'pane_wait_many',
+  // Semantic agent wait (Herdr port): blocks on semantic status transitions
+  // only; never writes pane input or workspace data.
+  'agent_wait',
   'perf_snapshot',
   'sync_status',
   'system_doctor',
@@ -235,6 +238,9 @@ const EXECUTION_EFFECT_TOOLS = new Set([
   'editor_insert',
   'editor_replace_selection',
   'pane_ask',
+  // agent_prompt (Herdr port) writes prompt text into a pane PTY — same
+  // effect class as pane_ask.
+  'agent_prompt',
   'file_write',
   'plan_write',
   'git_add',

@@ -133,6 +133,7 @@ import {
   isSessionInjectableIdle,
   resetAgentStatusOnExit,
 } from "./agent-status";
+import { startAgentScreenDetection } from "../detect/detector";
 import { installMcpSessionTerminationRevocation } from "./mcp-session-revocation";
 import { codexStatusHookArgs } from "./hook-status-config";
 import { codexHookTrustBypassArgs } from "./codex-cli-version";
@@ -211,6 +212,7 @@ const missionShims = new Set<MissionShimRuntime>();
 const missionShimBySession = new Map<string, MissionShimRuntime>(); // sessionId → runtime
 let disposeTerminationRevocation: (() => void) | null = null;
 let disposePtyMissionControl: (() => void) | null = null;
+let disposeScreenDetection: (() => void) | null = null;
 const legacyParserTaps = new ReplaceableEventTapScope();
 /**
  * First-run interstitial responder (workspace trust, data-sharing consent,
@@ -1467,6 +1469,10 @@ export function startMcpServer(): Promise<void> {
   disposePtyMissionControl?.();
   disposePtyMissionControl = installPtyStreamMissionControl(missionControl);
   installLegacyParser(missionControl);
+  // Manifest-based screen detection (src/main/detect/): additive "screen"
+  // source into the semantic status reducer; hook authority still wins.
+  disposeScreenDetection?.();
+  disposeScreenDetection = startAgentScreenDetection();
   disposeTerminationRevocation?.();
   disposeTerminationRevocation = installMcpSessionTerminationRevocation();
   const candidate = http.createServer((req, res) => {
@@ -1563,6 +1569,8 @@ export function stopMcpServer(): void {
   missionMarkerObserver.clear();
   disposePtyMissionControl?.();
   disposePtyMissionControl = null;
+  disposeScreenDetection?.();
+  disposeScreenDetection = null;
   for (const token of sessionTokens.values()) {
     cleanupAgyMcpConfig(token);
     cleanupCliMcpSession(token);

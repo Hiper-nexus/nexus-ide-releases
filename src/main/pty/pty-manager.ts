@@ -1445,9 +1445,14 @@ export function spawnAgentSession(
   const identityEnv = gatewayBaseUrl ? agentEnv(adapter, null) : env;
   const spawnEnvs = identityEnv === env ? [env] : [env, identityEnv];
   if (agentHookEndpointPath) {
+    // NEXUS_PANE_KEY carries the ephemeral sessionId (hook correlation);
+    // NEXUS_PANE_ID carries the stable paneId so a respawned agent can still
+    // refer to its own pane. Absent paneId means no value is invented.
+    const stablePaneId = req.paneId?.trim();
     for (const target of spawnEnvs) {
       target.NEXUS_AGENT_HOOK_ENDPOINT = agentHookEndpointPath;
       target.NEXUS_PANE_KEY = sessionId;
+      if (stablePaneId) target.NEXUS_PANE_ID = stablePaneId;
     }
   }
   // Subscription-first: strip inherited key/token vars before any injection.

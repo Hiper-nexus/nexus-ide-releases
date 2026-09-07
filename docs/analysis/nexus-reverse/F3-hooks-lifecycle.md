@@ -37,7 +37,7 @@
 | 9 | O comando injetado é defensivo por construção: `if [ -x '<script>' ]; then /bin/sh '<script>'; fi` — script ausente vira no-op, não erro da CLI. | `installer-utils.ts:88-91` |
 | 10 | Antes de sobrescrever a config do usuário, faz backup `<config>.bak` preservando o modo restritivo do original. | `installer-utils.ts:186-217` |
 | 11 | Codex: mesma mecânica em `~/.codex/hooks.json`, **mais** o seed de *trust state* em `~/.codex/config.toml` (Codex ≥ 0.129 exige revisão interativa de hooks não confiados). | `src/main/agent-hooks/codex-hook-service.ts:229-241`, `:184-211`; formato da chave em `codex-hook-trust.ts:82-85` |
-| 12 | Pane nasce: o PTY injeta `NEXUS_AGENT_HOOK_ENDPOINT` (o caminho do arquivo) e `NEXUS_PANE_KEY = sessionId` no env do processo da CLI. | `src/main/pty/pty-manager.ts:1233-1238` |
+| 12 | Pane nasce: o PTY injeta `NEXUS_AGENT_HOOK_ENDPOINT` (o caminho do arquivo), `NEXUS_PANE_KEY = sessionId` (efêmero) e, quando o spawn tem pane estável, `NEXUS_PANE_ID = paneId` (sobrevive a resume/respawn) no env do processo da CLI. | `src/main/pty/pty-manager.ts:1233-1238` |
 | 13 | A CLI dispara um evento (ex.: `PreToolUse`). O script faz `.` (source) do endpoint file para obter porta+token — **o segredo nunca vive no arquivo de config**. | `claude-hook-service.ts:75-77` |
 | 14 | Guard: sem porta, sem token ou sem `NEXUS_PANE_KEY`, sai `0` silenciosamente. | `claude-hook-service.ts:78-80` |
 | 15 | `POST http://127.0.0.1:$PORT/hook/claude`, form-urlencoded, header `X-Nexus-Agent-Hook-Token`, timeouts curtos (`--connect-timeout 0.5 --max-time 1.5`), `|| true`, e **`exit 0` incondicional**. | `claude-hook-service.ts:85-91` |
