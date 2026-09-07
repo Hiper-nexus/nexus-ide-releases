@@ -3,6 +3,11 @@
  *
  * Distilled from getpaseo/paseo packages/protocol/src/branch-slug.ts (Apache-2.0).
  * Safe against illegal git refs, path traversal characters, and shell metacharacters.
+ *
+ * NOT WIRED: the only importer is mission-worktree-orchestrator.ts, which has
+ * no production call sites. Production worktree branches are hash-derived
+ * (`refs/heads/nexus/<projectKey>/<taskKey>`) and do not use these slugs.
+ * See docs/qa/items/F-404.md.
  */
 
 export const MAX_SLUG_LENGTH = 50;

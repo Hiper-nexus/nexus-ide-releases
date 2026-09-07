@@ -4,6 +4,11 @@
  * Distilled from getpaseo/paseo packages/server/src/utils/worktree-metadata.ts (Apache-2.0).
  * Persists mission/task provenance inside `.git/nexus/worktree.json` so worktree
  * state is self-describing, verifiable across reboots, and cleanable on merge.
+ *
+ * NOT WIRED: no production call site reaches this module, so
+ * `.git/nexus/worktree.json` is never written by a running app. The only
+ * importer is mission-worktree-orchestrator.ts, which is itself unwired.
+ * See docs/qa/items/F-404.md before depending on this metadata.
  */
 
 import fs from 'node:fs';

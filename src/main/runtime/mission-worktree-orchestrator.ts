@@ -3,6 +3,14 @@
  *
  * Integrates Paseo-style branch slugging and worktree provenance with
  * Nexus's WorktreeManager and lifecycle safety.
+ *
+ * NOT WIRED: `prepareTaskWorktree` and `teardownTaskWorktree` have zero
+ * production call sites, and `autoArchiveOnMerge` is written but never read —
+ * there is no auto-archive logic anywhere in the repo. Production worktree
+ * lifecycle is owned by WorktreeManager, which names branches
+ * `refs/heads/nexus/<projectKey>/<taskKey>` rather than the `task/<slug>` this
+ * module produces; the two schemes are not reconciled.
+ * See docs/qa/items/F-404.md before wiring this up.
  */
 
 import type { ProjectExecutionScope } from '../../shared/types';
