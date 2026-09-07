@@ -1,37 +1,24 @@
-import fs from 'node:fs';
-import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { writeFileAtomic } from '../util/atomic-write';
 
 /**
  * Persist JSON without ever exposing a partially-written destination file.
- * The temporary file lives beside the destination so rename remains atomic.
+ *
+ * This is a shim over the canonical writer in `src/main/util/atomic-write.ts`,
+ * kept only because one of its two callers lives in `src/main/orch/`. New code
+ * should import `writeJsonAtomic` or `writeFileAtomic` from there directly.
+ *
+ * The two implementations used to be independent, and this one was the weaker
+ * duplicate: it had O_EXCL on the temp file and fsync'd the bytes, but not the
+ * 0o700 parent directory, not O_NOFOLLOW, not `fchmodSync` on the descriptor,
+ * and not the post-rename directory fsync. That is a trap rather than a mere
+ * inconsistency — the next caller who needs to persist a token greps, finds a
+ * function called `writeJsonFileAtomic` sitting in `persistence/` next to
+ * `secrets-store.ts`, and reasonably concludes it is the secret-safe one.
+ * Delegating makes the weaker choice unavailable.
+ *
+ * Output bytes are unchanged from the previous implementation, trailing newline
+ * included, so an existing `settings.json` is byte-identical after this.
  */
 export function writeJsonFileAtomic(filePath: string, value: unknown): void {
-  const directory = path.dirname(filePath);
-  const temporaryPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
-  let descriptor: number | null = null;
-
-  fs.mkdirSync(directory, { recursive: true });
-  try {
-    descriptor = fs.openSync(temporaryPath, 'wx', 0o600);
-    fs.writeFileSync(descriptor, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
-    fs.fsyncSync(descriptor);
-    fs.closeSync(descriptor);
-    descriptor = null;
-    fs.renameSync(temporaryPath, filePath);
-  } catch (error) {
-    if (descriptor !== null) {
-      try {
-        fs.closeSync(descriptor);
-      } catch {
-        // Preserve the original persistence error.
-      }
-    }
-    try {
-      fs.rmSync(temporaryPath, { force: true });
-    } catch {
-      // Preserve the original persistence error.
-    }
-    throw error;
-  }
+  writeFileAtomic(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
