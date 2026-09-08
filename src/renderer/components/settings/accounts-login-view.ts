@@ -6,6 +6,8 @@
 export const LOGIN_CTA_OPEN = 'Abrir login da CLI';
 export const LOGIN_CTA_SWITCH = 'Entrar com outra conta';
 export const LOGIN_CTA_BUSY = 'Abrindo terminal…';
+/** Ação de cadastro — a mesma frase em Providers e no menu "+ Pane". */
+export const ADD_ACCOUNT_CTA = 'Adicionar conta';
 
 export function authStatusLabel(state: string | undefined): string {
   if (state === 'ok') return 'conectado';
@@ -43,6 +45,8 @@ export interface AccountsPanelView {
   readonly showSaveLoggedIn: boolean;
   readonly showAddAnotherLogin: boolean;
   readonly showActiveEmUsoPill: boolean;
+  /** Frase honesta sobre o que o cadastro consegue fazer nesta CLI. */
+  readonly addAccountHint: string;
 }
 
 export function accountsPanelView(
@@ -80,9 +84,36 @@ export function accountsPanelView(
     showReservaEmpty: loggedIn && hasActiveVault && input.standbyCount === 0,
     showMultiChip: loggedIn && vault,
     showSaveLoggedIn: loggedIn && input.canSnapshot,
-    showAddAnotherLogin: loggedIn && hasLogin,
+    // Cadastrar mais uma conta não depende de QUANTAS já existem, e o botão
+    // some apenas quando o herói acima já oferece exatamente este login —
+    // dois botões para a mesma ação leem como duas ações diferentes.
+    // Durante `checking` ele continua: entrar na CLI é sempre legítimo, e
+    // esperar a sonda para poder cadastrar era um beco sem saída.
+    showAddAnotherLogin: hasLogin && !askLogin,
     showActiveEmUsoPill: loggedIn,
+    addAccountHint: addAccountHint(input),
   };
+}
+
+/**
+ * O que o cadastro REALMENTE faz nesta CLI. Sem snapshot o Nexus não guarda
+ * duas sessões nativas em paralelo: o login troca a sessão da ferramenta e o
+ * caminho de contas paralelas é a API key. Dizer isso é obrigação — prometer
+ * isolamento que o adapter não implementa seria mentira de interface.
+ */
+function addAccountHint(input: AccountsPanelViewInput): string {
+  const name = input.adapterLabel.trim() || 'esta CLI';
+  if (input.canSnapshot) {
+    return (
+      `Nomeie a conta nova e entre na ${name}. O Nexus guarda a conta atual ` +
+      'antes da troca e salva a nova quando o login for confirmado.'
+    );
+  }
+  return (
+    `${name} ainda não permite ao Nexus guardar duas sessões nativas em ` +
+    'paralelo: o login troca a sessão da ferramenta. Para contas simultâneas ' +
+    'nesta CLI, use API key.'
+  );
 }
 
 function accountsPanelHint(

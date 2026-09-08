@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import {
   isFileAuthAdapter,
   type FileAuthAdapterId,
@@ -34,6 +35,8 @@ export interface ManagedProviderSpec {
   authRelativePath: string;
   /** Additional relative auth candidates (first hit wins for capture). */
   authCandidates?: string[];
+  /** Non-secret account metadata that may live beside the auth artifact. */
+  identityCandidates?: string[];
   /** Extra home-relative paths to skip when linking from the system home. */
   skipLinkNames: string[];
   /** Resolve the user's real CLI home directory. */
@@ -80,70 +83,207 @@ function decodeJwtPayload(token: string): Record<string, unknown> | null {
   }
 }
 
-function stringClaim(
-  obj: Record<string, unknown> | null,
-  keys: string[],
+export interface ManagedAuthIdentity {
+  email?: string;
+  /** Provider-scoped stable subject; main-only and never sent to the renderer. */
+  subject?: string;
+}
+
+export type AuthIdentityComparison = 'same' | 'different' | 'unknown';
+
+const EMAIL_KEY_NAMES = new Set([
+  'email',
+  'useremail',
+  'accountemail',
+  'emailaddress',
+]);
+
+function normalizedClaimKey(key: string): string {
+  return key.replace(/[-_]/g, '').toLowerCase();
+}
+
+function validEmail(value: string | null): string | null {
+  return value && /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(value) ? value : null;
+}
+
+function findStringClaimDeep(
+  value: unknown,
+  keys: ReadonlySet<string>,
+  depth = 0,
 ): string | null {
-  if (!obj) return null;
-  for (const key of keys) {
-    const value = obj[key];
-    if (typeof value === 'string' && value.trim()) return value.trim();
+  if (depth > 10 || value === null || value === undefined) return null;
+  if (typeof value === 'string') {
+    const jwt = decodeJwtPayload(value);
+    return jwt ? findStringClaimDeep(jwt, keys, depth + 1) : null;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findStringClaimDeep(item, keys, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (typeof value !== 'object') return null;
+  const record = value as Record<string, unknown>;
+  for (const [key, candidate] of Object.entries(record)) {
+    if (!keys.has(normalizedClaimKey(key))) continue;
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+  for (const candidate of Object.values(record)) {
+    const found = findStringClaimDeep(candidate, keys, depth + 1);
+    if (found) return found;
   }
   return null;
 }
 
-/** Best-effort email/identity from a provider auth blob (never throws). */
+function parsedAuthBlob(blob: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(blob) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return null;
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function directorySnapshotIdentity(
+  adapterId: string,
+  snapshot: DirSnapshot,
+): ManagedAuthIdentity {
+  let email: string | undefined;
+  let subject: string | undefined;
+  for (const contents of Object.values(snapshot.files)) {
+    const identity = identityFromAuthBlob(adapterId, contents);
+    email ??= identity.email;
+    subject ??= identity.subject;
+    if (email && subject) break;
+  }
+  return { ...(email ? { email } : {}), ...(subject ? { subject } : {}) };
+}
+
+/** Best-effort non-secret identity from a provider auth blob (never throws). */
 export function identityFromAuthBlob(
   adapterId: string,
   blob: string,
-): { email?: string } {
-  try {
-    const parsed = JSON.parse(blob) as Record<string, unknown>;
-    if (adapterId === 'codex') {
-      const tokens =
-        parsed.tokens && typeof parsed.tokens === 'object'
-          ? (parsed.tokens as Record<string, unknown>)
-          : null;
-      const idToken =
-        typeof tokens?.id_token === 'string' ? tokens.id_token : null;
-      const accessToken =
-        typeof tokens?.access_token === 'string' ? tokens.access_token : null;
-      const email =
-        stringClaim(decodeJwtPayload(idToken ?? ''), [
-          'email',
-          'preferred_username',
-          'upn',
-        ]) ??
-        stringClaim(decodeJwtPayload(accessToken ?? ''), [
-          'email',
-          'preferred_username',
-          'upn',
-        ]);
-      return email ? { email } : {};
-    }
-    if (adapterId === 'grok') {
-      const email =
-        stringClaim(parsed, ['email', 'user_email']) ??
-        stringClaim(
-          parsed.user && typeof parsed.user === 'object'
-            ? (parsed.user as Record<string, unknown>)
-            : null,
-          ['email'],
-        );
-      return email ? { email } : {};
-    }
-    if (adapterId === 'kimi' || adapterId === 'opencode' || adapterId === 'agy') {
-      const email = stringClaim(parsed, [
-        'email',
-        'user_email',
-        'accountEmail',
-      ]);
-      return email ? { email } : {};
-    }
-  } catch {
-    // Not JSON or unexpected shape — identity is optional.
+): ManagedAuthIdentity {
+  const parsed = parsedAuthBlob(blob);
+  if (!parsed) return {};
+  const snapshot = parseDirSnapshot(blob);
+  if (snapshot) return directorySnapshotIdentity(adapterId, snapshot);
+
+  const emailKeys = new Set(EMAIL_KEY_NAMES);
+  if (adapterId === 'agy') emailKeys.add('active');
+  const email = validEmail(findStringClaimDeep(parsed, emailKeys));
+  const subjectKeys =
+    adapterId === 'codex'
+      ? new Set(['accountid', 'chatgptaccountid'])
+      : adapterId === 'grok'
+        ? new Set(['userid', 'principalid'])
+        : adapterId === 'kimi'
+          ? new Set(['userid', 'sub'])
+          : adapterId === 'agy'
+            ? new Set(['sub'])
+            : null;
+  const subject = subjectKeys
+    ? findStringClaimDeep(parsed, subjectKeys)
+    : null;
+  return {
+    ...(email ? { email } : {}),
+    ...(subject ? { subject } : {}),
+  };
+}
+
+function hasNonEmptyClaim(value: unknown, keys: string[]): boolean {
+  return Boolean(
+    findStringClaimDeep(value, new Set(keys.map(normalizedClaimKey))),
+  );
+}
+
+/** A present file is not auth proof: reject empty/stale shells and invalid JSON. */
+export function authBlobIsUsable(adapterId: string, blob: string): boolean {
+  const parsed = parsedAuthBlob(blob);
+  if (!parsed) return false;
+  const snapshot = parseDirSnapshot(blob);
+  if (snapshot) {
+    return Object.values(snapshot.files).some((contents) =>
+      authBlobIsUsable(adapterId, contents),
+    );
   }
-  return {};
+  if (adapterId === 'codex') {
+    return hasNonEmptyClaim(parsed.tokens, ['access_token', 'refresh_token']);
+  }
+  if (adapterId === 'grok') {
+    return hasNonEmptyClaim(parsed, ['key', 'access_token', 'refresh_token']);
+  }
+  if (adapterId === 'kimi') {
+    const access = findStringClaimDeep(parsed, new Set(['accesstoken']));
+    if (!access) return false;
+    const refresh = findStringClaimDeep(parsed, new Set(['refreshtoken']));
+    const rawExpiry = Number(parsed.expires_at);
+    if (!Number.isFinite(rawExpiry) || rawExpiry <= 0) return Boolean(refresh);
+    const expirySeconds =
+      rawExpiry >= 1_000_000_000_000
+        ? Math.floor(rawExpiry / 1000)
+        : Math.floor(rawExpiry);
+    return (
+      expirySeconds - Math.floor(Date.now() / 1000) > 5 * 60 ||
+      Boolean(refresh)
+    );
+  }
+  if (adapterId === 'opencode') {
+    return hasNonEmptyClaim(parsed, ['key', 'access', 'refresh']);
+  }
+  if (adapterId === 'agy') {
+    return hasNonEmptyClaim(parsed, [
+      'token',
+      'access_token',
+      'refresh_token',
+      'id_token',
+    ]);
+  }
+  return false;
+}
+
+/**
+ * Compare provider identities without exposing their subject or credential.
+ * A stable subject outranks email: one email can own two Codex workspaces.
+ */
+export function compareAuthBlobIdentity(
+  adapterId: string,
+  leftBlob: string,
+  rightBlob: string,
+): AuthIdentityComparison {
+  const left = identityFromAuthBlob(adapterId, leftBlob);
+  const right = identityFromAuthBlob(adapterId, rightBlob);
+  if (left.subject && right.subject) {
+    return left.subject === right.subject ? 'same' : 'different';
+  }
+  if (left.email && right.email) {
+    return left.email.trim().toLowerCase() === right.email.trim().toLowerCase()
+      ? 'same'
+      : 'different';
+  }
+  return leftBlob === rightBlob ? 'same' : 'unknown';
+}
+
+function authFingerprint(
+  adapterId: string,
+  blob: string,
+  identity: ManagedAuthIdentity,
+): string | undefined {
+  if (!authBlobIsUsable(adapterId, blob)) return undefined;
+  const material = identity.subject
+    ? `subject:${identity.subject}`
+    : identity.email
+      ? `email:${identity.email.trim().toLowerCase()}`
+      : `credential:${blob}`;
+  return createHash('sha256')
+    .update(`${adapterId}\0${material}`)
+    .digest('hex');
 }
 
 export const MANAGED_PROVIDER_SPECS: Record<FileAuthAdapterId, ManagedProviderSpec> = {
@@ -195,9 +335,14 @@ export const MANAGED_PROVIDER_SPECS: Record<FileAuthAdapterId, ManagedProviderSp
   agy: {
     adapterId: 'agy',
     homeEnvVar: 'GEMINI_CLI_HOME',
-    authRelativePath: 'antigravity',
-    authCandidates: ['antigravity', 'antigravity-cli'],
-    skipLinkNames: ['antigravity', 'antigravity-cli'],
+    authRelativePath: 'oauth_creds.json',
+    authCandidates: [path.join('antigravity-cli', 'antigravity-oauth-token')],
+    identityCandidates: ['google_accounts.json'],
+    skipLinkNames: [
+      'oauth_creds.json',
+      'antigravity',
+      'antigravity-cli',
+    ],
     systemHome: (home = os.homedir()) => path.join(home, '.gemini'),
   },
 };
@@ -504,49 +649,56 @@ export function captureNativeAuth(
   const spec = MANAGED_PROVIDER_SPECS[adapterId];
   const systemHome = spec.systemHome(home);
   if (!systemHome) return null;
-
-  if (adapterId === 'agy') {
-    const candidates = (spec.authCandidates ?? [spec.authRelativePath]).map((rel) =>
-      path.join(systemHome, rel),
-    );
-    const hit = firstExisting(candidates);
-    if (!hit) return null;
-    // Store a pointer snapshot (path + mtime) + optional nested auth files as JSON.
-    const payload = snapshotDirectoryAuth(hit);
-    if (!payload) return null;
-    const identity = identityFromAuthBlob(adapterId, payload);
-    return {
-      blob: payload,
-      email: identity.email,
-      authRelativePath: path.relative(systemHome, hit),
-    };
-  }
-
-  const candidates = [
-    path.join(systemHome, spec.authRelativePath),
-    ...(spec.authCandidates ?? []).map((rel) => path.join(systemHome, rel)),
-  ];
+  const candidatePaths = [...new Set([
+    spec.authRelativePath,
+    ...(spec.authCandidates ?? []),
+  ])].map((rel) => path.join(systemHome, rel));
   // Kimi oauth path may be a file without extension.
-  for (const candidate of candidates) {
+  for (const candidate of candidatePaths) {
     if (!exists(candidate)) continue;
-    const st = fs.statSync(candidate);
-    if (st.isDirectory()) {
-      const payload = snapshotDirectoryAuth(candidate);
-      if (!payload) continue;
-      const identity = identityFromAuthBlob(adapterId, payload);
-      return {
-        blob: payload,
-        email: identity.email,
-        authRelativePath: path.relative(systemHome, candidate),
-      };
+    let blob: string | null = null;
+    try {
+      blob = fs.statSync(candidate).isDirectory()
+        ? snapshotDirectoryAuth(candidate)
+        : readText(candidate);
+    } catch {
+      continue;
     }
-    const blob = readText(candidate);
-    if (!blob) continue;
-    const identity = identityFromAuthBlob(adapterId, blob);
+    let authRelativePath = path.relative(systemHome, candidate);
+    if (
+      blob &&
+      adapterId === 'agy' &&
+      authRelativePath !== spec.authRelativePath
+    ) {
+      const parsed = parsedAuthBlob(blob);
+      const token = parsed?.token;
+      if (token && typeof token === 'object' && !Array.isArray(token)) {
+        // AGY 1.1's CLI-specific file wraps the same OAuth token object that
+        // the portable GEMINI_CLI_HOME route reads from oauth_creds.json.
+        blob = JSON.stringify(token);
+        authRelativePath = spec.authRelativePath;
+      }
+    }
+    if (!blob || !authBlobIsUsable(adapterId, blob)) continue;
+    let identity = identityFromAuthBlob(adapterId, blob);
+    if (!identity.email) {
+      for (const relative of spec.identityCandidates ?? []) {
+        const supplemental = readText(path.join(systemHome, relative));
+        if (!supplemental) continue;
+        const found = identityFromAuthBlob(adapterId, supplemental);
+        if (found.email || found.subject) {
+          identity = {
+            email: found.email,
+            subject: identity.subject ?? found.subject,
+          };
+          break;
+        }
+      }
+    }
     return {
       blob,
       email: identity.email,
-      authRelativePath: path.relative(systemHome, candidate),
+      authRelativePath,
     };
   }
   return null;
@@ -716,4 +868,27 @@ export function scrubManagedSessionAuth(sessionId: string): void {
 /** Whether a native (unmanaged) subscription session is present for the adapter. */
 export function hasNativeFileAuth(adapterId: string, home = os.homedir()): boolean {
   return captureNativeAuth(adapterId, home) !== null;
+}
+
+/**
+ * Identity-only view of the NATIVE session. Capture is bounded and stays in
+ * memory; the renderer receives only a real email claim (when present) and a
+ * one-way fingerprint. Claude is Keychain-backed and uses its own path.
+ */
+export function nativeAuthIdentity(
+  adapterId: string,
+  home = os.homedir(),
+): { email?: string; fingerprint?: string } {
+  const capture = captureNativeAuth(adapterId, home);
+  if (!capture) return {};
+  const parsedIdentity = identityFromAuthBlob(adapterId, capture.blob);
+  const identity: ManagedAuthIdentity = {
+    ...parsedIdentity,
+    ...(capture.email ? { email: capture.email } : {}),
+  };
+  const fingerprint = authFingerprint(adapterId, capture.blob, identity);
+  return {
+    ...(identity.email ? { email: identity.email } : {}),
+    ...(fingerprint ? { fingerprint } : {}),
+  };
 }

@@ -6,9 +6,9 @@ import { useAccountStore } from '../../state/account-store';
 import { useUsageStore } from '../../state/usage-store';
 import { askConfirm } from '../../state/confirm-store';
 import { defaultAccountLabel, emailFromAuthDetail } from './account-default-label';
-import { accountsPanelView } from './accounts-login-view';
+import { ADD_ACCOUNT_CTA, accountsPanelView } from './accounts-login-view';
 import { PixelIcon } from '../PixelIcon';
-import { openCliLoginTerminal } from './cli-login-terminal';
+import { openCliLoginTerminal, type CliLoginFinish } from './cli-login-terminal';
 
 /**
  * Multi-account manager for one adapter — the failover roster.
@@ -74,6 +74,8 @@ export function AccountsManager({
   authStatus,
   onAuthStatusChange,
   loginCommand: declaredLoginCommand,
+  onAccountAdded,
+  compact = false,
 }: {
   adapterId: string;
   /** Nome legível do provider (Claude, AGY…). Fallback = adapterId. */
@@ -82,6 +84,14 @@ export function AccountsManager({
   authStatus?: AdapterAuthStatus | null;
   onAuthStatusChange?: (status: AdapterAuthStatus) => void;
   loginCommand?: string | null;
+  /**
+   * Conta recém-cadastrada, pelo `id` que o motor devolveu. Quem embute este
+   * painel (o menu "+ Pane") usa o id para levar a escolha até o modelo — sem
+   * procurar pelo nome, que numa conta sem e-mail nem sequer é único.
+   */
+  onAccountAdded?: (accountId: string) => void;
+  /** Densidade reduzida para quando o painel vive dentro de um menu. */
+  compact?: boolean;
 }) {
   // Select the whole array (stable reference) and filter in a memo — a
   // selector that returns `.filter(...)` makes a NEW array every render, which
@@ -100,7 +110,9 @@ export function AccountsManager({
   const hydrate = useAccountStore((s) => s.hydrate);
   const usageByAccount = useUsageStore((s) => s.snapshot.byAccount);
 
-  const [addMode, setAddMode] = useState<null | 'subscription' | 'api-key'>(null);
+  const [addMode, setAddMode] = useState<
+    null | 'subscription' | 'api-key' | 'login'
+  >(null);
   const [label, setLabel] = useState('');
   const [upstream, setUpstream] = useState('anthropic');
   const [key, setKey] = useState('');
@@ -167,10 +179,7 @@ export function AccountsManager({
    * depois do teardown). Sem a guarda, virava rejection não tratada.
    * Devolve o status deste adapter para quem precisa decidir em cima dele.
    */
-  async function refreshAuth(): Promise<{
-    state: string;
-    detail: string;
-  } | null> {
+  async function refreshAuth(): Promise<AdapterAuthStatus | null> {
     try {
       const list = await window.nexus?.providers?.authStatus();
       if (!list) return null;
@@ -180,6 +189,8 @@ export function AccountsManager({
       };
       setAuth(next);
       onAuthStatusChange?.(next);
+      // Devolve a LINHA da sonda, com o sessionFingerprint intacto: é ele que
+      // vira o baseline do login e prova que a sessão mudou.
       return next;
     } catch {
       const next = { adapterId, state: 'unknown' as const, detail: 'Não foi possível verificar a conexão.' };
@@ -199,39 +210,97 @@ export function AccountsManager({
   }
 
   /**
-   * Auto-save pós-login. O modelo é de duas etapas: o CLI guarda UMA sessão
-   * por vez; a conta só existe no Nexus depois de salva. Se o operador loga a
-   * 2ª conta antes de salvar a 1ª, o CLI sobrescreve o arquivo e a 1ª some
-   * para sempre (o bug "não mostra as duas contas"). Aqui a armadilha fecha
-   * sozinha: terminal de login fechou com sessão NOVA (e-mail fora do vault)
-   * → a conta entra sem ninguém apertar nada. Best-effort; o caminho manual
-   * segue no botão.
+   * A conta que já está logada na CLI, guardada ANTES de qualquer troca.
+   *
+   * O modelo da ferramenta é de uma sessão por vez: quem entra na 2ª conta
+   * sem guardar a 1ª perde a 1ª para sempre — o CLI sobrescreve o arquivo.
+   * Era o bug "não mostra as duas contas". Guardar é idempotente: o motor
+   * deduplica pelo subject/blob e, quando reconhece a mesma conta, atualiza a
+   * linha existente sem renomeá-la nem criar uma segunda.
    */
-  async function autoSaveSessionAfterLogin() {
+  async function preserveCurrentSession(
+    baseline: AdapterAuthStatus | null,
+  ): Promise<void> {
+    if (!canSnapshot || baseline?.state !== 'ok') return;
+    const liveNow = emailFromAuthDetail(baseline.detail)?.trim().toLowerCase();
+    // Quando a sonda dá identidade e ela JÁ está no vault, guardar de novo
+    // só reescreveria a mesma credencial e pediria restart de pane à toa.
+    // Sem identidade não dá para saber, e aí a proteção vence o incômodo: o
+    // motor deduplica, então o pior caso é uma reescrita idempotente.
+    if (
+      liveNow &&
+      accounts.some((a) => a.email?.trim().toLowerCase() === liveNow)
+    ) {
+      return;
+    }
+    const name = defaultAccountLabel({
+      typed: '',
+      adapterId,
+      adapterLabel: displayName,
+      authDetail: baseline.detail,
+      taken: accounts.map((a) => a.label),
+    });
     try {
-      const status = await refreshAuth();
-      if (!status || status.state !== 'ok') return;
-      const email = emailFromAuthDetail(status.detail);
-      if (!email) return; // sonda sem identidade: não há como dedupar
-      const known = useAccountStore
-        .getState()
-        .accounts.find(
-          (a) =>
-            a.adapterId === adapterId &&
-            a.email?.trim().toLowerCase() === email.trim().toLowerCase(),
-        );
-      if (known && !known.needsRelogin && !known.onCooldown) return;
-      const res = await addActiveSession(adapterId, email);
-      if (!res.ok) return;
+      const res = await addActiveSession(adapterId, name);
+      if (res.ok) await hydrate();
+    } catch {
+      // Preservar é rede de proteção: se falhar, o login em si segue valendo.
+    }
+  }
+
+  /**
+   * Fim do terminal de login. O que autoriza gravar uma conta nova é a PROVA
+   * que o watcher trouxe (sonda `ok` + sessão diferente do baseline), nunca o
+   * simples fechamento do pane: cancelar um login não pode virar conta nova.
+   * Sem e-mail também cadastra — o rótulo digitado (ou o padrão) basta, e o
+   * `id` devolvido é o que identifica a conta daqui em diante.
+   */
+  async function saveVerifiedLogin(
+    finish: CliLoginFinish,
+    typedLabel: string,
+  ): Promise<void> {
+    try {
+      if (finish.status) {
+        setAuth(finish.status);
+        onAuthStatusChange?.(finish.status);
+      } else {
+        await refreshAuth();
+      }
       await hydrate();
+      if (!finish.verified) {
+        showNotice(
+          `Não deu para confirmar um login novo em ${displayName}. Se você ` +
+            'entrou em outra conta, use Salvar esta conta.',
+          'info',
+        );
+        return;
+      }
+      const name = defaultAccountLabel({
+        typed: typedLabel,
+        adapterId,
+        adapterLabel: displayName,
+        // O roster já foi rehidratado acima: um nome genérico não colide com
+        // o que a preservação acabou de gravar.
+        taken: useAccountStore
+          .getState()
+          .accounts.filter((a) => a.adapterId === adapterId)
+          .map((a) => a.label),
+        authDetail: finish.status?.detail,
+      });
+      const res = await addActiveSession(adapterId, name);
+      await hydrate();
+      if (!res.ok) {
+        showNotice(res.error ?? 'Não foi possível salvar a conta nova.', 'err');
+        return;
+      }
       showNotice(
-        known
-          ? `Conta ${email} reautenticada e pronta no Nexus.`
-          : `Conta ${email} salva no Nexus. Troque de conta no CLI e repita para juntar mais.`,
+        `Conta “${name}” salva no Nexus. Escolha o modelo para abrir um pane ` +
+          'nela, ou entre em mais uma conta.',
         'ok',
       );
+      if (res.id) onAccountAdded?.(res.id);
     } catch {
-      // Auto-save é conveniência: falha silenciosa, o login já está feito.
+      // O login já aconteceu na CLI; falha aqui não pode derrubar a tela.
     }
   }
 
@@ -365,22 +434,31 @@ export function AccountsManager({
   }
 
   /**
-   * Mesmo caminho do painel de CLIs: abre um terminal real, roda o comando da
-   * ferramenta e, quando aquele terminal fecha, o Nexus reexamina o login e
-   * salva a conta nova sozinho (auto-save acima).
+   * Mesmo caminho do painel de CLIs: abre um terminal real e roda o comando da
+   * ferramenta. Três coisas acontecem em ordem antes do terminal existir:
+   * a sonda é relida (o BASELINE contra o qual o login novo será provado), a
+   * conta que está logada agora é guardada, e só então a CLI recebe o comando.
    */
-  async function openLoginTerminal() {
+  async function openLoginTerminal(nameHint = '', preserveCurrent = false) {
     if (!loginCommand) return;
+    const typedLabel = nameHint.trim();
     setBusy(true);
     showNotice('Abrindo o terminal de login…', 'info');
     try {
+      const baseline = await refreshAuth();
+      // Só o cadastro de MAIS uma conta preserva a atual. Reentrar numa conta
+      // expirada é consertar aquela linha, não trocar de conta: guardar o blob
+      // morto antes só sujaria o roster.
+      if (preserveCurrent) await preserveCurrentSession(baseline);
       const result = await openCliLoginTerminal({
         command: loginCommand,
         adapterId,
         adapterLabel: displayName,
-        onFinished: () => { void autoSaveSessionAfterLogin(); },
+        baseline,
+        onFinished: (finish) => { void saveVerifiedLogin(finish, typedLabel); },
       });
       if (result.ok) {
+        closeForm();
         showNotice('Terminal de login aberto. Siga as instruções da ferramenta.', 'info');
       } else {
         showNotice(result.error, 'err');
@@ -560,7 +638,7 @@ export function AccountsManager({
               <button
                 type="button"
                 className="settings-btn settings-btn--primary acct__action"
-                onClick={() => void openLoginTerminal()}
+                onClick={() => void openLoginTerminal(account.label)}
                 disabled={busy}
                 title="Abre o terminal de login desta CLI de novo"
               >
@@ -628,7 +706,7 @@ export function AccountsManager({
   const hasUnsavedSession = panel.showSaveLoggedIn && !vaultHasLiveSession;
 
   return (
-    <div className="acct" data-adapter={adapterId}>
+    <div className="acct" data-adapter={adapterId} data-compact={compact ? 'true' : undefined}>
       <div className="acct__head">
         <div className="acct__head-copy">
           <div className="acct__title-row">
@@ -770,11 +848,17 @@ export function AccountsManager({
               {panel.showAddAnotherLogin && (
                 <button
                   type="button"
-                  className="settings-btn"
-                  onClick={() => void openLoginTerminal()}
+                  className={
+                    hasUnsavedSession
+                      ? 'settings-btn'
+                      : 'settings-btn settings-btn--primary'
+                  }
+                  data-testid="acct-add-account"
+                  onClick={() => setAddMode('login')}
                   disabled={busy}
+                  title={`Cadastra mais uma conta de ${displayName}, sem limite de quantas`}
                 >
-                  {panel.loginCta}
+                  <PixelIcon name="users" size={12} /> {ADD_ACCOUNT_CTA}
                 </button>
               )}
               <button
@@ -787,6 +871,52 @@ export function AccountsManager({
               </button>
             </div>
           </>
+        )}
+
+        {addMode === 'login' && (
+          <div className="acct__form" role="group" aria-label="Adicionar conta">
+            <p className="acct__form-title">{panel.addAccountHint}</p>
+            <div className="acct__add">
+              <input
+                className="settings-input"
+                value={label}
+                placeholder="nome da conta (ex.: trabalho, pessoal)"
+                autoFocus
+                aria-label="Nome da conta nova"
+                data-testid="acct-new-name"
+                onChange={(e) => setLabel(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !busy && loginCommand) {
+                    void openLoginTerminal(label, true);
+                  }
+                  if (e.key === 'Escape') closeForm();
+                }}
+              />
+              {loginCommand && (
+                <button
+                  type="button"
+                  className="settings-btn settings-btn--primary"
+                  data-testid="acct-add-account-login"
+                  onClick={() => void openLoginTerminal(label, true)}
+                  disabled={busy}
+                  title={`Abre um terminal com “${loginCommand}”`}
+                >
+                  {panel.loginCta ?? 'Abrir login da CLI'}
+                </button>
+              )}
+              <button
+                type="button"
+                className="settings-btn"
+                onClick={() => setAddMode('api-key')}
+                disabled={busy}
+              >
+                Usar API key
+              </button>
+              <button type="button" className="settings-btn" onClick={closeForm} disabled={busy}>
+                Cancelar
+              </button>
+            </div>
+          </div>
         )}
 
         {addMode === 'subscription' && (

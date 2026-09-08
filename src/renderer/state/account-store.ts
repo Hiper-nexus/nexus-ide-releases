@@ -19,12 +19,20 @@ interface AccountStore {
   receiveQuota(list: AccountQuotaInfo[]): void;
   receiveActivated(event: AccountActivatedEvent): void;
   clearRestartNotice(): void;
-  add(req: AddAccountRequest): Promise<{ ok: boolean; error?: string }>;
-  addActiveClaude(label: string): Promise<{ ok: boolean; email?: string; error?: string }>;
+  /**
+   * O `id` devolvido pelo main JÁ existia no contrato de IPC e sempre veio no
+   * runtime; só a tipagem do renderer o escondia. Ele é o que permite
+   * selecionar a conta recém-criada sem procurá-la pelo nome ou e-mail —
+   * conta sem e-mail não tem outro identificador estável.
+   */
+  add(req: AddAccountRequest): Promise<{ ok: boolean; id?: string; error?: string }>;
+  addActiveClaude(
+    label: string,
+  ): Promise<{ ok: boolean; id?: string; email?: string; error?: string }>;
   addActiveSession(
     adapterId: string,
     label: string,
-  ): Promise<{ ok: boolean; email?: string; error?: string }>;
+  ): Promise<{ ok: boolean; id?: string; email?: string; error?: string }>;
   supportsSnapshot(adapterId: string): Promise<boolean>;
   rename(id: string, label: string): Promise<void>;
   remove(id: string): Promise<void>;

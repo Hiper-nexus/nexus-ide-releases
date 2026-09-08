@@ -209,7 +209,13 @@ describe('Settings terminal-producing actions', () => {
         await Promise.resolve();
       });
 
-      act(() => button(host, 'Abrir login da CLI').click());
+      // O login relê a sonda ANTES de abrir o terminal: é esse baseline que
+      // depois prova se houve login novo. Por isso o clique é assíncrono.
+      await act(async () => {
+        button(host, 'Abrir login da CLI').click();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
 
       expect(useProductNavigationStore.getState().destination).toEqual({
         kind: 'settings',
@@ -244,7 +250,13 @@ describe('Settings terminal-producing actions', () => {
         await Promise.resolve();
         await Promise.resolve();
       });
-      act(() => button(host, 'Abrir login da CLI').click());
+      // O login relê a sonda ANTES de abrir o terminal: é esse baseline que
+      // depois prova se houve login novo. Por isso o clique é assíncrono.
+      await act(async () => {
+        button(host, 'Abrir login da CLI').click();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
 
       await settleReady(null);
 

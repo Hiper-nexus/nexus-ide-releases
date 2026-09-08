@@ -8,30 +8,41 @@
  * ("sessão Claude viva: fulano@dominio.com"); é dele que sai o nome.
  */
 
-const EMAIL_RE = /[\w.+-]+@[\w-]+\.[\w.-]+/u;
+import { emailFromAuthDetail } from '../../../shared/auth-detail-identity';
 
-/** Extrai o primeiro e-mail de um texto de diagnóstico de autenticação. */
-export function emailFromAuthDetail(
-  detail: string | null | undefined,
-): string | null {
-  if (!detail) return null;
-  const match = EMAIL_RE.exec(detail);
-  return match ? match[0] : null;
-}
+export { emailFromAuthDetail };
 
 /**
  * Rótulo a usar quando o operador não digitou nome.
  * Preferência: e-mail da sessão → nome do adapter. Nunca string vazia.
+ *
+ * `taken` são os rótulos que já existem no vault desta CLI. Sem ele, uma CLI
+ * que não expõe e-mail (Kimi, OpenCode, Codex em workspace) produzia "Conta
+ * Codex" para TODAS as contas — o mesmo empate que o print de 23/08 mostrou
+ * entre duas contas Claude. O sufixo numérico é a saída mínima: continua
+ * legível e o operador renomeia quando quiser.
  */
 export function defaultAccountLabel(input: {
   readonly typed: string;
   readonly adapterId: string;
   readonly adapterLabel?: string;
   readonly authDetail?: string | null;
+  readonly taken?: readonly string[];
 }): string {
   const typed = input.typed.trim();
   if (typed) return typed;
   const email = emailFromAuthDetail(input.authDetail);
-  if (email) return email;
-  return `Conta ${input.adapterLabel?.trim() || input.adapterId}`;
+  const base = email || `Conta ${input.adapterLabel?.trim() || input.adapterId}`;
+  return firstFreeLabel(base, input.taken ?? []);
+}
+
+function firstFreeLabel(base: string, taken: readonly string[]): string {
+  const used = new Set(taken.map((label) => label.trim().toLowerCase()));
+  if (!used.has(base.toLowerCase())) return base;
+  // ponytail: varredura linear no roster de UMA CLI (unidades, não milhares).
+  for (let index = 2; index < used.size + 3; index += 1) {
+    const candidate = `${base} ${index}`;
+    if (!used.has(candidate.toLowerCase())) return candidate;
+  }
+  return base;
 }

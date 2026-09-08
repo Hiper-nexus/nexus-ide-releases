@@ -12,18 +12,33 @@ import { AccountsManager } from './AccountsManager';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
 
-/** Terminal de login mockado: captura o onFinished para dispará-lo no teste. */
+/**
+ * Terminal de login mockado. Guarda o `onFinished` E o baseline recebido: o
+ * baseline é o contrato desta etapa, e o teste tem de poder afirmar que ele
+ * foi colhido ANTES do terminal existir.
+ */
+interface LoginFinish {
+  verified: boolean;
+  status: { adapterId: string; state: string; detail: string } | null;
+}
 const loginTerminal = vi.hoisted(() => ({
-  finish: null as null | (() => void),
+  finish: null as null | ((result: unknown) => void),
+  baseline: undefined as unknown,
 }));
 vi.mock('./cli-login-terminal', () => ({
   openCliLoginTerminal: vi.fn(
-    async (input: { onFinished?: () => void }) => {
+    async (input: { onFinished?: (r: unknown) => void; baseline?: unknown }) => {
       loginTerminal.finish = input.onFinished ?? null;
+      loginTerminal.baseline = input.baseline;
       return { ok: true as const, paneId: 'pane-login' };
     },
   ),
 }));
+
+/** Encerra o terminal de login com o veredito que o watcher teria dado. */
+function finishLogin(result: LoginFinish): void {
+  loginTerminal.finish?.(result);
+}
 
 function account(patch: Partial<AccountInfo> = {}): AccountInfo {
   return {
@@ -67,6 +82,7 @@ describe('AccountsManager', () => {
     useConfirmStore.setState({ pending: null, queue: [] });
     useUsageStore.setState({ snapshot: EMPTY_USAGE_SNAPSHOT });
     loginTerminal.finish = null;
+    loginTerminal.baseline = undefined;
     Object.defineProperty(window, 'nexus', {
       configurable: true,
       value: {
@@ -99,7 +115,7 @@ describe('AccountsManager', () => {
     expect(host.textContent).toContain('Sessão nativa de claude');
     expect(host.textContent).toContain('conectado');
     expect(host.textContent).toContain('API key');
-    expect(host.textContent).toMatch(/entrar com outra conta/i);
+    expect(host.textContent).toMatch(/adicionar conta/i);
     expect(host.textContent).toContain('Salvar esta conta');
     expect(host.textContent).not.toMatch(/abrir login da CLI/i);
     expect(host.textContent).not.toMatch(/1 ·/i);
@@ -125,8 +141,12 @@ describe('AccountsManager', () => {
     });
     const { host, root } = mount();
     await act(async () => { await Promise.resolve(); });
-    const login = [...host.querySelectorAll('button')].find((button) =>
-      button.textContent?.includes('Entrar com outra conta'),
+    const addAccount = host.querySelector<HTMLButtonElement>(
+      '[data-testid="acct-add-account"]',
+    );
+    await act(async () => { addAccount!.click(); });
+    const login = host.querySelector<HTMLButtonElement>(
+      '[data-testid="acct-add-account-login"]',
     );
     await act(async () => { login!.click(); });
 
@@ -287,8 +307,8 @@ describe('AccountsManager', () => {
     act(() => root.unmount());
   });
 
-  it('auto-salva a conta nova quando o terminal de login fecha (bug das 2 contas)', async () => {
-    const addActiveSession = vi.fn(async () => ({ ok: true, email: 'dev@example.com' }));
+  it('guarda a conta atual ANTES de abrir o login (bug das 2 contas)', async () => {
+    const addActiveSession = vi.fn(async () => ({ ok: true, id: 'acct-live', email: 'dev@example.com' }));
     useAccountStore.setState({
       accounts: [
         account({ label: 'Outra', email: 'other@example.com', active: true }),
@@ -302,32 +322,53 @@ describe('AccountsManager', () => {
       await Promise.resolve();
     });
 
-    const enterBtn = [...host.querySelectorAll('button')].find((b) =>
-      b.textContent?.includes('Entrar com outra conta'),
-    );
-    expect(enterBtn).toBeTruthy();
     await act(async () => {
-      enterBtn!.click();
+      host.querySelector<HTMLButtonElement>('[data-testid="acct-add-account"]')!.click();
+    });
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-testid="acct-add-account-login"]')!.click();
+      await Promise.resolve();
       await Promise.resolve();
     });
-    expect(loginTerminal.finish).not.toBeNull();
 
-    // Terminal de login fechou → a sessão viva (dev@example.com) não está no
-    // vault → entra sozinha, sem o operador achar o botão "salvar".
-    await act(async () => {
-      loginTerminal.finish!();
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    // A sessão viva entrou no vault antes de a CLI poder sobrescrevê-la, e o
+    // baseline saiu junto: é contra ele que o login novo será provado.
     expect(addActiveSession).toHaveBeenCalledWith('claude', 'dev@example.com');
+    expect(loginTerminal.baseline).toMatchObject({
+      adapterId: 'claude',
+      state: 'ok',
+    });
     act(() => root.unmount());
   });
 
-  it('não auto-salva quando a sessão viva já é conta conhecida', async () => {
-    const addActiveSession = vi.fn(async () => ({ ok: true }));
+  it('não reescreve a conta atual quando ela já está no vault', async () => {
+    const addActiveSession = vi.fn(async () => ({ ok: true, id: 'acct-1' }));
     useAccountStore.setState({
-      accounts: [account()],
+      // A sessão viva (dev@example.com) já é esta linha salva.
+      accounts: [account({ label: 'Trabalho', email: 'dev@example.com' })],
+      addActiveSession,
+    } as never);
+
+    const { host, root } = mount();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-testid="acct-add-account"]')!.click();
+    });
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-testid="acct-add-account-login"]')!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(addActiveSession).not.toHaveBeenCalled();
+    expect(openCliLoginTerminal).toHaveBeenCalled();
+    act(() => root.unmount());
+  });
+
+  it('fechar o terminal sem trocar de sessão NÃO inventa uma conta nova', async () => {
+    const addActiveSession = vi.fn(async () => ({ ok: true, id: 'acct-live' }));
+    useAccountStore.setState({
+      accounts: [account({ label: 'Trabalho', email: 'dev@example.com' })],
       addActiveSession,
     } as never);
 
@@ -336,21 +377,144 @@ describe('AccountsManager', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-testid="acct-add-account"]')!.click();
+    });
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-testid="acct-add-account-login"]')!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    addActiveSession.mockClear();
 
-    const enterBtn = [...host.querySelectorAll('button')].find((b) =>
-      b.textContent?.includes('Entrar com outra conta'),
+    await act(async () => {
+      finishLogin({ verified: false, status: null });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(addActiveSession).not.toHaveBeenCalled();
+    expect(host.textContent).toMatch(/não deu para confirmar um login novo/i);
+    expect(host.textContent).not.toMatch(/conta .* salva no Nexus/i);
+    act(() => root.unmount());
+  });
+
+  it('login provado grava a conta nova pelo nome digitado, sem depender de e-mail', async () => {
+    const added: string[] = [];
+    const addActiveSession = vi.fn(async (_adapterId: string, label: string) => {
+      added.push(label);
+      return { ok: true, id: 'acct-b' };
+    });
+    useAccountStore.setState({
+      accounts: [account({ label: 'Trabalho' })],
+      addActiveSession,
+    } as never);
+    const onAccountAdded = vi.fn();
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(
+        <AccountsManager
+          adapterId="codex"
+          adapterLabel="Codex"
+          loginCommand="codex login"
+          authStatus={{ adapterId: 'codex', state: 'ok', detail: 'sessão viva' }}
+          onAccountAdded={onAccountAdded}
+        />,
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-testid="acct-add-account"]')!.click();
+    });
+    const nameInput = host.querySelector<HTMLInputElement>(
+      '[data-testid="acct-new-name"]',
     );
     await act(async () => {
-      enterBtn!.click();
-      await Promise.resolve();
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype, 'value',
+      )?.set;
+      setter?.call(nameInput!, 'pessoal');
+      nameInput!.dispatchEvent(new Event('input', { bubbles: true }));
     });
     await act(async () => {
-      loginTerminal.finish!();
+      host.querySelector<HTMLButtonElement>('[data-testid="acct-add-account-login"]')!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    added.length = 0;
+
+    // A sonda não expõe e-mail nenhum: só o fingerprint prova a troca.
+    await act(async () => {
+      finishLogin({
+        verified: true,
+        status: { adapterId: 'codex', state: 'ok', detail: 'sessão viva' },
+      });
       await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(addActiveSession).not.toHaveBeenCalled();
+
+    expect(added).toEqual(['pessoal']);
+    expect(onAccountAdded).toHaveBeenCalledWith('acct-b');
+    expect(host.textContent).toContain('Conta “pessoal” salva no Nexus');
+    act(() => root.unmount());
+  });
+
+  it('falha ao gravar a conta nova aparece como erro, não como sucesso', async () => {
+    const addActiveSession = vi.fn(async () => ({
+      ok: false,
+      error: 'Nenhuma sessão ativa detectada para este provider.',
+    }));
+    useAccountStore.setState({
+      accounts: [account()],
+      addActiveSession,
+    } as never);
+    const onAccountAdded = vi.fn();
+
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(
+        <AccountsManager
+          adapterId="claude"
+          adapterLabel="Claude"
+          onAccountAdded={onAccountAdded}
+        />,
+      );
+    });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-testid="acct-add-account"]')!.click();
+    });
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-testid="acct-add-account-login"]')!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      finishLogin({
+        verified: true,
+        status: { adapterId: 'claude', state: 'ok', detail: 'sessão viva' },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain(
+      'Nenhuma sessão ativa detectada',
+    );
+    expect(onAccountAdded).not.toHaveBeenCalled();
     act(() => root.unmount());
   });
 
@@ -576,7 +740,7 @@ describe('AccountsManager', () => {
   });
 
   it('re-autentica conta conhecida quando estava com needsRelogin', async () => {
-    const addActiveSession = vi.fn(async () => ({ ok: true }));
+    const addActiveSession = vi.fn(async () => ({ ok: true, id: 'acct-adm' }));
     useAccountStore.setState({
       accounts: [
         account({
@@ -602,16 +766,97 @@ describe('AccountsManager', () => {
     await act(async () => {
       reloginBtn!.click();
       await Promise.resolve();
+      await Promise.resolve();
+    });
+    // Reentrar numa conta expirada conserta AQUELA linha: nada é preservado
+    // antes, senão o blob morto viraria uma segunda gravação.
+    expect(addActiveSession).not.toHaveBeenCalled();
+
+    // O token rodou: mesmo e-mail, fingerprint novo — é o único sinal que
+    // distingue "reautenticou" de "não fez nada" numa CLI já logada.
+    await act(async () => {
+      finishLogin({
+        verified: true,
+        status: {
+          adapterId: 'claude',
+          state: 'ok',
+          detail: 'sessão Claude viva: dev@example.com',
+        },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(addActiveSession).toHaveBeenCalledWith('claude', 'Conta Adm');
+    act(() => root.unmount());
+  });
+
+  it('oferece o cadastro com 1, 2 e 3 contas já salvas — sem teto', async () => {
+    useAccountStore.setState({
+      accounts: [
+        account({ id: 'c1', adapterId: 'codex', label: 'A' }),
+        account({ id: 'c2', adapterId: 'codex', label: 'B', active: false }),
+        account({ id: 'c3', adapterId: 'codex', label: 'C', active: false }),
+      ],
+    });
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(
+        <AccountsManager
+          adapterId="codex"
+          adapterLabel="Codex"
+          loginCommand="codex login"
+          authStatus={{ adapterId: 'codex', state: 'ok', detail: 'sessão viva' }}
+        />,
+      );
+    });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(host.textContent).toContain('A');
+    expect(host.textContent).toContain('B');
+    expect(host.textContent).toContain('C');
+    expect(
+      host.querySelector('[data-testid="acct-add-account"]'),
+    ).toBeTruthy();
+    act(() => root.unmount());
+  });
+
+  it('CLI sem snapshot diz a verdade em vez de prometer contas paralelas', async () => {
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        providers: {
+          authStatus: vi.fn(async () => [
+            { adapterId: 'muse', state: 'ok', detail: 'sessão viva' },
+          ]),
+        },
+        accounts: {
+          supportsSnapshot: vi.fn(async () => ({ ok: true, supported: false })),
+        },
+      },
+    });
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(
+        <AccountsManager adapterId="muse" adapterLabel="Muse" loginCommand="muse login" />,
+      );
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
     });
 
     await act(async () => {
-      loginTerminal.finish!();
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
+      host.querySelector<HTMLButtonElement>('[data-testid="acct-add-account"]')!.click();
     });
-
-    expect(addActiveSession).toHaveBeenCalledWith('claude', 'dev@example.com');
+    expect(host.textContent).toMatch(/troca a sessão da ferramenta/i);
+    expect(host.textContent).toMatch(/use API key/i);
     act(() => root.unmount());
   });
 });

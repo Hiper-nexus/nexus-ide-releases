@@ -41,6 +41,37 @@ describe('defaultAccountLabel — duas contas Claude precisam ser distinguíveis
     ).toBe('Conta kimi');
   });
 
+  it('nome genérico não empata com o que já está no vault', () => {
+    // Duas contas Codex sem e-mail: "Conta Codex" duas vezes era o empate que
+    // deixava o seletor impossível de ler.
+    expect(
+      defaultAccountLabel({
+        typed: '',
+        adapterId: 'codex',
+        adapterLabel: 'Codex',
+        taken: ['Conta Codex'],
+      }),
+    ).toBe('Conta Codex 2');
+    expect(
+      defaultAccountLabel({
+        typed: '',
+        adapterId: 'codex',
+        adapterLabel: 'Codex',
+        taken: ['conta codex', 'Conta Codex 2'],
+      }),
+    ).toBe('Conta Codex 3');
+  });
+
+  it('rótulo digitado nunca é renumerado — o nome é do operador', () => {
+    expect(
+      defaultAccountLabel({
+        typed: 'trabalho',
+        adapterId: 'codex',
+        taken: ['trabalho'],
+      }),
+    ).toBe('trabalho');
+  });
+
   it('extrai o e-mail de qualquer diagnóstico', () => {
     expect(emailFromAuthDetail('sessão Claude viva: a.b+x@dominio.com.br')).toBe(
       'a.b+x@dominio.com.br',

@@ -7,6 +7,22 @@ import {
   authStatusLabel,
 } from './accounts-login-view';
 
+function view(patch: Partial<Parameters<typeof accountsPanelView>[0]> = {}) {
+  return accountsPanelView({
+    authState: 'ok',
+    adapterLabel: 'Codex',
+    isClaude: false,
+    vaultCount: 0,
+    standbyCount: 0,
+    hasActiveVault: false,
+    liveEmail: null,
+    loginCommand: 'codex login',
+    canSnapshot: true,
+    busy: false,
+    ...patch,
+  });
+}
+
 describe('authStatusLabel', () => {
   it('nomeia o estado da CLI, nunca o app do Dock', () => {
     expect(authStatusLabel('ok')).toBe('conectado');
@@ -190,5 +206,42 @@ describe('accountsPanelView — logado', () => {
     expect(logged.showSplitRoster).toBe(false);
     expect(logged.showReserva).toBe(true);
     expect(logged.showActiveEmUsoPill).toBe(true);
+  });
+});
+
+describe('accountsPanelView — cadastrar conta não depende de quantas já existem', () => {
+  it('oferece o cadastro com 0, 1, 2 e 7 contas salvas', () => {
+    for (const vaultCount of [0, 1, 2, 7]) {
+      expect(view({ vaultCount, hasActiveVault: vaultCount > 0 }).showAddAnotherLogin)
+        .toBe(true);
+    }
+  });
+
+  it('oferece o cadastro enquanto a sonda ainda verifica — não é beco sem saída', () => {
+    expect(view({ authState: 'checking' }).showAddAnotherLogin).toBe(true);
+  });
+
+  it('não duplica o botão quando o herói já oferece exatamente este login', () => {
+    for (const authState of ['missing', 'unknown']) {
+      const panel = view({ authState });
+      expect(panel.showLoginHero).toBe(true);
+      expect(panel.showAddAnotherLogin).toBe(false);
+    }
+  });
+
+  it('CLI sem comando de login não finge um caminho de login', () => {
+    const panel = view({ loginCommand: null });
+    expect(panel.showAddAnotherLogin).toBe(false);
+    expect(panel.loginCta).toBeNull();
+  });
+
+  it('diz a verdade sobre snapshot: sem ele, o login TROCA a sessão', () => {
+    expect(view({ canSnapshot: true }).addAccountHint).toMatch(
+      /guarda a conta atual antes da troca/i,
+    );
+    const semSnapshot = view({ canSnapshot: false }).addAccountHint;
+    expect(semSnapshot).toMatch(/troca a sessão da ferramenta/i);
+    expect(semSnapshot).toMatch(/API key/);
+    expect(semSnapshot).not.toMatch(/isolad/i);
   });
 });

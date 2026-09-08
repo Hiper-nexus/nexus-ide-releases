@@ -15,6 +15,15 @@ import {
   subscriptionAuthStatusIsUnknown,
 } from './subscription-auth';
 import { refreshKimiSeatReadiness } from './kimi-seat-probe';
+import {
+  hasNativeFileAuth,
+  isFileAuthAdapter,
+  nativeAuthIdentity,
+} from './managed-credentials';
+import {
+  detailWithIdentity,
+  emailFromAuthDetail,
+} from '../../shared/auth-detail-identity';
 
 /**
  * Sonda de login das CLIs — SEM navegador. Cada CLI guarda a sessão OAuth
@@ -92,12 +101,10 @@ const OAUTH_PROBES: Record<
     }
     return { state: 'missing', detail: 'sem sessão — rode `claude auth login`' };
   },
-  codex: async () => {
-    if (fileExists(path.join(HOME, '.codex', 'auth.json'))) {
-      return { state: 'ok', detail: 'sessão OAuth local (auth.json)' };
-    }
-    return { state: 'missing', detail: 'sem sessão — rode `codex login`' };
-  },
+  codex: async () =>
+    hasNativeFileAuth('codex')
+      ? { state: 'ok', detail: 'sessão Codex OAuth local (auth.json)' }
+      : { state: 'missing', detail: 'sem sessão — rode `codex login`' },
   agy: async () =>
     // Delegate to the shared detector (like grok/kimi) so a managed AGY account
     // under $GEMINI_CLI_HOME is recognized, not just ~/.gemini in the real home.
@@ -112,7 +119,7 @@ const OAUTH_PROBES: Record<
           detail: 'sem sessão — rode `agy` e conclua o OAuth',
         },
   grok: async () =>
-    hasSubscriptionAuth('grok')
+    hasNativeFileAuth('grok')
       ? { state: 'ok', detail: 'sessão Grok OAuth local' }
       : { state: 'missing', detail: 'sem sessão — rode `grok login`' },
   kimi: async () => {
@@ -132,7 +139,7 @@ const OAUTH_PROBES: Record<
     };
   },
   opencode: async () =>
-    hasSubscriptionAuth('opencode')
+    hasNativeFileAuth('opencode')
       ? { state: 'ok', detail: 'credencial OpenCode local' }
       : {
           state: 'missing',
@@ -177,7 +184,25 @@ export async function probeAdapterAuth(): Promise<AdapterAuthStatus[]> {
             detail: 'API key no cofre',
           };
         }
-        return { adapterId: info.adapterId, state, detail };
+        // A sessão nativa fornece e-mail real quando houver e sempre que
+        // possível um fingerprint opaco. Assim a UI detecta A -> B inclusive
+        // em CLIs sem e-mail (Kimi/OpenCode), sem receber token/subject.
+        const identity =
+          state === 'ok' && isFileAuthAdapter(info.adapterId)
+            ? nativeAuthIdentity(info.adapterId)
+            : {};
+        const finalDetail =
+          !emailFromAuthDetail(detail) && identity.email
+            ? detailWithIdentity(detail, identity.email)
+            : detail;
+        return {
+          adapterId: info.adapterId,
+          state,
+          detail: finalDetail,
+          ...(identity.fingerprint
+            ? { sessionFingerprint: identity.fingerprint }
+            : {}),
+        };
       }
       if (info.hasKey) {
         return { adapterId: info.adapterId, state: 'ok', detail: 'API key no cofre' };

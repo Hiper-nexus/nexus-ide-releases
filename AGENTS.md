@@ -92,6 +92,35 @@ npm run rebuild:node           # rebuild native modules for Node (CI/tests)
   `~/.overclock-app/overclock-doctor.mjs` (report/limpeza de marcadores órfãos
   e missões travadas).
 
+## Multi-conta: o que prova um login novo
+
+Quem tocar em Providers, no menu "+ Pane" ou no terminal de login precisa
+saber isto antes de mexer:
+
+- **Uma CLI guarda UMA sessão por vez.** Entrar na 2ª conta sem guardar a 1ª a
+  perde para sempre. Por isso `AccountsManager` preserva a sessão atual
+  (`addActiveSession`) ANTES de abrir o login de cadastro. O motor deduplica
+  por subject/blob e mantém o rótulo da linha existente, então preservar é
+  idempotente.
+- **Fechar o terminal, estourar o tempo ou reencontrar `authReady` não provam
+  login nenhum.** A prova é `cliLoginProvedNewSession(baseline, atual)` em
+  `src/renderer/components/settings/cli-login-terminal.ts`: sonda `ok` mais
+  identidade de sessão que surgiu ou mudou em relação ao baseline colhido
+  ANTES de abrir o terminal. Sem prova, a UI diz que não deu — nunca grava uma
+  conta que talvez seja a mesma.
+- **A identidade é `AdapterAuthStatus.sessionFingerprint` (opaco, só
+  igualdade), com o e-mail da sonda como segundo caminho.** Nunca exiba,
+  registre nem persista o fingerprint. É ele que distingue A de B em CLI sem
+  e-mail (Kimi, OpenCode) e prova reautenticação da mesma conta.
+- **Conta sem e-mail é conta.** `addActiveSession` aceita rótulo e devolve
+  `id`; use o `id` para selecionar a conta, nunca o nome.
+- **Sem `supportsSnapshot` não há duas sessões nativas em paralelo.** Diga
+  isso na interface e aponte a API key; não prometa isolamento que o adapter
+  não implementa.
+- A ação administrativa do "+ Pane" vive na decoração local
+  (`withAccountActions`), fora de `buildPanePickerEntries` — aquele catálogo é
+  compartilhado com a grade de terminais, onde cada linha é um terminal.
+
 ## Conventions
 
 - Co-located tests: `foo.ts` → `foo.test.ts` in the same directory.

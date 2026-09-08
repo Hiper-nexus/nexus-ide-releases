@@ -12,7 +12,32 @@ import { useOrchStore } from '../state/orch-store';
 import { usePanePickerStore } from '../state/pane-picker-store';
 import { useProviderStore } from '../state/provider-store';
 import { useSessionStateStore } from '../state/session-state-store';
-import { PanePicker, runPanePickerIntent } from './PanePicker';
+import {
+  PanePicker,
+  buildPanePickerEntries,
+  runPanePickerIntent,
+  withAccountActions,
+} from './PanePicker';
+
+/**
+ * O painel de contas real monta o hub inteiro (IPC, uso, confirmação). Aqui
+ * interessa o CONTRATO do menu com ele: recebe a CLI certa e devolve o id da
+ * conta nova. O painel tem a própria suíte co-locada.
+ */
+const accountsManager = vi.hoisted(() => ({
+  added: null as null | ((accountId: string) => void),
+  adapterId: '',
+}));
+vi.mock('./settings/AccountsManager', () => ({
+  AccountsManager: (props: {
+    adapterId: string;
+    onAccountAdded?: (accountId: string) => void;
+  }) => {
+    accountsManager.adapterId = props.adapterId;
+    accountsManager.added = props.onAccountAdded ?? null;
+    return <div data-testid="accounts-manager">{props.adapterId}</div>;
+  },
+}));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
@@ -185,12 +210,17 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     delete (
       window as Window & { __nexusGetScrollbackExcerpt?: unknown }
     ).__nexusGetScrollbackExcerpt;
+    accountsManager.added = null;
+    accountsManager.adapterId = '';
   });
 
   afterEach(() => {
     act(() => root.unmount());
     document.body.replaceChildren();
-    usePanePickerStore.setState({ pendingOpen: false });
+    usePanePickerStore.setState({
+      pendingOpen: false,
+      pendingAccountsAdapterId: null,
+    });
     if (originalScrollIntoView) {
       Object.defineProperty(
         HTMLElement.prototype,
@@ -295,10 +325,11 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     openMenu();
     type('claude');
 
-    // 2 contas × 2 modelos.
-    expect(options()).toHaveLength(4);
+    // 2 contas × 2 modelos, mais a linha de cadastro que fecha o grupo.
+    expect(options()).toHaveLength(5);
     expect(optionLabels()[0]).toContain('Conta 1');
     expect(optionLabels()[0]).toContain('claude-default');
+    expect(optionLabels()[4]).toContain('Adicionar conta');
 
     clickEntry('agent:claude:acc-2:claude-alt');
 
@@ -332,7 +363,7 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     openMenu();
     type('bare');
 
-    expect(options()).toHaveLength(1);
+    expect(options()).toHaveLength(2);
     expect(optionLabels()[0]).toContain('padrão da ferramenta');
 
     clickEntry('agent:bare:default:default');
@@ -407,6 +438,202 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     });
 
     expect(host.querySelector('[role="listbox"]')).toBeNull();
+  });
+
+  it('cada CLI ganha a ação de cadastrar conta, sempre no fim do grupo', () => {
+    useAccountStore.setState({
+      accounts: [account('acc-1', 'claude', 'Conta 1')],
+    } as never);
+    mount();
+    openMenu();
+
+    // Uma ação por CLI instalada — nem a mais, nem a menos.
+    const admin = options().filter(
+      (option) => option.getAttribute('data-admin') === 'true',
+    );
+    expect(admin).toHaveLength(3); // Bare CLI, Claude, Codex
+    expect(admin[1]!.textContent).toContain('Adicionar conta');
+    expect(admin[1]!.textContent).toContain('1 conta salva');
+    expect(admin[1]!.getAttribute('aria-label')).toBe(
+      'Adicionar conta em Claude',
+    );
+
+    // Fecha o grupo: as escolhas de conta × modelo vêm todas antes dela.
+    type('claude');
+    const labels = optionLabels();
+    expect(labels[labels.length - 1]).toContain('Adicionar conta');
+  });
+
+  it('a ação de cadastro NÃO entra no catálogo compartilhado com a grade', () => {
+    const shared = buildPanePickerEntries(
+      [provider('codex', 'Codex')],
+      [account('acc-1', 'codex', 'Conta 1')],
+    );
+    expect(shared.some((entry) => entry.id.startsWith('accounts:'))).toBe(false);
+    // Só a decoração local do menu a acrescenta.
+    const rows = withAccountActions(shared, [account('acc-1', 'codex', 'Conta 1')]);
+    expect(rows.filter((row) => row.id === 'accounts:codex')).toHaveLength(1);
+  });
+
+  it('a busca alcança o cadastro pelo nome da ferramenta e por "conta"', () => {
+    mount();
+    openMenu();
+
+    type('adicionar conta codex');
+    expect(options()).toHaveLength(1);
+    expect(optionLabels()[0]).toContain('Adicionar conta');
+    expect(groupHeadings()).toEqual(['Codex']);
+  });
+
+  it('cadastrar abre a vista de contas daquela CLI, sem criar pane nenhum', () => {
+    mount();
+    openMenu();
+    clickEntry('accounts:codex');
+
+    expect(host.querySelector('[data-testid="accounts-manager"]')).not.toBeNull();
+    expect(accountsManager.adapterId).toBe('codex');
+    expect(host.querySelector('[role="listbox"]')).toBeNull();
+    expect(spawnAgent).not.toHaveBeenCalled();
+    expect(addShellPane).not.toHaveBeenCalled();
+    expect(
+      host.querySelector('.pane-picker__panel')?.getAttribute('data-view'),
+    ).toBe('accounts');
+  });
+
+  it('a vista de contas não sequestra as teclas da lista', () => {
+    mount();
+    openMenu();
+    clickEntry('accounts:codex');
+
+    const panel = host.querySelector('.pane-picker__panel')!;
+    act(() => {
+      panel.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+      );
+      panel.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }),
+      );
+    });
+
+    // Enter dentro do formulário pertence ao formulário: nada foi aberto.
+    expect(spawnAgent).not.toHaveBeenCalled();
+    expect(host.querySelector('[data-testid="accounts-manager"]')).not.toBeNull();
+  });
+
+  it('Escape sobe um nível: de contas para a lista, e só então fecha', () => {
+    mount();
+    openMenu();
+    clickEntry('accounts:codex');
+
+    act(() => {
+      document.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+      );
+    });
+    expect(host.querySelector('[data-testid="accounts-manager"]')).toBeNull();
+    expect(host.querySelector('[role="listbox"]')).not.toBeNull();
+
+    act(() => {
+      document.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+      );
+    });
+    expect(host.querySelector('[role="listbox"]')).toBeNull();
+    expect(document.activeElement).toBe(trigger());
+  });
+
+  it('Voltar às contas devolve a lista e o foco à busca', () => {
+    mount();
+    openMenu();
+    clickEntry('accounts:codex');
+
+    const back = host.querySelector<HTMLButtonElement>(
+      '[data-testid="pane-picker-accounts-back"]',
+    );
+    act(() => back!.click());
+
+    expect(host.querySelector('[role="listbox"]')).not.toBeNull();
+    expect(document.activeElement).toBe(filterInput());
+  });
+
+  it('conta nova volta para a lista sob o cursor, e o spawn leva o id dela', () => {
+    mount();
+    openMenu();
+    clickEntry('accounts:codex');
+
+    // O painel salvou a conta B e devolveu o id que o motor emitiu.
+    act(() => {
+      useAccountStore.setState({
+        accounts: [
+          account('acc-a', 'codex', 'trabalho'),
+          account('acc-b', 'codex', 'pessoal', { active: false }),
+        ],
+      } as never);
+      accountsManager.added!('acc-b');
+    });
+
+    // Voltou para a lista SEM abrir pane: a escolha do modelo é explícita.
+    expect(host.querySelector('[role="listbox"]')).not.toBeNull();
+    expect(spawnAgent).not.toHaveBeenCalled();
+
+    const fresh = options().filter(
+      (option) => option.getAttribute('data-fresh') === 'true',
+    );
+    expect(fresh.length).toBeGreaterThan(0);
+    expect(fresh[0]!.textContent).toContain('pessoal');
+    expect(fresh[0]!.getAttribute('aria-selected')).toBe('true');
+
+    clickEntry('agent:codex:acc-b:codex-alt');
+    expect(spawnAgent).toHaveBeenCalledWith('codex', 'codex-alt', {
+      accountId: 'acc-b',
+    });
+  });
+
+  it('N contas da mesma CLI viram N escolhas × modelo, sem teto', () => {
+    useAccountStore.setState({
+      accounts: [
+        account('acc-a', 'codex', 'A'),
+        account('acc-b', 'codex', 'B', { active: false }),
+        account('acc-c', 'codex', 'C', { active: false }),
+        account('acc-d', 'codex', 'D', { active: false }),
+      ],
+    } as never);
+    mount();
+    openMenu();
+    type('codex');
+
+    // 4 contas × 2 modelos + a linha de cadastro.
+    expect(options()).toHaveLength(9);
+    clickEntry('agent:codex:acc-c:codex-default');
+    expect(spawnAgent).toHaveBeenCalledWith('codex', 'codex-default', {
+      accountId: 'acc-c',
+    });
+  });
+
+  it('conta sem e-mail é escolhível pelo rótulo, como qualquer outra', () => {
+    useAccountStore.setState({
+      accounts: [
+        account('acc-sem-email', 'codex', 'workspace 2', { email: undefined }),
+      ],
+    } as never);
+    mount();
+    openMenu();
+    type('workspace 2');
+
+    expect(options()).toHaveLength(2);
+    clickEntry('agent:codex:acc-sem-email:codex-alt');
+    expect(spawnAgent).toHaveBeenCalledWith('codex', 'codex-alt', {
+      accountId: 'acc-sem-email',
+    });
+  });
+
+  it('o pedido pendente devolve a vista de contas depois de o login navegar', () => {
+    mount();
+    act(() => usePanePickerStore.getState().requestOpen('codex'));
+
+    expect(host.querySelector('[data-testid="accounts-manager"]')).not.toBeNull();
+    expect(accountsManager.adapterId).toBe('codex');
+    expect(usePanePickerStore.getState().pendingAccountsAdapterId).toBeNull();
   });
 
   it('+ Pane numa missão 401 entrega o handoff para a conta escolhida', () => {

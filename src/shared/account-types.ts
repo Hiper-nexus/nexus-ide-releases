@@ -26,7 +26,7 @@ export interface Account {
   mode: AccountMode;
   /** Routed upstream for api-key accounts (anthropic|glm|sakana|…). */
   upstream: string;
-  /** Email for subscription accounts (from the Claude oauthAccount). */
+  /** Real email claim when the provider exposes one; never a synthesized id. */
   email?: string;
   /** Epoch ms until which this account is skipped after hitting a limit. */
   cooldownUntil?: number;

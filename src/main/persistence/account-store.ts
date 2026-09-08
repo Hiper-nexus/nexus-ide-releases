@@ -24,6 +24,7 @@ import {
 } from '../quota/claude-oauth-refresh';
 import {
   captureNativeAuth,
+  compareAuthBlobIdentity,
   isFileAuthAdapter,
   managedHomeEnv,
   materializeManagedHome,
@@ -1056,6 +1057,16 @@ function findSessionDuplicate(
   const normalized = email?.trim().toLowerCase();
   for (const account of listAccounts(adapterId)) {
     if (account.mode !== 'subscription') continue;
+    const storedBlob = getSecret(CRED_PREFIX + account.id);
+    if (storedBlob && isFileAuthAdapter(adapterId)) {
+      // ponytail: O(N) vault comparison avoids a schema migration; if account
+      // pools ever become large, persist an indexed provider identity digest.
+      const identity = compareAuthBlobIdentity(adapterId, blob, storedBlob);
+      if (identity === 'same') return account;
+      // A provider subject is stronger than email. One email can own multiple
+      // Codex workspaces, which must remain independent accounts.
+      if (identity === 'different') continue;
+    }
     if (
       normalized &&
       account.email &&
@@ -1063,9 +1074,7 @@ function findSessionDuplicate(
     ) {
       return account;
     }
-    if (!normalized || !account.email) {
-      if (getSecret(CRED_PREFIX + account.id) === blob) return account;
-    }
+    if ((!normalized || !account.email) && storedBlob === blob) return account;
   }
   return null;
 }

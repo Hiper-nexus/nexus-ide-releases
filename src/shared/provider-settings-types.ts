@@ -138,6 +138,13 @@ export interface AdapterAuthStatus {
   adapterId: string;
   state: AuthState;
   detail: string;
+  /**
+   * Opaque, provider-scoped fingerprint of the CLI session currently on disk.
+   * Equality is the only supported operation. It contains no token or raw
+   * provider subject and lets login UIs detect account A -> B even when the
+   * provider (for example Kimi/OpenCode) exposes no email claim.
+   */
+  sessionFingerprint?: string;
 }
 
 export const PROVIDER_CHANNELS = {

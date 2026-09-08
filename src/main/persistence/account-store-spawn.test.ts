@@ -26,6 +26,44 @@ function oauthCredential(accessToken: string): string {
   });
 }
 
+function jwt(claims: Record<string, unknown>): string {
+  return `h.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.s`;
+}
+
+function codexCapture(
+  email: string,
+  accountId: string,
+  accessToken: string,
+) {
+  return {
+    blob: JSON.stringify({
+      tokens: {
+        id_token: jwt({ email, sub: `user-${email}` }),
+        access_token: accessToken,
+        refresh_token: `refresh-${accessToken}`,
+        account_id: accountId,
+      },
+    }),
+    email,
+    authRelativePath: 'auth.json',
+  };
+}
+
+function kimiCapture(userId: string, tokenId: string) {
+  return {
+    blob: JSON.stringify({
+      access_token: jwt({ user_id: userId, sub: userId, token_id: tokenId }),
+      refresh_token: jwt({
+        user_id: userId,
+        sub: userId,
+        token_id: `refresh-${tokenId}`,
+      }),
+      expires_at: 4_102_444_800,
+    }),
+    authRelativePath: 'credentials/kimi-code.json',
+  };
+}
+
 vi.mock('./secrets-store', () => ({
   deleteSecret: (key: string) => {
     if (accountDeps.deleteFailures.has(key)) {
@@ -212,6 +250,42 @@ describe('prepareAccountForSpawn', () => {
     });
   });
 
+  it.each([
+    'claude',
+    'codex',
+    'grok',
+    'kimi',
+    'opencode',
+    'openclaude',
+    'aider',
+    'glm',
+    'longcat',
+  ])('keeps N API-key credentials independent for %s', (adapterId) => {
+    const first = addAccount({
+      adapterId,
+      label: 'Conta A',
+      mode: 'api-key',
+      key: `key-${adapterId}-a`,
+    });
+    const second = addAccount({
+      adapterId,
+      label: 'Conta B',
+      mode: 'api-key',
+      key: `key-${adapterId}-b`,
+    });
+
+    expect(prepareAccountForSpawn(adapterId, first.id)).toMatchObject({
+      ok: true,
+      account: { id: first.id },
+      apiKey: `key-${adapterId}-a`,
+    });
+    expect(prepareAccountForSpawn(adapterId, second.id)).toMatchObject({
+      ok: true,
+      account: { id: second.id },
+      apiKey: `key-${adapterId}-b`,
+    });
+  });
+
   it('conta que É o login nativo do Keychain spawna SEM token env (linhagem única)', () => {
     // Regressão de campo: o env era um snapshot do vault que expirava em
     // horas e o CLI não refresca token de env → "401 OAuth access token has
@@ -321,6 +395,83 @@ describe('prepareAccountForSpawn', () => {
     expect(result.authEnv.CODEX_HOME).toContain('codex');
     expect(result.authEnv.CODEX_HOME).toContain(account!.id);
     expect(managedDeps.materialize).toHaveBeenCalled();
+  });
+
+  it('keeps two Codex workspaces independent even when their email is the same', () => {
+    const firstCapture = codexCapture(
+      'codex@example.test',
+      'chatgpt-workspace-a',
+      'codex-access-a',
+    );
+    const secondCapture = codexCapture(
+      'codex@example.test',
+      'chatgpt-workspace-b',
+      'codex-access-b',
+    );
+    managedDeps.capture
+      .mockReturnValueOnce(firstCapture)
+      .mockReturnValueOnce(secondCapture);
+
+    const first = addActiveSessionAccount('codex', 'Codex A');
+    const second = addActiveSessionAccount('codex', 'Codex B');
+
+    expect(first && second).toBeTruthy();
+    expect(second!.id).not.toBe(first!.id);
+    expect(listAccounts('codex')).toHaveLength(2);
+
+    const firstSpawn = prepareAccountForSpawn('codex', first!.id);
+    const secondSpawn = prepareAccountForSpawn('codex', second!.id);
+    expect(firstSpawn).toMatchObject({
+      ok: true,
+      authEnv: { CODEX_HOME: expect.stringContaining(first!.id) },
+    });
+    expect(secondSpawn).toMatchObject({
+      ok: true,
+      authEnv: { CODEX_HOME: expect.stringContaining(second!.id) },
+    });
+    expect(managedDeps.materialize).toHaveBeenCalledWith(
+      'codex',
+      first!.id,
+      firstCapture.blob,
+    );
+    expect(managedDeps.materialize).toHaveBeenCalledWith(
+      'codex',
+      second!.id,
+      secondCapture.blob,
+    );
+  });
+
+  it('updates a rotated Codex credential with the same provider account id', () => {
+    managedDeps.capture
+      .mockReturnValueOnce(
+        codexCapture('codex@example.test', 'chatgpt-workspace-a', 'old'),
+      )
+      .mockReturnValueOnce(
+        codexCapture('codex@example.test', 'chatgpt-workspace-a', 'rotated'),
+      );
+
+    const first = addActiveSessionAccount('codex', 'Codex');
+    const refreshed = addActiveSessionAccount('codex', 'Codex novamente');
+
+    expect(refreshed!.id).toBe(first!.id);
+    expect(listAccounts('codex')).toHaveLength(1);
+  });
+
+  it('dedupes token rotation but keeps distinct Kimi subjects without inventing email', () => {
+    managedDeps.capture
+      .mockReturnValueOnce(kimiCapture('kimi-user-a', 'old'))
+      .mockReturnValueOnce(kimiCapture('kimi-user-a', 'rotated'))
+      .mockReturnValueOnce(kimiCapture('kimi-user-b', 'other'));
+
+    const first = addActiveSessionAccount('kimi', 'Kimi A');
+    const refreshed = addActiveSessionAccount('kimi', 'Kimi A novamente');
+    const second = addActiveSessionAccount('kimi', 'Kimi B');
+
+    expect(refreshed!.id).toBe(first!.id);
+    expect(second!.id).not.toBe(first!.id);
+    expect(first!.email).toBeUndefined();
+    expect(second!.email).toBeUndefined();
+    expect(listAccounts('kimi')).toHaveLength(2);
   });
 
   it('persists account metadata before returning success', () => {

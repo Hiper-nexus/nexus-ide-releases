@@ -67,6 +67,12 @@
   width: min(348px, calc(100vw - 2 * var(--space-4)));
   max-height: min(58vh, 460px);
   flex-direction: column;
+  /* Duas larguras, uma superfície: o menu é uma lista estreita; a vista de
+     contas é um formulário e precisa do dobro para as linhas do roster não
+     virarem três andares de texto quebrado. */
+  transition:
+    width 180ms var(--ease-out-quart),
+    max-height 180ms var(--ease-out-quart);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-xl);
   background: linear-gradient(
@@ -90,14 +96,88 @@
   }
 }
 
+.pane-picker__panel[data-view='accounts'] {
+  width: min(560px, calc(100vw - 2 * var(--space-4)));
+  max-height: min(76vh, 620px);
+}
+
 .pane-picker__head {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
   gap: 9px;
-  padding: 10px 12px;
+  padding: var(--space-2-5) var(--space-3);
   border-bottom: 1px solid var(--border);
   color: var(--accent);
+}
+
+/* ---- Vista de contas dentro do menu ---- */
+
+.pane-picker__head--back {
+  gap: var(--space-2);
+  color: var(--text-dim);
+}
+
+.pane-picker__back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  padding: var(--space-1) var(--space-2) var(--space-1) var(--space-1);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-dim);
+  font-family: var(--font-ui);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    color 140ms var(--ease-out-quart),
+    border-color 140ms var(--ease-out-quart);
+}
+
+/* A seta do chevron aponta para baixo por padrão; aqui ela é "voltar". */
+.pane-picker__back .pixel-icon {
+  transform: rotate(90deg);
+}
+
+.pane-picker__back:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.pane-picker__back:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.pane-picker__head-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pane-picker__accounts {
+  min-height: 0;
+  flex: 1 1 auto;
+  padding: var(--space-3);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* O painel de contas nasceu para uma página de Configurações. Dentro de um
+   menu ele mantém o MESMO vocabulário e só perde folga: nada de segunda
+   linguagem visual para a mesma tela. */
+.pane-picker__accounts .acct[data-compact='true'] {
+  gap: var(--space-2);
+}
+
+.pane-picker__accounts .acct[data-compact='true'] .acct__title {
+  font-size: var(--text-sm);
 }
 
 .pane-picker__input {
@@ -129,7 +209,7 @@
 
 .pane-picker__list {
   margin: 0;
-  padding: 6px;
+  padding: var(--space-1-5);
   overflow-y: auto;
   list-style: none;
 }
@@ -226,6 +306,28 @@
   white-space: nowrap;
 }
 
+/* Ação administrativa: mesma linha, peso menor — cadastrar conta não pode
+   competir com o que o operador veio abrir. */
+.pane-picker__item[data-admin='true'] .pane-picker__item-label {
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
+.pane-picker__item[data-admin='true'] .pixel-icon {
+  color: var(--accent);
+}
+
+.pane-picker__item[data-admin='true'][data-active='true']
+  .pane-picker__item-label {
+  color: var(--text);
+}
+
+/* Conta recém-cadastrada: some ao primeiro movimento do cursor, então é uma
+   pista de retorno, não um estado permanente. */
+.pane-picker__item[data-fresh='true'] {
+  box-shadow: inset 0 0 0 1px var(--accent-strong);
+}
+
 .pane-picker__empty {
   padding: 20px 12px 24px;
   color: var(--text-dim);
@@ -268,6 +370,11 @@
 @media (prefers-reduced-motion: reduce) {
   .pane-picker__panel {
     animation: none;
+    transition: none;
+  }
+
+  .pane-picker__back {
+    transition: none;
   }
 
   .pane-picker__trigger {

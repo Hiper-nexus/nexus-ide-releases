@@ -8,10 +8,15 @@ import { useProviderStore } from '../../state/provider-store';
 import { ProvidersPanel } from './ProvidersPanel';
 
 const loginTerminal = vi.hoisted(() => ({
-  openCliLoginTerminal: vi.fn(async () => ({
-    ok: true as const,
-    paneId: 'pane-login',
-  })),
+  finish: null as null | ((result: unknown) => void),
+  baseline: undefined as unknown,
+  openCliLoginTerminal: vi.fn(
+    async (input: { onFinished?: (r: unknown) => void; baseline?: unknown }) => {
+      loginTerminal.finish = input.onFinished ?? null;
+      loginTerminal.baseline = input.baseline;
+      return { ok: true as const, paneId: 'pane-login' };
+    },
+  ),
 }));
 vi.mock('./cli-login-terminal', () => loginTerminal);
 
@@ -273,6 +278,79 @@ describe('ProvidersPanel hub', () => {
     expect(
       host.querySelector('.acct__notice')?.textContent,
     ).toContain('Terminal de login aberto');
+    act(() => root.unmount());
+  });
+
+  it('Codex conectado ainda oferece cadastrar a 2ª conta, e ela entra no roster', async () => {
+    const added: string[] = [];
+    const addActiveSession = vi.fn(async (_adapterId: string, label: string) => {
+      added.push(label);
+      return { ok: true, id: 'codex-b' };
+    });
+    useAccountStore.setState({
+      accounts: [{
+        id: 'codex-a', adapterId: 'codex', label: 'trabalho',
+        mode: 'subscription', upstream: 'codex', createdAt: 1, active: true,
+        hasCredential: true, onCooldown: false, needsRelogin: false,
+      }],
+      addActiveSession,
+      hydrate: vi.fn(async () => undefined),
+      supportsSnapshot: vi.fn(async () => true),
+    } as never);
+    vi.mocked(window.nexus.providers.authStatus).mockResolvedValue([
+      {
+        adapterId: 'codex', state: 'ok', detail: 'sessão viva',
+        sessionFingerprint: 'conta-a',
+      },
+    ]);
+    useProviderStore.setState({
+      providers: [provider('codex', 'Codex', { loginCommand: 'codex login' })],
+      hydrate: vi.fn(async () => undefined),
+    } as never);
+
+    const { host, root } = mount();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    // O pedido humano: com uma conta Codex já conectada, a opção de entrar na
+    // segunda tem de estar visível — era exatamente ela que faltava.
+    const addAccount = host.querySelector<HTMLButtonElement>(
+      '.prov-detail [data-testid="acct-add-account"]',
+    );
+    expect(addAccount).toBeTruthy();
+    await act(async () => { addAccount!.click(); });
+
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>(
+        '[data-testid="acct-add-account-login"]',
+      )!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(loginTerminal.openCliLoginTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'codex login', adapterId: 'codex' }),
+    );
+    // A conta A foi guardada antes de a CLI poder sobrescrevê-la. A sonda do
+    // Codex não expõe e-mail, então o rótulo é o genérico — e o motor mantém
+    // "trabalho" ao deduplicar contra a linha que já existe.
+    expect(added).toEqual(['Conta Codex']);
+    expect(loginTerminal.baseline).toMatchObject({ sessionFingerprint: 'conta-a' });
+
+    added.length = 0;
+    await act(async () => {
+      loginTerminal.finish!({
+        verified: true,
+        status: {
+          adapterId: 'codex', state: 'ok', detail: 'sessão viva',
+          sessionFingerprint: 'conta-b',
+        },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(added).toEqual(['Conta Codex']);
+    expect(host.textContent).toContain('salva no Nexus');
     act(() => root.unmount());
   });
 
