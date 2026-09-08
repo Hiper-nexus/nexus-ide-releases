@@ -17,25 +17,27 @@ const STATUS_TOKENS = [
   '--status-dot-warning',
 ];
 
-// Every light background nexus-light resolves to, cross-multiplied with the
-// seven status tokens. This snapshot is the ratchet: the gate must be updated
-// (and the entry deleted) the moment any one of these starts passing.
-const EXPECTED_GAP_KEYS = new Set(
-  ['nexus-light'].flatMap((themeId) =>
-    STATUS_TOKENS.flatMap((token) =>
-      ['--bg', '--bg-elevated', '--bg-bar'].map(
-        (background) => `${themeId} ${token} ${background}`,
-      ),
-    ),
-  ),
-);
+const SURFACE_TOKENS = [
+  '--surface-sidebar',
+  '--surface-0',
+  '--surface-1',
+  '--surface-2',
+  '--surface-3',
+];
+
+/**
+ * The ratchet. This set must only ever shrink: a registered gap that starts
+ * passing shows up as a missing key here, forcing its KNOWN_GAPS entry to be
+ * deleted instead of quietly going stale. It is empty now — it held 21 entries
+ * for F-338 until nexus-light got its own surface ramp and status band.
+ */
+const EXPECTED_GAP_KEYS = new Set();
 
 function runGate() {
-  const result = spawnSync(
-    process.execPath,
-    ['--import', 'tsx', gatePath],
-    { cwd: repositoryRoot, encoding: 'utf8' },
-  );
+  const result = spawnSync(process.execPath, ['--import', 'tsx', gatePath], {
+    cwd: repositoryRoot,
+    encoding: 'utf8',
+  });
   if (result.error) throw result.error;
   let report;
   try {
@@ -52,13 +54,20 @@ function runGate() {
 describe('check-palette-contrast gate', () => {
   const { status, report } = runGate();
 
-  it('passes today, so it can be wired into a gate without blocking anyone', () => {
-    // The sensor's own header records what happens when a design gate the repo
-    // cannot pass reaches a merge coordinator: the cheapest fix becomes
-    // weakening the gate. Every current violation is a registered finding.
+  it('passes on merit, with no registered gaps left to hide behind', () => {
     expect(status).toBe(0);
     expect(report.ok).toBe(true);
     expect(report.findings).toEqual([]);
+    expect(report.knownGaps.count).toBe(0);
+    expect(report.knownGaps.entries).toEqual([]);
+    expect(report.knownGaps.byFinding).toEqual({});
+  });
+
+  it('confirms the known-gap set has not drifted from the ratchet', () => {
+    const keys = new Set(
+      report.knownGaps.entries.map((gap) => `${gap.themeId} ${gap.token} ${gap.background}`),
+    );
+    expect([...keys].sort()).toEqual([...EXPECTED_GAP_KEYS].sort());
   });
 
   it('audits all seven themes, seven status tokens and eight backgrounds each', () => {
@@ -67,39 +76,23 @@ describe('check-palette-contrast gate', () => {
       expect(theme.statusTokensAudited).toBe(STATUS_TOKENS.length);
       // --bg, --bg-elevated, --bg-bar from ui-theme.ts plus five --surface-*
       expect(theme.backgroundsAudited).toBe(8);
-    }
-  });
-
-  it('reports a violation for every dark-band status token on the light theme', () => {
-    const light = report.themes.find((theme) => theme.themeId === 'nexus-light');
-    expect(light.violations).toBe(EXPECTED_GAP_KEYS.size);
-  });
-
-  it('confines the known gaps to exactly the F-338 snapshot', () => {
-    const keys = new Set(
-      report.knownGaps.entries.map((gap) => `${gap.themeId} ${gap.token} ${gap.background}`),
-    );
-    // A gap that started passing shows up as a missing key here, forcing the
-    // KNOWN_GAPS entry to be deleted instead of quietly going stale.
-    expect([...keys].sort()).toEqual([...EXPECTED_GAP_KEYS].sort());
-    for (const gap of report.knownGaps.entries) {
-      expect(gap.finding).toBe('F-338');
-      expect(gap.ratio).toBeLessThan(gap.floor);
-    }
-    expect(report.knownGaps.byFinding).toEqual({ 'F-338': EXPECTED_GAP_KEYS.size });
-  });
-
-  it('reports no violation at all in the six dark themes', () => {
-    for (const theme of report.themes) {
-      if (theme.themeId === 'nexus-light') continue;
       expect(theme.violations, `${theme.themeId} should clear the floor`).toBe(0);
     }
   });
 
-  it('surfaces F-337: a light --bg with dark --surface-* resolved from :root', () => {
-    const note = report.notes.find((entry) => entry.includes('F-337'));
-    expect(note).toBeDefined();
-    expect(note).toContain('nexus-light');
-    expect(note).toContain('--surface-sidebar');
+  it('detects no light-background/dark-surface inconsistency in any theme', () => {
+    // This is the F-337 detector: the gate emits a note when a theme's --bg is
+    // light but --surface-sidebar resolves to the dark :root value. Empty notes
+    // means every theme's surfaces now agree with its background. The values
+    // themselves are asserted directly in palette-gen.test.ts, which reads
+    // base.css; this asserts the gate's own detection path stays silent.
+    expect(report.notes).toEqual([]);
+  });
+
+  it('keeps every surface token reachable for the audit', () => {
+    // Guards the assumption behind backgroundsAudited === 8: if a surface token
+    // stopped being a plain 6-digit hex the count would drop silently and the
+    // audit would quietly stop covering it.
+    expect(SURFACE_TOKENS).toHaveLength(5);
   });
 });
