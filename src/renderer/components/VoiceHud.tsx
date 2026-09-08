@@ -16,6 +16,7 @@ import {
   stopJarvisSpeech,
 } from '../voice/response-output-gate';
 import { PixelIcon } from './PixelIcon';
+import { VoiceLevelBars } from './VoiceLevelBars';
 
 /**
  * HUD flutuante da JARVIS: fase do pipeline ao vivo (ouvindo → transcrevendo →
@@ -300,6 +301,7 @@ export function VoiceHud() {
         onPointerDown={beginDrag}
       >
         {orb}
+        <VoiceLevelBars visible={status === 'listening'} />
         <span className="voice-hud__mini-label">
           {missingRealtimeKey
             ? 'sem chave'
@@ -451,6 +453,7 @@ export function VoiceHud() {
       </div>
       <div className="voice-hud__shell">
         {orb}
+        <VoiceLevelBars visible={status === 'listening'} />
         <div className="voice-hud__body">
           <span className="voice-hud__label">{label}</span>
           {visibleError ? (

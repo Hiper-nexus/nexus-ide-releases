@@ -232,6 +232,33 @@
     inset 0 0 8px color-mix(in srgb, var(--accent) 34%, transparent);
 }
 
+/* Barrinhas de nível do mic — prova explícita de captura durante o ditado
+   (o orb sozinho é sutil demais segurando Space). Alturas via style inline
+   pelo componente (sem re-render por frame); a transição suaviza a queda. */
+.voice-levelbars {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 20px;
+  padding: 0 2px;
+  color: var(--accent);
+}
+
+.voice-levelbars__bar {
+  width: 3px;
+  min-height: 2px;
+  border-radius: 2px;
+  background: currentColor;
+  opacity: 0.9;
+  transition: height 90ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-levelbars__bar {
+    transition: none;
+  }
+}
+
 .voice-orb {
   position: relative;
   /* Compacto: o orb de 236px era o principal culpado do "tampa o terminal". */
