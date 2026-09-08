@@ -315,6 +315,18 @@ export const RELEASE_0744: AppRelease = {
   ],
 };
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.7',
+  date: '2026-09-08',
+  codename: 'Space que avisa',
+  summary: 'Ditado por Space desarmado mostra toast acionável em vez de morrer em silêncio; copy do preset corrigida.',
+  highlights: [
+    { title: 'Space desarmado avisa', detail: 'Segurar Space com atalho global ou captura bloqueada mostra toast ("Ditado por Space desarmado") com atalho para Configurações → Voz — 1x por pressionamento, com throttle e dedupe.' },
+  ],
+  fixes: [
+    { title: 'Copy do preset Ditado EN', detail: 'O texto dizia que Space não digitava espaço; o correto (discriminador hold) é: toque rápido digita, só o SEGURAR dita.' },
+  ],
+};
+export const RELEASE_0766: AppRelease = {
   version: '0.76.6',
   date: '2026-09-08',
   codename: 'Failover que assenta e voz que mostra',

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.76.7 — Space que avisa
+
+- Ditado por Space desarmado (atalho global ou captura bloqueada) mostra toast acionável em vez de morrer em silêncio.
+- Copy do preset Ditado EN corrigida: toque rápido digita espaço, só o SEGURAR dita.
+
 ## 0.76.6 — Failover que assenta e voz que mostra
 
 - Failover multi-conta (F-511): conta com token vencido e sem renovação é pulada com motivo acionável em vez de queimar uma sessão nova num 401 garantido; conta vencida-mas-curável renova no momento do pin.
