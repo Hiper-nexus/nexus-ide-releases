@@ -315,6 +315,21 @@ export const RELEASE_0744: AppRelease = {
   ],
 };
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.5',
+  date: '2026-09-08',
+  codename: 'Multi-conta e panes que respondem',
+  summary: 'Providers e menu de panes com quantas contas você quiser por CLI, Muse na lista de adapters, e quatro correções de sessão: Claude Max reconhecido no app, Grok sem loop de login e pane pós-missão que sempre responde.',
+  highlights: [
+    { title: 'Multi-conta de verdade', detail: 'Providers ganha cadastro de segunda (e N-ésima) conta por CLI — Codex incluso — com escolha A/B/N no menu de panes e prova de login novo por baseline e identidade de sessão: fechar ou estourar o tempo nunca conta como sucesso.' },
+    { title: 'Muse entra na lista', detail: 'O adapter Muse passa a carregar (manifesto completado e validado): aparece em Providers, Contas e Cotas, detecta a sessão OAuth e abre o login pelo terminal.' },
+    { title: 'Claude Max reconhecido', detail: 'O app empacotado lia o Keychain e confundia negação de leitura com logout. Agora pergunta à própria CLI (`claude auth status`) quando o storage falha — positivo só com atestação viva.' },
+    { title: 'Grok sem loop de login', detail: 'Conta gerenciada com credencial expirada sombreava a sessão nativa válida e forçava device-login a cada abertura. O overlay agora prefere a sessão nativa fresca da mesma conta.' },
+  ],
+  fixes: [
+    { title: 'Pane pós-missão nunca mudo', detail: 'Teclar num orquestrador encerrado após o done sempre responde: confirma a tentativa de religar ou orienta com Reiniciar — repetir tecla no cooldown não some mais em silêncio.' },
+  ],
+};
+export const RELEASE_0764: AppRelease = {
   version: '0.76.4',
   date: '2026-09-07',
   codename: 'Tema claro de verdade',

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.76.5 — Multi-conta e panes que respondem
+
+- Providers e menu de panes com quantas contas você quiser por CLI — segunda conta Codex inclusa — com prova de login novo (fechar ou estourar o tempo nunca conta como sucesso).
+- Adapter Muse entra na lista: Providers, Contas, Cotas e login pelo terminal.
+- Claude Max com sessão Keychain-only passa a ser reconhecido no app empacotado.
+- Grok não pede mais device-login em loop quando a conta gerenciada está com credencial expirada.
+- Teclar num orquestrador encerrado após o done sempre responde (religa ou orienta).
+
 ## 0.76.4 — Tema claro de verdade, e nada de perder o que você escreveu
 
 - `nexus-light` agora é claro por inteiro: cartões, rail, filtros e o gutter do diff ganham superfícies próprias, e as cores de status passam a ser legíveis sobre fundo claro. Antes o tema herdava as superfícies quase pretas do Pink City e os pontos de estado ficavam abaixo do contraste mínimo.
