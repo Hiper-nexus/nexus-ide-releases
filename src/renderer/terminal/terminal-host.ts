@@ -55,7 +55,9 @@ import {
   shouldKickMissionEngineOnDeadPaneKey,
   shouldPrintMissionPaneExitNotice,
   shouldReviveDeadMissionFromPane,
+  terminalDeadPaneFastPathApplies,
 } from './mission-owned-pane-policy';
+import type { TerminalMissionLink } from './mission-owned-pane-policy';
 import { TERMINAL_THEMES } from '../styles/terminal-theme';
 import {
   discardTerminalOutput,
@@ -1283,8 +1285,34 @@ function startSpawn(
           // Pós-missão (ou pane sem vínculo): estado preso nunca silencia a
           // tecla. Missão viva ou desconhecida segue pela rota antiga, com
           // todas as proteções.
+          //
+          // Duas guardas da rota antiga valem aqui também, e F-347 é o que
+          // acontece quando elas faltam:
+          //
+          //   1. `missionStillOwnsPane` — done SEM carimbo do humano ainda é
+          //      revisão, então o coordenador continua dono do pane (F-108).
+          //      `terminalMissionLinkOf` responde 'done' para os dois casos,
+          //      aprovado e aguardando revisão, e os dois predicados discordam
+          //      exatamente onde importa. Sem esta guarda, uma tecla num pane de
+          //      worker de missão concluída-não-aprovada apagava
+          //      `paneMissions[pane.id]` de forma irreversível pela UI, antes de
+          //      o humano revisar.
+          //   2. `paneState !== 'hibernated'` — um pane hibernado tem botão de
+          //      acordar ("Use ☀ para acordar") e não é estado preso; virar
+          //      shell nu na primeira tecla destrói o snapshot sem necessidade.
+          //
+          // O que sobra é o caso que esta rota existe para cobrir: missão
+          // terminal que já não é dona do pane, com estado que a rota antiga
+          // silenciaria. O predicado é puro e testado em
+          // mission-owned-pane-policy.test.ts.
           const terminalLink = terminalMissionLinkOf(pane);
-          if (terminalLink !== 'live-or-unknown') {
+          if (
+            terminalDeadPaneFastPathApplies({
+              link: terminalLink,
+              paneState: paneState(pane.id),
+              missionOwns: missionStillOwnsPane(pane.id, pane),
+            })
+          ) {
             const terminalAction = decideTerminalMissionDeadPaneKey({
               spawnStarted: host.spawnStarted,
               keepReviewChannel:
@@ -2372,13 +2400,6 @@ function missionStillOwnsPane(paneId: string, pane?: PaneModel): boolean {
   if (mission.status === 'running' || mission.status === 'blocked') return true;
   return missionAwaitsOperatorReview(mission);
 }
-
-/**
- * Vínculo da missão para a tecla em pane sem sessão. 'none' = pane livre;
- * 'done'/'failed' = espelhos locais concordam que terminou; qualquer outro
- * caso é tratado como missão viva ou desconhecida (proteções intactas).
- */
-type TerminalMissionLink = 'none' | 'done' | 'failed' | 'live-or-unknown';
 
 function terminalMissionLinkOf(pane: PaneModel): TerminalMissionLink {
   const missionId = missionIdOfPane(pane.id, pane);

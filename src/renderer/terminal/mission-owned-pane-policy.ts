@@ -3,6 +3,8 @@
  * renderer não entrar no beco sync → block → retire → pane oco.
  */
 
+import type { PaneSessionState } from '../../shared/surface-payload-types';
+
 export type StaleAuthorityAction = 'sync-once' | 'unlock-keyboard';
 
 export function decideStaleAuthorityRecovery(input: {
@@ -186,6 +188,49 @@ export function decideExitedPaneKey(input: {
   // missão concluída ainda é o canal da revisão humana — a tecla tenta
   // religá-lo, nunca troca por um shell vazio.
   return input.doneOrchestrator ? 'resume-keyboard' : 'reclaim-shell';
+}
+
+/**
+ * Vínculo da missão para a tecla em pane sem sessão. `'none'` = pane livre;
+ * `'done'`/`'failed'` = os espelhos locais concordam que terminou; qualquer
+ * outro caso é tratado como missão viva ou desconhecida, com as proteções
+ * intactas.
+ *
+ * `'done'` **não distingue aprovado de aguardando revisão** — quem precisa
+ * dessa distinção consulta `missionOwns`, não este tipo.
+ */
+export type TerminalMissionLink = 'none' | 'done' | 'failed' | 'live-or-unknown';
+
+/**
+ * Se a tecla passa pela rota rápida de missão terminal ou cai na rota antiga
+ * (`decideExitedPaneKey`), que é a que tem as proteções completas.
+ *
+ * A rota rápida existe para um caso só: **estado preso**. Pane cuja missão
+ * terminou mas cujo estado não é `'exited'`, onde `decideExitedPaneKey`
+ * devolveria `'ignore'` e o teclado ficaria mudo para sempre. Ela não existe
+ * para atropelar posse de missão nem hibernação, e F-347 é o que acontece quando
+ * atropela:
+ *
+ *   1. `missionOwns` — done SEM carimbo do humano ainda é revisão, então o
+ *      coordenador continua dono do pane (F-108). `link === 'done'` vale para
+ *      aprovado e para aguardando revisão, então os dois predicados discordam
+ *      exatamente onde importa. Sem esta guarda, uma tecla num pane de worker de
+ *      missão concluída-não-aprovada apagava `paneMissions[pane.id]` de forma
+ *      irreversível pela UI, antes de o humano revisar.
+ *   2. `paneState === 'hibernated'` — pane hibernado tem botão de acordar e não
+ *      é estado preso; virar shell nu na primeira tecla descarta o snapshot sem
+ *      necessidade.
+ */
+export function terminalDeadPaneFastPathApplies(input: {
+  readonly link: TerminalMissionLink;
+  /** `paneState(paneId)`; `undefined` quando o pane não tem entrada de estado. */
+  readonly paneState: PaneSessionState | undefined;
+  /** `missionStillOwnsPane(pane.id, pane)`. */
+  readonly missionOwns: boolean;
+}): boolean {
+  if (input.link === 'live-or-unknown') return false;
+  if (input.paneState === 'hibernated') return false;
+  return !input.missionOwns;
 }
 
 /**

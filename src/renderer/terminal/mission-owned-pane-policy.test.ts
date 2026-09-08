@@ -11,6 +11,7 @@ import {
   shouldInterruptBusyWorkerAfterMaestroTurnEnd,
   shouldKickMissionEngineOnDeadPaneKey,
   shouldPrintMissionPaneExitNotice,
+  terminalDeadPaneFastPathApplies,
   latestCivilianDeliverySummary,
   MISSION_HOLD_NOTICE,
   MISSION_OWNED_EXIT_NOTICE,
@@ -609,5 +610,110 @@ describe('decideTerminalMissionDeadPaneKey — pós-missão nunca é mudez', () 
         keepReviewChannel: false,
       }),
     ).toBe('reclaim-shell');
+  });
+});
+
+describe('terminalDeadPaneFastPathApplies — F-347', () => {
+  it('NÃO atropela a posse de missão done que ainda aguarda revisão', () => {
+    // O caso exato do F-347: missão concluída sem carimbo do humano, pane de
+    // worker. missionStillOwnsPane responde true (F-108), então a tecla tem que
+    // cair na rota antiga, que devolve 'resume-keyboard'. Antes desta guarda a
+    // rota rápida disparava e reclaimAsOperatorShell apagava
+    // paneMissions[pane.id] de forma irreversível pela UI.
+    expect(
+      terminalDeadPaneFastPathApplies({
+        link: 'done',
+        paneState: 'exited',
+        missionOwns: true,
+      }),
+    ).toBe(false);
+  });
+
+  it('não atropela posse de missão independentemente do estado do pane', () => {
+    for (const paneState of ['busy', 'exited', 'spawning', undefined] as const) {
+      expect(
+        terminalDeadPaneFastPathApplies({ link: 'done', paneState, missionOwns: true }),
+      ).toBe(false);
+      expect(
+        terminalDeadPaneFastPathApplies({ link: 'failed', paneState, missionOwns: true }),
+      ).toBe(false);
+    }
+  });
+
+  it('aplica quando a missão terminal já não é dona do pane', () => {
+    // Missão done e APROVADA: o operador pode reclamar.
+    expect(
+      terminalDeadPaneFastPathApplies({
+        link: 'done',
+        paneState: 'exited',
+        missionOwns: false,
+      }),
+    ).toBe(true);
+    expect(
+      terminalDeadPaneFastPathApplies({
+        link: 'failed',
+        paneState: 'exited',
+        missionOwns: false,
+      }),
+    ).toBe(true);
+  });
+
+  it('aplica no estado preso, que é o único caso para o qual a rota existe', () => {
+    // Missão terminal, pane sem posse, estado que a rota antiga silenciaria
+    // ('ignore' porque paneState !== 'exited'). Sem a rota rápida o teclado
+    // ficava mudo para sempre.
+    for (const paneState of ['busy', 'spawning', undefined] as const) {
+      expect(
+        terminalDeadPaneFastPathApplies({ link: 'done', paneState, missionOwns: false }),
+      ).toBe(true);
+    }
+  });
+
+  it('não converte pane hibernado em shell na primeira tecla', () => {
+    // Pane hibernado tem botão de acordar e não é estado preso. Vale também
+    // para pane sem vínculo nenhum, que é o caso secundário do F-347.
+    expect(
+      terminalDeadPaneFastPathApplies({
+        link: 'none',
+        paneState: 'hibernated',
+        missionOwns: false,
+      }),
+    ).toBe(false);
+    expect(
+      terminalDeadPaneFastPathApplies({
+        link: 'done',
+        paneState: 'hibernated',
+        missionOwns: false,
+      }),
+    ).toBe(false);
+  });
+
+  it('nunca aplica a missão viva ou desconhecida', () => {
+    for (const paneState of ['busy', 'exited', 'hibernated', undefined] as const) {
+      expect(
+        terminalDeadPaneFastPathApplies({
+          link: 'live-or-unknown',
+          paneState,
+          missionOwns: false,
+        }),
+      ).toBe(false);
+      expect(
+        terminalDeadPaneFastPathApplies({
+          link: 'live-or-unknown',
+          paneState,
+          missionOwns: true,
+        }),
+      ).toBe(false);
+    }
+  });
+
+  it('aplica a pane livre sem vínculo, que é digitável por definição', () => {
+    expect(
+      terminalDeadPaneFastPathApplies({
+        link: 'none',
+        paneState: 'exited',
+        missionOwns: false,
+      }),
+    ).toBe(true);
   });
 });
