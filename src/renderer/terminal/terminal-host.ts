@@ -57,7 +57,11 @@ import {
   shouldReviveDeadMissionFromPane,
   terminalDeadPaneFastPathApplies,
 } from './mission-owned-pane-policy';
-import type { TerminalMissionLink } from './mission-owned-pane-policy';
+import {
+  DEAD_PANE_REVIVE_ATTEMPT_NOTICE,
+  DEAD_PANE_REVIVE_COOLDOWN_NOTICE,
+  type TerminalMissionLink,
+} from './mission-owned-pane-policy';
 import { TERMINAL_THEMES } from '../styles/terminal-theme';
 import {
   discardTerminalOutput,
@@ -618,7 +622,24 @@ async function requestDeadMissionPaneRevive(
   operatorInitiated = false,
 ): Promise<void> {
   if (!shouldReviveDeadMissionFromPane({ operatorInitiated })) return;
-  if (!shouldAttemptDeadPaneRevive(missionId)) return;
+  if (!shouldAttemptDeadPaneRevive(missionId)) {
+    // Repetição dentro do cooldown: em vez de no-op mudo, uma dica — era
+    // este silêncio que lia como "não deixa eu intervir".
+    if (operatorInitiated) {
+      host.term.writeln(
+        `\r\n\x1b[36m${DEAD_PANE_REVIVE_COOLDOWN_NOTICE}\x1b[0m`,
+      );
+    }
+    return;
+  }
+  // Confirmação de recebimento ANTES do trabalho async (não é promessa de
+  // aceite: recusa/falha ganham as linhas próprias abaixo). Sem isto, uma
+  // tentativa lenta parece tecla morta.
+  if (operatorInitiated) {
+    host.term.writeln(
+      `\r\n\x1b[36m${DEAD_PANE_REVIVE_ATTEMPT_NOTICE}\x1b[0m`,
+    );
+  }
   try {
     // Pergunta pendente: não faz o remote call que vira erro vermelho no
     // terminal. A missão só volta quando o operador responde no board.

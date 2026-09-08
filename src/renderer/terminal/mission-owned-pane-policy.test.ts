@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   BLOCKED_RESUME_NOTICE,
+  DEAD_PANE_REVIVE_ATTEMPT_NOTICE,
+  DEAD_PANE_REVIVE_COOLDOWN_NOTICE,
   decideDeadPaneReviveRespawn,
   decideExitedPaneKey,
   decideTerminalMissionDeadPaneKey,
@@ -715,5 +717,20 @@ describe('terminalDeadPaneFastPathApplies — F-347', () => {
         missionOwns: false,
       }),
     ).toBe(true);
+  });
+});
+
+describe('avisos de revive — nenhuma tecla pós-done cai no silêncio', () => {
+  it('a tentativa anuncia recebimento sem prometer aceite', () => {
+    expect(DEAD_PANE_REVIVE_ATTEMPT_NOTICE.length).toBeGreaterThan(0);
+    expect(DEAD_PANE_REVIVE_ATTEMPT_NOTICE).toContain('[nexus]');
+    expect(DEAD_PANE_REVIVE_ATTEMPT_NOTICE).not.toMatch(
+      /religado|concluído|pronto/i,
+    );
+  });
+
+  it('o cooldown repetido orienta em vez de engolir a tecla', () => {
+    expect(DEAD_PANE_REVIVE_COOLDOWN_NOTICE).toContain('[nexus]');
+    expect(DEAD_PANE_REVIVE_COOLDOWN_NOTICE).toContain('Reiniciar');
   });
 });

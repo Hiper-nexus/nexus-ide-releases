@@ -273,6 +273,17 @@ export function pruneWouldLeaveOperatorMute(
 export const MISSION_OWNED_EXIT_NOTICE =
   '[nexus] agente entregou. Digite no Maestro para pedir um ajuste — a missão não encerrou.';
 
+/**
+ * Pós-done/morto, nenhuma tecla cai no silêncio: a tentativa anuncia na
+ * hora (o aceite/erro vem depois pelas linhas existentes) e a repetição
+ * dentro do cooldown de 15s ganha dica em vez de no-op mudo — era assim
+ * que "terminou a missão e não deixa eu intervir" se apresentava.
+ */
+export const DEAD_PANE_REVIVE_ATTEMPT_NOTICE =
+  '[nexus] tecla recebida — tentando religar o Maestro neste pane…';
+export const DEAD_PANE_REVIVE_COOLDOWN_NOTICE =
+  '[nexus] tentativa recente em curso — aguarde concluir ou use Reiniciar na toolbar.';
+
 function clampDeliverySummary(raw: string): string | null {
   const line = raw.replace(/\s+/g, ' ').trim();
   if (line.length === 0 || line.startsWith('{')) return null;
