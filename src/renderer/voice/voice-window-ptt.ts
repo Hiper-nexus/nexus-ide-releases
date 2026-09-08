@@ -35,6 +35,11 @@ export interface WindowPttOptions {
   isEnabled: () => boolean;
   /** Limiar de hold em ms; default `HOLD_TO_TALK_THRESHOLD_MS`. */
   getHoldMs?: () => number;
+  /**
+   * Space pressionado com o ditado desarmado. UMA chamada por
+   * pressionamento (sem repeat) para o chamador explicar o porquê.
+   */
+  onDisabledKeyDown?: () => void;
 }
 
 /** Elements where Space must keep its normal meaning (forms, settings). */
@@ -124,7 +129,22 @@ export function attachWindowPtt(
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
-    if (!options.isEnabled()) return;
+    if (!options.isEnabled()) {
+      // Antes o Space morria aqui em silêncio (atalho global ou captura
+      // bloqueada) e o operador achava que o ditado estava quebrado.
+      if (
+        !e.repeat &&
+        !e.defaultPrevented &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        codeMatchesPttKey(e.code, options.getKeyCode()) &&
+        !shouldIgnoreWindowPttTarget(e.target)
+      ) {
+        options.onDisabledKeyDown?.();
+      }
+      return;
+    }
     if (e.defaultPrevented) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (!codeMatchesPttKey(e.code, options.getKeyCode())) return;

@@ -1066,7 +1066,7 @@ return (
                     <p className="voice-settings__hint">
                       Segure Espaço, fale e solte para enviar o texto em inglês ao terminal.
                       Requer uma chave Groq.
-                      Com este modo, Space não digita espaço no terminal.
+                      Toque rápido continua digitando espaço — só o SEGURAR dita.
                     </p>
                   </div>
 

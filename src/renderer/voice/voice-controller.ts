@@ -107,6 +107,8 @@ import {
   resetOfferedLiveMicFramesThisTurn,
 } from './live-mute-rescue';
 import { NarrationQueue } from './narration-queue';
+import { useToastStore } from '../state/toast-store';
+import { useProductNavigationStore } from '../state/product-navigation-store';
 import {
   isJarvisNarrationHalted,
   registerNarrationControl,
@@ -160,6 +162,37 @@ const CLICK_WAKE_MIN_LISTEN_MS = 1_125;
 const WAKE_MAX_MS = 15_000;
 const CLICK_WAKE_MAX_MS = 22_000;
 const PTT_HOLD_MAX_MS = 60_000;
+/** Ditado desarmado: avisa no máximo 1x a cada 30s (sem spam por pressionar). */
+const DISABLED_SPACE_HINT_MIN_INTERVAL_MS = 30_000;
+let lastDisabledSpaceHintAt = 0;
+
+/**
+ * Space segurado com o ditado desarmado (caso de campo: atalho global ⌘⇧Space
+ * e o operador segurando Space nu — antes morria em silêncio). Toast
+ * acionável com dedupe (substitui em vez de empilhar).
+ */
+function notifySpaceDictationBlocked(): void {
+  const now = Date.now();
+  if (now - lastDisabledSpaceHintAt < DISABLED_SPACE_HINT_MIN_INTERVAL_MS) {
+    return;
+  }
+  lastDisabledSpaceHintAt = now;
+  const info = useVoiceStore.getState().info;
+  const captureBlocked = !info || info.captureAllowed === false;
+  useToastStore.getState().push('info', 'Ditado por Space desarmado', {
+    detail: captureBlocked
+      ? 'A captura de voz está bloqueada. Verifique o microfone em Configurações → Voz.'
+      : 'O atalho atual é global (⌘⇧Space). Para ditar segurando Space, use tecla nua — preset "Ditado EN (Space + Groq)" ou Atalho = Space.',
+    action: {
+      label: 'Abrir Voz',
+      onClick: () => {
+        useProductNavigationStore.getState().openSettings('voice');
+      },
+    },
+    dedupeKey: 'voice-space-scope',
+    ttlMs: 20_000,
+  });
+}
 // After a Live response, a person naturally needs a moment to formulate the
 // next request. Keep the warm Gemini turn open long enough to feel conversational
 // without leaving the mic in an indefinite ambient-capture state.
@@ -1441,6 +1474,7 @@ export function useVoiceController(active = true): void {
             isWindowScopedShortcut(info.shortcut ?? '')
           );
         },
+        onDisabledKeyDown: notifySpaceDictationBlocked,
       },
     );
     // Botão de microfone em UI (wizard de missão): MESMO caminho do Space

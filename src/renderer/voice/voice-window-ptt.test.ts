@@ -49,24 +49,29 @@ describe('shouldIgnoreWindowPttTarget', () => {
 describe('attachWindowPtt', () => {
   const HOLD_MS = 250;
 
-  function attach(overrides: {
-    onStart?: () => void;
-    onStop?: () => void;
-    emitSpace?: (target: EventTarget | null, count: number) => void;
-    isEnabled?: () => boolean;
-  } = {}) {
+  function attach(
+    overrides: {
+      onStart?: () => void;
+      onStop?: () => void;
+      emitSpace?: (target: EventTarget | null, count: number) => void;
+      isEnabled?: () => boolean;
+      onDisabledKeyDown?: () => void;
+    } = {},
+  ) {
     const onStart = vi.fn(overrides.onStart);
     const onStop = vi.fn(overrides.onStop);
     const emitSpace = vi.fn(overrides.emitSpace);
+    const onDisabledKeyDown = vi.fn(overrides.onDisabledKeyDown);
     const dispose = attachWindowPtt(
       { onStart, onStop, emitSpace },
       {
         getKeyCode: () => 'Space',
         isEnabled: overrides.isEnabled ?? (() => true),
         getHoldMs: () => HOLD_MS,
+        onDisabledKeyDown,
       },
     );
-    return { onStart, onStop, emitSpace, dispose };
+    return { onStart, onStop, emitSpace, onDisabledKeyDown, dispose };
   }
 
   function keydown(repeat = false): KeyboardEvent {
@@ -186,6 +191,43 @@ describe('attachWindowPtt', () => {
     keyup();
     expect(onStart).not.toHaveBeenCalled();
     expect(emitSpace).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it('Space desarmado avisa UMA vez por pressionamento (sem repeat)', () => {
+    const { onDisabledKeyDown, dispose } = attach({
+      isEnabled: () => false,
+    });
+    keydown();
+    keydown(true);
+    keydown(true);
+    keyup();
+    expect(onDisabledKeyDown).toHaveBeenCalledTimes(1);
+    dispose();
+  });
+
+  it('Space desarmado em formulário não avisa (espaço é digitação)', () => {
+    const { onDisabledKeyDown, dispose } = attach({
+      isEnabled: () => false,
+    });
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+    const event = new KeyboardEvent('keydown', {
+      code: 'Space',
+      bubbles: true,
+      cancelable: true,
+    });
+    input.dispatchEvent(event);
+    expect(onDisabledKeyDown).not.toHaveBeenCalled();
+    input.remove();
+    dispose();
+  });
+
+  it('habilitado nunca avisa', () => {
+    const { onDisabledKeyDown, dispose } = attach();
+    keydown();
+    keyup();
+    expect(onDisabledKeyDown).not.toHaveBeenCalled();
     dispose();
   });
 
