@@ -27,9 +27,11 @@
  *
  * which rounds to the doctrine's 0.70/55% and 0.72/90%. `generateStatusHex`
  * reproduces all seven shipped dark tokens bit-for-bit from those two bands and
- * the hues below — see palette-gen.test.ts. The light bands (0.50/60% and
- * 0.62/90%) are included because the same rule generates them, but base.css
- * does not use them yet: see docs/qa/items/F-338.md before wiring them.
+ * the hues below — see palette-gen.test.ts. The light bands (0.50/60% for pills,
+ * 0.555/90% for dots) generate the `[data-theme='nexus-light']` block in
+ * base.css; F-337 and F-338 are closed. The dot band's lightness is solved
+ * against the light surface ramp rather than inherited, and
+ * LIGHT_STATUS_DOT_BAND documents why.
  *
  * Hues were measured out of the shipped tokens and then verified to reproduce
  * them; the exact windows are documented on STATUS_HUES. Regenerate the whole
@@ -274,7 +276,12 @@ export const SHIPPED_DARK_STATUS_TOKENS: readonly StatusTokenSpec[] = Object.fre
   { token: '--status-dot-warning', hue: 'warning', band: DARK_STATUS_DOT_BAND },
 ]);
 
-/** The same rule applied to the light band. Not yet used by base.css. */
+/**
+ * The same rule applied to the light bands. This is what the
+ * `[data-theme='nexus-light']` block in base.css declares; palette-gen.test.ts
+ * asserts the two agree token for token, so changing a band without
+ * regenerating the CSS fails.
+ */
 export const GENERATED_LIGHT_STATUS_TOKENS: readonly StatusTokenSpec[] = Object.freeze([
   { token: '--status-success', hue: 'success', band: LIGHT_STATUS_BAND },
   { token: '--status-danger', hue: 'danger', band: LIGHT_STATUS_BAND },
