@@ -80,13 +80,26 @@ describe('check-palette-contrast gate', () => {
     }
   });
 
-  it('detects no light-background/dark-surface inconsistency in any theme', () => {
-    // This is the F-337 detector: the gate emits a note when a theme's --bg is
-    // light but --surface-sidebar resolves to the dark :root value. Empty notes
-    // means every theme's surfaces now agree with its background. The values
-    // themselves are asserted directly in palette-gen.test.ts, which reads
-    // base.css; this asserts the gate's own detection path stays silent.
-    expect(report.notes).toEqual([]);
+  it('reports exactly the themes that draw on a surface ramp belonging to another theme', () => {
+    // F-341. --surface-0 is the page-level surface, so a theme whose --bg sits
+    // far from the --surface-0 it resolves to is rendering cards and rails on
+    // somebody else's ramp. Snapshotted rather than asserted empty: nexus-light
+    // and pink-city are coherent by construction, and these four are the known
+    // incoherent set. A theme that becomes coherent fails here until it is
+    // removed from the list, which is the point.
+    const flagged = report.notes.map((note) => note.split(':')[0]).sort();
+    expect(flagged).toEqual(['dracula', 'nexus-gray', 'nexus-red', 'solarized-dark']);
+    for (const note of report.notes) {
+      expect(note).toContain('F-341');
+    }
+  });
+
+  it('leaves the two coherent themes unflagged', () => {
+    // pink-city defines the ramp (surface-0 === bg === #080709) and nexus-light
+    // now generates its own (surface-0 === bg === #f7f8fb, F-337).
+    const flagged = report.notes.map((note) => note.split(':')[0]);
+    expect(flagged).not.toContain('nexus-pink-city');
+    expect(flagged).not.toContain('nexus-light');
   });
 
   it('keeps every surface token reachable for the audit', () => {

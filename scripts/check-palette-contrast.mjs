@@ -28,13 +28,21 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   auditContrast,
-  contrastRatio,
+  hexToOklch,
   NON_TEXT_CONTRAST_FLOOR,
 } from '../src/renderer/styles/palette-gen.ts';
 import { PALETTES } from '../src/renderer/styles/ui-theme.ts';
 
 const repositoryRoot = process.cwd();
 const BASE_CSS = path.join(repositoryRoot, 'src/renderer/styles/base.css');
+
+/**
+ * Largest OKLCH lightness difference tolerated between a theme's `--bg` and the
+ * `--surface-0` it resolves to. Derived from the measured spread across the
+ * seven shipped themes, not chosen: the two coherent ones are 0.0000, the
+ * near-black variant is 0.0188, and the four incoherent ones start at 0.0315.
+ */
+const SURFACE_BACKGROUND_MAX_LIGHTNESS_DRIFT = 0.02;
 
 /** The tokens DESIGN.md §2 documents as holding a contrast floor. */
 const STATUS_TOKENS = [
@@ -198,17 +206,25 @@ function main() {
       }
     }
 
-    // F-337 evidence: a light theme whose surfaces are still the dark :root
-    // values. Reported as a note because those pairs are dark-on-dark and pass
-    // the floor; the defect is the inconsistency, not a contrast failure.
-    const backgroundIsLight = contrastRatio(palette.bg, '#000000') > contrastRatio(palette.bg, '#ffffff');
-    const sidebar = resolveCssToken(root, themeBlock, '--surface-sidebar');
-    if (backgroundIsLight && sidebar && isHex(sidebar)) {
-      const surfaceIsDark = contrastRatio(sidebar, '#ffffff') > contrastRatio(sidebar, '#000000');
-      if (surfaceIsDark) {
+    // Surface/background coherence. --surface-0 IS the page-level surface: in
+    // pink-city it is byte-identical to --bg (#080709) and in nexus-light it is
+    // identical to --bg (#f7f8fb). A theme whose --surface-0 resolves far from
+    // its own --bg is drawing cards, rails and hovers on a ramp designed for a
+    // different theme. Reported as a note rather than a finding: the pairs share
+    // a polarity so they clear the contrast floor, and the defect is visual
+    // coherence, not legibility. 0.02 admits the near-black variants
+    // (nexus-dark measures 0.0188) and flags the genuinely divergent ones
+    // (nexus-red 0.0315, nexus-gray 0.0647, solarized-dark 0.1361,
+    // dracula 0.1570). See F-341.
+    const surface0 = resolveCssToken(root, themeBlock, '--surface-0');
+    if (surface0 && isHex(surface0) && isHex(palette.bg)) {
+      const drift = Math.abs(hexToOklch(surface0).l - hexToOklch(palette.bg).l);
+      if (drift > SURFACE_BACKGROUND_MAX_LIGHTNESS_DRIFT) {
         notes.push(
-          `${themeId}: --bg is light (${palette.bg}) but --surface-sidebar resolves to the ` +
-          `dark :root value (${sidebar}); no theme overrides --surface-*. See F-337.`,
+          `${themeId}: --bg is ${palette.bg} but --surface-0 resolves to ${surface0} ` +
+          `(OKLCH lightness drift ${drift.toFixed(4)}, over the ` +
+          `${SURFACE_BACKGROUND_MAX_LIGHTNESS_DRIFT} budget); this theme draws on the ` +
+          `pink-city surface ramp. See F-341.`,
         );
       }
     }
