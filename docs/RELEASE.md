@@ -10,7 +10,7 @@ os gates no mesmo commit da tag e envia os artefatos diretamente pelo alvo
 não depende do repositório inferido pelo diretório atual.
 
 O runtime de release também é autoridade versionada: use exatamente Node
-`22.23.1`, conforme `package.json > nexusRelease.node`. Outro patch de Node 22
+`22.22.3`, conforme `package.json > nexusRelease.node`. Outro patch de Node 22
 falha antes da build.
 
 O runbook canônico, incluindo cadastro interativo da credencial no Keychain,
