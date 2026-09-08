@@ -70,6 +70,31 @@ export function claudeBlobNeedsRefresh(
 }
 
 /**
+ * Access token com expiresAt conhecido e já vencido (além do skew) E sem
+ * refresh token utilizável: ninguém consegue renovar este blob — nem o
+ * sweeper (`claudeBlobNeedsRefresh` devolve null sem refresh token), nem o
+ * CLI (token de env não é refrescado). Escalar este blob para um spawn é
+ * 401 garantido queimando uma sessão nova. Sem expiresAt confiável não há
+ * juízo (presença continua valendo) — o 401 de runtime com cooldown segue
+ * como backstop para expiração indetectável (revogação, rotação externa).
+ */
+export function claudeBlobIsExpiredUnhealable(
+  blob: string,
+  now: number,
+): boolean {
+  const parsed = parseBlob(blob);
+  if (!parsed) return false;
+  const refreshToken = parsed.oauth.refreshToken;
+  if (typeof refreshToken === 'string' && refreshToken.length > 0) return false;
+  const expiresAt = parsed.oauth.expiresAt;
+  return (
+    typeof expiresAt === 'number' &&
+    Number.isFinite(expiresAt) &&
+    expiresAt - now <= CLAUDE_REFRESH_SKEW_MS
+  );
+}
+
+/**
  * Renova o blob via token endpoint. Devolve o blob ATUALIZADO (JSON string,
  * refresh token rotacionado preservado) ou null em falha — o chamador mantém
  * o blob antigo e o comportamento fica igual ao de hoje.

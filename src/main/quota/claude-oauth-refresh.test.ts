@@ -3,6 +3,7 @@ import {
   CLAUDE_CODE_CLIENT_ID,
   CLAUDE_OAUTH_TOKEN_URL,
   CLAUDE_REFRESH_SKEW_MS,
+  claudeBlobIsExpiredUnhealable,
   claudeBlobNeedsRefresh,
   refreshClaudeOauthBlob,
 } from './claude-oauth-refresh';
@@ -46,6 +47,42 @@ describe('claudeBlobNeedsRefresh', () => {
       claudeBlobNeedsRefresh(blob({ accessToken: 'a', expiresAt: NOW - 1 }), NOW),
     ).toBeNull();
     expect(claudeBlobNeedsRefresh('not json', NOW)).toBeNull();
+  });
+});
+
+describe('claudeBlobIsExpiredUnhealable (F-511)', () => {
+  it('vencido sem refresh = 401 garantido: verdadeiro', () => {
+    expect(
+      claudeBlobIsExpiredUnhealable(
+        blob({ accessToken: 'stale', expiresAt: NOW - 1000 }),
+        NOW,
+      ),
+    ).toBe(true);
+  });
+
+  it('vencido COM refresh = curável pelo sweeper/failover: falso', () => {
+    expect(
+      claudeBlobIsExpiredUnhealable(
+        blob({ accessToken: 'stale', refreshToken: 'r', expiresAt: NOW - 1000 }),
+        NOW,
+      ),
+    ).toBe(false);
+  });
+
+  it('fresco sem refresh: falso (presença continua valendo)', () => {
+    expect(
+      claudeBlobIsExpiredUnhealable(
+        blob({ accessToken: 'a', expiresAt: NOW + 2 * CLAUDE_REFRESH_SKEW_MS }),
+        NOW,
+      ),
+    ).toBe(false);
+  });
+
+  it('sem expiresAt confiável não há juízo: falso', () => {
+    expect(
+      claudeBlobIsExpiredUnhealable(blob({ accessToken: 'a' }), NOW),
+    ).toBe(false);
+    expect(claudeBlobIsExpiredUnhealable('not json', NOW)).toBe(false);
   });
 });
 

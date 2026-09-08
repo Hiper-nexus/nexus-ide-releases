@@ -77,12 +77,20 @@ vi.mock('../adapters/claude-credential', () => ({
   },
 }));
 
-vi.mock('../quota/claude-oauth-refresh', () => ({
-  claudeBlobNeedsRefresh: (blob: string, now: number) =>
-    deps.needsRefresh(blob, now),
-  refreshClaudeOauthBlob: (blob: string, now: number) =>
-    deps.refreshBlob(blob, now),
-}));
+vi.mock('../quota/claude-oauth-refresh', async () => {
+  // Lógica pura do helper de vivacidade é real (testada no próprio módulo);
+  // só o refresh de rede fica sob controle do teste.
+  const actual = await vi.importActual<
+    typeof import('../quota/claude-oauth-refresh')
+  >('../quota/claude-oauth-refresh');
+  return {
+    claudeBlobIsExpiredUnhealable: actual.claudeBlobIsExpiredUnhealable,
+    claudeBlobNeedsRefresh: (blob: string, now: number) =>
+      deps.needsRefresh(blob, now),
+    refreshClaudeOauthBlob: (blob: string, now: number) =>
+      deps.refreshBlob(blob, now),
+  };
+});
 
 vi.mock('../adapters/managed-credentials', async () => {
   const actual = await vi.importActual<typeof import('../adapters/managed-credentials')>(
@@ -97,6 +105,7 @@ vi.mock('../adapters/managed-credentials', async () => {
 });
 
 import {
+  accountHasFailoverCredential,
   activateAccount,
   activeClaudeAuthEnv,
   addActiveSessionAccount,
@@ -107,6 +116,7 @@ import {
   hasRecentClaudeRefreshFailure,
   initAccountStore,
   isAuthCooldownReason,
+  listAccounts,
   listAccountInfos,
   onAccountsChange,
   prepareAccountForSpawn,
@@ -338,6 +348,64 @@ describe('addActiveSessionAccount não duplica o mesmo assinante', () => {
     const again = addActiveSessionAccount('claude', 'who@example.test');
     expect(again!.id).toBe(legacy!.id);
     expect(again!.email).toBe('who@example.test');
+  });
+});
+
+describe('F-511: secundária com token morto não queima sessão', () => {
+  /** Vault com access expirado e SEM refresh: ninguém renova (caso de campo). */
+  function deadBlob(): string {
+    return JSON.stringify({
+      claudeAiOauth: { accessToken: 'dead', expiresAt: Date.now() - 60_000 },
+    });
+  }
+
+  function freshBlob(): string {
+    return JSON.stringify({
+      claudeAiOauth: {
+        accessToken: 'live',
+        expiresAt: Date.now() + 4 * 60 * 60 * 1000,
+      },
+    });
+  }
+
+  afterEach(() => {
+    for (const a of listAccounts('claude')) clearClaudeRefreshFailure(a.id);
+  });
+
+  it('prepare recusa secundária vencida-sem-refresh com motivo acionável', () => {
+    const a = addClaudeAccount('Conta B', 'b@example.test', deadBlob());
+    deps.activeEmail = 'native@example.test'; // B é secundária
+    const result = prepareAccountForSpawn('claude', a.id);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toContain('entre novamente');
+  });
+
+  it('pick do failover pula a conta morta', () => {
+    const a = addClaudeAccount('Conta B', 'b@example.test', deadBlob());
+    deps.activeEmail = 'native@example.test';
+    expect(accountHasFailoverCredential(a)).toBe(false);
+  });
+
+  it('secundária fresca sem refresh continua spawnável (presença vale)', () => {
+    const a = addClaudeAccount('Conta B', 'b@example.test', freshBlob());
+    deps.activeEmail = 'native@example.test';
+    expect(accountHasFailoverCredential(a)).toBe(true);
+    expect(prepareAccountForSpawn('claude', a.id).ok).toBe(true);
+  });
+
+  it('secundária vencida COM refresh não é recusada (failover cura no pin)', () => {
+    const withRefresh = JSON.stringify({
+      claudeAiOauth: {
+        accessToken: 'stale',
+        refreshToken: 'refresh-stale',
+        expiresAt: Date.now() - 60_000,
+      },
+    });
+    const a = addClaudeAccount('Conta B', 'b@example.test', withRefresh);
+    deps.activeEmail = 'native@example.test';
+    expect(accountHasFailoverCredential(a)).toBe(true);
+    expect(prepareAccountForSpawn('claude', a.id).ok).toBe(true);
   });
 });
 

@@ -93,6 +93,7 @@ vi.mock('../persistence/account-store', () => ({
     probe: false,
   })),
   adoptNativeAccountForFailover: vi.fn(() => null),
+  ensureFreshClaudeSubscription: vi.fn(async () => false),
   isAccountBlockedForScope: vi.fn(() => false),
   setCooldown: accountMocks.setCooldown,
   prepareAccountForSpawn: vi.fn((adapterId: string, id: string) => {
@@ -173,6 +174,15 @@ function addPane(options: {
 
 const renderers: Renderer[] = [];
 
+/**
+ * F-511: performSwitch é async (heal-before-pin da secundária Claude com
+ * corrida de 15s contra o refresh de rede). Os efeitos do switch assentam em
+ * microtasks — este flush drena a cadeia sem avançar os fake timers.
+ */
+async function settleFailover(): Promise<void> {
+  for (let i = 0; i < 25; i += 1) await Promise.resolve();
+}
+
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(100_000);
@@ -225,7 +235,7 @@ describe('account failover authority and lifecycle', () => {
     );
     expect(accountMocks.setCooldown).not.toHaveBeenCalled();
   });
-  it('emits only to the exact pane owner across projects with colliding pane ids', () => {
+  it('emits only to the exact pane owner across projects with colliding pane ids', async () => {
     const scopeA = testProjectScope();
     const scopeB = testProjectScope({
       installationId: 'installation-b',
@@ -256,6 +266,7 @@ describe('account failover authority and lifecycle', () => {
     });
 
     ptyMocks.dataTaps[0]('session-a', 'LIMIT');
+    await settleFailover();
 
     expect(windowA.send).toHaveBeenCalledWith(
       ACCOUNT_CHANNELS.failover,
@@ -427,6 +438,7 @@ describe('account failover authority and lifecycle', () => {
     });
 
     ptyMocks.dataTaps[0]('session-719', 'LIMIT');
+    await settleFailover();
 
     expect(accountMocks.setCooldown).toHaveBeenCalledWith(
       'account-a',
@@ -444,7 +456,7 @@ describe('account failover authority and lifecycle', () => {
     );
   });
 
-  it('coalesces multi-pane bursts on the same exhausted account to one target', () => {
+  it('coalesces multi-pane bursts on the same exhausted account to one target', async () => {
     const scope = testProjectScope();
     const owner = renderer(606);
     renderers.push(owner);
@@ -467,6 +479,7 @@ describe('account failover authority and lifecycle', () => {
 
     ptyMocks.dataTaps[0]!('sess-1', 'LIMIT');
     ptyMocks.dataTaps[0]!('sess-2', 'LIMIT');
+    await settleFailover();
 
     const sends = owner.send.mock.calls.filter(
       (c) => c[0] === ACCOUNT_CHANNELS.failover,
@@ -537,6 +550,7 @@ describe('account failover authority and lifecycle', () => {
       .mockImplementationOnce(() => ({ account: accountC, probe: false }));
 
     ptyMocks.dataTaps[0]!('sess-prep', 'LIMIT');
+    await settleFailover();
 
     expect(owner.send).toHaveBeenCalledWith(
       ACCOUNT_CHANNELS.failover,
@@ -654,6 +668,7 @@ describe('espera-pela-irmã + cooldown escopado (C1, derivado do oh-my-pi)', () 
     }));
 
     ptyMocks.dataTaps[0]!('sess-808', 'LIMIT');
+    await settleFailover();
 
     expect(owner.send).toHaveBeenCalledWith(
       ACCOUNT_CHANNELS.failover,
@@ -668,6 +683,7 @@ describe('espera-pela-irmã + cooldown escopado (C1, derivado do oh-my-pi)', () 
 
     // Dispara a espera-pela-irmã: o pick default volta a devolver account-b.
     vi.advanceTimersByTime(31_000);
+    await settleFailover();
 
     const sends = owner.send.mock.calls.filter(
       (c) => c[0] === ACCOUNT_CHANNELS.failover,
@@ -722,6 +738,7 @@ describe('espera-pela-irmã + cooldown escopado (C1, derivado do oh-my-pi)', () 
       vi.mocked(prepareAccountForSpawn).mock.calls.length;
 
     ptyMocks.dataTaps[0]!('sess-810', 'LIMIT');
+    await settleFailover();
 
     expect(owner.send).toHaveBeenCalledWith(
       ACCOUNT_CHANNELS.failover,
@@ -774,8 +791,10 @@ describe('espera-pela-irmã + cooldown escopado (C1, derivado do oh-my-pi)', () 
     }));
 
     ptyMocks.dataTaps[0]!('sess-811', 'LIMIT');
+    await settleFailover();
     ptyMocks.exitTaps[0]!('sess-811');
     vi.advanceTimersByTime(120_000);
+    await settleFailover();
 
     const sends = owner.send.mock.calls.filter(
       (c) => c[0] === ACCOUNT_CHANNELS.failover,
@@ -799,6 +818,7 @@ describe('espera-pela-irmã + cooldown escopado (C1, derivado do oh-my-pi)', () 
     );
 
     ptyMocks.dataTaps[0]!('sess-812', 'LIMIT');
+    await settleFailover();
 
     expect(accountMocks.setCooldown).toHaveBeenCalledWith(
       'account-a',
@@ -826,6 +846,7 @@ describe('espera-pela-irmã + cooldown escopado (C1, derivado do oh-my-pi)', () 
     );
 
     ptyMocks.dataTaps[0]!('sess-812', 'LIMIT');
+    await settleFailover();
 
     expect(accountMocks.setCooldown).toHaveBeenCalledWith(
       'account-a',
@@ -971,6 +992,7 @@ describe('disjuntor de morte instantânea (401-loop multi-conta)', () => {
 
     // 1ª morte instantânea: legítima (pane aberto em conta morta cai na irmã).
     ptyMocks.dataTaps[0]!('sess-instant-1', 'LIMIT 401');
+    await settleFailover();
     expect(owner.send).toHaveBeenCalledWith(
       ACCOUNT_CHANNELS.failover,
       expect.objectContaining({
@@ -990,6 +1012,7 @@ describe('disjuntor de morte instantânea (401-loop multi-conta)', () => {
     });
     owner.send.mockClear();
     ptyMocks.dataTaps[0]!('sess-instant-2', 'LIMIT 401');
+    await settleFailover();
     expect(owner.send).toHaveBeenCalledWith(
       ACCOUNT_CHANNELS.failover,
       expect.objectContaining({
@@ -1029,7 +1052,7 @@ describe('disjuntor de morte instantânea (401-loop multi-conta)', () => {
     renderers.push(owner);
     bindResolvedRendererWorkspaceScope(owner, scope);
     registerFailoverListener(owner);
-    const fire = (n: number) => {
+    const fire = async (n: number) => {
       addPane({
         owner,
         paneId: `pane-trip-${n}`,
@@ -1037,12 +1060,13 @@ describe('disjuntor de morte instantânea (401-loop multi-conta)', () => {
         scope,
       });
       ptyMocks.dataTaps[0]!(`sess-trip-${n}`, 'LIMIT 401');
+      await settleFailover();
     };
-    fire(1);
-    fire(2);
+    await fire(1);
+    await fire(2);
     // 3ª morte seguida: trava de novo E emite de novo (sem janela muda —
     // o toast deduplica no lugar, mas o pane nunca morre em silêncio).
-    fire(3);
+    await fire(3);
     const trips = owner.send.mock.calls.filter(
       (c) =>
         c[0] === ACCOUNT_CHANNELS.failover &&
@@ -1052,7 +1076,8 @@ describe('disjuntor de morte instantânea (401-loop multi-conta)', () => {
     // Re-login: a contagem antiga não vale contra a credencial nova.
     resetInstantAuthDeaths('claude');
     owner.send.mockClear();
-    fire(4);
+    await fire(4);
+    await settleFailover();
     expect(owner.send).toHaveBeenCalledWith(
       ACCOUNT_CHANNELS.failover,
       expect.objectContaining({

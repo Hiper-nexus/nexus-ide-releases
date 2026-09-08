@@ -28,6 +28,7 @@ import {
 import type { ProviderQuotaEntry } from '../../shared/quota-types';
 import {
   adoptNativeAccountForFailover,
+  ensureFreshClaudeSubscription,
   getAccount,
   getActiveAccount,
   isAccountBlockedForScope,
@@ -420,7 +421,27 @@ interface SwitchRequest {
  * sondagem last-resort) → prepare (com um alternate) → evento. Quando nada
  * está livre, agenda a espera-pela-irmã em vez de desistir.
  */
-function performSwitch(req: SwitchRequest): void {
+/**
+ * F-511: renova a secundária Claude ANTES do pin. `ensureFreshClaudeSubscription`
+ * é best-effort mas o refresh é rede sem timeout próprio — a corrida de 15s
+ * impede um provider lento de travar o failover (o refresh segue em
+ * background e o vault fica fresco para a próxima tentativa).
+ */
+async function healClaudeSecondaryBeforePin(
+  accountId: string,
+  now: number,
+): Promise<void> {
+  try {
+    await Promise.race([
+      ensureFreshClaudeSubscription(accountId, now),
+      new Promise((resolve) => setTimeout(resolve, 15_000)),
+    ]);
+  } catch {
+    // best-effort: o prepare abaixo decide com o que houver no vault.
+  }
+}
+
+async function performSwitch(req: SwitchRequest): Promise<void> {
   const { key, authority, paneId, adapterId, hit, now, current, attempt } = req;
   const fromLabel = current?.label ?? adapterId;
   const fromAccountId = current?.id;
@@ -463,10 +484,34 @@ function performSwitch(req: SwitchRequest): void {
     nextUnblockAtMs = selection.nextUnblockAtMs;
   }
 
-  // Pin-only prepare; never record coalesce until a target is spawnable.
-  // On prepare failure, drop poisoned coalesce and try one alternate.
+  // F-511: performSwitch é async (heal-before-pin): sem este registro
+  // antecipado, panes da mesma rajada não veriam a decisão do primeiro
+  // switch (o registro pós-prepare só acontece depois do await) e cada um
+  // repetia o pick. Provisório de propósito: o prepare abaixo valida o alvo
+  // e o caminho existente apaga a entrada na falha — o reuse revalida conta
+  // e escopo de qualquer forma. Sondagens nunca entram (como no registro
+  // pós-prepare): é UMA request de teste, não destino da rajada.
+  if (next && !probe && !coalesced) {
+    coalesceByFrom.set(coalesceKey, {
+      toAccountId: next.id,
+      toLabel: next.label,
+      expiresAt: now + COALESCE_MS,
+    });
+  }
+
+  // Pin-only prepare. O coalesce já foi registrado de forma provisória no
+  // pick (visibilidade para a rajada concorrente); aqui, na falha do
+  // prepare, a entrada é descartada e tenta-se UMA alternativa.
   let prepareError: string | undefined;
   if (next) {
+    // F-511: secundária Claude com access token vencido mas refresh vivo
+    // morria no 401 do pane porque o sweeper (15min) ainda não tinha
+    // renovado. Renova aqui, no momento do pin; sem refresh no blob ou com
+    // refresh morto, o prepare abaixo recusa com motivo acionável em vez
+    // de queimar a sessão.
+    if (next.adapterId === 'claude') {
+      await healClaudeSecondaryBeforePin(next.id, now);
+    }
     let prepared = prepareAccountForSpawn(adapterId, next.id, now, {
       allowCoolingProbe: probe,
     });
@@ -490,6 +535,9 @@ function performSwitch(req: SwitchRequest): void {
         nextUnblockAtMs = alternate.nextUnblockAtMs;
       }
       if (next) {
+        if (next.adapterId === 'claude') {
+          await healClaudeSecondaryBeforePin(next.id, now);
+        }
         prepared = prepareAccountForSpawn(adapterId, next.id, now);
         if (!prepared.ok) {
           prepareError = prepared.error;
@@ -681,7 +729,7 @@ function fireScheduledRetry(
   const pinned = pane.accountId ? getAccount(pane.accountId) : null;
   const current =
     pinned?.adapterId === adapterId ? pinned : getActiveAccount(adapterId);
-  performSwitch({
+  void performSwitch({
     key,
     authority,
     paneId: pane.paneId,
@@ -835,7 +883,7 @@ function handleLimitHit(
     }
   }
 
-  performSwitch({
+  void performSwitch({
     key,
     authority,
     paneId: pane.paneId,

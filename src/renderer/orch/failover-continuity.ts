@@ -7,6 +7,7 @@
 import {
   FAILOVER_HANDOFF_FOOTER,
   FAILOVER_HANDOFF_HEADER,
+  sanitizeHandoffExcerptForDetector,
 } from '../../shared/failover-handoff';
 
 export interface ContinuityPackInput {
@@ -67,9 +68,15 @@ export function buildContinuityPack(input: ContinuityPackInput): string {
     lines.push(`Open work: ${clip(input.openWorkHint, MAX_HINT)}`);
   }
   if (input.scrollbackExcerpt) {
-    lines.push(
-      `Recent terminal excerpt (may be partial):\n"""\n${clip(stripNestedHandoffPacks(input.scrollbackExcerpt), MAX_EXCERPT)}\n"""`,
+    // Sanitizado contra o limit-detector (F-511): o excerpt cita a tela da
+    // morte da sessão anterior — 401/429/quota verbatim. Sem as máscaras, o
+    // detector recasa esse texto citado como sinal vivo assim que o header
+    // do pack sai da janela rolante (4000 chars) e o failover entra em
+    // ping-pong entre contas saudáveis. O motivo preciso segue na 2ª linha.
+    const excerpt = sanitizeHandoffExcerptForDetector(
+      clip(stripNestedHandoffPacks(input.scrollbackExcerpt), MAX_EXCERPT),
     );
+    lines.push(`Recent terminal excerpt (may be partial):\n"""\n${excerpt}\n"""`);
   }
   lines.push(FAILOVER_HANDOFF_FOOTER);
   return lines.join('\n');

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { detectLimit, tierScopeFromModelId } from './limit-detector';
+import { sanitizeHandoffExcerptForDetector } from '../../shared/failover-handoff';
 
 describe('detectLimit', () => {
   it('detects Claude usage-limit messages as rate-limit', () => {
@@ -460,6 +461,52 @@ describe('detectLimit — escopo de tier (cooldown escopado do oh-my-pi)', () =>
     const hit = detectLimit(`Error: 429 Too Many Requests ${filler} sonnet`);
     expect(hit?.kind).toBe('rate-limit');
     expect(hit?.scope).toBeUndefined();
+  });
+});
+
+describe('F-511: excerpt sanitizado nunca re-dispara failover (anti-drift)', () => {
+  // Tela real da morte da sessão (caso de campo 08/09): o pack de failover
+  // cita este texto verbatim no pane novo. Sem sanitização, assim que o
+  // header do pack sai da janela rolante (4000 chars), o 401 CITADO casa
+  // como sinal vivo e o failover entra em ping-pong (loop fantasma).
+  const DEATH_SCREEN = [
+    'Claude Code v2.1.265 Opus 5 with max effort · Claude API ~/HiperGO',
+    'Remote managed settings failed to load (authentication rejected (401))',
+    'ERROR: API Error: 401 OAuth access token has expired. Re-authenticate to continue.',
+    'Please run /login · Invalid API key · stored token for "oauth" was rejected',
+    'Session expired — refresh token revoked, not logged in anymore',
+  ].join('\n');
+
+  it('a tela da morte crua AINDA dispara (amostra não é vácua)', () => {
+    const hit = detectLimit(DEATH_SCREEN);
+    expect(hit?.kind).toBe('auth');
+  });
+
+  it('a mesma tela sanitizada não dispara', () => {
+    expect(
+      detectLimit(sanitizeHandoffExcerptForDetector(DEATH_SCREEN)),
+    ).toBeNull();
+  });
+
+  it('janela envelhecida (só excerpt + footer, sem header) não dispara', () => {
+    // Simula a janela rolante depois que o header saiu: só resta o excerpt
+    // sanitizado e o footer benigno.
+    const agedWindow = [
+      sanitizeHandoffExcerptForDetector(DEATH_SCREEN),
+      'Execute the next concrete step now.',
+      '-agent working normally below, streaming output…',
+    ].join('\n');
+    expect(agedWindow).not.toContain('[NEXUS FAILOVER HANDOFF]');
+    expect(detectLimit(agedWindow)).toBeNull();
+  });
+
+  it('cobre as formas de quota/rate do excerpt também', () => {
+    const fuel = [
+      'Error: 429 Too Many Requests — rate_limit_exceeded, try again',
+      'quota exceeded, usage limit reached, payment required',
+    ].join('\n');
+    expect(detectLimit(fuel)).not.toBeNull();
+    expect(detectLimit(sanitizeHandoffExcerptForDetector(fuel))).toBeNull();
   });
 });
 

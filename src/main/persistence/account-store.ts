@@ -19,6 +19,7 @@ import {
   writeActiveClaudeCredential,
 } from '../adapters/claude-credential';
 import {
+  claudeBlobIsExpiredUnhealable,
   claudeBlobNeedsRefresh,
   refreshClaudeOauthBlob,
 } from '../quota/claude-oauth-refresh';
@@ -525,7 +526,21 @@ export function accountHasFailoverCredential(account: Account): boolean {
   if (account.mode === 'api-key') {
     return hasSecret(KEY_PREFIX + account.id);
   }
-  if (hasSecret(CRED_PREFIX + account.id)) return true;
+  if (hasSecret(CRED_PREFIX + account.id)) {
+    // Blob Claude vencido sem refresh token: o pick pula a conta em vez de
+    // queimar a tentativa de failover num 401 garantido (F-511). Sem
+    // expiresAt confiável não há juízo — presença continua valendo.
+    if (account.adapterId === 'claude' && account.mode === 'subscription') {
+      const blob = getSecret(CRED_PREFIX + account.id);
+      if (
+        typeof blob === 'string' &&
+        claudeBlobIsExpiredUnhealable(blob, Date.now())
+      ) {
+        return false;
+      }
+    }
+    return true;
+  }
   if (account.adapterId === 'claude' && account.email) {
     const nativeEmail = activeClaudeEmail();
     return Boolean(nativeEmail && emailsEqual(account.email, nativeEmail));
@@ -633,6 +648,23 @@ export function prepareAccountForSpawn(
       ok: false,
       error:
         `conta "${account.label}" com renovação de token falhando — entre ` +
+        'novamente em Configurações › Providers',
+    };
+  }
+  // Token vencido sem refresh: o sweeper nunca tenta este blob
+  // (`claudeBlobNeedsRefresh` exige refresh token) e nunca o sinaliza — sem
+  // esta recusa, todo failover queimava uma sessão nova num 401 garantido
+  // (F-511). Marca a falha para o veto de 1h valer aqui também.
+  const vaultBlob = getSecret(CRED_PREFIX + account.id);
+  if (
+    typeof vaultBlob === 'string' &&
+    claudeBlobIsExpiredUnhealable(vaultBlob, now)
+  ) {
+    markClaudeRefreshFailed(account);
+    return {
+      ok: false,
+      error:
+        `conta "${account.label}" com token expirado e sem renovação possível — entre ` +
         'novamente em Configurações › Providers',
     };
   }
