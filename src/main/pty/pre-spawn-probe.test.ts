@@ -131,6 +131,31 @@ describe('probePreSpawn — claude family', () => {
     ).toBeNull();
   });
 
+  it('fail-closed passes when `claude auth status` attests a live session', async () => {
+    // Keychain-only session unreadable from the spawn host (packaged-app
+    // TCC/ACL denial): storage reads fail but the CLI owns the session.
+    const deps = withClaude({
+      claudeCliLoggedIn: () => true,
+      claudeOauthEmail: () => 'user@example.com',
+    });
+    expect(
+      await probePreSpawn('claude', { deps, failClosed: true }),
+    ).toBeNull();
+  });
+
+  it('fail-closed still blocks when CLI attestation is negative', async () => {
+    const deps = withClaude({
+      claudeCliLoggedIn: () => false,
+      claudeOauthEmail: () => 'user@example.com',
+    });
+    const failure = await probePreSpawn('claude', {
+      deps,
+      failClosed: true,
+    });
+    expect(failure?.code).toBe('missing-credential');
+    expect(failure?.adapterId).toBe('claude');
+  });
+
   it('fails typed + actionable when nothing exists', async () => {
     const failure = await runProbe('claude', withClaude());
     expect(failure).toEqual({

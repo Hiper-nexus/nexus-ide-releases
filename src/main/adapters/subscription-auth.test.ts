@@ -6,6 +6,8 @@ import {
   agyKeychainBlobIsUsable,
   agyKeychainCredentialIsUsable,
   agyKeychainCredentialIsUsableAsync,
+  claudeCliAuthStatusLoggedInAsync,
+  claudeCliAuthStatusLoggedInSync,
   claudeKeychainHas,
   claudeKeychainHasAsync,
   claudeOauthEmail,
@@ -1074,6 +1076,70 @@ describe('warmKeychainOnlySubscriptionAuth', () => {
     await warmKeychainOnlySubscriptionAuth('codex', asyncKeychainProbe);
 
     expect(asyncKeychainProbe).not.toHaveBeenCalled();
+  });
+});
+
+describe('claude CLI auth-status attestation', () => {
+  const BIN = '/Users/test/.local/bin/claude';
+  type SyncExec = typeof import('node:child_process').execFileSync;
+  type AsyncExec = typeof import('node:child_process').execFile;
+  const syncOk = (out: string) =>
+    vi.fn(() => out) as unknown as SyncExec;
+
+  it('trusts a loggedIn:true attestation from the CLI itself', () => {
+    const execImpl = vi.fn(() => JSON.stringify({ loggedIn: true }));
+    expect(
+      claudeCliAuthStatusLoggedInSync(execImpl as unknown as SyncExec, BIN),
+    ).toBe(true);
+    expect(execImpl).toHaveBeenCalledTimes(1);
+    expect(execImpl).toHaveBeenCalledWith(
+      BIN,
+      ['auth', 'status'],
+      expect.objectContaining({ timeout: 5_000 }),
+    );
+  });
+
+  it('rejects loggedIn:false, non-JSON, and exec failures as silent false', () => {
+    expect(
+      claudeCliAuthStatusLoggedInSync(syncOk('{"loggedIn":false}'), BIN),
+    ).toBe(false);
+    expect(claudeCliAuthStatusLoggedInSync(syncOk('not-json'), BIN)).toBe(false);
+    expect(
+      claudeCliAuthStatusLoggedInSync(
+        vi.fn(() => {
+          throw new Error('ETIMEDOUT');
+        }) as unknown as SyncExec,
+        BIN,
+      ),
+    ).toBe(false);
+  });
+
+  it('never spawns when no claude binary resolves', () => {
+    const execImpl = vi.fn(() => '{"loggedIn":true}');
+    expect(
+      claudeCliAuthStatusLoggedInSync(execImpl as unknown as SyncExec, null),
+    ).toBe(false);
+    expect(execImpl).not.toHaveBeenCalled();
+  });
+
+  it('async variant resolves the attestation without throwing', async () => {
+    const ok = vi.fn(
+      (
+        _file: string,
+        _args: readonly string[],
+        _options: Record<string, unknown>,
+        callback: (error: Error | null, stdout: string) => void,
+      ) => {
+        queueMicrotask(() => callback(null, JSON.stringify({ loggedIn: true })));
+        return {};
+      },
+    ) as unknown as AsyncExec;
+    await expect(claudeCliAuthStatusLoggedInAsync(ok, BIN)).resolves.toBe(true);
+    const failing = vi.fn(() => {
+      throw new Error('spawn ENOENT');
+    }) as unknown as AsyncExec;
+    await expect(claudeCliAuthStatusLoggedInAsync(failing, BIN)).resolves.toBe(false);
+    await expect(claudeCliAuthStatusLoggedInAsync(ok, null)).resolves.toBe(false);
   });
 });
 

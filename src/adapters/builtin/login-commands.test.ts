@@ -10,6 +10,7 @@ const SESSION_LOGIN_IDS = [
   'codex',
   'grok',
   'kimi',
+  'muse',
   'opencode',
   'openclaude',
 ] as const;

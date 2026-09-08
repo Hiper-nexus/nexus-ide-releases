@@ -6,6 +6,7 @@ import {
   activateArtifact,
   ensurePrivateDirectory,
   linkDirectoryEntries,
+  linkFile,
   linkSelectedEntries,
   MAX_CLI_TOML_CONFIG_DEPTH,
   objectValue,
@@ -87,6 +88,112 @@ function governedGrokProjectPolicy(
  * `hooks/nexus.json` inside the overlay — the user's own hooks/ entries are
  * linked through, and nexus.json never syncs back into the real profile.
  */
+const GROK_AUTH_FILE = 'auth.json';
+const GROK_AUTH_LOCK_FILE = 'auth.json.lock';
+/** Freshness skew: a token expiring within this window counts as stale. */
+const GROK_AUTH_FRESH_SKEW_MS = 5 * 60 * 1000;
+
+interface GrokAuthIdentity {
+  email: string;
+  expiresAtMs: number | null;
+}
+
+function readGrokAuthIdentities(dir: string): GrokAuthIdentity[] {
+  try {
+    const raw = fs.readFileSync(path.join(dir, GROK_AUTH_FILE), 'utf8');
+    const parsed = JSON.parse(raw) as Record<
+      string,
+      { email?: unknown; expires_at?: unknown }
+    >;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return [];
+    }
+    return Object.values(parsed).flatMap((entry) => {
+      if (!entry || typeof entry !== 'object') return [];
+      const email =
+        typeof entry.email === 'string' ? entry.email.trim().toLowerCase() : '';
+      if (!email) return [];
+      let expiresAtMs: number | null = null;
+      if (typeof entry.expires_at === 'string') {
+        const parsedMs = Date.parse(entry.expires_at);
+        expiresAtMs = Number.isFinite(parsedMs) ? parsedMs : null;
+      }
+      return [{ email, expiresAtMs }];
+    });
+  } catch {
+    return [];
+  }
+}
+
+function hasFreshEntry(entries: GrokAuthIdentity[], now: number): boolean {
+  return entries.some(
+    (entry) =>
+      entry.expiresAtMs !== null &&
+      entry.expiresAtMs > now + GROK_AUTH_FRESH_SKEW_MS,
+  );
+}
+
+/**
+ * Resolve which profile supplies auth.json to the overlay.
+ *
+ * A pinned managed account shadows the native profile: its captured
+ * auth.json is a one-time snapshot that goes stale when the operator
+ * re-logs in outside Nexus, while the native ~/.grok/auth.json keeps
+ * refreshing. The stale copy then forces a device-login loop — the CLI
+ * rejects the expired credential (observed: it even removes the overlay
+ * link) and every rebuilt overlay starts from the same stale source.
+ *
+ * Fallback rules (multi-account safe):
+ * - managed home already has ANY fresh entry → providerHome (untouched,
+ *   N accounts keep coexisting);
+ * - otherwise, native has a fresh entry AND (managed holds no identities
+ *   at all, or one of them matches the native email = same account with
+ *   a rotated credential) → native home;
+ * - anything else (different-account pin, nothing fresh anywhere) →
+ *   providerHome, i.e. exactly today's behavior: the CLI may still
+ *   refresh via its own refresh_token, and no foreign identity ever
+ *   leaks into a pinned account.
+ *
+ * Overlay-level link only — vault state is never mutated here.
+ */
+export function resolveGrokOverlayAuthSource(
+  providerHome: string,
+  home: string,
+  now = Date.now(),
+): string {
+  const nativeHome = path.join(home, '.grok');
+  if (path.resolve(providerHome) === path.resolve(nativeHome)) {
+    return providerHome;
+  }
+  const managed = readGrokAuthIdentities(providerHome);
+  if (hasFreshEntry(managed, now)) return providerHome;
+  const native = readGrokAuthIdentities(nativeHome);
+  const freshNative = native.filter(
+    (entry) =>
+      entry.expiresAtMs !== null &&
+      entry.expiresAtMs > now + GROK_AUTH_FRESH_SKEW_MS,
+  );
+  if (freshNative.length === 0) return providerHome;
+  if (managed.length === 0) return nativeHome;
+  const managedEmails = new Set(managed.map((entry) => entry.email));
+  if (freshNative.some((entry) => managedEmails.has(entry.email))) {
+    return nativeHome;
+  }
+  return providerHome;
+}
+
+/** Link the auth pair from the resolved source; absent files stay absent. */
+function linkGrokAuthPair(sourceDir: string, artifactDir: string): void {
+  for (const name of [GROK_AUTH_FILE, GROK_AUTH_LOCK_FILE]) {
+    try {
+      fs.statSync(path.join(sourceDir, name));
+    } catch {
+      continue;
+    }
+    linkFile(path.join(sourceDir, name), path.join(artifactDir, name));
+  }
+}
+
 export function prepareGrokMcpSession(
   url: string,
   token: string,
@@ -112,6 +219,11 @@ export function prepareGrokMcpSession(
         options.cwd,
         options.workspaceRoot,
       );
+      // The auth pair resolves through resolveGrokOverlayAuthSource: a
+      // stale managed shadow falls back to a fresh same-account native
+      // session instead of forcing a device-login loop. It is linked
+      // exactly once below — never from providerHome here.
+      const authSource = resolveGrokOverlayAuthSource(providerHome, home);
       if (policy.governed) {
         linkSelectedEntries(
           providerHome,
@@ -120,8 +232,6 @@ export function prepareGrokMcpSession(
             '.metadata_version',
             'active_sessions.json',
             'agent_id',
-            'auth.json',
-            'auth.json.lock',
             'bundled',
             'models_cache.json',
             'projects',
@@ -132,9 +242,15 @@ export function prepareGrokMcpSession(
         linkDirectoryEntries(
           providerHome,
           artifactDir,
-          new Set(['config.toml', 'hooks']),
+          new Set([
+            'config.toml',
+            'hooks',
+            GROK_AUTH_FILE,
+            GROK_AUTH_LOCK_FILE,
+          ]),
         );
       }
+      linkGrokAuthPair(authSource, artifactDir);
       const sourceRaw = readTomlObject(path.join(providerHome, 'config.toml'));
       const source = policy.governed
         ? stripExecutableProfileConfig(sourceRaw)

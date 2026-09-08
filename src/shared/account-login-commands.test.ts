@@ -5,15 +5,15 @@ import {
 } from './account-login-commands';
 
 describe('account login commands', () => {
-  it('covers every session-snapshot adapter with its own login command', () => {
-    // Alinhado a supportsSessionSnapshot: claude + file-auth de
-    // MANAGED_PROVIDER_SPECS (codex, grok, kimi, opencode, agy) + OpenClaude.
+  it('covers every session-login adapter with its own command', () => {
+    // Snapshot-capable adapters plus terminal-login-only OpenClaude/Muse.
     expect(Object.keys(ACCOUNT_LOGIN_COMMANDS).sort()).toEqual([
       'agy',
       'claude',
       'codex',
       'grok',
       'kimi',
+      'muse',
       'openclaude',
       'opencode',
     ]);

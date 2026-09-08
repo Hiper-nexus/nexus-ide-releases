@@ -11,6 +11,7 @@ import {
   isFileAuthAdapter,
 } from '../adapters/managed-credentials';
 import {
+  claudeCliAuthStatusLoggedInSync,
   claudeOauthEmail,
   type AuthStrategy,
 } from '../adapters/subscription-auth';
@@ -91,6 +92,12 @@ export interface PreSpawnProbeDeps {
   readActiveClaudeCredential(): string | null;
   readClaudeCredentialsFile(): string | null;
   claudeOauthEmail(): string | null;
+  /**
+   * Live CLI attestation (`claude auth status`). Covers Keychain-only
+   * sessions the spawn host cannot read (packaged-app TCC/ACL denial) —
+   * a positive is a usable session, stronger than email identity.
+   */
+  claudeCliLoggedIn?: () => boolean;
   hasNativeFileAuth(adapterId: string): boolean;
   authStrategy(adapterId: string, model?: string): AuthStrategy;
   /** Optional uncached authority used only at autonomous process creation. */
@@ -154,6 +161,7 @@ const defaultDeps: PreSpawnProbeDeps = {
   readActiveClaudeCredential,
   readClaudeCredentialsFile,
   claudeOauthEmail: () => claudeOauthEmail(),
+  claudeCliLoggedIn: () => claudeCliAuthStatusLoggedInSync(),
   hasNativeFileAuth: (adapterId) => hasNativeFileAuth(adapterId),
   authStrategy: (adapterId, model) =>
     providerAuthStrategy(adapterId, model),
@@ -256,6 +264,11 @@ async function probe(
     }
     if (deps.readClaudeCredentialsFile() !== null) return null;
     if (deps.hasStoredKey(adapterId, effectiveModel)) return null;
+    // Live CLI attestation outranks storage reads: a Keychain-only session
+    // unreadable from this host (TCC/ACL) still spawns fine, since the CLI
+    // reads its own storage. Trusted in failClosed too — the CLI proves a
+    // usable session, unlike email identity below.
+    if (deps.claudeCliLoggedIn?.() === true) return null;
     // Governed / fail-closed spawns (mission, isolated HOME) never trust email.
     // Direct user terminals may still open when we only know the identity and
     // the CLI will use native keychain itself (non-isolated HOME).

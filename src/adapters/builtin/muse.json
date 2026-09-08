@@ -5,9 +5,15 @@
   "version": "1.0.0",
   "icon": "◆",
   "bin": "muse",
+  "detect": "muse --version",
+  "install": {
+    "method": "manual",
+    "command": "Consulte a documentação do Muse Spark para instalar a CLI `muse`"
+  },
   "auth": {
-    "method": "file",
-    "loginHint": "muse login (credenciais em ~/.config/muse/auth.json)"
+    "method": "oauth",
+    "loginHint": "muse login (credenciais em ~/.config/muse/auth.json)",
+    "loginCommand": "muse login"
   },
   "spawn": {
     "interactive": ["muse"],
@@ -26,6 +32,22 @@
     "flag": "--model",
     "list": [],
     "default": ""
+  },
+  "promptInjection": {
+    "method": "arg",
+    "trailingNewline": false,
+    "bracketedPaste": false
+  },
+  "stateParsing": {
+    "idle": {
+      "type": "timeout",
+      "ms": 800
+    },
+    "shellIntegration": false,
+    "exitCodes": {
+      "0": "ok",
+      "1": "error"
+    }
   },
   "control": {
     "permission": {

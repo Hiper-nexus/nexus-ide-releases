@@ -6,7 +6,7 @@ import {
   claudeCredentialBlobIsUsable,
   readActiveClaudeCredential,
 } from './claude-credential';
-import { realUserHome } from '../path-resolver';
+import { realUserHome, resolveCliBinary } from '../path-resolver';
 import { openClaudeKeychainService, readNativeOAuthKeychain } from './native-oauth-keychain';
 import {
   peekKimiSeatReadiness,
@@ -223,6 +223,91 @@ export function claudeCredentialsFileIsUsable(home = os.homedir()): boolean {
   } catch {
     return false;
   }
+}
+
+function resolveClaudeBinary(): string | null {
+  try {
+    return resolveCliBinary('claude')?.binPath ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function parseClaudeAuthStatusLoggedIn(stdout: unknown): boolean {
+  try {
+    const parsed = JSON.parse(String(stdout)) as { loggedIn?: unknown };
+    return parsed?.loggedIn === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Ask the CLI itself (`claude auth status`) instead of reading its private
+ * storage. Modern Claude Code on macOS is Keychain-only (no
+ * ~/.claude/.credentials.json), and the packaged app can be denied the
+ * Keychain secret read (TCC/ACL) while the CLI still owns a live session —
+ * storage sniffing then reports a confident false "not logged in". The CLI
+ * attesting `"loggedIn": true` is the authoritative positive signal; every
+ * failure mode (missing binary, timeout, non-JSON, loggedIn:false) is a
+ * silent false that falls through to the existing probes. Never throws.
+ */
+export function claudeCliAuthStatusLoggedInSync(
+  execImpl: typeof execFileSync = execFileSync,
+  bin: string | null = resolveClaudeBinary(),
+  timeoutMs = 5_000,
+): boolean {
+  if (!bin) return false;
+  try {
+    const out = execImpl(bin, ['auth', 'status'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: timeoutMs,
+      killSignal: 'SIGKILL',
+    });
+    return parseClaudeAuthStatusLoggedIn(out);
+  } catch {
+    return false;
+  }
+}
+
+/** Async variant for background warms (never blocks the main loop). */
+export function claudeCliAuthStatusLoggedInAsync(
+  execImpl: typeof execFile = execFile,
+  bin: string | null = resolveClaudeBinary(),
+  timeoutMs = 8_000,
+): Promise<boolean> {
+  if (!bin) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    try {
+      execImpl(
+        bin,
+        ['auth', 'status'],
+        {
+          timeout: timeoutMs,
+          killSignal: 'SIGKILL',
+          windowsHide: true,
+          encoding: 'utf8',
+        },
+        (error, stdout) => resolve(error === null && parseClaudeAuthStatusLoggedIn(stdout)),
+      );
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+/**
+ * Default native-session probe for the async Claude warm: Keychain secret
+ * first, CLI attestation when the secret is missing OR unreadable (a TCC/ACL
+ * denial rejects instead of resolving false — that must not read as logout).
+ */
+function probeClaudeNativeSessionAsync(): Promise<boolean> {
+  if (process.platform !== 'darwin') return Promise.resolve(false);
+  return readNativeOAuthKeychain('Claude Code-credentials').then(
+    (ok) => (ok ? true : claudeCliAuthStatusLoggedInAsync()),
+    () => claudeCliAuthStatusLoggedInAsync(),
+  );
 }
 
 function openclaudeConfigDir(home: string): string {
@@ -894,6 +979,14 @@ export function hasSubscriptionAuth(
   // Never cache a miss: login in a live shell writes the session seconds
   // later and the Attention list must see it without waiting out the TTL.
   if (value) cacheSubscriptionAuth(adapterId, value, model);
+  if (value) return value;
+  // Keychain-only Claude session unreadable from this process (packaged-app
+  // TCC/ACL denial): storage sniffing failed but the CLI may still attest a
+  // live session. Positive-only fallback — a negative changes nothing.
+  if (adapterId === 'claude' && claudeCliAuthStatusLoggedInSync()) {
+    cacheSubscriptionAuth(adapterId, true, model);
+    return true;
+  }
   return value;
 }
 
@@ -938,8 +1031,7 @@ export function hasSubscriptionAuthForStatus(
  */
 export function refreshClaudeSubscriptionAuthCache(
   home = os.homedir(),
-  keychainProbe: () => Promise<boolean> = () => process.platform === 'darwin'
-    ? readNativeOAuthKeychain('Claude Code-credentials') : Promise.resolve(false),
+  keychainProbe: () => Promise<boolean> = () => probeClaudeNativeSessionAsync(),
   options: { authoritative?: boolean } = {},
 ): Promise<ClaudeAuthRefreshResult> {
   const cached = cachedSubscriptionAuth('claude');

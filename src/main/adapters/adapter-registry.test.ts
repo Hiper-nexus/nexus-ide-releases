@@ -204,7 +204,13 @@ describe('builtin adapters', () => {
         models?: { list?: string[]; default?: string };
       };
       const offered = adapter.models?.list ?? [];
-      if (adapter.models?.default !== undefined) {
+      // Adapters sem modelo enumerável (muse: a CLI aceita um --model
+      // opaco que o catálogo não tem como listar) declaram default "" =
+      // "sem opinião". O runtime descarta modelo vazio em vez de selá-lo
+      // (readyModelForAdapter / firstDeclaredModel), então não há id
+      // inválido para publicar — só defaults não-vazios entram aqui.
+      // (O incidente grok-build acima era um id ERRADO, não ausência.)
+      if (adapter.models?.default) {
         expect(offered).toContain(adapter.models.default);
       }
       const entry = adapter.id ? published[adapter.id] : undefined;
