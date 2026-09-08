@@ -229,6 +229,40 @@ function auditFindings(payload: AuditPayload): MechanicalFinding[] {
   return findings;
 }
 
+/**
+ * Leitura tolerante das contagens em `metadata.vulnerabilities` direto do JSON
+ * cru, para quando o schema completo não valida. F-408: sem isto, uma resposta
+ * com contagens bloqueantes mas mapa de registros em outro formato (`advisories`
+ * no npm v6, ou re-chaveamento por proxy de registry) virava `unavailable`
+ * silencioso. Devolve `null` quando nem as contagens são legíveis — aí sim é
+ * indisponibilidade honesta.
+ */
+function readRawAuditCounts(
+  stdout: string,
+): { critical: number; high: number } | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== 'object' || parsed === null) return null;
+  const metadata = (parsed as { metadata?: unknown }).metadata;
+  if (typeof metadata !== 'object' || metadata === null) return null;
+  const vulnerabilities = (metadata as { vulnerabilities?: unknown })
+    .vulnerabilities;
+  if (typeof vulnerabilities !== 'object' || vulnerabilities === null) {
+    return null;
+  }
+  const read = (key: string): number => {
+    const value = (vulnerabilities as Record<string, unknown>)[key];
+    return typeof value === 'number' && Number.isFinite(value) && value > 0
+      ? Math.floor(value)
+      : 0;
+  };
+  return { critical: read('critical'), high: read('high') };
+}
+
 export async function runDependencyAuditSensor(
   root: string,
   deps: MechanicalRunnerDeps = {},
@@ -249,6 +283,35 @@ export async function runDependencyAuditSensor(
       status: 'unavailable',
       summary: 'Auditoria de dependências indisponível (sem lockfile).',
       findings: [],
+    };
+  }
+  // F-408: `npm audit` precisa de `package-lock.json` para resolver a árvore.
+  // Num projeto pnpm/yarn/bun ele sai com ENOLOCK sem produzir dado nenhum, e o
+  // resultado era `unavailable` com `findings: []` — que o consumidor
+  // (civilian-auto-review) não bloqueia, porque ele monta `blocking` só a partir
+  // de findings. Um controle de segurança que não executou não pode ser
+  // registrado como satisfeito, então isto é bloqueante: ou a auditoria roda com
+  // o gerenciador que o lockfile implica, ou a entrega espera.
+  if (!exists(join(root, 'package-lock.json'))) {
+    const detected = LOCKFILES.filter((lock) => exists(join(root, lock)));
+    return {
+      kind: 'dependency-audit',
+      status: 'failed',
+      summary:
+        'Auditoria: ✗ não executada — o projeto usa ' +
+        `${detected.join(', ')} e o sensor só sabe auditar package-lock.json.`,
+      findings: [
+        {
+          severity: 'high',
+          file: `(dependência) ${detected[0] ?? 'lockfile'}`,
+          evidence:
+            'O sensor de auditoria executa `npm audit`, que exige package-lock.json. ' +
+            `Este projeto tem ${detected.join(', ')}, então nenhuma vulnerabilidade foi verificada.`,
+          recommendation:
+            'Rode a auditoria do gerenciador real do projeto (pnpm audit / yarn npm audit / bun audit) ' +
+            'ou gere um package-lock.json. Não conclua a entrega sem uma auditoria executada.',
+        },
+      ],
     };
   }
   let stdout: string;
@@ -288,6 +351,36 @@ export async function runDependencyAuditSensor(
   try {
     payload = auditPayloadSchema.parse(JSON.parse(stdout));
   } catch {
+    // F-408: o schema tem um .refine() que detecta contagens em
+    // `metadata.vulnerabilities` divergentes do mapa de registros — e esse
+    // `catch` descartava a detecção, transformando-a em `unavailable` sem
+    // findings, que o consumidor não bloqueia. npm v6 emite `advisories` em vez
+    // de `vulnerabilities`, e um proxy de registry ou uma mudança de chave faz o
+    // mesmo; em todos esses casos as contagens dizem que há critical/high e o
+    // mapa não produz nada. Se o npm reportou contagens bloqueantes, isso é
+    // bloqueante mesmo sem conseguirmos ler os registros.
+    const raw = readRawAuditCounts(stdout);
+    if (raw !== null && raw.critical + raw.high > 0) {
+      return {
+        kind: 'dependency-audit',
+        status: 'failed',
+        summary:
+          `Auditoria: ✗ ${raw.critical} crítica(s), ${raw.high} alta(s) reportadas em produção, ` +
+          'mas os registros individuais não puderam ser lidos.',
+        findings: [
+          {
+            severity: raw.critical > 0 ? 'critical' : 'high',
+            file: '(dependência) resumo da auditoria',
+            evidence:
+              `npm audit reportou ${raw.critical} crítica(s) e ${raw.high} alta(s) em metadata.vulnerabilities, ` +
+              'mas o mapa de registros não veio no formato esperado, então os pacotes afetados não puderam ser nomeados.',
+            recommendation:
+              'Rode `npm audit --omit=dev` manualmente para ver os pacotes afetados e atualize-os. ' +
+              'Não conclua a entrega com contagens bloqueantes não inspecionadas.',
+          },
+        ],
+      };
+    }
     return {
       kind: 'dependency-audit',
       status: 'unavailable',

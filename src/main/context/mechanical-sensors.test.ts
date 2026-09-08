@@ -162,9 +162,38 @@ describe('runDependencyAuditSensor', () => {
       exec: execFail(JSON.stringify(payload)),
     });
 
-    expect(result.status).toBe('unavailable');
-    expect(result.findings).toEqual([]);
+    // F-408: este teste asserava `unavailable` com `findings: []`, que é o
+    // desfecho NÃO bloqueante — civilian-auto-review monta `blocking` só a
+    // partir de `result.findings`, então um controle que reportou contagens
+    // críticas mas não conseguiu nomear os pacotes não barrava a entrega, e ela
+    // era gravada como `proof.status: 'verified'`. O nome do teste sempre disse
+    // "não aprovam"; agora o desfecho acompanha o nome.
+    expect(result.status).toBe('failed');
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0]?.severity).toBe(
+      counts.critical > 0 ? 'critical' : 'high',
+    );
     expect(result.summary).not.toContain('✓');
+    expect(result.summary).toContain('não puderam ser lidos');
+  });
+
+  it('lockfile que não é package-lock.json bloqueia em vez de passar por auditado (F-408)', async () => {
+    // `npm audit` exige package-lock.json. Num projeto pnpm/yarn/bun ele sai com
+    // ENOLOCK sem produzir dado nenhum, e o resultado era `unavailable` com
+    // `findings: []` — não bloqueante. A auditoria não executou, então a entrega
+    // não pode ser registrada como verificada.
+    const result = await runDependencyAuditSensor('/so-pnpm', {
+      exists: (target: string) =>
+        target.endsWith('package.json') || target.endsWith('pnpm-lock.yaml'),
+      exec: async () => {
+        throw new Error('npm audit should not be reached for a pnpm-only project');
+      },
+    });
+
+    expect(result.status).toBe('failed');
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0]?.severity).toBe('high');
+    expect(result.summary).toContain('pnpm-lock.yaml');
   });
 
   it.each(['critical', 'high', 'moderate', 'low'] as const)(
