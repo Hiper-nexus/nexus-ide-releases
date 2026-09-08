@@ -188,6 +188,25 @@ export function decideExitedPaneKey(input: {
   return input.doneOrchestrator ? 'resume-keyboard' : 'reclaim-shell';
 }
 
+/**
+ * Tecla em pane SEM sessão de missão TERMINAL (done/failed) ou vínculo
+ * órfão. O chamador já provou que não há sessão viva nem spawn em curso
+ * (para spawn em curso, devolve 'ignore' — transiente).
+ *
+ * Pós-missão nunca é mudez: estado preso (busy/spawning travado, exit
+ * perdido) não pode silenciar o teclado. O coordenador de missão concluída
+ * mantém o canal de revisão (F-108); todo o resto vira shell digitável.
+ * Missão VIVA nunca passa por aqui — as proteções acima continuam valendo.
+ */
+export function decideTerminalMissionDeadPaneKey(input: {
+  readonly spawnStarted: boolean;
+  /** Coordenador de missão concluída: a tecla tenta religar o Maestro. */
+  readonly keepReviewChannel: boolean;
+}): ExitedPaneKeyAction {
+  if (input.spawnStarted) return 'ignore';
+  return input.keepReviewChannel ? 'resume-keyboard' : 'reclaim-shell';
+}
+
 function isTypableOperatorLeaf(pane: {
   readonly kind?: string;
   readonly isStructuralPlaceholder?: boolean;

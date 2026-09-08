@@ -85,39 +85,11 @@ vi.mock('./lib/progressive-launch', () => ({
 }));
 vi.mock('./lib/use-product-flags', () => ({ useProductFlags: () => ({}) }));
 
-vi.mock('./components/product/Launcher', () => ({
-  Launcher: ({
-    onOpenWorkspace,
-    onStartMission,
-    onOpenPane,
-    onOpenShellTerminal,
-    onOpenTaskBoard,
-    onOpenMemory,
-    onOpenProviders,
-  }: {
-    onOpenWorkspace: () => void;
-    onStartMission: () => void;
-    onOpenPane: () => void;
-    onOpenShellTerminal: () => void;
-    onOpenTaskBoard: () => void;
-    onOpenMemory: () => void;
-    onOpenProviders: () => void;
-  }) => (
-    <section data-product-destination="launcher" aria-label="Launcher">
-      <button type="button" onClick={onOpenWorkspace}>Abrir workspace</button>
-      <button type="button" onClick={onStartMission}>Missão em equipe</button>
-      <button type="button" onClick={onOpenPane}>Montar meus terminais</button>
-      <button type="button" onClick={onOpenShellTerminal}>Terminal puro</button>
-      <button type="button" onClick={onOpenTaskBoard}>Abrir Quadro</button>
-      <button type="button" onClick={onOpenMemory}>Abrir Memória</button>
-      <button type="button" onClick={onOpenProviders}>Conectar uma IA</button>
-    </section>
-  ),
-}));
-
 vi.mock('./components/product/WorkspaceRail', () => ({
   WorkspaceRail: ({
     onCreateNew,
+    onOpenLauncher,
+    onOpenWorkspace,
     onOpenTaskBoard,
     onOpenMemory,
     onOpenSettings,
@@ -125,6 +97,8 @@ vi.mock('./components/product/WorkspaceRail', () => ({
     onRemoveMission,
   }: {
     onCreateNew: () => void;
+    onOpenLauncher: () => void;
+    onOpenWorkspace: () => void;
     onOpenTaskBoard: () => void;
     onOpenMemory: () => void;
     onOpenSettings: () => void;
@@ -133,6 +107,8 @@ vi.mock('./components/product/WorkspaceRail', () => ({
   }) => (
     <nav aria-label="Destinos do Nexus">
       <button type="button" onClick={onCreateNew}>Novo</button>
+      <button type="button" onClick={onOpenLauncher}>Início</button>
+      <button type="button" onClick={onOpenWorkspace}>Abrir projeto</button>
       <button type="button" onClick={onOpenTerminals}>Terminais</button>
       <button type="button" onClick={onOpenTaskBoard}>Quadro</button>
       <button type="button" onClick={onOpenMemory}>Memória</button>
@@ -143,8 +119,15 @@ vi.mock('./components/product/WorkspaceRail', () => ({
 }));
 
 vi.mock('./components/mission/MissionSetup', () => ({
-  MissionSetup: () => (
-    <section data-product-destination="mission-setup" aria-label="Preparar missão" />
+  MissionSetup: ({ home }: { home?: boolean }) => (
+    <section
+      data-product-destination={home ? 'launcher' : 'mission-setup'}
+      data-creation-form={home ? 'home' : 'advanced'}
+      aria-label="Preparar missão"
+    >
+      <button type="button" onClick={() => void useWorkspaceStore.getState().pick()}>Escolher pasta da criação</button>
+      <button type="button" onClick={() => useProductNavigationStore.getState().openSettings('providers')}>Conectar uma IA</button>
+    </section>
   ),
 }));
 
@@ -569,37 +552,123 @@ describe('App Nexus V2 cutover', () => {
     expect(useProductNavigationStore.getState().destination).toEqual({ kind: 'settings', section: 'providers' });
   });
 
-  it.each(['Montar meus terminais', 'Terminal puro'])(
-    'abre a configuração de pasta e layout pelo Início em %s',
-    (label) => {
-      const host = mountApp();
-      const action = [...host.querySelectorAll('button')].find(button => button.textContent === label);
-      expect(action).toBeDefined();
-      act(() => action!.click());
-      expect(host.querySelector('[role="dialog"]')?.textContent).toContain('Escolha a pasta e os painéis');
-      expect(host.querySelector('[role="dialog"]')?.textContent).toContain('Quantos painéis você quer abrir?');
-      expect(useProductNavigationStore.getState().destination).toEqual({ kind: 'launcher' });
-    },
-  );
-
-  it('boots without a workspace into one AppShell Launcher', () => {
+  it('boots without a workspace directly into the creation form', () => {
     const host = mountApp();
 
     expect(host.querySelectorAll('.nexus-shell')).toHaveLength(1);
     expect(currentDestination(host)).toBe('launcher');
+    expect(host.querySelector('[data-creation-form="home"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="Launcher"]')).toBeNull();
+    expect(host.querySelector('.product-header__name')?.textContent).toBe('Seu espaço');
+    expect(host.querySelector('.product-header__destination')?.textContent).toBe('Criar com IA');
     expect(
       host.querySelectorAll('[data-terminal-workspace-host="true"]'),
     ).toHaveLength(0);
   });
 
-  it('opens an available workspace at the canonical Terminal destination', () => {
+  it.each(['launcher', 'mission-setup'] as const)('keeps %s open when its folder picker activates the workspace', async (route) => {
+    vi.spyOn(useWorkspaceStore.getState(), 'pick').mockImplementation(async () => {
+      openWorkspace();
+    });
+    const host = mountApp();
+    if (route === 'mission-setup') {
+      act(() => useProductNavigationStore.getState().openMissionSetup());
+    }
+    const picker = [...host.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Escolher pasta da criação',
+    );
+    expect(picker).toBeDefined();
+
+    await act(async () => picker!.click());
+
+    expect(useWorkspaceStore.getState().current?.path).toBe('/tmp/nexus-workspace');
+    expect(useProductNavigationStore.getState().destination).toEqual({ kind: route });
+    expect(host.querySelector('[data-creation-form]')).not.toBeNull();
+    expect(host.querySelector<HTMLElement>('[data-terminal-workspace-host="true"]')?.hidden).toBe(true);
+  });
+
+  it('keeps the creation destination after cancelling a picker and opening a project later', async () => {
+    vi.spyOn(useWorkspaceStore.getState(), 'pick').mockResolvedValue();
+    const host = mountApp();
+    const picker = [...host.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Escolher pasta da criação',
+    );
+    expect(picker).toBeDefined();
+    await act(async () => picker!.click());
+
+    act(() => openWorkspace());
+
+    expect(currentDestination(host)).toBe('launcher');
+  });
+
+  it('returns from provider settings to the same creation destination', () => {
+    const host = mountApp();
+    act(() => useProductNavigationStore.getState().openSettings('providers'));
+    act(() => useProductNavigationStore.getState().backFromSettings());
+
+    expect(currentDestination(host)).toBe('launcher');
+    expect(host.querySelector('[data-creation-form="home"]')).not.toBeNull();
+  });
+
+  it('boots with an available workspace directly into creation instead of Terminal', () => {
     openWorkspace();
     const host = mountApp();
 
     expect(useProductNavigationStore.getState().destination).toEqual({
-      kind: 'terminal',
+      kind: 'launcher',
     });
+    expect(currentDestination(host)).toBe('launcher');
+    expect(host.querySelector('[data-creation-form="home"]')).not.toBeNull();
+  });
+
+  it('leaves a previous project mission for creation when the workspace changes', () => {
+    openWorkspace();
+    useProductNavigationStore.getState().openMission('old-project-mission');
+    const host = mountApp();
+
+    act(() => useWorkspaceStore.setState({
+      current: { path: '/tmp/new-project', name: 'Novo projeto', lastOpenedAt: 2 },
+    }));
+
+    expect(useProductNavigationStore.getState().destination).toEqual({ kind: 'launcher' });
+    expect(currentDestination(host)).toBe('launcher');
+  });
+
+  it('keeps an explicitly selected Terminal destination when the workspace changes', () => {
+    openWorkspace();
+    useProductNavigationStore.getState().openTerminal();
+    const host = mountApp();
+
+    act(() => useWorkspaceStore.setState({
+      current: { path: '/tmp/new-project', name: 'Novo projeto', lastOpenedAt: 2 },
+    }));
+
     expect(currentDestination(host)).toBe('terminal');
+  });
+
+  it('returns from Settings to creation after leaving the previous mission project', () => {
+    openWorkspace();
+    useProductNavigationStore.getState().openMission('old-project-mission');
+    useProductNavigationStore.getState().openSettings('providers');
+    const host = mountApp();
+
+    act(() => useWorkspaceStore.setState({
+      current: { path: '/tmp/new-project', name: 'Novo projeto', lastOpenedAt: 2 },
+    }));
+
+    expect(currentDestination(host)).toBe('settings');
+    act(() => useProductNavigationStore.getState().backFromSettings());
+    expect(currentDestination(host)).toBe('launcher');
+  });
+
+  it('keeps project identity beside the active destination in the header', () => {
+    openWorkspace();
+    const host = mountApp();
+    act(() => useProductNavigationStore.getState().openMissionSetup());
+
+    expect(host.querySelector('.product-header__name')?.textContent).toBe('Nexus Workspace');
+    expect(host.querySelector('.product-header__destination')?.textContent).toBe('Criar com IA');
+    expect(host.querySelectorAll('.product-header__tools')).toHaveLength(1);
   });
 
   it('keeps the scheduler terminal host mounted but hidden while Mission Board is active', () => {

@@ -45,6 +45,24 @@ const dispatched: Mission = {
 };
 
 describe('mission intent gate', () => {
+  it('allows an idempotent done request only from the explicitly bound current orchestrator', () => {
+    const done: Mission = { ...dispatched, status: 'done', intentState: 'done', orchestratorSessionId: 'current-session' };
+    const current = { mission: done, role: 'orchestrator', sessionId: 'current-session' };
+
+    expect(assertMissionIntentAllowsTool('nexus_mission_set_status', current, { status: 'done', push: {} }).ok).toBe(true);
+    for (const rejected of [
+      { ...current, role: 'worker' },
+      { ...current, sessionId: 'old-session' },
+      { ...current, sessionId: undefined },
+      { ...current, mission: { ...done, orchestratorSessionId: undefined } },
+    ]) {
+      expect(assertMissionIntentAllowsTool('nexus_mission_set_status', rejected, { status: 'done' }).ok).toBe(false);
+    }
+    expect(assertMissionIntentAllowsTool('nexus_mission_set_status', current, { status: 'running' }).ok).toBe(false);
+    expect(assertMissionIntentAllowsTool('nexus_pane_spawn', current).ok).toBe(false);
+    expect(assertMissionIntentAllowsTool('nexus_terminal_run', current).ok).toBe(false);
+  });
+
   it('denies context_doctor before a goal exists', () => {
     const result = assertMissionIntentAllowsTool('nexus_context_doctor', {
       mission: awaitingGoal,

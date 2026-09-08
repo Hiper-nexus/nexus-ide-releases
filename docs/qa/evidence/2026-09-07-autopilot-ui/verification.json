@@ -1,0 +1,117 @@
+{
+  "date": "2026-09-07",
+  "scope": "Renderer integration and visual component QA, synthetic backend",
+  "passed": 196,
+  "failed": 0,
+  "files": [
+    {
+      "file": "src/renderer/App.overlays.test.tsx",
+      "tests": 3,
+      "status": "passed"
+    },
+    {
+      "file": "src/renderer/App.test.tsx",
+      "tests": 42,
+      "status": "passed"
+    },
+    {
+      "file": "src/renderer/state/product-navigation-store.pet.test.ts",
+      "tests": 8,
+      "status": "passed"
+    },
+    {
+      "file": "src/renderer/state/product-navigation-store.test.ts",
+      "tests": 10,
+      "status": "passed"
+    },
+    {
+      "file": "src/renderer/components/mission/MissionSetup.home.test.tsx",
+      "tests": 11,
+      "status": "passed"
+    },
+    {
+      "file": "src/renderer/components/mission/MissionSetup.legacy-replacement.test.tsx",
+      "tests": 5,
+      "status": "passed"
+    },
+    {
+      "file": "src/renderer/components/mission/MissionSetup.pet.test.tsx",
+      "tests": 5,
+      "status": "passed"
+    },
+    {
+      "file": "src/renderer/components/mission/MissionSetup.test.tsx",
+      "tests": 68,
+      "status": "passed"
+    },
+    {
+      "file": "src/renderer/components/mission/MissionSetupRosterRow.test.tsx",
+      "tests": 11,
+      "status": "passed"
+    },
+    {
+      "file": "src/renderer/components/mission/MissionStyleContracts.test.tsx",
+      "tests": 9,
+      "status": "passed"
+    },
+    {
+      "file": "src/renderer/components/product/AppShell.test.tsx",
+      "tests": 3,
+      "status": "passed"
+    },
+    {
+      "file": "src/renderer/components/product/WorkspaceRail.test.tsx",
+      "tests": 21,
+      "status": "passed"
+    }
+  ],
+  "sources": [
+    {
+      "file": "src/renderer/App.tsx",
+      "sha256": "ffe79942f8f426325da13e122091526080767a34584fdda9a62d96dfd39c50df"
+    },
+    {
+      "file": "src/renderer/components/mission/MissionSetup.tsx",
+      "sha256": "620f2e760f1eacc500b3eb63c0b38d05d3f37cd09b712cd353c66928c5cb4dd4"
+    },
+    {
+      "file": "src/renderer/components/mission/ExpressMissionStart.tsx",
+      "sha256": "9387ff25ce8b46d8e259a84781fb20cf90ad7f78c1bfc8c98a80c8e3afd88520"
+    },
+    {
+      "file": "src/renderer/components/product/WorkspaceRail.tsx",
+      "sha256": "dd1fa9052481fc8519a9b41416004462f6f78521fdb61ab2b4a42f1a589fa742"
+    },
+    {
+      "file": "src/renderer/styles/app-shell.css",
+      "sha256": "099573d9512a324b2e64b2b4dea2e9faa9b7618e03c7ed6d544f7b60c6456be0"
+    },
+    {
+      "file": "src/renderer/styles/mission-setup.css",
+      "sha256": "5310de5373f8fe8822da5620824917f0014c48323c76f8ae130d940fa1ea9329"
+    }
+  ],
+  "typecheck": "passed",
+  "rendererExecutableDomSinks": 0,
+  "visual": {
+    "viewports": [
+      {
+        "width": 900,
+        "height": 700
+      },
+      {
+        "width": 1100,
+        "height": 760
+      },
+      {
+        "width": 1440,
+        "height": 1000
+      }
+    ],
+    "reducedMotion": "form animation none",
+    "horizontalOverflowAt900": false,
+    "disclosureValuesPreserved": true,
+    "backend": "synthetic callbacks only"
+  },
+  "fullMissionExecuted": false
+}

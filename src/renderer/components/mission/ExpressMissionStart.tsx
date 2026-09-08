@@ -42,9 +42,8 @@ interface ExpressMissionStartProps {
 }
 
 /**
- * Caminho Expresso: descreva o objetivo, escolha a Ferramenta de cada papel,
- * Iniciar. O wizard de 3 passos continua em "Mais papéis e tamanho". Zero
- * novo canal IPC — reusa prepare+start com o roster que está na tela.
+ * Objetivo primeiro; equipe e referências podem ser personalizadas sem
+ * mudar o rascunho ao abrir opções. Reusa prepare+start com o roster salvo.
  */
 /**
  * Três pedidos reais, de tamanhos diferentes: uma correção pequena, uma tela
@@ -95,11 +94,11 @@ export function ExpressMissionStart({
 }: ExpressMissionStartProps) {
   const headingRef = useRef<HTMLHeadingElement>(null);
 
-  const draftEditingDisabled = draftFieldsDisabled || !workspace;
+  const draftEditingDisabled = draftFieldsDisabled;
   const disabledReasonId = 'express-draft-disabled-reason';
-  const disabledReason = workspace
-    ? 'Resolva o carregamento do rascunho antes de preencher os dados da missão.'
-    : 'Escolha uma pasta de projeto para preencher os dados da missão.';
+  const disabledReason =
+    'Resolva o carregamento do rascunho antes de preencher os dados da missão.';
+  const needsWorkspace = !workspace;
 
   useEffect(() => {
     if (!suppressHeadingAutofocus) headingRef.current?.focus();
@@ -119,9 +118,16 @@ export function ExpressMissionStart({
     if (!busy && !startBlocked) onStart();
   };
 
-  const teamNames = draft.roster
-    .map((agent) => agent.agentName)
-    .filter(Boolean);
+  const teamSize = draft.roster.length;
+  const teamTools = [
+    ...new Set(
+      draft.roster.map(
+        (agent) =>
+          inventory.adapters.find((adapter) => adapter.id === agent.cli)
+            ?.label ?? agent.cli,
+      ),
+    ),
+  ];
 
   const dictation = useObjectiveDictation({
     enabled: !draftEditingDisabled && !busy,
@@ -142,68 +148,19 @@ export function ExpressMissionStart({
       onSubmit={handleSubmit}
     >
       <header className="mission-setup__step-header">
-        <p className="mission-setup__step-kicker">Caminho Expresso</p>
         <h1 id="express-mission-title" ref={headingRef} tabIndex={-1}>
-          Descreva e pronto
+          O que você quer criar?
         </h1>
         <p>
-          Escreva o que você quer entregar. Em seguida escolha qual ferramenta
-          faz cada papel — Iniciar usa exatamente o que estiver aqui.
+          Conte sua ideia ou o que precisa melhorar. O Nexus organiza a equipe
+          para trabalhar no seu projeto.
         </p>
       </header>
 
       <div className="mission-setup__continuous-section">
-        <div className="mission-setup__field mission-setup__workspace-field">
-          <label htmlFor="express-workspace-path">Pasta do projeto</label>
-          <div className="mission-setup__workspace-control">
-            <input
-              id="express-workspace-path"
-              type="text"
-              value={workspace?.path ?? 'Nenhuma pasta escolhida'}
-              readOnly
-              aria-invalid={Boolean(workspaceActionError)}
-              aria-describedby={[
-                workspaceActionError ? 'express-workspace-error' : null,
-                draftEditingDisabled ? disabledReasonId : null,
-              ]
-                .filter(Boolean)
-                .join(' ')}
-            />
-            <button
-              type="button"
-              className="mission-setup__button mission-setup__button--secondary"
-              onClick={onPickWorkspace}
-              disabled={pickingWorkspace || busy}
-              aria-describedby={
-                draftEditingDisabled ? disabledReasonId : undefined
-              }
-            >
-              {pickingWorkspace ? 'Escolhendo pasta…' : 'Escolher pasta'}
-            </button>
-          </div>
-          {workspaceActionError && (
-            <p
-              id="express-workspace-error"
-              className="mission-setup__inline-error mission-setup__focus-message"
-              role="alert"
-              aria-atomic="true"
-              tabIndex={-1}
-            >
-              {workspaceActionError}
-            </p>
-          )}
-          {draftEditingDisabled && (
-            <p id={disabledReasonId} className="mission-setup__hint">
-              {disabledReason}
-            </p>
-          )}
-        </div>
-
         <div className="mission-setup__field mission-setup__objective-field">
           <div className="mission-setup__objective-label-row">
-            <label htmlFor="express-objective">
-              O que você quer que a missão entregue?
-            </label>
+            <label htmlFor="express-objective">Seu pedido</label>
             <button
               type="button"
               className={`mission-setup__button mission-setup__button--secondary mission-setup__dictation-button${
@@ -237,7 +194,7 @@ export function ExpressMissionStart({
           <textarea
             id="express-objective"
             value={draft.objective}
-            rows={2}
+            rows={5}
             maxLength={MISSION_INTENT_GOAL_MAX_CHARS}
             placeholder="Exemplo: refaça o fluxo de cadastro para ficar simples no celular e confirme que ele funciona do início ao fim."
             disabled={draftEditingDisabled || busy}
@@ -248,7 +205,8 @@ export function ExpressMissionStart({
             }}
           />
           <span id="express-objective-hint" className="mission-setup__sr-only">
-            Escreva em linguagem comum. A missão começa assim que você confirmar.
+            Escreva em linguagem comum. Você pode começar com uma ideia e pedir
+            ajustes depois.
           </span>
           {/* O produto nunca mostrava um objetivo que FUNCIONOU. Quem não
               programa trava na folha em branco: não sabe o tamanho, o nível de
@@ -275,85 +233,204 @@ export function ExpressMissionStart({
           </div>
         </div>
 
-        <MissionAttachmentPicker
-          contextPaths={draft.contextPaths}
-          disabled={draftEditingDisabled || busy}
-          compact
-          onContextPathsChange={onContextPathsChange}
-        />
+        <div
+          className="mission-setup__field mission-setup__workspace-field"
+          role="group"
+          aria-label="Projeto da criação"
+        >
+          <div className="mission-setup__project-line">
+            <p className="mission-setup__project-name">
+              <span>Projeto</span>
+              <span aria-hidden="true">·</span>
+              <strong
+                id="express-workspace-name"
+                title={workspace?.path}
+                aria-describedby={
+                  workspace ? 'express-workspace-path' : undefined
+                }
+              >
+                {workspace?.name ?? 'Nenhum projeto escolhido'}
+              </strong>
+            </p>
+            {workspace && (
+              <span
+                id="express-workspace-path"
+                className="mission-setup__sr-only"
+              >
+                {workspace.path}
+              </span>
+            )}
+            <button
+              type="button"
+              className="mission-setup__button mission-setup__button--secondary"
+              onClick={onPickWorkspace}
+              disabled={pickingWorkspace || busy}
+              aria-describedby={
+                draftEditingDisabled ? disabledReasonId : undefined
+              }
+            >
+              {pickingWorkspace
+                ? 'Escolhendo pasta…'
+                : workspace
+                  ? 'Trocar pasta'
+                  : 'Escolher pasta'}
+            </button>
+          </div>
+          {workspaceActionError && (
+            <p
+              id="express-workspace-error"
+              className="mission-setup__inline-error mission-setup__focus-message"
+              role="alert"
+              aria-atomic="true"
+              tabIndex={-1}
+            >
+              {workspaceActionError}
+            </p>
+          )}
+          {draftEditingDisabled && (
+            <p id={disabledReasonId} className="mission-setup__hint">
+              {disabledReason}
+            </p>
+          )}
+          {needsWorkspace && !draftEditingDisabled && (
+            <p className="mission-setup__hint">
+              Escreva sua ideia à vontade — ao iniciar, você escolhe a pasta e
+              o texto acompanha sem apagar o rascunho que já existir nela.
+            </p>
+          )}
+        </div>
 
-        {draft.roster.length > 0 ? (
-          <>
-            <div className="mission-setup__section-heading">
-              <div>
-                <h2>Quem faz o quê</h2>
-              </div>
-              <span className="mission-setup__count-chip">
-                {teamNames.length} {teamNames.length === 1 ? 'papel' : 'papéis'}
+        <details
+          id="express-delivery-details"
+          className="mission-setup__disclosure mission-setup__express-options"
+        >
+          <summary>
+            Adicionar detalhes e referências{' '}
+            <span className="mission-setup__option-action">Opcional</span>
+          </summary>
+          <div className="mission-setup__option-content">
+            <div className="mission-setup__field">
+              <label htmlFor="express-acceptance">
+                Como vou saber que ficou pronto?
+              </label>
+              <input
+                id="express-acceptance"
+                type="text"
+                value={draft.acceptance ?? ''}
+                maxLength={2048}
+                placeholder="Exemplo: a página abre no celular e o botão de contato funciona."
+                disabled={draftEditingDisabled || busy}
+                aria-describedby="express-acceptance-hint"
+                onChange={(event) => {
+                  if (draftEditingDisabled) return;
+                  onAcceptanceChange(event.target.value);
+                }}
+              />
+              <span
+                id="express-acceptance-hint"
+                className="mission-setup__hint"
+              >
+                Opcional, mas é o que a equipe usa para conferir a entrega antes
+                de dizer que terminou.
               </span>
             </div>
-            {inventory.status === 'ready' ? (
-              <ul
-                className="mission-roster mission-roster--compact"
-                aria-label="Quem faz o quê"
+            <MissionAttachmentPicker
+              contextPaths={draft.contextPaths}
+              disabled={draftEditingDisabled || busy}
+              compact
+              onContextPathsChange={onContextPathsChange}
+            />
+          </div>
+        </details>
+
+        {draft.roster.length > 0 ? (
+          <details
+            id="express-team-options"
+            className="mission-setup__disclosure mission-setup__express-options"
+          >
+            <summary>
+              <span className="mission-setup__option-summary">
+                <strong>Equipe da criação</strong>
+                <span>
+                  {teamSize} {teamSize === 1 ? 'agente' : 'agentes'} ·{' '}
+                  {teamTools.join(' · ')}
+                </span>
+              </span>
+              <span className="mission-setup__option-action">
+                Personalizar equipe
+              </span>
+            </summary>
+            <div className="mission-setup__option-content">
+              <h2>Quem faz o quê</h2>
+              {inventory.status === 'ready' ? (
+                <ul
+                  className="mission-roster mission-roster--compact"
+                  aria-label="Quem faz o quê"
+                >
+                  {draft.roster.map((agent) => (
+                    <MissionSetupRosterRow
+                      key={agent.id}
+                      agent={agent}
+                      candidates={
+                        agent.category === 'orchestrator'
+                          ? inventory.readiness.verifiedMaestros
+                          : inventory.readiness.qualifiedWorkers
+                      }
+                      providers={inventory.providers}
+                      accounts={inventory.accounts}
+                      issue={issueForAgent(agent, inventory)}
+                      removable={false}
+                      compact
+                      onChange={(next) =>
+                        onRosterChange(
+                          draft.roster.map((item) =>
+                            item.id === next.id ? next : item,
+                          ),
+                        )
+                      }
+                      onRemove={() => undefined}
+                    />
+                  ))}
+                </ul>
+              ) : null}
+              <button
+                type="button"
+                className="mission-setup__button mission-setup__button--quiet"
+                onClick={onAdvanced}
+                disabled={busy}
               >
-                {draft.roster.map((agent) => (
-                  <MissionSetupRosterRow
-                    key={agent.id}
-                    agent={agent}
-                    candidates={
-                      agent.category === 'orchestrator'
-                        ? inventory.readiness.verifiedMaestros
-                        : inventory.readiness.qualifiedWorkers
-                    }
-                    providers={inventory.providers}
-                    accounts={inventory.accounts}
-                    issue={issueForAgent(agent, inventory)}
-                    removable={false}
-                    compact
-                    onChange={(next) =>
-                      onRosterChange(
-                        draft.roster.map((item) =>
-                          item.id === next.id ? next : item,
-                        ),
-                      )
-                    }
-                    onRemove={() => undefined}
-                  />
-                ))}
-              </ul>
-            ) : null}
-          </>
+                Mais papéis e tamanho
+              </button>
+            </div>
+          </details>
         ) : inventoryLoading ? (
           <p className="mission-setup__hint">
             Verificando as ferramentas de IA conectadas…
           </p>
         ) : null}
 
-        {/* Independente do roster: um rascunho antigo com equipe salva e o
-            login vencido caía num beco — "Equipe automática" na tela, nenhuma
-            rota para Providers, e o Iniciar apontando para um botão ausente. */}
-        {!inventoryLoading && !inventoryReady ? (
-            <div
-              className="mission-setup__section-heading"
-              id="express-provider-block"
-            >
-              <div>
-                <h2>Falta conectar uma ferramenta de IA</h2>
-                <p>
-                  O Nexus precisa de pelo menos uma ferramenta de IA (Claude,
-                  Codex, Gemini…) para trabalhar por você.
-                </p>
-              </div>
-              <button
-                type="button"
-                className="mission-setup__button mission-setup__button--primary"
-                onClick={onConnectProvider}
-                disabled={busy}
-              >
-                Conectar uma ferramenta de IA
-              </button>
+        {/* A pendência específica abaixo já oferece a ação de conexão. */}
+        {!inventoryLoading && !inventoryReady && !maestroIssue ? (
+          <div
+            className="mission-setup__section-heading"
+            id="express-provider-block"
+          >
+            <div>
+              <h2>Falta conectar uma ferramenta de IA</h2>
+              <p>
+                O Nexus precisa de pelo menos uma ferramenta de IA (Claude,
+                Codex, Gemini…) para trabalhar por você.
+              </p>
             </div>
+            <button
+              type="button"
+              className="mission-setup__button mission-setup__button--secondary"
+              onClick={onConnectProvider}
+              disabled={busy}
+            >
+              Conectar uma ferramenta de IA
+            </button>
+          </div>
         ) : null}
       </div>
 
@@ -402,6 +479,16 @@ export function ExpressMissionStart({
           aria-atomic="true"
         >
           {error ?? maestroIssue}
+          {maestroIssue && (
+            <button
+              type="button"
+              className="mission-setup__button mission-setup__button--secondary"
+              onClick={onConnectProvider}
+              disabled={busy}
+            >
+              Conectar ferramenta da equipe
+            </button>
+          )}
         </div>
       )}
 
@@ -414,42 +501,13 @@ export function ExpressMissionStart({
             startBlocked && !error ? 'express-maestro-login' : undefined
           }
         >
-          {busy ? 'Iniciando missão…' : 'Iniciar missão'}
-        </button>
-        <button
-          type="button"
-          className="mission-setup__button mission-setup__button--quiet"
-          onClick={onAdvanced}
-          disabled={busy}
-        >
-          Mais papéis e tamanho
+          {busy
+            ? 'Iniciando criação…'
+            : needsWorkspace
+              ? 'Escolher pasta e iniciar'
+              : 'Iniciar criação'}
         </button>
       </footer>
-
-      <div className="mission-setup__continuous-section">
-        <div className="mission-setup__field">
-          <label htmlFor="express-acceptance">
-            Como vou saber que ficou pronto?
-          </label>
-          <input
-            id="express-acceptance"
-            type="text"
-            value={draft.acceptance ?? ''}
-            maxLength={2048}
-            placeholder="Exemplo: a página abre no celular e o botão de contato funciona."
-            disabled={draftEditingDisabled || busy}
-            aria-describedby="express-acceptance-hint"
-            onChange={(event) => {
-              if (draftEditingDisabled) return;
-              onAcceptanceChange(event.target.value);
-            }}
-          />
-          <span id="express-acceptance-hint" className="mission-setup__hint">
-            Opcional, mas é o que a equipe usa para conferir a entrega antes de
-            dizer que terminou.
-          </span>
-        </div>
-      </div>
     </form>
   );
 }

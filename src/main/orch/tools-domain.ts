@@ -13,7 +13,10 @@ import {
 import {
   assertMcpInvocationCurrent,
   type McpToolDef,
+  type McpToolInvocation,
 } from './mcp-protocol';
+import type { AgentGateContext } from './gate';
+import { z } from 'zod';
 import { findPane, readSessionOutput, waitForIdle } from './pane-registry';
 import { listProviderSettings } from '../persistence/provider-config-store';
 import { routeTask, type TaskTier } from './task-router';
@@ -43,6 +46,8 @@ import { getProjectDomainStores } from './project-domain-store-registry';
 import { getContextWorkflowService } from '../context/context-workflow-registry';
 import { ProcessGitRunner } from '../runtime/git-command';
 import { missionEngineForScope } from './mission-engine-registry';
+import { maybeCompleteFastLaneOnDelivery } from './civilian-delivery-completion';
+import { missionRequiresAutomaticCompletionReview } from './mission-independent-review-gate';
 import { saveCatalogOverlay, proposeRecipes } from './catalog-overlay';
 import {
   addCronJob,
@@ -320,17 +325,22 @@ const missionListTool: McpToolDef = {
 };
 
 const gitRunner = new ProcessGitRunner();
+const missionPushSchema = z.object({
+  remote: z.string().trim().max(2_048).optional(),
+  branch: z.string().trim().max(1_024).optional(),
+}).strict();
+type MissionPush = z.infer<typeof missionPushSchema>;
 
 function safeGitPush(
   scope: ProjectExecutionScope,
-  push: { remote?: string; branch?: string },
+  push: MissionPush,
 ): { ok: boolean; output?: string; error?: string } {
   const remote = (push.remote ?? 'origin').trim();
   const branch = push.branch?.trim();
-  if (!remote || /[;&|`$(){}[\]\\]/.test(remote)) {
+  if (!remote || remote.startsWith('-') || /[;&|`$(){}[\]\\]/.test(remote)) {
     return { ok: false, error: 'unsafe git remote' };
   }
-  if (branch && /[;&|`$(){}[\]\\]/.test(branch)) {
+  if (branch && (/^[-+]/.test(branch) || /[;&|:`$(){}[\]\\]/.test(branch))) {
     return { ok: false, error: 'unsafe git branch' };
   }
   const args = branch ? ['push', remote, branch] : ['push', remote];
@@ -345,11 +355,44 @@ function safeGitPush(
   }
 }
 
+function pushCompletedMission(
+  ctx: AgentGateContext,
+  expected: { readonly id: string; readonly intentVersion?: number },
+  push: MissionPush,
+  invocation?: McpToolInvocation,
+) {
+  assertMcpInvocationCurrent(invocation);
+  const completed = getProjectDomainStores(ctx.scope).missions.get(expected.id);
+  if (!completed || completed.status !== 'done' || !completed.result ||
+    completed.intentVersion !== expected.intentVersion) {
+    throw new Error('mission changed before the requested push');
+  }
+  if (!completed.orchestratorSessionId?.trim()) {
+    throw new Error('requested push requires an explicit current orchestrator session');
+  }
+  assertCurrentMissionOrchestratorSession(ctx, completed);
+  const pushed = safeGitPush(ctx.scope, push);
+  if (!pushed.ok) {
+    console.warn(`[mission-set-status] git push falhou para ${expected.id}: ${pushed.error}`);
+  }
+  return {
+    ...completed,
+    pushExecuted: pushed.ok,
+    pushPending: !pushed.ok,
+    ...(!pushed.ok ? {
+      message: 'A missão concluiu localmente, mas o push não foi confirmado. Confira o destino antes de tentar novamente.',
+    } : {}),
+  };
+}
+
 const missionSetStatusTool: McpToolDef = {
   name: 'nexus_mission_set_status',
   description:
     'Update a mission status (pending|running|blocked|done|failed). ' +
-    'done is ONLY for real completion — never a shortcut. With a frozen PREVC contract, ' +
+    'For standard squads, done requests automatic verification and returns the current mission state. ' +
+    'If completionRequested=true, finish your turn so Nexus can verify; do not poll or mark blocked merely to wait. ' +
+    'An explicit push waits for this verification attempt. If pushPending=true, no push is queued; retry with fresh authority after completion. ' +
+    'The mission reaches done ONLY after real completion. With a frozen PREVC contract, ' +
     'done requires the complete workflow and immutable step receipts; without a frozen ' +
     'contract (PREVC degrades, never blocks), a non-orchestrated completion requires a ' +
     'durable note (or existing learnings) ≥40 chars. A standard squad mission may only ' +
@@ -374,6 +417,7 @@ const missionSetStatusTool: McpToolDef = {
       },
       push: {
         type: 'object',
+        additionalProperties: false,
         description:
           'Optional git push to run after the mission reaches done. ' +
           'Only plain push is supported; force flags are rejected.',
@@ -385,10 +429,11 @@ const missionSetStatusTool: McpToolDef = {
     },
     required: ['missionId', 'status'],
   },
-  handler: async (args, ctx) => {
+  handler: async (args, ctx, invocation) => {
     const missionId = requireStr(args, 'missionId');
     const status = missionStatusSchema.parse(args.status);
     const note = str(args, 'note')?.trim() ?? '';
+    const push = args.push === undefined ? undefined : missionPushSchema.parse(args.push);
     assertOrchestratorMission(ctx, missionId);
     const stores = getProjectDomainStores(ctx.scope);
     const current = stores.missions.get(missionId);
@@ -411,9 +456,36 @@ const missionSetStatusTool: McpToolDef = {
             'completed mission is missing its canonical MissionResult',
           );
         }
-        return current;
+        return push ? pushCompletedMission(ctx, current, push, invocation) : current;
       }
       const lane = current.intentContract?.lane ?? 'standard';
+      if (missionRequiresAutomaticCompletionReview(current, current.squadId ? getSquad(current.squadId) : null)) {
+        const entry = `## Solicitação de conclusão\n${note}`.slice(0, MAX_MISSION_RESULT_CHARS);
+        if (note && !current.learnings.includes(entry)) {
+          stores.missions.appendLearning(missionId, entry);
+        }
+        const verification = maybeCompleteFastLaneOnDelivery(ctx.scope, missionId).catch((error) => {
+          console.warn('[mission-set-status] verificação de conclusão falhou:', error instanceof Error ? error.message : error);
+          return null;
+        });
+        // Let immediate decisions settle; a slow sensor must not keep its own
+        // orchestrator turn busy and prevent the mission from becoming idle.
+        if (push) await verification;
+        else await Promise.race([verification, new Promise<void>((resolve) => setImmediate(resolve))]);
+        const latest = stores.missions.get(missionId) ?? current;
+        if (latest.status !== 'done') {
+          return {
+            ...latest,
+            completionRequested: true,
+            message: push
+              ? 'A verificação ainda não concluiu a missão e o push não foi executado. Tente novamente após a missão concluir; o push não ficou agendado.'
+              : 'Solicitação de conclusão recebida. Você pode encerrar este turno; o Nexus continua verificando a entrega.',
+            ...(push ? { pushExecuted: false, pushPending: true } : {}),
+          };
+        }
+        if (!latest.result) throw new Error('completed mission is missing its canonical MissionResult');
+        return push ? pushCompletedMission(ctx, current, push, invocation) : latest;
+      }
       const workflow = getContextWorkflowService(ctx.scope);
       if (!workflow.isMissionDriverComplete(
         missionId,
@@ -552,24 +624,7 @@ const missionSetStatusTool: McpToolDef = {
           'MissionEngine did not persist the canonical verified completion result',
         );
       }
-      if (
-        typeof args.push === 'object' &&
-        args.push !== null &&
-        !Array.isArray(args.push)
-      ) {
-        const push = args.push as { remote?: string; branch?: string };
-        const pushResult = safeGitPush(ctx.scope, push);
-        if (pushResult.ok) {
-          console.info(
-            `[mission-set-status] git push concluído para ${missionId}: ${pushResult.output}`,
-          );
-        } else {
-          console.warn(
-            `[mission-set-status] git push falhou para ${missionId}: ${pushResult.error}`,
-          );
-        }
-      }
-      return completed;
+      return push ? pushCompletedMission(ctx, current, push, invocation) : completed;
     }
     if (note.length > 0) {
       const heading =

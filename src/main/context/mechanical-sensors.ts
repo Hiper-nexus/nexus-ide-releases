@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { z } from 'zod';
 
 /**
  * Sensores mecânicos Nexus-owned (Etapa 2 do plano dev-sênior).
@@ -174,22 +175,31 @@ export async function runTypecheckSensor(
 /* Dependency audit — npm audit --omit=dev quando existe lockfile       */
 /* ------------------------------------------------------------------ */
 
-interface AuditVulnerability {
-  readonly name?: string;
-  readonly severity?: string;
-}
+const AUDIT_COUNT_SEVERITIES = ['critical', 'high', 'moderate', 'low'] as const;
 
-interface AuditPayload {
-  readonly metadata?: {
-    readonly vulnerabilities?: {
-      readonly critical?: number;
-      readonly high?: number;
-      readonly moderate?: number;
-      readonly low?: number;
-    };
-  };
-  readonly vulnerabilities?: Record<string, AuditVulnerability>;
-}
+const auditPayloadSchema = z.object({
+  error: z.never().optional(),
+  metadata: z.object({
+    vulnerabilities: z.object({
+      critical: z.number().int().nonnegative(),
+      high: z.number().int().nonnegative(),
+      moderate: z.number().int().nonnegative(),
+      low: z.number().int().nonnegative(),
+    }),
+  }),
+  vulnerabilities: z.record(z.string(), z.object({
+    name: z.string().optional(),
+    severity: z.enum(['info', 'low', 'moderate', 'high', 'critical']),
+  })),
+}).refine((payload) => {
+  const vulnerabilities = Object.values(payload.vulnerabilities);
+  return AUDIT_COUNT_SEVERITIES.every((severity) =>
+    payload.metadata.vulnerabilities[severity] ===
+    vulnerabilities.filter((vulnerability) => vulnerability.severity === severity).length,
+  );
+}, 'Contagens de vulnerabilidades divergentes dos registros');
+
+type AuditPayload = z.infer<typeof auditPayloadSchema>;
 
 const LOCKFILES = [
   'package-lock.json',
@@ -200,8 +210,7 @@ const LOCKFILES = [
 
 function auditFindings(payload: AuditPayload): MechanicalFinding[] {
   const findings: MechanicalFinding[] = [];
-  const vulns = payload.vulnerabilities ?? {};
-  for (const [name, info] of Object.entries(vulns)) {
+  for (const [name, info] of Object.entries(payload.vulnerabilities)) {
     const severity =
       info.severity === 'critical'
         ? 'critical'
@@ -277,7 +286,7 @@ export async function runDependencyAuditSensor(
   }
   let payload: AuditPayload;
   try {
-    payload = JSON.parse(stdout) as AuditPayload;
+    payload = auditPayloadSchema.parse(JSON.parse(stdout));
   } catch {
     return {
       kind: 'dependency-audit',
@@ -286,7 +295,7 @@ export async function runDependencyAuditSensor(
       findings: [],
     };
   }
-  const counts = payload.metadata?.vulnerabilities ?? {};
+  const counts = payload.metadata.vulnerabilities;
   const blocking = auditFindings(payload);
   if (blocking.length === 0) {
     const moderate = counts.moderate ?? 0;

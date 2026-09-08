@@ -46,11 +46,15 @@ import { buildGridTree } from '../lib/split-tree';
 import {
   attachHost,
   cancelPaneRecovery,
+  consumeFirstSpawnIntent,
   discardPaneSpawnState,
+  markPersistedAuthorityOnSpawn,
+  markResumeOnSpawn,
   getOrCreateHost,
   getPaneSessionId,
   hibernateHost,
   holdSpawnUntilApproved,
+  orchAutoReliveGate,
   reconcileHosts,
   waitForSession,
 } from './terminal-host';
@@ -170,5 +174,54 @@ describe('waitForSession with an attached terminal', () => {
     expect(await waiting).toBeNull();
     expect(kill).toHaveBeenCalledWith('late-pty');
     expect(getPaneSessionId(pane.id)).toBeNull();
+  });
+});
+
+describe('orchAutoReliveGate — teto anti-loop com voz no esgotamento', () => {
+  it('permite religar fora do cooldown e abaixo do teto', () => {
+    expect(
+      orchAutoReliveGate({ now: 100_000, lastReliveAt: 80_000, autoReliveCount: 0 }),
+    ).toBe('allow');
+    expect(
+      orchAutoReliveGate({ now: 100_000, lastReliveAt: undefined, autoReliveCount: 1 }),
+    ).toBe('allow');
+  });
+
+  it('segura o transiente de cooldown em silêncio', () => {
+    expect(
+      orchAutoReliveGate({ now: 100_000, lastReliveAt: 95_000, autoReliveCount: 0 }),
+    ).toBe('cooldown');
+  });
+
+  it('aponta esgotamento quando o teto estoura (o chamador anuncia)', () => {
+    expect(
+      orchAutoReliveGate({ now: 100_000, lastReliveAt: 80_000, autoReliveCount: 2 }),
+    ).toBe('exhausted');
+  });
+});
+
+describe('consumeFirstSpawnIntent — resume+restore nunca simultâneos', () => {
+  it('última intenção vence e o consumo é one-shot', () => {
+    // Ordem do fluxo de login que gerava panes mortos com
+    // `modo(resume+fresh simultâneos)`: restore marcado e resume depois.
+    markPersistedAuthorityOnSpawn('intent-a');
+    markResumeOnSpawn('intent-a');
+    expect(consumeFirstSpawnIntent('intent-a')).toEqual({
+      resume: true,
+      restorePersistedAuthority: false,
+    });
+    expect(consumeFirstSpawnIntent('intent-a')).toEqual({
+      resume: false,
+      restorePersistedAuthority: false,
+    });
+
+    markResumeOnSpawn('intent-b');
+    markPersistedAuthorityOnSpawn('intent-b');
+    expect(consumeFirstSpawnIntent('intent-b')).toEqual({
+      resume: false,
+      restorePersistedAuthority: true,
+    });
+    discardPaneSpawnState('intent-a');
+    discardPaneSpawnState('intent-b');
   });
 });

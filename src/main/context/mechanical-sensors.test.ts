@@ -76,7 +76,11 @@ describe('runDependencyAuditSensor', () => {
   it('audit limpo → passed com contagens quando existem', async () => {
     const payload = {
       metadata: { vulnerabilities: { critical: 0, high: 0, moderate: 2, low: 1 } },
-      vulnerabilities: {},
+      vulnerabilities: {
+        'moderate-a': { severity: 'moderate' },
+        'moderate-b': { severity: 'moderate' },
+        'low-a': { severity: 'low' },
+      },
     };
     const result = await runDependencyAuditSensor('/com-lockfile', {
       ...depsWithFs,
@@ -109,7 +113,7 @@ describe('runDependencyAuditSensor', () => {
 
   it('moderate/low não bloqueiam', async () => {
     const payload = {
-      metadata: { vulnerabilities: { critical: 0, high: 0, moderate: 3, low: 2 } },
+      metadata: { vulnerabilities: { critical: 0, high: 0, moderate: 1, low: 1 } },
       vulnerabilities: {
         a: { severity: 'moderate' },
         b: { severity: 'low' },
@@ -128,5 +132,79 @@ describe('runDependencyAuditSensor', () => {
       exec: execFail('npm ERR! network'),
     });
     expect(result.status).toBe('unavailable');
+  });
+
+  it.each(['ENOLOCK', 'EAI_AGAIN'])(
+    'erro JSON %s do npm audit não é um relatório aprovado',
+    async (code) => {
+      const result = await runDependencyAuditSensor('/com-lockfile', {
+        exists: fakeExists,
+        exec: execFail(JSON.stringify({ error: { code, summary: 'Audit failed.' } })),
+      });
+
+      expect(result.status).toBe('unavailable');
+      expect(result.findings).toEqual([]);
+      expect(result.summary).not.toContain('✓');
+    },
+  );
+
+  it.each([
+    { critical: 1, high: 0 },
+    { critical: 0, high: 2 },
+    { critical: 1, high: 2 },
+  ])('contagens bloqueantes $critical/$high sem registros não aprovam a auditoria', async (counts) => {
+    const payload = {
+      metadata: { vulnerabilities: { ...counts, moderate: 0, low: 0 } },
+      vulnerabilities: {},
+    };
+    const result = await runDependencyAuditSensor('/com-lockfile', {
+      exists: fakeExists,
+      exec: execFail(JSON.stringify(payload)),
+    });
+
+    expect(result.status).toBe('unavailable');
+    expect(result.findings).toEqual([]);
+    expect(result.summary).not.toContain('✓');
+  });
+
+  it.each(['critical', 'high', 'moderate', 'low'] as const)(
+    'contagem %s divergente dos registros torna o relatório indisponível',
+    async (severity) => {
+      const payload = {
+        metadata: { vulnerabilities: { critical: 0, high: 0, moderate: 0, low: 0 } },
+        vulnerabilities: { lib: { severity } },
+      };
+      const result = await runDependencyAuditSensor('/com-lockfile', {
+        exists: fakeExists,
+        exec: async () => ({ stdout: JSON.stringify(payload), stderr: '' }),
+      });
+
+      expect(result.status).toBe('unavailable');
+      expect(result.findings).toEqual([]);
+    },
+  );
+
+  it.each([
+    ['objeto vazio', {}],
+    ['null', null],
+    ['lista', []],
+    ['relatório sem contagens', { vulnerabilities: {} }],
+    ['vulnerabilidade malformada', {
+      metadata: { vulnerabilities: { critical: 0, high: 0, moderate: 0, low: 0 } },
+      vulnerabilities: { lib: null },
+    }],
+    ['erro mesmo com campos de relatório', {
+      error: { code: 'ENOLOCK' },
+      metadata: { vulnerabilities: { critical: 0, high: 0, moderate: 0, low: 0 } },
+      vulnerabilities: {},
+    }],
+  ])('JSON inválido (%s) é indisponível mesmo com exit zero', async (_label, payload) => {
+    const result = await runDependencyAuditSensor('/com-lockfile', {
+      exists: fakeExists,
+      exec: async () => ({ stdout: JSON.stringify(payload), stderr: '' }),
+    });
+
+    expect(result.status).toBe('unavailable');
+    expect(result.findings).toEqual([]);
   });
 });

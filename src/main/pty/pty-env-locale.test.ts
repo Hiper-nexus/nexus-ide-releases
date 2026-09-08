@@ -12,7 +12,9 @@ describe('ensureUtf8Locale', () => {
 
   it('preserva locale UTF-8 já herdado', () => {
     const env: NodeJS.ProcessEnv = { LANG: 'pt_BR.UTF-8' };
-    ensureUtf8Locale(env, 'darwin');
+    ensureUtf8Locale(env, 'darwin', {
+      listLocales: () => ['en_US.UTF-8', 'pt_BR.UTF-8'],
+    });
     expect(env.LANG).toBe('pt_BR.UTF-8');
   });
 
@@ -27,7 +29,9 @@ describe('ensureUtf8Locale', () => {
 
   it('respeita LC_ALL UTF-8 vigente mesmo sem LANG', () => {
     const env: NodeJS.ProcessEnv = { LC_ALL: 'pt_BR.UTF-8' };
-    ensureUtf8Locale(env, 'darwin');
+    ensureUtf8Locale(env, 'darwin', {
+      listLocales: () => ['en_US.UTF-8', 'pt_BR.UTF-8'],
+    });
     expect(env.LANG).toBeUndefined();
     expect(env.LC_ALL).toBe('pt_BR.UTF-8');
   });
@@ -44,14 +48,18 @@ describe('ensureUtf8Locale', () => {
 
   it('LC_CTYPE=C não pode vencer um LANG UTF-8 legítimo do usuário', () => {
     const env: NodeJS.ProcessEnv = { LANG: 'pt_BR.UTF-8', LC_CTYPE: 'POSIX' };
-    ensureUtf8Locale(env, 'linux');
+    ensureUtf8Locale(env, 'linux', {
+      listLocales: () => ['en_US.UTF-8', 'pt_BR.UTF-8'],
+    });
     expect(env.LC_CTYPE).toBeUndefined();
     expect(env.LANG).toBe('pt_BR.UTF-8');
   });
 
   it('respeita LC_CTYPE UTF-8 explícito do usuário', () => {
     const env: NodeJS.ProcessEnv = { LC_CTYPE: 'pt_BR.UTF-8' };
-    ensureUtf8Locale(env, 'darwin');
+    ensureUtf8Locale(env, 'darwin', {
+      listLocales: () => ['en_US.UTF-8', 'pt_BR.UTF-8'],
+    });
     expect(env.LC_CTYPE).toBe('pt_BR.UTF-8');
     expect(env.LANG).toBeUndefined();
   });
@@ -60,5 +68,46 @@ describe('ensureUtf8Locale', () => {
     const env: NodeJS.ProcessEnv = {};
     ensureUtf8Locale(env, 'win32');
     expect(env.LANG).toBeUndefined();
+  });
+
+  it('troca LANG UTF-8 inexistente (en_BR) pelo fallback', () => {
+    // Campo em 07/09/2026: shell com LANG=en_BR.UTF-8 (idioma en + região
+    // BR) — termina em UTF-8 mas não existe no `locale -a`, e todo boot de
+    // worker cuspia warnings de perl. Sufixo não é prova; só instalado vale.
+    const env: NodeJS.ProcessEnv = { LANG: 'en_BR.UTF-8' };
+    ensureUtf8Locale(env, 'darwin', {
+      listLocales: () => ['en_US.UTF-8', 'pt_BR.UTF-8'],
+    });
+    expect(env.LANG).toBe('en_US.UTF-8');
+  });
+
+  it('LC_ALL inexistente não derruba LANG válido', () => {
+    const env: NodeJS.ProcessEnv = {
+      LC_ALL: 'en_BR.UTF-8',
+      LANG: 'pt_BR.UTF-8',
+    };
+    ensureUtf8Locale(env, 'darwin', {
+      listLocales: () => ['en_US.UTF-8', 'pt_BR.UTF-8'],
+    });
+    expect(env.LC_ALL).toBeUndefined();
+    expect(env.LANG).toBe('pt_BR.UTF-8');
+  });
+
+  it('sem como verificar, confia no herdado (fail-open)', () => {
+    const env: NodeJS.ProcessEnv = { LANG: 'en_BR.UTF-8' };
+    ensureUtf8Locale(env, 'darwin', { listLocales: () => null });
+    expect(env.LANG).toBe('en_BR.UTF-8');
+  });
+
+  it('lister que lança não quebra o spawn', () => {
+    const env: NodeJS.ProcessEnv = { LANG: 'en_BR.UTF-8' };
+    expect(() =>
+      ensureUtf8Locale(env, 'darwin', {
+        listLocales: () => {
+          throw new Error('sem locale');
+        },
+      }),
+    ).not.toThrow();
+    expect(env.LANG).toBe('en_BR.UTF-8');
   });
 });

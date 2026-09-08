@@ -115,23 +115,62 @@ describe('mission setup draft store', () => {
     localStorage.clear();
   });
 
-  it('ignores draft edits until a project workspace exists', () => {
+  it('guarda a ideia escrita antes da pasta só na memória', () => {
     const store = useMissionSetupStore.getState();
 
-    store.setObjective('Este texto não pode virar um rascunho sem projeto');
-    store.setTitle('Sem projeto');
-    store.setContextPaths(['src/App.tsx']);
+    store.setObjective('Quero um sistema de agendamento para minha barbearia');
+    store.setTitle('Barbearia');
+    store.setAcceptance('Consigo agendar pelo celular');
+    store.setContextPaths(['docs/ideia.md']);
+    // Equipe e etapa continuam por pasta: não atravessam sem projeto.
     store.setRoster([coordinator, implementer]);
     store.setAdvancedLane('consult');
     store.setStep('team');
 
-    expect(useMissionSetupStore.getState().draft).toEqual(
-      createEmptyMissionSetupDraft(),
+    const pending = useMissionSetupStore.getState();
+    expect(pending.draft.objective).toBe(
+      'Quero um sistema de agendamento para minha barbearia',
     );
+    expect(pending.draft.title).toBe('Barbearia');
+    expect(pending.draft.acceptance).toBe('Consigo agendar pelo celular');
+    expect(pending.draft.contextPaths).toEqual(['docs/ideia.md']);
+    expect(pending.draft.roster).toEqual([]);
+    expect(pending.persistence).toEqual({ status: 'idle' });
+    // Nada foi persistido sem pasta.
+    expect(localStorage.length).toBe(0);
+  });
+
+  it('transfere a ideia pendente para a pasta vazia sem apagar rascunho existente', () => {
+    const store = useMissionSetupStore.getState();
+    store.setObjective('Quero um sistema de agendamento para minha barbearia');
+    store.setTitle('Barbearia');
 
     store.setWorkspace('/projects/alpha');
-    expect(useMissionSetupStore.getState().draft).toEqual(
-      createEmptyMissionSetupDraft(),
+    const alpha = useMissionSetupStore.getState();
+    expect(alpha.draft.objective).toBe(
+      'Quero um sistema de agendamento para minha barbearia',
+    );
+    expect(alpha.draft.title).toBe('Barbearia');
+
+    // Rascunho existente na pasta de destino nunca é sobrescrito.
+    store.setWorkspace(null);
+    store.setObjective('Ideia nova que não pode apagar a beta');
+    store.setWorkspace('/projects/beta');
+    useMissionSetupStore.getState().setObjective('Rascunho original da beta');
+    store.setWorkspace(null);
+    store.setObjective('Outra ideia nova');
+    store.setWorkspace('/projects/beta');
+    expect(useMissionSetupStore.getState().draft.objective).toBe(
+      'Rascunho original da beta',
+    );
+  });
+
+  it('preserva a ideia ao fechar o projeto sem pasta', () => {
+    const store = useMissionSetupStore.getState();
+    store.setObjective('Ideia que sobrevive sem pasta');
+    store.setWorkspace(null);
+    expect(useMissionSetupStore.getState().draft.objective).toBe(
+      'Ideia que sobrevive sem pasta',
     );
   });
 

@@ -126,6 +126,41 @@ afterEach(() => {
 });
 
 describe('Mission Setup and Mission Board style contracts', () => {
+  it.each([
+    { width: 900, canvasWidth: 650, stacked: true },
+    { width: 1_100, canvasWidth: 850, stacked: false },
+  ])('sizes the express team for its $canvasWidth px canvas in a $width px window', ({ width, canvasWidth, stacked }) => {
+    installStyleContract(missionStyles, { width, containerWidth: canvasWidth });
+    const host = render(
+      <section className="mission-setup">
+        <div className="mission-setup__canvas">
+          <div className="mission-setup__step mission-setup__step--express">
+            <div className="mission-roster-row mission-roster-row--compact">
+              <div className="mission-roster-row__identity">
+                <strong>Construir o sistema</strong>
+                <div className="mission-roster-row__controls">
+                  <label className="mission-roster-row__control">
+                    <span>Ferramenta</span>
+                    <select><option>Claude</option></select>
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>,
+      width,
+    );
+    const canvas = host.querySelector('.mission-setup__canvas')!;
+    const identity = host.querySelector('.mission-roster-row__identity')!;
+    const controls = host.querySelector('.mission-roster-row__controls')!;
+
+    expect(computedCssValue(canvas, 'container-type')).toBe('inline-size');
+    expect(computedCssValue(identity, 'grid-template-areas'))
+      .toContain(stacked ? "'name'" : "'name controls'");
+    expect(computedCssValue(controls, 'flex-wrap')).toBe(stacked ? 'wrap' : 'nowrap');
+  });
+
   it('renders >=2px focus on representative setup and board controls', () => {
     installStyleContract(missionStyles, {
       width: 1_400,

@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { Mission } from '../../shared/orch-types';
 import { testProjectScope } from './__tests__/scope-fixture';
 import type { CandidateQualityAnalysis } from '../context/candidate-quality-scanner';
@@ -201,10 +204,31 @@ describe('blockingFindingsOf / describeFindingsForOperator', () => {
 });
 
 describe('enforceCivilianAutoReview', () => {
-  it('sem repositório git → defer-to-roster-review (nunca trava)', async () => {
+  it('projeto real sem Git recebe análise dos arquivos e segue com limitação honesta', async () => {
     __resetCivilianAutoReviewForTests();
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'nexus-civil-review-')));
+    writeFileSync(join(root, 'server.js'), 'console.log("ready");\n');
+    try {
+      const outcome = await enforceCivilianAutoReview({
+        mission: missionFixture(),
+        scope: testProjectScope({ rootRealPath: root }),
+        productFiles: ['server.js'],
+      });
+      expect(outcome.kind).toBe('approved');
+      if (outcome.kind !== 'approved') return;
+      expect(outcome.note).toContain('sem comparação com histórico Git');
+      expect(outcome.note).toContain('Typecheck indisponível');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('sem repositório Git ainda analisa os arquivos pelo modo working-tree', async () => {
+    __resetCivilianAutoReviewForTests();
+    const analyze = vi.fn(async () => analysis([]));
     const { dependencies } = deps({
       git: fakeGit({ failRevParse: true }),
+      analyze,
     });
     const outcome = await enforceCivilianAutoReview(
       {
@@ -214,10 +238,11 @@ describe('enforceCivilianAutoReview', () => {
       },
       dependencies,
     );
-    expect(outcome.kind).toBe('defer-to-roster-review');
+    expect(outcome.kind).toBe('approved');
+    expect(analyze).toHaveBeenCalledWith(expect.objectContaining({ candidateSource: 'working-tree' }));
   });
 
-  it('aprovado → evidência + nota; segundo tick no mesmo HEAD não re-escaneia', async () => {
+  it('revalida a entrega a cada tentativa de conclusão, mesmo no mesmo HEAD', async () => {
     __resetCivilianAutoReviewForTests();
     const { dependencies, calls } = deps();
     const input = {
@@ -232,7 +257,61 @@ describe('enforceCivilianAutoReview', () => {
     expect(first.note).toContain('aprovado');
     const second = await enforceCivilianAutoReview(input, dependencies);
     expect(second.kind).toBe('approved');
-    expect(calls.analyzeCalls).toBe(1);
+    expect(calls.analyzeCalls).toBe(2);
+  });
+
+  it('bloqueia regressão sem commit após uma aprovação anterior', async () => {
+    __resetCivilianAutoReviewForTests();
+    let currentFindings: readonly ReviewFindingInput[] = [];
+    const { dependencies, calls } = deps({
+      analyze: async () => analysis(currentFindings),
+    });
+    const input = {
+      mission: missionFixture(),
+      scope,
+      productFiles: ['src/auth.ts'],
+    };
+    expect((await enforceCivilianAutoReview(input, dependencies)).kind)
+      .toBe('approved');
+
+    // HEAD e caminhos permanecem iguais; o conteúdo mudou antes da entrega final.
+    currentFindings = [finding('critical', 'src/auth.ts')];
+    const afterEdit = await enforceCivilianAutoReview(input, dependencies);
+
+    expect(afterEdit.kind).toBe('blocked');
+    expect(calls.analyzeCalls).toBe(2);
+  });
+
+  it('reexecuta os sensores e bloqueia erro de compilação surgido sem novo commit', async () => {
+    __resetCivilianAutoReviewForTests();
+    const { dependencies } = deps();
+    let hasCompileError = false;
+    let typecheckCalls = 0;
+    const sensors = {
+      ...dependencies,
+      typecheck: async () => {
+        typecheckCalls += 1;
+        return {
+          kind: 'typecheck' as const,
+          status: hasCompileError ? 'failed' as const : 'passed' as const,
+          summary: hasCompileError ? 'Erro de compilação.' : 'Compila.',
+          findings: hasCompileError ? [{
+            severity: 'high' as const,
+            file: 'src/app.ts',
+            evidence: 'TS2304: Cannot find name x.',
+            recommendation: 'Corrija o erro de compilação.',
+          }] : [],
+        };
+      },
+    };
+    const input = { mission: missionFixture(), scope, productFiles: ['src/app.ts'] };
+    expect((await enforceCivilianAutoReview(input, sensors)).kind).toBe('approved');
+
+    hasCompileError = true;
+    const afterEdit = await enforceCivilianAutoReview(input, sensors);
+
+    expect(afterEdit.kind).toBe('blocked');
+    expect(typecheckCalls).toBe(2);
   });
 
   it('reprovado com Maestro vivo → despacha reparo e entra em cooldown', async () => {

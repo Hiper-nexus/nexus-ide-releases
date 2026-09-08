@@ -399,7 +399,7 @@ describe('walkProductFiles — evidência sem lixo', () => {
 });
 
 describe('settlement — success queued espera o paste no Maestro', () => {
-  it('handoff success ainda queued NÃO fecha via Pronto', () => {
+  it('handoff success ainda queued NÃO fecha via Pronto', async () => {
     expect(
       hasUnsettledQueuedHandoffs([
         { deliveryState: 'queued' },
@@ -473,7 +473,9 @@ describe('settlement — success queued espera o paste no Maestro', () => {
       listProductFiles: () => [] as readonly string[],
       missionEngine: { completeVerified },
     };
-    const completed = maybeApplyCivilianPronto(scope, mission.id, deps);
+    const completed = await maybeApplyCivilianPronto(scope, mission.id, {
+      ...deps, missionEngine: { ...deps.missionEngine, blockUser: vi.fn() },
+    });
     expect(completed.action).toBe('wait');
     expect(completed.reason).toBe('queued-handoffs');
     expect(completed.completed).toBe(false);

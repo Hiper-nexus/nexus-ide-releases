@@ -93,6 +93,36 @@ function renderRail(overrides: Partial<WorkspaceRailProps> = {}) {
 }
 
 describe('WorkspaceRail', () => {
+  it('offers one new request action before a stable navigation and the history', () => {
+    const { host, handlers } = renderRail({ onOpenLauncher: vi.fn() });
+    const create = host.querySelectorAll('[aria-label="Novo pedido"], [data-testid="rail-new-mission"]');
+    expect(create).toHaveLength(1);
+    expect(create[0]?.textContent).toContain('Novo pedido');
+    const destinations = host.querySelector('[aria-label="Destinos fixos"]')!;
+    const history = host.querySelector('.workspace-rail__scroll')!;
+    expect(destinations.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(history.contains(create[0]!)).toBe(false);
+    act(() => (create[0] as HTMLButtonElement).click());
+    expect(handlers.onCreateNew).toHaveBeenCalledOnce();
+  });
+
+  it('shows each request title and state without repeating its project or branch', () => {
+    const { host } = renderRail();
+    const request = host.querySelector('[data-mission-id="mission-running"]')!;
+    expect(request.textContent).toContain('Corrigir o login');
+    expect(request.textContent).toContain('Trabalhando');
+    expect(request.querySelector('.workspace-rail__mission-repo-chip')).toBeNull();
+    expect(request.querySelector('.workspace-rail__mission-branch')).toBeNull();
+  });
+
+  it('opens an existing project without entering the creation flow', () => {
+    const onOpenWorkspace = vi.fn();
+    const { host, handlers } = renderRail({ onOpenWorkspace });
+    act(() => host.querySelector<HTMLButtonElement>('[aria-label="Abrir projeto existente"]')!.click());
+    expect(onOpenWorkspace).toHaveBeenCalledOnce();
+    expect(handlers.onCreateNew).not.toHaveBeenCalled();
+  });
+
   it('keeps destinations and settings outside the scrollable mission history', () => {
     const { host } = renderRail({ onOpenLauncher: vi.fn(), projectEnabled: true, onOpenProject: vi.fn() });
     const body = host.querySelector('.workspace-rail__scroll');
@@ -263,6 +293,13 @@ describe('WorkspaceRail', () => {
       recentWorkspaces: [],
     });
 
+    // 11 estados, página de 10: expande para cobrir a matriz inteira.
+    act(() => {
+      host
+        .querySelector<HTMLButtonElement>('.workspace-rail__missions-more')!
+        .click();
+    });
+
     for (const { id, state, label, tone } of statusCases) {
       const row = host.querySelector(`[data-mission-id="mission-${id}"]`);
 
@@ -363,14 +400,13 @@ describe('WorkspaceRail', () => {
     ).not.toMatch(/Precisa de você/);
   });
 
-  it('CTA hero Nova missão abre o mesmo fluxo simples no workspace', () => {
+  it('Novo pedido abre o fluxo simples no projeto atual', () => {
     const { host, handlers } = renderRail();
 
     const cta = host.querySelector<HTMLButtonElement>(
       '[data-testid="rail-new-mission"]',
     );
-    expect(cta?.textContent).toContain('Nova missão');
-    expect(cta?.textContent).toContain('o Nexus monta a equipe');
+    expect(cta?.textContent).toContain('Novo pedido');
     act(() => {
       cta?.click();
     });
@@ -381,7 +417,7 @@ describe('WorkspaceRail', () => {
     const { host, handlers } = renderRail();
 
     act(() => {
-      host.querySelector<HTMLButtonElement>('[aria-label="Criar nova missão"]')?.click();
+      host.querySelector<HTMLButtonElement>('[aria-label="Novo pedido"]')?.click();
       host.querySelector<HTMLButtonElement>('[data-workspace-id="atlas"]')?.click();
       host.querySelector<HTMLButtonElement>('[data-mission-id="mission-running"]')?.click();
       host.querySelector<HTMLButtonElement>('[aria-label="Abrir Terminais"]')?.click();
@@ -700,6 +736,64 @@ describe('WorkspaceRail', () => {
         useLayoutStore.setState({ root: previousRoot });
       });
     }
+  });
+
+  it('pagina a lista de missões por pasta (10 por vez)', () => {
+    const missions = Array.from({ length: 12 }, (_, index) => ({
+      id: `mission-many-${index}`,
+      title: `Missão ${index}`,
+      status: 'completed' as const,
+      needsAttention: false,
+    }));
+    const { host } = renderRail({
+      activeWorkspaces: [{ id: 'atlas', name: 'Atlas local', missions }],
+      selection: { kind: 'mission', missionId: 'mission-many-2' },
+    });
+
+    expect(
+      host.querySelectorAll('[data-mission-id^="mission-many-"]').length,
+    ).toBe(10);
+    expect(
+      host.querySelector('[data-mission-id="mission-many-10"]'),
+    ).toBeNull();
+    const more = host.querySelector<HTMLButtonElement>(
+      '.workspace-rail__missions-more',
+    );
+    expect(more?.textContent).toContain('Mostrar mais 2');
+
+    act(() => more!.click());
+    expect(
+      host.querySelectorAll('[data-mission-id^="mission-many-"]').length,
+    ).toBe(12);
+    const less = host.querySelector<HTMLButtonElement>(
+      '.workspace-rail__missions-more',
+    );
+    expect(less?.textContent).toContain('Mostrar menos');
+
+    act(() => less!.click());
+    expect(
+      host.querySelectorAll('[data-mission-id^="mission-many-"]').length,
+    ).toBe(10);
+  });
+
+  it('a missão selecionada além da página abre a lista até ela', () => {
+    const missions = Array.from({ length: 12 }, (_, index) => ({
+      id: `mission-many-${index}`,
+      title: `Missão ${index}`,
+      status: 'completed' as const,
+      needsAttention: false,
+    }));
+    const { host } = renderRail({
+      activeWorkspaces: [{ id: 'atlas', name: 'Atlas local', missions }],
+      selection: { kind: 'mission', missionId: 'mission-many-11' },
+    });
+
+    expect(
+      host.querySelector('[data-mission-id="mission-many-11"]'),
+    ).not.toBeNull();
+    expect(
+      host.querySelector('.workspace-rail__missions-more'),
+    ).toBeNull();
   });
 
   it('sem metadados do adapter, mantém o selo de texto da CLI', () => {

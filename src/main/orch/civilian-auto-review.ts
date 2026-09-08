@@ -42,6 +42,8 @@ export const CIVILIAN_REPAIR_BUDGET_PER_MISSION = 2;
 export const CIVILIAN_REPAIR_COOLDOWN_MS = 90_000;
 
 const BLOCKING_SEVERITIES = new Set(['critical', 'high']);
+/** No commit claim: working-tree scanner binds these projects to its file snapshot. */
+const NO_GIT_REVISION = '0'.repeat(40);
 
 const REPAIR_PROMPT_HEADER =
   '[NEXUS_QUALITY_REPAIR] A revisão automática encontrou problemas no código entregue. Corrija os itens abaixo antes de concluir a missão. Não marque como concluída sem corrigir.';
@@ -81,16 +83,10 @@ export interface CivilianAutoReviewDependencies {
 
 const repairBudgets = new Map<string, { used: number }>();
 const repairCooldowns = new Map<string, number>();
-/** Veredito aprovado é estável por HEAD — evita re-escanear a cada tick. */
-const approvedMemo = new Map<
-  string,
-  { headSha: string; outcome: CivilianAutoReviewOutcome }
->();
 
 export function __resetCivilianAutoReviewForTests(): void {
   repairBudgets.clear();
   repairCooldowns.clear();
-  approvedMemo.clear();
 }
 
 function repairBudgetRemaining(missionId: string): boolean {
@@ -260,23 +256,14 @@ export async function enforceCivilianAutoReview(
   const root = input.scope.rootRealPath;
   const git = dependencies.git ?? new AsyncProcessGitRunner();
 
-  const headSha = await currentHeadSha(git, root);
-  if (!headSha || !/^[a-f0-9]{40}$/u.test(headSha)) {
-    return { kind: 'defer-to-roster-review' };
-  }
-  const memoized = approvedMemo.get(input.mission.id);
-  if (memoized && memoized.headSha === headSha) {
-    return memoized.outcome;
-  }
+  const observedHead = await currentHeadSha(git, root);
+  const headSha = observedHead ?? NO_GIT_REVISION;
+  // HEAD não representa mudanças sem commit. Toda tentativa de concluir
+  // precisa revalidar o código e os sensores sobre a entrega atual.
 
-  const baseSha = await resolveAutoReviewBaseSha(
-    git,
-    root,
-    input.mission.createdAt,
-  );
-  if (!baseSha) {
-    return { kind: 'defer-to-roster-review' };
-  }
+  const baseSha = observedHead
+    ? await resolveAutoReviewBaseSha(git, root, input.mission.createdAt) ?? observedHead
+    : NO_GIT_REVISION;
 
   const changedFiles = [...new Set(input.productFiles)].slice(0, 512);
   const diffHash = createHash('sha256')
@@ -293,6 +280,7 @@ export async function enforceCivilianAutoReview(
         headSha,
         diffHash,
         changedFiles,
+        candidateSource: 'working-tree',
       },
       dependencies.git ? { git: dependencies.git } : {},
     );
@@ -313,9 +301,10 @@ export async function enforceCivilianAutoReview(
     const outcome: CivilianAutoReviewOutcome = {
       kind: 'approved',
       evidenceId: `nexus-auto-review:${analysis.analysisHash}`,
-      note: `${civilianAutoReviewEvidenceNote(analysis)}\n${sensorSummaries(mechanical)}`,
+      note: [civilianAutoReviewEvidenceNote(analysis), sensorSummaries(mechanical),
+        !observedHead ? 'Arquivos atuais analisados sem comparação com histórico Git.' : '',
+      ].filter(Boolean).join('\n'),
     };
-    approvedMemo.set(input.mission.id, { headSha, outcome });
     return outcome;
   }
 

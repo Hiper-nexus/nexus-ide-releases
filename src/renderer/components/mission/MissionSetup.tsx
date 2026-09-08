@@ -206,7 +206,14 @@ function humanizeMissionStartError(message: string): string {
 
 
 
-export function MissionSetup() {
+export interface MissionSetupProps {
+  /** Início opens Express; the advanced journey keeps its own destination. */
+  home?: boolean;
+}
+
+export function MissionSetup({
+  home = false,
+}: MissionSetupProps = {}) {
   const workspace = useWorkspaceStore((state) => state.current);
   const pickWorkspace = useWorkspaceStore((state) => state.pick);
   const workspacePath = useMissionSetupStore((state) => state.workspacePath);
@@ -301,7 +308,8 @@ export function MissionSetup() {
 
   useLayoutEffect(() => {
     setWorkspace(canonicalWorkspacePath);
-  }, [canonicalWorkspacePath, setWorkspace]);
+    if (home) setStep('express');
+  }, [canonicalWorkspacePath, home, setStep, setWorkspace]);
 
   useLayoutEffect(() => {
     if (hasUnreadDraft) persistedDraftReadAlertRef.current?.focus();
@@ -583,14 +591,14 @@ export function MissionSetup() {
   };
 
   useEffect(() => {
-    if (draft.step !== 'review' || !authorityKey) {
+    if (home || draft.step !== 'review' || !authorityKey) {
       enteredReviewKeyRef.current = null;
       return;
     }
     if (enteredReviewKeyRef.current === authorityKey) return;
     enteredReviewKeyRef.current = authorityKey;
     void runPrepare(authorityKey);
-  }, [authorityKey, draft.step]);
+  }, [authorityKey, draft.step, home]);
 
   const changeObjective = (objective: string): void => {
     if (objective === draft.objective) return;
@@ -837,6 +845,12 @@ export function MissionSetup() {
   const startExpress = async (): Promise<void> => {
     if (expressBusyRef.current) return;
     const setupState = useMissionSetupStore.getState();
+    const capturedDestination = home ? 'launcher' : 'mission-setup';
+    const capturedEntryRevision = setupState.entryAuthorityRevision;
+    const isCurrentCreationEntry = (): boolean =>
+      useProductNavigationStore.getState().destination.kind === capturedDestination &&
+      useMissionSetupStore.getState().entryAuthorityRevision === capturedEntryRevision;
+    if (!isCurrentCreationEntry()) return;
     const currentWorkspacePath =
       useWorkspaceStore.getState().current?.path ?? null;
     if (
@@ -860,6 +874,7 @@ export function MissionSetup() {
       const direct = await requestDirectAnswer(setupState.draft.objective);
       expressBusyRef.current = false;
       setExpressStatus('idle');
+      if (!isCurrentCreationEntry()) return;
       if (direct) {
         setDirectAnswer(direct);
         return;
@@ -944,6 +959,7 @@ export function MissionSetup() {
         useWorkspaceStore.getState().current?.path ?? null;
       const latestKey = missionSetupAuthorityKey(latestSetup);
       if (
+        !isCurrentCreationEntry() ||
         generation !== startGenerationRef.current ||
         latestKey !== capturedAuthorityKey ||
         latestWorkspace !== latestSetup.workspacePath ||
@@ -959,14 +975,12 @@ export function MissionSetup() {
       const finalSetup = useMissionSetupStore.getState();
       const finalWorkspace = useWorkspaceStore.getState().current?.path ?? null;
       const finalKey = missionSetupAuthorityKey(finalSetup);
-      const finalDestination =
-        useProductNavigationStore.getState().destination;
       if (
+        !isCurrentCreationEntry() ||
         generation !== startGenerationRef.current ||
         finalKey !== capturedAuthorityKey ||
         finalWorkspace !== finalSetup.workspacePath ||
-        finalSetup.draft.step !== 'express' ||
-        finalDestination.kind !== 'mission-setup'
+        finalSetup.draft.step !== 'express'
       ) {
         return;
       }
@@ -984,10 +998,7 @@ export function MissionSetup() {
           : typeof error === 'string'
             ? error
             : '';
-      const leftSetup =
-        useProductNavigationStore.getState().destination.kind !==
-        'mission-setup';
-      if (leftSetup) return;
+      if (!isCurrentCreationEntry()) return;
       setExpressStatus('idle');
       setExpressError(humanizeMissionStartError(rawMessage));
     } finally {
@@ -1106,7 +1117,7 @@ export function MissionSetup() {
           <ExpressMissionStart
             workspace={workspace}
             draft={draft}
-            draftFieldsDisabled={!workspace || hasUnreadDraft}
+            draftFieldsDisabled={hasUnreadDraft}
             suppressHeadingAutofocus={hasUnreadDraft}
             pickingWorkspace={pickingWorkspace}
             workspaceActionError={workspaceActionError}
@@ -1126,7 +1137,10 @@ export function MissionSetup() {
             onAcceptanceChange={(value) => setAcceptance(value)}
             onContextPathsChange={setContextPaths}
             onStart={() => void startExpress()}
-            onAdvanced={() => setStep('team')}
+            onAdvanced={() => {
+              if (home) useProductNavigationStore.getState().openMissionSetup();
+              setStep('team');
+            }}
             onConnectProvider={() =>
               useProductNavigationStore.getState().openSettings('providers')
             }
@@ -1139,7 +1153,7 @@ export function MissionSetup() {
           <MissionStep
             workspace={workspace}
             draft={draft}
-            draftFieldsDisabled={!workspace || hasUnreadDraft}
+            draftFieldsDisabled={hasUnreadDraft}
             suppressHeadingAutofocus={hasUnreadDraft}
             pickingWorkspace={pickingWorkspace}
             workspaceActionError={workspaceActionError}

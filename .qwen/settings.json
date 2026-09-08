@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx *)",
+      "Bash(npm run *)",
+      "Bash(do *)",
+      "Bash(done)",
+      "Bash(set *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git fetch *)",
+      "Bash(git *)",
+      "Bash(git push *)",
+      "Bash(node *)",
+      "Bash(npm install *)",
+      "Bash(cp *)",
+      "Bash(// *)",
+      "Bash(const *)",
+      "Bash(console.log)",
+      "Bash(eof)",
+      "Bash(sed *)",
+      "Bash(let *)",
+      "Bash(rgb.every)",
+      "Bash(}return *)",
+      "Bash(!dot)",
+      "Bash(hits.push)",
+      "Bash(echo *)",
+      "Bash(import *)",
+      "Bash(try *)",
+      "Bash(db.loadextension)",
+      "Bash(disabled)",
+      "Bash(omitted)",
+      "Bash(sqlite_omit/i.test)",
+      "Bash(cannot *)",
+      "Bash(no *)",
+      "Bash(dlopen/i.test)",
+      "Bash(db.close)"
+    ]
+  },
+  "$version": 4
+}

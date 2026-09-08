@@ -173,7 +173,7 @@ describe('Nexus V2 shell and product workspace style contracts', () => {
       '.nexus-shell__skip-link',
     );
     const createMission = host.querySelector<HTMLButtonElement>(
-      '[aria-label="Criar nova missão"]',
+      '[aria-label="Novo pedido"]',
     );
     const settings = host.querySelector<HTMLButtonElement>(
       '[aria-label="Abrir Configurações"]',

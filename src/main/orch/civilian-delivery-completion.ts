@@ -12,6 +12,7 @@ import { missionResultSchema } from '../../shared/mission-engine-contract';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
   enforceCivilianAutoReview,
+  resolveAutoReviewBaseSha,
   type CivilianAutoReviewOutcome,
 } from './civilian-auto-review';
 import { missionRequiresIndependentReview } from './mission-independent-review-gate';
@@ -22,7 +23,8 @@ import {
 } from './project-domain-store-registry';
 import { missionEngineForScope } from './mission-engine-registry';
 import { getSquad } from './squad-store';
-import { inspectTeamQuestionCompletion, isTeamQuestionMission, type TeamQuestionPaneRuntime } from './mission-team-question-completion';
+import { inspectTeamQuestionCompletion, isTeamQuestionMission, teamQuestionResponseSummary, type TeamQuestionObserverBinding, type TeamQuestionPaneRuntime } from './mission-team-question-completion';
+import { loadObserverPaneSessions } from './mission-team-question-observer';
 import { classifySeatAuth } from '../adapters/seat-auth-readiness';
 import { detectSubscriptionAuthReadiness } from '../adapters/subscription-auth';
 import {
@@ -36,6 +38,13 @@ import {
   storyConfirmationScript,
 } from './mission-story-plan';
 import type { ScopedTaskRecord } from './task-store';
+import { missionLifecycleKey } from './mission-lifecycle-lock';
+import { captureWorkingTreeCandidate } from '../context/candidate-working-tree-snapshot';
+import { withAutomaticCompletionProof, type AutomaticCompletionProof } from './automatic-completion-proof';
+import { SKIP_DIRECTORIES } from '../context/orientation/orientation-types';
+import { readFrozenMissionReviewContext } from './mission-review-proof';
+import { AsyncProcessGitRunner } from '../runtime/git-command';
+import { listMtimePathsSince } from './worker-delivery-evidence';
 
 const execFileAsync = promisify(execFile);
 
@@ -128,12 +137,20 @@ type LivePane = TeamQuestionPaneRuntime & {
 };
 
 export interface CivilianDeliveryDependencies {
+  readonly readFrozenReviewContext?: typeof readFrozenMissionReviewContext;
+  readonly captureCandidate?: (scope: ProjectExecutionScope) => Promise<{
+    readonly fingerprint: string;
+    readonly complete: boolean;
+    readonly deletedPaths?: readonly string[];
+  }>;
   readonly getStores?: (scope: ProjectExecutionScope) => CivilianStores;
   readonly listPanes?: () => readonly LivePane[];
+  readonly listObserverPaneSessions?: (missionId: string) => readonly TeamQuestionObserverBinding[];
   readonly listProductFiles?: (
     root: string,
     handoffs: readonly Handoff[],
     kickoffText?: string,
+    createdAt?: number,
   ) => readonly string[] | Promise<readonly string[]>;
   readonly now?: () => number;
   readonly spawnReviewers?: (
@@ -533,6 +550,11 @@ function isJunkRelative(rel: string): boolean {
   return rel.split(/[/\\]/u).some((segment) => JUNK_DIR.has(segment));
 }
 
+function isAutomaticallyDiscoverableArtifact(relativePath: string): boolean {
+  return !relativePath.split(/[/\\]/u).slice(0, -1).some((directory) =>
+    SKIP_DIRECTORIES.has(directory) || directory === '.qwen' || directory === '.opencode');
+}
+
 function resolveWorkspaceFile(root: string, rawPath: string): string | null {
   const trimmed = rawPath.trim();
   if (!trimmed || trimmed.includes('\0')) return null;
@@ -582,6 +604,7 @@ async function listGitProductFiles(root: string): Promise<string[]> {
         timeout: 4_000,
       });
       for (const line of stdout.split('\n')) {
+        if (!isAutomaticallyDiscoverableArtifact(line.trim())) continue;
         const absolute = resolveWorkspaceFile(root, line.trim());
         if (absolute && isNonEmptyFile(absolute)) {
           found.add(relative(root, absolute));
@@ -598,6 +621,7 @@ export async function listDeliveredProductFiles(
   root: string,
   handoffs: readonly Handoff[],
   kickoffText = '',
+  createdAt?: number,
 ): Promise<string[]> {
   const found = new Set<string>([
     ...collectArtifactFiles(root, handoffs),
@@ -606,6 +630,13 @@ export async function listDeliveredProductFiles(
   for (const requested of extractKickoffRequestedFiles(kickoffText)) {
     const absolute = resolveWorkspaceFile(root, requested);
     if (absolute && isNonEmptyFile(absolute)) found.add(relative(root, absolute));
+  }
+  if (createdAt !== undefined) {
+    for (const changed of listMtimePathsSince(root, createdAt)) {
+      if (!isAutomaticallyDiscoverableArtifact(changed)) continue;
+      const absolute = resolveWorkspaceFile(root, changed);
+      if (absolute && isNonEmptyFile(absolute)) found.add(relative(root, absolute));
+    }
   }
   return [...found].sort();
 }
@@ -1063,16 +1094,17 @@ async function civilianAutoReviewGate(
   panes: readonly LivePane[],
   deps: CivilianDeliveryDependencies,
 ): Promise<
-  | { readonly action: 'proceed'; readonly extras?: { note?: string; evidenceIds?: readonly string[] } }
+  | { readonly action: 'proceed'; readonly proof?: AutomaticCompletionProof; readonly extras?: { note?: string; evidenceIds?: readonly string[] } }
   | { readonly action: 'wait'; readonly spawnedReviewers: readonly string[] }
   | { readonly action: 'block'; readonly description: string }
 > {
   const squad = mission.squadId
     ? ((deps.getSquad ?? getSquad)(mission.squadId) ?? null)
     : null;
-  // Cobertos pelo gate de revisão independente (guided/legacy/standard+ops):
-  // o fluxo existente de recusa + revisor do roster já cuida deles.
-  if (missionRequiresIndependentReview(mission, squad)) {
+  // A revisão de um candidato congelado já tem Council próprio. Missões
+  // sem esse workflow usam o mesmo scanner/reparo, inclusive guided/legacy.
+  if (missionRequiresIndependentReview(mission, squad) &&
+      (deps.readFrozenReviewContext ?? readFrozenMissionReviewContext)(scope, mission.id)) {
     return { action: 'proceed' };
   }
   if (
@@ -1102,6 +1134,7 @@ async function civilianAutoReviewGate(
     case 'approved':
       return {
         action: 'proceed',
+        proof: { status: 'verified', note: outcome.note },
         extras: { note: outcome.note, evidenceIds: [outcome.evidenceId] },
       };
     case 'repair-dispatched':
@@ -1141,6 +1174,7 @@ async function civilianAutoReviewGate(
       }
       return {
         action: 'proceed',
+        proof: { status: 'unavailable', note: 'Scanner indisponível; conclusão pela política de entrega existente.' },
         extras: {
           note:
             'Scanner determinístico indisponível (workspace sem repositório git ou leitura falhou); conclusão sem varredura automática.',
@@ -1163,6 +1197,7 @@ function completeMission(
     readonly note?: string;
     readonly evidenceIds?: readonly string[];
   },
+  responseSummary?: string,
 ): boolean {
   const orchestratorNames = new Set(
     (stores.missionPanes?.list(mission.id) ?? [])
@@ -1181,7 +1216,7 @@ function completeMission(
               orchestratorNames.has(paneAgentKey(handoff.fromAgent)),
           )?.summary ?? null;
   const consolidatedSummary = buildConsolidatedSummary(mission, handoffs ?? []);
-  const summary = completionSummary(
+  const summary = responseSummary ?? completionSummary(
     mission,
     files,
     remaining,
@@ -1238,7 +1273,52 @@ function emptyResult(
  * Fail-closed: sandbox / session_authority_revoked / orchestrator_spawn_forbidden
  * / blocked_technical / failed. Não inventa números do board.
  */
+const completionFlights = new Set<string>();
+
 export async function maybeCompleteFastLaneOnDelivery(
+  scope: ProjectExecutionScope,
+  missionId: string | undefined,
+  deps: CivilianDeliveryDependencies = {},
+): Promise<CivilianDeliveryResult> {
+  if (!missionId) return emptyResult();
+  const key = missionLifecycleKey(scope, missionId);
+  if (completionFlights.has(key)) {
+    return { ...emptyResult(), reason: 'review-in-progress' };
+  }
+  completionFlights.add(key);
+  try {
+    return await reconcileCivilianCompletionAttempt(scope, missionId, deps);
+  } finally {
+    completionFlights.delete(key);
+  }
+}
+
+function completionState(stores: CivilianStores, missionId: string, panes: readonly LivePane[]): string {
+  const current = stores.missions.get(missionId);
+  return JSON.stringify({
+    mission: current && [
+      current.status, current.intentState, current.intentVersion,
+      current.updatedAt, current.intentContract, current.orchestratorSessionId,
+    ],
+    tasks: stores.tasks.list(missionId)
+      .map((task) => [task.id, task.status, task.updatedAt]),
+    handoffs: stores.handoffs.list({ missionId, includeDelivered: true })
+      .map((handoff) => [handoff.id, handoff.status, handoff.deliveryState, handoff.createdAt]),
+    panes: panes.filter((pane) => pane.missionId === missionId)
+      .map((pane) => [pane.paneId, pane.sessionId, pane.agentName, pane.role, pane.state]),
+  });
+}
+
+async function captureCompletionCandidate(scope: ProjectExecutionScope, deps: CivilianDeliveryDependencies, baseSha?: string) {
+  try {
+    return await (deps.captureCandidate?.(scope) ?? captureWorkingTreeCandidate({ scope, baseSha }));
+  } catch {
+    // Optional race detector: absence is reported, never a new prerequisite.
+    return null;
+  }
+}
+
+async function reconcileCivilianCompletionAttempt(
   scope: ProjectExecutionScope,
   missionId: string | undefined,
   deps: CivilianDeliveryDependencies = {},
@@ -1287,6 +1367,8 @@ export async function maybeCompleteFastLaneOnDelivery(
     panes: stores.missionPanes?.list?.(missionId) ?? [],
     runtimePanes: panes,
     handoffs,
+    observerPaneSessions: deps.listObserverPaneSessions?.(missionId) ??
+      loadObserverPaneSessions(scope, missionId),
   });
   if (!teamQuestion.ready) {
     return { ...emptyResult('wait'), reason: teamQuestion.reason, missingTargets: teamQuestion.missingTargets };
@@ -1307,11 +1389,13 @@ export async function maybeCompleteFastLaneOnDelivery(
         scope.rootRealPath,
         handoffs,
         mission.description ?? '',
+        mission.createdAt,
       ) ??
         listDeliveredProductFiles(
           scope.rootRealPath,
           handoffs,
           mission.description ?? '',
+          mission.createdAt,
         )),
     ),
   ];
@@ -1360,7 +1444,7 @@ export async function maybeCompleteFastLaneOnDelivery(
     ...markTasksDone(stores, inspection.deliveredWorkerTaskIds),
   ];
 
-  const action = decideCivilianDeliveryAction({
+  const decisionInput: CivilianDeliveryDecisionInput = {
     failClosed: inspection.failClosed,
     boardAllDone: inspection.boardAllDone,
     hasExpectedDelivery: evidence.expected,
@@ -1386,7 +1470,22 @@ export async function maybeCompleteFastLaneOnDelivery(
         if (oldest === null || task.queuedMs > oldest) return task.queuedMs;
         return oldest;
       }, null),
-  });
+  };
+  const initialAction = decideCivilianDeliveryAction(decisionInput);
+  const shouldCaptureCandidate = !teamQuestion.applicable && mission.intentContract?.lane !== 'consult' && (
+    initialAction === 'complete' || initialAction === 'spawn-review' ||
+    (initialAction === 'refuse-empty' && inspection.hasSuccessHandoff)
+  );
+  const stateBeforeReview = completionState(stores, missionId, panes);
+  const reviewBaseSha = shouldCaptureCandidate && !deps.captureCandidate
+    ? await resolveAutoReviewBaseSha(new AsyncProcessGitRunner(), scope.rootRealPath, mission.createdAt) ?? undefined
+    : undefined;
+  const candidateBefore = shouldCaptureCandidate
+    ? await captureCompletionCandidate(scope, deps, reviewBaseSha) : null;
+  const deletedCount = candidateBefore?.complete ? candidateBefore.deletedPaths?.length ?? 0 : 0;
+  const action = deletedCount > 0
+    ? decideCivilianDeliveryAction({ ...decisionInput, hasExpectedDelivery: true, productFileCount: productFiles.length + deletedCount })
+    : initialAction;
 
   const path: CivilianCompletionPath =
     action !== 'complete'
@@ -1505,6 +1604,16 @@ export async function maybeCompleteFastLaneOnDelivery(
       productFiles,
     };
   }
+  const candidateAfter = shouldCaptureCandidate
+    ? await captureCompletionCandidate(scope, deps, reviewBaseSha) : null;
+  const currentPanes = deps.listPanes?.() ??
+    (typeof listPaneSnapshots === 'function' ? listPaneSnapshots() : []);
+  if (
+    completionState(stores, missionId, currentPanes) !== stateBeforeReview ||
+    (candidateBefore && candidateAfter && candidateBefore.fingerprint !== candidateAfter.fingerprint)
+  ) {
+    return { ...emptyResult(), productFiles, markedDoneTaskIds, reason: 'review-candidate-changed' };
+  }
   if (autoReview.action === 'block') {
     const engine = deps.missionEngine ?? missionEngineForScope(scope);
     try {
@@ -1536,7 +1645,13 @@ export async function maybeCompleteFastLaneOnDelivery(
   let completed = false;
   let refusalSpawned: readonly string[] = [];
   try {
-    completed = completeMission(
+    const limitation = shouldCaptureCandidate && (!candidateBefore?.complete || !candidateAfter?.complete)
+      ? 'A checagem de mudanças durante a revisão foi parcial ou indisponível.' : '';
+    const extras = {
+      ...autoReview.extras,
+      note: [autoReview.extras?.note, limitation].filter(Boolean).join('\n'),
+    };
+    const complete = () => completeMission(
       scope,
       stores,
       mission,
@@ -1545,8 +1660,16 @@ export async function maybeCompleteFastLaneOnDelivery(
       engine,
       path ?? 'evidence',
       teamQuestion.applicable ? teamQuestion.responses.map(({ handoff }) => handoff) : handoffs,
-      autoReview.extras,
+      extras,
+      teamQuestion.applicable ? teamQuestionResponseSummary(teamQuestion) : undefined,
     );
+    completed = autoReview.proof
+      ? withAutomaticCompletionProof(scope, mission, {
+          ...autoReview.proof,
+          ...(candidateBefore?.complete && candidateAfter?.complete
+            ? { candidateFingerprint: candidateAfter.fingerprint, deletedArtifactPaths: candidateAfter.deletedPaths } : {}),
+        }, complete)
+      : complete();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (!isCivilianReviewRefusal(message)) {

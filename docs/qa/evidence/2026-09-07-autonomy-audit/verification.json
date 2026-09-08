@@ -1,0 +1,92 @@
+{
+  "date": "2026-09-07",
+  "scope": "Focused regression suite; not an end-to-end mission or competitive benchmark",
+  "baseCommit": "3c61b14904594b29675df7cdd55edde6c4bc4e56",
+  "nodeVersion": "v22.22.3",
+  "success": true,
+  "passed": 240,
+  "failed": 0,
+  "files": [
+    {
+      "file": "src/main/context/automated-review-design-contract.test.ts",
+      "status": "passed",
+      "tests": 3
+    },
+    {
+      "file": "src/main/context/candidate-quality-scanner.test.ts",
+      "status": "passed",
+      "tests": 1
+    },
+    {
+      "file": "src/main/context/mechanical-sensors.test.ts",
+      "status": "passed",
+      "tests": 24
+    },
+    {
+      "file": "src/main/orch/civilian-auto-review.test.ts",
+      "status": "passed",
+      "tests": 18
+    },
+    {
+      "file": "src/main/orch/civilian-delivery-completion.test.ts",
+      "status": "passed",
+      "tests": 52
+    },
+    {
+      "file": "src/main/orch/cli-mcp-session-governance.test.ts",
+      "status": "passed",
+      "tests": 3
+    },
+    {
+      "file": "src/main/orch/guided-squad-skills.test.ts",
+      "status": "passed",
+      "tests": 39
+    },
+    {
+      "file": "src/main/orch/mcp-dispatch-security.test.ts",
+      "status": "passed",
+      "tests": 64
+    },
+    {
+      "file": "src/main/orch/mission-delivery-artifact-gate.test.ts",
+      "status": "passed",
+      "tests": 5
+    },
+    {
+      "file": "src/main/orch/mission-independent-review-gate.test.ts",
+      "status": "passed",
+      "tests": 16
+    },
+    {
+      "file": "src/main/orch/skill-mirror.test.ts",
+      "status": "passed",
+      "tests": 15
+    }
+  ],
+  "reviewedFiles": [
+    {
+      "file": "src/main/context/mechanical-sensors.ts",
+      "sha256": "633ebb5c6c9b3a9a25e6c2a51fc38e2a040c187242ac1607f353f849eb985254"
+    },
+    {
+      "file": "src/main/context/mechanical-sensors.test.ts",
+      "sha256": "ecb3e6209185efee719d8d31cc444285fe8363a19c99ab88295e11e3f332447c"
+    },
+    {
+      "file": "src/main/orch/civilian-auto-review.ts",
+      "sha256": "338d9f5df4d65a80e8af0d7d824492f3e93151df075b2fa8c39689bd3b4e4103"
+    },
+    {
+      "file": "src/main/orch/civilian-auto-review.test.ts",
+      "sha256": "494d356baac1af6cdb5ae325facaa8f7b4c4373dc7c8403bef8a0d2c75275144"
+    },
+    {
+      "file": "src/main/orch/skill-mirror.ts",
+      "sha256": "2c4efd37bf6119916b66f26f959ff308dabf9d8f83f56761db20ed7ef863da8d"
+    },
+    {
+      "file": "src/main/orch/skill-mirror.test.ts",
+      "sha256": "97f0d3cf7234f48449180b4b668ca97e1e900a26f733b1e73df8bd3563955516"
+    }
+  ]
+}

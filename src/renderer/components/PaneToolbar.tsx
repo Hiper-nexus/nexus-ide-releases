@@ -19,6 +19,7 @@ import { CostBadge } from './CostBadge';
 import { DevServerChip } from './DevServerChip';
 import { PixelIcon, type PixelIconName } from './PixelIcon';
 import { requestPaneClose } from '../terminal/pane-close-guard';
+import { getPaneSessionId } from '../terminal/terminal-host';
 import { askConfirm } from '../state/confirm-store';
 import { useOrchStore } from '../state/orch-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
@@ -449,7 +450,10 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
     icon: 'close',
     danger: true,
     primary: true,
-    run: () => void requestPaneClose(pane.id),
+    run: () =>
+      void requestPaneClose(pane.id, undefined, {
+        hasLiveSession: getPaneSessionId(pane.id) !== null,
+      }),
   };
 
   // A narrow pane reserves room for its close pin and the menu trigger.

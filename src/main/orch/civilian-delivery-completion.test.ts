@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -33,11 +34,16 @@ vi.mock('./squad-store', () => ({
 }));
 
 vi.mock('./civilian-auto-review', () => ({
+  resolveAutoReviewBaseSha: async () => null,
   enforceCivilianAutoReview: async () => ({
     kind: 'approved',
     evidenceId: 'nexus-auto-review:test-hash',
     note: 'Scanner determinístico candidate-quality-v1: aprovado (teste).',
   }),
+}));
+
+vi.mock('../context/candidate-working-tree-snapshot', () => ({
+  captureWorkingTreeCandidate: async () => ({ fingerprint: 'candidate-1', complete: true }),
 }));
 
 import type { Handoff, Mission } from '../../shared/orch-types';
@@ -52,6 +58,8 @@ import {
   maybeCompleteFastLaneOnDelivery,
   toArtifactRefs,
 } from './civilian-delivery-completion';
+import { maybeApplyCivilianPronto } from './civilian-pronto';
+import { getAutomaticCompletionProof } from './automatic-completion-proof';
 import type { ScopedTaskRecord } from './task-store';
 
 const scope = testProjectScope({ rootRealPath: '/workspace/waitlist' });
@@ -701,6 +709,23 @@ describe('inspectCivilianDelivery', () => {
 });
 
 describe('listDeliveredProductFiles', () => {
+  it.each([false, true])('descobre saída pós-início sem declaração de arquivos (commit=%s)', async (commit) => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'civilian-discovery-')));
+    const createdAt = Date.now() - 2_000;
+    try {
+      if (commit) execFileSync('git', ['init', '--quiet'], { cwd: root });
+      writeFileSync(join(root, 'index.html'), '<h1>Minha loja</h1>');
+      if (commit) {
+        execFileSync('git', ['add', 'index.html'], { cwd: root });
+        execFileSync('git', ['-c', 'user.name=Nexus test', '-c', 'user.email=test@nexus.invalid', '-c', 'core.hooksPath=/dev/null', 'commit', '--quiet', '-m', 'Create page'], { cwd: root });
+      }
+      expect(await listDeliveredProductFiles(root, [handoff({ artifacts: [], summary: 'Página criada' })], 'Faça uma página', createdAt))
+        .toContain('index.html');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('só conta arquivo real e não-vazio; artifact mentiroso não basta', async () => {
     const root = mkdtempSync(join(tmpdir(), 'civilian-files-'));
     mkdirSync(join(root, 'public'));
@@ -805,8 +830,9 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
     return {
       marked,
       liveMission,
-      reconcile: () =>
-        maybeCompleteFastLaneOnDelivery(scope, liveMission.id, {
+      stores,
+      reconcile: (executionScope = scope) =>
+        maybeCompleteFastLaneOnDelivery(executionScope, liveMission.id, {
           getStores: () => stores,
           listPanes: () => input.panes ?? [],
           listProductFiles: () => input.files,
@@ -1385,6 +1411,185 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
     expect(blockUser).not.toHaveBeenCalled();
   });
 
+  it('Pronto respeita reparo pendente mesmo com board completo e pane idle', async () => {
+    completeVerified.mockClear();
+    const runAutoReviewGate = vi.fn(async () => ({ kind: 'repair-dispatched' as const }));
+    const state = boardDoneHarness({
+      missionOverrides: { intentContract: civilianContract },
+      depsExtras: { runAutoReviewGate },
+    });
+
+    const outcome = await maybeApplyCivilianPronto(scope, state.liveMission.id, {
+      getStores: () => state.stores as never,
+      listPanes: () => [],
+      listProductFiles: () => ['server.js'],
+      missionEngine: { completeVerified, blockUser },
+      runAutoReviewGate,
+    });
+
+    expect(outcome.completed).toBe(false);
+    expect(outcome.action).toBe('wait');
+    expect(completeVerified).not.toHaveBeenCalled();
+  });
+
+  it('uma revisão em voo não duplica sensores nem empresta aprovação ao segundo caller', async () => {
+    completeVerified.mockClear();
+    let release!: () => void;
+    const reviewing = new Promise<void>((resolve) => { release = resolve; });
+    const runAutoReviewGate = vi.fn(async () => {
+      await reviewing;
+      return { kind: 'approved' as const, evidenceId: 'physical-review', note: 'verificado' };
+    });
+    const state = boardDoneHarness({
+      missionOverrides: { intentContract: civilianContract },
+      depsExtras: { runAutoReviewGate },
+    });
+    const first = state.reconcile();
+    await vi.waitFor(() => expect(runAutoReviewGate).toHaveBeenCalledOnce());
+    const second = state.reconcile();
+    release();
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+
+    expect(runAutoReviewGate).toHaveBeenCalledOnce();
+    expect(firstResult.completed).toBe(true);
+    expect(secondResult).toMatchObject({ action: 'wait', completed: false, reason: 'review-in-progress' });
+    expect(completeVerified).toHaveBeenCalledOnce();
+  });
+
+  it('mudança no candidato durante revisão impede concluir e a próxima tentativa revalida', async () => {
+    completeVerified.mockClear();
+    let fingerprint = 'before';
+    const runAutoReviewGate = vi.fn(async () => {
+      fingerprint = 'after';
+      return { kind: 'approved' as const, evidenceId: 'physical-review', note: 'verificado' };
+    });
+    const state = boardDoneHarness({
+      missionOverrides: { intentContract: civilianContract },
+      depsExtras: {
+        runAutoReviewGate,
+        captureCandidate: async () => ({ fingerprint, complete: true }),
+      },
+    });
+
+    expect(await state.reconcile()).toMatchObject({ action: 'wait', completed: false, reason: 'review-candidate-changed' });
+    expect(completeVerified).not.toHaveBeenCalled();
+    expect((await state.reconcile()).completed).toBe(true);
+    expect(runAutoReviewGate).toHaveBeenCalledTimes(2);
+  });
+
+  it('revisão negativa, reparo e aprovação concluem sem intervenção nova', async () => {
+    completeVerified.mockClear();
+    const runAutoReviewGate = vi.fn()
+      .mockResolvedValueOnce({ kind: 'repair-dispatched' })
+      .mockResolvedValueOnce({ kind: 'approved', evidenceId: 'repair-checked', note: 'reparo verificado' });
+    const state = boardDoneHarness({
+      missionOverrides: { intentContract: civilianContract },
+      depsExtras: { runAutoReviewGate },
+    });
+
+    expect((await state.reconcile()).action).toBe('wait');
+    expect((await state.reconcile()).completed).toBe(true);
+    expect(completeVerified).toHaveBeenCalledOnce();
+  });
+
+  it('workspace real sem Git detecta edição durante revisão e conclui na tentativa estável', async () => {
+    completeVerified.mockClear();
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'nexus-nongit-review-')));
+    const localScope = testProjectScope({ rootRealPath: root });
+    const snapshots = await vi.importActual<typeof import('../context/candidate-working-tree-snapshot')>('../context/candidate-working-tree-snapshot');
+    writeFileSync(join(root, 'server.js'), 'export const value = 1;');
+    const runAutoReviewGate = vi.fn(async () => {
+      writeFileSync(join(root, 'server.js'), 'export const value = 2;');
+      return { kind: 'approved' as const, evidenceId: 'physical-review', note: 'verificado' };
+    });
+    const state = boardDoneHarness({
+      missionOverrides: { intentContract: civilianContract },
+      depsExtras: { runAutoReviewGate, captureCandidate: () => snapshots.captureWorkingTreeCandidate({ scope: localScope }) },
+    });
+    try {
+      expect(await state.reconcile(localScope)).toMatchObject({ completed: false, reason: 'review-candidate-changed' });
+      expect((await state.reconcile(localScope)).completed).toBe(true);
+      expect(completeVerified).toHaveBeenCalledOnce();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('snapshot indisponível mantém entrega com nota honesta, sem espera permanente', async () => {
+    completeVerified.mockClear();
+    const state = boardDoneHarness({
+      missionOverrides: { intentContract: civilianContract },
+      depsExtras: { captureCandidate: async () => { throw new Error('snapshot unavailable'); } },
+    });
+
+    expect((await state.reconcile()).completed).toBe(true);
+    expect(completeVerified.mock.calls[0]![1].learnings)
+      .toContain('checagem de mudanças durante a revisão foi parcial ou indisponível');
+  });
+
+  it('exclusão física pode concluir sem arquivos restantes e só expõe paths na prova interna', async () => {
+    completeVerified.mockClear();
+    const state = harness({
+      files: [], tasks: [], planned: [], handoffs: [handoff()],
+      panes: [{ missionId: 'mission-a906d36d', role: 'worker', agentName: 'Frontend', state: 'idle' }],
+      missionOverrides: { intentContract: civilianContract },
+      depsExtras: { captureCandidate: async () => ({ fingerprint: 'deleted-candidate', complete: true, deletedPaths: ['old.ts'] }) },
+    });
+    let deletionPaths: readonly string[] | undefined;
+    completeVerified.mockImplementationOnce((_scope, input) => {
+      deletionPaths = getAutomaticCompletionProof(scope, state.liveMission)?.deletedArtifactPaths;
+      Object.assign(state.liveMission, { status: 'done', result: input.result });
+    });
+
+    expect((await state.reconcile()).completed).toBe(true);
+    expect(deletionPaths).toEqual(['old.ts']);
+    expect(getAutomaticCompletionProof(scope, state.liveMission)).toBeNull();
+  });
+
+  it('mudança de intenção enquanto o scanner roda não conclui a missão atualizada', async () => {
+    completeVerified.mockClear();
+    const state = boardDoneHarness({
+      missionOverrides: { intentContract: civilianContract },
+      depsExtras: { runAutoReviewGate: async () => {
+        state.liveMission.intentVersion = 2;
+        return { kind: 'approved', evidenceId: 'old-review', note: 'versão anterior' };
+      } },
+    });
+
+    expect(await state.reconcile()).toMatchObject({ action: 'wait', reason: 'review-candidate-changed' });
+    expect(completeVerified).not.toHaveBeenCalled();
+  });
+
+  it('missões com mesmo ID em outro checkout não compartilham o voo', async () => {
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    const runAutoReviewGate = vi.fn(async () => {
+      await pending;
+      return { kind: 'approved' as const, evidenceId: 'proof', note: 'verificado' };
+    });
+    const state = boardDoneHarness({
+      missionOverrides: { intentContract: civilianContract },
+      depsExtras: { runAutoReviewGate },
+    });
+    const first = state.reconcile();
+    const second = state.reconcile({ ...scope, checkoutId: 'separate-checkout' });
+    await vi.waitFor(() => expect(runAutoReviewGate).toHaveBeenCalledTimes(2));
+    release();
+    await Promise.all([first, second]);
+  });
+
+  it('falha em uma tentativa libera o voo para a próxima revisão', async () => {
+    const runAutoReviewGate = vi.fn()
+      .mockRejectedValueOnce(new Error('scanner failed'))
+      .mockResolvedValueOnce({ kind: 'approved', evidenceId: 'new-proof', note: 'verificado' });
+    const state = boardDoneHarness({
+      missionOverrides: { intentContract: civilianContract },
+      depsExtras: { runAutoReviewGate },
+    });
+    await expect(state.reconcile()).rejects.toThrow('scanner failed');
+    expect((await state.reconcile()).completed).toBe(true);
+  });
+
   it('scanner indisponível + revisor no roster → abre revisor e espera', async () => {
     completeVerified.mockClear();
     blockUser.mockClear();
@@ -1421,7 +1626,7 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
     expect(completeVerified).not.toHaveBeenCalled();
   });
 
-  it('missão guiada (gate próprio) NÃO passa pela revisão automática — sem gate duplo', async () => {
+  it('missão guiada com candidato congelado mantém seu gate próprio sem scanner duplicado', async () => {
     completeVerified.mockClear();
     blockUser.mockClear();
     const runAutoReviewGate = vi.fn();
@@ -1440,12 +1645,24 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
           orchestrationMode: 'guided',
         } as Mission['intentContract'],
       },
-      depsExtras: { runAutoReviewGate },
+      depsExtras: { runAutoReviewGate, readFrozenReviewContext: () => ({ workflow: {} }) },
     });
 
     const result = await reconcile();
     expect(runAutoReviewGate).not.toHaveBeenCalled();
     expect(result.completed).toBe(true);
+  });
+
+  it('missão guiada sem candidato congelado usa reparo automático, sem exigir outro fluxo', async () => {
+    completeVerified.mockClear();
+    const runAutoReviewGate = vi.fn(async () => ({ kind: 'repair-dispatched' as const }));
+    const state = boardDoneHarness({
+      missionOverrides: { intentContract: { ...civilianContract, orchestrationMode: 'guided' } },
+      depsExtras: { runAutoReviewGate, readFrozenReviewContext: () => null },
+    });
+    expect((await state.reconcile()).action).toBe('wait');
+    expect(runAutoReviewGate).toHaveBeenCalledOnce();
+    expect(completeVerified).not.toHaveBeenCalled();
   });
   });
 });

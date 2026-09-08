@@ -156,6 +156,29 @@ export function loadMcpHubServersForSpawn(
 }
 
 /**
+ * Nomes que a CLI Claude reserva e pula em silêncio no boot
+ * (`1 MCP server skipped due to invalid config`). Observado em campo com
+ * `computer-use` (Codex Computer Use) em 07/09/2026.
+ */
+const CLAUDE_RESERVED_MCP_NAMES: ReadonlySet<string> = new Set([
+  'computer-use',
+]);
+
+/**
+ * Renomeia chave reservada para nome carregável (`user-<nome>`), com sufixo
+ * numérico em colisão. Conteúdo do servidor intacto — só a chave muda, e as
+ * tools aparecem sob o novo nome em vez de caírem no boot do worker.
+ */
+function claudeSafeServerKey(raw: string, taken: ReadonlySet<string>): string {
+  if (!CLAUDE_RESERVED_MCP_NAMES.has(raw.toLowerCase())) return raw;
+  let candidate = `user-${raw}`;
+  for (let n = 2; taken.has(candidate); n += 1) {
+    candidate = `user-${raw}-${n}`;
+  }
+  return candidate;
+}
+
+/**
  * Entradas no formato `.mcp.json` do Claude (também aceito pelo Kimi).
  * O chamador faz o spread ANTES da entrada `nexus`, que sempre vence.
  */
@@ -163,8 +186,22 @@ export function claudeFamilyHubMcpServers(
   servers: readonly McpHubSpawnServer[],
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {};
+  const taken = new Set<string>();
   for (const server of servers) {
-    out[server.key] = isStdioHubServer(server)
+    let key = claudeSafeServerKey(server.key, taken);
+    if (taken.has(key)) {
+      // Colisão (literal sobre renomeado ou id duplicado): preserva o que
+      // já saiu e sufixa o recém-chegado — nada some em silêncio.
+      let n = 2;
+      let candidate = `${key}-${n}`;
+      while (taken.has(candidate)) {
+        n += 1;
+        candidate = `${key}-${n}`;
+      }
+      key = candidate;
+    }
+    taken.add(key);
+    out[key] = isStdioHubServer(server)
       ? {
           type: 'stdio',
           command: server.command,

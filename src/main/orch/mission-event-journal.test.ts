@@ -161,4 +161,31 @@ describe('MissionEventJournal', () => {
       ),
     ).toThrow(/payload exceeds size limit/);
   });
+
+  it('lists raw session_spawned payloads in append order', () => {
+    const manager = new ProjectRuntimeManager({ baseDir, appVersion: '0.15.5' });
+    managers.push(manager);
+    seedMission(manager, 'mission-fixture');
+    const journal = new MissionEventJournal(manager, testProjectScope());
+    journal.append(createMissionEventFixture({
+      idempotencyKey: 'idem-spawn-first',
+      type: 'observer.session_spawned',
+      payload: { frameSeq: 1, sessionId: 'pty-1', paneId: 'pane-1' },
+    }));
+    journal.append(createMissionEventFixture({
+      idempotencyKey: 'idem-other-type',
+      type: 'observer.turn_started',
+      payload: { frameSeq: 2, sessionId: 'pty-1', paneId: 'pane-1' },
+    }));
+    journal.append(createMissionEventFixture({
+      idempotencyKey: 'idem-spawn-second',
+      type: 'observer.session_spawned',
+      payload: { frameSeq: 1, sessionId: 'pty-2', paneId: 'pane-1' },
+    }));
+    const payloads = journal.listSessionSpawnedPayloads('mission-fixture');
+    expect(payloads).toHaveLength(2);
+    expect(JSON.parse(payloads[0]!)).toMatchObject({ sessionId: 'pty-1', paneId: 'pane-1' });
+    expect(JSON.parse(payloads[1]!)).toMatchObject({ sessionId: 'pty-2', paneId: 'pane-1' });
+    expect(journal.listSessionSpawnedPayloads('mission-absent')).toEqual([]);
+  });
 });

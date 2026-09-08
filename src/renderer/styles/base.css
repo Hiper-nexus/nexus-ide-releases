@@ -284,6 +284,51 @@
   --btn-primary: #16181d;
   --btn-primary-ink: #fafafa;
   --btn-primary-hover: #23262e;
+
+  /* Rampa de superfícies do tema claro — F-337. Sem isto, os 35 usos de
+     var(--surface-*) renderizavam #080709…#201e25 (o :root escuro) sobre
+     --bg #f7f8fb, porque UiPalette carrega bg/bgElevated/bgBar mas nenhuma
+     surface e nenhum bloco [data-theme] as sobrescrevia.
+
+     Gerada por generateSurfaceRamp(PALETTES['nexus-light'], LIGHT_SURFACE_STEPS)
+     em palette-gen.ts: hue e inclinação de croma vêm dos dois neutros do próprio
+     tema (--bg #f7f8fb, --bg-bar #eef1f6 → hue 260.7), e os degraus de lightness
+     espelham os da rampa escura medidos, invertidos. Um tema claro não pode
+     subir — --bg já está em L=0.979 e o branco em 1.0 — então desce, mantendo a
+     semântica que os tokens carregam nas folhas de estilo: N maior é estado de
+     interação mais forte (card → hover → selecionado), não prateleira mais alta.
+     ΔL entre vizinhos: 0.016 / 0.034 / 0.018 / 0.040, contra 0.016 / 0.033 /
+     0.019 / 0.041 no escuro — a mesma distância perceptual nos dois temas. */
+  --surface-0: #f7f8fb;
+  --surface-sidebar: #f0f3f7;
+  --surface-1: #e3e8f0;
+  --surface-2: #dce2ec;
+  --surface-3: #cdd5e2;
+
+  /* Banda clara de status — F-338. A banda escura (L=0.70 pills, L=0.72 dots)
+     media 2.32–2.80:1 sobre --bg, abaixo dos 3:1 que DESIGN.md §2 afirma para
+     os dots. Gerada por generatePalette(GENERATED_LIGHT_STATUS_TOKENS): pills em
+     L=0.50 croma 60% do gamut, dots em L=0.555 croma 90%.
+
+     O L dos dots é 0.555 e não o 0.62 que a mesma regra daria sobre branco
+     puro: --surface-3 aqui desce a L=0.871, e um dot a 0.62 mede 2.30:1 sobre
+     ele. A doutrina deriva lightness do piso de contraste contra as superfícies
+     onde o token realmente pousa, então o piso é --surface-3. 0.555 é o L mais
+     alto em que os três hues ainda passam 3:1 em todas as superfícies claras.
+
+     Pior caso medido, todos sobre --surface-3: success 3.92 · danger 4.31 ·
+     warning 4.10 · merged 4.37 · dot-success 3.04 · dot-danger 3.55 ·
+     dot-warning 3.28. dot-success passa com 0.04 de folga DE PROPÓSITO — é o
+     token vinculante, exatamente como success é o vinculante na banda escura.
+     Qualquer escurecimento futuro desta rampa quebra ele primeiro, e
+     `npm run design:palette-check` é o que avisa. */
+  --status-success: #3e704a;
+  --status-danger: #9d433b;
+  --status-warning: #7b5d39;
+  --status-merged: #7347af;
+  --status-dot-success: #228845;
+  --status-dot-danger: #d02727;
+  --status-dot-warning: #9a671d;
 }
 
 /* O terceiro nível de texto é calculado POR TEMA. Cada valor fica ≥4.5:1

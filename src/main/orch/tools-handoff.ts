@@ -489,14 +489,12 @@ const handoffSubmitTool: McpToolDef = {
           error instanceof Error ? error.message : error,
         );
       }
-      try {
-        maybeApplyCivilianPronto(ctx.scope, ctx.missionId);
-      } catch (error) {
+      void maybeApplyCivilianPronto(ctx.scope, ctx.missionId).catch((error) => {
         console.warn(
           "[handoff] Pronto civil após handoff falhou:",
           error instanceof Error ? error.message : error,
         );
-      }    }
+      });    }
     // autoCloseOnHandoff (paridade Bridge): declarado no spawn, dispara SÓ
     // no success — falha preserva pane e scrollback. Fora do caminho da
     // resposta: o fechamento nunca atrasa nem derruba o handoff.

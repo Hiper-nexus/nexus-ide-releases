@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { Mission, Squad } from '../../shared/orch-types';
 import { PET_STUDIO_SQUAD_ID } from '../../shared/pet-studio';
+import type { ProjectExecutionScope } from '../../shared/types';
+import { getAutomaticCompletionProof, withAutomaticCompletionProof } from './automatic-completion-proof';
 import {
   assertIndependentReviewForDone,
   evaluateIndependentReviewGate,
@@ -64,6 +66,93 @@ const accepted = [
   },
 ];
 
+const scope: ProjectExecutionScope = {
+  version: 1, installationId: 'test-install', projectId: 'test-project',
+  checkoutId: 'test-checkout', rootRealPath: '/projects/test', identitySource: 'manifest',
+};
+
+describe('Main-owned completion proof', () => {
+  it('requires the automatic check for Express standard without requiring a manual reviewer', () => {
+    const current = mission({ intentContract: { lane: 'standard', freeAgentChoice: true } as Mission['intentContract'] });
+    const input = { scope, mission: current, squad: squad(), handoffs: [], deliveryAttemptsOf: () => [] };
+    expect(evaluateIndependentReviewGate(input).ok).toBe(false);
+    withAutomaticCompletionProof(scope, current, { status: 'verified' }, () => {
+      expect(evaluateIndependentReviewGate({
+        ...input, automaticProof: getAutomaticCompletionProof(scope, current),
+      })).toEqual({ ok: true, reviewerHandoffId: 'main-automatic-verification' });
+      return true;
+    });
+  });
+
+  it('keeps a Main-validated text-only answer exempt', () => {
+    expect(evaluateIndependentReviewGate({
+      mission: mission(), squad: squad(), handoffs: [], deliveryAttemptsOf: () => [], textOnly: true,
+    })).toEqual({ ok: true, reviewerHandoffId: 'exempt' });
+  });
+
+  it('does not add a new automatic-proof requirement to free ops or missions without a squad', () => {
+    for (const current of [
+      mission({ intentContract: { lane: 'ops', freeAgentChoice: true } as Mission['intentContract'] }),
+      mission({ squadId: undefined }),
+    ]) {
+      expect(evaluateIndependentReviewGate({
+        mission: current, squad: squad(), handoffs: [], deliveryAttemptsOf: () => [],
+      })).toEqual({ ok: true, reviewerHandoffId: 'exempt' });
+    }
+  });
+
+  it('rejects substantial prose and invented evidence IDs without a resolved proof', () => {
+    for (const evidenceIds of [[], ['review:invented']]) {
+      const result = evaluateIndependentReviewGate({
+        mission: mission(), squad: squad(), deliveryAttemptsOf: () => [],
+        handoffs: [{ id: 'reviewer', fromAgent: 'Reviewer', status: 'success',
+          summary: 'x'.repeat(120), deliveryState: 'consumed', evidenceIds }],
+      });
+      expect(result).toMatchObject({ ok: false, code: 'review_without_evidence' });
+    }
+  });
+
+  it('allows the current automatic check after rejected history without a manual reviewer round', () => {
+    const current = mission();
+    withAutomaticCompletionProof(scope, current, { status: 'verified', candidateFingerprint: 'b'.repeat(64) }, () => {
+      const result = evaluateIndependentReviewGate({
+        scope, mission: current, squad: squad(), deliveryAttemptsOf: () => [],
+        automaticProof: getAutomaticCompletionProof(scope, current),
+        handoffs: Array.from({ length: 20 }, (_, index) => ({
+          id: `old-review-${index}`, fromAgent: 'Reviewer', status: 'failed',
+          summary: '[REPROVADA] Falha no login antes da correção.', deliveryState: 'consumed',
+        })),
+      });
+      expect(result).toEqual({ ok: true, reviewerHandoffId: 'main-automatic-verification' });
+      return result.ok;
+    });
+  });
+
+  it('does not accept a JSON-shaped automatic proof or one bound to another intent', () => {
+    const current = mission();
+    const input = { scope, mission: current, squad: squad(), handoffs: [], deliveryAttemptsOf: () => [] };
+    expect(evaluateIndependentReviewGate({ ...input, automaticProof: { status: 'verified' } }).ok).toBe(false);
+    withAutomaticCompletionProof(scope, current, { status: 'verified' }, () => {
+      expect(evaluateIndependentReviewGate({
+        ...input, mission: mission({ intentVersion: 2 }),
+        automaticProof: getAutomaticCompletionProof(scope, current),
+      }).ok).toBe(false);
+      return true;
+    });
+  });
+
+  it('accepts an explicit unavailable check without misrepresenting it as a verified review', () => {
+    const current = mission();
+    withAutomaticCompletionProof(scope, current, { status: 'unavailable', note: 'Verificação indisponível; resultado entregue com limitação.' }, () => {
+      expect(evaluateIndependentReviewGate({
+        scope, mission: current, squad: squad(), handoffs: [], deliveryAttemptsOf: () => [],
+        automaticProof: getAutomaticCompletionProof(scope, current),
+      })).toEqual({ ok: true, reviewerHandoffId: 'main-check-unavailable' });
+      return true;
+    });
+  });
+});
+
 describe('evaluateIndependentReviewGate', () => {
   it('done só com executor → FALHA (review_missing)', () => {
     const result = evaluateIndependentReviewGate({
@@ -88,7 +177,7 @@ describe('evaluateIndependentReviewGate', () => {
     }
   });
 
-  it('executor + revisor com evidência aceitos → PASSA', () => {
+  it('executor e revisor com IDs não resolvidos não comprovam revisão', () => {
     const result = evaluateIndependentReviewGate({
       mission: mission(),
       squad: squad(),
@@ -112,7 +201,7 @@ describe('evaluateIndependentReviewGate', () => {
       ],
       deliveryAttemptsOf: () => accepted,
     });
-    expect(result).toEqual({ ok: true, reviewerHandoffId: 'h-rev' });
+    expect(result).toMatchObject({ ok: false, code: 'review_without_evidence' });
   });
 
   it('revisor com verdict incorrect → nunca verde', () => {
@@ -142,7 +231,7 @@ describe('evaluateIndependentReviewGate', () => {
       deliveryAttemptsOf: () => accepted,
     });
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.code).toBe('review_rejected');
+    if (!result.ok) expect(result.code).toBe('review_without_evidence');
   });
 
   it('revisor success sem prova → review_without_evidence', () => {
@@ -164,7 +253,7 @@ describe('evaluateIndependentReviewGate', () => {
     if (!result.ok) expect(result.code).toBe('review_without_evidence');
   });
 
-  it('Via Rápida civil (freeAgentChoice) não exige revisor manual', () => {
+  it('Via Rápida dispensa revisor manual, mas não a verificação automática', () => {
     const result = evaluateIndependentReviewGate({
       mission: mission({
         intentState: 'executing',
@@ -186,8 +275,7 @@ describe('evaluateIndependentReviewGate', () => {
       ],
       deliveryAttemptsOf: () => accepted,
     });
-    expect(result.ok).toBe(true);
-    if (result.ok) expect(result.reviewerHandoffId).toBe('exempt');
+    expect(result).toMatchObject({ ok: false, code: 'review_missing' });
     expect(
       isCivilianViaRapidaReviewExempt({
         intentState: 'executing',
@@ -269,14 +357,14 @@ describe('evaluateIndependentReviewGate', () => {
 });
 
 describe('reviewerHandoffHasEvidence', () => {
-  it('aceita evidenceIds ou resumo longo sem reprovação', () => {
+  it('não transforma IDs soltos ou resumo longo em evidência', () => {
     expect(
       reviewerHandoffHasEvidence({
         id: 'a',
         status: 'success',
         evidenceIds: ['e'],
       }),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       reviewerHandoffHasEvidence({
         id: 'b',
@@ -291,7 +379,7 @@ describe('reviewerHandoffHasEvidence', () => {
         summary:
           'Chequei auth, pagamentos e o fluxo principal. Tudo passou sem regressão detectável.',
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 });
 
@@ -353,10 +441,11 @@ describe('leitura do veredito do revisor (gate 0.62, 19/08)', () => {
   });
 });
 
-describe('revisão SUBMITTED com attempt aceito vale — inclusive pós-respawn (0.63)', () => {
-  it('handoff submitted + attempt aceito por sessão ANTERIOR do Maestro passa o gate', () => {
+describe('recibos de transporte não substituem verificação do candidato', () => {
+  it('handoff submitted com attempt aceito continua exigindo prova de qualidade', () => {
     const result = evaluateIndependentReviewGate({
       mission: {
+        ...mission(),
         id: 'mission-1',
         squadId: 'squad-1',
         intentContract: { lane: 'standard' } as never,
@@ -391,14 +480,15 @@ describe('revisão SUBMITTED com attempt aceito vale — inclusive pós-respawn 
         },
       ],
     });
-    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({ ok: false, code: 'review_without_evidence' });
   });
 });
 
-describe('list-ack: acknowledged/consumed valem SEM attempt digitado (0.64)', () => {
-  it('revisão reconhecida via nexus_handoff_list passa o gate sem paste+Enter', () => {
+describe('list-ack registra leitura, não qualidade', () => {
+  it('revisão reconhecida via nexus_handoff_list não prova o candidato', () => {
     const result = evaluateIndependentReviewGate({
       mission: {
+        ...mission(),
         id: 'mission-1',
         squadId: 'squad-1',
         intentContract: { lane: 'standard' } as never,
@@ -427,12 +517,13 @@ describe('list-ack: acknowledged/consumed valem SEM attempt digitado (0.64)', ()
       // O Maestro leu via list — NUNCA houve delivery digitado.
       deliveryAttemptsOf: () => [],
     });
-    expect(result.ok).toBe(true);
+    expect(result).toMatchObject({ ok: false, code: 'review_without_evidence' });
   });
 
   it('queued continua NÃO valendo — sem recibo nenhum não há revisão', () => {
     const result = evaluateIndependentReviewGate({
       mission: {
+        ...mission(),
         id: 'mission-1',
         squadId: 'squad-1',
         intentContract: { lane: 'standard' } as never,

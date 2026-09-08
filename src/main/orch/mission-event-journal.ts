@@ -247,6 +247,26 @@ export class MissionEventJournal {
     return info.changes ?? 0;
   }
 
+  /**
+   * Raw `observer.session_spawned` payloads in append order. Dumb pipe for
+   * pane→session attribution (F-143): callers parse and validate, skipping
+   * malformed rows. Capped — spawns are ~1/pane, so the bound is headroom,
+   * not a correctness limit the matcher may rely on.
+   */
+  listSessionSpawnedPayloads(missionId: string, limit = 2000): readonly string[] {
+    if (!missionId) return [];
+    const capped = Math.min(Math.max(1, Math.floor(limit)), 5000);
+    const db = this.#binding.readDatabase();
+    const rows = db
+      .prepare(
+        `SELECT payload_json FROM mission_events
+         WHERE mission_id = ? AND event_type = 'observer.session_spawned'
+         ORDER BY sequence ASC LIMIT ?`,
+      )
+      .all(missionId, capped) as { payload_json: string }[];
+    return rows.map((row) => row.payload_json);
+  }
+
   /** UI projection: last N events newest-first. */
   projectRecent(missionId: string, limit = 50): readonly MissionEvent[] {
     const capped = Math.min(Math.max(1, limit), 200);

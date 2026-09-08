@@ -43,9 +43,12 @@ import {
   PET_STUDIO_SQUAD,
   PET_STUDIO_SQUAD_ID,
 } from "../../shared/pet-studio";
-import { assertIndependentReviewForDone } from "./mission-independent-review-gate";
+import { assertIndependentReviewForDone, missionRequiresIndependentReview } from "./mission-independent-review-gate";
 import { assertDeliveryArtifactsForDone } from "./mission-delivery-artifact-gate";
-import { assertTeamQuestionCompletion, teamQuestionResponseSummary, type TeamQuestionPaneRuntime } from "./mission-team-question-completion";
+import { getAutomaticCompletionProof } from "./automatic-completion-proof";
+import { resolveFrozenMissionReviewProof } from "./mission-review-proof";
+import { assertTeamQuestionCompletion, teamQuestionResponseSummary, type TeamQuestionObserverBinding, type TeamQuestionPaneRuntime } from "./mission-team-question-completion";
+import { loadObserverPaneSessions } from "./mission-team-question-observer";
 import { requireRendererWorkspaceScope } from "../persistence/renderer-workspace-scope";
 import {
   revalidateSealedAttachmentSnapshots,
@@ -1309,6 +1312,7 @@ export function completeVerifiedMission(
   deps: {
     readonly getSquad?: typeof getSquad;
     readonly listPanes?: () => readonly TeamQuestionPaneRuntime[];
+    readonly listObserverPaneSessions?: (missionId: string) => readonly TeamQuestionObserverBinding[];
   } = {},
 ): void {
   const current = stores.missions.get(input.missionId);
@@ -1320,17 +1324,32 @@ export function completeVerifiedMission(
       mission: current, squad, handoffs,
       panes: stores.missionPanes?.list?.(current.id) ?? [],
       runtimePanes: (deps.listPanes ?? listPaneSnapshots)(),
+      observerPaneSessions: deps.listObserverPaneSessions?.(current.id) ??
+        loadObserverPaneSessions(scope, current.id),
     });
+    if (teamQuestion.fallbackAgents.length > 0) {
+      console.info(
+        `[mission-engine] team-question consolidated via observer fallback for ${teamQuestion.fallbackAgents.join(', ')} (mission ${current.id}): panes were never sealed.`,
+      );
+    }
+    const textOnly = teamQuestion.applicable || current.intentContract?.routingAdvice?.kind === 'direct-answer';
+    const automaticProof = getAutomaticCompletionProof(scope, current);
+    const frozenReviewProof = !textOnly && !automaticProof && missionRequiresIndependentReview(current, squad)
+      ? resolveFrozenMissionReviewProof(scope, current) : null;
     assertIndependentReviewForDone({
-      mission: current, squad, handoffs,
+      mission: current, scope, squad, handoffs, automaticProof, frozenReviewProof, textOnly,
       deliveryAttemptsOf: (handoffId) => stores.handoffs?.listDeliveryAttempts?.(handoffId) ?? [],
       dispatches: stores.taskDispatches?.list?.(current.id) ?? [],
     });
     assertDeliveryArtifactsForDone({
       lane: current.intentContract?.lane,
-      goal: current.description?.trim() || current.title?.trim() || '',
+      goal: current.intentContract?.goal.trim() || current.description?.trim() || current.title?.trim() || '',
       rootRealPath: scope.rootRealPath,
       handoffs,
+      artifactRefs: input.result.artifactRefs,
+      resultSummary: input.result.summary,
+      deletedArtifactRefs: automaticProof?.deletedArtifactPaths,
+      textOnly,
     });
     if (teamQuestion.applicable) {
       result = { ...result, summary: teamQuestionResponseSummary(teamQuestion), artifactRefs: [], evidenceIds: [] };

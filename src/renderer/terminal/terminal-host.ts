@@ -39,6 +39,7 @@ import {
   BLOCKED_RESUME_NOTICE,
   decideDeadPaneReviveRespawn,
   decideExitedPaneKey,
+  decideTerminalMissionDeadPaneKey,
   decideOrchestratorProcessExit,
   decideStaleAuthorityRecovery,
   decideUnlockRetiredMissionPane,
@@ -1279,6 +1280,27 @@ function startSpawn(
         }
 
         if (!host.sessionId) {
+          // Pós-missão (ou pane sem vínculo): estado preso nunca silencia a
+          // tecla. Missão viva ou desconhecida segue pela rota antiga, com
+          // todas as proteções.
+          const terminalLink = terminalMissionLinkOf(pane);
+          if (terminalLink !== 'live-or-unknown') {
+            const terminalAction = decideTerminalMissionDeadPaneKey({
+              spawnStarted: host.spawnStarted,
+              keepReviewChannel:
+                terminalLink === 'done' && pane.role === 'orchestrator',
+            });
+            if (terminalAction === 'resume-keyboard') {
+              void unlockRetiredMissionPane(pane, host, {
+                operatorInitiated: true,
+              });
+            } else if (terminalAction === 'reclaim-shell') {
+              void reclaimExitedPaneAsShell(pane, host, {
+                ignoreMissionOwnership: terminalLink !== 'none',
+              });
+            }
+            return;
+          }
           const keyAction = decideExitedPaneKey({
             hasSession: false,
             spawnStarted: host.spawnStarted,
@@ -1369,13 +1391,14 @@ function beginPaneSpawn(pane: PaneModel, host: Host): void {
     return;
   }
   host.spawnWhenMeasurable = false;
+  const firstIntent = consumeFirstSpawnIntent(pane.id);
   void startSpawn(
     pane,
     host,
-    resumeOnFirstSpawn.delete(pane.id),
+    firstIntent.resume,
     false,
     undefined,
-    restoreAuthorityOnFirstSpawn.delete(pane.id),
+    firstIntent.restorePersistedAuthority,
   );
 }
 
@@ -1984,15 +2007,42 @@ if (typeof window !== 'undefined') {
  * flow: mark before setPanes(), and every restored CLI continues its
  * previous conversation.
  */
-const resumeOnFirstSpawn = new Set<string>();
-const restoreAuthorityOnFirstSpawn = new Set<string>();
+/**
+ * Intenção única de primeira-spawn por pane. resume+restore simultâneos são
+ * rejeitados pelo main (fence em main-owned-agent-spawn) e o login do Codex
+ * provou que os dois marcadores conviviam — pane morto com erro vermelho.
+ * Slot único: a última intenção vence, ambiguidade é estruturalmente
+ * impossível. Nunca persiste no layout salvo.
+ */
+type FirstSpawnIntent = 'resume' | 'restore';
+const firstSpawnIntent = new Map<string, FirstSpawnIntent>();
 /** Restored agents held until the user confirms resume (no silent auto-work). */
 const heldSpawnPanes = new Set<string>();
+
+function markFirstSpawnIntent(paneId: string, intent: FirstSpawnIntent): void {
+  firstSpawnIntent.set(paneId, intent);
+}
+
+/**
+ * Consome a intenção (one-shot) no formato do payload de spawn. Usado pelos
+ * dois pontos de primeira-spawn; exportado para teste.
+ */
+export function consumeFirstSpawnIntent(paneId: string): {
+  readonly resume: boolean;
+  readonly restorePersistedAuthority: boolean;
+} {
+  const intent = firstSpawnIntent.get(paneId);
+  firstSpawnIntent.delete(paneId);
+  return {
+    resume: intent === 'resume',
+    restorePersistedAuthority: intent === 'restore',
+  };
+}
 
 export function markResumeOnSpawn(paneId: string): void {
   // Intentional resume (reopen mission / user confirmed) always clears a hold.
   heldSpawnPanes.delete(paneId);
-  resumeOnFirstSpawn.add(paneId);
+  markFirstSpawnIntent(paneId, 'resume');
   kickHeldSpawnIfReady(paneId);
 }
 
@@ -2031,7 +2081,7 @@ export function prepareMissionPaneResume(paneId: string): void {
 /** Pause spawn for a restored agent until the user approves (or reopens). */
 export function holdSpawnUntilApproved(paneId: string): void {
   heldSpawnPanes.add(paneId);
-  resumeOnFirstSpawn.delete(paneId);
+  firstSpawnIntent.delete(paneId);
 }
 
 export function isSpawnHeld(paneId: string): boolean {
@@ -2041,8 +2091,7 @@ export function isSpawnHeld(paneId: string): boolean {
 /** Forget every renderer-local spawn intent before pruning an orphan leaf. */
 export function discardPaneSpawnState(paneId: string): void {
   heldSpawnPanes.delete(paneId);
-  resumeOnFirstSpawn.delete(paneId);
-  restoreAuthorityOnFirstSpawn.delete(paneId);
+  firstSpawnIntent.delete(paneId);
   useSessionStateStore.getState().clearPaneState(paneId);
 }
 
@@ -2065,7 +2114,7 @@ export function releaseHeldSpawns(
       // Never leave a latent resume flag behind when the first observer already
       // adopted or started this pane.
       if (host?.spawnStarted || host?.sessionId) continue;
-      resumeOnFirstSpawn.add(paneId);
+      markFirstSpawnIntent(paneId, 'resume');
       kickHeldSpawnIfReady(paneId);
     } else {
       // UI/session marker only — do NOT set host.hibernated or kickHeldSpawn
@@ -2093,7 +2142,7 @@ function listPanesFromLayout(): readonly PaneModel[] {
 
 /** Mark a missing mission pane to start fresh with its persisted authority. */
 export function markPersistedAuthorityOnSpawn(paneId: string): void {
-  restoreAuthorityOnFirstSpawn.add(paneId);
+  markFirstSpawnIntent(paneId, 'restore');
   heldSpawnPanes.delete(paneId);
   unlockExitedSessionlessHost(paneId);
   kickHeldSpawnIfReady(paneId);
@@ -2322,6 +2371,28 @@ function missionStillOwnsPane(paneId: string, pane?: PaneModel): boolean {
   if (!mission) return false;
   if (mission.status === 'running' || mission.status === 'blocked') return true;
   return missionAwaitsOperatorReview(mission);
+}
+
+/**
+ * Vínculo da missão para a tecla em pane sem sessão. 'none' = pane livre;
+ * 'done'/'failed' = espelhos locais concordam que terminou; qualquer outro
+ * caso é tratado como missão viva ou desconhecida (proteções intactas).
+ */
+type TerminalMissionLink = 'none' | 'done' | 'failed' | 'live-or-unknown';
+
+function terminalMissionLinkOf(pane: PaneModel): TerminalMissionLink {
+  const missionId = missionIdOfPane(pane.id, pane);
+  if (!missionId) return 'none';
+  const orch = useOrchStore.getState();
+  const legacy = orch.missions.find((m) => m.id === missionId);
+  const summary = orch.missionSummaries.find((m) => m.id === missionId);
+  if (legacy?.status === 'done' || summary?.state === 'completed') {
+    return 'done';
+  }
+  if (legacy?.status === 'failed' || summary?.state === 'failed') {
+    return 'failed';
+  }
+  return 'live-or-unknown';
 }
 
 /** Os dois espelhos locais: status cru do SQLite + projeção canônica. */
@@ -2558,6 +2629,32 @@ const MAX_AUTO_ORCH_RELIVES = 2;
 const orchReliveAt = new Map<string, number>();
 const orchReliveCount = new Map<string, number>();
 
+export type OrchAutoReliveGate = 'allow' | 'cooldown' | 'exhausted';
+
+/**
+ * Teto do religamento automático do Maestro (anti-loop de crash). Puro para
+ * teste: 'cooldown' é transiente e silencioso; 'exhausted' exige voz — o
+ * chamador anuncia que o automático pausou e que a tecla religa.
+ */
+export function orchAutoReliveGate(input: {
+  readonly now: number;
+  readonly lastReliveAt: number | undefined;
+  readonly autoReliveCount: number;
+  readonly cooldownMs?: number;
+  readonly maxAutoRelives?: number;
+}): OrchAutoReliveGate {
+  const cooldownMs = input.cooldownMs ?? ORCH_RELIVE_COOLDOWN_MS;
+  const maxAutoRelives = input.maxAutoRelives ?? MAX_AUTO_ORCH_RELIVES;
+  if (
+    input.lastReliveAt !== undefined &&
+    input.now - input.lastReliveAt < cooldownMs
+  ) {
+    return 'cooldown';
+  }
+  if (input.autoReliveCount >= maxAutoRelives) return 'exhausted';
+  return 'allow';
+}
+
 /**
  * Maestro no turn-end: a CLI saiu sozinha. Religa a mesma conversa no
  * mesmo xterm, sem banner e sem retry-kickoff (F-006/F-008).
@@ -2569,12 +2666,29 @@ function reliveOrchestratorCli(
 ): void {
   if (host.disposed) return;
   const now = Date.now();
-  const last = orchReliveAt.get(pane.id) ?? 0;
   if (!operatorInitiated) {
-    if (now - last < ORCH_RELIVE_COOLDOWN_MS) return;
-    const autoCount = orchReliveCount.get(pane.id) ?? 0;
-    if (autoCount >= MAX_AUTO_ORCH_RELIVES) return;
-    orchReliveCount.set(pane.id, autoCount + 1);
+    const gate = orchAutoReliveGate({
+      now,
+      lastReliveAt: orchReliveAt.get(pane.id),
+      autoReliveCount: orchReliveCount.get(pane.id) ?? 0,
+    });
+    if (gate === 'cooldown') return;
+    if (gate === 'exhausted') {
+      // Lei do Maestro sempre falável: o automático pausou, mas o pane
+      // nunca some em silêncio — a tecla religa (caminho do operador, sem
+      // teto) e a missão continua no Quadro.
+      try {
+        host.term.writeln(
+          '\r\n\x1b[33m[nexus] o Maestro saiu e o religamento automático ' +
+            'pausou após 2 tentativas — digite aqui para religar e pedir ' +
+            'ajustes; a missão continua no Quadro.\x1b[0m',
+        );
+      } catch {
+        // best effort
+      }
+      return;
+    }
+    orchReliveCount.set(pane.id, (orchReliveCount.get(pane.id) ?? 0) + 1);
   }
   orchReliveAt.set(pane.id, now);
 
@@ -2820,13 +2934,14 @@ export function waitForSession(
             // initial grid until attach/ResizeObserver can fit them.
             settleHostGrid(host);
             host.spawnWhenMeasurable = false;
+            const firstIntent = consumeFirstSpawnIntent(pane.id);
             void startSpawn(
               pane,
               host,
-              resumeOnFirstSpawn.delete(pane.id),
+              firstIntent.resume,
               false,
               undefined,
-              restoreAuthorityOnFirstSpawn.delete(pane.id),
+              firstIntent.restorePersistedAuthority,
             );
           }, HEADLESS_SPAWN_FALLBACK_MS);
         }

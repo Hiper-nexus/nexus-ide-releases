@@ -921,69 +921,90 @@ describe('MissionSetup', () => {
     await flush();
 
     expect(pick).toHaveBeenCalledTimes(1);
-    expect(
-      fieldByLabel<HTMLInputElement>(host, 'Pasta do projeto').value,
-    ).toBe(OTHER_WORKSPACE.path);
+    const project = host.querySelector<HTMLElement>('#express-workspace-name');
+    expect(project?.textContent).toBe(OTHER_WORKSPACE.name);
+    expect(project?.title).toBe(OTHER_WORKSPACE.path);
     expect(useMissionSetupStore.getState().workspacePath).toBe(
       OTHER_WORKSPACE.path,
     );
   });
 
-  it('focuses a workspace error when no project is active', async () => {
+  it('sem pasta, a entrada é o Expresso e a ideia escrita é preservada', async () => {
+    useMissionSetupStore.setState({
+      workspacePath: WORKSPACE.path,
+      draft: {
+        objective: 'Quero um sistema de agendamento para minha barbearia',
+        title: '',
+        contextPaths: [],
+        roster: [],
+        advanced: { lane: 'standard' },
+        step: 'mission',
+        revision: 0,
+      },
+    });
     useWorkspaceStore.setState({ current: null });
-    useMissionSetupStore.setState({ workspacePath: null });
     const host = render(<MissionSetup />);
     await flush();
 
-    act(() => button(host, 'Continuar para equipe').click());
-    const error = host.querySelector<HTMLElement>('#mission-workspace-error');
-    expect(error?.textContent).toContain('Escolha uma pasta de projeto');
-    expect(document.activeElement).toBe(error);
+    // Fechar o projeto volta à entrada expressa sem descartar a ideia.
+    const objective = fieldByLabel<HTMLTextAreaElement>(host, 'Seu pedido');
+    expect(objective.disabled).toBe(false);
+    expect(objective.value).toBe(
+      'Quero um sistema de agendamento para minha barbearia',
+    );
+    expect(
+      button(host, 'Escolher pasta e iniciar').disabled,
+    ).toBe(false);
   });
 
-  it('keeps draft controls disabled until a project exists and explains the next action', async () => {
+  it('permite escrever a ideia antes da pasta e pede a pasta ao iniciar', async () => {
     useWorkspaceStore.setState({ current: null });
-    useMissionSetupStore.setState({ workspacePath: null });
+    useMissionSetupStore.setState({
+      workspacePath: null,
+      draft: {
+        objective: '',
+        title: '',
+        contextPaths: [],
+        roster: [],
+        advanced: { lane: 'standard' },
+        step: 'express',
+        revision: 0,
+      },
+    });
     const host = render(<MissionSetup />);
     await flush();
 
     const objective = fieldByLabel<HTMLTextAreaElement>(
       host,
-      'O que você quer que a equipe entregue?',
+      'Seu pedido',
     );
-    const title = fieldByLabel<HTMLInputElement>(
+    const acceptance = fieldByLabel<HTMLInputElement>(
       host,
-      'Nome da missão (opcional)',
+      'Como vou saber que ficou pronto?',
     );
-    const context = fieldByLabel<HTMLInputElement>(
-      host,
-      'Adicionar arquivo ou referência',
-    );
-    const lane = fieldByLabel<HTMLSelectElement>(host, 'Tipo de trabalho');
-    const advanced = Array.from(host.querySelectorAll('details')).find(
-      (item) => item.querySelector('summary')?.textContent === 'Avançado',
-    );
-    const advancedSummary = advanced?.querySelector('summary');
     const reason = host.querySelector<HTMLElement>(
-      '#mission-draft-disabled-reason',
+      '#express-draft-disabled-reason',
     );
 
     expect(button(host, 'Escolher pasta').disabled).toBe(false);
-    expect(objective.disabled).toBe(true);
-    expect(title.disabled).toBe(true);
-    expect(context.disabled).toBe(true);
-    expect(button(host, 'Adicionar contexto').disabled).toBe(true);
-    expect(lane.disabled).toBe(true);
-    expect(advancedSummary?.getAttribute('aria-disabled')).toBe('true');
-    expect(reason?.textContent).toContain(
-      'Escolha uma pasta de projeto para preencher os dados da missão.',
+    expect(objective.disabled).toBe(false);
+    expect(acceptance.disabled).toBe(false);
+    // Sem bloqueio de leitura, não há motivo de desabilitação.
+    expect(reason).toBeNull();
+    expect(host.textContent).toContain(
+      'ao iniciar, você escolhe a pasta e o texto acompanha',
     );
-    expect(objective.getAttribute('aria-describedby')).toContain(
-      'mission-draft-disabled-reason',
-    );
+    expect(
+      button(host, 'Escolher pasta e iniciar').disabled,
+    ).toBe(false);
 
-    act(() => advancedSummary?.click());
-    expect(advanced?.open).toBe(false);
+    enterText(objective, 'Quero um sistema de agendamento');
+    await flush();
+    expect(useMissionSetupStore.getState().draft.objective).toBe(
+      'Quero um sistema de agendamento',
+    );
+    // Nada é persistido sem pasta.
+    expect(localStorage.length).toBe(0);
   });
 
   it('announces a quota failure, keeps the edit in memory, and retries saving', async () => {
@@ -1069,7 +1090,7 @@ describe('MissionSetup', () => {
     expect(
       fieldByLabel<HTMLTextAreaElement>(
         host,
-        'O que você quer que a missão entregue?',
+        'Seu pedido',
       ).disabled,
     ).toBe(true);
 
@@ -1107,7 +1128,7 @@ describe('MissionSetup', () => {
       host.querySelector<HTMLHeadingElement>('#express-mission-title');
     const objective = fieldByLabel<HTMLTextAreaElement>(
       host,
-      'O que você quer que a missão entregue?',
+      'Seu pedido',
     );
 
     expect(objective.disabled).toBe(true);
@@ -1126,7 +1147,7 @@ describe('MissionSetup', () => {
 
     const blockedObjective = fieldByLabel<HTMLTextAreaElement>(
       host,
-      'O que você quer que a missão entregue?',
+      'Seu pedido',
     );
     expect(host.textContent).toContain('O rascunho salvo está corrompido');
     expect(blockedObjective.disabled).toBe(true);
@@ -1143,7 +1164,7 @@ describe('MissionSetup', () => {
 
     const objective = fieldByLabel<HTMLTextAreaElement>(
       host,
-      'O que você quer que a missão entregue?',
+      'Seu pedido',
     );
     expect(objective.value).toBe('');
     expect(objective.disabled).toBe(false);
@@ -2111,26 +2132,32 @@ describe('Caminho Expresso', () => {
   it('abre direto no Expresso (sem wizard) com a pasta e o objetivo habilitados', async () => {
     const host = await renderAtExpress();
 
-    expect(host.textContent).toContain('Descreva e pronto');
+    expect(host.textContent).toContain('O que você quer criar?');
     expect(
       host.querySelector('nav[aria-label="Etapas da missão"]'),
     ).toBeNull();
     expect(host.querySelector('[aria-current="step"]')).toBeNull();
-    expect(
-      fieldByLabel<HTMLInputElement>(host, 'Pasta do projeto').value,
-    ).toBe(WORKSPACE.path);
+    const project = host.querySelector<HTMLElement>('#express-workspace-name');
+    expect(project?.textContent).toBe(WORKSPACE.name);
+    expect(project?.title).toBe(WORKSPACE.path);
+    expect(button(host, 'Trocar pasta').type).toBe('button');
     const objective = fieldByLabel<HTMLTextAreaElement>(
       host,
-      'O que você quer que a missão entregue?',
+      'Seu pedido',
     );
     expect(objective.value).toBe('');
     expect(objective.disabled).toBe(false);
-    expect(button(host, 'Iniciar missão').type).toBe('submit');
+    expect(button(host, 'Iniciar criação').type).toBe('submit');
     expect(button(host, 'Mais papéis e tamanho').type).toBe('button');
     expect(button(host, 'Ditar objetivo').type).toBe('button');
     await flush();
     await flush();
     expect(host.textContent).toContain('Quem faz o quê');
+    const team = host.querySelector<HTMLDetailsElement>('#express-team-options');
+    expect(team).not.toBeNull();
+    expect(team!.open).toBe(false);
+    expect(team!.querySelector('summary')?.textContent)
+      .toContain('Personalizar equipe');
     expect(
       host.querySelectorAll('select[aria-label^="Ferramenta de IA"]').length,
     ).toBeGreaterThanOrEqual(2);
@@ -2138,6 +2165,57 @@ describe('Caminho Expresso', () => {
     expect(
       host.querySelector('input[type="file"][accept*="audio"]'),
     ).not.toBeNull();
+  });
+
+  it('abrir e recolher opções preserva o rascunho e inicia a equipe selecionada', async () => {
+    const host = await renderAtExpress();
+    enterText(
+      fieldByLabel<HTMLTextAreaElement>(host, 'Seu pedido'),
+      'Crie uma página de contato',
+    );
+    await flush();
+    const before = useMissionSetupStore.getState().draft;
+    const team = host.querySelector<HTMLDetailsElement>('#express-team-options');
+    expect(team).not.toBeNull();
+    const toggle = team!.querySelector('summary')!;
+
+    act(() => toggle.click());
+    expect(team!.open).toBe(true);
+    act(() => toggle.click());
+    expect(team!.open).toBe(false);
+    expect(useMissionSetupStore.getState().draft).toEqual(before);
+
+    act(() => button(host, 'Iniciar criação').click());
+    await flush();
+    expect(api.prepare.mock.calls[0]![0].roster).toEqual(before.roster);
+    expect(api.start).toHaveBeenCalledTimes(1);
+  });
+
+  it('detalhes opcionais ficam antes de iniciar e preservam critérios no pedido', async () => {
+    const host = await renderAtExpress();
+    const details = host.querySelector<HTMLDetailsElement>(
+      '#express-delivery-details',
+    );
+    expect(details).not.toBeNull();
+    expect(details!.open).toBe(false);
+    expect(
+      details!.compareDocumentPosition(button(host, 'Iniciar criação')) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    act(() => details!.querySelector('summary')!.click());
+    enterText(
+      fieldByLabel<HTMLTextAreaElement>(host, 'Seu pedido'),
+      'Crie uma página de contato',
+    );
+    enterText(
+      fieldByLabel<HTMLInputElement>(host, 'Como vou saber que ficou pronto?'),
+      'O formulário funciona no celular.',
+    );
+
+    act(() => button(host, 'Iniciar criação').click());
+    await flush();
+    expect(api.prepare.mock.calls[0]![0].acceptanceCriteria)
+      .toEqual(['O formulário funciona no celular.']);
   });
 
   it('anexa áudio de fora do projeto como contexto relativo da missão', async () => {
@@ -2308,7 +2386,7 @@ describe('Caminho Expresso', () => {
     enterText(
       fieldByLabel<HTMLTextAreaElement>(
         host,
-        'O que você quer que a missão entregue?',
+        'Seu pedido',
       ),
       'Construir uma landing page com formulário de contato',
     );
@@ -2322,7 +2400,7 @@ describe('Caminho Expresso', () => {
       host.querySelector('select[aria-label^="Ferramenta de IA"]'),
     ).not.toBeNull();
 
-    act(() => button(host, 'Iniciar missão').click());
+    act(() => button(host, 'Iniciar criação').click());
     await flush();
 
     expect(api.prepare).toHaveBeenCalledTimes(1);
@@ -2354,7 +2432,7 @@ describe('Caminho Expresso', () => {
     enterText(
       fieldByLabel<HTMLTextAreaElement>(
         host,
-        'O que você quer que a missão entregue?',
+        'Seu pedido',
       ),
       'Construir uma página de contato com formulário funcionando',
     );
@@ -2395,13 +2473,15 @@ describe('Caminho Expresso', () => {
     enterText(
       fieldByLabel<HTMLTextAreaElement>(
         host,
-        'O que você quer que a missão entregue?',
+        'Seu pedido',
       ),
       'Construir uma landing page com formulário de contato',
     );
     await flush();
     await flush();
 
+    const team = host.querySelector<HTMLDetailsElement>('#express-team-options')!;
+    act(() => team.querySelector('summary')!.click());
     const tool = host.querySelector<HTMLSelectElement>(
       'select[aria-label="Ferramenta de IA para Implementar interface"]',
     );
@@ -2422,13 +2502,17 @@ describe('Caminho Expresso', () => {
         .draft.roster.find((agent) => agent.agentName === 'Implementar interface')
         ?.cli,
     ).toBe('gemini');
+    const selectedRoster = useMissionSetupStore.getState().draft.roster;
+    act(() => team.querySelector('summary')!.click());
+    expect(team.open).toBe(false);
 
-    act(() => button(host, 'Iniciar missão').click());
+    act(() => button(host, 'Iniciar criação').click());
     await flush();
     await flush();
 
     expect(api.prepare).toHaveBeenCalledTimes(1);
     const prepared = api.prepare.mock.calls[0]![0];
+    expect(prepared.roster).toEqual(selectedRoster);
     expect(
       prepared.roster.find((agent) => agent.agentName === 'Implementar interface')
         ?.cli,
@@ -2449,7 +2533,7 @@ describe('Caminho Expresso', () => {
     enterText(
       fieldByLabel<HTMLTextAreaElement>(
         host,
-        'O que você quer que a missão entregue?',
+        'Seu pedido',
       ),
       'Construir uma landing page com formulário de contato',
     );
@@ -2472,11 +2556,16 @@ describe('Caminho Expresso', () => {
         ?.getAttribute('data-state'),
     ).toBe('needs-attention');
     expect(host.textContent).toContain('claude auth login');
-    expect(button(host, 'Iniciar missão').disabled).toBe(true);
+    expect(button(host, 'Iniciar criação').disabled).toBe(true);
 
-    act(() => button(host, 'Iniciar missão').click());
+    act(() => button(host, 'Iniciar criação').click());
     await flush();
     expect(api.prepare).not.toHaveBeenCalled();
+    act(() => button(host, 'Conectar ferramenta da equipe').click());
+    expect(useProductNavigationStore.getState().destination).toMatchObject({
+      kind: 'settings',
+      section: 'providers',
+    });
   });
 
   it('pula workers sem modelo configurado na rotação em vez de devolver null', () => {
@@ -2521,14 +2610,14 @@ describe('Caminho Expresso', () => {
     enterText(
       fieldByLabel<HTMLTextAreaElement>(
         host,
-        'O que você quer que a missão entregue?',
+        'Seu pedido',
       ),
       'Construir uma landing page',
     );
     await flush();
     await flush();
 
-    act(() => button(host, 'Iniciar missão').click());
+    act(() => button(host, 'Iniciar criação').click());
     await flush();
 
     expect(host.textContent).not.toContain(
@@ -2550,14 +2639,17 @@ describe('Caminho Expresso', () => {
 
     const objective = fieldByLabel<HTMLTextAreaElement>(
       host,
-      'O que você quer que a missão entregue?',
+      'Seu pedido',
     );
-    expect(objective.disabled).toBe(true);
-    expect(host.textContent).toContain(
-      'Escolha uma pasta de projeto para preencher os dados da missão.',
+    // A ideia pode ser escrita antes da pasta.
+    expect(objective.disabled).toBe(false);
+    enterText(objective, 'Construir uma landing page');
+    await flush();
+    expect(useMissionSetupStore.getState().draft.objective).toBe(
+      'Construir uma landing page',
     );
 
-    act(() => button(host, 'Iniciar missão').click());
+    act(() => button(host, 'Escolher pasta e iniciar').click());
     await flush();
 
     expect(pick).toHaveBeenCalledTimes(1);
@@ -2572,22 +2664,48 @@ describe('Caminho Expresso', () => {
     expect(host.textContent).toContain('Falta conectar uma ferramenta de IA');
     // O pré-requisito deixou de ser texto morto: existe um botão que resolve.
     expect(button(host, 'Conectar uma ferramenta de IA')).toBeDefined();
+    expect([...host.querySelectorAll('button')].filter((item) =>
+      item.textContent?.trim().startsWith('Conectar'),
+    )).toHaveLength(1);
 
     enterText(
       fieldByLabel<HTMLTextAreaElement>(
         host,
-        'O que você quer que a missão entregue?',
+        'Seu pedido',
       ),
       'Construir uma landing page',
     );
     await flush();
-    act(() => button(host, 'Iniciar missão').click());
+    act(() => button(host, 'Iniciar criação').click());
     await flush();
 
     expect(api.prepare).not.toHaveBeenCalled();
     expect(host.textContent).toContain(
       'Falta conectar uma ferramenta de IA — use o botão “Conectar uma ferramenta de IA” logo acima.',
     );
+  });
+
+  it('equipe salva indisponível oferece uma única ação de conexão no aviso específico', async () => {
+    api.listAdapters.mockResolvedValue([]);
+    api.listProviders.mockResolvedValue([]);
+    const host = await renderAtExpress();
+    act(() => useMissionSetupStore.getState().setRoster(REVIEW_ROSTER));
+    await flush();
+
+    const issue = host.querySelector('#express-maestro-login');
+    expect(issue?.textContent).toContain('Ferramenta não instalada');
+    expect(host.querySelector('#express-provider-block')).toBeNull();
+    expect([...host.querySelectorAll('button')].filter((item) =>
+      item.textContent?.trim().startsWith('Conectar'),
+    )).toHaveLength(1);
+    expect(button(host, 'Iniciar criação').disabled).toBe(true);
+
+    act(() => button(host, 'Conectar ferramenta da equipe').click());
+    expect(useProductNavigationStore.getState().destination).toMatchObject({
+      kind: 'settings',
+      section: 'providers',
+    });
+    expect(api.prepare).not.toHaveBeenCalled();
   });
 
   it('objetivo de planejamento sela a lane plan', async () => {
@@ -2598,13 +2716,13 @@ describe('Caminho Expresso', () => {
     enterText(
       fieldByLabel<HTMLTextAreaElement>(
         host,
-        'O que você quer que a missão entregue?',
+        'Seu pedido',
       ),
       'planeje como adicionar um formulario de contato, só o plano, sem escrever codigo',
     );
     await flush();
     await flush();
-    act(() => button(host, 'Iniciar missão').click());
+    act(() => button(host, 'Iniciar criação').click());
     await flush();
     await flush();
 
@@ -2620,13 +2738,13 @@ describe('Caminho Expresso', () => {
     enterText(
       fieldByLabel<HTMLTextAreaElement>(
         host,
-        'O que você quer que a missão entregue?',
+        'Seu pedido',
       ),
       'crie uma landing page para minha barbearia',
     );
     await flush();
     await flush();
-    act(() => button(host, 'Iniciar missão').click());
+    act(() => button(host, 'Iniciar criação').click());
     await flush();
     await flush();
 
@@ -2641,7 +2759,7 @@ describe('Caminho Expresso', () => {
     enterText(
       fieldByLabel<HTMLTextAreaElement>(
         host,
-        'O que você quer que a missão entregue?',
+        'Seu pedido',
       ),
       'Construir uma landing page',
     );
@@ -2655,7 +2773,7 @@ describe('Caminho Expresso', () => {
     expect(
       host.querySelector('[aria-current="step"]')?.textContent,
     ).toContain('Equipe');
-    expect(host.textContent).not.toContain('Descreva e pronto');
+    expect(host.textContent).not.toContain('O que você quer criar?');
     expect(button(host, 'Voltar para missão')).toBeDefined();
   });
 });

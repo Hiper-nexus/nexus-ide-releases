@@ -7,6 +7,7 @@ import {
   type AsyncGitRunner,
 } from '../runtime/git-command';
 import { canonicalJson } from './canonical-json';
+import { captureWorkingTreeCandidate, readCandidateFile } from './candidate-working-tree-snapshot';
 import {
   analyzeCandidateQualityFacts,
   type CandidateQualityLineRange,
@@ -44,6 +45,8 @@ export interface RunCandidateQualityAnalysisInput {
   readonly headSha: string;
   readonly diffHash: string;
   readonly changedFiles: readonly string[];
+  /** Commit review is unchanged; civilian review explicitly includes current/untracked files. */
+  readonly candidateSource?: 'commit' | 'working-tree';
   readonly signal?: AbortSignal;
 }
 
@@ -56,6 +59,7 @@ export interface CandidateQualityAnalysis {
   readonly inspectedBytes: number;
   readonly incompleteReasons: readonly string[];
   readonly reviewerMarkdown: string;
+  readonly candidateFingerprint?: string;
 }
 
 export interface CandidateQualityScannerDependencies {
@@ -124,43 +128,16 @@ function parseAddedLines(diff: string): ReadonlyMap<string, readonly CandidateQu
 }
 
 async function readPhysicalSource(
-  root: string,
+  scope: ProjectExecutionScope,
   relativePath: string,
   signal?: AbortSignal,
 ): Promise<string | null> {
   throwIfAborted(signal);
-  const absolute = path.join(root, ...relativePath.split('/'));
-  let before: fs.Stats;
   try {
-    before = await fs.promises.lstat(absolute);
+    return readCandidateFile(scope, relativePath, MAX_FILE_BYTES).toString('utf8');
   } catch {
     return null;
   }
-  if (
-    before.isSymbolicLink() ||
-    !before.isFile() ||
-    before.size > MAX_FILE_BYTES
-  ) {
-    return null;
-  }
-  const real = await fs.promises.realpath(absolute);
-  if (path.normalize(real) !== path.normalize(absolute)) return null;
-  const content = await fs.promises.readFile(real, {
-    encoding: 'utf8',
-    signal,
-  });
-  const after = await fs.promises.lstat(absolute);
-  if (
-    after.isSymbolicLink() ||
-    !after.isFile() ||
-    before.dev !== after.dev ||
-    before.ino !== after.ino ||
-    before.size !== after.size ||
-    before.mtimeMs !== after.mtimeMs
-  ) {
-    return null;
-  }
-  return content;
 }
 
 function boundedReason(reason: string): string {
@@ -174,6 +151,7 @@ function reviewerMarkdown(input: {
   inspectedFiles: number;
   inspectedBytes: number;
   incompleteReasons: readonly string[];
+  candidateSource?: 'git' | 'filesystem';
 }): string {
   const findingLines = input.findings.slice(0, 32).map(
     (value) =>
@@ -183,6 +161,9 @@ function reviewerMarkdown(input: {
   return [
     '## Main-owned candidate quality preflight',
     `Analyzer: ${ANALYZER_VERSION}`,
+    ...(input.candidateSource ? [input.candidateSource === 'git'
+      ? 'Candidate: current working tree, including untracked files.'
+      : 'Candidate: current directory files; Git comparison was unavailable.'] : []),
     `Evidence hash: ${input.analysisHash}`,
     `Status: ${input.complete ? 'complete' : 'partial — manual inspection is mandatory'}`,
     `Bounded index: ${input.inspectedFiles} files / ${input.inspectedBytes} bytes`,
@@ -209,30 +190,36 @@ export async function runCandidateQualityAnalysis(
   if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
     throw new Error('candidate quality checkout is not a physical directory');
   }
-  const changedFiles = input.changedFiles
+  const git = dependencies.git ?? new AsyncProcessGitRunner();
+  const scope = Object.freeze({ ...input.scope, rootRealPath: root });
+  const snapshotInput = { scope, baseSha: input.baseSha, git, signal: input.signal };
+  const snapshot = input.candidateSource === 'working-tree'
+    ? await captureWorkingTreeCandidate(snapshotInput)
+    : null;
+  const requestedPaths = [...input.changedFiles, ...(snapshot?.changedPaths ?? [])];
+  const changedFiles = requestedPaths
     .map(normalizeRelativePath)
     .filter((value): value is string => value !== null);
   const limitedChanged = [...new Set(changedFiles)].slice(0, MAX_CHANGED_FILES);
-  const reasons: string[] = [];
-  if (changedFiles.length !== input.changedFiles.length) {
+  const reasons: string[] = [...(snapshot?.incompleteReasons ?? [])];
+  if (changedFiles.length !== requestedPaths.length) {
     reasons.push('one or more changed paths were unsafe');
   }
-  if (changedFiles.length > MAX_CHANGED_FILES) {
+  if (new Set(changedFiles).size > MAX_CHANGED_FILES) {
     reasons.push(`changed-file limit ${MAX_CHANGED_FILES} reached`);
   }
 
-  const git = dependencies.git ?? new AsyncProcessGitRunner();
-  const head = await git.run(root, ['rev-parse', '--verify', 'HEAD^{commit}'], {
-    timeoutMs: 5_000,
-  });
-  if (head.stdout.trim().toLowerCase() !== input.headSha.toLowerCase()) {
+  const observedHead = snapshot
+    ? snapshot.headSha
+    : (await git.run(root, ['rev-parse', '--verify', 'HEAD^{commit}'], { timeoutMs: 5_000 })).stdout.trim();
+  if (observedHead && observedHead.toLowerCase() !== input.headSha.toLowerCase()) {
     throw new Error('candidate quality checkout HEAD does not match review binding');
   }
   let addedLines: ReadonlyMap<string, readonly CandidateQualityLineRange[]> =
     new Map();
   let diffAvailable = false;
   try {
-    const diff = await git.run(
+    const diff = snapshot ? { stdout: snapshot.diff } : await git.run(
       root,
       [
         'diff',
@@ -258,7 +245,8 @@ export async function runCandidateQualityAnalysis(
     );
   }
 
-  const scope = Object.freeze({ ...input.scope, rootRealPath: root });
+  const deletedPaths = new Set(snapshot?.deletedPaths ?? []);
+  const untrackedPaths = new Set(snapshot?.untrackedPaths ?? []);
   const limits = Object.freeze({
     ...DEFAULT_ORIENTATION_LIMITS,
     maxFiles: MAX_SOURCE_FILES,
@@ -283,6 +271,7 @@ export async function runCandidateQualityAnalysis(
   const prioritizedFiles = [
     ...limitedChanged
       .filter((relativePath) =>
+        !deletedPaths.has(relativePath) &&
         TS_JS_EXTENSIONS.has(path.posix.extname(relativePath).toLowerCase()))
       .map(
         (relativePath) =>
@@ -310,22 +299,35 @@ export async function runCandidateQualityAnalysis(
       reasons.push(`analysis time budget ${ANALYSIS_BUDGET_MS}ms reached`);
       break;
     }
-    const content = await readPhysicalSource(root, file.relativePath, input.signal);
+    let content: string | null = null;
+    try {
+      content = await readPhysicalSource(scope, file.relativePath, input.signal);
+    } catch {
+      throwIfAborted(input.signal);
+    }
     if (content === null) {
       if (limitedChanged.includes(file.relativePath)) {
         reasons.push(`changed source could not be read: ${file.relativePath}`);
       }
       continue;
     }
-    inspectedBytes += Buffer.byteLength(content, 'utf8');
+    const contentBytes = Buffer.byteLength(content, 'utf8');
+    if (inspectedBytes + contentBytes > MAX_SOURCE_BYTES) {
+      reasons.push(`source byte limit ${MAX_SOURCE_BYTES} reached`);
+      break;
+    }
+    inspectedBytes += contentBytes;
     sources.push(Object.freeze({
       relativePath: file.relativePath,
       content,
-      addedLines: addedLines.get(file.relativePath) ?? Object.freeze([]),
+      addedLines: untrackedPaths.has(file.relativePath)
+        ? Object.freeze([{ start: 1, end: content.split('\n').length }])
+        : addedLines.get(file.relativePath) ?? Object.freeze([]),
     }));
     if (
       diffAvailable &&
       limitedChanged.includes(file.relativePath) &&
+      !untrackedPaths.has(file.relativePath) &&
       !addedLines.has(file.relativePath)
     ) {
       reasons.push(`changed source had no parseable diff header: ${file.relativePath}`);
@@ -339,9 +341,25 @@ export async function runCandidateQualityAnalysis(
   for (const changed of limitedChanged) {
     if (
       TS_JS_EXTENSIONS.has(path.posix.extname(changed).toLowerCase()) &&
+      !deletedPaths.has(changed) &&
       !sourcePathSet.has(changed)
     ) {
       reasons.push(`changed source was outside the bounded index: ${changed}`);
+    }
+  }
+  if (snapshot) {
+    try {
+      const after = await captureWorkingTreeCandidate(snapshotInput);
+      reasons.push(...after.incompleteReasons);
+      if (snapshot.fingerprint !== after.fingerprint) reasons.push('working-tree candidate changed during analysis');
+      for (const source of sources) {
+        if (await readPhysicalSource(scope, source.relativePath, input.signal) !== source.content) {
+          reasons.push(`source changed during analysis: ${source.relativePath}`);
+        }
+      }
+    } catch {
+      throwIfAborted(input.signal);
+      reasons.push('working-tree candidate could not be revalidated');
     }
   }
   const uniqueReasons = Object.freeze(
@@ -361,6 +379,11 @@ export async function runCandidateQualityAnalysis(
         baseSha: input.baseSha,
         headSha: input.headSha,
         diffHash: input.diffHash,
+        ...(snapshot ? { candidateFingerprint: snapshot.fingerprint } : {}),
+        sources: sources.map((source) => ({
+          path: source.relativePath,
+          sha256: createHash('sha256').update(source.content).digest('hex'),
+        })),
       },
       complete,
       findings,
@@ -384,6 +407,8 @@ export async function runCandidateQualityAnalysis(
       inspectedFiles: sources.length,
       inspectedBytes,
       incompleteReasons: uniqueReasons,
+      candidateSource: snapshot?.source,
     }),
+    ...(snapshot ? { candidateFingerprint: snapshot.fingerprint } : {}),
   });
 }

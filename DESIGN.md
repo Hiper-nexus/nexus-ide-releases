@@ -317,3 +317,24 @@ Não voltar à lista de dezenas de destinos na barra lateral. A biblioteca Meus
 pets tem acesso permanente e não depende de o mascote flutuante estar ligado.
 Catálogo de modelos de mídia e conexão dos serviços são funções distintas,
 com um caminho direto entre elas.
+
+## 13. Criação direta e navegação por resultado
+
+- **Início é o formulário real de criação.** Um título, uma frase, o pedido e
+  `Iniciar criação`. Sem tutorial intermediário, stepper ou aprovação de equipe
+  no caminho padrão. O fluxo manual é uma opção dentro da personalização.
+- **Pedido protagonista.** Campo confortável para descrever a ideia; projeto
+  pelo nome humano, caminho disponível para inspeção. Equipe resumida e
+  detalhes/referências recolhidos. Expandir opções não muda nem apaga o pedido.
+- **Uma entrada persistente.** `Novo pedido` aparece uma vez na rail. Início,
+  abertura de projeto e demais destinos precedem o histórico rolável. Limpeza
+  permanece recolhida junto às utilidades do projeto.
+- **Hierarquia legível.** Títulos dos trabalhos em 13px; estados em 12px, numa
+  linha própria. Não repetir o nome do projeto nem a branch em cada trabalho.
+  O cabeçalho identifica projeto/destino e agrupa utilidades à direita.
+- **Espaço disponível governa layout.** A equipe responde à largura do canvas,
+  não apenas à janela. Nomes e seletores não podem se sobrepor ao reduzir a
+  janela ou abrir painéis. Alvos secundários de pelo menos 32px no desktop.
+- **Autonomia deve corresponder ao mecanismo.** A interface remove decisões
+  técnicas obrigatórias; estados de execução, revisão e entrega continuam
+  baseados no motor. Um redesign não certifica sozinho a qualidade do código.

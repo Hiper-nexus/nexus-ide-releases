@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { PLUGIN_MANIFEST_SCHEMA } from './agent-plugin-manifest';
+import { IMPECCABLE_MANIFEST } from './impeccable-manifest';
 import { ensureSkillsForCli } from './skill-mirror';
 
 const roots: string[] = [];
@@ -54,6 +55,61 @@ afterEach(() => {
 });
 
 describe('ensureSkillsForCli', () => {
+  it.each(['outdated', 'missing'] as const)(
+    'repairs a bundled helper that is %s even when SKILL.md already matches',
+    (helperState) => {
+      const home = tmpRoot();
+      const generatedRoot = path.join(home, '.nexus', 'generated-skills');
+      const skillDir = writeSkill(
+        generatedRoot,
+        'impeccable',
+        IMPECCABLE_MANIFEST['SKILL.md']!.content,
+      );
+      const helper = 'scripts/context.mjs';
+      if (helperState === 'outdated') {
+        fs.mkdirSync(path.dirname(path.join(skillDir, helper)), { recursive: true });
+        fs.writeFileSync(path.join(skillDir, helper), '// previous bundled helper');
+      }
+      const target = path.join(tmpRoot(), 'provider-skills');
+
+      ensureSkillsForCli('codex', {
+        home,
+        sourceDirs: [],
+        allowedSkills: ['impeccable'],
+        targetDirs: [target],
+        includeCliTarget: false,
+      });
+
+      const expected = IMPECCABLE_MANIFEST[helper]!.content;
+      expect(fs.readFileSync(path.join(skillDir, helper), 'utf8')).toBe(expected);
+      expect(fs.readFileSync(path.join(target, 'impeccable', helper), 'utf8'))
+        .toBe(expected);
+    },
+  );
+
+  it('keeps unchanged bundled helpers and customized provider copies intact', () => {
+    const home = tmpRoot();
+    const target = path.join(home, '.codex', 'skills');
+    const custom = writeSkill(target, 'impeccable', '# My design workflow');
+    fs.writeFileSync(path.join(custom, 'reference.md'), 'My own reference');
+    const options = { home, sourceDirs: [], allowedSkills: ['impeccable'] };
+    ensureSkillsForCli('codex', options);
+    const generated = path.join(
+      home, '.nexus', 'generated-skills', 'impeccable', 'scripts', 'context.mjs',
+    );
+    const originalTime = new Date('2020-01-01T00:00:00.000Z');
+    fs.utimesSync(generated, originalTime, originalTime);
+
+    ensureSkillsForCli('codex', options);
+
+    expect(fs.statSync(generated).mtimeMs).toBe(originalTime.getTime());
+    expect(fs.readFileSync(path.join(custom, 'SKILL.md'), 'utf8'))
+      .toBe('# My design workflow');
+    expect(fs.readFileSync(path.join(custom, 'reference.md'), 'utf8'))
+      .toBe('My own reference');
+    expect(fs.existsSync(path.join(custom, 'scripts'))).toBe(false);
+  });
+
   it('mirrors installed skills into the Codex namespace', () => {
     const home = tmpRoot();
     const source = tmpRoot();

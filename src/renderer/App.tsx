@@ -15,7 +15,6 @@ import { CommandPalette } from './components/CommandPalette';
 import { useCommandPaletteStore } from './state/command-palette-store';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { TerminalGridDialog } from './components/TerminalGridDialog';
-import { useTerminalGridDialogStore } from './state/terminal-grid-dialog-store';
 import { OverlayLayer } from './overlay/overlay-layer';
 import { OrchestrationModeDialog } from './components/OrchestrationModeDialog';
 import { MediaStudioPanel } from './components/MediaStudioPanel';
@@ -90,7 +89,6 @@ import { FEATURE_FLAG_IDS } from '../shared/feature-flags';
 import { bootGreeting } from '../shared/endorphin';
 import { missionAwaitsOperatorReview } from '../shared/mission-recovery-policy';
 import { AppShell } from './components/product/AppShell';
-import { Launcher } from './components/product/Launcher';
 import {
   WorkspaceRail,
   type WorkspaceRailSelection,
@@ -158,13 +156,12 @@ function productDestinationKey(destination: ProductDestination): string {
 function productDestinationLabel(destination: ProductDestination): string {
   switch (destination.kind) {
     case 'launcher':
-      return 'Launcher';
+    case 'mission-setup':
+      return 'Criar com IA';
     case 'terminal':
       return 'Terminal do workspace';
     case 'project':
       return 'Projeto';
-    case 'mission-setup':
-      return 'Preparar missão';
     case 'mission':
       return destination.surface === 'board'
         ? 'Quadro da missão'
@@ -344,9 +341,8 @@ export function App() {
     return () => clearInterval(timer);
   }, [recentWorkspaceKey]);
 
-  // Each workspace owns its saved pane tree. A workspace identity change may
-  // choose Terminal, but ordinary store refreshes never reset the active
-  // product destination.
+  // Restore each workspace's panes without replacing the creation home with
+  // Terminal. Only a mission tied to the outgoing project needs a safe exit.
   const pendingMissionRemovals = useRef(new Set<string>());
   const lastWorkspacePath = useRef<string | null | undefined>(undefined);
   useEffect(() => {
@@ -368,17 +364,19 @@ export function App() {
     if (workspaceChanged) {
       useFilesStore.getState().reset();
       const navigation = useProductNavigationStore.getState();
-      const activatingWorkspace = previousPath === null;
       const replacingWorkspace =
         previousPath !== undefined &&
         previousPath !== null &&
         previousPath !== path;
-      if (
-        navigation.destination.kind === 'launcher' ||
-        activatingWorkspace ||
-        replacingWorkspace
+      if (replacingWorkspace && navigation.destination.kind === 'mission') {
+        navigation.openLauncher();
+      } else if (
+        replacingWorkspace &&
+        navigation.settingsReturnDestination?.kind === 'mission'
       ) {
-        navigation.openTerminal();
+        useProductNavigationStore.setState({
+          settingsReturnDestination: { kind: 'launcher' },
+        });
       }
     }
     lastWorkspacePath.current = path;
@@ -839,7 +837,7 @@ export function App() {
   function selectWorkspace(workspaceId: string): void {
     const workspace = useWorkspaceStore.getState();
     if (workspace.current?.path === workspaceId) {
-      useProductNavigationStore.getState().openTerminal();
+      useProductNavigationStore.getState().openLauncher();
       return;
     }
     void workspace.open(workspaceId).catch((error) => {
@@ -945,21 +943,7 @@ export function App() {
   let destinationContent: ReactNode = null;
   switch (destination.kind) {
     case 'launcher':
-      destinationContent = (
-        <Launcher
-          onOpenWorkspace={pickWorkspace}
-          onStartMission={navigation.openNewMission}
-          onOpenPane={() => {
-            useTerminalGridDialogStore.getState().open({ initialCount: 2 });
-          }}
-          onOpenShellTerminal={() => {
-            useTerminalGridDialogStore.getState().open({ initialCount: 1 });
-          }}
-          onOpenTaskBoard={navigation.openTaskBoard}
-          onOpenMemory={navigation.openMemory}
-          onOpenProviders={() => navigation.openSettings('providers')}
-        />
-      );
+      destinationContent = <MissionSetup home />;
       break;
     case 'terminal':
       break;
@@ -1119,6 +1103,7 @@ export function App() {
             selection={selection}
             onCreateNew={navigation.openNewMission}
             onOpenLauncher={navigation.openLauncher}
+            onOpenWorkspace={pickWorkspace}
             currentWorkspaceId={currentWorkspace?.path}
             attentionCount={attentionCount}
             onOpenAttention={() =>
@@ -1179,21 +1164,26 @@ export function App() {
           />
         }
         header={
-          currentWorkspace ? (
-            <>
-              {/* Atualizar o app tem que estar SEMPRE alcançável: o chip saiu
-                  do App em 01/08 num fix de missão e o produto passou duas
-                  releases sem nenhuma porta para atualizar. */}
+          <>
+            <div className="product-header__identity">
+              <strong className="product-header__name">
+                {currentWorkspace?.name ?? 'Seu espaço'}
+              </strong>
+              <span className="product-header__destination">
+                {productDestinationLabel(destination)}
+              </span>
+            </div>
+            <div className="product-header__tools">
               <UpdateNotifier alwaysVisible />
-              <AgentNotifications />
-              {!contextualPanelVisible ? contextualPanel : null}
-              <DictationModeChip />
-            </>
-          ) : (
-            // Sem workspace aberto (launcher) o cabeçalho ficava vazio — e era
-            // exatamente ali que o operador chegava para atualizar.
-            <UpdateNotifier alwaysVisible />
-          )
+              {currentWorkspace ? (
+                <>
+                  <AgentNotifications />
+                  {!contextualPanelVisible ? contextualPanel : null}
+                  <DictationModeChip />
+                </>
+              ) : null}
+            </div>
+          </>
         }
         contentLabel={productDestinationLabel(destination)}
         focusRequest={destinationFocusRequest}

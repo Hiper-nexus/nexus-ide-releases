@@ -22,11 +22,13 @@ import {
   noteCivilianReviewRefusal,
   shouldLogCivilianRefusal,
   toArtifactRefs,
+  maybeCompleteFastLaneOnDelivery,
+  type CivilianDeliveryDependencies,
 } from './civilian-delivery-completion';
-import { missionEngineForScope } from './mission-engine-registry';
 import { listPaneSnapshots } from './pane-registry';
 import { getSquad } from './squad-store';
-import { inspectTeamQuestionCompletion, isTeamQuestionMission, teamQuestionResponseSummary, type TeamQuestionCompletion, type TeamQuestionPaneRuntime } from './mission-team-question-completion';
+import { inspectTeamQuestionCompletion, isTeamQuestionMission, teamQuestionResponseSummary, type TeamQuestionCompletion, type TeamQuestionObserverBinding, type TeamQuestionPaneRuntime } from './mission-team-question-completion';
+import { loadObserverPaneSessions } from './mission-team-question-observer';
 import { advanceSealedTasksFromFilesOnDisk } from './mission-story-plan';
 import {
   getProjectDomainStores,
@@ -400,8 +402,11 @@ export type CivilianProntoDependencies = {
     readonly role?: string;
     readonly state?: string | null;
   })[];
+  readonly listObserverPaneSessions?: (missionId: string) => readonly TeamQuestionObserverBinding[];
   readonly listProductFiles?: (root: string) => readonly string[];
-  readonly missionEngine?: Pick<MissionEngine, 'completeVerified'>;
+  readonly missionEngine?: Pick<MissionEngine, 'completeVerified' | 'blockUser'>;
+  readonly runAutoReviewGate?: CivilianDeliveryDependencies['runAutoReviewGate'];
+  readonly captureCandidate?: CivilianDeliveryDependencies['captureCandidate'];
 };
 
 /**
@@ -409,11 +414,11 @@ export type CivilianProntoDependencies = {
  * O header civil (estado `completed` → rótulo Pronto) só quando N/N.
  * Board N/M permanece honesto — não inventa 20/20.
  */
-export function maybeApplyCivilianPronto(
+export async function maybeApplyCivilianPronto(
   scope: ProjectExecutionScope,
   missionId: string | undefined,
   deps: CivilianProntoDependencies = {},
-): CivilianProntoApplyResult {
+): Promise<CivilianProntoApplyResult> {
   const empty = (action: CivilianProntoAction, reason: string): CivilianProntoApplyResult => ({
     action,
     path: null,
@@ -448,6 +453,8 @@ export function maybeApplyCivilianPronto(
     panes: stores.missionPanes?.list?.(missionId) ?? [],
     runtimePanes: panes,
     handoffs,
+    observerPaneSessions: deps.listObserverPaneSessions?.(missionId) ??
+      loadObserverPaneSessions(scope, missionId),
   });
   if (!teamQuestion.ready) return empty('wait', teamQuestion.reason);
 
@@ -572,18 +579,18 @@ export function maybeApplyCivilianPronto(
     `[fast-lane] Pronto justified by ${decision.reason}`,
   );
 
-  const engine = deps.missionEngine ?? missionEngineForScope(scope);
   let completed = false;
   try {
-    completed = applyCivilianProntoDecision({
-      scope,
-      mission,
-      decision,
-      productFiles: files,
-      engine,
-      stores,
-      teamQuestion,
-    });
+    const result = await maybeCompleteFastLaneOnDelivery(scope, missionId, deps);
+    completed = result.completed;
+    if (!completed) {
+      return {
+        ...decision,
+        action: result.action.startsWith('refuse') ? 'refuse' : 'wait',
+        reason: result.reason ?? result.action,
+        completed: false,
+      };
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     // Recusa por revisão: o civilian-delivery é quem abre o revisor; aqui só

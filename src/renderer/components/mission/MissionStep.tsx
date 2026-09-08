@@ -193,7 +193,9 @@ export function MissionStep({
   const [pendingRemovalFocus, setPendingRemovalFocus] =
     useState<PendingRemovalFocus | null>(null);
 
-  const draftEditingDisabled = draftFieldsDisabled || !workspace;
+  const draftEditingDisabled = draftFieldsDisabled;
+  const advancedDisabled = draftFieldsDisabled || !workspace;
+  const needsWorkspace = !workspace;
   // Ditado do objetivo: transcript literal APENSA ao texto atual (nunca
   // substitui o que o operador já digitou) e respeita o teto do campo.
   const dictation = useObjectiveDictation({
@@ -212,9 +214,8 @@ export function MissionStep({
     (path) => !isMissionContextAttachmentPath(path),
   );
   const disabledReasonId = 'mission-draft-disabled-reason';
-  const disabledReason = workspace
-    ? 'Resolva o carregamento do rascunho antes de preencher os dados da missão.'
-    : 'Escolha uma pasta de projeto para preencher os dados da missão.';
+  const disabledReason =
+    'Resolva o carregamento do rascunho antes de preencher os dados da missão.';
   const lanePresentation = missionLanePresentation(draft.advanced.lane);
 
   useEffect(() => {
@@ -321,6 +322,14 @@ export function MissionStep({
       setWorkspaceError(createValidationError(disabledReason));
       return;
     }
+    if (needsWorkspace) {
+      setWorkspaceError(
+        createValidationError(
+          'Escolha a pasta do projeto para continuar — sua ideia fica salva.',
+        ),
+      );
+      return;
+    }
     if (!draft.objective.trim()) {
       setObjectiveError(
         createValidationError('Descreva a entrega antes de continuar.'),
@@ -409,6 +418,12 @@ export function MissionStep({
           {draftEditingDisabled && (
             <p id={disabledReasonId} className="mission-setup__hint">
               {disabledReason}
+            </p>
+          )}
+          {needsWorkspace && !draftEditingDisabled && (
+            <p className="mission-setup__hint">
+              Escreva sua ideia à vontade — a pasta é pedida ao continuar e o
+              texto acompanha sem apagar o rascunho que já existir nela.
             </p>
           )}
         </div>
@@ -598,17 +613,17 @@ export function MissionStep({
         className="mission-setup__disclosure mission-setup__continuous-section"
       >
         <summary
-          aria-disabled={draftEditingDisabled || undefined}
+          aria-disabled={advancedDisabled || undefined}
           aria-describedby={
-            draftEditingDisabled ? disabledReasonId : undefined
+            advancedDisabled ? disabledReasonId : undefined
           }
-          tabIndex={draftEditingDisabled ? -1 : undefined}
+          tabIndex={advancedDisabled ? -1 : undefined}
           onClick={(event) => {
-            if (draftEditingDisabled) event.preventDefault();
+            if (advancedDisabled) event.preventDefault();
           }}
           onKeyDown={(event) => {
             if (
-              draftEditingDisabled &&
+              advancedDisabled &&
               (event.key === 'Enter' || event.key === ' ')
             ) {
               event.preventDefault();
@@ -622,15 +637,15 @@ export function MissionStep({
           <select
             id="mission-lane"
             value={draft.advanced.lane}
-            disabled={draftEditingDisabled}
+            disabled={advancedDisabled}
             aria-describedby={[
               'mission-lane-hint',
-              draftEditingDisabled ? disabledReasonId : null,
+              advancedDisabled ? disabledReasonId : null,
             ]
               .filter(Boolean)
               .join(' ')}
             onChange={(event) => {
-              if (!draftEditingDisabled) {
+              if (!advancedDisabled) {
                 onLaneChange(event.target.value as MissionLane);
               }
             }}
@@ -651,10 +666,10 @@ export function MissionStep({
               id="mission-free-agent-choice"
               type="checkbox"
               checked={draft.advanced.freeAgentChoice ?? false}
-              disabled={draftEditingDisabled}
+              disabled={advancedDisabled}
               aria-describedby="mission-free-agent-choice-hint"
               onChange={(event) => {
-                if (!draftEditingDisabled) {
+                if (!advancedDisabled) {
                   onFreeAgentChoiceChange(event.target.checked);
                 }
               }}

@@ -1,14 +1,12 @@
 import { PET_STUDIO_SQUAD_ID } from '../../shared/pet-studio';
-import type { Mission, SquadAgent } from '../../shared/orch-types';
-import {
-  parseReviewFindings,
-  type ReviewFindings,
-} from './review-findings';
-import { checkReviewCycleLimit } from './swarm-protocol';
+import type { HandoffEvidenceBinding, Mission, SquadAgent } from '../../shared/orch-types';
+import type { ProjectExecutionScope } from '../../shared/types';
+import { isAutomaticCompletionProof } from './automatic-completion-proof';
+import { isFrozenMissionReviewProof } from './mission-review-proof';
 
 /**
- * Gate civil: missão standard/ops com squad NÃO fica Concluída sem revisão
- * independente com evidência. Implementador sozinho dizendo "ok" nunca basta.
+ * Gate de conclusão: decide por recibos do Main, nunca pelo resumo de um
+ * implementador ou pela quantidade de mensagens antigas do revisor.
  */
 
 export type IndependentReviewGateCode =
@@ -32,6 +30,8 @@ export type ReviewGateHandoff = {
   readonly fromAgent?: string;
   readonly sessionId?: string;
   readonly evidenceIds?: readonly string[];
+  readonly evidenceTrust?: 'unverified' | 'nexus-trusted' | 'stale';
+  readonly evidenceBinding?: HandoffEvidenceBinding;
   readonly deliveryState?: string;
   readonly artifacts?: unknown;
 };
@@ -92,10 +92,18 @@ function laneOf(mission: Pick<Mission, 'intentContract'>): string {
   return mission.intentContract?.lane ?? 'standard';
 }
 
+function isReviewContentExempt(
+  mission: Pick<Mission, 'squadId' | 'intentContract'>,
+  squad: ReviewGateSquadView | null | undefined,
+): boolean {
+  if (mission.squadId === PET_STUDIO_SQUAD_ID || squad?.id === PET_STUDIO_SQUAD_ID) return true;
+  const lane = laneOf(mission);
+  return lane !== 'standard' && lane !== 'ops';
+}
+
 /**
- * Via Rápida civil (express / livre / yolo): board N/N + files+handoffs
- * fecha sem revisor manual. Guided/legacy continuam exigindo revisão.
- * Maestro-only era o furo 061 (review_missing com 20 seladas no disco).
+ * Via Rápida dispensa o revisor manual. A verificação automática canônica
+ * continua obrigatória no caminho standard com squad antes da conclusão.
  */
 export function isCivilianViaRapidaReviewExempt(
   mission: Pick<Mission, 'intentState' | 'intentContract'>,
@@ -108,21 +116,26 @@ export function isCivilianViaRapidaReviewExempt(
 }
 
 /**
- * Exportada para o caminho civil (civilian-delivery-completion) saber se a
- * missão já é coberta pelo gate de revisão independente — a revisão
- * automática main-owned só entra onde este gate NÃO cobre.
+ * Identifica o fluxo de revisor do roster. O caminho civil reutiliza seu
+ * Council quando há workflow congelado; sem ele, executa a revisão automática.
  */
 export function missionRequiresIndependentReview(
   mission: Pick<Mission, 'squadId' | 'intentContract' | 'intentState'>,
   squad: ReviewGateSquadView | null | undefined,
 ): boolean {
-  if (mission.squadId === PET_STUDIO_SQUAD_ID) return false;
-  if (squad?.id === PET_STUDIO_SQUAD_ID) return false;
-  const lane = laneOf(mission);
-  if (lane !== 'standard' && lane !== 'ops') return false;
+  if (isReviewContentExempt(mission, squad)) return false;
   if (!mission.squadId) return false;
   if (isCivilianViaRapidaReviewExempt(mission)) return false;
   return true;
+}
+
+/** Matches the standard squad completion route that produces automatic receipts. */
+export function missionRequiresAutomaticCompletionReview(
+  mission: Pick<Mission, 'squadId' | 'intentContract'>,
+  squad: ReviewGateSquadView | null | undefined,
+): boolean {
+  return Boolean(mission.squadId) && laneOf(mission) === 'standard' &&
+    !isReviewContentExempt(mission, squad);
 }
 
 function categoryOfAgentName(
@@ -207,65 +220,71 @@ function acceptedByCurrentOrchestrator(
   );
 }
 
-function tryParseFindings(handoff: ReviewGateHandoff): ReviewFindings | null {
-  try {
-    return parseReviewFindings(handoff);
-  } catch {
-    return null;
-  }
-}
-
-function hasBlockingFindings(findings: ReviewFindings): boolean {
-  if (findings.verdict === 'incorrect') return true;
-  return findings.findings.some(
-    (finding) => finding.priority === 'P0' || finding.priority === 'P1',
-  );
-}
-
 /**
- * Evidência física da revisão: IDs Nexus, veredito tipado correto, ou
- * resumo substancial do revisor (≥80 chars) sem sinal de reprovação.
+ * Store-resolved review references are candidates for evidence, never a
+ * verdict. The current Main-owned council below decides their meaning.
  */
 export function reviewerHandoffHasEvidence(handoff: ReviewGateHandoff): boolean {
-  if ((handoff.evidenceIds?.length ?? 0) > 0) return true;
-  const findings = tryParseFindings(handoff);
-  if (findings) {
-    return findings.verdict === 'correct' && !hasBlockingFindings(findings);
-  }
-  const summary = (handoff.summary ?? '').trim();
-  if (summary.length < 80) return false;
-  if (reviewSummaryLooksNegative(summary)) return false;
-  return true;
+  return handoff.evidenceTrust === 'nexus-trusted' &&
+    handoff.evidenceBinding !== undefined &&
+    handoff.evidenceIds?.some((id) => id.startsWith('review:')) === true;
 }
 
-function isNegativeReviewHandoff(handoff: ReviewGateHandoff): boolean {
-  if (handoff.status === 'blocked' || handoff.status === 'failed') {
-    return true;
-  }
-  const findings = tryParseFindings(handoff);
-  if (findings && hasBlockingFindings(findings)) return true;
-  const summary = (handoff.summary ?? '').trim();
-  return summary.length > 0 && reviewSummaryLooksNegative(summary);
-}
-
-/**
- * Avalia se a missão pode ir a `done`. Puro / testável.
- */
-export function evaluateIndependentReviewGate(input: {
+export interface IndependentReviewGateInput {
   readonly mission: Pick<
     Mission,
-    'id' | 'squadId' | 'intentContract' | 'orchestratorSessionId' | 'intentState'
+    'id' | 'squadId' | 'intentContract' | 'orchestratorSessionId' | 'intentState' | 'intentVersion' | 'updatedAt'
   >;
+  readonly scope?: ProjectExecutionScope;
+  /** In-process receipts only. A serialized object can never pass the guards. */
+  readonly automaticProof?: unknown;
+  readonly frozenReviewProof?: unknown;
+  /** Main validated the team's textual answer; never supplied by MCP input. */
+  readonly textOnly?: boolean;
   readonly squad: ReviewGateSquadView | null | undefined;
   readonly handoffs: readonly ReviewGateHandoff[];
   readonly deliveryAttemptsOf: (
     handoffId: string,
   ) => readonly ReviewGateDeliveryAttempt[];
   readonly dispatches?: readonly ReviewGateDispatch[];
-}): IndependentReviewGateResult {
-  if (!missionRequiresIndependentReview(input.mission, input.squad)) {
+}
+
+function mainOwnedReviewDecision(input: IndependentReviewGateInput): IndependentReviewGateResult | null {
+  if (!input.scope) return null;
+  if (isAutomaticCompletionProof(input.automaticProof, input.scope, input.mission)) {
+    return {
+      ok: true,
+      reviewerHandoffId: input.automaticProof.status === 'verified'
+        ? 'main-automatic-verification' : 'main-check-unavailable',
+    };
+  }
+  if (!isFrozenMissionReviewProof(input.frozenReviewProof, input.scope, input.mission)) return null;
+  const proof = input.frozenReviewProof;
+  if (!proof.candidateCurrent) {
+    return { ok: false, code: 'review_without_evidence',
+      reason: 'A entrega mudou depois da revisão. O Nexus precisa verificar o candidato atual.' };
+  }
+  if (proof.gate.reason === 'blocking-findings') {
+    return { ok: false, code: 'review_rejected',
+      reason: 'A revisão do candidato atual encontrou problemas. A correção precisa passar por nova verificação.' };
+  }
+  if (proof.gate.ready && proof.gate.evidenceIds.length > 0) {
+    return { ok: true, reviewerHandoffId: proof.gate.evidenceIds[0]! };
+  }
+  return { ok: false, code: 'review_without_evidence',
+    reason: 'O candidato atual ainda não tem uma revisão independente registrada pelo Nexus.' };
+}
+
+/** Current Main-owned evidence decides; handoff history only explains a missing check. */
+export function evaluateIndependentReviewGate(input: IndependentReviewGateInput): IndependentReviewGateResult {
+  if (input.textOnly === true || (
+    !missionRequiresIndependentReview(input.mission, input.squad) &&
+    !missionRequiresAutomaticCompletionReview(input.mission, input.squad)
+  )) {
     return { ok: true, reviewerHandoffId: 'exempt' };
   }
+  const proofDecision = mainOwnedReviewDecision(input);
+  if (proofDecision) return proofDecision;
 
   const dispatches = input.dispatches ?? [];
   const orchSession = input.mission.orchestratorSessionId;
@@ -275,21 +294,6 @@ export function evaluateIndependentReviewGate(input: {
       resolveHandoffCategory(handoff, dispatches, input.squad),
     ),
   );
-
-  const rejected = reviewerHandoffs.find((handoff) =>
-    isNegativeReviewHandoff(handoff),
-  );
-  if (rejected) {
-    const cycleLimit = checkReviewCycleLimit(reviewerHandoffs.length);
-    const reason = cycleLimit.escalateToOperator
-      ? `Limite de ciclos de revisão atingido (${cycleLimit.currentCycle}). Escalonando para intervenção do operador humano.`
-      : 'A revisão encontrou risco. Corrija com um novo trabalhador — não marque como concluída.';
-    return {
-      ok: false,
-      code: 'review_rejected',
-      reason,
-    };
-  }
 
   const acceptedReviewers = reviewerHandoffs.filter(
     (handoff) =>
@@ -306,23 +310,15 @@ export function evaluateIndependentReviewGate(input: {
       ok: false,
       code: 'review_missing',
       reason:
-        'Falta revisão independente com evidência. Abra um revisor ou QA, receba a entrega e só então conclua.',
+        'Esta entrega precisa passar pela verificação automática do Nexus antes de concluir.',
     };
   }
 
-  const withEvidence = acceptedReviewers.find((handoff) =>
-    reviewerHandoffHasEvidence(handoff),
-  );
-  if (!withEvidence) {
-    return {
-      ok: false,
-      code: 'review_without_evidence',
-      reason:
-        'A revisão chegou sem prova do que foi checado. Peça evidência ao revisor antes de concluir.',
-    };
-  }
-
-  return { ok: true, reviewerHandoffId: withEvidence.id };
+  return {
+    ok: false,
+    code: 'review_without_evidence',
+    reason: 'O resumo recebido não comprova a verificação da entrega atual. O Nexus precisa executar a verificação automática.',
+  };
 }
 
 /** Lança se o gate falhar — usado em completeVerified / set_status done. */

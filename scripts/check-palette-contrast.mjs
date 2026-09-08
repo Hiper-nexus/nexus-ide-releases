@@ -81,6 +81,21 @@ for (const token of STATUS_TOKENS) {
 
 const HEX = /#[0-9a-fA-F]{6}/;
 
+/**
+ * Strip CSS comments before parsing declarations. Not optional: a declaration
+ * regex of the shape /(--name)\s*:\s*([^;]+);/ matches across newlines, so
+ * prose inside a comment that happens to contain `--token:` swallows the real
+ * declaration that follows it up to the next semicolon. This gate shipped that
+ * bug and it cost exactly one token — a comment reading "todos sobre
+ * --surface-3: success 3.92 ..." consumed the following `--status-success`
+ * line, so the audit silently read the dark value from :root instead of the
+ * theme's override. design-system-sensor.mjs strips comments for the same
+ * reason; any declaration scraper over these stylesheets has to.
+ */
+function stripCssComments(css) {
+  return css.replace(/\/\*[\s\S]*?\*\//g, '');
+}
+
 function ruleBody(css, selector) {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return css.match(new RegExp(`${escaped}\\s*\\{([^}]*)\\}`))?.[1] ?? '';

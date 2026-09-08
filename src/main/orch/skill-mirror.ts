@@ -241,10 +241,9 @@ function writeGeneratedSkills(root: string): string {
     fs.writeFileSync(path.join(skillDir, 'SKILL.md'), skill.body);
   }
   // Bundled multi-file skills (impeccable ~1.8 MB, archify ~600 KB).
-  // Rewriting (and base64-decoding) everything on every agent spawn is
-  // wasteful; materialize only when missing or stale — bundled SKILL.md
-  // differs from the materialized one — which also keeps them fresh across
-  // app updates.
+  // Repair the Main-owned generated cache per asset: helper-only updates must
+  // reach new sessions even when SKILL.md is unchanged. Provider copies remain
+  // non-destructive in copySkill, preserving locally customized installations.
   materializeManifestSkill(root, 'impeccable', IMPECCABLE_MANIFEST);
   materializeManifestSkill(root, 'archify', ARCHIFY_MANIFEST);
   materializeManifestSkill(root, 'bmad-templates', BMAD_TEMPLATES_MANIFEST);
@@ -258,21 +257,18 @@ function materializeManifestSkill(
   name: string,
   manifest: Record<string, SkillAsset>,
 ): void {
-  const bundledSkill = manifest['SKILL.md'];
-  const materializedSkill = path.join(root, name, 'SKILL.md');
-  const currentSkill = (() => {
+  for (const [relPath, asset] of Object.entries(manifest)) {
+    const destPath = path.join(root, name, relPath);
+    const expected = Buffer.from(asset.content, asset.encoding);
     try {
-      return fs.readFileSync(materializedSkill, 'utf8');
-    } catch {
-      return null;
+      if (fs.readFileSync(destPath).equals(expected)) continue;
+    } catch (error) {
+      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) {
+        throw error;
+      }
     }
-  })();
-  if (!bundledSkill || currentSkill !== bundledSkill.content) {
-    for (const [relPath, asset] of Object.entries(manifest)) {
-      const destPath = path.join(root, name, relPath);
-      fs.mkdirSync(path.dirname(destPath), { recursive: true });
-      fs.writeFileSync(destPath, Buffer.from(asset.content, asset.encoding));
-    }
+    fs.mkdirSync(path.dirname(destPath), { recursive: true });
+    fs.writeFileSync(destPath, expected);
   }
 }
 

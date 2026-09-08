@@ -217,7 +217,17 @@ export interface PaletteBand {
 export const DARK_STATUS_BAND: PaletteBand = { lightness: 0.7, chromaFraction: 0.55 };
 export const DARK_STATUS_DOT_BAND: PaletteBand = { lightness: 0.72, chromaFraction: 0.9 };
 export const LIGHT_STATUS_BAND: PaletteBand = { lightness: 0.5, chromaFraction: 0.6 };
-export const LIGHT_STATUS_DOT_BAND: PaletteBand = { lightness: 0.62, chromaFraction: 0.9 };
+/**
+ * Solved, not inherited. The naive light dot band is L=0.62, which is what the
+ * same rule produces against a near-white surface. But nexus-light's surface
+ * ramp descends to L=0.870 (`--surface-3`), and a dot at 0.62 measures 2.30:1
+ * against it — under the 3:1 floor. The doctrine derives lightness from the
+ * contrast floor against the surfaces the token actually sits on, so the floor
+ * here is `--surface-3`, not white: 0.555 is the highest dot lightness at which
+ * all three hues still clear 3:1 on every light surface. Raising the ramp
+ * instead was considered and rejected — see `LIGHT_SURFACE_STEPS`.
+ */
+export const LIGHT_STATUS_DOT_BAND: PaletteBand = { lightness: 0.555, chromaFraction: 0.9 };
 
 export type StatusHueName = 'success' | 'danger' | 'warning' | 'merged' | 'running';
 
@@ -412,4 +422,98 @@ export function auditBandCoherence(
     });
   }
   return violations;
+}
+
+/**
+ * A theme's two neutral anchors. `--bg` and `--bg-bar` are written inline by
+ * `applyUiTheme` from `PALETTES` in ui-theme.ts and are never declared in
+ * base.css, so a ramp generator has to be handed them.
+ */
+export interface SurfaceRampAnchor {
+  readonly background: string;
+  readonly bar: string;
+}
+
+export interface SurfaceRampStep {
+  readonly token: string;
+  /** Signed OKLCH lightness offset from the anchor background. */
+  readonly lightnessDelta: number;
+}
+
+/**
+ * Measured out of base.css `:root` — the shipped dark ramp, kept as data so the
+ * light ramp mirrors its step structure instead of inventing one:
+ *
+ *   surface-0 L=0.1312 (= pink-city --bg)   sidebar 0.1475   surface-1 0.1807
+ *   surface-2 0.1991                        surface-3 0.2403
+ *
+ * Lightness ascends and chroma rises with it (0.0054 -> 0.0135) around a
+ * roughly constant hue of ~298, the Pink City violet tint.
+ */
+export const DARK_SURFACE_STEPS: readonly SurfaceRampStep[] = Object.freeze([
+  { token: '--surface-0', lightnessDelta: 0 },
+  { token: '--surface-sidebar', lightnessDelta: 0.0163 },
+  { token: '--surface-1', lightnessDelta: 0.0494 },
+  { token: '--surface-2', lightnessDelta: 0.0679 },
+  { token: '--surface-3', lightnessDelta: 0.109 },
+]);
+
+/**
+ * The same step sizes, inverted. A light theme cannot ascend: nexus-light's
+ * `--bg` is already L=0.979 and white is 1.0, so there is no headroom above the
+ * page. Descending preserves the semantic the tokens actually carry in the
+ * stylesheets — a higher N is a stronger interaction state (card -> hover ->
+ * selected), not a higher shelf — and mirroring the measured dark deltas means a
+ * selected row reads as distinct from a card by the same perceptual amount in
+ * both themes.
+ */
+export const LIGHT_SURFACE_STEPS: readonly SurfaceRampStep[] = Object.freeze(
+  DARK_SURFACE_STEPS.map((step) => ({
+    token: step.token,
+    lightnessDelta: -step.lightnessDelta,
+  })),
+);
+
+/**
+ * Largest per-channel difference between `generateSurfaceRamp` and the shipped
+ * dark ramp, measured: 3/255 at `--surface-3`, 1/255 at `--surface-0` and
+ * `--surface-sidebar`. The dark ramp was hand-tuned after generation, so this
+ * rule APPROXIMATES it rather than reproducing it — unlike the status bands,
+ * which it reproduces bit-for-bit.
+ *
+ * Consequence, and the reason the dark ramp is not regenerated: overwriting
+ * `:root` would shift shipped colours by up to 3/255 for no benefit. The
+ * generator derives ramps that have no shipped values yet (nexus-light), and the
+ * drift is pinned by a test so a change to the formula is noticed.
+ */
+export const SURFACE_RAMP_MAX_CHANNEL_DRIFT = 3;
+
+/**
+ * Build a surface ramp from a theme's own two neutrals. Hue comes from the bar
+ * anchor (more saturated than the background, so its hue is better determined)
+ * and the chroma slope is derived from the two anchors rather than fixed, which
+ * is what keeps each theme's tint its own: pink-city's neutrals run violet
+ * (hue ~308), nexus-light's run blue (~261).
+ */
+export function generateSurfaceRamp(
+  anchor: SurfaceRampAnchor,
+  steps: readonly SurfaceRampStep[],
+): ReadonlyArray<{ readonly token: string; readonly value: string }> {
+  const background = hexToOklch(anchor.background);
+  const bar = hexToOklch(anchor.bar);
+  const lightnessSpan = background.l - bar.l;
+  if (Math.abs(lightnessSpan) < 1e-6) {
+    throw new TypeError(
+      'surface ramp anchors must differ in lightness, otherwise the chroma slope is not solvable',
+    );
+  }
+  const chromaSlope = (bar.c - background.c) / lightnessSpan;
+  return steps.map((step) => ({
+    token: step.token,
+    value: oklchToHex({
+      l: background.l + step.lightnessDelta,
+      c: Math.max(0, background.c - step.lightnessDelta * chromaSlope),
+      h: bar.h,
+    }),
+  }));
 }

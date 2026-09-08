@@ -82,14 +82,14 @@ function harness(handoffs: Handoff[], names = targetNames, current = mission()) 
   } as unknown as ProjectDomainStoreSuite;
   const deps = {
     getStores: () => stores, getSquad: () => squad, listPanes: () => names.map(runtime), listProductFiles: () => ['README.md'],
-    missionEngine: { completeVerified },
+    missionEngine: { completeVerified, blockUser: vi.fn() },
   };
   return { current, stores, completeVerified, transitionLifecycle, deps, panes };
 }
 
-function pronto(handoffs: Handoff[], names = targetNames, current = mission()) {
+async function pronto(handoffs: Handoff[], names = targetNames, current = mission()) {
   const state = harness(handoffs, names, current);
-  return { ...state, result: maybeApplyCivilianPronto(scope, current.id, state.deps) };
+  return { ...state, result: await maybeApplyCivilianPronto(scope, current.id, state.deps) };
 }
 
 function inspect(handoffs: Handoff[], extra: Partial<Parameters<typeof inspectTeamQuestionCompletion>[0]> = {}) {
@@ -114,7 +114,7 @@ function complete(handoffs: Handoff[], options: { operatorOverride?: boolean; cu
 describe('team-question automatic completion', () => {
   it('reports a fail-closed handoff before waiting for the remaining team', async () => {
     const failed = { ...handoff('Codex'), status: 'blocked' as const, summary: 'sandbox_denied: provider launch refused' };
-    const first = pronto([failed], ['Codex']);
+    const first = await pronto([failed], ['Codex']);
     expect(first.result).toMatchObject({ action: 'refuse', reason: 'fail-closed', completed: false });
     expect(first.completeVerified).not.toHaveBeenCalled();
     const state = harness([failed], ['Codex']);
@@ -126,23 +126,23 @@ describe('team-question automatic completion', () => {
     expect(state.stores.tasks.markLifecycleStatus).not.toHaveBeenCalled();
   });
 
-  it('does not complete from the master alone despite a done board and a pre-existing file', () => {
-    const outcome = pronto([handoff()], []);
+  it('does not complete from the master alone despite a done board and a pre-existing file', async () => {
+    const outcome = await pronto([handoff()], []);
     expect(outcome.result.action).toBe('wait');
     expect(outcome.current.status).toBe('running');
     expect(outcome.completeVerified).not.toHaveBeenCalled();
     expect(outcome.result.reason).toContain('(0/3)');
   });
 
-  it('waits for the approved absent targets after only one of three has responded', () => {
-    const outcome = pronto([handoff('Codex')], ['Codex']);
+  it('waits for the approved absent targets after only one of three has responded', async () => {
+    const outcome = await pronto([handoff('Codex')], ['Codex']);
     expect(outcome.result).toMatchObject({ action: 'wait', completed: false });
     expect(outcome.result.reason).toContain('(1/3)');
     expect(outcome.result.reason).toContain('Cursor, DeepSeek');
   });
 
-  it('accepts all three physically identified responses without attaching old files or the master claim', () => {
-    const outcome = pronto([handoff(), ...targetNames.map((name) => handoff(name))]);
+  it('accepts all three physically identified responses without attaching old files or the master claim', async () => {
+    const outcome = await pronto([handoff(), ...targetNames.map((name) => handoff(name))]);
     expect(outcome.result.completed).toBe(true);
     expect(outcome.result.reason).toBe('all-workers-delivered (3/3)');
     expect(outcome.current.result?.artifactRefs).toEqual([]);
@@ -259,5 +259,115 @@ describe('team-question automatic completion', () => {
     const state = complete([handoff()], { current });
     state.run();
     expect(state.current.status).toBe('done');
+  });
+});
+
+describe('team-question observer fallback for unsealed panes (F-143)', () => {
+  function unsealedPane(agentName: string, current: Mission): MissionPaneSpec {
+    const spec = pane(agentName, current);
+    return { ...spec, workerIncarnationId: undefined, authoritySeal: undefined };
+  }
+
+  function unsealedHarness(current: Mission) {
+    return {
+      mission: current,
+      squad,
+      panes: targetNames.map((name) => unsealedPane(name, current)),
+      runtimePanes: [],
+      handoffs: targetNames.map((name) => handoff(name)),
+      observerPaneSessions: targetNames.map((name) => ({ paneId: `pane-${name}`, sessionId: `session-${name}` })),
+    };
+  }
+
+  it('stays pending for unsealed panes without observer bindings', () => {
+    const current = mission();
+    const input = unsealedHarness(current);
+    const outcome = inspectTeamQuestionCompletion({ ...input, observerPaneSessions: [] });
+    expect(outcome).toMatchObject({ applicable: true, ready: false });
+    expect(outcome.missingTargets).toEqual(targetNames);
+    expect(outcome.fallbackAgents).toEqual([]);
+  });
+
+  it('consolidates real answers via observer bindings after their panes died', () => {
+    const outcome = inspectTeamQuestionCompletion(unsealedHarness(mission()));
+    expect(outcome).toMatchObject({ applicable: true, ready: true });
+    expect(outcome.missingTargets).toEqual([]);
+    expect(outcome.fallbackAgents).toEqual(targetNames);
+    expect(outcome.responses.map((response) => response.agentName)).toEqual(targetNames);
+  });
+
+  it('still rejects a forged fromAgent arriving from another session', () => {
+    const current = mission();
+    const input = unsealedHarness(current);
+    const forged = targetNames.map((name, index) => ({
+      ...handoff(name),
+      sessionId: `session-${targetNames[(index + 1) % targetNames.length]}`,
+      mcpProvenance: {
+        ...handoff(name).mcpProvenance!,
+        sessionId: `session-${targetNames[(index + 1) % targetNames.length]}`,
+      },
+    }));
+    const outcome = inspectTeamQuestionCompletion({ ...input, handoffs: forged });
+    expect(outcome.ready).toBe(false);
+    expect(outcome.missingTargets).toEqual(targetNames);
+  });
+
+  it('prefers the latest binding when a pane was rebound to a new session', () => {
+    const current = mission();
+    const input = unsealedHarness(current);
+    const outcome = inspectTeamQuestionCompletion({
+      ...input,
+      observerPaneSessions: [
+        { paneId: 'pane-Codex', sessionId: 'session-Codex-old' },
+        ...input.observerPaneSessions,
+      ],
+    });
+    expect(outcome).toMatchObject({ ready: true });
+    expect(outcome.fallbackAgents).toEqual(targetNames);
+  });
+
+  it('binds a live unsealed pane through its runtime session without journal history', () => {
+    const current = mission();
+    const input = unsealedHarness(current);
+    const outcome = inspectTeamQuestionCompletion({
+      ...input,
+      observerPaneSessions: [],
+      runtimePanes: targetNames.map(runtime),
+    });
+    expect(outcome).toMatchObject({ ready: true });
+    expect(outcome.fallbackAgents).toEqual(targetNames);
+  });
+
+  it('does not let the fallback rescue a sealed pane with a mismatched incarnation', () => {
+    const bad = { ...handoff('Codex'), workerIncarnationId: 'other-generation' };
+    const outcome = inspect([bad, handoff('Cursor'), handoff('DeepSeek')], {
+      observerPaneSessions: targetNames.map((name) => ({ paneId: `pane-${name}`, sessionId: `session-${name}` })),
+    });
+    expect(outcome.ready).toBe(false);
+    expect(outcome.missingTargets).toEqual(['Codex']);
+    // Sealed panes stay on the strict path even with bindings present.
+    expect(outcome.fallbackAgents).toEqual([]);
+  });
+
+  it('completes unsealed legacy panes at the production boundary via observer bindings', () => {
+    const current = mission();
+    const specs = targetNames.map((name) => unsealedPane(name, current));
+    const stores = {
+      missions: { get: () => current, transitionLifecycle: (_id: string, _e: unknown, patch: Record<string, unknown>) => Object.assign(current, patch) },
+      handoffs: { list: () => targetNames.map((name) => handoff(name)) },
+      missionPanes: { list: () => specs },
+      tasks: { list: () => [], listPlannedTasks: () => [] },
+    } as unknown as ProjectDomainStoreSuite;
+    completeVerifiedMission(scope, stores, {
+      missionId: current.id, expectedStatus: 'running' as const, expectedIntentState: 'executing' as const,
+      expectedUpdatedAt: 100, expectedIntentVersion: 1, learnings: '',
+      result: { outcome: 'success' as const, summary: 'Master says all answered.', evidenceIds: [], artifactRefs: [] },
+    }, {
+      getSquad: () => squad,
+      listPanes: () => [],
+      listObserverPaneSessions: () => targetNames.map((name) => ({ paneId: `pane-${name}`, sessionId: `session-${name}` })),
+    });
+    expect(current.status).toBe('done');
+    expect(current.result?.summary).toBe('Respostas da equipe:\n- Codex: 4\n- Cursor: 4\n- DeepSeek: 4');
   });
 });

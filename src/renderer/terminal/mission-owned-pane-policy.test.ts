@@ -3,6 +3,7 @@ import {
   BLOCKED_RESUME_NOTICE,
   decideDeadPaneReviveRespawn,
   decideExitedPaneKey,
+  decideTerminalMissionDeadPaneKey,
   decideOrchestratorProcessExit,
   decideStaleAuthorityRecovery,
   decideUnlockRetiredMissionPane,
@@ -573,5 +574,40 @@ describe('abrir Terminais numa missão pronta NÃO pode relançar a missão', ()
         }),
       ).toBe('keep-paused');
     }
+  });
+});
+
+describe('decideTerminalMissionDeadPaneKey — pós-missão nunca é mudez', () => {
+  it('spawn em curso continua ignorando a tecla (transiente)', () => {
+    expect(
+      decideTerminalMissionDeadPaneKey({
+        spawnStarted: true,
+        keepReviewChannel: true,
+      }),
+    ).toBe('ignore');
+    expect(
+      decideTerminalMissionDeadPaneKey({
+        spawnStarted: true,
+        keepReviewChannel: false,
+      }),
+    ).toBe('ignore');
+  });
+
+  it('coordenador de missão concluída mantém o canal de revisão', () => {
+    expect(
+      decideTerminalMissionDeadPaneKey({
+        spawnStarted: false,
+        keepReviewChannel: true,
+      }),
+    ).toBe('resume-keyboard');
+  });
+
+  it('worker e demais panes de missão terminal viram shell digitável', () => {
+    expect(
+      decideTerminalMissionDeadPaneKey({
+        spawnStarted: false,
+        keepReviewChannel: false,
+      }),
+    ).toBe('reclaim-shell');
   });
 });

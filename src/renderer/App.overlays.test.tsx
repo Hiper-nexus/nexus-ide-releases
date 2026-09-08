@@ -93,9 +93,6 @@ vi.mock('./components/product/AppShell', () => ({
     </div>
   ),
 }));
-vi.mock('./components/product/Launcher', () => ({
-  Launcher: () => <section aria-label="Launcher" />,
-}));
 vi.mock('./components/product/WorkspaceRail', () => ({
   WorkspaceRail: () => <nav aria-label="Destinos do Nexus" />,
 }));

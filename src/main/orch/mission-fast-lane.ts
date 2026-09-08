@@ -131,7 +131,6 @@ import {
   planMetaPaneAskSeats,
 } from './via-rapida-first-wave';
 import { firstWaveWorkerPrompt, metaPaneAskPrompt } from './via-rapida-walk';
-import { maybeApplyCivilianPronto } from './civilian-pronto';
 import { hashMissionIntentAuthority } from './mission-pane-authority';
 
 /**
@@ -1329,11 +1328,6 @@ async function tickWatcher(state: WatcherState): Promise<void> {
       },
     );
     if (civilian.completed) {
-      stopWatcher(state.scope, state.missionId);
-      return;
-    }
-    const pronto = maybeApplyCivilianPronto(state.scope, state.missionId);
-    if (pronto.completed) {
       stopWatcher(state.scope, state.missionId);
       return;
     }

@@ -356,6 +356,34 @@ function cloneDraft(draft: MissionSetupDraft): MissionSetupDraft {
   };
 }
 
+/**
+ * Ideia escrita antes de escolher a pasta: só texto (objetivo, aceite,
+ * título e referências). Roster/equipe continuam por workspace e nunca
+ * atravessam pastas — evita sugerir equipe da pasta errada.
+ */
+function draftTextFields(draft: MissionSetupDraft): {
+  objective: string;
+  acceptance?: string;
+  title: string;
+  contextPaths: string[];
+} {
+  return {
+    objective: draft.objective,
+    acceptance: draft.acceptance,
+    title: draft.title,
+    contextPaths: [...draft.contextPaths],
+  };
+}
+
+function draftTextFieldsEmpty(draft: MissionSetupDraft): boolean {
+  return (
+    draft.objective.length === 0 &&
+    (draft.acceptance ?? '').length === 0 &&
+    draft.title.length === 0 &&
+    draft.contextPaths.length === 0
+  );
+}
+
 type StorageAccess =
   | { ok: true; value: Storage }
   | { ok: false };
@@ -534,6 +562,26 @@ export const useMissionSetupStore = create<MissionSetupStore>((set, get) => {
     }));
   };
 
+  /**
+   * Revisão sem pasta: guarda a ideia só na memória (persistence idle),
+   * sem tocar o localStorage. Usado pelos campos de texto antes da
+   * escolha da pasta.
+   */
+  const revisePendingText = (
+    update: (draft: MissionSetupDraft) => Omit<MissionSetupDraft, 'revision'>,
+  ): void => {
+    const current = get();
+    if (current.entryContext?.kind === 'pet-studio') return;
+    const next = {
+      ...update(current.draft),
+      revision: Math.min(
+        Number.MAX_SAFE_INTEGER,
+        current.draft.revision + 1,
+      ),
+    } as MissionSetupDraft;
+    set({ draft: next, persistence: { status: 'idle' } });
+  };
+
   return {
     workspacePath: null,
     draft: createEmptyMissionSetupDraft(),
@@ -565,11 +613,23 @@ export const useMissionSetupStore = create<MissionSetupStore>((set, get) => {
       }
 
       if (!workspacePath) {
+        // Sem pasta: a entrada é o Expresso e a ideia já escrita é
+        // preservada na memória em vez de descartada. Nada é persistido
+        // até uma pasta ser escolhida.
+        const draft =
+          current.draft.step === 'express'
+            ? current.draft
+            : {
+                ...current.draft,
+                step: 'express' as const,
+                revision: Math.min(
+                  Number.MAX_SAFE_INTEGER,
+                  current.draft.revision + 1,
+                ),
+              };
         set({
           workspacePath: null,
-          draft: createEmptyMissionSetupDraft(
-            Math.min(Number.MAX_SAFE_INTEGER, current.draft.revision + 1),
-          ),
+          draft,
           persistence: { status: 'idle' },
           workspaceDrafts,
           entryContext: null,
@@ -578,13 +638,44 @@ export const useMissionSetupStore = create<MissionSetupStore>((set, get) => {
         return;
       }
 
+      // Ideia pendente (escrita sem pasta): transfere só os campos de texto
+      // quando a pasta de destino está vazia. Rascunho existente na pasta
+      // nunca é sobrescrito.
+      const pending =
+        !current.workspacePath && !draftTextFieldsEmpty(current.draft)
+          ? draftTextFields(current.draft)
+          : null;
+      const applyPending = (
+        base: MissionSetupDraft,
+      ): MissionSetupDraft => {
+        if (!pending) return base;
+        const next = cloneDraft(base);
+        next.objective = pending.objective;
+        next.acceptance = pending.acceptance;
+        next.title = pending.title;
+        next.contextPaths = [...pending.contextPaths];
+        next.revision = Math.max(base.revision, current.draft.revision);
+        return next;
+      };
+
       const remembered = workspaceDrafts[workspacePath];
       if (remembered) {
+        const withPending =
+          pending && draftTextFieldsEmpty(remembered.draft)
+            ? applyPending(remembered.draft)
+            : null;
+        const draft = withPending ?? cloneDraft(remembered.draft);
+        const persistence = withPending
+          ? persistWorkspaceDraft(workspacePath, draft)
+          : remembered.persistence;
         set({
           workspacePath,
-          draft: cloneDraft(remembered.draft),
-          persistence: remembered.persistence,
-          workspaceDrafts,
+          draft,
+          persistence,
+          workspaceDrafts: {
+            ...workspaceDrafts,
+            [workspacePath]: { draft, persistence },
+          },
           entryContext: null,
           entryAuthorityRevision,
         });
@@ -592,13 +683,21 @@ export const useMissionSetupStore = create<MissionSetupStore>((set, get) => {
       }
 
       const loaded = readWorkspaceDraft(workspacePath);
+      const withPending =
+        pending && draftTextFieldsEmpty(loaded.draft)
+          ? applyPending(loaded.draft)
+          : null;
+      const draft = withPending ?? loaded.draft;
+      const persistence = withPending
+        ? persistWorkspaceDraft(workspacePath, draft)
+        : loaded.persistence;
       set({
         workspacePath,
-        draft: loaded.draft,
-        persistence: loaded.persistence,
+        draft,
+        persistence,
         workspaceDrafts: {
           ...workspaceDrafts,
-          [workspacePath]: loaded,
+          [workspacePath]: { draft, persistence },
         },
         entryContext: null,
         entryAuthorityRevision,
@@ -608,19 +707,34 @@ export const useMissionSetupStore = create<MissionSetupStore>((set, get) => {
     setObjective: (objective) => {
       const nextObjective = objective.slice(0, MISSION_INTENT_GOAL_MAX_CHARS);
       if (nextObjective === get().draft.objective) return;
-      revise((draft) => ({ ...draft, objective: nextObjective }));
+      const update = (draft: MissionSetupDraft) => ({
+        ...draft,
+        objective: nextObjective,
+      });
+      if (get().workspacePath) revise(update);
+      else revisePendingText(update);
     },
 
     setAcceptance: (acceptance) => {
       const next = acceptance.slice(0, 2_048);
       if (next === (get().draft.acceptance ?? '')) return;
-      revise((draft) => ({ ...draft, acceptance: next }));
+      const update = (draft: MissionSetupDraft) => ({
+        ...draft,
+        acceptance: next,
+      });
+      if (get().workspacePath) revise(update);
+      else revisePendingText(update);
     },
 
     setTitle: (title) => {
       const nextTitle = title.slice(0, MISSION_PREPARE_TITLE_MAX_CHARS);
       if (nextTitle === get().draft.title) return;
-      revise((draft) => ({ ...draft, title: nextTitle }));
+      const update = (draft: MissionSetupDraft) => ({
+        ...draft,
+        title: nextTitle,
+      });
+      if (get().workspacePath) revise(update);
+      else revisePendingText(update);
     },
 
     setContextPaths: (contextPaths) => {
@@ -632,7 +746,12 @@ export const useMissionSetupStore = create<MissionSetupStore>((set, get) => {
       ) {
         return;
       }
-      revise((draft) => ({ ...draft, contextPaths: nextPaths }));
+      const update = (draft: MissionSetupDraft) => ({
+        ...draft,
+        contextPaths: nextPaths,
+      });
+      if (get().workspacePath) revise(update);
+      else revisePendingText(update);
     },
 
     setRoster: (roster) => {

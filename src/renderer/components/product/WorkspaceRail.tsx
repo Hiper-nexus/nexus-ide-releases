@@ -13,7 +13,7 @@ import { listPanes } from '../../lib/split-tree';
 import { useLayoutStore } from '../../state/layout-store';
 import { useOrchStore } from '../../state/orch-store';
 import { useSessionStateStore } from '../../state/session-state-store';
-import { useGitScmStore } from '../../state/git-scm-store';
+import { formatShortcut } from '../../lib/platform';
 import { useQuotaStore } from '../../state/quota-store';
 import { useAdapterStore } from '../../state/adapter-store';
 import { prioritizeReportedQuotas, shortWindowsLine } from '../../lib/quota-display';
@@ -79,6 +79,8 @@ export interface WorkspaceRailProps {
    * botão de abrir pasta da interface.
    */
   onOpenLauncher?: () => void;
+  /** Opens a folder without going through the creation form. */
+  onOpenWorkspace?: () => void;
   /**
    * Workspace aberto agora. A lixeira dele NÃO remove dos recentes: o main
    * desvia para o diálogo de fechar projeto (App.tsx), que encerra todas as
@@ -195,6 +197,12 @@ interface WorkspaceGroupProps {
   onRemoveMission?: (missionId: string, workspaceId: string) => void;
 }
 
+/**
+ * Missões visíveis por pasta antes do "mostrar mais". O rail estreito não
+ * comporta as 100+ missões de um workspace antigo (campo: "Em andamento 125").
+ */
+const RAIL_MISSION_PAGE_SIZE = 10;
+
 function WorkspaceGroup({
   currentWorkspaceId,
   label,
@@ -206,13 +214,12 @@ function WorkspaceGroup({
   onRemoveWorkspace,
   onRemoveMission,
 }: WorkspaceGroupProps) {
-  if (workspaces.length === 0) return null;
   const labelId = `workspace-rail-${group}-label`;
+  const missionCount = workspaces.reduce((count, workspace) => count + workspace.missions.length, 0);
 
   const paneMissions = useOrchStore((s) => s.paneMissions);
   const root = useLayoutStore((s) => s.root);
   const paneStates = useSessionStateStore((s) => s.paneStates);
-  const currentBranch = useGitScmStore((s) => s.branch);
   const adapters = useAdapterStore((s) => s.adapters);
   const allPanes = useMemo(() => listPanes(root), [root]);
   const adapterMetaById = useMemo(() => {
@@ -222,6 +229,10 @@ function WorkspaceGroup({
     }
     return map;
   }, [adapters]);
+  // Paginação por pasta: o rail estreito não comporta 100+ missões.
+  const [missionListLimits, setMissionListLimits] = useState<
+    Record<string, number>
+  >({});
   // Estilo Orca: a missão selecionada já abre com os agentes visíveis.
   const selectedMissionId =
     selection?.kind === 'mission' ? selection.missionId : null;
@@ -237,6 +248,8 @@ function WorkspaceGroup({
     );
   }, [selectedMissionId]);
 
+  if (workspaces.length === 0) return null;
+
   return (
     <section
       className="workspace-rail__group"
@@ -247,15 +260,31 @@ function WorkspaceGroup({
         <span id={labelId} className="workspace-rail__group-title">
           {label}
         </span>
-        <span className="workspace-rail__group-pill">
-          {workspaces.reduce((acc, w) => acc + w.missions.length, 0)}
-        </span>
+        {missionCount > 0 ? (
+          <span className="workspace-rail__group-pill">{missionCount}</span>
+        ) : null}
       </div>
       <ul className="workspace-rail__workspace-list">
         {workspaces.map((workspace) => {
           const workspaceSelected =
             selection?.kind === 'workspace' &&
             selection.workspaceId === workspace.id;
+          // A selecionada sempre aparece, mesmo além da página atual.
+          const selectedIndex =
+            selection?.kind === 'mission'
+              ? workspace.missions.findIndex(
+                  (mission) => mission.id === selection.missionId,
+                )
+              : -1;
+          const defaultMissionLimit = Math.max(
+            RAIL_MISSION_PAGE_SIZE,
+            selectedIndex + 1,
+          );
+          const missionLimit =
+            missionListLimits[workspace.id] ?? defaultMissionLimit;
+          const visibleMissions = workspace.missions.slice(0, missionLimit);
+          const hiddenMissionCount =
+            workspace.missions.length - visibleMissions.length;
 
           return (
             <li className="workspace-rail__workspace-item" key={workspace.id}>
@@ -309,7 +338,7 @@ function WorkspaceGroup({
                   className="workspace-rail__mission-list"
                   aria-label={`Missões em ${workspace.name}`}
                 >
-                  {workspace.missions.map((mission) => {
+                  {visibleMissions.map((mission) => {
                     const status = missionStatusDisplay(
                       mission.status,
                       mission.needsAttention,
@@ -358,15 +387,6 @@ function WorkspaceGroup({
                             </div>
                             <span className="workspace-rail__mission-copy">
                               <span className="workspace-rail__mission-meta-line">
-                                <span className="workspace-rail__mission-repo-chip" title={workspace.name}>
-                                  <span className="workspace-rail__mission-repo-mark" aria-hidden="true" />
-                                  <span className="workspace-rail__mission-repo-name">{workspace.name}</span>
-                                </span>
-                                {workspace.id === currentWorkspaceId && currentBranch ? (
-                                  <span className="workspace-rail__mission-branch" title={currentBranch}>
-                                    {currentBranch}
-                                  </span>
-                                ) : null}
                                 <span className="workspace-rail__mission-status">
                                   {status.label}
                                 </span>
@@ -479,6 +499,39 @@ function WorkspaceGroup({
                   })}
                 </ul>
               ) : null}
+              {workspace.missions.length > 0 &&
+                hiddenMissionCount > 0 ? (
+                  <button
+                    type="button"
+                    className="workspace-rail__missions-more"
+                    aria-expanded={false}
+                    aria-label={`Mostrar mais ${hiddenMissionCount} missões em ${workspace.name}`}
+                    onClick={() =>
+                      setMissionListLimits((prev) => ({
+                        ...prev,
+                        [workspace.id]:
+                          missionLimit + RAIL_MISSION_PAGE_SIZE,
+                      }))
+                    }
+                  >
+                    Mostrar mais {hiddenMissionCount}…
+                  </button>
+                ) : missionLimit > defaultMissionLimit ? (
+                  <button
+                    type="button"
+                    className="workspace-rail__missions-more"
+                    aria-expanded={true}
+                    aria-label={`Mostrar menos missões em ${workspace.name}`}
+                    onClick={() =>
+                      setMissionListLimits((prev) => ({
+                        ...prev,
+                        [workspace.id]: defaultMissionLimit,
+                      }))
+                    }
+                  >
+                    Mostrar menos
+                  </button>
+                ) : null}
             </li>
           );
         })}
@@ -518,6 +571,7 @@ export function WorkspaceRail({
   onOpenUsageQuota,
   onOpenTerminals,
   onOpenLauncher,
+  onOpenWorkspace,
   currentWorkspaceId,
   attentionCount = 0,
   onOpenAttention,
@@ -538,19 +592,10 @@ export function WorkspaceRail({
       <header className="workspace-rail__identity">
         <div className="workspace-rail__brand">
           <span className="workspace-rail__mark" aria-hidden="true">
-            <NexusMark size={15} />
+            <NexusMark size={20} />
           </span>
           <strong className="workspace-rail__brand-name">Nexus</strong>
         </div>
-        <button
-          type="button"
-          className="workspace-rail__new"
-          aria-label="Criar nova missão"
-          onClick={onCreateNew}
-        >
-          <PixelIcon name="plus" size={11} />
-          <span>Novo</span>
-        </button>
       </header>
 
       <div className="workspace-rail__search-wrap">
@@ -558,21 +603,21 @@ export function WorkspaceRail({
           type="button"
           className="workspace-rail__search-btn"
           aria-label="Buscar missões e atalhos"
-          title="Buscar (⌘K)"
+          title={`Buscar (${formatShortcut('mod', 'K')})`}
           onClick={() => useCommandPaletteStore.getState().toggle()}
         >
           <PixelIcon name="search" size={11} />
           <span className="workspace-rail__search-placeholder">Buscar</span>
-          <kbd className="workspace-rail__search-kbd">⌘K</kbd>
+          <kbd className="workspace-rail__search-kbd">{formatShortcut('mod', 'K')}</kbd>
         </button>
       </div>
 
-      <div className="workspace-rail__scroll">
+      <div className="workspace-rail__actions">
         <button
           type="button"
           className="workspace-rail__mission-cta"
-          aria-label="Criar nova missão neste workspace — descreva o objetivo"
-          title="Descreva o objetivo — o Nexus monta a equipe neste workspace"
+          aria-label="Novo pedido"
+          title="Descreva um novo pedido para sua equipe de IA"
           data-testid="rail-new-mission"
           onClick={onCreateNew}
         >
@@ -580,48 +625,16 @@ export function WorkspaceRail({
             className="workspace-rail__mission-cta-icon"
             aria-hidden="true"
           >
-            <PixelIcon name="mission" size={15} />
+            <PixelIcon name="plus" size={14} />
           </span>
           <span className="workspace-rail__mission-cta-copy">
             <span className="workspace-rail__mission-cta-title">
-              Nova missão
+              Novo pedido
             </span>
-            <span className="workspace-rail__mission-cta-sub">
-              Descreva o objetivo — o Nexus monta a equipe
-            </span>
-          </span>
-          <span
-            className="workspace-rail__mission-cta-plus"
-            aria-hidden="true"
-          >
-            <PixelIcon name="plus" size={11} />
           </span>
         </button>
-        <WorkspaceGroup
-          label="Em andamento"
-          group="active"
-          workspaces={activeWorkspaces}
-          selection={selection}
-          onSelectWorkspace={onSelectWorkspace}
-          onSelectMission={onSelectMission}
-          onRemoveWorkspace={onRemoveWorkspace}
-          currentWorkspaceId={currentWorkspaceId}
-          onRemoveMission={onRemoveMission}
-        />
-        <WorkspaceGroup
-          label="Recentes"
-          group="recent"
-          workspaces={recentWorkspaces}
-          selection={selection}
-          onSelectWorkspace={onSelectWorkspace}
-          onSelectMission={onSelectMission}
-          onRemoveWorkspace={onRemoveWorkspace}
-          currentWorkspaceId={currentWorkspaceId}
-          onRemoveMission={onRemoveMission}
-        />
       </div>
 
-      <WorkspaceCleanup />
       <ul className="workspace-rail__fixed" aria-label="Destinos fixos">
         {onOpenLauncher ? (
           <li>
@@ -636,6 +649,19 @@ export function WorkspaceRail({
             >
               <PixelIcon name="grid" size={12} />
               <span className="workspace-rail__row-label">Início</span>
+            </button>
+          </li>
+        ) : null}
+        {onOpenWorkspace ? (
+          <li>
+            <button
+              type="button"
+              className="workspace-rail__row workspace-rail__fixed-row"
+              aria-label="Abrir projeto existente"
+              onClick={onOpenWorkspace}
+            >
+              <PixelIcon name="files" size={12} />
+              <span className="workspace-rail__row-label">Abrir projeto</span>
             </button>
           </li>
         ) : null}
@@ -716,7 +742,33 @@ export function WorkspaceRail({
         </li>
       </ul>
 
+      <div className="workspace-rail__scroll">
+        <WorkspaceGroup
+          label={activeWorkspaces.some((workspace) => workspace.missions.length > 0) ? 'Em andamento' : 'Projeto atual'}
+          group="active"
+          workspaces={activeWorkspaces}
+          selection={selection}
+          onSelectWorkspace={onSelectWorkspace}
+          onSelectMission={onSelectMission}
+          onRemoveWorkspace={onRemoveWorkspace}
+          currentWorkspaceId={currentWorkspaceId}
+          onRemoveMission={onRemoveMission}
+        />
+        <WorkspaceGroup
+          label="Recentes"
+          group="recent"
+          workspaces={recentWorkspaces}
+          selection={selection}
+          onSelectWorkspace={onSelectWorkspace}
+          onSelectMission={onSelectMission}
+          onRemoveWorkspace={onRemoveWorkspace}
+          currentWorkspaceId={currentWorkspaceId}
+          onRemoveMission={onRemoveMission}
+        />
+      </div>
+
       <footer className="workspace-rail__footer">
+        <WorkspaceCleanup />
         {onOpenAttention && attentionCount > 0 ? (
           <button
             type="button"

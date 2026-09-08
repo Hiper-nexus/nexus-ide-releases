@@ -153,6 +153,8 @@
    de um scroll container (padrão que só sticky quando o usuário já rolou até
    o fim). */
 .mission-setup__canvas {
+  container-name: mission-setup;
+  container-type: inline-size;
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
@@ -788,11 +790,14 @@
 }
 
 .mission-setup__step--express .mission-setup__step-header {
-  padding: var(--space-2) 0 var(--space-3);
+  align-items: flex-start;
+  padding: var(--space-3) 0 var(--space-5);
+  border-bottom: 0;
+  text-align: left;
 }
 
 .mission-setup__step--express .mission-setup__step-header h1 {
-  font-size: var(--text-3xl);
+  font-size: var(--text-hero);
 }
 
 .mission-setup__step--express .mission-setup__step-header > p:last-child {
@@ -801,12 +806,133 @@
 }
 
 .mission-setup__step--express .mission-setup__continuous-section {
-  padding: var(--space-3) 0;
+  padding: 0;
+  border-bottom: 0;
 }
 
 .mission-setup__step--express .mission-setup__objective-field textarea {
-  min-height: 72px;
-  padding: var(--space-3);
+  min-height: calc(var(--space-8) * 2 + var(--space-6));
+  padding: var(--space-4);
+  border-color: var(--border-strong);
+  background: var(--bg-elevated);
+  font-size: var(--text-lg);
+  line-height: 1.6;
+}
+
+.mission-setup__step--express .mission-setup__workspace-field {
+  margin-top: var(--space-5);
+}
+
+.mission-setup__project-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.mission-setup__project-name {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  min-width: 0;
+  font-size: var(--text-md);
+}
+
+.mission-setup__project-name strong {
+  color: var(--text);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.mission-setup__express-options {
+  margin-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+.mission-setup__express-options > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--mission-control-block-size);
+  padding: var(--space-3) 0;
+  list-style: none;
+  font-size: var(--text-md);
+  font-weight: 500;
+}
+
+.mission-setup__express-options > summary::-webkit-details-marker {
+  display: none;
+}
+
+.mission-setup__express-options > summary::after {
+  content: '';
+  flex: 0 0 auto;
+  width: var(--space-1-5);
+  height: var(--space-1-5);
+  margin-inline: var(--space-1);
+  border-right: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+  transform: rotate(45deg);
+  transition: transform 180ms var(--ease-out-quart);
+}
+
+.mission-setup__express-options[open] > summary::after {
+  transform: rotate(-135deg);
+}
+
+.mission-setup__express-options > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: var(--space-1);
+  border-radius: var(--radius-sm);
+}
+
+.mission-setup__option-summary {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.mission-setup__option-summary > span {
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.mission-setup__option-action {
+  margin-left: auto;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+}
+
+.mission-setup__option-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding-bottom: var(--space-3);
+}
+
+.mission-setup__option-content > .mission-setup__button {
+  align-self: flex-start;
+}
+
+.mission-setup__option-content > h2 {
+  margin: 0;
+  font-size: var(--text-md);
+}
+
+.mission-setup__step--express .mission-setup__button--quiet:hover:not(:disabled) {
+  background: var(--bg-elevated);
+  color: var(--text);
+}
+
+.mission-setup__step--express .mission-setup__error-summary {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
 }
 
 .mission-setup__step--express .mission-setup__section-heading {
@@ -1676,6 +1802,18 @@
   overflow-wrap: anywhere;
 }
 
+@container mission-setup (max-width: 760px) {
+  .mission-setup__step--express .mission-roster-row--compact .mission-roster-row__identity {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: 'name' 'role' 'controls';
+  }
+
+  .mission-setup__step--express .mission-roster-row--compact .mission-roster-row__controls {
+    margin-top: var(--space-2);
+    flex-wrap: wrap;
+  }
+}
+
 @media (max-width: 760px) {
   .mission-setup__progress ol {
     padding-inline: var(--space-2);
@@ -1736,6 +1874,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .mission-setup__express-options > summary::after {
+    transition: none;
+  }
+
   .mission-setup__step {
     animation: none;
   }
@@ -1879,7 +2021,8 @@
 
 .mission-setup__example {
   appearance: none;
-  padding: var(--space-1) var(--space-2);
+  min-height: var(--space-6);
+  padding: var(--space-1-5) var(--space-3);
   border: 1px solid var(--border);
   border-radius: var(--radius-round);
   background: transparent;

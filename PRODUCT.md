@@ -48,8 +48,8 @@ evocar controle e prontidão (aviônica, mission control), nunca fantasia gamer.
    sempre visíveis; decoração nunca compete com informação.
 2. **Prontidão.** Toda tela responde "o que está rodando e o que posso fazer
    agora?" — inclusive (principalmente) o estado vazio.
-3. **Neon com parcimônia.** Um acento ciano/verde operacional para o que está
-   VIVO (agentes ativos, ações primárias); o resto fica em neutros profundos.
+3. **Cor com parcimônia.** Pink City sinaliza foco, seleção e trabalho ativo.
+   A ação principal é branca; superfícies usam os neutros de `DESIGN.md`.
 4. **Densidade calma.** Muita informação, pouca ansiedade: hierarquia por
    tipografia e espaçamento, não por caixas e bordas.
 5. **Teclado primeiro.** Power users não caçam botões; atalhos visíveis e
@@ -58,13 +58,17 @@ evocar controle e prontidão (aviônica, mission control), nunca fantasia gamer.
    home → missão) entrega presença, confirmação ou progresso — pet, kicker,
    status narrativo, CTA com peso. Contrato em `src/shared/endorphin.ts`.
    Não é RGB gamer: é o operador sentir que o sistema respondeu com vida.
-7. **Complexidade sob demanda.** O caminho iniciante segue
-   ideia → escopo → aprovação única → progresso → entrega. Squads, providers,
-   panes e telemetria aparecem quando explicam uma decisão ou quando o usuário
-   abre a missão e olha as abas Plano, Atividade e Equipe.
-8. **Uma decisão, um gate.** Editar ou salvar rascunhos não pede confirmação.
-   A aprovação humana acontece imediatamente antes do primeiro efeito externo
-   relevante e fixa o contrato exato que será executado.
+7. **Criação direta como padrão.** Início contém o formulário real:
+   descrever → iniciar → acompanhar → receber a entrega → pedir ajustes.
+   A equipe recomendada é suficiente para começar. Configuração de papéis,
+   modelos, critérios e referências é opcional; o usuário leigo não precisa
+   aprovar um plano ou montar a equipe para cada pedido. Terminal é destino
+   explícito, não a tela automática ao abrir um projeto salvo.
+8. **Autonomia sem cerimônia.** Iniciar autoriza o trabalho definido no pedido.
+   Planejamento, implementação, revisão e reparo são responsabilidade do motor.
+   O caminho manual continua disponível por escolha explícita. Pendências
+   reais de conexão ou acesso precisam ser acionáveis; a interface não deve
+   transformar verificação indisponível em uma entrega anunciada como validada.
 9. **Entrega guiada determinística.** Squads gerados pelo fluxo iniciante
    executam uma onda de implementação seguida por QA independente. O QA só
    altera e integra quando encontra um defeito; se a entrega já estiver verde,

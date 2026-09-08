@@ -1,0 +1,2659 @@
+{
+  "as_of_utc": "2026-09-07T21:21:31.404124+00:00",
+  "recent_cutoff_utc": "2026-08-31T21:21:31.404000+00:00",
+  "sources": {
+    "installed_local": {
+      "databases": 17,
+      "missions": 2,
+      "mission_statuses": {
+        "blocked": 2
+      },
+      "missions_created_7d": 0,
+      "audit_rows": 1169,
+      "audit_errors": 102,
+      "audit_errors_7d": 12,
+      "audit_errors_no_mission": 33,
+      "identified_test_mission_ids": 0,
+      "schema_versions": {
+        "37": 15,
+        "26": 2
+      },
+      "audit_errors_distinct_missions": 13,
+      "error_date_range": [
+        "2026-07-31T18:41:36.303000+00:00",
+        "2026-09-04T16:41:57.352000+00:00"
+      ]
+    },
+    "dev_default": {
+      "databases": 13,
+      "missions": 128,
+      "mission_statuses": {
+        "blocked": 95,
+        "done": 33
+      },
+      "missions_created_7d": 0,
+      "audit_rows": 2355,
+      "audit_errors": 293,
+      "audit_errors_7d": 6,
+      "audit_errors_no_mission": 61,
+      "identified_test_mission_ids": 0,
+      "schema_versions": {
+        "37": 13
+      },
+      "audit_errors_distinct_missions": 69,
+      "error_date_range": [
+        "2026-08-18T19:51:35.498000+00:00",
+        "2026-09-01T00:34:12.983000+00:00"
+      ],
+      "retained_mission_intent_states": {
+        "blocked_user": 91,
+        "blocked_technical": 4,
+        "done": 33
+      },
+      "completed_results": {
+        "canonical_result_present": 33,
+        "has_artifact_refs": 31,
+        "no_artifact_refs": 2
+      }
+    },
+    "dev_test_live_fix": {
+      "databases": 8,
+      "missions": 1,
+      "mission_statuses": {
+        "blocked": 1
+      },
+      "missions_created_7d": 0,
+      "audit_rows": 36,
+      "audit_errors": 3,
+      "audit_errors_7d": 0,
+      "audit_errors_no_mission": 0,
+      "identified_test_mission_ids": 0,
+      "schema_versions": {
+        "37": 8
+      },
+      "audit_errors_distinct_missions": 1,
+      "error_date_range": [
+        "2026-08-10T13:34:35.333000+00:00",
+        "2026-08-10T13:37:27.823000+00:00"
+      ]
+    },
+    "dev_test_e2e": {
+      "databases": 8,
+      "missions": 1,
+      "mission_statuses": {
+        "done": 1
+      },
+      "missions_created_7d": 0,
+      "audit_rows": 25,
+      "audit_errors": 4,
+      "audit_errors_7d": 0,
+      "audit_errors_no_mission": 4,
+      "identified_test_mission_ids": 0,
+      "schema_versions": {
+        "37": 8
+      },
+      "audit_errors_distinct_missions": 0,
+      "error_date_range": [
+        "2026-08-08T11:00:01.867000+00:00",
+        "2026-08-08T12:09:24.730000+00:00"
+      ]
+    },
+    "dev_test_final_clean": {
+      "databases": 8,
+      "missions": 4,
+      "mission_statuses": {
+        "running": 1,
+        "blocked": 1,
+        "done": 2
+      },
+      "missions_created_7d": 0,
+      "audit_rows": 18,
+      "audit_errors": 0,
+      "audit_errors_7d": 0,
+      "audit_errors_no_mission": 0,
+      "identified_test_mission_ids": 0,
+      "schema_versions": {
+        "37": 8
+      },
+      "audit_errors_distinct_missions": 0,
+      "error_date_range": [
+        null,
+        null
+      ]
+    }
+  },
+  "issues": [
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "worker_died_without_delivery",
+      "stage": "Execução",
+      "events": 54,
+      "distinct_missions": 32,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-19T14:16:29.462000+00:00",
+        "2026-08-25T12:09:47.583000+00:00"
+      ],
+      "channels": {
+        "main_trace": 54
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "same_checkout_busy",
+      "stage": "Delegação",
+      "events": 55,
+      "distinct_missions": 23,
+      "without_mission": 6,
+      "date_range": [
+        "2026-08-19T14:18:56.463000+00:00",
+        "2026-09-01T00:33:40.023000+00:00"
+      ],
+      "channels": {
+        "audit_error": 55
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "missing_live_session",
+      "stage": "Execução",
+      "events": 46,
+      "distinct_missions": 21,
+      "without_mission": 2,
+      "date_range": [
+        "2026-08-19T15:11:41.707000+00:00",
+        "2026-08-25T01:07:24.400000+00:00"
+      ],
+      "channels": {
+        "audit_error": 46
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "handoff_replay_mismatch",
+      "stage": "Entrega entre agentes",
+      "events": 35,
+      "distinct_missions": 18,
+      "without_mission": 4,
+      "date_range": [
+        "2026-08-19T20:55:10.175000+00:00",
+        "2026-08-25T04:39:40.240000+00:00"
+      ],
+      "channels": {
+        "audit_error": 35
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "other_error",
+      "stage": "Outros",
+      "events": 33,
+      "distinct_missions": 18,
+      "without_mission": 8,
+      "date_range": [
+        "2026-08-18T19:51:35.498000+00:00",
+        "2026-08-25T04:49:18.785000+00:00"
+      ],
+      "channels": {
+        "audit_error": 33
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "handoff_transport:accept_superseded",
+      "stage": "Entrega entre agentes",
+      "events": 17,
+      "distinct_missions": 15,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-21T18:18:57.070000+00:00",
+        "2026-08-25T01:00:38.607000+00:00"
+      ],
+      "channels": {
+        "handoff_delivery_attempt": 17
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "handoff_transport:accept_timeout",
+      "stage": "Entrega entre agentes",
+      "events": 25,
+      "distinct_missions": 13,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-19T21:18:09.586000+00:00",
+        "2026-08-25T09:49:55.968000+00:00"
+      ],
+      "channels": {
+        "handoff_delivery_attempt": 25
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "extra_spawn_refused",
+      "stage": "Delegação",
+      "events": 20,
+      "distinct_missions": 13,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-25T00:08:10.560000+00:00",
+        "2026-08-25T01:08:06.360000+00:00"
+      ],
+      "channels": {
+        "audit_error": 20
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "handoff_transport:acceptance_cas_lost",
+      "stage": "Entrega entre agentes",
+      "events": 10,
+      "distinct_missions": 9,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-19T21:20:45.306000+00:00",
+        "2026-08-25T09:42:50.752000+00:00"
+      ],
+      "channels": {
+        "handoff_delivery_attempt": 10
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "cross_checkout_denied",
+      "stage": "Escopo e autorização",
+      "events": 14,
+      "distinct_missions": 8,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-24T22:36:54.401000+00:00",
+        "2026-08-25T01:03:53.988000+00:00"
+      ],
+      "channels": {
+        "audit_error": 14
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "handoff_transport:paste_write_failed",
+      "stage": "Entrega entre agentes",
+      "events": 10,
+      "distinct_missions": 7,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-21T18:34:26.756000+00:00",
+        "2026-08-25T11:16:56.291000+00:00"
+      ],
+      "channels": {
+        "handoff_delivery_attempt": 10
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "credentials_missing",
+      "stage": "Conexão da IA",
+      "events": 21,
+      "distinct_missions": 6,
+      "without_mission": 10,
+      "date_range": [
+        "2026-08-20T21:56:06.848000+00:00",
+        "2026-08-21T18:54:20.388000+00:00"
+      ],
+      "channels": {
+        "audit_error": 21
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "missing_or_invalid_argument",
+      "stage": "Uso de ferramentas",
+      "events": 14,
+      "distinct_missions": 6,
+      "without_mission": 4,
+      "date_range": [
+        "2026-08-19T20:39:52.936000+00:00",
+        "2026-08-31T23:34:11.675000+00:00"
+      ],
+      "channels": {
+        "audit_error": 14
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "completion_proof_required",
+      "stage": "Conclusão",
+      "events": 8,
+      "distinct_missions": 6,
+      "without_mission": 1,
+      "date_range": [
+        "2026-08-19T21:37:06.152000+00:00",
+        "2026-09-01T00:34:12.983000+00:00"
+      ],
+      "channels": {
+        "audit_error": 8
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "handoff_transport:orchestrator_session_exited",
+      "stage": "Entrega entre agentes",
+      "events": 6,
+      "distinct_missions": 6,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-24T11:15:11.684000+00:00",
+        "2026-08-25T00:39:35.571000+00:00"
+      ],
+      "channels": {
+        "handoff_delivery_attempt": 6
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "task_plan_immutable",
+      "stage": "Planejamento",
+      "events": 23,
+      "distinct_missions": 2,
+      "without_mission": 18,
+      "date_range": [
+        "2026-08-18T20:31:25.885000+00:00",
+        "2026-08-19T22:15:34.479000+00:00"
+      ],
+      "channels": {
+        "audit_error": 23
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "routing_contract",
+      "stage": "Delegação",
+      "events": 2,
+      "distinct_missions": 2,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-19T21:41:40.179000+00:00",
+        "2026-08-20T20:19:57.506000+00:00"
+      ],
+      "channels": {
+        "audit_error": 2
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "empty_artifacts",
+      "stage": "Conclusão",
+      "events": 2,
+      "distinct_missions": 2,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-20T21:13:33.973000+00:00",
+        "2026-08-20T22:13:00.510000+00:00"
+      ],
+      "channels": {
+        "audit_error": 2
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "tool_not_allowed",
+      "stage": "Escopo e autorização",
+      "events": 5,
+      "distinct_missions": 1,
+      "without_mission": 4,
+      "date_range": [
+        "2026-08-18T20:22:53.629000+00:00",
+        "2026-08-20T22:04:24.124000+00:00"
+      ],
+      "channels": {
+        "audit_error": 5
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "dispatcher_required",
+      "stage": "Delegação",
+      "events": 5,
+      "distinct_missions": 1,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-18T19:53:02.730000+00:00",
+        "2026-08-18T20:38:56.285000+00:00"
+      ],
+      "channels": {
+        "audit_error": 5
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "handoff_not_awaiting_ack",
+      "stage": "Entrega entre agentes",
+      "events": 4,
+      "distinct_missions": 1,
+      "without_mission": 3,
+      "date_range": [
+        "2026-08-18T20:37:07.097000+00:00",
+        "2026-08-21T18:19:13.081000+00:00"
+      ],
+      "channels": {
+        "audit_error": 4
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "review_rejected",
+      "stage": "Revisão",
+      "events": 4,
+      "distinct_missions": 1,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-19T21:18:34.782000+00:00",
+        "2026-08-19T22:15:29.980000+00:00"
+      ],
+      "channels": {
+        "audit_error": 4
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "other:squad_binding_violation",
+      "stage": "Outros",
+      "events": 1,
+      "distinct_missions": 1,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-20T20:19:15.986000+00:00",
+        "2026-08-20T20:19:15.986000+00:00"
+      ],
+      "channels": {
+        "audit_error": 1
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "handoff_transport:submit_write_failed",
+      "stage": "Entrega entre agentes",
+      "events": 1,
+      "distinct_missions": 1,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-24T11:14:28.054000+00:00",
+        "2026-08-24T11:14:28.054000+00:00"
+      ],
+      "channels": {
+        "handoff_delivery_attempt": 1
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "dispatch_not_running",
+      "stage": "Execução",
+      "events": 1,
+      "distinct_missions": 0,
+      "without_mission": 1,
+      "date_range": [
+        "2026-08-20T21:19:07.886000+00:00",
+        "2026-08-20T21:19:07.886000+00:00"
+      ],
+      "channels": {
+        "audit_error": 1
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "dev_test_e2e",
+      "code": "other:handoff_provenance",
+      "stage": "Outros",
+      "events": 2,
+      "distinct_missions": 0,
+      "without_mission": 2,
+      "date_range": [
+        "2026-08-08T11:00:01.867000+00:00",
+        "2026-08-08T11:01:19.893000+00:00"
+      ],
+      "channels": {
+        "audit_error": 2
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "dev_test_e2e",
+      "code": "other_error",
+      "stage": "Outros",
+      "events": 1,
+      "distinct_missions": 0,
+      "without_mission": 1,
+      "date_range": [
+        "2026-08-08T11:28:48.380000+00:00",
+        "2026-08-08T11:28:48.380000+00:00"
+      ],
+      "channels": {
+        "audit_error": 1
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "dev_test_e2e",
+      "code": "handoff_replay_mismatch",
+      "stage": "Entrega entre agentes",
+      "events": 1,
+      "distinct_missions": 0,
+      "without_mission": 1,
+      "date_range": [
+        "2026-08-08T12:09:24.730000+00:00",
+        "2026-08-08T12:09:24.730000+00:00"
+      ],
+      "channels": {
+        "audit_error": 1
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "dev_test_live_fix",
+      "code": "missing_or_invalid_argument",
+      "stage": "Uso de ferramentas",
+      "events": 1,
+      "distinct_missions": 1,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-10T13:34:35.333000+00:00",
+        "2026-08-10T13:34:35.333000+00:00"
+      ],
+      "channels": {
+        "audit_error": 1
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "dev_test_live_fix",
+      "code": "other_error",
+      "stage": "Outros",
+      "events": 1,
+      "distinct_missions": 1,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-10T13:34:45.541000+00:00",
+        "2026-08-10T13:34:45.541000+00:00"
+      ],
+      "channels": {
+        "audit_error": 1
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "dev_test_live_fix",
+      "code": "dispatcher_required",
+      "stage": "Delegação",
+      "events": 1,
+      "distinct_missions": 1,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-10T13:37:27.823000+00:00",
+        "2026-08-10T13:37:27.823000+00:00"
+      ],
+      "channels": {
+        "audit_error": 1
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "dispatcher_required",
+      "stage": "Delegação",
+      "events": 21,
+      "distinct_missions": 4,
+      "without_mission": 5,
+      "date_range": [
+        "2026-08-05T22:25:32.201000+00:00",
+        "2026-09-04T16:41:46.492000+00:00"
+      ],
+      "channels": {
+        "audit_error": 21
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "other_error",
+      "stage": "Outros",
+      "events": 15,
+      "distinct_missions": 4,
+      "without_mission": 8,
+      "date_range": [
+        "2026-08-05T22:24:44.678000+00:00",
+        "2026-08-19T20:12:37.391000+00:00"
+      ],
+      "channels": {
+        "audit_error": 15
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "same_checkout_busy",
+      "stage": "Delegação",
+      "events": 15,
+      "distinct_missions": 3,
+      "without_mission": 3,
+      "date_range": [
+        "2026-08-12T17:42:22.521000+00:00",
+        "2026-09-03T20:22:11.641000+00:00"
+      ],
+      "channels": {
+        "audit_error": 15
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "routing_contract",
+      "stage": "Delegação",
+      "events": 7,
+      "distinct_missions": 3,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-17T09:37:20.772000+00:00",
+        "2026-08-20T13:41:11.499000+00:00"
+      ],
+      "channels": {
+        "audit_error": 7
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "completion_proof_required",
+      "stage": "Conclusão",
+      "events": 4,
+      "distinct_missions": 3,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-13T18:20:28.589000+00:00",
+        "2026-08-24T21:24:17.551000+00:00"
+      ],
+      "channels": {
+        "audit_error": 4
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "worker_budget",
+      "stage": "Delegação",
+      "events": 8,
+      "distinct_missions": 2,
+      "without_mission": 1,
+      "date_range": [
+        "2026-08-18T18:56:38.690000+00:00",
+        "2026-08-20T14:18:08.201000+00:00"
+      ],
+      "channels": {
+        "audit_error": 8
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "handoff_transport:accept_timeout",
+      "stage": "Entrega entre agentes",
+      "events": 6,
+      "distinct_missions": 2,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-19T18:38:13.118000+00:00",
+        "2026-08-20T13:44:47.289000+00:00"
+      ],
+      "channels": {
+        "handoff_delivery_attempt": 6
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "worker_died_without_delivery",
+      "stage": "Execução",
+      "events": 2,
+      "distinct_missions": 2,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-18T18:45:49.584000+00:00",
+        "2026-08-19T18:10:19.398000+00:00"
+      ],
+      "channels": {
+        "main_trace": 2
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "task_plan_required",
+      "stage": "Planejamento",
+      "events": 9,
+      "distinct_missions": 1,
+      "without_mission": 1,
+      "date_range": [
+        "2026-08-17T09:12:43.042000+00:00",
+        "2026-08-18T16:37:36.804000+00:00"
+      ],
+      "channels": {
+        "audit_error": 9
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "dispatch_not_running",
+      "stage": "Execução",
+      "events": 3,
+      "distinct_missions": 1,
+      "without_mission": 2,
+      "date_range": [
+        "2026-08-20T13:39:55.026000+00:00",
+        "2026-09-03T20:54:13.994000+00:00"
+      ],
+      "channels": {
+        "audit_error": 3
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "handoff_not_awaiting_ack",
+      "stage": "Entrega entre agentes",
+      "events": 3,
+      "distinct_missions": 1,
+      "without_mission": 2,
+      "date_range": [
+        "2026-08-18T01:37:53.478000+00:00",
+        "2026-08-24T21:24:25.538000+00:00"
+      ],
+      "channels": {
+        "audit_error": 3
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "task_plan_immutable",
+      "stage": "Planejamento",
+      "events": 2,
+      "distinct_missions": 1,
+      "without_mission": 1,
+      "date_range": [
+        "2026-08-06T13:25:32.496000+00:00",
+        "2026-08-20T13:42:26.152000+00:00"
+      ],
+      "channels": {
+        "audit_error": 2
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "tool_not_allowed",
+      "stage": "Escopo e autorização",
+      "events": 2,
+      "distinct_missions": 1,
+      "without_mission": 1,
+      "date_range": [
+        "2026-08-18T19:11:54.591000+00:00",
+        "2026-08-31T19:56:08.766000+00:00"
+      ],
+      "channels": {
+        "audit_error": 2
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "missing_or_invalid_argument",
+      "stage": "Uso de ferramentas",
+      "events": 2,
+      "distinct_missions": 1,
+      "without_mission": 1,
+      "date_range": [
+        "2026-08-12T17:44:25.774000+00:00",
+        "2026-08-25T20:49:27.816000+00:00"
+      ],
+      "channels": {
+        "audit_error": 2
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "missing_live_session",
+      "stage": "Execução",
+      "events": 2,
+      "distinct_missions": 1,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-19T18:36:05.411000+00:00",
+        "2026-08-19T20:02:59.904000+00:00"
+      ],
+      "channels": {
+        "audit_error": 2
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "credentials_missing",
+      "stage": "Conexão da IA",
+      "events": 1,
+      "distinct_missions": 1,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-19T20:00:49.508000+00:00",
+        "2026-08-19T20:00:49.508000+00:00"
+      ],
+      "channels": {
+        "audit_error": 1
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "handoff_replay_mismatch",
+      "stage": "Entrega entre agentes",
+      "events": 3,
+      "distinct_missions": 0,
+      "without_mission": 3,
+      "date_range": [
+        "2026-08-13T20:46:53.159000+00:00",
+        "2026-08-18T16:54:23.270000+00:00"
+      ],
+      "channels": {
+        "audit_error": 3
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "window_unavailable",
+      "stage": "Inicialização",
+      "events": 2,
+      "distinct_missions": 0,
+      "without_mission": 2,
+      "date_range": [
+        "2026-08-03T13:41:59.457000+00:00",
+        "2026-09-04T16:41:57.352000+00:00"
+      ],
+      "channels": {
+        "audit_error": 2
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "cross_checkout_denied",
+      "stage": "Escopo e autorização",
+      "events": 2,
+      "distinct_missions": 0,
+      "without_mission": 2,
+      "date_range": [
+        "2026-09-04T16:40:13.809000+00:00",
+        "2026-09-04T16:40:20.580000+00:00"
+      ],
+      "channels": {
+        "audit_error": 2
+      }
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "workflow_stale",
+      "stage": "Revisão",
+      "events": 1,
+      "distinct_missions": 0,
+      "without_mission": 1,
+      "date_range": [
+        "2026-07-31T18:41:36.303000+00:00",
+        "2026-07-31T18:41:36.303000+00:00"
+      ],
+      "channels": {
+        "audit_error": 1
+      }
+    },
+    {
+      "window": "recent_7d",
+      "source": "dev_default",
+      "code": "completion_proof_required",
+      "stage": "Conclusão",
+      "events": 1,
+      "distinct_missions": 1,
+      "without_mission": 0,
+      "date_range": [
+        "2026-09-01T00:34:12.983000+00:00",
+        "2026-09-01T00:34:12.983000+00:00"
+      ],
+      "channels": {
+        "audit_error": 1
+      }
+    },
+    {
+      "window": "recent_7d",
+      "source": "dev_default",
+      "code": "same_checkout_busy",
+      "stage": "Delegação",
+      "events": 3,
+      "distinct_missions": 0,
+      "without_mission": 3,
+      "date_range": [
+        "2026-08-31T22:26:00.208000+00:00",
+        "2026-09-01T00:33:40.023000+00:00"
+      ],
+      "channels": {
+        "audit_error": 3
+      }
+    },
+    {
+      "window": "recent_7d",
+      "source": "dev_default",
+      "code": "missing_or_invalid_argument",
+      "stage": "Uso de ferramentas",
+      "events": 2,
+      "distinct_missions": 0,
+      "without_mission": 2,
+      "date_range": [
+        "2026-08-31T22:25:53.408000+00:00",
+        "2026-08-31T23:34:11.675000+00:00"
+      ],
+      "channels": {
+        "audit_error": 2
+      }
+    },
+    {
+      "window": "recent_7d",
+      "source": "installed_local",
+      "code": "dispatcher_required",
+      "stage": "Delegação",
+      "events": 6,
+      "distinct_missions": 1,
+      "without_mission": 1,
+      "date_range": [
+        "2026-09-04T16:40:32.480000+00:00",
+        "2026-09-04T16:41:46.492000+00:00"
+      ],
+      "channels": {
+        "audit_error": 6
+      }
+    },
+    {
+      "window": "recent_7d",
+      "source": "installed_local",
+      "code": "same_checkout_busy",
+      "stage": "Delegação",
+      "events": 1,
+      "distinct_missions": 1,
+      "without_mission": 0,
+      "date_range": [
+        "2026-09-03T20:22:11.641000+00:00",
+        "2026-09-03T20:22:11.641000+00:00"
+      ],
+      "channels": {
+        "audit_error": 1
+      }
+    },
+    {
+      "window": "recent_7d",
+      "source": "installed_local",
+      "code": "dispatch_not_running",
+      "stage": "Execução",
+      "events": 2,
+      "distinct_missions": 0,
+      "without_mission": 2,
+      "date_range": [
+        "2026-09-03T20:24:04.191000+00:00",
+        "2026-09-03T20:54:13.994000+00:00"
+      ],
+      "channels": {
+        "audit_error": 2
+      }
+    },
+    {
+      "window": "recent_7d",
+      "source": "installed_local",
+      "code": "cross_checkout_denied",
+      "stage": "Escopo e autorização",
+      "events": 2,
+      "distinct_missions": 0,
+      "without_mission": 2,
+      "date_range": [
+        "2026-09-04T16:40:13.809000+00:00",
+        "2026-09-04T16:40:20.580000+00:00"
+      ],
+      "channels": {
+        "audit_error": 2
+      }
+    },
+    {
+      "window": "recent_7d",
+      "source": "installed_local",
+      "code": "window_unavailable",
+      "stage": "Inicialização",
+      "events": 1,
+      "distinct_missions": 0,
+      "without_mission": 1,
+      "date_range": [
+        "2026-09-04T16:41:57.352000+00:00",
+        "2026-09-04T16:41:57.352000+00:00"
+      ],
+      "channels": {
+        "audit_error": 1
+      }
+    }
+  ],
+  "root_causes": [
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "worker_budget",
+      "stage": "Delegação",
+      "events": 8,
+      "distinct_missions": 2,
+      "without_mission": 1,
+      "date_range": [
+        "2026-08-18T18:56:38.690000+00:00",
+        "2026-08-20T14:18:08.201000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "dispatch_not_running",
+      "stage": "Execução",
+      "events": 3,
+      "distinct_missions": 1,
+      "without_mission": 2,
+      "date_range": [
+        "2026-08-20T13:39:55.026000+00:00",
+        "2026-09-03T20:54:13.994000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "handoff_not_awaiting_ack",
+      "stage": "Entrega entre agentes",
+      "events": 3,
+      "distinct_missions": 1,
+      "without_mission": 2,
+      "date_range": [
+        "2026-08-18T01:37:53.478000+00:00",
+        "2026-08-24T21:24:25.538000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "routing_contract",
+      "stage": "Delegação",
+      "events": 7,
+      "distinct_missions": 3,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-17T09:37:20.772000+00:00",
+        "2026-08-20T13:41:11.499000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "task_plan_immutable",
+      "stage": "Planejamento",
+      "events": 2,
+      "distinct_missions": 1,
+      "without_mission": 1,
+      "date_range": [
+        "2026-08-06T13:25:32.496000+00:00",
+        "2026-08-20T13:42:26.152000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "handoff_transport",
+      "stage": "Entrega entre agentes",
+      "events": 6,
+      "distinct_missions": 2,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-19T18:38:13.118000+00:00",
+        "2026-08-20T13:44:47.289000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "workflow_stale",
+      "stage": "Revisão",
+      "events": 1,
+      "distinct_missions": 0,
+      "without_mission": 1,
+      "date_range": [
+        "2026-07-31T18:41:36.303000+00:00",
+        "2026-07-31T18:41:36.303000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "window_unavailable",
+      "stage": "Inicialização",
+      "events": 2,
+      "distinct_missions": 0,
+      "without_mission": 2,
+      "date_range": [
+        "2026-08-03T13:41:59.457000+00:00",
+        "2026-09-04T16:41:57.352000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "same_checkout_busy",
+      "stage": "Delegação",
+      "events": 15,
+      "distinct_missions": 3,
+      "without_mission": 3,
+      "date_range": [
+        "2026-08-12T17:42:22.521000+00:00",
+        "2026-09-03T20:22:11.641000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "completion_proof_required",
+      "stage": "Conclusão",
+      "events": 4,
+      "distinct_missions": 3,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-13T18:20:28.589000+00:00",
+        "2026-08-24T21:24:17.551000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "tool_not_allowed",
+      "stage": "Escopo e autorização",
+      "events": 2,
+      "distinct_missions": 1,
+      "without_mission": 1,
+      "date_range": [
+        "2026-08-18T19:11:54.591000+00:00",
+        "2026-08-31T19:56:08.766000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "other_error",
+      "stage": "Outros",
+      "events": 15,
+      "distinct_missions": 4,
+      "without_mission": 8,
+      "date_range": [
+        "2026-08-05T22:24:44.678000+00:00",
+        "2026-08-19T20:12:37.391000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "dispatcher_required",
+      "stage": "Delegação",
+      "events": 21,
+      "distinct_missions": 4,
+      "without_mission": 5,
+      "date_range": [
+        "2026-08-05T22:25:32.201000+00:00",
+        "2026-09-04T16:41:46.492000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "task_plan_required",
+      "stage": "Planejamento",
+      "events": 9,
+      "distinct_missions": 1,
+      "without_mission": 1,
+      "date_range": [
+        "2026-08-17T09:12:43.042000+00:00",
+        "2026-08-18T16:37:36.804000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "handoff_replay_mismatch",
+      "stage": "Entrega entre agentes",
+      "events": 3,
+      "distinct_missions": 0,
+      "without_mission": 3,
+      "date_range": [
+        "2026-08-13T20:46:53.159000+00:00",
+        "2026-08-18T16:54:23.270000+00:00"
+      ]
+    },
+    {
+      "window": "recent_7d",
+      "source": "installed_local",
+      "code": "same_checkout_busy",
+      "stage": "Delegação",
+      "events": 1,
+      "distinct_missions": 1,
+      "without_mission": 0,
+      "date_range": [
+        "2026-09-03T20:22:11.641000+00:00",
+        "2026-09-03T20:22:11.641000+00:00"
+      ]
+    },
+    {
+      "window": "recent_7d",
+      "source": "installed_local",
+      "code": "dispatch_not_running",
+      "stage": "Execução",
+      "events": 2,
+      "distinct_missions": 0,
+      "without_mission": 2,
+      "date_range": [
+        "2026-09-03T20:24:04.191000+00:00",
+        "2026-09-03T20:54:13.994000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "cross_checkout_denied",
+      "stage": "Escopo e autorização",
+      "events": 2,
+      "distinct_missions": 0,
+      "without_mission": 2,
+      "date_range": [
+        "2026-09-04T16:40:13.809000+00:00",
+        "2026-09-04T16:40:20.580000+00:00"
+      ]
+    },
+    {
+      "window": "recent_7d",
+      "source": "installed_local",
+      "code": "cross_checkout_denied",
+      "stage": "Escopo e autorização",
+      "events": 2,
+      "distinct_missions": 0,
+      "without_mission": 2,
+      "date_range": [
+        "2026-09-04T16:40:13.809000+00:00",
+        "2026-09-04T16:40:20.580000+00:00"
+      ]
+    },
+    {
+      "window": "recent_7d",
+      "source": "installed_local",
+      "code": "dispatcher_required",
+      "stage": "Delegação",
+      "events": 6,
+      "distinct_missions": 1,
+      "without_mission": 1,
+      "date_range": [
+        "2026-09-04T16:40:32.480000+00:00",
+        "2026-09-04T16:41:46.492000+00:00"
+      ]
+    },
+    {
+      "window": "recent_7d",
+      "source": "installed_local",
+      "code": "window_unavailable",
+      "stage": "Inicialização",
+      "events": 1,
+      "distinct_missions": 0,
+      "without_mission": 1,
+      "date_range": [
+        "2026-09-04T16:41:57.352000+00:00",
+        "2026-09-04T16:41:57.352000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "missing_or_invalid_argument",
+      "stage": "Uso de ferramentas",
+      "events": 2,
+      "distinct_missions": 1,
+      "without_mission": 1,
+      "date_range": [
+        "2026-08-12T17:44:25.774000+00:00",
+        "2026-08-25T20:49:27.816000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "missing_live_session",
+      "stage": "Execução",
+      "events": 2,
+      "distinct_missions": 1,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-19T18:36:05.411000+00:00",
+        "2026-08-19T20:02:59.904000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "credentials_missing",
+      "stage": "Conexão da IA",
+      "events": 1,
+      "distinct_missions": 1,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-19T20:00:49.508000+00:00",
+        "2026-08-19T20:00:49.508000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "code": "worker_died_without_delivery",
+      "stage": "Execução",
+      "events": 2,
+      "distinct_missions": 2,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-18T18:45:49.584000+00:00",
+        "2026-08-19T18:10:19.398000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "tool_not_allowed",
+      "stage": "Escopo e autorização",
+      "events": 5,
+      "distinct_missions": 1,
+      "without_mission": 4,
+      "date_range": [
+        "2026-08-18T20:22:53.629000+00:00",
+        "2026-08-20T22:04:24.124000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "same_checkout_busy",
+      "stage": "Delegação",
+      "events": 55,
+      "distinct_missions": 23,
+      "without_mission": 6,
+      "date_range": [
+        "2026-08-19T14:18:56.463000+00:00",
+        "2026-09-01T00:33:40.023000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "handoff_replay_mismatch",
+      "stage": "Entrega entre agentes",
+      "events": 35,
+      "distinct_missions": 18,
+      "without_mission": 4,
+      "date_range": [
+        "2026-08-19T20:55:10.175000+00:00",
+        "2026-08-25T04:39:40.240000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "missing_live_session",
+      "stage": "Execução",
+      "events": 46,
+      "distinct_missions": 21,
+      "without_mission": 2,
+      "date_range": [
+        "2026-08-19T15:11:41.707000+00:00",
+        "2026-08-25T01:07:24.400000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "other:squad_binding_violation",
+      "stage": "Outros",
+      "events": 1,
+      "distinct_missions": 1,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-20T20:19:15.986000+00:00",
+        "2026-08-20T20:19:15.986000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "routing_contract",
+      "stage": "Delegação",
+      "events": 2,
+      "distinct_missions": 2,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-19T21:41:40.179000+00:00",
+        "2026-08-20T20:19:57.506000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "missing_or_invalid_argument",
+      "stage": "Uso de ferramentas",
+      "events": 14,
+      "distinct_missions": 6,
+      "without_mission": 4,
+      "date_range": [
+        "2026-08-19T20:39:52.936000+00:00",
+        "2026-08-31T23:34:11.675000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "other_error",
+      "stage": "Outros",
+      "events": 33,
+      "distinct_missions": 18,
+      "without_mission": 8,
+      "date_range": [
+        "2026-08-18T19:51:35.498000+00:00",
+        "2026-08-25T04:49:18.785000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "completion_proof_required",
+      "stage": "Conclusão",
+      "events": 8,
+      "distinct_missions": 6,
+      "without_mission": 1,
+      "date_range": [
+        "2026-08-19T21:37:06.152000+00:00",
+        "2026-09-01T00:34:12.983000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "empty_artifacts",
+      "stage": "Conclusão",
+      "events": 2,
+      "distinct_missions": 2,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-20T21:13:33.973000+00:00",
+        "2026-08-20T22:13:00.510000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "dispatch_not_running",
+      "stage": "Execução",
+      "events": 1,
+      "distinct_missions": 0,
+      "without_mission": 1,
+      "date_range": [
+        "2026-08-20T21:19:07.886000+00:00",
+        "2026-08-20T21:19:07.886000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "credentials_missing",
+      "stage": "Conexão da IA",
+      "events": 21,
+      "distinct_missions": 6,
+      "without_mission": 10,
+      "date_range": [
+        "2026-08-20T21:56:06.848000+00:00",
+        "2026-08-21T18:54:20.388000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "handoff_not_awaiting_ack",
+      "stage": "Entrega entre agentes",
+      "events": 4,
+      "distinct_missions": 1,
+      "without_mission": 3,
+      "date_range": [
+        "2026-08-18T20:37:07.097000+00:00",
+        "2026-08-21T18:19:13.081000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "cross_checkout_denied",
+      "stage": "Escopo e autorização",
+      "events": 14,
+      "distinct_missions": 8,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-24T22:36:54.401000+00:00",
+        "2026-08-25T01:03:53.988000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "extra_spawn_refused",
+      "stage": "Delegação",
+      "events": 20,
+      "distinct_missions": 13,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-25T00:08:10.560000+00:00",
+        "2026-08-25T01:08:06.360000+00:00"
+      ]
+    },
+    {
+      "window": "recent_7d",
+      "source": "dev_default",
+      "code": "missing_or_invalid_argument",
+      "stage": "Uso de ferramentas",
+      "events": 2,
+      "distinct_missions": 0,
+      "without_mission": 2,
+      "date_range": [
+        "2026-08-31T22:25:53.408000+00:00",
+        "2026-08-31T23:34:11.675000+00:00"
+      ]
+    },
+    {
+      "window": "recent_7d",
+      "source": "dev_default",
+      "code": "same_checkout_busy",
+      "stage": "Delegação",
+      "events": 3,
+      "distinct_missions": 0,
+      "without_mission": 3,
+      "date_range": [
+        "2026-08-31T22:26:00.208000+00:00",
+        "2026-09-01T00:33:40.023000+00:00"
+      ]
+    },
+    {
+      "window": "recent_7d",
+      "source": "dev_default",
+      "code": "completion_proof_required",
+      "stage": "Conclusão",
+      "events": 1,
+      "distinct_missions": 1,
+      "without_mission": 0,
+      "date_range": [
+        "2026-09-01T00:34:12.983000+00:00",
+        "2026-09-01T00:34:12.983000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "handoff_transport",
+      "stage": "Entrega entre agentes",
+      "events": 69,
+      "distinct_missions": 40,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-19T21:18:09.586000+00:00",
+        "2026-08-25T11:16:56.291000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "task_plan_immutable",
+      "stage": "Planejamento",
+      "events": 23,
+      "distinct_missions": 2,
+      "without_mission": 18,
+      "date_range": [
+        "2026-08-18T20:31:25.885000+00:00",
+        "2026-08-19T22:15:34.479000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "review_rejected",
+      "stage": "Revisão",
+      "events": 4,
+      "distinct_missions": 1,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-19T21:18:34.782000+00:00",
+        "2026-08-19T22:15:29.980000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "dispatcher_required",
+      "stage": "Delegação",
+      "events": 5,
+      "distinct_missions": 1,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-18T19:53:02.730000+00:00",
+        "2026-08-18T20:38:56.285000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "code": "worker_died_without_delivery",
+      "stage": "Execução",
+      "events": 54,
+      "distinct_missions": 32,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-19T14:16:29.462000+00:00",
+        "2026-08-25T12:09:47.583000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "dev_test_live_fix",
+      "code": "missing_or_invalid_argument",
+      "stage": "Uso de ferramentas",
+      "events": 1,
+      "distinct_missions": 1,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-10T13:34:35.333000+00:00",
+        "2026-08-10T13:34:35.333000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "dev_test_live_fix",
+      "code": "other_error",
+      "stage": "Outros",
+      "events": 1,
+      "distinct_missions": 1,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-10T13:34:45.541000+00:00",
+        "2026-08-10T13:34:45.541000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "dev_test_live_fix",
+      "code": "dispatcher_required",
+      "stage": "Delegação",
+      "events": 1,
+      "distinct_missions": 1,
+      "without_mission": 0,
+      "date_range": [
+        "2026-08-10T13:37:27.823000+00:00",
+        "2026-08-10T13:37:27.823000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "dev_test_e2e",
+      "code": "other:handoff_provenance",
+      "stage": "Outros",
+      "events": 2,
+      "distinct_missions": 0,
+      "without_mission": 2,
+      "date_range": [
+        "2026-08-08T11:00:01.867000+00:00",
+        "2026-08-08T11:01:19.893000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "dev_test_e2e",
+      "code": "other_error",
+      "stage": "Outros",
+      "events": 1,
+      "distinct_missions": 0,
+      "without_mission": 1,
+      "date_range": [
+        "2026-08-08T11:28:48.380000+00:00",
+        "2026-08-08T11:28:48.380000+00:00"
+      ]
+    },
+    {
+      "window": "expanded",
+      "source": "dev_test_e2e",
+      "code": "handoff_replay_mismatch",
+      "stage": "Entrega entre agentes",
+      "events": 1,
+      "distinct_missions": 0,
+      "without_mission": 1,
+      "date_range": [
+        "2026-08-08T12:09:24.730000+00:00",
+        "2026-08-08T12:09:24.730000+00:00"
+      ]
+    }
+  ],
+  "trace": {
+    "installed_local": {
+      "expanded": {
+        "events": 109,
+        "kinds": {
+          "main-boot": 57,
+          "orchestrator-respawned": 24,
+          "head-change-external": 11,
+          "worker-died-without-delivery": 2,
+          "fast-lane-first-wave": 15
+        },
+        "boot_versions": {
+          "0.50.2": 1,
+          "0.50.3": 1,
+          "0.50.4": 2,
+          "0.60.1": 1,
+          "0.60.2": 2,
+          "0.63.0": 2,
+          "0.64.0": 4,
+          "0.70.1": 1,
+          "0.70.4": 1,
+          "0.70.5": 1,
+          "0.70.6": 1,
+          "0.70.7": 2,
+          "0.70.10": 1,
+          "0.70.12": 3,
+          "0.70.14": 1,
+          "0.70.15": 1,
+          "0.70.16": 1,
+          "0.70.17": 1,
+          "0.70.18": 2,
+          "0.70.19": 1,
+          "0.70.20": 4,
+          "0.70.21": 1,
+          "0.71.0": 1,
+          "0.72.0": 1,
+          "0.72.1": 3,
+          "0.73.0": 3,
+          "0.74.0": 2,
+          "0.74.1": 1,
+          "0.74.3": 1,
+          "0.74.4": 2,
+          "0.76.0": 4,
+          "0.76.1": 1,
+          "0.76.3": 3
+        },
+        "date_range": [
+          "2026-08-18T14:01:36.060000+00:00",
+          "2026-09-07T15:20:13.407000+00:00"
+        ]
+      },
+      "recent_7d": {
+        "events": 27,
+        "kinds": {
+          "main-boot": 22,
+          "fast-lane-first-wave": 4,
+          "orchestrator-respawned": 1
+        },
+        "boot_versions": {
+          "0.71.0": 1,
+          "0.72.0": 1,
+          "0.72.1": 3,
+          "0.73.0": 3,
+          "0.74.0": 2,
+          "0.74.1": 1,
+          "0.74.3": 1,
+          "0.74.4": 2,
+          "0.76.0": 4,
+          "0.76.1": 1,
+          "0.76.3": 3
+        },
+        "date_range": [
+          "2026-09-01T00:14:22.027000+00:00",
+          "2026-09-07T15:20:13.407000+00:00"
+        ]
+      }
+    },
+    "dev_default": {
+      "expanded": {
+        "events": 366,
+        "kinds": {
+          "main-boot": 98,
+          "orchestrator-respawned": 50,
+          "head-change-external": 9,
+          "fast-lane-first-wave": 155,
+          "worker-died-without-delivery": 54
+        },
+        "boot_versions": {
+          "0.50.5": 2,
+          "0.60.0": 4,
+          "0.60.2": 1,
+          "0.61.0": 4,
+          "0.63.0": 1,
+          "0.64.0": 40,
+          "0.70.1": 1,
+          "0.70.2": 2,
+          "0.70.5": 2,
+          "0.70.6": 6,
+          "0.70.8": 4,
+          "0.70.9": 4,
+          "0.70.10": 13,
+          "0.70.13": 1,
+          "0.70.18": 1,
+          "0.70.21": 2,
+          "0.70.22": 2,
+          "0.71.0": 3,
+          "0.72.0": 2,
+          "0.76.1": 1,
+          "0.76.2": 2
+        },
+        "date_range": [
+          "2026-08-18T19:41:02.350000+00:00",
+          "2026-09-05T21:26:58.517000+00:00"
+        ]
+      },
+      "recent_7d": {
+        "events": 15,
+        "kinds": {
+          "main-boot": 12,
+          "fast-lane-first-wave": 3
+        },
+        "boot_versions": {
+          "0.70.21": 2,
+          "0.70.22": 2,
+          "0.71.0": 3,
+          "0.72.0": 2,
+          "0.76.1": 1,
+          "0.76.2": 2
+        },
+        "date_range": [
+          "2026-08-31T22:15:38.825000+00:00",
+          "2026-09-05T21:26:58.517000+00:00"
+        ]
+      }
+    },
+    "dev_test_live_fix": {
+      "expanded": {
+        "events": 0,
+        "kinds": {},
+        "boot_versions": {},
+        "date_range": []
+      },
+      "recent_7d": {
+        "events": 0,
+        "kinds": {},
+        "boot_versions": {},
+        "date_range": []
+      }
+    },
+    "dev_test_e2e": {
+      "expanded": {
+        "events": 0,
+        "kinds": {},
+        "boot_versions": {},
+        "date_range": []
+      },
+      "recent_7d": {
+        "events": 0,
+        "kinds": {},
+        "boot_versions": {},
+        "date_range": []
+      }
+    },
+    "dev_test_final_clean": {
+      "expanded": {
+        "events": 0,
+        "kinds": {},
+        "boot_versions": {},
+        "date_range": []
+      },
+      "recent_7d": {
+        "events": 0,
+        "kinds": {},
+        "boot_versions": {},
+        "date_range": []
+      }
+    }
+  },
+  "auxiliary_logs": {
+    "shared_voice": {
+      "events": {
+        "expanded": {
+          "INFO:wake.score": 7041,
+          "INFO:wake.detected": 10,
+          "INFO:jarvis.wakeTurnReset": 14,
+          "INFO:voice.turn.wake": 64,
+          "INFO:jarvis.engageDecision": 10,
+          "INFO:voice.turn.speech_start": 63,
+          "INFO:live.micFramesSent": 67,
+          "INFO:voice.turn.speech_end": 57,
+          "WARN:jarvis.realtimeMuteDegraded": 5,
+          "WARN:live.quiescedForClassic": 8,
+          "INFO:jarvis.classicTranscript": 5,
+          "INFO:voice.turn.turn_committed": 8,
+          "INFO:jarvis.brainReply": 8,
+          "INFO:jarvis.ghostReplyDiscarded": 5,
+          "WARN:voice.statusWatchdog": 8,
+          "INFO:jarvis.realtimeTranscript": 4,
+          "INFO:live.serverAudioChunk": 4,
+          "WARN:jarvis.liveProviderMuteDegraded": 4,
+          "INFO:jarvis.liveBridge": 3,
+          "INFO:voice.instanceBoot": 322,
+          "INFO:voice.aecRuntime": 322,
+          "INFO:voice.restart": 322,
+          "INFO:wake.defaultModels": 322,
+          "INFO:voice.aecReady": 322,
+          "INFO:stt.dictationTranscript": 35,
+          "INFO:voice.responseMute": 3,
+          "INFO:dictation.emit": 25,
+          "INFO:dictation.targetResolved": 23,
+          "INFO:dictation.ipcDispatch": 23,
+          "ERROR:dictation.ptyFailed": 5,
+          "INFO:tts.provider": 31,
+          "INFO:audio.playbackStart": 18,
+          "INFO:dictation.laneFallback": 11,
+          "INFO:dictation.ptyConfirmed": 18,
+          "WARN:capture.workletFallback": 1,
+          "ERROR:runtime.incident": 3,
+          "WARN:tts.fallback": 14,
+          "ERROR:dictation.noLivePane": 2,
+          "INFO:jarvis.weakSpeechAccepted": 1,
+          "INFO:dictation.uiTarget": 4,
+          "INFO:jarvis.actionBridge": 1,
+          "WARN:jarvis.emptyReply": 3,
+          "WARN:live.hotReuseDisabled": 1
+        },
+        "recent_7d": {
+          "INFO:voice.instanceBoot": 37,
+          "INFO:voice.aecRuntime": 37,
+          "INFO:voice.restart": 37,
+          "INFO:wake.defaultModels": 37,
+          "INFO:voice.aecReady": 37,
+          "INFO:tts.provider": 3,
+          "INFO:audio.playbackStart": 1,
+          "WARN:tts.fallback": 2
+        }
+      },
+      "date_range": [
+        "2026-08-04T17:20:27.813000+00:00",
+        "2026-09-07T15:20:14.112000+00:00"
+      ],
+      "safe_error_codes": {}
+    },
+    "updater": {
+      "events": {
+        "expanded": {
+          "INFO:state": 3174,
+          "INFO:init": 490,
+          "INFO:check:start": 695,
+          "INFO:check:uptodate": 490,
+          "INFO:init:offline": 1195,
+          "INFO:check:available": 199,
+          "INFO:install:refresh-latest": 54,
+          "INFO:install:start": 54,
+          "INFO:local-feed:listening": 53,
+          "INFO:install:local-feed-ready": 53,
+          "INFO:squirrel:update-available": 51,
+          "INFO:squirrel:update-downloaded": 51,
+          "INFO:check:gh-unavailable-try-public": 15,
+          "WARN:squirrel:error": 2,
+          "WARN:state": 4,
+          "WARN:check:gh-failed": 2,
+          "WARN:install:download-source-failed": 26
+        },
+        "recent_7d": {
+          "INFO:state": 264,
+          "INFO:init": 37,
+          "INFO:check:start": 83,
+          "INFO:check:uptodate": 59,
+          "INFO:init:offline": 43,
+          "INFO:check:available": 24,
+          "INFO:install:refresh-latest": 9,
+          "INFO:install:start": 9,
+          "WARN:install:download-source-failed": 11,
+          "INFO:local-feed:listening": 9,
+          "INFO:install:local-feed-ready": 9,
+          "INFO:squirrel:update-available": 9,
+          "INFO:squirrel:update-downloaded": 9
+        }
+      },
+      "date_range": [
+        "2026-07-13T20:08:12.254000+00:00",
+        "2026-09-07T15:20:35.466000+00:00"
+      ],
+      "safe_error_codes": {
+        "HTTP 404": 26
+      }
+    },
+    "voice_metrics_old": {
+      "events": {
+        "expanded": {},
+        "recent_7d": {}
+      },
+      "date_range": [],
+      "safe_error_codes": {}
+    }
+  },
+  "audit_tool_errors": [
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "tool": "nexus_pane_spawn",
+      "events": 47,
+      "distinct_missions": 8
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "tool": "nexus_worker_heartbeat",
+      "events": 4,
+      "distinct_missions": 2
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "tool": "nexus_handoff_ack",
+      "events": 3,
+      "distinct_missions": 1
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "tool": "nexus_task",
+      "events": 16,
+      "distinct_missions": 3
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "tool": "nexus_route_log",
+      "events": 1,
+      "distinct_missions": 0
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "tool": "nexus_ui_read",
+      "events": 2,
+      "distinct_missions": 0
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "tool": "nexus_mission_set_status",
+      "events": 5,
+      "distinct_missions": 4
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "tool": "nexus_worktree_create",
+      "events": 4,
+      "distinct_missions": 3
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "tool": "nexus_merge_task",
+      "events": 1,
+      "distinct_missions": 1
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "tool": "nexus_context_draft_review_run",
+      "events": 2,
+      "distinct_missions": 0
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "tool": "nexus_pane_wait_idle",
+      "events": 1,
+      "distinct_missions": 0
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "tool": "nexus_handoff_submit",
+      "events": 3,
+      "distinct_missions": 0
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "tool": "nexus_agent_invoke",
+      "events": 1,
+      "distinct_missions": 0
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "tool": "nexus_mission_create",
+      "events": 1,
+      "distinct_missions": 0
+    },
+    {
+      "window": "recent_7d",
+      "source": "installed_local",
+      "tool": "nexus_pane_spawn",
+      "events": 4,
+      "distinct_missions": 2
+    },
+    {
+      "window": "recent_7d",
+      "source": "installed_local",
+      "tool": "nexus_worker_heartbeat",
+      "events": 2,
+      "distinct_missions": 0
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "tool": "nexus_workspace_list",
+      "events": 1,
+      "distinct_missions": 0
+    },
+    {
+      "window": "recent_7d",
+      "source": "installed_local",
+      "tool": "nexus_workspace_list",
+      "events": 1,
+      "distinct_missions": 0
+    },
+    {
+      "window": "recent_7d",
+      "source": "installed_local",
+      "tool": "nexus_mission_set_status",
+      "events": 1,
+      "distinct_missions": 1
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "tool": "nexus_mission_control",
+      "events": 1,
+      "distinct_missions": 1
+    },
+    {
+      "window": "recent_7d",
+      "source": "installed_local",
+      "tool": "nexus_mission_control",
+      "events": 1,
+      "distinct_missions": 1
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "tool": "nexus_route_task",
+      "events": 1,
+      "distinct_missions": 1
+    },
+    {
+      "window": "recent_7d",
+      "source": "installed_local",
+      "tool": "nexus_route_task",
+      "events": 1,
+      "distinct_missions": 1
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "tool": "nexus_mission_spawn_pane",
+      "events": 5,
+      "distinct_missions": 2
+    },
+    {
+      "window": "recent_7d",
+      "source": "installed_local",
+      "tool": "nexus_mission_spawn_pane",
+      "events": 1,
+      "distinct_missions": 1
+    },
+    {
+      "window": "recent_7d",
+      "source": "installed_local",
+      "tool": "nexus_ui_read",
+      "events": 1,
+      "distinct_missions": 0
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "tool": "nexus_mission_get",
+      "events": 1,
+      "distinct_missions": 0
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "tool": "nexus_pane_read",
+      "events": 1,
+      "distinct_missions": 0
+    },
+    {
+      "window": "expanded",
+      "source": "installed_local",
+      "tool": "nexus_sensor_run",
+      "events": 1,
+      "distinct_missions": 1
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "tool": "nexus_handoff_submit",
+      "events": 43,
+      "distinct_missions": 21
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "tool": "nexus_pane_spawn",
+      "events": 104,
+      "distinct_missions": 39
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "tool": "nexus_task",
+      "events": 27,
+      "distinct_missions": 3
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "tool": "nexus_pane_read",
+      "events": 20,
+      "distinct_missions": 15
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "tool": "nexus_route_task",
+      "events": 2,
+      "distinct_missions": 1
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "tool": "nexus_mission_set_status",
+      "events": 13,
+      "distinct_missions": 7
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "tool": "nexus_worker_heartbeat",
+      "events": 3,
+      "distinct_missions": 0
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "tool": "nexus_pane_wait_idle",
+      "events": 13,
+      "distinct_missions": 8
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "tool": "nexus_pane_ask",
+      "events": 33,
+      "distinct_missions": 21
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "tool": "nexus_handoff_ack",
+      "events": 4,
+      "distinct_missions": 1
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "tool": "nexus_mission_spawn_pane",
+      "events": 25,
+      "distinct_missions": 17
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "tool": "nexus_agent_invoke",
+      "events": 1,
+      "distinct_missions": 1
+    },
+    {
+      "window": "recent_7d",
+      "source": "dev_default",
+      "tool": "nexus_pane_spawn",
+      "events": 4,
+      "distinct_missions": 0
+    },
+    {
+      "window": "recent_7d",
+      "source": "dev_default",
+      "tool": "nexus_handoff_submit",
+      "events": 1,
+      "distinct_missions": 0
+    },
+    {
+      "window": "recent_7d",
+      "source": "dev_default",
+      "tool": "nexus_mission_set_status",
+      "events": 1,
+      "distinct_missions": 1
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "tool": "nexus_worktree_get",
+      "events": 1,
+      "distinct_missions": 1
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "tool": "nexus_browser_open",
+      "events": 2,
+      "distinct_missions": 1
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "tool": "nexus_terminal_run",
+      "events": 1,
+      "distinct_missions": 1
+    },
+    {
+      "window": "expanded",
+      "source": "dev_default",
+      "tool": "nexus_review_submit",
+      "events": 1,
+      "distinct_missions": 1
+    },
+    {
+      "window": "expanded",
+      "source": "dev_test_live_fix",
+      "tool": "nexus_handoff_submit",
+      "events": 1,
+      "distinct_missions": 1
+    },
+    {
+      "window": "expanded",
+      "source": "dev_test_live_fix",
+      "tool": "nexus_pane_wait_idle",
+      "events": 1,
+      "distinct_missions": 1
+    },
+    {
+      "window": "expanded",
+      "source": "dev_test_live_fix",
+      "tool": "nexus_pane_close",
+      "events": 1,
+      "distinct_missions": 1
+    },
+    {
+      "window": "expanded",
+      "source": "dev_test_e2e",
+      "tool": "nexus_handoff_submit",
+      "events": 3,
+      "distinct_missions": 0
+    },
+    {
+      "window": "expanded",
+      "source": "dev_test_e2e",
+      "tool": "nexus_task",
+      "events": 1,
+      "distinct_missions": 0
+    }
+  ],
+  "limitations": [
+    "Local profiles only; no customer or production identity confirmed.",
+    "Migration backups and messages/settings/providers/credentials excluded.",
+    "No raw mission IDs, titles, prompts, project names or paths exported.",
+    "Distinct mission references deduplicated by local profile plus mission_id (or args.missionId scalar when absent); missing IDs kept separately. References need not still have a mission row.",
+    "Current mission rows are not the denominator of retained historical audit events."
+  ],
+  "correlations": {
+    "dev_default": {
+      "transport_final_snapshot": [
+        {
+          "failure_code": "accept_superseded",
+          "handoff_final_delivery_state": "acknowledged",
+          "mission_final_status": "done",
+          "attempts": 6
+        },
+        {
+          "failure_code": "accept_superseded",
+          "handoff_final_delivery_state": "consumed",
+          "mission_final_status": "blocked",
+          "attempts": 8
+        },
+        {
+          "failure_code": "accept_superseded",
+          "handoff_final_delivery_state": "consumed",
+          "mission_final_status": "done",
+          "attempts": 3
+        },
+        {
+          "failure_code": "accept_timeout",
+          "handoff_final_delivery_state": "consumed",
+          "mission_final_status": "blocked",
+          "attempts": 12
+        },
+        {
+          "failure_code": "accept_timeout",
+          "handoff_final_delivery_state": "consumed",
+          "mission_final_status": "done",
+          "attempts": 1
+        },
+        {
+          "failure_code": "accept_timeout",
+          "handoff_final_delivery_state": "queued",
+          "mission_final_status": "blocked",
+          "attempts": 5
+        },
+        {
+          "failure_code": "accept_timeout",
+          "handoff_final_delivery_state": "queued",
+          "mission_final_status": "done",
+          "attempts": 3
+        },
+        {
+          "failure_code": "accept_timeout",
+          "handoff_final_delivery_state": "submitted",
+          "mission_final_status": "blocked",
+          "attempts": 4
+        },
+        {
+          "failure_code": "acceptance_cas_lost",
+          "handoff_final_delivery_state": "consumed",
+          "mission_final_status": "blocked",
+          "attempts": 6
+        },
+        {
+          "failure_code": "acceptance_cas_lost",
+          "handoff_final_delivery_state": "queued",
+          "mission_final_status": "done",
+          "attempts": 1
+        },
+        {
+          "failure_code": "acceptance_cas_lost",
+          "handoff_final_delivery_state": "submitted",
+          "mission_final_status": "blocked",
+          "attempts": 1
+        },
+        {
+          "failure_code": "acceptance_cas_lost",
+          "handoff_final_delivery_state": "submitted",
+          "mission_final_status": "done",
+          "attempts": 2
+        },
+        {
+          "failure_code": "orchestrator_session_exited",
+          "handoff_final_delivery_state": "consumed",
+          "mission_final_status": "blocked",
+          "attempts": 2
+        },
+        {
+          "failure_code": "orchestrator_session_exited",
+          "handoff_final_delivery_state": "queued",
+          "mission_final_status": "blocked",
+          "attempts": 1
+        },
+        {
+          "failure_code": "orchestrator_session_exited",
+          "handoff_final_delivery_state": "queued",
+          "mission_final_status": "done",
+          "attempts": 3
+        },
+        {
+          "failure_code": "paste_write_failed",
+          "handoff_final_delivery_state": "queued",
+          "mission_final_status": "blocked",
+          "attempts": 6
+        },
+        {
+          "failure_code": "paste_write_failed",
+          "handoff_final_delivery_state": "queued",
+          "mission_final_status": "done",
+          "attempts": 4
+        },
+        {
+          "failure_code": "submit_write_failed",
+          "handoff_final_delivery_state": "queued",
+          "mission_final_status": "done",
+          "attempts": 1
+        }
+      ],
+      "worker_exit_details": {
+        "events": 54,
+        "with_file_paths": 50,
+        "adapter:agy": 10,
+        "adapter:kimi": 25,
+        "adapter:codex": 8,
+        "adapter:grok": 8,
+        "without_file_paths": 4,
+        "adapter:other": 3
+      }
+    },
+    "installed_local": {
+      "transport_final_snapshot": [
+        {
+          "failure_code": "accept_timeout",
+          "handoff_final_delivery_state": "acknowledged",
+          "mission_final_status": "blocked",
+          "attempts": 1
+        },
+        {
+          "failure_code": "accept_timeout",
+          "handoff_final_delivery_state": "consumed",
+          "mission_final_status": "blocked",
+          "attempts": 5
+        }
+      ],
+      "worker_exit_details": {
+        "events": 2,
+        "without_file_paths": 1,
+        "adapter:codex": 1,
+        "with_file_paths": 1,
+        "adapter:agy": 1
+      }
+    }
+  },
+  "recent_first_wave": {
+    "dev_default": {
+      "distinct_mission_references": 3,
+      "records": [
+        {
+          "at_utc": "2026-08-31T22:25:28.662000+00:00",
+          "spawned": 1,
+          "target": 1
+        },
+        {
+          "at_utc": "2026-08-31T23:33:25.107000+00:00",
+          "spawned": 1,
+          "target": 1
+        },
+        {
+          "at_utc": "2026-09-01T00:32:45.062000+00:00",
+          "spawned": 1,
+          "target": 1
+        }
+      ]
+    },
+    "installed_local": {
+      "distinct_mission_references": 3,
+      "records": [
+        {
+          "at_utc": "2026-09-03T14:48:37.791000+00:00",
+          "spawned": 1,
+          "target": 1
+        },
+        {
+          "at_utc": "2026-09-03T14:48:55.610000+00:00",
+          "spawned": 1,
+          "target": 1
+        },
+        {
+          "at_utc": "2026-09-03T20:21:16.472000+00:00",
+          "spawned": 1,
+          "target": 1
+        },
+        {
+          "at_utc": "2026-09-03T20:53:10.886000+00:00",
+          "spawned": 1,
+          "target": 1
+        }
+      ]
+    }
+  },
+  "method": {
+    "sqlite": "URI mode=ro only",
+    "audit_outcomes": [
+      "error",
+      "denied",
+      "failed",
+      "blocked"
+    ],
+    "mission_id_fallback": "only args.missionId / args.mission_id scalar, never full request",
+    "no_production_identity_confirmed": true,
+    "migration_backups_excluded": true,
+    "profiles_with_no_recent_retained_missions_may_still_have_recent_trace_references": true
+  }
+}

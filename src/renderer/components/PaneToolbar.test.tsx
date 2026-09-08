@@ -11,6 +11,7 @@ const close = vi.hoisted(() => vi.fn());
 vi.mock('../terminal/pane-close-guard', () => ({ requestPaneClose: close }));
 vi.mock('../terminal/terminal-host', () => ({
   hibernateHost: vi.fn(), wakeHost: vi.fn(), respawnWithResume: vi.fn(), scrollPaneToBottom: vi.fn(),
+  getPaneSessionId: vi.fn(() => null),
 }));
 vi.mock('./CostBadge', () => ({ CostBadge: () => null }));
 vi.mock('./DevServerChip', () => ({ DevServerChip: () => null }));
@@ -72,7 +73,9 @@ describe('PaneToolbar narrow controls', () => {
     const closeButton = host.querySelector<HTMLButtonElement>('[aria-label="Fechar este pane"]');
     expect(closeButton).not.toBeNull();
     act(() => closeButton!.click());
-    expect(close).toHaveBeenCalledExactlyOnceWith(pane.id);
+    expect(close).toHaveBeenCalledExactlyOnceWith(pane.id, undefined, {
+      hasLiveSession: false,
+    });
   });
 
   it('opens layout actions outside the clipped pane and returns keyboard focus on Escape', () => {

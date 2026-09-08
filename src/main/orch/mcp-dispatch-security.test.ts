@@ -1,5 +1,6 @@
 import {
   afterAll,
+  afterEach,
   beforeAll,
   beforeEach,
   describe,
@@ -18,11 +19,17 @@ import {
   readAuditLog,
 } from "../jarvis/audit-log";
 import { clearAll as clearAllPermissions } from "../jarvis/permissions";
-import { bindTokenToSession, mintToken, resetGateForTests } from "./gate";
+import { bindTokenToSession, mintToken, releaseSessionByToken, resetGateForTests } from "./gate";
 import { dispatchToolCall } from "./mcp-dispatch";
 import type { McpDispatchOptions } from "./mcp-dispatch";
 import type { IntentGateMissionResolver } from "./mcp-dispatch";
 import type { McpRegistry, McpToolDef } from "./mcp-protocol";
+import type { Mission } from "../../shared/orch-types";
+import { buildDomainTools } from "./tools-domain";
+import * as domainStores from "./project-domain-store-registry";
+import * as completion from "./civilian-delivery-completion";
+import * as squads from "./squad-store";
+import { ProcessGitRunner } from "../runtime/git-command";
 import { testProjectScope } from "./__tests__/scope-fixture";
 import { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
 import {
@@ -236,6 +243,34 @@ function standardWorkflowOptions(
     },
   };
 }
+
+function completedPushDispatchFixture() {
+  const ctx = orchestratorMissionContext();
+  bindTokenToSession(ctx.token, 'push-session');
+  let state = dispatchedMissionFixture();
+  const update = (patch: Partial<Mission>) => {
+    state = { ...state, mission: { ...state.mission, ...patch } };
+  };
+  update({ squadId: 'push-squad', orchestratorSessionId: 'push-session' });
+  vi.spyOn(domainStores, 'getProjectDomainStores').mockReturnValue({
+    missions: { get: () => state.mission, appendLearning: vi.fn() },
+  } as never);
+  vi.spyOn(squads, 'getSquad').mockReturnValue(null);
+  const reconcile = vi.spyOn(completion, 'maybeCompleteFastLaneOnDelivery');
+  const push = vi.spyOn(ProcessGitRunner.prototype, 'run')
+    .mockReturnValue({ status: 0, stdout: 'Pushed to local fixture', stderr: '' });
+  const tool = buildDomainTools().find((item) => item.name === 'nexus_mission_set_status')!;
+  const finish = () => update({ status: 'done', intentState: 'done',
+    result: { outcome: 'success', summary: 'Verified fixture', evidenceIds: [], artifactRefs: [] } });
+  return {
+    ctx, reconcile, push, finish, update,
+    run: (caller = ctx) => dispatchToolCall('http-mcp', registryWith(tool), tool.name,
+      { missionId: TEST_MISSION_ID, status: 'done', push: { remote: 'origin' } }, caller,
+      { ...workflowOptions(), resolveMissionForIntentGate: () => state }),
+  };
+}
+
+afterEach(() => vi.restoreAllMocks());
 
 describe("MCP dispatch effect safety", () => {
   beforeAll(() => {
@@ -1478,6 +1513,48 @@ describe("MCP dispatch effect safety", () => {
       result: { status: "done" },
     });
     expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it('runs an explicitly requested push after slow verification through the real dispatcher', async () => {
+    const f = completedPushDispatchFixture();
+    const pending = Promise.withResolvers<void>();
+    f.reconcile.mockImplementation(async () => {
+      await pending.promise;
+      f.finish();
+      return { action: 'complete', completed: true } as never;
+    });
+    const running = f.run();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(f.push).not.toHaveBeenCalled();
+    pending.resolve();
+
+    expect(await running).toMatchObject({ ok: true, result: { status: 'done', pushExecuted: true } });
+    expect(f.push).toHaveBeenCalledExactlyOnceWith(auditScope.rootRealPath, ['push', 'origin'], { timeoutMs: 60_000 });
+  });
+
+  it('accepts a fresh done-plus-push retry for the bound orchestrator through the real dispatcher', async () => {
+    const f = completedPushDispatchFixture();
+    f.finish();
+
+    expect(await f.run()).toMatchObject({ ok: true, result: { pushExecuted: true } });
+    expect(f.reconcile).not.toHaveBeenCalled();
+    expect(f.push).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['revoked', 'stale', 'bad-scope'] as const)('rejects completed push with %s authority through the dispatcher', async (failure) => {
+    const f = completedPushDispatchFixture();
+    f.reconcile.mockImplementation(async () => {
+      f.finish();
+      if (failure === 'revoked') releaseSessionByToken(f.ctx.token);
+      if (failure === 'stale') f.update({ orchestratorSessionId: 'replacement-session' });
+      return { action: 'complete', completed: true } as never;
+    });
+    const caller = failure === 'bad-scope'
+      ? { ...f.ctx, scope: { ...f.ctx.scope, checkoutId: 'forged-checkout' } }
+      : f.ctx;
+
+    expect(await f.run(caller)).toMatchObject({ ok: false });
+    expect(f.push).not.toHaveBeenCalled();
   });
 
   it("ops lane runs execution effects without a frozen PREVC contract", async () => {

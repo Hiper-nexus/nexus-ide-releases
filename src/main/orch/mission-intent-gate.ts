@@ -47,6 +47,7 @@ export interface IntentGateContext {
     | 'intentState'
     | 'intentContract'
     | 'intentVersion'
+    | 'orchestratorSessionId'
   >;
   readonly taskCount?: number;
   readonly workerPaneCount?: number;
@@ -201,6 +202,16 @@ export function assertMissionIntentAllowsTool(
     if (canonical === 'mission_set_status') {
       const nextStatus =
         typeof args.status === 'string' ? args.status : undefined;
+      const currentSession = ctx.mission.orchestratorSessionId?.trim();
+      if (
+        nextStatus === 'done' && ctx.mission.status === 'done' &&
+        ctx.role === 'orchestrator' && currentSession &&
+        ctx.sessionId === currentSession
+      ) {
+        // Permit only the idempotent completion handler, including its final
+        // push checkpoint. Other effects and stale/unbound sessions stay closed.
+        return { ok: true, intentState, intentVersion };
+      }
       const failSafe =
         nextStatus === 'blocked' || nextStatus === 'failed';
       const canStart =

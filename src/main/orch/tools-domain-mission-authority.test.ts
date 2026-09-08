@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentGateContext } from './gate';
 import { testProjectScope } from './__tests__/scope-fixture';
+import { ProcessGitRunner } from '../runtime/git-command';
 
 const mocks = vi.hoisted(() => ({
   getProjectDomainStores: vi.fn(),
@@ -8,10 +9,17 @@ const mocks = vi.hoisted(() => ({
   saveSquad: vi.fn(),
   createRemoteTmuxSession: vi.fn(),
   completeVerified: vi.fn(),
+  reconcile: vi.fn(),
+  gitRun: vi.fn(),
 }));
 
 vi.mock('./project-domain-store-registry', () => ({
   getProjectDomainStores: mocks.getProjectDomainStores,
+}));
+
+vi.mock('./civilian-delivery-completion', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./civilian-delivery-completion')>()),
+  maybeCompleteFastLaneOnDelivery: mocks.reconcile,
 }));
 
 
@@ -94,9 +102,130 @@ function remoteSpawnTool() {
   return tool;
 }
 
+function completionPushFixture(status = 'running') {
+  const result = { outcome: 'success', summary: 'Entrega verificada.' };
+  let stored = {
+    id: 'mission-existing', status, squadId: 'standard-team',
+    orchestratorSessionId: 'orchestrator-session', learnings: '',
+    intentVersion: 1, intentState: 'executing', updatedAt: 10,
+    intentContract: { lane: 'standard' },
+    result: status === 'done' ? result : undefined,
+  };
+  mocks.getProjectDomainStores.mockReturnValue({
+    missions: { get: () => stored, appendLearning: vi.fn() },
+  });
+  return {
+    finish: () => { stored = { ...stored, status: 'done', result }; },
+    replaceSession: (sessionId = 'new-session') => { stored = { ...stored, orchestratorSessionId: sessionId }; },
+  };
+}
+
+afterEach(() => vi.restoreAllMocks());
+
 describe('mission creation authority', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.reconcile.mockReset().mockResolvedValue({ action: 'wait', completed: false, reason: 'review-in-progress' });
+    mocks.gitRun.mockReset().mockReturnValue({ status: 0, stdout: 'Pushed', stderr: '' });
+    vi.spyOn(ProcessGitRunner.prototype, 'run').mockImplementation(mocks.gitRun);
+  });
+
+  it('waits for explicitly requested push after slow verification and pushes once', async () => {
+    const f = completionPushFixture();
+    const pending = Promise.withResolvers<void>();
+    mocks.reconcile.mockImplementation(async () => {
+      await pending.promise;
+      f.finish();
+      return { action: 'complete', completed: true };
+    });
+    let settled = false;
+    const operation = missionSetStatusTool().handler({
+      missionId: 'mission-existing', status: 'done', push: { remote: 'origin', branch: 'main' },
+    }, context('orchestrator')).then((result) => { settled = true; return result; });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const waited = !settled;
+    pending.resolve();
+    const result = await operation;
+    await mocks.reconcile.mock.results[0]!.value;
+
+    expect(waited).toBe(true);
+    expect(result).toMatchObject({ status: 'done', pushExecuted: true, pushPending: false });
+    expect(mocks.gitRun).toHaveBeenCalledExactlyOnceWith(scope.rootRealPath, ['push', 'origin', 'main'], { timeoutMs: 60_000 });
+  });
+
+  it('reports a pending push when verification is waiting for a repair', async () => {
+    completionPushFixture();
+    mocks.reconcile.mockResolvedValue({ action: 'wait', completed: false, reason: 'repair-dispatched' });
+    const result = await missionSetStatusTool().handler({
+      missionId: 'mission-existing', status: 'done', push: {},
+    }, context('orchestrator'));
+
+    expect(result).toMatchObject({ status: 'running', pushExecuted: false, pushPending: true });
+    expect((result as { message: string }).message).toMatch(/tente novamente|nova tentativa/iu);
+    expect(mocks.gitRun).not.toHaveBeenCalled();
+  });
+
+  it('honors a fresh explicit push request for an already completed mission', async () => {
+    completionPushFixture('done');
+    const result = await missionSetStatusTool().handler({
+      missionId: 'mission-existing', status: 'done', push: {},
+    }, context('orchestrator'));
+
+    expect(result).toMatchObject({ status: 'done', pushExecuted: true });
+    expect(mocks.reconcile).not.toHaveBeenCalled();
+    expect(mocks.gitRun).toHaveBeenCalledExactlyOnceWith(scope.rootRealPath, ['push', 'origin'], { timeoutMs: 60_000 });
+  });
+
+  it('requires an explicit current orchestrator binding for a completed push', async () => {
+    const f = completionPushFixture('done');
+    f.replaceSession('');
+    await expect(missionSetStatusTool().handler({
+      missionId: 'mission-existing', status: 'done', push: {},
+    }, context('orchestrator'))).rejects.toThrow(/current orchestrator/i);
+    expect(mocks.gitRun).not.toHaveBeenCalled();
+  });
+
+  it('refuses push when the orchestrator session changed while verification ran', async () => {
+    const f = completionPushFixture();
+    mocks.reconcile.mockImplementation(async () => {
+      f.finish();
+      f.replaceSession();
+      return { action: 'complete', completed: true };
+    });
+    await expect(missionSetStatusTool().handler({
+      missionId: 'mission-existing', status: 'done', push: {},
+    }, context('orchestrator'))).rejects.toThrow(/orchestrator_session_stale/);
+    expect(mocks.gitRun).not.toHaveBeenCalled();
+  });
+
+  it('revalidates MCP scope authority immediately before push', async () => {
+    const f = completionPushFixture();
+    let revoked = false;
+    mocks.reconcile.mockImplementation(async () => {
+      f.finish();
+      revoked = true;
+      return { action: 'complete', completed: true };
+    });
+    await expect(missionSetStatusTool().handler({
+      missionId: 'mission-existing', status: 'done', push: {},
+    }, context('orchestrator'), {
+      assertCurrentAuthority: () => { if (revoked) throw new Error('scope authority changed'); },
+    })).rejects.toThrow('scope authority changed');
+    expect(mocks.gitRun).not.toHaveBeenCalled();
+  });
+
+  it.each([{ remote: '--force' }, { branch: '+main:main' }])('rejects force syntax passed as a push target: %j', async (push) => {
+    const f = completionPushFixture();
+    mocks.reconcile.mockImplementation(async () => {
+      f.finish();
+      return { action: 'complete', completed: true };
+    });
+    const result = await missionSetStatusTool().handler({
+      missionId: 'mission-existing', status: 'done', push,
+    }, context('orchestrator'));
+
+    expect(result).toMatchObject({ pushExecuted: false });
+    expect(mocks.gitRun).not.toHaveBeenCalled();
   });
 
   it.each(['worker', 'orchestrator'] as const)(
@@ -239,6 +368,7 @@ describe('mission creation authority', () => {
           intentContract: { lane: 'standard' },
         }),
         setStatus,
+        appendLearning: vi.fn(),
       },
       missionPanes: { list: () => [] },
       handoffs: { list: () => [] },
@@ -257,7 +387,7 @@ describe('mission creation authority', () => {
         },
         context('orchestrator'),
       ),
-    ).rejects.toThrow(/worker.*handoff/i);
+    ).resolves.toMatchObject({ status: 'running', completionRequested: true });
     expect(setStatus).not.toHaveBeenCalled();
   });
 
@@ -274,6 +404,7 @@ describe('mission creation authority', () => {
           intentContract: { lane: 'standard' },
         }),
         setStatus,
+        appendLearning: vi.fn(),
       },
       missionPanes: { list: () => [{ role: 'worker' }] },
       handoffs: {
@@ -293,7 +424,7 @@ describe('mission creation authority', () => {
         note: 'Worker produziu resultado, mas o orquestrador ainda não aceitou a entrega.',
       },
       context('orchestrator'),
-    )).rejects.toThrow(/accepted handoff/i);
+    )).resolves.toMatchObject({ status: 'running', completionRequested: true });
     expect(setStatus).not.toHaveBeenCalled();
   });
 
@@ -366,7 +497,7 @@ describe('mission creation authority', () => {
           },
           context('orchestrator'),
         ),
-      ).rejects.toThrow(/main-owned.*verified completion/i);
+      ).resolves.toMatchObject({ status: 'running', completionRequested: true });
       expect(getMission).toHaveBeenCalledWith('mission-existing');
       expect(setStatus).not.toHaveBeenCalled();
     },
@@ -409,11 +540,11 @@ describe('mission creation authority', () => {
         note: 'Worker concluiu, mas o aceite pertence a uma sessão antiga do orquestrador.',
       },
       context('orchestrator'),
-    )).rejects.toThrow(/current orchestrator session/i);
+    )).resolves.toMatchObject({ status: 'running', completionRequested: true });
     expect(setStatus).not.toHaveBeenCalled();
   });
 
-  it('Via Rápida (R4/D#2): done sancionado com handoff success ACEITO pela sessão corrente + nota durável', async () => {
+  it('Via Rápida devolve done somente quando a reconciliação confirma conclusão', async () => {
     // A dor real: fast-lane não congela contrato nem tem dispatch authority
     // POR CONSTRUÇÃO — o throw incondicional impedia QUALQUER done do
     // Maestro (missão real: "2 handoffs success consumidos" e mesmo assim
@@ -434,12 +565,13 @@ describe('mission creation authority', () => {
       title: 'Prova',
       description: '',
     };
-    mocks.completeVerified.mockImplementation(() => {
+    mocks.reconcile.mockImplementation(async () => {
       mission = {
         ...mission,
         status: 'done',
         result: { outcome: 'success', summary: 'ok', evidenceIds: [], artifactRefs: [] },
       };
+      return { action: 'complete', completed: true };
     });
     mocks.getProjectDomainStores.mockReturnValue({
       missions: {
@@ -480,8 +612,50 @@ describe('mission creation authority', () => {
       context('orchestrator'),
     )) as Record<string, unknown>;
 
-    expect(mocks.completeVerified).toHaveBeenCalled();
+    expect(mocks.reconcile).toHaveBeenCalledOnce();
+    expect(mocks.completeVerified).not.toHaveBeenCalled();
     expect(result.status).toBe('done');
+  });
+
+  it('pedido done durante reparo é aceito e não muda status ou chama completeVerified diretamente', async () => {
+    const mission = {
+      id: 'mission-existing', status: 'running', squadId: 'standard-team',
+      learnings: '', intentVersion: 1, intentState: 'executing', updatedAt: 10,
+      intentContract: { lane: 'standard' },
+    };
+    const appendLearning = vi.fn();
+    mocks.getProjectDomainStores.mockReturnValue({ missions: { get: () => mission, appendLearning } });
+    mocks.reconcile.mockResolvedValue({ action: 'wait', completed: false, reason: 'repair-dispatched' });
+
+    const result = await missionSetStatusTool().handler({ missionId: mission.id, status: 'done', note: 'Entrega inicial enviada.' }, context('orchestrator'));
+
+    expect(result).toMatchObject({ status: 'running', completionRequested: true });
+    expect(appendLearning).toHaveBeenCalledWith(mission.id, '## Solicitação de conclusão\nEntrega inicial enviada.');
+    expect(mocks.reconcile).toHaveBeenCalledWith(scope, mission.id);
+    expect(mocks.completeVerified).not.toHaveBeenCalled();
+  });
+
+  it('libera o turno enquanto sensores trabalham e deixa a reconciliação concluir depois', async () => {
+    let stored: Record<string, unknown> = {
+      id: 'mission-existing', status: 'running', squadId: 'standard-team',
+      learnings: '', intentVersion: 1, intentState: 'executing', updatedAt: 10,
+      intentContract: { lane: 'standard' },
+    };
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    mocks.getProjectDomainStores.mockReturnValue({ missions: { get: () => stored, appendLearning: vi.fn() } });
+    mocks.reconcile.mockImplementation(async () => {
+      await pending;
+      stored = { ...stored, status: 'done', result: { outcome: 'success', summary: 'Verificado e concluído.' } };
+      return { action: 'complete', completed: true };
+    });
+
+    const response = await missionSetStatusTool().handler({ missionId: 'mission-existing', status: 'done' }, context('orchestrator'));
+    expect(response).toMatchObject({ status: 'running', completionRequested: true });
+    release();
+    await vi.waitFor(() => expect(stored.status).toBe('done'));
+    expect(mocks.reconcile).toHaveBeenCalledOnce();
+    expect(mocks.completeVerified).not.toHaveBeenCalled();
   });
 
   it('Via Rápida: sem aceite da sessão CORRENTE o done continua recusado', async () => {
@@ -529,7 +703,7 @@ describe('mission creation authority', () => {
         note: 'Handoff consumido, mas por sessão anterior do orquestrador — sem prova corrente.',
       },
       context('orchestrator'),
-    )).rejects.toThrow(/main-owned verified completion required/i);
+    )).resolves.toMatchObject({ status: 'running', completionRequested: true });
     expect(mocks.completeVerified).not.toHaveBeenCalled();
   });
 
@@ -546,6 +720,7 @@ describe('mission creation authority', () => {
           intentContract: { lane: 'standard', intentVersion: 3 },
         }),
         setStatus,
+        appendLearning: vi.fn(),
       },
       tasks: {
         hasPlan: () => true,
@@ -564,7 +739,7 @@ describe('mission creation authority', () => {
         note: 'Worker disse que terminou, mas o merge e a entrega ainda não foram provados.',
       },
       context('orchestrator'),
-    )).rejects.toThrow(/main-owned verified completion required/i);
+    )).resolves.toMatchObject({ status: 'running', completionRequested: true });
     expect(setStatus).not.toHaveBeenCalled();
   });
 
@@ -580,6 +755,7 @@ describe('mission creation authority', () => {
           intentContract: { lane: 'standard' },
         }),
         setStatus,
+        appendLearning: vi.fn(),
       },
     });
     mocks.getContextWorkflowService.mockReturnValue({
@@ -668,6 +844,7 @@ describe('mission creation authority', () => {
           intentContract: { lane: 'ops' },
         }),
         setStatus,
+        appendLearning: vi.fn(),
       },
     });
     mocks.getContextWorkflowService.mockReturnValue({
@@ -688,6 +865,7 @@ describe('mission creation authority', () => {
       missions: {
         get: () => ({ id: 'mission-existing', status: 'done', milestones: [] }),
         setStatus,
+        appendLearning: vi.fn(),
       },
     });
 
