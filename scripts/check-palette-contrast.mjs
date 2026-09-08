@@ -63,21 +63,16 @@ const SURFACE_TOKENS = [
 /**
  * Registered gaps. Key is `${themeId} ${token} ${background}`.
  *
- * F-338: nexus-light declares no --status-* override, so the dark band
- *        (L=0.70/0.72) renders on a #f7f8fb background at 2.3-2.8:1 while
- *        DESIGN.md §2 claims WCAG 3:1.
- * F-337: --surface-* is declared once in :root and never overridden per theme,
- *        so 35 declarations render near-black surfaces inside the light theme.
- *        Those pairs pass the floor (dark on dark) and are reported as notes,
- *        not gaps; the finding is the inconsistency, not a contrast failure.
- *        F-337 is also what blocks fixing F-338 in isolation.
+ * Empty as of the nexus-light fix: `--surface-*` and `--status-*` are now
+ * declared per theme, so all seven themes clear the floor. This was 21 entries
+ * under F-338 (the dark status band measuring 2.3-2.8:1 on a #f7f8fb
+ * background) and F-337 (no theme overriding `--surface-*` at all); both are
+ * closed. The mechanism stays because the next theme added starts as a gap, and
+ * because check-palette-contrast.test.mjs asserts this set is exactly as small
+ * as it claims to be — a gap that starts passing fails that test until its entry
+ * is deleted here.
  */
 const KNOWN_GAPS = new Map();
-for (const token of STATUS_TOKENS) {
-  for (const background of ['--bg', '--bg-elevated', '--bg-bar']) {
-    KNOWN_GAPS.set(`nexus-light ${token} ${background}`, 'F-338');
-  }
-}
 
 const HEX = /#[0-9a-fA-F]{6}/;
 
@@ -123,7 +118,7 @@ function main() {
     console.log(JSON.stringify({ ok: false, findings: [{ severity: 'high', message: `no base.css at ${BASE_CSS}` }] }, null, 2));
     process.exit(1);
   }
-  const css = fs.readFileSync(BASE_CSS, 'utf8');
+  const css = stripCssComments(fs.readFileSync(BASE_CSS, 'utf8'));
   const root = declarations(ruleBody(css, ':root'));
 
   const findings = [];
