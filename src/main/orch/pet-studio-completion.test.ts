@@ -37,9 +37,13 @@ let workspaceRoot = '';
 let sourcePackageDir = '';
 let installedPackageDir = '';
 let mission: ScopedMission;
-let setStatus: ReturnType<typeof vi.fn>;
-let markSubmitted: ReturnType<typeof vi.fn>;
-let markConsumed: ReturnType<typeof vi.fn>;
+let setStatus: ReturnType<
+  typeof vi.fn<(id: string, status: ScopedMission['status']) => ScopedMission>
+>;
+let markSubmitted: ReturnType<typeof vi.fn<(id: string) => boolean>>;
+let markConsumed: ReturnType<
+  typeof vi.fn<(id: string, missionId: string) => boolean>
+>;
 
 function stores() {
   return {
@@ -162,9 +166,14 @@ beforeEach(() => {
       };
     },
   );
-  setStatus = vi.fn(() => ({ ...mission, status: 'done' }));
-  markSubmitted = vi.fn(() => true);
-  markConsumed = vi.fn(() => true);
+  // Vitest 5: impl arrow sem params vira Mock<Procedure|Constructable> e não
+  // é atribuível ao setter; params explícitos restauram a inferência.
+  setStatus = vi.fn((_id: string, _status: ScopedMission['status']) => ({
+    ...mission,
+    status: 'done' as const,
+  }));
+  markSubmitted = vi.fn((_id: string) => true);
+  markConsumed = vi.fn((_id: string, _missionId: string) => true);
 });
 
 afterEach(() => rmSync(sandbox, { recursive: true, force: true }));
