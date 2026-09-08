@@ -315,6 +315,23 @@ export const RELEASE_0744: AppRelease = {
   ],
 };
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.4',
+  date: '2026-09-07',
+  codename: 'Tema claro de verdade',
+  summary: 'O tema claro passa a ser claro por inteiro, e seis caminhos que podiam perder o que você escreveu ou concluir sem verificar foram fechados.',
+  highlights: [
+    { title: 'Tema claro completo', detail: 'Cartões, rail, filtros e o gutter do diff ganham superfícies próprias no nexus-light, e as cores de estado passam a ser legíveis sobre fundo claro. Antes o tema herdava as superfícies quase pretas do Pink City e os pontos de estado ficavam abaixo do contraste mínimo.' },
+    { title: 'Sua ideia não some', detail: 'Escrever antes de escolher a pasta e depois escolher uma pasta que já tem rascunho mantém os dois textos. Antes o que você digitou era descartado em silêncio, sem aviso e sem como desfazer.' },
+    { title: 'Revisão protegida', detail: 'Uma tecla num terminal de missão concluída, mas ainda não revisada, não desfaz mais o vínculo entre o painel e a missão. O canal de revisão sobrevive até você aprovar.' },
+    { title: 'Entrega verificada de verdade', detail: 'A auditoria de dependências passa a impedir a conclusão quando não consegue rodar, em vez de registrar a entrega como verificada. Falha na análise automática de qualidade agora aparece no registro e na nota da entrega.' },
+  ],
+  fixes: [
+    { title: 'Anexos ficam no projeto deles', detail: 'Fechar um projeto não leva mais os arquivos anexados nele para o projeto seguinte; reabrir o projeto de origem restaura os seus.' },
+    { title: 'Painel hibernado acorda como antes', detail: 'Uma tecla não converte mais um painel hibernado em shell vazio — o botão de acordar continua sendo o caminho.' },
+    { title: 'Contratos que o código cumpre', detail: 'A descrição de conclusão de missão deixa de prometer uma garantia que o caminho delegado não verifica, para o agente não planejar em cima dela.' },
+  ],
+};
+export const RELEASE_0763: AppRelease = {
   version: '0.76.3',
   date: '2026-09-05',
   codename: 'Configurações mais claras',

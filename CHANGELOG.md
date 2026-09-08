@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.76.4 — Tema claro de verdade, e nada de perder o que você escreveu
+
+- `nexus-light` agora é claro por inteiro: cartões, rail, filtros e o gutter do diff ganham superfícies próprias, e as cores de status passam a ser legíveis sobre fundo claro. Antes o tema herdava as superfícies quase pretas do Pink City e os pontos de estado ficavam abaixo do contraste mínimo.
+- A ideia escrita antes de escolher a pasta não some mais quando a pasta já tem um rascunho: os dois textos são mantidos, em vez de o que você digitou ser descartado em silêncio.
+- Fechar um projeto não leva mais os arquivos anexados nele para o projeto seguinte.
+- Uma tecla num terminal de missão concluída — mas ainda não revisada — não desfaz mais o vínculo entre o painel e a missão. O canal de revisão sobrevive até você aprovar.
+- Painel hibernado continua acordando pelo botão; uma tecla não o converte mais em shell vazio.
+- A auditoria de dependências passa a impedir a conclusão quando não consegue rodar (projeto que não usa npm, ou contagem crítica sem detalhe legível), em vez de registrar a entrega como verificada.
+- Falha na análise automática de qualidade agora aparece no registro e na nota da entrega; antes era silenciosa.
+
 ## 0.76.3 — Configurações mais claras
 
 - Limpar projeto: fechar todos os panes ou apagar todas as missões, com confirmação única e resultado parcial em caso de falha.

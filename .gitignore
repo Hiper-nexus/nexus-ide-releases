@@ -101,6 +101,7 @@ out/
 .kimi/
 .codex/
 .claude/
+.qwen/
 .aider*
 .overclock-app/
 # Wiki gerada pelo Qoder a partir do código: derivável, pesada e sempre defasada.
