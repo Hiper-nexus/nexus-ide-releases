@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.6 — Failover que assenta e voz que mostra
+
+- Failover multi-conta (F-511): conta com token vencido e sem renovação é pulada com motivo acionável em vez de queimar uma sessão nova num 401 garantido; conta vencida-mas-curável renova no momento do pin.
+- Fim do ping-pong entre contas saudáveis: o trecho citado no pack de failover não re-dispara o detector de limite.
+- HUD de voz com barrinhas de nível do mic durante a captura (ditado e Jarvis).
+
 ## 0.76.5 — Multi-conta e panes que respondem
 
 - Providers e menu de panes com quantas contas você quiser por CLI — segunda conta Codex inclusa — com prova de login novo (fechar ou estourar o tempo nunca conta como sucesso).

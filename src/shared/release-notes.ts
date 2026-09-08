@@ -315,6 +315,19 @@ export const RELEASE_0744: AppRelease = {
   ],
 };
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.6',
+  date: '2026-09-08',
+  codename: 'Failover que assenta e voz que mostra',
+  summary: 'Failover multi-conta para de queimar sessões em credencial morta e de entrar em ping-pong com 401 citado; HUD de voz ganha barrinhas de nível do mic durante a captura.',
+  highlights: [
+    { title: 'Failover sem storm (F-511)', detail: 'Conta Claude secundária com token vencido e sem refresh é pulada no pick e recusada no prepare com motivo acionável; vencida-mas-curável renova no momento do pin. O excerpt do pack de failover é sanitizado para o 401 citado nunca re-disparar o detector.' },
+    { title: 'Barrinhas de captura', detail: 'O HUD mostra 7 barras do nível real do mic enquanto escuta (ditado Space e Jarvis) — prova explícita de que está capturando.' },
+  ],
+  fixes: [
+    { title: 'Rajadas compartilham UM alvo', detail: 'Com o switch assíncrono, o coalesce passa a registrar provisório no pick: panes da mesma rajada voltam a convergir para a mesma conta.' },
+  ],
+};
+export const RELEASE_0765: AppRelease = {
   version: '0.76.5',
   date: '2026-09-08',
   codename: 'Multi-conta e panes que respondem',
