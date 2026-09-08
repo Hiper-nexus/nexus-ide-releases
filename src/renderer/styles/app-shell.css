@@ -535,6 +535,45 @@
   color: var(--text);
 }
 
+/* Paginação do Quadro: botão fantasma — sem o reset de appearance o UA
+   pinta botão nativo claro com o texto claro herdado do rail. */
+.workspace-rail__missions-more {
+  appearance: none;
+  font: inherit;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: var(--space-6);
+  margin-top: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  white-space: nowrap;
+  transition:
+    background-color 160ms var(--ease-out-quart),
+    color 160ms var(--ease-out-quart);
+}
+
+.workspace-rail__missions-more:hover {
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  color: var(--text);
+}
+
+.workspace-rail__missions-more:active {
+  transform: translateY(var(--radius-xs));
+}
+
+.workspace-rail__missions-more:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .workspace-rail__workspace {
   gap: var(--space-2);
   font-weight: 600;
