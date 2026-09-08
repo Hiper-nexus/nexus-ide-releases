@@ -141,6 +141,10 @@ scripts/codesign-retry-bin/
 /.nexus/pet-hatch-runs/
 /.nexus/ui-audit/
 /.nexus/attachments/
+# Estado de missão em execução: inbox de PTY, marcadores .nudge e transcripts.
+# Regenerado a cada missão rodada neste checkout, e cresce sem limite — cada
+# execução de agente adiciona arquivos. F-507.
+/.nexus/swarms/
 # Inventário local de servidores MCP: carrega credenciais de auth.
 /.nexus/mcp-hub.json
 # Capturas da auditoria visual (Impeccable). As críticas em .impeccable/critique
