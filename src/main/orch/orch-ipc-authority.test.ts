@@ -271,11 +271,14 @@ vi.mock('electron', () => ({
 }));
 
 vi.mock('../design/designmd-api-client', () => ({
-  DesignMdApiClient: vi.fn().mockImplementation(() => ({
-    searchKits: harness.designMdSearch,
-    getKit: vi.fn(),
-    publishKit: vi.fn(),
-  })),
+  // Vitest 5 exige implementation `function` para `new` (arrow quebra).
+  DesignMdApiClient: vi.fn().mockImplementation(function () {
+    return {
+      searchKits: harness.designMdSearch,
+      getKit: vi.fn(),
+      publishKit: vi.fn(),
+    };
+  }),
   DesignMdApiError: class DesignMdApiError extends Error {},
   DesignMdAuthError: class DesignMdAuthError extends Error {},
   DesignMdLicenseError: class DesignMdLicenseError extends Error {},

@@ -26,13 +26,16 @@ const stubs = vi.hoisted(() => ({
 }));
 
 vi.mock('../design/designmd-api-client', () => ({
-  DesignMdApiClient: vi.fn().mockImplementation(() => ({
-    searchKits: stubs.searchKits,
-    getKit: stubs.getKit,
-    publishKit: stubs.publishKit,
-    listPopularKits: stubs.listPopularKits,
-    listTags: stubs.listTags,
-  })),
+  // Vitest 5 exige implementation `function` para `new` (arrow quebra).
+  DesignMdApiClient: vi.fn().mockImplementation(function () {
+    return {
+      searchKits: stubs.searchKits,
+      getKit: stubs.getKit,
+      publishKit: stubs.publishKit,
+      listPopularKits: stubs.listPopularKits,
+      listTags: stubs.listTags,
+    };
+  }),
   DesignMdApiError: class DesignMdApiError extends Error {
     constructor(message: string) {
       super(message);
