@@ -76,11 +76,11 @@ export function WorkspaceCleanup() {
   }
 
   return (
-    <details className="workspace-cleanup">
-      <summary>Limpar projeto</summary>
+    <div className="workspace-cleanup">
+      <span className="workspace-cleanup__title">Limpar projeto</span>
       <button type="button" disabled={busy} onClick={() => void clean('panes')}>Fechar todos os panes</button>
       <button type="button" disabled={busy} onClick={() => void clean('missions')}>Apagar todas as missões</button>
       {busy && <span role="status">Aguarde…</span>}
-    </details>
+    </div>
   );
 }

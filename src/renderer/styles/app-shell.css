@@ -1611,7 +1611,7 @@
   }
 }
 .workspace-cleanup { padding: var(--space-2) var(--space-3); color: var(--text-dim); font-size: var(--text-xs); }
-.workspace-cleanup summary { cursor: pointer; padding: var(--space-1) 0; }
+.workspace-cleanup__title { display: block; padding: var(--space-1) 0; font-weight: 600; }
 .workspace-cleanup button { display: block; width: 100%; text-align: left; padding: var(--space-2); margin-top: var(--space-1); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elevated); color: var(--text); font: inherit; cursor: pointer; }
 .workspace-cleanup button:hover:not(:disabled) { border-color: var(--danger); }
 .workspace-cleanup button:disabled { opacity: .5; cursor: wait; }
