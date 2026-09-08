@@ -392,12 +392,14 @@ const missionSetStatusTool: McpToolDef = {
     'For standard squads, done requests automatic verification and returns the current mission state. ' +
     'If completionRequested=true, finish your turn so Nexus can verify; do not poll or mark blocked merely to wait. ' +
     'An explicit push waits for this verification attempt. If pushPending=true, no push is queued; retry with fresh authority after completion. ' +
-    'The mission reaches done ONLY after real completion. With a frozen PREVC contract, ' +
-    'done requires the complete workflow and immutable step receipts; without a frozen ' +
-    'contract (PREVC degrades, never blocks), a non-orchestrated completion requires a ' +
-    'durable note (or existing learnings) ≥40 chars. A standard squad mission may only ' +
-    'reach done through main-owned verified completion receipts; prose or a reporter claim ' +
-    'is never orchestration completion. ' +
+    'The mission reaches done ONLY after real completion. A standard squad mission is ' +
+    'completed through the main-owned verified path, which does NOT re-check PREVC step ' +
+    'receipts — do not assume incomplete steps will be refused there. For any other mission, ' +
+    'with a frozen PREVC contract, done requires the complete workflow and immutable step ' +
+    'receipts; without a frozen contract (PREVC degrades, never blocks), a non-orchestrated ' +
+    'completion requires a durable note (or existing learnings) ≥40 chars. A standard squad ' +
+    'mission may only reach done through main-owned verified completion receipts; prose or a ' +
+    'reporter claim is never orchestration completion. ' +
     'Use blocked when the environment is not ready (work may still ' +
     'have been delivered outside the pipeline). Use failed when execution started and ended in error. ' +
     'Optional note: required for durable blocked/failed justification and for done without ' +
