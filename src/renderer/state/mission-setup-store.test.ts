@@ -140,7 +140,7 @@ describe('mission setup draft store', () => {
     expect(localStorage.length).toBe(0);
   });
 
-  it('transfere a ideia pendente para a pasta vazia sem apagar rascunho existente', () => {
+  it('transfere a ideia pendente para a pasta vazia e mescla com rascunho existente', () => {
     const store = useMissionSetupStore.getState();
     store.setObjective('Quero um sistema de agendamento para minha barbearia');
     store.setTitle('Barbearia');
@@ -152,7 +152,9 @@ describe('mission setup draft store', () => {
     );
     expect(alpha.draft.title).toBe('Barbearia');
 
-    // Rascunho existente na pasta de destino nunca é sobrescrito.
+    // A tela promete as duas metades: "o texto acompanha sem apagar o rascunho
+    // que já existir nela". Antes só a segunda valia — o texto digitado era
+    // descartado em silêncio (F-345).
     store.setWorkspace(null);
     store.setObjective('Ideia nova que não pode apagar a beta');
     store.setWorkspace('/projects/beta');
@@ -160,9 +162,90 @@ describe('mission setup draft store', () => {
     store.setWorkspace(null);
     store.setObjective('Outra ideia nova');
     store.setWorkspace('/projects/beta');
-    expect(useMissionSetupStore.getState().draft.objective).toBe(
-      'Rascunho original da beta',
-    );
+    const merged = useMissionSetupStore.getState().draft.objective;
+    expect(merged).toContain('Rascunho original da beta');
+    expect(merged).toContain('Outra ideia nova');
+  });
+
+  it('não descarta a ideia digitada quando a pasta escolhida já tem rascunho (F-345)', () => {
+    const store = useMissionSetupStore.getState();
+    // Pasta com rascunho persistido.
+    store.setWorkspace('/projects/com-rascunho');
+    useMissionSetupStore.getState().setObjective('Rascunho antigo da pasta');
+    useMissionSetupStore.getState().setAcceptance('Aceite antigo');
+
+    // Operador volta ao Início sem projeto e digita uma ideia nova.
+    store.setWorkspace(null);
+    useMissionSetupStore.getState().setObjective('Ideia de cinco linhas do operador');
+    useMissionSetupStore.getState().setAcceptance('Aceite novo do operador');
+    useMissionSetupStore.getState().setTitle('Título novo');
+
+    // Escolhe a pasta que já tem rascunho.
+    store.setWorkspace('/projects/com-rascunho');
+    const draft = useMissionSetupStore.getState().draft;
+
+    // Nada some: nem o que estava na pasta, nem o que foi digitado.
+    expect(draft.objective).toContain('Rascunho antigo da pasta');
+    expect(draft.objective).toContain('Ideia de cinco linhas do operador');
+    expect(draft.acceptance).toContain('Aceite antigo');
+    expect(draft.acceptance).toContain('Aceite novo do operador');
+    // Título é rótulo, não prosa: nunca vira concatenação. A pasta não tinha
+    // título, então o digitado entra; se tivesse, o existente venceria.
+    expect(draft.title).toBe('Título novo');
+    expect(draft.title).not.toContain('\n');
+  });
+
+  it('mantém o título existente da pasta em vez de concatenar (F-345)', () => {
+    const store = useMissionSetupStore.getState();
+    store.setWorkspace('/projects/com-titulo');
+    useMissionSetupStore.getState().setObjective('Objetivo da pasta');
+    useMissionSetupStore.getState().setTitle('Título da pasta');
+
+    store.setWorkspace(null);
+    useMissionSetupStore.getState().setObjective('Objetivo digitado');
+    useMissionSetupStore.getState().setTitle('Título digitado');
+
+    store.setWorkspace('/projects/com-titulo');
+    const draft = useMissionSetupStore.getState().draft;
+    expect(draft.title).toBe('Título da pasta');
+    expect(draft.objective).toContain('Objetivo da pasta');
+    expect(draft.objective).toContain('Objetivo digitado');
+  });
+
+  it('não leva contextPaths do projeto fechado para o projeto aberto (F-346)', () => {
+    const store = useMissionSetupStore.getState();
+    store.setWorkspace('/projects/A');
+    useMissionSetupStore.getState().setObjective('Objetivo de A');
+    // contextPaths são relativos ao projeto: normalizeProjectContextPath rejeita
+    // caminho absoluto. O dano de transportá-los não é ler a árvore de A, é
+    // entregar a agentes com CWD em B caminhos que em B não existem.
+    useMissionSetupStore.getState().setContextPaths([
+      'src/server.ts',
+      'docs/notas.md',
+    ]);
+    expect(useMissionSetupStore.getState().draft.contextPaths).toEqual([
+      'src/server.ts',
+      'docs/notas.md',
+    ]);
+
+    // Fecha A. O texto sobrevive (é visível e editável), os caminhos não:
+    // pertencem à árvore que deixou de ser o CWD.
+    store.setWorkspace(null);
+    const carried = useMissionSetupStore.getState().draft;
+    expect(carried.objective).toBe('Objetivo de A');
+    expect(carried.contextPaths).toEqual([]);
+
+    // Abre B, que não tem rascunho. Nada de A vira anexo de B.
+    store.setWorkspace('/projects/B');
+    expect(useMissionSetupStore.getState().draft.contextPaths).toEqual([]);
+
+    // E reabrir A restaura os caminhos dele a partir do rascunho persistido,
+    // então limpá-los no fechamento não custa nada ao projeto de origem.
+    store.setWorkspace('/projects/A');
+    expect(useMissionSetupStore.getState().draft.contextPaths).toEqual([
+      'src/server.ts',
+      'docs/notas.md',
+    ]);
   });
 
   it('preserva a ideia ao fechar o projeto sem pasta', () => {

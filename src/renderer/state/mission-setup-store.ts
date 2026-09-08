@@ -616,15 +616,26 @@ export const useMissionSetupStore = create<MissionSetupStore>((set, get) => {
         // Sem pasta: a entrada é o Expresso e a ideia já escrita é
         // preservada na memória em vez de descartada. Nada é persistido
         // até uma pasta ser escolhida.
+        //
+        // `contextPaths` é a exceção: são caminhos de arquivo absolutos ou
+        // relativos à árvore do workspace que está sendo fechado. Transportá-los
+        // para o próximo projeto entrega a agentes cujo CWD é outro caminhos que
+        // não existem lá (F-346). Texto viaja porque é visível e editável antes
+        // de iniciar; caminho de arquivo não, porque o agente não tem como
+        // perceber que é de outra árvore.
+        const closingWorkspace = current.workspacePath !== null;
+        const carried = closingWorkspace
+          ? { ...current.draft, contextPaths: [] as string[] }
+          : current.draft;
         const draft =
-          current.draft.step === 'express'
-            ? current.draft
+          carried.step === 'express'
+            ? carried
             : {
-                ...current.draft,
+                ...carried,
                 step: 'express' as const,
                 revision: Math.min(
                   Number.MAX_SAFE_INTEGER,
-                  current.draft.revision + 1,
+                  carried.revision + 1,
                 ),
               };
         set({
@@ -638,34 +649,60 @@ export const useMissionSetupStore = create<MissionSetupStore>((set, get) => {
         return;
       }
 
-      // Ideia pendente (escrita sem pasta): transfere só os campos de texto
-      // quando a pasta de destino está vazia. Rascunho existente na pasta
-      // nunca é sobrescrito.
+      // Ideia pendente (escrita sem pasta): viaja para a pasta escolhida. Se a
+      // pasta já tem rascunho, os dois são mesclados — ver applyPending.
       const pending =
         !current.workspacePath && !draftTextFieldsEmpty(current.draft)
           ? draftTextFields(current.draft)
           : null;
+      /** Junta dois textos não vazios sem perder nenhum dos dois. */
+      const joinNonEmpty = (existing: string, incoming: string): string => {
+        const a = existing.trim();
+        const b = incoming.trim();
+        if (!a) return incoming;
+        if (!b) return existing;
+        if (a === b) return existing;
+        return `${existing.replace(/\s+$/, '')}\n\n${b}`;
+      };
       const applyPending = (
         base: MissionSetupDraft,
       ): MissionSetupDraft => {
-        if (!pending) return base;
+        if (!pending) return cloneDraft(base);
         const next = cloneDraft(base);
-        next.objective = pending.objective;
-        next.acceptance = pending.acceptance;
-        next.title = pending.title;
-        next.contextPaths = [...pending.contextPaths];
+        if (draftTextFieldsEmpty(base)) {
+          // Destino vazio: transferência integral.
+          next.objective = pending.objective;
+          next.acceptance = pending.acceptance;
+          next.title = pending.title;
+          next.contextPaths = [...pending.contextPaths];
+        } else {
+          // Destino com texto. A tela promete as duas coisas ao mesmo tempo —
+          // "o texto acompanha sem apagar o rascunho que já existir nela" — e
+          // antes só a segunda valia: o pending era descartado em silêncio, sem
+          // toast e sem undo (F-345). Sobrescrever quebraria a outra metade.
+          // Mesclar é o único desfecho que honra as duas.
+          next.objective = joinNonEmpty(base.objective, pending.objective);
+          next.acceptance = joinNonEmpty(
+            base.acceptance ?? '',
+            pending.acceptance ?? '',
+          );
+          // Título é rótulo, não prosa: concatenar produziria nonsense. O que já
+          // existe vence; o pending só entra se não houver título.
+          if (base.title.trim().length === 0) next.title = pending.title;
+          next.contextPaths = [
+            ...new Set([...base.contextPaths, ...pending.contextPaths]),
+          ];
+        }
         next.revision = Math.max(base.revision, current.draft.revision);
         return next;
       };
 
       const remembered = workspaceDrafts[workspacePath];
       if (remembered) {
-        const withPending =
-          pending && draftTextFieldsEmpty(remembered.draft)
-            ? applyPending(remembered.draft)
-            : null;
-        const draft = withPending ?? cloneDraft(remembered.draft);
-        const persistence = withPending
+        // applyPending mescla quando o destino tem texto e transfere quando está
+        // vazio; sem pending devolve um clone, como antes.
+        const draft = applyPending(remembered.draft);
+        const persistence = pending
           ? persistWorkspaceDraft(workspacePath, draft)
           : remembered.persistence;
         set({
@@ -683,12 +720,8 @@ export const useMissionSetupStore = create<MissionSetupStore>((set, get) => {
       }
 
       const loaded = readWorkspaceDraft(workspacePath);
-      const withPending =
-        pending && draftTextFieldsEmpty(loaded.draft)
-          ? applyPending(loaded.draft)
-          : null;
-      const draft = withPending ?? loaded.draft;
-      const persistence = withPending
+      const draft = applyPending(loaded.draft);
+      const persistence = pending
         ? persistWorkspaceDraft(workspacePath, draft)
         : loaded.persistence;
       set({
