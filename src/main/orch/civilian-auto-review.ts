@@ -56,7 +56,7 @@ export type CivilianAutoReviewOutcome =
     }
   | { readonly kind: 'repair-dispatched' }
   | { readonly kind: 'blocked'; readonly description: string }
-  | { readonly kind: 'defer-to-roster-review' };
+  | { readonly kind: 'defer-to-roster-review'; readonly reason?: string };
 
 export interface CivilianAutoReviewInput {
   readonly mission: Mission;
@@ -284,8 +284,20 @@ export async function enforceCivilianAutoReview(
       },
       dependencies.git ? { git: dependencies.git } : {},
     );
-  } catch {
-    return { kind: 'defer-to-roster-review' };
+  } catch (error) {
+    // F-144: este catch alimentava uma prova `unavailable` que o gate de revisão
+    // aceita como conclusão, sem nenhuma linha de log. A política de concluir
+    // quando o scanner não pôde rodar é deliberada e tem teste com nome próprio;
+    // o que não pode é um bug no scanner, um sensor novo que lança e um timeout
+    // transitório produzirem exatamente o mesmo desfecho silencioso que uma
+    // indisponibilidade legítima. O motivo segue adiante para aparecer na nota
+    // persistida da entrega, não só no log.
+    const reason = error instanceof Error ? error.message : String(error);
+    console.warn(
+      '[civilian-auto-review] scanner de qualidade falhou; adiando para revisão do roster:',
+      reason,
+    );
+    return { kind: 'defer-to-roster-review', reason };
   }
 
   // Etapa 2 — sensores mecânicos Nexus-owned: typecheck + auditoria de

@@ -1168,16 +1168,28 @@ async function civilianAutoReviewGate(
           if (spawned.length > 0) {
             return { action: 'wait', spawnedReviewers: spawned };
           }
-        } catch {
-          // spawn falhou → conclui com nota honesta abaixo
+        } catch (error) {
+          // F-144: mesmo padrão do catch do scanner — sem log, uma falha de spawn
+          // de revisor é indistinguível de "não havia revisor para spawnar".
+          console.warn(
+            '[civilian-delivery] spawn de revisor do roster falhou; concluindo com nota:',
+            error instanceof Error ? error.message : String(error),
+          );
         }
       }
+      // F-144: o motivo real viaja até a nota persistida. Antes, tanto "não há
+      // repositório git" quanto "o scanner lançou" quanto "o spawn do revisor
+      // falhou" produziam o mesmo texto genérico, e a prova gravada como
+      // `unavailable` não permitia diagnosticar depois o que tinha acontecido.
+      const reasonSuffix = outcome.reason ? ` Motivo: ${outcome.reason}` : '';
       return {
         action: 'proceed',
-        proof: { status: 'unavailable', note: 'Scanner indisponível; conclusão pela política de entrega existente.' },
+        proof: {
+          status: 'unavailable',
+          note: `Scanner indisponível; conclusão pela política de entrega existente.${reasonSuffix}`,
+        },
         extras: {
-          note:
-            'Scanner determinístico indisponível (workspace sem repositório git ou leitura falhou); conclusão sem varredura automática.',
+          note: `Scanner determinístico indisponível (workspace sem repositório git, leitura falhou, ou o revisor do roster não pôde ser spawnado); conclusão sem varredura automática.${reasonSuffix}`,
         },
       };
     }
