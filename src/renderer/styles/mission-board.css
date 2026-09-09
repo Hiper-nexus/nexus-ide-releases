@@ -619,12 +619,16 @@
   background: var(--bg);
 }
 
+/* Lado a lado a largura é a preferência viva publicada na raiz do quadro
+   (`--nexus-inspector-w`, mission-inspector-width-store). A faixa é a que o
+   shell já concede ao inspetor (`--nexus-shell-inspector-min/max`,
+   app-shell.css); os fallbacks repetem o valor atual dos tokens. */
 .mission-board__inspector-region {
-  flex: 0 0 var(--mission-inspector-size, 40%);
-  width: var(--mission-inspector-size, 40%);
+  flex: 0 0 var(--nexus-inspector-w, 400px);
+  width: var(--nexus-inspector-w, 400px);
   height: 100%;
-  min-width: calc(var(--space-8) + var(--space-8) + var(--space-8) + var(--space-8) + var(--space-8));
-  max-width: 50%;
+  min-width: var(--nexus-shell-inspector-min, 360px);
+  max-width: var(--nexus-shell-inspector-max, 440px);
   min-height: 0;
   overflow: hidden;
   background: var(--bg-elevated);
@@ -656,6 +660,58 @@
 }
 
 .mission-board__splitter:focus-visible {
+  border-color: var(--accent);
+  outline: 2px solid var(--accent);
+  outline-offset: calc(-1 * var(--radius-xs));
+  background: var(--accent-soft);
+}
+
+/* Inspetor recolhido: um trilho de 8px na borda onde ele reabre, com a altura
+   inteira do quadro como alvo (nunca menos de 32px, DESIGN.md §6). Mesmo
+   idioma do divisor: fio de borda, acento só em hover/foco. */
+.mission-board__inspector-rail {
+  position: relative;
+  flex: 0 0 8px;
+  width: 8px;
+  min-width: 8px;
+  max-width: 8px;
+  min-height: 32px;
+  align-self: stretch;
+  border-inline-start: 1px solid var(--border-strong);
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+/* O punho: um fio de 2×24px centralizado em tom de texto. Só a opacidade
+   anima — nada de gradiente ou glow. */
+.mission-board__inspector-rail::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 2px;
+  height: 24px;
+  border-radius: var(--radius-round);
+  background: var(--text-faint);
+  opacity: 0.6;
+  transform: translate(-50%, -50%);
+  transition: opacity 150ms var(--ease-out-quart);
+}
+
+.mission-board__inspector-rail:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.mission-board__inspector-rail:hover::before,
+.mission-board__inspector-rail:focus-visible::before {
+  background: var(--accent);
+  opacity: 1;
+}
+
+.mission-board__inspector-rail:focus-visible {
   border-color: var(--accent);
   outline: 2px solid var(--accent);
   outline-offset: calc(-1 * var(--radius-xs));
@@ -1205,7 +1261,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .mission-graph__surface::after {
+  .mission-graph__surface::after,
+  .mission-board__inspector-rail::before {
     transition: none;
   }
 
@@ -1816,6 +1873,26 @@
     border-inline-start: 0;
     border-block-start: 1px solid var(--border-strong);
     cursor: row-resize;
+  }
+
+  /* Empilhado, o inspetor reabre embaixo: o trilho deita na borda inferior
+     com a mesma espessura do divisor. */
+  .mission-board__inspector-rail {
+    flex-basis: 8px;
+    width: 100%;
+    min-width: 100%;
+    max-width: 100%;
+    height: 8px;
+    min-height: 8px;
+    max-height: 8px;
+    border-inline-start: 0;
+    border-block-start: 1px solid var(--border-strong);
+    cursor: row-resize;
+  }
+
+  .mission-board__inspector-rail::before {
+    width: 24px;
+    height: 2px;
   }
 
   .mission-board__inspector-region {

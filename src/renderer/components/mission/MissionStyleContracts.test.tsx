@@ -109,6 +109,11 @@ function MissionStyleFixture() {
               </button>
             </div>
           </aside>
+          <div
+            className="mission-board__inspector-rail"
+            role="separator"
+            tabIndex={0}
+          />
         </div>
       </section>
     </>
@@ -173,6 +178,7 @@ describe('Mission Setup and Mission Board style contracts', () => {
       host.querySelector<HTMLButtonElement>('.mission-board__button'),
       host.querySelector<HTMLButtonElement>('.mission-agent-card'),
       host.querySelector<HTMLElement>('.mission-board__splitter'),
+      host.querySelector<HTMLElement>('.mission-board__inspector-rail'),
     ];
 
     for (const control of controls) {
@@ -210,6 +216,46 @@ describe('Mission Setup and Mission Board style contracts', () => {
     expect(styleLengthPx(boardPrimary, 'min-height')).toBeGreaterThanOrEqual(40);
     expect(styleLengthPx(setupDense, 'min-height')).toBeGreaterThanOrEqual(32);
     expect(styleLengthPx(boardDense, 'min-height')).toBeGreaterThanOrEqual(32);
+  });
+
+  it.each([
+    { containerWidth: 1_200, stacked: false },
+    { containerWidth: 900, stacked: true },
+  ])(
+    'keeps the collapsed inspector rail 8px thin on its edge (stacked: $stacked) with a >=32px tall target side by side',
+    ({ containerWidth, stacked }) => {
+      installStyleContract(missionStyles, { width: 1_400, containerWidth });
+      const host = render(<MissionStyleFixture />);
+      const rail = host.querySelector<HTMLElement>(
+        '.mission-board__inspector-rail',
+      );
+      if (!rail) throw new Error('Collapsed inspector rail did not render');
+
+      if (stacked) {
+        expect(styleLengthPx(rail, 'height')).toBe(8);
+        expect(computedCssValue(rail, 'width')).toBe('100%');
+        expect(computedCssValue(rail, 'cursor')).toBe('row-resize');
+      } else {
+        expect(styleLengthPx(rail, 'width')).toBe(8);
+        expect(styleLengthPx(rail, 'min-height')).toBeGreaterThanOrEqual(32);
+        expect(computedCssValue(rail, 'align-self')).toBe('stretch');
+        expect(computedCssValue(rail, 'cursor')).toBe('col-resize');
+      }
+    },
+  );
+
+  it('keeps the inspector region inside the shell band without inline styles per child', () => {
+    installStyleContract(missionStyles, { width: 1_400, containerWidth: 1_200 });
+    const host = render(<MissionStyleFixture />);
+    const inspector = host.querySelector<HTMLElement>(
+      '.mission-board__inspector-region',
+    );
+    if (!inspector) throw new Error('Inspector region did not render');
+
+    expect(computedCssValue(inspector, 'width')).toBe('400px');
+    expect(styleLengthPx(inspector, 'min-width')).toBe(360);
+    expect(styleLengthPx(inspector, 'max-width')).toBe(440);
+    expect(inspector.getAttribute('style')).toBeNull();
   });
 
   it.each(missionViewports)(

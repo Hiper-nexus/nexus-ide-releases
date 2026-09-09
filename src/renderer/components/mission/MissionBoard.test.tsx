@@ -22,6 +22,15 @@ import {
   type MissionEvent,
 } from '../../../shared/mission-events';
 import { useMissionInspectorStore } from '../../state/mission-inspector-store';
+import {
+  MISSION_INSPECTOR_WIDTH_DEFAULT,
+  MISSION_INSPECTOR_WIDTH_MAX,
+  MISSION_INSPECTOR_WIDTH_MIN,
+  MISSION_INSPECTOR_WIDTH_STORAGE_KEY,
+  useInspectorWidthStore,
+} from '../../state/mission-inspector-width-store';
+
+const MISSION_INSPECTOR_COLLAPSED_KEY = 'nexus.mission.inspector-collapsed';
 
 interface ControlledQuestionState {
   readonly optionId: string | null;
@@ -469,6 +478,101 @@ function keyDown(element: HTMLElement, key: string): void {
   });
 }
 
+function mouseDown(element: HTMLElement, clientX: number, clientY = 400): void {
+  act(() => {
+    element.dispatchEvent(
+      new MouseEvent('mousedown', {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        clientX,
+        clientY,
+      }),
+    );
+  });
+}
+
+function mouseMove(clientX: number, clientY = 400): void {
+  act(() => {
+    window.dispatchEvent(new MouseEvent('mousemove', { clientX, clientY }));
+  });
+}
+
+function mouseUp(): void {
+  act(() => {
+    window.dispatchEvent(new MouseEvent('mouseup', { button: 0 }));
+  });
+}
+
+function doubleClick(element: HTMLElement): void {
+  act(() => {
+    element.dispatchEvent(
+      new MouseEvent('dblclick', { bubbles: true, cancelable: true }),
+    );
+  });
+}
+
+/**
+ * Quadro medido: 1200×800 põe o inspetor lado a lado (> 1099px). A borda
+ * direita fica em x=1200, então a largura pedida por arraste é 1200 − clientX.
+ */
+function mockWorkspaceRect(width = 1_200, height = 800): void {
+  vi.spyOn(
+    HTMLElement.prototype,
+    'getBoundingClientRect',
+  ).mockImplementation(function (this: HTMLElement): DOMRect {
+    const measured =
+      this.classList.contains('mission-board') ||
+      this.classList.contains('mission-board__workspace-layout')
+        ? width
+        : 0;
+    return {
+      x: 0,
+      y: 0,
+      width: measured,
+      height,
+      top: 0,
+      right: measured,
+      bottom: height,
+      left: 0,
+      toJSON: () => ({}),
+    } as DOMRect;
+  });
+}
+
+function inspectorRail(host: ParentNode): HTMLElement | null {
+  return host.querySelector<HTMLElement>('.mission-board__inspector-rail');
+}
+
+function inspectorSplitter(host: ParentNode): HTMLElement | null {
+  return host.querySelector<HTMLElement>('.mission-board__splitter');
+}
+
+function liveInspectorWidth(host: ParentNode): string {
+  return (
+    host
+      .querySelector<HTMLElement>('.mission-board')
+      ?.style.getPropertyValue('--nexus-inspector-w') ?? ''
+  );
+}
+
+async function mountSideBySideBoard(): Promise<HTMLDivElement> {
+  mockWorkspaceRect();
+  api.snapshot.mockResolvedValue(
+    canonicalSnapshot({ state: 'running', stateReason: undefined }),
+  );
+  const { host } = mount();
+  await flush();
+  return host;
+}
+
+async function collapseInspector(host: HTMLDivElement): Promise<HTMLElement> {
+  await click(buttonByName(host, 'detalhes ›'));
+  const rail = inspectorRail(host);
+  if (!rail) throw new Error('Collapsed inspector rail did not render');
+  return rail;
+}
+
 function emitChanged(items: MissionSummarySnapshot[]): void {
   const current = [...subscriptions].reverse().find((item) => item.active);
   if (!current) throw new Error('Mission change subscription not registered');
@@ -477,6 +581,8 @@ function emitChanged(items: MissionSummarySnapshot[]): void {
 
 beforeEach(() => {
   subscriptions.length = 0;
+  localStorage.clear();
+  useInspectorWidthStore.setState({ width: MISSION_INSPECTOR_WIDTH_DEFAULT });
   api.snapshot.mockReset();
   api.command.mockReset();
   api.onChanged.mockReset();
@@ -672,34 +778,7 @@ describe('MissionBoard canonical controller', () => {
   });
 
   it('exposes a focusable vertical separator that controls the inspector and changes its bounded split from the keyboard', async () => {
-    vi.spyOn(
-      HTMLElement.prototype,
-      'getBoundingClientRect',
-    ).mockImplementation(function (this: HTMLElement): DOMRect {
-      const width =
-        this.classList.contains('mission-board') ||
-        this.classList.contains('mission-board__workspace-layout')
-          ? 1_200
-          : 0;
-      return {
-        x: 0,
-        y: 0,
-        width,
-        height: 800,
-        top: 0,
-        right: width,
-        bottom: 800,
-        left: 0,
-        toJSON: () => ({}),
-      } as DOMRect;
-    });
-
-    api.snapshot.mockResolvedValue(
-      canonicalSnapshot({ state: 'running', stateReason: undefined }),
-    );
-
-    const { host } = mount();
-    await flush();
+    const host = await mountSideBySideBoard();
 
     const separator = host.querySelector<HTMLElement>('[role="separator"]');
     expect(separator).not.toBeNull();
@@ -729,9 +808,9 @@ describe('MissionBoard canonical controller', () => {
     const minimum = Number(separator.getAttribute('aria-valuemin'));
     const maximum = Number(separator.getAttribute('aria-valuemax'));
     const initial = Number(separator.getAttribute('aria-valuenow'));
-    expect(minimum).toBe(320);
-    expect(maximum).toBe(600);
-    expect(initial).toBe(480);
+    expect(minimum).toBe(MISSION_INSPECTOR_WIDTH_MIN);
+    expect(maximum).toBe(MISSION_INSPECTOR_WIDTH_MAX);
+    expect(initial).toBe(MISSION_INSPECTOR_WIDTH_DEFAULT);
 
     keyDown(separator, 'ArrowLeft');
     const afterLeft = Number(separator.getAttribute('aria-valuenow'));
@@ -748,6 +827,185 @@ describe('MissionBoard canonical controller', () => {
 
     keyDown(separator, 'End');
     expect(Number(separator.getAttribute('aria-valuenow'))).toBe(maximum);
+
+    // Teclado também persiste: a largura sobrevive a um reinício.
+    expect(useInspectorWidthStore.getState().width).toBe(maximum);
+    expect(localStorage.getItem(MISSION_INSPECTOR_WIDTH_STORAGE_KEY)).toBe(
+      String(maximum),
+    );
+  });
+
+  it('publishes the live width as a CSS var on the board root and persists what the splitter drag sets', async () => {
+    const host = await mountSideBySideBoard();
+
+    expect(liveInspectorWidth(host)).toBe(
+      `${MISSION_INSPECTOR_WIDTH_DEFAULT}px`,
+    );
+    // Nenhum filho carrega `style` inline próprio: o CSS lê a var da raiz.
+    expect(
+      host
+        .querySelector('.mission-board__workspace-layout')
+        ?.getAttribute('style'),
+    ).toBeNull();
+    expect(
+      host.querySelector('.mission-board__inspector-region')?.getAttribute('style'),
+    ).toBeNull();
+
+    const separator = inspectorSplitter(host);
+    if (!separator) throw new Error('Splitter did not render');
+
+    mouseDown(separator, 800);
+    expect(document.activeElement).toBe(separator);
+
+    mouseMove(780);
+    expect(separator.getAttribute('aria-valuenow')).toBe('420');
+    expect(liveInspectorWidth(host)).toBe('420px');
+    expect(separator.getAttribute('aria-valuetext')).toContain('420px');
+
+    // O arraste para na faixa do shell: 600px pedidos viram o máximo.
+    mouseMove(600);
+    expect(separator.getAttribute('aria-valuenow')).toBe(
+      String(MISSION_INSPECTOR_WIDTH_MAX),
+    );
+    mouseMove(1_100);
+    expect(separator.getAttribute('aria-valuenow')).toBe(
+      String(MISSION_INSPECTOR_WIDTH_MIN),
+    );
+
+    mouseMove(790);
+    mouseUp();
+    expect(useInspectorWidthStore.getState().width).toBe(410);
+    expect(localStorage.getItem(MISSION_INSPECTOR_WIDTH_STORAGE_KEY)).toBe(
+      '410',
+    );
+
+    // Soltou: mover o ponteiro não redimensiona mais.
+    mouseMove(900);
+    expect(separator.getAttribute('aria-valuenow')).toBe('410');
+    expect(liveInspectorWidth(host)).toBe('410px');
+  });
+
+  it('opens at the stored width and restores the default on a splitter double-click', async () => {
+    useInspectorWidthStore.getState().setWidth(424);
+    const host = await mountSideBySideBoard();
+
+    const separator = inspectorSplitter(host);
+    if (!separator) throw new Error('Splitter did not render');
+    expect(separator.getAttribute('aria-valuenow')).toBe('424');
+    expect(liveInspectorWidth(host)).toBe('424px');
+
+    doubleClick(separator);
+    expect(separator.getAttribute('aria-valuenow')).toBe(
+      String(MISSION_INSPECTOR_WIDTH_DEFAULT),
+    );
+    expect(localStorage.getItem(MISSION_INSPECTOR_WIDTH_STORAGE_KEY)).toBe(
+      String(MISSION_INSPECTOR_WIDTH_DEFAULT),
+    );
+  });
+
+  it('leaves a focusable reopening rail only while the inspector is collapsed, and a click brings it back', async () => {
+    const host = await mountSideBySideBoard();
+    expect(inspectorRail(host)).toBeNull();
+
+    const rail = await collapseInspector(host);
+    expect(inspectorSplitter(host)).toBeNull();
+    expect(host.querySelector('[aria-label="Inspetor da missão"]')).toBeNull();
+    expect(localStorage.getItem(MISSION_INSPECTOR_COLLAPSED_KEY)).toBe('1');
+    expect(rail.getAttribute('role')).toBe('separator');
+    expect(rail.tabIndex).toBe(0);
+    expect(rail.getAttribute('aria-label')).toMatch(/inspetor/i);
+    expect(rail.getAttribute('aria-orientation')).toBe('vertical');
+    expect(rail.getAttribute('aria-valuenow')).toBe('0');
+    // A largura guardada não some enquanto o painel está recolhido.
+    expect(liveInspectorWidth(host)).toBe(
+      `${MISSION_INSPECTOR_WIDTH_DEFAULT}px`,
+    );
+
+    mouseDown(rail, 1_198);
+    mouseMove(1_195); // 3px < limiar: ainda é um clique
+    expect(inspectorRail(host)).not.toBeNull();
+    mouseUp();
+
+    expect(inspectorRail(host)).toBeNull();
+    const separator = inspectorSplitter(host);
+    expect(separator).not.toBeNull();
+    expect(
+      host.querySelector('[aria-label="Inspetor da missão"]'),
+    ).not.toBeNull();
+    expect(document.activeElement).toBe(separator);
+    expect(separator?.getAttribute('aria-valuenow')).toBe(
+      String(MISSION_INSPECTOR_WIDTH_DEFAULT),
+    );
+    expect(localStorage.getItem(MISSION_INSPECTOR_COLLAPSED_KEY)).toBe('0');
+  });
+
+  it('reopens the inspector by dragging the rail inward and keeps the dragged width', async () => {
+    const host = await mountSideBySideBoard();
+    const rail = await collapseInspector(host);
+
+    mouseDown(rail, 1_198);
+    mouseMove(1_194); // 4px: abaixo do limiar de 8px
+    expect(inspectorRail(host)).not.toBeNull();
+    expect(inspectorSplitter(host)).toBeNull();
+
+    mouseMove(1_180); // 18px para dentro: reabre no piso da faixa
+    expect(inspectorRail(host)).toBeNull();
+    const separator = inspectorSplitter(host);
+    if (!separator) throw new Error('Splitter did not replace the rail');
+    expect(separator.getAttribute('aria-valuenow')).toBe(
+      String(MISSION_INSPECTOR_WIDTH_MIN),
+    );
+
+    mouseMove(790);
+    expect(separator.getAttribute('aria-valuenow')).toBe('410');
+    expect(liveInspectorWidth(host)).toBe('410px');
+
+    mouseUp();
+    expect(useInspectorWidthStore.getState().width).toBe(410);
+    expect(localStorage.getItem(MISSION_INSPECTOR_WIDTH_STORAGE_KEY)).toBe(
+      '410',
+    );
+    expect(localStorage.getItem(MISSION_INSPECTOR_COLLAPSED_KEY)).toBe('0');
+  });
+
+  it.each([
+    { key: 'Enter' },
+    { key: ' ' },
+    { key: 'ArrowLeft' },
+  ])('reopens the inspector from the rail with $key and hands focus to the splitter', async ({ key }) => {
+    const host = await mountSideBySideBoard();
+    const rail = await collapseInspector(host);
+
+    rail.focus();
+    keyDown(rail, 'ArrowRight'); // sentido contrário: nada acontece
+    expect(inspectorRail(host)).not.toBeNull();
+
+    keyDown(rail, key);
+    expect(inspectorRail(host)).toBeNull();
+    const separator = inspectorSplitter(host);
+    expect(separator).not.toBeNull();
+    expect(document.activeElement).toBe(separator);
+    expect(localStorage.getItem(MISSION_INSPECTOR_COLLAPSED_KEY)).toBe('0');
+  });
+
+  it('still mounts with the inspector open when storage is unavailable', async () => {
+    const original = Object.getOwnPropertyDescriptor(window, 'localStorage');
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get() {
+        throw new Error('storage disabled');
+      },
+    });
+    try {
+      const host = await mountSideBySideBoard();
+      expect(inspectorSplitter(host)).not.toBeNull();
+      expect(inspectorRail(host)).toBeNull();
+
+      await click(buttonByName(host, 'detalhes ›'));
+      expect(inspectorRail(host)).not.toBeNull();
+    } finally {
+      if (original) Object.defineProperty(window, 'localStorage', original);
+    }
   });
 
   it('refreshes only when onChanged includes the mounted mission id', async () => {

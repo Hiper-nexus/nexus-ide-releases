@@ -381,3 +381,24 @@ Paseo contributors. Distributed under the Apache License 2.0.
 
 Provenance ledger: `third_party/provenance/paseo.json`. Full license: `third_party/licenses/Apache-2.0.txt`.
 
+## Agent Orchestrator (Untrivial-ai/agent-orchestrator) — resizable inspector pattern
+
+The mission inspector width preference and its collapsed reopening rail
+(`src/renderer/state/mission-inspector-width-store.ts`,
+`src/renderer/components/mission/MissionBoard.tsx`,
+`src/renderer/styles/mission-board.css`) port the interaction pattern of
+`frontend/src/renderer/hooks/useResizable.ts` and the inspector container in
+`frontend/src/renderer/components/SessionView.tsx` from
+[`Untrivial-ai/agent-orchestrator`](https://github.com/Untrivial-ai/agent-orchestrator)
+at commit `73f0046ec5aee8f546a2ad75e4f75ad50ff222c9`: a panel width persisted in
+`localStorage` and published as a CSS custom property on the layout root instead
+of inline styles, a thin collapsed rail that reopens the panel once a drag
+travels past an 8px threshold, and double-click to restore the default width.
+The Nexus code is a fresh TypeScript implementation on top of its existing
+mouse-driven splitter and zustand stores; no upstream file is redistributed.
+Copyright remains with the Agent Orchestrator contributors. Distributed under
+the Apache License 2.0.
+
+Provenance ledger: `third_party/provenance/agent-orchestrator-2026-09-09.json`.
+Full license: `third_party/licenses/Apache-2.0.txt`.
+

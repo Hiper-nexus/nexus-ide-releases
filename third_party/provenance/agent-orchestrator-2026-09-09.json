@@ -1,0 +1,40 @@
+{
+  "source": "Untrivial-ai/agent-orchestrator",
+  "upstreamCommit": "73f0046ec5aee8f546a2ad75e4f75ad50ff222c9",
+  "upstreamRepository": "https://github.com/Untrivial-ai/agent-orchestrator",
+  "license": "Apache-2.0",
+  "copyright": "Copyright remains with the Agent Orchestrator contributors",
+  "licenseFile": "third_party/licenses/Apache-2.0.txt",
+  "importedAt": "2026-09-09",
+  "vendoringPolicy": "Pattern port only. The upstream hook and container were read to understand the interaction (persisted panel width published as a CSS custom property on the layout root, collapsed 8px rail that reopens on drag past an 8px threshold, double-click reset). No upstream file is copied or redistributed; Nexus reimplements the behaviour in its own TypeScript on top of the pre-existing mouse-driven mission splitter, its zustand store idiom (rail-width-store) and BEM CSS. Entries are therefore type 'adapted'.",
+  "files": [
+    {
+      "upstreamUrl": "https://github.com/Untrivial-ai/agent-orchestrator/blob/73f0046ec5aee8f546a2ad75e4f75ad50ff222c9/frontend/src/renderer/hooks/useResizable.ts",
+      "upstreamCommit": "73f0046ec5aee8f546a2ad75e4f75ad50ff222c9",
+      "originalSha256": "75e5b4e30f1768ca10a6fc8c530cddfb1eb1ae0f798d1fd3c72b710acbfbaec3",
+      "originalPath": "frontend/src/renderer/hooks/useResizable.ts",
+      "nexusPath": "src/renderer/state/mission-inspector-width-store.ts + src/renderer/components/mission/MissionBoard.tsx (splitter/rail handlers)",
+      "license": "Apache-2.0",
+      "copyright": "Copyright remains with the Agent Orchestrator contributors",
+      "type": "adapted",
+      "changeSummary": "Upstream persists a clamped width in localStorage from a pointer-driven hook and writes it to a CSS var on :root, with a separate collapsed-rail pointer handler that expands the owner after an 8px travel threshold and a double-click reset. Nexus keeps the persisted width in a zustand store (clamp band mirrors --nexus-shell-inspector-min/max; tolerant storage read/write), publishes it as --nexus-inspector-w on the mission board root via React style, reuses its existing window mousemove/mouseup/blur drag with a shared beginPointerDrag helper, and adds keyboard reopening (Enter/Space/Arrow) plus focus hand-off to the splitter. Stacked (height) mode stays session-only ratio state as before.",
+      "secondaryProvenance": [],
+      "importDate": "2026-09-09",
+      "status": "imported"
+    },
+    {
+      "upstreamUrl": "https://github.com/Untrivial-ai/agent-orchestrator/blob/73f0046ec5aee8f546a2ad75e4f75ad50ff222c9/frontend/src/renderer/components/SessionView.tsx",
+      "upstreamCommit": "73f0046ec5aee8f546a2ad75e4f75ad50ff222c9",
+      "originalSha256": "f2d98986633d12927a535a7ce7311649b2e43861cad6e333c6709b7a6a551c8b",
+      "originalPath": "frontend/src/renderer/components/SessionView.tsx (inspector container, lines ~108-118 and ~310-358)",
+      "nexusPath": "src/renderer/components/mission/MissionBoard.tsx (collapsed rail markup) + src/renderer/styles/mission-board.css (.mission-board__inspector-rail, .mission-board__inspector-region)",
+      "license": "Apache-2.0",
+      "copyright": "Copyright remains with the Agent Orchestrator contributors",
+      "type": "adapted",
+      "changeSummary": "Upstream renders a framer-motion inspector sized by `width: var(--ao-inspector-w)` and, when collapsed, an absolutely positioned 8px-wide `inspector-collapsed-rail` with a resize cursor. Nexus renders the rail as a flex sibling of the graph with role=separator, aria-label/orientation/value*, tabIndex=0, a 2px focus-visible outline, a >=32px tall target, a 2x24px grip animated on opacity only (150ms --ease-out-quart, reduced-motion guarded) and a stacked-mode variant along the bottom edge. No framer-motion, no Tailwind, no upstream markup copied.",
+      "secondaryProvenance": [],
+      "importDate": "2026-09-09",
+      "status": "imported"
+    }
+  ]
+}

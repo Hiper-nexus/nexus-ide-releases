@@ -37,6 +37,11 @@ import {
   formatMissionTelemetry,
 } from '../../../shared/handoff-telemetry';
 import { useMissionInspectorStore } from '../../state/mission-inspector-store';
+import {
+  MISSION_INSPECTOR_WIDTH_MAX,
+  MISSION_INSPECTOR_WIDTH_MIN,
+  useInspectorWidthStore,
+} from '../../state/mission-inspector-width-store';
 import { toUserFacingMissionRecovery } from '../../lib/user-facing-mission-error';
 import { listPanes } from '../../lib/split-tree';
 import { askConfirm } from '../../state/confirm-store';
@@ -66,12 +71,21 @@ import {
 const RECENT_EVENT_LIMIT = 40;
 const WORKSPACE_STACK_BREAKPOINT = 1099;
 const MISSION_INSPECTOR_COLLAPSED_KEY = 'nexus.mission.inspector-collapsed';
-const DEFAULT_INSPECTOR_RATIO = 0.4;
-const VERTICAL_MIN_INSPECTOR_SIZE = 320;
-const VERTICAL_MAX_INSPECTOR_RATIO = 0.5;
-const HORIZONTAL_MIN_INSPECTOR_RATIO = 0.3;
-const HORIZONTAL_MAX_INSPECTOR_RATIO = 0.6;
+/**
+ * Empilhado (quadro ≤ 1099px) o inspetor vive embaixo do grafo e sua medida é
+ * ALTURA — fração da área de trabalho, só desta sessão. Lado a lado a medida é
+ * a largura persistida do `useInspectorWidthStore`.
+ */
+const STACKED_INSPECTOR_DEFAULT_RATIO = 0.4;
+const STACKED_INSPECTOR_MIN_RATIO = 0.3;
+const STACKED_INSPECTOR_MAX_RATIO = 0.6;
 const SPLITTER_KEYBOARD_STEP = 16;
+/**
+ * Arraste a partir do trilho recolhido só reabre depois de o ponteiro andar
+ * este tanto para dentro do quadro: um clique trêmulo não vira
+ * redimensionamento (limiar do Agent Orchestrator).
+ */
+const INSPECTOR_RAIL_EXPAND_THRESHOLD = 8;
 
 type SplitterOrientation = 'horizontal' | 'vertical';
 
@@ -83,37 +97,34 @@ function workspaceOrientation(width: number): SplitterOrientation {
     : 'vertical';
 }
 
-function inspectorExtent(
-  orientation: SplitterOrientation,
-  dimensions: WorkspaceDimensions,
-): number {
-  return orientation === 'vertical' ? dimensions.width : dimensions.height;
-}
-
-function minimumInspectorSize(
-  orientation: SplitterOrientation,
-  extent: number,
-): number {
-  return orientation === 'vertical'
-    ? Math.min(VERTICAL_MIN_INSPECTOR_SIZE, extent * VERTICAL_MAX_INSPECTOR_RATIO)
-    : extent * HORIZONTAL_MIN_INSPECTOR_RATIO;
-}
-
-
-function clampInspectorSize(
-  size: number,
-  orientation: SplitterOrientation,
-  extent: number,
-): number {
-  const maximum =
-    extent *
-    (orientation === 'vertical'
-      ? VERTICAL_MAX_INSPECTOR_RATIO
-      : HORIZONTAL_MAX_INSPECTOR_RATIO);
+function clampStackedInspectorHeight(size: number, extent: number): number {
   return Math.min(
-    maximum,
-    Math.max(minimumInspectorSize(orientation, extent), size),
+    extent * STACKED_INSPECTOR_MAX_RATIO,
+    Math.max(extent * STACKED_INSPECTOR_MIN_RATIO, size),
   );
+}
+
+function readStoredInspectorCollapsed(): boolean {
+  try {
+    return (
+      typeof window !== 'undefined' &&
+      window.localStorage.getItem(MISSION_INSPECTOR_COLLAPSED_KEY) === '1'
+    );
+  } catch {
+    // Storage bloqueado não pode impedir o quadro de montar.
+    return false;
+  }
+}
+
+function persistInspectorCollapsed(collapsed: boolean): void {
+  try {
+    window.localStorage.setItem(
+      MISSION_INSPECTOR_COLLAPSED_KEY,
+      collapsed ? '1' : '0',
+    );
+  } catch {
+    // Preferência é best-effort; o estado da sessão já vale.
+  }
 }
 
 
@@ -247,26 +258,37 @@ export function MissionBoard({
   const [workspaceDimensions, setWorkspaceDimensions] =
     useState<WorkspaceDimensions>({ width: 0, height: 0 });
   const [inspectorCollapsed, setInspectorCollapsed] = useState(
-    () =>
-      typeof window !== 'undefined' &&
-      window.localStorage.getItem(MISSION_INSPECTOR_COLLAPSED_KEY) === '1',
+    readStoredInspectorCollapsed,
   );
   const toggleInspectorCollapsed = useCallback((): void => {
     setInspectorCollapsed((current) => {
       const next = !current;
-      try {
-        window.localStorage.setItem(
-          MISSION_INSPECTOR_COLLAPSED_KEY,
-          next ? '1' : '0',
-        );
-      } catch {
-        // Preferência é best-effort; o estado da sessão já vale.
-      }
+      persistInspectorCollapsed(next);
       return next;
     });
   }, []);
-  const [inspectorRatio, setInspectorRatio] = useState(
-    DEFAULT_INSPECTOR_RATIO,
+  // Reaberto pelo trilho, o foco tem que pousar no divisor que o substitui —
+  // senão quem veio pelo teclado cai no body.
+  const splitterRef = useRef<HTMLDivElement | null>(null);
+  const focusSplitterAfterExpandRef = useRef(false);
+  const expandInspectorFromRail = useCallback((): void => {
+    focusSplitterAfterExpandRef.current = true;
+    setInspectorCollapsed((current) => {
+      if (!current) return current;
+      persistInspectorCollapsed(false);
+      return false;
+    });
+  }, []);
+  useEffect(() => {
+    if (inspectorCollapsed || !focusSplitterAfterExpandRef.current) return;
+    focusSplitterAfterExpandRef.current = false;
+    splitterRef.current?.focus({ preventScroll: true });
+  }, [inspectorCollapsed]);
+  const inspectorWidth = useInspectorWidthStore((state) => state.width);
+  const setInspectorWidth = useInspectorWidthStore((state) => state.setWidth);
+  const resetInspectorWidth = useInspectorWidthStore((state) => state.reset);
+  const [stackedInspectorRatio, setStackedInspectorRatio] = useState(
+    STACKED_INSPECTOR_DEFAULT_RATIO,
   );
 
   const currentMission = useOrchStore(
@@ -462,7 +484,6 @@ export function MissionBoard({
         width: Math.max(0, width),
         height: Math.max(0, height),
       };
-      const nextOrientation = workspaceOrientation(nextDimensions.width);
 
       setWorkspaceDimensions((current) =>
         current.width === nextDimensions.width &&
@@ -470,13 +491,6 @@ export function MissionBoard({
           ? current
           : nextDimensions,
       );
-      setInspectorRatio((current) => {
-        const extent = inspectorExtent(nextOrientation, nextDimensions);
-        if (extent <= 0) return current;
-        return (
-          clampInspectorSize(current * extent, nextOrientation, extent) / extent
-        );
-      });
     };
 
     const initialRect = workspace.getBoundingClientRect();
@@ -501,37 +515,45 @@ export function MissionBoard({
   }, [currentSnapshot?.id]);
 
   const splitterOrientation = workspaceOrientation(workspaceDimensions.width);
-  const currentInspectorExtent = inspectorExtent(
-    splitterOrientation,
-    workspaceDimensions,
-  );
-  const inspectorMinimum = minimumInspectorSize(
-    splitterOrientation,
-    currentInspectorExtent,
-  );
-  const inspectorMaximum =
-    currentInspectorExtent *
-    (splitterOrientation === 'vertical'
-      ? VERTICAL_MAX_INSPECTOR_RATIO
-      : HORIZONTAL_MAX_INSPECTOR_RATIO);
-  const inspectorSize =
-    currentInspectorExtent > 0
+  const isSideBySide = splitterOrientation === 'vertical';
+  const stackedExtent = workspaceDimensions.height;
+  const stackedInspectorHeight =
+    stackedExtent > 0
       ? Math.round(
-          clampInspectorSize(
-            inspectorRatio * currentInspectorExtent,
-            splitterOrientation,
-            currentInspectorExtent,
+          clampStackedInspectorHeight(
+            stackedInspectorRatio * stackedExtent,
+            stackedExtent,
           ),
         )
       : 0;
-  const inspectorPercent =
-    currentInspectorExtent > 0
-      ? Math.round((inspectorSize / currentInspectorExtent) * 100)
-      : DEFAULT_INSPECTOR_RATIO * 100;
-  const workspaceStyle = {
+  const inspectorMinimum = isSideBySide
+    ? MISSION_INSPECTOR_WIDTH_MIN
+    : stackedExtent * STACKED_INSPECTOR_MIN_RATIO;
+  const inspectorMaximum = isSideBySide
+    ? MISSION_INSPECTOR_WIDTH_MAX
+    : stackedExtent * STACKED_INSPECTOR_MAX_RATIO;
+  const inspectorSize = isSideBySide ? inspectorWidth : stackedInspectorHeight;
+  const stackedInspectorPercent =
+    stackedExtent > 0
+      ? Math.round((stackedInspectorHeight / stackedExtent) * 100)
+      : STACKED_INSPECTOR_DEFAULT_RATIO * 100;
+  const inspectorValueText = isSideBySide
+    ? `Inspetor com ${inspectorWidth}px de largura`
+    : `Inspetor ocupa ${stackedInspectorPercent}% da altura do quadro`;
+  // A medida viva mora na raiz do quadro como CSS var: o CSS lê, nenhum filho
+  // carrega `style` próprio.
+  const boardStyle = {
+    '--nexus-inspector-w': `${inspectorWidth}px`,
     '--mission-inspector-size':
-      currentInspectorExtent > 0 ? `${inspectorSize}px` : '40%',
+      stackedExtent > 0 ? `${stackedInspectorHeight}px` : '40%',
   } as CSSProperties;
+
+  const resizeStackedInspectorTo = (size: number, extent: number): void => {
+    if (extent <= 0) return;
+    setStackedInspectorRatio(
+      clampStackedInspectorHeight(size, extent) / extent,
+    );
+  };
 
   const handleSplitterKeyDown = (
     event: ReactKeyboardEvent<HTMLDivElement>,
@@ -545,34 +567,31 @@ export function MissionBoard({
         nextSize = inspectorMaximum;
         break;
       case 'ArrowLeft':
-        if (splitterOrientation !== 'vertical') return;
+        if (!isSideBySide) return;
         nextSize = inspectorSize + SPLITTER_KEYBOARD_STEP;
         break;
       case 'ArrowRight':
-        if (splitterOrientation !== 'vertical') return;
+        if (!isSideBySide) return;
         nextSize = inspectorSize - SPLITTER_KEYBOARD_STEP;
         break;
       case 'ArrowUp':
-        if (splitterOrientation !== 'horizontal') return;
+        if (isSideBySide) return;
         nextSize = inspectorSize + SPLITTER_KEYBOARD_STEP;
         break;
       case 'ArrowDown':
-        if (splitterOrientation !== 'horizontal') return;
+        if (isSideBySide) return;
         nextSize = inspectorSize - SPLITTER_KEYBOARD_STEP;
         break;
       default:
         return;
     }
 
-    if (currentInspectorExtent <= 0) return;
     event.preventDefault();
-    setInspectorRatio(
-      clampInspectorSize(
-        nextSize,
-        splitterOrientation,
-        currentInspectorExtent,
-      ) / currentInspectorExtent,
-    );
+    if (isSideBySide) {
+      setInspectorWidth(nextSize);
+      return;
+    }
+    resizeStackedInspectorTo(nextSize, stackedExtent);
   };
 
   const resizeInspectorAt = (clientX: number, clientY: number): void => {
@@ -580,25 +599,45 @@ export function MissionBoard({
     if (!workspace) return;
 
     const rect = workspace.getBoundingClientRect();
-    const nextDimensions = { width: rect.width, height: rect.height };
-    const nextOrientation = workspaceOrientation(rect.width);
-    const nextExtent = inspectorExtent(nextOrientation, nextDimensions);
-    if (nextExtent <= 0) return;
+    if (workspaceOrientation(rect.width) === 'vertical') {
+      setInspectorWidth(rect.right - clientX);
+      return;
+    }
 
-    const requestedSize =
-      nextOrientation === 'vertical'
-        ? rect.right - clientX
-        : rect.bottom - clientY;
+    const nextDimensions = { width: rect.width, height: rect.height };
     setWorkspaceDimensions((current) =>
       current.width === nextDimensions.width &&
       current.height === nextDimensions.height
         ? current
         : nextDimensions,
     );
-    setInspectorRatio(
-      clampInspectorSize(requestedSize, nextOrientation, nextExtent) /
-        nextExtent,
-    );
+    resizeStackedInspectorTo(rect.bottom - clientY, rect.height);
+  };
+
+  const beginPointerDrag = (
+    onMove: (moveEvent: MouseEvent) => void,
+    onRelease?: () => void,
+  ): void => {
+    dragCleanupRef.current?.();
+
+    function finishDrag(): void {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('blur', finishDrag);
+      if (dragCleanupRef.current === finishDrag) {
+        dragCleanupRef.current = null;
+      }
+    }
+
+    function handleMouseUp(): void {
+      finishDrag();
+      onRelease?.();
+    }
+
+    dragCleanupRef.current = finishDrag;
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('blur', finishDrag);
   };
 
   const handleSplitterMouseDown = (
@@ -608,25 +647,53 @@ export function MissionBoard({
 
     event.preventDefault();
     event.currentTarget.focus();
-    dragCleanupRef.current?.();
-
-    function handleMouseMove(moveEvent: MouseEvent): void {
+    beginPointerDrag((moveEvent) => {
       resizeInspectorAt(moveEvent.clientX, moveEvent.clientY);
-    }
+    });
+  };
 
-    function finishDrag(): void {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', finishDrag);
-      window.removeEventListener('blur', finishDrag);
-      if (dragCleanupRef.current === finishDrag) {
-        dragCleanupRef.current = null;
-      }
-    }
+  const handleRailMouseDown = (
+    event: ReactMouseEvent<HTMLDivElement>,
+  ): void => {
+    if (event.button !== 0) return;
 
-    dragCleanupRef.current = finishDrag;
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', finishDrag);
-    window.addEventListener('blur', finishDrag);
+    event.preventDefault();
+    event.currentTarget.focus();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const railOrientation = splitterOrientation;
+    let expanded = false;
+    beginPointerDrag(
+      (moveEvent) => {
+        // Arrastar para dentro do quadro é puxar o inspetor de volta.
+        const travel =
+          railOrientation === 'vertical'
+            ? startX - moveEvent.clientX
+            : startY - moveEvent.clientY;
+        if (!expanded) {
+          if (travel < INSPECTOR_RAIL_EXPAND_THRESHOLD) return;
+          expanded = true;
+          expandInspectorFromRail();
+        }
+        resizeInspectorAt(moveEvent.clientX, moveEvent.clientY);
+      },
+      () => {
+        // Sem arraste o gesto foi um clique: reabre na medida guardada.
+        if (!expanded) expandInspectorFromRail();
+      },
+    );
+  };
+
+  const handleRailKeyDown = (
+    event: ReactKeyboardEvent<HTMLDivElement>,
+  ): void => {
+    const opensInspector =
+      event.key === 'Enter' ||
+      event.key === ' ' ||
+      (isSideBySide ? event.key === 'ArrowLeft' : event.key === 'ArrowUp');
+    if (!opensInspector) return;
+    event.preventDefault();
+    expandInspectorFromRail();
   };
 
   const beginBoardAction = (
@@ -962,6 +1029,7 @@ export function MissionBoard({
       data-state={currentSnapshot.state}
       aria-labelledby={headingId}
       aria-busy={loading || pendingAction !== null}
+      style={boardStyle}
     >
       <header className="mission-board__header">
         <div className="mission-board__identity">
@@ -1173,7 +1241,6 @@ export function MissionBoard({
       <div
         ref={workspaceRef}
         className="mission-board__workspace-layout"
-        style={workspaceStyle}
       >
         <div className="mission-board__graph-region">
           <MissionGraph
@@ -1201,9 +1268,28 @@ export function MissionBoard({
             {inspectorCollapsed ? '‹ detalhes' : 'detalhes ›'}
           </button>
         </div>
-        {!inspectorCollapsed && (
+        {inspectorCollapsed ? (
+          // Recolhido, sobra um trilho de 8px na borda onde o inspetor
+          // reabre: clique, arraste para dentro ou Enter trazem o painel
+          // de volta sem depender do botão "detalhes".
+          <div
+            className="mission-board__inspector-rail"
+            role="separator"
+            tabIndex={0}
+            aria-label="Reabrir inspetor da missão"
+            aria-orientation={splitterOrientation}
+            aria-valuemin={0}
+            aria-valuemax={Math.round(inspectorMaximum)}
+            aria-valuenow={0}
+            aria-valuetext="Inspetor recolhido"
+            title="Clique ou arraste para reabrir o inspetor"
+            onKeyDown={handleRailKeyDown}
+            onMouseDown={handleRailMouseDown}
+          />
+        ) : (
           <>
             <div
+              ref={splitterRef}
               className="mission-board__splitter"
               role="separator"
               tabIndex={0}
@@ -1213,11 +1299,15 @@ export function MissionBoard({
               aria-valuemin={Math.round(inspectorMinimum)}
               aria-valuemax={Math.round(inspectorMaximum)}
               aria-valuenow={inspectorSize}
-              aria-valuetext={`Inspetor ocupa ${inspectorPercent}% da ${
-                splitterOrientation === 'vertical' ? 'largura' : 'altura'
-              } do quadro`}
+              aria-valuetext={inspectorValueText}
+              title={
+                isSideBySide
+                  ? 'Arraste para ajustar a largura; clique duplo restaura o padrão'
+                  : 'Arraste para ajustar a altura'
+              }
               onKeyDown={handleSplitterKeyDown}
               onMouseDown={handleSplitterMouseDown}
+              onDoubleClick={isSideBySide ? resetInspectorWidth : undefined}
             />
             <div
               id={inspectorRegionId}
