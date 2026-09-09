@@ -13,6 +13,7 @@ import {
   type MissionSnapshot,
   type MissionStateReason,
   type MissionSummarySnapshot,
+  missionWorktreeSchema,
 } from '../../shared/mission-engine-contract';
 import {
   missionStatusSchema,
@@ -107,6 +108,15 @@ const snapshotPaneViewSchema = z
   })
   .strict();
 
+/** Worktree como o registry de runtime o conhece; `branchRef` pode vir `refs/heads/…`. */
+const snapshotWorktreeViewSchema = z
+  .object({
+    branchRef: z.string().trim().min(1).max(512),
+    worktreePath: z.string().min(1).max(4096).optional(),
+    status: missionWorktreeSchema.shape.status,
+  })
+  .strict();
+
 export const projectMissionSnapshotViewSchema = z
   .object({
     mission: snapshotMissionViewSchema,
@@ -120,6 +130,7 @@ export const projectMissionSnapshotViewSchema = z
     panes: z.array(snapshotPaneViewSchema).max(64),
     openQuestion: missionQuestionSchema.optional(),
     roster: z.array(strictSquadAgentSchema).max(64),
+    worktrees: z.array(snapshotWorktreeViewSchema).max(64).optional(),
   })
   .strict();
 
@@ -478,6 +489,11 @@ export function projectMissionSnapshot(
   const view = projectMissionSnapshotViewSchema.parse(rawView);
   const { state, stateReason } = projectState(view);
   const completed = view.tasks.filter((task) => task.status === 'done').length;
+  const worktrees = (view.worktrees ?? []).map((worktree) => ({
+    branch: missionWorktreeBranchLabel(worktree.branchRef),
+    ...(worktree.worktreePath ? { path: worktree.worktreePath } : {}),
+    status: worktree.status,
+  }));
 
   const snapshot = {
     id: view.mission.id,
@@ -517,11 +533,17 @@ export function projectMissionSnapshot(
       : {}),
     ...(view.mission.result ? { result: view.mission.result } : {}),
     allowedActions: allowedActionsForState(state, stateReason),
+    ...(worktrees.length > 0 ? { worktrees } : {}),
     version: view.mission.version,
     updatedAt: view.mission.updatedAt,
   };
 
   return missionSnapshotSchema.parse(snapshot);
+}
+
+/** `refs/heads/feat/x` → `feat/x`; o rail mostra a branch, não a ref. */
+export function missionWorktreeBranchLabel(branchRef: string): string {
+  return branchRef.replace(/^refs\/heads\//u, '');
 }
 
 export function projectMissionSummarySnapshot(
@@ -534,6 +556,7 @@ export function projectMissionSummarySnapshot(
     state: snapshot.state,
     ...(snapshot.stateReason ? { stateReason: snapshot.stateReason } : {}),
     progress: snapshot.progress,
+    ...(snapshot.worktrees ? { worktrees: snapshot.worktrees } : {}),
     needsAttention:
       !isIsolationStopReasonCode(snapshot.stateReason?.code) &&
       [

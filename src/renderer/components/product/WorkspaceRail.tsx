@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type {
   MissionLifecycleState,
   MissionStateReason,
+  MissionWorktree,
 } from '../../../shared/mission-engine-contract';
 import {
   MISSION_LIFECYCLE_LABELS,
@@ -24,6 +25,16 @@ import { useProductNavigationStore } from '../../state/product-navigation-store'
 import { WorkspaceCleanup } from './WorkspaceCleanup';
 import { NexusMark } from '../NexusMark';
 import { PixelIcon, type PixelIconName } from '../PixelIcon';
+import { workspacePathLabels } from './workspace-path-label';
+import { relativeAgeLabel } from '../../../shared/mission-kanban';
+import {
+  flattenMissionBranchGroups,
+  worktreeStatusLabel,
+} from './mission-branch-groups';
+import {
+  loadCollapsedWorkspacePaths,
+  saveCollapsedWorkspacePaths,
+} from '../../lib/mission-rail-prefs';
 
 export interface WorkspaceRailMission {
   id: string;
@@ -33,11 +44,19 @@ export interface WorkspaceRailMission {
   stateReason?: Pick<MissionStateReason, 'code' | 'label'>;
   /** Entrega pronta para revisar; o aceite humano continua pendente. */
   awaitsOperatorReview?: boolean;
+  /** Worktrees da missão: a branch é o nó da árvore, como no herdr/Sidecar. */
+  worktrees?: readonly MissionWorktree[];
+  updatedAt?: number;
 }
 
 export interface WorkspaceRailWorkspace {
   id: string;
   name: string;
+  /**
+   * Caminho da pasta no disco. O apelido sozinho não distingue dois `web`
+   * abertos de repositórios diferentes — era exatamente o que o rail mostrava.
+   */
+  path?: string;
   missions: readonly WorkspaceRailMission[];
 }
 
@@ -190,6 +209,11 @@ interface WorkspaceGroupProps {
   label: string;
   group: 'active' | 'recent';
   workspaces: readonly WorkspaceRailWorkspace[];
+  /**
+   * Calculado sobre os DOIS grupos: o rótulo de `web` só é honesto se levar em
+   * conta o outro `web`, mesmo que ele esteja na outra seção.
+   */
+  pathLabels: ReadonlyMap<string, string>;
   selection: WorkspaceRailSelection;
   onSelectWorkspace: (workspaceId: string) => void;
   onSelectMission: (missionId: string, workspaceId?: string) => void;
@@ -208,6 +232,7 @@ function WorkspaceGroup({
   label,
   group,
   workspaces,
+  pathLabels,
   selection,
   onSelectWorkspace,
   onSelectMission,
@@ -216,6 +241,8 @@ function WorkspaceGroup({
 }: WorkspaceGroupProps) {
   const labelId = `workspace-rail-${group}-label`;
   const missionCount = workspaces.reduce((count, workspace) => count + workspace.missions.length, 0);
+  // "Recentes" nunca tem missão para contar: lá o número útil é de pastas.
+  const groupCount = group === 'recent' ? workspaces.length : missionCount;
 
   const paneMissions = useOrchStore((s) => s.paneMissions);
   const root = useLayoutStore((s) => s.root);
@@ -239,6 +266,21 @@ function WorkspaceGroup({
   const [expandedMissions, setExpandedMissions] = useState<
     Record<string, boolean>
   >(() => (selectedMissionId ? { [selectedMissionId]: true } : {}));
+  // Árvore de spaces: projeto recolhível, preferência persistida por caminho.
+  // Default = tudo aberto (comportamento de sempre); o projeto da missão
+  // selecionada abre mesmo recolhido, para a seleção nunca sumir da vista.
+  const [collapsedWorkspaces, setCollapsedWorkspaces] = useState<
+    ReadonlySet<string>
+  >(() => new Set(loadCollapsedWorkspacePaths()));
+  const toggleWorkspaceCollapsed = (workspaceId: string) => {
+    setCollapsedWorkspaces((prev) => {
+      const next = new Set(prev);
+      if (next.has(workspaceId)) next.delete(workspaceId);
+      else next.add(workspaceId);
+      saveCollapsedWorkspacePaths([...next]);
+      return next;
+    });
+  };
   // O inicializador do useState roda uma vez: sem isto, navegar para outra
   // missão depois do mount nunca expandia os agentes dela.
   useEffect(() => {
@@ -260,8 +302,8 @@ function WorkspaceGroup({
         <span id={labelId} className="workspace-rail__group-title">
           {label}
         </span>
-        {missionCount > 0 ? (
-          <span className="workspace-rail__group-pill">{missionCount}</span>
+        {groupCount > 0 ? (
+          <span className="workspace-rail__group-pill">{groupCount}</span>
         ) : null}
       </div>
       <ul className="workspace-rail__workspace-list">
@@ -285,6 +327,9 @@ function WorkspaceGroup({
           const visibleMissions = workspace.missions.slice(0, missionLimit);
           const hiddenMissionCount =
             workspace.missions.length - visibleMissions.length;
+          const missionRows = flattenMissionBranchGroups(visibleMissions);
+          const isCollapsed =
+            collapsedWorkspaces.has(workspace.id) && selectedIndex < 0;
 
           return (
             <li className="workspace-rail__workspace-item" key={workspace.id}>
@@ -296,17 +341,60 @@ function WorkspaceGroup({
                   }`}
                   data-workspace-id={workspace.id}
                   aria-current={workspaceSelected ? 'page' : undefined}
-                  aria-label={`Abrir workspace ${workspace.name}`}
-                  title={workspace.name}
+                  aria-label={
+                    workspace.path
+                      ? `Abrir workspace ${workspace.name} em ${workspace.path}`
+                      : `Abrir workspace ${workspace.name}`
+                  }
+                  title={
+                    workspace.path
+                      ? `${workspace.name}\n${workspace.path}`
+                      : workspace.name
+                  }
                   onClick={() => onSelectWorkspace(workspace.id)}
                 >
                   <span className="workspace-rail__workspace-icon" aria-hidden>
                     <PixelIcon name="files" size={12} />
                   </span>
-                  <span className="workspace-rail__row-label">
-                    {workspace.name}
+                  <span className="workspace-rail__workspace-copy">
+                    <span className="workspace-rail__row-label">
+                      {workspace.name}
+                    </span>
+                    {workspace.path ? (
+                      <span className="workspace-rail__workspace-path">
+                        {pathLabels.get(workspace.id) ?? workspace.path}
+                      </span>
+                    ) : null}
                   </span>
                 </button>
+                {workspace.missions.length > 0 ? (
+                  <button
+                    type="button"
+                    className={`workspace-rail__workspace-toggle${
+                      isCollapsed ? ' workspace-rail__workspace-toggle--collapsed' : ''
+                    }`}
+                    data-action="toggle-workspace"
+                    data-workspace-id={workspace.id}
+                    aria-expanded={!isCollapsed}
+                    aria-label={
+                      isCollapsed
+                        ? `Mostrar as ${workspace.missions.length} missões de ${workspace.name}`
+                        : `Recolher as missões de ${workspace.name}`
+                    }
+                    title={isCollapsed ? 'Mostrar missões' : 'Recolher missões'}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      toggleWorkspaceCollapsed(workspace.id);
+                    }}
+                  >
+                    <PixelIcon name="chevron-down" size={10} />
+                    {isCollapsed ? (
+                      <span className="workspace-rail__workspace-count">
+                        {workspace.missions.length}
+                      </span>
+                    ) : null}
+                  </button>
+                ) : null}
                 {onRemoveWorkspace ? (
                   <button
                     type="button"
@@ -333,12 +421,33 @@ function WorkspaceGroup({
                 ) : null}
               </div>
 
-              {workspace.missions.length > 0 ? (
+              {workspace.missions.length > 0 && !isCollapsed ? (
                 <ul
                   className="workspace-rail__mission-list"
                   aria-label={`Missões em ${workspace.name}`}
                 >
-                  {visibleMissions.map((mission) => {
+                  {missionRows.map((row) => {
+                    if (row.kind === 'branch') {
+                      const statusLabel = worktreeStatusLabel(row.status);
+                      return (
+                        <li
+                          key={`branch:${row.branch}`}
+                          className={`workspace-rail__branch workspace-rail__branch--${row.status}`}
+                          data-rail-branch={row.branch}
+                          aria-label={`Branch ${row.branch}${statusLabel ? ` (${statusLabel})` : ''}`}
+                          title={row.branch}
+                        >
+                          <span className="workspace-rail__branch-glyph" aria-hidden="true">
+                            ⑂
+                          </span>
+                          <span className="workspace-rail__branch-name">{row.branch}</span>
+                          {statusLabel ? (
+                            <span className="workspace-rail__branch-status">{statusLabel}</span>
+                          ) : null}
+                        </li>
+                      );
+                    }
+                    const mission = row.mission;
                     const status = missionStatusDisplay(
                       mission.status,
                       mission.needsAttention,
@@ -390,6 +499,14 @@ function WorkspaceGroup({
                                 <span className="workspace-rail__mission-status">
                                   {status.label}
                                 </span>
+                                {mission.updatedAt ? (
+                                  <span
+                                    className="workspace-rail__mission-age"
+                                    title={new Date(mission.updatedAt).toLocaleString()}
+                                  >
+                                    {relativeAgeLabel(mission.updatedAt, Date.now())}
+                                  </span>
+                                ) : null}
                               </span>
                             </span>
                           </button>
@@ -586,6 +703,10 @@ export function WorkspaceRail({
   const layoutRoot = useLayoutStore((s) => s.root);
   const totalPanes = listPanes(layoutRoot).length;
   const quotaEntries = useQuotaStore((s) => s.snapshot.entries);
+  const pathLabels = useMemo(
+    () => workspacePathLabels([...activeWorkspaces, ...recentWorkspaces]),
+    [activeWorkspaces, recentWorkspaces],
+  );
 
   return (
     <nav className="workspace-rail__navigation" aria-label="Destinos do Nexus">
@@ -747,6 +868,7 @@ export function WorkspaceRail({
           label={activeWorkspaces.some((workspace) => workspace.missions.length > 0) ? 'Em andamento' : 'Projeto atual'}
           group="active"
           workspaces={activeWorkspaces}
+          pathLabels={pathLabels}
           selection={selection}
           onSelectWorkspace={onSelectWorkspace}
           onSelectMission={onSelectMission}
@@ -758,6 +880,7 @@ export function WorkspaceRail({
           label="Recentes"
           group="recent"
           workspaces={recentWorkspaces}
+          pathLabels={pathLabels}
           selection={selection}
           onSelectWorkspace={onSelectWorkspace}
           onSelectMission={onSelectMission}
@@ -768,6 +891,11 @@ export function WorkspaceRail({
       </div>
 
       <footer className="workspace-rail__footer">
+        {/*
+          Tudo que pode ceder altura mora aqui: numa janela baixa esta faixa
+          encolhe (e rola) em vez de esmagar a lista de projetos acima.
+        */}
+        <div className="workspace-rail__utilities">
         <WorkspaceCleanup />
         {onOpenAttention && attentionCount > 0 ? (
           <button
@@ -858,6 +986,7 @@ export function WorkspaceRail({
             </div>
           </div>
         ) : null}
+        </div>
 
         <div className="workspace-rail__cockpit-status">
           <button

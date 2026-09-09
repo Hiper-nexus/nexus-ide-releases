@@ -11,6 +11,7 @@ import { useTerminalGridDialogStore } from '../../state/terminal-grid-dialog-sto
 import { useQuotaStore } from '../../state/quota-store';
 import { useAdapterStore } from '../../state/adapter-store';
 import { useLayoutStore } from '../../state/layout-store';
+import { useWorkspaceStore } from '../../state/workspace-store';
 import { buildGridTree, createLeaf, createPane } from '../../lib/split-tree';
 
 (
@@ -821,5 +822,157 @@ describe('WorkspaceRail', () => {
         useLayoutStore.setState({ root: previousRoot });
       });
     }
+  });
+  it('mantém a limpeza destrutiva recolhida em vez de fixá-la sobre a lista de projetos', () => {
+    const previous = useWorkspaceStore.getState().current;
+    act(() => {
+      useWorkspaceStore.setState({
+        current: { path: '/projetos/atlas', name: 'Atlas local', lastOpenedAt: 1 },
+      });
+    });
+
+    try {
+      const { host } = renderRail();
+      const cleanup = host.querySelector<HTMLDetailsElement>('.workspace-cleanup');
+      expect(cleanup).not.toBeNull();
+      expect(cleanup!.tagName).toBe('DETAILS');
+      expect(cleanup!.open).toBe(false);
+      expect(
+        host.querySelector('[data-action="clean-panes"]'),
+      ).toBeNull();
+
+      act(() => {
+        cleanup!.open = true;
+        cleanup!.dispatchEvent(new Event('toggle'));
+      });
+      expect(host.querySelector('[data-action="clean-panes"]')).not.toBeNull();
+      expect(host.querySelector('[data-action="clean-missions"]')).not.toBeNull();
+    } finally {
+      act(() => {
+        useWorkspaceStore.setState({ current: previous });
+      });
+    }
+  });
+
+  it('mostra o caminho da pasta na linha do projeto, não só o apelido', () => {
+    const { host } = renderRail({
+      recentWorkspaces: [
+        {
+          id: '/Users/ana/dev/cometa',
+          path: '/Users/ana/dev/cometa',
+          name: 'Cometa',
+          missions: [],
+        },
+      ],
+    });
+
+    const row = host.querySelector<HTMLButtonElement>(
+      '[data-workspace-id="/Users/ana/dev/cometa"]',
+    );
+    expect(row).not.toBeNull();
+    expect(row!.title).toContain('/Users/ana/dev/cometa');
+    expect(row!.getAttribute('aria-label')).toContain('/Users/ana/dev/cometa');
+    expect(
+      host.querySelector('.workspace-rail__workspace-path')?.textContent,
+    ).toBe('…/dev/cometa');
+  });
+
+  it('conta as pastas de Recentes, que nunca têm missões para contar', () => {
+    const { host } = renderRail({
+      recentWorkspaces: [
+        { id: '/a', path: '/a', name: 'Alfa', missions: [] },
+        { id: '/b', path: '/b', name: 'Beta', missions: [] },
+        { id: '/c', path: '/c', name: 'Gama', missions: [] },
+      ],
+    });
+
+    const recent = host.querySelector('[data-rail-group="recent"]');
+    expect(
+      recent?.querySelector('.workspace-rail__group-pill')?.textContent,
+    ).toBe('3');
+  });
+
+  it('separa as utilidades encolhíveis da linha de Configurações, que fica sempre visível', () => {
+    const { host } = renderRail();
+    const utilities = host.querySelector('.workspace-rail__utilities');
+    const pinned = host.querySelector('.workspace-rail__cockpit-status');
+
+    expect(utilities).not.toBeNull();
+    expect(pinned).not.toBeNull();
+    expect(utilities!.contains(pinned)).toBe(false);
+    expect(
+      utilities!.compareDocumentPosition(pinned!) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+  it('desenha a branch do worktree como nó da árvore, e nada para missão sem worktree', () => {
+    const { host } = renderRail({
+      activeWorkspaces: [
+        {
+          id: 'atlas',
+          name: 'Atlas local',
+          missions: [
+            { id: 'm-solta', title: 'Sem worktree', status: 'running', needsAttention: false },
+            {
+              id: 'm-branch',
+              title: 'Com worktree',
+              status: 'running',
+              needsAttention: false,
+              worktrees: [{ branch: 'feat/mf-103-operacao-furos', status: 'queued' }],
+            },
+          ],
+        },
+      ],
+      selection: { kind: 'mission', missionId: 'm-solta' },
+    });
+    const branch = host.querySelector('[data-rail-branch="feat/mf-103-operacao-furos"]');
+    expect(branch).not.toBeNull();
+    expect(branch!.textContent).toContain('feat/mf-103-operacao-furos');
+    expect(branch!.textContent).toContain('na fila');
+    // A missão solta vem antes do nó de branch, direto sob o projeto.
+    const list = host.querySelector('.workspace-rail__mission-list')!;
+    const order = [...list.children].map((el) =>
+      el.getAttribute('data-rail-branch') ?? el.querySelector('[data-mission-id]')?.getAttribute('data-mission-id'),
+    );
+    expect(order).toEqual(['m-solta', 'feat/mf-103-operacao-furos', 'm-branch']);
+    expect(host.querySelectorAll('.workspace-rail__branch')).toHaveLength(1);
+  });
+
+  it('recolhe as missões de um projeto e lembra disso; a seleção nunca some', () => {
+    localStorage.clear();
+    const { host } = renderRail({ selection: null });
+    const toggle = host.querySelector<HTMLButtonElement>(
+      '[data-action="toggle-workspace"][data-workspace-id="atlas"]',
+    )!;
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(host.querySelector('[data-mission-id="mission-running"]')).not.toBeNull();
+
+    act(() => toggle.click());
+    expect(host.querySelector('[data-mission-id="mission-running"]')).toBeNull();
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(toggle.textContent).toContain('2');
+    expect(JSON.parse(localStorage.getItem('nexus.activityRail.collapsedWorkspaces') ?? '[]')).toEqual(['atlas']);
+
+    // Projeto recolhido, mas a missão selecionada mora nele: continua à vista.
+    const { host: second } = renderRail({ selection: { kind: 'mission', missionId: 'mission-running' } });
+    expect(second.querySelector('[data-mission-id="mission-running"]')).not.toBeNull();
+    localStorage.clear();
+  });
+  it('mostra a idade da missão sem segundos, ao lado do estado', () => {
+    const { host } = renderRail({
+      activeWorkspaces: [
+        {
+          id: 'atlas',
+          name: 'Atlas local',
+          missions: [
+            { id: 'm-5min', title: 'Cinco minutos', status: 'running', needsAttention: false, updatedAt: Date.now() - 5 * 60_000 },
+            { id: 'm-sem-idade', title: 'Sem idade', status: 'running', needsAttention: false },
+          ],
+        },
+      ],
+      selection: null,
+    });
+    expect(host.querySelector('[data-mission-id="m-5min"] .workspace-rail__mission-age')?.textContent).toBe('5m');
+    expect(host.querySelector('[data-mission-id="m-sem-idade"] .workspace-rail__mission-age')).toBeNull();
   });
 });

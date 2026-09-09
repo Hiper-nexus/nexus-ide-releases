@@ -56,6 +56,25 @@ function runningView(): ProjectMissionSnapshotView {
   };
 }
 
+describe('worktrees na projeção', () => {
+  it('leva a branch (sem refs/heads) e o estado do worktree até o resumo do rail', () => {
+    const view: ProjectMissionSnapshotView = {
+      ...runningView(),
+      worktrees: [
+        { branchRef: 'refs/heads/feat/mf-103-operacao-furos', worktreePath: '/w/mf-103', status: 'ready' },
+        { branchRef: 'nexus/task-2', status: 'integrated' },
+      ],
+    };
+    const summary = projectMissionSummarySnapshot(view);
+    expect(summary.worktrees).toEqual([
+      { branch: 'feat/mf-103-operacao-furos', path: '/w/mf-103', status: 'ready' },
+      { branch: 'nexus/task-2', status: 'integrated' },
+    ]);
+    // Sem worktree o campo nem aparece — payload antigo continua idêntico.
+    expect(projectMissionSummarySnapshot(runningView())).not.toHaveProperty('worktrees');
+  });
+});
+
 describe('projectMissionSnapshot', () => {
   it('Via Rápida: running sem recibo cerimonial continua running', () => {
     // O tripé autoridade+recibo+liveness era do motor antigo e projetava

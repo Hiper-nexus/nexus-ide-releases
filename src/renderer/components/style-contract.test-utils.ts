@@ -1,5 +1,11 @@
 export interface StyleContractEnvironment {
   width: number;
+  /**
+   * Viewport height. Required to exercise `@media (max-height: ...)`: the rail
+   * compresses by HEIGHT, and without this every height branch was silently
+   * dropped from the contract.
+   */
+  height?: number;
   reducedMotion?: boolean;
   pointer?: 'fine' | 'coarse';
   containerWidth?: number;
@@ -115,6 +121,14 @@ function mediaBranchMatches(
     const value = rawValue.trim();
     if (name === 'max-width') return environment.width <= Number.parseFloat(value);
     if (name === 'min-width') return environment.width >= Number.parseFloat(value);
+    if (name === 'max-height') {
+      if (environment.height === undefined) return false;
+      return environment.height <= Number.parseFloat(value);
+    }
+    if (name === 'min-height') {
+      if (environment.height === undefined) return false;
+      return environment.height >= Number.parseFloat(value);
+    }
     if (name === 'prefers-reduced-motion') {
       return value === (environment.reducedMotion ? 'reduce' : 'no-preference');
     }

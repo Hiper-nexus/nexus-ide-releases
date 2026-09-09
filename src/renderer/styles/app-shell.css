@@ -2,6 +2,12 @@
 
 .nexus-shell {
   --nexus-shell-rail-width: 250px;
+  /*
+    Piso da lista de projetos. Sem ele a lista era a ÚNICA faixa elástica do
+    rail (todo o resto é `auto`) e, numa janela baixa, sobrava altura para uma
+    linha e meia com barra de rolagem — o conteúdo cedia e o cromo nunca.
+  */
+  --rail-projects-min: 168px;
   --nexus-shell-inspector-min: 360px;
   --nexus-shell-inspector-max: 440px;
   --nexus-shell-workspace-min: 0px;
@@ -37,6 +43,7 @@
 }
 
 .nexus-shell__frame {
+  position: relative;
   display: grid;
   grid-template-columns: var(--nexus-shell-rail-width) minmax(0, 1fr);
   width: 100%;
@@ -44,6 +51,26 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+
+/* Alça de largura do rail (200-280px, faixa da DESIGN.md §11). */
+.nexus-shell__rail-resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--nexus-shell-rail-width);
+  z-index: 2;
+  width: 6px;
+  transform: translateX(-3px);
+  cursor: col-resize;
+  background: transparent;
+  transition: background-color 160ms var(--ease-out-quart);
+  touch-action: none;
+}
+
+.nexus-shell__rail-resize:hover,
+.nexus-shell__rail-resize:focus-visible {
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
 .workspace-rail {
@@ -176,7 +203,15 @@
 
 .workspace-rail__navigation {
   display: grid;
-  grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;
+  /*
+    Identidade, busca, CTA, destinos, PROJETOS, rodapé. A faixa dos projetos
+    tem piso; a do rodapé aceita encolher abaixo do próprio conteúdo, então em
+    janela baixa quem cede é a manutenção, não a lista.
+  */
+  grid-template-rows:
+    auto auto auto auto
+    minmax(var(--rail-projects-min), 1fr)
+    minmax(0, auto);
   width: 100%;
   height: 100%;
   min-height: 0;
@@ -452,6 +487,96 @@
   padding-right: var(--space-6);
 }
 
+/* Árvore de spaces: recolher/mostrar as missões de um projeto. Aparece no
+   hover como as demais ações da linha; recolhido, fica visível com a contagem
+   — senão a pessoa não sabe que há missões escondidas ali. */
+.workspace-rail__workspace-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: var(--space-6);
+  height: var(--space-6);
+  padding: 0 var(--space-1);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  opacity: 0;
+  flex-shrink: 0;
+  transition:
+    opacity 160ms var(--ease-out-quart),
+    transform 160ms var(--ease-out-quart);
+}
+
+.workspace-rail__workspace-row-wrapper:hover .workspace-rail__workspace-toggle,
+.workspace-rail__workspace-row-wrapper:focus-within .workspace-rail__workspace-toggle,
+.workspace-rail__workspace-toggle--collapsed {
+  opacity: 1;
+}
+
+.workspace-rail__workspace-toggle--collapsed svg {
+  transform: rotate(-90deg);
+}
+
+.workspace-rail__workspace-toggle:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.workspace-rail__workspace-count {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+/* Branch como nó da árvore (herdr/Sidecar): mono, discreta, indentada. */
+.workspace-rail__branch {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  min-height: 24px;
+  margin: var(--space-1) 0 2px;
+  padding: 0 var(--space-2) 0 var(--space-2-5);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  min-width: 0;
+}
+
+.workspace-rail__branch-glyph {
+  flex: 0 0 auto;
+  color: var(--text-faint);
+}
+
+.workspace-rail__branch-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-rail__branch-status {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-size: var(--text-2xs);
+  color: var(--text-faint);
+}
+
+.workspace-rail__branch--queued .workspace-rail__branch-status {
+  color: var(--warn);
+}
+
+.workspace-rail__branch--failed .workspace-rail__branch-status,
+.workspace-rail__branch--abandoned .workspace-rail__branch-status {
+  color: var(--danger);
+}
+
+.workspace-rail__branch--integrated .workspace-rail__branch-status {
+  color: var(--ok);
+}
+
 .workspace-rail__workspace-action {
   position: absolute;
   right: var(--space-1);
@@ -576,7 +701,28 @@
 
 .workspace-rail__workspace {
   gap: var(--space-2);
+  align-items: center;
   font-weight: 600;
+}
+
+.workspace-rail__workspace-copy {
+  display: grid;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+/* O texto já chega encurtado pelo fim (shortenWorkspacePath): o prefixo é
+   comum a todas as pastas, a cauda é o que distingue duas chamadas `web`. */
+.workspace-rail__workspace-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: 400;
+  line-height: 1.35;
 }
 
 .workspace-rail__workspace-icon {
@@ -649,6 +795,15 @@
   background: transparent;
   color: var(--text-faint);
   cursor: pointer;
+  /* Ação aparece no hover/foco sem mover o rótulo; em repouso a linha é só
+     identidade + estado. */
+  opacity: 0;
+  transition: opacity 160ms var(--ease-out-quart);
+}
+
+.workspace-rail__mission-row:hover .workspace-rail__mission-remove,
+.workspace-rail__mission-row:focus-within .workspace-rail__mission-remove {
+  opacity: 1;
 }
 
 .workspace-rail__mission-remove:hover {
@@ -859,6 +1014,17 @@
   flex-shrink: 0;
 }
 
+/* Idade sem segundos (Sidecar): precisão que o dado não sustenta só faz a
+   linha piscar. */
+.workspace-rail__mission-age {
+  margin-left: auto;
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
 .workspace-rail__mission-status {
   font-size: var(--text-sm);
   font-weight: 500;
@@ -1020,8 +1186,21 @@
 }
 
 .workspace-rail__footer {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-height: 0;
   padding: var(--space-2);
   border-top: 1px solid var(--border);
+}
+
+/* Cede altura primeiro e rola por conta própria; Configurações e o status do
+   runtime ficam na faixa `auto` abaixo e nunca saem da tela. */
+.workspace-rail__utilities {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-gutter: stable;
 }
 
 .workspace-rail__cockpit {
@@ -1034,9 +1213,13 @@
   transition: border-color 120ms ease, background-color 120ms ease;
 }
 
-/* Keep project rows readable on shorter windows without moving navigation
-   behind a long mission history. Desktop controls retain a 32px target. */
-@media (max-height: 760px) {
+/*
+  Compressão por ALTURA, em ordem declarada de sacrifício. A lista de projetos
+  nunca entra nessa ordem: ela tem piso (--rail-projects-min) e é o conteúdo.
+*/
+
+/* 1. Cromo mais denso; controles seguem com alvo de 32px no desktop. */
+@media (max-height: 820px) {
   .workspace-rail__fixed-row,
   .workspace-rail__settings {
     min-height: var(--space-6);
@@ -1046,6 +1229,31 @@
   .workspace-rail__cockpit {
     margin-block: var(--space-1);
     padding: var(--space-1);
+  }
+
+  /* Cota vira o essencial: provedor e percentual. As janelas detalhadas
+     ("5 Horas 3% · Semanal 6%") continuam em Configurações. */
+  .workspace-rail__quota-line {
+    display: none;
+  }
+}
+
+/* 2. Sai o cartão de cotas inteiro — telemetria não disputa altura com a
+   navegação. O clique equivalente segue na linha de Configurações. */
+@media (max-height: 700px) {
+  .workspace-rail__cockpit {
+    display: none;
+  }
+}
+
+/* 3. Último recurso: piso menor, para o rodapé não ser empurrado para fora. */
+@media (max-height: 620px) {
+  .nexus-shell {
+    --rail-projects-min: 120px;
+  }
+
+  .workspace-rail__search-wrap {
+    padding-block: var(--space-2) var(--space-1);
   }
 }
 
@@ -1610,8 +1818,13 @@
     min-height: calc(var(--space-6) + var(--space-3));
   }
 }
-.workspace-cleanup { padding: var(--space-2) var(--space-3); color: var(--text-dim); font-size: var(--text-xs); }
-.workspace-cleanup__title { display: block; padding: var(--space-1) 0; font-weight: 600; }
+.workspace-cleanup { padding: 0 var(--space-1); color: var(--text-dim); font-size: var(--text-xs); }
+.workspace-cleanup__title { display: block; padding: var(--space-1) var(--space-1); border-radius: var(--radius-sm); font-weight: 600; cursor: pointer; list-style: none; }
+.workspace-cleanup__title::-webkit-details-marker { display: none; }
+.workspace-cleanup__title::before { content: '+'; display: inline-block; width: 1em; color: var(--text-faint); font-family: var(--font-mono); }
+.workspace-cleanup[open] > .workspace-cleanup__title::before { content: '\2212'; }
+.workspace-cleanup__title:hover { background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--text); }
+.workspace-cleanup__actions { padding-bottom: var(--space-1); }
 .workspace-cleanup button { display: block; width: 100%; text-align: left; padding: var(--space-2); margin-top: var(--space-1); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elevated); color: var(--text); font: inherit; cursor: pointer; }
 .workspace-cleanup button:hover:not(:disabled) { border-color: var(--danger); }
 .workspace-cleanup button:disabled { opacity: .5; cursor: wait; }

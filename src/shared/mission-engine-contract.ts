@@ -280,6 +280,27 @@ export const missionResultSchema = z
   .strict();
 export type MissionResult = z.infer<typeof missionResultSchema>;
 
+/**
+ * Worktree de missão como o rail o mostra: branch (sem `refs/heads/`), caminho
+ * e estado. Opcional em ambos os snapshots para o contrato `.strict()` continuar
+ * aceitando payloads antigos.
+ */
+export const missionWorktreeSchema = z
+  .object({
+    branch: z.string().trim().min(1).max(512),
+    path: z.string().min(1).max(4096).optional(),
+    status: z.enum([
+      'reserved',
+      'ready',
+      'queued',
+      'integrated',
+      'failed',
+      'abandoned',
+    ]),
+  })
+  .strict();
+export type MissionWorktree = z.infer<typeof missionWorktreeSchema>;
+
 export const missionSnapshotSchema = z
   .object({
     id: idSchema,
@@ -295,6 +316,7 @@ export const missionSnapshotSchema = z
     question: missionQuestionSchema.optional(),
     result: missionResultSchema.optional(),
     allowedActions: z.array(missionAllowedActionSchema).max(6),
+    worktrees: z.array(missionWorktreeSchema).max(64).optional(),
     version: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     updatedAt: timestampSchema,
   })
@@ -309,6 +331,7 @@ export const missionSummarySnapshotSchema = z
     stateReason: missionStateReasonSchema.optional(),
     progress: missionProgressSchema,
     needsAttention: z.boolean(),
+    worktrees: z.array(missionWorktreeSchema).max(64).optional(),
     updatedAt: timestampSchema,
   })
   .strict();

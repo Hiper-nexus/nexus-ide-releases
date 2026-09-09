@@ -51,6 +51,8 @@ function toRailMission(
     title: summary.title,
     status: summary.state,
     needsAttention: summary.needsAttention,
+    updatedAt: summary.updatedAt,
+    ...(summary.worktrees ? { worktrees: summary.worktrees } : {}),
     ...(summary.stateReason ? { stateReason: summary.stateReason } : {}),
     ...(awaitingReviewIds?.has(summary.id)
       ? { awaitsOperatorReview: true as const }
@@ -72,6 +74,7 @@ export function projectRailWorkspaces(
     activeWorkspaces.push({
       id: input.current.path,
       name: input.current.name,
+      path: input.current.path,
       missions: input.currentSummaries.map((summary) =>
         toRailMission(summary, awaitingReviewIds),
       ),
@@ -88,6 +91,7 @@ export function projectRailWorkspaces(
       activeWorkspaces.push({
         id: workspace.path,
         name: workspace.name,
+        path: workspace.path,
         missions: active.map((summary) => toRailMission(summary)),
       });
     }
@@ -98,6 +102,7 @@ export function projectRailWorkspaces(
     .map((workspace) => ({
       id: workspace.path,
       name: workspace.name,
+      path: workspace.path,
       missions: [],
     }));
 

@@ -1,8 +1,11 @@
 import {
   useLayoutEffect,
   useRef,
+  type CSSProperties,
   type ReactNode,
 } from 'react';
+import { useRailWidthStore } from '../../state/rail-width-store';
+import { RailResizer } from './RailResizer';
 
 export interface AppShellProps {
   rail: ReactNode;
@@ -36,6 +39,9 @@ export function AppShell({
 }: AppShellProps) {
   const mainRef = useRef<HTMLElement>(null);
   const handledFocusRequest = useRef(focusRequest);
+  // Chrome do shell, não estado de produto: a largura do rail é preferência da
+  // pessoa e precisa ser lida onde a coluna do grid é declarada.
+  const railWidth = useRailWidthStore((state) => state.width);
 
   useLayoutEffect(() => {
     if (
@@ -48,7 +54,12 @@ export function AppShell({
     mainRef.current?.focus();
   }, [focusRequest]);
   return (
-    <div className={`nexus-shell ${className}`.trim()}>
+    <div
+      className={`nexus-shell ${className}`.trim()}
+      style={
+        { '--nexus-shell-rail-width': `${railWidth}px` } as CSSProperties
+      }
+    >
       <a className="nexus-shell__skip-link" href={`#${contentId}`}>
         Pular para o conteúdo
       </a>
@@ -57,6 +68,7 @@ export function AppShell({
         <aside className="workspace-rail" aria-label="Navegação do produto">
           {rail}
         </aside>
+        <RailResizer />
 
         <div
           className={`nexus-shell__workspace${

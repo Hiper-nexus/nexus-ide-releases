@@ -32,6 +32,13 @@ export function WorkspaceCleanup() {
   const workspace = useWorkspaceStore((state) => state.current);
   const running = useRef(false);
   const [busy, setBusy] = useState(false);
+  /**
+   * Recolhida por padrão (DESIGN.md §13: "Limpeza permanece recolhida junto às
+   * utilidades do projeto"). Fixa e aberta, ela ocupava ~100px permanentes do
+   * rodapé do rail — espaço tirado da única região elástica, a lista de
+   * projetos — para hospedar duas ações destrutivas que ninguém usa por dia.
+   */
+  const [open, setOpen] = useState(false);
   if (!workspace) return null;
 
   async function clean(kind: 'panes' | 'missions') {
@@ -76,11 +83,33 @@ export function WorkspaceCleanup() {
   }
 
   return (
-    <div className="workspace-cleanup">
-      <span className="workspace-cleanup__title">Limpar projeto</span>
-      <button type="button" disabled={busy} onClick={() => void clean('panes')}>Fechar todos os panes</button>
-      <button type="button" disabled={busy} onClick={() => void clean('missions')}>Apagar todas as missões</button>
-      {busy && <span role="status">Aguarde…</span>}
-    </div>
+    <details
+      className="workspace-cleanup"
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary className="workspace-cleanup__title">Limpar projeto</summary>
+      {open ? (
+        <div className="workspace-cleanup__actions">
+          <button
+            type="button"
+            data-action="clean-panes"
+            disabled={busy}
+            onClick={() => void clean('panes')}
+          >
+            Fechar todos os panes
+          </button>
+          <button
+            type="button"
+            data-action="clean-missions"
+            disabled={busy}
+            onClick={() => void clean('missions')}
+          >
+            Apagar todas as missões
+          </button>
+          {busy && <span role="status">Aguarde…</span>}
+        </div>
+      ) : null}
+    </details>
   );
 }

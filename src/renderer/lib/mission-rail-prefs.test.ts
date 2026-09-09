@@ -6,6 +6,8 @@ import {
   savePinnedMissionIds,
   setMissionArchived,
   togglePinnedMissionId,
+  loadCollapsedWorkspacePaths,
+  saveCollapsedWorkspacePaths,
 } from './mission-rail-prefs';
 
 function memoryStore(seed: Record<string, string> = {}) {
@@ -90,5 +92,16 @@ describe('archived missions (view-only, per workspace)', () => {
       'done',
       'archived',
     ]);
+  });
+
+  it('lembra quais projetos a pessoa recolheu no rail, e nada mais', () => {
+    const store = new Map<string, string>();
+    const like = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) };
+    expect(loadCollapsedWorkspacePaths(like)).toEqual([]);
+    saveCollapsedWorkspacePaths(['/ws/a', '/ws/a', '/ws/b'], like);
+    expect(loadCollapsedWorkspacePaths(like)).toEqual(['/ws/a', '/ws/b']);
+    like.setItem('nexus.activityRail.collapsedWorkspaces', '{not json');
+    expect(loadCollapsedWorkspacePaths(like)).toEqual([]);
+    expect(loadCollapsedWorkspacePaths(null)).toEqual([]);
   });
 });

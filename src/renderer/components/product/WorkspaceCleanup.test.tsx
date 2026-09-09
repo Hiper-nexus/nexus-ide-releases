@@ -30,9 +30,22 @@ beforeEach(() => {
   act(() => root.render(<WorkspaceCleanup />));
 });
 afterEach(() => { act(() => root.unmount()); host.remove(); Reflect.deleteProperty(window, 'nexus'); });
+/** A limpeza mora recolhida: as ações só existem depois de expandir. */
+function expandCleanup() {
+  const details = host.querySelector<HTMLDetailsElement>('.workspace-cleanup')!;
+  act(() => { details.open = true; details.dispatchEvent(new Event('toggle')); });
+}
 async function click(label: string) {
+  expandCleanup();
   await act(async () => { [...host.querySelectorAll('button')].find(button => button.textContent === label)!.click(); });
 }
+
+it('mantém as ações destrutivas recolhidas até alguém pedir', () => {
+  expect(host.querySelector<HTMLDetailsElement>('.workspace-cleanup')!.open).toBe(false);
+  expect(host.querySelectorAll('button')).toHaveLength(0);
+  expandCleanup();
+  expect(host.querySelectorAll('button')).toHaveLength(2);
+});
 it('cancelling deletes nothing and asks only once for the whole batch', async () => {
   mocks.confirm.mockResolvedValue(false);
   await click('Apagar todas as missões');

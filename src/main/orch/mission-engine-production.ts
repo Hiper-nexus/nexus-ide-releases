@@ -1,4 +1,6 @@
 import path from "node:path";
+import { requireWorktreeRuntimeRegistry } from "../runtime/worktree-runtime-registry";
+import type { WorktreeRecord } from "../runtime/worktree-contract";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type { WebContents } from "electron";
@@ -1023,6 +1025,7 @@ function projectMissionEngineSnapshotView(
   const mission = stores.missions.get(missionId);
   if (!mission) throw new Error("mission not found");
   const missionPanes = stores.missionPanes.list(missionId);
+  const worktrees = missionWorktreeViews(scope, mission.id);
   const orchestratorPane =
     missionPanes.find((pane) => pane.role === "orchestrator") ?? null;
   const sessionId = mission.orchestratorSessionId;
@@ -1205,7 +1208,30 @@ function projectMissionEngineSnapshotView(
     panes,
     roster,
     ...(openQuestion ? { openQuestion } : {}),
+    ...(worktrees.length > 0 ? { worktrees } : {}),
   };
+}
+
+/**
+ * Worktrees da missão para o rail (branch como nó da árvore). O registry é
+ * runtime, não verdade da missão: se ele não estiver disponível, a view segue
+ * sem o campo — o rail mostra a missão sob o projeto, como antes.
+ */
+function missionWorktreeViews(
+  scope: ProjectExecutionScope,
+  missionId: string,
+): Array<{ branchRef: string; worktreePath?: string; status: WorktreeRecord["status"] }> {
+  try {
+    return requireWorktreeRuntimeRegistry()
+      .listMission(scope, missionId)
+      .map((record) => ({
+        branchRef: record.branchRef,
+        ...(record.worktreePath ? { worktreePath: record.worktreePath } : {}),
+        status: record.status,
+      }));
+  } catch {
+    return [];
+  }
 }
 
 function persistLeftoverIsolationFromSnapshotView(

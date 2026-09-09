@@ -209,3 +209,37 @@ export function saveCollapsedSections(
     // ignore
   }
 }
+
+// Projetos recolhidos no rail (árvore de spaces). Default = todos abertos, o
+// comportamento de sempre; a preferência gravada só recolhe o que a pessoa
+// recolheu. Chave por caminho do workspace, como pins/arquivados.
+const COLLAPSED_WORKSPACES_KEY = 'nexus.activityRail.collapsedWorkspaces';
+
+export function loadCollapsedWorkspacePaths(
+  store: StorageLike | null = storage(),
+): string[] {
+  if (!store) return [];
+  try {
+    const raw = store.getItem(COLLAPSED_WORKSPACES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((p): p is string => typeof p === 'string' && p.length > 0)
+      .slice(0, 256);
+  } catch {
+    return [];
+  }
+}
+
+export function saveCollapsedWorkspacePaths(
+  paths: readonly string[],
+  store: StorageLike | null = storage(),
+): void {
+  if (!store) return;
+  try {
+    store.setItem(COLLAPSED_WORKSPACES_KEY, JSON.stringify([...new Set(paths)]));
+  } catch {
+    // ignore
+  }
+}

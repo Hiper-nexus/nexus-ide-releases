@@ -259,4 +259,77 @@ describe('Nexus V2 shell and product workspace style contracts', () => {
       ).toBe('none');
     }
   });
+  it('gives the project list a floor and lets the rail utilities yield instead', () => {
+    installStyleContract(productStyles, { width: 1_100, height: 700 });
+    const host = render(<ProductShellFixture />, 1_100, 700);
+    const nav = host.querySelector<HTMLElement>('.workspace-rail__navigation');
+    if (!nav) throw new Error('Workspace rail navigation did not render');
+
+    const tracks = styleTracks(nav, 'grid-template-rows').map((track) =>
+      track.replaceAll(' ', ''),
+    );
+    const projects = tracks.find((track) => track.endsWith(',1fr)'));
+    if (!projects) {
+      throw new Error('Rail has no elastic project track to protect');
+    }
+    const floor = Number.parseFloat(projects.replace(/^minmax\(/, ''));
+    expect(floor).toBeGreaterThanOrEqual(140);
+
+    // Alguma faixa precisa poder encolher abaixo do próprio conteúdo, senão o
+    // piso da lista só empurra o rodapé para fora da janela.
+    expect(tracks.some((track) => /^minmax\(0(px)?,/.test(track))).toBe(true);
+  });
+
+  it('drops the quota cockpit from the rail on short windows', () => {
+    const tall = installStyleContract(productStyles, {
+      width: 1_100,
+      height: 900,
+    });
+    expect(
+      activeCssomDeclaration(tall, '.workspace-rail__cockpit', 'display'),
+    ).not.toBe('none');
+    tall.remove();
+
+    const short = installStyleContract(productStyles, {
+      width: 1_100,
+      height: 640,
+    });
+    expect(
+      activeCssomDeclaration(short, '.workspace-rail__cockpit', 'display'),
+    ).toBe('none');
+  });
+
+  it('keeps the rail resize handle inside the 200-280px band', () => {
+    installStyleContract(productStyles, { width: 1_400, height: 900 });
+    const host = render(<ProductShellFixture />, 1_400, 900);
+    const handle = host.querySelector<HTMLElement>('.nexus-shell__rail-resize');
+    if (!handle) throw new Error('Rail resize handle did not render');
+
+    expect(handle.getAttribute('role')).toBe('separator');
+    expect(Number(handle.getAttribute('aria-valuemin'))).toBe(200);
+    expect(Number(handle.getAttribute('aria-valuemax'))).toBe(280);
+    expect(styleLengthPx(handle, 'width')).toBeGreaterThanOrEqual(4);
+  });
+  it('keeps mission row actions out of the resting row and reveals them on hover/focus', () => {
+    // Regra herdada do DESIGN do Agent Orchestrator (§4): a linha em repouso é
+    // identidade + estado; ações aparecem no hover/foco sem mover o rótulo.
+    const style = installStyleContract(productStyles, { width: 1_400, height: 900 });
+    expect(
+      activeCssomDeclaration(style, '.workspace-rail__mission-remove', 'opacity'),
+    ).toBe('0');
+    expect(
+      activeCssomDeclaration(
+        style,
+        '.workspace-rail__mission-row:hover .workspace-rail__mission-remove',
+        'opacity',
+      ),
+    ).toBe('1');
+    expect(
+      activeCssomDeclaration(
+        style,
+        '.workspace-rail__mission-row:focus-within .workspace-rail__mission-remove',
+        'opacity',
+      ),
+    ).toBe('1');
+  });
 });

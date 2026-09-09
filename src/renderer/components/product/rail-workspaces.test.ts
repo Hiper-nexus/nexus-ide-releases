@@ -90,4 +90,24 @@ describe('projectRailWorkspaces', () => {
       '/ws/alpha',
     ]);
   });
+
+  it('leva worktrees e updatedAt da missão até o rail', () => {
+    const result = projectRailWorkspaces({
+      current,
+      recents,
+      currentSummaries: [
+        {
+          ...summary('a', 'running'),
+          updatedAt: 42,
+          worktrees: [{ branch: 'feat/x', status: 'ready' }],
+        },
+      ],
+      crossWorkspaceSummaries: {},
+    });
+    expect(result.activeWorkspaces[0]!.missions[0]).toMatchObject({
+      id: 'a',
+      updatedAt: 42,
+      worktrees: [{ branch: 'feat/x', status: 'ready' }],
+    });
+  });
 });
