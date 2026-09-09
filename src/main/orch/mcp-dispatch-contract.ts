@@ -26,6 +26,12 @@ export interface ToolDispatchResult {
   tool: string;
   result?: unknown;
   error?: string;
+  /**
+   * Caminho que funciona, para o agente. Separado de `error` de propósito:
+   * `error` é contrato (o smoke empacotado e o renderer comparam a string
+   * canônica); a dica é copy e pode mudar sem quebrar ninguém.
+   */
+  hint?: string;
   denied?: boolean;
   requiredConfirmation?: boolean;
   confirmationReason?: string;

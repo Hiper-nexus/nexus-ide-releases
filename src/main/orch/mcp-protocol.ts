@@ -240,8 +240,10 @@ export async function handleMcpMessage(
         return ok(id, toolText(result.result));
       }
       const detail = result.error ?? result.confirmationReason ?? "tool denied";
+      // A dica não entra em `error` (contrato); entra no texto que o agente lê.
+      const guidance = result.hint ? ` — ${result.hint}` : "";
       console.warn(
-        `[orch] tool ${result.tool} FALHOU (${ctx.label}): ${detail}`,
+        `[orch] tool ${result.tool} FALHOU (${ctx.label}): ${detail}${guidance}`,
       );
       return ok(
         id,
@@ -250,9 +252,10 @@ export async function handleMcpMessage(
             ? {
                 tool: result.tool,
                 error: detail,
+                ...(result.hint ? { hint: result.hint } : {}),
                 effectMayHaveCommitted: true,
               }
-            : `${result.tool} failed: ${detail}`,
+            : `${result.tool} failed: ${detail}${guidance}`,
         ),
       );
     }

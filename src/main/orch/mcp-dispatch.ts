@@ -610,14 +610,16 @@ export async function dispatchToolCall(
     // Toda recusa diz o caminho que funciona. O operador num pane sem missão
     // que tenta handoff precisa ouvir "fale com o pane" ou "crie a missão",
     // não uma lista de campos internos.
-    const blocked =
-      "mission effect blocked: projectId, checkoutId, missionId and contextRevision are required";
+    // `error` fica canônico: o smoke empacotado (mcp-write-guard) e o renderer
+    // comparam a string exata. A dica de caminho vai em `hint`.
     const error =
+      "mission effect blocked: projectId, checkoutId, missionId and contextRevision are required";
+    const hint =
       ctx.role === "user" && canonical === "handoff_submit"
-        ? `${blocked} — handoff exige missão: para falar com outro pane use nexus_pane_write ou nexus_pane_ask; para registrar um handoff, crie uma missão com nexus_mission_create`
+        ? "handoff exige missão: para falar com outro pane use nexus_pane_write ou nexus_pane_ask; para registrar um handoff, crie uma missão com nexus_mission_create"
         : ctx.role === "user"
-          ? `${blocked} — ${tool.name} exige missão neste pane: crie uma com nexus_mission_create (spawn/write/ask/close de panes funcionam sem missão)`
-          : blocked;
+          ? `${tool.name} exige missão neste pane: crie uma com nexus_mission_create (spawn/write/ask/close de panes funcionam sem missão)`
+          : undefined;
     const auditFailure = writeAudit(
       () =>
         auditDenied(
@@ -632,7 +634,13 @@ export async function dispatchToolCall(
       tool.name,
     );
     if (auditFailure) return auditFailure;
-    return { ok: false, tool: tool.name, denied: true, error };
+    return {
+      ok: false,
+      tool: tool.name,
+      denied: true,
+      error,
+      ...(hint ? { hint } : {}),
+    };
   }
 
   const resolveMission =

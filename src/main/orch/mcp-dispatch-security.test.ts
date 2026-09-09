@@ -898,7 +898,12 @@ describe("MCP dispatch effect safety", () => {
       { status: "success", summary: "handoff de teste" },
       userContext(),
     );
-    expect(result).toMatchObject({ ok: false, denied: true, error: expect.stringContaining("nexus_pane_write") });
+    expect(result).toMatchObject({
+      ok: false,
+      denied: true,
+      error: expect.stringContaining("missionId and contextRevision"),
+      hint: expect.stringContaining("nexus_pane_write"),
+    });
     expect(handler).not.toHaveBeenCalled();
   });
 

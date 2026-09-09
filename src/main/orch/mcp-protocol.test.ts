@@ -304,6 +304,40 @@ describe('handleMcpMessage', () => {
     ]);
   });
 
+  it('recusa sem missão mantém o erro canônico e leva a dica de caminho ao agente', async () => {
+    // Contrato: `error` é a string que o smoke empacotado (mcp-write-guard)
+    // compara ao pé da letra; a dica vai em `hint` e só entra no TEXTO que o
+    // agente lê. Trocar a string do erro reprovou o gate da 0.76.8.
+    resetGateForTests();
+    const ctx = userCtx();
+    const handoff: McpToolDef = {
+      name: 'nexus_handoff_submit',
+      description: 'handoff',
+      inputSchema: { type: 'object', properties: {} },
+      handler: async () => ({ ok: true }),
+    };
+    const registry: McpRegistry = {
+      tools: [...makeRegistry().tools, handoff],
+      serverName: 'nexus-test',
+      serverVersion: '0.0.1',
+    };
+    const res = await handleMcpMessage(
+      registry,
+      ctx,
+      req('tools/call', {
+        name: 'nexus_handoff_submit',
+        arguments: { status: 'success', summary: 'handoff de teste' },
+      }),
+    );
+    const result = res?.result as { isError?: boolean; content: Array<{ text: string }> };
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain(
+      'mission effect blocked: projectId, checkoutId, missionId and contextRevision are required',
+    );
+    expect(result.content[0].text).toContain('nexus_pane_write');
+    expect(result.content[0].text).toContain('nexus_mission_create');
+  });
+
   it('advertises pane_spawn to a running mission orchestrator', async () => {
     resetGateForTests();
     const ctx = orchestratorMissionCtx();
