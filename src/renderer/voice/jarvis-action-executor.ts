@@ -1083,7 +1083,11 @@ export async function executeJarvisAction(
         paneId: target.paneId,
         sessionReady: Boolean(sessionId),
       });
-      if (!ok) sayText = 'Não consegui escrever no pane.';
+      if (!ok) {
+        sayText = 'Não consegui escrever no pane.';
+      } else if (!sayText) {
+        sayText = 'Enviado ao pane.';
+      }
       toolResult = {
         tool: action.type,
         ok,
@@ -1155,7 +1159,7 @@ export async function executeJarvisAction(
         },
       );
       sayText = ok
-        ? 'Missão enviada ao squad.'
+        ? (sayText || 'Missão enviada ao squad.')
         : 'Não consegui enviar a missão ao orquestrador.';
       toolResult = {
         tool: action.type,
