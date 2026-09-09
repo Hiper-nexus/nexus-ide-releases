@@ -548,6 +548,10 @@ export function App() {
           layout.focusedPaneId,
           event.shiftKey ? 'column' : 'row',
         );
+      } else if (key === 'f' && event.shiftKey && layout.viewKind === 'grid') {
+        event.preventDefault();
+        useProductNavigationStore.getState().openTerminal();
+        layout.toggleStageFocus(layout.focusedPaneId);
       } else if (key === 'w') {
         event.preventDefault();
         requestPaneClose(layout.focusedPaneId);

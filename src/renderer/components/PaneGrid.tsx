@@ -47,6 +47,11 @@ export function PaneGrid({
 } = {}) {
   const root = useLayoutStore((s) => s.root);
   const maximizedPaneId = useLayoutStore((s) => s.maximizedPaneId);
+  const stageFocusMode = useLayoutStore((s) => s.stageFocusMode);
+  const focusedPaneId = useLayoutStore((s) => s.focusedPaneId);
+  const toggleStageFocus = useLayoutStore((s) => s.toggleStageFocus);
+  const focus = useLayoutStore((s) => s.focus);
+
   const displayRoot = useMemo(() => {
     if (!visiblePaneIds) return root;
     const visible = listPanes(root).filter((pane) => visiblePaneIds.has(pane.id));
@@ -58,6 +63,21 @@ export function PaneGrid({
       listPanes(displayRoot).find((pane) => pane.id === maximizedPaneId) ?? null
     );
   }, [displayRoot, maximizedPaneId]);
+
+  const displayPanes = useMemo(() => {
+    return displayRoot ? listPanes(displayRoot) : [];
+  }, [displayRoot]);
+
+  const isStageFocusActive = Boolean(
+    stageFocusMode && !maximizedPane && displayPanes.length > 1,
+  );
+
+  const { stagePane, companionPanes } = useMemo(() => {
+    if (!isStageFocusActive) return { stagePane: null, companionPanes: [] };
+    const found = displayPanes.find((p) => p.id === focusedPaneId) ?? displayPanes[0]!;
+    const companions = displayPanes.filter((p) => p.id !== found.id);
+    return { stagePane: found, companionPanes: companions };
+  }, [isStageFocusActive, displayPanes, focusedPaneId]);
 
   // Dispose only when the pane left the CANONICAL tree — never because the
   // vista da missão escondeu o mosaico das outras.
@@ -77,10 +97,100 @@ export function PaneGrid({
   }
 
   return (
-    <div className={`grid${maximizedPane ? ' grid--pane-maximized' : ''}`}>
-      {maximizedPane ? <PaneLeaf pane={maximizedPane} /> : (
+    <div
+      className={`grid${maximizedPane ? ' grid--pane-maximized' : ''}${
+        isStageFocusActive ? ' grid--stage-focus' : ''
+      }`}
+    >
+      {maximizedPane ? (
+        <PaneLeaf pane={maximizedPane} />
+      ) : isStageFocusActive && stagePane ? (
+        <Group orientation="horizontal" className="panel-group panel-group--stage">
+          <Panel
+            className="panel panel--stage-main"
+            defaultSize="72%"
+            minSize="40%"
+          >
+            <PaneLeaf pane={stagePane} />
+          </Panel>
+          <Separator className="resize-handle resize-handle--horizontal" />
+          <Panel
+            className="panel panel--stage-rail"
+            defaultSize="28%"
+            minSize="20%"
+          >
+            <div
+              className="stage-companion-rail"
+              role="region"
+              aria-label="Companions em background"
+            >
+              <div className="stage-companion-rail__header">
+                <span className="stage-companion-rail__title">
+                  Companions ({companionPanes.length})
+                </span>
+                <button
+                  type="button"
+                  className="stage-companion-rail__exit"
+                  onClick={() => toggleStageFocus()}
+                  title="Voltar à grade completa (Cmd+Shift+F)"
+                >
+                  Sair do Stage
+                </button>
+              </div>
+              <div className="stage-companion-rail__list">
+                {companionPanes.map((companion) => (
+                  <div
+                    key={companion.id}
+                    className="stage-companion-card"
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => focus(companion.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        focus(companion.id);
+                      }
+                    }}
+                    title={`Trazer ${companion.title || 'Pane'} para o palco`}
+                  >
+                    <div className="stage-companion-card__bar">
+                      <span className="stage-companion-card__title">
+                        {companion.title || `Pane ${companion.id.slice(0, 6)}`}
+                      </span>
+                      <div className="stage-companion-card__meta">
+                        <span className="stage-companion-card__badge">
+                          {companion.role ?? companion.kind}
+                        </span>
+                        <button
+                          type="button"
+                          className="stage-companion-card__promote-btn"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            focus(companion.id);
+                          }}
+                        >
+                          Palco
+                        </button>
+                      </div>
+                    </div>
+                    <div className="stage-companion-card__body">
+                      <PaneLeaf pane={companion} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </Panel>
+        </Group>
+      ) : (
         <div className="grid__scroll">
-          <div className="grid__sized" style={{ minWidth: minimumPaneGridSize(displayRoot).width, minHeight: minimumPaneGridSize(displayRoot).height }}>
+          <div
+            className="grid__sized"
+            style={{
+              minWidth: minimumPaneGridSize(displayRoot).width,
+              minHeight: minimumPaneGridSize(displayRoot).height,
+            }}
+          >
             {renderNode(displayRoot)}
           </div>
         </div>

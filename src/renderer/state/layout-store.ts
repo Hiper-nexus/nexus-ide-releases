@@ -43,6 +43,7 @@ interface LayoutState {
   root: LayoutNode;
   focusedPaneId: string | null;
   maximizedPaneId: string | null;
+  stageFocusMode: boolean;
   hydrated: boolean;
   viewKind: ViewKind;
   canvasNodeLayouts: Record<string, CanvasNodeLayout>;
@@ -99,6 +100,8 @@ interface LayoutState {
   close(paneId: string, reason?: string): void;
   /** Temporarily show one pane full-size in the grid without mutating the tree. */
   toggleMaximizePane(paneId: string): void;
+  /** Alterna o modo Stage Focus: pane focado em destaque (75%) com rail de cards vivos. */
+  toggleStageFocus(paneId?: string): void;
   /** Drop a spent orchRequestId so Reiniciar does not reuse a dead token. */
   clearOrchRequestId(paneId: string): void;
   /** Claim the canonical structural vacancy as an operator shell. */
@@ -761,6 +764,7 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
   root: initialTree(),
   focusedPaneId: null,
   maximizedPaneId: null,
+  stageFocusMode: false,
   hydrated: false,
   viewKind: 'grid',
   canvasNodeLayouts: {},
@@ -1029,8 +1033,9 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
       get().focusedPaneId === paneId ? firstPaneId(root) : get().focusedPaneId;
     const maximizedPaneId =
       get().maximizedPaneId === paneId ? null : get().maximizedPaneId;
+    const stageFocusMode = afterCount <= 1 ? false : get().stageFocusMode;
     bumpTreeVersion();
-    set({ root, focusedPaneId, maximizedPaneId });
+    set({ root, focusedPaneId, maximizedPaneId, stageFocusMode });
     persist();
     // The tree cannot be empty, so closing the final pane leaves the canonical
     // structural vacancy in place. Product navigation is the sole visible
@@ -1057,6 +1062,26 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
     if (!exists) return;
     const maximizedPaneId = get().maximizedPaneId === paneId ? null : paneId;
     set({ maximizedPaneId, focusedPaneId: paneId });
+  },
+
+  toggleStageFocus: (paneId) => {
+    const all = listPanes(get().root);
+    if (all.length <= 1) {
+      if (get().stageFocusMode) {
+        set({ stageFocusMode: false });
+      }
+      return;
+    }
+    const targetId = paneId ?? get().focusedPaneId ?? all[0]?.id;
+    if (!targetId) return;
+    const exists = all.some((pane) => pane.id === targetId);
+    if (!exists) return;
+    const nextMode = !get().stageFocusMode;
+    set({
+      stageFocusMode: nextMode,
+      focusedPaneId: targetId,
+      maximizedPaneId: null,
+    });
   },
 
   clearOrchRequestId: (paneId) => {

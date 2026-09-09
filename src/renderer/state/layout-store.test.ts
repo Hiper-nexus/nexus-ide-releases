@@ -117,6 +117,26 @@ describe('layout-store pane maximize', () => {
     expect(useLayoutStore.getState().maximizedPaneId).toBeNull();
     expect(listPanes(useLayoutStore.getState().root).map((pane) => pane.id)).toEqual(['pane-a']);
   });
+
+  it('toggles stageFocusMode on and off when multiple panes exist', () => {
+    expect(useLayoutStore.getState().stageFocusMode).toBe(false);
+
+    useLayoutStore.getState().toggleStageFocus('pane-b');
+    expect(useLayoutStore.getState().stageFocusMode).toBe(true);
+    expect(useLayoutStore.getState().focusedPaneId).toBe('pane-b');
+
+    useLayoutStore.getState().toggleStageFocus();
+    expect(useLayoutStore.getState().stageFocusMode).toBe(false);
+  });
+
+  it('clears stageFocusMode when closing leaves only one pane', () => {
+    useLayoutStore.getState().toggleStageFocus('pane-b');
+    expect(useLayoutStore.getState().stageFocusMode).toBe(true);
+
+    useLayoutStore.getState().close('pane-b', 'test');
+    expect(useLayoutStore.getState().stageFocusMode).toBe(false);
+    expect(listPanes(useLayoutStore.getState().root).map((pane) => pane.id)).toEqual(['pane-a']);
+  });
 });
 
 describe('layout-store maximize vs foco programático', () => {

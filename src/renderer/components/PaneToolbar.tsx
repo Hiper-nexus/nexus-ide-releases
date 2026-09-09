@@ -155,6 +155,8 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
   const split = useLayoutStore((s) => s.split);
   const maximizedPaneId = useLayoutStore((s) => s.maximizedPaneId);
   const toggleMaximizePane = useLayoutStore((s) => s.toggleMaximizePane);
+  const stageFocusMode = useLayoutStore((s) => s.stageFocusMode);
+  const toggleStageFocus = useLayoutStore((s) => s.toggleStageFocus);
   const renameTitle = useLayoutStore((s) => s.renameTitle);
   const promoteMissionPaneRole = useLayoutStore((s) => s.promoteMissionPaneRole);
   const setPaneRole = useLayoutStore((s) => s.setPaneRole);
@@ -395,6 +397,18 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
 
     if (!isCanvas) {
       list.push({
+        id: 'stage-focus',
+        label: stageFocusMode ? 'Grade Normal' : 'Foco Stage',
+        detail: stageFocusMode
+          ? 'Restaura a grade completa com todos os panes'
+          : 'Destaque no pane ativo com rail de companions (Cmd+Shift+F)',
+        shortcut: formatShortcut('mod', 'shift', 'F'),
+        icon: stageFocusMode ? 'grid' : 'sparkle',
+        active: stageFocusMode,
+        primary: false,
+        run: () => toggleStageFocus(pane.id),
+      });
+      list.push({
         id: 'maximize',
         label: isMaximized ? 'Restaurar' : 'Ampliar',
         detail: isMaximized
@@ -432,6 +446,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
     isCanvas,
     isHibernated,
     isMaximized,
+    stageFocusMode,
     paneState,
     promoteMissionPaneRole,
     setPaneRole,
@@ -440,6 +455,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
     activeMissions,
     split,
     toggleMaximizePane,
+    toggleStageFocus,
   ]);
 
   const closeAction: ToolbarAction = {
