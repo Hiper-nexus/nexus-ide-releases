@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { emitDestructiveReversalEvent } from "./mission-event-emit";
-import { hasReversiblePath } from "./destructive-reversibility";
 import {
   hasCurrentApprovedDispatchContract,
   hasCurrentDispatchAuthority,
@@ -31,6 +30,7 @@ import {
   isEffectfulTool,
   isToolAllowedForReadOnlyContext,
   permitsOperatorPaneEffect,
+  permitsOperatorVibeEffect,
 } from "./mcp-effect-policy";
 import { validateToolArgs } from "./mcp-args-validation";
 import type { McpRegistry, McpToolDef } from "./mcp-protocol";
@@ -62,6 +62,7 @@ import {
 import {
   RENDERER_EXACT_CONSENT_TOOLS,
   isDestructiveEffect,
+  isDestructivePaneInput,
   requiresExactConsentReceipt,
   requiresPerActionConsent,
   requiresToolConfirmation,
@@ -319,6 +320,18 @@ function resolveDispatchTool(
   );
 }
 
+/**
+ * Modo vibe vale para o pane do operador falando pelo MCP (`http-mcp`), que é
+ * a lane dos agentes hospedados. As lanes internas (renderer, voice, shim,
+ * pty-stream) mantêm as próprias regras — não são o teclado do operador.
+ */
+function isOperatorVibeDispatch(
+  source: McpDispatchSource,
+  ctx: AgentGateContext,
+): boolean {
+  return source === "http-mcp" && permitsOperatorVibeEffect(ctx);
+}
+
 function bindEffectAuthority(
   source: McpDispatchSource,
   ctx: AgentGateContext,
@@ -334,6 +347,18 @@ function bindEffectAuthority(
     policy === "read-only" ||
     policy === "bootstrap-authority" ||
     policy === "handoff-authority"
+  ) {
+    return { contextRevision: ctx.contextRevision };
+  }
+  // Modo vibe (hardcoded): a mão do operador num pane sem missão não passa por
+  // missão, PREVC nem authority de workflow — inclusive destrutivo/externo. O
+  // handler segue como fronteira e o registro continua em auditoria. As duas
+  // classes abaixo têm autoridade própria de ORIGEM (renderer) e continuam
+  // valendo: um agente MCP não dirige a UI nem usa a lane routine do renderer.
+  if (
+    isOperatorVibeDispatch(source, ctx) &&
+    policy !== "renderer-authorized-effect" &&
+    policy !== "routine-local-operation"
   ) {
     return { contextRevision: ctx.contextRevision };
   }
@@ -605,7 +630,14 @@ export async function dispatchToolCall(
     effectPolicy === "renderer-authorized-effect" ||
     effectPolicy === "routine-local-operation" ||
     // Mão do operador: pane_spawn/write/ask/close sem missão (campo 09/09).
-    permitsOperatorPaneEffect(ctx, tool.name);
+    permitsOperatorPaneEffect(ctx, tool.name) ||
+    // Modo vibe (hardcoded): pane do operador sem missão não tem cabresto de
+    // efeito — nenhuma tool efetiva de código é barrada por falta de missão.
+    // Exceções: handoff é protocolo de missão (sem missão não tem destino) e
+    // bootstrap-authority mantém a própria cadeia de autoridade/recibo.
+    (isOperatorVibeDispatch(source, ctx) &&
+      effectPolicy !== "handoff-authority" &&
+      effectPolicy !== "bootstrap-authority");
   if (isEffectfulTool(tool.name) && !ctx.missionId && !permitsUnboundEffect) {
     // Toda recusa diz o caminho que funciona. O operador num pane sem missão
     // que tenta handoff precisa ouvir "fale com o pane" ou "crie a missão",
@@ -831,32 +863,33 @@ export async function dispatchToolCall(
     // minutos por comando). O modal permanece para ferramentas sem missão e
     // missões sem aprovação corrente. Tudo segue auditado (userAuthorized).
     //
-    // O piso destrutivo SAIU daqui: ele existia como defesa contra perda de
-    // dados, e essa defesa agora é o preparo de reversibilidade acima (lixeira
-    // + ref do tip anterior), que protege sem interromper. A ordem importou —
-    // o mecanismo entrou antes de a pergunta sair.
+    // Piso destrutivo (09/09): a missão aprovada não pergunta NADA — paridade
+    // com o modo vibe ("mesma doutrina"). O preparo de reversibilidade
+    // (lixeira + ref do tip anterior) continua rodando quando existe, mas
+    // deixou de bloquear o comando quando não existe.
     if (
       !userAuthorized &&
       initialIntent.ok &&
       initialIntent.resolved &&
       hasCurrentApprovedDispatchContract(initialIntent.resolved.mission) &&
-      // O piso destrutivo cai SOMENTE onde o desfazer existe. Sem preparador
-      // ligado (seams de teste, caminhos ainda não migrados) ele permanece: a
-      // pergunta é pior que nada, mas melhor que perda de dados silenciosa.
-      // O piso destrutivo cai SOMENTE onde o desfazer existe de fato: é preciso
-      // haver preparador ligado E o comando ter caminho de volta em princípio.
-      // Sem a segunda metade, mkfs/dd/DROP TABLE/unpublish — todos sem volta —
-      // rodariam sem pergunta E sem desfazer, estritamente pior que a fricção
-      // que a N1 removeu. Classificação é PURA: perguntar não custa efeito.
-      !(
-        isDestructiveEffect(tool.name, args) &&
-        !(
-          options.prepareDestructiveReversibility &&
-          hasReversiblePath(typeof args.command === "string" ? args.command : "")
-        )
-      ) &&
       !requiresPerActionConsent(tool.name, args)
     ) {
+      userAuthorized = true;
+    }
+    // Modo vibe (hardcoded, decisão 09/09): pane do operador sem missão não
+    // para em modal — nenhum efeito, inclusive destrutivo e externo. O operador
+    // aceitou o risco explicitamente ("sem cabresto nenhum, só auditoria
+    // depois"); o aviso abaixo é o que sobra além do registro de auditoria.
+    if (!userAuthorized && isOperatorVibeDispatch(source, ctx)) {
+      if (
+        isDestructivePaneInput(tool.name, args) ||
+        isDestructiveEffect(tool.name, args)
+      ) {
+        console.warn(
+          `[vibe] ${tool.name} destrutivo liberado sem modal ` +
+            `(sessão ${sessionId}, papel ${ctx.role}, sem missão)`,
+        );
+      }
       userAuthorized = true;
     }
     if (!userAuthorized) {

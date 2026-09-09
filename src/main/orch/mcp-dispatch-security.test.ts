@@ -680,7 +680,10 @@ describe("MCP dispatch effect safety", () => {
     expect(handler).toHaveBeenCalledOnce();
   });
 
-  it("still requires confirmation for destructive commands in an approved mission", async () => {
+  it("auto-approves destructive commands in an approved mission (paridade com o modo vibe)", async () => {
+    // Decisão 09/09 ("mesma doutrina"): a missão aprovada não pergunta nada —
+    // o piso destrutivo saiu também da missão. A reversibilidade continua
+    // sendo preparada quando existir; não bloqueia quando não existir.
     const handler = vi.fn(async () => ({ exitCode: 0 }));
     const confirm = vi.fn(async () => false);
     const registry = registryWith({
@@ -699,10 +702,9 @@ describe("MCP dispatch effect safety", () => {
       opsWorkflowOptions({ confirm }),
     );
 
-    expect(result.ok).toBe(false);
-    expect(result.error).toBe("user_denied");
-    expect(confirm).toHaveBeenCalledOnce();
-    expect(handler).not.toHaveBeenCalled();
+    expect(confirm).not.toHaveBeenCalled();
+    expect(handler).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({ ok: true, tool: "nexus_terminal_run" });
   });
 
   it.each([
@@ -846,15 +848,20 @@ describe("MCP dispatch effect safety", () => {
     }
   });
 
-  it("deixa a mão do operador (user, sem missão) spawnar e falar com panes", async () => {
+  it("deixa a mão do operador (user, sem missão) spawnar e falar com panes sem modal", async () => {
     // Campo 09/09: pane aberto pelo operador, agente pede outro pane e leva
-    // "mission effect blocked". Estreito: só pane_spawn/write/ask/close.
+    // "mission effect blocked". Estreito: só pane_spawn/write/ask/close. E o
+    // pedido de confirmação por pane era a fricção ("toda hora pedindo isto"):
+    // a mão do operador é autoridade; o modal só volta para texto destrutivo.
     for (const [toolName, args] of [
       ["nexus_pane_spawn", { adapterId: "codex", prompt: "oi" }],
       ["nexus_pane_write", { paneId: "pane-1", text: "oi" }],
-      ["nexus_pane_ask", { paneId: "pane-1", prompt: "oi" }],
+      ["nexus_pane_write_many", { writes: [{ paneId: "pane-1", text: "oi" }] }],
+      ["nexus_pane_ask", { paneId: "pane-1", question: "oi" }],
+      ["nexus_pane_close", { paneId: "pane-1" }],
     ] as const) {
       const handler = vi.fn(async () => ({ ok: true }));
+      const confirm = vi.fn(async () => true);
       const result = await dispatchToolCall(
         "http-mcp",
         registryWith({
@@ -866,12 +873,85 @@ describe("MCP dispatch effect safety", () => {
         toolName,
         args,
         userContext(),
-        { confirm: vi.fn(async () => true) },
+        { confirm },
       );
       expect(result).not.toMatchObject({ denied: true });
       expect(result).toMatchObject({ ok: true, tool: toolName });
       expect(handler).toHaveBeenCalledTimes(1);
+      expect(confirm).not.toHaveBeenCalled();
     }
+  });
+
+  it("modo vibe: texto destrutivo do operador sem missão também passa, com aviso", async () => {
+    // Decisão 09/09: "sem cabresto nenhum, só auditoria depois". O dispatch
+    // libera e emite `[vibe]` no log; o registro de auditoria continua.
+    const handler = vi.fn(async () => ({ ok: true }));
+    const confirm = vi.fn(async () => false);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const result = await dispatchToolCall(
+        "http-mcp",
+        registryWith({
+          name: "nexus_pane_write",
+          description: "operator pane effect",
+          inputSchema: { type: "object", properties: {} },
+          handler,
+        }),
+        "nexus_pane_write",
+        { paneId: "pane-1", text: "npm test; rm -rf /tmp/nexus-f148" },
+        userContext(),
+        { confirm },
+      );
+      expect(confirm).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ ok: true, tool: "nexus_pane_write" });
+      expect(handler).toHaveBeenCalledOnce();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("[vibe]"));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("modo vibe: terminal_run/file_write/git_commit do operador sem missão passam sem modal", async () => {
+    for (const [toolName, args] of [
+      ["nexus_terminal_run", { command: "npm test" }],
+      ["nexus_file_write", { path: "src/x.ts", content: "x" }],
+      ["nexus_git_commit", { message: "vibe" }],
+    ] as const) {
+      const handler = vi.fn(async () => ({ ok: true }));
+      const confirm = vi.fn(async () => false);
+      const result = await dispatchToolCall(
+        "http-mcp",
+        registryWith({
+          name: toolName,
+          description: "vibe",
+          inputSchema: { type: "object", properties: {} },
+          handler,
+        }),
+        toolName,
+        args,
+        userContext(),
+        { confirm },
+      );
+      expect(result).not.toMatchObject({ denied: true });
+      expect(result).toMatchObject({ ok: true, tool: toolName });
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(confirm).not.toHaveBeenCalled();
+    }
+  });
+
+  it("modo vibe não vale para worker sem missão", async () => {
+    resetGateForTests();
+    const worker = mintToken({ label: "orfao", role: "worker", scope: auditScope, allowedTools: null, allowedSkills: null });
+    const handler = vi.fn(async () => ({ ok: true }));
+    const result = await dispatchToolCall(
+      "http-mcp",
+      registryWith({ name: "nexus_terminal_run", description: "x", inputSchema: { type: "object", properties: {} }, handler }),
+      "nexus_terminal_run",
+      { command: "npm test" },
+      worker,
+    );
+    expect(result).toMatchObject({ ok: false, denied: true });
+    expect(handler).not.toHaveBeenCalled();
   });
 
   it("worker sem missão continua barrado no pane_spawn", async () => {
@@ -1128,7 +1208,22 @@ describe("MCP dispatch effect safety", () => {
 
   it("revalidates the exact intent after asynchronous confirmation", async () => {
     const handler = vi.fn(async () => ({ bytes: 1 }));
-    let current = dispatchedMissionFixture();
+    const base = dispatchedMissionFixture();
+    // Missão RUNNING mas SEM aprovação corrente: o intent gate libera e o
+    // auto-approve não — é o caminho que ainda abre o modal desde que o piso
+    // destrutivo saiu. A revalidação pós-confirmação continua fechando a
+    // corrida.
+    let current: NonNullable<ReturnType<IntentGateMissionResolver>> = {
+      ...base,
+      mission: {
+        ...base.mission,
+        status: "running",
+        intentContract: {
+          ...base.mission.intentContract!,
+          approvedAt: undefined,
+        },
+      },
+    };
     const result = await dispatchToolCall(
       "http-mcp",
       registryWith({
@@ -1170,13 +1265,23 @@ describe("MCP dispatch effect safety", () => {
   });
 
   it("revalidates the frozen workflow revision after confirmation", async () => {
-    // O veículo mudou junto com a N1: o cron deixou de abrir modal, então quem
-    // ainda passa pelo ramo de confirmação é o comando destrutivo SEM
-    // preparador de reversibilidade ligado — o piso que só cai onde o desfazer
-    // existe. A corrida sob teste (revisão congelada muda DURANTE a
-    // confirmação) é a mesma; o que se prova é que ela continua fechando.
+    // A corrida sob teste (revisão congelada muda DURANTE a confirmação) é a
+    // mesma; com a decisão 09/09 a missão RUNNING sem approvedAt corrente é o
+    // caminho que abre o modal sem barrar no intent gate.
     const handler = vi.fn(async () => ({ created: true }));
     let revision = TEST_CONTEXT_REVISION;
+    const base = dispatchedMissionFixture();
+    const unapproved: NonNullable<ReturnType<IntentGateMissionResolver>> = {
+      ...base,
+      mission: {
+        ...base.mission,
+        status: "running",
+        intentContract: {
+          ...base.mission.intentContract!,
+          approvedAt: undefined,
+        },
+      },
+    };
     const result = await dispatchToolCall(
       "http-mcp",
       registryWith({
@@ -1190,6 +1295,7 @@ describe("MCP dispatch effect safety", () => {
       missionContext(TEST_CONTEXT_REVISION, ["nexus_terminal_run"]),
       {
         ...workflowOptions(),
+        resolveMissionForIntentGate: () => unapproved,
         confirm: async () => {
           revision = "new-context-revision";
           return true;

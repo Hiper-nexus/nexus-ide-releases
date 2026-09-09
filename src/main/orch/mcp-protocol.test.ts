@@ -143,8 +143,10 @@ function workflowOptions(
 
 function opsTerminalWorkflowOptions(
   confirm?: McpDispatchOptions['confirm'],
+  opts?: { approved?: boolean },
 ): McpDispatchOptions {
   const base = workflowOptions(confirm);
+  const approved = opts?.approved ?? true;
   return {
     ...base,
     resolveMissionForIntentGate: (scope, missionId) => {
@@ -157,6 +159,7 @@ function opsTerminalWorkflowOptions(
           intentContract: {
             ...resolved.mission.intentContract,
             lane: 'ops',
+            approvedAt: approved ? resolved.mission.intentContract.approvedAt : undefined,
             budgets: {
               ...resolved.mission.intentContract.budgets,
               maxWorkers: 0,
@@ -623,7 +626,7 @@ describe('handleMcpMessage', () => {
         name: 'nexus_terminal_run',
         arguments: { command: 'rm -rf /tmp/nexus-no-ui' },
       }),
-      opsTerminalWorkflowOptions(),
+      opsTerminalWorkflowOptions(undefined, { approved: false }),
     );
 
     const result = res?.result as {
@@ -667,7 +670,7 @@ describe('handleMcpMessage', () => {
         name: 'nexus_terminal_run',
         arguments: { command: 'rm -rf /tmp/nexus-approved' },
       }),
-      opsTerminalWorkflowOptions(confirm),
+      opsTerminalWorkflowOptions(confirm, { approved: false }),
     );
 
     const result = res?.result as {
@@ -765,7 +768,7 @@ describe('handleMcpMessage', () => {
         name: 'nexus_terminal_run',
         arguments: { command: 'rm -rf /tmp/nexus-denied' },
       }),
-      opsTerminalWorkflowOptions(async () => false),
+      opsTerminalWorkflowOptions(async () => false, { approved: false }),
     );
 
     const result = res?.result as {

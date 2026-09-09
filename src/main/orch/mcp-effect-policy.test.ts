@@ -9,6 +9,7 @@ import {
   effectPolicyForTool,
   isHookMcpToolAllowedForReadOnlyContext,
   permitsOperatorPaneEffect,
+  permitsOperatorVibeEffect,
   isToolAllowedForReadOnlyContext,
   requiresHumanConfirmationForTool,
 } from './mcp-effect-policy';
@@ -279,5 +280,15 @@ describe('zero fricção (0.27.0) — o que ainda pergunta, e por quê', () => {
     expect(permitsOperatorPaneEffect({ role: 'orchestrator' }, 'pane_spawn')).toBe(false);
     // Com missão a isenção não se aplica: o caminho normal decide.
     expect(permitsOperatorPaneEffect({ role: 'user', missionId: 'm1' }, 'pane_spawn')).toBe(false);
+  });
+  it('modo vibe: pane do operador sem missão destrava TODO efeito, não só panes', () => {
+    // Decisão 09/09: "sem cabresto nenhum, só auditoria depois". O predicado é
+    // por sessão (role user + sem missão), não por nome de tool — a fronteira
+    // por tool continua existindo só como documentação da isenção antiga.
+    expect(permitsOperatorVibeEffect({ role: 'user' })).toBe(true);
+    // Papel e missão continuam sendo as fronteiras.
+    expect(permitsOperatorVibeEffect({ role: 'worker' })).toBe(false);
+    expect(permitsOperatorVibeEffect({ role: 'orchestrator' })).toBe(false);
+    expect(permitsOperatorVibeEffect({ role: 'user', missionId: 'm1' })).toBe(false);
   });
 });

@@ -262,6 +262,30 @@ export function permitsOperatorPaneEffect(
   );
 }
 
+/**
+ * Modo vibe (hardcoded, decisão 09/09): a mão do operador num pane sem missão
+ * NÃO tem cabresto de efeito.
+ *
+ * O operador já digita `npm test`, `git commit` e `rm -rf` no próprio terminal;
+ * exigir missão para o MESMO gesto via MCP transformava "abre o pane e manda
+ * ver" em cerimônia de contexto/intenção. A partir daqui `file_write`,
+ * `terminal_run`, `git_*`, `pr_*` e o que mais for rodam sem missão e sem
+ * modal — inclusive destrutivo e externo (push/deploy), por escolha explícita
+ * do operador ("sem cabresto nenhum, só auditoria depois").
+ *
+ * Fronteiras que PERMANECEM: pane-authz de alvo (worker não lê shell/browser),
+ * allowlists do token, `RENDERER_EXACT_CONSENT_TOOLS` (mutação global de
+ * agentes/squads continua na superfície nativa), o recibo exato do `cron` e o
+ * bind de contexto da missão quando existe. O registro continua em auditoria;
+ * texto destrutivo injetado em pane leva um aviso `[vibe]` no log.
+ */
+export function permitsOperatorVibeEffect(ctx: {
+  readonly role: string;
+  readonly missionId?: string;
+}): boolean {
+  return ctx.role === 'user' && !ctx.missionId;
+}
+
 /** Effects whose handlers may run only in PREVC's execution stage. */
 const EXECUTION_EFFECT_TOOLS = new Set([
   'audio_generate',
