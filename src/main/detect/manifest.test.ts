@@ -169,13 +169,13 @@ describe('region names', () => {
   });
 });
 
-describe('bundled manifest contract (21 Herdr manifests)', () => {
+describe('bundled manifest contract (20 Herdr manifests)', () => {
   const files = fs
     .readdirSync(BUNDLED_DIR)
     .filter((name) => name.endsWith('.toml'));
 
-  it('ships exactly the 21 upstream manifests', () => {
-    expect(files).toHaveLength(21);
+  it('ships exactly the 20 upstream manifests', () => {
+    expect(files).toHaveLength(20);
   });
 
   it('resolves the bundled directory via the default candidate chain', () => {
@@ -184,7 +184,7 @@ describe('bundled manifest contract (21 Herdr manifests)', () => {
 
   it('every bundled manifest parses and compiles (regex translation check)', () => {
     const loaded = loadManifestDir(BUNDLED_DIR);
-    expect(loaded).toHaveLength(21);
+    expect(loaded).toHaveLength(20);
     for (const { manifest, file } of loaded) {
       const compiled = compileManifest(manifest);
       expect(compiled.rules.length, file).toBeGreaterThan(0);
