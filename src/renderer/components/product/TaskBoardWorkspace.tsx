@@ -1,10 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { TodoItem, TodoList, TodoStatus } from '../../../shared/orch-types';
 import { orchTodosEmptyBeat } from '../../../shared/endorphin';
-import { statusLabel } from '../../lib/mission-rail-groups';
 import {
+  MISSION_KANBAN_LANES,
+  MISSION_KANBAN_LANE_LABELS,
+  relativeAgeLabel,
+  type MissionKanbanLane,
+} from '../../../shared/mission-kanban';
+import {
+  groupTaskBoardMissionsByLane,
   projectTaskBoardEntries,
   taskBoardIsEmpty,
+  type TaskBoardMissionEntry,
+  type TaskBoardTodoEntry,
 } from '../../lib/task-board-projection';
 import { useOrchStore } from '../../state/orch-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
@@ -21,6 +29,65 @@ const TODO_STATUS_OPTIONS: ReadonlyArray<{
   { value: 'done', label: 'Concluída' },
 ];
 
+/** Lanes vivas viram colunas; o arquivo é gaveta recolhida no rodapé. */
+const KANBAN_COLUMNS = MISSION_KANBAN_LANES.filter(
+  (lane) => lane.placement === 'column',
+);
+
+const LANE_EMPTY_COPY: Readonly<Record<MissionKanbanLane, string>> = {
+  building: 'Nada em construção',
+  validating: 'Nada para validar',
+  needs_you: 'Nada pendente com você',
+  ready: 'Nada pronto ainda',
+  archive: 'Nada arquivado',
+};
+
+/** A idade relativa não tem segundos, então um tique por minuto basta. */
+const AGE_TICK_MS = 60_000;
+
+function isoStamp(ms: number): string | undefined {
+  const date = new Date(ms);
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString();
+}
+
+interface MissionKanbanCardProps {
+  readonly entry: TaskBoardMissionEntry;
+  readonly now: number;
+  readonly onOpen: (missionId: string) => void;
+}
+
+/** Card = título + estado em palavra + idade curta. Sem arrastar: a lane é derivada. */
+function MissionKanbanCard({ entry, now, onOpen }: MissionKanbanCardProps) {
+  const { summary } = entry;
+  return (
+    <li
+      className="mission-kanban__card"
+      data-state={summary.state}
+      data-attention={summary.needsAttention ? 'true' : undefined}
+    >
+      <button
+        type="button"
+        className="mission-kanban__card-open"
+        onClick={() => onOpen(summary.id)}
+      >
+        <span className="mission-kanban__card-title">{entry.name}</span>
+        <span className="mission-kanban__card-meta">
+          <span className="mission-kanban__card-state">{entry.stateLabel}</span>
+          <span className="mission-kanban__card-sep" aria-hidden="true">
+            ·
+          </span>
+          <time
+            className="mission-kanban__card-age"
+            dateTime={isoStamp(summary.updatedAt)}
+          >
+            {relativeAgeLabel(summary.updatedAt, now)}
+          </time>
+        </span>
+      </button>
+    </li>
+  );
+}
+
 interface PendingTodoWrite {
   workspaceEpoch: number;
   boundWorkspacePath: string | null;
@@ -35,6 +102,7 @@ interface TodoWriteFailure {
 export function TaskBoardWorkspace() {
   const todoLists = useOrchStore((state) => state.todoLists);
   const missions = useOrchStore((state) => state.missions);
+  const missionSummaries = useOrchStore((state) => state.missionSummaries);
   const workspaceEpoch = useOrchStore((state) => state.workspaceEpoch);
   const boundWorkspacePath = useOrchStore(
     (state) => state.boundWorkspacePath,
@@ -48,21 +116,35 @@ export function TaskBoardWorkspace() {
     ReadonlyMap<string, PendingTodoWrite>
   >(() => new Map());
   const [errors, setErrors] = useState<Record<string, TodoWriteFailure>>({});
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
     pendingWrites.current.clear();
     setPending(new Map());
     setErrors({});
   }, [workspaceEpoch, boundWorkspacePath]);
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), AGE_TICK_MS);
+    return () => window.clearInterval(timer);
+  }, []);
   const boardEntries = useMemo(
-    () => projectTaskBoardEntries({ missions, todoLists }),
-    [missions, todoLists],
+    () => projectTaskBoardEntries({ missions, missionSummaries, todoLists }),
+    [missions, missionSummaries, todoLists],
+  );
+  const missionLanes = useMemo(
+    () => groupTaskBoardMissionsByLane(boardEntries),
+    [boardEntries],
+  );
+  const todoEntries = useMemo(
+    () =>
+      boardEntries.filter(
+        (entry): entry is TaskBoardTodoEntry => entry.kind === 'todo',
+      ),
+    [boardEntries],
   );
   const itemCount = boardEntries.length;
-  const missionCount = boardEntries.filter(
-    (entry) => entry.kind === 'mission',
-  ).length;
-  const todoCount = itemCount - missionCount;
+  const todoCount = todoEntries.length;
+  const missionCount = itemCount - todoCount;
 
   const setStatus = async (
     list: TodoList,
@@ -142,8 +224,8 @@ export function TaskBoardWorkspace() {
 
   // "Limpar concluídas" — a política vive no main (board-clear-plan):
   // missão viva perde só itens concluídos; lista terminal/órfã sai inteira.
-  const clearableCount = boardEntries.filter(
-    (entry) => entry.kind === 'todo' && entry.status === 'done',
+  const clearableCount = todoEntries.filter(
+    (entry) => entry.status === 'done',
   ).length;
   const [clearArmed, setClearArmed] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -189,13 +271,19 @@ export function TaskBoardWorkspace() {
     }
   };
 
-  // Bridge parity: the board reads as status columns, not opaque list ids.
-  // Running/blocked missions occupy Em andamento even before any todo exists.
+  // Tarefas seguem em colunas por status canônico (todo/in_progress/done),
+  // sem expor ids de lista. Missões vivem em lanes derivadas, acima.
   const columns = TODO_STATUS_OPTIONS.map((option) => ({
     status: option.value,
     label: option.label,
-    entries: boardEntries.filter((entry) => entry.status === option.value),
+    entries: todoEntries.filter((entry) => entry.status === option.value),
   }));
+  const archived = missionLanes.archive;
+  const showMissionKanban = missionCount > 0;
+  // Sem missão, as colunas ficam visíveis embaixo do empty state (o CTA
+  // senta acima delas). Com missão e sem tarefa, três colunas vazias seriam
+  // só ruído abaixo das lanes.
+  const showTodoColumns = todoCount > 0 || missionCount === 0;
 
   return (
     <section
@@ -283,7 +371,97 @@ export function TaskBoardWorkspace() {
           />
         ) : null}
 
-        <div className="task-board-workspace__lists">
+        {showMissionKanban ? (
+          <section className="mission-kanban" aria-label="Missões por estado">
+            <p className="task-board-workspace__group-label">Missões</p>
+            <div className="mission-kanban__lanes">
+              {KANBAN_COLUMNS.map((lane) => {
+                const members = missionLanes[lane.id];
+                return (
+                  <section
+                    key={lane.id}
+                    className="mission-kanban__lane"
+                    data-lane={lane.id}
+                    data-empty={members.length === 0 ? 'true' : undefined}
+                    aria-label={`Missões: ${lane.label}`}
+                  >
+                    <header className="mission-kanban__lane-header">
+                      <span
+                        className="mission-kanban__lane-dot"
+                        aria-hidden="true"
+                      />
+                      <h2 className="mission-kanban__lane-name">{lane.label}</h2>
+                      <span
+                        className="mission-kanban__lane-sep"
+                        aria-hidden="true"
+                      >
+                        ·
+                      </span>
+                      <span className="mission-kanban__lane-count">
+                        {members.length}
+                      </span>
+                    </header>
+                    {members.length === 0 ? (
+                      <p className="mission-kanban__lane-empty">
+                        {LANE_EMPTY_COPY[lane.id]}
+                      </p>
+                    ) : (
+                      <ul className="mission-kanban__cards">
+                        {members.map((entry) => (
+                          <MissionKanbanCard
+                            key={entry.key}
+                            entry={entry}
+                            now={now}
+                            onOpen={openMission}
+                          />
+                        ))}
+                      </ul>
+                    )}
+                  </section>
+                );
+              })}
+            </div>
+            {archived.length > 0 ? (
+              <details className="mission-kanban__archive">
+                <summary className="mission-kanban__archive-summary">
+                  <span
+                    className="mission-kanban__lane-dot"
+                    aria-hidden="true"
+                  />
+                  <span className="mission-kanban__lane-name">
+                    {MISSION_KANBAN_LANE_LABELS.archive}
+                  </span>
+                  <span className="mission-kanban__lane-sep" aria-hidden="true">
+                    ·
+                  </span>
+                  <span className="mission-kanban__lane-count">
+                    {archived.length}
+                  </span>
+                </summary>
+                <ul className="mission-kanban__cards">
+                  {archived.map((entry) => (
+                    <MissionKanbanCard
+                      key={entry.key}
+                      entry={entry}
+                      now={now}
+                      onOpen={openMission}
+                    />
+                  ))}
+                </ul>
+              </details>
+            ) : null}
+          </section>
+        ) : null}
+
+        {showTodoColumns ? (
+          <section
+            className="task-board-workspace__todos"
+            aria-label="Tarefas por status"
+          >
+            {showMissionKanban ? (
+              <p className="task-board-workspace__group-label">Tarefas</p>
+            ) : null}
+            <div className="task-board-workspace__lists">
           {columns.map((column) => (
             <section
               key={column.status}
@@ -302,36 +480,6 @@ export function TaskBoardWorkspace() {
               ) : (
                 <ul className="task-board-workspace__items">
                   {column.entries.map((entry, itemIndex) => {
-                    if (entry.kind === 'mission') {
-                      const missionStatus = entry.mission.status;
-                      return (
-                        <li
-                          key={entry.key}
-                          className={`task-board-workspace__item task-board-workspace__item--mission task-board-workspace__item--${entry.status}`}
-                        >
-                          <span
-                            className={`task-board-workspace__dot task-board-workspace__dot--${entry.status}${
-                              missionStatus === 'blocked'
-                                ? ' task-board-workspace__dot--blocked'
-                                : ''
-                            }`}
-                            aria-hidden="true"
-                          />
-                          <button
-                            type="button"
-                            className="task-board-workspace__mission-open"
-                            onClick={() => openMission(entry.mission.id)}
-                          >
-                            <span className="task-board-workspace__item-name">
-                              {entry.name}
-                            </span>
-                            <span className="task-board-workspace__mission-badge">
-                              Missão · {statusLabel(missionStatus)}
-                            </span>
-                          </button>
-                        </li>
-                      );
-                    }
                     const { list, item } = entry;
                     const key = entry.key;
                     const isPending = pending.has(key);
@@ -410,7 +558,9 @@ export function TaskBoardWorkspace() {
               )}
             </section>
           ))}
-        </div>
+            </div>
+          </section>
+        ) : null}
       </div>
     </section>
   );

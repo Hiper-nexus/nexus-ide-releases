@@ -2,6 +2,8 @@
 import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { MissionSummarySnapshot } from '../../../shared/mission-engine-contract';
+import { MISSION_OPERATOR_APPROVED_MARKER } from '../../../shared/mission-recovery-policy';
 import type { Mission, TodoList, TodoStatus } from '../../../shared/orch-types';
 import { useMissionSetupStore } from '../../state/mission-setup-store';
 import { useOrchStore } from '../../state/orch-store';
@@ -139,6 +141,7 @@ beforeEach(() => {
   installNexusBoundary();
   useOrchStore.setState({
     missions: [LEGACY_MISSION],
+    missionSummaries: [],
     todoLists: [],
     workspaceEpoch: 0,
     boundWorkspacePath: null,
@@ -184,7 +187,14 @@ describe('TaskBoardWorkspace contracts', () => {
     const host = mount(<TaskBoardWorkspace />);
 
     expect(host.textContent).toContain(LEGACY_MISSION.title);
-    expect(host.textContent).toMatch(/missão.*rodando/i);
+    const lane = host.querySelector<HTMLElement>(
+      '.mission-kanban__lane[data-lane="building"]',
+    );
+    expect(lane?.querySelector('h2')?.textContent).toBe('Construindo');
+    expect(
+      lane?.querySelector('.mission-kanban__card-state')?.textContent,
+    ).toBe('Trabalhando');
+    expect(host.textContent).not.toMatch(/rodando/i);
     expect(host.textContent).not.toMatch(/sem tarefas no fluxo/i);
     expect(host.querySelector('.task-board-workspace__empty')).toBeNull();
   });
@@ -192,7 +202,7 @@ describe('TaskBoardWorkspace contracts', () => {
   it('opens the running mission from the board card without mutating todos', () => {
     const host = mount(<TaskBoardWorkspace />);
     const open = host.querySelector<HTMLButtonElement>(
-      '.task-board-workspace__mission-open',
+      '.mission-kanban__card-open',
     );
     if (!open) throw new Error('Mission card was not rendered');
 
@@ -510,5 +520,254 @@ describe('TaskBoardWorkspace contracts', () => {
     expect(orchBoundary.updateMission).not.toHaveBeenCalled();
     expect(orchBoundary.reopenMission).not.toHaveBeenCalled();
     expect(orchBoundary.removeMission).not.toHaveBeenCalled();
+  });
+});
+
+function summary(
+  overrides: Partial<MissionSummarySnapshot> = {},
+): MissionSummarySnapshot {
+  return {
+    id: 'mission-summary',
+    title: 'Missão',
+    state: 'running',
+    progress: { completed: 0, total: 0 },
+    needsAttention: false,
+    updatedAt: Date.now(),
+    ...overrides,
+  };
+}
+
+function cardTitles(scope: ParentNode | null): string[] {
+  return [...(scope?.querySelectorAll('.mission-kanban__card-title') ?? [])].map(
+    (node) => node.textContent ?? '',
+  );
+}
+
+describe('TaskBoardWorkspace — lanes de missão derivadas do snapshot', () => {
+  it('projeta cada estado na lane certa, cabeçalho "● nome · contagem" e arquivo recolhido', () => {
+    const now = Date.now();
+    useOrchStore.setState({
+      missions: [
+        {
+          ...LEGACY_MISSION,
+          id: 'done-approved',
+          status: 'done',
+          description: `Entregue\n${MISSION_OPERATOR_APPROVED_MARKER}`,
+        },
+        { ...LEGACY_MISSION, id: 'done-pending', status: 'done' },
+      ],
+      missionSummaries: [
+        summary({ id: 'live', title: 'Construindo agora', state: 'running', updatedAt: now }),
+        summary({
+          id: 'plan',
+          title: 'Plano pronto',
+          state: 'review_ready',
+          updatedAt: now - 5 * 60_000,
+        }),
+        summary({
+          id: 'done-pending',
+          title: 'Entrega para revisar',
+          state: 'completed',
+          updatedAt: now - 2 * 3_600_000,
+        }),
+        summary({
+          id: 'ask',
+          title: 'Pergunta aberta',
+          state: 'blocked_user',
+          needsAttention: true,
+          stateReason: { code: 'open-question', label: 'Aguardando sua resposta' },
+          updatedAt: now,
+        }),
+        summary({
+          id: 'done-approved',
+          title: 'Entrega aceita',
+          state: 'completed',
+          updatedAt: now - 3 * 86_400_000,
+        }),
+        summary({
+          id: 'broken',
+          title: 'Deu ruim',
+          state: 'failed',
+          needsAttention: true,
+          updatedAt: now,
+        }),
+      ],
+      todoLists: [],
+    });
+    const host = mount(<TaskBoardWorkspace />);
+
+    const lanes = [
+      ...host.querySelectorAll<HTMLElement>('.mission-kanban__lane'),
+    ];
+    expect(lanes.map((lane) => lane.dataset.lane)).toEqual([
+      'building',
+      'validating',
+      'needs_you',
+      'ready',
+    ]);
+    expect(lanes.map((lane) => lane.querySelector('h2')?.textContent)).toEqual([
+      'Construindo',
+      'Validando',
+      'Precisa de você',
+      'Pronto',
+    ]);
+    expect(
+      lanes.map(
+        (lane) => lane.querySelector('.mission-kanban__lane-count')?.textContent,
+      ),
+    ).toEqual(['1', '2', '1', '1']);
+    expect(
+      lanes.every((lane) => lane.querySelector('.mission-kanban__lane-dot')),
+    ).toBe(true);
+    expect(cardTitles(lanes[0]!)).toEqual(['Construindo agora']);
+    expect(cardTitles(lanes[1]!)).toEqual(['Plano pronto', 'Entrega para revisar']);
+    expect(cardTitles(lanes[2]!)).toEqual(['Pergunta aberta']);
+    expect(cardTitles(lanes[3]!)).toEqual(['Entrega aceita']);
+    expect(
+      lanes[1]!.querySelectorAll('.mission-kanban__card-state')[1]?.textContent,
+    ).toBe('Pronto para revisar');
+
+    // Falha nunca divide coluna com sucesso: mora na gaveta, recolhida.
+    const archive = host.querySelector<HTMLDetailsElement>(
+      'details.mission-kanban__archive',
+    );
+    expect(archive).not.toBeNull();
+    expect(archive!.open).toBe(false);
+    expect(archive!.querySelector('summary')?.textContent).toContain('Arquivo');
+    expect(
+      archive!.querySelector('.mission-kanban__lane-count')?.textContent,
+    ).toBe('1');
+    expect(cardTitles(archive!)).toEqual(['Deu ruim']);
+    expect(lanes[3]!.textContent).not.toContain('Deu ruim');
+    expect(host.textContent).toContain('6 missões no fluxo');
+  });
+
+  it('dentro da lane, atenção vem primeiro e depois a mais recente', () => {
+    const now = Date.now();
+    useOrchStore.setState({
+      missions: [],
+      missionSummaries: [
+        summary({ id: 'old', title: 'Velha', state: 'running', updatedAt: now - 3 * 3_600_000 }),
+        summary({ id: 'new', title: 'Nova', state: 'starting', updatedAt: now }),
+        summary({
+          id: 'repair-quiet',
+          title: 'Reparo sem alerta',
+          state: 'blocked_technical',
+          needsAttention: false,
+          updatedAt: now,
+        }),
+        summary({
+          id: 'ask-old',
+          title: 'Pergunta antiga',
+          state: 'blocked_user',
+          needsAttention: true,
+          updatedAt: now - 86_400_000,
+        }),
+      ],
+      todoLists: [],
+    });
+    const host = mount(<TaskBoardWorkspace />);
+
+    expect(
+      cardTitles(host.querySelector('.mission-kanban__lane[data-lane="building"]')),
+    ).toEqual(['Nova', 'Velha']);
+    expect(
+      cardTitles(host.querySelector('.mission-kanban__lane[data-lane="needs_you"]')),
+    ).toEqual(['Pergunta antiga', 'Reparo sem alerta']);
+  });
+
+  it('o card diz título, estado em palavra e idade curta sem segundos — e não se arrasta', () => {
+    useOrchStore.setState({
+      missions: [],
+      missionSummaries: [
+        summary({
+          id: 'x',
+          title: 'Missão X',
+          state: 'running',
+          updatedAt: Date.now() - 5 * 60_000,
+        }),
+      ],
+      todoLists: [],
+    });
+    const host = mount(<TaskBoardWorkspace />);
+    const card = host.querySelector<HTMLElement>('.mission-kanban__card');
+
+    expect(card?.querySelector('.mission-kanban__card-title')?.textContent).toBe(
+      'Missão X',
+    );
+    expect(card?.querySelector('.mission-kanban__card-state')?.textContent).toBe(
+      'Trabalhando',
+    );
+    const age = card?.querySelector<HTMLTimeElement>('time.mission-kanban__card-age');
+    expect(age?.textContent).toBe('5m');
+    expect(age?.getAttribute('datetime')).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(card?.textContent).not.toContain('running');
+    expect(host.querySelectorAll('[draggable="true"]')).toHaveLength(0);
+  });
+
+  it('o snapshot canônico manda sobre a linha legada do mesmo id, sem duplicar o card', () => {
+    useOrchStore.setState({
+      missions: [LEGACY_MISSION],
+      missionSummaries: [
+        summary({
+          id: LEGACY_MISSION.id,
+          title: LEGACY_MISSION.title,
+          state: 'blocked_user',
+          needsAttention: true,
+          stateReason: { code: 'open-question', label: 'Aguardando sua resposta' },
+        }),
+      ],
+      todoLists: [],
+    });
+    const host = mount(<TaskBoardWorkspace />);
+
+    expect(host.querySelectorAll('.mission-kanban__card')).toHaveLength(1);
+    expect(
+      cardTitles(host.querySelector('.mission-kanban__lane[data-lane="needs_you"]')),
+    ).toEqual([LEGACY_MISSION.title]);
+    expect(host.textContent).toContain('1 missão no fluxo');
+  });
+
+  it('abre a missão a partir da gaveta de arquivo sem mutar nada', () => {
+    useOrchStore.setState({
+      missions: [],
+      missionSummaries: [
+        summary({ id: 'broken', title: 'Falhou feio', state: 'failed', needsAttention: true }),
+      ],
+      todoLists: [],
+    });
+    const host = mount(<TaskBoardWorkspace />);
+
+    expect(
+      host.querySelectorAll('.mission-kanban__lane .mission-kanban__card'),
+    ).toHaveLength(0);
+    const open = host.querySelector<HTMLButtonElement>(
+      '.mission-kanban__archive .mission-kanban__card-open',
+    );
+    if (!open) throw new Error('Card do arquivo não renderizou');
+    act(() => open.click());
+
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'mission',
+      missionId: 'broken',
+      surface: 'board',
+    });
+    expect(orchBoundary.updateMission).not.toHaveBeenCalled();
+    expect(orchBoundary.removeMission).not.toHaveBeenCalled();
+  });
+
+  it('sem tarefas, as colunas de tarefa saem de cena; com tarefas, voltam rotuladas', () => {
+    const host = mount(<TaskBoardWorkspace />);
+    expect(host.querySelectorAll('.task-board-workspace__list')).toHaveLength(0);
+    expect(host.querySelector('.mission-kanban__archive')).toBeNull();
+
+    act(() => useOrchStore.setState({ todoLists: [TODO_LIST] }));
+
+    expect(host.querySelectorAll('.task-board-workspace__list')).toHaveLength(3);
+    expect(
+      [...host.querySelectorAll('.task-board-workspace__group-label')].map(
+        (node) => node.textContent,
+      ),
+    ).toEqual(['Missões', 'Tarefas']);
   });
 });
