@@ -58,6 +58,45 @@ export function isDestructiveEffect(
 }
 
 /**
+ * Texto que a mão do operador mandaria para um PTY e que carrega comando
+ * destrutivo.
+ *
+ * O modal do pane sem missão cai por padrão (a sessão `user` já abre e fala
+ * com panes pela UI), mas um `rm -rf` injetado por prompt não ganha passe
+ * livre: pane_write/ask/many com texto destrutivo continua pedindo
+ * confirmação — é o "destrutivo sem caminho de volta" da decisão de 09/09.
+ * A âncora de `isDestructive` (início ou após `;`/`&`/`|`) evita o falso
+ * positivo de uma pergunta que só cita o comando.
+ */
+export function isDestructivePaneInput(
+  toolName: string,
+  args: Readonly<Record<string, unknown>>,
+): boolean {
+  const canonical = canonicalToolName(toolName);
+  const texts: string[] = [];
+  const pushText = (value: unknown): void => {
+    if (typeof value === 'string' && value.length > 0) texts.push(value);
+  };
+  if (canonical === 'pane_write' || canonical === 'agent_prompt') {
+    pushText(args.text);
+  } else if (canonical === 'pane_ask') {
+    pushText(args.question);
+  } else if (canonical === 'pane_write_many') {
+    const writes = args.writes;
+    if (Array.isArray(writes)) {
+      for (const entry of writes) {
+        if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+          pushText((entry as Record<string, unknown>).text);
+        }
+      }
+    }
+  } else {
+    return false;
+  }
+  return texts.some((text) => isDestructive(text));
+}
+
+/**
  * Consentimento por ação — hoje, VAZIO no caminho da missão, de propósito.
  *
  * Ele existia para duas famílias, e nenhuma delas ainda precisa dele:
