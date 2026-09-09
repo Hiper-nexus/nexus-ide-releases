@@ -11,9 +11,23 @@
 export type PaneInputLane = 'operator' | 'raw';
 
 export function paneInputLane(
-  pane: { readonly kind?: string; readonly missionId?: string | null } | undefined,
+  pane:
+    | {
+        readonly kind?: string;
+        readonly missionId?: string | null;
+        /**
+         * Papel de orquestração do pane. Um pane `worker`/`orchestrator` é
+         * governado pelo main MESMO sem missão — o `nexus_pane_spawn` do
+         * operador minta o papel sem criar missão (campo 09/09: "não consigo
+         * digitar nos panes que o orquestrador abriu"). A lane crua é recusada
+         * por design nesses panes; sem o papel aqui a tecla morria em silêncio.
+         */
+        readonly role?: 'orchestrator' | 'worker';
+      }
+    | undefined,
   paneMissionIdFromStore: string | undefined,
 ): PaneInputLane {
   const missionId = pane?.missionId ?? paneMissionIdFromStore;
-  return pane?.kind === 'cli-agent' && missionId ? 'operator' : 'raw';
+  const governed = Boolean(missionId) || Boolean(pane?.role);
+  return pane?.kind === 'cli-agent' && governed ? 'operator' : 'raw';
 }

@@ -17,12 +17,36 @@ describe('paneInputLane — mesma lane do teclado para QUALQUER escrita no pane'
     ).toBe('operator');
   });
 
-  it('shell plano e cli-agent sem missão seguem na lane crua', () => {
+  it('pane governado sem missão (papel de orquestração) usa a lane do operador', () => {
+    // Campo 09/09: pane aberto pelo operador pede um pane ao agente
+    // (nexus_pane_spawn) e o novo pane nasce worker/orchestrator SEM missão.
+    // A lane crua é recusada pelo main para esses panes — a tecla do operador
+    // morria em silêncio no pane que o orquestrador abriu.
+    expect(
+      paneInputLane({ kind: 'cli-agent', missionId: undefined, role: 'worker' }, undefined),
+    ).toBe('operator');
+    expect(
+      paneInputLane(
+        { kind: 'cli-agent', missionId: undefined, role: 'orchestrator' },
+        undefined,
+      ),
+    ).toBe('operator');
+  });
+
+  it('shell plano e cli-agent sem missão e sem papel seguem na lane crua', () => {
     expect(paneInputLane({ kind: 'shell', missionId: undefined }, undefined)).toBe(
       'raw',
     );
+    // Pane direto do operador (adapter escolhido no "+ Pane"): main minta
+    // role `user` e a escrita crua é permitida — não há o que pedir.
     expect(
       paneInputLane({ kind: 'cli-agent', missionId: undefined }, undefined),
+    ).toBe('raw');
+    expect(
+      paneInputLane(
+        { kind: 'cli-agent', missionId: undefined, role: undefined },
+        undefined,
+      ),
     ).toBe('raw');
   });
 

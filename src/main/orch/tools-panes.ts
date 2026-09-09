@@ -406,6 +406,14 @@ const paneSpawn: McpToolDef = {
     let options: SpawnToolOptions;
     let executionMode: 'same_checkout' | 'isolated_worktree' | undefined;
     let rosterRouteAuthorized = false;
+    /**
+     * Mão do operador sem missão: o pane filho é a MESMA mão. Omitir `role`
+     * faz o main mintar `user` (`mcp-server`: `meta?.role ?? "user"`), então o
+     * filho herda o modo vibe e a pane-authz do operador em vez de nascer
+     * worker preso. Decisão 09/09 — opção "panes que você abre herdam a
+     * liberdade". Com missão nada muda: worker/orchestrator seguem como sempre.
+     */
+    const operatorHand = ctx.role === 'user' && !ctx.missionId;
     if (agentRef) {
       const requestedMissionId = childMissionId(ctx, str(args, 'missionId'));
       const mission = requestedMissionId
@@ -471,7 +479,9 @@ const paneSpawn: McpToolDef = {
           agent.allowedTools ?? (role === 'orchestrator' ? null : []),
         ),
         allowedSkills: attenuateSkills(ctx.allowedSkills, agent.allowedSkills ?? null),
-        role,
+        // Sem missão a categoria do roster não confere autoridade: o filho do
+        // operador nasce `user` (ver `operatorHand`).
+        role: operatorHand ? undefined : role,
         readOnly: args.readOnly === true,
         prompt: str(args, 'prompt'),
         scope: ctx.scope,
@@ -498,7 +508,10 @@ const paneSpawn: McpToolDef = {
       // selado único para esta CLI vence esse default.
       const gateModel =
         selectedAdHocModel ?? defaultModelForAdapter(adHocAdapterId);
-      if (!routeReservationId) {
+      // A mão do operador escolhe o modelo: o aviso de catálogo (custo/faixa)
+      // não vira parede `route_required` no pane dele. O gate de modelo
+      // fantasma continua a jusante (resolveModelForSpawn).
+      if (!routeReservationId && !operatorHand) {
         const gateError = adHocSpawnGateError(
           adHocAdapterId,
           gateModel,
@@ -516,10 +529,11 @@ const paneSpawn: McpToolDef = {
         contextRevision: ctx.contextRevision,
         // An MCP-initiated spawn is the orchestrator delegating: default to a
         // WORKER (gated) so an ad-hoc spawn without agentName never lands as an
-        // unrestricted 'user'-role token (SEC#5).
+        // unrestricted 'user'-role token (SEC#5). A mão do operador sem missão
+        // é a exceção explícita: o filho É o operador (ver `operatorHand`).
         allowedTools: attenuateTools(ctx.allowedTools, []),
         allowedSkills: attenuateSkills(ctx.allowedSkills, null),
-        role: 'worker',
+        role: operatorHand ? undefined : 'worker',
         readOnly: args.readOnly === true,
         prompt: str(args, 'prompt'),
         scope: ctx.scope,

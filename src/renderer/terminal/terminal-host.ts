@@ -1381,11 +1381,12 @@ function startSpawn(
           }
           return;
         }
-        // Pane de missão não aceita escrita do renderer — a posse é do main.
-        // O teclado do operador entra pedindo, não escrevendo: sem esse desvio
-        // a tecla era descartada em silêncio e o terminal parecia morto.
-        // O vínculo vem do orchStore quando o pane restaurado chega sem ele.
-        if (pane.kind === 'cli-agent' && missionId) {
+        // Pane governado (missão OU papel de orquestração sem missão) não
+        // aceita escrita crua do renderer — a posse é do main. O teclado do
+        // operador entra pedindo, não escrevendo: sem esse desvio a tecla era
+        // descartada em silêncio e o terminal parecia morto. O vínculo vem do
+        // orchStore quando o pane restaurado chega sem ele.
+        if (paneInputLane(pane, missionId) === 'operator') {
           sendOperatorInputOrNotify(pane.id, host.sessionId, data);
           return;
         }
@@ -3246,14 +3247,20 @@ function sendOperatorInputOrNotify(
   data: string,
 ): void {
   void window.nexus.orch.sendPaneOperatorInput({ sessionId, data }).then(
-    (accepted) => {
+    async (accepted) => {
       if (accepted) return;
+      // Fallback: pane direto do operador (role `user`) aceita escrita crua, e
+      // o paste bracketed é recusado na lane do operador de propósito. O
+      // recibo CONFIRMADO é a única forma de saber que o main aceitou — o
+      // `pty.write` cru é fire-and-forget (send) e devolvia `undefined`, então
+      // uma recusa real caía no vazio e a tecla sumia sem aviso.
+      let wrote = false;
       try {
-        window.nexus.pty.write(sessionId, data);
-        return;
+        wrote = await window.nexus.pty.writeConfirmed(sessionId, data);
       } catch {
         // PTY pode estar encerrado fisicamente
       }
+      if (wrote) return;
       const target = hosts.get(paneId);
       if (!target || target.disposed) return;
       // Uma recusa POR RAJADA, não por tecla: digitação corrida e eventos de

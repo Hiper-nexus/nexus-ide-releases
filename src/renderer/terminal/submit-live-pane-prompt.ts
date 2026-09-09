@@ -19,6 +19,7 @@ export function submitLivePanePrompt(
     readonly id: string;
     readonly kind?: string;
     readonly missionId?: string | null;
+    readonly role?: 'orchestrator' | 'worker';
   },
   text: string,
 ): Promise<boolean> {
