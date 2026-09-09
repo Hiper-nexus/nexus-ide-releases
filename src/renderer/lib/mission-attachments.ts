@@ -110,14 +110,6 @@ type ClipboardFileSource = {
 };
 
 /**
- * Extract image/audio files from a paste event.
- * Screenshots (⌘⇧⌃4 → clipboard → ⌘V) land as image/* items with no path.
- * Returns [] when the paste is text-only so callers leave the textarea alone.
- *
- * Dedupes by name+size+type+lastModified so items/files dual listing and
- * multi-item paste of the same blob don't double-attach.
- */
-/**
  * Identity of a pasted/dropped blob that survives rename (`image.png` →
  * `print-…png`) and a second paste event of the same clipboard bytes.
  */
@@ -138,6 +130,14 @@ export async function missionAttachmentContentKey(file: File): Promise<string> {
   return `${file.size}:${hash.toString(16)}`;
 }
 
+/**
+ * Extract image/audio files from a paste event.
+ * Screenshots (⌘⇧⌃4 → clipboard → ⌘V) land as image/* items with no path.
+ * Returns [] when the paste is text-only so callers leave the textarea alone.
+ *
+ * Dedupes by name+size+type so items/files dual listing and multi-item paste
+ * of the same blob don't double-attach.
+ */
 export function filesFromClipboardData(
   data: ClipboardFileSource | DataTransfer | null | undefined,
 ): File[] {
@@ -149,7 +149,11 @@ export function filesFromClipboardData(
     if (!file) return;
     const kind = classifyMissionAttachment(file);
     if (!kind) return;
-    const key = `${file.name}\0${file.size}\0${file.type}\0${file.lastModified}`;
+    // `lastModified` NÃO entra na chave: para um blob de clipboard o navegador
+    // sintetiza um File a cada acessor, carimbando o instante da chamada. O
+    // mesmo print vinha por `items` e por `files` com timestamps a um
+    // milissegundo de distância e era anexado duas vezes (campo 09/09).
+    const key = `${file.name}\0${file.size}\0${file.type}`;
     if (seen.has(key)) return;
     seen.add(key);
     collected.push(namePastedMissionFile(file, kind));

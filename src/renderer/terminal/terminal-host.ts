@@ -21,8 +21,12 @@ import { useToastStore } from '../state/toast-store';
 import { getActiveWorkspacePath } from '../state/active-workspace';
 import { filesFromClipboardData } from '../lib/mission-attachments';
 import {
+  describeDropWithoutFiles,
   droppedFileRejectionMessage,
+  droppedUriRejectionMessage,
   resolveDroppedMissionContextPath,
+  resolveDropUris,
+  type DroppedUri,
 } from '../lib/mission-shell-file-intake';
 import { listPanes } from '../lib/split-tree';
 import {
@@ -146,6 +150,14 @@ interface Host {
   quietSpawn?: boolean;
   /** Spawn adiado até o slot ter caixa real (F-009). */
   spawnWhenMeasurable?: boolean;
+  /**
+   * Retentativa do spawn adiado. O ResizeObserver era o único gatilho para
+   * retomar um spawn que esperava slot mensurável — e quando o canvas de
+   * terminais sai de `hidden` o fit pode falhar no mesmo frame (medida de
+   * fonte ainda zero) e o tamanho depois fica estável: nenhum evento novo,
+   * pane em branco para sempre (campo 09/09: pane aberto no Início).
+   */
+  deferredSpawnRetry?: ReturnType<typeof setTimeout>;
   /** Last grid already propagated to the PTY; avoids duplicate SIGWINCH. */
   reportedGrid: { cols: number; rows: number } | null;
   isVisible: boolean;
@@ -1432,14 +1444,48 @@ function settleHostGrid(host: Host): boolean {
   return hostGridIsUsable({ cols: host.term.cols, rows: host.term.rows });
 }
 
+const DEFERRED_SPAWN_RETRY_MIN_MS = 250;
+const DEFERRED_SPAWN_RETRY_MAX_MS = 2_000;
+
+function clearDeferredSpawnRetry(host: Host): void {
+  if (host.deferredSpawnRetry === undefined) return;
+  clearTimeout(host.deferredSpawnRetry);
+  host.deferredSpawnRetry = undefined;
+}
+
+/**
+ * Enquanto o spawn estiver adiado, tenta de novo num relógio próprio com
+ * backoff (250ms → 2s). Barato — um timer por host adiado — e transforma
+ * "nunca nasce" em "nasce assim que o slot for mensurável".
+ */
+function armDeferredSpawnRetry(host: Host, delayMs: number): void {
+  clearDeferredSpawnRetry(host);
+  host.deferredSpawnRetry = setTimeout(() => {
+    host.deferredSpawnRetry = undefined;
+    if (host.disposed || host.spawnStarted || host.hibernated) return;
+    if (!host.spawnWhenMeasurable) return;
+    tryDeferredSpawn(host);
+    if (host.spawnWhenMeasurable && !host.spawnStarted) {
+      armDeferredSpawnRetry(
+        host,
+        Math.min(delayMs * 2, DEFERRED_SPAWN_RETRY_MAX_MS),
+      );
+    }
+  }, delayMs);
+}
+
 function beginPaneSpawn(pane: PaneModel, host: Host): void {
   if (host.spawnStarted || host.hibernated || host.disposed) return;
   if (heldSpawnPanes.has(pane.id)) return;
   if (!settleHostGrid(host)) {
     host.spawnWhenMeasurable = true;
+    if (host.deferredSpawnRetry === undefined) {
+      armDeferredSpawnRetry(host, DEFERRED_SPAWN_RETRY_MIN_MS);
+    }
     return;
   }
   host.spawnWhenMeasurable = false;
+  clearDeferredSpawnRetry(host);
   const firstIntent = consumeFirstSpawnIntent(pane.id);
   void startSpawn(
     pane,
@@ -1844,6 +1890,35 @@ async function injectDroppedFile(host: Host, file: File): Promise<void> {
 }
 
 /**
+ * Drop que chegou sem `File`, só com o endereço (WhatsApp, Fotos, um link do
+ * navegador): o main lê o `file://` ou baixa o http(s) e devolve o caminho
+ * estagiado em mission-context, que entra no pane como um drop do Finder.
+ * Uma recusa vira toast com o motivo do main; nada é escrito no pane.
+ */
+async function injectDroppedUri(host: Host, dropped: DroppedUri): Promise<void> {
+  try {
+    if (dropped.kind === 'url') {
+      useToastStore.getState().push('info', 'Baixando link para a missão…', {
+        detail: dropped.uri,
+        dedupeKey: 'terminal-drop-download',
+      });
+    }
+    const result = await window.nexus.files.importDroppedUri(dropped.uri);
+    if (result.ok && result.path && host.sessionId) {
+      window.nexus.pty.write(host.sessionId, `${shellQuote(result.path)} `);
+      return;
+    }
+    useToastStore.getState().push(
+      'warn',
+      dropped.kind === 'url' ? 'Link não baixado' : 'Arquivo não colado no terminal',
+      result.error ?? droppedUriRejectionMessage(dropped),
+    );
+  } catch {
+    // Ignore — a failed drop should never break the terminal.
+  }
+}
+
+/**
  * Make a terminal fully operable: copy the selection (⌘/Ctrl+C when text is
  * selected), paste text (native xterm) or an image (saved to disk, path
  * injected), and accept drag-and-dropped files (real path injected as if
@@ -1918,8 +1993,25 @@ function wireInteractions(host: Host, sendJumpKeyOnScroll = false): void {
     e.preventDefault();
     e.stopPropagation();
     const files = Array.from(e.dataTransfer?.files ?? []);
-    if (files.length === 0) return;
-    for (const file of files) void injectDroppedFile(host, file);
+    if (files.length > 0) {
+      for (const file of files) void injectDroppedFile(host, file);
+      return;
+    }
+    // Apps nativos entregam mídia como PROMESSA de arquivo, e quando o
+    // Chromium não a materializa `files` vem vazia — mas o `text/uri-list`
+    // costuma vir: o main ainda consegue ler o `file://` ou baixar o link.
+    const { accepted } = resolveDropUris(e.dataTransfer);
+    if (accepted.length > 0) {
+      for (const dropped of accepted) void injectDroppedUri(host, dropped);
+      return;
+    }
+    // Silêncio aqui tornava "não suportado" indistinguível de "quebrado".
+    // Diga o que chegou.
+    useToastStore.getState().push(
+      'warn',
+      'Nada foi solto no terminal',
+      describeDropWithoutFiles(e.dataTransfer),
+    );
   });
 }
 
@@ -3269,6 +3361,7 @@ export function submitPromptToPaneOperatorInput(
 
 function disposeHost(host: Host, paneId: string): void {
   host.disposed = true;
+  clearDeferredSpawnRetry(host);
   host.inputVisibility.dispose();
   webglPool.unregister(paneId);
   host.ro.disconnect();

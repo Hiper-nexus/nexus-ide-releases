@@ -14,6 +14,7 @@ import {
   initialPromptChannel,
 } from "../../shared/cli-initial-prompt";
 import { ensureUtf8Locale } from "./pty-env-locale";
+import { applyPaneTerminalIdentity } from "./pane-terminal-identity";
 import { PTY_CHANNELS } from "../../shared/channels";
 import type { SpawnRequest, PaneSessionState } from "../../shared/types";
 import {
@@ -589,8 +590,8 @@ const ENV_ALLOWLIST = new Set<string>([
   "LANGUAGE",
   "LC_ALL",
   "TERM",
-  "TERM_PROGRAM",
-  "TERM_PROGRAM_VERSION",
+  // TERM_PROGRAM/_VERSION NÃO passam: o pane se apresenta como Nexus
+  // (pane-terminal-identity), não como o terminal que subiu o app.
   "COLORTERM",
   "EDITOR",
   "VISUAL",
@@ -647,7 +648,7 @@ function baseChildEnv(): NodeJS.ProcessEnv {
   // App GUI (Finder) não herda locale do shell: sem isto o CLI filho roda em
   // locale C e prompts pt-BR viram mojibake no empacotado (bug F, 05/08).
   ensureUtf8Locale(env);
-  return env;
+  return applyPaneTerminalIdentity(env);
 }
 
 /**

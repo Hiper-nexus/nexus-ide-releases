@@ -143,6 +143,39 @@ describe('mission attachments', () => {
     ).toEqual([]);
   });
 
+  it('conta UMA vez a imagem que o clipboard expõe em items E em files', () => {
+    // Chromium entrega o mesmo print pelos dois acessores, e cada chamada
+    // sintetiza um File novo — com `lastModified` do instante da chamada.
+    // Quando as duas caem em milissegundos diferentes, uma chave que inclui
+    // `lastModified` deixa de casar e o mesmo print é anexado duas vezes
+    // (campo 09/09: dois `print-...T12-36-22.png` na mesma colagem).
+    const fromItems = new File(['png-bytes'], 'image.png', {
+      type: 'image/png',
+      lastModified: 1_757_419_000_000,
+    });
+    const fromFiles = new File(['png-bytes'], 'image.png', {
+      type: 'image/png',
+      lastModified: 1_757_419_000_001,
+    });
+
+    const files = filesFromClipboardData({
+      items: [{ kind: 'file', type: 'image/png', getAsFile: () => fromItems }],
+      files: [fromFiles],
+    });
+
+    expect(files).toHaveLength(1);
+  });
+
+  it('ainda separa arquivos distintos que chegam juntos na mesma colagem', () => {
+    const files = filesFromClipboardData({
+      files: [
+        realFile('erro.png', 'image/png', 'a'),
+        realFile('log.png', 'image/png', 'bb'),
+      ],
+    });
+    expect(files.map((entry) => entry.name)).toEqual(['erro.png', 'log.png']);
+  });
+
   it('renames generic clipboard dumps but keeps real filenames', () => {
     const generic = namePastedMissionFile(realFile('image.png', 'image/png'), 'image');
     expect(generic.name).toMatch(/^print-.*\.png$/);

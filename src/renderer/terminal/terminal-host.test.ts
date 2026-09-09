@@ -42,6 +42,7 @@ vi.mock('./terminal-ghost-assist', () => ({ TerminalGhostAssist: class { dispose
 
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
+import { useToastStore } from '../state/toast-store';
 import { buildGridTree } from '../lib/split-tree';
 import {
   attachHost,
@@ -108,6 +109,36 @@ afterEach(() => {
   vi.unstubAllGlobals();
   if (originalNexus) Object.defineProperty(window, 'nexus', originalNexus);
   else Reflect.deleteProperty(window, 'nexus');
+});
+
+describe('spawn adiado sem ninguém esperando a sessão', () => {
+  it('nasce sozinho quando o canvas oculto fica mensurável, mesmo sem ResizeObserver', async () => {
+    // Campo 09/09: pane aberto pelo picker com o destino em Início (canvas
+    // de terminais `hidden`, 0×0). Ninguém chama waitForSession, o
+    // ResizeObserver não resgata e o pane ficava em branco para sempre.
+    const host = openHiddenHost();
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(spawn).not.toHaveBeenCalled();
+    expect(host.spawnWhenMeasurable).toBe(true);
+
+    host.element.parentElement!.hidden = false;
+    setHostSize(host.element, 1200, 800);
+    await vi.advanceTimersByTimeAsync(2_500);
+
+    expect(spawn).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ cols: 120, rows: 40 }),
+    );
+    expect(host.spawnWhenMeasurable).toBe(false);
+  });
+
+  it('para de tentar quando o host é descartado', async () => {
+    const host = openHiddenHost();
+    await vi.advanceTimersByTimeAsync(300);
+    reconcileHosts(new Set());
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(spawn).not.toHaveBeenCalled();
+    expect(host.disposed).toBe(true);
+  });
 });
 
 describe('waitForSession with an attached terminal', () => {
@@ -223,5 +254,142 @@ describe('consumeFirstSpawnIntent — resume+restore nunca simultâneos', () => 
     });
     discardPaneSpawnState('intent-a');
     discardPaneSpawnState('intent-b');
+  });
+});
+
+describe('drop sem File — text/uri-list vira anexo digitado no PTY', () => {
+  const write = vi.fn();
+  const importDroppedUri = vi.fn();
+
+  beforeEach(() => {
+    write.mockReset();
+    importDroppedUri.mockReset();
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        pty: {
+          spawn, kill, resize: vi.fn(), write,
+          onStateChange: () => () => {}, onData: () => () => {}, onExit: () => () => {},
+        },
+        files: { importDroppedUri, pathForFile: () => '', importMissionAttachment: vi.fn() },
+      },
+    });
+    useToastStore.setState({ toasts: [] });
+  });
+
+  async function openLiveHost() {
+    const host = getOrCreateHost(pane);
+    setHostSize(host.element, 1400, 900);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(pane, slot);
+    expect(await waitForSession(pane.id, 1000)).toBe('pty-hidden');
+    return host;
+  }
+
+  function dropWithoutFiles(element: HTMLElement, data: Record<string, string>): void {
+    const event = new Event('drop', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'dataTransfer', {
+      value: {
+        files: [],
+        types: Object.keys(data),
+        getData: (type: string) => data[type] ?? '',
+        dropEffect: 'none',
+      },
+    });
+    element.dispatchEvent(event);
+  }
+
+  it('file:// solto sem File pede ao main e digita o caminho estagiado', async () => {
+    // WhatsApp/Fotos entregam só o endereço; `files` vem vazia. O main lê o
+    // arquivo e devolve o caminho em mission-context, que entra no pane
+    // exatamente como um drop do Finder.
+    const host = await openLiveHost();
+    importDroppedUri.mockResolvedValue({
+      ok: true,
+      path: '.nexus/attachments/mission-context/k-foto.png',
+    });
+
+    dropWithoutFiles(host.element, {
+      'text/uri-list': 'file:///Users/ana/foto%20de%20perfil.png',
+    });
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(importDroppedUri).toHaveBeenCalledExactlyOnceWith(
+      'file:///Users/ana/foto%20de%20perfil.png',
+    );
+    expect(write).toHaveBeenCalledWith(
+      'pty-hidden',
+      '.nexus/attachments/mission-context/k-foto.png ',
+    );
+    expect(useToastStore.getState().toasts.map((toast) => toast.title)).not.toContain(
+      'Nada foi solto no terminal',
+    );
+  });
+
+  it('lista com comentário, file:// e https:// gera um anexo por linha', async () => {
+    const host = await openLiveHost();
+    importDroppedUri.mockImplementation(async (uri: string) => ({
+      ok: true,
+      path: `.nexus/attachments/mission-context/k-${uri.split('/').pop()}`,
+    }));
+
+    dropWithoutFiles(host.element, {
+      'text/uri-list':
+        '# origem\r\nfile:///Users/ana/a.png\r\nhttps://example.com/b.pdf\r\n',
+    });
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(importDroppedUri.mock.calls.map(([uri]) => uri)).toEqual([
+      'file:///Users/ana/a.png',
+      'https://example.com/b.pdf',
+    ]);
+    expect(write.mock.calls.map(([, data]) => data)).toEqual([
+      '.nexus/attachments/mission-context/k-a.png ',
+      '.nexus/attachments/mission-context/k-b.pdf ',
+    ]);
+  });
+
+  it('recusa do main vira toast com o motivo, sem digitar nada', async () => {
+    const host = await openLiveHost();
+    importDroppedUri.mockResolvedValue({
+      ok: false,
+      error: '"filme.mov" excede o limite de 14 MB por arquivo.',
+    });
+
+    dropWithoutFiles(host.element, { 'text/uri-list': 'file:///Users/ana/filme.mov' });
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(write).not.toHaveBeenCalled();
+    const toasts = useToastStore.getState().toasts;
+    expect(toasts.map((toast) => toast.title)).toContain('Arquivo não colado no terminal');
+    expect(toasts.find((toast) => toast.title === 'Arquivo não colado no terminal')?.detail).toContain('14 MB');
+  });
+
+  it('sem URI aproveitável mantém o diagnóstico honesto e não chama o main', async () => {
+    const host = await openLiveHost();
+
+    dropWithoutFiles(host.element, { Files: '' });
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(importDroppedUri).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
+    const toast = useToastStore
+      .getState()
+      .toasts.find((item) => item.title === 'Nada foi solto no terminal');
+    expect(toast?.detail).toContain('Finder');
+  });
+
+  it('esquema recusado no renderer (data:) também cai no diagnóstico, sem IPC', async () => {
+    const host = await openLiveHost();
+
+    dropWithoutFiles(host.element, { 'text/uri-list': 'data:text/plain;base64,aGk=' });
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(importDroppedUri).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
+    expect(useToastStore.getState().toasts.map((toast) => toast.title)).toContain(
+      'Nada foi solto no terminal',
+    );
   });
 });

@@ -37,6 +37,13 @@ export const writeFileSchema = z.object({
   relPath: z.string().min(1).max(4096),
   content: z.string().max(5_000_000),
 });
+/**
+ * Drop sem `File`: apps nativos entregam só um `text/uri-list` (`file://…`
+ * ou `http(s)://…`). O main lê/baixa e estagia em mission-context.
+ */
+export const importDroppedUriSchema = z.object({
+  uri: z.string().min(1).max(4096),
+});
 
 export const FILES_CHANNELS = {
   list: 'files:list',
@@ -44,4 +51,5 @@ export const FILES_CHANNELS = {
   write: 'files:write',
   saveDropped: 'files:saveDropped',
   importMissionAttachment: 'files:importMissionAttachment',
+  importDroppedUri: 'files:importDroppedUri',
 } as const;

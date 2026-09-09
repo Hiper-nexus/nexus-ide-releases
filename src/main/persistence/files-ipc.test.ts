@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WebContents } from 'electron';
 import {
@@ -206,6 +207,7 @@ describe('file explorer IPC renderer authority', () => {
     FILES_CHANNELS.write,
     FILES_CHANNELS.saveDropped,
     FILES_CHANNELS.importMissionAttachment,
+    FILES_CHANNELS.importDroppedUri,
   ])(
     'fails closed for an unbound renderer on %s',
     (channel) => {
@@ -213,13 +215,15 @@ describe('file explorer IPC renderer authority', () => {
       renderers.push(window);
 
       const raw =
-        channel === FILES_CHANNELS.saveDropped ||
-        channel === FILES_CHANNELS.importMissionAttachment
-          ? { name: 'drop.txt', base64: 'YmxvY2tlZA==' }
-          : {
-              relPath: channel === FILES_CHANNELS.list ? '' : 'same.txt',
-              content: 'blocked',
-            };
+        channel === FILES_CHANNELS.importDroppedUri
+          ? { uri: 'file:///tmp/blocked.txt' }
+          : channel === FILES_CHANNELS.saveDropped ||
+              channel === FILES_CHANNELS.importMissionAttachment
+            ? { name: 'drop.txt', base64: 'YmxvY2tlZA==' }
+            : {
+                relPath: channel === FILES_CHANNELS.list ? '' : 'same.txt',
+                content: 'blocked',
+              };
 
       expect(() => invoke(channel, window, raw)).toThrow(
         /renderer has no authorized workspace scope/i,
@@ -453,5 +457,59 @@ describe('file explorer IPC renderer authority', () => {
     expect(fs.readFileSync(path.join(root, result.path!), 'utf8')).toBe(
       'audio-bytes',
     );
+  });
+});
+
+describe('drop sem File: file:// e http(s) via IPC', () => {
+  it('stages a local file:// path inside the invoking renderer workspace', async () => {
+    const root = project('uri-root', 'inside');
+    const window = renderer(901);
+    renderers.push(window);
+    bindResolvedRendererWorkspaceScope(
+      window,
+      scope(root, 'project-a', 'checkout-a'),
+    );
+    const outside = path.join(baseDir, 'solto do Finder.png');
+    fs.writeFileSync(outside, 'png-bytes');
+
+    const result = await invoke<Promise<{ ok: boolean; path?: string }>>(
+      FILES_CHANNELS.importDroppedUri,
+      window,
+      { uri: pathToFileURL(outside).href },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.path).toMatch(
+      /^\.nexus\/attachments\/mission-context\/.+solto_do_Finder\.png$/,
+    );
+    expect(fs.readFileSync(path.join(root, result.path!), 'utf8')).toBe(
+      'png-bytes',
+    );
+  });
+
+  it('rejects a malformed payload and an unsupported scheme without touching disk', async () => {
+    const root = project('uri-root-bad', 'inside');
+    const window = renderer(902);
+    renderers.push(window);
+    bindResolvedRendererWorkspaceScope(
+      window,
+      scope(root, 'project-a', 'checkout-a'),
+    );
+
+    expect(
+      await invoke<Promise<{ ok: boolean; error?: string }>>(
+        FILES_CHANNELS.importDroppedUri,
+        window,
+        { uri: 42 },
+      ),
+    ).toEqual({ ok: false, error: 'invalid payload' });
+    expect(
+      await invoke<Promise<{ ok: boolean; error?: string }>>(
+        FILES_CHANNELS.importDroppedUri,
+        window,
+        { uri: 'javascript:alert(1)' },
+      ),
+    ).toMatchObject({ ok: false, error: expect.stringMatching(/http/i) });
+    expect(fs.existsSync(path.join(root, '.nexus'))).toBe(false);
   });
 });

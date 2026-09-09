@@ -3,6 +3,7 @@ import path from 'node:path';
 import { ipcMain } from 'electron';
 import {
   FILES_CHANNELS,
+  importDroppedUriSchema,
   listDirSchema,
   readFileSchema,
   writeFileSchema,
@@ -16,6 +17,7 @@ import {
   importWorkspaceMissionAttachment,
   saveDroppedFile,
 } from './dropped-files';
+import { importDroppedUri } from './dropped-uri-import';
 import { requireRendererWorkspaceScope } from './renderer-workspace-scope';
 
 /**
@@ -401,6 +403,15 @@ export function registerFilesIpc(hooks: FilesIpcTestHooks = {}): void {
       raw.name,
       raw.base64,
     );
+  });
+
+  // Drop sem `File`: o renderer só tem o endereço (`file://` ou http(s)).
+  // O scope é exigido de forma síncrona para falhar fechado como os vizinhos.
+  ipcMain.handle(FILES_CHANNELS.importDroppedUri, (event, raw) => {
+    const scope = requireRendererWorkspaceScope(event.sender);
+    const parsed = importDroppedUriSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false, error: 'invalid payload' };
+    return importDroppedUri(scope.rootRealPath, parsed.data.uri);
   });
 
   ipcMain.handle(FILES_CHANNELS.list, (event, raw) => {

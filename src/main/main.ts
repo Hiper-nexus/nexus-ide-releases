@@ -170,6 +170,7 @@ import {
   orchTerminateSession,
   terminateAllSessions,
 } from "./pty/pty-manager";
+import { setPaneTerminalIdentity } from "./pty/pane-terminal-identity";
 import { configureWorktreePtySweep } from "./runtime/worktree-pty-sweep";
 import {
   liveRuntimeProcessSummary,
@@ -477,6 +478,7 @@ function bootstrap(): void {
       syncCapability.backendConfigured,
     ),
   });
+  setPaneTerminalIdentity({ name: "NexusIDE", version: app.getVersion() });
   registerPtyIpc();
   // Semantic CommandBlock layer (OSC 133). Fail-closed behind feature flag;
   // never mutates the PTY byte stream — lateral tap only.

@@ -434,12 +434,41 @@ export function importWorkspaceMissionAttachment(
   base64: string,
   options: SaveDroppedFileOptions = {},
 ): SaveDroppedFileResult {
+  let decoded: Buffer;
+  try {
+    decoded = decodeBase64(base64);
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'import failed',
+    };
+  }
+  return importWorkspaceMissionAttachmentBytes(
+    workspaceRoot,
+    name,
+    decoded,
+    options,
+  );
+}
+
+/**
+ * Same staging for bytes that never crossed the IPC as base64 — a `file://`
+ * read or an http(s) download done in main. Enforces the same 14 MiB cap.
+ */
+export function importWorkspaceMissionAttachmentBytes(
+  workspaceRoot: string,
+  name: string,
+  decoded: Buffer,
+  options: SaveDroppedFileOptions = {},
+): SaveDroppedFileResult {
   let file = '';
   let fd: number | null = null;
   let created = false;
   let createdIdentity: fs.Stats | null = null;
   try {
-    const decoded = decodeBase64(base64);
+    if (decoded.length > DROPPED_ATTACHMENT_MAX_BYTES) {
+      throw new Error('dropped file exceeds the 14 MiB item limit');
+    }
     const uid = expectedUid(options);
     const root = requireMissionContextDirectory(workspaceRoot, uid);
     const token =

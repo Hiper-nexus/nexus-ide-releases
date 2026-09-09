@@ -850,6 +850,13 @@ export interface NexusApi {
       name: string,
       base64: string,
     ): Promise<{ ok: boolean; path?: string; error?: string }>;
+    /**
+     * Drop that carried no `File`, only a `file://` path or an http(s) link:
+     * main reads/downloads it and stages it in mission-context like above.
+     */
+    importDroppedUri(
+      uri: string,
+    ): Promise<{ ok: boolean; path?: string; error?: string }>;
     /** Resolve a dragged File to its absolute filesystem path (webUtils). */
     pathForFile(file: File): string;
   };
