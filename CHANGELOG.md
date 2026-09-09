@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.76.10 — Modo vibe sem cabresto, paste humano em pane governado e Kimi desbloqueado
+
+- Modo vibe para o operador: panes abertos pelo operador sem missão executam efeitos de código (`nexus_terminal_run`, `nexus_file_write`, `nexus_git_commit`, etc.) diretamente via MCP sem barreira de intent gate ou modal de confirmação.
+- Paridade na missão aprovada: comandos destrutivos em missões com contrato aprovado deixam de exigir confirmação modal a cada passo — a reversibilidade continua sendo preparada em background sem bloquear o fluxo.
+- Paste humano (Ctrl+V): a lane do operador em panes governados passa a aceitar bracketed paste, permitindo colar código sem recusa pelo processo principal.
+- Kimi Code 0.41+: a tela "Trust this folder?" é detectada e aceita automaticamente pelo autoresponder de PTY no boot, impedindo que a CLI fique travada antes do composer.
+- Teclado do operador em panes secundários: panes criados por agentes sem missão passam a receber a digitação humana direta do xterm.
+- Ferramentas de pane do operador sem modal: `nexus_pane_close`, `nexus_pane_write` e `nexus_pane_ask` deixam de pedir consentimento a cada chamada.
+- Uma CLI Google (AGY): Gemini CLI deixa de ser instalada ou descoberta separadamente em favor do Google Antigravity (AGY CLI).
+- Codex atualizado: o modelo padrão do Codex passa a apontar para `gpt-5.6-sol`.
+- Contas Claude: recuperação robusta de sessões e failover priorizando panes fortes.
+
 ## 0.76.9 — O picker mostra o mais forte primeiro, e o rail mostra onde você está
 
 - "+ Pane" agrupa cada CLI por conta (conta A, conta B) com o estado da conta em chip (ativa, sessão expirada, em pausa, sem credencial), em vez de intercalar conta×modelo. Sem conta salva, o bloco diz que a CLI usa a credencial ativa dela.

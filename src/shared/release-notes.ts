@@ -315,6 +315,24 @@ export const RELEASE_0744: AppRelease = {
   ],
 };
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.10',
+  date: '2026-09-09',
+  codename: 'Modo vibe sem cabresto, paste humano em pane governado e Kimi desbloqueado',
+  summary: 'O operador tem modo vibe completo para criar, editar, rodar comandos e commitar sem burocracia de missão; paste humano (Ctrl+V) aceito em panes governados; Kimi Code 0.41+ responde a tela de confiança; e a missão aprovada ganha paridade com o modo vibe.',
+  highlights: [
+    { title: 'Modo vibe completo para o operador', detail: 'Pane do operador aberto sem missão pode rodar terminal_run, file_write, git_commit e PRs diretamente pelo MCP sem barreira de intent gate ou modal de confirmação. A auditoria completa segue registrada e texto destrutivo ganha aviso no log.' },
+    { title: 'Paridade de missão aprovada (zero fricção)', detail: 'Missões com contrato aprovado não travam mais em modais destrutivos para comandos de código — o preparo de reversibilidade continua protegendo em segundo plano sem interromper a execução.' },
+    { title: 'Paste humano (Ctrl+V) em panes governados', detail: 'A digitação do operador através do xterm agora aceita bracketed paste sem que o backend recuse o envio como injeção orquestrada.' },
+  ],
+  fixes: [
+    { title: 'Kimi Code 0.41+ não fica mais mudo', detail: 'A tela de seleção “Trust this folder?” é respondida automaticamente no boot pelo autoresponder do PTY, evitando que prompts iniciais sejam engolidos.' },
+    { title: 'Digitação em panes filhos abertos por agentes', detail: 'Panes governados spawnados sem missão passam a aceitar a digitação direta do operador, eliminando o comportamento de terminal travado.' },
+    { title: 'Ferramentas de pane sem modal repetitivo', detail: 'Operar panes (fechar, escrever, perguntar) pela mão do usuário sem missão não abre mais modal de confirmação a cada chamada.' },
+    { title: 'Codex abre no modelo de ponta', detail: 'O default de produto deixa de depender do fallback nativo 5.5 e passa a selar gpt-5.6-sol no pane, no squad, no Pet Studio e no roteamento difícil.' },
+    { title: 'Uma CLI Google: Antigravity', detail: 'Gemini CLI deixa de ser instalada, descoberta ou exibida como adapter separado em favor de AGY/Antigravity; modelos gemini-* continuam disponíveis dentro dele.' },
+  ],
+};
+export const RELEASE_0769: AppRelease = {
   version: '0.76.9',
   date: '2026-09-09',
   codename: 'O picker mostra o mais forte primeiro, e o rail mostra onde você está',
