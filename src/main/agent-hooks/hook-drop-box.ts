@@ -151,6 +151,10 @@ export class AgentHookDropBoxWatcher {
         }
         this.#scheduleDrain();
       });
+      // A subscrição do kernel (FSEvents/kqueue) não é instantânea: um drop
+      // escrito entre o drain inicial e o watcher ficar armado não gera evento
+      // e só apareceria no próximo. Uma varredura extra fecha essa janela.
+      this.#scheduleDrain();
     } catch (err) {
       console.warn("[hook-drop-box] failed to watch directory, falling back to polling:", err);
       this.#pollingTimer = setInterval(() => {

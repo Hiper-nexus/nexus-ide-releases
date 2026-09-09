@@ -90,8 +90,12 @@ describe("hook-drop-box", () => {
       timestamp: Date.now(),
     });
 
-    // Wait for fs.watch and debounce
-    await new Promise((r) => setTimeout(r, 120));
+    // Espera determinística: fs.watch arma de forma assíncrona no macOS, e um
+    // sleep fixo de 120 ms perdia a corrida (flake 1 em 3 rodadas isoladas).
+    const deadline = Date.now() + 2_000;
+    while (ingested.length === 0 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
 
     expect(ingested.length).toBe(1);
     expect(ingested[0].sessionId).toBe("session-async");
