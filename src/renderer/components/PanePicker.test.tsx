@@ -15,6 +15,8 @@ import { useSessionStateStore } from '../state/session-state-store';
 import {
   PanePicker,
   buildPanePickerEntries,
+  resolveSpecialtyBadge,
+  resolveSpecialtyKeywords,
   runPanePickerIntent,
   withAccountActions,
 } from './PanePicker';
@@ -911,5 +913,25 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
       ?.continuityPack;
     expect(pack).toContain('m-radar');
     expect(pack).toContain('Radar BI');
+  });
+
+  describe('roteamento por especialidade de CLI e modelo', () => {
+    it('resolve especialidade frontend para Claude e Opus/Sonnet', () => {
+      const badge = resolveSpecialtyBadge('claude', 'claude-opus-4');
+      expect(badge?.label).toBe('frontend');
+      expect(resolveSpecialtyKeywords('claude', 'claude-opus-4')).toContain('react');
+    });
+
+    it('resolve especialidade lógica para Codex e GPT', () => {
+      const badge = resolveSpecialtyBadge('codex', 'gpt-5.6-sol');
+      expect(badge?.label).toBe('lógica');
+      expect(resolveSpecialtyKeywords('codex', 'gpt-5.6-sol')).toContain('refactor');
+    });
+
+    it('resolve especialidade rápido para modelos leves (flash/haiku/mini)', () => {
+      const badge = resolveSpecialtyBadge('gemini', 'gemini-2.5-flash');
+      expect(badge?.label).toBe('rápido');
+      expect(resolveSpecialtyKeywords('gemini', 'gemini-2.5-flash')).toContain('scout');
+    });
   });
 });

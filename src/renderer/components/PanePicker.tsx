@@ -179,6 +179,82 @@ function compareAccountsForDisplay(a: AccountInfo, b: AccountInfo): number {
   );
 }
 
+export function resolveSpecialtyBadge(
+  adapterId: string,
+  modelId: string,
+): PanePickerBadge | null {
+  const m = (modelId || '').toLowerCase();
+  const a = (adapterId || '').toLowerCase();
+  if (
+    m.includes('haiku') ||
+    m.includes('flash') ||
+    m.includes('mini') ||
+    m.includes('nano')
+  ) {
+    return {
+      label: 'rápido',
+      tone: 'fast',
+      title: 'Ideal para tarefas rápidas, scouting e automações',
+    };
+  }
+  if (m.includes('opus') || m.includes('sonnet') || a.includes('claude')) {
+    return {
+      label: 'frontend',
+      tone: 'deep',
+      title: 'Especialista em React, Frontend e Arquitetura',
+    };
+  }
+  if (
+    m.includes('codex') ||
+    m.includes('gpt-5') ||
+    m.includes('o3') ||
+    a.includes('codex')
+  ) {
+    return {
+      label: 'lógica',
+      tone: 'deep',
+      title: 'Especialista em Lógica, Algoritmos e Refatoração',
+    };
+  }
+  if (m.includes('gemini') || a.includes('gemini')) {
+    return {
+      label: 'contexto',
+      tone: 'balanced',
+      title: 'Especialista em Longo Contexto e Multimodal',
+    };
+  }
+  if (m.includes('kimi') || m.includes('deepseek') || a.includes('kimi')) {
+    return {
+      label: 'raciocínio',
+      tone: 'deep',
+      title: 'Especialista em Raciocínio Profundo e C/Rust',
+    };
+  }
+  return null;
+}
+
+export function resolveSpecialtyKeywords(
+  adapterId: string,
+  modelId: string,
+): string {
+  const badge = resolveSpecialtyBadge(adapterId, modelId);
+  if (!badge) return '';
+  switch (badge.label) {
+    case 'frontend':
+      return 'frontend react ui css tailwind design arquiteto';
+    case 'lógica':
+      return 'logica refactor algoritmo backend bug fix';
+    case 'contexto':
+      return 'contexto multimodal documentos analise longo';
+    case 'raciocínio':
+      return 'raciocinio math algoritmos profundos c rust';
+    case 'rápido':
+      return 'rapido recon scout automacao leve';
+    default:
+      return badge.label;
+  }
+}
+
 function badgesOf(row: PickerModelRow): PanePickerBadge[] {
   const badges: PanePickerBadge[] = [];
   if (row.band) {
@@ -212,6 +288,7 @@ function agentEntry(
 ): PanePickerEntry {
   const modelLabel = row.id || DEFAULT_MODEL_LABEL;
   const badges = badgesOf(row);
+  const specialtyWords = resolveSpecialtyKeywords(provider.adapterId, row.id);
   return {
     id: `agent:${provider.adapterId}:${account?.id ?? 'default'}:${row.id || 'default'}`,
     section: 'clis',
@@ -226,8 +303,9 @@ function agentEntry(
       account?.label ?? DEFAULT_ACCOUNT_LABEL,
       account?.email ?? '',
       modelLabel,
+      specialtyWords,
       ...badges.map((badge) => badge.label),
-    ].join(' '),
+    ].filter(Boolean).join(' '),
     intent: {
       kind: 'agent',
       adapterId: provider.adapterId,
