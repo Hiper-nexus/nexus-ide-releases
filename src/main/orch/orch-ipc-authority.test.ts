@@ -3959,13 +3959,17 @@ describe('teclado do operador em pane de missão', () => {
     ]);
   });
 
-  it('recusa bracketed paste: injeção orquestrada não entra por aqui', async () => {
+  it('entrega bracketed paste humano (Ctrl+V) pelo lane do operador', async () => {
+    // Decisão 09/09: colar código num pane governado é gesto do operador e
+    // entra pela lane humana; a injeção orquestrada de verdade continua na
+    // lane main-owned com recibo (`orchWriteSession`), que não passa aqui.
     const { handler, sender } = setup();
     const sessionId = livePane(sender);
-    expect(
-      handler({ sender }, { sessionId, data: '\x1b[200~kickoff\x1b[201~' }),
-    ).toBe(false);
-    expect(harness.operatorInput.writes).toEqual([]);
+    const pasted = '\x1b[200~kickoff\x1b[201~';
+    expect(handler({ sender }, { sessionId, data: pasted })).toBe(true);
+    expect(harness.operatorInput.writes).toEqual([
+      { sessionId, data: pasted },
+    ]);
   });
 
   it('recusa sessão que este renderer não apresenta', async () => {

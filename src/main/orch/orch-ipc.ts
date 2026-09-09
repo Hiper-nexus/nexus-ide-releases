@@ -1761,10 +1761,12 @@ export function registerOrchIpc(): void {
     const parsed = paneOperatorInputSchema.safeParse(raw);
     if (!parsed.success) return false;
     const { sessionId, data } = parsed.data;
-    // Bracketed paste é o transporte da injeção orquestrada (kickoff, handoff,
-    // resposta de ferramenta). Ele continua entrando só pelo lane com recibo:
-    // o operador digita, não injeta contrato.
-    if (data.includes("\x1b[200~") || data.includes("\x1b[201~")) return false;
+    // Paste HUMANO entra aqui, incluindo o bracketed paste que o xterm emite
+    // (Ctrl+V). A recusa antiga por `\x1b[200~` tratava o paste do operador
+    // como se fosse injeção orquestrada e quebrava colar código em pane
+    // governado; a injeção de verdade (kickoff/handoff/resposta de ferramenta)
+    // continua entrando pela lane main-owned com recibo (`orchWriteSession`),
+    // que não passa por este handler. A lane já exige posse de apresentação.
     // Posse de apresentação é do main, não do payload: só quem realmente
     // mostra a sessão pode falar por ela.
     const info = getOwnedAgentSessionInfo(event.sender, sessionId);
