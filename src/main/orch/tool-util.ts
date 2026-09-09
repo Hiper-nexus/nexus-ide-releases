@@ -1050,7 +1050,7 @@ export async function spawnPaneAndMaybePrompt(
   // superfície de seleção (dropdown do squad, roster, route_task) podia oferecer
   // um id que o CLI instalado não roda (ex.: `gpt-5.6` depois da OpenAI
   // renomear para `gpt-5.6-sol`/`-luna`/`-terra`). Sem isto o CLI ignora o
-  // pedido e cai SILENCIOSAMENTE no seu default (`gpt-5.6-terra`), fazendo o modelo
+  // pedido e cai SILENCIOSAMENTE no seu default (`gpt-5.6-sol`), fazendo o modelo
   // escolhido pelo usuário NÃO valer. Aqui, imediatamente antes do PTY,
   // resolvemos o modelo contra a lista REAL do CLI (cache do próprio CLI quando
   // existe; senão a lista estática do adapter): id exato quando roda, senão a

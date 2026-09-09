@@ -195,9 +195,12 @@ describe('published catalog JSON', () => {
       expect(astra?.costTier).toBe('high');
       expect(isModelBlockedForAutoRouting(astra)).toBe(true);
     }
-    // Default do codex segue estável durante o rollout.
+    // O rollout restrito não vira default, mas o melhor modelo GA vira.
     expect(BUILTIN_MODEL_CATALOG.adapters?.codex?.default).toBe(
-      'gpt-5.6-terra',
+      'gpt-5.6-sol',
+    );
+    expect(PUBLISHED_MODEL_CATALOG.adapters?.codex?.default).toBe(
+      'gpt-5.6-sol',
     );
   });
 

@@ -39,6 +39,7 @@ import {
   classifyOperationalBand,
   preferOperationalBand,
 } from '../../shared/model-operational-bands';
+import { CODEX_FRONTIER_MODEL } from '../../shared/model-defaults';
 import { adapterCircuitBreakers } from './circuit-breaker';
 import { multiScoreRerank } from './route-pipeline';
 
@@ -125,8 +126,8 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'claude', model: 'claude-opus-4-8', effort: 'high' },
     { adapterId: 'glm', model: 'glm-5.3', effort: 'high' },
     { adapterId: 'longcat', model: 'LongCat-2.0', effort: 'high' },
+    { adapterId: 'codex', model: CODEX_FRONTIER_MODEL, effort: 'high' },
     { adapterId: 'codex', model: 'gpt-5.6-terra', effort: 'high' },
-    { adapterId: 'codex', model: 'gpt-5.6-sol', effort: 'high' },
     { adapterId: 'agy', model: 'gemini-3.1-pro-high', effort: 'high' },
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'high' },
     { adapterId: 'grok', model: 'grok-4.1', effort: 'high' },

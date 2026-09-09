@@ -1,4 +1,5 @@
 import type { Squad } from './orch-types';
+import { CODEX_FRONTIER_MODEL } from './model-defaults';
 
 /** Stable id for the built-in, single-agent pet creation squad. */
 export const PET_STUDIO_SQUAD_ID = 'nexus-pet-studio';
@@ -25,7 +26,7 @@ export const PET_STUDIO_SQUAD: Squad = {
       agentName: 'Pet Maker',
       category: 'orchestrator',
       cli: 'codex',
-      model: 'gpt-5.6-terra',
+      model: CODEX_FRONTIER_MODEL,
       effort: 'high',
       // The dedicated maker gets only workspace dependencies plus Nexus-owned
       // media. It never receives the private Codex imagegen/home path.

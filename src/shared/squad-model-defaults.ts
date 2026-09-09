@@ -1,6 +1,8 @@
+import { CODEX_FRONTIER_MODEL } from './model-defaults';
+
 /** Product defaults for newly created or provider-switched squad agents. */
 export const SQUAD_MODEL_DEFAULTS = {
-  codex: 'gpt-5.6-terra',
+  codex: CODEX_FRONTIER_MODEL,
   grok: 'grok-4.5',
   gemini: 'gemini-3.7-flash-high',
 } as const;
@@ -12,7 +14,6 @@ export function defaultSquadModelForAdapter(adapterId: string): string | undefin
     case 'grok':
       return SQUAD_MODEL_DEFAULTS.grok;
     case 'agy':
-    case 'gemini-cli':
     case 'antigravity-cli':
       return SQUAD_MODEL_DEFAULTS.gemini;
     default:

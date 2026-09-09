@@ -9,6 +9,7 @@ import type {
   ModelInfoMap,
 } from '../../shared/adapter-types';
 import publishedCatalogRaw from '../../../resources/model-catalog.json';
+import { CODEX_FRONTIER_MODEL } from '../../shared/model-defaults';
 import { bareModelId } from '../../vendor/omp/catalog/identity';
 import {
   RICH_MODEL_CATALOG,
@@ -94,7 +95,7 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
       ],
     },
     codex: {
-      default: 'gpt-5.6-terra',
+      default: CODEX_FRONTIER_MODEL,
       models: [
         {
           id: 'gpt-6-astra',

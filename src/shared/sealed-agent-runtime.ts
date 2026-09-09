@@ -1,7 +1,7 @@
 /**
  * Modelo e effort selados na escolha das CLIs da missão.
  *
- * Ranking, bandas, `nexus_route_task` e o default do adapter/CLI (Codex 5.5,
+ * Ranking, bandas, `nexus_route_task` e o default do adapter/CLI,
  * DeepSeek Flash, Claude sonnet) nunca vencem o que o operador selou no
  * início. Failover para OUTRA CLI usa o model/effort da rota — nunca mistura
  * o selo de um provider no binário de outro.
