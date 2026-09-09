@@ -131,7 +131,7 @@ describe('shared agent-hook-listener', () => {
     expect(event!.payload.agentType).toBe('claude')
   })
 
-  it('normalizes Gemini BeforeTool to working with tool fields', () => {
+  it('aceita hook Gemini legado, mas projeta a identidade Antigravity', () => {
     const event = normalizeHookPayload(
       state,
       'gemini',
@@ -147,7 +147,7 @@ describe('shared agent-hook-listener', () => {
     )
 
     expect(event?.payload.state).toBe('working')
-    expect(event?.payload.agentType).toBe('gemini')
+    expect(event?.payload.agentType).toBe('antigravity')
     expect(event?.payload.toolName).toBe('read_file')
     expect(event?.payload.toolInput).toBe('src/index.ts')
   })

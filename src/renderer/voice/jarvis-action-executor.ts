@@ -240,7 +240,7 @@ function normPaneName(text: string): string {
 const SHELL_COMMAND_RE = /^(?:\.\/|\/|[A-Za-z0-9_.-]+=|[A-Za-z0-9_.-]+(?:\s|$))/;
 const KNOWN_SHELL_COMMANDS = new Set([
   'agy', 'awk', 'cat', 'cd', 'chmod', 'chown', 'claude', 'clear', 'codex',
-  'cp', 'curl', 'docker', 'echo', 'electron-forge', 'find', 'gemini', 'gh',
+  'cp', 'curl', 'docker', 'echo', 'electron-forge', 'find', 'gh',
   'git', 'grep', 'head', 'kill', 'kimi', 'ls', 'make', 'mkdir', 'mv', 'node',
   'npm', 'npx', 'pnpm', 'pwd', 'python', 'python3', 'rg', 'rm', 'sed', 'tail',
   'touch', 'tsx', 'yarn',

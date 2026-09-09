@@ -2455,18 +2455,18 @@ describe('Caminho Expresso', () => {
     expect(api.start).toHaveBeenCalledTimes(1);
   });
 
-  it('Iniciar missão despacha a CLI que o operador escolheu em cada papel', async () => {
-    const gemini = adapter('gemini', {
-      label: 'Gemini',
+  it('Iniciar missão despacha o AGY escolhido pelo operador em cada papel', async () => {
+    const agy = adapter('agy', {
+      label: 'Antigravity',
       models: { list: ['gemini-2.5-pro'], default: 'gemini-2.5-pro' },
       orchestratorCapable: false,
       missionControlCapable: false,
     });
-    api.listAdapters.mockResolvedValue([CLAUDE, CODEX, gemini]);
+    api.listAdapters.mockResolvedValue([CLAUDE, CODEX, agy]);
     api.listProviders.mockResolvedValue([
       provider(CLAUDE),
       provider(CODEX),
-      provider(gemini),
+      provider(agy),
     ]);
 
     const host = await renderAtExpress();
@@ -2487,11 +2487,11 @@ describe('Caminho Expresso', () => {
     );
     expect(tool).not.toBeNull();
     expect([...tool!.options].map((option) => option.value)).toEqual(
-      expect.arrayContaining(['codex', 'gemini']),
+      expect.arrayContaining(['codex', 'agy']),
     );
 
     act(() => {
-      tool!.value = 'gemini';
+      tool!.value = 'agy';
       tool!.dispatchEvent(new Event('change', { bubbles: true }));
     });
     await flush();
@@ -2501,7 +2501,7 @@ describe('Caminho Expresso', () => {
         .getState()
         .draft.roster.find((agent) => agent.agentName === 'Implementar interface')
         ?.cli,
-    ).toBe('gemini');
+    ).toBe('agy');
     const selectedRoster = useMissionSetupStore.getState().draft.roster;
     act(() => team.querySelector('summary')!.click());
     expect(team.open).toBe(false);
@@ -2516,7 +2516,7 @@ describe('Caminho Expresso', () => {
     expect(
       prepared.roster.find((agent) => agent.agentName === 'Implementar interface')
         ?.cli,
-    ).toBe('gemini');
+    ).toBe('agy');
   });
 
   it('Iniciar fica bloqueado se o operador escolher Claude sem sessão', async () => {

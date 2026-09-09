@@ -9,7 +9,6 @@ import {
 const ARGV_IDS = [
   'claude',
   'codex',
-  'gemini',
   'opencode',
   'openclaude',
   'kimi',
@@ -70,7 +69,7 @@ describe('cli install recipes', () => {
   it('never invents recipes for CLIs without a verified channel', () => {
     // GLM/LongCat autenticam por token (sem CLI própria a instalar); aider
     // usa instalador próprio ainda não verificado.
-    for (const id of ['aider', 'glm', 'longcat', 'desconhecido']) {
+    for (const id of ['aider', 'gemini', 'gemini-cli', 'glm', 'longcat', 'desconhecido']) {
       expect(cliInstallRecipeFor(id, 'darwin')).toBeNull();
     }
   });

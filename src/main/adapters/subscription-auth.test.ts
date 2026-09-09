@@ -926,7 +926,7 @@ describe('detectSubscriptionAuth', () => {
     expect(detectSubscriptionAuth('cursor-agent', home)).toBe(true);
   });
 
-  it('detects Gemini CLI from the same Google session files as AGY', () => {
+  it('não ressuscita Gemini CLI a partir dos arquivos do AGY', () => {
     const home = tempHome();
     expect(
       detectSubscriptionAuth('gemini', home, undefined, {
@@ -938,11 +938,7 @@ describe('detectSubscriptionAuth', () => {
       path.join(home, '.gemini', 'google_accounts.json'),
       JSON.stringify({ active: 'retornoja@gmail.com', old: [] }),
     );
-    expect(
-      detectSubscriptionAuth('gemini', home, undefined, {
-        probeAgyKeychain: false,
-      }),
-    ).toBe(true);
+    expect(detectSubscriptionAuth('gemini', home)).toBe(false);
   });
 
   it('detects Muse Spark only when auth.json holds a live token', () => {

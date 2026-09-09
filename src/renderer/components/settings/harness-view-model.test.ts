@@ -28,7 +28,9 @@ const enriched: EnrichedCatalogInfo = {
 
 describe('harness view model', () => {
   it('reports the real CLI home as provenance', () => {
-    expect(harnessOrigin('C:\\Users\\u\\.gemini\\config\\skills\\x')).toBe('Gemini');
+    expect(harnessOrigin('C:\\Users\\u\\.gemini\\config\\skills\\x')).toBe(
+      'Antigravity',
+    );
     expect(harnessOrigin('/home/u/.nexus/plugins/x')).toBe('Nexus');
   });
 

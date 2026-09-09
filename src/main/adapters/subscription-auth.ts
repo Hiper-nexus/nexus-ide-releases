@@ -912,11 +912,6 @@ export function detectSubscriptionAuth(
       // and a keychain access token. Identity in the file is the inbox
       // signal — the Attention list cannot wait on a Keychain probe.
       return cursorCliConfigHasSession(home);
-    case 'gemini':
-      // Official Gemini CLI shares ~/.gemini with AGY/antigravity.
-      return (
-        agyOauthCredsFileIsUsable(home) || agyGoogleAccountIsActive(home)
-      );
     case 'muse': {
       try {
         return museAuthBlobIsUsable(

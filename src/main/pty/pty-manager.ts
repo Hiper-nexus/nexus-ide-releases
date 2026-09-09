@@ -2002,7 +2002,7 @@ export function spawnAgentSession(
         : null;
       const realHome = agyNativeProfile?.processHome ?? os.homedir();
       // AGY 1.1 resolves OAuth/config from the OS account profile, never from
-      // Electron's isolated HOME or the historical Gemini CLI env override.
+      // Electron's isolated HOME or the historical AGY env override.
       if (isAgyNativeProfile) delete spawnEnv.GEMINI_CLI_HOME;
       const decorationOverrodeHome = Boolean(
         !isAgyNativeProfile && decoration?.env.HOME,

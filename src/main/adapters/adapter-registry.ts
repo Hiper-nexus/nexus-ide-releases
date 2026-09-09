@@ -6,6 +6,7 @@ import {
   adapterSchema,
   hasNexusMcpCapability,
 } from '../../shared/adapter-types';
+import { canonicalCliAdapterId } from '../../shared/cli-adapter-id';
 import type {
   Adapter,
   AdapterCapabilityMatrix,
@@ -51,6 +52,23 @@ import {
 const USER_ADAPTER_DIR = path.join(os.homedir(), '.nexus', 'plugins', 'adapters');
 const NEXUS_DIR = path.join(os.homedir(), '.nexus');
 type AdapterOrigin = 'builtin' | 'user';
+
+/** CLI removida do produto; modelos gemini-* continuam pertencendo ao AGY. */
+const RETIRED_ADAPTER_IDS = new Set(['gemini', 'gemini-cli']);
+
+function isRetiredAdapter(adapter: Adapter): boolean {
+  const id = adapter.id.trim().toLowerCase();
+  const bin = adapter.kind === 'cli-pty'
+    ? path.posix
+        .basename(adapter.bin.replaceAll('\\', '/'))
+        .toLowerCase()
+        .replace(/\.(?:exe|cmd|bat)$/u, '')
+    : '';
+  return (
+    RETIRED_ADAPTER_IDS.has(id) ||
+    bin === 'gemini'
+  );
+}
 
 /**
  * These builtins completed Nexus' real governed coordinator gate. Keep this
@@ -253,8 +271,16 @@ export function mergeAdapters(
   user: readonly Adapter[],
 ): Map<string, Adapter> {
   const merged = new Map<string, Adapter>();
-  for (const a of builtins) merged.set(a.id, withNativeApprovalDefaults(a));
-  for (const a of user) merged.set(a.id, withNativeApprovalDefaults(a));
+  for (const a of builtins) {
+    if (!isRetiredAdapter(a)) {
+      merged.set(a.id, withNativeApprovalDefaults(a));
+    }
+  }
+  for (const a of user) {
+    if (!isRetiredAdapter(a)) {
+      merged.set(a.id, withNativeApprovalDefaults(a));
+    }
+  }
   return merged;
 }
 
@@ -549,12 +575,12 @@ export function unregisterAdapterListener(wc: WebContents): void {
 }
 
 export function getAdapter(id: string): Adapter | null {
-  return registry.get(id) ?? null;
+  return registry.get(canonicalCliAdapterId(id)) ?? null;
 }
 
 /** User adapters may override builtin ids; security qualifications never do. */
 export function isBuiltinAdapter(id: string): boolean {
-  return adapterOrigins.get(id) === 'builtin';
+  return adapterOrigins.get(canonicalCliAdapterId(id)) === 'builtin';
 }
 
 /** Every loaded adapter (full config) — used by the provider settings hub. */
@@ -588,7 +614,7 @@ export function isBinResolvable(bin: string): boolean {
  * "process exited (code 1)".
  */
 export function isAdapterInstalled(id: string): boolean {
-  return installedCache.get(id)?.installed ?? false;
+  return installedCache.get(canonicalCliAdapterId(id))?.installed ?? false;
 }
 
 /**
@@ -597,7 +623,7 @@ export function isAdapterInstalled(id: string): boolean {
  * command name — so detection and execution share the same executable.
  */
 export function getAdapterResolvedBin(id: string): string | null {
-  return installedCache.get(id)?.binPath ?? null;
+  return installedCache.get(canonicalCliAdapterId(id))?.binPath ?? null;
 }
 
 /**
@@ -605,13 +631,14 @@ export function getAdapterResolvedBin(id: string): string | null {
  * Returns absolute path or null.
  */
 export function resolveAdapterBinary(id: string): string | null {
-  const adapter = registry.get(id);
+  const canonicalId = canonicalCliAdapterId(id);
+  const adapter = registry.get(canonicalId);
   if (!adapter || adapter.kind === 'api-provider') return null;
   const hit = resolveBin(adapter.bin);
   if (hit) {
-    installedCache.set(id, { installed: true, binPath: hit.binPath });
+    installedCache.set(canonicalId, { installed: true, binPath: hit.binPath });
   } else {
-    installedCache.set(id, { installed: false, binPath: null });
+    installedCache.set(canonicalId, { installed: false, binPath: null });
   }
   return hit?.binPath ?? null;
 }

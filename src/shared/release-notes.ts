@@ -318,13 +318,15 @@ export const CURRENT_RELEASE: AppRelease = {
   version: '0.76.9',
   date: '2026-09-09',
   codename: 'O picker mostra o mais forte primeiro, e o rail mostra onde você está',
-  summary: 'O "+ Pane" agrupa por conta e ordena os modelos do mais novo e mais forte ao mais leve; o rail marca o projeto aberto; e uma pasta apagada com o app aberto passa a ser dita, não um ENOENT cru.',
+  summary: 'O "+ Pane" agrupa por conta e ordena CLIs e modelos pela força operacional; o rail marca o projeto aberto; e uma pasta apagada com o app aberto passa a ser dita, não um ENOENT cru.',
   highlights: [
     { title: 'Conta por fora, modelo por dentro', detail: 'Cada CLI agrupa por conta (conta A, conta B) com o estado da conta em chip — ativa, sessão expirada, em pausa, sem credencial — em vez de intercalar conta×modelo. Sem conta salva, o bloco diz que a CLI usa a credencial ativa dela.' },
-    { title: 'O mais forte e mais novo primeiro', detail: 'Geração embutida no id, depois o custo do catálogo (ou a família do id), utilizáveis antes dos restritos. Chips de faixa (Profundo · Equilibrado · Rápido), padrão da CLI e acesso restrito — todos pesquisáveis. Cada conta mostra 4 e dobra o resto em “mais N modelos”; a busca vê tudo.' },
+    { title: 'O mais forte primeiro', detail: 'CLIs seguem a preferência operacional; dentro delas, capacidade e família vêm antes da geração embutida no id, e utilizáveis ficam antes dos restritos. Contas ativas sobem e sessões indisponíveis descem. Chips de faixa (Profundo · Equilibrado · Rápido), padrão da CLI e acesso restrito continuam pesquisáveis.' },
     { title: 'Selo ATUAL no projeto aberto', detail: 'A linha do projeto em uso leva selo e borda de acento, independente do que está selecionado — selecionar a missão de outra pasta não apaga onde você está.' },
   ],
   fixes: [
+    { title: 'Codex abre no modelo de ponta', detail: 'O default de produto deixa de depender do fallback nativo 5.5 e passa a selar gpt-5.6-sol no pane, no squad, no Pet Studio e no roteamento difícil. O gpt-6-astra permanece disponível para seleção explícita enquanto estiver marcado como rollout restrito.' },
+    { title: 'Uma CLI Google: Antigravity', detail: 'Gemini CLI deixa de ser instalada, descoberta ou exibida como adapter separado. O produto mantém somente AGY/Antigravity; modelos gemini-* continuam disponíveis dentro dele. Squads e hooks antigos são migrados na entrada para não quebrar trabalho salvo.' },
     { title: 'Pasta apagada com o app aberto', detail: 'Worktree removido por outra ferramenta deixava todo pane novo morrer com ENOENT cru. Agora o pane explica e aponta a saída; o Nexus sonda a pasta ao focar a janela e a cada spawn que cai por isso, avisa uma vez, o rail troca ATUAL por “pasta sumiu”, o cabeçalho ganha o chip e o toast oferece “Abrir outra pasta”. O workspace não é fechado sozinho.' },
   ],
 };

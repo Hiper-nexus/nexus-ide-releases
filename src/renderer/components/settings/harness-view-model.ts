@@ -21,7 +21,7 @@ export function harnessOrigin(file: string): string {
   if (normalized.includes('/.claude/')) return 'Claude';
   if (normalized.includes('/.codex/')) return 'Codex';
   if (normalized.includes('/.agents/')) return 'Agents';
-  if (normalized.includes('/.gemini/')) return 'Gemini';
+  if (normalized.includes('/.gemini/')) return 'Antigravity';
   if (normalized.includes('/.kimi-code/')) return 'Kimi';
   if (normalized.includes('/.grok/')) return 'Grok';
   if (normalized.includes('/.nexus/')) return 'Nexus';

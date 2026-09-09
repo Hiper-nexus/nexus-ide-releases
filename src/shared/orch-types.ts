@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { canonicalCliAdapterId } from './cli-adapter-id';
 import type { ProjectExecutionScope } from './types';
 import type {
   MissionResult,
@@ -54,7 +55,7 @@ function authorityString(max: number, label: string, min = 0) {
 const PROVIDER_ID_TO_CLI: Record<string, string> = {
   'claude-cli': 'claude',
   'codex-cli': 'codex',
-  // Google's Gemini CLI slot is now served by AGY in Nexus defaults.
+  // Migração de squads antigos: a CLI removida converge para AGY ao carregar.
   'gemini-cli': 'agy',
   'kimi-cli': 'kimi',
   'antigravity-cli': 'agy',
@@ -64,13 +65,17 @@ function normalizeSquadAgent(raw: unknown): unknown {
   // Some squads.json rosters may omit `cli` (workers inherit the default CLI)
   // or carry only a providerId — normalize before validating.
   if (!raw || typeof raw !== 'object') return raw;
-  if ('cli' in raw && raw.cli) return raw;
+  if ('cli' in raw && typeof raw.cli === 'string' && raw.cli.trim()) {
+    return { ...raw, cli: canonicalCliAdapterId(raw.cli) };
+  }
 
   const providerId =
     'providerId' in raw && typeof raw.providerId === 'string'
       ? raw.providerId
       : undefined;
-  const mapped = providerId ? PROVIDER_ID_TO_CLI[providerId] : undefined;
+  const mapped = providerId
+    ? PROVIDER_ID_TO_CLI[providerId] ?? canonicalCliAdapterId(providerId)
+    : undefined;
   return { ...raw, cli: mapped ?? 'claude' };
 }
 

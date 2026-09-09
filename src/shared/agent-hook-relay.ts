@@ -38,6 +38,7 @@ import type { AgentProviderSessionMetadata } from './agent-session-resume'
 export type AgentHookSource =
   | 'claude'
   | 'codex'
+  /** Entrada legada apenas; novas instalações usam antigravity/AGY. */
   | 'gemini'
   | 'antigravity'
   | 'amp'

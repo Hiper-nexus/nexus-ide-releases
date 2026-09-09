@@ -1290,7 +1290,8 @@ function extractCodexToolFields(
   return {}
 }
 
-function extractGeminiToolFields(
+/** Compatibilidade somente de entrada para hooks Gemini já instalados. */
+function extractLegacyGeminiToolFields(
   eventName: unknown,
   hookPayload: Record<string, unknown>
 ): ToolSnapshot {
@@ -1312,9 +1313,7 @@ function extractGeminiToolFields(
   }
   if (eventName === 'AfterAgent') {
     const message = readString(hookPayload, 'prompt_response')
-    if (message) {
-      return { lastAssistantMessage: message }
-    }
+    if (message) return { lastAssistantMessage: message }
   }
   return {}
 }
@@ -2130,7 +2129,7 @@ function extractToolFields(
     case 'codex':
       return extractCodexToolFields(eventName, hookPayload)
     case 'gemini':
-      return extractGeminiToolFields(eventName, hookPayload)
+      return extractLegacyGeminiToolFields(eventName, hookPayload)
     case 'antigravity':
       return extractAntigravityToolFields(eventName, hookPayload)
     case 'amp':
@@ -2339,15 +2338,17 @@ function normalizeKimiEvent(
   )
 }
 
-function normalizeGeminiEvent(
+/**
+ * Recebe hooks deixados por instalações antigas, mas projeta a identidade
+ * canônica Antigravity. O Nexus não instala nem oferece Gemini CLI novamente.
+ */
+function normalizeLegacyGeminiEvent(
   state: HookListenerState,
   eventName: unknown,
   promptText: string,
   paneKey: string,
   hookPayload: Record<string, unknown>
 ): ParsedAgentStatusPayload | null {
-  // Why: Gemini CLI's native pre-tool event is BeforeTool. PreToolUse/PostToolUse
-  // remain accepted for legacy Antigravity-compatible payloads on this endpoint.
   const stateName =
     eventName === 'BeforeAgent' ||
     eventName === 'BeforeTool' ||
@@ -2358,10 +2359,7 @@ function normalizeGeminiEvent(
       : eventName === 'AfterAgent'
         ? 'done'
         : null
-
-  if (!stateName) {
-    return null
-  }
+  if (!stateName) return null
 
   const snapshot = resolveToolState(
     state,
@@ -2369,17 +2367,15 @@ function normalizeGeminiEvent(
     extractToolFields('gemini', eventName, hookPayload),
     { resetOnNewTurn: isNewTurnEvent('gemini', eventName) }
   )
-
   return parseAgentStatusPayload(
     JSON.stringify({
       state: stateName,
       prompt: resolvePrompt(state, paneKey, promptText, {
         resetOnNewTurn: isNewTurnEvent('gemini', eventName)
       }),
-      agentType: 'gemini',
+      agentType: 'antigravity',
       toolName: snapshot.toolName,
       toolInput: snapshot.toolInput,
-      interactivePrompt: snapshot.interactivePrompt,
       lastAssistantMessage: snapshot.lastAssistantMessage
     })
   )
@@ -3219,7 +3215,13 @@ export function normalizeHookPayload(
       payload = normalizeCodexEvent(state, eventName, promptText, paneKey, hookPayloadRecord)
       break
     case 'gemini':
-      payload = normalizeGeminiEvent(state, eventName, promptText, paneKey, hookPayloadRecord)
+      payload = normalizeLegacyGeminiEvent(
+        state,
+        eventName,
+        promptText,
+        paneKey,
+        hookPayloadRecord
+      )
       break
     case 'antigravity':
       if (isNewTurnEvent('antigravity', eventName)) {

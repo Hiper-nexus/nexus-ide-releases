@@ -16,7 +16,7 @@ import {
 
 describe('model discovery', () => {
   it('covers all catalog CLIs and only wires live exec where a list command exists', () => {
-    expect(Object.keys(MODEL_DISCOVERY_INVENTORY)).toHaveLength(19);
+    expect(Object.keys(MODEL_DISCOVERY_INVENTORY)).toHaveLength(18);
     const live = Object.entries(MODEL_DISCOVERY_INVENTORY)
       .filter(([, entry]) => entry.kind === 'cli')
       .map(([id]) => id)
@@ -48,7 +48,7 @@ describe('model discovery', () => {
     expect(MODEL_DISCOVERY_INVENTORY.aider.kind).toBe('bundled');
     expect(MODEL_DISCOVERY_INVENTORY.glm.reason).toMatch(/claude/);
     expect(MODEL_DISCOVERY_INVENTORY.deepseek.kind).toBe('bundled');
-    expect(MODEL_DISCOVERY_INVENTORY.gemini.kind).toBe('bundled');
+    expect(MODEL_DISCOVERY_INVENTORY).not.toHaveProperty('gemini');
     expect(MODEL_DISCOVERY_INVENTORY.muse.kind).toBe('bundled');
     expect(MODEL_DISCOVERY_INVENTORY.sakana.kind).toBe('bundled');
   });

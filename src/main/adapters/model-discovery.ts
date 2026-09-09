@@ -141,7 +141,7 @@ export interface ModelDiscoveryInventoryEntry {
 }
 
 /**
- * As 18 CLIs do catálogo (9 builtin + 9 overlay em ~/.nexus/plugins/adapters).
+ * CLIs do catálogo builtin + overlays em ~/.nexus/plugins/adapters.
  * kind `cli` entra no refresh automático (abertura, settings/missão, 5 min).
  * Claude/Codex: cache oficial já lido por cli-model-discovery — sem comando list.
  * Sem listagem: lista bundled do adapter + enrich do catálogo; não fingimos.
@@ -185,10 +185,6 @@ export const MODEL_DISCOVERY_INVENTORY: Readonly<
   deepseek: {
     kind: 'bundled',
     reason: 'wrapper da CLI claude + endpoint DeepSeek; sem catálogo próprio',
-  },
-  gemini: {
-    kind: 'bundled',
-    reason: 'Gemini CLI não expõe comando/API estável de listar modelos',
   },
   qwen: {
     kind: 'bundled',

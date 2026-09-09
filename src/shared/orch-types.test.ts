@@ -52,6 +52,23 @@ describe('squadSchema (squads.json compat)', () => {
     expect(squad.agents[2].cli).toBe('agy');
   });
 
+  it('migra cli Gemini explícita de squads persistidos para AGY', () => {
+    const squad = squadSchema.parse({
+      id: 's1',
+      name: 'Test',
+      createdAt: 1,
+      agents: [
+        {
+          id: 'w1',
+          agentName: 'legacy',
+          category: 'executor',
+          cli: 'gemini',
+        },
+      ],
+    });
+    expect(squad.agents[0].cli).toBe('agy');
+  });
+
   it('preserves nativeInstructions and an explicit cli', () => {
     const squad = squadSchema.parse({
       id: 's1',

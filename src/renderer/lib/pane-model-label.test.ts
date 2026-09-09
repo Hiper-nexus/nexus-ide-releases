@@ -69,21 +69,23 @@ describe('resolveModelChipLabel', () => {
     });
   });
 
-  describe('Gemini', () => {
-    it('gemini-cli + gemini-3.1-pro + high', () => {
-      const label = resolveModelChipLabel('gemini-cli', 'gemini-3.1-pro', 'high');
-      expect(label!.family).toBe('Gemini');
+  describe('AGY', () => {
+    it('agy + gemini-3.1-pro + high', () => {
+      const label = resolveModelChipLabel('agy', 'gemini-3.1-pro', 'high');
+      expect(label!.family).toBe('AGY');
       expect(label!.version).toBe('3.1 Pro');
       expect(label!.effortAbbr).toBe('H');
-      expect(label!.medium).toBe('Gemini 3.1');
-      expect(label!.full).toBe('Gemini 3.1 Pro · High');
+      expect(label!.medium).toBe('AGY 3.1');
+      expect(label!.full).toBe('AGY 3.1 Pro · High');
     });
 
-    it('gemini + gemini-3.5-flash', () => {
-      const label = resolveModelChipLabel('gemini', 'gemini-3.5-flash', undefined);
-      expect(label!.family).toBe('Gemini');
-      expect(label!.version).toBe('3.5 Flash');
-      expect(label!.medium).toBe('Gemini 3.5');
+    it('não apresenta gemini/gemini-cli como adapters', () => {
+      expect(
+        resolveModelChipLabel('gemini', 'gemini-3.5-flash', undefined),
+      ).toBeNull();
+      expect(
+        resolveModelChipLabel('gemini-cli', 'gemini-3.1-pro', 'high'),
+      ).toBeNull();
     });
   });
 

@@ -14,7 +14,6 @@
  * Canais verificados em 2026-07-16:
  * - claude:   npm @anthropic-ai/claude-code (docs Anthropic)
  * - codex:    npm @openai/codex (pacote oficial OpenAI)
- * - gemini:   npm @google/gemini-cli (pacote oficial Google)
  * - opencode: brew opencode / npm opencode-ai
  * - openclaude: npm @gitlawb/openclaude (docs gitlawb)
  * - kimi:     brew kimi-code / npm @moonshot-ai/kimi-code (platform.kimi.ai)
@@ -102,11 +101,6 @@ const RECIPES: Readonly<Record<string, PlatformRecipes>> = Object.freeze({
     darwin: [npmRecipe('@openai/codex'), brewRecipe('codex')],
     linux: [npmRecipe('@openai/codex')],
     win32: [npmRecipe('@openai/codex')],
-  },
-  gemini: {
-    darwin: [npmRecipe('@google/gemini-cli')],
-    linux: [npmRecipe('@google/gemini-cli')],
-    win32: [npmRecipe('@google/gemini-cli')],
   },
   opencode: {
     darwin: [brewRecipe('opencode'), npmRecipe('opencode-ai')],

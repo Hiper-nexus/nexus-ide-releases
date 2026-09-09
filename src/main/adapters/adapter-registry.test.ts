@@ -429,6 +429,16 @@ describe('builtin adapters', () => {
     expect(claude?.models?.default).toBe('claude-sonnet-5');
   });
 
+  it('abre Codex no melhor modelo GA em vez de cair no default nativo 5.5', () => {
+    const codex = BUILTIN_ADAPTERS.find(
+      (adapter) => (adapter as { id?: string }).id === 'codex',
+    ) as { models?: { list?: string[]; default?: string } } | undefined;
+
+    expect(codex?.models?.default).toBe('gpt-5.6-sol');
+    expect(codex?.models?.list?.[0]).toBe('gpt-6-astra');
+    expect(codex?.models?.list).toContain('gpt-5.6-sol');
+  });
+
   it('uses the xAI CLI official API-key variable for Grok', () => {
     const grok = BUILTIN_ADAPTERS.find(
       (adapter) => (adapter as { id?: string }).id === 'grok',
@@ -843,6 +853,25 @@ describe('mergeAdapters', () => {
     const merged = mergeAdapters([builtin], [user]);
     expect(merged.size).toBe(2);
     expect(merged.has('my-cli')).toBe(true);
+  });
+
+  it('não carrega Gemini CLI builtin nem plugin; AGY permanece', () => {
+    const agy = buildAdapter('agy', 'Antigravity');
+    const gemini = buildAdapter('gemini', 'Gemini CLI');
+    const geminiCli = buildAdapter('gemini-cli', 'Gemini CLI legacy');
+    const renamedGemini = {
+      ...buildAdapter('custom-google', 'Google assistant'),
+      bin: 'C:\\Users\\operator\\bin\\gemini.cmd',
+    } as Adapter;
+    const merged = mergeAdapters(
+      [agy],
+      [gemini, geminiCli, renamedGemini],
+    );
+
+    expect(merged.has('agy')).toBe(true);
+    expect(merged.has('gemini')).toBe(false);
+    expect(merged.has('gemini-cli')).toBe(false);
+    expect(merged.has('custom-google')).toBe(false);
   });
 
   it('empty user list returns only builtins', () => {
