@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.76.8 — A lista de projetos para de encolher, e o pane do operador manda
+
+- Terminal aberto pela opção de pane já pode, sem missão nenhuma, abrir outros panes (`nexus_pane_spawn`, inclusive por nome de agente do roster), ver todos eles (`nexus_pane_list`) e falar com eles (`nexus_pane_write`/`nexus_pane_ask`). Antes cada um desses caía em `mission effect blocked`, e a lista voltava vazia até para o próprio pane. Worker e orquestrador seguem presos à missão; shell, arquivo e git seguem exigindo missão.
+- Pane que cria uma missão e depois a descarta volta a poder criar outra. A promoção `user → orchestrator` era porta de mão única: o pane ficava estéril até ser fechado.
+- Pane aberto enquanto o canvas de terminais estava oculto (por exemplo a partir do Início) passa a nascer sozinho assim que fica visível. Antes o spawn adiado dependia só do ResizeObserver e podia ficar em branco para sempre.
+- Toda recusa de efeito sem missão agora diz o caminho que funciona (ex.: handoff sem missão aponta para `nexus_pane_write`/`nexus_pane_ask` ou `nexus_mission_create`).
+- Árvore de spaces no rail: a branch do worktree vira o nó da árvore (`⑂ feat/mf-103-…`) com a missão embaixo — missão sem worktree fica direto sob o projeto. Cada projeto pode ser recolhido, e o rail lembra. Ações da linha (lixeira) aparecem só no hover/foco.
+- Soltar num pane algo que veio como endereço (`file://` de um app nativo, ou um link `http(s)`) agora funciona: o Nexus lê o arquivo local ou baixa o link (até 14 MB, 20 s), guarda em `mission-context` e cola o caminho no terminal — antes só arquivo arrastado do Finder entrava.
+- `nexus_pane_write_many` virou broadcast com recibo por alvo: `submitted | skipped (pane_dead | agent_not_ready | pane_hibernated) | failed`. Pane morto nunca recebe; um alvo recusado nunca para os outros.
+- Quadro de missões por status derivado: Construindo · Validando · Precisa de você · Pronto, com a gaveta Arquivo recolhida no rodapé. Antes, falha e sucesso caíam na mesma coluna e missão bloqueada sumia entre as vivas. Cada card mostra estado em palavra e idade curta; nada se arrasta entre lanes — a lane é consequência, não escolha.
+- Inspector da missão com largura ajustável (360–440 px) que persiste, e um trilho fino na borda quando recolhido — clique, arraste ou Enter reabre. Antes, recolher escondia o inspector até você achar o botão.
+- Panes se apresentam como `NexusIDE <versão>` (`TERM_PROGRAM`) em vez de herdar o terminal que abriu o app.
+- A lista de projetos do rail ganha piso de altura: em uma janela de 700px são 4 pastas visíveis no lugar de 1. Antes ela era a única faixa elástica e cedia toda a altura para o cromo fixo.
+- Cada projeto mostra o menor trecho do caminho que o distingue dos outros abertos — dois `web` viram `…/lupygo/apps/web` e `…/volare/apps/web`.
+- Largura do rail ajustável entre 200 e 280px, por arraste ou teclado, com duplo clique voltando ao padrão; a escolha persiste.
+- Limpar projeto volta a ficar recolhido e o cartão de cotas sai do rail em janelas baixas; os dois seguem a um clique.
+- Imagem colada não vai mais duplicada: o mesmo print chegava pelos dois acessores do clipboard e escapava da deduplicação.
+- Arrastar para o terminal algo sem arquivo (promessa de app nativo, link ou só texto) agora explica o que chegou em vez de não fazer nada.
+
 ## 0.76.7 — Space que avisa
 
 - Ditado por Space desarmado (atalho global ou captura bloqueada) mostra toast acionável em vez de morrer em silêncio.

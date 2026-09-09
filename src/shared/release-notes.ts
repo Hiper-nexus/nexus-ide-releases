@@ -315,6 +315,31 @@ export const RELEASE_0744: AppRelease = {
   ],
 };
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.8',
+  date: '2026-09-09',
+  codename: 'A lista de projetos para de encolher, e o pane do operador manda',
+  summary: 'O rail dá espaço aos projetos, cada pasta mostra o caminho que a distingue, e um terminal aberto por você abre, vê e fala com outros panes sem precisar de missão.',
+  highlights: [
+    { title: 'Seu pane abre e vê outros panes sem missão', detail: 'Terminal aberto pela opção de pane pode spawnar outros (inclusive por nome de agente do roster), listá-los e mandar texto para eles. Antes tudo isso caía em “mission effect blocked” e a lista voltava vazia até para o próprio pane. Worker e orquestrador seguem presos à missão.' },
+    { title: 'Descartar a missão não esteriliza o pane', detail: 'A promoção user → orchestrator era de mão única: quem criava e descartava uma missão nunca mais conseguia criar outra naquele pane.' },
+    { title: 'Árvore de spaces no rail', detail: 'A branch do worktree é o nó da árvore, com a missão embaixo; missão sem worktree fica direto sob o projeto. Projetos recolhíveis com memória; ações de linha só no hover.' },
+    { title: 'Projetos com piso de altura', detail: 'A lista de projetos era a única faixa elástica do rail; numa janela de 700px sobrava uma linha e meia. Agora ela tem piso e quem cede altura é a manutenção: em 700px são 4 pastas visíveis no lugar de 1.' },
+    { title: 'Pasta identificável', detail: 'Cada projeto mostra o menor trecho do caminho que o distingue dos outros abertos: dois `web` viram “…/lupygo/apps/web” e “…/volare/apps/web”, enquanto um nome único fica curto.' },
+    { title: 'Largura do rail é sua', detail: 'Arraste a borda entre 200 e 280px, ajuste pelo teclado ou volte ao padrão com duplo clique. A escolha persiste entre sessões.' },
+    { title: 'Cotas e limpeza saem da frente', detail: 'Limpar projeto volta a ser recolhido, e o cartão de cotas some em janelas baixas — os dois continuam a um clique, sem disputar a altura da navegação.' },
+  ],
+  fixes: [
+    { title: 'Pane aberto no Início nasce sozinho', detail: 'Pane criado com o canvas de terminais oculto ficava em branco para sempre: o spawn adiado só era retomado pelo ResizeObserver. Agora há retentativa própria até o slot ficar mensurável.' },
+    { title: 'Drop de endereço no pane', detail: 'file:// vindo de app nativo ou link http(s) solto no terminal vira arquivo em mission-context (14 MB, 20 s) com o caminho colado no PTY.' },
+    { title: 'Broadcast com recibo por alvo', detail: 'nexus_pane_write_many devolve submitted | skipped (pane_dead | agent_not_ready | pane_hibernated) | failed por pane; morto nunca recebe, recusa de um não para os outros.' },
+    { title: 'Quadro por status derivado', detail: 'Construindo · Validando · Precisa de você · Pronto + gaveta Arquivo. Falha e sucesso não dividem mais coluna; bloqueada aparece onde precisa de você. Lane é derivada do estado, sem arrastar.' },
+    { title: 'Inspector com largura sua e trilho de volta', detail: 'Largura ajustável (360–440 px) persistida; recolhido deixa um trilho de 8 px que reabre por clique, arraste ou teclado.' },
+    { title: 'Recusa que ensina o caminho', detail: 'Efeito sem missão agora diz o que funciona — handoff sem missão aponta para nexus_pane_write/nexus_pane_ask ou nexus_mission_create — em vez de listar campos internos.' },
+    { title: 'Imagem colada não duplica mais', detail: 'O mesmo print chegava pelos dois acessores do clipboard com carimbos de tempo a um milissegundo de distância, escapava da deduplicação e era anexado duas vezes.' },
+    { title: 'Arraste sem arquivo deixa de ser silêncio', detail: 'Soltar no terminal algo que não trouxe arquivo — promessa não materializada por app nativo, link ou só texto — agora diz o que chegou em vez de não fazer nada.' },
+  ],
+};
+export const RELEASE_0767: AppRelease = {
   version: '0.76.7',
   date: '2026-09-08',
   codename: 'Space que avisa',
