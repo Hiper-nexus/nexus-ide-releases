@@ -76,8 +76,8 @@ describe('modelStrength — custo do catálogo manda, família desempata', () =>
   });
 });
 
-describe('rankPickerModels — o mais novo e mais forte primeiro', () => {
-  it('Claude: geração 5 antes da 4, opus antes de sonnet, restritos no fim', () => {
+describe('rankPickerModels — o mais forte primeiro', () => {
+  it('Claude: opus antes de fable/sonnet mesmo quando o outro id é mais novo', () => {
     const ranked = rankPickerModels({
       defaultModel: 'claude-sonnet-5',
       models: [
@@ -105,11 +105,11 @@ describe('rankPickerModels — o mais novo e mais forte primeiro', () => {
     });
 
     expect(ranked.map((row) => row.id)).toEqual([
-      'claude-fable-5-1',
       'claude-opus-5',
-      'claude-sonnet-5',
       'claude-opus-4-8',
       'claude-opus-4-7',
+      'claude-fable-5-1',
+      'claude-sonnet-5',
       'claude-sonnet-4-6',
       'claude-haiku-4-5',
       'claude-mythos-5-1',
@@ -207,5 +207,38 @@ describe('rankPickerModels — o mais novo e mais forte primeiro', () => {
         (row) => row.id,
       ),
     ).toEqual(['x-1']);
+  });
+
+  it('modelo fraco continua na lista e selecionável — só nunca acima do forte', () => {
+    const ranked = rankPickerModels({
+      defaultModel: 'gpt-5.6-luna',
+      models: ['gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.4-mini'],
+      modelInfo: info({
+        'gpt-5.6-sol': { cost: 'high', availability: 'paid' },
+        'gpt-5.6-luna': { cost: 'medium', availability: 'paid' },
+        'gpt-5.4-mini': { cost: 'low', availability: 'cheap' },
+      }),
+    });
+    const ids = ranked.map((row) => row.id);
+    // O fraco (mini) NÃO some — segue escolhível, apenas no fim.
+    expect(ids).toContain('gpt-5.4-mini');
+    expect(ids.indexOf('gpt-5.6-sol')).toBeLessThan(ids.indexOf('gpt-5.4-mini'));
+    expect(ids[ids.length - 1]).toBe('gpt-5.4-mini');
+    // Todos utilizáveis: nenhum foi marcado como restrito/removido.
+    expect(ranked.every((row) => row.restricted === false)).toBe(true);
+  });
+
+  it('modelo restrito (api-only) permanece escolhível manualmente, só nunca prioritário', () => {
+    const ranked = rankPickerModels({
+      defaultModel: 'gpt-5.6-sol',
+      models: ['gpt-6-astra', 'gpt-5.6-sol'],
+      modelInfo: info({
+        'gpt-6-astra': { cost: 'high', availability: 'api-only' },
+        'gpt-5.6-sol': { cost: 'high', availability: 'paid' },
+      }),
+    });
+    const ids = ranked.map((row) => row.id);
+    expect(ids).toEqual(['gpt-5.6-sol', 'gpt-6-astra']);
+    expect(ranked.find((row) => row.id === 'gpt-6-astra')?.restricted).toBe(true);
   });
 });

@@ -423,9 +423,8 @@ interface SwitchRequest {
  */
 /**
  * F-511: renova a secundária Claude ANTES do pin. `ensureFreshClaudeSubscription`
- * é best-effort mas o refresh é rede sem timeout próprio — a corrida de 15s
- * impede um provider lento de travar o failover (o refresh segue em
- * background e o vault fica fresco para a próxima tentativa).
+ * é best-effort e tem timeout próprio; a corrida de 15s aqui permanece como
+ * defesa adicional para o failover nunca depender da latência do provider.
  */
 async function healClaudeSecondaryBeforePin(
   accountId: string,
@@ -832,6 +831,22 @@ function handleLimitHit(
   // demais modelos; sem escopo o cooldown é global (comportamento legado).
   if (current) {
     setCooldown(current.id, now + hit.cooldownMs, hit.reason, hit.scope);
+    if (
+      hit.kind === 'auth' &&
+      current.adapterId === 'claude' &&
+      current.mode === 'subscription'
+    ) {
+      // 401 não significa necessariamente refresh morto: o access token pode
+      // ter sido revogado antes do expiresAt. Renova somente a linhagem desta
+      // conta no vault; nunca troca nem sobrescreve o Keychain global.
+      void ensureFreshClaudeSubscription(current.id, now, undefined, {
+        force: true,
+      }).catch(() => {
+        console.warn(
+          '[failover] renovação forçada da conta Claude falhou antes de concluir',
+        );
+      });
+    }
   }
 
   // Disjuntor de morte instantânea (401-loop multi-conta): sessão que morre

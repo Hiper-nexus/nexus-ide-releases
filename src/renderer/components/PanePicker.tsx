@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountInfo } from '../../shared/account-types';
+import { rankAutoSeatCli } from '../../shared/auto-seat-auth';
 import { OPERATIONAL_BAND_LABELS } from '../../shared/model-operational-bands';
 import type { ProviderSettingsInfo } from '../../shared/provider-settings-types';
 import { filterPaletteActions } from '../lib/command-palette-filter';
@@ -162,6 +163,22 @@ function accountHeading(
   };
 }
 
+function accountDisplayRank(account: AccountInfo): number {
+  if (account.needsRelogin) return 4;
+  if (!account.hasCredential) return 3;
+  if (account.onCooldown) return 2;
+  if (account.active) return 0;
+  return 1;
+}
+
+function compareAccountsForDisplay(a: AccountInfo, b: AccountInfo): number {
+  return (
+    accountDisplayRank(a) - accountDisplayRank(b) ||
+    a.label.localeCompare(b.label, 'pt-BR') ||
+    a.createdAt - b.createdAt
+  );
+}
+
 function badgesOf(row: PickerModelRow): PanePickerBadge[] {
   const badges: PanePickerBadge[] = [];
   if (row.band) {
@@ -264,12 +281,16 @@ export function buildPanePickerEntries(
         provider.enabled !== false,
     )
     .slice()
-    .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'));
+    .sort(
+      (a, b) =>
+        rankAutoSeatCli(a.adapterId) - rankAutoSeatCli(b.adapterId) ||
+        a.label.localeCompare(b.label, 'pt-BR'),
+    );
 
   for (const provider of installed) {
     const mine = accounts.filter(
       (account) => account.adapterId === provider.adapterId,
-    );
+    ).sort(compareAccountsForDisplay);
     const ranked = rankPickerModels(provider);
     const models = ranked.length > 0 ? ranked : [EMPTY_CATALOG_ROW];
     // Conta por fora, modelo por dentro: cada conta abre o próprio bloco com

@@ -6,8 +6,8 @@ import {
 } from '../../shared/model-operational-bands';
 
 /**
- * Ordem dos modelos no "+ Pane": geração mais nova primeiro e, dentro dela,
- * o mais forte primeiro. O catálogo não guarda data de lançamento nem uma
+ * Ordem dos modelos no "+ Pane": capacidade mais forte primeiro e, dentro
+ * dela, geração mais nova primeiro. O catálogo não guarda data de lançamento nem uma
  * "força" explícita; o que ele guarda é costTier/availability (curados à
  * mão) e ids com a geração embutida (claude-opus-4-8, gpt-5.6-sol,
  * gemini-3.7-flash-high). Este módulo lê SÓ isso — nunca fixtures de
@@ -63,18 +63,18 @@ const COST_STRENGTH: Readonly<Record<string, number>> = Object.freeze({
   free: 0,
 });
 
-/** Famílias que os vendors vendem como topo de linha. */
-const STRONG_TOKENS: ReadonlySet<string> = new Set([
-  'opus',
-  'fable',
-  'mythos',
-  'pro',
-  'ultra',
-  'max',
-  'sol',
-  'astra',
-  'reasoner',
-]);
+/** Força relativa das famílias dentro da mesma faixa de custo. */
+const FAMILY_STRENGTH_NUDGE: Readonly<Record<string, number>> = Object.freeze({
+  opus: 0.3,
+  ultra: 0.25,
+  max: 0.25,
+  fable: 0.2,
+  mythos: 0.2,
+  pro: 0.2,
+  sol: 0.2,
+  astra: 0.2,
+  reasoner: 0.2,
+});
 
 /** Sufixos de custo/velocidade: mesma geração, menos capacidade. */
 const LIGHT_TOKENS: ReadonlySet<string> = new Set([
@@ -98,8 +98,6 @@ const EFFORT_NUDGE: Readonly<Record<string, number>> = Object.freeze({
   low: 0,
 });
 
-/** Desempate a favor da família forte quando o custo é o mesmo (sol × terra). */
-const STRONG_NUDGE = 0.05;
 const LIGHT_NUDGE = -0.3;
 
 function tokensOf(id: string): string[] {
@@ -116,20 +114,21 @@ export function modelStrength(
   info?: ModelCatalogEntryInfo | null,
 ): number {
   const tokens = tokensOf(id);
-  const strong = tokens.some((token) => STRONG_TOKENS.has(token));
   const light = tokens.some((token) => LIGHT_TOKENS.has(token));
+  const family = tokens.reduce(
+    (max, token) => Math.max(max, FAMILY_STRENGTH_NUDGE[token] ?? 0),
+    0,
+  );
   const tier =
     info?.costTier && info.costTier !== 'unknown'
       ? COST_STRENGTH[info.costTier]
       : undefined;
-  const base = tier ?? (strong ? 3 : light ? 1 : 2);
+  const base = tier ?? (family > 0 ? 3 : light ? 1 : 2);
   const effort = tokens.reduce(
     (max, token) => Math.max(max, EFFORT_NUDGE[token] ?? 0),
     0,
   );
-  return (
-    base + effort + (strong ? STRONG_NUDGE : 0) + (light ? LIGHT_NUDGE : 0)
-  );
+  return base + family + effort + (light ? LIGHT_NUDGE : 0);
 }
 
 function isRestricted(info: ModelCatalogEntryInfo | undefined): boolean {
@@ -145,9 +144,8 @@ function bandOf(info: ModelCatalogEntryInfo | undefined): OperationalBand | null
 
 /**
  * Catálogo do provider em ordem de escolha: utilizáveis antes dos restritos;
- * geração (major) mais nova primeiro; dentro dela o mais forte; depois o
- * minor mais novo; e por fim a ordem do próprio catálogo (default primeiro),
- * que é o único desempate para ids sem versão (`codex-default`).
+ * capacidade primeiro; depois geração major/minor; e por fim a ordem do
+ * próprio catálogo. O default é marcado, mas não ganha prioridade artificial.
  */
 export function rankPickerModels(
   provider: Pick<ProviderSettingsInfo, 'models' | 'defaultModel' | 'modelInfo'>,
@@ -170,8 +168,8 @@ export function rankPickerModels(
   scored.sort(
     (a, b) =>
       Number(a.restricted) - Number(b.restricted) ||
-      b.version[0] - a.version[0] ||
       b.strength - a.strength ||
+      b.version[0] - a.version[0] ||
       b.version[1] - a.version[1] ||
       a.index - b.index,
   );

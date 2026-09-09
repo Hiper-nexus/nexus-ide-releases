@@ -3,8 +3,10 @@ import {
   CLAUDE_CODE_CLIENT_ID,
   CLAUDE_OAUTH_TOKEN_URL,
   CLAUDE_REFRESH_SKEW_MS,
+  CLAUDE_REFRESH_TIMEOUT_MS,
   claudeBlobIsExpiredUnhealable,
   claudeBlobNeedsRefresh,
+  forceRefreshClaudeOauthBlob,
   refreshClaudeOauthBlob,
 } from './claude-oauth-refresh';
 
@@ -160,5 +162,96 @@ describe('refreshClaudeOauthBlob', () => {
     });
     expect(await refreshClaudeOauthBlob(fresh, NOW, fetchImpl)).toBeNull();
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('401 força renovação mesmo quando expiresAt ainda diz que o token está válido', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        access_token: 'recovered-access',
+        refresh_token: 'recovered-refresh',
+        expires_in: 3600,
+      }),
+    }));
+    const revoked = blob({
+      accessToken: 'revoked-before-expiry',
+      refreshToken: 'refresh-1',
+      expiresAt: NOW + 2 * CLAUDE_REFRESH_SKEW_MS,
+    });
+
+    const updated = await forceRefreshClaudeOauthBlob(revoked, NOW, fetchImpl);
+
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(JSON.parse(updated!).claudeAiOauth).toMatchObject({
+      accessToken: 'recovered-access',
+      refreshToken: 'recovered-refresh',
+    });
+  });
+
+  it('aborta refresh pendurado para liberar novas tentativas da conta', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchImpl = vi.fn(
+        async (
+          _url: string,
+          init: { signal?: AbortSignal },
+        ): Promise<never> =>
+          new Promise((_, reject) => {
+            init.signal?.addEventListener('abort', () => {
+              reject(new Error('aborted'));
+            });
+          }),
+      );
+      const pending = forceRefreshClaudeOauthBlob(
+        blob({
+          accessToken: 'revoked',
+          refreshToken: 'refresh-1',
+          expiresAt: NOW + CLAUDE_REFRESH_SKEW_MS,
+        }),
+        NOW,
+        fetchImpl,
+      );
+
+      await vi.advanceTimersByTimeAsync(CLAUDE_REFRESH_TIMEOUT_MS);
+
+      await expect(pending).resolves.toBeNull();
+      expect(fetchImpl).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('mantém o timeout ativo enquanto o body da resposta é lido', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchImpl = vi.fn(
+        async (_url: string, init: { signal?: AbortSignal }) => ({
+          ok: true,
+          status: 200,
+          json: async (): Promise<never> =>
+            new Promise((_, reject) => {
+              init.signal?.addEventListener('abort', () => {
+                reject(new Error('body aborted'));
+              });
+            }),
+        }),
+      );
+      const pending = forceRefreshClaudeOauthBlob(
+        blob({
+          accessToken: 'revoked',
+          refreshToken: 'refresh-1',
+          expiresAt: NOW + CLAUDE_REFRESH_SKEW_MS,
+        }),
+        NOW,
+        fetchImpl,
+      );
+
+      await vi.advanceTimersByTimeAsync(CLAUDE_REFRESH_TIMEOUT_MS);
+
+      await expect(pending).resolves.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

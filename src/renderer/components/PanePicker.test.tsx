@@ -243,7 +243,7 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     expect(optionLabels().some((label) => label.includes('Browser'))).toBe(
       true,
     );
-    expect(groupHeadings()).toEqual(['Bare CLI', 'Claude', 'Codex']);
+    expect(groupHeadings()).toEqual(['Claude', 'Codex', 'Bare CLI']);
     // Fora da lista principal, mas NOMEADAS na seção de indisponíveis.
     expect(optionLabels().some((label) => label.includes('Kimi'))).toBe(false);
     expect(optionLabels().some((label) => label.includes('Grok'))).toBe(false);
@@ -452,9 +452,9 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
       (option) => option.getAttribute('data-admin') === 'true',
     );
     expect(admin).toHaveLength(3); // Bare CLI, Claude, Codex
-    expect(admin[1]!.textContent).toContain('Adicionar conta');
-    expect(admin[1]!.textContent).toContain('1 conta salva');
-    expect(admin[1]!.getAttribute('aria-label')).toBe(
+    expect(admin[0]!.textContent).toContain('Adicionar conta');
+    expect(admin[0]!.textContent).toContain('1 conta salva');
+    expect(admin[0]!.getAttribute('aria-label')).toBe(
       'Adicionar conta em Claude',
     );
 
@@ -670,6 +670,42 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     // Os chips também são busca: "rapido" acha o haiku.
     type('rapido');
     expect(optionIds()).toEqual(['agent:claude:default:claude-haiku-4-5']);
+  });
+
+  it('ordena CLIs pela preferência operacional e contas ativas antes das indisponíveis', () => {
+    useProviderStore.setState({
+      providers: [
+        provider('aider', 'Aider'),
+        provider('codex', 'Codex'),
+        provider('claude', 'Claude'),
+      ],
+    } as never);
+    useAccountStore.setState({
+      accounts: [
+        account('claude-cooling', 'claude', 'Conta ativa em pausa', {
+          active: true,
+          onCooldown: true,
+        }),
+        account('claude-expired', 'claude', 'Conta antiga', {
+          active: false,
+          needsRelogin: true,
+        }),
+        account('claude-ready', 'claude', 'Conta pronta', { active: false }),
+      ],
+    } as never);
+
+    mount();
+    openMenu();
+
+    expect(groupHeadings()).toEqual(['Claude', 'Codex', 'Aider']);
+    const headings = [...host.querySelectorAll('.pane-picker__account')].map(
+      (node) => node.textContent,
+    );
+    expect(headings.slice(0, 3)).toEqual([
+      'Conta pronta',
+      'Conta ativa em pausaem pausa (limite)',
+      'Conta antigasessão expirada',
+    ]);
   });
 
   it('dobra cada conta nos 4 mais fortes; "mais N modelos" abre o resto e a busca vê tudo', () => {

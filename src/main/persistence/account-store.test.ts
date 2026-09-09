@@ -21,6 +21,7 @@ const deps = vi.hoisted(() => ({
   /** Blobs escritos no Keychain nativo, em ordem. */
   keychainWrites: [] as string[],
   cachedSecrets: new Set<string>(),
+  failSecretWrites: false,
   activeEmail: null as string | null,
   keychain: null as string | null,
   needsRefresh: vi.fn(
@@ -56,6 +57,9 @@ vi.mock('./secrets-store', () => ({
   hasSecret: (key: string) => deps.secrets.has(key),
   setSecret: (key: string, value: string) => {
     deps.calls.push(`setSecret:${key}`);
+    if (deps.failSecretWrites) {
+      return { ok: false, error: 'vault indisponível' };
+    }
     deps.secrets.set(key, value);
     deps.cachedSecrets.add(key);
     return { ok: true };
@@ -87,6 +91,8 @@ vi.mock('../quota/claude-oauth-refresh', async () => {
     claudeBlobIsExpiredUnhealable: actual.claudeBlobIsExpiredUnhealable,
     claudeBlobNeedsRefresh: (blob: string, now: number) =>
       deps.needsRefresh(blob, now),
+    forceRefreshClaudeOauthBlob: (blob: string, now: number) =>
+      deps.refreshBlob(blob, now),
     refreshClaudeOauthBlob: (blob: string, now: number) =>
       deps.refreshBlob(blob, now),
   };
@@ -160,6 +166,7 @@ beforeEach(() => {
   initAccountStore(openDb);
   deps.secrets.clear();
   deps.cachedSecrets.clear();
+  deps.failSecretWrites = false;
   deps.calls.length = 0;
   deps.keychainWrites.length = 0;
   deps.activeEmail = null;
@@ -499,6 +506,32 @@ describe('renovação morta veta failover no escuro', () => {
     expect(hasRecentClaudeRefreshFailure(a.id)).toBe(false);
   });
 
+  it('refresh que cura com cooldown de auth JÁ expirado ainda emite (clearCooldown no-op)', async () => {
+    // CodeRabbit (F-512): o `clearCooldown` só emite quando havia cooldown
+    // vivo. Com o cooldown de auth já vencido ele é no-op, mas a marca de
+    // refresh-failure mudou de estado — sem o emit o badge fica pendurado.
+    const a = addSecondary('Conta B', 'b@example.test', oauthBlob('b-access'));
+    (deps as Record<string, unknown>).marked = [a];
+    setCooldown(a.id, Date.now() - 1, 'Error: 401');
+    deps.needsRefresh.mockReturnValue({ refreshToken: 'rt-b' });
+    deps.refreshBlob.mockResolvedValue(null);
+    const seen: number[] = [];
+    const off = onAccountsChange(() => {
+      seen.push(1);
+    });
+    try {
+      expect(await ensureFreshClaudeSubscription(a.id)).toBe(false);
+      expect(hasRecentClaudeRefreshFailure(a.id)).toBe(true);
+      const before = seen.length;
+      deps.refreshBlob.mockResolvedValue(oauthBlob('b-access-2'));
+      expect(await ensureFreshClaudeSubscription(a.id)).toBe(true);
+      expect(hasRecentClaudeRefreshFailure(a.id)).toBe(false);
+      expect(seen.length).toBe(before + 1);
+    } finally {
+      off();
+    }
+  });
+
   it('prepare recusa secundária com renovação falhando (motivo acionável)', async () => {
     const a = addSecondary('Conta B', 'b@example.test', oauthBlob('b-access'));
     (deps as Record<string, unknown>).marked = [a];
@@ -584,6 +617,79 @@ describe('renovação morta veta failover no escuro', () => {
     const info = listAccountInfos().find((i) => i.id === a.id);
     expect(info?.onCooldown).toBe(false);
     expect(info?.needsRelogin).toBe(true);
+  });
+
+  it('erro 401 cujo cooldown terminou não deixa a conta expirada para sempre', () => {
+    const a = addSecondary('Conta B', 'b@example.test', oauthBlob('b-access'));
+    setCooldown(a.id, Date.now() - 1, 'Error: 401');
+
+    const info = listAccountInfos().find((i) => i.id === a.id);
+    expect(info?.onCooldown).toBe(false);
+    expect(info?.needsRelogin).toBe(false);
+  });
+
+  it('refresh forçado após 401 cura só a conta afetada e limpa o erro persistido', async () => {
+    const a = addSecondary('Conta B', 'b@example.test', oauthBlob('b-access'));
+    setCooldown(a.id, Date.now() + 15 * 60 * 1000, 'Error: 401');
+    deps.refreshBlob.mockResolvedValueOnce(oauthBlob('b-access-renewed'));
+
+    expect(
+      await ensureFreshClaudeSubscription(
+        a.id,
+        Date.now(),
+        deps.refreshBlob,
+        { force: true },
+      ),
+    ).toBe(true);
+
+    const info = listAccountInfos().find((item) => item.id === a.id);
+    expect(info?.needsRelogin).toBe(false);
+    expect(info?.lastError).toBe('credencial Claude renovada');
+    expect(deps.keychainWrites).toHaveLength(0);
+  });
+
+  it('refresh concluído não apaga um cooldown de quota criado durante o await', async () => {
+    const a = addSecondary('Conta B', 'b@example.test', oauthBlob('b-access'));
+    setCooldown(a.id, Date.now() + 15 * 60 * 1000, 'Error: 401');
+    let finishRefresh: ((blob: string) => void) | undefined;
+    const refreshPending = new Promise<string>((resolve) => {
+      finishRefresh = resolve;
+    });
+    const refresh = vi.fn(() => refreshPending);
+
+    const healing = ensureFreshClaudeSubscription(
+      a.id,
+      Date.now(),
+      refresh,
+      { force: true },
+    );
+    setCooldown(a.id, Date.now() + 30 * 60 * 1000, 'rate limit exceeded');
+    finishRefresh?.(oauthBlob('b-access-renewed'));
+
+    expect(await healing).toBe(true);
+    const info = listAccountInfos().find((item) => item.id === a.id);
+    expect(info?.onCooldown).toBe(true);
+    expect(info?.lastError).toBe('rate limit exceeded');
+  });
+
+  it('falha ao persistir o token renovado mantém a conta bloqueada', async () => {
+    const a = addSecondary('Conta B', 'b@example.test', oauthBlob('b-access'));
+    setCooldown(a.id, Date.now() + 15 * 60 * 1000, 'Error: 401');
+    deps.failSecretWrites = true;
+    deps.refreshBlob.mockResolvedValueOnce(oauthBlob('b-access-renewed'));
+
+    expect(
+      await ensureFreshClaudeSubscription(
+        a.id,
+        Date.now(),
+        deps.refreshBlob,
+        { force: true },
+      ),
+    ).toBe(false);
+
+    const info = listAccountInfos().find((item) => item.id === a.id);
+    expect(info?.needsRelogin).toBe(true);
+    expect(info?.lastError).toBe('Error: 401');
   });
 
   it('listAccountInfos não marca onCooldown nem needsRelogin na conta que é a sessão nativa viva', () => {

@@ -20,10 +20,16 @@ export const CLAUDE_OAUTH_TOKEN_URL =
 export const CLAUDE_CODE_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 /** Renova quando faltar menos que isto para expirar (ou sem expiresAt). */
 export const CLAUDE_REFRESH_SKEW_MS = 30 * 60 * 1000;
+export const CLAUDE_REFRESH_TIMEOUT_MS = 15_000;
 
 type FetchLike = (
   url: string,
-  init: { method: string; headers: Record<string, string>; body: string },
+  init: {
+    method: string;
+    headers: Record<string, string>;
+    body: string;
+    signal?: AbortSignal;
+  },
 ) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
 
 interface ParsedBlob {
@@ -56,8 +62,8 @@ export function claudeBlobNeedsRefresh(
 ): { refreshToken: string } | null {
   const parsed = parseBlob(blob);
   if (!parsed) return null;
-  const refreshToken = parsed.oauth.refreshToken;
-  if (typeof refreshToken !== 'string' || refreshToken.length === 0) return null;
+  const refreshToken = refreshTokenFrom(parsed);
+  if (!refreshToken) return null;
   const expiresAt = parsed.oauth.expiresAt;
   if (
     typeof expiresAt === 'number' &&
@@ -67,6 +73,13 @@ export function claudeBlobNeedsRefresh(
     return null;
   }
   return { refreshToken };
+}
+
+function refreshTokenFrom(parsed: ParsedBlob): string | null {
+  const refreshToken = parsed.oauth.refreshToken;
+  return typeof refreshToken === 'string' && refreshToken.length > 0
+    ? refreshToken
+    : null;
 }
 
 /**
@@ -106,43 +119,77 @@ export async function refreshClaudeOauthBlob(
 ): Promise<string | null> {
   const needs = claudeBlobNeedsRefresh(blob, now);
   if (!needs) return null;
+  return refreshClaudeOauthBlobWithToken(
+    blob,
+    now,
+    needs.refreshToken,
+    fetchImpl,
+  );
+}
+
+/**
+ * Um 401 pode revogar o access token antes de `expiresAt`. Nesse caso a
+ * renovação agendada não roda porque o relógio ainda diz "fresco". O caminho
+ * forçado usa o refresh token da própria conta e nunca toca no Keychain
+ * global; é acionado somente depois de uma falha de autenticação observada.
+ */
+export async function forceRefreshClaudeOauthBlob(
+  blob: string,
+  now: number,
+  fetchImpl: FetchLike = fetch as unknown as FetchLike,
+): Promise<string | null> {
   const parsed = parseBlob(blob);
   if (!parsed) return null;
-  let response: Awaited<ReturnType<FetchLike>>;
+  const refreshToken = refreshTokenFrom(parsed);
+  if (!refreshToken) return null;
+  return refreshClaudeOauthBlobWithToken(blob, now, refreshToken, fetchImpl);
+}
+
+async function refreshClaudeOauthBlobWithToken(
+  blob: string,
+  now: number,
+  refreshToken: string,
+  fetchImpl: FetchLike,
+): Promise<string | null> {
+  const parsed = parseBlob(blob);
+  if (!parsed) return null;
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    CLAUDE_REFRESH_TIMEOUT_MS,
+  );
   try {
-    response = await fetchImpl(CLAUDE_OAUTH_TOKEN_URL, {
+    const response = await fetchImpl(CLAUDE_OAUTH_TOKEN_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         grant_type: 'refresh_token',
-        refresh_token: needs.refreshToken,
+        refresh_token: refreshToken,
         client_id: CLAUDE_CODE_CLIENT_ID,
       }),
+      signal: controller.signal,
     });
+    if (!response.ok) return null;
+    const payload = await response.json();
+    if (!payload || typeof payload !== 'object') return null;
+    const data = payload as Record<string, unknown>;
+    const accessToken = data.access_token;
+    if (typeof accessToken !== 'string' || accessToken.length === 0) return null;
+    const expiresIn = data.expires_in;
+    const nextOauth: Record<string, unknown> = {
+      ...parsed.oauth,
+      accessToken,
+      ...(typeof data.refresh_token === 'string' && data.refresh_token.length > 0
+        ? { refreshToken: data.refresh_token }
+        : {}),
+      ...(typeof expiresIn === 'number' && Number.isFinite(expiresIn)
+        ? { expiresAt: now + expiresIn * 1000 }
+        : {}),
+    };
+    return JSON.stringify({ ...parsed.root, claudeAiOauth: nextOauth });
   } catch {
     return null;
+  } finally {
+    clearTimeout(timeout);
   }
-  if (!response.ok) return null;
-  let payload: unknown;
-  try {
-    payload = await response.json();
-  } catch {
-    return null;
-  }
-  if (!payload || typeof payload !== 'object') return null;
-  const data = payload as Record<string, unknown>;
-  const accessToken = data.access_token;
-  if (typeof accessToken !== 'string' || accessToken.length === 0) return null;
-  const expiresIn = data.expires_in;
-  const nextOauth: Record<string, unknown> = {
-    ...parsed.oauth,
-    accessToken,
-    ...(typeof data.refresh_token === 'string' && data.refresh_token.length > 0
-      ? { refreshToken: data.refresh_token }
-      : {}),
-    ...(typeof expiresIn === 'number' && Number.isFinite(expiresIn)
-      ? { expiresAt: now + expiresIn * 1000 }
-      : {}),
-  };
-  return JSON.stringify({ ...parsed.root, claudeAiOauth: nextOauth });
 }

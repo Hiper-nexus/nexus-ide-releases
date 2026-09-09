@@ -21,6 +21,7 @@ import {
 import {
   claudeBlobIsExpiredUnhealable,
   claudeBlobNeedsRefresh,
+  forceRefreshClaudeOauthBlob,
   refreshClaudeOauthBlob,
 } from '../quota/claude-oauth-refresh';
 import {
@@ -733,10 +734,11 @@ function markClaudeRefreshFailed(account: { id: string; label: string }): void {
 export async function ensureFreshClaudeSubscription(
   accountId: string,
   now = Date.now(),
-  refreshImpl: (
+  refreshImpl?: (
     blob: string,
     now: number,
-  ) => Promise<string | null> = refreshClaudeOauthBlob,
+  ) => Promise<string | null>,
+  options: { force?: boolean } = {},
 ): Promise<boolean> {
   const account = accounts.get(accountId);
   if (!account || account.adapterId !== 'claude') return false;
@@ -750,22 +752,43 @@ export async function ensureFreshClaudeSubscription(
   }
   const blob = getSecret(CRED_PREFIX + accountId);
   if (typeof blob !== 'string' || !blob) return false;
-  if (!claudeBlobNeedsRefresh(blob, now)) return false;
+  if (!options.force && !claudeBlobNeedsRefresh(blob, now)) return false;
   if (claudeRefreshInFlight.has(accountId)) return false;
   claudeRefreshInFlight.add(accountId);
   try {
-    const updated = await refreshImpl(blob, now);
+    const updateBlob =
+      refreshImpl ??
+      (options.force ? forceRefreshClaudeOauthBlob : refreshClaudeOauthBlob);
+    const updated = await updateBlob(blob, now);
     if (!updated) {
       // Tentativa real falhou (rede ou refresh rotacionado/consumido): marca
       // para o failover não queimar sessões nesta conta, e avisa a UI.
       markClaudeRefreshFailed(account);
       return false;
     }
-    setSecret(CRED_PREFIX + accountId, updated);
+    const saved = setSecret(CRED_PREFIX + accountId, updated);
+    if (!saved.ok) {
+      markClaudeRefreshFailed(account);
+      console.warn(
+        '[accounts] token Claude renovado, mas não persistido no vault',
+      );
+      return false;
+    }
     // Cura silenciosa deixava o badge "sessão expirada" pendurado com
     // Configurações aberto: emite na transição true→false também. (A expiração
     // por TTL é preguiçosa — aparece no próximo emit de qualquer origem.)
-    if (claudeRefreshFailedAt.delete(accountId)) emit();
+    const clearedRefreshFailure = claudeRefreshFailedAt.delete(accountId);
+    const currentAccount = accounts.get(accountId);
+    // `clearCooldown` só emite quando havia cooldown vivo. Se o cooldown de
+    // auth já tinha expirado (no-op) mas o refresh-failure mudou de estado, o
+    // emit ainda precisa sair — senão o badge fica pendurado até outro evento.
+    const clearedCooldown =
+      currentAccount && isAuthCooldownReason(currentAccount.lastError)
+        ? clearCooldown(accountId, 'credencial Claude renovada')
+        : false;
+    if (!clearedCooldown && clearedRefreshFailure) {
+      emit();
+    }
     console.info('[accounts] claude oauth renovado para conta', account.label);
     return true;
   } catch {
@@ -1451,16 +1474,16 @@ function upsertCooldownBlock(
  * Blocos escopados (tier:*) ficam: refutação account-wide não desprova um
  * limite por tier.
  */
-export function clearCooldown(id: string, note: string): void {
+export function clearCooldown(id: string, note: string): boolean {
   const account = accounts.get(id);
-  if (!account) return;
+  if (!account) return false;
   const now = Date.now();
   const globalBlock = cooldownBlocks.get(id)?.get(GLOBAL_SCOPE);
   const hasLegacyCooldown =
     account.cooldownUntil !== undefined && account.cooldownUntil > now;
   const hasActiveBlock =
     globalBlock !== undefined && globalBlock.blockedUntil > now;
-  if (!hasLegacyCooldown && !hasActiveBlock) return;
+  if (!hasLegacyCooldown && !hasActiveBlock) return false;
   const nextAccounts = new Map(accounts);
   nextAccounts.set(id, {
     ...account,
@@ -1478,6 +1501,7 @@ export function clearCooldown(id: string, note: string): void {
   }
   replaceMap(accounts, nextAccounts);
   emit();
+  return true;
 }
 
 /**
@@ -1530,19 +1554,21 @@ export function listAccountInfos(): AccountInfo[] {
       a.mode === 'subscription' &&
       Boolean(nativeClaude && a.email && emailsEqual(a.email, nativeClaude));
 
-    const isAuthCooldown = isAuthCooldownReason(a.lastError);
+    const hasAuthError = isAuthCooldownReason(a.lastError);
     const hasActiveCooldown = Boolean(a.cooldownUntil && a.cooldownUntil > now);
 
     // Se a conta é a sessão nativa ativa da CLI e tinha cooldown ou erro de auth,
     // o login vivo no Keychain refuta o erro antigo: agenda a limpeza.
-    if (isLiveNativeClaude && (hasActiveCooldown || isAuthCooldown)) {
+    if (isLiveNativeClaude && (hasActiveCooldown || hasAuthError)) {
       queueMicrotask(() => {
         clearCooldown(a.id, 'sessão confirmada ativa no Keychain');
       });
     }
 
     const effectiveCooldown = hasActiveCooldown && !isLiveNativeClaude;
-    const authFailure = isAuthCooldown || hasRecentClaudeRefreshFailure(a.id, now);
+    const hasActiveAuthCooldown = hasActiveCooldown && hasAuthError;
+    const authFailure =
+      hasActiveAuthCooldown || hasRecentClaudeRefreshFailure(a.id, now);
 
     return {
       ...a,
@@ -1552,7 +1578,7 @@ export function listAccountInfos(): AccountInfo[] {
           ? hasSecret(KEY_PREFIX + a.id)
           : hasSecret(CRED_PREFIX + a.id) || isLiveNativeClaude,
       // onCooldown é apenas para limite real de cota / rate-limit — nunca para erro de auth/login:
-      onCooldown: effectiveCooldown && !isAuthCooldown,
+      onCooldown: effectiveCooldown && !hasAuthError,
       // needsRelogin indica sessão expirada / 401 / refresh morto:
       needsRelogin: !isLiveNativeClaude && authFailure,
     };

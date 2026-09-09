@@ -967,6 +967,12 @@ describe('espera-pela-irmã + cooldown escopado (C1, derivado do oh-my-pi)', () 
 describe('disjuntor de morte instantânea (401-loop multi-conta)', () => {
   it('troca na 1ª morte instantânea de auth e trava na 2ª seguida com motivo acionável', async () => {
     const { detectLimit } = await import('./limit-detector');
+    const { ensureFreshClaudeSubscription } = await import(
+      '../persistence/account-store'
+    );
+    vi.mocked(ensureFreshClaudeSubscription).mockRejectedValueOnce(
+      new Error('vault indisponível'),
+    );
     const authHit = (buffer: string) =>
       buffer.includes('LIMIT')
         ? {
@@ -1000,6 +1006,12 @@ describe('disjuntor de morte instantânea (401-loop multi-conta)', () => {
         switched: true,
         toAccountId: 'account-b',
       }),
+    );
+    expect(ensureFreshClaudeSubscription).toHaveBeenCalledWith(
+      'account-a',
+      100_000,
+      undefined,
+      { force: true },
     );
 
     // 2ª sessão morre de auth com segundos de vida: o disjuntor trava em vez
@@ -1088,4 +1100,3 @@ describe('disjuntor de morte instantânea (401-loop multi-conta)', () => {
     );
   });
 });
-
