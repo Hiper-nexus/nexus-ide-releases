@@ -31,6 +31,23 @@ Grok Build may run or modify contents in this directory, posing security risks.
   No, exit
 `;
 
+/** Kimi Code 0.41/0.42 — transcrito ao vivo na primeira abertura numa pasta. */
+const KIMI_TRUST_PROMPT = `
+Trust this folder?
+↑↓ navigate · Enter select · Esc exit
+
+/private/tmp/kimi-trust-fresh-1
+
+Project-level MCP servers are disabled until you explicitly choose Trust.
+Trust starts the listed project MCP targets and remembers this folder.
+
+ ❯ Trust this folder
+   Enable project MCP servers. Remembered for this folder.
+
+   Don't trust
+   Exit Kimi Code. Asked again next launch.
+`;
+
 /** Live Claude Code 2.1.x UI (also used by GLM/Longcat) — no "Enter to confirm". */
 const CLAUDE_BYPASS_PROMPT_21 = `
 WARNING: Claude Code running in Bypass Permissions mode
@@ -118,6 +135,21 @@ describe('CLI prompt autoresponder', () => {
     expect(
       matchesPromptSignature(GROK_TRUST_PROMPT, signature('grok-folder-trust')),
     ).toBe(true);
+  });
+
+  it('recognizes and accepts the Kimi folder trust prompt with Enter', () => {
+    // Campo 09/09: o Kimi 0.42 para em "Trust this folder?" antes do composer;
+    // sem resposta a pane fica muda e o prompt da missão é engolido pelo modal.
+    expect(
+      matchesPromptSignature(KIMI_TRUST_PROMPT, signature('kimi-folder-trust')),
+    ).toBe(true);
+
+    const responder = new CliPromptAutoResponder();
+    responder.bind('session-kimi', 'kimi');
+    expect(responder.observe('session-kimi', KIMI_TRUST_PROMPT)).toBe(
+      ACCEPT_DEFAULT_PROMPT_RESPONSE,
+    );
+    expect(responder.observe('session-kimi', KIMI_TRUST_PROMPT)).toBeNull();
   });
 
   it('recognizes and accepts the Claude 2.1.x bypass acknowledgement (GLM shell)', () => {

@@ -105,6 +105,23 @@ export const BUILTIN_PROMPT_SIGNATURES: readonly PromptSignature[] = [
     ],
     response: ACCEPT_DEFAULT_PROMPT_RESPONSE,
   },
+  {
+    // Kimi Code 0.41+ (0.42.0 observado ao vivo) para na tela "Trust this
+    // folder?" ANTES do composer. O menu é de setas com "Trust this folder"
+    // já destacado; Enter seleciona — mesma forma do grok-folder-trust. Sem
+    // resposta a pane fica muda e o brief da missão é colado no modal e
+    // engolido (campo 09/09: "o kimi não está nem abrindo"). Trust também
+    // habilita o MCP de projeto que o próprio Nexus injeta.
+    adapterIds: ['kimi'],
+    name: 'kimi-folder-trust',
+    phrases: [
+      'trust this folder?',
+      'trust starts the listed project mcp targets',
+      "don't trust",
+    ],
+    response: ACCEPT_DEFAULT_PROMPT_RESPONSE,
+    earlyPhrase: 'trust this folder?',
+  },
 ];
 
 function normalizePromptText(output: string): string {
