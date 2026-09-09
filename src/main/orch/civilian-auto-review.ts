@@ -11,6 +11,7 @@ import {
 } from '../context/candidate-quality-scanner';
 import {
   runDependencyAuditSensor,
+  runTestCoverageSensor,
   runTypecheckSensor,
   type MechanicalCheckResult,
   type MechanicalFinding,
@@ -74,6 +75,10 @@ export interface CivilianAutoReviewDependencies {
     root: string,
   ) => Promise<MechanicalCheckResult>;
   readonly audit?: (root: string) => Promise<MechanicalCheckResult>;
+  readonly testCoverage?: (
+    root: string,
+    files: readonly string[],
+  ) => Promise<MechanicalCheckResult>;
   readonly deliverRepair?: (
     sessionId: string,
     prompt: string,
@@ -210,23 +215,25 @@ export function civilianAutoReviewEvidenceNote(
     : `Scanner determinístico ${analysis.version}: aprovado com ressalvas (evidência ${shortHash}; análise parcial).`;
 }
 
-/** Achados mecânicos (tsc/audit) no mesmo formato dos findings de review. */
+/** Achados mecânicos (tsc/audit/test-coverage) no mesmo formato dos findings de review. */
 function mechanicalToReviewFindings(
   results: readonly MechanicalCheckResult[],
 ): readonly ReviewFindingInput[] {
   return results.flatMap((result) =>
-    result.findings.map((finding: MechanicalFinding): ReviewFindingInput => ({
-      severity: finding.severity,
-      category:
-        result.kind === 'dependency-audit'
-          ? ('security' as ReviewCategory)
-          : ('correctness' as ReviewCategory),
-      file: finding.file,
-      criterionRefs: [],
-      invariantRefs: [],
-      evidence: finding.evidence,
-      recommendation: finding.recommendation,
-    })),
+    result.findings
+      .filter((finding) => BLOCKING_SEVERITIES.has(finding.severity))
+      .map((finding: MechanicalFinding): ReviewFindingInput => ({
+        severity: finding.severity,
+        category:
+          result.kind === 'dependency-audit'
+            ? ('security' as ReviewCategory)
+            : ('correctness' as ReviewCategory),
+        file: finding.file,
+        criterionRefs: [],
+        invariantRefs: [],
+        evidence: finding.evidence,
+        recommendation: finding.recommendation,
+      })),
   );
 }
 
@@ -301,11 +308,12 @@ export async function enforceCivilianAutoReview(
   }
 
   // Etapa 2 — sensores mecânicos Nexus-owned: typecheck + auditoria de
-  // dependências quando o projeto permite (tsconfig/lockfile). Não dependem
+  // dependências + cobertura de testes quando o projeto permite. Não dependem
   // de scripts no alvo; falha de infraestrutura é indisponível, não bloqueio.
   const mechanical = await Promise.all([
     (dependencies.typecheck ?? runTypecheckSensor)(root),
     (dependencies.audit ?? runDependencyAuditSensor)(root),
+    (dependencies.testCoverage ?? runTestCoverageSensor)(root, changedFiles),
   ]);
   const mechanicalBlocking = mechanicalToReviewFindings(mechanical);
   const blocking = [...blockingFindingsOf(analysis), ...mechanicalBlocking];

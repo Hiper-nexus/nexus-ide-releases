@@ -31,7 +31,10 @@ export interface MechanicalFinding {
   readonly recommendation: string;
 }
 
-export type MechanicalCheckKind = 'typecheck' | 'dependency-audit';
+export type MechanicalCheckKind =
+  | 'typecheck'
+  | 'dependency-audit'
+  | 'test-coverage';
 
 export interface MechanicalCheckResult {
   readonly kind: MechanicalCheckKind;
@@ -410,5 +413,87 @@ export async function runDependencyAuditSensor(
     status: 'failed',
     summary: `Auditoria: ✗ ${critical} crítica(s), ${high} alta(s) em produção.`,
     findings: blocking,
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Test Coverage — verificação adversarial de testes co-localizados     */
+/* ------------------------------------------------------------------ */
+
+const TEST_EXT_REGEX = /\.(test|spec)\.[jt]sx?$/u;
+const CODE_EXT_REGEX = /\.[jt]sx?$/u;
+
+export async function runTestCoverageSensor(
+  root: string,
+  productFiles: readonly string[] = [],
+  deps: MechanicalRunnerDeps = {},
+): Promise<MechanicalCheckResult> {
+  const exists = deps.exists ?? existsSync;
+
+  const sourceFiles = productFiles.filter((file) => {
+    if (!CODE_EXT_REGEX.test(file)) return false;
+    if (TEST_EXT_REGEX.test(file)) return false;
+    if (file.endsWith('.d.ts')) return false;
+    if (file.includes('.config.') || file.startsWith('scripts/')) return false;
+    return true;
+  });
+
+  if (sourceFiles.length === 0) {
+    return {
+      kind: 'test-coverage',
+      status: 'passed',
+      summary: 'Cobertura de testes: ✓ dispensada (apenas testes, docs ou configs modificados).',
+      findings: [],
+    };
+  }
+
+  const missingTests: string[] = [];
+
+  for (const sourceFile of sourceFiles) {
+    const extMatch = sourceFile.match(/\.([jt]sx?)$/u);
+    if (!extMatch) continue;
+    const base = sourceFile.slice(0, -extMatch[0].length);
+    const possibleTests = [
+      `${base}.test.${extMatch[1]}`,
+      `${base}.spec.${extMatch[1]}`,
+      `${base}.test.ts`,
+      `${base}.spec.ts`,
+      `${base}.test.tsx`,
+      `${base}.spec.tsx`,
+    ];
+
+    const hasSibling = possibleTests.some((candidate) => {
+      return productFiles.includes(candidate) || exists(join(root, candidate));
+    });
+
+    if (!hasSibling) {
+      missingTests.push(sourceFile);
+    }
+  }
+
+  if (missingTests.length === 0) {
+    return {
+      kind: 'test-coverage',
+      status: 'passed',
+      summary: `Cobertura de testes: ✓ ${sourceFiles.length} arquivo(s) fonte possuem testes correspondentes.`,
+      findings: [],
+    };
+  }
+
+  const findings: MechanicalFinding[] = missingTests.slice(0, MAX_FINDINGS_PER_SENSOR).map((file) => {
+    const siblingName = file.replace(/\.([jt]sx?)$/u, '.test.$1');
+    return {
+      severity: 'medium',
+      file,
+      evidence: 'Arquivo de código alterado sem teste automatizado sibling (.test.ts ou .spec.ts).',
+      recommendation: `Crie um teste co-localizado (${siblingName}) cobrindo os novos fluxos e invariantes de ${file}.`,
+    };
+  });
+
+  return {
+    kind: 'test-coverage',
+    status: 'passed',
+    summary: `Cobertura de testes: ${missingTests.length} arquivo(s) de código sem teste sibling co-localizado.`,
+    findings,
   };
 }

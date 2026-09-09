@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   runDependencyAuditSensor,
+  runTestCoverageSensor,
   runTypecheckSensor,
 } from './mechanical-sensors';
 
@@ -235,5 +236,39 @@ describe('runDependencyAuditSensor', () => {
 
     expect(result.status).toBe('unavailable');
     expect(result.findings).toEqual([]);
+  });
+});
+
+describe('runTestCoverageSensor', () => {
+  it('dispensa verificação se nenhum arquivo de código foi alterado', async () => {
+    const result = await runTestCoverageSensor('/app', ['README.md', 'docs/plan.md']);
+    expect(result.kind).toBe('test-coverage');
+    expect(result.status).toBe('passed');
+    expect(result.findings).toHaveLength(0);
+    expect(result.summary).toContain('dispensada');
+  });
+
+  it('aprova quando arquivos de código possuem testes correspondentes', async () => {
+    const result = await runTestCoverageSensor(
+      '/app',
+      ['src/foo.ts', 'src/foo.test.ts'],
+      { exists: () => false },
+    );
+    expect(result.status).toBe('passed');
+    expect(result.findings).toHaveLength(0);
+    expect(result.summary).toContain('possuem testes');
+  });
+
+  it('detecta arquivos de código sem teste sibling existente', async () => {
+    const result = await runTestCoverageSensor(
+      '/app',
+      ['src/bar.ts'],
+      { exists: () => false },
+    );
+    expect(result.status).toBe('passed');
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0]?.file).toBe('src/bar.ts');
+    expect(result.findings[0]?.severity).toBe('medium');
+    expect(result.findings[0]?.recommendation).toContain('src/bar.test.ts');
   });
 });
