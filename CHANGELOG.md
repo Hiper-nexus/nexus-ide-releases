@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.76.11 — Stage Focus, Síntese DAG, Roteador por Especialidade e Jarvis Instantâneo
+
+- Stage Focus Mode (Cmd+Shift+F): foco visual com proporção 72%/28% colocando o terminal ativo no palco principal e mantendo os demais agentes monitorados em um companion rail com cards interativos.
+- Context DAG no Handoff: os handoffs do Maestro e workers agora transmitem a cadeia causal de execução (conquistas, bloqueios, próximos passos e DAG de contexto) para preservação do fio da meada.
+- Sensor Mecânico de Cobertura de Testes: pair review adversarial automático que audita a presença de testes irmãos para arquivos de código modificados, bloqueando finalizações cegas.
+- Roteador por Especialidade no "+ Pane": mapeamento e busca inteligente de agentes e modelos por aptidão técnica (frontend, lógica, contexto, raciocínio, rápido) no catálogo de spawn.
+- Jarvis Direto sem Hesitação: comandos locais e ações de rotina por voz executam sem atraso ou modais repetitivos, mantendo feedback sonoro assertivo.
+- Herdr Manifests: contagem sincronizada de manifestos embutidos para 20 após a aposentadoria da CLI Gemini legada em prol do AGY.
+- Segurança de dependências: atualização do smol-toml para 1.8.0.
+
 ## 0.76.10 — Modo vibe sem cabresto, paste humano em pane governado e Kimi desbloqueado
 
 - Modo vibe para o operador: panes abertos pelo operador sem missão executam efeitos de código (`nexus_terminal_run`, `nexus_file_write`, `nexus_git_commit`, etc.) diretamente via MCP sem barreira de intent gate ou modal de confirmação.

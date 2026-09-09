@@ -1,7 +1,7 @@
 {
   "name": "nexus-ide",
   "productName": "NexusIDE",
-  "version": "0.76.10",
+  "version": "0.76.11",
   "description": "Terminal IDE multi-agente: grid de panes de terminal com PTYs reais, base para adapters de CLIs de IA e orquestração de squads.",
   "main": ".vite/build/main.js",
   "author": "NexusIDE",
@@ -73,7 +73,7 @@
     "react-resizable-panels": "^4.12.0",
     "recast": "^0.23.11",
     "selfsigned": "^5.5.0",
-    "smol-toml": "^1.7.0",
+    "smol-toml": "^1.8.0",
     "tesseract.js": "^7.0.0",
     "typescript": "^6.0.3",
     "ws": "^8.21.0",

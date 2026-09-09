@@ -315,6 +315,52 @@ export const RELEASE_0744: AppRelease = {
   ],
 };
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.11',
+  date: '2026-09-09',
+  codename: 'Stage Focus, Síntese DAG, Roteador por Especialidade e Jarvis Instantâneo',
+  summary:
+    'Modo Stage Focus (Cmd+Shift+F) com painel principal e companion rail interativo; Context DAG sintetizando conquistas, bloqueios e próximos passos nos handoffs; sensor mecânico de cobertura adversarial; roteamento inteligente por especialidade nas CLIs; e Jarvis com execução por voz imediata.',
+  highlights: [
+    {
+      title: 'Stage Focus Mode (Cmd+Shift+F)',
+      detail:
+        'Foco visual imersivo no terminal ativo (72%) acompanhado por uma coluna lateral com cards interativos de todos os outros agentes vivos.',
+    },
+    {
+      title: 'Context DAG nos Handoffs de Workers',
+      detail:
+        'Handoffs automáticos entre trabalhadores e Maestro agora estruturam causalmente o fio da meada: accomplished, blockers, next_steps e contexto relacional.',
+    },
+    {
+      title: 'Sensor Mecânico de Cobertura de Testes',
+      detail:
+        'Pair review adversarial automático que verifica a existência de testes irmãos para cada arquivo de código alterado antes do aceite da tarefa.',
+    },
+    {
+      title: 'Roteador por Especialidade no "+ Pane"',
+      detail:
+        'Busca inteligente e catalogação por capacidades operacionais (frontend, lógica, contexto, raciocínio e rápido) nas opções de spawn de agentes.',
+    },
+    {
+      title: 'Jarvis Direto: Execução sem Hesitação',
+      detail:
+        'Execução por voz imediata com feedback sonoro responsivo para comandos locais e encaminhamento ágil de intenções operacionais.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Contrato de Manifestos Herdr (F-349)',
+      detail:
+        'Contagem e carregamento de manifestos atualizados para refletir a consolidação da CLI Google em AGY.',
+    },
+    {
+      title: 'Correção de dependência toml',
+      detail:
+        'Atualização do smol-toml para 1.8.0, eliminando alertas de segurança em dependências de produção.',
+    },
+  ],
+};
+export const RELEASE_07610: AppRelease = {
   version: '0.76.10',
   date: '2026-09-09',
   codename: 'Modo vibe sem cabresto, paste humano em pane governado e Kimi desbloqueado',
