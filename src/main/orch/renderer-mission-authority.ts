@@ -32,6 +32,7 @@ import {
   getContextBySession,
   promoteMissionSessionAuthority,
   restoreSessionAuthority,
+  rollbackMissionSessionAuthorities,
 } from "./gate";
 import { attachOrchMeta, findPaneOwnedBy } from "./pane-registry";
 import type {
@@ -553,6 +554,10 @@ export class RendererMissionAuthority {
       );
     }
     if (result === "removed") {
+      // Sessões presas à missão que acabou de sumir: sem isto o pane que a
+      // criou continuava `orchestrator` apontando para uma missão inexistente
+      // e nunca mais conseguia criar outra (campo 09/09).
+      rollbackMissionSessionAuthorities(candidate.mission.id);
       // The removed mission may own the scope's durable merge block. Nothing
       // can acknowledge that block anymore, so lift it now instead of letting
       // every future mission of this scope defer merges into a technical

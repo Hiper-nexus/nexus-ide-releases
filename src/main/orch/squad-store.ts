@@ -740,6 +740,25 @@ export function findAgentInSquad(
   return matches.length === 1 ? { squad, agent: matches[0] } : null;
 }
 
+/**
+ * Resolve um agente pelo nome em QUALQUER squad, para quando não há missão que
+ * fixe o squad. Ambíguo (mesmo nome em squads diferentes) devolve null: melhor
+ * pedir o nome exato do que spawnar o agente errado.
+ */
+export function findAgentInAnySquad(
+  ref: string,
+): { squad: Squad; agent: SquadAgent } | null {
+  const matches: Array<{ squad: Squad; agent: SquadAgent }> = [];
+  for (const squad of squads.values()) {
+    for (const agent of squad.agents) {
+      if (agent.id === ref || agent.agentName === ref) {
+        matches.push({ squad, agent });
+      }
+    }
+  }
+  return matches.length === 1 ? matches[0]! : null;
+}
+
 export function listAgents(): Array<SquadAgent & { squadId: string }> {
   const out: Array<SquadAgent & { squadId: string }> = [];
   for (const squad of squads.values()) {

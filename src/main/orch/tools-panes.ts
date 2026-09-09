@@ -13,7 +13,12 @@ import {
   waitForIdle,
   waitForNextIdle,
 } from './pane-registry';
-import { inspectSessionLease, orchWriteSession, sessionLeaseRegistry } from '../pty/pty-manager';
+import {
+  getSessionState,
+  inspectSessionLease,
+  orchWriteSession,
+  sessionLeaseRegistry,
+} from '../pty/pty-manager';
 import {
   listAdapterInfos,
 } from '../adapters/adapter-registry';
@@ -21,7 +26,12 @@ import {
   armAutoCloseOnHandoff,
   selectScopedPaneCloseTargets,
 } from './pane-close-scopes';
-import { findAgentInSquad, getSquad, squadRoutableCliIds } from './squad-store';
+import {
+  findAgentInAnySquad,
+  findAgentInSquad,
+  getSquad,
+  squadRoutableCliIds,
+} from './squad-store';
 import { adHocSpawnGateError } from './route-provenance';
 import { recordRouteLog } from './route-log';
 import {
@@ -401,11 +411,27 @@ const paneSpawn: McpToolDef = {
       const mission = requestedMissionId
         ? getProjectDomainStores(ctx.scope).missions.get(requestedMissionId)
         : null;
-      if (!mission?.squadId) {
+      // A sessão `user` é a mão do operador: ela já pode abrir um pane ad-hoc
+      // com qualquer CLI e modelo, então exigir missão só para NOMEAR um
+      // agente do roster era cerimônia — e virou parede em campo (09/09:
+      // "mandei abrir outro pane e não conseguiu"). Fora do operador, o
+      // vínculo com a missão continua obrigatório.
+      const found = mission?.squadId
+        ? findAgentInSquad(mission.squadId, agentRef)
+        : ctx.role === 'user'
+          ? findAgentInAnySquad(agentRef)
+          : null;
+      if (!found && !mission?.squadId && ctx.role !== 'user') {
         throw new Error('squad agent spawn requires a mission bound to a squad');
       }
-      const found = findAgentInSquad(mission.squadId, agentRef);
-      if (!found) throw new Error(`unknown squad agent: ${agentRef}`);
+      if (!found) {
+        throw new Error(
+          `unknown squad agent: ${agentRef} — confira o nome em ` +
+            'Configurações › Squads, ou abra o pane direto passando ' +
+            'adapterId (ex.: { adapterId: "codex" }), que não depende de ' +
+            'roster nem de missão',
+        );
+      }
       const { agent } = found;
       const role = agent.category === 'orchestrator' ? 'orchestrator' : 'worker';
       if (ctx.role === 'worker' && role === 'orchestrator') {
@@ -1175,8 +1201,10 @@ const paneAsk: McpToolDef = {
 const paneWriteMany: McpToolDef = {
   name: 'nexus_pane_write_many',
   description:
-    'Write prompts to several panes in one call. writes: ' +
-    '[{paneId, text, submit?}].',
+    'Broadcast with a receipt per target. writes: [{paneId, text, submit?, ' +
+    'force?}]. Each entry answers outcome submitted|skipped|failed and, when ' +
+    'skipped, reason pane_dead|agent_not_ready|pane_hibernated. A refused ' +
+    'target never stops the others; a dead pane never receives.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -1193,6 +1221,12 @@ const paneWriteMany: McpToolDef = {
       },
             text: { type: 'string' },
             submit: { type: 'boolean' },
+            force: {
+              type: 'boolean',
+              description:
+                'Deliver even to a pane still spawning or hibernated. ' +
+                'A dead pane never receives.',
+            },
           },
           required: ['paneId', 'text'],
         },
@@ -1202,22 +1236,41 @@ const paneWriteMany: McpToolDef = {
   },
   handler: async (args, ctx, invocation) => {
     const writes = Array.isArray(args.writes) ? args.writes : [];
-    const results: Array<{ paneId: string; ok: boolean; error?: string }> = [];
+    const results: PaneWriteReceipt[] = [];
     for (const raw of writes) {
       // Do not turn a revoked batch into N best-effort writes. Every iteration
       // revalidates outside the per-item error wrapper so revocation stops it.
       assertMcpInvocationCurrent(invocation);
-      const write = raw as { paneId?: string; text?: string; submit?: boolean };
+      const write = raw as {
+        paneId?: string;
+        text?: string;
+        submit?: boolean;
+        force?: boolean;
+      };
       if (typeof write.paneId !== 'string' || typeof write.text !== 'string') {
         results.push({
           paneId: String(write.paneId),
           ok: false,
+          outcome: 'failed',
           error: 'invalid write',
         });
         continue;
       }
       try {
         const sessionId = authorizedSessionIdOf(ctx, write.paneId, 'write');
+        const skip = broadcastSkipReason(
+          getSessionState(sessionId),
+          write.force === true,
+        );
+        if (skip) {
+          results.push({
+            paneId: write.paneId,
+            ok: false,
+            outcome: 'skipped',
+            reason: skip,
+          });
+          continue;
+        }
         const text = withWorkerHandoffFooter(sessionId, write.text ?? '');
         if (write.submit === false) {
           assertMcpInvocationCurrent(invocation);
@@ -1225,11 +1278,12 @@ const paneWriteMany: McpToolDef = {
         } else {
           await injectPrompt(sessionId, text, invocation);
         }
-        results.push({ paneId: write.paneId, ok: true });
+        results.push({ paneId: write.paneId, ok: true, outcome: 'submitted' });
       } catch (err) {
         results.push({
           paneId: write.paneId,
           ok: false,
+          outcome: 'failed',
           error: err instanceof Error ? err.message : String(err),
         });
       }
@@ -1237,6 +1291,38 @@ const paneWriteMany: McpToolDef = {
     return results;
   },
 };
+
+/** Recibo por alvo de um broadcast: o que aconteceu com CADA pane, nomeado. */
+export interface PaneWriteReceipt {
+  readonly paneId: string;
+  /** Compatibilidade: `true` só quando `outcome === 'submitted'`. */
+  readonly ok: boolean;
+  readonly outcome: 'submitted' | 'skipped' | 'failed';
+  readonly reason?: BroadcastSkipReason;
+  readonly error?: string;
+}
+
+export type BroadcastSkipReason =
+  | 'pane_dead'
+  | 'agent_not_ready'
+  | 'pane_hibernated';
+
+/**
+ * Regra do broadcast (herdada do Sidecar): entregar a quem pode receber e
+ * dizer, por alvo, por que não entregou aos outros — nunca acordar pane
+ * morto, nunca digitar num agente que ainda está nascendo. `force` passa por
+ * cima de "não pronto"/"hibernado"; morto continua morto.
+ */
+export function broadcastSkipReason(
+  state: ReturnType<typeof getSessionState>,
+  force: boolean,
+): BroadcastSkipReason | null {
+  if (state === null || state === 'exited') return 'pane_dead';
+  if (force) return null;
+  if (state === 'spawning') return 'agent_not_ready';
+  if (state === 'hibernated') return 'pane_hibernated';
+  return null;
+}
 
 const paneClose: McpToolDef = {
   name: 'nexus_pane_close',

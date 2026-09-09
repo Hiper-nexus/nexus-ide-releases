@@ -15,6 +15,7 @@ import {
   MAX_STOP_ATTEMPTS,
   mintToken,
   promoteMissionSessionAuthority,
+  rollbackSessionAuthorityMission,
   releaseSession,
   resetGateForTests,
   restoreSessionAuthority,
@@ -211,6 +212,73 @@ describe('token registry + stop gate', () => {
       allowedTools: [],
     });
     expect(isToolAllowedForRole('worker', getContextBySession('pty-old')!.allowedTools, 'nexus_handoff_submit')).toBe(true);
+  });
+
+  it('devolve ao pane a autoridade de criar missão quando a missão dele some', () => {
+    // Campo 09/09: o operador pediu panes num terminal, o Nexus exigiu missão,
+    // ele criou uma, descartou, e a partir dali o pane NUNCA mais pôde criar
+    // outra ("only a user-owned session may create a mission"). A promoção
+    // user→orchestrator do nexus_mission_create era porta de mão única.
+    const scope = testProjectScope();
+    const pane = mintToken({
+      label: 'pane do operador',
+      role: 'user',
+      scope,
+      allowedTools: null,
+    });
+    bindTokenToSession(pane.token, 'pty-operador');
+
+    const ctx = getContextBySession('pty-operador')!;
+    // O que nexus_mission_create faz ao promover o criador.
+    ctx.missionId = 'mission-descartada';
+    ctx.role = 'orchestrator';
+    ctx.promotedFromUserSession = true;
+
+    expect(
+      rollbackSessionAuthorityMission('pty-operador', 'mission-descartada'),
+    ).toBe(true);
+
+    const after = getContextBySession('pty-operador')!;
+    expect(after.role).toBe('user');
+    expect(after.missionId).toBeUndefined();
+    expect(after).not.toHaveProperty('promotedFromUserSession');
+  });
+
+  it('nunca promove um worker a user ao desfazer a missão dele', () => {
+    // A devolução vale só para quem ERA user antes. Um worker perdeu a missão,
+    // mas continua worker: virar `user` seria escalada de privilégio.
+    const scope = testProjectScope();
+    const worker = mintToken({
+      label: 'worker',
+      role: 'worker',
+      missionId: 'mission-descartada',
+      scope,
+      allowedTools: [],
+    });
+    bindTokenToSession(worker.token, 'pty-worker-orfao');
+
+    expect(
+      rollbackSessionAuthorityMission('pty-worker-orfao', 'mission-descartada'),
+    ).toBe(true);
+
+    const after = getContextBySession('pty-worker-orfao')!;
+    expect(after.role).toBe('worker');
+    expect(after.missionId).toBeUndefined();
+  });
+
+  it('não devolve autoridade citando a missão errada', () => {
+    const scope = testProjectScope();
+    const pane = mintToken({ label: 'pane', role: 'user', scope, allowedTools: null });
+    bindTokenToSession(pane.token, 'pty-outro');
+    const ctx = getContextBySession('pty-outro')!;
+    ctx.missionId = 'mission-viva';
+    ctx.role = 'orchestrator';
+    ctx.promotedFromUserSession = true;
+
+    expect(
+      rollbackSessionAuthorityMission('pty-outro', 'mission-descartada'),
+    ).toBe(false);
+    expect(getContextBySession('pty-outro')?.role).toBe('orchestrator');
   });
 
   it('refuses to promote a session from another mission', () => {

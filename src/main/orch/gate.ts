@@ -53,6 +53,13 @@ export interface AgentGateContext {
    */
   petStudioMediaAuthority?: true;
   /**
+   * Marca de que ESTA sessão era `user` e foi promovida a orquestradora por
+   * `nexus_mission_create`. Só ela pode ser devolvida a `user` quando a missão
+   * some — um worker que perde a missão continua worker, porque devolvê-lo a
+   * `user` seria escalada de privilégio.
+   */
+  promotedFromUserSession?: true;
+  /**
    * Main-owned proof that this exact read-only worker profile belongs to an
    * active Nexus PREVC reviewer. It is derived at the physical spawn boundary,
    * never from prompt text or a caller-supplied MCP argument.
@@ -639,6 +646,18 @@ export function promoteMissionSessionAuthority(
 }
 
 /** Compensation for a failed cross-store mission creation commit. */
+/**
+ * Desfaz o vínculo de uma sessão com uma missão que deixou de existir.
+ *
+ * A promoção `user` → `orchestrator` de `nexus_mission_create` era porta de mão
+ * única: quem criava uma missão num pane e a descartava ficava estéril para
+ * sempre — `nexus_mission_create` respondia "only a user-owned session may
+ * create a mission" e só um pane novo resolvia (campo 09/09). Aqui a promoção
+ * é revertida junto com a missão que a justificou.
+ *
+ * A devolução vale SÓ para quem foi promovido a partir de `user`. Worker órfão
+ * perde a missão e continua worker.
+ */
 export function rollbackSessionAuthorityMission(
   sessionId: string,
   missionId: string,
@@ -647,7 +666,27 @@ export function rollbackSessionAuthorityMission(
   if (!ctx || ctx.missionId !== missionId) return false;
   delete ctx.missionId;
   delete ctx.contextRevision;
+  delete ctx.workerIncarnationId;
+  if (ctx.promotedFromUserSession) {
+    ctx.role = "user";
+    ctx.allowedTools = null;
+    ctx.allowedSkills = null;
+    ctx.handoffSubmitted = false;
+    delete ctx.promotedFromUserSession;
+  }
   return true;
+}
+
+/** Toda sessão presa à missão que sumiu, devolvida de uma vez. */
+export function rollbackMissionSessionAuthorities(missionId: string): number {
+  const target = missionId.trim();
+  if (!target) return 0;
+  let released = 0;
+  for (const [sessionId, ctx] of contextBySession) {
+    if (ctx.missionId !== target) continue;
+    if (rollbackSessionAuthorityMission(sessionId, target)) released += 1;
+  }
+  return released;
 }
 
 export function bindContextRevision(

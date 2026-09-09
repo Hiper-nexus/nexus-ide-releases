@@ -265,6 +265,9 @@ const missionCreateTool: McpToolDef = {
     });
     ctx.missionId = mission.id;
     ctx.role = 'orchestrator';
+    // Marca a promoção para que ela possa ser desfeita se a missão for
+    // descartada. Sem isto o pane fica estéril para sempre.
+    ctx.promotedFromUserSession = true;
     // The creator's own pane is part of the mission composition too, so a
     // history reopen restores the orchestrator alongside the workers.
     const orchPane = ctx.sessionId ? findPane(ctx.sessionId) : null;

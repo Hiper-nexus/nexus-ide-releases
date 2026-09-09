@@ -846,6 +846,62 @@ describe("MCP dispatch effect safety", () => {
     }
   });
 
+  it("deixa a mão do operador (user, sem missão) spawnar e falar com panes", async () => {
+    // Campo 09/09: pane aberto pelo operador, agente pede outro pane e leva
+    // "mission effect blocked". Estreito: só pane_spawn/write/ask/close.
+    for (const [toolName, args] of [
+      ["nexus_pane_spawn", { adapterId: "codex", prompt: "oi" }],
+      ["nexus_pane_write", { paneId: "pane-1", text: "oi" }],
+      ["nexus_pane_ask", { paneId: "pane-1", prompt: "oi" }],
+    ] as const) {
+      const handler = vi.fn(async () => ({ ok: true }));
+      const result = await dispatchToolCall(
+        "http-mcp",
+        registryWith({
+          name: toolName,
+          description: "operator pane effect",
+          inputSchema: { type: "object", properties: {} },
+          handler,
+        }),
+        toolName,
+        args,
+        userContext(),
+        { confirm: vi.fn(async () => true) },
+      );
+      expect(result).not.toMatchObject({ denied: true });
+      expect(result).toMatchObject({ ok: true, tool: toolName });
+      expect(handler).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("worker sem missão continua barrado no pane_spawn", async () => {
+    resetGateForTests();
+    const worker = mintToken({ label: "orfao", role: "worker", scope: auditScope, allowedTools: null, allowedSkills: null });
+    const handler = vi.fn(async () => ({ ok: true }));
+    const result = await dispatchToolCall(
+      "http-mcp",
+      registryWith({ name: "nexus_pane_spawn", description: "x", inputSchema: { type: "object", properties: {} }, handler }),
+      "nexus_pane_spawn",
+      { adapterId: "codex" },
+      worker,
+    );
+    expect(result).toMatchObject({ ok: false, denied: true });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("handoff sem missão pela mão do operador recusa ensinando o caminho", async () => {
+    const handler = vi.fn(async () => ({ ok: true }));
+    const result = await dispatchToolCall(
+      "http-mcp",
+      registryWith({ name: "nexus_handoff_submit", description: "x", inputSchema: { type: "object", properties: {} }, handler }),
+      "nexus_handoff_submit",
+      { status: "success", summary: "handoff de teste" },
+      userContext(),
+    );
+    expect(result).toMatchObject({ ok: false, denied: true, error: expect.stringContaining("nexus_pane_write") });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
   it("allows memory_retain as a missionless free-pane effect (bootstrap exemption)", async () => {
     // A memória agentic é compartilhada por todas as CLIs hospedadas; retain
     // precisa rodar em pane livre (sem missão). A exención é ESTREITA por nome:
@@ -1370,7 +1426,7 @@ describe("MCP dispatch effect safety", () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
-  it("rejects pre-contract delegation from an unbound user or worker", async () => {
+  it("rejects pre-contract delegation from an unbound worker; the operator's own pane may spawn", async () => {
     const handler = vi.fn(async () => ({ paneId: "must-not-spawn" }));
     const registry = registryWith({
       name: "nexus_pane_spawn",
@@ -1409,9 +1465,12 @@ describe("MCP dispatch effect safety", () => {
       awaitingOpts,
     );
 
-    expect(fromUser).toMatchObject({ ok: false, denied: true });
+    // Campo 09/09: a sessão `user` sem missão é a mão do operador — ela já
+    // abre pane pela UI, então pane_spawn via MCP não exige contrato. O
+    // worker (preso à missão pré-contrato) continua barrado no intent gate.
+    expect(fromUser).toMatchObject({ ok: true });
     expect(fromWorker).toMatchObject({ ok: false, denied: true });
-    expect(handler).not.toHaveBeenCalled();
+    expect(handler).toHaveBeenCalledTimes(1);
   });
 
   it("permits repository sync only from the renderer-owned user path", async () => {

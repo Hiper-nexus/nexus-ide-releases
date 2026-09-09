@@ -10,6 +10,7 @@ const deps = vi.hoisted(() => ({
   requireRendererWorkspaceScope: vi.fn(),
   getContextBySession: vi.fn(),
   restoreSessionAuthority: vi.fn(),
+  rollbackMissionSessionAuthorities: vi.fn(),
   getMission: vi.fn(),
   updateMission: vi.fn(),
   bindMissionRuntimeSquad: vi.fn(),
@@ -43,6 +44,7 @@ vi.mock("../persistence/renderer-workspace-scope", () => ({
 vi.mock("./gate", () => ({
   getContextBySession: deps.getContextBySession,
   restoreSessionAuthority: deps.restoreSessionAuthority,
+  rollbackMissionSessionAuthorities: deps.rollbackMissionSessionAuthorities,
 }));
 
 
@@ -360,6 +362,31 @@ describe("renderer mission authority", () => {
         status: "blocked",
         intentState: "blocked_user",
       }),
+    );
+  });
+
+  it("devolve a autoridade das sessões presas à missão removida", () => {
+    // Campo 09/09: o pane que criava uma missão virava `orchestrator` e, ao
+    // descartar a missão, ficava estéril — nunca mais criava outra. Remover a
+    // missão sem soltar as sessões dela deixava o vínculo pendurado.
+    deps.getMission.mockReturnValue({
+      ...mission,
+      status: "blocked",
+      orchestratorSessionId: "pty-live",
+      intentState: "blocked_user",
+    });
+    deps.listMissionPanes.mockReturnValue([]);
+    deps.listHandoffs.mockReturnValue([]);
+    deps.listTasks.mockReturnValue([]);
+
+    const candidate = authority.missionRemovalCandidateFromRenderer(
+      owner,
+      "mission-a",
+    );
+    authority.removeMissionFromRenderer(owner, "mission-a", candidate!.fence);
+
+    expect(deps.rollbackMissionSessionAuthorities).toHaveBeenCalledWith(
+      "mission-a",
     );
   });
 

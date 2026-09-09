@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import {
   effectPolicyForTool,
   isHookMcpToolAllowedForReadOnlyContext,
+  permitsOperatorPaneEffect,
   isToolAllowedForReadOnlyContext,
   requiresHumanConfirmationForTool,
 } from './mcp-effect-policy';
@@ -260,5 +261,23 @@ describe('zero fricção (0.27.0) — o que ainda pergunta, e por quê', () => {
     );
     expect(requiresPerActionConsent('nexus_task', {})).toBe(false);
     expect(requiresPerActionConsent('nexus_handoff_submit', {})).toBe(false);
+  });
+  it('mão do operador sem missão pode spawn/write/ask/close de panes — e só isso', () => {
+    // Campo 09/09: terminal aberto pela opção de pane, agente pede outros
+    // panes e leva "mission effect blocked" em tudo. A sessão user já abre
+    // pane pela UI; exigir missão para o mesmo gesto via MCP era cerimônia.
+    const operator = { role: 'user' };
+    for (const tool of ['nexus_pane_spawn', 'pane_write', 'nexus_pane_ask', 'pane_close']) {
+      expect(permitsOperatorPaneEffect(operator, tool)).toBe(true);
+    }
+    // Estreito: nada de shell, arquivo, git ou handoff sem missão.
+    for (const tool of ['nexus_terminal_run', 'file_write', 'git_push', 'nexus_handoff_submit', 'mission_set_status']) {
+      expect(permitsOperatorPaneEffect(operator, tool)).toBe(false);
+    }
+    // Worker e orquestrador seguem presos à missão.
+    expect(permitsOperatorPaneEffect({ role: 'worker' }, 'pane_spawn')).toBe(false);
+    expect(permitsOperatorPaneEffect({ role: 'orchestrator' }, 'pane_spawn')).toBe(false);
+    // Com missão a isenção não se aplica: o caminho normal decide.
+    expect(permitsOperatorPaneEffect({ role: 'user', missionId: 'm1' }, 'pane_spawn')).toBe(false);
   });
 });

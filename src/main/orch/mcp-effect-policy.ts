@@ -229,6 +229,39 @@ const RENDERER_AUTHORIZED_EFFECT_TOOLS = new Set(['ui_action']);
  */
 const ROUTINE_LOCAL_OPERATION_TOOLS = new Set(['git_sync']);
 
+/**
+ * Efeitos que a MÃO DO OPERADOR pode disparar sem missão.
+ *
+ * Campo 09/09: o operador abriu um terminal pela opção de pane, pediu ao
+ * agente para abrir outros panes e mandar mensagens, e levou
+ * "mission effect blocked" em TODOS os efeitos — spawn, write, ask. A sessão
+ * `user` só existe em pane aberto diretamente pelo operador (renderer
+ * autorizado); ela já pode abrir qualquer pane pela UI, então exigir missão
+ * para fazer o MESMO via MCP era cerimônia sem dano nomeado.
+ *
+ * Estreito de propósito: só pane-scoped, só `role: user`, só sem missão.
+ * Worker e orquestrador seguem presos à missão; `terminal_run`, `file_write`,
+ * git e afins continuam bloqueados sem missão como sempre.
+ */
+const OPERATOR_PANE_EFFECT_TOOLS = new Set([
+  'pane_spawn',
+  'pane_write',
+  'pane_write_many',
+  'pane_ask',
+  'pane_close',
+]);
+
+export function permitsOperatorPaneEffect(
+  ctx: { readonly role: string; readonly missionId?: string },
+  toolName: string,
+): boolean {
+  return (
+    ctx.role === 'user' &&
+    !ctx.missionId &&
+    OPERATOR_PANE_EFFECT_TOOLS.has(canonicalToolName(toolName))
+  );
+}
+
 /** Effects whose handlers may run only in PREVC's execution stage. */
 const EXECUTION_EFFECT_TOOLS = new Set([
   'audio_generate',

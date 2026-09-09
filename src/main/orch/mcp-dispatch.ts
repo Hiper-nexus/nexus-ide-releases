@@ -30,6 +30,7 @@ import {
   effectPolicyForTool,
   isEffectfulTool,
   isToolAllowedForReadOnlyContext,
+  permitsOperatorPaneEffect,
 } from "./mcp-effect-policy";
 import { validateToolArgs } from "./mcp-args-validation";
 import type { McpRegistry, McpToolDef } from "./mcp-protocol";
@@ -337,6 +338,11 @@ function bindEffectAuthority(
     return { contextRevision: ctx.contextRevision };
   }
   if (policy === "delegation-authority") {
+    // Mão do operador sem missão: pane_spawn é o mesmo gesto que abrir um
+    // pane pela UI. Ver OPERATOR_PANE_EFFECT_TOOLS.
+    if (permitsOperatorPaneEffect(ctx, toolName)) {
+      return { contextRevision: ctx.contextRevision };
+    }
     if (ctx.role !== "orchestrator" || !ctx.missionId) {
       throw new Error(
         "delegation authority requires an orchestrator bound to a mission",
@@ -361,6 +367,9 @@ function bindEffectAuthority(
     return { contextRevision: ctx.contextRevision };
   }
   if (!ctx.missionId) {
+    if (permitsOperatorPaneEffect(ctx, toolName)) {
+      return { contextRevision: ctx.contextRevision };
+    }
     throw new Error(
       "mission effect blocked: projectId, checkoutId, missionId and contextRevision are required",
     );
@@ -594,10 +603,21 @@ export async function dispatchToolCall(
     canonical === "context_draft_review" ||
     effectPolicy === "mission-control" ||
     effectPolicy === "renderer-authorized-effect" ||
-    effectPolicy === "routine-local-operation";
+    effectPolicy === "routine-local-operation" ||
+    // Mão do operador: pane_spawn/write/ask/close sem missão (campo 09/09).
+    permitsOperatorPaneEffect(ctx, tool.name);
   if (isEffectfulTool(tool.name) && !ctx.missionId && !permitsUnboundEffect) {
-    const error =
+    // Toda recusa diz o caminho que funciona. O operador num pane sem missão
+    // que tenta handoff precisa ouvir "fale com o pane" ou "crie a missão",
+    // não uma lista de campos internos.
+    const blocked =
       "mission effect blocked: projectId, checkoutId, missionId and contextRevision are required";
+    const error =
+      ctx.role === "user" && canonical === "handoff_submit"
+        ? `${blocked} — handoff exige missão: para falar com outro pane use nexus_pane_write ou nexus_pane_ask; para registrar um handoff, crie uma missão com nexus_mission_create`
+        : ctx.role === "user"
+          ? `${blocked} — ${tool.name} exige missão neste pane: crie uma com nexus_mission_create (spawn/write/ask/close de panes funcionam sem missão)`
+          : blocked;
     const auditFailure = writeAudit(
       () =>
         auditDenied(

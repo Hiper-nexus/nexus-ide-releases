@@ -406,6 +406,12 @@ function spawnCliPtyAgentPane(
       adapter.id,
       spawn,
     );
+    // Só a sessão ACEITA ganha scope (restart rejeitado e settlement já
+    // retornaram acima). Sem isto o pane de agente aberto direto pelo operador
+    // não tinha scope no registro: `nexus_pane_list` devolvia [] até para o
+    // próprio pane e read/write nele caía em "pane belongs to another project
+    // checkout" (campo 09/09). O shell direto já fazia este bind.
+    attachSessionScope(sessionId, authority.scope);
     return {
       ok: true,
       sessionId,
