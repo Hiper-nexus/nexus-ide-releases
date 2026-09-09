@@ -1470,4 +1470,21 @@ describe('idle delivery authority and lifecycle', { timeout: 60_000 }, () => {
     expect(attempts[0].state).toBe('accepted');
     delivery.shutdownIdleDelivery();
   });
+
+  it('formata metadados de Context DAG estruturado em formatDelivery', async () => {
+    const delivery = await import('./idle-delivery');
+    const h = handoff({
+      artifacts: [
+        { kind: 'context.accomplished', payload: ['auth refactor', 'unit tests'] },
+        { kind: 'context.blockers', payload: 'backend redis timeout' },
+        { kind: 'context.nextSteps', payload: ['deploy migration', 'run smoke test'] },
+      ],
+    });
+
+    const formatted = delivery.formatDelivery(h);
+    expect(formatted).toContain('context_dag=[');
+    expect(formatted).toContain('accomplished="auth refactor; unit tests"');
+    expect(formatted).toContain('blockers="backend redis timeout"');
+    expect(formatted).toContain('next_steps="deploy migration; run smoke test"');
+  });
 });

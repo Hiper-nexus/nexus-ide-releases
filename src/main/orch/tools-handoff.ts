@@ -86,6 +86,25 @@ function buildOverclockArtifacts(
   return artifacts;
 }
 
+function buildContextDagArtifacts(
+  args: Record<string, unknown>,
+): Array<{ readonly kind: string; readonly payload: unknown }> {
+  const artifacts: Array<{ readonly kind: string; readonly payload: unknown }> = [];
+  if (args.accomplished !== undefined) {
+    artifacts.push({ kind: "context.accomplished", payload: args.accomplished });
+  }
+  if (args.blockers !== undefined) {
+    artifacts.push({ kind: "context.blockers", payload: args.blockers });
+  }
+  if (args.nextSteps !== undefined) {
+    artifacts.push({ kind: "context.nextSteps", payload: args.nextSteps });
+  }
+  if (args.contextDag !== undefined) {
+    artifacts.push({ kind: "context.dag", payload: args.contextDag });
+  }
+  return artifacts;
+}
+
 function requireHandoffMcpEffectIntent(
   invocation: McpToolInvocation | undefined,
 ): NonNullable<McpToolInvocation["agentTransportPhysicalReceipt"]> {
@@ -159,6 +178,37 @@ const handoffSubmitTool: McpToolDef = {
         enum: ["success", "partial", "blocked", "failed", "done", "error"],
       },
       summary: { type: "string" },
+      accomplished: {
+        description: "Itens concluídos com sucesso neste turno/tarefa.",
+        oneOf: [
+          { type: "string" },
+          { type: "array", items: { type: "string" } },
+        ],
+      },
+      blockers: {
+        description: "Bloqueios, pendências ou impedimentos encontrados.",
+        oneOf: [
+          { type: "string" },
+          { type: "array", items: { type: "string" } },
+        ],
+      },
+      nextSteps: {
+        description: "Próximos passos acionáveis sugeridos para a continuidade do trabalho.",
+        oneOf: [
+          { type: "string" },
+          { type: "array", items: { type: "string" } },
+        ],
+      },
+      contextDag: {
+        type: "object",
+        description: "Grafo de contexto / fio da meada estruturado.",
+        properties: {
+          nodeId: { type: "string" },
+          parentHandoffId: { type: "string" },
+          prerequisites: { type: "array", items: { type: "string" } },
+          outputs: { type: "array", items: { type: "string" } },
+        },
+      },
       artifacts: { type: "array", items: {} },
       filesModified: { type: "array", items: { type: "string" } },
       "files-modified": { type: "array", items: { type: "string" } },
@@ -331,9 +381,11 @@ const handoffSubmitTool: McpToolDef = {
     // conclusão, e payload inválido é simplesmente ignorado.
     const telemetry = sanitizeHandoffTelemetry(args.telemetry);
     const overclockArtifacts = buildOverclockArtifacts(args);
+    const contextDagArtifacts = buildContextDagArtifacts(args);
     const artifacts = [
       ...(Array.isArray(args.artifacts) ? args.artifacts : []),
       ...overclockArtifacts,
+      ...contextDagArtifacts,
       ...(telemetry ? [embedTelemetryArtifact(telemetry)] : []),
     ];
     const handoffInput = {

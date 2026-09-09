@@ -140,7 +140,8 @@ export function withHandoffContract(
       : null;
   const contract = systemDeliversContract ?? (viaMcp
     ? 'Ao concluir sua tarefa, finalize chamando a tool nexus_handoff_submit ' +
-      'com {status: "success"|"partial"|"failed", summary, artifacts}. ' +
+      'com {status: "success"|"partial"|"failed", summary, artifacts} ' +
+      '(opcionalmente estruture o fio da meada em accomplished: [...], blockers: [...], nextSteps: [...]). ' +
       telemetryContract +
       ' ' +
       shimFallback

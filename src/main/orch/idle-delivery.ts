@@ -349,6 +349,26 @@ function sanitizeForTerminal(text: string): string {
 /** System recovery agent — not a worker; delivery must not look adversarial. */
 export const SYSTEM_HANDOFF_AGENTS = new Set(['nexus-delegation-supervisor']);
 
+function extractContextDagSummary(artifacts: readonly unknown[]): string {
+  if (!Array.isArray(artifacts) || artifacts.length === 0) return '';
+  const parts: string[] = [];
+  for (const item of artifacts) {
+    if (typeof item !== 'object' || item === null) continue;
+    const rec = item as Record<string, unknown>;
+    if (rec.kind === 'context.accomplished' && rec.payload) {
+      const val = Array.isArray(rec.payload) ? rec.payload.join('; ') : String(rec.payload);
+      parts.push(`accomplished="${sanitizeForTerminal(val)}"`);
+    } else if (rec.kind === 'context.blockers' && rec.payload) {
+      const val = Array.isArray(rec.payload) ? rec.payload.join('; ') : String(rec.payload);
+      parts.push(`blockers="${sanitizeForTerminal(val)}"`);
+    } else if (rec.kind === 'context.nextSteps' && rec.payload) {
+      const val = Array.isArray(rec.payload) ? rec.payload.join('; ') : String(rec.payload);
+      parts.push(`next_steps="${sanitizeForTerminal(val)}"`);
+    }
+  }
+  return parts.length > 0 ? ` context_dag=[${parts.join(' ')}]` : '';
+}
+
 /**
  * Format a handoff for orchestrator PTY injection. Worker handoffs stay
  * untrusted; system supervisor handoffs are labeled so the orchestrator does
@@ -363,6 +383,7 @@ export function formatDelivery(
     0,
     MAX_DELIVERY_SUMMARY,
   );
+  const contextDagThread = extractContextDagSummary(handoff.artifacts);
   const artifacts =
     handoff.artifacts.length > 0
       ? ` artifacts: ${sanitizeForTerminal(
@@ -396,7 +417,7 @@ export function formatDelivery(
     `handoff_id=${handoff.id} ${acknowledgementAuthority} ` +
     `reported_status=${handoff.status} claim_trust=${claimTrust} ` +
     `evidence=${evidenceLabel} does_not_complete_mission=true ` +
-    `summary: ${summary}${artifacts}`
+    `summary: ${summary}${contextDagThread}${artifacts}`
   );
 }
 
