@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AccountInfo } from '../../shared/account-types';
+import { OPERATIONAL_BAND_LABELS } from '../../shared/model-operational-bands';
 import type { ProviderSettingsInfo } from '../../shared/provider-settings-types';
 import { filterPaletteActions } from '../lib/command-palette-filter';
+import { rankPickerModels, type PickerModelRow } from '../lib/pane-picker-models';
 import { listPanes } from '../lib/split-tree';
 import { planOperatorAgentSpawn } from '../orch/stranded-mission-handoff';
 import { useAccountStore } from '../state/account-store';
@@ -39,6 +41,38 @@ export type PanePickerIntent =
 /** Banda de topo do menu — espelha o agrupamento do concorrente. */
 export type PanePickerSection = 'tipo' | 'clis';
 
+export type PanePickerAccountStatus =
+  | 'implicit'
+  | 'active'
+  | 'ready'
+  | 'expired'
+  | 'cooldown'
+  | 'no-credential';
+
+/** Sub-cabeçalho de conta dentro do grupo da CLI (conta A, conta B…). */
+export interface PanePickerAccountHeading {
+  readonly key: string;
+  readonly label: string;
+  readonly email?: string;
+  readonly status: PanePickerAccountStatus;
+  /** Chip ao lado do nome; vazio quando não há nada a dizer. */
+  readonly statusLabel: string;
+}
+
+export type PanePickerBadgeTone =
+  | 'deep'
+  | 'balanced'
+  | 'fast'
+  | 'default'
+  | 'restricted';
+
+/** Chip à direita do modelo: faixa operacional, padrão da CLI, restrito. */
+export interface PanePickerBadge {
+  readonly label: string;
+  readonly tone: PanePickerBadgeTone;
+  readonly title?: string;
+}
+
 export interface PanePickerEntry {
   readonly id: string;
   readonly section: PanePickerSection;
@@ -46,13 +80,22 @@ export interface PanePickerEntry {
   readonly group: string;
   /** Adapter do grupo — só para o logo do cabeçalho. */
   readonly adapterId?: string;
-  /** Linha principal: conta, ou o nome do tipo. */
+  /** Linha principal: o modelo (linhas de CLI), ou o nome do tipo. */
   readonly label: string;
-  /** Complemento à direita: modelo, ou a natureza do tipo. */
+  /**
+   * Complemento: nas linhas de CLI é a conta (com "(sessão expirada)"
+   * quando for o caso) — só para leitores de tela, porque a conta já
+   * encabeça o bloco —; nos tipos, a natureza deles.
+   */
   readonly detail: string;
   readonly icon: PixelIconName;
   readonly keywords: string;
   readonly intent: PanePickerIntent;
+  /** Conta que encabeça o bloco desta linha (só linhas de CLI). */
+  readonly account?: PanePickerAccountHeading;
+  readonly badges?: readonly PanePickerBadge[];
+  /** Posição do modelo dentro da conta, 0 = mais forte. Governa a dobra. */
+  readonly rank?: number;
 }
 
 const SECTION_LABEL: Record<PanePickerSection, string> = {
@@ -66,16 +109,118 @@ const DEFAULT_ACCOUNT_LABEL = 'padrão';
 const DEFAULT_MODEL_LABEL = 'padrão da ferramenta';
 
 /**
- * Modelo default primeiro, depois o resto do catálogo, sem repetição. Um
- * adapter pode legitimamente não declarar nenhum modelo: nesse caso a lista
- * fica com uma única entrada vazia, que vira a linha "padrão da ferramenta".
+ * Adapter sem catálogo é legítimo: uma única linha vazia, que vira "padrão
+ * da ferramenta" e sobe a CLI sem `--model`.
  */
-function modelsOf(provider: ProviderSettingsInfo): string[] {
-  const ordered = [provider.defaultModel, ...provider.models]
-    .map((model) => model?.trim() ?? '')
-    .filter((model) => model.length > 0);
-  const unique = [...new Set(ordered)];
-  return unique.length > 0 ? unique : [''];
+const EMPTY_CATALOG_ROW: PickerModelRow = {
+  id: '',
+  band: null,
+  restricted: false,
+  isDefault: false,
+};
+
+/**
+ * Conta morta continua escolhível (o prepare veta com motivo), mas nunca
+ * com o nome limpo — o sufixo honesto evita o 401 surpresa.
+ */
+function accountDetail(account: AccountInfo | undefined): string {
+  if (!account) return DEFAULT_ACCOUNT_LABEL;
+  return account.needsRelogin && account.label
+    ? `${account.label} (sessão expirada)`
+    : account.label;
+}
+
+function accountStatus(
+  account: AccountInfo,
+): [PanePickerAccountStatus, string] {
+  if (account.needsRelogin) return ['expired', 'sessão expirada'];
+  if (!account.hasCredential) return ['no-credential', 'sem credencial'];
+  if (account.onCooldown) return ['cooldown', 'em pausa (limite)'];
+  if (account.active) return ['active', 'ativa'];
+  return ['ready', ''];
+}
+
+function accountHeading(
+  adapterId: string,
+  account: AccountInfo | undefined,
+): PanePickerAccountHeading {
+  if (!account) {
+    return {
+      key: `${adapterId}:default`,
+      label: DEFAULT_ACCOUNT_LABEL,
+      status: 'implicit',
+      statusLabel: 'credencial ativa da CLI',
+    };
+  }
+  const [status, statusLabel] = accountStatus(account);
+  return {
+    key: `${adapterId}:${account.id}`,
+    label: account.label,
+    ...(account.email ? { email: account.email } : {}),
+    status,
+    statusLabel,
+  };
+}
+
+function badgesOf(row: PickerModelRow): PanePickerBadge[] {
+  const badges: PanePickerBadge[] = [];
+  if (row.band) {
+    badges.push({ label: OPERATIONAL_BAND_LABELS[row.band], tone: row.band });
+  }
+  if (row.isDefault) {
+    badges.push({
+      label: 'padrão',
+      tone: 'default',
+      title: 'Modelo padrão desta CLI',
+    });
+  }
+  if (row.restricted) {
+    badges.push({
+      label: 'restrito',
+      tone: 'restricted',
+      title:
+        row.warning ??
+        'Acesso restrito: só funciona se a sua conta tiver este modelo.',
+    });
+  }
+  return badges;
+}
+
+function agentEntry(
+  provider: ProviderSettingsInfo,
+  account: AccountInfo | undefined,
+  heading: PanePickerAccountHeading,
+  row: PickerModelRow,
+  rank: number,
+): PanePickerEntry {
+  const modelLabel = row.id || DEFAULT_MODEL_LABEL;
+  const badges = badgesOf(row);
+  return {
+    id: `agent:${provider.adapterId}:${account?.id ?? 'default'}:${row.id || 'default'}`,
+    section: 'clis',
+    group: provider.label,
+    adapterId: provider.adapterId,
+    label: modelLabel,
+    detail: accountDetail(account),
+    icon: 'plus',
+    keywords: [
+      provider.label,
+      provider.adapterId,
+      account?.label ?? DEFAULT_ACCOUNT_LABEL,
+      account?.email ?? '',
+      modelLabel,
+      ...badges.map((badge) => badge.label),
+    ].join(' '),
+    intent: {
+      kind: 'agent',
+      adapterId: provider.adapterId,
+      model: row.id,
+      ...(account ? { accountId: account.id } : {}),
+    },
+    account: heading,
+    badges,
+    rank,
+  };
 }
 
 /**
@@ -125,38 +270,18 @@ export function buildPanePickerEntries(
     const mine = accounts.filter(
       (account) => account.adapterId === provider.adapterId,
     );
-    for (const model of modelsOf(provider)) {
-      const modelLabel = model || DEFAULT_MODEL_LABEL;
-      const push = (account?: AccountInfo) =>
-        entries.push({
-          id: `agent:${provider.adapterId}:${account?.id ?? 'default'}:${model || 'default'}`,
-          section: 'clis',
-          group: provider.label,
-          adapterId: provider.adapterId,
-          // Conta morta continua escolhível (o prepare veta com motivo), mas
-          // nunca com o nome limpo — o sufixo honesto evita o 401 surpresa.
-          label:
-            account?.needsRelogin && account.label
-              ? `${account.label} (sessão expirada)`
-              : (account?.label ?? DEFAULT_ACCOUNT_LABEL),
-          detail: modelLabel,
-          icon: 'plus',
-          keywords: [
-            provider.label,
-            provider.adapterId,
-            account?.label ?? DEFAULT_ACCOUNT_LABEL,
-            account?.email ?? '',
-            modelLabel,
-          ].join(' '),
-          intent: {
-            kind: 'agent',
-            adapterId: provider.adapterId,
-            model,
-            ...(account ? { accountId: account.id } : {}),
-          },
-        });
-      if (mine.length === 0) push();
-      else for (const account of mine) push(account);
+    const ranked = rankPickerModels(provider);
+    const models = ranked.length > 0 ? ranked : [EMPTY_CATALOG_ROW];
+    // Conta por fora, modelo por dentro: cada conta abre o próprio bloco com
+    // os modelos do mais forte ao mais leve — em vez de intercalar
+    // conta×modelo e obrigar a ler a lista inteira para achar "B no opus".
+    const owners: readonly (AccountInfo | undefined)[] =
+      mine.length === 0 ? [undefined] : mine;
+    for (const owner of owners) {
+      const heading = accountHeading(provider.adapterId, owner);
+      models.forEach((row, rank) =>
+        entries.push(agentEntry(provider, owner, heading, row, rank)),
+      );
     }
   }
 
@@ -215,12 +340,40 @@ export interface PanePickerAccountAction {
   readonly manageAccounts: true;
 }
 
-export type PanePickerRow = PanePickerEntry | PanePickerAccountAction;
+/**
+ * Linha "mais N modelos": cada conta mostra os mais fortes e guarda o resto
+ * atrás desta dobra. Abrir a dobra não fecha o menu.
+ */
+export interface PanePickerFoldAction {
+  readonly id: string;
+  readonly section: 'clis';
+  readonly group: string;
+  readonly adapterId: string;
+  readonly label: string;
+  readonly detail: string;
+  readonly icon: PixelIconName;
+  readonly keywords: string;
+  /** Chave da conta cujo bloco esta linha expande. */
+  readonly expandFold: string;
+}
+
+export type PanePickerRow =
+  | PanePickerEntry
+  | PanePickerAccountAction
+  | PanePickerFoldAction;
 
 export function isAccountAction(
   row: PanePickerRow,
 ): row is PanePickerAccountAction {
   return 'manageAccounts' in row;
+}
+
+export function isFoldAction(row: PanePickerRow): row is PanePickerFoldAction {
+  return 'expandFold' in row;
+}
+
+export function isPickerEntry(row: PanePickerRow): row is PanePickerEntry {
+  return 'intent' in row;
 }
 
 function savedAccountsLabel(count: number): string {
@@ -268,6 +421,53 @@ export function withAccountActions(
     });
   });
   return rows;
+}
+
+/** Modelos visíveis por conta antes de "mais N modelos". */
+export const PANE_PICKER_MODELS_ABOVE_FOLD = 4;
+
+/**
+ * Dobra da lista em repouso: por conta, os 4 modelos mais fortes ficam à
+ * vista e o resto entra atrás de uma linha "mais N modelos". Só dobra quando
+ * esconderia pelo menos 2 — dobrar um único modelo é pior que mostrá-lo. A
+ * busca nunca passa por aqui: quem digita vê tudo.
+ */
+export function foldPanePickerRows(
+  rows: readonly PanePickerRow[],
+  expanded: ReadonlySet<string>,
+): PanePickerRow[] {
+  const perAccount = new Map<string, number>();
+  for (const row of rows) {
+    if (!isPickerEntry(row) || !row.account) continue;
+    perAccount.set(row.account.key, (perAccount.get(row.account.key) ?? 0) + 1);
+  }
+  const out: PanePickerRow[] = [];
+  for (const row of rows) {
+    if (!isPickerEntry(row) || !row.account || row.rank === undefined) {
+      out.push(row);
+      continue;
+    }
+    const key = row.account.key;
+    const total = perAccount.get(key) ?? 0;
+    const folds =
+      total > PANE_PICKER_MODELS_ABOVE_FOLD + 1 && !expanded.has(key);
+    if (!folds || row.rank < PANE_PICKER_MODELS_ABOVE_FOLD) {
+      out.push(row);
+    } else if (row.rank === PANE_PICKER_MODELS_ABOVE_FOLD) {
+      out.push({
+        id: `more:${key}`,
+        section: 'clis',
+        group: row.group,
+        adapterId: row.adapterId ?? '',
+        label: `mais ${total - PANE_PICKER_MODELS_ABOVE_FOLD} modelos`,
+        detail: '',
+        icon: 'chevron-down',
+        keywords: '',
+        expandFold: key,
+      });
+    }
+  }
+  return out;
 }
 
 function recentExcerpt(paneId: string): string {
@@ -356,6 +556,10 @@ export function PanePicker({
   const [accountsFor, setAccountsFor] = useState<string | null>(null);
   /** Conta cadastrada agora: a lista volta com ela sob o cursor. */
   const [freshAccountId, setFreshAccountId] = useState<string | null>(null);
+  /** Contas cujo bloco de modelos foi aberto além da dobra. */
+  const [expandedFolds, setExpandedFolds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
 
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -366,9 +570,14 @@ export function PanePicker({
     () => withAccountActions(buildPanePickerEntries(providers, accounts), accounts),
     [providers, accounts],
   );
+  // A busca vê tudo; só a lista em repouso dobra os modelos além dos mais
+  // fortes de cada conta.
   const filtered = useMemo(
-    () => filterPaletteActions(entries, query),
-    [entries, query],
+    () =>
+      query.trim()
+        ? filterPaletteActions(entries, query)
+        : foldPanePickerRows(entries, expandedFolds),
+    [entries, query, expandedFolds],
   );
   const accountsForLabel = useMemo(
     () =>
@@ -432,6 +641,7 @@ export function PanePicker({
     if (!open) return;
     setQuery('');
     setCursor(0);
+    setExpandedFolds(new Set());
   }, [open]);
 
   // O foco vive na busca sempre que a lista está na frente — ao abrir e ao
@@ -446,7 +656,7 @@ export function PanePicker({
     if (!freshAccountId || accountsFor) return;
     const index = filtered.findIndex(
       (row) =>
-        !isAccountAction(row) &&
+        isPickerEntry(row) &&
         row.intent.kind === 'agent' &&
         row.intent.accountId === freshAccountId,
     );
@@ -493,6 +703,12 @@ export function PanePicker({
       setAccountsFor(row.adapterId);
       return;
     }
+    if (isFoldAction(row)) {
+      // Abrir a dobra não fecha o menu: o cursor fica onde está e o primeiro
+      // modelo escondido assume a linha.
+      setExpandedFolds((current) => new Set(current).add(row.expandFold));
+      return;
+    }
     setOpen(false);
     const paneId = runPanePickerIntent(row.intent);
     if (paneId) onPaneCreated?.(paneId);
@@ -520,6 +736,7 @@ export function PanePicker({
 
   let lastSection: PanePickerSection | null = null;
   let lastGroup: string | null = null;
+  let lastAccountKey: string | null = null;
 
   return (
     <div className="pane-picker" ref={rootRef}>
@@ -608,14 +825,21 @@ export function PanePicker({
                 {filtered.map((row, index) => {
                   const showSection = row.section !== lastSection;
                   const showGroup = row.group !== '' && row.group !== lastGroup;
+                  if (showGroup) lastAccountKey = null;
                   lastSection = row.section;
                   lastGroup = row.group;
+                  const entry = isPickerEntry(row) ? row : null;
+                  const heading = entry?.account;
+                  const showAccount =
+                    heading !== undefined && heading.key !== lastAccountKey;
+                  if (heading) lastAccountKey = heading.key;
                   const admin = isAccountAction(row);
+                  const fold = isFoldAction(row);
                   const isFresh =
-                    !admin &&
-                    row.intent.kind === 'agent' &&
-                    row.intent.accountId !== undefined &&
-                    row.intent.accountId === freshAccountId;
+                    entry !== null &&
+                    entry.intent.kind === 'agent' &&
+                    entry.intent.accountId !== undefined &&
+                    entry.intent.accountId === freshAccountId;
                   return (
                     <li key={row.id} role="presentation">
                       {showSection && (
@@ -637,6 +861,27 @@ export function PanePicker({
                           </span>
                         </div>
                       )}
+                      {showAccount && heading && (
+                        <div
+                          className="pane-picker__account"
+                          aria-hidden="true"
+                          data-status={heading.status}
+                        >
+                          <span className="pane-picker__account-name">
+                            {heading.label}
+                          </span>
+                          {heading.email && (
+                            <span className="pane-picker__account-email">
+                              {heading.email}
+                            </span>
+                          )}
+                          {heading.statusLabel && (
+                            <span className="pane-picker__account-status">
+                              {heading.statusLabel}
+                            </span>
+                          )}
+                        </div>
+                      )}
                       <button
                         type="button"
                         role="option"
@@ -649,9 +894,12 @@ export function PanePicker({
                         }
                         data-active={index === cursor}
                         data-admin={admin || undefined}
+                        data-fold={fold || undefined}
+                        data-model={heading ? true : undefined}
                         data-fresh={isFresh || undefined}
                         data-testid={`pane-picker-entry-${row.id}`}
                         className="pane-picker__item"
+                        title={heading ? row.label : undefined}
                         onMouseEnter={() => setCursor(index)}
                         onClick={() => runRow(row)}
                       >
@@ -659,10 +907,30 @@ export function PanePicker({
                         <span className="pane-picker__item-label">
                           {row.label}
                         </span>
-                        <span className="pane-picker__item-detail">
-                          <span aria-hidden="true">›</span>
-                          {row.detail}
-                        </span>
+                        {entry?.badges && entry.badges.length > 0 && (
+                          <span className="pane-picker__item-badges">
+                            {entry.badges.map((badge) => (
+                              <span
+                                key={badge.tone}
+                                className="pane-picker__badge"
+                                data-tone={badge.tone}
+                                title={badge.title}
+                              >
+                                {badge.label}
+                              </span>
+                            ))}
+                          </span>
+                        )}
+                        {heading ? (
+                          <span className="pane-picker__sr-only">
+                            {` — ${row.detail}`}
+                          </span>
+                        ) : row.detail ? (
+                          <span className="pane-picker__item-detail">
+                            <span aria-hidden="true">›</span>
+                            {row.detail}
+                          </span>
+                        ) : null}
                       </button>
                     </li>
                   );

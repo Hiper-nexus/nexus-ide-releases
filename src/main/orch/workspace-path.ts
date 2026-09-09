@@ -4,24 +4,62 @@ import { activeWorkspaceOrNull } from '../persistence/workspace-store';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { WorkspacePolicy } from '../../shared/workspace-types';
 
+/**
+ * A pasta do projeto sumiu do disco com o app aberto — tipicamente um
+ * worktree removido por outra ferramenta. Cada pane novo cairia com um
+ * ENOENT cru de `lstat`; a mensagem diz o que aconteceu e por onde sair.
+ * O main também usa a classe para avisar o renderer (rail/cabeçalho).
+ */
+export class WorkspaceRootMissingError extends Error {
+  readonly code = 'workspace-root-missing';
+
+  constructor(readonly rootPath: string, options?: ErrorOptions) {
+    super(
+      `a pasta do projeto não existe mais no disco: ${rootPath}. ` +
+        'Abra outra pasta em Início › Abrir pasta, ou recrie o worktree e ' +
+        'reabra o projeto.',
+      options,
+    );
+    this.name = 'WorkspaceRootMissingError';
+  }
+}
+
+export function isMissingPathError(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException | null)?.code;
+  return code === 'ENOENT' || code === 'ENOTDIR';
+}
+
 function realpathOrThrow(targetPath: string, label: string): string {
   try {
     return fs.realpathSync(targetPath);
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
-    throw new Error(`${label} cannot be resolved: ${detail}`);
+    throw new Error(`${label} cannot be resolved: ${detail}`, { cause: err });
+  }
+}
+
+/** Raiz do projeto: sumir do disco tem nome próprio; o resto segue genérico. */
+function realpathRootOrThrow(root: string, label: string): string {
+  try {
+    return fs.realpathSync(root);
+  } catch (err) {
+    if (isMissingPathError(err)) {
+      throw new WorkspaceRootMissingError(root, { cause: err });
+    }
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(`${label} cannot be resolved: ${detail}`, { cause: err });
   }
 }
 
 export function activeWorkspaceRoot(): string {
   const root = activeWorkspaceOrNull();
   if (!root) throw new Error('no workspace open');
-  return realpathOrThrow(path.resolve(root), 'workspace');
+  return realpathRootOrThrow(path.resolve(root), 'workspace');
 }
 
 export function resolveRootForScope(scope: ProjectExecutionScope): string {
   const expected = path.resolve(scope.rootRealPath);
-  const actual = realpathOrThrow(expected, 'scoped workspace');
+  const actual = realpathRootOrThrow(expected, 'scoped workspace');
   if (actual !== expected) {
     throw new Error('scoped workspace identity changed on disk');
   }

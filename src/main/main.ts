@@ -249,6 +249,7 @@ import {
 } from "./persistence/settings-store";
 import {
   getWorkspaceState,
+  probeCurrentWorkspaceLiveness,
   registerWorkspaceIpc,
   registerWorkspaceListener,
   unregisterWorkspaceListener,
@@ -521,6 +522,11 @@ function bootstrap(): void {
   registerOrchIpc();
   registerAuthProbeIpc();
   registerWorkspaceIpc();
+  // Worktree removido por fora com o app aberto: o foco da janela é quando a
+  // pessoa volta e precisa saber que a pasta sumiu — antes do pane falhar.
+  app.on("browser-window-focus", () => {
+    probeCurrentWorkspaceLiveness();
+  });
   registerOrientationIpc();
   registerContextDraftIpc();
   registerProviderIpc();

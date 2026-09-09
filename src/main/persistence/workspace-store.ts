@@ -7,6 +7,7 @@ import {
   WORKSPACE_CHANNELS,
   openWorkspaceSchema,
   type WorkspaceInfo,
+  type WorkspaceLivenessEvent,
   type WorkspaceState,
 } from '../../shared/workspace-types';
 import {
@@ -98,6 +99,37 @@ function broadcast(): void {
   }
 }
 
+/** Caminho do current cujo sumiço já foi avisado ao renderer. */
+let missingReported: string | null = null;
+
+/**
+ * A pasta do workspace corrente pode sumir com o app aberto (worktree
+ * removido por outra ferramenta). `load()` só valida no boot; isto sonda
+ * depois — no foco da janela e em cada spawn que cai por isso — e avisa o
+ * renderer UMA vez por sumiço e uma vez pela volta. Não fecha o workspace
+ * sozinho: panes vivos continuam vivos e decidir é do operador.
+ */
+export function probeCurrentWorkspaceLiveness(): WorkspaceLivenessEvent | null {
+  const current = state.current;
+  if (!current) {
+    missingReported = null;
+    return null;
+  }
+  const missing = canonicalDirectory(current.path) === null;
+  const reported = missingReported === current.path;
+  if (missing === reported) return null;
+  missingReported = missing ? current.path : null;
+  const event: WorkspaceLivenessEvent = {
+    path: current.path,
+    name: current.name,
+    missing,
+  };
+  for (const wc of listeners) {
+    if (!wc.isDestroyed()) wc.send(WORKSPACE_CHANNELS.liveness, event);
+  }
+  return event;
+}
+
 export function getWorkspaceState(): WorkspaceState {
   return state;
 }
@@ -126,6 +158,7 @@ function openWorkspace(dir: string, owner: WebContents): WorkspaceState {
     ...state.recents.filter((w) => w.path !== canonical),
   ].slice(0, MAX_RECENTS);
   state = { current: info, recents };
+  missingReported = null;
   persist();
   broadcast();
   // L1 structural map — async, never blocks open, never mutates the repo.
@@ -222,6 +255,7 @@ export function registerWorkspaceIpc(): void {
     clearRendererWorkspaceScope(event.sender);
     stopOrientationForWorkspace();
     state = { ...state, current: null };
+    missingReported = null;
     persist();
     broadcast();
     return state;
@@ -237,6 +271,7 @@ export function registerWorkspaceIpc(): void {
         state.current?.path === parsed.data.path ? null : state.current,
       recents: state.recents.filter((w) => w.path !== parsed.data.path),
     };
+    if (removedCurrent) missingReported = null;
     persist();
     broadcast();
     return state;

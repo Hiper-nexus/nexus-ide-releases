@@ -197,6 +197,9 @@ export function App() {
   const layoutRoot = useLayoutStore((state) => state.root);
   const workspaceHydrated = useWorkspaceStore((state) => state.hydrated);
   const currentWorkspace = useWorkspaceStore((state) => state.current);
+  const currentWorkspaceMissing = useWorkspaceStore(
+    (state) => state.currentMissing,
+  );
   const recentWorkspaces = useWorkspaceStore((state) => state.recents);
   const destination = useProductNavigationStore((state) => state.destination);
   const missionSummaries = useOrchStore((state) => state.missionSummaries);
@@ -266,7 +269,27 @@ export function App() {
   useVoiceController(workspaceHydrated && currentWorkspace !== null);
   useOrchBridge();
   useSettingsController();
-  useWorkspaceController();
+  // Pasta do projeto sumiu do disco (worktree removido por fora): o toast
+  // diz o que houve e oferece a saída; a store já marcou o rail/cabeçalho.
+  useWorkspaceController((event) => {
+    const toast = useToastStore.getState();
+    const dedupeKey = `workspace-missing:${event.path}`;
+    if (event.missing) {
+      toast.push('error', 'A pasta do projeto sumiu do disco', {
+        detail:
+          `“${event.name}” não existe mais em ${event.path}. Panes novos não ` +
+          'abrem ali — abra outra pasta, ou recrie o worktree e reabra o projeto.',
+        action: { label: 'Abrir outra pasta', onClick: () => pickWorkspace() },
+        dedupeKey,
+        ttlMs: 60_000,
+      });
+      return;
+    }
+    toast.push('success', 'A pasta do projeto voltou', {
+      detail: `“${event.name}” está de volta em ${event.path}.`,
+      dedupeKey,
+    });
+  });
   useProviderController();
   useAdapterController();
   useAccountController();
@@ -1105,6 +1128,7 @@ export function App() {
             onOpenLauncher={navigation.openLauncher}
             onOpenWorkspace={pickWorkspace}
             currentWorkspaceId={currentWorkspace?.path}
+            currentWorkspaceMissing={currentWorkspaceMissing}
             attentionCount={attentionCount}
             onOpenAttention={() =>
               useAttentionInboxStore.getState().setOpen(true)
@@ -1169,6 +1193,14 @@ export function App() {
               <strong className="product-header__name">
                 {currentWorkspace?.name ?? 'Seu espaço'}
               </strong>
+              {currentWorkspaceMissing ? (
+                <span
+                  className="product-header__missing"
+                  title="A pasta deste projeto não existe mais no disco"
+                >
+                  pasta não encontrada
+                </span>
+              ) : null}
               <span className="product-header__destination">
                 {productDestinationLabel(destination)}
               </span>

@@ -322,6 +322,149 @@
   color: var(--text);
 }
 
+/* ---- Bloco por conta ----
+   Dentro do grupo da CLI, cada conta encabeça o próprio bloco de modelos
+   (conta A, conta B…). Fica entre o cabeçalho do grupo (10px) e o texto das
+   linhas (30px) para a hierarquia se ler sem legenda. */
+.pane-picker__account {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 6px;
+  padding: 7px 10px 2px 18px;
+  color: var(--text-dim);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.pane-picker__account-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pane-picker__account-email {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-weight: 400;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.pane-picker__account-status {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 0 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-round);
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.pane-picker__account[data-status='active'] .pane-picker__account-status {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 55%, transparent);
+}
+
+.pane-picker__account[data-status='cooldown'] .pane-picker__account-status {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 55%, transparent);
+}
+
+.pane-picker__account[data-status='expired'] .pane-picker__account-status,
+.pane-picker__account[data-status='no-credential'] .pane-picker__account-status {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 60%, transparent);
+}
+
+.pane-picker__account[data-status='implicit'] .pane-picker__account-status {
+  border-color: transparent;
+  color: var(--text-faint);
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+/* Linha de modelo: o id em mono (é o que a CLI recebe) ocupa a linha; os
+   chips ficam à direita e nunca o empurram para fora. */
+.pane-picker__item[data-model='true'] .pane-picker__item-label {
+  max-width: none;
+  flex: 1 1 auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.pane-picker__item-badges {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.pane-picker__badge {
+  padding: 1px 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-round);
+  color: var(--text-dim);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.pane-picker__badge[data-tone='deep'] {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+}
+
+.pane-picker__badge[data-tone='balanced'] {
+  color: var(--text);
+}
+
+.pane-picker__badge[data-tone='fast'] {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+}
+
+.pane-picker__badge[data-tone='default'] {
+  border-style: dashed;
+}
+
+.pane-picker__badge[data-tone='restricted'] {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 55%, transparent);
+}
+
+/* "mais N modelos": linha de dobra, peso de ação secundária. */
+.pane-picker__item[data-fold='true'] .pane-picker__item-label {
+  color: var(--text-dim);
+  font-weight: 500;
+}
+
+.pane-picker__item[data-fold='true'][data-active='true']
+  .pane-picker__item-label {
+  color: var(--text);
+}
+
+/* A conta já encabeça o bloco: na linha ela só existe para leitores de tela. */
+.pane-picker__sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 /* Conta recém-cadastrada: some ao primeiro movimento do cursor, então é uma
    pista de retorno, não um estado permanente. */
 .pane-picker__item[data-fresh='true'] {

@@ -104,7 +104,10 @@ import type {
   UiSettings,
   UiSettingsPatch,
 } from './settings-types';
-import type { WorkspaceState } from './workspace-types';
+import type {
+  WorkspaceLivenessEvent,
+  WorkspaceState,
+} from './workspace-types';
 import type {
   FileTreeResult,
   ReadFileResult,
@@ -812,6 +815,8 @@ export interface NexusApi {
     close(): Promise<WorkspaceState>;
     remove(path: string): Promise<WorkspaceState>;
     onChanged(cb: (state: WorkspaceState) => void): Unsubscribe;
+    /** A pasta do workspace corrente sumiu do disco (ou voltou). */
+    onLiveness(cb: (event: WorkspaceLivenessEvent) => void): Unsubscribe;
   };
   /** L1 structural Project Orientation Map (not business authority). */
   orientation: {

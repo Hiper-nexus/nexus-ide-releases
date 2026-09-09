@@ -41,7 +41,10 @@ import type {
   UiSettings,
 } from '../shared/settings-types';
 import { WORKSPACE_CHANNELS } from '../shared/workspace-types';
-import type { WorkspaceState } from '../shared/workspace-types';
+import type {
+  WorkspaceLivenessEvent,
+  WorkspaceState,
+} from '../shared/workspace-types';
 import { ORIENTATION_CHANNELS } from '../shared/orientation-types';
 import type { OrientationSnapshot } from '../shared/orientation-types';
 import { CONTEXT_DRAFT_CHANNELS } from '../shared/context-draft-types';
@@ -515,6 +518,19 @@ ipcRenderer.on(SETTINGS_CHANNELS.uiChanged, (_e, ui: UiSettings) =>
 const workspaceChangedListeners = new Set<(state: WorkspaceState) => void>();
 ipcRenderer.on(WORKSPACE_CHANNELS.changed, (_e, state: WorkspaceState) =>
   emitToListeners(workspaceChangedListeners, 'workspaceChangedListeners', state),
+);
+
+const workspaceLivenessListeners = new Set<
+  (event: WorkspaceLivenessEvent) => void
+>();
+ipcRenderer.on(
+  WORKSPACE_CHANNELS.liveness,
+  (_e, event: WorkspaceLivenessEvent) =>
+    emitToListeners(
+      workspaceLivenessListeners,
+      'workspaceLivenessListeners',
+      event,
+    ),
 );
 
 const providersChangedListeners = new Set<
@@ -1012,6 +1028,7 @@ const api: NexusApi = {
     close: () => ipcRenderer.invoke(WORKSPACE_CHANNELS.close),
     remove: (path) => ipcRenderer.invoke(WORKSPACE_CHANNELS.remove, { path }),
     onChanged: (cb) => addListener(workspaceChangedListeners, cb),
+    onLiveness: (cb) => addListener(workspaceLivenessListeners, cb),
   },
   orientation: {
     get: (): Promise<OrientationSnapshot | null> =>

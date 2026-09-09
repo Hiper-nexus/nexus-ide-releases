@@ -589,6 +589,177 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     });
   });
 
+  const CLAUDE_CATALOG: Partial<ProviderSettingsInfo> = {
+    defaultModel: 'claude-sonnet-5',
+    models: ['claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5'],
+    modelInfo: {
+      'claude-opus-5': { id: 'claude-opus-5', costTier: 'high', availability: 'paid' },
+      'claude-sonnet-5': { id: 'claude-sonnet-5', costTier: 'medium', availability: 'paid' },
+      'claude-haiku-4-5': { id: 'claude-haiku-4-5', costTier: 'low', availability: 'cheap' },
+    },
+  };
+
+  const optionIds = () =>
+    options().map((option) => option.dataset.testid?.replace('pane-picker-entry-', ''));
+
+  it('conta por fora, modelo por dentro: cada conta encabeça o próprio bloco com o estado dela', () => {
+    useProviderStore.setState({
+      providers: [provider('claude', 'Claude', CLAUDE_CATALOG)],
+    } as never);
+    useAccountStore.setState({
+      accounts: [
+        account('acc-a', 'claude', 'Conta A', { email: 'a@x.dev' }),
+        account('acc-b', 'claude', 'Conta B', { active: false, needsRelogin: true }),
+      ],
+    } as never);
+    mount();
+    openMenu();
+    type('claude');
+
+    // Bloco inteiro da conta A, depois o da conta B — nunca intercalado.
+    expect(optionIds()).toEqual([
+      'agent:claude:acc-a:claude-opus-5',
+      'agent:claude:acc-a:claude-sonnet-5',
+      'agent:claude:acc-a:claude-haiku-4-5',
+      'agent:claude:acc-b:claude-opus-5',
+      'agent:claude:acc-b:claude-sonnet-5',
+      'agent:claude:acc-b:claude-haiku-4-5',
+      'accounts:claude',
+    ]);
+    const headings = [...host.querySelectorAll('.pane-picker__account')];
+    expect(headings.map((node) => node.textContent)).toEqual([
+      'Conta Aa@x.devativa',
+      'Conta Bsessão expirada',
+    ]);
+    expect(headings[0]!.getAttribute('data-status')).toBe('active');
+    expect(headings[1]!.getAttribute('data-status')).toBe('expired');
+    // O modelo é a linha; a conta segue no texto acessível da opção.
+    expect(optionLabels()[0]).toContain('claude-opus-5');
+    expect(optionLabels()[0]).toContain('Conta A');
+    expect(optionLabels()[3]).toContain('Conta B (sessão expirada)');
+    expect(groupHeadings()).toEqual(['Claude']);
+  });
+
+  it('o mais forte e mais novo vem primeiro, com a faixa e o padrão em chips', () => {
+    useProviderStore.setState({
+      providers: [provider('claude', 'Claude', CLAUDE_CATALOG)],
+    } as never);
+    mount();
+    openMenu();
+    type('claude');
+
+    const badgesOf = (entryId: string) =>
+      [
+        ...host.querySelectorAll(
+          `[data-testid="pane-picker-entry-${entryId}"] .pane-picker__badge`,
+        ),
+      ].map((node) => node.textContent);
+    // O default (sonnet) deixa de ser o primeiro à força: o opus é mais forte.
+    expect(optionIds()[0]).toBe('agent:claude:default:claude-opus-5');
+    expect(badgesOf('agent:claude:default:claude-opus-5')).toEqual(['Profundo']);
+    expect(badgesOf('agent:claude:default:claude-sonnet-5')).toEqual([
+      'Equilibrado',
+      'padrão',
+    ]);
+    expect(badgesOf('agent:claude:default:claude-haiku-4-5')).toEqual(['Rápido']);
+    // Sem conta salva, o bloco diz de onde vem a credencial.
+    expect(host.querySelector('.pane-picker__account')?.textContent).toBe(
+      'padrãocredencial ativa da CLI',
+    );
+
+    // Os chips também são busca: "rapido" acha o haiku.
+    type('rapido');
+    expect(optionIds()).toEqual(['agent:claude:default:claude-haiku-4-5']);
+  });
+
+  it('dobra cada conta nos 4 mais fortes; "mais N modelos" abre o resto e a busca vê tudo', () => {
+    useProviderStore.setState({
+      providers: [
+        provider('codex', 'Codex', {
+          defaultModel: 'gpt-5.6-terra',
+          models: [
+            'gpt-5.6-sol',
+            'gpt-5.6-terra',
+            'gpt-5.6-luna',
+            'gpt-5.5',
+            'gpt-5.4',
+            'gpt-5.4-mini',
+            'gpt-5.3-codex',
+          ],
+        }),
+      ],
+    } as never);
+    mount();
+    openMenu();
+
+    expect(optionIds()).toEqual([
+      'type:terminal',
+      'type:browser',
+      'agent:codex:default:gpt-5.6-sol',
+      'agent:codex:default:gpt-5.6-terra',
+      'agent:codex:default:gpt-5.6-luna',
+      'agent:codex:default:gpt-5.5',
+      'more:codex:default',
+      'accounts:codex',
+    ]);
+    expect(optionLabels()[6]).toContain('mais 3 modelos');
+
+    // A busca nunca respeita a dobra; apagar o texto dobra de novo.
+    type('mini');
+    expect(optionIds()).toEqual(['agent:codex:default:gpt-5.4-mini']);
+    type('');
+    expect(optionIds()).toContain('more:codex:default');
+
+    // Abrir a dobra não fecha o menu nem abre pane nenhum.
+    clickEntry('more:codex:default');
+    expect(host.querySelector('[role="listbox"]')).not.toBeNull();
+    expect(spawnAgent).not.toHaveBeenCalled();
+    expect(optionIds()).toEqual([
+      'type:terminal',
+      'type:browser',
+      'agent:codex:default:gpt-5.6-sol',
+      'agent:codex:default:gpt-5.6-terra',
+      'agent:codex:default:gpt-5.6-luna',
+      'agent:codex:default:gpt-5.5',
+      'agent:codex:default:gpt-5.4',
+      'agent:codex:default:gpt-5.3-codex',
+      'agent:codex:default:gpt-5.4-mini',
+      'accounts:codex',
+    ]);
+
+    // Reabrir começa dobrado: a dobra é estado do menu, não preferência.
+    act(() => {
+      document.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+      );
+    });
+    openMenu();
+    expect(optionIds()).toContain('more:codex:default');
+  });
+
+  it('a dobra só existe quando esconderia pelo menos 2 modelos', () => {
+    useProviderStore.setState({
+      providers: [
+        provider('codex', 'Codex', {
+          defaultModel: 'gpt-5.6-terra',
+          models: ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.4'],
+        }),
+      ],
+    } as never);
+    mount();
+    openMenu();
+    type('codex');
+
+    expect(optionIds()).toEqual([
+      'agent:codex:default:gpt-5.6-sol',
+      'agent:codex:default:gpt-5.6-terra',
+      'agent:codex:default:gpt-5.6-luna',
+      'agent:codex:default:gpt-5.5',
+      'agent:codex:default:gpt-5.4',
+      'accounts:codex',
+    ]);
+  });
+
   it('N contas da mesma CLI viram N escolhas × modelo, sem teto', () => {
     useAccountStore.setState({
       accounts: [

@@ -17,6 +17,17 @@ export interface WorkspaceState {
   recents: WorkspaceInfo[];
 }
 
+/**
+ * Sinal transitório do main: a pasta do workspace corrente sumiu do disco
+ * (worktree removido por outra ferramenta com o app aberto) — ou voltou.
+ * Nunca persiste; o operador decide o que fazer com os panes.
+ */
+export interface WorkspaceLivenessEvent {
+  path: string;
+  name: string;
+  missing: boolean;
+}
+
 export const openWorkspaceSchema = z.object({
   path: z.string().min(1).max(4096),
 });
@@ -29,6 +40,7 @@ export const WORKSPACE_CHANNELS = {
   close: 'workspace:close',
   remove: 'workspace:remove',
   changed: 'workspace:changed',
+  liveness: 'workspace:liveness',
 } as const;
 
 /**

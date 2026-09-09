@@ -106,6 +106,12 @@ export interface WorkspaceRailProps {
    * sessões. O rótulo precisa prometer o que de fato acontece.
    */
   currentWorkspaceId?: string;
+  /**
+   * A pasta do projeto aberto sumiu do disco (worktree removido por fora).
+   * O selo "atual" vira "pasta não encontrada" — a pessoa precisa ver ONDE
+   * está antes de entender por que nenhum pane novo nasce.
+   */
+  currentWorkspaceMissing?: boolean;
   /** Quantos itens esperam a pessoa. Zero esconde a linha por completo. */
   attentionCount?: number;
   onOpenAttention?: () => void;
@@ -206,6 +212,7 @@ function missionStatusDisplay(
 
 interface WorkspaceGroupProps {
   currentWorkspaceId?: string;
+  currentWorkspaceMissing?: boolean;
   label: string;
   group: 'active' | 'recent';
   workspaces: readonly WorkspaceRailWorkspace[];
@@ -229,6 +236,7 @@ const RAIL_MISSION_PAGE_SIZE = 10;
 
 function WorkspaceGroup({
   currentWorkspaceId,
+  currentWorkspaceMissing = false,
   label,
   group,
   workspaces,
@@ -330,6 +338,14 @@ function WorkspaceGroup({
           const missionRows = flattenMissionBranchGroups(visibleMissions);
           const isCollapsed =
             collapsedWorkspaces.has(workspace.id) && selectedIndex < 0;
+          // "Onde estamos" é independente de seleção: selecionar a missão de
+          // outra pasta não pode apagar qual projeto está aberto agora.
+          const isCurrent = workspace.id === currentWorkspaceId;
+          const isMissing = isCurrent && currentWorkspaceMissing;
+          const currentNote = isMissing
+            ? 'Projeto aberto agora — a pasta não existe mais no disco'
+            : 'Projeto aberto agora';
+          const where = workspace.path ? ` em ${workspace.path}` : '';
 
           return (
             <li className="workspace-rail__workspace-item" key={workspace.id}>
@@ -338,27 +354,44 @@ function WorkspaceGroup({
                   type="button"
                   className={`workspace-rail__row workspace-rail__workspace${
                     workspaceSelected ? ' workspace-rail__row--selected' : ''
-                  }`}
+                  }${isCurrent ? ' workspace-rail__workspace--current' : ''}`}
                   data-workspace-id={workspace.id}
+                  data-current={isCurrent || undefined}
+                  data-missing={isMissing || undefined}
                   aria-current={workspaceSelected ? 'page' : undefined}
                   aria-label={
-                    workspace.path
-                      ? `Abrir workspace ${workspace.name} em ${workspace.path}`
-                      : `Abrir workspace ${workspace.name}`
+                    isCurrent
+                      ? `${currentNote}: ${workspace.name}${where}`
+                      : `Abrir workspace ${workspace.name}${where}`
                   }
-                  title={
-                    workspace.path
-                      ? `${workspace.name}\n${workspace.path}`
-                      : workspace.name
-                  }
+                  title={[
+                    workspace.name,
+                    workspace.path,
+                    isCurrent ? currentNote : null,
+                  ]
+                    .filter(Boolean)
+                    .join('\n')}
                   onClick={() => onSelectWorkspace(workspace.id)}
                 >
                   <span className="workspace-rail__workspace-icon" aria-hidden>
                     <PixelIcon name="files" size={12} />
                   </span>
                   <span className="workspace-rail__workspace-copy">
-                    <span className="workspace-rail__row-label">
-                      {workspace.name}
+                    <span className="workspace-rail__workspace-title">
+                      <span className="workspace-rail__row-label">
+                        {workspace.name}
+                      </span>
+                      {isCurrent ? (
+                        <span
+                          className={`workspace-rail__workspace-current${
+                            isMissing
+                              ? ' workspace-rail__workspace-current--missing'
+                              : ''
+                          }`}
+                        >
+                          {isMissing ? 'pasta sumiu' : 'atual'}
+                        </span>
+                      ) : null}
                     </span>
                     {workspace.path ? (
                       <span className="workspace-rail__workspace-path">
@@ -690,6 +723,7 @@ export function WorkspaceRail({
   onOpenLauncher,
   onOpenWorkspace,
   currentWorkspaceId,
+  currentWorkspaceMissing = false,
   attentionCount = 0,
   onOpenAttention,
 }: WorkspaceRailProps) {
@@ -874,6 +908,7 @@ export function WorkspaceRail({
           onSelectMission={onSelectMission}
           onRemoveWorkspace={onRemoveWorkspace}
           currentWorkspaceId={currentWorkspaceId}
+          currentWorkspaceMissing={currentWorkspaceMissing}
           onRemoveMission={onRemoveMission}
         />
         <WorkspaceGroup
@@ -886,6 +921,7 @@ export function WorkspaceRail({
           onSelectMission={onSelectMission}
           onRemoveWorkspace={onRemoveWorkspace}
           currentWorkspaceId={currentWorkspaceId}
+          currentWorkspaceMissing={currentWorkspaceMissing}
           onRemoveMission={onRemoveMission}
         />
       </div>

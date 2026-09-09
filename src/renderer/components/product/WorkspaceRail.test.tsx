@@ -854,6 +854,58 @@ describe('WorkspaceRail', () => {
     }
   });
 
+  it('marca o projeto aberto agora com o selo "atual", mesmo com outra missão selecionada', () => {
+    const { host } = renderRail({
+      currentWorkspaceId: 'atlas',
+      selection: { kind: 'mission', missionId: 'mission-done' },
+    });
+
+    const current = host.querySelector<HTMLButtonElement>(
+      '[data-workspace-id="atlas"]',
+    )!;
+    expect(current.dataset.current).toBe('true');
+    expect(current.className).toContain('workspace-rail__workspace--current');
+    expect(
+      current.querySelector('.workspace-rail__workspace-current')?.textContent,
+    ).toBe('atual');
+    expect(current.getAttribute('aria-label')).toBe(
+      'Projeto aberto agora: Atlas local',
+    );
+    expect(current.title).toContain('Projeto aberto agora');
+    // O apelido continua limpo: o selo é um irmão, não parte do nome.
+    expect(current.querySelector('.workspace-rail__row-label')?.textContent).toBe(
+      'Atlas local',
+    );
+    // A seleção (missão do Cometa) não confunde com "onde estamos".
+    expect(current.getAttribute('aria-current')).toBeNull();
+    const other = host.querySelector<HTMLButtonElement>(
+      '[data-workspace-id="cometa"]',
+    )!;
+    expect(other.dataset.current).toBeUndefined();
+    expect(other.querySelector('.workspace-rail__workspace-current')).toBeNull();
+    expect(other.getAttribute('aria-label')).toBe('Abrir workspace Cometa');
+  });
+
+  it('pasta do projeto atual sumiu do disco: o selo diz isso no lugar de "atual"', () => {
+    const { host } = renderRail({
+      currentWorkspaceId: 'atlas',
+      currentWorkspaceMissing: true,
+    });
+
+    const current = host.querySelector<HTMLButtonElement>(
+      '[data-workspace-id="atlas"]',
+    )!;
+    expect(current.dataset.missing).toBe('true');
+    const badge = current.querySelector('.workspace-rail__workspace-current')!;
+    expect(badge.textContent).toBe('pasta sumiu');
+    expect(badge.className).toContain('workspace-rail__workspace-current--missing');
+    expect(current.getAttribute('aria-label')).toContain('não existe mais no disco');
+    // Só o projeto aberto pode "sumir"; um recente não herda o estado.
+    expect(
+      host.querySelector('[data-workspace-id="cometa"]')?.getAttribute('data-missing'),
+    ).toBeNull();
+  });
+
   it('mostra o caminho da pasta na linha do projeto, não só o apelido', () => {
     const { host } = renderRail({
       recentWorkspaces: [

@@ -60,6 +60,7 @@ function installWorkspaceApi(
     close: vi.fn(async () => state(null)),
     remove: vi.fn(async (_path: string) => state(null)),
     onChanged: vi.fn(() => () => {}),
+    onLiveness: vi.fn(() => () => {}),
     ...overrides,
   };
   vi.stubGlobal('window', { nexus: { workspace: api } });
@@ -275,5 +276,55 @@ describe('workspace-store layout authority transitions', () => {
     expect(layout.prepare).not.toHaveBeenCalled();
     expect(layout.abandon).toHaveBeenCalledOnce();
     expect(layout.switch).toHaveBeenCalledWith(nextPath);
+  });
+
+  describe('pasta do workspace corrente sumiu do disco', () => {
+    it('marca só o workspace corrente, e ignora avisos de outro caminho', () => {
+      useWorkspaceStore.setState({
+        current: info('/workspace/atual'),
+        recents: [info('/workspace/atual')],
+        hydrated: true,
+        currentMissing: false,
+      });
+
+      useWorkspaceStore
+        .getState()
+        .receiveLiveness({ path: '/workspace/outro', name: 'outro', missing: true });
+      expect(useWorkspaceStore.getState().currentMissing).toBe(false);
+
+      useWorkspaceStore
+        .getState()
+        .receiveLiveness({ path: '/workspace/atual', name: 'atual', missing: true });
+      expect(useWorkspaceStore.getState().currentMissing).toBe(true);
+
+      useWorkspaceStore
+        .getState()
+        .receiveLiveness({ path: '/workspace/atual', name: 'atual', missing: false });
+      expect(useWorkspaceStore.getState().currentMissing).toBe(false);
+    });
+
+    it('mexer nos recentes preserva o aviso; trocar de workspace o limpa', async () => {
+      const current = '/workspace/atual';
+      useWorkspaceStore.setState({
+        current: info(current),
+        recents: [info(current)],
+        hydrated: true,
+        currentMissing: true,
+      });
+      setActiveWorkspacePath(current);
+      installWorkspaceApi();
+
+      useWorkspaceStore
+        .getState()
+        .receive(state(current, [info(current), info('/workspace/vizinho')]));
+      expect(useWorkspaceStore.getState().currentMissing).toBe(true);
+      expect(useWorkspaceStore.getState().recents).toHaveLength(2);
+
+      useWorkspaceStore.getState().receive(state('/workspace/vizinho'));
+      await vi.waitFor(() =>
+        expect(useWorkspaceStore.getState().current?.path).toBe('/workspace/vizinho'),
+      );
+      expect(useWorkspaceStore.getState().currentMissing).toBe(false);
+    });
   });
 });

@@ -1,7 +1,8 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { create } from 'zustand';
 import type {
   WorkspaceInfo,
+  WorkspaceLivenessEvent,
   WorkspaceState,
 } from '../../shared/workspace-types';
 import { setActiveWorkspacePath } from './active-workspace';
@@ -23,21 +24,41 @@ interface WorkspaceStore {
   current: WorkspaceInfo | null;
   recents: WorkspaceInfo[];
   hydrated: boolean;
+  /**
+   * A pasta do workspace corrente sumiu do disco (worktree removido por fora
+   * com o app aberto). O workspace continua aberto — panes vivos seguem —,
+   * mas panes novos não nascem ali; rail e cabeçalho precisam dizer isso.
+   */
+  currentMissing: boolean;
 
   hydrate(): Promise<void>;
   receive(state: WorkspaceState): void;
+  receiveLiveness(event: WorkspaceLivenessEvent): void;
   pick(): Promise<void>;
   open(path: string): Promise<void>;
   close(): Promise<void>;
   remove(path: string): Promise<void>;
 }
 
-type WorkspaceSet = (partial: Partial<WorkspaceStore>) => void;
+type WorkspaceSet = (
+  partial:
+    | Partial<WorkspaceStore>
+    | ((previous: WorkspaceStore) => Partial<WorkspaceStore>),
+) => void;
 type WorkspaceGet = () => WorkspaceStore;
 
 function apply(set: WorkspaceSet, state: WorkspaceState): void {
   setActiveWorkspacePath(state.current?.path ?? null);
-  set({ current: state.current, recents: state.recents });
+  set((previous) => ({
+    current: state.current,
+    recents: state.recents,
+    // O aviso de pasta sumida pertence a UM caminho: trocar de workspace o
+    // limpa; mexer só nos recentes o preserva.
+    currentMissing:
+      previous.current?.path === state.current?.path
+        ? previous.currentMissing
+        : false,
+  }));
 }
 
 function workspacePath(state: WorkspaceState): string | null {
@@ -182,6 +203,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   current: null,
   recents: [],
   hydrated: false,
+  currentMissing: false,
 
   hydrate: async () => {
     try {
@@ -194,6 +216,11 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   },
 
   receive: (state) => receiveMainState(set, get, state),
+
+  receiveLiveness: (event) => {
+    if (get().current?.path !== event.path) return;
+    set({ currentMissing: event.missing });
+  },
 
   pick: async () =>
     mutateWorkspace(set, get, () => window.nexus.workspace.pick()),
@@ -210,13 +237,31 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     ),
 }));
 
-/** Boot hook: hydrate once and follow main-process broadcasts. */
-export function useWorkspaceController(): void {
+/**
+ * Boot hook: hydrate once and follow main-process broadcasts. `onLiveness`
+ * recebe o sumiço/volta da pasta corrente DEPOIS de a store refletir — é o
+ * gancho da UI (toast com saída), que não mora numa store.
+ */
+export function useWorkspaceController(
+  onLiveness?: (event: WorkspaceLivenessEvent) => void,
+): void {
   const hydrate = useWorkspaceStore((s) => s.hydrate);
+  const onLivenessRef = useRef(onLiveness);
+  onLivenessRef.current = onLiveness;
   useEffect(() => {
     void hydrate();
-    return window.nexus.workspace.onChanged((state) =>
+    const offChanged = window.nexus.workspace.onChanged((state) =>
       useWorkspaceStore.getState().receive(state),
     );
+    const offLiveness = window.nexus.workspace.onLiveness((event) => {
+      const store = useWorkspaceStore.getState();
+      if (store.current?.path !== event.path) return;
+      store.receiveLiveness(event);
+      onLivenessRef.current?.(event);
+    });
+    return () => {
+      offChanged();
+      offLiveness();
+    };
   }, [hydrate]);
 }

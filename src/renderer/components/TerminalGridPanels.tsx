@@ -110,7 +110,7 @@ export function TerminalAgentsStep({ selections, entries, onSelect, onApplyAll, 
               {adapterId ? (
                 <label>Modelo e conta
                   <select aria-label={`Modelo e conta do painel ${index + 1}`} value={entryId} onChange={event => onSelect(index, event.target.value)}>
-                    {models.map(entry => <option key={entry.id} value={entry.id}>{entry.detail} · {entry.label}</option>)}
+                    {models.map(entry => <option key={entry.id} value={entry.id}>{entry.label} · {entry.detail}</option>)}
                   </select>
                 </label>
               ) : <p className="terminal-setup__shell-hint">{selected ? 'Você digita os comandos. Nenhuma IA será iniciada neste painel.' : 'Essa escolha não está mais disponível. Selecione outra ferramenta ou Terminal sem IA.'}</p>}

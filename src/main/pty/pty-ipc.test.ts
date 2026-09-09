@@ -116,6 +116,9 @@ vi.mock("../persistence/renderer-workspace-scope", () => ({
 
 vi.mock("../orch/workspace-path", () => ({
   resolveCwdForScope: authorityDeps.resolveCwdForScope,
+  // Classe real fica fora: aqui só interessa que o `instanceof` não exploda.
+  WorkspaceRootMissingError: class WorkspaceRootMissingError extends Error {},
+  isMissingPathError: () => false,
 }));
 
 vi.mock("../orch/pane-registry", () => ({

@@ -55,7 +55,11 @@ import {
   requiresReadOnlyNativeAuthority,
   supportsEnforceableReadOnlyNativeAuthority,
 } from "./autonomous-cli-policy";
-import { resolveCwdForScope } from "../orch/workspace-path";
+import {
+  WorkspaceRootMissingError,
+  resolveCwdForScope,
+} from "../orch/workspace-path";
+import { probeCurrentWorkspaceLiveness } from "../persistence/workspace-store";
 import {
   requiresSpawnGate,
   shouldUseEphemeralHome,
@@ -482,6 +486,9 @@ export function registerPtyIpc(): void {
       } catch (err) {
         const message =
           err instanceof Error ? err.message : "failed to spawn agent";
+        if (err instanceof WorkspaceRootMissingError) {
+          probeCurrentWorkspaceLiveness();
+        }
         return { ok: false, error: message };
       }
     }
@@ -512,6 +519,9 @@ export function registerPtyIpc(): void {
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "failed to spawn shell";
+      if (err instanceof WorkspaceRootMissingError) {
+        probeCurrentWorkspaceLiveness();
+      }
       return { ok: false, error: message };
     }
   });

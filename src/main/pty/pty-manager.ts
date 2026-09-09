@@ -34,6 +34,10 @@ import type { CliPtyAdapter } from "../../shared/adapter-types";
 import { resolvePlaceholders } from "../../shared/adapter-types";
 import type { BoundSpawnAuthority } from "../orch/spawn-authority";
 import {
+  WorkspaceRootMissingError,
+  isMissingPathError,
+} from "../orch/workspace-path";
+import {
   isMissionBoundCodexWorkspaceAuthority,
   isPetStudioNativeWorkspaceAuthority,
   requiresReadOnlyNativeAuthority,
@@ -531,10 +535,25 @@ function requireTrustedAgentCwd(
   let cwd: string;
   try {
     root = fs.realpathSync(authority.scope.rootRealPath);
+  } catch (err) {
+    // Worktree apagado com o app aberto: nome próprio, com saída dita.
+    if (isMissingPathError(err)) {
+      throw new WorkspaceRootMissingError(authority.scope.rootRealPath, {
+        cause: err,
+      });
+    }
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(`authorized cli-agent cwd cannot be resolved: ${detail}`, {
+      cause: err,
+    });
+  }
+  try {
     cwd = fs.realpathSync(authority.cwd);
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
-    throw new Error(`authorized cli-agent cwd cannot be resolved: ${detail}`);
+    throw new Error(`authorized cli-agent cwd cannot be resolved: ${detail}`, {
+      cause: err,
+    });
   }
   if (root !== authority.scope.rootRealPath || cwd !== authority.cwd) {
     throw new Error("authorized cli-agent workspace identity changed on disk");
