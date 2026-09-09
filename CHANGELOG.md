@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.76.9 — O picker mostra o mais forte primeiro, e o rail mostra onde você está
+
+- "+ Pane" agrupa cada CLI por conta (conta A, conta B) com o estado da conta em chip (ativa, sessão expirada, em pausa, sem credencial), em vez de intercalar conta×modelo. Sem conta salva, o bloco diz que a CLI usa a credencial ativa dela.
+- Dentro de cada conta, os modelos vêm do mais novo e mais forte ao mais leve: geração embutida no id, depois o custo do catálogo (ou a família do id — opus/pro acima de mini/flash), utilizáveis antes dos restritos. Chips dizem a faixa (Profundo · Equilibrado · Rápido), o padrão da CLI e o acesso restrito — e entram na busca ("rapido" acha o haiku).
+- Cada conta mostra os 4 mais fortes e dobra o resto em "mais N modelos"; a busca sempre vê tudo, e reabrir o menu volta dobrado. A grade de terminais lista "modelo · conta".
+- Rail: o projeto aberto leva o selo ATUAL e uma borda de acento, independente do que está selecionado — selecionar a missão de outra pasta não apaga onde você está.
+- Pasta do projeto apagada com o app aberto (worktree removido por outra ferramenta) deixava todo pane novo morrer com `ENOENT … lstat` cru. Agora o pane diz que a pasta não existe mais e por onde sair; o Nexus sonda a pasta ao focar a janela e a cada spawn que cai por isso, avisa uma vez, o rail troca ATUAL por "pasta sumiu", o cabeçalho ganha o chip e o toast oferece "Abrir outra pasta". O workspace não é fechado sozinho — panes vivos continuam e decidir é seu.
+
 ## 0.76.8 — A lista de projetos para de encolher, e o pane do operador manda
 
 - Terminal aberto pela opção de pane já pode, sem missão nenhuma, abrir outros panes (`nexus_pane_spawn`, inclusive por nome de agente do roster), ver todos eles (`nexus_pane_list`) e falar com eles (`nexus_pane_write`/`nexus_pane_ask`). Antes cada um desses caía em `mission effect blocked`, e a lista voltava vazia até para o próprio pane. Worker e orquestrador seguem presos à missão; shell, arquivo e git seguem exigindo missão.
