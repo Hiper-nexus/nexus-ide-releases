@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.76.13 — Pane não morre no trust, o assento é do CLI que você pediu
+
+- **Pane travava — ou morria — no "Yes, I trust this folder"**: o Claude Code 2.1.267 tirou a numeração das opções e deixou o cursor parado em "No, exit". O autoresponder mandava `1` (ignorado) seguido de Enter, que confirmava o *cancelar* e encerrava o pane — o operador via a tela parada e o pane parecia não abrir. A resposta passa a ser lida da própria tela: se o aceite está abaixo do cancelar, o app desce o cursor antes de confirmar; se a tela não prova qual item está focado, nada é digitado.
+- **Pedir Kimi abria Sonnet**: o gate pré-spawn decidia o assento do Kimi por uma cache de processo aquecida apenas em Configurações › Contas, kickoff e bootstrap — nunca no spawn direto do operador. Cache fria (ou corrida com o fold do PATH no boot) virava "sem credencial" e a cadeia de sucessão sentava o Claude, com o modelo default. Agora a sonda `kimi provider list` roda na hora do spawn e o binário é resolvido por caminho absoluto.
+- **A troca de assento agora aparece**: quando o CLI pedido não senta e outro assume o pane, o app avisa na tela com o nome dos dois e um atalho para Providers. Antes a troca existia só num `console.warn` do processo principal.
+- **O logo da IA sobrevive a pane estreito**: abaixo de 380 px o badge do agente era escondido inteiro, e não havia como saber qual IA estava em cada pane. Agora só o texto sai (já saía em 460 px); o logo fica em qualquer largura.
+- **GLM Flash**: adapter dedicado (binário do Claude Code contra a z.ai) com upstream próprio, quatro slots pinados em `glm-5.3-flash[1m]`, aliases de credencial `glm-flash → glm → zai`, catálogo só-Flash, roteamento em trivial+easy, quota e logo.
+- **Devin CLI**: adapter embutido como worker (MCP `none`), com receita de instalação darwin/linux, sonda de autenticação, credencial gerenciada e logo próprio.
+- **"+ Pane" virou um índice de CLIs**: uma linha por provider com logo, meta e chevron; a matriz conta×modelo aparece no drill-in. Busca global intacta, Esc em escada, e Grok e demais CLIs não ficam mais enterradas sob dezenas de linhas de conta×modelo.
+- **Ranking de modelos por família**: famílias frontier (Fable/Mythos/Astra) acima do Opus; modelos api-only ganham o selo "restrito" e seguem fora do auto-routing, com a mesma régua no select de modelo do roster.
+
 ## 0.76.12 — impeccable 0.1.5 executável, skills que se atualizam e o pane do macOS 27
 
 - impeccable 0.1.5 embutido: o skill passa a trazer o CLI empacotado (launcher + binário darwin-arm64 + índice de fontes) em vez dos scripts soltos, e os verbos do `SKILL.md` chamam o binário direto.

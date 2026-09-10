@@ -315,6 +315,57 @@ export const RELEASE_0744: AppRelease = {
   ],
 };
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.13',
+  date: '2026-09-10',
+  codename: 'Pane não morre no trust, o assento é do CLI que você pediu',
+  summary:
+    'O diálogo de confiança do Claude Code 2.1.267 deixava de ser respondido — pior: a tecla que o app mandava encerrava o pane. O assento de um pane era decidido por uma leitura de credencial em cache, então pedir Kimi podia abrir Claude sem aviso nenhum; agora a credencial é sondada na hora e a troca, quando acontece, aparece na tela. O logo do provider passa a sobreviver em pane estreito, e entram o GLM Flash e o Devin.',
+  highlights: [
+    {
+      title: 'A troca de assento aparece',
+      detail:
+        'Quando o CLI pedido não senta e outro assume o pane, o app avisa com o nome dos dois e um atalho para Providers — antes a troca existia só num log do processo principal.',
+    },
+    {
+      title: 'O logo da IA sobrevive a pane estreito',
+      detail:
+        'Abaixo de 380 px o badge do agente era escondido inteiro e não havia como saber qual modelo estava em cada pane. Agora só o texto sai; o logo fica em qualquer largura.',
+    },
+    {
+      title: 'GLM Flash',
+      detail:
+        'Adapter dedicado (binário do Claude Code contra a z.ai) com upstream próprio, quatro slots pinados em glm-5.3-flash[1m], aliases de credencial, catálogo, quota e logo próprios.',
+    },
+    {
+      title: 'Devin CLI',
+      detail:
+        'Adapter embutido como worker, com receita de instalação, sonda de autenticação, credencial gerenciada e logo.',
+    },
+    {
+      title: '+ Pane virou um índice de CLIs',
+      detail:
+        'Uma linha por provider com logo, meta e chevron; a matriz conta×modelo aparece no drill-in. Grok e as demais CLIs deixam de ficar enterradas sob dezenas de linhas de conta.',
+    },
+    {
+      title: 'Ranking de modelos por família',
+      detail:
+        'Famílias frontier (Fable/Mythos/Astra) passam acima do Opus, e modelos api-only ganham o selo "restrito" — continuam fora do auto-routing.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Pane travava — ou morria — no "Yes, I trust this folder"',
+      detail:
+        'O Claude Code 2.1.267 tirou a numeração das opções e deixou o cursor parado em "No, exit". O autoresponder mandava "1" (ignorado) seguido de Enter, que confirmava o cancelar e encerrava o pane. A resposta agora é lida da própria tela: se o aceite está abaixo do cancelar, o pane desce antes de confirmar; se a tela não prova qual item está focado, o app não digita nada e deixa a decisão com você.',
+    },
+    {
+      title: 'Pedir Kimi abria Sonnet',
+      detail:
+        'O gate pré-spawn decidia o assento do Kimi por uma cache de processo que só era aquecida em Configurações › Contas, kickoff e bootstrap — nunca no spawn direto do operador. Cache fria virava "sem credencial" e a cadeia de sucessão sentava o Claude. Agora a sonda "kimi provider list" roda na hora do spawn e o binário é resolvido por caminho absoluto, sem depender do PATH do app.',
+    },
+  ],
+};
+export const RELEASE_07612: AppRelease = {
   version: '0.76.12',
   date: '2026-09-10',
   codename: 'impeccable 0.1.5 executável, skills que se atualizam e o pane do macOS 27',
