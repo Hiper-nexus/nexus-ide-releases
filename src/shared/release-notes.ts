@@ -315,6 +315,57 @@ export const RELEASE_0744: AppRelease = {
   ],
 };
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.12',
+  date: '2026-09-10',
+  codename: 'impeccable 0.1.5 executável, skills que se atualizam e o pane do macOS 27',
+  summary:
+    'O impeccable 0.1.5 entra embutido no Nexus como CLI empacotado e passa a rodar de verdade dentro dos panes; as skills instaladas se atualizam sozinhas a cada spawn de agente, sem apagar nada que o usuário escreveu; e o supervisor de PTY para de rejeitar o perl do macOS 27, que zerava todos os panes no app empacotado.',
+  highlights: [
+    {
+      title: 'impeccable 0.1.5 embutido e executável',
+      detail:
+        'O skill agora traz o CLI empacotado (launcher + binário darwin-arm64 + índice de fontes) em vez de scripts soltos: os verbos do SKILL.md chamam o binário direto, e ele executa no pane.',
+    },
+    {
+      title: 'Skills instaladas se atualizam sozinhas',
+      detail:
+        'As skills embutidas (impeccable, archify, bmad-templates, superpowers, dembrandt) são sincronizadas na cópia de cada CLI a cada spawn de agente, então uma instalação antiga recebe a versão nova sem reinstalar o app.',
+    },
+    {
+      title: 'Nada seu é apagado na atualização',
+      detail:
+        'A sincronização só remove o que o próprio Nexus escreveu, comprovado por um registro com o hash de cada arquivo entregue. Skill que você criou, ou arquivo que você editou, fica intacto.',
+    },
+    {
+      title: 'Cache de skills podada e íntegra',
+      detail:
+        'A cache de skills do app deixa de acumular arquivos de versões antigas, o que impedia instalações novas de receberem um hibrido entre a versão velha e a nova.',
+    },
+    {
+      title: 'Pane volta a abrir no macOS 27',
+      detail:
+        'O supervisor de PTY passa a identificar a arquitetura do processo vivo ao validar o perl do sistema, aceitando o binário de 3 slices que o macOS 27 introduziu.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Todo pane morria no app empacotado do macOS 27',
+      detail:
+        'O macOS 27 deu um terceiro slice ao /usr/bin/perl e o supervisor comparava o hash de um slice diferente do que o kernel carrega, recusando o lançamento com "stage0: helper exited before authenticated exec". Agora a validação é feita na arquitetura que o processo realmente executa, o que também fecha um buraco latente no Rosetta.',
+    },
+    {
+      title: 'O impeccable entregue não executava',
+      detail:
+        'O bundling de skills gravava tudo com permissão de leitura, então o CLI do impeccable chegava ao pane sem poder rodar. O bit de execução agora faz parte do pacote e é reparado mesmo quando o conteúdo já estava certo.',
+    },
+    {
+      title: 'Instalação nova recebia um impeccable híbrido',
+      detail:
+        'Arquivos removidos da fonte sobreviviam na cache e vazavam para instalações novas. A cache passa a ser podada contra o conteúdo realmente embutido.',
+    },
+  ],
+};
+export const RELEASE_07611: AppRelease = {
   version: '0.76.11',
   date: '2026-09-09',
   codename: 'Stage Focus, Síntese DAG, Roteador por Especialidade e Jarvis Instantâneo',

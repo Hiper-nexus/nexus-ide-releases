@@ -50,6 +50,8 @@ extern char **environ;
 #define CODE_IDENTITY_RETRY_DELAY_MS 5
 #define CDHASH_HEX_LENGTH 40
 #define CDHASH_BYTE_LENGTH 20
+/* Longest slice name shipped by Apple today is "arm64e.x1". */
+#define LIVE_ARCHITECTURE_LENGTH 32
 #define NEXUS_SUPERVISOR_IDENTIFIER "nexus-pty-supervisor"
 #define NEXUS_APP_IDENTIFIER "com.nexuside.app"
 #define NEXUS_UTILITY_HELPER_IDENTIFIER "com.nexuside.app.helper"
@@ -1499,15 +1501,83 @@ static CFDictionaryRef copy_live_signing_information(pid_t pid) {
   return information;
 }
 
-static CFDictionaryRef copy_static_signing_information(const char *path) {
+/*
+ * A universal image carries one CDHash per architecture slice and the kernel
+ * runs exactly one of them.  Security's default slice choice is not that slice
+ * in general: once /usr/bin/perl grew an arm64e.x1 slice, the framework began
+ * reporting it as the primary slice while the kernel kept executing arm64e, so
+ * a live process was compared against a different program's CDHash and every
+ * legitimate launch was rejected.  A live code object names the slice it is
+ * actually running in kSecCodeInfoFormat ("Mach-O thin (<arch>)"), so that is
+ * what the sealed side must be pinned to.  A code object that does not present
+ * a thin Mach-O format leaves the caller on the unqualified lookup.
+ */
+static bool copy_live_code_architecture(CFDictionaryRef live,
+                                        char output[LIVE_ARCHITECTURE_LENGTH]) {
+  static const char thin_prefix[] = "Mach-O thin (";
+  if (live == NULL) {
+    return false;
+  }
+  CFTypeRef value = CFDictionaryGetValue(live, kSecCodeInfoFormat);
+  if (value == NULL || CFGetTypeID(value) != CFStringGetTypeID()) {
+    return false;
+  }
+  char format[128];
+  if (!CFStringGetCString((CFStringRef)value, format, sizeof(format),
+                          kCFStringEncodingUTF8)) {
+    return false;
+  }
+  if (strncmp(format, thin_prefix, sizeof(thin_prefix) - 1) != 0) {
+    return false;
+  }
+  const char *architecture = format + sizeof(thin_prefix) - 1;
+  const char *terminator = strchr(architecture, ')');
+  if (terminator == NULL || terminator == architecture) {
+    return false;
+  }
+  size_t length = (size_t)(terminator - architecture);
+  if (length >= LIVE_ARCHITECTURE_LENGTH) {
+    return false;
+  }
+  memcpy(output, architecture, length);
+  output[length] = '\0';
+  return true;
+}
+
+static CFDictionaryRef copy_static_signing_information(
+    const char *path, const char *architecture) {
   CFURLRef url = CFURLCreateFromFileSystemRepresentation(
       kCFAllocatorDefault, (const UInt8 *)path, (CFIndex)strlen(path), false);
   if (url == NULL) {
     return NULL;
   }
   SecStaticCodeRef code = NULL;
-  OSStatus status =
-      SecStaticCodeCreateWithPath(url, kSecCSDefaultFlags, &code);
+  OSStatus status = errSecSuccess;
+  CFStringRef architecture_string = NULL;
+  CFDictionaryRef attributes = NULL;
+  if (architecture != NULL && architecture[0] != '\0') {
+    architecture_string = CFStringCreateWithCString(
+        kCFAllocatorDefault, architecture, kCFStringEncodingUTF8);
+    if (architecture_string != NULL) {
+      const void *keys[] = {kSecCodeAttributeArchitecture};
+      const void *values[] = {architecture_string};
+      attributes = CFDictionaryCreate(
+          kCFAllocatorDefault, keys, values, 1, &kCFTypeDictionaryKeyCallBacks,
+          &kCFTypeDictionaryValueCallBacks);
+    }
+  }
+  if (attributes != NULL) {
+    status = SecStaticCodeCreateWithPathAndAttributes(
+        url, kSecCSDefaultFlags, attributes, &code);
+  } else {
+    status = SecStaticCodeCreateWithPath(url, kSecCSDefaultFlags, &code);
+  }
+  if (attributes != NULL) {
+    CFRelease(attributes);
+  }
+  if (architecture_string != NULL) {
+    CFRelease(architecture_string);
+  }
   CFRelease(url);
   if (status != errSecSuccess || code == NULL) {
     if (code != NULL) {
@@ -1572,7 +1642,11 @@ static bool live_code_matches_static(pid_t pid, const char *static_path,
     return false;
   }
   CFDictionaryRef live = copy_live_signing_information(pid);
-  CFDictionaryRef sealed = copy_static_signing_information(static_path);
+  char architecture[LIVE_ARCHITECTURE_LENGTH];
+  const char *sealed_architecture =
+      copy_live_code_architecture(live, architecture) ? architecture : NULL;
+  CFDictionaryRef sealed =
+      copy_static_signing_information(static_path, sealed_architecture);
   bool matches =
       signing_information_has_identity(live, identifier, team_identifier) &&
       signing_information_has_identity(sealed, identifier, team_identifier) &&
@@ -1709,15 +1783,6 @@ static bool packaged_nexus_process_matches(
   return false;
 }
 
-static bool direct_parent_is_apple_perl(
-    const struct responsibility_api *api, struct process_record *parent) {
-  if (!load_stable_process_record(api, getppid(), parent)) {
-    return false;
-  }
-  return live_code_matches_static(parent->pid, "/usr/bin/perl",
-                                  "com.apple.perl", NULL);
-}
-
 /*
  * The pre-disclaim responsibility is the one-shot launch capability. It is
  * inherited through node-pty and Apple's traced Perl stage, then consumed when
@@ -1733,6 +1798,20 @@ static void launch_auth_diag(const char *reason, pid_t a, pid_t b) {
   fprintf(out, "launch-auth-fail reason=%s a=%d b=%d self=%d\n", reason,
           (int)a, (int)b, (int)getpid());
   fclose(out);
+}
+
+static bool direct_parent_is_apple_perl(
+    const struct responsibility_api *api, struct process_record *parent) {
+  if (!load_stable_process_record(api, getppid(), parent)) {
+    launch_auth_diag("parent_record_unavailable", getppid(), 0);
+    return false;
+  }
+  if (!live_code_matches_static(parent->pid, "/usr/bin/perl", "com.apple.perl",
+                                NULL)) {
+    launch_auth_diag("parent_code_mismatch", parent->pid, 0);
+    return false;
+  }
+  return true;
 }
 
 static bool consume_main_owned_launch_authorization(

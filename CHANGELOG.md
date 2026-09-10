@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.76.12 — impeccable 0.1.5 executável, skills que se atualizam e o pane do macOS 27
+
+- impeccable 0.1.5 embutido: o skill passa a trazer o CLI empacotado (launcher + binário darwin-arm64 + índice de fontes) em vez dos scripts soltos, e os verbos do `SKILL.md` chamam o binário direto.
+- Bit de execução preservado no empacotamento de skills: o bundling gravava tudo como leitura, então o CLI do impeccable chegava ao pane sem poder rodar. O bit agora faz parte do pacote e é reparado mesmo quando o conteúdo já estava certo — o que conserta também a cache já quebrada no disco.
+- Cache de skills podada: arquivos que saíram da fonte não sobrevivem mais em `~/.nexus/generated-skills`, o que impedia uma instalação nova de receber um impeccable híbrido (versão nova + arquivos mortos).
+- Skills instaladas se atualizam sozinhas: as skills embutidas (impeccable, archify, bmad-templates, superpowers, dembrandt) são sincronizadas na cópia de cada CLI a cada spawn de agente, então uma instalação antiga recebe a versão nova sem reinstalar o app. A sincronização só remove o que o próprio Nexus escreveu, comprovado por um registro com o hash de cada arquivo entregue — skill criada por você, ou arquivo que você editou, fica intacto.
+- Pane volta a abrir no macOS 27: o `/usr/bin/perl` do sistema ganhou um terceiro slice (`arm64e.x1`) e o supervisor de PTY comparava o hash de um slice diferente do que o kernel carrega, recusando todo lançamento com `stage0: helper exited before authenticated exec`. A validação passa a identificar a arquitetura do processo vivo, o que de quebra fecha um buraco latente sob Rosetta.
+
 ## 0.76.11 — Stage Focus, Síntese DAG, Roteador por Especialidade e Jarvis Instantâneo
 
 - Stage Focus Mode (Cmd+Shift+F): foco visual com proporção 72%/28% colocando o terminal ativo no palco principal e mantendo os demais agentes monitorados em um companion rail com cards interativos.

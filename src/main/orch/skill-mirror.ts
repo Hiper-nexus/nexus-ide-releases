@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -213,6 +214,278 @@ function defaultSourceDirs(home: string): string[] {
   ];
 }
 
+/**
+ * Skills shipped inside the app as generated TypeScript manifests. Keyed by
+ * directory name, because that is what resolves both the Main-owned cache and
+ * the provider copies installed from it.
+ */
+const BUNDLED_MANIFESTS: Record<string, Record<string, SkillAsset>> = {
+  impeccable: IMPECCABLE_MANIFEST,
+  archify: ARCHIFY_MANIFEST,
+  'bmad-templates': BMAD_TEMPLATES_MANIFEST,
+  superpowers: SUPERPOWERS_MANIFEST,
+  dembrandt: DEMBRANDT_MANIFEST,
+};
+
+const MANAGED_LEDGER_FILE = '.nexus-managed.json';
+const MANAGED_LEDGER_SCHEMA = 1;
+/** Provider files above this size are not worth reading to identify a copy. */
+const DELIVERY_PROBE_MAX_BYTES = 32 * 1024;
+/** Cap on how many carried-over assets are compared before giving up. */
+const DELIVERY_PROBE_LIMIT = 16;
+
+/**
+ * What Nexus itself delivered into a skill directory, as
+ * `<skill> → <relative path> → sha256 of the bytes we wrote`. It is the only
+ * authority that authorizes a delete: a path absent from it is never removed,
+ * no matter how stale it looks.
+ */
+interface ManagedLedger {
+  schemaVersion: number;
+  skills: Record<string, Record<string, string>>;
+}
+
+function emptyLedger(): ManagedLedger {
+  return { schemaVersion: MANAGED_LEDGER_SCHEMA, skills: {} };
+}
+
+function sha256Hex(buffer: Buffer): string {
+  return createHash('sha256').update(buffer).digest('hex');
+}
+
+function isMissingError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    'code' in error &&
+    (error as NodeJS.ErrnoException).code === 'ENOENT'
+  );
+}
+
+function readManagedLedger(generatedRoot: string): ManagedLedger {
+  const file = path.join(generatedRoot, MANAGED_LEDGER_FILE);
+  try {
+    const parsed: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (!parsed || typeof parsed !== 'object') return emptyLedger();
+    const raw = (parsed as { skills?: unknown }).skills;
+    if (!raw || typeof raw !== 'object') return emptyLedger();
+    const skills: Record<string, Record<string, string>> = {};
+    for (const [name, entries] of Object.entries(raw as Record<string, unknown>)) {
+      if (!entries || typeof entries !== 'object') continue;
+      const paths: Record<string, string> = {};
+      for (const [relPath, digest] of Object.entries(
+        entries as Record<string, unknown>,
+      )) {
+        if (typeof digest === 'string') paths[relPath] = digest;
+      }
+      skills[skillName(name)] = paths;
+    }
+    return { schemaVersion: MANAGED_LEDGER_SCHEMA, skills };
+  } catch {
+    // An absent or corrupt ledger must never authorize deletions. Starting
+    // empty means this run only records what it writes from now on.
+    return emptyLedger();
+  }
+}
+
+function writeManagedLedger(
+  generatedRoot: string,
+  ledger: ManagedLedger,
+): void {
+  const file = path.join(generatedRoot, MANAGED_LEDGER_FILE);
+  const serialized = `${JSON.stringify(ledger, null, 2)}\n`;
+  try {
+    // It runs on every agent spawn; only a real change may touch the disk.
+    if (fs.readFileSync(file, 'utf8') === serialized) return;
+  } catch (error) {
+    if (!isMissingError(error)) throw error;
+  }
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, serialized);
+}
+
+/** Manifest keys use POSIX separators on every platform. */
+function toManifestKey(root: string, abs: string): string {
+  return path.relative(root, abs).split(path.sep).join('/');
+}
+
+function placeSkillAsset(destPath: string, asset: SkillAsset): boolean {
+  const expected = Buffer.from(asset.content, asset.encoding);
+  let changed = false;
+  try {
+    if (!fs.readFileSync(destPath).equals(expected)) {
+      fs.writeFileSync(destPath, expected);
+      changed = true;
+    }
+  } catch (error) {
+    if (!isMissingError(error)) throw error;
+    fs.mkdirSync(path.dirname(destPath), { recursive: true });
+    fs.writeFileSync(destPath, expected);
+    changed = true;
+  }
+  // Matching bytes do not prove the mode is right: releases before this one
+  // wrote the vendored CLI 0644, and bailing out on "unchanged content" would
+  // perpetuate that broken cache forever.
+  if (asset.executable && process.platform !== 'win32') {
+    if ((fs.statSync(destPath).mode & 0o111) === 0) {
+      fs.chmodSync(destPath, 0o755);
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+/**
+ * Removes everything under a Main-owned skill directory that the current
+ * bundle no longer ships. Safe because nothing but Nexus ever writes there.
+ */
+function pruneManifestDir(
+  skillRoot: string,
+  dir: string,
+  kept: ReadonlySet<string>,
+): void {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (error) {
+    if (isMissingError(error)) return;
+    throw error;
+  }
+  for (const entry of entries) {
+    const abs = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      pruneManifestDir(skillRoot, abs, kept);
+      continue;
+    }
+    if (kept.has(toManifestKey(skillRoot, abs))) continue;
+    fs.rmSync(abs, { force: true });
+  }
+  if (dir === skillRoot) return;
+  try {
+    if (fs.readdirSync(dir).length === 0) fs.rmdirSync(dir);
+  } catch (error) {
+    if (!isMissingError(error)) throw error;
+  }
+}
+
+/** Deletes only when the bytes are still exactly what we delivered. */
+function removeIfUnmodified(abs: string, digest: string): boolean {
+  let current: Buffer;
+  try {
+    current = fs.readFileSync(abs);
+  } catch (error) {
+    if (isMissingError(error)) return true;
+    throw error;
+  }
+  if (sha256Hex(current) !== digest) return false;
+  fs.rmSync(abs, { force: true });
+  return true;
+}
+
+/**
+ * True when a provider directory already holds one of our bundled files
+ * byte-for-byte. That is what separates "an older Nexus installed this" from
+ * "the user wrote this skill themselves" when no ledger exists yet — installs
+ * predating the ledger carry over their untouched assets verbatim.
+ */
+function looksLikeBundledDelivery(
+  target: string,
+  manifest: Record<string, SkillAsset>,
+): boolean {
+  const probes = Object.entries(manifest)
+    .filter(([, asset]) => asset.content.length <= DELIVERY_PROBE_MAX_BYTES)
+    .sort((a, b) => a[1].content.length - b[1].content.length)
+    .slice(0, DELIVERY_PROBE_LIMIT);
+  for (const [relPath, asset] of probes) {
+    const abs = path.join(target, relPath);
+    let size: number;
+    try {
+      size = fs.statSync(abs).size;
+    } catch (error) {
+      if (!isMissingError(error)) throw error;
+      continue;
+    }
+    const expected = Buffer.from(asset.content, asset.encoding);
+    // Size first: a mismatch costs one stat instead of a full read.
+    if (size !== expected.length) continue;
+    if (fs.readFileSync(abs).equals(expected)) return true;
+  }
+  return false;
+}
+
+/**
+ * Removes directories left empty by a sync. Deliberately separate from
+ * pruneManifestDir: this one never considers files, so it cannot be misused
+ * with an empty keep-set to wipe a directory.
+ */
+function pruneEmptyDirs(dir: string, stopAt: string): void {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch (error) {
+    if (isMissingError(error)) return;
+    throw error;
+  }
+  for (const entry of entries) {
+    if (entry.isDirectory()) pruneEmptyDirs(path.join(dir, entry.name), stopAt);
+  }
+  if (dir === stopAt) return;
+  try {
+    if (fs.readdirSync(dir).length === 0) fs.rmdirSync(dir);
+  } catch (error) {
+    if (!isMissingError(error)) throw error;
+  }
+}
+
+interface BundledInstall {
+  /** False when the target is somebody else's skill and must not be touched. */
+  applied: boolean;
+  /** True when this call actually changed bytes on disk. */
+  changed: boolean;
+  /** Paths this delivery now owns inside the target. */
+  managed: Record<string, string>;
+}
+
+/**
+ * Installs or refreshes one bundled skill into a provider directory.
+ *
+ * A skill the user authored, or one they have taken over, is left alone; a
+ * copy traceable to Nexus is brought up to the shipped version. Deletion is
+ * fenced by the ledger plus a digest, so an edited file is never lost.
+ */
+function installBundledSkill(
+  targetRoot: string,
+  name: string,
+  manifest: Record<string, SkillAsset>,
+  ledger: ManagedLedger,
+): BundledInstall {
+  const target = path.join(targetRoot, name);
+  const recorded = ledger.skills[skillName(name)] ?? {};
+  const tracked = Object.keys(recorded).length > 0;
+  const installed = fs.existsSync(path.join(target, 'SKILL.md'));
+  if (installed && !tracked && !looksLikeBundledDelivery(target, manifest)) {
+    return { applied: false, changed: false, managed: recorded };
+  }
+
+  fs.mkdirSync(target, { recursive: true });
+  let changed = false;
+  const managed: Record<string, string> = {};
+  for (const [relPath, asset] of Object.entries(manifest)) {
+    changed = placeSkillAsset(path.join(target, relPath), asset) || changed;
+    managed[relPath] = sha256Hex(Buffer.from(asset.content, asset.encoding));
+  }
+  for (const [relPath, digest] of Object.entries(recorded)) {
+    if (relPath in managed) continue;
+    if (!removeIfUnmodified(path.join(target, relPath), digest)) {
+      // Still ours, just not removable while the user's edit sits in it.
+      managed[relPath] = digest;
+      continue;
+    }
+    changed = true;
+  }
+  pruneEmptyDirs(target, target);
+  return { applied: true, changed, managed };
+}
+
 function writeGeneratedSkills(root: string): string {
   const dir = path.join(root, 'ponytail');
   fs.mkdirSync(dir, { recursive: true });
@@ -240,15 +513,13 @@ function writeGeneratedSkills(root: string): string {
     fs.mkdirSync(skillDir, { recursive: true });
     fs.writeFileSync(path.join(skillDir, 'SKILL.md'), skill.body);
   }
-  // Bundled multi-file skills (impeccable ~1.8 MB, archify ~600 KB).
-  // Repair the Main-owned generated cache per asset: helper-only updates must
-  // reach new sessions even when SKILL.md is unchanged. Provider copies remain
-  // non-destructive in copySkill, preserving locally customized installations.
-  materializeManifestSkill(root, 'impeccable', IMPECCABLE_MANIFEST);
-  materializeManifestSkill(root, 'archify', ARCHIFY_MANIFEST);
-  materializeManifestSkill(root, 'bmad-templates', BMAD_TEMPLATES_MANIFEST);
-  materializeManifestSkill(root, 'superpowers', SUPERPOWERS_MANIFEST);
-  materializeManifestSkill(root, 'dembrandt', DEMBRANDT_MANIFEST);
+  // Bundled multi-file skills (impeccable, archify, ...). Repair the
+  // Main-owned generated cache asset by asset: helper-only updates must reach
+  // new sessions even when SKILL.md is unchanged, and files a previous bundle
+  // dropped must not survive into a fresh provider install.
+  for (const [name, manifest] of Object.entries(BUNDLED_MANIFESTS)) {
+    materializeManifestSkill(root, name, manifest);
+  }
   return root;
 }
 
@@ -257,19 +528,11 @@ function materializeManifestSkill(
   name: string,
   manifest: Record<string, SkillAsset>,
 ): void {
+  const skillRoot = path.join(root, name);
   for (const [relPath, asset] of Object.entries(manifest)) {
-    const destPath = path.join(root, name, relPath);
-    const expected = Buffer.from(asset.content, asset.encoding);
-    try {
-      if (fs.readFileSync(destPath).equals(expected)) continue;
-    } catch (error) {
-      if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) {
-        throw error;
-      }
-    }
-    fs.mkdirSync(path.dirname(destPath), { recursive: true });
-    fs.writeFileSync(destPath, expected);
+    placeSkillAsset(path.join(skillRoot, relPath), asset);
   }
+  pruneManifestDir(skillRoot, skillRoot, new Set(Object.keys(manifest)));
 }
 
 function readSkillSources(sourceDirs: string[]): Map<string, SkillSource> {
@@ -339,6 +602,21 @@ function cliSkillDirs(adapterId: string, home: string): string[] {
   }
 }
 
+/**
+ * The shipped manifest for a source, when that source is the Main-owned cache
+ * of a bundled skill. Skills the user installed themselves have none, and keep
+ * the non-destructive copy below.
+ */
+function bundledManifestFor(
+  source: SkillSource,
+  generatedRoot: string,
+): Record<string, SkillAsset> | undefined {
+  if (source.plugin) return undefined;
+  const rel = path.relative(generatedRoot, source.dir);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return undefined;
+  return BUNDLED_MANIFESTS[skillName(source.name)];
+}
+
 function copySkill(source: SkillSource, targetRoot: string): boolean {
   const target = path.join(targetRoot, source.name);
   if (fs.existsSync(path.join(target, 'SKILL.md'))) return false;
@@ -405,13 +683,35 @@ export function ensureSkillsForCli(
     .filter((source): source is SkillSource & { plugin: AgentPluginMirrorSource } =>
       source.plugin !== undefined)
     .map((source) => visibleAgentPluginReduction(source.plugin));
+  // Read once for the whole run, write once at the end: the ledger describes
+  // what Nexus owns across every target it delivers into.
+  let ledger = readManagedLedger(generatedRoot);
   for (const targetDir of targetDirs) {
     for (const source of sources) {
       let didCopy = false;
       try {
-        didCopy = source.plugin
-          ? copyAgentPluginSkill(source.plugin, targetDir, allowedTools)
-          : copySkill(source, targetDir);
+        if (source.plugin) {
+          didCopy = copyAgentPluginSkill(source.plugin, targetDir, allowedTools);
+        } else {
+          const manifest = bundledManifestFor(source, generatedRoot);
+          if (!manifest) {
+            didCopy = copySkill(source, targetDir);
+          } else {
+            const install = installBundledSkill(
+              targetDir,
+              source.name,
+              manifest,
+              ledger,
+            );
+            if (install.applied) {
+              ledger = {
+                ...ledger,
+                skills: { ...ledger.skills, [skillName(source.name)]: install.managed },
+              };
+            }
+            didCopy = install.changed;
+          }
+        }
       } catch (error) {
         if (!source.plugin) throw error;
         pluginFailures.push({
@@ -426,5 +726,6 @@ export function ensureSkillsForCli(
     }
   }
 
+  writeManagedLedger(generatedRoot, ledger);
   return { mirrored, targetDirs, copied, pluginReductions, pluginFailures };
 }

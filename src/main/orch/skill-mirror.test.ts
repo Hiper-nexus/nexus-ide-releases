@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -65,10 +66,10 @@ describe('ensureSkillsForCli', () => {
         'impeccable',
         IMPECCABLE_MANIFEST['SKILL.md']!.content,
       );
-      const helper = 'scripts/context.mjs';
+      const helper = 'scripts/VERSION';
       if (helperState === 'outdated') {
         fs.mkdirSync(path.dirname(path.join(skillDir, helper)), { recursive: true });
-        fs.writeFileSync(path.join(skillDir, helper), '// previous bundled helper');
+        fs.writeFileSync(path.join(skillDir, helper), '0.0.1\n');
       }
       const target = path.join(tmpRoot(), 'provider-skills');
 
@@ -95,7 +96,7 @@ describe('ensureSkillsForCli', () => {
     const options = { home, sourceDirs: [], allowedSkills: ['impeccable'] };
     ensureSkillsForCli('codex', options);
     const generated = path.join(
-      home, '.nexus', 'generated-skills', 'impeccable', 'scripts', 'context.mjs',
+      home, '.nexus', 'generated-skills', 'impeccable', 'scripts', 'VERSION',
     );
     const originalTime = new Date('2020-01-01T00:00:00.000Z');
     fs.utimesSync(generated, originalTime, originalTime);
@@ -430,5 +431,201 @@ describe('ensureSkillsForCli', () => {
         ],
       }),
     );
+  });
+});
+
+describe('bundled skill delivery', () => {
+  it.skipIf(process.platform === 'win32')(
+    'materializes the vendored impeccable CLI with its execution bit',
+    () => {
+      const home = tmpRoot();
+      const target = path.join(tmpRoot(), 'provider-skills');
+
+      ensureSkillsForCli('codex', {
+        home,
+        sourceDirs: [],
+        allowedSkills: ['impeccable'],
+        targetDirs: [target],
+        includeCliTarget: false,
+      });
+
+      const cli = path.join(target, 'impeccable', 'scripts', 'impeccable');
+      expect(fs.statSync(cli).mode & 0o111).not.toBe(0);
+      expect(fs.readFileSync(cli, 'utf8')).toBe(
+        IMPECCABLE_MANIFEST['scripts/impeccable']!.content,
+      );
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'repairs the execution bit when an identical helper has the wrong mode',
+    () => {
+      const home = tmpRoot();
+      const cli = path.join(
+        home, '.nexus', 'generated-skills', 'impeccable', 'scripts', 'impeccable',
+      );
+      fs.mkdirSync(path.dirname(cli), { recursive: true });
+      fs.writeFileSync(cli, IMPECCABLE_MANIFEST['scripts/impeccable']!.content);
+      fs.chmodSync(cli, 0o644);
+      const target = path.join(tmpRoot(), 'provider-skills');
+
+      ensureSkillsForCli('codex', {
+        home,
+        sourceDirs: [],
+        allowedSkills: ['impeccable'],
+        targetDirs: [target],
+        includeCliTarget: false,
+      });
+
+      expect(fs.statSync(cli).mode & 0o111).not.toBe(0);
+      expect(
+        fs.statSync(path.join(target, 'impeccable', 'scripts', 'impeccable')).mode
+          & 0o111,
+      ).not.toBe(0);
+    },
+  );
+
+  it('prunes files the bundle no longer ships from the Main-owned cache', () => {
+    const home = tmpRoot();
+    const cached = path.join(home, '.nexus', 'generated-skills', 'impeccable');
+    const obsolete = path.join(cached, 'scripts', 'legacy-helper.mjs');
+    fs.mkdirSync(path.dirname(obsolete), { recursive: true });
+    fs.writeFileSync(obsolete, '// dropped from the bundle');
+    const target = path.join(tmpRoot(), 'provider-skills');
+
+    ensureSkillsForCli('codex', {
+      home,
+      sourceDirs: [],
+      allowedSkills: ['impeccable'],
+      targetDirs: [target],
+      includeCliTarget: false,
+    });
+
+    expect(fs.existsSync(obsolete)).toBe(false);
+    expect(fs.existsSync(path.join(cached, 'SKILL.md'))).toBe(true);
+    expect(fs.existsSync(path.join(cached, 'scripts', 'VERSION'))).toBe(true);
+  });
+
+  it('refreshes a bundled provider copy that an older release delivered', () => {
+    const home = tmpRoot();
+    const target = path.join(tmpRoot(), 'provider-skills');
+    const options = {
+      home,
+      sourceDirs: [],
+      allowedSkills: ['impeccable'],
+      targetDirs: [target],
+      includeCliTarget: false,
+    };
+    ensureSkillsForCli('codex', options);
+    const skillDir = path.join(target, 'impeccable');
+    const version = path.join(skillDir, 'scripts', 'VERSION');
+    fs.writeFileSync(version, '0.0.1\n');
+    fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '# impeccable from an older release');
+
+    ensureSkillsForCli('codex', options);
+
+    expect(fs.readFileSync(version, 'utf8')).toBe(
+      IMPECCABLE_MANIFEST['scripts/VERSION']!.content,
+    );
+    expect(fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf8')).toBe(
+      IMPECCABLE_MANIFEST['SKILL.md']!.content,
+    );
+  });
+
+  it('adopts a pre-ledger provider copy by recognizing its carried-over assets', () => {
+    const home = tmpRoot();
+    const target = path.join(tmpRoot(), 'provider-skills');
+    const skillDir = path.join(target, 'impeccable');
+    fs.mkdirSync(path.join(skillDir, 'scripts'), { recursive: true });
+    // An install from an older Nexus, before any ledger existed: the headline
+    // document has since been rewritten, but the small carried-over assets are
+    // byte-identical. That is what identifies it as our delivery rather than a
+    // skill the user wrote by hand.
+    fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '# impeccable (old release)');
+    fs.writeFileSync(
+      path.join(skillDir, 'NOTICE.md'),
+      IMPECCABLE_MANIFEST['NOTICE.md']!.content,
+    );
+    fs.writeFileSync(path.join(skillDir, 'scripts', 'VERSION'), '0.0.1\n');
+
+    ensureSkillsForCli('codex', {
+      home,
+      sourceDirs: [],
+      allowedSkills: ['impeccable'],
+      targetDirs: [target],
+      includeCliTarget: false,
+    });
+
+    expect(fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf8')).toBe(
+      IMPECCABLE_MANIFEST['SKILL.md']!.content,
+    );
+    expect(fs.readFileSync(path.join(skillDir, 'scripts', 'VERSION'), 'utf8')).toBe(
+      IMPECCABLE_MANIFEST['scripts/VERSION']!.content,
+    );
+  });
+
+  it('keeps provider files that Nexus did not write', () => {
+    const home = tmpRoot();
+    const target = path.join(tmpRoot(), 'provider-skills');
+    const options = {
+      home,
+      sourceDirs: [],
+      allowedSkills: ['impeccable'],
+      targetDirs: [target],
+      includeCliTarget: false,
+    };
+    ensureSkillsForCli('codex', options);
+    const mine = path.join(target, 'impeccable', 'notes.md');
+    fs.writeFileSync(mine, 'local note');
+
+    ensureSkillsForCli('codex', options);
+
+    expect(fs.readFileSync(mine, 'utf8')).toBe('local note');
+  });
+
+  it('keeps a delivered file that the user has since edited', () => {
+    const home = tmpRoot();
+    const target = path.join(tmpRoot(), 'provider-skills');
+    const options = {
+      home,
+      sourceDirs: [],
+      allowedSkills: ['impeccable'],
+      targetDirs: [target],
+      includeCliTarget: false,
+    };
+    ensureSkillsForCli('codex', options);
+    // Record it as ours, then edit it: the ledger's hash guard must refuse to
+    // delete work the user has put into it.
+    const handled = path.join(target, 'impeccable', 'handled.md');
+    fs.writeFileSync(handled, 'as delivered');
+    const ledgerFile = path.join(
+      home, '.nexus', 'generated-skills', '.nexus-managed.json',
+    );
+    const ledger = JSON.parse(fs.readFileSync(ledgerFile, 'utf8'));
+    ledger.skills.impeccable['handled.md'] = createHash('sha256')
+      .update('as delivered')
+      .digest('hex');
+    fs.writeFileSync(ledgerFile, JSON.stringify(ledger));
+    fs.writeFileSync(handled, 'edited by the user');
+
+    ensureSkillsForCli('codex', options);
+
+    expect(fs.readFileSync(handled, 'utf8')).toBe('edited by the user');
+  });
+
+  it('leaves a locally authored skill untouched', () => {
+    const home = tmpRoot();
+    const target = path.join(tmpRoot(), 'provider-skills');
+    const local = writeSkill(target, 'my-local-skill', '# Mine');
+
+    ensureSkillsForCli('codex', {
+      home,
+      sourceDirs: [target],
+      allowedSkills: ['my-local-skill'],
+      targetDirs: [target],
+      includeCliTarget: false,
+    });
+
+    expect(fs.readFileSync(path.join(local, 'SKILL.md'), 'utf8')).toBe('# Mine');
   });
 });

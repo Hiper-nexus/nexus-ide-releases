@@ -2,6 +2,8 @@
 export interface SkillAsset {
   content: string;
   encoding: 'utf8' | 'base64';
+  /** Vendored executables (e.g. the impeccable CLI) must land runnable. */
+  executable?: boolean;
 }
 
 export const DEMBRANDT_MANIFEST: Record<string, SkillAsset> = {

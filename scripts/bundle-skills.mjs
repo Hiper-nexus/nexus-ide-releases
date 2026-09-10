@@ -60,16 +60,25 @@ for (const skill of SKILLS) {
 
   const manifest = {};
   for (const file of walk(srcDir)) {
-    const relPath = path.relative(srcDir, file);
+    // POSIX separators in the manifest keys: they are generated on one
+    // platform and consumed on every other, and the materializer resolves them
+    // through path.join (which accepts '/' on Windows too).
+    const relPath = path.relative(srcDir, file).split(path.sep).join('/');
     if (relPath.includes('.DS_Store')) continue;
     const buffer = fs.readFileSync(file);
     // A file is safe as utf8 only if decode+re-encode is byte-for-byte
     // lossless; anything else (any binary, regardless of extension) is stored
     // as base64 so the round-trip can never corrupt it.
     const isBinary = !Buffer.from(buffer.toString('utf8'), 'utf8').equals(buffer);
+    // The exec bit is part of the payload for vendored CLIs (impeccable ships
+    // `scripts/impeccable` + a Mach-O launcher). Only the bit is stored, not
+    // the mode: POSIX modes do not round-trip through Windows and nothing else
+    // about the mode matters to the materializer.
+    const isExecutable = (fs.statSync(file).mode & 0o111) !== 0;
     manifest[relPath] = {
       content: buffer.toString(isBinary ? 'base64' : 'utf8'),
       encoding: isBinary ? 'base64' : 'utf8',
+      ...(isExecutable ? { executable: true } : {}),
     };
   }
 
@@ -77,6 +86,8 @@ for (const skill of SKILLS) {
 export interface SkillAsset {
   content: string;
   encoding: 'utf8' | 'base64';
+  /** Vendored executables (e.g. the impeccable CLI) must land runnable. */
+  executable?: boolean;
 }
 
 export const ${skill.constName}: Record<string, SkillAsset> = ${JSON.stringify(manifest, null, 2)};
