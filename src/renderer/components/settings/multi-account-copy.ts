@@ -104,8 +104,10 @@ export const ALL_MULTI_ACCOUNT_ADAPTER_IDS = [
   'opencode',
   'openclaude',
   'glm',
+  'glm-flash',
   'longcat',
   'aider',
+  'devin',
 ] as const;
 
 export type MultiAccountAdapterId =

@@ -402,6 +402,29 @@
   font-size: var(--text-sm);
 }
 
+/* Linha de índice (nível 1): uma por CLI — logo + nome fortes à esquerda,
+   resumo mono (modelo de topo +N · contas · login) no meio, chevron de drill
+   no fim. O chevron acende no acento quando a linha está sob o cursor: é o
+   único "há mais aqui" que a linha precisa. */
+.pane-picker__item[data-cli='true'] .provider-logo {
+  flex: 0 0 auto;
+}
+
+.pane-picker__item[data-cli='true'] .pane-picker__item-label {
+  max-width: none;
+  flex: 0 1 auto;
+}
+
+.pane-picker__item[data-cli='true'] > .pixel-icon:last-child {
+  margin-left: 0;
+  color: var(--text-faint);
+  transition: color 140ms var(--ease-out-quart);
+}
+
+.pane-picker__item[data-cli='true'][data-active='true'] > .pixel-icon:last-child {
+  color: var(--accent);
+}
+
 .pane-picker__item-badges {
   display: flex;
   flex: 0 0 auto;

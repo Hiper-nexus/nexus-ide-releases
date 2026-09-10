@@ -4,6 +4,7 @@ import {
   ACCEPT_FIRST_OPTION_BY_NUMBER,
   ACCEPT_SECOND_OPTION_BY_NUMBER,
   ACCEPT_SECOND_PROMPT_RESPONSE,
+  ACCEPT_SECOND_TRUST_OPTION_RESPONSE,
   BUILTIN_PROMPT_SIGNATURES,
   CliPromptAutoResponder,
   matchesPromptSignature,
@@ -108,6 +109,58 @@ Quick safety check: Is this a project you created or one you trust?
   2. No, exit
 `;
 
+/**
+ * Claude Code 2.1.267, transcribed from a live PTY run (10/09) in a cwd that
+ * was never trusted. Two things changed since 2.1.220 and both are fatal for a
+ * fixed keystroke: the options lost their numbers, and the cursor now parks on
+ * "No, exit" — so a bare Enter quits the CLI instead of trusting the folder.
+ */
+const CLAUDE_TRUST_PROMPT_21267 = `
+────────────────────────────────────────────────────────────────────
+ Accessing workspace:
+
+ /private/var/folders/zg/…/T/probe3-cwd-a3_o5mg5
+
+ Quick safety check: Is this a project you created or one you trust? (Like
+ your own code, a well-known open source project, or work from your team).
+ If not, take a moment to review what's in this folder first.
+
+ Claude Code'll be able to read, edit, and execute files here.
+
+ Security guide
+
+ ❯ No, exit
+   Yes, I trust this folder
+
+ Enter to confirm · Esc to cancel
+`;
+
+/** O mesmo diálogo num pane estreito, com as frases quebradas no meio. */
+const CLAUDE_TRUST_PROMPT_21267_NARROW = `
+ Quick safety check: Is this a project you created or one you trust? (Like
+ your own code, a well-known open source project, or work from your team).
+ If not, take a moment to review what's in this fo
+ lder first.
+ Claude Code'll be able to read, edit, and execute files here.
+ Security guide
+ ❯ No, exi
+ t
+   Yes, I trust this folder
+ Enter to confirm · Esc to cancel
+`;
+
+/** Same dialog, accept listed first — a build where Enter already accepts. */
+const CLAUDE_TRUST_PROMPT_ACCEPT_FIRST = `
+Quick safety check: Is this a project you created or one you trust?
+
+/tmp/nexus-accept-first
+
+ ❯ Yes, I trust this folder
+   No, exit
+
+ Enter to confirm · Esc to cancel
+`;
+
 function signature(name: string) {
   const found = BUILTIN_PROMPT_SIGNATURES.find((item) => item.name === name);
   if (!found) throw new Error(`missing signature ${name}`);
@@ -152,6 +205,44 @@ describe('CLI prompt autoresponder', () => {
     expect(responder.observe('session-kimi', KIMI_TRUST_PROMPT)).toBeNull();
   });
 
+  it('never answers the 2.1.267 trust dialog with the Enter that quits the CLI', () => {
+    // Probe ao vivo (10/09): sem números e com o cursor parado em "No, exit",
+    // o Enter sozinho encerra o processo (exit 1) e o `1\r` antigo é uma tecla
+    // ignorada seguida desse mesmo Enter fatal. A resposta tem de MOVER o
+    // cursor para o aceite.
+    expect(
+      matchesPromptSignature(
+        CLAUDE_TRUST_PROMPT_21267,
+        signature('claude-workspace-trust-quick-safety-check'),
+      ),
+    ).toBe(true);
+
+    const responder = new CliPromptAutoResponder();
+    responder.bind('session-claude', 'claude');
+    const answer = responder.observe('session-claude', CLAUDE_TRUST_PROMPT_21267);
+    expect(answer).toBe(ACCEPT_SECOND_TRUST_OPTION_RESPONSE);
+    expect(answer).not.toBe(ACCEPT_DEFAULT_PROMPT_RESPONSE);
+    expect(answer).not.toBe(ACCEPT_FIRST_OPTION_BY_NUMBER);
+  });
+
+  it('answers the same trust screen when a narrow pane shreds the wording', () => {
+    // Pane estreito quebra a etiqueta no meio da palavra ("No, exi / t") — a
+    // forma compacta é o que salva, e a decisão de tecla usa a mesma leitura.
+    const responder = new CliPromptAutoResponder();
+    responder.bind('session-claude', 'claude');
+    expect(
+      responder.observe('session-claude', CLAUDE_TRUST_PROMPT_21267_NARROW),
+    ).toBe(ACCEPT_SECOND_TRUST_OPTION_RESPONSE);
+  });
+
+  it('keeps a bare Enter when the accept item is the one already focused', () => {
+    const responder = new CliPromptAutoResponder();
+    responder.bind('session-claude', 'claude');
+    expect(
+      responder.observe('session-claude', CLAUDE_TRUST_PROMPT_ACCEPT_FIRST),
+    ).toBe(ACCEPT_DEFAULT_PROMPT_RESPONSE);
+  });
+
   it('recognizes and accepts the Claude 2.1.x bypass acknowledgement (GLM shell)', () => {
     expect(
       matchesPromptSignature(
@@ -166,7 +257,7 @@ describe('CLI prompt autoresponder', () => {
       ),
     ).toBe(true);
 
-    for (const adapterId of ['claude', 'glm', 'longcat'] as const) {
+    for (const adapterId of ['claude', 'glm', 'glm-flash', 'longcat'] as const) {
       const responder = new CliPromptAutoResponder();
       responder.bind(`session-${adapterId}`, adapterId);
       expect(responder.observe(`session-${adapterId}`, CLAUDE_BYPASS_PROMPT_21)).toBe(
@@ -266,7 +357,7 @@ describe('CLI prompt autoresponder', () => {
       ),
     ).toBe(true);
 
-    for (const adapterId of ['claude', 'glm', 'longcat'] as const) {
+    for (const adapterId of ['claude', 'glm', 'glm-flash', 'longcat'] as const) {
       const responder = new CliPromptAutoResponder();
       responder.bind(`session-${adapterId}`, adapterId);
       expect(responder.observe(`session-${adapterId}`, CLAUDE_TRUST_PROMPT)).toBe(
@@ -284,19 +375,21 @@ describe('CLI prompt autoresponder', () => {
       ),
     ).toBe(true);
 
-    for (const adapterId of ['claude', 'glm', 'longcat'] as const) {
+    for (const adapterId of ['claude', 'glm', 'glm-flash', 'longcat'] as const) {
       const responder = new CliPromptAutoResponder();
       responder.bind(`session-${adapterId}`, adapterId);
+      // Nesta build o aceite é o item focado e vem listado primeiro: a tecla
+      // derivada da tela é o Enter simples.
       expect(
         responder.observe(`session-${adapterId}`, CLAUDE_TRUST_PROMPT_220),
-      ).toBe(ACCEPT_FIRST_OPTION_BY_NUMBER);
+      ).toBe(ACCEPT_DEFAULT_PROMPT_RESPONSE);
       expect(
         responder.observe(`session-${adapterId}`, CLAUDE_TRUST_PROMPT_220),
       ).toBeNull();
     }
   });
 
-  it('defers on the partial Claude 2.1.220 banner and force-accepts option 1', () => {
+  it('holds injection on the bare trust banner but never types a blind Enter', () => {
     const responder = new CliPromptAutoResponder();
     responder.bind('session-claude', 'claude');
 
@@ -307,9 +400,10 @@ describe('CLI prompt autoresponder', () => {
       ),
     ).toBeNull();
     expect(responder.shouldDeferInjection('session-claude')).toBe(true);
-    expect(responder.forceAcceptResponse('session-claude')).toEqual({
-      response: ACCEPT_FIRST_OPTION_BY_NUMBER,
-    });
+    // Sem as duas etiquetas na tela não há como saber qual item está focado, e
+    // na 2.1.267 o Enter no item errado encerra o pane. Fail-closed: o
+    // force-accept espera o diálogo pintar em vez de arriscar uma tecla.
+    expect(responder.forceAcceptResponse('session-claude')).toBeNull();
   });
 
   it('defers injection on the trust banner and force-accepts with option 1 (never Down+Enter)', () => {

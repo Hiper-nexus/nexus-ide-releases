@@ -8,6 +8,7 @@ const SESSION_LOGIN_IDS = [
   'agy',
   'claude',
   'codex',
+  'devin',
   'grok',
   'kimi',
   'muse',
@@ -15,7 +16,7 @@ const SESSION_LOGIN_IDS = [
   'openclaude',
 ] as const;
 
-const KEY_ONLY_IDS = ['aider', 'glm', 'longcat'] as const;
+const KEY_ONLY_IDS = ['aider', 'glm', 'glm-flash', 'longcat'] as const;
 
 describe('builtin CLI login commands', () => {
   const adapters = BUILTIN_ADAPTERS.map((raw) => adapterSchema.parse(raw));

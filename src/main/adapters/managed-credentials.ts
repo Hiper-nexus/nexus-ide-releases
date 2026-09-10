@@ -150,6 +150,40 @@ function parsedAuthBlob(blob: string): Record<string, unknown> | null {
   }
 }
 
+/**
+ * Devin guarda a sessão em TOML **plano** (sem seções) em
+ * ~/.local/share/devin/credentials.toml. Todos os helpers acima parseiam JSON e
+ * devolvem null para esse blob — sem um ramo próprio, uma conta Devin logada
+ * seria lida como "sem auth" e o fingerprint da sessão nunca sairia.
+ *
+ * A varredura é linha a linha e só olha NOME de chave e valor: TOML plano não
+ * tem aninhamento, então não há risco de casar uma chave aninhada por engano.
+ */
+const DEVIN_CREDENTIAL_KEYS = new Set([
+  'windsurf_api_key',
+  'api_key',
+  'token',
+]);
+
+function devinTomlCredentialValue(blob: string): string | null {
+  for (const rawLine of blob.split(/\r?\n/u)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#') || line.startsWith('[')) continue;
+    const eq = line.indexOf('=');
+    if (eq <= 0) continue;
+    const key = line.slice(0, eq).trim();
+    if (!DEVIN_CREDENTIAL_KEYS.has(key)) continue;
+    const value = line
+      .slice(eq + 1)
+      .trim()
+      .replace(/^["']/u, '')
+      .replace(/["']$/u, '')
+      .trim();
+    if (value) return value;
+  }
+  return null;
+}
+
 function directorySnapshotIdentity(
   adapterId: string,
   snapshot: DirSnapshot,
@@ -205,6 +239,10 @@ function hasNonEmptyClaim(value: unknown, keys: string[]): boolean {
 
 /** A present file is not auth proof: reject empty/stale shells and invalid JSON. */
 export function authBlobIsUsable(adapterId: string, blob: string): boolean {
+  // Antes do guard de JSON: o blob do Devin é TOML plano e jamais parsearia.
+  if (adapterId === 'devin' && !parseDirSnapshot(blob)) {
+    return devinTomlCredentialValue(blob) !== null;
+  }
   const parsed = parsedAuthBlob(blob);
   if (!parsed) return false;
   const snapshot = parseDirSnapshot(blob);
@@ -345,6 +383,21 @@ export const MANAGED_PROVIDER_SPECS: Record<FileAuthAdapterId, ManagedProviderSp
     ],
     systemHome: (home = os.homedir()) => path.join(home, '.gemini'),
   },
+  devin: {
+    adapterId: 'devin',
+    // O instalador oficial respeita XDG_DATA_HOME e instala em
+    // $XDG_DATA_HOME/devin — o mesmo env var do opencode, mas aqui ele desloca
+    // também credentials.toml, mcp/ e summaries/, não só a árvore de auth.
+    homeEnvVar: 'XDG_DATA_HOME',
+    authRelativePath: path.join('devin', 'credentials.toml'),
+    skipLinkNames: ['devin'],
+    systemHome: (home = os.homedir()) => {
+      const ambient = process.env.XDG_DATA_HOME?.trim();
+      const xdg = ambient ? ambient : path.join(home, '.local', 'share');
+      // XDG é convenção de Linux; no macOS o Devin ainda usa ~/.local/share.
+      return xdg;
+    },
+  },
 };
 
 export function managedAccountsRoot(
@@ -483,11 +536,18 @@ function authTargetPath(
 export function shouldWriteAuthFile(
   existingPath: string,
   vaultBlob: string,
+  adapterId?: FileAuthAdapterId,
 ): boolean {
   try {
     if (!exists(existingPath)) return true;
     const onDisk = fs.readFileSync(existingPath, 'utf8');
     if (onDisk === vaultBlob) return false;
+    // TOML plano não carrega sinal de frescor e o blob não guarda identidade —
+    // então "diferente" só pode significar troca de conta, e a escolha do
+    // usuário (o vault) manda. Recusar aqui faria o spawn rodar como a conta
+    // anterior sem nenhum sinal visível; reescrever, no pior caso, custa um
+    // login de novo.
+    if (adapterId === 'devin') return true;
     // If both are JSON with token freshness fields, keep the fresher one.
     const diskFresh = freshnessFromAuthContents(onDisk);
     const vaultFresh = freshnessFromAuthContents(vaultBlob);
@@ -579,7 +639,7 @@ export function materializeManagedHome(
   }
 
   const authPath = authTargetPath(adapterId, managedHome, options.authRelativePath);
-  if (shouldWriteAuthFile(authPath, authBlob)) {
+  if (shouldWriteAuthFile(authPath, authBlob, adapterId)) {
     writePrivateFile(authPath, authBlob);
   }
 
@@ -600,6 +660,10 @@ export function readBackFresherAuth(
     const managedHome = managedHomePath(adapterId, accountId, options.home);
     const authPath = authTargetPath(adapterId, managedHome, options.authRelativePath);
     if (!exists(authPath)) return null;
+    // Devin grava TOML plano: sem frescor e sem identidade legível. Ler de volta
+    // sobrescreveria o vault com um blob opaco — a escolha do usuário (o vault)
+    // é a autoridade, na mesma lógica de shouldWriteAuthFile.
+    if (adapterId === 'devin') return null;
     const onDisk = fs.readFileSync(authPath, 'utf8');
     if (onDisk === vaultBlob) return null;
     const diskFresh = freshnessFromAuthContents(onDisk);

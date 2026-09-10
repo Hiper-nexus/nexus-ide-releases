@@ -182,6 +182,11 @@ function clickEntry(entryId: string): void {
   act(() => button.click());
 }
 
+/** Abre a matriz conta × modelo de uma CLI (nível 2 do menu). */
+function drillInto(adapterId: string): void {
+  clickEntry(`cli:${adapterId}`);
+}
+
 describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
   beforeEach(() => {
     Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
@@ -235,21 +240,61 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     vi.clearAllMocks();
   });
 
-  it('lista Terminal, Browser e cada CLI instalada — e só elas', () => {
+  it('lista Terminal, Browser e UMA linha por CLI instalada — e só elas', () => {
     mount();
     openMenu();
 
+    const ids = optionIds();
+    expect(ids).toEqual([
+      'type:terminal',
+      'type:browser',
+      'cli:claude',
+      'cli:codex',
+      'cli:bare',
+    ]);
     expect(optionLabels().some((label) => label.includes('Terminal'))).toBe(
       true,
     );
     expect(optionLabels().some((label) => label.includes('Browser'))).toBe(
       true,
     );
-    expect(groupHeadings()).toEqual(['Claude', 'Codex', 'Bare CLI']);
-    // Fora da lista principal, mas NOMEADAS na seção de indisponíveis.
+    // O índice resume cada CLI: modelo de topo +N, contas salvas, login.
+    const claude = options().find((o) =>
+      o.dataset.testid === 'pane-picker-entry-cli:claude',
+    );
+    expect(claude?.textContent).toContain('claude-default +1');
+    // Fora do índice, mas NOMEADAS na seção de indisponíveis.
     expect(optionLabels().some((label) => label.includes('Kimi'))).toBe(false);
     expect(optionLabels().some((label) => label.includes('Grok'))).toBe(false);
     expect(host.textContent).not.toContain('GLM');
+  });
+
+  it('o índice resume contas e pede login pendente quando falta sessão', () => {
+    useProviderStore.setState({
+      providers: [
+        provider('claude', 'Claude', { authState: 'missing' }),
+        provider('codex', 'Codex'),
+      ],
+    } as never);
+    useAccountStore.setState({
+      accounts: [
+        account('acc-1', 'claude', 'Conta 1'),
+        account('acc-2', 'claude', 'Conta 2', { active: false }),
+      ],
+    } as never);
+    mount();
+    openMenu();
+
+    const claude = options().find(
+      (o) => o.dataset.testid === 'pane-picker-entry-cli:claude',
+    );
+    expect(claude?.textContent).toContain('2 contas');
+    expect(claude?.textContent).toContain('login pendente');
+    const codex = options().find(
+      (o) => o.dataset.testid === 'pane-picker-entry-cli:codex',
+    );
+    expect(codex?.textContent).not.toContain('conta');
+    expect(codex?.textContent).not.toContain('login pendente');
   });
 
   it('nomeia as CLIs indisponíveis com o motivo — nunca filtra em silêncio', () => {
@@ -307,6 +352,7 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
   it('clicar numa linha sobe o pane com adapterId e modelo exatos', () => {
     mount();
     openMenu();
+    drillInto('codex');
 
     clickEntry('agent:codex:default:codex-alt');
 
@@ -325,7 +371,7 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     } as never);
     mount();
     openMenu();
-    type('claude');
+    drillInto('claude');
 
     // 2 contas × 2 modelos, mais a linha de cadastro que fecha o grupo.
     expect(options()).toHaveLength(5);
@@ -348,7 +394,7 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     } as never);
     mount();
     openMenu();
-    type('claude');
+    drillInto('claude');
 
     expect(
       optionLabels().some((label) => label.includes('Conta 1 (sessão expirada)')),
@@ -363,7 +409,7 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
   it('CLI sem catálogo de modelos ainda oferece uma linha que abre', () => {
     mount();
     openMenu();
-    type('bare');
+    drillInto('bare');
 
     expect(options()).toHaveLength(2);
     expect(optionLabels()[0]).toContain('padrão da ferramenta');
@@ -442,26 +488,29 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     expect(host.querySelector('[role="listbox"]')).toBeNull();
   });
 
-  it('cada CLI ganha a ação de cadastrar conta, sempre no fim do grupo', () => {
+  it('cada CLI ganha a ação de cadastrar conta, sempre no fim da matriz', () => {
     useAccountStore.setState({
       accounts: [account('acc-1', 'claude', 'Conta 1')],
     } as never);
     mount();
     openMenu();
 
-    // Uma ação por CLI instalada — nem a mais, nem a menos.
+    // Uma ação por CLI — dentro do drill de cada uma, nunca no índice.
+    expect(
+      options().some((o) => o.getAttribute('data-admin') === 'true'),
+    ).toBe(false);
+    drillInto('claude');
     const admin = options().filter(
       (option) => option.getAttribute('data-admin') === 'true',
     );
-    expect(admin).toHaveLength(3); // Bare CLI, Claude, Codex
+    expect(admin).toHaveLength(1);
     expect(admin[0]!.textContent).toContain('Adicionar conta');
     expect(admin[0]!.textContent).toContain('1 conta salva');
     expect(admin[0]!.getAttribute('aria-label')).toBe(
       'Adicionar conta em Claude',
     );
 
-    // Fecha o grupo: as escolhas de conta × modelo vêm todas antes dela.
-    type('claude');
+    // Fecha a matriz: as escolhas de conta × modelo vêm todas antes dela.
     const labels = optionLabels();
     expect(labels[labels.length - 1]).toContain('Adicionar conta');
   });
@@ -490,6 +539,7 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
   it('cadastrar abre a vista de contas daquela CLI, sem criar pane nenhum', () => {
     mount();
     openMenu();
+    drillInto('codex');
     clickEntry('accounts:codex');
 
     expect(host.querySelector('[data-testid="accounts-manager"]')).not.toBeNull();
@@ -505,6 +555,7 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
   it('a vista de contas não sequestra as teclas da lista', () => {
     mount();
     openMenu();
+    drillInto('codex');
     clickEntry('accounts:codex');
 
     const panel = host.querySelector('.pane-picker__panel')!;
@@ -522,9 +573,10 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     expect(host.querySelector('[data-testid="accounts-manager"]')).not.toBeNull();
   });
 
-  it('Escape sobe um nível: de contas para a lista, e só então fecha', () => {
+  it('Escape sobe um nível de cada vez: contas → matriz da CLI → índice → fecha', () => {
     mount();
     openMenu();
+    drillInto('codex');
     clickEntry('accounts:codex');
 
     act(() => {
@@ -532,8 +584,19 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
         new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
       );
     });
+    // De contas volta à MATRIZ da CLI (não ao índice geral).
     expect(host.querySelector('[data-testid="accounts-manager"]')).toBeNull();
     expect(host.querySelector('[role="listbox"]')).not.toBeNull();
+    expect(optionIds()).toContain('agent:codex:default:codex-default');
+
+    act(() => {
+      document.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+      );
+    });
+    // Da matriz volta ao índice: uma linha por CLI de novo.
+    expect(optionIds()).toContain('cli:codex');
+    expect(optionIds()).toContain('cli:claude');
 
     act(() => {
       document.dispatchEvent(
@@ -544,23 +607,35 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     expect(document.activeElement).toBe(trigger());
   });
 
-  it('Voltar às contas devolve a lista e o foco à busca', () => {
+  it('Voltar do drill devolve o índice; Voltar das contas devolve a matriz', () => {
     mount();
     openMenu();
-    clickEntry('accounts:codex');
+    drillInto('codex');
 
-    const back = host.querySelector<HTMLButtonElement>(
+    // Voltar da matriz → índice, com a busca focada de novo.
+    let back = host.querySelector<HTMLButtonElement>(
+      '[data-testid="pane-picker-cli-back"]',
+    );
+    act(() => back!.click());
+    expect(optionIds()).toContain('cli:codex');
+    expect(document.activeElement).toBe(filterInput());
+
+    // Das contas volta à matriz da CLI — não despenca até o índice.
+    drillInto('codex');
+    clickEntry('accounts:codex');
+    back = host.querySelector<HTMLButtonElement>(
       '[data-testid="pane-picker-accounts-back"]',
     );
     act(() => back!.click());
-
     expect(host.querySelector('[role="listbox"]')).not.toBeNull();
-    expect(document.activeElement).toBe(filterInput());
+    expect(optionIds()).toContain('agent:codex:default:codex-default');
+    expect(optionIds()).not.toContain('cli:codex');
   });
 
-  it('conta nova volta para a lista sob o cursor, e o spawn leva o id dela', () => {
+  it('conta nova volta para a matriz sob o cursor, e o spawn leva o id dela', () => {
     mount();
     openMenu();
+    drillInto('codex');
     clickEntry('accounts:codex');
 
     // O painel salvou a conta B e devolveu o id que o motor emitiu.
@@ -616,7 +691,7 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     } as never);
     mount();
     openMenu();
-    type('claude');
+    drillInto('claude');
 
     // Bloco inteiro da conta A, depois o da conta B — nunca intercalado.
     expect(optionIds()).toEqual([
@@ -639,7 +714,15 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     expect(optionLabels()[0]).toContain('claude-opus-5');
     expect(optionLabels()[0]).toContain('Conta A');
     expect(optionLabels()[3]).toContain('Conta B (sessão expirada)');
-    expect(groupHeadings()).toEqual(['Claude']);
+    // No drill o cabeçalho do painel nomeia a CLI (Voltar + logo) — sem
+    // cabeçalho de grupo repetido.
+    expect(
+      host.querySelector('[data-testid="pane-picker-cli-back"]')?.textContent,
+    ).toContain('Voltar');
+    expect(
+      host.querySelector('[role="dialog"]')?.getAttribute('aria-label'),
+    ).toBe('Modelos de Claude');
+    expect(groupHeadings()).toEqual([]);
   });
 
   it('o mais forte e mais novo vem primeiro, com a faixa e o padrão em chips', () => {
@@ -648,7 +731,7 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     } as never);
     mount();
     openMenu();
-    type('claude');
+    drillInto('claude');
 
     const badgesOf = (entryId: string) =>
       [
@@ -699,7 +782,17 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     mount();
     openMenu();
 
-    expect(groupHeadings()).toEqual(['Claude', 'Codex', 'Aider']);
+    // O índice ordena uma linha por CLI pela preferência operacional.
+    expect(optionIds()).toEqual([
+      'type:terminal',
+      'type:browser',
+      'cli:claude',
+      'cli:codex',
+      'cli:aider',
+    ]);
+
+    // Contas ativas antes das indisponíveis — dentro da matriz da CLI.
+    drillInto('claude');
     const headings = [...host.querySelectorAll('.pane-picker__account')].map(
       (node) => node.textContent,
     );
@@ -730,9 +823,13 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     mount();
     openMenu();
 
+    // A busca nunca respeita a dobra nem pede o drill: vai direto na linha.
+    type('mini');
+    expect(optionIds()).toEqual(['agent:codex:default:gpt-5.4-mini']);
+    type('');
+
+    drillInto('codex');
     expect(optionIds()).toEqual([
-      'type:terminal',
-      'type:browser',
       'agent:codex:default:gpt-5.6-sol',
       'agent:codex:default:gpt-5.6-terra',
       'agent:codex:default:gpt-5.6-luna',
@@ -740,21 +837,13 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
       'more:codex:default',
       'accounts:codex',
     ]);
-    expect(optionLabels()[6]).toContain('mais 3 modelos');
-
-    // A busca nunca respeita a dobra; apagar o texto dobra de novo.
-    type('mini');
-    expect(optionIds()).toEqual(['agent:codex:default:gpt-5.4-mini']);
-    type('');
-    expect(optionIds()).toContain('more:codex:default');
+    expect(optionLabels()[4]).toContain('mais 3 modelos');
 
     // Abrir a dobra não fecha o menu nem abre pane nenhum.
     clickEntry('more:codex:default');
     expect(host.querySelector('[role="listbox"]')).not.toBeNull();
     expect(spawnAgent).not.toHaveBeenCalled();
     expect(optionIds()).toEqual([
-      'type:terminal',
-      'type:browser',
       'agent:codex:default:gpt-5.6-sol',
       'agent:codex:default:gpt-5.6-terra',
       'agent:codex:default:gpt-5.6-luna',
@@ -766,12 +855,19 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     ]);
 
     // Reabrir começa dobrado: a dobra é estado do menu, não preferência.
+    // (Um Esc por act: cada Escape precisa ver o render do nível anterior.)
+    act(() => {
+      document.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+      );
+    });
     act(() => {
       document.dispatchEvent(
         new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
       );
     });
     openMenu();
+    drillInto('codex');
     expect(optionIds()).toContain('more:codex:default');
   });
 
@@ -786,7 +882,7 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     } as never);
     mount();
     openMenu();
-    type('codex');
+    drillInto('codex');
 
     expect(optionIds()).toEqual([
       'agent:codex:default:gpt-5.6-sol',
@@ -809,7 +905,7 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     } as never);
     mount();
     openMenu();
-    type('codex');
+    drillInto('codex');
 
     // 4 contas × 2 modelos + a linha de cadastro.
     expect(options()).toHaveLength(9);

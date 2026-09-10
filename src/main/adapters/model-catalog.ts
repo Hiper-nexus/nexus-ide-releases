@@ -139,6 +139,15 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
         { id: 'glm-4.5-air', availability: 'cheap', costTier: 'low', source: 'bundled' },
       ],
     },
+    'glm-flash': {
+      default: 'glm-5.3-flash[1m]',
+      models: [
+        { id: 'glm-5.3-flash[1m]', availability: 'cheap', costTier: 'low', source: 'bundled' },
+        { id: 'glm-5.3-flash', availability: 'cheap', costTier: 'low', source: 'bundled' },
+        { id: 'glm-4.7-flash[1m]', availability: 'cheap', costTier: 'low', source: 'bundled' },
+        { id: 'glm-4.7-flash', availability: 'cheap', costTier: 'low', source: 'bundled' },
+      ],
+    },
     agy: {
       default: 'gemini-3.7-flash-high',
       models: [

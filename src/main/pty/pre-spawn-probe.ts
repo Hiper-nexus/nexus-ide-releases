@@ -16,6 +16,7 @@ import {
   type AuthStrategy,
 } from '../adapters/subscription-auth';
 import { isCredentiallessOpenCodeModel } from '../adapters/model-auth-readiness';
+import { refreshKimiSeatReadiness } from '../adapters/kimi-seat-probe';
 import {
   canSeat,
   classifySeatAuth,
@@ -105,7 +106,11 @@ export interface PreSpawnProbeDeps {
     adapterId: string,
     model?: string,
   ): AuthStrategy | Promise<AuthStrategy>;
-  /** Test seam for Kimi `provider list` readiness. */
+  /**
+   * Kimi `provider list` readiness. A produção liga a sonda VIVA aqui; testes
+   * injetam um veredito fixo. Ausente, o probe cai na cache de processo — que
+   * pode nunca ter sido aquecida, e é justamente aí que o assento se perde.
+   */
   kimiSeatReadiness?(
     adapterId: string,
   ): SeatAuthReadiness | undefined | Promise<SeatAuthReadiness | undefined>;
@@ -154,7 +159,16 @@ function readClaudeCredentialsFile(): string | null {
   }
 }
 
-const defaultDeps: PreSpawnProbeDeps = {
+/**
+ * Fiação de produção do gate pré-spawn. Exportada para o teste de regressão
+ * conseguir fixar a entrada do Kimi: `kimiSeatReadiness` ficou de fora por ser
+ * rotulada "test seam", e sem ela o spawn lia SÓ a cache de processo — que é
+ * aquecida em Settings/Contas, kickoff e bootstrap, nunca no spawn direto do
+ * operador. Cache fria (ou corrida com o fold do PATH no boot) virava
+ * "incomplete" → `missing-credential` → assento remapeado para claude sem
+ * ninguém saber (campo 10/09: "pedi kimi, abriu sonnet").
+ */
+export const PRODUCTION_PROBE_DEPS: PreSpawnProbeDeps = {
   getAdapter: (adapterId) => getAdapter(adapterId),
   listAccounts: (adapterId) => listAccounts(adapterId),
   hasStoredKey: (adapterId, model) => hasRuntimeKey(adapterId, model),
@@ -167,6 +181,9 @@ const defaultDeps: PreSpawnProbeDeps = {
     providerAuthStrategy(adapterId, model),
   authoritativeAuthStrategy: (adapterId, model) =>
     providerAuthStrategyAuthoritativeAsync(adapterId, model),
+  // Sonda VIVA: ~0,5s, só quando o assento pedido é o kimi, e o resultado vivo
+  // sempre sobrepõe a cache (mergeKimiProviderListReadiness devolve o live).
+  kimiSeatReadiness: () => refreshKimiSeatReadiness(),
 };
 
 function hintFor(adapter: ProbeAdapterView, fallback: string): string {
@@ -376,7 +393,7 @@ export async function probePreSpawn(
     return await probe(
       adapterId,
       options.model,
-      options.deps ?? defaultDeps,
+      options.deps ?? PRODUCTION_PROBE_DEPS,
       options.failClosed === true,
       options,
     );

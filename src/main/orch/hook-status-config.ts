@@ -35,7 +35,7 @@ import {
 } from '../../vendor/emdash/hooks/hook-config';
 import { filterUserHooks } from '../../vendor/emdash/hooks/hook-commands';
 
-// ── Claude (family: claude/glm/longcat) ─────────────────────────────────────
+// ── Claude (family: claude/glm/glm-flash/longcat) ───────────────────────────
 
 export type ClaudeHooksMap = Record<string, unknown[]>;
 

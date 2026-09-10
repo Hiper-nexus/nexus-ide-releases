@@ -580,6 +580,7 @@ function cliSkillDirs(adapterId: string, home: string): string[] {
   switch (adapterId) {
     case 'claude':
     case 'glm':
+    case 'glm-flash':
     case 'longcat':
       return [path.join(home, '.claude', 'skills')];
     case 'codex':

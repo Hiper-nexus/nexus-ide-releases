@@ -100,12 +100,16 @@ interface ParsedModel {
 }
 
 function parseModelVersion(model: string): ParsedModel {
-  const lower = model.toLowerCase();
+  // Sufixos de rota entre colchetes (`glm-5.3-flash[1m]` = variante 1M da
+  // z.ai) são detalhe de endpoint — o chip mostra o nome limpo, como o
+  // `%%[*` do launcher.
+  const clean = model.replace(/\[[^\]]*\]/g, '');
+  const lower = clean.toLowerCase();
 
   // GPT: "gpt-5.5-medium" → ver "5.5", effort "medium"
   //      "gpt-5.6-sol-medium" → ver "5.6 Sol", effort "medium"
   if (lower.startsWith('gpt-')) {
-    const parts = model.slice(4).split('-');
+    const parts = clean.slice(4).split('-');
     const effortIdx = parts.findIndex((p) => EFFORT_LABELS[p.toLowerCase()]);
     const vParts =
       effortIdx >= 0 ? parts.slice(0, effortIdx) : parts;
@@ -119,50 +123,50 @@ function parseModelVersion(model: string): ParsedModel {
 
   // Claude: "claude-sonnet-4-5" → "Sonnet 4.5"
   if (lower.startsWith('claude-')) {
-    const parts = model.slice(7).split('-');
+    const parts = clean.slice(7).split('-');
     return { version: normalizeVersionParts(parts) };
   }
 
   // Gemini: "gemini-3.1-pro" → "3.1 Pro"
   if (lower.startsWith('gemini-')) {
-    const parts = model.slice(7).split('-');
+    const parts = clean.slice(7).split('-');
     return { version: normalizeVersionParts(parts) };
   }
 
   // DeepSeek: "deepseek-v4-pro" → "V4 Pro"
   if (lower.startsWith('deepseek-')) {
-    const parts = model.slice(9).split('-');
+    const parts = clean.slice(9).split('-');
     return { version: normalizeVersionParts(parts) };
   }
 
   // Grok: "grok-4.5" | "cursor-grok-4.5-high"
   if (lower.startsWith('cursor-grok-')) {
-    return parseGrokSuffix(model.slice(12));
+    return parseGrokSuffix(clean.slice(12));
   }
   if (lower.startsWith('grok-')) {
-    return parseGrokSuffix(model.slice(5));
+    return parseGrokSuffix(clean.slice(5));
   }
 
   // Kimi: "kimi-k3-max" → "K3 Max"
   if (lower.startsWith('kimi-')) {
-    const parts = model.slice(5).split('-');
+    const parts = clean.slice(5).split('-');
     return { version: normalizeVersionParts(parts) };
   }
 
   // GLM: "glm-4-pro" → "4 Pro"
   if (lower.startsWith('glm-')) {
-    const parts = model.slice(4).split('-');
+    const parts = clean.slice(4).split('-');
     return { version: normalizeVersionParts(parts) };
   }
 
   // Qwen: "qwen2.5-coder" → "2.5 Coder"
   if (lower.startsWith('qwen')) {
-    const parts = model.slice(4).split('-');
+    const parts = clean.slice(4).split('-');
     return { version: normalizeVersionParts(parts) };
   }
 
   // Fallback genérico: retorna o model como está
-  return { version: model };
+  return { version: clean };
 }
 
 function parseGrokSuffix(suffix: string): ParsedModel {

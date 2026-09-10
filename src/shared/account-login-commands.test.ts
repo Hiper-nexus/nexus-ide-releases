@@ -11,6 +11,7 @@ describe('account login commands', () => {
       'agy',
       'claude',
       'codex',
+      'devin',
       'grok',
       'kimi',
       'muse',
@@ -26,6 +27,7 @@ describe('account login commands', () => {
 
   it('returns null for token-based adapters (GLM/LongCat) and unknowns', () => {
     expect(accountLoginCommandFor('glm')).toBeNull();
+    expect(accountLoginCommandFor('glm-flash')).toBeNull();
     expect(accountLoginCommandFor('longcat')).toBeNull();
     expect(accountLoginCommandFor('desconhecido')).toBeNull();
   });

@@ -82,10 +82,10 @@ const PATTERNS: FirstRunInterstitialPattern[] = [
   {
     name: 'workspace-trust-directory-contents',
     // Claude Code 2.1.2xx replaced the older "files in this folder" copy.
-    // Claude-family shells (glm/longcat) inherit the screen; grok ships a
-    // folder-trust gate of its own whose older wording is already owned by
-    // cli-prompt-autoresponder and is forbidden below.
-    adapterIds: ['claude', 'glm', 'longcat', 'grok'],
+    // Claude-family shells (glm/glm-flash/longcat) inherit the screen; grok
+    // ships a folder-trust gate of its own whose older wording is already
+    // owned by cli-prompt-autoresponder and is forbidden below.
+    adapterIds: ['claude', 'glm', 'glm-flash', 'longcat', 'grok'],
     requireAll: [
       /do you trust the contents of this directory\?/,
       /higher risk of prompt injection/,

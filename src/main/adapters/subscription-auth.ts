@@ -849,6 +849,7 @@ export function detectSubscriptionAuth(
       // The install itself creates ~/.grok. Only auth.json proves login.
       return existsInEnv('GROK_HOME', 'auth.json') || exists('.grok', 'auth.json');
     case 'glm':
+    case 'glm-flash':
       // GLM has no CLI-managed OAuth session — it authenticates purely with a
       // z.ai token injected as ANTHROPIC_AUTH_TOKEN. Force api-key strategy so
       // the token is actually injected (never suppressed as if a subscription

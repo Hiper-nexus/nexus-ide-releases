@@ -16,6 +16,7 @@ function adapters(...installed: string[]): AdapterAvailability[] {
     'grok',
     'kimi',
     'glm',
+    'glm-flash',
     'longcat',
   ];
   return all.map((id) => ({ id, installed: installed.includes(id) }));
@@ -120,6 +121,18 @@ describe('routeTask', () => {
     );
     expect(decision!.adapterId).toBe('glm');
     expect(decision!.reason).toContain('melhor opção instalada');
+  });
+
+  it('routes trivial work to GLM Flash when it is the installed cheap lane', () => {
+    const decision = routeTask(
+      'corrigir typo no README do projeto agora',
+      adapters('glm-flash', 'claude'),
+      DEFAULT_ROUTING_TABLE,
+      'trivial',
+    );
+    expect(decision!.adapterId).toBe('glm-flash');
+    expect(decision!.model).toBe('glm-5.3-flash[1m]');
+    expect(decision!.effort).toBe('low');
   });
 
   it('leads the medium tier with GLM 5.3 (cheap + strong)', () => {

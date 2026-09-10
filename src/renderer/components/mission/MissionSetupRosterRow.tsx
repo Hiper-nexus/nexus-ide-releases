@@ -7,6 +7,7 @@ import {
 import type { ProviderSettingsInfo } from '../../../shared/provider-settings-types';
 import type { AdapterInfo } from '../../../shared/types';
 import { isAdapterModelAuthenticated } from '../../orch/mission-runtime-readiness';
+import { rankPickerModels } from '../../lib/pane-picker-models';
 
 const CATEGORY_LABELS: Record<SquadAgent['category'], string> = {
   orchestrator: 'Coordenação e revisão',
@@ -50,14 +51,25 @@ interface MissionSetupRosterRowProps {
 
 export function readyModelsForPicker(input: {
   adapter: Pick<AdapterInfo, 'models'> | null;
-  provider: Pick<ProviderSettingsInfo, 'models'> | undefined;
+  provider:
+    | (Pick<ProviderSettingsInfo, 'models'> &
+        Partial<Pick<ProviderSettingsInfo, 'defaultModel' | 'modelInfo'>>)
+    | undefined;
 }): string[] {
-  return [
+  const merged = [
     ...new Set([
       ...(input.provider?.models ?? []),
       ...(input.adapter?.models.list ?? []),
     ]),
   ];
+  if (!input.provider) return merged;
+  // Mesma régua do "+ Pane": mais forte primeiro, api-only marcado mas
+  // rankeado pela força, deprecated por último.
+  return rankPickerModels({
+    models: merged,
+    defaultModel: input.provider.defaultModel ?? '',
+    modelInfo: input.provider.modelInfo,
+  }).map((row) => row.id);
 }
 
 export function readyModelForAdapter(input: {

@@ -207,6 +207,35 @@
         }
       ]
     },
+    "glm-flash": {
+      "default": "glm-5.3-flash[1m]",
+      "models": [
+        {
+          "id": "glm-5.3-flash[1m]",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        },
+        {
+          "id": "glm-5.3-flash",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        },
+        {
+          "id": "glm-4.7-flash[1m]",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        },
+        {
+          "id": "glm-4.7-flash",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        }
+      ]
+    },
     "agy": {
       "default": "gemini-3.7-flash-high",
       "models": [

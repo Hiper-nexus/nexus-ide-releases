@@ -22,6 +22,7 @@ const SOURCE_LABELS: Record<QuotaSource, string> = {
 };
 const PROVIDER_LABELS: Record<string, string> = {
   glm: 'GLM',
+  'glm-flash': 'GLM Flash',
   longcat: 'LongCat',
   kimi: 'Kimi',
   xai: 'xAI',

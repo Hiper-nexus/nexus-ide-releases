@@ -92,9 +92,11 @@ export type RankedRouteEntry = {
  *
  * GLM (z.ai, model 5.3) is a first-class `glm` adapter now — strong AND cheap,
  * so it LEADS the medium tier and is an early option on hard. It runs on the
- * Claude binary pointed at the z.ai endpoint (see glm.json). LongCat
- * (Meituan, 1M ctx, agentic) follows the same pattern (longcat.json) and sits
- * right behind GLM on medium/hard — comparable price, extra diversity.
+ * Claude binary pointed at the z.ai endpoint (see glm.json). GLM Flash is the
+ * same route with every model slot pinned to glm-5.3-flash (the launcher's
+ * `ai gf`): the cheap/fast lane for trivial+easy work. LongCat (Meituan,
+ * 1M ctx, agentic) follows the same pattern (longcat.json) and sits right
+ * behind GLM on medium/hard — comparable price, extra diversity.
  *
  */
 export const DEFAULT_ROUTING_TABLE: RoutingTable = {
@@ -102,6 +104,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'grok', model: 'grok-code-fast-1', effort: 'low' },
     { adapterId: 'agy', model: 'gemini-3.7-flash-low', effort: 'low' },
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'low' },
+    { adapterId: 'glm-flash', model: 'glm-5.3-flash[1m]', effort: 'low' },
     { adapterId: 'claude', model: 'claude-haiku-4-5', effort: 'low' },
   ],
   easy: [
@@ -109,6 +112,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'grok', model: 'grok-4-fast', effort: 'low' },
     { adapterId: 'agy', model: 'gemini-3.7-flash-low', effort: 'low' },
     { adapterId: 'codex', model: 'gpt-5.4-mini', effort: 'low' },
+    { adapterId: 'glm-flash', model: 'glm-5.3-flash[1m]', effort: 'low' },
     { adapterId: 'claude', model: 'claude-sonnet-4-6', effort: 'low' },
   ],
   medium: [

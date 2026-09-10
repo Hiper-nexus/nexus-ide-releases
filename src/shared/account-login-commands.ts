@@ -22,6 +22,9 @@ export const ACCOUNT_LOGIN_COMMANDS: Readonly<Record<string, string>> =
     muse: 'muse login',
     // AGY inicia o OAuth sozinho quando abre sem sessão.
     agy: 'agy',
+    // `devin auth login` tem subcomandos (login/logout/status); o flag
+    // --force-manual-token-flow é só para quem não consegue abrir o navegador.
+    devin: 'devin auth login',
   });
 
 export function accountLoginCommandFor(adapterId: string): string | null {

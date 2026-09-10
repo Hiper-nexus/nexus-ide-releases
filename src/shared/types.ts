@@ -296,6 +296,29 @@ export interface PaneLoginStuckEvent {
 }
 
 /**
+ * Payload pushed by main on `orch:worker.spawnFailed` (project scope stripped).
+ *
+ * Two situations share this channel, and both end the same way for the
+ * operator: the CLI that was asked for did NOT seat — it either died on boot
+ * (`successorCli` retried) or its seat had no usable credential and the
+ * succession chain seated another CLI before the process existed. The pane may
+ * well be open on the successor, which is exactly why the notice matters: sem
+ * ela a troca fica invisível e o pane parece só ter ignorado o pedido
+ * (campo 10/09: "pedi kimi, abriu sonnet que eu nem tinha pedido").
+ */
+export interface PaneWorkerSpawnFailedEvent {
+  readonly missionId: string;
+  /** CLI that did not seat. */
+  readonly deadAdapterId: string;
+  readonly message: string;
+  readonly title?: string;
+  /** CLI that took the pane instead, when one did. */
+  readonly successorCli?: string;
+  readonly successorName?: string;
+  readonly at: number;
+}
+
+/**
  * The typed surface exposed on `window.nexus` by the preload script.
  * The renderer NEVER sees raw ipcRenderer — only this contract.
  */
@@ -768,6 +791,10 @@ export interface NexusApi {
     onBgTaskEvent(cb: (event: BgTaskEventPayload) => void): Unsubscribe;
     onPaneLoginStuck(cb: (event: PaneLoginStuckEvent) => void): Unsubscribe;
     onAgentWaiting(cb: (event: AgentWaitingEvent) => void): Unsubscribe;
+    /** O CLI pedido não sentou (morreu no boot, ou o assento foi remapeado). */
+    onWorkerSpawnFailed(
+      cb: (event: PaneWorkerSpawnFailedEvent) => void,
+    ): Unsubscribe;
   };
   remote: {
     bridgeStatus(): Promise<RemoteBridgeInfo>;

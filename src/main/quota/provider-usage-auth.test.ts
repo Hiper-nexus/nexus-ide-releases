@@ -142,7 +142,7 @@ describe('resolveClaudeToken boot safety', () => {
 
 describe('quota account identity', () => {
   it.each([
-    ['glm', 'https://api.z.ai/api/anthropic'], ['longcat', 'https://api.longcat.chat/anthropic'],
+    ['glm', 'https://api.z.ai/api/anthropic'], ['glm-flash', 'https://api.z.ai/api/anthropic'], ['longcat', 'https://api.longcat.chat/anthropic'],
   ])('uses a generic Anthropic token only when its configured endpoint belongs to %s', (adapterId, matchingBaseUrl) => {
     mocks.hasCachedSecret.mockReturnValue(false);
     mocks.loadLauncherProviderKey.mockReturnValue(null);
@@ -163,7 +163,7 @@ describe('quota account identity', () => {
     expect(resolveCodexAuthCandidates()).toHaveLength(1);
   });
 
-  it.each(['glm', 'longcat', 'grok', 'kimi', 'opencode'])('does not assign global % to a pinned %s account', (adapterId) => {
+  it.each(['glm', 'glm-flash', 'longcat', 'grok', 'kimi', 'opencode'])('does not assign global % to a pinned %s account', (adapterId) => {
     mocks.getAccount.mockReturnValue({ adapterId });
     mocks.hasCachedSecret.mockReturnValue(false);
     mocks.loadLauncherProviderKey.mockReturnValue('global-other-account-key');

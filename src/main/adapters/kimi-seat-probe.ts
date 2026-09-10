@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { resolveCliBinary } from '../path-resolver';
 import {
   classifyKimiProviderList,
   mergeKimiProviderListReadiness,
@@ -13,10 +14,23 @@ export interface KimiSeatProbeDeps {
   execProviderList(): Promise<{ stdout: string; stderr: string }>;
 }
 
+/**
+ * Caminho absoluto quando existir. O app empacotado nasce com o PATH mínimo do
+ * Finder até o fold do login-shell assentar; um nome nu em ENOENT vira
+ * `missing` — veredito FALSO de "sem credencial" que remapeia o assento.
+ */
+function resolveKimiBin(): string {
+  try {
+    return resolveCliBinary('kimi')?.binPath ?? 'kimi';
+  } catch {
+    return 'kimi';
+  }
+}
+
 function defaultExecProviderList(): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     execFile(
-      'kimi',
+      resolveKimiBin(),
       ['provider', 'list', '--json'],
       { timeout: EXEC_TIMEOUT_MS, encoding: 'utf8' },
       (err, stdout, stderr) => {

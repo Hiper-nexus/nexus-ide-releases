@@ -21,6 +21,13 @@
  * - agy:      script oficial https://antigravity.google/cli/install.sh
  *             (antigravity.google/docs/cli/install) — baixado e executado
  *             via bash SEM pipe de shell.
+ *
+ * Canais verificados em 2026-09-10:
+ * - devin:    script oficial https://cli.devin.ai/install.sh — inspecionado
+ *             antes do uso: baixa de BASE_URL=https://static.devin.ai/cli com
+ *             sha256 conferido contra manifest.json, instala em
+ *             $XDG_DATA_HOME/devin/cli/_versions/<versão> e cria o link
+ *             ~/.local/bin/devin. Também via bash SEM pipe de shell.
  */
 
 interface ArgvInstallRecipe {
@@ -125,6 +132,13 @@ const RECIPES: Readonly<Record<string, PlatformRecipes>> = Object.freeze({
   agy: {
     darwin: [scriptRecipe('https://antigravity.google/cli/install.sh')],
     linux: [scriptRecipe('https://antigravity.google/cli/install.sh')],
+  },
+  devin: {
+    // Sem win32: o instalador oficial só cai em bash via MINGW/CYGWIN e
+    // delega ao powershell — o runner daqui é bash, então a receita não se
+    // aplica. Mesma decisão do agy.
+    darwin: [scriptRecipe('https://cli.devin.ai/install.sh')],
+    linux: [scriptRecipe('https://cli.devin.ai/install.sh')],
   },
 });
 

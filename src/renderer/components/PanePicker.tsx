@@ -101,7 +101,7 @@ export interface PanePickerEntry {
 
 const SECTION_LABEL: Record<PanePickerSection, string> = {
   tipo: 'Tipo',
-  clis: 'Cloud · CLIs',
+  clis: 'CLIs',
 };
 
 /** Conta sem apelido pinado — a CLI usa a credencial ativa dela. */
@@ -318,15 +318,9 @@ function agentEntry(
   };
 }
 
-/**
- * Monta o catálogo do menu a partir das duas fontes de verdade. Puro de
- * propósito: é o que os testes exercitam sem montar React.
- */
-export function buildPanePickerEntries(
-  providers: readonly ProviderSettingsInfo[],
-  accounts: readonly AccountInfo[],
-): PanePickerEntry[] {
-  const entries: PanePickerEntry[] = [
+/** Linhas fixas da seção Tipo — as mesmas no índice e no catálogo completo. */
+function typeEntries(): PanePickerEntry[] {
+  return [
     {
       id: 'type:terminal',
       section: 'tipo',
@@ -348,24 +342,19 @@ export function buildPanePickerEntries(
       intent: { kind: 'browser' },
     },
   ];
+}
 
-  const installed = providers
-    .filter(
-      (provider) =>
-        provider.kind === 'cli-pty' &&
-        provider.installed &&
-        // Provider desligado à mão em Configurações não volta pela porta dos
-        // fundos: o operador já disse que não quer essa CLI.
-        provider.enabled !== false,
-    )
-    .slice()
-    .sort(
-      (a, b) =>
-        rankAutoSeatCli(a.adapterId) - rankAutoSeatCli(b.adapterId) ||
-        a.label.localeCompare(b.label, 'pt-BR'),
-    );
+/**
+ * Monta o catálogo do menu a partir das duas fontes de verdade. Puro de
+ * propósito: é o que os testes exercitam sem montar React.
+ */
+export function buildPanePickerEntries(
+  providers: readonly ProviderSettingsInfo[],
+  accounts: readonly AccountInfo[],
+): PanePickerEntry[] {
+  const entries: PanePickerEntry[] = typeEntries();
 
-  for (const provider of installed) {
+  for (const provider of clisSorted(providers)) {
     const mine = accounts.filter(
       (account) => account.adapterId === provider.adapterId,
     ).sort(compareAccountsForDisplay);
@@ -385,6 +374,65 @@ export function buildPanePickerEntries(
   }
 
   return entries;
+}
+
+function clisSorted(providers: readonly ProviderSettingsInfo[]) {
+  return providers
+    .filter(
+      (provider) =>
+        provider.kind === 'cli-pty' &&
+        provider.installed &&
+        // Provider desligado à mão em Configurações não volta pela porta dos
+        // fundos: o operador já disse que não quer essa CLI.
+        provider.enabled !== false,
+    )
+    .slice()
+    .sort(
+      (a, b) =>
+        rankAutoSeatCli(a.adapterId) - rankAutoSeatCli(b.adapterId) ||
+        a.label.localeCompare(b.label, 'pt-BR'),
+    );
+}
+
+/**
+ * Nível 1 do menu: os tipos fixos + UMA linha por CLI instalada. A matriz
+ * conta × modelo mora no nível 2 (drill-in) — sem isso, N CLIs × M modelos ×
+ * K contas viravam uma parede única de scroll onde uma ferramenta instalada
+ * "sumia" dezenas de linhas abaixo (o caso real: Grok sob 2 contas de
+ * Claude). A busca continua global e ignora o índice: quem digita "grok" ou
+ * "opus" cai direto na linha de spawn.
+ */
+export function buildPanePickerIndex(
+  providers: readonly ProviderSettingsInfo[],
+  accounts: readonly AccountInfo[],
+): PanePickerRow[] {
+  const rows: PanePickerRow[] = typeEntries();
+  for (const provider of clisSorted(providers)) {
+    const ranked = rankPickerModels(provider);
+    const top = ranked[0]?.id;
+    const mine = accounts.filter(
+      (account) => account.adapterId === provider.adapterId,
+    ).length;
+    const detail = [
+      top ? `${top}${ranked.length > 1 ? ` +${ranked.length - 1}` : ''}` : DEFAULT_MODEL_LABEL,
+      mine > 0 ? `${mine} conta${mine === 1 ? '' : 's'}` : '',
+      provider.authState === 'missing' ? 'login pendente' : '',
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    rows.push({
+      id: `cli:${provider.adapterId}`,
+      section: 'clis',
+      group: '',
+      adapterId: provider.adapterId,
+      label: provider.label,
+      detail,
+      icon: 'arrow-right',
+      keywords: `${provider.label} ${provider.adapterId} cli`,
+      drillCli: provider.adapterId,
+    });
+  }
+  return rows;
 }
 
 /** Por que uma CLI conhecida ficou de fora da lista. */
@@ -440,6 +488,26 @@ export interface PanePickerAccountAction {
 }
 
 /**
+ * Linha de índice do nível 1: UMA por CLI instalada — nome, modelos e contas
+ * em resumo — que abre a matriz conta × modelo daquela ferramenta no nível 2.
+ * Não é pane nem cadastro: é navegação ("drill"), então nunca aparece na
+ * busca global (ela já enxerga as linhas de modelo direto).
+ */
+export interface PanePickerCliIndexAction {
+  readonly id: string;
+  readonly section: 'clis';
+  /** Vazio: linhas de índice não imprimem cabeçalho de grupo. */
+  readonly group: '';
+  readonly adapterId: string;
+  readonly label: string;
+  readonly detail: string;
+  readonly icon: PixelIconName;
+  readonly keywords: string;
+  /** CLI cuja matriz conta × modelo esta linha abre. */
+  readonly drillCli: string;
+}
+
+/**
  * Linha "mais N modelos": cada conta mostra os mais fortes e guarda o resto
  * atrás desta dobra. Abrir a dobra não fecha o menu.
  */
@@ -458,6 +526,7 @@ export interface PanePickerFoldAction {
 
 export type PanePickerRow =
   | PanePickerEntry
+  | PanePickerCliIndexAction
   | PanePickerAccountAction
   | PanePickerFoldAction;
 
@@ -465,6 +534,12 @@ export function isAccountAction(
   row: PanePickerRow,
 ): row is PanePickerAccountAction {
   return 'manageAccounts' in row;
+}
+
+export function isCliIndexAction(
+  row: PanePickerRow,
+): row is PanePickerCliIndexAction {
+  return 'drillCli' in row;
 }
 
 export function isFoldAction(row: PanePickerRow): row is PanePickerFoldAction {
@@ -651,6 +726,8 @@ export function PanePicker({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [cursor, setCursor] = useState(0);
+  /** CLI cujo índice foi aberto: a matriz conta × modelo dela ocupa o painel. */
+  const [drillCli, setDrillCli] = useState<string | null>(null);
   /** CLI cuja vista de contas está ocupando o painel (null = lista). */
   const [accountsFor, setAccountsFor] = useState<string | null>(null);
   /** Conta cadastrada agora: a lista volta com ela sob o cursor. */
@@ -669,14 +746,31 @@ export function PanePicker({
     () => withAccountActions(buildPanePickerEntries(providers, accounts), accounts),
     [providers, accounts],
   );
-  // A busca vê tudo; só a lista em repouso dobra os modelos além dos mais
-  // fortes de cada conta.
+  const indexRows = useMemo(
+    () => buildPanePickerIndex(providers, accounts),
+    [providers, accounts],
+  );
+  /** Linhas da CLI aberta em drill — modelos por conta + ação de cadastro. */
+  const drillRows = useMemo(
+    () =>
+      drillCli
+        ? entries.filter(
+            (row) =>
+              (row as { adapterId?: string }).adapterId === drillCli,
+          )
+        : [],
+    [entries, drillCli],
+  );
+  // A busca vê tudo e ignora o nível; em repouso, o índice lista UMA linha por
+  // CLI e o drill dobra os modelos além dos mais fortes de cada conta.
   const filtered = useMemo(
     () =>
       query.trim()
         ? filterPaletteActions(entries, query)
-        : foldPanePickerRows(entries, expandedFolds),
-    [entries, query, expandedFolds],
+        : drillCli
+          ? foldPanePickerRows(drillRows, expandedFolds)
+          : indexRows,
+    [entries, indexRows, drillRows, query, drillCli, expandedFolds],
   );
   const accountsForLabel = useMemo(
     () =>
@@ -685,9 +779,16 @@ export function PanePicker({
       '',
     [providers, accountsFor],
   );
+  const drillLabel = useMemo(
+    () =>
+      providers.find((provider) => provider.adapterId === drillCli)?.label ??
+      drillCli ??
+      '',
+    [providers, drillCli],
+  );
   const hasCli = useMemo(
-    () => entries.some((entry) => entry.section === 'clis'),
-    [entries],
+    () => indexRows.some((row) => row.section === 'clis'),
+    [indexRows],
   );
   const unavailable = useMemo(
     () => buildPanePickerUnavailable(providers),
@@ -698,12 +799,16 @@ export function PanePicker({
   const closeToTrigger = useCallback(() => {
     setOpen(false);
     setAccountsFor(null);
+    setDrillCli(null);
     triggerRef.current?.focus();
   }, []);
 
-  /** Volta da vista de contas para a lista. O foco é reposto no efeito
-   *  abaixo: a busca só volta a existir no render seguinte. */
-  const backToList = useCallback(() => setAccountsFor(null), []);
+  /** Sobe UM nível: contas → matriz da CLI → índice. O foco é reposto no
+   *  efeito abaixo: a busca só volta a existir no render seguinte. */
+  const stepUp = useCallback(() => {
+    if (accountsFor) setAccountsFor(null);
+    else setDrillCli(null);
+  }, [accountsFor]);
 
   // Início → Abrir um pane: o grid pode estar escondido; o pedido fica
   // até este picker montar/ficar vivo. Quando o pedido nomeia uma CLI, o
@@ -711,7 +816,11 @@ export function PanePicker({
   useEffect(() => {
     if (!pendingOpen) return;
     setOpen(true);
-    if (pendingAccountsAdapterId) setAccountsFor(pendingAccountsAdapterId);
+    if (pendingAccountsAdapterId) {
+      // Voltar das contas devolve a matriz daquela CLI, não o índice geral.
+      setDrillCli(pendingAccountsAdapterId);
+      setAccountsFor(pendingAccountsAdapterId);
+    }
     consumePendingOpen();
   }, [pendingOpen, pendingAccountsAdapterId, consumePendingOpen]);
 
@@ -721,6 +830,8 @@ export function PanePicker({
   // quando o próprio operador voltou para a lista.
   const accountsForRef = useRef<string | null>(null);
   accountsForRef.current = accountsFor;
+  const drillCliRef = useRef<string | null>(null);
+  drillCliRef.current = drillCli;
   useEffect(
     () => () => {
       const pending = accountsForRef.current;
@@ -729,22 +840,26 @@ export function PanePicker({
     [],
   );
 
-  // Fechar o menu encerra a vista de contas: reabrir depois começa na lista,
+  // Fechar o menu encerra drill e contas: reabrir depois começa no índice,
   // e o desmonte só restaura contexto de quem NÃO fechou de propósito.
   useEffect(() => {
-    if (!open) setAccountsFor(null);
+    if (!open) {
+      setAccountsFor(null);
+      setDrillCli(null);
+    }
   }, [open]);
 
-  // Estado limpo a cada abertura (18 CLIs não se navegam com scroll).
+  // Estado limpo a cada abertura: uma linha por CLI se navega com os olhos.
   useEffect(() => {
     if (!open) return;
     setQuery('');
     setCursor(0);
+    setDrillCli(null);
     setExpandedFolds(new Set());
   }, [open]);
 
-  // O foco vive na busca sempre que a lista está na frente — ao abrir e ao
-  // voltar da vista de contas. Teclado nunca fica órfão no meio do menu.
+  // O foco vive na busca sempre que a lista está na frente — índice e drill
+  // compartilham a mesma linha de busca (a busca vê tudo, de qualquer nível).
   useEffect(() => {
     if (open && !accountsFor) inputRef.current?.focus();
   }, [open, accountsFor]);
@@ -771,8 +886,10 @@ export function PanePicker({
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       event.preventDefault();
-      // Escape sobe UM nível: de contas para a lista, da lista para fora.
-      if (accountsForRef.current) backToList();
+      // Escape sobe UM nível: de contas para a matriz da CLI, dela para o
+      // índice, do índice para fora.
+      if (accountsForRef.current) stepUp();
+      else if (drillCliRef.current) setDrillCli(null);
       else closeToTrigger();
     };
     document.addEventListener('mousedown', onPointerDown);
@@ -781,7 +898,7 @@ export function PanePicker({
       document.removeEventListener('mousedown', onPointerDown);
       document.removeEventListener('keydown', onKeyDown);
     };
-  }, [open, closeToTrigger, backToList]);
+  }, [open, closeToTrigger, stepUp]);
 
   // O cursor nunca aponta para fora do filtro corrente.
   useEffect(() => {
@@ -795,6 +912,12 @@ export function PanePicker({
   }, [cursor]);
 
   const runRow = (row: PanePickerRow) => {
+    if (isCliIndexAction(row)) {
+      // Drill-in: a matriz conta × modelo daquela CLI ocupa o painel.
+      setDrillCli(row.drillCli);
+      setCursor(0);
+      return;
+    }
     if (isAccountAction(row)) {
       // Cadastro não abre pane: o menu troca para a vista de contas e o
       // operador volta para escolher o modelo com a conta já selecionada.
@@ -826,6 +949,29 @@ export function PanePicker({
     } else if (event.key === 'End') {
       event.preventDefault();
       setCursor(Math.max(0, filtered.length - 1));
+    } else if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+      // ←/→ são de edição quando há texto no campo; com a busca vazia eles
+      // viram navegação de nível (→ entra na CLI, ← volta ao índice).
+      const target = event.target as HTMLInputElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable) &&
+        target.value !== ''
+      ) {
+        return;
+      }
+      event.preventDefault();
+      if (event.key === 'ArrowRight') {
+        // → em linha de índice abre a matriz da CLI; nas demais, não faz nada.
+        const row = filtered[cursor];
+        if (row && isCliIndexAction(row)) runRow(row);
+      } else if (drillCli) {
+        // ← sobe um nível quando o drill está aberto.
+        setDrillCli(null);
+        setCursor(0);
+      }
     } else if (event.key === 'Enter') {
       event.preventDefault();
       const row = filtered[cursor];
@@ -842,12 +988,14 @@ export function PanePicker({
       {open && (
         <div
           className="pane-picker__panel"
-          data-view={accountsFor ? 'accounts' : 'list'}
+          data-view={accountsFor ? 'accounts' : drillCli ? 'cli' : 'list'}
           role="dialog"
           aria-label={
             accountsFor
               ? `Contas de ${accountsForLabel}`
-              : 'Abrir novo pane'
+              : drillCli
+                ? `Modelos de ${drillLabel}`
+                : 'Abrir novo pane'
           }
           // Setas/Enter só governam a LISTA. Dentro do formulário de contas
           // eles pertencem aos campos: capturá-los ali roubaria o Enter de
@@ -861,10 +1009,10 @@ export function PanePicker({
                   type="button"
                   className="pane-picker__back"
                   data-testid="pane-picker-accounts-back"
-                  onClick={backToList}
+                  onClick={stepUp}
                 >
                   <PixelIcon name="chevron" size={12} />
-                  Voltar às contas
+                  Voltar
                 </button>
                 <span className="pane-picker__head-title">
                   {accountsForLabel}
@@ -884,8 +1032,25 @@ export function PanePicker({
             </>
           ) : (
             <>
-              <div className="pane-picker__head">
-                <PixelIcon name="search" size={12} />
+              <div
+                className={`pane-picker__head${drillCli ? ' pane-picker__head--back' : ''}`}
+              >
+                {drillCli ? (
+                  <button
+                    type="button"
+                    className="pane-picker__back"
+                    data-testid="pane-picker-cli-back"
+                    onClick={() => {
+                      setDrillCli(null);
+                      setCursor(0);
+                    }}
+                  >
+                    <PixelIcon name="chevron" size={12} />
+                    Voltar
+                  </button>
+                ) : (
+                  <PixelIcon name="search" size={12} />
+                )}
                 <input
                   ref={inputRef}
                   className="pane-picker__input"
@@ -899,14 +1064,26 @@ export function PanePicker({
                   }
                   aria-label="Filtrar por CLI, conta ou modelo"
                   data-testid="pane-picker-filter"
-                  placeholder="CLI, conta ou modelo…"
+                  placeholder={
+                    drillCli
+                      ? `${drillLabel} — busca continua vendo tudo`
+                      : 'CLI, conta ou modelo…'
+                  }
                   value={query}
                   onChange={(event) => {
                     setQuery(event.target.value);
                     setCursor(0);
                   }}
                 />
-                <kbd className="pane-picker__esc">esc</kbd>
+                {drillCli ? (
+                  <ProviderLogo
+                    adapterId={drillCli}
+                    label={drillLabel}
+                    size="xs"
+                  />
+                ) : (
+                  <kbd className="pane-picker__esc">esc</kbd>
+                )}
               </div>
 
               <ul
@@ -922,8 +1099,12 @@ export function PanePicker({
                   </li>
                 )}
                 {filtered.map((row, index) => {
-                  const showSection = row.section !== lastSection;
-                  const showGroup = row.group !== '' && row.group !== lastGroup;
+                  // No drill o cabeçalho já nomeia a CLI — sem repetir seção
+                  // nem grupo. Conta continua: é ela que separa os blocos.
+                  const inDrill = drillCli !== null && !query.trim();
+                  const showSection = !inDrill && row.section !== lastSection;
+                  const showGroup =
+                    !inDrill && row.group !== '' && row.group !== lastGroup;
                   if (showGroup) lastAccountKey = null;
                   lastSection = row.section;
                   lastGroup = row.group;
@@ -934,6 +1115,7 @@ export function PanePicker({
                   if (heading) lastAccountKey = heading.key;
                   const admin = isAccountAction(row);
                   const fold = isFoldAction(row);
+                  const cliRow = isCliIndexAction(row);
                   const isFresh =
                     entry !== null &&
                     entry.intent.kind === 'agent' &&
@@ -989,10 +1171,13 @@ export function PanePicker({
                         aria-label={
                           admin
                             ? `Adicionar conta em ${row.group}`
-                            : undefined
+                            : cliRow
+                              ? `Abrir modelos de ${row.label}`
+                              : undefined
                         }
                         data-active={index === cursor}
                         data-admin={admin || undefined}
+                        data-cli={cliRow || undefined}
                         data-fold={fold || undefined}
                         data-model={heading ? true : undefined}
                         data-fresh={isFresh || undefined}
@@ -1002,7 +1187,15 @@ export function PanePicker({
                         onMouseEnter={() => setCursor(index)}
                         onClick={() => runRow(row)}
                       >
-                        <PixelIcon name={row.icon} size={12} />
+                        {cliRow ? (
+                          <ProviderLogo
+                            adapterId={row.adapterId}
+                            label={row.label}
+                            size="xs"
+                          />
+                        ) : (
+                          <PixelIcon name={row.icon} size={12} />
+                        )}
                         <span className="pane-picker__item-label">
                           {row.label}
                         </span>
@@ -1026,23 +1219,29 @@ export function PanePicker({
                           </span>
                         ) : row.detail ? (
                           <span className="pane-picker__item-detail">
-                            <span aria-hidden="true">›</span>
+                            {!cliRow && <span aria-hidden="true">›</span>}
                             {row.detail}
                           </span>
                         ) : null}
+                        {cliRow && (
+                          <PixelIcon
+                            name="arrow-right"
+                            size={12}
+                          />
+                        )}
                       </button>
                     </li>
                   );
                 })}
               </ul>
 
-              {!hasCli && (
+              {!hasCli && !drillCli && (
                 <p className="pane-picker__hint">
                   Nenhuma CLI detectada — instale uma em Configurações › Providers.
                 </p>
               )}
 
-              {unavailable.length > 0 && (
+              {unavailable.length > 0 && !drillCli && !query.trim() && (
                 <div
                   className="pane-picker__unavailable"
                   aria-label="CLIs indisponíveis"

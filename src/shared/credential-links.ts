@@ -63,6 +63,10 @@ const PROVIDER_LINKS: Record<string, CredentialLink> = {
     label: 'Z.AI Platform',
     url: 'https://z.ai/model-api',
   },
+  'glm-flash': {
+    label: 'Z.AI Platform',
+    url: 'https://z.ai/model-api',
+  },
   grok: ENV_LINKS.XAI_API_KEY,
   kimi: ENV_LINKS.MOONSHOT_API_KEY,
   longcat: {
@@ -78,6 +82,7 @@ const UPSTREAM_LINKS: Record<string, CredentialLink> = {
     url: 'https://platform.deepseek.com/api_keys',
   },
   glm: PROVIDER_LINKS.glm,
+  'glm-flash': PROVIDER_LINKS['glm-flash'],
   longcat: PROVIDER_LINKS.longcat,
   minimax: {
     label: 'MiniMax Platform',

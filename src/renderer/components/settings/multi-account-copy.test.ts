@@ -98,7 +98,7 @@ describe('multi-account copy for every builtin LLM adapter', () => {
 
 describe('supportsSessionSnapshot matrix (main vault)', () => {
   // OAuth / session snapshot: Claude keychain + file-auth CLIs.
-  // API-only (glm, longcat, aider) → só botão API key na UI.
+  // API-only (glm, glm-flash, longcat, aider) → só botão API key na UI.
   const expectSnapshot: Record<string, boolean> = {
     claude: true,
     codex: true,
@@ -108,8 +108,10 @@ describe('supportsSessionSnapshot matrix (main vault)', () => {
     opencode: true,
     openclaude: false,
     glm: false,
+    'glm-flash': false,
     longcat: false,
     aider: false,
+    devin: true,
   };
 
   for (const adapterId of ALL_MULTI_ACCOUNT_ADAPTER_IDS) {

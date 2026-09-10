@@ -8,6 +8,11 @@ export const FILE_AUTH_ADAPTER_IDS = [
   'kimi',
   'opencode',
   'agy',
+  // Devin grava TOML plano (sem seções) em
+  // ~/.local/share/devin/credentials.toml. Os helpers de identidade/frescor de
+  // managed-credentials são JSON-shaped e devolvem null para ele — por isso o
+  // adapter tem ramo próprio lá. Mantenha os dois lados em sincronia.
+  'devin',
 ] as const;
 
 export type FileAuthAdapterId = (typeof FILE_AUTH_ADAPTER_IDS)[number];

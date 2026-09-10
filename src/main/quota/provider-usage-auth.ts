@@ -65,7 +65,7 @@ function pushUnique(out: string[], value: string | null | undefined): void {
 }
 
 function declaredAnthropicToken(adapterId: string): string | null {
-  const expectedHost = adapterId === 'glm' ? 'api.z.ai'
+  const expectedHost = adapterId === 'glm' || adapterId === 'glm-flash' ? 'api.z.ai'
     : adapterId === 'longcat' ? 'api.longcat.chat' : null;
   if (!expectedHost) return null;
   try {
@@ -163,7 +163,7 @@ export function resolveProviderApiKeyCandidates(
     // ignore
   }
 
-  if (adapterId === 'glm') {
+  if (adapterId === 'glm' || adapterId === 'glm-flash') {
     for (const alias of ['zai', 'zhipu', 'z-ai', 'z.ai'] as const) {
       pushUnique(out, safeGetKey(alias));
       try {

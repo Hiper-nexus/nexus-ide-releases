@@ -259,6 +259,7 @@ describe('prepareAccountForSpawn', () => {
     'openclaude',
     'aider',
     'glm',
+    'glm-flash',
     'longcat',
   ])('keeps N API-key credentials independent for %s', (adapterId) => {
     const first = addAccount({

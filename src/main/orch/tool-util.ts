@@ -29,6 +29,7 @@ import {
   writerCircuitBreakers,
 } from './writer-circuit-break';
 import { trace } from '../observability/main-trace';
+import { emitWorkerSpawnFailed } from './spawn-fail-events';
 import { getAdapter } from '../adapters/adapter-registry';
 import { discoverCliModels } from '../adapters/cli-model-discovery';
 import {
@@ -121,6 +122,7 @@ const MAX_NATIVE_INITIAL_PROMPT_BYTES = 64 * 1024;
 const CLAUDE_FAMILY_TURN_PROOF_ADAPTERS = new Set([
   'claude',
   'glm',
+  'glm-flash',
   'longcat',
 ]);
 
@@ -1094,6 +1096,14 @@ export async function spawnPaneAndMaybePrompt(
     getOrchSettings().squadCliPolicy,
   );
   let activeAdapterId = options.adapterId;
+  /**
+   * Assento que o gate de credencial recusou e a cadeia de sucessão
+   * substituiu. Guardado para avisar o operador DEPOIS que o pane existir —
+   * antes disso não há sessão para nomear, e a troca silenciosa é justamente o
+   * que fazia o pane parecer ter ignorado o pedido (campo 10/09).
+   */
+  let seatRemap: { readonly requested: string; readonly reason: string } | null =
+    null;
   try {
     await assertPreSpawnProbe(activeAdapterId, {
       model: effectiveModel,
@@ -1125,6 +1135,7 @@ export async function spawnPaneAndMaybePrompt(
       `[pane-spawn] ${error.message} — assento remapeado para \`${successor}\`` +
         ` (role=${options.role ?? '?'} mission=${options.missionId ?? '?'})`,
     );
+    seatRemap = { requested: activeAdapterId, reason: error.message };
     activeAdapterId = successor;
     options = { ...options, adapterId: successor, model: undefined };
   }
@@ -1308,6 +1319,26 @@ export async function spawnPaneAndMaybePrompt(
   writerCircuitBreakers.recordConnectSuccess(writerKey);
   adapterCircuitBreakers.recordSuccess(options.adapterId);
   hooks.onPaneCreated?.(result.paneId, result.sessionId);
+  if (seatRemap) {
+    // O pane ABRIU — em outro CLI. Sem este aviso o operador só descobre a
+    // troca por acaso, e o pane parece ter ignorado o que foi pedido.
+    try {
+      emitWorkerSpawnFailed({
+        missionId: options.missionId ?? '',
+        deadAdapterId: seatRemap.requested,
+        message: seatRemap.reason,
+        title:
+          `Assento ${seatRemap.requested} → ${options.adapterId}` +
+          (options.agentName ? ` (${options.agentName})` : ''),
+        successorCli: options.adapterId,
+        successorName: getAdapter(options.adapterId)?.label,
+        at: Date.now(),
+        scope: options.scope,
+      });
+    } catch {
+      // Aviso é best-effort: nunca derruba um spawn que já deu certo.
+    }
+  }
   // Remember the mission's composition so it can be reopened from history.
   if (options.missionId && options.transient !== true) {
     assertMcpInvocationCurrent(hooks.invocation);

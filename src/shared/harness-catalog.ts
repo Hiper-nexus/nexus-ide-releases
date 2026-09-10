@@ -257,6 +257,19 @@ export const PRESET_HARNESSES: readonly HarnessDefinition[] = Object.freeze([
     installInstructionsUrl: 'https://block.github.io/goose/',
     installHint: 'Install goose from block.github.io/goose',
   }),
+  // A própria CLI traz o servidor ACP (`devin acp` — "Run as an ACP (Agent
+  // Client Protocol) server over stdio"), então não há wrapper npm aqui.
+  deepFreezeDefinition({
+    id: 'devin',
+    label: 'Devin (ACP)',
+    command: 'devin',
+    args: ['acp'],
+    env: {},
+    tier: 'preset',
+    canAutoInstall: false,
+    installInstructionsUrl: 'https://cli.devin.ai/install.sh',
+    installHint: 'Install the Devin CLI and ensure `devin` is on your PATH',
+  }),
 ]);
 
 /**

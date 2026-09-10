@@ -35,11 +35,28 @@ describe('launcher provider routing (ported from ~/ai-launcher)', () => {
     expect(env.ANTHROPIC_AUTH_TOKEN).toBe('zai-token');
     // Extra env ported verbatim from PROVIDER_EXTRA_ENV[glm].
     expect(env.API_TIMEOUT_MS).toBe('600000');
-    expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-4.7');
+    expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-5.3-flash[1m]');
     expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5.3[1m]');
     expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5.3[1m]');
     // Third parties use AUTH_TOKEN, never API_KEY.
     expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+  });
+
+  it('routes glm-flash like `ai gf`: same z.ai host, every model slot on Flash', () => {
+    const provider = getUpstreamProvider('glm-flash');
+    expect(provider?.baseUrl).toBe('https://api.z.ai/api/anthropic');
+    expect(provider?.requiresToken).toBe(true);
+    const env = buildProviderRoutingEnv('glm-flash', 'zai-token');
+    expect(env.ANTHROPIC_BASE_URL).toBe('https://api.z.ai/api/anthropic');
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBe('zai-token');
+    // glm_flash_setup_env pinna os quatro slots + o modelo da sessão.
+    expect(env.ANTHROPIC_MODEL).toBe('glm-5.3-flash[1m]');
+    expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('glm-5.3-flash[1m]');
+    expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('glm-5.3-flash[1m]');
+    expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('glm-5.3-flash[1m]');
+    expect(env.ANTHROPIC_API_KEY).toBeUndefined();
+    // Sem token a rota falha fechada como os demais upstreams com token.
+    expect(buildProviderRoutingEnv('glm-flash', null)).toEqual({});
   });
 
   it('returns no routing env for native anthropic', () => {
@@ -101,6 +118,17 @@ describe('loadLauncherProviderKey (ai-launcher providers.conf bridge)', () => {
     fs.writeFileSync(conf, 'zai=from-alias\n', { mode: 0o600 });
     setLauncherProvidersFileForTests(conf);
     expect(loadLauncherProviderKey('glm')).toBe('from-alias');
+  });
+
+  it('shares the glm credential slot with glm-flash (own key wins first)', () => {
+    fs.writeFileSync(conf, 'glm=zai-shared\n', { mode: 0o600 });
+    setLauncherProvidersFileForTests(conf);
+    expect(loadLauncherProviderKey('glm-flash')).toBe('zai-shared');
+    fs.writeFileSync(conf, 'glm-flash=dedicated\nglm=zai-shared\n', {
+      mode: 0o600,
+    });
+    setLauncherProvidersFileForTests(conf);
+    expect(loadLauncherProviderKey('glm-flash')).toBe('dedicated');
   });
 
   it('rejects invalid provider names and missing files', () => {

@@ -77,7 +77,7 @@ describe('modelStrength — custo do catálogo manda, família desempata', () =>
 });
 
 describe('rankPickerModels — o mais forte primeiro', () => {
-  it('Claude: opus antes de fable/sonnet mesmo quando o outro id é mais novo', () => {
+  it('Claude: geração de fronteira (fable/mythos) lidera; deprecated afunda, api-only rankeia', () => {
     const ranked = rankPickerModels({
       defaultModel: 'claude-sonnet-5',
       models: [
@@ -105,15 +105,15 @@ describe('rankPickerModels — o mais forte primeiro', () => {
     });
 
     expect(ranked.map((row) => row.id)).toEqual([
+      'claude-fable-5-1',
+      'claude-mythos-5-1',
+      'claude-fable-5',
       'claude-opus-5',
       'claude-opus-4-8',
       'claude-opus-4-7',
-      'claude-fable-5-1',
       'claude-sonnet-5',
       'claude-sonnet-4-6',
       'claude-haiku-4-5',
-      'claude-mythos-5-1',
-      'claude-fable-5',
     ]);
     // O default deixa de ser o primeiro à força, mas segue marcado.
     expect(ranked.find((row) => row.id === 'claude-sonnet-5')?.isDefault).toBe(true);
@@ -125,7 +125,7 @@ describe('rankPickerModels — o mais forte primeiro', () => {
     expect(mythos?.warning).toBe('Trusted-access only');
   });
 
-  it('Codex: sol antes de terra (mesmo custo, família forte), 5.5 antes de luna, astra restrito no fim', () => {
+  it('Codex: astra (GPT-6) lidera mesmo api-only; sol antes de terra, 5.5 antes de luna', () => {
     const ranked = rankPickerModels({
       defaultModel: 'gpt-5.6-terra',
       models: [
@@ -151,6 +151,7 @@ describe('rankPickerModels — o mais forte primeiro', () => {
     });
 
     expect(ranked.map((row) => row.id)).toEqual([
+      'gpt-6-astra',
       'gpt-5.6-sol',
       'gpt-5.6-terra',
       'gpt-5.5',
@@ -158,7 +159,6 @@ describe('rankPickerModels — o mais forte primeiro', () => {
       'gpt-5.4',
       'gpt-5.3-codex',
       'gpt-5.4-mini',
-      'gpt-6-astra',
     ]);
   });
 
@@ -228,7 +228,7 @@ describe('rankPickerModels — o mais forte primeiro', () => {
     expect(ranked.every((row) => row.restricted === false)).toBe(true);
   });
 
-  it('modelo restrito (api-only) permanece escolhível manualmente, só nunca prioritário', () => {
+  it('modelo restrito (api-only) rankeia pela força e mantém o selo "restrito"', () => {
     const ranked = rankPickerModels({
       defaultModel: 'gpt-5.6-sol',
       models: ['gpt-6-astra', 'gpt-5.6-sol'],
@@ -238,7 +238,20 @@ describe('rankPickerModels — o mais forte primeiro', () => {
       }),
     });
     const ids = ranked.map((row) => row.id);
-    expect(ids).toEqual(['gpt-5.6-sol', 'gpt-6-astra']);
+    expect(ids).toEqual(['gpt-6-astra', 'gpt-5.6-sol']);
     expect(ranked.find((row) => row.id === 'gpt-6-astra')?.restricted).toBe(true);
+  });
+
+  it('modelo deprecated ("não use") afunda por último mesmo sendo forte', () => {
+    const ranked = rankPickerModels({
+      defaultModel: 'x-1',
+      models: ['x-9', 'x-1'],
+      modelInfo: info({
+        'x-9': { cost: 'high', availability: 'deprecated' },
+        'x-1': { cost: 'low', availability: 'cheap' },
+      }),
+    });
+    expect(ranked.map((row) => row.id)).toEqual(['x-1', 'x-9']);
+    expect(ranked[1]?.restricted).toBe(true);
   });
 });

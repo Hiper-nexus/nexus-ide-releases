@@ -9,6 +9,7 @@ const LEGACY_ORCHESTRATOR_CLI = "claude";
 const WORKER_CLI_ORDER = [
   "codex",
   "glm",
+  "glm-flash",
   "agy",
   "grok",
   "opencode",

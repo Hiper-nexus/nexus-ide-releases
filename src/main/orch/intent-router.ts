@@ -366,7 +366,9 @@ const ROUTER_PROVIDER_CHAIN: readonly RouterProvider[] = [
     id: 'glm',
     style: 'anthropic',
     endpoint: 'https://api.z.ai/api/anthropic/v1/messages',
-    model: 'glm-4.7',
+    // Slot barato do provider glm no launcher (ANTHROPIC_DEFAULT_HAIKU_MODEL):
+    // glm-5.3-flash — mais barato que o 4.7 e geração atual.
+    model: 'glm-5.3-flash',
   },
   {
     id: 'qwen',

@@ -18,7 +18,7 @@ export interface PickerModelRow {
   readonly id: string;
   /** Faixa operacional do catálogo; null quando ele não conhece o modelo. */
   readonly band: OperationalBand | null;
-  /** api-only/deprecated: escolhível à mão, mas nunca acima dos utilizáveis. */
+  /** api-only/deprecated: escolha manual — a linha mostra o selo "restrito". */
   readonly restricted: boolean;
   readonly isDefault: boolean;
   readonly warning?: string;
@@ -65,14 +65,16 @@ const COST_STRENGTH: Readonly<Record<string, number>> = Object.freeze({
 
 /** Força relativa das famílias dentro da mesma faixa de custo. */
 const FAMILY_STRENGTH_NUDGE: Readonly<Record<string, number>> = Object.freeze({
+  // Geração de fronteira nova lidera o provider: fable/mythos (Claude 5.x GA
+  // e trusted-access) e astra (GPT-6) ficam acima de opus/sol.
+  fable: 0.35,
+  mythos: 0.35,
+  astra: 0.35,
   opus: 0.3,
   ultra: 0.25,
   max: 0.25,
-  fable: 0.2,
-  mythos: 0.2,
   pro: 0.2,
   sol: 0.2,
-  astra: 0.2,
   reasoner: 0.2,
 });
 
@@ -135,6 +137,12 @@ function isRestricted(info: ModelCatalogEntryInfo | undefined): boolean {
   return info?.availability === 'api-only' || info?.availability === 'deprecated';
 }
 
+/** `deprecated` = "não use": sempre no fim. `api-only` é só escolha manual —
+ * rankeia pela força normal e a linha mostra o selo "restrito". */
+function isDeprecated(info: ModelCatalogEntryInfo | undefined): boolean {
+  return info?.availability === 'deprecated';
+}
+
 function bandOf(info: ModelCatalogEntryInfo | undefined): OperationalBand | null {
   if (!info) return null;
   const knowsCost = info.costTier !== undefined && info.costTier !== 'unknown';
@@ -143,9 +151,11 @@ function bandOf(info: ModelCatalogEntryInfo | undefined): OperationalBand | null
 }
 
 /**
- * Catálogo do provider em ordem de escolha: utilizáveis antes dos restritos;
- * capacidade primeiro; depois geração major/minor; e por fim a ordem do
- * próprio catálogo. O default é marcado, mas não ganha prioridade artificial.
+ * Catálogo do provider em ordem de escolha: capacidade primeiro; depois
+ * geração major/minor; e por fim a ordem do próprio catálogo. api-only é
+ * escolha manual legítima — rankeia pela força e a linha carrega o selo
+ * "restrito"; só `deprecated` ("não use") afunda sempre. O default é marcado,
+ * mas não ganha prioridade artificial.
  */
 export function rankPickerModels(
   provider: Pick<ProviderSettingsInfo, 'models' | 'defaultModel' | 'modelInfo'>,
@@ -161,13 +171,14 @@ export function rankPickerModels(
       index,
       info,
       restricted: isRestricted(info),
+      deprecated: isDeprecated(info),
       version: parseModelVersion(id),
       strength: modelStrength(id, info),
     };
   });
   scored.sort(
     (a, b) =>
-      Number(a.restricted) - Number(b.restricted) ||
+      Number(a.deprecated) - Number(b.deprecated) ||
       b.strength - a.strength ||
       b.version[0] - a.version[0] ||
       b.version[1] - a.version[1] ||

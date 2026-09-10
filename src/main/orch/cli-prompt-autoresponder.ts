@@ -25,6 +25,13 @@ interface PromptSignature {
    * visible, before the menu options finish painting.
    */
   earlyPhrase?: string;
+  /**
+   * Resposta lida da TELA, para telas cujo aceite não é uma tecla fixa: a
+   * mesma caixa lista as opções em ordem diferente entre builds e o Enter
+   * confirma o item focado (o errado encerra o pane). `null` = recusa
+   * responder, nunca um chute.
+   */
+  responseFor?: (raw: string) => string | null;
 }
 
 export const ACCEPT_DEFAULT_PROMPT_RESPONSE = '\r';
@@ -34,15 +41,24 @@ export const ACCEPT_SECOND_PROMPT_RESPONSE = '\x1b[B\r';
 export const ACCEPT_SECOND_OPTION_BY_NUMBER = '2\r';
 /** Pick the first numbered option explicitly (Claude-family workspace trust). */
 export const ACCEPT_FIRST_OPTION_BY_NUMBER = '1\r';
+/**
+ * Move the trust cursor OFF the parked cancel item onto "Yes, …", then confirm.
+ *
+ * Claude Code 2.1.267 desenha o diálogo de trust SEM números e com o cursor
+ * parado em "No, exit": o Enter sozinho encerra o CLI (probe ao vivo 10/09 —
+ * exit 1) e o antigo `1\r` vira uma tecla ignorada seguida desse mesmo Enter
+ * fatal. Ver `claudeWorkspaceTrustResponse`.
+ */
+export const ACCEPT_SECOND_TRUST_OPTION_RESPONSE = '\x1b[B\r';
 
 /**
- * Claude Code 2.1.x (and Claude-family shells: glm/longcat) show this disclaimer
+ * Claude Code 2.1.x (and Claude-family shells: glm/glm-flash/longcat) show this disclaimer
  * whenever full-auto / bypass is enabled. The live UI no longer always prints
  * "Enter to confirm" — matching on that phrase left GLM workers stuck forever.
  */
 export const BUILTIN_PROMPT_SIGNATURES: readonly PromptSignature[] = [
   {
-    adapterIds: ['claude', 'glm', 'longcat'],
+    adapterIds: ['claude', 'glm', 'glm-flash', 'longcat'],
     name: 'claude-bypass-acknowledgement',
     phrases: [
       'claude code running in bypass permissions mode',
@@ -55,13 +71,13 @@ export const BUILTIN_PROMPT_SIGNATURES: readonly PromptSignature[] = [
   },
   {
     // Claude-family workspace trust ("Do you trust the files in this
-    // folder?"). Isolated third-party homes (GLM/LongCat under
+    // folder?"). Isolated third-party homes (GLM/GLM Flash/LongCat under
     // ~/.nexus/homes/<id>) carry no per-project trust, so the FIRST spawn in
     // every project cwd hits this dialog; unanswered it stays up forever and
     // the mission/review brief is pasted into the modal and swallowed.
     // Option 1 is "Yes, proceed" — never force the default-accept here:
     // Down+Enter would pick "No, exit" and kill the session.
-    adapterIds: ['claude', 'glm', 'longcat'],
+    adapterIds: ['claude', 'glm', 'glm-flash', 'longcat'],
     name: 'claude-workspace-trust',
     phrases: [
       'do you trust the files in this folder?',
@@ -75,14 +91,19 @@ export const BUILTIN_PROMPT_SIGNATURES: readonly PromptSignature[] = [
     // Claude Code 2.1.220 replaced the legacy folder-trust copy above. Keep a
     // separate exact signature so future wording changes fail closed instead
     // of turning generic terminal text into an automatic keypress.
-    adapterIds: ['claude', 'glm', 'longcat'],
+    //
+    // 2.1.267 mudou a FORMA além da redação: as opções perderam os números e o
+    // cursor nasce em "No, exit" — a tecla que aceitava na 2.1.220 (`1\r`)
+    // encerra o pane agora. Por isso a resposta é lida da própria tela.
+    adapterIds: ['claude', 'glm', 'glm-flash', 'longcat'],
     name: 'claude-workspace-trust-quick-safety-check',
     phrases: [
       'quick safety check: is this a project you created or one you trust?',
       'yes, i trust this folder',
       'no, exit',
     ],
-    response: ACCEPT_FIRST_OPTION_BY_NUMBER,
+    response: ACCEPT_SECOND_TRUST_OPTION_RESPONSE,
+    responseFor: claudeWorkspaceTrustResponse,
     earlyPhrase: 'quick safety check: is this a project',
   },
   {
@@ -136,6 +157,26 @@ function normalizePromptText(output: string): string {
  */
 function compactPromptText(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9?]/g, '');
+}
+
+/**
+ * Qual tecla aceita o trust do Claude Code — lida da PRÓPRIA tela.
+ *
+ * A 2.1.220 listava "Yes, I trust this folder" primeiro e numerado; a 2.1.267
+ * lista "No, exit" primeiro, sem números e com o cursor nele. O Enter confirma
+ * o item focado, então a tecla que aceitava numa versão encerra o pane na
+ * outra. Só a ordem renderizada diz qual é qual: com as duas etiquetas na tela
+ * a resposta é derivada; sem elas, `null` (o operador responde) — nunca um
+ * chute que possa escolher "No, exit".
+ */
+function claudeWorkspaceTrustResponse(raw: string): string | null {
+  const compact = compactPromptText(raw);
+  const cancel = compact.indexOf(compactPromptText('no, exit'));
+  const accept = compact.indexOf(compactPromptText('yes, i trust this folder'));
+  if (cancel < 0 || accept < 0) return null;
+  return cancel < accept
+    ? ACCEPT_SECOND_TRUST_OPTION_RESPONSE
+    : ACCEPT_DEFAULT_PROMPT_RESPONSE;
 }
 
 export function matchesPromptSignature(
@@ -273,15 +314,30 @@ export class CliPromptAutoResponder {
     if (!this.isEnabled(sessionId)) return null;
     const match = this.pendingMatch(sessionId, now);
     if (!match) return null;
+    const response = this.answerFor(
+      match,
+      this.buffers.get(sessionId) ?? '',
+    );
+    if (response === null) return null;
     // Settle so callers wait before typing the mission brief.
     this.unbind(sessionId);
     this.settlingUntil.set(sessionId, now + SETTLE_AFTER_ACCEPT_MS);
     return {
-      response: match.response,
+      response,
       ...(match.fallbackResponse !== undefined
         ? { fallbackResponse: match.fallbackResponse }
         : {}),
     };
+  }
+
+  /**
+   * Teclas para a tela que casou: fixas na assinatura, ou derivadas do que
+   * está desenhado quando o aceite depende da ordem das opções naquele build.
+   * `null` = recusa (o operador responde).
+   */
+  private answerFor(signature: PromptSignature, raw: string): string | null {
+    if (signature.responseFor) return signature.responseFor(raw);
+    return signature.response;
   }
 
   clear(): void {
@@ -305,9 +361,17 @@ export class CliPromptAutoResponder {
       this.buffers.set(sessionId, buffer);
       return null;
     }
+    const response = this.answerFor(match, buffer);
+    if (response === null) {
+      // A tela casou, mas não dá para provar qual item está focado — e um
+      // Enter no item errado encerra o pane. Segue observando (as opções
+      // podem ainda estar pintando) sem digitar nada.
+      this.buffers.set(sessionId, buffer);
+      return null;
+    }
     this.unbind(sessionId);
     this.settlingUntil.set(sessionId, now + SETTLE_AFTER_ACCEPT_MS);
-    return match.response;
+    return response;
   }
 }
 

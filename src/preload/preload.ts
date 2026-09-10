@@ -100,6 +100,7 @@ import type {
   AgentWaitingEvent,
   BgTaskEventPayload,
   PaneLoginStuckEvent,
+  PaneWorkerSpawnFailedEvent,
 } from '../shared/types';
 import type {
   JarvisLiveInterruptEvent,
@@ -453,6 +454,9 @@ const squadsChangedListeners = new Set<(squads: Squad[]) => void>();
 const bgTaskEventListeners = new Set<(event: BgTaskEventPayload) => void>();
 const paneLoginStuckListeners = new Set<(event: PaneLoginStuckEvent) => void>();
 const agentWaitingListeners = new Set<(event: AgentWaitingEvent) => void>();
+const workerSpawnFailedListeners = new Set<
+  (event: PaneWorkerSpawnFailedEvent) => void
+>();
 
 ipcRenderer.on(ORCH_CHANNELS.paneSpawnRequest, (_e, req: OrchPaneSpawnRequest) =>
   emitToListeners(paneSpawnRequestListeners, 'paneSpawnRequestListeners', req),
@@ -498,6 +502,15 @@ ipcRenderer.on(ORCH_CHANNELS.paneLoginStuck, (_e, event: PaneLoginStuckEvent) =>
 );
 ipcRenderer.on(ORCH_CHANNELS.agentWaiting, (_e, event: AgentWaitingEvent) =>
   emitToListeners(agentWaitingListeners, 'agentWaitingListeners', event),
+);
+ipcRenderer.on(
+  ORCH_CHANNELS.workerSpawnFailed,
+  (_e, event: PaneWorkerSpawnFailedEvent) =>
+    emitToListeners(
+      workerSpawnFailedListeners,
+      'workerSpawnFailedListeners',
+      event,
+    ),
 );
 
 const settingsChangedListeners = new Set<(settings: TerminalSettings) => void>();
@@ -980,6 +993,8 @@ const api: NexusApi = {
       addListener(paneLoginStuckListeners, cb),
     onAgentWaiting: (cb: (event: AgentWaitingEvent) => void) =>
       addListener(agentWaitingListeners, cb),
+    onWorkerSpawnFailed: (cb: (event: PaneWorkerSpawnFailedEvent) => void) =>
+      addListener(workerSpawnFailedListeners, cb),
   },
   remote: {
     bridgeStatus: () => ipcRenderer.invoke(REMOTE_CHANNELS.bridgeStatus),

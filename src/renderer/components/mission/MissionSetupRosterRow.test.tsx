@@ -298,7 +298,7 @@ describe('MissionSetupRosterRow', () => {
 });
 
 describe('readyModelsForPicker', () => {
-  it('une lista curta do provider com o bundled do adapter (AGY 3.7 e 3.1 Pro)', () => {
+  it('une lista curta do provider com o bundled do adapter, mais forte primeiro (AGY)', () => {
     const models = readyModelsForPicker({
       provider: { models: ['gemini-3.6-flash-high'] },
       adapter: {
@@ -313,11 +313,12 @@ describe('readyModelsForPicker', () => {
         },
       },
     });
+    // Mesma régua do "+ Pane": Pro acima dos Flash, depois geração e esforço.
     expect(models).toEqual([
-      'gemini-3.6-flash-high',
-      'gemini-3.7-flash-high',
-      'gemini-3.7-flash-medium',
       'gemini-3.1-pro-high',
+      'gemini-3.7-flash-high',
+      'gemini-3.6-flash-high',
+      'gemini-3.7-flash-medium',
     ]);
   });
 

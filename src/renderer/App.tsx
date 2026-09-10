@@ -58,6 +58,7 @@ import {
 } from './state/gamification-store';
 import { useFailoverController } from './orch/failover-controller';
 import { useAccountRestartController } from './orch/account-restart-controller';
+import { useWorkerSpawnFailedController } from './orch/worker-spawn-failed-controller';
 import { Toasts } from './components/Toasts';
 import { useVoiceStore } from './voice/voice-store';
 import { removeMissionVerified } from './orch/remove-mission-verified';
@@ -299,6 +300,7 @@ export function App() {
   useGamificationSync();
   useFailoverController();
   useAccountRestartController();
+  useWorkerSpawnFailedController();
 
   useEffect(
     () =>

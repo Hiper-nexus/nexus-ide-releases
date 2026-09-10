@@ -16,7 +16,7 @@ import {
 
 describe('model discovery', () => {
   it('covers all catalog CLIs and only wires live exec where a list command exists', () => {
-    expect(Object.keys(MODEL_DISCOVERY_INVENTORY)).toHaveLength(18);
+    expect(Object.keys(MODEL_DISCOVERY_INVENTORY)).toHaveLength(19);
     const live = Object.entries(MODEL_DISCOVERY_INVENTORY)
       .filter(([, entry]) => entry.kind === 'cli')
       .map(([id]) => id)
@@ -37,6 +37,7 @@ describe('model discovery', () => {
     expect(supportsModelDiscovery('claude')).toBe(false);
     expect(supportsModelDiscovery('codex')).toBe(false);
     expect(supportsModelDiscovery('glm')).toBe(false);
+    expect(supportsModelDiscovery('glm-flash')).toBe(false);
     expect(supportsModelDiscovery('aider')).toBe(false);
     expect(supportsModelDiscovery('gemini')).toBe(false);
     expect(supportsModelDiscovery('desconhecido')).toBe(false);
@@ -47,6 +48,8 @@ describe('model discovery', () => {
     expect(MODEL_DISCOVERY_INVENTORY.codex.kind).toBe('cache');
     expect(MODEL_DISCOVERY_INVENTORY.aider.kind).toBe('bundled');
     expect(MODEL_DISCOVERY_INVENTORY.glm.reason).toMatch(/claude/);
+    expect(MODEL_DISCOVERY_INVENTORY['glm-flash'].kind).toBe('bundled');
+    expect(MODEL_DISCOVERY_INVENTORY['glm-flash'].reason).toMatch(/claude/);
     expect(MODEL_DISCOVERY_INVENTORY.deepseek.kind).toBe('bundled');
     expect(MODEL_DISCOVERY_INVENTORY).not.toHaveProperty('gemini');
     expect(MODEL_DISCOVERY_INVENTORY.muse.kind).toBe('bundled');

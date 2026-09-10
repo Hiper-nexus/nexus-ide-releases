@@ -1,12 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  PRODUCTION_PROBE_DEPS,
   PreSpawnProbeError,
   assertPreSpawnProbe,
   probePreSpawn,
   type PreSpawnProbeDeps,
   type ProbeAdapterView,
 } from './pre-spawn-probe';
-import { SILENT_REMINT_HINT } from '../adapters/seat-auth-readiness';
+import {
+  SILENT_REMINT_HINT,
+  rememberKimiSeatReadiness,
+} from '../adapters/seat-auth-readiness';
 
 const claudeAdapter: ProbeAdapterView = {
   kind: 'cli-pty',
@@ -409,6 +413,46 @@ describe('probePreSpawn — kimi 5-state seating', () => {
         }),
       );
       expect(failure?.code).toBe('missing-credential');
+    }
+  });
+
+  it('a fiação de produção sonda o provider list ao vivo, não a cache', () => {
+    // Campo 10/09: a cache de processo era o ÚNICO insumo do spawn. Ela é
+    // aquecida em Settings/Contas, kickoff e bootstrap — nunca no spawn direto
+    // do operador —, então uma cache fria condenava o assento e o pane subia
+    // como claude sem aviso ("pedi kimi, abriu sonnet").
+    expect(typeof PRODUCTION_PROBE_DEPS.kimiSeatReadiness).toBe('function');
+  });
+
+  it('cache envenenada não sobrevive à sonda viva', async () => {
+    rememberKimiSeatReadiness('missing');
+    try {
+      // Sem sonda (fiação antiga) a cache manda: o assento se perde.
+      expect(
+        (
+          await runProbe(
+            'kimi',
+            makeDeps({
+              getAdapter: () => kimiAdapter,
+              authStrategy: () => 'subscription',
+            }),
+          )
+        )?.code,
+      ).toBe('missing-credential');
+
+      // Com a sonda viva respondendo, o mesmo spawn senta.
+      expect(
+        await runProbe(
+          'kimi',
+          makeDeps({
+            getAdapter: () => kimiAdapter,
+            authStrategy: () => 'subscription',
+            kimiSeatReadiness: () => 'present',
+          }),
+        ),
+      ).toBeNull();
+    } finally {
+      rememberKimiSeatReadiness(undefined);
     }
   });
 });

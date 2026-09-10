@@ -21,6 +21,7 @@ import ompLogo from '../assets/provider-logos/omp.svg';
 import museLogo from '../assets/provider-logos/muse.svg';
 import primeAgentLogo from '../assets/provider-logos/prime-agent.svg';
 import cursorAgentLogo from '../assets/provider-logos/cursor.svg';
+import devinLogo from '../assets/provider-logos/devin.svg';
 
 const PROVIDER_LOGOS: Record<string, { src: string; mono?: boolean }> = {
   groq: { src: groqLogo, mono: true },
@@ -33,6 +34,7 @@ const PROVIDER_LOGOS: Record<string, { src: string; mono?: boolean }> = {
   kimi: { src: kimiLogo },
   grok: { src: grokLogo, mono: true },
   glm: { src: glmLogo },
+  'glm-flash': { src: glmLogo },
   longcat: { src: longcatLogo },
   aider: { src: aiderLogo },
   agy: { src: antigravityLogo },
@@ -51,6 +53,7 @@ const PROVIDER_LOGOS: Record<string, { src: string; mono?: boolean }> = {
   muse: { src: museLogo },
   'prime-agent': { src: primeAgentLogo },
   'cursor-agent': { src: cursorAgentLogo, mono: true },
+  devin: { src: devinLogo },
 };
 
 export function hasProviderLogo(adapterId: string): boolean {

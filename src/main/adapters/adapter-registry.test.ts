@@ -269,6 +269,7 @@ describe('builtin adapters', () => {
     expect(integration('claude')).toBe('autoload');
     expect(integration('openclaude')).toBe('autoload');
     expect(integration('glm')).toBe('autoload');
+    expect(integration('glm-flash')).toBe('autoload');
     expect(integration('longcat')).toBe('autoload');
     expect(integration('codex')).toBe('codex');
     // AGY 1.1 ignores private MCP profile projections. Mission workers use
@@ -342,6 +343,10 @@ describe('builtin adapters', () => {
     ]);
     expect(permission('agy')?.safe).toEqual(['--sandbox']);
     expect(permission('glm')?.safe).toEqual([
+      '--permission-mode',
+      'manual',
+    ]);
+    expect(permission('glm-flash')?.safe).toEqual([
       '--permission-mode',
       'manual',
     ]);
@@ -526,6 +531,9 @@ describe('builtin adapters', () => {
     expect(orchestrationEvidenceForAdapter(parsed('glm'), 'builtin')).toBe(
       'unsupported',
     );
+    expect(orchestrationEvidenceForAdapter(parsed('glm-flash'), 'builtin')).toBe(
+      'unsupported',
+    );
     expect(orchestrationEvidenceForAdapter(parsed('longcat'), 'builtin')).toBe(
       'unsupported',
     );
@@ -692,6 +700,7 @@ describe('builtin adapters', () => {
     ['claude', ['--continue'], ['--resume']],
     ['codex', ['resume', '--last'], ['resume']],
     ['glm', ['--continue'], ['--resume']],
+    ['glm-flash', ['--continue'], ['--resume']],
     ['grok', ['--continue'], ['--resume']],
     ['kimi', ['--continue'], ['--session']],
     ['longcat', ['--continue'], ['--resume']],
@@ -705,7 +714,7 @@ describe('builtin adapters', () => {
     },
   );
 
-  it.each(['claude', 'openclaude', 'glm', 'longcat', 'grok'])(
+  it.each(['claude', 'openclaude', 'glm', 'glm-flash', 'longcat', 'grok'])(
     '%s dictates a fresh provider session id for exact per-pane recovery',
     (id) => {
       expect(builtin(id)?.spawn?.sessionIdArg).toBe('--session-id');

@@ -58,6 +58,7 @@ const adapterTrust = vi.hoisted(() => ({
     "agy",
     "grok",
     "glm",
+    "glm-flash",
     "longcat",
   ]),
   rejectedBinPath: null as string | null,

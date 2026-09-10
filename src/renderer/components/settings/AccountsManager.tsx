@@ -23,6 +23,7 @@ const UPSTREAMS = [
   { id: 'anthropic', label: 'Anthropic (key nativa)' },
   { id: 'mimo', label: 'MIMO / Xiaomi' },
   { id: 'glm', label: 'GLM / z.ai' },
+  { id: 'glm-flash', label: 'GLM Flash / z.ai' },
   { id: 'moonshot', label: 'Kimi / Moonshot' },
   { id: 'deepseek', label: 'DeepSeek' },
   { id: 'minimax', label: 'MiniMax' },

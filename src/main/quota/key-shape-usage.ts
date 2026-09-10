@@ -42,7 +42,7 @@ const DECLARED_PROVIDERS = new Map<string, QuotaProvider>([
   ['claude', 'claude'], ['anthropic', 'claude'],
   ['kimi', 'kimi'], ['kimi-for-coding', 'kimi'], ['moonshotai', 'kimi'],
   ['grok', 'grok'], ['xai', 'grok'],
-  ['glm', 'glm'], ['zai', 'glm'], ['zai-coding-plan', 'glm'], ['zhipu', 'glm'],
+  ['glm', 'glm'], ['glm-flash', 'glm'], ['zai', 'glm'], ['zai-coding-plan', 'glm'], ['zhipu', 'glm'],
   ['longcat', 'longcat'],
 ]);
 

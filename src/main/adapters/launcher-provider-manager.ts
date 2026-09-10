@@ -37,13 +37,33 @@ export interface UpstreamProvider {
 // Ported verbatim from the launcher's declare -A PROVIDER_* maps.
 // GLM Coding Plan mapping from Z.AI's latest-model guide (2026-08-14):
 // https://docs.z.ai/devpack/latest-model — sonnet/opus use the 1M route.
+// O launcher (GLM_MODEL/GLM_FLASH_MODEL) pina o slot haiku no Flash desde que
+// o glm-5.3-flash virou o modelo barato do provider — o 4.7 saiu de linha.
+const GLM_MODEL = 'glm-5.3[1m]';
+const GLM_FLASH_MODEL = 'glm-5.3-flash[1m]';
 const GLM_EXTRA: Record<string, string> = {
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
   API_TIMEOUT_MS: '600000',
   CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000',
-  ANTHROPIC_DEFAULT_HAIKU_MODEL: 'glm-4.7',
-  ANTHROPIC_DEFAULT_SONNET_MODEL: 'glm-5.3[1m]',
-  ANTHROPIC_DEFAULT_OPUS_MODEL: 'glm-5.3[1m]',
+  ANTHROPIC_DEFAULT_HAIKU_MODEL: GLM_FLASH_MODEL,
+  ANTHROPIC_DEFAULT_SONNET_MODEL: GLM_MODEL,
+  ANTHROPIC_DEFAULT_OPUS_MODEL: GLM_MODEL,
+};
+
+/**
+ * `glm_flash_setup_env` do launcher: provider_setup_env('glm') + TODOS os
+ * slots de modelo no Flash (haiku/sonnet/opus/ANTHROPIC_MODEL). É uma rota
+ * upstream própria, não só um --model: quem roteia qualquer CLI claude-family
+ * via glm-flash recebe a sessão inteira no Flash.
+ */
+const GLM_FLASH_EXTRA: Record<string, string> = {
+  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+  API_TIMEOUT_MS: '600000',
+  CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000',
+  ANTHROPIC_MODEL: GLM_FLASH_MODEL,
+  ANTHROPIC_DEFAULT_HAIKU_MODEL: GLM_FLASH_MODEL,
+  ANTHROPIC_DEFAULT_SONNET_MODEL: GLM_FLASH_MODEL,
+  ANTHROPIC_DEFAULT_OPUS_MODEL: GLM_FLASH_MODEL,
 };
 
 const THIRD_PARTY_EXTRA: Record<string, string> = {
@@ -67,6 +87,16 @@ export const UPSTREAM_PROVIDERS: Record<string, UpstreamProvider> = {
     baseUrl: 'https://api.z.ai/api/anthropic',
     defaultModel: '',
     extraEnv: GLM_EXTRA,
+    requiresToken: true,
+    local: false,
+  },
+  // Mesma credencial e base URL do glm — `ai glm-flash`/`gf` no launcher.
+  'glm-flash': {
+    id: 'glm-flash',
+    label: 'GLM Flash / Z.ai',
+    baseUrl: 'https://api.z.ai/api/anthropic',
+    defaultModel: GLM_FLASH_MODEL,
+    extraEnv: GLM_FLASH_EXTRA,
     requiresToken: true,
     local: false,
   },
@@ -239,6 +269,8 @@ const PROVIDER_NAME_RE = /^[a-z0-9_-]+$/;
 /** Aliases the launcher accepts for the same credential slot. */
 const LAUNCHER_KEY_ALIASES: Record<string, string[]> = {
   glm: ['glm', 'zai', 'z.ai'],
+  // `ai gf` não tem slot próprio no providers.conf — lê a chave `glm`.
+  'glm-flash': ['glm-flash', 'glm', 'zai', 'z.ai'],
   sakana: ['sakana', 'fugu'],
 };
 

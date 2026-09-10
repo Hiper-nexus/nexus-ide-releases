@@ -178,6 +178,10 @@ export const MODEL_DISCOVERY_INVENTORY: Readonly<
     kind: 'bundled',
     reason: 'wrapper da CLI claude + endpoint z.ai; listar claude traria ids errados',
   },
+  'glm-flash': {
+    kind: 'bundled',
+    reason: 'wrapper da CLI claude + endpoint z.ai; listar claude traria ids errados',
+  },
   longcat: {
     kind: 'bundled',
     reason: 'wrapper da CLI claude + endpoint LongCat; sem catálogo próprio',

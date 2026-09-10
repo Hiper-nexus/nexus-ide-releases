@@ -3,12 +3,14 @@ import codexRaw from './codex.json';
 import kimiRaw from './kimi.json';
 import grokRaw from './grok.json';
 import glmRaw from './glm.json';
+import glmFlashRaw from './glm-flash.json';
 import longcatRaw from './longcat.json';
 import aiderRaw from './aider.json';
 import agyRaw from './agy.json';
 import opencodeRaw from './opencode.json';
 import openclaudeRaw from './openclaude.json';
 import museRaw from './muse.json';
+import devinRaw from './devin.json';
 import deepseekRaw from './deepseek.json';
 import qwenRaw from './qwen.json';
 
@@ -19,12 +21,28 @@ export const BUILTIN_ADAPTERS: unknown[] = [
   kimiRaw,
   grokRaw,
   glmRaw,
+  glmFlashRaw,
   longcatRaw,
   aiderRaw,
   agyRaw,
   opencodeRaw,
   openclaudeRaw,
   museRaw,
+  // devin: `extraArgs` fica vazio de propósito. O `--respect-workspace-trust
+  // false` só existe no headless (print mode não sabe mostrar o prompt e falha
+  // em diretório não confiado — está no próprio --help da CLI), e o headless
+  // daqui alimenta só o executor de benchmark (cli-benchmark-executor), que não
+  // aplica control args: ali o modo é o default da CLI (`auto`, que aprova
+  // leitura e ainda pede aprovação para edição). No interativo o prompt de
+  // confiança aparece uma vez por workspace: é consentimento do usuário, e o
+  // Nexus não responde por ele.
+  //
+  // Permissão: como TODOS os outros builtins, o adapter declara
+  // `control.permission.yolo` ("--permission-mode dangerous"). buildControlArgs
+  // (control-args.ts:33) aplica esse argv quando nenhum modo foi escolhido, ou
+  // seja: spawn sem escolha explícita roda full-auto, igual a claude/glm/codex.
+  // Quem quiser aprovação por edição escolhe outro modo no settings do provider.
+  devinRaw,
   // api-provider: sem binário — existem para gestão de key na aba Remotos
   // (router de intenção lê o vault/launcher por esses mesmos ids).
   deepseekRaw,

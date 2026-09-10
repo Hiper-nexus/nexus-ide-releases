@@ -22,6 +22,7 @@ export const PREFERRED_AUTO_SEAT_CLIS = [
   'agy',
   'grok',
   'glm',
+  'glm-flash',
   'kimi',
 ] as const;
 
