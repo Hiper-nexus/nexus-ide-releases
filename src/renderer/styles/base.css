@@ -1126,10 +1126,21 @@ body {
 }
 
 @container pane-toolbar (max-width: 380px) {
-  .toolbar__badge--agent,
+  /* O LOGO do provider é a identidade do pane: sobrevive onde o texto já não
+     cabe. Antes este badge era escondido inteiro e o operador ficava sem saber
+     qual IA estava no pane em qualquer largura abaixo de 380 px. O que some
+     aqui é o que tem outro lugar — texto do badge (já sai em 460 px), worker e
+     badges genéricos. */
   .toolbar__badge--worker,
-  .toolbar__badge:not(.toolbar__badge--orch),
+  .toolbar__badge:not(.toolbar__badge--orch):not(.toolbar__badge--agent),
   .toolbar__agent-avatar {
+    display: none !important;
+  }
+  .toolbar__badge--agent {
+    gap: 0;
+    padding-inline: 4px;
+  }
+  .toolbar__badge--agent .toolbar__badge-text {
     display: none !important;
   }
 }
