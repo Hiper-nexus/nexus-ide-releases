@@ -409,7 +409,10 @@ export function buildPanePickerIndex(
   const rows: PanePickerRow[] = typeEntries();
   for (const provider of clisSorted(providers)) {
     const ranked = rankPickerModels(provider);
-    const top = ranked[0]?.id;
+    // O índice não carrega o selo "restrito" da matriz: anunciar aqui um modelo
+    // api-only que o auto-routing recusa faria o operador pedir no resumo o que
+    // o roteamento nega. Prefere o mais forte entre os que sentam de verdade.
+    const top = (ranked.find((entry) => !entry.restricted) ?? ranked[0])?.id;
     const mine = accounts.filter(
       (account) => account.adapterId === provider.adapterId,
     ).length;
@@ -860,9 +863,14 @@ export function PanePicker({
 
   // O foco vive na busca sempre que a lista está na frente — índice e drill
   // compartilham a mesma linha de busca (a busca vê tudo, de qualquer nível).
+  //
+  // `drillCli` entra nas deps porque o keydown mora no painel: ao entrar/sair
+  // do drill com o MOUSE o botão clicado é desmontado no mesmo commit e o foco
+  // cai no <body> — a lista continuava pintada como armada e as setas/Enter
+  // ficavam mortos até alguém clicar de novo na busca.
   useEffect(() => {
     if (open && !accountsFor) inputRef.current?.focus();
-  }, [open, accountsFor]);
+  }, [open, accountsFor, drillCli]);
 
   // Conta recém-criada: a lista volta com ela sob o cursor, para a escolha
   // explícita do modelo. Nunca abre um pane sozinha.

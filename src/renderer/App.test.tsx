@@ -63,6 +63,9 @@ vi.mock('./orch/failover-controller', () => ({
 vi.mock('./orch/account-restart-controller', () => ({
   useAccountRestartController: () => undefined,
 }));
+vi.mock('./orch/worker-spawn-failed-controller', () => ({
+  useWorkerSpawnFailedController: () => undefined,
+}));
 vi.mock('./orch/orch-bridge', () => ({ useOrchBridge: () => undefined }));
 vi.mock('./voice/voice-controller', () => ({
   useVoiceController: () => undefined,

@@ -34,9 +34,13 @@ import {
 /**
  * Pre-spawn credential probe (peer ADE v1.2 harvest, fix F-256): a spawn
  * issued with a missing credential used to surface as a dead pane or a mute
- * login TUI. This probe runs BEFORE the pane exists — cheap (<50ms warm, no
- * network; every check is a stat/keychain read or a cached binary lookup) —
- * and turns that blind spawn into a typed, actionable error.
+ * login TUI. This probe runs BEFORE the pane exists — every check is a
+ * stat/keychain read or a cached binary lookup, no network — and turns that
+ * blind spawn into a typed, actionable error.
+ *
+ * EXCEÇÃO: o assento do Kimi prova credencial com uma execução real
+ * (`kimi provider list --json`, ~0,5 s, teto de 4 s) porque a prova dele não
+ * mora em arquivo. É pago só quando o CLI pedido é o kimi.
  *
  * Deliberate limits:
  *  - It is a light PRECHECK, not a duplicate of prepareAccountForSpawn: when

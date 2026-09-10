@@ -2292,9 +2292,12 @@ body {
 }
 
 @container pane-toolbar (max-width: 380px) {
-  /* Badge some → chip entra. Até 380px mostra família + versão reduzida. */
+  /* Aqui o badge do provider DEIXOU de sumir (ele carrega o logo, que é a
+     identidade do pane). Com os dois visíveis a linha de meta estoura e itens
+     são cortados inteiros — então quem cede é o chip de texto: o nome do
+     modelo continua no title e volta assim que houver largura. */
   .toolbar__model-chip {
-    display: inline-flex;
+    display: none;
   }
 }
 

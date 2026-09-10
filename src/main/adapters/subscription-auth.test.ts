@@ -528,6 +528,27 @@ describe('detectSubscriptionAuth', () => {
     expect(hasSubscriptionAuthForStatus('claude', undefined, home)).toBe(false);
   });
 
+  it('reconhece a sessão do Devin no TOML de credenciais', () => {
+    // Sem este case o switch caía no default `false`, a estratégia virava
+    // `login-needed` e o gate pré-spawn recusava todo spawn governado — a CLI
+    // aparecia logada em Configurações e nunca sentava um pane.
+    const xdg = tempHome();
+    const previous = process.env.XDG_DATA_HOME;
+    process.env.XDG_DATA_HOME = xdg;
+    try {
+      expect(detectSubscriptionAuth('devin', tempHome())).toBe(false);
+      touch(xdg, 'devin', 'credentials.toml');
+      fs.writeFileSync(
+        path.join(xdg, 'devin', 'credentials.toml'),
+        'windsurf_api_key = "sessao-viva"\n',
+      );
+      expect(detectSubscriptionAuth('devin', tempHome())).toBe(true);
+    } finally {
+      if (previous === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = previous;
+    }
+  });
+
   it('warms a Keychain-only Claude status asynchronously without poisoning the cold cache', async () => {
     const home = tempHome();
     const asyncKeychainProbe = vi.fn(async () => true);

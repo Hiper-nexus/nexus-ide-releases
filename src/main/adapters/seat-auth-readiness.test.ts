@@ -181,6 +181,15 @@ describe('classifyKimiProviderList', () => {
     expect(
       mergeKimiProviderListReadiness('missing', 'present'),
     ).toBe('missing');
+    // `unreadable` é falha de leitura, não veredito: não pode derrubar um
+    // `present` quente (senão um timeout de 4 s tira o Kimi de todos os
+    // assentos seguintes do processo).
+    expect(
+      mergeKimiProviderListReadiness('unreadable', 'present'),
+    ).toBe('present');
+    expect(mergeKimiProviderListReadiness('unreadable', undefined)).toBe(
+      'unreadable',
+    );
   });
 
   it('erro de parse é unreadable', () => {

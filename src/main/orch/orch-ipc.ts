@@ -75,6 +75,10 @@ import {
   unregisterAgentWaitingTarget,
 } from "./agent-waiting-broadcast";
 import {
+  registerWorkerSpawnFailedTarget,
+  unregisterWorkerSpawnFailedTarget,
+} from "./spawn-fail-events";
+import {
   initPaneRegistry,
   listPaneSnapshots,
   registerOrchRenderer,
@@ -1422,6 +1426,9 @@ export function registerOrchListener(wc: WebContents): void {
   registerBgTaskEventTarget(wc);
   registerLoginStuckTarget(wc);
   registerAgentWaitingTarget(wc);
+  // Sem este registro o broadcast do assento remapeado não tem alvo: o aviso
+  // era emitido no main e morria ali (o operador continuava sem saber).
+  registerWorkerSpawnFailedTarget(wc);
 }
 
 export function unregisterOrchListener(wc: WebContents): void {
@@ -1430,6 +1437,7 @@ export function unregisterOrchListener(wc: WebContents): void {
   unregisterBgTaskEventTarget(wc);
   unregisterLoginStuckTarget(wc);
   unregisterAgentWaitingTarget(wc);
+  unregisterWorkerSpawnFailedTarget(wc);
 }
 
 export function getOrchestrationStartHealth(): OrchestrationStartHealth {

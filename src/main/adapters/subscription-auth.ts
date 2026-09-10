@@ -7,6 +7,7 @@ import {
   readActiveClaudeCredential,
 } from './claude-credential';
 import { realUserHome, resolveCliBinary } from '../path-resolver';
+import { hasNativeFileAuth } from './managed-credentials';
 import { openClaudeKeychainService, readNativeOAuthKeychain } from './native-oauth-keychain';
 import {
   peekKimiSeatReadiness,
@@ -903,6 +904,13 @@ export function detectSubscriptionAuth(
       } catch {
         return false;
       }
+    case 'devin':
+      // Sessão em TOML plano ($XDG_DATA_HOME/devin/credentials.toml). Sem este
+      // case o switch caía no default `false`, a estratégia virava
+      // `login-needed` e o gate pré-spawn recusava TODO spawn governado do
+      // devin: a CLI aparecia logada em Configurações e nunca sentava um pane
+      // (a cadeia de sucessão sentava outro CLI no lugar).
+      return hasNativeFileAuth(adapterId, home);
     case 'aider':
       // Aider has no native OAuth/subscription session; it consumes provider
       // API keys. Treating its config directory as login would suppress every

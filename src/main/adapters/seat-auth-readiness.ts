@@ -206,10 +206,17 @@ export function classifyKimiProviderList(
  */
 export function mergeKimiProviderListReadiness(
   live: SeatAuthReadiness,
-  _stale?: SeatAuthReadiness | null,
+  stale?: SeatAuthReadiness | null,
 ): SeatAuthReadiness {
   // Live oauth (`present`) always wins. Mixed stdout is classified as present
   // before merge, so a stale "No providers configured" cannot downgrade it.
+  //
+  // `unreadable` não é veredito, é FALHA DE LEITURA (binário lento, timeout de
+  // 4 s, auto-update em curso). Deixá-la sobrescrever um `present` quente tira
+  // o Kimi do ar para todos os assentos seguintes do processo — inclusive como
+  // destino da cadeia de sucessão — que é a mesma troca silenciosa que a sonda
+  // ao vivo existe para evitar.
+  if (live === 'unreadable' && stale) return stale;
   return live;
 }
 
