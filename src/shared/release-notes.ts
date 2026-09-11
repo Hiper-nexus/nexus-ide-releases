@@ -314,7 +314,7 @@ export const RELEASE_0744: AppRelease = {
     },
   ],
 };
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07613: AppRelease = {
   version: '0.76.13',
   date: '2026-09-10',
   codename: 'Pane não morre no trust, o assento é do CLI que você pediu',
@@ -2724,6 +2724,71 @@ export const RELEASE_01938: AppRelease = {
       title: 'Gates honestos e rápidos',
       detail:
         'Risco em português recebe a mesma severidade do equivalente em inglês, requisitos explícitos desconhecidos permanecem pendentes e worktrees antigos em .dev-user-data deixam de contaminar testes e indexadores.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.14',
+  date: '2026-09-11',
+  codename: 'O terminal sobrevive à troca de projeto',
+  summary:
+    'Trocar de projeto deixava de ser navegação e virava perda: o processo do ' +
+    'pane era morto no instante em que o workspace saía de cena, e o ' +
+    'scrollback salvo fingia que o terminal tinha voltado — vazio. Agora os ' +
+    'panes do projeto que sai ficam estacionados com a sessão viva e voltam ' +
+    'intactos. Na mesma linha, pane de missão encerrada parou de ser apagado ' +
+    'do layout (era perda permanente e silenciosa), e o layout parou de ' +
+    'gravar os panes de um projeto sob a chave de outro.',
+  highlights: [
+    {
+      title: 'Trocar de projeto não mata mais o que está rodando',
+      detail:
+        'Ao hidratar o projeto novo, o app descartava todo host fora da árvore e ' +
+        'matava o PTY com force, pulando o lease — a única guarda protegia ' +
+        'sessão de agente de missão, e o shell do operador nasce sem agente. ' +
+        'Agora os panes do projeto que sai são estacionados: saem da tela e ' +
+        'devolvem o lease de WebGL, mas mantêm terminal, processo e estado, e ' +
+        'voltam ao lugar quando você retorna. Só o fechamento explícito ' +
+        '(pane ✕, Fechar projeto, remover da lista) encerra.',
+    },
+    {
+      title: 'Pane de missão encerrada para de ser apagado',
+      detail:
+        'Quando a Main negava autoridade de restore, o pane era fechado e o ' +
+        'layout era gravado sem ele: os terminais e o histórico daqueles ' +
+        'agentes sumiam para sempre, com a Main ainda dona deles. Em campo ' +
+        'isso custou 7 panes de uma missão concluída e 2 de uma bloqueada. ' +
+        'Agora o pane é aposentado — continua no layout, legível, e não ' +
+        'reexecuta sozinho. Quem fecha é você, em Limpar projeto.',
+    },
+    {
+      title: 'Um projeto não grava mais os panes de outro',
+      detail:
+        'Se uma ação sua caísse na janela exata da troca de projeto, o app ' +
+        'marcava a árvore antiga como sendo do projeto novo e, 300 ms depois, ' +
+        'gravava os terminais de um projeto sob a chave do outro — o terminal ' +
+        'de um lugar aparecendo dentro de outro. A posse só é declarada depois ' +
+        'que o layout do projeto realmente carrega.',
+    },
+    {
+      title: 'Arrastar, soltar e colar na tela Iniciar missão',
+      detail:
+        'O aviso "Solte para anexar contexto à missão" ficava preso na tela — ' +
+        'inclusive em outro projeto — porque quem o limpava nunca recebia o ' +
+        'evento. Arrastar mídia do WhatsApp não fazia nada, porque o app exigia ' +
+        'um tipo de carga que aquele arraste não traz. E colar só funcionava ' +
+        'com o wizard aberto. Os três passaram a ter um só dono, e nenhum ' +
+        'caminho é silencioso: se não der para anexar, o app diz o que chegou.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Navegar para um projeto abre nos terminais dele',
+      detail:
+        'Clicar num projeto no rail com o wizard aberto deixava o destino ' +
+        'colado em "O que você quer criar?". Agora abre nos terminais, como ' +
+        'já fazia o caminho de abrir a pasta pelo Finder.',
     },
   ],
 };
