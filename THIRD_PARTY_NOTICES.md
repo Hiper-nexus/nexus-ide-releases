@@ -418,3 +418,47 @@ the Apache License 2.0.
 Provenance ledger: `third_party/provenance/agent-orchestrator-2026-09-09.json`.
 Full license: `third_party/licenses/Apache-2.0.txt`.
 
+## stablyai/orca (Source Control GitHub PR merge-queue harvest)
+
+Modules adapted from [`stablyai/orca`](https://github.com/stablyai/orca) at
+commit `93334dc53fccdb7348d09fc28067ba6d3dec36ea`. MIT License, Copyright (c)
+2026 Lovecast Inc.
+
+- `src/main/source-control/github-pr-queue.ts` — GraphQL merge-queue probe,
+  auto-merge mutations and enqueue flow adapted from
+  `src/main/github/client.ts` (+ `github-pr-stack-async-merge.ts`), rebuilt on
+  injected fetch with ForgeAuthorization + audit instead of the `gh` CLI.
+- `src/shared/github-pr-merge-queue.ts` — merge metadata parsing, async-merge
+  response classification and enqueue planning extracted as pure functions
+  (no `gh` CLI, no Electron, no cache).
+- `src/shared/github-pr-auto-merge-availability.ts` — auto-merge vs merge-queue
+  availability rules without Orca i18n/types imports.
+- `src/shared/github-pr-merge-state.ts` — PR merge-state presentation with
+  Portuguese labels and tone tokens instead of i18n/Tailwind.
+- `src/shared/pull-request-generation.ts` — honest LOCAL generator (commits +
+  branch + issue) as the primary path; JSON parse kept as optional upgrade.
+- `src/shared/source-control-primary-action-decision.ts` — primary-action
+  decision core (commit / stage / publish / push / create PR / enqueue),
+  Portuguese labels.
+
+Provenance ledger: `third_party/provenance/orca-93334dc5.json`. License text:
+`third_party/licenses/orca-MIT.txt`.
+
+## stablyai/orca (Orchestration worker evidence harvest)
+
+Modules adapted from [`stablyai/orca`](https://github.com/stablyai/orca) at
+commit `4ec6bbf5884e5bd915b4f49c4602b5e5a88b61ae`. MIT License, Copyright (c)
+2026 Lovecast Inc.
+
+- `src/main/orch/worker-files-modified.ts` — `worker_done --files-modified`
+  evidence contract from `src/main/runtime/orchestration/preamble.ts`: a
+  writer that exits with 0 files-modified is not a successful delivery unless
+  a real MCP handoff already closed a task.
+- `src/main/orch/writer-circuit-breaker.ts` — connected+writable writer
+  circuit adapted from `dispatch-circuit-breaker.ts`
+  (`DISPATCH_CIRCUIT_BREAK_FAILURES = 3`): three deaths of the same role or
+  adapter trip the circuit into remint / skip-silent.
+
+Provenance ledger: `third_party/provenance/orca-4ec6bbf5.json`. License text:
+`third_party/licenses/orca-MIT.txt`.
+

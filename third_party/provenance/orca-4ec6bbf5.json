@@ -1,0 +1,44 @@
+{
+  "source": "stablyai/orca",
+  "upstreamCommit": "4ec6bbf5884e5bd915b4f49c4602b5e5a88b61ae",
+  "upstreamRepository": "https://github.com/stablyai/orca",
+  "license": "MIT",
+  "copyright": "Copyright (c) 2026 Lovecast Inc.",
+  "licenseFile": "third_party/licenses/orca-MIT.txt",
+  "importedAt": "2026-08-19",
+  "verifiedAt": "2026-09-11",
+  "headerPolicy": "Every adapted file carries an inline attribution block pointing at the pin, copyright, and license file: Adapted from stablyai/orca @ 4ec6bbf5884e5bd915b4f49c4602b5e5a88b61ae; Copyright (c) 2026 Lovecast Inc. — MIT License; See third_party/licenses/orca-MIT.txt.",
+  "note": "Ledger criado para quitar dívida de proveniência: a onda de orchestration worker evidence/circuit-breaker entrou no Nexus em 2026-08-19 sem ledger próprio e o verificador original só lia orca-143c36e.json.",
+  "files": [
+    {
+      "upstreamUrl": "https://github.com/stablyai/orca/blob/4ec6bbf5884e5bd915b4f49c4602b5e5a88b61ae/src/main/runtime/orchestration/preamble.ts",
+      "upstreamCommit": "4ec6bbf5884e5bd915b4f49c4602b5e5a88b61ae",
+      "originalSha256": "a8d52c0814adf2dab264cf6add7668b1db8406e9e55719e11b139d1d1677e1c9",
+      "originalPath": "src/main/runtime/orchestration/preamble.ts",
+      "nexusPath": "src/main/orch/worker-files-modified.ts",
+      "nexusSha256": "638de665c72670bcb6ece20aca632f32cd04948bcbc080b2cb27c5d1ce6ba622",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 Lovecast Inc.",
+      "type": "adapted",
+      "changeSummary": "Adapta o contrato worker_done --files-modified do preamble de orquestração upstream. Nexus changes: módulo próprio de evidência — a writer that exits with 0 files-modified is NOT a successful delivery unless a real MCP handoff already closed a task; evidence path que deixou 20stories-e em board 0/20 com 18 arquivos em disco.",
+      "secondaryProvenance": [],
+      "importDate": "2026-08-19",
+      "status": "imported"
+    },
+    {
+      "upstreamUrl": "https://github.com/stablyai/orca/blob/4ec6bbf5884e5bd915b4f49c4602b5e5a88b61ae/src/main/runtime/orchestration/db/dispatch-context/dispatch-circuit-breaker.ts",
+      "upstreamCommit": "4ec6bbf5884e5bd915b4f49c4602b5e5a88b61ae",
+      "originalSha256": "50318bff8325b62dd06bf2169fe455e7a4fa6719155db7254d035bf4adce4577",
+      "originalPath": "src/main/runtime/orchestration/db/dispatch-context/dispatch-circuit-breaker.ts",
+      "nexusPath": "src/main/orch/writer-circuit-breaker.ts",
+      "nexusSha256": "a9480ebd2fe7dfa755004d9fd8846cdb172efdb43604ddaebef5d33e07e63850",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 Lovecast Inc.",
+      "type": "adapted",
+      "changeSummary": "Adapta o dispatch-circuit-breaker upstream (DISPATCH_CIRCUIT_BREAK_FAILURES = 3) para o circuito de writer connected+writable do Nexus: 3 failures then remint / skip-silent. Nexus changes: a pane that spawned but never became connected AND stdin-writable is not a live writer; three deaths of the same role or adapter trip the circuit so Kimi is not reseated forever.",
+      "secondaryProvenance": [],
+      "importDate": "2026-08-19",
+      "status": "imported"
+    }
+  ]
+}
