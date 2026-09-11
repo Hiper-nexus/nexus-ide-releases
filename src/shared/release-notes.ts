@@ -2728,7 +2728,7 @@ export const RELEASE_01938: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07614: AppRelease = {
   version: '0.76.14',
   date: '2026-09-11',
   codename: 'O terminal sobrevive à troca de projeto',
@@ -2789,6 +2789,74 @@ export const CURRENT_RELEASE: AppRelease = {
         'Clicar num projeto no rail com o wizard aberto deixava o destino ' +
         'colado em "O que você quer criar?". Agora abre nos terminais, como ' +
         'já fazia o caminho de abrir a pasta pelo Finder.',
+    },
+  ],
+};
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.15',
+  date: '2026-09-11',
+  codename: 'O pane não congela no redesenho e o crash report conta tudo',
+  summary:
+    'Resync dos módulos herdados do Orca para o v1.4.200. Um TUI que redesenha ' +
+    'sem parar não congela mais o pane visível, a fila de saída deixa de prender ' +
+    'buffers gigantes na memória, os crash reports ficam mais fiéis, o protocolo ' +
+    'de stream ganha teto contra frames gigantes e o parser de ssh_config segue ' +
+    'a semântica do OpenSSH.',
+  highlights: [
+    {
+      title: 'TUI que redesenha sem parar não congela mais o pane',
+      detail:
+        'O scheduler segurava o frame aberto e, ao chegar o fechamento, esperava ' +
+        'mais um pouco — e cada espera cancelava o timer de segurança da outra. ' +
+        'Num stream que alterna as duas sem parar, o pane nunca drenava. Agora ' +
+        'um prazo único vale para o episódio inteiro: a tela pinta no fim dele, ' +
+        'seja lá quantas vezes o modo vire.',
+    },
+    {
+      title: 'Fila de saída não prende mais buffers gigantes',
+      detail:
+        'Uma fatia de 16 KiB de uma leitura de 2 MB mantinha os 2 MB inteiros ' +
+        'vivos enquanto qualquer resto ficasse na fila, e slots já drenados ' +
+        'seguravam a string até a compactação. Fatias parciais são copiadas ' +
+        'quando o resto cai à metade do retido, slot drenado solta na hora e a ' +
+        'montagem dos chunks deixou de ser quadrática.',
+    },
+    {
+      title: 'Crash reports mais fiéis',
+      detail:
+        'Breadcrumbs coalescidos com o payload pendente, dedupe por webContents, ' +
+        'classificação por plataforma, amostragem de memória do host antes da ' +
+        'morte do processo, wait status POSIX e assinatura do minidump no texto, ' +
+        'notas do usuário preservadas.',
+    },
+    {
+      title: 'Manter acordado com três modos',
+      detail:
+        'Off, auto e on. No macOS a assertion do sistema tem precedência sobre o ' +
+        'powerSaveBlocker e o status passa a ser assinável.',
+    },
+    {
+      title: 'Protocolo de stream do terminal com teto',
+      detail:
+        'Um frame JSON gigante ou profundamente aninhado chegava sem limite ao ' +
+        'JSON.parse. Agora há cap de 8 MiB e limite estrutural e de aninhamento.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'ssh_config com a semântica do OpenSSH',
+      detail:
+        'Quando uma diretiva se repete no mesmo bloco Host, o primeiro valor ' +
+        'vence, como no OpenSSH. No Windows o token __PROGRAMDATA__ passa a ser ' +
+        'expandido: antes virava ENOENT silencioso e escondia um known_hosts ' +
+        'administrado.',
+    },
+    {
+      title: 'Proveniência do código herdado do Orca em dia',
+      detail:
+        'O verificador lê todos os ledgers, oito arquivos sem ledger e uma ' +
+        'entrada malformada foram regularizados, e cinco ondas de resync para ' +
+        'o v1.4.200 estão registradas com hash real de cada blob.',
     },
   ],
 };
