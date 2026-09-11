@@ -1,12 +1,23 @@
-// Adapted from stablyai/orca @ 143c36e566483006fe54fa2716b019ec00599752
+// Adapted from stablyai/orca @ f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92
 // Copyright (c) 2026 Lovecast Inc. — MIT License
 // See third_party/licenses/orca-MIT.txt. Nexus changes: upstream tests
 
 import { describe, expect, it } from 'vitest'
 import {
-  shouldRecordProcessGoneCrash,
+  shouldRecordProcessGoneCrash as classifyProcessGoneCrash,
   shouldRecoverRendererAfterProcessGone
 } from './process-gone-classification'
+
+type ProcessGoneClassificationInput = Parameters<typeof classifyProcessGoneCrash>[0]
+
+function shouldRecordProcessGoneCrash({
+  platform = 'darwin',
+  ...event
+}: Omit<ProcessGoneClassificationInput, 'platform'> & {
+  platform?: NodeJS.Platform
+}): boolean {
+  return classifyProcessGoneCrash({ platform, ...event })
+}
 
 describe('shouldRecordProcessGoneCrash', () => {
   it('suppresses killed process exits during expected lifecycle teardown', () => {
@@ -262,14 +273,35 @@ describe('shouldRecordProcessGoneCrash', () => {
     ).toBe(true)
   })
 
-  it('still records renderer kills from the recent Linux crash-report cluster', () => {
+  it('suppresses namespace-encoded SIGTERM kills from the recent Linux cluster', () => {
     expect(
       shouldRecordProcessGoneCrash({
+        platform: 'linux',
         source: 'renderer',
         processType: 'renderer',
         reason: 'killed',
         exitCode: 61696,
         expectedTeardown: 'none'
+      })
+    ).toBe(false)
+  })
+
+  it('keeps wait status 61696 reportable outside the exact Linux killed boundary', () => {
+    const processGone = {
+      source: 'renderer' as const,
+      processType: 'renderer',
+      reason: 'killed',
+      exitCode: 61696,
+      expectedTeardown: 'none' as const
+    }
+
+    expect(shouldRecordProcessGoneCrash({ ...processGone, platform: 'darwin' })).toBe(true)
+    expect(shouldRecordProcessGoneCrash({ ...processGone, platform: 'win32' })).toBe(true)
+    expect(
+      shouldRecordProcessGoneCrash({
+        ...processGone,
+        platform: 'linux',
+        reason: 'abnormal-exit'
       })
     ).toBe(true)
   })
@@ -289,6 +321,7 @@ describe('shouldRecordProcessGoneCrash', () => {
   it('records non-SIGTERM killed process exits outside expected lifecycle teardown', () => {
     expect(
       shouldRecordProcessGoneCrash({
+        platform: 'linux',
         source: 'renderer',
         processType: 'renderer',
         reason: 'killed',
@@ -343,6 +376,15 @@ describe('shouldRecordProcessGoneCrash', () => {
 })
 
 describe('shouldRecoverRendererAfterProcessGone', () => {
+  it('recovers unexpected killed renderers', () => {
+    expect(
+      shouldRecoverRendererAfterProcessGone({
+        reason: 'killed',
+        expectedTeardown: 'none'
+      })
+    ).toBe(true)
+  })
+
   it('does not recover expected renderer reload teardown', () => {
     expect(
       shouldRecoverRendererAfterProcessGone({
@@ -370,19 +412,22 @@ describe('shouldRecoverRendererAfterProcessGone', () => {
     ).toBe(false)
   })
 
-  it('does not recover renderer startup and security launch failures', () => {
+  it('recovers transient renderer launch failures', () => {
     expect(
       shouldRecoverRendererAfterProcessGone({
         reason: 'launch-failed',
         expectedTeardown: 'none'
       })
-    ).toBe(false)
+    ).toBe(true)
     expect(
       shouldRecoverRendererAfterProcessGone({
         reason: 'launch-failed',
         expectedTeardown: 'renderer-reload'
       })
-    ).toBe(false)
+    ).toBe(true)
+  })
+
+  it('does not recover renderer integrity failures', () => {
     expect(
       shouldRecoverRendererAfterProcessGone({
         reason: 'integrity-failure',

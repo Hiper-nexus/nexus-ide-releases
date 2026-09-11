@@ -191,6 +191,22 @@ Modules adapted from ORCA remote/relay/SSH/WSL concepts at the same pin
 License text: `third_party/licenses/orca-MIT.txt`. Provenance ledger:
 `third_party/provenance/orca-143c36e.json`.
 
+## stablyai/orca — resync wave 1 (2026-09-11 @ f352b6b)
+
+The crash-reporting, agent awake/sleep, hook-type and harness-injected-turn modules
+first harvested at `143c36e` were resynchronized with
+[`stablyai/orca`](https://github.com/stablyai/orca) at commit
+`f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92` (v1.4.200; MIT, Copyright (c) 2026 Lovecast Inc.).
+Their entries in `third_party/provenance/orca-143c36e.json` are marked superseded and
+re-recorded in `third_party/provenance/orca-f352b6b.json`, together with the new upstream
+dependencies those modules gained (`src/shared/crash-report-redaction.ts`,
+`crash-report-exit-code.ts`, `posix-wait-status.ts`, `crash-report-signature-lines.ts`,
+`crash-report-attribution-lines.ts`, `react-update-depth-attribution.ts`,
+`computer-awake-mode.ts`; `src/main/crash-reporting/system-memory-details.ts`,
+`swap-volume-free-space.ts`, `pre-gone-host-memory.ts`). Deliberately not resynced:
+the GPU fallback marker (scheme v3 belongs to a restart-prompt flow Nexus does not have)
+and the Windows ACL repair helper (Nexus keeps the bounded retry only).
+
 ## stablyai/orca (Design Mode harvest)
 
 The incremental unique-selector algorithm in `src/preload/browser-design-mode.ts`
