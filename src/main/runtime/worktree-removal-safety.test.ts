@@ -1,5 +1,6 @@
-// Adapted from stablyai/orca @ 143c36e566483006fe54fa2716b019ec00599752
-// (src/main/worktree-removal-safety.test.ts)
+// Adapted from stablyai/orca @ f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92
+// (src/main/worktree-removal-safety.test.ts) — resynced 2026-09-11, no
+// upstream test behavior changed (only an unrelated import path move).
 // Copyright (c) 2026 Lovecast Inc. — MIT License
 // See third_party/licenses/orca-MIT.txt. Nexus changes: ORCA WorktreeMeta
 // provenance cases replaced by WorktreeRecord-based Nexus provenance; local

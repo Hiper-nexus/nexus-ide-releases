@@ -1,11 +1,14 @@
-// Adapted from stablyai/orca @ 143c36e566483006fe54fa2716b019ec00599752
-// (src/main/ipc/worktree-logic.ts — extraction of areWorktreePathsEqual and
-// its private helpers only; the rest of worktree-logic is ORCA IPC-specific).
+// Adapted from stablyai/orca @ f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92
+// (src/main/ipc/worktree-path-comparison.ts — extraction of
+// areWorktreePathsEqual and its private helpers only; worktreePathComparisonKey
+// and dedupeWorktreesByPath are ORCA relay/listing-specific and stay out).
 // Copyright (c) 2026 Lovecast Inc. — MIT License
 // See third_party/licenses/orca-MIT.txt. Nexus changes: standalone module;
-// statement style; no behavioral change.
+// statement style; Windows-path detection resynced onto the shared
+// isWindowsAbsolutePathLike helper instead of a duplicate local regex.
 
 import { posix, win32 } from 'node:path';
+import { isWindowsAbsolutePathLike } from '../../shared/cross-platform-path';
 
 export function areWorktreePathsEqual(
   leftPath: string,
@@ -23,23 +26,26 @@ export function areWorktreePathsEqual(
     return left === right;
   }
 
-  if (platform === 'win32' || looksLikeWindowsPath(leftPath) || looksLikeWindowsPath(rightPath)) {
-    const left = win32.normalize(win32.resolve(leftPath));
-    const right = win32.normalize(win32.resolve(rightPath));
+  if (
+    platform === 'win32' ||
+    isWindowsAbsolutePathLike(leftPath) ||
+    isWindowsAbsolutePathLike(rightPath)
+  ) {
     // Why: `git worktree list` can report the same Windows path with different
     // slash styles or drive-letter casing than the path computed before
     // creation; those must compare as the same worktree.
-    return left.toLowerCase() === right.toLowerCase();
+    return (
+      normalizeWindowsWorktreePathForComparison(leftPath) ===
+      normalizeWindowsWorktreePathForComparison(rightPath)
+    );
   }
   const left = normalizePosixWorktreePathForComparison(leftPath, platform);
   const right = normalizePosixWorktreePathForComparison(rightPath, platform);
   return left === right;
 }
 
-function looksLikeWindowsPath(pathValue: string): boolean {
-  return (
-    /^[A-Za-z]:[\\/]/.test(pathValue) || pathValue.startsWith('\\\\') || pathValue.startsWith('//')
-  );
+function normalizeWindowsWorktreePathForComparison(pathValue: string): string {
+  return win32.normalize(win32.resolve(pathValue)).toLowerCase();
 }
 
 function looksLikePosixAbsolutePath(pathValue: string): boolean {

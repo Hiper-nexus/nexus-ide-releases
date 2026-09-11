@@ -1,5 +1,15 @@
 // Adapted from stablyai/orca @ c3620f0954ae283b3b71b295a241f6a9596af6aa
 // (MIT): physical-exit-before-replacement authority, under Nexus fences.
+// Resync check 2026-09-11 against f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92: no
+// code ported. Upstream's worktree-teardown.ts grew a structured-agent-session
+// sweep, cross-host graph matching, and an `allowUnverifiedStop` Force Delete
+// escape hatch (#11960) that WARNS and proceeds instead of throwing when a
+// stop can't be proven. This file shares no code with that one — it is a
+// from-scratch reimplementation of the same invariant for mission authority,
+// not worktree PTY teardown — and porting the escape hatch would weaken
+// physical-exit-before-replacement into an advisory check, letting two
+// sessions claim authority over the same mission (split-brain). Deliberately
+// not ported; see third_party/provenance/orca-f352b6b-runtime-remote.json.
 import { createHash } from 'node:crypto';
 import { appendMissionVerdict } from '../../shared/mission-block-cause';
 import {

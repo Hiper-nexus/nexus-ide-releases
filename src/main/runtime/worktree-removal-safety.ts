@@ -1,4 +1,4 @@
-// Adapted from stablyai/orca @ 143c36e566483006fe54fa2716b019ec00599752
+// Adapted from stablyai/orca @ f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92
 // (src/main/worktree-removal-safety.ts)
 // Copyright (c) 2026 Lovecast Inc. — MIT License
 // See third_party/licenses/orca-MIT.txt. Nexus changes: ORCA WorktreeMeta
@@ -6,6 +6,9 @@
 // main-owned via WorktreeStateStore CAS, so there is no legacy-evidence branch
 // and no meta-update surface to sanitize); GitWorktreeInfo replaced by local
 // RegisteredWorktreeInfo; Repo replaced by plain repo path; statement style.
+// Resynced 2026-09-11: upstream's only change in this window (two new keys on
+// its WorktreeMeta sanitization array) lives entirely in the ORCA meta-update
+// surface Nexus does not carry — no code changed here.
 
 import { lstat, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';

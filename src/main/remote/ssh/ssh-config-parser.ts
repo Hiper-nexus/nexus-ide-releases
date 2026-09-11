@@ -1,7 +1,11 @@
-// Adapted from stablyai/orca @ 143c36e566483006fe54fa2716b019ec00599752
+// Adapted from stablyai/orca @ f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92
 // Copyright (c) 2026 Lovecast Inc. — MIT License
 // See third_party/licenses/orca-MIT.txt. Nexus changes: lean Host block parser;
-// no Include expansion / full OpenSSH parity (follow-up).
+// no Include expansion / full OpenSSH parity (follow-up). Resynced
+// 2026-09-11: brought OpenSSH's first-value-wins semantics for single-valued
+// keys (below); gssapiAuthentication and parseSshConfigAliasClaims stayed
+// upstream — Nexus has no GSSAPI auth path and nothing consumes alias-claim
+// detection yet.
 
 import { resolveSshConfigHomePath } from './ssh-config-path-expansion';
 
@@ -62,16 +66,18 @@ export function parseSshConfig(
       continue;
     }
     if (!current) continue;
+    // Why: OpenSSH uses the first obtained value for single-valued parameters,
+    // so a repeated directive inside one Host block must not clobber it.
     switch (key) {
       case 'hostname':
-        current.hostname = value;
+        current.hostname ??= value;
         break;
       case 'user':
-        current.user = value;
+        current.user ??= value;
         break;
       case 'port': {
         const n = Number(value);
-        if (Number.isInteger(n) && n > 0 && n <= 65535) current.port = n;
+        if (Number.isInteger(n) && n > 0 && n <= 65535) current.port ??= n;
         break;
       }
       case 'identityfile':
@@ -80,7 +86,7 @@ export function parseSshConfig(
         );
         break;
       case 'proxyjump':
-        current.proxyJump = value;
+        current.proxyJump ??= value;
         break;
       default:
         break;
