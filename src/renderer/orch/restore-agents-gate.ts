@@ -7,12 +7,9 @@ import {
 } from '../state/layout-store';
 import { askConfirm } from '../state/confirm-store';
 import {
-  discardPaneSpawnState,
   holdSpawnUntilApproved,
   releaseHeldSpawns,
-  unlockRetiredMissionPane,
 } from '../terminal/terminal-host';
-import { pruneWouldLeaveOperatorMute } from '../terminal/mission-owned-pane-policy';
 import { isAutomatedReviewerPaneIdentity } from '../../shared/automated-reviewer-pane';
 import { useOrchStore } from '../state/orch-store';
 import { listPanes } from '../lib/split-tree';
@@ -187,7 +184,26 @@ function confirmMissionPaneAuthority(
   return check;
 }
 
-function pruneOrphanMissionPane(
+/**
+ * Negar autoridade NUNCA apaga o pane — ele é APOSENTADO.
+ *
+ * O estado seguro já está armado quando chegamos aqui: `gateRestoredAgents`
+ * segurou o spawn (`holdSpawnUntilApproved`) antes de perguntar à main, então o
+ * pane já está inerte e visível. O código anterior soltava o hold
+ * (`discardPaneSpawnState`) e em seguida chamava `close(...)`, que SEMPRE
+ * persiste — destruindo o terminal do operador de forma irreversível. Foi assim
+ * que 7 panes de uma missão `done` sumiram em campo (e 2 de outra `blocked`):
+ * `mission_panes` ainda os tinha, o layout durável não.
+ *
+ * Aposentado: continua no layout, com o conteúdo e o scrollback preservados, e
+ * o hold garante que não executa sozinho. Fechar é ação explícita do operador
+ * ("Limpar projeto → Fechar todos os panes").
+ *
+ * Não usamos `unlockRetiredMissionPane` aqui de propósito: para worker de
+ * missão `done` ele decide `reclaim-shell`, que SPAWNA um shell novo e converte
+ * o pane — o oposto de inerte e com histórico.
+ */
+function retireUnauthorizedMissionPane(
   pane: PaneModel,
   generation: RestoreWorkspaceGeneration,
 ): void {
@@ -196,17 +212,8 @@ function pruneOrphanMissionPane(
   if (orphanPrunesInFlight.has(key)) return;
   orphanPrunesInFlight.add(key);
   try {
-    const live = listPanes(useLayoutStore.getState().root);
-    if (pruneWouldLeaveOperatorMute(live, pane.id)) {
-      // Único leaf do coordenador: apagar deixava o operador sem teclado.
-      discardPaneSpawnState(pane.id);
-      void unlockRetiredMissionPane(pane);
-      return;
-    }
-    // Close while the spawn is still held. If layout cleanup ever throws, the
-    // pane remains fail-closed instead of becoming runnable by accident.
-    useLayoutStore.getState().close(pane.id, 'restore-orphan-mission-pane');
-    discardPaneSpawnState(pane.id);
+    // Idempotente, e reafirmado a cada gate: nunca soltar, nunca apagar.
+    holdSpawnUntilApproved(pane.id);
     const livePaneIds = new Set(
       listPanes(useLayoutStore.getState().root).map((item) => item.id),
     );
@@ -277,7 +284,7 @@ export async function gateRestoredAgents(
           confirmedMissionIds.push(pane.id);
           return;
         }
-        pruneOrphanMissionPane(pane, restoreGeneration);
+        retireUnauthorizedMissionPane(pane, restoreGeneration);
       } catch (error) {
         if (!isCurrentRestoreWorkspaceGeneration(restoreGeneration)) return;
         // Main may be restarting. Fail closed and retain the hold; absence of a

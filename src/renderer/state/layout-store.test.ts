@@ -716,6 +716,41 @@ describe('layout-store persistence key vs. the tree it owns', () => {
     releaseLoad();
     await switching;
   });
+
+  it('não grava a árvore que sobrou quando o load vence a corrida da debounce', async () => {
+    // A ordenação perigosa é a NORMAL: `layout.load` é SQLite + IPC local e
+    // resolve em milissegundos, bem antes dos 300 ms da debounce. O teste
+    // acima prende o load e só o libera DEPOIS da debounce — cobre a ordenação
+    // segura, por isso passa sem proteger nada.
+    //
+    // Aqui o load resolve rápido: o ramo `treeVersion !== versionAtStart`
+    // carimba `layoutWorkspacePath = '/workspace/b'` SEM hidratar (a árvore
+    // viva ainda é a de A) e, 300 ms depois, a debounce grava os panes de A
+    // sob a chave de B. É o "pane fantasma": terminal de um workspace
+    // aparecendo dentro de outro.
+    const save = vi.fn(
+      async (_workspacePath: string, _layout: WorkspaceLayout) => undefined,
+    );
+    const load = vi.fn(async (path: string) => {
+      if (path === '/workspace/b') {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      return null;
+    });
+    vi.stubGlobal('window', {
+      nexus: { layout: { load, save, saveSync: vi.fn() } },
+    });
+
+    await switchWorkspaceLayout('/workspace/a');
+    expect(useLayoutStore.getState().hydrated).toBe(true);
+
+    const switching = switchWorkspaceLayout('/workspace/b');
+    useLayoutStore.getState().addShellPane();
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    await switching;
+
+    expect(save.mock.calls.map(([path]) => path)).not.toContain('/workspace/b');
+  });
 });
 
 describe('layout-store test fixtures go through the seam', () => {

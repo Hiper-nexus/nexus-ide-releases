@@ -59,7 +59,7 @@ export function WorkspaceCleanup() {
       const confirmed = await askConfirm({
         title: kind === 'panes' ? `Fechar ${count} panes?` : `Apagar ${count} missões?`,
         body: kind === 'panes'
-          ? `Projeto ${workspace.name}: os terminais e agentes serão encerrados. O histórico das missões será preservado.`
+          ? `Projeto ${workspace.name}: os terminais e agentes serão encerrados — incluindo os panes de missões já encerradas, que ficam guardados no projeto e agora saem junto. O histórico das missões será preservado.`
           : `Projeto ${workspace.name}: as missões serão encerradas e seu histórico apagado. Esta exclusão não pode ser desfeita. Os arquivos do projeto serão preservados.`,
         confirmLabel: kind === 'panes' ? 'Fechar todos os panes' : 'Apagar todas as missões',
         danger: true,

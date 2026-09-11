@@ -453,10 +453,19 @@ export function switchWorkspaceLayout(workspacePath: string): Promise<boolean> {
     if (persistKey !== workspacePath) return true;
     // A local mutation landed while we were loading — it wins; don't hydrate.
     if (treeVersion !== versionAtStart) {
-      // That live tree IS this workspace's tree now. Recording it matters: the
-      // next re-read has to recognise it as a refresh, or it would treat the
-      // mission on screen as foreign and restore right over it.
-      layoutWorkspacePath = workspacePath;
+      // NÃO carimbamos `layoutWorkspacePath = workspacePath` aqui.
+      //
+      // `hydrate` não rodou (o ramo retorna abaixo), então a árvore viva ainda
+      // é a do workspace que está SAINDO. Carimbá-la como deste workspace faz
+      // `ownsPersistedLayout` mentir e, 300 ms depois, a debounce grava os
+      // panes de A sob a chave de B — terminal de um workspace aparecendo
+      // dentro de outro (o "pane fantasma" relatado em campo).
+      //
+      // O carimbo existia para a releitura reconhecer o que está na tela como
+      // refresh em vez de restaurar por cima. Mas a árvore que está na tela,
+      // neste caso, é justamente a ESTRANGEIRA: tratá-la como estranha e
+      // hidratar o alvo por cima é o desfecho correto, não o indesejado. Sem
+      // carimbo a posse fica honesta e a guarda de persistência volta a valer.
       return layout !== null;
     }
     const durableLayout = layout ? sanitizeWorkspaceLayout(layout) : null;
