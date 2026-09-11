@@ -1,11 +1,12 @@
-// Adapted from stablyai/orca @ 143c36e566483006fe54fa2716b019ec00599752
+// Adapted from stablyai/orca @ f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92
 // Copyright (c) 2026 Lovecast Inc. — MIT License
-// See third_party/licenses/orca-MIT.txt. Nexus changes: upstream tests with temp dir
+// See third_party/licenses/orca-MIT.txt. Nexus changes: upstream tests with temp dir; the Windows ACL-repair assertions were dropped (Nexus keeps only the bounded retry)
 
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
 import { CrashReportStore } from './crash-report-store'
 import type { CrashReportCreateInput } from '../../shared/crash-reporting'
 
@@ -35,13 +36,15 @@ function input(reason = 'crashed'): CrashReportCreateInput {
       {
         createdAt: '2026-05-16T01:00:00.000Z',
         name: 'workspace_opened',
-        data: { path: '/Users/alice/project', ssh: false }
+        data: { path: '/Users/alice/project', ssh: false },
+        origin: 'renderer:42'
       }
     ]
   }
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })))
 })
 
@@ -137,5 +140,100 @@ describe('CrashReportStore', () => {
     await Promise.all(Array.from({ length: 5 }, (_, index) => store.record(input(`oom-${index}`))))
 
     await expect(store.listRecent()).resolves.toHaveLength(5)
+  })
+
+  it('waits for an in-flight crash write before reading the pending report', async () => {
+    const { store } = await createStore()
+
+    const recordPromise = store.record(input())
+    const pendingPromise = store.getLatestPending()
+    const report = await recordPromise
+
+    await expect(pendingPromise).resolves.toMatchObject({ id: report.id, status: 'pending' })
+  })
+
+  it.each(['EPERM', 'EACCES', 'EBUSY'] as const)(
+    'recovers a pending report after a transient Windows %s read failure',
+    async (code) => {
+      const { store, filePath } = await createStore()
+      const report = await store.record(input())
+      const reloaded = new CrashReportStore(filePath)
+      vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+      const readError = Object.assign(new Error('temporary read failure'), { code })
+      const readFileSpy = vi.spyOn(fs, 'readFile').mockRejectedValueOnce(readError)
+
+      await expect(reloaded.getLatestPending()).resolves.toMatchObject({ id: report.id })
+
+      expect(readFileSpy).toHaveBeenCalledTimes(2)
+    }
+  )
+
+  it('retries a transient Windows rename lock', async () => {
+    const { store } = await createStore()
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    const busyError = Object.assign(new Error('file busy'), { code: 'EBUSY' })
+    const renameSpy = vi.spyOn(fs, 'rename').mockRejectedValueOnce(busyError)
+
+    await expect(store.record(input())).resolves.toMatchObject({ status: 'pending' })
+
+    expect(renameSpy).toHaveBeenCalledTimes(2)
+  })
+
+  it('removes its temp file after a terminal write failure', async () => {
+    const { store, filePath } = await createStore()
+    const ioError = Object.assign(new Error('disk error'), { code: 'EIO' })
+    vi.spyOn(fs, 'rename').mockRejectedValueOnce(ioError)
+
+    await expect(store.record(input())).rejects.toBe(ioError)
+
+    const entries = await fs.readdir(path.dirname(filePath))
+    expect(entries.filter((entry) => entry.endsWith('.tmp'))).toEqual([])
+  })
+
+  describe('attachDetails', () => {
+    it('merges late minidump details without dropping the originals', async () => {
+      const { store } = await createStore()
+      const report = await store.record(input())
+
+      const updated = await store.attachDetails(report.id, {
+        minidumpStatus: 'captured',
+        minidumpCheckFile: 'render_frame_impl.cc'
+      })
+
+      expect(updated?.details).toMatchObject({
+        code: 5,
+        minidumpStatus: 'captured',
+        minidumpCheckFile: 'render_frame_impl.cc'
+      })
+      expect((await store.getById(report.id))?.details.minidumpCheckFile).toBe(
+        'render_frame_impl.cc'
+      )
+    })
+
+    it('sanitizes attached details the same way recorded ones are', async () => {
+      const { store } = await createStore()
+      const report = await store.record(input())
+
+      const updated = await store.attachDetails(report.id, {
+        minidumpPath: '/Users/alice/Library/Application Support/Orca/reports/abc.dmp'
+      })
+
+      expect(updated?.details.minidumpPath).toBe('[redacted-path]')
+    })
+
+    it('leaves the report status untouched so the crash prompt still fires', async () => {
+      const { store } = await createStore()
+      const report = await store.record(input())
+
+      await store.attachDetails(report.id, { minidumpStatus: 'absent' })
+
+      expect((await store.getLatestPending())?.id).toBe(report.id)
+    })
+
+    it('returns null for a report that has already been evicted', async () => {
+      const { store } = await createStore()
+
+      expect(await store.attachDetails('missing-id', { minidumpStatus: 'absent' })).toBeNull()
+    })
   })
 })

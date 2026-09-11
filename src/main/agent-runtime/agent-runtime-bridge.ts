@@ -44,6 +44,7 @@ import { ProcessGoneDedupe } from '../crash-reporting/process-gone-dedupe';
 import {
   buildProcessGoneCrashDetails,
   setProcessGoneDiagnosticsApp,
+  startPreGoneCrashSampling,
 } from '../crash-reporting/process-gone-diagnostics';
 import { publishSessionActivityState } from '../pty/pty-manager';
 import type { RendererRecoveryCircuitBreaker } from '../reliability/renderer-recovery-circuit-breaker';
@@ -116,6 +117,9 @@ function ensureDiagnosticsApp(): void {
     setProcessGoneDiagnosticsApp({
       getAppMetrics: () => app.getAppMetrics?.() ?? [],
     });
+    // Sampled every 60 s (unref'd): process-gone metrics only see survivors,
+    // so the last whole-app sample is what names the process that died.
+    startPreGoneCrashSampling();
     diagnosticsAppBound = true;
   } catch {
     // Tests without electron app — leave unset; classification still works.
@@ -181,6 +185,7 @@ export function handleRenderProcessGone(
   const source: ProcessGoneSource = 'renderer';
 
   const shouldRecord = shouldRecordProcessGoneCrash({
+    platform: process.platform,
     source,
     processType: 'renderer',
     reason,
@@ -196,11 +201,14 @@ export function handleRenderProcessGone(
       exitCode,
       expectedTeardown,
     });
-    const details = buildProcessGoneCrashDetails({
-      processType: 'renderer',
-      reason,
-      exitCode,
-    });
+    const details = buildProcessGoneCrashDetails(
+      {
+        processType: 'renderer',
+        reason,
+        exitCode,
+      },
+      'renderer',
+    );
     void getCrashReportStore()
       .record({
         source: 'renderer',
@@ -346,6 +354,7 @@ export function handleChildProcessGone(
   const source: ProcessGoneSource = 'child';
 
   const shouldRecord = shouldRecordProcessGoneCrash({
+    platform: process.platform,
     source,
     processType,
     serviceName,
@@ -363,12 +372,15 @@ export function handleChildProcessGone(
       processType,
       serviceName: serviceName ?? null,
     });
-    const details = buildProcessGoneCrashDetails({
+    const details = buildProcessGoneCrashDetails(
+      {
+        processType,
+        reason,
+        exitCode,
+        serviceName,
+      },
       processType,
-      reason,
-      exitCode,
-      serviceName,
-    });
+    );
     void getCrashReportStore()
       .record({
         source: 'child',

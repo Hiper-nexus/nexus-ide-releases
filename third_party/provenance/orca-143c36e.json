@@ -203,7 +203,8 @@
       "changeSummary": "attribution header; secret-safe sanitization kept",
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/shared/crash-reporting.test.ts",
@@ -217,7 +218,8 @@
       "changeSummary": "upstream tests with attribution",
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/main/crash-reporting/process-gone-classification.ts",
@@ -231,7 +233,8 @@
       "changeSummary": "under crash-reporting; pure classification",
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/main/crash-reporting/process-gone-classification.test.ts",
@@ -245,7 +248,8 @@
       "changeSummary": "upstream tests",
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/main/crash-reporting/process-gone-dedupe.ts",
@@ -259,7 +263,8 @@
       "changeSummary": "bounded dedupe map",
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/main/crash-reporting/process-gone-dedupe.test.ts",
@@ -273,7 +278,8 @@
       "changeSummary": "upstream tests",
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/main/crash-reporting/process-gone-diagnostics.ts",
@@ -287,7 +293,8 @@
       "changeSummary": "app metrics via injectable getter (no hard electron app import at module top for tests)",
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/main/crash-reporting/process-gone-diagnostics.test.ts",
@@ -301,7 +308,8 @@
       "changeSummary": "upstream tests adapted for injectable metrics",
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/main/crash-reporting/gpu-crash-fallback-decision.ts",
@@ -315,7 +323,8 @@
       "changeSummary": "pure GPU fallback tracker",
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/main/crash-reporting/gpu-crash-fallback-decision.test.ts",
@@ -329,7 +338,8 @@
       "changeSummary": "upstream tests",
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/main/crash-reporting/crash-breadcrumb-store.ts",
@@ -343,7 +353,8 @@
       "changeSummary": "bounded breadcrumbs; sanitize via shared crash-reporting",
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/main/crash-reporting/crash-breadcrumb-store.test.ts",
@@ -357,7 +368,8 @@
       "changeSummary": "upstream tests",
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/main/crash-reporting/crash-breadcrumb-store-leak.test.ts",
@@ -385,7 +397,8 @@
       "changeSummary": "userData path injectable; no required app.getPath at import",
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/main/crash-reporting/crash-report-store.test.ts",
@@ -399,7 +412,8 @@
       "changeSummary": "upstream tests with temp dir",
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/shared/agent-hook-types.ts",
@@ -413,7 +427,8 @@
       "changeSummary": "ORCA_HOOK_PROTOCOL_VERSION renamed export alias kept; attribution",
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/shared/agent-session-resume.ts",
@@ -511,7 +526,8 @@
       "changeSummary": "filter harness-injected turns",
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/shared/agent-hook-listener.ts",
@@ -567,7 +583,8 @@
       "changeSummary": "sleep prevention; injectable power APIs; default no-op platform assertions when not provided",
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/main/agent-awake-service.test.ts",
@@ -581,7 +598,8 @@
       "changeSummary": "upstream awake tests with electron mock",
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/main/git/hosted-remote-url.ts",
@@ -890,7 +908,8 @@
       "changeSummary": "caffeinate-based sleep assertion; injectable spawn",
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/main/linux-lid-sleep-assertion.ts",
@@ -1560,7 +1579,9 @@
       "copyright": "Copyright (c) 2026 Lovecast Inc.",
       "type": "adapted",
       "changeSummary": "Secondary MIT pattern layered over the Apache-2.0 emdash parser: interactive question tools enter awaiting-input, while only explicit user submission or matching completion clears the latch.",
-      "secondaryProvenance": ["generalaction/emdash@c1af543 (Apache-2.0 primary vendored source)"],
+      "secondaryProvenance": [
+        "generalaction/emdash@c1af543 (Apache-2.0 primary vendored source)"
+      ],
       "importDate": "2026-07-23",
       "status": "imported"
     },

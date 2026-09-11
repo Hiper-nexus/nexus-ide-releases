@@ -1,4 +1,4 @@
-// Adapted from stablyai/orca @ 143c36e566483006fe54fa2716b019ec00599752
+// Adapted from stablyai/orca @ f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92
 // Copyright (c) 2026 Lovecast Inc. — MIT License
 // See third_party/licenses/orca-MIT.txt. Nexus changes: upstream awake tests with electron mock
 
@@ -89,6 +89,7 @@ function createService(
     linuxAssertion,
     macosAssertion,
     now,
+    platform: 'linux',
     powerMonitor,
     logger: {
       debug: vi.fn(),
@@ -124,6 +125,42 @@ describe('AgentAwakeService', () => {
     expect(blocker.start).toHaveBeenCalledWith('prevent-display-sleep')
     expect(macosAssertion.start).toHaveBeenCalledTimes(1)
     expect(linuxAssertion.start).toHaveBeenCalledTimes(1)
+  })
+
+  it('stays awake in On mode without a working agent', () => {
+    const blocker = createBlocker()
+    const service = createService(() => 1_000, blocker)
+
+    service.setMode('on')
+
+    expect(blocker.start).toHaveBeenCalledWith('prevent-display-sleep')
+    expect(service.getStatus()).toEqual({ mode: 'on', active: true })
+  })
+
+  it('publishes Auto activity changes to status subscribers', () => {
+    const service = createService(() => 1_000)
+    const listener = vi.fn()
+    service.subscribe(listener)
+
+    service.setMode('auto')
+    service.setStatuses([workingStatus()])
+    service.setStatuses([workingStatus(), workingStatus()])
+    service.setStatuses([workingStatus()])
+    service.setStatuses([])
+
+    expect(listener).toHaveBeenNthCalledWith(1, {
+      mode: 'auto',
+      active: false
+    })
+    expect(listener).toHaveBeenNthCalledWith(2, {
+      mode: 'auto',
+      active: true
+    })
+    expect(listener).toHaveBeenNthCalledWith(3, {
+      mode: 'auto',
+      active: false
+    })
+    expect(listener).toHaveBeenCalledTimes(3)
   })
 
   it('starts and stops from settings flips around an already-running status', () => {

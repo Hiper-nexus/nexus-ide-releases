@@ -1,4 +1,4 @@
-// Adapted from stablyai/orca @ 143c36e566483006fe54fa2716b019ec00599752
+// Adapted from stablyai/orca @ f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92
 // Copyright (c) 2026 Lovecast Inc. — MIT License
 // See third_party/licenses/orca-MIT.txt. Nexus changes: ORCA_HOOK_PROTOCOL_VERSION renamed export alias kept; attribution
 
@@ -24,7 +24,13 @@ export const AGENT_HOOK_TARGETS = [
 ] as const
 export type AgentHookTarget = (typeof AGENT_HOOK_TARGETS)[number]
 
-export type AgentHookInstallState = 'installed' | 'not_installed' | 'partial' | 'error'
+export type AgentHookInstallState = 'installed' | 'not_installed' | 'partial' | 'error' | 'skipped'
+
+export type AgentHookInstallSkipReason =
+  | 'agent_disabled'
+  | 'cli_not_found'
+  | 'cli_presence_unknown'
+  | 'hooks_disabled'
 
 export type AgentHookInstallStatus = {
   agent: AgentHookTarget
@@ -32,6 +38,7 @@ export type AgentHookInstallStatus = {
   configPath: string
   managedHooksPresent: boolean
   detail: string | null
+  skipReason?: AgentHookInstallSkipReason
 }
 
 // Why: bumped whenever the managed script's request shape changes. The
@@ -45,3 +52,6 @@ export type AgentHookInstallStatus = {
 // rewritten on every install() call so there is no durable on-disk v1 script
 // to inherit. Reserve the next bump for a real wire change.
 export const ORCA_HOOK_PROTOCOL_VERSION = '1' as const
+
+// Why: absence means the listener predates raw-JSON metadata headers, so managed scripts must keep using form posts.
+export const ORCA_HOOK_RAW_JSON_TRANSPORT = 'raw-json-v1' as const
