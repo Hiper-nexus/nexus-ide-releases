@@ -1,7 +1,8 @@
-// Adapted from stablyai/orca @ 143c36e566483006fe54fa2716b019ec00599752
+// Adapted from stablyai/orca @ f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92
 // Copyright (c) 2026 Lovecast Inc. — MIT License
 // See third_party/licenses/orca-MIT.txt. Nexus changes: upstream tests with attribution
 // Secondary provenance: fork of hosted-git-info@9.0.3 behavior (see package notes).
+// Resync 2026-09-11: byte-identical upstream at 143c36e and f352b6b — re-pinned only.
 
 import { describe, expect, it } from 'vitest'
 import {

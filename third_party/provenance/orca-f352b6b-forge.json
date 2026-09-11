@@ -1,0 +1,141 @@
+{
+  "source": "stablyai/orca",
+  "upstreamCommit": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92",
+  "upstreamRepository": "https://github.com/stablyai/orca",
+  "license": "MIT",
+  "copyright": "Copyright (c) 2026 Lovecast Inc.",
+  "licenseFile": "third_party/licenses/orca-MIT.txt",
+  "importedAt": "2026-09-11",
+  "verifiedAt": "2026-09-11",
+  "headerPolicy": "Direct copies/adaptations preserve upstream notices and carry: Adapted from stablyai/orca @ <commit>; Copyright (c) 2026 Lovecast Inc. — MIT License; See third_party/licenses/orca-MIT.txt. Nexus-authored concept entries are mapped by the current Nexus SHA-256 and retain pin/license attribution in their implementation family or source header. Existing copyright notices inside source are never stripped.",
+  "note": "Resync wave (forge) of the source-control/forge modules first harvested at 143c36e to upstream v1.4.200 (f352b6b). Entries with `supersedes` replace the same nexusPath in orca-143c36e.json, whose entries are marked superseded. This wave ports zero upstream code changes: forge-provider.ts, forge-provider.test.ts, forge-flags.ts, github-forge-provider.ts and gitlab-forge-provider.ts all trace to upstream files that are now the full ORCA hosted-review multi-forge router/client graph (connectionId->executionHostId host routing, OrThrow lookup semantics, GitHub rate-limit pre-check #11532, glab/gh CLI subprocess management) which Nexus deliberately does not import — reviewed in full (pin->HEAD diff for forge-provider.ts; 66 commits since 143c36e for src/main/github, 33 for src/main/gitlab) and none of it crosses into the narrow injectable-HTTP surface these lean adapters expose. hosted-remote-url.ts and its test are byte-identical between 143c36e and f352b6b. Every file is re-pinned to f352b6b with a resync note recording what was checked.",
+  "files": [
+    {
+      "upstreamUrl": "https://github.com/stablyai/orca/blob/f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92/src/main/git/hosted-remote-url.ts",
+      "upstreamCommit": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92",
+      "originalSha256": "71f3e45923de563ae2fa6750c14e798d9b4ef38736603ef4fedb3685faf8b50a",
+      "originalPath": "src/main/git/hosted-remote-url.ts",
+      "nexusPath": "src/main/git/hosted-remote-url.ts",
+      "nexusSha256": "9255f2ae8dbbda8b7dc93f71f184002460d697f4ad0dd23e12575541bad2993f",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 Lovecast Inc.",
+      "type": "copied",
+      "changeSummary": "resync; byte-identical to 143c36e — re-pinned only; local path under src/main/git; dual provenance hosted-git-info@9.0.3",
+      "secondaryProvenance": [
+        {
+          "name": "hosted-git-info",
+          "version": "9.0.3",
+          "note": "ORCA file is a scoped local fork of hosted-git-info@9.0.3 behavior for GitHub/GitLab/Bitbucket remote parsing",
+          "npm": "https://www.npmjs.com/package/hosted-git-info/v/9.0.3",
+          "license": "ISC"
+        }
+      ],
+      "importDate": "2026-09-11",
+      "status": "imported",
+      "supersedes": "143c36e566483006fe54fa2716b019ec00599752"
+    },
+    {
+      "upstreamUrl": "https://github.com/stablyai/orca/blob/f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92/src/main/git/hosted-remote-url.test.ts",
+      "upstreamCommit": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92",
+      "originalSha256": "767edddffe94421d6a2ae9e8406a69a9ea5fc6425d2375a5d3d0715360d69419",
+      "originalPath": "src/main/git/hosted-remote-url.test.ts",
+      "nexusPath": "src/main/git/hosted-remote-url.test.ts",
+      "nexusSha256": "71978297cdd3b2b7cb8c8bea6735c23f2e4742e779b2a915c533fe8b97ddff3e",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 Lovecast Inc.",
+      "type": "copied",
+      "changeSummary": "resync; byte-identical to 143c36e — re-pinned only; upstream tests with attribution",
+      "secondaryProvenance": [
+        {
+          "name": "hosted-git-info",
+          "version": "9.0.3",
+          "note": "tests cover forked parse behavior",
+          "license": "ISC"
+        }
+      ],
+      "importDate": "2026-09-11",
+      "status": "imported",
+      "supersedes": "143c36e566483006fe54fa2716b019ec00599752"
+    },
+    {
+      "upstreamUrl": "https://github.com/stablyai/orca/blob/f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92/src/main/source-control/forge-provider.ts",
+      "upstreamCommit": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92",
+      "originalSha256": "6c2aa50ff89733c6c4ece7415926a0f497483f08d18a41fcad21d32e3460b230",
+      "originalPath": "src/main/source-control/forge-provider.ts",
+      "nexusPath": "src/main/source-control/forge-provider.ts",
+      "nexusSha256": "ccdd474c6cd47ab6e9486be6ac644ba4117c04865a25908a3bbfe4641f7a4277",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 Lovecast Inc.",
+      "type": "adapted",
+      "changeSummary": "resync; no code change — upstream file at this pin is the full multi-forge hosted-review router (connectionId->executionHostId, OrThrow lookups, GitHub rate-limit pre-check #11532); Nexus's lean ForgeProvider (authz+audit, no hosted-review graph) already separates unavailable (ok:false) from not-found (ok:true, review:null) via its result types, meeting the same goal upstream's OrThrow rename targets",
+      "secondaryProvenance": [],
+      "importDate": "2026-09-11",
+      "status": "imported",
+      "supersedes": "143c36e566483006fe54fa2716b019ec00599752"
+    },
+    {
+      "upstreamUrl": "https://github.com/stablyai/orca/blob/f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92/src/main/source-control/forge-provider.test.ts",
+      "upstreamCommit": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92",
+      "originalSha256": "0eb724a25825db17489499f0cdc952f290cbe08819450e5d9c7054203a0eca26",
+      "originalPath": "src/main/source-control/forge-provider.test.ts",
+      "nexusPath": "src/main/source-control/forge-provider.test.ts",
+      "nexusSha256": "f1c3eb78aef776fcf5e811e333d543e4e4f1e547025126ee361cf9a3cd93595b",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 Lovecast Inc.",
+      "type": "adapted",
+      "changeSummary": "resync; no code change — added the missing attribution header (was absent since the 143c36e import); upstream test at this pin mocks the hosted-review monolith Nexus does not import, no shared assertions to port",
+      "secondaryProvenance": [],
+      "importDate": "2026-09-11",
+      "status": "imported",
+      "supersedes": "143c36e566483006fe54fa2716b019ec00599752"
+    },
+    {
+      "upstreamUrl": "https://github.com/stablyai/orca/blob/f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92/src/main/source-control/forge-provider.ts",
+      "upstreamCommit": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92",
+      "originalSha256": "6c2aa50ff89733c6c4ece7415926a0f497483f08d18a41fcad21d32e3460b230",
+      "originalPath": "src/main/source-control/forge-provider.ts",
+      "nexusPath": "src/main/source-control/forge-flags.ts",
+      "nexusSha256": "2be22f98eea2eabdd259b559a7d22dedebe27bebfb69230d5de36be15a96cac9",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 Lovecast Inc.",
+      "type": "adapted",
+      "changeSummary": "resync; no code change — feature-flag defaults (GitHub/GitLab on; Bitbucket/Azure/Gitea off) are a Nexus product decision, independent of upstream turning on Bitbucket createReview at this pin",
+      "secondaryProvenance": [],
+      "importDate": "2026-09-11",
+      "status": "imported",
+      "supersedes": "143c36e566483006fe54fa2716b019ec00599752"
+    },
+    {
+      "upstreamUrl": "https://github.com/stablyai/orca/blob/f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92/src/main/github/client.ts",
+      "upstreamCommit": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92",
+      "originalSha256": "443668b36d273c63c2d12f2774b6371429f8d4a41bfb12c9f592d13a333dc592",
+      "originalPath": "src/main/github/client.ts",
+      "nexusPath": "src/main/source-control/github-forge-provider.ts",
+      "nexusSha256": "602f9386711dc678ade245cbec1fcfdfb4bb8c729a883fca5b9d15224e69027d",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 Lovecast Inc.",
+      "type": "adapted",
+      "changeSummary": "resync; no code change — reviewed 66 upstream commits since 143c36e touching src/main/github (fork head-origin tracking, GHES multi-repo routing, stacked-PR/merge-queue UI, PR-lookup rate-limit pre-check #11532); none affect createReview/getReviewForBranch for a plain repo+branch pair, this adapter's whole surface; the client.ts path is now a re-export barrel over the sliced implementation, hashed here for reference only Upstream path at this pin: src/main/github/client.ts (barrel; implementation sliced into src/main/github/client/**, ~200 files, since 143c36e).",
+      "secondaryProvenance": [],
+      "importDate": "2026-09-11",
+      "status": "imported",
+      "supersedes": "143c36e566483006fe54fa2716b019ec00599752"
+    },
+    {
+      "upstreamUrl": "https://github.com/stablyai/orca/blob/f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92/src/main/gitlab/client.ts",
+      "upstreamCommit": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92",
+      "originalSha256": "1481a84549781326ce4b9693e3a9552368ff2581c427937cf376efdb64b7c494",
+      "originalPath": "src/main/gitlab/client.ts",
+      "nexusPath": "src/main/source-control/gitlab-forge-provider.ts",
+      "nexusSha256": "8748fdbdcab2bf1391ce116ebdc7ad8d3f8246c5f3935bd06a2f706fa20a803a",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 Lovecast Inc.",
+      "type": "adapted",
+      "changeSummary": "resync; no code change — reviewed 33 upstream commits since 143c36e touching src/main/gitlab; the one REST-shaped fix (non-array API body guard, #12911) targets the glab-CLI JSON.parse(stdout) path this adapter's direct HTTP transport doesn't share, and this file already guards non-array bodies via Array.isArray(response.body); rest of the window is self-hosted-instance routing and Checks-panel pipeline traces, part of the hosted-review graph Nexus does not import; the client.ts path is now a re-export barrel, hashed here for reference only Upstream path at this pin: src/main/gitlab/client.ts (barrel; implementation split into src/main/gitlab/*.ts, ~40 files, since 143c36e).",
+      "secondaryProvenance": [],
+      "importDate": "2026-09-11",
+      "status": "imported",
+      "supersedes": "143c36e566483006fe54fa2716b019ec00599752"
+    }
+  ]
+}

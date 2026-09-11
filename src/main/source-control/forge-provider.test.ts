@@ -1,3 +1,10 @@
+// Adapted from stablyai/orca @ f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92
+// Copyright (c) 2026 Lovecast Inc. — MIT License
+// See third_party/licenses/orca-MIT.txt. Nexus changes: Nexus authz/audit +
+// GH/GL adapter unit tests (not the full ORCA hosted-review multi-forge suite).
+// Resync 2026-09-11: upstream's test at this pin mocks the hosted-review
+// monolith Nexus does not import; no shared assertions to port.
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   assertForgeWriteAuthorized,

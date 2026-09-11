@@ -603,7 +603,8 @@
         }
       ],
       "importDate": "2026-07-11",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/main/git/hosted-remote-url.test.ts",
@@ -624,7 +625,8 @@
         }
       ],
       "importDate": "2026-07-11",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/main/source-control/forge-provider.ts",
@@ -638,7 +640,8 @@
       "changeSummary": "Lean ForgeProvider with authz+audit; no ORCA hosted-review client graph",
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/main/github/client.ts",
@@ -652,7 +655,8 @@
       "changeSummary": "GitHub forge adapter with mandatory ForgeAuthorization + audit; injectable HTTP (not full ORCA client graph)",
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/main/gitlab/client.ts",
@@ -666,7 +670,8 @@
       "changeSummary": "GitLab forge adapter with mandatory ForgeAuthorization + audit; injectable HTTP",
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/main/source-control/forge-provider.ts",
@@ -680,7 +685,8 @@
       "changeSummary": "Feature flags: GitHub/GitLab default on; Bitbucket/Azure/Gitea default off",
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/main/source-control/forge-provider.test.ts",
@@ -694,7 +700,8 @@
       "changeSummary": "Nexus authz/audit + GH/GL adapter unit tests (not full ORCA hosted-review suite)",
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/shared/terminal-stream-protocol.ts",
@@ -1560,7 +1567,9 @@
       "copyright": "Copyright (c) 2026 Lovecast Inc.",
       "type": "adapted",
       "changeSummary": "Secondary MIT pattern layered over the Apache-2.0 emdash parser: interactive question tools enter awaiting-input, while only explicit user submission or matching completion clears the latch.",
-      "secondaryProvenance": ["generalaction/emdash@c1af543 (Apache-2.0 primary vendored source)"],
+      "secondaryProvenance": [
+        "generalaction/emdash@c1af543 (Apache-2.0 primary vendored source)"
+      ],
       "importDate": "2026-07-23",
       "status": "imported"
     },

@@ -1,8 +1,13 @@
-// Adapted from stablyai/orca @ 143c36e566483006fe54fa2716b019ec00599752
+// Adapted from stablyai/orca @ f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92
 // Copyright (c) 2026 Lovecast Inc. — MIT License
 // See third_party/licenses/orca-MIT.txt. Nexus changes: lean interface without
 // ORCA hosted-review monolith; external writes require ForgeAuthorization + audit;
 // failure results may carry a typed provider apiError (GitHub: GitHubApiError).
+// Resync 2026-09-11: upstream's forge-provider.ts at this pin is the full
+// multi-forge hosted-review router (connectionId -> executionHostId, OrThrow
+// lookups, GitHub rate-limit pre-check) Nexus deliberately does not import;
+// its "OrThrow to avoid conflating unavailable with not-found" goal is already
+// met here structurally via ok:false vs ok:true+review:null. No port needed.
 
 import type { GitHubApiError } from '../../vendor/emdash/github/github-api-errors';
 

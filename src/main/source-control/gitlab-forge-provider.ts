@@ -1,7 +1,16 @@
-// Adapted from stablyai/orca @ 143c36e566483006fe54fa2716b019ec00599752
+// Adapted from stablyai/orca @ f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92
 // Copyright (c) 2026 Lovecast Inc. — MIT License
 // See third_party/licenses/orca-MIT.txt. Nexus changes: GitLab adapter with
 // mandatory ForgeAuthorization + audit log; HTTP transport injected; get MR for branch.
+// Resync 2026-09-11: src/main/gitlab/client.ts (this file's upstream origin)
+// was sliced into ~40 files at this pin; reviewed the 33 commits since 143c36e
+// touching src/main/gitlab. The one REST-shaped fix — guard against a non-array
+// API body (#12911) — targets the `glab` CLI JSON-parse path (JSON.parse(stdout)
+// on an error envelope), which this adapter's direct HTTP transport doesn't
+// share; this file already guards non-array bodies via
+// `Array.isArray(response.body) ? response.body : []`. Rest of the window is
+// self-hosted-instance routing and Checks-panel pipeline traces, both part of
+// the hosted-review graph Nexus does not import. No port applies.
 
 import type {
   ForgeCreateReviewResult,

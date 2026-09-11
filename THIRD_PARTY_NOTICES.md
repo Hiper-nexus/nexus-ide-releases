@@ -402,3 +402,23 @@ the Apache License 2.0.
 Provenance ledger: `third_party/provenance/agent-orchestrator-2026-09-09.json`.
 Full license: `third_party/licenses/Apache-2.0.txt`.
 
+
+## stablyai/orca (forge adapters resync — f352b6b)
+
+The forge/source-control adapters first adapted at commit
+`143c36e566483006fe54fa2716b019ec00599752` (see "Source Control harvest — F4"
+above) were resynced against
+[`stablyai/orca`](https://github.com/stablyai/orca) at commit
+`f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92` (v1.4.200), licensed under the
+MIT License. Copyright (c) 2026 Lovecast Inc.
+
+This wave ports no code. The upstream files behind `forge-provider.ts`,
+`forge-flags.ts`, `github-forge-provider.ts` and `gitlab-forge-provider.ts`
+grew into Orca's full hosted-review multi-forge router and client graph, which
+Nexus deliberately does not import; the upstream deltas since the pin were
+reviewed in full and none crosses into the narrow injectable-HTTP surface these
+lean adapters expose. `hosted-remote-url.ts` is byte-identical to the pin and
+keeps its dual provenance (hosted-git-info@9.0.3). Headers were re-pinned and
+per-file provenance is recorded in
+`third_party/provenance/orca-f352b6b-forge.json`; the superseded entries in
+`orca-143c36e.json` point at the new pin.
