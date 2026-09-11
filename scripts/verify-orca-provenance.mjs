@@ -6,6 +6,8 @@
  * whose entries supersede same-nexusPath entries in earlier ledgers.
  *
  * Rules:
+ * - status "superseded": hash not re-checked (history); a live entry for the
+ *     same nexusPath pinned to supersededBy must exist
  * - originalPath starts with "(concept)":
  *     originalSha256 === sha256(nexus file in repo)
  * - otherwise (copied/adapted with real pin path):
@@ -87,6 +89,23 @@ let checked = 0;
 
 for (const e of files) {
   checked += 1;
+  if (e.status === 'superseded') {
+    // History, not authority: the entry that replaced it (same nexusPath,
+    // pinned to supersededBy) is the one whose hash must hold. A superseded
+    // "(concept)" entry would otherwise fail as soon as the file evolves.
+    const successor = (entriesByNexusPath.get(e.nexusPath) ?? []).some(
+      (other) =>
+        other !== e &&
+        other.status !== 'superseded' &&
+        (!e.supersededBy || other.upstreamCommit === e.supersededBy),
+    );
+    if (!successor) {
+      fail(
+        `superseded entry ${e.nexusPath} has no live successor pinned to ${e.supersededBy ?? '(unspecified)'}`,
+      );
+    }
+    continue;
+  }
   const op = (e.originalPath || '').trim();
   const nexusAbs = join(REPO, e.nexusPath);
   if (!existsSync(nexusAbs) || !lstatSync(nexusAbs).isFile()) {
