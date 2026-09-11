@@ -160,6 +160,7 @@ vi.mock('./overlay/overlay-layer', () => ({
 }));
 
 import { App } from './App';
+import { PANE_SKILL_DRAG_TYPE } from './lib/pane-interactions';
 import { useCloseWorkspaceStore } from './components/CloseWorkspaceDialog';
 import { EMPTY_GAMIFICATION_SNAPSHOT, useGamificationStore } from './state/gamification-store';
 import { useLayoutStore } from './state/layout-store';
@@ -167,6 +168,8 @@ import { useMediaStudioStore } from './state/media-studio-store';
 import { useOrchStore } from './state/orch-store';
 import { useOrchestrationModeStore } from './state/orchestration-mode-store';
 import { useProductNavigationStore } from './state/product-navigation-store';
+import { useMissionSetupStore } from './state/mission-setup-store';
+import { useToastStore } from './state/toast-store';
 import { useWorkspaceStore } from './state/workspace-store';
 import { useCommandPaletteStore } from './state/command-palette-store';
 import { useConfirmStore } from './state/confirm-store';
@@ -243,6 +246,17 @@ beforeEach(() => {
         generate: vi.fn(),
         cancelGenerate: vi.fn(),
         revealArtifact: vi.fn(),
+      },
+      files: {
+        importMissionAttachment: vi.fn(async (name: string) => ({
+          ok: true,
+          path: `.nexus/attachments/mission-context/token-${name}`,
+        })),
+        importDroppedUri: vi.fn(async (uri: string) => ({
+          ok: true,
+          path: `.nexus/attachments/mission-context/token-${uri.split('/').at(-1)}`,
+        })),
+        pathForFile: vi.fn(() => '/Users/me/Desktop/fora-do-projeto.m4a'),
       },
     },
   });
@@ -398,5 +412,203 @@ describe('App root blocking overlays', () => {
     expect(terminalVisibility()).toEqual({ visible: true, reasons: [] });
     expect(currentScreenSnapshot().context).not.toMatch(PROFILE_REPORT);
     expect(lastBrowserSuppression()).toBe(false);
+  });
+});
+
+/**
+ * O intake de arrastar/soltar/colar do shell. O overlay `.global-drop-overlay`
+ * ficava preso porque quem o acende (`App`) o limpava por um listener de
+ * `window` que um filho com `stopPropagation` (picker, pane) nunca deixa
+ * chegar. Ver o plano da correção.
+ */
+describe('intake de arrastar/soltar/colar no shell', () => {
+  function setMissionSetupDestination(): void {
+    act(() => {
+      useProductNavigationStore.setState({
+        destination: { kind: 'mission-setup' },
+      });
+    });
+  }
+
+  function clearToasts(): void {
+    act(() => {
+      const store = useToastStore.getState();
+      for (const toast of [...store.toasts]) store.dismiss(toast.id);
+    });
+  }
+
+  interface TransferInit {
+    readonly types: readonly string[];
+    readonly files?: readonly File[];
+    readonly data?: Record<string, string>;
+  }
+
+  function transfer(init: TransferInit) {
+    return {
+      types: init.types,
+      files: init.files ?? [],
+      getData: (type: string) => init.data?.[type] ?? '',
+    };
+  }
+
+  function fire(type: string, target: EventTarget, init: TransferInit): Event {
+    const event = Object.assign(
+      new Event(type, { bubbles: true, cancelable: true }),
+      { dataTransfer: transfer(init) },
+    );
+    act(() => {
+      target.dispatchEvent(event);
+    });
+    return event;
+  }
+
+  function overlay(): Element | null {
+    return document.querySelector('.global-drop-overlay');
+  }
+
+  function toastDetails(): string {
+    return useToastStore
+      .getState()
+      .toasts.map((toast) => `${toast.title} ${toast.detail ?? ''}`)
+      .join(' | ');
+  }
+
+  // O store do wizard é módulo-level: sem reset, o que um teste anexa vaza
+  // para o seguinte.
+  const missionSetupInitial = useMissionSetupStore.getState();
+
+  beforeEach(() => {
+    clearToasts();
+    act(() => {
+      useMissionSetupStore.setState(missionSetupInitial, true);
+    });
+  });
+
+  it('some com o overlay quando um filho consome o drop (picker/pane param a propagação)', () => {
+    mountApp();
+    setMissionSetupDestination();
+    fire('dragover', window, { types: ['Files'] });
+    expect(overlay()).not.toBeNull();
+
+    const child = document.querySelector('[data-testid="app-shell"]')!;
+    child.addEventListener('drop', (event) => event.stopPropagation());
+    fire('drop', child, {
+      types: ['Files'],
+      files: [new File(['bytes'], 'clipe.m4a', { type: 'audio/mp4' })],
+    });
+
+    expect(overlay()).toBeNull();
+  });
+
+  it('some com o overlay quando o arraste é cancelado sem drop', () => {
+    vi.useFakeTimers();
+    try {
+      mountApp();
+      setMissionSetupDestination();
+      fire('dragover', window, { types: ['Files'] });
+      expect(overlay()).not.toBeNull();
+
+      act(() => {
+        vi.advanceTimersByTime(5_000);
+      });
+
+      expect(overlay()).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('some com o overlay ao sair da janela mesmo com relatedTarget não-nulo', () => {
+    mountApp();
+    setMissionSetupDestination();
+    fire('dragover', window, { types: ['Files'] });
+    expect(overlay()).not.toBeNull();
+
+    act(() => {
+      window.dispatchEvent(
+        Object.assign(new Event('dragleave', { bubbles: true }), {
+          relatedTarget: document.body,
+          clientX: -5,
+          clientY: 40,
+        }),
+      );
+    });
+
+    expect(overlay()).toBeNull();
+  });
+
+  it('anexa pelo endereço quando o arraste traz a promessa e não o arquivo', async () => {
+    mountApp();
+    setMissionSetupDestination();
+    const uri = 'file:///Users/ana/foto%20de%20perfil.png';
+
+    fire('dragover', window, { types: ['Files', 'text/uri-list'] });
+    await act(async () => {
+      window.dispatchEvent(
+        Object.assign(new Event('drop', { bubbles: true, cancelable: true }), {
+          dataTransfer: transfer({
+            types: ['Files', 'text/uri-list'],
+            data: { 'text/uri-list': uri },
+          }),
+        }),
+      );
+    });
+
+    expect(window.nexus.files.importDroppedUri).toHaveBeenCalledWith(uri);
+    expect(useMissionSetupStore.getState().draft.contextPaths).toEqual([
+      '.nexus/attachments/mission-context/token-foto%20de%20perfil.png',
+    ]);
+  });
+
+  it('avisa em vez de silenciar quando nada do arraste é aproveitável', () => {
+    mountApp();
+    setMissionSetupDestination();
+    fire('drop', window, { types: ['Files'] });
+
+    expect(toastDetails()).toContain('Finder');
+  });
+
+  it('não acende o overlay nem importa no arraste interno de skill', () => {
+    mountApp();
+    setMissionSetupDestination();
+    fire('dragover', window, { types: [PANE_SKILL_DRAG_TYPE] });
+    expect(overlay()).toBeNull();
+
+    fire('drop', window, { types: [PANE_SKILL_DRAG_TYPE] });
+    expect(window.nexus.files.importDroppedUri).not.toHaveBeenCalled();
+    expect(toastDetails()).not.toContain('Finder');
+  });
+
+  it('não reivindica arraste de texto puro (a textarea mantém a inserção nativa)', () => {
+    mountApp();
+    setMissionSetupDestination();
+    const event = fire('drop', window, {
+      types: ['text/plain'],
+      data: { 'text/plain': 'um parágrafo arrastado' },
+    });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(toastDetails()).not.toContain('Finder');
+  });
+
+  it('anexa imagem colada mesmo sem o wizard montado', async () => {
+    mountApp();
+    setMissionSetupDestination();
+    const image = new File(['bytes'], 'image.png', { type: 'image/png' });
+    const clipboardData = {
+      items: [{ kind: 'file', type: 'image/png', getAsFile: () => image }],
+      files: [image],
+    };
+
+    await act(async () => {
+      window.dispatchEvent(
+        Object.assign(new Event('paste', { bubbles: true, cancelable: true }), {
+          clipboardData,
+        }),
+      );
+    });
+
+    expect(window.nexus.files.importMissionAttachment).toHaveBeenCalledTimes(1);
+    expect(useMissionSetupStore.getState().draft.contextPaths).toHaveLength(1);
   });
 });

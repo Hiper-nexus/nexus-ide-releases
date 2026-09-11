@@ -5,6 +5,7 @@ import {
   MISSION_ATTACHMENT_LIMITS,
   stageMissionAttachment,
 } from './mission-attachments';
+import { hasSkillDragType } from './pane-interactions';
 
 /**
  * Shell-wide file drop is only for starting or filling the setup wizard.
@@ -104,9 +105,10 @@ export function droppedFileRejectionMessage(file: Pick<File, 'name' | 'size'>): 
 }
 
 /** O que veio num arraste, quando `dataTransfer.files` chegou vazia. */
-type DroppedPayload = {
+export type DroppedPayload = {
   readonly types?: ArrayLike<string> | readonly string[];
   readonly getData?: (type: string) => string;
+  readonly files?: ArrayLike<unknown>;
 };
 
 /** Linhas úteis de um `text/uri-list`: uma por endereço, `#` é comentário. */
@@ -214,4 +216,81 @@ export function describeDropWithoutFiles(
   if (text !== '') return 'Veio só texto no arraste, sem arquivo.';
 
   return 'O arraste não trouxe arquivo. Salve a mídia no disco e arraste do Finder.';
+}
+
+/**
+ * O arraste merece ser aceito no `dragover`?
+ *
+ * Só `types` é legível aqui: durante o `dragover` o data store está em
+ * "protected mode" e `getData()` devolve sempre string vazia. Decidir por
+ * `getData` seria decidir no escuro.
+ *
+ * - `text/plain` sozinho NÃO entra: arrastar texto selecionado para dentro de
+ *   uma textarea é gesto legítimo, e reivindicar esse drop mata a inserção
+ *   nativa (`App` não faz mais `preventDefault` no topo do handler).
+ * - O arraste interno de skill também não: sem esta guarda o overlay global
+ *   acende enquanto se arrasta uma skill pelo app.
+ */
+export function acceptsShellDrag(types: ArrayLike<string>): boolean {
+  if (hasSkillDragType(types)) return false;
+  const list = Array.from(types);
+  return list.includes('Files') || list.includes('text/uri-list');
+}
+
+/** O que o shell deve fazer com um arraste que chegou. */
+export type ShellDropPlan =
+  | { readonly action: 'files' }
+  | { readonly action: 'uris'; readonly uris: readonly DroppedUri[] }
+  | { readonly action: 'warn'; readonly message: string }
+  | { readonly action: 'ignore' };
+
+/**
+ * Decide o destino de um arraste ANTES de qualquer `preventDefault`.
+ *
+ * `allowUrlDownload` falso é o caso do wizard: baixar um http(s) disparado por
+ * um arraste seria surpreendente e a lista branca do wizard não aceitaria o
+ * arquivo resultante — melhor dizer o que chegou.
+ */
+export function describeShellDrop(
+  transfer: DroppedPayload | null | undefined,
+  options: { readonly allowUrlDownload: boolean } = {
+    allowUrlDownload: false,
+  },
+): ShellDropPlan {
+  if (!transfer) return { action: 'ignore' };
+  const types = Array.from(transfer.types ?? []);
+  if (hasSkillDragType(types)) return { action: 'ignore' };
+  if ((transfer.files?.length ?? 0) > 0) return { action: 'files' };
+
+  const accepted = resolveDropUris(transfer).accepted.filter(
+    (dropped) => options.allowUrlDownload || dropped.kind === 'file',
+  );
+  if (accepted.length > 0) return { action: 'uris', uris: accepted };
+
+  if (types.includes('Files') || types.includes('text/uri-list')) {
+    return { action: 'warn', message: describeDropWithoutFiles(transfer) };
+  }
+  return { action: 'ignore' };
+}
+
+/**
+ * Único ponto do renderer que copia/baixa um endereço arrastado para o
+ * mission-context. O pane também usa `importDroppedUri`, mas escreve o
+ * caminho no PTY — por isso ele mantém o próprio wrapper.
+ */
+export async function importDroppedUriForMission(
+  uri: string,
+): Promise<{ ok: true; path: string } | { ok: false; message: string }> {
+  const kind: DroppedUri['kind'] = /^file:/i.test(uri) ? 'file' : 'url';
+  const fallback = droppedUriRejectionMessage({ kind, uri });
+  try {
+    const result = await window.nexus.files.importDroppedUri(uri);
+    if (result.ok && result.path) return { ok: true, path: result.path };
+    return { ok: false, message: result.error ?? fallback };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : fallback,
+    };
+  }
 }
