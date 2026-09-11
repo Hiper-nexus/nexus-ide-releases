@@ -128,3 +128,44 @@ export function canReplayScrollback(
   if (capturedCols === undefined) return true;
   return capturedCols === currentCols;
 }
+
+/**
+ * Colunas mínimas para uma TUI não quebrar a própria linha de status.
+ *
+ * 60 cobre com folga a linha mais longa que medimos num agente real —
+ * `thinking with high effort (esc to interrupt · 5s)`, 51 caracteres.
+ */
+export const MIN_USABLE_COLS = 60;
+
+/**
+ * POR QUE ISTO EXISTE (medido ao vivo em 11/09, janela 1280, célula 7,74px):
+ *
+ * O CLI dentro do pane redesenha a linha de status no lugar com `\r`, assumindo
+ * que ela CABE. Quando a linha é mais larga que `cols`, ela quebra; o `\r`
+ * seguinte volta à coluna 0 da linha DE BAIXO, não da original. O cursor desce
+ * um degrau por tick e cada quadro deixa resíduo — lixo permanente no
+ * scrollback. Não é reflow nem renderer: é geométrico.
+ *
+ * Com muitos panes a grade encolhe até isso ser inevitável: 3 panes lado a lado
+ * dão 28 colunas, 4 dão 21, 5 ou mais dão 8 (o piso de `MIN_PANE_WIDTH`).
+ *
+ * Este clamp sobe a GRADE de volta ao piso, sem mexer no pane: o TUI passa a
+ * ver colunas suficientes (não quebra, não sobe lixo) e o excedente é cortado
+ * pela borda do pane — corte é recuperável alargando o pane; o creep corrompe o
+ * histórico de forma permanente.
+ *
+ * Só vale com SESSÃO VIVA: antes do spawn quem decide é `hostGridIsUsable` via
+ * `settleHostGrid`, e subir a grade ali mudaria a decisão de adiar o spawn.
+ */
+export function clampGridToUsableCols(input: {
+  readonly cols: number;
+  readonly rows: number;
+  readonly hasSession: boolean;
+}): { cols: number; rows: number; clamped: boolean } {
+  const untouched = { cols: input.cols, rows: input.rows, clamped: false };
+  if (!input.hasSession) return untouched;
+  if (!Number.isFinite(input.cols) || input.cols >= MIN_USABLE_COLS) {
+    return untouched;
+  }
+  return { cols: MIN_USABLE_COLS, rows: input.rows, clamped: true };
+}

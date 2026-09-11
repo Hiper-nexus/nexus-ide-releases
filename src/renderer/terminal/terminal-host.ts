@@ -101,6 +101,7 @@ import {
 } from './session-boundary-notice';
 import {
   canReplayScrollback,
+  clampGridToUsableCols,
   escalateRefitReason,
   hostGridIsUsable,
   hostSlotIsMeasurable,
@@ -351,7 +352,7 @@ function registerWebglLease(paneId: string, host: Host): void {
 function resumeVisibleHost(paneId: string, host: Host): boolean {
   return resumeTerminalVisibilityBeforePaint({
     resumeRenderer: () => webglPool.touch(paneId),
-    fitVisibleGrid: () => host.fit.fit(),
+    fitVisibleGrid: () => fitHostGrid(host),
     propagateSize: () => propagateHostSize(host),
     flushOutput: () => {
       flushPendingScrollback(host);
@@ -474,7 +475,7 @@ export function applyTerminalSettings(settings: TerminalSettings): void {
       // Terminal not opened yet.
     }
     try {
-      host.fit.fit();
+      fitHostGrid(host);
       propagateHostSize(host);
     } catch {
       // Not measurable yet — the ResizeObserver will settle it.
@@ -1448,6 +1449,38 @@ const RESIZE_DEBOUNCE_MS = 150;
 /** waitForSession: dá tempo do PaneLeaf attachar e medir o slot. */
 const HEADLESS_SPAWN_FALLBACK_MS = 200;
 
+/**
+ * O ÚNICO jeito de medir a grade de um host.
+ *
+ * `fit.fit()` sozinho deixa a grade encolher até 2 colunas (o próprio FitAddon
+ * clampa em `Math.max(2, …)`), e num pane estreito isso faz a linha de status
+ * de qualquer TUI quebrar — e o `\r` seguinte passar a descer de linha, subindo
+ * lixo permanente. Ver `clampGridToUsableCols` para a medição completa.
+ *
+ * Envolver o fit num só lugar garante que nenhum dos caminhos de resize (observer
+ * por host, refit global, reveal, spawn) escape da regra.
+ */
+function fitHostGrid(host: Host): boolean {
+  try {
+    host.fit.fit();
+  } catch {
+    return false;
+  }
+  const grid = clampGridToUsableCols({
+    cols: host.term.cols,
+    rows: host.term.rows,
+    hasSession: host.sessionId != null,
+  });
+  if (!grid.clamped) return true;
+  try {
+    host.term.resize(grid.cols, grid.rows);
+  } catch {
+    // Terminal descartado no meio; a grade pequena volta no próximo fit.
+    return false;
+  }
+  return true;
+}
+
 function settleHostGrid(host: Host): boolean {
   if (
     !hostSlotIsMeasurable({
@@ -1458,7 +1491,7 @@ function settleHostGrid(host: Host): boolean {
     return false;
   }
   try {
-    host.fit.fit();
+    fitHostGrid(host);
   } catch {
     return false;
   }
@@ -1595,7 +1628,7 @@ function makeResizeObserver(paneId: string, host: Host): ResizeObserver {
         return;
       }
       try {
-        host.fit.fit();
+        fitHostGrid(host);
       } catch {
         tryDeferredSpawn(host);
         return;
@@ -1621,7 +1654,7 @@ function refitAllHosts(reason: RefitReason): void {
     if (host.disposed || !host.opened || host.virtualized) continue;
     const before = { cols: host.term.cols, rows: host.term.rows };
     try {
-      host.fit.fit();
+      fitHostGrid(host);
     } catch {
       continue; // Not measurable right now; the ResizeObserver will settle it.
     }
@@ -2160,7 +2193,7 @@ export function attachHost(pane: PaneModel, slot: HTMLElement): void {
   const beforeGrid = host.reportedGrid;
   if (useLayoutStore.getState().focusedPaneId !== pane.id) {
     try {
-      host.fit.fit();
+      fitHostGrid(host);
       flushPendingScrollback(host);
       propagateHostSize(host);
     } catch {

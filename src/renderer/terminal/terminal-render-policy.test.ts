@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   canReplayScrollback,
+  clampGridToUsableCols,
+  MIN_USABLE_COLS,
   escalateRefitReason,
   hostGridIsUsable,
   hostSlotIsMeasurable,
@@ -221,5 +223,40 @@ describe('escalateRefitReason', () => {
       'display-scale',
     );
     expect(escalateRefitReason(null, 'window-resize')).toBe('window-resize');
+  });
+});
+
+describe('clampGridToUsableCols', () => {
+  it('sobe a grade para o piso quando o pane é estreito DEMAIS e há sessão viva', () => {
+    // Medido ao vivo (janela 1280, célula 7,74px): 3 panes lado a lado dão 28
+    // colunas, 4 dão 21, 5+ dão 8. A linha de status realista ("thinking with
+    // high effort (esc to interrupt · 5s)") tem 51 caracteres — não cabe.
+    const clamped = clampGridToUsableCols({ cols: 8, rows: 40, hasSession: true });
+    expect(clamped.clamped).toBe(true);
+    expect(clamped.cols).toBe(MIN_USABLE_COLS);
+    expect(clamped.rows).toBe(40);
+  });
+
+  it('não mexe em grade já utilizável', () => {
+    const clamped = clampGridToUsableCols({ cols: 120, rows: 40, hasSession: true });
+    expect(clamped.clamped).toBe(false);
+    expect(clamped.cols).toBe(120);
+  });
+
+  it('não mexe em pane SEM sessão — o spawn tem o gate dele', () => {
+    // Quem barra spawn em slot pequeno é o hostGridIsUsable/settleHostGrid.
+    // Subir a grade antes de existir sessão mudaria a decisão de spawn.
+    const clamped = clampGridToUsableCols({ cols: 8, rows: 40, hasSession: false });
+    expect(clamped.clamped).toBe(false);
+    expect(clamped.cols).toBe(8);
+  });
+
+  it('aceita exatamente o piso', () => {
+    const clamped = clampGridToUsableCols({
+      cols: MIN_USABLE_COLS,
+      rows: 40,
+      hasSession: true,
+    });
+    expect(clamped.clamped).toBe(false);
   });
 });
