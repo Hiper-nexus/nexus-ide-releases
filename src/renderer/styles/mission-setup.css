@@ -2044,3 +2044,24 @@
   opacity: 0.5;
   cursor: default;
 }
+
+/* Caminho manual da tela de criação (ver ExpressTerminalOptions): dois alvos
+   secundários lado a lado, o mesmo layout do antigo `.launcher__terminal-actions`.
+   Nenhum token novo — só composição, com o que a casa já tem. */
+.mission-setup__terminal-options {
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+.mission-setup__terminal-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+@media (max-width: 720px) {
+  .mission-setup__terminal-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

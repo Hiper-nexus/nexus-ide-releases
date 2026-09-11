@@ -2173,6 +2173,24 @@ describe('Caminho Expresso', () => {
     ).not.toBeNull();
   });
 
+  it('oferece o caminho manual na própria tela, sem mandar o operador a Terminais', async () => {
+    const host = await renderAtExpress();
+
+    // A capacidade existia no Launcher antigo e foi perdida: sem esta seção o
+    // operador tem que sair para Terminais só para achar um terminal.
+    expect(host.textContent).toContain('Prefere trabalhar nos terminais?');
+    expect(button(host, 'Montar meus terminais').type).toBe('button');
+    expect(button(host, 'Terminal sem IA').type).toBe('button');
+
+    // Secundários: nunca competem com o CTA primário da tela.
+    for (const label of ['Montar meus terminais', 'Terminal sem IA']) {
+      expect(button(host, label).className).toContain('action-card--ghost');
+    }
+    expect(button(host, 'Iniciar criação').className).toContain(
+      'mission-setup__button--primary',
+    );
+  });
+
   it('abrir e recolher opções preserva o rascunho e inicia a equipe selecionada', async () => {
     const host = await renderAtExpress();
     enterText(

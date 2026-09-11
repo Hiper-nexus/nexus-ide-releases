@@ -4,6 +4,7 @@ import type { SquadAgent } from '../../../shared/orch-types';
 import type { WorkspaceInfo } from '../../../shared/workspace-types';
 import type { MissionSetupDraft } from '../../state/mission-setup-store';
 import type { DirectAnswer } from '../../lib/direct-answer';
+import { ExpressTerminalOptions } from './ExpressTerminalOptions';
 import { MissionAttachmentPicker } from './MissionAttachmentPicker';
 import { MissionSetupRosterRow } from './MissionSetupRosterRow';
 import { issueForAgent, type MissionTeamInventory } from './TeamStep';
@@ -408,6 +409,12 @@ export function ExpressMissionStart({
             Verificando as ferramentas de IA conectadas…
           </p>
         ) : null}
+
+        {/* O caminho manual fica VISÍVEL, não atrás de disclosure: o operador
+            tinha que sair para Terminais só para achar um terminal. Não é passo
+            intermediário no caminho padrão — dá para ignorar e apertar
+            "Iniciar criação" — mas esconder foi o que incomodou. */}
+        <ExpressTerminalOptions />
 
         {/* A pendência específica abaixo já oferece a ação de conexão. */}
         {!inventoryLoading && !inventoryReady && !maestroIssue ? (
