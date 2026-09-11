@@ -42,6 +42,7 @@ import {
   buildRecommendedMissionRoster,
   missionRosterIssue,
 } from './TeamStep';
+import { MissionAttachmentPicker } from './MissionAttachmentPicker';
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -275,6 +276,10 @@ const api = {
     ok: true,
     path: `.nexus/attachments/mission-context/token-${name}`,
   })),
+  importDroppedUri: vi.fn(async (uri: string) => ({
+    ok: true,
+    path: `.nexus/attachments/mission-context/token-${uri.split('/').at(-1)}`,
+  })),
 };
 
 const initialWorkspaceState = useWorkspaceStore.getState();
@@ -292,6 +297,7 @@ function installNexusApi(): void {
       orch: { removeMission: api.removeMission },
       files: {
         importMissionAttachment: api.importMissionAttachment,
+        importDroppedUri: api.importDroppedUri,
         pathForFile: () => '',
       },
     } as unknown as Window['nexus'],
@@ -2350,6 +2356,237 @@ describe('Caminho Expresso', () => {
     expect(
       host.querySelectorAll('.mission-attachment-picker__list li'),
     ).toHaveLength(1);
+  });
+
+  it('drop no drop-zone sem File usa o endereço da promessa de arquivo', async () => {
+    // WhatsApp/Fotos entregam a PROMESSA; `files` vem vazia mas o uri-list vem.
+    const host = await renderAtExpress();
+    const dropZone = host.querySelector<HTMLElement>(
+      '.mission-attachment-picker__drop',
+    );
+    expect(dropZone).not.toBeNull();
+    const uri = 'file:///Users/ana/foto.png';
+
+    await act(async () => {
+      dropZone!.dispatchEvent(
+        Object.assign(new Event('drop', { bubbles: true, cancelable: true }), {
+          dataTransfer: {
+            types: ['Files', 'text/uri-list'],
+            files: [],
+            getData: (type: string) => (type === 'text/uri-list' ? uri : ''),
+          },
+        }),
+      );
+    });
+    await vi.waitFor(async () => {
+      await flush();
+      expect(useMissionSetupStore.getState().draft.contextPaths).toEqual([
+        '.nexus/attachments/mission-context/token-foto.png',
+      ]);
+    });
+
+    expect(api.importDroppedUri).toHaveBeenCalledWith(uri);
+    expect(api.importMissionAttachment).not.toHaveBeenCalled();
+  });
+
+  it('drop no drop-zone sem nada aproveitável mostra o motivo em vez de silêncio', async () => {
+    const host = await renderAtExpress();
+    const dropZone = host.querySelector<HTMLElement>(
+      '.mission-attachment-picker__drop',
+    );
+    expect(dropZone).not.toBeNull();
+
+    act(() => {
+      dropZone!.dispatchEvent(
+        Object.assign(new Event('drop', { bubbles: true, cancelable: true }), {
+          dataTransfer: { types: ['Files'], files: [], getData: () => '' },
+        }),
+      );
+    });
+
+    const error = host.querySelector('.mission-setup__inline-error');
+    expect(error?.textContent).toContain('Finder');
+    expect(api.importDroppedUri).not.toHaveBeenCalled();
+  });
+
+  it('colar arquivo dentro do drop-zone não chega ao shell; colar texto passa', async () => {
+    // O App agora é o dono único do paste no window; a zona precisa segurar
+    // a cola de arquivo para o shell não importar em dobro.
+    const finishImports = observeAttachmentWork();
+    const host = await renderAtExpress();
+    const dropZone = host.querySelector<HTMLElement>(
+      '.mission-attachment-picker__drop',
+    );
+    expect(dropZone).not.toBeNull();
+    const seenByWindow: string[] = [];
+    const spy = (event: Event) => {
+      const data = (event as ClipboardEvent).clipboardData;
+      seenByWindow.push(data && data.files.length > 0 ? 'file' : 'text');
+    };
+    window.addEventListener('paste', spy);
+    try {
+      const image = new File(['bytes'], 'print.png', { type: 'image/png' });
+      act(() => {
+        dropZone!.dispatchEvent(
+          Object.assign(new Event('paste', { bubbles: true, cancelable: true }), {
+            clipboardData: {
+              items: [{ kind: 'file', type: 'image/png', getAsFile: () => image }],
+              files: [image],
+            },
+          }),
+        );
+        dropZone!.dispatchEvent(
+          Object.assign(new Event('paste', { bubbles: true, cancelable: true }), {
+            clipboardData: { items: [], files: [] },
+          }),
+        );
+      });
+    } finally {
+      window.removeEventListener('paste', spy);
+    }
+    // A cola com arquivo dispara um import real; sem esperar, ele terminava
+    // durante o teste seguinte e enfiava print.png no rascunho alheio.
+    await finishImports();
+
+    // Só a cola SEM arquivo atravessa a zona.
+    expect(seenByWindow).toEqual(['text']);
+  });
+
+  it('drop na zona desabilitada não é engolido: o evento segue para o shell', () => {
+    // `disabled` vem do pai (rascunho travado / missão iniciando). Antes o
+    // picker fazia preventDefault + stopPropagation ANTES de olhar `disabled`,
+    // e o drop morria ali: nem a zona anexava, nem o shell ficava sabendo.
+    const host = render(
+      <MissionAttachmentPicker
+        contextPaths={[]}
+        disabled
+        onContextPathsChange={() => undefined}
+      />,
+    );
+    const dropZone = host.querySelector<HTMLElement>(
+      '.mission-attachment-picker__drop',
+    );
+    expect(dropZone).not.toBeNull();
+    const seenByWindow = vi.fn();
+    window.addEventListener('drop', seenByWindow);
+    try {
+      const event = Object.assign(
+        new Event('drop', { bubbles: true, cancelable: true }),
+        {
+          dataTransfer: {
+            types: ['Files'],
+            files: [new File(['b'], 'b.png', { type: 'image/png' })],
+            getData: () => '',
+          },
+        },
+      );
+      act(() => {
+        dropZone!.dispatchEvent(event);
+      });
+      expect(seenByWindow).toHaveBeenCalledTimes(1);
+      expect(event.defaultPrevented).toBe(false);
+      expect(api.importMissionAttachment).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener('drop', seenByWindow);
+    }
+  });
+
+  it('soltar sem arquivo no drop zone anexa pelo endereço em vez de silenciar', async () => {
+    // Arrastar mídia de um app nativo (WhatsApp) traz a PROMESSA do arquivo, não
+    // o arquivo: `dataTransfer.files` vem vazia. A zona caía em
+    // `filesFromClipboardData`, que devolve [] por construção — silêncio puro.
+    const finishImports = observeAttachmentWork();
+    const host = await renderAtExpress();
+    const dropZone = host.querySelector<HTMLElement>(
+      '.mission-attachment-picker__drop',
+    );
+    expect(dropZone).not.toBeNull();
+
+    await act(async () => {
+      dropZone!.dispatchEvent(
+        Object.assign(new Event('drop', { bubbles: true, cancelable: true }), {
+          dataTransfer: {
+            types: ['Files', 'text/uri-list'],
+            files: [],
+            getData: (type: string) =>
+              type === 'text/uri-list' ? 'file:///Users/ana/cliente.png' : '',
+          },
+        }),
+      );
+    });
+    await finishImports();
+
+    expect(api.importDroppedUri).toHaveBeenCalledWith(
+      'file:///Users/ana/cliente.png',
+    );
+    // Asserção por presença, não por contagem: o store do wizard é
+    // módulo-level e outros testes do arquivo disparam imports assíncronos sem
+    // aguardá-los, que aterrissam neste rascunho depois. O que este teste prova
+    // é que o ENDEREÇO virou anexo — antes da correção `importDroppedUri` nem
+    // era chamado e a lista ficava vazia.
+    expect(useMissionSetupStore.getState().draft.contextPaths).toContain(
+      '.nexus/attachments/mission-context/token-cliente.png',
+    );
+    expect(host.textContent).toContain('cliente.png');
+  });
+
+  it('soltar no drop zone algo inaproveitável mostra o motivo, não silêncio', async () => {
+    const host = await renderAtExpress();
+    const dropZone = host.querySelector<HTMLElement>(
+      '.mission-attachment-picker__drop',
+    );
+    expect(dropZone).not.toBeNull();
+
+    await act(async () => {
+      dropZone!.dispatchEvent(
+        Object.assign(new Event('drop', { bubbles: true, cancelable: true }), {
+          dataTransfer: { types: ['Files'], files: [], getData: () => '' },
+        }),
+      );
+    });
+
+    expect(
+      host.querySelector('.mission-setup__inline-error')?.textContent,
+    ).toMatch(/Finder/);
+  });
+
+  it('colar dentro da zona de anexos não vaza para o shell', async () => {
+    // Quem é dono da cola na zona é o picker (com os erros inline dele e a
+    // deduplicação por content-key). Se o evento subisse até o window, o intake
+    // do shell importaria a MESMA imagem uma segunda vez.
+    const finishImports = observeAttachmentWork();
+    const host = await renderAtExpress();
+    const dropZone = host.querySelector<HTMLElement>(
+      '.mission-attachment-picker__drop',
+    );
+    expect(dropZone).not.toBeNull();
+
+    const shellSaw: Event[] = [];
+    const onWindowPaste = (event: Event) => {
+      shellSaw.push(event);
+    };
+    window.addEventListener('paste', onWindowPaste);
+    try {
+      const image = new File(['bytes'], 'image.png', { type: 'image/png' });
+      const clipboardData = {
+        items: [{ kind: 'file', type: 'image/png', getAsFile: () => image }],
+        files: [image],
+      };
+      await act(async () => {
+        dropZone!.dispatchEvent(
+          Object.assign(
+            new Event('paste', { bubbles: true, cancelable: true }),
+            { clipboardData },
+          ),
+        );
+      });
+      await finishImports();
+    } finally {
+      window.removeEventListener('paste', onWindowPaste);
+    }
+
+    expect(shellSaw).toHaveLength(0);
+    expect(api.importMissionAttachment).toHaveBeenCalledTimes(1);
   });
 
   it('mostra anexos do cliente no wizard avançado e importa áudio externo', async () => {

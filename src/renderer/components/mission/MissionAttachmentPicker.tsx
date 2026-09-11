@@ -10,6 +10,11 @@ import {
   missionAttachmentContentKey,
   type MissionAttachment,
 } from '../../lib/mission-attachments';
+import {
+  describeShellDrop,
+  importDroppedUriForMission,
+  type DroppedUri,
+} from '../../lib/mission-shell-file-intake';
 
 const FILE_ACCEPT =
   'audio/*,image/*,application/pdf,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.odt,.rtf,' +
@@ -127,30 +132,45 @@ export function MissionAttachmentPicker({
     }
   };
 
+  /**
+   * Anexa endereços aproveitados de um arraste sem `File` (a promessa que o
+   * Chromium não materializa). Sem esta perna o drop na zona era silêncio puro:
+   * `filesFromClipboardData` devolve [] por construção quando não há arquivo.
+   */
+  const importDroppedUris = async (
+    uris: readonly DroppedUri[],
+  ): Promise<void> => {
+    if (disabled || uris.length === 0) return;
+    setBusy(true);
+    setError(null);
+    const next = [...contextPaths];
+    const nextPathSet = new Set(next);
+    try {
+      const failures: string[] = [];
+      for (const dropped of uris) {
+        const result = await importDroppedUriForMission(dropped.uri);
+        if (!result.ok) {
+          failures.push(result.message);
+          continue;
+        }
+        if (!nextPathSet.has(result.path)) {
+          nextPathSet.add(result.path);
+          next.push(result.path);
+        }
+      }
+      if (next.length !== contextPaths.length) onContextPathsChange(next);
+      if (failures.length > 0) setError(failures.join(' '));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const importFilesRef = useRef(importFiles);
   importFilesRef.current = importFiles;
-  const disabledRef = useRef(disabled);
-  disabledRef.current = disabled;
 
   useEffect(() => {
     const pending = consumeDroppedFiles();
     if (pending.length > 0) void importFilesRef.current(pending);
-  }, []);
-
-  useEffect(() => {
-    const onPaste = (event: ClipboardEvent) => {
-      if (disabledRef.current || event.defaultPrevented) return;
-      const target = event.target;
-      // Cola no drop zone já é tratada no onPaste do elemento. Sem este
-      // skip, o listener de window importa de novo (duas linhas na UI).
-      if (target instanceof Node && dropRef.current?.contains(target)) return;
-      const files = filesFromClipboardData(event.clipboardData);
-      if (files.length === 0) return;
-      event.preventDefault();
-      void importFilesRef.current(files);
-    };
-    window.addEventListener('paste', onPaste);
-    return () => window.removeEventListener('paste', onPaste);
   }, []);
 
   const currentImported = importedPaths(contextPaths);
@@ -192,10 +212,25 @@ export function MissionAttachmentPicker({
         }}
         onDragLeave={() => setDropActive(false)}
         onDrop={(event) => {
+          const plan = describeShellDrop(event.dataTransfer, {
+            allowUrlDownload: false,
+          });
+          // Texto puro e arraste interno de skill não são intake.
+          if (plan.action === 'ignore') return;
+          // Desabilitado: NÃO reivindica o evento. Sem `stopPropagation` o
+          // intake do shell assume e avisa; engolir aqui era silêncio total.
+          if (disabled) return;
           event.preventDefault();
           event.stopPropagation();
           setDropActive(false);
-          if (disabled) return;
+          if (plan.action === 'warn') {
+            setError(plan.message);
+            return;
+          }
+          if (plan.action === 'uris') {
+            void importDroppedUris(plan.uris);
+            return;
+          }
           // Arquivos crus: o filtro de clipboard engolia PDF em silêncio.
           // validateMissionAttachment (dentro de importFiles) explica o que
           // não passa em vez de fingir que nada foi solto.
@@ -211,6 +246,9 @@ export function MissionAttachmentPicker({
           const files = filesFromClipboardData(event.clipboardData);
           if (files.length === 0) return;
           event.preventDefault();
+          // O intake do shell é dono do paste no app inteiro; sem parar aqui a
+          // MESMA imagem seria importada duas vezes.
+          event.stopPropagation();
           void importFiles(files);
         }}
       >

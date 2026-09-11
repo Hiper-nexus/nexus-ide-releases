@@ -1,6 +1,9 @@
 /** @vitest-environment jsdom */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  acceptsShellDrag,
+  describeShellDrop,
+  importDroppedUriForMission,
   partitionDroppedMissionFiles,
   resolveDroppedMissionContextPath,
   resolveDropUris,
@@ -8,6 +11,7 @@ import {
   describeDropWithoutFiles,
   droppedUriRejectionMessage,
 } from './mission-shell-file-intake';
+import { PANE_SKILL_DRAG_TYPE } from './pane-interactions';
 
 function file(name: string, type: string): File {
   return new File(['bytes'], name, { type });
@@ -258,5 +262,119 @@ describe('droppedUriRejectionMessage', () => {
   it('names a link and a file differently', () => {
     expect(droppedUriRejectionMessage({ kind: 'url', uri: 'https://x/y.png' })).toMatch(/link/i);
     expect(droppedUriRejectionMessage({ kind: 'file', uri: 'file:///a.png' })).toMatch(/arquivo/i);
+  });
+});
+
+describe('acceptsShellDrag', () => {
+  it('aceita arquivo e lista de endereços', () => {
+    expect(acceptsShellDrag(['Files'])).toBe(true);
+    expect(acceptsShellDrag(['text/plain', 'Files'])).toBe(true);
+    expect(acceptsShellDrag(['text/uri-list'])).toBe(true);
+  });
+
+  it('recusa o arraste interno de skill — senão o overlay global acende ao arrastar uma skill', () => {
+    expect(acceptsShellDrag([PANE_SKILL_DRAG_TYPE])).toBe(false);
+    expect(acceptsShellDrag([PANE_SKILL_DRAG_TYPE, 'text/plain'])).toBe(false);
+  });
+
+  it('recusa texto solto — arrastar texto para dentro de uma textarea é gesto legítimo', () => {
+    expect(acceptsShellDrag(['text/plain'])).toBe(false);
+    expect(acceptsShellDrag(['text/plain', 'text/html'])).toBe(false);
+    expect(acceptsShellDrag([])).toBe(false);
+  });
+});
+
+describe('describeShellDrop', () => {
+  const transfer = (
+    types: readonly string[],
+    data: Record<string, string> = {},
+  ) => ({ types, getData: (type: string) => data[type] ?? '' });
+
+  const carriedFile = (name = 'cliente.m4a', type = 'audio/mp4') => {
+    const file = new File(['bytes'], name, { type });
+    return { types: ['Files'], files: [file], getData: () => '' };
+  };
+
+  it('entrega os arquivos crus quando o arraste trouxe arquivo', () => {
+    expect(describeShellDrop(carriedFile()).action).toBe('files');
+  });
+
+  it('promessa de arquivo sem materialização vira endereço utilizável, não silêncio', () => {
+    // Arrastar mídia do WhatsApp/Fotos põe a PROMESSA no pasteboard: `files`
+    // vem vazia, mas o `text/uri-list` costuma vir. O shell ignorava isso.
+    const plan = describeShellDrop(
+      transfer(['Files', 'text/uri-list'], {
+        'text/uri-list': 'file:///Users/ana/foto.png',
+      }),
+    );
+    expect(plan.action).toBe('uris');
+    expect(plan.action === 'uris' && plan.uris).toEqual([
+      { kind: 'file', uri: 'file:///Users/ana/foto.png' },
+    ]);
+  });
+
+  it('explica o que chegou quando não há arquivo nem endereço aproveitável', () => {
+    const plan = describeShellDrop(transfer(['Files']));
+    expect(plan.action).toBe('warn');
+    expect(plan.action === 'warn' && plan.message).toContain('Finder');
+  });
+
+  it('no wizard não baixa link http — vira aviso honesto, sem download', () => {
+    const plan = describeShellDrop(
+      transfer(['text/uri-list'], { 'text/uri-list': 'https://example.com/a.png' }),
+      { allowUrlDownload: false },
+    );
+    expect(plan.action).toBe('warn');
+    expect(plan.action === 'warn' && plan.message).toContain('https://example.com/a.png');
+  });
+
+  it('entrega o link http quando o destino permite baixar (pane)', () => {
+    const plan = describeShellDrop(
+      transfer(['text/uri-list'], { 'text/uri-list': 'https://example.com/a.png' }),
+      { allowUrlDownload: true },
+    );
+    expect(plan.action).toBe('uris');
+    expect(plan.action === 'uris' && plan.uris).toEqual([
+      { kind: 'url', uri: 'https://example.com/a.png' },
+    ]);
+  });
+
+  it('não reivindica texto puro nem arraste interno de skill', () => {
+    expect(describeShellDrop(transfer(['text/plain'], { 'text/plain': 'um parágrafo' })).action).toBe(
+      'ignore',
+    );
+    expect(describeShellDrop(transfer([PANE_SKILL_DRAG_TYPE])).action).toBe('ignore');
+    expect(describeShellDrop(null).action).toBe('ignore');
+  });
+});
+
+describe('importDroppedUriForMission', () => {
+  it('devolve o caminho quando o main aceita o endereço', async () => {
+    const importDroppedUri = vi.fn(async () => ({
+      ok: true,
+      path: '.nexus/attachments/mission-context/token-foto.png',
+    }));
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: { files: { importDroppedUri } },
+    });
+
+    await expect(
+      importDroppedUriForMission('file:///Users/ana/foto.png'),
+    ).resolves.toEqual({
+      ok: true,
+      path: '.nexus/attachments/mission-context/token-foto.png',
+    });
+    expect(importDroppedUri).toHaveBeenCalledWith('file:///Users/ana/foto.png');
+  });
+
+  it('traduz a recusa do main em mensagem, sem engolir o erro', async () => {
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: { files: { importDroppedUri: vi.fn(async () => ({ ok: false })) } },
+    });
+    await expect(
+      importDroppedUriForMission('file:///Users/ana/foto.png'),
+    ).resolves.toEqual({ ok: false, message: expect.stringMatching(/arquivo/i) });
   });
 });

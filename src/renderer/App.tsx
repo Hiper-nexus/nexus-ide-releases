@@ -76,8 +76,14 @@ import {
   SearchPanelBody,
   SkillsPanelBody,
 } from './components/product/ProductPanelBodies';
-import { stageMissionAttachment } from './lib/mission-attachments';
 import {
+  filesFromClipboardData,
+  stageMissionAttachment,
+} from './lib/mission-attachments';
+import {
+  acceptsShellDrag,
+  describeShellDrop,
+  importDroppedUriForMission,
   partitionDroppedMissionFiles,
   shellClaimsMissionFileDrop,
 } from './lib/mission-shell-file-intake';
@@ -187,6 +193,15 @@ function outgoingSurfaceOwnsFocus(active: Element | null): boolean {
     active.closest('[role="dialog"], .nexus-shell__overlays'),
   );
 }
+
+/**
+ * Silêncio máximo tolerado entre dois `dragover` antes de considerar o arraste
+ * morto e limpar o overlay. O navegador emite `dragover` continuamente (~350 ms)
+ * enquanto o ponteiro arrasta algo por cima da janela; um arraste CANCELADO
+ * (Esc) ou que termina sobre uma superfície nativa (o pane de browser não é DOM)
+ * não avisa ninguém — sem este watchdog o overlay ficava na tela para sempre.
+ */
+const SHELL_DRAG_IDLE_TIMEOUT_MS = 1_200;
 
 /**
  * App root: hydrates the saved layout on boot and wires global keyboard
@@ -601,40 +616,45 @@ export function App() {
       window.removeEventListener('keydown', onCycleKey, { capture: true });
   }, []);
 
-  // Finder drops on launcher/setup become mission context. An open pane or
-  // mission keeps the event — claiming it here used to bounce the operator
-  // back to Express with "Arquivo fora do projeto".
+  // Finder/WhatsApp drops on launcher/setup become mission context. An open
+  // pane or mission keeps the event — claiming it here used to bounce the
+  // operator back to Express with "Arquivo fora do projeto".
   useEffect(() => {
-    const hasFiles = (event: DragEvent) =>
-      Array.from(event.dataTransfer?.types ?? []).includes('Files');
-    const onDragOver = (event: DragEvent) => {
-      if (!hasFiles(event)) return;
-      event.preventDefault();
-      const destination = useProductNavigationStore.getState().destination;
-      setDropActive(shellClaimsMissionFileDrop(destination.kind));
-    };
-    const onDragLeave = (event: DragEvent) => {
-      if (event.relatedTarget === null) setDropActive(false);
-    };
-    const onDrop = (event: DragEvent) => {
-      if (!hasFiles(event)) return;
-      event.preventDefault();
-      setDropActive(false);
-      const destination = useProductNavigationStore.getState().destination;
-      if (!shellClaimsMissionFileDrop(destination.kind)) {
-        return;
+    let idleTimer: ReturnType<typeof setTimeout> | null = null;
+    const clearIdleTimer = (): void => {
+      if (idleTimer !== null) {
+        clearTimeout(idleTimer);
+        idleTimer = null;
       }
-      event.stopPropagation();
+    };
+    const releaseDropOverlay = (): void => {
+      clearIdleTimer();
+      setDropActive(false);
+    };
 
-      const workspace = useWorkspaceStore.getState().current;
-      if (!workspace) return;
-      // Arquivos CRUS do drop: o filtro de clipboard descartava PDF/documento
-      // em silêncio ("arrastei e não ficou anexado", 19/08). A partição decide
-      // o destino e o que ela rejeitar ganha um toast — nunca silêncio.
-      const files = Array.from(event.dataTransfer?.files ?? []);
-      if (files.length === 0) return;
+    const warnNothingAttached = (message: string): void => {
+      useToastStore.getState().push('warn', 'Nada foi anexado à missão', message);
+    };
 
-      const split = partitionDroppedMissionFiles(workspace.path, files);
+    /** Anexa caminhos ao rascunho sem repetir o que já está lá. */
+    const appendContextPaths = (paths: readonly string[]): void => {
+      if (paths.length === 0) return;
+      const current = useMissionSetupStore.getState();
+      const merged = [...current.draft.contextPaths];
+      for (const path of paths) if (!merged.includes(path)) merged.push(path);
+      current.setContextPaths(merged);
+    };
+
+    /**
+     * Arquivos CRUS: o filtro de clipboard descartava PDF/documento em silêncio
+     * ("arrastei e não ficou anexado", 19/08). A partição decide o destino e o
+     * que ela rejeitar ganha um toast — nunca silêncio.
+     */
+    const stageFilesIntoMission = async (
+      workspacePath: string,
+      files: readonly File[],
+    ): Promise<void> => {
+      const split = partitionDroppedMissionFiles(workspacePath, files);
       if (split.rejected.length > 0) {
         useToastStore.getState().push(
           'warn',
@@ -645,47 +665,172 @@ export function App() {
             .join(', ')} — use imagem, áudio, documento (PDF/Office) ou texto/código.`,
         );
       }
+      const imported: string[] = [];
+      for (const file of split.toImport) {
+        try {
+          imported.push((await stageMissionAttachment(file)).path);
+        } catch (error) {
+          useToastStore.getState().push(
+            'warn',
+            'Não foi possível anexar',
+            error instanceof Error
+              ? error.message
+              : `Falha ao importar ${file.name}.`,
+          );
+        }
+      }
+      // Rejeitados e falhas de import já ganharam toast específico acima — um
+      // segundo aviso genérico aqui era só ruído.
+      appendContextPaths([...split.inProject, ...imported]);
+    };
+
+    /** Leva o operador ao wizard quando o destino é o launcher. */
+    const enterMissionSetup = (
+      destination: ProductDestination,
+      workspacePath: string,
+    ): void => {
+      if (destination.kind !== 'launcher') return;
+      const setup = useMissionSetupStore.getState();
+      setup.clearEntryContext();
+      setup.setWorkspace(workspacePath);
+      setup.setStep('express');
+      useProductNavigationStore.getState().openMissionSetup();
+    };
+
+    // CAPTURA, só `preventDefault`: é isto que faz o navegador ENTREGAR o drop.
+    // Um arraste que não anuncia `Files` (mídia vinda de outro app) não gerava
+    // evento nenhum — era o "arrastei e não aconteceu nada". Só `types` é
+    // legível no `dragover`: o data store está em protected mode e `getData()`
+    // devolve string vazia. Também é aqui que o watchdog é alimentado, porque a
+    // captura no window vê TODO `dragover`, inclusive os que um filho interrompe.
+    const onDragOverCapture = (event: DragEvent) => {
+      if (!acceptsShellDrag(event.dataTransfer?.types ?? [])) return;
+      event.preventDefault();
+      clearIdleTimer();
+      idleTimer = setTimeout(releaseDropOverlay, SHELL_DRAG_IDLE_TIMEOUT_MS);
+    };
+
+    // BOLHA, só estado: a decisão fica aqui de propósito. Em captura o overlay
+    // global cobriria a própria zona do picker, que já tem o seu destaque.
+    const onDragOver = (event: DragEvent) => {
+      if (!acceptsShellDrag(event.dataTransfer?.types ?? [])) return;
+      event.preventDefault();
+      const destination = useProductNavigationStore.getState().destination;
+      setDropActive(shellClaimsMissionFileDrop(destination.kind));
+    };
+
+    // CAPTURA: nenhum `stopPropagation` de filho alcança este listener, então o
+    // overlay SEMPRE sai da tela quando o drop acontece. Era exatamente aqui que
+    // ele ficava preso — o picker e o pane de terminal param a propagação nos
+    // próprios handlers, e o listener de bolha do window nunca rodava.
+    const onDropCapture = () => releaseDropOverlay();
+
+    const onDragEnd = () => releaseDropOverlay();
+
+    const onDragLeave = (event: DragEvent) => {
+      const outsideWindow =
+        event.clientX <= 0 ||
+        event.clientY <= 0 ||
+        event.clientX >= window.innerWidth ||
+        event.clientY >= window.innerHeight;
+      if (event.relatedTarget !== null && !outsideWindow) return;
+      releaseDropOverlay();
+    };
+
+    const onDrop = (event: DragEvent) => {
+      const plan = describeShellDrop(event.dataTransfer, {
+        allowUrlDownload: false,
+      });
+      // Texto puro e arraste interno de skill não são intake: reivindicar o
+      // `preventDefault` aqui mataria a inserção nativa de texto na textarea.
+      if (plan.action === 'ignore') return;
+      event.preventDefault();
+      releaseDropOverlay();
+
+      const destination = useProductNavigationStore.getState().destination;
+      if (!shellClaimsMissionFileDrop(destination.kind)) return;
+      event.stopPropagation();
+
+      if (plan.action === 'warn') {
+        warnNothingAttached(plan.message);
+        return;
+      }
+
+      const workspace = useWorkspaceStore.getState().current;
+      if (!workspace) {
+        warnNothingAttached('Abra um projeto antes de soltar arquivos.');
+        return;
+      }
+      enterMissionSetup(destination, workspace.path);
+
+      if (plan.action === 'uris') {
+        // O arraste trouxe a PROMESSA de arquivo, não o arquivo. O main lê o
+        // `file://` (ou baixa o link) e deposita no mission-context.
+        const uris = plan.uris;
+        void (async () => {
+          const imported: string[] = [];
+          for (const dropped of uris) {
+            const result = await importDroppedUriForMission(dropped.uri);
+            if (result.ok) imported.push(result.path);
+            else warnNothingAttached(result.message);
+          }
+          appendContextPaths(imported);
+        })();
+        return;
+      }
+
+      const files = Array.from(event.dataTransfer?.files ?? []);
+      if (files.length === 0) return;
+      void stageFilesIntoMission(workspace.path, files);
+    };
+
+    // BOLHA de propósito: o pane de terminal registra `paste` em captura no
+    // próprio elemento e chama `stopPropagation`, então ele segue ganhando a
+    // cola dele. Fora do pane, a cola de imagem passa a anexar à missão — antes
+    // o único dono do paste era o picker, e fora do wizard não fazia nada.
+    const onPaste = (event: ClipboardEvent) => {
+      if (event.defaultPrevented) return;
+      const destination = useProductNavigationStore.getState().destination;
+      if (!shellClaimsMissionFileDrop(destination.kind)) return;
+      // `filesFromClipboardData` já ignora cola só-texto: a textarea não muda.
+      const files = filesFromClipboardData(event.clipboardData);
+      if (files.length === 0) return;
+      event.preventDefault();
+
+      const workspace = useWorkspaceStore.getState().current;
+      if (!workspace) {
+        warnNothingAttached('Abra um projeto antes de colar arquivos.');
+        return;
+      }
+      // Sem `clearEntryContext`: apagar o rascunho digitado num ⌘V acidental
+      // seria destrutivo (o drop no launcher pode se dar esse luxo, a cola não).
       const setup = useMissionSetupStore.getState();
       if (destination.kind === 'launcher') {
-        setup.clearEntryContext();
         setup.setWorkspace(workspace.path);
         setup.setStep('express');
         useProductNavigationStore.getState().openMissionSetup();
       }
-
-      void (async () => {
-        const imported: string[] = [];
-        for (const file of split.toImport) {
-          try {
-            imported.push((await stageMissionAttachment(file)).path);
-          } catch (error) {
-            useToastStore.getState().push(
-              'warn',
-              'Não foi possível anexar',
-              error instanceof Error
-                ? error.message
-                : `Falha ao importar ${file.name}.`,
-            );
-          }
-        }
-        const contextPaths = [...split.inProject, ...imported];
-        // Rejeitados e falhas de import já ganharam toast específico acima —
-        // um segundo aviso genérico aqui era só ruído.
-        if (contextPaths.length === 0) return;
-        const current = useMissionSetupStore.getState();
-        current.setContextPaths([
-          ...current.draft.contextPaths,
-          ...contextPaths,
-        ]);
-      })();
+      void stageFilesIntoMission(workspace.path, files);
     };
+
+    window.addEventListener('dragover', onDragOverCapture, { capture: true });
+    window.addEventListener('drop', onDropCapture, { capture: true });
     window.addEventListener('dragover', onDragOver);
+    window.addEventListener('dragend', onDragEnd);
     window.addEventListener('dragleave', onDragLeave);
     window.addEventListener('drop', onDrop);
+    window.addEventListener('paste', onPaste);
     return () => {
+      clearIdleTimer();
+      window.removeEventListener('dragover', onDragOverCapture, {
+        capture: true,
+      });
+      window.removeEventListener('drop', onDropCapture, { capture: true });
       window.removeEventListener('dragover', onDragOver);
+      window.removeEventListener('dragend', onDragEnd);
       window.removeEventListener('dragleave', onDragLeave);
       window.removeEventListener('drop', onDrop);
+      window.removeEventListener('paste', onPaste);
     };
   }, []);
 
