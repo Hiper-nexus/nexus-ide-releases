@@ -1,0 +1,54 @@
+{
+  "source": "stablyai/orca",
+  "upstreamCommit": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92",
+  "upstreamRepository": "https://github.com/stablyai/orca",
+  "license": "MIT",
+  "copyright": "Copyright (c) 2026 Lovecast Inc.",
+  "licenseFile": "third_party/licenses/orca-MIT.txt",
+  "importedAt": "2026-09-11",
+  "verifiedAt": "2026-09-11",
+  "headerPolicy": "Direct copies/adaptations preserve upstream notices and carry: Adapted from stablyai/orca @ <commit>; Copyright (c) 2026 Lovecast Inc. — MIT License; See third_party/licenses/orca-MIT.txt. Existing copyright notices inside source are never stripped.",
+  "note": "Resync wave (terminal output scheduler) of the module first harvested at 143c36e (src/renderer/src/lib/pane-manager/pane-terminal-output-scheduler.ts) to upstream v1.4.200. Between the pin and f352b6b, upstream sliced that ~1.1k-line file down to a 107-line re-export facade and moved its logic into a dozen pane-manager modules (pane-terminal-output-{pipeline,queue-backlog,queue-chunks,queue-registry,drain,writer,flusher,ack-credit,scheduler-debug}.ts, pane-terminal-foreground-{queue-state,render-settle}.ts, pane-terminal-cursor-sequencing.ts). Nexus did not mirror that split: this wave ports the three behavior fixes that land in those files and apply to Nexus's adapted single-file API, not the file layout. `upstreamUrl` below points to pane-terminal-output-queue-chunks.ts, the successor file carrying two of the three fixes; the third (the hold/coalesce release-deadline fix) predates the split and is cited by its original commit in changeSummary. Entries with `supersedes` replace the same nexusPath in orca-143c36e.json, whose entries are marked superseded. Not ported: the ack-credit/delivery-credit system (pane-terminal-output-ack-credit.ts — remote PTY multiplex flow control; different leva/worktree, no Nexus equivalent to extend) and the xterm `_core` dirty-row repaint optimization (orca#18169, pane-terminal-foreground-render-settle.ts — Nexus's header already excludes the private `_core` API this depends on). The mechanical split commits themselves (#16775, #17131) carried no behavior change and were not ported.",
+  "files": [
+    {
+      "upstreamUrl": "https://github.com/stablyai/orca/blob/f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92/src/renderer/src/lib/pane-manager/pane-terminal-output-queue-chunks.ts",
+      "upstreamCommit": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92",
+      "originalSha256": "453e38a2db85f9b10d8c373bb747af4e105a3f790ee95d3bd54e6a90ef63f58d",
+      "originalPath": "src/renderer/src/lib/pane-manager/pane-terminal-output-queue-chunks.ts",
+      "nexusPath": "src/renderer/terminal/terminal-output-scheduler.ts",
+      "nexusSha256": "a803b42323646a5b01dee27785a05b69cd22c63a9533bfda35ba65ab3ab9db15",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 Lovecast Inc.",
+      "type": "adapted",
+      "changeSummary": "Ported three upstream behavior fixes onto the existing adapted API (state machine kept; no Orca file-split copied): (1) orca#8754 (d64ccc71b, pre-split pane-terminal-output-scheduler.ts) — hold/coalesce foreground timers cancelled each other's fallback forever on an alternating stream (a continuously repainting TUI), freezing a visible pane; ported as a shared foregroundReleaseDeadlineAt/Fixed gate (armForegroundReleaseDeadline/clearForegroundRelease) that caps one non-drainable episode regardless of how many times the mode flips. (2) orca#13402 / STA-3567 (868bfbe8c, pre-split) — partial takeQueuedChunk slices and drained queue slots kept V8's full parent string alive (e.g. a 2MB backlog chunk pinned by one un-flattened residual slice); ported flattenRetainedSlice with the same geometric re-flatten bound (residual <= retainedChars/2) plus clearing drained full-consume slots before the 64-chunk compaction. (3) perf (906bf54cc) — takeQueuedChunk assembled output via repeated `data +=`, quadratic across many small queued chunks (background floods, single-char writes); ported array+join assembly, kept our own ANSI-safe safeOutputSplitIndex chunking (upstream's post-split version does not have an equivalent — Nexus's split-avoidance is a deliberate divergence, not an omission).",
+      "secondaryProvenance": [
+        {
+          "upstreamUrl": "https://github.com/stablyai/orca/blob/f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92/src/renderer/src/lib/pane-manager/pane-terminal-foreground-queue-state.ts",
+          "originalPath": "src/renderer/src/lib/pane-manager/pane-terminal-foreground-queue-state.ts",
+          "originalSha256": "6e1fdfd21aa4d9923a898bc869cb7bc6f84abf49553ec48da2d757c14899e651",
+          "upstreamCommit": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92",
+          "note": "Carries the orca#8754 release-deadline gate at the pin (armForegroundReleaseDeadline / foregroundReleaseDeadlineFixed); fix 1 was ported from here, fixes 2 and 3 from the primary upstreamUrl (pane-terminal-output-queue-chunks.ts)."
+        }
+      ],
+      "importDate": "2026-09-11",
+      "status": "imported",
+      "supersedes": "143c36e566483006fe54fa2716b019ec00599752"
+    },
+    {
+      "upstreamUrl": "https://github.com/stablyai/orca/blob/f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92/src/renderer/src/lib/pane-manager/pane-terminal-output-queue-chunks.test.ts",
+      "upstreamCommit": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92",
+      "originalSha256": "e1226fdced7416b0c3d06d1fc42a4db22f3af2ad1b09ff57771003458b215bda",
+      "originalPath": "src/renderer/src/lib/pane-manager/pane-terminal-output-queue-chunks.test.ts",
+      "nexusPath": "src/renderer/terminal/terminal-output-scheduler.test.ts",
+      "nexusSha256": "8d62e11aac8e40055abd56a09da394472054a389b24b7702978b7fa4784034c5",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2026 Lovecast Inc.",
+      "type": "adapted",
+      "changeSummary": "Added regression coverage for the three ported fixes, written against Nexus's own public API (writeTerminalOutput/flushTerminalOutput/getQueuedChars), not copied from any single upstream test file: a hold/coalesce alternation test proving the entry still becomes drainable (orca#8754), a many-small-chunks-in-order assembly test (906bf54cc's test adapted from enqueueChunk/takeQueuedChunk-level to public-API level since those are not exported here), a large-single-chunk-many-partial-takes content-integrity test for the retainedChars bookkeeping, and a flattenRetainedSlice content-preservation unit test. Upstream's STA-3567 heap-measurement tests (global.gc / --expose-gc) were deliberately NOT ported — see changeSummary note in this ledger's top-level `note` and the resync handoff summary.",
+      "secondaryProvenance": [],
+      "importDate": "2026-09-11",
+      "status": "imported",
+      "supersedes": "143c36e566483006fe54fa2716b019ec00599752"
+    }
+  ]
+}
