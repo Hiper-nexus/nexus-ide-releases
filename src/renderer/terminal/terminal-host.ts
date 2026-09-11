@@ -168,6 +168,12 @@ interface Host {
   opened: boolean;
   spawnStarted: boolean;
   hibernated: boolean;
+  /**
+   * Estacionado: o workspace dono deste pane saiu de cena, mas o processo
+   * continua vivo e o xterm guardado fora do DOM. `reconcileHosts` não
+   * descarta um host estacionado; `attachHost` o recoloca na tela ao voltar.
+   */
+  parked: boolean;
   disposed: boolean;
   /** Keeps the live composer visible and repairs missed interactive paints. */
   inputVisibility: TerminalInputVisibilityController;
@@ -1778,6 +1784,7 @@ function createShellHost(pane: PaneModel): Host {
     opened: false,
     spawnStarted: false,
     hibernated: false,
+    parked: false,
     disposed: false,
     inputVisibility,
     cleanups: [],
@@ -1836,6 +1843,7 @@ function createCliAgentHost(pane: PaneModel): Host {
     opened: false,
     spawnStarted: false,
     hibernated: false,
+    parked: false,
     disposed: false,
     inputVisibility,
     cleanups: [],
@@ -2044,6 +2052,13 @@ export function getOrCreateHost(pane: PaneModel): Host {
 export function attachHost(pane: PaneModel, slot: HTMLElement): void {
   const host = getOrCreateHost(pane);
   slot.appendChild(host.element);
+  if (host.parked) {
+    // De volta do estacionamento: mesmo xterm, mesma sessão. O lease de WebGL
+    // foi devolvido ao estacionar; o bounce de grade logo abaixo cobre a
+    // largura que mudou enquanto o pane estava fora da tela.
+    unparkHost(pane.id, host);
+    if (host.opened) registerWebglLease(pane.id, host);
+  }
 
   if (!host.opened) {
     host.term.open(host.element);
@@ -3366,6 +3381,88 @@ export function submitPromptToPaneOperatorInput(
   });
 }
 
+/**
+ * Panes afastados por troca de workspace, por workspace dono. Trocar de
+ * projeto AFASTA os panes — não os fecha. Antes, todo host fora da árvore nova
+ * era descartado e `disposeHost` matava o PTY com `force:true`: o trabalho
+ * que rodava num pane do operador morria ~1 s depois do clique em outro
+ * workspace, e na volta o scrollback salvo fingia que o terminal tinha
+ * voltado. Só o fechamento explícito (pane ✕, Fechar projeto, remover da
+ * lista) mata.
+ */
+const parkedHosts = new Map<string, Set<string>>();
+const parkedHostWorkspace = new Map<string, string>();
+
+function unparkHost(paneId: string, host: Host): void {
+  host.parked = false;
+  const workspacePath = parkedHostWorkspace.get(paneId);
+  parkedHostWorkspace.delete(paneId);
+  if (workspacePath === undefined) return;
+  const set = parkedHosts.get(workspacePath);
+  set?.delete(paneId);
+  if (set && set.size === 0) parkedHosts.delete(workspacePath);
+}
+
+/**
+ * Afasta os panes da árvore ATUAL antes de o layout trocar de workspace.
+ * Host sem sessão não tem nada a preservar e é descartado (o scrollback salvo
+ * o reconstrói na volta); host com sessão sai do DOM e devolve o lease de
+ * WebGL, mas mantém xterm, PTY e estado. Devolve quantos ficaram estacionados.
+ */
+export function parkWorkspaceHosts(workspacePath: string): number {
+  const paneIds = listPanes(useLayoutStore.getState().root).map(
+    (item) => item.id,
+  );
+  let parked = 0;
+  for (const paneId of paneIds) {
+    const host = hosts.get(paneId);
+    if (!host || host.disposed || host.parked) continue;
+    if (!host.sessionId) {
+      disposeHost(host, paneId);
+      hosts.delete(paneId);
+      continue;
+    }
+    host.parked = true;
+    webglPool.unregister(paneId);
+    host.element.remove();
+    parkedHostWorkspace.set(paneId, workspacePath);
+    let set = parkedHosts.get(workspacePath);
+    if (!set) {
+      set = new Set();
+      parkedHosts.set(workspacePath, set);
+    }
+    set.add(paneId);
+    parked += 1;
+  }
+  if (parked > 0) {
+    console.info(
+      `[terminal] ${parked} pane(s) de ${workspacePath} estacionado(s) com a sessão viva`,
+    );
+  }
+  return parked;
+}
+
+/** Fechamento explícito de um projeto: mata o que estava estacionado dele. */
+export function disposeWorkspaceHosts(workspacePath: string): number {
+  const set = parkedHosts.get(workspacePath);
+  if (!set) return 0;
+  let disposed = 0;
+  for (const paneId of [...set]) {
+    const host = hosts.get(paneId);
+    unparkHost(paneId, host ?? ({ parked: false } as Host));
+    if (!host || host.disposed) continue;
+    disposeHost(host, paneId);
+    hosts.delete(paneId);
+    disposed += 1;
+  }
+  if (disposed > 0) {
+    console.info(
+      `[terminal] ${disposed} pane(s) estacionado(s) de ${workspacePath} encerrado(s)`,
+    );
+  }
+  return disposed;
+}
+
 function disposeHost(host: Host, paneId: string): void {
   host.disposed = true;
   clearDeferredSpawnRetry(host);
@@ -3379,12 +3476,19 @@ function disposeHost(host: Host, paneId: string): void {
   useSessionStateStore.getState().clearPaneState(paneId);
 }
 
-/** Dispose every terminal whose pane id is no longer present in the layout. */
+/**
+ * Dispose every terminal whose pane id is no longer present in the layout.
+ * Um host estacionado está fora da árvore DE PROPÓSITO (o workspace dele
+ * saiu de cena): não é descarte. Se ele voltou à árvore, desestaciona.
+ */
 export function reconcileHosts(liveIds: Set<string>): void {
   for (const [id, host] of hosts) {
-    if (!liveIds.has(id)) {
-      disposeHost(host, id);
-      hosts.delete(id);
+    if (liveIds.has(id)) {
+      if (host.parked) unparkHost(id, host);
+      continue;
     }
+    if (host.parked) continue;
+    disposeHost(host, id);
+    hosts.delete(id);
   }
 }

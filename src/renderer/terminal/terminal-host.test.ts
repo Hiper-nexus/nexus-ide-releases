@@ -49,6 +49,8 @@ import {
   cancelPaneRecovery,
   consumeFirstSpawnIntent,
   discardPaneSpawnState,
+  disposeWorkspaceHosts,
+  parkWorkspaceHosts,
   markPersistedAuthorityOnSpawn,
   markResumeOnSpawn,
   getOrCreateHost,
@@ -391,5 +393,117 @@ describe('drop sem File — text/uri-list vira anexo digitado no PTY', () => {
     expect(useToastStore.getState().toasts.map((toast) => toast.title)).toContain(
       'Nada foi solto no terminal',
     );
+  });
+});
+
+/**
+ * Trocar de workspace AFASTA os panes; não os fecha. Antes, `reconcileHosts`
+ * descartava todo host fora da árvore nova e `disposeHost` matava o PTY com
+ * `force:true` — o trabalho que rodava num pane do operador morria em ~1 s ao
+ * clicar em outro workspace, e na volta o scrollback salvo fingia que o
+ * terminal tinha voltado.
+ */
+describe('estacionamento de hosts na troca de workspace', () => {
+  const paneA1: PaneModel = { id: 'park-a1', kind: 'shell', title: 'A1' };
+  const paneA2: PaneModel = { id: 'park-a2', kind: 'shell', title: 'A2' };
+  const paneC1: PaneModel = { id: 'park-c1', kind: 'shell', title: 'C1' };
+
+  async function openLiveHost(target: PaneModel) {
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(target, slot);
+    const host = getOrCreateHost(target);
+    setHostSize(host.element, 1200, 800);
+    await vi.advanceTimersByTimeAsync(2_500);
+    expect(getPaneSessionId(target.id)).toBe(`pty-${target.id}`);
+    return { host, slot };
+  }
+
+  beforeEach(() => {
+    spawn.mockImplementation(async (req: { paneId?: string }) => ({
+      ok: true,
+      sessionId: `pty-${req.paneId ?? 'anon'}`,
+    }));
+    useLayoutStore.setState({
+      root: buildGridTree([paneA1, paneA2]),
+      focusedPaneId: paneA1.id,
+    });
+  });
+
+  afterEach(() => {
+    disposeWorkspaceHosts('/ws/a');
+    disposeWorkspaceHosts('/ws/c');
+    for (const target of [paneA1, paneA2, paneC1]) discardPaneSpawnState(target.id);
+  });
+
+  it('estacionar preserva host e sessão quando a árvore passa a ser de outro workspace', async () => {
+    const { host } = await openLiveHost(paneA1);
+
+    parkWorkspaceHosts('/ws/a');
+    reconcileHosts(new Set(['pane-de-b']));
+
+    expect(kill).not.toHaveBeenCalled();
+    expect(host.disposed).toBe(false);
+    expect(getOrCreateHost(paneA1)).toBe(host);
+    expect(getPaneSessionId(paneA1.id)).toBe('pty-park-a1');
+  });
+
+  it('voltar ao workspace reanexa o mesmo host sem replay duplicado', async () => {
+    const { host } = await openLiveHost(paneA1);
+    parkWorkspaceHosts('/ws/a');
+    reconcileHosts(new Set(['pane-de-b']));
+    expect(host.element.isConnected).toBe(false);
+
+    const slot2 = document.createElement('div');
+    document.body.appendChild(slot2);
+    // O layout restaurado traz scrollback salvo — um host já aberto NÃO pode
+    // reescrevê-lo por cima da sessão viva.
+    attachHost({ ...paneA1, terminalScrollback: 'historico salvo' }, slot2);
+    reconcileHosts(new Set([paneA1.id]));
+
+    expect(slot2.contains(host.element)).toBe(true);
+    expect(getOrCreateHost(paneA1)).toBe(host);
+    expect(host.pendingScrollback).toBeUndefined();
+    expect(kill).not.toHaveBeenCalled();
+    // Desestacionado: se o operador fechar o pane agora, ele morre de verdade.
+    reconcileHosts(new Set());
+    expect(kill).toHaveBeenCalledWith('pty-park-a1');
+  });
+
+  it('host sem sessão é descartado ao estacionar (nada a preservar)', () => {
+    const slot = document.createElement('div');
+    slot.hidden = true;
+    document.body.appendChild(slot);
+    attachHost(paneA2, slot);
+    const host = getOrCreateHost(paneA2);
+    expect(getPaneSessionId(paneA2.id)).toBeNull();
+
+    parkWorkspaceHosts('/ws/a');
+
+    expect(host.disposed).toBe(true);
+    expect(kill).not.toHaveBeenCalled();
+  });
+
+  it('fechar um pane pelo operador continua matando a sessão', async () => {
+    await openLiveHost(paneA1);
+    reconcileHosts(new Set());
+    expect(kill).toHaveBeenCalledWith('pty-park-a1');
+  });
+
+  it('remover um projeto mata só os estacionados dele', async () => {
+    const { host: hostA } = await openLiveHost(paneA1);
+    parkWorkspaceHosts('/ws/a');
+    useLayoutStore.setState({ root: buildGridTree([paneC1]), focusedPaneId: paneC1.id });
+    const { host: hostC } = await openLiveHost(paneC1);
+    parkWorkspaceHosts('/ws/c');
+    reconcileHosts(new Set(['pane-de-b']));
+    expect(kill).not.toHaveBeenCalled();
+
+    disposeWorkspaceHosts('/ws/a');
+
+    expect(kill).toHaveBeenCalledTimes(1);
+    expect(kill).toHaveBeenCalledWith('pty-park-a1');
+    expect(hostA.disposed).toBe(true);
+    expect(hostC.disposed).toBe(false);
   });
 });
