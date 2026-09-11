@@ -1157,6 +1157,19 @@ export function getQueuedChars(terminal: TerminalOutputSink): number {
   return queuedByTerminal.get(terminal)?.queuedChars ?? 0;
 }
 
+/**
+ * String backing store still pinned by a sink's queue slots, consumed slots
+ * included (tests / benchmarks). Lets a test assert the orca#13402 bound
+ * (`retained <= 2 * queued`) without heap snapshots or `--expose-gc`.
+ */
+export function getQueuedRetainedChars(terminal: TerminalOutputSink): number {
+  const entry = queuedByTerminal.get(terminal);
+  if (!entry) return 0;
+  let total = 0;
+  for (const chunk of entry.chunks) total += chunk.retainedChars;
+  return total;
+}
+
 /** Written-but-unparsed char count for a sink (tests / benchmarks). */
 export function getPendingParseChars(terminal: TerminalOutputSink): number {
   return pendingParseByTerminal.get(terminal) ?? 0;

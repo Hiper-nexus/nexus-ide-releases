@@ -17,6 +17,7 @@ import {
   flushTerminalOutput,
   getPendingParseChars,
   getQueuedChars,
+  getQueuedRetainedChars,
   getTerminalOutputRuntimeSnapshot,
   pauseTerminalOutput,
   getTerminalOutputSchedulerDebugSnapshot,
@@ -516,10 +517,14 @@ describe('foreground hold/coalesce livelock (orca#8754)', () => {
     expect(terminal.write).toHaveBeenCalled();
   });
 
-  it('does not fire the release gate early for a single well-behaved hold→coalesce pair', () => {
+  it('honours the full coalesce delay when the shared deadline is not binding', () => {
     vi.useFakeTimers();
     const terminal = createTerminal();
 
+    // t=0: hold arms a 32ms deadline. t=10: coalesce asks for 8ms, so the
+    // shared deadline becomes min(32, 18) = 18. The entry must be released
+    // at t=18 exactly: not early (the coalesce window is honoured) and not
+    // stretched to the hold budget.
     writeTerminalOutput(terminal, 'open', {
       foreground: true,
       latencySensitive: true,
@@ -531,9 +536,13 @@ describe('foreground hold/coalesce livelock (orca#8754)', () => {
       latencySensitive: true,
       coalesceForeground: true,
     });
-    // Coalesce delay (latency-sensitive) is short; give it room to fire once.
-    vi.runAllTimers();
+    vi.advanceTimersByTime(7);
+    expect(terminal.write).not.toHaveBeenCalled();
 
+    // The release at t=18 hands off to a 0ms drain timer. Fake timers put a
+    // zero-delay timer created inside a tick on the next tick, so the write
+    // itself lands at t=19.
+    vi.advanceTimersByTime(2);
     expect(terminal.written.join('')).toBe('openclose');
     expect(terminal.write).toHaveBeenCalledTimes(1);
   });
@@ -576,9 +585,37 @@ describe('takeQueuedChunk linear assembly', () => {
     writeTerminalOutput(terminal, payload, { foreground: false });
     for (let i = 0; i < 200 && getQueuedChars(terminal) > 0; i += 1) {
       vi.advanceTimersByTime(16);
+      // orca#13402 bound: a partial take either re-flattens (retained ==
+      // residual) or leaves residual*2 > retained, so the pinned backing
+      // store can never exceed twice what is still queued. Reverting the
+      // geometric flatten keeps the original ~160K pinned while queued
+      // shrinks, and this trips once queued drops below 80K.
+      expect(getQueuedRetainedChars(terminal)).toBeLessThanOrEqual(
+        2 * getQueuedChars(terminal),
+      );
     }
 
     expect(terminal.written.join('')).toBe(payload);
     expect(getQueuedChars(terminal)).toBe(0);
+    expect(getQueuedRetainedChars(terminal)).toBe(0);
+  });
+
+  it('releases the backing store of fully consumed slots before the 64-slot compaction', () => {
+    vi.useFakeTimers();
+    const terminal = createTerminal();
+    // 100 x 1 KiB chunks: each 16 KiB take consumes 16 whole slots, so after
+    // one drain tick (2 writes) 32 consumed slots sit below the compaction
+    // threshold. With the fix they hold nothing; without it each still pins
+    // its 1 KiB and retained exceeds what is queued.
+    const chunk = 'y'.repeat(1024);
+    for (let i = 0; i < 100; i += 1) {
+      writeTerminalOutput(terminal, chunk, { foreground: false });
+    }
+    expect(getQueuedRetainedChars(terminal)).toBe(getQueuedChars(terminal));
+
+    vi.advanceTimersByTime(50);
+    expect(getQueuedChars(terminal)).toBeLessThan(100 * 1024);
+    expect(getQueuedChars(terminal)).toBeGreaterThan(0);
+    expect(getQueuedRetainedChars(terminal)).toBe(getQueuedChars(terminal));
   });
 });
