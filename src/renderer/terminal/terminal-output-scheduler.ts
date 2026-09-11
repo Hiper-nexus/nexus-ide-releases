@@ -1,9 +1,29 @@
-// Adapted from stablyai/orca @ 143c36e566483006fe54fa2716b019ec00599752
+// Adapted from stablyai/orca @ f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92
+// (resynced from 143c36e566483006fe54fa2716b019ec00599752)
 // Copyright (c) 2026 Lovecast Inc. — MIT License
 // See third_party/licenses/orca-MIT.txt. Nexus changes: state machine + public
 // API adapted for stable @xterm/xterm write sinks; removed e2e-config, xterm
 // beta private _core refresh, scroll-intent, and pane-manager foreground
-// settle helpers. Backlog warning text uses "Nexus" branding.
+// settle helpers. Backlog warning text uses "Nexus" branding. Resync
+// (2026-09-11) ported three upstream behavior fixes onto this API, adapted
+// rather than copied line-for-line since upstream split this file into a
+// dozen pane-manager modules after the pin:
+//  - orca#8754: hold/coalesce foreground timers could cancel each other
+//    forever on an alternating stream (a continuously repainting TUI),
+//    freezing a visible pane. Ported as a shared release-deadline gate
+//    (armForegroundReleaseDeadline/clearForegroundRelease).
+//  - orca#13402 / STA-3567: partial takeQueuedChunk slices and drained
+//    queue slots kept V8's full parent string alive. Ported flattenRetainedSlice
+//    with the same geometric re-flatten bound, plus clearing drained slots
+//    before the 64-chunk compaction.
+//  - perf: takeQueuedChunk assembled output via repeated `data +=`, which
+//    is quadratic across many small queued chunks. Ported the array+join
+//    assembly, keeping our own ANSI-safe safeOutputSplitIndex chunking.
+// NOT ported: upstream's ack-credit / delivery-credit system (remote PTY
+// multiplex flow control — different leva/worktree, no Nexus equivalent),
+// its xterm `_core` dirty-row repaint optimization (orca#18169 — Nexus has
+// no access to that private API, see header above), and the mechanical
+// file-split commits themselves (no behavior change to port).
 
 /**
  * Shared terminal output scheduler: per-terminal queues, foreground priority,
@@ -33,6 +53,13 @@ export type WriteTerminalOutputOptions = {
 
 type QueueChunk = {
   data: string;
+  /**
+   * Size of the string backing store still reachable through this slot.
+   * `data.slice()` in V8 can return a sliced string that keeps its full
+   * parent alive; this tracks that parent size so takeQueuedChunk knows
+   * when a re-flatten is worth its copy cost. See flattenRetainedSlice.
+   */
+  retainedChars: number;
   foreground: boolean;
   onParsed?: TerminalOutputParsedCallback;
 };
@@ -64,6 +91,18 @@ type QueueEntry = {
   foregroundCoalesceDelayMs: number;
   foregroundHoldSafetyTimer: ReturnType<typeof setTimeout> | null;
   foregroundCoalesceTimer: ReturnType<typeof setTimeout> | null;
+  /**
+   * Hold and coalesce each cancel the other's fallback timer when a write
+   * arrives mid-wait, so an alternating stream (a continuously repainting
+   * TUI whose frame-open chunk holds and frame-close chunk coalesces) could
+   * re-arm both forever and freeze a visible pane (orca#8754). This caps one
+   * non-drainable episode independent of how many times the mode flips.
+   */
+  foregroundReleaseDeadlineAt: number | null;
+  /** Once coalesce has taken the entry over, a later hold chunk clamps to
+   * the existing deadline instead of extending it — otherwise the two
+   * mechanisms could still re-arm each other through the deadline itself. */
+  foregroundReleaseDeadlineFixed: boolean;
 };
 
 const BACKGROUND_FLUSH_DELAY_MS = 50;
@@ -256,6 +295,8 @@ function createQueueEntry(
     foregroundCoalesceDelayMs: FOREGROUND_COALESCE_DELAY_MS,
     foregroundHoldSafetyTimer: null,
     foregroundCoalesceTimer: null,
+    foregroundReleaseDeadlineAt: null,
+    foregroundReleaseDeadlineFixed: false,
   };
 }
 
@@ -275,16 +316,56 @@ function clearForegroundCoalesce(entry: QueueEntry): void {
   entry.foregroundCoalesceDelayMs = FOREGROUND_COALESCE_DELAY_MS;
 }
 
+/**
+ * Returns the delay the caller's timer must use so it never outlives this
+ * non-drainable episode's deadline. A hold chunk may push the deadline out
+ * (mayExtend); once coalesce has taken over, the deadline is fixed so a
+ * later hold chunk can only clamp to it, not restart it (orca#8754).
+ */
+function armForegroundReleaseDeadline(
+  entry: QueueEntry,
+  delayMs: number,
+  mayExtend: boolean,
+): number {
+  const now = getDrainNow();
+  const requested = now + delayMs;
+  entry.foregroundReleaseDeadlineAt =
+    entry.foregroundReleaseDeadlineAt === null ||
+    (mayExtend && !entry.foregroundReleaseDeadlineFixed)
+      ? requested
+      : Math.min(entry.foregroundReleaseDeadlineAt, requested);
+  return Math.max(0, entry.foregroundReleaseDeadlineAt - now);
+}
+
+/** Reopen the gate only once the entry is drainable again, so the next
+ * synchronized frame gets a full budget. */
+function resetForegroundReleaseGate(entry: QueueEntry): void {
+  entry.foregroundReleaseDeadlineAt = null;
+  entry.foregroundReleaseDeadlineFixed = false;
+}
+
+function clearForegroundRelease(entry: QueueEntry): void {
+  clearForegroundHoldSafety(entry);
+  clearForegroundCoalesce(entry);
+  resetForegroundReleaseGate(entry);
+}
+
 function scheduleForegroundHoldSafety(entry: QueueEntry): void {
   clearForegroundHoldSafety(entry);
+  const delayMs = armForegroundReleaseDeadline(
+    entry,
+    entry.foregroundHoldSafetyDelayMs,
+    true,
+  );
   entry.foregroundHoldSafetyTimer = setTimeout(() => {
     entry.foregroundHoldSafetyTimer = null;
     entry.foregroundHold = false;
     clearForegroundCoalesce(entry);
+    resetForegroundReleaseGate(entry);
     if (queuedByTerminal.has(entry.terminal)) {
       scheduleDrain(0);
     }
-  }, entry.foregroundHoldSafetyDelayMs);
+  }, delayMs);
 }
 
 function scheduleForegroundCoalesceRelease(
@@ -300,17 +381,38 @@ function scheduleForegroundCoalesceRelease(
     entry.foregroundCoalesceTimer = null;
   }
   entry.foregroundCoalesce = true;
+  // Fixed from here: a later hold chunk must clamp to this deadline instead
+  // of restarting the pair's mutual re-arm (orca#8754).
+  entry.foregroundReleaseDeadlineFixed = true;
+  const delayMs = armForegroundReleaseDeadline(
+    entry,
+    entry.foregroundCoalesceDelayMs,
+    false,
+  );
   entry.foregroundCoalesceTimer = setTimeout(() => {
     entry.foregroundCoalesceTimer = null;
     entry.foregroundCoalesce = false;
+    resetForegroundReleaseGate(entry);
     if (queuedByTerminal.has(entry.terminal)) {
       scheduleDrain(0);
     }
-  }, entry.foregroundCoalesceDelayMs);
+  }, delayMs);
 }
 
 function isEntryDrainable(entry: QueueEntry): boolean {
   return !entry.foregroundHold && !entry.foregroundCoalesce;
+}
+
+/**
+ * Exposed for unit tests. Force a standalone copy of `value`. V8 can return
+ * `String#slice` as a "sliced string" that keeps its full parent backing
+ * store alive; a queue slot holding a slice of a 2 MB PTY read would
+ * otherwise pin that 2 MB until the slot itself is spliced away
+ * (orca#13402 / STA-3567). The `+ ' '` concatenation forces V8 to flatten
+ * into a fresh string.
+ */
+export function flattenRetainedSlice(value: string): string {
+  return value.length === 0 ? value : `${value} `.slice(0, -1);
 }
 
 /** Exposed for unit tests: strip transient cursor-show sequences (ANSI integrity). */
@@ -480,7 +582,10 @@ export function safeOutputSplitIndex(data: string, limit: number): number {
 
 function takeQueuedChunk(entry: QueueEntry, limit: number): QueuedWrite | null {
   let remaining = limit;
-  let data = '';
+  // Join source chunks once at the end instead of repeated `data +=`: a
+  // background flood queued as many small chunks (single keystrokes, tight
+  // PTY reads) made assembly quadratic in the chunk count.
+  const dataParts: string[] = [];
   let foreground: boolean | null = null;
   const parsedCallbacks: TerminalOutputParsedCallback[] = [];
 
@@ -491,9 +596,19 @@ function takeQueuedChunk(entry: QueueEntry, limit: number): QueuedWrite | null {
     }
     foreground ??= chunk.foreground;
     if (chunk.data.length <= remaining) {
-      data += chunk.data;
+      dataParts.push(chunk.data);
       remaining -= chunk.data.length;
       entry.queuedChars -= chunk.data.length;
+      // Drop the reference now rather than waiting for the 64-chunk
+      // compaction in compactConsumedChunks: a drained slot left holding
+      // its string keeps a potentially large backlog chunk alive for
+      // dozens of drain cycles (orca#13402 / STA-3567).
+      entry.chunks[entry.chunkIndex] = {
+        data: '',
+        retainedChars: 0,
+        foreground: chunk.foreground,
+        onParsed: undefined,
+      };
       entry.chunkIndex += 1;
       if (chunk.onParsed) parsedCallbacks.push(chunk.onParsed);
       continue;
@@ -503,11 +618,18 @@ function takeQueuedChunk(entry: QueueEntry, limit: number): QueuedWrite | null {
     if (take <= 0) {
       break;
     }
-    data += chunk.data.slice(0, take);
+    dataParts.push(chunk.data.slice(0, take));
     if (chunk.onParsed) parsedCallbacks.push(chunk.onParsed);
+    const residual = chunk.data.slice(take);
+    // Geometric flattening: re-flatten only once the residual has shrunk to
+    // half of what is currently retained. Flattening on every partial take
+    // would itself be quadratic; skipping it forever would pin the original
+    // (possibly multi-MB) backing store for as long as any tail is queued.
+    const flatten = residual.length * 2 <= chunk.retainedChars;
     entry.chunks[entry.chunkIndex] = {
       ...chunk,
-      data: chunk.data.slice(take),
+      data: flatten ? flattenRetainedSlice(residual) : residual,
+      retainedChars: flatten ? residual.length : chunk.retainedChars,
     };
     entry.queuedChars -= take;
     remaining = 0;
@@ -516,9 +638,10 @@ function takeQueuedChunk(entry: QueueEntry, limit: number): QueuedWrite | null {
   compactConsumedChunks(entry);
   if (entry.queuedChars < 0) entry.queuedChars = 0;
   recordQueueDebugPressure();
-  return data
+  const assembled = dataParts.length === 1 ? dataParts[0] : dataParts.join('');
+  return assembled
     ? {
-        data,
+        data: assembled,
         foreground: foreground === true,
         onParsed:
           parsedCallbacks.length > 0
@@ -563,12 +686,17 @@ function enqueueChunk(
       return;
     }
   }
+  // Own the bytes: PTY reads and restore-tape trims hand us slices of a much
+  // larger buffer, and an un-flattened push would pin that whole buffer for
+  // as long as this chunk sits in the queue.
+  const owned = flattenRetainedSlice(data);
   entry.chunks.push({
-    data,
+    data: owned,
+    retainedChars: owned.length,
     foreground: options?.foreground === true,
     onParsed: options?.onParsed,
   });
-  entry.queuedChars += data.length;
+  entry.queuedChars += owned.length;
   recordQueueDebugPressure();
 }
 
@@ -578,6 +706,7 @@ function replaceBacklogWithWarning(entry: QueueEntry): void {
   entry.chunks = [
     {
       data: BACKGROUND_BACKLOG_WARNING,
+      retainedChars: BACKGROUND_BACKLOG_WARNING.length,
       foreground: false,
     },
   ];
@@ -591,7 +720,7 @@ function replaceBacklogWithWarning(entry: QueueEntry): void {
   if (debugEnabled && shouldNotify) {
     debugState.droppedBacklogCount++;
   }
-  clearForegroundCoalesce(entry);
+  clearForegroundRelease(entry);
   recordQueueDebugPressure();
   if (shouldNotify) {
     entry.onBackgroundBacklogDropped?.();
@@ -695,8 +824,7 @@ function writeQueuedChunk(entry: QueueEntry): 'foreground' | 'background' | null
     entry.chunks.length = 0;
     entry.chunkIndex = 0;
     entry.queuedChars = 0;
-    clearForegroundHoldSafety(entry);
-    clearForegroundCoalesce(entry);
+    clearForegroundRelease(entry);
     recordQueueDebugPressure();
     return null;
   }
@@ -738,8 +866,7 @@ function drainQueuedOutput(): void {
       queuedByTerminal.set(entry.terminal, entry);
     } else {
       entry.highPriority = false;
-      clearForegroundCoalesce(entry);
-      clearForegroundHoldSafety(entry);
+      clearForegroundRelease(entry);
     }
     if (writes > 0 && getDrainNow() - startedAt >= DRAIN_TIME_BUDGET_MS) {
       break;
@@ -813,7 +940,7 @@ export function writeTerminalOutput(
           );
         }
         if (containsDrainableCursorRestore(data)) {
-          clearForegroundCoalesce(queued);
+          clearForegroundRelease(queued);
           scheduleDrain(0);
           return;
         }
@@ -825,8 +952,7 @@ export function writeTerminalOutput(
         return;
       }
       queued.foregroundHold = false;
-      clearForegroundCoalesce(queued);
-      clearForegroundHoldSafety(queued);
+      clearForegroundRelease(queued);
       scheduleDrain(0);
       return;
     }
@@ -936,8 +1062,7 @@ export function resumeTerminalOutput(terminal: TerminalOutputSink): void {
   const entry = queuedByTerminal.get(terminal);
   if (!entry) return;
   entry.foregroundHold = false;
-  clearForegroundHoldSafety(entry);
-  clearForegroundCoalesce(entry);
+  clearForegroundRelease(entry);
   scheduleDrain(0);
 }
 
@@ -946,8 +1071,7 @@ export function pauseTerminalOutput(terminal: TerminalOutputSink): void {
   const entry = queuedByTerminal.get(terminal);
   if (!entry) return;
   entry.foregroundHold = true;
-  clearForegroundCoalesce(entry);
-  clearForegroundHoldSafety(entry);
+  clearForegroundRelease(entry);
 }
 
 export interface TerminalOutputRuntimeSnapshot {
@@ -997,8 +1121,7 @@ export function flushTerminalOutput(
       entry.beforeWrite?.(queuedWrite.data);
       writeSinkChunk(terminal, queuedWrite.data, queuedWrite.onParsed);
     } catch {
-      clearForegroundHoldSafety(entry);
-      clearForegroundCoalesce(entry);
+      clearForegroundRelease(entry);
       recordQueueDebugPressure();
       return;
     }
@@ -1013,8 +1136,7 @@ export function flushTerminalOutput(
     scheduleDrain(0);
   } else {
     entry.highPriority = false;
-    clearForegroundCoalesce(entry);
-    clearForegroundHoldSafety(entry);
+    clearForegroundRelease(entry);
   }
   recordQueueDebugPressure();
 }
@@ -1023,8 +1145,7 @@ export function flushTerminalOutput(
 export function discardTerminalOutput(terminal: TerminalOutputSink): void {
   const entry = queuedByTerminal.get(terminal);
   if (entry) {
-    clearForegroundHoldSafety(entry);
-    clearForegroundCoalesce(entry);
+    clearForegroundRelease(entry);
   }
   queuedByTerminal.delete(terminal);
   pendingParseByTerminal.delete(terminal);
@@ -1049,8 +1170,7 @@ export function resetTerminalOutputSchedulerForTests(): void {
     drainTimerDelayMs = null;
   }
   for (const entry of queuedByTerminal.values()) {
-    clearForegroundHoldSafety(entry);
-    clearForegroundCoalesce(entry);
+    clearForegroundRelease(entry);
   }
   queuedByTerminal.clear();
   pendingParseByTerminal.clear();

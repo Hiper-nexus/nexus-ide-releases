@@ -1,13 +1,19 @@
-// Adapted from stablyai/orca @ 143c36e566483006fe54fa2716b019ec00599752
+// Adapted from stablyai/orca @ f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92
+// (resynced from 143c36e566483006fe54fa2716b019ec00599752)
 // Copyright (c) 2026 Lovecast Inc. — MIT License
 // See third_party/licenses/orca-MIT.txt. Nexus changes: tests target adapted
 // scheduler API (stable write sink, no xterm _core / scroll-intent mocks).
+// Resync (2026-09-11): regression coverage for the three ported fixes
+// (orca#8754 hold/coalesce release deadline, orca#13402 retained-slice
+// flattening, linear chunk assembly) written against Nexus's public API,
+// not copied from a single upstream test file.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   MAX_BACKGROUND_QUEUE_CHARS,
   MAX_UNPARSED_WRITE_CHARS,
   discardTerminalOutput,
+  flattenRetainedSlice,
   flushTerminalOutput,
   getPendingParseChars,
   getQueuedChars,
@@ -447,5 +453,132 @@ describe('resync pós-drop de backlog (garble do voo real 19/08)', () => {
     const joined = terminal.written.join('');
     expect(joined).not.toContain('rabo-cortado-sem-esc');
     expect(joined).toContain('\x1b[2J\x1b[Hframe TUI redesenhado');
+  });
+});
+
+describe('flattenRetainedSlice', () => {
+  it('preserves content exactly, including empty and multi-byte input', () => {
+    expect(flattenRetainedSlice('')).toBe('');
+    expect(flattenRetainedSlice('a')).toBe('a');
+    const source = 'hello world, 漢字, \x1b[31mred\x1b[0m, 🎉';
+    expect(flattenRetainedSlice(source)).toBe(source);
+    expect(flattenRetainedSlice(source.slice(3))).toBe(source.slice(3));
+  });
+});
+
+describe('foreground hold/coalesce livelock (orca#8754)', () => {
+  beforeEach(() => {
+    resetTerminalOutputSchedulerForTests();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    resetTerminalOutputSchedulerForTests();
+  });
+
+  it('keeps repainting when synchronized frames alternate hold and coalesce chunks', () => {
+    vi.useFakeTimers();
+    const terminal = createTerminal();
+
+    // Mirrors a continuously repainting TUI: the frame-open chunk holds
+    // (waits for the frame-close chunk), the frame-close chunk coalesces
+    // (waits briefly for more foreground output). Each write lands 5ms
+    // after the previous one — shorter than BOTH the latency-sensitive
+    // coalesce delay (8ms) and hold-safety delay (32ms) — so before the fix
+    // every write cancels the other side's fallback timer before it can
+    // fire, and the entry never becomes drainable no matter how long the
+    // stream continues.
+    const writeFrameOpen = (frame: number): void => {
+      writeTerminalOutput(terminal, `\x1b[?2026h\x1b[10;5HWorking ${frame}`, {
+        foreground: true,
+        latencySensitive: true,
+        holdForeground: true,
+      });
+    };
+    const writeFrameClose = (): void => {
+      writeTerminalOutput(terminal, '\x1b[10;8H\x1b[?2026l', {
+        foreground: true,
+        latencySensitive: true,
+        coalesceForeground: true,
+      });
+    };
+
+    writeFrameOpen(0);
+    for (let frame = 1; frame < 40; frame += 1) {
+      vi.advanceTimersByTime(5);
+      writeFrameClose();
+      vi.advanceTimersByTime(5);
+      writeFrameOpen(frame);
+    }
+
+    // The shared release deadline caps one non-drainable episode regardless
+    // of how the mode keeps flipping, so at least one write must have
+    // escaped despite 200ms of continuous alternation.
+    expect(terminal.write).toHaveBeenCalled();
+  });
+
+  it('does not fire the release gate early for a single well-behaved hold→coalesce pair', () => {
+    vi.useFakeTimers();
+    const terminal = createTerminal();
+
+    writeTerminalOutput(terminal, 'open', {
+      foreground: true,
+      latencySensitive: true,
+      holdForeground: true,
+    });
+    vi.advanceTimersByTime(10);
+    writeTerminalOutput(terminal, 'close', {
+      foreground: true,
+      latencySensitive: true,
+      coalesceForeground: true,
+    });
+    // Coalesce delay (latency-sensitive) is short; give it room to fire once.
+    vi.runAllTimers();
+
+    expect(terminal.written.join('')).toBe('openclose');
+    expect(terminal.write).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('takeQueuedChunk linear assembly', () => {
+  beforeEach(() => {
+    resetTerminalOutputSchedulerForTests();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    resetTerminalOutputSchedulerForTests();
+  });
+
+  it('assembles many small queued chunks in order with no gaps or duplicates', () => {
+    vi.useFakeTimers();
+    const terminal = createTerminal();
+    const parts = Array.from({ length: 200 }, (_, index) => `${index}:`);
+
+    for (const part of parts) {
+      writeTerminalOutput(terminal, part, { foreground: false });
+    }
+    flushTerminalOutput(terminal);
+
+    expect(terminal.written.join('')).toBe(parts.join(''));
+    expect(getQueuedChars(terminal)).toBe(0);
+  });
+
+  it('preserves exact content across many partial takes of one large chunk (retainedChars bookkeeping)', () => {
+    vi.useFakeTimers();
+    const terminal = createTerminal();
+    // Unique per-record markers: any misalignment from the geometric
+    // flatten/no-flatten bookkeeping would show up as a content mismatch,
+    // not just a length mismatch.
+    const records = Array.from({ length: 20_000 }, (_, index) =>
+      String(index).padStart(7, '0'),
+    );
+    const payload = records.join(':') + ':';
+
+    writeTerminalOutput(terminal, payload, { foreground: false });
+    for (let i = 0; i < 200 && getQueuedChars(terminal) > 0; i += 1) {
+      vi.advanceTimersByTime(16);
+    }
+
+    expect(terminal.written.join('')).toBe(payload);
+    expect(getQueuedChars(terminal)).toBe(0);
   });
 });

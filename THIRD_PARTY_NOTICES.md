@@ -402,3 +402,41 @@ the Apache License 2.0.
 Provenance ledger: `third_party/provenance/agent-orchestrator-2026-09-09.json`.
 Full license: `third_party/licenses/Apache-2.0.txt`.
 
+
+## stablyai/orca (terminal output scheduler resync — f352b6b)
+
+The terminal output scheduler first adapted at commit
+`143c36e566483006fe54fa2716b019ec00599752` (see "ORCA (stablyai/orca) —
+terminal reliability modules" above) was resynced against
+[`stablyai/orca`](https://github.com/stablyai/orca) at commit
+`f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92` (v1.4.200), licensed under the
+MIT License. Copyright (c) 2026 Lovecast Inc.
+
+Between the pin and `f352b6b`, upstream sliced its single scheduler file into
+a dozen pane-manager modules. Nexus did not mirror that split: the resync
+ports three upstream behavior fixes onto the existing adapted single-file API
+in `src/renderer/terminal/terminal-output-scheduler.ts`, rather than copying
+the new file layout:
+
+- orca#8754 — foreground hold and coalesce timers could cancel each other's
+  fallback forever on an alternating stream (a continuously repainting TUI),
+  freezing a visible pane. Ported as a shared release-deadline gate.
+- orca#13402 / STA-3567 — partial queue slices and drained queue slots kept
+  V8's full parent string alive. Ported as `flattenRetainedSlice` with the same
+  geometric re-flatten bound, plus clearing drained slots early.
+- Linear chunk assembly — output was assembled with repeated string
+  concatenation, quadratic across many small queued chunks. Ported as
+  array-and-join assembly.
+
+Not ported: the ack-credit / delivery-credit flow control (remote PTY
+multiplexing, no Nexus equivalent), the xterm `_core` dirty-row repaint
+optimization (orca#18169, depends on the private API Nexus excludes), and the
+mechanical file-split commits (no behavior change). Upstream's heap-measurement
+tests for STA-3567 were not ported either; regression coverage was written
+against Nexus's own public scheduler API.
+
+The full MIT license text is included at `third_party/licenses/orca-MIT.txt`.
+Per-file provenance is recorded in
+`third_party/provenance/orca-f352b6b-terminal.json`; the two superseded entries
+in `third_party/provenance/orca-143c36e.json` are marked `superseded` and point
+at the new pin. The source file's attribution header names both pins.
