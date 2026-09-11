@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
- * Mechanical honesty check for third_party/provenance/orca-143c36e.json
- * against a local Git clone containing every ledger commit. The ledger began
- * at 143c36e and may contain explicitly pinned later harvests.
+ * Mechanical honesty check for every third_party/provenance/orca-*.json
+ * ledger against a local Git clone containing every ledger commit. The first
+ * ledger began at 143c36e; resync waves add orca-<pin>[-<wave>].json ledgers
+ * whose entries supersede same-nexusPath entries in earlier ledgers.
  *
  * Rules:
  * - originalPath starts with "(concept)":
@@ -27,7 +28,13 @@ import {
 import { join, relative } from 'node:path';
 
 const REPO = process.env.REPO_ROOT || process.cwd();
-const LEDGER = join(REPO, 'third_party/provenance/orca-143c36e.json');
+const LEDGER_DIR = join(REPO, 'third_party/provenance');
+const LEDGERS = existsSync(LEDGER_DIR)
+  ? readdirSync(LEDGER_DIR)
+      .filter((name) => /^orca-[a-f0-9]+(-[a-z0-9-]+)?\.json$/.test(name))
+      .sort()
+      .map((name) => join(LEDGER_DIR, name))
+  : [];
 const pinDir = process.env.ORCA_PIN_DIR;
 
 function sha256(buf) {
@@ -57,8 +64,8 @@ function walk(dir, acc = []) {
   return acc;
 }
 
-if (!existsSync(LEDGER)) {
-  fail(`ledger missing: ${LEDGER}`);
+if (LEDGERS.length === 0) {
+  fail(`no orca-*.json ledgers found in ${LEDGER_DIR}`);
   process.exit(1);
 }
 if (!pinDir || !existsSync(pinDir)) {
@@ -66,8 +73,9 @@ if (!pinDir || !existsSync(pinDir)) {
   process.exit(1);
 }
 
-const ledger = JSON.parse(readFileSync(LEDGER, 'utf8'));
-const files = ledger.files || [];
+const files = LEDGERS.flatMap(
+  (ledgerPath) => JSON.parse(readFileSync(ledgerPath, 'utf8')).files || [],
+);
 const nexusPaths = new Set(files.map((e) => e.nexusPath));
 const entriesByNexusPath = new Map();
 for (const entry of files) {
@@ -158,6 +166,6 @@ if (failures > 0) {
   process.exit(1);
 }
 console.log(
-  `PASS provenance verify: ${checked} ledger entries honest; header coverage OK; pin=${pinDir}`,
+  `PASS provenance verify: ${checked} entries across ${LEDGERS.length} ledger(s) honest; header coverage OK; pin=${pinDir}`,
 );
 process.exit(0);
