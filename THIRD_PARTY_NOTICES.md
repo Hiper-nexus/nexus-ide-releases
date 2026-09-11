@@ -462,18 +462,11 @@ commit `4ec6bbf5884e5bd915b4f49c4602b5e5a88b61ae`. MIT License, Copyright (c)
 Provenance ledger: `third_party/provenance/orca-4ec6bbf5.json`. License text:
 `third_party/licenses/orca-MIT.txt`.
 
-
 ## stablyai/orca (terminal output scheduler resync — f352b6b)
 
 The terminal output scheduler first adapted at commit
 `143c36e566483006fe54fa2716b019ec00599752` (see "ORCA (stablyai/orca) —
 terminal reliability modules" above) was resynced against
-
-## stablyai/orca (forge adapters resync — f352b6b)
-
-The forge/source-control adapters first adapted at commit
-`143c36e566483006fe54fa2716b019ec00599752` (see "Source Control harvest — F4"
-above) were resynced against
 [`stablyai/orca`](https://github.com/stablyai/orca) at commit
 `f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92` (v1.4.200), licensed under the
 MIT License. Copyright (c) 2026 Lovecast Inc.
@@ -506,6 +499,16 @@ Per-file provenance is recorded in
 `third_party/provenance/orca-f352b6b-terminal.json`; the two superseded entries
 in `third_party/provenance/orca-143c36e.json` are marked `superseded` and point
 at the new pin. The source file's attribution header names both pins.
+
+## stablyai/orca (forge adapters resync — f352b6b)
+
+The forge/source-control adapters first adapted at commit
+`143c36e566483006fe54fa2716b019ec00599752` (see "Source Control harvest — F4"
+above) were resynced against
+[`stablyai/orca`](https://github.com/stablyai/orca) at commit
+`f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92` (v1.4.200), licensed under the
+MIT License. Copyright (c) 2026 Lovecast Inc.
+
 This wave ports no code. The upstream files behind `forge-provider.ts`,
 `forge-flags.ts`, `github-forge-provider.ts` and `gitlab-forge-provider.ts`
 grew into Orca's full hosted-review multi-forge router and client graph, which
@@ -516,6 +519,7 @@ keeps its dual provenance (hosted-git-info@9.0.3). Headers were re-pinned and
 per-file provenance is recorded in
 `third_party/provenance/orca-f352b6b-forge.json`; the superseded entries in
 `orca-143c36e.json` point at the new pin.
+
 ## stablyai/orca (Runtime/Remote resync)
 
 Runtime and remote modules re-checked against
@@ -546,4 +550,3 @@ Copyright (c) 2026 Lovecast Inc.
 
 Provenance ledger: `third_party/provenance/orca-f352b6b-runtime-remote.json`.
 License text: `third_party/licenses/orca-MIT.txt`.
-
