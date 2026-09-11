@@ -2861,7 +2861,7 @@ export const RELEASE_07615: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07616: AppRelease = {
   version: '0.76.16',
   date: '2026-09-11',
   codename: 'O ditado para de perder palavra e o pane prova que está ouvindo',
@@ -2963,4 +2963,37 @@ export const CURRENT_RELEASE: AppRelease = {
         'queimava a fatia apertada do orçamento numa tarefa de duas palavras.',
     },
   ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.17',
+  date: '2026-09-11',
+  codename: 'O pane estreito para de encher a tela de lixo',
+  summary:
+    'Com muitos panes abertos, cada pane fica estreito — e a linha de status ' +
+    'do agente, redesenhada no lugar a cada tick, passa a quebrar. O `\\r` ' +
+    'seguinte volta à coluna 0 da linha de baixo, o cursor desce um degrau por ' +
+    'tick e a tela enche de lixo permanente. Agora a grade do terminal não ' +
+    'desce abaixo de 60 colunas enquanto há sessão viva.',
+  highlights: [
+    {
+      title: 'Pane estreito para de virar lixo',
+      detail:
+        'Medimos ao vivo: numa janela de 1280, três panes lado a lado dão 28 ' +
+        'colunas, quatro dão 21 e cinco ou mais dão 8 — enquanto a linha de ' +
+        'status realista de um agente tem 51 caracteres. A grade passa a não ' +
+        'descer abaixo de 60 colunas: o agente vê largura suficiente, para de ' +
+        'quebrar a linha e para de subir resíduo. O que sobra fica cortado pela ' +
+        'borda do pane — corte se recupera alargando o pane, creep corrompia o ' +
+        'histórico para sempre.',
+    },
+    {
+      title: 'Um caminho só para medir o terminal',
+      detail:
+        'O fit passa sempre pelo mesmo wrapper, então nenhuma das seis rotas de ' +
+        'redimensionamento (observer por pane, refit global, reveal, spawn) ' +
+        'escapa da regra.',
+    },
+  ],
+  fixes: [],
 };

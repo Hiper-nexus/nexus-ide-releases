@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.76.17 — O pane estreito para de encher a tela de lixo
+
+- **Pane com muitos panes abertos enchia de lixo do spinner**: o CLI dentro do pane redesenha a linha de status no lugar com `\r`, assumindo que ela CABE. Quando a linha é mais larga que `cols`, ela quebra — e o `\r` seguinte volta à coluna 0 da linha **de baixo**, não da original. O cursor desce um degrau a cada tick e cada quadro deixa resíduo: lixo permanente no scrollback. Medido ao vivo (janela 1280, célula 7,74px): 3 panes lado a lado dão **28 colunas**, 4 dão 21, 5 ou mais dão **8** — e a linha de status realista de um agente tem **51 caracteres**. Agora a grade não desce abaixo de 60 colunas enquanto há sessão viva: o TUI passa a ver largura suficiente, para de quebrar a linha e para de subir lixo. O excedente fica cortado pela borda do pane — corte se recupera alargando o pane; o creep corrompia o histórico de forma permanente.
+- **Um único caminho de medição**: o fit do terminal passa a ser sempre pelo mesmo wrapper, então nenhuma das seis rotas de resize (observer por host, refit global, reveal, spawn) escapa da regra.
+
 ## 0.76.16 — O ditado para de perder palavra e o pane prova que está ouvindo
 
 - **As barras de nível do microfone não apareciam**: elas existiam só dentro do HUD flutuante, e o HUD em modo "só áudio" devolve `null` — quem escondia o HUD ficava sem nenhuma prova visual de que o áudio estava entrando. Agora as barras vivem também na barra superior, ao lado do chip CODE/CHAT, independentes do estado do HUD.
