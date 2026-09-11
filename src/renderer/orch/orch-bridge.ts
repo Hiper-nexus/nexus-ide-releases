@@ -23,6 +23,7 @@ import {
 import {
   cancelPaneRecovery,
   getPaneSessionId,
+  holdSpawnUntilApproved,
   isPaneSessionHealthy,
   markPersistedAuthorityOnSpawn,
   onPaneSessionChange,
@@ -148,17 +149,26 @@ function retireStaleMissionOrchestratorPanes(req: {
 }
 
 /**
- * Missão terminal (done/failed) não deixa cadáver no grid (campanha 0.50):
- * o encerramento fecha o runtime no main, mas panes RESTAURADOS de sessões
- * mortas não têm registro lá — ninguém pedia o fechamento e o layout os
- * exibia para sempre. Panes SEM sessão viva da missão terminal são
- * aposentados aqui. `blocked` preserva (Retomar precisa do contexto);
- * sessão viva é lifecycle do main, o renderer não fecha layout de pane vivo.
+ * Missão terminal (done/failed): os panes dela são APOSENTADOS, nunca apagados.
  *
- * F-108: o ORQUESTRADOR nunca entra nesta varredura. O motor marcar done
- * (CLI já saiu) apagava o Maestro e o operador perdia o canal para revisar
- * e pedir ajuste. Quem fecha o coordenador é só o humano (Encerrar/Remover
- * / último pane). Workers mortos de missão terminal continuam saindo.
+ * Antes esta varredura FECHAVA (`close` + `syncPanesNow`, que PERSISTE) todo
+ * worker sem sessão viva. Duas coisas estavam erradas:
+ *
+ * 1. `getPaneSessionId` responde "sem sessão" enquanto os hosts do renderer
+ *    estão drenados numa troca de workspace — então um pane VIVO era
+ *    classificado como cadáver e apagado do layout durável.
+ * 2. Apagar é irreversível e ninguém pediu. Esta porta, junto com o gate de
+ *    restore, fez 7 panes de uma missão `done` sumirem em campo — com a main
+ *    ainda dona dos 7.
+ *
+ * Agora só SEGURAMOS o spawn: o pane fica no layout, com o histórico, e não
+ * reexecuta sozinho. Fechar é ação explícita do operador ("Limpar projeto →
+ * Fechar todos os panes"). `blocked` preserva (Retomar precisa do contexto);
+ * sessão viva é lifecycle do main, o renderer não toca em pane vivo.
+ *
+ * F-108 continua valendo: o ORQUESTRADOR não entra nesta varredura. O motor
+ * marcar done (CLI já saiu) apagava o Maestro e o operador perdia o canal para
+ * revisar e pedir ajuste. Quem fecha o coordenador é só o humano.
  */
 function retireTerminalMissionPanes(
   missions: readonly { id: string; status: string }[],
@@ -171,19 +181,14 @@ function retireTerminalMissionPanes(
   );
   if (terminalIds.size === 0) return;
   const paneMissions = useOrchStore.getState().paneMissions;
-  const corpses = listPanes(useLayoutStore.getState().root).filter((pane) => {
+  const retired = listPanes(useLayoutStore.getState().root).filter((pane) => {
     if (pane.kind !== 'cli-agent') return false;
     if ((pane.role ?? 'worker') === 'orchestrator') return false;
     const missionId = pane.missionId ?? paneMissions[pane.id];
     if (!missionId || !terminalIds.has(missionId)) return false;
     return !getPaneSessionId(pane.id);
   });
-  for (const pane of corpses) {
-    useLayoutStore.getState().close(pane.id, 'mission-terminal-cleanup');
-  }
-  if (corpses.length > 0) {
-    syncPanesNow();
-  }
+  for (const pane of retired) holdSpawnUntilApproved(pane.id);
 }
 
 const recoveryInFlight = new Set<string>();

@@ -11,6 +11,7 @@ import { useOrchBridge } from './orch-bridge';
 const terminal = vi.hoisted(() => ({
   cancelPaneRecovery: vi.fn(),
   getPaneSessionId: vi.fn((_paneId: string) => null as string | null),
+  holdSpawnUntilApproved: vi.fn(),
   isPaneSessionHealthy: vi.fn(() => true),
   markPersistedAuthorityOnSpawn: vi.fn(),
   onPaneSessionChange: vi.fn(() => vi.fn()),
@@ -179,9 +180,13 @@ describe('cleanup de panes de missão terminal (campanha 0.50)', () => {
     terminal.waitForSession.mockReset().mockResolvedValue('session-new');
   });
 
-  it('orquestrador de missão done NÃO fecha — só o humano encerra; worker morto sai', () => {
-    // F-108: o motor marcar done (CLI já saiu) varria o pane do Maestro e
-    // o operador perdia o canal para ver se deu certo e pedir ajuste.
+  it('missão terminal não apaga pane nenhum: orquestrador E worker são aposentados', () => {
+    // F-108 protegia só o Maestro. O worker morto de missão encerrada era
+    // varrido com `close` + `syncPanesNow` — que PERSISTE. Foi uma das duas
+    // portas que apagaram 7 panes de uma missão `done` em campo, e a pior:
+    // `getPaneSessionId` fica vazio enquanto os hosts do renderer estão
+    // drenados numa troca de workspace, então pane VIVO era tratado como
+    // cadáver. Agora nada é removido automaticamente.
     act(() => {
       missionsHandler?.([
         makeMission('mission-done', 'done'),
@@ -192,10 +197,14 @@ describe('cleanup de panes de missão terminal (campanha 0.50)', () => {
 
     const panes = listPanes(useLayoutStore.getState().root).map((p) => p.id);
     expect(panes).toContain('pane-done-mission');
-    expect(panes).not.toContain('pane-done-worker');
+    expect(panes).toContain('pane-done-worker');
     expect(panes).toContain('pane-running-mission');
     expect(panes).toContain('pane-blocked-mission');
     expect(panes).toContain('pane-shell');
+    // Aposentado = spawn segurado: fica no layout, nunca reexecuta sozinho.
+    expect(terminal.holdSpawnUntilApproved).toHaveBeenCalledWith(
+      'pane-done-worker',
+    );
   });
 
   it('pane de missão done com SESSÃO VIVA não é fechado pelo renderer', () => {

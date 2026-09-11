@@ -205,7 +205,10 @@ describe('restore-agents-gate', () => {
     });
   });
 
-  it('prunes a role-only legacy pane because role is not mission authority', async () => {
+  it('aposenta o pane legado só-de-papel em vez de apagá-lo do layout', async () => {
+    // `role` NÃO é autoridade de missão — mas negar autoridade nunca pode
+    // significar APAGAR. O pane fica, inerte e legível, e quem fecha é o
+    // operador ("Limpar projeto → Fechar todos os panes").
     const roleOnly = {
       ...agent('role-only', 'Orquestrador antigo'),
       role: 'orchestrator' as const,
@@ -218,20 +221,16 @@ describe('restore-agents-gate', () => {
       ['role-only'],
       { resume: true },
     );
-    expect(discardPaneSpawnState).toHaveBeenCalledWith('role-only');
-    expect(closePane).toHaveBeenCalledWith(
-      'role-only',
-      'restore-orphan-mission-pane',
-    );
+    expect(closePane).not.toHaveBeenCalled();
+    expect(unlockRetiredMissionPane).not.toHaveBeenCalled();
     expect(askConfirm).not.toHaveBeenCalled();
   });
 
-  it('prunes a mission pane that Main says has no current persisted authority', async () => {
+  it('aposenta o pane de missão sem autoridade em vez de apagá-lo do layout', async () => {
     canRestoreMissionPane.mockResolvedValue(false);
 
-    await gateRestoredAgents([
-      missionAgent('orphan-pane', 'Orquestrador órfão'),
-    ]);
+    const orphan = missionAgent('orphan-pane', 'Orquestrador órfão');
+    await gateRestoredAgents([orphan]);
 
     expect(canRestoreMissionPane).toHaveBeenCalledWith({
       missionId: 'mission-a',
@@ -241,14 +240,17 @@ describe('restore-agents-gate', () => {
       ['orphan-pane'],
       { resume: true },
     );
-    expect(discardPaneSpawnState).toHaveBeenCalledWith('orphan-pane');
-    expect(closePane).toHaveBeenCalledWith(
-      'orphan-pane',
-      'restore-orphan-mission-pane',
-    );
+    // A linha que apagava e PERSISTIA — a que destruiu 7 panes em campo.
+    expect(closePane).not.toHaveBeenCalled();
+    // E não pode virar shell: `reclaim-shell` spawna processo novo e descarta
+    // o histórico, que é justamente o que o operador perdeu.
+    expect(unlockRetiredMissionPane).not.toHaveBeenCalled();
   });
 
-  it('unlocks the last coordinator pane instead of pruning the operator mute', async () => {
+  it('nunca deixa o operador mudo: o último pane também é aposentado, não apagado', async () => {
+    // O guard de "operador mudo" existia porque apagar o último leaf tirava o
+    // teclado dele. Com a aposentadoria nada é removido, então o guard deixou
+    // de ser um caso especial: o último pane segue exatamente o mesmo caminho.
     canRestoreMissionPane.mockResolvedValue(false);
     const last = missionAgent('pane-6', 'Coordenar e revisar');
     layoutRoot.current = {
@@ -259,12 +261,14 @@ describe('restore-agents-gate', () => {
 
     await gateRestoredAgents([last]);
 
-    expect(discardPaneSpawnState).toHaveBeenCalledWith('pane-6');
-    expect(unlockRetiredMissionPane).toHaveBeenCalledWith(last);
     expect(closePane).not.toHaveBeenCalled();
+    // `unlockRetiredMissionPane` mandaria um worker de missão encerrada para
+    // `reclaim-shell` — spawn novo, histórico descartado. Aposentar não passa
+    // por ele, nem para o coordenador.
+    expect(unlockRetiredMissionPane).not.toHaveBeenCalled();
   });
 
-  it('coalesces duplicate HMR gates and prunes an orphan only once', async () => {
+  it('coalesces duplicate HMR gates and retires an orphan only once', async () => {
     let resolveAuthority!: (allowed: boolean) => void;
     canRestoreMissionPane.mockReturnValue(
       new Promise<boolean>((resolve) => {
@@ -279,7 +283,8 @@ describe('restore-agents-gate', () => {
     await Promise.all([first, second]);
 
     expect(canRestoreMissionPane).toHaveBeenCalledOnce();
-    expect(closePane).toHaveBeenCalledOnce();
+    expect(closePane).not.toHaveBeenCalled();
+    expect(unlockRetiredMissionPane).not.toHaveBeenCalled();
     expect(releaseHeldSpawns).not.toHaveBeenCalledWith(
       ['hmr-orphan'],
       { resume: true },
