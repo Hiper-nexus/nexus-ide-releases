@@ -98,6 +98,7 @@ vi.mock('./components/product/WorkspaceRail', () => ({
     onOpenSettings,
     onOpenTerminals,
     onRemoveMission,
+    onSelectWorkspace,
   }: {
     onCreateNew: () => void;
     onOpenLauncher: () => void;
@@ -107,8 +108,10 @@ vi.mock('./components/product/WorkspaceRail', () => ({
     onOpenSettings: () => void;
     onOpenTerminals: () => void;
     onRemoveMission: (missionId: string, workspaceId: string) => void;
+    onSelectWorkspace: (workspaceId: string) => void;
   }) => (
     <nav aria-label="Destinos do Nexus">
+      <button type="button" onClick={() => onSelectWorkspace('/tmp/neighbor')}>Projeto vizinho</button>
       <button type="button" onClick={onCreateNew}>Novo</button>
       <button type="button" onClick={onOpenLauncher}>Início</button>
       <button type="button" onClick={onOpenWorkspace}>Abrir projeto</button>
@@ -506,6 +509,31 @@ describe('App Nexus V2 cutover', () => {
       { id: 'mission-created', title: 'Nova missão', state: 'running' },
     ] as never));
     expect(currentDestination(host)).toBe('mission-board:mission-created');
+  });
+
+  it('navegar para outro projeto pelo rail cai nos terminais, não no destino anterior', async () => {
+    // Trocar de projeto com o wizard aberto deixava o destino `mission-setup`
+    // colado: o operador clicava no workspace e caía em "O que você quer
+    // criar?" em vez de ver os terminais dele. O caminho do Finder
+    // (onDeepOpenPath) já abre nos terminais; o rail passa a fazer o mesmo.
+    openWorkspace();
+    useProductNavigationStore.getState().openMissionSetup();
+    vi.spyOn(useWorkspaceStore.getState(), 'open').mockImplementation(async (path) => {
+      useWorkspaceStore.setState({ current: { path, name: 'Neighbor', lastOpenedAt: 1 } });
+    });
+    const host = mountApp();
+    const neighbor = [...host.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Projeto vizinho',
+    );
+    expect(neighbor).toBeDefined();
+
+    await act(async () => {
+      neighbor!.click();
+      await vi.dynamicImportSettled();
+    });
+
+    expect(useWorkspaceStore.getState().current?.path).toBe('/tmp/neighbor');
+    expect(useProductNavigationStore.getState().destination).toEqual({ kind: 'terminal' });
   });
 
   it('remove missão de outro projeto só depois de confirmar e ativar o projeto correto', async () => {
