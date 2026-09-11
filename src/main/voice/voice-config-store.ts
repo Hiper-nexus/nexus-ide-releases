@@ -31,6 +31,7 @@ import type {
 import {
   resolveChain,
   promoteProvider,
+  flattenChain,
   type ProviderProbes,
 } from './provider-select';
 import {
@@ -218,6 +219,42 @@ export function loadVoiceConfig(): VoiceConfig {
       };
       migrated = true;
       console.log('[voice] voz Gemini Live migrada para Charon (masculina)');
+    }
+    // O Gemini 3.5 Transcribe passa a liderar a cadeia de STT (transcrição
+    // literal, mais fiel que a tradução do Whisper). Sem esta migração o
+    // provedor NÃO apareceria no seletor: as opções do dropdown derivam de
+    // `info.stt.chain`, que vem desta config persistida, e `promoteProvider` é
+    // no-op para provider que não é link da cadeia.
+    //
+    // SÓ instala em quem ainda está na cadeia PADRÃO (head groq, endpoint da
+    // Groq). Um head trocado é escolha deliberada — `docs/voice.md` documenta
+    // exatamente isso para quem quer offline/privacidade — e promover o Gemini
+    // por cima mandaria o áudio dessa pessoa para o Google sem ela ter pedido:
+    // uma chave Gemini costuma existir de qualquer forma, já que ele é o brain
+    // padrão. "Gemini está ausente" não é o mesmo que "esta é a cadeia de
+    // fábrica", e era só isso que a guarda antiga checava.
+    const onShippedSttChain =
+      userConfig.stt.provider === 'groq' &&
+      (userConfig.stt.endpoint ?? '').includes('api.groq.com');
+    if (
+      onShippedSttChain &&
+      !flattenChain(userConfig.stt).some((link) => link.provider === 'gemini')
+    ) {
+      // `outputMode` (e o `translate` que anda junto) são lidos SÓ do head —
+      // é ali que mora a intenção CODE/CHAT do usuário. Herdar os defaults do
+      // Gemini apagaria a escolha dele, e como o arquivo é reescrito logo
+      // abaixo a perda seria permanente. A cadeia antiga vira FALLBACK, então
+      // nada do que ele tinha abaixo é perdido ou reordenado.
+      const keptOutputMode =
+        userConfig.stt.outputMode ?? DEFAULT_VOICE_CONFIG.stt.outputMode;
+      userConfig.stt = {
+        ...DEFAULT_VOICE_CONFIG.stt,
+        outputMode: keptOutputMode,
+        translate: keptOutputMode === 'english',
+        fallback: userConfig.stt,
+      };
+      migrated = true;
+      console.log('[voice] STT: Gemini 3.5 Transcribe adicionado à cabeça da cadeia');
     }
     // Keep focused-pane when the user (or peer ADE migration) chose dictation
     // into the active terminal — do not force Jarvis over NexusVoice-style PTT.

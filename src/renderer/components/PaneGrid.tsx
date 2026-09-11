@@ -1,9 +1,9 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react';
 import { Group, Panel, Separator } from 'react-resizable-panels';
 import type { LayoutNode } from '../../shared/types';
 import { useLayoutStore } from '../state/layout-store';
 import { buildGridTree, listPanes } from '../lib/split-tree';
-import { reconcileHosts } from '../terminal/terminal-host';
+import { reconcileHosts, refitAllPanesBeforePaint } from '../terminal/terminal-host';
 import { reconcileBrowserPanes } from '../browser/browser-host';
 import { minimumPaneGridSize } from '../lib/pane-grid-size';
 import { PaneLeaf } from './PaneLeaf';
@@ -86,6 +86,25 @@ export function PaneGrid({
     reconcileHosts(liveIds);
     reconcileBrowserPanes(liveIds);
   }, [root]);
+
+  // Fit PRÉ-PAINT: quando a largura da área de panes muda (sidebar/rail abrindo
+  // ou fechando, modo foco entrando), o React já comitou o DOM mas o browser
+  // ainda não pintou — o container já tem o tamanho novo, então o fit mede
+  // certo e o terminal nunca aparece com a grade antiga. Sem isto o caminho
+  // debounced deixaria as colunas velhas na tela por todo o debounce.
+  //
+  // Sem array de deps de propósito: a checagem de largura é barata e é o único
+  // sinal confiável de "a área mudou" sem depender de cada flag de layout.
+  const sizedRef = useRef<HTMLDivElement | null>(null);
+  const lastSizedWidthRef = useRef(0);
+  useLayoutEffect(() => {
+    const el = sizedRef.current;
+    if (!el) return;
+    const width = el.clientWidth;
+    if (width === lastSizedWidthRef.current) return;
+    lastSizedWidthRef.current = width;
+    refitAllPanesBeforePaint();
+  });
 
   if (!displayRoot) {
     return (
@@ -185,6 +204,7 @@ export function PaneGrid({
       ) : (
         <div className="grid__scroll">
           <div
+            ref={sizedRef}
             className="grid__sized"
             style={{
               minWidth: minimumPaneGridSize(displayRoot).width,

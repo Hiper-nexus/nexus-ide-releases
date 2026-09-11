@@ -7,6 +7,7 @@ import {
 import { VoiceHud } from './components/VoiceHud';
 import { VoiceSettings } from './components/VoiceSettings';
 import { DictationModeChip } from './components/DictationModeChip';
+import { VoiceLevelBars } from './components/VoiceLevelBars';
 import {
   CloseWorkspaceDialog,
   useCloseWorkspaceStore,
@@ -231,6 +232,9 @@ export function App() {
   );
   const closeWorkspaceOpen = useCloseWorkspaceStore((state) => state.open);
   const voiceSettingsOpen = useVoiceStore((state) => state.settingsOpen);
+  // Só há áudio entrando de fato em 'listening'. Durante transcribing/routing o
+  // mic já fechou, então barra ali seria sinal falso.
+  const voiceListening = useVoiceStore((state) => state.status) === 'listening';
   const paletteOpen = useCommandPaletteStore((state) => state.open);
   const confirmOpen = useConfirmStore((state) => state.pending !== null);
   const cheatsheetOpen = useCheatsheetStore((state) => state.open);
@@ -1372,6 +1376,9 @@ export function App() {
                 <>
                   <AgentNotifications />
                   {!contextualPanelVisible ? contextualPanel : null}
+                  {/* Prova de captura sempre visível: o HUD pode estar oculto
+                      (modo só-áudio), minimizado ou fora da tela — aqui não. */}
+                  <VoiceLevelBars visible={voiceListening} />
                   <DictationModeChip />
                 </>
               ) : null}

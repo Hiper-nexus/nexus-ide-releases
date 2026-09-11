@@ -104,12 +104,28 @@ Secrets never reach the renderer or shell panes — they are read from
 
 | Provider | Env var | Notes |
 |----------|---------|-------|
-| Gemini (Jarvis brain default) | `GEMINI_API_KEY` | OpenAI-compatible chat completions, `gemini-3.5-flash` |
+| Gemini (Jarvis brain default + **STT default**) | `GEMINI_API_KEY` | brain `gemini-3.5-flash`; STT `gemini-3.5-transcribe` (Interactions API) |
 | OpenAI (Jarvis brain fallback + STT/TTS) | `OPENAI_API_KEY` | brain `gpt-4o-mini`, STT `whisper-1`, TTS `tts-1` |
-| Groq (Jarvis brain fallback + STT default) | `GROQ_API_KEY` | brain `llama-3.3-70b-versatile`, STT `whisper-large-v3-turbo` |
+| Groq (STT Whisper) | `GROQ_API_KEY` | brain `llama-3.3-70b-versatile`, STT `whisper-large-v3-turbo` |
 | whisper.cpp (STT last resort) | — (keyless) | `brew install whisper-cpp` + a model |
 | Piper (TTS fallback) | — (keyless) | optional local binary |
 | macOS `say` (TTS last resort) | — (keyless) | always available; voice `Luciana` |
+
+**STT default is Gemini when `GEMINI_API_KEY` is present, otherwise Groq.** The
+head of the `stt` chain is the Gemini link; the previous Whisper chain
+(groq → openai → whisper.cpp) sits under it as its `fallback`. Selection is by
+key presence only — no separate "which provider" logic.
+
+`gemini-3.5-transcribe` **transcribes only** — the Interactions API has no
+translation endpoint. So with Gemini active the dictation text comes out in the
+language spoken (Portuguese), whatever the CODE/CHAT chip says; the chip label
+shows `CODE·PT` to make that mechanical rather than a hover. Pick a Whisper
+provider (Groq/OpenAI) if you want PT→EN translation in CODE mode.
+
+The Gemini path also ignores `translate` and `language` on purpose, sends the
+code vocabulary as `custom_vocabulary` (only in CODE mode — `req.prompt` is the
+signal), and uses `mode: {type:'verbatim'}`: the `smart` mode strips filler
+words, which is exactly the "a word I said didn't come through" symptom.
 
 **With no keys at all:** TTS still works via macOS `say`; STT needs local
 whisper.cpp (bin `whisper-cli`/`main` on PATH or in `~/.nexus/bin`, plus a model
@@ -133,6 +149,12 @@ So a free-tier Groq account that regularly 429s transparently falls through to
 OpenAI, and then to keyless local whisper.cpp. When this happens the HUD shows a
 note like `groq throttled (429 rate limit) → openai` instead of failing silently.
 
+The **passive-wake** path reorders the chain to put fast transcription providers
+first (Groq → other Whisper providers → transcription-only last). A generative
+Interactions call between Groq and OpenAI would burn the tight wake budget
+(`STT_PASSIVE_WAKE_CLOUD_TIMEOUT_MS = 2s`) on what is really a two-word decode,
+leaving OpenAI only the remainder.
+
 ## Changing the default provider (no rebuild)
 
 Config lives at `~/.nexus/plugins/voice/nexus-voice.json` (a superset of a
@@ -145,6 +167,13 @@ To make OpenAI or local the primary STT, either:
 - **Config:** reorder the `stt`/`tts` fallback chain, or set the head `provider`
   to `openai` / `local-whisper`. Reorder `jarvisBrain` or set its head provider
   to `gemini`, `openai`, or `groq`. One line, no recompile.
+
+Pinning the head is **respected and not reverted**. The one-time migration that
+prepends the Gemini link only fires while the `stt` chain still looks like the
+shipped default (head `provider: 'groq'` on the Groq endpoint); once you choose a
+head, that choice stands. Pinning the head to `local-whisper` is the supported
+way to keep audio entirely on the machine — a `GEMINI_API_KEY` present for the
+Jarvis brain will not pull STT back to the cloud.
 
 `voice.speakMode`: `summary` (default, 1–3 sentences) · `full` · `off` (dictation
 only). `voice.routing`: `jarvis` (default) · `focused-pane` · `orchestrator` ·

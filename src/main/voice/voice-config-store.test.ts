@@ -218,4 +218,112 @@ describe('voice-config-store', () => {
     expect(loaded.tts.voice).toBe('ash');
     expect(saved.tts.voice).toBe('ash');
   });
+
+  it('injeta o Gemini na cabeça do STT uma vez, preservando a cadeia do usuário', async () => {
+    const { home, store } = await loadStoreInTempHome();
+    const { DEFAULT_VOICE_CONFIG, DEFAULT_WHISPER_STT } = await import(
+      '../../shared/voice-config'
+    );
+    const file = path.join(home, '.nexus', 'plugins', 'voice', 'nexus-voice.json');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    // Config no formato ANTERIOR à chegada do Gemini: head = groq.
+    fs.writeFileSync(
+      file,
+      JSON.stringify(
+        { ...DEFAULT_VOICE_CONFIG, stt: DEFAULT_WHISPER_STT },
+        null,
+        2,
+      ),
+    );
+
+    const providers = (head: unknown): string[] => {
+      const out: string[] = [];
+      let node = head as { provider?: string; fallback?: unknown } | undefined;
+      while (node?.provider) {
+        out.push(node.provider);
+        node = node.fallback as typeof node;
+      }
+      return out;
+    };
+
+    const loaded = store.loadVoiceConfig();
+    // O Gemini lidera e a cadeia Whisper que o usuário já tinha segue abaixo.
+    expect(providers(loaded.stt)).toEqual([
+      'gemini',
+      'groq',
+      'openai',
+      'local-whisper',
+    ]);
+
+    // Reler não duplica o link injetado.
+    const again = store.loadVoiceConfig();
+    expect(providers(again.stt)).toEqual([
+      'gemini',
+      'groq',
+      'openai',
+      'local-whisper',
+    ]);
+  });
+
+  it('preserva o modo CHAT do usuário ao instalar o Gemini', async () => {
+    const { home, store } = await loadStoreInTempHome();
+    const { DEFAULT_VOICE_CONFIG, DEFAULT_WHISPER_STT } = await import(
+      '../../shared/voice-config'
+    );
+    const file = path.join(home, '.nexus', 'plugins', 'voice', 'nexus-voice.json');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(
+      file,
+      JSON.stringify(
+        {
+          ...DEFAULT_VOICE_CONFIG,
+          // Cadeia de fábrica, mas com o ditado em CHAT (português literal).
+          stt: { ...DEFAULT_WHISPER_STT, outputMode: 'portuguese', translate: false },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const loaded = store.loadVoiceConfig();
+    // `outputMode` é lido SÓ do head. Herdar o default do Gemini viraria o
+    // ditado de volta para CODE — e como o arquivo é reescrito na migração, a
+    // perda da preferência seria permanente.
+    expect(loaded.stt.provider).toBe('gemini');
+    expect(loaded.stt.outputMode).toBe('portuguese');
+    expect(loaded.stt.translate).toBe(false);
+  });
+
+  it('não atropela um head escolhido de propósito (offline/privacidade)', async () => {
+    const { home, store } = await loadStoreInTempHome();
+    const { DEFAULT_VOICE_CONFIG } = await import('../../shared/voice-config');
+    const file = path.join(home, '.nexus', 'plugins', 'voice', 'nexus-voice.json');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(
+      file,
+      JSON.stringify(
+        {
+          ...DEFAULT_VOICE_CONFIG,
+          stt: {
+            type: 'stt',
+            provider: 'local-whisper',
+            localBin: 'whisper-cli',
+            model: 'base',
+            translate: true,
+            language: 'pt',
+            outputMode: 'english',
+          },
+        },
+        null,
+        2,
+      ),
+    );
+
+    const loaded = store.loadVoiceConfig();
+    // Quem fixou o head em local-whisper pediu para o áudio NÃO sair da
+    // máquina. Promover o Gemini por cima mandaria a fala dessa pessoa para o
+    // Google sem ela ter pedido — e a chave dele costuma existir, porque o
+    // Gemini também é o brain padrão.
+    expect(loaded.stt.provider).toBe('local-whisper');
+  });
 });

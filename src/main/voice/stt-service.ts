@@ -2,12 +2,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile, execFileSync } from 'node:child_process';
+import { sttProviderTranslates } from '../../shared/voice-config';
 import type { VoiceConfig, VoicePlugin } from '../../shared/voice-config';
 import type {
   TranscribeRequest,
   TranscribeResult,
   SttAttempt,
 } from '../../shared/voice-ipc';
+import { DICTATION_CODE_VOCABULARY } from '../../shared/dictation-vocabulary';
 import { classifyKind, flattenChain, type ProviderProbes } from './provider-select';
 import { resolveVoiceApiKey } from './voice-secrets';
 
@@ -221,6 +223,132 @@ async function attemptCloud(
   return { ok: true, text };
 }
 
+// ── Gemini 3.5 Transcribe (Interactions API) ─────────────────────────────────
+
+export const GEMINI_INTERACTIONS_URL =
+  'https://generativelanguage.googleapis.com/v1beta/interactions';
+export const DEFAULT_GEMINI_STT_MODEL = 'gemini-3.5-transcribe';
+
+/**
+ * O Gemini fala o Interactions API, não o dialeto OpenAI/Whisper: JSON com o
+ * áudio inline, header `x-goog-api-key`, resposta em `output_text`/`steps`.
+ * Por isso ele NÃO passa por `attemptCloud` — o FormData, o `Bearer`, o swap de
+ * endpoint `/audio/transcriptions`→`/translations` e o swap turbo→v3 são todos
+ * específicos de Whisper.
+ */
+export function isGeminiStt(plugin: VoicePlugin): boolean {
+  return plugin.provider === 'gemini';
+}
+
+/**
+ * Extrai o texto da resposta do Interactions API.
+ *
+ * As duas fontes oficiais divergem: a página do produto documenta
+ * `output_text`, e a referência da API não define esse campo — mostra o texto
+ * dentro de `steps[].content[].text`. Aceitar as duas formas custa pouco e
+ * evita que a mudança de shape de um preview derrube o ditado em silêncio.
+ */
+export function extractGeminiTranscript(json: unknown): string {
+  if (!json || typeof json !== 'object') return '';
+  const record = json as Record<string, unknown>;
+  // Uma interação que FALHOU (ou ficou incompleta) pode carregar texto parcial.
+  // Devolvê-lo como sucesso injetaria lixo no pane como se fosse fala — melhor
+  // falhar e deixar a cadeia tentar o próximo provedor.
+  const status = record.status;
+  if (typeof status === 'string' && status !== 'completed') return '';
+  if (typeof record.output_text === 'string' && record.output_text.trim()) {
+    return record.output_text.trim();
+  }
+  const steps = Array.isArray(record.steps) ? record.steps : [];
+  const parts: string[] = [];
+  for (const step of steps) {
+    if (!step || typeof step !== 'object') continue;
+    const record = step as Record<string, unknown>;
+    // Só passos de SAÍDA do modelo: concatenar qualquer passo com `text`
+    // (raciocínio, anotação) costuraria coisa que não foi falada no transcript.
+    if (record.type !== undefined && record.type !== 'model_output') continue;
+    const content = record.content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content) {
+      if (!block || typeof block !== 'object') continue;
+      const text = (block as Record<string, unknown>).text;
+      if (typeof text === 'string' && text.trim()) parts.push(text.trim());
+    }
+  }
+  return parts.join(' ').trim();
+}
+
+/** Vocabulário que enviesa o decoder: o do ditado, ou a wake word no wake. */
+function geminiCustomVocabulary(req: TranscribeRequest): string[] {
+  if (req.purpose === 'passive-wake') {
+    const word = req.passiveWakeWord?.trim();
+    return word ? [word] : [];
+  }
+  // O priming de código viaja como `req.prompt` e SÓ no modo CODE. Sem esta
+  // checagem o Gemini enviesaria o vocabulário no CHAT — onde o caminho Whisper
+  // de propósito não enviesa — e os dois engines discordariam sobre o que o
+  // modo significa.
+  return req.prompt ? [...DICTATION_CODE_VOCABULARY] : [];
+}
+
+async function attemptGemini(
+  plugin: VoicePlugin,
+  req: TranscribeRequest,
+  deps: SttDeps,
+  cloudTimeoutMs: number = STT_CLOUD_TIMEOUT_MS,
+): Promise<Attempt> {
+  const envVar = plugin.auth?.envVar ?? 'GEMINI_API_KEY';
+  const key = deps.getEnv(envVar)?.trim();
+  if (!key) return { ok: false, needsKey: true, reason: `${envVar} not set` };
+
+  const vocabulary = geminiCustomVocabulary(req);
+  const body = {
+    model: plugin.model ?? DEFAULT_GEMINI_STT_MODEL,
+    input: [{ type: 'audio', data: req.audioBase64, mime_type: req.mime }],
+    generation_config: {
+      transcription_config: {
+        // `verbatim` de propósito: o modo `smart` remove muletas de fala — e o
+        // sintoma que motivou este provedor foi justamente palavra sumindo.
+        mode: { type: 'verbatim' },
+        ...(vocabulary.length ? { custom_vocabulary: vocabulary } : {}),
+        // Sem `language_codes`: omitir habilita auto-detecção e code-switching,
+        // que é onde o modelo ganha de quem fala PT com jargão em inglês.
+      },
+    },
+  };
+
+  let res: Response;
+  try {
+    res = await deps.fetchImpl(plugin.endpoint ?? GEMINI_INTERACTIONS_URL, {
+      method: 'POST',
+      headers: { 'x-goog-api-key': key, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(cloudTimeoutMs),
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === 'TimeoutError') {
+      return {
+        ok: false,
+        needsKey: false,
+        reason: `timeout (${(cloudTimeoutMs / 1000).toFixed(1)}s sem resposta)`,
+      };
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, needsKey: false, reason: `network error (${message})` };
+  }
+
+  if (!res.ok) {
+    const { reason, needsKey } = describeHttpFailure(res.status);
+    const failureBody = await res.text().catch(() => '');
+    const detail = failureBody.replace(/\s+/g, ' ').trim().slice(0, 160);
+    return { ok: false, needsKey, reason: detail ? `${reason}: ${detail}` : reason };
+  }
+
+  const text = extractGeminiTranscript(await res.json().catch(() => ({})));
+  if (!text) return { ok: false, needsKey: false, reason: 'empty transcript' };
+  return { ok: true, text };
+}
+
 // ── Local whisper.cpp (keyless, offline, no rate limit) ──────────────────────
 
 /** Candidate binary names/paths for whisper.cpp, in preference order. */
@@ -302,6 +430,9 @@ async function attemptProvider(
   deps: SttDeps,
   cloudTimeoutMs?: number,
 ): Promise<Attempt> {
+  // Gemini ANTES de classifyKind: o shape do request/response é outro, e o
+  // caminho Whisper aplicaria FormData/Bearer/swap-de-endpoint nele.
+  if (isGeminiStt(plugin)) return attemptGemini(plugin, req, deps, cloudTimeoutMs);
   return classifyKind(plugin) === 'cloud'
     ? attemptCloud(plugin, req, deps, cloudTimeoutMs)
     : attemptLocal(plugin, req, deps);
@@ -313,10 +444,18 @@ async function attemptProvider(
  * never changes the user's persisted STT preference for normal commands.
  */
 function prioritizePassiveWakeChain(chain: readonly VoicePlugin[]): VoicePlugin[] {
-  return [
-    ...chain.filter((plugin) => plugin.provider === PASSIVE_WAKE_FAST_PROVIDER),
-    ...chain.filter((plugin) => plugin.provider !== PASSIVE_WAKE_FAST_PROVIDER),
-  ];
+  // O wake precisa decodificar DUAS PALAVRAS dentro de uma fatia apertada do
+  // orçamento (STT_PASSIVE_WAKE_CLOUD_TIMEOUT_MS = 2s). Um provedor
+  // transcription-only (Gemini/Interactions) é uma chamada generativa — se ele
+  // ficasse entre a Groq e a OpenAI, queimaria o orçamento e a OpenAI ainda
+  // receberia só a sobra. Ordem: Groq (hop mais curto) → demais provedores
+  // Whisper → transcription-only por último. `sort` é estável, então a ordem
+  // original é preservada dentro de cada faixa.
+  const rank = (plugin: VoicePlugin): number => {
+    if (plugin.provider === PASSIVE_WAKE_FAST_PROVIDER) return 0;
+    return sttProviderTranslates(plugin.provider) ? 1 : 2;
+  };
+  return [...chain].sort((a, b) => rank(a) - rank(b));
 }
 
 /**

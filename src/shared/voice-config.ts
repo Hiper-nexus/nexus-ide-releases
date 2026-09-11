@@ -415,9 +415,68 @@ export type VoiceConfig = z.infer<typeof voiceConfigSchema>;
 // ── Defaults ─────────────────────────────────────────────────────────────────
 
 /**
- * The shipped default: Groq translate-STT → whisper.cpp local fallback; OpenAI
- * TTS → Piper → macOS `say`. macOS `say` is the always-available terminal fallback
- * (no key, no install), so the pipeline can always speak even with zero config.
+ * Provedores de STT que só TRANSCREVEM: não têm endpoint de tradução. O Gemini
+ * 3.5 Transcribe usa o Interactions API, que não traduz — então com ele ativo o
+ * modo CODE não produz inglês, e a UI precisa dizer isso em vez de prometer.
+ */
+export const TRANSCRIPTION_ONLY_STT_PROVIDERS: ReadonlySet<string> = new Set(['gemini']);
+
+/** O provedor consegue entregar PT→EN, ou só transcreve literal? */
+export function sttProviderTranslates(providerId: string): boolean {
+  return !TRANSCRIPTION_ONLY_STT_PROVIDERS.has(providerId);
+}
+
+/**
+ * Cadeia de STT compatível com Whisper: Groq → OpenAI → whisper.cpp local.
+ *
+ * Fica NOMEADA porque a migração legada (`migrateLegacyVoiceConfig`) e os
+ * testes de fallback dependem do head SER o Groq. Quando o Gemini entrou na
+ * cabeça de `DEFAULT_VOICE_CONFIG.stt`, as leituras de
+ * `.provider/.endpoint/.model/.vad/.fallback` deixaram de significar "o
+ * provedor Whisper padrão" — esta constante é essa âncora, e evita que a
+ * migração passe a herdar endpoint e modelo do Google.
+ */
+export const DEFAULT_WHISPER_STT: VoicePlugin = {
+  type: 'stt',
+  provider: 'groq',
+  endpoint: 'https://api.groq.com/openai/v1/audio/transcriptions',
+  auth: { type: 'api_key', envVar: 'GROQ_API_KEY' },
+  model: 'whisper-large-v3-turbo',
+  translate: true,
+  translateFrom: 'pt',
+  translateTo: 'en',
+  streaming: false,
+  language: 'pt',
+  outputMode: 'english',
+  vad: { engine: 'silero', threshold: 0.5, minSpeechMs: 300, maxSilenceMs: 800 },
+  // Chain: Groq (fast/cheap, but free-tier rate-limits) → OpenAI → keyless
+  // local whisper.cpp. Any provider that is throttled/quota-limited/erroring
+  // is skipped automatically (see stt-service), so a 429 never breaks voice.
+  fallback: {
+    type: 'stt',
+    provider: 'openai',
+    endpoint: 'https://api.openai.com/v1/audio/transcriptions',
+    auth: { type: 'api_key', envVar: 'OPENAI_API_KEY' },
+    model: 'whisper-1',
+    translate: true,
+    translateFrom: 'pt',
+    translateTo: 'en',
+    fallback: {
+      type: 'stt',
+      provider: 'local-whisper',
+      localBin: 'whisper-cli',
+      model: 'base',
+      translate: true,
+    },
+  },
+};
+
+/**
+ * The shipped default: Gemini 3.5 Transcribe (transcrição literal, usada quando
+ * existe GEMINI_API_KEY) → cadeia Whisper (Groq translate → OpenAI →
+ * whisper.cpp local); OpenAI TTS → Piper → macOS `say`. macOS `say` is the
+ * always-available terminal fallback (no key, no install), so the pipeline can
+ * always speak even with zero config.
  */
 export const DEFAULT_VOICE_CONFIG: VoiceConfig = {
   enabled: true,
@@ -465,38 +524,23 @@ export const DEFAULT_VOICE_CONFIG: VoiceConfig = {
     },
   },
   stt: {
+    // Gemini 3.5 Transcribe na cabeça: transcrição LITERAL de alta acurácia
+    // (modo verbatim + custom_vocabulary do jargão técnico). Sem
+    // GEMINI_API_KEY o `resolveChain` cai no Groq sozinho — a escolha é por
+    // presença de chave, não por lógica de seleção nova (provider-select).
+    //
+    // Transcription-only: o Interactions API do Google não tem endpoint de
+    // tradução, então `translate: false` é FATO do provedor, não preferência.
+    // Quem quiser PT→EN no ditado escolhe um provedor Whisper.
     type: 'stt',
-    provider: 'groq',
-    endpoint: 'https://api.groq.com/openai/v1/audio/transcriptions',
-    auth: { type: 'api_key', envVar: 'GROQ_API_KEY' },
-    model: 'whisper-large-v3-turbo',
-    translate: true,
-    translateFrom: 'pt',
-    translateTo: 'en',
-    streaming: false,
+    provider: 'gemini',
+    endpoint: 'https://generativelanguage.googleapis.com/v1beta/interactions',
+    auth: { type: 'api_key', envVar: 'GEMINI_API_KEY' },
+    model: 'gemini-3.5-transcribe',
+    translate: false,
     language: 'pt',
     outputMode: 'english',
-    vad: { engine: 'silero', threshold: 0.5, minSpeechMs: 300, maxSilenceMs: 800 },
-    // Chain: Groq (fast/cheap, but free-tier rate-limits) → OpenAI → keyless
-    // local whisper.cpp. Any provider that is throttled/quota-limited/erroring
-    // is skipped automatically (see stt-service), so a 429 never breaks voice.
-    fallback: {
-      type: 'stt',
-      provider: 'openai',
-      endpoint: 'https://api.openai.com/v1/audio/transcriptions',
-      auth: { type: 'api_key', envVar: 'OPENAI_API_KEY' },
-      model: 'whisper-1',
-      translate: true,
-      translateFrom: 'pt',
-      translateTo: 'en',
-      fallback: {
-        type: 'stt',
-        provider: 'local-whisper',
-        localBin: 'whisper-cli',
-        model: 'base',
-        translate: true,
-      },
-    },
+    fallback: DEFAULT_WHISPER_STT,
   },
   tts: {
     type: 'tts',
@@ -541,6 +585,15 @@ export const legacyVoiceConfigSchema = z.object({
 
 export type LegacyVoiceConfig = z.infer<typeof legacyVoiceConfigSchema>;
 
+/**
+ * Env var por provider para a MIGRAÇÃO de `audio-config.json` legada.
+ *
+ * Sem `gemini` de propósito: aquele formato é sempre Whisper, e o builder desta
+ * migração produz um plugin com forma Whisper (endpoint `/audio/transcriptions`,
+ * `model` do Whisper). Um `provider: 'gemini'` vindo de lá casaria com
+ * `isGeminiStt` e mandaria JSON do Interactions API com `x-goog-api-key` para a
+ * URL da Groq — falha garantida e uma tentativa queimada na cadeia.
+ */
 const KNOWN_ENV_VAR: Record<string, string> = {
   groq: 'GROQ_API_KEY',
   openai: 'OPENAI_API_KEY',
@@ -551,13 +604,18 @@ const KNOWN_ENV_VAR: Record<string, string> = {
  * Migrate a legacy `audio-config.json` into a full NexusIDE voice config.
  * The STT block is derived from the legacy fields; the TTS block and local
  * fallbacks come from {@link DEFAULT_VOICE_CONFIG}. Pure — no I/O.
+ *
+ * A âncora é {@link DEFAULT_WHISPER_STT}, NÃO `DEFAULT_VOICE_CONFIG.stt`: uma
+ * `audio-config.json` legada é sempre Whisper (Groq/OpenAI/whisper.cpp), e o
+ * head do default hoje é o Gemini — herdar dele daria endpoint e modelo do
+ * Google a uma config que nunca pediu isso.
  */
 export function migrateLegacyVoiceConfig(raw: LegacyVoiceConfig): VoiceConfig {
-  const provider = raw.provider ?? DEFAULT_VOICE_CONFIG.stt.provider;
+  const provider = raw.provider ?? DEFAULT_WHISPER_STT.provider;
   const baseUrl = raw.baseUrl?.replace(/\/$/, '');
   const endpoint = baseUrl
     ? `${baseUrl}/audio/transcriptions`
-    : DEFAULT_VOICE_CONFIG.stt.endpoint;
+    : DEFAULT_WHISPER_STT.endpoint;
   const translate = (raw.outputMode ?? 'english') === 'english';
 
   const stt: VoicePlugin = {
@@ -565,7 +623,7 @@ export function migrateLegacyVoiceConfig(raw: LegacyVoiceConfig): VoiceConfig {
     provider,
     endpoint,
     auth: { type: 'api_key', envVar: KNOWN_ENV_VAR[provider] ?? 'GROQ_API_KEY' },
-    model: raw.model ?? DEFAULT_VOICE_CONFIG.stt.model,
+    model: raw.model ?? DEFAULT_WHISPER_STT.model,
     translate,
     translateFrom: raw.language ?? 'pt',
     translateTo: 'en',
@@ -573,8 +631,8 @@ export function migrateLegacyVoiceConfig(raw: LegacyVoiceConfig): VoiceConfig {
     outputMode: raw.outputMode ?? 'english',
     chunkMs: raw.chunkMs,
     streaming: false,
-    vad: DEFAULT_VOICE_CONFIG.stt.vad,
-    fallback: DEFAULT_VOICE_CONFIG.stt.fallback,
+    vad: DEFAULT_WHISPER_STT.vad,
+    fallback: DEFAULT_WHISPER_STT.fallback,
   };
 
   // peer ADE NexusVoice used bare Space as an in-app hold key. Keep that

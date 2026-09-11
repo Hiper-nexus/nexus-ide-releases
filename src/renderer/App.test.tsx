@@ -702,6 +702,23 @@ describe('App Nexus V2 cutover', () => {
     expect(host.querySelectorAll('.product-header__tools')).toHaveLength(1);
   });
 
+  it('shows the mic level bars in the header while capturing, independent of the HUD', () => {
+    openWorkspace();
+    const host = mountApp();
+    const header = host.querySelector('.product-header__tools');
+    const bars = () =>
+      header?.querySelector('[data-testid="voice-level-bars"]') ?? null;
+
+    // Fora da captura não há barra: sinal de "estou ouvindo" não pode ser decorativo.
+    expect(bars()).toBeNull();
+
+    act(() => useVoiceStore.getState().setStatus('listening'));
+    expect(bars()).not.toBeNull();
+
+    act(() => useVoiceStore.getState().setStatus('idle'));
+    expect(bars()).toBeNull();
+  });
+
   it('keeps the scheduler terminal host mounted but hidden while Mission Board is active', () => {
     openWorkspace();
     useProductNavigationStore.getState().openMission('mission-scheduler');

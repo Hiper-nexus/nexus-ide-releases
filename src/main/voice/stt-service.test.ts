@@ -21,7 +21,15 @@ function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status });
 }
 
-/** Base deps with everything stubbed; override per test. */
+/**
+ * Base deps with everything stubbed; override per test.
+ *
+ * `GEMINI_API_KEY` fica SEM chave por padrão. O head da cadeia de STT hoje é o
+ * Gemini, e os testes deste arquivo exercitam o fallback Whisper (Groq →
+ * OpenAI → local-whisper). Com chave para tudo, o Gemini assumiria a cabeça e
+ * todo teste da cadeia Whisper passaria a bater no Google primeiro. Os testes
+ * do Gemini ligam a chave explicitamente via `getEnv` próprio.
+ */
 function deps(over: Partial<SttDeps>): SttDeps {
   return {
     fetchImpl: vi.fn(async () => jsonResponse(500, {})) as unknown as typeof fetch,
@@ -31,7 +39,7 @@ function deps(over: Partial<SttDeps>): SttDeps {
     removeFile: vi.fn(),
     fileExists: vi.fn(() => false),
     findBin: vi.fn(() => null),
-    getEnv: vi.fn(() => 'test-key'),
+    getEnv: vi.fn((name: string) => (name === 'GEMINI_API_KEY' ? undefined : 'test-key')),
     ...over,
   };
 }
@@ -240,7 +248,10 @@ describe('transcribe — quota/rate-limit fallback (free-tier Groq)', () => {
     if (!result.ok) {
       expect(result.error).toContain('whisper.cpp');
       expect(result.error).toMatch(/GROQ_API_KEY|OPENAI_API_KEY/);
+      // O Gemini lidera a cadeia: sem chave ele entra na lista como tentativa
+      // frustrada (mesmo tratamento dos outros), então aparece primeiro.
       expect(result.attempts.map((a) => a.provider)).toEqual([
+        'gemini',
         'groq',
         'openai',
         'local-whisper',
@@ -367,5 +378,165 @@ describe('transcribe — passive wake', () => {
       expect(result.attempts.map((attempt) => attempt.provider)).toContain('local-whisper');
       expect(result.attempts.map((attempt) => attempt.reason).join(' ')).toContain('passive wake');
     }
+  });
+});
+
+describe('transcribe — Gemini 3.5 Transcribe (Interactions API)', () => {
+  /** deps com chave do Gemini presente — é ela que põe o Gemini na cabeça. */
+  function geminiDeps(over: Partial<SttDeps> = {}): SttDeps {
+    return deps({ getEnv: vi.fn(() => 'test-key'), ...over });
+  }
+
+  it('monta o request do Interactions API: áudio inline, x-goog-api-key, verbatim', async () => {
+    let url: string | undefined;
+    let init: RequestInit | undefined;
+    const fetchImpl = vi.fn(async (u: string | URL | Request, i?: RequestInit) => {
+      url = String(u);
+      init = i;
+      return jsonResponse(200, { output_text: 'comita e sobe pro worktree' });
+    }) as unknown as typeof fetch;
+
+    // `prompt` é o sinal do modo CODE — é ele que liga o viés de vocabulário.
+    const result = await transcribe(
+      { ...REQ, prompt: 'code priming' },
+      config(),
+      PROBES,
+      geminiDeps({ fetchImpl }),
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.provider).toBe('gemini');
+      expect(result.text).toBe('comita e sobe pro worktree');
+    }
+    expect(url).toBe('https://generativelanguage.googleapis.com/v1beta/interactions');
+
+    const headers = init?.headers as Record<string, string>;
+    // Gemini usa x-goog-api-key — NÃO o Bearer do dialeto OpenAI/Whisper.
+    expect(headers['x-goog-api-key']).toBe('test-key');
+    expect(headers.Authorization).toBeUndefined();
+
+    const body = JSON.parse(String(init?.body)) as {
+      model: string;
+      input: Array<{ type: string; data?: string; mime_type?: string }>;
+      generation_config: {
+        transcription_config: {
+          mode?: unknown;
+          custom_vocabulary?: string[];
+          language_codes?: unknown;
+        };
+      };
+    };
+    expect(body.model).toBe('gemini-3.5-transcribe');
+    expect(body.input[0]?.type).toBe('audio');
+    expect(body.input[0]?.data).toBe(REQ.audioBase64);
+    expect(body.input[0]?.mime_type).toBe('audio/wav');
+
+    const tc = body.generation_config.transcription_config;
+    // verbatim: o modo `smart` remove muletas de fala — exatamente o sintoma
+    // de "palavra que eu falei não entrou no texto".
+    expect(tc.mode).toEqual({ type: 'verbatim' });
+    expect(tc.custom_vocabulary).toContain('worktree');
+    // Sem language_codes: omitir habilita auto-detecção/code-switching, que é
+    // a força do modelo para PT com jargão técnico em inglês.
+    expect(tc.language_codes).toBeUndefined();
+  });
+
+  it('NÃO enviesa vocabulário fora do modo code (CHAT não tem priming)', async () => {
+    // Array em vez de variável solta: o TS estreita uma `let` atribuída dentro
+    // do callback para `never` no ponto da asserção.
+    const bodies: Array<{
+      generation_config: { transcription_config: Record<string, unknown> };
+    }> = [];
+    const fetchImpl = vi.fn(async (_u: string | URL | Request, i?: RequestInit) => {
+      bodies.push(JSON.parse(String(i?.body)));
+      return jsonResponse(200, { output_text: 'texto do chat' });
+    }) as unknown as typeof fetch;
+
+    // Sem `prompt` = CHAT. O caminho Whisper de propósito não enviesa aqui, e
+    // os engines não podem discordar sobre o que o modo significa.
+    await transcribe(REQ, config(), PROBES, geminiDeps({ fetchImpl }));
+
+    const transcription = bodies[0]?.generation_config.transcription_config;
+    expect(transcription?.custom_vocabulary).toBeUndefined();
+    expect(transcription?.mode).toEqual({ type: 'verbatim' });
+  });
+
+  it('interação que FALHOU não vira transcrição, mesmo com texto parcial', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse(200, {
+        status: 'failed',
+        steps: [{ type: 'model_output', content: [{ type: 'text', text: 'texto parcial' }] }],
+      }),
+    ) as unknown as typeof fetch;
+
+    // Devolver isso como sucesso injetaria lixo no pane como se fosse fala.
+    const result = await transcribe(REQ, config(), PROBES, geminiDeps({ fetchImpl }));
+    expect(result.ok).toBe(false);
+  });
+
+  it('lê a transcrição de steps[].content[].text quando não há output_text', async () => {
+    // A página do produto documenta `output_text`; a referência da API não
+    // define esse campo e mostra o texto dentro de steps. Aceitar as duas
+    // formas é o que impede o preview de quebrar o ditado em silêncio.
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse(200, {
+        id: 'interactions/abc',
+        status: 'completed',
+        steps: [
+          {
+            type: 'model_output',
+            content: [{ type: 'text', text: 'texto vindo dos steps' }],
+          },
+        ],
+      }),
+    ) as unknown as typeof fetch;
+
+    const result = await transcribe(REQ, config(), PROBES, geminiDeps({ fetchImpl }));
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.text).toBe('texto vindo dos steps');
+  });
+
+  it('resposta sem texto nenhum conta como falha, não como transcrição vazia', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, { steps: [] })) as unknown as typeof fetch;
+    const result = await transcribe(
+      REQ,
+      config(),
+      PROBES,
+      geminiDeps({ fetchImpl, runLocal: vi.fn(), findBin: vi.fn(() => null) }),
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it('429 no Gemini cai para o Groq em vez de derrubar o turno', async () => {
+    const fetchImpl = vi.fn(async (u: string | URL | Request) => {
+      if (String(u).includes('generativelanguage')) return jsonResponse(429, {});
+      return jsonResponse(200, { text: 'veio do groq' });
+    }) as unknown as typeof fetch;
+
+    const result = await transcribe(REQ, config(), PROBES, geminiDeps({ fetchImpl }));
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.provider).toBe('groq');
+      expect(result.text).toBe('veio do groq');
+    }
+  });
+
+  it('401 no Gemini marca needsKey e segue para o próximo provedor', async () => {
+    const fetchImpl = vi.fn(async (u: string | URL | Request) => {
+      if (String(u).includes('generativelanguage')) return jsonResponse(401, {});
+      return jsonResponse(200, { text: 'groq atendeu' });
+    }) as unknown as typeof fetch;
+
+    const result = await transcribe(REQ, config(), PROBES, geminiDeps({ fetchImpl }));
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.provider).toBe('groq');
+  });
+
+  it('sem chave do Gemini a cadeia começa no Groq (escolha por presença de chave)', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, { text: 'groq' })) as unknown as typeof fetch;
+    const result = await transcribe(REQ, config(), PROBES, deps({ fetchImpl }));
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.provider).toBe('groq');
   });
 });

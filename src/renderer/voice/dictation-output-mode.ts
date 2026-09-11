@@ -7,6 +7,8 @@
  * request explícito, qualquer engine honra o modo configurado —
  * `req.translate` vence `plugin.translate` em stt-service.
  */
+import { DICTATION_CODE_PRIMING_PROMPT } from '../../shared/dictation-vocabulary';
+
 export type DictationOutputMode = 'english' | 'portuguese';
 
 /**
@@ -15,13 +17,12 @@ export type DictationOutputMode = 'english' | 'portuguese';
  * O prompt condiciona o decoder ao domínio — precisa ser em inglês (a API de
  * translations condiciona em prompts EN) e funciona como bias de vocabulário,
  * não como instrução seguida à risca.
+ *
+ * A LISTA de termos vive em `shared/dictation-vocabulary` porque o main monta
+ * o `custom_vocabulary` do Gemini a partir da MESMA lista. Reexportado aqui
+ * para os consumidores do renderer não precisarem saber disso.
  */
-export const DICTATION_CODE_PRIMING_PROMPT =
-  'Software engineering dictation for a coding agent, translated to clear ' +
-  'imperative English without commentary. Technical vocabulary: commit, push, ' +
-  'branch, worktree, merge, rebase, deploy, build, test, lint, refactor, ' +
-  'rollback, endpoint, frontend, backend, terminal, pane, worker, handoff, ' +
-  'mission, squad, pull request, release.';
+export { DICTATION_CODE_PRIMING_PROMPT };
 
 export function dictationSttRequestParams(
   mode: DictationOutputMode | undefined,

@@ -158,6 +158,13 @@ interface Host {
    * pane em branco para sempre (campo 09/09: pane aberto no Início).
    */
   deferredSpawnRetry?: ReturnType<typeof setTimeout>;
+  /**
+   * Teto do spawn adiado. O backoff sozinho não termina: um slot que NUNCA fica
+   * mensurável (pane num canvas que nunca é revelado) ficava reagendando de 2s
+   * em 2s para sempre, em silêncio — timer vivo permanente e pane vazio sem
+   * nenhuma pista para o operador. Passado o orçamento, desistimos ALTO.
+   */
+  deferredSpawnBudgetUntil?: number;
   /** Last grid already propagated to the PTY; avoids duplicate SIGWINCH. */
   reportedGrid: { cols: number; rows: number } | null;
   isVisible: boolean;
@@ -1427,10 +1434,17 @@ function startSpawn(
  * Debounced fit-on-resize. An interactive node resize (or a canvas pan that
  * re-parents the terminal) fires the ResizeObserver in a tight burst; calling
  * fit()+pty.resize on each frame floods the child with SIGWINCH and thrashes
- * the renderer (the resize storm Maestri hit). Coalesce to one fit ~60ms after
- * the last resize.
+ * the renderer (the resize storm Maestri hit). Coalesce to one fit after the
+ * last resize.
+ *
+ * 150ms (era 60ms): a mudança de colunas dispara reflow do scrollback INTEIRO e
+ * recalcula a posição da viewport — com muitos panes e scrollback grande isso é
+ * o custo dominante, não o desenho. O Orca mede o mesmo caminho e documenta um
+ * reflow de 10k linhas travando o renderer por 500ms-2s no Windows; eles também
+ * usam 150ms. A 60ms cada pane grande refazia esse trabalho ~2,5x mais vezes por
+ * rajada. O atraso continua imperceptível para arrastar splitter.
  */
-const RESIZE_DEBOUNCE_MS = 60;
+const RESIZE_DEBOUNCE_MS = 150;
 /** waitForSession: dá tempo do PaneLeaf attachar e medir o slot. */
 const HEADLESS_SPAWN_FALLBACK_MS = 200;
 
@@ -1453,6 +1467,13 @@ function settleHostGrid(host: Host): boolean {
 
 const DEFERRED_SPAWN_RETRY_MIN_MS = 250;
 const DEFERRED_SPAWN_RETRY_MAX_MS = 2_000;
+/**
+ * Orçamento total do spawn adiado. Com o backoff saturando em 2s, 60s dá ~30
+ * tentativas — folga de sobra para um slot que só demora a ser medido (aba
+ * abrindo, fonte carregando) e curto o bastante para o operador não ficar
+ * olhando um pane vazio sem explicação.
+ */
+const DEFERRED_SPAWN_BUDGET_MS = 60_000;
 
 function clearDeferredSpawnRetry(host: Host): void {
   if (host.deferredSpawnRetry === undefined) return;
@@ -1461,9 +1482,31 @@ function clearDeferredSpawnRetry(host: Host): void {
 }
 
 /**
+ * Desistência ALTA: o pane mostra o motivo em vez de ficar vazio para sempre.
+ * Espelha o caminho de falha de spawn, que já escreve "[nexus] failed to start".
+ */
+function abandonDeferredSpawn(host: Host): void {
+  clearDeferredSpawnRetry(host);
+  host.spawnWhenMeasurable = false;
+  host.deferredSpawnBudgetUntil = undefined;
+  console.warn(
+    `[terminal] spawn adiado abandonado após ${DEFERRED_SPAWN_BUDGET_MS / 1000}s sem slot mensurável`,
+  );
+  try {
+    host.term.writeln(
+      '\r\n\x1b[33m[nexus] o pane não pôde ser medido para iniciar o terminal.\x1b[0m',
+    );
+  } catch {
+    // Terminal já descartado — o console.warn acima ainda registra o caso.
+  }
+}
+
+/**
  * Enquanto o spawn estiver adiado, tenta de novo num relógio próprio com
  * backoff (250ms → 2s). Barato — um timer por host adiado — e transforma
  * "nunca nasce" em "nasce assim que o slot for mensurável".
+ *
+ * Com teto: passado {@link DEFERRED_SPAWN_BUDGET_MS} sem sucesso, para e avisa.
  */
 function armDeferredSpawnRetry(host: Host, delayMs: number): void {
   clearDeferredSpawnRetry(host);
@@ -1471,6 +1514,10 @@ function armDeferredSpawnRetry(host: Host, delayMs: number): void {
     host.deferredSpawnRetry = undefined;
     if (host.disposed || host.spawnStarted || host.hibernated) return;
     if (!host.spawnWhenMeasurable) return;
+    if (Date.now() >= (host.deferredSpawnBudgetUntil ?? 0)) {
+      abandonDeferredSpawn(host);
+      return;
+    }
     tryDeferredSpawn(host);
     if (host.spawnWhenMeasurable && !host.spawnStarted) {
       armDeferredSpawnRetry(
@@ -1487,11 +1534,15 @@ function beginPaneSpawn(pane: PaneModel, host: Host): void {
   if (!settleHostGrid(host)) {
     host.spawnWhenMeasurable = true;
     if (host.deferredSpawnRetry === undefined) {
+      // Orçamento novo a cada ciclo de adiamento: um reveal posterior pode
+      // re-armar legitimamente, e aí a contagem velha não pode condená-lo.
+      host.deferredSpawnBudgetUntil = Date.now() + DEFERRED_SPAWN_BUDGET_MS;
       armDeferredSpawnRetry(host, DEFERRED_SPAWN_RETRY_MIN_MS);
     }
     return;
   }
   host.spawnWhenMeasurable = false;
+  host.deferredSpawnBudgetUntil = undefined;
   clearDeferredSpawnRetry(host);
   const firstIntent = consumeFirstSpawnIntent(pane.id);
   void startSpawn(
@@ -1590,6 +1641,35 @@ function refitAllHosts(reason: RefitReason): void {
 
 let refitAllTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingRefitReason: RefitReason | null = null;
+
+/**
+ * Fit SÍNCRONO para rodar dentro de um `useLayoutEffect`.
+ *
+ * O React já comitou o DOM mas o browser ainda NÃO pintou — o container já tem
+ * a largura nova, então o fit mede certo. Pelo caminho debounced o terminal
+ * ficaria com as colunas ANTIGAS por todo o debounce (150ms), o que aparece
+ * como um flash de grade errada quando a sidebar/rail abre e os panes esticam.
+ *
+ * Cancela o refit agendado: quando este roda, aquele vira trabalho repetido
+ * (Orca descreve o mesmo par — bypass pré-paint + debounce que vira no-op).
+ */
+export function refitAllPanesBeforePaint(): void {
+  // NÃO descartar um motivo pendente mais caro: `display-scale` exige repaint de
+  // TODOS os panes (o glifo mudou sem a grade mudar — shouldRepaintOnRefit). Se
+  // um refit desses estava agendado e um layout-change chega antes, rodar só
+  // 'layout-change' e zerar o pendente deixaria os terminais desenhados no DPR
+  // antigo. Escalar preserva o motivo mais forte.
+  const pending = pendingRefitReason;
+  if (refitAllTimer) {
+    clearTimeout(refitAllTimer);
+    refitAllTimer = null;
+  }
+  pendingRefitReason = null;
+  refitAllHosts(
+    pending ? escalateRefitReason(pending, 'layout-change') : 'layout-change',
+  );
+}
+
 function scheduleRefitAll(reason: RefitReason): void {
   pendingRefitReason = escalateRefitReason(pendingRefitReason, reason);
   if (refitAllTimer) clearTimeout(refitAllTimer);
