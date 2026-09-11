@@ -2965,7 +2965,7 @@ export const RELEASE_07616: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07617: AppRelease = {
   version: '0.76.17',
   date: '2026-09-11',
   codename: 'O pane estreito para de encher a tela de lixo',
@@ -2993,6 +2993,41 @@ export const CURRENT_RELEASE: AppRelease = {
         'O fit passa sempre pelo mesmo wrapper, então nenhuma das seis rotas de ' +
         'redimensionamento (observer por pane, refit global, reveal, spawn) ' +
         'escapa da regra.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.18',
+  date: '2026-09-11',
+  codename: 'O terminal deixa de ficar escondido na tela de criação',
+  summary:
+    'A tela "O que você quer criar?" só oferecia "Iniciar criação" — para abrir ' +
+    'um terminal era preciso sair para Terminais, e não havia como escolher ' +
+    'quais IAs abrir em cada painel. A capacidade existia e tinha sido ' +
+    'perdida: agora ela volta, visível, abaixo do formulário.',
+  highlights: [
+    {
+      title: 'Montar seus próprios painéis, sem sair da criação',
+      detail:
+        '"Prefere trabalhar nos terminais?" traz duas portas. "Montar meus ' +
+        'terminais" abre o assistente que deixa escolher a pasta, a quantidade ' +
+        'de painéis e UMA IA DIFERENTE EM CADA UM. "Terminal sem IA" abre um ' +
+        'terminal direto, para quem quer só digitar comandos.',
+    },
+    {
+      title: 'Seu pedido não se perde ao ir para os terminais',
+      detail:
+        'Ir para os terminais não apaga o que você já escreveu: ao voltar para ' +
+        'a criação, o pedido continua no campo. Verificado ao vivo.',
+    },
+    {
+      title: 'O CTA continua sendo um só',
+      detail:
+        'Os dois cartões novos são secundários e neutros — "Iniciar criação" ' +
+        'segue sendo a única ação primária da tela, e a cor de estado do ' +
+        'produto continua significando estado, não decoração.',
     },
   ],
   fixes: [],

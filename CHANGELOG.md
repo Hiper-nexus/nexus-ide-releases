@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.18 — O terminal deixa de ficar escondido na tela de criação
+
+- **A tela de criação só sabia iniciar missão**: para abrir um terminal era preciso sair para "Terminais", e não havia como escolher quais IAs abrir em cada painel. Agora, abaixo do formulário, a seção **"Prefere trabalhar nos terminais?"** oferece duas portas: **Montar meus terminais** (assistente que deixa escolher a pasta, a quantidade de painéis e uma IA diferente em cada um) e **Terminal sem IA** (terminal direto, sem assistente). Isto era **regressão, não ausência**: a seção existia no antigo `Launcher` — hoje código morto — com estas mesmas duas portas, e o store que a servia ficou órfão, sem nenhum chamador.
+- **Seu pedido não se perde ao ir para os terminais**: voltar para a criação mantém o texto digitado no campo. Verificado ao vivo.
+- **O CTA continua sendo um só**: os dois cartões são secundários e neutros; "Iniciar criação" segue como a única ação primária da tela.
+
 ## 0.76.17 — O pane estreito para de encher a tela de lixo
 
 - **Pane com muitos panes abertos enchia de lixo do spinner**: o CLI dentro do pane redesenha a linha de status no lugar com `\r`, assumindo que ela CABE. Quando a linha é mais larga que `cols`, ela quebra — e o `\r` seguinte volta à coluna 0 da linha **de baixo**, não da original. O cursor desce um degrau a cada tick e cada quadro deixa resíduo: lixo permanente no scrollback. Medido ao vivo (janela 1280, célula 7,74px): 3 panes lado a lado dão **28 colunas**, 4 dão 21, 5 ou mais dão **8** — e a linha de status realista de um agente tem **51 caracteres**. Agora a grade não desce abaixo de 60 colunas enquanto há sessão viva: o TUI passa a ver largura suficiente, para de quebrar a linha e para de subir lixo. O excedente fica cortado pela borda do pane — corte se recupera alargando o pane; o creep corrompia o histórico de forma permanente.
