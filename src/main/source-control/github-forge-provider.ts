@@ -1,8 +1,18 @@
-// Adapted from stablyai/orca @ 143c36e566483006fe54fa2716b019ec00599752
+// Adapted from stablyai/orca @ f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92
 // Copyright (c) 2026 Lovecast Inc. — MIT License
 // See third_party/licenses/orca-MIT.txt. Nexus changes: GitHub adapter with
 // mandatory ForgeAuthorization + audit log; HTTP transport injected; get PR for
 // branch; failures classified into the typed GitHubApiError taxonomy (emdash).
+// Resync 2026-09-11: src/main/github/client.ts (this file's upstream origin)
+// was sliced into ~200 files at this pin; reviewed the 66 commits since 143c36e
+// touching src/main/github — fork head-origin tracking, GHES multi-repo
+// routing, stacked-PR/merge-queue UI and a GitHub PR-lookup rate-limit
+// pre-check (#11532) all live in the hosted-review graph Nexus does not
+// import. Nothing in that window changes createReview/getReviewForBranch
+// semantics for a non-fork repo+branch pair, which is this adapter's whole
+// surface. No port applies; not proactively adding rate-limit tracking here
+// since it would be new functionality (and needs github-pr-queue.ts, a
+// different worker's file) rather than a resync fix.
 
 import type {
   ForgeAutoMergeInput,
