@@ -27,4 +27,17 @@ Host *.lab
     expect(sshHostPatternMatches('*.lab', 'a.lab')).toBe(true);
     expect(resolveSshHostConfig(configs, 'x.lab')?.user).toBe('lab');
   });
+
+  it('keeps the first value for a directive repeated in one Host block (OpenSSH semantics)', () => {
+    const configs = parseSshConfig(`
+Host dev
+  Port 22
+  Port 2222
+  User first
+  User second
+`);
+    const dev = resolveSshHostConfig(configs, 'dev');
+    expect(dev?.port).toBe(22);
+    expect(dev?.user).toBe('first');
+  });
 });

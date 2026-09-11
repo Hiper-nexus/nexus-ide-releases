@@ -49,7 +49,8 @@
       "changeSummary": "Standalone shared module; Nexus statement style; attribution header; no PTY/IPC wiring.",
       "secondaryProvenance": [],
       "importDate": "2026-07-10",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/shared/terminal-stream-protocol.test.ts",
@@ -63,7 +64,8 @@
       "changeSummary": "Standalone shared module + tests with attribution header; no PTY/IPC/host wiring.",
       "secondaryProvenance": [],
       "importDate": "2026-07-10",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/renderer/src/lib/pane-manager/pane-terminal-output-scheduler.ts",
@@ -119,7 +121,8 @@
       "changeSummary": "WorktreeMeta/orca provenance replaced by WorktreeRecord-based Nexus provenance; GitWorktreeInfo -> local RegisteredWorktreeInfo; Repo -> repoPath; stripOrcaProvenanceMetaUpdates dropped (provenance main-owned via CAS); statement style.",
       "secondaryProvenance": [],
       "importDate": "2026-07-10",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/main/worktree-removal-safety.test.ts",
@@ -133,7 +136,8 @@
       "changeSummary": "Provenance cases ported to NexusWorktreeProvenance; RegisteredWorktreeInfo fixtures; added main-worktree/unregistered rejection case; statement style.",
       "secondaryProvenance": [],
       "importDate": "2026-07-10",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/main/worktree-orphan-gitdir-proof.ts",
@@ -161,7 +165,8 @@
       "changeSummary": "Subset: only isWindowsAbsolutePathLike; remaining helpers deferred to remote/WSL harvest.",
       "secondaryProvenance": [],
       "importDate": "2026-07-10",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/main/ipc/worktree-logic.ts",
@@ -175,7 +180,8 @@
       "changeSummary": "Extraction of areWorktreePathsEqual + private path helpers only; rest of worktree-logic is ORCA IPC-specific.",
       "secondaryProvenance": [],
       "importDate": "2026-07-10",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/shared/crash-reporting-diagnostic-bundle.ts",
@@ -708,7 +714,8 @@
       "changeSummary": "Production session wrapper over shared terminal-stream-protocol with seq/resume",
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/shared/terminal-stream-protocol.test.ts",
@@ -722,7 +729,8 @@
       "changeSummary": "Unit tests for production stream session encode/decode/resume",
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/tree/143c36e566483006fe54fa2716b019ec00599752",
@@ -764,7 +772,8 @@
       "changeSummary": "Pure SSH path normalize/containment; root / prefix-safe; no agent force",
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/tree/143c36e566483006fe54fa2716b019ec00599752",
@@ -1338,7 +1347,8 @@
       "changeSummary": "FASE2 remote MVP lean SSH stack under RemoteHostCapability; mock transport.",
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/tree/143c36e566483006fe54fa2716b019ec00599752",
@@ -1352,7 +1362,8 @@
       "changeSummary": "FASE2 remote MVP lean SSH stack under RemoteHostCapability; mock transport.",
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/tree/143c36e566483006fe54fa2716b019ec00599752",
@@ -1366,7 +1377,8 @@
       "changeSummary": "FASE2 remote MVP lean SSH stack under RemoteHostCapability; mock transport.",
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/tree/143c36e566483006fe54fa2716b019ec00599752",
@@ -1380,7 +1392,8 @@
       "changeSummary": "FASE2 remote MVP lean SSH stack under RemoteHostCapability; mock transport.",
       "secondaryProvenance": [],
       "importDate": "2026-07-11",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/143c36e566483006fe54fa2716b019ec00599752/src/main/ssh/ssh-agent-identity-filter.test.ts",
@@ -1534,7 +1547,8 @@
       "changeSummary": "Nexus main-owned mission runtime termination adapts the physical-exit-before-replacement invariant across PTY and OMP, while retaining Nexus lifecycle fences, durable stores, and renderer collapse protocol.",
       "secondaryProvenance": [],
       "importDate": "2026-07-23",
-      "status": "imported"
+      "status": "superseded",
+      "supersededBy": "f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92"
     },
     {
       "upstreamUrl": "https://github.com/stablyai/orca/blob/0121f571e4c9929f4d299f1a339d6e72c5d58c8b/src/shared/agent-hook-listener.ts",

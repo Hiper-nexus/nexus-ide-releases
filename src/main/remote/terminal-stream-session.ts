@@ -1,7 +1,10 @@
-// Adapted from stablyai/orca @ 143c36e566483006fe54fa2716b019ec00599752
+// Adapted from stablyai/orca @ f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92
 // Copyright (c) 2026 Lovecast Inc. — MIT License
 // See third_party/licenses/orca-MIT.txt. Nexus changes: production session
 // wrapper around shared terminal-stream-protocol with seq/reconnect resume.
+// Resynced 2026-09-11: no code changed — this wrapper only uses the
+// Output/Resized/Subscribe opcodes and the frame shape, neither touched by
+// the JSON size/structure limits or new opcodes added to the protocol module.
 
 import {
   decodeTerminalStreamFrame,

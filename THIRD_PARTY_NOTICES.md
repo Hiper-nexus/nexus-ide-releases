@@ -402,3 +402,34 @@ the Apache License 2.0.
 Provenance ledger: `third_party/provenance/agent-orchestrator-2026-09-09.json`.
 Full license: `third_party/licenses/Apache-2.0.txt`.
 
+## stablyai/orca (Runtime/Remote resync)
+
+Runtime and remote modules re-checked against
+[`stablyai/orca`](https://github.com/stablyai/orca) at commit
+`f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92` (upstream v1.4.200). MIT License,
+Copyright (c) 2026 Lovecast Inc.
+
+- `src/shared/terminal-stream-protocol.ts` (+ test) — full-file resync:
+  `decodeTerminalStreamJson` gained an 8 MiB payload cap and structural/
+  nesting limits via the new `src/shared/json-text-structure-limit.ts`
+  (DoS prevention — oversized or deeply nested frames no longer reach
+  `JSON.parse` uncapped); opcodes Ack, ClaimViewport, OutputSpan,
+  SetOutputPaused and WriteUnavailable added as type surface only.
+- `src/main/remote/ssh/ssh-config-path-expansion.ts` — `__PROGRAMDATA__`
+  token expansion fix (Windows `ssh -G` prints it unexpanded; left alone
+  when `ProgramData` is unset, guarded against startsWith collisions).
+- `src/main/remote/ssh/ssh-config-parser.ts` — OpenSSH first-value-wins
+  semantics for a single-valued directive repeated inside one Host block.
+- `src/main/runtime/worktree-path-compare.ts` — Windows-path detection
+  resynced onto the shared `isWindowsAbsolutePathLike` (upstream also
+  removed the duplicate private regex); no behavioral change.
+- Checked, no code changed: `worktree-removal-safety(.test)`, `ssh-path`,
+  `cross-platform-path`, `terminal-stream-session(.test)`.
+- Deliberately not ported: the `allowUnverifiedStop` Force Delete escape
+  hatch and structured-agent-session sweep in `worktree-teardown.ts`
+  (#11960) — `src/main/orch/mission-runtime-termination.ts` keeps the
+  physical-exit-before-replacement invariant strict for mission authority.
+
+Provenance ledger: `third_party/provenance/orca-f352b6b-runtime-remote.json`.
+License text: `third_party/licenses/orca-MIT.txt`.
+

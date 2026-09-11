@@ -1,8 +1,8 @@
-// Adapted from stablyai/orca @ 143c36e566483006fe54fa2716b019ec00599752
+// Adapted from stablyai/orca @ f352b6b08d9028ba8b577d6ac8a8247c2a6c9c92
 // Copyright (c) 2026 Lovecast Inc. — MIT License
 // See third_party/licenses/orca-MIT.txt. Nexus changes: standalone shared module with attribution header; no PTY/IPC wiring.
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   TerminalStreamOpcode,
   decodeTerminalStreamFrame,
@@ -10,7 +10,8 @@ import {
   decodeTerminalStreamText,
   encodeTerminalStreamFrame,
   encodeTerminalStreamJson,
-  encodeTerminalStreamText
+  encodeTerminalStreamText,
+  TERMINAL_STREAM_JSON_STRUCTURE_LIMITS
 } from './terminal-stream-protocol'
 
 describe('terminal-stream-protocol', () => {
@@ -125,6 +126,34 @@ describe('terminal-stream-protocol', () => {
     expect(snapshotRequest?.streamId).toBe(12)
     expect(unsubscribe?.opcode).toBe(TerminalStreamOpcode.Unsubscribe)
     expect(unsubscribe?.streamId).toBe(12)
+  })
+
+  it('round-trips output acknowledgement frames', () => {
+    const ack = decodeTerminalStreamFrame(
+      encodeTerminalStreamFrame({
+        opcode: TerminalStreamOpcode.Ack,
+        streamId: 12,
+        seq: 4,
+        payload: encodeTerminalStreamJson({ bytes: 4096 })
+      })
+    )
+
+    expect(ack?.opcode).toBe(TerminalStreamOpcode.Ack)
+    expect(ack?.streamId).toBe(12)
+    expect(ack && decodeTerminalStreamJson(ack.payload)).toEqual({ bytes: 4096 })
+  })
+
+  it('rejects excessive JSON nesting before JSON.parse', () => {
+    const parseSpy = vi.spyOn(JSON, 'parse')
+    try {
+      const depth = TERMINAL_STREAM_JSON_STRUCTURE_LIMITS.nestingDepth + 1
+      const payload = new TextEncoder().encode(`${'['.repeat(depth)}0${']'.repeat(depth)}`)
+
+      expect(decodeTerminalStreamJson(payload)).toBeNull()
+      expect(parseSpy).not.toHaveBeenCalled()
+    } finally {
+      parseSpy.mockRestore()
+    }
   })
 
   it('rejects unknown frame versions and opcodes', () => {
