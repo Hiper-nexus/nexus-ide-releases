@@ -13,6 +13,10 @@ import {
   prepareWorkspaceLayoutSwitch,
   switchWorkspaceLayout,
 } from './layout-store';
+import {
+  disposeWorkspaceHosts,
+  parkWorkspaceHosts,
+} from '../terminal/terminal-host';
 
 /**
  * Renderer mirror of the workspace onboarding state (current + recents). The
@@ -123,11 +127,18 @@ function mutateWorkspace(
   get: WorkspaceGet,
   invoke: () => Promise<WorkspaceState>,
   shouldPrepareLayout: (currentPath: string | null) => boolean = () => true,
+  outgoingPanes: 'park' | 'close' = 'close',
 ): Promise<void> {
   return serializeTransition(async () => {
     const previousPath = get().current?.path ?? null;
     const prepared =
       shouldPrepareLayout(previousPath) && hasAttachedWorkspaceLayout();
+    // Trocar de projeto AFASTA os panes: o processo continua e o pane volta
+    // intacto. Só `close` (o diálogo promete encerrar as sessões) deixa o
+    // reconcile do App descartá-los.
+    if (prepared && previousPath && outgoingPanes === 'park') {
+      parkWorkspaceHosts(previousPath);
+    }
     const previousLayoutPath = prepared ? prepareWorkspaceLayoutSwitch() : null;
     let state: WorkspaceState;
     try {
@@ -223,18 +234,34 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   },
 
   pick: async () =>
-    mutateWorkspace(set, get, () => window.nexus.workspace.pick()),
+    mutateWorkspace(
+      set,
+      get,
+      () => window.nexus.workspace.pick(),
+      () => true,
+      'park',
+    ),
   open: async (path) =>
-    mutateWorkspace(set, get, () => window.nexus.workspace.open(path)),
+    mutateWorkspace(
+      set,
+      get,
+      () => window.nexus.workspace.open(path),
+      () => true,
+      'park',
+    ),
   close: async () =>
     mutateWorkspace(set, get, () => window.nexus.workspace.close()),
-  remove: async (path) =>
-    mutateWorkspace(
+  remove: async (path) => {
+    await mutateWorkspace(
       set,
       get,
       () => window.nexus.workspace.remove(path),
       (currentPath) => currentPath === path,
-    ),
+    );
+    // Tirar o projeto da lista é fechamento explícito: o que estava
+    // estacionado dele morre aqui, nunca calado numa troca.
+    disposeWorkspaceHosts(path);
+  },
 }));
 
 /**

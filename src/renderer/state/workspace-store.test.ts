@@ -24,6 +24,16 @@ vi.mock('./layout-store', () => ({
   switchWorkspaceLayout: layout.switch,
 }));
 
+const hosts = vi.hoisted(() => ({
+  park: vi.fn((_path: string) => 0),
+  dispose: vi.fn((_path: string) => 0),
+}));
+
+vi.mock('../terminal/terminal-host', () => ({
+  parkWorkspaceHosts: hosts.park,
+  disposeWorkspaceHosts: hosts.dispose,
+}));
+
 import { useWorkspaceStore } from './workspace-store';
 
 function info(path: string, lastOpenedAt = 1): WorkspaceInfo {
@@ -77,6 +87,8 @@ describe('workspace-store layout authority transitions', () => {
     layout.prepare.mockReturnValue(null);
     layout.switch.mockReset();
     layout.switch.mockResolvedValue(true);
+    hosts.park.mockReset();
+    hosts.dispose.mockReset();
     useWorkspaceStore.setState({
       current: null,
       recents: [],
@@ -326,5 +338,75 @@ describe('workspace-store layout authority transitions', () => {
       );
       expect(useWorkspaceStore.getState().currentMissing).toBe(false);
     });
+  });
+});
+
+describe('workspace-store: trocar de projeto afasta os panes, fechar encerra', () => {
+  beforeEach(() => {
+    layout.abandon.mockReset();
+    layout.detach.mockReset();
+    layout.hasAttached.mockReset();
+    layout.hasAttached.mockReturnValue(true);
+    layout.prepare.mockReset();
+    layout.prepare.mockReturnValue(null);
+    layout.switch.mockReset();
+    layout.switch.mockResolvedValue(true);
+    hosts.park.mockReset();
+    hosts.dispose.mockReset();
+    useWorkspaceStore.setState({
+      current: info('/ws/a'),
+      recents: [info('/ws/a')],
+      hydrated: true,
+    });
+    setActiveWorkspacePath('/ws/a');
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('open() estaciona os hosts do workspace que sai ANTES de soltar o layout', async () => {
+    const events: string[] = [];
+    hosts.park.mockImplementation((path) => {
+      events.push(`park:${path}`);
+      return 1;
+    });
+    layout.prepare.mockImplementation(() => {
+      events.push('flush:/ws/a');
+      return '/ws/a';
+    });
+    installWorkspaceApi({
+      open: vi.fn(async (path) => state(path, [info(path, 2), info('/ws/a')])),
+    });
+
+    await useWorkspaceStore.getState().open('/ws/b');
+
+    expect(events).toEqual(['park:/ws/a', 'flush:/ws/a']);
+    expect(hosts.dispose).not.toHaveBeenCalled();
+  });
+
+  it('close() NÃO estaciona: o diálogo promete encerrar as sessões do projeto', async () => {
+    installWorkspaceApi({ close: vi.fn(async () => state(null, [info('/ws/a')])) });
+
+    await useWorkspaceStore.getState().close();
+
+    expect(hosts.park).not.toHaveBeenCalled();
+  });
+
+  it('remove(path) descarta os hosts estacionados daquele projeto', async () => {
+    useWorkspaceStore.setState({
+      current: info('/ws/b'),
+      recents: [info('/ws/b', 2), info('/ws/a')],
+      hydrated: true,
+    });
+    setActiveWorkspacePath('/ws/b');
+    installWorkspaceApi({
+      remove: vi.fn(async () => state('/ws/b', [info('/ws/b', 2)])),
+    });
+
+    await useWorkspaceStore.getState().remove('/ws/a');
+
+    expect(hosts.dispose).toHaveBeenCalledWith('/ws/a');
+    expect(hosts.park).not.toHaveBeenCalled();
   });
 });
