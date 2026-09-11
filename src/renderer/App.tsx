@@ -1014,7 +1014,17 @@ export function App() {
       useProductNavigationStore.getState().openLauncher();
       return;
     }
-    void workspace.open(workspaceId).catch((error) => {
+    void workspace
+      .open(workspaceId)
+      .then(() => {
+        // Mesmo destino do caminho do Finder (onDeepOpenPath): quem navega
+        // para um projeto quer ver os terminais dele — não o wizard que ficou
+        // aberto no projeto anterior.
+        if (useWorkspaceStore.getState().current?.path === workspaceId) {
+          useProductNavigationStore.getState().openTerminal();
+        }
+      })
+      .catch((error) => {
       const message = error instanceof Error ? error.message : String(error);
       const isMissing =
         message.includes('inaccessible') ||
