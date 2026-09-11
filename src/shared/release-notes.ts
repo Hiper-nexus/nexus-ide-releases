@@ -2792,7 +2792,7 @@ export const RELEASE_07614: AppRelease = {
     },
   ],
 };
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07615: AppRelease = {
   version: '0.76.15',
   date: '2026-09-11',
   codename: 'O pane não congela no redesenho e o crash report conta tudo',
@@ -2857,6 +2857,110 @@ export const CURRENT_RELEASE: AppRelease = {
         'O verificador lê todos os ledgers, oito arquivos sem ledger e uma ' +
         'entrada malformada foram regularizados, e cinco ondas de resync para ' +
         'o v1.4.200 estão registradas com hash real de cada blob.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.16',
+  date: '2026-09-11',
+  codename: 'O ditado para de perder palavra e o pane prova que está ouvindo',
+  summary:
+    'Duas frentes. No ditado, o Gemini 3.5 Transcribe entra como provedor ' +
+    'escolhível (transcrição literal, com o jargão técnico no vocabulário do ' +
+    'decoder) ao lado do Groq — e as barras de nível do microfone passam a ' +
+    'viver também na barra superior, onde ficam visíveis mesmo com o HUD ' +
+    'oculto. Em panes, três ajustes de custo tirados do Orca: menos reflow ' +
+    'por rajada, teto no respawn adiado e fit antes da pintura.',
+  highlights: [
+    {
+      title: 'Prova de captura onde você está olhando',
+      detail:
+        'As barrinhas de nível do microfone existiam só dentro do HUD ' +
+        'flutuante — e o HUD em "só áudio" devolve null, então quem esconde o ' +
+        'HUD ficava sem nenhuma prova de que o áudio estava entrando. Agora ' +
+        'elas aparecem na barra superior, ao lado do chip CODE/CHAT, ' +
+        'independentes do estado do HUD.',
+    },
+    {
+      title: 'Gemini 3.5 Transcribe como provedor de ditado',
+      detail:
+        'Transcrição LITERAL com `verbatim` — o modo `smart` remove muletas de ' +
+        'fala, que era justamente a queixa de "a palavra que eu falei não ' +
+        'entrou". O vocabulário técnico do modo code vai como ' +
+        '`custom_vocabulary` para o decoder. Vem ligado quando existe ' +
+        'GEMINI_API_KEY; sem a chave, a cadeia Whisper (Groq → OpenAI → ' +
+        'whisper.cpp) assume sozinha, e o provedor continua escolhível em ' +
+        'Configurações › Serviços.',
+    },
+    {
+      title: 'O chip não mente sobre o idioma',
+      detail:
+        'O Gemini transcreve e não traduz — com ele ativo, o modo CODE entrega ' +
+        'português, como escolhido. Como um tooltip não avisa quem já está ' +
+        'ditando, o próprio rótulo passa a denunciar: o chip mostra `CODE·PT`.',
+    },
+    {
+      title: 'Panes mais baratos em rajada de redesenho',
+      detail:
+        'O debounce de refit sobe de 60ms para 150ms: a troca de colunas ' +
+        'dispara reflow do scrollback inteiro, e a 60ms cada pane grande ' +
+        'refazia esse trabalho ~2,5x mais vezes por rajada.',
+    },
+    {
+      title: 'Respawn adiado não tenta para sempre em silêncio',
+      detail:
+        'Um slot que nunca fica mensurável reagendava de 2 em 2 segundos para ' +
+        'sempre, deixando um timer vivo e um pane vazio sem explicação. Agora ' +
+        'há um teto de 60s e, ao estourar, o próprio pane diz o motivo.',
+    },
+    {
+      title: 'Terminal assume a largura nova antes da pintura',
+      detail:
+        'Quando a sidebar abre e os panes esticam, o fit passa a rodar dentro ' +
+        'do layout effect — o container já tem o tamanho novo e o terminal ' +
+        'nunca aparece com a grade antiga. Sem isso o debounce maior deixaria ' +
+        'as colunas velhas na tela por mais tempo.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Modo do ditado não é mais apagado por upgrade',
+      detail:
+        'A migração que instala o Gemini escrevia os defaults por cima de TODOS ' +
+        'os campos do topo da cadeia — e o modo CODE/CHAT mora justamente ali. ' +
+        'Quem tinha escolhido CHAT voltava para CODE, e como o arquivo é ' +
+        'reescrito a perda era permanente.',
+    },
+    {
+      title: 'Head fixado de propósito é respeitado',
+      detail:
+        'A mesma migração só checava "o Gemini está ausente?", nunca "esta é a ' +
+        'cadeia de fábrica". Quem fixou `local-whisper` para manter o áudio na ' +
+        'máquina ganharia o Gemini na frente — e como o Gemini também é o brain ' +
+        'padrão, a chave costuma existir: a fala iria para a nuvem sem ninguém ' +
+        'pedir. Agora a migração só age sobre a cadeia padrão.',
+    },
+    {
+      title: 'Interação que falhou não vira transcrição',
+      detail:
+        'Uma resposta com status de falha mas com texto parcial era aceita como ' +
+        'sucesso e injetada no pane como se fosse fala. Agora só passos de ' +
+        'saída concluídos contam.',
+    },
+    {
+      title: 'Vocabulário técnico não vaza para o modo CHAT',
+      detail:
+        'O viés de vocabulário do modo code passou a ser ligado pelo mesmo ' +
+        'sinal que o caminho Whisper usa (o prompt de priming), para os dois ' +
+        'provedores não discordarem sobre o que o modo significa.',
+    },
+    {
+      title: 'O wake não gasta o orçamento com modelo generativo',
+      detail:
+        'A cadeia do wake foi reordenada para os provedores de transcrição ' +
+        'rápida virem primeiro: uma chamada generativa entre a Groq e a OpenAI ' +
+        'queimava a fatia apertada do orçamento numa tarefa de duas palavras.',
     },
   ],
 };

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.76.16 — O ditado para de perder palavra e o pane prova que está ouvindo
+
+- **As barras de nível do microfone não apareciam**: elas existiam só dentro do HUD flutuante, e o HUD em modo "só áudio" devolve `null` — quem escondia o HUD ficava sem nenhuma prova visual de que o áudio estava entrando. Agora as barras vivem também na barra superior, ao lado do chip CODE/CHAT, independentes do estado do HUD.
+- **Gemini 3.5 Transcribe como provedor de ditado**: transcrição LITERAL com `mode: verbatim` — o modo `smart` remove muletas de fala, que era exatamente a queixa de "a palavra que eu falei não entrou no texto". O vocabulário técnico do modo code viaja como `custom_vocabulary` para o decoder. Vem ligado quando existe `GEMINI_API_KEY`; sem a chave a cadeia Whisper (Groq → OpenAI → whisper.cpp) assume sozinha, e o provedor segue escolhível em Configurações › Serviços.
+- **O chip não mente sobre o idioma**: o Gemini transcreve e não traduz — com ele ativo o modo CODE entrega português, como decidido. Como tooltip não avisa quem já está ditando, o próprio rótulo denuncia: `CODE·PT`.
+- **Panes mais baratos em rajada de redesenho**: o debounce de refit sobe de 60ms para 150ms. A troca de colunas dispara reflow do scrollback inteiro, e a 60ms cada pane grande refazia esse trabalho ~2,5x mais vezes por rajada.
+- **Respawn adiado não tenta para sempre em silêncio**: um slot que nunca ficava mensurável reagendava de 2 em 2 segundos indefinidamente, deixando um timer vivo e um pane vazio sem explicação. Agora há teto de 60s e, ao estourar, o próprio pane diz o motivo.
+- **Terminal assume a largura nova antes da pintura**: quando a sidebar abre e os panes esticam, o fit roda dentro do layout effect — o container já tem o tamanho novo e o terminal não aparece com a grade antiga. Sem isso o debounce maior deixaria as colunas velhas na tela por mais tempo.
+- **Modo do ditado não é mais apagado por upgrade**: a migração que instala o Gemini escrevia os defaults por cima de TODOS os campos do topo da cadeia — e o modo CODE/CHAT mora justamente ali. Quem tinha escolhido CHAT voltava para CODE, e como o arquivo é reescrito a perda era permanente.
+- **Head fixado de propósito é respeitado**: a mesma migração só checava "o Gemini está ausente?", nunca "esta é a cadeia de fábrica". Quem fixou `local-whisper` para manter o áudio na máquina ganharia o Gemini na frente — e como o Gemini também é o brain padrão, a chave costuma existir: a fala iria para a nuvem sem ninguém pedir. Agora a migração só age sobre a cadeia padrão.
+- **Interação que falhou não vira transcrição**: resposta com status de falha mas com texto parcial era aceita como sucesso e injetada no pane como se fosse fala. Agora só passos de saída concluídos contam.
+- **Vocabulário técnico não vaza para o modo CHAT**: o viés de vocabulário passou a ser ligado pelo mesmo sinal que o caminho Whisper usa (o prompt de priming), para os dois provedores não discordarem sobre o que o modo significa.
+- **O wake não gasta o orçamento com modelo generativo**: a cadeia do wake foi reordenada para os provedores de transcrição rápida virem primeiro — uma chamada generativa entre a Groq e a OpenAI queimava a fatia apertada do orçamento numa tarefa de duas palavras.
+
 ## 0.76.15 — O pane não congela no redesenho e o crash report conta tudo
 
 - **TUI que redesenha sem parar congelava o pane visível**: o scheduler de saída segurava o frame aberto (hold) e, ao chegar o fechamento, esperava mais um pouco (coalesce) — e cada um cancelava o timer de segurança do outro. Num stream que alterna os dois sem parar, o pane nunca voltava a drenar. Agora um prazo único vale para o episódio inteiro: seja lá quantas vezes o modo vire, a tela pinta no fim dele (orca#8754).
