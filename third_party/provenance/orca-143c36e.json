@@ -958,7 +958,7 @@
     {
       "upstreamUrl": "https://github.com/stablyai/orca/tree/143c36e566483006fe54fa2716b019ec00599752",
       "upstreamCommit": "143c36e566483006fe54fa2716b019ec00599752",
-      "originalSha256": "10878959cad76723c77ce543e47b40403baa45b365823ed893590f6ec5e22e3b",
+      "originalSha256": "72549357c3b15101dc0ca6c0dd0f7827e54cb031050e2e68a54d194e830c06a9",
       "originalPath": "(concept) F3 agent-runtime integration across crash reporting, agent hooks, and awake lifecycle",
       "nexusPath": "src/main/agent-runtime/agent-runtime-bridge.ts",
       "license": "MIT",
