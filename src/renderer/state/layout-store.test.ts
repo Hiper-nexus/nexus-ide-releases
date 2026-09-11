@@ -745,11 +745,51 @@ describe('layout-store persistence key vs. the tree it owns', () => {
     expect(useLayoutStore.getState().hydrated).toBe(true);
 
     const switching = switchWorkspaceLayout('/workspace/b');
+    const paneDeA = useLayoutStore.getState().addShellPane();
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    await switching;
+
+    // O invariante é sobre o CONTEÚDO, não sobre a chamada: gravar sob B é
+    // legítimo depois que a posse é do B. Gravar os PANES DE A sob B, não.
+    const idsDeA = new Set([paneDeA]);
+    for (const [path, layout] of save.mock.calls) {
+      if (path !== '/workspace/b') continue;
+      for (const pane of listPanes(layout.root)) {
+        expect(idsDeA.has(pane.id)).toBe(false);
+      }
+    }
+  });
+
+  it('não deixa a persistência do workspace novo presa depois da corrida', async () => {
+    // Denunciar a posse sem restabelecê-la faz `ownsPersistedLayout` dar false
+    // para sempre, e aí `persist`/`flushLayout` PULAM toda gravação deste
+    // workspace — o operador perderia os terminais dele em silêncio, que é
+    // exatamente o sintoma que estamos consertando.
+    const save = vi.fn(
+      async (_workspacePath: string, _layout: WorkspaceLayout) => undefined,
+    );
+    const load = vi.fn(async (path: string) => {
+      if (path === '/workspace/b') {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      return null;
+    });
+    vi.stubGlobal('window', {
+      nexus: { layout: { load, save, saveSync: vi.fn() } },
+    });
+
+    await switchWorkspaceLayout('/workspace/a');
+    const switching = switchWorkspaceLayout('/workspace/b');
     useLayoutStore.getState().addShellPane();
     await new Promise((resolve) => setTimeout(resolve, 400));
     await switching;
 
-    expect(save.mock.calls.map(([path]) => path)).not.toContain('/workspace/b');
+    // Uma mutação NOVA, já fora da janela da troca, tem de voltar a gravar.
+    save.mockClear();
+    useLayoutStore.getState().addShellPane();
+    await new Promise((resolve) => setTimeout(resolve, 400));
+
+    expect(save.mock.calls.map(([path]) => path)).toContain('/workspace/b');
   });
 });
 

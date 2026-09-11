@@ -451,21 +451,30 @@ export function switchWorkspaceLayout(workspacePath: string): Promise<boolean> {
     }
     // A stale response from a slower earlier switch must not clobber the tree.
     if (persistKey !== workspacePath) return true;
-    // A local mutation landed while we were loading — it wins; don't hydrate.
+    // A local mutation landed while we were loading.
+    //
+    // A tentação é carimbar a árvore viva como deste workspace, como o código
+    // fazia antes. Isso está ERRADO: `hydrate` não rodou, então a árvore viva
+    // ainda é a do workspace que está SAINDO. `layoutWorkspacePath` é o único
+    // respondedor de `ownsPersistedLayout`, e o carimbo fazia a debounce de
+    // 300 ms gravar os panes de A sob a chave de B — terminal de um workspace
+    // aparecendo dentro de outro.
+    //
+    // Mas sair daqui sem nada também está errado: sem posse, `persist` e
+    // `flushLayout` passam a PULAR toda gravação deste workspace para sempre
+    // (`ownsPersistedLayout` false), e o operador perde os terminais em
+    // silêncio. O desfecho correto é hidratar o alvo — a leitura já chegou —
+    // preservando os panes de MISSÃO que aterrissaram nesta janela, que é
+    // exatamente o que o carimbo existia para proteger.
     if (treeVersion !== versionAtStart) {
-      // NÃO carimbamos `layoutWorkspacePath = workspacePath` aqui.
-      //
-      // `hydrate` não rodou (o ramo retorna abaixo), então a árvore viva ainda
-      // é a do workspace que está SAINDO. Carimbá-la como deste workspace faz
-      // `ownsPersistedLayout` mentir e, 300 ms depois, a debounce grava os
-      // panes de A sob a chave de B — terminal de um workspace aparecendo
-      // dentro de outro (o "pane fantasma" relatado em campo).
-      //
-      // O carimbo existia para a releitura reconhecer o que está na tela como
-      // refresh em vez de restaurar por cima. Mas a árvore que está na tela,
-      // neste caso, é justamente a ESTRANGEIRA: tratá-la como estranha e
-      // hidratar o alvo por cima é o desfecho correto, não o indesejado. Sem
-      // carimbo a posse fica honesta e a guarda de persistência volta a valer.
+      const durableLayout = layout ? sanitizeWorkspaceLayout(layout) : null;
+      if (durableLayout) {
+        restoredPanesHandler?.(listPanes(durableLayout.root));
+      }
+      useLayoutStore
+        .getState()
+        .hydrate(durableLayout, { preserveLiveMissionPanes: true });
+      layoutWorkspacePath = workspacePath;
       return layout !== null;
     }
     const durableLayout = layout ? sanitizeWorkspaceLayout(layout) : null;
