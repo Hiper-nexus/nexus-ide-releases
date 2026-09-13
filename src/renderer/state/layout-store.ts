@@ -58,7 +58,11 @@ interface LayoutState {
   spawnAgent(
     adapterId: string,
     model: string,
-    options?: { readonly accountId?: string; readonly continuityPack?: string },
+    options?: {
+      readonly accountId?: string;
+      readonly continuityPack?: string;
+      readonly effort?: string;
+    },
   ): string | undefined;
   /** Replace the whole grid with an explicit set of panes (Modo Livre). */
   setPanes(panes: PaneModel[]): void;
@@ -943,7 +947,11 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
       );
     }
     const root = buildGridTree(capped);
-    const focusedPaneId = capped[0]!.id;
+    const currentFocusedId = get().focusedPaneId;
+    const focusedPaneId =
+      currentFocusedId && capped.some((pane) => pane.id === currentFocusedId)
+        ? currentFocusedId
+        : capped[0]!.id;
     const { viewKind, canvasNodeLayouts } = get();
     const updatedLayouts =
       viewKind === 'canvas'
@@ -981,6 +989,7 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
       // Só grava quando o operador escolheu a conta: `accountId: undefined`
       // no modelo persistido não é a mesma coisa que a chave ausente.
       ...(options?.accountId ? { accountId: options.accountId } : {}),
+      ...(options?.effort ? { effort: options.effort } : {}),
     };
     // Continuity is a fresh-session prompt, never missionId on this pane
     // (Main would reject stale persisted mission authority).

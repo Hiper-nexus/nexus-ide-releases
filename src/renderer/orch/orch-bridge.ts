@@ -358,8 +358,10 @@ function panesAfterMainOwnedPresentation(
 function focusFreshlyPresentedPane(
   paneId: string,
   existedBefore: boolean,
+  role?: string,
 ): void {
   if (existedBefore) return;
+  if (role === 'worker') return;
   useLayoutStore.getState().focus(paneId);
 }
 
@@ -423,7 +425,7 @@ async function presentLiveMainOwnedPane(
     const pane = current ? { ...current, agentTransport: 'acp' as const } : paneFromPresentation(req);
     const next = panesAfterMainOwnedPresentation(existing, pane);
     if (next !== existing) useLayoutStore.getState().setPanes(next);
-    focusFreshlyPresentedPane(req.paneId, current !== undefined);
+    focusFreshlyPresentedPane(req.paneId, current !== undefined, req.role);
     assertPresentedPaneMounted(req.paneId);
     return;
   }
@@ -437,7 +439,7 @@ async function presentLiveMainOwnedPane(
   if (next !== existing) {
     useLayoutStore.getState().setPanes(next);
   }
-  focusFreshlyPresentedPane(req.paneId, current !== undefined);
+  focusFreshlyPresentedPane(req.paneId, current !== undefined, req.role);
   assertPresentedPaneMounted(req.paneId);
 
   const sessionId = await waitForSession(

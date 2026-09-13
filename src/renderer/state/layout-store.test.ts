@@ -205,6 +205,16 @@ describe('layout-store maximize vs foco programático', () => {
     expect(useLayoutStore.getState().maximizedPaneId).toBeNull();
     expect(useLayoutStore.getState().focusedPaneId).toBe(orch.id);
   });
+
+  it('setPanes preserva o pane focado atual se ele continuar na lista de panes', () => {
+    useLayoutStore.getState().setPanes([shell, orch]);
+    useLayoutStore.getState().focus(orch.id);
+    expect(useLayoutStore.getState().focusedPaneId).toBe(orch.id);
+
+    // Atualização de panes com worker adicional não rouba o foco do orquestrador
+    useLayoutStore.getState().setPanes([shell, orch, worker]);
+    expect(useLayoutStore.getState().focusedPaneId).toBe(orch.id);
+  });
 });
 
 describe('layout-store transient pane recovery', () => {
