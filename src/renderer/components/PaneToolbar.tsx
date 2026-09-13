@@ -114,6 +114,7 @@ function ToolbarBtn({
   density: Density;
   menu?: boolean;
 }) {
+  const isLeader = action.id === 'mission-leader';
   return (
     <button
       type="button"
@@ -122,6 +123,7 @@ function ToolbarBtn({
         'nodrag',
         action.danger ? 'toolbar__btn--close' : '',
         action.active ? 'toolbar__btn--active' : '',
+        isLeader ? 'toolbar__btn--leader-active' : '',
       ]
         .filter(Boolean)
         .join(' ')}
@@ -633,7 +635,8 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
             className="toolbar__badge toolbar__badge--orch"
             data-tip="Orquestrador — coordena e delega para os workers"
           >
-            orq
+            <PixelIcon name="crown" size={10} className="toolbar__badge-crown" />
+            <span>orq</span>
           </span>
         )}
         {pane.role === 'worker' && pane.agentName && (

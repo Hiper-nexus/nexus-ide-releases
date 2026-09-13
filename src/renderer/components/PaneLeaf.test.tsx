@@ -159,4 +159,38 @@ describe('CoffeeSpillCorner no pane vivo focado', () => {
 
     act(() => root.unmount());
   });
+
+  it('renderiza efeito de feixe rotativo e classe de orquestrador quando role é orchestrator', () => {
+    const orchPane: PaneModel = {
+      id: 'pane-orch',
+      kind: 'cli-agent',
+      title: 'Maestro',
+      role: 'orchestrator',
+    };
+    const workerPane: PaneModel = {
+      id: 'pane-worker',
+      kind: 'cli-agent',
+      title: 'Worker',
+      role: 'worker',
+    };
+
+    useLayoutStore.setState({
+      root: buildGridTree([orchPane, workerPane]),
+      focusedPaneId: workerPane.id,
+      maximizedPaneId: null,
+      hydrated: true,
+      viewKind: 'grid',
+    });
+
+    render();
+
+    const beam = host.querySelectorAll('.pane__crown-beam');
+    expect(beam).toHaveLength(1);
+
+    const orchElement = host.querySelector('.pane--orchestrator');
+    expect(orchElement).not.toBeNull();
+    expect(orchElement?.querySelector('.pane__crown-beam')).not.toBeNull();
+
+    act(() => root.unmount());
+  });
 });

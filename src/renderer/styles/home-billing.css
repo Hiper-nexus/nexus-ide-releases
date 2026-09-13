@@ -533,10 +533,26 @@
    ela responde "quem manda neste pane". Peso 700 num chip de 10px só borrava o
    glifo — a cor sozinha já carrega o sinal. */
 .toolbar__badge--orch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
   background: var(--accent-soft);
   font-weight: 600;
+  box-shadow: 0 0 8px -2px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.toolbar__badge--orch .toolbar__badge-crown {
+  color: #ffd166;
+  filter: drop-shadow(0 0 3px rgba(255, 209, 102, 0.6));
+}
+
+.toolbar__btn--leader-active {
+  background: color-mix(in srgb, var(--accent) 22%, transparent) !important;
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent) !important;
+  color: #ffd166 !important;
+  box-shadow: 0 0 10px -2px color-mix(in srgb, var(--accent) 50%, transparent);
 }
 
 .toolbar__badge--worker {

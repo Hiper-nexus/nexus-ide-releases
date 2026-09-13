@@ -48,11 +48,15 @@ export function PaneLeaf({ pane }: Props) {
 
 function AcpPaneLeaf({ pane }: Props) {
   const isFocused = useLayoutStore((s) => s.focusedPaneId === pane.id);
+  const isOrchestrator = pane.role === 'orchestrator';
   return (
     <PaneInteractionSurface
       pane={pane}
-      className={`pane ${isFocused ? 'pane--focused' : ''} pane--acp`}
+      className={`pane ${isFocused ? 'pane--focused' : ''} ${
+        isOrchestrator ? 'pane--orchestrator' : ''
+      } pane--acp`}
     >
+      {isOrchestrator && <div className="pane__crown-beam" aria-hidden="true" />}
       <PaneToolbar pane={pane} isFocused={isFocused} />
       <AcpPaneView missionId={pane.missionId ?? ''} />
       {/* Derrame no canto superior direito — uma vez por foco,
@@ -65,6 +69,7 @@ function AcpPaneLeaf({ pane }: Props) {
 function TerminalPaneLeaf({ pane }: Props) {
   const slotRef = useRef<HTMLDivElement>(null);
   const isFocused = useLayoutStore((s) => s.focusedPaneId === pane.id);
+  const isOrchestrator = pane.role === 'orchestrator';
   // Display state (busy sticky) — true state flips on short PTY gaps; using it
   // here restarts border animations and reads as terminal flicker.
   const sessionState = useSessionStateStore((s) => s.displayStates.get(pane.id));
@@ -125,9 +130,10 @@ function TerminalPaneLeaf({ pane }: Props) {
     <PaneInteractionSurface
       pane={pane}
       className={`pane ${isFocused ? 'pane--focused' : ''} ${
-        sessionState ? `pane--state-${sessionState}` : ''
-      }`}
+        isOrchestrator ? 'pane--orchestrator' : ''
+      } ${sessionState ? `pane--state-${sessionState}` : ''}`}
     >
+      {isOrchestrator && <div className="pane__crown-beam" aria-hidden="true" />}
       <PaneToolbar pane={pane} isFocused={isFocused} />
       {pane.kind === 'cli-agent' && <PaneActivityStrip paneId={pane.id} />}
       {/* Irmão do slot, nunca filho: o nó do terminal é re-parentado para

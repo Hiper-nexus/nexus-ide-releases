@@ -823,6 +823,80 @@ body {
   }
 }
 
+/* ---- Orchestrator: Rei da Parada (King of the Grid) ---- */
+@property --crown-beam-angle {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+
+@keyframes crown-beam-spin {
+  from {
+    --crown-beam-angle: 0deg;
+  }
+  to {
+    --crown-beam-angle: 360deg;
+  }
+}
+
+.pane--orchestrator {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong));
+  box-shadow: 0 0 16px -4px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+
+.pane--orchestrator.pane--focused {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 1px var(--accent-strong),
+    0 0 24px -4px color-mix(in srgb, var(--accent) 38%, transparent);
+}
+
+/* O feixe rotativo ao redor do terminal:
+   Usa máscara de borda (padding 1.5px com mask-composite: exclude) para NUNCA
+   tocar nem embaçar o canvas do xterm. A rotação em ângulo do conic-gradient
+   executa no compositor GPU via @property. */
+.pane__crown-beam {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px;
+  pointer-events: none;
+  z-index: 2;
+  overflow: hidden;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+.pane__crown-beam::before {
+  content: '';
+  position: absolute;
+  inset: -20px;
+  background: conic-gradient(
+    from var(--crown-beam-angle, 0deg) at 50% 50%,
+    transparent 0deg,
+    transparent 180deg,
+    color-mix(in srgb, var(--role-orchestrator, #818cf8) 40%, transparent) 240deg,
+    color-mix(in srgb, var(--accent) 85%, transparent) 290deg,
+    #ffd166 335deg,
+    #ffffff 355deg,
+    transparent 360deg
+  );
+  animation: crown-beam-spin 4s linear infinite;
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pane__crown-beam::before {
+    animation: none;
+    background: linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--accent) 70%, transparent),
+      color-mix(in srgb, #ffd166 50%, transparent)
+    );
+  }
+}
+
 .pane--state-exited:not(.pane--focused) {
   border-color: color-mix(in srgb, var(--state-failed) 60%, var(--border-strong));
 }
