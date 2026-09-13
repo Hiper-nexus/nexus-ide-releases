@@ -869,6 +869,62 @@ export async function executeJarvisAction(
         };
       }
     }
+  } else if (action.type === 'open_agent') {
+    const workspace = useWorkspaceStore.getState().current;
+    if (!workspace) {
+      sayText = 'Abre um projeto primeiro; aí eu abro o agente nele.';
+      toolResult = { tool: action.type, ok: false, summary: 'sem workspace aberto' };
+    } else {
+      const rawAgent = action.agentId.toLowerCase().trim();
+      const agentId = rawAgent === 'antigravity' ? 'agy' : rawAgent;
+      let model = action.model;
+      let effort: string | undefined;
+
+      if (agentId === 'codex') {
+        model = action.model || 'gpt-5.6-luna';
+      } else if (agentId === 'agy') {
+        model = action.model || 'gemini-3.8-pro-high';
+        effort = 'max';
+      } else if (agentId === 'kimi') {
+        model = action.model || 'kimi-code/k3';
+      } else if (agentId === 'devin') {
+        model = action.model || 'swe-2-high';
+      }
+
+      const paneId = useLayoutStore.getState().spawnAgent(agentId, model || '', {
+        ...(effort ? { effort } : {}),
+      });
+
+      if (paneId) {
+        revealPaneForUser(paneId);
+        markEffect(control);
+        const sessionId = await waitForSession(paneId, 5_000);
+        checkpoint(control);
+        if (sessionId) {
+          sayText = sayText || `Agente ${agentId} aberto.`;
+          toolResult = {
+            tool: action.type,
+            ok: true,
+            summary: `agente ${agentId} aberto e visível (${model ?? 'padrão'})`,
+            output: { paneId, agentId, model, effort },
+          };
+        } else {
+          sayText = `Abri o painel, mas o agente ${agentId} ainda não iniciou.`;
+          toolResult = {
+            tool: action.type,
+            ok: false,
+            summary: `agente ${agentId} sem sessão`,
+          };
+        }
+      } else {
+        sayText = `Não consegui abrir o agente ${agentId}.`;
+        toolResult = {
+          tool: action.type,
+          ok: false,
+          summary: `falha ao abrir agente ${agentId}`,
+        };
+      }
+    }
   } else if (action.type === 'close_pane') {
     const layout = useLayoutStore.getState();
     const target = layout.focusedPaneId;
@@ -1175,10 +1231,16 @@ export async function executeJarvisAction(
       };
     }
   } else if (action.type === 'run_command') {
-    // A terminal Enter executes every physical line. Native confirmation is
-    // intentionally per command, so a model-produced newline must never turn
-    // one approved command into a second hidden execution.
-    const terminalCommand = action.command.trim() === 'I' ? 'ai' : action.command;
+    let terminalCommand = action.command.trim() === 'I' ? 'ai' : action.command.trim();
+    if (terminalCommand === 'codex') {
+      terminalCommand = 'codex --model gpt-5.6-luna';
+    } else if (terminalCommand === 'agy' || terminalCommand === 'antigravity') {
+      terminalCommand = 'agy --model gemini-3.8-pro-high --effort max';
+    } else if (terminalCommand === 'kimi') {
+      terminalCommand = 'kimi --model kimi-code/k3';
+    } else if (terminalCommand === 'devin') {
+      terminalCommand = 'devin --model swe-2-high';
+    }
     if (/[\r\n]/.test(terminalCommand)) {
       return {
         sayText: 'Por segurança, eu só executo comandos de uma única linha.',

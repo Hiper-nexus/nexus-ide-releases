@@ -100,6 +100,10 @@ function actionSummary(action: JarvisAction): string {
       if (action.mode === 'status') return 'checar status do repositório via pane';
       if (action.mode === 'push') return 'enviar repositório via pane';
       return 'atualizar repositório via pane';
+    case 'open_agent':
+      return action.model
+        ? `abrir agente ${action.agentId} (${action.model})`
+        : `abrir agente ${action.agentId}`;
   }
 }
 

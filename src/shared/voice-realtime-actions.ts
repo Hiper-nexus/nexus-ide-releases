@@ -13,6 +13,7 @@ export const SAFE_REALTIME_ACTIONS = [
   'new_agentic_mission',
   'new_workspace',
   'open_terminal',
+  'open_agent',
   'close_pane',
   'open_board',
   'open_settings',
@@ -59,6 +60,10 @@ export interface NexusRealtimeActionArgs {
   pergunta?: string;
   /** sync_repo_via_pane: pull | status | push (default pull). */
   mode?: 'pull' | 'status' | 'push';
+  /** open_agent: CLI agent adapter id (codex, agy, kimi, devin, etc.). */
+  agentId?: string;
+  /** open_agent: optional model override. */
+  model?: string;
 }
 
 export function summarizeNexusRealtimeAction(args: NexusRealtimeActionArgs): string {
@@ -85,6 +90,8 @@ export function summarizeNexusRealtimeAction(args: NexusRealtimeActionArgs): str
       return 'abrir assistente de workspace';
     case 'open_terminal':
       return 'abrir terminal';
+    case 'open_agent':
+      return args.agentId ? `abrir agente ${args.agentId}` : 'abrir agente';
     case 'close_pane':
       return 'fechar pane';
     case 'open_board':
@@ -161,6 +168,11 @@ export function realtimeArgsToJarvisAction(
   if (args.action === 'new_agentic_mission') {
     const intent = cleanText(args.intent, 4_000) || undefined;
     return { type: 'new_agentic_mission', ...(intent ? { intent } : {}) };
+  }
+  if (args.action === 'open_agent') {
+    const agentId = cleanText(args.agentId, 64);
+    const model = cleanText(args.model, 64) || undefined;
+    return agentId ? { type: 'open_agent', agentId, ...(model ? { model } : {}) } : null;
   }
   if (args.action === 'open_browser') {
     const url = cleanText(args.url, 4_096);

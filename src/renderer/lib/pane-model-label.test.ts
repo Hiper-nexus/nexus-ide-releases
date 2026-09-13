@@ -127,6 +127,20 @@ describe('resolveModelChipLabel', () => {
       expect(label!.version).toBe('K3 Max');
       expect(label!.medium).toBe('Kimi K3');
     });
+
+    it('kimi + kimi-code/k3', () => {
+      const label = resolveModelChipLabel('kimi', 'kimi-code/k3', undefined);
+      expect(label!.family).toBe('Kimi');
+      expect(label!.version).toBe('K3');
+      expect(label!.medium).toBe('Kimi K3');
+    });
+
+    it('kimi + kimi-k2.8', () => {
+      const label = resolveModelChipLabel('kimi', 'kimi-k2.8', undefined);
+      expect(label!.family).toBe('Kimi');
+      expect(label!.version).toBe('K2.8');
+      expect(label!.medium).toBe('Kimi K2.8');
+    });
   });
 
   describe('adapterId sem model', () => {

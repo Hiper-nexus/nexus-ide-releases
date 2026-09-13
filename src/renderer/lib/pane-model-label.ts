@@ -147,7 +147,11 @@ function parseModelVersion(model: string): ParsedModel {
     return parseGrokSuffix(clean.slice(5));
   }
 
-  // Kimi: "kimi-k3-max" → "K3 Max"
+  // Kimi: "kimi-code/k3" → "K3", "kimi-k3-max" → "K3 Max", "kimi-k2.8" → "K2.8"
+  if (lower.startsWith('kimi-code/')) {
+    const parts = clean.slice(10).split('-');
+    return { version: normalizeVersionParts(parts) };
+  }
   if (lower.startsWith('kimi-')) {
     const parts = clean.slice(5).split('-');
     return { version: normalizeVersionParts(parts) };

@@ -66,6 +66,7 @@ Action types:
 - {"type":"new_agentic_mission","intent":"<optional objective>"} - open a new mission directly in Agentic mode. Use this, never voice settings or design_squad, when the user asks to start/create a mission in "modo agêntico". It opens the objective step; it does not launch a squad.
 - {"type":"new_workspace"} - open the new workspace wizard (folder + setup).
 - {"type":"open_terminal"} - open an empty shell terminal in the current workspace.
+- {"type":"open_agent","agentId":"<codex|agy|kimi|devin|claude|opencode>","model":"<optional model>"} - open an AI agent terminal pane. Defaults: codex -> gpt-5.6-luna, agy -> gemini-3.8-pro-high, kimi -> kimi-code/k3, devin -> swe-2-high.
 - {"type":"close_pane"} - close the focused pane/terminal.
 - {"type":"open_board"} - open the missions / Ops Board.
 - {"type":"open_settings"} - open the main app settings drawer.

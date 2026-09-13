@@ -107,6 +107,51 @@ export function jarvisActionFastPath(
     return { say: say(ctx, 'Abrindo um terminal.'), expectReply: false, action: { type: 'open_terminal' } };
   }
 
+  const openAgentMatch =
+    t.match(
+      /\b(?:abre|abra|abrir|inicia|inicie|iniciar|sobe|suba|novo|cria|crie|criar)\b(?:\s+(?:o|a|um|uma))?(?:\s+pane\s+(?:com|de|do)?\s*)?(?:\s+(?:agente|cli))?\s*(codex|agy|antigravity|kimi|devin|claude|grok|glm|cursor)(?:\s+(?:no|em|na)\s+pane)?(?:\s+com\s+(.+))?\s*$/,
+    ) ??
+    t.match(
+      /\b(?:no|em|na)\s+pane\s+(?:mando|mande)?\s*(?:ele)?\s*(?:abrir|abre|iniciar|inicia)\s+(codex|agy|antigravity|kimi|devin|claude|grok|glm|cursor)\b/,
+    );
+  if (openAgentMatch) {
+    const rawAgent = openAgentMatch[1].toLowerCase();
+    const agentId = rawAgent === 'antigravity' ? 'agy' : rawAgent;
+    if (agentId === 'codex') {
+      return {
+        say: say(ctx, 'Abrindo o Codex com modelo Luna.'),
+        expectReply: false,
+        action: { type: 'open_agent', agentId: 'codex', model: 'gpt-5.6-luna' },
+      };
+    }
+    if (agentId === 'agy') {
+      return {
+        say: say(ctx, 'Abrindo o Antigravity com Gemini 3.8 em esforço máximo.'),
+        expectReply: false,
+        action: { type: 'open_agent', agentId: 'agy', model: 'gemini-3.8-pro-high' },
+      };
+    }
+    if (agentId === 'kimi') {
+      return {
+        say: say(ctx, 'Abrindo o Kimi no modelo K3.'),
+        expectReply: false,
+        action: { type: 'open_agent', agentId: 'kimi', model: 'kimi-code/k3' },
+      };
+    }
+    if (agentId === 'devin') {
+      return {
+        say: say(ctx, 'Abrindo o Devin no modelo SWE-2.'),
+        expectReply: false,
+        action: { type: 'open_agent', agentId: 'devin', model: 'swe-2-high' },
+      };
+    }
+    return {
+      say: say(ctx, `Abrindo o agente ${rawAgent}.`),
+      expectReply: false,
+      action: { type: 'open_agent', agentId },
+    };
+  }
+
   if (
     /\b(abre|abra|abrir|mostra|mostre)\b.*\b(board|quadro|painel de miss|ops board|missoes)\b/.test(t)
   ) {

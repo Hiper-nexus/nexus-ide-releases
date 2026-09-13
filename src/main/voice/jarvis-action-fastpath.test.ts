@@ -332,6 +332,34 @@ describe('jarvisActionFastPath', () => {
     expect(reply?.action).toEqual({ type: 'open_squad', squadName: 'code review' });
   });
 
+  it('abre codex, agy, kimi e devin com os modelos padrão corretos', () => {
+    expect(jarvisActionFastPath('abre o codex', CTX)?.action).toEqual({
+      type: 'open_agent',
+      agentId: 'codex',
+      model: 'gpt-5.6-luna',
+    });
+    expect(jarvisActionFastPath('no pane mando ele abrir codex', CTX)?.action).toEqual({
+      type: 'open_agent',
+      agentId: 'codex',
+      model: 'gpt-5.6-luna',
+    });
+    expect(jarvisActionFastPath('abre agy', CTX)?.action).toEqual({
+      type: 'open_agent',
+      agentId: 'agy',
+      model: 'gemini-3.8-pro-high',
+    });
+    expect(jarvisActionFastPath('abre o kimi', CTX)?.action).toEqual({
+      type: 'open_agent',
+      agentId: 'kimi',
+      model: 'kimi-code/k3',
+    });
+    expect(jarvisActionFastPath('abre devin', CTX)?.action).toEqual({
+      type: 'open_agent',
+      agentId: 'devin',
+      model: 'swe-2-high',
+    });
+  });
+
   it('conversa aberta não intercepta', () => {
     expect(jarvisActionFastPath('vamos dominar o mundo', CTX)).toBeNull();
     expect(jarvisActionFastPath('o que você acha?', CTX)).toBeNull();

@@ -69,6 +69,7 @@ const OPERATING_MODEL = `Nexus operating model:
   the user wants. Use open_squad for a named saved squad;
   use design_squad only when the user explicitly asks to create/design a new
   squad.
+- To open an agent pane (codex, agy, kimi, devin), call nexus_action with open_agent and appropriate agentId and model (defaults: codex -> gpt-5.6-luna, agy -> gemini-3.8-pro-high, kimi -> kimi-code/k3, devin -> swe-2-high).
 - Everyday repository update/sync/pull/push/status must use sync_repo_via_pane
   (AI CLI pane). Never use run_command or mcp_tool nexus_git_* for that intent.`;
 

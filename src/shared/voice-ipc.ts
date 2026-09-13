@@ -307,6 +307,7 @@ export type JarvisAction =
   | { type: 'new_agentic_mission'; intent?: string }
   | { type: 'new_workspace' }
   | { type: 'open_terminal' }
+  | { type: 'open_agent'; agentId: string; model?: string }
   | { type: 'close_pane' }
   | { type: 'open_board' }
   | { type: 'open_settings' }
