@@ -2998,7 +2998,7 @@ export const RELEASE_07617: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07618: AppRelease = {
   version: '0.76.18',
   date: '2026-09-11',
   codename: 'O terminal deixa de ficar escondido na tela de criação',
@@ -3031,4 +3031,57 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
   fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.19',
+  date: '2026-09-13',
+  codename: 'Chaves de API unificadas, Jarvis visível e resguardo de terminal',
+  summary:
+    'Painel centralizado de Chaves de API (Gemini, Grok, Groq, OpenAI, Claude e outros) ' +
+    'com salvamento no Keychain, assistente Jarvis embutida diretamente nas configurações ' +
+    'internas, orientação em português para ausência de bundle em disco e drenagem pré-exit no terminal.',
+  highlights: [
+    {
+      title: 'Central de Chaves de API unificada',
+      detail:
+        'Novo painel "Chaves de API" em Configurações para gerenciar Gemini, Grok, Groq, OpenAI, ' +
+        'Claude, ElevenLabs, DeepSeek, Kimi, Replicate e OpenRouter em um só lugar, com ' +
+        'salvamento automático no Keychain seguro e propagação para Jarvis, CLIs e Estúdio de Mídia.',
+    },
+    {
+      title: 'Jarvis visível e configurável nas configurações internas',
+      detail:
+        'A assistente Jarvis agora aparece com destaque em "Jarvis & Voz", trazendo todo o painel ' +
+        'de conversa ao vivo (Grok Voice, Gemini Live, OpenAI Realtime), personalização, timbre, ' +
+        'atalhos de atendimento e microfone de forma embutida e direta, sem modal escondido.',
+    },
+    {
+      title: 'Orientação clara quando o executável é movido ou excluído',
+      detail:
+        'Se o aplicativo em disco for apagado ou movido enquanto estava ' +
+        'aberto, o Darwin PTY Supervisor não cospe mais erro cru de ENOENT: ' +
+        'ele avisa em português que o app foi removido do disco e pede ' +
+        'reabertura ou novo build.',
+    },
+    {
+      title: 'Fim do texto sobreposto no encerramento de terminal',
+      detail:
+        'O evento de exit agora drena e descarrega todo o buffer pendente no ' +
+        'xterm antes de pintar "process exited", eliminando a corrida visual ' +
+        'que deixava resíduos de texto embaralhados na tela.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'F-204: Resguardo de bundle em disco e drenagem pré-exit no terminal',
+      detail:
+        'Previne travamentos ou mensagens de erro cruas quando arquivos do bundle são removidos em tempo de execução, e drena a saída do PTY antes de renderizar o banner de saída.',
+    },
+    {
+      title: 'F-350: Chaves de API dispersas e configuração da Jarvis oculta em modal',
+      detail:
+        'Criação da seção Chaves de API para todos os provedores e embutimento nativo do painel da Jarvis nas configurações internas.',
+    },
+  ],
 };

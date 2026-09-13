@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.19 — Chaves de API unificadas, Jarvis visível e resguardo de terminal
+
+- **Central de Chaves de API unificada (F-350)**: Novo painel dedicado "Chaves de API" em Configurações para gerenciar com facilidade as chaves dos provedores (Google Gemini, Grok, Groq, OpenAI, Claude, ElevenLabs, DeepSeek, Moonshot/Kimi, Replicate, OpenRouter). As chaves são armazenadas com segurança no Keychain local do sistema e propagadas automaticamente para a assistente Jarvis, adaptadores de CLI e Estúdio de Mídia. Inclui banner de acesso rápido na aba de Providers.
+- **Jarvis embutida e configurável nas configurações internas (F-350)**: A assistente Jarvis agora vive de forma visível e nativa na seção "Jarvis & Voz", com acesso imediato à conversa contínua ao vivo (Grok Voice, Gemini Live, OpenAI Realtime), personalização de nome e instruções, timbre, modo de atendimento e microfone, sem depender de popup modal.
+- **Orientação em português para bundle apagado ou movido (F-204)**: Quando o aplicativo em disco é removido ou substituído enquanto está em execução, o Darwin PTY Supervisor não cospe mais erro cru de ENOENT; ele instrui o operador em português a fechar e reabrir o app para religar os terminais.
+- **Drenagem de saída de terminal pré-exit (F-204)**: O evento de encerramento do processo drena o buffer pendente no xterm antes de estampar o banner de saída, eliminando corrida que deixava caracteres embaralhados na tela.
+
 ## 0.76.18 — O terminal deixa de ficar escondido na tela de criação
 
 - **A tela de criação só sabia iniciar missão**: para abrir um terminal era preciso sair para "Terminais", e não havia como escolher quais IAs abrir em cada painel. Agora, abaixo do formulário, a seção **"Prefere trabalhar nos terminais?"** oferece duas portas: **Montar meus terminais** (assistente que deixa escolher a pasta, a quantidade de painéis e uma IA diferente em cada um) e **Terminal sem IA** (terminal direto, sem assistente). Isto era **regressão, não ausência**: a seção existia no antigo `Launcher` — hoje código morto — com estas mesmas duas portas, e o store que a servia ficou órfão, sem nenhum chamador.
