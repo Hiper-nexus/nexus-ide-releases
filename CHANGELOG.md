@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.76.20 — Orquestração estável, terminais transparentes e modelos de fronteira
+
+- **Foco estável e cursores protegidos no grid multi-painéis (F-513)**: A reorganização da grade (`setPanes`) agora preserva o terminal em que o operador está trabalhando caso ele permaneça na tela. Além disso, a montagem em background de workers secundários não rouba o foco do cursor nem interrompe a digitação ativa.
+- **Início direto em terminais ao selecionar workspaces**: Ao abrir ou selecionar um workspace, o Nexus entra diretamente nos terminais interativos em vez de ficar preso na tela de criação de missão. A vaga livre no grid oferece ações diretas para abrir um terminal ou montar grade multi-IA.
+- **Instalação de CLIs via terminal e correção do Meta Muse (F-514)**: Adicionado botão "Instalar via terminal" no painel de Provedores para executar receitas de instalação em um painel interativo visível, permitindo acompanhar o download e permissões. A receita do Meta Muse no macOS foi atualizada para o Homebrew Cask oficial (`brew install --cask muse-code`), e o login alerta com segurança antes de tentar rodar binários não encontrados no PATH.
+- **Expurgo de modelos legados e migração transparente (F-515)**: Modelos descontinuados pela OpenAI que retornavam erro 400 em contas ChatGPT (`gpt-5.4`, `gpt-5.4-mini`, `gpt-5.3`) foram expurgados dos catálogos ativos e ganharam mapeamento automático transparente para `gpt-5.6-luna`.
+- **Novos modelos e Jarvis direcionada**: Catálogo atualizado com Kimi K2.8 e K3, Devin SWE-2, Gemini 3.8 Pro e Flash, e suporte a modelos DeepSeek, com o assistente Jarvis direcionado aos modelos de alta capacidade.
+
 ## 0.76.19 — Chaves de API unificadas, Jarvis visível e resguardo de terminal
 
 - **Central de Chaves de API unificada (F-350)**: Novo painel dedicado "Chaves de API" em Configurações para gerenciar com facilidade as chaves dos provedores (Google Gemini, Grok, Groq, OpenAI, Claude, ElevenLabs, DeepSeek, Moonshot/Kimi, Replicate, OpenRouter). As chaves são armazenadas com segurança no Keychain local do sistema e propagadas automaticamente para a assistente Jarvis, adaptadores de CLI e Estúdio de Mídia. Inclui banner de acesso rápido na aba de Providers.

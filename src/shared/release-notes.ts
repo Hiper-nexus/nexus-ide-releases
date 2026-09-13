@@ -3033,7 +3033,7 @@ export const RELEASE_07618: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07619: AppRelease = {
   version: '0.76.19',
   date: '2026-09-13',
   codename: 'Chaves de API unificadas, Jarvis visível e resguardo de terminal',
@@ -3085,3 +3085,59 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
 };
+
+export const RELEASE_07620: AppRelease = {
+  version: '0.76.20',
+  date: '2026-09-13',
+  codename: 'Orquestração estável, terminais transparentes e modelos de fronteira',
+  summary:
+    'Foco estável sem roubo de cursor por workers em background, abertura direta em terminais ao iniciar workspaces, ' +
+    'instalação de CLIs no terminal com receita verificada do Meta Muse, expurgo e auto-migração de modelos legados (gpt-5.4 → gpt-5.6-luna) ' +
+    'e catálogo atualizado com Kimi K2.8/K3, Devin SWE-2 e Gemini 3.8 Pro.',
+  highlights: [
+    {
+      title: 'Foco e cursores protegidos no grid multi-painéis',
+      detail:
+        'A reorganização da grade preserva com precisão o terminal focado pelo operador, e workers montados em segundo plano não roubam mais o foco da digitação ativa.',
+    },
+    {
+      title: 'Início direto em terminais e novo fluxo de workspace',
+      detail:
+        'Ao abrir ou selecionar um workspace, o Nexus entra diretamente nos terminais interativos em vez de prender o operador na tela de criação, com opções rápidas de montar grade multi-IA na vaga livre.',
+    },
+    {
+      title: 'Instalação de CLIs via terminal e correção do Meta Muse',
+      detail:
+        'Novo botão "Instalar via terminal" em Provedores para executar a instalação em um painel interativo visível com feedback em tempo real. A receita do Meta Muse no macOS agora utiliza o Homebrew Cask oficial (brew install --cask muse-code).',
+    },
+    {
+      title: 'Expurgo de modelos legados e migração transparente',
+      detail:
+        'Modelos descontinuados pela OpenAI que retornavam erro 400 (gpt-5.4, gpt-5.4-mini, gpt-5.3) foram removidos dos catálogos e ganharam migração automática transparente para gpt-5.6-luna.',
+    },
+    {
+      title: 'Novos modelos e Jarvis direcionada',
+      detail:
+        'Integração oficial de Kimi K2.8 e K3, Devin SWE-2, Gemini 3.8 Pro e Flash, e suporte expandido a modelos DeepSeek, com roteamento de voz direcionado aos modelos de alta capacidade.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'F-513: Foco involuntário e roubo de cursor por montagem de workers no grid',
+      detail:
+        'Preserva o pane focado em setPanes e restringe focusFreshlyPresentedPane para workers secundários.',
+    },
+    {
+      title: 'F-514: Falha na instalação do Meta Muse e falta de terminal visível para instalar CLIs',
+      detail:
+        'Atualiza receita do Muse para cask oficial e adiciona terminal interativo para instalações de CLIs.',
+    },
+    {
+      title: 'F-515: Erro 400 por modelos legados do Codex (gpt-5.4) e distorção na ordenação de modelos',
+      detail:
+        'Remove modelos obsoletos, cria mapeamento migrateModelId e garante ordenação estrita por nota numérica no comparador de modelos.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = RELEASE_07620;
