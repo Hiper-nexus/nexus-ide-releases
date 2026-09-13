@@ -132,10 +132,11 @@ export function canReplayScrollback(
 /**
  * Colunas mínimas para uma TUI não quebrar a própria linha de status.
  *
- * 60 cobre com folga a linha mais longa que medimos num agente real —
- * `thinking with high effort (esc to interrupt · 5s)`, 51 caracteres.
+ * 80 cobre com folga a linha de status de agentes modernos com thinking longo,
+ * ex.: `Harmonizing... still thinking with high effort (esc to interrupt · 12s)`
+ * (70 caracteres) e TUIs padrão de 80 colunas.
  */
-export const MIN_USABLE_COLS = 60;
+export const MIN_USABLE_COLS = 80;
 
 /**
  * POR QUE ISTO EXISTE (medido ao vivo em 11/09, janela 1280, célula 7,74px):

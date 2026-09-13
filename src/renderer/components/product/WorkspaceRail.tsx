@@ -89,6 +89,8 @@ export interface WorkspaceRailProps {
   onOpenTaskBoard: () => void;
   onOpenMemory: () => void;
   onOpenSettings: () => void;
+  onOpenApiKeys?: () => void;
+  onOpenVoiceSettings?: () => void;
   onOpenUsageQuota?: () => void;
   /** Destino explícito do grid. Não é o nome do workspace. */
   onOpenTerminals: () => void;
@@ -718,6 +720,8 @@ export function WorkspaceRail({
   onOpenTaskBoard,
   onOpenMemory,
   onOpenSettings,
+  onOpenApiKeys,
+  onOpenVoiceSettings,
   onOpenUsageQuota,
   onOpenTerminals,
   onOpenLauncher,
@@ -1036,6 +1040,24 @@ export function WorkspaceRail({
           >
             <PixelIcon name="config" size={12} />
             <span className="workspace-rail__row-label">Configurações</span>
+          </button>
+          <button
+            type="button"
+            className="workspace-rail__quick-icon-btn"
+            title="Chaves de API (Gemini, Grok, Groq, OpenAI...)"
+            aria-label="Chaves de API"
+            onClick={onOpenApiKeys ?? (() => useProductNavigationStore.getState().openSettings('api-keys'))}
+          >
+            <PixelIcon name="key" size={11} />
+          </button>
+          <button
+            type="button"
+            className="workspace-rail__quick-icon-btn"
+            title="Jarvis & Voz"
+            aria-label="Jarvis & Voz"
+            onClick={onOpenVoiceSettings ?? (() => useProductNavigationStore.getState().openSettings('voice'))}
+          >
+            <PixelIcon name="mic" size={11} />
           </button>
           <div
             className="workspace-rail__cockpit-conn"

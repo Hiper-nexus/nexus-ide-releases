@@ -198,12 +198,20 @@ export function Launcher({
             </p>
             <div className="launcher__actions">
               <LauncherAction
+                id="pane"
+                label="Montar meus terminais"
+                accessibleLabel="Montar meus terminais"
+                description="Inicie direto com grade de terminais e escolha suas IAs."
+                icon="grid"
+                primary
+                onClick={onOpenPane}
+              />
+              <LauncherAction
                 id="mission"
                 label="Criar com IA"
                 accessibleLabel="Criar com IA"
                 description="Conte sua ideia e prepare uma missão."
                 icon="mission"
-                primary
                 onClick={onStartMission}
               />
               <LauncherAction

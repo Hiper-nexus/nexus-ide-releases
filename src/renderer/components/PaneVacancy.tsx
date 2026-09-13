@@ -4,6 +4,7 @@ import { routeMissionAttention } from '../lib/mission-attention-route';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
+import { useTerminalGridDialogStore } from '../state/terminal-grid-dialog-store';
 import { CoffeeSpillCorner } from '../pet/CoffeeCup';
 import { ActionCard, EmptyState } from './ActionCard';
 import { PaneInteractionSurface } from './PaneInteractionSurface';
@@ -128,7 +129,7 @@ export function PaneVacancyBody({ pane }: { readonly pane: PaneModel }) {
     <ActionCard
       icon="terminal"
       size="sm"
-      variant="ghost"
+      variant="primary"
       title="Abrir terminal aqui"
       subtitle="Esta vaga vira um terminal seu"
       onClick={(event) => {
@@ -148,17 +149,27 @@ export function PaneVacancyBody({ pane }: { readonly pane: PaneModel }) {
             title="Vaga livre no grid"
             body={
               <p>
-                Nenhum agente ocupa esta área. Quando uma missão apresentar um
-                agente, ele nasce aqui.
+                Nenhum agente ocupa esta área. Inicie um terminal diretamente ou monte uma grade de terminais.
               </p>
             }
             action={
               <>
                 {openTerminal}
                 <ActionCard
+                  icon="grid"
+                  size="sm"
+                  variant="default"
+                  title="Montar grade de terminais"
+                  subtitle="Escolha a quantidade de terminais e IAs"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    useTerminalGridDialogStore.getState().open({ initialCount: 2 });
+                  }}
+                />
+                <ActionCard
                   icon="mission"
                   size="sm"
-                  variant="primary"
+                  variant="ghost"
                   title="Começar uma missão"
                   subtitle="Descrever o objetivo no início"
                   onClick={(event) => {

@@ -1003,6 +1003,11 @@ export function App() {
     void useWorkspaceStore
       .getState()
       .pick()
+      .then(() => {
+        if (useWorkspaceStore.getState().current) {
+          useProductNavigationStore.getState().openTerminal();
+        }
+      })
       .catch((cause: unknown) => {
         useToastStore.getState().push(
           'error',
@@ -1015,7 +1020,7 @@ export function App() {
   function selectWorkspace(workspaceId: string): void {
     const workspace = useWorkspaceStore.getState();
     if (workspace.current?.path === workspaceId) {
-      useProductNavigationStore.getState().openLauncher();
+      useProductNavigationStore.getState().openTerminal();
       return;
     }
     void workspace
@@ -1349,6 +1354,8 @@ export function App() {
             onOpenTaskBoard={navigation.openTaskBoard}
             onOpenMemory={navigation.openMemory}
             onOpenSettings={() => navigation.openSettings()}
+            onOpenApiKeys={() => navigation.openSettings('api-keys')}
+            onOpenVoiceSettings={() => navigation.openSettings('voice')}
             onOpenUsageQuota={() => navigation.openSettings('usage-quota')}
           />
         }

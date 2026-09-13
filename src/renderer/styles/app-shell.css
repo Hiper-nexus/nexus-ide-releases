@@ -1564,6 +1564,27 @@
   flex: 1;
 }
 
+.workspace-rail__quick-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border-radius: var(--radius-xs, 3px);
+  background: transparent;
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.workspace-rail__quick-icon-btn:hover {
+  background: var(--surface-overlay, rgba(255, 255, 255, 0.08));
+  color: var(--text-bright, #fff);
+  border-color: var(--border-medium, rgba(255, 255, 255, 0.2));
+}
+
 .workspace-rail__cockpit-conn {
   display: inline-flex;
   align-items: center;
