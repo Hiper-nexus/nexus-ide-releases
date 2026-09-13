@@ -202,4 +202,31 @@ describe('UpdateManager', () => {
       'repositories/1304178302',
     );
   });
+
+  it('mapeia erro de assinatura de código do Squirrel para orientação amigável em português', () => {
+    const listeners = new Map<string, (err: unknown) => void>();
+    electron.autoUpdater.on.mockImplementation((event: string, cb: (err: unknown) => void) => {
+      listeners.set(event, cb);
+      return electron.autoUpdater;
+    });
+    const prevFeed = process.env.NEXUS_UPDATE_FEED;
+    process.env.NEXUS_UPDATE_FEED = 'https://api.nexuside.app/feed';
+    try {
+      const manager = new UpdateManager(true, {
+        runtimeArch: 'arm64',
+        runtimePlatform: 'darwin',
+      });
+      manager.init();
+      const errorHandler = listeners.get('error');
+      expect(errorHandler).toBeDefined();
+      errorHandler?.(new Error('Could not get code signature for running application'));
+      expect(manager.getState().phase).toBe('error');
+      expect(manager.getState().error).toBe(
+        'O app atual foi aberto fora de /Applications ou a partir de build sem assinatura Developer ID. Instale o .dmg oficial para atualizar.',
+      );
+    } finally {
+      process.env.NEXUS_UPDATE_FEED = prevFeed;
+    }
+  });
 });
+

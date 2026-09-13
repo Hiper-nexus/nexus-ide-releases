@@ -724,7 +724,11 @@ export class UpdateManager {
     this.squirrelWired = true;
     autoUpdater.on('error', (err) => {
       writeUpdateLog('warn', 'squirrel:error', err);
-      this.patch({ phase: 'error', error: String(err.message ?? err).slice(0, 200) });
+      const raw = String(err?.message ?? err);
+      const error = raw.includes('Could not get code signature')
+        ? 'O app atual foi aberto fora de /Applications ou a partir de build sem assinatura Developer ID. Instale o .dmg oficial para atualizar.'
+        : raw.slice(0, 200);
+      this.patch({ phase: 'error', error });
     });
     autoUpdater.on('update-available', () => {
       writeUpdateLog('info', 'squirrel:update-available', { mode: this.mode });

@@ -303,6 +303,32 @@ export function UpdateModal({ state, onClose }: Props) {
               Reiniciar agora
             </button>
           )}
+          {phase === 'error' && available && (
+            <>
+              <button
+                type="button"
+                className="update-modal__btn update-modal__btn--primary"
+                onClick={() => {
+                  const tag = available.tag || `v${available.version}`;
+                  const url = `https://github.com/Hiper-nexus/nexus-ide/releases/tag/${tag}`;
+                  void window.nexus?.app?.openExternal(url);
+                }}
+              >
+                Baixar instalador (.dmg)
+              </button>
+              {state.canInstall && (
+                <button
+                  type="button"
+                  className="update-modal__btn"
+                  onClick={() =>
+                    runUpdateAction('install', () => window.nexus.update.install())
+                  }
+                >
+                  Tentar novamente
+                </button>
+              )}
+            </>
+          )}
           <button
             className="update-modal__btn"
             disabled={busy}
