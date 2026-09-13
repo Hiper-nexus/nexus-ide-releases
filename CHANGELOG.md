@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.21 — Rei da Parada: Feixe rotativo do orquestrador e distinção real
+
+- **Destaque visual do terminal orquestrador ("Rei da Parada") (F-516)**: O terminal líder que atua como orquestrador agora exibe um feixe luminoso perimetral animado (`.pane__crown-beam`) que circula continuamente pela sua borda. O efeito utiliza gradiente cônico em rotação suave e máscara de exclusão CSS (`mask-composite: exclude`), executando com aceleração total no compositor da GPU sem repintar o canvas do xterm e com zero interferência no input.
+- **Insígnia da coroa e comandos de liderança**: O badge `orq` na barra de ferramentas do terminal foi aprimorado com uma coroa dourada (`crown`) luminosa com drop-shadow, e o botão líder recebe realce de destaque ativo em tons de ouro e magenta.
+- **Acessibilidade**: Fallback gracioso para usuários com `prefers-reduced-motion: reduce`, substituindo a rotação por um gradiente estático elegante.
+
 ## 0.76.20 — Orquestração estável, terminais transparentes e modelos de fronteira
 
 - **Foco estável e cursores protegidos no grid multi-painéis (F-513)**: A reorganização da grade (`setPanes`) agora preserva o terminal em que o operador está trabalhando caso ele permaneça na tela. Além disso, a montagem em background de workers secundários não rouba o foco do cursor nem interrompe a digitação ativa.

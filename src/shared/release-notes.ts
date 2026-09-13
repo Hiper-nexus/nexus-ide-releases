@@ -3086,7 +3086,7 @@ export const RELEASE_07619: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07620: AppRelease = {
   version: '0.76.20',
   date: '2026-09-13',
   codename: 'Orquestração estável, terminais transparentes e modelos de fronteira',
@@ -3140,4 +3140,35 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_07620: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.21',
+  date: '2026-09-13',
+  codename: 'Rei da Parada: Feixe rotativo do orquestrador e distinção real',
+  summary:
+    'Destaque visual de alta visibilidade para o terminal orquestrador com feixe de luz rotativo perimetral ' +
+    '(Crown Beam) 100% acelerado no compositor GPU sem repintar o xterm, insígnia da coroa no badge da barra de ferramentas ' +
+    'e realce dinâmico do painel líder do grid.',
+  highlights: [
+    {
+      title: 'Feixe rotativo do orquestrador (Rei da Parada)',
+      detail:
+        'Um feixe de luz dinâmico e contínuo percorre o perímetro externo do terminal orquestrador via gradiente cônico animado ' +
+        'no compositor GPU, destacando o líder da missão sem degradar performance nem repintar o canvas do xterm.',
+    },
+    {
+      title: 'Insígnia da coroa e comandos de liderança',
+      detail:
+        'O badge orq passa a exibir a coroa dourada com drop-shadow luminoso, e o botão de liderança na barra de ferramentas ' +
+        'recebe realce ativo em tons de ouro e magenta.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'F-516: Falta de distinção imediata do terminal orquestrador líder em grids multi-painéis',
+      detail:
+        'Implementado feixe luminoso perimetral com máscara de exclusão CSS e gradiente cônico animado, com suporte total a prefers-reduced-motion.',
+    },
+  ],
+};
+
+export const RELEASE_07621: AppRelease = CURRENT_RELEASE;
