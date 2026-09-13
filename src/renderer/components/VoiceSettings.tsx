@@ -143,13 +143,23 @@ function comboFromKeyboardEvent(
   return { accel: [...mods, key].join('+'), key };
 }
 
-export function VoiceSettings() {
+export interface VoiceSettingsProps {
+  onClose?: () => void;
+  embedded?: boolean;
+}
+
+export function VoiceSettings({ onClose, embedded = false }: VoiceSettingsProps = {}) {
   const draftHydrationBarrier = useRef(createDraftHydrationBarrier()).current;
-  const open = useVoiceStore((s) => s.settingsOpen);
+  const storeOpen = useVoiceStore((s) => s.settingsOpen);
+  const open = embedded || storeOpen;
   const info = useVoiceStore((s) => s.info);
   const liveState = useVoiceStore((s) => s.liveState);
   const transcriptAppend = useVoiceStore((s) => s.transcriptAppend);
-  const close = useVoiceStore((s) => s.closeSettings);
+  const storeClose = useVoiceStore((s) => s.closeSettings);
+  const close = () => {
+    if (onClose) onClose();
+    storeClose();
+  };
   const setInfo = useVoiceStore((s) => s.setInfo);
   const hudMode = useVoiceStore((s) => s.hud.mode);
   const setHudMode = useVoiceStore((s) => s.setHudMode);
@@ -294,7 +304,7 @@ export function VoiceSettings() {
   }, [open, info, draftHydrationBarrier]);
 
   useEffect(() => {
-    if (!open || info) return;
+    if (!open || info || !window.nexus?.voice?.getInfo) return;
     let cancelled = false;
     void window.nexus.voice
       .getInfo()
@@ -658,15 +668,15 @@ export function VoiceSettings() {
         ? 'ativação por voz ligada'
         : 'ativação por voz desligada';
 
-return (
+  return (
     <div
-      className="agent-picker"
-      role="dialog"
-      aria-modal="true"
+      className={embedded ? 'voice-settings voice-settings--embedded' : 'agent-picker'}
+      role={embedded ? undefined : 'dialog'}
+      aria-modal={embedded ? undefined : 'true'}
       aria-label="Configurações da Jarvis"
     >
-      <div className="agent-picker__overlay" onClick={close} />
-      <div className="agent-picker__panel agent-picker__panel--voice voice-settings">
+      {!embedded && <div className="agent-picker__overlay" onClick={close} />}
+      <div className={embedded ? 'voice-settings__container' : 'agent-picker__panel agent-picker__panel--voice voice-settings'}>
         <header className="voice-settings__hero">
           <div
             className={`voice-settings__orb voice-settings__orb--${liveConnectionTone}`}
@@ -691,11 +701,13 @@ return (
               Configure como conversar com a assistente e ouvir suas respostas.
             </p>
           </div>
-          <CloseButton
-            className="voice-settings__close"
-            onClick={close}
-            label="Fechar configurações de voz"
-          />
+          {!embedded && (
+            <CloseButton
+              className="voice-settings__close"
+              onClick={close}
+              label="Fechar configurações de voz"
+            />
+          )}
         </header>
 
         {!info ? (

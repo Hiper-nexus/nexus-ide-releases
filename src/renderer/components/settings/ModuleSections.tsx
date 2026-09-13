@@ -23,6 +23,7 @@ import { TerminalPerformanceStatus } from './TerminalPerformanceStatus';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
 import { EmptyState } from '../ActionCard';
 import { SquadEditor } from '../SquadEditor';
+import { VoiceSettings } from '../VoiceSettings';
 
 /** MÓDULOS sections: Terminal, Voice, Providers, Squads, Marketplace. */
 
@@ -164,21 +165,26 @@ export function TerminalSection() {
 export function VoiceSection() {
   const openVoice = useVoiceStore((s) => s.openSettings);
   return (
-    <section>
-      <SettingsSectionTitle>Voz</SettingsSectionTitle>
-      <p className="settings-detail__hint">
-        Escolha o microfone e configure ditado, tradução e respostas faladas da assistente.
-      </p>
+    <section className="settings-section">
+      <div className="settings-row-between">
+        <div>
+          <SettingsSectionTitle>Jarvis & Voz</SettingsSectionTitle>
+          <p className="settings-detail__hint">
+            Configure a assistente Jarvis, modo contínuo de conversa ao vivo em tempo real, respostas faladas e microfone.
+          </p>
+        </div>
+        <button
+          type="button"
+          className="settings-btn"
+          onClick={() => {
+            openVoice();
+          }}
+        >
+          Abrir configurações de voz em janela
+        </button>
+      </div>
       <AudioDeviceControls />
-      <button
-        type="button"
-        className="settings-btn settings-btn--primary"
-        onClick={() => {
-          openVoice();
-        }}
-      >
-        Abrir configurações de voz
-      </button>
+      <VoiceSettings embedded />
     </section>
   );
 }

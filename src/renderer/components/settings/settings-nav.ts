@@ -1,5 +1,6 @@
 export type SettingsSection =
   | 'account'
+  | 'api-keys'
   | 'appearance'
   | 'pets'
   | 'system'
@@ -89,12 +90,45 @@ export const SETTINGS_GROUPS: NavGroup[] = [
       aliases: ['plano · assinatura', 'account', 'billing', 'subscription', 'você', 'you'],
     },
     {
+      id: 'api-keys',
+      icon: 'KEY',
+      pixelIcon: 'key',
+      title: 'Chaves de API',
+      subtitle: 'Gemini, Grok, Groq, OpenAI, Claude e outros',
+      aliases: [
+        'keys',
+        'api key',
+        'gemini',
+        'grok',
+        'groq',
+        'openai',
+        'claude',
+        'elevenlabs',
+        'deepseek',
+        'chaves',
+        'tokens',
+        'credenciais',
+      ],
+    },
+    {
       id: 'voice',
       icon: 'VOX',
       pixelIcon: 'mic',
-      title: 'Voz',
-      subtitle: 'Microfone, ditado e assistente',
-      aliases: ['Jarvis · captura', 'voice', 'realtime', 'wake', 'mic', 'microfone'],
+      title: 'Jarvis & Voz',
+      subtitle: 'Assistente Jarvis, conversa ao vivo e microfone',
+      aliases: [
+        'jarvis',
+        'assistente',
+        'grok voice',
+        'gemini live',
+        'realtime',
+        'captura',
+        'voice',
+        'wake',
+        'mic',
+        'microfone',
+        'ditado',
+      ],
     },
   ]),
   pillarGroup('app', [
@@ -384,6 +418,7 @@ export const SETTINGS_GROUPS: NavGroup[] = [
 /** YOU · APP · AGENTS · SYSTEM — pilares emocionais da nav (endorphin). */
 const SETTINGS_SECTION_PILLAR: Record<SettingsSection, SettingsNavPillarId> = {
   account: 'you',
+  'api-keys': 'you',
   voice: 'you',
   appearance: 'app',
   pets: 'app',

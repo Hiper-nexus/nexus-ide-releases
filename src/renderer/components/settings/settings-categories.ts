@@ -10,9 +10,9 @@ export interface SettingsCategory {
 }
 
 export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
-  { id: 'account', title: 'Minha conta', description: 'Plano e assinatura', icon: 'id-badge', sections: ['account'] },
+  { id: 'account', title: 'Minha conta', description: 'Plano, assinatura e chaves', icon: 'id-badge', sections: ['account', 'api-keys'] },
   { id: 'personalization', title: 'Aparência e pets', description: 'Cores e seus mascotes', icon: 'grid', sections: ['appearance', 'pets'] },
-  { id: 'voice', title: 'Voz e captura', description: 'Microfone e assistente', icon: 'mic', sections: ['voice', 'vision'] },
+  { id: 'voice', title: 'Voz e Jarvis', description: 'Assistente Jarvis, microfone e visão', icon: 'mic', sections: ['voice', 'vision'] },
   { id: 'ai', title: 'Agentes e modelos', description: 'Conexões, equipes e uso', icon: 'users', sections: ['providers', 'squads', 'llms', 'ranking', 'usage-quota'] },
   { id: 'media', title: 'Mídia', description: 'Conectar serviços e ver modelos', icon: 'vision', sections: ['media', 'media-catalog'] },
   { id: 'resources', title: 'Recursos', description: 'Catálogos e referências', icon: 'sparkle', sections: ['harness', 'agents', 'skills', 'marketplace', 'design-systems'] },
@@ -26,6 +26,7 @@ export function settingsCategoryFor(section: SettingsSection): SettingsCategory 
 }
 
 export const SETTINGS_SECTION_SHORT_LABELS: Partial<Record<SettingsSection, string>> = {
+  'api-keys': 'Chaves de API', voice: 'Jarvis & Voz',
   media: 'Conexões', 'media-catalog': 'Modelos', providers: 'Contas de IA',
   llms: 'Ferramentas', ranking: 'Comparar modelos', 'usage-quota': 'Uso e cotas',
   'agent-connection': 'Agentes', mcps: 'Ferramentas', remote: 'Servidores', 'companion-relay': 'Celular',

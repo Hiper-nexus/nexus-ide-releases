@@ -38,6 +38,7 @@ import { ModelRankingSection } from './ModelRankingSection';
 import { PixelIcon } from '../PixelIcon';
 import { useGamificationStore } from '../../state/gamification-store';
 import { AccountSection } from './AccountSection';
+import { ApiKeysSection } from './ApiKeysSection';
 import { AppearanceSection } from './AppearanceSection';
 import { MediaSection } from './MediaSection';
 import {
@@ -135,6 +136,8 @@ function SettingsSectionContent({
   switch (section) {
     case 'account':
       return <AccountSection />;
+    case 'api-keys':
+      return <ApiKeysSection />;
     case 'appearance':
       return <AppearanceSection />;
     case 'pets':

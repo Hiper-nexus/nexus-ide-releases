@@ -46,6 +46,27 @@
   line-height: 1.45;
 }
 
+.voice-settings--embedded {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  margin-top: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--bg-elevated);
+  box-shadow: none;
+  overflow: hidden;
+}
+
+.voice-settings--embedded .voice-settings__container {
+  display: flex;
+  flex-direction: column;
+  height: 640px;
+  max-height: calc(100vh - 200px);
+  min-height: 480px;
+  overflow: hidden;
+}
+
 /* ── Header ─────────────────────────────────────────────────────────── */
 .voice-settings__hero {
   display: flex;

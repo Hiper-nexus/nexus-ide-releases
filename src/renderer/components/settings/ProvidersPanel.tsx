@@ -9,6 +9,7 @@ import type { AdapterAuthStatus, ProviderSettingsInfo } from '../../../shared/pr
 import { credentialLinkForKeySlot } from '../../../shared/credential-links';
 import { useAccountStore } from '../../state/account-store';
 import { useProviderStore } from '../../state/provider-store';
+import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { openExternalFromAnchor } from '../../lib/open-external';
 import { ActionCard } from '../ActionCard';
 import { AccountsManager } from './AccountsManager';
@@ -816,6 +817,22 @@ export function ProvidersPanel() {
           </button>
         )}
       </header>
+
+      <div className="prov-hub__api-keys-banner" role="region" aria-label="Acesso rápido às chaves de API">
+        <div className="prov-hub__api-keys-banner-info">
+          <span className="prov-hub__api-keys-banner-badge">Novo</span>
+          <span className="prov-hub__api-keys-banner-text">
+            Procurando onde inserir chaves de API (Gemini, Grok, Groq, OpenAI, Claude...)?
+          </span>
+        </div>
+        <button
+          type="button"
+          className="settings-btn settings-btn--sm"
+          onClick={() => useProductNavigationStore.getState().openSettings('api-keys')}
+        >
+          Gerenciar chaves de API →
+        </button>
+      </div>
       {provisionSummary && (
         <p className="settings-field__note" role="status">
           {provisionSummary}
