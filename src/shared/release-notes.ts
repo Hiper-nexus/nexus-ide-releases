@@ -3086,7 +3086,7 @@ export const RELEASE_07619: AppRelease = {
   ],
 };
 
-export const RELEASE_07620: AppRelease = {
+export const CURRENT_RELEASE: AppRelease = {
   version: '0.76.20',
   date: '2026-09-13',
   codename: 'Orquestração estável, terminais transparentes e modelos de fronteira',
@@ -3140,4 +3140,4 @@ export const RELEASE_07620: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = RELEASE_07620;
+export const RELEASE_07620: AppRelease = CURRENT_RELEASE;
