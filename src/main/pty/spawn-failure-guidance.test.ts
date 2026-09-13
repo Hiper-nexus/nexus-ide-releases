@@ -33,6 +33,16 @@ describe('spawnFailureGuidance', () => {
     expect(guidance).not.toContain('feche e reabra o Nexus');
   });
 
+  it('traduz bundle/Resources apagado do disco durante execução como reinicialização necessária', () => {
+    const guidance = spawnFailureGuidance(
+      "Packaged Darwin PTY responsibility supervisor failed application-" +
+        "ownership verification: ENOENT: no such file or directory, lstat '/Users/cleofaspereirarocha/nexus-ide/out/NexusIDE-darwin-arm64/NexusIDE.app/Contents/Resources'",
+    );
+    expect(guidance).not.toBeNull();
+    expect(guidance).toContain('feche e reabra o Nexus');
+    expect(guidance).toContain('apagado, movido ou reinstalado');
+  });
+
   it('retorna null para erro desconhecido (não inventa orientação)', () => {
     expect(spawnFailureGuidance('spawn ENOENT')).toBeNull();
     expect(spawnFailureGuidance('')).toBeNull();

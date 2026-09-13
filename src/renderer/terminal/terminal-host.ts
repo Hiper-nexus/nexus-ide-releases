@@ -1041,6 +1041,7 @@ function startSpawn(
       host.cleanups.push(() => discardTerminalOutput(host.term));
       host.cleanups.push(
         window.nexus.pty.onExit(res.sessionId, ({ exitCode }) => {
+          flushTerminalOutput(host.term);
           const staleExactResume =
             resume &&
             !missionId &&

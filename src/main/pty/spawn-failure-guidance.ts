@@ -18,6 +18,14 @@ const SWAPPED_BUNDLE_MARKERS = [
   'running executable is not the exact main/utility image inside this bundle',
 ] as const;
 
+/** Bundle or Resources was removed, deleted, or unlinked while running. */
+const MISSING_BUNDLE_MARKERS = [
+  'no such file or directory',
+  'ENOENT',
+  'packaged application has no absolute resourcesPath',
+  'resourcesPath is not inside a macOS application bundle',
+] as const;
+
 /** Signature chain broken → reinstall, a restart cannot heal this. */
 const BROKEN_SIGNATURE_MARKERS = [
   'must both carry Nexus Team ID',
@@ -31,6 +39,15 @@ export function spawnFailureGuidance(errorText: string): string | null {
     return (
       'O Nexus foi atualizado em disco enquanto estava aberto — feche e ' +
       'reabra o Nexus para religar os terminais; a missão continua no rail.'
+    );
+  }
+  if (
+    text.includes('Packaged Darwin PTY responsibility supervisor') &&
+    MISSING_BUNDLE_MARKERS.some((marker) => text.includes(marker))
+  ) {
+    return (
+      'O aplicativo NexusIDE no disco foi apagado, movido ou reinstalado enquanto estava aberto — ' +
+      'feche e reabra o Nexus (ou gere um novo build) para religar os terminais.'
     );
   }
   if (BROKEN_SIGNATURE_MARKERS.some((marker) => text.includes(marker))) {
