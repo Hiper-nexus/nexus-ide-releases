@@ -126,7 +126,21 @@ export async function openCliLoginTerminal(input: {
     };
   }
 
-  writeToPane(paneId, `${command}\n`);
+  const provider = input.adapterId
+    ? useProviderStore
+        .getState()
+        .providers.find((candidate) => candidate.adapterId === input.adapterId)
+    : undefined;
+  const isInstalled = provider ? provider.installed : true;
+  if (!isInstalled && provider) {
+    const installCmd = provider.installCommand || `consulte a documentação para instalar a CLI ${provider.label}`;
+    writeToPane(
+      paneId,
+      `echo "⚠️ A CLI '${provider.label || input.adapterId}' não foi encontrada no PATH." && echo "Instalação sugerida: ${installCmd}"\n`,
+    );
+  } else {
+    writeToPane(paneId, `${command}\n`);
+  }
   useLayoutStore.getState().focus(paneId);
   useProductNavigationStore.getState().openTerminal();
 

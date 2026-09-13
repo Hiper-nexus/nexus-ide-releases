@@ -10,6 +10,8 @@ import { credentialLinkForKeySlot } from '../../../shared/credential-links';
 import { useAccountStore } from '../../state/account-store';
 import { useProviderStore } from '../../state/provider-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
+import { useLayoutStore } from '../../state/layout-store';
+import { waitForSession, writeToPane } from '../../terminal/terminal-host';
 import { openExternalFromAnchor } from '../../lib/open-external';
 import { ActionCard } from '../ActionCard';
 import { AccountsManager } from './AccountsManager';
@@ -422,6 +424,22 @@ function ProviderDetail({
     }
   }
 
+  async function installInTerminal() {
+    const command =
+      provider.installCommand?.trim() ||
+      `echo "Consulte a documentação oficial para instalar a CLI ${provider.label}."`;
+    const layout = useLayoutStore.getState();
+    const paneId = layout.addShellPane({ focus: true });
+    layout.renameTitle(paneId, `Instalar ${provider.label}`);
+    useProductNavigationStore.getState().openTerminal();
+    try {
+      await waitForSession(paneId, 10_000);
+      writeToPane(paneId, `${command}\n`);
+    } catch {
+      // sessao terminal inicializada
+    }
+  }
+
   const extraArgsKey = provider.extraArgs.join('\0');
   useEffect(() => {
     setBinDraft(provider.binPath);
@@ -451,16 +469,28 @@ function ProviderDetail({
               ? 'Instalada nesta máquina'
               : 'Não encontrado no PATH — instale a CLI ou aponte o binário em Avançado'}
           </p>
-          {!provider.installed && provider.canAutoInstall && (
-            <button
-              type="button"
-              className="settings-btn settings-btn--primary prov-detail__install"
-              disabled={installBusy}
-              onClick={() => void installCli()}
-              title="Instala a CLI do provider pela fonte oficial (confirmação nativa mostra o comando exato)"
-            >
-              {installBusy ? 'Instalando…' : 'Instalar automaticamente'}
-            </button>
+          {!provider.installed && (
+            <div className="prov-detail__install-actions" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '6px' }}>
+              {provider.canAutoInstall && (
+                <button
+                  type="button"
+                  className="settings-btn settings-btn--primary prov-detail__install"
+                  disabled={installBusy}
+                  onClick={() => void installCli()}
+                  title="Instala a CLI do provider pela fonte oficial (confirmação nativa mostra o comando exato)"
+                >
+                  {installBusy ? 'Instalando…' : 'Instalar automaticamente'}
+                </button>
+              )}
+              <button
+                type="button"
+                className="settings-btn settings-btn--ghost prov-detail__install"
+                onClick={() => void installInTerminal()}
+                title="Abre um terminal no Nexus para rodar o comando de instalação e acompanhar a saída"
+              >
+                <PixelIcon name="terminal" size={11} /> Instalar via terminal
+              </button>
+            </div>
           )}
           {installError && (
             <p className="prov-detail__install-error" role="alert">

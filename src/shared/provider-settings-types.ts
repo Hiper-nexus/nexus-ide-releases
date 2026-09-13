@@ -55,6 +55,8 @@ export interface ProviderSettingsInfo {
   installed: boolean;
   /** True quando há receita de instalação 1-clique para esta plataforma. */
   canAutoInstall: boolean;
+  /** Comando de instalação sugerido ou declarado pelo adapter. */
+  installCommand?: string;
   binPath: string;
   detectedBin: string;
   defaultModel: string;

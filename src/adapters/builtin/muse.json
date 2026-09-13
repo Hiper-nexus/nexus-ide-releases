@@ -7,8 +7,8 @@
   "bin": "muse",
   "detect": "muse --version",
   "install": {
-    "method": "manual",
-    "command": "Consulte a documentação do Muse Spark para instalar a CLI `muse`"
+    "method": "brew",
+    "command": "brew install --cask muse-code"
   },
   "auth": {
     "method": "oauth",

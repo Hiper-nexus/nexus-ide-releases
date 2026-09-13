@@ -76,6 +76,15 @@ function brewRecipe(formula: string): ArgvInstallRecipe {
   });
 }
 
+function brewCaskRecipe(cask: string): ArgvInstallRecipe {
+  return Object.freeze({
+    kind: 'argv' as const,
+    argv: Object.freeze(['brew', 'install', '--cask', cask]),
+    runner: 'brew',
+    runnerHint: BREW_HINT,
+  });
+}
+
 function scriptRecipe(scriptUrl: string): ScriptInstallRecipe {
   return Object.freeze({
     kind: 'script' as const,
@@ -140,6 +149,9 @@ const RECIPES: Readonly<Record<string, PlatformRecipes>> = Object.freeze({
     darwin: [scriptRecipe('https://cli.devin.ai/install.sh')],
     linux: [scriptRecipe('https://cli.devin.ai/install.sh')],
   },
+  muse: {
+    darwin: [brewCaskRecipe('muse-code')],
+  },
 });
 
 /** Todos os candidatos (ordem de preferência) para a CLI nesta plataforma. */
@@ -155,6 +167,17 @@ export function cliInstallRecipeFor(
   platform: NodeJS.Platform = process.platform,
 ): CliInstallRecipe | null {
   return RECIPES[adapterId]?.[platform]?.[0] ?? null;
+}
+
+/** Retorna o comando exato em formato texto para rodar num terminal interativo. */
+export function cliInstallCommandFor(
+  adapterId: string,
+  platform: NodeJS.Platform = process.platform,
+): string | null {
+  const recipe = cliInstallRecipeFor(adapterId, platform);
+  if (!recipe) return null;
+  if (recipe.kind === 'argv') return recipe.argv.join(' ');
+  return `curl -fsSL ${recipe.scriptUrl} | bash`;
 }
 
 export type InstallRecipeSelection =

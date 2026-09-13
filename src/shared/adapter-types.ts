@@ -11,7 +11,7 @@ import { z } from 'zod';
  */
 
 const installSchema = z.object({
-  method: z.enum(['brew', 'npm', 'pip', 'uv', 'cargo', 'manual']),
+  method: z.enum(['brew', 'npm', 'pip', 'uv', 'cargo', 'manual', 'script']),
   command: z.string().min(1),
 });
 

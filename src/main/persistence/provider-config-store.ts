@@ -55,6 +55,7 @@ import {
 import {
   cliInstallRecipeCandidates,
   cliInstallRecipeFor,
+  cliInstallCommandFor,
   selectInstallRecipe,
   describeInstallRecipe,
 } from '../adapters/cli-install-recipes';
@@ -150,7 +151,7 @@ function defaultConfigFor(adapterId: string): ProviderConfig {
     extraArgs: [],
     upstream: defaultUpstream,
     permissionMode: defaultPermissionModeFor(adapterId),
-    effort: '',
+    effort: adapterId === 'agy' ? 'max' : '',
     verbose: false,
   };
 }
@@ -1078,6 +1079,9 @@ function toInfo(
     enabled: cfg.enabled,
     installed,
     canAutoInstall: cliInstallRecipeFor(adapterId) !== null,
+    installCommand:
+      cliInstallCommandFor(adapterId) ??
+      (adapter.kind === 'cli-pty' ? adapter.install?.command : undefined),
     binPath: cfg.binPath,
     detectedBin,
     defaultModel,

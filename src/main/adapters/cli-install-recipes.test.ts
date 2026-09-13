@@ -66,6 +66,14 @@ describe('cli install recipes', () => {
     ]);
   });
 
+  it('installs Muse via official Homebrew cask', () => {
+    const recipe = cliInstallRecipeFor('muse', 'darwin');
+    expect(recipe?.kind).toBe('argv');
+    if (recipe?.kind === 'argv') {
+      expect(recipe.argv).toEqual(['brew', 'install', '--cask', 'muse-code']);
+    }
+  });
+
   it('never invents recipes for CLIs without a verified channel', () => {
     // GLM/LongCat autenticam por token (sem CLI própria a instalar); aider
     // usa instalador próprio ainda não verificado.
