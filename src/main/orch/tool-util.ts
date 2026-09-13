@@ -38,6 +38,7 @@ import {
 } from './task-router';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { hasBoundHandoffForExactDispatchWorker } from './task-dispatch-codec';
+import { migrateModelId } from '../../shared/model-defaults';
 import { resolveCwdForScope } from './workspace-path';
 import { withHandoffContract } from './worker-handoff-contract';
 import {
@@ -1059,8 +1060,9 @@ export async function spawnPaneAndMaybePrompt(
   // 1ª variante da mesma família. Sem variante, mantém o pedido (não piora).
   const runnableModels =
     discoverCliModels().get(options.adapterId) ?? adapter.models.list;
-  const sealedModel = options.model?.trim();
-  let effectiveModel = options.model;
+  const rawModel = options.model?.trim();
+  const sealedModel = migrateModelId(rawModel);
+  let effectiveModel = sealedModel ?? options.model;
   if (sealedModel) {
     if (
       adapter.models.list.includes(sealedModel) ||

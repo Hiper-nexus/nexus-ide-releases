@@ -15,7 +15,13 @@
   },
   "models": {
     "flag": "--model",
-    "list": ["deepseek-chat", "deepseek-reasoner"],
+    "list": [
+      "deepseek-chat",
+      "deepseek-coder",
+      "deepseek-reasoner",
+      "deepseek-pro",
+      "deepseek-flash"
+    ],
     "default": "deepseek-chat"
   },
   "streaming": true,

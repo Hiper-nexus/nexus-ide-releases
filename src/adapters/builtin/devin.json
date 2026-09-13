@@ -44,6 +44,9 @@
   "models": {
     "flag": "--model",
     "list": [
+      "swe-2-high",
+      "swe-2-max",
+      "swe-2-medium",
       "claude-sonnet-5-medium",
       "claude-sonnet-5-high",
       "claude-opus-5-medium",
@@ -65,14 +68,11 @@
       "glm-5-2-max",
       "kimi-k3-high",
       "grok-4-6-high",
-      "swe-2-medium",
-      "swe-2-high",
-      "swe-2-max",
       "deepseek-v4-pro-high",
       "inkling-high",
       "adaptive"
     ],
-    "default": "claude-sonnet-5-medium"
+    "default": "swe-2-high"
   },
   "promptInjection": {
     "method": "arg",

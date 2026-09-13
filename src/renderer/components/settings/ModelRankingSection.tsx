@@ -415,11 +415,6 @@ export function ModelRankingSection() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const providers = useProviderStore((s) => s.providers);
-  const fleetQuota = useQuotaStore((s) => s.snapshot);
-  const quotaByAdapter = useMemo(
-    () => quotaAvailabilityByAdapter(fleetQuota),
-    [fleetQuota],
-  );
   const installed = useMemo(() => {
     const set = new Set<string>();
     for (const p of providers) {
@@ -467,11 +462,8 @@ export function ModelRankingSection() {
 
   const rows = useMemo(() => {
     if (!snapshot) return [];
-    if (sort === "overall") {
-      return sortEntriesWithQuota(snapshot.entries, sort, quotaByAdapter);
-    }
     return sortEntries(snapshot.entries, sort);
-  }, [snapshot, sort, quotaByAdapter]);
+  }, [snapshot, sort]);
 
   const selected = useMemo(() => {
     if (!snapshot || !selectedId) return null;
@@ -480,11 +472,8 @@ export function ModelRankingSection() {
 
   const leader = useMemo(() => {
     if (!snapshot) return null;
-    return (
-      sortEntriesWithQuota(snapshot.entries, "overall", quotaByAdapter)[0] ??
-      null
-    );
-  }, [snapshot, quotaByAdapter]);
+    return sortEntries(snapshot.entries, "overall")[0] ?? null;
+  }, [snapshot]);
 
   const liveCount = useMemo(
     () => rows.filter((r) => installed.has(r.adapterId)).length,

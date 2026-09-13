@@ -1,5 +1,6 @@
 import type { PaneModel } from '../../shared/types';
 import type { SpawnRequest } from '../../shared/surface-payload-types';
+import { migrateModelId } from '../../shared/model-defaults';
 
 /**
  * Monta o payload do spawn PTY no contrato zod do main
@@ -54,7 +55,7 @@ export function buildPtySpawnRequest(
     restorePersistedAuthority: input.restorePersistedAuthority,
     paneId: pane.id,
     adapterId: clean(pane.adapterId),
-    model: clean(pane.model),
+    model: clean(migrateModelId(pane.model)),
     accountId: clean(input.accountId ?? pane.accountId),
     effort: clean(pane.effort),
     orchRequestId: clean(pane.orchRequestId),

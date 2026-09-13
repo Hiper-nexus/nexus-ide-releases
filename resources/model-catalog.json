@@ -97,24 +97,6 @@
           "availability": "paid",
           "costTier": "high",
           "source": "nexus-eval"
-        },
-        {
-          "id": "gpt-5.4",
-          "availability": "paid",
-          "costTier": "medium",
-          "source": "remote"
-        },
-        {
-          "id": "gpt-5.4-mini",
-          "availability": "cheap",
-          "costTier": "low",
-          "source": "remote"
-        },
-        {
-          "id": "gpt-5.3-codex",
-          "availability": "paid",
-          "costTier": "medium",
-          "source": "remote"
         }
       ]
     },
@@ -240,6 +222,18 @@
       "default": "gemini-3.7-flash-high",
       "models": [
         {
+          "id": "gemini-3.8-pro-high",
+          "availability": "paid",
+          "costTier": "high",
+          "source": "remote"
+        },
+        {
+          "id": "gemini-3.8-flash-high",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "remote"
+        },
+        {
           "id": "gemini-3.7-flash-low",
           "availability": "free",
           "costTier": "free",
@@ -329,6 +323,12 @@
           "source": "remote"
         },
         {
+          "id": "kimi-k2.8",
+          "availability": "paid",
+          "costTier": "medium",
+          "source": "remote"
+        },
+        {
           "id": "kimi-k2.7",
           "availability": "paid",
           "costTier": "medium",
@@ -338,6 +338,35 @@
           "id": "kimi-k2-turbo",
           "availability": "cheap",
           "costTier": "low",
+          "source": "remote"
+        }
+      ]
+    },
+    "devin": {
+      "default": "swe-2-high",
+      "models": [
+        {
+          "id": "swe-2-high",
+          "availability": "paid",
+          "costTier": "high",
+          "source": "remote"
+        },
+        {
+          "id": "swe-2-max",
+          "availability": "paid",
+          "costTier": "high",
+          "source": "remote"
+        },
+        {
+          "id": "swe-2-medium",
+          "availability": "paid",
+          "costTier": "medium",
+          "source": "remote"
+        },
+        {
+          "id": "claude-sonnet-5-medium",
+          "availability": "paid",
+          "costTier": "medium",
           "source": "remote"
         }
       ]

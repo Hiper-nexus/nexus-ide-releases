@@ -16,6 +16,7 @@ import {
 import { ensureUtf8Locale } from "./pty-env-locale";
 import { applyPaneTerminalIdentity } from "./pane-terminal-identity";
 import { PTY_CHANNELS } from "../../shared/channels";
+import { migrateModelId } from "../../shared/model-defaults";
 import type { SpawnRequest, PaneSessionState } from "../../shared/types";
 import {
   classifySessionLiveness,
@@ -1118,20 +1119,21 @@ function normalizeAgentModel(
   model: string,
   failClosedOnUnusable: boolean,
 ): string {
-  if (adapter.id === "kimi" && model === "kimi-for-coding") {
+  const migrated = migrateModelId(model) ?? model;
+  if (adapter.id === "kimi" && migrated === "kimi-for-coding") {
     return "kimi-code/kimi-for-coding";
   }
   // OpenCode 1.17 requires provider/model. A stale unqualified preference is
   // not a valid fallback: omit --model and let OpenCode use its own configured
   // default instead of failing the pane at startup. A sealed mission model
   // must never take that silent default — fail visible.
-  if (adapter.id === "opencode" && model && !model.includes("/")) {
+  if (adapter.id === "opencode" && migrated && !migrated.includes("/")) {
     if (failClosedOnUnusable) {
-      throw sealedModelMissingFromArgvError(adapter.label, model);
+      throw sealedModelMissingFromArgvError(adapter.label, migrated);
     }
     return "";
   }
-  return model;
+  return migrated;
 }
 
 function configOverrideValues(args: readonly string[]): string[] {

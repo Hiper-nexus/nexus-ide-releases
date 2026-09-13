@@ -109,8 +109,6 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
         { id: 'gpt-5.6-terra', availability: 'paid', costTier: 'high', source: 'bundled' },
         { id: 'gpt-5.6-luna', availability: 'paid', costTier: 'medium', source: 'bundled' },
         { id: 'gpt-5.5', availability: 'paid', costTier: 'high', source: 'bundled' },
-        { id: 'gpt-5.4', availability: 'paid', costTier: 'medium', source: 'bundled' },
-        { id: 'gpt-5.4-mini', availability: 'cheap', costTier: 'low', source: 'bundled' },
       ],
     },
     grok: {
@@ -151,6 +149,8 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
     agy: {
       default: 'gemini-3.7-flash-high',
       models: [
+        { id: 'gemini-3.8-pro-high', availability: 'paid', costTier: 'high', source: 'bundled' },
+        { id: 'gemini-3.8-flash-high', availability: 'cheap', costTier: 'low', source: 'bundled' },
         { id: 'gemini-3.7-flash-low', availability: 'free', costTier: 'free', source: 'bundled' },
         { id: 'gemini-3.7-flash-medium', availability: 'cheap', costTier: 'low', source: 'bundled' },
         { id: 'gemini-3.7-flash-high', availability: 'cheap', costTier: 'low', source: 'bundled' },
@@ -164,15 +164,42 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
       ],
     },
     kimi: {
+      default: 'kimi-code/k3',
       models: [
         { id: 'kimi-code/k3', availability: 'paid', costTier: 'medium', source: 'bundled' },
+        { id: 'kimi-k2.8', availability: 'paid', costTier: 'medium', source: 'bundled' },
         { id: 'kimi-code/kimi-for-coding-highspeed', availability: 'cheap', costTier: 'low', source: 'bundled' },
         { id: 'kimi-code/kimi-for-coding', availability: 'cheap', costTier: 'low', source: 'bundled' },
+      ],
+    },
+    devin: {
+      default: 'swe-2-high',
+      models: [
+        { id: 'swe-2-high', availability: 'paid', costTier: 'high', source: 'bundled' },
+        { id: 'swe-2-max', availability: 'paid', costTier: 'high', source: 'bundled' },
+        { id: 'swe-2-medium', availability: 'paid', costTier: 'medium', source: 'bundled' },
+        { id: 'claude-sonnet-5-medium', availability: 'paid', costTier: 'medium', source: 'bundled' },
       ],
     },
     longcat: {
       models: [
         { id: 'LongCat-2.0', availability: 'cheap', costTier: 'low', source: 'bundled' },
+      ],
+    },
+    deepseek: {
+      default: 'deepseek-chat',
+      models: [
+        { id: 'deepseek-chat', availability: 'cheap', costTier: 'low', source: 'bundled' },
+        { id: 'deepseek-coder', availability: 'cheap', costTier: 'low', source: 'bundled' },
+        { id: 'deepseek-reasoner', availability: 'cheap', costTier: 'medium', source: 'bundled' },
+        { id: 'deepseek-pro', availability: 'paid', costTier: 'medium', source: 'bundled' },
+        { id: 'deepseek-flash', availability: 'free', costTier: 'free', source: 'bundled' },
+      ],
+    },
+    muse: {
+      default: 'muse',
+      models: [
+        { id: 'muse', availability: 'free', costTier: 'free', source: 'bundled' },
       ],
     },
   },
