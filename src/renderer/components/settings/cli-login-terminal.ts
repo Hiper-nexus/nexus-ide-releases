@@ -133,10 +133,15 @@ export async function openCliLoginTerminal(input: {
     : undefined;
   const isInstalled = provider ? provider.installed : true;
   if (!isInstalled && provider) {
-    const installCmd = provider.installCommand || `consulte a documentação para instalar a CLI ${provider.label}`;
+    const installCmd =
+      provider.installCommand ||
+      `consulte a documentação para instalar a CLI ${provider.label}`;
+    const safeMsg = `⚠️ A CLI '${provider.label || input.adapterId}' não foi encontrada no PATH.`;
+    const safeCmdMsg = `Instalação sugerida: ${installCmd}`;
+    const tipMsg = 'Execute o comando acima neste terminal para instalar a CLI.';
     writeToPane(
       paneId,
-      `echo "⚠️ A CLI '${provider.label || input.adapterId}' não foi encontrada no PATH." && echo "Instalação sugerida: ${installCmd}"\n`,
+      `printf '%s\\n%s\\n%s\\n\\n' ${JSON.stringify(safeMsg)} ${JSON.stringify(safeCmdMsg)} ${JSON.stringify(tipMsg)}\n`,
     );
   } else {
     writeToPane(paneId, `${command}\n`);
