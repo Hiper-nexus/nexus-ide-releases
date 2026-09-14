@@ -215,7 +215,10 @@ export function createWindowsSignOptions(
     }
     return {
       ...commonOptions,
-      signWithParams: ['/sha1', certificateSha1.toUpperCase()],
+      // eSigner CKA exposes the cloud-backed certificate through the Local
+      // Machine certificate store. `/sm` makes SignTool select that store
+      // instead of the empty per-user store on the signing host.
+      signWithParams: ['/sm', '/sha1', certificateSha1.toUpperCase()],
     };
   }
 

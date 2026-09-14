@@ -11,6 +11,7 @@ describe('protected signed Windows worker', () => {
   });
   it('uses only certificate-store signing, validates exact commit and stable version', () => {
     expect(workflow).toContain('WINDOWS_CERTIFICATE_SHA1');
+    expect(workflow).toContain('Cert:\\LocalMachine\\My\\$env:WINDOWS_CERTIFICATE_SHA1');
     expect(workflow).toContain('$branch.commit.sha -ne $env:GITHUB_SHA');
     expect(workflow).toContain('existing tag points at another commit');
     expect(workflow).not.toMatch(/-password=|-totp_secret=|-otp=/i);

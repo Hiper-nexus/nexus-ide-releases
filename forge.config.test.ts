@@ -35,6 +35,7 @@ describe('Windows release signing', () => {
       continueOnError: false,
       hashes: ['sha256'],
       signWithParams: [
+        '/sm',
         '/sha1',
         'E44D98FF840B1DF78D87F6768D177B5719952CAB',
       ],

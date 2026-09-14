@@ -85,7 +85,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if ($env:WINDOWS_CERTIFICATE_FILE -or $env:WINDOWS_CERTIFICATE_PASSWORD) { throw 'worker must use CKA certificate-store mode only' }
-          $cert = Get-Item "Cert:\CurrentUser\My\$env:WINDOWS_CERTIFICATE_SHA1"
+          $cert = Get-Item "Cert:\LocalMachine\My\$env:WINDOWS_CERTIFICATE_SHA1"
           if ($cert.Subject -notmatch '(?:^|,\s*)CN="?HIPERSEND TECNOLOGIA INTERNET & SOFTWARES LTDA"?(?:,|$)' -or $cert.NotAfter -le (Get-Date)) { throw 'unexpected or expired signing certificate' }
           if (Test-Path out) { Remove-Item out -Recurse -Force }
           npm run make -- --platform win32 --arch x64
