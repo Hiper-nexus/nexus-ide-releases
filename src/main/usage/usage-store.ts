@@ -166,16 +166,22 @@ const persistedUsageIdentitySchema = z
 export function computeRealCost(ev: UsageEvent): number {
   const parsed = providerUsageEventSchema.parse(ev);
   const price = priceForModel(parsed.model);
+  const cacheReadPrice =
+    price.cacheReadPerM !== undefined
+      ? price.cacheReadPerM
+      : price.inputPerM * CACHE_READ_RATIO;
+  const cacheWrite5mPrice =
+    price.cacheWritePerM !== undefined
+      ? price.cacheWritePerM
+      : price.inputPerM * CACHE_WRITE_5M_RATIO;
+  const cacheWrite1hPrice = price.inputPerM * CACHE_WRITE_1H_RATIO;
+
   const cost =
     (parsed.inputTokens / MICROS_PER_USD) * price.inputPerM +
     (parsed.outputTokens / MICROS_PER_USD) * price.outputPerM +
-    (parsed.cacheReadTokens / MICROS_PER_USD) * price.inputPerM * CACHE_READ_RATIO +
-    (parsed.cacheWrite5mTokens / MICROS_PER_USD) *
-      price.inputPerM *
-      CACHE_WRITE_5M_RATIO +
-    (parsed.cacheWrite1hTokens / MICROS_PER_USD) *
-      price.inputPerM *
-      CACHE_WRITE_1H_RATIO;
+    (parsed.cacheReadTokens / MICROS_PER_USD) * cacheReadPrice +
+    (parsed.cacheWrite5mTokens / MICROS_PER_USD) * cacheWrite5mPrice +
+    (parsed.cacheWrite1hTokens / MICROS_PER_USD) * cacheWrite1hPrice;
   if (!Number.isFinite(cost) || cost < 0) throw new Error('invalid usage cost');
   return cost;
 }

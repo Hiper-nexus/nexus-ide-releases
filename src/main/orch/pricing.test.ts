@@ -8,9 +8,9 @@ import {
 } from './pricing';
 
 describe('priceForModel', () => {
-  it('matches by prefix', () => {
-    expect(priceForModel('claude-opus-4-8')).toEqual(MODEL_PRICES['claude-opus']);
-    expect(priceForModel('gpt-5.2')).toEqual(MODEL_PRICES['gpt-5']);
+  it('matches by prefix and resolves specific variants', () => {
+    expect(priceForModel('claude-opus-4-8')).toEqual(MODEL_PRICES['claude-opus-4-8']);
+    expect(priceForModel('gpt-5.2')).toEqual(MODEL_PRICES['gpt-5.2']);
     expect(priceForModel('deepseek-v3')).toEqual(MODEL_PRICES.deepseek);
   });
 
@@ -24,9 +24,9 @@ describe('priceForModel', () => {
     expect(priceForModel('gemini-3.6-flash-low')).toEqual(
       MODEL_PRICES['gemini-3.6-flash'],
     );
-    expect(priceForModel('gemini-2.5-pro')).toEqual(MODEL_PRICES.gemini);
+    expect(priceForModel('gemini-2.5-pro')).toEqual(MODEL_PRICES['gemini-2.5-pro']);
     expect(priceForModel('claude-sonnet-5')).toEqual(
-      MODEL_PRICES['claude-sonnet'],
+      MODEL_PRICES['claude-sonnet-5'],
     );
     expect(priceForModel('gpt-5-mini')).toEqual(MODEL_PRICES['gpt-5-mini']);
     expect(priceForModel('claude-opus-5')).toEqual(
@@ -35,15 +35,38 @@ describe('priceForModel', () => {
     expect(priceForModel('glm-5.3-flash')).toEqual(
       MODEL_PRICES['glm-5.3-flash'],
     );
+    expect(priceForModel('claude-fable-5-1')).toEqual(
+      MODEL_PRICES['claude-fable-5-1'],
+    );
+    expect(priceForModel('gpt-6-astra')).toEqual(
+      MODEL_PRICES['gpt-6-astra'],
+    );
   });
 
-  it('strips provider namespaces before matching', () => {
+  it('matches compound names and namespaced models correctly', () => {
+    expect(priceForModel('kimi-code/k3')).toEqual(MODEL_PRICES['kimi-code/k3']);
     expect(priceForModel('moonshot/kimi-k2')).toEqual(MODEL_PRICES.kimi);
     expect(priceForModel('xiaomi/mimo-v2')).toEqual(MODEL_PRICES.mimo);
+    expect(priceForModel('openrouter/anthropic/claude-fable-5-1')).toEqual(
+      MODEL_PRICES['claude-fable-5-1'],
+    );
+    expect(priceForModel('devin/swe-2-high')).toEqual(MODEL_PRICES['swe-2-high']);
+    expect(priceForModel('muse')).toEqual(MODEL_PRICES.muse);
+    expect(priceForModel('opencode/big-pickle')).toEqual(
+      MODEL_PRICES['opencode/big-pickle'],
+    );
+  });
+
+  it('supports short model aliases', () => {
+    expect(priceForModel('sonnet')).toEqual(MODEL_PRICES.sonnet);
+    expect(priceForModel('opus')).toEqual(MODEL_PRICES.opus);
+    expect(priceForModel('haiku')).toEqual(MODEL_PRICES.haiku);
+    expect(priceForModel('gpt-4o')).toEqual(MODEL_PRICES['gpt-4o']);
+    expect(priceForModel('gpt-4o-mini')).toEqual(MODEL_PRICES['gpt-4o-mini']);
   });
 
   it('is case-insensitive', () => {
-    expect(priceForModel('Claude-Opus-4-8')).toEqual(MODEL_PRICES['claude-opus']);
+    expect(priceForModel('Claude-Opus-5')).toEqual(MODEL_PRICES['claude-opus-5']);
   });
 
   it('falls back to the default price', () => {
@@ -55,26 +78,28 @@ describe('priceForModel', () => {
 
 describe('estimateCost', () => {
   it('prices input and output tokens separately', () => {
-    // claude-opus: $15/M in, $75/M out.
-    const cost = estimateCost('claude-opus-4-8', 1_000_000, 1_000_000);
-    expect(cost).toBeCloseTo(90, 10);
-  });
-
-  it('uses the official lower Opus 5 list price without changing Opus 4', () => {
+    // claude-opus-5: $5/M in, $25/M out.
     const cost = estimateCost('claude-opus-5', 1_000_000, 1_000_000);
     expect(cost).toBeCloseTo(30, 10);
-    expect(priceForModel('claude-opus-4-8')).toEqual(
-      MODEL_PRICES['claude-opus'],
-    );
+  });
+
+  it('prices frontier claude-fable at $10 in and $50 out', () => {
+    const cost = estimateCost('claude-fable-5-1', 1_000_000, 1_000_000);
+    expect(cost).toBeCloseTo(60, 10);
+  });
+
+  it('prices free tools at $0', () => {
+    expect(estimateCost('muse', 1_000_000, 1_000_000)).toBe(0);
+    expect(estimateCost('big-pickle', 500_000, 500_000)).toBe(0);
   });
 
   it('scales linearly with token counts', () => {
-    const cost = estimateCost('claude-sonnet-5', 500_000, 100_000);
+    const cost = estimateCost('claude-3-7-sonnet', 500_000, 100_000);
     expect(cost).toBeCloseTo(0.5 * 3 + 0.1 * 15, 10);
   });
 
   it('returns zero for zero tokens', () => {
-    expect(estimateCost('claude-opus', 0, 0)).toBe(0);
+    expect(estimateCost('claude-opus-5', 0, 0)).toBe(0);
   });
 
   it('uses the default price for unknown models', () => {

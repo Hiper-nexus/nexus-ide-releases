@@ -13,35 +13,190 @@ export interface ModelPrice {
   inputPerM: number;
   /** USD per 1M output tokens. */
   outputPerM: number;
+  /** Optional USD per 1M cache read tokens. If omitted, uses standard provider ratio. */
+  cacheReadPerM?: number;
+  /** Optional USD per 1M cache write (5m) tokens. If omitted, uses standard ratio. */
+  cacheWritePerM?: number;
 }
 
 /** Fallback when no prefix matches (mid-tier assistant pricing). */
 export const DEFAULT_PRICE: ModelPrice = { inputPerM: 3, outputPerM: 15 };
 
 export const MODEL_PRICES: Record<string, ModelPrice> = {
-  // Claude Opus 5 public API list price (distinct from the Opus 4 family).
-  'claude-opus-5': { inputPerM: 5, outputPerM: 25 },
-  'claude-opus': { inputPerM: 15, outputPerM: 75 },
-  'claude-sonnet': { inputPerM: 3, outputPerM: 15 },
-  'claude-haiku': { inputPerM: 1, outputPerM: 5 },
-  claude: { inputPerM: 3, outputPerM: 15 },
-  'gpt-5-mini': { inputPerM: 0.25, outputPerM: 2 },
-  'gpt-5': { inputPerM: 1.25, outputPerM: 10 },
-  // Gemini 3.7 Flash intro list price (Google AI, through 2026-12-31).
-  'gemini-3.7-flash': { inputPerM: 0.75, outputPerM: 3.75 },
-  'gemini-3.6-flash': { inputPerM: 1.5, outputPerM: 7.5 },
-  'gemini-flash': { inputPerM: 0.3, outputPerM: 2.5 },
-  gemini: { inputPerM: 1.25, outputPerM: 10 },
-  mimo: { inputPerM: 0.2, outputPerM: 0.6 },
-  kimi: { inputPerM: 0.6, outputPerM: 2.5 },
-  moonshot: { inputPerM: 0.6, outputPerM: 2.5 },
-  deepseek: { inputPerM: 0.27, outputPerM: 1.1 },
-  // GLM-5.3-Flash list price (Z.ai, 2026-08-26).
-  'glm-5.3-flash': { inputPerM: 0.07, outputPerM: 0.25 },
+  // === Anthropic Claude (anthropic.com/pricing & models-rich.json) ===
+  // Claude Fable 5.x / Mythos 5.x (frontier generation: $10/M in, $50/M out)
+  'claude-fable-5-1': { inputPerM: 10, outputPerM: 50, cacheReadPerM: 1, cacheWritePerM: 12.5 },
+  'claude-fable-5': { inputPerM: 10, outputPerM: 50, cacheReadPerM: 1, cacheWritePerM: 12.5 },
+  'claude-fable': { inputPerM: 10, outputPerM: 50, cacheReadPerM: 1, cacheWritePerM: 12.5 },
+  'claude-mythos-5-1': { inputPerM: 10, outputPerM: 50, cacheReadPerM: 1, cacheWritePerM: 12.5 },
+  'claude-mythos-5': { inputPerM: 10, outputPerM: 50, cacheReadPerM: 1, cacheWritePerM: 12.5 },
+  'claude-mythos': { inputPerM: 10, outputPerM: 50, cacheReadPerM: 1, cacheWritePerM: 12.5 },
+
+  // Claude Opus family (Opus 5 & 4.x: $5/M in, $25/M out; Opus 3 legacy: $15/M in, $75/M out)
+  'claude-opus-5': { inputPerM: 5, outputPerM: 25, cacheReadPerM: 0.5, cacheWritePerM: 6.25 },
+  'claude-opus-4-8': { inputPerM: 5, outputPerM: 25, cacheReadPerM: 0.5, cacheWritePerM: 6.25 },
+  'claude-opus-4-7': { inputPerM: 5, outputPerM: 25, cacheReadPerM: 0.5, cacheWritePerM: 6.25 },
+  'claude-opus-4-6': { inputPerM: 5, outputPerM: 25, cacheReadPerM: 0.5, cacheWritePerM: 6.25 },
+  'claude-opus-4-5': { inputPerM: 5, outputPerM: 25, cacheReadPerM: 0.5, cacheWritePerM: 6.25 },
+  'claude-opus-4': { inputPerM: 5, outputPerM: 25, cacheReadPerM: 0.5, cacheWritePerM: 6.25 },
+  'claude-3-opus': { inputPerM: 15, outputPerM: 75, cacheReadPerM: 1.5, cacheWritePerM: 18.75 },
+  'claude-opus': { inputPerM: 15, outputPerM: 75, cacheReadPerM: 1.5, cacheWritePerM: 18.75 },
+
+  // Claude Sonnet family (Sonnet 5: $2/M in, $10/M out; Sonnet 3.5/3.7: $3/M in, $15/M out)
+  'claude-sonnet-5': { inputPerM: 2, outputPerM: 10, cacheReadPerM: 0.2, cacheWritePerM: 2.5 },
+  'claude-3-7-sonnet': { inputPerM: 3, outputPerM: 15, cacheReadPerM: 0.3, cacheWritePerM: 3.75 },
+  'claude-3-5-sonnet': { inputPerM: 3, outputPerM: 15, cacheReadPerM: 0.3, cacheWritePerM: 3.75 },
+  'claude-sonnet-4-6': { inputPerM: 3, outputPerM: 15, cacheReadPerM: 0.3, cacheWritePerM: 3.75 },
+  'claude-sonnet-4-5': { inputPerM: 3, outputPerM: 15, cacheReadPerM: 0.3, cacheWritePerM: 3.75 },
+  'claude-sonnet': { inputPerM: 3, outputPerM: 15, cacheReadPerM: 0.3, cacheWritePerM: 3.75 },
+
+  // Claude Haiku family
+  'claude-3-5-haiku': { inputPerM: 0.8, outputPerM: 4.0, cacheReadPerM: 0.08, cacheWritePerM: 1.0 },
+  'claude-haiku-4-5': { inputPerM: 1.0, outputPerM: 5.0, cacheReadPerM: 0.1, cacheWritePerM: 1.25 },
+  'claude-3-haiku': { inputPerM: 0.25, outputPerM: 1.25, cacheReadPerM: 0.03, cacheWritePerM: 0.3 },
+  'claude-haiku': { inputPerM: 1.0, outputPerM: 5.0, cacheReadPerM: 0.1, cacheWritePerM: 1.25 },
+  claude: { inputPerM: 3, outputPerM: 15, cacheReadPerM: 0.3, cacheWritePerM: 3.75 },
+
+  // Short aliases (e.g. OpenClaude / direct flags)
+  sonnet: { inputPerM: 3, outputPerM: 15, cacheReadPerM: 0.3, cacheWritePerM: 3.75 },
+  opus: { inputPerM: 15, outputPerM: 75, cacheReadPerM: 1.5, cacheWritePerM: 18.75 },
+  haiku: { inputPerM: 1, outputPerM: 5, cacheReadPerM: 0.1, cacheWritePerM: 1.25 },
+
+  // === OpenAI / Codex (openai.com/api/pricing & models-rich.json) ===
+  'gpt-6-astra': { inputPerM: 10, outputPerM: 60, cacheReadPerM: 2.5 },
+  'gpt-6': { inputPerM: 10, outputPerM: 60, cacheReadPerM: 2.5 },
+  'gpt-5.6-sol': { inputPerM: 5, outputPerM: 30, cacheReadPerM: 0.5, cacheWritePerM: 6.25 },
+  'gpt-5.6-terra': { inputPerM: 2.5, outputPerM: 15, cacheReadPerM: 0.25, cacheWritePerM: 3.125 },
+  'gpt-5.6-luna': { inputPerM: 1.0, outputPerM: 6, cacheReadPerM: 0.1, cacheWritePerM: 1.25 },
+  'gpt-5.6': { inputPerM: 2.5, outputPerM: 15, cacheReadPerM: 0.25 },
+  'gpt-5.5': { inputPerM: 5, outputPerM: 30, cacheReadPerM: 0.5 },
+  'gpt-5.4-mini': { inputPerM: 0.75, outputPerM: 4.5, cacheReadPerM: 0.075 },
+  'gpt-5.4-nano': { inputPerM: 0.2, outputPerM: 1.25, cacheReadPerM: 0.02 },
+  'gpt-5.4': { inputPerM: 2.5, outputPerM: 15, cacheReadPerM: 0.25 },
+  'gpt-5.2-pro': { inputPerM: 21, outputPerM: 168, cacheReadPerM: 0 },
+  'gpt-5.2': { inputPerM: 1.75, outputPerM: 14, cacheReadPerM: 0.175 },
+  'gpt-5.1': { inputPerM: 1.25, outputPerM: 10, cacheReadPerM: 0.125 },
+  'gpt-5-pro': { inputPerM: 15, outputPerM: 120, cacheReadPerM: 0 },
+  'gpt-5-mini': { inputPerM: 0.25, outputPerM: 2, cacheReadPerM: 0.025 },
+  'gpt-5-nano': { inputPerM: 0.05, outputPerM: 0.4, cacheReadPerM: 0.005 },
+  'gpt-5': { inputPerM: 1.25, outputPerM: 10, cacheReadPerM: 0.125 },
+  'o1-mini': { inputPerM: 1.1, outputPerM: 4.4, cacheReadPerM: 0.55 },
+  o1: { inputPerM: 15, outputPerM: 60, cacheReadPerM: 7.5 },
+  'o3-mini': { inputPerM: 1.1, outputPerM: 4.4, cacheReadPerM: 0.55 },
+  o3: { inputPerM: 10, outputPerM: 40, cacheReadPerM: 5.0 },
+  'o4-mini': { inputPerM: 1.1, outputPerM: 4.4, cacheReadPerM: 0.55 },
+  'gpt-4o-mini': { inputPerM: 0.15, outputPerM: 0.6, cacheReadPerM: 0.075 },
+  'gpt-4o': { inputPerM: 2.5, outputPerM: 10, cacheReadPerM: 1.25 },
+  'gpt-4.1-mini': { inputPerM: 0.4, outputPerM: 1.6, cacheReadPerM: 0.1 },
+  'gpt-4.1-nano': { inputPerM: 0.1, outputPerM: 0.4, cacheReadPerM: 0.025 },
+  'gpt-4.1': { inputPerM: 2.0, outputPerM: 8.0, cacheReadPerM: 0.5 },
+  'gpt-4-turbo': { inputPerM: 10, outputPerM: 30, cacheReadPerM: 0 },
+  'gpt-4': { inputPerM: 30, outputPerM: 60, cacheReadPerM: 0 },
+  'codex-mini': { inputPerM: 1.5, outputPerM: 6, cacheReadPerM: 0.375 },
+  codex: { inputPerM: 1.25, outputPerM: 10, cacheReadPerM: 0.125 },
+
+  // === Google Gemini / AGY (ai.google.dev/pricing) ===
+  'gemini-3.8-pro': { inputPerM: 2.0, outputPerM: 10.0, cacheReadPerM: 0.2 },
+  'gemini-3.8-flash': { inputPerM: 0.3, outputPerM: 1.5, cacheReadPerM: 0.03 },
+  'gemini-3.7-flash': { inputPerM: 0.75, outputPerM: 3.75, cacheReadPerM: 0.075 },
+  'gemini-3.6-flash': { inputPerM: 1.5, outputPerM: 7.5, cacheReadPerM: 0.15 },
+  'gemini-3.5-flash': { inputPerM: 1.5, outputPerM: 7.5, cacheReadPerM: 0.15 },
+  'gemini-3.1-pro': { inputPerM: 2.0, outputPerM: 10.0, cacheReadPerM: 0.2 },
+  'gemini-2.5-pro': { inputPerM: 1.25, outputPerM: 10.0, cacheReadPerM: 0.125 },
+  'gemini-2.5-flash-lite': { inputPerM: 0.1, outputPerM: 0.4, cacheReadPerM: 0.01 },
+  'gemini-2.5-flash': { inputPerM: 0.3, outputPerM: 2.5, cacheReadPerM: 0.03 },
+  'gemini-2.0-flash-lite': { inputPerM: 0.075, outputPerM: 0.3 },
+  'gemini-2.0-flash': { inputPerM: 0.1, outputPerM: 0.4, cacheReadPerM: 0.025 },
+  'gemini-1.5-pro': { inputPerM: 1.25, outputPerM: 5.0, cacheReadPerM: 0.3125 },
+  'gemini-1.5-flash-8b': { inputPerM: 0.0375, outputPerM: 0.15, cacheReadPerM: 0.01 },
+  'gemini-1.5-flash': { inputPerM: 0.075, outputPerM: 0.3, cacheReadPerM: 0.01875 },
+  'gemini-flash': { inputPerM: 0.3, outputPerM: 2.5, cacheReadPerM: 0.03 },
+  gemini: { inputPerM: 1.25, outputPerM: 10, cacheReadPerM: 0.125 },
+  gemma: { inputPerM: 0, outputPerM: 0 },
+
+  // === Kimi / Moonshot AI (kimi.com & api.moonshot.cn/pricing) ===
+  'kimi-code/k3': { inputPerM: 1.2, outputPerM: 5.0, cacheReadPerM: 0.24 },
+  'kimi-k3': { inputPerM: 1.2, outputPerM: 5.0, cacheReadPerM: 0.24 },
+  k3: { inputPerM: 1.2, outputPerM: 5.0, cacheReadPerM: 0.24 },
+  'kimi-k2.8': { inputPerM: 0.95, outputPerM: 4.0, cacheReadPerM: 0.19 },
+  'kimi-k2.7-code-highspeed': { inputPerM: 1.9, outputPerM: 8.0, cacheReadPerM: 0.38 },
+  'kimi-k2.7': { inputPerM: 0.95, outputPerM: 4.0, cacheReadPerM: 0.19 },
+  'kimi-k2.6': { inputPerM: 0.95, outputPerM: 4.0, cacheReadPerM: 0.16 },
+  'kimi-k2.5': { inputPerM: 0.6, outputPerM: 3.0, cacheReadPerM: 0.1 },
+  'kimi-k2-turbo': { inputPerM: 2.4, outputPerM: 10.0, cacheReadPerM: 0.6 },
+  'kimi-k2': { inputPerM: 0.6, outputPerM: 2.5, cacheReadPerM: 0.15 },
+  'kimi-code': { inputPerM: 0.6, outputPerM: 2.5, cacheReadPerM: 0.15 },
+  kimi: { inputPerM: 0.6, outputPerM: 2.5, cacheReadPerM: 0.15 },
+  'moonshot-v1-128k': { inputPerM: 0.85, outputPerM: 0.85 },
+  'moonshot-v1-32k': { inputPerM: 0.34, outputPerM: 0.34 },
+  'moonshot-v1-8k': { inputPerM: 0.17, outputPerM: 0.17 },
+  moonshot: { inputPerM: 0.6, outputPerM: 2.5, cacheReadPerM: 0.15 },
+
+  // === Devin (Cognition SWE-2 ACU-aligned list price) ===
+  'swe-2-max': { inputPerM: 5.0, outputPerM: 25.0 },
+  'swe-2-high': { inputPerM: 3.5, outputPerM: 17.5 },
+  'swe-2-medium': { inputPerM: 2.0, outputPerM: 10.0 },
+  'swe-2': { inputPerM: 3.5, outputPerM: 17.5 },
+  swe: { inputPerM: 3.5, outputPerM: 17.5 },
+  devin: { inputPerM: 3.5, outputPerM: 17.5 },
+
+  // === Muse Code (bundled / local tool — $0 token cost) ===
+  muse: { inputPerM: 0, outputPerM: 0 },
+
+  // === DeepSeek (api.deepseek.com/pricing) ===
+  'deepseek-reasoner': { inputPerM: 0.55, outputPerM: 2.19, cacheReadPerM: 0.14 },
+  'deepseek-chat': { inputPerM: 0.27, outputPerM: 1.1, cacheReadPerM: 0.07 },
+  'deepseek-v4-pro': { inputPerM: 0.435, outputPerM: 0.87, cacheReadPerM: 0.003625 },
+  'deepseek-v4-flash-free': { inputPerM: 0, outputPerM: 0 },
+  'deepseek-flash': { inputPerM: 0, outputPerM: 0 },
+  'deepseek-coder': { inputPerM: 0.14, outputPerM: 0.28 },
+  deepseek: { inputPerM: 0.27, outputPerM: 1.1, cacheReadPerM: 0.07 },
+
+  // === xAI Grok (docs.x.ai/docs/overview#pricing) ===
+  'grok-code-fast-1': { inputPerM: 0.2, outputPerM: 1.5, cacheReadPerM: 0.02 },
+  'grok-composer-2.5-fast': { inputPerM: 0.2, outputPerM: 1.5, cacheReadPerM: 0.02 },
+  'grok-4-fast': { inputPerM: 0.2, outputPerM: 0.5, cacheReadPerM: 0.05 },
+  'grok-4.5': { inputPerM: 2.0, outputPerM: 6.0, cacheReadPerM: 0.5 },
+  'grok-4.6': { inputPerM: 3.0, outputPerM: 15.0, cacheReadPerM: 0.75 },
+  'grok-4.1': { inputPerM: 1.25, outputPerM: 2.5, cacheReadPerM: 0.2 },
+  'grok-4': { inputPerM: 3.0, outputPerM: 15.0, cacheReadPerM: 0.75 },
+  'grok-3-mini': { inputPerM: 0.3, outputPerM: 0.5, cacheReadPerM: 0.075 },
+  'grok-3': { inputPerM: 3.0, outputPerM: 15.0, cacheReadPerM: 0.75 },
+  'grok-2': { inputPerM: 2.0, outputPerM: 10.0, cacheReadPerM: 0.5 },
+  grok: { inputPerM: 3.0, outputPerM: 15.0, cacheReadPerM: 0.75 },
+
+  // === Zhipu AI / GLM (bigmodel.cn/pricing) ===
+  'glm-5.3-flash': { inputPerM: 0.07, outputPerM: 0.25, cacheReadPerM: 0.01 },
+  'glm-5.3': { inputPerM: 0.6, outputPerM: 2.2 },
+  'glm-5.2': { inputPerM: 0.6, outputPerM: 2.2 },
+  'glm-4.7-flash': { inputPerM: 0.07, outputPerM: 0.25, cacheReadPerM: 0.01 },
+  'glm-4.7': { inputPerM: 0.6, outputPerM: 2.2 },
+  'glm-4.6': { inputPerM: 0.6, outputPerM: 2.2 },
+  'glm-4.5-air': { inputPerM: 0, outputPerM: 0 },
+  'glm-4.5-flash': { inputPerM: 0, outputPerM: 0 },
   glm: { inputPerM: 0.6, outputPerM: 2.2 },
-  grok: { inputPerM: 3, outputPerM: 15 },
+
+  // === Alibaba Qwen (help.aliyun.com/document_detail/271257.html) ===
+  'qwen-2.5-coder': { inputPerM: 0.2, outputPerM: 0.6 },
+  'qwen-turbo': { inputPerM: 0.05, outputPerM: 0.2 },
+  'qwen-plus': { inputPerM: 0.4, outputPerM: 1.2 },
+  'qwen-max': { inputPerM: 1.6, outputPerM: 6.4 },
   qwen: { inputPerM: 0.4, outputPerM: 1.2 },
-  // longcat.chat/platform list price (promo atual: 0.30 in / 1.20 out).
+
+  // === Community / OpenCode free open models ($0) ===
+  'opencode/big-pickle': { inputPerM: 0, outputPerM: 0 },
+  'big-pickle': { inputPerM: 0, outputPerM: 0 },
+  'opencode/deepseek-v4-flash-free': { inputPerM: 0, outputPerM: 0 },
+  'opencode/mimo-v2.5-free': { inputPerM: 0, outputPerM: 0 },
+  'opencode/nemotron-3-ultra-free': { inputPerM: 0, outputPerM: 0 },
+
+  // === Xiaomi MIMO ===
+  'mimo-v2.5': { inputPerM: 0.2, outputPerM: 0.6 },
+  'mimo-v2': { inputPerM: 0.2, outputPerM: 0.6 },
+  mimo: { inputPerM: 0.2, outputPerM: 0.6 },
+
+  // === LongCat ===
+  'longcat-2.0': { inputPerM: 0.75, outputPerM: 2.95 },
   longcat: { inputPerM: 0.75, outputPerM: 2.95 },
 };
 
@@ -55,14 +210,26 @@ function normalizeModelId(model: string): string {
   return lastSlash >= 0 ? lower.slice(lastSlash + 1) : lower;
 }
 
-/** Resolve the price entry for a model id (longest prefix wins). */
+/** Resolve the price entry for a model id (longest prefix wins across candidates). */
 export function priceForModel(model: string | undefined): ModelPrice {
   if (!model) return DEFAULT_PRICE;
-  const id = normalizeModelId(model);
+  const lower = model.trim().toLowerCase();
+  const afterLastSlash = normalizeModelId(model);
+  const firstSlash = lower.indexOf('/');
+  const afterFirstSlash = firstSlash >= 0 ? lower.slice(firstSlash + 1) : lower;
+
+  // Candidates ordered so exact qualified identifiers (e.g. "kimi-code/k3",
+  // "opencode/big-pickle") can match directly before falling back to stripped names.
+  const candidates = Array.from(new Set([lower, afterLastSlash, afterFirstSlash]));
+
   let best: { prefix: string; price: ModelPrice } | null = null;
-  for (const [prefix, price] of Object.entries(MODEL_PRICES)) {
-    if (!id.startsWith(prefix)) continue;
-    if (!best || prefix.length > best.prefix.length) best = { prefix, price };
+  for (const candidate of candidates) {
+    for (const [prefix, price] of Object.entries(MODEL_PRICES)) {
+      if (!candidate.startsWith(prefix)) continue;
+      if (!best || prefix.length > best.prefix.length) {
+        best = { prefix, price };
+      }
+    }
   }
   return best?.price ?? DEFAULT_PRICE;
 }

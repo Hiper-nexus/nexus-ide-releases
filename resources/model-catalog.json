@@ -381,6 +381,52 @@
           "source": "remote"
         }
       ]
+    },
+    "deepseek": {
+      "default": "deepseek-chat",
+      "models": [
+        {
+          "id": "deepseek-chat",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "bundled"
+        },
+        {
+          "id": "deepseek-coder",
+          "availability": "cheap",
+          "costTier": "low",
+          "source": "bundled"
+        },
+        {
+          "id": "deepseek-reasoner",
+          "availability": "cheap",
+          "costTier": "medium",
+          "source": "bundled"
+        },
+        {
+          "id": "deepseek-pro",
+          "availability": "paid",
+          "costTier": "medium",
+          "source": "bundled"
+        },
+        {
+          "id": "deepseek-flash",
+          "availability": "free",
+          "costTier": "free",
+          "source": "bundled"
+        }
+      ]
+    },
+    "muse": {
+      "default": "muse",
+      "models": [
+        {
+          "id": "muse",
+          "availability": "free",
+          "costTier": "free",
+          "source": "bundled"
+        }
+      ]
     }
   }
 }
