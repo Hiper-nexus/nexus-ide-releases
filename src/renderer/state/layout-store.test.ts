@@ -1148,3 +1148,36 @@ describe('promoteMissionPaneRole — isolamento entre missões (F-527)', () => {
     expect(panes.get('pane-solto')?.missionId).toBeUndefined();
   });
 });
+
+describe('layout-store stage focus mode', () => {
+  it('locks stagePaneId and allows promoting companion with setStagePane', () => {
+    useLayoutStore.setState({
+      root: buildGridTree([
+        { id: 'pane-1', kind: 'shell', title: 'Main' },
+        { id: 'pane-2', kind: 'shell', title: 'Worker' },
+      ]),
+      stageFocusMode: false,
+      stagePaneId: null,
+      focusedPaneId: 'pane-1',
+    });
+
+    useLayoutStore.getState().toggleStageFocus('pane-1');
+    expect(useLayoutStore.getState().stageFocusMode).toBe(true);
+    expect(useLayoutStore.getState().stagePaneId).toBe('pane-1');
+
+    // Focando outro pane NÃO muda stagePaneId (evita swap involuntário e tremor)
+    useLayoutStore.getState().focus('pane-2');
+    expect(useLayoutStore.getState().focusedPaneId).toBe('pane-2');
+    expect(useLayoutStore.getState().stagePaneId).toBe('pane-1');
+
+    // Promoção deliberada via setStagePane
+    useLayoutStore.getState().setStagePane('pane-2');
+    expect(useLayoutStore.getState().stagePaneId).toBe('pane-2');
+    expect(useLayoutStore.getState().focusedPaneId).toBe('pane-2');
+
+    // Desligar stage focus limpa stagePaneId
+    useLayoutStore.getState().toggleStageFocus();
+    expect(useLayoutStore.getState().stageFocusMode).toBe(false);
+    expect(useLayoutStore.getState().stagePaneId).toBeNull();
+  });
+});

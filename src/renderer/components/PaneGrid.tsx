@@ -48,9 +48,9 @@ export function PaneGrid({
   const root = useLayoutStore((s) => s.root);
   const maximizedPaneId = useLayoutStore((s) => s.maximizedPaneId);
   const stageFocusMode = useLayoutStore((s) => s.stageFocusMode);
+  const stagePaneId = useLayoutStore((s) => s.stagePaneId);
   const focusedPaneId = useLayoutStore((s) => s.focusedPaneId);
   const toggleStageFocus = useLayoutStore((s) => s.toggleStageFocus);
-  const focus = useLayoutStore((s) => s.focus);
 
   const displayRoot = useMemo(() => {
     if (!visiblePaneIds) return root;
@@ -74,10 +74,12 @@ export function PaneGrid({
 
   const { stagePane, companionPanes } = useMemo(() => {
     if (!isStageFocusActive) return { stagePane: null, companionPanes: [] };
-    const found = displayPanes.find((p) => p.id === focusedPaneId) ?? displayPanes[0]!;
+    const preferredId = stagePaneId ?? focusedPaneId;
+    const found =
+      displayPanes.find((p) => p.id === preferredId) ?? displayPanes[0]!;
     const companions = displayPanes.filter((p) => p.id !== found.id);
     return { stagePane: found, companionPanes: companions };
-  }, [isStageFocusActive, displayPanes, focusedPaneId]);
+  }, [isStageFocusActive, displayPanes, stagePaneId, focusedPaneId]);
 
   // Dispose only when the pane left the CANONICAL tree — never because the
   // vista da missão escondeu o mosaico das outras.
@@ -161,37 +163,9 @@ export function PaneGrid({
                   <div
                     key={companion.id}
                     className="stage-companion-card"
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => focus(companion.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        focus(companion.id);
-                      }
-                    }}
-                    title={`Trazer ${companion.title || 'Pane'} para o palco`}
+                    role="region"
+                    aria-label={`Companion ${companion.title || companion.id}`}
                   >
-                    <div className="stage-companion-card__bar">
-                      <span className="stage-companion-card__title">
-                        {companion.title || `Pane ${companion.id.slice(0, 6)}`}
-                      </span>
-                      <div className="stage-companion-card__meta">
-                        <span className="stage-companion-card__badge">
-                          {companion.role ?? companion.kind}
-                        </span>
-                        <button
-                          type="button"
-                          className="stage-companion-card__promote-btn"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            focus(companion.id);
-                          }}
-                        >
-                          Palco
-                        </button>
-                      </div>
-                    </div>
                     <div className="stage-companion-card__body">
                       <PaneLeaf pane={companion} />
                     </div>

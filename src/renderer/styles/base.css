@@ -695,59 +695,34 @@ body {
 }
 
 .stage-companion-card:hover,
-.stage-companion-card:focus-visible {
+.stage-companion-card:focus-within {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px var(--accent-soft);
 }
 
-.stage-companion-card__bar {
-  display: flex;
+.toolbar__promote-stage-btn {
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  padding: var(--space-1-5) var(--space-2-5);
-  background: var(--surface-1);
-  border-bottom: 1px solid var(--border);
-  font-size: var(--text-xs);
-  cursor: pointer;
-  user-select: none;
-}
-
-.stage-companion-card__title {
-  font-weight: 500;
-  color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.stage-companion-card__meta {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.stage-companion-card__badge {
-  font-size: var(--text-2xs);
-  color: var(--text-dim);
-  background: var(--surface-2);
+  gap: 4px;
   padding: 1px 6px;
   border-radius: var(--radius-xs);
-  border: 1px solid var(--border);
-}
-
-.stage-companion-card__promote-btn {
-  background: transparent;
-  border: none;
+  background: var(--accent-subtle, rgba(200, 160, 255, 0.12));
+  border: 1px solid var(--accent);
   color: var(--accent);
   font-size: var(--text-2xs);
   font-weight: 600;
   cursor: pointer;
-  padding: 1px 4px;
+  transition: all 120ms ease;
+  flex-shrink: 0;
+  line-height: 14px;
 }
 
-.stage-companion-card__promote-btn:hover {
-  text-decoration: underline;
+.toolbar__promote-stage-btn:hover {
+  background: var(--accent);
+  color: var(--bg);
 }
+
+
 
 .stage-companion-card__body {
   flex: 1;

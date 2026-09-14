@@ -162,6 +162,8 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
   const maximizedPaneId = useLayoutStore((s) => s.maximizedPaneId);
   const toggleMaximizePane = useLayoutStore((s) => s.toggleMaximizePane);
   const stageFocusMode = useLayoutStore((s) => s.stageFocusMode);
+  const stagePaneId = useLayoutStore((s) => s.stagePaneId);
+  const setStagePane = useLayoutStore((s) => s.setStagePane);
   const toggleStageFocus = useLayoutStore((s) => s.toggleStageFocus);
   const renameTitle = useLayoutStore((s) => s.renameTitle);
   const promoteMissionPaneRole = useLayoutStore((s) => s.promoteMissionPaneRole);
@@ -384,6 +386,16 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
     }
 
     if (!isCanvas) {
+      if (stageFocusMode && stagePaneId && stagePaneId !== pane.id) {
+        list.push({
+          id: 'promote-to-stage',
+          label: 'Ir ao Palco',
+          detail: 'Trazer este pane para o palco principal',
+          icon: 'sparkle',
+          primary: true,
+          run: () => setStagePane(pane.id),
+        });
+      }
       list.push({
         id: 'stage-focus',
         label: stageFocusMode ? 'Grade Normal' : 'Foco Stage',
@@ -435,6 +447,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
     isHibernated,
     isMaximized,
     stageFocusMode,
+    stagePaneId,
     paneState,
     promoteMissionPaneRole,
     setPaneRole,
@@ -444,6 +457,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
     split,
     toggleMaximizePane,
     toggleStageFocus,
+    setStagePane,
   ]);
 
   const closeAction: ToolbarAction = {
@@ -675,6 +689,21 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
         )}
         {pane.kind === 'cli-agent' && <CostBadge paneId={pane.id} />}
         <DevServerChip pane={pane} />
+        {stageFocusMode && stagePaneId && stagePaneId !== pane.id && (
+          <button
+            type="button"
+            className="toolbar__promote-stage-btn nodrag"
+            aria-label={`Trazer ${pane.title || 'pane'} para o palco principal`}
+            data-tip="Trazer este pane para o palco principal"
+            onClick={(e) => {
+              e.stopPropagation();
+              setStagePane(pane.id);
+            }}
+          >
+            <PixelIcon name="sparkle" size={10} />
+            <span>Palco</span>
+          </button>
+        )}
       </div>
 
       <div className="toolbar__actions">

@@ -44,6 +44,7 @@ interface LayoutState {
   focusedPaneId: string | null;
   maximizedPaneId: string | null;
   stageFocusMode: boolean;
+  stagePaneId: string | null;
   hydrated: boolean;
   viewKind: ViewKind;
   canvasNodeLayouts: Record<string, CanvasNodeLayout>;
@@ -106,6 +107,8 @@ interface LayoutState {
   toggleMaximizePane(paneId: string): void;
   /** Alterna o modo Stage Focus: pane focado em destaque (75%) com rail de cards vivos. */
   toggleStageFocus(paneId?: string): void;
+  /** Define explicitamente o pane no palco principal em Stage Focus mode. */
+  setStagePane(paneId: string): void;
   /** Drop a spent orchRequestId so Reiniciar does not reuse a dead token. */
   clearOrchRequestId(paneId: string): void;
   /** Claim the canonical structural vacancy as an operator shell. */
@@ -710,7 +713,9 @@ function rootWithoutVacancyResidue(root: LayoutNode): LayoutNode {
  *       LOOK like while it legitimately does.
  */
 export function enforceLayoutInvariants(
-  previous: Pick<LayoutState, 'root' | 'focusedPaneId' | 'maximizedPaneId'>,
+  previous: Pick<LayoutState, 'root' | 'focusedPaneId' | 'maximizedPaneId'> & {
+    readonly stagePaneId?: string | null;
+  },
   partial: Partial<LayoutState>,
 ): Partial<LayoutState> {
   if (partial.root === undefined) {
@@ -718,7 +723,8 @@ export function enforceLayoutInvariants(
     // does not apply — but I5 still does, against the tree that IS live.
     if (
       partial.focusedPaneId === undefined &&
-      partial.maximizedPaneId === undefined
+      partial.maximizedPaneId === undefined &&
+      partial.stagePaneId === undefined
     ) {
       return partial;
     }
@@ -732,6 +738,10 @@ export function enforceLayoutInvariants(
       partial.maximizedPaneId !== undefined
         ? partial.maximizedPaneId
         : previous.maximizedPaneId;
+    const requestedStagePane =
+      partial.stagePaneId !== undefined
+        ? partial.stagePaneId
+        : previous.stagePaneId;
     return {
       ...partial,
       focusedPaneId:
@@ -740,6 +750,10 @@ export function enforceLayoutInvariants(
           : (live[0]?.id ?? null),
       maximizedPaneId:
         requestedZoom && liveIds.has(requestedZoom) ? requestedZoom : null,
+      stagePaneId:
+        requestedStagePane && liveIds.has(requestedStagePane)
+          ? requestedStagePane
+          : null,
     };
   }
   // I6 runs FIRST: the panes read below must already be residue-free, or a
@@ -775,7 +789,16 @@ export function enforceLayoutInvariants(
   const maximizedPaneId =
     requestedZoom && liveIds.has(requestedZoom) ? requestedZoom : null;
 
-  return { ...partial, root, focusedPaneId, maximizedPaneId };
+  const requestedStagePane =
+    partial.stagePaneId !== undefined
+      ? partial.stagePaneId
+      : previous.stagePaneId;
+  const stagePaneId =
+    requestedStagePane && liveIds.has(requestedStagePane)
+      ? requestedStagePane
+      : null;
+
+  return { ...partial, root, focusedPaneId, maximizedPaneId, stagePaneId };
 }
 
 export const useLayoutStore = create<LayoutState>((rawSet, get) => {
@@ -791,6 +814,7 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
   focusedPaneId: null,
   maximizedPaneId: null,
   stageFocusMode: false,
+  stagePaneId: null,
   hydrated: false,
   viewKind: 'grid',
   canvasNodeLayouts: {},
@@ -1078,8 +1102,14 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
     const maximizedPaneId =
       get().maximizedPaneId === paneId ? null : get().maximizedPaneId;
     const stageFocusMode = afterCount <= 1 ? false : get().stageFocusMode;
+    const stagePaneId =
+      afterCount <= 1
+        ? null
+        : get().stagePaneId === paneId
+          ? (firstPaneId(root) ?? null)
+          : get().stagePaneId;
     bumpTreeVersion();
-    set({ root, focusedPaneId, maximizedPaneId, stageFocusMode });
+    set({ root, focusedPaneId, maximizedPaneId, stageFocusMode, stagePaneId });
     persist();
     // The tree cannot be empty, so closing the final pane leaves the canonical
     // structural vacancy in place. Product navigation is the sole visible
@@ -1112,20 +1142,27 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
     const all = listPanes(get().root);
     if (all.length <= 1) {
       if (get().stageFocusMode) {
-        set({ stageFocusMode: false });
+        set({ stageFocusMode: false, stagePaneId: null });
       }
       return;
     }
-    const targetId = paneId ?? get().focusedPaneId ?? all[0]?.id;
+    const targetId = paneId ?? get().stagePaneId ?? get().focusedPaneId ?? all[0]?.id;
     if (!targetId) return;
     const exists = all.some((pane) => pane.id === targetId);
     if (!exists) return;
     const nextMode = !get().stageFocusMode;
     set({
       stageFocusMode: nextMode,
+      stagePaneId: nextMode ? targetId : null,
       focusedPaneId: targetId,
       maximizedPaneId: null,
     });
+  },
+
+  setStagePane: (paneId) => {
+    const exists = listPanes(get().root).some((pane) => pane.id === paneId);
+    if (!exists) return;
+    set({ stagePaneId: paneId, focusedPaneId: paneId });
   },
 
   clearOrchRequestId: (paneId) => {
