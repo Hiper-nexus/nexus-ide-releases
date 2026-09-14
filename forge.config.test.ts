@@ -5,7 +5,68 @@ import forgeConfig, {
   assertRequiredWakeResource,
   createLinuxDebMakerConfig,
   createLinuxRpmMakerConfig,
+  createWindowsSignOptions,
 } from './forge.config';
+
+describe('Windows release signing', () => {
+  it('keeps signing disabled without the explicit release opt-in', () => {
+    expect(createWindowsSignOptions({})).toBeUndefined();
+  });
+
+  it('configures SHA-256 signing from a certificate file', () => {
+    expect(createWindowsSignOptions({
+      NEXUS_WINDOWS_RELEASE_SIGNING: '1',
+      WINDOWS_CERTIFICATE_FILE: ' C:\\release\\publisher.pfx ',
+      WINDOWS_CERTIFICATE_PASSWORD: 'secret',
+    })).toEqual({
+      certificateFile: 'C:\\release\\publisher.pfx',
+      certificatePassword: 'secret',
+      continueOnError: false,
+      hashes: ['sha256'],
+      timestampServer: 'http://timestamp.digicert.com',
+    });
+  });
+
+  it('configures SHA-256 certificate-store signing by thumbprint', () => {
+    expect(createWindowsSignOptions({
+      NEXUS_WINDOWS_RELEASE_SIGNING: '1',
+      WINDOWS_CERTIFICATE_SHA1: ' e44d98ff840b1df78d87f6768d177b5719952cab ',
+    })).toEqual({
+      continueOnError: false,
+      hashes: ['sha256'],
+      signWithParams: [
+        '/sha1',
+        'E44D98FF840B1DF78D87F6768D177B5719952CAB',
+      ],
+      timestampServer: 'http://timestamp.digicert.com',
+    });
+  });
+
+  it.each([
+    ['invalid opt-in', { NEXUS_WINDOWS_RELEASE_SIGNING: 'true' }],
+    ['missing signing mode', { NEXUS_WINDOWS_RELEASE_SIGNING: '1' }],
+    ['file without password', {
+      NEXUS_WINDOWS_RELEASE_SIGNING: '1',
+      WINDOWS_CERTIFICATE_FILE: 'publisher.pfx',
+    }],
+    ['password without file', {
+      NEXUS_WINDOWS_RELEASE_SIGNING: '1',
+      WINDOWS_CERTIFICATE_PASSWORD: 'secret',
+    }],
+    ['invalid thumbprint', {
+      NEXUS_WINDOWS_RELEASE_SIGNING: '1',
+      WINDOWS_CERTIFICATE_SHA1: 'not-a-thumbprint',
+    }],
+    ['mixed modes', {
+      NEXUS_WINDOWS_RELEASE_SIGNING: '1',
+      WINDOWS_CERTIFICATE_FILE: 'publisher.pfx',
+      WINDOWS_CERTIFICATE_PASSWORD: 'secret',
+      WINDOWS_CERTIFICATE_SHA1: 'E44D98FF840B1DF78D87F6768D177B5719952CAB',
+    }],
+  ])('rejects %s', (_name, environment) => {
+    expect(() => createWindowsSignOptions(environment)).toThrow();
+  });
+});
 
 describe('macOS transport security', () => {
   it('keeps ATS enabled while allowing only local product services over HTTP', () => {
@@ -34,6 +95,12 @@ describe('Linux sandbox packaging', () => {
 });
 
 describe('native terminal packaging', () => {
+  it('unpacks Windows DLLs used beside native Node bindings', () => {
+    expect(
+      (forgeConfig.packagerConfig?.asar as { unpack?: string }).unpack,
+    ).toContain('*.dll');
+  });
+
   it('unpacks complete node-pty packages without naming a mutable spawn-helper', () => {
     expect(forgeConfig.packagerConfig?.asar).toMatchObject({
       unpackDir: '**/node_modules/@lydell/{node-pty,node-pty-*}',

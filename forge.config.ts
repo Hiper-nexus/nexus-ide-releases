@@ -24,6 +24,25 @@ import {
   isAppleReleaseSigning,
 } from './build/mac-signing';
 
+/**
+ * Ícone do instalador Windows, gerado de `assets/icon.png` por
+ * `npm run build:windows-icon`. Fica versionado no repo de propósito: a worktree
+ * descartável do release nasce do git, então um arquivo só-gerado não existiria
+ * lá na hora do `electron-forge make`.
+ */
+const WINDOWS_SETUP_ICON = 'assets/icon.ico';
+
+/**
+ * URL pública do mesmo ícone, exigida pelo Squirrel para a entrada em "Adicionar
+ * ou remover programas". Precisa ser um endereço estável e alcançável por quem
+ * instala; não é buscada no build, é gravada como metadado.
+ *
+ * TODO(windows): publicar `icon.ico` na raiz de `nexus-ide-releases` antes da
+ * primeira release Windows — até lá o Windows mostra o ícone do executável.
+ */
+const WINDOWS_SETUP_ICON_URL =
+  'https://raw.githubusercontent.com/Hiper-nexus/nexus-ide-releases/main/icon.ico';
+
 const MICROPHONE_USAGE_DESCRIPTION =
   'NexusIDE uses the microphone for push-to-talk voice commands (Jarvis mode).';
 const SCREEN_CAPTURE_USAGE_DESCRIPTION =
@@ -157,17 +176,6 @@ type WindowsReleaseSignOptions = WindowsSignOptions & {
   continueOnError: false;
 };
 
-function requiredWindowsSigningValue(
-  environment: NodeJS.ProcessEnv,
-  name: 'WINDOWS_CERTIFICATE_FILE' | 'WINDOWS_CERTIFICATE_PASSWORD',
-): string {
-  const value = environment[name];
-  if (!value || (name === 'WINDOWS_CERTIFICATE_FILE' && !value.trim())) {
-    throw new Error(`${name} is required for Windows release signing.`);
-  }
-  return name === 'WINDOWS_CERTIFICATE_FILE' ? value.trim() : value;
-}
-
 export function createWindowsSignOptions(
   environment: NodeJS.ProcessEnv,
 ): WindowsReleaseSignOptions | undefined {
@@ -176,20 +184,51 @@ export function createWindowsSignOptions(
   if (mode !== '1') {
     throw new Error('NEXUS_WINDOWS_RELEASE_SIGNING must be exactly "1".');
   }
-  return {
-    certificateFile: requiredWindowsSigningValue(
-      environment,
-      'WINDOWS_CERTIFICATE_FILE',
-    ),
-    certificatePassword: requiredWindowsSigningValue(
-      environment,
-      'WINDOWS_CERTIFICATE_PASSWORD',
-    ),
-    continueOnError: false,
+
+  const certificateFile = environment.WINDOWS_CERTIFICATE_FILE?.trim();
+  const certificatePassword = environment.WINDOWS_CERTIFICATE_PASSWORD;
+  const certificateSha1 = environment.WINDOWS_CERTIFICATE_SHA1?.trim();
+  const hasFileModeValue =
+    environment.WINDOWS_CERTIFICATE_FILE !== undefined ||
+    certificatePassword !== undefined;
+  const hasStoreModeValue = environment.WINDOWS_CERTIFICATE_SHA1 !== undefined;
+
+  if (hasFileModeValue && hasStoreModeValue) {
+    throw new Error(
+      'Windows release signing must use either certificate file credentials or WINDOWS_CERTIFICATE_SHA1, not both.',
+    );
+  }
+
+  const commonOptions = {
+    continueOnError: false as const,
     hashes: [
       'sha256' as NonNullable<WindowsSignOptions['hashes']>[number],
     ],
     timestampServer: 'http://timestamp.digicert.com',
+  };
+
+  if (hasStoreModeValue) {
+    if (!certificateSha1 || !/^[a-f0-9]{40}$/iu.test(certificateSha1)) {
+      throw new Error(
+        'WINDOWS_CERTIFICATE_SHA1 must contain exactly 40 hexadecimal characters.',
+      );
+    }
+    return {
+      ...commonOptions,
+      signWithParams: ['/sha1', certificateSha1.toUpperCase()],
+    };
+  }
+
+  if (!certificateFile) {
+    throw new Error('WINDOWS_CERTIFICATE_FILE is required for Windows release signing.');
+  }
+  if (!certificatePassword) {
+    throw new Error('WINDOWS_CERTIFICATE_PASSWORD is required for Windows release signing.');
+  }
+  return {
+    ...commonOptions,
+    certificateFile,
+    certificatePassword,
   };
 }
 
@@ -298,9 +337,9 @@ const config: ForgeConfig = {
     // hash in Info.plist consistent — the plugin repacks the asar AFTER the
     // hash is computed, which trips the integrity fuse into a silent hang.
     asar: {
-      // *.dylib: onnxruntime-node (wake word) dlopens libonnxruntime beside
-      // its .node binding — both must live outside the asar.
-      unpack: '**/{*.node,*.dylib,*.so*,*.wasm,tesseract.js/**,tesseract.js-core/**,wasm-feature-detect/**}',
+      // onnxruntime-node (wake word) dlopens its platform shared library beside
+      // the .node binding — both must live outside the asar.
+      unpack: '**/{*.node,*.dll,*.dylib,*.so*,*.wasm,tesseract.js/**,tesseract.js-core/**,wasm-feature-detect/**}',
       // Keep the complete platform package adjacent to its native binding.
       // Release verification separately requires zero spawn-helper entries.
       unpackDir: '**/node_modules/@lydell/{node-pty,node-pty-*}',
@@ -399,16 +438,27 @@ const config: ForgeConfig = {
     // Code signing/notarization (osxSign/osxNotarize in packagerConfig)
     // activates when a Developer ID identity is present on the build machine.
     new MakerDMG(createMacDmgMakerConfig(process.env), ['darwin']),
-    new MakerSquirrel(
-      squirrelWindowsSignOptions
+    // Squirrel.Windows produz o Setup.exe. Dois pontos sobre o default do
+    // electron-winstaller, ambos visíveis para quem instala:
+    // - `setupIcon` não tem default; sem ele o instalador sai sem a nossa marca.
+    // - `iconUrl` tem default que é o ícone do PRÓPRIO Electron
+    //   (electron-winstaller/lib/index.js:182). Deixar em branco entrega a marca
+    //   alheia no "Adicionar ou remover programas" do Windows.
+    // O caminho vai relativo à raiz do projeto, como o `icon` do packager acima:
+    // rcedit recebe o valor cru, e o CWD é a raiz tanto no build normal quanto na
+    // worktree descartável do release.
+    new MakerSquirrel({
+      setupIcon: WINDOWS_SETUP_ICON,
+      iconUrl: WINDOWS_SETUP_ICON_URL,
+      ...(squirrelWindowsSignOptions
         ? {
             windowsSign:
               squirrelWindowsSignOptions as NonNullable<
                 MakerSquirrelConfig['windowsSign']
               >,
           }
-        : {},
-    ),
+        : {}),
+    }),
     new MakerZIP({}, ['darwin']),
     new MakerRpm(createLinuxRpmMakerConfig()),
     new MakerDeb(createLinuxDebMakerConfig()),
