@@ -55,8 +55,9 @@ const BOOT_PROMPT_PATTERNS: readonly BootPromptPattern[] = [
     answer: '\x1b',
     midTurn: true,
   },
-  { re: /do you trust (the|this) (files in this )?folder\??/i, label: 'folder-trust' },
-  { re: /trust (this|the) (folder|workspace|directory)\??/i, label: 'folder-trust' },
+  { re: /do you trust (the|this) (files in this |contents of this |authors of (the files in )?this )?(folder|directory|repository|workspace)\??/i, label: 'folder-trust' },
+  { re: /trust (this|the) (folder|workspace|directory|repository)\??/i, label: 'folder-trust' },
+  { re: /are you sure you want to run claude in this (directory|folder)\??/i, label: 'folder-trust' },
   { re: /press (enter|return) to (continue|confirm|accept|proceed)/i, label: 'press-enter' },
   { re: /allow (telemetry|analytics|usage data)\?/i, label: 'telemetry-consent' },
 ];

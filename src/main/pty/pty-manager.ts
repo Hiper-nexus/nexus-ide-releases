@@ -1441,6 +1441,7 @@ export function spawnAgentSession(
   }
   const promptChannel = initialPromptChannel({
     declared: adapter.spawn.initialPrompt,
+    interactiveFlag: adapter.spawn.initialPromptFlag,
     oneshotArgs: adapter.spawn.initialPromptArgs,
     interactive: adapter.spawn.interactive,
   });
@@ -1452,7 +1453,8 @@ export function spawnAgentSession(
     !req.resume &&
     promptChannel.kind !== "paste" &&
     (authority.context?.role === "worker" ||
-      promptChannel.kind === "positional")
+      promptChannel.kind === "positional" ||
+      promptChannel.kind === "interactive-flag")
       ? authority.context?.initialPrompt
       : undefined;
   let safeNativeInitialPrompt: string | undefined;

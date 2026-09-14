@@ -19,6 +19,8 @@
 export type InitialPromptChannel =
   /** Prompt vai como último argumento e a TUI SEGUE interativa. */
   | { readonly kind: 'positional' }
+  /** Prompt vai com flag interativa e a TUI SEGUE interativa (ex.: --prompt-interactive no agy). */
+  | { readonly kind: 'interactive-flag'; readonly flag: string }
   /**
    * A CLI só aceita prompt num modo não-interativo (`-p`, `--print`, `run`).
    * Serve para worker one-shot; NUNCA para um pane que precisa continuar vivo.
@@ -35,6 +37,7 @@ export type InitialPromptChannel =
  *   agent    → `agent [options] [command] [prompt...]`  (cursor-agent)
  *   muse     → `muse [OPTIONS] [PROMPT]`
  *   qodercli → `qodercli [options] [command] [query...]`
+ *   devin    → `devin [OPTIONS] [PATH]... [-- <PROMPT>...]`
  */
 const POSITIONAL_BINARIES: ReadonlySet<string> = new Set([
   'claude',
@@ -45,11 +48,14 @@ const POSITIONAL_BINARIES: ReadonlySet<string> = new Set([
   'agent',
   'muse',
   'qodercli',
+  'devin',
 ]);
 
 export interface InitialPromptSource {
   /** `spawn.initialPrompt` declarado pelo adapter, quando houver. */
-  readonly declared?: 'positional' | 'oneshot' | 'paste' | null;
+  readonly declared?: 'positional' | 'interactive-flag' | 'oneshot' | 'paste' | null;
+  /** Flag usada quando declared === 'interactive-flag' (ex.: '--prompt-interactive'). */
+  readonly interactiveFlag?: string | null;
   /** Argumentos do modo one-shot (ex.: ['--print'], ['-p'], ['run']). */
   readonly oneshotArgs?: readonly string[] | null;
   /** `spawn.interactive` — só o binário importa aqui. */
@@ -71,6 +77,12 @@ export function initialPromptChannel(
 ): InitialPromptChannel {
   const declared = source.declared ?? null;
   if (declared === 'positional') return { kind: 'positional' };
+  if (declared === 'interactive-flag') {
+    return {
+      kind: 'interactive-flag',
+      flag: source.interactiveFlag || '--prompt-interactive',
+    };
+  }
   if (declared === 'paste') return { kind: 'paste' };
   if (declared === 'oneshot') {
     const args = (source.oneshotArgs ?? []).filter(
@@ -80,7 +92,8 @@ export function initialPromptChannel(
     // melhor colar depois do boot do que subir um pane que ignora o prompt.
     return args.length > 0 ? { kind: 'oneshot', args } : { kind: 'paste' };
   }
-  return POSITIONAL_BINARIES.has(spawnBinaryName(source.interactive))
+  const bin = spawnBinaryName(source.interactive);
+  return POSITIONAL_BINARIES.has(bin)
     ? { kind: 'positional' }
     : { kind: 'paste' };
 }
@@ -97,7 +110,16 @@ export function applyInitialPromptToArgv(
 ): string[] {
   const next = [...args];
   if (channel.kind === 'positional') {
-    next.push(prompt);
+    const isDevin = next.some((a) => a === 'devin' || a.endsWith('/devin'));
+    if (isDevin && !next.includes('--')) {
+      next.push('--', prompt);
+    } else {
+      next.push(prompt);
+    }
+    return next;
+  }
+  if (channel.kind === 'interactive-flag') {
+    next.push(channel.flag, prompt);
     return next;
   }
   if (channel.kind === 'oneshot') {
@@ -123,11 +145,12 @@ export function applyInitialPromptToArgv(
 }
 
 /**
- * O pane de missão precisa continuar vivo para o operador digitar nele. Só o
- * canal posicional atende isso; one-shot fecha depois da tarefa.
+ * O pane de missão precisa continuar vivo para o operador digitar nele.
+ * Canais posicionais e flags interativas atendem isso; one-shot fecha depois da tarefa.
  */
 export function acceptsInteractiveInitialPrompt(
   source: InitialPromptSource,
 ): boolean {
-  return initialPromptChannel(source).kind === 'positional';
+  const kind = initialPromptChannel(source).kind;
+  return kind === 'positional' || kind === 'interactive-flag';
 }

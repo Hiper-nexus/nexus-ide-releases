@@ -36,7 +36,9 @@ const spawnConfigSchema = z.object({
   resumeArgs: z.array(z.string()).default([]),
   extraArgs: z.array(z.string()).default([]),
   /** Canal de largada declarado pelo adapter. Omitido = herda do binário. */
-  initialPrompt: z.enum(['positional', 'oneshot', 'paste']).optional(),
+  initialPrompt: z.enum(['positional', 'interactive-flag', 'oneshot', 'paste']).optional(),
+  /** Flag usada para canal interactive-flag (ex.: --prompt-interactive). */
+  initialPromptFlag: z.string().optional(),
   /** Argumentos que ligam o modo one-shot (`--print`, `-p`, `run`…). */
   initialPromptArgs: z.array(z.string()).optional(),
   /**

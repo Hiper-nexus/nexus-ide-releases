@@ -122,6 +122,16 @@ describe('applyInitialPromptToArgv', () => {
     ).toEqual(['--add-dir', '/tmp/ws', '--print', 'mapeie']);
   });
 
+  it('Devin positional anexa -- antes do prompt', () => {
+    expect(
+      applyInitialPromptToArgv(
+        ['devin', '--model', 'swe-2-high'],
+        { kind: 'positional' },
+        'faça a tarefa',
+      ),
+    ).toEqual(['devin', '--model', 'swe-2-high', '--', 'faça a tarefa']);
+  });
+
   it('colagem não mexe no argv', () => {
     expect(
       applyInitialPromptToArgv(['--model', 'k3'], { kind: 'paste' }, 'x'),

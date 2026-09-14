@@ -37,7 +37,10 @@
       "--resume"
     ],
     "sessionIdArg": "--session-id",
-    "extraArgs": []
+    "extraArgs": [
+      "--permission-mode",
+      "acceptEdits"
+    ]
   },
   "env": {
     "static": {

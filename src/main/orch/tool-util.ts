@@ -15,6 +15,7 @@ import {
 } from './pane-authz';
 import type { AgentGateContext } from './gate';
 import {
+  getAgentSessionInfo,
   getSessionState,
   isSessionStdinWritable,
   orchTerminateSession,
@@ -500,9 +501,15 @@ async function injectWithBusyProof(
 
   try {
     const safePrompt = assertSafePtyPrompt(prompt);
-    const input = safePrompt.includes('\n')
-      ? `\x1b[200~${safePrompt}\x1b[201~`
-      : safePrompt;
+    const agent = getAgentSessionInfo(sessionId);
+    const adapter = agent?.adapterId ? getAdapter(agent.adapterId) : null;
+    const allowsBracketedPaste =
+      (adapter && adapter.kind === 'cli-pty' ? adapter.promptInjection?.bracketedPaste : undefined) ??
+      (agent?.adapterId ? !['kimi', 'agy', 'devin'].includes(agent.adapterId) : true);
+    const input =
+      safePrompt.includes('\n') && allowsBracketedPaste
+        ? `\x1b[200~${safePrompt}\x1b[201~`
+        : safePrompt;
     if (!isSessionInjectableIdle(sessionId)) return false;
     assertMcpInvocationCurrent(invocation);
     if (!orchWriteSession(sessionId, input, { markInputBusy: false })) {
@@ -567,7 +574,7 @@ async function injectWithBusyProof(
     if (submitted && getSessionState(sessionId) !== null) {
       await assertAcceptedPromptAuthority(sessionId, invocation);
     }
-    if (!accepted) clearStrandedComposer();
+    if (!accepted && !submitted) clearStrandedComposer();
     return accepted;
   } finally {
     settle = null;

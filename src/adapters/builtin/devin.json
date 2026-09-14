@@ -33,7 +33,7 @@
     "resumeIdArgs": [
       "--resume"
     ],
-    "initialPrompt": "paste",
+    "initialPrompt": "positional",
     "extraArgs": []
   },
   "env": {
