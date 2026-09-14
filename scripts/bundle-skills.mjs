@@ -42,7 +42,10 @@ const SKILLS = [
 
 function walk(dir) {
   const files = [];
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+  const entries = fs
+    .readdirSync(dir, { withFileTypes: true })
+    .sort((left, right) => left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+  for (const entry of entries) {
     const res = path.resolve(dir, entry.name);
     if (entry.isDirectory()) files.push(...walk(res));
     else files.push(res);
@@ -70,13 +73,25 @@ for (const skill of SKILLS) {
     // lossless; anything else (any binary, regardless of extension) is stored
     // as base64 so the round-trip can never corrupt it.
     const isBinary = !Buffer.from(buffer.toString('utf8'), 'utf8').equals(buffer);
+    // Keep generated manifests byte-stable across POSIX and Windows checkouts.
+    // Git may materialize vendored text with CRLF on Windows; the runtime
+    // payload must retain the canonical LF form used by the release tree.
+    const content = isBinary
+      ? buffer.toString('base64')
+      : buffer.toString('utf8').replace(/\r\n?/gu, '\n');
     // The exec bit is part of the payload for vendored CLIs (impeccable ships
     // `scripts/impeccable` + a Mach-O launcher). Only the bit is stored, not
     // the mode: POSIX modes do not round-trip through Windows and nothing else
     // about the mode matters to the materializer.
-    const isExecutable = (fs.statSync(file).mode & 0o111) !== 0;
+    const isExecutable =
+      (fs.statSync(file).mode & 0o111) !== 0 ||
+      relPath === 'scripts/impeccable' ||
+      // Git's executable bit is not preserved by a Windows checkout. The
+      // vendored platform payloads under these directories are executable
+      // even when their mode is reported as 0644 on NTFS.
+      /(^|\/)(?:bin|scripts\/bin)\//u.test(relPath);
     manifest[relPath] = {
-      content: buffer.toString(isBinary ? 'base64' : 'utf8'),
+      content,
       encoding: isBinary ? 'base64' : 'utf8',
       ...(isExecutable ? { executable: true } : {}),
     };
