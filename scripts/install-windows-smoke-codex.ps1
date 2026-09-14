@@ -57,12 +57,20 @@ if (-not $probe.WaitForExit(20000)) {
   }
   throw 'native Codex node-pty probe exceeded its hard deadline'
 }
-$probeOutput = if (Test-Path $probeStdout) {
-  ([string](Get-Content $probeStdout -Raw)).Trim()
-} else { '' }
-$probeError = if (Test-Path $probeStderr) {
-  ([string](Get-Content $probeStderr -Raw)).Trim()
-} else { '' }
+$probeOutput = ''
+if (Test-Path $probeStdout) {
+  $probeOutputContent = Get-Content $probeStdout -Raw
+  if (-not [string]::IsNullOrEmpty($probeOutputContent)) {
+    $probeOutput = $probeOutputContent.Trim()
+  }
+}
+$probeError = ''
+if (Test-Path $probeStderr) {
+  $probeErrorContent = Get-Content $probeStderr -Raw
+  if (-not [string]::IsNullOrEmpty($probeErrorContent)) {
+    $probeError = $probeErrorContent.Trim()
+  }
+}
 if ($probe.ExitCode -ne 0) {
   throw "native Codex node-pty probe failed: $probeError"
 }
