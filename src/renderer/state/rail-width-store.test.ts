@@ -16,7 +16,7 @@ beforeEach(() => {
 });
 
 describe('rail width store', () => {
-  it('keeps every width inside the 200-280px band the design system allows', () => {
+  it('keeps every width inside the allowed band the design system allows', () => {
     expect(clampRailWidth(120)).toBe(RAIL_WIDTH_MIN);
     expect(clampRailWidth(2_000)).toBe(RAIL_WIDTH_MAX);
     expect(clampRailWidth(232)).toBe(232);

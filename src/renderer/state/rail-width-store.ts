@@ -10,8 +10,8 @@
 import { create } from 'zustand';
 
 export const RAIL_WIDTH_MIN = 200;
-export const RAIL_WIDTH_MAX = 280;
-export const RAIL_WIDTH_DEFAULT = 250;
+export const RAIL_WIDTH_MAX = 480;
+export const RAIL_WIDTH_DEFAULT = 260;
 export const RAIL_WIDTH_STORAGE_KEY = 'nexus.rail.width';
 
 /** Fora da faixa vira o extremo mais próximo; lixo vira o default. */
