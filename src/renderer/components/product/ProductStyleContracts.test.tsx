@@ -299,7 +299,7 @@ describe('Nexus V2 shell and product workspace style contracts', () => {
     ).toBe('none');
   });
 
-  it('keeps the rail resize handle inside the 200-280px band', () => {
+  it('keeps the rail resize handle inside the 200-480px band', () => {
     installStyleContract(productStyles, { width: 1_400, height: 900 });
     const host = render(<ProductShellFixture />, 1_400, 900);
     const handle = host.querySelector<HTMLElement>('.nexus-shell__rail-resize');
@@ -307,7 +307,7 @@ describe('Nexus V2 shell and product workspace style contracts', () => {
 
     expect(handle.getAttribute('role')).toBe('separator');
     expect(Number(handle.getAttribute('aria-valuemin'))).toBe(200);
-    expect(Number(handle.getAttribute('aria-valuemax'))).toBe(280);
+    expect(Number(handle.getAttribute('aria-valuemax'))).toBe(480);
     expect(styleLengthPx(handle, 'width')).toBeGreaterThanOrEqual(4);
   });
   it('keeps mission row actions out of the resting row and reveals them on hover/focus', () => {

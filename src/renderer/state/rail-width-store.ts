@@ -1,8 +1,8 @@
 /**
  * Largura do rail, ajustável pela pessoa.
  *
- * DESIGN.md §11 já descreve o rail como "largura persistente de 250px (faixa
- * permitida: 200-280px)" — a faixa existia no contrato e nunca no produto: a
+ * DESIGN.md §11 já descreve o rail como "largura persistente de 260px (faixa
+ * permitida: 200-480px)" — a faixa existia no contrato e nunca no produto: a
  * largura era um literal em CSS. Em janela estreita isso deixava o rail comendo
  * um terço do canvas sem escape, e em rail largo os nomes de pasta cabiam mas
  * ninguém podia pedir por eles.

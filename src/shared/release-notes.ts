@@ -3460,7 +3460,7 @@ export const RELEASE_07626: AppRelease = {
 
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.27',
+  version: '0.76.28',
   date: '2026-09-14',
   codename: 'Trust direto GLM/Kimi, Enter garantido, sidebar sem cortes e motor inteligente',
   summary:
@@ -3468,7 +3468,8 @@ export const CURRENT_RELEASE: AppRelease = {
     '1. Pre-seeding de workspace trust no GLM, Kimi e Claude entra direto no terminal sem telas bloqueantes; ' +
     '2. Envio de prompt para workers com Enter garantido e prova de busy após o submit, evitando prompts pendurados; ' +
     '3. Expansão da sidebar para até 480px, eliminando corte de rótulos e encolhimento do badge ATUAL; ' +
-    '4. Orquestrador reutiliza squads e modelos salvos pelo usuário (sem trocar para gpt-5.5) e delega uniformemente via nexus_route_task.',
+    '4. Orquestrador reutiliza squads e modelos salvos pelo usuário (sem trocar para gpt-5.5) e delega uniformemente via nexus_route_task. ' +
+    'A instalação Windows recebe branding Nexus e o updater trata feeds ainda sem artefato como "sem atualização".',
   highlights: [
     {
       title: 'Trust de workspace direto sem telas de confirmação (F-520)',
@@ -3497,6 +3498,11 @@ export const CURRENT_RELEASE: AppRelease = {
         'A ferramenta nexus_route_task agora está disponível para o orquestrador despachar subtarefas para a frota de ' +
         'CLIs especializadas, sem executar missões complexas sozinho sem autorização.',
     },
+    {
+      title: 'Instalador Windows com identidade Nexus',
+      detail:
+        'Setup e pacote interno usam o ícone Nexus, a tela de carregamento da marca e o updater não exibe erro quando o feed ainda não possui um artefato Windows.',
+    },
   ],
   fixes: [
     {
@@ -3518,6 +3524,11 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'F-531: orquestrador ignorando squad salvo e assumindo gpt-5.5 sozinho',
       detail:
         'Incluso preferSavedSquad na síntese de squads, lookup de modelo em squads ativos no nexus_pane_spawn e doutrina de delegação.',
+    },
+    {
+      title: 'Feed vazio do updater tratado sem falso erro',
+      detail:
+        'Respostas 404/Not Found do mirror público são classificadas como ausência de release, mantendo a interface em dia até o primeiro pacote Windows ser publicado.',
     },
   ],
 };

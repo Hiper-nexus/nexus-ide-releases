@@ -10,7 +10,7 @@ const KEYBOARD_STEP_COARSE = 24;
 
 /**
  * Alça de largura do rail. DESIGN.md §11 descreve o rail como "largura
- * persistente de 250px (faixa permitida: 200-280px)" — a faixa nunca existiu no
+ * persistente de 260px (faixa permitida: 200-480px)" — a faixa nunca existiu no
  * produto, então em janela estreita o rail comia um terço do canvas sem escape,
  * e quem queria ler o caminho da pasta não tinha como pedir mais espaço.
  */

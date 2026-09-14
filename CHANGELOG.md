@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.28 — Instalador Windows Nexus e atualização resiliente
+
+- **Branding do instalador Windows**: Setup e pacote interno usam o ícone Nexus e uma tela de carregamento da marca; o artefato instalado mantém a identidade visual no Windows.
+- **Updater sem falso erro em feed vazio**: mirror sem artefato Windows (404/Not Found) passa a ser tratado como “nenhuma atualização”, sem exibir erro de rede ao usuário.
+- **Paridade da sidebar**: a largura ajustável até 480px, o badge `ATUAL` preservado e os rótulos longos com reticências seguem incluídos nesta release.
+
 ## 0.76.27 — Trust direto GLM/Kimi, Enter garantido, sidebar sem cortes e motor inteligente
 
 - **Trust de workspace direto sem telas de confirmação (F-520)**: panes de GLM, Kimi e Claude entram diretamente no workspace sem travar na tela "Yes, I trust this folder" ou "Quick safety check". O Nexus pre-seeda o aceite no `.claude.json` e nas pastas governadas do Kimi (`workspace-trust` e `workspaces.json`), passando caminhos canônicos com realpath.

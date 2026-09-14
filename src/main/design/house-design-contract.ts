@@ -157,7 +157,7 @@ function directionSection(input: HouseDesignContractInput): string[] {
           'Chosen by **signal match**, not by a human: the goal and this ' +
             `reference share the product-domain axes ` +
             `\`${choice.sharedAxes.join('`, `') || 'none'}\`, and no other ` +
-            `catalogued reference matched as well (runner-up score ` +
+            `catalogued reference matched as well (next-best score ` +
             `${choice.runnerUpScore}).`,
           '',
           `Confidence: **${choice.confidence}**.` +
