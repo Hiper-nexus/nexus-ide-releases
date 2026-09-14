@@ -1,0 +1,39 @@
+name: Windows native Job Object spike
+
+on:
+  push:
+    branches:
+      - 'codex/windows-test-*'
+    paths:
+      - 'native/windows-pty-job/**'
+      - '.github/workflows/windows-native-job.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-native-job-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-spike:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.0
+        with:
+          persist-credentials: false
+
+      - name: Compile native fixture and test owned process cohort
+        shell: pwsh
+        run: ./native/windows-pty-job/run.ps1 -OutputDirectory '${{ runner.temp }}/nexus-windows-job-spike'
+
+      - name: Preserve native build and test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-native-job-spike
+          path: ${{ runner.temp }}/nexus-windows-job-spike/
+          if-no-files-found: warn
+          retention-days: 7
