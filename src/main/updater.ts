@@ -40,6 +40,7 @@ import { createSingleFlight } from './single-flight';
 
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const BOOT_CHECK_DELAY_MS = 3_000;
+const WINDOWS_SQUIRREL_FIRST_RUN_DELAY_MS = 10_000;
 const GH_CHECK_TIMEOUT_MS = 15_000;
 const GH_DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
 const GH_RELEASES_PER_PAGE = 100;
@@ -265,6 +266,13 @@ export interface UpdateManagerDependencies {
   runGh?: GhExecutor;
   runtimeArch?: string;
   runtimePlatform?: string;
+  runtimeArgs?: readonly string[];
+  appExecutablePath?: string;
+  pathExists?: (candidate: string) => boolean;
+}
+
+function officialWindowsUpdateFeed(version: string): string {
+  return `https://update.electronjs.org/Hiper-nexus/nexus-ide-releases/win32-x64/${version}`;
 }
 
 export class UpdateManager {
@@ -279,6 +287,8 @@ export class UpdateManager {
   private readonly runGh: GhExecutor;
   private readonly runtimeArch: string;
   private readonly runtimePlatform: string;
+  private readonly runtimeArgs: readonly string[];
+  private readonly isInstalledWindowsTarget: boolean;
   /** 'feed' = NEXUS_UPDATE_FEED direto; 'gh' = release privado via gh. */
   private mode: 'feed' | 'gh' | 'none' = 'none';
   private readonly checkSingleFlight = createSingleFlight(() => this.performCheck());
@@ -290,6 +300,24 @@ export class UpdateManager {
     this.runGh = dependencies.runGh ?? ghExec;
     this.runtimeArch = dependencies.runtimeArch ?? process.arch;
     this.runtimePlatform = dependencies.runtimePlatform ?? process.platform;
+    this.runtimeArgs = dependencies.runtimeArgs ?? process.argv;
+    const isPackagedWindowsX64 =
+      app.isPackaged &&
+      this.runtimePlatform === 'win32' &&
+      this.runtimeArch === 'x64';
+    if (isPackagedWindowsX64) {
+      const pathExists = dependencies.pathExists ?? fs.existsSync;
+      const appExecutablePath =
+        dependencies.appExecutablePath ?? app.getPath('exe');
+      const windowsUpdateExecutable = path.win32.resolve(
+        path.win32.dirname(appExecutablePath),
+        '..',
+        'Update.exe',
+      );
+      this.isInstalledWindowsTarget = pathExists(windowsUpdateExecutable);
+    } else {
+      this.isInstalledWindowsTarget = false;
+    }
     // Override dev-only para exercitar a UI ("finge" que a versão atual é
     // antiga) — nunca ativo empacotado.
     const fakeCurrent = !app.isPackaged
@@ -299,18 +327,28 @@ export class UpdateManager {
       phase: 'idle',
       currentVersion: fakeCurrent || app.getVersion(),
       source: 'none',
-      canInstall: app.isPackaged && isMacUpdatePlatform(this.runtimePlatform),
+      canInstall:
+        app.isPackaged &&
+        (isMacUpdatePlatform(this.runtimePlatform) || this.isInstalledWindowsTarget),
     };
   }
 
   init(): void {
     this.registerIpcHandlers();
-    if (!isMacUpdatePlatform(this.runtimePlatform)) {
+    const isWindows = this.runtimePlatform === 'win32';
+    if (!isMacUpdatePlatform(this.runtimePlatform) && !this.isInstalledWindowsTarget) {
+      const error = isWindows
+        ? !app.isPackaged
+          ? 'Atualizações automáticas exigem o NexusIDE instalado pelo Setup.exe.'
+          : this.runtimeArch !== 'x64'
+            ? `Arquitetura Windows sem atualização automática: ${this.runtimeArch}.`
+            : 'Instalação Squirrel incompleta: Update.exe não foi encontrado.'
+        : `Plataforma sem atualização automática: ${this.runtimePlatform}.`;
       this.patch({
         phase: 'unsupported',
         source: 'none',
         canInstall: false,
-        error: undefined,
+        error,
       });
       writeUpdateLog('info', 'init:unsupported-platform', {
         platform: this.runtimePlatform,
@@ -334,9 +372,21 @@ export class UpdateManager {
     }
 
     const rawFeed = process.env.NEXUS_UPDATE_FEED?.trim();
-    const feed = validateUpdateFeedUrl(rawFeed);
+    const defaultWindowsFeed = this.isInstalledWindowsTarget
+      ? officialWindowsUpdateFeed(this.state.currentVersion)
+      : undefined;
+    const feed = validateUpdateFeedUrl(rawFeed || defaultWindowsFeed);
     if (rawFeed && !feed) {
       console.warn('[updater] NEXUS_UPDATE_FEED rejeitado: origem/HTTPS inválidos');
+      if (this.isInstalledWindowsTarget) {
+        this.patch({
+          phase: 'error',
+          source: 'none',
+          canInstall: false,
+          error: 'Feed de atualização inválido.',
+        });
+        return;
+      }
     }
     if (feed && app.isPackaged) {
       this.mode = 'feed';
@@ -366,7 +416,12 @@ export class UpdateManager {
         void this.check();
       }
     };
-    setTimeout(scheduled, BOOT_CHECK_DELAY_MS).unref?.();
+    const initialCheckDelay =
+      this.isInstalledWindowsTarget &&
+      this.runtimeArgs.includes('--squirrel-firstrun')
+        ? WINDOWS_SQUIRREL_FIRST_RUN_DELAY_MS
+        : BOOT_CHECK_DELAY_MS;
+    setTimeout(scheduled, initialCheckDelay).unref?.();
     this.timer = setInterval(scheduled, CHECK_INTERVAL_MS);
     this.timer.unref?.();
 
@@ -424,6 +479,7 @@ export class UpdateManager {
 
   private async performCheck(): Promise<void> {
     if (!this.networkEnabled) return;
+    if (this.mode === 'none') return;
     if (this.state.phase === 'downloading' || this.state.phase === 'ready') return;
     writeUpdateLog('info', 'check:start', {
       mode: this.mode,

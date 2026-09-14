@@ -83,10 +83,71 @@ afterEach(() => {
   vi.unstubAllGlobals();
   electron.handlers.clear();
   vi.clearAllMocks();
+  electron.app.isPackaged = true;
   rmSync(electron.logsPath, { recursive: true, force: true });
 });
 
 describe('UpdateManager', () => {
+  it('uses the official feed for an installed packaged Windows x64 app', () => {
+    const manager = new UpdateManager(true, {
+      runtimeArch: 'x64',
+      runtimePlatform: 'win32',
+      runtimeArgs: [],
+      appExecutablePath: 'C:\\Users\\operator\\AppData\\Local\\NexusIDE\\app-0.15.0\\nexus-ide.exe',
+      pathExists: (candidate) => candidate.endsWith('NexusIDE\\Update.exe'),
+    });
+
+    manager.init();
+
+    expect(electron.autoUpdater.setFeedURL).toHaveBeenCalledWith({
+      url: 'https://update.electronjs.org/Hiper-nexus/nexus-ide-releases/win32-x64/0.15.0',
+    });
+    expect(manager.getState()).toMatchObject({
+      phase: 'idle',
+      source: 'feed',
+      canInstall: true,
+    });
+  });
+
+  it('waits at least ten seconds before the initial first-run Windows check', () => {
+    vi.useFakeTimers();
+    const manager = new UpdateManager(true, {
+      runtimeArch: 'x64',
+      runtimePlatform: 'win32',
+      runtimeArgs: ['--squirrel-firstrun'],
+      appExecutablePath: 'C:\\NexusIDE\\app-0.15.0\\nexus-ide.exe',
+      pathExists: () => true,
+    });
+    manager.init();
+
+    vi.advanceTimersByTime(9_999);
+    expect(electron.autoUpdater.checkForUpdates).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(electron.autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['portable Windows package', true, 'x64', false],
+    ['unsupported Windows architecture', true, 'arm64', true],
+    ['Windows development build', false, 'x64', true],
+  ])('fails clearly for %s', (_name, isPackaged, runtimeArch, updateExeExists) => {
+    electron.app.isPackaged = isPackaged;
+    const manager = new UpdateManager(true, {
+      runtimeArch,
+      runtimePlatform: 'win32',
+      runtimeArgs: [],
+      appExecutablePath: 'C:\\NexusIDE\\app-0.15.0\\nexus-ide.exe',
+      pathExists: () => updateExeExists,
+    });
+
+    manager.init();
+
+    expect(manager.getState().phase).toBe('unsupported');
+    expect(manager.getState().canInstall).toBe(false);
+    expect(manager.getState().error).toBeTruthy();
+    expect(electron.autoUpdater.setFeedURL).not.toHaveBeenCalled();
+  });
+
   it('revalida uma oferta antiga e baixa somente o release mais novo', async () => {
     vi.useFakeTimers();
     let releases = [apiRelease('0.16.1')];
@@ -232,4 +293,3 @@ describe('UpdateManager', () => {
     }
   });
 });
-

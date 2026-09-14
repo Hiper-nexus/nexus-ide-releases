@@ -30,6 +30,29 @@ describe('update feed trust policy', () => {
     );
   });
 
+  it('accepts only the exact stable Windows x64 path on the official update service', () => {
+    expect(
+      validateUpdateFeedUrl(
+        'https://update.electronjs.org/Hiper-nexus/nexus-ide-releases/win32-x64/0.76.23',
+      ),
+    ).toBe(
+      'https://update.electronjs.org/Hiper-nexus/nexus-ide-releases/win32-x64/0.76.23',
+    );
+  });
+
+  it.each([
+    'http://update.electronjs.org/Hiper-nexus/nexus-ide-releases/win32-x64/0.76.23',
+    'https://user:pass@update.electronjs.org/Hiper-nexus/nexus-ide-releases/win32-x64/0.76.23',
+    'https://update.electronjs.org/Hiper-nexus/nexus-ide/win32-x64/0.76.23',
+    'https://update.electronjs.org/Hiper-nexus/nexus-ide-releases/win32-arm64/0.76.23',
+    'https://update.electronjs.org/Hiper-nexus/nexus-ide-releases/win32-x64/v0.76.23',
+    'https://update.electronjs.org/Hiper-nexus/nexus-ide-releases/win32-x64/0.76.23/extra',
+    'https://update.electronjs.org/Hiper-nexus/nexus-ide-releases/win32-x64/0.76.23?channel=beta',
+    'https://update.electronjs.org/Hiper-nexus/nexus-ide-releases/win32-x64/0.76.23#fragment',
+  ])('rejects invalid official Windows feed %s', (url) => {
+    expect(validateUpdateFeedUrl(url)).toBeNull();
+  });
+
   it.each([
     'http://api.nexuside.app/updates',
     'https://127.0.0.1/updates',

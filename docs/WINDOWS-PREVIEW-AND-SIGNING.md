@@ -73,3 +73,24 @@ workspace opening, PowerShell terminal creation, persistence, provider login,
 a simple mission, process shutdown, and uninstall before considering a Windows
 release candidate. The private preview workflow alone never satisfies this
 release gate.
+
+## Continuous updates
+
+An installed Windows x64 build uses the official Electron update service feed
+for `Hiper-nexus/nexus-ide-releases`. Portable packages and installations
+without the adjacent Squirrel `Update.exe` do not update. The first automatic
+check waits at least ten seconds after a `--squirrel-firstrun` launch so the
+installer can release its file lock.
+
+Every stable public Windows release must contain signed assets from the same
+authorized version and commit:
+
+- one Setup `.exe` whose filename contains `-win32-x64-`;
+- exactly one full NUPKG, preserving the MakerSquirrel filename;
+- the matching unchanged single-entry `RELEASES` file.
+
+Do not publish the private workflow's unsigned preview files. The inner
+installed application and Setup must both have valid publisher signatures and
+timestamps before those assets are attached to the public stable release. A
+real installed N to N+1 update remains required before claiming continuous
+Windows update delivery.
