@@ -37,44 +37,30 @@ if ($LASTEXITCODE -ne 0 -or $nativeVersion -ne 'codex-cli 0.145.0') {
 }
 
 $env:NEXUS_SMOKE_CODEX_EXE = $nativeCodex.FullName
-@'
-const nodePty = require('@lydell/node-pty');
-const { stripVTControlCharacters } = require('node:util');
-const expected = 'codex-cli 0.145.0';
-const executable = process.env.NEXUS_SMOKE_CODEX_EXE;
-let output = '';
-let settled = false;
-const terminal = nodePty.spawn(executable, ['--version'], {
-  name: 'xterm-256color',
-  cols: 80,
-  rows: 24,
-  cwd: process.cwd(),
-  env: process.env,
-});
-const timer = setTimeout(() => {
-  if (settled) return;
-  settled = true;
-  try { terminal.kill(); } catch {}
-  console.error('native Codex node-pty probe timed out');
-  process.exitCode = 1;
-}, 15_000);
-terminal.onData((data) => {
-  if (output.length < 4096) output += data;
-});
-terminal.onExit(({ exitCode, signal }) => {
-  if (settled) return;
-  settled = true;
-  clearTimeout(timer);
-  const normalized = stripVTControlCharacters(output).trim();
-  if (exitCode !== 0 || signal || normalized !== expected) {
-    console.error(JSON.stringify({ exitCode, signal, output: normalized }));
-    process.exitCode = 1;
-    return;
-  }
-  console.log(`[windows-smoke] native Codex node-pty proof: ${normalized}`);
-});
-'@ | node
-if ($LASTEXITCODE -ne 0) { throw 'native Codex node-pty probe failed' }
+$probeStdout = Join-Path $env:RUNNER_TEMP 'nexus-codex-pty-probe.stdout.log'
+$probeStderr = Join-Path $env:RUNNER_TEMP 'nexus-codex-pty-probe.stderr.log'
+$probe = Start-Process -FilePath (Get-Command node).Source `
+  -ArgumentList @('--import', 'tsx', 'scripts/windows-codex-node-pty-probe.ts') `
+  -RedirectStandardOutput $probeStdout `
+  -RedirectStandardError $probeStderr `
+  -NoNewWindow `
+  -PassThru
+if (-not $probe.WaitForExit(20000)) {
+  $probe.Kill()
+  $probe.WaitForExit()
+  throw 'native Codex node-pty probe exceeded its hard deadline'
+}
+$probe.WaitForExit()
+$probeOutput = if (Test-Path $probeStdout) {
+  (Get-Content $probeStdout -Raw).Trim()
+} else { '' }
+$probeError = if (Test-Path $probeStderr) {
+  (Get-Content $probeStderr -Raw).Trim()
+} else { '' }
+if ($probe.ExitCode -ne 0) {
+  throw "native Codex node-pty probe failed: $probeError"
+}
+Write-Host $probeOutput
 
 $nativeCodex.Directory.FullName |
   Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
