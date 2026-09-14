@@ -3281,37 +3281,34 @@ export const RELEASE_07623: AppRelease = {
 export const CURRENT_RELEASE: AppRelease = {
   version: '0.76.24',
   date: '2026-09-14',
-  codename: 'Cotas com a verdade do provider e rail sem cortes',
+  codename: 'Cotas com a verdade do provider, ditado resiliente, workers distribuídos e mídia sempre aceita',
   summary:
-    'A análise de cotas deixa de mentir: um cooldown nunca mais pinta 100% falso por cima da leitura real do serviço ' +
-    '(o caso da conta pausada com Semanal 54% mostrando barra vermelha 100%). A pausa vira selo; o percentual é o fato. ' +
-    'Cooldowns fantasmas são refutados com leituras frescas abaixo do limiar de uso elevado, a Z.ai/GLM passa a confiar ' +
-    'nas contagens exatas em vez do campo percentage defasado, o countdown de renovação conta de verdade a cada minuto ' +
-    'com reconsulta de 5 min em background, e o rail para de cortar percentuais, e-mails e menus.',
+    'A análise de cotas deixa de mentir (cooldown nunca mais pinta 100% falso), o ditado sobrevive a qualquer chave Gemini e diz qual API atendeu, ' +
+    'os workers de missão passam a se distribuir entre os CLIs da máquina sempre no modelo mais atual, e imagem do WhatsApp passa a ser aceita ' +
+    'sempre — arrastada ou colada, no pane ou na missão.',
   highlights: [
     {
-      title: 'Cooldown nunca mais fabrica 100%',
+      title: 'Cooldown nunca mais fabrica 100% nas cotas',
       detail:
-        'Política de exibição separada da decisão de failover: a barra do cockpit e os contadores da frota vêm SOMENTE da telemetria do provider. ' +
-        'Conta em pausa mostra o percentual real + selo "pausa" com barra hachurada — a decisão de quarantena continua existindo onde importa (ranking, failover e spawn).',
+        'Barra e contadores vêm SOMENTE da telemetria real; conta pausada mostra o percentual verdadeiro + selo "pausa". Refutação de cooldown fantasma com gate justo (0.8), ' +
+        'GLM/Z.ai pelas contagens exatas, reconsulta de 5 min e countdown por minuto. Rail sem cortes: "54%" inteiro, menus completos.',
     },
     {
-      title: 'Cooldown fantasma destravado por leitura fresca',
+      title: 'Ditado resiliente e transparente (F-524)',
       detail:
-        'Leitura provider-api com menos de 10 min em que TODA janela conhecida está abaixo de 80% (limiar de uso elevado) agora refuta o cooldown persistido. ' +
-        'Antes o gate era 50%: uma conta comprovadamente com folga (Semanal 54%) ficava travada em "100%" por horas. Cooldown com tempo vencido nunca é reportado como ativo.',
+        'Gemini STT com rota universal: chave sem acesso ao preview cai para generateContent, que também TRADUZ PT→EN no modo CODE. O chip anuncia "via {provider}", ' +
+        'o HUD mostra quem transcreveu e a falha vem com correção em português (configurar chave, ativar Groq, instalar whisper.cpp).',
     },
     {
-      title: 'GLM/Z.ai: contagens exatas antes do percentage bruto',
+      title: 'Workers distribuídos entre os CLIs da máquina (F-525)',
       detail:
-        'Quando o endpoint devolve usage + currentValue/remaining, o ratio vem das contagens — o campo percentage (arredondado e por vezes defasado) é só fallback, ' +
-        'seguindo a prática documentada pela comunidade (CodexBar/zai.md).',
+        'Lane governada aberta para os builtin writáveis (Codex, Claude, AGY, Grok, GLM, Kimi): Codex no sandbox nativo, demais no boundary worktree+merge. ' +
+        'Fallback do roteador escolhe o CLI menos usado e o pool multi-CLI alimenta a diversidade — chega de tudo em gpt-5.6-sol.',
     },
     {
-      title: 'Cota viva em sessões longas',
+      title: 'Imagem do WhatsApp aceita sempre (F-526)',
       detail:
-        'Reconsulta silenciosa a cada 5 min (sem piscar "Consultando…") e countdowns de renovação recalculados a cada minuto a partir do resetsAt — ' +
-        'o "5d" não fica mais congelado no valor do momento do fetch.',
+        'Mídia que chega sem arquivo, só como HTML com imagem embutida, é extraída, salva no mission-context e injetada com caminho absoluto — no terminal, no wizard e na missão.',
     },
   ],
   fixes: [
@@ -3319,6 +3316,21 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'F-522: cockpit mostrava 100% vermelho numa conta com folga comprovada',
       detail:
         'Caso real: conta Codex retornoja em cooldown(quota) exibindo barra 100% enquanto o serviço reportava Semanal 54%. Correção em três camadas: exibição por telemetria, refutação com gate de 0.8 e cooldown vencido ignorado.',
+    },
+    {
+      title: 'F-524: ditado Gemini morria em chave sem preview e não traduzia',
+      detail:
+        'Interactions API (preview) continua como etapa literal; 403/404/status incompleto e o modo inglês caem para generateContent (GA para toda chave AI Studio, com tradução PT→EN via prompt).',
+    },
+    {
+      title: 'F-525: toda missão concentrava em Codex gpt-5.6-sol',
+      detail:
+        'Release-qualified writers expandidos + fallback least-used no roteador + grok-4.6 como default no catálogo publicado e nos squads (o publicado estava defasado em 4.5).',
+    },
+    {
+      title: 'F-526: arrastar imagem do WhatsApp não fazia nada',
+      detail:
+        'Drop/colagem com imagem embutida em data:URI (sem File, sem uri-list) agora é aceita no terminal e no shell de missão; dragover libera a entrega do drop.',
     },
     {
       title: 'F-522: pane pinado podia mostrar a cota de outra conta',
