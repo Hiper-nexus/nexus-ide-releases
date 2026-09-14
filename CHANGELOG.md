@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.76.29 — Multi-conta de cotas limpa, resolução de segredos e sidebar polida sem cortes
+
+- **Multi-conta de cotas limpa sem duplicações (F-532)**: elimina duplicação de cards de cota ("Conexão atual" vs "Conta salva no Nexus" com mesma porcentagem) quando uma conta salva no cofre cobre o login nativo. Descriptografa segredos sob demanda em `provider-usage-auth` para sondar contas secundárias do cofre em tempo real e renova tokens OAuth Claude expirados automaticamente via `refreshClaudeOauthBlob`.
+- **Barra lateral ampla e cockpit de cotas para até 4 contas (F-533)**: largura mínima elevada para 240px e padrão para 280px, adicionando margem de respiro contra a borda divisória nos elementos alinhados à direita (`[⌘K]`, `+`, `[🟢 Local]`). O cockpit agora comporta até 4 contas e formata janelas de tempo de maneira compacta (`Sem 29% · 6d9h`) para eliminar quebras de linha e cortes por reticências.
+
 ## 0.76.28 — Instalador Windows Nexus e atualização resiliente
 
 - **Branding do instalador Windows**: Setup e pacote interno usam o ícone Nexus e uma tela de carregamento da marca; o artefato instalado mantém a identidade visual no Windows.

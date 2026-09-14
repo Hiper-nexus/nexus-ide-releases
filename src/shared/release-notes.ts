@@ -3459,7 +3459,7 @@ export const RELEASE_07626: AppRelease = {
 };
 
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07628: AppRelease = {
   version: '0.76.28',
   date: '2026-09-14',
   codename: 'Trust direto GLM/Kimi, Enter garantido, sidebar sem cortes e motor inteligente',
@@ -3533,3 +3533,41 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.29',
+  date: '2026-09-14',
+  codename: 'Multi-conta de cotas limpa, resolução de segredos e sidebar polida sem cortes',
+  summary:
+    'Duas melhorias fundamentais de usabilidade e multi-conta: ' +
+    '1. Deduplicação de contas de cotas (elimina card duplicado de CLI nativo quando a conta já está no cofre) ' +
+    'e descriptografia sob demanda para sondagem de cotas de contas secundárias do cofre (com renovação automática de OAuth Claude); ' +
+    '2. Barra lateral polida com margem de respiro à direita, largura mínima de 240px (padrão 280px), ' +
+    'cockpit de cotas ampliado para até 4 contas e formatação compacta de janelas sem cortes de texto.',
+  highlights: [
+    {
+      title: 'Multi-conta de cotas limpa e sem duplicações (F-532)',
+      detail:
+        'A página de Uso e cotas e a barra lateral não duplicam mais conexões que já estão salvas no cofre. ' +
+        'Contas secundárias têm seus segredos descriptografados sob demanda para leitura de cotas em tempo real.',
+    },
+    {
+      title: 'Barra lateral espaçosa e cockpit de cotas para 4 contas (F-533)',
+      detail:
+        'Largura mínima ampliada para 240px e padrão para 280px, com margem de respiro contra a borda divisória. ' +
+        'O cockpit agora exibe até 4 contas e abrevia janelas de tempo ("Sem 29% · 6d9h") para nunca quebrar ou truncar.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'F-532: duplicação de cards de cota e falha na sondagem de contas salvas no cofre',
+      detail:
+        'Suprimida linha fantasma de CLI nativo quando o login já é coberto pelo cofre; liberada descriptografia segura de segredos em provider-usage-auth e auto-refresh de OAuth Claude.',
+    },
+    {
+      title: 'F-533: elementos encostados na divisória e janelas de cota cortadas por reticências',
+      detail:
+        'Ajustados paddings horizontais da barra lateral (var(--space-3)), opção compact: true no shortWindowsLine e cockpit com slice(0, 4).',
+    },
+  ],
+};
