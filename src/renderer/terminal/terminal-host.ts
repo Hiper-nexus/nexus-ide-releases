@@ -24,6 +24,8 @@ import {
   describeDropWithoutFiles,
   droppedFileRejectionMessage,
   droppedUriRejectionMessage,
+  embeddedImageFromHtml,
+  fileFromEmbeddedImage,
   resolveDroppedMissionContextPath,
   resolveDropUris,
   toAbsoluteContextPath,
@@ -2111,7 +2113,19 @@ function wireInteractions(host: Host, sendJumpKeyOnScroll = false): void {
     'paste',
     (e: ClipboardEvent) => {
       const files = filesFromClipboardData(e.clipboardData);
-      if (files.length === 0) return;
+      if (files.length === 0) {
+        // F-526: WhatsApp e apps Electron colam a imagem só como HTML com
+        // data:URI (sem item file). Materializa e segue a mesma rota.
+        const embedded = embeddedImageFromHtml(
+          e.clipboardData?.getData('text/html'),
+        );
+        const file = embedded ? fileFromEmbeddedImage(embedded) : null;
+        if (!file) return;
+        e.preventDefault();
+        e.stopPropagation();
+        void injectDroppedFile(host, file);
+        return;
+      }
       e.preventDefault();
       e.stopPropagation();
       for (const file of files) void injectDroppedFile(host, file);
@@ -2138,6 +2152,14 @@ function wireInteractions(host: Host, sendJumpKeyOnScroll = false): void {
     const { accepted } = resolveDropUris(e.dataTransfer);
     if (accepted.length > 0) {
       for (const dropped of accepted) void injectDroppedUri(host, dropped);
+      return;
+    }
+    // F-526: WhatsApp e apps Electron sem promessa materializada entregam o
+    // HTML com a imagem embutida (data:URI). Extrai e injeta como file.
+    const embedded = embeddedImageFromHtml(e.dataTransfer?.getData('text/html'));
+    const embeddedFile = embedded ? fileFromEmbeddedImage(embedded) : null;
+    if (embeddedFile) {
+      void injectDroppedFile(host, embeddedFile);
       return;
     }
     // Silêncio aqui tornava "não suportado" indistinguível de "quebrado".

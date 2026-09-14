@@ -255,7 +255,12 @@ export function describeDropWithoutFiles(
 export function acceptsShellDrag(types: ArrayLike<string>): boolean {
   if (hasSkillDragType(types)) return false;
   const list = Array.from(types);
-  return list.includes('Files') || list.includes('text/uri-list');
+  if (list.includes('Files') || list.includes('text/uri-list')) return true;
+  // F-526: WhatsApp e apps Electron anunciam a mídia arrastada apenas como
+  // `text/html` (imagem embutida em data:URI) — sem isto o dragover não faz
+  // preventDefault e o navegador NUNCA entrega o drop. Texto formatado de
+  // página (html + plain juntos) continua fora do intake.
+  return list.includes('text/html') && !list.includes('text/plain');
 }
 
 /** O que o shell deve fazer com um arraste que chegou. */
@@ -288,6 +293,12 @@ export function describeShellDrop(
   );
   if (accepted.length > 0) return { action: 'uris', uris: accepted };
 
+  // F-526: mídia embutida em HTML (WhatsApp/Electron) — o onDrop materializa
+  // o File a partir do data:URI e segue a rota de arquivos.
+  if (embeddedImageFromHtml(transfer.getData?.('text/html') ?? null)) {
+    return { action: 'files' };
+  }
+
   if (types.includes('Files') || types.includes('text/uri-list')) {
     return { action: 'warn', message: describeDropWithoutFiles(transfer) };
   }
@@ -313,5 +324,60 @@ export async function importDroppedUriForMission(
       ok: false,
       message: error instanceof Error ? error.message : fallback,
     };
+  }
+}
+
+// ── F-526: imagem embutida em HTML (WhatsApp e apps Electron) ────────────────
+
+const DATA_URI_IMAGE =
+  /src=["']data:(image\/(?:png|jpe?g|webp|gif));base64,([A-Za-z0-9+/=]+)["']/i;
+
+export interface EmbeddedImage {
+  readonly mime: string;
+  readonly base64: string;
+}
+
+/**
+ * WhatsApp e outros apps Electron entregam mídia arrastada/colada como HTML
+ * com um data:URI de imagem, sem File materializado e sem uri-list — os dois
+ * caminhos que o intake já cobria. Este é o terceiro: extrair a imagem
+ * embutida do HTML.
+ */
+export function embeddedImageFromHtml(html: string | null | undefined): EmbeddedImage | null {
+  if (!html) return null;
+  const match = DATA_URI_IMAGE.exec(html);
+  if (!match) return null;
+  return { mime: match[1]!.toLowerCase(), base64: match[2]! };
+}
+
+/** Extensão canônica do mime da imagem embutida. */
+export function embeddedImageExtension(mime: string): string {
+  if (mime === 'image/jpeg' || mime === 'image/jpg') return 'jpg';
+  if (mime === 'image/webp') return 'webp';
+  if (mime === 'image/gif') return 'gif';
+  return 'png';
+}
+
+/**
+ * Materializa a imagem embutida como File, pronta para a MESMA rota de
+ * paste/drop (stage no mission-context + path absoluto no prompt).
+ */
+export function fileFromEmbeddedImage(
+  image: EmbeddedImage,
+  now = Date.now(),
+): File | null {
+  try {
+    const binary = atob(image.base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    const name = `imagem-colada-${new Date(now).toISOString().replace(/[:.]/g, '-')}.${embeddedImageExtension(image.mime)}`;
+    return new File([bytes], name, {
+      type: image.mime === 'image/jpg' ? 'image/jpeg' : image.mime,
+      lastModified: now,
+    });
+  } catch {
+    return null;
   }
 }

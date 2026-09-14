@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   acceptsShellDrag,
   describeShellDrop,
+  embeddedImageFromHtml,
+  fileFromEmbeddedImage,
   importDroppedUriForMission,
   partitionDroppedMissionFiles,
   resolveDroppedMissionContextPath,
@@ -422,3 +424,52 @@ describe('toAbsoluteContextPath', () => {
   });
 });
 
+
+// ── F-526: mídia embutida em HTML (WhatsApp e apps Electron) ─────────────────
+
+describe('embeddedImageFromHtml / fileFromEmbeddedImage', () => {
+  const WA_HTML =
+    '<meta http-equiv="Content-Type" content="text/html; charset=utf-8">' +
+    '<img src="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAA" alt="IMG-20260914-WA0001.jpg" size="204304">';
+
+  it('extrai o data:URI de imagem do HTML do WhatsApp', () => {
+    const image = embeddedImageFromHtml(WA_HTML);
+    expect(image).not.toBeNull();
+    expect(image?.mime).toBe('image/jpeg');
+    expect(image?.base64).toBe('/9j/4AAQSkZJRgABAQAA');
+  });
+
+  it('ignora HTML sem imagem embutida e blob: URLs', () => {
+    expect(embeddedImageFromHtml('<p>texto</p>')).toBeNull();
+    expect(
+      embeddedImageFromHtml('<img src="blob:https://web.whatsapp.com/xyz">'),
+    ).toBeNull();
+    expect(embeddedImageFromHtml(null)).toBeNull();
+  });
+
+  it('materializa um File nomeado com a extensão certa', () => {
+    const image = embeddedImageFromHtml(WA_HTML)!;
+    const file = fileFromEmbeddedImage(image, Date.parse('2026-09-14T12:00:00Z'));
+    expect(file).not.toBeNull();
+    expect(file!.type).toBe('image/jpeg');
+    expect(file!.name).toMatch(/^imagem-colada-.*\.jpg$/);
+    expect(file!.size).toBeGreaterThan(0);
+  });
+
+  it('acceptsShellDrag aceita html-only (WhatsApp) e recusa texto formatado', () => {
+    expect(acceptsShellDrag(['text/html'])).toBe(true);
+    // Página arrastada (html+plain) continua fora do intake.
+    expect(acceptsShellDrag(['text/html', 'text/plain'])).toBe(false);
+    expect(acceptsShellDrag(['Files'])).toBe(true);
+    expect(acceptsShellDrag(['text/plain'])).toBe(false);
+  });
+
+  it('describeShellDrop planeja files para a imagem embutida em HTML', () => {
+    const transfer = {
+      types: ['text/html'],
+      getData: (type: string) => (type === 'text/html' ? WA_HTML : ''),
+      files: { length: 0 },
+    };
+    expect(describeShellDrop(transfer)).toEqual({ action: 'files' });
+  });
+});

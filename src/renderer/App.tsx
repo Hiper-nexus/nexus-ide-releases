@@ -84,6 +84,8 @@ import {
 import {
   acceptsShellDrag,
   describeShellDrop,
+  embeddedImageFromHtml,
+  fileFromEmbeddedImage,
   importDroppedUriForMission,
   partitionDroppedMissionFiles,
   shellClaimsMissionFileDrop,
@@ -784,7 +786,16 @@ export function App() {
       }
 
       const files = Array.from(event.dataTransfer?.files ?? []);
-      if (files.length === 0) return;
+      if (files.length === 0) {
+        // F-526: mídia entregue apenas como HTML (WhatsApp/Electron) —
+        // materializa o data:URI e estagia como arquivo normal.
+        const embedded = embeddedImageFromHtml(
+          event.dataTransfer?.getData('text/html'),
+        );
+        const file = embedded ? fileFromEmbeddedImage(embedded) : null;
+        if (file) void stageFilesIntoMission(workspace.path, [file]);
+        return;
+      }
       void stageFilesIntoMission(workspace.path, files);
     };
 
@@ -797,7 +808,15 @@ export function App() {
       const destination = useProductNavigationStore.getState().destination;
       if (!shellClaimsMissionFileDrop(destination.kind)) return;
       // `filesFromClipboardData` já ignora cola só-texto: a textarea não muda.
-      const files = filesFromClipboardData(event.clipboardData);
+      let files = filesFromClipboardData(event.clipboardData);
+      if (files.length === 0) {
+        // F-526: imagem colada como HTML embutido (WhatsApp/Electron).
+        const embedded = embeddedImageFromHtml(
+          event.clipboardData?.getData('text/html'),
+        );
+        const file = embedded ? fileFromEmbeddedImage(embedded) : null;
+        if (file) files = [file];
+      }
       if (files.length === 0) return;
       event.preventDefault();
 
