@@ -41,21 +41,27 @@ $probeStdout = Join-Path $env:RUNNER_TEMP 'nexus-codex-pty-probe.stdout.log'
 $probeStderr = Join-Path $env:RUNNER_TEMP 'nexus-codex-pty-probe.stderr.log'
 $probe = Start-Process -FilePath (Get-Command node).Source `
   -ArgumentList @('--import', 'tsx', 'scripts/windows-codex-node-pty-probe.ts') `
+  -WorkingDirectory (Get-Location).Path `
   -RedirectStandardOutput $probeStdout `
   -RedirectStandardError $probeStderr `
   -NoNewWindow `
   -PassThru
+$probeHandle = $probe.SafeHandle
+if ($probeHandle.IsInvalid -or $probeHandle.IsClosed) {
+  throw 'native Codex node-pty probe process handle is unavailable'
+}
 if (-not $probe.WaitForExit(20000)) {
   $probe.Kill()
-  $probe.WaitForExit()
+  if (-not $probe.WaitForExit(5000)) {
+    throw 'native Codex node-pty probe did not exit after targeted termination'
+  }
   throw 'native Codex node-pty probe exceeded its hard deadline'
 }
-$probe.WaitForExit()
 $probeOutput = if (Test-Path $probeStdout) {
-  (Get-Content $probeStdout -Raw).Trim()
+  ([string](Get-Content $probeStdout -Raw)).Trim()
 } else { '' }
 $probeError = if (Test-Path $probeStderr) {
-  (Get-Content $probeStderr -Raw).Trim()
+  ([string](Get-Content $probeStderr -Raw)).Trim()
 } else { '' }
 if ($probe.ExitCode -ne 0) {
   throw "native Codex node-pty probe failed: $probeError"
