@@ -1449,13 +1449,11 @@ export function spawnAgentSession(
   // OpenCode `run`) mata o pane — só worker. Orquestrador one-shot cola.
   const nativeInitialPrompt =
     authority.source === "pending" &&
-    Boolean(authority.context?.missionId?.trim()) &&
     !req.resume &&
     promptChannel.kind !== "paste" &&
     (authority.context?.role === "worker" ||
-      (authority.context?.role === "orchestrator" &&
-        promptChannel.kind === "positional"))
-      ? authority.context.initialPrompt
+      promptChannel.kind === "positional")
+      ? authority.context?.initialPrompt
       : undefined;
   let safeNativeInitialPrompt: string | undefined;
   if (nativeInitialPrompt !== undefined) {

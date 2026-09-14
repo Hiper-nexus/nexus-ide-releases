@@ -1196,6 +1196,31 @@ describe('agent prompt injection', () => {
     }
   });
 
+  it('sends second Enter even when session was busy during paste echo if it is idle after first Enter', async () => {
+    vi.useFakeTimers();
+    try {
+      stubs.sessionState.mockReturnValueOnce('busy').mockReturnValue('idle');
+      const pending = injectPrompt('session-1', 'line one\nline two');
+      await vi.advanceTimersByTimeAsync(500);
+      expect(stubs.writeSession).toHaveBeenNthCalledWith(
+        2,
+        'session-1',
+        '\r',
+        { markInputBusy: false },
+      );
+      await vi.advanceTimersByTimeAsync(400);
+      await pending;
+      expect(stubs.writeSession).toHaveBeenNthCalledWith(
+        3,
+        'session-1',
+        '\r',
+        { markInputBusy: false },
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('terminates a pane if authority is revoked after paste but before the first Enter', async () => {
     vi.useFakeTimers();
     try {
