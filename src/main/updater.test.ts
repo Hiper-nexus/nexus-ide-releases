@@ -109,7 +109,7 @@ describe('UpdateManager', () => {
     });
   });
 
-  it('waits at least ten seconds before the initial first-run Windows check', () => {
+  it('gates timer, focus and direct checks until the Windows first-run deadline', async () => {
     vi.useFakeTimers();
     const manager = new UpdateManager(true, {
       runtimeArch: 'x64',
@@ -119,11 +119,38 @@ describe('UpdateManager', () => {
       pathExists: () => true,
     });
     manager.init();
+    const check = electron.handlers.get(UPDATE_CHANNELS.check);
+    const onFocus = electron.app.on.mock.calls.find(
+      ([event]) => event === 'browser-window-focus',
+    )?.[1] as (() => void) | undefined;
 
-    vi.advanceTimersByTime(9_999);
+    await check?.(trustedSenderEvent());
+    onFocus?.();
+
+    await vi.advanceTimersByTimeAsync(9_999);
     expect(electron.autoUpdater.checkForUpdates).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(1);
+    await vi.advanceTimersByTimeAsync(1);
     expect(electron.autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the macOS initial check at three seconds', () => {
+    vi.useFakeTimers();
+    const previousFeed = process.env.NEXUS_UPDATE_FEED;
+    process.env.NEXUS_UPDATE_FEED = 'https://api.nexuside.app/feed';
+    try {
+      const manager = new UpdateManager(true, {
+        runtimeArch: 'arm64',
+        runtimePlatform: 'darwin',
+      });
+      manager.init();
+
+      vi.advanceTimersByTime(2_999);
+      expect(electron.autoUpdater.checkForUpdates).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(electron.autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
+    } finally {
+      process.env.NEXUS_UPDATE_FEED = previousFeed;
+    }
   });
 
   it.each([

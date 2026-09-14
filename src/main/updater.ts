@@ -289,6 +289,8 @@ export class UpdateManager {
   private readonly runtimePlatform: string;
   private readonly runtimeArgs: readonly string[];
   private readonly isInstalledWindowsTarget: boolean;
+  private readonly firstRunCheckDeadline: number | null;
+  private firstRunCheckTimer: ReturnType<typeof setTimeout> | null = null;
   /** 'feed' = NEXUS_UPDATE_FEED direto; 'gh' = release privado via gh. */
   private mode: 'feed' | 'gh' | 'none' = 'none';
   private readonly checkSingleFlight = createSingleFlight(() => this.performCheck());
@@ -318,6 +320,11 @@ export class UpdateManager {
     } else {
       this.isInstalledWindowsTarget = false;
     }
+    this.firstRunCheckDeadline =
+      this.isInstalledWindowsTarget &&
+      this.runtimeArgs.includes('--squirrel-firstrun')
+        ? Date.now() + WINDOWS_SQUIRREL_FIRST_RUN_DELAY_MS
+        : null;
     // Override dev-only para exercitar a UI ("finge" que a versão atual é
     // antiga) — nunca ativo empacotado.
     const fakeCurrent = !app.isPackaged
@@ -416,12 +423,9 @@ export class UpdateManager {
         void this.check();
       }
     };
-    const initialCheckDelay =
-      this.isInstalledWindowsTarget &&
-      this.runtimeArgs.includes('--squirrel-firstrun')
-        ? WINDOWS_SQUIRREL_FIRST_RUN_DELAY_MS
-        : BOOT_CHECK_DELAY_MS;
-    setTimeout(scheduled, initialCheckDelay).unref?.();
+    if (!this.deferUntilWindowsFirstRunDeadline()) {
+      setTimeout(scheduled, BOOT_CHECK_DELAY_MS).unref?.();
+    }
     this.timer = setInterval(scheduled, CHECK_INTERVAL_MS);
     this.timer.unref?.();
 
@@ -477,9 +481,24 @@ export class UpdateManager {
     return this.checkSingleFlight();
   }
 
+  private deferUntilWindowsFirstRunDeadline(): boolean {
+    if (this.firstRunCheckDeadline === null) return false;
+    const remainingMs = this.firstRunCheckDeadline - Date.now();
+    if (remainingMs <= 0) return false;
+    if (!this.firstRunCheckTimer) {
+      this.firstRunCheckTimer = setTimeout(() => {
+        this.firstRunCheckTimer = null;
+        void this.check();
+      }, remainingMs);
+      this.firstRunCheckTimer.unref?.();
+    }
+    return true;
+  }
+
   private async performCheck(): Promise<void> {
     if (!this.networkEnabled) return;
     if (this.mode === 'none') return;
+    if (this.deferUntilWindowsFirstRunDeadline()) return;
     if (this.state.phase === 'downloading' || this.state.phase === 'ready') return;
     writeUpdateLog('info', 'check:start', {
       mode: this.mode,
