@@ -972,7 +972,7 @@ export function WorkspaceRail({
               <span className="workspace-rail__cockpit-detail-hint">Ver</span>
             </div>
             <div className="workspace-rail__cockpit-bars">
-              {prioritizeReportedQuotas(quotaEntries).slice(0, 2).map((entry) => {
+              {prioritizeReportedQuotas(quotaEntries).slice(0, 4).map((entry) => {
                 // A barra e o percentual vêm SOMENTE da telemetria real do
                 // serviço. Um cooldown/limit-hit jamais pinta 100% falso por
                 // cima de uma leitura fresca (ex.: conta pausada com Semanal
@@ -994,8 +994,8 @@ export function WorkspaceRail({
                         : 'ok';
                 const percentLabel =
                   worst === null ? '—' : `${Math.round(worst * 100)}%`;
-                // Estilo Orca: todas as janelas ("5 Horas 35% · Semanal 41%").
-                const line = shortWindowsLine(entry, quotaTick);
+                // Estilo Orca compacto: janelas informadas ("Sem 41% · 5d").
+                const line = shortWindowsLine(entry, quotaTick, { compact: true });
                 const cooldownTitle = entry.onCooldown
                   ? ' · pausa temporária após sinal de limite (percentual = última leitura do serviço)'
                   : '';

@@ -19,7 +19,7 @@ describe('rail width store', () => {
   it('keeps every width inside the allowed band the design system allows', () => {
     expect(clampRailWidth(120)).toBe(RAIL_WIDTH_MIN);
     expect(clampRailWidth(2_000)).toBe(RAIL_WIDTH_MAX);
-    expect(clampRailWidth(232)).toBe(232);
+    expect(clampRailWidth(252)).toBe(252);
     expect(clampRailWidth(Number.NaN)).toBe(RAIL_WIDTH_DEFAULT);
   });
 
@@ -46,8 +46,8 @@ describe('rail width store', () => {
       },
     });
     try {
-      expect(() => useRailWidthStore.getState().setWidth(210)).not.toThrow();
-      expect(useRailWidthStore.getState().width).toBe(210);
+      expect(() => useRailWidthStore.getState().setWidth(250)).not.toThrow();
+      expect(useRailWidthStore.getState().width).toBe(250);
       expect(readStoredRailWidth()).toBe(RAIL_WIDTH_DEFAULT);
     } finally {
       if (original) Object.defineProperty(window, 'localStorage', original);

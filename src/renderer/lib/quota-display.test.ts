@@ -129,9 +129,53 @@ describe('quota-display', () => {
   });
 });
 
- it('puts confirmed quotas including zero before unknown entries without mutating the fleet', () => {
-   const entry = (id: string, ratio: number | null) => ({ id, windows: [{ usedRatio: ratio }] }) as ProviderQuotaEntry;
-   const entries = [entry('unknown', null), entry('zero', 0), entry('invalid', NaN), entry('reported', 0.71)];
-   expect(prioritizeReportedQuotas(entries).map(item => item.id)).toEqual(['zero', 'reported', 'unknown', 'invalid']);
-   expect(entries.map(item => item.id)).toEqual(['unknown', 'zero', 'invalid', 'reported']);
- });
+  it('shortWindowsLine with compact option omits empty windows when reported data exists and abbreviates labels', () => {
+    const now = Date.parse('2026-09-14T12:00:00.000Z');
+    const entry: ProviderQuotaEntry = {
+      id: 'glm',
+      adapterId: 'glm',
+      label: 'GLM',
+      installed: true,
+      onCooldown: false,
+      updatedAt: now,
+      windows: [
+        {
+          kind: 'hours',
+          label: '5 Horas',
+          usedRatio: null,
+          source: 'unknown',
+          confidence: 'low',
+        },
+        {
+          kind: 'weekly',
+          label: 'Semanal',
+          usedRatio: 0.29,
+          source: 'provider-api',
+          confidence: 'high',
+          resetsAt: now + 6 * 24 * 60 * 60_000 + 9 * 60 * 60_000,
+        },
+      ],
+    };
+    // In compact mode: ignores empty "5h —" and abbreviates "Semanal" -> "Sem"
+    expect(shortWindowsLine(entry, now, { compact: true })).toBe('Sem 29% · 6d9h');
+  });
+
+  it('puts confirmed quotas including zero before unknown entries without mutating the fleet', () => {
+    const entry = (id: string, ratio: number | null, active = false) =>
+      ({ id, active, windows: [{ usedRatio: ratio }] }) as ProviderQuotaEntry;
+    const entries = [
+      entry('unknown', null),
+      entry('zero', 0, false),
+      entry('zero-active', 0, true),
+      entry('invalid', NaN),
+      entry('reported', 0.71),
+    ];
+    // Reported entries first; among reported entries, active accounts come first
+    expect(prioritizeReportedQuotas(entries).map((item) => item.id)).toEqual([
+      'zero-active',
+      'zero',
+      'reported',
+      'unknown',
+      'invalid',
+    ]);
+  });
