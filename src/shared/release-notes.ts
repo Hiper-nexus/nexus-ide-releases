@@ -3220,7 +3220,7 @@ export const RELEASE_07622: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07623: AppRelease = {
   version: '0.76.23',
   date: '2026-09-14',
   codename: 'Rotação automática de modelo, agy no Gemini 3.8 Pro e orquestrador sempre em foco',
@@ -3278,5 +3278,59 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_07623: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.24',
+  date: '2026-09-14',
+  codename: 'Cotas com a verdade do provider e rail sem cortes',
+  summary:
+    'A análise de cotas deixa de mentir: um cooldown nunca mais pinta 100% falso por cima da leitura real do serviço ' +
+    '(o caso da conta pausada com Semanal 54% mostrando barra vermelha 100%). A pausa vira selo; o percentual é o fato. ' +
+    'Cooldowns fantasmas são refutados com leituras frescas abaixo do limiar de uso elevado, a Z.ai/GLM passa a confiar ' +
+    'nas contagens exatas em vez do campo percentage defasado, o countdown de renovação conta de verdade a cada minuto ' +
+    'com reconsulta de 5 min em background, e o rail para de cortar percentuais, e-mails e menus.',
+  highlights: [
+    {
+      title: 'Cooldown nunca mais fabrica 100%',
+      detail:
+        'Política de exibição separada da decisão de failover: a barra do cockpit e os contadores da frota vêm SOMENTE da telemetria do provider. ' +
+        'Conta em pausa mostra o percentual real + selo "pausa" com barra hachurada — a decisão de quarantena continua existindo onde importa (ranking, failover e spawn).',
+    },
+    {
+      title: 'Cooldown fantasma destravado por leitura fresca',
+      detail:
+        'Leitura provider-api com menos de 10 min em que TODA janela conhecida está abaixo de 80% (limiar de uso elevado) agora refuta o cooldown persistido. ' +
+        'Antes o gate era 50%: uma conta comprovadamente com folga (Semanal 54%) ficava travada em "100%" por horas. Cooldown com tempo vencido nunca é reportado como ativo.',
+    },
+    {
+      title: 'GLM/Z.ai: contagens exatas antes do percentage bruto',
+      detail:
+        'Quando o endpoint devolve usage + currentValue/remaining, o ratio vem das contagens — o campo percentage (arredondado e por vezes defasado) é só fallback, ' +
+        'seguindo a prática documentada pela comunidade (CodexBar/zai.md).',
+    },
+    {
+      title: 'Cota viva em sessões longas',
+      detail:
+        'Reconsulta silenciosa a cada 5 min (sem piscar "Consultando…") e countdowns de renovação recalculados a cada minuto a partir do resetsAt — ' +
+        'o "5d" não fica mais congelado no valor do momento do fetch.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'F-522: cockpit mostrava 100% vermelho numa conta com folga comprovada',
+      detail:
+        'Caso real: conta Codex retornoja em cooldown(quota) exibindo barra 100% enquanto o serviço reportava Semanal 54%. Correção em três camadas: exibição por telemetria, refutação com gate de 0.8 e cooldown vencido ignorado.',
+    },
+    {
+      title: 'F-522: pane pinado podia mostrar a cota de outra conta',
+      detail:
+        'entryForAccount não cai mais na linha de outra conta (nem na "CLI nativo") quando a conta pinada ainda não tem entry — tooltip do CostBadge não mistura mais credenciais.',
+    },
+    {
+      title: 'F-523: rail cortando conteúdo',
+      detail:
+        'Percentuais nunca mais truncados ("54" virava corte seco de "54%"), e-mail da conta ganha ellipsis de verdade, "Ver" e o indicador "Local" cabem inteiros, ' +
+        'label de Configurações encolhe com ellipsis em rail estreito e a barra de cota anima com transform na GPU em vez de width.',
+    },
+  ],
+};
 
