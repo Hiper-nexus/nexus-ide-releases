@@ -17,12 +17,8 @@ const BIN = path.join(
 const ARGS = [
   '-f',
   '-s',
-  '-w',
-  '@lydell/node-pty',
-  '-w',
-  'better-sqlite3',
-  '-w',
-  'onnxruntime-node',
+  '-o',
+  '@lydell/node-pty,better-sqlite3,onnxruntime-node',
 ];
 const ATTEMPTS = 2;
 
