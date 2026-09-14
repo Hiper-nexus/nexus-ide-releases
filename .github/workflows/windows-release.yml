@@ -50,6 +50,14 @@ jobs:
           node-version: '22.23.2'
           cache: npm
 
+      # node-gyp (better-sqlite3) needs a real Python interpreter during the
+      # Electron rebuild. The signing worker is intentionally otherwise
+      # preconfigured; setup-python makes that dependency explicit and keeps
+      # the service runner independent of an interactive user's PATH.
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+
       - name: Validate version, commit and optional existing release tag
         shell: pwsh
         run: |
