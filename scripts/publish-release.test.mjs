@@ -36,6 +36,49 @@ afterAll(() => {
 });
 
 describe('manual GitHub release publication', () => {
+  it('blocks ordinary publication before build or external mutations without a signed worker run', async () => {
+    await expect(publishManualRelease({ root: '/unused', environment: publishEnvironment() })).rejects.toThrow(/NEXUS_WINDOWS_RELEASE_RUN_ID/);
+  });
+
+  it('stages Windows bytes in both exact drafts and keeps worker evidence private', async () => {
+    const fixture = publicationFixture();
+    const mac = fixture.release;
+    const directory = path.dirname(mac.canonicalAssetPaths[0]);
+    const assetPaths = ['NexusIDE-1.2.3-win32-x64-Setup.exe', 'nexus_ide-1.2.3-full.nupkg', 'RELEASES'].map(name => path.join(directory, name));
+    const receiptPath = path.join(directory, 'windows-release-receipt.json');
+    for (const filename of [...assetPaths, receiptPath]) fs.writeFileSync(filename, `verified ${path.basename(filename)}`);
+    fixture.release = {
+      canonicalAssetPaths: [...mac.canonicalAssetPaths, ...assetPaths, receiptPath],
+      publicAssetPaths: [...mac.publicAssetPaths, ...assetPaths],
+    };
+    fixture.release.canonicalAssets = describeLocalReleaseAssets(fixture.release.canonicalAssetPaths);
+    fixture.release.publicAssets = describeLocalReleaseAssets(fixture.release.publicAssetPaths);
+    const windows = { assetPaths, receiptPath, assets: describeLocalReleaseAssets(assetPaths), receiptAsset: describeLocalReleaseAssets([receiptPath])[0] };
+    const events = [];
+    const github = fakeGitHub({ states: new Map(), fixture, events });
+    const options = {
+      root: '/unused', environment: publishEnvironment(), authority: releaseAuthority(), nodeVersion: releaseNodeVersion(),
+      stageReleaseAssets, github,
+      repositoryPublisher: { async push() { events.push('push'); }, async verify() {} },
+      runCandidateGate: async () => fixture.candidate,
+      loadReusableCandidate: async () => fixture.candidate,
+      materializeCandidate: () => mac,
+      loadWindowsCandidate: async () => windows,
+    };
+    await publishManualReleaseTestCore(options);
+    const publicUpload = events.find(event => event.startsWith(`upload:${PUBLIC_RELEASE_REPO}:`));
+    expect(publicUpload).toContain('RELEASES');
+    expect(publicUpload).toContain('nexus_ide-1.2.3-full.nupkg');
+    expect(publicUpload).not.toContain('windows-release-receipt.json');
+    expect(events.find(event => event.startsWith(`upload:${CANONICAL_RELEASE_REPO}:`))).toContain('windows-release-receipt.json');
+    events.length = 0;
+    await expect(publishManualReleaseTestCore({ ...options, loadWindowsCandidate: async () => { throw new Error('unsigned worker'); } })).rejects.toThrow(/unsigned worker/);
+    expect(events).toEqual([]);
+    fs.appendFileSync(assetPaths[0], 'tampered after authenticated extraction');
+    await expect(publishManualReleaseTestCore(options)).rejects.toThrow(/bytes changed/);
+    expect(events).toEqual([]);
+  });
+
   it('keeps publication effects outside caller-controlled production seams', () => {
     expect(() =>
       publishManualRelease({ github: {} }),

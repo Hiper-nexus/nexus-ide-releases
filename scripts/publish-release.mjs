@@ -6,6 +6,13 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import {
+  appendWindowsAssets,
+  fileHash as hashReleaseFile,
+  loadSignedWindowsCandidate,
+  requireWindowsRunId,
+} from './windows-release-candidate.mjs';
+
+import {
   assertAuthoritativeReleaseCandidate,
   runReleaseCandidateGate,
 } from './release-candidate-gate.mjs';
@@ -137,7 +144,7 @@ function tryRunCapture(command, args, root) {
 }
 
 function fileSha256(filePath) {
-  return createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+  return hashReleaseFile(filePath);
 }
 
 export function describeLocalReleaseAssets(assetPaths) {
@@ -1192,6 +1199,7 @@ async function publishManualReleaseCore(
   const root = path.resolve(options.root ?? process.cwd());
   const environment = options.environment ?? process.env;
   assertManualPublishEnvironment(environment);
+  if (authoritative) requireWindowsRunId(environment);
   const authority = authoritative
     ? readAndAssertReleaseAuthority(root)
     : options.authority;
@@ -1300,7 +1308,20 @@ async function publishManualReleaseCore(
       ? materializeReusable
       : materializeFresh
   )(root, candidate);
-  const stagedCandidate = await stage(materialized);
+  const windows = authoritative
+    ? await loadSignedWindowsCandidate({
+        root, environment, version, commitSha: candidate.receipt.commitSha,
+      })
+    : await options.loadWindowsCandidate?.({
+        root, environment, version, commitSha: candidate.receipt.commitSha,
+      });
+  let stagedCandidate;
+  try {
+    const combined = windows ? appendWindowsAssets(materialized, windows) : materialized;
+    stagedCandidate = await stage(combined);
+  } finally {
+    windows?.dispose?.();
+  }
   const release = stagedCandidate.release;
   try {
   if (reusePublishedCandidate) {

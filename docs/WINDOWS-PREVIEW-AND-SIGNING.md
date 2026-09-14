@@ -94,3 +94,30 @@ installed application and Setup must both have valid publisher signatures and
 timestamps before those assets are attached to the public stable release. A
 real installed N to N+1 update remains required before claiming continuous
 Windows update delivery.
+
+## Worker contínuo e publicação com Mac
+
+O workflow `windows-release.yml` está preparado para um runner Windows x64
+protegido com o label `nexus-release-signing` e CKA já configurado em modo
+automático sob a conta real do serviço. Ele não foi executado nem registra um
+runner automaticamente. O ambiente GitHub `windows-release-signing` deve restringir
+branches a main e fornecer apenas o thumbprint público `WINDOWS_CERTIFICATE_SHA1`;
+a autenticação CKA deve ser provisionada pelo titular no host.
+
+O publicador comum agora exige `NEXUS_WINDOWS_RELEASE_RUN_ID` e valida a origem
+autenticada, commit e digest do artifact do workflow, em vez de confiar em recibo
+local. Veja [RELEASE.md](RELEASE.md). Todos os futuros releases por esse comando
+exigem Windows junto com Mac. O workflow ainda não comprova instalação ou upgrade
+assinado N→N+1; essa validação continua necessária antes da primeira publicação.
+
+O Setup e o executável observados no preview ultrapassam o limite de 200 MB do
+eSigner Express web. Use a integração CKA nativa para o processo completo.
+O pacote observado tem 21 arquivos PE, além de possíveis etapas de assinatura
+do instalador: saldo de 40 assinaturas não equivale a 40 versões.
+
+Estado externo verificado nesta tarefa: `main` ainda estava com `protected=false`.
+Por isso o novo worker permanece desabilitado até configurar proteção de main,
+além de registrar o runner e provisionar o CKA. Nenhuma dessas configurações foi
+alterada. Os testes de publicação com fixtures Mac ficam no Mac; o worker roda
+os testes de empacotamento/updater usados pelo preview Windows. O PowerShell do
+novo coletor ainda não foi executado em host de assinatura.

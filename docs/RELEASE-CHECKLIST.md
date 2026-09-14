@@ -81,3 +81,16 @@ Smoke: <launcher, terminal, ops, standard 1-2 workers>
 Findings fechados: F-XXX, F-YYY, ...
 Riscos residuais: ...
 ```
+
+## Windows x64 na mesma versão
+
+- [ ] Workflow privado `windows-release.yml` concluído no mesmo commit da candidata Mac em `main` protegido.
+- [ ] Setup, aplicativo, Squirrel.exe (Update.exe instalado) e ExecutionStub têm assinatura HIPERSEND válida e timestamp.
+- [ ] Instalação limpa pelo Setup e atualização assinada N→N+1 funcionam sem gh/login; dados e terminal preservados.
+- [ ] SHA-256 do artifact GitHub validado, recibo e três assets Windows entram na mesma transação de drafts.
+- [ ] NUPKG mantém nome original e RELEASES contém uma única entrada completa; Setup identifica win32-x64.
+- [ ] Nenhuma versão estável maior já foi publicada.
+- [ ] Saldo/validade CKA suficientes para o inventário real: dezenas de arquivos podem consumir várias assinaturas por build.
+
+O workflow não substitui a prova de upgrade instalado; o recibo distingue esse
+limite explicitamente. Nunca marque a release pronta apenas por um build unsigned.

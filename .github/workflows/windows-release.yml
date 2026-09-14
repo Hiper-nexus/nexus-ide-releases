@@ -1,0 +1,103 @@
+name: Signed Windows x64 release candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact stable version on protected main (without v)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-release-signing
+  cancel-in-progress: false
+
+jobs:
+  sign:
+    if: github.repository == 'Hiper-nexus/nexus-ide' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.ref_protected
+    runs-on: [self-hosted, Windows, X64, nexus-release-signing]
+    environment: windows-release-signing
+    timeout-minutes: 90
+    env:
+      ONNXRUNTIME_NODE_INSTALL_CUDA: skip
+      RELEASE_VERSION: ${{ inputs.version }}
+      WINDOWS_CERTIFICATE_SHA1: ${{ vars.WINDOWS_CERTIFICATE_SHA1 }}
+    steps:
+      - name: Require protected main before executing repository code
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_REPOSITORY -ne 'Hiper-nexus/nexus-ide' -or $env:GITHUB_REF -ne 'refs/heads/main') { throw 'unauthorized release source' }
+          if ($env:RELEASE_VERSION -notmatch '^\d+\.\d+\.\d+$') { throw 'stable version required' }
+          if ($env:WINDOWS_CERTIFICATE_SHA1 -notmatch '^[A-Fa-f0-9]{40}$') { throw 'Configure the protected CKA worker certificate thumbprint first' }
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json' }
+          $branch = Invoke-RestMethod -Uri 'https://api.github.com/repos/Hiper-nexus/nexus-ide/branches/main' -Headers $headers
+          if (-not $branch.protected -or $branch.commit.sha -ne $env:GITHUB_SHA) { throw 'release commit must be current protected main' }
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22.23.2'
+          cache: npm
+
+      - name: Validate version, commit and optional existing release tag
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ((git rev-parse HEAD) -ne $env:GITHUB_SHA) { throw 'checkout commit mismatch' }
+          if ((node -p "require('./package.json').version") -ne $env:RELEASE_VERSION) { throw 'version mismatch' }
+          if ((node -p "require('./package.json').nexusRelease.node") -ne (node -p 'process.versions.node')) { throw 'Node release authority mismatch' }
+          $tag = "refs/tags/v$env:RELEASE_VERSION"
+          git show-ref --verify --quiet $tag
+          if ($LASTEXITCODE -eq 0) {
+            if ((git rev-parse "$tag^{}") -ne $env:GITHUB_SHA) { throw 'existing tag points at another commit' }
+          }
+          $global:LASTEXITCODE = 0
+
+      - name: Install and verify source
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm ci
+          if ($LASTEXITCODE -ne 0) { throw 'npm ci failed' }
+          npm run typecheck
+          if ($LASTEXITCODE -ne 0) { throw 'typecheck failed' }
+          npm run security:renderer-sinks
+          if ($LASTEXITCODE -ne 0) { throw 'renderer sinks failed' }
+          npx vitest run forge.config.test.ts scripts/build-windows-icon.test.mjs build/prune-native-payload.test.ts scripts/rebuild-node-natives.test.mjs scripts/windows-release-workflow.test.mjs src/main/updater.test.ts src/main/updater-feed.test.ts
+          if ($LASTEXITCODE -ne 0) { throw 'release tests failed' }
+
+      - name: Build using preconfigured CKA certificate store
+        shell: pwsh
+        env:
+          NEXUS_WINDOWS_RELEASE_SIGNING: '1'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:WINDOWS_CERTIFICATE_FILE -or $env:WINDOWS_CERTIFICATE_PASSWORD) { throw 'worker must use CKA certificate-store mode only' }
+          $cert = Get-Item "Cert:\CurrentUser\My\$env:WINDOWS_CERTIFICATE_SHA1"
+          if ($cert.Subject -notmatch '(?:^|,\s*)CN="?HIPERSEND TECNOLOGIA INTERNET & SOFTWARES LTDA"?(?:,|$)' -or $cert.NotAfter -le (Get-Date)) { throw 'unexpected or expired signing certificate' }
+          if (Test-Path out) { Remove-Item out -Recurse -Force }
+          npm run make -- --platform win32 --arch x64
+          if ($LASTEXITCODE -ne 0) { throw 'signed Windows build failed' }
+
+      - name: Verify signed package, run native smoke and collect immutable payload
+        shell: pwsh
+        run: ./scripts/collect-windows-release.ps1
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-x64-signed-release
+          path: windows-release-assets/*
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
