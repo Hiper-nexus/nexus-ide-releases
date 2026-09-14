@@ -484,6 +484,23 @@ export async function designSquadForWorkspace(
   // keychain-only providers (AGY) first so a live session is not read as
   // login-needed and wrongly excluded from the designed roster.
   await warmSquadRuntimeSubscriptionAuth();
+  if (options.preferSavedSquad) {
+    const inventory = liveSquadRuntimeInventory();
+    const saved = pickReusableSquad(
+      listSquads(),
+      inventory.policy,
+      inventory.verifiedOrchestratorCliIds,
+      isOperatorChoicePolicy(getOrchSettings().squadCliPolicy),
+    );
+    if (saved) {
+      assertSquadDesignAuthority(options);
+      return {
+        ok: true,
+        squad: saved,
+        warning: `Reusando o squad salvo "${saved.name}" — edite o roster na próxima tela se quiser outro time.`,
+      };
+    }
+  }
   return designSquad({ workspacePath, options });
 }
 

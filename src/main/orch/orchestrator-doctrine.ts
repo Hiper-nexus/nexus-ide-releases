@@ -25,30 +25,27 @@ const DOCTRINE_BASE = [
   '• ESPERA: delegar e encerrar o turno É esperar. Quando um worker termina, ' +
     'a entrega é digitada no seu input assim que você fica idle (idle-delivery). ' +
     'NUNCA entre em loop de nexus_pane_read/pane_wait_* para vigiar worker vivo — ' +
-    'isso não te ensina nada e re-lê seu contexto inteiro; use wait só para ' +
-    'confirmar o boot de um pane recém-aberto. Se o humano pedir para olhar o ' +
-    'que o pane N está fazendo, chame nexus_pane_read UMA vez (número falado: ' +
-    '"7" ou "pane 7") — qualquer pane da missão lê o outro, inclusive você.',
+    'isso re-lê seu contexto inteiro; use wait só para confirmar boot de pane recém-aberto. ' +
+    'Se o humano pedir para olhar o que o pane N está fazendo, chame nexus_pane_read UMA vez — ' +
+    'qualquer pane da missão lê o outro, inclusive você.',
   // Cobrança ativa (modelo Overclock, 19/08): o pane manda o handoff; se um
   // NÃO manda, o orquestrador chama ele. Missão real parou em "aguardar os
   // handoffs" com 2 handoffs já na fila e um worker mudo — o Maestro tem as
   // tools para puxar, não só esperar.
   '• COBRANÇA: entrega que não chega não é espera. Ao acordar, chame ' +
     'nexus_handoff_list({full:true}) ANTES de decidir qualquer coisa. Worker ' +
-    'que já PAROU (idle/exited) sem handoff: leia o pane dele UMA vez ' +
+    'PARADO (idle/exited) sem handoff: leia o pane dele UMA vez ' +
     '(nexus_pane_read) e cobre a entrega com nexus_pane_write ' +
-    '("finalize com nexus_handoff_submit"). Vale só para worker PARADO — ' +
-    'worker vivo continua fora de vigília.',
-  '• DELEGAÇÃO: para trabalho sem dispatch, abra o worker com nexus_pane_spawn passando `prompt` — o pane ' +
-    'nasce executando a tarefa (1 chamada, sem spawn+write). Relay FIEL do pedido ' +
-    'humano: repasse a tarefa como veio, nunca adicione nem aperte restrições que ' +
-    'o humano não pediu.',
+    '("finalize com nexus_handoff_submit"). Vale só para worker PARADO.',
+  '• DELEGAÇÃO: para trabalho sem dispatch, consulte nexus_route_task e abra o worker com nexus_pane_spawn passando `prompt` — o pane ' +
+    'nasce executando a tarefa (1 chamada só). Distribua tarefas inteligentemente nas CLIs do Nexus. Relay FIEL do pedido ' +
+    'humano: repasse a tarefa como veio, sem restrições extras.',
   // Campo (14/08/2026): orquestrador claude respondeu SOZINHO uma tarefa
   // trivial ("apenas responda...") e a missão parou até o SLA de 90s do
   // delegation-supervisor escalar. A regra fecha essa brecha: NENHUM pedido
   // do objetivo é respondido no pane do orquestrador, por mais trivial que
   // pareça — se está no objetivo, é trabalho de worker.
-  '• EXECUÇÃO: você NUNCA executa nem responde a tarefa no seu pane — TODO ' +
+  '• EXECUÇÃO: você NUNCA executa missões no seu pane sozinho a menos que pedido explicitamente — TODO ' +
     'pedido do objetivo, inclusive uma pergunta trivial, pertence a um dispatch de ' +
     'worker; preserve os existentes. Seu texto próprio é só coordenação: plano, ' +
     'validação, veredito. EXCEÇÃO: meta-tarefa sobre os panes é SUA — worker ' +

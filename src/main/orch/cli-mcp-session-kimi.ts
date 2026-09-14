@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -29,6 +30,83 @@ import { mergeKimiStatusHooks } from './hook-status-config';
 import { claudeFamilyHubMcpServers } from '../mcp-hub/mcp-hub-spawn';
 
 /**
+ * Pre-seed trust for the workspace in Kimi's workspace-trust and workspaces.json
+ * so Kimi doesn't ask "Trust this folder?" when opened by Nexus.
+ */
+export function ensureKimiWorkspaceTrust(
+  providerHome: string,
+  cwd?: string,
+): void {
+  if (!cwd) return;
+  try {
+    const trustDir = path.join(providerHome, 'workspace-trust');
+    fs.mkdirSync(trustDir, { recursive: true, mode: 0o700 });
+
+    const targets = [cwd];
+    try {
+      const real = fs.realpathSync(cwd);
+      if (real && real !== cwd) targets.push(real);
+    } catch {
+      // best-effort realpath
+    }
+
+    const workspacesPath = path.join(providerHome, 'workspaces.json');
+    let workspacesData: {
+      version: number;
+      workspaces: Record<string, unknown>;
+      deleted_workspace_ids: string[];
+    } = {
+      version: 1,
+      workspaces: {},
+      deleted_workspace_ids: [],
+    };
+    if (fs.existsSync(workspacesPath)) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(workspacesPath, 'utf8'));
+        if (parsed && typeof parsed === 'object' && parsed.workspaces) {
+          workspacesData = parsed as typeof workspacesData;
+        }
+      } catch {
+        // fallback
+      }
+    }
+
+    const nowIso = new Date().toISOString();
+    const nowMs = Date.now();
+
+    for (const root of targets) {
+      const hash = crypto.createHash('sha256').update(root).digest('hex').slice(0, 12);
+      const base = path.basename(root) || 'workspace';
+      const workspaceId = `wd_${base}_${hash}`;
+
+      const trustFile = path.join(trustDir, workspaceId);
+      fs.writeFileSync(
+        trustFile,
+        JSON.stringify({ root, trustedAt: nowMs }),
+        { mode: 0o600 },
+      );
+
+      if (!workspacesData.workspaces[workspaceId]) {
+        workspacesData.workspaces[workspaceId] = {
+          root,
+          name: base,
+          created_at: nowIso,
+          last_opened_at: nowIso,
+        };
+      }
+    }
+
+    fs.writeFileSync(
+      workspacesPath,
+      JSON.stringify(workspacesData, null, 2),
+      { mode: 0o600 },
+    );
+  } catch {
+    // best-effort
+  }
+}
+
+/**
  * Kimi officially resolves MCP from $KIMI_CODE_HOME/mcp.json. The overlay
  * symlinks all real data and adds only a private, token-free MCP declaration;
  * `bearerTokenEnvVar` reads the already session-scoped Nexus token at runtime.
@@ -49,6 +127,9 @@ export function prepareKimiMcpSession(
       process.env.KIMI_CODE_HOME ??
       path.join(home, '.kimi-code'),
   );
+  if (options.cwd) {
+    ensureKimiWorkspaceTrust(providerHome, options.cwd);
+  }
   const artifactRoot = path.resolve(
     options.artifactRoot ??
       path.join(home, '.nexus', 'ephemeral', 'mcp-clients'),
@@ -72,6 +153,8 @@ export function prepareKimiMcpSession(
             'session_index.jsonl',
             'sessions',
             'user-history',
+            'workspace-trust',
+            'workspaces.json',
           ]),
         );
       } else {

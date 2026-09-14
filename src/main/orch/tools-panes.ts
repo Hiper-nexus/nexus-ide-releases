@@ -499,8 +499,11 @@ const paneSpawn: McpToolDef = {
             adHocAdapterId,
           )
         : null;
-      const selectedAdHocModel = uniqueSealed?.model ?? adHocModel;
-      const selectedAdHocEffort = uniqueSealed?.effort ?? adHocEffort;
+      const squadAgent = !uniqueSealed && !adHocModel
+        ? findAgentInAnySquad(adHocAdapterId)?.agent
+        : undefined;
+      const selectedAdHocModel = uniqueSealed?.model ?? adHocModel ?? squadAgent?.model;
+      const selectedAdHocEffort = uniqueSealed?.effort ?? adHocEffort ?? squadAgent?.effort;
       // Spawn ad-hoc (sem agentName): modelo com warning de catálogo (ex.:
       // grok-4.5) só entra se veio de uma decisão real do nexus_route_task.
       // Omitir o model NÃO contorna o gate: sem model explícito, o que roda é

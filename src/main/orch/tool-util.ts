@@ -305,26 +305,33 @@ async function submitEnter(
     assertMcpInvocationCurrent(invocation);
     if (onBeforeSubmit?.() === false) return;
     // Paste-echo busy during settle is not proof that Enter was accepted.
-    // Re-arm after the composer has settled so a DeepSeek/Claude TUI that
-    // painted during paste still gets the second CR if it is idle now.
-    observedBusy = getSessionState(sessionId) === 'busy';
-    const firstEnter = orchWriteSession(sessionId, '\r', { markInputBusy: false });
-    if (!firstEnter) {
-      throw new Error('agent prompt Enter was not delivered to the PTY');
-    }
-    await delay(ENTER_RETRY_MS);
-    if (
-      !observedBusy &&
-      (requireInjectableIdle
-        ? isSessionInjectableIdle(sessionId)
-        : getSessionState(sessionId) === 'idle')
-    ) {
-      assertMcpInvocationCurrent(invocation);
-      if (onBeforeSubmit?.() === false) return;
-      const secondEnter = orchWriteSession(sessionId, '\r', { markInputBusy: false });
-      if (!secondEnter) {
+    // Reset observedBusy right before sending Enter so only a busy transition
+    // occurring AFTER Enter is treated as proof that Enter was accepted!
+    let enterAcceptedBusy = false;
+    const untapEnterBusy = tapSessionState((changedSessionId, state) => {
+      if (changedSessionId === sessionId && state === 'busy') {
+        enterAcceptedBusy = true;
+      }
+    });
+    try {
+      const firstEnter = orchWriteSession(sessionId, '\r', { markInputBusy: false });
+      if (!firstEnter) {
         throw new Error('agent prompt Enter was not delivered to the PTY');
       }
+      await delay(ENTER_RETRY_MS);
+      const isIdleNow = requireInjectableIdle
+        ? isSessionInjectableIdle(sessionId)
+        : getSessionState(sessionId) === 'idle';
+      if (!enterAcceptedBusy && isIdleNow) {
+        assertMcpInvocationCurrent(invocation);
+        if (onBeforeSubmit?.() === false) return;
+        const secondEnter = orchWriteSession(sessionId, '\r', { markInputBusy: false });
+        if (!secondEnter) {
+          throw new Error('agent prompt Enter was not delivered to the PTY');
+        }
+      }
+    } finally {
+      untapEnterBusy();
     }
   } catch (error) {
     if (invocation) {
@@ -403,7 +410,8 @@ async function injectWithBusyProof(
   // Never interleave a brief with boot or a turn already in progress. The
   // caller may retry only after an actual idle snapshot/edge.
   if (!isSessionInjectableIdle(sessionId)) return false;
-  let observedBusy = getSessionState(sessionId) === 'busy';
+  let observedBusy = false;
+  let postSubmitBusy = false;
   let observedOutput = false;
   let observedOutputChunks = 0;
   let submitted = false;
@@ -416,7 +424,7 @@ async function injectWithBusyProof(
   const hasAcceptanceProof = () =>
     requireTurnStartProof
       ? turnStartObserved || sustainedPhysicalTurn
-      : observedBusy && observedOutput;
+      : (postSubmitBusy || (submitted && observedBusy)) && observedOutput;
   const maybeAccept = () => {
     if (hasAcceptanceProof()) settle?.(true);
   };
@@ -452,6 +460,7 @@ async function injectWithBusyProof(
     if (state === 'busy') {
       observedBusy = true;
       if (submitted) {
+        postSubmitBusy = true;
         armPhysicalTurnConfirmation();
         maybeAccept();
       }
@@ -532,7 +541,10 @@ async function injectWithBusyProof(
     if (getAgentTurnStartSequence(sessionId) > turnStartBaseline) {
       turnStartObserved = true;
     }
-    if (getSessionState(sessionId) === 'busy') observedBusy = true;
+    if (getSessionState(sessionId) === 'busy') {
+      observedBusy = true;
+      postSubmitBusy = true;
+    }
     armPhysicalTurnConfirmation();
     if (hasAcceptanceProof()) {
       await assertAcceptedPromptAuthority(sessionId, invocation);
@@ -1213,15 +1225,15 @@ export async function spawnPaneAndMaybePrompt(
   // (agy/codex/opencode) e todo o resto recebia por colagem pós-boot, que é o
   // canal que falha contra TUI fria (timing race, eco, mutez). Agora o resolvedor
   // é o MESMO que o pty-manager e o deliveredByNativeChannel usam — uma lista só.
+  const promptChannel = initialPromptChannel({
+    declared: adapter.spawn.initialPrompt,
+    oneshotArgs: adapter.spawn.initialPromptArgs,
+    interactive: adapter.spawn.interactive,
+  });
   const shouldUseNativeInitialPrompt = Boolean(
-    options.missionId &&
-      options.role === 'worker' &&
-      finalPrompt &&
-      initialPromptChannel({
-        declared: adapter.spawn.initialPrompt,
-        oneshotArgs: adapter.spawn.initialPromptArgs,
-        interactive: adapter.spawn.interactive,
-      }).kind !== 'paste',
+    finalPrompt &&
+      promptChannel.kind !== 'paste' &&
+      (options.role === 'worker' || promptChannel.kind === 'positional'),
   );
   let initialPrompt: string | undefined;
   if (shouldUseNativeInitialPrompt && finalPrompt) {

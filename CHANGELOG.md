@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.27 — Trust direto GLM/Kimi, Enter garantido, sidebar sem cortes e motor inteligente
+
+- **Trust de workspace direto sem telas de confirmação (F-520)**: panes de GLM, Kimi e Claude entram diretamente no workspace sem travar na tela "Yes, I trust this folder" ou "Quick safety check". O Nexus pre-seeda o aceite no `.claude.json` e nas pastas governadas do Kimi (`workspace-trust` e `workspaces.json`), passando caminhos canônicos com realpath.
+- **Enter garantido após injeção de prompt no pane (F-521)**: prompts longos colados no terminal de workers não ficam mais parados aguardando confirmação manual. A detecção de turn start ignora o eco da colagem (`postSubmitBusy`), e o envio do Enter reenvia se o TUI engolir o primeiro caractere durante a transição. CLIs com suporte a prompt posicional (como Codex) recebem o prompt inicial diretamente nos argumentos de inicialização.
+- **Sidebar ampla e sem cortes de conteúdo (F-530)**: largura máxima da sidebar expandida para 480px (padrão 260px). O badge "ATUAL" não encolhe para "ATU" (`flex-shrink: 0`, `white-space: nowrap`), o atalho [⌘K] mantém espaçamento limpo e títulos de workspaces longos truncam com reticências.
+- **Orquestrador inteligente com reuso de squad salvo (F-531)**: o orquestrador respeita os modelos escolhidos no squad pelo usuário em vez de forçar o fallback para `gpt-5.5`. A ferramenta `nexus_route_task` agora está liberada para qualquer modo e a doutrina proíbe o orquestrador de executar missões complexas sozinho sem autorização, delegando tarefas aos CLIs especializados da frota.
+
 ## 0.76.26 — O pane GLM abre de verdade: trust respondido nas duas bordas
 
 - **Pane da família Claude não fica mais "Aguardando" no trust (F-529)**: abrir um pane GLM deixava o terminal parado para sempre no "Yes, I trust this folder" (relato ao vivo: pane 1, glm-5.3, status Aguardando). Duas causas no `CliPromptAutoResponder`: (1) a janela de observação de 20s era contada do SPAWN, e o cold start do GLM/Z.ai — binário node pesado nascendo num home isolado sem trust por projeto salvo — pinta o diálogo depois disso, com o watch já desistido em silêncio; (2) a resposta era digitada UMA vez e o estado encerrado na hora — a tecla perdida na race do desenho do diálogo nunca era reenviada, e o caminho com fallback (`forceAccept`) só existia quando havia brief de missão para injetar, nunca no pane aberto pelo operador.

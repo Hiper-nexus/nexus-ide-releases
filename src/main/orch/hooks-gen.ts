@@ -157,13 +157,25 @@ function readNativeProjectTrust(
 
 function exactProjectTrust(cwd: string | undefined): Record<string, unknown> {
   if (!cwd) return {};
-  return {
-    projects: {
-      [cwd]: {
+  const projects: Record<string, unknown> = {
+    [cwd]: {
+      hasTrustDialogAccepted: true,
+      hasCompletedProjectOnboarding: true,
+    },
+  };
+  try {
+    const real = fs.realpathSync(cwd);
+    if (real && real !== cwd) {
+      projects[real] = {
         hasTrustDialogAccepted: true,
         hasCompletedProjectOnboarding: true,
-      },
-    },
+      };
+    }
+  } catch {
+    // best-effort
+  }
+  return {
+    projects,
   };
 }
 
@@ -401,7 +413,10 @@ export function prepareEphemeralHome(
  * Persistent so the adapter keeps its own session/history; auth is injected via
  * env and is never sourced from this home.
  */
-export function prepareThirdPartyClaudeHome(adapterId: string): string {
+export function prepareThirdPartyClaudeHome(
+  adapterId: string,
+  cwd?: string,
+): string {
   // Containment: the id becomes a path segment; reject traversal from a
   // hand-authored plugin adapter id.
   if (
@@ -415,17 +430,67 @@ export function prepareThirdPartyClaudeHome(adapterId: string): string {
   }
   const dir = path.join(os.homedir(), '.nexus', 'homes', adapterId);
   fs.mkdirSync(path.join(dir, '.claude'), { recursive: true, mode: 0o700 });
-  // Skip first-run onboarding on the first spawn; never clobber state the CLI
-  // has since written on later runs.
   const onboardingMarker = path.join(dir, '.claude.json');
-  if (!fs.existsSync(onboardingMarker)) {
-    fs.writeFileSync(
-      onboardingMarker,
-      JSON.stringify({ hasCompletedOnboarding: true }),
-      { mode: 0o600 },
-    );
+  let profile: Record<string, unknown> = { hasCompletedOnboarding: true };
+  if (fs.existsSync(onboardingMarker)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(onboardingMarker, 'utf8'));
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        profile = parsed as Record<string, unknown>;
+      }
+    } catch {
+      // keep fallback
+    }
   }
+  profile.hasCompletedOnboarding = true;
+  if (cwd) {
+    const existingProjects = (profile.projects && typeof profile.projects === 'object' && !Array.isArray(profile.projects))
+      ? (profile.projects as Record<string, unknown>)
+      : {};
+    const trust = exactProjectTrust(cwd);
+    profile.projects = {
+      ...existingProjects,
+      ...((trust.projects as Record<string, unknown>) ?? {}),
+    };
+  }
+  fs.writeFileSync(
+    onboardingMarker,
+    JSON.stringify(profile, null, 2),
+    { mode: 0o600 },
+  );
   return dir;
+}
+
+/**
+ * Pre-seed trust for the current workspace in ~/.claude.json so native Claude
+ * doesn't stop on the "Trust this folder?" prompt when opened from Nexus IDE.
+ */
+export function ensureNativeClaudeProjectTrust(
+  realHome: string,
+  cwd?: string,
+): void {
+  if (!cwd) return;
+  const profilePath = path.join(realHome, '.claude.json');
+  try {
+    let profile: Record<string, unknown> = {};
+    if (fs.existsSync(profilePath)) {
+      const parsed = JSON.parse(fs.readFileSync(profilePath, 'utf8'));
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        profile = parsed as Record<string, unknown>;
+      }
+    }
+    const existingProjects = (profile.projects && typeof profile.projects === 'object' && !Array.isArray(profile.projects))
+      ? (profile.projects as Record<string, unknown>)
+      : {};
+    const trust = exactProjectTrust(cwd);
+    profile.projects = {
+      ...existingProjects,
+      ...((trust.projects as Record<string, unknown>) ?? {}),
+    };
+    fs.writeFileSync(profilePath, JSON.stringify(profile, null, 2), { mode: 0o600 });
+  } catch {
+    // Best effort — do not fail spawn if realHome/.claude.json is not writable
+  }
 }
 
 /**

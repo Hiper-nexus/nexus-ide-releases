@@ -2414,6 +2414,7 @@ export function registerOrchIpc(): void {
             : await designSquadForWorkspace(wsPath, {
                 signal: fence.signal,
                 assertCurrentAuthority: fence.assertCurrentAuthority,
+                preferSavedSquad: true,
               });
           fence.assertCurrentAuthority();
           return result;
