@@ -147,6 +147,7 @@ interface ProbeIdentity extends EntryKey {
   usageProviderId?: string;
   authMode: string;
   canProbe: boolean;
+  active?: boolean;
 }
 
 function apiCacheKey(input: ProbeIdentity): string {
@@ -296,6 +297,7 @@ export class QuotaService {
       authMode: string;
       canProbe: boolean;
       accountId?: string;
+      active?: boolean;
       label: string;
       installed: boolean;
       onCooldown: boolean;
@@ -337,21 +339,31 @@ export class QuotaService {
         });
         continue;
       }
-      // Bare system/CLI row so native login still shows % next to vault rows.
-      draft.push({
-        adapterId: p.adapterId,
-        usageProviderId: declaredQuotaUpstream(p),
-        authMode: quotaAuthMode(p),
-        canProbe: canProbeQuota(p),
-        label: `${p.label} · CLI nativo`,
-        installed: p.installed,
-        onCooldown: false,
-        tokens: tokens[p.adapterId],
-      });
+      const hasActiveVaultAccount = vault.some((a) => a.active);
+      const vaultCoversNativeAuth = hasActiveVaultAccount || (
+        vault.length > 0 &&
+        vault.every((a) => a.mode === p.authStrategy)
+      );
+
+      // Bare system/CLI row only when the native login is distinct from vault rows
+      // (e.g. native subscription session while vault only has API keys).
+      if (!vaultCoversNativeAuth) {
+        draft.push({
+          adapterId: p.adapterId,
+          usageProviderId: declaredQuotaUpstream(p),
+          authMode: quotaAuthMode(p),
+          canProbe: canProbeQuota(p),
+          label: `${p.label} · CLI nativo`,
+          installed: p.installed,
+          onCooldown: false,
+          tokens: tokens[p.adapterId],
+        });
+      }
       for (const a of vault) {
         draft.push({
           adapterId: p.adapterId,
           accountId: a.id,
+          active: a.active,
           usageProviderId: declaredQuotaUpstream(p, a),
           authMode: quotaAuthMode(p, a),
           canProbe: canProbeQuota(p, a),
@@ -373,6 +385,7 @@ export class QuotaService {
       draft.push({
         adapterId: a.adapterId,
         accountId: a.id,
+        active: a.active,
         usageProviderId: declaredQuotaUpstream(p, a),
         authMode: quotaAuthMode(p, a),
         canProbe: canProbeQuota(p, a),
@@ -485,6 +498,7 @@ export class QuotaService {
     adapterId: string;
     usageProviderId?: string;
     accountId?: string;
+    active?: boolean;
     label: string;
     installed: boolean;
     onCooldown: boolean;
@@ -546,6 +560,7 @@ export class QuotaService {
       id,
       adapterId: input.adapterId,
       accountId: input.accountId,
+      ...(input.active !== undefined ? { active: input.active } : {}),
       label: input.label,
       ...(input.usageProviderId ? { usageProviderId: input.usageProviderId } : {}),
       installed: input.installed,

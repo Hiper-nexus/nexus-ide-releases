@@ -120,6 +120,12 @@ function EntryCard({
   const label = entry.accountId
     ? entry.label
     : entry.label.replace(/\s*·\s*CLI nativo$/u, '');
+  const origin = entry.accountId
+    ? entry.active
+      ? 'Conta ativa no Nexus'
+      : 'Conta salva no Nexus'
+    : 'Conexão atual';
+  const showEmail = email && !label.includes(email);
   return (
     <li
       className={`quota-entry ${entry.onCooldown ? 'quota-entry--cool' : ''}`}
@@ -130,8 +136,8 @@ function EntryCard({
         <div className="quota-entry__title">
           <h3 className="quota-entry__label">{label}</h3>
           <p className="quota-entry__origin">
-            {entry.accountId ? 'Conta salva no Nexus' : 'Conexão atual'}
-            {email ? ` · ${email}` : ''}
+            {origin}
+            {showEmail ? ` · ${email}` : ''}
           </p>
         </div>
         <span

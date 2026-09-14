@@ -607,4 +607,52 @@ describe('QuotaService live Claude OAuth usage', () => {
     expect(snap.entries.some((e) => e.adapterId === 'opencode')).toBe(false);
     svc.stop();
   });
+
+  it('deduplicates native CLI row when active vault account is present', async () => {
+    const svc = new QuotaService({
+      listProviders: () => [
+        { ...provider('codex', 'Codex', { installed: true }), authStrategy: 'subscription' },
+        { ...provider('claude', 'Claude', { installed: true }), authStrategy: 'subscription' },
+      ],
+      listAccounts: () => [
+        {
+          id: 'codex-acct-1',
+          adapterId: 'codex',
+          label: 'retornoja@gmail.com',
+          mode: 'subscription',
+          active: true,
+          onCooldown: false,
+        } as AccountInfo,
+        {
+          id: 'claude-acct-1',
+          adapterId: 'claude',
+          label: 'admin@volarehost.com.br',
+          mode: 'subscription',
+          active: false,
+          onCooldown: false,
+        } as AccountInfo,
+        {
+          id: 'claude-acct-2',
+          adapterId: 'claude',
+          label: 'retornoja@gmail.com',
+          mode: 'subscription',
+          active: true,
+          onCooldown: false,
+        } as AccountInfo,
+      ],
+    });
+    const snap = await svc.snapshot(HIT_AT);
+    // Codex should only have 1 entry (retornoja@gmail.com), no duplicate "Codex · CLI nativo"
+    const codexEntries = snap.entries.filter((e) => e.adapterId === 'codex');
+    expect(codexEntries).toHaveLength(1);
+    expect(codexEntries[0].accountId).toBe('codex-acct-1');
+    expect(codexEntries[0].active).toBe(true);
+
+    // Claude should have exactly 2 vault entries, no duplicate "Claude · CLI nativo"
+    const claudeEntries = snap.entries.filter((e) => e.adapterId === 'claude');
+    expect(claudeEntries).toHaveLength(2);
+    expect(claudeEntries.map((e) => e.accountId)).toEqual(['claude-acct-1', 'claude-acct-2']);
+    expect(claudeEntries.find((e) => e.accountId === 'claude-acct-2')?.active).toBe(true);
+    svc.stop();
+  });
 });

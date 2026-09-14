@@ -51,6 +51,8 @@ export interface ProviderQuotaEntry {
   /** Declared API provider supplying quota; adapterId remains the owner of the row. */
   usageProviderId?: string;
   accountId?: string;
+  /** True when this account is currently active for the adapter */
+  active?: boolean;
   /** Display name (CLI label or account label). */
   label: string;
   /** Provider binary detected / online enough to care. */

@@ -12,7 +12,7 @@ import path from 'node:path';
 import {
   getKey,
   getSecret,
-  hasCachedSecret,
+  setSecret,
 } from '../persistence/secrets-store';
 import { loadLauncherProviderKey } from '../adapters/launcher-provider-manager';
 import { getAccount } from '../persistence/account-store';
@@ -21,6 +21,10 @@ import {
   type CodexChatGptAuth,
 } from './codex-usage';
 import { extractClaudeAccessToken } from './claude-oauth-usage';
+import {
+  claudeBlobNeedsRefresh,
+  refreshClaudeOauthBlob,
+} from './claude-oauth-refresh';
 import { readNativeOAuthCredential } from '../adapters/native-oauth-keychain';
 
 const CRED_PREFIX = 'acctcred:';
@@ -36,11 +40,6 @@ function readText(filePath: string): string | null {
 }
 
 function safeGetKey(adapterId: string): string | null {
-  // Quota refreshes can run immediately after launch. A cold vault read would
-  // synchronously enter the macOS Keychain and stall Electron's main thread.
-  // Use only an already-decrypted cache entry here; a later provider spawn can
-  // resolve the durable secret on demand.
-  if (!hasCachedSecret(adapterId)) return null;
   try {
     return getKey(adapterId)?.trim() || null;
   } catch {
@@ -49,7 +48,6 @@ function safeGetKey(adapterId: string): string | null {
 }
 
 function safeGetSecret(key: string): string | null {
-  if (!hasCachedSecret(key)) return null;
   try {
     const v = getSecret(key);
     return typeof v === 'string' && v.trim() ? v.trim() : null;
@@ -80,18 +78,27 @@ function declaredAnthropicToken(adapterId: string): string | null {
 /**
  * Claude OAuth token for the renderer quota probe.
  *
- * This path runs during boot and must never synchronously enter Keychain:
- * - an account-pinned probe may use only an already-decrypted vault entry;
- * - an unpinned probe reads file credentials or the native Keychain asynchronously.
- *
- * The authoritative spawn path remains in account-store and may explicitly
- * consult/synchronise the native Keychain when a worker is actually launched.
+ * Pinned probes use the vault account secret, refreshing the token if expired.
+ * Unpinned probes read file credentials or the native Keychain asynchronously.
  */
 export async function resolveClaudeToken(accountId?: string): Promise<string | null> {
   if (accountId) {
     if (getAccount(accountId)?.adapterId !== 'claude') return null;
     const blob = safeGetSecret(CRED_PREFIX + accountId);
-    return blob ? extractClaudeAccessToken(blob) : null;
+    if (!blob) return null;
+    const now = Date.now();
+    if (claudeBlobNeedsRefresh(blob, now)) {
+      try {
+        const refreshed = await refreshClaudeOauthBlob(blob, now);
+        if (refreshed) {
+          setSecret(CRED_PREFIX + accountId, refreshed);
+          return extractClaudeAccessToken(refreshed);
+        }
+      } catch {
+        // Fall back to extracted token below if refresh network request fails
+      }
+    }
+    return extractClaudeAccessToken(blob);
   }
 
   const blob = readText(
