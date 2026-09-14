@@ -1383,9 +1383,9 @@ const routeTaskTool: McpToolDef = {
     required: ['task'],
   },
   handler: async (args, ctx) => {
-    if (ctx.role !== 'orchestrator') {
+    if (ctx.role !== 'orchestrator' && ctx.role !== 'user') {
       throw new Error(
-        'route_task delegation authority is reserved to the mission orchestrator',
+        'route_task delegation authority is reserved to the mission orchestrator or operator',
       );
     }
     const missionId = childMissionId(ctx, str(args, 'missionId'));
