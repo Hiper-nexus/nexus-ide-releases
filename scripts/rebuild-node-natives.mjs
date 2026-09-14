@@ -15,12 +15,20 @@ export function sanitizeBuildEnvironment(environment) {
   );
 }
 
-export function rebuildNodeNatives(environment = process.env) {
-  const command = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-  const result = spawnSync(command, ['rebuild', 'better-sqlite3'], {
+export function rebuildNodeNatives(
+  environment = process.env,
+  run = spawnSync,
+  nodeExecutable = process.execPath,
+) {
+  const npmCli = environment.npm_execpath;
+  if (!npmCli || !/\.(?:c?js|mjs)$/iu.test(npmCli)) {
+    throw new Error('npm_execpath must identify the npm JavaScript CLI.');
+  }
+  const result = run(nodeExecutable, [npmCli, 'rebuild', 'better-sqlite3'], {
     cwd: process.cwd(),
     env: sanitizeBuildEnvironment(environment),
     stdio: 'inherit',
+    shell: false,
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {

@@ -89,9 +89,11 @@ jobs:
 
           $assets = 'windows-preview-assets'
           New-Item -ItemType Directory -Force $assets | Out-Null
-          $setupName = "NexusIDE-$version-win32-x64-Setup.exe"
-          $packageName = "NexusIDE-$version-win32-x64-full.nupkg"
-          $releasesName = "NexusIDE-$version-win32-x64-RELEASES"
+          # RELEASES contains the Squirrel package filename. Preserve every
+          # original name so the downloaded artifact remains a usable feed.
+          $setupName = $setups[0].Name
+          $packageName = $packages[0].Name
+          $releasesName = $releases[0].Name
           $metadataName = "NexusIDE-$version-win32-x64-preview.txt"
           Copy-Item $setups[0].FullName (Join-Path $assets $setupName)
           Copy-Item $packages[0].FullName (Join-Path $assets $packageName)

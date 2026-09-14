@@ -58,9 +58,9 @@ describe('pruneNativePayload', () => {
 
     expect(removed).toEqual(
       expect.arrayContaining([
-        'node_modules/onnxruntime-node/bin/napi-v3/linux',
-        'node_modules/onnxruntime-node/bin/napi-v3/win32',
-        'node_modules/onnxruntime-node/bin/napi-v3/darwin/x64',
+        path.join('node_modules', 'onnxruntime-node', 'bin', 'napi-v3', 'linux'),
+        path.join('node_modules', 'onnxruntime-node', 'bin', 'napi-v3', 'win32'),
+        path.join('node_modules', 'onnxruntime-node', 'bin', 'napi-v3', 'darwin', 'x64'),
       ]),
     );
     expect(() =>
@@ -78,25 +78,32 @@ describe('pruneNativePayload', () => {
     const root = fixture();
     const removed = pruneNativePayload(root, 'darwin', 'universal');
     expect(removed).not.toContain(
-      'node_modules/onnxruntime-node/bin/napi-v3/darwin/x64',
+      path.join('node_modules', 'onnxruntime-node', 'bin', 'napi-v3', 'darwin', 'x64'),
     );
   });
 
   it('removes GPU provider libraries from the CPU-only Linux package', () => {
     const root = fixture();
     const removed = pruneNativePayload(root, 'linux', 'x64');
-    const prefix = 'node_modules/onnxruntime-node/bin/napi-v3/linux/x64/';
+    const prefix = path.join(
+      'node_modules',
+      'onnxruntime-node',
+      'bin',
+      'napi-v3',
+      'linux',
+      'x64',
+    );
 
     expect(removed).toEqual(
       expect.arrayContaining([
-        `${prefix}libonnxruntime_providers_cuda.so`,
-        `${prefix}libonnxruntime_providers_tensorrt.so`,
-        `${prefix}libonnxruntime_providers_shared.so`,
+        path.join(prefix, 'libonnxruntime_providers_cuda.so'),
+        path.join(prefix, 'libonnxruntime_providers_tensorrt.so'),
+        path.join(prefix, 'libonnxruntime_providers_shared.so'),
       ]),
     );
     expect(() =>
       writeFileSync(
-        path.join(root, `${prefix}libonnxruntime.so`),
+        path.join(root, prefix, 'libonnxruntime.so'),
         'cpu-still-present',
       ),
     ).not.toThrow();
@@ -108,8 +115,8 @@ describe('pruneNativePayload', () => {
 
     expect(removed).toEqual(
       expect.arrayContaining([
-        'node_modules/@tesseract.js-data/eng/4.0.0',
-        'node_modules/@tesseract.js-data/por/4.0.0',
+        path.join('node_modules', '@tesseract.js-data', 'eng', '4.0.0'),
+        path.join('node_modules', '@tesseract.js-data', 'por', '4.0.0'),
       ]),
     );
     for (const language of ['eng', 'por']) {
