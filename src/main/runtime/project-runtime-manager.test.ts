@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
   ProjectRuntimeCapacityError,
@@ -432,6 +432,29 @@ describe('ProjectRuntimeManager physical isolation', () => {
 });
 
 describe('ProjectRuntimeManager migrations and health', () => {
+  it('opens migration backup files with write access before fsync', () => {
+    const openSync = fs.openSync.bind(fs);
+    const opened: Array<{ file: string; flags: string | number }> = [];
+    const openSpy = vi.spyOn(fs, 'openSync').mockImplementation(
+      (file, flags, mode) => {
+        opened.push({ file: String(file), flags });
+        return openSync(file, flags, mode);
+      },
+    );
+
+    try {
+      const runtime = manager().open(scope(PROJECT_A, 'checkout-backup-fsync'));
+      expect(runtime.mode).toBe('read-write');
+    } finally {
+      openSpy.mockRestore();
+    }
+
+    const backupOpen = opened.find(({ file }) =>
+      file.includes('runtime-schema-0-to-'),
+    );
+    expect(backupOpen?.flags).toBe('r+');
+  });
+
   it('widens shim provenance without losing immutable receipt rows', () => {
     const targetScope = scope(PROJECT_A, 'checkout-shim-migration');
     const beforeShim = manager({

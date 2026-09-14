@@ -268,8 +268,8 @@ function ensurePrivateDirectory(directory: string): void {
   }
 }
 
-function fsyncFile(file: string): void {
-  const fd = fs.openSync(file, 'r');
+function fsyncFile(file: string, flags = 'r'): void {
+  const fd = fs.openSync(file, flags);
   try {
     fs.fsyncSync(fd);
   } finally {
@@ -301,7 +301,10 @@ function backupBeforeMigration(
   try {
     db.prepare('VACUUM INTO ?').run(backupPath);
     fs.chmodSync(backupPath, 0o600);
-    fsyncFile(backupPath);
+    // FlushFileBuffers on Windows requires a handle opened with GENERIC_WRITE.
+    // The directory flush below intentionally keeps its read-only best-effort
+    // handle for POSIX filesystems.
+    fsyncFile(backupPath, 'r+');
     fsyncDirectory(backupDirectory);
     return backupPath;
   } catch (error) {
