@@ -1,10 +1,22 @@
 /** @vitest-environment jsdom */
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { VoiceRuntimeInfo } from '../../shared/voice-ipc';
 import { useDictationMode } from './use-dictation-mode';
 import { useVoiceStore } from './voice-store';
+
+// vi.mock é içado e vale para o arquivo INTEIRO — a factory preserva o
+// comportamento real (todo provedor traduz) exceto o id usado para exercitar
+// o mecanismo ·PT do chip, que hoje não tem representante real.
+vi.mock('../../shared/voice-config', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('../../shared/voice-config')>();
+  return {
+    ...actual,
+    sttProviderTranslates: (id: string) => id !== 'stub-literal',
+  };
+});
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
@@ -44,21 +56,27 @@ function infoWith(provider: string): VoiceRuntimeInfo {
 }
 
 describe('useDictationMode', () => {
-  it('avisa que o provedor só transcreve quando ele não traduz', () => {
+  it('avisa qual API vai atender o ditado (F-524)', () => {
     const { title } = mountTitle();
     act(() => useVoiceStore.setState({ info: infoWith('gemini') }));
 
-    // No modo CODE o texto sai em português mesmo — o chip não pode prometer
-    // inglês quando o provedor ativo não tem endpoint de tradução.
-    expect(title()).toContain('só transcreve');
-    expect(title()).toContain('português');
+    expect(title()).toContain('via Gemini');
   });
 
-  it('o RÓTULO denuncia a troca — tooltip não avisa quem já está ditando', () => {
+  it('o RÓTULO denuncia a troca quando o provedor não traduz (mecanismo ·PT)', () => {
+    // O Gemini agora traduz (generateContent) — o mecanismo do sufixo segue
+    // valendo para futuros provedores transcription-only, coberto via mock.
+    const { label } = mountTitle();
+    act(() => useVoiceStore.setState({ info: infoWith('stub-literal') }));
+
+    expect(label()).toBe('CODE·PT');
+  });
+
+  it('gemini deixa de ser CODE·PT — a rota generativa entrega inglês', () => {
     const { label } = mountTitle();
     act(() => useVoiceStore.setState({ info: infoWith('gemini') }));
 
-    expect(label()).toBe('CODE·PT');
+    expect(label()).toBe('CODE');
   });
 
   it('rótulo fica normal quando o provedor traduz', () => {

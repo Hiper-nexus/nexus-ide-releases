@@ -415,11 +415,13 @@ export type VoiceConfig = z.infer<typeof voiceConfigSchema>;
 // ── Defaults ─────────────────────────────────────────────────────────────────
 
 /**
- * Provedores de STT que só TRANSCREVEM: não têm endpoint de tradução. O Gemini
- * 3.5 Transcribe usa o Interactions API, que não traduz — então com ele ativo o
- * modo CODE não produz inglês, e a UI precisa dizer isso em vez de prometer.
+ * Provedores de STT que só TRANSCREVEM: não têm como entregar PT→EN. O Gemini
+ * deixou de ser transcription-only (0.76.24): o modo english do ditado usa a
+ * rota generativa (generateContent) que traduz; o Interactions API verbatim
+ * segue para o modo literal e como etapa de alta acurácia. O conjunto fica
+ * como mecanismo para futuros provedores transcription-only.
  */
-export const TRANSCRIPTION_ONLY_STT_PROVIDERS: ReadonlySet<string> = new Set(['gemini']);
+export const TRANSCRIPTION_ONLY_STT_PROVIDERS: ReadonlySet<string> = new Set([]);
 
 /** O provedor consegue entregar PT→EN, ou só transcreve literal? */
 export function sttProviderTranslates(providerId: string): boolean {

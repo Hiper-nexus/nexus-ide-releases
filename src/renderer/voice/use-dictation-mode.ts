@@ -1,4 +1,5 @@
 import { sttProviderTranslates } from '../../shared/voice-config';
+import { sttProviderLabel } from './stt-failure-help';
 import { useVoiceStore } from './voice-store';
 
 /**
@@ -26,9 +27,10 @@ export function useDictationMode(): DictationModeControl {
   const mode: DictationMode =
     info?.dictationOutputMode === 'portuguese' ? 'portuguese' : 'english';
 
-  // O provedor ativo pode ser transcription-only (Gemini 3.5 Transcribe, cujo
-  // Interactions API não traduz). Com ele ativo o modo CODE NÃO produz inglês —
-  // prometer tradução no tooltip seria o chip mentindo sobre o que vai sair.
+  // O provedor ativo pode ser transcription-only (sem rota de tradução). O
+  // Gemini deixou de ser (0.76.24: modo english via generateContent), mas o
+  // mecanismo do sufixo segue valendo para futuros provedores — prometer
+  // tradução no tooltip com provedor que não traduz seria o chip mentindo.
   // `stt` também é opcional: mocks e um info parcial não trazem a cadeia, e
   // `info?.stt.active` estourava com stt undefined.
   const activeProvider = info?.stt?.active?.provider;
@@ -52,6 +54,11 @@ export function useDictationMode(): DictationModeControl {
     mode === 'english'
       ? 'Ditado: Code — inglês otimizado p/ execução'
       : 'Ditado: Chat — português literal';
+  // F-524: o operador precisa saber QUAL API vai atender o ditado sem abrir
+  // configuração nenhuma — o provider ativo viaja no tooltip do chip.
+  const via = activeProvider
+    ? ` · via ${sttProviderLabel(activeProvider)}`
+    : '';
   const caveat = translates
     ? ''
     : ` · ${activeProvider} só transcreve (sem tradução): o texto sai em português`;
@@ -66,7 +73,7 @@ export function useDictationMode(): DictationModeControl {
   return {
     mode,
     label,
-    title: `${base}${caveat} (clique p/ ${mode === 'english' ? 'Chat' : 'Code'})`,
+    title: `${base}${via}${caveat} (clique p/ ${mode === 'english' ? 'Chat' : 'Code'})`,
     toggle,
   };
 }

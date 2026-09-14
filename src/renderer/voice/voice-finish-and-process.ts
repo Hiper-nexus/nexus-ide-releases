@@ -8,6 +8,7 @@
 import type React from 'react';
 import { useVoiceStore } from './voice-store';
 import { dictationSttRequestParams } from './dictation-output-mode';
+import { describeSttFailure, sttSuccessNote } from './stt-failure-help';
 import { hasUsableLocalSpeech, shouldDiscardBeforeRealtime } from './capture-gate';
 import {
   isDiscardableTranscript,
@@ -320,7 +321,9 @@ export async function finishAndProcess(
       store.setStatus('transcribing');
       const stt = await transcribeCapture();
       if (!stt.ok) {
-        store.setError(stt.error);
+        // F-524: erro acionável em pt-BR — qual provider falhou, por quê e o
+        // caminho de correção (chave, preview, throttle, whisper local).
+        store.setError(describeSttFailure(stt));
         return;
       }
       if (stt.discarded === 'echo') {
@@ -338,7 +341,9 @@ export async function finishAndProcess(
         return;
       }
       resetAutoReplyLoopForCapture(activeCaptureReason);
-      store.setNote(stt.fallbackNote ?? null);
+      // F-524: transparência — qual API atendeu o ditado (ou a jornada de
+      // fallback, quando o provider de cabeça falhou).
+      store.setNote(sttSuccessNote(stt));
       store.setTranscript(transcript);
       console.log(
         `[voice] ditado transcrito (${cachedSttLatencyMs}ms): "${transcript}"`,
@@ -936,8 +941,9 @@ export async function finishAndProcess(
         liveEndTurn();
         return;
       }
-      store.setError(stt.error);
-      liveStatus('error', stt.error);
+      const sttHelp = describeSttFailure(stt);
+      store.setError(sttHelp);
+      liveStatus('error', sttHelp);
       return;
     }
     if (stt.discarded === 'echo') {
@@ -1066,7 +1072,7 @@ export async function finishAndProcess(
       reason: activeCaptureReason,
     });
     resetAutoReplyLoopForCapture(activeCaptureReason);
-    store.setNote(stt.fallbackNote ?? null);
+    store.setNote(sttSuccessNote(stt));
 
     if (routing === 'jarvis') {
       if (!turnExecution.claim('classic-brain', turnToken)) {

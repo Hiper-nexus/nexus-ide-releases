@@ -539,4 +539,149 @@ describe('transcribe — Gemini 3.5 Transcribe (Interactions API)', () => {
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.provider).toBe('groq');
   });
+
+  // ── F-524: modo english + resiliência do preview ─────────────────────────
+
+  it('ditado CODE (translate) usa a rota generativa e entrega inglês', async () => {
+    const urls: string[] = [];
+    const bodies: unknown[] = [];
+    const fetchImpl = vi.fn(async (u: string | URL | Request, i?: RequestInit) => {
+      urls.push(String(u));
+      bodies.push(JSON.parse(String(i?.body)));
+      return jsonResponse(200, {
+        candidates: [
+          { content: { parts: [{ text: 'git push origin main' }] } },
+        ],
+      });
+    }) as unknown as typeof fetch;
+
+    const result = await transcribe(
+      { ...REQ, translate: true, language: 'pt', prompt: 'code priming' },
+      config(),
+      PROBES,
+      geminiDeps({ fetchImpl }),
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.provider).toBe('gemini');
+      expect(result.text).toBe('git push origin main');
+    }
+    // NEM passou pelo Interactions: transcription-only não traduz.
+    expect(urls).toHaveLength(1);
+    expect(urls[0]).toBe(
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent',
+    );
+    const body = bodies[0] as {
+      contents: Array<{ parts: Array<Record<string, unknown>> }>;
+    };
+    expect(body.contents[0]?.parts[0]?.inline_data).toMatchObject({
+      mime_type: 'audio/wav',
+      data: REQ.audioBase64,
+    });
+    const instruction = String(body.contents[0]?.parts[1]?.text);
+    expect(instruction).toContain('TRANSLATE it to English');
+    expect(instruction).toContain('code priming');
+  });
+
+  it('chave SEM acesso ao preview (404 no Interactions) transcreve via generateContent', async () => {
+    const calls: string[] = [];
+    const fetchImpl = vi.fn(async (u: string | URL | Request) => {
+      const url = String(u);
+      calls.push(url);
+      if (url.endsWith('/interactions')) {
+        return jsonResponse(404, {
+          error: { message: 'model gemini-3.5-transcribe not found for API version' },
+        });
+      }
+      return jsonResponse(200, {
+        candidates: [{ content: { parts: [{ text: 'texto via generateContent' }] } }],
+      });
+    }) as unknown as typeof fetch;
+
+    const result = await transcribe(REQ, config(), PROBES, geminiDeps({ fetchImpl }));
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.text).toBe('texto via generateContent');
+    expect(calls).toHaveLength(2);
+  });
+
+  it('401 (chave inválida) NÃO queima a segunda chamada — segue a cadeia', async () => {
+    const fetchImpl = vi.fn(async (u: string | URL | Request) => {
+      if (String(u).includes('generativelanguage')) return jsonResponse(401, {});
+      return jsonResponse(200, { text: 'groq assumiu' });
+    }) as unknown as typeof fetch;
+
+    const result = await transcribe(REQ, config(), PROBES, geminiDeps({ fetchImpl }));
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.provider).toBe('groq');
+    // Interactions UMA vez; o fallback generativo não roda com credencial ruim.
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('timeout no Interactions não tenta a rota generativa (rede lenta vale para as duas)', async () => {
+    const fetchImpl = vi.fn(async () => {
+      const err = new Error('aborted');
+      err.name = 'TimeoutError';
+      throw err;
+    }) as unknown as typeof fetch;
+
+    // Só o Gemini tem chave: sem Groq/OpenAI/whisper atrás, o timeout dele é
+    // a única chamada de rede do turno.
+    const geminiOnly = {
+      ...deps({ fetchImpl }),
+      getEnv: vi.fn((name: string) =>
+        name === 'GEMINI_API_KEY' ? 'test-key' : undefined,
+      ),
+    };
+    const result = await transcribe(REQ, config(), PROBES, geminiOnly);
+    expect(result.ok).toBe(false);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const geminiAttempt = result.attempts.find((a) => a.provider === 'gemini');
+    expect(geminiAttempt?.reason).toContain('timeout');
+  });
+
+  it('interação status=failed recupera pela rota generativa literal', async () => {
+    const fetchImpl = vi.fn(async (u: string | URL | Request) => {
+      if (String(u).endsWith('/interactions')) {
+        return jsonResponse(200, { status: 'failed' });
+      }
+      return jsonResponse(200, {
+        candidates: [{ content: { parts: [{ text: 'recuperado literal' }] } }],
+      });
+    }) as unknown as typeof fetch;
+
+    const result = await transcribe(REQ, config(), PROBES, geminiDeps({ fetchImpl }));
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.text).toBe('recuperado literal');
+  });
+});
+
+describe('extractGeminiGenerateContentTranscript', () => {
+  it('concatena parts de múltiplos candidates', async () => {
+    const { extractGeminiGenerateContentTranscript } = await import('./stt-service');
+    expect(
+      extractGeminiGenerateContentTranscript({
+        candidates: [
+          { content: { parts: [{ text: 'primeira ' }, { text: 'parte' }] } },
+          { content: { parts: [{ text: ' · segunda' }] } },
+        ],
+      }),
+    ).toBe('primeira parte · segunda');
+  });
+
+  it('promptFeedback com blockReason é falha, não transcrição', async () => {
+    const { extractGeminiGenerateContentTranscript } = await import('./stt-service');
+    expect(
+      extractGeminiGenerateContentTranscript({
+        promptFeedback: { blockReason: 'SAFETY' },
+        candidates: [{ content: { parts: [{ text: 'bloqueado' }] } }],
+      }),
+    ).toBe('');
+  });
+
+  it('resposta sem candidates devolve vazio', async () => {
+    const { extractGeminiGenerateContentTranscript } = await import('./stt-service');
+    expect(extractGeminiGenerateContentTranscript({})).toBe('');
+    expect(extractGeminiGenerateContentTranscript(null)).toBe('');
+  });
 });
