@@ -34,6 +34,7 @@ import {
   resolvePackagedMainBundlePath,
   resolvePackagedTarget,
   runPackagedSmoke,
+  toHostAsarPath,
 } from './smoke-packaged-app.mjs';
 
 const tempDirs = [];
@@ -276,6 +277,40 @@ describe('isolation args and environment', () => {
 });
 
 describe('proofs: renderer, functional, marker, natives', () => {
+  it('converts canonical ASAR entries to the host separator at extraction time', () => {
+    expect(toHostAsarPath('/.vite/build/main.js', '\\')).toBe(
+      '.vite\\build\\main.js',
+    );
+    expect(toHostAsarPath('third_party\\licenses\\Apache-2.0.txt', '/')).toBe(
+      'third_party/licenses/Apache-2.0.txt',
+    );
+  });
+
+  it('inspects main chunks and legal files from a real ASAR archive', async () => {
+    const root = makeTemp('nexus-smoke-asar-boundary-');
+    const source = path.join(root, 'source');
+    const resources = path.join(root, 'resources');
+    writeTree(source, [
+      '.vite/build/main.js',
+      '.vite/build/main-hashed.js',
+      'third_party/licenses/Apache-2.0.txt',
+      'third_party/licenses/OFL-1.1.txt',
+    ]);
+    fs.writeFileSync(
+      path.join(source, 'package.json'),
+      JSON.stringify({ main: '.vite/build/main.js' }),
+    );
+    fs.writeFileSync(
+      path.join(source, 'THIRD_PARTY_NOTICES.md'),
+      '## Onlook CSS-to-Tailwind translator\nonlook-dev/onlook\n',
+    );
+    fs.mkdirSync(resources, { recursive: true });
+    await createFinishedPackage(source, path.join(resources, 'app.asar'));
+
+    expect(() => inspectPackagedMainBundle(resources)).not.toThrow();
+    expect(() => inspectPackagedLegalArtifacts(resources)).not.toThrow();
+  });
+
   it('requires the pinned default PT-BR wake model in packaged resources', async () => {
     const resources = makeTemp('nexus-smoke-wake-');
     const wakeDir = path.join(resources, 'wake');

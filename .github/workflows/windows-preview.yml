@@ -49,8 +49,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'typecheck failed' }
           npm run security:renderer-sinks
           if ($LASTEXITCODE -ne 0) { throw 'renderer sink check failed' }
-          npx vitest run forge.config.test.ts scripts/build-windows-icon.test.mjs build/prune-native-payload.test.ts
+          npx vitest run forge.config.test.ts scripts/build-windows-icon.test.mjs build/prune-native-payload.test.ts scripts/rebuild-node-natives.test.mjs
           if ($LASTEXITCODE -ne 0) { throw 'focused packaging tests failed' }
+          npx vitest run scripts/smoke-packaged-app.test.mjs -t ASAR
+          if ($LASTEXITCODE -ne 0) { throw 'cross-platform ASAR tests failed' }
 
       - name: Make Windows x64 package
         shell: pwsh

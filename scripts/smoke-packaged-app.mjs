@@ -382,17 +382,29 @@ export function resolvePackagedMainBundlePath(entries, declaredMain = null) {
   return candidates[0] ?? null;
 }
 
+export function toHostAsarPath(entry, separator = path.sep) {
+  return entry
+    .replaceAll('\\', '/')
+    .replace(/^\/+/, '')
+    .split('/')
+    .join(separator);
+}
+
+function extractPackagedAsarFile(asarPath, entry) {
+  return extractAsarFile(asarPath, toHostAsarPath(entry));
+}
+
 export function inspectPackagedMainBundle(resourcesDir) {
   const asarPath = path.join(resourcesDir, 'app.asar');
   let bundle;
   try {
-    bundle = extractAsarFile(asarPath, PACKAGED_MAIN_BUNDLE_PATH);
+    bundle = extractPackagedAsarFile(asarPath, PACKAGED_MAIN_BUNDLE_PATH);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     let declaredMain = null;
     try {
       const packageJson = JSON.parse(
-        extractAsarFile(asarPath, 'package.json').toString('utf8'),
+        extractPackagedAsarFile(asarPath, 'package.json').toString('utf8'),
       );
       declaredMain = packageJson?.main ?? null;
     } catch {
@@ -412,7 +424,7 @@ export function inspectPackagedMainBundle(resourcesDir) {
           // The normal Forge archive stores package.json and its declared main
           // at the same root. Read that exact path first; enumerating a large
           // archive is only needed for the historical nested-root variant.
-          bundle = extractAsarFile(asarPath, directDeclaredPath);
+          bundle = extractPackagedAsarFile(asarPath, directDeclaredPath);
         } catch {
           // Try the package-root variation below.
         }
@@ -425,7 +437,7 @@ export function inspectPackagedMainBundle(resourcesDir) {
           declaredMain,
         );
         if (fallbackPath) {
-          bundle = extractAsarFile(asarPath, fallbackPath);
+          bundle = extractPackagedAsarFile(asarPath, fallbackPath);
         }
       } catch {
         // Preserve the original extraction error below; a corrupt archive is
@@ -455,7 +467,7 @@ export function inspectPackagedMainBundle(resourcesDir) {
     throw new Error('could not inspect packaged main bundle: no main chunks found');
   }
   for (const chunk of mainChunks) {
-    assertPackagedMainBundleBootable(extractAsarFile(asarPath, chunk));
+    assertPackagedMainBundleBootable(extractPackagedAsarFile(asarPath, chunk));
   }
 }
 
@@ -463,9 +475,12 @@ export function inspectPackagedLegalArtifacts(resourcesDir) {
   const asarPath = path.join(resourcesDir, 'app.asar');
   let notice;
   try {
-    notice = extractAsarFile(asarPath, PACKAGED_NOTICE_PATH).toString('utf8');
+    notice = extractPackagedAsarFile(
+      asarPath,
+      PACKAGED_NOTICE_PATH,
+    ).toString('utf8');
     for (const licensePath of PACKAGED_LICENSE_PATHS) {
-      const license = extractAsarFile(asarPath, licensePath);
+      const license = extractPackagedAsarFile(asarPath, licensePath);
       if (license.length === 0) {
         throw new Error(`${licensePath} is empty`);
       }
