@@ -3534,27 +3534,105 @@ export const RELEASE_07628: AppRelease = {
 };
 
 
+export const RELEASE_07629: AppRelease = {
+  version: '0.76.29',
+  date: '2026-09-14',
+  codename: 'Multi-conta de cotas limpa, resolução de segredos e sidebar polida sem cortes',
+  summary:
+    'Duas melhorias fundamentais de usabilidade e multi-conta: ' +
+    '1. Deduplicação de contas de cotas (elimina card duplicado de CLI nativo quando a conta já está no cofre) ' +
+    'e descriptografia sob demanda para sondagem de cotas de contas secundárias do cofre (com renovação automática de OAuth Claude); ' +
+    '2. Barra lateral polida com margem de respiro à direita, largura mínima de 240px (padrão 280px), ' +
+    'cockpit de cotas ampliado para até 4 contas e formatação compacta de janelas sem cortes de texto.',
+  highlights: [
+    {
+      title: 'Multi-conta de cotas limpa e sem duplicações (F-532)',
+      detail:
+        'A página de Uso e cotas e a barra lateral não duplicam mais conexões que já estão salvas no cofre. ' +
+        'Contas secundárias têm seus segredos descriptografados sob demanda para leitura de cotas em tempo real.',
+    },
+    {
+      title: 'Barra lateral espaçosa e cockpit de cotas para 4 contas (F-533)',
+      detail:
+        'Largura mínima ampliada para 240px e padrão para 280px, com margem de respiro contra a borda divisória. ' +
+        'O cockpit agora exibe até 4 contas e abrevia janelas de tempo ("Sem 29% · 6d9h") para nunca quebrar ou truncar.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'F-532: duplicação de cards de cota e falha na sondagem de contas salvas no cofre',
+      detail:
+        'Suprimida linha fantasma de CLI nativo quando o login já é coberto pelo cofre; liberada descriptografia segura de segredos em provider-usage-auth e auto-refresh de OAuth Claude.',
+    },
+    {
+      title: 'F-533: elementos encostados na divisória e janelas de cota cortadas por reticências',
+      detail:
+        'Ajustados paddings horizontais da barra lateral (var(--space-3)), opção compact: true no shortWindowsLine e cockpit com slice(0, 4).',
+    },
+  ],
+};
+
+
 export const CURRENT_RELEASE: AppRelease = {
   version: '0.76.30',
   date: '2026-09-14',
-  codename: 'Windows operacional: CLIs, diálogos e release reproduzível',
+  codename: 'Palco estável, orquestração afinada (GLM/Devin/Kimi/AGY), Nexus Mobile v1.4.201 e Windows operacional',
   summary:
-    'Correções de operação no Windows: instalação de CLIs npm sem ENOENT/EINVAL, ' +
-    'descoberta viva com caminho absoluto, seletor de pastas associado à janela ' +
-    'e manifests de skills reproduzíveis entre plataformas.',
+    'Estabilidade completa do modo Foco/Palco, afinação crítica no boot e injeção de prompts dos agentes de IA, ' +
+    'herança integral do aplicativo móvel Nexus Mobile com streaming de terminal, e robustez na operação e empacotamento Windows.',
   highlights: [
+    {
+      title: 'Modo Foco/Palco estável e sem sobreposição de cabeçalhos (F-535, F-536)',
+      detail:
+        'O painel principal do palco permanece travado via stagePaneId evitando layout shifts e tremor violento ao interagir ' +
+        'com companions na barra lateral. Eliminado o cabeçalho duplo em cada card e adicionada aceleração de hardware (translateZ(0)) ' +
+        'para impedir disputa de composição GPU com o WebGL do terminal.',
+    },
+    {
+      title: 'Orquestração de frota robusta e entrega de prompts (F-537)',
+      detail:
+        'GLM recebe --permission-mode acceptEdits e aceite de pastas confiáveis automático. ' +
+        'Devin recebe prompt posicional via -- <prompt> na inicialização. ' +
+        'Kimi e Antigravity (AGY) operam sem caracteres corrompidos de bracketed paste e com garantia de não-apagamento após Enter.',
+    },
+    {
+      title: 'Nexus Mobile Companion v1.4.201 (F-538)',
+      detail:
+        'Cliente Expo 55 / React Native 0.83 completo com streaming bidirecional de PTYs xterm, pareamento por QR Code ' +
+        'e acompanhamento de tarefas da IDE no bolso.',
+    },
     {
       title: 'Instalação de CLIs Windows sem falha de shim',
       detail:
         'npm.cmd e outros executáveis descobertos no PATH são resolvidos para caminho absoluto e executados com o cmd nativo apenas no Windows.',
     },
     {
-      title: 'Paridade de descoberta e seleção de pasta',
+      title: 'Paridade de descoberta e seleção de pasta no Windows',
       detail:
         'Modelos e Kimi compartilham a resolução de binários; diálogos nativos de projeto são filhos da janela principal.',
     },
   ],
   fixes: [
+    {
+      title: 'F-535: tremor de tela e oclusão do menu de ações de pane no macOS',
+      detail:
+        'Promovida camada do menu e overlay para composição de hardware dedicada (translateZ(0)), prevenindo z-fighting com o canvas do xterm.',
+    },
+    {
+      title: 'F-536: oscilação e cabeçalhos duplicados nos companion cards do modo Palco',
+      detail:
+        'Trava do palco por stagePaneId em vez de focar automaticamente o companion ao clicar; cabeçalho de barra redundante removido e botão explícito "Palco" adicionado.',
+    },
+    {
+      title: 'F-537: falhas de spawn e perda de prompts iniciais em GLM, Devin, Kimi e AGY',
+      detail:
+        'Adicionada permissão acceptEdits no GLM, injeção posicional no Devin e proteção contra Ctrl+U residual em tool-util.ts.',
+    },
+    {
+      title: 'F-538: companion móvel desatualizado sem suporte funcional a streaming',
+      detail:
+        'Herdada base completa do Orca Mobile v1.4.201 sob mobile/ com tipagem estrita de RPC e rebranding Nexus.',
+    },
     {
       title: 'Windows: npm/CLIs instaláveis deixavam ENOENT/EINVAL',
       detail:

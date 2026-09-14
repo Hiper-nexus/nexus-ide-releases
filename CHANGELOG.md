@@ -1,11 +1,12 @@
 # Changelog
 
-## 0.76.30 — Windows operacional: CLIs, diálogos e release reproduzível
+## 0.76.30 — Palco estável, orquestração afinada (GLM/Devin/Kimi/AGY), Nexus Mobile v1.4.201 e Windows operacional
 
+- **Palco estável sem tremor e cabeçalho único (F-535, F-536)**: o modo Foco/Palco (Stage Focus) agora mantém o painel principal travado em `stagePaneId`, impedindo que cliques ou digitação em terminais da coluna lateral invertam posições e disparem redimensionamentos descontrolados com tremor violento na tela. O cabeçalho duplicado nos cards de companion foi removido, unificando a barra de ferramentas com botão explícito de promoção para o Palco e aceleração por GPU dedicada (`translateZ(0)`) eliminando z-fighting com o WebGL do xterm no macOS.
+- **Orquestração confiável de LLMs e entrega de prompt (F-537)**: GLM passa a receber `--permission-mode acceptEdits` e detecção abrangente de confiança de diretório no boot, eliminando travamento no spawn. Devin recebe prompt posicional via `-- <prompt>` de acordo com a CLI oficial, garantindo absorção imediata. Kimi e Antigravity (AGY) têm bracketed paste desativado (incompatível com Ink TUI) e o envio de prompts não apaga mais o texto com `Ctrl+U` após submissão do Enter.
+- **Nexus Mobile Companion completo herdado do Orca v1.4.201 (F-538)**: aplicativo móvel moderno (Expo 55 / React Native 0.83) com suporte a streaming de terminal em tempo real, pareamento remoto via QR Code, monitoramento contínuo de tarefas em segundo plano e supervisão de agentes da frota.
 - **Instalação de CLIs no Windows**: npm e demais shims `.cmd` agora são resolvidos por caminho absoluto e executados pelo interpretador nativo, eliminando `spawn npm ENOENT/EINVAL` no app empacotado.
-- **Paridade de descoberta**: sondagem de modelos e Kimi usam o mesmo caminho absoluto e PATH efetivo da frota Windows.
-- **Diálogo de pasta confiável**: o seletor nativo é associado à janela do NexusIDE, evitando abrir atrás do app e deixar o botão "Próximo" aparentemente travado.
-- **Manifests reproduzíveis**: assets de skills têm ordenação, line endings e executáveis determinísticos entre Windows e POSIX.
+- **Paridade de descoberta e diálogos no Windows**: sondagem de modelos e Kimi usam o mesmo caminho absoluto e PATH efetivo da frota Windows. O seletor nativo de pasta confiável é associado à janela principal do NexusIDE, evitando abrir atrás do app. Assets de skills têm ordenação determinística.
 
 ## 0.76.29 — Multi-conta de cotas limpa, resolução de segredos e sidebar polida sem cortes
 
