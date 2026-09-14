@@ -115,5 +115,29 @@ com Mac não são convertidas por upload avulso: use uma próxima versão conjun
 O primeiro instalador público precisa conter o atualizador e passar instalação
 e atualização real assinada N→N+1, preservando dados. O worker atual prova
 assinatura e smoke do NUPKG; `installedUpgradeVerified=false` no recibo registra
-que essa prova de instalação/upgrade ainda não é produzida por ele. Provisionamento
+que essa prova de instalação/upgrade ainda não é produzida por ele. O publicador
+**recusa esse recibo**: o candidato pode continuar privado, mas não pode tornar
+nenhuma das plataformas pública. Provisionamento
 CKA, assinatura real e upgrade instalado continuam não verificados nesta entrega.
+
+### Prova de upgrade e concorrência
+
+A prova `installedUpgradeProof` deve vir dentro do mesmo artifact autenticado
+do worker e conter schemaVersion 1, status pass, fromVersion estável inferior,
+toVersion igual à candidata, commitSha, runId e assetSha256 com os hashes exatos
+do Setup, NUPKG e RELEASES. Os checks signedBaselineInstalled,
+squirrelUpgradeApplied, targetRestarted e userDataPreserved devem resultar do
+teste real. A ausência da prova, alvo errado ou installedUpgradeVerified=false
+bloqueia publicação. Um arquivo local editado não substitui essa evidência.
+O harness para produzir essa prova ainda não está implementado no coletor.
+
+O comando de produção mantém um lock exclusivo local durante toda a sessão,
+compartilhado entre checkouts da conta de release. Outra sessão falha sem
+executar publicação; o lock é liberado ao terminar ou falhar normalmente e
+nunca é roubado por expiração. Após crash, confira host/PID em owner.json e
+remova o lock somente depois de confirmar que a sessão acabou.
+
+As listas estáveis da canônica e do espelho são relidas imediatamente antes
+de cada transição draft→publicado. Isso fecha a janela longa de download e
+upload. O lock não coordena hosts diferentes; não execute publicadores
+independentes em hosts distintos simultaneamente.

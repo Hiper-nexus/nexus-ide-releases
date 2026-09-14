@@ -7,10 +7,13 @@ import { pathToFileURL } from 'node:url';
 
 import {
   appendWindowsAssets,
+  assertMonotonicWindowsRelease,
   fileHash as hashReleaseFile,
   loadSignedWindowsCandidate,
   requireWindowsRunId,
 } from './windows-release-candidate.mjs';
+
+import { withPublicationLock } from './release-publication-lock.mjs';
 
 import {
   assertAuthoritativeReleaseCandidate,
@@ -1009,6 +1012,15 @@ export function classifyGitHubReleaseResult(result, { repo, tag }) {
 
 function createGitHubClient(root) {
   return {
+    listStableReleases(repo) {
+      githubRepositoryTarget(repo);
+      const lines = runCapture('gh', [
+        'api', '--hostname', 'github.com', '--paginate',
+        `repos/${repo}/releases?per_page=100`,
+        '--jq', '.[] | {tag_name,draft,prerelease} | @json',
+      ], root).trim();
+      return lines ? lines.split('\n').map(line => JSON.parse(line)) : [];
+    },
     inspect(repo, tag) {
       return classifyGitHubReleaseResult(
         tryRunCapture(
@@ -1037,6 +1049,12 @@ function createGitHubClient(root) {
       run('gh', buildGitHubReleasePublishArgs({ tag, repo }), root);
     },
   };
+}
+
+async function assertPublicationStillMonotonic(github, repositories, version) {
+  for (const repo of repositories) {
+    assertMonotonicWindowsRelease(await github.listStableReleases(repo), version);
+  }
 }
 
 function createRepositoryPublisher(root, canonicalRepo) {
@@ -1404,6 +1422,7 @@ async function publishManualReleaseCore(
       expectedAssets: release.canonicalAssets,
     });
     assertStagedReleaseAssets(release);
+    await assertPublicationStillMonotonic(github, [canonicalRepo, publicRepo], version);
     await github.publish(canonicalRepo, tag);
     canonical = await github.inspect(canonicalRepo, tag);
     verifyPublished(canonical, {
@@ -1432,6 +1451,7 @@ async function publishManualReleaseCore(
       expectedAssets: release.publicAssets,
     });
     assertStagedReleaseAssets(release);
+    await assertPublicationStillMonotonic(github, [canonicalRepo, publicRepo], version);
     await github.publish(publicRepo, tag);
     mirror = await github.inspect(publicRepo, tag);
   }
@@ -1483,7 +1503,7 @@ export function publishManualRelease(options = {}) {
       `sealed manual release rejects dependency override: ${String(unexpected ?? 'prototype')}`,
     );
   }
-  return publishManualReleaseCore(
+  return withPublicationLock(() => publishManualReleaseCore(
     {
       ...(descriptors.root ? { root: descriptors.root.value } : {}),
       ...(descriptors.environment
@@ -1491,7 +1511,7 @@ export function publishManualRelease(options = {}) {
         : {}),
     },
     MANUAL_RELEASE_PRODUCTION_AUTHORITY,
-  );
+  ));
 }
 
 /**

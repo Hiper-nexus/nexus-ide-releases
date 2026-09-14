@@ -284,23 +284,37 @@ Decisão operacional (0.20.4):
   `hooks=` da recusa (se recusar) e provar o elo quebrado. Só então remover o
   skip.
 
-## Limite de assinatura Windows
+## Assinatura e prontidão Windows
 
-A release canônica não executa o CodeSignTool/eSigner 1.3.3. Essa versão aceita
-usuário, senha e TOTP apenas por argumentos de linha de comando, o que exporia
-segredos na lista de processos. Até existir uma integração que receba
-credenciais por canal seguro, assinatura e publicação Windows falham de forma
-fechada; nenhum script local de compatibilidade faz parte do fluxo autorizado.
+CodeSignTool/eSigner 1.3.3 continua fora do fluxo autorizado: senha e TOTP em
+argumentos expõem segredos na lista de processos. A alternativa implementada é
+CKA pré-configurado no Windows Certificate Store, selecionado apenas pelo
+thumbprint público. Consulte [o fluxo Windows](../docs/WINDOWS-PREVIEW-AND-SIGNING.md)
+e [a publicação conjunta](../docs/RELEASE.md).
+
+O worker protegido, a autenticação CKA e a proteção de main ainda precisam ser
+provisionados; nenhuma credencial foi instalada por essa implementação. O
+candidato privado pode ser construído e validado com assinatura e smoke. Para
+publicação, o recibo autenticado também precisa conter prova real de instalação
+e upgrade assinado N→N+1, vinculada à versão, commit, run e hashes dos três
+artefatos. O coletor atual registra `installedUpgradeVerified=false`, portanto
+**não autoriza publicação pública**, mesmo quando assinatura e smoke passarem.
+Não transforme esse campo em true sem implementar e executar o teste real.
 
 ## Canal de atualização
 
-Assinar e publicar um ZIP não cria, por si só, auto-update para usuários finais.
-O app só usa Squirrel diretamente quando recebe um `NEXUS_UPDATE_FEED` HTTPS
-confiável. Sem esse feed, o caminho alternativo depende de `gh` autenticado e é
-adequado apenas para instalações de desenvolvimento do repositório privado.
-Antes de prometer atualização automática, provisione e teste o feed em um
-domínio Nexus confiável. Este fluxo gera hoje apenas o ZIP `darwin-arm64`;
-`darwin-x64` continua indisponível até receber build e prova próprios.
+Mac mantém a descoberta via gh privado e fallback anônimo no espelho público,
+com instalação por Squirrel.Mac. Windows x64 instalado usa o serviço oficial
+Electron apontado ao repositório público de releases, com Setup, NUPKG completo
+e RELEASES publicados juntos. A disponibilidade desse código não comprova
+upgrade instalado; a prova obrigatória acima permanece pendente.
+
+O publicador local usa um lock compartilhado por todas as checkouts da conta
+de release e consulta novamente as versões estáveis dos dois repositórios
+imediatamente antes de tornar cada draft público. Não execute publicadores em
+hosts diferentes simultaneamente: o lock é local, não distribuído. Em caso de
+crash, confirme que o PID em owner.json terminou antes de remover manualmente
+o lock informado pelo erro; nunca há tomada automática por timeout.
 
 ### Transporte de timestamp em redes com IPv6 indisponível
 

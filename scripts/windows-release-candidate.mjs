@@ -84,6 +84,21 @@ function assertReceipt(receipt, expected) {
   if (['app', 'updater', 'stub'].some(kind => receipt.signatures[kind].thumbprint.toUpperCase() !== publisher)) fail('candidate executables have different publishers');
 }
 
+function assertInstalledUpgradeProof(receipt, expected) {
+  const proof = receipt.installedUpgradeProof;
+  const from = String(proof?.fromVersion ?? '');
+  const isOlder = STABLE.test(from) && from.split('.').map(Number)
+    .map((part, index) => part - Number(expected.version.split('.')[index]))
+    .find(value => value !== 0) < 0;
+  if (receipt.smoke.installedUpgradeVerified !== true || proof?.schemaVersion !== 1 || proof?.status !== 'pass' || !isOlder ||
+    proof.toVersion !== expected.version || proof.commitSha !== expected.commitSha || proof.runId !== expected.runId ||
+    !proof.assetSha256 || Object.keys(proof.assetSha256).length !== 3 ||
+    receipt.assets.some(asset => proof.assetSha256[asset.name] !== asset.sha256) ||
+    ['signedBaselineInstalled', 'squirrelUpgradeApplied', 'targetRestarted', 'userDataPreserved'].some(check => proof.checks?.[check] !== true)) {
+    fail('installed N-to-N+1 upgrade proof is missing, failed or not bound to this candidate. Run a real signed installed-upgrade harness in the trusted worker and record target version, commit, run and all asset hashes; signed NUPKG smoke alone cannot authorize public publication.');
+  }
+}
+
 function assertAsset(root, asset) {
   if (typeof asset?.name !== 'string' || !/^[A-Za-z0-9_.-]+$/u.test(asset.name) || !SHA256.test(asset.sha256 ?? '') ||
     !Number.isSafeInteger(asset.size) || asset.size < 1) fail('invalid asset metadata');
@@ -108,6 +123,7 @@ export function assertWindowsCandidate(root, expected) {
   const releases = fs.readFileSync(path.join(root, 'RELEASES'), 'utf8').trim();
   const expectedEntry = `${fileHash(packagePath, 'sha1')} ${packages[0]} ${fs.statSync(packagePath).size}`;
   if (releases.toLowerCase() !== expectedEntry.toLowerCase() || releases.split(/\r?\n/u).length !== 1) fail('RELEASES must contain one exact full package hash, original name and size');
+  assertInstalledUpgradeProof(receipt, expected);
   return { assetPaths, receiptPath, assets: receipt.assets.map(({ name, size, sha256 }) => ({ name, size, sha256 })),
     receiptAsset: { name: RECEIPT, size: fs.statSync(receiptPath).size, sha256: fileHash(receiptPath) } };
 }

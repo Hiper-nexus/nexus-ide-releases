@@ -22,7 +22,8 @@ function fixture() {
   const payloads = { [setup]: Buffer.from('signed setup'), [nupkg]: Buffer.from('signed package') };
   payloads.RELEASES = Buffer.from(`${hash(payloads[nupkg], 'sha1')} ${nupkg} ${payloads[nupkg].length}\n`);
   const signature = { status: 'Valid', subject: 'CN=HIPERSEND TECNOLOGIA INTERNET & SOFTWARES LTDA, O=HIPERSEND', thumbprint: 'B'.repeat(40), timestampThumbprint: 'C'.repeat(40) };
-  const receipt = { schemaVersion: 1, version: '1.2.3', commitSha: sha, runId: '42', platform: 'win32', arch: 'x64', smoke: { status: 'pass' }, signatures: { setup: signature, app: signature, updater: signature, stub: signature }, assets: Object.entries(payloads).map(([name, bytes]) => ({ name, size: bytes.length, sha256: hash(bytes) })) };
+  const receipt = { schemaVersion: 1, version: '1.2.3', commitSha: sha, runId: '42', platform: 'win32', arch: 'x64', smoke: { status: 'pass', installedUpgradeVerified: true }, signatures: { setup: signature, app: signature, updater: signature, stub: signature }, assets: Object.entries(payloads).map(([name, bytes]) => ({ name, size: bytes.length, sha256: hash(bytes) })) };
+  receipt.installedUpgradeProof = { schemaVersion: 1, status: 'pass', fromVersion: '1.2.2', toVersion: '1.2.3', commitSha: sha, runId: '42', assetSha256: Object.fromEntries(receipt.assets.map(a => [a.name, a.sha256])), checks: { signedBaselineInstalled: true, squirrelUpgradeApplied: true, targetRestarted: true, userDataPreserved: true } };
   for (const [name, bytes] of Object.entries(payloads)) fs.writeFileSync(path.join(root, name), bytes);
   fs.writeFileSync(path.join(root, 'windows-release-receipt.json'), JSON.stringify(receipt));
   return { root, receipt, setup, nupkg, expected: { version: '1.2.3', commitSha: sha, runId: '42' } };
@@ -69,6 +70,13 @@ describe('Windows candidate bytes within an authenticated archive', () => {
     const f = fixture();
     const result = assertWindowsCandidate(f.root, f.expected);
     expect(result.assetPaths.map(p => path.basename(p)).sort()).toEqual([f.setup, f.nupkg, 'RELEASES'].sort());
+  });
+  it('blocks missing, false or unbound installed upgrade evidence', () => {
+    for (const alter of [r => { r.smoke.installedUpgradeVerified = false; }, r => { delete r.installedUpgradeProof; }, r => { r.installedUpgradeProof.toVersion = '1.2.4'; }, r => { r.installedUpgradeProof.commitSha = 'b'.repeat(40); }, r => { r.installedUpgradeProof.runId = '43'; }, r => { r.installedUpgradeProof.fromVersion = '1.2.3'; }, r => { r.installedUpgradeProof.assetSha256.RELEASES = 'f'.repeat(64); }, r => { r.installedUpgradeProof.checks.userDataPreserved = false; }]) {
+      const f = fixture(); alter(f.receipt);
+      fs.writeFileSync(path.join(f.root, 'windows-release-receipt.json'), JSON.stringify(f.receipt));
+      expect(() => assertWindowsCandidate(f.root, f.expected)).toThrow(/installed.*upgrade.*proof/i);
+    }
   });
   it('rejects unsigned, wrong publisher, missing timestamp, failed smoke, stale commit/version', () => {
     for (const alter of [r => { r.signatures.app.status = 'NotSigned'; }, r => { r.signatures.setup.subject = 'CN=Other'; }, r => { r.signatures.updater.timestampThumbprint = ''; }, r => { r.smoke.status = 'fail'; }, r => { r.commitSha = 'b'.repeat(40); }, r => { r.version = '1.2.4'; }]) {

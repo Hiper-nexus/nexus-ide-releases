@@ -121,3 +121,10 @@ além de registrar o runner e provisionar o CKA. Nenhuma dessas configurações 
 alterada. Os testes de publicação com fixtures Mac ficam no Mac; o worker roda
 os testes de empacotamento/updater usados pelo preview Windows. O PowerShell do
 novo coletor ainda não foi executado em host de assinatura.
+
+A publicação agora bloqueia também um candidato assinado com smoke verde se
+ainda faltar a prova autenticada de upgrade instalado N→N+1. O coletor atual
+continua emitindo installedUpgradeVerified=false; ele gera candidato privado,
+mas **não autoriza publicação pública**. O harness real ainda precisa ser
+implementado/executado no worker e vincular a prova ao mesmo commit, versão,
+run e hashes. Nenhuma flag foi promovida artificialmente a true.

@@ -79,6 +79,32 @@ describe('manual GitHub release publication', () => {
     expect(events).toEqual([]);
   });
 
+  it.each([CANONICAL_RELEASE_REPO, PUBLIC_RELEASE_REPO])('blocks publication when %s advances while uploads are staged', async (advancedRepo) => {
+    const fixture = publicationFixture();
+    const events = [];
+    const github = fakeGitHub({ states: new Map(), fixture, events });
+    let staged = false;
+    const upload = github.upload;
+    github.upload = async (...args) => { await upload(...args); if (args[0] === PUBLIC_RELEASE_REPO) staged = true; };
+    github.listStableReleases = async repo => staged && repo === advancedRepo ? [{ tag_name: 'v1.2.4', draft: false, prerelease: false }] : [];
+    await expect(publishManualReleaseTestCore(publicationOptions(fixture, github))).rejects.toThrow(/newer stable/);
+    expect(staged).toBe(true);
+    expect(events.some(event => event.startsWith('publish:'))).toBe(false);
+  });
+
+  it('checks both repositories again before exposing the mirror', async () => {
+    const fixture = publicationFixture();
+    const events = [];
+    const github = fakeGitHub({ states: new Map(), fixture, events });
+    let canonicalPublished = false;
+    const publish = github.publish;
+    github.publish = async (...args) => { await publish(...args); canonicalPublished = true; };
+    github.listStableReleases = async repo => canonicalPublished && repo === CANONICAL_RELEASE_REPO ? [{ tag_name: 'v1.2.4' }] : [];
+    await expect(publishManualReleaseTestCore(publicationOptions(fixture, github))).rejects.toThrow(/newer stable/);
+    expect(events).toContain(`publish:${CANONICAL_RELEASE_REPO}`);
+    expect(events).not.toContain(`publish:${PUBLIC_RELEASE_REPO}`);
+  });
+
   it('keeps publication effects outside caller-controlled production seams', () => {
     expect(() =>
       publishManualRelease({ github: {} }),
@@ -1106,6 +1132,17 @@ function passthroughStage(release) {
   };
 }
 
+function publicationOptions(fixture, github) {
+  return {
+    root: '/unused', environment: publishEnvironment(), authority: releaseAuthority(), nodeVersion: releaseNodeVersion(),
+    stageReleaseAssets: passthroughStage, github,
+    repositoryPublisher: { async push() {}, async verify() {} },
+    runCandidateGate: async () => fixture.candidate,
+    loadReusableCandidate: async () => fixture.candidate,
+    materializeCandidate: () => fixture.release,
+  };
+}
+
 function publicationFixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-publish-fixture-'));
   publicationRoots.push(root);
@@ -1195,6 +1232,7 @@ function fakeGitHub({ states, fixture, events }) {
     return state ?? { kind: 'missing', repo, tag };
   };
   return {
+    async listStableReleases() { return []; },
     async inspect(repo, tag) {
       return get(repo, tag);
     },
