@@ -3574,13 +3574,26 @@ export const RELEASE_07629: AppRelease = {
 
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.30',
+  version: '0.76.31',
   date: '2026-09-14',
-  codename: 'Palco estável, orquestração afinada (GLM/Devin/Kimi/AGY), Nexus Mobile v1.4.201 e Windows operacional',
+  codename: 'Eliminação de falsas exaustões (Codex), Nexus Mobile 100% testado e contratos compartilhados',
   summary:
-    'Estabilidade completa do modo Foco/Palco, afinação crítica no boot e injeção de prompts dos agentes de IA, ' +
-    'herança integral do aplicativo móvel Nexus Mobile com streaming de terminal, e robustez na operação e empacotamento Windows.',
+    'Refutação viva de limites de provedor para impedir quarentena e toasts falsos de cota esgotada no Codex, ' +
+    'integração e suite de testes completa (581 suítes / 5026 testes) no Nexus Mobile Companion, ' +
+    'e estabilização de contratos compartilhados e limites de indexação.',
   highlights: [
+    {
+      title: 'Refutação viva e fim dos falsos positivos de cota esgotada (F-539)',
+      detail:
+        'O Codex reportando headroom saudável (como 72% de uso semanal com 28% livre) não entra mais em quarentena de 12h. ' +
+        'Eliminados falsos disparos de limit_reached em payloads de telemetria e refutação viva estendida para sinais do observer.',
+    },
+    {
+      title: 'Nexus Mobile Companion v1.4.201 com 100% de testes verdes (F-540)',
+      detail:
+        '581 suítes e 5.026 testes passando no cliente mobile Expo 55 / React Native 0.83. ' +
+        'Contratos compartilhados, screencast do navegador e biblioteca de ícones offline totalmente integrados.',
+    },
     {
       title: 'Modo Foco/Palco estável e sem sobreposição de cabeçalhos (F-535, F-536)',
       detail:
@@ -3595,24 +3608,23 @@ export const CURRENT_RELEASE: AppRelease = {
         'Devin recebe prompt posicional via -- <prompt> na inicialização. ' +
         'Kimi e Antigravity (AGY) operam sem caracteres corrompidos de bracketed paste e com garantia de não-apagamento após Enter.',
     },
-    {
-      title: 'Nexus Mobile Companion v1.4.201 (F-538)',
-      detail:
-        'Cliente Expo 55 / React Native 0.83 completo com streaming bidirecional de PTYs xterm, pareamento por QR Code ' +
-        'e acompanhamento de tarefas da IDE no bolso.',
-    },
-    {
-      title: 'Instalação de CLIs Windows sem falha de shim',
-      detail:
-        'npm.cmd e outros executáveis descobertos no PATH são resolvidos para caminho absoluto e executados com o cmd nativo apenas no Windows.',
-    },
-    {
-      title: 'Paridade de descoberta e seleção de pasta no Windows',
-      detail:
-        'Modelos e Kimi compartilham a resolução de binários; diálogos nativos de projeto são filhos da janela principal.',
-    },
   ],
   fixes: [
+    {
+      title: 'F-539: falso positivo de cota esgotada no Codex com refutação viva',
+      detail:
+        'Hardening de regex de limite, guarda de negação false/null/0, teto de refutação em 0.8 e fallback para ~/.codex/auth.json.',
+    },
+    {
+      title: 'F-540: companion móvel com contratos transitivos e runner isolado',
+      detail:
+        'Restaurados contratos de source-control, review, screencast e ícones em src/shared/ com 0 erros de tsc.',
+    },
+    {
+      title: 'F-541: limites de arquivos no LSP sidecar e mocks de teste de orquestração',
+      detail:
+        'Elevado maxProjectFiles para 4.000 para suportar monorepos em crescimento e alinhadas asserções de contratos visuais.',
+    },
     {
       title: 'F-535: tremor de tela e oclusão do menu de ações de pane no macOS',
       detail:
