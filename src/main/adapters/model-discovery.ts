@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { isModelId } from '../../shared/model-id';
-import { getEffectivePath } from '../path-resolver';
+import { getEffectivePath, resolveCliBinary } from '../path-resolver';
 
 /**
  * Descoberta VIVA de modelos por CLI: "saiu modelo novo → aparece no Nexus"
@@ -293,14 +293,22 @@ function isFresh(entry: CacheEntry | undefined, now: number): boolean {
 
 function execDiscovery(strategy: DiscoveryStrategy): Promise<string[]> {
   return new Promise((resolve, reject) => {
+    // npm-installed CLIs are `.cmd` shims on Windows. Resolve the same
+    // absolute executable used by the provider registry and let Node invoke
+    // the native command interpreter for that shim; a bare `agy`/`kimi` with
+    // shell:false becomes `spawn <name> ENOENT` in the packaged app.
+    const command = resolveCliBinary(strategy.bin)?.binPath ?? strategy.bin;
     execFile(
-      strategy.bin,
+      command,
       [...strategy.args],
       {
         encoding: 'utf8',
         timeout: EXEC_TIMEOUT_MS,
         maxBuffer: 1024 * 1024,
         env: { ...process.env, PATH: getEffectivePath() },
+        ...(process.platform === 'win32'
+          ? { shell: true, windowsHide: true }
+          : {}),
       },
       (error, stdout) => {
         if (error) {

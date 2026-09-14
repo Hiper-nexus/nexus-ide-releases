@@ -35,7 +35,7 @@ import {
   resolveAdapterBinary,
 } from '../adapters/adapter-registry';
 import { resolveCliLoginCommand } from '../../shared/cli-login';
-import { revalidateExecutable } from '../path-resolver';
+import { revalidateExecutable, resolveCliBinary } from '../path-resolver';
 import {
   availableEfforts,
   availablePermissionModes,
@@ -1221,7 +1221,7 @@ async function runScriptInstall(scriptUrl: string): Promise<void> {
       execFile(
         resolveRunnerPath('bash') ?? 'bash',
         [file],
-        { timeout: 15 * 60_000, maxBuffer: 8 * 1024 * 1024 },
+        installExecOptions(),
         (error) => (error ? reject(error) : resolve()),
       );
     });
@@ -1299,20 +1299,74 @@ const RUNNER_FALLBACK_DIRS = [
   '/bin',
   '/usr/bin',
   path.join(os.homedir(), '.local', 'bin'),
+  // Windows GUI launches frequently omit the user npm directory from PATH.
+  // Keep these locations as discovery fallbacks; the resolved path is still
+  // validated as a regular file before any install command runs.
+  ...(process.platform === 'win32'
+    ? [
+        path.join(process.env.ProgramFiles ?? 'C:\\Program Files', 'nodejs'),
+        path.join(
+          process.env['ProgramFiles(x86)'] ?? 'C:\\Program Files (x86)',
+          'nodejs',
+        ),
+        path.join(
+          process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local'),
+          'Programs',
+          'nodejs',
+        ),
+        path.join(
+          process.env.APPDATA ?? path.join(os.homedir(), 'AppData', 'Roaming'),
+          'npm',
+        ),
+        path.join(
+          process.env.LOCALAPPDATA ?? path.join(os.homedir(), 'AppData', 'Local'),
+          'Microsoft',
+          'WinGet',
+          'Links',
+        ),
+      ]
+    : []),
 ];
 
 /** Caminho executável do runner: PATH primeiro, diretórios canônicos depois. */
 export function resolveRunnerPath(runner: string): string | null {
-  if (isBinResolvable(runner)) return runner;
+  // Returning the bare name here made the Windows packaged app call
+  // `execFile('npm', ...)`. Node cannot launch npm's .cmd shim with
+  // shell:false, so every install failed with `spawn npm ENOENT` even though
+  // discovery had already proved that npm existed. Always return the absolute
+  // file selected by the same resolver used for CLI discovery.
+  const resolved = resolveCliBinary(runner);
+  if (resolved) return resolved.binPath;
   for (const dir of RUNNER_FALLBACK_DIRS) {
-    const candidate = path.join(dir, runner);
-    try {
-      if (fs.statSync(candidate).isFile()) return candidate;
-    } catch {
-      // segue para o próximo diretório
-    }
+    const candidate = resolveCliBinary(runner, {
+      processPath: dir,
+      effectivePath: dir,
+    });
+    if (candidate) return candidate.binPath;
   }
   return null;
+}
+
+/**
+ * npm/brew are command shims on Windows (`.cmd`). Node 22 intentionally does
+ * not execute those files through `execFile` with `shell:false` (ENOENT/EINVAL).
+ * The recipes are immutable, code-owned argv, so enabling the native command
+ * interpreter only on Windows preserves the no-shell path on POSIX while
+ * making the verified installer usable in the packaged app.
+ */
+function installExecOptions(): {
+  timeout: number;
+  maxBuffer: number;
+  windowsHide?: boolean;
+  shell?: boolean;
+} {
+  return {
+    timeout: 15 * 60_000,
+    maxBuffer: 8 * 1024 * 1024,
+    ...(process.platform === 'win32'
+      ? { shell: true, windowsHide: true }
+      : {}),
+  };
 }
 
 /**
@@ -1402,7 +1456,7 @@ export async function maybeOfferFirstRunProvisioning(
           execFile(
             resolveRunnerPath(recipe.runner) ?? recipe.argv[0],
             recipe.argv.slice(1),
-            { timeout: 15 * 60_000, maxBuffer: 8 * 1024 * 1024 },
+            installExecOptions(),
             (error) => (error ? reject(error) : resolve()),
           );
         });
@@ -1481,7 +1535,7 @@ export function registerProviderIpc(): void {
             resolveRunnerPath(recipe.runner) ?? recipe.argv[0],
             recipe.argv.slice(1),
             // brew pode compilar; 15 min é teto honesto para 1ª instalação.
-            { timeout: 15 * 60_000, maxBuffer: 8 * 1024 * 1024 },
+            installExecOptions(),
             (error) => (error ? reject(error) : resolve()),
           );
         });

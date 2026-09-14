@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { dialog, ipcMain } from 'electron';
+import { BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from 'electron';
 import type { WebContents } from 'electron';
 import {
   WORKSPACE_CHANNELS,
@@ -213,10 +213,14 @@ export function registerWorkspaceIpc(): void {
   });
 
   ipcMain.handle(WORKSPACE_CHANNELS.pick, async (event) => {
-    const result = await dialog.showOpenDialog({
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const options: OpenDialogOptions = {
       title: 'Escolher pasta do workspace',
       properties: ['openDirectory', 'createDirectory'],
-    });
+    };
+    const result = owner
+      ? await dialog.showOpenDialog(owner, options)
+      : await dialog.showOpenDialog(options);
     if (result.canceled || result.filePaths.length === 0) return state;
     return openWorkspace(result.filePaths[0], event.sender);
   });
@@ -224,10 +228,14 @@ export function registerWorkspaceIpc(): void {
   // Folder picker WITHOUT opening the workspace — the "Novo workspace" wizard
   // uses it for the PASTA step (the workspace only opens on the final launch).
   ipcMain.handle(WORKSPACE_CHANNELS.pickPath, async (event): Promise<string | null> => {
-    const result = await dialog.showOpenDialog({
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    const options: OpenDialogOptions = {
       title: 'Escolher pasta do workspace',
       properties: ['openDirectory', 'createDirectory'],
-    });
+    };
+    const result = owner
+      ? await dialog.showOpenDialog(owner, options)
+      : await dialog.showOpenDialog(options);
     if (result.canceled || result.filePaths.length === 0) return null;
     const canonical = canonicalDirectory(result.filePaths[0]);
     if (!canonical) return null;

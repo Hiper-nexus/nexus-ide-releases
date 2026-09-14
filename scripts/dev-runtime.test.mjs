@@ -24,7 +24,7 @@ describe('createDevEnvironment', () => {
       '/workspace/nexus-ide',
     );
 
-    expect(env.NEXUS_USER_DATA_DIR).toBe('/tmp/nexus-custom');
+    expect(env.NEXUS_USER_DATA_DIR).toBe(path.resolve('/tmp/nexus-custom'));
   });
 
   it('normalizes an explicit relative userData override against the repo', () => {

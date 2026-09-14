@@ -278,6 +278,10 @@ vi.mock('../path-resolver', () => ({
   revalidateExecutable: (binPath: string) =>
     typeof binPath === 'string' &&
     (binPath.startsWith('/') || /^[A-Za-z]:[\\/]/.test(binPath)),
+  resolveCliBinary: (runner: string) =>
+    runner === 'npm'
+      ? { binPath: 'C:\\Program Files\\nodejs\\npm.cmd' }
+      : null,
 }));
 
 vi.mock('../adapters/control-args', () => ({
@@ -356,6 +360,7 @@ import {
   providerAuthStrategyAuthoritativeAsync,
   providerReadiness,
   initializeProviderConfigStore,
+  resolveRunnerPath,
   resolveQuotaApiKey,
 } from './provider-config-store';
 import { fetchLiveProviderWindows } from '../quota/provider-live-usage';
@@ -1009,6 +1014,12 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
         suppressEnv: ['ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL'],
       },
     });
+  });
+});
+
+describe('Windows install runner resolution', () => {
+  it('returns the absolute npm.cmd shim instead of the bare npm name', () => {
+    expect(resolveRunnerPath('npm')).toBe('C:\\Program Files\\nodejs\\npm.cmd');
   });
 });
 

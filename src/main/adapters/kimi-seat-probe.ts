@@ -32,7 +32,13 @@ function defaultExecProviderList(): Promise<{ stdout: string; stderr: string }> 
     execFile(
       resolveKimiBin(),
       ['provider', 'list', '--json'],
-      { timeout: EXEC_TIMEOUT_MS, encoding: 'utf8' },
+      {
+        timeout: EXEC_TIMEOUT_MS,
+        encoding: 'utf8',
+        ...(process.platform === 'win32'
+          ? { shell: true, windowsHide: true }
+          : {}),
+      },
       (err, stdout, stderr) => {
         if (err && !stdout) {
           reject(err);

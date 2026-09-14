@@ -130,8 +130,9 @@ describe('path-resolver CLI binary resolution', () => {
 
   it('buildEffectivePath unions process + login + existing curated dirs', () => {
     // Point home at tmp so .kimi-code/bin exists and is included.
+    const processPath = ['/usr/bin', '/bin'].join(path.delimiter);
     const effective = buildEffectivePath({
-      processPath: '/usr/bin:/bin',
+      processPath,
       loginPath: '/custom/login/bin',
       home: tmp,
     });
@@ -147,7 +148,10 @@ describe('path-resolver CLI binary resolution', () => {
       tmp,
     );
 
-    expect(value).toBe('/custom/async/bin');
+    // Windows has no POSIX login shell to probe; the resolver deliberately
+    // keeps the inherited PATH unchanged there.
+    if (process.platform === 'win32') expect(value).toBe(process.env.PATH ?? '');
+    else expect(value).toBe('/custom/async/bin');
   });
 
   it('absolute path resolution accepts ~/ expansion', () => {
@@ -177,7 +181,14 @@ describe('path-resolver CLI binary resolution', () => {
   it('rejects non-executable regular files', () => {
     const plain = path.join(binDir, 'not-a-cli');
     fs.writeFileSync(plain, 'data\n', { mode: 0o644 });
-    expect(lookupInPath('not-a-cli', binDir)).toBeNull();
-    expect(revalidateExecutable(plain)).toBe(false);
+    if (process.platform === 'win32') {
+      // Windows does not expose POSIX execute bits; a regular file is a valid
+      // command candidate and the eventual CreateProcess call is authoritative.
+      expect(lookupInPath('not-a-cli', binDir)).toBe(plain);
+      expect(revalidateExecutable(plain)).toBe(true);
+    } else {
+      expect(lookupInPath('not-a-cli', binDir)).toBeNull();
+      expect(revalidateExecutable(plain)).toBe(false);
+    }
   });
 });

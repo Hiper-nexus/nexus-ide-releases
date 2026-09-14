@@ -64,6 +64,10 @@ function runChild(command, args) {
       stdio: 'inherit',
       env,
       cwd: repoRoot,
+      // Electron Forge and npm expose `.cmd` shims on Windows. Node 22 does
+      // not launch those through shell:false (EINVAL/ENOENT), which made
+      // `npm start` appear to do nothing on a fresh Windows install.
+      ...(process.platform === 'win32' ? { shell: true, windowsHide: true } : {}),
     });
     activeChild = child;
 
