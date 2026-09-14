@@ -27,7 +27,7 @@ export class PhysicalPtyShutdownError extends Error {
   }
 }
 
-function hasExactPhysicalInventoryProof(
+export function hasExactPhysicalInventoryProof(
   result: TerminateAllSessionsResult,
 ): boolean {
   const attempted = new Set(result.attemptedSessionIds);

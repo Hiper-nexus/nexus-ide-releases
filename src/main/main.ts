@@ -178,6 +178,7 @@ import {
 } from "./runtime-process-inventory";
 import { shutdownPtyHost } from "./pty/pty-host-client";
 import {
+  hasExactPhysicalInventoryProof,
   shutdownOrchestrationRuntimesRecordingStragglers,
 } from "./app-shutdown";
 import {
@@ -1085,7 +1086,7 @@ function shutdown(): Promise<void> {
     // Sem veto de sessão única: falha de prova vira incidente registrado e o
     // teardown segue até o fim — o processo resistente é abandonado ao teto,
     // nunca aguardado para sempre (diretiva 06/08).
-    await shutdownOrchestrationRuntimesRecordingStragglers(
+    const ptyShutdown = await shutdownOrchestrationRuntimesRecordingStragglers(
       {
         quiesceOrchestration: quiesceOrchestrationCoordinator,
         // Generous fence: Darwin supervisor proof is unbounded once SIGTERM is
@@ -1129,7 +1130,17 @@ function shutdown(): Promise<void> {
       // fail-closed shutdown lane. The external harness still checks exit(0)
       // and the remaining Electron process group, but it never treats a root
       // process disappearing on its own as PTY teardown proof.
-      console.log("[smoke] shutdown-complete: physical PTY inventory proven");
+      if (
+        ptyShutdown.ok &&
+        ptyShutdown.failedSessionIds.length === 0 &&
+        hasExactPhysicalInventoryProof(ptyShutdown)
+      ) {
+        console.log("[smoke] shutdown-complete: physical PTY inventory proven");
+      } else {
+        console.warn(
+          "[smoke] shutdown-unproven: physical PTY inventory was not proven",
+        );
+      }
       // BridgeSpace pattern: once the intentional shutdown proof is written,
       // leave immediately. Waiting for Electron's nested quit/app.exit path
       // can keep the root alive past the packaged-smoke grace window.

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   buildShutdownFailureNotice,
+  hasExactPhysicalInventoryProof,
   PhysicalPtyShutdownError,
   shutdownOrchestrationRuntimesRecordingStragglers,
   shutdownOrchestrationRuntimesWithProof,
@@ -19,6 +20,21 @@ function result(
     ...patch,
   };
 }
+
+describe("hasExactPhysicalInventoryProof", () => {
+  it("distinguishes an exact proof from unsupported or partial inventory", () => {
+    expect(hasExactPhysicalInventoryProof(result())).toBe(true);
+    expect(
+      hasExactPhysicalInventoryProof(
+        result({
+          ok: false,
+          terminatedSessionIds: [],
+          failedSessionIds: ["pty-a", "pty-b"],
+        }),
+      ),
+    ).toBe(false);
+  });
+});
 
 // DIRETIVA (06/08): nenhuma sessão sozinha veta o quit. Sessão sem prova
 // física de morte é incidente REGISTRADO; o teardown segue até o fim e o app
