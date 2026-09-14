@@ -3535,39 +3535,40 @@ export const RELEASE_07628: AppRelease = {
 
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.29',
+  version: '0.76.30',
   date: '2026-09-14',
-  codename: 'Multi-conta de cotas limpa, resolução de segredos e sidebar polida sem cortes',
+  codename: 'Windows operacional: CLIs, diálogos e release reproduzível',
   summary:
-    'Duas melhorias fundamentais de usabilidade e multi-conta: ' +
-    '1. Deduplicação de contas de cotas (elimina card duplicado de CLI nativo quando a conta já está no cofre) ' +
-    'e descriptografia sob demanda para sondagem de cotas de contas secundárias do cofre (com renovação automática de OAuth Claude); ' +
-    '2. Barra lateral polida com margem de respiro à direita, largura mínima de 240px (padrão 280px), ' +
-    'cockpit de cotas ampliado para até 4 contas e formatação compacta de janelas sem cortes de texto.',
+    'Correções de operação no Windows: instalação de CLIs npm sem ENOENT/EINVAL, ' +
+    'descoberta viva com caminho absoluto, seletor de pastas associado à janela ' +
+    'e manifests de skills reproduzíveis entre plataformas.',
   highlights: [
     {
-      title: 'Multi-conta de cotas limpa e sem duplicações (F-532)',
+      title: 'Instalação de CLIs Windows sem falha de shim',
       detail:
-        'A página de Uso e cotas e a barra lateral não duplicam mais conexões que já estão salvas no cofre. ' +
-        'Contas secundárias têm seus segredos descriptografados sob demanda para leitura de cotas em tempo real.',
+        'npm.cmd e outros executáveis descobertos no PATH são resolvidos para caminho absoluto e executados com o cmd nativo apenas no Windows.',
     },
     {
-      title: 'Barra lateral espaçosa e cockpit de cotas para 4 contas (F-533)',
+      title: 'Paridade de descoberta e seleção de pasta',
       detail:
-        'Largura mínima ampliada para 240px e padrão para 280px, com margem de respiro contra a borda divisória. ' +
-        'O cockpit agora exibe até 4 contas e abrevia janelas de tempo ("Sem 29% · 6d9h") para nunca quebrar ou truncar.',
+        'Modelos e Kimi compartilham a resolução de binários; diálogos nativos de projeto são filhos da janela principal.',
     },
   ],
   fixes: [
     {
-      title: 'F-532: duplicação de cards de cota e falha na sondagem de contas salvas no cofre',
+      title: 'Windows: npm/CLIs instaláveis deixavam ENOENT/EINVAL',
       detail:
-        'Suprimida linha fantasma de CLI nativo quando o login já é coberto pelo cofre; liberada descriptografia segura de segredos em provider-usage-auth e auto-refresh de OAuth Claude.',
+        'Corrigida a resolução de `.cmd`, fallback de diretórios Node/npm e opções de spawn para o instalador e descoberta de modelos.',
     },
     {
-      title: 'F-533: elementos encostados na divisória e janelas de cota cortadas por reticências',
+      title: 'Windows: seletor de pasta podia abrir atrás da janela',
       detail:
-        'Ajustados paddings horizontais da barra lateral (var(--space-3)), opção compact: true no shortWindowsLine e cockpit com slice(0, 4).',
+        'O diálogo agora usa BrowserWindow.fromWebContents(event.sender), mantendo foco e habilitando o avanço do fluxo.',
+    },
+    {
+      title: 'Release: manifests de skills variavam no checkout Windows',
+      detail:
+        'Ordenação, normalização LF e marcação explícita de payloads executáveis tornam o empacotamento estável e auditável.',
     },
   ],
 };

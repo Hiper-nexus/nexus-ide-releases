@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.30 — Windows operacional: CLIs, diálogos e release reproduzível
+
+- **Instalação de CLIs no Windows**: npm e demais shims `.cmd` agora são resolvidos por caminho absoluto e executados pelo interpretador nativo, eliminando `spawn npm ENOENT/EINVAL` no app empacotado.
+- **Paridade de descoberta**: sondagem de modelos e Kimi usam o mesmo caminho absoluto e PATH efetivo da frota Windows.
+- **Diálogo de pasta confiável**: o seletor nativo é associado à janela do NexusIDE, evitando abrir atrás do app e deixar o botão "Próximo" aparentemente travado.
+- **Manifests reproduzíveis**: assets de skills têm ordenação, line endings e executáveis determinísticos entre Windows e POSIX.
+
 ## 0.76.29 — Multi-conta de cotas limpa, resolução de segredos e sidebar polida sem cortes
 
 - **Multi-conta de cotas limpa sem duplicações (F-532)**: elimina duplicação de cards de cota ("Conexão atual" vs "Conta salva no Nexus" com mesma porcentagem) quando uma conta salva no cofre cobre o login nativo. Descriptografa segredos sob demanda em `provider-usage-auth` para sondar contas secundárias do cofre em tempo real e renova tokens OAuth Claude expirados automaticamente via `refreshClaudeOauthBlob`.
