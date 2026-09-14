@@ -10,6 +10,7 @@ import {
   shellClaimsMissionFileDrop,
   describeDropWithoutFiles,
   droppedUriRejectionMessage,
+  toAbsoluteContextPath,
 } from './mission-shell-file-intake';
 import { PANE_SKILL_DRAG_TYPE } from './pane-interactions';
 
@@ -378,3 +379,46 @@ describe('importDroppedUriForMission', () => {
     ).resolves.toEqual({ ok: false, message: expect.stringMatching(/arquivo/i) });
   });
 });
+
+describe('toAbsoluteContextPath', () => {
+  it('combina baseDir com caminho relativo do mission-context', () => {
+    expect(
+      toAbsoluteContextPath(
+        '/Users/ana/project',
+        '.nexus/attachments/mission-context/token-print.png',
+      ),
+    ).toBe(
+      '/Users/ana/project/.nexus/attachments/mission-context/token-print.png',
+    );
+  });
+
+  it('normaliza barras invertidas e barras finais do baseDir', () => {
+    expect(
+      toAbsoluteContextPath(
+        'C:\\Users\\ana\\project\\',
+        '.nexus/attachments/mission-context/token-print.png',
+      ),
+    ).toBe(
+      'C:/Users/ana/project/.nexus/attachments/mission-context/token-print.png',
+    );
+  });
+
+  it('preserva caminhos que já são absolutos (POSIX ou Windows)', () => {
+    expect(
+      toAbsoluteContextPath('/Users/ana/project', '/tmp/upload.png'),
+    ).toBe('/tmp/upload.png');
+    expect(
+      toAbsoluteContextPath('C:/project', 'C:\\Windows\\temp\\file.txt'),
+    ).toBe('C:\\Windows\\temp\\file.txt');
+  });
+
+  it('retorna o caminho original se baseDir for nulo ou vazio', () => {
+    expect(
+      toAbsoluteContextPath(null, '.nexus/attachments/mission-context/print.png'),
+    ).toBe('.nexus/attachments/mission-context/print.png');
+    expect(
+      toAbsoluteContextPath('', '.nexus/attachments/mission-context/print.png'),
+    ).toBe('.nexus/attachments/mission-context/print.png');
+  });
+});
+

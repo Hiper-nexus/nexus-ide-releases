@@ -26,6 +26,7 @@ import {
   droppedUriRejectionMessage,
   resolveDroppedMissionContextPath,
   resolveDropUris,
+  toAbsoluteContextPath,
   type DroppedUri,
 } from '../lib/mission-shell-file-intake';
 import { listPanes } from '../lib/split-tree';
@@ -1987,15 +1988,24 @@ function shellQuote(p: string): string {
   return /[\s'"\\$`(){}[\]!*?&;|<>]/.test(p) ? `'${p.replace(/'/g, "'\\''")}'` : p;
 }
 
+function hostBaseDir(host: Host): string | null {
+  const paneCwd = listPanes(useLayoutStore.getState().root).find(
+    (p) => p.id === host.paneId,
+  )?.cwd;
+  return paneCwd || getActiveWorkspacePath();
+}
+
 /** Copy a pasted/dropped blob into the workspace mission-context dir, inject its path. */
 async function injectDroppedFile(host: Host, file: File): Promise<void> {
   try {
+    const baseDir = hostBaseDir(host);
     const path = await resolveDroppedMissionContextPath(
-      getActiveWorkspacePath(),
+      baseDir,
       file,
     );
     if (path && host.sessionId) {
-      window.nexus.pty.write(host.sessionId, `${shellQuote(path)} `);
+      const fullPath = toAbsoluteContextPath(baseDir, path);
+      window.nexus.pty.write(host.sessionId, `${shellQuote(fullPath)} `);
       return;
     }
     // "Não cola e não mostra" (screenshot 2026-08-18): arquivo que o intake
@@ -2028,7 +2038,9 @@ async function injectDroppedUri(host: Host, dropped: DroppedUri): Promise<void> 
     }
     const result = await window.nexus.files.importDroppedUri(dropped.uri);
     if (result.ok && result.path && host.sessionId) {
-      window.nexus.pty.write(host.sessionId, `${shellQuote(result.path)} `);
+      const baseDir = hostBaseDir(host);
+      const fullPath = toAbsoluteContextPath(baseDir, result.path);
+      window.nexus.pty.write(host.sessionId, `${shellQuote(fullPath)} `);
       return;
     }
     useToastStore.getState().push(

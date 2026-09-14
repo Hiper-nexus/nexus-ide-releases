@@ -329,6 +329,37 @@ describe('drop sem File — text/uri-list vira anexo digitado no PTY', () => {
     );
   });
 
+  it('injeta caminho absoluto no PTY quando o pane ou workspace define baseDir', async () => {
+    const paneWithCwd: PaneModel = {
+      id: 'pane-cwd-test',
+      kind: 'shell',
+      title: 'Shell Cwd',
+      cwd: '/Users/cleofas/meu-projeto',
+    };
+    useLayoutStore.setState({ root: { kind: 'leaf', id: paneWithCwd.id, pane: paneWithCwd } });
+    const host = getOrCreateHost(paneWithCwd);
+    setHostSize(host.element, 1400, 900);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(paneWithCwd, slot);
+    expect(await waitForSession(paneWithCwd.id, 1000)).toBe('pty-hidden');
+
+    importDroppedUri.mockResolvedValue({
+      ok: true,
+      path: '.nexus/attachments/mission-context/token-print.png',
+    });
+
+    dropWithoutFiles(host.element, {
+      'text/uri-list': 'file:///Users/cleofas/Downloads/print.png',
+    });
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(write).toHaveBeenCalledWith(
+      'pty-hidden',
+      '/Users/cleofas/meu-projeto/.nexus/attachments/mission-context/token-print.png ',
+    );
+  });
+
   it('lista com comentário, file:// e https:// gera um anexo por linha', async () => {
     const host = await openLiveHost();
     importDroppedUri.mockImplementation(async (uri: string) => ({

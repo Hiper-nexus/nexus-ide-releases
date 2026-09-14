@@ -129,13 +129,14 @@ describe('workspace mission-context import', () => {
     return fs.realpathSync(root);
   }
 
-  it('copies bytes into a root-relative .nexus/attachments/mission-context path', () => {
+  it('copies bytes into a root-relative .nexus/attachments/mission-context path and mirrors to home', () => {
     const root = workspace();
+    fs.mkdirSync(path.join(homeDir, '.nexus'), { recursive: true, mode: 0o700 });
     const result = importWorkspaceMissionAttachment(
       root,
       'cliente.m4a',
       Buffer.from('audio-bytes').toString('base64'),
-      { token: () => 'fixed-token' },
+      { homeDir, token: () => 'fixed-token' },
     );
 
     expect(result).toEqual({
@@ -148,6 +149,16 @@ describe('workspace mission-context import', () => {
     expect(fs.statSync(path.dirname(abs)).mode & 0o777).toBe(0o700);
     expect(fs.statSync(abs).mode & 0o777).toBe(0o600);
     expect(path.isAbsolute(result.path)).toBe(false);
+
+    const mirror = path.join(
+      homeDir,
+      '.nexus',
+      'attachments',
+      'mission-context',
+      droppedFileName('cliente.m4a', 'fixed-token'),
+    );
+    expect(fs.existsSync(mirror)).toBe(true);
+    expect(fs.readFileSync(mirror, 'utf8')).toBe('audio-bytes');
   });
 
   it('does not follow a symlink out of the workspace', () => {

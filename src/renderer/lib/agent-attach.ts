@@ -5,7 +5,10 @@ import type { PaneModel } from '../../shared/types';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { listPanes } from './split-tree';
-import { resolveDroppedMissionContextPath } from './mission-shell-file-intake';
+import {
+  resolveDroppedMissionContextPath,
+  toAbsoluteContextPath,
+} from './mission-shell-file-intake';
 import { getActiveWorkspacePath } from '../state/active-workspace';
 import {
   getPaneSessionId,
@@ -126,7 +129,9 @@ export async function attachFilesToAgent(
   const paths: string[] = [];
   for (const file of list) {
     const resolved = await resolveDroppedMissionContextPath(workspace, file);
-    if (resolved) paths.push(resolved);
+    if (resolved) {
+      paths.push(toAbsoluteContextPath(workspace, resolved));
+    }
   }
   if (paths.length === 0) return { ok: false, count: 0, error: 'could not resolve paths' };
   const ok = injectPathsToAgent(paths, target);

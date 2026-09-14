@@ -523,6 +523,30 @@ export function importWorkspaceMissionAttachmentBytes(
     assertSingleLink(current, 'mission context file');
     fs.closeSync(fd);
     fd = null;
+
+    // Espelho de conveniência em ~/.nexus/attachments/mission-context/:
+    // Agentes de linha de comando (como Claude Code, Kimi, etc.) frequentemente deduzem
+    // que caminhos iniciados por `.nexus/...` vivem em `~/.nexus/attachments/`.
+    // Espelhar o arquivo garante que ferramentas e buscas na home encontrem o anexo.
+    try {
+      const home = canonicalHome(options);
+      const userNexus = path.join(home, '.nexus');
+      if (fs.existsSync(userNexus)) {
+        const userAttachments = path.join(userNexus, 'attachments');
+        if (!fs.existsSync(userAttachments)) {
+          fs.mkdirSync(userAttachments, { mode: 0o700 });
+        }
+        const userMissionContext = path.join(userAttachments, 'mission-context');
+        if (!fs.existsSync(userMissionContext)) {
+          fs.mkdirSync(userMissionContext, { mode: 0o700 });
+        }
+        const mirrorFile = path.join(userMissionContext, storedName);
+        fs.writeFileSync(mirrorFile, decoded, { mode: 0o600 });
+      }
+    } catch {
+      // Espelho é puramente auxiliar; falha silenciosa não interrompe o salvamento primário.
+    }
+
     return {
       ok: true,
       path: `${MISSION_CONTEXT_ATTACHMENT_PREFIX}${storedName}`,

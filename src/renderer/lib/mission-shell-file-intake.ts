@@ -37,6 +37,27 @@ export function droppedProjectContextPath(
   return normalizeProjectContextPath(candidate.slice(root.length + 1));
 }
 
+function isAbsolutePath(candidate: string): boolean {
+  return /^(?:\/|[A-Za-z]:[\\/]|\\\\)/u.test(candidate);
+}
+
+/**
+ * Converte caminhos relativos (como `.nexus/attachments/...` ou `src/...`)
+ * em caminhos absolutos do sistema de arquivos quando um diretório-base
+ * (workspace ou cwd do pane) está disponível. O terminal e prompts de agentes
+ * CLI precisam de caminhos absolutos para que LLMs (como Claude Code ou Kimi)
+ * nunca confundam `.nexus/...` com pastas na home do usuário (`~/.nexus/`).
+ */
+export function toAbsoluteContextPath(
+  baseDir: string | null | undefined,
+  targetPath: string,
+): string {
+  if (!baseDir || isAbsolutePath(targetPath)) return targetPath;
+  const root = baseDir.replaceAll('\\', '/').replace(/\/+$/u, '');
+  const rel = targetPath.replaceAll('\\', '/').replace(/^\/+/u, '');
+  return `${root}/${rel}`;
+}
+
 export function partitionDroppedMissionFiles(
   workspacePath: string,
   files: readonly File[],
