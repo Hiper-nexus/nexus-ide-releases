@@ -627,7 +627,7 @@ describe('WorkspaceRail', () => {
 
     const { host } = renderRail();
     const cockpit = host.querySelector('.workspace-rail__cockpit');
-    expect(cockpit?.textContent).toContain('5 Horas 35% · Semanal 41%');
+    expect(cockpit?.textContent).toContain('5h 35% · Sem 41%');
     expect(cockpit?.querySelector('[role="img"][aria-label="Logo Claude"]')).not.toBeNull();
     // A barra e o valor refletem a PIOR janela (41%), não a primeira.
     expect(cockpit?.textContent).toContain('41%');

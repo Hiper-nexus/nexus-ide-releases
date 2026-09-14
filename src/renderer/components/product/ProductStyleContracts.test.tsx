@@ -306,7 +306,7 @@ describe('Nexus V2 shell and product workspace style contracts', () => {
     if (!handle) throw new Error('Rail resize handle did not render');
 
     expect(handle.getAttribute('role')).toBe('separator');
-    expect(Number(handle.getAttribute('aria-valuemin'))).toBe(200);
+    expect(Number(handle.getAttribute('aria-valuemin'))).toBe(240);
     expect(Number(handle.getAttribute('aria-valuemax'))).toBe(480);
     expect(styleLengthPx(handle, 'width')).toBeGreaterThanOrEqual(4);
   });

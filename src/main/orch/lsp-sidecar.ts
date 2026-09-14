@@ -13,9 +13,9 @@ const requireForLsp = createRequire(__filename);
 export const LSP_LIMITS = Object.freeze({
   defaultResults: 50,
   maxResults: 100,
-  maxProjectFiles: 2_000,
+  maxProjectFiles: 4_000,
   maxReadFiles: 5_000,
-  maxDirectories: 2_000,
+  maxDirectories: 4_000,
   maxDirectoryEntries: 10_000,
   maxFileBytes: 1_048_576,
   maxConfigBytes: 65_536,

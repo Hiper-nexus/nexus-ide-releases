@@ -370,9 +370,17 @@ describe('mcp-server governed CLI profile wiring', () => {
       role: 'orchestrator',
       providerId: 'claude',
     });
-    expect(fs.readFileSync(path.join(home, '.claude.json'), 'utf8')).toBe(
-      nativeProfile,
-    );
+    expect(
+      JSON.parse(fs.readFileSync(path.join(home, '.claude.json'), 'utf8')),
+    ).toMatchObject({
+      oauthAccount: { emailAddress: 'operator@example.com' },
+      projects: {
+        [cwd]: {
+          hasTrustDialogAccepted: true,
+          hasCompletedProjectOnboarding: true,
+        },
+      },
+    });
 
     decoration.onSpawnFailed?.();
   });

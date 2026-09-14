@@ -70,6 +70,7 @@ vi.mock('./pane-registry', () => ({
 }));
 vi.mock('./pane-authz', () => ({ authorizePaneAccess: vi.fn() }));
 vi.mock('../pty/pty-manager', () => ({
+  getAgentSessionInfo: vi.fn(() => null),
   orchWriteSession: stubs.writeSession,
   orchTerminateSession: stubs.terminateSession,
   getSessionState: stubs.sessionState,
