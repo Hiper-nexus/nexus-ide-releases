@@ -21,6 +21,11 @@ Run `scripts/smoke-packaged-app.mjs --app <path-to-nexus-ide.exe>` against the
 executable extracted from the full NUPKG. This proves the packaged runtime; it
 does not prove installation through Setup.exe.
 
+The Windows CI smoke installs the repository-pinned `@openai/codex@0.145.0`
+under the runner's temporary directory and exposes it on `PATH` only for the
+job. The functional mission-preparation probe requires a real executable CLI,
+but does not log in or use provider tokens. Codex is not bundled into NexusIDE.
+
 ## Build with the SSL.com eSigner certificate store
 
 A full signed build must run on Windows with eSigner CKA installed and the
