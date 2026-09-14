@@ -22,9 +22,15 @@ executable extracted from the full NUPKG. This proves the packaged runtime; it
 does not prove installation through Setup.exe.
 
 The Windows CI smoke installs the repository-pinned `@openai/codex@0.145.0`
-under the runner's temporary directory and exposes it on `PATH` only for the
-job. The functional mission-preparation probe requires a real executable CLI,
-but does not log in or use provider tokens. Codex is not bundled into NexusIDE.
+under the runner's temporary directory and exposes only its native
+`codex.exe` directory on `PATH`. It proves that executable through node-pty
+before packaging. The functional mission-preparation probe requires a real
+executable CLI, but does not log in or use provider tokens. Codex is not bundled
+into NexusIDE.
+
+Windows CLI spawning requires a native executable. Compatibility with npm
+`.cmd` and extensionless Unix shims is tracked separately and is not implied by
+this preview prerequisite.
 
 ## Build with the SSL.com eSigner certificate store
 
