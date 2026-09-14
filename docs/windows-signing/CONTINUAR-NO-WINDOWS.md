@@ -71,11 +71,11 @@ Instale o **eSigner CKA da fonte oficial SSL.com** no Windows, entre na conta
 SSL.com do titular e conclua o autenticador no próprio aplicativo. Senha,
 PIN, OTP, segredos do autenticador e sessões não devem ser colocados no GitHub.
 
-Com o CKA pronto, confirme a presença do certificado na mesma conta Windows
-que executará o build:
+Com o CKA pronto, confirme a presença do certificado na loja Local Machine do
+Windows que executará o build:
 
 ```powershell
-Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert |
+Get-ChildItem Cert:\LocalMachine\My -CodeSigningCert |
   Format-List Subject, Thumbprint, NotAfter, HasPrivateKey
 ```
 

@@ -43,11 +43,11 @@ non-exportable private key through the Windows Certificate Store. Do not pass
 an eSigner password, PIN, or OTP in process arguments.
 
 1. Open eSigner CKA and complete its interactive sign-in and authenticator flow.
-2. Find the single intended code-signing certificate in the current user's
+2. Find the single intended code-signing certificate in the Local Machine
    certificate store and copy its 40-character SHA-1 thumbprint:
 
    ```powershell
-   Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert |
+   Get-ChildItem Cert:\LocalMachine\My -CodeSigningCert |
      Format-List Subject, Thumbprint, NotAfter
    ```
 
