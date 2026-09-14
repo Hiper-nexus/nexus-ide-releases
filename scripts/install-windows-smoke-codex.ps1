@@ -39,6 +39,7 @@ if ($LASTEXITCODE -ne 0 -or $nativeVersion -ne 'codex-cli 0.145.0') {
 $env:NEXUS_SMOKE_CODEX_EXE = $nativeCodex.FullName
 @'
 const nodePty = require('@lydell/node-pty');
+const { stripVTControlCharacters } = require('node:util');
 const expected = 'codex-cli 0.145.0';
 const executable = process.env.NEXUS_SMOKE_CODEX_EXE;
 let output = '';
@@ -64,7 +65,7 @@ terminal.onExit(({ exitCode, signal }) => {
   if (settled) return;
   settled = true;
   clearTimeout(timer);
-  const normalized = output.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').trim();
+  const normalized = stripVTControlCharacters(output).trim();
   if (exitCode !== 0 || signal || normalized !== expected) {
     console.error(JSON.stringify({ exitCode, signal, output: normalized }));
     process.exitCode = 1;
