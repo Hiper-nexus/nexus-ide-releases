@@ -44,6 +44,7 @@ export function collectAvailableShells(
   currentShell: string | undefined,
   isExecutable: (candidate: string) => boolean,
   preferredShell?: string | null,
+  platform = process.platform,
 ): string[] {
   const declared = shellsFile
     .split(/\r?\n/)
@@ -58,11 +59,61 @@ export function collectAvailableShells(
     ...declared,
   ];
   const seen = new Set<string>();
+  const isAbsolute = platform === 'win32'
+    ? path.win32.isAbsolute
+    : path.posix.isAbsolute;
 
   return candidates.filter((candidate) => {
-    if (!path.isAbsolute(candidate) || seen.has(candidate)) return false;
+    if (!isAbsolute(candidate) || seen.has(candidate)) return false;
     seen.add(candidate);
     return isExecutable(candidate);
+  });
+}
+
+export function collectAvailableWindowsShells(
+  environment: NodeJS.ProcessEnv,
+  executable: (candidate: string) => boolean,
+): string[] {
+  const programFiles = [
+    environment.ProgramW6432,
+    environment.ProgramFiles,
+  ].filter((value): value is string => Boolean(value));
+  const systemRoot = environment.SystemRoot;
+  const comSpec = environment.ComSpec;
+  const candidates = [
+    ...programFiles.map((root) =>
+      path.win32.join(root, 'PowerShell', '7', 'pwsh.exe')),
+    ...(systemRoot
+      ? [
+          path.win32.join(
+            systemRoot,
+            'System32',
+            'WindowsPowerShell',
+            'v1.0',
+            'powershell.exe',
+          ),
+        ]
+      : []),
+    ...(comSpec && path.win32.basename(comSpec).toLowerCase() === 'cmd.exe'
+      ? [comSpec]
+      : []),
+    ...(systemRoot
+      ? [path.win32.join(systemRoot, 'System32', 'cmd.exe')]
+      : []),
+  ];
+  const seen = new Set<string>();
+  return candidates.filter((candidate) => {
+    if (
+      !/^[a-z]:\\/iu.test(candidate) ||
+      !path.win32.isAbsolute(candidate)
+    ) {
+      return false;
+    }
+    const identity = path.win32.normalize(candidate).toLowerCase();
+    if (seen.has(identity)) return false;
+    if (!executable(candidate)) return false;
+    seen.add(identity);
+    return true;
   });
 }
 
@@ -76,6 +127,9 @@ function isExecutable(candidate: string): boolean {
 }
 
 export function listAvailableShells(): string[] {
+  if (process.platform === 'win32') {
+    return collectAvailableWindowsShells(process.env, isExecutable);
+  }
   let shellsFile = '';
   try {
     shellsFile = fs.readFileSync('/etc/shells', 'utf8');
@@ -94,13 +148,21 @@ export function resolveConfiguredShell(
   requested: string | undefined,
   configured: string,
   available: readonly string[],
+  platform = process.platform,
 ): string {
   const selected = configured || available[0];
-  if (!selected || !available.includes(selected)) {
+  const identity = (candidate: string): string =>
+    platform === 'win32'
+      ? path.win32.normalize(candidate).toLowerCase()
+      : candidate;
+  const approved = selected
+    ? available.find((candidate) => identity(candidate) === identity(selected))
+    : undefined;
+  if (!selected || !approved) {
     throw new Error('configured shell is not an approved executable');
   }
-  if (requested && requested !== selected) {
+  if (requested && identity(requested) !== identity(selected)) {
     throw new Error('renderer shell does not match main-process settings');
   }
-  return selected;
+  return approved;
 }

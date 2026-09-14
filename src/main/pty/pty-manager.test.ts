@@ -207,6 +207,7 @@ import {
   orchTerminateSession,
   registeredOrchestratorSessionsForMission,
   orchWriteSession,
+  operatorShellLoginArgs,
   writeSession,
   inspectSessionLease,
 } from "./pty-manager";
@@ -1174,6 +1175,14 @@ describe("PTY session ownership (renderer capability boundary)", () => {
     // PATH do pane — fricção direta no vibecode (foi o bash-3.2 pelado de campo).
     expect(h.specFor(sessionId).args[0]).toBe("-l");
     orchKillSession(sessionId);
+  });
+
+  it.each([
+    'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
+    'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+    'C:\\Windows\\System32\\cmd.exe',
+  ])('selects no Unix login arguments for Windows operator shell %s', (shell) => {
+    expect(operatorShellLoginArgs(shell, {})).toEqual([]);
   });
 
   it("does not authorize replacement until the PTY host proves physical exit", async () => {

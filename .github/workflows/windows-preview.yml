@@ -49,8 +49,21 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'typecheck failed' }
           npm run security:renderer-sinks
           if ($LASTEXITCODE -ne 0) { throw 'renderer sink check failed' }
-          npx vitest run forge.config.test.ts scripts/build-windows-icon.test.mjs build/prune-native-payload.test.ts scripts/rebuild-node-natives.test.mjs src/main/runtime/project-runtime-manager.test.ts src/main/updater.test.ts src/main/updater-feed.test.ts
+          $tokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'scripts/collect-windows-release.ps1').Path,
+            [ref]$tokens,
+            [ref]$parseErrors
+          ) | Out-Null
+          if ($parseErrors.Count -ne 0) {
+            $parseErrors | ForEach-Object { Write-Error $_.Message }
+            throw 'Windows release collection script has syntax errors'
+          }
+          npx vitest run forge.config.test.ts scripts/build-windows-icon.test.mjs build/prune-native-payload.test.ts scripts/rebuild-node-natives.test.mjs src/main/persistence/shell-catalog.test.ts src/main/runtime/project-runtime-manager.test.ts src/main/updater.test.ts src/main/updater-feed.test.ts
           if ($LASTEXITCODE -ne 0) { throw 'focused packaging tests failed' }
+          npx vitest run src/main/pty/pty-manager.test.ts -t 'Windows operator shell'
+          if ($LASTEXITCODE -ne 0) { throw 'Windows shell spawn arguments failed' }
           npx vitest run scripts/smoke-packaged-app.test.mjs -t ASAR
           if ($LASTEXITCODE -ne 0) { throw 'cross-platform ASAR tests failed' }
 
