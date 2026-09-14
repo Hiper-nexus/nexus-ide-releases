@@ -22,6 +22,12 @@ export interface MainOwnedFailoverPlanInput {
   readonly toAccountId: string;
   readonly fromAccountLabel: string;
   readonly reason: string;
+  /**
+   * F-520: failover de MODELO (mesma conta) — modelo alternativo escolhido
+   * pelo main quando o provider rejeitou o id anterior. Ausente = failover
+   * de conta (o respawn já nasce no default do adapter).
+   */
+  readonly toModel?: string;
 }
 
 export type MainOwnedFailoverPlan =
@@ -53,15 +59,19 @@ export function planMainOwnedFailoverRespawn(
   if (!meta.missionId || !meta.role) {
     return { action: 'skip', reason: 'pane main-owned sem missão/papel' };
   }
-  const initialPrompt =
-    `A conta "${input.fromAccountLabel}" bateu o limite (${input.reason}). ` +
-    `Você foi religado automaticamente na conta reserva — continuar a tarefa ` +
-    `de onde parou, sem repetir trabalho já entregue.`;
+  const initialPrompt = input.toModel
+    ? `O modelo anterior foi rejeitado pelo provider (${input.reason}). ` +
+      `Você foi religado automaticamente no modelo "${input.toModel}" — ` +
+      `continuar a tarefa de onde parou, sem repetir trabalho já entregue.`
+    : `A conta "${input.fromAccountLabel}" bateu o limite (${input.reason}). ` +
+      `Você foi religado automaticamente na conta reserva — continuar a tarefa ` +
+      `de onde parou, sem repetir trabalho já entregue.`;
   return {
     action: 'respawn',
     options: {
       adapterId: input.adapterId,
       accountId: input.toAccountId,
+      model: input.toModel,
       missionId: meta.missionId,
       role: meta.role,
       agentName: meta.agentName,
@@ -95,6 +105,8 @@ export async function respawnMainOwnedPaneWithAccount(input: {
   readonly toAccountId: string;
   readonly fromAccountLabel: string;
   readonly reason: string;
+  /** F-520: failover de modelo — mesma conta, modelo alternativo. */
+  readonly toModel?: string;
 }): Promise<boolean> {
   const entry = getMainOwnedPane(input.paneId);
   const plan = planMainOwnedFailoverRespawn({
@@ -103,6 +115,7 @@ export async function respawnMainOwnedPaneWithAccount(input: {
     toAccountId: input.toAccountId,
     fromAccountLabel: input.fromAccountLabel,
     reason: input.reason,
+    toModel: input.toModel,
   });
   if (plan.action === 'skip') {
     console.info(

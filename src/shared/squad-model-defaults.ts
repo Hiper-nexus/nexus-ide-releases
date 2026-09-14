@@ -4,7 +4,7 @@ import { CODEX_FRONTIER_MODEL } from './model-defaults';
 export const SQUAD_MODEL_DEFAULTS = {
   codex: CODEX_FRONTIER_MODEL,
   grok: 'grok-4.5',
-  gemini: 'gemini-3.7-flash-high',
+  gemini: 'gemini-3.8-pro-high',
 } as const;
 
 export function defaultSquadModelForAdapter(adapterId: string): string | undefined {

@@ -30,6 +30,23 @@ describe('detectLimit', () => {
     expect(detectLimit('mission-429 finished successfully')).toBeNull();
   });
 
+  it('detecta modelo rejeitado como kind model (conta sadia, rotação de modelo)', () => {
+    // Texto real do Codex CLI desatualizada (2026-09-14): erro 400 na abertura
+    // do pane — a conta está operacional, só o modelo não é suportado.
+    expect(
+      detectLimit(
+        '{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The \'gpt-6-astra\' model requires a newer version of Codex. Please upgrade to the latest app or CLI and try again."}}',
+      )?.kind,
+    ).toBe('model');
+    expect(detectLimit('Error: model_not_found: gemini-3.9-pro')?.kind).toBe('model');
+    expect(detectLimit('API error: model not supported on this client version')?.kind).toBe(
+      'model',
+    );
+    // Prosa de agente sobre modelos NÃO é sinal de erro.
+    expect(detectLimit('Vamos migrar o modelo do squad para o gemini-3.8.')).toBeNull();
+    expect(detectLimit('O modelo requer uma versão mais nova? melhor atualizar.')).toBeNull();
+  });
+
   it('ignora erros citados em blockquotes Markdown (EN/PT)', () => {
     expect(
       detectLimit(

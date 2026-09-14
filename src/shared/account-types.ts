@@ -17,7 +17,9 @@ export type FailoverReasonKind =
   | 'rate-limit'
   | 'quota'
   | 'auth'
-  | 'transient';
+  | 'transient'
+  /** Pane morta por MODELO rejeitado (CLI desatualizada/id aposentado): a conta está sadia; o renderer rotaciona o modelo do pane e religa na mesma conta. */
+  | 'model';
 
 export interface Account {
   id: string;
@@ -83,6 +85,12 @@ export interface FailoverEvent {
   switched: boolean;
   /** Replacement account pinned to the pane before its resume spawn. */
   toAccountId?: string;
+  /**
+   * kind='model' com switched=true: modelo alternativo escolhido pelo main
+   * (migração de id aposentado ou default do catálogo do adapter). O renderer
+   * aplica no pane e religa na MESMA conta — credencial não é punida.
+   */
+  toModel?: string;
   /** Exhausted account id (when known). */
   fromAccountId?: string;
   /**

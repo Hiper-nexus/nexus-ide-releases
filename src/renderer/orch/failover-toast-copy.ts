@@ -49,6 +49,13 @@ export function blockedFailoverToastCopy(
         detail:
           `${event.reason}. Nenhuma outra conta está disponível agora.${retryNote}`,
       };
+    case 'model':
+      return {
+        title: `Modelo rejeitado em "${event.fromAccountLabel}"`,
+        detail:
+          `${event.reason}. A conta está operacional — atualize a CLI em ` +
+          `Configurações → Providers para usar este modelo.`,
+      };
   }
 }
 

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { migrateModelId } from './model-defaults';
 import {
   applySquadModelDefault,
   defaultSquadModelForAdapter,
@@ -19,9 +20,18 @@ describe('squad model defaults', () => {
   it('fills only an empty model and preserves a manual choice', () => {
     expect(applySquadModelDefault({ cli: 'codex' }).model).toBe('gpt-5.6-sol');
     expect(applySquadModelDefault({ cli: 'grok' }).model).toBe('grok-4.5');
-    expect(applySquadModelDefault({ cli: 'agy' }).model).toBe('gemini-3.7-flash-high');
+    expect(applySquadModelDefault({ cli: 'agy' }).model).toBe('gemini-3.8-pro-high');
     expect(applySquadModelDefault({ cli: 'grok', model: 'grok-4.1' }).model).toBe(
       'grok-4.1',
     );
+  });
+
+  it('migrates retired/legacy model ids to the active lineage at spawn time', () => {
+    // gemini-3.1-pro-high: depreciação de produto (2026-09-14) — todo pane/squad
+    // agy sempre no modelo mais recente da linhagem pro.
+    expect(migrateModelId('gemini-3.1-pro-high')).toBe('gemini-3.8-pro-high');
+    expect(migrateModelId('gpt-5.4-pro')).toBe('gpt-5.6-sol');
+    expect(migrateModelId('gpt-5.6-sol')).toBe('gpt-5.6-sol');
+    expect(migrateModelId(undefined)).toBeUndefined();
   });
 });

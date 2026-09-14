@@ -147,7 +147,9 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
       ],
     },
     agy: {
-      default: 'gemini-3.7-flash-high',
+      // Gemini mais recente com reasoning high — doutrina do produto: o agy
+      // abre sempre na geração mais nova (2026-09-14, dono do produto).
+      default: 'gemini-3.8-pro-high',
       models: [
         { id: 'gemini-3.8-pro-high', availability: 'paid', costTier: 'high', source: 'bundled' },
         { id: 'gemini-3.8-flash-high', availability: 'cheap', costTier: 'low', source: 'bundled' },

@@ -185,7 +185,8 @@ export interface ObserverStallSuspectedPayload {
  */
 export interface ObserverProviderErrorPayload {
   source: 'provider-hook' | 'acp-driver';
-  kind: 'quota' | 'rate-limit' | 'auth' | 'transient';
+  /** 'model': conta sadia, modelo rejeitado — o failover rotaciona o modelo do pane (F-520). */
+  kind: 'quota' | 'rate-limit' | 'auth' | 'transient' | 'model';
   reason: string;
   cooldownMs: number;
   scope?: string;

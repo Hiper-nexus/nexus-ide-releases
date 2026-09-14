@@ -118,6 +118,42 @@ describe('layout-store pane maximize', () => {
     expect(listPanes(useLayoutStore.getState().root).map((pane) => pane.id)).toEqual(['pane-a']);
   });
 
+  it('mantém o pane maximizado em foco quando a orquestração abre um novo pane (F-521)', () => {
+    useLayoutStore.getState().toggleMaximizePane('pane-a');
+
+    const workerId = useLayoutStore.getState().spawnOrchPane({
+      orchRequestId: 'req-focus-1',
+      paneId: 'pane-worker',
+      adapterId: 'codex',
+      model: 'gpt-5.6-sol',
+      title: 'Worker 1',
+      missionId: 'm-focus',
+      role: 'worker',
+    });
+
+    expect(workerId).toBe('pane-worker');
+    expect(listPanes(useLayoutStore.getState().root).map((pane) => pane.id)).toEqual(
+      expect.arrayContaining(['pane-a', 'pane-b', 'pane-worker']),
+    );
+    // O orquestrador maximizado permanece em foco — o worker entra no grid
+    // por trás, sem roubar o zoom.
+    expect(useLayoutStore.getState().maximizedPaneId).toBe('pane-a');
+    expect(useLayoutStore.getState().focusedPaneId).toBe('pane-a');
+  });
+
+  it('foca o novo pane da orquestração quando não há maximize ativo', () => {
+    const workerId = useLayoutStore.getState().spawnOrchPane({
+      orchRequestId: 'req-focus-2',
+      paneId: 'pane-worker-2',
+      adapterId: 'codex',
+      title: 'Worker 2',
+      role: 'worker',
+    });
+
+    expect(useLayoutStore.getState().focusedPaneId).toBe(workerId);
+    expect(useLayoutStore.getState().maximizedPaneId).toBeNull();
+  });
+
   it('toggles stageFocusMode on and off when multiple panes exist', () => {
     expect(useLayoutStore.getState().stageFocusMode).toBe(false);
 
@@ -574,12 +610,27 @@ describe('enforceLayoutInvariants (the rule itself)', () => {
     expect(next.focusedPaneId).toBe('pane-agent');
   });
 
-  it('ends a zoom when the write mounts a pane the operator has not seen', () => {
+  it('F-521: mantém o zoom quando o write monta um pane novo (worker entra atrás do orquestrador em foco)', () => {
     const next = enforceLayoutInvariants(
       { root: buildGridTree([agent]), focusedPaneId: 'pane-agent', maximizedPaneId: 'pane-agent' },
       { root: buildGridTree([agent, { ...agent, id: 'pane-worker', missionId: 'mission-1' }]) },
     );
+    // Política invertida em 2026-09-14: panes de orquestração abrem POR TRÁS
+    // do pane maximizado — derrubar o zoom punia o operador em modo foco.
+    expect(next.maximizedPaneId).toBe('pane-agent');
+  });
+
+  it('F-521: encerra o zoom quando o write pede explicitamente (foco deliberado no pane novo)', () => {
+    const next = enforceLayoutInvariants(
+      { root: buildGridTree([agent]), focusedPaneId: 'pane-agent', maximizedPaneId: 'pane-agent' },
+      {
+        root: buildGridTree([agent, { ...agent, id: 'pane-worker', missionId: 'mission-1' }]),
+        focusedPaneId: 'pane-worker',
+        maximizedPaneId: null,
+      },
+    );
     expect(next.maximizedPaneId).toBeNull();
+    expect(next.focusedPaneId).toBe('pane-worker');
   });
 
   it('keeps a zoom when the write only removes panes', () => {

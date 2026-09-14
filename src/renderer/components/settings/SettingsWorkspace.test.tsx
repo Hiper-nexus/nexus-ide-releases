@@ -218,7 +218,7 @@ describe('SettingsWorkspace contracts', () => {
     expect(rail).not.toBeNull();
 
     const cases: Array<[SettingsSection, RegExp, string]> = [
-      ['account', /minha conta/i, 'Minha conta'],
+      ['account', /minha conta/i, 'Chaves de API e Conta'],
       ['appearance', /^aparência$/i, 'Aparência'],
       ['terminal', /^terminal$/i, 'Sistema'],
       ['remote', /^remoto$/i, 'Conexões externas'],
@@ -289,7 +289,7 @@ describe('SettingsWorkspace contracts', () => {
       '.settings-nav__item[aria-current="page"]',
     );
     expect(active).not.toBeNull();
-    expect(active?.textContent).toContain('Minha conta');
+    expect(active?.textContent).toContain('Chaves de API e Conta');
   });
 
   it('provides an h1 and focused h2 route target while resetting detail scroll on deep-link changes', async () => {

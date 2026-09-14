@@ -31,8 +31,9 @@ import { useOrchBridge } from './orch-bridge';
  * presentation, worker spawn, recovery}:
  *
  *  I1  a structural placeholder never coexists with (or replaces) real content;
- *  I2  a stale zoom (maximizedPaneId) never survives a change that ADDS panes,
- *      and never points at a pane that left the tree;
+ *  I2  a zoom (maximizedPaneId) never points at a pane that left the tree and,
+ *      desde a F-521, SOBREVIVE a writes que adicionam panes — workers entram
+ *      atrás do orquestrador em modo foco em vez de roubar o zoom;
  *  I3  no layout restore (persisted tree, or the read-failure fallback) may
  *      evict a pane bound to a live mission;
  *  I4  the presentation channel owns focus for the pane it presents.
@@ -508,6 +509,7 @@ describe('mission pane authority vs. workspace layout restore', () => {
   for (const order of permutations(STEPS)) {
     it(`ordering matrix — ${order.join(' → ')}`, async () => {
       const root = mount();
+      let zoomedPaneId: string | null = null;
       await act(async () => {
         await switchWorkspaceLayout(WORKSPACE);
       });
@@ -528,6 +530,7 @@ describe('mission pane authority vs. workspace layout restore', () => {
         zoom: async () => {
           const target = paneIds()[0];
           if (target) {
+            zoomedPaneId = target;
             act(() => {
               useLayoutStore.getState().toggleMaximizePane(target);
             });
@@ -555,15 +558,20 @@ describe('mission pane authority vs. workspace layout restore', () => {
       }
       expect(paneIds()).toContain('pane-worker');
       expectLayoutInvariants();
-      // Nothing may be mounted-but-invisible: a zoom is the operator's
-      // explicit choice about the panes that existed WHEN THEY ASKED, so any
-      // pane mounted afterwards must have ended it. (A zoom that is still the
-      // most recent event is legitimate and stays.)
-      const mountedAfterZoom = order
-        .slice(order.indexOf('zoom') + 1)
-        .some((step) => step === 'present' || step === 'worker');
-      if (mountedAfterZoom) {
-        expect(useLayoutStore.getState().maximizedPaneId).toBeNull();
+      // F-521 (2026-09-14): o zoom é a escolha explícita do operador e
+      // SOBREVIVE a workers montados depois — o worker entra atrás do
+      // orquestrador em modo foco, não rouba o zoom. Apresentação (I4) e
+      // restore posteriores têm autoridade própria de foco/layout e podem
+      // legitimamente encerrar o zoom; nesses casos só o invariante genérico
+      // (zoom → pane vivo) continua valendo, já verificado por
+      // expectLayoutInvariants.
+      const stepsAfterZoom = order.slice(order.indexOf('zoom') + 1);
+      const onlyWorkerAfterZoom =
+        stepsAfterZoom.includes('worker') &&
+        !stepsAfterZoom.includes('present') &&
+        !stepsAfterZoom.includes('restore');
+      if (onlyWorkerAfterZoom && zoomedPaneId) {
+        expect(useLayoutStore.getState().maximizedPaneId).toBe(zoomedPaneId);
       }
       act(() => root.unmount());
     });

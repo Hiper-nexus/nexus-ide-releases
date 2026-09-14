@@ -117,6 +117,8 @@ interface LayoutState {
   setBrowserUrl(paneId: string, url: string): void;
   /** Pin the account used by this pane (used by account failover + resume). */
   setAccountId(paneId: string, accountId: string | undefined): void;
+  /** Pin the model used by this pane (used by model failover: rejected model → catalog fallback). */
+  setPaneModel(paneId: string, model: string | undefined): void;
   promoteMissionPaneRole(missionId: string, paneId: string): void;
   setPaneRole(paneId: string, role: 'orchestrator' | 'worker' | undefined): void;
   /**
@@ -683,10 +685,14 @@ function rootWithoutVacancyResidue(root: LayoutNode): LayoutNode {
  *       install a placeholder OVER live content, never implemented it at all.
  *
  *   I2  A zoom is a view of ONE pane: PaneGrid renders only `maximizedPaneId`.
- *       It may not survive a write that ADDS panes (they would be mounted, live
- *       and invisible), nor point at a pane that left the tree. Seven call
- *       sites carried a hand-written `maximizedPaneId: null`; `hydrate`
- *       deliberately carried the zoom forward instead.
+ *       It may not point at a pane that left the tree. F-521 (2026-09-14)
+ *       relaxou a regra antiga "zoom cai em todo write que adiciona panes":
+ *       panes de orquestração abrem POR TRÁS do orquestrador em modo foco —
+ *       derrubar o zoom de todo write ganhador punia o operador que pediu
+ *       foco e sabotava o `focus:false` do addShellPane. Hoje o zoom só cai
+ *       quando o write pede explicitamente (`maximizedPaneId: null` no
+ *       partial — foco deliberado no pane novo) ou quando o pane sai da
+ *       árvore; panes novos montados atrás do zoom são intenção, não vazamento.
  *
  * Focus is normalized with it: it may only name a pane that survived the write.
  *
@@ -760,16 +766,14 @@ export function enforceLayoutInvariants(
       ? requestedFocus
       : (live[0]?.id ?? null);
 
-  const previousIds = new Set(listPanes(previous.root).map((pane) => pane.id));
-  const gainedPanes = live.some((pane) => !previousIds.has(pane.id));
   const requestedZoom =
     partial.maximizedPaneId !== undefined
       ? partial.maximizedPaneId
       : previous.maximizedPaneId;
+  // F-521: zoom não cai mais só porque o write ganhou panes — só se o write
+  // pedir explicitamente (null) ou o pane maximizado sair da árvore.
   const maximizedPaneId =
-    requestedZoom && liveIds.has(requestedZoom) && !gainedPanes
-      ? requestedZoom
-      : null;
+    requestedZoom && liveIds.has(requestedZoom) ? requestedZoom : null;
 
   return { ...partial, root, focusedPaneId, maximizedPaneId };
 }
@@ -807,7 +811,7 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
   },
 
   spawnOrchPane: (req) => {
-    const { root: currentRoot, viewKind, canvasNodeLayouts } = get();
+    const { root: currentRoot, viewKind, canvasNodeLayouts, focusedPaneId, maximizedPaneId } = get();
     const existingPanes = listPanes(currentRoot);
     if (existingPanes.some((pane) => pane.id === req.paneId)) {
       throw new Error(
@@ -881,10 +885,20 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
         : canvasNodeLayouts;
 
     bumpTreeVersion();
-    // O foco deliberado no pane recém-montado encerra qualquer maximize stale
-    // (mesmo idioma de focus()/setPanes): senão o pane ampliado continua
-    // cobrindo o agente que a orquestração acabou de apresentar.
-    set({ root, focusedPaneId: newPane.id, maximizedPaneId: null, canvasNodeLayouts: updatedLayouts });
+    // Modo foco (F-521): com um pane ampliado ATIVO (o operador colocou o
+    // orquestrador em foco), o worker novo NÃO rouba o foco nem derruba o
+    // zoom — o orquestrador permanece em foco e o worker entra no grid por
+    // trás. Sem maximize ativo, mantém o comportamento legado: foco no pane
+    // recém-apresentado, que também encerra qualquer maximize stale.
+    const keepFocus =
+      maximizedPaneId !== null &&
+      listPanes(root).some((pane) => pane.id === maximizedPaneId);
+    set({
+      root,
+      focusedPaneId: keepFocus ? focusedPaneId : newPane.id,
+      maximizedPaneId: keepFocus ? maximizedPaneId : null,
+      canvasNodeLayouts: updatedLayouts,
+    });
     persist();
     return newPane.id;
   },
@@ -1237,6 +1251,12 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
 
   setAccountId: (paneId, accountId) => {
     const root = updatePane(get().root, paneId, { accountId });
+    set({ root });
+    persist();
+  },
+
+  setPaneModel: (paneId, model) => {
+    const root = updatePane(get().root, paneId, { model });
     set({ root });
     persist();
   },

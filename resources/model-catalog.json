@@ -219,7 +219,7 @@
       ]
     },
     "agy": {
-      "default": "gemini-3.7-flash-high",
+      "default": "gemini-3.8-pro-high",
       "models": [
         {
           "id": "gemini-3.8-pro-high",

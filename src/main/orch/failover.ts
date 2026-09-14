@@ -6,6 +6,8 @@ import {
 } from '../../shared/account-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { tapSessionData, tapSessionExit, getAgentSessionInfo } from '../pty/pty-manager';
+import { getAdapter } from '../adapters/adapter-registry';
+import { migrateModelId } from '../../shared/model-defaults';
 import { respawnMainOwnedPaneWithAccount } from './failover-mission-respawn';
 import {
   getRendererWorkspaceScope,
@@ -759,6 +761,24 @@ function watchFor(authority: FailoverAuthority): [string, SessionWatch] {
   return [key, watch];
 }
 
+/**
+ * F-520: escolha pura do modelo de rotação quando o provider rejeita o id do
+ * pane. Ordem: migração de id aposentado (só conta se MUDOU o id), senão o
+ * default curado do catálogo do adapter; se o resultado é o próprio modelo
+ * rejeitado, não há rotação (undefined) e o pane recebe orientação acionável.
+ */
+export function pickModelRotation(
+  paneModel: string | undefined,
+  adapterDefault: string | undefined,
+): string | undefined {
+  const migrated = paneModel ? migrateModelId(paneModel) : undefined;
+  const fallback =
+    migrated !== undefined && migrated !== paneModel
+      ? migrated
+      : adapterDefault;
+  return fallback && fallback !== paneModel ? fallback : undefined;
+}
+
 function handleLimitHit(
   authority: FailoverAuthority,
   pane: NonNullable<ReturnType<typeof resolvePaneDetails>>,
@@ -820,6 +840,50 @@ function handleLimitHit(
         source,
       }),
     );
+    return;
+  }
+
+  // Modelo rejeitado (F-520): a CONTA está sadia — "as contas estão todas
+  // operacionais". Rotacionar o MODELO do pane (id aposentado → migração;
+  // senão default curado do catálogo do adapter) e religar na MESMA conta.
+  // Cooldown de credencial aqui puniria conta sã e queimaria o pool inteiro.
+  if (hit.kind === 'model') {
+    const next = pickModelRotation(
+      pane.model,
+      getAdapter(adapterId)?.models.default,
+    );
+    emitFailover(authority, {
+      paneId: pane.paneId,
+      fromAccountLabel: current?.label ?? adapterId,
+      toAccountLabel: current?.label ?? adapterId,
+      toModel: next,
+      reason: next
+        ? `modelo "${pane.model ?? '(default)'}" rejeitado (${hit.reason}) → rotacionado para "${next}"`
+        : `${hit.reason} — sem modelo alternativo no catálogo; atualize a CLI em Configurações → Providers`,
+      kind: hit.kind,
+      switched: next !== undefined,
+      fromAccountId: current?.id,
+      toAccountId: next ? current?.id : undefined,
+      missionId: authority.missionId,
+    });
+    // Pane main-owned (worker headless de missão): o renderer não é dono do
+    // processo — o Main respawna com a MESMA conta no modelo alternativo.
+    if (!authority.owner && next && current) {
+      void respawnMainOwnedPaneWithAccount({
+        paneId: pane.paneId,
+        sessionId: authority.sessionId,
+        adapterId,
+        toAccountId: current.id,
+        fromAccountLabel: current.label,
+        reason: hit.reason,
+        toModel: next,
+      }).catch((error) => {
+        console.warn(
+          '[failover] main-owned model respawn falhou (evento segue para o renderer):',
+          error instanceof Error ? error.message : error,
+        );
+      });
+    }
     return;
   }
 

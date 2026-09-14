@@ -30,8 +30,8 @@
   },
   "models": {
     "flag": "--model",
-    "list": [],
-    "default": ""
+    "list": ["muse"],
+    "default": "muse"
   },
   "promptInjection": {
     "method": "arg",

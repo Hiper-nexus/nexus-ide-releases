@@ -188,6 +188,24 @@ const PATTERNS: Pattern[] = [
     re: /stored token for ["'][^"']+["'] was rejected/i,
   },
   { kind: 'auth', cooldownMs: 15 * 60 * 1000, re: /(?:erro|falha).{0,40}(?:n[aã]o autenticado|sess[aã]o expirada|token inv[aá]lido)/i },
+  // Modelo rejeitado — a CONTA está sadia (F-520): o failover troca o modelo
+  // do pane (migração/default do catálogo) e religa na mesma conta, em vez
+  // de punir a credencial com cooldown. Error-shaped: exige o formato real
+  // das mensagens de provider, nunca prosa de agente sobre modelos.
+  //
+  // Texto real do Codex CLI em CLI desatualizada (2026-09-14):
+  //   The 'gpt-6-astra' model requires a newer version of Codex.
+  {
+    kind: 'model',
+    cooldownMs: 5 * 60 * 1000,
+    re: /model requires a newer version/i,
+  },
+  // Códigos de erro de API (Gemini "model not found", OpenAI model_not_found).
+  {
+    kind: 'model',
+    cooldownMs: 5 * 60 * 1000,
+    re: /\bmodel[_\s-](?:not[_\s]found|not[_\s]supported|unsupported|deprecat(?:ed|ion[_\s]error))\b/i,
+  },
 ];
 
 /**

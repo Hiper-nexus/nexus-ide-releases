@@ -492,6 +492,19 @@ function ProviderDetail({
               </button>
             </div>
           )}
+          {provider.installed && provider.canAutoInstall && (
+            <div className="prov-detail__install-actions" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '6px' }}>
+              <button
+                type="button"
+                className="settings-btn settings-btn--ghost prov-detail__install"
+                disabled={installBusy}
+                onClick={() => void installCli()}
+                title="Reexecuta o instalador oficial para colocar esta CLI na última versão — modelos novos exigem CLI atualizada (confirmação nativa mostra o comando exato)"
+              >
+                {installBusy ? 'Atualizando…' : 'Atualizar CLI'}
+              </button>
+            </div>
+          )}
           {installError && (
             <p className="prov-detail__install-error" role="alert">
               <PixelIcon name="warn" size={11} /> {installError}
@@ -763,6 +776,13 @@ export function ProvidersPanel() {
     () => providers.filter((p) => !p.installed && p.canAutoInstall),
     [providers],
   );
+  // CLIs instaladas com receita oficial: `npm install -g pkg` / instalador
+  // oficial reexecutado = upgrade para a última versão (F-520: CLIs velhas
+  // rejeitam modelos novos com erro 400 na abertura do pane).
+  const updatableInstalled = useMemo(
+    () => providers.filter((p) => p.installed && p.canAutoInstall),
+    [providers],
+  );
   const [provisioning, setProvisioning] = useState<string | null>(null);
   const [provisionSummary, setProvisionSummary] = useState<string | null>(null);
 
@@ -793,6 +813,38 @@ export function ProvidersPanel() {
         done.length > 0 ? `instaladas: ${done.join(', ')}` : null,
         failed.length > 0 ? `pendentes: ${failed.join('; ')}` : null,
         done.length === 0 && failed.length === 0 ? 'nada a instalar' : null,
+      ]
+        .filter(Boolean)
+        .join(' · '),
+    );
+  }
+
+  /**
+   * Atualizador em lote: reexecuta a receita oficial de cada CLI JÁ instalada
+   * (mesmo fluxo gated — confirmação nativa por CLI com o comando exato).
+   * `npm install -g <pkg>` sobre uma versão existente instala a última.
+   */
+  async function updateInstalled() {
+    setProvisionSummary(null);
+    const done: string[] = [];
+    const failed: string[] = [];
+    for (const provider of updatableInstalled) {
+      setProvisioning(provider.label);
+      try {
+        const result = await window.nexus.providers.installCli(provider.adapterId);
+        if (result.ok) done.push(provider.label);
+        else failed.push(`${provider.label} (${result.error ?? 'falhou'})`);
+      } catch {
+        failed.push(provider.label);
+      }
+    }
+    setProvisioning(null);
+    await hydrate();
+    setProvisionSummary(
+      [
+        done.length > 0 ? `atualizadas: ${done.join(', ')}` : null,
+        failed.length > 0 ? `pendentes: ${failed.join('; ')}` : null,
+        done.length === 0 && failed.length === 0 ? 'nada a atualizar' : null,
       ]
         .filter(Boolean)
         .join(' · '),
@@ -833,18 +885,35 @@ export function ProvidersPanel() {
             Conecte suas ferramentas e defina os modelos que você quer usar.
           </p>
         </div>
-        {missingInstallable.length > 0 && (
-          <button
-            type="button"
-            className="settings-btn settings-btn--primary"
-            disabled={provisioning !== null}
-            onClick={() => void provisionMissing()}
-            title="Instala em sequência todas as CLIs ausentes com instalador oficial — cada uma pede a confirmação nativa com o comando exato"
-          >
-            {provisioning
-              ? `Instalando ${provisioning}…`
-              : `Instalar ${missingInstallable.length} CLIs ausentes`}
-          </button>
+        {(missingInstallable.length > 0 || updatableInstalled.length > 0) && (
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            {missingInstallable.length > 0 && (
+              <button
+                type="button"
+                className="settings-btn settings-btn--primary"
+                disabled={provisioning !== null}
+                onClick={() => void provisionMissing()}
+                title="Instala em sequência todas as CLIs ausentes com instalador oficial — cada uma pede a confirmação nativa com o comando exato"
+              >
+                {provisioning
+                  ? `Instalando ${provisioning}…`
+                  : `Instalar ${missingInstallable.length} CLIs ausentes`}
+              </button>
+            )}
+            {updatableInstalled.length > 0 && (
+              <button
+                type="button"
+                className="settings-btn"
+                disabled={provisioning !== null}
+                onClick={() => void updateInstalled()}
+                title="Reexecuta o instalador oficial de cada CLI instalada para atualizá-la à última versão — cada uma pede a confirmação nativa com o comando exato"
+              >
+                {provisioning
+                  ? `Atualizando ${provisioning}…`
+                  : `Atualizar ${updatableInstalled.length} CLIs`}
+              </button>
+            )}
+          </div>
         )}
       </header>
 

@@ -14,6 +14,9 @@ const electron = vi.hoisted(() => {
       isPackaged: true,
       getVersion: () => '0.15.0',
       getPath: () => logsPath,
+      // F-517 registrou rechecagem de update no foco da janela; o mock nunca
+      // acompanhou e todos os testes do UpdateManager morriam em app.on.
+      on: vi.fn(),
     },
     autoUpdater: {
       setFeedURL: vi.fn(),

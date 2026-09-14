@@ -63,7 +63,7 @@
       "gpt-4.1",
       "gpt-4o"
     ],
-    "default": "gpt-5.6-luna"
+    "default": "gpt-5.6-sol"
   },
   "promptInjection": {
     "method": "arg",
