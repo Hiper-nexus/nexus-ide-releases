@@ -671,7 +671,10 @@ export function ProvidersPanel() {
   const hydrate = useProviderStore((s) => s.hydrate);
   const accounts = useAccountStore((s) => s.accounts);
   const [tab, setTab] = useState<ProvidersHubTab>('clis');
-  const [showAbsent, setShowAbsent] = useState(false);
+  const [showAbsentByTab, setShowAbsentByTab] = useState({
+    clis: true,
+    login: false,
+  });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [catalogNotice, setCatalogNotice] = useState<string | null>(null);
@@ -718,6 +721,8 @@ export function ProvidersPanel() {
       return next;
     });
   }, [providers]);
+
+  const showAbsent = tab === 'remote' ? false : showAbsentByTab[tab];
 
   const visible = useMemo(
     () => filterProvidersForTab(providers, tab, { showAbsent }),
@@ -901,11 +906,11 @@ export function ProvidersPanel() {
                 className="settings-btn settings-btn--primary"
                 disabled={provisioning !== null}
                 onClick={() => void provisionMissing()}
-                title="Instala em sequência todas as CLIs ausentes com instalador oficial — cada uma pede a confirmação nativa com o comando exato"
+                title="Instala em sequência apenas as CLIs ausentes com instalador oficial verificado — cada uma pede a confirmação nativa com o comando exato"
               >
                 {provisioning
                   ? `Instalando ${provisioning}…`
-                  : `Instalar ${missingInstallable.length} CLIs ausentes`}
+                  : `Instalar ${missingInstallable.length} CLI${missingInstallable.length === 1 ? '' : 's'} com instalador verificado`}
               </button>
             )}
             {updatableInstalled.length > 0 && (
@@ -984,7 +989,12 @@ export function ProvidersPanel() {
               <input
                 type="checkbox"
                 checked={showAbsent}
-                onChange={(e) => setShowAbsent(e.target.checked)}
+                onChange={(e) => {
+                  setShowAbsentByTab((current) => ({
+                    ...current,
+                    [tab]: e.target.checked,
+                  }));
+                }}
               />
               Mostrar ausentes
             </label>
@@ -1016,7 +1026,14 @@ export function ProvidersPanel() {
                   Você poderá entrar com sua conta na ferramenta escolhida.
                 </p>
                 {!showAbsent && (
-                  <button type="button" className="settings-btn settings-btn--primary" onClick={() => setShowAbsent(true)}>
+                  <button
+                    type="button"
+                    className="settings-btn settings-btn--primary"
+                    onClick={() => setShowAbsentByTab((current) => ({
+                      ...current,
+                      clis: true,
+                    }))}
+                  >
                     Ver ferramentas para instalar
                   </button>
                 )}

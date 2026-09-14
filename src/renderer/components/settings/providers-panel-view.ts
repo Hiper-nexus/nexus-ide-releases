@@ -59,7 +59,8 @@ export function tabDetectedLabel(
     return `${n} com login detectado${n === 1 ? '' : 's'}`;
   }
   const n = countDetectedClis(providers);
-  return `${n} detectado${n === 1 ? '' : 's'}`;
+  const catalogSize = providers.filter(isLocalCliProvider).length;
+  return `${catalogSize} CLI${catalogSize === 1 ? '' : 's'} no catálogo · ${n} detectada${n === 1 ? '' : 's'}`;
 }
 
 export function filterProvidersForTab(

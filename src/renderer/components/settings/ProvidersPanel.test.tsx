@@ -70,16 +70,28 @@ function mount(): { host: HTMLDivElement; root: Root } {
 }
 
 describe('ProvidersPanel hub', () => {
-  it('helps a first-time user find an AI without installing anything automatically', async () => {
+  it('shows the CLI catalog to a first-time user without installing anything automatically', () => {
     useProviderStore.setState({ providers: [provider('claude', 'Claude', { installed: false, canAutoInstall: true })] });
     const { host, root } = mount();
-    expect(host.textContent).toContain('Nenhuma ferramenta de IA encontrada neste computador');
-    const action = [...host.querySelectorAll('button')].find(button => button.textContent === 'Ver ferramentas para instalar');
-    expect(action).toBeDefined();
-    await act(async () => action!.click());
     expect(host.querySelector('.prov-row')?.textContent).toContain('Claude');
+    expect(host.querySelector<HTMLInputElement>('.prov-hub__show-absent input')?.checked)
+      .toBe(true);
     expect(loginTerminal.openCliLoginTerminal).not.toHaveBeenCalled();
     expect(window.nexus.providers.installCli).not.toHaveBeenCalled();
+    act(() => root.unmount());
+  });
+
+  it('lets a user restore absent CLIs after choosing to hide them', async () => {
+    useProviderStore.setState({ providers: [provider('claude', 'Claude', { installed: false, canAutoInstall: true })] });
+    const { host, root } = mount();
+    const showAbsent = host.querySelector<HTMLInputElement>('.prov-hub__show-absent input');
+    await act(async () => { showAbsent!.click(); });
+    const restoreCatalog = [...host.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Ver ferramentas para instalar',
+    );
+    expect(restoreCatalog).toBeTruthy();
+    await act(async () => { restoreCatalog!.click(); });
+    expect(host.querySelector('.prov-row')?.textContent).toContain('Claude');
     act(() => root.unmount());
   });
 
@@ -128,21 +140,35 @@ describe('ProvidersPanel hub', () => {
     vi.restoreAllMocks();
   });
 
-  it('shows a detected count and tile grid of installed CLIs by default', () => {
+  it('shows the complete CLI catalog, including absent CLIs, by default', () => {
     const { host, root } = mount();
     expect(host.querySelector('[data-testid="prov-detected-count"]')?.textContent)
-      .toMatch(/2 detectados/);
+      .toBe('3 CLIs no catálogo · 2 detectadas');
     const tiles = host.querySelectorAll('[data-testid="prov-tile-grid"] .prov-row');
-    expect(tiles.length).toBe(2);
+    expect(tiles.length).toBe(3);
     expect(host.textContent).toContain('Claude');
     expect(host.textContent).toContain('Codex');
-    expect(host.textContent).not.toContain('Kimi');
+    expect(host.textContent).toContain('Kimi');
     expect(host.textContent).toContain('2/2');
     // Single rescan CTA (no duplicate buttons).
     const refresh = [...host.querySelectorAll('button')].filter((b) =>
       /Reexaminar CLIs|Examinando/.test(b.textContent ?? ''),
     );
     expect(refresh).toHaveLength(1);
+    act(() => root.unmount());
+  });
+
+  it('describes bulk installation as limited to verified installers', () => {
+    useProviderStore.setState({
+      providers: [
+        provider('codex', 'Codex', { canAutoInstall: true }),
+        provider('kimi', 'Kimi', { installed: false, canAutoInstall: true }),
+      ],
+    });
+    const { host, root } = mount();
+    expect(host.textContent).toContain(
+      'Instalar 1 CLI com instalador verificado',
+    );
     act(() => root.unmount());
   });
 
@@ -376,8 +402,6 @@ describe('ProvidersPanel hub', () => {
       installed: false, canAutoInstall: true,
     })] });
     const { host, root } = mount();
-    const showAbsent = host.querySelector<HTMLInputElement>('.prov-hub__show-absent input');
-    await act(async () => { showAbsent!.click(); });
     expect(host.querySelectorAll('.prov-row button')).toHaveLength(1);
     const install = host.querySelector<HTMLButtonElement>('.prov-detail__install');
     expect(install).toBeTruthy();

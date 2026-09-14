@@ -161,7 +161,9 @@ describe('providers-panel-view', () => {
 
   it('labels detected counts per tab context', () => {
     const all = [claude, shellLike, missing, glm];
-    expect(tabDetectedLabel('clis', all, 2)).toBe('2 detectados');
+    expect(tabDetectedLabel('clis', all, 2)).toBe(
+      '3 CLIs no catálogo · 2 detectadas',
+    );
     expect(tabDetectedLabel('login', all, 1)).toBe('1 com login detectado');
     expect(tabDetectedLabel('remote', all, 1)).toBe('1 remoto');
   });
