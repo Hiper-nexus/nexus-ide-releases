@@ -460,13 +460,19 @@ describe('manual GitHub release publication', () => {
         expect(staged.release.canonicalAssetPaths).not.toEqual(
           canonicalAssetPaths,
         );
-        expect(
-          fs.statSync(path.dirname(staged.release.canonicalAssetPaths[0])).mode &
-            0o777,
-        ).toBe(0o700);
-        expect(
-          fs.statSync(staged.release.canonicalAssetPaths[0]).mode & 0o777,
-        ).toBe(0o400);
+        // Windows exposes only its read-only bit through Node's POSIX mode
+        // emulation. The publisher runs on macOS, where these private-mode
+        // assertions are meaningful; every host still exercises the isolated
+        // copy and immutable-hash contract below.
+        if (process.platform !== 'win32') {
+          expect(
+            fs.statSync(path.dirname(staged.release.canonicalAssetPaths[0])).mode &
+              0o777,
+          ).toBe(0o700);
+          expect(
+            fs.statSync(staged.release.canonicalAssetPaths[0]).mode & 0o777,
+          ).toBe(0o400);
+        }
         fs.writeFileSync(dmg, 'changed after staging');
         expect(describeLocalReleaseAssets(
           staged.release.canonicalAssetPaths,

@@ -147,7 +147,7 @@
     "ssh2@1.17.0": true
   },
   "optionalDependencies": {
-    "appdmg": "file:third_party/appdmg-secure",
+    "appdmg": "file:./third_party/appdmg-0.6.6.tgz",
     "ssh2": "^1.17.0"
   }
 }
