@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.31 — Eliminação de falsas exaustões (Codex), Nexus Mobile 100% testado e contratos compartilhados
+
+- **Refutação viva e eliminação de falsas exaustões de cota no Codex (F-539)**: contas com uso saudável (como 72% de uso semanal com 28% livre) não entram mais em quarentena de 12 horas nem exibem toasts falsos de cota esgotada. Hardening de expressões regulares de `limit_reached` para nunca casar com valores de negação (`false`, `null`, `0`), expansão da refutação viva para sinais do observer e resolução segura de tokens do Codex via `~/.codex/auth.json`.
+- **Nexus Mobile Companion completo com 100% de testes verdes (F-540)**: monorepo atualizado com todos os contratos transitivos sob `src/shared/`, suporte a streaming de terminal e screencast do navegador móvel em `src/main/runtime/`, ícones offline em `src/shared/agent-icons/` e 581 suítes de teste passando integralmente (5.026 testes no app móvel).
+- **Ajustes de limites do LSP sidecar e mocks de teste (F-541)**: teto de arquivos de projeto do LSP sidecar elevado para 4.000 para acomodar o crescimento de tipos do monorepo, mock de `getAgentSessionInfo` adicionado e asserções de contratos visuais alinhadas com o piso de 240px.
+
 ## 0.76.30 — Palco estável, orquestração afinada (GLM/Devin/Kimi/AGY), Nexus Mobile v1.4.201 e Windows operacional
 
 - **Palco estável sem tremor e cabeçalho único (F-535, F-536)**: o modo Foco/Palco (Stage Focus) agora mantém o painel principal travado em `stagePaneId`, impedindo que cliques ou digitação em terminais da coluna lateral invertam posições e disparem redimensionamentos descontrolados com tremor violento na tela. O cabeçalho duplicado nos cards de companion foi removido, unificando a barra de ferramentas com botão explícito de promoção para o Palco e aceleração por GPU dedicada (`translateZ(0)`) eliminando z-fighting com o WebGL do xterm no macOS.
