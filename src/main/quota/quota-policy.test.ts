@@ -30,6 +30,21 @@ describe('quota-policy', () => {
     expect(buildFleetSnapshot([account]).highUsageCount).toBe(0);
     expect(quotaAvailabilityScore(account)).toBe(0);
   });
+  it('cooldown never fabricates 100% over real telemetry in fleet display counters', () => {
+    // O caso do cockpit: conta em cooldown(quota) com leitura real Semanal 54%.
+    // Decisão (entryWorstRatio) continua tratando como esgotada; EXIBIÇÃO
+    // (worstUsedRatio/highUsageCount) reporta o fato: 54%.
+    const account = entry({ id: 'codex:ret', adapterId: 'codex', onCooldown: true, cooldownKind: 'quota',
+      windows: [
+        { kind: 'hours', label: '5 Horas', usedRatio: null, source: 'unknown', confidence: 'low' },
+        { kind: 'weekly', label: 'Semanal', usedRatio: 0.54, source: 'provider-api', confidence: 'high' },
+      ],
+    });
+    expect(entryWorstRatio(account)).toBe(1);
+    const fleet = buildFleetSnapshot([account]);
+    expect(fleet.worstUsedRatio).toBe(0.54);
+    expect(fleet.highUsageCount).toBe(0);
+  });
   it('computes worst ratio and high usage', () => {
     const e = entry({
       id: 'claude:a',

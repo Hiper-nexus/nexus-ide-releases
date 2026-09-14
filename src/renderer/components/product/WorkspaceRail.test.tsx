@@ -633,6 +633,58 @@ describe('WorkspaceRail', () => {
     expect(cockpit?.textContent).toContain('41%');
   });
 
+  it('conta em cooldown mostra a telemetria real + selo pausa — nunca 100% falso', () => {
+    // Regressão do bug real: conta "retornoja" em cooldown(quota) aparecia com
+    // barra 100% vermelha enquanto o serviço reportava Semanal 54%.
+    const now = Date.now();
+    act(() => {
+      useQuotaStore.getState().receive({
+        updatedAt: now,
+        entries: [
+          {
+            id: 'codex:ret',
+            adapterId: 'codex',
+            accountId: 'ret',
+            label: 'Codex · retornoja@gmail.com',
+            installed: true,
+            onCooldown: true,
+            cooldownKind: 'quota',
+            cooldownUntil: now + 3 * 60 * 60_000,
+            updatedAt: now,
+            windows: [
+              {
+                kind: 'hours',
+                label: '5 Horas',
+                usedRatio: null,
+                source: 'unknown',
+                confidence: 'low',
+              },
+              {
+                kind: 'weekly',
+                label: 'Semanal',
+                usedRatio: 0.54,
+                source: 'provider-api',
+                confidence: 'high',
+              },
+            ],
+          },
+        ],
+        worstUsedRatio: 0.54,
+        highUsageCount: 0,
+        unknownCount: 0,
+      });
+    });
+
+    const { host } = renderRail();
+    const cockpit = host.querySelector('.workspace-rail__cockpit');
+    const val = cockpit?.querySelector('.workspace-rail__quota-val');
+    expect(val?.textContent).toBe('54%');
+    expect(cockpit?.textContent).not.toContain('100%');
+    expect(cockpit?.querySelector('.workspace-rail__quota-pause')).not.toBeNull();
+    const item = cockpit?.querySelector('.workspace-rail__quota-item--cool');
+    expect(item).not.toBeNull();
+  });
+
   it('missão selecionada abre com agentes visíveis e logo da LLM (estilo Orca)', () => {
     const previousRoot = useLayoutStore.getState().root;
     const pane = {

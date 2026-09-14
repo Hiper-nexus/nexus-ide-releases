@@ -237,6 +237,23 @@ describe('providerApiRefutesCooldown', () => {
     expect(providerApiRefutesCooldown(windows, NOW - 1000, NOW)).toBe(false);
   });
 
+  it('refuta conta pausada com uso alto mas comprovadamente não bloqueado (Semanal 54%)', () => {
+    // O caso real do cockpit: cooldown de quota gravado, leitura fresca diz
+    // 54% semanal + 5h unknown. 54% é "uso alto com folga" — manter a conta
+    // travada em 100% falso era o bug. Abaixo de 0.8 (limiar de uso elevado)
+    // a leitura autoritativa desmente o sinal textual.
+    const windows = [
+      win({ kind: 'hours', usedRatio: null }),
+      win({ kind: 'weekly', label: 'Semanal', usedRatio: 0.54 }),
+    ];
+    expect(providerApiRefutesCooldown(windows, NOW - 1000, NOW)).toBe(true);
+  });
+
+  it('NÃO refuta no limiar de uso elevado (0.8)', () => {
+    const windows = [win({ kind: 'weekly', label: 'Semanal', usedRatio: 0.8 })];
+    expect(providerApiRefutesCooldown(windows, NOW - 1000, NOW)).toBe(false);
+  });
+
   it('NÃO refuta com leitura velha demais', () => {
     const windows = [win({ usedRatio: 0.1 })];
     expect(

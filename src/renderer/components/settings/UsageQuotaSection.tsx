@@ -2,7 +2,12 @@ import { useEffect } from 'react';
 import { useQuotaStore } from '../../state/quota-store';
 import { useAccountStore } from '../../state/account-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
-import { prioritizeReportedQuotas, windowDisplay } from '../../lib/quota-display';
+import {
+  formatResetCountdown,
+  prioritizeReportedQuotas,
+  windowDisplay,
+} from '../../lib/quota-display';
+import { useMinuteTick } from '../../lib/use-minute-tick';
 import {
   QUOTA_HIGH_USAGE_THRESHOLD,
   type ProviderQuotaEntry,
@@ -42,10 +47,19 @@ function hasQuota(entry: ProviderQuotaEntry): boolean {
     (window) => windowDisplay(window).tone !== 'unknown',
   );
 }
-function QuotaWindowRow({ window }: { window: QuotaWindow }) {
+function QuotaWindowRow({
+  window,
+  now,
+}: {
+  window: QuotaWindow;
+  now: number;
+}) {
   const display = windowDisplay(window);
   const unknown = display.tone === 'unknown';
   const local = window.source === 'local-tokens';
+  // Live countdown beats the fetch-time-frozen remainingLabel.
+  const reset =
+    formatResetCountdown(window.resetsAt, now) ?? window.remainingLabel ?? '';
   return (
     <li className="quota-window" data-unknown={unknown}>
       <span className="quota-window__name">{window.label}</span>
@@ -79,9 +93,7 @@ function QuotaWindowRow({ window }: { window: QuotaWindow }) {
         </>
       )}
       <span className="quota-window__reset">
-        {local
-          ? 'Sem limite de conta informado'
-          : (window.remainingLabel ?? '')}
+        {local ? 'Sem limite de conta informado' : reset}
       </span>
     </li>
   );
@@ -90,10 +102,12 @@ function EntryCard({
   entry,
   email,
   needsRelogin,
+  now,
 }: {
   entry: ProviderQuotaEntry;
   email?: string;
   needsRelogin?: boolean;
+  now: number;
 }) {
   const known = hasQuota(entry);
   const state = needsRelogin
@@ -145,6 +159,7 @@ function EntryCard({
           <QuotaWindowRow
             key={`${window.kind}-${window.label}`}
             window={window}
+            now={now}
           />
         ))}
       </ul>
@@ -180,6 +195,7 @@ export function UsageQuotaSection() {
   const refresh = useQuotaStore((state) => state.refresh);
   const accounts = useAccountStore((state) => state.accounts);
   const openSettings = useProductNavigationStore((state) => state.openSettings);
+  const now = useMinuteTick();
   useEffect(() => {
     void hydrate();
   }, [hydrate]);
@@ -277,6 +293,7 @@ export function UsageQuotaSection() {
             <EntryCard
               key={entry.id}
               entry={entry}
+              now={now}
               email={
                 accounts.find((account) => account.id === entry.accountId)
                   ?.email

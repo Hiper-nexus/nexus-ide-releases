@@ -1358,6 +1358,8 @@
 .workspace-rail__cockpit-detail-hint {
   font-size: 10px;
   color: var(--text-muted);
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .workspace-rail__cockpit-bars {
@@ -1382,16 +1384,55 @@
   align-items: center;
   gap: var(--space-1-5);
   color: var(--text-muted);
+  min-width: 0;
+  flex: 1;
+  white-space: nowrap;
+}
+
+/* Flex containers don't ellipsize children — the text span must do it, and
+   the logo must never be squeezed. */
+.workspace-rail__quota-name .provider-logo {
+  flex-shrink: 0;
+}
+
+.workspace-rail__quota-name > span {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 135px;
+}
+
+/* Percentual e selo de pausa nunca são comprimidos — truncar "54%" para "54"
+   mente sobre o dado mais importante do card. */
+.workspace-rail__quota-tail {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
 }
 
 .workspace-rail__quota-val {
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 600;
+}
+
+.workspace-rail__quota-pause {
+  font-size: 8px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: var(--radius-xs, 3px);
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+  color: var(--warn);
+  white-space: nowrap;
+}
+
+/* Conta em pausa: telemetria segue visível (é o fato), o estado é o selo. */
+.workspace-rail__quota-item--cool .workspace-rail__quota-track {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--surface-overlay, rgba(255, 255, 255, 0.1)) 0 3px,
+    rgba(255, 255, 255, 0.04) 3px 6px
+  );
 }
 
 .workspace-rail__quota-val--ok {
@@ -1419,8 +1460,10 @@
 
 .workspace-rail__quota-bar {
   height: 100%;
+  width: 100%;
+  transform-origin: left center;
   border-radius: 2px;
-  transition: width 200ms ease;
+  transition: transform 200ms ease;
 }
 
 .workspace-rail__quota-bar--ok {
@@ -1562,6 +1605,14 @@
 
 .workspace-rail__cockpit-status .workspace-rail__settings {
   flex: 1;
+  /* Em rail estreito o label encolhe com ellipsis para não empurrar o
+     indicador "Local" para fora da tela. */
+  min-width: 0;
+}
+
+.workspace-rail__cockpit-status .workspace-rail__quick-icon-btn,
+.workspace-rail__cockpit-conn {
+  flex-shrink: 0;
 }
 
 .workspace-rail__quick-icon-btn {

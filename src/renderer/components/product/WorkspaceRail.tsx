@@ -18,6 +18,7 @@ import { formatShortcut } from '../../lib/platform';
 import { useQuotaStore } from '../../state/quota-store';
 import { useAdapterStore } from '../../state/adapter-store';
 import { prioritizeReportedQuotas, shortWindowsLine } from '../../lib/quota-display';
+import { useMinuteTick } from '../../lib/use-minute-tick';
 import { ProviderLogo } from '../ProviderLogo';
 import { useTerminalGridDialogStore } from '../../state/terminal-grid-dialog-store';
 import { useCommandPaletteStore } from '../../state/command-palette-store';
@@ -741,6 +742,7 @@ export function WorkspaceRail({
   const layoutRoot = useLayoutStore((s) => s.root);
   const totalPanes = listPanes(layoutRoot).length;
   const quotaEntries = useQuotaStore((s) => s.snapshot.entries);
+  const quotaTick = useMinuteTick();
   const pathLabels = useMemo(
     () => workspacePathLabels([...activeWorkspaces, ...recentWorkspaces]),
     [activeWorkspaces, recentWorkspaces],
@@ -971,6 +973,10 @@ export function WorkspaceRail({
             </div>
             <div className="workspace-rail__cockpit-bars">
               {prioritizeReportedQuotas(quotaEntries).slice(0, 2).map((entry) => {
+                // A barra e o percentual vêm SOMENTE da telemetria real do
+                // serviço. Um cooldown/limit-hit jamais pinta 100% falso por
+                // cima de uma leitura fresca (ex.: conta pausada com Semanal
+                // 54%) — a pausa aparece como selo, o percentual é o fato.
                 let worst: number | null = null;
                 for (const window of entry.windows) {
                   if (window.usedRatio === null) continue;
@@ -978,7 +984,6 @@ export function WorkspaceRail({
                     worst = window.usedRatio;
                   }
                 }
-                if (entry.onCooldown) worst = 1;
                 const tone =
                   worst === null
                     ? 'unknown'
@@ -990,15 +995,29 @@ export function WorkspaceRail({
                 const percentLabel =
                   worst === null ? '—' : `${Math.round(worst * 100)}%`;
                 // Estilo Orca: todas as janelas ("5 Horas 35% · Semanal 41%").
-                const line = shortWindowsLine(entry);
+                const line = shortWindowsLine(entry, quotaTick);
+                const cooldownTitle = entry.onCooldown
+                  ? ' · pausa temporária após sinal de limite (percentual = última leitura do serviço)'
+                  : '';
                 return (
-                  <div key={entry.id} className="workspace-rail__quota-item">
+                  <div
+                    key={entry.id}
+                    className={`workspace-rail__quota-item${
+                      entry.onCooldown ? ' workspace-rail__quota-item--cool' : ''
+                    }`}
+                    title={`${line}${cooldownTitle}`}
+                  >
                     <div className="workspace-rail__quota-info">
                       <span className="workspace-rail__quota-name"><ProviderLogo adapterId={entry.adapterId} label={entry.label} size="xs" /><span>{entry.label}</span></span>
-                      <span
-                        className={`workspace-rail__quota-val workspace-rail__quota-val--${tone}`}
-                      >
-                        {percentLabel}
+                      <span className="workspace-rail__quota-tail">
+                        {entry.onCooldown ? (
+                          <span className="workspace-rail__quota-pause" title="Conta em pausa temporária">pausa</span>
+                        ) : null}
+                        <span
+                          className={`workspace-rail__quota-val workspace-rail__quota-val--${tone}`}
+                        >
+                          {percentLabel}
+                        </span>
                       </span>
                     </div>
                     {line ? (
@@ -1013,10 +1032,7 @@ export function WorkspaceRail({
                       <div
                         className={`workspace-rail__quota-bar workspace-rail__quota-bar--${tone}`}
                         style={{
-                          width: `${Math.min(
-                            100,
-                            Math.max(0, (worst ?? 0) * 100),
-                          )}%`,
+                          transform: `scaleX(${Math.min(1, Math.max(0, worst ?? 0))})`,
                         }}
                       />
                     </div>

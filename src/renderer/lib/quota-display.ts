@@ -20,6 +20,27 @@ function percentLabel(ratio: number): string {
   return `${percentageNumber.format(value)}%`;
 }
 
+/**
+ * Live countdown to a reset epoch. Rendered labels must be recomputed from
+ * resetsAt on each paint — the stored remainingLabel was frozen at fetch time
+ * and goes stale between refreshes (no polling on the old pipeline).
+ */
+export function formatResetCountdown(
+  resetsAt: number | undefined,
+  now = Date.now(),
+): string | null {
+  if (resetsAt === undefined || !Number.isFinite(resetsAt)) return null;
+  const left = Math.max(0, resetsAt - now);
+  const mins = Math.round(left / 60_000);
+  if (mins < 60) return `${Math.max(1, mins)}min`;
+  const hours = Math.floor(mins / 60);
+  const rem = mins % 60;
+  if (hours < 48) return rem > 0 ? `${hours}h${rem}m` : `${hours}h`;
+  const days = Math.floor(hours / 24);
+  const h = hours % 24;
+  return h > 0 ? `${days}d${h}h` : `${days}d`;
+}
+
 export function windowDisplay(w: QuotaWindow): {
   percentLabel: string;
   tone: 'ok' | 'warn' | 'danger' | 'unknown';
@@ -63,11 +84,14 @@ export function chipTone(
   return 'ok';
 }
 
-export function shortWindowsLine(entry: ProviderQuotaEntry): string {
+export function shortWindowsLine(entry: ProviderQuotaEntry, now = Date.now()): string {
   const parts = entry.windows.slice(0, 3).map((w) => {
     const d = windowDisplay(w);
-    const reset = w.remainingLabel ? ` · ${w.remainingLabel}` : '';
-    return `${w.label} ${d.percentLabel}${reset}`;
+    // Prefer a live countdown off resetsAt; the stored label is fetch-time
+    // frozen and only used when the provider gave no reset timestamp.
+    const reset =
+      formatResetCountdown(w.resetsAt, now) ?? w.remainingLabel ?? '';
+    return `${w.label} ${d.percentLabel}${reset ? ` · ${reset}` : ''}`;
   });
   return parts.join(' · ');
 }

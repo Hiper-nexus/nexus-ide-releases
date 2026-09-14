@@ -28,6 +28,12 @@ interface GlmLimitItem {
   unit?: unknown;
   number?: unknown;
   percentage?: unknown;
+  /** Total allowance for the window (Z.ai "usage" = the limit itself). */
+  usage?: unknown;
+  /** Used count so far in this window. */
+  currentValue?: unknown;
+  /** Limit minus used. */
+  remaining?: unknown;
   nextResetTime?: unknown;
 }
 
@@ -36,6 +42,28 @@ function percentToRatio(raw: unknown): number | null {
   // Z.ai reports 0–100 percent (incl. 0, 1, 12…). Always /100 so 1 → 1%.
   if (raw < 0) return 0;
   return Math.min(1, raw / 100);
+}
+
+/**
+ * Exact counts beat the coarse `percentage` field: the community (CodexBar
+ * zai.md) documents that when a positive `usage` limit and a
+ * `currentValue`/`remaining` count are present, the counts determine the used
+ * percentage — `percentage` alone can lag behind real consumption. Returns
+ * null when counts are absent or unusable (caller falls back to percentage).
+ */
+function countsToRatio(limit: GlmLimitItem): number | null {
+  const total = limit.usage;
+  if (typeof total !== 'number' || !Number.isFinite(total) || total <= 0) {
+    return null;
+  }
+  const used =
+    typeof limit.currentValue === 'number' && Number.isFinite(limit.currentValue)
+      ? limit.currentValue
+      : typeof limit.remaining === 'number' && Number.isFinite(limit.remaining)
+        ? total - limit.remaining
+        : null;
+  if (used === null) return null;
+  return Math.max(0, Math.min(1, used / total));
 }
 
 function resetAtMs(raw: unknown): number | undefined {
@@ -82,7 +110,9 @@ export function parseGlmQuotaLimit(
   for (const item of limitsRaw) {
     if (!item || typeof item !== 'object') continue;
     const limit = item as GlmLimitItem;
-    const ratio = percentToRatio(limit.percentage);
+    // Exact counts first (usage/currentValue/remaining); coarse percentage is
+    // the fallback when the provider omits counts.
+    const ratio = countsToRatio(limit) ?? percentToRatio(limit.percentage);
     if (ratio === null) continue;
 
     if (isFiveHour(limit)) {

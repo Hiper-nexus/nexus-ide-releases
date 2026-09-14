@@ -5,6 +5,7 @@ import {
   chipLabel,
   chipParts,
   chipTone,
+  formatResetCountdown,
   shortWindowsLine,
   windowDisplay,
 } from './quota-display';
@@ -91,6 +92,40 @@ describe('quota-display', () => {
     expect(line).toContain('—');
     expect(line).toContain('54%');
     expect(line).not.toMatch(/Sessão 0%/);
+  });
+
+  it('shortWindowsLine recomputes the countdown from resetsAt instead of the frozen label', () => {
+    const now = Date.parse('2026-09-14T12:00:00.000Z');
+    const entry: ProviderQuotaEntry = {
+      id: 'codex:ret',
+      adapterId: 'codex',
+      label: 'Codex · retornoja',
+      installed: true,
+      onCooldown: false,
+      updatedAt: now,
+      windows: [
+        {
+          kind: 'weekly',
+          label: 'Semanal',
+          usedRatio: 0.54,
+          source: 'provider-api',
+          confidence: 'high',
+          resetsAt: now + 5 * 24 * 60 * 60_000 + 2 * 60 * 60_000,
+          remainingLabel: '5d', // congelado no fetch — deve ser ignorado
+        },
+      ],
+    };
+    expect(shortWindowsLine(entry, now)).toBe('Semanal 54% · 5d2h');
+  });
+
+  it('formatResetCountdown formats minutes, hours and days in pt-BR', () => {
+    const now = 1_000_000_000_000;
+    expect(formatResetCountdown(undefined, now)).toBeNull();
+    expect(formatResetCountdown(now - 10_000, now)).toBe('1min');
+    expect(formatResetCountdown(now + 45 * 60_000, now)).toBe('45min');
+    expect(formatResetCountdown(now + 90 * 60_000, now)).toBe('1h30m');
+    expect(formatResetCountdown(now + 5 * 24 * 60 * 60_000, now)).toBe('5d');
+    expect(formatResetCountdown(now + 5 * 24 * 60 * 60_000 + 3 * 60 * 60_000, now)).toBe('5d3h');
   });
 });
 

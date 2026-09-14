@@ -30,6 +30,22 @@ export function entryWorstRatio(entry: ProviderQuotaEntry): number | null {
   return worst;
 }
 
+/**
+ * Worst ratio for DISPLAY (chip, cockpit bars, fleet counters). Only real
+ * telemetry counts: a cooldown/limit-hit must never paint a fake 100% over a
+ * fresh provider reading (e.g. account paused with weekly 54% reported).
+ */
+export function entryDisplayWorstRatio(
+  entry: ProviderQuotaEntry,
+): number | null {
+  let worst: number | null = null;
+  for (const w of entry.windows) {
+    if (w.usedRatio === null) continue;
+    if (worst === null || w.usedRatio > worst) worst = w.usedRatio;
+  }
+  return worst;
+}
+
 export function isHighUsage(
   entry: ProviderQuotaEntry,
   threshold = QUOTA_HIGH_USAGE_THRESHOLD,
@@ -47,7 +63,9 @@ export function buildFleetSnapshot(
   let highUsageCount = 0;
   let unknownCount = 0;
   for (const e of entries) {
-    const w = entryWorstRatio(e);
+    // Display counters come from real telemetry only — cooldowns surface via
+    // entry.onCooldown, never as a fabricated 100% in the fleet worst.
+    const w = entryDisplayWorstRatio(e);
     if (w === null) {
       const allUnknown = e.windows.every((x) => x.usedRatio === null);
       if (allUnknown) unknownCount += 1;

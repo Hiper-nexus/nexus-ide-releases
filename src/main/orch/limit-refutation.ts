@@ -22,9 +22,10 @@
  *    backoff plus auth/transient recovery remain available without quota APIs.
  */
 
-import type {
-  ProviderQuotaEntry,
-  QuotaWindowKind,
+import {
+  QUOTA_HIGH_USAGE_THRESHOLD,
+  type ProviderQuotaEntry,
+  type QuotaWindowKind,
 } from '../../shared/quota-types';
 import type { LimitHit } from './limit-detector';
 
@@ -109,10 +110,18 @@ export function hasFreshProviderApiWindowForLimit(
 /**
  * Refuta um COOLDOWN já persistido (pós-hoc, sem saber o kind do hit que o
  * criou): leitura provider-api fresca em que TODA janela com ratio conhecido
- * está claramente saudável. Cobre o resíduo da cascata fantasma — cooldowns
- * gravados antes do fix ficavam pendurados por horas ("5 Horas 100% ·
- * 10h16m") mesmo com a conta comprovadamente ok. Conservador: sem leitura
- * fresca, ou com qualquer janela ≥ REFUTE_HEALTHY_RATIO, o cooldown fica.
+ * está abaixo do limiar de uso elevado. Cobre o resíduo da cascata fantasma —
+ * cooldowns gravados antes do fix ficavam pendurados por horas ("100%" na
+ * barra) mesmo com a conta comprovadamente com folga (ex.: Semanal 54%).
+ *
+ * Gate deliberadamente mais folgado que o da refutação ao vivo
+ * (REFUTE_HEALTHY_RATIO=0.5): aqui o cooldown já está gravado e a leitura é
+ * autoritativa — um provider que realmente bloqueia reporta a janela
+ * correspondente em ~100%, nunca em 54%. Janelas no intervalo 0.5–0.8 são
+ * "uso alto, mas comprovadamente não bloqueado": manter a conta quarantinada
+ * ali reproduzia exatamente o bug do cockpit mostrando 100% falso.
+ * Conservador nos demais eixos: sem leitura fresca, ou com qualquer janela ≥
+ * QUOTA_HIGH_USAGE_THRESHOLD, o cooldown fica.
  */
 export function providerApiRefutesCooldown(
   windows: ReadonlyArray<{ source: string; usedRatio: number | null }>,
@@ -123,7 +132,7 @@ export function providerApiRefutesCooldown(
   let sawRatio = false;
   for (const window of windows) {
     if (window.source !== 'provider-api' || window.usedRatio === null) continue;
-    if (window.usedRatio >= REFUTE_HEALTHY_RATIO) return false;
+    if (window.usedRatio >= QUOTA_HIGH_USAGE_THRESHOLD) return false;
     sawRatio = true;
   }
   return sawRatio;

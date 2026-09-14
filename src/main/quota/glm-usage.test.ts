@@ -50,12 +50,53 @@ describe('parseGlmQuotaLimit', () => {
       usedRatio: 0.12,
       source: 'provider-api',
     });
+    // Counts beat percentage: TIME_LIMIT usage=4000 currentValue=20 → 0.5%,
+    // mesmo com o campo percentage (arredondado) dizendo 1.
     expect(w.find((x) => x.kind === 'monthly')).toMatchObject({
       label: 'MCP mensal',
-      usedRatio: 0.01,
+      usedRatio: 0.005,
       source: 'provider-api',
     });
     expect(w.find((x) => x.kind === 'weekly')?.resetsAt).toBe(1784073369995);
+  });
+
+  it('exact counts take precedence over a stale percentage on token windows', () => {
+    // percentage dizendo 1% enquanto as contagens reais mostram 25% usado —
+    // a prática da comunidade (CodexBar/zai.md): contagens mandam.
+    const w = parseGlmQuotaLimit(
+      {
+        data: {
+          limits: [
+            {
+              type: 'TOKENS_LIMIT',
+              unit: 6,
+              number: 1,
+              percentage: 1,
+              usage: 800_000_000,
+              currentValue: 200_000_000,
+              remaining: 600_000_000,
+              nextResetTime: 1784073369995,
+            },
+          ],
+        },
+      },
+      NOW,
+    );
+    expect(w.find((x) => x.kind === 'weekly')?.usedRatio).toBe(0.25);
+  });
+
+  it('falls back to percentage when counts are absent or unusable', () => {
+    const w = parseGlmQuotaLimit(
+      {
+        data: {
+          limits: [
+            { type: 'TOKENS_LIMIT', unit: 6, number: 1, percentage: 12 },
+          ],
+        },
+      },
+      NOW,
+    );
+    expect(w.find((x) => x.kind === 'weekly')?.usedRatio).toBe(0.12);
   });
 
   it('returns empty for garbage', () => {

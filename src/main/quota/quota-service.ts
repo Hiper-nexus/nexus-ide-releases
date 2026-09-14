@@ -523,8 +523,13 @@ export class QuotaService {
     // cooldown é resíduo (cascata fantasma pré-fix ou reset antecipado do
     // provider) — limpa na conta e já entrega a entry destravada, em vez de
     // exibir "100% · 10h" numa conta comprovadamente ok.
-    let onCooldown = input.onCooldown;
-    let cooldownUntil = input.cooldownUntil;
+    // Um cooldown com `cooldownUntil` já vencido nunca é reportado como ativo
+    // (defesa em profundidade: o account-store expira, a entry não herda
+    // resíduo).
+    let onCooldown =
+      input.onCooldown &&
+      (input.cooldownUntil === undefined || input.cooldownUntil > input.now);
+    let cooldownUntil = onCooldown ? input.cooldownUntil : undefined;
     if (
       onCooldown &&
       allowCooldownRefutation &&

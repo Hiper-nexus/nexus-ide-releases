@@ -25,7 +25,7 @@ interface QuotaStore {
   status: QuotaLoadStatus;
   error: string | null;
   hydrate(): Promise<void>;
-  refresh(): Promise<void>;
+  refresh(opts?: { silent?: boolean }): Promise<void>;
   receive(snapshot: QuotaFleetSnapshot): void;
   reset(): void;
 }
@@ -85,12 +85,19 @@ export const useQuotaStore = create<QuotaStore>((set, get) => ({
     await hydrateInFlight;
   },
 
-  refresh: async () => {
-    set({ status: 'loading', error: null });
+  refresh: async (opts) => {
+    // Silent refreshes (background poll) keep the current snapshot on error
+    // and never flash "Consultando…" over live data.
+    const silent = opts?.silent === true;
+    if (!silent) set({ status: 'loading', error: null });
     try {
       const snapshot = await fetchSnapshot('refresh');
       set({ snapshot, status: 'ready', error: null });
     } catch (err) {
+      if (silent) {
+        console.warn('[quota] background refresh failed:', err);
+        return;
+      }
       const message = err instanceof Error ? err.message : String(err);
       console.warn('[quota] refresh failed:', err);
       set({ status: 'error', error: message });
@@ -120,6 +127,17 @@ export function useQuotaSync(): void {
       useQuotaStore.getState().receive(snapshot);
     });
   }, []);
+
+  // Background poll: without it, long sessions showed percentages from hours
+  // ago (push only fired on limit hits). 5 min keeps providers happy while the
+  // countdown labels tick per-minute via useMinuteTick.
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      void useQuotaStore.getState().refresh({ silent: true });
+    }, 5 * 60_000);
+    return () => clearInterval(timer);
+  }, []);
 }
 
 export function entryForAccount(
@@ -127,16 +145,16 @@ export function entryForAccount(
   adapterId: string,
   accountId?: string,
 ): ProviderQuotaEntry | undefined {
+  // A pinned pane must only ever see ITS account's quota. Falling through to
+  // the native CLI row (or any other account) shows a different credential's
+  // telemetry — a lie, not a fallback. Unpinned panes use the native row.
   if (accountId) {
-    const hit = snapshot.entries.find(
+    return snapshot.entries.find(
       (e) => e.adapterId === adapterId && e.accountId === accountId,
     );
-    if (hit) return hit;
   }
-  return (
-    snapshot.entries.find(
-      (e) => e.adapterId === adapterId && e.accountId === undefined,
-    ) ?? snapshot.entries.find((e) => e.adapterId === adapterId)
+  return snapshot.entries.find(
+    (e) => e.adapterId === adapterId && e.accountId === undefined,
   );
 }
 
