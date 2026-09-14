@@ -65,3 +65,16 @@ trust/seal integration require review before implementing that production step.
 Exact verified upstream provenance and full design remain in the task's
 `windows-native-job-lifecycle-design.md`. This spike uses Windows SDK APIs only,
 not copied or patched third-party implementation code.
+
+## First native-run diagnosis
+
+Run 34852749384 compiled successfully with MSVC 19.51.36256, SDK 10.0.26100
+and /WX, then reproduced ERROR_INVALID_HANDLE at the root console assertion.
+The fixture driver intentionally redirects stdout/stderr to evidence files.
+Without STARTF_USESTDHANDLES plus null standard handles, Windows can carry
+those redirected defaults into the pseudo-console client instead of creating
+ConPTY handles. The spawn helper now follows the exact node-pty startup policy
+for ConPTY launches, retaining bInheritHandles=false, JOB_LIST and suspension.
+The existing GetConsoleMode assertion and exact-pipe marker remain mandatory;
+no assertion was weakened. The rerun is still required to establish success.
+See [Microsoft Terminal's documented diagnosis](https://github.com/microsoft/terminal/discussions/15814).

@@ -104,6 +104,14 @@ inline Process spawn(const std::vector<std::wstring>& args, HANDLE job = nullptr
   STARTUPINFOEXW startup{};
   startup.StartupInfo.cb = static_cast<DWORD>(count ? sizeof(startup) : sizeof(STARTUPINFOW));
   startup.lpAttributeList = attributes.get();
+  if (console) {
+    // Suppress the driver's redirected standard handles so ConPTY supplies its
+    // own console handles (Microsoft Terminal discussion #15814; node-pty does this).
+    startup.StartupInfo.dwFlags |= STARTF_USESTDHANDLES;
+    startup.StartupInfo.hStdInput = nullptr;
+    startup.StartupInfo.hStdOutput = nullptr;
+    startup.StartupInfo.hStdError = nullptr;
+  }
   std::wstring command = quote(executable());
   for (const auto& arg : args) command += L" " + quote(arg);
   PROCESS_INFORMATION created{};
