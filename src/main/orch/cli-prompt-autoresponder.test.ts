@@ -331,7 +331,11 @@ describe('CLI prompt autoresponder', () => {
     const t0 = 1_000_000;
     responder.bind('session-glm', 'glm', t0);
     expect(responder.isPending('session-glm', t0 + 1_000)).toBe(true);
-    expect(responder.isPending('session-glm', t0 + 21_000)).toBe(false);
+    // F-529: trust pinta tarde em cold start — a janela do glm é a das
+    // assinaturas de TRUST (60s), não o default de boot menu (20s).
+    expect(responder.isPending('session-glm', t0 + 21_000)).toBe(true);
+    // ... mas continua finita: sessão longa não paga stripAnsi para sempre.
+    expect(responder.isPending('session-glm', t0 + 61_000)).toBe(false);
   });
 
   it('forceAcceptResponse dismisses a visible bypass menu for inject recovery', () => {
@@ -418,6 +422,94 @@ describe('CLI prompt autoresponder', () => {
     // on this menu selects "No, exit" and kills the CLI session.
     expect(responder.forceAcceptResponse('session-glm')).toEqual({
       response: ACCEPT_FIRST_OPTION_BY_NUMBER,
+    });
+  });
+
+  describe('F-529: resposta perdida na race do trust é reenviada', () => {
+    function armHarness(prompt: string, adapterId = 'glm') {
+      const writes: Array<{ sessionId: string; data: string }> = [];
+      const timers: Array<() => void> = [];
+      const responder = new CliPromptAutoResponder(
+        () => true,
+        (fn) => {
+          timers.push(fn);
+          return undefined as unknown as NodeJS.Timeout;
+        },
+      );
+      responder.setWriter((sessionId, data) => writes.push({ sessionId, data }));
+      responder.bind('session-op', adapterId);
+      const response = responder.observe('session-op', prompt);
+      return { responder, writes, timers, response };
+    }
+
+    it('pane do operador no trust 2.1.267: tecla perdida é reenviada até o teto, sem fallback inventado', () => {
+      const { responder, writes, timers, response } = armHarness(
+        CLAUDE_TRUST_PROMPT_21267,
+      );
+      expect(response).toBe(ACCEPT_SECOND_TRUST_OPTION_RESPONSE);
+      expect(responder.isVerifying('session-op')).toBe(true);
+      // O envio original é do caller (o tap do mcp-server) — o autoresponder
+      // só digita os REENVIOS.
+      expect(writes).toEqual([]);
+
+      timers.pop()!(); // silêncio: 1º reenvio com a mesma tecla segura
+      expect(writes.map((w) => w.data)).toEqual([
+        ACCEPT_SECOND_TRUST_OPTION_RESPONSE,
+      ]);
+      timers.pop()!(); // ainda mudo: 2º reenvio
+      expect(writes.map((w) => w.data)).toEqual([
+        ACCEPT_SECOND_TRUST_OPTION_RESPONSE,
+        ACCEPT_SECOND_TRUST_OPTION_RESPONSE,
+      ]);
+      timers.pop()!(); // esgotou: desiste e devolve o diálogo ao operador
+      expect(writes.length).toBe(2);
+      expect(responder.isVerifying('session-op')).toBe(false);
+    });
+
+    it('o repaint que prova o aceite encerra a verificação sem nenhum reenvio', () => {
+      const { responder, writes, timers, response } = armHarness(
+        CLAUDE_TRUST_PROMPT_21267,
+      );
+      expect(response).toBe(ACCEPT_SECOND_TRUST_OPTION_RESPONSE);
+      // O TUI aceitou e repintou a tela home.
+      responder.observe('session-op', ' Welcome to Claude Code!');
+      expect(responder.isVerifying('session-op')).toBe(false);
+      timers.pop()!(); // recheck agendado antes do repaint: estado já não existe
+      expect(writes).toEqual([]);
+    });
+
+    it('a última tentativa usa o fallback numérico da assinatura (bypass 2.1.x)', () => {
+      const { writes, timers, response } = armHarness(
+        CLAUDE_BYPASS_PROMPT_21,
+      );
+      expect(response).toBe(ACCEPT_SECOND_PROMPT_RESPONSE);
+      timers.pop()!();
+      timers.pop()!();
+      expect(writes.map((w) => w.data)).toEqual([
+        ACCEPT_SECOND_PROMPT_RESPONSE,
+        ACCEPT_SECOND_OPTION_BY_NUMBER,
+      ]);
+    });
+
+    it('injeção de missão segue adiada enquanto a resposta aguarda prova', () => {
+      const { responder } = armHarness(CLAUDE_TRUST_PROMPT_21267);
+      expect(responder.shouldDeferInjection('session-op')).toBe(true);
+      responder.observe('session-op', ' Welcome to Claude Code!');
+      // Depois do aceite provado só resta o settle de 450ms (o TUI saindo do
+      // menu); passado ele, a injeção segue.
+      expect(
+        responder.shouldDeferInjection('session-op', Date.now() + 2_000),
+      ).toBe(false);
+    });
+
+    it('fechar o pane (drop) cancela a verificação e não digita mais nada', () => {
+      const { responder, writes, timers } = armHarness(
+        CLAUDE_TRUST_PROMPT_21267,
+      );
+      responder.drop('session-op');
+      expect(responder.isVerifying('session-op')).toBe(false);
+      timers.pop()!();
+      expect(writes).toEqual([]);
     });
   });
 });

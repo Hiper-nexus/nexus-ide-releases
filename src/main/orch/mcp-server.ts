@@ -1327,7 +1327,12 @@ function installLegacyParser(
   legacyParserTaps.replace((track) => {
     track(tapSessionData((sessionId, data) => {
       let plain: string | null = null;
-      if (cliPromptAutoResponder.isPending(sessionId)) {
+      if (
+        cliPromptAutoResponder.isPending(sessionId) ||
+        // F-529: resposta enviada aguarda prova de aceite — o repaint que
+        // prova chega por ESTE tap; sem ele os reenvios disparariam às cegas.
+        cliPromptAutoResponder.isVerifying(sessionId)
+      ) {
         plain = stripAnsi(data);
       }
       const response =
@@ -1465,6 +1470,9 @@ export function startMcpServer(): Promise<void> {
     serverVersion: app.getVersion(),
   };
   installSpawnHook();
+  // F-529: reenvios do autoresponder (tecla perdida na race do desenho do
+  // diálogo de trust) digitam pelo mesmo caminho da resposta original.
+  cliPromptAutoResponder.setWriter(orchWriteSession);
   const missionControl = createPtyMissionControl();
   disposePtyMissionControl?.();
   disposePtyMissionControl = installPtyStreamMissionControl(missionControl);

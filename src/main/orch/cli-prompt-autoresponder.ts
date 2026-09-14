@@ -8,7 +8,23 @@ const SETTLE_AFTER_ACCEPT_MS = 450;
  * we unbind: otherwise Claude-family panes with skipDangerous set would keep
  * stripAnsi on every PTY chunk for the whole mission.
  */
-const WATCH_WINDOW_MS = 20_000;
+const DEFAULT_WATCH_WINDOW_MS = 20_000;
+/**
+ * Diálogos de TRUST pintam tarde em cold start: GLM/Z.ai é um binário node
+ * pesado nascendo num home isolado NOVO (nenhum trust por projeto salvo), e o
+ * relógio do watch começa no spawn, não no diálogo. Com 20s o autoresponder
+ * desistia ANTES do diálogo existir e o pane ficava "Aguardando" para sempre
+ * (F-529: pane GLM do operador preso no "Yes, I trust this folder").
+ */
+const TRUST_WATCH_WINDOW_MS = 60_000;
+/**
+ * Um TUI que aceitou a tecla SEMPRE emite repaint na hora. Silêncio completo
+ * depois da resposta = a tecla se perdeu (race com o desenho do diálogo) —
+ * reenviar é idempotente e seguro; nunca digitar de novo não é.
+ */
+const ACCEPT_QUIET_RETRY_MS = 1_800;
+/** Envio original + 2 reenvios; depois o diálogo é do operador. */
+const MAX_ACCEPT_ATTEMPTS = 3;
 
 interface PromptSignature {
   adapterIds: readonly string[];
@@ -32,6 +48,11 @@ interface PromptSignature {
    * responder, nunca um chute.
    */
   responseFor?: (raw: string) => string | null;
+  /**
+   * Janela de observação própria (default 20s). Diálogos de trust ganham
+   * janela maior: podem pintar depois do cold start da CLI (F-529).
+   */
+  watchMs?: number;
 }
 
 export const ACCEPT_DEFAULT_PROMPT_RESPONSE = '\r';
@@ -86,6 +107,7 @@ export const BUILTIN_PROMPT_SIGNATURES: readonly PromptSignature[] = [
     ],
     response: ACCEPT_FIRST_OPTION_BY_NUMBER,
     earlyPhrase: 'do you trust the files in this folder?',
+    watchMs: TRUST_WATCH_WINDOW_MS,
   },
   {
     // Claude Code 2.1.220 replaced the legacy folder-trust copy above. Keep a
@@ -105,6 +127,7 @@ export const BUILTIN_PROMPT_SIGNATURES: readonly PromptSignature[] = [
     response: ACCEPT_SECOND_TRUST_OPTION_RESPONSE,
     responseFor: claudeWorkspaceTrustResponse,
     earlyPhrase: 'quick safety check: is this a project',
+    watchMs: TRUST_WATCH_WINDOW_MS,
   },
   {
     adapterIds: ['agy'],
@@ -115,6 +138,7 @@ export const BUILTIN_PROMPT_SIGNATURES: readonly PromptSignature[] = [
       'yes, i trust this folder',
     ],
     response: ACCEPT_DEFAULT_PROMPT_RESPONSE,
+    watchMs: TRUST_WATCH_WINDOW_MS,
   },
   {
     adapterIds: ['grok'],
@@ -125,6 +149,7 @@ export const BUILTIN_PROMPT_SIGNATURES: readonly PromptSignature[] = [
       'yes, proceed',
     ],
     response: ACCEPT_DEFAULT_PROMPT_RESPONSE,
+    watchMs: TRUST_WATCH_WINDOW_MS,
   },
   {
     // Kimi Code 0.41+ (0.42.0 observado ao vivo) para na tela "Trust this
@@ -142,6 +167,7 @@ export const BUILTIN_PROMPT_SIGNATURES: readonly PromptSignature[] = [
     ],
     response: ACCEPT_DEFAULT_PROMPT_RESPONSE,
     earlyPhrase: 'trust this folder?',
+    watchMs: TRUST_WATCH_WINDOW_MS,
   },
 ];
 
@@ -199,13 +225,40 @@ function signaturesFor(adapterId: string): PromptSignature[] {
   );
 }
 
+/** Estado da resposta já enviada, aguardando o TUI provar que aceitou. */
+interface AcceptVerification {
+  readonly signature: PromptSignature;
+  readonly response: string;
+  readonly fallbackResponse?: string;
+  attempts: number;
+}
+
 export class CliPromptAutoResponder {
   private readonly buffers = new Map<string, string>();
   private readonly sessions = new Map<string, PromptSignature[]>();
   private readonly settlingUntil = new Map<string, number>();
   private readonly boundAt = new Map<string, number>();
+  /**
+   * Respostas enviadas cujo efeito ainda não foi comprovado por saída nova.
+   * Um TUI que aceitou repinta a tela na hora; silêncio = tecla perdida e o
+   * reenvio é agendado (F-529: pane do operador preso no trust para sempre
+   * porque Down+Enter foi digitado DENTRO da race do desenho do diálogo).
+   */
+  private readonly accepted = new Map<string, AcceptVerification>();
+  private writer: ((sessionId: string, data: string) => void) | null = null;
 
-  constructor(private readonly enabled: () => boolean = () => true) {}
+  constructor(
+    private readonly enabled: () => boolean = () => true,
+    private readonly schedule: (fn: () => void, ms: number) => void = (
+      fn,
+      ms,
+    ) => setTimeout(fn, ms),
+  ) {}
+
+  /** Instala quem digita os REENVIOS (o envio original é do caller). */
+  setWriter(writer: (sessionId: string, data: string) => void): void {
+    this.writer = writer;
+  }
 
   private isEnabled(sessionId?: string): boolean {
     let enabled = false;
@@ -240,12 +293,22 @@ export class CliPromptAutoResponder {
   drop(sessionId: string): void {
     this.unbind(sessionId);
     this.settlingUntil.delete(sessionId);
+    this.accepted.delete(sessionId);
   }
 
   /** True while we are still watching PTY output for a known boot prompt. */
   isPending(sessionId: string, now = Date.now()): boolean {
     if (!this.isEnabled(sessionId)) return false;
     return this.watchingSignatures(sessionId, now) !== null;
+  }
+
+  /**
+   * True enquanto uma resposta enviada aguarda prova de aceitação: o tap de
+   * PTY deve continuar entregando chunks ao `observe` nesse estado, senão o
+   * repaint que provaria o aceite nunca chega e os reenvios disparam à cega.
+   */
+  isVerifying(sessionId: string): boolean {
+    return this.accepted.has(sessionId);
   }
 
   private watchingSignatures(
@@ -255,7 +318,13 @@ export class CliPromptAutoResponder {
     const signatures = this.sessions.get(sessionId);
     if (!signatures) return null;
     const started = this.boundAt.get(sessionId) ?? now;
-    if (now - started > WATCH_WINDOW_MS) {
+    // A janela é a MAIOR entre as assinaturas assistidas: trust pinta tarde
+    // (60s), menus de boot rápidos seguram o default (20s).
+    const watchMs = signatures.reduce(
+      (max, signature) => Math.max(max, signature.watchMs ?? DEFAULT_WATCH_WINDOW_MS),
+      0,
+    );
+    if (now - started > watchMs) {
       this.unbind(sessionId);
       return null;
     }
@@ -298,6 +367,9 @@ export class CliPromptAutoResponder {
       if (now < settleUntil) return true;
       this.settlingUntil.delete(sessionId);
     }
+    // Uma resposta em verificação pode reenviar: o diálogo talvez siga na
+    // tela, e digitar o brief da missão nele é exatamente o que o settle evita.
+    if (this.accepted.has(sessionId)) return true;
     return this.pendingMatch(sessionId, now) !== null;
   }
 
@@ -322,6 +394,7 @@ export class CliPromptAutoResponder {
     // Settle so callers wait before typing the mission brief.
     this.unbind(sessionId);
     this.settlingUntil.set(sessionId, now + SETTLE_AFTER_ACCEPT_MS);
+    this.armAcceptVerification(sessionId, match, response);
     return {
       response,
       ...(match.fallbackResponse !== undefined
@@ -340,15 +413,77 @@ export class CliPromptAutoResponder {
     return signature.response;
   }
 
+  /**
+   * Registra a resposta enviada e agenda o reenvio caso o TUI fique mudo.
+   * O envio ORIGINAL é responsabilidade do caller (que já tinha a resposta);
+   * daqui em diante a prova é do stream: qualquer chunk novo limpa o estado.
+   */
+  private armAcceptVerification(
+    sessionId: string,
+    signature: PromptSignature,
+    response: string,
+  ): void {
+    this.accepted.set(sessionId, {
+      signature,
+      response,
+      ...(signature.fallbackResponse !== undefined
+        ? { fallbackResponse: signature.fallbackResponse }
+        : {}),
+      attempts: 1,
+    });
+    this.schedule(() => this.recheckAccept(sessionId), ACCEPT_QUIET_RETRY_MS);
+  }
+
+  /**
+   * Silêncio desde o último envio: reenvia. Última tentativa usa o fallback
+   * numérico quando a assinatura tem um. Esgotadas as tentativas, o diálogo é
+   * do operador — nunca se digita além do que a assinatura conhece.
+   */
+  private recheckAccept(sessionId: string): void {
+    const state = this.accepted.get(sessionId);
+    if (!state) return; // houve saída: aceite comprovado (observe limpou).
+    if (state.attempts >= MAX_ACCEPT_ATTEMPTS) {
+      this.accepted.delete(sessionId);
+      console.warn(
+        `[cli-prompt] resposta de "${state.signature.name}" ignorada ` +
+          `${state.attempts}x na sessão ${sessionId} — o diálogo segue para o operador`,
+      );
+      return;
+    }
+    const useFallback =
+      state.attempts + 1 >= MAX_ACCEPT_ATTEMPTS &&
+      state.fallbackResponse !== undefined;
+    const data = useFallback
+      ? (state.fallbackResponse ?? state.response)
+      : state.response;
+    state.attempts += 1;
+    try {
+      this.writer?.(sessionId, data);
+    } catch (error) {
+      console.warn(
+        `[cli-prompt] reenvio falhou na sessão ${sessionId}`,
+        error,
+      );
+    }
+    this.schedule(() => this.recheckAccept(sessionId), ACCEPT_QUIET_RETRY_MS);
+  }
+
   clear(): void {
     this.sessions.clear();
     this.buffers.clear();
     this.settlingUntil.clear();
     this.boundAt.clear();
+    this.accepted.clear();
   }
 
   observe(sessionId: string, output: string, now = Date.now()): string | null {
     if (!this.isEnabled(sessionId)) return null;
+    // Resposta já enviada: qualquer saída do TUI é a prova do aceite (o
+    // diálogo aceito repinta a tela). Nada de re-casar assinaturas aqui.
+    if (this.accepted.has(sessionId)) {
+      if (output.trim().length > 0) this.accepted.delete(sessionId);
+      return null;
+    }
     const signatures = this.watchingSignatures(sessionId, now);
     if (!signatures) return null;
     const buffer = `${this.buffers.get(sessionId) ?? ''}${output}`.slice(
@@ -371,6 +506,7 @@ export class CliPromptAutoResponder {
     }
     this.unbind(sessionId);
     this.settlingUntil.set(sessionId, now + SETTLE_AFTER_ACCEPT_MS);
+    this.armAcceptVerification(sessionId, match, response);
     return response;
   }
 }
