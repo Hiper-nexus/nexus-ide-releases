@@ -14,6 +14,7 @@ import {
   INITIAL_PROJECT_MIGRATIONS,
   createProjectMigration,
 } from './project-runtime-schema';
+import { sqliteFilePath } from './project-runtime-migrations';
 
 const PROJECT_A = '11111111-1111-4111-8111-111111111111';
 const PROJECT_B = '22222222-2222-4222-8222-222222222222';
@@ -432,6 +433,20 @@ describe('ProjectRuntimeManager physical isolation', () => {
 });
 
 describe('ProjectRuntimeManager migrations and health', () => {
+  it('uses the Win32 namespace for SQLite long-path filenames only', () => {
+    const humanPath = path.win32.join(
+      'C:\\',
+      'runtime',
+      'nested'.repeat(48),
+      'backup.sqlite3',
+    );
+
+    expect(sqliteFilePath(humanPath, 'win32')).toBe(
+      path.win32.toNamespacedPath(humanPath),
+    );
+    expect(sqliteFilePath(humanPath, 'darwin')).toBe(humanPath);
+  });
+
   it('opens migration backup files with write access before fsync', () => {
     const openSync = fs.openSync.bind(fs);
     const opened: Array<{ file: string; flags: string | number }> = [];

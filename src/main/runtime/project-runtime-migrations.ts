@@ -285,6 +285,15 @@ function fsyncDirectory(directory: string): void {
   }
 }
 
+export function sqliteFilePath(
+  filename: string,
+  platform = process.platform,
+): string {
+  return platform === 'win32'
+    ? path.win32.toNamespacedPath(filename)
+    : filename;
+}
+
 function backupBeforeMigration(
   db: Database.Database,
   runtimeDirectory: string,
@@ -299,7 +308,7 @@ function backupBeforeMigration(
     `runtime-schema-${fromVersion}-to-${toVersion}-${now()}-${randomUUID()}.sqlite3`,
   );
   try {
-    db.prepare('VACUUM INTO ?').run(backupPath);
+    db.prepare('VACUUM INTO ?').run(sqliteFilePath(backupPath));
     fs.chmodSync(backupPath, 0o600);
     // FlushFileBuffers on Windows requires a handle opened with GENERIC_WRITE.
     // The directory flush below intentionally keeps its read-only best-effort
