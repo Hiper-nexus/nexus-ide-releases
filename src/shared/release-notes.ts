@@ -3171,7 +3171,7 @@ export const RELEASE_07621: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07622: AppRelease = {
   version: '0.76.22',
   date: '2026-09-13',
   codename: 'Preços de API em tempo real, aviso proativo de atualização e anexos duráveis no terminal',
@@ -3220,5 +3220,63 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_07622: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.23',
+  date: '2026-09-14',
+  codename: 'Rotação automática de modelo, agy no Gemini 3.8 Pro e orquestrador sempre em foco',
+  summary:
+    'Quando um provider rejeita o modelo (CLI desatualizada ou id aposentado), o Nexus rotaciona o pane para o modelo ativo e religa na mesma conta — sem deixar o terminal parado. ' +
+    'O adapter agy passa a abrir sempre na geração mais recente do Gemini (3.8 Pro high), com migração automática de panes legados. ' +
+    'Providers ganha atualização de CLIs em 1 clique e 1 lote, e o orquestrador em modo foco não perde mais o foco quando a missão abre workers.',
+  highlights: [
+    {
+      title: 'Rotação automática de LLM em modelo rejeitado',
+      detail:
+        'Erro 400 "model requires a newer version" (Codex), model_not_found e variantes agora disparam failover de MODELO: o pane migra para o modelo ativo da linhagem ' +
+        '(ou o default curado do catálogo) e religa na MESMA conta. A credencial não entra em cooldown — as contas seguem operacionais.',
+    },
+    {
+      title: 'AGY sempre no Gemini mais recente (3.8 Pro high)',
+      detail:
+        'Default do adapter promovido a gemini-3.8-pro-high no catálogo builtin, no catálogo publicado e nos defaults de squad. ' +
+        'Panes e squads legados em gemini-3.1-pro-high são migrados no spawn — sempre a geração mais recente da linhagem pro com reasoning high.',
+    },
+    {
+      title: 'Atualizar CLIs pelo próprio Nexus',
+      detail:
+        'Configurações → Providers: "Atualizar CLI" por provider instalado e "Atualizar N CLIs" em lote reexecutam a receita oficial (npm/instalador) e instalam a última versão, ' +
+        'com confirmação nativa mostrando o comando exato. CLI desatualizada é a causa raiz de modelos novos rejeitados.',
+    },
+    {
+      title: 'Orquestrador mantém o foco com workers novos',
+      detail:
+        'Em modo foco (pane ampliado), workers abertos pela orquestração entram no grid por trás — sem roubar o foco nem derrubar o zoom. ' +
+        'O zoom só cai por apresentação/restore explícitos ou quando o pane ampliado sai da árvore.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'F-520: pane Codex morto com erro 400 de modelo (gpt-6-astra em CLI antiga)',
+      detail:
+        'Detecção de rejeição de modelo no limit-detector + failover de modelo (migração/default do catálogo) religando na mesma conta; sem alternativa, orientação acionável para atualizar a CLI.',
+    },
+    {
+      title: 'F-520: agy abrindo em gemini-3.1-pro em vez do mais recente',
+      detail:
+        'Default promovido a gemini-3.8-pro-high e migração automática do id legado gemini-3.1-pro-high em todo spawn de pane e squad.',
+    },
+    {
+      title: 'F-521: pane novo da orquestração roubava o foco do orquestrador em modo foco',
+      detail:
+        'Invariante I2 do layout reformulado: zoom sobrevive a writes que adicionam panes; spawn de worker preserva focusedPaneId e maximizedPaneId ativos.',
+    },
+    {
+      title: 'Default do Codex abria em gpt-5.6-luna (drift pré-existente)',
+      detail:
+        'Adapter builtin volta a gpt-5.6-sol (CODEX_FRONTIER_MODEL), alinhado ao catálogo publicado; muse passa a ser oferecido pelo adapter builtin; suíte de testes volta ao verde total (mock app.on do updater e rótulo da seção Chaves de API e Conta).',
+    },
+  ],
+};
+
+export const RELEASE_07623: AppRelease = CURRENT_RELEASE;
 
