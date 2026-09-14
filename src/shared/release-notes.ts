@@ -3278,7 +3278,7 @@ export const RELEASE_07623: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07624: AppRelease = {
   version: '0.76.24',
   date: '2026-09-14',
   codename: 'Cotas com a verdade do provider, ditado resiliente, workers distribuídos e mídia sempre aceita',
@@ -3346,3 +3346,68 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.25',
+  date: '2026-09-14',
+  codename: 'Missões separadas por pane, mídia do WhatsApp de verdade e limpeza sempre à mão',
+  summary:
+    'Promover um pane a orquestrador nunca mais anexa à "missão padrão" em silêncio: com missões rolando, ' +
+    'o Nexus pergunta qual missão o painel lidera — ou abre uma nova, separada por construção. A vista Terminais ' +
+    'ganha chips de foco por missão, o botão "Nova missão" vive dentro do quadro, a imagem do WhatsApp chega ' +
+    'pelo caminho real do Electron (DownloadURL/promessa) e as ações de limpar panes/missões voltam a ficar sempre visíveis.',
+  highlights: [
+    {
+      title: 'Missão por pane, separada (F-527)',
+      detail:
+        '"Tornar Orquestrador" em pane sem vínculo agora abre um diálogo: escolher a missão existente ou criar uma NOVA ' +
+        'separada. A promoção também para de rebaixar panes de outras missões — cada missão mantém os próprios panes.',
+    },
+    {
+      title: 'Vista Terminais com chips de missão (F-527)',
+      detail:
+        'Com duas ou mais missões vivas, a vista Terminais abre focada numa missão e oferece chips para trocar ou ver todas ' +
+        '— chega de grid misturando panes de missões diferentes.',
+    },
+    {
+      title: 'Nova missão em 1 clique com outra rolando (F-527)',
+      detail:
+        'Botão "+ Nova missão" direto no quadro da missão atual, levando ao Caminho Expresso (uma tela: objetivo + iniciar).',
+    },
+    {
+      title: 'Imagem do WhatsApp pelo caminho real (F-526)',
+      detail:
+        'O WhatsApp entrega a mídia como promessa (flavor DownloadURL) — agora o Nexus entende esse formato, além do HTML ' +
+        'com data:URI e caminho local em texto, no terminal e na missão. O aviso de "nada solto" lista os tipos recebidos.',
+    },
+    {
+      title: 'Limpar panes/missões sempre à mão (F-528)',
+      detail:
+        'As ações "Fechar todos os panes" e "Apagar missões" viviam escondidas atrás de um controle recolhido no rodapé — ' +
+        'voltaram como linha compacta permanente, com confirmação completa antes de agir.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'F-527: segunda missão por pane virava bagunça na tela',
+      detail:
+        'Três causas corrigidas: promoção com fallback silencioso à primeira missão ativa, promoteMissionPaneRole rebaixando panes sem vínculo, ' +
+        'e a vista global mostrando panes de todas as missões no mesmo grid sem separação.',
+    },
+    {
+      title: 'F-526: drop do WhatsApp mostrava "nada foi solto no terminal"',
+      detail:
+        'resolveDropUris agora entende o flavor DownloadURL do Chromium (promessa de mídia de apps Electron/web) e caminho absoluto em text/plain.',
+    },
+    {
+      title: 'F-528: sidebar cortando texto em rail estreito',
+      detail:
+        'Atalho ⌘K da busca com flex-shrink, título do CTA e placeholder de busca com ellipsis — nada mais corta seco no rail ajustável.',
+    },
+    {
+      title: 'Anti-pattern de animação no brief da revisão',
+      detail:
+        'transição de max-height substituída por grid-template-rows (sem layout thrash), apontado pelo audit de UI.',
+    },
+  ],
+};
