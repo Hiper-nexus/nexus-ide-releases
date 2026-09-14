@@ -1,0 +1,140 @@
+name: Windows x64 unsigned preview
+
+on:
+  push:
+    branches:
+      - 'codex/windows-test-*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ONNXRUNTIME_NODE_INSTALL_CUDA: skip
+
+jobs:
+  build:
+    name: Build and smoke unsigned preview
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22.23.2'
+          cache: npm
+
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ((node -p "require('./package.json').nexusRelease.node") -ne '22.23.2') {
+            throw 'workflow Node version differs from package.json nexusRelease.node'
+          }
+          if ((node -p 'process.arch') -ne 'x64') { throw 'Windows runner is not x64' }
+          npm ci
+          if ($LASTEXITCODE -ne 0) { throw 'npm ci failed' }
+
+      - name: Quality and packaging tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm run typecheck
+          if ($LASTEXITCODE -ne 0) { throw 'typecheck failed' }
+          npm run security:renderer-sinks
+          if ($LASTEXITCODE -ne 0) { throw 'renderer sink check failed' }
+          npx vitest run forge.config.test.ts scripts/build-windows-icon.test.mjs build/prune-native-payload.test.ts
+          if ($LASTEXITCODE -ne 0) { throw 'focused packaging tests failed' }
+
+      - name: Make Windows x64 package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm run make -- --platform win32 --arch x64
+          if ($LASTEXITCODE -ne 0) { throw 'electron-forge make failed' }
+
+      - name: Smoke executable extracted from full NUPKG
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $packages = @(Get-ChildItem out/make -Recurse -File -Filter '*-full.nupkg')
+          if ($packages.Count -ne 1) { throw "expected one full NUPKG; found $($packages.Count)" }
+          $archive = Join-Path $env:RUNNER_TEMP 'NexusIDE-full.zip'
+          $extracted = Join-Path $env:RUNNER_TEMP 'NexusIDE-full'
+          Copy-Item $packages[0].FullName $archive
+          Expand-Archive -Path $archive -DestinationPath $extracted
+          $apps = @(Get-ChildItem $extracted -Recurse -File -Filter 'nexus-ide.exe')
+          if ($apps.Count -ne 1) { throw "expected one nexus-ide.exe; found $($apps.Count)" }
+          node scripts/smoke-packaged-app.mjs --app $apps[0].FullName
+          if ($LASTEXITCODE -ne 0) { throw 'NUPKG executable smoke failed' }
+
+      - name: Collect unsigned preview artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = node -p "require('./package.json').version"
+          if ($LASTEXITCODE -ne 0) { throw 'version lookup failed' }
+          $setups = @(Get-ChildItem out/make -Recurse -File -Filter '*Setup.exe')
+          $packages = @(Get-ChildItem out/make -Recurse -File -Filter '*-full.nupkg')
+          $releases = @(Get-ChildItem out/make -Recurse -File -Filter 'RELEASES')
+          if ($setups.Count -ne 1) { throw "expected one Setup.exe; found $($setups.Count)" }
+          if ($packages.Count -ne 1) { throw "expected one full NUPKG; found $($packages.Count)" }
+          if ($releases.Count -ne 1) { throw "expected one RELEASES; found $($releases.Count)" }
+
+          $assets = 'windows-preview-assets'
+          New-Item -ItemType Directory -Force $assets | Out-Null
+          $setupName = "NexusIDE-$version-win32-x64-Setup.exe"
+          $packageName = "NexusIDE-$version-win32-x64-full.nupkg"
+          $releasesName = "NexusIDE-$version-win32-x64-RELEASES"
+          $metadataName = "NexusIDE-$version-win32-x64-preview.txt"
+          Copy-Item $setups[0].FullName (Join-Path $assets $setupName)
+          Copy-Item $packages[0].FullName (Join-Path $assets $packageName)
+          Copy-Item $releases[0].FullName (Join-Path $assets $releasesName)
+          @(
+            'channel=private-actions-preview'
+            'signing=unsigned'
+            'public_release_eligible=false'
+            'setup_install_validation=not_run'
+            'runtime_validation=nupkg-extracted-executable-smoke'
+            'platform=win32'
+            'arch=x64'
+            "commit=$env:GITHUB_SHA"
+          ) | Set-Content (Join-Path $assets $metadataName) -Encoding ascii
+
+          $checksumName = "NexusIDE-$version-win32-x64-SHA256.txt"
+          @($setupName, $packageName, $releasesName, $metadataName) | ForEach-Object {
+            $hash = (Get-FileHash (Join-Path $assets $_) -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $_"
+          } | Set-Content (Join-Path $assets $checksumName) -Encoding ascii
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-x64-unsigned-preview
+          path: windows-preview-assets/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Collect failure diagnostics
+        if: failure()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force windows-preview-diagnostics | Out-Null
+          if (Test-Path out) { Copy-Item out windows-preview-diagnostics/out -Recurse }
+          git status --short | Set-Content windows-preview-diagnostics/git-status.txt -Encoding utf8
+          node --version | Set-Content windows-preview-diagnostics/node-version.txt -Encoding ascii
+          npm --version | Set-Content windows-preview-diagnostics/npm-version.txt -Encoding ascii
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: failure()
+        with:
+          name: windows-x64-preview-diagnostics
+          path: windows-preview-diagnostics/
+          if-no-files-found: warn
+          retention-days: 7
