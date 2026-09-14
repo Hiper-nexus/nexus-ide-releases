@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.22 — Preços de API em tempo real, aviso proativo de atualização e anexos duráveis no terminal
+
+- **Auditoria e atualização de custos e preços de APIs oficiais (F-518)**: Preços por 1 milhão de tokens (USD/M) alinhados às tabelas oficiais para Anthropic (Claude Fable 5.1/5, Opus 5/4.x, Sonnet 5/3.7/3.5, Haiku), OpenAI/Codex (GPT-6 Astra, GPT-5.6 Sol/Luna/Terra, GPT-5.5, GPT-4o, o1, o3, Codex), Kimi/Moonshot (K3, K2.8, K2.7 HighSpeed, Moonshot v1), Cognition Devin (SWE-2 Max/High/Medium), Meta Muse (gratuito), Google Gemini (Gemini 3.8 Pro/Flash, 3.7, 2.5, 2.0), DeepSeek (Reasoner R1, Chat V3, Coder, Flash), xAI Grok (4.6, 4.5, Code-Fast-1), Zhipu GLM (5.3, 4.7), Alibaba Qwen, Xiaomi MIMO, LongCat e modelos comunitários. Adicionado cálculo exato de custos de leitura/escrita de prompt cache (`cacheReadPerM` / `cacheWritePerM`), e corrigida a resolução de modelos com namespace e barras.
+- **Aviso proativo de atualização disponível na interface (F-517)**: Card flutuante (`UpdateBannerNotice`) exibe de forma proativa quando uma nova versão do NexusIDE estiver disponível, acompanhado de beacon luminoso animado e ação direta de 1 clique ("Atualizar agora" / "Reiniciar agora"). Botão de status no cabeçalho ganha animação pulsante de alta visibilidade e rechecagem inteligente ao focar a janela.
+- **Caminho absoluto e espelho home para imagens coladas no terminal (F-519)**: Capturas de tela coladas (⌘V) ou arquivos soltos no terminal agora injetam o caminho absoluto no prompt, permitindo que agentes CLI (como Claude Code, Kimi e Devin) encontrem o arquivo mesmo trabalhando em subpastas. Além disso, foi criado espelho de compatibilidade automático em `~/.nexus/attachments/mission-context/` para modelos que procuram diretórios de configuração iniciados por ponto na home (`~/`).
+
 ## 0.76.21 — Rei da Parada: Feixe rotativo do orquestrador e distinção real
 
 - **Destaque visual do terminal orquestrador ("Rei da Parada") (F-516)**: O terminal líder que atua como orquestrador agora exibe um feixe luminoso perimetral animado (`.pane__crown-beam`) que circula continuamente pela sua borda. O efeito utiliza gradiente cônico em rotação suave e máscara de exclusão CSS (`mask-composite: exclude`), executando com aceleração total no compositor da GPU sem repintar o canvas do xterm e com zero interferência no input.

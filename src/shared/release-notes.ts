@@ -3140,7 +3140,7 @@ export const RELEASE_07620: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07621: AppRelease = {
   version: '0.76.21',
   date: '2026-09-13',
   codename: 'Rei da Parada: Feixe rotativo do orquestrador e distinção real',
@@ -3171,4 +3171,54 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
 };
 
-export const RELEASE_07621: AppRelease = CURRENT_RELEASE;
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.22',
+  date: '2026-09-13',
+  codename: 'Preços de API em tempo real, aviso proativo de atualização e anexos duráveis no terminal',
+  summary:
+    'Auditoria e atualização completa dos preços e custos de uso de todas as APIs e LLMs (Anthropic, OpenAI, Kimi, Devin, Muse, Gemini, DeepSeek, Grok, GLM, Qwen), ' +
+    'notificação proativa em card flutuante na UI para novas atualizações do NexusIDE com ação de 1 clique, ' +
+    'e resolução de caminho absoluto e espelho em home para imagens e arquivos colados no terminal.',
+  highlights: [
+    {
+      title: 'Preços de API atualizados e suporte a Prompt Cache',
+      detail:
+        'Tabela de custos por 1M de tokens alinhada aos preços oficiais de lista das APIs. Inclui Claude Fable 5.1, Opus 5/4.x, Sonnet 5/3.7, ' +
+        'OpenAI GPT-6 Astra, GPT-5.6 Sol/Luna/Terra, GPT-4o/mini, Kimi K3, Devin SWE-2, Meta Muse (gratuito), Gemini 3.8 Pro/Flash e DeepSeek R1/V3, ' +
+        'com cálculo exato de cache read e write.',
+    },
+    {
+      title: 'Aviso proativo de atualização disponível',
+      detail:
+        'Novo banner flutuante na UI com indicador de status e botão de atualização direta sem necessidade de abrir manualmente o modal. ' +
+        'Checagem rápida de boot (3s) e verificação inteligente periódica ao focar a janela do app.',
+    },
+    {
+      title: 'Anexos de imagem duráveis no terminal e espelho na home',
+      detail:
+        'Ao colar imagens (⌘V) ou soltar arquivos no terminal, o caminho injetado no prompt é sempre absoluto, garantindo que agentes CLI ' +
+        'e comandos do shell localizem o anexo em qualquer subpasta. Criação automática de espelho em ~/.nexus/attachments/mission-context ' +
+        'para compatibilidade com ferramentas que buscam na home.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'F-517: Notificação de atualização disponível não visível proativamente na interface',
+      detail:
+        'Adicionado banner flutuante com beacon luminoso, botão pulsante no header e gatilhos de foco/boot para verificação de versão.',
+    },
+    {
+      title: 'F-518: Preços e custos de APIs defasados e modelos compostos caindo no preço padrão',
+      detail:
+        'Expandida a tabela MODEL_PRICES com todas as famílias oficiais, suporte a cache de prompt e resolução inteligente de identificadores compostos.',
+    },
+    {
+      title: 'F-519: Imagem colada no terminal não encontrada por agentes CLI devido a caminho relativo',
+      detail:
+        'Resolução para caminho absoluto completo no PTY e prompts de agentes, além de espelho de conveniência em ~/.nexus/attachments/mission-context.',
+    },
+  ],
+};
+
+export const RELEASE_07622: AppRelease = CURRENT_RELEASE;
+
