@@ -48,7 +48,9 @@ export function useFailoverController(): void {
       }
       // Rotação de MODELO (F-520): a conta está sadia — aplica o modelo
       // alternativo escolhido pelo main no pane e religa na MESMA conta,
-      // sem handoff de credencial nem continuity pack.
+      // sem handoff de credencial nem continuity pack. O toast de sucesso
+      // só existe se o pane foi encontrado e religado de fato (evento pode
+      // chegar em janela de outro project-scope que não possui o pane).
       if (event.toModel) {
         const pane = listPanes(useLayoutStore.getState().root).find(
           (p) => p.id === event.paneId,
@@ -64,13 +66,13 @@ export function useFailoverController(): void {
               `[nexus] modelo rejeitado → religando em "${event.toModel}" (mesma conta)…`,
               { mode: 'same-account-resume' },
             );
+            push(
+              'warn',
+              `Modelo rotacionado para "${event.toModel}"`,
+              `${event.reason}. A conta não foi trocada — apenas o modelo do pane.`,
+            );
           }
         }
-        push(
-          'warn',
-          `Modelo rotacionado para "${event.toModel}"`,
-          `${event.reason}. A conta não foi trocada — apenas o modelo do pane.`,
-        );
         return;
       }
       const pane = listPanes(useLayoutStore.getState().root).find(

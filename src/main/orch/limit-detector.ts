@@ -190,22 +190,27 @@ const PATTERNS: Pattern[] = [
   { kind: 'auth', cooldownMs: 15 * 60 * 1000, re: /(?:erro|falha).{0,40}(?:n[aã]o autenticado|sess[aã]o expirada|token inv[aá]lido)/i },
   // Modelo rejeitado — a CONTA está sadia (F-520): o failover troca o modelo
   // do pane (migração/default do catálogo) e religa na mesma conta, em vez
-  // de punir a credencial com cooldown. Error-shaped: exige o formato real
-  // das mensagens de provider, nunca prosa de agente sobre modelos.
+  // de punir a credencial com cooldown. Error-shaped como 429/402/401 acima:
+  // casa apenas os formatos CANÔNICOS das mensagens reais de provider — a
+  // prosa nua "model not found" (docs/agente citando o erro) jamais dispara,
+  // porque disparar aqui mata uma sessão sadia e reescreve o modelo do pane.
   //
-  // Texto real do Codex CLI em CLI desatualizada (2026-09-14):
-  //   The 'gpt-6-astra' model requires a newer version of Codex.
+  // Textos reais verificados:
+  // - Codex CLI desatualizada: "The 'gpt-6-astra' model requires a newer
+  //   version of Codex. Please upgrade…" (2026-09-14)
+  // - OpenAI: "The model 'gpt-x' does not exist or you do not have access
+  //   to it" / código model_not_found
+  // - Anthropic: "not_found_error: model: …"
+  // - Gemini: "models/gemini-x is not found"
+  { kind: 'model', cooldownMs: 5 * 60 * 1000, re: /model requires a newer version/i },
   {
     kind: 'model',
     cooldownMs: 5 * 60 * 1000,
-    re: /model requires a newer version/i,
+    re: /model ['"][^'"]{1,64}['"] (?:does not exist|is not found|was not found|is not supported)/i,
   },
-  // Códigos de erro de API (Gemini "model not found", OpenAI model_not_found).
-  {
-    kind: 'model',
-    cooldownMs: 5 * 60 * 1000,
-    re: /\bmodel[_\s-](?:not[_\s]found|not[_\s]supported|unsupported|deprecat(?:ed|ion[_\s]error))\b/i,
-  },
+  { kind: 'model', cooldownMs: 5 * 60 * 1000, re: /\bnot_found_error:[^\n]{0,60}\bmodel\b/i },
+  { kind: 'model', cooldownMs: 5 * 60 * 1000, re: /\bmodels\/[a-z0-9][a-z0-9.-]{0,80}\s+is not found\b/i },
+  { kind: 'model', cooldownMs: 5 * 60 * 1000, re: /\b(?:model_not_found|model_not_supported)\b/i },
 ];
 
 /**

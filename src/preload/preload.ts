@@ -1068,8 +1068,8 @@ const api: NexusApi = {
     testKey: (adapterId) =>
       ipcRenderer.invoke(PROVIDER_CHANNELS.testKey, { adapterId }),
     authStatus: () => ipcRenderer.invoke(PROVIDER_CHANNELS.authStatus),
-    installCli: (adapterId: string) =>
-      ipcRenderer.invoke(PROVIDER_CHANNELS.installCli, { adapterId }),
+    installCli: (adapterId: string, mode?: 'install' | 'update') =>
+      ipcRenderer.invoke(PROVIDER_CHANNELS.installCli, { adapterId, mode }),
     addModel: (adapterId: string, model: string) =>
       ipcRenderer.invoke(PROVIDER_CHANNELS.addModel, { adapterId, model }),
     removeModel: (adapterId: string, model: string) =>

@@ -59,8 +59,11 @@ export function planMainOwnedFailoverRespawn(
   if (!meta.missionId || !meta.role) {
     return { action: 'skip', reason: 'pane main-owned sem missão/papel' };
   }
+  // F-520: o prompt de modelo NUNCA ecoa o reason cru — o texto canónico
+  // ("model requires a newer version", …) casaria de novo no detector ao ser
+  // digitado no PTY novo e dispararia um failover fantasma na sessão sadia.
   const initialPrompt = input.toModel
-    ? `O modelo anterior foi rejeitado pelo provider (${input.reason}). ` +
+    ? `O modelo anterior foi rejeitado pelo provider. ` +
       `Você foi religado automaticamente no modelo "${input.toModel}" — ` +
       `continuar a tarefa de onde parou, sem repetir trabalho já entregue.`
     : `A conta "${input.fromAccountLabel}" bateu o limite (${input.reason}). ` +

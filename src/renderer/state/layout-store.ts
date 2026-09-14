@@ -806,7 +806,10 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
     const claimed = claimPlaceholderTarget(get().root, paneId);
     const root = splitPane(claimed, paneId, direction, newPane);
     bumpTreeVersion();
-    set({ root, focusedPaneId: newPane.id });
+    // Split é interação DIRETA do operador com o pane ampliado: o resultado
+    // tem que aparecer. Sem o null explícito, o invariante F-521 manteria o
+    // zoom e montaria a metade nova invisível com o foco dentro dela.
+    set({ root, focusedPaneId: newPane.id, maximizedPaneId: null });
     persist();
   },
 
@@ -1369,12 +1372,15 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
     // número ao mesmo pane. Layout gravado antes da numeração existir chega sem
     // o campo e recebe o menor livre — workspace antigo abre normal.
     const root = withPaneNumbers(bare, hydratePaneNumbers(listPanes(bare)));
-    // The zoom is deliberately NOT decided here: enforceLayoutInvariants owns
-    // it, so a restore that adds panes can never leave one covering them.
+    // Zoom é volátil (não faz parte do layout persistido) e o restore não é
+    // intenção de zoom: encerra explicitamente. Desde a F-521 o invariante
+    // mantém o zoom em writes que ganham panes — sem o null explícito, panes
+    // restaurados montariam vivos por trás do zoom do estado anterior.
     set({
       root,
       focusedPaneId:
         durableLayout.focusedPaneId ?? firstPaneId(durableLayout.root),
+      maximizedPaneId: null,
       hydrated: true,
       viewKind: durableLayout.viewKind ?? 'grid',
       canvasNodeLayouts: durableLayout.canvasNodeLayouts ?? {},

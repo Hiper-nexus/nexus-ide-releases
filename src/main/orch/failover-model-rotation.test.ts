@@ -21,10 +21,10 @@ describe('pickModelRotation (F-520: failover de modelo, conta sadia)', () => {
     expect(pickModelRotation('gpt-5.6-sol', 'gpt-5.6-sol')).toBeUndefined();
   });
 
-  it('pane sem modelo explícito roda para o default do adapter', () => {
-    expect(pickModelRotation(undefined, 'gemini-3.8-pro-high')).toBe(
-      'gemini-3.8-pro-high',
-    );
+  it('pane sem modelo explícito não rotaciona: já roda no default do adapter', () => {
+    // Respawnar "no default" repetiria o mesmo modelo rejeitado com toast de
+    // sucesso — a orientação certa (atualizar CLI) vem do toast bloqueado.
+    expect(pickModelRotation(undefined, 'gemini-3.8-pro-high')).toBeUndefined();
     expect(pickModelRotation(undefined, undefined)).toBeUndefined();
   });
 });

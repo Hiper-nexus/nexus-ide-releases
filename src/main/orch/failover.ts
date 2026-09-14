@@ -766,16 +766,19 @@ function watchFor(authority: FailoverAuthority): [string, SessionWatch] {
  * pane. Ordem: migração de id aposentado (só conta se MUDOU o id), senão o
  * default curado do catálogo do adapter; se o resultado é o próprio modelo
  * rejeitado, não há rotação (undefined) e o pane recebe orientação acionável.
+ *
+ * Pane SEM modelo explícito já roda no default do adapter (o pty-manager
+ * resolve models.default) — rotacionar "para o default" respawna o mesmo
+ * modelo rejeitado com toast de sucesso mentiroso, então também retorna
+ * undefined: a orientação certa é atualizar a CLI, não trocar de modelo.
  */
 export function pickModelRotation(
   paneModel: string | undefined,
   adapterDefault: string | undefined,
 ): string | undefined {
-  const migrated = paneModel ? migrateModelId(paneModel) : undefined;
-  const fallback =
-    migrated !== undefined && migrated !== paneModel
-      ? migrated
-      : adapterDefault;
+  if (!paneModel) return undefined;
+  const migrated = migrateModelId(paneModel);
+  const fallback = migrated !== paneModel ? migrated : adapterDefault;
   return fallback && fallback !== paneModel ? fallback : undefined;
 }
 
@@ -857,9 +860,11 @@ function handleLimitHit(
       fromAccountLabel: current?.label ?? adapterId,
       toAccountLabel: current?.label ?? adapterId,
       toModel: next,
+      // A orientação ("atualize a CLI…") vive SÓ no failover-toast-copy —
+      // motivo aqui causa toast com a frase duplicada (donos únicos por kind).
       reason: next
-        ? `modelo "${pane.model ?? '(default)'}" rejeitado (${hit.reason}) → rotacionado para "${next}"`
-        : `${hit.reason} — sem modelo alternativo no catálogo; atualize a CLI em Configurações → Providers`,
+        ? `modelo "${pane.model}" rejeitado (${hit.reason}) → rotacionado para "${next}"`
+        : `${hit.reason} — sem modelo alternativo no catálogo`,
       kind: hit.kind,
       switched: next !== undefined,
       fromAccountId: current?.id,

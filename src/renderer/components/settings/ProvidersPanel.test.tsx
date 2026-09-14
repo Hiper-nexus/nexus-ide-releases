@@ -382,7 +382,7 @@ describe('ProvidersPanel hub', () => {
     const install = host.querySelector<HTMLButtonElement>('.prov-detail__install');
     expect(install).toBeTruthy();
     await act(async () => { install!.click(); });
-    expect(window.nexus.providers.installCli).toHaveBeenCalledWith('kimi');
+    expect(window.nexus.providers.installCli).toHaveBeenCalledWith('kimi', 'install');
     act(() => root.unmount());
   });
 });

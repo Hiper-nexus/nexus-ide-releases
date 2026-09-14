@@ -38,11 +38,21 @@ describe('detectLimit', () => {
         '{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The \'gpt-6-astra\' model requires a newer version of Codex. Please upgrade to the latest app or CLI and try again."}}',
       )?.kind,
     ).toBe('model');
-    expect(detectLimit('Error: model_not_found: gemini-3.9-pro')?.kind).toBe('model');
-    expect(detectLimit('API error: model not supported on this client version')?.kind).toBe(
+    // Canônicos reais por provider:
+    expect(
+      detectLimit(
+        "Error: The model 'gpt-5.7' does not exist or you do not have access to it.",
+      )?.kind,
+    ).toBe('model');
+    expect(detectLimit('not_found_error: model: claude-opus-9 not found')?.kind).toBe('model');
+    expect(detectLimit('API error: models/gemini-3.9-pro is not found for API version v1')?.kind).toBe(
       'model',
     );
-    // Prosa de agente sobre modelos NÃO é sinal de erro.
+    expect(detectLimit('{"code": "model_not_found"}')?.kind).toBe('model');
+    // Prosa de agente citando o erro NUNCA dispara — disparar aqui mata
+    // sessão sadia e reescreve o modelo do pane (doutrina error-shaped).
+    expect(detectLimit('If the API returns model not found, upgrade the CLI.')).toBeNull();
+    expect(detectLimit('Deu model not found quando tentei o gemini-3.9-pro.')).toBeNull();
     expect(detectLimit('Vamos migrar o modelo do squad para o gemini-3.8.')).toBeNull();
     expect(detectLimit('O modelo requer uma versão mais nova? melhor atualizar.')).toBeNull();
   });

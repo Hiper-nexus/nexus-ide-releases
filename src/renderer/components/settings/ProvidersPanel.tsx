@@ -396,10 +396,13 @@ function ProviderDetail({
   provider,
   authStatus,
   onAuthStatusChange,
+  batchBusy,
 }: {
   provider: ProviderSettingsInfo;
   authStatus: AdapterAuthStatus | null;
   onAuthStatusChange: (status: AdapterAuthStatus) => void;
+  /** Lote (instalar/atualizar todas) em curso: os botões locais cedem. */
+  batchBusy: boolean;
 }) {
   const setConfig = useProviderStore((s) => s.setConfig);
   const hydrateProviders = useProviderStore((s) => s.hydrate);
@@ -410,14 +413,16 @@ function ProviderDetail({
   const [installError, setInstallError] = useState<string | null>(null);
   const riskWarning = providerRiskWarning(provider);
 
-  async function installCli() {
+  async function installCli(mode: 'install' | 'update' = 'install') {
     setInstallBusy(true);
     setInstallError(null);
     try {
       const result = await window.nexus.providers.installCli(
         provider.adapterId,
+        mode,
       );
-      if (!result.ok) setInstallError(result.error ?? 'instalação falhou');
+      if (!result.ok)
+        setInstallError(result.error ?? (mode === 'update' ? 'atualização falhou' : 'instalação falhou'));
       else await hydrateProviders();
     } finally {
       setInstallBusy(false);
@@ -475,7 +480,7 @@ function ProviderDetail({
                 <button
                   type="button"
                   className="settings-btn settings-btn--primary prov-detail__install"
-                  disabled={installBusy}
+                  disabled={installBusy || batchBusy}
                   onClick={() => void installCli()}
                   title="Instala a CLI do provider pela fonte oficial (confirmação nativa mostra o comando exato)"
                 >
@@ -497,8 +502,8 @@ function ProviderDetail({
               <button
                 type="button"
                 className="settings-btn settings-btn--ghost prov-detail__install"
-                disabled={installBusy}
-                onClick={() => void installCli()}
+                disabled={installBusy || batchBusy}
+                onClick={() => void installCli('update')}
                 title="Reexecuta o instalador oficial para colocar esta CLI na última versão — modelos novos exigem CLI atualizada (confirmação nativa mostra o comando exato)"
               >
                 {installBusy ? 'Atualizando…' : 'Atualizar CLI'}
@@ -831,7 +836,10 @@ export function ProvidersPanel() {
     for (const provider of updatableInstalled) {
       setProvisioning(provider.label);
       try {
-        const result = await window.nexus.providers.installCli(provider.adapterId);
+        const result = await window.nexus.providers.installCli(
+          provider.adapterId,
+          'update',
+        );
         if (result.ok) done.push(provider.label);
         else failed.push(`${provider.label} (${result.error ?? 'falhou'})`);
       } catch {
@@ -1049,6 +1057,7 @@ export function ProvidersPanel() {
               (status) => status.adapterId === selected.adapterId,
             ) ?? { adapterId: selected.adapterId, state: selected.authState ?? 'unknown', detail: 'Não foi possível verificar a conexão.' }}
             onAuthStatusChange={acceptAuthStatus}
+            batchBusy={provisioning !== null}
           />
         )}
         </div>

@@ -34,6 +34,13 @@ interface ArgvInstallRecipe {
   readonly kind: 'argv';
   /** Comando exato (argv, sem shell). */
   readonly argv: readonly string[];
+  /**
+   * F-520: comando de ATUALIZAÇÃO quando difere do install — `brew install`
+   * com a fórmula já presente é no-op exit 0 (mentiria "atualizada");
+   * `brew upgrade` resolve. npm não precisa: `npm install -g pkg` sempre
+   * instala a latest. Script recipes atualizam por natureza.
+   */
+  readonly updateArgv?: readonly string[];
   /** Runner exigido no PATH (pré-checado antes do confirm nativo). */
   readonly runner: string;
   /** Instrução honesta quando o runner falta na máquina do cliente. */
@@ -71,6 +78,7 @@ function brewRecipe(formula: string): ArgvInstallRecipe {
   return Object.freeze({
     kind: 'argv' as const,
     argv: Object.freeze(['brew', 'install', formula]),
+    updateArgv: Object.freeze(['brew', 'upgrade', formula]),
     runner: 'brew',
     runnerHint: BREW_HINT,
   });
@@ -80,6 +88,7 @@ function brewCaskRecipe(cask: string): ArgvInstallRecipe {
   return Object.freeze({
     kind: 'argv' as const,
     argv: Object.freeze(['brew', 'install', '--cask', cask]),
+    updateArgv: Object.freeze(['brew', 'upgrade', '--cask', cask]),
     runner: 'brew',
     runnerHint: BREW_HINT,
   });

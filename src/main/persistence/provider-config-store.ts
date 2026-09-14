@@ -1437,7 +1437,11 @@ export function registerProviderIpc(): void {
 
   handleTrusted(PROVIDER_CHANNELS.installCli, async (_e, raw) => {
     const parsed = z
-      .object({ adapterId: z.string().min(1).max(64) })
+      .object({
+        adapterId: z.string().min(1).max(64),
+        /** F-520: 'update' troca install por upgrade onde o install é no-op (brew). */
+        mode: z.enum(['install', 'update']).default('install'),
+      })
       .safeParse(raw);
     if (!parsed.success) return { ok: false, error: 'adapter inválido' };
     const adapter = getAdapter(parsed.data.adapterId);
@@ -1457,7 +1461,12 @@ export function registerProviderIpc(): void {
     if (!selection.ok) {
       return { ok: false, error: selection.missingRunnerHints.join(' OU: ') };
     }
-    const recipe = selection.recipe;
+    const recipe =
+      parsed.data.mode === 'update' &&
+      selection.recipe.kind === 'argv' &&
+      selection.recipe.updateArgv
+        ? { ...selection.recipe, argv: selection.recipe.updateArgv }
+        : selection.recipe;
     const confirmed = await confirmCliInstall(
       adapter.label,
       describeInstallRecipe(recipe),

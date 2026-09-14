@@ -864,7 +864,10 @@ export interface NexusApi {
     testKey(adapterId: string): Promise<TestConnectionResult>;
     authStatus(): Promise<AdapterAuthStatus[]>;
     /** Instala a CLI pela receita oficial (confirmação nativa no main). */
-    installCli(adapterId: string): Promise<{ ok: boolean; error?: string }>;
+    installCli(
+      adapterId: string,
+      mode?: 'install' | 'update',
+    ): Promise<{ ok: boolean; error?: string }>;
     addModel(adapterId: string, model: string): Promise<ProviderSettingsInfo[]>;
     removeModel(adapterId: string, model: string): Promise<ProviderSettingsInfo[]>;
     onChanged(cb: (list: ProviderSettingsInfo[]) => void): Unsubscribe;
