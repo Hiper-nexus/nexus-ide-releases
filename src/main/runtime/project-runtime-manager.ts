@@ -7,6 +7,7 @@ import {
   configureSafeReadOnlyDatabase,
   initializeProjectDatabase,
   ProjectRuntimeFault,
+  sqliteFilePath,
   type ProjectRuntimeFailureCode,
 } from './project-runtime-migrations';
 import {
@@ -92,6 +93,7 @@ function defaultDatabaseModuleLoader(): ProjectDatabaseConstructor {
 
 export function createLazyProjectDatabaseFactory(
   load: ProjectDatabaseModuleLoader = defaultDatabaseModuleLoader,
+  platform = process.platform,
 ): ProjectDatabaseFactory {
   let Constructor: ProjectDatabaseConstructor | null = null;
   let loadFailure: unknown;
@@ -107,7 +109,7 @@ export function createLazyProjectDatabaseFactory(
         throw error;
       }
     }
-    return new Constructor(filename, options);
+    return new Constructor(sqliteFilePath(filename, platform), options);
   };
 }
 

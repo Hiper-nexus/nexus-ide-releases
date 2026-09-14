@@ -5,10 +5,12 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
+  createLazyProjectDatabaseFactory,
   ProjectRuntimeCapacityError,
   ProjectRuntimeInUseError,
   ProjectRuntimeManager,
   ProjectRuntimeUnavailableError,
+  type ProjectDatabaseConstructor,
 } from './project-runtime-manager';
 import {
   INITIAL_PROJECT_MIGRATIONS,
@@ -433,6 +435,49 @@ describe('ProjectRuntimeManager physical isolation', () => {
 });
 
 describe('ProjectRuntimeManager migrations and health', () => {
+  it('passes namespaced Windows paths only to the default native constructor', () => {
+    const opened: string[] = [];
+    const FakeDatabase = function (filename: string) {
+      opened.push(filename);
+      return {};
+    } as unknown as ProjectDatabaseConstructor;
+    const factory = createLazyProjectDatabaseFactory(
+      () => FakeDatabase,
+      'win32',
+    );
+    const humanPath = path.win32.join(
+      'C:\\',
+      'runtime',
+      'nested'.repeat(48),
+      'runtime.sqlite3',
+    );
+
+    factory(humanPath);
+
+    expect(opened).toEqual([path.win32.toNamespacedPath(humanPath)]);
+  });
+
+  it('opens an actual SQLite runtime while retaining a long canonical path', () => {
+    const longBaseDir = path.join(
+      baseDir,
+      'a'.repeat(60),
+      'b'.repeat(60),
+    );
+    const runtimeManager = new ProjectRuntimeManager({
+      baseDir: longBaseDir,
+      appVersion: '9.4.1-test',
+    });
+    managers.push(runtimeManager);
+
+    const runtime = runtimeManager.open(
+      scope(PROJECT_A, 'checkout-long-native-path'),
+    );
+
+    expect(runtime.databasePath.length).toBeGreaterThan(260);
+    expect(runtime.databasePath).not.toMatch(/^\\\\\?\\/u);
+    expect(runtime.mode).toBe('read-write');
+  });
+
   it('uses the Win32 namespace for SQLite long-path filenames only', () => {
     const humanPath = path.win32.join(
       'C:\\',
