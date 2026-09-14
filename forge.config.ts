@@ -453,7 +453,14 @@ const config: ForgeConfig = {
   rebuildConfig:
     process.env.NEXUS_DEV_SKIP_NATIVE_REBUILD === '1'
       ? { onlyModules: [] }
-      : { mode: 'sequential' },
+      : {
+          mode: 'sequential',
+          onlyModules: [
+            '@lydell/node-pty',
+            'better-sqlite3',
+            'onnxruntime-node',
+          ],
+        },
   makers: [
     // .dmg is the installable macOS artifact; ZIP doubles as the
     // Squirrel.Mac auto-update payload.
