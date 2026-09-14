@@ -3347,7 +3347,7 @@ export const RELEASE_07624: AppRelease = {
 };
 
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07625: AppRelease = {
   version: '0.76.25',
   date: '2026-09-14',
   codename: 'Missões separadas por pane, mídia do WhatsApp de verdade e limpeza sempre à mão',
@@ -3408,6 +3408,52 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'Anti-pattern de animação no brief da revisão',
       detail:
         'transição de max-height substituída por grid-template-rows (sem layout thrash), apontado pelo audit de UI.',
+    },
+  ],
+};
+
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.26',
+  date: '2026-09-14',
+  codename: 'O pane GLM abre de verdade — trust respondido nas duas bordas',
+  summary:
+    'Abrir um pane GLM (ou de qualquer CLI da família Claude Code) deixava o terminal ' +
+    '"Aguardando" para sempre no diálogo "Yes, I trust this folder". O autoresponder ' +
+    'desistia antes do diálogo pintar (janela de 20s contada do spawn, e o cold start ' +
+    'do GLM é mais lento que isso) e, quando respondia, digitava UMA vez só: a tecla ' +
+    'perdida na race do desenho da tela nunca era reenviada. Agora o diálogo de trust ' +
+    'tem janela própria de 60s e toda resposta enviada exige prova de aceite — silêncio ' +
+    'reenvia a tecla segura, a última tentativa usa o fallback numérico e o repaint do ' +
+    'TUI encerra a verificação. Vale para todas as CLIs com diálogo de confiança ' +
+    '(Claude, GLM, GLM Flash, LongCat, AGY, Grok e Kimi), no pane do operador e em missão.',
+  highlights: [
+    {
+      title: 'Trust de cold start é respondido (F-529)',
+      detail:
+        'Diálogos de confiança ganham janela de observação de 60s — o relógio antigo de 20s ' +
+        'expirava antes de o GLM/Z.ai terminar de subir e o pane ficava pendurado sem aviso. ' +
+        'Menus de boot rápidos continuam no default de 20s, então sessões longas não pagam ' +
+        'parsing para sempre.',
+    },
+    {
+      title: 'Resposta com prova de aceite (F-529)',
+      detail:
+        'Um TUI que aceitou a tecla sempre repinta a tela; silêncio completo de 1,8s quer ' +
+        'dizer que a tecla se perdeu. O autoresponder reenvia a mesma tecla (idempotente e ' +
+        'segura), usa o fallback numérico na última tentativa quando a assinatura tem, e ' +
+        'para de digitar ao comprovar o aceite — esgotadas as tentativas, o diálogo é ' +
+        'devolvido ao operador em vez de chutes.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'F-529: abrir pane GLM ficava "Aguardando" no trust para sempre',
+      detail:
+        'Duas causas corrigidas no CliPromptAutoResponder: watch único de 20s valendo também ' +
+        'para trust que pinta tarde, e resposta única sem verificação de efeito — o caminho ' +
+        'com fallback só existia quando havia brief de missão para injetar, nunca no pane ' +
+        'aberto pelo operador.',
     },
   ],
 };
