@@ -52,6 +52,24 @@
   color: var(--accent);
 }
 
+.update-status-btn--available {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: var(--accent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 30%, transparent);
+  font-weight: 600;
+  animation: update-beacon-pulse 2s ease-in-out infinite;
+}
+
+@keyframes update-beacon-pulse {
+  0%, 100% {
+    box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 20%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 14px color-mix(in srgb, var(--accent) 50%, transparent);
+  }
+}
+
 .update-status-btn--ready {
   color: var(--ok, #7ee2a8);
   border-color: currentColor;
@@ -65,6 +83,162 @@
 .update-status-btn--checking,
 .update-status-btn--downloading {
   animation: voice-orb-breathe 1.4s ease-in-out infinite;
+}
+
+/* Floating update banner notification */
+.update-banner {
+  position: fixed;
+  top: 46px;
+  right: 18px;
+  z-index: var(--z-modal, 100);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3, 12px);
+  padding: 10px 14px;
+  background: color-mix(in srgb, var(--bg-elevated) 92%, transparent);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-xl, 12px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45), 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent);
+  color: var(--text-primary);
+  cursor: pointer;
+  max-width: 480px;
+  animation: update-banner-slide-in 240ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+.update-banner:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--accent);
+}
+
+@keyframes update-banner-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(-12px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.update-banner__content {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.update-banner__badge {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.update-banner__beacon {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+}
+
+.update-banner__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.update-banner__title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.update-banner__desc {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.update-banner__actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.update-banner__btn {
+  appearance: none;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 10px;
+  border-radius: var(--radius-md, 6px);
+  cursor: pointer;
+  transition: all 120ms ease;
+  white-space: nowrap;
+}
+
+.update-banner__btn--primary {
+  background: var(--accent);
+  color: var(--bg);
+  border: 1px solid var(--accent);
+}
+
+.update-banner__btn--primary:hover {
+  filter: brightness(1.15);
+}
+
+.update-banner__btn--ghost {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border-strong);
+}
+
+.update-banner__btn--ghost:hover {
+  color: var(--text-primary);
+  border-color: var(--text-dim);
+}
+
+.update-banner__close {
+  appearance: none;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 11px;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+  transition: color 120ms ease, background 120ms ease;
+}
+
+.update-banner__close:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
 }
 
 .update-modal__backdrop {

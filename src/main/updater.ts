@@ -39,7 +39,7 @@ import { createSingleFlight } from './single-flight';
  */
 
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
-const BOOT_CHECK_DELAY_MS = 20_000;
+const BOOT_CHECK_DELAY_MS = 3_000;
 const GH_CHECK_TIMEOUT_MS = 15_000;
 const GH_DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
 const GH_RELEASES_PER_PAGE = 100;
@@ -369,6 +369,16 @@ export class UpdateManager {
     setTimeout(scheduled, BOOT_CHECK_DELAY_MS).unref?.();
     this.timer = setInterval(scheduled, CHECK_INTERVAL_MS);
     this.timer.unref?.();
+
+    const onFocus = () => {
+      if (
+        !this.state.checkedAt ||
+        Date.now() - this.state.checkedAt > 15 * 60 * 1000
+      ) {
+        scheduled();
+      }
+    };
+    app.on('browser-window-focus', onFocus);
   }
 
   private registerIpcHandlers(): void {

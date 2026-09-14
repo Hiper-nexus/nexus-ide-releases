@@ -148,7 +148,17 @@ export function useUpdateState(): UpdateState | null {
       .getState()
       .then((s) => {
         logRendererUpdate('getState', summarizeUpdateState(s));
-        if (!cancelled) setState(s);
+        if (!cancelled) {
+          setState(s);
+          if (
+            window.nexus?.update?.check &&
+            (s.phase === 'idle' || !s.checkedAt || Date.now() - s.checkedAt > 15 * 60 * 1000)
+          ) {
+            void window.nexus.update.check().catch((err) => {
+              logRendererError('background check failed', err);
+            });
+          }
+        }
       })
       .catch((err) => {
         logRendererError('getState failed', err);
@@ -354,6 +364,130 @@ export function UpdateModal({ state, onClose }: Props) {
  * como componente próprio para não depender de ninguém lembrar de montar as
  * três peças na mão.
  */
+/**
+ * Banner flutuante de notificação proativa de atualização.
+ * Exibido quando há uma nova versão disponível ou pronta para reiniciar,
+ * permitindo que o usuário veja e clique para atualizar imediatamente
+ * sem precisar adivinhar se há updates.
+ */
+export function UpdateBannerNotice({
+  state,
+  onOpenModal,
+}: {
+  state: UpdateState;
+  onOpenModal: () => void;
+}) {
+  const [dismissedVersion, setDismissedVersion] = useState<string | null>(null);
+  const version = state.available?.version ?? '';
+  const isDismissed = Boolean(version && dismissedVersion === version);
+
+  if (isDismissed) return null;
+  if (
+    state.phase !== 'available' &&
+    state.phase !== 'ready' &&
+    state.phase !== 'downloading'
+  ) {
+    return null;
+  }
+
+  const handleInstall = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    void window.nexus?.update?.install?.();
+  };
+
+  const handleRestart = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    void window.nexus?.update?.restart?.();
+  };
+
+  const handleDismiss = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (version) setDismissedVersion(version);
+  };
+
+  return (
+    <div
+      className={`update-banner update-banner--${state.phase}`}
+      role="alert"
+      aria-live="polite"
+      onClick={onOpenModal}
+    >
+      <div className="update-banner__content">
+        <span className="update-banner__badge" aria-hidden="true">
+          <span className="update-banner__beacon" />
+          {state.phase === 'ready' ? '🚀' : '✨'}
+        </span>
+        <div className="update-banner__text">
+          <strong className="update-banner__title">
+            {state.phase === 'ready'
+              ? 'Atualização pronta para aplicar!'
+              : state.phase === 'downloading'
+                ? 'Baixando atualização…'
+                : `Nova versão disponível: v${version}`}
+          </strong>
+          <span className="update-banner__desc">
+            {state.phase === 'ready'
+              ? 'Reinicie o NexusIDE para aplicar agora.'
+              : state.phase === 'downloading'
+                ? getDownloadLabel(state.downloadProgress)
+                : 'Clique para atualizar agora ou ver notas.'}
+          </span>
+        </div>
+      </div>
+
+      <div
+        className="update-banner__actions"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {state.phase === 'available' && state.canInstall && (
+          <button
+            type="button"
+            className="update-banner__btn update-banner__btn--primary"
+            onClick={handleInstall}
+          >
+            Atualizar agora
+          </button>
+        )}
+        {state.phase === 'ready' && (
+          <button
+            type="button"
+            className="update-banner__btn update-banner__btn--primary"
+            onClick={handleRestart}
+          >
+            Reiniciar agora
+          </button>
+        )}
+        <button
+          type="button"
+          className="update-banner__btn update-banner__btn--ghost"
+          onClick={onOpenModal}
+          title="Ver detalhes da versão"
+        >
+          Ver notas
+        </button>
+        <button
+          type="button"
+          className="update-banner__close"
+          onClick={handleDismiss}
+          aria-label="Lembrar mais tarde"
+          title="Lembrar mais tarde"
+        >
+          ✕
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Chip de atualização + banner proativo + painel, prontos para montar.
+ *
+ * A composição existia e sumiu do App em 01/08 (commit `5a6cb8b8`, junto de um
+ * fix de missão), deixando o painel órfão: o app passou DUAS releases sem
+ * nenhuma superfície de atualizar — "a parte de atualizar o app sumiu". Voltou
+ * como componente próprio para não depender de ninguém lembrar de montar as
+ * três peças na mão.
+ */
 export function UpdateNotifier({
   alwaysVisible = false,
   compact = false,
@@ -372,6 +506,7 @@ export function UpdateNotifier({
         compact={compact}
         onClick={() => setOpen(true)}
       />
+      <UpdateBannerNotice state={state} onOpenModal={() => setOpen(true)} />
       {open && <UpdateModal state={state} onClose={() => setOpen(false)} />}
     </>
   );
