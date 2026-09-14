@@ -92,6 +92,7 @@ import {
 import { cliPromptAutoResponder } from "./cli-prompt-autoresponder";
 import {
   cleanupSessionArtifacts,
+  ensureNativeClaudeProjectTrust,
   prepareEphemeralHome,
   prepareThirdPartyClaudeHome,
   writeClaudeFamilyZeroClickSettings,
@@ -954,7 +955,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
         // orchestrator gets logged out (/login). Isolate them in a persistent
         // private HOME; MCP + zero-click settings still arrive via flags, and
         // skills mirror into the isolated home.
-        const isolatedHome = prepareThirdPartyClaudeHome(adapter.id);
+        const isolatedHome = prepareThirdPartyClaudeHome(adapter.id, authority.cwd);
         env.HOME = isolatedHome;
         ephemeralHomeDir = isolatedHome;
         // Bug D (2026-08-17): o Claude Code não reconhece ids de modelo de
@@ -970,7 +971,9 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           writeClaudeFamilyZeroClickSettings(ctx.token),
         );
       } else if (adapter.quirks.mcpAutoload) {
-        // Real HOME: still force zero-click via flag settings (system default).
+        // Real HOME: ensure native Claude also trusts the active workspace
+        ensureNativeClaudeProjectTrust(os.homedir(), authority.cwd);
+        // still force zero-click via flag settings (system default).
         extraArgs.push(
           "--mcp-config",
           writeMcpConfigFile(ctx.token, mcpConfig),
@@ -1041,6 +1044,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
         } else if (flavor === "kimi") {
           const prepared = prepareKimiMcpSession(mcpUrl(), ctx.token, {
             providerHome: preparedEnv?.KIMI_CODE_HOME,
+            cwd: authority.cwd,
             hubServers,
           });
           Object.assign(env, prepared.env);
