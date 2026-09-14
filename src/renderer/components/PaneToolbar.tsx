@@ -252,13 +252,20 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
       items[next]?.focus();
     };
     const onResize = () => setMenuOpen(false);
+    const onScroll = (e: Event) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
     document.addEventListener('mousedown', onDoc);
     document.addEventListener('keydown', onKey, { capture: true });
     window.addEventListener('resize', onResize);
+    window.addEventListener('scroll', onScroll, { capture: true, passive: true });
     return () => {
       document.removeEventListener('mousedown', onDoc);
       document.removeEventListener('keydown', onKey, { capture: true });
       window.removeEventListener('resize', onResize);
+      window.removeEventListener('scroll', onScroll, { capture: true });
     };
   }, [menuOpen]);
 
@@ -480,12 +487,14 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
     const anchor = menuTriggerRef.current.getBoundingClientRect();
     const menu = menuRef.current.getBoundingClientRect();
     const below = anchor.bottom + MENU_ANCHOR_GAP;
-    setMenuPosition({
-      left: Math.max(MENU_VIEWPORT_GUTTER, Math.min(anchor.right - menu.width, window.innerWidth - menu.width - MENU_VIEWPORT_GUTTER)),
-      top: Math.max(MENU_VIEWPORT_GUTTER,
-        below + menu.height <= window.innerHeight - MENU_VIEWPORT_GUTTER
-          ? below : anchor.top - menu.height - MENU_ANCHOR_GAP,
-      ),
+    const nextLeft = Math.max(MENU_VIEWPORT_GUTTER, Math.min(anchor.right - menu.width, window.innerWidth - menu.width - MENU_VIEWPORT_GUTTER));
+    const nextTop = Math.max(MENU_VIEWPORT_GUTTER,
+      below + menu.height <= window.innerHeight - MENU_VIEWPORT_GUTTER
+        ? below : anchor.top - menu.height - MENU_ANCHOR_GAP,
+    );
+    setMenuPosition((prev) => {
+      if (prev.left === nextLeft && prev.top === nextTop) return prev;
+      return { left: nextLeft, top: nextTop };
     });
     menuRef.current.querySelector<HTMLButtonElement>('button')?.focus();
   }, [menuOpen, density]);
@@ -689,7 +698,18 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
               data-tip="Mais ações (dormir, dividir, fim…)"
               onClick={(e) => {
                 e.stopPropagation();
-                setMenuOpen((v) => !v);
+                if (!menuOpen && menuTriggerRef.current) {
+                  const anchor = menuTriggerRef.current.getBoundingClientRect();
+                  const below = anchor.bottom + MENU_ANCHOR_GAP;
+                  const estimatedWidth = 220;
+                  setMenuPosition({
+                    left: Math.max(MENU_VIEWPORT_GUTTER, Math.min(anchor.right - estimatedWidth, window.innerWidth - estimatedWidth - MENU_VIEWPORT_GUTTER)),
+                    top: Math.max(MENU_VIEWPORT_GUTTER, below),
+                  });
+                  setMenuOpen(true);
+                } else {
+                  setMenuOpen(false);
+                }
               }}
             >
               <PixelIcon name="more" size={11} />
