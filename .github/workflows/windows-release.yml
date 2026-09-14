@@ -51,12 +51,29 @@ jobs:
           cache: npm
 
       # node-gyp (better-sqlite3) needs a real Python interpreter during the
-      # Electron rebuild. The signing worker is intentionally otherwise
-      # preconfigured; setup-python makes that dependency explicit and keeps
-      # the service runner independent of an interactive user's PATH.
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
-        with:
-          python-version: '3.12'
+      # Electron rebuild. Do this in pwsh instead of actions/setup-python:
+      # this signing host intentionally blocks Windows PowerShell scripts from
+      # third-party actions, while the bundled runtime is already provisioned.
+      - name: Configure Python for native rebuild
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $candidates = @(
+            (Join-Path $env:USERPROFILE '.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe'),
+            (Join-Path $env:LOCALAPPDATA 'Programs\Python\Python312\python.exe'),
+            'C:\Python312\python.exe'
+          )
+          $python = $candidates |
+            Where-Object { Test-Path -LiteralPath $_ } |
+            Select-Object -First 1
+          if (-not $python) {
+            $command = Get-Command python -ErrorAction SilentlyContinue
+            if ($command) { $python = $command.Source }
+          }
+          if (-not $python) { throw 'Python 3.12 is required for the native Electron rebuild' }
+          "PYTHON=$python" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "npm_config_python=$python" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          & $python --version
 
       - name: Validate version, commit and optional existing release tag
         shell: pwsh
