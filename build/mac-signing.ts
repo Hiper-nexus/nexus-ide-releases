@@ -121,6 +121,9 @@ function isDarwinPtySupervisorTarget(filePath: string): boolean {
   );
 }
 
+export const APPLE_TIMESTAMP_AUTHORITY_URL =
+  'http://timestamp.apple.com/ts01';
+
 export function createMacSignOptions(teamId: string | undefined) {
   if (teamId !== undefined && !isAppleReleaseSigning(teamId)) {
     throw new Error('Apple Team ID must contain exactly 10 uppercase letters or digits.');
@@ -151,10 +154,9 @@ export function createMacSignOptions(teamId: string | undefined) {
             ],
           }
         : {}),
-      // Leaving this undefined in release mode makes @electron/osx-sign use
-      // codesign's Apple-provided TSA (`--timestamp`). A URL override is both
-      // unnecessary and less resilient across Apple timestamp backends.
-      ...(isRelease ? {} : { timestamp: 'none' }),
+      // Usa a autoridade oficial de carimbo de tempo da Apple com URL explícita
+      // para evitar falhas de timeout ("A timestamp was expected but was not found").
+      timestamp: isRelease ? APPLE_TIMESTAMP_AUTHORITY_URL : 'none',
     }),
   };
 }

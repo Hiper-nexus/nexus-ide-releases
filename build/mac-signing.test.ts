@@ -6,6 +6,7 @@ import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
+  APPLE_TIMESTAMP_AUTHORITY_URL,
   createMacSignOptions,
   DARWIN_PTY_SUPERVISOR_IDENTIFIER,
   entitlementProfileForMacTarget,
@@ -105,7 +106,9 @@ describe('macOS signing modes', () => {
     expect(options.optionsForFile('/tmp/NexusIDE')).toMatchObject({
       hardenedRuntime: true,
     });
-    expect(options.optionsForFile('/tmp/NexusIDE').timestamp).toBeUndefined();
+    expect(options.optionsForFile('/tmp/NexusIDE').timestamp).toBe(
+      APPLE_TIMESTAMP_AUTHORITY_URL,
+    );
     expect(options.identityValidation).toBeUndefined();
   });
 
