@@ -26,6 +26,16 @@ export function TerminalWorkspace({
 }: TerminalWorkspaceProps) {
   const viewKind = useLayoutStore((state) => state.viewKind);
   const inMission = missionId !== undefined;
+  // F-527: filtro de missão na vista GLOBAL. Com duas ou mais missões vivendo
+  // na mesma árvore de panes, a vista "Todas" misturava tudo — a "bagunça na
+  // tela". O foco abre na missão mais recente e "Todas as missões" volta a
+  // mostrar o grid inteiro em um clique.
+  const [globalFocusMissionId, setGlobalFocusMissionId] = useState<
+    string | null
+  >(null);
+  useEffect(() => {
+    setGlobalFocusMissionId(null);
+  }, [missionId]);
   // O rótulo segue a projeção canônica da missão — "Missão ativa" fixo mentia
   // em missão já concluída/falha. Done SEM carimbo do humano é revisão, não
   // Pronto: senão o header dos Terminais declara encerrado o canal que ainda
@@ -61,17 +71,50 @@ export function TerminalWorkspace({
       previous.has(paneId) ? previous : new Set(previous).add(paneId),
     );
   }, []);
+  const panes = useMemo(() => listPanes(layoutRoot), [layoutRoot]);
+  // Missões ativas que realmente têm panes nesta árvore (a base dos chips).
+  const missionsWithPanes = useMemo(() => {
+    const byId = new Map<string, { id: string; title: string; state: string }>();
+    for (const pane of panes) {
+      const boundId = pane.missionId ?? paneMissions[pane.id];
+      if (!boundId || byId.has(boundId)) continue;
+      const summary = useOrchStore
+        .getState()
+        .missionSummaries.find((m) => m.id === boundId);
+      if (!summary) continue;
+      const state = summary.state;
+      const live =
+        state === 'running' ||
+        state === 'starting' ||
+        state === 'recovering' ||
+        state === 'review_ready' ||
+        state === 'blocked_user' ||
+        state === 'blocked_technical';
+      if (!live) continue;
+      byId.set(boundId, { id: boundId, title: summary.title, state });
+    }
+    return [...byId.values()];
+  }, [panes, paneMissions]);
+
+  const multiMission = !inMission && missionsWithPanes.length >= 2;
+  const VIEW_ALL = '__all__';
+  const globalFocus =
+    globalFocusMissionId === VIEW_ALL
+      ? null
+      : (globalFocusMissionId ?? missionsWithPanes[0]?.id ?? null);
+  const effectiveMissionId = inMission ? missionId : globalFocus;
+
   const visiblePaneIds = useMemo(() => {
-    if (!missionId) return undefined;
+    if (!effectiveMissionId) return undefined;
     const visible = selectMissionTerminalPanes(
-      listPanes(layoutRoot),
-      missionId,
+      panes,
+      effectiveMissionId,
       paneMissions,
     );
     const ids = new Set(visible.map((pane) => pane.id));
     for (const pinned of operatorPinIds) ids.add(pinned);
     return ids;
-  }, [layoutRoot, missionId, paneMissions, operatorPinIds]);
+  }, [panes, effectiveMissionId, paneMissions, operatorPinIds]);
 
   return (
     <section
@@ -103,6 +146,40 @@ export function TerminalWorkspace({
               <span>Voltar ao Quadro</span>
             </button>
           ) : null}
+        </header>
+      ) : null}
+
+      {multiMission ? (
+        <header className="terminal-workspace__filterbar" role="toolbar" aria-label="Filtrar terminais por missão">
+          <span className="terminal-workspace__filterbar-label">Missões:</span>
+          {missionsWithPanes.map((mission) => (
+            <button
+              key={mission.id}
+              type="button"
+              className={`terminal-workspace__filter-chip${
+                globalFocus === mission.id
+                  ? ' terminal-workspace__filter-chip--active'
+                  : ''
+              }`}
+              aria-pressed={globalFocus === mission.id}
+              onClick={() => setGlobalFocusMissionId(mission.id)}
+              title={mission.title}
+            >
+              {mission.title || 'Missão sem título'}
+            </button>
+          ))}
+          <button
+            type="button"
+            className={`terminal-workspace__filter-chip${
+              globalFocus === null
+                ? ' terminal-workspace__filter-chip--active'
+                : ''
+            }`}
+            aria-pressed={globalFocus === null}
+            onClick={() => setGlobalFocusMissionId(VIEW_ALL)}
+          >
+            Todas as missões
+          </button>
         </header>
       ) : null}
 

@@ -15,6 +15,7 @@ import {
 import { CommandPalette } from './components/CommandPalette';
 import { useCommandPaletteStore } from './state/command-palette-store';
 import { ConfirmDialog } from './components/ConfirmDialog';
+import { ChoiceDialog } from './components/ChoiceDialog';
 import { TerminalGridDialog } from './components/TerminalGridDialog';
 import { OverlayLayer } from './overlay/overlay-layer';
 import { OrchestrationModeDialog } from './components/OrchestrationModeDialog';
@@ -1435,6 +1436,7 @@ export function App() {
               <AttentionInbox />
               <KeyboardCheatsheet />
               <ConfirmDialog />
+              <ChoiceDialog />
               <TerminalGridDialog />
             </OverlayLayer>
             <Toasts />

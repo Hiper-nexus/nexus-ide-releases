@@ -412,3 +412,71 @@ describe('TerminalWorkspace em missão — "+ Pane" do operador', () => {
     expect(shellAttached).toBe(true);
   });
 });
+
+// ── F-527: vista global separa missões por chips de foco ─────────────────────
+
+describe('TerminalWorkspace — filtro de missões na vista global (F-527)', () => {
+  it('com 2+ missões vivas, abre focada na primeira e mostra chips', () => {
+    useLayoutStore.setState({
+      root: buildGridTree([
+        {
+          id: 'pane-a1',
+          kind: 'cli-agent',
+          title: 'Worker A1',
+          adapterId: 'codex',
+          missionId: 'mission-a',
+        },
+        {
+          id: 'pane-b1',
+          kind: 'cli-agent',
+          title: 'Worker B1',
+          adapterId: 'agy',
+          missionId: 'mission-b',
+        },
+      ]),
+      focusedPaneId: 'pane-a1',
+    });
+    useOrchStore.setState({
+      paneMissions: {},
+      missions: [],
+      missionSummaries: [
+        {
+          id: 'mission-a',
+          title: 'Checkout da loja',
+          state: 'running',
+          progress: { completed: 0, total: 1 },
+          needsAttention: false,
+          updatedAt: 1,
+        },
+        {
+          id: 'mission-b',
+          title: 'Blog da release',
+          state: 'running',
+          progress: { completed: 0, total: 1 },
+          needsAttention: false,
+          updatedAt: 2,
+        },
+      ],
+    });
+
+    const { host } = mount(<TerminalWorkspace />);
+
+    const chips = [
+      ...host.querySelectorAll('.terminal-workspace__filter-chip'),
+    ];
+    expect(chips.map((c) => c.textContent)).toEqual([
+      'Checkout da loja',
+      'Blog da release',
+      'Todas as missões',
+    ]);
+    // Foco default: a primeira missão — só os panes dela montam.
+    expect(
+      host.querySelector('.terminal-workspace__filter-chip--active')
+        ?.textContent,
+    ).toBe('Checkout da loja');
+    const attached = terminalRuntime.attachHost.mock.calls.map(
+      ([pane]) => (pane as PaneModel).id,
+    );
+    expect(attached).toEqual(['pane-a1']);
+  });
+});

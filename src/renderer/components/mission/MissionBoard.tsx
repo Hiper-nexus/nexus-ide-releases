@@ -1122,6 +1122,17 @@ export function MissionBoard({
           >
             Terminais
           </button>
+          {/* F-527: com uma missão rolando, começar outra exigia sair da
+              superfície e achar o rail. Aqui é 1 clique → Caminho Expresso. */}
+          <button
+            type="button"
+            className="mission-board__button mission-board__button--secondary"
+            onClick={() =>
+              useProductNavigationStore.getState().openNewMission()
+            }
+          >
+            + Nova missão
+          </button>
           {HEADER_ACTIONS.filter(
             (action) =>
               currentSnapshot.allowedActions.includes(action) &&

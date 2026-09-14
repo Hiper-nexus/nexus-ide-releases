@@ -1093,3 +1093,58 @@ describe('layout-store role assignment and promotion', () => {
     expect(p1?.missionId).toBe('mission-alpha');
   });
 });
+
+// ── F-527: promoção não contamina panes fora da missão ───────────────────────
+
+describe('promoteMissionPaneRole — isolamento entre missões (F-527)', () => {
+  it('não rebaixa nem re-rotula panes sem vínculo ou de outra missão', () => {
+    useLayoutStore.setState({
+      root: buildGridTree([
+        {
+          id: 'pane-m1-orch',
+          kind: 'cli-agent',
+          title: 'Orquestrador M1',
+          adapterId: 'codex',
+          missionId: 'mission-1',
+          role: 'orchestrator',
+        },
+        {
+          id: 'pane-m1-worker',
+          kind: 'cli-agent',
+          title: 'Worker M1',
+          adapterId: 'codex',
+          missionId: 'mission-1',
+          role: 'worker',
+        },
+        {
+          id: 'pane-m2-worker',
+          kind: 'cli-agent',
+          title: 'Worker M2',
+          adapterId: 'agy',
+          missionId: 'mission-2',
+          role: 'orchestrator',
+        },
+        {
+          id: 'pane-solto',
+          kind: 'shell',
+          title: 'Shell do operador',
+        },
+      ]),
+    });
+
+    useLayoutStore.getState().promoteMissionPaneRole('mission-1', 'pane-m1-worker');
+
+    const panes = new Map(
+      listPanes(useLayoutStore.getState().root).map((p) => [p.id, p]),
+    );
+    // Missão 1: promovido vira orquestrador; o orquestrador anterior cai a worker.
+    expect(panes.get('pane-m1-worker')?.role).toBe('orchestrator');
+    expect(panes.get('pane-m1-orch')?.role).toBe('worker');
+    // Missão 2 intocada — o orquestrador dela NÃO é rebaixado.
+    expect(panes.get('pane-m2-worker')?.role).toBe('orchestrator');
+    expect(panes.get('pane-m2-worker')?.missionId).toBe('mission-2');
+    // Pane solto intocado — nem role, nem vínculo inventado.
+    expect(panes.get('pane-solto')?.role).toBeUndefined();
+    expect(panes.get('pane-solto')?.missionId).toBeUndefined();
+  });
+});

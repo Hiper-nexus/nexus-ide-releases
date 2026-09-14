@@ -1267,10 +1267,21 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
   promoteMissionPaneRole: (missionId, paneId) => {
     let root = get().root;
     for (const pane of listPanes(root)) {
-      if (pane.missionId && pane.missionId !== missionId) continue;
-      const role = pane.id === paneId ? 'orchestrator' : 'worker';
-      const mId = pane.id === paneId ? (pane.missionId ?? missionId) : pane.missionId;
-      root = updatePane(root, pane.id, { role, missionId: mId });
+      const isPromoted = pane.id === paneId;
+      const boundToThis = pane.missionId === missionId;
+      // F-527: só a missão promovida e o pane promovido mudam. Panes SEM
+      // vínculo (shells do operador, panes soltos de outro fluxo) não podem
+      // ser rebaixados a worker nem re-rotulados por uma promoção alheia —
+      // era isto que misturava missões diferentes na mesma tela.
+      if (!isPromoted && !boundToThis) continue;
+      if (isPromoted) {
+        root = updatePane(root, pane.id, {
+          role: 'orchestrator',
+          missionId: pane.missionId ?? missionId,
+        });
+      } else {
+        root = updatePane(root, pane.id, { role: 'worker' });
+      }
     }
     set({ root });
     persist();

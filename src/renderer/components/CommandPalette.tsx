@@ -7,6 +7,10 @@ import { useOrchStore } from '../state/orch-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { useMissionSetupStore } from '../state/mission-setup-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
+import {
+  promotePaneWithMissionChoice,
+  toastPromoted,
+} from '../lib/pane-mission-promote';
 import { useTerminalGridDialogStore } from '../state/terminal-grid-dialog-store';
 import { missionChromeTitle } from '../../shared/mission-identity';
 import { listPanes } from '../lib/split-tree';
@@ -195,24 +199,14 @@ export function CommandPalette() {
         const focusedId = useLayoutStore.getState().focusedPaneId;
         const p = listPanes(root).find((item) => item.id === focusedId) ?? listPanes(root)[0];
         if (p) {
-          const destination = useProductNavigationStore.getState().destination;
-          const resolvedMissionId =
-            p.missionId ??
-            (destination.kind === 'mission' ? destination.missionId : undefined) ??
-            useOrchStore.getState().paneMissions[p.id] ??
-            useOrchStore.getState().missions.find((m) => m.status === 'running' || m.status === 'blocked')?.id ??
-            useOrchStore.getState().missions[0]?.id;
-
-          if (resolvedMissionId) {
-            void window.nexus?.orch?.promoteMissionOrchestrator?.({
-              missionId: resolvedMissionId,
-              paneId: p.id,
-            });
-            layout.promoteMissionPaneRole(resolvedMissionId, p.id);
-            useOrchStore.getState().bindPaneMission(p.id, resolvedMissionId);
-          } else {
-            layout.setPaneRole(p.id, 'orchestrator');
-          }
+          // F-527: vínculo explícito de missão — sem anexar à "padrão".
+          void promotePaneWithMissionChoice({ paneId: p.id }).then((missionId) => {
+            if (!missionId) return;
+            const title = useOrchStore
+              .getState()
+              .missions.find((m) => m.id === missionId)?.title;
+            toastPromoted(title);
+          });
         }
       },
       '',

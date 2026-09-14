@@ -23,6 +23,10 @@ import { getPaneSessionId } from '../terminal/terminal-host';
 import { askConfirm } from '../state/confirm-store';
 import { useOrchStore } from '../state/orch-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
+import {
+  promotePaneWithMissionChoice,
+  toastPromoted,
+} from '../lib/pane-mission-promote';
 import { AgentAvatar, resolveAgentCategory } from './AgentAvatar';
 import { ProviderLogo } from './ProviderLogo';
 import { CommandBlockMenu } from './CommandBlockMenu';
@@ -286,42 +290,17 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
           icon: 'crown-outline',
           primary: true,
           run: () => {
-            void askConfirm({
-              title: 'Tornar este painel o orquestrador?',
-              body: 'Este painel passa a liderar o squad, coordenar tarefas e receber handoffs.',
-              confirmLabel: 'Tornar Orquestrador',
-            }).then(async (ok) => {
-              if (!ok) return;
-              const resolvedMissionId =
-                pane.missionId ??
-                (destination.kind === 'mission' ? destination.missionId : undefined) ??
-                paneMissions[pane.id] ??
-                activeMissions.find((m) => m.status === 'running' || m.status === 'blocked')?.id ??
-                activeMissions[0]?.id;
-
-              if (resolvedMissionId) {
-                let result: { ok: boolean; warning?: string; error?: string } | null = null;
-                try {
-                  result = await window.nexus?.orch?.promoteMissionOrchestrator?.({
-                    missionId: resolvedMissionId,
-                    paneId: pane.id,
-                  });
-                } catch {
-                  // Promoção direta de layout se IPC indisponível
-                }
-                promoteMissionPaneRole(resolvedMissionId, pane.id);
-                useOrchStore.getState().bindPaneMission(pane.id, resolvedMissionId);
-                if (result && !result.ok && result.warning) {
-                  await askConfirm({
-                    title: 'Aviso de promoção',
-                    body: result.warning,
-                    confirmLabel: 'OK',
-                  });
-                }
-              } else {
-                setPaneRole(pane.id, 'orchestrator');
-              }
-            });
+            // F-527: vínculo explícito — pane sem missão pergunta QUAL missão
+            // liderar (ou abre uma nova separada), nunca anexa à "padrão".
+            void promotePaneWithMissionChoice({ paneId: pane.id }).then(
+              (missionId) => {
+                if (!missionId) return;
+                const title = useOrchStore
+                  .getState()
+                  .missions.find((m) => m.id === missionId)?.title;
+                toastPromoted(title);
+              },
+            );
           },
         });
       }
