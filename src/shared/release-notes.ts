@@ -3413,7 +3413,7 @@ export const RELEASE_07625: AppRelease = {
 };
 
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07626: AppRelease = {
   version: '0.76.26',
   date: '2026-09-14',
   codename: 'O pane GLM abre de verdade — trust respondido nas duas bordas',
@@ -3457,3 +3457,68 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
 };
+
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.27',
+  date: '2026-09-14',
+  codename: 'Trust direto GLM/Kimi, Enter garantido, sidebar sem cortes e motor inteligente',
+  summary:
+    'Quatro correções essenciais para estabilidade e usabilidade em produção: ' +
+    '1. Pre-seeding de workspace trust no GLM, Kimi e Claude entra direto no terminal sem telas bloqueantes; ' +
+    '2. Envio de prompt para workers com Enter garantido e prova de busy após o submit, evitando prompts pendurados; ' +
+    '3. Expansão da sidebar para até 480px, eliminando corte de rótulos e encolhimento do badge ATUAL; ' +
+    '4. Orquestrador reutiliza squads e modelos salvos pelo usuário (sem trocar para gpt-5.5) e delega uniformemente via nexus_route_task.',
+  highlights: [
+    {
+      title: 'Trust de workspace direto sem telas de confirmação (F-520)',
+      detail:
+        'Panes de GLM, Kimi e Claude entram diretamente no workspace sem travar na tela "Yes, I trust this folder" ' +
+        'ou "Quick safety check". O Nexus pre-seeda o aceite no .claude.json e nas pastas governadas do Kimi, ' +
+        'usando caminhos canônicos com realpath.',
+    },
+    {
+      title: 'Enter garantido após injeção de prompt no pane (F-521)',
+      detail:
+        'Prompts colados no terminal de workers não ficam mais parados aguardando confirmação. O motor de injeção ' +
+        'diferencia o eco da colagem do início real de processamento e reenvia Enter se a primeira tentativa ' +
+        'for engolida pelo TUI. CLIs com suporte a prompt posicional recebem o prompt inicial diretamente nos argumentos.',
+    },
+    {
+      title: 'Sidebar ampla e sem cortes de conteúdo (F-530)',
+      detail:
+        'Largura máxima da sidebar expandida para 480px (padrão 260px). O badge "ATUAL" não encolhe para "ATU", ' +
+        'o atalho [⌘K] mantém espaçamento limpo e os títulos de workspaces longos truncam elegantemente com reticências.',
+    },
+    {
+      title: 'Orquestrador inteligente com reuso de squad salvo (F-531)',
+      detail:
+        'O orquestrador respeita os modelos escolhidos no squad pelo usuário em vez de forçar o fallback para gpt-5.5. ' +
+        'A ferramenta nexus_route_task agora está disponível para o orquestrador despachar subtarefas para a frota de ' +
+        'CLIs especializadas, sem executar missões complexas sozinho sem autorização.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'F-520: diálogos bloqueantes de pasta e segurança no GLM, Kimi e Claude',
+      detail:
+        'Configurado exactProjectTrust com realpath, pre-seeding de workspace-trust para Kimi e bypass de onboarding no .claude.json.',
+    },
+    {
+      title: 'F-521: prompt colado no pane sem Enter automático nos workers',
+      detail:
+        'Corrigida race condition no submitEnter e injectWithBusyProof; suporte a native argv initial prompt para qualquer role.',
+    },
+    {
+      title: 'F-530: barra lateral cortando badges e botões de busca',
+      detail:
+        'Ajustadas regras CSS da workspace rail e ampliado o limite de arraste do painel lateral.',
+    },
+    {
+      title: 'F-531: orquestrador ignorando squad salvo e assumindo gpt-5.5 sozinho',
+      detail:
+        'Incluso preferSavedSquad na síntese de squads, lookup de modelo em squads ativos no nexus_pane_spawn e doutrina de delegação.',
+    },
+  ],
+};
+
