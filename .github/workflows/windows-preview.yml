@@ -41,38 +41,6 @@ jobs:
           npm ci
           if ($LASTEXITCODE -ne 0) { throw 'npm ci failed' }
 
-      - name: Diagnose Windows SQLite file compatibility
-        shell: pwsh
-        run: |
-          @'
-          const fs = require('node:fs');
-          const path = require('node:path');
-          const os = require('node:os');
-          const Database = require('better-sqlite3');
-          const base = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-sqlite-probe-'));
-          const directory = path.join(base, 'projects', 'project-' + 'a'.repeat(64), 'checkout-' + 'b'.repeat(64), 'backups');
-          fs.mkdirSync(directory, { recursive: true });
-          const db = new Database(path.join(base, 'source.sqlite3'));
-          db.exec("CREATE TABLE proof (value TEXT); INSERT INTO proof VALUES ('fixture')");
-          for (const mode of ['raw', 'namespaced']) {
-            const target = path.join(directory, 'runtime-schema-0-to-42-1789386000000-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee-' + mode + '.sqlite3');
-            const sqliteTarget = mode === 'namespaced' ? path.toNamespacedPath(target) : target;
-            try {
-              db.prepare('VACUUM INTO ?').run(sqliteTarget);
-              console.log(JSON.stringify({mode, length: target.length, vacuum: 'passed'}));
-              for (const flags of ['r', 'r+']) {
-                let fd;
-                try { fd = fs.openSync(target, flags); fs.fsyncSync(fd); console.log(JSON.stringify({mode, flags, fsync: 'passed'})); }
-                catch (error) { console.log(JSON.stringify({mode, flags, fsync: 'failed', code: error.code, message: error.message})); }
-                finally { if (fd !== undefined) fs.closeSync(fd); }
-              }
-            } catch (error) { console.log(JSON.stringify({mode, length: target.length, vacuum: 'failed', code: error.code, message: error.message})); }
-          }
-          db.close();
-          fs.rmSync(base, { recursive: true, force: true });
-          '@ | node
-          if ($LASTEXITCODE -ne 0) { throw 'SQLite diagnostic failed to execute' }
-
       - name: Quality and packaging tests
         shell: pwsh
         run: |
@@ -121,18 +89,20 @@ jobs:
           if ($packages.Count -ne 1) { throw "expected one full NUPKG; found $($packages.Count)" }
           if ($releases.Count -ne 1) { throw "expected one RELEASES; found $($releases.Count)" }
 
-          $assets = 'windows-preview-assets'
-          New-Item -ItemType Directory -Force $assets | Out-Null
+          $installerAssets = 'windows-preview-installer'
+          $feedAssets = 'windows-preview-update-feed'
+          New-Item -ItemType Directory -Force $installerAssets | Out-Null
+          New-Item -ItemType Directory -Force $feedAssets | Out-Null
           # RELEASES contains the Squirrel package filename. Preserve every
           # original name so the downloaded artifact remains a usable feed.
           $setupName = $setups[0].Name
           $packageName = $packages[0].Name
           $releasesName = $releases[0].Name
           $metadataName = "NexusIDE-$version-win32-x64-preview.txt"
-          Copy-Item $setups[0].FullName (Join-Path $assets $setupName)
-          Copy-Item $packages[0].FullName (Join-Path $assets $packageName)
-          Copy-Item $releases[0].FullName (Join-Path $assets $releasesName)
-          @(
+          Copy-Item $setups[0].FullName (Join-Path $installerAssets $setupName)
+          Copy-Item $packages[0].FullName (Join-Path $feedAssets $packageName)
+          Copy-Item $releases[0].FullName (Join-Path $feedAssets $releasesName)
+          $metadata = @(
             'channel=private-actions-preview'
             'signing=unsigned'
             'public_release_eligible=false'
@@ -141,18 +111,31 @@ jobs:
             'platform=win32'
             'arch=x64'
             "commit=$env:GITHUB_SHA"
-          ) | Set-Content (Join-Path $assets $metadataName) -Encoding ascii
+          )
+          $metadata | Set-Content (Join-Path $installerAssets $metadataName) -Encoding ascii
+          $metadata | Set-Content (Join-Path $feedAssets $metadataName) -Encoding ascii
 
           $checksumName = "NexusIDE-$version-win32-x64-SHA256.txt"
-          @($setupName, $packageName, $releasesName, $metadataName) | ForEach-Object {
-            $hash = (Get-FileHash (Join-Path $assets $_) -Algorithm SHA256).Hash.ToLowerInvariant()
+          @($setupName, $metadataName) | ForEach-Object {
+            $hash = (Get-FileHash (Join-Path $installerAssets $_) -Algorithm SHA256).Hash.ToLowerInvariant()
             "$hash  $_"
-          } | Set-Content (Join-Path $assets $checksumName) -Encoding ascii
+          } | Set-Content (Join-Path $installerAssets $checksumName) -Encoding ascii
+          @($packageName, $releasesName, $metadataName) | ForEach-Object {
+            $hash = (Get-FileHash (Join-Path $feedAssets $_) -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $_"
+          } | Set-Content (Join-Path $feedAssets $checksumName) -Encoding ascii
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: windows-x64-unsigned-preview
-          path: windows-preview-assets/
+          name: windows-x64-unsigned-installer
+          path: windows-preview-installer/
+          if-no-files-found: error
+          retention-days: 7
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-x64-unsigned-update-feed
+          path: windows-preview-update-feed/
           if-no-files-found: error
           retention-days: 7
 
