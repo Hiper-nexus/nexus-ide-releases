@@ -58,7 +58,11 @@ export function assertReleaseQualifiedMissionWorkerSpawn(
     adapter?.kind === 'cli-pty' &&
     isReleaseQualifiedMissionWorkerCli(adapter.id) &&
     isBuiltinAdapter(adapter.id) &&
-    supportsEnforceableWorkspaceWriteNativeAuthority(adapter) &&
+    // F-525: sandbox nativo (Codex) OU boundary worktree+merge (demais builtin
+    // writáveis) — a exigência de sandbox nativo deixava o governed inteiro
+    // concentrado num único CLI, o sintoma relatado pelo dono do produto.
+    (supportsEnforceableWorkspaceWriteNativeAuthority(adapter) ||
+      supportsTaskWorktreeMergeBoundary(adapter.id)) &&
     (options.readOnly !== true ||
       supportsEnforceableReadOnlyNativeAuthority(adapter));
   if (qualified) return;
@@ -73,10 +77,11 @@ export function assertReleaseQualifiedMissionWorkerSpawn(
   if (readOnlyParticipant) return;
   throw new Error(
     `governed_worker_spawn_unsupported: ${options.adapterId} não pode executar ` +
-      'como worker autônomo de missão nesta release; use o adapter Codex builtin ' +
+      'como worker autônomo de missão nesta release; use um adapter builtin ' +
+      'qualificado (Codex, Claude, AGY, Grok, GLM, Kimi), ' +
       // Nav real: Configurações › Squads (OrchestratorDefaults). Não existe
       // seção "Orquestração" — mandar o operador para lá custava a busca toda.
-      'qualificado, ative Configurações › Squads › Escolha livre, ou abra ' +
+      'ative Configurações › Squads › Escolha livre, ou abra ' +
       'esse CLI manualmente no Terminal fora da missão',
   );
 }
@@ -84,8 +89,9 @@ export function assertReleaseQualifiedMissionWorkerSpawn(
 /**
  * Whether a revision-bound writable worker may use this adapter under the
  * current squad CLI policy. Codex native sandbox qualifies in governed mode;
- * under operator-choice any live cli-pty qualifies for an isolated task
- * worktree.
+ * F-525: the remaining builtin release-qualified writers qualify through the
+ * task-worktree + Main-owned merge boundary; under operator-choice any live
+ * cli-pty qualifies for an isolated task worktree.
  */
 export function isRevisionBoundWritableWorkerAdapterAllowed(
   adapterId: string,
@@ -98,8 +104,19 @@ export function isRevisionBoundWritableWorkerAdapterAllowed(
     return true;
   }
   return (
-    adapter.id === 'codex' &&
+    isReleaseQualifiedMissionWorkerCli(adapter.id) &&
     isBuiltinAdapter(adapter.id) &&
-    supportsEnforceableWorkspaceWriteNativeAuthority(adapter)
+    (supportsEnforceableWorkspaceWriteNativeAuthority(adapter) ||
+      supportsTaskWorktreeMergeBoundary(adapter.id))
   );
+}
+
+/**
+ * F-525: builtin writers without a provider-native write sandbox (everything
+ * except Codex today) still have the durable integration boundary: a
+ * physically isolated per-task worktree plus the Main-owned validated merge.
+ * That is the same boundary the product ships by default (Autopilot).
+ */
+function supportsTaskWorktreeMergeBoundary(adapterId: string): boolean {
+  return isReleaseQualifiedMissionWorkerCli(adapterId);
 }

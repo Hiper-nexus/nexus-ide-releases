@@ -19,7 +19,7 @@ describe('squad model defaults', () => {
 
   it('fills only an empty model and preserves a manual choice', () => {
     expect(applySquadModelDefault({ cli: 'codex' }).model).toBe('gpt-5.6-sol');
-    expect(applySquadModelDefault({ cli: 'grok' }).model).toBe('grok-4.5');
+    expect(applySquadModelDefault({ cli: 'grok' }).model).toBe('grok-4.6');
     expect(applySquadModelDefault({ cli: 'agy' }).model).toBe('gemini-3.8-pro-high');
     expect(applySquadModelDefault({ cli: 'grok', model: 'grok-4.1' }).model).toBe(
       'grok-4.1',

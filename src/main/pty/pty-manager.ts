@@ -43,6 +43,7 @@ import {
   isPetStudioNativeWorkspaceAuthority,
   requiresReadOnlyNativeAuthority,
   secureAutonomousCliArgs,
+  supportsEnforceableWorkspaceWriteNativeAuthority,
 } from "./autonomous-cli-policy";
 import type {
   PtyHost,
@@ -69,6 +70,7 @@ import {
   type CodexGovernedProcessSandbox,
 } from "../orch/cli-mcp-session-config";
 import { requiresSpawnGate } from "../orch/spawn-home-policy";
+import { isReleaseQualifiedMissionWorkerCli } from "../orch/squad-runtime-policy";
 import {
   codexGovernedSandboxLaunchMode,
   sealCodexPrivateProcessEnvironment,
@@ -1705,7 +1707,15 @@ export function spawnAgentSession(
       isAdvisoryUnconfinedCli(adapter.id),
   );
   const operatorChoiceWorkspaceWrite = Boolean(
-    executionPolicy.isFrictionless && writableWorkerIntent,
+    writableWorkerIntent &&
+      (executionPolicy.isFrictionless ||
+        // F-525: governed writer sem sandbox nativo de escrita usa o boundary
+        // Autopilot (worktree isolada + merge Main-owned). Vale apenas para o
+        // conjunto release-qualified — adapters fora dele continuam recusados
+        // aqui embaixo (defesa em camadas com o gate de spawn authority).
+        (executionPolicy.enforceWorkspaceWriteSandbox &&
+          !supportsEnforceableWorkspaceWriteNativeAuthority(adapter) &&
+          isReleaseQualifiedMissionWorkerCli(adapter.id))),
   );
   const frictionlessMissionWorker = Boolean(
     executionPolicy.isFrictionless &&
@@ -1756,7 +1766,14 @@ export function spawnAgentSession(
       );
     }
     if (nativeReadOnly || enforceWorkspaceWriteSandbox) {
+      // F-525: a exigência de resume main-owned pertence ao confinamento
+      // nativo (Codex). Writers builtin sem sandbox nativo rodam no boundary
+      // worktree+merge — o resume deles não precisa do selo de sessão.
+      const nativeConfinedWriter =
+        enforceWorkspaceWriteSandbox &&
+        supportsEnforceableWorkspaceWriteNativeAuthority(adapter);
       if (
+        (nativeReadOnly || nativeConfinedWriter) &&
         providerResumeRequested &&
         trustedResumeArgs.length === 0
       ) {

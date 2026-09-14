@@ -655,12 +655,21 @@ export function routeTask(
   }
 
   // No table adapter installed at all — degrade to whatever exists.
-  const fallback = [...available.keys()][0];
+  // F-525: "whatever exists" não pode ser sempre o primeiro (concentrava a
+  // missão num único CLI, tipicamente Codex). Escolhe o MENOS USADO da missão
+  // entre os disponíveis — o mesmo sinal de diversidade do multi-score, agora
+  // no degrau final.
+  const fallbackPool = [...available.keys()];
+  const useCount = (id: string): number =>
+    context.missionUseCounts?.get(id) ?? 0;
+  const fallback = fallbackPool.reduce((least, id) =>
+    useCount(id) < useCount(least) ? id : least,
+  fallbackPool[0]!);
   return {
     tier,
     adapterId: fallback,
     effort: applyEffortFloor(table[tier][0]?.effort, policy.effortFloor),
-    reason: `${tier}; specialty=${specialtyVerdict.specialty} source=${policy.source}; ${why}; nenhum candidato da tabela instalado — usando ${fallback}`,
+    reason: `${tier}; specialty=${specialtyVerdict.specialty} source=${policy.source}; ${why}; nenhum candidato da tabela instalado — usando ${fallback} (menos usado na missão)`,
     alternatives: [],
     specialty: specialtyVerdict.specialty,
     policySource: policy.source,

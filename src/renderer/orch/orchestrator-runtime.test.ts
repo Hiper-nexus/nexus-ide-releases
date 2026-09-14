@@ -183,7 +183,7 @@ describe('resolveOrchestratorRuntime', () => {
         defaultAccountId: '',
         accounts: [],
       }).model,
-    ).toBe('grok-4.5');
+    ).toBe('grok-4.6');
     expect(
       resolveOrchestratorRuntime({
         adapterId: 'agy',

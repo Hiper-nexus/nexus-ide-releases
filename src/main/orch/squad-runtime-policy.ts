@@ -82,14 +82,28 @@ export interface SquadRuntimeAgentLike {
  * Current-release id backstop for unattended mission workers under the
  * `governed` squad CLI policy.
  *
- * Capability metadata remains necessary, but it is not sufficient on its own:
- * the physical task planner/dispatcher only implements provider-native
- * confined read/write for the builtin Codex path. Under `operator-choice`
- * (see orch.squadCliPolicy) any handoff-capable CLI may write inside its
- * isolated worktree; only the Main-owned validated merge promotes the result.
- * Manual panes and direct routing remain available either way.
+ * F-525 (2026-09-14, decisão do dono do produto): a lane governada abre para
+ * os CLIs builtin writáveis do produto. O Codex continua no seu sandbox
+ * nativo (workspace-write probe-verified); os demais escrevem sob o MESMO
+ * boundary já provado do Autopilot — worktree isolada por tarefa + merge
+ * validado pelo Main — em vez de exigir um sandbox nativo que só o Codex
+ * expõe. A concentração de toda missão num único CLI (Codex) era o sintoma
+ * relatado; a distribuição (route multi-score, first-wave spread, squad
+ * architect round-robin) já existia e agora tem pool multi-CLI para trabalhar
+ * nos dois modos.
+ *
+ * Capability metadata (autonomousWorkspaceWriteCapable / handoff) continua
+ * sendo filtro necessário nas demais camadas.
  */
-const RELEASE_QUALIFIED_MISSION_WORKER_CLIS = new Set(["codex"]);
+const RELEASE_QUALIFIED_MISSION_WORKER_CLIS = new Set([
+  "codex",
+  "claude",
+  "agy",
+  "grok",
+  "glm",
+  "glm-flash",
+  "kimi",
+]);
 
 export function isReleaseQualifiedMissionWorkerCli(
   adapterId: string,

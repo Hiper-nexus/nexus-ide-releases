@@ -3,7 +3,7 @@ import { CODEX_FRONTIER_MODEL } from './model-defaults';
 /** Product defaults for newly created or provider-switched squad agents. */
 export const SQUAD_MODEL_DEFAULTS = {
   codex: CODEX_FRONTIER_MODEL,
-  grok: 'grok-4.5',
+  grok: 'grok-4.6',
   gemini: 'gemini-3.8-pro-high',
 } as const;
 

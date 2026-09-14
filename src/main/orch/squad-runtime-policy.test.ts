@@ -121,11 +121,16 @@ describe("buildSquadRuntimeCliPolicy", () => {
     expect(policy.routableWorkerCliIds.has("claude")).toBe(false);
   });
 
-  it("does not let a forged capability promote Kimi into a governed mission worker", () => {
+  it("F-525: qualified builtin writers (Kimi) join the governed worker pool; non-qualified stay out", () => {
     const policy = buildSquadRuntimeCliPolicy(
       [
         provider("codex"),
         provider("kimi", {
+          seatAuthReadiness: "present",
+          guidedHandoffCapable: true,
+          autonomousWorkspaceWriteCapable: true,
+        }),
+        provider("opencode", {
           seatAuthReadiness: "present",
           guidedHandoffCapable: true,
           autonomousWorkspaceWriteCapable: true,
@@ -135,7 +140,10 @@ describe("buildSquadRuntimeCliPolicy", () => {
     );
 
     expect(policy.routableCliIds.has("kimi")).toBe(true);
-    expect([...policy.routableWorkerCliIds]).toEqual(["codex"]);
+    // Kimi agora é release-qualified (boundary worktree+merge, F-525);
+    // opencode continua fora do pool governado de writers.
+    expect(policy.routableWorkerCliIds.has("kimi")).toBe(true);
+    expect(policy.routableWorkerCliIds.has("opencode")).toBe(false);
   });
 
   it("fails closed when a provider row has no loaded main-owned adapter", () => {

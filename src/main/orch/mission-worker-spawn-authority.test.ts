@@ -45,12 +45,26 @@ describe('mission-worker-spawn-authority', () => {
     ).not.toThrow();
   });
 
-  it('blocks kimi writers under governed', () => {
+  it('F-525: allows kimi writers under governed via task-worktree boundary', () => {
+    // Decisão do dono do produto: builtin writáveis sem sandbox nativo usam o
+    // boundary worktree+merge em vez de ficarem fora da lane governada.
     getAdapter.mockReturnValue({ id: 'kimi', kind: 'cli-pty' });
     supportsEnforceableWorkspaceWriteNativeAuthority.mockReturnValue(false);
     expect(() =>
       assertReleaseQualifiedMissionWorkerSpawn({
         adapterId: 'kimi',
+        missionId: 'm1',
+        role: 'worker',
+      }),
+    ).not.toThrow();
+  });
+
+  it('F-525: still fails closed for adapters outside the release-qualified set', () => {
+    getAdapter.mockReturnValue({ id: 'opencode', kind: 'cli-pty' });
+    supportsEnforceableWorkspaceWriteNativeAuthority.mockReturnValue(false);
+    expect(() =>
+      assertReleaseQualifiedMissionWorkerSpawn({
+        adapterId: 'opencode',
         missionId: 'm1',
         role: 'worker',
       }),

@@ -2829,7 +2829,7 @@ describe("cli-agent spawn argv hardening", () => {
     }
   });
 
-  it.each(["kimi", "opencode"])(
+  it.each(["opencode"])(
     "refuses an isolated autonomous %s worker before a process is spawned",
     (adapterId) => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-pty-sandbox-"));
@@ -2874,6 +2874,49 @@ describe("cli-agent spawn argv hardening", () => {
       }
     },
   );
+
+  it("F-525: governed kimi writer spawns via task-worktree boundary (worktree+merge) instead of failing closed", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-pty-sandbox-"));
+    const worktree = path.join(root, "worker");
+    fs.mkdirSync(worktree);
+    try {
+      const coordination = trustedSpawn(fs.realpathSync(root)).scope;
+      const execution = trustedSpawn(fs.realpathSync(worktree)).scope;
+      const authority: BoundSpawnAuthority = {
+        source: "pending",
+        cwd: execution.rootRealPath,
+        scope: execution,
+        coordinationScope: coordination,
+        context: {
+          missionId: "mission-isolated",
+          contextRevision: "revision-isolated",
+          role: "worker",
+          workerIncarnationId: "worker-isolated",
+          allowedTools: [],
+          allowedSkills: null,
+          scope: coordination,
+          executionScope: execution,
+        },
+      };
+      const adapter = builtinCliPtyAdapter("kimi");
+      const h = fakeHost();
+      const spawn = vi.spyOn(h.host, "spawn");
+      setPtyHost(h.host);
+
+      expect(() =>
+        spawnAgentSession(
+          fakeWc(),
+          { kind: "cli-agent", cols: 80, rows: 24 },
+          adapter,
+          { extraArgs: adapter.control?.permission?.yolo ?? [] },
+          authority,
+        ),
+      ).not.toThrow();
+      expect(spawn).toHaveBeenCalledTimes(1);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 
   it.each([
     ["kimi", "--yolo"],

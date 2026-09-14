@@ -101,7 +101,7 @@
       ]
     },
     "grok": {
-      "default": "grok-4.5",
+      "default": "grok-4.6",
       "models": [
         {
           "id": "grok-4.6",
