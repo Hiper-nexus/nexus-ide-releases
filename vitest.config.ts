@@ -17,6 +17,8 @@ export default defineConfig({
       // Archived QA artifacts may contain node:test examples, not product suites.
       'docs/qa/evidence/**',
       'docs/analysis/overclock-13318-extract/**',
+      // Mobile companion is a separate React Native/Expo workspace with its own runner.
+      'mobile/**',
     ],
     setupFiles: ['./src/test/vitest.setup.ts'],
     // The root run also collects server PGlite suites, and `server/vitest.config.ts`

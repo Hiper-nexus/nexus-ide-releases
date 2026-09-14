@@ -7,6 +7,32 @@
 // Import APENAS de tipo: apagado na compilação, o preload segue sem runtime.
 import type { MissionBlockCauseCode } from './mission-block-cause';
 
+export type SpriteAnimation = {
+  row: number;
+  frames: number;
+  frameDurationsMs?: number[];
+};
+
+export type CustomPet = {
+  id: string;
+  label: string;
+  fileName: string;
+  mimeType: string;
+  kind?: 'image' | 'bundle';
+  sprite?: {
+    frameWidth: number;
+    frameHeight: number;
+    columns: number;
+    rows: number;
+    sheetWidth: number;
+    sheetHeight: number;
+    fps: number;
+    defaultAnimation?: string;
+    animations?: Record<string, SpriteAnimation>;
+  };
+  spriteFps?: number;
+};
+
 export const PET_CHANNELS = {
   /** invoke: renderer (qualquer janela) → main. Lê as prefs atuais. */
   getPrefs: 'pet:getPrefs',

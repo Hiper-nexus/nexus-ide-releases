@@ -16,6 +16,7 @@ import {
 
 export const AGENT_STATUS_STATES = ['working', 'blocked', 'waiting', 'done'] as const
 export type AgentStatusState = (typeof AGENT_STATUS_STATES)[number]
+export type AgentWorkingMode = 'monitoring'
 // Why: agent types are not restricted to a fixed set — new agents appear
 // regularly and users may run custom agents. Any non-empty string is accepted;
 // well-known names are kept as a convenience union for internal code that
@@ -78,6 +79,17 @@ export type AgentStatusOrchestrationContext = {
   orchestrationRunId?: string
 }
 
+export type AgentSubagentState = 'working' | 'blocked' | 'waiting' | 'idle' | 'unverifiable'
+
+export type AgentSubagentSnapshot = {
+  id: string
+  agentType?: string
+  model?: string
+  description?: string
+  state: AgentSubagentState
+  startedAt: number
+}
+
 export type AgentStatusEntry = {
   state: AgentStatusState
   /** The user's most recent prompt, when the hook payload carried one.
@@ -135,6 +147,9 @@ export type AgentStatusEntry = {
   /** Provider-owned conversation/session id captured from hook payloads.
    *  Used only for exact CLI resume; Orca terminal ids are not agent-session ids. */
   providerSession?: AgentProviderSessionMetadata
+  workingMode?: AgentWorkingMode
+  model?: string
+  subagents?: AgentSubagentSnapshot[]
 }
 
 export type MigrationUnsupportedPtyEntry = {
@@ -166,6 +181,9 @@ export type AgentStatusPayload = {
   lastAssistantMessage?: string
   interrupted?: boolean
   providerSession?: AgentProviderSessionMetadata
+  workingMode?: AgentWorkingMode
+  model?: string
+  subagents?: AgentSubagentSnapshot[]
 }
 
 /**
