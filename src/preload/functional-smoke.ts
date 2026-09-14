@@ -16,6 +16,7 @@ import {
   type FunctionalSmokeResult,
 } from '../shared/smoke-types';
 import { FEATURE_FLAG_IDS } from '../shared/feature-flags';
+import { stripTerminalControlSequences } from '../shared/terminal-control-sequences';
 import {
   missionReviewSchema,
   type MissionPrepareRequest,
@@ -662,7 +663,9 @@ export async function runFunctionalSmokeProbes(
           );
           if (!spaceDelivered) return false;
           const echoed = (): boolean =>
-            dictationEcho.slice(before).replace(/\s+/gu, ' ').includes(typed);
+            stripTerminalControlSequences(dictationEcho.slice(before))
+              .replace(/\s+/gu, ' ')
+              .includes(typed);
           for (let attempt = 0; attempt < 50 && !echoed(); attempt += 1) {
             await delay(100);
           }

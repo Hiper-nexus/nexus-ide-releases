@@ -65,6 +65,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'focused packaging tests failed' }
           npx vitest run src/main/pty/pty-manager.test.ts -t 'Windows operator shell'
           if ($LASTEXITCODE -ne 0) { throw 'Windows shell spawn arguments failed' }
+          npx vitest run src/shared/terminal-control-sequences.test.ts src/preload/functional-smoke.test.ts
+          if ($LASTEXITCODE -ne 0) { throw 'functional terminal echo tests failed' }
           npx vitest run scripts/smoke-packaged-app.test.mjs -t ASAR
           if ($LASTEXITCODE -ne 0) { throw 'cross-platform ASAR tests failed' }
 

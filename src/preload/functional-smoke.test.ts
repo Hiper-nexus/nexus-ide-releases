@@ -56,7 +56,9 @@ function successfulMissionReview(
 }
 
 
-function successfulApi(): FunctionalSmokeApi {
+function successfulApi(
+  echoTransform: (data: string) => string = (data) => data,
+): FunctionalSmokeApi {
   return {
     workspace: {
       open: vi.fn(async (workspacePath: string) => ({
@@ -107,7 +109,7 @@ function successfulApi(): FunctionalSmokeApi {
         writeConfirmed: vi.fn(async (sessionId: string, data: string) => {
           if (sessionId !== 'pty-smoke-1') return false;
           // Eco do TTY: o texto digitado volta pelo stream de dados.
-          queueMicrotask(() => listeners.get(sessionId)?.(data));
+          queueMicrotask(() => listeners.get(sessionId)?.(echoTransform(data)));
           return true;
         }),
         kill: vi.fn((sessionId: string) => {
@@ -479,6 +481,23 @@ describe('runFunctionalSmokeProbes — ditado obrigatório no smoke empacotado',
 });
 
 describe('runFunctionalSmokeProbes — Space hold-to-talk no smoke empacotado', () => {
+  it('recognizes the unique physical echo through ConPTY VT control sequences', async () => {
+    const api = successfulApi((data) =>
+      data === 'nexus-tap space-marker'
+        ? 'nexus-tap\u001b]0;PowerShell\u0007 \u001b[?25hspace-marker'
+        : data,
+    );
+
+    const result = await runFunctionalSmokeProbes(
+      api,
+      '/tmp/nexus-smoke-workspace',
+      { delay: async () => {}, probeTimeoutMs: 100 },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.probes).toContain('dictation-hold-to-talk');
+  });
+
   it('prova o contrato do discriminador e a entrega física do espaço do toque', async () => {
     const api = successfulApi();
 

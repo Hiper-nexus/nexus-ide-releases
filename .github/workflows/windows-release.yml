@@ -75,7 +75,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'typecheck failed' }
           npm run security:renderer-sinks
           if ($LASTEXITCODE -ne 0) { throw 'renderer sinks failed' }
-          npx vitest run forge.config.test.ts scripts/build-windows-icon.test.mjs build/prune-native-payload.test.ts scripts/rebuild-node-natives.test.mjs scripts/windows-release-workflow.test.mjs src/main/updater.test.ts src/main/updater-feed.test.ts
+          npx vitest run forge.config.test.ts scripts/build-windows-icon.test.mjs build/prune-native-payload.test.ts scripts/rebuild-node-natives.test.mjs scripts/windows-release-workflow.test.mjs src/shared/terminal-control-sequences.test.ts src/preload/functional-smoke.test.ts src/main/updater.test.ts src/main/updater-feed.test.ts
           if ($LASTEXITCODE -ne 0) { throw 'release tests failed' }
 
       - name: Build using preconfigured CKA certificate store
