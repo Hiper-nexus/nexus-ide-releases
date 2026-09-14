@@ -319,4 +319,32 @@ describe('UpdateManager', () => {
       process.env.NEXUS_UPDATE_FEED = prevFeed;
     }
   });
+
+  it('trata feed Windows ausente como nenhuma atualização publicada', () => {
+    const listeners = new Map<string, (err: unknown) => void>();
+    electron.autoUpdater.on.mockImplementation((event: string, cb: (err: unknown) => void) => {
+      listeners.set(event, cb);
+      return electron.autoUpdater;
+    });
+    const prevFeed = process.env.NEXUS_UPDATE_FEED;
+    process.env.NEXUS_UPDATE_FEED = 'https://update.electronjs.org/Hiper-nexus/nexus-ide-releases/win32-x64/0.15.0';
+    try {
+      const manager = new UpdateManager(true, {
+        runtimeArch: 'x64',
+        runtimePlatform: 'win32',
+        runtimeArgs: [],
+        appExecutablePath: 'C:\\NexusIDE\\app-0.15.0\\nexus-ide.exe',
+        pathExists: () => true,
+      });
+      manager.init();
+      listeners.get('error')?.(new Error('Unexpected response code: 404'));
+      expect(manager.getState()).toMatchObject({
+        phase: 'uptodate',
+        error: undefined,
+      });
+      expect(manager.getState().checkedAt).toEqual(expect.any(Number));
+    } finally {
+      process.env.NEXUS_UPDATE_FEED = prevFeed;
+    }
+  });
 });

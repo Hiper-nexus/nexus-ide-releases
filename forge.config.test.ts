@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 
 import forgeConfig, {
   assertRequiredWakeResource,
   createLinuxDebMakerConfig,
   createLinuxRpmMakerConfig,
+  createWindowsInstallerBrandingConfig,
   createWindowsSignOptions,
 } from './forge.config';
 
@@ -66,6 +68,18 @@ describe('Windows release signing', () => {
     }],
   ])('rejects %s', (_name, environment) => {
     expect(() => createWindowsSignOptions(environment)).toThrow();
+  });
+});
+
+describe('Windows installer branding', () => {
+  it('uses the Nexus icon and branded loading artwork', () => {
+    expect(createWindowsInstallerBrandingConfig()).toMatchObject({
+      setupIcon: 'assets/icon.ico',
+      iconUrl: 'https://raw.githubusercontent.com/Hiper-nexus/nexus-ide-releases/main/icon.ico',
+      loadingGif: 'assets/installer-loading.gif',
+    });
+    expect(existsSync(path.resolve('assets/icon.ico'))).toBe(true);
+    expect(existsSync(path.resolve('assets/installer-loading.gif'))).toBe(true);
   });
 });
 

@@ -810,6 +810,20 @@ export class UpdateManager {
     autoUpdater.on('error', (err) => {
       writeUpdateLog('warn', 'squirrel:error', err);
       const raw = String(err?.message ?? err);
+      // A feed can legitimately return 404 while the public mirror has no
+      // Windows asset for this channel yet. Treat that as a quiet "no update"
+      // result instead of surfacing a scary red error to every installed user.
+      // Any other transport/signature failure remains fail-visible below.
+      if (/\b404\b|not found|não localizado/i.test(raw)) {
+        writeUpdateLog('info', 'squirrel:feed-empty', { status: 404 });
+        this.patch({
+          phase: 'uptodate',
+          available: undefined,
+          error: undefined,
+          checkedAt: Date.now(),
+        });
+        return;
+      }
       const error = raw.includes('Could not get code signature')
         ? 'O app atual foi aberto fora de /Applications ou a partir de build sem assinatura Developer ID. Instale o .dmg oficial para atualizar.'
         : raw.slice(0, 200);

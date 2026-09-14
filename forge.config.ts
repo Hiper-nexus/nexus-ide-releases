@@ -33,6 +33,13 @@ import {
 const WINDOWS_SETUP_ICON = 'assets/icon.ico';
 
 /**
+ * Branded Squirrel.Windows progress artwork. Keeping this beside the icon
+ * makes the first-run installer feel like NexusIDE from the very first frame,
+ * instead of showing Squirrel's generic spinner.
+ */
+const WINDOWS_INSTALLER_LOADING_GIF = 'assets/installer-loading.gif';
+
+/**
  * URL pública do mesmo ícone, exigida pelo Squirrel para a entrada em "Adicionar
  * ou remover programas". Precisa ser um endereço estável e alcançável por quem
  * instala; não é buscada no build, é gravada como metadado.
@@ -42,6 +49,18 @@ const WINDOWS_SETUP_ICON = 'assets/icon.ico';
  */
 const WINDOWS_SETUP_ICON_URL =
   'https://raw.githubusercontent.com/Hiper-nexus/nexus-ide-releases/main/icon.ico';
+
+export function createWindowsInstallerBrandingConfig(): {
+  setupIcon: string;
+  iconUrl: string;
+  loadingGif: string;
+} {
+  return {
+    setupIcon: WINDOWS_SETUP_ICON,
+    iconUrl: WINDOWS_SETUP_ICON_URL,
+    loadingGif: WINDOWS_INSTALLER_LOADING_GIF,
+  };
+}
 
 const MICROPHONE_USAGE_DESCRIPTION =
   'NexusIDE uses the microphone for push-to-talk voice commands (Jarvis mode).';
@@ -451,8 +470,7 @@ const config: ForgeConfig = {
     // rcedit recebe o valor cru, e o CWD é a raiz tanto no build normal quanto na
     // worktree descartável do release.
     new MakerSquirrel({
-      setupIcon: WINDOWS_SETUP_ICON,
-      iconUrl: WINDOWS_SETUP_ICON_URL,
+      ...createWindowsInstallerBrandingConfig(),
       ...(squirrelWindowsSignOptions
         ? {
             windowsSign:
