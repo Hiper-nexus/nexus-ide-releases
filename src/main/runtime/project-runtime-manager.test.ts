@@ -615,7 +615,7 @@ describe('ProjectRuntimeManager migrations and health', () => {
 
     expect(backupPath).toBeTruthy();
     expect(fs.existsSync(backupPath as string)).toBe(true);
-    const backup = new Database(backupPath as string, {
+    const backup = new Database(sqliteFilePath(backupPath as string), {
       readonly: true,
       fileMustExist: true,
     });
