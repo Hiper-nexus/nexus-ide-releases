@@ -14,6 +14,9 @@ dist/
 !third_party/brace-expansion-compat/upstream/dist/commonjs/package.json
 server/dist-relay/
 out/
+# Collected signed Windows release payload; published as GitHub release assets,
+# never committed to Git (the Setup/NUPKG are hundreds of megabytes).
+/windows-release-assets/
 build/*
 # ...but keep the source-controlled macOS packaging/signing configuration.
 # Forge imports these files during a clean CI checkout, so none may remain
