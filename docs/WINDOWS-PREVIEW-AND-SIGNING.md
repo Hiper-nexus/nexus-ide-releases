@@ -1,5 +1,8 @@
 # Windows x64 preview and signing
 
+Para continuar esta tarefa em outra máquina, comece pelo
+[roteiro Windows com certificado público](windows-signing/CONTINUAR-NO-WINDOWS.md).
+
 The hosted `Windows x64 unsigned preview` workflow builds only private test
 artifacts. Its Setup.exe and NUPKG are unsigned, have not been validated through
 the installer, and are not eligible for a public release. A push to a
