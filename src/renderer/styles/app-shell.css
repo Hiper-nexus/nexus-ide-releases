@@ -343,12 +343,17 @@
 
 .workspace-rail__search-placeholder {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   text-align: left;
 }
 
 .workspace-rail__search-kbd {
   display: inline-flex;
   align-items: center;
+  flex-shrink: 0;
   padding: 0 var(--space-1);
   border-radius: var(--radius-xs);
   border: 1px solid var(--border);
@@ -428,6 +433,8 @@
   font-weight: 600;
   line-height: 1.2;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .workspace-rail__mission-cta-sub {
@@ -1974,6 +1981,10 @@
 .workspace-cleanup[open] > .workspace-cleanup__title::before { content: '\2212'; }
 .workspace-cleanup__title:hover { background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--text); }
 .workspace-cleanup__actions { padding-bottom: var(--space-1); }
+/* F-528: linha compacta sempre visível — as ações destrutivas não podem
+   morrer escondidas atrás do disclosure (o dono as procurou e não achou). */
+.workspace-cleanup__actions--inline { display: flex; gap: var(--space-1); padding-bottom: var(--space-1); }
+.workspace-cleanup__actions--inline button { display: block; flex: 1 1 0; min-width: 0; text-align: center; padding: var(--space-1) var(--space-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .workspace-cleanup button { display: block; width: 100%; text-align: left; padding: var(--space-2); margin-top: var(--space-1); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-elevated); color: var(--text); font: inherit; cursor: pointer; }
 .workspace-cleanup button:hover:not(:disabled) { border-color: var(--danger); }
 .workspace-cleanup button:disabled { opacity: .5; cursor: wait; }

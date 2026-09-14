@@ -32,13 +32,6 @@ export function WorkspaceCleanup() {
   const workspace = useWorkspaceStore((state) => state.current);
   const running = useRef(false);
   const [busy, setBusy] = useState(false);
-  /**
-   * Recolhida por padrão (DESIGN.md §13: "Limpeza permanece recolhida junto às
-   * utilidades do projeto"). Fixa e aberta, ela ocupava ~100px permanentes do
-   * rodapé do rail — espaço tirado da única região elástica, a lista de
-   * projetos — para hospedar duas ações destrutivas que ninguém usa por dia.
-   */
-  const [open, setOpen] = useState(false);
   if (!workspace) return null;
 
   async function clean(kind: 'panes' | 'missions') {
@@ -83,33 +76,32 @@ export function WorkspaceCleanup() {
   }
 
   return (
-    <details
-      className="workspace-cleanup"
-      open={open}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
-    >
-      <summary className="workspace-cleanup__title">Limpar projeto</summary>
-      {open ? (
-        <div className="workspace-cleanup__actions">
-          <button
-            type="button"
-            data-action="clean-panes"
-            disabled={busy}
-            onClick={() => void clean('panes')}
-          >
-            Fechar todos os panes
-          </button>
-          <button
-            type="button"
-            data-action="clean-missions"
-            disabled={busy}
-            onClick={() => void clean('missions')}
-          >
-            Apagar todas as missões
-          </button>
-          {busy && <span role="status">Aguarde…</span>}
-        </div>
-      ) : null}
-    </details>
+    <div className="workspace-cleanup workspace-cleanup--inline">
+      {/* F-528: linha compacta SEMPRE visível — as ações viveram escondidas
+          atrás de um disclosure recolhido e o dono do produto as procurou sem
+          achar. A confirmação com o texto completo continua na frente da
+          ação destrutiva. */}
+      <span className="workspace-cleanup__title">Limpar projeto</span>
+      <div className="workspace-cleanup__actions workspace-cleanup__actions--inline">
+        <button
+          type="button"
+          data-action="clean-panes"
+          disabled={busy}
+          title="Fechar todos os panes deste projeto (histórico preservado)"
+          onClick={() => void clean('panes')}
+        >
+          {busy ? '…' : '✕ Panes'}
+        </button>
+        <button
+          type="button"
+          data-action="clean-missions"
+          disabled={busy}
+          title="Encerrar as missões deste projeto e apagar o histórico (não pode ser desfeito)"
+          onClick={() => void clean('missions')}
+        >
+          {busy ? '…' : '✕ Missões'}
+        </button>
+      </div>
+    </div>
   );
 }

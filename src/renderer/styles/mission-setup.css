@@ -1394,16 +1394,18 @@
 }
 
 /* Corpo colapsável do brief: por padrão mostra ~3 linhas com fade no rodapé.
-   Expandido com --open: max-height maior + overflow interno. */
+   Expandido com --open: linha maior + overflow interno. grid-template-rows
+   anima sem layout thrash (max-height repintava o documento inteiro). */
 .mission-review__brief-body {
   position: relative;
-  max-height: 72px;
+  display: grid;
+  grid-template-rows: 72px;
   overflow: hidden;
-  transition: max-height 220ms var(--ease-out-quart);
+  transition: grid-template-rows 220ms var(--ease-out-quart);
 }
 
 .mission-review__brief-body--open {
-  max-height: 340px;
+  grid-template-rows: 340px;
   overflow-y: auto;
 }
 

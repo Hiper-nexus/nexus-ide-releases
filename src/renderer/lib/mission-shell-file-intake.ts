@@ -164,8 +164,10 @@ function classifyDroppedUri(uri: string): DroppedUri['kind'] | null {
 }
 
 /**
- * O que dá para aproveitar quando `files` veio vazia: o `text/uri-list` e,
- * na falta dele, um `text/plain` que seja exatamente UM link http(s).
+ * O que dá para aproveitar quando `files` veio vazia: o `text/uri-list`, o
+ * flavor `DownloadURL` do Chromium (promessa de mídia arrastada de apps
+ * Electron/web — é assim que o WhatsApp Desktop entrega imagem), um
+ * `text/plain` que seja UM link http(s) ou um caminho absoluto local.
  *
  * O `file://` NÃO é decodificado aqui — o main faz isso com `fileURLToPath`,
  * que também valida o host. Esquemas fora de file/http(s) (data:, blob:,
@@ -176,10 +178,27 @@ export function resolveDropUris(
   transfer: DroppedPayload | null | undefined,
 ): DropUriResolution {
   if (!transfer) return { accepted: [], rejected: [] };
-  let candidates = uriListLines(transfer.getData?.('text/uri-list') ?? '');
+  const candidates: string[] = [
+    ...uriListLines(transfer.getData?.('text/uri-list') ?? ''),
+  ];
+  if (candidates.length === 0) {
+    // DownloadURL: "mime:filename:url" — o flavor de promessa de download do
+    // Chromium. A 3ª parte (depois do 2º ':') é o endereço real.
+    const downloadUrl = (transfer.getData?.('DownloadURL') ?? '').trim();
+    const match = /^[-\w.+]+\/[-\w.+]+:[^:]*:(https?:\/\/\S+)$/i.exec(
+      downloadUrl,
+    );
+    if (match) candidates.push(match[1]!);
+  }
   if (candidates.length === 0) {
     const text = (transfer.getData?.('text/plain') ?? '').trim();
-    if (/^https?:\/\/\S+$/i.test(text)) candidates = [text];
+    if (/^https?:\/\/\S+$/i.test(text)) {
+      candidates.push(text);
+    } else if (/^\/\S/.test(text) && !text.includes('\n')) {
+      // Caminho absoluto local (cache de mídia de apps nativos). Espaços
+      // precisam de encode para virar um file:// válido no main.
+      candidates.push(`file://${encodeURI(text)}`);
+    }
   }
   const accepted: DroppedUri[] = [];
   const rejected: string[] = [];
@@ -230,7 +249,7 @@ export function describeDropWithoutFiles(
   if (uri !== '') return `Veio um link, não um arquivo: ${uri}`;
 
   if (types.includes('Files')) {
-    return 'O app de origem prometeu um arquivo que o Nexus não recebeu. Salve a mídia no disco e arraste do Finder.';
+    return `O app de origem prometeu um arquivo que o Nexus não recebeu (tipos: ${types.join(', ')}). Salve a mídia no disco e arraste do Finder.`;
   }
 
   const text = transfer.getData?.('text/plain')?.trim() ?? '';
@@ -255,7 +274,13 @@ export function describeDropWithoutFiles(
 export function acceptsShellDrag(types: ArrayLike<string>): boolean {
   if (hasSkillDragType(types)) return false;
   const list = Array.from(types);
-  if (list.includes('Files') || list.includes('text/uri-list')) return true;
+  if (
+    list.includes('Files') ||
+    list.includes('text/uri-list') ||
+    list.includes('DownloadURL')
+  ) {
+    return true;
+  }
   // F-526: WhatsApp e apps Electron anunciam a mídia arrastada apenas como
   // `text/html` (imagem embutida em data:URI) — sem isto o dragover não faz
   // preventDefault e o navegador NUNCA entrega o drop. Texto formatado de

@@ -885,18 +885,10 @@ describe('WorkspaceRail', () => {
 
     try {
       const { host } = renderRail();
-      const cleanup = host.querySelector<HTMLDetailsElement>('.workspace-cleanup');
+      // F-528: a limpeza vive numa linha compacta SEMPRE visível — as ações
+      // destrutivas não podem sumir atrás de disclosure (o dono as procurou).
+      const cleanup = host.querySelector('.workspace-cleanup');
       expect(cleanup).not.toBeNull();
-      expect(cleanup!.tagName).toBe('DETAILS');
-      expect(cleanup!.open).toBe(false);
-      expect(
-        host.querySelector('[data-action="clean-panes"]'),
-      ).toBeNull();
-
-      act(() => {
-        cleanup!.open = true;
-        cleanup!.dispatchEvent(new Event('toggle'));
-      });
       expect(host.querySelector('[data-action="clean-panes"]')).not.toBeNull();
       expect(host.querySelector('[data-action="clean-missions"]')).not.toBeNull();
     } finally {
