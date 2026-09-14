@@ -112,8 +112,12 @@ const REASON_PATTERNS: readonly ReasonPattern[] = [
   // Códigos com underscore do USAGE_LIMIT_PATTERN do omp — error-shaped por
   // si. A forma em texto livre "usage limit" foi EXCLUÍDA de propósito: colide
   // com prosa ("Codex has no usage limit…"); o legado do Nexus tem as versões
-  // ancoradas em início de linha.
-  { reason: 'QUOTA_EXHAUSTED', re: /usage_limit_reached|usage_not_included|\blimit_reached\b|personal-team-blocked/i },
+  // ancoradas em início de linha. Exige confirmação de erro ou : true para não
+  // disparar em telemetria normal do Codex ("limit_reached": false).
+  {
+    reason: 'QUOTA_EXHAUSTED',
+    re: /usage_limit_reached|usage_not_included|personal-team-blocked|(?<![a-z0-9_-])limit_reached\s*[:=]\s*true\b|(?<![a-z0-9_-])(?:error|status|failed)[:\s][^\n]{0,30}\blimit_reached\b/i,
+  },
   // Provedores chineses (GLM/DeepSeek…): 额度不足 = "cota insuficiente",
   // 额度耗尽 = "cota esgotada". Específicos o bastante para casar nus.
   { reason: 'QUOTA_EXHAUSTED', re: /额度不足|额度耗尽/ },

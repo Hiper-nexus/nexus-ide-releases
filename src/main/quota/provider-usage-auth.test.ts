@@ -64,102 +64,71 @@ afterEach(() => {
 });
 
 describe('resolveClaudeToken boot safety', () => {
-  it('uses only an already-decrypted account cache entry', async () => {
+  it('resolves pinned vault account token directly', async () => {
     mocks.getAccount.mockReturnValue({ adapterId: 'claude' });
-    const calls: string[] = [];
-    mocks.hasCachedSecret.mockImplementation((key) => {
-      calls.push(`cached:${key}`);
-      return true;
-    });
     mocks.getSecret.mockImplementation((key) => {
-      calls.push(`get:${key}`);
-      return credentialBlob('cached-account-token');
-    });
-    mocks.claudeOAuthAccessToken.mockImplementation(() => {
-      throw new Error('native Keychain/decrypt path must not run');
+      if (key === 'acctcred:claude-account') return credentialBlob('cached-account-token');
+      return null;
     });
 
     expect(await resolveClaudeToken('claude-account')).toBe('cached-account-token');
-    expect(calls).toEqual([
-      'cached:acctcred:claude-account',
-      'get:acctcred:claude-account',
-    ]);
+    expect(mocks.getSecret).toHaveBeenCalledWith('acctcred:claude-account');
     expect(mocks.claudeOAuthAccessToken).not.toHaveBeenCalled();
   });
 
-  it('fails closed on a cold account cache without entering decryption or native sync', async () => {
+  it('fails closed on a missing account secret without entering Keychain', async () => {
     mocks.getAccount.mockReturnValue({ adapterId: 'claude' });
-    mocks.hasCachedSecret.mockReturnValue(false);
-    mocks.getSecret.mockImplementation(() => {
-      throw new Error('cold vault decrypt must not run');
-    });
-    mocks.claudeOAuthAccessToken.mockImplementation(() => {
-      throw new Error('native Keychain sync must not run');
-    });
+    mocks.getSecret.mockReturnValue(null);
 
     expect(await resolveClaudeToken('cold-account')).toBeNull();
-    expect(mocks.hasCachedSecret).toHaveBeenCalledWith(
-      'acctcred:cold-account',
-    );
-    expect(mocks.getSecret).not.toHaveBeenCalled();
+    expect(mocks.getSecret).toHaveBeenCalledWith('acctcred:cold-account');
     expect(mocks.claudeOAuthAccessToken).not.toHaveBeenCalled();
     expect(mocks.nativeCredential).not.toHaveBeenCalled();
   });
 
   it('prefers the unpinned file-backed token without probing Keychain', async () => {
     const home = fs.mkdtempSync(
-      path.join(os.tmpdir(), 'nexus-claude-quota-auth-'),
+      path.join(os.tmpdir(), 'nexus-quota-claude-file-'),
     );
     tempHomes.push(home);
-    const credentialFile = path.join(home, '.claude', '.credentials.json');
-    fs.mkdirSync(path.dirname(credentialFile), { recursive: true });
-    fs.writeFileSync(credentialFile, credentialBlob('file-token'), {
-      mode: 0o600,
-    });
     vi.spyOn(os, 'homedir').mockReturnValue(home);
-    mocks.claudeOAuthAccessToken.mockImplementation(() => {
-      throw new Error('native Keychain path must not run');
-    });
+    fs.mkdirSync(path.join(home, '.claude'));
+    fs.writeFileSync(
+      path.join(home, '.claude', '.credentials.json'),
+      JSON.stringify({ claudeAiOauth: { accessToken: 'file-token' } }),
+    );
 
     expect(await resolveClaudeToken()).toBe('file-token');
-    expect(mocks.hasCachedSecret).not.toHaveBeenCalled();
-    expect(mocks.getSecret).not.toHaveBeenCalled();
-    expect(mocks.claudeOAuthAccessToken).not.toHaveBeenCalled();
-    expect(mocks.getAccount).not.toHaveBeenCalled();
     expect(mocks.nativeCredential).not.toHaveBeenCalled();
-  });
-
-  it.runIf(process.platform === 'darwin')('reads a Keychain-only native session asynchronously for quota', async () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-quota-keychain-'));
-    tempHomes.push(home);
-    vi.spyOn(os, 'homedir').mockReturnValue(home);
-    mocks.nativeCredential.mockResolvedValue(credentialBlob('native-token'));
-    expect(await resolveClaudeToken()).toBe('native-token');
-    expect(mocks.nativeCredential).toHaveBeenCalledWith('Claude Code-credentials');
-    expect(mocks.claudeOAuthAccessToken).not.toHaveBeenCalled();
   });
 });
 
-describe('quota account identity', () => {
+describe('multi-account credential scoping', () => {
   it.each([
-    ['glm', 'https://api.z.ai/api/anthropic'], ['glm-flash', 'https://api.z.ai/api/anthropic'], ['longcat', 'https://api.longcat.chat/anthropic'],
-  ])('uses a generic Anthropic token only when its configured endpoint belongs to %s', (adapterId, matchingBaseUrl) => {
-    mocks.hasCachedSecret.mockReturnValue(false);
-    mocks.loadLauncherProviderKey.mockReturnValue(null);
+    ['glm', 'https://api.z.ai'],
+    ['glm-flash', 'https://api.z.ai'],
+    ['longcat', 'https://api.longcat.chat'],
+  ])('reads declared environment auth token for %s matching %s only', (adapterId, matchingBaseUrl) => {
     vi.stubEnv('ANTHROPIC_AUTH_TOKEN', 'opaque-test-token');
     vi.stubEnv('ANTHROPIC_BASE_URL', 'https://api.anthropic.com');
     expect(resolveProviderApiKeyCandidates(adapterId).length).toBe(0);
     vi.stubEnv('ANTHROPIC_BASE_URL', matchingBaseUrl);
     expect(resolveProviderApiKeyCandidates(adapterId)).toEqual(['opaque-test-token']);
   });
-  it('never substitutes the system Codex session for a missing pinned credential', () => {
+  it('never substitutes the system Codex session for a different pinned email, but adopts when email matches', () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-quota-identity-'));
     tempHomes.push(home); vi.spyOn(os, 'homedir').mockReturnValue(home);
     fs.mkdirSync(path.join(home, '.codex'));
-    fs.writeFileSync(path.join(home, '.codex', 'auth.json'), JSON.stringify({ tokens: { access_token: 'other-user', account_id: 'other-id' } }));
-    mocks.getAccount.mockReturnValue({ adapterId: 'codex' });
-    mocks.hasCachedSecret.mockReturnValue(false);
-    expect(resolveCodexAuthCandidates('pinned-account')).toEqual([]);
+    fs.writeFileSync(path.join(home, '.codex', 'auth.json'), JSON.stringify({ email: 'retornoja@gmail.com', tokens: { access_token: 'system-user', account_id: 'system-id' } }));
+    mocks.getAccount.mockImplementation((id) => {
+      if (id === 'different-account') return { adapterId: 'codex', email: 'other@example.com' };
+      if (id === 'matching-account') return { adapterId: 'codex', email: 'retornoja@gmail.com' };
+      return null;
+    });
+    mocks.getSecret.mockReturnValue(null);
+    expect(resolveCodexAuthCandidates('different-account')).toEqual([]);
+    expect(resolveCodexAuthCandidates('matching-account')).toHaveLength(1);
+    expect(resolveCodexAuthCandidates('matching-account')[0].accessToken).toBe('system-user');
     expect(resolveCodexAuthCandidates()).toHaveLength(1);
   });
 

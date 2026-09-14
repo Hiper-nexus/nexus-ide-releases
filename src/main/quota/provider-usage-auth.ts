@@ -130,6 +130,15 @@ export function resolveCodexAuthCandidates(
     if (account?.adapterId === 'codex') {
       const blob = safeGetSecret(CRED_PREFIX + accountId);
       if (blob) add(parseCodexAuthJson(blob));
+      if (out.length === 0) {
+        const system = readText(path.join(os.homedir(), '.codex', 'auth.json'));
+        if (system) {
+          const sysAuth = parseCodexAuthJson(system);
+          if (sysAuth && (!account.email || system.includes(account.email))) {
+            add(sysAuth);
+          }
+        }
+      }
     }
     return out;
   }

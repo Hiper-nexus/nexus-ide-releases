@@ -41,11 +41,10 @@ export const LONG_COOLDOWN_MIN_MS = 60 * 60 * 1000;
 
 /**
  * Below this used fraction the account clearly has room, so a "limit reached"
- * claim from the terminal is untrustworthy. Kept well under the high-usage
- * threshold (0.8) so we never suppress a hit on an account that is genuinely
- * close to its ceiling.
+ * claim from the terminal is untrustworthy. Uses QUOTA_HIGH_USAGE_THRESHOLD (0.8)
+ * so accounts with headroom (e.g. 72% weekly on Codex) are not falsely marked exhausted.
  */
-export const REFUTE_HEALTHY_RATIO = 0.5;
+export const REFUTE_HEALTHY_RATIO = QUOTA_HIGH_USAGE_THRESHOLD;
 
 /** Windows a `quota` (plan/credits) claim would show up in. */
 const QUOTA_WINDOW_KINDS: ReadonlySet<QuotaWindowKind> = new Set([

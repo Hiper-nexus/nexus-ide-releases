@@ -467,8 +467,17 @@ export function detectLimit(rawText: string): LimitHit | null {
   // já reconheciam.
   const classified = classifyRateLimitText(text);
   if (classified) {
-    const parsed = parseResetCooldown(text);
     const matchedIndex = text.indexOf(classified.matched);
+    if (matchedIndex >= 0) {
+      const tail = text.slice(
+        matchedIndex + classified.matched.length,
+        matchedIndex + classified.matched.length + 24,
+      );
+      if (/^\s*[:=]\s*(?:false|null|0\b)/i.test(tail)) {
+        return null;
+      }
+    }
+    const parsed = parseResetCooldown(text);
     const scope = extractAnthropicTierScope(
       text,
       matchedIndex >= 0 ? matchedIndex : 0,

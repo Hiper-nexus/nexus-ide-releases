@@ -798,10 +798,10 @@ function handleLimitHit(
     ? quotaEntryFor(adapterId, current.id)
     : undefined;
 
-  // The typed hook frame is already provider-native evidence. Only the legacy
-  // mixed PTY stream needs the second-layer API refutation.
+  // Provider-api readings are authoritative evidence over scrollback text AND
+  // observer hook frames. If a fresh provider API reading proves the account is healthy,
+  // failover is suppressed.
   if (
-    source === 'scrollback' &&
     current &&
     providerApiRefutesLimit(quotaEntry, hit, now)
   ) {
@@ -820,13 +820,9 @@ function handleLimitHit(
     return;
   }
 
-  // A PTY is an untrusted mixed stream (provider output + quoted logs + agent
-  // prose). It may trigger short recovery, auth rotation, or transient backoff,
-  // but it cannot be the sole authority for a long usage quarantine. Typed
-  // provider-hook errors have already crossed the canonical boundary and can
-  // carry the provider's cooldown directly.
+  // A long multi-hour usage quarantine cannot be authorized without a fresh
+  // matching provider-api window. Short backoff plus auth/transient recovery remain available.
   if (
-    source === 'scrollback' &&
     longCooldownNeedsFreshProviderApi(hit) &&
     !hasFreshProviderApiWindowForLimit(quotaEntry, hit, now)
   ) {
