@@ -90,6 +90,22 @@ export {
   type WorkflowEffectAuthority,
 } from "./mcp-dispatch-contract";
 
+/**
+ * Copy que ensina o agente a NÃO insistir. Vive em `hint` (não em `error`) pelo
+ * contrato de dispatch: `error` é comparado por string exata em smoke/renderer,
+ * enquanto `hint` é dica e pode evoluir. Cada negação de autoridade termina com
+ * o caminho que funciona, e não com uma recusa muda — o modelo que não ouve a
+ * saída tenta de novo, contorna ou reporta bloqueio de missão.
+ */
+export const DENIAL_HINTS = Object.freeze({
+  allowlist:
+    "Não tente de novo nem trate como bloqueio da missão: esta ferramenta está fora do seu papel/allowlist por decisão de quem montou a squad. Entregue com o que tem e declare em nexus_handoff_submit (campo blockers) o que ficou de fora por falta dela.",
+  readOnly:
+    "Você está em modo somente-leitura: não tente escrever por outro caminho (shell, editor, git). Registre no handoff o que precisaria mudar e por quê.",
+  internalReviewer:
+    "Reviewer interno só lê e opina: conclua com nexus_merge_review_submit ou o handoff de revisão, sem tentar editar.",
+});
+
 function resolveProductionWorkflowAuthority(
   scope: ProjectExecutionScope,
   missionId: string,
@@ -511,7 +527,10 @@ export async function dispatchToolCall(
     };
   }
 
-  const denyBeforeIntent = (reason: string): ToolDispatchResult => {
+  const denyBeforeIntent = (
+    reason: string,
+    hint?: string,
+  ): ToolDispatchResult => {
     const auditFailure = writeAudit(
       () =>
         auditDenied(
@@ -531,6 +550,7 @@ export async function dispatchToolCall(
         tool: tool.name,
         denied: true,
         error: reason,
+        ...(hint ? { hint } : {}),
       }
     );
   };
@@ -538,6 +558,7 @@ export async function dispatchToolCall(
   if (!isInternalPrevcReviewerToolAllowed(ctx, tool.name)) {
     return denyBeforeIntent(
       `tool "${tool.name}" is outside this internal reviewer's exact profile`,
+      DENIAL_HINTS.internalReviewer,
     );
   }
 
@@ -571,6 +592,7 @@ export async function dispatchToolCall(
       tool: tool.name,
       denied: true,
       error: reason,
+      hint: DENIAL_HINTS.allowlist,
     };
   }
 
@@ -585,6 +607,7 @@ export async function dispatchToolCall(
     const reason =
       `read-only authority denied tool "${tool.name}": workspace, process, ` +
       `delegation, and external effects are unavailable (agent: ${ctx.label})`;
+    const hint = DENIAL_HINTS.readOnly;
     const auditFailure = writeAudit(
       () =>
         auditDenied(
@@ -604,6 +627,7 @@ export async function dispatchToolCall(
       tool: tool.name,
       denied: true,
       error: reason,
+      hint,
     };
   }
 
