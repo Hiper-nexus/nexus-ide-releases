@@ -3574,13 +3574,13 @@ export const RELEASE_07629: AppRelease = {
 
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.31',
-  date: '2026-09-14',
-  codename: 'Eliminação de falsas exaustões (Codex), Nexus Mobile 100% testado e contratos compartilhados',
+  version: '0.76.32',
+  date: '2026-09-15',
+  codename: 'Windows: terminal visível e diagnóstico Jarvis seguro',
   summary:
-    'Refutação viva de limites de provedor para impedir quarentena e toasts falsos de cota esgotada no Codex, ' +
-    'integração e suite de testes completa (581 suítes / 5026 testes) no Nexus Mobile Companion, ' +
-    'e estabilização de contratos compartilhados e limites de indexação.',
+    'Correções de operação no Windows: terminais deixam de abrir em uma tela preta sem workspace, ' +
+    'o diagnóstico da Jarvis funciona sem projeto e o caminho normal continua com escopo e memória protegidos; ' +
+    'a versão também inclui as correções de cota, mobile, orquestração e CLIs da linha 0.76.31.',
   highlights: [
     {
       title: 'Refutação viva e fim dos falsos positivos de cota esgotada (F-539)',
@@ -3651,14 +3651,19 @@ export const CURRENT_RELEASE: AppRelease = {
         'Corrigida a resolução de `.cmd`, fallback de diretórios Node/npm e opções de spawn para o instalador e descoberta de modelos.',
     },
     {
-      title: 'Windows: seletor de pasta podia abrir atrás da janela',
+      title: 'Windows: Terminais ficava como canvas preto sem projeto',
       detail:
-        'O diálogo agora usa BrowserWindow.fromWebContents(event.sender), mantendo foco e habilitando o avanço do fluxo.',
+        'A navegação agora renderiza a tela de escolha de pasta e não deixa o operador sem feedback.',
     },
     {
-      title: 'Release: manifests de skills variavam no checkout Windows',
+      title: 'Jarvis: teste manual exigia escopo de workspace',
       detail:
-        'Ordenação, normalização LF e marcação explícita de payloads executáveis tornam o empacotamento estável e auditável.',
+        'Adicionada a rota de smoke test sem escopo; `voice:jarvis` permanece fail-closed para comandos reais.',
+    },
+    {
+      title: 'Windows: grade filtrada sem panes mostrava preto',
+      detail:
+        'O estado vazio agora informa que não há terminal visível, evitando confundir missão sem pane com falha de renderização.',
     },
   ],
 };

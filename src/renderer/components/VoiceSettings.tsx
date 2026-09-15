@@ -597,7 +597,12 @@ export function VoiceSettings({ onClose, embedded = false }: VoiceSettingsProps 
         }
         return;
       }
-      const reply = await window.nexus.voice.jarvis(req);
+      // Settings can be opened before a project exists. Use the diagnostic
+      // capability there; the normal Jarvis channel remains project-scoped and
+      // continues to enforce renderer workspace authorization.
+      const reply = await window.nexus.voice.jarvisSmokeTest({
+        transcript: req.transcript,
+      });
       if (reply.say.trim()) {
         const spoken = await window.nexus.voice.speak({
           text: reply.say,

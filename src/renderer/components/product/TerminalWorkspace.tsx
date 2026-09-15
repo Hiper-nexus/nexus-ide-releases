@@ -8,6 +8,7 @@ import { selectMissionTerminalPanes } from '../../lib/mission-terminal-panes';
 import { missionLifecycleLabel } from '../../lib/mission-lifecycle-copy';
 import { missionAwaitsOperatorReview } from '../../../shared/mission-recovery-policy';
 import { PixelIcon } from '../PixelIcon';
+import { EmptyState } from '../ActionCard';
 
 export interface TerminalWorkspaceProps {
   /** Quando presente, a vista mostra só os panes desta missão. Hosts das outras ficam vivos. */
@@ -16,6 +17,60 @@ export interface TerminalWorkspaceProps {
   /** Keeps pane/session hosts mounted while removing the surface from navigation. */
   hidden?: boolean;
   className?: string;
+}
+
+/**
+ * Terminal destination without an active project. The app shell still lets
+ * the operator click "Terminais" before choosing a folder; returning a blank
+ * canvas there is indistinguishable from a broken PTY. Keep this surface free
+ * of PaneLeaf/PTY work until the workspace scope exists, and give the operator
+ * one explicit recovery action instead.
+ */
+export function TerminalWorkspaceEmpty({
+  onOpenWorkspace,
+}: {
+  readonly onOpenWorkspace: () => void;
+}) {
+  return (
+    <section
+      className="product-workspace product-page terminal-workspace terminal-workspace--empty"
+      data-product-destination="terminal"
+      aria-label="Terminais"
+    >
+      <header className="product-workspace__header terminal-workspace__header">
+        <div className="product-workspace__identity">
+          <span className="product-workspace__badge" aria-hidden="true">
+            <PixelIcon name="terminal" size={16} />
+          </span>
+          <div className="product-workspace__heading">
+            <span className="product-workspace__context">Seu espaço</span>
+            <h1>Terminais</h1>
+          </div>
+        </div>
+      </header>
+      <div className="terminal-workspace__empty-body">
+        <EmptyState
+          icon="files"
+          title="Escolha uma pasta para abrir os terminais"
+          body={
+            <p>
+              O Nexus precisa de um projeto ativo para criar o terminal e
+              manter o acesso protegido aos seus arquivos.
+            </p>
+          }
+          action={
+            <button
+              type="button"
+              className="project-overview__goal-submit"
+              onClick={onOpenWorkspace}
+            >
+              Escolher pasta
+            </button>
+          }
+        />
+      </div>
+    </section>
+  );
 }
 
 export function TerminalWorkspace({

@@ -231,6 +231,15 @@ describe('TerminalWorkspace contracts', () => {
     expect(ptySpawn).not.toHaveBeenCalled();
   });
 
+  it('explica quando o filtro não tem panes em vez de entregar uma tela preta', () => {
+    const { host } = mount(
+      <TerminalWorkspace missionId="mission-without-panes" />,
+    );
+
+    expect(host.querySelector('.grid--mission-empty')).not.toBeNull();
+    expect(host.textContent).toContain('Nenhum terminal visível');
+  });
+
   it('Terminais da missão mostra só os panes dela, não o mosaico das 15', () => {
     useLayoutStore.setState({
       root: buildGridTree([

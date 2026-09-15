@@ -34,6 +34,8 @@ export const VOICE_CHANNELS = {
   openSoundSettings: 'voice:openSoundSettings',
   /** invoke: renderer → main. Fala transcrita → resposta JARVIS {say, action}. */
   jarvis: 'voice:jarvis',
+  /** invoke: renderer → main. Smoke test sem projeto/memória/ações. */
+  jarvisSmokeTest: 'voice:jarvis.smokeTest',
   /** invoke: renderer → main. Confirmação nativa antes de rodar um comando de
    * voz (SEC#6 — anti prompt-injection voz→shell). Retorna boolean. */
   confirmCommand: 'voice:confirmCommand',

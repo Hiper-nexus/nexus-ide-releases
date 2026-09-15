@@ -186,6 +186,20 @@ vi.mock('./components/product/TerminalWorkspace', () => ({
       ) : null}
     </section>
   ),
+  TerminalWorkspaceEmpty: ({
+    onOpenWorkspace,
+  }: {
+    onOpenWorkspace: () => void;
+  }) => (
+    <section
+      data-terminal-workspace-empty="true"
+      data-product-destination="terminal"
+      aria-label="Terminais"
+    >
+      <p>Escolha uma pasta para abrir os terminais</p>
+      <button type="button" onClick={onOpenWorkspace}>Escolher pasta</button>
+    </section>
+  ),
 }));
 
 vi.mock('./components/product/TaskBoardWorkspace', () => ({
@@ -595,6 +609,24 @@ describe('App Nexus V2 cutover', () => {
     expect(
       host.querySelectorAll('[data-terminal-workspace-host="true"]'),
     ).toHaveLength(0);
+  });
+
+  it('mostra uma ação em vez de tela preta ao abrir Terminais sem workspace', async () => {
+    const pick = vi.spyOn(useWorkspaceStore.getState(), 'pick').mockImplementation(async () => {
+      openWorkspace();
+    });
+    const host = mountApp();
+    act(() => useProductNavigationStore.getState().openTerminal());
+
+    expect(host.querySelector('[data-terminal-workspace-empty="true"]')).not.toBeNull();
+    const choose = [...host.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Escolher pasta',
+    );
+    expect(choose).toBeDefined();
+    await act(async () => choose!.click());
+    expect(pick).toHaveBeenCalledOnce();
+    expect(useWorkspaceStore.getState().current?.path).toBe('/tmp/nexus-workspace');
+    pick.mockRestore();
   });
 
   it.each(['launcher', 'mission-setup'] as const)('keeps %s open when its folder picker activates the workspace', async (route) => {

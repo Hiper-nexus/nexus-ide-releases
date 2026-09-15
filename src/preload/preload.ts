@@ -803,6 +803,8 @@ const api: NexusApi = {
     openSoundSettings: () => ipcRenderer.send(VOICE_CHANNELS.openSoundSettings),
     resetMicPermission: () => ipcRenderer.invoke(VOICE_CHANNELS.micResetTcc),
     jarvis: (req) => ipcRenderer.invoke(VOICE_CHANNELS.jarvis, req),
+    jarvisSmokeTest: (req) =>
+      ipcRenderer.invoke(VOICE_CHANNELS.jarvisSmokeTest, req),
     confirmCommand: (command: string) =>
       ipcRenderer.invoke(VOICE_CHANNELS.confirmCommand, command),
     liveStart: (req) => ipcRenderer.invoke(VOICE_CHANNELS.liveStart, req ?? {}),

@@ -8,6 +8,7 @@ import { reconcileBrowserPanes } from '../browser/browser-host';
 import { minimumPaneGridSize } from '../lib/pane-grid-size';
 import { PaneLeaf } from './PaneLeaf';
 import { PanePicker } from './PanePicker';
+import { EmptyState } from './ActionCard';
 
 /**
  * Renders the binary layout tree with react-resizable-panels (MIT). Each split
@@ -113,7 +114,18 @@ export function PaneGrid({
       <div
         className="grid grid--mission-empty"
         aria-label="Nenhum terminal desta missão"
-      />
+      >
+        <EmptyState
+          icon="terminal"
+          title="Nenhum terminal visível"
+          body={
+            <p>
+              Esta missão ainda não tem um terminal aberto. Volte ao quadro ou
+              abra um pane para começar.
+            </p>
+          }
+        />
+      </div>
     );
   }
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.32 — Windows: terminal visível e diagnóstico Jarvis seguro
+
+- **Terminais sem projeto**: clicar em “Terminais” antes de escolher uma pasta agora mostra uma ação clara para abrir o workspace, em vez de uma tela preta.
+- **Jarvis nas configurações**: o teste manual funciona antes do primeiro projeto, usando uma rota diagnóstica sem memória, escopo ou ações; a rota normal continua protegida por workspace.
+- **Multi-pane**: preservado o modo adaptativo com fila/backpressure, leases WebGL e hibernação de panes ocultos; benchmark Windows de 4/8/10 panes validado.
+
 ## 0.76.31 — Eliminação de falsas exaustões (Codex), Nexus Mobile 100% testado e contratos compartilhados
 
 - **Refutação viva e eliminação de falsas exaustões de cota no Codex (F-539)**: contas com uso saudável (como 72% de uso semanal com 28% livre) não entram mais em quarentena de 12 horas nem exibem toasts falsos de cota esgotada. Hardening de expressões regulares de `limit_reached` para nunca casar com valores de negação (`false`, `null`, `0`), expansão da refutação viva para sinais do observer e resolução segura de tokens do Codex via `~/.codex/auth.json`.

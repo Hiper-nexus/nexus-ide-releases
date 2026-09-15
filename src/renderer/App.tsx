@@ -107,7 +107,10 @@ import {
 import { projectRailWorkspaces } from './components/product/rail-workspaces';
 import { MissionSetup } from './components/mission/MissionSetup';
 import { MissionBoard } from './components/mission/MissionBoard';
-import { TerminalWorkspace } from './components/product/TerminalWorkspace';
+import {
+  TerminalWorkspace,
+  TerminalWorkspaceEmpty,
+} from './components/product/TerminalWorkspace';
 import { ProjectOverviewConnected } from './components/product/ProjectOverview';
 import { TaskBoardWorkspace } from './components/product/TaskBoardWorkspace';
 import { MemoryWorkspace } from './components/product/MemoryWorkspace';
@@ -1213,6 +1216,8 @@ export function App() {
       />
       {terminalBearing ? null : destinationContent}
     </>
+  ) : terminalBearing ? (
+    <TerminalWorkspaceEmpty onOpenWorkspace={pickWorkspace} />
   ) : (
     destinationContent
   );

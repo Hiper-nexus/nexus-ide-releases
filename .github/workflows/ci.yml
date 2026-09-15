@@ -19,6 +19,10 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
+    env:
+      # The monorepo's strict TypeScript graph exceeds Node's default ~2 GB
+      # old-space limit on the GitHub-hosted runner.
+      NODE_OPTIONS: --max-old-space-size=4096
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

@@ -199,6 +199,20 @@
   block-size: 100%;
 }
 
+.terminal-workspace__empty-body {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  min-block-size: 0;
+  display: grid;
+  place-items: center;
+  padding: var(--space-6);
+  overflow: auto;
+}
+
+.terminal-workspace__empty-body .empty-state {
+  inline-size: min(100%, 40rem);
+}
+
 /* Task board: todo projection only, with native status controls. */
 .task-board-workspace__content {
   overflow: auto;

@@ -584,6 +584,25 @@ describe("Voice Live IPC ownership", () => {
     );
   });
 
+  it("runs the settings smoke test without a workspace and strips actions", async () => {
+    brainDeps.jarvisThink.mockResolvedValueOnce({
+      say: "Jarvis online",
+      action: { type: "open_terminal" },
+    });
+
+    await expect(
+      invoke(VOICE_CHANNELS.jarvisSmokeTest, new TestRenderer(83), {
+        transcript: "diagnóstico rápido da jarvis",
+      }),
+    ).resolves.toEqual({
+      say: "Jarvis online",
+      action: { type: "none" },
+    });
+    expect(scopeDeps.requireRendererWorkspaceScope).not.toHaveBeenCalled();
+    expect(projectMemoryDeps.createMemory).not.toHaveBeenCalled();
+    expect(projectMemoryDeps.createConversation).not.toHaveBeenCalled();
+  });
+
   it("discards a classic reply when the renderer changes project in flight", async () => {
     const owner = new TestRenderer(82);
     scopeDeps.scopes.set(owner.id, scopeA);

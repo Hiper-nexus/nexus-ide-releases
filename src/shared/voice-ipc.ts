@@ -380,6 +380,19 @@ export const jarvisRequestSchema = z.object({
 
 export type JarvisRequest = z.infer<typeof jarvisRequestSchema>;
 
+/**
+ * Settings diagnostics intentionally do not carry a workspace context. This
+ * keeps the button useful before the first project is opened without turning
+ * the project-scoped `voice:jarvis` route into an unscoped command channel.
+ */
+export const jarvisSmokeTestRequestSchema = z.object({
+  transcript: z.string().min(1).max(4000),
+});
+
+export type JarvisSmokeTestRequest = z.infer<
+  typeof jarvisSmokeTestRequestSchema
+>;
+
 export type SpeakResult =
   | { ok: true; provider: string; mode: 'played'; fallbackNote?: string }
   | {

@@ -558,7 +558,14 @@ body {
 }
 
 .grid--mission-empty {
+  display: grid;
+  place-items: center;
+  padding: var(--space-6);
   min-height: 12rem;
+}
+
+.grid--mission-empty .empty-state {
+  inline-size: min(100%, 40rem);
 }
 
 

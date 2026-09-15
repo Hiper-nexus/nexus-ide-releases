@@ -17,6 +17,7 @@ import {
   jarvisLiveSayRequestSchema,
   jarvisLiveRescueRequestSchema,
   jarvisLiveAudioPlaybackEventSchema,
+  jarvisSmokeTestRequestSchema,
   jarvisLiveSmokeTestRequestSchema,
   jarvisLiveStartRequestSchema,
   jarvisLiveStatusPatchSchema,
@@ -1058,6 +1059,43 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
         const message = err instanceof Error ? err.message : String(err);
         return {
           say: `Deu erro ao pensar: ${message}`,
+          action: { type: "none" },
+        };
+      }
+    },
+  );
+
+  ipcMain.handle(
+    VOICE_CHANNELS.jarvisSmokeTest,
+    async (_event, raw): Promise<JarvisReply> => {
+      const parsed = jarvisSmokeTestRequestSchema.safeParse(raw);
+      if (!parsed.success) {
+        return { say: "Não entendi o teste.", action: { type: "none" } };
+      }
+      try {
+        // This is deliberately a separate IPC capability. It has no renderer
+        // workspace scope, no project memory/conversation, and its action is
+        // discarded so a settings probe can never mutate the app.
+        const reply = await jarvisThink(
+          parsed.data.transcript,
+          {
+            workspace: null,
+            screen: "Diagnóstico da Jarvis nas configurações.",
+            recents: [],
+            squads: [],
+            panes: [],
+            focusedPane: null,
+            orchestrator: null,
+            missions: [],
+          },
+          [],
+          defaultBrainDeps,
+        );
+        return { ...reply, action: { type: "none" } };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return {
+          say: `Deu erro ao testar a Jarvis: ${message}`,
           action: { type: "none" },
         };
       }

@@ -544,6 +544,8 @@ export interface NexusApi {
     openSoundSettings(): void;
     onWakeDetected(cb: () => void): Unsubscribe;
     jarvis(req: JarvisRequest): Promise<JarvisReply>;
+    /** Diagnostic-only Jarvis probe; never reads project state or executes actions. */
+    jarvisSmokeTest(req: import('./voice-ipc').JarvisSmokeTestRequest): Promise<JarvisReply>;
     /** Main-owned risk gate; prompts only for destructive/deploy commands. */
     confirmCommand(command: string): Promise<boolean>;
     /** macOS: tccutil reset Microphone <bundleId> + relaunch (grant TCC fantasma). */
