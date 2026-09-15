@@ -1,0 +1,1194 @@
+{
+  "result": {
+    "tools": [
+      {
+        "name": "handoff_submit",
+        "description": "REQUIRED FINAL CALL of a worker pane (spawned with a task): your VERY LAST action, or the orchestrator waits forever — idle output is not completion. summary = 1–2 sentences, the CONCLUSION itself (never \"I wrote X\"); write the full answer in your own pane first. For code/deploy/wiring work fill `evidence` (commands + exit codes, files) so the orchestrator can review. AFTER this call your turn is OVER: one short closing line, no restating, no second call for the same task.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "paneId": {
+              "type": "string",
+              "description": "Submitting pane. Omit = the caller pane."
+            },
+            "summary": {
+              "type": "string",
+              "description": "1–2 sentences (≤280 chars): the conclusion itself, in the task's language; short answers verbatim. >400 chars is auto-condensed (original → fullText); >1500 refused."
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "done",
+                "blocked",
+                "error",
+                "progress"
+              ],
+              "description": "done | blocked | error | progress (non-terminal note: no wake)."
+            },
+            "artifacts": {
+              "description": "Structured output only (paths, ids, results) — never a copy of your prose."
+            },
+            "to": {
+              "type": "string",
+              "description": "paneId to wake instead of your spawner (when the briefing says \"report to pane-N\"). Unknown target → spawner."
+            },
+            "briefId": {
+              "type": "string",
+              "description": "briefId of the brief-file you executed (delegation by pointer)."
+            },
+            "evidence": {
+              "type": "object",
+              "description": "Proof for the review gate: references, not prose. Big diffs/logs → evidenceFile.",
+              "properties": {
+                "checks": {
+                  "type": "array",
+                  "description": "Acceptance checks: [{requirement, status: done|partial|skipped, verify}].",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "requirement": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "done",
+                          "partial",
+                          "skipped"
+                        ]
+                      },
+                      "verify": {
+                        "type": "string",
+                        "description": "Command or file:line that proves it."
+                      }
+                    },
+                    "required": [
+                      "requirement",
+                      "status",
+                      "verify"
+                    ]
+                  }
+                },
+                "commands": {
+                  "type": "array",
+                  "description": "Commands run as proof: [{cmd, exitCode}].",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "cmd": {
+                        "type": "string"
+                      },
+                      "exitCode": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "cmd",
+                      "exitCode"
+                    ]
+                  }
+                },
+                "files": {
+                  "type": "array",
+                  "description": "Files changed: [{path, added, removed}].",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string"
+                      },
+                      "added": {
+                        "type": "integer"
+                      },
+                      "removed": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "path"
+                    ]
+                  }
+                },
+                "evidenceFile": {
+                  "type": "string",
+                  "description": "Absolute path holding the full diff / logs."
+                },
+                "deployed": {
+                  "type": "string",
+                  "description": "One line: how deploy was proven."
+                },
+                "wired": {
+                  "type": "string",
+                  "description": "One line: how wiring was proven."
+                },
+                "tested": {
+                  "type": "string",
+                  "description": "One line: how tests were proven."
+                }
+              }
+            },
+            "fullText": {
+              "type": "string",
+              "maxLength": 65536,
+              "description": "Complete long answer (>280 chars), stored for handoff_list full:true. Never travels by default."
+            },
+            "attach": {
+              "type": "boolean",
+              "description": "(system) Set by the Overclock close hook — workers never set this."
+            },
+            "sessionId": {
+              "type": "string",
+              "description": "(system) CLI session id captured by the close hook."
+            },
+            "transcript": {
+              "type": "string",
+              "description": "(system) Transcript path captured by the close hook."
+            }
+          },
+          "required": [
+            "summary",
+            "status"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "handoff_list",
+        "description": "Read worker results (task-granular: 1 pane = N tasks, ids \"h-N\"). Default = tasks delegated to YOU in your mission. The wake line is the result; `full:true` with `ids` returns the stored fullText. Do not poll: results are delivered to you when the worker submits.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "panes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Filter by paneId — all of that worker's tasks, newest first."
+            },
+            "ids": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Filter by task id (\"h-N\"). Required to read fullText."
+            },
+            "delegator": {
+              "type": "string",
+              "description": "Audit filter: everything delegated BY this paneId, pending included."
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "caller_mission",
+                "caller_workspace",
+                "all_workspaces"
+              ],
+              "description": "caller_mission (default when the session has a mission) | caller_workspace | all_workspaces."
+            },
+            "workspacePath": {
+              "type": "string",
+              "description": "Explicit target workspace path (overrides scope)."
+            },
+            "missionId": {
+              "type": "string",
+              "description": "Explicit target mission id (overrides scope)."
+            },
+            "full": {
+              "type": "boolean",
+              "description": "Include stored fullText (only with `ids`)."
+            },
+            "allowCrossCaller": {
+              "type": "boolean",
+              "description": "Bypass caller/mission scoping — the global registry."
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "pane_spawn",
+        "description": "Open agent pane(s) in the Overclock grid — a \"pane\" is THIS Overclock object, NOT a tmux/terminal split, window or shell job. ONE pane: `prompt` (task delivered at birth; the pane wakes already executing it) OR `idle:true`. N panes: ONE call with `panes:[…]`, never N calls. Every config field is optional (the pane clones your CLI/account/model/effort/cwd). Returns paneId(s). Do not narrate — call, then END YOUR TURN; the worker's handoff wakes you.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "agent": {
+              "type": "string",
+              "enum": [
+                "claude",
+                "codex",
+                "gemini",
+                "kimi",
+                "antigravity",
+                "cursor",
+                "copilot",
+                "grok",
+                "opencode",
+                "kiro",
+                "muse",
+                "hermes",
+                "commandcode",
+                "shell"
+              ],
+              "description": "CLI host. OMIT unless the human named a CLI — omitted = clone of the caller."
+            },
+            "providerId": {
+              "type": "string",
+              "description": "Provider id (providers.json). Omit to inherit."
+            },
+            "model": {
+              "type": "string",
+              "description": "Model id. Omit to inherit the caller's. Valid ids: overclock_list kind=models."
+            },
+            "prompt": {
+              "type": "string",
+              "description": "First task, delivered at birth (the pane boots already executing it). REQUIRED unless idle:true. A POINTER (\"executa TASK/items/X.md\"), relayed faithfully — never the order to open panes."
+            },
+            "idle": {
+              "type": "boolean",
+              "description": "True ONLY for a deliberately EMPTY pane. Mutually exclusive with `prompt`."
+            },
+            "effort": {
+              "type": "string",
+              "enum": [
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ],
+              "description": "Reasoning effort at spawn (claude/codex low..max). Set it HERE, never via /effort after boot."
+            },
+            "cwd": {
+              "type": "string",
+              "description": "Absolute working directory. Defaults to the caller's workspace ROOT — pass it explicitly when spawning from a worker."
+            },
+            "autoCloseOnHandoff": {
+              "type": "boolean",
+              "description": "Close the pane 30s after a clean done handoff. Default false."
+            },
+            "delegateOnly": {
+              "type": "boolean",
+              "description": "Pure-delegator orchestrator: execution tools stripped. Use with squadRole:\"orchestrator\"."
+            },
+            "squadRole": {
+              "type": "string",
+              "description": "Squad role (e.g. \"orchestrator\"). Required with delegateOnly."
+            },
+            "squadCallable": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              },
+              "description": "Agents this orchestrator may spawn via persona. [] = discovered at runtime."
+            },
+            "persona": {
+              "type": "string",
+              "description": "Catalog agent name to embody (its prompt/CLI/model/skills)."
+            },
+            "resume": {
+              "type": "string",
+              "description": "Resume a CLOSED worker with its context: task id \"h-N\" or old paneId. Combine with prompt (the follow-up)."
+            },
+            "missionId": {
+              "type": "string",
+              "description": "Bind to a specific mission. Normally omit — spawns inherit the caller's."
+            },
+            "workspacePath": {
+              "type": "string",
+              "description": "Workspace the pane belongs to (registered folder). Omit = the caller's; declare it when spawning from outside a pane (Arms/bot)."
+            },
+            "allowedSkills": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Hard skill whitelist for this pane (gate blocks the rest)."
+            },
+            "expectSiblings": {
+              "type": "number",
+              "description": "Legacy hint (total panes of this wave) — prefer `panes:[…]` in ONE call."
+            },
+            "toolProfile": {
+              "type": "string",
+              "enum": [
+                "worker",
+                "orchestrator",
+                "full"
+              ],
+              "description": "MCP tools the pane SEES: worker (handoff/read/list/media/spawn/write) | orchestrator (+wait/close/mission/squad/clarify) | full. Inferred from role when omitted."
+            },
+            "task": {
+              "type": "string",
+              "description": "Harness (Ultra): the task TYPE; the app picks model/effort/skills and says so in the receipt. Explicit fields win."
+            },
+            "allowChildSpawns": {
+              "type": "number",
+              "description": "How many panes THIS pane may spawn. Omit = 0 for a worker; pass N only for a sub-orchestrator."
+            },
+            "expect": {
+              "type": "object",
+              "description": "Delivery contract: artifacts must match `expect.schema`; mismatches go back to the worker up to `expect.retries` (default 1), then land as blocked.",
+              "properties": {
+                "schema": {
+                  "type": "object",
+                  "description": "JSON Schema (type/required/properties/items/enum)."
+                },
+                "retries": {
+                  "type": "number",
+                  "description": "Default 1."
+                }
+              },
+              "required": [
+                "schema"
+              ],
+              "additionalProperties": false
+            },
+            "panes": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 24,
+              "description": "N panes in ONE call (never N calls). Each entry takes the same fields as a single spawn.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "prompt": {
+                    "type": "string",
+                    "description": "First task for THIS pane. REQUIRED unless idle:true."
+                  },
+                  "idle": {
+                    "type": "boolean",
+                    "description": "True ONLY for a deliberately empty pane."
+                  },
+                  "agent": {
+                    "type": "string",
+                    "enum": [
+                      "claude",
+                      "codex",
+                      "gemini",
+                      "kimi",
+                      "antigravity",
+                      "cursor",
+                      "copilot",
+                      "grok",
+                      "opencode",
+                      "kiro",
+                      "muse",
+                      "hermes",
+                      "commandcode",
+                      "shell"
+                    ],
+                    "description": "CLI host. Omit = clone of the caller."
+                  },
+                  "providerId": {
+                    "type": "string",
+                    "description": "Provider id. Omit to inherit."
+                  },
+                  "model": {
+                    "type": "string",
+                    "description": "Model id. Omit to inherit."
+                  },
+                  "effort": {
+                    "type": "string",
+                    "enum": [
+                      "low",
+                      "medium",
+                      "high",
+                      "xhigh",
+                      "max"
+                    ],
+                    "description": "Reasoning effort at spawn. Omit to inherit."
+                  },
+                  "cwd": {
+                    "type": "string",
+                    "description": "Absolute working directory inside the workspace."
+                  },
+                  "workspacePath": {
+                    "type": "string",
+                    "description": "Workspace of THIS pane (default: the wave's / the caller's)."
+                  },
+                  "persona": {
+                    "type": "string",
+                    "description": "Catalog agent name to embody."
+                  },
+                  "missionId": {
+                    "type": "string",
+                    "description": "Bind to a specific mission."
+                  },
+                  "allowedSkills": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Hard skill whitelist."
+                  },
+                  "allowChildSpawns": {
+                    "type": "number",
+                    "description": "How many panes this pane may spawn."
+                  },
+                  "autoCloseOnHandoff": {
+                    "type": "boolean",
+                    "description": "Close 30s after a clean done handoff."
+                  },
+                  "squadRole": {
+                    "type": "string",
+                    "description": "Squad role."
+                  },
+                  "delegateOnly": {
+                    "type": "boolean",
+                    "description": "Pure delegator."
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "pane_write",
+        "description": "Type text into an existing pane and submit it (a new task for a pane that is already alive). One pane: `paneId`+`text`. Several: `writes:[{paneId,text},…]` in one call. Briefing is a POINTER (\"executa TASK/items/F-016.md\"), never an inline dossier. Never spawn+write the same pane: pane_spawn `prompt` already delivers the first task.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "paneId": {
+              "type": "string",
+              "description": "Target paneId."
+            },
+            "text": {
+              "type": "string",
+              "description": "Text to type and submit. Relay the human's ask faithfully; briefing is a POINTER, never an inline dossier."
+            },
+            "brief": {
+              "type": "string",
+              "description": "Full briefing persisted as a file; the pane gets only a pointer line (delegation by pointer)."
+            },
+            "submit": {
+              "type": "boolean",
+              "description": "Press Enter after typing (default true)."
+            },
+            "allowCrossMission": {
+              "type": "boolean",
+              "description": "Required (true) to reach a pane of another mission."
+            },
+            "allowCrossWorkspace": {
+              "type": "boolean",
+              "description": "Required (true) to reach a pane of another workspace."
+            },
+            "writes": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 20,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "paneId": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string",
+                    "description": "Text to type. Omit when using `brief` (pointer mode)."
+                  },
+                  "brief": {
+                    "type": "string",
+                    "description": "Full briefing persisted as a file; the pane gets a pointer line."
+                  },
+                  "submit": {
+                    "type": "boolean",
+                    "description": "Default true. False leaves text parked in the target input."
+                  }
+                },
+                "required": [
+                  "paneId"
+                ],
+                "additionalProperties": false
+              },
+              "description": "Several panes in one call: [{paneId, text|brief}]."
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "pane_read",
+        "description": "Read a pane's terminal tail (one: `paneId`; several: `panes:[ids]`). Worker results arrive by handoff — read a pane only to confirm boot/state or inspect a sibling; polling pane_read in a loop re-reads your whole context each turn (measured: 159M cache-read tokens).",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "paneId": {
+              "type": "string",
+              "description": "Target paneId."
+            },
+            "lastN": {
+              "type": "number",
+              "description": "Trailing lines after compact filtering. Default 80, max 1000."
+            },
+            "includeRawLines": {
+              "type": "boolean",
+              "description": "Debug only: include the raw filtered lines."
+            },
+            "preferHandoff": {
+              "type": "boolean",
+              "description": "Default true: return the OVERCLOCK_HANDOFF block when present instead of the raw tail."
+            },
+            "handoffOnly": {
+              "type": "boolean",
+              "description": "Return only the handoff block (empty when absent)."
+            },
+            "allowCrossMission": {
+              "type": "boolean",
+              "description": "Required (true) to reach a pane of another mission."
+            },
+            "allowCrossWorkspace": {
+              "type": "boolean",
+              "description": "Required (true) to reach a pane of another workspace."
+            },
+            "panes": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 20,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "paneId": {
+                    "type": "string"
+                  },
+                  "match": {
+                    "type": "string",
+                    "description": "Optional substring to detect in this pane output."
+                  },
+                  "caseSensitive": {
+                    "type": "boolean",
+                    "description": "Default false."
+                  }
+                },
+                "required": [
+                  "paneId"
+                ],
+                "additionalProperties": false
+              },
+              "description": "Several panes in one call: [paneId, …]."
+            },
+            "includeTail": {
+              "type": "boolean",
+              "description": "With `panes`: include compact terminal tails."
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "pane_wait",
+        "description": "Block until a pane is output-idle (`paneId`, cap 15s — BOOT CONFIRMATION ONLY) or until panes match/finish (`panes:[…]`, fallback for agents that cannot handoff_submit). NEVER wait for a worker result here: delegate and END YOUR TURN — handoff_submit wakes you.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "paneId": {
+              "type": "string",
+              "description": "Single pane: wait until output-idle (cap 15s — boot confirmation only)."
+            },
+            "poll": {
+              "type": "boolean",
+              "description": "Return the current status immediately, without blocking."
+            },
+            "timeoutMs": {
+              "type": "number",
+              "description": "Max wait. Single pane: default/cap 15000. `panes`: default 30000, max 600000."
+            },
+            "allowCrossMission": {
+              "type": "boolean",
+              "description": "Required (true) to reach a pane of another mission."
+            },
+            "allowCrossWorkspace": {
+              "type": "boolean",
+              "description": "Required (true) to reach a pane of another workspace."
+            },
+            "panes": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 20,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "paneId": {
+                    "type": "string"
+                  },
+                  "match": {
+                    "type": "string",
+                    "description": "Substring that marks this pane complete."
+                  },
+                  "caseSensitive": {
+                    "type": "boolean",
+                    "description": "Default false."
+                  }
+                },
+                "required": [
+                  "paneId"
+                ],
+                "additionalProperties": false
+              },
+              "description": "Several panes: [{paneId, match?, caseSensitive?}] — completes on idle/done/dead, or when `match` appears (after the submitted prompt echo)."
+            },
+            "returnOn": {
+              "type": "string",
+              "enum": [
+                "any",
+                "all"
+              ],
+              "description": "any (default: first completion) | all."
+            },
+            "pollIntervalMs": {
+              "type": "number",
+              "description": "Internal polling interval. Default 100, min 50, max 5000."
+            },
+            "lastN": {
+              "type": "number",
+              "description": "Trailing lines inspected per pane. Default 120."
+            },
+            "includeTail": {
+              "type": "boolean",
+              "description": "Include compact terminal tails in the snapshots."
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "caller_workspace",
+                "all_workspaces"
+              ],
+              "description": "caller_mission (default when the session has a mission) | caller_workspace | all_workspaces."
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "pane_list",
+        "description": "List panes with status (idle/running/done/dead), CLI, model and mission. Default scope: the caller's mission (else workspace). Status is the liveness signal — prefer it to reading terminals.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scope": {
+              "type": "string",
+              "enum": [
+                "caller_mission",
+                "caller_workspace",
+                "all_workspaces"
+              ],
+              "description": "caller_mission (default when the session has a mission) | caller_workspace | all_workspaces."
+            },
+            "workspacePath": {
+              "type": "string",
+              "description": "Explicit target workspace path (overrides scope)."
+            },
+            "missionId": {
+              "type": "string",
+              "description": "Explicit target mission id (overrides scope)."
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "pane_close",
+        "description": "Close pane(s): `paneId` for one, `paneIds:[…]` for several in ONE call. Closing is silent (no death wake); collect the handoff first.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "paneId": {
+              "type": "string",
+              "description": "Target paneId."
+            },
+            "scope": {
+              "type": "string",
+              "enum": [
+                "caller_mission",
+                "caller_workspace",
+                "all_workspaces"
+              ],
+              "description": "caller_mission (default when the session has a mission) | caller_workspace | all_workspaces."
+            },
+            "allowSelfClose": {
+              "type": "boolean",
+              "description": "Required (true) to close your own pane."
+            },
+            "allowCrossWorkspace": {
+              "type": "boolean",
+              "description": "Required (true) to reach a pane of another workspace."
+            },
+            "allowCrossMission": {
+              "type": "boolean",
+              "description": "Required (true) to reach a pane of another mission."
+            },
+            "paneIds": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Several panes in ONE call (never N calls)."
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "pane_attach",
+        "description": "Mirror a pane's REAL terminal (colors, TUI, keyboard, resize) over a Unix socket — the live screen of the Overclock Bot. Returns {socket, token, cols, rows, framing}; wire format and client recipe: skill oc-mcp. Pane must be attachable:true (pane_list).",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "paneId": {
+              "type": "string",
+              "description": "Pane to mirror (needs attachable:true)."
+            }
+          },
+          "required": [
+            "paneId"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "pane_detach",
+        "description": "Close pane_attach connections: with `token` only that attachment; without it, every attachment of the pane (socket removed).",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "paneId": {
+              "type": "string"
+            },
+            "token": {
+              "type": "string",
+              "description": "Token returned by pane_attach. Omit to detach all."
+            }
+          },
+          "required": [
+            "paneId"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "pane_whoami",
+        "description": "Identity of THIS pane: paneId, mission, workspace, cwd, who spawned it (null = opened by the human), role and harness. The handshake already carries it — call only if unsure.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_list",
+        "description": "List one kind of resource: models, agents, skills (catalog), providers (spawnable CLIs/accounts), vault (media assets) or media_providers (configured image/video/audio services). `query`/`area` filter; `name` with kind=agents returns that agent in full.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "models",
+                "providers",
+                "vault",
+                "media_providers"
+              ],
+              "description": "REQUIRED family: models | agents | skills | providers | vault | media_providers."
+            },
+            "query": {
+              "type": "string",
+              "description": "Free-text filter (a few words)."
+            },
+            "area": {
+              "type": "string",
+              "description": "Agents: filter by squad role/category (scout|builder|reviewer)."
+            },
+            "name": {
+              "type": "string",
+              "description": "Agents: return this one agent in full."
+            },
+            "cli": {
+              "type": "string",
+              "description": "Agents (with name): which CLI's installation to read."
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "vps",
+                "api",
+                "database",
+                "service",
+                "other"
+              ],
+              "description": "Vault: asset type filter."
+            },
+            "family": {
+              "type": "string",
+              "enum": [
+                "image",
+                "video",
+                "audio"
+              ],
+              "description": "media_providers: only one media family — image | video | audio."
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_mission",
+        "description": "Overclock missions (the unit that groups panes/tasks): list, get, create, or set_status. Spawns inherit the caller's mission — pass missionId to pane_spawn only to deviate.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string",
+              "enum": [
+                "list",
+                "get",
+                "create",
+                "set_status"
+              ],
+              "description": "list · get · create · set_status"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "draft",
+                "in_progress",
+                "blocked",
+                "done",
+                "archived"
+              ],
+              "description": "Mission status (list filter / set_status value)."
+            },
+            "limit": {
+              "type": "number",
+              "description": "Optional max missions to return (1-200). Default 12, newest first."
+            },
+            "workspacePath": {
+              "type": "string",
+              "description": "Explicit target workspace. Overrides the default (caller workspace)."
+            },
+            "allWorkspaces": {
+              "type": "boolean",
+              "description": "List missions across ALL workspaces. Default false: scoped to the caller workspace."
+            },
+            "includeArchived": {
+              "type": "boolean",
+              "description": "Include archived missions. Default false (archived are dead state — F-058)."
+            },
+            "id": {
+              "type": "string",
+              "description": "Mission identifier."
+            },
+            "title": {
+              "type": "string",
+              "description": "Short mission title, e.g. \"Implement payment flow\"."
+            },
+            "description": {
+              "type": "string",
+              "description": "Optional mission summary. Helps future model/agent routing."
+            },
+            "worktreePath": {
+              "type": "string",
+              "description": "Absolute path of the workspace/worktree of the mission."
+            },
+            "type": {
+              "type": "string",
+              "enum": [
+                "libre",
+                "squad",
+                "agentic"
+              ],
+              "description": "C-195: mission type — decides pane-spawn behavior inside it. Omit for libre (default)."
+            },
+            "workDir": {
+              "type": "string",
+              "description": "Sticky work directory for ALL file output of the mission. Declare once, before delegating."
+            }
+          },
+          "required": [
+            "op"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_media_generate",
+        "description": "Generate an image, video or audio file with a configured provider (discover them with overclock_list kind=media_providers). Returns the output path.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "image",
+                "video",
+                "audio"
+              ],
+              "description": "image · video · audio"
+            },
+            "prompt": {
+              "type": "string",
+              "description": "Generation prompt."
+            },
+            "imageUrl": {
+              "type": "string",
+              "description": "Source image (image-to-image / first frame): http(s) URL or local path."
+            },
+            "images": {
+              "type": "array",
+              "description": "Reference images [{url, role}]. image: role character|style|object (google-image honors roles). video (grok-cli): subjects to keep faithful (reference_to_video).",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "description": "http(s) URL or local file path (relative paths resolve against the workspace)."
+                  },
+                  "role": {
+                    "type": "string",
+                    "enum": [
+                      "character",
+                      "style",
+                      "object"
+                    ],
+                    "description": "Omit = character."
+                  }
+                },
+                "required": [
+                  "url"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "provider": {
+              "type": "string",
+              "enum": [
+                "google-image",
+                "openai-image",
+                "grok-cli",
+                "codex-cli",
+                "agy-cli"
+              ],
+              "description": "Provider service id (see overclock_list kind=media_providers). Default: the configured one."
+            },
+            "outPath": {
+              "type": "string",
+              "description": "Output path (relative = workspace). Default generated-<timestamp>."
+            },
+            "model": {
+              "type": "string",
+              "description": "Model override — one of the provider's active models."
+            },
+            "aspect": {
+              "type": "string",
+              "enum": [
+                "16:9",
+                "9:16",
+                "1:1",
+                "4:3",
+                "3:4"
+              ],
+              "description": "image: aspect ratio (16:9, 9:16, 1:1…). video (grok-cli): applied to the generated frame."
+            },
+            "endImageUrl": {
+              "type": "string",
+              "description": "video: end frame (Kling) to interpolate between imageUrl and this."
+            },
+            "recoverJobId": {
+              "type": "string",
+              "description": "video: re-poll a prior timed-out job by id instead of submitting."
+            },
+            "durationSeconds": {
+              "type": "number",
+              "description": "video (grok-cli): 6 or 10 s (others rounded; `note` says so). replicate-video uses Settings."
+            },
+            "resolution": {
+              "type": "string",
+              "description": "video (grok-cli): Grok resolution_name, e.g. '480p' (default) or '720p'."
+            },
+            "voices": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 3,
+              "description": "video (grok-cli): up to 3 preset voice ids (eve, leo, ara…); prompt tags <AUDIO_n>; images are <IMAGE_n>."
+            },
+            "voiceId": {
+              "type": "string",
+              "description": "audio: voice id."
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_navigate",
+        "description": "Drive the Overclock UI: workspaces, missions, screens, panes, the MissionWizard (`wizard-*`) and dialogs — pick the action with `target` (documented there). `target:\"browser\"` + `url` opens a URL or a local built site in the internal browser pane (the way to show a deliverable). Query resolution: exact id → exact title → title contains; 0 or 2+ matches never navigate, they return candidates. UI only — panes are pane_spawn/pane_list.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "target": {
+              "type": "string",
+              "enum": [
+                "workspace",
+                "workspace-open",
+                "workspace-create",
+                "mission",
+                "mission-new",
+                "screen",
+                "pane",
+                "run-squad",
+                "run-agentic",
+                "home",
+                "wizard-advance",
+                "wizard-set",
+                "wizard-fire",
+                "wizard-cancel",
+                "dialog-dismiss",
+                "view-files",
+                "view-sessions",
+                "tab-close",
+                "tab-next",
+                "tab-prev",
+                "tab-switch",
+                "back",
+                "browser",
+                "skin",
+                "workspace-add"
+              ],
+              "description": "UI action (enum). workspace-*/mission/pane/screen take `query`; wizard-set takes \"key:value,…\"; browser takes `url`; skin `query`=skin id; workspace-add `query`=absolute path. Details: skill oc-mcp."
+            },
+            "query": {
+              "type": "string",
+              "description": "Workspace path/name, mission id/title, screen name, pane id/title, squad preset id, tab index, or \"key:value\" for wizard-set."
+            },
+            "model": {
+              "type": "string",
+              "description": "run-agentic: orchestrator model."
+            },
+            "goal": {
+              "type": "string",
+              "description": "run-agentic: goal pre-filled in the wizard."
+            },
+            "url": {
+              "type": "string",
+              "description": "For target=browser: http(s) URL or ABSOLUTE local path of a built site (served automatically)."
+            },
+            "missionId": {
+              "type": "string",
+              "description": "For target=browser: mission to attach the pane to (default: caller's)."
+            },
+            "workspacePath": {
+              "type": "string",
+              "description": "For target=browser: workspace path (default: caller's)."
+            },
+            "create": {
+              "type": "boolean",
+              "description": "workspace-add: create the folder when missing."
+            },
+            "open": {
+              "type": "boolean",
+              "description": "workspace-add: open the tab (default true)."
+            }
+          },
+          "required": [
+            "target"
+          ],
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "overclock_status",
+        "description": "Is the app running, which workspace/mission is active, what this connection can do (gated capabilities declared). Call first from an external connector.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {},
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "app_observe",
+        "description": "JSON tree of what is on screen (workspaces, missions, panes, open dialog with its options). The observation is the decision input; screenshots are proof for humans only. `uiReportStale:true` = renderer not yet reported — observe again.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "scope": {
+              "type": "string",
+              "enum": [
+                "app",
+                "wizard",
+                "skins",
+                "panes"
+              ],
+              "description": "Slice of the tree to return. Default \"app\" (whole tree)."
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      {
+        "name": "app_events",
+        "description": "Cursor-based queue of app events (pane finished, handoff, dialog…) — pass `after` = last seq read. `source:\"perf\"` returns performance episodes instead.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "source": {
+              "type": "string",
+              "enum": [
+                "app",
+                "perf"
+              ],
+              "description": "Default app. app · perf"
+            },
+            "since": {
+              "type": "number",
+              "description": "Seq of the last event you read. Omit on the first call."
+            },
+            "limit": {
+              "type": "number",
+              "description": "Max events (default 200, max 1000)."
+            },
+            "types": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "pane.idle",
+                  "pane.handoff",
+                  "pane.error",
+                  "pane.closed",
+                  "dialog.opened",
+                  "dialog.closed",
+                  "skin.changed",
+                  "mission.changed"
+                ]
+              },
+              "description": "Type filter."
+            },
+            "last": {
+              "type": "number",
+              "description": "How many episodes to return, most recent first. Default 10, max 500."
+            }
+          },
+          "required": [],
+          "additionalProperties": false
+        }
+      }
+    ]
+  },
+  "jsonrpc": "2.0",
+  "id": 2
+}
