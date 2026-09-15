@@ -3573,7 +3573,7 @@ export const RELEASE_07629: AppRelease = {
 };
 
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07633: AppRelease = {
   version: '0.76.33',
   date: '2026-09-15',
   codename: 'Releases separadas por SO e CLIs Windows nativas',
@@ -3694,3 +3694,52 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
 };
+
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.34',
+  date: '2026-09-15',
+  codename: 'Goal Governor autônomo e motor de ondas para panes do grid',
+  summary:
+    'Introduz o Goal Governor e o motor de ondas autônomo (Onda 4, 5, 6...) no processo principal do Electron, ' +
+    'permitindo execuções multi-etapas contínuas durante a madrugada em panes soltos sem parada no prompt do orquestrador; ' +
+    'inclui bloqueio de suspensão do sistema, testes automáticos de transição e circuit-breaker contra consumo excessivo de tokens.',
+  highlights: [
+    {
+      title: 'Goal Governor & Wave Engine Autônomo para Panes do Grid (F-544)',
+      detail:
+        'Motor supervisor integrado ao relógio adaptativo do Electron main (3s). Conduz a execução de ondas sequenciais (ex: Onda 4 -> 5 -> 6), ' +
+        'avalia gates de testes/comandos e injeta comandos PTY no orquestrador assim que as tarefas e testes passam.',
+    },
+    {
+      title: 'Prevenção de Suspensão Noturna (Anti-Sleep)',
+      detail:
+        'Ativação coordenada de powerSaveBlocker e MacosSystemSleepAssertion / LinuxLidSleepAssertion durante a execução de ondas noturnas, ' +
+        'mantendo o Mac e os panes trabalhando até a conclusão total.',
+    },
+    {
+      title: 'Supervisão MCP no Namespace nexus_*',
+      detail:
+        'Ferramentas expostas para orquestradores (Codex, Claude, AGY, Devin): nexus_goal_register, nexus_goal_status, nexus_goal_bind_pane, ' +
+        'nexus_wave_advance, nexus_goal_control e nexus_goal_task_update.',
+    },
+    {
+      title: 'Circuit Breaker Fail-Safe',
+      detail:
+        'Pausa automática com alerta ao operador após 3 falhas consecutivas de gate de verificação, impedindo loops infinitos e desperdício de tokens.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'F-544: Orquestração de ondas em panes soltos interrompida por falta de Goal Governor e supervisão autônoma',
+      detail:
+        'Criado o motor de supervisão autônoma de metas e ondas com gates de verificação, injeção de prompts via PTY, bloqueio de suspensão e circuit breaker.',
+    },
+    {
+      title: 'F-542: Falha de OOM no CI e typecheck por estouro de heap do Node.js',
+      detail:
+        'Adicionado --max-old-space-size=4096 nas pipelines de CI, scripts de lint e typecheck e no fluxo do nexus-notary.',
+    },
+  ],
+};
+

@@ -26,6 +26,11 @@ import { configureHandoffDeliveryRuntimeRecovery } from './idle-delivery';
 import { recoverHandoffDeliveryRuntime } from './handoff-delivery-runtime-recovery';
 import { terminateUnauthorizedMissionRuntimes } from './mission-runtime-termination';
 import { requireProjectDomainStoreRegistry } from './project-domain-store-registry';
+import {
+  GOAL_GOVERNOR_RECONCILE_CADENCE_MS,
+  reconcileGoalGovernor,
+  shutdownGoalGovernor,
+} from './goal-governor';
 
 /**
  * Production owner for orchestration supervision.
@@ -93,6 +98,11 @@ export function startOrchestrationCoordinator(): void {
       cadenceMs: HANDOFF_DELIVERY_OUTBOX_RECONCILE_MS,
       run: () => reconcilePendingHandoffDeliveryOutbox(),
     },
+    {
+      id: 'goal-governor',
+      cadenceMs: GOAL_GOVERNOR_RECONCILE_CADENCE_MS,
+      run: (now) => reconcileGoalGovernor(now),
+    },
   ]);
   coordinator = instance;
   instance.start();
@@ -141,6 +151,7 @@ export async function stopOrchestrationCoordinator(): Promise<void> {
     disposeBootPromptWatchdog = null;
     shutdownDelegationSupervisor();
     configureHandoffDeliveryRuntimeRecovery(null);
+    await shutdownGoalGovernor();
     coordinator = null;
   })();
   coordinatorStopFlight = stop;

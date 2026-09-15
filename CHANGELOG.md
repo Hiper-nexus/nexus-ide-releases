@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.76.34 — Goal Governor autônomo e motor de ondas para panes do grid
+
+- **Goal Governor & Autonomous Wave Engine (F-544)**: Motor supervisor no processo principal do Electron (reconciliador adaptativo de 3s) que conduz a execução de ondas sequenciais (ex: Onda 4 -> Onda 5 -> Onda 6) em panes soltos no grid de terminais. Elimina paradas do orquestrador após o primeiro turno, monitora encerramento e entregas dos workers, avalia gates automáticos (`npm test`, `npm run typecheck`, arquivos e comandos customizados) e injeta os comandos e tarefas da onda seguinte diretamente via PTY nudge (`orchWriteSession`).
+- **Prevenção de suspensão noturna (Anti-Sleep)**: Bloqueio automático de suspensão do sistema operacional via `powerSaveBlocker` e asserções de plataforma (`MacosSystemSleepAssertion` e `LinuxLidSleepAssertion`) enquanto houver metas e ondas ativas, garantindo execução contínua durante a madrugada.
+- **Supervisão e controle MCP (`nexus_*`)**: Ferramentas expostas para orquestradores (Codex Astra, Claude Code, Antigravity, Devin, Kimi, OpenCode): `nexus_goal_register`, `nexus_goal_status`, `nexus_goal_bind_pane`, `nexus_wave_advance`, `nexus_goal_control` e `nexus_goal_task_update`.
+- **Circuit Breaker protetor contra queima de tokens**: Pausa automática com alerta acionável ao operador após 3 falhas consecutivas de gate, prevenindo loops infinitos em caso de erros não resolvidos.
+- **Skill dedicada do Goal Governor**: Adicionada `.devin/skills/nexus-goal-governor/SKILL.md` com guia completo de uso e exemplos práticos para orquestradores e pilotos.
+
 ## 0.76.33 — Releases separadas por SO e CLIs Windows nativas
 
 - **Instaladores por plataforma**: Antigravity e Devin usam os instaladores oficiais PowerShell no Windows; os scripts bash continuam restritos a macOS/Linux. Aider usa `uv` sem shell POSIX e Muse informa honestamente quando não há instalador Windows nativo.

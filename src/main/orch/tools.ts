@@ -21,6 +21,7 @@ import { buildPlanTools } from './tools-plan';
 import { buildHunkTools } from './tools-hunks';
 import { buildLspTools } from './tools-lsp';
 import { buildInstrumentTools } from './tools-instruments';
+import { buildGoalTools } from './tools-goal';
 
 /**
  * The MCP toolset — the orchestration tools in the
@@ -60,5 +61,6 @@ export function buildToolset(): McpToolDef[] {
     ...buildSecurityTools(),
     ...buildMemoryTools(),
     ...buildInstrumentTools(),
+    ...buildGoalTools(),
   ];
 }
