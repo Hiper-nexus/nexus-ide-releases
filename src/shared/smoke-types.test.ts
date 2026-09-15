@@ -85,3 +85,29 @@ describe('parseFunctionalSmokeResult', () => {
     ).toBeNull();
   });
 });
+
+describe('failure reason (closed set)', () => {
+  it('accepts a reason from the closed set and rejects free text', () => {
+    expect(
+      parseFunctionalSmokeResult({
+        ok: false,
+        probes: [],
+        failedProbe: 'dictation-hold-to-talk',
+        reason: 'write-refused-exited',
+      }),
+    ).toEqual({
+      ok: false,
+      probes: [],
+      failedProbe: 'dictation-hold-to-talk',
+      reason: 'write-refused-exited',
+    });
+    expect(
+      parseFunctionalSmokeResult({
+        ok: false,
+        probes: [],
+        failedProbe: 'dictation-hold-to-talk',
+        reason: 'shell said: secret',
+      }),
+    ).toBeNull();
+  });
+});

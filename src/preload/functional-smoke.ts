@@ -12,6 +12,7 @@ import {
   FUNCTIONAL_SMOKE_FILE_CONTENT,
   FUNCTIONAL_SMOKE_MIN_ADAPTERS,
   FUNCTIONAL_SMOKE_MIN_TOOLS,
+  type FunctionalSmokeFailureReason,
   type FunctionalSmokeProbe,
   type FunctionalSmokeResult,
 } from '../shared/smoke-types';
@@ -567,7 +568,22 @@ export async function runFunctionalSmokeProbes(
   const dictationCleanup: {
     sessionId: string | null;
     unsubscribe: (() => void) | null;
-  } = { sessionId: null, unsubscribe: null };
+    unsubscribeExit: (() => void) | null;
+    /** A sessão do shell morreu antes de a sonda terminar. */
+    exited: boolean;
+    /** Motivo fechado da falha, para o gate não ficar cego. */
+    reason: FunctionalSmokeFailureReason | null;
+  } = {
+    sessionId: null,
+    unsubscribe: null,
+    unsubscribeExit: null,
+    exited: false,
+    reason: null,
+  };
+  const refusedReason = (): FunctionalSmokeFailureReason =>
+    dictationCleanup.exited ? 'write-refused-exited' : 'write-refused-alive';
+  const echoReason = (): FunctionalSmokeFailureReason =>
+    dictationCleanup.exited ? 'echo-timeout-exited' : 'echo-timeout-alive';
   try {
     if (
       !(await probe(
@@ -584,9 +600,16 @@ export async function runFunctionalSmokeProbes(
             spawned.ok !== true ||
             typeof spawned.sessionId !== 'string'
           ) {
+            dictationCleanup.reason = 'spawn-failed';
             return false;
           }
           dictationCleanup.sessionId = spawned.sessionId;
+          dictationCleanup.unsubscribeExit = api.pty.onExit(
+            spawned.sessionId,
+            () => {
+              dictationCleanup.exited = true;
+            },
+          );
           dictationCleanup.unsubscribe = api.pty.onData(
             spawned.sessionId,
             (data) => {
@@ -597,7 +620,10 @@ export async function runFunctionalSmokeProbes(
             spawned.sessionId,
             DICTATION_MARKER,
           );
-          if (!accepted) return false;
+          if (!accepted) {
+            dictationCleanup.reason = refusedReason();
+            return false;
+          }
           for (
             let attempt = 0;
             attempt < PTY_ECHO_ATTEMPTS &&
@@ -606,13 +632,20 @@ export async function runFunctionalSmokeProbes(
           ) {
             await delay(PTY_ECHO_POLL_MS);
           }
-          return dictationEcho.includes(DICTATION_MARKER);
+          const markerDelivered = dictationEcho.includes(DICTATION_MARKER);
+          if (!markerDelivered) dictationCleanup.reason = echoReason();
+          return markerDelivered;
         },
         (value) => value === true,
         echoTimeoutMs,
       ))
     ) {
-      return { ok: false, probes, failedProbe: 'dictation-delivery' };
+      return {
+        ok: false,
+        probes,
+        failedProbe: 'dictation-delivery',
+        ...(dictationCleanup.reason ? { reason: dictationCleanup.reason } : {}),
+      };
     }
 
     if (
@@ -648,7 +681,10 @@ export async function runFunctionalSmokeProbes(
       !(await probe(
         'dictation-hold-to-talk',
         async () => {
-          if (!dictationCleanup.sessionId) return false;
+          if (!dictationCleanup.sessionId) {
+            dictationCleanup.reason = 'no-session';
+            return false;
+          }
           const make =
             deps.holdToTalkFactory ?? (() => new HoldToTalkDiscriminator());
 
@@ -669,7 +705,10 @@ export async function runFunctionalSmokeProbes(
           typing.keyDown({ repeat: false });
           const repeatIsTyping = typing.keyDown({ repeat: true }).emitSpaces === 1;
 
-          if (!tapTypesSpace || !holdArms || !repeatIsTyping) return false;
+          if (!tapTypesSpace || !holdArms || !repeatIsTyping) {
+            dictationCleanup.reason = 'discriminator';
+            return false;
+          }
 
           // O espaço retido tem de CHEGAR ao pane, com recibo e eco. O espaço
           // viaja ENTRE dois tokens únicos: procurar por um ' ' solto no
@@ -681,7 +720,10 @@ export async function runFunctionalSmokeProbes(
             dictationCleanup.sessionId,
             typed,
           );
-          if (!spaceDelivered) return false;
+          if (!spaceDelivered) {
+            dictationCleanup.reason = refusedReason();
+            return false;
+          }
           const echoed = (): boolean =>
             stripTerminalControlSequences(dictationEcho.slice(before))
               .replace(/\s+/gu, ' ')
@@ -693,16 +735,24 @@ export async function runFunctionalSmokeProbes(
           ) {
             await delay(PTY_ECHO_POLL_MS);
           }
-          return echoed();
+          const spaceEchoed = echoed();
+          if (!spaceEchoed) dictationCleanup.reason = echoReason();
+          return spaceEchoed;
         },
         (value) => value === true,
         echoTimeoutMs,
       ))
     ) {
-      return { ok: false, probes, failedProbe: 'dictation-hold-to-talk' };
+      return {
+        ok: false,
+        probes,
+        failedProbe: 'dictation-hold-to-talk',
+        ...(dictationCleanup.reason ? { reason: dictationCleanup.reason } : {}),
+      };
     }
   } finally {
     if (dictationCleanup.unsubscribe) dictationCleanup.unsubscribe();
+    if (dictationCleanup.unsubscribeExit) dictationCleanup.unsubscribeExit();
     if (dictationCleanup.sessionId) {
       const sessionId = dictationCleanup.sessionId;
       await new Promise<void>((resolve) => {

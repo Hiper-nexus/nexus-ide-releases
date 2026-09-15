@@ -36,10 +36,29 @@ export interface FunctionalSmokeSuccess {
   toolCount: number;
 }
 
+/**
+ * Motivo FECHADO de falha dentro de uma sonda (sem texto livre: o relatório do
+ * renderer nunca pode contrabandear log). Diz ao gate o que falhou de fato —
+ * na 0.76.36 o gate só dizia "dictation-hold-to-talk" e a causa ficou opaca.
+ */
+export const FUNCTIONAL_SMOKE_FAILURE_REASONS = [
+  'discriminator',
+  'no-session',
+  'spawn-failed',
+  'write-refused-alive',
+  'write-refused-exited',
+  'echo-timeout-alive',
+  'echo-timeout-exited',
+] as const;
+
+export type FunctionalSmokeFailureReason =
+  (typeof FUNCTIONAL_SMOKE_FAILURE_REASONS)[number];
+
 export interface FunctionalSmokeFailure {
   ok: false;
   probes: FunctionalSmokeProbe[];
   failedProbe: FunctionalSmokeProbe;
+  reason?: FunctionalSmokeFailureReason;
 }
 
 export type FunctionalSmokeResult = FunctionalSmokeSuccess | FunctionalSmokeFailure;
@@ -47,6 +66,8 @@ export type FunctionalSmokeResult = FunctionalSmokeSuccess | FunctionalSmokeFail
 const PROBE_SET = new Set<string>(FUNCTIONAL_SMOKE_REQUIRED_PROBES);
 const SUCCESS_KEYS = new Set(['ok', 'probes', 'adapterCount', 'toolCount']);
 const FAILURE_KEYS = new Set(['ok', 'probes', 'failedProbe']);
+const FAILURE_KEYS_WITH_REASON = new Set([...FAILURE_KEYS, 'reason']);
+const REASON_SET = new Set<string>(FUNCTIONAL_SMOKE_FAILURE_REASONS);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -94,7 +115,16 @@ export function parseFunctionalSmokeResult(value: unknown): FunctionalSmokeResul
   }
 
   if (value.ok === false) {
-    if (!hasExactKeys(value, FAILURE_KEYS)) return null;
+    const withReason = 'reason' in value;
+    if (!hasExactKeys(value, withReason ? FAILURE_KEYS_WITH_REASON : FAILURE_KEYS)) {
+      return null;
+    }
+    if (
+      withReason &&
+      (typeof value.reason !== 'string' || !REASON_SET.has(value.reason))
+    ) {
+      return null;
+    }
     if (
       typeof value.failedProbe !== 'string' ||
       !PROBE_SET.has(value.failedProbe) ||
@@ -106,6 +136,9 @@ export function parseFunctionalSmokeResult(value: unknown): FunctionalSmokeResul
       ok: false,
       probes,
       failedProbe: value.failedProbe as FunctionalSmokeProbe,
+      ...(withReason
+        ? { reason: value.reason as FunctionalSmokeFailureReason }
+        : {}),
     };
   }
 

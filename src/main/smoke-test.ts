@@ -98,7 +98,12 @@ export function initSmokeTest(): void {
       }
       if (!result.ok) {
         removeListeners();
-        settle("functional-failed", result.failedProbe);
+        settle(
+          "functional-failed",
+          result.reason
+            ? `${result.failedProbe} (${result.reason})`
+            : result.failedProbe,
+        );
         return;
       }
       removeListeners();
