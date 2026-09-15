@@ -66,6 +66,23 @@ describe('nexus_pane_spawn recusa worker antes de qualquer spawn', () => {
   });
 });
 
+describe('nexus_pane_spawn — contrato de entrega (expect) falha visível antes do spawn', () => {
+  it('expect malformado é recusado para o orquestrador antes de qualquer spawn', async () => {
+    await expect(
+      paneSpawnTool.handler(
+        { adapterId: 'codex', expect: { schema: { type: 'lista' } } },
+        context({ role: 'orchestrator', label: 'orch' }),
+      ),
+    ).rejects.toThrow(/expect\.schema inválido: .*tipo desconhecido/);
+    await expect(
+      paneSpawnTool.handler(
+        { adapterId: 'codex', expect: { schema: true, retries: 7 } },
+        context({ role: 'orchestrator', label: 'orch' }),
+      ),
+    ).rejects.toThrow(/expect\.retries inválido/);
+  });
+});
+
 describe('coerceSpawnReadOnly', () => {
   it('preserva readOnly=false quando o chamador não é read-only', () => {
     expect(coerceSpawnReadOnly({ readOnly: false }, false)).toEqual({
