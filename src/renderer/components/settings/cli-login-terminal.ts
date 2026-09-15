@@ -9,6 +9,19 @@ import { useSessionStateStore } from '../../state/session-state-store';
 import { waitForSession, writeToPane } from '../../terminal/terminal-host';
 
 /**
+ * Aspas simples POSIX, sempre — deliberadamente sem a variante condicional do
+ * `shellQuote` do terminal-host, que só cita ao encontrar caractere especial e
+ * deixa passar `~` e `#`.
+ *
+ * Dentro de '...' o shell não interpreta nada: nem `$`, nem crase, nem barra
+ * invertida. É o que separa "mostrar um comando sugerido" de "executar o que
+ * veio no campo `installCommand`" — o texto aqui é dado, não instrução.
+ */
+function posixSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+/**
  * Login de CLI dentro do Nexus: abre um terminal de verdade e roda o comando de
  * login DA FERRAMENTA. O Nexus nunca pede senha nem guarda credencial de
  * assinatura — quem grava a sessão é a própria CLI, igual ao shell do operador.
@@ -141,7 +154,7 @@ export async function openCliLoginTerminal(input: {
     const tipMsg = 'Execute o comando acima neste terminal para instalar a CLI.';
     writeToPane(
       paneId,
-      `printf '%s\\n%s\\n%s\\n\\n' ${JSON.stringify(safeMsg)} ${JSON.stringify(safeCmdMsg)} ${JSON.stringify(tipMsg)}\n`,
+      `printf '%s\\n%s\\n%s\\n\\n' ${posixSingleQuote(safeMsg)} ${posixSingleQuote(safeCmdMsg)} ${posixSingleQuote(tipMsg)}\n`,
     );
   } else {
     writeToPane(paneId, `${command}\n`);
