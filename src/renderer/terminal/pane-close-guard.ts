@@ -32,7 +32,6 @@ export function deadTerminalPaneClosesDirectly(input: {
   return !input.hasLiveSession && input.missionTerminalOrUnlinked;
 }
 
-/** Verdadeiro quando nenhum vínculo vivo impede liberar o pane. */
 export function paneMissionLinkIsTerminal(
   paneId: string,
   pane?: PaneModel,
@@ -42,9 +41,23 @@ export function paneMissionLinkIsTerminal(
   if (!missionId) return true;
   const orch = useOrchStore.getState();
   const legacy = orch.missions.find((m) => m.id === missionId);
-  if (legacy?.status === 'done' || legacy?.status === 'failed') return true;
+  if (legacy?.status === 'done' || legacy?.status === 'failed') {
+    return true;
+  }
   const summary = orch.missionSummaries.find((m) => m.id === missionId);
-  return summary?.state === 'completed' || summary?.state === 'failed';
+  if (
+    summary?.state === 'completed' ||
+    summary?.state === 'failed' ||
+    summary?.state === 'stopping'
+  ) {
+    return true;
+  }
+  // Se a missão não existe nos registros ativos (órfã após restart/reload),
+  // o vínculo não é ativo. Trata como terminal para liberar o fechamento do pane.
+  if (!legacy && !summary) {
+    return true;
+  }
+  return false;
 }
 
 /** Confirm da casa como default — nada de window.confirm nativo bloqueante. */

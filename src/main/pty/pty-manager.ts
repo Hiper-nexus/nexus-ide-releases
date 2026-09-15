@@ -2475,8 +2475,10 @@ export function adoptMainOwnedAgentSession(
 ): AdoptedMainOwnedAgentSession | null {
   const matches = [...sessions.entries()].filter(([, session]) => {
     const info = session.agent;
+    const wcMatches =
+      session.wc === null || session.wc === wc || !canSend(session.wc);
     return (
-      (session.wc === null || session.wc === wc) &&
+      wcMatches &&
       info?.paneId === claim.paneId &&
       info.adapterId === claim.adapterId &&
       info.missionId === claim.missionId &&
@@ -2829,7 +2831,8 @@ export function killSessionsFor(wc: WebContents): void {
     if (session.wc !== wc) continue;
     const info = session.agent;
     if (
-      info?.missionId &&
+      info &&
+      info.missionId &&
       info.role !== "user" &&
       info.source !== "direct-user"
     ) {

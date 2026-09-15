@@ -335,6 +335,8 @@ export interface NexusApi {
      * intervenção humana — clique no balão ou menu "Ver missões").
      */
     onOpenOps(cb: () => void): Unsubscribe;
+    /** O pet pediu para navegar para a tela de terminais / grid. */
+    onOpenTerminal(cb: () => void): Unsubscribe;
     /**
      * Main avisa intervenção (missão blocked / agent waiting) e conclusão.
      * Sempre chega mesmo com pet desligado — a UI mostra toast e pode abrir o

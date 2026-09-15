@@ -626,6 +626,12 @@ const api: NexusApi = {
       ipcRenderer.on(PET_CHANNELS.openOps, listener);
       return () => ipcRenderer.removeListener(PET_CHANNELS.openOps, listener);
     },
+    onOpenTerminal: (cb: () => void) => {
+      const listener = () => cb();
+      ipcRenderer.on(PET_CHANNELS.openTerminal, listener);
+      return () =>
+        ipcRenderer.removeListener(PET_CHANNELS.openTerminal, listener);
+    },
     onAttention: (cb: (event: import('../shared/pet-types').PetEvent) => void) => {
       const listener = (_e: unknown, event: import('../shared/pet-types').PetEvent) =>
         cb(event);

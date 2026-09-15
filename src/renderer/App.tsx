@@ -914,6 +914,13 @@ export function App() {
         }),
       );
     }
+    if (petApi.onOpenTerminal) {
+      offs.push(
+        petApi.onOpenTerminal(() => {
+          useProductNavigationStore.getState().openTerminal();
+        }),
+      );
+    }
     if (petApi.onAttention) {
       offs.push(
         petApi.onAttention((event) => {

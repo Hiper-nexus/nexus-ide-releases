@@ -465,6 +465,13 @@
 }
 
 /* ---- Confirm dialog (close workspace) ---- */
+.confirm {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-confirm);
+  pointer-events: auto;
+}
+
 .confirm__overlay {
   position: fixed;
   inset: 0;

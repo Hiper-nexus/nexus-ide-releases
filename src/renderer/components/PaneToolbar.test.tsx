@@ -136,4 +136,16 @@ describe('PaneToolbar narrow controls', () => {
       document.removeEventListener('keydown', canvasShortcut);
     }
   });
+
+  it('exibe o botão de Foco Stage na barra de ferramentas em largura normal', () => {
+    const pane2: PaneModel = { id: 'pane-2', kind: 'shell', title: 'Terminal 2' };
+    useLayoutStore.setState({ root: buildGridTree([pane, pane2]), focusedPaneId: pane.id, maximizedPaneId: null });
+    const host = mount(600);
+    const stageBtn = host.querySelector<HTMLButtonElement>(
+      '[aria-label="Foco Stage"], [aria-label="Grade Normal"]',
+    );
+    expect(stageBtn).not.toBeNull();
+    act(() => stageBtn!.click());
+    expect(useLayoutStore.getState().stageFocusMode).toBe(true);
+  });
 });

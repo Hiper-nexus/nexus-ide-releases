@@ -168,8 +168,17 @@ export function TerminalWorkspace({
     );
     const ids = new Set(visible.map((pane) => pane.id));
     for (const pinned of operatorPinIds) ids.add(pinned);
+    // Em vista global (!inMission), panes desvinculados de missão (shells avulsos,
+    // agentes soltos montados via grid/launcher) NUNCA podem sumir da grade
+    // por causa de um filtro automático de missão anterior!
+    if (!inMission) {
+      for (const pane of panes) {
+        const boundId = pane.missionId ?? paneMissions[pane.id];
+        if (!boundId) ids.add(pane.id);
+      }
+    }
     return ids;
-  }, [panes, effectiveMissionId, paneMissions, operatorPinIds]);
+  }, [panes, effectiveMissionId, paneMissions, operatorPinIds, inMission]);
 
   return (
     <section

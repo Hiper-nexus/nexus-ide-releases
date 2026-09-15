@@ -24,7 +24,7 @@ function TerminalGridSetup({ initialCount, close }: { initialCount: number; clos
   const layoutRoot = useLayoutStore(state => state.root);
   const [count, setCount] = useState(Number.isFinite(initialCount) ? Math.max(1, Math.min(MAX_SETUP_PANES, Math.trunc(initialCount))) : 2);
   const [step, setStep] = useState<'layout' | 'agents'>('layout');
-  const [folder, setFolder] = useState(current?.path ?? '');
+  const [folder, setFolder] = useState(current?.path || recents[0]?.path || '');
   const [selections, setSelections] = useState<string[]>(Array(MAX_SETUP_PANES).fill(SHELL_ENTRY_ID));
   const [operation, setOperation] = useState<'pick-folder' | 'open-panels' | null>(null);
   const busy = operation !== null;

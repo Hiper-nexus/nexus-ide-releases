@@ -405,7 +405,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
         shortcut: formatShortcut('mod', 'shift', 'F'),
         icon: stageFocusMode ? 'grid' : 'sparkle',
         active: stageFocusMode,
-        primary: false,
+        primary: true,
         run: () => toggleStageFocus(pane.id),
       });
       list.push({
@@ -454,6 +454,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
     destination,
     paneMissions,
     activeMissions,
+    respawnWithResume,
     split,
     toggleMaximizePane,
     toggleStageFocus,
@@ -476,12 +477,6 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
 
   // A narrow pane reserves room for its close pin and the menu trigger.
   // Layout and mission actions remain available through the same menu.
-  const overflow =
-    density === 'compact'
-      ? actions
-      : density === 'icons'
-        ? actions.filter((a) => a.id === 'scroll-end' || a.id === 'hibernate')
-        : [];
   const sessionVisible = actions.filter((a) =>
     density === 'compact'
       ? false
@@ -493,8 +488,23 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
     (a) => a.id === 'mission-leader' || a.id === 'promote-orchestrator',
   );
   const layoutVisible = density === 'compact' ? [] : actions.filter(
-    (a) => a.id === 'maximize' || a.id === 'split-right' || a.id === 'split-down',
+    (a) =>
+      a.id === 'stage-focus' ||
+      a.id === 'maximize' ||
+      a.id === 'split-right' ||
+      a.id === 'split-down',
   );
+  const overflow =
+    density === 'compact'
+      ? actions
+      : density === 'icons'
+        ? actions.filter((a) => a.id === 'scroll-end' || a.id === 'hibernate')
+        : actions.filter(
+            (a) =>
+              !sessionVisible.some((s) => s.id === a.id) &&
+              !missionVisible.some((m) => m.id === a.id) &&
+              !layoutVisible.some((l) => l.id === a.id),
+          );
 
   useLayoutEffect(() => {
     if (!menuOpen || !menuRef.current || !menuTriggerRef.current) return;
