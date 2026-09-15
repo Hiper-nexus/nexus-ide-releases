@@ -109,6 +109,23 @@ describe('Linux sandbox packaging', () => {
   });
 });
 
+describe('platform-specific maker matrix', () => {
+  it('keeps each distributable maker on its native operating system', () => {
+    expect(
+      forgeConfig.makers?.map((maker) => ({
+        name: maker.name,
+        platforms: maker.platforms,
+      })),
+    ).toEqual([
+      { name: 'dmg', platforms: ['darwin'] },
+      { name: 'squirrel', platforms: ['win32'] },
+      { name: 'zip', platforms: ['darwin'] },
+      { name: 'rpm', platforms: ['linux'] },
+      { name: 'deb', platforms: ['linux'] },
+    ]);
+  });
+});
+
 describe('native terminal packaging', () => {
   it('unpacks Windows DLLs used beside native Node bindings', () => {
     expect(

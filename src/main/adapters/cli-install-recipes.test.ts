@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   cliInstallRecipeCandidates,
   cliInstallRecipeFor,
+  cliInstallCommandFor,
   describeInstallRecipe,
+  compatibleManualInstallCommand,
   selectInstallRecipe,
 } from './cli-install-recipes';
 
@@ -13,6 +15,7 @@ const ARGV_IDS = [
   'openclaude',
   'kimi',
   'grok',
+  'aider',
 ] as const;
 
 describe('cli install recipes', () => {
@@ -49,9 +52,19 @@ describe('cli install recipes', () => {
       expect(recipe.scriptUrl).toBe('https://antigravity.google/cli/install.sh');
       expect(describeInstallRecipe(recipe)).toContain('antigravity.google');
     }
-    // Windows do agy usa PowerShell (irm|iex) — sem receita até termos um
-    // caminho sem pipe de shell.
-    expect(cliInstallRecipeFor('agy', 'win32')).toBeNull();
+    const agyWindows = cliInstallRecipeFor('agy', 'win32');
+    expect(agyWindows?.kind).toBe('powershell-script');
+    if (agyWindows?.kind === 'powershell-script') {
+      expect(agyWindows.scriptUrl).toBe('https://antigravity.google/cli/install.ps1');
+      expect(cliInstallCommandFor('agy', 'win32')).toBe(
+        'irm https://antigravity.google/cli/install.ps1 | iex',
+      );
+    }
+    const devinWindows = cliInstallRecipeFor('devin', 'win32');
+    expect(devinWindows?.kind).toBe('powershell-script');
+    if (devinWindows?.kind === 'powershell-script') {
+      expect(devinWindows.scriptUrl).toBe('https://static.devin.ai/cli/setup.ps1');
+    }
   });
 
   it('installs OpenClaude from the official gitlawb npm package', () => {
@@ -75,11 +88,33 @@ describe('cli install recipes', () => {
   });
 
   it('never invents recipes for CLIs without a verified channel', () => {
-    // GLM/LongCat autenticam por token (sem CLI própria a instalar); aider
-    // usa instalador próprio ainda não verificado.
-    for (const id of ['aider', 'gemini', 'gemini-cli', 'glm', 'longcat', 'desconhecido']) {
+    // GLM/LongCat autenticam por token (sem CLI própria a instalar).
+    for (const id of ['gemini', 'gemini-cli', 'glm', 'longcat', 'desconhecido']) {
       expect(cliInstallRecipeFor(id, 'darwin')).toBeNull();
     }
+  });
+
+  it('mantém o comando manual separado por shell', () => {
+    expect(
+      compatibleManualInstallCommand(
+        'curl -fsSL https://example.test/install.sh | bash',
+        'win32',
+      ),
+    ).toBeNull();
+    expect(compatibleManualInstallCommand('brew install muse-code', 'win32')).toBeNull();
+    expect(
+      compatibleManualInstallCommand('irm https://example.test/install.ps1 | iex', 'win32'),
+    ).toBe('irm https://example.test/install.ps1 | iex');
+    expect(
+      compatibleManualInstallCommand('irm https://example.test/install.ps1 | iex', 'darwin'),
+    ).toBeNull();
+  });
+
+  it('não publica receita Unix/Homebrew no catálogo Windows', () => {
+    expect(cliInstallRecipeFor('muse', 'win32')).toBeNull();
+    expect(cliInstallCommandFor('muse', 'win32')).toBeNull();
+    expect(cliInstallCommandFor('agy', 'win32')).not.toMatch(/install\.sh|bash/iu);
+    expect(cliInstallCommandFor('devin', 'win32')).not.toMatch(/install\.sh|bash/iu);
   });
 });
 

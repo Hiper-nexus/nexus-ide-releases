@@ -48,6 +48,10 @@ import {
   supportsEnforceableReadOnlyNativeAuthority,
   supportsEnforceableWorkspaceWriteNativeAuthority,
 } from '../pty/autonomous-cli-policy';
+import {
+  cliInstallCommandFor,
+  compatibleManualInstallCommand,
+} from './cli-install-recipes';
 
 const USER_ADAPTER_DIR = path.join(os.homedir(), '.nexus', 'plugins', 'adapters');
 const NEXUS_DIR = path.join(os.homedir(), '.nexus');
@@ -338,7 +342,10 @@ function toAdapterInfo(
   origin: AdapterOrigin,
 ): AdapterInfo {
   const installCommand =
-    adapter.kind !== 'api-provider' ? adapter.install.command : '';
+    adapter.kind !== 'api-provider'
+      ? cliInstallCommandFor(adapter.id) ??
+        compatibleManualInstallCommand(adapter.install.command)
+      : null;
   const loginHint =
     adapter.kind !== 'api-provider' ? adapter.auth.loginHint : undefined;
   // Merge user-added custom models so a CLI's newest models (added by hand)
@@ -365,7 +372,9 @@ function toAdapterInfo(
     },
     installed: resolution.installed,
     resolvedBinPath: resolution.binPath,
-    installCommand,
+    // AdapterInfo mantém string por compatibilidade IPC; vazio significa que
+    // não existe receita nativa segura para este SO (ex.: Muse no Windows).
+    installCommand: installCommand ?? '',
     loginHint,
     authMethod,
     idleTimeoutMs: resolveIdleTimeoutMs(adapter),

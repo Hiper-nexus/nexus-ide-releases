@@ -3574,14 +3574,31 @@ export const RELEASE_07629: AppRelease = {
 
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.32',
+  version: '0.76.33',
   date: '2026-09-15',
-  codename: 'Windows: terminal visível e diagnóstico Jarvis seguro',
+  codename: 'Releases separadas por SO e CLIs Windows nativas',
   summary:
-    'Correções de operação no Windows: terminais deixam de abrir em uma tela preta sem workspace, ' +
-    'o diagnóstico da Jarvis funciona sem projeto e o caminho normal continua com escopo e memória protegidos; ' +
-    'a versão também inclui as correções de cota, mobile, orquestração e CLIs da linha 0.76.31.',
+    'A versão separa de forma explícita os canais de instalação e os artefatos de release por sistema operacional: ' +
+    'Windows usa PowerShell e Setup assinado, macOS usa DMG/ZIP com bash/Homebrew quando oficial, e Linux usa DEB/RPM. ' +
+    'Também corrige o modal de atualização deslocado e preserva as correções operacionais da 0.76.32.',
   highlights: [
+    {
+      title: 'Instalação de CLI nativa por sistema operacional (F-543)',
+      detail:
+        'Antigravity e Devin usam os scripts oficiais .ps1 no Windows; macOS/Linux mantêm os scripts .sh. ' +
+        'Aider usa uv em todos os sistemas suportados e Muse não promete um instalador Windows inexistente.',
+    },
+    {
+      title: 'Matriz de artefatos sem mistura entre SOs',
+      detail:
+        'O Forge fixa Squirrel em win32, DMG/ZIP em darwin e DEB/RPM em linux. ' +
+        'Cada runner gera somente o pacote nativo que o sistema consegue validar e assinar.',
+    },
+    {
+      title: 'Modal de atualização alinhado à viewport (F-350)',
+      detail:
+        'A camada global não cria mais um containing block transformado de 0×0; overlays `position: fixed` ficam no lugar correto.',
+    },
     {
       title: 'Refutação viva e fim dos falsos positivos de cota esgotada (F-539)',
       detail:
@@ -3610,6 +3627,16 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
   fixes: [
+    {
+      title: 'F-543: Windows executava curl/bash e Homebrew incompatíveis',
+      detail:
+        'Receitas e comandos manuais agora são filtrados pelo SO; PowerShell é baixado para arquivo temporário e executado sem pipe oculto.',
+    },
+    {
+      title: 'F-350: modal de atualização deslocado no canto esquerdo',
+      detail:
+        'Removidos `transform`/`-webkit-transform` do ancestral `.overlay-layer`, que fazia `position: fixed` resolver contra uma área 0×0.',
+    },
     {
       title: 'F-539: falso positivo de cota esgotada no Codex com refutação viva',
       detail:

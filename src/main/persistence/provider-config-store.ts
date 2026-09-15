@@ -56,8 +56,10 @@ import {
   cliInstallRecipeCandidates,
   cliInstallRecipeFor,
   cliInstallCommandFor,
+  compatibleManualInstallCommand,
   selectInstallRecipe,
   describeInstallRecipe,
+  type CliInstallRecipe,
 } from '../adapters/cli-install-recipes';
 import { execFile } from 'node:child_process';
 import {
@@ -1081,7 +1083,9 @@ function toInfo(
     canAutoInstall: cliInstallRecipeFor(adapterId) !== null,
     installCommand:
       cliInstallCommandFor(adapterId) ??
-      (adapter.kind === 'cli-pty' ? adapter.install?.command : undefined),
+      (adapter.kind === 'cli-pty'
+        ? compatibleManualInstallCommand(adapter.install?.command)
+        : undefined) ?? undefined,
     binPath: cfg.binPath,
     detectedBin,
     defaultModel,
@@ -1228,6 +1232,62 @@ async function runScriptInstall(scriptUrl: string): Promise<void> {
   } finally {
     fs.rmSync(file, { force: true });
   }
+}
+
+/** Baixa um instalador oficial PowerShell para disco antes de executar.
+ * Nunca usamos `irm | iex` dentro do processo do Nexus: o comando só aparece
+ * como instrução manual; a instalação automática roda o arquivo baixado com
+ * `powershell.exe -File`, sem um shell intermediário escondido. */
+async function runPowerShellScriptInstall(scriptUrl: string): Promise<void> {
+  const url = new URL(scriptUrl);
+  if (url.protocol !== 'https:') {
+    throw new Error('instalador oficial precisa ser HTTPS');
+  }
+  const response = await net.fetch(scriptUrl);
+  if (!response.ok) {
+    throw new Error(`download do instalador falhou: HTTP ${response.status}`);
+  }
+  const body = await response.text();
+  if (!body.trim()) throw new Error('instalador oficial veio vazio');
+  const file = path.join(
+    os.tmpdir(),
+    `nexus-cli-install-${Date.now()}-${process.pid}.ps1`,
+  );
+  fs.writeFileSync(file, body, { mode: 0o600 });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      execFile(
+        resolveRunnerPath('powershell') ?? 'powershell.exe',
+        ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', file],
+        // powershell.exe é um binário real; não precisa do shell=true que os
+        // shims `.cmd` de npm/brew exigem no Windows.
+        { ...installExecOptions(), shell: false },
+        (error) => (error ? reject(error) : resolve()),
+      );
+    });
+  } finally {
+    fs.rmSync(file, { force: true });
+  }
+}
+
+/** Executa uma receita selecionada mantendo a separação por plataforma. */
+async function runInstallRecipe(recipe: CliInstallRecipe): Promise<void> {
+  if (recipe.kind === 'script') {
+    await runScriptInstall(recipe.scriptUrl);
+    return;
+  }
+  if (recipe.kind === 'powershell-script') {
+    await runPowerShellScriptInstall(recipe.scriptUrl);
+    return;
+  }
+  await new Promise<void>((resolve, reject) => {
+    execFile(
+      resolveRunnerPath(recipe.runner) ?? recipe.argv[0],
+      recipe.argv.slice(1),
+      installExecOptions(),
+      (error) => (error ? reject(error) : resolve()),
+    );
+  });
 }
 
 /** Native, un-spoofable confirmation before trusting a renderer-supplied
@@ -1449,18 +1509,7 @@ export async function maybeOfferFirstRunProvisioning(
     }
     const recipe = selection.recipe;
     try {
-      if (recipe.kind === 'script') {
-        await runScriptInstall(recipe.scriptUrl);
-      } else {
-        await new Promise<void>((resolve, reject) => {
-          execFile(
-            resolveRunnerPath(recipe.runner) ?? recipe.argv[0],
-            recipe.argv.slice(1),
-            installExecOptions(),
-            (error) => (error ? reject(error) : resolve()),
-          );
-        });
-      }
+      await runInstallRecipe(recipe);
       done.push(provider.label);
     } catch (err) {
       pending.push(
@@ -1527,19 +1576,8 @@ export function registerProviderIpc(): void {
     );
     if (!confirmed) return { ok: false, error: 'instalação cancelada' };
     try {
-      if (recipe.kind === 'script') {
-        await runScriptInstall(recipe.scriptUrl);
-      } else {
-        await new Promise<void>((resolve, reject) => {
-          execFile(
-            resolveRunnerPath(recipe.runner) ?? recipe.argv[0],
-            recipe.argv.slice(1),
-            // brew pode compilar; 15 min é teto honesto para 1ª instalação.
-            installExecOptions(),
-            (error) => (error ? reject(error) : resolve()),
-          );
-        });
-      }
+      // brew pode compilar; 15 min é teto honesto para 1ª instalação.
+      await runInstallRecipe(recipe);
     } catch (err) {
       return {
         ok: false,

@@ -476,6 +476,8 @@ const config: ForgeConfig = {
     // O caminho vai relativo à raiz do projeto, como o `icon` do packager acima:
     // rcedit recebe o valor cru, e o CWD é a raiz tanto no build normal quanto na
     // worktree descartável do release.
+    // Cada maker declara explicitamente o alvo. Isso evita que uma alteração
+    // futura nos defaults do Forge gere artefatos de outro SO no pacote.
     new MakerSquirrel({
       ...createWindowsInstallerBrandingConfig(),
       ...(squirrelWindowsSignOptions
@@ -486,10 +488,10 @@ const config: ForgeConfig = {
               >,
           }
         : {}),
-    }),
+    }, ['win32']),
     new MakerZIP({}, ['darwin']),
-    new MakerRpm(createLinuxRpmMakerConfig()),
-    new MakerDeb(createLinuxDebMakerConfig()),
+    new MakerRpm(createLinuxRpmMakerConfig(), ['linux']),
+    new MakerDeb(createLinuxDebMakerConfig(), ['linux']),
   ],
   plugins: [
     new VitePlugin({

@@ -2908,6 +2908,15 @@
   font-size: var(--text-sm);
 }
 
+.prov-detail__install-hint {
+  display: block;
+  max-width: 46rem;
+  margin-top: var(--space-2);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
 .prov-detail__install-error {
   margin: var(--space-1-5) 0 0;
   font-size: var(--text-xs);

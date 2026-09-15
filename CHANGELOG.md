@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.33 — Releases separadas por SO e CLIs Windows nativas
+
+- **Instaladores por plataforma**: Antigravity e Devin usam os instaladores oficiais PowerShell no Windows; os scripts bash continuam restritos a macOS/Linux. Aider usa `uv` sem shell POSIX e Muse informa honestamente quando não há instalador Windows nativo.
+- **Matriz de release explícita**: Squirrel/Setup somente em `win32`, DMG/ZIP somente em `darwin` e DEB/RPM somente em `linux`, evitando artefatos cruzados.
+- **Overlay alinhado**: o modal de atualização volta a resolver `position: fixed` contra a viewport, sem ficar preso no canto esquerdo.
+
 ## 0.76.32 — Windows: terminal visível e diagnóstico Jarvis seguro
 
 - **Terminais sem projeto**: clicar em “Terminais” antes de escolher uma pasta agora mostra uma ação clara para abrir o workspace, em vez de uma tela preta.

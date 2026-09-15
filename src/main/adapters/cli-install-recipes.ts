@@ -21,13 +21,16 @@
  * - agy:      script oficial https://antigravity.google/cli/install.sh
  *             (antigravity.google/docs/cli/install) — baixado e executado
  *             via bash SEM pipe de shell.
+ *             No Windows, a variante oficial é install.ps1 e roda pelo
+ *             PowerShell; nunca enviamos install.sh para powershell.exe.
  *
  * Canais verificados em 2026-09-10:
  * - devin:    script oficial https://cli.devin.ai/install.sh — inspecionado
  *             antes do uso: baixa de BASE_URL=https://static.devin.ai/cli com
  *             sha256 conferido contra manifest.json, instala em
  *             $XDG_DATA_HOME/devin/cli/_versions/<versão> e cria o link
- *             ~/.local/bin/devin. Também via bash SEM pipe de shell.
+ *             ~/.local/bin/devin. No Windows, a documentação oficial usa
+ *             https://static.devin.ai/cli/setup.ps1 via PowerShell.
  */
 
 interface ArgvInstallRecipe {
@@ -56,7 +59,18 @@ interface ScriptInstallRecipe {
   readonly runnerHint: string;
 }
 
-export type CliInstallRecipe = ArgvInstallRecipe | ScriptInstallRecipe;
+interface PowerShellScriptInstallRecipe {
+  readonly kind: 'powershell-script';
+  /** Instalador oficial PowerShell, baixado antes de executar. */
+  readonly scriptUrl: string;
+  readonly runner: 'powershell';
+  readonly runnerHint: string;
+}
+
+export type CliInstallRecipe =
+  | ArgvInstallRecipe
+  | ScriptInstallRecipe
+  | PowerShellScriptInstallRecipe;
 
 const NPM_HINT =
   'Este instalador usa o npm. Instale o Node.js primeiro (nodejs.org) e tente de novo.';
@@ -64,6 +78,8 @@ const BREW_HINT =
   'Este instalador usa o Homebrew. Instale-o primeiro (brew.sh) e tente de novo.';
 const BASH_HINT =
   'Este instalador usa o bash, que não foi encontrado nesta máquina.';
+const POWERSHELL_HINT =
+  'Este instalador usa o PowerShell, que não foi encontrado nesta máquina.';
 
 function npmRecipe(pkg: string): ArgvInstallRecipe {
   return Object.freeze({
@@ -100,6 +116,35 @@ function scriptRecipe(scriptUrl: string): ScriptInstallRecipe {
     scriptUrl,
     runner: 'bash',
     runnerHint: BASH_HINT,
+  });
+}
+
+function powershellRecipe(scriptUrl: string): PowerShellScriptInstallRecipe {
+  return Object.freeze({
+    kind: 'powershell-script' as const,
+    scriptUrl,
+    runner: 'powershell' as const,
+    runnerHint: POWERSHELL_HINT,
+  });
+}
+
+function uvRecipe(pkg: string): ArgvInstallRecipe {
+  return Object.freeze({
+    kind: 'argv' as const,
+    argv: Object.freeze([
+      'uv',
+      'tool',
+      'install',
+      '--force',
+      '--python',
+      'python3.12',
+      '--with',
+      'pip',
+      pkg,
+    ]),
+    runner: 'uv',
+    runnerHint:
+      'Este instalador usa o uv. Instale-o primeiro (docs.astral.sh/uv) e tente de novo.',
   });
 }
 
@@ -147,16 +192,22 @@ const RECIPES: Readonly<Record<string, PlatformRecipes>> = Object.freeze({
     linux: [npmRecipe('@xai-official/grok')],
     win32: [npmRecipe('@xai-official/grok')],
   },
+  aider: {
+    // Aider publica o pacote aider-chat para uv/PyPI. O uv cria um ambiente
+    // isolado e o entrypoint `aider`, sem depender de shell POSIX.
+    darwin: [uvRecipe('aider-chat@latest')],
+    linux: [uvRecipe('aider-chat@latest')],
+    win32: [uvRecipe('aider-chat@latest')],
+  },
   agy: {
     darwin: [scriptRecipe('https://antigravity.google/cli/install.sh')],
     linux: [scriptRecipe('https://antigravity.google/cli/install.sh')],
+    win32: [powershellRecipe('https://antigravity.google/cli/install.ps1')],
   },
   devin: {
-    // Sem win32: o instalador oficial só cai em bash via MINGW/CYGWIN e
-    // delega ao powershell — o runner daqui é bash, então a receita não se
-    // aplica. Mesma decisão do agy.
     darwin: [scriptRecipe('https://cli.devin.ai/install.sh')],
     linux: [scriptRecipe('https://cli.devin.ai/install.sh')],
+    win32: [powershellRecipe('https://static.devin.ai/cli/setup.ps1')],
   },
   muse: {
     darwin: [brewCaskRecipe('muse-code')],
@@ -186,7 +237,35 @@ export function cliInstallCommandFor(
   const recipe = cliInstallRecipeFor(adapterId, platform);
   if (!recipe) return null;
   if (recipe.kind === 'argv') return recipe.argv.join(' ');
+  if (recipe.kind === 'powershell-script') {
+    return `irm ${recipe.scriptUrl} | iex`;
+  }
   return `curl -fsSL ${recipe.scriptUrl} | bash`;
+}
+
+/**
+ * Preserva comandos manuais de adapters externos somente quando eles fazem
+ * sentido no shell desta plataforma. Um comando Unix (`curl | bash`) ou
+ * Homebrew nunca pode aparecer no PowerShell: além de falhar, a UI induz o
+ * operador a acreditar que a CLI foi instalada quando nada executou.
+ */
+export function compatibleManualInstallCommand(
+  command: string | undefined,
+  platform: NodeJS.Platform = process.platform,
+): string | null {
+  const trimmed = command?.trim() ?? '';
+  if (!trimmed) return null;
+  const posixShellPipe = /(?:curl|wget)[^\n|]*\|\s*(?:sudo\s+)?(?:bash|sh|zsh)\b/i;
+  if (platform === 'win32') {
+    if (posixShellPipe.test(trimmed) || /^brew(?:\s|$)/i.test(trimmed)) {
+      return null;
+    }
+    return trimmed;
+  }
+  if (/^(?:irm|iwr|powershell(?:\.exe)?|pwsh)\b/i.test(trimmed)) {
+    return null;
+  }
+  return trimmed;
 }
 
 export type InstallRecipeSelection =

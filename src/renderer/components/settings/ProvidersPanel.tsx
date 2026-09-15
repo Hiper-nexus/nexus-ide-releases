@@ -487,14 +487,21 @@ function ProviderDetail({
                   {installBusy ? 'Instalando…' : 'Instalar automaticamente'}
                 </button>
               )}
-              <button
-                type="button"
-                className="settings-btn settings-btn--ghost prov-detail__install"
-                onClick={() => void installInTerminal()}
-                title="Abre um terminal no Nexus para rodar o comando de instalação e acompanhar a saída"
-              >
-                <PixelIcon name="terminal" size={11} /> Instalar via terminal
-              </button>
+              {provider.installCommand?.trim() ? (
+                <button
+                  type="button"
+                  className="settings-btn settings-btn--ghost prov-detail__install"
+                  onClick={() => void installInTerminal()}
+                  title="Abre um terminal no Nexus para rodar o comando de instalação compatível com este sistema e acompanhar a saída"
+                >
+                  <PixelIcon name="terminal" size={11} /> Instalar via terminal
+                </button>
+              ) : (
+                <span className="prov-detail__install-hint">
+                  Sem instalador nativo seguro para este sistema; use a versão
+                  compatível do provider (no Windows, WSL quando indicado).
+                </span>
+              )}
             </div>
           )}
           {provider.installed && provider.canAutoInstall && (
