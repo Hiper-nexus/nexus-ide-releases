@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.36 — Paridade multiplataforma e release Windows determinística
+
+- **Fixtures por sistema operacional**: testes de MCP/Cline agora resolvem os caminhos nativos de Cursor/VS Code em macOS, Linux e Windows, sem carregar dependências macOS-only em runners Linux/Windows.
+- **CLI Devin no Windows**: a expectativa de instalação passa a refletir o canal oficial PowerShell, mantendo bash apenas em macOS/Linux.
+- **Anexos selados contra substituição same-inode**: snapshots guardam `ctimeNs`/`mtimeNs` para impedir que um arquivo recriado ocupe o mesmo inode e seja liberado como se fosse o original.
+- **PTY daemon resiliente**: resets assíncronos de probes são absorvidos sem `ECONNRESET` não tratado.
+
 ## 0.76.35 — Desktop Pet fluido e integrado, recuperação fail-safe de panes e distribuição universal
 
 - **Desktop Pet Fluido e Livre (F-545)**: Substituído o travamento rígido em bordas e presets de 64px por posicionamento contínuo e suave (`clampPetDragFreeDesktop`) em qualquer coordenada dos monitores. O pet agora transita livremente por toda a tela, respeitando apenas o overhang de segurança.

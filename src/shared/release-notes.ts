@@ -3744,7 +3744,7 @@ export const RELEASE_07634: AppRelease = {
 };
 
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07635: AppRelease = {
   version: '0.76.35',
   date: '2026-09-15',
   codename: 'Desktop Pet fluido e integrado, recuperação fail-safe de panes e distribuição universal',
@@ -3792,6 +3792,40 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'F-546: Deadlock no fechamento de panes ao reiniciar mid-mission, menu Palco ausente, desalinhamento de modais e botão de abrir panes de IAs',
       detail:
         'Implementado fallback gracioso no encerramento de panes, restaurado botão do Palco, ajustado layout fixed dos modais e visibilidade imediata de novos panes.',
+    },
+  ],
+};
+
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.36',
+  date: '2026-09-15',
+  codename: 'Paridade multiplataforma e release Windows determinística',
+  summary:
+    'Alinha fixtures e caminhos de configuração entre macOS, Linux e Windows, torna a instalação do Devin explícita no Windows, ' +
+    'protege anexos selados contra substituição same-inode e elimina ECONNRESET assíncrono no daemon de PTY.',
+  highlights: [
+    {
+      title: 'Paridade de caminhos MCP/Cline em todos os sistemas',
+      detail:
+        'Os testes e observadores usam APPDATA/XDG_CONFIG_HOME/Application Support conforme o SO, evitando falsos ausentes no Windows e Linux.',
+    },
+    {
+      title: 'Devin com instalador PowerShell nativo no Windows',
+      detail:
+        'A superfície de instalação mantém scripts bash em macOS/Linux e usa o canal oficial PowerShell no Windows.',
+    },
+    {
+      title: 'Anexos selados com identidade temporal',
+      detail:
+        'ctimeNs e mtimeNs complementam device/inode para detectar recriação same-inode e impedir remoção de substitutos.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'CI multiplataforma e endpoint de PTY',
+      detail:
+        'Suites macOS-only deixam de falhar em Linux/Windows e sockets que recebem desconexão imediata não vazam ECONNRESET.',
     },
   ],
 };
