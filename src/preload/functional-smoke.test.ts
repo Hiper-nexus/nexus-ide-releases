@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
+import {
+  DEFAULT_ECHO_PROBE_TIMEOUT_MS,
+  PTY_ECHO_WAIT_MS,
+} from './functional-smoke';
 import type {
   MissionPrepareRequest,
   MissionReview,
@@ -571,5 +575,12 @@ describe('runFunctionalSmokeProbes — Space hold-to-talk no smoke empacotado', 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error('esperava falha');
     expect(result.failedProbe).toBe('dictation-hold-to-talk');
+  });
+});
+
+describe('sondas de eco de PTY — prazo sob carga', () => {
+  it('a janela de eco é generosa e cabe no prazo próprio da sonda', () => {
+    expect(PTY_ECHO_WAIT_MS).toBeGreaterThanOrEqual(10_000);
+    expect(DEFAULT_ECHO_PROBE_TIMEOUT_MS).toBeGreaterThan(PTY_ECHO_WAIT_MS);
   });
 });
