@@ -94,7 +94,7 @@ describe('validateShotIngestFiles (política de caminhos)', () => {
       ok: false,
       reason: 'invalid-shape',
     });
-    const tooMany = Array.from({ length: 33 }, (_, i) => join(picturesDir, `f${i}.png`));
+    const tooMany = Array.from({ length: 321 }, (_, i) => join(picturesDir, `f${i}.png`));
     expect(validateShotIngestFiles(tooMany, { homeDir: home })).toEqual({
       ok: false,
       reason: 'too-many-files',

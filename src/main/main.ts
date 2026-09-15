@@ -836,7 +836,11 @@ if (!wireDeepLinks()) {
         await startShotBridgeServer({
           userDataPath: app.getPath("userData"),
           onFiles: (files) => {
-            const win = BrowserWindow.getAllWindows()[0];
+            // Janela principal = qualquer janela que não seja o pet (mesmo
+            // filtro do activate; getAllWindows()[0] poderia ser o pet).
+            const win = BrowserWindow.getAllWindows().filter(
+              (w) => !isPetWindow(w),
+            )[0];
             if (win) {
               if (win.isMinimized()) win.restore();
               win.focus();

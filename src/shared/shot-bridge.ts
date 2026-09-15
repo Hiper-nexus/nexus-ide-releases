@@ -27,8 +27,10 @@ export const SHOT_BRIDGE_CHANNELS = {
 
 /** Corpo máximo do POST (JSON com a lista de caminhos). */
 export const SHOT_REQUEST_MAX_BYTES = 64 * 1024;
-/** Máximo de arquivos por ingest. */
-export const SHOT_INGEST_MAX_FILES = 32;
+/** Máximo de arquivos por ingest (folga para o pacote de revisão: cap de 300
+ *  frames do extrator + vídeo + folha de contato). Espelhado no cliente Rust
+ *  do Nexus Shot (lib.rs, expansão de frames). */
+export const SHOT_INGEST_MAX_FILES = 320;
 /** Tamanho máximo por arquivo (512 MB — vídeos de gravação). */
 export const SHOT_FILE_MAX_BYTES = 512 * 1024 * 1024;
 
