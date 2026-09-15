@@ -20,9 +20,13 @@ import {
 } from "../jarvis/audit-log";
 import { clearAll as clearAllPermissions } from "../jarvis/permissions";
 import { bindTokenToSession, mintToken, releaseSessionByToken, resetGateForTests } from "./gate";
-import { dispatchToolCall } from "./mcp-dispatch";
+import { DENIAL_HINTS, dispatchToolCall } from "./mcp-dispatch";
 import type { McpDispatchOptions } from "./mcp-dispatch";
 import type { IntentGateMissionResolver } from "./mcp-dispatch";
+import {
+  CONTEXT_DRAFT_REVIEW_SKILLS,
+  CONTEXT_DRAFT_REVIEW_TOOLS,
+} from "./prevc-reviewer-profile";
 import type { McpRegistry, McpToolDef } from "./mcp-protocol";
 import type { Mission } from "../../shared/orch-types";
 import { buildDomainTools } from "./tools-domain";
@@ -2606,5 +2610,118 @@ describe("MCP dispatch effect safety", () => {
     expect(handler).toHaveBeenCalledTimes(1);
     releaseFirst();
     await expect(first).resolves.toMatchObject({ ok: true });
+  });
+
+  describe("denial hints instruct instead of blocking", () => {
+    function internalDraftReviewerContext() {
+      resetGateForTests();
+      return mintToken({
+        label: "context-reviewer-codex-abcdef123456",
+        role: "worker",
+        missionId: TEST_MISSION_ID,
+        agentName: "context-reviewer-codex-abcdef123456",
+        providerId: "codex",
+        readOnly: true,
+        allowedTools: [...CONTEXT_DRAFT_REVIEW_TOOLS],
+        allowedSkills: [...CONTEXT_DRAFT_REVIEW_SKILLS],
+        internalPrevcReviewerAuthority: {
+          kind: "context-draft",
+          draftId: "draft-security-hints",
+        },
+        internalPrevcReviewerAuthoritySource: "verified-active-profile",
+        scope: auditScope,
+      });
+    }
+
+    function readOnlyContext() {
+      resetGateForTests();
+      return mintToken({
+        label: "read-only-hint-test",
+        role: "worker",
+        missionId: TEST_MISSION_ID,
+        contextRevision: TEST_CONTEXT_REVISION,
+        readOnly: true,
+        scope: auditScope,
+        allowedTools: null,
+      });
+    }
+
+    it("hints that an allowlist denial is a squad decision, not a mission blocker", async () => {
+      const handler = vi.fn(async () => ({ shouldNotRun: true }));
+      const context = missionContext(undefined, ["nexus_file_read"]);
+      const result = await dispatchToolCall(
+        "http-mcp",
+        registryWith({
+          name: "nexus_git_commit",
+          description: "commit",
+          inputSchema: { type: "object", properties: {} },
+          handler,
+        }),
+        "nexus_git_commit",
+        { message: "must not run" },
+        context,
+        workflowOptions(),
+      );
+
+      expect(result).toMatchObject({
+        ok: false,
+        denied: true,
+        error: expect.stringContaining("outside this agent's allowlist"),
+        hint: DENIAL_HINTS.allowlist,
+      });
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it("hints that a read-only denial must not be routed around", async () => {
+      const handler = vi.fn(async () => ({ shouldNotRun: true }));
+      const result = await dispatchToolCall(
+        "http-mcp",
+        registryWith({
+          name: "nexus_git_commit",
+          description: "commit",
+          inputSchema: { type: "object", properties: {} },
+          handler,
+        }),
+        "nexus_git_commit",
+        { message: "must not run" },
+        readOnlyContext(),
+        workflowOptions(),
+      );
+
+      expect(result).toMatchObject({
+        ok: false,
+        denied: true,
+        error: expect.stringContaining("read-only authority denied tool"),
+        hint: DENIAL_HINTS.readOnly,
+      });
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it("hints that the internal reviewer only reads and concludes", async () => {
+      const handler = vi.fn(async () => ({ shouldNotRun: true }));
+      const result = await dispatchToolCall(
+        "http-mcp",
+        registryWith({
+          name: "nexus_file_write",
+          description: "write",
+          inputSchema: { type: "object", properties: {} },
+          handler,
+        }),
+        "nexus_file_write",
+        { path: "src/anything.ts", content: "x" },
+        internalDraftReviewerContext(),
+        workflowOptions(),
+      );
+
+      expect(result).toMatchObject({
+        ok: false,
+        denied: true,
+        error: expect.stringContaining(
+          "outside this internal reviewer's exact profile",
+        ),
+        hint: DENIAL_HINTS.internalReviewer,
+      });
+      expect(handler).not.toHaveBeenCalled();
+    });
   });
 });
