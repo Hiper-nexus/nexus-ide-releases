@@ -489,3 +489,62 @@ describe('TerminalWorkspace — filtro de missões na vista global (F-527)', () 
     expect(attached).toEqual(['pane-a1']);
   });
 });
+
+// ── F-546: panes soltos (sem missão) nunca somem da grade na vista global ────
+
+describe('TerminalWorkspace — visibilidade de panes soltos (F-546)', () => {
+  function seedMissionPlusLoose(): void {
+    useLayoutStore.setState({
+      root: buildGridTree([
+        {
+          id: 'pane-mission',
+          kind: 'cli-agent',
+          title: 'Worker da missão',
+          adapterId: 'codex',
+          missionId: 'mission-x',
+        },
+        { id: 'pane-loose', kind: 'shell', title: 'Shell avulso' },
+      ]),
+      focusedPaneId: 'pane-mission',
+    });
+    useOrchStore.setState({
+      paneMissions: { 'pane-mission': 'mission-x' },
+      missions: [],
+      missionSummaries: [
+        {
+          id: 'mission-x',
+          title: 'Missão X',
+          state: 'running',
+          progress: { completed: 0, total: 1 },
+          needsAttention: false,
+          updatedAt: 1,
+        },
+      ],
+    });
+  }
+
+  it('vista global: pane sem missionId e sem entrada em paneMissions continua visível ao lado do pane da missão', () => {
+    seedMissionPlusLoose();
+
+    const { host } = mount(<TerminalWorkspace />);
+
+    const attached = terminalRuntime.attachHost.mock.calls.map(
+      ([pane]) => (pane as PaneModel).id,
+    );
+    expect(attached.sort()).toEqual(['pane-loose', 'pane-mission'].sort());
+    expect(host.querySelectorAll('.pane__terminal')).toHaveLength(2);
+  });
+
+  it('dentro de uma missão: o pane solto não é adicionado só por esta regra', () => {
+    seedMissionPlusLoose();
+
+    mount(
+      <TerminalWorkspace missionId="mission-x" onBackToBoard={vi.fn()} />,
+    );
+
+    const attached = terminalRuntime.attachHost.mock.calls.map(
+      ([pane]) => (pane as PaneModel).id,
+    );
+    expect(attached).toEqual(['pane-mission']);
+  });
+});
