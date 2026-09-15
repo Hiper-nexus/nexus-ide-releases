@@ -7,7 +7,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const TIMEOUT_MS = 70_000;
+// 100 s: duas sondas de eco de PTY podem esperar até 15 s cada sob carga
+// (ver PTY_ECHO_WAIT_MS no preload) sem estourar o prazo do smoke inteiro.
+const TIMEOUT_MS = 100_000;
 // Darwin supervisor proof has no give-up deadline once SIGTERM is in flight;
 // the app may legitimately take tens of seconds to emit shutdown-complete for
 // a live shell pane under the signed responsibility cohort.

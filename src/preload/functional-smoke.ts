@@ -48,6 +48,17 @@ const MCP_POLL_DELAY_MS = 100;
 // probe deadline above that window so a healthy slow packaged launch cannot be
 // rejected by the wrapper before the MCP-specific poll completes.
 const DEFAULT_PROBE_TIMEOUT_MS = 10_000;
+/**
+ * Sondas que esperam o ECO de um shell real (dictation-delivery e
+ * dictation-hold-to-talk). Num Mac carregado (load > 6, dois lançamentos
+ * consecutivos do app no gate de release) o shell demorou mais de 5 s para
+ * ecoar e a sonda reprovava um artefato bom (0.76.36). A janela é generosa e
+ * o prazo da sonda acompanha; o custo só existe quando o eco realmente atrasa.
+ */
+export const PTY_ECHO_WAIT_MS = 15_000;
+const PTY_ECHO_POLL_MS = 100;
+const PTY_ECHO_ATTEMPTS = PTY_ECHO_WAIT_MS / PTY_ECHO_POLL_MS;
+export const DEFAULT_ECHO_PROBE_TIMEOUT_MS = 20_000;
 const FUNCTIONAL_SMOKE_MISSION_REQUEST: MissionPrepareRequest = {
   objective:
     'Verify canonical mission preparation without starting any workers.',
@@ -187,6 +198,8 @@ export interface FunctionalSmokeApi {
 interface FunctionalSmokeDeps {
   delay?: (ms: number) => Promise<void>;
   probeTimeoutMs?: number;
+  /** Prazo das sondas que esperam eco de PTY; em testes herda probeTimeoutMs. */
+  echoProbeTimeoutMs?: number;
   /**
    * Test-only seam: injeta um discriminador quebrado para provar que a probe
    * REPROVA a regressão (uma probe que só passa não prova nada).
@@ -307,6 +320,10 @@ export async function runFunctionalSmokeProbes(
   const probes: FunctionalSmokeProbe[] = [];
   const delay = deps.delay ?? defaultDelay;
   const timeoutMs = deps.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
+  const echoTimeoutMs =
+    deps.echoProbeTimeoutMs ??
+    deps.probeTimeoutMs ??
+    DEFAULT_ECHO_PROBE_TIMEOUT_MS;
   let adapterCount = 0;
   let toolCount = 0;
 
@@ -314,9 +331,10 @@ export async function runFunctionalSmokeProbes(
     name: FunctionalSmokeProbe,
     run: () => Promise<unknown>,
     validate: (value: unknown) => boolean = (value) => value !== undefined,
+    deadlineMs: number = timeoutMs,
   ): Promise<boolean> => {
     try {
-      const value = await withTimeout(run(), timeoutMs);
+      const value = await withTimeout(run(), deadlineMs);
       if (!validate(value)) return false;
       probes.push(name);
       return true;
@@ -582,14 +600,16 @@ export async function runFunctionalSmokeProbes(
           if (!accepted) return false;
           for (
             let attempt = 0;
-            attempt < 50 && !dictationEcho.includes(DICTATION_MARKER);
+            attempt < PTY_ECHO_ATTEMPTS &&
+            !dictationEcho.includes(DICTATION_MARKER);
             attempt += 1
           ) {
-            await delay(100);
+            await delay(PTY_ECHO_POLL_MS);
           }
           return dictationEcho.includes(DICTATION_MARKER);
         },
         (value) => value === true,
+        echoTimeoutMs,
       ))
     ) {
       return { ok: false, probes, failedProbe: 'dictation-delivery' };
@@ -666,12 +686,17 @@ export async function runFunctionalSmokeProbes(
             stripTerminalControlSequences(dictationEcho.slice(before))
               .replace(/\s+/gu, ' ')
               .includes(typed);
-          for (let attempt = 0; attempt < 50 && !echoed(); attempt += 1) {
-            await delay(100);
+          for (
+            let attempt = 0;
+            attempt < PTY_ECHO_ATTEMPTS && !echoed();
+            attempt += 1
+          ) {
+            await delay(PTY_ECHO_POLL_MS);
           }
           return echoed();
         },
         (value) => value === true,
+        echoTimeoutMs,
       ))
     ) {
       return { ok: false, probes, failedProbe: 'dictation-hold-to-talk' };
