@@ -149,9 +149,17 @@ export function assertMonotonicWindowsRelease(releases, version) {
   }
 }
 
-function github(args, root, outputFd) {
+/**
+ * O artefato assinado do worker tem ~556 MB; a ~0,6 MB/s medidos no link de
+ * publicação ele leva ~15 min, e o teto anterior de 10 min derrubava a
+ * publicação da 0.76.37 com "lookup/download failed" sem culpa do worker.
+ */
+const ARTIFACT_DOWNLOAD_TIMEOUT_MS = 60 * 60_000;
+const API_TIMEOUT_MS = 10 * 60_000;
+
+function github(args, root, outputFd, timeoutMs = API_TIMEOUT_MS) {
   const result = spawnSync('gh', ['api', '--hostname', 'github.com', ...args], {
-    cwd: root, shell: false, timeout: 10 * 60_000, maxBuffer: 16 * 1024 * 1024,
+    cwd: root, shell: false, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024,
     encoding: 'utf8', stdio: ['ignore', outputFd ?? 'pipe', 'pipe'],
   });
   if (result.error || result.status !== 0) fail('authenticated GitHub worker lookup/download failed; verify the run ID and repository access');
@@ -179,7 +187,11 @@ export async function loadSignedWindowsCandidate({ root, environment, version, c
   try {
     const zip = path.join(directory, 'worker.zip');
     const fd = fs.openSync(zip, 'wx', 0o600);
-    try { github([`repos/${REPO}/actions/artifacts/${artifact.id}/zip`], root, fd); } finally { fs.closeSync(fd); }
+    try {
+      github([`repos/${REPO}/actions/artifacts/${artifact.id}/zip`], root, fd, ARTIFACT_DOWNLOAD_TIMEOUT_MS);
+    } finally {
+      fs.closeSync(fd);
+    }
     assertWindowsArtifact(artifact, fileHash(zip), run);
     const extracted = path.join(directory, 'candidate');
     await extractWindowsArchive(zip, extracted, version);
