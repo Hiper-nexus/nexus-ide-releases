@@ -35,12 +35,15 @@ const DEFAULT_PREINSTALLED_PETS = [
   {
     id: 'nivu',
     displayName: 'Nivu',
-    description: 'Pet personalizado do Cleofas — restaurado do backup.',
+    description: 'Mascote Nivu — companheiro personalizável do NexusIDE.',
     bundledSheetFile: 'nivu.webp',
   },
 ];
 
-export function ensureDefaultInstalledPets(codexHome?: string): void {
+export function ensureDefaultInstalledPets(
+  codexHome?: string,
+  libRootOverride?: string,
+): void {
   try {
     const root = petsRoot(codexHome);
     if (!existsSync(root)) {
@@ -61,17 +64,19 @@ export function ensureDefaultInstalledPets(codexHome?: string): void {
       }
     }
 
-    let libRoot = '';
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { app } = require('electron') as typeof import('electron');
-      libRoot = resolvePetsLibraryRoot(
-        app.getAppPath(),
-        process.resourcesPath,
-        app.isPackaged,
-      );
-    } catch {
-      libRoot = resolvePetsLibraryRoot('', '', false);
+    let libRoot = libRootOverride ?? '';
+    if (!libRoot) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const { app } = require('electron') as typeof import('electron');
+        libRoot = resolvePetsLibraryRoot(
+          app.getAppPath(),
+          process.resourcesPath,
+          app.isPackaged,
+        );
+      } catch {
+        libRoot = resolvePetsLibraryRoot('', '', false);
+      }
     }
     for (const pet of DEFAULT_PREINSTALLED_PETS) {
       if (deletedSet.has(pet.id)) continue;
