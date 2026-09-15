@@ -25,6 +25,7 @@ jobs:
       ONNXRUNTIME_NODE_INSTALL_CUDA: skip
       RELEASE_VERSION: ${{ inputs.version }}
       WINDOWS_CERTIFICATE_SHA1: ${{ vars.WINDOWS_CERTIFICATE_SHA1 }}
+      NODE_OPTIONS: "--max-old-space-size=4096"
     steps:
       - name: Require protected main before executing repository code
         shell: pwsh

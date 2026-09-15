@@ -31,6 +31,7 @@ const steps = [
     name: 'typecheck',
     command: process.execPath,
     args: [
+      '--max-old-space-size=4096',
       path.join(root, 'node_modules', 'typescript', 'bin', 'tsc'),
       '--noEmit',
     ],
