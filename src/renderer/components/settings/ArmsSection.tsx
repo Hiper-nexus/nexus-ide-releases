@@ -19,6 +19,8 @@ interface ArmsBridge {
     createdAt: number | null;
     rotatedAt: number | null;
     lastUsedAt: number | null;
+    instance: 'prod' | 'dev';
+    descriptorPath: string;
   }>;
   generate(): Promise<{ token: string; createdAt: number }>;
   rotate(): Promise<{ token: string; createdAt: number }>;
@@ -26,7 +28,8 @@ interface ArmsBridge {
 }
 
 function bridge(): ArmsBridge | null {
-  const arms = (window as { nexus?: { arms?: ArmsBridge } }).nexus?.arms;
+  const arms = (window as unknown as { nexus?: { arms?: ArmsBridge } }).nexus
+    ?.arms;
   return arms ?? null;
 }
 
@@ -170,7 +173,7 @@ export function ArmsSection(): React.ReactElement {
   "mcpServers": {
     "nexus-arms": {
       "command": "node",
-      "args": ["${SNIPPET_BIN}"],
+      "args": ["${SNIPPET_BIN}", "--descriptor", "${status.descriptorPath}"],
       "env": { "NEXUS_ARMS_TOKEN": "<cole o token aqui>" }
     }
   }

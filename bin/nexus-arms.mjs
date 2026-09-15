@@ -23,6 +23,7 @@
  */
 
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -30,10 +31,48 @@ import readline from 'node:readline';
 const FETCH_TIMEOUT_MS = 8_000;
 const RETRIES = 1;
 
+function defaultDescriptorPath(homedir) {
+  return path.join(homedir, '.nexus', 'arms-runtime.json');
+}
+
+function validateDescriptorPath(file) {
+  if (!path.isAbsolute(file)) {
+    throw new Error(`caminho do descritor Arms deve ser absoluto: ${file}`);
+  }
+  return file;
+}
+
+export function resolveDescriptorPath(argv, env, homedir) {
+  const index = argv.indexOf('--descriptor');
+  const argvValue =
+    index >= 0 && typeof argv[index + 1] === 'string' && !argv[index + 1].startsWith('--')
+      ? argv[index + 1].trim()
+      : '';
+  const envValue =
+    typeof env.NEXUS_ARMS_DESCRIPTOR === 'string'
+      ? env.NEXUS_ARMS_DESCRIPTOR.trim()
+      : '';
+  return validateDescriptorPath(argvValue || envValue || defaultDescriptorPath(homedir));
+}
+
+let descriptorPath = defaultDescriptorPath(os.homedir());
+let descriptorPathError = null;
+try {
+  descriptorPath = resolveDescriptorPath(process.argv, process.env, os.homedir());
+} catch (error) {
+  descriptorPathError = error;
+}
+
 function runtimeDescriptor() {
-  const file = path.join(os.homedir(), '.nexus', 'arms-runtime.json');
+  if (descriptorPathError) {
+    const error = new Error(
+      `${descriptorPathError.message}; usando fallback ${descriptorPath}`,
+    );
+    error.code = 'BAD_DESCRIPTOR_PATH';
+    throw error;
+  }
   try {
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const parsed = JSON.parse(fs.readFileSync(descriptorPath, 'utf8'));
     if (parsed?.schemaVersion === 1 && Number.isInteger(parsed.port) && parsed.port > 0) {
       return { port: parsed.port, at: parsed.at ?? null };
     }
@@ -50,7 +89,7 @@ function log(message) {
 async function callApp(method, params) {
   const descriptor = runtimeDescriptor();
   if (!descriptor) {
-    const error = new Error('Nexus não está aberto (nenhum runtime em ~/.nexus/arms-runtime.json)');
+    const error = new Error(`Nexus não está aberto (nenhum runtime em ${descriptorPath})`);
     error.code = 'APP_CLOSED';
     throw error;
   }
@@ -153,7 +192,7 @@ async function dispatchCall(id, params) {
 }
 
 async function main() {
-  log('conector Arms iniciado (stdout = JSON-RPC apenas)');
+  log(`conector Arms iniciado (stdout = JSON-RPC apenas; descriptor=${descriptorPath})`);
   const rl = readline.createInterface({ input: process.stdin });
   rl.on('line', (line) => {
     const trimmed = line.trim();
@@ -207,7 +246,9 @@ async function main() {
   });
 }
 
-main().catch((error) => {
-  log(`falha fatal: ${error.message}`);
-  process.exit(1);
-});
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    log(`falha fatal: ${error.message}`);
+    process.exit(1);
+  });
+}

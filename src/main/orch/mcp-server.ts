@@ -102,7 +102,53 @@ import { handleHookStatusHttp } from "./hook-status-endpoint";
 import { authenticateArmsToken } from "../connectors/arms-token-store";
 import { handleArmsJsonRpc, markArmsBoot } from "../connectors/arms-endpoint";
 import { emitAppEvent } from "../connectors/app-events";
-const ARMS_RUNTIME_FILE = path.join(os.homedir(), ".nexus", "arms-runtime.json");
+
+export type ArmsRuntimeInstance = "prod" | "dev";
+
+export function resolveArmsRuntimeInstance(isPackaged: boolean): ArmsRuntimeInstance {
+  return isPackaged ? "prod" : "dev";
+}
+
+export function resolveArmsRuntimeDescriptorPath(
+  homedir: string,
+  instance: ArmsRuntimeInstance,
+): string {
+  const filename =
+    instance === "prod" ? "arms-runtime.json" : "arms-runtime.dev.json";
+  return path.join(homedir, ".nexus", filename);
+}
+
+export function getArmsRuntimeDescriptorInfo(): {
+  instance: ArmsRuntimeInstance;
+  descriptorPath: string;
+} {
+  const instance = resolveArmsRuntimeInstance(app.isPackaged);
+  return {
+    instance,
+    descriptorPath: resolveArmsRuntimeDescriptorPath(os.homedir(), instance),
+  };
+}
+
+export function buildArmsRuntimeDescriptor(
+  boundPort: number,
+  instance: ArmsRuntimeInstance,
+  descriptorPath: string,
+  at = Date.now(),
+): {
+  schemaVersion: 1;
+  port: number;
+  at: number;
+  instance: ArmsRuntimeInstance;
+  descriptorPath: string;
+} {
+  return {
+    schemaVersion: 1,
+    port: boundPort,
+    at,
+    instance,
+    descriptorPath,
+  };
+}
 
 /**
  * Porta viva do loopback server para o bin nexus-arms descobrir o app sem
@@ -110,11 +156,16 @@ const ARMS_RUNTIME_FILE = path.join(os.homedir(), ".nexus", "arms-runtime.json")
  * Sem segredo aqui — só a porta e o instante do boot.
  */
 function writeArmsRuntimeDescriptor(boundPort: number): void {
+  const { instance, descriptorPath } = getArmsRuntimeDescriptorInfo();
   try {
-    fs.mkdirSync(path.dirname(ARMS_RUNTIME_FILE), { recursive: true });
+    fs.mkdirSync(path.dirname(descriptorPath), { recursive: true });
     fs.writeFileSync(
-      ARMS_RUNTIME_FILE,
-      `${JSON.stringify({ schemaVersion: 1, port: boundPort, at: Date.now() }, null, 2)}\n`,
+      descriptorPath,
+      `${JSON.stringify(
+        buildArmsRuntimeDescriptor(boundPort, instance, descriptorPath),
+        null,
+        2,
+      )}\n`,
       { mode: 0o644 },
     );
   } catch (error) {
@@ -123,8 +174,9 @@ function writeArmsRuntimeDescriptor(boundPort: number): void {
 }
 
 function removeArmsRuntimeDescriptor(): void {
+  const { descriptorPath } = getArmsRuntimeDescriptorInfo();
   try {
-    fs.rmSync(ARMS_RUNTIME_FILE, { force: true });
+    fs.rmSync(descriptorPath, { force: true });
   } catch {
     /* best effort */
   }
