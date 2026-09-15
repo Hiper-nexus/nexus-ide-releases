@@ -3696,7 +3696,7 @@ export const RELEASE_07633: AppRelease = {
 };
 
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07634: AppRelease = {
   version: '0.76.34',
   date: '2026-09-15',
   codename: 'Goal Governor autônomo e motor de ondas para panes do grid',
@@ -3742,4 +3742,58 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
 };
+
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.35',
+  date: '2026-09-15',
+  codename: 'Desktop Pet fluido e integrado, recuperação fail-safe de panes e distribuição universal',
+  summary:
+    'Torna a movimentação do mascote desktop contínua e fluida por toda a tela, conecta os alertas do pet em tempo real ' +
+    'às metas e ondas (/goal), embarca os avatares personalizados para distribuição em qualquer Mac, restaura o botão de ' +
+    'Modo Palco, centraliza modais na viewport e protege contra travamento ao fechar panes reiniciados mid-mission.',
+  highlights: [
+    {
+      title: 'Desktop Pet Fluido e Livre por Toda a Tela (F-545)',
+      detail:
+        'Substituído o travamento rígido em coordenadas de borda de 64px por posicionamento contínuo em tela cheia (clampPetDragFreeDesktop), ' +
+        'com movimentação suave, suporte a multi-monitores e respeito estrito ao prefers-reduced-motion.',
+    },
+    {
+      title: 'Utilidade Operacional do Pet com Metas e Terminais (F-545)',
+      detail:
+        'Balões e reações do pet agora acompanham em tempo real o ciclo de metas (goal-wave-started, goal-wave-completed, goal-gate-passed, ' +
+        'goal-finished), com CTAs que navegam diretamente para o terminal (open-terminal) ou para o painel de operações.',
+    },
+    {
+      title: 'Distribuição Universal de Mascotes Embarcados (F-545)',
+      detail:
+        'Os pets "Codex Companion" e "Nivu" foram empacotados em resources/pets/sheets/ e são provisionados automaticamente de forma idempotente ' +
+        'e segura (ensureDefaultInstalledPets) em qualquer Mac na inicialização.',
+    },
+    {
+      title: 'Recuperação Fail-Safe e Fechamento de Panes sem Deadlock (F-546)',
+      detail:
+        'Garantia de que panes órfãos ou com sessões PTY zumbis após reinício mid-mission possam ser fechados imediatamente sem deadlock na UI.',
+    },
+    {
+      title: 'Modo Palco Restaurado e Modais Alinhados (F-546)',
+      detail:
+        'Ação do Modo Palco reintroduzida como botão primário na barra de ferramentas dos panes, e correção de modais ancorados na viewport inteira.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'F-545: Pet travado em posições predefinidas, sem utilidade de sistema e ausente em builds em outros Macs',
+      detail:
+        'Implementado clampPetDragFreeDesktop, eventos goal no pet, roteamento open-terminal e provisionamento seguro de pets padrão.',
+    },
+    {
+      title: 'F-546: Deadlock no fechamento de panes ao reiniciar mid-mission, menu Palco ausente, desalinhamento de modais e botão de abrir panes de IAs',
+      detail:
+        'Implementado fallback gracioso no encerramento de panes, restaurado botão do Palco, ajustado layout fixed dos modais e visibilidade imediata de novos panes.',
+    },
+  ],
+};
+
 

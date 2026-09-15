@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.76.35 — Desktop Pet fluido e integrado, recuperação fail-safe de panes e distribuição universal
+
+- **Desktop Pet Fluido e Livre (F-545)**: Substituído o travamento rígido em bordas e presets de 64px por posicionamento contínuo e suave (`clampPetDragFreeDesktop`) em qualquer coordenada dos monitores. O pet agora transita livremente por toda a tela, respeitando apenas o overhang de segurança.
+- **Utilidade de Sistema e Integração com Goal Governor (F-545)**: O pet agora reage em tempo real às ondas e metas operacionais (`goal-wave-started`, `goal-wave-completed`, `goal-gate-passed`, `goal-finished`), com balões acionáveis que navegam diretamente para o terminal (`open-terminal`) e para o painel de operações, além de suporte nativo a `prefers-reduced-motion`.
+- **Distribuição Universal de Mascotes (F-545)**: Os mascotes "Codex Companion" e "Nivu" agora vêm embarcados no pacote (`resources/pets/sheets/`) e são provisionados com segurança em qualquer Mac (`ensureDefaultInstalledPets`), sem sobrescrever customizações existentes nem reviver mascotes excluídos.
+- **Recuperação Fail-Safe de Panes ao Reiniciar (F-546)**: Eliminação de deadlocks no fechamento de panes após reinício mid-mission ou queda da sessão subjacente. Sessões zumbis são liberadas de forma graciosa sem bloquear a interface.
+- **Modo Palco / Foco Restaurado (F-546)**: Ação do Modo Palco restaurada como botão de destaque primário na barra de ferramentas de cada pane.
+- **Alinhamento de Modais e Cards (F-546)**: Diálogos e modais agora utilizam `position: fixed; inset: 0;` para que fiquem perfeitamente centralizados e alinhados na viewport, independentemente do container pai.
+- **Botão "Abrir panes de IAs" Operacional (F-546)**: Panes de IA iniciados a partir da criação de nova missão agora se tornam imediatamente visíveis e prontos para interação.
+
 ## 0.76.34 — Goal Governor autônomo e motor de ondas para panes do grid
 
 - **Goal Governor & Autonomous Wave Engine (F-544)**: Motor supervisor no processo principal do Electron (reconciliador adaptativo de 3s) que conduz a execução de ondas sequenciais (ex: Onda 4 -> Onda 5 -> Onda 6) em panes soltos no grid de terminais. Elimina paradas do orquestrador após o primeiro turno, monitora encerramento e entregas dos workers, avalia gates automáticos (`npm test`, `npm run typecheck`, arquivos e comandos customizados) e injeta os comandos e tarefas da onda seguinte diretamente via PTY nudge (`orchWriteSession`).
