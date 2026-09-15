@@ -39,7 +39,7 @@ import {
   classifyOperationalBand,
   preferOperationalBand,
 } from '../../shared/model-operational-bands';
-import { CODEX_FRONTIER_MODEL } from '../../shared/model-defaults';
+import { CODEX_FRONTIER_MODEL, migrateModelId } from '../../shared/model-defaults';
 import { adapterCircuitBreakers } from './circuit-breaker';
 import { multiScoreRerank } from './route-pipeline';
 
@@ -362,7 +362,7 @@ export function isRoutableModelResolution(
  * adapter instalado. Motivo de campo (17/07): a tabela pedia `gpt-5.6`, mas a
  * OpenAI renomeou a geração em variantes (`gpt-5.6-sol`/`-luna`/`-terra`); o
  * CLI ignorava o modelo fantasma e caía SILENCIOSAMENTE no seu default
- * (`gpt-5.5`). Agora:
+ * (`gpt-5.6-luna`). Agora:
  *  - modelo exato disponível → usa ele;
  *  - família release-pinned disponível (ex.: `gpt-5.6` → `gpt-5.6-sol`) →
  *    usa a 1ª variante que o CLI lista (a CLI ordena a preferida primeiro);
@@ -375,6 +375,10 @@ export function resolveRoutableModel(
   available: readonly string[] | undefined,
 ): { readonly ok: true; readonly model: string | undefined } | { readonly ok: false } {
   if (!requested) return { ok: true, model: undefined };
+  const migrated = migrateModelId(requested);
+  if (migrated && migrated !== requested) {
+    return resolveRoutableModel(migrated, available);
+  }
   if (!available || available.length === 0) return { ok: true, model: requested };
   if (available.includes(requested)) return { ok: true, model: requested };
   const variant = available.find((model) =>

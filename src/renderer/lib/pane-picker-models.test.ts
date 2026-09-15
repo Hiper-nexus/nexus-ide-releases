@@ -125,7 +125,7 @@ describe('rankPickerModels — o mais forte primeiro', () => {
     expect(mythos?.warning).toBe('Trusted-access only');
   });
 
-  it('Codex: astra (GPT-6) lidera mesmo api-only; sol antes de terra, 5.5 antes de luna', () => {
+  it('Codex: astra (GPT-6) lidera mesmo api-only; sol antes de terra, luna antes de legados', () => {
     const ranked = rankPickerModels({
       defaultModel: 'gpt-5.6-terra',
       models: [
@@ -133,7 +133,6 @@ describe('rankPickerModels — o mais forte primeiro', () => {
         'gpt-5.6-sol',
         'gpt-5.6-terra',
         'gpt-5.6-luna',
-        'gpt-5.5',
         'gpt-5.4',
         'gpt-5.4-mini',
         'gpt-5.3-codex',
@@ -143,7 +142,6 @@ describe('rankPickerModels — o mais forte primeiro', () => {
         'gpt-5.6-sol': { cost: 'high', availability: 'paid' },
         'gpt-5.6-terra': { cost: 'high', availability: 'paid' },
         'gpt-5.6-luna': { cost: 'medium', availability: 'paid' },
-        'gpt-5.5': { cost: 'high', availability: 'paid' },
         'gpt-5.4': { cost: 'medium', availability: 'paid' },
         'gpt-5.4-mini': { cost: 'low', availability: 'cheap' },
         'gpt-5.3-codex': { cost: 'medium', availability: 'paid' },
@@ -154,7 +152,6 @@ describe('rankPickerModels — o mais forte primeiro', () => {
       'gpt-6-astra',
       'gpt-5.6-sol',
       'gpt-5.6-terra',
-      'gpt-5.5',
       'gpt-5.6-luna',
       'gpt-5.4',
       'gpt-5.3-codex',

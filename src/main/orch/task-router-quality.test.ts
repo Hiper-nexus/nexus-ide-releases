@@ -38,7 +38,7 @@ describe('diversidade com cobertura parcial de avaliação (regressão: só code
       installed: true,
       models: ['claude-opus-4-8', 'claude-sonnet-5', 'claude-haiku-4-5'],
     },
-    { id: 'codex', installed: true, models: ['gpt-5.5', 'gpt-5.4'] },
+    { id: 'codex', installed: true, models: ['gpt-5.6-luna', 'gpt-5.4'] },
     { id: 'grok', installed: true, models: ['grok-4.1', 'grok-4-fast'] },
     { id: 'kimi', installed: true, models: ['kimi-code/k3'] },
     {
@@ -171,7 +171,7 @@ describe('tier critical com diversidade instalada', () => {
     );
     expect(decision!.tier).toBe('critical');
     expect(decision!.adapterId).toBe('agy');
-    expect(decision!.model).toBe('gemini-3.1-pro-high');
+    expect(decision!.model).toBe('gemini-3.8-pro-high');
     expect(decision!.reason).not.toContain('melhor opção instalada');
   });
 });
@@ -453,19 +453,19 @@ describe('routeTask default catalog path (no published eval quality)', () => {
 describe('resolveRoutableModel — modelo real, sem fantasma', () => {
   it('usa o modelo exato quando o adapter o lista', () => {
     expect(
-      resolveRoutableModel('gpt-5.6-sol', ['gpt-5.6-sol', 'gpt-5.5']),
+      resolveRoutableModel('gpt-5.6-sol', ['gpt-5.6-sol', 'gpt-5.6-luna']),
     ).toEqual({ ok: true, model: 'gpt-5.6-sol' });
   });
 
   it('mapeia geração renomeada para a 1ª variante de família (gpt-5.6 → gpt-5.6-sol)', () => {
     // Caso de campo: a tabela pede gpt-5.6, mas o CLI só tem as variantes.
     expect(
-      resolveRoutableModel('gpt-5.6', ['gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.5']),
+      resolveRoutableModel('gpt-5.6', ['gpt-5.6-sol', 'gpt-5.6-luna']),
     ).toEqual({ ok: true, model: 'gpt-5.6-sol' });
   });
 
   it('descarta o candidato quando nenhuma variante da família existe', () => {
-    expect(resolveRoutableModel('gpt-5.6', ['gpt-5.5', 'gpt-5.4'])).toEqual({
+    expect(resolveRoutableModel('gpt-5.6', ['gpt-5.4'])).toEqual({
       ok: false,
     });
     expect(resolveRoutableModel('gpt-5.6', ['gpt-5.6-malicious'])).toEqual({
@@ -485,7 +485,7 @@ describe('resolveRoutableModel — modelo real, sem fantasma', () => {
   });
 
   it('sem modelo pedido não impõe modelo (default do adapter)', () => {
-    expect(resolveRoutableModel(undefined, ['gpt-5.5'])).toEqual({
+    expect(resolveRoutableModel(undefined, ['gpt-5.6-luna'])).toEqual({
       ok: true,
       model: undefined,
     });
@@ -517,7 +517,7 @@ describe('routeTask nunca emite modelo que o codex instalado não roda', () => {
           id: 'codex',
           installed: true,
           // Espelha o cache real do CLI: sem bare gpt-5.6.
-          models: ['gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.4'],
+          models: ['gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.4'],
         },
       ],
       DEFAULT_ROUTING_TABLE,
@@ -543,7 +543,7 @@ describe('routeTask nunca emite modelo que o codex instalado não roda', () => {
         {
           id: 'codex',
           installed: true,
-          models: ['gpt-5.6-sol', 'gpt-5.6-luna', 'gpt-5.5'],
+          models: ['gpt-5.6-sol', 'gpt-5.6-luna'],
         },
       ],
       legacyTable,

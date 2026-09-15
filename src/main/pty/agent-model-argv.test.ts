@@ -10,7 +10,7 @@ describe('firstDeclaredModel', () => {
     expect(firstDeclaredModel(['', undefined, 'claude-sonnet-5'])).toBe(
       'claude-sonnet-5',
     );
-    expect(firstDeclaredModel(['   ', null, 'gpt-5.5'])).toBe('gpt-5.5');
+    expect(firstDeclaredModel(['   ', null, 'gpt-5.6-luna'])).toBe('gpt-5.6-luna');
   });
 
   it('keeps the first real pick', () => {
@@ -65,7 +65,7 @@ describe('argvHonorsModel', () => {
     expect(
       argvHonorsModel(['--model', 'gpt-5.6-sol'], '--model', 'gpt-5.6-sol'),
     ).toBe(true);
-    expect(argvHonorsModel(['--model', 'gpt-5.5'], '--model', 'gpt-5.6-sol')).toBe(
+    expect(argvHonorsModel(['--model', 'gpt-5.6-luna'], '--model', 'gpt-5.6-sol')).toBe(
       false,
     );
   });

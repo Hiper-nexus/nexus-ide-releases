@@ -214,7 +214,7 @@ describe('MissionSetupRosterRow', () => {
       ...adapter,
       models: {
         default: 'gpt-5.6-terra',
-        list: ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5'],
+        list: ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'],
       },
     };
     const host = document.createElement('div');
@@ -247,7 +247,6 @@ describe('MissionSetupRosterRow', () => {
         'gpt-5.6-sol-wm',
         'gpt-5.6-terra',
         'gpt-5.6-luna',
-        'gpt-5.5',
       ]),
     );
   });
@@ -332,7 +331,6 @@ describe('readyModelsForPicker', () => {
             'gpt-5.6-sol',
             'gpt-5.6-terra',
             'gpt-5.6-luna',
-            'gpt-5.5',
           ],
         },
       },
@@ -342,7 +340,6 @@ describe('readyModelsForPicker', () => {
       'gpt-5.6-sol-wm',
       'gpt-5.6-terra',
       'gpt-5.6-luna',
-      'gpt-5.5',
     ]);
   });
 });

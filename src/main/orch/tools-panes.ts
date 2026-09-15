@@ -348,7 +348,7 @@ const paneSpawn: McpToolDef = {
     'Open a new terminal pane running an AI CLI. Provide agentName (a squad ' +
     'agent — inherits allowlists/title). The model and effort sealed on that ' +
     'roster member WIN over nexus_route_task, ranking, and the CLI default ' +
-    '(Codex 5.5 / DeepSeek Flash / adapter.models.default). Pass adapterId ' +
+    '(Codex Luna / DeepSeek Flash / adapter.models.default). Pass adapterId ' +
     'only to fail over to a different CLI — never to substitute the sealed ' +
     'model on the same CLI. If the sealed model cannot be applied, spawn fails ' +
     'visibly. In a running mission, pass routeReservationId when the CLI is ' +

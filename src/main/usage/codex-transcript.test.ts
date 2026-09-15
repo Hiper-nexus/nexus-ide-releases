@@ -13,7 +13,7 @@ const META = JSON.stringify({
 
 const TURN_CONTEXT = JSON.stringify({
   type: 'turn_context',
-  payload: { model: 'gpt-5.5', cwd: '/Users/x/nexus-ide' },
+  payload: { model: 'gpt-5.6-luna', cwd: '/Users/x/nexus-ide' },
 });
 
 const TOKEN_COUNT = JSON.stringify({
@@ -77,7 +77,7 @@ describe('parseCodexLine', () => {
   });
 
   it('extrai modelo do turn_context', () => {
-    expect(parseCodexLine(TURN_CONTEXT)).toEqual({ kind: 'model', model: 'gpt-5.5' });
+    expect(parseCodexLine(TURN_CONTEXT)).toEqual({ kind: 'model', model: 'gpt-5.6-luna' });
   });
 
   it('usa last_token_usage e separa cached do input', () => {
@@ -105,7 +105,7 @@ describe('CodexFileIngest', () => {
     const ev = ingest.ingestLine(TOKEN_COUNT);
     expect(ev).toMatchObject({
       sessionId: 'codex-sess-1',
-      model: 'gpt-5.5',
+      model: 'gpt-5.6-luna',
       inputTokens: 17623,
       cacheReadTokens: 4992,
       outputTokens: 578,

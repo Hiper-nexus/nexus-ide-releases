@@ -13,7 +13,7 @@ describe('honorSealedRosterRuntime', () => {
         sealedModel: 'gpt-5.6-sol',
         sealedEffort: 'high',
         requestedAdapterId: 'codex',
-        requestedModel: 'gpt-5.5',
+        requestedModel: 'gpt-5.6-luna',
         requestedEffort: 'low',
       }),
     ).toEqual({
@@ -105,7 +105,7 @@ describe('pinUniqueSealedRosterOnDecision', () => {
     const pinned = pinUniqueSealedRosterOnDecision(
       {
         adapterId: 'codex',
-        model: 'gpt-5.5',
+        model: 'gpt-5.6-luna',
         effort: 'low',
         reason: 'easy; ranking',
       },

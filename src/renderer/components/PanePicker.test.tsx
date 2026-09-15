@@ -812,7 +812,6 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
             'gpt-5.6-sol',
             'gpt-5.6-terra',
             'gpt-5.6-luna',
-            'gpt-5.5',
             'gpt-5.4',
             'gpt-5.4-mini',
             'gpt-5.3-codex',
@@ -833,11 +832,11 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
       'agent:codex:default:gpt-5.6-sol',
       'agent:codex:default:gpt-5.6-terra',
       'agent:codex:default:gpt-5.6-luna',
-      'agent:codex:default:gpt-5.5',
+      'agent:codex:default:gpt-5.4',
       'more:codex:default',
       'accounts:codex',
     ]);
-    expect(optionLabels()[4]).toContain('mais 3 modelos');
+    expect(optionLabels()[4]).toContain('mais 2 modelos');
 
     // Abrir a dobra não fecha o menu nem abre pane nenhum.
     clickEntry('more:codex:default');
@@ -847,7 +846,6 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
       'agent:codex:default:gpt-5.6-sol',
       'agent:codex:default:gpt-5.6-terra',
       'agent:codex:default:gpt-5.6-luna',
-      'agent:codex:default:gpt-5.5',
       'agent:codex:default:gpt-5.4',
       'agent:codex:default:gpt-5.3-codex',
       'agent:codex:default:gpt-5.4-mini',
@@ -876,7 +874,7 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
       providers: [
         provider('codex', 'Codex', {
           defaultModel: 'gpt-5.6-terra',
-          models: ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5', 'gpt-5.4'],
+          models: ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.4'],
         }),
       ],
     } as never);
@@ -888,7 +886,6 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
       'agent:codex:default:gpt-5.6-sol',
       'agent:codex:default:gpt-5.6-terra',
       'agent:codex:default:gpt-5.6-luna',
-      'agent:codex:default:gpt-5.5',
       'agent:codex:default:gpt-5.4',
       'accounts:codex',
     ]);

@@ -69,10 +69,11 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   'gpt-5.6-terra': { inputPerM: 2.5, outputPerM: 15, cacheReadPerM: 0.25, cacheWritePerM: 3.125 },
   'gpt-5.6-luna': { inputPerM: 1.0, outputPerM: 6, cacheReadPerM: 0.1, cacheWritePerM: 1.25 },
   'gpt-5.6': { inputPerM: 2.5, outputPerM: 15, cacheReadPerM: 0.25 },
-  'gpt-5.5': { inputPerM: 5, outputPerM: 30, cacheReadPerM: 0.5 },
   'gpt-5.4-mini': { inputPerM: 0.75, outputPerM: 4.5, cacheReadPerM: 0.075 },
   'gpt-5.4-nano': { inputPerM: 0.2, outputPerM: 1.25, cacheReadPerM: 0.02 },
   'gpt-5.4': { inputPerM: 2.5, outputPerM: 15, cacheReadPerM: 0.25 },
+  // gpt-5.5: modelo descontinuado; mantido para custo histórico.
+  'gpt-5.5': { inputPerM: 5, outputPerM: 30, cacheReadPerM: 0.5 },
   'gpt-5.2-pro': { inputPerM: 21, outputPerM: 168, cacheReadPerM: 0 },
   'gpt-5.2': { inputPerM: 1.75, outputPerM: 14, cacheReadPerM: 0.175 },
   'gpt-5.1': { inputPerM: 1.25, outputPerM: 10, cacheReadPerM: 0.125 },

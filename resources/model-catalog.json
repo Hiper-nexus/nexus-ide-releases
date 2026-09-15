@@ -91,12 +91,6 @@
           "availability": "paid",
           "costTier": "medium",
           "source": "remote"
-        },
-        {
-          "id": "gpt-5.5",
-          "availability": "paid",
-          "costTier": "high",
-          "source": "nexus-eval"
         }
       ]
     },

@@ -709,10 +709,13 @@ export function prepareCodexGovernedSession(
         // "model migration prompt preference" no arquivo imutável.
         notice: {
           model_migrations: {
-            'gpt-5.3': 'gpt-5.5',
-            'gpt-5.4': 'gpt-5.5',
-            'gpt-5.4-mini': 'gpt-5.5',
-            'gpt-5.4-nano': 'gpt-5.5',
+            // gpt-5.5 saiu do catálogo: squads salvos com ele são
+            // redirecionados, nunca falham no spawn.
+            'gpt-5.5': 'gpt-5.6-luna',
+            'gpt-5.3': 'gpt-5.6-luna',
+            'gpt-5.4': 'gpt-5.6-luna',
+            'gpt-5.4-mini': 'gpt-5.6-luna',
+            'gpt-5.4-nano': 'gpt-5.6-luna',
           },
         },
         tui: {

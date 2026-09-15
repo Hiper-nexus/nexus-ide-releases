@@ -4,7 +4,7 @@ import { resolveModelChipLabel } from './pane-model-label';
 describe('resolveModelChipLabel', () => {
   it('retorna null para pane sem adapterId (shell puro)', () => {
     expect(resolveModelChipLabel(undefined, undefined, undefined)).toBeNull();
-    expect(resolveModelChipLabel(undefined, 'gpt-5.5', 'high')).toBeNull();
+    expect(resolveModelChipLabel(undefined, 'gpt-5.6-luna', 'high')).toBeNull();
   });
 
   it('retorna null para adapterId não reconhecido', () => {
@@ -44,13 +44,13 @@ describe('resolveModelChipLabel', () => {
   });
 
   describe('GPT / Codex', () => {
-    it('codex + gpt-5.5-medium (effort embedded no model)', () => {
-      const label = resolveModelChipLabel('codex', 'gpt-5.5-medium', undefined);
+    it('codex + gpt-5.6-luna-medium (effort embedded no model)', () => {
+      const label = resolveModelChipLabel('codex', 'gpt-5.6-luna-medium', undefined);
       expect(label!.family).toBe('GPT');
-      expect(label!.version).toBe('5.5');
+      expect(label!.version).toBe('5.6 Luna');
       expect(label!.effortAbbr).toBe('M');
-      expect(label!.medium).toBe('GPT 5.5');
-      expect(label!.full).toBe('GPT 5.5 · Medium');
+      expect(label!.medium).toBe('GPT 5.6');
+      expect(label!.full).toBe('GPT 5.6 Luna · Medium');
     });
 
     it('codex + gpt-5.6-sol-medium (versão composta)', () => {
@@ -63,7 +63,7 @@ describe('resolveModelChipLabel', () => {
     });
 
     it('effort explícito bate effort do model', () => {
-      const label = resolveModelChipLabel('codex', 'gpt-5.5-medium', 'high');
+      const label = resolveModelChipLabel('codex', 'gpt-5.6-luna-medium', 'high');
       // effort explícito (pane.effort) deve ter precedência
       expect(label!.effortAbbr).toBe('H');
     });

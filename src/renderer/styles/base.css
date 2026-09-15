@@ -2329,7 +2329,7 @@ body {
    badge se torna visível novamente (> 380px) o chip some e o badge assume
    sem sobreposição de informação.
 
-   Texto: densidade 'icons' → medium ("Claude Sonnet", "GPT 5.5"),
+   Texto: densidade 'icons' → medium ("Claude Sonnet", "GPT Luna"),
            densidade 'compact' → compact ("Claude", "GPT", "Gemini"). */
 .toolbar__model-chip {
   display: none; /* oculto acima de 380px — badge já cobre a info */

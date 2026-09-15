@@ -1,6 +1,7 @@
 import type { AdapterInfo } from "../../shared/types";
 import type { SquadAgent } from "../../shared/orch-types";
 import { defaultSquadModelForAdapter } from "../../shared/squad-model-defaults";
+import { migrateModelId } from "../../shared/model-defaults";
 import type { SquadCliPolicy } from "../../shared/settings-types";
 import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
 
@@ -46,6 +47,10 @@ function sortWorkerCliIds(ids: string[]): string[] {
     const byRank = workerCliRank(a) - workerCliRank(b);
     return byRank === 0 ? a.localeCompare(b) : byRank;
   });
+}
+
+function agentModelOrDefault(agent: SquadAgent, cli: string): string | undefined {
+  return migrateModelId(agent.model) ?? defaultSquadModelForAdapter(cli);
 }
 
 export function workerCliPool(
@@ -123,7 +128,7 @@ export function balanceSquadRosterCli(
     if (options?.preserveExactCliAssignments) {
       return {
         ...agent,
-        model: agent.model ?? defaultSquadModelForAdapter(agent.cli),
+        model: agentModelOrDefault(agent, agent.cli),
       };
     }
 
@@ -131,7 +136,7 @@ export function balanceSquadRosterCli(
       if (adapterInstalledEnabled(adapters, agent.cli)) {
         return {
           ...agent,
-          model: agent.model ?? defaultSquadModelForAdapter(agent.cli),
+          model: agentModelOrDefault(agent, agent.cli),
         };
       }
       const target = adapterInstalledEnabled(adapters, orchestratorAdapterId)
@@ -154,7 +159,7 @@ export function balanceSquadRosterCli(
     ) {
       return {
         ...agent,
-        model: agent.model ?? defaultSquadModelForAdapter(agent.cli),
+        model: agentModelOrDefault(agent, agent.cli),
       };
     }
 
@@ -171,7 +176,7 @@ export function balanceSquadRosterCli(
     if (keepWorker) {
       return {
         ...agent,
-        model: agent.model ?? defaultSquadModelForAdapter(agent.cli),
+        model: agentModelOrDefault(agent, agent.cli),
       };
     }
 
@@ -181,7 +186,7 @@ export function balanceSquadRosterCli(
     return nextCli === agent.cli
       ? {
           ...agent,
-          model: agent.model ?? defaultSquadModelForAdapter(nextCli),
+          model: agentModelOrDefault(agent, nextCli),
         }
       : {
           ...agent,

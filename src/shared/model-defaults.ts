@@ -6,6 +6,7 @@ export const CODEX_FRONTIER_MODEL = 'gpt-5.6-sol';
  * Mapeamento automático para versões ativas da mesma linhagem.
  */
 export const RETIRED_MODEL_MIGRATIONS: Readonly<Record<string, string>> = Object.freeze({
+  'gpt-5.5': 'gpt-5.6-luna',
   'gpt-5.4': 'gpt-5.6-luna',
   'gpt-5.4-mini': 'gpt-5.6-luna',
   'gpt-5.4-nano': 'gpt-5.6-luna',
@@ -24,4 +25,3 @@ export function migrateModelId(modelId: string | undefined): string | undefined 
   const bare = modelId.trim();
   return RETIRED_MODEL_MIGRATIONS[bare] ?? modelId;
 }
-

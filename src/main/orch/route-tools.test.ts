@@ -72,7 +72,7 @@ describe('nexus_route_task wiring', () => {
     mocks.listProviderSettings.mockReturnValue([
       { adapterId: 'shell', enabled: true, installed: true, authStrategy: 'none', models: ['shell'] },
       { adapterId: 'kimi', enabled: true, installed: true, authStrategy: 'oauth', models: ['kimi-code/k3'] },
-      { adapterId: 'codex', enabled: true, installed: true, authStrategy: 'oauth', models: ['gpt-5.5'] },
+      { adapterId: 'codex', enabled: true, installed: true, authStrategy: 'oauth', models: ['gpt-5.6-luna'] },
     ]);
     const decision = (await tool('nexus_route_task').handler(
       { task: 'tarefa de complexidade média' },
@@ -109,7 +109,7 @@ describe('nexus_route_task quota auto-exclude', () => {
     enabled: true,
     installed: true,
     authStrategy: 'oauth',
-    models: ['gpt-5.5'],
+    models: ['gpt-5.6-luna'],
   };
 
   it('adapter com todas as contas em cooldown some do ranked e das alternativas', async () => {
@@ -185,7 +185,7 @@ describe('nexus_route_task first-wave AuthReadiness', () => {
         enabled: true,
         installed: true,
         authStrategy: 'oauth',
-        models: ['gpt-5.5'],
+        models: ['gpt-5.6-luna'],
       },
     ]);
     const decision = (await tool('nexus_route_task').handler(

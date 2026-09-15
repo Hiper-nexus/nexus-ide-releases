@@ -302,7 +302,7 @@ describe('secureAutonomousCliArgs', () => {
       codex,
       [
         '--model',
-        'gpt-5.5',
+        'gpt-5.6-luna',
         '--dangerously-bypass-approvals-and-sandbox',
         '--add-dir',
         '/tmp/outside',
@@ -354,7 +354,7 @@ describe('secureAutonomousCliArgs', () => {
       false,
       {
         enforceWorkspaceWriteSandbox: true,
-        trustedWorkspaceModel: 'gpt-5.5',
+        trustedWorkspaceModel: 'gpt-5.6-luna',
         trustedWorkspaceConfigOverrides: [
           'mcp_servers.nexus_abcdef123456.url="http://127.0.0.1:4200/mcp"',
         ],
@@ -365,7 +365,7 @@ describe('secureAutonomousCliArgs', () => {
 
     expect(args).toEqual([
       '--model',
-      'gpt-5.5',
+      'gpt-5.6-luna',
       '-c',
       'model_reasoning_effort=high',
       '-c',
@@ -400,7 +400,7 @@ describe('secureAutonomousCliArgs', () => {
       ],
       true,
       {
-        trustedWorkspaceModel: 'gpt-5.5',
+        trustedWorkspaceModel: 'gpt-5.6-luna',
         trustedWorkspaceConfigOverrides: [
           'mcp_servers.nexus_abcdef123456.tool_timeout_sec=45',
         ],
@@ -411,7 +411,7 @@ describe('secureAutonomousCliArgs', () => {
 
     expect(args).toEqual([
       '--model',
-      'gpt-5.5',
+      'gpt-5.6-luna',
       '-c',
       'mcp_servers.nexus_abcdef123456.tool_timeout_sec=45',
       '--ask-for-approval',

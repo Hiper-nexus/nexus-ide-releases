@@ -195,7 +195,7 @@ function codexUsage(
   return {
     sessionId,
     messageId,
-    model: 'gpt-5.5',
+    model: 'gpt-5.6-luna',
     inputTokens: 10,
     outputTokens: 2,
     cacheReadTokens: 0,

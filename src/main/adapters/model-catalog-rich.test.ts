@@ -81,11 +81,12 @@ describe('getRichModelMetadata — um modelo real por adapter', () => {
     expect(meta?.maxTokens).toBe(64_000);
   });
 
-  it('codex: resolve preço e janela de gpt-5.5', () => {
-    const meta = getRichModelMetadata('codex', 'gpt-5.5');
+  it('codex: resolve preço e janela de gpt-5.6-luna', () => {
+    const meta = getRichModelMetadata('codex', 'gpt-5.6-luna');
     expect(meta).not.toBeNull();
     expect(meta?.catalogProvider).toBe('openai-codex');
-    expect(meta?.cost?.input).toBe(5);
+    expect(meta?.cost?.input).toBe(1);
+    expect(meta?.cost?.output).toBe(6);
     expect(meta?.contextWindow).toBe(272_000);
   });
 

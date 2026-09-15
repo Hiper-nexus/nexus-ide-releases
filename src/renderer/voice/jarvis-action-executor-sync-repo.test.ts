@@ -139,7 +139,7 @@ describe('sync_repo_via_pane executor', () => {
               label: 'Codex',
               installed: true,
               enabled: true,
-              models: { default: 'gpt-5.5', list: ['gpt-5.5'] },
+              models: { default: 'gpt-5.6-luna', list: ['gpt-5.6-luna'] },
             },
           ]),
         },
@@ -213,7 +213,7 @@ describe('sync_repo_via_pane executor', () => {
       { say: '', action: { type: 'sync_repo_via_pane', mode: 'status' } },
       context,
     );
-    expect(layoutState.spawnAgent).toHaveBeenCalledWith('codex', 'gpt-5.5');
+    expect(layoutState.spawnAgent).toHaveBeenCalledWith('codex', 'gpt-5.6-luna');
     expect(submitPromptToPaneConfirmed).toHaveBeenCalledWith(
       'pane-spawned-2',
       buildSyncRepoViaPanePrompt('status'),

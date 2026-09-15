@@ -423,7 +423,7 @@ describe('prepareCodexGovernedSession', () => {
       workspaceRoot: worktree,
       codexNativeAuthority: 'workspace-write',
       codexAdminSkillsRoot: adminSkillsRoot,
-      model: 'gpt-5.5',
+      model: 'gpt-5.6-luna',
     });
 
     expect(result.env.CODEX_HOME).toBe(result.artifactDir);
@@ -526,11 +526,13 @@ describe('prepareCodexGovernedSession', () => {
         TMPDIR: path.join(result.env.CODEX_HOME, 'shell-tmp'),
       },
     });
-    expect(privateConfig.model).toBe('gpt-5.5');
-    expect(privateConfig.notice?.model_migrations?.['gpt-5.4']).toBe('gpt-5.5');
+    expect(privateConfig.model).toBe('gpt-5.6-luna');
+    expect(privateConfig.notice?.model_migrations?.['gpt-5.4']).toBe('gpt-5.6-luna');
+    // gpt-5.5 saiu do catálogo: squad salvo com ele é redirecionado, não falha.
+    expect(privateConfig.notice?.model_migrations?.['gpt-5.5']).toBe('gpt-5.6-luna');
     expect(privateConfig.tui).toEqual({
       resume_cwd: 'current',
-      model_availability_nux: { 'gpt-5.5': 4 },
+      model_availability_nux: { 'gpt-5.6-luna': 4 },
     });
     expect(privateConfig.skills?.bundled).toEqual({ enabled: false });
     expect(privateConfig.skills?.config).toEqual(

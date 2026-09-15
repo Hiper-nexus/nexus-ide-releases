@@ -200,13 +200,13 @@ export function buildSecondaryCommitMessageAgentSpecs({
           defaultThinkingLevel: 'low'
         },
         {
-          id: 'gpt-5.5',
-          label: 'GPT-5.5',
+          id: 'gpt-5.6-luna',
+          label: 'GPT-5.6 Luna',
           thinkingLevels: OPENAI_THINKING_LEVELS,
           defaultThinkingLevel: 'low'
         }
       ],
-      defaultModelId: 'gpt-5.4'
+      defaultModelId: 'gpt-5.6-luna'
     },
     antigravity: {
       id: 'antigravity',

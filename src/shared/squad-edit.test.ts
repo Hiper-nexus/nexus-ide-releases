@@ -9,7 +9,7 @@ const builtin: EditableSquad = {
   orchestratorInstructions: 'orquestre',
   agents: [
     { id: 'orch', agentName: 'Maestro', category: 'orchestrator', cli: 'claude', model: 'claude-sonnet-5' },
-    { id: 'exec', agentName: 'Executor', category: 'executor', cli: 'codex', model: 'gpt-5.5' },
+    { id: 'exec', agentName: 'Executor', category: 'executor', cli: 'codex', model: 'gpt-5.6-luna' },
   ],
 };
 

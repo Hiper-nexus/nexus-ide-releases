@@ -108,7 +108,6 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
         { id: 'gpt-5.6-sol', availability: 'paid', costTier: 'high', source: 'bundled' },
         { id: 'gpt-5.6-terra', availability: 'paid', costTier: 'high', source: 'bundled' },
         { id: 'gpt-5.6-luna', availability: 'paid', costTier: 'medium', source: 'bundled' },
-        { id: 'gpt-5.5', availability: 'paid', costTier: 'high', source: 'bundled' },
       ],
     },
     grok: {

@@ -325,7 +325,7 @@ describe("spawn authority resolution", () => {
             ...reviewedSquad,
             nativeInstructions: "Changed after confirmation.",
             agents: reviewedSquad.agents.map((agent) =>
-              agent.id === "worker" ? { ...agent, model: "gpt-5.5" } : agent,
+              agent.id === "worker" ? { ...agent, model: "gpt-5.6-luna" } : agent,
             ),
           },
         ],

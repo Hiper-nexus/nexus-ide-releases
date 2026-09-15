@@ -256,19 +256,19 @@ describe("balanceSquadRosterCli", () => {
 
     expect(balanced[0]).toMatchObject({
       cli: "codex",
-      model: "gpt-5.4",
+      model: "gpt-5.6-luna",
     });
     expect(balanced[1].cli).toBe("codex");
   });
 
-  it("preserves a worker model when the selected CLI does not change", () => {
+  it("migrates a retired worker model when the selected CLI does not change", () => {
     const [balanced] = balanceSquadRosterCli(
       [agent("frontend", "executor", "codex", "gpt-5.5")],
       [adapter("codex")],
     );
 
     expect(balanced.cli).toBe("codex");
-    expect(balanced.model).toBe("gpt-5.5");
+    expect(balanced.model).toBe("gpt-5.6-luna");
   });
 
   it("uses the original worker CLI when no alternative exists", () => {

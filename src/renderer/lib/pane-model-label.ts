@@ -95,7 +95,7 @@ function normalizeVersionParts(parts: string[]): string {
 
 interface ParsedModel {
   version: string;
-  /** Effort keyword encontrado dentro do próprio model ID (ex: "gpt-5.5-medium"). */
+  /** Effort keyword encontrado dentro do próprio model ID (ex: "gpt-5.6-luna-medium"). */
   effortInModel?: string;
 }
 
@@ -106,7 +106,7 @@ function parseModelVersion(model: string): ParsedModel {
   const clean = model.replace(/\[[^\]]*\]/g, '');
   const lower = clean.toLowerCase();
 
-  // GPT: "gpt-5.5-medium" → ver "5.5", effort "medium"
+  // GPT: "gpt-5.6-luna-medium" → ver "5.6 Luna", effort "medium"
   //      "gpt-5.6-sol-medium" → ver "5.6 Sol", effort "medium"
   if (lower.startsWith('gpt-')) {
     const parts = clean.slice(4).split('-');
