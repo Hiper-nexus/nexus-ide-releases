@@ -140,12 +140,10 @@ describe('Devin CLI on every CLI/provider surface', () => {
     expect(ALL_MULTI_ACCOUNT_ADAPTER_IDS).toContain('devin');
   });
 
-  it('installs through the official script on darwin/linux and never on win32', () => {
-    // O instalador oficial só cai em bash (MINGW/CYGWIN delegam ao powershell),
-    // então o runner bash daqui não se aplica — mesma decisão do agy.
+  it('installs through the official channel on every supported OS', () => {
     expect(cliInstallRecipeFor('devin', 'darwin')?.kind).toBe('script');
     expect(cliInstallRecipeFor('devin', 'linux')?.kind).toBe('script');
-    expect(cliInstallRecipeFor('devin', 'win32')).toBeNull();
+    expect(cliInstallRecipeFor('devin', 'win32')?.kind).toBe('powershell-script');
     const recipe = cliInstallRecipeFor('devin', 'darwin');
     expect(recipe).not.toBeNull();
     expect(describeInstallRecipe(recipe!)).toContain(

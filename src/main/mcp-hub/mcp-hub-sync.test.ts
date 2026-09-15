@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import {
@@ -19,6 +19,7 @@ import {
 const tempDirs: string[] = [];
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -28,6 +29,29 @@ function tmpHome(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mcp-sync-'));
   tempDirs.push(dir);
   return dir;
+}
+
+function clineSettingsPath(home: string): string {
+  let hostRoot: string;
+  if (process.platform === 'darwin') {
+    hostRoot = path.join(home, 'Library', 'Application Support', 'Code');
+  } else if (process.platform === 'win32') {
+    const appData = path.join(home, 'AppData', 'Roaming');
+    vi.stubEnv('APPDATA', appData);
+    hostRoot = path.join(appData, 'Code');
+  } else {
+    const xdg = path.join(home, '.config');
+    vi.stubEnv('XDG_CONFIG_HOME', xdg);
+    hostRoot = path.join(xdg, 'Code');
+  }
+  return path.join(
+    hostRoot,
+    'User',
+    'globalStorage',
+    'saoudrizwan.claude-dev',
+    'settings',
+    'cline_mcp_settings.json',
+  );
 }
 
 const emptyHub: McpHubConfig = { schemaVersion: 1, servers: [] };
@@ -153,18 +177,9 @@ describe('plan + apply fill-gaps', () => {
       `#!/bin/sh\ntouch ${JSON.stringify(sentinel)}\n`,
       { mode: 0o700 },
     );
-    const clineDir = path.join(
-      home,
-      'Library',
-      'Application Support',
-      'Code',
-      'User',
-      'globalStorage',
-      'saoudrizwan.claude-dev',
-      'settings',
-    );
+    const clinePath = clineSettingsPath(home);
+    const clineDir = path.dirname(clinePath);
     fs.mkdirSync(clineDir, { recursive: true });
-    const clinePath = path.join(clineDir, 'cline_mcp_settings.json');
     fs.writeFileSync(clinePath, JSON.stringify({ mcpServers: {} }));
 
     const observed = collectObservedHubServers(home);
@@ -328,18 +343,9 @@ describe('plan + apply fill-gaps', () => {
 
   it('export fill-gaps → Cline (mcpServers + disabled/autoApprove)', () => {
     const home = tmpHome();
-    const clineDir = path.join(
-      home,
-      'Library',
-      'Application Support',
-      'Code',
-      'User',
-      'globalStorage',
-      'saoudrizwan.claude-dev',
-      'settings',
-    );
+    const clinePath = clineSettingsPath(home);
+    const clineDir = path.dirname(clinePath);
     fs.mkdirSync(clineDir, { recursive: true });
-    const clinePath = path.join(clineDir, 'cline_mcp_settings.json');
     fs.writeFileSync(
       clinePath,
       JSON.stringify({
@@ -420,17 +426,7 @@ describe('plan + apply fill-gaps', () => {
       exportTools: ['cline'],
     });
     expect(result.toolWrites).toEqual([]);
-    const ghost = path.join(
-      home,
-      'Library',
-      'Application Support',
-      'Code',
-      'User',
-      'globalStorage',
-      'saoudrizwan.claude-dev',
-      'settings',
-      'cline_mcp_settings.json',
-    );
+    const ghost = clineSettingsPath(home);
     expect(fs.existsSync(ghost)).toBe(false);
   });
 });

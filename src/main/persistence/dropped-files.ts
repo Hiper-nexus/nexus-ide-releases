@@ -844,7 +844,12 @@ function assertSealedSnapshotMetadata(
     !snapshot.device ||
     !/^[0-9]+$/.test(snapshot.device) ||
     !snapshot.inode ||
-    !/^[0-9]+$/.test(snapshot.inode)
+    !/^[0-9]+$/.test(snapshot.inode) ||
+    ((snapshot.ctimeNs !== undefined || snapshot.mtimeNs !== undefined) &&
+      (snapshot.ctimeNs === undefined ||
+        snapshot.mtimeNs === undefined ||
+        !/^[0-9]+$/.test(snapshot.ctimeNs) ||
+        !/^[0-9]+$/.test(snapshot.mtimeNs)))
   ) {
     throw new Error('sealed attachment metadata is incomplete or invalid');
   }
@@ -993,6 +998,8 @@ function writeSealedAttachment(
       size: sealedBytes.length,
       device: written.dev.toString(),
       inode: written.ino.toString(),
+      ctimeNs: written.ctimeNs.toString(),
+      mtimeNs: written.mtimeNs.toString(),
     });
   } catch (error) {
     if (createdIdentity) {
@@ -1116,7 +1123,11 @@ export function revalidateSealedAttachmentSnapshots(
         before.nlink !== 1n ||
         (before.mode & 0o777n) !== 0o400n ||
         before.dev.toString() !== snapshot.device ||
-        before.ino.toString() !== snapshot.inode
+        before.ino.toString() !== snapshot.inode ||
+        (snapshot.ctimeNs !== undefined &&
+          before.ctimeNs.toString() !== snapshot.ctimeNs) ||
+        (snapshot.mtimeNs !== undefined &&
+          before.mtimeNs.toString() !== snapshot.mtimeNs)
       ) {
         throw new Error('sealed attachment identity changed');
       }
@@ -1171,7 +1182,11 @@ export function releaseSealedAttachmentSnapshots(
         !current.isFile() ||
         current.nlink !== 1n ||
         current.dev.toString() !== snapshot.device ||
-        current.ino.toString() !== snapshot.inode
+        current.ino.toString() !== snapshot.inode ||
+        (snapshot.ctimeNs !== undefined &&
+          current.ctimeNs.toString() !== snapshot.ctimeNs) ||
+        (snapshot.mtimeNs !== undefined &&
+          current.mtimeNs.toString() !== snapshot.mtimeNs)
       ) {
         continue;
       }

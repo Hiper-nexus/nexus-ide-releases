@@ -526,6 +526,9 @@ function installGovernedCodexTestHook(
   const home = path.join(root, "home");
   fs.mkdirSync(home, { recursive: true });
   vi.stubEnv("HOME", home);
+  // Node's os.homedir() reads USERPROFILE on Windows rather than HOME.
+  // Keep the fixture's provider home identical across all supported hosts.
+  vi.stubEnv("USERPROFILE", home);
   const tokens: string[] = [];
   setAgentSpawnHook((_adapter, _request, authority) => {
     const meta = authority.context;
@@ -1887,7 +1890,9 @@ describe("entrega física das skills concedidas ao Codex", () => {
     }
   });
 
-  it("modo endurecido continua entregando só no CODEX_HOME privado", () => {
+  it.runIf(process.platform !== "linux")(
+    "modo endurecido continua entregando só no CODEX_HOME privado",
+    () => {
     setSquadCliPolicyLookupForTests(() => "governed");
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-codex-sealed-"));
     const home = path.join(root, "home");
@@ -1924,11 +1929,14 @@ describe("entrega física das skills concedidas ao Codex", () => {
       cleanupHook();
       fs.rmSync(root, { recursive: true, force: true });
     }
-  });
+    },
+  );
 });
 
 describe("cli-agent spawn argv hardening", () => {
-  it("replaces governed Codex CODEX_HOME in the final spawn but preserves direct panes", () => {
+  it.runIf(process.platform !== "linux")(
+    "replaces governed Codex CODEX_HOME in the final spawn but preserves direct panes",
+    () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-codex-spawn-"));
     const home = path.join(root, "home");
     const realCodexHome = path.join(home, ".codex");
@@ -2030,7 +2038,8 @@ describe("cli-agent spawn argv hardening", () => {
       vi.unstubAllEnvs();
       fs.rmSync(root, { recursive: true, force: true });
     }
-  });
+    },
+  );
 
   it("denies a second exclusive-auth orchestrator even when the first is detached", () => {
     const h = fakeHost();
@@ -2545,7 +2554,9 @@ describe("cli-agent spawn argv hardening", () => {
     }
   });
 
-  it("lets direct panes follow writable provider policy and keeps workers writable", () => {
+  it.runIf(process.platform !== "linux")(
+    "lets direct panes follow writable provider policy and keeps workers writable",
+    () => {
     const h = fakeHost();
     setPtyHost(h.host);
     const codex = makeCodexAdapter();
@@ -2594,7 +2605,8 @@ describe("cli-agent spawn argv hardening", () => {
       cleanupHook?.();
       fs.rmSync(root, { recursive: true, force: true });
     }
-  });
+    },
+  );
 
   it("rejects missing and same-root worker scopes before the PTY host", () => {
     for (const authority of [
@@ -2692,7 +2704,9 @@ describe("cli-agent spawn argv hardening", () => {
     },
   );
 
-  it("revalidates the sealed native chain at the last boundary before every governed host spawn", async () => {
+  it.runIf(process.platform !== "linux")(
+    "revalidates the sealed native chain at the last boundary before every governed host spawn",
+    async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-codex-profile-"));
     const cleanupHook = installGovernedCodexTestHook(root);
     const h = fakeHost();
@@ -2747,9 +2761,12 @@ describe("cli-agent spawn argv hardening", () => {
       cleanupHook();
       fs.rmSync(root, { recursive: true, force: true });
     }
-  });
+    },
+  );
 
-  it("preserves only an exact main-owned Codex resume and rejects latest", () => {
+  it.runIf(process.platform !== "linux")(
+    "preserves only an exact main-owned Codex resume and rejects latest",
+    () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-codex-profile-"));
     const cleanupHook = installGovernedCodexTestHook(root);
     const providerSessionId = "019d1000-0000-7000-8000-000000000001";
@@ -2836,7 +2853,8 @@ describe("cli-agent spawn argv hardening", () => {
       cleanupHook();
       fs.rmSync(root, { recursive: true, force: true });
     }
-  });
+    },
+  );
 
   it.each(["opencode"])(
     "refuses an isolated autonomous %s worker before a process is spawned",
@@ -3121,7 +3139,9 @@ describe("cli-agent spawn argv hardening", () => {
     }
   });
 
-  it("pins an isolated Codex worker to workspace-write even when settings request bypass", () => {
+  it.runIf(process.platform !== "linux")(
+    "pins an isolated Codex worker to workspace-write even when settings request bypass",
+    () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-pty-sandbox-"));
     const worktree = path.join(root, "worker");
     fs.mkdirSync(worktree);
@@ -3262,9 +3282,12 @@ describe("cli-agent spawn argv hardening", () => {
       adapterTrust.builtinIds.add("codex");
       fs.rmSync(root, { recursive: true, force: true });
     }
-  });
+    },
+  );
 
-  it("makes read-only override the configured Codex bypass", () => {
+  it.runIf(process.platform !== "linux")(
+    "makes read-only override the configured Codex bypass",
+    () => {
     const h = fakeHost();
     setPtyHost(h.host);
     const codex = makeCodexAdapter();
@@ -3324,7 +3347,8 @@ describe("cli-agent spawn argv hardening", () => {
       cleanupHook();
       fs.rmSync(root, { recursive: true, force: true });
     }
-  });
+    },
+  );
 
   it.runIf(process.platform === "darwin")(
     "confines the exact immediate Pet maker to an offline writable workspace",
@@ -3725,7 +3749,9 @@ describe("cli-agent spawn argv hardening", () => {
     },
   );
 
-  it("keeps an approved pre-freeze Codex orchestrator read-only without provider prompts", () => {
+  it.runIf(process.platform !== "linux")(
+    "keeps an approved pre-freeze Codex orchestrator read-only without provider prompts",
+    () => {
     const h = fakeHost();
     setPtyHost(h.host);
     const codex = makeCodexAdapter();
@@ -3777,7 +3803,8 @@ describe("cli-agent spawn argv hardening", () => {
       cleanupHook();
       fs.rmSync(root, { recursive: true, force: true });
     }
-  });
+    },
+  );
 
   it("reports every scoped agent session even when the provider chooses its id", () => {
     const h = fakeHost();

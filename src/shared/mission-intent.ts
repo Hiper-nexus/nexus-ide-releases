@@ -222,17 +222,31 @@ export const missionAttachmentSnapshotSchema = z
     /** Persisted identity of the exact sealed regular file. */
     device: z.string().regex(/^[0-9]+$/).optional(),
     inode: z.string().regex(/^[0-9]+$/).optional(),
+    /** Creation-time metadata detects same-inode replacement on Linux. */
+    ctimeNs: z.string().regex(/^[0-9]+$/).optional(),
+    /** Modification-time metadata detects same-inode content drift. */
+    mtimeNs: z.string().regex(/^[0-9]+$/).optional(),
   })
   .strict()
   .superRefine((snapshot, context) => {
-    const sealedMetadata = [
+    const sealedIdentityMetadata = [
       snapshot.sourcePath,
       snapshot.sealId,
       snapshot.device,
       snapshot.inode,
     ];
-    const present = sealedMetadata.filter((value) => value !== undefined).length;
-    if (present !== 0 && present !== sealedMetadata.length) {
+    const identityPresent = sealedIdentityMetadata.filter(
+      (value) => value !== undefined,
+    ).length;
+    const sealedTimeMetadata = [snapshot.ctimeNs, snapshot.mtimeNs];
+    const timePresent = sealedTimeMetadata.filter(
+      (value) => value !== undefined,
+    ).length;
+    if (
+      (identityPresent !== 0 &&
+        identityPresent !== sealedIdentityMetadata.length) ||
+      (timePresent !== 0 && timePresent !== sealedTimeMetadata.length)
+    ) {
       context.addIssue({
         code: 'custom',
         message: 'sealed attachment metadata must be complete',

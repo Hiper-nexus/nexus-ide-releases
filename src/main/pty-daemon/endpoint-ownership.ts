@@ -103,6 +103,12 @@ export async function claimDaemonEndpoint(input: {
   await rm(privatePath, { force: true });
 
   const server = net.createServer((socket) => {
+    // A probe may disconnect immediately after receiving the greeting. The
+    // stream reports that reset asynchronously, so a try/catch around
+    // socket.write alone would still leak an uncaught ECONNRESET.
+    socket.once('error', () => {
+      // The peer already went away; endpoint ownership is unchanged.
+    });
     try {
       socket.write(ENDPOINT_GREETING);
     } catch {

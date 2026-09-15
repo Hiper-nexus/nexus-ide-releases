@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   observeAcrossTools,
   parseCodexMcpToml,
@@ -14,6 +14,7 @@ import { normalizeMcpServerKey } from '../../shared/mcp-across-tools';
 const tempDirs: string[] = [];
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -23,6 +24,29 @@ function tmpHome(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mcp-obs-'));
   tempDirs.push(dir);
   return dir;
+}
+
+function cursorClinePath(home: string): string {
+  let hostRoot: string;
+  if (process.platform === 'darwin') {
+    hostRoot = path.join(home, 'Library', 'Application Support', 'Cursor');
+  } else if (process.platform === 'win32') {
+    const appData = path.join(home, 'AppData', 'Roaming');
+    vi.stubEnv('APPDATA', appData);
+    hostRoot = path.join(appData, 'Cursor');
+  } else {
+    const xdg = path.join(home, '.config');
+    vi.stubEnv('XDG_CONFIG_HOME', xdg);
+    hostRoot = path.join(xdg, 'Cursor');
+  }
+  return path.join(
+    hostRoot,
+    'User',
+    'globalStorage',
+    'saoudrizwan.claude-dev',
+    'settings',
+    'cline_mcp_settings.json',
+  );
 }
 
 describe('mcp parsers', () => {
@@ -108,17 +132,7 @@ describe('observeAcrossTools', () => {
 
   it('Cline resolve host Cursor quando VS Code Code falta', () => {
     const home = tmpHome();
-    const cursorCline = path.join(
-      home,
-      'Library',
-      'Application Support',
-      'Cursor',
-      'User',
-      'globalStorage',
-      'saoudrizwan.claude-dev',
-      'settings',
-      'cline_mcp_settings.json',
-    );
+    const cursorCline = cursorClinePath(home);
     fs.mkdirSync(path.dirname(cursorCline), { recursive: true });
     fs.writeFileSync(
       cursorCline,
@@ -137,18 +151,12 @@ describe('observeAcrossTools', () => {
     );
   });
 
-  it('Cline resolve host Linux ~/.config/Cursor quando VS Code falta', () => {
+  it.runIf(process.platform === 'linux')(
+    'Cline resolve host Linux ~/.config/Cursor quando VS Code falta',
+    () => {
     const home = tmpHome();
-    const cursorCline = path.join(
-      home,
-      '.config',
-      'Cursor',
-      'User',
-      'globalStorage',
-      'saoudrizwan.claude-dev',
-      'settings',
-      'cline_mcp_settings.json',
-    );
+    vi.stubEnv('XDG_CONFIG_HOME', path.join(home, '.config'));
+    const cursorCline = cursorClinePath(home);
     fs.mkdirSync(path.dirname(cursorCline), { recursive: true });
     fs.writeFileSync(
       cursorCline,
@@ -163,5 +171,6 @@ describe('observeAcrossTools', () => {
     expect(
       report.rows.find((r) => r.serverKey === 'linuxcline')?.cells.cline,
     ).toBe('present');
-  });
+    },
+  );
 });
