@@ -38,6 +38,29 @@ const DEFAULT_CIRCUIT_BREAKER_MAX = 3;
 const NUDGE_COOLDOWN_MS = 25_000;
 const ORCH_IDLE_STALL_NUDGE_MS = 45_000;
 
+function notifyPet(
+  kind:
+    | 'goal-wave-started'
+    | 'goal-wave-completed'
+    | 'goal-gate-passed'
+    | 'goal-finished',
+  title: string,
+): void {
+  try {
+    import('../pet/pet-window')
+      .then((mod) => {
+        mod.broadcastPetEvent({
+          kind,
+          title,
+          at: Date.now(),
+        });
+      })
+      .catch(() => {});
+  } catch {
+    // Ignore when running in tests or without pet window
+  }
+}
+
 // Internal state
 const goals = new Map<string, GoalDefinition>();
 const gatesInFlight = new Set<string>(); // goalId
@@ -167,6 +190,10 @@ export function registerGoal(params: RegisterGoalParams): GoalDefinition {
       `Instructions: ${firstWave.instructions}${taskList}\n` +
       `Proceed with spawning workers or executing tasks for this wave.`;
     nudgeOrchestrator(goal, initialNudge, now);
+    notifyPet(
+      'goal-wave-started',
+      `Iniciando Meta /goal: ${firstWave.name}`,
+    );
   }
 
   return goal;
@@ -532,11 +559,14 @@ async function runWaveGateEvaluation(
       wave.completedAt = Date.now();
       goal.consecutiveFailures = 0;
       goal.currentWaveIndex++;
+      notifyPet('goal-gate-passed', `Gate aprovado: Onda "${wave.name}"`);
+      notifyPet('goal-wave-completed', `Onda "${wave.name}" concluída!`);
 
       if (goal.currentWaveIndex >= goal.waves.length) {
         goal.status = 'completed';
         persistGoalToDisk(goal);
         updateAwakeLock();
+        notifyPet('goal-finished', `Meta /goal "${goal.title}" concluída!`);
         nudgeOrchestrator(
           goal,
           `[NEXUS GOAL GOVERNOR] 🎉 ALL WAVES COMPLETED! Goal "${goal.title}" finished successfully.`,
@@ -550,6 +580,10 @@ async function runWaveGateEvaluation(
         goal.status = 'running';
         persistGoalToDisk(goal);
         updateAwakeLock();
+        notifyPet(
+          'goal-wave-started',
+          `Iniciando Onda ${goal.currentWaveIndex + 1}: ${nextWave.name}`,
+        );
 
         const taskList = nextWave.tasks.length > 0
           ? `\nTasks:\n${nextWave.tasks.map((t) => `- [ ] ${t.id}: ${t.title}`).join('\n')}`
