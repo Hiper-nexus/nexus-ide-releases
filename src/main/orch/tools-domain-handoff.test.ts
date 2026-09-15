@@ -43,6 +43,12 @@ vi.mock("./project-domain-store-registry", () => ({
 }));
 
 import { buildDomainTools } from "./tools-domain";
+import {
+  armDeliveryContract,
+  armedDeliveryContract,
+  parseExpectArg,
+  resetDeliveryContractsForTesting,
+} from "./delivery-contract";
 
 const scope = testProjectScope();
 const tempDirectories: string[] = [];
@@ -181,6 +187,7 @@ function acknowledgeTool() {
 describe("handoff MCP stop receipt", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetDeliveryContractsForTesting();
     mocks.getStores.mockReturnValue({
       missions: {
         get: () => ({
@@ -362,6 +369,131 @@ describe("handoff MCP stop receipt", () => {
       { summary?: string } | undefined;
     expect(persisted?.summary).toContain("[compacted]");
     expect(persisted?.summary?.length).toBeLessThanOrEqual(4_000);
+  });
+
+  it("summary acima de 400 é condensado em fronteira de frase e a íntegra vira overclock.fullText", async () => {
+    resetDeliveryContractsForTesting();
+    mocks.submit.mockReturnValue(handoff("unverified"));
+    const sentence =
+      "Implementei a validação do contrato de entrega com os testes verdes.";
+    const long = Array(12).fill(sentence).join(" ");
+
+    await submitTool().handler(
+      { status: "success", summary: long },
+      context(),
+      invocation(),
+    );
+
+    const persisted = mocks.submit.mock.calls[0]?.[0] as {
+      summary?: string;
+      artifacts?: Array<{ kind: string; payload: unknown }>;
+    };
+    expect(persisted?.summary?.length).toBeLessThanOrEqual(420);
+    expect(persisted?.summary).toMatch(/\. \[compacted\]$/);
+    const fullText = persisted?.artifacts?.find(
+      (artifact) => artifact.kind === "overclock.fullText",
+    );
+    expect(String(fullText?.payload)).toContain(sentence);
+    expect(String(fullText?.payload).length).toBeGreaterThan(400);
+  });
+
+  it("contrato de entrega: a primeira divergência devolve ao worker o que falta, sem persistir", async () => {
+    resetDeliveryContractsForTesting();
+    armDeliveryContract(
+      "worker-session",
+      parseExpectArg({ schema: { type: "array", minItems: 1 } })!,
+    );
+
+    await expect(
+      submitTool().handler(
+        {
+          status: "success",
+          summary: "Entreguei tudo conforme o contrato pedido no spawn.",
+        },
+        context(),
+        invocation(),
+      ),
+    ).rejects.toThrow(
+      /contrato de entrega não cumprido \(devolução 1\/1\).*mínimo 1 itens/,
+    );
+    expect(mocks.submit).not.toHaveBeenCalled();
+    expect(armedDeliveryContract("worker-session")).not.toBeNull();
+  });
+
+  it("contrato de entrega esgotado: persiste como blocked com as violações em artifacts e desarma", async () => {
+    resetDeliveryContractsForTesting();
+    armDeliveryContract(
+      "worker-session",
+      parseExpectArg({ schema: { type: "array", minItems: 1 }, retries: 0 })!,
+    );
+    mocks.submit.mockReturnValue({
+      ...handoff("unverified"),
+      status: "blocked",
+    });
+
+    await submitTool().handler(
+      {
+        status: "success",
+        summary: "Entreguei tudo conforme o contrato pedido no spawn.",
+      },
+      context(),
+      invocation(),
+    );
+
+    const persisted = mocks.submit.mock.calls[0]?.[0] as {
+      status?: string;
+      artifacts?: Array<{ kind: string; payload: unknown }>;
+    };
+    expect(persisted?.status).toBe("blocked");
+    expect(persisted?.artifacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "nexus.deliveryContract",
+          payload: expect.objectContaining({
+            outcome: "unmet",
+            attempts: 1,
+            retries: 0,
+          }),
+        }),
+      ]),
+    );
+    expect(armedDeliveryContract("worker-session")).toBeNull();
+  });
+
+  it("contrato de entrega cumprido desarma; blocked declarado não é cobrado", async () => {
+    resetDeliveryContractsForTesting();
+    armDeliveryContract(
+      "worker-session",
+      parseExpectArg({ schema: { type: "array", minItems: 1 } })!,
+    );
+    mocks.submit.mockReturnValue(handoff("unverified"));
+
+    await submitTool().handler(
+      {
+        status: "success",
+        summary: "Entreguei tudo conforme o contrato pedido no spawn.",
+        artifacts: [{ kind: "file", path: "src/a.ts" }],
+      },
+      context(),
+      invocation(),
+    );
+    expect(armedDeliveryContract("worker-session")).toBeNull();
+
+    armDeliveryContract(
+      "worker-session",
+      parseExpectArg({ schema: { type: "array", minItems: 1 } })!,
+    );
+    await submitTool().handler(
+      {
+        status: "blocked",
+        summary: "Não consegui produzir os artefatos exigidos pelo contrato.",
+      },
+      context(),
+      invocation({ toolCallId: "tool-call-b" }),
+    );
+    const persisted = mocks.submit.mock.calls[1]?.[0] as { status?: string };
+    expect(persisted?.status).toBe("blocked");
+    expect(armedDeliveryContract("worker-session")).not.toBeNull();
   });
 
   it("binds replay identity to the full raw payload before compaction", async () => {

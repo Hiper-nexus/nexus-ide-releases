@@ -26,6 +26,7 @@ import {
   armAutoCloseOnHandoff,
   selectScopedPaneCloseTargets,
 } from './pane-close-scopes';
+import { armDeliveryContract, parseExpectArg } from './delivery-contract';
 import {
   findAgentInAnySquad,
   findAgentInSquad,
@@ -386,6 +387,22 @@ const paneSpawn: McpToolDef = {
           'Close this pane automatically when it submits a SUCCESS handoff ' +
           '(declared at birth; failure keeps the pane open for diagnosis).',
       },
+      expect: {
+        type: 'object',
+        description:
+          'Delivery contract (declared at birth): {schema, retries?}. On a ' +
+          'SUCCESS nexus_handoff_submit the worker artifacts are validated ' +
+          'against this JSON Schema (subset: type/required/properties/items/' +
+          'enum/const/minItems/pattern/anyOf). A mismatch is returned to the ' +
+          'worker naming what is missing, up to `retries` times (default 1, ' +
+          'max 5); after that the handoff is recorded as blocked with the ' +
+          'violations in artifacts.',
+        properties: {
+          schema: { type: 'object' },
+          retries: { type: 'integer', minimum: 0, maximum: 5 },
+        },
+        required: ['schema'],
+      },
       resume: {
         type: 'string',
         description:
@@ -401,6 +418,9 @@ const paneSpawn: McpToolDef = {
   handler: async (args, ctx, invocation) => {
     assertMcpInvocationCurrent(invocation);
     assertCallerMaySpawnPane(ctx.role);
+    // Contrato de entrega inválido falha AQUI, visível para quem declarou —
+    // nunca no handoff do worker, que não tem como consertar o schema.
+    const deliveryContract = parseExpectArg(args.expect);
     const agentRef = str(args, 'agentName');
     const routeReservationId = str(args, 'routeReservationId');
     let options: SpawnToolOptions;
@@ -880,9 +900,31 @@ const paneSpawn: McpToolDef = {
       if (args.autoCloseOnHandoff === true && spawned.sessionId) {
         armAutoCloseOnHandoff(spawned.sessionId, spawned.paneId);
       }
+      if (deliveryContract && spawned.sessionId) {
+        armDeliveryContract(spawned.sessionId, deliveryContract);
+      }
+      // Receipt de harness (Overclock 1.3.23): quem spawnou lê O QUE foi
+      // decidido — CLI, modelo, esforço e de onde a escolha veio — em vez
+      // de inferir pelo título do pane.
+      const harness = {
+        adapterId: options.adapterId,
+        model: options.model ?? null,
+        effort: options.effort ?? null,
+        source: agentRef
+          ? 'sealed-roster'
+          : routeReservationId
+            ? 'route'
+            : str(args, 'model')
+              ? 'explicit'
+              : 'cli-default',
+        ...(deliveryContract
+          ? { deliveryContract: { retries: deliveryContract.retries } }
+          : {}),
+      };
       return {
         ...spawned,
         ...(executionMode ? { executionMode } : {}),
+        harness,
       };
     } finally {
       if (releaseWorkerSlot) {

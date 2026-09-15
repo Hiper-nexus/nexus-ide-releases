@@ -32,7 +32,16 @@ import {
 import { getProjectDomainStores } from "./project-domain-store-registry";
 import { normalizeHandoffStatusInput } from "./legacy-handoff";
 import { requireStr, str } from "./tool-util";
-import { compactText } from "./session-compaction";
+import {
+  deliveryContractExhaustedArtifact,
+  deliveryContractRetryMessage,
+  disarmDeliveryContract,
+  evaluateDeliveryContract,
+} from "./delivery-contract";
+import {
+  capHandoffFullText,
+  condenseHandoffSummary,
+} from "./handoff-summary-rule";
 import type { ScopedHandoff } from "./handoff-store";
 
 /** Lease de heartbeat herdado do dispatch cerimonial (linhas legadas). */
@@ -169,7 +178,13 @@ const handoffSubmitTool: McpToolDef = {
     "boundary and mapped (done→success, error→failed). Always allowed " +
     "regardless of allowlists. Status and artifacts are untrusted delivery " +
     "metadata and never complete a mission. Only evidenceIds already issued " +
-    "and bound by Nexus can satisfy the worker stop receipt.",
+    "and bound by Nexus can satisfy the worker stop receipt. summary: 1-2 " +
+    "sentences (<=280 chars ideal); above 400 chars it is auto-condensed at a " +
+    "sentence boundary and the full text is kept as an overclock.fullText " +
+    "artifact. If the pane was spawned with expect.schema, a success handoff " +
+    "has its artifacts validated against it: mismatches come back to you " +
+    "naming what is missing (up to `retries` times); after that the handoff " +
+    "is recorded as blocked.",
   inputSchema: {
     type: "object",
     properties: {
@@ -283,9 +298,13 @@ const handoffSubmitTool: McpToolDef = {
     // A plan handoff is the exact physical PRD/architecture/story payload.
     // Other lanes retain compact operational summaries without anti-social noise.
     const cleanSummary = filterAntiSocialChatter(rawSummary).clean;
-    const summary = isPlanHandoff
-      ? cleanSummary
-      : compactText(cleanSummary, { maxChars: 4_000 }).text;
+    // Régua 280/400 (Overclock 1.3.23): o summary é o que o Maestro lê
+    // colado no PTY; acima de 400 chars condensa na fronteira de frase e a
+    // íntegra vai para o registro como artifact overclock.fullText.
+    const condensed = isPlanHandoff
+      ? null
+      : condenseHandoffSummary(cleanSummary);
+    const summary = condensed ? condensed.summary : cleanSummary;
     const rawEvidenceIds = args.evidenceIds;
     if (
       rawEvidenceIds !== undefined &&
@@ -340,9 +359,23 @@ const handoffSubmitTool: McpToolDef = {
         worktreeHeadSha,
       });
     }
-    const status = handoffStatusSchema.parse(
+    const declaredStatus = handoffStatusSchema.parse(
       normalizeHandoffStatusInput(args.status),
     );
+    // Contrato de entrega declarado no spawn (expect.schema): só um
+    // success é cobrado — blocked/failed/partial já confessam que não há
+    // entrega completa. Divergência devolve ao worker o que falta; com as
+    // devoluções esgotadas o handoff entra como blocked, com as violações
+    // registradas em artifacts para o Maestro decidir com evidência.
+    const contractVerdict =
+      declaredStatus === "success"
+        ? evaluateDeliveryContract(ctx.sessionId, args.artifacts)
+        : ({ kind: "none" } as const);
+    if (contractVerdict.kind === "retry") {
+      throw new Error(deliveryContractRetryMessage(contractVerdict));
+    }
+    const status: typeof declaredStatus =
+      contractVerdict.kind === "exhausted" ? "blocked" : declaredStatus;
     assertMcpInvocationCurrent(invocation);
     const fromAgent = ctx.agentName ?? ctx.label;
     const atSeconds = Math.floor(Date.now() / 1000);
@@ -382,10 +415,27 @@ const handoffSubmitTool: McpToolDef = {
     const telemetry = sanitizeHandoffTelemetry(args.telemetry);
     const overclockArtifacts = buildOverclockArtifacts(args);
     const contextDagArtifacts = buildContextDagArtifacts(args);
+    // Íntegra do summary condensado, salvo quando o worker já mandou o
+    // próprio fullText (o dele vence: é o texto que ele escolheu registrar).
+    const condensedFullText =
+      condensed?.condensed &&
+      condensed.original !== undefined &&
+      !(typeof args.fullText === "string" && args.fullText.length > 0)
+        ? [
+            {
+              kind: "overclock.fullText",
+              payload: capHandoffFullText(condensed.original),
+            },
+          ]
+        : [];
     const artifacts = [
       ...(Array.isArray(args.artifacts) ? args.artifacts : []),
       ...overclockArtifacts,
+      ...condensedFullText,
       ...contextDagArtifacts,
+      ...(contractVerdict.kind === "exhausted"
+        ? [deliveryContractExhaustedArtifact(contractVerdict, declaredStatus)]
+        : []),
       ...(telemetry ? [embedTelemetryArtifact(telemetry)] : []),
     ];
     const handoffInput = {
@@ -436,6 +486,10 @@ const handoffSubmitTool: McpToolDef = {
     }
     if (handoff.evidenceTrust === "nexus-trusted") {
       markHandoffSubmitted(ctx);
+    }
+    if (ctx.sessionId && contractVerdict.kind !== "none") {
+      // Contrato cumprido (ok) ou esgotado (blocked): a cobrança acabou.
+      disarmDeliveryContract(ctx.sessionId);
     }
     // Wake is exclusively `onHandoffSubmitted` → idle-delivery (bracketed
     // paste + 500 ms settle + Enter). A raw PTY dump here (commit 2b8b4e1d)
