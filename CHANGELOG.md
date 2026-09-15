@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.76.37 — Contrato de entrega, hooks vivos e conector por instância
+
+- **Contrato de entrega no spawn (`expect.schema`)**: `nexus_pane_spawn` aceita `expect: {schema, retries?}`. Num `nexus_handoff_submit` com status success, os `artifacts` do worker são validados contra o JSON Schema declarado (validador próprio em `src/shared/json-schema-lite.ts`, sem dependência empacotada). Divergência devolve ao worker exatamente o que falta, até `retries` vezes (padrão 1); esgotadas as devoluções, o handoff entra como `blocked` com as violações em `artifacts`. Schema inválido falha no spawn, visível para quem declarou.
+- **Régua do summary (280/400) e receipt de harness**: summary acima de 400 caracteres é condensado na última fronteira de frase entre 280 e 400 e a íntegra vai para o artifact `overclock.fullText`; o Maestro lê a conclusão, não o relatório. A resposta do spawn traz `harness {adapterId, model, effort, source}` para o chamador saber o que foi decidido.
+- **Hooks de worker vivos de verdade (F-536/F-555)**: o script de hook gerado é `.mjs` e usava `require()`, então o relato do Stop nunca chegava ao gate. Agora é ESM, escreve `{"continue":true}` no stdout do Stop (o runner do Codex marcava o hook como FAILED sem JSON), relança o neto com `windowsHide` e tenta a porta publicada em `~/.nexus/arms-runtime.json` quando `NEXUS_GATE_URL` aponta para porta morta. `pretool` segue fail-closed.
+- **Conector Arms por instância (`--descriptor`)**: com prod e dev abertos os dois escreviam o mesmo `~/.nexus/arms-runtime.json` e o cliente externo falava com a instância errada. Dev passa a escrever `arms-runtime.dev.json`; o descritor leva `instance` e `descriptorPath`; o snippet de Configurações › Conectores passa `--descriptor <caminho>` e o conector aceita `--descriptor` > `NEXUS_ARMS_DESCRIPTOR` > padrão.
+- **Recusas de tool que instruem o agente**: allowlist/papel, autoridade read-only e perfil de reviewer interno carregam um `hint` (não tentar de novo, não reportar como bloqueio, entregar com o que tem e declarar no handoff). O campo `error` segue idêntico.
+- **Dívidas de evidência da 0.76.35 pagas**: `ensureDefaultInstalledPets` e a visibilidade de panes soltos na vista global ganharam testes reais; o manifesto do mascote Nivu deixa de levar texto pessoal; os cards F-545/F-546 citam só evidência existente.
+- **Aviso de CLI ausente endurecido**: o texto do catálogo (`label`, `installCommand`) é citado com aspas simples POSIX antes de ir ao terminal, então nada dele é interpretado pelo shell.
+- **Smoke empacotado mais honesto e mais tolerante**: as sondas de ditado passam a reportar um motivo fechado de falha (`discriminator`, `write-refused-exited`, `echo-timeout-alive`…) em vez de só o nome da sonda, e a espera pelo eco de um shell real subiu de 5 s para 15 s com prazo próprio de 20 s, porque num Mac carregado o gate reprovava artefato bom.
+- **Docs**: destilação do Overclock 1.3.23 (delta vs 1.3.18, matriz do harness e hooks remontados) em `docs/analysis/overclock-1323-*`.
+
 ## 0.76.36 — Paridade multiplataforma e release Windows determinística
 
 - **Fixtures por sistema operacional**: testes de MCP/Cline agora resolvem os caminhos nativos de Cursor/VS Code em macOS, Linux e Windows, sem carregar dependências macOS-only em runners Linux/Windows.

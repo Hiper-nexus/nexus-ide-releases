@@ -3797,7 +3797,7 @@ export const RELEASE_07635: AppRelease = {
 };
 
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07636: AppRelease = {
   version: '0.76.36',
   date: '2026-09-15',
   codename: 'Paridade multiplataforma e release Windows determinística',
@@ -3831,3 +3831,61 @@ export const CURRENT_RELEASE: AppRelease = {
 };
 
 
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.37',
+  date: '2026-09-15',
+  codename: 'Contrato de entrega, hooks vivos e conector por instância',
+  summary:
+    'Fecha o ciclo de entrega dos workers com contrato validado no handoff, torna os hooks de ' +
+    'parada realmente vivos (ESM, continue-json para o Codex, fallback de endpoint), isola o ' +
+    'conector Arms por instância, faz as recusas de tool instruírem o agente e paga as dívidas ' +
+    'de evidência da 0.76.35.',
+  highlights: [
+    {
+      title: 'Contrato de entrega no spawn (expect.schema)',
+      detail:
+        'nexus_pane_spawn aceita expect {schema, retries}. Num handoff success os artifacts do worker ' +
+        'são validados contra o JSON Schema declarado; divergência devolve ao worker o que falta, e ' +
+        'com as devoluções esgotadas o handoff entra como blocked com as violações registradas.',
+    },
+    {
+      title: 'Régua do summary e receipt de harness',
+      detail:
+        'Summary acima de 400 caracteres é condensado na fronteira de frase e a íntegra vai para ' +
+        'overclock.fullText. A resposta do spawn traz harness {adapterId, model, effort, source}.',
+    },
+    {
+      title: 'Hooks de worker vivos (F-536/F-555)',
+      detail:
+        'O hook gerado é ESM (o require() num .mjs silenciava o relato do Stop), escreve ' +
+        '{"continue":true} para o runner do Codex, relança o neto com windowsHide e cai para a porta ' +
+        'publicada em arms-runtime.json quando a URL herdada está morta.',
+    },
+    {
+      title: 'Conector Arms por instância (--descriptor)',
+      detail:
+        'Dev escreve arms-runtime.dev.json, o descritor leva instance e descriptorPath, o snippet de ' +
+        'Conectores passa --descriptor e o conector fica amarrado a uma instância por construção.',
+    },
+    {
+      title: 'Recusas que instruem o agente',
+      detail:
+        'Negações por allowlist, papel, read-only e perfil de reviewer carregam um hint: não tentar de ' +
+        'novo, não reportar como bloqueio, entregar com o que tem e declarar no handoff o que faltou.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Dívidas de evidência da 0.76.35',
+      detail:
+        'Testes reais para ensureDefaultInstalledPets e para panes soltos na vista global; texto ' +
+        'neutro no manifesto do mascote; cards F-545/F-546 apontam só para evidência existente.',
+    },
+    {
+      title: 'Aviso de CLI ausente endurecido',
+      detail:
+        'label e installCommand do catálogo são citados com aspas simples POSIX antes de ir ao ' +
+        'terminal, então nada do texto é interpretado pelo shell.',
+    },
+  ],
+};
