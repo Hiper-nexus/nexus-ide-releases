@@ -67,6 +67,14 @@ describe('OverlayLayer — a camada existe FORA da árvore do grid', () => {
     expect(layer).toMatch(/isolation:\s*isolate;/);
     expect(layer).toMatch(/z-index:\s*var\(--z-overlay-root\);/);
   });
+
+  it('não cria um containing block que desalinhe filhos position:fixed', () => {
+    const css = read('src/renderer/styles/overlay-layer.css');
+    const layer = css.slice(css.indexOf('.overlay-layer {'), css.indexOf('/* ============================ SCRIM'));
+    // Um transform em qualquer ancestral faz position:fixed resolver contra
+    // a camada 0×0 em vez da viewport — o modal aparece preso à esquerda.
+    expect(layer).not.toMatch(/(?:-webkit-)?transform\s*:/);
+  });
 });
 
 describe('contrato de tokens H6 (DESIGN.md é a autoridade, base.css a fonte)', () => {

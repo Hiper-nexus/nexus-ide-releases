@@ -23,8 +23,6 @@
      dele, --z-toast(44) … --z-confirm(1300) voltam a ser a única autoridade
      de ordem — agora entre iguais, sem herdar teto de ninguém. */
   isolation: isolate;
-  transform: translateZ(0);
-  -webkit-transform: translateZ(0);
 }
 
 /* ============================ SCRIM ============================ */
