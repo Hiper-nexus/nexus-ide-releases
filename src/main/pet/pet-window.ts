@@ -383,6 +383,10 @@ function sendPetEvent(event: PetEvent): void {
   for (const decision of result.flushed) applyAttentionDecision(decision);
 }
 
+export function broadcastPetEvent(event: PetEvent): void {
+  sendPetEvent(event);
+}
+
 function stopDrag(): void {
   if (dragTimer) {
     clearInterval(dragTimer);
@@ -1262,18 +1266,19 @@ function registerPetIpc(): void {
     // pet para dentro ao soltar.
     const cursor = screen.getCursorScreenPoint();
     const display = screen.getDisplayNearestPoint(cursor);
-    // Settle 100% dentro dos bounds físicos: canto real, sem pixels off-screen.
+    // Settle 100% dentro dos bounds físicos sem forçar snap magnético em cantos.
     const settled = snapPetToCursorEdges(
-      clampPetDrag(
-        raw,
-        PET_WINDOW_SIZE,
-        display.bounds,
-        EDGE_OVERHANG_SETTLE,
-      ),
-      PET_WINDOW_SIZE,
-      display.bounds,
-      cursor,
-    );
+       clampPetDrag(
+         raw,
+         PET_WINDOW_SIZE,
+         display.bounds,
+         EDGE_OVERHANG_SETTLE,
+       ),
+       PET_WINDOW_SIZE,
+       display.bounds,
+       cursor,
+       0,
+     );
     if (gx !== settled.x || gy !== settled.y) {
       // Um único setBounds no fim garante a coordenada exata persistida.
       setPetBounds(settled, true);
@@ -1354,6 +1359,11 @@ function registerPetIpc(): void {
   ipcMain.on(PET_CHANNELS.requestSettings, (event) => {
     if (!fromPetWindow(event)) return;
     focusMainWindow()?.webContents.send(PET_CHANNELS.openSettings);
+  });
+
+  ipcMain.on(PET_CHANNELS.requestOpenTerminal, (event) => {
+    if (!fromPetWindow(event)) return;
+    focusMainWindow()?.webContents.send(PET_CHANNELS.openTerminal);
   });
 
   ipcMain.on(PET_CHANNELS.requestOpenOps, (event) => {

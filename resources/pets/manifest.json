@@ -178,5 +178,25 @@
     "bytes": 1795290,
     "cols": 8,
     "rows": 11
+  },
+  {
+    "id": "codex-companion",
+    "slug": "codex-companion",
+    "label": "Codex Companion",
+    "note": "A compact premium 3D toy Codex companion inspired by the reference: warm tan complexion, short dark hair, full dark beard, white shirt, and a silver wristwatch.",
+    "file": "sheets/codex-companion.webp",
+    "bytes": 1657570,
+    "cols": 8,
+    "rows": 11
+  },
+  {
+    "id": "nivu",
+    "slug": "nivu",
+    "label": "Nivu",
+    "note": "Pet personalizado do Cleofas — restaurado do backup.",
+    "file": "sheets/nivu.webp",
+    "bytes": 1732266,
+    "cols": 8,
+    "rows": 11
   }
 ]

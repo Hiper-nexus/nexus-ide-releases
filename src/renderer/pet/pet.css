@@ -52,16 +52,12 @@ body,
 }
 
 /*
- * Canto visual sem overhang nativo: desloca somente o conteúdo opaco dentro
- * da janela transparente compacta. Assim o mascote toca o canto e o
- * WindowServer nunca recebe pixels fora do display.
+ * Alinhamento contínuo e fluido: mantém o mascote ancorado no centro da janela
+ * sem saltos bruscos de 80px ao se aproximar das bordas do ecrã.
  */
-.pet--left {
-  align-items: flex-start;
-}
-
+.pet--left,
 .pet--right {
-  align-items: flex-end;
+  align-items: center;
 }
 
 .pet--top {
@@ -266,38 +262,103 @@ body,
   }
 }
 
+/*
+ * Wrapper dedicado para translação horizontal do vaguear orgânico.
+ * Separa o translateX do bob vertical (.pet__visual), evitando que
+ * a animação CSS sobrescreva o estado do mascote no fim do passo.
+ */
+.pet__wanderer {
+  position: relative;
+  display: grid;
+  place-items: center;
+}
+
 .pet__menu {
   position: absolute;
-  /* Acima do sprite compacto (~120px) + respiro — não fixo em 168px da era
-     do pet gigante. */
-  bottom: 148px;
+  /* Ancorado logo acima do sprite compacto com respiro */
+  bottom: 112px;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  min-width: 148px;
-  max-width: min(260px, calc(100% - 16px));
-  padding: 4px;
+  min-width: 175px;
+  max-width: min(268px, calc(100% - 16px));
+  max-height: calc(100% - 120px);
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 5px;
   border: 1px solid var(--pet-border);
-  border-radius: 10px;
+  border-radius: 12px;
   background: color-mix(in srgb, var(--pet-bg) 96%, #000);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
   z-index: 2;
+  animation: pet-balloon-in 140ms ease-out;
+}
+
+.pet__menu-header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 3px 5px 6px 5px;
+  border-bottom: 1px solid color-mix(in srgb, var(--pet-border) 70%, transparent);
+  margin-bottom: 2px;
+}
+
+.pet__menu-status {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--pet-accent);
+}
+
+.pet__menu-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--pet-accent);
+  box-shadow: 0 0 8px var(--pet-accent);
+}
+
+.pet__menu-dot--active {
+  background: var(--ok);
+  box-shadow: 0 0 8px var(--ok);
+}
+
+.pet__menu-dot--warn {
+  background: var(--pet-warn);
+  box-shadow: 0 0 8px var(--pet-warn);
+}
+
+.pet__menu-activity {
+  font-size: 10.5px;
+  color: var(--pet-text);
+  opacity: 0.85;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .pet__menu-item {
   appearance: none;
   border: none;
-  border-radius: 7px;
+  border-radius: 6px;
   background: transparent;
   color: var(--pet-text);
   font-family: var(--pet-font);
-  font-size: 12px;
+  font-size: 11.5px;
   text-align: left;
-  padding: 6px 9px;
+  padding: 5px 8px;
   cursor: pointer;
   white-space: normal;
   overflow-wrap: anywhere;
-  line-height: 1.3;
+  line-height: 1.25;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .pet__menu-item:hover {
@@ -508,7 +569,7 @@ body,
   100% { opacity: 0; transform: translateY(-16px); }
 }
 
-/* prefers-reduced-motion: fizz estático, sem entradas animadas */
+/* prefers-reduced-motion: fizz estático, sem entradas animadas ou vaguear autônomo */
 @media (prefers-reduced-motion: reduce) {
   .pet__coffee {
     animation: none;
@@ -518,5 +579,10 @@ body,
   .pet__cafeinando {
     animation: none;
     opacity: 1;
+  }
+
+  .pet__wanderer {
+    transform: none !important;
+    transition: none !important;
   }
 }

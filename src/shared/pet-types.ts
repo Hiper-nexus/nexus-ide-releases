@@ -61,6 +61,12 @@ export const PET_CHANNELS = {
   /** send: janela do pet → main. Foca a principal E pede o Settings. */
   requestSettings: 'pet:requestSettings',
   /**
+   * send: janela do pet → main. Foca a principal e navega para o grid de terminais.
+   */
+  requestOpenTerminal: 'pet:requestOpenTerminal',
+  /** event: main → janela principal. Navegar para os terminais. */
+  openTerminal: 'pet:openTerminal',
+  /**
    * send: janela do pet → main. Foca a principal e pede o Ops Board
    * (missão terminou / precisa de intervenção humana).
    */
@@ -363,10 +369,14 @@ export type PetEventKind =
   /** Um agente pediu permissão/input (hook waiting/blocked). */
   | 'agent-waiting'
   | 'agent-exited'
-  | 'agent-idle';
+  | 'agent-idle'
+  | 'goal-wave-started'
+  | 'goal-wave-completed'
+  | 'goal-gate-passed'
+  | 'goal-finished';
 
 /** Ação que o pet pede à janela principal quando o usuário interage. */
-export type PetOpenAction = 'focus-main' | 'open-ops';
+export type PetOpenAction = 'focus-main' | 'open-ops' | 'open-terminal';
 
 /**
  * POR QUE a missão parou, já apresentado. Viaja com o evento porque a janela
@@ -407,6 +417,14 @@ export function isPetUrgentEvent(kind: PetEventKind): boolean {
 
 export function petOpenActionFor(kind: PetEventKind): PetOpenAction {
   if (
+    kind === 'goal-wave-started' ||
+    kind === 'goal-wave-completed' ||
+    kind === 'goal-gate-passed' ||
+    kind === 'goal-finished'
+  ) {
+    return 'open-terminal';
+  }
+  if (
     kind === 'mission-blocked' ||
     kind === 'mission-technical-failure' ||
     kind === 'agent-waiting' ||
@@ -440,6 +458,10 @@ export interface NexusPetApi {
   focusMain(): void;
   /** Foca a principal e abre Settings → Aparência (menu "Configurar…"). */
   openSettings(): void;
+  /**
+   * Foca a principal e navega para o grid de terminais.
+   */
+  openTerminal(): void;
   /**
    * Foca a principal e pede o Ops Board (missão pronta / precisa de você).
    * Usado no clique do balão e no menu do pet.

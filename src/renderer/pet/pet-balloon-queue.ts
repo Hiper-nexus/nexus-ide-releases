@@ -115,6 +115,30 @@ export function balloonContentFor(
       };
     case 'agent-idle':
       return null;
+    case 'goal-wave-started':
+      return {
+        title: '🎯 Meta /goal',
+        text: event.title,
+        cta: 'Ver terminais',
+      };
+    case 'goal-wave-completed':
+      return {
+        title: '✨ Onda concluída',
+        text: event.title,
+        cta: 'Ver progresso',
+      };
+    case 'goal-gate-passed':
+      return {
+        title: '✅ Gate aprovado',
+        text: event.title,
+        cta: 'Avançando meta',
+      };
+    case 'goal-finished':
+      return {
+        title: '🏆 Meta 100% concluída',
+        text: event.title,
+        cta: 'Ver resultado',
+      };
   }
 }
 

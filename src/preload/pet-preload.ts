@@ -45,6 +45,7 @@ const api: NexusPetApi = {
   dragEnd: () => ipcRenderer.send(PET_CHANNELS.dragEnd),
   focusMain: () => ipcRenderer.send(PET_CHANNELS.focusMain),
   openSettings: () => ipcRenderer.send(PET_CHANNELS.requestSettings),
+  openTerminal: () => ipcRenderer.send(PET_CHANNELS.requestOpenTerminal),
   openOps: () => ipcRenderer.send(PET_CHANNELS.requestOpenOps),
 };
 

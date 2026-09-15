@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { PetPlacement, PetPrefs } from '../../shared/pet-types';
+import type { PetOpenAction, PetPlacement, PetPrefs } from '../../shared/pet-types';
 import { isPetUrgentEvent } from '../../shared/pet-types';
 import { OperatorSprite, type OperatorMood } from '../components/OperatorSprite';
 import { CoffeeCup } from './CoffeeCup';
@@ -48,8 +48,9 @@ function spriteSkinFor(preset: PetPrefs['preset']): string | null {
   return preset === 'operator' || preset === 'custom' ? null : preset;
 }
 
-function runBalloonAction(action: 'focus-main' | 'open-ops'): void {
+function runBalloonAction(action: PetOpenAction): void {
   if (action === 'open-ops') window.nexusPet.openOps();
+  else if (action === 'open-terminal') window.nexusPet.openTerminal();
   else window.nexusPet.focusMain();
 }
 
@@ -75,6 +76,8 @@ export function PetApp() {
   // Arrastando: corre L/R (linhas 1/2 do contrato) — pernas a mexer.
   const [runDir, setRunDir] = useState<'left' | 'right' | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [lastActivityText, setLastActivityText] = useState<string | null>(null);
+  const [wanderOffset, setWanderOffset] = useState(0);
   const [placement, setPlacement] = useState<PetPlacement>({
     horizontal: 'center',
     vertical: 'bottom',
@@ -152,6 +155,24 @@ export function PetApp() {
     const offPlacement = window.nexusPet.onPlacement(setPlacement);
     const offEvents = window.nexusPet.onEvent((event) => {
       setBalloons((state) => enqueueBalloon(state, event));
+      let activity = event.title;
+      if (event.kind === 'goal-wave-started') {
+        activity = `🎯 Onda: ${event.title}`;
+      } else if (event.kind === 'goal-wave-completed') {
+        activity = `✨ Onda concluída: ${event.title}`;
+      } else if (event.kind === 'goal-gate-passed') {
+        activity = `✅ Gate aprovado: ${event.title}`;
+      } else if (event.kind === 'goal-finished') {
+        activity = `🏆 Meta 100% concluída: ${event.title}`;
+      } else if (event.kind === 'mission-done') {
+        activity = `🏁 Missão concluída: ${event.title}`;
+      } else if (event.kind === 'agent-idle') {
+        activity = '☕ Agente concluiu e ficou livre';
+      } else if (event.kind === 'mission-blocked') {
+        activity = `⚠️ Intervenção necessária: ${event.title}`;
+      }
+      setLastActivityText(activity);
+
       const nextReaction: 'wave' | 'failed' | 'waiting' =
         event.kind === 'mission-failed' ||
         event.kind === 'mission-technical-failure' ||
@@ -243,13 +264,63 @@ export function PetApp() {
     currentBalloonId,
   ]);
 
-  const dismissAndAct = useCallback((action: 'focus-main' | 'open-ops') => {
+  const dismissAndAct = useCallback((action: PetOpenAction) => {
     runBalloonAction(action);
     setBalloons(dismissBalloon);
     setReaction(null);
     setMenuOpen(false);
     releaseInteractiveAfterOverlay();
   }, [releaseInteractiveAfterOverlay]);
+
+  const [reducedMotion, setReducedMotion] = useState(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return false;
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const onChange = (e: MediaQueryListEvent) => {
+      setReducedMotion(e.matches);
+      if (e.matches) {
+        setWanderOffset(0);
+        setRunDir(null);
+      }
+    };
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
+  // Vaguear orgânico autônomo (vida orgânica sem presets rígidos):
+  // Quando ocioso e acordado, o mascote dá passos suaves ocasionais (±20px).
+  // Respeita estritamente prefers-reduced-motion.
+  useEffect(() => {
+    if (reducedMotion || prefs?.sleeping || currentBalloon || menuOpen) {
+      setWanderOffset(0);
+      return;
+    }
+    const wanderTimer = window.setInterval(() => {
+      if (reducedMotion || drag.current?.dragging || currentBalloon || menuOpen || prefs?.sleeping) return;
+      setWanderOffset((prev) => {
+        let next = 0;
+        if (prev === 0) {
+          next = Math.random() > 0.5 ? 20 : -20;
+        } else {
+          next = 0;
+        }
+        const dir = next > prev ? 'right' : 'left';
+        setRunDir(dir);
+        window.setTimeout(() => {
+          if (!drag.current?.dragging) {
+            setRunDir(null);
+          }
+        }, 900);
+        return next;
+      });
+    }, 14_000);
+
+    return () => window.clearInterval(wanderTimer);
+  }, [reducedMotion, prefs?.sleeping, currentBalloon, menuOpen]);
 
   // Drag: limiar em screen coords (clientX “congela” quando a janela segue).
   // Main faz o follow por cursor; pointer capture + interactive forçado.
@@ -258,6 +329,7 @@ export function PetApp() {
     e.preventDefault();
     const el = hitRef.current;
     if (!el) return;
+    setWanderOffset(0);
     // Hit-test ON durante todo o gesto (click-through matava o arrasto).
     markInteractive(true);
     try {
@@ -280,6 +352,7 @@ export function PetApp() {
       const state = drag.current;
       drag.current = null;
       setRunDir(null);
+      setWanderOffset(0);
       el.removeEventListener('pointermove', onMove);
       el.removeEventListener('pointerup', onUp);
       el.removeEventListener('pointercancel', onCancel);
@@ -435,6 +508,39 @@ export function PetApp() {
           onMouseEnter={() => markInteractive(true)}
           onMouseLeave={() => markInteractive(false)}
         >
+          <div className="pet__menu-header">
+            <div className="pet__menu-status">
+              <span
+                className={`pet__menu-dot ${
+                  balloon?.urgent
+                    ? 'pet__menu-dot--warn'
+                    : lastActivityText
+                      ? 'pet__menu-dot--active'
+                      : ''
+                }`}
+              />
+              <span>{prefs.sleeping ? 'Pet em repouso' : 'Nexus Operando'}</span>
+            </div>
+            <div
+              className="pet__menu-activity"
+              title={lastActivityText ?? 'Pronto para novas missões.'}
+            >
+              {lastActivityText ?? 'Pronto para novas missões e comandos.'}
+            </div>
+          </div>
+
+          <button
+            type="button"
+            role="menuitem"
+            className="pet__menu-item"
+            onClick={() => {
+              window.nexusPet.openTerminal();
+              setMenuOpen(false);
+              markInteractive(false);
+            }}
+          >
+            💻 Terminais & Grid
+          </button>
           <button
             type="button"
             role="menuitem"
@@ -443,7 +549,7 @@ export function PetApp() {
               dismissAndAct('open-ops');
             }}
           >
-            Ver missões
+            📋 Quadro de Missões
           </button>
           <button
             type="button"
@@ -455,7 +561,7 @@ export function PetApp() {
               markInteractive(false);
             }}
           >
-            {prefs.sleeping ? 'Acordar' : 'Dormir'}
+            {prefs.sleeping ? '⚡ Acordar' : '💤 Dormir'}
           </button>
           <button
             type="button"
@@ -467,7 +573,7 @@ export function PetApp() {
               markInteractive(false);
             }}
           >
-            Configurar…
+            ⚙️ Configurar…
           </button>
           <button
             type="button"
@@ -477,7 +583,7 @@ export function PetApp() {
               void window.nexusPet.setPrefs({ enabled: false });
             }}
           >
-            Esconder pet
+            ✕ Esconder pet
           </button>
         </div>
       )}
@@ -508,50 +614,61 @@ export function PetApp() {
               : 'NexusIDE Pet — clique para menu · arraste para mover'
         }
       >
-        <div className="pet__visual">
-          {prefs.preset === 'sheet' && prefs.sheet ? (
-            <SheetPetSprite
-              sheet={prefs.sheet}
-              anim={sheetAnim}
-              lookDir={lookDir}
-              // Reserva altura para o balão dentro do BrowserWindow compacto;
-              // com balão o sheet encolhe um pouco para não recortar o aviso.
-              size={balloon ? Math.min(SHEET_SIZE, 100) : SHEET_SIZE}
-            />
-          ) : prefs.preset === 'custom' && prefs.customGrid ? (
-            <CustomPetSprite grid={prefs.customGrid} size={SPRITE_SIZE} />
-          ) : (
-            <OperatorSprite
-              size={SPRITE_SIZE}
-              tier="ELITE"
-              branch="base"
-              skin={spriteSkinFor(prefs.preset)}
-              mood={mood}
-            />
-          )}
-          {prefs.sleeping && !balloon?.urgent && (
-            <span className="pet__zzz" aria-hidden="true">
-              z z z
-            </span>
-          )}
-          {(needingYou || balloon?.urgent) && (
-            <span className="pet__alert" aria-hidden="true">
-              !
-            </span>
-          )}
-          {/* Lata: visível quando acordado e sem crise ativa.
-              Fizz acelera brevemente quando o pet comemora (celebrating). */}
-          {showAsAwake && !needingYou && !balloon?.urgent && (
-            <div className="pet__coffee" aria-hidden="true">
-              <CoffeeCup size={52} celebrating={celebrating} />
-            </div>
-          )}
-          {/* Flash "cafe" — aparece por ~3 s quando um agente fica idle. */}
-          {cafeinando && showAsAwake && (
-            <span className="pet__cafeinando" aria-hidden="true">
-              cafe
-            </span>
-          )}
+        <div
+          className="pet__wanderer"
+          style={{
+            transform: `translateX(${wanderOffset}px)`,
+            transition:
+              runDir && !drag.current?.dragging
+                ? 'transform 0.9s cubic-bezier(0.25, 1, 0.5, 1)'
+                : undefined,
+          }}
+        >
+          <div className="pet__visual">
+            {prefs.preset === 'sheet' && prefs.sheet ? (
+              <SheetPetSprite
+                sheet={prefs.sheet}
+                anim={sheetAnim}
+                lookDir={lookDir}
+                // Reserva altura para o balão dentro do BrowserWindow compacto;
+                // com balão o sheet encolhe um pouco para não recortar o aviso.
+                size={balloon ? Math.min(SHEET_SIZE, 100) : SHEET_SIZE}
+              />
+            ) : prefs.preset === 'custom' && prefs.customGrid ? (
+              <CustomPetSprite grid={prefs.customGrid} size={SPRITE_SIZE} />
+            ) : (
+              <OperatorSprite
+                size={SPRITE_SIZE}
+                tier="ELITE"
+                branch="base"
+                skin={spriteSkinFor(prefs.preset)}
+                mood={mood}
+              />
+            )}
+            {prefs.sleeping && !balloon?.urgent && (
+              <span className="pet__zzz" aria-hidden="true">
+                z z z
+              </span>
+            )}
+            {(needingYou || balloon?.urgent) && (
+              <span className="pet__alert" aria-hidden="true">
+                !
+              </span>
+            )}
+            {/* Lata: visível quando acordado e sem crise ativa.
+                Fizz acelera brevemente quando o pet comemora (celebrating). */}
+            {showAsAwake && !needingYou && !balloon?.urgent && (
+              <div className="pet__coffee" aria-hidden="true">
+                <CoffeeCup size={52} celebrating={celebrating} />
+              </div>
+            )}
+            {/* Flash "cafe" — aparece por ~3 s quando um agente fica idle. */}
+            {cafeinando && showAsAwake && (
+              <span className="pet__cafeinando" aria-hidden="true">
+                cafe
+              </span>
+            )}
+          </div>
         </div>
       </div>
     </div>

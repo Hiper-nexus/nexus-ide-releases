@@ -175,4 +175,27 @@ describe('enqueueBalloon / dismissBalloon', () => {
     s = dismissBalloon(s);
     expect(s.current?.text).toContain('B');
   });
+
+  it('rotas de eventos /goal apontam para o terminal (open-terminal)', () => {
+    const s1 = enqueueBalloon(
+      EMPTY_BALLOON_QUEUE,
+      ev('goal-wave-started', 'Onda 1/3'),
+    );
+    expect(s1.current?.action).toBe('open-terminal');
+    expect(s1.current?.cta).toBe('Ver terminais');
+
+    const s2 = enqueueBalloon(
+      EMPTY_BALLOON_QUEUE,
+      ev('goal-wave-completed', 'Onda 1 concluída'),
+    );
+    expect(s2.current?.action).toBe('open-terminal');
+    expect(s2.current?.cta).toBe('Ver progresso');
+
+    const s3 = enqueueBalloon(
+      EMPTY_BALLOON_QUEUE,
+      ev('goal-finished', 'Todas ondas concluídas'),
+    );
+    expect(s3.current?.action).toBe('open-terminal');
+    expect(s3.current?.cta).toBe('Ver resultado');
+  });
 });
