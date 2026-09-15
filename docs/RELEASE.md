@@ -131,6 +131,17 @@ teste real. A ausência da prova, alvo errado ou installedUpgradeVerified=false
 bloqueia publicação. Um arquivo local editado não substitui essa evidência.
 O harness para produzir essa prova ainda não está implementado no coletor.
 
+Enquanto o harness não existe, o operador pode declarar um **waiver** só para
+o caso "prova não produzida" (`installedUpgradeVerified=false` e
+`installedUpgradeProof` ausente no recibo): `NEXUS_WINDOWS_UPGRADE_PROOF_WAIVER`
+com um motivo de uma linha (20–600 caracteres: quem testou o quê, onde e
+quando). O waiver nunca cobre uma prova produzida e reprovada, nem uma prova
+desvinculada, nem um recibo que se diz verificado sem prova. O publicador
+grava `windows-upgrade-proof-waiver.json` (versão, commit, run, motivo, data
+e operador) como asset da release canônica, ao lado do recibo, e avisa no
+log; o espelho público não recebe o arquivo. Introduzido na 0.76.37, quando a
+0.76.32 já tinha saído com o mesmo recibo sem prova.
+
 O comando de produção mantém um lock exclusivo local durante toda a sessão,
 compartilhado entre checkouts da conta de release. Outra sessão falha sem
 executar publicação; o lock é liberado ao terminar ou falhar normalmente e

@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
-import { extractWindowsArchive, assertWindowsArchiveEntries, assertWindowsRun, assertWindowsArtifact, assertWindowsCandidate, assertMonotonicWindowsRelease, appendWindowsAssets, requireWindowsRunId } from './windows-release-candidate.mjs';
+import { extractWindowsArchive, assertWindowsArchiveEntries, assertWindowsRun, assertWindowsArtifact, assertWindowsCandidate, assertMonotonicWindowsRelease, appendWindowsAssets, requireWindowsRunId, parseUpgradeProofWaiver } from './windows-release-candidate.mjs';
 
 const sha = 'a'.repeat(40);
 const repo = { id: 12, full_name: 'Hiper-nexus/nexus-ide', private: true };
@@ -77,6 +77,46 @@ describe('Windows candidate bytes within an authenticated archive', () => {
       fs.writeFileSync(path.join(f.root, 'windows-release-receipt.json'), JSON.stringify(f.receipt));
       expect(() => assertWindowsCandidate(f.root, f.expected)).toThrow(/installed.*upgrade.*proof/i);
     }
+  });
+  describe('operator waiver for a NOT PRODUCED upgrade proof', () => {
+    const reason = 'upgrade 1.2.2→1.2.3 testado à mão na máquina Windows do operador em 2026-09-15';
+    const notProduced = r => { r.smoke.installedUpgradeVerified = false; delete r.installedUpgradeProof; };
+    const write = f => fs.writeFileSync(path.join(f.root, 'windows-release-receipt.json'), JSON.stringify(f.receipt));
+    it('parses only a single-line reason of useful length from the environment', () => {
+      expect(parseUpgradeProofWaiver({})).toBeUndefined();
+      expect(parseUpgradeProofWaiver({ NEXUS_WINDOWS_UPGRADE_PROOF_WAIVER: `  ${reason}  ` })).toEqual({ reason });
+      for (const bad of ['', 'sim', 'x'.repeat(19), `${reason}\nsegunda linha`, 'y'.repeat(601)]) {
+        expect(() => parseUpgradeProofWaiver({ NEXUS_WINDOWS_UPGRADE_PROOF_WAIVER: bad })).toThrow(/NEXUS_WINDOWS_UPGRADE_PROOF_WAIVER/);
+      }
+    });
+    it('accepts the candidate and records a waiver bound to version, commit, run and reason', () => {
+      const f = fixture(); notProduced(f.receipt); write(f);
+      const candidate = assertWindowsCandidate(f.root, f.expected, { upgradeProofWaiver: { reason } });
+      expect(candidate.assetPaths).toHaveLength(3);
+      expect(path.basename(candidate.waiverPath)).toBe('windows-upgrade-proof-waiver.json');
+      const record = JSON.parse(fs.readFileSync(candidate.waiverPath, 'utf8'));
+      expect(record).toMatchObject({ schemaVersion: 1, kind: 'windows-upgrade-proof-waiver', version: '1.2.3', commitSha: sha, runId: '42', receiptInstalledUpgradeVerified: false, reason });
+      expect(candidate.waiverAsset).toEqual({ name: 'windows-upgrade-proof-waiver.json', size: fs.statSync(candidate.waiverPath).size, sha256: hash(fs.readFileSync(candidate.waiverPath)) });
+      const merged = appendWindowsAssets({ canonicalAssets: [], publicAssets: [], canonicalAssetPaths: ['mac.dmg'], publicAssetPaths: ['mac.dmg'] }, candidate);
+      expect(merged.canonicalAssetPaths).toEqual(['mac.dmg', ...candidate.assetPaths, candidate.receiptPath, candidate.waiverPath]);
+      expect(merged.canonicalAssets.at(-1)).toEqual(candidate.waiverAsset);
+      expect(merged.publicAssetPaths).toEqual(['mac.dmg', ...candidate.assetPaths]);
+      expect(merged.publicAssets).toEqual(candidate.assets);
+    });
+    it('never covers a produced-but-failed proof, an unbound proof, or a receipt claiming verification without proof', () => {
+      for (const alter of [r => { r.installedUpgradeProof.status = 'fail'; r.smoke.installedUpgradeVerified = false; }, r => { r.installedUpgradeProof.toVersion = '1.2.4'; }, r => { r.installedUpgradeProof.checks.userDataPreserved = false; }, r => { delete r.installedUpgradeProof; }, r => { r.smoke.installedUpgradeVerified = false; }]) {
+        const f = fixture(); alter(f.receipt); write(f);
+        expect(() => assertWindowsCandidate(f.root, f.expected, { upgradeProofWaiver: { reason } })).toThrow(/installed.*upgrade.*proof/i);
+      }
+    });
+    it('without a waiver the not-produced receipt still fails and no waiver file is written', () => {
+      const f = fixture(); notProduced(f.receipt); write(f);
+      expect(() => assertWindowsCandidate(f.root, f.expected)).toThrow(/installed.*upgrade.*proof/i);
+      expect(fs.existsSync(path.join(f.root, 'windows-upgrade-proof-waiver.json'))).toBe(false);
+      const g = fixture(); const candidate = assertWindowsCandidate(g.root, g.expected, { upgradeProofWaiver: { reason } });
+      expect(candidate.waiverPath).toBeUndefined();
+      expect(fs.existsSync(path.join(g.root, 'windows-upgrade-proof-waiver.json'))).toBe(false);
+    });
   });
   it('rejects unsigned, wrong publisher, missing timestamp, failed smoke, stale commit/version', () => {
     for (const alter of [r => { r.signatures.app.status = 'NotSigned'; }, r => { r.signatures.setup.subject = 'CN=Other'; }, r => { r.signatures.updater.timestampThumbprint = ''; }, r => { r.smoke.status = 'fail'; }, r => { r.commitSha = 'b'.repeat(40); }, r => { r.version = '1.2.4'; }]) {
