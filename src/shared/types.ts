@@ -391,6 +391,13 @@ export interface NexusApi {
     onDeepOpenPath(
       cb: (payload: { path: string; isDir: boolean }) => void,
     ): Unsubscribe;
+    /**
+     * Arquivos entregues pelo Nexus Shot via shot-bridge (main → renderer).
+     * Metadados já validados no main: realpath sob ~/Pictures|Movies/Nexus Shot.
+     */
+    onShotFilesReceived(
+      cb: (payload: import('./shot-bridge').ShotFilesReceivedPayload) => void,
+    ): Unsubscribe;
   };
   arms: {
     /** Estado do token Arms (nunca devolve o valor). */

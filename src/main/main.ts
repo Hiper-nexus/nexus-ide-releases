@@ -5,6 +5,7 @@ import {
   app,
   BrowserWindow,
   dialog,
+  Notification,
   powerSaveBlocker,
   protocol,
   systemPreferences,
@@ -345,6 +346,11 @@ import {
   stopAgentHookHttpServer,
 } from './agent-hooks/hook-http-server';
 import { AgentHookDropBoxWatcher } from './agent-hooks/hook-drop-box';
+import {
+  startShotBridgeServer,
+  stopShotBridgeServer,
+} from './shot-bridge/shot-bridge-server';
+import { SHOT_BRIDGE_CHANNELS } from '../shared/shot-bridge';
 import {
   readActiveGpuFallbackMarker,
 } from './crash-reporting/gpu-fallback-marker';
@@ -822,6 +828,42 @@ if (!wireDeepLinks()) {
         console.warn("[main] managed agent hooks bootstrap failed:", err);
       }
 
+      // shot-bridge: endpoint loopback que recebe capturas/frames do Nexus
+      // Shot (app separado). Superfície mínima: valida caminhos sob as raízes
+      // do Shot, foca a janela, notifica e emite "shot:files-received" ao
+      // renderer. Falha aqui nunca impede o boot.
+      try {
+        await startShotBridgeServer({
+          userDataPath: app.getPath("userData"),
+          onFiles: (files) => {
+            const win = BrowserWindow.getAllWindows()[0];
+            if (win) {
+              if (win.isMinimized()) win.restore();
+              win.focus();
+              win.webContents.send(SHOT_BRIDGE_CHANNELS.filesReceived, {
+                files,
+                source: 'nexus-shot',
+                receivedAt: Date.now(),
+              });
+            }
+            try {
+              const count = files.length;
+              new Notification({
+                title: 'Nexus Shot',
+                body:
+                  count === 1
+                    ? `Recebido: ${files[0].name}`
+                    : `${count} arquivos recebidos do Nexus Shot`,
+              }).show();
+            } catch {
+              // Notificação é conveniência — o evento ao renderer é o contrato.
+            }
+          },
+        });
+      } catch (err) {
+        console.warn("[main] shot-bridge bootstrap failed:", err);
+      }
+
       // Limpeza dos hooks de handoff da 0.32.x (port do Overclock que nunca
       // rodou no Nexus — ver docstring do handoff-hook-installer). O
       // fechamento mecânico real vive no Main: turn-end-handoff, acionado
@@ -1104,6 +1146,7 @@ function shutdown(): Promise<void> {
     stopRemoteBridge();
     configureAgentHookEndpointPath(null);
     await stopAgentHookHttpServer().catch(() => {});
+    await stopShotBridgeServer().catch(() => {});
     hookDropBoxWatcher?.dispose();
     hookDropBoxWatcher = null;
     sessionAliveSentinel?.markExpectedExit();
