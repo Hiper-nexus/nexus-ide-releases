@@ -3,15 +3,20 @@ import { createRequire } from 'node:module';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const require = createRequire(import.meta.url);
-const util = require('../lib/util.js');
-const originalShell = util.sh;
+// appdmg-secure is a macOS packager; its utility module imports the native
+// fs-xattr binding, which is intentionally not installed on Linux/Windows.
+// Keep the parser contract covered on its owning platform without making the
+// cross-platform workspace suite fail during module evaluation.
+const util = process.platform === 'darwin' ? require('../lib/util.js') : null;
+const originalShell = util?.sh;
 
 afterEach(() => {
-  util.sh = originalShell;
+  if (util) util.sh = originalShell;
   vi.restoreAllMocks();
 });
 
 function readDimensions(filePath) {
+  if (!util) throw new Error('appdmg-secure utilities require macOS');
   return new Promise((resolve, reject) => {
     util.imageSize(filePath, (error, dimensions) => {
       if (error) reject(error);
@@ -20,7 +25,7 @@ function readDimensions(filePath) {
   });
 }
 
-describe('secure appdmg image dimensions', () => {
+describe.runIf(process.platform === 'darwin')('secure appdmg image dimensions', () => {
   it('reads bounded background dimensions through the native macOS parser', async () => {
     util.sh = vi.fn((_program, _args, callback) => {
       callback(null, {

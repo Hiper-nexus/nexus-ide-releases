@@ -26,6 +26,9 @@ async function realListener(socketPath: string): Promise<{
 }> {
   const { createServer } = await import('node:net');
   const server = createServer((socket) => {
+    // The probe destroys the client as soon as it receives the greeting;
+    // Node reports that peer reset asynchronously on the incumbent socket.
+    socket.once('error', () => {});
     socket.write('live\n');
   });
   await new Promise<void>((resolve, reject) => {
