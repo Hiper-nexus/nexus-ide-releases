@@ -31,32 +31,108 @@ export const HOOK_SCRIPT = `#!/usr/bin/env node
 // o hook em todo pane sem risco. O nosso era síncrono e fail-closed nos dois
 // eventos, que é a razão documentada (auditoria 0fe423aa) de nunca o termos
 // posto no caminho padrão. worker-handoff-enforcement segue como backstop.
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 const event = process.argv[2];
 const url = process.env.NEXUS_GATE_URL;
 const token = process.env.NEXUS_GATE_TOKEN;
 const IS_STOP = event === 'stop';
 const CHILD = process.env.NEXUS_HOOK_CHILD === '1';
 
+function normalizeBaseUrl(value) {
+  const trimmed = String(value || '').trim();
+  let out = trimmed;
+  while (out.endsWith('/')) out = out.slice(0, -1);
+  return out;
+}
+
+function readArmsRuntimeGateUrl(primary) {
+  try {
+    const raw = fs.readFileSync(path.join(os.homedir(), '.nexus', 'arms-runtime.json'), 'utf8');
+    const parsed = JSON.parse(raw);
+    const port = Number(parsed && parsed.port);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return '';
+    let gatePath = '/gate';
+    try {
+      const parsedPrimary = new URL(primary);
+      let primaryPath = parsedPrimary.pathname;
+      while (primaryPath.endsWith('/')) primaryPath = primaryPath.slice(0, -1);
+      if (primaryPath && primaryPath !== '/') gatePath = primaryPath;
+    } catch {}
+    return 'http://127.0.0.1:' + port + gatePath;
+  } catch {
+    return '';
+  }
+}
+
+function gateCandidates() {
+  const candidates = [];
+  const primary = normalizeBaseUrl(url);
+  if (primary) candidates.push(primary);
+  const fallback = normalizeBaseUrl(readArmsRuntimeGateUrl(primary));
+  if (fallback && !candidates.includes(fallback)) candidates.push(fallback);
+  return candidates;
+}
+
+function isRetryableRequestError(error) {
+  return (
+    error &&
+    (error.name === 'AbortError' ||
+      error.name === 'TimeoutError' ||
+      error.name === 'TypeError' ||
+      error.code === 'ECONNREFUSED' ||
+      error.code === 'ECONNRESET' ||
+      error.code === 'ENOTFOUND' ||
+      error.code === 'EHOSTUNREACH' ||
+      error.code === 'ETIMEDOUT' ||
+      error.cause?.code === 'ECONNREFUSED' ||
+      error.cause?.code === 'ECONNRESET' ||
+      error.cause?.code === 'ENOTFOUND' ||
+      error.cause?.code === 'EHOSTUNREACH' ||
+      error.cause?.code === 'ETIMEDOUT')
+  );
+}
+
 const post = async (raw) => {
   let input = {};
   try { input = JSON.parse(raw); } catch { return { bad: true }; }
-  const res = await fetch(url + '/' + event, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      authorization: 'Bearer ' + token,
-    },
-    body: JSON.stringify({
-      toolName: input.tool_name ?? null,
-      toolInput: input.tool_input ?? null,
-    }),
+  const body = JSON.stringify({
+    toolName: input.tool_name ?? null,
+    toolInput: input.tool_input ?? null,
   });
-  return { verdict: await res.json() };
+  const candidates = gateCandidates();
+  if (candidates.length === 0) throw new Error('gate URL unavailable');
+  let lastError;
+  for (let i = 0; i < candidates.length; i += 1) {
+    const timeoutMs = candidates.length > 1 && i === 0 ? 1500 : 8000;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(candidates[i] + '/' + event, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: 'Bearer ' + token,
+        },
+        body,
+        signal: controller.signal,
+      });
+      return { verdict: await res.json() };
+    } catch (error) {
+      lastError = error;
+      if (i === candidates.length - 1 || !isRetryableRequestError(error)) throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+  throw lastError || new Error('gate request failed');
 };
 
 // ── NETO do stop: faz a rede, falha em silêncio, nunca influencia o turno ──
 if (CHILD) {
-  const fs = require('node:fs');
   const file = process.argv[3] || '';
   let raw = '';
   try { raw = fs.readFileSync(file, 'utf8'); } catch {}
@@ -64,51 +140,51 @@ if (CHILD) {
   post(raw).catch(() => {}).then(() => process.exit(0));
 } else {
   let raw = '';
-  process.stdin.on('data', (c) => (raw += c));
-  process.stdin.on('end', async () => {
-    if (IS_STOP) {
-      // stop: DESACOPLADO. Grava, relança detached, sai. Sem credencial ou sem
-      // como relançar, sai 0 mesmo assim — fail-open: relato perdido é ruído,
-      // worker preso é o bug que este hook existe para não causar.
-      try {
-        const fs = require('node:fs');
-        const os = require('node:os');
-        const path = require('node:path');
-        const { spawn } = require('node:child_process');
-        const file = path.join(os.tmpdir(), 'nexus-hook-' + process.pid + '.json');
-        fs.writeFileSync(file, raw);
-        const child = spawn(process.execPath, [process.argv[1], event, file], {
-          detached: true,
-          stdio: 'ignore',
-          env: { ...process.env, NEXUS_HOOK_CHILD: '1' },
-        });
-        child.unref();
-      } catch {
-        // fail-open declarado.
-      }
-      process.exit(0);
-    }
-    // pretool: SÍNCRONO e FAIL-CLOSED. Toda falha bloqueia.
-    if (!url || !token) {
-      console.error('[nexus-hook] gate credentials unavailable — blocking');
-      process.exit(2);
-    }
+  try { raw = fs.readFileSync(0, 'utf8'); } catch {}
+  if (IS_STOP) {
     try {
-      const out = await post(raw);
-      if (out.bad) {
-        console.error('[nexus-hook] stdin não é JSON válido — blocking');
-        process.exit(2);
-      }
-      if (out.verdict && out.verdict.allow === false) {
-        console.error(out.verdict.reason || 'blocked by NexusIDE skill-gate');
-        process.exit(2);
-      }
+      fs.writeSync(1, '{"continue":true}\\n');
     } catch {
-      console.error('[nexus-hook] gate unreachable — blocking tool call');
-      process.exit(2);
+      // Codex runner compatibility is best-effort; Stop remains fail-open.
+    }
+    // stop: DESACOPLADO. Grava, relança detached, sai. Sem credencial ou sem
+    // como relançar, sai 0 mesmo assim — fail-open: relato perdido é ruído,
+    // worker preso é o bug que este hook existe para não causar.
+    try {
+      const file = path.join(os.tmpdir(), 'nexus-hook-' + process.pid + '.json');
+      fs.writeFileSync(file, raw);
+      const child = spawn(process.execPath, [process.argv[1], event, file], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+        env: { ...process.env, NEXUS_HOOK_CHILD: '1' },
+      });
+      child.unref();
+    } catch {
+      // fail-open declarado.
     }
     process.exit(0);
-  });
+  }
+  // pretool: SÍNCRONO e FAIL-CLOSED. Toda falha bloqueia.
+  if (!url || !token) {
+    console.error('[nexus-hook] gate credentials unavailable — blocking');
+    process.exit(2);
+  }
+  try {
+    const out = await post(raw);
+    if (out.bad) {
+      console.error('[nexus-hook] stdin não é JSON válido — blocking');
+      process.exit(2);
+    }
+    if (out.verdict && out.verdict.allow === false) {
+      console.error(out.verdict.reason || 'blocked by NexusIDE skill-gate');
+      process.exit(2);
+    }
+  } catch {
+    console.error('[nexus-hook] gate unreachable — blocking tool call');
+    process.exit(2);
+  }
+  process.exit(0);
 }
 `;
 
