@@ -26,8 +26,11 @@ vi.mock('../persistence/settings-store', () => ({
 }));
 
 import {
+  buildArmsRuntimeDescriptor,
   hasApprovedMissionProjectTrust,
   prepareAgentSpawnDecoration,
+  resolveArmsRuntimeDescriptorPath,
+  resolveArmsRuntimeInstance,
 } from './mcp-server';
 
 const roots: string[] = [];
@@ -243,6 +246,29 @@ afterEach(() => {
 });
 
 describe('mcp-server governed CLI profile wiring', () => {
+  it('keeps packaged Arms on the legacy descriptor and isolates dev', () => {
+    const home = path.join(tempRoot(), 'home');
+
+    expect(resolveArmsRuntimeInstance(true)).toBe('prod');
+    expect(resolveArmsRuntimeDescriptorPath(home, 'prod')).toBe(
+      path.join(home, '.nexus', 'arms-runtime.json'),
+    );
+
+    expect(resolveArmsRuntimeInstance(false)).toBe('dev');
+    expect(resolveArmsRuntimeDescriptorPath(home, 'dev')).toBe(
+      path.join(home, '.nexus', 'arms-runtime.dev.json'),
+    );
+
+    const descriptorPath = path.join(home, '.nexus', 'arms-runtime.dev.json');
+    expect(buildArmsRuntimeDescriptor(39791, 'dev', descriptorPath, 1234)).toEqual({
+      schemaVersion: 1,
+      port: 39791,
+      at: 1234,
+      instance: 'dev',
+      descriptorPath,
+    });
+  });
+
   it('injects private nx commands for a mission worker independently of MCP support', () => {
     const root = tempRoot();
     const cwd = path.join(root, 'workspace');

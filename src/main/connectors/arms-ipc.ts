@@ -7,6 +7,7 @@ import {
   rotateArmsToken,
 } from './arms-token-store';
 import { emitAppEvent } from './app-events';
+import { getArmsRuntimeDescriptorInfo } from '../orch/mcp-server';
 
 /**
  * IPC do conector Arms (Settings › Conectores). O plaintext do token cruza a
@@ -20,7 +21,10 @@ export function registerArmsIpc(): void {
   if (registered) return;
   registered = true;
 
-  handleTrusted(ARMS_CHANNELS.status, () => armsStatus());
+  handleTrusted(ARMS_CHANNELS.status, () => ({
+    ...armsStatus(),
+    ...getArmsRuntimeDescriptorInfo(),
+  }));
 
   handleTrusted(ARMS_CHANNELS.generate, () => {
     const generated = generateArmsToken();
