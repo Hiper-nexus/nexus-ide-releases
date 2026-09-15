@@ -3873,6 +3873,13 @@ export const CURRENT_RELEASE: AppRelease = {
         'Negações por allowlist, papel, read-only e perfil de reviewer carregam um hint: não tentar de ' +
         'novo, não reportar como bloqueio, entregar com o que tem e declarar no handoff o que faltou.',
     },
+    {
+      title: 'gpt-5.5 sai do catálogo; o GPT leve é o gpt-5.6-luna',
+      detail:
+        'O modelo deixa de existir e saiu de codex/aider, do catálogo, do picker de sessão e dos specs ' +
+        'de commit-message. Squads e rotas salvos com gpt-5.5 são redirecionados para gpt-5.6-luna em ' +
+        'vez de falhar no spawn.',
+    },
   ],
   fixes: [
     {
