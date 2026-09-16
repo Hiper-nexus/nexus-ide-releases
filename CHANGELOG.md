@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.40 — Marca Nexus e validação Windows confiáveis
+
+- **Ícone Nexus em toda a experiência Windows (F-548)**: o mesmo cristal Nexus multi-resolução agora acompanha o executável, o instalador, a janela e o atalho Squirrel. A janela declara o AppUserModelID do produto antes de abrir, evitando o tile genérico do Windows após instalar ou atualizar.
+- **Pacote de teste não finge instalação quebrada (F-549)**: a validação empacotada continua sem rede por segurança e não mostra mais o aviso falso de `Update.exe` ausente. Uma instalação Squirrel real com arquivos faltando continua sendo diagnosticada corretamente.
+- **Smoke por plataforma é validável no Windows (F-550)**: a suíte do pacote não pressupõe caminhos POSIX nem o comando `ps` ao simular macOS/Linux; a garantia estrutural continua separada para cada SO.
+
 ## 0.76.39 — Cada pedido no seu espaço
 
 - **Abas nos Terminais (F-560)**: cada painel pertence a exatamente um escopo — missão, espaço do operador ou soltos — e a vista desenha um escopo de cada vez, com a contagem de painéis em cada aba. `visiblePaneIds` nunca mais desliga o filtro inteiro: escopo inexistente devolve vazio, não a árvore toda. "Todos" continua disponível. `PaneModel` ganhou `spaceId`/`spaceTitle`, declarados em `paneModelSchema` para sobreviverem ao restart.

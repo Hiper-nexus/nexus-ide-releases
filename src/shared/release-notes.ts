@@ -3929,7 +3929,7 @@ export const RELEASE_07638: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07639: AppRelease = {
   version: '0.76.39',
   date: '2026-09-16',
   codename: 'Cada pedido no seu espaço',
@@ -3996,6 +3996,47 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'A leitura de paneMissions agora trata ausência temporária do mapa como pane sem vínculo, ' +
         'preservando o comportamento esperado de shells e agentes comuns.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.40',
+  date: '2026-09-16',
+  codename: 'Marca Nexus e validação Windows confiáveis',
+  summary:
+    'A distribuição Windows volta a carregar a marca do Nexus de ponta a ponta e o pacote de ' +
+    'validação deixa de se apresentar como uma instalação Squirrel corrompida. A mesma suíte ' +
+    'de smoke também passa a ser executável no Windows sem fingir que ele é macOS ou Linux.',
+  highlights: [
+    {
+      title: 'Ícone Nexus no executável, janela e barra de tarefas',
+      detail:
+        'O cristal Nexus multi-resolução é gerado nos formatos ICO e ICNS. No Windows, a ' +
+        'janela recebe o ícone empacotado e declara o mesmo AppUserModelID do launcher Squirrel, ' +
+        'para a barra de tarefas deixar de mostrar a folha genérica após uma atualização.',
+    },
+    {
+      title: 'Validação local não imita instalação corrompida',
+      detail:
+        'O smoke empacotado mantém atualização em modo offline antes de qualquer validação ' +
+        'Squirrel. Assim o pacote aberto diretamente para teste não acusa `Update.exe` ausente; ' +
+        'uma instalação real incompleta continua recebendo o diagnóstico correto.',
+    },
+    {
+      title: 'Smoke separado corretamente por sistema',
+      detail:
+        'As simulações estruturais de macOS e Linux usam caminhos do host e um inventário ' +
+        'injetado, então a suíte passa também no Windows sem misturar ferramentas de sistemas ' +
+        'diferentes.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Recurso de ícone não some do pacote',
+      detail:
+        'O gate do smoke verifica o ICO enviado em `resources`, incluindo todas as resoluções, ' +
+        'antes de aceitar uma candidata Windows.',
     },
   ],
 };
