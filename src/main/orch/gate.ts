@@ -11,19 +11,12 @@ import type { ProjectExecutionScope } from "../../shared/types";
 // BUILTIN_SQUADS/NEXUS_GUIDED_SKILLS em TDZ na suíte. O leader-gate se
 // registra aqui ao ser carregado (todo consumidor de orquestração o importa
 // no boot); sem registro, vale a comparação durável de antes da onda 3.
-export type MissionLeaderSessionCheck = (
-  scope: ProjectExecutionScope,
-  missionId: string,
-  ctx: { readonly sessionId?: string | null },
-) => { ok: true } | { ok: false; code: string; hint: string };
+import {
+  getMissionLeaderSessionCheck,
+  registerMissionLeaderSessionCheck,
+} from "./mission-leader-session-check";
 
-let missionLeaderSessionCheck: MissionLeaderSessionCheck | null = null;
-
-export function registerMissionLeaderSessionCheck(
-  check: MissionLeaderSessionCheck | null,
-): void {
-  missionLeaderSessionCheck = check;
-}
+export { registerMissionLeaderSessionCheck };
 import {
   internalPrevcReviewerAllowsTool,
   isExactInternalPrevcReviewerProfile,
@@ -511,6 +504,7 @@ export function assertCurrentMissionOrchestratorSession(
   assertOrchestratorMission(ctx, mission.id);
   const currentSessionId = mission.orchestratorSessionId?.trim();
   if (!currentSessionId) return;
+  const missionLeaderSessionCheck = getMissionLeaderSessionCheck();
   if (!missionLeaderSessionCheck) {
     // Nenhum consumidor de liderança carregado (bootstrap parcial/fixture):
     // vale a ligação durável, como antes da onda 3.

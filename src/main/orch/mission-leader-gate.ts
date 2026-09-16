@@ -1,7 +1,7 @@
 import type { ProjectExecutionScope } from '../../shared/project-identity-types';
 import { MissionLeadershipError, type MissionLeader } from './mission-leadership';
 import { getMissionLeadership } from './mission-leadership-runtime';
-import { registerMissionLeaderSessionCheck } from './gate';
+import { registerMissionLeaderSessionCheck } from './mission-leader-session-check';
 
 export type MissionLeaderGateCode = 'no-leader' | 'stale-session' | 'split-brain' | 'unproven';
 
