@@ -7,6 +7,7 @@ import {
   activateArtifact,
   linkDirectoryEntries,
   linkFile,
+  linkProviderSessionState,
   linkSelectedEntries,
   MAX_CLI_TOML_CONFIG_DEPTH,
   objectValue,
@@ -28,6 +29,13 @@ import {
 } from './governed-cli-profile';
 import { mergeKimiStatusHooks } from './hook-status-config';
 import { claudeFamilyHubMcpServers } from '../mcp-hub/mcp-hub-spawn';
+
+const KIMI_SESSION_DIRECTORIES = ['sessions', 'user-history', 'file-history'];
+const KIMI_SESSION_FILES = { 'session_index.jsonl': '' };
+const KIMI_SESSION_ENTRIES = [
+  ...KIMI_SESSION_DIRECTORIES,
+  ...Object.keys(KIMI_SESSION_FILES),
+];
 
 /**
  * Pre-seed trust for the workspace in Kimi's workspace-trust and workspaces.json
@@ -108,7 +116,8 @@ export function ensureKimiWorkspaceTrust(
 
 /**
  * Kimi officially resolves MCP from $KIMI_CODE_HOME/mcp.json. The overlay
- * symlinks all real data and adds only a private, token-free MCP declaration;
+ * links auth/profile data from the real home, conversations from durable Nexus
+ * checkout state, and adds a private, token-free MCP declaration;
  * `bearerTokenEnvVar` reads the already session-scoped Nexus token at runtime.
  * config.toml is overlaid the same way to carry the additive semantic-status
  * hooks (emdash wave 1: flat `hooks = [{event, command}]`, marker-separated);
@@ -150,9 +159,6 @@ export function prepareKimiMcpSession(
             'device_id',
             'migrations-effort.json',
             'oauth',
-            'session_index.jsonl',
-            'sessions',
-            'user-history',
             'workspace-trust',
             'workspaces.json',
           ]),
@@ -161,9 +167,16 @@ export function prepareKimiMcpSession(
         linkDirectoryEntries(
           providerHome,
           artifactDir,
-          new Set(['mcp.json', 'config.toml']),
+          new Set(['mcp.json', 'config.toml', ...KIMI_SESSION_ENTRIES]),
         );
       }
+      const providerSessionHome = linkProviderSessionState(
+        'kimi',
+        artifactDir,
+        options,
+        KIMI_SESSION_DIRECTORIES,
+        KIMI_SESSION_FILES,
+      );
       const sourceRaw = readJsonObject(path.join(providerHome, 'mcp.json'));
       const source = policy.governed
         ? stripExecutableProfileConfig(sourceRaw)
@@ -230,7 +243,7 @@ export function prepareKimiMcpSession(
       activateArtifact(token, {
         artifactDir,
         providerHome,
-        configFiles: ['mcp.json', 'config.toml'],
+        configFiles: ['mcp.json', 'config.toml', ...KIMI_SESSION_ENTRIES],
         syncBack: !policy.governed,
       });
       return {
@@ -239,10 +252,10 @@ export function prepareKimiMcpSession(
         extraArgs: policy.governed ? ['--skills-dir', governedSkillsDir] : [],
         serverName,
         artifactDir,
-        // Governed overlay symlinks sessions/user-history/credentials into the
-        // artifactDir pointing at the real ~/.kimi-code — the advisory sandbox
-        // must grant that home so session writes and auth reads resolve.
-        ...(policy.governed ? { providerStateHome: providerHome } : {}),
+        // Auth/profile and durable conversation links need separate sandbox grants.
+        ...(policy.governed
+          ? { providerStateHome: providerHome, providerSessionHome }
+          : {}),
       };
     },
   );

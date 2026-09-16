@@ -924,6 +924,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
     // Real provider home (~/.kimi-code, ~/.grok) the governed overlay symlinks
     // session/auth state into. The advisory sandbox grants it read+write.
     let advisoryProviderStateHome: string | undefined;
+    let advisoryProviderSessionHome: string | undefined;
     // Servidores MCP que o operador declarou explicitamente no hub do
     // workspace. Única leitura de hub no spawn; nunca lê o config ambiente de
     // outra ferramenta e nunca falha o spawn (hub quebrado ⇒ lista vazia).
@@ -1095,6 +1096,8 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           extraArgs.push(...prepared.extraArgs);
         } else if (flavor === "kimi") {
           const prepared = prepareKimiMcpSession(mcpUrl(), ctx.token, {
+            userDataPath: app.getPath("userData"),
+            checkoutId: authority.scope.checkoutId,
             providerHome: preparedEnv?.KIMI_CODE_HOME,
             cwd: authority.cwd,
             hubServers,
@@ -1102,8 +1105,11 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           Object.assign(env, prepared.env);
           extraArgs.push(...prepared.extraArgs);
           advisoryProviderStateHome = prepared.providerStateHome;
+          advisoryProviderSessionHome = prepared.providerSessionHome;
         } else if (flavor === "grok") {
           const prepared = prepareGrokMcpSession(mcpUrl(), ctx.token, {
+            userDataPath: app.getPath("userData"),
+            checkoutId: authority.scope.checkoutId,
             providerHome: preparedEnv?.GROK_HOME,
             cwd: authority.cwd,
             workspaceRoot: authority.scope.rootRealPath,
@@ -1112,6 +1118,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           Object.assign(env, prepared.env);
           extraArgs.push(...prepared.extraArgs);
           advisoryProviderStateHome = prepared.providerStateHome;
+          advisoryProviderSessionHome = prepared.providerSessionHome;
         }
       }
       if (!skillsPrepared) {
@@ -1227,11 +1234,15 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
       : {}),
     ...(advisoryProviderStateHome
       ? {
-          // Overlay providers (Kimi/Grok): keep the minted runtime as HOME
-          // (pty-manager path), but grant the real provider home so the
-          // overlay's session/auth symlinks resolve read+write.
-          providerStateReadPaths: [advisoryProviderStateHome],
-          providerStateWritePaths: [advisoryProviderStateHome],
+          // Grant auth/profile and the exact checkout's durable conversations.
+          providerStateReadPaths: [
+            advisoryProviderStateHome,
+            ...(advisoryProviderSessionHome ? [advisoryProviderSessionHome] : []),
+          ],
+          providerStateWritePaths: [
+            advisoryProviderStateHome,
+            ...(advisoryProviderSessionHome ? [advisoryProviderSessionHome] : []),
+          ],
         }
       : {}),
     onSpawned: (sessionId) => {

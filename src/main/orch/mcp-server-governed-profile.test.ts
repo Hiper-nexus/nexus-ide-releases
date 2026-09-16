@@ -10,7 +10,10 @@ import { getContext, resetGateForTests } from './gate';
 import { snapshotSquadAuthority } from './squad-authority-snapshot';
 
 vi.mock('electron', () => ({
-  app: { getVersion: () => 'test' },
+  app: {
+    getVersion: () => 'test',
+    getPath: () => path.join(os.homedir(), '.nexus-test-user-data'),
+  },
   dialog: { showMessageBox: vi.fn() },
 }));
 
@@ -246,6 +249,24 @@ afterEach(() => {
 });
 
 describe('mcp-server governed CLI profile wiring', () => {
+  it.each(['grok', 'kimi'] as const)('binds %s conversations and sandbox grants to Main checkout identity', (id) => {
+    const home = path.join(tempRoot(), 'home');
+    const cwd = path.join(home, 'workspace');
+    fs.mkdirSync(cwd, { recursive: true });
+    vi.stubEnv('HOME', home);
+    const providerHome = path.join(home, id === 'grok' ? '.grok' : '.kimi-code');
+    fs.mkdirSync(providerHome, { recursive: true });
+    const envKey = id === 'grok' ? 'GROK_HOME' : 'KIMI_CODE_HOME';
+    const decoration = prepareAgentSpawnDecoration(
+      adapter(id), { kind: 'cli-agent', cols: 80, rows: 24 },
+      authority(cwd, true), { [envKey]: providerHome },
+    )!;
+    const state = path.join(home, '.nexus-test-user-data', 'provider-state', id, 'checkout-wiring');
+    expect(fs.realpathSync(path.join(decoration.env[envKey], 'sessions'))).toBe(fs.realpathSync(path.join(state, 'sessions')));
+    expect(decoration.providerStateReadPaths).toEqual([providerHome, state]);
+    expect(decoration.providerStateWritePaths).toEqual([providerHome, state]);
+  });
+
   it('keeps packaged Arms on the legacy descriptor and isolates dev', () => {
     const home = path.join(tempRoot(), 'home');
 

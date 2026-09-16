@@ -9,7 +9,10 @@ import {
   type ArtifactPurgeResult,
 } from './ephemeral-artifact-purge';
 import { syncBackOverlayAuth } from './overlay-auth-syncback';
-import type { CliMcpPurgeOptions } from './cli-mcp-session-types';
+import type {
+  CliMcpPurgeOptions,
+  CliMcpSessionOptions,
+} from './cli-mcp-session-types';
 
 type ArtifactProvider = 'codex' | 'opencode' | 'kimi' | 'grok';
 
@@ -17,7 +20,7 @@ export interface ArtifactSession {
   artifactDir: string;
   /** Real provider home to persist a fresh in-pane login back into. */
   providerHome: string | null;
-  /** Top-level overlay config files (token/marker-bearing) — never synced back. */
+  /** Top-level config and isolated conversation entries — never synced to the real home. */
   configFiles: readonly string[];
   /** Basenames excluded from sync-back at ANY depth (e.g. Grok hooks/nexus.json). */
   syncBackExcludeAnywhere?: ReadonlySet<string>;
@@ -190,6 +193,56 @@ export function linkSelectedEntries(
       entry,
     );
   }
+}
+
+/** Conversation state survives overlay purge and never comes from the native profile. */
+export function linkProviderSessionState(
+  kind: 'grok' | 'kimi',
+  artifactDir: string,
+  options: CliMcpSessionOptions,
+  directories: readonly string[],
+  files: Readonly<Record<string, string>>,
+): string {
+  const home = path.resolve(options.home ?? os.homedir());
+  // Standalone callers use a stable path identity; production passes Main's checkoutId.
+  const root = path.resolve(options.workspaceRoot ?? options.cwd ?? process.cwd());
+  const checkoutId = options.checkoutId ??
+    `checkout-${sessionHash(fs.existsSync(root) ? fs.realpathSync(root) : root).slice(0, 32)}`;
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(checkoutId)) {
+    throw new Error('Invalid provider-state checkout identity');
+  }
+  let stateHome = path.resolve(options.userDataPath ?? path.join(home, '.nexus'));
+  for (const segment of ['provider-state', kind, checkoutId]) {
+    stateHome = path.join(stateHome, segment);
+    if (fs.lstatSync(stateHome, { throwIfNoEntry: false })?.isSymbolicLink()) {
+      throw new Error('Provider session state must not be a symlink');
+    }
+    ensurePrivateDirectory(stateHome);
+  }
+  for (const name of [...directories, ...Object.keys(files)]) {
+    if (fs.lstatSync(path.join(stateHome, name), { throwIfNoEntry: false })?.isSymbolicLink()) {
+      throw new Error('Provider session entry must not be a symlink');
+    }
+  }
+  for (const name of directories) {
+    ensurePrivateDirectory(path.join(stateHome, name));
+  }
+  for (const [name, initial] of Object.entries(files)) {
+    try {
+      fs.writeFileSync(path.join(stateHome, name), initial, {
+        flag: 'wx',
+        mode: 0o600,
+      });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    }
+  }
+  linkSelectedEntries(
+    stateHome,
+    artifactDir,
+    new Set([...directories, ...Object.keys(files)]),
+  );
+  return stateHome;
 }
 
 function prepareArtifactDir(

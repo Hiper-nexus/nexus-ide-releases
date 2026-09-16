@@ -6,6 +6,9 @@ export interface CliMcpSessionOptions extends GovernedCliProfileOptions {
   home?: string;
   providerHome?: string;
   artifactRoot?: string;
+  /** Main-owned durable storage and checkout identity for provider conversations. */
+  userDataPath?: string;
+  checkoutId?: string;
   /**
    * Servidores declarados pelo operador no hub do workspace
    * (`.nexus/mcp-hub.json`), já saneados. Materializados no config por sessão
@@ -39,13 +42,15 @@ export interface CliMcpSessionResult {
   serverName: string;
   artifactDir: string | null;
   /**
-   * Real provider home the overlay symlinks auth/session state INTO the
+   * Real provider home the overlay symlinks auth/profile state INTO the
    * ephemeral artifactDir from (e.g. ~/.kimi-code, ~/.grok). The advisory
-   * Seatbelt profile must grant read+write here: the CLI writes session/history
+   * Seatbelt profile must grant read+write here: the CLI refreshes credentials
    * through those symlinks, which the kernel resolves to the real path. Absent
    * for self-contained overlays (OpenCode) that never symlink a real home.
    */
   providerStateHome?: string;
+  /** Durable checkout conversation state, also granted to governed CLIs. */
+  providerSessionHome?: string;
   /** Present only for a Codex session whose private profile was compiled. */
   codexPermissionProfile?: string;
   /**

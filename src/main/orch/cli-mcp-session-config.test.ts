@@ -1239,7 +1239,7 @@ describe('prepareGrokMcpSession', () => {
     expect(fs.realpathSync(path.join(result.env.GROK_HOME, 'auth.json'))).toBe(
       fs.realpathSync(auth),
     );
-    expect(fs.realpathSync(path.join(result.env.GROK_HOME, 'sessions'))).toBe(
+    expect(fs.realpathSync(path.join(result.env.GROK_HOME, 'sessions'))).not.toBe(
       fs.realpathSync(path.dirname(sessionMarker)),
     );
     expect(fs.realpathSync(path.join(result.env.GROK_HOME, 'skills'))).toBe(

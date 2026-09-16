@@ -7,6 +7,7 @@ import {
   ensurePrivateDirectory,
   linkDirectoryEntries,
   linkFile,
+  linkProviderSessionState,
   linkSelectedEntries,
   MAX_CLI_TOML_CONFIG_DEPTH,
   objectValue,
@@ -80,8 +81,8 @@ function governedGrokProjectPolicy(
 
 /**
  * Grok 0.2.93 resolves native configuration from $GROK_HOME/config.toml.
- * The private provider-home overlay symlinks auth, sessions, skills and the
- * rest of the real profile, replacing only config.toml. The config references
+ * The private overlay links auth/skills from the real profile and conversations
+ * from Nexus's durable checkout state, replacing config.toml. The config references
  * NEXUS_MCP_TOKEN, already scoped to the spawned process, so no bearer is
  * persisted in either the real profile or the ephemeral overlay.
  * The additive semantic-status hooks (emdash wave 1) ship as a Nexus-owned
@@ -90,6 +91,16 @@ function governedGrokProjectPolicy(
  */
 const GROK_AUTH_FILE = 'auth.json';
 const GROK_AUTH_LOCK_FILE = 'auth.json.lock';
+const GROK_SESSION_DIRECTORIES = ['sessions', 'prompt_history'];
+const GROK_SESSION_FILES = {
+  'active_sessions.json': '[]\n',
+  'active_sessions.lock': '',
+  'prompt_history.jsonl': '',
+};
+const GROK_SESSION_ENTRIES = [
+  ...GROK_SESSION_DIRECTORIES,
+  ...Object.keys(GROK_SESSION_FILES),
+];
 /** Freshness skew: a token expiring within this window counts as stale. */
 const GROK_AUTH_FRESH_SKEW_MS = 5 * 60 * 1000;
 
@@ -230,12 +241,10 @@ export function prepareGrokMcpSession(
           artifactDir,
           new Set([
             '.metadata_version',
-            'active_sessions.json',
             'agent_id',
             'bundled',
             'models_cache.json',
             'projects',
-            'sessions',
           ]),
         );
       } else {
@@ -247,9 +256,17 @@ export function prepareGrokMcpSession(
             'hooks',
             GROK_AUTH_FILE,
             GROK_AUTH_LOCK_FILE,
+            ...GROK_SESSION_ENTRIES,
           ]),
         );
       }
+      const providerSessionHome = linkProviderSessionState(
+        'grok',
+        artifactDir,
+        options,
+        GROK_SESSION_DIRECTORIES,
+        GROK_SESSION_FILES,
+      );
       linkGrokAuthPair(authSource, artifactDir);
       const sourceRaw = readTomlObject(path.join(providerHome, 'config.toml'));
       const source = policy.governed
@@ -352,7 +369,7 @@ export function prepareGrokMcpSession(
       activateArtifact(token, {
         artifactDir,
         providerHome,
-        configFiles: ['config.toml'],
+        configFiles: ['config.toml', ...GROK_SESSION_ENTRIES],
         syncBackExcludeAnywhere: new Set([GROK_STATUS_HOOKS_FILE]),
         syncBack: !policy.governed,
       });
@@ -386,10 +403,10 @@ export function prepareGrokMcpSession(
         extraArgs: policy.governed ? ['--no-subagents'] : [],
         serverName,
         artifactDir,
-        // Governed overlay symlinks provider state into GROK_HOME from the real
-        // ~/.grok; the advisory sandbox must grant it read+write so session
-        // writes and auth reads resolve through the symlinks.
-        ...(policy.governed ? { providerStateHome: providerHome } : {}),
+        // Auth/profile and durable conversation links need separate sandbox grants.
+        ...(policy.governed
+          ? { providerStateHome: providerHome, providerSessionHome }
+          : {}),
       };
     },
   );
