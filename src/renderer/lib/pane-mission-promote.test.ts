@@ -291,34 +291,6 @@ describe('marcação de adoção (F-561)', () => {
     vi.resetModules();
   });
 
-  it.skip('(substituído: sem missão vira coordenador local, sem wizard) marca o painel E abre o Novo pedido', async () => {
-    const { promotePaneWithMissionChoice } = await import('./pane-mission-promote');
-    const { useOrchStore } = await import('../state/orch-store');
-    const { useProductNavigationStore } = await import(
-      '../state/product-navigation-store'
-    );
-    const { usePendingOrchestratorAdoptionStore } = await import(
-      '../state/pending-orchestrator-adoption-store'
-    );
-    const openNew = vi
-      .spyOn(useProductNavigationStore.getState(), 'openNewMission')
-      .mockImplementation(() => {});
-    useOrchStore.setState({ missions: [], paneMissions: {} });
-    usePendingOrchestratorAdoptionStore.getState().clear();
-
-    await promotePaneWithMissionChoice({
-      paneId: 'pane-9',
-      paneTitle: 'Codex',
-    });
-
-    expect(usePendingOrchestratorAdoptionStore.getState().pending).toEqual({
-      paneId: 'pane-9',
-      paneTitle: 'Codex',
-    });
-    expect(openNew).toHaveBeenCalledTimes(1);
-    openNew.mockRestore();
-  });
-
   it('a opção "nova missão" do diálogo também marca o painel', async () => {
     const { promotePaneWithMissionChoice, PROMOTE_NEW_MISSION: sentinel } =
       await import('./pane-mission-promote');
