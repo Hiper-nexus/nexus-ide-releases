@@ -342,6 +342,23 @@ export class UpdateManager {
 
   init(): void {
     this.registerIpcHandlers();
+    // Smoke and other explicitly offline boots must stay self-contained. Check
+    // this before validating a Windows Squirrel layout: Forge's direct package
+    // output intentionally has no Update.exe, and labelling that test package
+    // as a damaged user installation is both wrong and alarming.
+    if (!this.networkEnabled) {
+      this.patch({
+        phase: 'unsupported',
+        source: 'none',
+        canInstall: false,
+        error: undefined,
+      });
+      writeUpdateLog('info', 'init:offline', {
+        packaged: app.isPackaged,
+        currentVersion: this.state.currentVersion,
+      });
+      return;
+    }
     const isWindows = this.runtimePlatform === 'win32';
     if (!isMacUpdatePlatform(this.runtimePlatform) && !this.isInstalledWindowsTarget) {
       const error = isWindows
@@ -359,19 +376,6 @@ export class UpdateManager {
       });
       writeUpdateLog('info', 'init:unsupported-platform', {
         platform: this.runtimePlatform,
-        packaged: app.isPackaged,
-        currentVersion: this.state.currentVersion,
-      });
-      return;
-    }
-    if (!this.networkEnabled) {
-      this.patch({
-        phase: 'unsupported',
-        source: 'none',
-        canInstall: false,
-        error: undefined,
-      });
-      writeUpdateLog('info', 'init:offline', {
         packaged: app.isPackaged,
         currentVersion: this.state.currentVersion,
       });

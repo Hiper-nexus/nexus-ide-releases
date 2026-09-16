@@ -133,6 +133,26 @@ describe('UpdateManager', () => {
     expect(electron.autoUpdater.checkForUpdates).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps a packaged smoke test quiet instead of calling it a broken Squirrel install', () => {
+    const manager = new UpdateManager(false, {
+      runtimeArch: 'x64',
+      runtimePlatform: 'win32',
+      runtimeArgs: ['nexus-smoke-test'],
+      appExecutablePath: 'C:\\build\\NexusIDE-win32-x64\\nexus-ide.exe',
+      pathExists: () => false,
+    });
+
+    manager.init();
+
+    expect(manager.getState()).toMatchObject({
+      phase: 'unsupported',
+      source: 'none',
+      canInstall: false,
+      error: undefined,
+    });
+    expect(electron.autoUpdater.setFeedURL).not.toHaveBeenCalled();
+  });
+
   it('keeps the macOS initial check at three seconds', () => {
     vi.useFakeTimers();
     const previousFeed = process.env.NEXUS_UPDATE_FEED;
