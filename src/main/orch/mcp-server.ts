@@ -926,6 +926,10 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
     // session/auth state into. The advisory sandbox grants it read+write.
     let advisoryProviderStateHome: string | undefined;
     let advisoryProviderSessionHome: string | undefined;
+    // F-569: exact auth paths a governed Grok/Kimi session may read/write —
+    // never the whole provider home. Additive to providerStateHome.
+    let advisoryProviderStateReadPaths: readonly string[] = [];
+    let advisoryProviderStateWritePaths: readonly string[] = [];
     const claudeStatePaths: string[] = [];
     const claudeProfileReadPaths: string[] = [];
     // Servidores MCP que o operador declarou explicitamente no hub do
@@ -1093,6 +1097,8 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           extraArgs.push(...prepared.extraArgs);
           advisoryProviderStateHome = prepared.providerStateHome;
           advisoryProviderSessionHome = prepared.providerSessionHome;
+          advisoryProviderStateReadPaths = prepared.providerStateReadPaths ?? [];
+          advisoryProviderStateWritePaths = prepared.providerStateWritePaths ?? [];
         } else if (flavor === "kimi") {
           const prepared = prepareKimiMcpSession(mcpUrl(), ctx.token, {
             userDataPath: app.getPath("userData"),
@@ -1105,6 +1111,8 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           extraArgs.push(...prepared.extraArgs);
           advisoryProviderStateHome = prepared.providerStateHome;
           advisoryProviderSessionHome = prepared.providerSessionHome;
+          advisoryProviderStateReadPaths = prepared.providerStateReadPaths ?? [];
+          advisoryProviderStateWritePaths = prepared.providerStateWritePaths ?? [];
         } else if (flavor === "grok") {
           const prepared = prepareGrokMcpSession(mcpUrl(), ctx.token, {
             userDataPath: app.getPath("userData"),
@@ -1118,6 +1126,8 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           extraArgs.push(...prepared.extraArgs);
           advisoryProviderStateHome = prepared.providerStateHome;
           advisoryProviderSessionHome = prepared.providerSessionHome;
+          advisoryProviderStateReadPaths = prepared.providerStateReadPaths ?? [];
+          advisoryProviderStateWritePaths = prepared.providerStateWritePaths ?? [];
         }
       }
       if (!skillsPrepared) {
@@ -1225,17 +1235,23 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           missionShimWritePaths: missionShim.writePaths,
         }
       : {}),
-    ...((advisoryProviderStateHome || claudeStatePaths.length > 0)
+    ...((advisoryProviderStateHome ||
+      advisoryProviderSessionHome ||
+      advisoryProviderStateReadPaths.length > 0 ||
+      advisoryProviderStateWritePaths.length > 0 ||
+      claudeStatePaths.length > 0)
       ? {
           // Grant auth/profile and the exact checkout's durable conversations.
           providerStateReadPaths: [
             ...claudeStatePaths,
             ...claudeProfileReadPaths,
+            ...advisoryProviderStateReadPaths,
             ...(advisoryProviderStateHome ? [advisoryProviderStateHome] : []),
             ...(advisoryProviderSessionHome ? [advisoryProviderSessionHome] : []),
           ],
           providerStateWritePaths: [
             ...claudeStatePaths,
+            ...advisoryProviderStateWritePaths,
             ...(advisoryProviderStateHome ? [advisoryProviderStateHome] : []),
             ...(advisoryProviderSessionHome ? [advisoryProviderSessionHome] : []),
           ],

@@ -168,6 +168,52 @@ describe('prepareGrokMcpSession auth fallback', () => {
   });
 });
 
+describe('F-569 governed sandbox grant', () => {
+  it('never grants the real provider home; only the auth pair and the checkout store', () => {
+    const root = tempDir();
+    const home = path.join(root, 'home');
+    const providerHome = path.join(home, '.grok');
+    const userDataPath = path.join(root, 'user-data');
+    const artifactRoot = path.join(root, 'ephemeral');
+    fs.mkdirSync(providerHome, { recursive: true });
+    fs.writeFileSync(path.join(providerHome, 'auth.json'), '{}');
+    fs.writeFileSync(path.join(providerHome, 'auth.json.lock'), '');
+    // Unrelated real secrets that live next to auth.json in ~/.grok — never
+    // part of the grant surface.
+    fs.writeFileSync(path.join(providerHome, 'config.toml'), 'other = 1');
+
+    const token = 'grok-f569-sandbox-grant';
+    const result = prepareGrokMcpSession('http://127.0.0.1:9/mcp', token, {
+      home,
+      providerHome,
+      artifactRoot,
+      userDataPath,
+      checkoutId: 'checkout-f569',
+      governed: true,
+    });
+    try {
+      const sandboxGrant = [
+        ...(result.providerStateReadPaths ?? []),
+        ...(result.providerStateWritePaths ?? []),
+      ];
+      expect(sandboxGrant).not.toContain(providerHome);
+      expect(sandboxGrant).not.toContain(path.join(providerHome, 'config.toml'));
+      expect(result.providerStateReadPaths).toEqual([
+        path.join(providerHome, 'auth.json'),
+        path.join(providerHome, 'auth.json.lock'),
+      ]);
+      expect(result.providerStateWritePaths).toEqual(
+        result.providerStateReadPaths,
+      );
+      expect(result.providerSessionHome).toBe(
+        path.join(userDataPath, 'provider-state', 'grok', 'checkout-f569'),
+      );
+    } finally {
+      cleanupCliMcpSession(token);
+    }
+  });
+});
+
 describe('F-566 grok checkout session isolation', () => {
   it.each([false, true])(
     'isolates conversations and preserves auth (governed=%s)',

@@ -137,7 +137,7 @@ describe('pre-activation CLI artifact rollback', () => {
 });
 
 describe('advisory provider-state home grant', () => {
-  it('exposes the real provider home for a governed Kimi overlay', () => {
+  it('grants only credentials/oauth, never the whole home, for a governed Kimi overlay (F-569)', () => {
     const root = tempRoot();
     const home = path.join(root, 'home');
     const artifacts = path.join(root, 'artifacts');
@@ -146,6 +146,7 @@ describe('advisory provider-state home grant', () => {
     // told to grant it or the CLI's session mkdir fails with EPERM.
     write(path.join(providerHome, 'mcp.json'), JSON.stringify({ mcpServers: {} }));
     write(path.join(providerHome, 'credentials', 'kimi-code.json'), '{}');
+    write(path.join(providerHome, 'device_id'), 'unrelated-device-secret');
     const token = 'kimi-provider-state-home';
     tokens.push(token);
 
@@ -157,15 +158,21 @@ describe('advisory provider-state home grant', () => {
       allowedSkills: [],
     });
 
-    expect(result.providerStateHome).toBe(providerHome);
+    const credentialsDir = path.join(providerHome, 'credentials');
+    expect(result.providerStateReadPaths).toEqual([credentialsDir]);
+    expect(result.providerStateWritePaths).toEqual([credentialsDir]);
+    expect(result.providerStateReadPaths).not.toContain(providerHome);
+    expect(result.providerStateHome).toBeUndefined();
   });
 
-  it('exposes the real provider home for a governed Grok overlay', () => {
+  it('grants only the auth.json/lock pair, never the whole home, for a governed Grok overlay (F-569)', () => {
     const root = tempRoot();
     const home = path.join(root, 'home');
     const artifacts = path.join(root, 'artifacts');
     const providerHome = path.join(home, '.grok');
     write(path.join(providerHome, 'config.toml'), '');
+    write(path.join(providerHome, 'auth.json'), '{}');
+    write(path.join(providerHome, 'auth.json.lock'), '');
     const token = 'grok-provider-state-home';
     tokens.push(token);
 
@@ -177,10 +184,17 @@ describe('advisory provider-state home grant', () => {
       allowedSkills: [],
     });
 
-    expect(result.providerStateHome).toBe(providerHome);
+    const expectedGrant = [
+      path.join(providerHome, 'auth.json'),
+      path.join(providerHome, 'auth.json.lock'),
+    ];
+    expect(result.providerStateReadPaths).toEqual(expectedGrant);
+    expect(result.providerStateWritePaths).toEqual(expectedGrant);
+    expect(result.providerStateReadPaths).not.toContain(providerHome);
+    expect(result.providerStateHome).toBeUndefined();
   });
 
-  it('omits the provider-state home for a non-governed (direct pane) overlay', () => {
+  it('omits the provider-state grant for a non-governed (direct pane) overlay', () => {
     const root = tempRoot();
     const home = path.join(root, 'home');
     const artifacts = path.join(root, 'artifacts');
@@ -198,6 +212,8 @@ describe('advisory provider-state home grant', () => {
     });
 
     expect(result.providerStateHome).toBeUndefined();
+    expect(result.providerStateReadPaths).toBeUndefined();
+    expect(result.providerStateWritePaths).toBeUndefined();
   });
 });
 

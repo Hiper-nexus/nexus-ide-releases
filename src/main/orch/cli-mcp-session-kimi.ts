@@ -30,6 +30,26 @@ import {
 import { mergeKimiStatusHooks } from './hook-status-config';
 import { claudeFamilyHubMcpServers } from '../mcp-hub/mcp-hub-spawn';
 
+/**
+ * Real subpaths the governed overlay symlinks credential material from
+ * (F-569: the sandbox grant narrows to exactly these, never the whole
+ * ~/.kimi-code — mirrors managed-credentials.ts's own auth surface for Kimi).
+ */
+const KIMI_AUTH_ENTRIES = ['credentials', 'oauth'];
+
+function kimiAuthGrantPaths(providerHome: string): string[] {
+  const found: string[] = [];
+  for (const name of KIMI_AUTH_ENTRIES) {
+    const candidate = path.join(providerHome, name);
+    try {
+      if (fs.statSync(candidate).isDirectory()) found.push(candidate);
+    } catch {
+      continue;
+    }
+  }
+  return found;
+}
+
 const KIMI_SESSION_DIRECTORIES = ['sessions', 'user-history', 'file-history'];
 const KIMI_SESSION_FILES = { 'session_index.jsonl': '' };
 const KIMI_SESSION_ENTRIES = [
@@ -246,15 +266,24 @@ export function prepareKimiMcpSession(
         configFiles: ['mcp.json', 'config.toml', ...KIMI_SESSION_ENTRIES],
         syncBack: !policy.governed,
       });
+      const authGrantPaths = policy.governed
+        ? kimiAuthGrantPaths(providerHome)
+        : [];
       return {
         env: { KIMI_CODE_HOME: artifactDir },
         // Kimi documents --skills-dir as replacing user/project discovery.
         extraArgs: policy.governed ? ['--skills-dir', governedSkillsDir] : [],
         serverName,
         artifactDir,
-        // Auth/profile and durable conversation links need separate sandbox grants.
+        // F-569: governed sessions grant only credentials/oauth, never the
+        // whole ~/.kimi-code. Durable conversation links need a separate
+        // sandbox grant.
         ...(policy.governed
-          ? { providerStateHome: providerHome, providerSessionHome }
+          ? {
+              providerStateReadPaths: authGrantPaths,
+              providerStateWritePaths: authGrantPaths,
+              providerSessionHome,
+            }
           : {}),
       };
     },

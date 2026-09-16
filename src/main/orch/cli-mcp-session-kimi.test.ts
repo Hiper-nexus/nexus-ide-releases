@@ -19,6 +19,54 @@ function tempDir(): string {
   return dir;
 }
 
+describe('F-569 governed sandbox grant', () => {
+  it('never grants the real provider home; only credentials/oauth and the checkout store', () => {
+    const root = tempDir();
+    const home = path.join(root, 'home');
+    const providerHome = path.join(home, '.kimi-code');
+    const userDataPath = path.join(root, 'user-data');
+    const artifactRoot = path.join(root, 'ephemeral');
+    fs.mkdirSync(path.join(providerHome, 'credentials'), { recursive: true });
+    fs.writeFileSync(
+      path.join(providerHome, 'credentials', 'kimi-code.json'),
+      '{}',
+    );
+    // Unrelated real state that lives next to credentials/ in ~/.kimi-code —
+    // never part of the grant surface.
+    fs.writeFileSync(path.join(providerHome, 'device_id'), 'device-secret');
+
+    const token = 'kimi-f569-sandbox-grant';
+    const result = prepareKimiMcpSession('http://127.0.0.1:9/mcp', token, {
+      home,
+      providerHome,
+      artifactRoot,
+      userDataPath,
+      checkoutId: 'checkout-f569',
+      governed: true,
+      allowedSkills: [],
+    });
+    try {
+      const sandboxGrant = [
+        ...(result.providerStateReadPaths ?? []),
+        ...(result.providerStateWritePaths ?? []),
+      ];
+      expect(sandboxGrant).not.toContain(providerHome);
+      expect(sandboxGrant).not.toContain(path.join(providerHome, 'device_id'));
+      expect(result.providerStateReadPaths).toEqual([
+        path.join(providerHome, 'credentials'),
+      ]);
+      expect(result.providerStateWritePaths).toEqual(
+        result.providerStateReadPaths,
+      );
+      expect(result.providerSessionHome).toBe(
+        path.join(userDataPath, 'provider-state', 'kimi', 'checkout-f569'),
+      );
+    } finally {
+      cleanupCliMcpSession(token);
+    }
+  });
+});
+
 describe('F-566 kimi checkout session isolation', () => {
   it.each([false, true])(
     'isolates conversations and preserves auth (governed=%s)',

@@ -193,16 +193,24 @@ export function resolveGrokOverlayAuthSource(
   return providerHome;
 }
 
-/** Link the auth pair from the resolved source; absent files stay absent. */
-function linkGrokAuthPair(sourceDir: string, artifactDir: string): void {
+/**
+ * Link the auth pair from the resolved source; absent files stay absent.
+ * Returns the real source paths actually linked (F-569: this is the exact
+ * grant surface a governed sandbox needs — never the whole provider home).
+ */
+function linkGrokAuthPair(sourceDir: string, artifactDir: string): string[] {
+  const linked: string[] = [];
   for (const name of [GROK_AUTH_FILE, GROK_AUTH_LOCK_FILE]) {
+    const sourcePath = path.join(sourceDir, name);
     try {
-      fs.statSync(path.join(sourceDir, name));
+      fs.statSync(sourcePath);
     } catch {
       continue;
     }
-    linkFile(path.join(sourceDir, name), path.join(artifactDir, name));
+    linkFile(sourcePath, path.join(artifactDir, name));
+    linked.push(sourcePath);
   }
+  return linked;
 }
 
 export function prepareGrokMcpSession(
@@ -267,7 +275,7 @@ export function prepareGrokMcpSession(
         GROK_SESSION_DIRECTORIES,
         GROK_SESSION_FILES,
       );
-      linkGrokAuthPair(authSource, artifactDir);
+      const authGrantPaths = linkGrokAuthPair(authSource, artifactDir);
       const sourceRaw = readTomlObject(path.join(providerHome, 'config.toml'));
       const source = policy.governed
         ? stripExecutableProfileConfig(sourceRaw)
@@ -403,9 +411,15 @@ export function prepareGrokMcpSession(
         extraArgs: policy.governed ? ['--no-subagents'] : [],
         serverName,
         artifactDir,
-        // Auth/profile and durable conversation links need separate sandbox grants.
+        // F-569: governed sessions grant only the resolved auth.json/lock
+        // pair, never the whole ~/.grok. Durable conversation links need a
+        // separate sandbox grant.
         ...(policy.governed
-          ? { providerStateHome: providerHome, providerSessionHome }
+          ? {
+              providerStateReadPaths: authGrantPaths,
+              providerStateWritePaths: authGrantPaths,
+              providerSessionHome,
+            }
           : {}),
       };
     },

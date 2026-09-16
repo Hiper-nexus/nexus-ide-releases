@@ -284,6 +284,12 @@ describe('mcp-server governed CLI profile wiring', () => {
     vi.stubEnv('HOME', home);
     const providerHome = path.join(home, id === 'grok' ? '.grok' : '.kimi-code');
     fs.mkdirSync(providerHome, { recursive: true });
+    // F-569: the grant is the exact auth surface the overlay links back to the
+    // real home (Grok: auth.json; Kimi: credentials/), never the whole home.
+    const authPath = path.join(providerHome, id === 'grok' ? 'auth.json' : 'credentials');
+    if (id === 'grok') fs.writeFileSync(authPath, '{}');
+    else fs.mkdirSync(authPath, { recursive: true });
+    fs.writeFileSync(path.join(providerHome, 'device_id'), 'secret-not-for-the-worker');
     const envKey = id === 'grok' ? 'GROK_HOME' : 'KIMI_CODE_HOME';
     const decoration = prepareAgentSpawnDecoration(
       adapter(id), { kind: 'cli-agent', cols: 80, rows: 24 },
@@ -291,8 +297,27 @@ describe('mcp-server governed CLI profile wiring', () => {
     )!;
     const state = path.join(home, '.nexus-test-user-data', 'provider-state', id, 'checkout-wiring');
     expect(fs.realpathSync(path.join(decoration.env[envKey], 'sessions'))).toBe(fs.realpathSync(path.join(state, 'sessions')));
-    expect(decoration.providerStateReadPaths).toEqual([providerHome, state]);
-    expect(decoration.providerStateWritePaths).toEqual([providerHome, state]);
+    expect(decoration.providerStateReadPaths).toEqual([authPath, state]);
+    expect(decoration.providerStateWritePaths).toEqual([authPath, state]);
+    expect(decoration.providerStateReadPaths).not.toContain(providerHome);
+    expect(decoration.providerStateWritePaths).not.toContain(providerHome);
+  });
+
+  it.each(['grok', 'kimi'] as const)('still grants the durable %s session home when no auth material exists yet', (id) => {
+    const home = path.join(tempRoot(), 'home');
+    const cwd = path.join(home, 'workspace');
+    fs.mkdirSync(cwd, { recursive: true });
+    vi.stubEnv('HOME', home);
+    const providerHome = path.join(home, id === 'grok' ? '.grok' : '.kimi-code');
+    fs.mkdirSync(providerHome, { recursive: true });
+    const envKey = id === 'grok' ? 'GROK_HOME' : 'KIMI_CODE_HOME';
+    const decoration = prepareAgentSpawnDecoration(
+      adapter(id), { kind: 'cli-agent', cols: 80, rows: 24 },
+      authority(cwd, true), { [envKey]: providerHome },
+    )!;
+    const state = path.join(home, '.nexus-test-user-data', 'provider-state', id, 'checkout-wiring');
+    expect(decoration.providerStateReadPaths).toEqual([state]);
+    expect(decoration.providerStateWritePaths).toEqual([state]);
   });
 
   it.each(['claude', 'glm'] as const)('isolates direct %s conversation paths using the bound checkout', (id) => {
