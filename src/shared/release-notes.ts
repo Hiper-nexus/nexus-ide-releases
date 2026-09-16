@@ -3931,12 +3931,44 @@ export const RELEASE_07638: AppRelease = {
 
 export const CURRENT_RELEASE: AppRelease = {
   version: '0.76.39',
-  date: '2026-09-15',
-  codename: 'Navegação de panes resiliente',
+  date: '2026-09-16',
+  codename: 'Cada pedido no seu espaço',
   summary:
-    'Fecha a regressão de navegação que podia interromper um comando de voz durante a hidratação ' +
-    'transitória dos vínculos de missão, sem diluir o isolamento entre grades de missões.',
+    'Os painéis que você abre pelo "Novo pedido" param de grudar na missão que já estava ' +
+    'aberta: cada abertura ganha um espaço próprio, e os Terminais passam a ter abas por ' +
+    'missão e por espaço. "Tornar orquestrador" deixa de ser beco sem saída — a missão nova ' +
+    'ADOTA o painel em que você já estava trabalhando. E fecha a regressão de navegação que ' +
+    'podia interromper um comando de voz durante a hidratação dos vínculos de missão.',
   highlights: [
+    {
+      title: 'Abas nos Terminais: missão, espaço e soltos',
+      detail:
+        'Cada painel pertence a exatamente um escopo e a vista desenha um de cada vez, com a ' +
+        'contagem de painéis em cada aba. "Todos" continua ali para quem quer o mosaico ' +
+        'inteiro. O escopo sobrevive ao restart junto com o resto do layout.',
+    },
+    {
+      title: 'Montar meus terminais abre um espaço separado',
+      detail:
+        'O assistente do "Novo pedido" mina um espaço, carimba os painéis criados e já leva ' +
+        'você para dentro dele. Dividir um painel mantém o irmão no mesmo espaço, e o "+ Pane" ' +
+        'aberto dentro de um espaço entra nele.',
+    },
+    {
+      title: 'A missão adota o painel que você já estava usando',
+      detail:
+        'Marcar um terminal como coordenador leva ao Novo pedido com um aviso; quando a missão ' +
+        'começa, é aquele painel que assume. Nenhum terminal novo é aberto e o seu não é ' +
+        'encerrado. Se a adoção não puder acontecer, a missão arranca com um coordenador ' +
+        'próprio e o motivo é dito por extenso.',
+    },
+    {
+      title: 'O painel focado está sempre na tela',
+      detail:
+        'Login de ferramenta, instalação de CLI, voz e ⌘K criam painéis e pedem sua atenção ' +
+        'neles. Agora a aba acompanha o painel focado, então nunca mais somos mandados ' +
+        'concluir um login num terminal que não está desenhado.',
+    },
     {
       title: 'Jarvis não perde o comando em estado parcial',
       detail:
@@ -3951,6 +3983,14 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
   fixes: [
+    {
+      title: 'Fim do orquestrador órfão',
+      detail:
+        'A promoção passou a respeitar a recusa do processo principal. Antes a estrela de ' +
+        'coordenador aparecia na tela mesmo quando o motor não reconhecia líder nenhum, e ' +
+        'você só descobria quando nada acontecia. Vínculo morto ou missão que não existe mais ' +
+        'também deixaram de virar destino silencioso da promoção.',
+    },
     {
       title: 'Snapshot transitório não derruba a navegação',
       detail:

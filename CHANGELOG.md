@@ -1,6 +1,16 @@
 # Changelog
 
-## 0.76.39 — Navegação de panes resiliente
+## 0.76.39 — Cada pedido no seu espaço
+
+- **Abas nos Terminais (F-560)**: cada painel pertence a exatamente um escopo — missão, espaço do operador ou soltos — e a vista desenha um escopo de cada vez, com a contagem de painéis em cada aba. `visiblePaneIds` nunca mais desliga o filtro inteiro: escopo inexistente devolve vazio, não a árvore toda. "Todos" continua disponível. `PaneModel` ganhou `spaceId`/`spaceTitle`, declarados em `paneModelSchema` para sobreviverem ao restart.
+- **"Novo pedido → Montar meus terminais" abre um espaço separado (F-560)**: o assistente mina um espaço, carimba os painéis criados e foca esse escopo antes de navegar. Antes os painéis nasciam sem dono nenhum e a vista global — que desligava o filtro quando não havia missão elegível — desenhava tudo junto com a missão que já estava aberta. Dividir um painel mantém o irmão no mesmo espaço; o "+ Pane" aberto dentro de um espaço entra nele.
+- **O painel focado está sempre na tela (F-560)**: são 35 caminhos que levam aos Terminais depois de criar ou escolher um painel — login de CLI, instalação de ferramenta, voz, ⌘K, caixa de atenção. Em vez de cada um lembrar de trocar a aba, a regra mora num lugar só: quando o painel focado muda e está em outro escopo, a aba acompanha. Clicar numa aba não é desfeito pelo foco antigo.
+- **Pins por escopo (F-560)**: os painéis fixados pelo operador deixaram de vazar entre escopos — os pins da missão A já entravam no conjunto visível da missão B no mesmo render.
+- **A missão adota o painel vivo (F-561)**: `mission.start` aceita `adoptOrchestratorPaneId`. Uma reserva de um uso só (TTL 2 min) liga a camada IPC, que concede autoridade de missão, à Via Rápida, que manda na sequência de arranque. A adoção acontece depois da transição para `running/executing`, prova no store que a missão aponta para aquela sessão, cola o briefing no painel que já roda e grava o recibo de kickoff. Nenhum painel é morto — o oposto do respawn, que termina fisicamente o orquestrador registrado antes de subir o seu.
+- **Adoção é fail-safe numa direção só (F-561)**: sessão morta, CLI que não sabe coordenar, reserva vencida ou autoridade recusada caem no arranque normal. A missão sempre arranca, e a recusa vira aviso nomeado, nunca silêncio. Depois da concessão a adoção é irreversível: falha de briefing vira bloqueio técnico com a causa, nunca um segundo Maestro.
+- **O layout sabe que o painel foi adotado (F-561)**: o main adota depois que `mission.start` responde, então o renderer pergunta quem é o orquestrador até o main confirmar. O main é autoridade, o layout é espelho — sem confirmação, nenhuma estrela de coordenador aparece.
+- **Fim do orquestrador órfão (F-561)**: a promoção passou a honrar a recusa do processo principal. Antes a estrela aparecia na tela mesmo quando o motor não reconhecia líder nenhum. Vínculo morto ou missão inexistente também deixaram de virar destino silencioso.
+
 
 - **Comandos de voz continuam funcionais durante a hidratação**: se a lista transitória de vínculos de missão ainda estiver chegando do runtime, um shell ou agente comum abre normalmente na grade global; o Jarvis não interrompe o comando com erro de estado parcial.
 - **Isolamento de missão preservado**: quando o vínculo existe, rail, atalhos, paleta e Jarvis continuam abrindo exclusivamente os terminais da missão dona do pane.
