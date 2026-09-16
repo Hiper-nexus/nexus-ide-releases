@@ -41,6 +41,12 @@
  * Todo config que fica sem nenhum hook sai do disco — é lixo do port, não
  * arquivo do usuário. Qualquer entrada que não case a regra (hook do usuário,
  * de outro produto, ou de um executável que ainda existe) permanece intocada.
+ *
+ * O `<workspace>` dos alvos 2 e 3 NÃO é o `process.cwd()`: num app empacotado
+ * ele é "/" e nenhum repo do operador é alcançado. Quem sabe quais pastas
+ * estão registradas é o workspace-store — ele chama
+ * `cleanRegisteredWorkspaceHooks` no boot (current + recents) e a cada
+ * workspace aberto, via `cleanWorkspaceHookConfigs`.
  */
 
 import {
@@ -435,6 +441,55 @@ export function cleanHomeHooksConfigs(home = homedir()): string[] {
 }
 
 /**
+ * Limpa os dois configs de hook de UMA pasta (Codex + .agents), best-effort
+ * por alvo: um arquivo preso não impede o outro. Devolve os caminhos
+ * reescritos ou apagados.
+ *
+ * É a unidade certa para o main chamar por workspace — o `workspace` do boot
+ * é o `process.cwd()`, que num app empacotado é "/" e nunca contém o repo que
+ * o operador abriu.
+ */
+export function cleanWorkspaceHookConfigs(
+  workspace: string,
+  home = homedir(),
+): string[] {
+  const cleaned: string[] = [];
+  try {
+    if (cleanCodexWorkspaceHooks(workspace, home)) {
+      cleaned.push(join(workspace, ...CODEX_HOOKS_CONFIG));
+    }
+  } catch {
+    // best-effort
+  }
+  try {
+    if (cleanAgentsWorkspaceHooks(workspace, home)) {
+      cleaned.push(join(workspace, ...AGENTS_HOOKS_CONFIG));
+    }
+  } catch {
+    // best-effort
+  }
+  return cleaned;
+}
+
+/**
+ * Limpa os configs de VÁRIOS workspaces registrados (boot: current +
+ * recents). Nunca lança; caminho repetido não é limpo duas vezes.
+ */
+export function cleanRegisteredWorkspaceHooks(
+  workspaces: Iterable<string>,
+  home = homedir(),
+): string[] {
+  const cleaned: string[] = [];
+  for (const workspace of workspaces) {
+    if (!workspace) continue;
+    for (const file of cleanWorkspaceHookConfigs(workspace, home)) {
+      if (!cleaned.includes(file)) cleaned.push(file);
+    }
+  }
+  return cleaned;
+}
+
+/**
  * Apaga os scripts legados de ~/.nexus/agent-hooks/. Retorna os nomes
  * removidos (vazio quando não havia nada — boot idempotente).
  */
@@ -468,12 +523,7 @@ export function cleanupLegacyHandoffHooks(
   };
   try {
     const unregistered = removeLegacyHandoffHookRegistration(home);
-    if (cleanCodexWorkspaceHooks(workspace, home)) {
-      mark(join(workspace, ...CODEX_HOOKS_CONFIG));
-    }
-    if (cleanAgentsWorkspaceHooks(workspace, home)) {
-      mark(join(workspace, ...AGENTS_HOOKS_CONFIG));
-    }
+    for (const file of cleanWorkspaceHookConfigs(workspace, home)) mark(file);
     // $HOME depois do workspace: quando os dois coincidem (home == workspace)
     // o arquivo já foi tratado e a segunda passada vira no-op.
     for (const file of cleanHomeHooksConfigs(home)) mark(file);

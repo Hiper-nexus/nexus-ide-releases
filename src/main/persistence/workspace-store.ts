@@ -19,6 +19,7 @@ import {
   scheduleOrientationForWorkspace,
   stopOrientationForWorkspace,
 } from '../context/orientation/orientation-bootstrap';
+import { cleanRegisteredWorkspaceHooks } from '../agent-hooks/handoff-hook-installer';
 
 /**
  * Workspace store: current + recent workspaces, persisted in
@@ -148,6 +149,37 @@ function toInfo(dir: string): WorkspaceInfo {
   return { path: dir, name: path.basename(dir) || dir, lastOpenedAt: Date.now() };
 }
 
+/** Pastas registradas que o limpador deve visitar (current + recents). */
+function registeredWorkspacePaths(): string[] {
+  return [
+    ...(state.current ? [state.current.path] : []),
+    ...state.recents.map((workspace) => workspace.path),
+  ];
+}
+
+/**
+ * Hook de handoff legado dentro de um repo (.codex/.agents/hooks.json) sai do
+ * disco quando o workspace é registrado: o boot do main limpa o $HOME e o
+ * `process.cwd()` — que num app empacotado é "/" e nunca o repo aberto —, e
+ * era aí que o estrago do port sobrevivia (hook morto em todo tool call).
+ *
+ * Best-effort e idempotente: nunca lança, nunca bloqueia a abertura, e a
+ * segunda passada é no-op. Sem log quando não há nada a limpar.
+ */
+function cleanWorkspaceHooksQuietly(workspaces: Iterable<string>): void {
+  try {
+    const cleaned = cleanRegisteredWorkspaceHooks(workspaces);
+    if (cleaned.length > 0) {
+      console.info(
+        '[workspace] hooks de handoff legados limpos:',
+        cleaned.join(', '),
+      );
+    }
+  } catch (err) {
+    console.warn('[workspace] handoff hook cleanup failed:', err);
+  }
+}
+
 function openWorkspace(dir: string, owner: WebContents): WorkspaceState {
   const canonical = canonicalDirectory(dir);
   if (!canonical) return state;
@@ -161,6 +193,9 @@ function openWorkspace(dir: string, owner: WebContents): WorkspaceState {
   missingReported = null;
   persist();
   broadcast();
+  // Hook de handoff legado no repo que acabou de abrir (síncrono e barato:
+  // dois JSON pequenos; falha em silêncio).
+  cleanWorkspaceHooksQuietly([canonical]);
   // L1 structural map — async, never blocks open, never mutates the repo.
   scheduleOrientationForWorkspace(canonical);
   return state;
@@ -193,6 +228,9 @@ export function grantWorkspacePathFromTrustedMain(
 
 export function registerWorkspaceIpc(): void {
   load();
+  // Boot: todo workspace já registrado é visitado (o boot do main limpa só o
+  // $HOME e o process.cwd(), que no app empacotado é "/").
+  cleanWorkspaceHooksQuietly(registeredWorkspacePaths());
 
   ipcMain.handle(WORKSPACE_CHANNELS.get, (event) => {
     if (state.current) {

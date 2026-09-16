@@ -878,16 +878,22 @@ if (!wireDeepLinks()) {
       // rodou no Nexus — ver docstring do handoff-hook-installer). O
       // fechamento mecânico real vive no Main: turn-end-handoff, acionado
       // pelo /hook/status quando o turno do worker encerra.
+      //
+      // Aqui saem o $HOME e o `process.cwd()` — que num app empacotado é "/" e
+      // não é o repo do operador. Os workspaces REGISTRADOS (boot e cada
+      // abertura) são limpos pelo workspace-store, que é quem sabe os
+      // caminhos: `cleanRegisteredWorkspaceHooks`.
       try {
         const { cleanupLegacyHandoffHooks } = await import(
           './agent-hooks/handoff-hook-installer'
         );
-        const { unregistered, deleted } = cleanupLegacyHandoffHooks();
-        if (unregistered || deleted.length > 0) {
+        const { unregistered, deleted, cleaned } = cleanupLegacyHandoffHooks();
+        if (unregistered || deleted.length > 0 || cleaned.length > 0) {
           console.info(
             '[main] hooks de handoff legados removidos:',
             unregistered ? 'settings.json' : '',
             deleted.join(', '),
+            cleaned.join(', '),
           );
         }
       } catch (err) {
