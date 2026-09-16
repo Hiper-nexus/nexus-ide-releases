@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { ensurePrivateDirectory, linkFile, linkProviderSessionState } from '../orch/cli-mcp-session-artifacts';
 import {
   isFileAuthAdapter,
   type FileAuthAdapterId,
@@ -329,7 +330,11 @@ export const MANAGED_PROVIDER_SPECS: Record<FileAuthAdapterId, ManagedProviderSp
     adapterId: 'codex',
     homeEnvVar: 'CODEX_HOME',
     authRelativePath: 'auth.json',
-    skipLinkNames: ['auth.json'],
+    skipLinkNames: [
+      'auth.json', 'sessions', 'archived_sessions', 'history.jsonl',
+      'session_index.jsonl', 'state_5.sqlite', 'state_5.sqlite-wal', 'state_5.sqlite-shm',
+      'logs_2.sqlite', 'logs_2.sqlite-wal', 'logs_2.sqlite-shm',
+    ],
     systemHome: (home = os.homedir()) => path.join(home, '.codex'),
   },
   grok: {
@@ -681,6 +686,79 @@ export function readBackFresherAuth(
   }
 }
 
+/** F-567: durable conversations belong to a checkout, credentials keep their source. */
+export function prepareCheckoutProviderHome(
+  kind: 'agy' | 'devin',
+  options: { userDataPath: string; checkoutId: string; sourceHome: string },
+): { stateHome: string; env: Record<string, string>; sharedFiles: string[]; sharedReadPaths: string[] } {
+  if (!path.isAbsolute(options.userDataPath) || !path.isAbsolute(options.sourceHome)) {
+    throw new Error('Provider checkout and auth homes must be absolute paths');
+  }
+  const sourceHome = path.resolve(options.sourceHome);
+  // ponytail: reuse F-566's durable root directly; these CLIs need no MCP overlay.
+  const checkoutHome = linkProviderSessionState(kind, options.userDataPath, options, [], {});
+  // Account homes must not replace each other's auth while both panes run.
+  const account = createHash('sha256').update(sourceHome).digest('hex').slice(0, 32);
+  const stateHome = path.join(checkoutHome, account);
+  if (fs.lstatSync(stateHome, { throwIfNoEntry: false })?.isSymbolicLink()) {
+    throw new Error('Provider session state must not be a symlink');
+  }
+  ensurePrivateDirectory(stateHome);
+  const env: Record<string, string> = kind === 'agy'
+    ? { HOME: stateHome, USERPROFILE: stateHome, GEMINI_CLI_HOME: path.join(stateHome, '.gemini') }
+    : { XDG_DATA_HOME: stateHome };
+  const providerHome = kind === 'agy' ? env.GEMINI_CLI_HOME : stateHome;
+  const directories = kind === 'agy'
+    ? ['.gemini', '.gemini/antigravity-cli', '.gemini/antigravity-cli/conversations', '.gemini/config', '.gemini/antigravity', '.gemini/antigravity-ide']
+    : ['devin', 'devin/cli', 'devin/summaries', 'devin/transcripts'];
+  for (const relative of directories) {
+    const dir = path.join(stateHome, relative);
+    if (fs.lstatSync(dir, { throwIfNoEntry: false })?.isSymbolicLink()) {
+      throw new Error('Provider session entry must not be a symlink');
+    }
+    ensurePrivateDirectory(dir);
+  }
+  const spec = MANAGED_PROVIDER_SPECS[kind];
+  const sharedFiles: string[] = [];
+  // Explicit file allowlist: never project a native conversation directory.
+  const shared = [spec.authRelativePath, ...(spec.authCandidates ?? []), ...(spec.identityCandidates ?? [])];
+  if (kind === 'agy') shared.push('settings.json', 'antigravity-cli/settings.json', 'antigravity-cli/mcp_config.json', 'config/mcp_config.json');
+  for (const relative of shared) {
+    const source = path.join(sourceHome, relative);
+    if (!exists(source)) continue;
+    if (!fs.statSync(source).isFile()) throw new Error('Provider credential/config must be a file');
+    const target = path.join(providerHome, relative);
+    const entry = fs.lstatSync(target, { throwIfNoEntry: false });
+    if (entry?.isSymbolicLink() && path.toNamespacedPath(path.resolve(path.dirname(target), fs.readlinkSync(target))) !== path.toNamespacedPath(source)) {
+      throw new Error('Provider credential link points outside its auth source');
+    }
+    // Windows file links/copies (and atomic replacements) must not retain the
+    // credential of an earlier materialization when the account source changes.
+    if (entry && !entry.isSymbolicLink()) {
+      if (!entry.isFile()) throw new Error('Provider credential/config target must be a file');
+      fs.unlinkSync(target);
+    }
+    if (!entry || !entry.isSymbolicLink()) linkFile(source, target);
+    sharedFiles.push(fs.realpathSync(source));
+  }
+  const sharedReadPaths: string[] = [];
+  if (kind === 'agy') {
+    // Skill mirroring may populate these AFTER this helper, during MCP decoration.
+    // Directory links may start dangling; conversations never use these links.
+    for (const relative of ['config/skills', 'antigravity/skills', 'antigravity-cli/skills', 'antigravity-ide/skills']) {
+      const source = path.join(sourceHome, relative);
+      const target = path.join(providerHome, relative);
+      const entry = fs.lstatSync(target, { throwIfNoEntry: false });
+      if (!entry) fs.symlinkSync(source, target, 'junction');
+      else if (!entry.isSymbolicLink() || path.toNamespacedPath(path.resolve(path.dirname(target), fs.readlinkSync(target))) !== path.toNamespacedPath(source)) {
+        throw new Error('AGY skill link points outside its profile source');
+      }
+      sharedReadPaths.push(source);
+    }
+  }
+  return { stateHome, env, sharedFiles, sharedReadPaths };
+}
+
 /** Env patch so the next CLI process uses this managed home. */
 export function managedHomeEnv(
   adapterId: FileAuthAdapterId,
@@ -843,6 +921,11 @@ export function scrubManagedAuth(
   try {
     const managedHome = managedHomePath(adapterId, accountId, options.home);
     const authPath = authTargetPath(adapterId, managedHome, options.authRelativePath);
+    // OpenCode's Windows checkout homes share this inode so refreshes remain
+    // live. Clear it before unlinking, or a durable hardlink retains the secret.
+    if (adapterId === 'opencode' && process.platform === 'win32') {
+      fs.truncateSync(authPath, 0);
+    }
     fs.unlinkSync(authPath);
   } catch {
     // Best-effort: file may already be gone or never written.

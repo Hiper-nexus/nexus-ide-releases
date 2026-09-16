@@ -26,9 +26,7 @@
       "{{PROMPT}}"
     ],
     "ptyRequired": true,
-    "resumeArgs": [
-      "--continue"
-    ],
+    "resumeArgs": [],
     "resumeIdArgs": [
       "--conversation"
     ],

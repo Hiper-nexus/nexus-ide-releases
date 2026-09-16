@@ -1081,10 +1081,17 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           extraArgs.push(...codexHookTrustBypassArgs(adapter.bin));
         } else if (flavor === "opencode") {
           const prepared = prepareOpenCodeMcpSession(mcpUrl(), ctx.token, {
+            userDataPath: app.getPath("userData"),
+            checkoutId: authority.scope.checkoutId,
+            providerHome: preparedEnv?.XDG_DATA_HOME,
+            cwd: authority.cwd,
+            workspaceRoot: authority.scope.rootRealPath,
             hubServers,
           });
           Object.assign(env, prepared.env);
           extraArgs.push(...prepared.extraArgs);
+          advisoryProviderStateHome = prepared.providerStateHome;
+          advisoryProviderSessionHome = prepared.providerSessionHome;
         } else if (flavor === "kimi") {
           const prepared = prepareKimiMcpSession(mcpUrl(), ctx.token, {
             userDataPath: app.getPath("userData"),

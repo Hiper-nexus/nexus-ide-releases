@@ -19,7 +19,7 @@
     "interactive": ["muse"],
     "headless": ["muse", "exec", "{{PROMPT}}"],
     "ptyRequired": true,
-    "resumeArgs": ["resume", "--last"],
+    "resumeArgs": [],
     "resumeIdArgs": ["resume"],
     "extraArgs": []
   },

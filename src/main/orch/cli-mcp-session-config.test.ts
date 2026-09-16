@@ -203,10 +203,14 @@ describe('advisory provider-state home grant', () => {
 
 describe('prepareOpenCodeMcpSession', () => {
   it('uses the official inline config and expands the bearer from env at runtime', () => {
+    const root = tempRoot();
+    const home = path.join(root, 'home');
     const token = 'opencode-secret-token';
+    tokens.push(token);
     const result = prepareOpenCodeMcpSession(
       'http://127.0.0.1:4100/mcp',
       token,
+      { home, userDataPath: root, checkoutId: 'checkout-inline' },
     );
     const config = JSON.parse(result.env.OPENCODE_CONFIG_CONTENT) as {
       mcp: Record<
@@ -228,7 +232,8 @@ describe('prepareOpenCodeMcpSession', () => {
       headers: { Authorization: 'Bearer {env:NEXUS_MCP_TOKEN}' },
     });
     expect(JSON.stringify(result)).not.toContain(token);
-    expect(result.artifactDir).toBeNull();
+    expect(result.artifactDir).toBe(expectedArtifactDir(path.join(home, '.nexus', 'ephemeral', 'mcp-clients'), 'opencode', token));
+    expect(result.env.OPENCODE_DB).toBe(path.join(root, 'provider-state', 'opencode', 'checkout-inline', 'database', 'opencode.db'));
   });
 
   it('isolates governed config/plugins and exposes only Nexus plus granted skills', () => {
@@ -585,7 +590,7 @@ describe('prepareCodexGovernedSession', () => {
       sandboxDir: result.env.CODEX_HOME,
       processHome: path.join(result.env.CODEX_HOME, 'shell-home'),
       processTmp: path.join(result.env.CODEX_HOME, 'shell-tmp'),
-      providerStatePaths: [fs.realpathSync(path.join(codexHome, 'auth.json'))],
+      providerStatePaths: [fs.realpathSync(path.join(codexHome, 'auth.json')), result.env.CODEX_SQLITE_HOME],
     });
     expect(filesystem).not.toHaveProperty(result.env.CODEX_HOME);
     expect(filesystem).not.toHaveProperty(
@@ -602,17 +607,21 @@ describe('prepareCodexGovernedSession', () => {
     );
     for (const forbidden of [
       '.codex-global-state.json',
-      'history.jsonl',
-      'session_index.jsonl',
       'state_5.sqlite',
       'state_5.sqlite-wal',
       'state_5.sqlite-shm',
-      'sessions',
       'shell_snapshots',
     ]) {
       expect(fs.existsSync(path.join(result.env.CODEX_HOME, forbidden))).toBe(
         false,
       );
+    }
+    expect(fs.realpathSync(path.join(result.env.CODEX_HOME, 'sessions'))).toBe(
+      path.join(result.env.CODEX_SQLITE_HOME, 'sessions'),
+    );
+    expect(fs.readdirSync(path.join(result.env.CODEX_HOME, 'sessions'))).toEqual([]);
+    for (const name of ['history.jsonl', 'session_index.jsonl']) {
+      expect(fs.readFileSync(path.join(result.env.CODEX_HOME, name), 'utf8')).toBe('');
     }
     expect(result.codexProcessSandbox?.providerStatePaths).not.toEqual(
       expect.arrayContaining([
@@ -640,98 +649,45 @@ describe('prepareCodexGovernedSession', () => {
     ).toBe(false);
   });
 
-  it('materializes only an exact main-owned resume as private DB and rollout snapshots', () => {
+  it('resumes the exact checkout thread without importing or modifying native history', () => {
     const root = tempRoot();
     const home = path.join(root, 'home');
-    const artifacts = path.join(root, 'artifacts');
     const codexHome = path.join(home, '.codex');
     const worktree = path.join(root, 'worktree');
+    const state = path.join(root, 'provider-state', 'codex', 'checkout-resume');
     const exactId = '019d0000-0000-7000-8000-000000000001';
     const otherId = '019d0000-0000-7000-8000-000000000002';
-    const exactRelative = path.join(
-      '2026',
-      '07',
-      '26',
-      `rollout-${exactId}.jsonl`,
-    );
-    const otherRelative = path.join(
-      '2026',
-      '07',
-      '25',
-      `rollout-${otherId}.jsonl`,
-    );
-    const exactSource = path.join(codexHome, 'sessions', exactRelative);
-    const otherSource = path.join(codexHome, 'sessions', otherRelative);
+    const relative = path.join('2026', '07', '26', `rollout-${exactId}.jsonl`);
+    const nativeRollout = path.join(codexHome, 'sessions', relative);
+    const checkoutRollout = path.join(state, 'sessions', relative);
+    const oldOverlayRollout = path.join(root, 'purged-overlay', 'sessions', relative);
     write(path.join(codexHome, 'auth.json'), '{}');
-    write(path.join(codexHome, 'history.jsonl'), '{"id":"legacy"}');
-    write(path.join(codexHome, '.codex-global-state.json'), '{"apps":true}');
-    write(exactSource, '{"type":"exact"}\n');
-    write(otherSource, '{"type":"other"}\n');
+    write(path.join(codexHome, 'history.jsonl'), 'native history');
+    write(nativeRollout, 'native conversation');
+    write(checkoutRollout, 'checkout conversation');
     fs.mkdirSync(worktree, { recursive: true });
-    const sourceDatabasePath = path.join(codexHome, 'state_5.sqlite');
-    const sourceDb = new Database(sourceDatabasePath);
-    sourceDb.pragma('journal_mode = WAL');
-    sourceDb.pragma('wal_autocheckpoint = 0');
-    sourceDb.exec(`
-      CREATE TABLE backfill_state (
-        id INTEGER PRIMARY KEY,
-        status TEXT NOT NULL
-      );
-      CREATE TABLE threads (
-        id TEXT PRIMARY KEY,
-        rollout_path TEXT NOT NULL
-      );
-      CREATE TABLE thread_dynamic_tools (
-        thread_id TEXT NOT NULL,
-        position INTEGER NOT NULL,
-        name TEXT NOT NULL
-      );
-      CREATE TABLE thread_spawn_edges (
-        parent_thread_id TEXT NOT NULL,
-        child_thread_id TEXT NOT NULL
-      );
-      CREATE TABLE external_agent_config_imports (
-        import_id TEXT PRIMARY KEY
-      );
-      CREATE TABLE remote_control_enrollments (
-        websocket_url TEXT PRIMARY KEY
-      );
-    `);
-    sourceDb
-      .prepare('INSERT INTO backfill_state (id, status) VALUES (1, ?)')
-      .run('complete');
-    const insertThread = sourceDb.prepare(
-      'INSERT INTO threads (id, rollout_path) VALUES (?, ?)',
-    );
-    insertThread.run(exactId, exactSource);
-    insertThread.run(otherId, otherSource);
-    sourceDb
-      .prepare(
-        'INSERT INTO thread_dynamic_tools (thread_id, position, name) VALUES (?, 0, ?)',
-      )
-      .run(exactId, 'external-app-tool');
-    sourceDb
-      .prepare(
-        'INSERT INTO thread_spawn_edges (parent_thread_id, child_thread_id) VALUES (?, ?)',
-      )
-      .run(exactId, otherId);
-    sourceDb
-      .prepare(
-        'INSERT INTO external_agent_config_imports (import_id) VALUES (?)',
-      )
-      .run('external-import');
-    sourceDb
-      .prepare(
-        'INSERT INTO remote_control_enrollments (websocket_url) VALUES (?)',
-      )
-      .run('wss://remote.example.test');
-
+    const nativeDb = new Database(path.join(codexHome, 'state_5.sqlite'));
+    const checkoutDb = new Database(path.join(state, 'state_5.sqlite'));
     const token = 'codex-exact-resume-token';
     tokens.push(token);
     try {
+      nativeDb.exec('CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL)');
+      nativeDb.prepare('INSERT INTO threads VALUES (?, ?)').run(exactId, nativeRollout);
+      checkoutDb.pragma('journal_mode = WAL');
+      checkoutDb.pragma('wal_autocheckpoint = 0');
+      checkoutDb.exec(`
+        CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL);
+        CREATE TABLE thread_dynamic_tools (thread_id TEXT NOT NULL, name TEXT NOT NULL);
+      `);
+      checkoutDb.prepare('INSERT INTO threads VALUES (?, ?)').run(exactId, oldOverlayRollout);
+      checkoutDb.prepare('INSERT INTO threads VALUES (?, ?)').run(otherId, 'other-rollout');
+      checkoutDb.prepare('INSERT INTO thread_dynamic_tools VALUES (?, ?)').run(exactId, 'old-account-tool');
+      checkoutDb.prepare('INSERT INTO thread_dynamic_tools VALUES (?, ?)').run(otherId, 'other-thread-tool');
       const result = prepareCodexGovernedSession(token, {
         home,
-        artifactRoot: artifacts,
+        userDataPath: root,
+        checkoutId: 'checkout-resume',
+        artifactRoot: path.join(root, 'artifacts'),
         cwd: worktree,
         workspaceRoot: worktree,
         allowedSkills: [],
@@ -739,90 +695,30 @@ describe('prepareCodexGovernedSession', () => {
         codexResumeSessionId: exactId,
         codexAdminSkillsRoot: path.join(root, 'missing-admin-skills'),
       });
-      const privateDatabasePath = path.join(
-        result.env.CODEX_HOME,
-        'state_5.sqlite',
-      );
-      const privateRolloutPath = path.join(
-        result.env.CODEX_HOME,
-        'sessions',
-        exactRelative,
-      );
-
-      expect(fs.lstatSync(privateDatabasePath).isSymbolicLink()).toBe(false);
-      expect(fs.lstatSync(privateRolloutPath).isSymbolicLink()).toBe(false);
-      expect(mode(privateDatabasePath)).toBe(0o600);
-      expect(mode(privateRolloutPath)).toBe(0o600);
-      expect(fs.readFileSync(privateRolloutPath, 'utf8')).toBe(
-        '{"type":"exact"}\n',
-      );
-      expect(
-        fs.existsSync(
-          path.join(result.env.CODEX_HOME, 'sessions', otherRelative),
-        ),
-      ).toBe(false);
-      expect(
-        fs.existsSync(path.join(result.env.CODEX_HOME, 'state_5.sqlite-wal')),
-      ).toBe(false);
-      expect(
-        fs.existsSync(path.join(result.env.CODEX_HOME, 'state_5.sqlite-shm')),
-      ).toBe(false);
-      expect(
-        fs.existsSync(path.join(result.env.CODEX_HOME, 'history.jsonl')),
-      ).toBe(false);
-      expect(
-        fs.existsSync(
-          path.join(result.env.CODEX_HOME, '.codex-global-state.json'),
-        ),
-      ).toBe(false);
+      const durableState = fs.realpathSync(state);
+      const durableRollout = fs.realpathSync(checkoutRollout);
+      expect(result.env.CODEX_SQLITE_HOME).toBe(durableState);
+      expect(fs.realpathSync(path.join(result.env.CODEX_HOME, 'sessions', relative))).toBe(durableRollout);
+      expect(fs.readFileSync(durableRollout, 'utf8')).toBe('checkout conversation');
+      expect(fs.readFileSync(path.join(result.env.CODEX_HOME, 'history.jsonl'), 'utf8')).toBe('');
       expect(result.codexProcessSandbox?.providerStatePaths).toEqual([
-        fs.realpathSync(path.join(codexHome, 'auth.json')),
+        fs.realpathSync(path.join(codexHome, 'auth.json')), durableState,
       ]);
-      expect(result.codexProcessSandbox?.providerStatePaths).not.toEqual(
-        expect.arrayContaining([
-          fs.realpathSync(sourceDatabasePath),
-          fs.realpathSync(path.join(codexHome, 'sessions')),
-        ]),
-      );
-
-      const privateDb = new Database(privateDatabasePath, {
-        readonly: true,
-        fileMustExist: true,
-      });
-      try {
-        expect(
-          privateDb.prepare('SELECT id, rollout_path FROM threads').all(),
-        ).toEqual([{ id: exactId, rollout_path: privateRolloutPath }]);
-        expect(
-          privateDb.prepare('SELECT COUNT(*) AS count FROM thread_dynamic_tools').get(),
-        ).toEqual({ count: 0 });
-        expect(
-          privateDb.prepare('SELECT COUNT(*) AS count FROM thread_spawn_edges').get(),
-        ).toEqual({ count: 0 });
-        expect(
-          privateDb
-            .prepare('SELECT COUNT(*) AS count FROM external_agent_config_imports')
-            .get(),
-        ).toEqual({ count: 0 });
-        expect(
-          privateDb
-            .prepare('SELECT COUNT(*) AS count FROM remote_control_enrollments')
-            .get(),
-        ).toEqual({ count: 0 });
-        expect(privateDb.pragma('quick_check', { simple: true })).toBe('ok');
-      } finally {
-        privateDb.close();
-      }
-      expect(
-        sourceDb.prepare('SELECT COUNT(*) AS count FROM threads').get(),
-      ).toEqual({ count: 2 });
-      expect(
-        sourceDb
-          .prepare('SELECT rollout_path FROM threads WHERE id = ?')
-          .get(exactId),
-      ).toEqual({ rollout_path: exactSource });
+      expect(checkoutDb.prepare('SELECT id, rollout_path FROM threads ORDER BY id').all()).toEqual([
+        { id: exactId, rollout_path: durableRollout },
+        { id: otherId, rollout_path: 'other-rollout' },
+      ]);
+      expect(checkoutDb.prepare('SELECT * FROM thread_dynamic_tools').all()).toEqual([
+        { thread_id: otherId, name: 'other-thread-tool' },
+      ]);
+      expect(nativeDb.prepare('SELECT * FROM threads').all()).toEqual([{ id: exactId, rollout_path: nativeRollout }]);
+      expect(fs.readFileSync(nativeRollout, 'utf8')).toBe('native conversation');
+      cleanupCliMcpSession(token);
+      expect(fs.readFileSync(durableRollout, 'utf8')).toBe('checkout conversation');
+      expect(checkoutDb.pragma('quick_check', { simple: true })).toBe('ok');
     } finally {
-      sourceDb.close();
+      nativeDb.close();
+      checkoutDb.close();
     }
   });
 
@@ -831,12 +727,13 @@ describe('prepareCodexGovernedSession', () => {
     const home = path.join(root, 'home');
     const artifacts = path.join(root, 'artifacts');
     const codexHome = path.join(home, '.codex');
+    const stateHome = path.join(root, 'provider-state', 'codex', 'checkout-negative');
     const worktree = path.join(root, 'worktree');
     const requestedId = '019d0000-0000-7000-8000-000000000003';
     write(path.join(codexHome, 'auth.json'), '{}');
-    fs.mkdirSync(path.join(codexHome, 'sessions'), { recursive: true });
+    fs.mkdirSync(path.join(stateHome, 'sessions'), { recursive: true });
     fs.mkdirSync(worktree, { recursive: true });
-    const sourceDb = new Database(path.join(codexHome, 'state_5.sqlite'));
+    const sourceDb = new Database(path.join(stateHome, 'state_5.sqlite'));
     sourceDb.exec(`
       CREATE TABLE backfill_state (
         id INTEGER PRIMARY KEY,
@@ -854,6 +751,8 @@ describe('prepareCodexGovernedSession', () => {
     expect(() =>
       prepareCodexGovernedSession(token, {
         home,
+        userDataPath: root,
+        checkoutId: 'checkout-negative',
         artifactRoot: artifacts,
         cwd: worktree,
         workspaceRoot: worktree,
@@ -873,19 +772,20 @@ describe('prepareCodexGovernedSession', () => {
     const home = path.join(root, 'home');
     const artifacts = path.join(root, 'artifacts');
     const codexHome = path.join(home, '.codex');
+    const stateHome = path.join(root, 'provider-state', 'codex', 'checkout-negative');
     const worktree = path.join(root, 'worktree');
     const requestedId = '019d0000-0000-7000-8000-000000000004';
     const missingRollout = path.join(
-      codexHome,
+      stateHome,
       'sessions',
       '2026',
       '07',
       `rollout-${requestedId}.jsonl`,
     );
     write(path.join(codexHome, 'auth.json'), '{}');
-    fs.mkdirSync(path.join(codexHome, 'sessions'), { recursive: true });
+    fs.mkdirSync(path.join(stateHome, 'sessions'), { recursive: true });
     fs.mkdirSync(worktree, { recursive: true });
-    const sourceDb = new Database(path.join(codexHome, 'state_5.sqlite'));
+    const sourceDb = new Database(path.join(stateHome, 'state_5.sqlite'));
     sourceDb.exec(`
       CREATE TABLE backfill_state (
         id INTEGER PRIMARY KEY,
@@ -906,6 +806,8 @@ describe('prepareCodexGovernedSession', () => {
     expect(() =>
       prepareCodexGovernedSession(token, {
         home,
+        userDataPath: root,
+        checkoutId: 'checkout-negative',
         artifactRoot: artifacts,
         cwd: worktree,
         workspaceRoot: worktree,
@@ -1021,6 +923,7 @@ describe('prepareCodexGovernedSession', () => {
     ).toEqual([
       [path.join(result.env.CODEX_HOME, 'shell-home'), 'write'],
       [path.join(result.env.CODEX_HOME, 'shell-tmp'), 'write'],
+      [result.env.CODEX_SQLITE_HOME, 'write'],
     ]);
   });
 });

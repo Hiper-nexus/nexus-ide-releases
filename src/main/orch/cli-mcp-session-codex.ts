@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,6 +7,7 @@ import {
   activateArtifact,
   ensurePrivateDirectory,
   linkSelectedEntries,
+  linkProviderSessionState,
   readTomlObject,
   runtimeServerName,
   withCliMcpArtifactTransaction,
@@ -121,311 +121,143 @@ function codexSkillInventory(roots: readonly string[]): {
 // preserves Codex refresh-token rotation without giving a governed process any
 // real history, thread database, session tree or global application state.
 const CODEX_LIVE_AUTH_STATE = new Set(['auth.json']);
+const CODEX_OPERATOR_PROFILE = new Set([
+  'auth.json',
+  'skills',
+  'plugins',
+  'rules',
+  'AGENTS.md',
+  'models_cache.json',
+]);
 const CODEX_STATE_DATABASE = 'state_5.sqlite';
-const CODEX_SESSIONS_DIRECTORY = 'sessions';
-const CODEX_RESUME_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const CODEX_RESUME_ID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function privateTempPath(target: string): string {
-  return path.join(
-    path.dirname(target),
-    `.${path.basename(target)}.${process.pid}.${randomUUID()}.tmp`,
-  );
-}
+const CODEX_CONVERSATION_DIRECTORIES = ['sessions', 'archived_sessions'];
+const CODEX_CONVERSATION_FILES = {
+  'history.jsonl': '',
+  'session_index.jsonl': '',
+};
+const CODEX_OVERLAY_EXCLUSIONS = new Set([
+  'config.toml',
+  ...CODEX_CONVERSATION_DIRECTORIES,
+  ...Object.keys(CODEX_CONVERSATION_FILES),
+  'state_5.sqlite',
+  'state_5.sqlite-wal',
+  'state_5.sqlite-shm',
+  'logs_2.sqlite',
+  'logs_2.sqlite-wal',
+  'logs_2.sqlite-shm',
+]);
 
-/**
- * Copy one already-resolved provider file through an open descriptor. A size
- * or timestamp change during the copy is treated as an active writer and
- * fails closed instead of publishing a torn rollout.
- */
-function copyPrivateFileAtomic(source: string, target: string): void {
-  ensurePrivateDirectory(path.dirname(target));
-  const tmp = privateTempPath(target);
-  let sourceFd: number | null = null;
-  let targetFd: number | null = null;
-  try {
-    sourceFd = fs.openSync(
-      source,
-      fs.constants.O_RDONLY |
-        (typeof fs.constants.O_NOFOLLOW === 'number'
-          ? fs.constants.O_NOFOLLOW
-          : 0),
-    );
-    const before = fs.fstatSync(sourceFd);
-    if (!before.isFile()) {
-      throw new Error('Codex exact resume rollout is not a regular file');
-    }
-    targetFd = fs.openSync(tmp, 'wx', 0o600);
-    const buffer = Buffer.allocUnsafe(256 * 1_024);
-    let offset = 0;
-    while (offset < before.size) {
-      const length = Math.min(buffer.length, before.size - offset);
-      const read = fs.readSync(sourceFd, buffer, 0, length, offset);
-      if (read === 0) {
-        throw new Error('Codex exact resume rollout changed during snapshot');
-      }
-      let written = 0;
-      while (written < read) {
-        const count = fs.writeSync(
-          targetFd,
-          buffer,
-          written,
-          read - written,
-          offset + written,
-        );
-        if (count === 0) {
-          throw new Error('Codex exact resume rollout copy made no progress');
-        }
-        written += count;
-      }
-      offset += read;
-    }
-    const after = fs.fstatSync(sourceFd);
-    if (
-      after.size !== before.size ||
-      after.mtimeMs !== before.mtimeMs ||
-      after.ctimeMs !== before.ctimeMs ||
-      after.ino !== before.ino
-    ) {
-      throw new Error('Codex exact resume rollout changed during snapshot');
-    }
-    fs.fsyncSync(targetFd);
-    fs.closeSync(targetFd);
-    targetFd = null;
-    fs.closeSync(sourceFd);
-    sourceFd = null;
-    fs.renameSync(tmp, target);
-    fs.chmodSync(target, 0o600);
-  } catch (error) {
-    if (targetFd !== null) {
-      try {
-        fs.closeSync(targetFd);
-      } catch {
-        // Preserve the original failure.
-      }
-    }
-    if (sourceFd !== null) {
-      try {
-        fs.closeSync(sourceFd);
-      } catch {
-        // Preserve the original failure.
-      }
-    }
-    fs.rmSync(tmp, { force: true });
-    throw error;
-  }
-}
-
-function sqliteTableNames(db: Database.Database): Set<string> {
-  const rows = db
-    .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
-    .all() as Array<{ name: string }>;
-  return new Set(rows.map((row) => row.name));
-}
-
-/**
- * Materialize only the main-selected Codex thread into the private profile.
- *
- * `VACUUM INTO` is SQLite's transactionally consistent snapshot operation and
- * includes committed WAL content without ever linking the provider WAL/SHM.
- * The private copy is then reduced to the exact thread and repointed at the
- * one privately copied rollout before Codex can start.
- */
-function materializeCodexExactResumeState(options: {
-  providerHome: string;
-  artifactDir: string;
-  sessionId: string;
-}): void {
-  if (!CODEX_RESUME_ID.test(options.sessionId)) {
+/** Rebind only the requested checkout thread after its old overlay was purged. */
+function prepareCodexExactResume(
+  stateHome: string,
+  sessionId: string,
+  governed: boolean,
+): void {
+  if (!CODEX_RESUME_ID.test(sessionId)) {
     throw new Error('Codex exact resume session id is invalid');
   }
-
-  let providerRoot: string;
-  let sessionsRoot: string;
-  let sourceDatabase: string;
-  try {
-    providerRoot = fs.realpathSync.native(options.providerHome);
-    sourceDatabase = fs.realpathSync.native(
-      path.join(providerRoot, CODEX_STATE_DATABASE),
-    );
-    sessionsRoot = fs.realpathSync.native(
-      path.join(providerRoot, CODEX_SESSIONS_DIRECTORY),
-    );
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT' || code === 'ENOTDIR') {
-      throw new Error(
-        'Codex exact resume state database or sessions directory is unavailable',
-      );
-    }
-    throw error;
+  const databasePath = path.join(stateHome, CODEX_STATE_DATABASE);
+  if (!fs.existsSync(databasePath)) {
+    throw new Error('Codex exact resume state database is unavailable');
   }
-  if (
-    !pathBelongsTo(providerRoot, sourceDatabase) ||
-    !pathBelongsTo(providerRoot, sessionsRoot) ||
-    !fs.statSync(sourceDatabase).isFile() ||
-    !fs.statSync(sessionsRoot).isDirectory()
-  ) {
-    throw new Error('Codex exact resume state escapes its provider home');
+  if (fs.lstatSync(databasePath).isSymbolicLink()) {
+    throw new Error('Codex exact resume state database must not be a symlink');
   }
-
-  const targetDatabase = path.join(
-    options.artifactDir,
-    CODEX_STATE_DATABASE,
-  );
-  const temporaryDatabase = privateTempPath(targetDatabase);
-  let sourceDb: Database.Database | null = null;
-  let privateDb: Database.Database | null = null;
+  const db = new Database(databasePath, { fileMustExist: true });
   try {
-    sourceDb = new Database(sourceDatabase, {
-      readonly: true,
-      fileMustExist: true,
-    });
-    sourceDb.pragma('busy_timeout = 5000');
-    sourceDb.prepare('VACUUM INTO ?').run(temporaryDatabase);
-    sourceDb.close();
-    sourceDb = null;
-    fs.chmodSync(temporaryDatabase, 0o600);
-
-    privateDb = new Database(temporaryDatabase, { fileMustExist: true });
-    privateDb.pragma('busy_timeout = 5000');
-    const tables = sqliteTableNames(privateDb);
-    if (!tables.has('threads') || !tables.has('backfill_state')) {
-      throw new Error('Codex exact resume database schema is incomplete');
-    }
-    const reviewedTables = new Set([
-      '_sqlx_migrations',
-      'backfill_state',
-      'external_agent_config_imports',
-      'remote_control_enrollments',
-      'sqlite_sequence',
-      'thread_dynamic_tools',
-      'thread_spawn_edges',
-      'threads',
-    ]);
-    const unknownTables = [...tables].filter(
-      (table) => !reviewedTables.has(table),
-    );
-    if (unknownTables.length > 0) {
-      throw new Error(
-        'Codex exact resume database schema contains unreviewed state',
-      );
-    }
-    const backfill = privateDb
-      .prepare('SELECT status FROM backfill_state WHERE id = 1')
-      .get() as { status?: unknown } | undefined;
-    if (backfill?.status !== 'complete') {
-      throw new Error('Codex exact resume database backfill is incomplete');
-    }
-    const thread = privateDb
+    db.pragma('busy_timeout = 5000');
+    const thread = db
       .prepare('SELECT rollout_path FROM threads WHERE id = ?')
-      .get(options.sessionId) as { rollout_path?: unknown } | undefined;
-    if (
-      !thread ||
-      typeof thread.rollout_path !== 'string' ||
-      !thread.rollout_path.trim()
-    ) {
+      .get(sessionId) as { rollout_path?: unknown } | undefined;
+    if (!thread || typeof thread.rollout_path !== 'string') {
       throw new Error('Codex exact resume thread is unavailable');
     }
-
-    const recordedRollout = path.isAbsolute(thread.rollout_path)
-      ? path.resolve(thread.rollout_path)
-      : path.resolve(providerRoot, thread.rollout_path);
-    let sourceRollout: string;
+    // Codex records an absolute CODEX_HOME path. Only use its relative suffix;
+    // never read the old overlay or import a rollout from the native profile.
+    const parts = thread.rollout_path.split(path.sep);
+    const sessionsIndex = parts.findLastIndex((part) =>
+      CODEX_CONVERSATION_DIRECTORIES.includes(part),
+    );
+    if (sessionsIndex < 0)
+      throw new Error('Codex exact resume rollout is unavailable');
+    const sessionsRoot = fs.realpathSync.native(
+      path.join(stateHome, parts[sessionsIndex]),
+    );
+    let rollout: string;
     try {
-      sourceRollout = fs.realpathSync.native(recordedRollout);
+      rollout = fs.realpathSync.native(
+        path.join(sessionsRoot, ...parts.slice(sessionsIndex + 1)),
+      );
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code === 'ENOENT' || code === 'ENOTDIR') {
-        throw new Error('Codex exact resume rollout is unavailable');
+        throw new Error('Codex exact resume rollout is unavailable', { cause: error });
       }
       throw error;
     }
     if (
-      !pathBelongsTo(sessionsRoot, sourceRollout) ||
-      !fs.statSync(sourceRollout).isFile()
+      !pathBelongsTo(sessionsRoot, rollout) ||
+      !fs.statSync(rollout).isFile()
     ) {
-      throw new Error(
-        'Codex exact resume rollout escapes its provider sessions directory',
+      throw new Error('Codex exact resume rollout escapes checkout sessions');
+    }
+    const update = db
+      .prepare(
+        'UPDATE threads SET rollout_path = ? WHERE id = ? AND rollout_path = ?',
+      )
+      .run(rollout, sessionId, thread.rollout_path);
+    if (update.changes !== 1)
+      throw new Error('Codex exact resume thread changed during preparation');
+    // Persisted dynamic tools are part of the old provider capability surface,
+    // not transcript continuity. A governed resume must not resurrect them.
+    if (
+      governed &&
+      db
+        .prepare(
+          "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'thread_dynamic_tools'",
+        )
+        .get()
+    ) {
+      db.prepare('DELETE FROM thread_dynamic_tools WHERE thread_id = ?').run(
+        sessionId,
       );
     }
-    const rolloutRelative = path.relative(sessionsRoot, sourceRollout);
-    const privateRollout = path.join(
-      options.artifactDir,
-      CODEX_SESSIONS_DIRECTORY,
-      rolloutRelative,
-    );
-    copyPrivateFileAtomic(sourceRollout, privateRollout);
-
-    const reduceSnapshot = privateDb.transaction(() => {
-      // Dynamic/account tools and remote-control state are not session
-      // continuity. They are deliberately removed even for the retained
-      // thread; the private config exposes only the Nexus MCP surface.
-      if (tables.has('thread_dynamic_tools')) {
-        privateDb!.prepare('DELETE FROM thread_dynamic_tools').run();
-      }
-      if (tables.has('thread_spawn_edges')) {
-        privateDb!.prepare('DELETE FROM thread_spawn_edges').run();
-      }
-      if (tables.has('external_agent_config_imports')) {
-        privateDb!.prepare('DELETE FROM external_agent_config_imports').run();
-      }
-      if (tables.has('remote_control_enrollments')) {
-        privateDb!.prepare('DELETE FROM remote_control_enrollments').run();
-      }
-      const backfillColumns = new Set(
-        (
-          privateDb!.pragma('table_info(backfill_state)') as Array<{
-            name: string;
-          }>
-        ).map((column) => column.name),
-      );
-      if (backfillColumns.has('last_watermark')) {
-        privateDb!
-          .prepare('UPDATE backfill_state SET last_watermark = NULL')
-          .run();
-      }
-      privateDb!.prepare('DELETE FROM threads WHERE id <> ?').run(
-        options.sessionId,
-      );
-      const updated = privateDb!
-        .prepare('UPDATE threads SET rollout_path = ? WHERE id = ?')
-        .run(privateRollout, options.sessionId);
-      if (updated.changes !== 1) {
-        throw new Error('Codex exact resume thread changed during snapshot');
-      }
-    });
-    reduceSnapshot();
-    privateDb.pragma('journal_mode = DELETE');
-    privateDb.exec('VACUUM');
-    const quickCheck = privateDb.pragma('quick_check', {
-      simple: true,
-    }) as unknown;
-    if (quickCheck !== 'ok') {
-      throw new Error('Codex exact resume private database is corrupt');
-    }
-    privateDb.close();
-    privateDb = null;
-
-    fs.rmSync(`${temporaryDatabase}-wal`, { force: true });
-    fs.rmSync(`${temporaryDatabase}-shm`, { force: true });
-    fs.renameSync(temporaryDatabase, targetDatabase);
-    fs.chmodSync(targetDatabase, 0o600);
-  } catch (error) {
-    try {
-      privateDb?.close();
-    } catch {
-      // Preserve the original failure.
-    }
-    try {
-      sourceDb?.close();
-    } catch {
-      // Preserve the original failure.
-    }
-    fs.rmSync(temporaryDatabase, { force: true });
-    fs.rmSync(`${temporaryDatabase}-wal`, { force: true });
-    fs.rmSync(`${temporaryDatabase}-shm`, { force: true });
-    throw error;
+  } finally {
+    db.close();
   }
+}
+
+function prepareCodexConversationState(
+  artifactDir: string,
+  options: CliMcpSessionOptions,
+): string {
+  const stateHome = linkProviderSessionState(
+    'codex',
+    artifactDir,
+    options,
+    CODEX_CONVERSATION_DIRECTORIES,
+    CODEX_CONVERSATION_FILES,
+  );
+  // SQLite opens its journals beside the DB. Reject pre-existing redirects
+  // before launching even a fresh session, not only on the resume path.
+  for (const entry of fs.readdirSync(stateHome, { withFileTypes: true })) {
+    if (
+      /^(state|logs)_\d+\.sqlite(?:-(wal|shm|journal))?$/.test(entry.name) &&
+      entry.isSymbolicLink()
+    ) {
+      throw new Error('Codex checkout database must not be a symlink');
+    }
+  }
+  if (options.codexResumeSessionId)
+    prepareCodexExactResume(
+      stateHome,
+      options.codexResumeSessionId,
+      options.governed === true,
+    );
+  return fs.realpathSync.native(stateHome);
 }
 
 function codexProviderStateRealPaths(
@@ -584,11 +416,14 @@ export function prepareCodexGovernedSession(
       const externalSkillManifests = skillInventory.manifests;
       const shellHome = path.join(artifactDir, 'shell-home');
       const shellTmp = path.join(artifactDir, 'shell-tmp');
-      const sessionStateEntries = CODEX_LIVE_AUTH_STATE;
-      const providerStatePaths = codexProviderStateRealPaths(
-        providerHome,
-        sessionStateEntries,
-      );
+      const providerSessionHome = prepareCodexConversationState(artifactDir, {
+        ...options,
+        governed: true,
+      });
+      const providerStatePaths = [
+        ...codexProviderStateRealPaths(providerHome, CODEX_LIVE_AUTH_STATE),
+        providerSessionHome,
+      ];
       const protectedWritePaths = codexProtectedWritePaths({
         artifactDir,
         processHome: shellHome,
@@ -605,6 +440,7 @@ export function prepareCodexGovernedSession(
           nativeAuthority === 'workspace-write' ? 'write' : 'read',
         [shellHome]: 'write',
         [shellTmp]: 'write',
+        [providerSessionHome]: 'write',
       };
       // The provider profile stays fail-closed and contains no broad platform
       // alias such as `:minimal`. On Darwin the Nexus outer Seatbelt is the
@@ -632,14 +468,7 @@ export function prepareCodexGovernedSession(
 
       ensurePrivateDirectory(shellHome);
       ensurePrivateDirectory(shellTmp);
-      linkSelectedEntries(providerHome, artifactDir, sessionStateEntries);
-      if (options.codexResumeSessionId) {
-        materializeCodexExactResumeState({
-          providerHome,
-          artifactDir,
-          sessionId: options.codexResumeSessionId,
-        });
-      }
+      linkSelectedEntries(providerHome, artifactDir, CODEX_LIVE_AUTH_STATE);
       mirrorGovernedSkills(
         'codex',
         home,
@@ -652,6 +481,7 @@ export function prepareCodexGovernedSession(
       // TUI não tenta batchWrite e some o vermelho "Failed to save … config.toml".
       const sealedModel = options.model?.trim() || undefined;
       const config = stringify({
+        sqlite_home: providerSessionHome,
         ...(sealedModel ? { model: sealedModel } : {}),
         default_permissions: permissionProfile,
         shell_environment_policy: {
@@ -752,7 +582,11 @@ export function prepareCodexGovernedSession(
         syncBack: false,
       });
       return {
-        env: { CODEX_HOME: artifactDir },
+        env: {
+          CODEX_HOME: artifactDir,
+          CODEX_SQLITE_HOME: providerSessionHome,
+        },
+        providerSessionHome,
         // Codex 0.145.0: remove the native collaboration tool so only the
         // main-owned Nexus roster can create workers.
         extraArgs: ['--strict-config', '--disable', 'multi_agent'],
@@ -787,11 +621,11 @@ export function prepareCodexGovernedSession(
  */
 export function prepareCodexOperatorMissionHome(
   token: string,
-  options: Pick<
-    CliMcpSessionOptions,
-    'home' | 'providerHome' | 'artifactRoot'
-  > = {},
-): Pick<CliMcpSessionResult, 'env' | 'artifactDir' | 'serverName'> {
+  options: CliMcpSessionOptions & { preserveUserMcp?: boolean } = {},
+): Pick<
+  CliMcpSessionResult,
+  'env' | 'artifactDir' | 'serverName' | 'providerSessionHome'
+> {
   if (!token) throw new Error('Nexus MCP token is required');
   const home = path.resolve(options.home ?? os.homedir());
   const providerHome = path.resolve(
@@ -808,7 +642,17 @@ export function prepareCodexOperatorMissionHome(
     (preparedArtifactDir) => {
       const artifactDir = fs.realpathSync.native(preparedArtifactDir);
       const serverName = runtimeServerName(token);
-      linkSelectedEntries(providerHome, artifactDir, CODEX_LIVE_AUTH_STATE);
+      const providerSessionHome = prepareCodexConversationState(
+        artifactDir,
+        options,
+      );
+      linkSelectedEntries(
+        providerHome,
+        artifactDir,
+        options.preserveUserMcp
+          ? CODEX_OPERATOR_PROFILE
+          : CODEX_LIVE_AUTH_STATE,
+      );
       // Preserve user prefs (model, TUI, notice) but drop ambient MCP servers.
       // A malformed user config degrades to an empty private config — Nexus
       // still injects via argv, so the worker remains callable.
@@ -821,7 +665,7 @@ export function prepareCodexOperatorMissionHome(
       const { mcp_servers: _drop, ...rest } = userConfig;
       writePrivateFileAtomic(
         path.join(artifactDir, 'config.toml'),
-        `${stringify(rest).trimEnd()}\n`,
+        `${stringify({ ...(options.preserveUserMcp ? userConfig : rest), sqlite_home: providerSessionHome }).trimEnd()}\n`,
       );
       // Skills live under the private home so deliverGrantedSkills can land
       // without mutating the operator's real ~/.codex/skills permanently.
@@ -829,13 +673,21 @@ export function prepareCodexOperatorMissionHome(
       activateArtifact(token, {
         artifactDir,
         providerHome,
-        configFiles: ['config.toml'],
+        configFiles: [
+          ...CODEX_OVERLAY_EXCLUSIONS,
+          'shell_snapshots',
+          '.codex-global-state.json',
+        ],
         // Auth may refresh in-pane; sync the linked auth.json back. Never
         // sync the stripped config (it would wipe the user's MCP roster).
         syncBack: true,
       });
       return {
-        env: { CODEX_HOME: artifactDir },
+        env: {
+          CODEX_HOME: artifactDir,
+          CODEX_SQLITE_HOME: providerSessionHome,
+        },
+        providerSessionHome,
         serverName,
         artifactDir,
       };

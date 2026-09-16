@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  prepareCheckoutProviderHome,
   authBlobIsUsable,
   captureNativeAuth,
   compareAuthBlobIdentity,
@@ -386,5 +387,72 @@ describe('managed-credentials', () => {
     } finally {
       setManagedAuthPersister(null);
     }
+  });
+});
+
+
+describe('F-567 checkout provider homes', () => {
+  it.each(['agy', 'devin'] as const)('isolates %s conversations across checkouts and preserves credential links', (kind) => {
+    const root = tempHome();
+    const sourceHome = path.join(root, 'native');
+    const relativeAuth = kind === 'agy' ? 'oauth_creds.json' : path.join('devin', 'credentials.toml');
+    fs.mkdirSync(path.dirname(path.join(sourceHome, relativeAuth)), { recursive: true });
+    fs.writeFileSync(path.join(sourceHome, relativeAuth), 'test-credential');
+    const nativeSessions = path.join(sourceHome, kind === 'agy' ? 'antigravity-cli/conversations' : 'devin/cli');
+    fs.mkdirSync(nativeSessions, { recursive: true });
+    fs.writeFileSync(path.join(nativeSessions, 'sessions.db'), 'external');
+    const options = { userDataPath: path.join(root, 'userData'), checkoutId: 'checkout-a', sourceHome };
+    const first = prepareCheckoutProviderHome(kind, options);
+    const second = prepareCheckoutProviderHome(kind, { ...options, checkoutId: 'checkout-b' });
+    const providerHome = (home: typeof first) => kind === 'agy' ? home.env.GEMINI_CLI_HOME : home.env.XDG_DATA_HOME;
+    expect(first.stateHome).not.toBe(second.stateHome);
+    expect(first.stateHome).toContain(path.join('provider-state', kind, 'checkout-a'));
+    expect(fs.readFileSync(path.join(providerHome(first), relativeAuth), 'utf8')).toBe('test-credential');
+    expect(fs.existsSync(path.join(providerHome(first), kind === 'agy' ? 'antigravity-cli/conversations/sessions.db' : 'devin/cli/sessions.db'))).toBe(false);
+    fs.writeFileSync(path.join(first.stateHome, 'conversation-marker'), 'pane');
+    expect(prepareCheckoutProviderHome(kind, options).stateHome).toBe(first.stateHome);
+    expect(fs.existsSync(path.join(second.stateHome, 'conversation-marker'))).toBe(false);
+    expect(prepareCheckoutProviderHome(kind, { ...options, sourceHome: path.join(root, 'other-account') }).stateHome).not.toBe(first.stateHome);
+    if (kind === 'agy') expect(first.env.GEMINI_CLI_HOME).toBe(path.join(first.env.HOME, '.gemini'));
+  });
+
+  it('keeps AGY skills visible when the spawn hook mirrors them after home preparation', () => {
+    const root = tempHome();
+    const sourceHome = path.join(root, 'native');
+    const options = { userDataPath: path.join(root, 'userData'), checkoutId: 'checkout-skills', sourceHome };
+    const home = prepareCheckoutProviderHome('agy', options);
+    const skills = path.join(sourceHome, 'config', 'skills');
+    fs.mkdirSync(skills, { recursive: true });
+    fs.writeFileSync(path.join(skills, 'SKILL.md'), 'synthetic skill');
+    expect(fs.readFileSync(path.join(home.env.GEMINI_CLI_HOME, 'config', 'skills', 'SKILL.md'), 'utf8')).toBe('synthetic skill');
+    expect(home.sharedReadPaths).toContain(skills);
+    expect(home.sharedFiles).not.toContain(skills);
+    expect(prepareCheckoutProviderHome('agy', options).stateHome).toBe(home.stateHome);
+  });
+
+  it('refreshes a Windows-style credential copy from the selected account on respawn', () => {
+    const root = tempHome();
+    const sourceHome = path.join(root, 'native');
+    fs.mkdirSync(path.join(sourceHome, 'devin'), { recursive: true });
+    const source = path.join(sourceHome, 'devin', 'credentials.toml');
+    fs.writeFileSync(source, 'original-test-credential');
+    const options = { userDataPath: path.join(root, 'userData'), checkoutId: 'checkout-auth', sourceHome };
+    const home = prepareCheckoutProviderHome('devin', options);
+    const target = path.join(home.env.XDG_DATA_HOME, 'devin', 'credentials.toml');
+    fs.unlinkSync(target);
+    fs.writeFileSync(target, 'original-test-credential');
+    fs.writeFileSync(source, 'updated-test-credential');
+    prepareCheckoutProviderHome('devin', options);
+    expect(fs.readFileSync(target, 'utf8')).toBe('updated-test-credential');
+    expect(() => prepareCheckoutProviderHome('devin', { ...options, sourceHome: 'relative' })).toThrow(/absolute/);
+  });
+
+  it('rejects checkout traversal and linked state roots', () => {
+    const root = tempHome();
+    const options = { userDataPath: root, checkoutId: '../escape', sourceHome: path.join(root, 'native') };
+    expect(() => prepareCheckoutProviderHome('devin', options)).toThrow(/checkout/i);
+    fs.mkdirSync(path.join(root, 'external'));
+    fs.symlinkSync(path.join(root, 'external'), path.join(root, 'provider-state'), 'junction');
+    expect(() => prepareCheckoutProviderHome('devin', { ...options, checkoutId: 'checkout-a' })).toThrow(/symlink/i);
   });
 });

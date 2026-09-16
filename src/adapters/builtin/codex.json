@@ -31,10 +31,7 @@
       "{{PROMPT}}"
     ],
     "ptyRequired": true,
-    "resumeArgs": [
-      "resume",
-      "--last"
-    ],
+    "resumeArgs": [],
     "resumeIdArgs": [
       "resume"
     ],

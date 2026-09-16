@@ -696,21 +696,22 @@ describe('builtin adapters', () => {
   });
 
   it.each([
-    ['agy', ['--continue'], ['--conversation']],
-    ['claude', ['--continue'], ['--resume']],
-    ['codex', ['resume', '--last'], ['resume']],
-    ['glm', ['--continue'], ['--resume']],
-    ['glm-flash', ['--continue'], ['--resume']],
-    ['grok', ['--continue'], ['--resume']],
-    ['kimi', ['--continue'], ['--session']],
-    ['longcat', ['--continue'], ['--resume']],
-    ['opencode', ['--continue'], ['--session']],
-    ['openclaude', ['--continue'], ['--resume']],
+    ['agy', ['--conversation']],
+    ['claude', ['--resume']],
+    ['codex', ['resume']],
+    ['glm', ['--resume']],
+    ['glm-flash', ['--resume']],
+    ['grok', ['--resume']],
+    ['kimi', ['--session']],
+    ['longcat', ['--resume']],
+    ['opencode', ['--session']],
+    ['openclaude', ['--resume']],
   ])(
-    '%s resumes the latest or an exact provider session with current flags',
-    (id, latest, exact) => {
-      expect(builtin(id)?.spawn?.resumeArgs).toEqual(latest);
-      expect(builtin(id)?.spawn?.resumeIdArgs).toEqual(exact);
+    '%s disables latest resume and preserves exact provider session ID flags',
+    (id, exact) => {
+      const adapter = cliPtyAdapterSchema.parse(builtin(id));
+      expect(adapter.spawn.resumeArgs).toEqual([]);
+      expect(adapter.spawn.resumeIdArgs).toEqual(exact);
     },
   );
 

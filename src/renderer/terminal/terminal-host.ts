@@ -285,7 +285,7 @@ function reportPaneResumeIncident(
   });
   useToastStore.getState().push(
     recovered ? 'warn' : 'error',
-    recovered ? 'Doctor recuperando sessão do pane' : 'Doctor interrompeu o loop de retomada',
+    recovered ? 'Doctor recuperando sessão do pane' : 'Falha ao retomar a sessão',
     message,
   );
 }
@@ -985,12 +985,9 @@ function startSpawn(
         if (res.resumeMode === 'exact') {
           console.log(`[nexus] sessão exata recuperada para o pane ${pane.id}`);
         } else {
-          const message =
-            res.resumeMode === 'fresh-context'
-              ? '[nexus] a sessão anterior morreu com o app — a missão continuará em contexto novo.'
-              : res.resumeMode === 'latest'
-                ? '[nexus] retomada aproximada: a CLI abriu a conversa mais recente deste workspace.'
-                : '[nexus] nova sessão: esta CLI não oferece recuperação nativa.';
+          const message = missionId && res.resumeMode === 'fresh-context'
+            ? '[nexus] a sessão anterior não está disponível — a missão continuará em contexto novo.'
+            : '[nexus] nova conversa: não há uma sessão anterior confirmada para este pane.';
           host.term.writeln(`\r\n\x1b[33m${message}\x1b[0m`);
         }
       }
@@ -1045,71 +1042,22 @@ function startSpawn(
       host.cleanups.push(
         window.nexus.pty.onExit(res.sessionId, ({ exitCode }) => {
           flushTerminalOutput(host.term);
-          const staleExactResume =
+          const failedExactResume =
             resume &&
-            !missionId &&
-            !resumeLatestOnly &&
             res.resumeMode === 'exact' &&
             exitCode !== 0 &&
             Date.now() - spawnedAt < 10_000;
-          if (staleExactResume) {
-            // The CLI validates provider conversation ids only after spawn, so
-            // main cannot know synchronously that a captured id expired. Fall
-            // back once to the adapter's latest-session command.
-            const staleSessionId = res.sessionId;
-            reportPaneResumeIncident(
-              pane,
-              'stale-exact-id',
-              'O ID exato expirou; tentando uma única retomada pela conversa mais recente.',
-              true,
-            );
-            setTimeout(() => {
-              if (host.disposed || host.sessionId !== staleSessionId) return;
-              host.cleanups.forEach((cleanup) => cleanup());
-              host.cleanups = [];
-              setHostSession(host, pane.id, null);
-              host.spawnStarted = false;
-              host.term.writeln(
-                '\r\n\x1b[33m[nexus] ID exato expirou — tentando a conversa mais recente…\x1b[0m',
-              );
-              void startSpawn(pane, host, true, true);
-            }, 0);
-            return;
+          if (failedExactResume) {
+            const message = missionId
+              ? 'Falha ao retomar a sessão desta missão. Retome a missão pelo card.'
+              : 'Falha ao retomar a sessão. Abra + Pane e selecione o agente para iniciar uma nova conversa.';
+            reportPaneResumeIncident(pane, 'stale-exact-id', message, false);
+            host.term.writeln(`\r\n\x1b[31m[nexus] ${message}\x1b[0m`);
           }
-          const failedMissionExactResume =
-            resume &&
-            Boolean(missionId) &&
-            res.resumeMode === 'exact' &&
-            exitCode !== 0 &&
-            Date.now() - spawnedAt < 10_000;
-          if (failedMissionExactResume) {
-            reportPaneResumeIncident(
-              pane,
-              'resume-fallback-failed',
-              'A sessão exata desta missão não pôde ser recuperada. O Nexus não abriu a conversa mais recente de outro pane.',
-              false,
-            );
-          }
-          const failedFallback =
-            resume &&
-            exitCode !== 0 &&
-            Date.now() - spawnedAt < 10_000 &&
-            (resumeLatestOnly || res.resumeMode === 'latest');
           setHostSession(host, pane.id, null);
           // Latch solto: sem isto o host fica em exited eterno e o teclado
           // morre em silêncio (onData early-return quando sessionId=null).
           host.spawnStarted = false;
-          if (failedFallback) {
-            reportPaneResumeIncident(
-              pane,
-              'resume-fallback-failed',
-              'A conversa exata e a conversa mais recente não puderam ser recuperadas. O pane foi preservado e o retry automático foi encerrado.',
-              false,
-            );
-            host.term.writeln(
-              '\r\n\x1b[31m[nexus doctor] recuperação esgotada sem loop; inicie uma nova sessão neste pane.\x1b[0m',
-            );
-          }
           // Linha própria com \r\n em ambos os lados: o aviso de backlog 2 MB
           // pode cair no meio do buffer e colar "process exited" com "output
           // because the backlog…" (print do operador 2026-08-07 HiperGO).

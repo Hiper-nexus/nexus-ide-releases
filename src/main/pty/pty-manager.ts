@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import type { WebContents } from "electron";
+import { app, type WebContents } from "electron";
 import {
   argvHonorsModel,
   firstDeclaredModel,
@@ -56,7 +56,11 @@ import {
   cleanupShellIntegrationPaths,
   shellIntegrationSpawnArgs,
 } from "../terminal/shell-integration-env";
-import { scrubManagedSessionAuth } from "../adapters/managed-credentials";
+import {
+  MANAGED_PROVIDER_SPECS,
+  prepareCheckoutProviderHome,
+  scrubManagedSessionAuth,
+} from "../adapters/managed-credentials";
 import {
   resolveSpawnBinary,
   resolveWindowsCodexNpmShimLaunch,
@@ -97,7 +101,6 @@ import {
   resolveAdvisoryProcessSandbox,
 } from "./advisory-process-sandbox";
 import {
-  resolveAgyNativeProfile,
   resolveNativeUserHome,
 } from "./agy-native-profile";
 import { resolveMissionCliExecutionPolicy } from "./mission-cli-execution-policy";
@@ -1389,7 +1392,6 @@ export function spawnAgentSession(
   // authority, so the pane respawns FRESH under the same contract (no resume
   // argv) and the renderer delivers the mission continuity path. Same
   // philosophy as the cross-account failover above.
-  let persistedMissionFreshContext = false;
   if (req.resume) {
     if (authority.source === "persisted-pane") {
       const captured =
@@ -1408,7 +1410,6 @@ export function spawnAgentSession(
         trustedResumeArgs = [...adapter.spawn.resumeIdArgs!, captured];
         resumeMode = "exact";
       } else if (authority.context?.missionId) {
-        persistedMissionFreshContext = true;
         resumeMode = "fresh-context";
       } else {
         // Authority anomaly, NOT physical death: a persisted pane without a
@@ -1434,11 +1435,9 @@ export function spawnAgentSession(
         args.push(...adapter.spawn.resumeIdArgs!, captured);
         trustedResumeArgs = [...adapter.spawn.resumeIdArgs!, captured];
         resumeMode = "exact";
-      } else if (adapter.spawn.resumeArgs.length > 0) {
-        args.push(...adapter.spawn.resumeArgs);
-        resumeMode = "latest";
       } else {
-        resumeMode = "unsupported";
+        // No captured ID is authority to select another pane's latest conversation.
+        resumeMode = "fresh-context";
       }
     }
   }
@@ -1446,8 +1445,7 @@ export function spawnAgentSession(
   // True only when argv actually asks the provider to resume a conversation.
   // The fresh-context fallback is a FRESH spawn under the sealed contract, so
   // it dictates a new provider session id like any other fresh spawn.
-  const providerResumeRequested =
-    req.resume === true && !persistedMissionFreshContext;
+  const providerResumeRequested = resumeMode === "exact";
 
   // Telemetria real: dita o session id do provider em spawns FRESCOS (num
   // resume o CLI decide o id — a atribuição fica com o watcher de transcript).
@@ -1533,6 +1531,20 @@ export function spawnAgentSession(
   // autentica o tráfego que agora vai para lá.
   applyGatewayCredential(env, adapter, gatewayBaseUrl, gatewayApiKey);
   logGatewayRouting(adapter, gatewayBaseUrl, gatewayApiKey);
+
+  const checkoutProviderHome = adapter.id === "agy" || adapter.id === "devin"
+    ? prepareCheckoutProviderHome(adapter.id, {
+        userDataPath: app.getPath("userData"),
+        checkoutId: authority.scope.checkoutId,
+        sourceHome: overrides.keyEnv?.[MANAGED_PROVIDER_SPECS[adapter.id].homeEnvVar]
+          ?? MANAGED_PROVIDER_SPECS[adapter.id].systemHome(
+            adapter.id === "agy" ? resolveNativeUserHome({ inheritedHome: env.HOME }) : os.homedir(),
+          )!,
+      })
+    : null;
+  if (checkoutProviderHome) {
+    for (const target of spawnEnvs) Object.assign(target, checkoutProviderHome.env);
+  }
 
   // Orchestration decoration: MCP endpoint env, optional HOME override and
   // extra argv (e.g. --mcp-config). The hook is trusted main-process code.
@@ -1637,13 +1649,19 @@ export function spawnAgentSession(
     Object.assign(env, decoration.env);
     args.push(...decoration.extraArgs);
   }
-  // Managed-home env from keyEnv must survive overlays that only care about MCP
-  // config content (e.g. OpenCode XDG_DATA_HOME). Grok/Kimi intentionally
-  // replace *_HOME with an ephemeral overlay built FROM that managed home.
+  // Codex preparation below still needs the selected account's home. OpenCode
+  // decoration already projected that account's auth into checkout storage.
   for (const homeKey of ["CODEX_HOME", "XDG_DATA_HOME"] as const) {
+    if (
+      homeKey === "XDG_DATA_HOME" &&
+      adapter.id === "opencode" &&
+      decoration?.env.XDG_DATA_HOME
+    ) continue;
     const value = overrides.keyEnv?.[homeKey];
     if (value) env[homeKey] = value;
   }
+  // F-567: MCP decoration and account env must not restore native conversation stores.
+  if (checkoutProviderHome) Object.assign(env, checkoutProviderHome.env);
   const gatedSpawn = requiresSpawnGate(authority.context);
   const governedProfile = Boolean(
     decoration &&
@@ -1663,6 +1681,8 @@ export function spawnAgentSession(
       const policy = resolveGovernedCliProfile(token);
       if (adapter.id === "codex") {
         const codex = prepareCodexGovernedSession(token, {
+          userDataPath: app.getPath("userData"),
+          checkoutId: authority.scope.checkoutId,
           providerHome: env.CODEX_HOME,
           allowedSkills: [...policy.allowedSkills],
           cwd,
@@ -1690,33 +1710,34 @@ export function spawnAgentSession(
       decoration?.onSpawnFailed?.();
       throw error;
     }
-  } else if (
-    decoration &&
-    adapter.id === "codex" &&
-    gatedSpawn &&
-    executionPolicy.isFrictionless
-  ) {
-    // Autopiloto: não prepara o perfil governado completo (Seatbelt/deny),
-    // mas AINDA isola mcp_servers ambient do ~/.codex real — senão cloudflare/
-    // figma/higgsfield não autenticados travam o boot antes do prompt. Skills
-    // concedidas caem no CODEX_HOME privado, não no perfil do operador.
+  } else if (decoration && adapter.id === "codex") {
+    // Every decorated Codex pane uses checkout conversations. Direct panes
+    // retain the operator's MCP/profile; gated workers receive granted skills.
     try {
       const token = decoration.env.NEXUS_MCP_TOKEN;
       if (!token) {
-        throw new Error("gated CLI spawn is missing its main-owned bearer");
+        throw new Error("Codex CLI spawn is missing its main-owned bearer");
       }
       const operatorHome = prepareCodexOperatorMissionHome(token, {
+        userDataPath: app.getPath("userData"),
+        checkoutId: authority.scope.checkoutId,
+        codexResumeSessionId: resumeMode === "exact" ? trustedResumeArgs[trustedResumeArgs.length - 1] : undefined,
         providerHome: env.CODEX_HOME,
+        preserveUserMcp: !gatedSpawn,
+        cwd,
+        workspaceRoot: authority.scope.rootRealPath,
       });
       Object.assign(env, operatorHome.env);
-      const governedProfile = resolveGovernedCliProfile(token);
-      deliverGrantedSkillsToProviderHome(
-        "codex",
-        os.homedir(),
-        path.join(operatorHome.env.CODEX_HOME, "skills"),
-        governedProfile.allowedSkills,
-        governedProfile.allowedTools,
-      );
+      if (gatedSpawn) {
+        const governedProfile = resolveGovernedCliProfile(token);
+        deliverGrantedSkillsToProviderHome(
+          "codex",
+          os.homedir(),
+          path.join(operatorHome.env.CODEX_HOME, "skills"),
+          governedProfile.allowedSkills,
+          governedProfile.allowedTools,
+        );
+      }
     } catch (error) {
       // Isolamento de MCP ambient é disponibilidade do worker, não
       // confinamento: falha visível + spawn abortado bate fail-closed em
@@ -1904,22 +1925,9 @@ export function spawnAgentSession(
     ) {
       args.push("--search");
     }
-    if (
-      executionPolicy.isFrictionless &&
-      adapter.id === "agy" &&
-      isMissionParticipant
-    ) {
-      // AGY authenticates against the native macOS account profile. Release
-      // E2E runs Electron with an isolated HOME, so letting that environment
-      // escape into the provider makes the preflight see a valid Keychain
-      // session while the actual CLI falls back to OAuth and waits forever.
-      // Resolve only HOME here: frictionless mode must still let a user open
-      // AGY to authenticate when its provider-state directories do not exist.
-      const nativeHome = resolveNativeUserHome({ inheritedHome: env.HOME });
-      env.HOME = nativeHome;
-      env.USERPROFILE = nativeHome;
-      delete env.GEMINI_CLI_HOME;
-    }
+    // F-567: keep AGY HOME and GEMINI_CLI_HOME checkout-owned even in missions.
+    // Current AGY uses HOME; auth files remain linked to the managed/native source.
+
   } catch (error) {
     decoration?.onSpawnFailed?.();
     throw error;
@@ -2054,24 +2062,20 @@ export function spawnAgentSession(
     //    the real HOME as processHome, and grant only the Nexus ephemeral
     //    artifact tree. The real home is NEVER the writable sandbox root.
     try {
-      const isAgyNativeProfile = adapter.id === "agy";
-      const agyNativeProfile = isAgyNativeProfile
-        ? resolveAgyNativeProfile({ inheritedHome: spawnEnv.HOME })
-        : null;
-      const realHome = agyNativeProfile?.processHome ?? os.homedir();
-      // AGY 1.1 resolves OAuth/config from the OS account profile, never from
-      // Electron's isolated HOME or the historical AGY env override.
-      if (isAgyNativeProfile) delete spawnEnv.GEMINI_CLI_HOME;
+      const isAgy = adapter.id === "agy";
+      const realHome = isAgy
+        ? resolveNativeUserHome({ inheritedHome: spawnEnv.HOME })
+        : os.homedir();
       const decorationOverrodeHome = Boolean(
-        !isAgyNativeProfile && decoration?.env.HOME,
+        !isAgy && decoration?.env.HOME,
       );
       // Ignore any legacy AGY overlay runtime. Its writable scratch is fresh;
-      // the native profile is exposed only through exact Seatbelt grants.
-      let advisoryRuntimeDir = isAgyNativeProfile
+      // only shared auth/config files and checkout state receive exact grants.
+      let advisoryRuntimeDir = isAgy
         ? undefined
         : decoration?.sandboxDir;
       let advisoryProcessHome =
-        agyNativeProfile?.processHome ?? decoration?.processHome;
+        (isAgy ? spawnEnv.HOME : undefined) ?? decoration?.processHome;
       const advisoryEphemeralGrants: string[] = [];
       const advisoryReadOnlyGrants: string[] = [];
       if (!advisoryRuntimeDir && !decorationOverrodeHome) {
@@ -2085,7 +2089,7 @@ export function spawnAgentSession(
         // that points into the Nexus ephemeral tree (never HOME). Grant exactly
         // those per-session dirs — not the whole ephemeral root, so one advisor
         // cannot read a sibling session's bearer-bearing config.
-        if (!isAgyNativeProfile) {
+        if (!isAgy) {
           const ephemeralRoot = path.join(realHome, ".nexus", "ephemeral");
           for (const envVar of [
             "KIMI_CODE_HOME",
@@ -2115,7 +2119,7 @@ export function spawnAgentSession(
       // Keychain. AGY 1.1 reads the Keychain DB file directly — not only via
       // securityd — so without a read grant the CLI silently falls into the
       // OAuth re-login flow (physically verified). READ-ONLY, never writable.
-      if (advisoryProcessHome && !isAgyNativeProfile) {
+      if (advisoryProcessHome) {
         const keychainsDir = path.join(realHome, "Library", "Keychains");
         try {
           if (fs.statSync(keychainsDir).isDirectory()) {
@@ -2134,22 +2138,18 @@ export function spawnAgentSession(
         processHome: advisoryProcessHome,
         runtimeDir: advisoryRuntimeDir,
         providerStateReadPaths: [
-          ...(agyNativeProfile
-            ? agyNativeProfile.providerStateReadPaths
-            : [
-                ...(decoration?.providerStateReadPaths ?? []),
-                ...advisoryEphemeralGrants,
-                ...advisoryReadOnlyGrants,
-              ]),
+          ...(checkoutProviderHome
+            ? [checkoutProviderHome.stateHome, ...checkoutProviderHome.sharedReadPaths]
+            : (decoration?.providerStateReadPaths ?? [])),
+          ...advisoryEphemeralGrants,
+          ...advisoryReadOnlyGrants,
           ...(decoration?.missionShimReadPaths ?? []),
         ],
         providerStateWritePaths: [
-          ...(agyNativeProfile
-            ? agyNativeProfile.providerStateWritePaths
-            : [
-                ...(decoration?.providerStateWritePaths ?? []),
-                ...advisoryEphemeralGrants,
-              ]),
+          ...(checkoutProviderHome
+            ? [checkoutProviderHome.stateHome]
+            : (decoration?.providerStateWritePaths ?? [])),
+          ...advisoryEphemeralGrants,
           ...(decoration?.missionShimWritePaths ?? []),
         ],
       });
@@ -2183,11 +2183,13 @@ export function spawnAgentSession(
           extraReadPaths: [
             ...advisorySandbox.extraWritePaths,
             ...advisorySandbox.providerStateReadPaths,
+            ...(checkoutProviderHome?.sharedFiles ?? []),
             ...(decoration?.attachmentReadPaths ?? []),
           ],
           extraWritePaths: [
             ...advisorySandbox.extraWritePaths,
             ...advisorySandbox.providerStateWritePaths,
+            ...(checkoutProviderHome?.sharedFiles ?? []),
           ],
         });
         spawnFile = plan.file;

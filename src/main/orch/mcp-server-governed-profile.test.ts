@@ -249,6 +249,34 @@ afterEach(() => {
 });
 
 describe('mcp-server governed CLI profile wiring', () => {
+  it.each([false, true])('binds OpenCode data and exact auth grants to Main checkout identity (governed=%s)', (governed) => {
+    const home = path.join(tempRoot(), 'home');
+    const cwd = path.join(home, 'workspace');
+    const providerHome = path.join(home, 'managed-opencode');
+    fs.mkdirSync(cwd, { recursive: true });
+    write(path.join(providerHome, 'opencode', 'auth.json'), '{"account":"selected"}');
+    write(path.join(providerHome, 'opencode', 'opencode.db'), 'external database');
+    vi.stubEnv('HOME', home);
+    const decoration = prepareAgentSpawnDecoration(
+      adapter('opencode'), { kind: 'cli-agent', cols: 80, rows: 24 },
+      authority(cwd, governed), { XDG_DATA_HOME: providerHome },
+    );
+    if (!decoration) throw new Error('expected OpenCode decoration');
+    try {
+      const state = path.join(home, '.nexus-test-user-data', 'provider-state', 'opencode', 'checkout-wiring');
+      const auth = path.join(providerHome, 'opencode', 'auth.json');
+      expect(decoration.env.XDG_DATA_HOME.startsWith(state + path.sep)).toBe(true);
+      expect(decoration.env.XDG_STATE_HOME).toBe(path.join(state, 'state'));
+      expect(decoration.env.OPENCODE_DB).toBe(path.join(state, 'database', 'opencode.db'));
+      expect(fs.readFileSync(path.join(decoration.env.XDG_DATA_HOME, 'opencode', 'auth.json'), 'utf8')).toContain('selected');
+      expect(decoration.providerStateReadPaths).toEqual([auth, state]);
+      expect(decoration.providerStateWritePaths).toEqual([auth, state]);
+      expect(fs.existsSync(decoration.env.OPENCODE_DB)).toBe(false);
+    } finally {
+      decoration.onSpawnFailed?.();
+    }
+  });
+
   it.each(['grok', 'kimi'] as const)('binds %s conversations and sandbox grants to Main checkout identity', (id) => {
     const home = path.join(tempRoot(), 'home');
     const cwd = path.join(home, 'workspace');

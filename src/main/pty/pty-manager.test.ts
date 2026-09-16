@@ -2,8 +2,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { WebContents } from "electron";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { app, type WebContents } from "electron";
+
+vi.mock("electron", async () => {
+  const fs = await import("node:fs");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), "f567-pty-userdata-"));
+  return { app: { getPath: () => userData } };
+});
 import { parse } from "smol-toml";
 import { BUILTIN_ADAPTERS } from "../../adapters/builtin";
 import { cliPtyAdapterSchema } from "../../shared/adapter-types";
@@ -234,6 +242,8 @@ import {
 } from "../orch/gate";
 import { installMcpSessionTerminationRevocation } from "../orch/mcp-session-revocation";
 import { cleanupCliMcpSession } from "../orch/cli-mcp-session-config";
+
+afterAll(() => fs.rmSync(app.getPath("userData"), { recursive: true, force: true }));
 
 beforeEach(() => {
   windowsNpmShimLaunch.launch = null;
@@ -570,7 +580,11 @@ function installGovernedCodexTestHook(
 }
 
 function seedCodexResumeState(root: string, sessionId: string): void {
-  const codexHome = path.join(root, "home", ".codex");
+  const nativeHome = path.join(root, "home", ".codex");
+  fs.mkdirSync(nativeHome, { recursive: true });
+  fs.writeFileSync(path.join(nativeHome, "auth.json"), "{}");
+  const codexHome = path.join(app.getPath("userData"), "provider-state", "codex", "checkout-test");
+  fs.rmSync(codexHome, { recursive: true, force: true });
   const rollout = path.join(
     codexHome,
     "sessions",
@@ -1350,7 +1364,7 @@ describe("AGY advisory native profile", () => {
   const macosIt = process.platform === "darwin" ? it : it.skip;
 
   macosIt(
-    "keeps the OS account HOME when Electron HOME is isolated and grants only AGY state",
+    "isolates AGY HOME and grants only checkout state, shared config and native Keychain",
     async () => {
       const root = fs.mkdtempSync(
         path.join(os.tmpdir(), "nexus-agy-native-profile-"),
@@ -1420,28 +1434,30 @@ describe("AGY advisory native profile", () => {
 
         expect(spec.file).toBe("/usr/bin/sandbox-exec");
         expect(spec.cwd).toBe(fs.realpathSync.native(worktree));
-        expect(spec.env.HOME).toBe(fs.realpathSync.native(nativeHome));
+        expect(spec.env.HOME).toContain(path.join("provider-state", "agy", "checkout-test"));
         expect(spec.env.HOME).not.toBe(
           fs.realpathSync.native(isolatedElectronHome),
         );
         expect(profile).toContain("(allow network*)");
-        expect(readSection).toContain(
+        expect(readSection).not.toContain(
           `(subpath ${JSON.stringify(fs.realpathSync.native(geminiHome))})`,
         );
         expect(readSection).toContain(
           `(subpath ${JSON.stringify(fs.realpathSync.native(keychains))})`,
         );
-        expect(writeSection).toContain(
+        expect(writeSection).not.toContain(
           `(subpath ${JSON.stringify(fs.realpathSync.native(agyState))})`,
         );
         expect(writeSection).not.toContain(
           `(subpath ${JSON.stringify(fs.realpathSync.native(geminiHome))})`,
         );
+        expect(writeSection).toContain(JSON.stringify(fs.realpathSync(spec.env.HOME!)));
+        expect(readSection).toContain(JSON.stringify(fs.realpathSync(nativeMcpConfig)));
         expect(writeSection).not.toContain(
           `(subpath ${JSON.stringify(fs.realpathSync.native(keychains))})`,
         );
-        expect(spec.args.join(" ")).not.toContain("mcp_config");
-        expect(spec.env.GEMINI_CLI_HOME).toBeUndefined();
+        expect(spec.args.slice(spec.args.indexOf(binary) + 1)).not.toContain("--mcp-config");
+        expect(spec.env.GEMINI_CLI_HOME).toContain(path.join("provider-state", "agy", "checkout-test"));
         expect(fs.readFileSync(nativeMcpConfig).equals(originalMcpConfig)).toBe(
           true,
         );
@@ -1456,7 +1472,7 @@ describe("AGY advisory native profile", () => {
   );
 
   macosIt(
-    "uses the native OS profile for a frictionless read-only AGY worker without Seatbelt",
+    "keeps AGY checkout HOME for a frictionless read-only worker without Seatbelt",
     async () => {
       setSquadCliPolicyLookupForTests(() => "operator-choice");
       const root = fs.mkdtempSync(
@@ -1521,9 +1537,9 @@ describe("AGY advisory native profile", () => {
         );
         expect(spec.args).not.toContain("--prompt-interactive");
         expect(spec.args).not.toContain("/usr/bin/sandbox-exec");
-        expect(spec.env.HOME).toBe(expectedHome);
-        expect(spec.env.USERPROFILE).toBe(expectedHome);
-        expect(spec.env.GEMINI_CLI_HOME).toBeUndefined();
+        expect(spec.env.HOME).not.toBe(expectedHome);
+        expect(spec.env.USERPROFILE).toBe(spec.env.HOME);
+        expect(spec.env.GEMINI_CLI_HOME).toContain(path.join("provider-state", "agy", "checkout-test"));
       } finally {
         if (sessionId) await orchTerminateSession(sessionId);
         userInfoSpy.mockRestore();
@@ -2019,7 +2035,7 @@ describe("entrega física das skills concedidas ao Codex", () => {
 
 describe("cli-agent spawn argv hardening", () => {
   it.runIf(process.platform !== "linux")(
-    "replaces governed Codex CODEX_HOME in the final spawn but preserves direct panes",
+    "isolates governed and direct Codex stores while preserving direct profile settings",
     () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-codex-spawn-"));
     const home = path.join(root, "home");
@@ -2109,7 +2125,15 @@ describe("cli-agent spawn argv hardening", () => {
       const directSpec = h.specFor(direct.sessionId);
       expect(directSpec.args).not.toContain("--strict-config");
       expect(directSpec.args).not.toContain("multi_agent");
-      expect(directSpec.env.CODEX_HOME).toBe(realCodexHome);
+      expect(directSpec.env.CODEX_HOME).not.toBe(realCodexHome);
+      expect(directSpec.env.CODEX_SQLITE_HOME).toBe(fs.realpathSync(path.join(
+        app.getPath("userData"), "provider-state", "codex", "checkout-test",
+      )));
+      const directConfig = parse(fs.readFileSync(path.join(directSpec.env.CODEX_HOME!, "config.toml"), "utf8"));
+      expect(directConfig.mcp_servers).toEqual({ external: { command: "external-mcp" } });
+      expect(fs.realpathSync(path.join(directSpec.env.CODEX_HOME!, "plugins"))).toBe(fs.realpathSync(path.join(realCodexHome, "plugins")));
+      expect(fs.realpathSync(path.join(directSpec.env.CODEX_HOME!, "auth.json"))).toBe(fs.realpathSync(path.join(realCodexHome, "auth.json")));
+      expect(fs.realpathSync(path.join(directSpec.env.CODEX_HOME!, "sessions"))).toBe(fs.realpathSync(path.join(directSpec.env.CODEX_SQLITE_HOME!, "sessions")));
       expect(fs.existsSync(path.join(realCodexHome, "config.toml"))).toBe(true);
       expect(fs.existsSync(path.join(realCodexHome, "plugins"))).toBe(true);
 
@@ -2124,6 +2148,29 @@ describe("cli-agent spawn argv hardening", () => {
     }
     },
   );
+
+  it("preserves the OpenCode checkout data home over the managed-account keyEnv", () => {
+    setSquadCliPolicyLookupForTests(() => "operator-choice");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-opencode-env-"));
+    const h = fakeHost();
+    setPtyHost(h.host);
+    const checkoutEnv = {
+      XDG_DATA_HOME: path.join(root, "checkout", "data"),
+      XDG_STATE_HOME: path.join(root, "checkout", "state"),
+      OPENCODE_DB: path.join(root, "checkout", "opencode.db"),
+    };
+    setAgentSpawnHook(() => ({ authorityToken: "opencode-env-test", env: checkoutEnv, extraArgs: [] }));
+    const owner = fakeWc();
+    try {
+      const session = spawnAgentSession(owner, { kind: "cli-agent", cols: 80, rows: 24 }, builtinCliPtyAdapter("opencode"),
+        { keyEnv: { XDG_DATA_HOME: path.join(root, "managed-account") } }, trustedSpawn());
+      expect(h.specFor(session.sessionId).env).toMatchObject(checkoutEnv);
+      killSession(owner, session.sessionId);
+    } finally {
+      setAgentSpawnHook(null);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 
   it("denies a second exclusive-auth orchestrator even when the first is detached", () => {
     const h = fakeHost();
@@ -2508,7 +2555,7 @@ describe("cli-agent spawn argv hardening", () => {
     }
   });
 
-  it("keeps the direct-user pane on the latest-session fallback when no exact session exists", () => {
+  it("opens a fresh direct-user session when no exact session exists", () => {
     const h = fakeHost();
     setPtyHost(h.host);
     setResumeSessionLookup(() => null);
@@ -2536,10 +2583,8 @@ describe("cli-agent spawn argv hardening", () => {
         {},
         trustedSpawn(),
       );
-      // Non-mission panes keep the pre-existing choices: exact when captured,
-      // otherwise the adapter's latest-session fallback — never a throw.
-      expect(spawned.resumeMode).toBe("latest");
-      expect(h.specFor(spawned.sessionId).args).toContain("--continue");
+      expect(spawned.resumeMode).toBe("fresh-context");
+      expect(h.specFor(spawned.sessionId).args).not.toContain("--continue");
       orchKillSession(spawned.sessionId);
     } finally {
       setResumeSessionLookup(null);
@@ -2849,7 +2894,7 @@ describe("cli-agent spawn argv hardening", () => {
   );
 
   it.runIf(process.platform !== "linux")(
-    "preserves only an exact main-owned Codex resume and rejects latest",
+    "preserves exact Codex resume and opens fresh when latest-only was requested",
     () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-codex-profile-"));
     const cleanupHook = installGovernedCodexTestHook(root);
@@ -2915,23 +2960,17 @@ describe("cli-agent spawn argv hardening", () => {
       expect(resumeConfig.features?.network_proxy).toBe(false);
       expect(resumeConfig.tui?.resume_cwd).toBe("current");
 
-      expect(() =>
-        spawnAgentSession(
-          fakeWc(),
-          {
-            kind: "cli-agent",
-            paneId: "pane-codex-latest",
-            resume: true,
-            resumeLatestOnly: true,
-            cols: 80,
-            rows: 24,
-          },
-          codex,
-          {},
-          revisionBoundWorker(),
-        ),
-      ).toThrow(/exact main-owned provider session/i);
-      expect(spawn).toHaveBeenCalledTimes(1);
+      const fresh = spawnAgentSession(
+        fakeWc(),
+        { kind: "cli-agent", paneId: "pane-codex-latest", resume: true, resumeLatestOnly: true, cols: 80, rows: 24 },
+        codex, {}, revisionBoundWorker(),
+      );
+      expect(fresh.resumeMode).toBe("fresh-context");
+      expect(h.specFor(fresh.sessionId).args).not.toContain("--last");
+      expect(h.specFor(fresh.sessionId).args).not.toContain("resume");
+      expect(spawn).toHaveBeenCalledTimes(2);
+      orchKillSession(exact.sessionId);
+      orchKillSession(fresh.sessionId);
     } finally {
       setResumeSessionLookup(null);
       cleanupHook();
@@ -4584,5 +4623,51 @@ describe("cli-agent spawn argv hardening", () => {
       await orchTerminateSession(spawned.sessionId);
       expect(getSessionState(spawned.sessionId)).toBeNull();
     });
+  });
+});
+
+
+describe('F-567 spawn contracts', () => {
+  it('disables latest resume in every builtin while retaining exact resume templates', () => {
+    for (const raw of BUILTIN_ADAPTERS) {
+      if ((raw as { kind: string }).kind !== 'cli-pty') continue;
+      const adapter = cliPtyAdapterSchema.parse(raw);
+      expect(adapter.spawn.resumeArgs, adapter.id).toEqual([]);
+      if (adapter.id !== 'aider') expect(adapter.spawn.resumeIdArgs?.length, adapter.id).toBeGreaterThan(0);
+    }
+  });
+
+  it.each(['agy', 'devin'] as const)('keeps %s checkout state after MCP and managed-home overrides for direct and mission spawns', async (kind) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'f567-provider-spawn-'));
+    const envKey = kind === 'agy' ? 'GEMINI_CLI_HOME' : 'XDG_DATA_HOME';
+    const sourceHome = path.join(root, 'account');
+    fs.mkdirSync(sourceHome);
+    const h = fakeHost();
+    setPtyHost(h.host);
+    setSquadCliPolicyLookupForTests(() => 'operator-choice');
+    setAgentSpawnHook(() => ({ authorityToken: "f567-test", env: { [envKey]: path.join(root, 'legacy'), HOME: root }, extraArgs: [] }));
+    const sessions: string[] = [];
+    try {
+      const homes: string[] = [];
+      for (const authority of [trustedSpawn(), revisionBoundWorker()]) {
+        const spawned = spawnAgentSession(
+          fakeWc(),
+          { kind: 'cli-agent', paneId: `f567-${kind}-${authority.source}`, cols: 80, rows: 24 },
+          builtinCliPtyAdapter(kind),
+          { keyEnv: { [envKey]: sourceHome } }, authority,
+        );
+        sessions.push(spawned.sessionId);
+        const spec = h.specFor(spawned.sessionId);
+        expect(spec.env[envKey]).toContain(path.join(app.getPath('userData'), 'provider-state', kind, authority.scope.checkoutId));
+        expect(spec.env[envKey]).not.toBe(sourceHome);
+        if (kind === 'agy') expect(spec.env[envKey]).toBe(path.join(spec.env.HOME!, '.gemini'));
+        homes.push(spec.env[envKey]!);
+      }
+      expect(homes[0]).toBe(homes[1]);
+    } finally {
+      for (const id of sessions) await orchTerminateSession(id);
+      setAgentSpawnHook(null);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });

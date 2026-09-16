@@ -114,7 +114,7 @@ beforeEach(() => {
   xtermEvents.onData.clear();
   Object.defineProperty(window, 'nexus', {
     configurable: true,
-    value: { pty: {
+    value: { voice: { logVoice: vi.fn().mockResolvedValue(undefined) }, pty: {
       spawn, kill, resize: vi.fn(), write: ptyWrite,
       onStateChange: () => () => {}, onData: () => () => {},
       onExit: (sessionId: string, listener: (event: { exitCode: number }) => void) => {
@@ -590,5 +590,25 @@ describe('estacionamento de hosts na troca de workspace', () => {
     expect(kill).toHaveBeenCalledWith('pty-park-a1');
     expect(hostA.disposed).toBe(true);
     expect(hostC.disposed).toBe(false);
+  });
+});
+
+
+describe('F-567 exact resume failure', () => {
+  it('reports the error and never retries the latest conversation', async () => {
+    spawn.mockResolvedValue({ ok: true, sessionId: 'pty-exact', resumeMode: 'exact' });
+    markResumeOnSpawn(pane.id);
+    const host = openHiddenHost();
+    const output = vi.spyOn(host.term, 'writeln');
+    host.element.parentElement!.hidden = false;
+    setHostSize(host.element, 1200, 800);
+    await vi.advanceTimersByTimeAsync(2_500);
+    expect(spawn).toHaveBeenCalledTimes(1);
+    ptyExitListeners.get('pty-exact')!({ exitCode: 1 });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(output.mock.calls.flat().join(' ')).toContain('Falha ao retomar a sessão');
+    expect(output.mock.calls.flat().join(' ')).toContain('+ Pane');
+    expect(getPaneSessionId(pane.id)).toBeNull();
   });
 });
