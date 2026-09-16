@@ -6,6 +6,9 @@ import {
 import { requireStr, str } from './tool-util';
 import { spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
+import path from 'node:path';
+import { isIsolatedWriterContext, parseIsolatedWriterGitCommand } from './isolated-writer-policy';
+import { buildGitTools } from './tools-git';
 import { resolveCwdForScope } from './workspace-path';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { executionScopeFor } from './gate';
@@ -200,6 +203,16 @@ const terminalRun: McpToolDef = {
   handler: async (args, ctx, invocation) => {
     assertMcpInvocationCurrent(invocation);
     assertGovernedWorkspaceControlBoundary(ctx, terminalRun.name);
+    if (isIsolatedWriterContext(ctx)) {
+      const cwd = path.resolve(executionScopeFor(ctx).rootRealPath, str(args, 'cwd') ?? '.');
+      const request = parseIsolatedWriterGitCommand(requireStr(args, 'command'), cwd);
+      const tool = buildGitTools().find((candidate) => candidate.name === request.tool)!;
+      // Never spawn a shell, including for -C, command chains and sh -c.
+      // The Git handler validates actual cwd, allocation, HEAD and pathspecs.
+      const result = await tool.handler(request.args, ctx, invocation) as Record<string, unknown>;
+      const stdout = result.output ?? result.diff ?? (Array.isArray(result.commits) ? result.commits.join('\n') : JSON.stringify(result));
+      return { exitCode: 0, stdout: String(stdout), stderr: '', killed: false };
+    }
     const executionScope = executionScopeFor(ctx);
     const command = requireStr(args, 'command');
     const cwd = resolveCwdForScope(executionScope, str(args, 'cwd'));

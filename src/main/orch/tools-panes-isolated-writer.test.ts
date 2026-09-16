@@ -128,7 +128,7 @@ describe('Via Rápida isolated writers', () => {
       expect(fs.readFileSync(path.join(record.worktreePath, 'base.txt'), 'utf8')).toBe('committed\n');
       expect(options.prompt).toContain(record.worktreePath);
       expect(options.prompt).toContain(record.branchRef.slice('refs/heads/'.length));
-      expect(options.prompt).toContain('branch, sha e arquivos tocados');
+      expect(options.prompt).toContain('nexus_handoff_submit');
     }
     expect(fs.readFileSync(path.join(ctx.scope.rootRealPath, 'base.txt'), 'utf8')).toBe('operator WIP\n');
   });

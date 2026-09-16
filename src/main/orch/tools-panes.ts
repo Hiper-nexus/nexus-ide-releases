@@ -308,9 +308,14 @@ export function withIsolatedWriterContract(
   return '## Nexus execution authority\n' +
     `executionMode=\`isolated_worktree\`: esta tarefa roda na worktree própria ${workspace.worktreePath}, ` +
     `na branch ${workspace.branch}. Commit na própria branch é permitido e esperado. ` +
-    'Não faça push, não toque em outras branches nem no checkout de coordenação. ' +
-    'Ao terminar, chame nexus_handoff_submit uma vez com branch, sha e arquivos tocados, ' +
-    'além das validações e bloqueios. O orquestrador integra as branches ao final, na ordem de dependência.\n\n' + prompt;
+    'A branch não pode ser publicada: não use push, pull, stash, checkout, reset ou clean; ' +
+    'não toque em outras branches nem no checkout de coordenação. ' +
+    'Não há reserva exclusiva de arquivos: outros escritores podem editar o mesmo arquivo e gerar conflitos. ' +
+    'Não há merge automático; o orquestrador revisa e integra as branches na ordem de dependência. ' +
+    'Use nexus_git_add/commit/status/diff/log na própria worktree; nexus_terminal_run aceita somente essas operações Git estruturadas. ' +
+    'Use a ferramenta nativa do CLI, conforme o perfil escolhido, para builds e testes. ' +
+    'Ao terminar, chame nexus_handoff_submit uma vez com branch, sha, lista completa de arquivos tocados e diff ' +
+    '(patch anexado ou caminho de um artefato de diff), além das validações e bloqueios.\n\n' + prompt;
 }
 
 export function childMissionId(

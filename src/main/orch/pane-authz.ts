@@ -23,6 +23,8 @@ export type CallerRole = 'orchestrator' | 'worker' | 'user';
 export interface CallerCtx {
   role: CallerRole;
   scope: ProjectExecutionScope;
+  /** Main-issued worktree authority; coordination scope alone is insufficient. */
+  executionScope?: ProjectExecutionScope;
   /** The mission the caller belongs to (undefined before mission_create). */
   missionId?: string;
   /** Frozen PREVC revision restored by main; never renderer-authored. */
@@ -123,6 +125,7 @@ export function authorizePaneAccess(
 ): AuthzDecision {
   if (
     !pane.scope ||
+    caller.scope.installationId !== pane.scope.installationId ||
     caller.scope.projectId !== pane.scope.projectId ||
     caller.scope.checkoutId !== pane.scope.checkoutId
   ) {
@@ -160,6 +163,12 @@ export function authorizePaneAccess(
       allow: false,
       reason: 'workers cannot write to or close the orchestrator pane',
     };
+  }
+
+  if (caller.role === 'worker' && WRITE_ACTIONS.has(action) &&
+      (caller.executionScope ?? caller.scope).rootRealPath !==
+        (pane.executionScope ?? pane.scope).rootRealPath) {
+    return { allow: false, reason: 'workers cannot write to or close panes in another execution worktree' };
   }
 
   return { allow: true };

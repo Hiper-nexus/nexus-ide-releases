@@ -1,6 +1,10 @@
 import type { McpToolDef, McpToolInvocation } from './mcp-protocol';
 import { requireStr, str } from './tool-util';
-import { resolveCwdForScope } from './workspace-path';
+import { resolveCwdForScope, resolvePathForScope } from './workspace-path';
+import path from 'node:path';
+import type { AgentGateContext } from './gate';
+import { assertIsolatedWriterGitTool, isIsolatedWriterContext, isolatedWriterPolicyError } from './isolated-writer-policy';
+import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { executionScopeFor } from './gate';
 import {
@@ -14,6 +18,28 @@ import {
  */
 
 const gitRunner = new ProcessGitRunner();
+
+function assertIsolatedGitAuthority(ctx: AgentGateContext, cwd: string): void {
+  const execution = executionScopeFor(ctx);
+  if (!ctx.missionId || execution.installationId !== ctx.scope.installationId ||
+      execution.projectId !== ctx.scope.projectId || execution.checkoutId !== ctx.scope.checkoutId) {
+    throw isolatedWriterPolicyError();
+  }
+  const records = requireWorktreeRuntimeRegistry().listMission(ctx.scope, ctx.missionId)
+    .filter((record) => record.worktreePath === execution.rootRealPath && record.status === 'ready');
+  if (records.length !== 1 || !records[0].branchRef.startsWith('refs/heads/')) throw isolatedWriterPolicyError();
+  assertSafeLocalGitConfig(gitRunner, cwd);
+  try {
+    const top = gitRunner.run(cwd, ['rev-parse', '--show-toplevel']);
+    const branch = gitRunner.run(cwd, ['symbolic-ref', '--quiet', 'HEAD']);
+    if (top.status !== 0 || !path.isAbsolute(top.stdout.trim()) || path.resolve(top.stdout.trim()) !== execution.rootRealPath ||
+        branch.status !== 0 || branch.stdout.trim() !== records[0].branchRef) throw isolatedWriterPolicyError();
+  } catch {
+    // Includes detached HEAD (symbolic-ref exits nonzero), without publishing
+    // raw subprocess output as an instruction to bypass the assigned branch.
+    throw isolatedWriterPolicyError();
+  }
+}
 
 function gitExec(
   args: readonly string[],
@@ -675,5 +701,25 @@ export function buildGitTools(): McpToolDef[] {
     gitBranchList,
     gitBranchCreate,
     gitBranchSwitch,
-  ];
+  ].map((tool) => ({
+    ...tool,
+    handler: async (args: Record<string, unknown>, ctx: AgentGateContext, invocation?: McpToolInvocation) => {
+      // Enforce in the handler too: direct invocations must not bypass dispatch.
+      assertIsolatedWriterGitTool(ctx, tool.name);
+      if (isIsolatedWriterContext(ctx)) {
+        assertInvocationLive(invocation?.signal);
+        if (ctx.readOnly && ['nexus_git_add', 'nexus_git_commit'].includes(tool.name)) throw isolatedWriterPolicyError();
+        const cwd = resolveCwd(executionScopeFor(ctx), str(args, 'cwd'));
+        if (tool.name === 'nexus_git_add') {
+          const paths = args.paths === undefined ? ['.'] : args.paths;
+          if (!Array.isArray(paths) || paths.some((value) => typeof value !== 'string' || !value || value.startsWith(':') || value.startsWith('-'))) throw isolatedWriterPolicyError();
+          for (const value of paths) {
+            resolvePathForScope(executionScopeFor(ctx), path.resolve(cwd, value));
+          }
+        }
+        assertIsolatedGitAuthority(ctx, cwd);
+      }
+      return tool.handler(args, ctx, invocation);
+    },
+  }));
 }

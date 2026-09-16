@@ -40,7 +40,10 @@ import {
   listLivePaneNumbers,
   listPaneSnapshots,
   syncPanes,
+  attachOrchMeta,
 } from './pane-registry';
+import { mintToken, bindTokenToSession, releaseSession } from './gate';
+import { testProjectScope } from './__tests__/scope-fixture';
 
 function owner(id: number): WebContents {
   return {
@@ -70,6 +73,22 @@ describe('nexus_pane_list publica o número junto do id', () => {
   beforeEach(() => {
     pty.live.clear();
     syncPanes([], renderer, 'gen-reset');
+  });
+
+  it('uses the main-issued executionScope for authz instead of stale pane metadata', () => {
+    const scope = testProjectScope();
+    const executionScope = { ...scope, rootRealPath: '/worktree/actual' };
+    const ctx = mintToken({ label: 'isolated', role: 'worker', missionId: 'm', scope, executionScope });
+    bindTokenToSession(ctx.token, 'isolated-session');
+    pty.live.add('isolated-session');
+    try {
+      syncPanes([entry('isolated-pane', 3, 'isolated-session')], renderer, 'isolated-gen');
+      attachOrchMeta(renderer, 'isolated-pane', { missionId: 'm', role: 'worker', scope,
+        executionScope: { ...scope, rootRealPath: '/worktree/stale' }, allowedTools: null, allowedSkills: null });
+      expect(getPaneAuthzInfo('isolated-pane')?.executionScope).toEqual(executionScope);
+    } finally {
+      releaseSession('isolated-session');
+    }
   });
 
   it('cada pane listado carrega paneId E paneNumber', () => {

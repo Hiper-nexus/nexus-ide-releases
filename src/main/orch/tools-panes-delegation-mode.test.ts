@@ -6,6 +6,7 @@ import {
   reserveWorkerSpawnSlot,
   shouldReleaseWorkerReservation,
   withSameCheckoutWorkerContract,
+  withIsolatedWriterContract,
 } from './tools-panes';
 import { testProjectScope } from './__tests__/scope-fixture';
 import { compileIntentContract } from '../../shared/mission-intent';
@@ -31,6 +32,15 @@ function pane(
 }
 
 describe('pre-contract same-checkout delegation', () => {
+  it('states isolated writer conflicts, integration limits and required handoff diff', () => {
+    const prompt = withIsolatedWriterContract('Implementar tarefa.', { worktreePath: '/worktree/a', branch: 'worker-a' });
+    expect(prompt).toMatch(/mesmo arquivo.*conflit/i);
+    expect(prompt).toMatch(/não há merge automático/i);
+    expect(prompt).toMatch(/branch.*não pode ser publicada/i);
+    expect(prompt).toMatch(/arquivos tocados.*diff/i);
+    for (const operation of ['push', 'pull', 'stash', 'checkout', 'reset', 'clean']) expect(prompt).toContain(operation);
+    expect(prompt).toContain('Implementar tarefa.');
+  });
   it('blocks another active worker anywhere in the same checkout', () => {
     expect(activeSameCheckoutWorker([
       pane('idle'),

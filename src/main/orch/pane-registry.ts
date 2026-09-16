@@ -33,6 +33,7 @@ import {
   requireLiveRendererWorkspaceScope,
 } from "../persistence/renderer-workspace-scope";
 import { sameProjectScope } from "./project-scoped-broadcast";
+import { getContextBySession } from './gate';
 import { canListPane, type CallerCtx, type PaneAuthzInfo } from "./pane-authz";
 import { parsePaneNumberRef } from "../../shared/pane-number";
 import { makeId } from "./store-util";
@@ -1434,6 +1435,8 @@ export function findPaneBySessionOwnedBy(
 function authzInfoOf(registered: RegisteredPane): PaneAuthzInfo {
   const { entry, owner } = registered;
   const meta = orchMetaByPane.get(paneMetaKey(owner, entry.paneId));
+  const context = entry.sessionId ? getContextBySession(entry.sessionId) : null;
+  const physical = entry.sessionId ? getAgentSessionInfo(entry.sessionId) : null;
   return {
     paneId: entry.paneId,
     sessionId: entry.sessionId,
@@ -1444,9 +1447,9 @@ function authzInfoOf(registered: RegisteredPane): PaneAuthzInfo {
     workerIncarnationId: meta?.workerIncarnationId,
     operatorParentSessionId: meta?.operatorParentSessionId,
     scope:
-      meta?.scope ??
+      context?.scope ?? meta?.scope ??
       (entry.sessionId ? scopeBySession.get(entry.sessionId) : undefined),
-    executionScope: meta?.executionScope,
+    executionScope: context ? context.executionScope ?? context.scope : physical?.scope ?? meta?.executionScope,
   };
 }
 

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { testProjectScope } from './__tests__/scope-fixture';
 import {
   assertGovernedWorkspaceControlBoundary,
   pathTargetsCodexControlRoot,
@@ -12,6 +13,16 @@ const governedWorker = {
 };
 
 describe('governed workspace control boundary', () => {
+  it('allows only the checked Git broker lanes for a governed isolated writer', () => {
+    const ctx = { ...governedWorker, scope: testProjectScope(), executionScope: testProjectScope({ rootRealPath: '/own-worktree' }) };
+    for (const name of ['git_add', 'git_commit', 'git_status', 'git_diff', 'git_log', 'terminal_run']) {
+      expect(() => assertGovernedWorkspaceControlBoundary(ctx, `nexus_${name}`)).not.toThrow();
+    }
+    for (const name of ['git_push', 'git_pull', 'git_sync', 'git_branch_switch', 'bg_run']) {
+      expect(() => assertGovernedWorkspaceControlBoundary(ctx, `nexus_${name}`)).toThrow();
+    }
+    expect(() => assertGovernedWorkspaceControlBoundary(ctx, 'nexus_file_write', ['.codex/config.toml'])).toThrow();
+  });
   it.each([
     '.agents/skills/new/SKILL.md',
     'packages/app/.codex/skills/new/SKILL.md',

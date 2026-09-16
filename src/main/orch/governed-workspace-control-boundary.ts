@@ -1,6 +1,7 @@
 import type { AgentGateContext } from './gate';
 import type { WorkspacePolicy } from '../../shared/workspace-types';
 import { isInsidePath } from './workspace-path';
+import { assertIsolatedWriterGitTool, isIsolatedWriterContext, isolatedWriterPolicyError } from './isolated-writer-policy';
 
 const CONTROL_SEGMENTS = new Set(['.agents', '.codex']);
 
@@ -96,13 +97,22 @@ export function assertGovernedWorkspaceControlBoundary(
   ctx: Pick<
     AgentGateContext,
     'role' | 'missionId' | 'readOnly' | 'governedNativeProvider'
-  >,
+  > & Partial<Pick<AgentGateContext, 'scope' | 'executionScope'>>,
   toolName: string,
   mutationPaths: readonly string[] = [],
 ): void {
-  if (!isGovernedCodexWorker(ctx)) return;
-
   const canonical = canonicalToolName(toolName);
+  if (isIsolatedWriterContext(ctx)) {
+    if (canonical.startsWith('git_')) assertIsolatedWriterGitTool(ctx, canonical);
+    // The sibling background shell cannot bypass terminal_run's argv broker.
+    if (canonical === 'bg_run') throw isolatedWriterPolicyError();
+  }
+  if (!isGovernedCodexWorker(ctx)) return;
+  // These handlers now broker only fixed Git argv, verifying the allocated
+  // worktree/branch. Isolated terminal_run never starts a main-owned shell.
+  if (isIsolatedWriterContext(ctx) && [
+    'git_add', 'git_commit', 'git_status', 'git_diff', 'git_log', 'terminal_run',
+  ].includes(canonical)) return;
   if (OUTER_SANDBOX_BYPASS_TOOLS.has(canonical)) {
     throw new Error(
       `governed worker denies ${canonical} outside the inherited Codex process sandbox`,

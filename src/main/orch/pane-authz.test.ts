@@ -31,6 +31,19 @@ function pane(over: Partial<PaneAuthzInfo>): PaneAuthzInfo {
 }
 
 describe('authorizePaneAccess', () => {
+  it('confines worker write/close to the same execution worktree, keeping cross-worktree observation', () => {
+    const isolated = { ...worker, executionScope: { ...scope, rootRealPath: '/worktrees/a' } };
+    const peer = pane({ executionScope: { ...scope, rootRealPath: '/worktrees/b' } });
+    for (const action of ['write', 'close'] as const) {
+      expect(authorizePaneAccess(isolated, peer, action).allow).toBe(false);
+      expect(authorizePaneAccess(worker, peer, action).allow).toBe(false);
+      expect(authorizePaneAccess(isolated, pane({ executionScope: isolated.executionScope }), action).allow).toBe(true);
+      expect(authorizePaneAccess(orchestrator, peer, action).allow).toBe(true);
+    }
+    expect(authorizePaneAccess(isolated, peer, 'read').allow).toBe(true);
+    expect(authorizePaneAccess(isolated, peer, 'wait').allow).toBe(true);
+    expect(authorizePaneAccess(isolated, pane({}), 'write').allow).toBe(false);
+  });
   it('always allows acting on your own pane', () => {
     const own = pane({ sessionId: 'wself', missionId: 'other', kind: 'shell' });
     expect(authorizePaneAccess(worker, own, 'write').allow).toBe(true);
