@@ -524,3 +524,46 @@ describe('pane guardian (0.76.44): reaper de emergência sob pressão de memóri
     expect(closed).toHaveLength(0);
   });
 });
+
+describe('pane guardian (0.76.45): estacionar em vez de fechar', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    shutdownNonWorkerAutoClose();
+    statusTaps.clear();
+    exitTaps.clear();
+    vi.useRealTimers();
+  });
+
+  it('com parkPane presente, estaciona (closePane nunca é chamado) e passa o motivo', () => {
+    const parked: Array<{ paneId: string; reason: string }> = [];
+    const closed: string[] = [];
+    const idle = new Set<string>(['pty-p1']);
+    const pressure = { on: false };
+    const deps: NonWorkerAutoCloseDeps = {
+      isEnabled: () => true,
+      getPaneRef: (sid) => refFor(sid),
+      isIdle: (sid) => idle.has(sid),
+      closePane: (paneId) => { closed.push(paneId); return true; },
+      parkPane: (paneId, reason) => { parked.push({ paneId, reason }); idle.delete(paneId.replace('pane-', '')); return 'parked'; },
+      ttlMs: 10_000,
+      log: () => {},
+      listIdleSessions: () => [...idle],
+      sweepIntervalMs: 1_000,
+      isUnderMemoryPressure: () => pressure.on,
+    };
+    initNonWorkerAutoClose(deps);
+    vi.advanceTimersByTime(11_000);
+    expect(closed).toHaveLength(0);
+    expect(parked).toEqual([{ paneId: 'pane-pty-p1', reason: 'idle' }]);
+
+    idle.add('pty-p2');
+    vi.advanceTimersByTime(1_000);
+    pressure.on = true;
+    vi.advanceTimersByTime(1_000);
+    expect(parked[1]).toEqual({ paneId: 'pane-pty-p2', reason: 'memory-pressure' });
+    expect(closed).toHaveLength(0);
+  });
+});

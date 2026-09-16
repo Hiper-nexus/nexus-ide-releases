@@ -18,8 +18,13 @@ import os from 'node:os';
 
 export interface PaneAdmissionLimits {
   readonly enabled: boolean;
-  /** Panes de agente (cli-agent) vivos ao mesmo tempo. */
+  /**
+   * Panes de agente (cli-agent) vivos ao mesmo tempo. Por padrão é um AVISO
+   * (0.76.45, doutrina "menos travas": contagem sem pressão de memória não
+   * tem dano nomeado); só bloqueia com NEXUS_PANE_CAP_HARD=1.
+   */
   readonly maxAgentPanes: number;
+  readonly capIsHard: boolean;
   /** Abaixo disto de memória livre, nenhum pane novo. */
   readonly minFreeMB: number;
   /** Acima disto de swap em uso, nenhum pane novo. */
@@ -38,6 +43,7 @@ export function limitsForMachine(totalMB: number): PaneAdmissionLimits {
   const byRam = Math.floor((total - 8 * 1024) / 1280);
   return Object.freeze({
     enabled: true,
+    capIsHard: false,
     maxAgentPanes: Math.min(12, Math.max(4, byRam)),
     minFreeMB: Math.max(1024, Math.round(0.15 * total)),
     maxSwapUsedMB: 1024,
@@ -111,15 +117,12 @@ export function evaluatePaneAdmission(input: PaneAdmissionInput): PaneAdmissionV
   const { limits, memory } = input;
   if (!limits.enabled) return { ok: true };
 
-  if (input.liveAgentPanes >= limits.maxAgentPanes) {
-    return {
-      ok: false,
-      reason: 'cap',
-      message:
-        `Teto de ${limits.maxAgentPanes} panes de agente atingido ` +
-        `(${input.liveAgentPanes} vivos). ${describeIdleCandidates(input.idleCandidates)} ` +
-        'Ajuste o teto com NEXUS_PANE_CAP se esta máquina aguenta mais.',
-    };
+  const capMessage =
+    `Teto de ${limits.maxAgentPanes} panes de agente atingido ` +
+    `(${input.liveAgentPanes} vivos). ${describeIdleCandidates(input.idleCandidates)} ` +
+    'Ajuste o teto com NEXUS_PANE_CAP se esta máquina aguenta mais.';
+  if (input.liveAgentPanes >= limits.maxAgentPanes && limits.capIsHard) {
+    return { ok: false, reason: 'cap', message: capMessage };
   }
 
   if (memory) {
@@ -143,6 +146,10 @@ export function evaluatePaneAdmission(input: PaneAdmissionInput): PaneAdmissionV
     }
   }
 
+  // Contagem acima do teto sem pressão de memória: aviso, não trava.
+  if (input.liveAgentPanes >= limits.maxAgentPanes) {
+    return { ok: true, warning: capMessage };
+  }
   const next = input.liveAgentPanes + 1;
   if (next >= Math.ceil(limits.maxAgentPanes * CAP_WARNING_RATIO)) {
     return {
@@ -168,8 +175,10 @@ export function readPaneAdmissionLimits(
 ): PaneAdmissionLimits {
   const base = limitsForMachine(totalMB);
   const guard = (env.NEXUS_PANE_GUARD ?? '').trim().toLowerCase();
+  const hard = (env.NEXUS_PANE_CAP_HARD ?? '').trim().toLowerCase();
   return {
     enabled: !(guard === 'off' || guard === '0' || guard === 'false'),
+    capIsHard: hard === '1' || hard === 'true' || hard === 'on',
     maxAgentPanes: envInt(env.NEXUS_PANE_CAP, base.maxAgentPanes, 1),
     minFreeMB: envInt(env.NEXUS_PANE_MIN_FREE_MB, base.minFreeMB, 0),
     maxSwapUsedMB: envInt(env.NEXUS_PANE_MAX_SWAP_MB, base.maxSwapUsedMB, 0),

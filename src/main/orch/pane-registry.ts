@@ -13,6 +13,7 @@ import type {
   MissionPaneSpec,
   PaneAttemptCleanupRequest,
   PaneSnapshot,
+  PaneParkRequest,
 } from "../../shared/orch-types";
 import { ORCH_CHANNELS } from "../../shared/orch-channels";
 import { DEV_SERVER_CHANNELS } from "../../shared/channels";
@@ -1363,6 +1364,22 @@ function paneState(entry: PaneRegistryEntry): PaneSnapshot["state"] {
   return paneSessionStateForEntry(entry);
 }
 
+/** 0.76.45: panes estacionados pelo guardian (chave = owner:paneId). */
+const parkedByPane = new Map<string, { sessionId: string; parkedAt: number }>();
+
+function parkedRecordFor(registered: RegisteredPane): { sessionId: string; parkedAt: number } | null {
+  const key = paneMetaKey(registered.owner, registered.entry.paneId);
+  const parked = parkedByPane.get(key);
+  if (!parked) return null;
+  // Acordou: o renderer já espelha uma sessão viva diferente da estacionada.
+  const current = registered.entry.sessionId;
+  if (current && current !== parked.sessionId && getSessionState(current) !== null) {
+    parkedByPane.delete(key);
+    return null;
+  }
+  return parked;
+}
+
 function snapshotOf(registered: RegisteredPane): PaneSnapshot {
   const { entry, owner } = registered;
   const meta = orchMetaByPane.get(paneMetaKey(owner, entry.paneId));
@@ -1372,11 +1389,13 @@ function snapshotOf(registered: RegisteredPane): PaneSnapshot {
   // Scope precedence is explicit: the live session binding is the authority;
   // orch meta is only a fallback. A stale meta.scope must never override it.
   const scope = sessionScope ?? meta?.scope;
+  const parked = parkedRecordFor(registered);
   return {
     ...entry,
-    state: paneState(entry),
+    state: parked ? "parked" : paneState(entry),
     ...meta,
     ...(scope ? { scope } : {}),
+    ...(parked ? { parkedAt: parked.parkedAt, parkedSessionId: parked.sessionId } : {}),
   };
 }
 
@@ -2954,6 +2973,46 @@ export async function requestMissionWorkerPaneRetirement(
   }
   owner.send(ORCH_CHANNELS.paneCloseRequest, expected.paneId);
   return true;
+}
+
+/**
+ * 0.76.45 — estacionar em vez de fechar: encerra a sessão PTY (memória do
+ * pane vai a zero) mas o pane fica no layout com o scrollback; o renderer é
+ * avisado para mostrar "Dormindo" e oferecer "Acordar" (spawn no mesmo
+ * paneId com resume exato). Pane main-owned (sem renderer) não tem onde
+ * acordar: cai no fechamento normal. Retorna o que aconteceu.
+ */
+export async function requestPanePark(
+  paneId: string,
+  reason: PaneParkRequest["reason"],
+): Promise<"parked" | "closed" | false> {
+  const owners = new Set(
+    panes
+      .filter(
+        (registered) =>
+          registered.entry.paneId === paneId &&
+          !registered.owner.isDestroyed() &&
+          !registered.owner.isCrashed(),
+      )
+      .map((registered) => registered.owner),
+  );
+  if (owners.size !== 1) {
+    return (await requestPaneClose(paneId)) ? "closed" : false;
+  }
+  const owner = [...owners][0]!;
+  const registered = panes.find(
+    (candidate) => candidate.owner === owner && candidate.entry.paneId === paneId,
+  );
+  const sessionId = registered?.entry.sessionId;
+  if (!registered || !sessionId) return false;
+  const exited = await terminateOwnedMissionSession(sessionId);
+  if (!exited) return false;
+  const parkedAt = Date.now();
+  parkedByPane.set(paneMetaKey(owner, paneId), { sessionId, parkedAt });
+  const request: PaneParkRequest = { paneId, sessionId, parkedAt, reason };
+  if (!owner.isDestroyed()) owner.send(ORCH_CHANNELS.paneParkRequest, request);
+  panesVersion += 1;
+  return "parked";
 }
 
 export async function requestPaneClose(paneId: string): Promise<boolean> {

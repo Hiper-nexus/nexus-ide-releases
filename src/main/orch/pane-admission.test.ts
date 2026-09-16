@@ -23,7 +23,7 @@ describe('pane-admission (F-572): teto de panes + gate por memória', () => {
     expect(verdict.ok).toBe(true);
   });
 
-  it('recusa no teto de panes de agente e nomeia os panes ociosos a fechar', () => {
+  it('no teto de panes AVISA (não trava) e nomeia os panes ociosos a fechar', () => {
     const verdict = evaluatePaneAdmission(
       input({
         liveAgentPanes: DEFAULT_PANE_ADMISSION_LIMITS.maxAgentPanes,
@@ -33,13 +33,21 @@ describe('pane-admission (F-572): teto de panes + gate por memória', () => {
         ],
       }),
     );
+    expect(verdict.ok).toBe(true);
+    if (!verdict.ok) return;
+    const warning = verdict.warning ?? '';
+    expect(warning).toContain(`${DEFAULT_PANE_ADMISSION_LIMITS.maxAgentPanes}`);
+    // O mais ocioso primeiro, pelo número que o operador fala.
+    expect(warning.indexOf('pane 7')).toBeLessThan(warning.indexOf('pane 3'));
+    expect(warning).toContain('nexus_pane_close');
+  });
+
+  it('com NEXUS_PANE_CAP_HARD o teto volta a bloquear', () => {
+    const limits = readPaneAdmissionLimits({ NEXUS_PANE_CAP_HARD: '1' }, 24 * 1024);
+    const verdict = evaluatePaneAdmission(input({ limits, liveAgentPanes: limits.maxAgentPanes }));
     expect(verdict.ok).toBe(false);
     if (verdict.ok) return;
     expect(verdict.reason).toBe('cap');
-    expect(verdict.message).toContain(`${DEFAULT_PANE_ADMISSION_LIMITS.maxAgentPanes}`);
-    // O mais ocioso primeiro, pelo número que o operador fala.
-    expect(verdict.message.indexOf('pane 7')).toBeLessThan(verdict.message.indexOf('pane 3'));
-    expect(verdict.message).toContain('nexus_pane_close');
   });
 
   it('recusa por memória livre abaixo do mínimo', () => {
@@ -62,12 +70,12 @@ describe('pane-admission (F-572): teto de panes + gate por memória', () => {
     expect(verdict.message).toMatch(/swap/i);
   });
 
-  it('memória desconhecida não bloqueia (o teto de panes continua valendo)', () => {
+  it('memória desconhecida não bloqueia; acima do teto só avisa', () => {
     expect(evaluatePaneAdmission(input({ memory: null })).ok).toBe(true);
     const capped = evaluatePaneAdmission(
       input({ memory: null, liveAgentPanes: DEFAULT_PANE_ADMISSION_LIMITS.maxAgentPanes }),
     );
-    expect(capped.ok).toBe(false);
+    expect(capped.ok && Boolean(capped.warning)).toBe(true);
   });
 
   it('avisa a partir de 80% do teto sem recusar', () => {
@@ -179,7 +187,7 @@ describe('pane-admission: sinal do kernel no macOS + gate síncrono com conselhe
     registerPaneAdmissionAdvisor({
       idleCandidates: () => [{ paneId: 'pane-x', paneNumber: 4, title: 'Helper', idleForMs: 120_000 }],
     });
-    const verdict = admitAgentSpawnSync(DEFAULT_PANE_ADMISSION_LIMITS.maxAgentPanes, Date.now(), {});
+    const verdict = admitAgentSpawnSync(DEFAULT_PANE_ADMISSION_LIMITS.maxAgentPanes, Date.now(), { NEXUS_PANE_CAP_HARD: '1' });
     expect(verdict.ok).toBe(false);
     if (verdict.ok) return;
     expect(verdict.message).toContain('pane 4');

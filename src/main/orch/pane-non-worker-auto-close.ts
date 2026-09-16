@@ -32,6 +32,7 @@ import {
   getPaneRuntimeAuthorityBySession,
   listPaneSnapshots,
   requestPaneClose,
+  requestPanePark,
 } from './pane-registry';
 import { isSessionInjectableIdle, tapAgentSemanticStatus } from './agent-status';
 import { armedDeliveryContract } from './delivery-contract';
@@ -90,6 +91,15 @@ export interface NonWorkerAutoCloseDeps {
    * por tick, o mais parado primeiro.
    */
   readonly isUnderMemoryPressure?: () => boolean;
+  /**
+   * 0.76.45: estacionar em vez de fechar (CLI encerrado, pane fica com o
+   * scrollback e "Acordar" por resume). Quando presente, tem precedência
+   * sobre closePane; devolve false se não conseguiu (aí nada é fechado).
+   */
+  readonly parkPane?: (
+    paneId: string,
+    reason: 'idle' | 'memory-pressure',
+  ) => Promise<'parked' | 'closed' | false> | 'parked' | 'closed' | false;
 }
 
 function productionDeps(): NonWorkerAutoCloseDeps {
@@ -112,6 +122,9 @@ function productionDeps(): NonWorkerAutoCloseDeps {
     isIdle: (sessionId) => isSessionInjectableIdle(sessionId),
     hasPendingDelivery: (sessionId) => armedDeliveryContract(sessionId) !== null,
     closePane: (paneId) => requestPaneClose(paneId),
+    // 0.76.45: estacionar (pane fica, memória vai a zero); main-owned sem
+    // renderer cai no fechamento dentro de requestPanePark.
+    parkPane: (paneId, reason) => requestPanePark(paneId, reason),
     ttlMs: NON_WORKER_AUTO_CLOSE_TTL_MS,
     log: (message) => console.warn(`[pane-guardian] ${message}`),
     listIdleSessions: () =>
@@ -195,14 +208,19 @@ function closeIdlePane(
   ref: NonWorkerPaneRef,
   sessionId: string,
   trail: 'evento' | 'varredura',
+  reason: 'idle' | 'memory-pressure' = 'idle',
 ): void {
   if (closing.has(sessionId)) return;
   closing.add(sessionId);
+  const verb = deps.parkPane ? 'estacionando' : 'encerrando';
   deps.log(
-    `encerrando pane ocioso sem dono via ${trail} ` +
+    `${verb} pane ocioso sem dono via ${trail} (${reason}) ` +
       `(pane=${ref.paneId}, session=${sessionId}, role=${ref.role ?? 'none'})`,
   );
-  void Promise.resolve(deps.closePane(ref.paneId)).then(
+  const outcome: Promise<'parked' | 'closed' | boolean> = deps.parkPane
+    ? Promise.resolve(deps.parkPane(ref.paneId, reason))
+    : Promise.resolve(deps.closePane(ref.paneId));
+  void outcome.then(
     (closed) => {
       closing.delete(sessionId);
       if (!closed) {
@@ -274,7 +292,7 @@ export function sweepIdlePanes(deps: NonWorkerAutoCloseDeps): void {
         `pressão de memória: fechando o pane ocioso mais antigo sem esperar o TTL ` +
           `(pane=${ref.paneId}, ocioso há ${Math.round((now - (idleSince.get(sessionId) ?? now)) / 1000)} s)`,
       );
-      closeIdlePane(deps, ref, sessionId, 'varredura');
+      closeIdlePane(deps, ref, sessionId, 'varredura', 'memory-pressure');
       break;
     }
   }

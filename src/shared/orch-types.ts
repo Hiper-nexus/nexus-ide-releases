@@ -707,7 +707,9 @@ export type MissionOrchestratorBootstrapResult =
     };
 
 export type PaneRuntimeState =
-  'spawning' | 'busy' | 'idle' | 'exited' | 'hibernated' | 'unknown';
+  | 'spawning' | 'busy' | 'idle' | 'exited' | 'hibernated' | 'unknown'
+  /** 0.76.45: estacionado pelo guardian — CLI encerrado, pane e scrollback ficam; acordar = spawn com resume. */
+  | 'parked';
 
 /** One pane as mirrored into the main-process registry by the renderer. */
 export interface PaneRegistryEntry {
@@ -742,6 +744,9 @@ export interface PaneSnapshot extends PaneRegistryEntry {
   readOnly?: boolean;
   /** Provider-native filesystem/process confinement, when enforceable. */
   nativeReadOnly?: boolean;
+  /** 0.76.45: quando estacionado, o instante (ms) e a sessão encerrada que o resume reabre. */
+  parkedAt?: number;
+  parkedSessionId?: string;
 }
 
 /** Main → renderer: please create a pane and spawn its session. */
@@ -868,6 +873,19 @@ export type BrowserPaneCleanupRequest = PaneAttemptCleanupRequest;
 
 /** Legacy/general closes remain pane-id strings; attempt cleanup is sealed. */
 export type PaneCloseRequest = string | PaneAttemptCleanupRequest;
+
+/**
+ * Main → renderer (0.76.45): o guardian estacionou este pane. A sessão PTY
+ * já foi encerrada pelo main; o renderer marca o pane como `parked`, mantém
+ * o scrollback e oferece "Acordar" (spawn no mesmo paneId com `resume: true`
+ * — o main resolve o `--resume` exato pela sessão do provider, F-567).
+ */
+export interface PaneParkRequest {
+  paneId: string;
+  sessionId: string;
+  parkedAt: number;
+  reason: 'idle' | 'memory-pressure';
+}
 
 export const browserPaneOpenResultSchema = z.object({
   requestId: z.string().min(1).max(128),

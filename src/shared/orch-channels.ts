@@ -90,6 +90,8 @@ export const ORCH_CHANNELS = {
   paneRecoveryRequest: 'orch:pane.recoveryRequest',
   browserOpenRequest: 'orch:browser.openRequest',
   paneCloseRequest: 'orch:pane.closeRequest',
+  /** 0.76.45: main estacionou o pane (CLI encerrado, pane fica; acordar = spawn com resume). */
+  paneParkRequest: 'orch:pane.parkRequest',
   missionChanged: 'orch:mission.changed',
   missionsChanged: 'orch:missions.changed',
   handoffsChanged: 'orch:handoffs.changed',
