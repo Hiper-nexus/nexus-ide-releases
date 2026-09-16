@@ -4003,12 +4003,33 @@ export const RELEASE_07639: AppRelease = {
 export const CURRENT_RELEASE: AppRelease = {
   version: '0.76.40',
   date: '2026-09-16',
-  codename: 'Marca Nexus e validação Windows confiáveis',
+  codename: 'Cada pedido no seu espaço, marca Nexus no Windows',
   summary:
     'A distribuição Windows volta a carregar a marca do Nexus de ponta a ponta e o pacote de ' +
     'validação deixa de se apresentar como uma instalação Squirrel corrompida. A mesma suíte ' +
     'de smoke também passa a ser executável no Windows sem fingir que ele é macOS ou Linux.',
   highlights: [
+    {
+      title: 'Os painéis do "Novo pedido" não grudam mais na missão aberta',
+      detail:
+        'Cada abertura ganha um espaço próprio e os Terminais passam a ter abas por missão e por ' +
+        'espaço, com a contagem de painéis em cada uma. "Todos" continua ali para quem quer o ' +
+        'mosaico inteiro, e o escopo sobrevive ao restart.',
+    },
+    {
+      title: 'A missão adota o painel que você já estava usando',
+      detail:
+        'Marcar um terminal como coordenador leva ao Novo pedido com um aviso; quando a missão ' +
+        'começa, é aquele painel que assume. Nenhum terminal novo é aberto e o seu não é ' +
+        'encerrado.',
+    },
+    {
+      title: 'O painel focado está sempre na tela',
+      detail:
+        'Login de ferramenta, instalação de CLI, voz e ⌘K criam painéis e pedem sua atenção ' +
+        'neles — agora a aba acompanha, então nunca mais somos mandados concluir um login num ' +
+        'terminal que não está desenhado.',
+    },
     {
       title: 'Ícone Nexus no executável, janela e barra de tarefas',
       detail:
@@ -4032,6 +4053,12 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
   fixes: [
+    {
+      title: 'Fim do orquestrador órfão',
+      detail:
+        'A promoção passou a respeitar a recusa do processo principal: a estrela de coordenador ' +
+        'não aparece mais quando o motor não reconhece líder nenhum.',
+    },
     {
       title: 'Recurso de ícone não some do pacote',
       detail:

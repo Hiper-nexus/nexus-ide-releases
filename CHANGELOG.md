@@ -1,6 +1,10 @@
 # Changelog
 
-## 0.76.40 — Marca Nexus e validação Windows confiáveis
+## 0.76.40 — Cada pedido no seu espaço, marca Nexus no Windows
+
+- **Os painéis do "Novo pedido" ganham espaço próprio (F-560)**: cada painel pertence a exatamente um escopo — missão, espaço do operador ou soltos — e os Terminais passam a ter abas, com contagem. Detalhe completo na 0.76.39 abaixo, que nunca chegou a ser publicada.
+- **A missão adota o painel vivo (F-561)**: "Tornar orquestrador" deixa de ser beco sem saída; a missão nova assume o painel em que você já trabalhava, sem abrir terminal novo nem encerrar o seu.
+- **Filtro de escopo que cobre tudo volta a ser no-op**: um `Set` com todos os panes fazia o grid reconstruir a árvore com ids novos a cada atualização de missão, remontando o mosaico e matando a sessão de PTY por baixo. O gate de release pegou isso no app empacotado.
 
 - **Ícone Nexus em toda a experiência Windows (F-548)**: o mesmo cristal Nexus multi-resolução agora acompanha o executável, o instalador, a janela e o atalho Squirrel. A janela declara o AppUserModelID do produto antes de abrir, evitando o tile genérico do Windows após instalar ou atualizar.
 - **Pacote de teste não finge instalação quebrada (F-549)**: a validação empacotada continua sem rede por segurança e não mostra mais o aviso falso de `Update.exe` ausente. Uma instalação Squirrel real com arquivos faltando continua sendo diagnosticada corretamente.
