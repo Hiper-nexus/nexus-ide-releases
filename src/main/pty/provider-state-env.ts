@@ -1,4 +1,6 @@
 import path from 'node:path';
+import fs from 'node:fs';
+import { ensurePrivateDirectory } from '../orch/cli-mcp-session-artifacts';
 
 /**
  * F-567: durable conversations below provider-state/<adapter>/<checkoutId>.
@@ -114,4 +116,73 @@ export function providerStateEnvFor(
     }
   }
   return plan;
+}
+
+/** Materialize a Main-owned plan; returns exact native auth/config grants.
+ * Conversation roots are real private directories, never links to native stores.
+ * Windows junctions only support directories: this file-only allowlist uses
+ * hardlinks instead, failing closed across volumes rather than copying secrets.
+ */
+export function materializeProviderState(
+  plan: ProviderStatePlan,
+  userDataDir: string,
+): string[] {
+  const boundary = path.resolve(userDataDir);
+  const stateRoot = path.resolve(plan.stateRoot);
+  function ensureDirectory(dir: string): void {
+    const relative = path.relative(boundary, dir);
+    if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      throw new Error('Provider state must remain inside userData');
+    }
+    let current = boundary;
+    for (const segment of relative.split(path.sep)) {
+      current = path.join(current, segment);
+      if (fs.lstatSync(current, { throwIfNoEntry: false })?.isSymbolicLink()) {
+        throw new Error('Provider state directory must not be a symlink');
+      }
+      ensurePrivateDirectory(current);
+    }
+  }
+  ensureDirectory(stateRoot);
+  for (const dir of new Set(Object.values(plan.env))) ensureDirectory(dir);
+  const sharedFiles: string[] = [];
+  const overlay = plan.homeOverlay;
+  if (!overlay) return sharedFiles;
+  ensureDirectory(overlay.targetDir);
+  for (const relative of overlay.link) {
+    const source = path.resolve(overlay.sourceDir, relative);
+    const target = path.resolve(overlay.targetDir, relative);
+    if (!target.startsWith(`${stateRoot}${path.sep}`)) {
+      throw new Error('Provider config target must remain inside checkout state');
+    }
+    ensureDirectory(path.dirname(target));
+    const targetEntry = fs.lstatSync(target, { throwIfNoEntry: false });
+    if (targetEntry?.isSymbolicLink()) {
+      const linked = path.resolve(path.dirname(target), fs.readlinkSync(target));
+      if (path.toNamespacedPath(linked) !== path.toNamespacedPath(source)) {
+        throw new Error('Provider config link points outside its auth source');
+      }
+    } else if (targetEntry && !targetEntry.isFile()) {
+      throw new Error('Provider config target must be a regular file');
+    }
+    let sourceEntry: fs.Stats;
+    try {
+      sourceEntry = fs.statSync(source);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+      throw error;
+    }
+    if (!sourceEntry.isFile()) throw new Error('Provider auth/config source must be a regular file');
+    if (!targetEntry) {
+      if (process.platform === 'win32') fs.linkSync(source, target);
+      else fs.symlinkSync(source, target, 'file');
+    }
+    // CLI atomic renames may replace a link with a private regular file. Keep
+    // that fresh login/config; never overwrite it or sync conversations back.
+    const actualTarget = fs.statSync(target);
+    if (actualTarget.dev === sourceEntry.dev && actualTarget.ino === sourceEntry.ino) {
+      sharedFiles.push(fs.realpathSync(source));
+    }
+  }
+  return sharedFiles;
 }

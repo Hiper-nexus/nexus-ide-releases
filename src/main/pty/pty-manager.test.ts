@@ -4628,6 +4628,132 @@ describe("cli-agent spawn argv hardening", () => {
 
 
 describe('F-567 spawn contracts', () => {
+  (process.platform === 'darwin' ? it : it.skip).each([
+    ['droid', 'HOME', '.factory'],
+    ['hermes', 'HERMES_HOME', '.hermes'],
+    ['prime-agent', 'PRIME_AGENT_SESSION_DIR', '.prime/agent'],
+  ])('keeps %s checkout env under Seatbelt and grants only exact shared files', async (kind, envKey, profile) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'f567-tui-sandbox-'));
+    const home = path.join(root, 'native');
+    const profileDir = path.join(home, profile);
+    const worktree = path.join(root, 'worktree');
+    const runtime = path.join(root, 'runtime');
+    const binary = path.join(root, 'cli');
+    fs.mkdirSync(profileDir, { recursive: true });
+    fs.mkdirSync(worktree);
+    fs.mkdirSync(runtime);
+    fs.writeFileSync(binary, '#!/bin/sh\n');
+    fs.chmodSync(binary, 0o755);
+    const auth = path.join(profileDir, 'auth.json');
+    fs.writeFileSync(auth, '{"fixture":true}');
+    vi.stubEnv('HOME', home);
+    vi.stubEnv('USERPROFILE', home);
+    const host = fakeHost();
+    setPtyHost(host.host);
+    setAgentSpawnHook(() => ({ authorityToken: 'f567-tui-sandbox', env: {}, extraArgs: [], processHome: home, sandboxDir: runtime }));
+    const base = revisionBoundWorker(fs.realpathSync(worktree));
+    const authority = { ...base, scope: { ...base.scope, checkoutId: path.basename(root) }, context: { ...base.context!, readOnly: true, nativeReadOnly: false } };
+    const stateRoot = path.join(app.getPath('userData'), 'provider-state', kind, authority.scope.checkoutId);
+    let sessionId: string | undefined;
+    try {
+      const adapter = { ...makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }), id: kind };
+      ({ sessionId } = spawnMainOwnedAgentSession({ kind: 'cli-agent', paneId: `tui-sandbox-${kind}`, cols: 80, rows: 24 }, adapter, { binPath: binary }, authority));
+      const spec = host.specFor(sessionId);
+      expect(spec.file).toBe('/usr/bin/sandbox-exec');
+      expect(fs.realpathSync(spec.env[envKey]!)).toContain(fs.realpathSync(stateRoot) + path.sep);
+      const policy = spec.args[1];
+      expect(policy).toContain(JSON.stringify(fs.realpathSync(stateRoot)));
+      if (kind !== 'prime-agent') expect(policy).toContain(JSON.stringify(fs.realpathSync(auth)));
+      expect(policy).not.toContain(`(subpath ${JSON.stringify(fs.realpathSync(profileDir))})`);
+      expect(policy).not.toContain(`(subpath ${JSON.stringify(fs.realpathSync(home))})`);
+    } finally {
+      if (sessionId) await orchTerminateSession(sessionId);
+      setAgentSpawnHook(null);
+      vi.unstubAllEnvs();
+      fs.rmSync(root, { recursive: true, force: true });
+      fs.rmSync(stateRoot, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['droid', 'HOME', '.factory', 'sessions/chat.jsonl'],
+    ['hermes', 'HERMES_HOME', '.hermes', 'state.db'],
+    ['prime-agent', 'PRIME_AGENT_SESSION_DIR', '.prime/agent', 'sessions/chat.jsonl'],
+  ])('materializes %s state per checkout before decoration and preserves native conversations', async (kind, envKey, profile, conversation) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'f567-tui-spawn-'));
+    const nativeHome = path.join(root, 'native');
+    const profileDir = path.join(nativeHome, profile);
+    const nativeConversation = path.join(profileDir, conversation);
+    fs.mkdirSync(path.dirname(nativeConversation), { recursive: true });
+    fs.writeFileSync(nativeConversation, 'native conversation');
+    fs.writeFileSync(path.join(profileDir, 'auth.json'), '{"fixture":true}');
+    vi.stubEnv('HOME', nativeHome);
+    vi.stubEnv('USERPROFILE', nativeHome);
+    const host = fakeHost();
+    setPtyHost(host.host);
+    const prepared: Record<string, string>[] = [];
+    setAgentSpawnHook((_adapter, _req, _authority, env) => {
+      prepared.push({ ...env });
+      return { authorityToken: 'f567-tui-spawn', env: { [envKey]: profileDir }, extraArgs: [] };
+    });
+    const sessions: string[] = [];
+    const stateRoots: string[] = [];
+    try {
+      for (const suffix of ['a', 'b']) {
+        const base = trustedSpawn();
+        const authority = { ...base, scope: { ...base.scope, checkoutId: `${path.basename(root)}-${suffix}` } };
+        const stateRoot = path.join(app.getPath('userData'), 'provider-state', kind, authority.scope.checkoutId);
+        stateRoots.push(stateRoot);
+        const adapter = { ...makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }), id: kind };
+        const spawned = spawnAgentSession(fakeWc(), { kind: 'cli-agent', cols: 80, rows: 24 }, adapter, {}, authority);
+        sessions.push(spawned.sessionId);
+        const env = host.specFor(spawned.sessionId).env;
+        expect(env[envKey]).toBe(prepared.at(-1)![envKey]);
+        expect(env[envKey]).toContain(stateRoot + path.sep);
+        expect(fs.statSync(env[envKey]!).isDirectory()).toBe(true);
+        const targetProfile = kind === 'droid' ? path.join(env.HOME!, '.factory') : env[envKey]!;
+        const targetConversation = path.join(targetProfile, kind === 'prime-agent' ? 'chat.jsonl' : conversation);
+        expect(fs.existsSync(targetConversation)).toBe(false);
+        fs.mkdirSync(path.dirname(targetConversation), { recursive: true });
+        fs.writeFileSync(targetConversation, `checkout ${suffix}`);
+        if (kind !== 'prime-agent') {
+          expect(fs.readFileSync(path.join(targetProfile, 'auth.json'), 'utf8')).toBe('{"fixture":true}');
+          expect(fs.statSync(path.join(targetProfile, 'auth.json')).ino).toBe(fs.statSync(path.join(profileDir, 'auth.json')).ino);
+        }
+        expect(fs.readFileSync(nativeConversation, 'utf8')).toBe('native conversation');
+        await orchTerminateSession(spawned.sessionId);
+        expect(fs.readFileSync(targetConversation, 'utf8')).toBe(`checkout ${suffix}`);
+      }
+      expect(stateRoots[0]).not.toBe(stateRoots[1]);
+    } finally {
+      for (const id of sessions) await orchTerminateSession(id);
+      setAgentSpawnHook(null);
+      vi.unstubAllEnvs();
+      fs.rmSync(root, { recursive: true, force: true });
+      for (const dir of stateRoots) fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['claude', 'codex', 'grok', 'opencode'])('does not route %s through the TUI state hook', async (kind) => {
+    const host = fakeHost();
+    setPtyHost(host.host);
+    setAgentSpawnHook(null);
+    setSquadCliPolicyLookupForTests(() => 'operator-choice');
+    const base = trustedSpawn();
+    const authority = { ...base, scope: { ...base.scope, checkoutId: `tui-unaffected-${kind}` } };
+    const before = agentEnv(builtinCliPtyAdapter(kind), null);
+    const spawned = spawnAgentSession(fakeWc(), { kind: 'cli-agent', cols: 80, rows: 24 }, builtinCliPtyAdapter(kind), {}, authority);
+    try {
+      const env = host.specFor(spawned.sessionId).env;
+      for (const key of ['HOME', 'USERPROFILE', 'CODEX_HOME', 'GROK_HOME', 'XDG_DATA_HOME']) {
+        expect(env[key]).toBe(before[key]);
+      }
+      expect(fs.existsSync(path.join(app.getPath('userData'), 'provider-state', kind, authority.scope.checkoutId))).toBe(false);
+    } finally {
+      await orchTerminateSession(spawned.sessionId);
+    }
+  });
+
   it('disables latest resume in every builtin while retaining exact resume templates', () => {
     for (const raw of BUILTIN_ADAPTERS) {
       if ((raw as { kind: string }).kind !== 'cli-pty') continue;

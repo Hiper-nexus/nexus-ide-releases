@@ -1,6 +1,8 @@
 import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { providerStateEnvFor } from './provider-state-env';
+import { materializeProviderState, providerStateEnvFor } from './provider-state-env';
 
 const adapters = ['droid', 'cursor', 'copilot', 'amp', 'goose', 'pi', 'prime-agent', 'hermes', 'command-code'];
 afterEach(() => vi.restoreAllMocks());
@@ -76,5 +78,76 @@ describe('providerStateEnvFor', () => {
   it('rejects relative roots and leaves unrelated adapters alone', () => {
     expect(() => providerStateEnvFor('pi', { home: '/home', userDataDir: 'relative', checkoutId: 'a', platform: 'linux' })).toThrow();
     expect(providerStateEnvFor('codex', { home: '/home', userDataDir: '/data', checkoutId: 'a' })).toBeNull();
+  });
+});
+
+describe('materializeProviderState', () => {
+  function fixture() {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'provider-state-materialize-'));
+    const home = path.join(root, 'native');
+    const userDataDir = path.join(root, 'userData');
+    fs.mkdirSync(path.join(home, '.factory'), { recursive: true });
+    fs.mkdirSync(userDataDir);
+    fs.writeFileSync(path.join(home, '.factory', 'auth.json'), '{"fixture":true}');
+    const plan = providerStateEnvFor('droid', { home, userDataDir, checkoutId: 'checkout-a' })!;
+    return { root, home, userDataDir, plan };
+  }
+
+  it.each(['native', 'win32'])('links selected files, preserves local replacements and never imports conversations (%s)', (mode) => {
+    const f = fixture();
+    const nativeAuth = path.join(f.home, '.factory', 'auth.json');
+    const targetAuth = path.join(f.plan.env.HOME, '.factory', 'auth.json');
+    fs.mkdirSync(path.join(f.home, '.factory', 'sessions'));
+    fs.writeFileSync(path.join(f.home, '.factory', 'sessions', 'old.jsonl'), 'native');
+    if (mode === 'win32') vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+    try {
+      expect(materializeProviderState(f.plan, f.userDataDir)).toEqual([fs.realpathSync(nativeAuth)]);
+      expect(fs.statSync(targetAuth).ino).toBe(fs.statSync(nativeAuth).ino);
+      if (mode === 'win32') expect(fs.lstatSync(targetAuth).isSymbolicLink()).toBe(false);
+      expect(materializeProviderState(f.plan, f.userDataDir)).toEqual([fs.realpathSync(nativeAuth)]);
+      expect(fs.existsSync(path.join(f.plan.env.HOME, '.factory', 'sessions'))).toBe(false);
+      // An atomic auth refresh must survive the next launch.
+      fs.writeFileSync(targetAuth + '.tmp', 'fresh private login');
+      fs.renameSync(targetAuth + '.tmp', targetAuth);
+      expect(materializeProviderState(f.plan, f.userDataDir)).toEqual([]);
+      expect(fs.readFileSync(targetAuth, 'utf8')).toBe('fresh private login');
+      expect(fs.readFileSync(nativeAuth, 'utf8')).toBe('{"fixture":true}');
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['ancestor', 'profile', 'auth', 'source-directory'])('rejects redirected %s before writing outside checkout state', (attack) => {
+    const f = fixture();
+    try {
+      if (attack === 'ancestor') {
+        fs.symlinkSync(f.home, path.join(f.userDataDir, 'provider-state'), 'junction');
+      } else if (attack === 'source-directory') {
+        fs.rmSync(path.join(f.home, '.factory', 'auth.json'));
+        fs.mkdirSync(path.join(f.home, '.factory', 'auth.json'));
+      } else {
+        materializeProviderState(f.plan, f.userDataDir);
+        const target = path.join(f.plan.env.HOME, '.factory', ...(attack === 'auth' ? ['auth.json'] : []));
+        fs.rmSync(target, { recursive: true, force: true });
+        fs.symlinkSync(f.home, target, 'junction');
+      }
+      expect(() => materializeProviderState(f.plan, f.userDataDir)).toThrow(/Provider/);
+      expect(fs.existsSync(path.join(f.home, 'droid'))).toBe(false);
+    } finally {
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed rather than copying a Windows credential across volumes', () => {
+    const f = fixture();
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32');
+    const link = vi.spyOn(fs, 'linkSync').mockImplementation(() => { throw Object.assign(new Error('cross-volume'), { code: 'EXDEV' }); });
+    try {
+      expect(() => materializeProviderState(f.plan, f.userDataDir)).toThrow('cross-volume');
+      expect(fs.existsSync(path.join(f.plan.env.HOME, '.factory', 'auth.json'))).toBe(false);
+    } finally {
+      link.mockRestore();
+      fs.rmSync(f.root, { recursive: true, force: true });
+    }
   });
 });

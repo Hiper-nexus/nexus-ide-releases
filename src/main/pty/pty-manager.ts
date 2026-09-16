@@ -14,6 +14,7 @@ import {
   initialPromptChannel,
 } from "../../shared/cli-initial-prompt";
 import { ensureUtf8Locale } from "./pty-env-locale";
+import { materializeProviderState, providerStateEnvFor } from "./provider-state-env";
 import { applyPaneTerminalIdentity } from "./pane-terminal-identity";
 import { PTY_CHANNELS } from "../../shared/channels";
 import { migrateModelId } from "../../shared/model-defaults";
@@ -1546,6 +1547,19 @@ export function spawnAgentSession(
     for (const target of spawnEnvs) Object.assign(target, checkoutProviderHome.env);
   }
 
+  const tuiProviderState = providerStateEnvFor(adapter.id, {
+    userDataDir: app.getPath("userData"),
+    checkoutId: authority.scope.checkoutId,
+    home: identityEnv.HOME ?? os.homedir(),
+    platform: process.platform,
+  });
+  const tuiProviderSharedFiles = tuiProviderState
+    ? materializeProviderState(tuiProviderState, app.getPath("userData"))
+    : [];
+  if (tuiProviderState) {
+    for (const target of spawnEnvs) Object.assign(target, tuiProviderState.env);
+  }
+
   // Orchestration decoration: MCP endpoint env, optional HOME override and
   // extra argv (e.g. --mcp-config). The hook is trusted main-process code.
   // Pass prepared env so MCP overlays (Grok/Kimi) can source managed-account homes.
@@ -1925,9 +1939,8 @@ export function spawnAgentSession(
     ) {
       args.push("--search");
     }
-    // F-567: keep AGY HOME and GEMINI_CLI_HOME checkout-owned even in missions.
-    // Current AGY uses HOME; auth files remain linked to the managed/native source.
-
+    // F-567: decoration and account overrides must not restore native TUI stores.
+    if (tuiProviderState) Object.assign(env, tuiProviderState.env);
   } catch (error) {
     decoration?.onSpawnFailed?.();
     throw error;
@@ -2075,6 +2088,7 @@ export function spawnAgentSession(
         ? undefined
         : decoration?.sandboxDir;
       let advisoryProcessHome =
+        tuiProviderState?.env.HOME ??
         (isAgy ? spawnEnv.HOME : undefined) ?? decoration?.processHome;
       const advisoryEphemeralGrants: string[] = [];
       const advisoryReadOnlyGrants: string[] = [];
@@ -2138,6 +2152,7 @@ export function spawnAgentSession(
         processHome: advisoryProcessHome,
         runtimeDir: advisoryRuntimeDir,
         providerStateReadPaths: [
+          ...(tuiProviderState ? [tuiProviderState.stateRoot, ...tuiProviderSharedFiles] : []),
           ...(checkoutProviderHome
             ? [checkoutProviderHome.stateHome, ...checkoutProviderHome.sharedReadPaths]
             : (decoration?.providerStateReadPaths ?? [])),
@@ -2146,6 +2161,7 @@ export function spawnAgentSession(
           ...(decoration?.missionShimReadPaths ?? []),
         ],
         providerStateWritePaths: [
+          ...(tuiProviderState ? [tuiProviderState.stateRoot, ...tuiProviderSharedFiles] : []),
           ...(checkoutProviderHome
             ? [checkoutProviderHome.stateHome]
             : (decoration?.providerStateWritePaths ?? [])),
@@ -2184,12 +2200,14 @@ export function spawnAgentSession(
             ...advisorySandbox.extraWritePaths,
             ...advisorySandbox.providerStateReadPaths,
             ...(checkoutProviderHome?.sharedFiles ?? []),
+            ...tuiProviderSharedFiles,
             ...(decoration?.attachmentReadPaths ?? []),
           ],
           extraWritePaths: [
             ...advisorySandbox.extraWritePaths,
             ...advisorySandbox.providerStateWritePaths,
             ...(checkoutProviderHome?.sharedFiles ?? []),
+            ...tuiProviderSharedFiles,
           ],
         });
         spawnFile = plan.file;
