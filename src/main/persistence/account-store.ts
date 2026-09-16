@@ -327,8 +327,16 @@ function syncClaudeBlobFromKeychainIfNative(account: Account): void {
       return raw ? slimClaudeCredentialBlob(raw) : null;
     })();
   if (!nativeBlob) return; // Keychain unreadable / unusable → keep vault snapshot.
-  if (getSecret(CRED_PREFIX + account.id) === nativeBlob) return; // In sync.
-  const saved = setSecret(CRED_PREFIX + account.id, nativeBlob);
+  const vaultKey = CRED_PREFIX + account.id;
+  const current = getSecret(vaultKey);
+  if (current === nativeBlob) return; // In sync.
+  // `null` com a chave PRESENTE no índice do vault não é ausência — é decrypt
+  // que falhou agora (Keychain capenga). Forçar setSecret aqui é insistir num
+  // SecItemAdd no pior momento: é isso que faz o macOS levantar o modal
+  // "Chaves Não Encontradas / Reajustar Para Padrões" (o botão que apaga o
+  // keychain). O snapshot do vault fica; o próximo read-back tenta de novo.
+  if (current === null && hasSecret(vaultKey)) return;
+  const saved = setSecret(vaultKey, nativeBlob);
   if (!saved.ok) {
     console.warn(
       '[accounts] claude keychain read-back persist failed:',

@@ -210,6 +210,26 @@ describe('read-back Keychain → vault (linhagem Claude nativa)', () => {
     expect(deps.keychainWrites).toEqual([oauthBlob('b-live')]);
   });
 
+  it('decrypt que falhou com a chave presente NÃO força reescrita no Keychain', () => {
+    // Cenário do modal "Chaves Não Encontradas": o vault TEM a chave, mas o
+    // decrypt devolve null porque o Keychain está capenga neste instante. A
+    // igualdade estrita `null === blob` falhava e o sync insistia num
+    // setSecret → encryptString → SecItemAdd — exatamente o que levanta o modal
+    // do macOS com o botão que apaga o keychain.
+    const a = addClaudeAccount('Conta A', 'a@example.test', oauthBlob('a-old'));
+    deps.activeEmail = 'a@example.test';
+    deps.keychain = oauthBlob('a-live');
+    // Chave presente no índice, valor ilegível (decrypt falhou).
+    deps.secrets.set(`acctcred:${a.id}`, null as unknown as string);
+    deps.calls.length = 0;
+
+    ensureSubscriptionActive(a);
+
+    expect(deps.calls).not.toContain(`setSecret:acctcred:${a.id}`);
+    // O snapshot (ilegível agora) fica até um read-back conseguir confirmar.
+    expect(deps.secrets.has(`acctcred:${a.id}`)).toBe(true);
+  });
+
   it('ensureSubscriptionActive com Keychain mais novo atualiza o vault e escreve o valor FRESCO', () => {
     const a = addClaudeAccount('Conta A', 'a@example.test', oauthBlob('a-old'));
     deps.secrets.set(`acctcred:${a.id}`, oauthBlob('a-stale'));
