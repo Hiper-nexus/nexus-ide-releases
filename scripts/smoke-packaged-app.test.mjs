@@ -107,22 +107,23 @@ describe('resolveAppArgument / default targets', () => {
 
 describe('resolvePackagedTarget / packagedBinaryForApp', () => {
   it('resolves macOS .app binary and unpacked natives root', () => {
-    const target = resolvePackagedTarget('/tmp/release/NexusIDE.app', {
+    const appPath = path.resolve('/tmp/release/NexusIDE.app');
+    const target = resolvePackagedTarget(appPath, {
       platform: 'darwin',
       arch: 'arm64',
     });
     expect(target.binary).toBe(
-      path.join('/tmp/release/NexusIDE.app', 'Contents', 'MacOS', 'nexus-ide'),
+      path.join(appPath, 'Contents', 'MacOS', 'nexus-ide'),
     );
     expect(target.unpackedRoot).toBe(
       path.join(
-        '/tmp/release/NexusIDE.app',
+        appPath,
         'Contents',
         'Resources',
         'app.asar.unpacked',
       ),
     );
-    expect(packagedBinaryForApp('/tmp/release/NexusIDE.app', 'darwin')).toBe(
+    expect(packagedBinaryForApp(appPath, 'darwin')).toBe(
       target.binary,
     );
   });
@@ -195,23 +196,24 @@ describe('resolvePackagedTarget / packagedBinaryForApp', () => {
 
 describe('isolation args and environment', () => {
   it('launches with positional sentinel and Chromium user-data switch', () => {
-    const userData = '/tmp/nexus-packaged-smoke';
+    const userData = path.resolve('/tmp/nexus-packaged-smoke');
     expect(packagedSmokeArgs(userData, 'darwin')).toEqual([
       'nexus-smoke-test',
-      '--user-data-dir=/tmp/nexus-packaged-smoke',
+      `--user-data-dir=${userData}`,
     ]);
   });
 
   it('disables Chromium sandbox only for the Linux CI smoke harness', () => {
-    expect(packagedSmokeArgs('/tmp/nexus-packaged-smoke', 'linux')).toEqual([
+    const userData = path.resolve('/tmp/nexus-packaged-smoke');
+    expect(packagedSmokeArgs(userData, 'linux')).toEqual([
       '--no-sandbox',
       'nexus-smoke-test',
-      '--user-data-dir=/tmp/nexus-packaged-smoke',
+      `--user-data-dir=${userData}`,
     ]);
   });
 
   it('isolates filesystem defaults and strips secrets/injection variables', () => {
-    const userData = '/tmp/nexus-packaged-smoke';
+    const userData = path.resolve('/tmp/nexus-packaged-smoke');
     const env = packagedSmokeEnvironment(
       {
         PATH: '/bin',
@@ -228,17 +230,18 @@ describe('isolation args and environment', () => {
     expect(env).toMatchObject({
       PATH: '/bin',
       FOO: 'bar',
-      HOME: '/tmp/nexus-packaged-smoke/home',
-      USERPROFILE: '/tmp/nexus-packaged-smoke/home',
-      APPDATA: path.join('/tmp/nexus-packaged-smoke/home', 'AppData', 'Roaming'),
+      HOME: path.join(userData, 'home'),
+      USERPROFILE: path.join(userData, 'home'),
+      APPDATA: path.join(userData, 'home', 'AppData', 'Roaming'),
       LOCALAPPDATA: path.join(
-        '/tmp/nexus-packaged-smoke/home',
+        userData,
+        'home',
         'AppData',
         'Local',
       ),
-      TEMP: '/tmp/nexus-packaged-smoke/tmp',
-      TMP: '/tmp/nexus-packaged-smoke/tmp',
-      TMPDIR: '/tmp/nexus-packaged-smoke/tmp',
+      TEMP: path.join(userData, 'tmp'),
+      TMP: path.join(userData, 'tmp'),
+      TMPDIR: path.join(userData, 'tmp'),
       NEXUS_USER_DATA_DIR: userData,
       NEXUS_FORCE_ALL_FLAGS: '1',
       NEXUS_PACKAGED_SMOKE: '1',
@@ -272,8 +275,9 @@ describe('isolation args and environment', () => {
   });
 
   it('computes the functional marker path under isolated userData', () => {
-    expect(packagedSmokeMarkerPath('/tmp/nexus-packaged-smoke')).toBe(
-      '/tmp/nexus-packaged-smoke/functional-smoke-workspace/smoke.txt',
+    const userData = path.resolve('/tmp/nexus-packaged-smoke');
+    expect(packagedSmokeMarkerPath(userData)).toBe(
+      path.join(userData, 'functional-smoke-workspace', 'smoke.txt'),
     );
   });
 });
@@ -895,6 +899,7 @@ describe('runPackagedSmoke integration (fixture + fake spawn)', () => {
       },
       inspectMainBundle: () => {},
       inspectLegalArtifacts: () => {},
+      listTreePids: () => [],
     });
 
     expect(capturedArgs[0]).toBe('nexus-smoke-test');
