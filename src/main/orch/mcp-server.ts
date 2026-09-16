@@ -968,7 +968,14 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           adapterId: adapter.id,
           userDataPath: app.getPath("userData"),
           checkoutId: authority.scope.checkoutId,
-          inheritNativeProfile: !thirdPartyClaudeFamily && !gateHome,
+          // F-572: só a mão do operador (role user) herda o perfil MCP global
+          // (~19 servidores, ~600 MB por pane no incidente de 16/09). Worker e
+          // orquestrador nascem só com o MCP do Nexus — como já era em
+          // "hardened" — e ganham o resto por allowlist, não por herança.
+          inheritNativeProfile:
+            !thirdPartyClaudeFamily &&
+            !gateHome &&
+            (meta?.role ?? "user") === "user",
           gateHooks: gateHome,
           cwd: authority.cwd,
           approvedMissionProjectTrust,

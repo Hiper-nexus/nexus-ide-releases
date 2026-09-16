@@ -156,6 +156,11 @@ import {
   configureRendererMissionAuthority,
 } from "./orch/orch-ipc";
 import { quiesceOrchestrationCoordinator } from "./orch/orchestration-coordinator";
+import {
+  initNonWorkerAutoClose,
+  shutdownNonWorkerAutoClose,
+} from "./orch/pane-non-worker-auto-close";
+import { refreshSystemMemorySample } from "./orch/pane-admission";
 import { ProjectRuntimeManager } from "./runtime/project-runtime-manager";
 import {
   buildMultiPcBackendStatus,
@@ -784,6 +789,15 @@ if (!wireDeepLinks()) {
     stopMacOSDockWatchdog();
     startMacOSDockWatchdog();
 
+    // F-572: pane guardian — fecha pane ocioso sem dono (helper do operador ou
+    // worker sem missão) após o TTL, por evento de hook E por varredura do
+    // PTY. Existia desde 05/08 e nunca tinha sido ligado; em 16/09, 22 panes
+    // parados esgotaram a RAM do Mac.
+    initNonWorkerAutoClose();
+    // Primeira amostra de memória para o gate de admissão de panes (F-572);
+    // o gate é síncrono e lê o cache — sem isso o primeiro spawn nasce cego.
+    void refreshSystemMemorySample();
+
     // Gap A: register Claude+Codex managed hook installers. Installing edits the
     // user's GLOBAL ~/.claude & ~/.codex config (affects those tools even outside
     // Nexus), so we NEVER install on launch without consent — register only, then
@@ -1129,6 +1143,9 @@ function shutdown(): Promise<void> {
   if (shutdownPromise) return shutdownPromise;
   shutdownPromise = (async () => {
     stopMacOSDockWatchdog();
+    // F-572: nenhum fechamento automático de pane pode disparar no meio do
+    // teardown físico — a varredura e os timers param antes do PTY.
+    shutdownNonWorkerAutoClose();
     // Quiesce periodic orchestration before physical teardown, but retain its
     // exact exit observer and stores until PTY proof and reconciliation are
     // complete. A failed proof must leave the next retry operational.

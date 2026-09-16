@@ -187,7 +187,7 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     id: FEATURE_FLAG_IDS.paneNonWorkerAutoClose,
     owner: 'orch',
     description:
-      'Auto-fechar panes não-worker (spawn manual / agentes de ferramenta) idle além do TTL configurável (default 300s). Paridade commit 869c08f7.',
+      'Pane guardian (F-572): auto-fechar panes ociosos sem dono — helper do operador ou worker SEM missão — após 30 min, por evento de hook e por varredura do PTY a cada 60 s. Nunca toca orquestrador nem worker de missão. Ligado no boot desde a 0.76.43 (existia desde 05/08 e nunca tinha sido ligado).',
     channel: 'dev',
     createdAt: '2026-08-05',
     removeAfter: '2027-03-31',

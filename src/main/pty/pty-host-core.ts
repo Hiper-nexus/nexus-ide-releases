@@ -7,6 +7,7 @@
  * callbacks. pty-host-client.ts wires it to the real utilityProcess.
  */
 import type { PtyProcessTreeTerminationProof } from './pty-descendant-termination';
+import type { SessionFootprint } from './pane-footprint';
 import type {
   DarwinPtyExecutableSeal,
 } from './darwin-pty-supervisor';
@@ -51,7 +52,9 @@ export type HostControlMsg =
       termTimeoutMs: number;
       killTimeoutMs: number;
     }
-  | { type: 'liveness-probe'; requestId: string; sessionIds: string[] };
+  | { type: 'liveness-probe'; requestId: string; sessionIds: string[] }
+  /** F-572: RSS da árvore de processos de cada sessão viva no host. */
+  | { type: 'footprint-probe'; requestId: string };
 
 /** host → main (events). */
 export type HostEventMsg =
@@ -63,7 +66,12 @@ export type HostEventMsg =
       requestId: string;
       proof: PtyProcessTreeTerminationProof;
     }
-  | { type: 'liveness-report'; requestId: string; live: string[] };
+  | { type: 'liveness-report'; requestId: string; live: string[] }
+  | {
+      type: 'footprint-report';
+      requestId: string;
+      footprints: SessionFootprint[];
+    };
 
 export interface PtySessionHandlers {
   onData: (data: string) => void;
@@ -95,6 +103,12 @@ export interface PtyHost {
   probeLiveness?(
     sessionIds: readonly string[],
   ): Promise<ReadonlySet<string> | null>;
+  /**
+   * F-572: footprint (RSS da árvore de processos) de cada sessão viva no host.
+   * `null` = host não respondeu ou plataforma sem `ps` — telemetria ausente,
+   * nunca pressão inventada. Opcional: fakes de teste não precisam implementar.
+   */
+  probeFootprints?(): Promise<readonly SessionFootprint[] | null>;
 }
 
 /** Transport over the utilityProcess. `ensure()` lazily (re)forks the child. */
@@ -121,6 +135,16 @@ const TERMINATION_PROCESS_SCAN_BUDGET_MS = 4_000;
 const TERMINATION_TRANSPORT_MARGIN_MS = 500;
 /** Janela do probe de mortalidade; estourou = unverifiable, nunca morte. */
 const LIVENESS_PROBE_TIMEOUT_MS = 3_000;
+/** F-572: `ps` na árvore inteira cabe folgado; host mudo vira null. */
+const FOOTPRINT_PROBE_TIMEOUT_MS = 4_000;
+const pendingFootprintProbes = new Map<
+  string,
+  {
+    resolve: (value: readonly SessionFootprint[] | null) => void;
+    timer: ReturnType<typeof setTimeout> | null;
+  }
+>();
+let footprintProbeCounter = 0;
 export const PRE_SPAWN_FAILURE_TOMBSTONE_TTL_MS = 120_000;
 export const PRE_SPAWN_FAILURE_TOMBSTONE_LIMIT = 256;
 export const PHYSICAL_EXIT_RECEIPT_TTL_MS = 300_000;
@@ -489,6 +513,25 @@ export function createPtyHostBridge(
         },
       };
     },
+    probeFootprints() {
+      const requestId = `pty-footprint-${++footprintProbeCounter}`;
+      return new Promise<readonly SessionFootprint[] | null>((resolve) => {
+        const timer = setTimeout(() => {
+          if (!pendingFootprintProbes.delete(requestId)) return;
+          resolve(null); // host mudo = telemetria ausente, nunca pressão
+        }, FOOTPRINT_PROBE_TIMEOUT_MS);
+        timer.unref?.();
+        pendingFootprintProbes.set(requestId, { resolve, timer });
+        try {
+          transport.post({ type: 'footprint-probe', requestId });
+        } catch {
+          if (pendingFootprintProbes.delete(requestId)) {
+            clearTimeout(timer);
+            resolve(null);
+          }
+        }
+      });
+    },
     probeLiveness(sessionIds) {
       const requestId = `pty-liveness-${++livenessProbeCounter}`;
       return new Promise<ReadonlySet<string> | null>((resolve) => {
@@ -521,6 +564,14 @@ export function createPtyHostBridge(
       if (pending.timer) clearTimeout(pending.timer);
       pendingTerminations.delete(msg.requestId);
       pending.resolve(msg.proof);
+      return;
+    }
+    if (msg.type === 'footprint-report') {
+      const pending = pendingFootprintProbes.get(msg.requestId);
+      if (!pending) return;
+      if (pending.timer) clearTimeout(pending.timer);
+      pendingFootprintProbes.delete(msg.requestId);
+      pending.resolve(msg.footprints);
       return;
     }
     if (msg.type === 'liveness-report') {

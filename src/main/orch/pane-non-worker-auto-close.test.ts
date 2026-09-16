@@ -41,6 +41,9 @@ function refFor(
     paneId: `pane-${sessionId}`,
     sessionId,
     role: undefined,
+    // F-572: o default é um helper aberto pela mão do operador; um pane
+    // aberto pelo humano (sem pai) é testado à parte e nunca fecha.
+    operatorParentSessionId: 'pty-operator',
     ...overrides,
   };
 }
@@ -172,9 +175,12 @@ describe('pane-non-worker-auto-close (P1-4: auto-fechar panes não-worker idle)'
     expect(h.closed).toHaveLength(0);
   });
 
-  it('nunca encerra pane com role=worker', () => {
+  // F-572: worker COM missão continua intocável (a missão governa o ciclo de
+  // vida); worker SEM missão é a classe órfã e passou a ser elegível — ver o
+  // describe "pane guardian" abaixo.
+  it('nunca encerra pane com role=worker de uma missão', () => {
     const h = harness({
-      ref: refFor('pty-u1', { role: 'worker' }),
+      ref: refFor('pty-u1', { role: 'worker', missionId: 'mission-1' }),
     });
     initNonWorkerAutoClose(h.deps);
     emitStatus('pty-u1', 'idle');
@@ -234,5 +240,205 @@ describe('pane-non-worker-auto-close (P1-4: auto-fechar panes não-worker idle)'
     vi.advanceTimersByTime(1);
     expect(closed).toHaveLength(sessions.length);
     expect(closed.sort()).toEqual(sessions.map((s) => `pane-${s}`).sort());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// F-572 — pane guardian: worker órfão (sem missão) e varredura periódica.
+// Incidente 16/09: 33 spawns / 6 closes; ~25 workers sem missão ficaram
+// parados após handoff recusado; 22 panes × ~1 GB esgotaram a RAM do Mac.
+// ---------------------------------------------------------------------------
+describe('pane guardian (F-572): worker órfão + varredura periódica', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    shutdownNonWorkerAutoClose();
+    statusTaps.clear();
+    exitTaps.clear();
+    vi.useRealTimers();
+  });
+
+  it('encerra worker SEM missão idle após o TTL (classe órfã do F-565)', () => {
+    const h = harness({
+      ref: refFor('pty-w1', { role: 'worker', missionId: undefined }),
+    });
+    initNonWorkerAutoClose(h.deps);
+    emitStatus('pty-w1', 'idle');
+    vi.advanceTimersByTime(NON_WORKER_AUTO_CLOSE_TTL_MS + 1);
+    expect(h.closed).toEqual(['pane-pty-w1']);
+  });
+
+  it('nunca encerra worker COM missão (a missão governa o ciclo de vida)', () => {
+    const h = harness({
+      ref: refFor('pty-w2', { role: 'worker', missionId: 'mission-1' }),
+    });
+    initNonWorkerAutoClose(h.deps);
+    emitStatus('pty-w2', 'idle');
+    vi.advanceTimersByTime(NON_WORKER_AUTO_CLOSE_TTL_MS * 2);
+    expect(h.closed).toHaveLength(0);
+  });
+
+  it('varredura encerra pane idle no PTY mesmo sem nenhum status semântico (CLI sem hooks)', () => {
+    const idle = new Set<string>(['pty-s1']);
+    const closed: string[] = [];
+    const deps: NonWorkerAutoCloseDeps = {
+      isEnabled: () => true,
+      getPaneRef: (sid) => refFor(sid),
+      isIdle: (sid) => idle.has(sid),
+      closePane: (paneId) => { closed.push(paneId); return true; },
+      ttlMs: 10_000,
+      log: () => {},
+      listIdleSessions: () => [...idle],
+      sweepIntervalMs: 1_000,
+    };
+    initNonWorkerAutoClose(deps);
+    // Nenhum emitStatus: só a varredura enxerga o pane.
+    vi.advanceTimersByTime(9_999);
+    expect(closed).toHaveLength(0);
+    vi.advanceTimersByTime(1_001);
+    expect(closed).toEqual(['pane-pty-s1']);
+  });
+
+  it('varredura conta o idle a partir da PRIMEIRA observação, nunca fecha na hora', () => {
+    const idle = new Set<string>(['pty-s2']);
+    const closed: string[] = [];
+    const deps: NonWorkerAutoCloseDeps = {
+      isEnabled: () => true,
+      getPaneRef: (sid) => refFor(sid),
+      isIdle: (sid) => idle.has(sid),
+      closePane: (paneId) => { closed.push(paneId); return true; },
+      ttlMs: 10_000,
+      log: () => {},
+      listIdleSessions: () => [...idle],
+      sweepIntervalMs: 1_000,
+    };
+    initNonWorkerAutoClose(deps);
+    vi.advanceTimersByTime(1_000);
+    expect(closed).toHaveLength(0);
+  });
+
+  it('varredura zera o relógio quando o pane volta a ficar busy', () => {
+    const idle = new Set<string>(['pty-s3']);
+    const closed: string[] = [];
+    const deps: NonWorkerAutoCloseDeps = {
+      isEnabled: () => true,
+      getPaneRef: (sid) => refFor(sid),
+      isIdle: (sid) => idle.has(sid),
+      closePane: (paneId) => { closed.push(paneId); return true; },
+      ttlMs: 10_000,
+      log: () => {},
+      listIdleSessions: () => [...idle],
+      sweepIntervalMs: 1_000,
+    };
+    initNonWorkerAutoClose(deps);
+    vi.advanceTimersByTime(6_000);
+    idle.delete('pty-s3'); // busy
+    vi.advanceTimersByTime(2_000);
+    idle.add('pty-s3'); // idle de novo — relógio recomeça
+    vi.advanceTimersByTime(9_000);
+    expect(closed).toHaveLength(0);
+    vi.advanceTimersByTime(2_000);
+    expect(closed).toEqual(['pane-pty-s3']);
+  });
+
+  it('varredura respeita o veto de idle (awaiting-input) e os papéis protegidos', () => {
+    const listed = ['pty-a1', 'pty-o1', 'pty-m1'];
+    const refs = new Map<string, NonWorkerPaneRef>([
+      ['pty-a1', refFor('pty-a1')],
+      ['pty-o1', refFor('pty-o1', { role: 'orchestrator' })],
+      ['pty-m1', refFor('pty-m1', { role: 'worker', missionId: 'mission-9' })],
+    ]);
+    const closed: string[] = [];
+    const deps: NonWorkerAutoCloseDeps = {
+      isEnabled: () => true,
+      getPaneRef: (sid) => refs.get(sid) ?? null,
+      // pty-a1 está idle no PTY mas com diálogo aberto → veto.
+      isIdle: (sid) => sid !== 'pty-a1',
+      closePane: (paneId) => { closed.push(paneId); return true; },
+      ttlMs: 10_000,
+      log: () => {},
+      listIdleSessions: () => listed,
+      sweepIntervalMs: 1_000,
+    };
+    initNonWorkerAutoClose(deps);
+    vi.advanceTimersByTime(30_000);
+    expect(closed).toHaveLength(0);
+  });
+
+  it('shutdown para a varredura', () => {
+    const idle = new Set<string>(['pty-s4']);
+    const closed: string[] = [];
+    const deps: NonWorkerAutoCloseDeps = {
+      isEnabled: () => true,
+      getPaneRef: (sid) => refFor(sid),
+      isIdle: (sid) => idle.has(sid),
+      closePane: (paneId) => { closed.push(paneId); return true; },
+      ttlMs: 10_000,
+      log: () => {},
+      listIdleSessions: () => [...idle],
+      sweepIntervalMs: 1_000,
+    };
+    initNonWorkerAutoClose(deps);
+    vi.advanceTimersByTime(5_000);
+    shutdownNonWorkerAutoClose();
+    vi.advanceTimersByTime(60_000);
+    expect(closed).toHaveLength(0);
+  });
+});
+
+describe('pane guardian (F-572): quem NUNCA é fechado', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    shutdownNonWorkerAutoClose();
+    statusTaps.clear();
+    exitTaps.clear();
+    vi.useRealTimers();
+  });
+
+  it('pane aberto pelo humano no renderer (sem pai, sem papel) fica aberto mesmo ocioso', () => {
+    const h = harness({
+      ref: refFor('pty-h1', { role: undefined, operatorParentSessionId: undefined }),
+    });
+    initNonWorkerAutoClose(h.deps);
+    emitStatus('pty-h1', 'idle');
+    vi.advanceTimersByTime(NON_WORKER_AUTO_CLOSE_TTL_MS * 3);
+    expect(h.closed).toHaveLength(0);
+  });
+
+  it('helper aberto pela mão do operador (com pai) fecha após o TTL', () => {
+    const h = harness({
+      ref: refFor('pty-h2', { role: undefined, operatorParentSessionId: 'pty-op' }),
+    });
+    initNonWorkerAutoClose(h.deps);
+    emitStatus('pty-h2', 'idle');
+    vi.advanceTimersByTime(NON_WORKER_AUTO_CLOSE_TTL_MS + 1);
+    expect(h.closed).toEqual(['pane-pty-h2']);
+  });
+
+  it('pane com contrato de entrega armado (expect) não fecha enquanto não entregar', () => {
+    const closed: string[] = [];
+    let armed = true;
+    const deps: NonWorkerAutoCloseDeps = {
+      isEnabled: () => true,
+      getPaneRef: (sid) => refFor(sid),
+      isIdle: () => true,
+      hasPendingDelivery: () => armed,
+      closePane: (paneId) => { closed.push(paneId); return true; },
+      ttlMs: 10_000,
+      log: () => {},
+      listIdleSessions: () => ['pty-d1'],
+      sweepIntervalMs: 1_000,
+    };
+    initNonWorkerAutoClose(deps);
+    vi.advanceTimersByTime(30_000);
+    expect(closed).toHaveLength(0);
+    armed = false;
+    vi.advanceTimersByTime(2_000);
+    expect(closed).toEqual(['pane-pty-d1']);
   });
 });

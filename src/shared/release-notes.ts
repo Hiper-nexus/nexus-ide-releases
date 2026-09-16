@@ -4044,6 +4044,9 @@ export const CURRENT_RELEASE: AppRelease = {
   date: '2026-09-16',
   codename: 'Cada pane com a própria sessão',
   summary:
+    'Pane guardian (F-572): panes parados fecham sozinhos, o spawn tem teto e gate de ' +
+    'memória, e a telemetria enxerga a árvore de processos de cada pane — resposta ao ' +
+    'freeze de 16/09 com 22 panes ociosos. ' +
     'Um pane de Grok/Kimi dentro do Nexus não vaza mais para um terminal externo aberto no ' +
     'mesmo checkout (F-566), auditoria fechou o mesmo risco em todos os outros adapters ' +
     '(F-567), handoff sem missão já funciona de ponta a ponta para painéis do operador ' +
@@ -4051,6 +4054,26 @@ export const CURRENT_RELEASE: AppRelease = {
     'missão mais o fan-out de escritores paralelos entraram em produção sob contrato ' +
     'fechado, sem religar nenhum comportamento novo por padrão.',
   highlights: [
+    {
+      title: 'Pane guardian: nada fica aberto sem fazer nada (F-572)',
+      detail:
+        'Em 16/09, 22 panes parados (33 abertos, 6 fechados; workers sem missão presos ' +
+        'após handoff recusado) esgotaram a RAM de um Mac de 24 GB até o freeze. O ' +
+        'auto-fechamento de pane ocioso existia desde agosto e nunca tinha sido ligado. ' +
+        'Agora liga no boot, cobre worker sem missão e helper aberto pela mão do operador ' +
+        '(nunca orquestrador, worker de missão, pane aberto pelo humano ou pane com entrega ' +
+        'pendente), e varre o PTY a cada 60 s para CLIs sem hooks. TTL 30 min.',
+    },
+    {
+      title: 'Teto de panes e gate de memória no spawn (F-572)',
+      detail:
+        'Todo spawn de agente passa por um único ponto: acima de 12 panes de agente, ' +
+        'ou com menos de 1 GB disponível / mais de 2 GB de swap, o spawn é recusado ' +
+        'nomeando os panes ociosos a fechar. No macOS o sinal é o mesmo do jetsam ' +
+        '(kern.memorystatus_level), não o "free" cru. nexus_perf_snapshot passa a mostrar ' +
+        'o RSS da árvore de processos de cada pane. Workers não herdam mais o perfil MCP ' +
+        'global (um pane Claude cai de ~1,1 GB para ~0,5 GB).',
+    },
     {
       title: 'Sessão de CLI isolada por checkout (F-566/F-567)',
       detail:

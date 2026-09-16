@@ -15,7 +15,7 @@ import {
   scrollBrowserPane,
   waitForBrowser,
 } from '../browser/browser-manager';
-import { collectPerfSnapshot } from '../perf/perf-ipc';
+import { collectPerfSnapshotDetailed } from '../perf/perf-ipc';
 import { listPreviews, startPreview, stopPreview } from './preview-server';
 import { requestBrowserPane, requestPaneClose } from './pane-registry';
 import { authorizePaneRef, num, requireStr, str, strArray } from './tool-util';
@@ -387,9 +387,11 @@ const browserWaitTool: McpToolDef = {
 const perfSnapshotTool: McpToolDef = {
   name: 'nexus_perf_snapshot',
   description:
-    'Return process memory, Electron metrics, live PTY count and browser view count.',
+    'Return process memory, Electron metrics, live PTY count, browser view count, ' +
+    'per-pane process-tree RSS (CLI + MCP children), system free memory/swap and ' +
+    'the pane admission limits (F-572).',
   inputSchema: { type: 'object', properties: {} },
-  handler: async () => collectPerfSnapshot(),
+  handler: async () => collectPerfSnapshotDetailed(),
 };
 
 const browserScrollTool: McpToolDef = {

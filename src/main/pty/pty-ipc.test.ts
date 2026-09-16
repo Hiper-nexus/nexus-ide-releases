@@ -122,6 +122,8 @@ vi.mock("../orch/workspace-path", () => ({
 }));
 
 vi.mock("../orch/pane-registry", () => ({
+  // F-572: o gate de admissão conta panes de agente vivos; vazio = sem teto.
+  listPaneSnapshots: () => [],
   claimPendingSpawnMeta: authorityDeps.claimPendingSpawnMeta,
   claimPendingSpawnMetaByPane: authorityDeps.claimPendingSpawnMetaByPane,
   claimPendingRecoverySpawnMeta:

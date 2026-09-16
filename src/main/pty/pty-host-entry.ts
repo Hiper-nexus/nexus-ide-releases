@@ -11,6 +11,12 @@
  * fully-formed. The host is a dumb executor.
  */
 import * as nodePty from '@lydell/node-pty';
+import { execFile } from 'node:child_process';
+import {
+  attributeSessionFootprints,
+  parseRssProcessTable,
+  type SessionFootprint,
+} from './pane-footprint';
 import {
   escalateDarwinSupervisorTermination,
   PhysicalExitReceipts,
@@ -56,6 +62,37 @@ interface HostPtyEntry {
 }
 
 const procs = new Map<string, HostPtyEntry>();
+
+/** F-572: uma leitura de `ps`, atribuída por root de sessão. */
+function captureFootprints(): Promise<SessionFootprint[]> {
+  const roots = [...procs.entries()].map(([sessionId, entry]) => ({
+    sessionId,
+    rootPid: entry.proc.pid,
+  }));
+  if (roots.length === 0 || process.platform === 'win32') {
+    return Promise.resolve([]);
+  }
+  return new Promise((resolve) => {
+    execFile(
+      'ps',
+      ['-axo', 'pid=,ppid=,rss='],
+      {
+        encoding: 'utf8',
+        maxBuffer: 8 * 1024 * 1024,
+        timeout: 3_000,
+        killSignal: 'SIGKILL',
+        env: { ...process.env, LANG: 'C', LC_ALL: 'C' },
+      },
+      (error, stdout) => {
+        if (error) {
+          resolve([]);
+          return;
+        }
+        resolve(attributeSessionFootprints(parseRssProcessTable(stdout), roots));
+      },
+    );
+  });
+}
 const preSpawnFailures = new PreSpawnFailureTombstones();
 const physicalExitReceipts = new PhysicalExitReceipts();
 const completePhysicalExitProof: PtyProcessTreeTerminationProof =
@@ -338,6 +375,14 @@ parentPort.on('message', (e) => {
       return;
     case 'terminate':
       handleTerminate(msg);
+      return;
+    case 'footprint-probe':
+      // F-572: RSS da árvore de cada sessão (root = node-pty pid). Uma única
+      // leitura de `ps` para todas; win32 não tem `ps` → lista vazia (o main
+      // trata ausência como telemetria ausente, nunca como pressão).
+      void captureFootprints().then((footprints) => {
+        post({ type: 'footprint-report', requestId: msg.requestId, footprints });
+      });
       return;
     case 'liveness-probe':
       // Verdade física do host: handle presente no mapa = sessão viva aqui.

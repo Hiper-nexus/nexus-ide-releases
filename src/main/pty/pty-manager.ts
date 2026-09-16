@@ -78,6 +78,7 @@ import {
   type CodexGovernedProcessSandbox,
 } from "../orch/cli-mcp-session-config";
 import { requiresSpawnGate } from "../orch/spawn-home-policy";
+import { admitAgentSpawnSync } from "../orch/pane-admission";
 import { isReleaseQualifiedMissionWorkerCli } from "../orch/squad-runtime-policy";
 import {
   codexGovernedSandboxLaunchMode,
@@ -1305,6 +1306,20 @@ export function spawnAgentSession(
   if (allSessionsTerminationInProgress) {
     throw new Error("PTY shutdown is in progress; new sessions are blocked");
   }
+  // F-572: admissão de pane de agente — teto global + memória do sistema.
+  // Este é o ÚNICO ponto físico por onde todo spawn de agente passa
+  // ("+ Pane", nexus_pane_spawn, Via Rápida, respawn, revival e spawns
+  // main-owned), então o gate mora aqui. Shells comuns (spawnSession) são
+  // baratos e não contam. A recusa nomeia os panes ociosos a fechar.
+  const liveAgentPanes = countLiveAgentSessions();
+  const admission = admitAgentSpawnSync(liveAgentPanes);
+  if (!admission.ok) {
+    console.warn(
+      `[pane-admission] spawn recusado (${admission.reason}): ${admission.message}`,
+    );
+    throw new Error(admission.message);
+  }
+  if (admission.warning) console.warn(`[pane-admission] ${admission.warning}`);
   const cwd = requireTrustedAgentCwd(authority);
   assertExclusiveOrchestratorProcessAvailable(adapter, authority);
   const requestedModel = (req.model ?? overrides.defaultModel)?.trim() || "";
@@ -3378,3 +3393,25 @@ warmPool.setIsAliveFn((sessionId) => sessions.has(sessionId));
 warmPool.setDestroyFn((sessionId, startKey) => {
   orchKillSession(sessionId, { startKey, force: !startKey });
 });
+
+/**
+ * F-572: footprint (RSS da árvore de processos) de cada sessão viva no host
+ * PTY. `null` = host ausente/mudo ou plataforma sem `ps` — telemetria ausente,
+ * nunca pressão inventada. Usado por nexus_perf_snapshot e pelo doctor.
+ */
+export function probePaneFootprints(): Promise<
+  readonly import("./pane-footprint").SessionFootprint[] | null
+> {
+  const probe = ptyHost?.probeFootprints;
+  if (!probe) return Promise.resolve(null);
+  return probe.call(ptyHost).catch(() => null);
+}
+
+/** F-572: sessões de agente (cli-agent) vivas neste main — insumo do teto. */
+export function countLiveAgentSessions(): number {
+  let count = 0;
+  for (const session of sessions.values()) {
+    if (session.agent && session.state !== "exited") count += 1;
+  }
+  return count;
+}

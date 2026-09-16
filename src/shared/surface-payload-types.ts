@@ -275,6 +275,32 @@ export interface PerfSnapshot {
   panes: {
     livePtySessions: number;
     browserViews: number;
+    /**
+     * F-572: RSS da árvore de processos de cada sessão PTY (CLI + filhos MCP),
+     * medida no host PTY. Ausente quando o host não respondeu ou a plataforma
+     * não tem `ps`. O Electron não enxerga esses processos — no incidente de
+     * 16/09 o app somava ~450 MB enquanto 22 panes esgotavam a RAM.
+     */
+    footprints?: Array<{
+      sessionId: string;
+      rootPid: number;
+      processCount: number;
+      rssBytes: number | null;
+    }>;
+    footprintTotalRssBytes?: number;
+  };
+  /** F-572: amostra da memória do sistema usada pelo gate de admissão. */
+  systemMemory?: {
+    freeMB: number | null;
+    swapUsedMB: number | null;
+  };
+  /** F-572: limites vigentes do teto de panes de agente. */
+  paneAdmission?: {
+    enabled: boolean;
+    maxAgentPanes: number;
+    minFreeMB: number;
+    maxSwapUsedMB: number;
+    liveAgentPanes: number;
   };
   warmPool?: {
     hits: number;

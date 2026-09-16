@@ -26,6 +26,8 @@ import {
   startSessionMortalityReconciler,
 } from "./pty-manager";
 import { createRealPtyHost } from "./pty-host-client";
+import { registerPaneAdmissionAdvisor } from "../orch/pane-admission";
+import { getGuardianIdleForMs } from "../orch/pane-non-worker-auto-close";
 import {
   getAdapter,
   getAdapterResolvedBin,
@@ -47,7 +49,7 @@ import {
   waitForRotatingAuthSpawnGate,
 } from "../adapters/managed-auth-spawn-gate";
 import type { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
-import { attachSessionScope } from "../orch/pane-registry";
+import { attachSessionScope, listPaneSnapshots } from "../orch/pane-registry";
 import {
   assertMainOwnedAgentSpawnGrantActive,
   authorizeMainOwnedAgentSpawn,
@@ -182,6 +184,34 @@ function bindCommandTracking(
     cwd: spawn.authority.cwd,
     projectRoot: spawn.authority.scope.rootRealPath,
     missionId: spawn.authority.context?.missionId,
+  });
+}
+
+/**
+ * F-572: quem sabe NOMEAR os panes ociosos (número no cabeçalho, título,
+ * há quanto tempo) é o registro de panes deste módulo; o gate em si mora
+ * em pty-manager.spawnAgentSession (ponto físico único de spawn de agente,
+ * que também cobre os spawns main-owned da Via Rápida). Registrado uma vez
+ * em registerPtyIpc.
+ */
+function registerPaneAdmissionAdvisorFromRegistry(): void {
+  registerPaneAdmissionAdvisor({
+    idleCandidates: (now) =>
+      listPaneSnapshots()
+        .filter(
+          (pane) =>
+            pane.kind === "cli-agent" &&
+            pane.state === "idle" &&
+            pane.role !== "orchestrator",
+        )
+        .map((pane) => ({
+          paneId: pane.paneId,
+          paneNumber: pane.paneNumber,
+          title: pane.title,
+          idleForMs: pane.sessionId
+            ? getGuardianIdleForMs(pane.sessionId, now)
+            : 0,
+        })),
   });
 }
 
@@ -461,6 +491,7 @@ function spawnCliPtyAgentPane(
  * shell or agent path based on the request kind.
  */
 export function registerPtyIpc(): void {
+  registerPaneAdmissionAdvisorFromRegistry();
   // Route every PTY through the isolated utilityProcess host (node-pty never
   // loads in the main process — docs/ARCHITECTURE.md §B.2).
   setPtyHost(createRealPtyHost());

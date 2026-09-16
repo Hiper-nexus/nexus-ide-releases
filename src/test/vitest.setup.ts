@@ -50,3 +50,9 @@ if (
     });
   }
 }
+
+// F-572: o teto global de panes de agente (pane-admission) é uma rede de
+// segurança da máquina real; na suíte unitária as sessões falsas do
+// pty-manager se acumulam além do teto e derrubariam testes que não são
+// sobre o teto. Os testes do próprio gate passam limites explícitos.
+process.env.NEXUS_PANE_GUARD ??= 'off';

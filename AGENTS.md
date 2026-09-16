@@ -232,3 +232,22 @@ saber isto antes de mexer:
   false` só existe no headless; extraArgs interativo continua vazio.
 - Brief só depois do composer "Ask Devin to build". Auth: TOML em
   `~/.local/share/devin/credentials.toml`. `nexusMcp: none` permanece.
+
+## Panes: quem abre, fecha (F-572)
+
+- Um pane de agente custa ~0,5–1 GB (CLI + servidores MCP filhos). Em 16/09,
+  33 spawns / 6 closes num orquestrador sem missão deixaram 22 panes parados
+  e congelaram um Mac de 24 GB. Orquestrador/operador: ao ler o resultado de
+  um helper, feche o pane (`nexus_pane_close`) ou nasça-o com
+  `autoCloseOnHandoff: true`. Reabrir depois é `resume`, não custo perdido.
+- O guardian fecha sozinho pane ocioso sem dono (worker sem missão, helper
+  aberto pela mão do operador) após 30 min; nunca orquestrador, worker de
+  missão, pane aberto pelo humano no renderer ou pane com `expect` armado.
+- `spawnAgentSession` recusa o 13º pane de agente e qualquer spawn com
+  < 1 GB disponível ou > 2 GB de swap, nomeando os ociosos a fechar. Ajuste
+  por env (`NEXUS_PANE_CAP`, `NEXUS_PANE_MIN_FREE_MB`,
+  `NEXUS_PANE_MAX_SWAP_MB`, `NEXUS_PANE_GUARD=off`). Não crie outro caminho
+  de spawn que não passe por `spawnAgentSession`.
+- Workers e orquestradores NÃO herdam o perfil MCP global do usuário
+  (`~/.claude.json`); só a mão do operador (`role user`) herda. Quem precisa
+  de um servidor MCP extra declara por allowlist.
