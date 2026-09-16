@@ -16,6 +16,10 @@ export const RESUMABLE_TUI_AGENTS = [
   'omp',
   'prime-agent',
   'copilot',
+  'cursor',
+  'hermes',
+  'goose',
+  'command-code',
   'kimi'
 ] as const satisfies readonly TuiAgent[]
 
@@ -229,10 +233,17 @@ export function extractAgentProviderSession(
       const id = readSessionId(payload, ['session_id', 'sessionId'])
       return id ? { key: 'session_id', id } : null
     }
-    case 'amp':
-    case 'cursor':
+    case 'cursor': {
+      // Cursor's conversation_id identifies the chat; generation_id is one turn.
+      const id = readSessionId(payload, ['conversation_id', 'session_id'])
+      return id ? { key: 'session_id', id } : null
+    }
     case 'command-code':
-    case 'hermes':
+    case 'hermes': {
+      const id = readSessionId(payload, ['session_id'])
+      return id ? { key: 'session_id', id } : null
+    }
+    case 'amp':
       return null
   }
 }
@@ -243,6 +254,9 @@ export function getAgentResumeArgv(
   ompResumeFilePath?: string | null
 ): string[] | null {
   const id = providerSession.id
+  // Guard the shared builder too: callers can bypass persisted metadata parsing.
+  // An empty optional argument or the Hermes selector "latest" resumes another chat.
+  if (normalizeSessionId(id) !== id || id.toLowerCase() === 'latest') return null
   switch (agent) {
     case 'claude':
       return providerSession.key === 'session_id' ? ['claude', '--resume', id] : null
@@ -266,6 +280,16 @@ export function getAgentResumeArgv(
       return providerSession.key === 'session_id' ? ['mimo', '--session', id] : null
     case 'droid':
       return providerSession.key === 'session_id' ? ['droid', '--resume', id] : null
+    case 'cursor':
+      return providerSession.key === 'session_id' ? ['cursor-agent', '--resume', id] : null
+    case 'hermes':
+      return providerSession.key === 'session_id' ? ['hermes', '--resume', id] : null
+    case 'goose':
+      return providerSession.key === 'session_id'
+        ? ['goose', 'session', '--resume', '--session-id', id]
+        : null
+    case 'command-code':
+      return providerSession.key === 'session_id' ? ['command-code', '--session', id] : null
     case 'grok':
       return providerSession.key === 'session_id' ? ['grok', '--resume', id] : null
     case 'devin':
