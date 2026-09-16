@@ -4040,6 +4040,149 @@ export const RELEASE_07641: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.43',
+  date: '2026-09-16',
+  codename: 'Cada pane com a própria sessão',
+  summary:
+    'Um pane de Grok/Kimi dentro do Nexus não vaza mais para um terminal externo aberto no ' +
+    'mesmo checkout (F-566), auditoria fechou o mesmo risco em todos os outros adapters ' +
+    '(F-567), handoff sem missão já funciona de ponta a ponta para painéis do operador ' +
+    '(F-565), o cabeçalho do painel parou de tremer (F-568) e a base da liderança única de ' +
+    'missão mais o fan-out de escritores paralelos entraram em produção sob contrato ' +
+    'fechado, sem religar nenhum comportamento novo por padrão.',
+  highlights: [
+    {
+      title: 'Sessão de CLI isolada por checkout (F-566/F-567)',
+      detail:
+        'Grok e Kimi guardavam o histórico de conversa dentro do `~/.grok`/`~/.kimi-code` ' +
+        'real; um `grok -c`/`kimi -c` rodado num terminal comum fora do Nexus, no mesmo ' +
+        'diretório de trabalho de um painel aberto, conversava com a MESMA sessão. A ' +
+        'auditoria completa (F-567) cobriu os 13 adapters builtin: família Claude (claude, ' +
+        'glm, glm-flash, longcat, deepseek) ganhou HOME privado por pane; Codex, OpenCode, ' +
+        'AGY e Devin pararam de resolver "sessão mais recente" e passaram a guardar estado ' +
+        'por checkout; os TUI restantes (droid, cursor, copilot, amp, goose, pi, ' +
+        'prime-agent, hermes, command-code) ganharam o mesmo gancho em `pty-manager.ts`. ' +
+        'Toda conversa durável agora mora em `<userData>/provider-state/<adapter>/' +
+        '<checkoutId>/…`; resume só acontece por id explícito, nunca por fallback de "mais ' +
+        'recente no diretório".',
+    },
+    {
+      title: 'Handoff sem missão, ponta a ponta (F-565)',
+      detail:
+        '`nexus_handoff_submit` disparado por um painel do operador sem missão ativa deixa ' +
+        'de ser recusado: `resolveWorkspaceHandoffParent` reconhece o painel-filho do ' +
+        'operador, persiste o handoff com `mission_id` nulo e entrega no painel pai pelo ' +
+        'transporte normal de `pane_write`. Um orquestrador sem missão já tinha todos os ' +
+        'poderes; agora também recebe o retorno de um ajudante que ele mesmo abriu.',
+    },
+    {
+      title: 'Cabeçalho do painel parou de tremer (F-568)',
+      detail:
+        'Título de terminal alternando glifo de spinner a cada tick fazia o `PaneToolbar` ' +
+        'recalcular largura e reflowar o cabeçalho continuamente. `normalizePaneTitle` ' +
+        'separa título de indicador de atividade, o terminal-host deduplica e limita a ' +
+        'frequência de atualização, e o indicador ganhou um slot de largura fixa — o texto ' +
+        'ao lado para de balançar.',
+    },
+    {
+      title: 'Motor de liderança única de missão (F-562), fundação em produção',
+      detail:
+        'Uma única `MissionLeadership` por missão (origem spawn/adopt/respawn/promote/' +
+        'create, mais `takeover` explícito só para a UI do operador — nunca automático) ' +
+        'substitui o dono implícito por sessão. Onda 1 migrou leitores sem efeito para ' +
+        '`resolveMissionLeader`; onda 2 fez o renderer espelhar só o líder confirmado pelo ' +
+        'main (`leadership-reflect.ts`); onda 3 trocou o papel de UI por uma capability e os ' +
+        'gates de efeito passaram a consultar o líder resolvido via ' +
+        '`requireMissionLeaderSession`. Promover um painel por cima de um líder vivo continua ' +
+        'recusado por padrão — um orquestrador por missão.',
+    },
+    {
+      title: 'Fan-out de escritores paralelos, com cerca reforçada (F-563)',
+      detail:
+        'Um worker `isolatedWriter` ganha worktree própria dentro da Via Rápida. A cerca foi ' +
+        'endurecida antes de qualquer uso real: git fica limitado a add/commit/status/diff/' +
+        'log na worktree e branch do registro do Main (push, stash, reset, HEAD destacado e ' +
+        'repo aninhado são recusados), `nexus_terminal_run` desses writers não abre shell ' +
+        '— só traduz argv Git literal para os mesmos handlers protegidos — e write/close ' +
+        'entre workers exige a mesma `executionScope.rootRealPath`.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Grant de sandbox governado só cobre o material de auth (F-569)',
+      detail:
+        'Uma sessão governada de Grok/Kimi recebia leitura+escrita no `~/.grok`/' +
+        '`~/.kimi-code` inteiro — `config.toml`, `device_id`, `workspaces.json`, qualquer ' +
+        'coisa que estivesse ali — quando a política `governed` existe para restringir o que ' +
+        'o worker enxerga. O grant agora é só os caminhos reais que o overlay linka de volta ' +
+        '(`auth.json`/`.lock` no Grok; `credentials/` e `oauth/` no Kimi).',
+    },
+    {
+      title: 'Provider-state do checkout some quando o workspace some (F-570)',
+      detail:
+        '`<userData>/provider-state/<adapter>/<checkoutId>` nunca era removido, nem com o ' +
+        'checkout apagado — a árvore persistia para sempre. Agora é purgada no evento de ' +
+        'remoção do workspace, para todos os adapters, não só o ativo no momento.',
+    },
+    {
+      title: 'Spawn paralelo não revoga mais o refresh token do Codex (ciclo 5)',
+      detail:
+        'Cada painel Codex compartilhando uma conta gerenciada rotaciona o refresh token no ' +
+        'boot; seis painéis em paralelo sobre o mesmo `auth.json` derrubavam uns aos outros ' +
+        'com "refresh token was revoked". `managed-auth-spawn-gate.ts` faz um líder assumir o ' +
+        'refresh (token ainda válido por >5min segue em paralelo) e os seguidores esperam a ' +
+        'reescrita do arquivo, com lock e teto de 12s.',
+    },
+    {
+      title: 'Grok não roda mais `grok models` (ciclo 5)',
+      detail:
+        'Esse binário faz silent refresh e rotaciona o refresh token a cada chamada; o poll ' +
+        'de 5 minutos derrubava a sessão a cada ~10. A descoberta de modelos passou a ler ' +
+        '`~/.grok/models_cache.json` e o catálogo bundled; a cota usa o JWT que já está em ' +
+        '`auth.json` direto contra o endpoint de billing.',
+    },
+    {
+      title: 'Devin sobe pelo PTY (ciclo 5)',
+      detail:
+        'Spawn de Devin deixou de reportar "did not start after prompt delivery" no caminho ' +
+        'read-only ao subir pelo mesmo host de PTY que os demais adapters, em vez de um ' +
+        'caminho próprio.',
+    },
+    {
+      title: 'Limpador de hooks legados cobre HOMEs de CLI e todo workspace registrado',
+      detail:
+        'Sobras do Overclock apontando para `~/.overclock-app` agora são varridas também em ' +
+        '`~/.codex`, `~/.grok` e `~/.kimi-code`, e a varredura roda por workspace REGISTRADO ' +
+        '— não só pelo cwd do app — fechando o caso do hook morto num workspace fora do ' +
+        'diretório corrente.',
+    },
+    {
+      title: 'Contrato da liderança fechado antes de religar qualquer coisa',
+      detail:
+        '`MissionLeadershipError` ganhou códigos tipados (`split_brain`, `existing_session`, ' +
+        '`target_not_live`, `write_incomplete`, `scope_mismatch`, `busy`, `mission_missing`); ' +
+        'sessão `exited` deixou de travar a resolução; origens `create` e `release` além do ' +
+        '`takeover` explícito completam o vocabulário que as três ondas de religamento ' +
+        'consomem.',
+    },
+    {
+      title: 'Publicação `--macos` pelo caminho oficial (F-564)',
+      detail:
+        '`npm run release:publish -- --macos` consome só a candidata local já aprovada pelo ' +
+        'gate, sem disparar build nem exigir/aguardar candidato Windows — o Mac publica no ' +
+        'seu próprio ritmo.',
+    },
+    {
+      title: 'Gate de release não trava mais num app preso em exit do kernel',
+      detail:
+        'O smoke do pacote agora copia o app via `ditto`, desmonta a imagem antes de rodar o ' +
+        'smoke e trata um processo em `STAT` de saída do kernel (E/Z) como encerrado em vez ' +
+        'de aguardar para sempre, com teto de 60s na prova de árvore de processos.',
+    },
+  ],
+};
+
+export const RELEASE_07642: AppRelease = {
   version: '0.76.42',
   date: '2026-09-16',
   codename: 'Orquestrador num clique, cofre sem modal',
