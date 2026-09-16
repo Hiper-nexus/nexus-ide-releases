@@ -689,8 +689,21 @@ describe('TerminalWorkspace — espaços separados da missão aberta (F-560)', (
     ]);
   });
 
-  it('escopo que evaporou cai no primeiro com pane, nunca no mosaico inteiro', () => {
+  it('escopo que evaporou cai num escopo REAL, nunca no mosaico inteiro', () => {
     seedMissionPlusSpace();
+    usePaneScopeStore.getState().focusScope(spaceScopeKey('space-que-sumiu'));
+
+    mount(<TerminalWorkspace />);
+
+    // O foco do layout está no espaço novo, então a aba acompanha ele (a
+    // invariante "pane focado está na tela"). O que importa aqui é que NÃO
+    // volta a desenhar a árvore inteira: o pane da missão fica de fora.
+    expect(attachedPaneIds()).toEqual(['pane-novo-1', 'pane-novo-2']);
+  });
+
+  it('sem foco em pane nenhum, escopo evaporado cai no primeiro com pane', () => {
+    seedMissionPlusSpace();
+    useLayoutStore.setState({ focusedPaneId: null });
     usePaneScopeStore.getState().focusScope(spaceScopeKey('space-que-sumiu'));
 
     mount(<TerminalWorkspace />);
@@ -704,5 +717,77 @@ describe('TerminalWorkspace — espaços separados da missão aberta (F-560)', (
     mount(<TerminalWorkspace missionId="mission-a" onBackToBoard={vi.fn()} />);
 
     expect(attachedPaneIds()).toEqual(['pane-missao-a']);
+  });
+});
+
+// ── F-560: o painel focado está SEMPRE na tela ───────────────────────────────
+
+describe('TerminalWorkspace — foco puxa a aba (F-560)', () => {
+  function seedTwoScopes(): void {
+    useLayoutStore.setState({
+      root: buildGridTree([
+        {
+          id: 'pane-da-missao',
+          kind: 'cli-agent',
+          title: 'Worker',
+          adapterId: 'codex',
+          missionId: 'mission-a',
+        },
+        { id: 'pane-de-login', kind: 'shell', title: 'Login' },
+      ]),
+      focusedPaneId: 'pane-da-missao',
+    });
+    useOrchStore.setState({
+      paneMissions: { 'pane-da-missao': 'mission-a' },
+      missions: [],
+      missionSummaries: [
+        {
+          id: 'mission-a',
+          title: 'Missão A',
+          state: 'running',
+          progress: { completed: 0, total: 1 },
+          needsAttention: false,
+          updatedAt: 1,
+        },
+      ],
+    });
+  }
+
+  it('o pane de login recém-focado traz a aba dele junto — nunca OAuth invisível', () => {
+    seedTwoScopes();
+    const { host } = mount(<TerminalWorkspace />);
+    expect(activeChipLabel(host)).toBe('Missão A');
+
+    // É isto que cli-login-terminal / instalação de CLI / voz fazem: criam o
+    // pane e dão foco nele, sem saber que aba está aberta.
+    act(() => {
+      useLayoutStore.getState().focus('pane-de-login');
+    });
+
+    expect(activeChipLabel(host)).toBe('Painéis soltos');
+    expect(attachedPaneIds()).toContain('pane-de-login');
+  });
+
+  it('clicar numa aba NÃO é desfeito pelo foco antigo', () => {
+    seedTwoScopes();
+    const { host } = mount(<TerminalWorkspace />);
+
+    act(() => {
+      usePaneScopeStore.getState().focusScope(LOOSE_SCOPE_KEY);
+    });
+
+    // O foco continua no pane da missão, mas o operador escolheu esta aba.
+    expect(activeChipLabel(host)).toBe('Painéis soltos');
+  });
+
+  it('dentro de uma missão o foco não troca a aba — a vista é daquela missão', () => {
+    seedTwoScopes();
+    mount(<TerminalWorkspace missionId="mission-a" onBackToBoard={vi.fn()} />);
+
+    act(() => {
+      useLayoutStore.getState().focus('pane-de-login');
+    });
+
+    expect(attachedPaneIds()).toEqual(['pane-da-missao']);
   });
 });

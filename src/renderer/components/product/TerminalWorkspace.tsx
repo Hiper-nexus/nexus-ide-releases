@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CanvasView } from '../CanvasView';
 import { PaneGrid } from '../PaneGrid';
 import { useLayoutStore } from '../../state/layout-store';
@@ -9,6 +9,7 @@ import {
   ALL_SCOPES_KEY,
   listPaneScopes,
   missionScopeKey,
+  paneScopeKey,
   selectScopePanes,
 } from '../../lib/pane-spaces';
 import { usePaneScopeStore } from '../../state/pane-scope-store';
@@ -118,6 +119,7 @@ export function TerminalWorkspace({
   const contextLabel = missionState
     ? `Missão · ${missionLifecycleLabel(missionState, false, undefined, awaitsReview)}`
     : 'Missão';
+  const focusedPaneId = useLayoutStore((state) => state.focusedPaneId);
   const paneMissions = useOrchStore((state) => state.paneMissions);
   const missionSummaries = useOrchStore((state) => state.missionSummaries);
   const layoutRoot = useLayoutStore((state) => state.root);
@@ -154,9 +156,52 @@ export function TerminalWorkspace({
   const scopeExists =
     activeScopeKey === ALL_SCOPES_KEY ||
     scopes.some((scope) => scope.key === activeScopeKey);
+  // O escopo do pane focado entra JÁ no cálculo, não só no efeito abaixo: sem
+  // isto o primeiro quadro desenharia o escopo antigo e só então pularia — o
+  // operador veria um piscar de painéis que não são dele.
+  const focusedScopeKey = (() => {
+    if (!focusedPaneId) return null;
+    const focused = panes.find((pane) => pane.id === focusedPaneId);
+    return focused ? paneScopeKey(focused, paneMissions) : null;
+  })();
   const effectiveScopeKey = inMission
     ? missionScopeKey(missionId)
-    : (scopeExists && activeScopeKey ? activeScopeKey : scopes[0]?.key ?? null);
+    : scopeExists && activeScopeKey
+      ? activeScopeKey
+      : (focusedScopeKey ?? scopes[0]?.key ?? null);
+
+  /**
+   * INVARIANTE: um painel que acabou de receber foco está NA TELA.
+   *
+   * Trinta e cinco lugares levam o operador para os Terminais depois de criar
+   * ou escolher um painel — login de CLI, instalação de ferramenta, voz, ⌘K,
+   * caixa de atenção, notificações de agente. Com a vista filtrando por escopo,
+   * exigir que CADA um lembrasse de trocar a aba seria garantir que um
+   * esquecesse: o pior caso é o pane de login, onde o app manda concluir o
+   * OAuth num painel que não está desenhado.
+   *
+   * Então a regra mora aqui, uma vez: quando o pane FOCADO muda e ele está em
+   * outro escopo, a aba acompanha. Só na MUDANÇA — clicar numa aba não é
+   * puxado de volta pelo foco antigo.
+   */
+  const lastFollowedFocusRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (inMission || !focusedPaneId) return;
+    if (lastFollowedFocusRef.current === focusedPaneId) return;
+    lastFollowedFocusRef.current = focusedPaneId;
+    const focused = panes.find((pane) => pane.id === focusedPaneId);
+    if (!focused) return;
+    const scopeOfFocused = paneScopeKey(focused, paneMissions);
+    if (scopeOfFocused === effectiveScopeKey) return;
+    focusScope(scopeOfFocused);
+  }, [
+    focusedPaneId,
+    panes,
+    paneMissions,
+    effectiveScopeKey,
+    focusScope,
+    inMission,
+  ]);
 
   const handlePaneCreated = useCallback(
     (paneId: string) => {
