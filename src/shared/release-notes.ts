@@ -3831,7 +3831,7 @@ export const RELEASE_07636: AppRelease = {
 };
 
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07637: AppRelease = {
   version: '0.76.37',
   date: '2026-09-15',
   codename: 'Contrato de entrega, hooks vivos e conector por instância',
@@ -3893,6 +3893,38 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'label e installCommand do catálogo são citados com aspas simples POSIX antes de ir ao ' +
         'terminal, então nada do texto é interpretado pelo shell.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.38',
+  date: '2026-09-15',
+  codename: 'Terminais Windows com launchers nativos',
+  summary:
+    'Corrige a resolução de CLIs no Windows para que cada pane use o launcher nativo executável, ' +
+    'preservando a sessão autenticada e impedindo que um shim POSIX derrube o host de PTY. ' +
+    'Também mantém os panes de cada missão na sua própria superfície durante a navegação.',
+  highlights: [
+    {
+      title: 'Panes de IA voltam a iniciar no Windows',
+      detail:
+        'Codex e as demais CLIs instaladas por npm passam a abrir pelo launcher Windows (.cmd, .bat, .exe ou .com) ' +
+        'compatível com ConPTY, em vez de um arquivo de shell POSIX sem extensão.',
+    },
+    {
+      title: 'Cada missão permanece na própria grade',
+      detail:
+        'Rail, atalhos, paleta e Jarvis preservam o vínculo ativo do pane com a missão, inclusive antes ' +
+        'da persistência do layout, para não misturar terminais entre missões.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Host de PTY não é mais derrubado por shim inválido',
+      detail:
+        'Caminhos de CLI salvos de versões anteriores são revalidados antes do spawn; um shim inválido é ' +
+        'descartado e o launcher Windows correto é resolvido novamente.',
     },
   ],
 };

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.38 — Terminais Windows com launchers nativos
+
+- **Panes de IA no Windows**: a resolução de executáveis agora ignora scripts POSIX sem extensão instalados ao lado de CLIs npm e seleciona o launcher nativo `.cmd`, `.bat`, `.exe` ou `.com` compatível com ConPTY. Isso impede que a abertura de um pane de Codex/Claude/Kimi/Grok derrube o host de PTY com `code -1`.
+- **Recuperação de configuração salva**: um caminho antigo que aponte para o shim inválido é descartado no momento do spawn e resolvido novamente, sem exigir que a pessoa usuária reinstale ou refaça login na CLI.
+- **Missões isoladas ao navegar**: focar um agente pelo rail, paleta, atalho ou Jarvis respeita também o vínculo transitório do runtime e abre somente os terminais da missão correspondente, sem misturar panes de outra missão na mesma grade.
+
 ## 0.76.37 — Contrato de entrega, hooks vivos e conector por instância
 
 - **Contrato de entrega no spawn (`expect.schema`)**: `nexus_pane_spawn` aceita `expect: {schema, retries?}`. Num `nexus_handoff_submit` com status success, os `artifacts` do worker são validados contra o JSON Schema declarado (validador próprio em `src/shared/json-schema-lite.ts`, sem dependência empacotada). Divergência devolve ao worker exatamente o que falta, até `retries` vezes (padrão 1); esgotadas as devoluções, o handoff entra como `blocked` com as violações em `artifacts`. Schema inválido falha no spawn, visível para quem declarou.
