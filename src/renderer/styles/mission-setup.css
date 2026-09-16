@@ -2067,3 +2067,26 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* F-561: o operador chegou aqui clicando "Tornar orquestrador" num terminal.
+   O aviso é a ponte entre aquele clique e esta tela — sem ele a navegação
+   parece um salto sem motivo. */
+.mission-setup__adoption-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md, 8px);
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+.mission-setup__adoption-notice svg {
+  flex: 0 0 auto;
+  margin-block-start: 3px;
+  color: var(--accent);
+}

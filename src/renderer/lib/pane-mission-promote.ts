@@ -4,6 +4,7 @@ import { useProductNavigationStore } from '../state/product-navigation-store';
 import { askChoice } from '../state/choice-store';
 import { useToastStore } from '../state/toast-store';
 import { listPanes } from './split-tree';
+import { usePendingOrchestratorAdoptionStore } from '../state/pending-orchestrator-adoption-store';
 
 /**
  * F-527: promoção de pane a orquestrador com vínculo EXPLÍCITO de missão.
@@ -147,18 +148,13 @@ export async function promotePaneWithMissionChoice(input: {
   }
 
   if (target.kind === 'no-mission') {
-    // F-561: sem missão não existe orquestrador — e o diálogo "Nenhuma missão
-    // ativa" só entregava um beco sem saída (confirmar abria o wizard e o pane
-    // continuava solto). Agora a ação leva DIRETO ao caminho de criar a missão,
-    // e o toast diz por que o painel ainda não lidera nada.
-    useProductNavigationStore.getState().openNewMission();
-    useToastStore.getState().push(
-      'info',
-      'Orquestrador precisa de missão',
-      'Nenhuma missão em andamento neste projeto. Descreva o pedido aqui — a ' +
-        'missão nasce com o próprio orquestrador, e este painel continua seu ' +
-        'terminal.',
-    );
+    // F-561: sem missão não existe orquestrador. O diálogo "Nenhuma missão
+    // ativa" era um beco sem saída — confirmar abria o wizard e o painel
+    // continuava solto. Agora o painel fica MARCADO: o Novo pedido abre, e a
+    // missão que nascer adota este painel como Maestro em vez de subir um
+    // coordenador em branco. O objetivo é a única coisa que ainda precisa vir
+    // do operador — ninguém briefa um Maestro sem saber o que entregar.
+    requestPaneAdoptionForNextMission(input.paneId, input.paneTitle);
     return null;
   }
 
@@ -181,7 +177,7 @@ export async function promotePaneWithMissionChoice(input: {
   });
   if (picked === null) return null;
   if (picked === PROMOTE_NEW_MISSION) {
-    useProductNavigationStore.getState().openNewMission();
+    requestPaneAdoptionForNextMission(input.paneId, input.paneTitle);
     return null;
   }
   const promoted = await promotePaneToMissionOrchestrator(picked, input.paneId);
@@ -203,6 +199,27 @@ export function toastPromoteRefused(): void {
     'Não foi possível definir o orquestrador',
     'A missão não aceitou este painel como líder. Abra a missão pelo Quadro e ' +
       'tente de novo, ou crie uma nova missão.',
+  );
+}
+
+/**
+ * Marca o painel para liderar a PRÓXIMA missão e leva o operador ao Novo
+ * pedido. Três pontos de entrada usam isto: o menu do pane, a barra e o ⌘K.
+ */
+export function requestPaneAdoptionForNextMission(
+  paneId: string,
+  paneTitle?: string,
+): void {
+  usePendingOrchestratorAdoptionStore.getState().request({
+    paneId,
+    paneTitle: paneTitle ?? null,
+  });
+  useProductNavigationStore.getState().openNewMission();
+  useToastStore.getState().push(
+    'info',
+    'Este painel vai liderar',
+    'Descreva o que a missão deve entregar. Quando ela começar, é este painel ' +
+      'que assume como coordenador — nenhum terminal novo é aberto.',
   );
 }
 

@@ -1261,3 +1261,31 @@ describe('espaço do pane (F-560)', () => {
     expect(created.every((pane) => pane.spaceId === undefined)).toBe(true);
   });
 });
+
+describe('split não herda espaço de pane com vínculo OBSERVADO de missão (F-560)', () => {
+  it('pane em paneMissions é tratado como missão, o irmão não herda o espaço', async () => {
+    const { useOrchStore } = await import('./orch-store');
+    useLayoutStore.setState({
+      root: initialTree(),
+      focusedPaneId: null,
+      maximizedPaneId: null,
+      hydrated: true,
+    });
+    const paneId = useLayoutStore.getState().addShellPane();
+    useLayoutStore.setState({
+      root: updatePane(useLayoutStore.getState().root, paneId, {
+        spaceId: 'space-antigo',
+        spaceTitle: 'Meus terminais',
+      }),
+    });
+    useOrchStore.setState({ paneMissions: { [paneId]: 'mission-viva' } });
+
+    useLayoutStore.getState().split(paneId, 'row');
+
+    const sibling = listPanes(useLayoutStore.getState().root).find(
+      (pane) => pane.id !== paneId && !isStructuralPlaceholderPane(pane),
+    );
+    expect(sibling?.spaceId).toBeUndefined();
+    useOrchStore.setState({ paneMissions: {} });
+  });
+});

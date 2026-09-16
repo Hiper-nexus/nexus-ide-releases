@@ -713,6 +713,33 @@ export class RendererMissionAuthority {
     return missionStore.rebindOrchestratorSession(missionId, sessionId);
   }
 
+  /**
+   * Resolve o painel que o operador escolheu para LIDERAR uma missão que ainda
+   * vai nascer. Devolve só o que a reserva de adoção precisa saber; a
+   * autoridade em si continua sendo concedida por promoteOrchestratorFromRenderer,
+   * depois que a missão existir e tiver autoridade de despacho.
+   */
+  resolveOwnedPaneForAdoption(
+    owner: WebContents,
+    paneRef: string,
+  ): { paneId: string; sessionId: string; adapterId: string } | null {
+    let owned: ReturnType<typeof ownedPaneSession>;
+    try {
+      owned = ownedPaneSession(owner, paneRef);
+    } catch {
+      return null;
+    }
+    // Painel que já pertence a outra missão nunca é candidato: adotá-lo
+    // arrancaria o Maestro de uma missão viva para dar a outra.
+    if (owned.info.missionId) return null;
+    if (!owned.info.adapterId) return null;
+    return {
+      paneId: owned.paneId,
+      sessionId: owned.sessionId,
+      adapterId: owned.info.adapterId,
+    };
+  }
+
   promoteOrchestratorFromRenderer(
     owner: WebContents,
     missionId: string,

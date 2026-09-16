@@ -33,6 +33,7 @@ import {
   nextCanvasLayout,
 } from '../lib/canvas-layout';
 import { getActiveWorkspacePath } from './active-workspace';
+import { useOrchStore } from './orch-store';
 import { notifyIfLastMissionPaneClosed } from '../orch/mission-last-pane-notify';
 import { stashPendingContinuity } from '../orch/stranded-mission-handoff';
 import { isAutomatedReviewerPaneIdentity } from '../../shared/automated-reviewer-pane';
@@ -832,8 +833,14 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
     // operador dividia a tela e metade dela sumia da vista em que estava.
     // Missão não se herda por split: papel de missão é concedido pelo main.
     const source = listPanes(get().root).find((pane) => pane.id === paneId);
+    // O vínculo OBSERVADO conta tanto quanto o gravado: um pane que só está em
+    // orch-store.paneMissions é tratado como pane de missão pela aba, então o
+    // irmão dele não pode herdar um espaço antigo e aparecer noutro lugar.
+    const sourceHasMission = Boolean(
+      source?.missionId ?? useOrchStore.getState().paneMissions[paneId],
+    );
     const inheritedSpace =
-      !source?.missionId && source?.spaceId
+      !sourceHasMission && source?.spaceId
         ? { spaceId: source.spaceId, spaceTitle: source.spaceTitle }
         : {};
     const newPane: PaneModel = {

@@ -274,3 +274,87 @@ describe('promotePaneToMissionOrchestrator — recusa do main é final (F-561)',
     expect(promoteRole).not.toHaveBeenCalled();
   });
 });
+
+// ── F-561: o painel marcado lidera a próxima missão (adoção) ─────────────────
+
+describe('marcação de adoção (F-561)', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  it('sem missão nenhuma: marca o painel E abre o Novo pedido', async () => {
+    const { promotePaneWithMissionChoice } = await import('./pane-mission-promote');
+    const { useOrchStore } = await import('../state/orch-store');
+    const { useProductNavigationStore } = await import(
+      '../state/product-navigation-store'
+    );
+    const { usePendingOrchestratorAdoptionStore } = await import(
+      '../state/pending-orchestrator-adoption-store'
+    );
+    const openNew = vi
+      .spyOn(useProductNavigationStore.getState(), 'openNewMission')
+      .mockImplementation(() => {});
+    useOrchStore.setState({ missions: [], paneMissions: {} });
+    usePendingOrchestratorAdoptionStore.getState().clear();
+
+    await promotePaneWithMissionChoice({
+      paneId: 'pane-9',
+      paneTitle: 'Codex',
+    });
+
+    expect(usePendingOrchestratorAdoptionStore.getState().pending).toEqual({
+      paneId: 'pane-9',
+      paneTitle: 'Codex',
+    });
+    expect(openNew).toHaveBeenCalledTimes(1);
+    openNew.mockRestore();
+  });
+
+  it('a opção "nova missão" do diálogo também marca o painel', async () => {
+    const { promotePaneWithMissionChoice, PROMOTE_NEW_MISSION: sentinel } =
+      await import('./pane-mission-promote');
+    const { useChoiceStore } = await import('../state/choice-store');
+    const { useOrchStore } = await import('../state/orch-store');
+    const { useProductNavigationStore } = await import(
+      '../state/product-navigation-store'
+    );
+    const { usePendingOrchestratorAdoptionStore } = await import(
+      '../state/pending-orchestrator-adoption-store'
+    );
+    vi.spyOn(
+      useProductNavigationStore.getState(),
+      'openNewMission',
+    ).mockImplementation(() => {});
+    useOrchStore.setState({
+      missions: [mission('m1', 'running')] as Mission[],
+      paneMissions: {},
+    });
+    usePendingOrchestratorAdoptionStore.getState().clear();
+
+    const pending = promotePaneWithMissionChoice({
+      paneId: 'pane-10',
+      paneTitle: 'Claude',
+    });
+    await Promise.resolve();
+    useChoiceStore.getState().decide(sentinel);
+    expect(await pending).toBeNull();
+
+    expect(
+      usePendingOrchestratorAdoptionStore.getState().pending?.paneId,
+    ).toBe('pane-10');
+  });
+
+  it('take() consome a marca — um start, uma adoção', async () => {
+    const { usePendingOrchestratorAdoptionStore } = await import(
+      '../state/pending-orchestrator-adoption-store'
+    );
+    usePendingOrchestratorAdoptionStore
+      .getState()
+      .request({ paneId: 'pane-1', paneTitle: null });
+
+    expect(usePendingOrchestratorAdoptionStore.getState().take()?.paneId).toBe(
+      'pane-1',
+    );
+    expect(usePendingOrchestratorAdoptionStore.getState().take()).toBeNull();
+  });
+});

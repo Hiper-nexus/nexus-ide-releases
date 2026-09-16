@@ -9,6 +9,8 @@ import { MissionAttachmentPicker } from './MissionAttachmentPicker';
 import { MissionSetupRosterRow } from './MissionSetupRosterRow';
 import { issueForAgent, type MissionTeamInventory } from './TeamStep';
 import { useObjectiveDictation } from './use-objective-dictation';
+import { PixelIcon } from '../PixelIcon';
+import { usePendingOrchestratorAdoptionStore } from '../../state/pending-orchestrator-adoption-store';
 
 interface ExpressMissionStartProps {
   workspace: WorkspaceInfo | null;
@@ -94,6 +96,12 @@ export function ExpressMissionStart({
   onRosterChange,
 }: ExpressMissionStartProps) {
   const headingRef = useRef<HTMLHeadingElement>(null);
+  // Adoção pendente (F-561): o operador chegou aqui clicando "Tornar
+  // orquestrador" num terminal. Sem este aviso ele cai numa tela de criação de
+  // missão sem entender por quê.
+  const pendingAdoption = usePendingOrchestratorAdoptionStore(
+    (state) => state.pending,
+  );
 
   const draftEditingDisabled = draftFieldsDisabled;
   const disabledReasonId = 'express-draft-disabled-reason';
@@ -157,6 +165,19 @@ export function ExpressMissionStart({
           para trabalhar no seu projeto.
         </p>
       </header>
+
+      {pendingAdoption ? (
+        <p className="mission-setup__adoption-notice" role="status">
+          <PixelIcon name="crown" size={12} />
+          <span>
+            <strong>
+              {pendingAdoption.paneTitle?.trim() || 'O painel escolhido'}
+            </strong>{' '}
+            vai coordenar esta missão. Nenhum terminal novo é aberto — falta só
+            dizer o que ela deve entregar.
+          </span>
+        </p>
+      ) : null}
 
       <div className="mission-setup__continuous-section">
         <div className="mission-setup__field mission-setup__objective-field">

@@ -69,6 +69,12 @@ import {
 } from './worker-mortality';
 import { trace } from '../observability/main-trace';
 import { classifySessionLiveness } from '../pty/session-liveness';
+import {
+  decideOrchestratorAdoption,
+  orchestratorAdoptionRefusalMessage,
+  takeOrchestratorAdoption,
+  type OrchestratorAdoptionRefusal,
+} from './orchestrator-adoption';
 import { waitOutBootPrompts } from './boot-prompt-hold';
 import { maestroKickoffBlockReason } from './maestro-boot-gate';
 import { missionBlockPatch, type MissionBlockPatch } from '../../shared/mission-intent';
@@ -2095,6 +2101,117 @@ export async function resurrectRunningMissionsForScope(
  * via MCP tools (nexus_pane_spawn, nexus_handoff_list). Os workers são
  * spawnados SOB DEMANDA pelo orquestrador.
  */
+/**
+ * Resultado da tentativa de adoção. `adopted` é o caminho feliz; qualquer outra
+ * coisa devolve o motivo e a Via Rápida segue para o spawn normal — a missão
+ * SEMPRE arranca, com o painel do operador ou com um Maestro próprio.
+ */
+type OrchestratorAdoptionOutcome =
+  | { readonly adopted: true; readonly sessionId: string; readonly paneId: string }
+  | { readonly adopted: false; readonly refusal: OrchestratorAdoptionRefusal };
+
+/**
+ * Faz o painel VIVO do operador virar o Maestro desta missão.
+ *
+ * A ordem importa e é toda a razão desta função existir:
+ *  1. a missão já transicionou para running/executing (só aí ela tem autoridade
+ *     de despacho — sem isso a concessão é recusada);
+ *  2. concede-se autoridade de missão à sessão viva (quem faz isso é quem tem o
+ *     WebContents dono do pane; aqui só perguntamos);
+ *  3. confirma-se no store que a missão passou a apontar para ESSA sessão;
+ *  4. o briefing é COLADO no pane que já está rodando — não existe argv para um
+ *     processo que já subiu;
+ *  5. recibo de kickoff e watcher, iguais aos do caminho spawnado.
+ *
+ * Nada disso mata o pane. É exatamente o oposto do respawn, que termina
+ * fisicamente o orquestrador registrado antes de subir o seu.
+ */
+async function adoptOrchestratorPane(
+  scope: ProjectExecutionScope,
+  mission: Mission,
+  initialPrompt: string,
+): Promise<OrchestratorAdoptionOutcome> {
+  const reservation = takeOrchestratorAdoption(mission.id);
+  const adapter = reservation ? getAdapter(reservation.adapterId) : null;
+  const decision = decideOrchestratorAdoption({
+    reservation,
+    now: Date.now(),
+    sessionIsLive: reservation
+      ? classifySessionLiveness(getSessionState(reservation.sessionId)) === 'live'
+      : false,
+    adapterCanOrchestrate: Boolean(
+      adapter && adapter.kind === 'cli-pty' && canUseNexusMcp(adapter),
+    ),
+  });
+  if (decision.kind === 'spawn') {
+    return { adopted: false, refusal: decision.refusal };
+  }
+
+  const adopted = decision.reservation;
+  let granted = false;
+  try {
+    granted = await adopted.grantAuthority();
+  } catch (error) {
+    console.warn(
+      '[fast-lane] concessão de autoridade na adoção falhou:',
+      error instanceof Error ? error.message : error,
+    );
+    granted = false;
+  }
+  const stores = getProjectDomainStores(scope);
+  // Prova, não promessa: o store tem que apontar para a sessão adotada. Se a
+  // concessão disse ok mas o vínculo não mudou, isto NÃO é uma adoção.
+  const bound =
+    stores.missions.get(mission.id)?.orchestratorSessionId ?? null;
+  if (!granted || bound !== adopted.sessionId) {
+    return { adopted: false, refusal: 'authority-refused' };
+  }
+
+  const live = stores.missions.get(mission.id) ?? mission;
+  rememberKickoffBrief({
+    missionId: live.id,
+    orchestratorSessionId: adopted.sessionId,
+    intentVersion: live.intentVersion ?? 0,
+    promptHash: kickoffPromptHash(initialPrompt),
+  });
+
+  // Pane já rodando: o canal é sempre colagem. Esperar idle evita colar por
+  // cima de um turno em andamento do próprio operador.
+  const boot =
+    getSessionState(adopted.sessionId) === 'idle'
+      ? 'idle'
+      : await waitForIdle(adopted.sessionId, ORCHESTRATOR_BOOT_TIMEOUT_MS);
+  if (boot === 'exited') {
+    return { adopted: false, refusal: 'session-dead' };
+  }
+  const accepted = await deliverAgentPrompt(
+    adopted.sessionId,
+    initialPrompt,
+    undefined,
+    { adapterId: adopted.adapterId },
+  );
+  if (!accepted) {
+    return { adopted: false, refusal: 'authority-refused' };
+  }
+  tryAcceptIdleOrchestratorKickoff(stores, live, adopted.sessionId, initialPrompt);
+  if (!stores.missions.hasCurrentKickoffAcceptance(live.id)) {
+    try {
+      stores.missions.recordKickoffAcceptance({
+        missionId: live.id,
+        intentVersion: live.intentVersion ?? 0,
+        orchestratorSessionId: adopted.sessionId,
+        promptHash: kickoffPromptHash(initialPrompt),
+      });
+    } catch (error) {
+      console.warn(
+        '[fast-lane] recibo de kickoff da adoção não gravou:',
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+  return { adopted: true, sessionId: adopted.sessionId, paneId: adopted.paneId };
+}
+
 export async function fastLaneBootstrap(
   scope: ProjectExecutionScope,
   missionId: string,
@@ -2232,6 +2349,53 @@ export async function fastLaneBootstrap(
 
   const finishFirstPane = async (): Promise<void> => {
     const wave = dispatchFastLaneFirstWave(scope, missionId);
+    // Adoção primeiro: se o operador indicou um painel para liderar, ele vira o
+    // Maestro e nenhum pane novo nasce. Recusa não derruba a missão — ela cai
+    // no arranque normal com o aviso registrado.
+    const adoption = await adoptOrchestratorPane(scope, live, prompt);
+    if (adoption.adopted) {
+      orchPanes.set(missionId, {
+        paneId: adoption.paneId,
+        sessionId: adoption.sessionId,
+        adapterId: (await Promise.resolve(getAgentSessionInfo(adoption.sessionId)))
+          ?.adapterId ?? orchestrator.cli,
+        cwd: scope.rootRealPath,
+        title: orchestrator.agentName,
+        agentName: orchestrator.agentName,
+      });
+      if (!isFocusedLiveMission(missionId)) {
+        persistLeftoverIsolation(stores.missions, missionId, 'unfocus');
+        await releaseMissionLiveRuntime(scope, missionId);
+        return;
+      }
+      startWatcher(scope, missionId, adoption.sessionId);
+      void wave.catch((error) => {
+        console.warn(
+          '[fast-lane] first-wave após adoção falhou:',
+          error instanceof Error ? error.message : error,
+        );
+      });
+      return;
+    }
+    if (adoption.refusal !== 'no-reservation') {
+      console.warn(
+        `[fast-lane] adoção recusada (${adoption.refusal}) para ${missionId}: ` +
+          orchestratorAdoptionRefusalMessage(adoption.refusal),
+      );
+      emitMissionEvent(scope, {
+        missionId,
+        runId: `bootstrap:${missionId}`,
+        type: 'custom',
+        origin: 'system',
+        payload: {
+          kind: 'orchestrator-adoption-refused',
+          refusal: adoption.refusal,
+          detail: orchestratorAdoptionRefusalMessage(adoption.refusal),
+        },
+        idempotencyKey: `adoption-refused:${missionId}`,
+        occurredAt: Date.now(),
+      });
+    }
     const spawned = await spawnAgentPane(scope, live, orchestrator, prompt);
     if ('error' in spawned) {
       const current = stores.missions.get(missionId);

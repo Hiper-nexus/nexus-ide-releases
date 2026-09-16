@@ -609,6 +609,12 @@ export interface NexusApi {
     start(input: {
       missionId: string;
       reviewSha256: string;
+      /**
+       * Painel vivo que deve LIDERAR esta missão em vez de o motor subir um
+       * Maestro próprio (adoção). Usado quando a missão nasceu de um "Tornar
+       * orquestrador" num terminal que o operador já estava usando.
+       */
+      adoptOrchestratorPaneId?: string;
     }): Promise<MissionSnapshot>;
     command(command: MissionEngineCommand): Promise<MissionSnapshot>;
     snapshot(missionId: string): Promise<MissionSnapshot>;

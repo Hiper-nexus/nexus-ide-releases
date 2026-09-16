@@ -7,6 +7,8 @@ import { useOrchStore } from '../state/orch-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { useMissionSetupStore } from '../state/mission-setup-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
+import { usePaneScopeStore } from '../state/pane-scope-store';
+import { LOOSE_SCOPE_KEY } from '../lib/pane-spaces';
 import {
   promotePaneWithMissionChoice,
   toastPromoted,
@@ -178,6 +180,10 @@ export function CommandPalette() {
       () => {
         useProductNavigationStore.getState().openTerminal();
         layout.addShellPane();
+        // F-560: sem focar a aba dos soltos, o terminal nasce fora do escopo
+        // que está na tela e o operador vê a grade anterior — "abri e não
+        // apareceu". Mesma regra do atalho equivalente no Novo pedido.
+        usePaneScopeStore.getState().focusScope(LOOSE_SCOPE_KEY);
       },
       '',
       'shell novo',

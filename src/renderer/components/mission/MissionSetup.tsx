@@ -31,6 +31,7 @@ import {
 } from '../../state/mission-setup-store';
 import { toUserFacingMissionError } from '../../lib/user-facing-mission-error';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
+import { usePendingOrchestratorAdoptionStore } from '../../state/pending-orchestrator-adoption-store';
 import { useProviderStore } from '../../state/provider-store';
 import { useWorkspaceStore } from '../../state/workspace-store';
 import { ExpressMissionStart } from './ExpressMissionStart';
@@ -750,9 +751,14 @@ export function MissionSetup({
 
     let startSucceeded = false;
     try {
+      // Adoção (F-561): se o operador marcou um painel para liderar, a missão
+      // nasce COM ele — o motor não sobe um Maestro em branco. `take()` é de um
+      // uso só: um start falho não deixa a marca pendurada para a próxima.
+      const adopted = usePendingOrchestratorAdoptionStore.getState().take();
       const snapshot = await window.nexus.mission.start({
         missionId: capturedReview.missionId,
         reviewSha256: capturedReview.reviewSha256,
+        ...(adopted ? { adoptOrchestratorPaneId: adopted.paneId } : {}),
       });
       startSucceeded = true;
       if (capturedSupersededMissionId) {
@@ -968,9 +974,11 @@ export function MissionSetup({
         discardPreparedReview(review);
         return;
       }
+      const adopted = usePendingOrchestratorAdoptionStore.getState().take();
       const snapshot = await window.nexus.mission.start({
         missionId: review.missionId,
         reviewSha256: review.reviewSha256,
+        ...(adopted ? { adoptOrchestratorPaneId: adopted.paneId } : {}),
       });
       const finalSetup = useMissionSetupStore.getState();
       const finalWorkspace = useWorkspaceStore.getState().current?.path ?? null;

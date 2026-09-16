@@ -220,6 +220,11 @@ import {
 import { BoundedAsyncOperationPool } from './bounded-async-operation-pool';
 import { missionControlPlaneSnapshot } from "./mission-control-plane-ipc";
 import {
+  ORCHESTRATOR_ADOPTION_TTL_MS,
+  clearOrchestratorAdoption,
+  reserveOrchestratorAdoption,
+} from "./orchestrator-adoption";
+import {
   completeMissionByOperator,
   planOperatorCompleteIpc,
 } from "./mission-operator-complete";
@@ -231,6 +236,15 @@ import {
 
 const missionStartSchema = missionReviewSchema
   .pick({ missionId: true, reviewSha256: true })
+  .extend({
+    /**
+     * Painel VIVO que o operador escolheu para liderar esta missão. Presente
+     * quando a missão nasceu de um "Tornar orquestrador": em vez de subir um
+     * Maestro em branco, a missão adota o terminal em que ele já estava
+     * trabalhando. Ausente = arranque normal.
+     */
+    adoptOrchestratorPaneId: z.string().min(1).max(128).optional(),
+  })
   .strict();
 const canonicalMissionIdSchema = missionReviewSchema.shape.missionId;
 const canonicalMissionSummaryListSchema = z.array(
@@ -1881,12 +1895,53 @@ export function registerOrchIpc(): void {
         );
       }
     }
-    const snapshot = await withMissionLifecycleLock(
-      scope,
-      input.missionId,
-      () => missionEngineForScope(scope).start(scope, input),
-    );
-    return missionSnapshotSchema.parse(snapshot);
+    // A reserva de adoção é criada ANTES do start e consumida lá dentro, depois
+    // que a missão ganha autoridade de despacho. Quem tem o WebContents é esta
+    // camada — a Via Rápida só pergunta se pode adotar.
+    if (input.adoptOrchestratorPaneId) {
+      const authority = requireMissionAuthority();
+      const owned = authority.resolveOwnedPaneForAdoption(
+        event.sender,
+        input.adoptOrchestratorPaneId,
+      );
+      if (owned) {
+        reserveOrchestratorAdoption({
+          missionId: input.missionId,
+          paneId: owned.paneId,
+          sessionId: owned.sessionId,
+          adapterId: owned.adapterId,
+          expiresAt: Date.now() + ORCHESTRATOR_ADOPTION_TTL_MS,
+          grantAuthority: () => {
+            const result = authority.promoteOrchestratorFromRenderer(
+              event.sender,
+              input.missionId,
+              { paneId: owned.paneId },
+            );
+            if (result.ok && result.mission) {
+              redeliverPendingHandoffs(scope, result.mission.id);
+              broadcastProjectStore(scope, "missions");
+            }
+            return result.ok === true;
+          },
+        });
+      }
+    }
+    try {
+      const snapshot = await withMissionLifecycleLock(
+        scope,
+        input.missionId,
+        () =>
+          missionEngineForScope(scope).start(scope, {
+            missionId: input.missionId,
+            reviewSha256: input.reviewSha256,
+          }),
+      );
+      return missionSnapshotSchema.parse(snapshot);
+    } finally {
+      // Reserva é de um uso só: um start que falhou não deixa autorização de
+      // adoção pendurada para o próximo.
+      clearOrchestratorAdoption(input.missionId);
+    }
   });
   ipcMain.handle(ORCH_CHANNELS.missionCommand, async (event, raw) => {
     const rawDirect = raw as {
