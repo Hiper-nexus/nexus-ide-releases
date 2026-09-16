@@ -58,6 +58,7 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
     await paneSpawnTool.handler({ adapterId: 'codex' }, userPane());
     expect(harness.spawnPaneAndMaybePrompt).toHaveBeenCalledTimes(1);
     expect(spawnedRole()).toBeUndefined();
+    expect(harness.spawnPaneAndMaybePrompt.mock.calls[0]?.[0]).toMatchObject({ operatorParentSessionId: 'session-user' });
   });
 
   it('com missão o caller não é a mão do operador e o role explícito continua', async () => {

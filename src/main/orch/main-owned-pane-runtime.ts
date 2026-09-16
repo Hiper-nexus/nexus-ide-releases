@@ -49,6 +49,8 @@ import { spawnMainOwnedAcpMissionPane } from "./acp-mission-spawn";
 import { issueAgentIdentityBestEffort } from "./agent-identity-spawn";
 
 export interface PaneOrchMeta {
+  /** Main-authored spawner for missionless operator handoffs. */
+  operatorParentSessionId?: string;
   missionId?: string;
   contextRevision?: string;
   agentName?: string;
@@ -80,6 +82,8 @@ export interface PaneOrchMeta {
 }
 
 export interface PaneSpawnOptions {
+  /** Main-authored spawner; never copied into the renderer request. */
+  operatorParentSessionId?: string;
   adapterId: string;
   model?: string;
   /**
@@ -196,6 +200,7 @@ function authzInfoOf(pane: MainOwnedPane): PaneAuthzInfo {
     contextRevision: pane.meta.contextRevision,
     role: pane.meta.role,
     workerIncarnationId: pane.meta.workerIncarnationId,
+    operatorParentSessionId: pane.meta.operatorParentSessionId,
     scope: pane.meta.scope,
     executionScope: pane.meta.executionScope,
   };
@@ -593,6 +598,7 @@ export function spawnMainOwnedMissionPane(
   }
   const cwd = resolveCwdForScope(executionScope, options.cwd);
   const context = Object.freeze({
+    operatorParentSessionId: options.operatorParentSessionId,
     missionId: options.missionId,
     contextRevision: options.contextRevision,
     agentName: options.agentName,

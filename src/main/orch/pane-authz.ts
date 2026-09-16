@@ -32,6 +32,8 @@ export interface CallerCtx {
 }
 
 export interface PaneAuthzInfo {
+  /** Main-authored operator parent; absent for mission workers. */
+  operatorParentSessionId?: string;
   paneId: string;
   sessionId: string | null;
   kind: 'shell' | 'cli-agent' | 'browser';

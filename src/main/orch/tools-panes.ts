@@ -922,6 +922,9 @@ const paneSpawn: McpToolDef = {
       options = {
         ...options,
         [PENDING_SPAWN_RESULT]: true,
+        operatorParentSessionId: operatorHand && !ctx.contextRevision
+          ? ctx.sessionId
+          : undefined,
       } as SpawnToolOptions;
       const harness = {
         adapterId: options.adapterId,

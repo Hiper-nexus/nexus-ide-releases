@@ -153,3 +153,31 @@ saber isto antes de mexer:
   Recovery no registry libera reservas de pane de um processo anterior.
   Branch e diretório ficam preservados para integração manual pelo Maestro;
   liberar a reserva não autoriza apagar commits ou WIP não integrados.
+
+## Handoff sem missão (F-565)
+
+- `nexus_pane_spawn` guarda `operatorParentSessionId` no metadado do Main para
+  filhos do operador sem missão. Esse vínculo não vem dos argumentos MCP nem
+  do renderer; panes existentes sem vínculo não ganham um pai por inferência.
+- O handoff de workspace usa o ledger atual com `mission_id = NULL` no banco
+  do checkout. `list({ missionId: null })` seleciona somente essas linhas;
+  `undefined` preserva a consulta de auditoria do store.
+- A entrega ao pai usa `injectPrompt` (mesmo transporte de `nexus_pane_write`),
+  revalidando sessão, checkout e ausência de missão/contexto obsoleto durante
+  a operação. Falha de transporte mantém a linha `queued` e retorna
+  `delivered: false` com `deliveryError`; o operador ainda pode listar a linha.
+- Esse caminho nunca emite evidência/recibo de missão, ACK, avanço de task ou
+  conclusão. A auditoria MCP continua no dispatcher; o handoff é `unverified`.
+
+## Conversas Grok/Kimi por checkout (F-566)
+
+- Os overlays recebem `userDataPath` e `checkoutId` da autoridade do Main e
+  ligam suas conversas a `<userData>/provider-state/<adapter>/<checkoutId>/`.
+  Nunca volte a ligar `sessions`/históricos/índices ao perfil nativo: um CLI
+  externo no mesmo cwd pode retomar a conversa viva do pane.
+- Auth e extensões seguem a política existente do perfil. O sandbox governado
+  precisa conceder tanto o perfil quanto o diretório durável exato do checkout.
+- As entradas de conversa ficam excluídas do sync-back ao perfil real, inclusive
+  quando o CLI substitui um link de arquivo por rename atômico. Limpar overlays
+  não apaga sessões duráveis. Sessões antigas no perfil nativo ficam intactas;
+  não são importadas automaticamente para o Nexus.

@@ -1442,6 +1442,7 @@ function authzInfoOf(registered: RegisteredPane): PaneAuthzInfo {
     contextRevision: meta?.contextRevision,
     role: meta?.role,
     workerIncarnationId: meta?.workerIncarnationId,
+    operatorParentSessionId: meta?.operatorParentSessionId,
     scope:
       meta?.scope ??
       (entry.sessionId ? scopeBySession.get(entry.sessionId) : undefined),
@@ -2236,6 +2237,7 @@ export function requestPaneSpawn(
         contextRevision: options.contextRevision,
         agentName: options.agentName,
         workerIncarnationId: mintedWorkerIncarnationId(options),
+        operatorParentSessionId: options.operatorParentSessionId,
         allowedTools: options.allowedTools,
         allowedSkills: options.allowedSkills,
         role: options.role,

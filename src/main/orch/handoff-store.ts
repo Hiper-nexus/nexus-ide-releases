@@ -297,7 +297,8 @@ export interface HandoffAgentAttestationBinding {
 }
 
 export interface ListHandoffsFilter {
-  missionId?: string;
+  /** null selects only workspace handoffs; undefined keeps the audit query. */
+  missionId?: string | null;
   includeDelivered?: boolean;
   /** Filter by exact handoff ids (Overclock `ids`). */
   ids?: string[];
@@ -1333,7 +1334,7 @@ export class ScopedHandoffStore {
   list(rawFilter: ListHandoffsFilter = {}): ScopedHandoff[] {
     const filter = z
       .object({
-        missionId: identifierSchema.optional(),
+        missionId: identifierSchema.nullable().optional(),
         includeDelivered: z.boolean().optional(),
         ids: z.array(identifierSchema).max(256).optional(),
         sessionIds: z.array(identifierSchema).max(256).optional(),
@@ -1342,7 +1343,9 @@ export class ScopedHandoffStore {
       .parse(rawFilter);
     const clauses: string[] = [];
     const params: unknown[] = [];
-    if (filter.missionId !== undefined) {
+    if (filter.missionId === null) {
+      clauses.push("mission_id IS NULL");
+    } else if (filter.missionId !== undefined) {
       clauses.push("mission_id = ?");
       params.push(filter.missionId);
     }

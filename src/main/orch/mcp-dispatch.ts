@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { resolveWorkspaceHandoffParent } from "./workspace-handoff-authority";
 import { emitDestructiveReversalEvent } from "./mission-event-emit";
 import {
   hasCurrentApprovedDispatchContract,
@@ -655,9 +656,11 @@ export async function dispatchToolCall(
     effectPolicy === "routine-local-operation" ||
     // Mão do operador: pane_spawn/write/ask/close sem missão (campo 09/09).
     permitsOperatorPaneEffect(ctx, tool.name) ||
+    (canonical === "handoff_submit" &&
+      resolveWorkspaceHandoffParent(ctx) !== null) ||
     // Modo vibe (hardcoded): pane do operador sem missão não tem cabresto de
     // efeito — nenhuma tool efetiva de código é barrada por falta de missão.
-    // Exceções: handoff é protocolo de missão (sem missão não tem destino) e
+    // Handoff sem missão só usa o vínculo físico com o spawner acima;
     // bootstrap-authority mantém a própria cadeia de autoridade/recibo.
     (isOperatorVibeDispatch(source, ctx) &&
       effectPolicy !== "handoff-authority" &&
@@ -1369,7 +1372,7 @@ export async function dispatchToolCall(
     const agentTransportPhysicalReceipt =
       physicalAgentTransport &&
       (
-        tool.name === "nexus_handoff_submit" ||
+        (tool.name === "nexus_handoff_submit" && Boolean(ctx.missionId)) ||
         tool.name === "nexus_handoff_ack" ||
         (
           tool.name === "nexus_mission_set_status" &&

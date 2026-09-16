@@ -107,6 +107,24 @@ afterEach(() => {
 });
 
 describe("pending pane spawn authority", () => {
+  it("retains the operator spawner in Main metadata, outside the renderer request", async () => {
+    const owner = renderer();
+    registered = owner;
+    registerOrchRenderer(owner);
+    const scope = testProjectScope();
+    bindScope(owner, scope);
+    const pending = requestPaneSpawn({
+      adapterId: "codex", scope, operatorParentSessionId: "operator-parent",
+    });
+    const request = owner.send.mock.calls[0]?.[1] as OrchPaneSpawnRequest;
+    expect(request).not.toHaveProperty("operatorParentSessionId");
+    expect(claimPendingSpawnMeta(request.requestId, owner)).toMatchObject({
+      operatorParentSessionId: "operator-parent",
+    });
+    resolvePaneSpawn({ requestId: request.requestId, ok: false, error: "test cleanup" }, owner);
+    await expect(pending).resolves.toMatchObject({ ok: false });
+  });
+
   it("closes the main-minted browser pane when its acknowledgement arrives after timeout", async () => {
     vi.useFakeTimers();
     const owner = renderer();

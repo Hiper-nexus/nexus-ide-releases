@@ -33,6 +33,7 @@ import { buildDomainTools } from "./tools-domain";
 import * as domainStores from "./project-domain-store-registry";
 import * as completion from "./civilian-delivery-completion";
 import * as squads from "./squad-store";
+import * as paneRegistry from "./pane-registry";
 import { ProcessGitRunner } from "../runtime/git-command";
 import { testProjectScope } from "./__tests__/scope-fixture";
 import { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
@@ -971,6 +972,25 @@ describe("MCP dispatch effect safety", () => {
     );
     expect(result).toMatchObject({ ok: false, denied: true });
     expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("accepts workspace handoff only for a live operator child without stale context", async () => {
+    const ctx = userContext();
+    bindTokenToSession(ctx.token, 'workspace-child');
+    const parent = mintToken({ label: 'parent', role: 'user', scope: auditScope });
+    bindTokenToSession(parent.token, 'workspace-parent');
+    vi.spyOn(paneRegistry, 'getPaneRuntimeAuthorityBySession').mockImplementation(sessionId => ({
+      paneId: `pane-${sessionId}`, sessionId, kind: 'cli-agent', scope: auditScope,
+      owner: null, ...(sessionId === 'workspace-child' ? { operatorParentSessionId: 'workspace-parent' } : {}),
+    }));
+    const handler = vi.fn(async () => ({ ok: true }));
+    const tool = { name: 'nexus_handoff_submit', description: 'workspace handoff', inputSchema: { type: 'object', properties: {} }, handler };
+    const run = () => dispatchToolCall('http-mcp', registryWith(tool), tool.name, {}, ctx);
+    expect(await run()).toMatchObject({ ok: true });
+    expect(handler).toHaveBeenCalledOnce();
+    ctx.contextRevision = 'stale';
+    expect(await run()).toMatchObject({ ok: false });
+    expect(handler).toHaveBeenCalledOnce();
   });
 
   it("handoff sem missão pela mão do operador recusa ensinando o caminho", async () => {

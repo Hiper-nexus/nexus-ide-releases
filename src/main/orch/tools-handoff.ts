@@ -1,4 +1,5 @@
 import path from "node:path";
+import { submitWorkspaceHandoff } from "./tools-handoff-workspace";
 import {
   canSubmitMissionHandoff,
   hasCurrentApprovedDispatchContract,
@@ -249,6 +250,12 @@ const handoffSubmitTool: McpToolDef = {
     required: ["status", "summary"],
   },
   handler: async (args, ctx, invocation) => {
+    if (!ctx.missionId) {
+      return submitWorkspaceHandoff(args, ctx, invocation, [
+        ...buildOverclockArtifacts(args),
+        ...buildContextDagArtifacts(args),
+      ]);
+    }
     const physicalReceipt = requireHandoffMcpEffectIntent(invocation);
     let suite: ReturnType<typeof getProjectDomainStores>;
     let mission: ReturnType<
@@ -639,7 +646,7 @@ const handoffSubmitTool: McpToolDef = {
 const handoffListTool: McpToolDef = {
   name: "nexus_handoff_list",
   description:
-    "List handoffs for the current mission. The Maestro sees the full audit " +
+    "List handoffs for the current mission, or workspace handoffs for an operator without a mission. The Maestro sees the full audit " +
     "trail by default (including delivered/consumed). Pass includeDelivered: " +
     "false for only undelivered rows. full:true is the documented alias for " +
     "the complete trail (same as includeDelivered:true).",
@@ -657,11 +664,17 @@ const handoffListTool: McpToolDef = {
     // L10: only an orchestrator may enumerate other missions' handoffs. A worker
     // is confined to its own mission, so a prompt-injected worker cannot read
     // another mission's handoff summaries/artifacts by passing a guessed id.
+    if (
+      !ctx.missionId &&
+      (ctx.role === "worker" || ctx.contextRevision || ctx.workerIncarnationId)
+    ) return [];
     const requestedMission = str(args, "missionId");
     const missionId =
-      ctx.role === "orchestrator"
-        ? (requestedMission ?? ctx.missionId)
-        : ctx.missionId;
+      !ctx.missionId
+        ? null
+        : ctx.role === "orchestrator"
+          ? (requestedMission ?? ctx.missionId)
+          : ctx.missionId;
     const rawPanes = Array.isArray(args.panes)
       ? args.panes.filter((p) => typeof p === "string")
       : [];
@@ -677,12 +690,15 @@ const handoffListTool: McpToolDef = {
           .map((s) => s.sessionId)
           .filter((s): s is string => s !== null)
       : undefined;
+    if (paneSessionIds?.length === 0) return [];
     const rawIds = Array.isArray(args.ids)
       ? args.ids.filter((i) => typeof i === "string")
       : [];
     const rows = getProjectDomainStores(ctx.scope).handoffs.list({
       missionId,
-      includeDelivered: resolveHandoffListIncludeDelivered(args, ctx.role),
+      includeDelivered: resolveHandoffListIncludeDelivered(
+        args, !ctx.missionId ? "orchestrator" : ctx.role,
+      ),
       ...(paneSessionIds !== undefined && paneSessionIds.length > 0
         ? { sessionIds: paneSessionIds }
         : {}),
