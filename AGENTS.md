@@ -181,3 +181,54 @@ saber isto antes de mexer:
   quando o CLI substitui um link de arquivo por rename atômico. Limpar overlays
   não apaga sessões duráveis. Sessões antigas no perfil nativo ficam intactas;
   não são importadas automaticamente para o Nexus.
+
+## Política de Git do fan-out isolado (F-563)
+
+- No MCP, writers com `executionScope` distinto usam apenas Git
+  add/commit/status/diff/log na worktree e branch do registro do Main; HEAD
+  destacado, branch trocada e repo aninhado são recusados.
+- `nexus_terminal_run` desses writers não executa shell: traduz somente argv
+  Git literal para os mesmos handlers protegidos. Chains, subshells, scripts e
+  `nexus_bg_run` são recusados. Não substitua isso por regex ou wrapper de PATH.
+- Essa proteção cobre os processos lançados pelo MCP. A execução interna dos
+  CLIs depende de seus próprios hooks/perfis; Autopilot não implica sandbox
+  de kernel. Não declare que um guard MCP confina todas as ferramentas nativas.
+- Worker→worker write/close exige a mesma `executionScope.rootRealPath`.
+  Read/wait continuam disponíveis dentro da missão. O handoff do writer deve
+  listar arquivos tocados e diff; branches isoladas não têm merge automático.
+
+## Grok: não spawna `grok models` (ciclo 5)
+
+- O binário `grok models` faz silent refresh e rotaciona o refresh token a
+  cada invocação. O poll antigo (5 min) + TTL 5 min caía a cada ~10 min.
+- Descoberta de modelos do Grok lê `~/.grok/models_cache.json` (e o catálogo
+  bundled). Nunca `execFile('grok', ['models'])`. Cota usa
+  `GET cli-chat-proxy.grok.com/v1/billing` com o JWT já em `auth.json`.
+- `MODEL_DISCOVERY_POLL_MS` / `MODEL_DISCOVERY_TTL_MS` ≥ 1 h para o restante
+  das CLIs com comando list.
+
+## Codex: um refresh OAuth por conta gerenciada (ciclo 5 addendum)
+
+- O binário Codex (não o Nexus) rotaciona o refresh token do ChatGPT ao
+  boot quando o access JWT está velho. `auth.json` é o mesmo inode em todos
+  os panes da conta (`managed-accounts/codex/<acct>/home/auth.json` ou
+  `~/.codex/auth.json`, linkado no overlay).
+- `mcp-oauth-locks/file-store.lock` no overlay é lock do *MCP OAuth store*
+  da CLI, um por CODEX_HOME privado. Não serializa o ChatGPT `auth.json`.
+- Gate em `managed-auth-spawn-gate.ts` (chamado de `pty-ipc` antes do spawn):
+  token fresco → todos passam; token velho → um leader spawna, os outros
+  esperam o arquivo reescrito (lock `auth.json.nexus-spawn.lock`, timeout
+  12s) e reusam o token. Sem git-lock no overlay.
+- Mitigante de operador: contas Codex distintas em spawn paralelo evitam
+  a família; o picker já tem uma linha por conta.
+
+## Devin spawn: colagem depois do boot (ciclo 5)
+
+- `spawn.initialPrompt` é `paste` (como Kimi). Posicional `-- <PROMPT>` nascia
+  antes do trust e o pane morria com "agent pane did not start after prompt
+  delivery".
+- Trust interativo ("Do you trust the authors of this directory?") é
+  `cliPromptAutoResponder` (`devin-workspace-trust`). `--respect-workspace-trust
+  false` só existe no headless; extraArgs interativo continua vazio.
+- Brief só depois do composer "Ask Devin to build". Auth: TOML em
+  `~/.local/share/devin/credentials.toml`. `nexusMcp: none` permanece.
