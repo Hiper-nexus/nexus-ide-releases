@@ -4132,6 +4132,15 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
   fixes: [
     {
+      title: 'Liderança única: gate e leitores sem falso "sessão obsoleta"',
+      detail:
+        'A suíte completa pegou 23 regressões das ondas 1/3 antes da release: o gate de ' +
+        'líder recusava o próprio líder registrado antes da prova física, e os leitores ' +
+        'vazavam "domain stores are not initialized" quando o engine estava indisponível. ' +
+        'Agora só morte conhecida (sessão exited) nega o líder, e leitores degradam à ' +
+        'ligação durável da missão.',
+    },
+    {
       title: 'Grant de sandbox governado só cobre o material de auth (F-569)',
       detail:
         'Uma sessão governada de Grok/Kimi recebia leitura+escrita no `~/.grok`/' +
