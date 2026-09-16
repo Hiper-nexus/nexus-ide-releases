@@ -38,6 +38,7 @@ import {
   bindTrustedMainWindow,
   isLiveTrustedMainWindowSender,
 } from './security/trusted-ipc';
+import { resolveWindowsRuntimeIconPath } from './windows-app-identity';
 
 export { bindTrustedMainWindow } from './security/trusted-ipc';
 
@@ -315,6 +316,13 @@ export function createMainWindow(
     return null;
   }
 
+  const windowsRuntimeIcon = resolveWindowsRuntimeIconPath({
+    platform: process.platform,
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    appPath: app.getAppPath(),
+  });
+
   const win = new BrowserWindow({
     width: 1280,
     height: 820,
@@ -325,6 +333,10 @@ export function createMainWindow(
     // pisca a cor antiga antes do renderer assumir.
     backgroundColor: '#0b0b0c',
     title: 'NexusIDE',
+    // Windows gets the same multi-resolution ICO embedded in the executable.
+    // It is an explicit runtime source only on Windows; macOS continues to use
+    // the signed ICNS from the app bundle.
+    ...(windowsRuntimeIcon ? { icon: windowsRuntimeIcon } : {}),
     // Do not expose the native surface while the custom protocol is still
     // retrying. A first ERR_FAILED is recoverable, but showing each retry makes
     // the entire Nexus window visibly blink during startup.

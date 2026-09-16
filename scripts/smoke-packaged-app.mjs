@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { extractFile as extractAsarFile, listPackage } from '@electron/asar';
-import { constants as fsConstants, existsSync, statSync } from 'node:fs';
+import { constants as fsConstants, existsSync, readFileSync, statSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -27,6 +27,7 @@ const REQUIRED_WAKE_MODEL_FILE = 'ei-jarvis-ptbr.onnx';
 const PRODUCT_NAME = 'NexusIDE';
 const EXECUTABLE_NAME = 'nexus-ide';
 const PACKAGED_SMOKE_ARGUMENT = 'nexus-smoke-test';
+const WINDOWS_RUNTIME_ICON_SIZES = [16, 24, 32, 48, 64, 128, 256];
 /** Must match FUNCTIONAL_SMOKE_FILE_CONTENT in src/shared/smoke-types.ts. */
 const FUNCTIONAL_SMOKE_MARKER_CONTENT = 'nexus-functional-smoke\n';
 const SUPPORTED_PLATFORMS = new Set(['darwin', 'linux', 'win32']);
@@ -53,9 +54,53 @@ export {
   EXECUTABLE_NAME,
   PACKAGED_SMOKE_ARGUMENT,
   FUNCTIONAL_SMOKE_MARKER_CONTENT,
+  WINDOWS_RUNTIME_ICON_SIZES,
   SUPPORTED_PLATFORMS,
   SUPPORTED_ARCHES,
 };
+
+/**
+ * `icon.ico` is deliberately shipped outside app.asar for BrowserWindow's
+ * Windows runtime fallback. Keep this release gate separate from the source
+ * icon builder: it proves Forge did not drop or truncate the copied resource.
+ */
+export function assertPackagedWindowsRuntimeIcon(resourcesDir) {
+  const iconPath = path.join(resourcesDir, 'icon.ico');
+  let ico;
+  try {
+    ico = readFileSync(iconPath);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`packaged Windows runtime ICO is missing: ${detail}`);
+  }
+  if (ico.length < 6 || ico.readUInt16LE(0) !== 0 || ico.readUInt16LE(2) !== 1) {
+    throw new Error('packaged Windows runtime ICO has an invalid header');
+  }
+  const count = ico.readUInt16LE(4);
+  const directoryEnd = 6 + count * 16;
+  if (count !== WINDOWS_RUNTIME_ICON_SIZES.length || directoryEnd > ico.length) {
+    throw new Error('packaged Windows runtime ICO has an invalid directory');
+  }
+
+  const sizes = [];
+  for (let index = 0; index < count; index += 1) {
+    const at = 6 + index * 16;
+    const size = ico[at] === 0 ? 256 : ico[at];
+    const bytes = ico.readUInt32LE(at + 8);
+    const offset = ico.readUInt32LE(at + 12);
+    if (bytes === 0 || offset < directoryEnd || offset + bytes > ico.length) {
+      throw new Error(`packaged Windows runtime ICO has an invalid ${size}px entry`);
+    }
+    sizes.push(size);
+  }
+  if (sizes.join(',') !== WINDOWS_RUNTIME_ICON_SIZES.join(',')) {
+    throw new Error(
+      `packaged Windows runtime ICO sizes are ${sizes.join(',')} ` +
+        `(expected ${WINDOWS_RUNTIME_ICON_SIZES.join(',')})`,
+    );
+  }
+  return { path: iconPath, sizes };
+}
 
 export function resolveAppArgument(args) {
   if (args.length === 0) return null;
@@ -986,6 +1031,9 @@ export async function runPackagedSmoke(
   inspectMainBundle(target.resourcesDir);
   inspectLegalArtifacts(target.resourcesDir);
   await inspectWakeModel(target.resourcesDir);
+  if (platform === 'win32') {
+    assertPackagedWindowsRuntimeIcon(target.resourcesDir);
+  }
 
   const userData = await fs.mkdtemp(
     path.join(os.tmpdir(), 'nexus-packaged-smoke-'),

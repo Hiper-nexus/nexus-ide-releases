@@ -32,6 +32,12 @@ import {
   startMacOSDockWatchdog,
   stopMacOSDockWatchdog,
 } from './macos-activation-policy';
+import { configureWindowsAppIdentity } from './windows-app-identity';
+
+// Squirrel supplies this same AUMID to the installed launcher. Make the
+// Electron process explicit too, before a BrowserWindow is created, so Windows
+// resolves a fresh NexusIDE icon instead of a generic pinned shortcut tile.
+configureWindowsAppIdentity(process.platform, (id) => app.setAppUserModelId(id));
 
 // Must run before Electron emits `ready`. The handler itself is installed in
 // bootstrap (after ready), before the first BrowserWindow is created.

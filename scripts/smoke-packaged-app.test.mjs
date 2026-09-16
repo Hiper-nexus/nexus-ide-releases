@@ -11,6 +11,7 @@ import {
   FUNCTIONAL_SMOKE_MARKER_CONTENT,
   GRACEFUL_CLOSE_TIMEOUT_MS,
   assertFunctionalMarker,
+  assertPackagedWindowsRuntimeIcon,
   assertPackagedMainBundleBootable,
   inspectPackagedLegalArtifacts,
   inspectPackagedMainBundle,
@@ -36,6 +37,7 @@ import {
   runPackagedSmoke,
   toHostAsarPath,
 } from './smoke-packaged-app.mjs';
+import { buildIco, encodePngEntry } from './build-windows-icon.mjs';
 
 const tempDirs = [];
 
@@ -277,6 +279,23 @@ describe('isolation args and environment', () => {
 });
 
 describe('proofs: renderer, functional, marker, natives', () => {
+  it('requires a complete multi-resolution Nexus ICO in Windows resources', () => {
+    const resources = makeTemp('nexus-smoke-windows-icon-');
+    const rgba = Buffer.alloc(8 * 8 * 4, 255);
+    fs.writeFileSync(
+      path.join(resources, 'icon.ico'),
+      buildIco(encodePngEntry(rgba, 8)),
+    );
+
+    expect(assertPackagedWindowsRuntimeIcon(resources)).toMatchObject({
+      path: path.join(resources, 'icon.ico'),
+      sizes: [16, 24, 32, 48, 64, 128, 256],
+    });
+
+    fs.writeFileSync(path.join(resources, 'icon.ico'), Buffer.from('not-an-ico'));
+    expect(() => assertPackagedWindowsRuntimeIcon(resources)).toThrow(/ICO/i);
+  });
+
   it('converts canonical ASAR entries to the host separator at extraction time', () => {
     expect(toHostAsarPath('/.vite/build/main.js', '\\')).toBe(
       '.vite\\build\\main.js',
@@ -809,6 +828,13 @@ describe('runPackagedSmoke integration (fixture + fake spawn)', () => {
       );
     }
     writeTree(unpacked, files);
+    if (platform === 'win32') {
+      const rgba = Buffer.alloc(8 * 8 * 4, 255);
+      fs.writeFileSync(
+        path.join(path.dirname(unpacked), 'icon.ico'),
+        buildIco(encodePngEntry(rgba, 8)),
+      );
+    }
     const wakeDir = path.join(path.dirname(unpacked), 'wake');
     const wakeModel = Buffer.from('fixture-ptbr-wake-model');
     const wakeHash = createHash('sha256').update(wakeModel).digest('hex');

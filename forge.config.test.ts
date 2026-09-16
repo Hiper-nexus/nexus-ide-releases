@@ -80,6 +80,7 @@ describe('Windows installer branding', () => {
     });
     expect(existsSync(path.resolve('assets/icon.ico'))).toBe(true);
     expect(existsSync(path.resolve('assets/installer-loading.gif'))).toBe(true);
+    expect(forgeConfig.packagerConfig?.extraResource).toContain('assets/icon.ico');
   });
 });
 

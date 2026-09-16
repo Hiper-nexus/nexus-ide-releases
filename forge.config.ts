@@ -326,6 +326,10 @@ const config: ForgeConfig = {
     // resources/wake: head PT-BR ONNX (também embutido em base64 no main;
     // o arquivo em extraResource permite inspeção/override sem rebuild).
     extraResource: [
+      // Runtime fallback for the Windows taskbar. The executable also embeds
+      // this ICO, but a live BrowserWindow must have a concrete icon while a
+      // Squirrel shortcut/taskbar cache is refreshed after an upgrade.
+      'assets/icon.ico',
       'scripts/design-system-sensor.mjs',
       // Conector externo Arms (Settings › Conectores): MCP stdio para
       // orquestradores fora dos panes (Grok Bot, Cursor).
