@@ -445,6 +445,72 @@ export function resolveSpawnBinary(
   return resolveCliBinary(commandOrPath);
 }
 
+export interface WindowsNpmShimLaunch {
+  /** Native executable that can receive the npm package entry point directly. */
+  readonly file: string;
+  /** Prepended before the original CLI arguments. */
+  readonly argsPrefix: readonly string[];
+}
+
+function isRegularFile(candidate: string): boolean {
+  try {
+    return fs.statSync(candidate).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Bypass cmd.exe only for the standard npm-installed Codex launcher.
+ *
+ * `codex.cmd` is a batch file, so Windows routes its arguments through
+ * cmd.exe's much smaller command-line limit. Nexus adds a structured Codex
+ * hook configuration that can legitimately exceed that limit. Executing the
+ * adjacent Node runtime with the verified package entry point preserves the
+ * exact CLI invocation without invoking a batch interpreter.
+ *
+ * This deliberately rejects arbitrary .cmd files. The path, shim contents,
+ * Node executable, and Codex entry point must all have npm's expected shape.
+ */
+export function resolveWindowsCodexNpmShimLaunch(
+  shimPath: string,
+): WindowsNpmShimLaunch | null {
+  if (
+    process.platform !== 'win32' ||
+    !path.isAbsolute(shimPath) ||
+    path.basename(shimPath).toLowerCase() !== 'codex.cmd' ||
+    !isExecutableFile(shimPath)
+  ) {
+    return null;
+  }
+
+  const binDir = path.dirname(shimPath);
+  const node = path.join(binDir, 'node.exe');
+  const entry = path.join(
+    binDir,
+    'node_modules',
+    '@openai',
+    'codex',
+    'bin',
+    'codex.js',
+  );
+  if (!isExecutableFile(node) || !isRegularFile(entry)) return null;
+
+  try {
+    const normalizedShim = fs
+      .readFileSync(shimPath, 'utf8')
+      .replaceAll('/', '\\')
+      .toLowerCase();
+    if (!normalizedShim.includes('node_modules\\@openai\\codex\\bin\\codex.js')) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+
+  return { file: node, argsPrefix: [entry] };
+}
+
 /** Test seam — clears fold memo so each suite starts clean. */
 export function __resetPathResolverForTests(): void {
   folded = false;

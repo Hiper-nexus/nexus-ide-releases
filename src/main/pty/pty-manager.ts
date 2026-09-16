@@ -57,7 +57,10 @@ import {
   shellIntegrationSpawnArgs,
 } from "../terminal/shell-integration-env";
 import { scrubManagedSessionAuth } from "../adapters/managed-credentials";
-import { resolveSpawnBinary } from "../path-resolver";
+import {
+  resolveSpawnBinary,
+  resolveWindowsCodexNpmShimLaunch,
+} from "../path-resolver";
 import {
   isBuiltinAdapter,
   resolveAdapterBinary,
@@ -2196,6 +2199,26 @@ export function spawnAgentSession(
     } catch (error) {
       decoration?.onSpawnFailed?.();
       throw error;
+    }
+  }
+
+  // npm's Windows launcher is a .cmd batch file. A normal Codex pane carries
+  // the Nexus status-hook configuration as command-line arguments, which can
+  // exceed cmd.exe's 8K limit before Codex ever starts. The built-in launcher
+  // is verified by the resolver and is converted to node.exe + codex.js only
+  // for this direct, non-sandboxed Windows path. Never rewrite a sandbox plan:
+  // its wrapper and filesystem contract must remain exactly as constructed.
+  if (
+    process.platform === "win32" &&
+    adapter.id === "codex" &&
+    isBuiltinAdapter(adapter.id) &&
+    !processSandboxActive &&
+    spawnFile === bin
+  ) {
+    const npmShimLaunch = resolveWindowsCodexNpmShimLaunch(spawnFile);
+    if (npmShimLaunch) {
+      spawnFile = npmShimLaunch.file;
+      spawnArgs = [...npmShimLaunch.argsPrefix, ...spawnArgs];
     }
   }
 

@@ -23,6 +23,12 @@ import {
   gatewayForwardsProviderCredential,
 } from "./gateway-env";
 
+const windowsNpmShimLaunch = vi.hoisted(() => ({
+  launch: null as
+    | { readonly file: string; readonly argsPrefix: readonly string[] }
+    | null,
+}));
+
 // Unit tests use a fake PTY host — pin absolute bin paths so spawn never
 // depends on the machine PATH (same contract as production discovery).
 vi.mock("../path-resolver", () => ({
@@ -44,6 +50,7 @@ vi.mock("../path-resolver", () => ({
     effectivePath: "/mock/bin",
     source: "process-path",
   }),
+  resolveWindowsCodexNpmShimLaunch: () => windowsNpmShimLaunch.launch,
 }));
 
 const adapterTrust = vi.hoisted(() => ({
@@ -229,6 +236,7 @@ import { installMcpSessionTerminationRevocation } from "../orch/mcp-session-revo
 import { cleanupCliMcpSession } from "../orch/cli-mcp-session-config";
 
 beforeEach(() => {
+  windowsNpmShimLaunch.launch = null;
   // Most legacy hardening cases exercise the explicit hardened mode. Tests for
   // the default autopilot opt into operator-choice locally.
   setSquadCliPolicyLookupForTests(() => "governed");
@@ -1226,6 +1234,43 @@ describe("PTY session ownership (renderer capability boundary)", () => {
     },
   );
 
+  it.runIf(process.platform === 'win32')(
+    'starts a long-argument Codex pane through node instead of its npm cmd shim',
+    () => {
+      // F-206: npm's codex.cmd is interpreted by cmd.exe, whose command line
+      // limit is smaller than the hook configuration Nexus appends. The native
+      // node executable accepts the same entry point without that batch limit.
+      windowsNpmShimLaunch.launch = {
+        file: 'C:\\Node\\node.exe',
+        argsPrefix: ['C:\\Node\\node_modules\\@openai\\codex\\bin\\codex.js'],
+      };
+      const h = fakeHost();
+      setPtyHost(h.host);
+      const owner = fakeWc();
+      let sessionId: string | null = null;
+      try {
+        const spawned = spawnAgentSession(
+          owner,
+          { kind: 'cli-agent', cols: 80, rows: 24 },
+          makeCodexAdapter(),
+          {},
+          trustedSpawn(),
+        );
+        sessionId = spawned.sessionId;
+        const spec = h.specFor(sessionId);
+
+        expect(spec.file).toBe('C:\\Node\\node.exe');
+        expect(spec.args).toEqual(
+          expect.arrayContaining([
+            'C:\\Node\\node_modules\\@openai\\codex\\bin\\codex.js',
+          ]),
+        );
+      } finally {
+        if (sessionId) killSession(owner, sessionId);
+        windowsNpmShimLaunch.launch = null;
+      }
+    },
+  );
 
   it("does not authorize replacement until the PTY host proves physical exit", async () => {
     let handlers: PtySessionHandlers | null = null;

@@ -140,6 +140,37 @@ describe('path-resolver CLI binary resolution', () => {
     },
   );
 
+  it.skipIf(process.platform !== 'win32')(
+    'resolves the npm Codex cmd shim to its adjacent native Node entry point',
+    async () => {
+      const shim = path.join(binDir, 'codex.cmd');
+      const node = path.join(binDir, 'node.exe');
+      const entry = path.join(
+        binDir,
+        'node_modules',
+        '@openai',
+        'codex',
+        'bin',
+        'codex.js',
+      );
+      fs.mkdirSync(path.dirname(entry), { recursive: true });
+      fs.writeFileSync(shim, '@echo off\r\nnode "%~dp0node_modules\\@openai\\codex\\bin\\codex.js" %*\r\n');
+      fs.writeFileSync(node, 'MZ');
+      fs.writeFileSync(entry, '#!/usr/bin/env node\n');
+
+      const resolver = (await import('./path-resolver')) as unknown as {
+        resolveWindowsCodexNpmShimLaunch: (
+          shimPath: string,
+        ) => { file: string; argsPrefix: string[] } | null;
+      };
+
+      expect(resolver.resolveWindowsCodexNpmShimLaunch(shim)).toEqual({
+        file: node,
+        argsPrefix: [entry],
+      });
+    },
+  );
+
   it('lookupInPath misses when Finder PATH has no CLI dirs', () => {
     const finderPath = '/usr/bin:/bin:/usr/sbin:/sbin';
     expect(lookupInPath('kimi', finderPath)).toBeNull();
