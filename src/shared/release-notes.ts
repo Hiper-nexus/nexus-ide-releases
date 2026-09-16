@@ -4000,7 +4000,7 @@ export const RELEASE_07639: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07641: AppRelease = {
   version: '0.76.41',
   date: '2026-09-16',
   codename: 'Panes Windows sem eco e sem limite',
@@ -4035,6 +4035,70 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'As adaptações de launcher e ambiente só são ativadas em `win32`; os planos sandbox e ' +
         'o comportamento de macOS/Linux não são reescritos por esta atualização.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.42',
+  date: '2026-09-16',
+  codename: 'Orquestrador num clique, cofre sem modal',
+  summary:
+    'Atualização macOS com os seis bugs cobrados hoje: "Tornar orquestrador" volta a ser ' +
+    'um clique num painel solto, o cofre deixa de insistir com o Keychain (adeus modal ' +
+    '"Chaves Não Encontradas"), o spawn de painel não reporta falha de um painel vivo, o ' +
+    'quit não espera backend pendurado, "Entrar novamente" funciona e os hooks mortos do ' +
+    'Overclock somem do boot.',
+  highlights: [
+    {
+      title: '"Tornar orquestrador" num clique',
+      detail:
+        'Sem missão ativa, o painel solto vira coordenador na hora, como antes — sem abrir ' +
+        'o assistente de Novo pedido. Quem quer uma missão a partir do painel usa "Nova ' +
+        'missão deste painel", que marca o painel para adoção.',
+    },
+    {
+      title: 'Cofre sem modal do Keychain',
+      detail:
+        'O cofre sonda se o armazenamento seguro está disponível antes de cifrar e, se o ' +
+        'macOS recusar, devolve um erro nosso em vez de insistir até o sistema abrir ' +
+        '"Chaves Não Encontradas" — o modal cujo botão azul apaga o keychain inteiro. O ' +
+        'read-back de contas também parou de forçar reescrita quando o decrypt falha com a ' +
+        'chave presente.',
+    },
+    {
+      title: 'Spawn nunca mais mente sobre um painel vivo',
+      detail:
+        'Quando o CLI demora mais que o teto do MCP para ficar pronto, nexus_pane_spawn ' +
+        'responde com o paneId e pending: true em vez de "falhou". A prontidão é do ' +
+        'nexus_pane_wait_idle. Acabou o segundo worker nascido de um retry sobre um pane vivo.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Quit não espera cron pendurado',
+      detail:
+        'stopCronLoop, primeiro passo do encerramento, ganhou teto de 3 s: um backend remoto ' +
+        'que não responde deixa de segurar o app até o "quit excedeu o teto de 45000ms".',
+    },
+    {
+      title: '"Entrar novamente" abre o login',
+      detail:
+        'No painel de cotas, quando a conta pede novo login, o selo vira um botão de verdade ' +
+        'que abre o terminal de login pela mesma rota do gerenciador de contas.',
+    },
+    {
+      title: 'Hooks mortos do Overclock limpos em três alvos',
+      detail:
+        'Sobras em ~/.claude/settings.json, .codex/hooks.json e .agents/hooks.json apontando ' +
+        'para ~/.overclock-app são removidas no boot quando o executável não existe. Fim do ' +
+        '"Hook failed — exited with code 127" a cada tool e do modal "1 hook needs review".',
+    },
+    {
+      title: 'Recusa do handoff aponta um caminho que existe',
+      detail:
+        'A dica de "mission effect blocked" é recalculada pela allowlist do painel: um pane ' +
+        'somente-leitura ouve nexus_pane_ask, não ferramentas que o próprio gate barra.',
     },
   ],
 };

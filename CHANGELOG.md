@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.76.42 — Orquestrador num clique, cofre sem modal
+
+- **"Tornar orquestrador" num painel solto volta a ser um clique**: sem missão ativa, o painel vira coordenador na hora, como antes do F-527, sem abrir o assistente de Novo pedido. A sessão do operador já tem todos os poderes sem missão; a coroa é só o papel na tela. Quem quer uma missão a partir do painel usa "Nova missão deste painel", que marca o painel para adoção — a marca automática saiu do caminho sem missão para a próxima missão nunca adotar um painel velho.
+- **O cofre não insiste com o Keychain**: `encryptSecret` sonda `isEncryptionAvailable()` antes de cifrar; se o macOS recusar, o resultado é nosso (`OS secure storage is unavailable; secret was not persisted.`) em vez de repetir `encryptString` até o sistema abrir "Chaves Não Encontradas" — o modal cujo botão azul apaga o keychain inteiro. A cifra saiu do lock exclusivo do cofre e `getSecret` não tenta decifrar quando o backend já recusou.
+- **O read-back de contas não força reescrita**: quando o decrypt falha com a chave presente no índice, o sync da credencial mantém o snapshot e tenta de novo na próxima leitura, em vez de disparar `SecItemAdd` no pior momento. Era o caller mais frequente do cofre.
+- **`nexus_pane_spawn` nunca mais reporta falha de um painel que nasceu**: quando o CLI demora mais que o teto do MCP para ficar pronto, a resposta é um ACK pendente com o `paneId` (`pending: true`); a prontidão é do `nexus_pane_wait_idle`. Acabou o segundo worker nascido de um retry sobre um pane vivo. `allowPending` é opt-in interno: reviewers, Via Rápida e recuperação continuam exigindo sessão concreta.
+- **Recusa do handoff sem missão sugere só o que aquele painel alcança**: a dica de "mission effect blocked" é recalculada pela allowlist do painel — um pane somente-leitura ouve `nexus_pane_ask`, não ferramentas que o próprio gate barra. A cerca de autoridade não mudou.
+- **Quit não espera backend de cron pendurado**: `stopCronLoop`, primeiro passo do encerramento, ganhou teto de 3 s; o tick em voo segue em background e o diário reconcilia na sessão seguinte. Fim do "quit excedeu o teto de 45000ms".
+- **"Entrar novamente" no painel de cotas é um botão de verdade**: quando a conta pede novo login, o selo abre o terminal de login da conta pela mesma rota do gerenciador de contas. Antes era um texto inerte na posição de botão.
+- **Limpador de hooks legados cobre três alvos e caminho morto**: sobras do Overclock em `~/.claude/settings.json`, `<workspace>/.codex/hooks.json` e `<workspace>/.agents/hooks.json` apontando para `~/.overclock-app` são removidas no boot quando o executável não existe no disco. Fim do "Hook failed — exited with code 127" a cada tool e do modal "1 hook needs review" do Codex.
+
 ## 0.76.41 — Panes Windows sem eco e sem limite
 
 - **Codex abre de fato no Windows (F-206)**: o Nexus reconhece o launcher npm padrão `codex.cmd`, valida o `node.exe` e o `codex.js` adjacentes e inicia o Node diretamente. Isso elimina o erro `Linha de comando muito longa` causado pelos argumentos de hook atravessando o limite do `cmd.exe`.
