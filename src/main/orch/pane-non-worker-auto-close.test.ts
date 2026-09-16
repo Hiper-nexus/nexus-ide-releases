@@ -567,3 +567,58 @@ describe('pane guardian (0.76.45): estacionar em vez de fechar', () => {
     expect(closed).toHaveLength(0);
   });
 });
+
+
+describe('pane guardian (0.76.45): carência pós-acordar e gate cego', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    shutdownNonWorkerAutoClose();
+    statusTaps.clear();
+    exitTaps.clear();
+    vi.useRealTimers();
+  });
+
+  it('sob pressão, um pane que acabou de acordar não é estacionado de novo dentro da carência', () => {
+    const idle = new Set<string>(['pty-w1', 'pty-w2']);
+    const parked: string[] = [];
+    const wokeAgo = new Map<string, number>([['pty-w1', 30_000]]); // acordou há 30 s
+    const deps: NonWorkerAutoCloseDeps = {
+      isEnabled: () => true,
+      getPaneRef: (sid) => refFor(sid),
+      isIdle: (sid) => idle.has(sid),
+      closePane: () => true,
+      parkPane: (paneId) => { parked.push(paneId); idle.delete(paneId.replace('pane-', '')); return 'parked'; },
+      ttlMs: 30 * 60_000,
+      log: () => {},
+      listIdleSessions: () => [...idle],
+      sweepIntervalMs: 1_000,
+      isUnderMemoryPressure: () => true,
+      wokeAgoMs: (sid) => wokeAgo.get(sid) ?? null,
+    };
+    initNonWorkerAutoClose(deps);
+    vi.advanceTimersByTime(1_000); // ambos vistos idle
+    vi.advanceTimersByTime(1_000); // pressão: w1 tem carência, w2 é estacionado
+    expect(parked).toEqual(['pane-pty-w2']);
+  });
+
+  it('avisa uma vez quando a amostra de memória some por 3 varreduras seguidas', () => {
+    const logs: string[] = [];
+    const deps: NonWorkerAutoCloseDeps = {
+      isEnabled: () => true,
+      getPaneRef: (sid) => refFor(sid),
+      isIdle: () => false,
+      closePane: () => true,
+      ttlMs: 30 * 60_000,
+      log: (m) => logs.push(m),
+      listIdleSessions: () => [],
+      sweepIntervalMs: 1_000,
+      isMemorySampleMissing: () => true,
+    };
+    initNonWorkerAutoClose(deps);
+    vi.advanceTimersByTime(5_000);
+    expect(logs.filter((m) => m.includes('gate de pressão está cego'))).toHaveLength(1);
+  });
+});

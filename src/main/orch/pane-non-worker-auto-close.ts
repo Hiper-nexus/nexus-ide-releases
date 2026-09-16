@@ -29,11 +29,15 @@ import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import { getSessionState, tapSessionExit } from '../pty/pty-manager';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import {
+  getPaneAuthzInfo,
   getPaneRuntimeAuthorityBySession,
+  getPaneWokeAt,
   listPaneSnapshots,
   requestPaneClose,
   requestPanePark,
 } from './pane-registry';
+import { getAgentSessionInfo } from '../pty/pty-manager';
+import { getAdapter } from '../adapters/adapter-registry';
 import { isSessionInjectableIdle, tapAgentSemanticStatus } from './agent-status';
 import { armedDeliveryContract } from './delivery-contract';
 import {
@@ -100,7 +104,20 @@ export interface NonWorkerAutoCloseDeps {
     paneId: string,
     reason: 'idle' | 'memory-pressure',
   ) => Promise<'parked' | 'closed' | false> | 'parked' | 'closed' | false;
+  /**
+   * 0.76.45: há quanto tempo (ms) o pane desta sessão acordou de um
+   * estacionamento; null = nunca. O reaper de emergência dá carência de
+   * PANE_WAKE_GRACE_MS para não fazer ping-pong estaciona→acorda→estaciona.
+   */
+  readonly wokeAgoMs?: (sessionId: string) => number | null;
+  /** 0.76.45: amostra de memória indisponível neste tick (gate cego). */
+  readonly isMemorySampleMissing?: () => boolean;
 }
+
+/** Carência pós-acordar antes de o reaper de emergência poder estacionar de novo. */
+export const PANE_WAKE_GRACE_MS = 5 * 60_000;
+/** Ticks seguidos sem amostra de memória antes de avisar que o gate está cego. */
+const MEMORY_SAMPLE_BLIND_TICKS = 3;
 
 function productionDeps(): NonWorkerAutoCloseDeps {
   return {
@@ -124,7 +141,26 @@ function productionDeps(): NonWorkerAutoCloseDeps {
     closePane: (paneId) => requestPaneClose(paneId),
     // 0.76.45: estacionar (pane fica, memória vai a zero); main-owned sem
     // renderer cai no fechamento dentro de requestPanePark.
-    parkPane: (paneId, reason) => requestPanePark(paneId, reason),
+    parkPane: (paneId, reason) => {
+      // Adapter sem resume por id (ex.: aider) não tem como acordar com a
+      // conversa: estacionar seria fechar com outro nome. Fecha de verdade.
+      const sessionId = getPaneAuthzInfo(paneId)?.sessionId ?? null;
+      const adapterId = sessionId ? getAgentSessionInfo(sessionId)?.adapterId : undefined;
+      const adapter = adapterId ? getAdapter(adapterId) : null;
+      const canResume =
+        adapter?.kind === 'cli-pty' && (adapter.spawn.resumeIdArgs?.length ?? 0) > 0;
+      if (!canResume) {
+        return Promise.resolve(requestPaneClose(paneId)).then((closed) =>
+          closed ? 'closed' : false,
+        );
+      }
+      return requestPanePark(paneId, reason);
+    },
+    wokeAgoMs: (sessionId) => {
+      const paneId = getPaneRuntimeAuthorityBySession(sessionId)?.paneId;
+      const wokeAt = paneId ? getPaneWokeAt(paneId) : null;
+      return wokeAt === null ? null : Date.now() - wokeAt;
+    },
     ttlMs: NON_WORKER_AUTO_CLOSE_TTL_MS,
     log: (message) => console.warn(`[pane-guardian] ${message}`),
     listIdleSessions: () =>
@@ -141,6 +177,7 @@ function productionDeps(): NonWorkerAutoCloseDeps {
     // varredura (60 s) enxerga a memória de agora, não a do boot.
     isUnderMemoryPressure: () =>
       isUnderMemoryPressure(getCachedSystemMemory(), readPaneAdmissionLimits()),
+    isMemorySampleMissing: () => getCachedSystemMemory() === null,
     registerAdvisor: () =>
       registerPaneAdmissionAdvisor({
         idleCandidates: (now) =>
@@ -194,6 +231,7 @@ const idleSince = new Map<string, number>();
 /** Sessões cujo fechamento já foi pedido; evita pedir duas vezes por tick. */
 const closing = new Set<string>();
 let sweepTimer: ReturnType<typeof setInterval> | null = null;
+let blindTicks = 0;
 let untapStatus: (() => void) | null = null;
 let untapExit: (() => void) | null = null;
 
@@ -262,6 +300,17 @@ export function sweepIdlePanes(deps: NonWorkerAutoCloseDeps): void {
   const list = deps.listIdleSessions;
   if (!list) return;
   const now = (deps.now ?? Date.now)();
+  if (deps.isMemorySampleMissing?.()) {
+    blindTicks += 1;
+    if (blindTicks === MEMORY_SAMPLE_BLIND_TICKS) {
+      deps.log(
+        'sem amostra de memória há ' + blindTicks + ' varreduras: o gate de pressão está cego ' +
+          '(só o aviso de teto vale); verifique process.getSystemMemoryInfo/sysctl',
+      );
+    }
+  } else {
+    blindTicks = 0;
+  }
   const idleNow = new Set(list());
   for (const sessionId of [...idleSince.keys()]) {
     if (!idleNow.has(sessionId)) idleSince.delete(sessionId);
@@ -286,6 +335,8 @@ export function sweepIdlePanes(deps: NonWorkerAutoCloseDeps): void {
       .filter(([sessionId]) => idleNow.has(sessionId) && !closing.has(sessionId))
       .sort((a, b) => a[1] - b[1]);
     for (const [sessionId] of oldestFirst) {
+      const wokeAgo = deps.wokeAgoMs?.(sessionId);
+      if (wokeAgo !== null && wokeAgo !== undefined && wokeAgo < PANE_WAKE_GRACE_MS) continue;
       const ref = paneIsClosable(deps, sessionId);
       if (!ref) continue;
       deps.log(
@@ -341,4 +392,5 @@ export function shutdownNonWorkerAutoClose(): void {
   for (const sessionId of [...armed.keys()]) cancelTimer(sessionId);
   idleSince.clear();
   closing.clear();
+  blindTicks = 0;
 }

@@ -82,6 +82,12 @@ export interface PaneOrchMeta {
 }
 
 export interface PaneSpawnOptions {
+  /**
+   * 0.76.45: retomar a conversa de um pane ANTIGO (estacionado/fechado) no
+   * pane novo — o registro de sessão do provider é copiado para o paneId
+   * novo antes do spawn, e `resume: true` resolve o `--resume` exato.
+   */
+  readonly resumeFromPaneId?: string;
   /** Main-authored spawner; never copied into the renderer request. */
   operatorParentSessionId?: string;
   adapterId: string;

@@ -136,3 +136,21 @@ export function sessionBelongsToAccount(
   if (stored && want) return stored === want;
   return true;
 }
+
+/**
+ * 0.76.45: um pane NOVO retoma a conversa de um pane antigo (estacionado ou
+ * fechado). Copia o registro de sessão do provider para o paneId novo, com o
+ * mesmo dono de conta, para o lookup de resume exato (por paneId) encontrá-lo.
+ * Devolve false quando o pane antigo não tem sessão gravada.
+ */
+export function copyProviderPaneSession(
+  scope: Readonly<ProjectExecutionScope>,
+  fromPaneId: string,
+  toPaneId: string,
+  adapterId: string,
+  accountId?: string,
+): boolean {
+  const session = getProviderPaneSession(scope, fromPaneId, adapterId, accountId);
+  if (!session) return false;
+  return saveProviderPaneSession(scope, toPaneId, adapterId, session, accountId);
+}

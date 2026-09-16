@@ -939,6 +939,8 @@ export interface SpawnToolOptions {
   resume?: boolean | string;
   /** Only consider the latest session (no exact-session resume lookup). */
   resumeLatestOnly?: boolean;
+  /** 0.76.45: retomar a conversa de um pane antigo (estacionado/fechado) no pane novo. */
+  resumeFromPaneId?: string;
 }
 
 /**

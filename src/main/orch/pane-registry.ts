@@ -16,6 +16,7 @@ import type {
   PaneParkRequest,
 } from "../../shared/orch-types";
 import { ORCH_CHANNELS } from "../../shared/orch-channels";
+import { copyProviderPaneSession } from "../persistence/provider-session-store";
 import { DEV_SERVER_CHANNELS } from "../../shared/channels";
 import {
   detachOwnedMissionAgentSession,
@@ -537,6 +538,8 @@ export function unregisterOrchRenderer(wc: WebContents): void {
   panes = panes.filter((registered) => registered.owner !== wc);
   for (const paneId of removedPaneIds) {
     orchMetaByPane.delete(paneMetaKey(wc, paneId));
+    parkedByPane.delete(paneMetaKey(wc, paneId));
+    wokeAtByPane.delete(paneId);
   }
   // Sem renderer não há como o spawn completar — resolver já, senão cada
   // nexus_pane_spawn pendura o orquestrador por 30s até o timeout.
@@ -1375,9 +1378,23 @@ function parkedRecordFor(registered: RegisteredPane): { sessionId: string; parke
   const current = registered.entry.sessionId;
   if (current && current !== parked.sessionId && getSessionState(current) !== null) {
     parkedByPane.delete(key);
+    wokeAtByPane.set(registered.entry.paneId, Date.now());
     return null;
   }
   return parked;
+}
+
+/** 0.76.45: quando o pane acordou pela última vez (carência do reaper). */
+const wokeAtByPane = new Map<string, number>();
+export function getPaneWokeAt(paneId: string): number | null {
+  return wokeAtByPane.get(paneId) ?? null;
+}
+
+function forgetParkedRecords(paneId: string): void {
+  for (const key of [...parkedByPane.keys()]) {
+    if (key.endsWith(`:${paneId}`)) parkedByPane.delete(key);
+  }
+  wokeAtByPane.delete(paneId);
 }
 
 function snapshotOf(registered: RegisteredPane): PaneSnapshot {
@@ -2198,6 +2215,23 @@ export function requestPaneSpawn(
   }
   const requestId = makeId("orchspawn");
   const paneId = makeId("pane");
+  // 0.76.45: acordar/retomar a conversa de um pane antigo no pane novo — o
+  // lookup de resume exato é por paneId, então o registro é copiado ANTES do
+  // spawn. Sem registro antigo, o spawn segue (fresh) com aviso no log.
+  if (options.resumeFromPaneId && options.resumeFromPaneId !== paneId) {
+    const copied = copyProviderPaneSession(
+      options.scope,
+      options.resumeFromPaneId,
+      paneId,
+      options.adapterId,
+      options.accountId,
+    );
+    if (!copied) {
+      console.warn(
+        `[pane-registry] resumeFromPaneId=${options.resumeFromPaneId}: nenhuma sessão do provider gravada; o pane novo nasce sem contexto`,
+      );
+    }
+  }
   const executionScope = options.executionScope ?? options.scope;
   const requestedCwd = options.cwd ?? executionScope.rootRealPath;
   const request: OrchPaneSpawnRequest = Object.freeze({
@@ -3007,6 +3041,12 @@ export async function requestPanePark(
   if (!registered || !sessionId) return false;
   const exited = await terminateOwnedMissionSession(sessionId);
   if (!exited) return false;
+  // Reconfirma depois do await (como requestPaneClose): um respawn/close
+  // concorrente no mesmo pane não pode receber um parkRequest com sessão velha.
+  const current = panes.find(
+    (candidate) => candidate.owner === owner && candidate.entry.paneId === paneId,
+  );
+  if (!current || current.entry.sessionId !== sessionId) return false;
   const parkedAt = Date.now();
   parkedByPane.set(paneMetaKey(owner, paneId), { sessionId, parkedAt });
   const request: PaneParkRequest = { paneId, sessionId, parkedAt, reason };
@@ -3016,6 +3056,7 @@ export async function requestPanePark(
 }
 
 export async function requestPaneClose(paneId: string): Promise<boolean> {
+  forgetParkedRecords(paneId);
   const owners = new Set(
     panes
       .filter(

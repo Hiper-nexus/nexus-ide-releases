@@ -14,6 +14,7 @@ import {
   takePendingPaneSpawnResult,
   waitForIdle,
   waitForNextIdle,
+  findPane,
 } from './pane-registry';
 import {
   getSessionState,
@@ -93,6 +94,18 @@ import {
   SEMANTIC_WAIT_DEFAULT_TIMEOUT_MS,
   waitForSemanticStatus,
 } from './semantic-wait';
+
+/**
+ * 0.76.45: `resume` aceita um paneId antigo ("pane-…") ou o número/sessão de
+ * um pane ainda registrado; devolve o paneId cuja sessão do provider deve ser
+ * copiada para o pane novo. Task ids ("h-N") seguem só como flag booleana.
+ */
+function resumePaneRefOf(ref: string | undefined): string | undefined {
+  if (!ref) return undefined;
+  if (ref.startsWith('pane-')) return ref;
+  const known = findPane(ref);
+  return known?.paneId;
+}
 
 export function coerceSpawnReadOnly<T extends { readOnly?: boolean }>(
   options: T,
@@ -531,6 +544,7 @@ const paneSpawn: McpToolDef = {
         prompt: str(args, 'prompt'),
         scope: ctx.scope,
         resume: str(args, 'resume') ? true : undefined,
+        resumeFromPaneId: resumePaneRefOf(str(args, 'resume')),
       };
     } else {
       const adHocAdapterId = requireStr(args, 'adapterId');
@@ -586,6 +600,7 @@ const paneSpawn: McpToolDef = {
         prompt: str(args, 'prompt'),
         scope: ctx.scope,
         resume: str(args, 'resume') ? true : undefined,
+        resumeFromPaneId: resumePaneRefOf(str(args, 'resume')),
       };
     }
     // "Escolha livre de agentes" (opt-in por missão): atravessa os três gates
