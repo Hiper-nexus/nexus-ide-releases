@@ -2107,7 +2107,21 @@ export async function resurrectRunningMissionsForScope(
  * SEMPRE arranca, com o painel do operador ou com um Maestro próprio.
  */
 type OrchestratorAdoptionOutcome =
-  | { readonly adopted: true; readonly sessionId: string; readonly paneId: string }
+  | {
+      readonly adopted: true;
+      readonly sessionId: string;
+      readonly paneId: string;
+      /**
+       * A adoção VALEU (autoridade concedida, store apontando para a sessão)
+       * mas o briefing não chegou. Isto NUNCA vira spawn: depois da concessão o
+       * pane já é o orquestrador registrado e subir outro deixaria DOIS
+       * Maestros vivos na mesma missão — o pane adotado tem sessão viva, então
+       * a aposentadoria de cadáveres não o remove. O desfecho correto é o mesmo
+       * do caminho spawnado quando o briefing falha: bloqueio técnico com a
+       * causa escrita, com o pane preservado para o operador cutucar.
+       */
+      readonly briefingError?: string;
+    }
   | { readonly adopted: false; readonly refusal: OrchestratorAdoptionRefusal };
 
 /**
@@ -2175,23 +2189,42 @@ async function adoptOrchestratorPane(
     promptHash: kickoffPromptHash(initialPrompt),
   });
 
-  // Pane já rodando: o canal é sempre colagem. Esperar idle evita colar por
-  // cima de um turno em andamento do próprio operador.
-  const boot =
-    getSessionState(adopted.sessionId) === 'idle'
-      ? 'idle'
-      : await waitForIdle(adopted.sessionId, ORCHESTRATOR_BOOT_TIMEOUT_MS);
-  if (boot === 'exited') {
-    return { adopted: false, refusal: 'session-dead' };
-  }
-  const accepted = await deliverAgentPrompt(
-    adopted.sessionId,
-    initialPrompt,
-    undefined,
-    { adapterId: adopted.adapterId },
-  );
-  if (!accepted) {
-    return { adopted: false, refusal: 'authority-refused' };
+  // DAQUI PARA BAIXO a adoção é irreversível: a autoridade já foi concedida e o
+  // store já aponta para esta sessão. Toda falha vira `briefingError`, nunca
+  // recusa — voltar para o spawn agora criaria o segundo Maestro.
+  const settled: OrchestratorAdoptionOutcome = {
+    adopted: true,
+    sessionId: adopted.sessionId,
+    paneId: adopted.paneId,
+  };
+  try {
+    // Pane já rodando: o canal é sempre colagem. Esperar idle evita colar por
+    // cima de um turno em andamento do próprio operador.
+    const boot =
+      getSessionState(adopted.sessionId) === 'idle'
+        ? 'idle'
+        : await waitForIdle(adopted.sessionId, ORCHESTRATOR_BOOT_TIMEOUT_MS);
+    if (boot === 'exited') {
+      return { ...settled, briefingError: 'o painel saiu antes do briefing' };
+    }
+    const accepted = await deliverAgentPrompt(
+      adopted.sessionId,
+      initialPrompt,
+      undefined,
+      { adapterId: adopted.adapterId },
+    );
+    if (!accepted) {
+      return {
+        ...settled,
+        briefingError: 'o painel não aceitou o briefing',
+      };
+    }
+  } catch (error) {
+    return {
+      ...settled,
+      briefingError:
+        error instanceof Error ? error.message : String(error),
+    };
   }
   tryAcceptIdleOrchestratorKickoff(stores, live, adopted.sessionId, initialPrompt);
   if (!stores.missions.hasCurrentKickoffAcceptance(live.id)) {
@@ -2357,12 +2390,31 @@ export async function fastLaneBootstrap(
       orchPanes.set(missionId, {
         paneId: adoption.paneId,
         sessionId: adoption.sessionId,
-        adapterId: (await Promise.resolve(getAgentSessionInfo(adoption.sessionId)))
-          ?.adapterId ?? orchestrator.cli,
+        adapterId:
+          getAgentSessionInfo(adoption.sessionId)?.adapterId ?? orchestrator.cli,
         cwd: scope.rootRealPath,
         title: orchestrator.agentName,
         agentName: orchestrator.agentName,
       });
+      // Briefing não entregue num pane JÁ adotado: mesmo desfecho do caminho
+      // spawnado — bloqueio técnico com a causa, pane preservado. O que não
+      // pode acontecer é a missão ficar running sem ninguém e sem explicação.
+      if (adoption.briefingError) {
+        const current = stores.missions.get(missionId);
+        if (current && current.status === 'running' && current.intentState) {
+          missionEngineForScope(scope).blockTechnical(scope, {
+            missionId,
+            expectedStatus: current.status,
+            expectedIntentState: current.intentState,
+            expectedUpdatedAt: current.updatedAt,
+            expectedIntentVersion: current.intentVersion ?? 0,
+            description: `Briefing não chegou ao painel adotado: ${adoption.briefingError}`,
+          });
+        }
+        throw new Error(
+          `briefing não chegou ao painel adotado: ${adoption.briefingError}`,
+        );
+      }
       if (!isFocusedLiveMission(missionId)) {
         persistLeftoverIsolation(stores.missions, missionId, 'unfocus');
         await releaseMissionLiveRuntime(scope, missionId);

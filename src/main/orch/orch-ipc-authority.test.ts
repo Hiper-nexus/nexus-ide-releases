@@ -4,6 +4,10 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ORCH_CHANNELS } from '../../shared/orch-channels';
+import {
+  resetOrchestratorAdoptionsForTest,
+  takeOrchestratorAdoption,
+} from './orchestrator-adoption';
 import type { Mission, Squad } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { withMissionLifecycleLock } from './mission-lifecycle-lock';
@@ -104,6 +108,8 @@ const harness = vi.hoisted(() => {
     missionRemovalCandidate: vi.fn(),
     prepareMissionRemoval: vi.fn(),
     removeMission: vi.fn(),
+    resolveOwnedPaneForAdoption: vi.fn(),
+    promoteOrchestrator: vi.fn(),
     planPromotionCandidate: vi.fn(),
     promotePlan: vi.fn(),
     missionLifecycleCandidate: vi.fn(),
@@ -450,6 +456,16 @@ vi.mock('./renderer-mission-authority', () => ({
     ) {
       return harness.removeMission(owner, missionId, fence);
     }
+    resolveOwnedPaneForAdoption(owner: unknown, paneRef: string) {
+      return harness.resolveOwnedPaneForAdoption(owner, paneRef);
+    }
+    promoteOrchestratorFromRenderer(
+      owner: unknown,
+      missionId: string,
+      input: unknown,
+    ) {
+      return harness.promoteOrchestrator(owner, missionId, input);
+    }
   },
 }));
 vi.mock('./mission-orchestrator-bootstrap', () => ({
@@ -505,6 +521,7 @@ vi.mock('./mission-engine-registry', async (importOriginal) => {
 vi.mock('./idle-delivery', () => ({
   initIdleDelivery: vi.fn(),
   shutdownIdleDelivery: vi.fn(),
+  redeliverPendingHandoffs: vi.fn(),
 }));
 vi.mock('./worker-delivery-board', () => ({
   initWorkerDeliveryBoard: vi.fn(),
@@ -1181,6 +1198,128 @@ describe('canonical MissionEngine IPC boundary', () => {
       'start-finished',
       'competing-mutation',
     ]);
+  });
+
+  // ── F-561: adoção do painel vivo como orquestrador ────────────────────────
+
+  it('sem adoção pedida, nenhuma reserva é criada', async () => {
+    resetOrchestratorAdoptionsForTest();
+    const sender = owner(920);
+    harness.scopes.set(sender.id, SCOPE_A);
+    const engine = installCanonicalEngine(SCOPE_A);
+    engine.start.mockImplementationOnce(async () => {
+      expect(takeOrchestratorAdoption(startInput.missionId)).toBeNull();
+      return canonicalSnapshot();
+    });
+
+    await canonicalHandler(ORCH_CHANNELS.missionStart)({ sender }, startInput);
+
+    expect(harness.resolveOwnedPaneForAdoption).not.toHaveBeenCalled();
+  });
+
+  it('a reserva existe DURANTE o start e concede autoridade pelo main', async () => {
+    configureRendererMissionAuthority({} as never);
+    const sender = owner(921);
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.resolveOwnedPaneForAdoption.mockReturnValueOnce({
+      paneId: 'pane-vivo',
+      sessionId: 'pty-vivo',
+      adapterId: 'codex',
+    });
+    harness.promoteOrchestrator.mockReturnValueOnce({
+      ok: true,
+      mission: { id: startInput.missionId },
+    });
+    const engine = installCanonicalEngine(SCOPE_A);
+    let seen: ReturnType<typeof takeOrchestratorAdoption> = null;
+    engine.start.mockImplementationOnce(async () => {
+      // É aqui, e só aqui, que a Via Rápida enxerga a reserva.
+      seen = takeOrchestratorAdoption(startInput.missionId);
+      return canonicalSnapshot();
+    });
+
+    await canonicalHandler(ORCH_CHANNELS.missionStart)(
+      { sender },
+      { ...startInput, adoptOrchestratorPaneId: 'pane-vivo' },
+    );
+
+    expect(seen).not.toBeNull();
+    expect(seen!.paneId).toBe('pane-vivo');
+    expect(seen!.sessionId).toBe('pty-vivo');
+    expect(seen!.adapterId).toBe('codex');
+    expect(seen!.expiresAt).toBeGreaterThan(Date.now());
+    // A concessão é do main, com o WebContents dono — a Via Rápida só pergunta.
+    expect(await seen!.grantAuthority()).toBe(true);
+    expect(harness.promoteOrchestrator).toHaveBeenCalledWith(
+      sender,
+      startInput.missionId,
+      { paneId: 'pane-vivo' },
+    );
+  });
+
+  it('o start NÃO recebe o campo de adoção — o motor tem o seu próprio canal', async () => {
+    configureRendererMissionAuthority({} as never);
+    const sender = owner(922);
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.resolveOwnedPaneForAdoption.mockReturnValueOnce({
+      paneId: 'pane-vivo',
+      sessionId: 'pty-vivo',
+      adapterId: 'codex',
+    });
+    const engine = installCanonicalEngine(SCOPE_A);
+
+    await canonicalHandler(ORCH_CHANNELS.missionStart)(
+      { sender },
+      { ...startInput, adoptOrchestratorPaneId: 'pane-vivo' },
+    );
+
+    expect(engine.start).toHaveBeenCalledWith(SCOPE_A, {
+      missionId: startInput.missionId,
+      reviewSha256: startInput.reviewSha256,
+    });
+  });
+
+  it('painel que não resolve não vira reserva e não impede o start', async () => {
+    configureRendererMissionAuthority({} as never);
+    const sender = owner(923);
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.resolveOwnedPaneForAdoption.mockReturnValueOnce(null);
+    const engine = installCanonicalEngine(SCOPE_A);
+    engine.start.mockImplementationOnce(async () => {
+      expect(takeOrchestratorAdoption(startInput.missionId)).toBeNull();
+      return canonicalSnapshot();
+    });
+
+    await expect(
+      canonicalHandler(ORCH_CHANNELS.missionStart)(
+        { sender },
+        { ...startInput, adoptOrchestratorPaneId: 'pane-de-outra-missao' },
+      ),
+    ).resolves.toEqual(canonicalSnapshot());
+  });
+
+  it('start que falha NÃO deixa autorização de adoção pendurada', async () => {
+    configureRendererMissionAuthority({} as never);
+    const sender = owner(924);
+    harness.scopes.set(sender.id, SCOPE_A);
+    harness.resolveOwnedPaneForAdoption.mockReturnValueOnce({
+      paneId: 'pane-vivo',
+      sessionId: 'pty-vivo',
+      adapterId: 'codex',
+    });
+    const engine = installCanonicalEngine(SCOPE_A);
+    engine.start.mockImplementationOnce(async () => {
+      throw new Error('kickoff explodiu');
+    });
+
+    await expect(
+      canonicalHandler(ORCH_CHANNELS.missionStart)(
+        { sender },
+        { ...startInput, adoptOrchestratorPaneId: 'pane-vivo' },
+      ),
+    ).rejects.toThrow('kickoff explodiu');
+
+    expect(takeOrchestratorAdoption(startInput.missionId)).toBeNull();
   });
 
   it('confirms, revalidates, persists, and then snapshots canonical answers', async () => {
