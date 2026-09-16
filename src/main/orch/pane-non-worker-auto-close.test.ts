@@ -442,3 +442,85 @@ describe('pane guardian (F-572): quem NUNCA é fechado', () => {
     expect(closed).toEqual(['pane-pty-d1']);
   });
 });
+
+describe('pane guardian (0.76.44): reaper de emergência sob pressão de memória', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    shutdownNonWorkerAutoClose();
+    statusTaps.clear();
+    exitTaps.clear();
+    vi.useRealTimers();
+  });
+
+  function pressureHarness(pressure: { on: boolean }, idle: Set<string>) {
+    const closed: string[] = [];
+    const deps: NonWorkerAutoCloseDeps = {
+      isEnabled: () => true,
+      getPaneRef: (sid) => refFor(sid),
+      isIdle: (sid) => idle.has(sid),
+      // Fechar = a sessão sai (exit); no harness, some do conjunto idle.
+      closePane: (paneId) => { closed.push(paneId); idle.delete(paneId.replace('pane-', '')); return true; },
+      ttlMs: 30 * 60_000,
+      log: () => {},
+      listIdleSessions: () => [...idle],
+      sweepIntervalMs: 1_000,
+      isUnderMemoryPressure: () => pressure.on,
+    };
+    return { deps, closed };
+  }
+
+  it('sob pressão, fecha na hora o pane ocioso elegível mais antigo, sem esperar o TTL', () => {
+    const pressure = { on: false };
+    const idle = new Set<string>(['pty-e1', 'pty-e2']);
+    const h = pressureHarness(pressure, idle);
+    initNonWorkerAutoClose(h.deps);
+    vi.advanceTimersByTime(1_000); // e1 e e2 vistos idle
+    idle.add('pty-e3');
+    vi.advanceTimersByTime(1_000); // e3 visto depois
+    expect(h.closed).toHaveLength(0);
+    pressure.on = true;
+    vi.advanceTimersByTime(1_000);
+    // Um por tick, o mais parado primeiro: e1 (ou e2, mesma idade) antes de e3.
+    expect(h.closed).toHaveLength(1);
+    expect(['pane-pty-e1', 'pane-pty-e2']).toContain(h.closed[0]);
+    vi.advanceTimersByTime(1_000);
+    expect(h.closed).toHaveLength(2);
+    expect(h.closed).not.toContain('pane-pty-e3');
+  });
+
+  it('sem pressão, o TTL normal continua valendo', () => {
+    const pressure = { on: false };
+    const idle = new Set<string>(['pty-e4']);
+    const h = pressureHarness(pressure, idle);
+    initNonWorkerAutoClose(h.deps);
+    vi.advanceTimersByTime(10 * 60_000);
+    expect(h.closed).toHaveLength(0);
+  });
+
+  it('sob pressão continua respeitando os vetos: orquestrador e pane do humano ficam', () => {
+    const pressure = { on: true };
+    const idle = new Set<string>(['pty-o', 'pty-h']);
+    const refs = new Map<string, NonWorkerPaneRef>([
+      ['pty-o', refFor('pty-o', { role: 'orchestrator' })],
+      ['pty-h', refFor('pty-h', { role: undefined, operatorParentSessionId: undefined })],
+    ]);
+    const closed: string[] = [];
+    const deps: NonWorkerAutoCloseDeps = {
+      isEnabled: () => true,
+      getPaneRef: (sid) => refs.get(sid) ?? null,
+      isIdle: (sid) => idle.has(sid),
+      closePane: (paneId) => { closed.push(paneId); return true; },
+      ttlMs: 30 * 60_000,
+      log: () => {},
+      listIdleSessions: () => [...idle],
+      sweepIntervalMs: 1_000,
+      isUnderMemoryPressure: () => pressure.on,
+    };
+    initNonWorkerAutoClose(deps);
+    vi.advanceTimersByTime(5_000);
+    expect(closed).toHaveLength(0);
+  });
+});

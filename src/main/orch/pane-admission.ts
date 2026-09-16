@@ -14,6 +14,7 @@
  */
 
 import { execFile } from 'node:child_process';
+import os from 'node:os';
 
 export interface PaneAdmissionLimits {
   readonly enabled: boolean;
@@ -25,12 +26,37 @@ export interface PaneAdmissionLimits {
   readonly maxSwapUsedMB: number;
 }
 
-export const DEFAULT_PANE_ADMISSION_LIMITS: PaneAdmissionLimits = Object.freeze({
-  enabled: true,
-  maxAgentPanes: 12,
-  minFreeMB: 1024,
-  maxSwapUsedMB: 2048,
-});
+/**
+ * Limites proporcionais à RAM (0.76.44). Régua: reserva 8 GB para SO + apps
+ * e ~1,25 GB por pane de agente; mínimo disponível = 15 % da RAM (num Mac de
+ * 24 GB, 3,6 GB — 1 GB era tarde demais, a máquina já paginava); swap > 1 GB
+ * = já está paginando. Teto entre 4 e 12: acima disso quem governa é o
+ * guardian, não a RAM.
+ */
+export function limitsForMachine(totalMB: number): PaneAdmissionLimits {
+  const total = Number.isFinite(totalMB) && totalMB > 0 ? totalMB : 24 * 1024;
+  const byRam = Math.floor((total - 8 * 1024) / 1280);
+  return Object.freeze({
+    enabled: true,
+    maxAgentPanes: Math.min(12, Math.max(4, byRam)),
+    minFreeMB: Math.max(1024, Math.round(0.15 * total)),
+    maxSwapUsedMB: 1024,
+  });
+}
+
+/** Referência documentada: a régua aplicada a um Mac de 24 GB. */
+export const DEFAULT_PANE_ADMISSION_LIMITS: PaneAdmissionLimits = limitsForMachine(24 * 1024);
+
+/** Os mesmos limiares do gate de spawn, lidos como "a máquina já está sob pressão". */
+export function isUnderMemoryPressure(
+  sample: SystemMemorySample | null,
+  limits: PaneAdmissionLimits,
+): boolean {
+  if (!sample) return false;
+  if (sample.freeMB !== null && sample.freeMB < limits.minFreeMB) return true;
+  if (sample.swapUsedMB !== null && sample.swapUsedMB > limits.maxSwapUsedMB) return true;
+  return false;
+}
 
 export interface SystemMemorySample {
   readonly freeMB: number | null;
@@ -138,17 +164,15 @@ function envInt(value: string | undefined, fallback: number, min: number): numbe
 
 export function readPaneAdmissionLimits(
   env: NodeJS.ProcessEnv = process.env,
+  totalMB: number = os.totalmem() / (1024 * 1024),
 ): PaneAdmissionLimits {
+  const base = limitsForMachine(totalMB);
   const guard = (env.NEXUS_PANE_GUARD ?? '').trim().toLowerCase();
   return {
     enabled: !(guard === 'off' || guard === '0' || guard === 'false'),
-    maxAgentPanes: envInt(env.NEXUS_PANE_CAP, DEFAULT_PANE_ADMISSION_LIMITS.maxAgentPanes, 1),
-    minFreeMB: envInt(env.NEXUS_PANE_MIN_FREE_MB, DEFAULT_PANE_ADMISSION_LIMITS.minFreeMB, 0),
-    maxSwapUsedMB: envInt(
-      env.NEXUS_PANE_MAX_SWAP_MB,
-      DEFAULT_PANE_ADMISSION_LIMITS.maxSwapUsedMB,
-      0,
-    ),
+    maxAgentPanes: envInt(env.NEXUS_PANE_CAP, base.maxAgentPanes, 1),
+    minFreeMB: envInt(env.NEXUS_PANE_MIN_FREE_MB, base.minFreeMB, 0),
+    maxSwapUsedMB: envInt(env.NEXUS_PANE_MAX_SWAP_MB, base.maxSwapUsedMB, 0),
   };
 }
 

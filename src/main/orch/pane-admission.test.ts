@@ -93,8 +93,8 @@ describe('pane-admission (F-572): teto de panes + gate por memória', () => {
   });
 
   describe('readPaneAdmissionLimits: overrides por env', () => {
-    it('usa os defaults sem env', () => {
-      expect(readPaneAdmissionLimits({})).toEqual(DEFAULT_PANE_ADMISSION_LIMITS);
+    it('usa os defaults da máquina sem env (referência: Mac de 24 GB)', () => {
+      expect(readPaneAdmissionLimits({}, 24 * 1024)).toEqual(DEFAULT_PANE_ADMISSION_LIMITS);
     });
 
     it('aceita inteiros válidos e ignora lixo', () => {
@@ -109,7 +109,7 @@ describe('pane-admission (F-572): teto de panes + gate por memória', () => {
     });
 
     it('teto abaixo de 1 volta ao default (nunca zero)', () => {
-      expect(readPaneAdmissionLimits({ NEXUS_PANE_CAP: '0' }).maxAgentPanes).toBe(
+      expect(readPaneAdmissionLimits({ NEXUS_PANE_CAP: '0' }, 24 * 1024).maxAgentPanes).toBe(
         DEFAULT_PANE_ADMISSION_LIMITS.maxAgentPanes,
       );
     });
@@ -190,5 +190,43 @@ describe('pane-admission: sinal do kernel no macOS + gate síncrono com conselhe
     const still = admitAgentSpawnSync(0, Date.now(), {});
     expect(still.ok).toBe(true);
     registerPaneAdmissionAdvisor(null);
+  });
+});
+
+describe('pane-admission: limites proporcionais à RAM da máquina (0.76.44)', () => {
+  it('num Mac de 24 GB o mínimo disponível é 15 % (3,6 GB), o swap 1 GB e o teto 12', async () => {
+    const { limitsForMachine } = await import('./pane-admission');
+    const limits = limitsForMachine(24 * 1024);
+    expect(limits.minFreeMB).toBe(Math.round(0.15 * 24 * 1024));
+    expect(limits.maxSwapUsedMB).toBe(1024);
+    expect(limits.maxAgentPanes).toBe(12);
+  });
+
+  it('num Mac de 16 GB o teto cai para 6 e o mínimo disponível nunca fica abaixo de 1 GB', async () => {
+    const { limitsForMachine } = await import('./pane-admission');
+    const limits = limitsForMachine(16 * 1024);
+    expect(limits.maxAgentPanes).toBe(6);
+    expect(limits.minFreeMB).toBeGreaterThanOrEqual(1024);
+  });
+
+  it('numa máquina de 64 GB o teto satura em 12 (o guardian, não a RAM, governa)', async () => {
+    const { limitsForMachine } = await import('./pane-admission');
+    expect(limitsForMachine(64 * 1024).maxAgentPanes).toBe(12);
+  });
+
+  it('env continua sobrepondo os defaults proporcionais', async () => {
+    const { readPaneAdmissionLimits } = await import('./pane-admission');
+    const limits = readPaneAdmissionLimits({ NEXUS_PANE_CAP: '3' }, 24 * 1024);
+    expect(limits.maxAgentPanes).toBe(3);
+    expect(limits.minFreeMB).toBe(Math.round(0.15 * 24 * 1024));
+  });
+
+  it('isUnderMemoryPressure usa os mesmos limiares do gate', async () => {
+    const { isUnderMemoryPressure, limitsForMachine } = await import('./pane-admission');
+    const limits = limitsForMachine(24 * 1024);
+    expect(isUnderMemoryPressure({ freeMB: 10_000, swapUsedMB: 100 }, limits)).toBe(false);
+    expect(isUnderMemoryPressure({ freeMB: 2_000, swapUsedMB: 100 }, limits)).toBe(true);
+    expect(isUnderMemoryPressure({ freeMB: 10_000, swapUsedMB: 3_000 }, limits)).toBe(true);
+    expect(isUnderMemoryPressure(null, limits)).toBe(false);
   });
 });

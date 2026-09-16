@@ -35,7 +35,12 @@ import {
 } from './pane-registry';
 import { isSessionInjectableIdle, tapAgentSemanticStatus } from './agent-status';
 import { armedDeliveryContract } from './delivery-contract';
-import { registerPaneAdmissionAdvisor } from './pane-admission';
+import {
+  getCachedSystemMemory,
+  isUnderMemoryPressure,
+  readPaneAdmissionLimits,
+  registerPaneAdmissionAdvisor,
+} from './pane-admission';
 
 /** 30 minutos de idle antes de auto-fechar um pane sem dono. */
 export const NON_WORKER_AUTO_CLOSE_TTL_MS = 30 * 60_000;
@@ -79,6 +84,12 @@ export interface NonWorkerAutoCloseDeps {
    * módulo — esse edge fechava um ciclo ESM na suíte (F-572).
    */
   readonly registerAdvisor?: () => void;
+  /**
+   * 0.76.44: a máquina já está sob pressão (mesmos limiares do gate de
+   * spawn). Aí a varredura não espera o TTL: fecha um pane ocioso elegível
+   * por tick, o mais parado primeiro.
+   */
+  readonly isUnderMemoryPressure?: () => boolean;
 }
 
 function productionDeps(): NonWorkerAutoCloseDeps {
@@ -113,6 +124,10 @@ function productionDeps(): NonWorkerAutoCloseDeps {
         )
         .map((pane) => pane.sessionId as string),
     sweepIntervalMs: PANE_GUARDIAN_SWEEP_INTERVAL_MS,
+    // A amostra em cache vence em 5 s e se renova sozinha: cada tick da
+    // varredura (60 s) enxerga a memória de agora, não a do boot.
+    isUnderMemoryPressure: () =>
+      isUnderMemoryPressure(getCachedSystemMemory(), readPaneAdmissionLimits()),
     registerAdvisor: () =>
       registerPaneAdmissionAdvisor({
         idleCandidates: (now) =>
@@ -243,6 +258,25 @@ export function sweepIdlePanes(deps: NonWorkerAutoCloseDeps): void {
     const ref = paneIsClosable(deps, sessionId);
     if (!ref) continue;
     closeIdlePane(deps, ref, sessionId, 'varredura');
+  }
+  // 0.76.44 — reaper de emergência: com a máquina sob pressão (mesmos
+  // limiares do gate de spawn), não espera o TTL. Fecha UM pane ocioso
+  // elegível por tick, o mais parado primeiro; os vetos (orquestrador, worker
+  // de missão, pane do humano, entrega armada, awaiting-input) continuam.
+  if (deps.isUnderMemoryPressure?.()) {
+    const oldestFirst = [...idleSince.entries()]
+      .filter(([sessionId]) => idleNow.has(sessionId) && !closing.has(sessionId))
+      .sort((a, b) => a[1] - b[1]);
+    for (const [sessionId] of oldestFirst) {
+      const ref = paneIsClosable(deps, sessionId);
+      if (!ref) continue;
+      deps.log(
+        `pressão de memória: fechando o pane ocioso mais antigo sem esperar o TTL ` +
+          `(pane=${ref.paneId}, ocioso há ${Math.round((now - (idleSince.get(sessionId) ?? now)) / 1000)} s)`,
+      );
+      closeIdlePane(deps, ref, sessionId, 'varredura');
+      break;
+    }
   }
 }
 
