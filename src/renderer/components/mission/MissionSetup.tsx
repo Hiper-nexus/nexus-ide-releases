@@ -32,6 +32,7 @@ import {
 import { toUserFacingMissionError } from '../../lib/user-facing-mission-error';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { usePendingOrchestratorAdoptionStore } from '../../state/pending-orchestrator-adoption-store';
+import { reflectAdoptedOrchestratorWithToast } from '../../orch/adopted-orchestrator-reflect';
 import { useProviderStore } from '../../state/provider-store';
 import { useWorkspaceStore } from '../../state/workspace-store';
 import { ExpressMissionStart } from './ExpressMissionStart';
@@ -761,6 +762,16 @@ export function MissionSetup({
         ...(adopted ? { adoptOrchestratorPaneId: adopted.paneId } : {}),
       });
       startSucceeded = true;
+      // O main adota DEPOIS que o start responde (bootstrap não bloqueia a
+      // tela). O layout é espelho: só ganha a estrela quando o main provar que
+      // aquele painel virou o orquestrador.
+      if (adopted) {
+        reflectAdoptedOrchestratorWithToast(
+          snapshot.id,
+          adopted.paneId,
+          capturedReview.title,
+        );
+      }
       if (capturedSupersededMissionId) {
         await window.nexus.orch.removeMission(capturedSupersededMissionId);
       }
@@ -980,6 +991,13 @@ export function MissionSetup({
         reviewSha256: review.reviewSha256,
         ...(adopted ? { adoptOrchestratorPaneId: adopted.paneId } : {}),
       });
+      if (adopted) {
+        reflectAdoptedOrchestratorWithToast(
+          snapshot.id,
+          adopted.paneId,
+          review.title,
+        );
+      }
       const finalSetup = useMissionSetupStore.getState();
       const finalWorkspace = useWorkspaceStore.getState().current?.path ?? null;
       const finalKey = missionSetupAuthorityKey(finalSetup);
