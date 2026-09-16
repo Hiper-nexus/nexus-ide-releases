@@ -21,6 +21,12 @@ import { execFile } from 'node:child_process';
 const START = '__NEXUS_PATH_START__';
 const END = '__NEXUS_PATH_END__';
 const RESOLVE_TIMEOUT_MS = 4000;
+const WINDOWS_PTY_EXECUTABLE_EXTENSIONS = new Set([
+  '.exe',
+  '.com',
+  '.cmd',
+  '.bat',
+]);
 
 interface LoginShellExecOptions {
   readonly encoding: 'utf8';
@@ -263,8 +269,15 @@ function isExecutableFile(candidate: string): boolean {
   try {
     const st = fs.statSync(candidate);
     if (!st.isFile()) return false;
-    // On Windows, existence of a file is enough for node-pty/cmd resolution.
-    if (process.platform === 'win32') return true;
+    // node-pty sends the absolute file directly to ConPTY. A regular
+    // extensionless file is not necessarily executable on Windows: npm puts a
+    // POSIX `#!/bin/sh` shim next to its valid `.cmd` launcher. Selecting the
+    // shim crashes the PTY utility process instead of reporting a spawn error.
+    if (process.platform === 'win32') {
+      return WINDOWS_PTY_EXECUTABLE_EXTENSIONS.has(
+        path.extname(candidate).toLowerCase(),
+      );
+    }
     return (st.mode & 0o111) !== 0;
   } catch {
     return false;
@@ -286,18 +299,32 @@ export function lookupInPath(
   for (const dir of pathString.split(pathSep)) {
     if (!dir) continue;
     const candidate = path.join(dir, command);
-    if (isExecutableFile(candidate)) return candidate;
     if (process.platform === 'win32') {
+      // A caller may already name a native launcher (for example `npm.cmd` or
+      // an explicitly configured `codex.cmd`). Keep that exact candidate, but
+      // never treat an extensionless POSIX npm shim as executable through
+      // ConPTY.
+      if (
+        WINDOWS_PTY_EXECUTABLE_EXTENSIONS.has(
+          path.extname(command).toLowerCase(),
+        ) &&
+        isExecutableFile(candidate)
+      ) {
+        return candidate;
+      }
       const pathext = process.env.PATHEXT ?? '.EXE;.CMD;.BAT;.COM';
       for (const ext of pathext.split(';')) {
         if (!ext) continue;
-        // Try both original case (PATHEXT is usually uppercase) and lower.
-        const variants = [candidate + ext, candidate + ext.toLowerCase()];
-        for (const withExt of variants) {
-          if (isExecutableFile(withExt)) return withExt;
-        }
+        const normalizedExt = ext.toLowerCase();
+        if (!WINDOWS_PTY_EXECUTABLE_EXTENSIONS.has(normalizedExt)) continue;
+        // Use the normalized spelling. NTFS lookup remains case-insensitive,
+        // while callers get a stable path for persistence and tests.
+        const withExt = candidate + normalizedExt;
+        if (isExecutableFile(withExt)) return withExt;
       }
+      continue;
     }
+    if (isExecutableFile(candidate)) return candidate;
   }
   return null;
 }

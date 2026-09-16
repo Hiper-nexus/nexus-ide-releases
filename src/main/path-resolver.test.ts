@@ -27,10 +27,15 @@ describe('path-resolver CLI binary resolution', () => {
     kimiDir = path.join(tmp, '.kimi-code', 'bin');
     fs.mkdirSync(binDir, { recursive: true });
     fs.mkdirSync(kimiDir, { recursive: true });
-    executable = path.join(binDir, 'claude');
-    kimiBin = path.join(kimiDir, 'kimi');
-    fs.writeFileSync(executable, '#!/bin/sh\necho ok\n', { mode: 0o755 });
-    fs.writeFileSync(kimiBin, '#!/bin/sh\necho kimi\n', { mode: 0o755 });
+    const extension = process.platform === 'win32' ? '.cmd' : '';
+    executable = path.join(binDir, `claude${extension}`);
+    kimiBin = path.join(kimiDir, `kimi${extension}`);
+    const script =
+      process.platform === 'win32'
+        ? '@echo off\r\necho ok\r\n'
+        : '#!/bin/sh\necho ok\n';
+    fs.writeFileSync(executable, script, { mode: 0o755 });
+    fs.writeFileSync(kimiBin, script, { mode: 0o755 });
   });
 
   afterEach(() => {
@@ -56,8 +61,17 @@ describe('path-resolver CLI binary resolution', () => {
     fs.mkdirSync(isolated, { recursive: true });
     const realLocal = path.join(tmp, '.local', 'bin');
     fs.mkdirSync(realLocal, { recursive: true });
-    const claude = path.join(realLocal, 'claude');
-    fs.writeFileSync(claude, '#!/bin/sh\necho claude\n', { mode: 0o755 });
+    const claude = path.join(
+      realLocal,
+      `claude${process.platform === 'win32' ? '.cmd' : ''}`,
+    );
+    fs.writeFileSync(
+      claude,
+      process.platform === 'win32'
+        ? '@echo off\r\necho claude\r\n'
+        : '#!/bin/sh\necho claude\n',
+      { mode: 0o755 },
+    );
 
     const finderPath = '/usr/bin:/bin:/usr/sbin:/sbin';
     const effective = buildEffectivePath({
@@ -81,6 +95,50 @@ describe('path-resolver CLI binary resolution', () => {
     const found = lookupInPath('claude', binDir);
     expect(found).toBe(executable);
   });
+
+  it.skipIf(process.platform !== 'win32')(
+    'prefers the Windows launcher over a same-named POSIX shim',
+    () => {
+      const posixShim = path.join(binDir, 'codex');
+      const windowsLauncher = path.join(binDir, 'codex.cmd');
+      fs.writeFileSync(posixShim, '#!/bin/sh\necho codex\n', { mode: 0o755 });
+      fs.writeFileSync(windowsLauncher, '@echo off\r\necho codex\r\n');
+
+      expect(lookupInPath('codex', binDir)).toBe(windowsLauncher);
+    },
+  );
+
+  it.skipIf(process.platform !== 'win32')(
+    'keeps an explicitly suffixed Windows launcher executable',
+    () => {
+      const windowsLauncher = path.join(binDir, 'codex.cmd');
+      fs.writeFileSync(windowsLauncher, '@echo off\r\necho codex\r\n');
+
+      expect(lookupInPath('codex.cmd', binDir)).toBe(windowsLauncher);
+    },
+  );
+
+  it.skipIf(process.platform !== 'win32')(
+    'does not keep a cached POSIX shim when a Windows launcher is available',
+    () => {
+      const posixShim = path.join(binDir, 'codex');
+      const windowsLauncher = path.join(binDir, 'codex.cmd');
+      fs.writeFileSync(posixShim, '#!/bin/sh\necho codex\n', { mode: 0o755 });
+      fs.writeFileSync(windowsLauncher, '@echo off\r\necho codex\r\n');
+      const previousPath = process.env.PATH;
+      process.env.PATH = binDir;
+      __resetPathResolverForTests();
+
+      try {
+        expect(resolveSpawnBinary('codex', posixShim)?.binPath).toBe(
+          windowsLauncher,
+        );
+      } finally {
+        process.env.PATH = previousPath;
+        __resetPathResolverForTests();
+      }
+    },
+  );
 
   it('lookupInPath misses when Finder PATH has no CLI dirs', () => {
     const finderPath = '/usr/bin:/bin:/usr/sbin:/sbin';
@@ -155,7 +213,7 @@ describe('path-resolver CLI binary resolution', () => {
   });
 
   it('absolute path resolution accepts ~/ expansion', () => {
-    const rel = path.join('.kimi-code', 'bin', 'kimi');
+    const rel = path.relative(tmp, kimiBin);
     const hit = resolveCliBinary(`~/${rel}`, { home: tmp });
     expect(hit?.binPath).toBe(kimiBin);
     expect(hit?.source).toBe('absolute');
@@ -178,14 +236,12 @@ describe('path-resolver CLI binary resolution', () => {
     expect(hit?.binPath).toBe(kimiBin);
   });
 
-  it('rejects non-executable regular files', () => {
+  it('rejects regular files that Windows cannot launch directly', () => {
     const plain = path.join(binDir, 'not-a-cli');
     fs.writeFileSync(plain, 'data\n', { mode: 0o644 });
     if (process.platform === 'win32') {
-      // Windows does not expose POSIX execute bits; a regular file is a valid
-      // command candidate and the eventual CreateProcess call is authoritative.
-      expect(lookupInPath('not-a-cli', binDir)).toBe(plain);
-      expect(revalidateExecutable(plain)).toBe(true);
+      expect(lookupInPath('not-a-cli', binDir)).toBeNull();
+      expect(revalidateExecutable(plain)).toBe(false);
     } else {
       expect(lookupInPath('not-a-cli', binDir)).toBeNull();
       expect(revalidateExecutable(plain)).toBe(false);
