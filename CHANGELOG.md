@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.76.45 — Otimizar, não limitar
+
+- **Pane dormindo em vez de fechado (F-573)**: pane ocioso sem dono (helper aberto pela sua mão ou worker sem missão) tem o CLI encerrado após 30 min — ou na hora sob pressão de memória — mas FICA no layout com o scrollback e um botão "Acordar" que retoma a mesma conversa (`resume` exato por sessão, F-567). `requestPanePark` no main, `state: 'parked'` no snapshot, `ORCH_CHANNELS.paneParkRequest` para o renderer. Memória de pane dormindo: zero.
+- **Teto de panes vira aviso; bloqueio só por pressão real (F-573)**: acima do teto proporcional à RAM (4–12: 16 GB → 6, 24 GB → 12) o spawn passa com aviso nomeando os ociosos. Bloqueia só com menos de 15 % da RAM disponível (`kern.memorystatus_level` no macOS) ou mais de 1 GB de swap. `NEXUS_PANE_CAP_HARD=1` restaura o bloqueio por contagem.
+- **Reaper de emergência (F-573)**: sob pressão, um pane ocioso elegível por minuto, o mais parado primeiro, sem esperar o TTL; vetos intactos (orquestrador, worker de missão, pane aberto pelo humano, `expect` armado, `awaiting-input`).
+- **Hub MCP compartilhado (F-573)**: os servidores stdio do seu `~/.claude.json` sobem uma vez no main e são expostos por HTTP (`/hub/<key>`, auth pelo token do pane) para os panes da sua mão; `hooks-gen` emite `{type:'http'}` em vez de copiar `command/args`. Fim dos 19 `npm exec` por pane. Flag `feature.mcp.sharedHub` (ligada); sem bridge, cai na herança antiga.
+- **Custo por pane no cabeçalho (F-573)**: o host PTY mede o RSS da árvore de cada sessão a cada 30 s (`perf:paneFootprints`) e o `PaneToolbar` mostra "512 MB" no slot de largura fixa do F-568, com tom de aviso acima de 1,5 GB.
+- **`nexus_pane_spawn { resume: "pane-X" }` retoma de verdade a conversa do pane antigo (F-573)**: o valor era descartado e o pane novo nascia sem contexto. Agora a sessão do provider do pane antigo é copiada para o pane novo antes do spawn e o `--resume` exato (F-567) a encontra — vale para pane dormindo e para pane já fechado. Pane `aider` (sem resume por id) é fechado em vez de estacionado.
+- **Guardian sem ping-pong**: 5 min de carência depois de acordar antes de o reaper de emergência poder estacionar o mesmo pane; aviso no log quando a amostra de memória some por 3 varreduras (gate cego).
+
 ## 0.76.43 — Cada pane com a própria sessão
 
 - **Pane guardian: nada mais fica aberto sem fazer nada (F-572)**: em 16/09 um orquestrador abriu 33 panes e fechou 6; ~25 workers sem missão ficaram parados após um handoff recusado, e 22 panes × ~1 GB (CLI + servidores MCP filhos) esgotaram a RAM de um Mac de 24 GB até o freeze. O auto-fechamento de pane ocioso existia desde 05/08 e **nunca tinha sido ligado**; agora liga no boot, cobre worker SEM missão e helper aberto pela mão do operador (nunca orquestrador, worker de missão, pane aberto pelo humano ou pane com contrato de entrega armado), e ganhou varredura do PTY a cada 60 s para CLIs sem hooks. TTL 30 min.

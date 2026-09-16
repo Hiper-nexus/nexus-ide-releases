@@ -4040,6 +4040,63 @@ export const RELEASE_07641: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.45',
+  date: '2026-09-16',
+  codename: 'Otimizar, não limitar',
+  summary:
+    'Resposta ao freeze com 8 panes num Air de 24 GB: o teto de panes virou aviso (só a ' +
+    'pressão real de memória bloqueia), pane ocioso é estacionado em vez de fechado (memória ' +
+    'a zero, acorda com um clique no mesmo contexto), os seus servidores MCP globais sobem ' +
+    'uma vez em vez de uma vez por pane, e o cabeçalho mostra quanto cada pane custa.',
+  highlights: [
+    {
+      title: 'Pane dormindo em vez de fechado',
+      detail:
+        'Pane ocioso sem dono (helper seu ou worker sem missão) tem o CLI encerrado após 30 ' +
+        'min, ou na hora sob pressão de memória, mas fica no layout com o scrollback e um ' +
+        'botão "Acordar" que retoma a MESMA conversa (resume exato por sessão). Memória do ' +
+        'pane dormindo: zero.',
+    },
+    {
+      title: 'Servidores MCP compartilhados',
+      detail:
+        'Os servidores MCP do seu perfil global (~19, ~600 MB por pane até a 0.76.43) sobem ' +
+        'uma única vez no Nexus e cada pane fala com eles por HTTP. Um pane Claude da sua mão ' +
+        'cai de ~1,1 GB para ~0,5 GB; workers já não herdavam.',
+    },
+    {
+      title: 'Teto vira aviso; só pressão real bloqueia',
+      detail:
+        'Acima do teto proporcional à RAM o spawn passa com um aviso nomeando os ociosos a ' +
+        'fechar. O único bloqueio é a máquina de fato sob pressão: menos de 15 % da RAM ' +
+        'disponível (sinal do kernel no macOS) ou mais de 1 GB de swap. NEXUS_PANE_CAP_HARD=1 ' +
+        'restaura o bloqueio por contagem para quem quiser.',
+    },
+    {
+      title: 'Custo de cada pane no cabeçalho',
+      detail:
+        'O RSS da árvore de processos de cada pane (CLI + filhos MCP) aparece no cabeçalho a ' +
+        'cada 30 s, com tom de aviso acima de 1,5 GB. nexus_perf_snapshot traz o mesmo.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Reaper de emergência',
+      detail:
+        'Sob pressão de memória o guardian estaciona um pane ocioso elegível por minuto, o ' +
+        'mais parado primeiro, sem esperar o TTL — nunca o seu pane, um orquestrador, um worker ' +
+        'de missão ou um pane com entrega pendente.',
+    },
+    {
+      title: 'Limites proporcionais à máquina',
+      detail:
+        'Teto entre 4 e 12 conforme a RAM (16 GB → 6, 24 GB → 12); mínimo disponível 15 % da ' +
+        'RAM em vez de 1 GB fixo (tarde demais num Mac de 24 GB).',
+    },
+  ],
+};
+
+export const RELEASE_07643: AppRelease = {
   version: '0.76.43',
   date: '2026-09-16',
   codename: 'Cada pane com a própria sessão',
