@@ -4,6 +4,7 @@ import type { PaneModel } from '../../shared/types';
 
 const xtermEvents = vi.hoisted(() => ({
   onData: new Set<(data: string) => void>(),
+  onTitleChange: new Set<(title: string) => void>(),
 }));
 
 vi.mock('@xterm/xterm', () => ({
@@ -15,7 +16,10 @@ vi.mock('@xterm/xterm', () => ({
     buffer = { active: { baseY: 0, length: 0, viewportY: 0, type: 'normal' } };
     open(element: HTMLElement) { this.element = element; }
     loadAddon(addon: { activate?: (term: unknown) => void }) { addon.activate?.(this); }
-    onTitleChange() { return { dispose() {} }; }
+    onTitleChange(listener: (title: string) => void) {
+      xtermEvents.onTitleChange.add(listener);
+      return { dispose: () => xtermEvents.onTitleChange.delete(listener) };
+    }
     onScroll() { return { dispose() {} }; }
     onData(listener: (data: string) => void) {
       xtermEvents.onData.add(listener);
@@ -112,6 +116,7 @@ beforeEach(() => {
   ptyWrite.mockReset();
   ptyExitListeners.clear();
   xtermEvents.onData.clear();
+  xtermEvents.onTitleChange.clear();
   Object.defineProperty(window, 'nexus', {
     configurable: true,
     value: { voice: { logVoice: vi.fn().mockResolvedValue(undefined) }, pty: {
@@ -134,10 +139,15 @@ afterEach(() => {
   vi.clearAllTimers();
   vi.useRealTimers();
   xtermEvents.onData.clear();
+  xtermEvents.onTitleChange.clear();
   vi.unstubAllGlobals();
   if (originalNexus) Object.defineProperty(window, 'nexus', originalNexus);
   else Reflect.deleteProperty(window, 'nexus');
 });
+
+function fireTitle(title: string): void {
+  for (const listener of [...xtermEvents.onTitleChange]) listener(title);
+}
 
 describe('spawn adiado sem ninguém esperando a sessão', () => {
   it('nasce sozinho quando o canvas oculto fica mensurável, mesmo sem ResizeObserver', async () => {
@@ -166,6 +176,58 @@ describe('spawn adiado sem ninguém esperando a sessão', () => {
     await vi.advanceTimersByTimeAsync(5_000);
     expect(spawn).not.toHaveBeenCalled();
     expect(host.disposed).toBe(true);
+  });
+});
+
+describe('F-568 — título do pane não treme com o spinner do CLI', () => {
+  function mountedHost() {
+    const host = getOrCreateHost(pane);
+    setHostSize(host.element, 1200, 800);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(pane, slot);
+    return host;
+  }
+
+  it('remove o glifo do spinner e escreve só o título normalizado', async () => {
+    mountedHost();
+    const setTitle = vi.spyOn(useLayoutStore.getState(), 'setTitle');
+    fireTitle('⠋ nexus-ide');
+    await vi.advanceTimersByTimeAsync(300);
+    expect(setTitle).toHaveBeenCalledExactlyOnceWith(pane.id, 'nexus-ide');
+  });
+
+  it('deduplica: frames de spinner que normalizam para o mesmo título não geram novo write', async () => {
+    mountedHost();
+    const setTitle = vi.spyOn(useLayoutStore.getState(), 'setTitle');
+    for (const frame of ['⠋', '⠙', '⠹', '⠸', '⠼']) {
+      fireTitle(`${frame} nexus-ide`);
+      await vi.advanceTimersByTimeAsync(60);
+    }
+    await vi.advanceTimersByTimeAsync(300);
+    expect(setTitle).toHaveBeenCalledExactlyOnceWith(pane.id, 'nexus-ide');
+  });
+
+  it('throttle trailing: rajada de títulos diferentes coalesce num único write com o valor final', async () => {
+    mountedHost();
+    const setTitle = vi.spyOn(useLayoutStore.getState(), 'setTitle');
+    fireTitle('⠋ um');
+    await vi.advanceTimersByTimeAsync(50);
+    fireTitle('⠙ dois');
+    await vi.advanceTimersByTimeAsync(50);
+    fireTitle('⠹ três');
+    // Ainda dentro da janela de 250ms — nenhum write chegou ao store.
+    expect(setTitle).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(setTitle).toHaveBeenCalledExactlyOnceWith(pane.id, 'três');
+  });
+
+  it('nunca propaga ao store quando a mensagem é só o glifo, sem texto', async () => {
+    mountedHost();
+    const setTitle = vi.spyOn(useLayoutStore.getState(), 'setTitle');
+    fireTitle('⠋');
+    await vi.advanceTimersByTimeAsync(300);
+    expect(setTitle).not.toHaveBeenCalled();
   });
 });
 

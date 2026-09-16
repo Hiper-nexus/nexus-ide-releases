@@ -96,6 +96,9 @@ function StateIndicator({
       className={`toolbar__state toolbar__state--chip toolbar__state--${view.mod}`}
       data-tip={view.tip}
       aria-label={view.tip}
+      // F-568: slot de largura fixa — o dot/ícone (não texto) que denota
+      // atividade nunca deve mudar de largura entre frames do spinner do CLI.
+      style={compact ? { minWidth: 14 } : undefined}
     >
       <PixelIcon name={STATE_ICON[view.mod]} size={10} />
       {!compact && <span className="toolbar__state-label">{view.chip}</span>}
@@ -542,7 +545,13 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
       ref={rootRef}
     >
       {/* Meta shrinks first — never steal space from the close pin. */}
-      <div className="toolbar__meta">
+      <div
+        className="toolbar__meta"
+        // F-568: isola o reflow do cabeçalho — título/estado não devem
+        // empurrar o resto do pane quando o CLI reescreve o título do
+        // terminal a cada frame do spinner.
+        style={{ contain: 'layout' }}
+      >
         <span className={`toolbar__dot ${isFocused ? 'toolbar__dot--on' : ''}`} />
         {/*
           Nome humano do pane. Existe para ser LIDO e repetido: "o pane 7
@@ -610,6 +619,9 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
           <span
             className="toolbar__title"
             data-tip="Duplo-clique para renomear"
+            // F-568: tabular-nums trava a largura dos dígitos do título —
+            // min-width/ellipsis já vêm do CSS global (.toolbar__title).
+            style={{ fontVariantNumeric: 'tabular-nums' }}
             onDoubleClick={(e) => {
               e.stopPropagation();
               setDraft(pane.title);

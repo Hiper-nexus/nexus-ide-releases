@@ -32,6 +32,7 @@ import {
   type DroppedUri,
 } from '../lib/mission-shell-file-intake';
 import { listPanes } from '../lib/split-tree';
+import { normalizePaneTitle } from '../lib/pane-title';
 import {
   missionAwaitsOperatorReview,
   wasMissionRuntimeClosedByOperator,
@@ -1812,10 +1813,50 @@ function rehydrateHost(host: Host): void {
   });
 }
 
+// F-568: um CLI (Codex/Claude/Grok) reescreve o título OSC a cada frame do
+// próprio spinner, dezenas de vezes por segundo. Sem isto, cada frame
+// reflui o toolbar (chip de título muda de largura) — normaliza o glifo de
+// status para fora do texto, propaga só quando o título limpo MUDA, e
+// coalesce rajadas num único write por TITLE_THROTTLE_MS (trailing).
+const TITLE_THROTTLE_MS = 250;
+
+interface PaneTitleThrottleState {
+  lastApplied: string | null;
+  pendingTitle: string | null;
+  timer: ReturnType<typeof setTimeout> | null;
+}
+
+const titleThrottleState = new WeakMap<Host, PaneTitleThrottleState>();
+
+function applyIncomingPaneTitle(host: Host, rawTitle: string): void {
+  const { title } = normalizePaneTitle(rawTitle);
+  if (!title) return;
+
+  let state = titleThrottleState.get(host);
+  if (!state) {
+    state = { lastApplied: null, pendingTitle: null, timer: null };
+    titleThrottleState.set(host, state);
+    host.cleanups.push(() => {
+      if (state!.timer !== null) clearTimeout(state!.timer);
+    });
+  }
+  if (title === state.lastApplied) return;
+
+  state.pendingTitle = title;
+  if (state.timer !== null) return;
+  state.timer = setTimeout(() => {
+    state!.timer = null;
+    const next = state!.pendingTitle;
+    state!.pendingTitle = null;
+    if (next && next !== state!.lastApplied) {
+      state!.lastApplied = next;
+      useLayoutStore.getState().setTitle(host.paneId, next);
+    }
+  }, TITLE_THROTTLE_MS);
+}
+
 function wireHostTerminalListeners(host: Host): void {
-  host.term.onTitleChange((title) =>
-    useLayoutStore.getState().setTitle(host.paneId, title),
-  );
+  host.term.onTitleChange((title) => applyIncomingPaneTitle(host, title));
   host.term.onScroll((viewportY) => {
     host.inputVisibility.onScroll(viewportY, host.term.buffer.active.baseY);
   });
@@ -1858,9 +1899,7 @@ function createShellHost(pane: PaneModel): Host {
   host.ro = makeResizeObserver(pane.id, host);
   host.ro.observe(element);
 
-  term.onTitleChange((title) =>
-    useLayoutStore.getState().setTitle(pane.id, title),
-  );
+  term.onTitleChange((title) => applyIncomingPaneTitle(host, title));
   term.onScroll((viewportY) => {
     host.inputVisibility.onScroll(viewportY, host.term.buffer.active.baseY);
   });
