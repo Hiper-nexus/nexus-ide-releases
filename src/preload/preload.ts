@@ -84,6 +84,10 @@ import { NOTE_CHANNELS } from '../shared/note-types';
 import type { Note, NotesChangedEvent } from '../shared/note-types';
 import { PIPE_CHANNELS } from '../shared/pipe-types';
 import type { Pipe, PipeMode } from '../shared/pipe-types';
+import {
+  SHOT_BRIDGE_CHANNELS,
+  type ShotFilesReceivedPayload,
+} from '../shared/shot-bridge';
 import type {
   NexusApi,
   BrowserDesignEventPayload,
@@ -185,6 +189,16 @@ ipcRenderer.on(
   WINDOW_CHANNELS.deepOpenPath,
   (_event, payload: { path: string; isDir: boolean }) =>
     emitToListeners(deepOpenListeners, 'deepOpenListeners', payload),
+);
+
+// shot-bridge: arquivos entregues pelo Nexus Shot (contrato em
+// shared/shot-bridge.ts). Somente leitura: o renderer recebe metadados já
+// validados no main (realpath sob as raízes permitidas).
+const shotFilesListeners = new Set<(payload: ShotFilesReceivedPayload) => void>();
+ipcRenderer.on(
+  SHOT_BRIDGE_CHANNELS.filesReceived,
+  (_event, payload: ShotFilesReceivedPayload) =>
+    emitToListeners(shotFilesListeners, 'shotFilesListeners', payload),
 );
 
 function clearPtySequenceState(sessionId: string): void {
@@ -668,6 +682,8 @@ const api: NexusApi = {
       ipcRenderer.invoke(WINDOW_CHANNELS.openTerminalPath, path),
     onDeepOpenPath: (cb: (payload: { path: string; isDir: boolean }) => void) =>
       addListener(deepOpenListeners, cb),
+    onShotFilesReceived: (cb: (payload: ShotFilesReceivedPayload) => void) =>
+      addListener(shotFilesListeners, cb),
   },
   arms: {
     status: () => ipcRenderer.invoke(ARMS_CHANNELS.status),
