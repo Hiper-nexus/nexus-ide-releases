@@ -614,7 +614,14 @@ function WorkspaceGroup({
                                         onClick={(e) => {
                                           e.stopPropagation();
                                           useLayoutStore.getState().focus(pane.id);
-                                          useProductNavigationStore.getState().openTerminal();
+                                          // O agente pertence a esta missão. Abrir a
+                                          // superfície global aqui misturava o mosaico
+                                          // dela com os panes de outras missões; o foco
+                                          // precisa preservar a fronteira da missão.
+                                          const navigation =
+                                            useProductNavigationStore.getState();
+                                          navigation.openMission(mission.id);
+                                          navigation.showMissionTerminals();
                                         }}
                                       >
                                         <span

@@ -34,6 +34,7 @@ const {
   orchState: {
     missions: [] as Array<Record<string, unknown>>,
     squads: [] as Array<Record<string, unknown>>,
+    paneMissions: {} as Record<string, string>,
   },
   workspaceState: {
     current: null as { path: string } | null,
@@ -135,6 +136,7 @@ beforeEach(() => {
   ];
   orchState.missions = [];
   orchState.squads = [];
+  orchState.paneMissions = {};
   workspaceState.current = { path: '/tmp/nexus' };
   waitForSession.mockResolvedValue('session-terminal');
   useProductNavigationStore.setState({
@@ -215,9 +217,9 @@ describe('Jarvis product navigation', () => {
         id: 'pane-terminal',
         kind: 'shell',
         title: 'Terminal',
-        missionId: 'mission-release',
       },
     ];
+    orchState.paneMissions = { 'pane-terminal': 'mission-release' };
     useProductNavigationStore.getState().openTaskBoard();
 
     const result = await execute({ type: 'open_terminal' });

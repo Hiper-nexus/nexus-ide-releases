@@ -163,9 +163,13 @@ describe('CommandPalette product navigation', () => {
           id: 'pane-1',
           kind: 'shell',
           title: 'Terminal',
-          missionId: 'mission-release',
         },
       },
+    } as never);
+    // A ponte de orquestração pode conhecer a missão antes da persistência do
+    // layout. O atalho precisa respeitar esse vínculo transitório também.
+    useOrchStore.setState({
+      paneMissions: { 'pane-1': 'mission-release' },
     } as never);
     useProductNavigationStore.getState().openTaskBoard();
     const host = render(<CommandPalette />);

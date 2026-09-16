@@ -3,6 +3,7 @@ import { isMissionRuntimeSquadId, type SquadAgent } from '../../shared/orch-type
 import { PET_STUDIO_SQUAD_ID } from '../../shared/pet-studio';
 import { useLayoutStore } from '../state/layout-store';
 import { listPanes } from '../lib/split-tree';
+import { attentionMissionIdForPane } from '../lib/mission-attention-route';
 import { useWorkspaceStore } from '../state/workspace-store';
 import { useOrchStore } from '../state/orch-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
@@ -182,8 +183,9 @@ function revealPaneForUser(paneId: string): void {
     (candidate) => candidate.id === paneId,
   );
   const navigation = useProductNavigationStore.getState();
-  if (pane?.missionId) {
-    navigation.openMission(pane.missionId);
+  const missionId = pane ? attentionMissionIdForPane(pane) : undefined;
+  if (missionId) {
+    navigation.openMission(missionId);
     useProductNavigationStore.getState().showMissionTerminals();
   } else {
     navigation.openTerminal();

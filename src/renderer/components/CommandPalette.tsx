@@ -14,6 +14,7 @@ import {
 import { useTerminalGridDialogStore } from '../state/terminal-grid-dialog-store';
 import { missionChromeTitle } from '../../shared/mission-identity';
 import { listPanes } from '../lib/split-tree';
+import { attentionMissionIdForPane } from '../lib/mission-attention-route';
 import { filterPaletteActions } from '../lib/command-palette-filter';
 import { formatShortcut } from '../lib/platform';
 import { shortcutKeys } from '../lib/shortcuts';
@@ -76,8 +77,9 @@ export function CommandPalette() {
         keywords: `pane foco ${pane.paneNumber ?? ''} ${pane.adapterId ?? ''} ${state ?? ''}`,
         run: () => {
           const navigation = useProductNavigationStore.getState();
-          if (pane.missionId) {
-            navigation.openMission(pane.missionId);
+          const missionId = attentionMissionIdForPane(pane);
+          if (missionId) {
+            navigation.openMission(missionId);
             useProductNavigationStore.getState().showMissionTerminals();
           } else {
             navigation.openTerminal();

@@ -46,6 +46,7 @@ import {
 import { listPanes } from './lib/split-tree';
 import { describeWorkspaceOpenError } from './lib/workspace-open-error';
 import {
+  attentionMissionIdForPane,
   attentionCauseForMissionState,
   routeMissionAttention,
 } from './lib/mission-attention-route';
@@ -554,8 +555,9 @@ export function App() {
         if (pane) {
           event.preventDefault();
           const navigation = useProductNavigationStore.getState();
-          if (pane.missionId) {
-            navigation.openMission(pane.missionId);
+          const missionId = attentionMissionIdForPane(pane);
+          if (missionId) {
+            navigation.openMission(missionId);
             useProductNavigationStore.getState().showMissionTerminals();
           } else {
             navigation.openTerminal();
@@ -613,8 +615,9 @@ export function App() {
       const next =
         panes[(currentIdx + dir + panes.length) % panes.length] ?? panes[0]!;
       const navigation = useProductNavigationStore.getState();
-      if (next.missionId) {
-        navigation.openMission(next.missionId);
+      const missionId = attentionMissionIdForPane(next);
+      if (missionId) {
+        navigation.openMission(missionId);
         useProductNavigationStore.getState().showMissionTerminals();
       } else {
         navigation.openTerminal();

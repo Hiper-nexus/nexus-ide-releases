@@ -1059,6 +1059,47 @@ describe('App Nexus V2 cutover', () => {
     },
   );
 
+  it('keeps a pane with a transient mission binding in that mission via ⌘1', () => {
+    openWorkspace();
+    useLayoutStore.setState({
+      root: {
+        kind: 'leaf',
+        id: 'leaf-transient-mission-pane',
+        pane: {
+          id: 'pane-transient-mission',
+          kind: 'cli-agent',
+          title: 'Agente da missão',
+          adapterId: 'codex',
+        },
+      },
+      focusedPaneId: null,
+    } as never);
+    useOrchStore.setState({
+      paneMissions: { 'pane-transient-mission': 'mission-release' },
+    } as never);
+    mountApp();
+
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: '1',
+          metaKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'mission',
+      missionId: 'mission-release',
+      surface: 'terminals',
+    });
+    expect(useLayoutStore.getState().focusedPaneId).toBe(
+      'pane-transient-mission',
+    );
+  });
+
   it('abre a lista de atenção com ⌘J quando há workspace', () => {
     openWorkspace();
     useProductNavigationStore.getState().openTerminal();

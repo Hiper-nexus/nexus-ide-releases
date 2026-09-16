@@ -12,6 +12,7 @@ import { useQuotaStore } from '../../state/quota-store';
 import { useAdapterStore } from '../../state/adapter-store';
 import { useLayoutStore } from '../../state/layout-store';
 import { useWorkspaceStore } from '../../state/workspace-store';
+import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { buildGridTree, createLeaf, createPane } from '../../lib/split-tree';
 
 (
@@ -726,6 +727,55 @@ describe('WorkspaceRail', () => {
       act(() => {
         useLayoutStore.setState({ root: previousRoot });
         useAdapterStore.getState().receive([]);
+      });
+    }
+  });
+
+  it('ao focar um agente, preserva a missão e abre apenas os terminais dela', () => {
+    const previousRoot = useLayoutStore.getState().root;
+    const previousDestination = useProductNavigationStore.getState().destination;
+    const previousSettingsReturn =
+      useProductNavigationStore.getState().settingsReturnDestination;
+    const pane = {
+      ...createPane('cli-agent', undefined, 'claude'),
+      id: 'pane-mission-scoped',
+      title: 'agente da missão',
+      missionId: 'mission-running',
+    };
+    act(() => {
+      useLayoutStore.setState({ root: createLeaf(pane), focusedPaneId: null });
+      useProductNavigationStore.setState({
+        destination: { kind: 'launcher' },
+        settingsReturnDestination: null,
+      });
+    });
+
+    try {
+      const { host } = renderRail({
+        selection: { kind: 'mission', missionId: 'mission-running' },
+      });
+      const agent = host.querySelector<HTMLButtonElement>(
+        '.workspace-rail__agent-btn',
+      );
+      expect(agent).not.toBeNull();
+
+      act(() => agent!.click());
+
+      expect(useLayoutStore.getState().focusedPaneId).toBe(
+        'pane-mission-scoped',
+      );
+      expect(useProductNavigationStore.getState().destination).toEqual({
+        kind: 'mission',
+        missionId: 'mission-running',
+        surface: 'terminals',
+      });
+    } finally {
+      act(() => {
+        useLayoutStore.setState({ root: previousRoot });
+        useProductNavigationStore.setState({
+          destination: previousDestination,
+          settingsReturnDestination: previousSettingsReturn,
+        });
       });
     }
   });
