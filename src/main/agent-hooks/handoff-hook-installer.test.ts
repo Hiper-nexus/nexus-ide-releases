@@ -13,6 +13,8 @@ import {
   cleanAgentsWorkspaceHooks,
   cleanCodexWorkspaceHooks,
   cleanHomeHooksConfigs,
+  cleanRegisteredWorkspaceHooks,
+  cleanWorkspaceHookConfigs,
   cleanupLegacyHandoffHooks,
   deleteLegacyHandoffHookScripts,
   removeLegacyHandoffHookRegistration,
@@ -57,6 +59,25 @@ function codexHooksPath(workspace: string): string {
 
 function agentsHooksPath(workspace: string): string {
   return join(workspace, '.agents', 'hooks.json');
+}
+
+/** <dir>/.codex/hooks.json no formato do Codex com o soft-status morto. */
+function deadCodexFile(file: string, dir: string, event: string): void {
+  writeJson(file, {
+    hooks: {
+      [event]: [
+        {
+          hooks: [
+            {
+              type: 'command',
+              command: overclockCommand(dir, 'soft-status.mjs'),
+              timeout: 5,
+            },
+          ],
+        },
+      ],
+    },
+  });
 }
 
 /** Caminho do soft-status.mjs do Overclock, com o $HOME do teste. */
@@ -565,6 +586,77 @@ describe('cleanHomeHooksConfigs', () => {
     writeFileSync(file, '{not json');
     expect(cleanHomeHooksConfigs(home)).toEqual([]);
     expect(readFileSync(file, 'utf8')).toBe('{not json');
+  });
+});
+
+describe('cleanWorkspaceHookConfigs', () => {
+  it('limpa os dois configs de UMA pasta e é idempotente', () => {
+    const ws = makeTemp();
+    const codexFile = codexHooksPath(ws);
+    const agentsFile = agentsHooksPath(ws);
+    deadCodexFile(codexFile, ws, 'Iniciativa');
+    writeJson(agentsFile, {
+      'overclock-soft-status': {
+        enabled: true,
+        PostToolUse: [
+          {
+            type: 'command',
+            command: join(ws, '.nexus', 'agent-hooks', 'soft-status.mjs'),
+          },
+        ],
+      },
+    });
+
+    expect(cleanWorkspaceHookConfigs(ws)).toEqual([codexFile, agentsFile]);
+    expect(existsSync(codexFile)).toBe(false);
+    expect(existsSync(agentsFile)).toBe(false);
+    expect(cleanWorkspaceHookConfigs(ws)).toEqual([]);
+  });
+});
+
+describe('cleanRegisteredWorkspaceHooks', () => {
+  it('limpa os dois workspaces em tmp e ignora pasta fora da lista', () => {
+    const a = makeTemp();
+    const b = makeTemp();
+    const decoy = makeTemp();
+    const codexA = codexHooksPath(a);
+    const codexB = codexHooksPath(b);
+    const agentsB = agentsHooksPath(b);
+    deadCodexFile(codexA, a, 'Iniciativa');
+    deadCodexFile(codexB, b, 'Iniciativa');
+    deadCodexFile(agentsHooksPath(decoy), decoy, 'Iniciativa');
+    writeJson(agentsB, {
+      'overclock-soft-status': {
+        enabled: true,
+        Stop: [
+          {
+            type: 'command',
+            command: overclockCommand(b, 'soft-status.mjs'),
+          },
+        ],
+      },
+    });
+
+    // Nenhum dos caminhos vem de process.cwd(): quem manda é a lista.
+    expect(cleanRegisteredWorkspaceHooks([a, b])).toEqual([
+      codexA,
+      codexB,
+      agentsB,
+    ]);
+    expect(existsSync(codexA)).toBe(false);
+    expect(existsSync(codexB)).toBe(false);
+    expect(existsSync(agentsB)).toBe(false);
+    // Pasta registrada só na cabeça de quem chamou continua intocada.
+    expect(existsSync(agentsHooksPath(decoy))).toBe(true);
+  });
+
+  it('caminho repetido não limpa duas vezes e vazio não explode', () => {
+    const ws = makeTemp();
+    const file = codexHooksPath(ws);
+    deadCodexFile(file, ws, 'Iniciativa');
+
+    expect(cleanRegisteredWorkspaceHooks(['', ws, ws, ''])).toEqual([file]);
+    expect(cleanRegisteredWorkspaceHooks([ws, ws])).toEqual([]);
   });
 });
 
