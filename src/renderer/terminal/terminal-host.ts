@@ -7,6 +7,7 @@ import { attachTerminalPathLinks } from './terminal-path-links';
 import { TerminalGhostAssist } from './terminal-ghost-assist';
 import '@xterm/xterm/css/xterm.css';
 import type { PaneModel } from '../../shared/types';
+import type { PaneParkRequest } from '../../shared/orch-types';
 import { buildPtySpawnRequest } from './spawn-request';
 import type { TerminalSettings } from '../../shared/settings-types';
 import { DEFAULT_TERMINAL_SETTINGS } from '../../shared/settings-types';
@@ -16,6 +17,7 @@ import {
   useLayoutStore,
 } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
+import { usePaneParkedStore } from '../state/pane-parked-store';
 import { useOrchStore } from '../state/orch-store';
 import { useToastStore } from '../state/toast-store';
 import { getActiveWorkspacePath } from '../state/active-workspace';
@@ -837,6 +839,9 @@ function startSpawn(
   host.spawnGeneration = generation;
   host.spawnStarted = true;
   host.hibernated = false;
+  // Qualquer spawn novo (Acordar, Reiniciar, digitar no pane dormindo) supera
+  // o "estacionado" — é o único ponto por onde todo respawn deste pane passa.
+  usePaneParkedStore.getState().clearParked(pane.id);
   useSessionStateStore.getState().setPaneState(pane.id, 'spawning');
   const pack = continuityPack ?? takePendingContinuity(pane.id);
   return (async (): Promise<string | null> => {
@@ -2051,6 +2056,18 @@ async function injectDroppedUri(host: Host, dropped: DroppedUri): Promise<void> 
 function wireInteractions(host: Host, sendJumpKeyOnScroll = false): void {
   const { element, term } = host;
 
+  // 0.76.45: digitar num pane estacionado acorda — mesmo gesto do botão
+  // "Acordar". Listener persistente e independente do onData por-spawn (que
+  // markPaneParked descarta): só dispara enquanto o pane está em
+  // usePaneParkedStore, então nunca compete com a digitação normal.
+  term.onData(() => {
+    if (!usePaneParkedStore.getState().parked.has(host.paneId)) return;
+    const pane = listPanes(useLayoutStore.getState().root).find(
+      (candidate) => candidate.id === host.paneId,
+    );
+    if (pane) wakeHost(pane);
+  });
+
   // TUI (alternate screen, Grok/Claude/Codex): wheel → PageUp/PageDown no PTY.
   // Shell/log (normal buffer): xterm continua rolando o viewport.
   element.addEventListener(
@@ -3154,6 +3171,43 @@ export function wakeHost(pane: PaneModel): boolean {
   useSessionStateStore.getState().setPaneState(pane.id, 'spawning');
   void startSpawn(pane, host, pane.kind === 'cli-agent');
   return true;
+}
+
+/**
+ * 0.76.45: main → renderer via orch:pane.parkRequest. O guardian estacionou
+ * este pane por ociosidade (ou pressão de memória) e já encerrou a sessão
+ * PTY antes de mandar isto — o renderer só reflete: mantém o scrollback,
+ * descarta os listeners do spawn morto (mesmo gesto de `hibernateHost`, para
+ * o próximo `startSpawn` não herdar um onData duplicado) e marca o pane em
+ * `usePaneParkedStore` (cabeçalho "Dormindo" + botão "Acordar" no toolbar).
+ * Acordar reusa `wakeHost` — mesmo caminho do Dormir/Acordar manual.
+ */
+export function markPaneParked(request: PaneParkRequest): void {
+  const host = hosts.get(request.paneId);
+  if (!host || host.disposed) return;
+  if (host.sessionId === request.sessionId) {
+    setHostSession(host, request.paneId, null);
+  }
+  host.cleanups.forEach((fn) => fn());
+  host.cleanups = [];
+  host.spawnStarted = false;
+  host.hibernated = true;
+  host.term.options.cursorBlink = false;
+  usePaneParkedStore.getState().markParked(request.paneId, {
+    sessionId: request.sessionId,
+    parkedAt: request.parkedAt,
+    reason: request.reason,
+  });
+  const reasonLabel =
+    request.reason === 'memory-pressure' ? 'pressão de memória' : 'ociosidade';
+  try {
+    host.term.writeln(
+      `\r\n\x1b[36m[nexus] pane estacionado (${reasonLabel}) — processo encerrado, ` +
+        'buffer preservado. Use ☀ ou digite para acordar.\x1b[0m',
+    );
+  } catch {
+    // Terminal pode não estar aberto ainda.
+  }
 }
 
 /** The live PTY session id backing a pane, or null if not spawned yet. */

@@ -313,6 +313,18 @@ export interface PerfSnapshot {
   };
 }
 
+/**
+ * 0.76.45: broadcast periódico main → todos os renderers (perf:paneFootprints).
+ * Mesmo dado do panes.footprints do PerfSnapshot (probePaneFootprints +
+ * getCachedSystemMemory), mas empurrado a cada 30s e indexado por sessionId
+ * para lookup O(1) no badge de custo do PaneToolbar, em vez de poll.
+ */
+export interface PaneFootprintBroadcast {
+  capturedAt: number;
+  bySessionId: Record<string, { rssBytes: number | null; processCount: number }>;
+  systemMemory: { freeMB: number | null; swapUsedMB: number | null } | null;
+}
+
 export interface RecipeLintIssue {
   severity: 'error' | 'warning';
   squadId: string;

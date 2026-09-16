@@ -161,6 +161,10 @@ import {
   shutdownNonWorkerAutoClose,
 } from "./orch/pane-non-worker-auto-close";
 import { refreshSystemMemorySample } from "./orch/pane-admission";
+import {
+  startPaneFootprintBroadcast,
+  stopPaneFootprintBroadcast,
+} from "./perf/pane-footprint-broadcast";
 import { ProjectRuntimeManager } from "./runtime/project-runtime-manager";
 import {
   buildMultiPcBackendStatus,
@@ -797,6 +801,9 @@ if (!wireDeepLinks()) {
     // Primeira amostra de memória para o gate de admissão de panes (F-572);
     // o gate é síncrono e lê o cache — sem isso o primeiro spawn nasce cego.
     void refreshSystemMemorySample();
+    // Badge de custo por pane no cabeçalho (0.76.45): push periódico do
+    // footprint por sessão para todos os renderers.
+    startPaneFootprintBroadcast();
 
     // Gap A: register Claude+Codex managed hook installers. Installing edits the
     // user's GLOBAL ~/.claude & ~/.codex config (affects those tools even outside
@@ -1146,6 +1153,7 @@ function shutdown(): Promise<void> {
     // F-572: nenhum fechamento automático de pane pode disparar no meio do
     // teardown físico — a varredura e os timers param antes do PTY.
     shutdownNonWorkerAutoClose();
+    stopPaneFootprintBroadcast();
     // Quiesce periodic orchestration before physical teardown, but retain its
     // exact exit observer and stores until PTY proof and reconciliation are
     // complete. A failed proof must leave the next retry operational.

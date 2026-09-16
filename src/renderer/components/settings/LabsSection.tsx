@@ -11,6 +11,11 @@ import { SettingsSectionTitle } from './SettingsSectionTitle';
 
 /** Rótulos e dicas PT-BR por flag; ids novos caem no fallback (id cru). */
 export const LABS_FLAG_COPY: Record<string, { title: string; hint?: string }> = {
+  'feature.mcp.sharedHub': {
+    title: 'Compartilhar servidores MCP entre os painéis',
+    hint:
+      'Os servidores MCP do seu perfil sobem uma vez no Nexus e cada painel fala com eles por HTTP, em vez de cada painel abrir os seus (~600 MB por painel). Desligar volta ao modo antigo.',
+  },
   'feature.mission.warmupAdvisories': {
     title: 'Preparar revisão durante a execução',
     hint: 'Revisores preparam uma lista de verificações enquanto a missão é implementada.',

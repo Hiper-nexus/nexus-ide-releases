@@ -3,6 +3,7 @@ import type {
   MissionPaneRecoveryRequest,
   MissionPaneRecoveryResult,
   MissionPanePresentationRequest,
+  PaneParkRequest,
   PaneRegistryEntry,
 } from '../../shared/orch-types';
 import type { PaneModel } from '../../shared/types';
@@ -25,6 +26,7 @@ import {
   getPaneSessionId,
   holdSpawnUntilApproved,
   isPaneSessionHealthy,
+  markPaneParked,
   markPersistedAuthorityOnSpawn,
   onPaneSessionChange,
   respawnMissionPaneFresh,
@@ -763,6 +765,10 @@ export function useOrchBridge(): void {
         }
         useLayoutStore.getState().close(paneId, 'orch-close-request');
         syncPanesNow(); // Critical: close request needs immediate sync
+      }),
+
+      window.nexus.orch.onPaneParkRequest((request: PaneParkRequest) => {
+        markPaneParked(request);
       }),
 
       window.nexus.mission.onChanged((items) => {

@@ -70,6 +70,7 @@ import type {
   BrowserPaneOpenRequest,
   BrowserPaneOpenResult,
   PaneCloseRequest,
+  PaneParkRequest,
   McpRuntimeInfo,
   Mission,
   MissionOperatorCompleteResult,
@@ -206,6 +207,7 @@ import type {
   EnrichedCatalogInfo,
   InstalledItemInfo,
   NativeToolInfo,
+  PaneFootprintBroadcast,
   PaneSessionState,
   PerfSnapshot,
   RecipeOverlayResult,
@@ -644,6 +646,9 @@ export interface NexusApi {
     sendBrowserOpenResult(result: BrowserPaneOpenResult): void;
     onBrowserOpenRequest(cb: (req: BrowserPaneOpenRequest) => void): Unsubscribe;
     onPaneCloseRequest(cb: (request: PaneCloseRequest) => void): Unsubscribe;
+    /** Main → renderer (0.76.45): o guardian estacionou este pane — a sessão
+     * PTY já foi encerrada; o renderer marca `parked` e oferece "Acordar". */
+    onPaneParkRequest(cb: (request: PaneParkRequest) => void): Unsubscribe;
     /**
      * Teclado do operador num pane de missão. O renderer não escreve nesses
      * panes; pede ao main, que valida posse/missão/formato e escreve pelo
@@ -1039,6 +1044,8 @@ export interface NexusApi {
   };
   perf: {
     snapshot(): Promise<PerfSnapshot>;
+    /** Push periódico (30s) do footprint por pane — ver PERF_CHANNELS.paneFootprints. */
+    onPaneFootprints(cb: (event: PaneFootprintBroadcast) => void): Unsubscribe;
   };
   mcp: {
     invoke(

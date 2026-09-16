@@ -9,8 +9,11 @@ import {
 import type { PaneModel } from '../../shared/types';
 import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
+import { usePaneParkedStore } from '../state/pane-parked-store';
+import { usePaneFootprintStore } from '../state/pane-footprint-store';
 import {
   hibernateHost,
+  onPaneSessionChange,
   respawnWithResume,
   scrollPaneToBottom,
   wakeHost,
@@ -87,6 +90,24 @@ function StateIndicator({
 }) {
   // displayStates lags busy→idle so Trabalho↔Pronto does not flash every quiet gap.
   const state = useSessionStateStore((s) => s.displayStates.get(paneId));
+  // 0.76.45: estacionado pelo guardian é um veredito do main sobre um pane
+  // sem sessão — sobrepõe o que a sessão local (provavelmente 'exited')
+  // mostraria, e reusa o ícone/cor do hibernado manual (mesma leitura visual,
+  // sem precisar de token novo).
+  const isParked = usePaneParkedStore((s) => s.parked.has(paneId));
+  if (isParked) {
+    return (
+      <span
+        className="toolbar__state toolbar__state--chip toolbar__state--hibernated"
+        data-tip="Pane estacionado (guardian) — sessão encerrada, buffer preservado. Use Acordar."
+        aria-label="Dormindo"
+        style={compact ? { minWidth: 14 } : undefined}
+      >
+        <PixelIcon name="status-hibernated" size={10} />
+        {!compact && <span className="toolbar__state-label">Dormindo</span>}
+      </span>
+    );
+  }
   if (!state) return null;
 
   const view = paneSessionView(state);
@@ -102,6 +123,57 @@ function StateIndicator({
     >
       <PixelIcon name={STATE_ICON[view.mod]} size={10} />
       {!compact && <span className="toolbar__state-label">{view.chip}</span>}
+    </span>
+  );
+}
+
+/** Sessão PTY viva deste pane, reativa (getPaneSessionId sozinho não re-renderiza). */
+function usePaneLiveSessionId(paneId: string): string | null {
+  const [sessionId, setSessionId] = useState<string | null>(() =>
+    getPaneSessionId(paneId),
+  );
+  useEffect(() => {
+    setSessionId(getPaneSessionId(paneId));
+    return onPaneSessionChange((id, next) => {
+      if (id === paneId) setSessionId(next);
+    });
+  }, [paneId]);
+  return sessionId;
+}
+
+/** Acima disto, o badge de custo (RAM) vira aviso — tom do tema, não hardcoded. */
+const FOOTPRINT_WARN_BYTES = 1.5 * 1024 * 1024 * 1024;
+
+/** "512 MB" / "80 MB" (arredondado à dezena abaixo de 100 MB) / "1.8 GB". */
+export function formatFootprintLabel(rssBytes: number): string {
+  const mb = rssBytes / (1024 * 1024);
+  if (mb < 100) return `${Math.round(mb / 10) * 10} MB`;
+  if (mb < 1024) return `${Math.round(mb)} MB`;
+  return `${(mb / 1024).toFixed(1)} GB`;
+}
+
+/** Badge discreto de RSS por pane (0.76.45) — null = nada, nunca "0 MB" inventado. */
+function FootprintBadge({ paneId }: { paneId: string }) {
+  const sessionId = usePaneLiveSessionId(paneId);
+  const entry = usePaneFootprintStore((s) =>
+    sessionId ? s.bySessionId[sessionId] : undefined,
+  );
+  if (!entry || entry.rssBytes === null) return null;
+  const warn = entry.rssBytes >= FOOTPRINT_WARN_BYTES;
+  return (
+    <span
+      className="toolbar__badge toolbar__footprint"
+      data-tip={`${entry.processCount} processos · RSS da árvore`}
+      // F-568: tabular-nums + largura mínima — o número muda a cada 30s, o
+      // slot não pode empurrar os vizinhos a cada troca de dígito.
+      style={{
+        fontVariantNumeric: 'tabular-nums',
+        minWidth: 52,
+        textAlign: 'right',
+        color: warn ? 'var(--danger)' : undefined,
+      }}
+    >
+      {formatFootprintLabel(entry.rssBytes)}
     </span>
   );
 }
@@ -208,6 +280,10 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
       ? resolveModelChipLabel(pane.adapterId, pane.model, pane.effort)
       : null;
   const isHibernated = paneState === 'hibernated';
+  // 0.76.45: estacionado pelo guardian dorme/acorda igual ao hibernado
+  // manual — mesmo botão, mesmo wakeHost, só a origem da decisão muda.
+  const isParked = usePaneParkedStore((s) => s.parked.has(pane.id));
+  const isSleeping = isHibernated || isParked;
   const isMaximized = maximizedPaneId === pane.id;
 
   useEffect(() => {
@@ -336,14 +412,16 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
       });
       list.push({
         id: 'hibernate',
-        label: isHibernated ? 'Acordar' : 'Dormir',
-        detail: isHibernated
-          ? 'Reabre o processo deste pane'
-          : 'Encerra o processo e mantém o buffer na tela',
-        icon: isHibernated ? 'sun' : 'moon',
-        active: isHibernated,
+        label: isSleeping ? 'Acordar' : 'Dormir',
+        detail: isParked
+          ? 'Estacionado pelo guardian (ocioso) — acorda retomando a mesma sessão'
+          : isHibernated
+            ? 'Reabre o processo deste pane'
+            : 'Encerra o processo e mantém o buffer na tela',
+        icon: isSleeping ? 'sun' : 'moon',
+        active: isSleeping,
         run: () => {
-          if (isHibernated) {
+          if (isSleeping) {
             wakeHost(pane);
             return;
           }
@@ -448,6 +526,8 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
     isVacancy,
     isCanvas,
     isHibernated,
+    isParked,
+    isSleeping,
     isMaximized,
     stageFocusMode,
     stagePaneId,
@@ -596,7 +676,9 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
         {pane.kind === 'cli-agent' && (
           <AgentAvatar
             category={agentCategory}
-            state={displayState ?? paneState ?? 'spawning'}
+            // Estacionado reusa o visual "hibernated" (avatar apagado) — não
+            // existe estado 'parked' no avatar, a leitura já é a mesma.
+            state={isParked ? 'hibernated' : displayState ?? paneState ?? 'spawning'}
             size="micro"
             label={pane.agentName ?? pane.title}
             className="toolbar__agent-avatar"
@@ -710,6 +792,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
           <StateIndicator paneId={pane.id} compact={density === 'compact'} />
         )}
         {pane.kind === 'cli-agent' && <CostBadge paneId={pane.id} />}
+        {pane.kind === 'cli-agent' && <FootprintBadge paneId={pane.id} />}
         <DevServerChip pane={pane} />
         {stageFocusMode && stagePaneId && stagePaneId !== pane.id && (
           <button

@@ -15,6 +15,7 @@ import { BrowserPane } from './BrowserPane';
 import { isStructuralPlaceholderPane } from '../lib/split-tree';
 import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
+import { usePaneParkedStore } from '../state/pane-parked-store';
 import type { PaneModel } from '../../shared/types';
 import {
   MIN_CANVAS_PANE_HEIGHT,
@@ -62,12 +63,17 @@ export const CanvasPaneNode = memo(function CanvasPaneNode({
   const isFocused = useLayoutStore((s) => s.focusedPaneId === id);
   const focus = useLayoutStore((s) => s.focus);
   const paneState = useSessionStateStore((s) => s.paneStates.get(id));
+  // 0.76.45: estacionado pelo guardian sobrepõe o que a sessão local
+  // (provavelmente 'exited') mostraria — mesma leitura do hibernado manual,
+  // sem precisar de mais uma chave em SESSION_LABELS.
+  const isParked = usePaneParkedStore((s) => s.parked.has(id));
+  const effectiveState = isParked ? 'hibernated' : paneState;
   const isSnapshot = zoom < SNAPSHOT_THRESHOLD;
   const stateLabel =
     pane.kind === 'browser'
       ? 'browser aberto'
-      : paneState
-        ? SESSION_LABELS[paneState]
+      : effectiveState
+        ? SESSION_LABELS[effectiveState]
         : 'conectando';
 
   // Attach (or re-attach after snapshot) the terminal into this slot.
@@ -107,7 +113,7 @@ export const CanvasPaneNode = memo(function CanvasPaneNode({
   return (
     <div
       className={`canvas-pane ${isFocused ? 'canvas-pane--focused' : ''}`}
-      data-session-state={paneState ?? 'unknown'}
+      data-session-state={effectiveState ?? 'unknown'}
       onMouseDown={() => focus(id)}
       onFocus={(event) => {
         if (event.target === event.currentTarget) focus(id);
@@ -156,7 +162,7 @@ export const CanvasPaneNode = memo(function CanvasPaneNode({
       ) : isSnapshot ? (
         <div className="canvas-pane__snapshot">
           <span
-            className={`canvas-pane__snapshot-state canvas-pane__snapshot-state--${paneState ?? 'unknown'}`}
+            className={`canvas-pane__snapshot-state canvas-pane__snapshot-state--${effectiveState ?? 'unknown'}`}
           >
             <i aria-hidden="true" />
             {stateLabel}

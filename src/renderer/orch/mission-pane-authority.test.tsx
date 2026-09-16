@@ -138,6 +138,7 @@ function installNexus(): void {
         onPaneRecoveryRequest: listener(),
         onBrowserOpenRequest: listener(),
         onPaneCloseRequest: listener(),
+        onPaneParkRequest: listener(),
         onMissionsChanged: listener(),
         onHandoffsChanged: listener(),
         onTodosChanged: listener(),

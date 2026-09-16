@@ -103,6 +103,7 @@ import type {
   AdapterInfo,
   AgentWaitingEvent,
   BgTaskEventPayload,
+  PaneFootprintBroadcast,
   PaneLoginStuckEvent,
   PaneWorkerSpawnFailedEvent,
 } from '../shared/types';
@@ -123,6 +124,7 @@ import type {
   Handoff,
   BrowserPaneOpenRequest,
   PaneCloseRequest,
+  PaneParkRequest,
   Mission,
   MissionPatch,
   MissionPanePresentationRequest,
@@ -458,6 +460,7 @@ const paneRecoveryRequestListeners = new Set<
 >();
 const browserOpenRequestListeners = new Set<(req: BrowserPaneOpenRequest) => void>();
 const paneCloseRequestListeners = new Set<(request: PaneCloseRequest) => void>();
+const paneParkRequestListeners = new Set<(request: PaneParkRequest) => void>();
 const missionChangedListeners = new Set<
   (items: MissionSummarySnapshot[]) => void
 >();
@@ -470,6 +473,9 @@ const paneLoginStuckListeners = new Set<(event: PaneLoginStuckEvent) => void>();
 const agentWaitingListeners = new Set<(event: AgentWaitingEvent) => void>();
 const workerSpawnFailedListeners = new Set<
   (event: PaneWorkerSpawnFailedEvent) => void
+>();
+const paneFootprintsListeners = new Set<
+  (event: PaneFootprintBroadcast) => void
 >();
 
 ipcRenderer.on(ORCH_CHANNELS.paneSpawnRequest, (_e, req: OrchPaneSpawnRequest) =>
@@ -490,6 +496,9 @@ ipcRenderer.on(ORCH_CHANNELS.browserOpenRequest, (_e, req: BrowserPaneOpenReques
 );
 ipcRenderer.on(ORCH_CHANNELS.paneCloseRequest, (_e, request: PaneCloseRequest) =>
   emitToListeners(paneCloseRequestListeners, 'paneCloseRequestListeners', request),
+);
+ipcRenderer.on(ORCH_CHANNELS.paneParkRequest, (_e, request: PaneParkRequest) =>
+  emitToListeners(paneParkRequestListeners, 'paneParkRequestListeners', request),
 );
 ipcRenderer.on(
   ORCH_CHANNELS.missionChanged,
@@ -525,6 +534,9 @@ ipcRenderer.on(
       'workerSpawnFailedListeners',
       event,
     ),
+);
+ipcRenderer.on(PERF_CHANNELS.paneFootprints, (_e, event: PaneFootprintBroadcast) =>
+  emitToListeners(paneFootprintsListeners, 'paneFootprintsListeners', event),
 );
 
 const settingsChangedListeners = new Set<(settings: TerminalSettings) => void>();
@@ -912,6 +924,7 @@ const api: NexusApi = {
       ipcRenderer.send(ORCH_CHANNELS.browserOpenResult, result),
     onPaneSpawnRequest: (cb) => addListener(paneSpawnRequestListeners, cb),
     onPaneCloseRequest: (cb) => addListener(paneCloseRequestListeners, cb),
+    onPaneParkRequest: (cb) => addListener(paneParkRequestListeners, cb),
     sendPaneOperatorInput: (input: { sessionId: string; data: string }) =>
       ipcRenderer.invoke(ORCH_CHANNELS.paneOperatorInput, input),
     listMissions: () => ipcRenderer.invoke(ORCH_CHANNELS.missionsList),
@@ -1253,6 +1266,7 @@ const api: NexusApi = {
   },
   perf: {
     snapshot: () => ipcRenderer.invoke(PERF_CHANNELS.snapshot),
+    onPaneFootprints: (cb) => addListener(paneFootprintsListeners, cb),
   },
   mcp: {
     invoke: (tool: string, args: Record<string, unknown> = {}) =>

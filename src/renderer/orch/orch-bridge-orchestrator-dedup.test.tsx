@@ -163,6 +163,7 @@ describe('orchestration bridge orchestrator dedup', () => {
           onPaneRecoveryRequest: listener(),
           onBrowserOpenRequest: listener(),
           onPaneCloseRequest: listener(),
+          onPaneParkRequest: listener(),
           onMissionsChanged: listener(),
           onHandoffsChanged: listener(),
           onTodosChanged: listener(),
@@ -217,6 +218,7 @@ describe('orchestration bridge orchestrator dedup', () => {
           onPaneRecoveryRequest: listener(),
           onBrowserOpenRequest: listener(),
           onPaneCloseRequest: listener(),
+          onPaneParkRequest: listener(),
           onMissionsChanged: listener(),
           onHandoffsChanged: listener(),
           onTodosChanged: listener(),
@@ -313,6 +315,7 @@ describe('orchestration bridge leadership mirror', () => {
           onPaneRecoveryRequest: listener(),
           onBrowserOpenRequest: listener(),
           onPaneCloseRequest: listener(),
+          onPaneParkRequest: listener(),
           onMissionsChanged: vi.fn((cb: (missions: Mission[]) => void) => {
             missionsHandler = cb;
             return vi.fn();

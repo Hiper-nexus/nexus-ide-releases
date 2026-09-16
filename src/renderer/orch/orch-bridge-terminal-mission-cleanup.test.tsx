@@ -151,6 +151,7 @@ describe('cleanup de panes de missão terminal (campanha 0.50)', () => {
           onPaneRecoveryRequest: listener(),
           onBrowserOpenRequest: listener(),
           onPaneCloseRequest: listener(),
+          onPaneParkRequest: listener(),
           onMissionsChanged: vi.fn((cb: (missions: Mission[]) => void) => {
             missionsHandler = cb;
             return vi.fn();

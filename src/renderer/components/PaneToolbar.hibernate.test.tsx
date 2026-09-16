@@ -16,6 +16,8 @@ vi.mock('../terminal/terminal-host', () => ({
   wakeHost: power.wakeHost,
   respawnWithResume: vi.fn(),
   scrollPaneToBottom: vi.fn(),
+  getPaneSessionId: vi.fn(() => null),
+  onPaneSessionChange: vi.fn(() => vi.fn()),
 }));
 vi.mock('../state/confirm-store', () => ({ askConfirm: power.askConfirm }));
 vi.mock('../terminal/pane-close-guard', () => ({ requestPaneClose: vi.fn() }));
