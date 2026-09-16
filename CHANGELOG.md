@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.76.46 — Otimizar, não limitar (canal Windows)
+
+- **Mesmo conteúdo da 0.76.45, agora no canal Windows x64**: a 0.76.45 saiu só para macOS; cada canal publica sua própria versão estável, então o Windows avança com o número seguinte recebendo o mesmo código assinado. Para quem vem da 0.76.41, a atualização também traz o conteúdo da 0.76.43 (pane guardian, sessão de CLI isolada por checkout, liderança única de missão).
+- **Os itens entregues são os da seção 0.76.45 abaixo**: pane dormindo em vez de fechado, hub MCP compartilhado, teto de panes como aviso, custo por pane no cabeçalho, reaper de emergência e limites proporcionais à máquina (F-572/F-573).
+
 ## 0.76.45 — Otimizar, não limitar
 
 - **Pane dormindo em vez de fechado (F-573)**: pane ocioso sem dono (helper aberto pela sua mão ou worker sem missão) tem o CLI encerrado após 30 min — ou na hora sob pressão de memória — mas FICA no layout com o scrollback e um botão "Acordar" que retoma a mesma conversa (`resume` exato por sessão, F-567). `requestPanePark` no main, `state: 'parked'` no snapshot, `ORCH_CHANNELS.paneParkRequest` para o renderer. Memória de pane dormindo: zero.
