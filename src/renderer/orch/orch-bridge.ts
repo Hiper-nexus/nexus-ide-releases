@@ -32,7 +32,6 @@ import {
   waitForHealthyPaneSession,
   waitForSession,
 } from '../terminal/terminal-host';
-import { takePaneSpawnError } from '../terminal/pane-spawn-errors';
 import { waitForBrowserPaneCreated } from '../browser/browser-host';
 import { initAgentNotificationBridge } from './agent-notification-bridge';
 import type { Handoff } from '../../shared/orch-types';
@@ -632,24 +631,41 @@ export function useOrchBridge(): void {
               `[orch] pane spawn materialized id=${req.requestId} pane=${paneId}`,
             );
             useOrchStore.getState().bindPaneMission(paneId, req.missionId);
+            // The pane identity is already main-owned and durable enough to
+            // address. Do not make the MCP caller pay for a cold CLI boot just
+            // to learn that identity; the late session bind remains authorized
+            // by the still-pending main grant.
+            if (req.allowPending) {
+              syncPanesNow();
+              window.nexus.orch.sendPaneSpawnResult({
+                requestId: req.requestId,
+                ok: true,
+                paneId,
+                sessionId: null,
+                pending: true,
+              });
+            }
             const sessionId = await waitForSession(paneId, 75_000);
             console.info(
               `[orch] pane spawn session result id=${req.requestId} pane=${paneId} session=${sessionId ?? "none"}`,
             );
             if (!sessionId) {
-              cleanupFailedOrchPane(req, paneId);
-              // O erro CONCRETO do pty.spawn (ex.: cerca do pty-manager) vale
-              // mais que o timeout genérico — sem ele o operador lê "adapter
-              // missing" quando o problema era um orquestrador registrado.
-              const detail = takePaneSpawnError(paneId ?? '');
-              window.nexus.orch.sendPaneSpawnResult({
-                requestId: req.requestId,
-                ok: false,
-                paneId,
-                error:
-                  detail ??
-                  'session did not start (adapter missing or spawn failed)',
-              });
+              if (!req.allowPending) {
+                cleanupFailedOrchPane(req, paneId);
+                window.nexus.orch.sendPaneSpawnResult({
+                  requestId: req.requestId,
+                  ok: false,
+                  paneId,
+                  error: 'session did not start (adapter missing or spawn failed)',
+                });
+                return;
+              }
+              // A sessão pode materializar depois do timeout local. O ACK
+              // pendente acima já resolveu o contrato sem declarar falha e
+              // mantém o pane vivo para nexus_pane_wait_idle.
+              console.info(
+                `[orch] pane spawn still pending id=${req.requestId} pane=${paneId}`,
+              );
               return;
             }
             syncPanesNow(); // Critical: main needs state before result

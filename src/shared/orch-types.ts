@@ -763,6 +763,8 @@ export interface OrchPaneSpawnRequest {
   /** Agente do squad que este pane representa — exibido no badge do pane. */
   agentName?: string;
   role?: 'orchestrator' | 'worker';
+  /** Main-authorized public spawn may settle before a session id exists. */
+  allowPending?: true;
   /** New mission workers are always fresh by default; main may request resume. */
   resume: boolean;
   resumeLatestOnly: boolean;
@@ -774,7 +776,8 @@ export const orchPaneSpawnResultSchema = z.object({
   requestId: z.string().min(1).max(128),
   ok: z.boolean(),
   paneId: z.string().max(128).optional(),
-  sessionId: z.string().max(128).optional(),
+  sessionId: z.string().max(128).nullable().optional(),
+  pending: z.literal(true).optional(),
   error: z.string().max(1024).optional(),
 });
 export type OrchPaneSpawnResult = z.infer<typeof orchPaneSpawnResultSchema>;

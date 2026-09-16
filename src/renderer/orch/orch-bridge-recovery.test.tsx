@@ -1188,19 +1188,11 @@ describe('orchestration bridge pane recovery', () => {
     act(() => mounted.root.unmount());
   });
 
-  it('removes a failed orchestration pane before reporting a missing session and retries without growth', async () => {
+  it('reports a pending pane when session materialization times out without cleanup', async () => {
     let spawnHandler: ((request: OrchPaneSpawnRequest) => void) | null = null;
     const sendPaneSpawnResult = vi.fn();
     const syncPanes = vi.fn();
-    let settleFirstWait: ((sessionId: string | null) => void) | null = null;
-    terminal.waitForSession
-      .mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            settleFirstWait = resolve;
-          }),
-      )
-      .mockResolvedValueOnce(null);
+    terminal.waitForSession.mockResolvedValueOnce(null);
     Object.defineProperty(window, 'nexus', {
       configurable: true,
       value: {
@@ -1242,45 +1234,31 @@ describe('orchestration bridge pane recovery', () => {
       adapterId: 'codex',
       missionId: 'mission-a',
       role: 'worker',
+      allowPending: true,
       resume: false,
       resumeLatestOnly: false,
       restorePersistedAuthority: false,
     };
 
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      act(() => spawnHandler?.(request));
-      if (attempt === 0) {
-        await vi.waitFor(() => {
-          expect(
-            listPanes(useLayoutStore.getState().root).some(
-              (pane) => pane.id === request.paneId,
-            ),
-          ).toBe(true);
-        });
-        // Terminal spawn failure historically cleared the spent token before
-        // waitForSession returned. The still-in-flight sealed request retains
-        // cleanup ownership of its exact Main-minted pane id.
-        act(() => {
-          useLayoutStore.getState().clearOrchRequestId(request.paneId);
-          settleFirstWait?.(null);
-        });
-      }
-      await vi.waitFor(() => {
-        expect(sendPaneSpawnResult).toHaveBeenCalledTimes(attempt + 1);
+    act(() => spawnHandler?.(request));
+    await vi.waitFor(() => {
+      expect(sendPaneSpawnResult).toHaveBeenCalledWith({
+        requestId: request.requestId,
+        ok: true,
+        paneId: request.paneId,
+        sessionId: null,
+        pending: true,
       });
-      expect(listPanes(useLayoutStore.getState().root).map((pane) => pane.id))
-        .toEqual(['pane-shell']);
-    }
-
-    expect(sendPaneSpawnResult).toHaveBeenLastCalledWith({
-      requestId: request.requestId,
-      ok: false,
-      paneId: request.paneId,
-      error: 'session did not start (adapter missing or spawn failed)',
     });
-    expect(syncPanes).toHaveBeenLastCalledWith([
-      expect.objectContaining({ paneId: 'pane-shell' }),
-    ]);
+
+    expect(sendPaneSpawnResult).not.toHaveBeenCalledWith(
+      expect.objectContaining({ ok: false }),
+    );
+    expect(listPanes(useLayoutStore.getState().root).map((pane) => pane.id))
+      .toContain(request.paneId);
+    expect(syncPanes).toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({ paneId: request.paneId })]),
+    );
     act(() => mounted.root.unmount());
   });
 

@@ -7,11 +7,16 @@ const harness = vi.hoisted(() => ({
     paneId: 'pane-child',
     sessionId: 'pty-child',
   })),
+  takePendingPaneSpawnResult: vi.fn((): unknown => null),
 }));
 
 vi.mock('./tool-util', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./tool-util')>()),
   spawnPaneAndMaybePrompt: harness.spawnPaneAndMaybePrompt,
+}));
+vi.mock('./pane-registry', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./pane-registry')>()),
+  takePendingPaneSpawnResult: harness.takePendingPaneSpawnResult,
 }));
 
 import { paneSpawnTool } from './tools-panes';
@@ -71,5 +76,31 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
       ),
     ).rejects.toBeTruthy();
     expect(harness.spawnPaneAndMaybePrompt).not.toHaveBeenCalled();
+  });
+
+  it('expõe o ACK pendente quando a sessão ainda não materializou', async () => {
+    harness.spawnPaneAndMaybePrompt.mockRejectedValueOnce(
+      new Error('pane spawn pending'),
+    );
+    harness.takePendingPaneSpawnResult.mockReturnValueOnce({
+      requestId: 'orchspawn-pending',
+      ok: true,
+      paneId: 'pane-pending',
+      sessionId: null,
+      pending: true,
+    });
+
+    const result = await paneSpawnTool.handler(
+      { adapterId: 'codex' },
+      userPane(),
+      { signal: new AbortController().signal },
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      paneId: 'pane-pending',
+      sessionId: null,
+      pending: true,
+    });
   });
 });

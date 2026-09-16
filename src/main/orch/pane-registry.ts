@@ -117,6 +117,9 @@ import {
 const SPAWN_TIMEOUT_MS = ORCH_SPAWN_GRANT_TTL_MS;
 const RECOVERY_TIMEOUT_MS = 90_000;
 
+/** Internal opt-in used only by the public MCP pane spawn transaction. */
+export const PENDING_SPAWN_RESULT = Symbol("pending-pane-spawn-result");
+
 type OrchMeta = PaneOrchMeta;
 
 interface RegisteredPane {
@@ -146,9 +149,28 @@ interface PendingSpawn {
   lastSentAt: number;
   attempts: number;
   settled: boolean;
+  pendingResultSent: boolean;
+  allowPendingResult: boolean;
+  abortSignal?: AbortSignal;
   abortCleanup?: () => void;
 }
 const pendingSpawns = new Map<string, PendingSpawn>();
+const pendingSpawnResults = new WeakMap<AbortSignal, OrchPaneSpawnResult>();
+
+/**
+ * `spawnPaneAndMaybePrompt` predates the pending spawn ACK and still expects
+ * a session id. Keep the compatibility seam local to this registry: the MCP
+ * pane tool consumes the already-resolved pending result and returns it to the
+ * caller, while the main pending record remains alive for the late PTY bind.
+ */
+export function takePendingPaneSpawnResult(
+  signal: AbortSignal | undefined,
+): OrchPaneSpawnResult | null {
+  if (!signal) return null;
+  const result = pendingSpawnResults.get(signal) ?? null;
+  if (result) pendingSpawnResults.delete(signal);
+  return result;
+}
 
 interface OrchSpawnGrantTombstone {
   readonly requestId: string;
@@ -305,6 +327,8 @@ export function remintOrchSpawnGrant(
     lastSentAt: Date.now(),
     attempts: 1,
     settled: false,
+    pendingResultSent: false,
+    allowPendingResult: false,
     meta: tomb.meta,
   };
   armPendingSpawnTimer(requestId, pending);
@@ -1592,6 +1616,9 @@ export function getPaneAuthzInfoOwnedByPane(
 }
 
 export type PaneSpawnOptions = MainOwnedPaneSpawnOptions;
+type PendingPaneSpawnOptions = PaneSpawnOptions & {
+  readonly [PENDING_SPAWN_RESULT]?: true;
+};
 
 /**
  * Resolve the exact current mission/workflow/squad authority exclusively from
@@ -1981,7 +2008,7 @@ function mintedWorkerIncarnationId(
 }
 
 export function requestPaneSpawn(
-  options: PaneSpawnOptions & { readonly abortSignal?: AbortSignal },
+  options: PendingPaneSpawnOptions & { readonly abortSignal?: AbortSignal },
 ): Promise<OrchPaneSpawnResult> {
   if (options.abortSignal?.aborted) {
     return Promise.resolve({
@@ -2163,6 +2190,8 @@ export function requestPaneSpawn(
     transient: options.transient === true ? true : undefined,
     agentName: options.agentName,
     role: options.role,
+    allowPending:
+      options[PENDING_SPAWN_RESULT] === true ? true : undefined,
     resume: options.resume != null && options.resume !== false,
     resumeLatestOnly: options.resumeLatestOnly === true,
     restorePersistedAuthority: false,
@@ -2195,6 +2224,13 @@ export function requestPaneSpawn(
       lastSentAt: Date.now(),
       attempts: 1,
       settled: false,
+      pendingResultSent: false,
+      allowPendingResult:
+        (options as PaneSpawnOptions &
+          { readonly [PENDING_SPAWN_RESULT]?: true })[
+          PENDING_SPAWN_RESULT
+        ] === true,
+      abortSignal: options.abortSignal,
       meta: {
         missionId: options.missionId,
         contextRevision: options.contextRevision,
@@ -2310,6 +2346,26 @@ export function resolvePaneSpawn(
     handleRendererWorkspaceScopeChange(owner, pending.meta.scope);
     return true;
   }
+  if (result.pending === true) {
+    if (
+      !pending.allowPendingResult ||
+      !result.ok ||
+      result.paneId !== pending.request.paneId ||
+      result.sessionId !== null
+    ) {
+      return false;
+    }
+    if (pending.pendingResultSent) return true;
+    pending.pendingResultSent = true;
+    if (pending.abortSignal) {
+      pendingSpawnResults.set(pending.abortSignal, result);
+    }
+    attachOrchMeta(owner, result.paneId, pending.meta);
+    // Keep this grant in `pendingSpawns`: the PTY may still bind its session
+    // after the MCP caller has received the pending ACK.
+    pending.resolve(result);
+    return true;
+  }
   if (
     result.ok &&
     (!pending.claimedSessionId ||
@@ -2335,7 +2391,7 @@ export function resolvePaneSpawn(
   if (result.ok && result.paneId) {
     attachOrchMeta(owner, result.paneId, pending.meta);
   }
-  pending.resolve(result);
+  if (!pending.pendingResultSent) pending.resolve(result);
   return true;
 }
 

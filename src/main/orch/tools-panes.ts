@@ -10,6 +10,8 @@ import {
   newOutputSince,
   readSessionOutput,
   requestPaneClose,
+  PENDING_SPAWN_RESULT,
+  takePendingPaneSpawnResult,
   waitForIdle,
   waitForNextIdle,
 } from './pane-registry';
@@ -353,7 +355,8 @@ const paneSpawn: McpToolDef = {
     'model on the same CLI. If the sealed model cannot be applied, spawn fails ' +
     'visibly. In a running mission, pass routeReservationId when the CLI is ' +
     'not the sticky roster route. Prompt is delivered in the CLI argv AT BIRTH. ' +
-    'Returns {paneId, sessionId}.',
+    'Returns {paneId, sessionId} or {paneId, sessionId:null, pending:true} ' +
+    'while the CLI session is still starting; use nexus_pane_wait_idle next.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -882,30 +885,13 @@ const paneSpawn: McpToolDef = {
       assertMcpInvocationCurrent(invocation);
       consumeReservedRoute?.();
       assertMcpInvocationCurrent(invocation);
-      const spawned = await spawnPaneAndMaybePrompt(options, {
-        // Capture the PTY identity before missionPanes.record(). If that
-        // durable write fails, the finally block must retain the reservation
-        // instead of treating the spawn as if it never happened.
-        onPaneCreated: (paneId) => {
-          spawnedWorkerPaneId = paneId;
-        },
-        invocation,
-      });
-      // F-104: sem marcação de "handoff pendente" no spawn — o marcador só
-      // era limpo por um submit do próprio worker e vetava o fechamento
-      // mecânico para sempre. A dedup por janela de turno basta.
-      // Declarado no nascimento (registro, não pergunta): o pane se fecha
-      // sozinho no handoff SUCCESS — paridade Bridge, libera a vaga sem
-      // segurar slot da onda seguinte; falha preserva pane para diagnóstico.
-      if (args.autoCloseOnHandoff === true && spawned.sessionId) {
-        armAutoCloseOnHandoff(spawned.sessionId, spawned.paneId);
-      }
-      if (deliveryContract && spawned.sessionId) {
-        armDeliveryContract(spawned.sessionId, deliveryContract);
-      }
-      // Receipt de harness (Overclock 1.3.23): quem spawnou lê O QUE foi
-      // decidido — CLI, modelo, esforço e de onde a escolha veio — em vez
-      // de inferir pelo título do pane.
+      // This opt-in is carried through the existing spawn helper without
+      // widening its public options type. Internal requestPaneSpawn callers
+      // continue waiting for a concrete session id.
+      options = {
+        ...options,
+        [PENDING_SPAWN_RESULT]: true,
+      } as SpawnToolOptions;
       const harness = {
         adapterId: options.adapterId,
         model: options.model ?? null,
@@ -921,6 +907,44 @@ const paneSpawn: McpToolDef = {
           ? { deliveryContract: { retries: deliveryContract.retries } }
           : {}),
       };
+      let spawned: { paneId: string; sessionId: string };
+      try {
+        spawned = await spawnPaneAndMaybePrompt(options, {
+          // Capture the PTY identity before missionPanes.record(). If that
+          // durable write fails, the finally block must retain the reservation
+          // instead of treating the spawn as if it never happened.
+          onPaneCreated: (paneId) => {
+            spawnedWorkerPaneId = paneId;
+          },
+          invocation,
+        });
+      } catch (error) {
+        // The legacy helper still requires a session id. When the renderer has
+        // already acknowledged the main-minted pane as pending, translate that
+        // compatibility throw back into the successful effect result.
+        const pending = takePendingPaneSpawnResult(invocation?.signal);
+        if (!pending) throw error;
+        return {
+          ...pending,
+          ...(executionMode ? { executionMode } : {}),
+          harness,
+        };
+      }
+      // F-104: sem marcação de "handoff pendente" no spawn — o marcador só
+      // era limpo por um submit do próprio worker e vetava o fechamento
+      // mecânico para sempre. A dedup por janela de turno basta.
+      // Declarado no nascimento (registro, não pergunta): o pane se fecha
+      // sozinho no handoff SUCCESS — paridade Bridge, libera a vaga sem
+      // segurar slot da onda seguinte; falha preserva pane para diagnóstico.
+      if (args.autoCloseOnHandoff === true && spawned.sessionId) {
+        armAutoCloseOnHandoff(spawned.sessionId, spawned.paneId);
+      }
+      if (deliveryContract && spawned.sessionId) {
+        armDeliveryContract(spawned.sessionId, deliveryContract);
+      }
+      // Receipt de harness (Overclock 1.3.23): quem spawnou lê O QUE foi
+      // decidido — CLI, modelo, esforço e de onde a escolha veio — em vez
+      // de inferir pelo título do pane.
       return {
         ...spawned,
         ...(executionMode ? { executionMode } : {}),

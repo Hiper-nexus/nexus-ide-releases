@@ -254,8 +254,10 @@ import {
   requestMissionWorkerPaneRetirement,
   requestPaneClose,
   requestPaneSpawn,
+  PENDING_SPAWN_RESULT,
   resolvePaneSpawn,
   syncPanes,
+  takePendingPaneSpawnResult,
   unregisterOrchRenderer,
   wasOrchestratorOperatorDismissed,
 } from "./pane-registry";
@@ -354,6 +356,77 @@ describe("main-owned mission pane spawn", () => {
     await expect(requestPaneClose(pty.paneId)).resolves.toBe(true);
     expect(pty.terminate).toHaveBeenCalledWith("pty-headless-1");
     expect(getPaneRuntimeAuthorityBySession("pty-headless-1")).toBeNull();
+  });
+
+  it("resolves a pending renderer ACK without consuming the late session bind", async () => {
+    const owner = {
+      id: 941,
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      send: vi.fn(),
+    } as unknown as WebContents & { send: ReturnType<typeof vi.fn> };
+    const signal = new AbortController().signal;
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerOrchRenderer(owner);
+
+    const resultPromise = requestPaneSpawn({
+      adapterId: "codex",
+      missionId: "mission-headless",
+      agentName: "Worker Headless",
+      workerIncarnationId: "worker-incarnation-main",
+      role: "worker",
+      scope,
+      abortSignal: signal,
+      [PENDING_SPAWN_RESULT]: true,
+    });
+    const request = owner.send.mock.calls[0]?.[1] as {
+      requestId: string;
+      paneId: string;
+    };
+    expect(claimPendingSpawnMeta(request.requestId, owner)).not.toBeNull();
+
+    expect(
+      resolvePaneSpawn(
+        {
+          requestId: request.requestId,
+          ok: true,
+          paneId: request.paneId,
+          sessionId: null,
+          pending: true,
+        },
+        owner,
+      ),
+    ).toBe(true);
+    await expect(resultPromise).resolves.toEqual({
+      requestId: request.requestId,
+      ok: true,
+      paneId: request.paneId,
+      sessionId: null,
+      pending: true,
+    });
+    expect(takePendingPaneSpawnResult(signal)).toEqual({
+      requestId: request.requestId,
+      ok: true,
+      paneId: request.paneId,
+      sessionId: null,
+      pending: true,
+    });
+
+    expect(bindPendingSpawnSession(request.requestId, owner, "pty-claimed"))
+      .toBe(true);
+    expect(
+      resolvePaneSpawn(
+        {
+          requestId: request.requestId,
+          ok: true,
+          paneId: request.paneId,
+          sessionId: "pty-claimed",
+        },
+        owner,
+      ),
+    ).toBe(true);
+    unregisterOrchRenderer(owner);
+    clearRendererWorkspaceScope(owner);
   });
 
   it("revalidates AGY auth before a headless main-owned PTY spawn", async () => {
