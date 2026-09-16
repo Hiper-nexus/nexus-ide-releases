@@ -137,6 +137,37 @@ describe('PaneToolbar narrow controls', () => {
     }
   });
 
+  it('F-568: o título mantém o mesmo estilo de largura (className + style) trocando de conteúdo', () => {
+    // A barra "treme" quando o box do título muda de largura sozinho a cada
+    // frame do spinner do CLI. Aqui não há layout real (jsdom), então o
+    // proxy é: as regras que controlam a largura (className + inline style,
+    // com min-width/ellipsis/tabular-nums) nunca dependem do texto do
+    // título — só o conteúdo textual muda entre renders.
+    const titledPane: PaneModel = { id: 'title-toolbar', kind: 'shell', title: 'nexus-ide' };
+    useLayoutStore.setState({
+      root: buildGridTree([titledPane]),
+      focusedPaneId: titledPane.id,
+      maximizedPaneId: null,
+    });
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    roots.push(root);
+    act(() => root.render(<PaneToolbar pane={titledPane} isFocused />));
+    act(() => measure(600));
+
+    const titleEl = () => host.querySelector<HTMLElement>('.toolbar__title')!;
+    const stableClassName = titleEl().className;
+    const stableStyle = titleEl().getAttribute('style');
+
+    for (const title of ['Brief da missão', 'a', 'um título bem mais comprido que o anterior']) {
+      act(() => root.render(<PaneToolbar pane={{ ...titledPane, title }} isFocused />));
+      expect(titleEl().className).toBe(stableClassName);
+      expect(titleEl().getAttribute('style')).toBe(stableStyle);
+      expect(titleEl().textContent).toBe(title);
+    }
+  });
+
   it('exibe o botão de Foco Stage na barra de ferramentas em largura normal', () => {
     const pane2: PaneModel = { id: 'pane-2', kind: 'shell', title: 'Terminal 2' };
     useLayoutStore.setState({ root: buildGridTree([pane, pane2]), focusedPaneId: pane.id, maximizedPaneId: null });
