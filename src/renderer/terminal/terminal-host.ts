@@ -2749,6 +2749,14 @@ async function reclaimExitedPaneAsShell(
   ) {
     return;
   }
+  // The input subscription from the exited session deliberately remains live
+  // long enough to receive the key that reaches this recovery path. It must
+  // be removed before the replacement shell installs its own subscription;
+  // otherwise the same xterm forwards every subsequent key once per past
+  // session (for example, `c` becomes `cc` or `ccc`).
+  host.spawnGeneration += 1;
+  host.cleanups.forEach((cleanup) => cleanup());
+  host.cleanups = [];
   host.spawnStarted = true;
   try {
     host.term.writeln(

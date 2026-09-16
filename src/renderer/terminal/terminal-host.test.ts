@@ -2,6 +2,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PaneModel } from '../../shared/types';
 
+const xtermEvents = vi.hoisted(() => ({
+  onData: new Set<(data: string) => void>(),
+}));
+
 vi.mock('@xterm/xterm', () => ({
   Terminal: class {
     cols = 80;
@@ -13,7 +17,10 @@ vi.mock('@xterm/xterm', () => ({
     loadAddon(addon: { activate?: (term: unknown) => void }) { addon.activate?.(this); }
     onTitleChange() { return { dispose() {} }; }
     onScroll() { return { dispose() {} }; }
-    onData() { return { dispose() {} }; }
+    onData(listener: (data: string) => void) {
+      xtermEvents.onData.add(listener);
+      return { dispose: () => xtermEvents.onData.delete(listener) };
+    }
     attachCustomKeyEventHandler() {}
     write() {}
     writeln() {}
@@ -38,7 +45,16 @@ vi.mock('@xterm/addon-search', () => ({ SearchAddon: class {} }));
 vi.mock('@xterm/addon-serialize', () => ({ SerializeAddon: class {} }));
 vi.mock('@xterm/addon-webgl', () => ({ WebglAddon: class {} }));
 vi.mock('./terminal-path-links', () => ({ attachTerminalPathLinks() {} }));
-vi.mock('./terminal-ghost-assist', () => ({ TerminalGhostAssist: class { dispose() {} } }));
+vi.mock('./terminal-ghost-assist', () => ({
+  TerminalGhostAssist: class {
+    state = { visibleTail: () => '' };
+    dispose() {}
+    ingestPtyData() {}
+    ingestUserInput() {}
+    tryAcceptGhost() { return false; }
+    tryAcceptGhostWord() { return false; }
+  },
+}));
 
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
@@ -65,6 +81,8 @@ import {
 const pane: PaneModel = { id: 'hidden-spawn-test', kind: 'shell', title: 'Terminal' };
 const spawn = vi.fn();
 const kill = vi.fn();
+const ptyWrite = vi.fn();
+const ptyExitListeners = new Map<string, (event: { exitCode: number }) => void>();
 const originalNexus = Object.getOwnPropertyDescriptor(window, 'nexus');
 
 function setHostSize(element: HTMLElement, width: number, height: number): void {
@@ -91,11 +109,18 @@ beforeEach(() => {
   vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} });
   spawn.mockReset().mockResolvedValue({ ok: true, sessionId: 'pty-hidden' });
   kill.mockReset();
+  ptyWrite.mockReset();
+  ptyExitListeners.clear();
+  xtermEvents.onData.clear();
   Object.defineProperty(window, 'nexus', {
     configurable: true,
     value: { pty: {
-      spawn, kill, resize: vi.fn(), write: vi.fn(),
-      onStateChange: () => () => {}, onData: () => () => {}, onExit: () => () => {},
+      spawn, kill, resize: vi.fn(), write: ptyWrite,
+      onStateChange: () => () => {}, onData: () => () => {},
+      onExit: (sessionId: string, listener: (event: { exitCode: number }) => void) => {
+        ptyExitListeners.set(sessionId, listener);
+        return () => ptyExitListeners.delete(sessionId);
+      },
     } },
   });
   useOrchStore.setState({ paneMissions: {}, missions: [] });
@@ -108,6 +133,7 @@ afterEach(() => {
   document.body.replaceChildren();
   vi.clearAllTimers();
   vi.useRealTimers();
+  xtermEvents.onData.clear();
   vi.unstubAllGlobals();
   if (originalNexus) Object.defineProperty(window, 'nexus', originalNexus);
   else Reflect.deleteProperty(window, 'nexus');
@@ -140,6 +166,34 @@ describe('spawn adiado sem ninguém esperando a sessão', () => {
     await vi.advanceTimersByTimeAsync(5_000);
     expect(spawn).not.toHaveBeenCalled();
     expect(host.disposed).toBe(true);
+  });
+});
+
+describe('reabertura de pane encerrado', () => {
+  it('mantém um único receptor de teclado depois de converter o pane em shell', async () => {
+    // F-353: o listener de input da sessão que acabou permanecia registrado
+    // para capturar a tecla que abre o shell. A nova sessão adicionava outro
+    // listener ao mesmo xterm, então cada tecla seguinte era enviada duas
+    // vezes ao PTY.
+    spawn
+      .mockResolvedValueOnce({ ok: true, sessionId: 'pty-old' })
+      .mockResolvedValueOnce({ ok: true, sessionId: 'pty-new' });
+    const host = getOrCreateHost(pane);
+    setHostSize(host.element, 1200, 800);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(pane, slot);
+    expect(await waitForSession(pane.id, 1_000)).toBe('pty-old');
+
+    ptyExitListeners.get('pty-old')?.({ exitCode: 0 });
+    for (const listener of [...xtermEvents.onData]) listener('x');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await waitForSession(pane.id, 1_000)).toBe('pty-new');
+
+    ptyWrite.mockClear();
+    for (const listener of [...xtermEvents.onData]) listener('c');
+
+    expect(ptyWrite).toHaveBeenCalledExactlyOnceWith('pty-new', 'c');
   });
 });
 
