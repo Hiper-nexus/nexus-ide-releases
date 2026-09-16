@@ -243,12 +243,14 @@ saber isto antes de mexer:
 - O guardian fecha sozinho pane ocioso sem dono (worker sem missão, helper
   aberto pela mão do operador) após 30 min; nunca orquestrador, worker de
   missão, pane aberto pelo humano no renderer ou pane com `expect` armado.
-- `spawnAgentSession` recusa o pane de agente acima do teto da máquina
-  (4–12, ~1,25 GB por pane com 8 GB reservados; 12 num Mac de 24 GB) e
-  qualquer spawn com menos de 15 % da RAM disponível ou mais de 1 GB de
-  swap, nomeando os ociosos a fechar. Sob esses mesmos limiares o guardian
-  fecha um pane ocioso elegível por minuto sem esperar o TTL. Ajuste por env
-  (`NEXUS_PANE_CAP`, `NEXUS_PANE_MIN_FREE_MB`, `NEXUS_PANE_MAX_SWAP_MB`,
+- `spawnAgentSession` só RECUSA um pane de agente com a máquina sob pressão
+  real (menos de 15 % da RAM disponível ou mais de 1 GB de swap). O teto por
+  contagem (4–12 conforme a RAM; 12 num Mac de 24 GB) é AVISO, não trava
+  (decisão do operador 16/09: otimizar, não limitar; `NEXUS_PANE_CAP_HARD=1`
+  restaura o bloqueio). Sob pressão o guardian ESTACIONA um pane ocioso
+  elegível por minuto sem esperar o TTL: o CLI é encerrado, o pane e o
+  scrollback ficam, "Acordar" retoma a mesma conversa por resume. Ajuste por
+  env (`NEXUS_PANE_CAP`, `NEXUS_PANE_MIN_FREE_MB`, `NEXUS_PANE_MAX_SWAP_MB`,
   `NEXUS_PANE_GUARD=off`). Não crie outro caminho de spawn que não passe
   por `spawnAgentSession`.
 - Workers e orquestradores NÃO herdam o perfil MCP global do usuário
