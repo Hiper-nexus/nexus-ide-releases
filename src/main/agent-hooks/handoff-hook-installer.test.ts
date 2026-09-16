@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   cleanAgentsWorkspaceHooks,
   cleanCodexWorkspaceHooks,
+  cleanHomeHooksConfigs,
   cleanupLegacyHandoffHooks,
   deleteLegacyHandoffHookScripts,
   removeLegacyHandoffHookRegistration,
@@ -366,6 +367,207 @@ describe('cleanAgentsWorkspaceHooks', () => {
   });
 });
 
+describe('cleanHomeHooksConfigs', () => {
+  const homeCodex = (home: string) => join(home, '.codex', 'hooks.json');
+  const homeGrok = (home: string) => join(home, '.grok', 'hooks.json');
+  const homeKimi = (home: string) => join(home, '.kimi-code', 'hooks.json');
+  const grokHookFile = (home: string, name: string) =>
+    join(home, '.grok', 'hooks', name);
+
+  it('limpa o hooks.json do $HOME do Codex e apaga o arquivo vazio', () => {
+    const home = makeTemp();
+    const file = homeCodex(home);
+    writeJson(file, {
+      hooks: {
+        PostToolUse: [
+          {
+            hooks: [
+              {
+                type: 'command',
+                command: overclockCommand(home, 'soft-status.mjs'),
+                timeout: 5,
+              },
+            ],
+          },
+        ],
+        Stop: [
+          {
+            hooks: [
+              {
+                type: 'command',
+                command: overclockCommand(home, 'soft-status.mjs'),
+                timeout: 30,
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(cleanHomeHooksConfigs(home)).toEqual([file]);
+    expect(existsSync(file)).toBe(false);
+    expect(cleanHomeHooksConfigs(home)).toEqual([]);
+  });
+
+  it('preserva no $HOME do Codex o hook de outro produto e o do usuário', () => {
+    const home = makeTemp();
+    const file = homeCodex(home);
+    // Assinatura real do instalador do Nexus (`codex-hook-service.ts`): o
+    // comando é um `if` de shell, não um caminho — nunca é julgado.
+    const managed = {
+      type: 'command',
+      command:
+        "if [ -x '/Users/x/.nexus/agent-hooks/codex-hook.sh' ]; then /bin/sh '/Users/x/.nexus/agent-hooks/codex-hook.sh'; fi",
+      timeout: 10,
+    };
+    writeJson(file, {
+      hooks: {
+        PostToolUse: [
+          { matcher: '', hooks: [managed] },
+          {
+            hooks: [
+              {
+                type: 'command',
+                command: overclockCommand(home, 'soft-status.mjs'),
+                timeout: 5,
+              },
+            ],
+          },
+        ],
+        Stop: [{ hooks: [{ type: 'command', command: 'pnpm lint' }] }],
+      },
+    });
+
+    expect(cleanHomeHooksConfigs(home)).toEqual([file]);
+    const hooks = readJson(file).hooks as Record<string, unknown[]>;
+    expect(hooks.PostToolUse).toHaveLength(1);
+    expect((hooks.PostToolUse[0] as { hooks: unknown[] }).hooks).toEqual([
+      managed,
+    ]);
+    expect((hooks.Stop[0] as { hooks: unknown[] }).hooks).toEqual([
+      { type: 'command', command: 'pnpm lint' },
+    ]);
+  });
+
+  it('não remove comando cujo executável existe (Codex $HOME)', () => {
+    const home = makeTemp();
+    const file = homeCodex(home);
+    const alive = touch(join(home, 'bin', 'soft-status.mjs'));
+    const doc = {
+      hooks: {
+        PreToolUse: [{ hooks: [{ type: 'command', command: alive }] }],
+      },
+    };
+    writeJson(file, doc);
+
+    expect(cleanHomeHooksConfigs(home)).toEqual([]);
+    expect(readJson(file)).toEqual(doc);
+  });
+
+  it('limpa o hooks.json do $HOME do Grok', () => {
+    const home = makeTemp();
+    const file = homeGrok(home);
+    writeJson(file, {
+      hooks: {
+        PreToolUse: [
+          {
+            hooks: [
+              {
+                type: 'command',
+                command: overclockCommand(home, 'handoff-deliver.mjs'),
+                timeout: 5,
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(cleanHomeHooksConfigs(home)).toEqual([file]);
+    expect(existsSync(file)).toBe(false);
+  });
+
+  it('limpa o hooks.json do $HOME do Kimi', () => {
+    const home = makeTemp();
+    const file = homeKimi(home);
+    writeJson(file, {
+      hooks: {
+        Stop: [
+          {
+            hooks: [
+              {
+                type: 'command',
+                command: overclockCommand(home, 'soft-status.mjs'),
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(cleanHomeHooksConfigs(home)).toEqual([file]);
+    expect(existsSync(file)).toBe(false);
+  });
+
+  it('varre ~/.grok/hooks/*.json sem presumir o formato do arquivo', () => {
+    const home = makeTemp();
+    const dead = grokHookFile(home, 'soft-status.json');
+    // Formato próprio do Grok: um hook por arquivo, comando solto no topo.
+    writeJson(dead, {
+      event: 'PostToolUse',
+      command: overclockCommand(home, 'soft-status.mjs'),
+      timeout: 5,
+    });
+    // Aninhamento no formato do Codex também sai, venha de onde vier.
+    const deadWindows = grokHookFile(home, 'handoff.json');
+    writeJson(deadWindows, {
+      hooks: [
+        {
+          hooks: [
+            {
+              type: 'command',
+              command: overclockCommand(home, 'handoff-stop.mjs'),
+            },
+          ],
+        },
+      ],
+    });
+    const alive = grokHookFile(home, 'meu-hook.json');
+    const aliveCommand = `"${touch(join(home, 'bin', 'meu hook.sh'))}"`;
+    writeJson(alive, { event: 'Stop', command: aliveCommand });
+
+    const cleaned = cleanHomeHooksConfigs(home);
+    // Ordem do readdir não é contrato — o conjunto é.
+    expect([...cleaned].sort()).toEqual([dead, deadWindows].sort());
+    expect(existsSync(dead)).toBe(false);
+    expect(existsSync(deadWindows)).toBe(false);
+    // Arquivo cujo executável existe fica byte a byte igual.
+    expect(readJson(alive)).toEqual({ event: 'Stop', command: aliveCommand });
+  });
+
+  it('não apaga vizinho não-json de ~/.grok/hooks', () => {
+    const home = makeTemp();
+    const dir = join(home, '.grok', 'hooks');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'soft-status.json.bak'), 'backup');
+    expect(cleanHomeHooksConfigs(home)).toEqual([]);
+    expect(readFileSync(join(dir, 'soft-status.json.bak'), 'utf8')).toBe(
+      'backup',
+    );
+  });
+
+  it('$HOME sem esses configs ou com json inválido → no-op, sem lançar', () => {
+    const home = makeTemp();
+    expect(cleanHomeHooksConfigs(home)).toEqual([]);
+
+    const file = homeCodex(home);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, '{not json');
+    expect(cleanHomeHooksConfigs(home)).toEqual([]);
+    expect(readFileSync(file, 'utf8')).toBe('{not json');
+  });
+});
+
 describe('deleteLegacyHandoffHookScripts', () => {
   it('apaga os três arquivos legados e devolve os nomes', () => {
     const home = makeTemp();
@@ -441,6 +643,53 @@ describe('cleanupLegacyHandoffHooks', () => {
     expect(existsSync(agentsFile)).toBe(false);
 
     expect(cleanupLegacyHandoffHooks(root, root)).toEqual({
+      unregistered: false,
+      deleted: [],
+      cleaned: [],
+    });
+  });
+
+  it('limpa o $HOME das outras CLIs, não só o workspace', () => {
+    const home = makeTemp();
+    const ws = makeTemp();
+    const codexHome = join(home, '.codex', 'hooks.json');
+    writeJson(codexHome, {
+      hooks: {
+        PreToolUse: [
+          {
+            hooks: [
+              {
+                type: 'command',
+                command: overclockCommand(home, 'soft-status.mjs'),
+                timeout: 5,
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const grokHome = join(home, '.grok', 'hooks.json');
+    writeJson(grokHome, {
+      hooks: {
+        Stop: [
+          {
+            hooks: [
+              {
+                type: 'command',
+                command: overclockCommand(home, 'soft-status.mjs'),
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    const result = cleanupLegacyHandoffHooks(home, ws);
+    expect(result.cleaned).toEqual([codexHome, grokHome]);
+    expect(existsSync(codexHome)).toBe(false);
+    expect(existsSync(grokHome)).toBe(false);
+
+    expect(cleanupLegacyHandoffHooks(home, ws)).toEqual({
       unregistered: false,
       deleted: [],
       cleaned: [],

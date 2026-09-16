@@ -29,14 +29,28 @@
  *    e o Codex abria o modal bloqueante de revisão de hook no boot.
  * 3. <workspace>/.agents/hooks.json — formato do Overclock: cada chave é um
  *    hook nomeado com `enabled` e as entradas SOLTAS por evento.
+ * 4. $HOME dos outros CLIs — ~/.codex/hooks.json, ~/.grok/hooks.json e
+ *    ~/.kimi-code/hooks.json. O porte largou o registro no $HOME de TODA CLI
+ *    que ele tocava; limpar só o workspace deixava a versão de $HOME viva, e
+ *    o estrago (127 por ferramenta + modal de revisão do Codex) reaparecia em
+ *    qualquer missão fora do repo.
+ * 5. ~/.grok/hooks/*.json — o Grok não guarda um hooks.json só: cada hook é
+ *    um arquivo próprio nesse diretório. Formato não é presumido — a varredura
+ *    ali é por predicado de comando (ver `pruneDeadHookCommands`).
  *
- * Os dois configs de workspace saem do disco quando ficam sem nenhum hook —
- * é lixo do port, não arquivo do usuário. Qualquer entrada que não case a
- * regra (hook do usuário, de outro produto, ou de um executável que ainda
- * existe) permanece intocada.
+ * Todo config que fica sem nenhum hook sai do disco — é lixo do port, não
+ * arquivo do usuário. Qualquer entrada que não case a regra (hook do usuário,
+ * de outro produto, ou de um executável que ainda existe) permanece intocada.
  */
 
-import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 
@@ -53,6 +67,19 @@ const OVERCLOCK_APP_DIR = '.overclock-app/';
 /** Configs de hook que os portes largaram no workspace (não no $HOME). */
 const CODEX_HOOKS_CONFIG = ['.codex', 'hooks.json'] as const;
 const AGENTS_HOOKS_CONFIG = ['.agents', 'hooks.json'] as const;
+
+/**
+ * Mesmo registro, mas no $HOME de cada CLI. O Codex é o caso vivo: o
+ * instalador do Nexus (`codex-hook-service.ts`) escreve nesse MESMO arquivo —
+ * os comandos que ele gerencia começam com `if [ -x ... ]` (nome nu de shell,
+ * não caminho), então a regra daqui nunca os julga.
+ */
+const CODEX_HOME_HOOKS_CONFIG = ['.codex', 'hooks.json'] as const;
+const GROK_HOME_HOOKS_CONFIG = ['.grok', 'hooks.json'] as const;
+const KIMI_HOME_HOOKS_CONFIG = ['.kimi-code', 'hooks.json'] as const;
+
+/** O Grok guarda hook um-por-arquivo em ~/.grok/hooks/*.json. */
+const GROK_HOOKS_DIR = ['.grok', 'hooks'] as const;
 
 function nexusAgentHooksDir(home: string): string {
   return join(home, '.nexus', 'agent-hooks');
@@ -308,6 +335,105 @@ export function cleanAgentsWorkspaceHooks(
   return writeCleanedJson(file, nextDoc);
 }
 
+/** Sentinela: o valor saiu da árvore (comando morto ou container esvaziado). */
+const DROPPED = Symbol('dropped');
+
+/**
+ * Varre QUALQUER arranjo de JSON removendo comandos mortos — o mesmo
+ * predicado do resto do módulo: vestígio do port OU executável ausente.
+ *
+ * O formato do hook de cada CLI não é presumido de propósito: o Grok grava um
+ * arquivo por hook e nada garante o aninhamento do Codex. O que é universal é
+ * a entrada de hook TER um `command`; quem decide se ele morreu é
+ * `isDeadHookCommand`, que só condena caminho com evidência.
+ *
+ * Container que perde entradas e fica vazio sai junto, para o arquivo não
+ * sobrar como `{"hooks":{}}`. Container que já estava vazio e não perdeu nada
+ * permanece: é decisão do usuário, não sobra do port.
+ */
+function pruneDeadHookCommands(
+  value: unknown,
+  home: string,
+): { value: unknown; removed: boolean } {
+  if (Array.isArray(value)) {
+    const kept: unknown[] = [];
+    let removed = false;
+    for (const item of value) {
+      const pruned = pruneDeadHookCommands(item, home);
+      removed = removed || pruned.removed;
+      if (pruned.value !== DROPPED) kept.push(pruned.value);
+    }
+    if (removed && kept.length === 0) return { value: DROPPED, removed };
+    return { value: kept, removed };
+  }
+  if (!isPlainObject(value)) return { value, removed: false };
+
+  if (isDeadHookCommand(value.command, home)) {
+    return { value: DROPPED, removed: true };
+  }
+
+  let removed = false;
+  const next: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value)) {
+    const pruned = pruneDeadHookCommands(child, home);
+    removed = removed || pruned.removed;
+    if (pruned.value !== DROPPED) next[key] = pruned.value;
+  }
+  if (removed && Object.keys(next).length === 0) {
+    return { value: DROPPED, removed };
+  }
+  return { value: next, removed };
+}
+
+/**
+ * Limpa um config de hook de formato desconhecido (o de $HOME de cada CLI).
+ * Apaga o arquivo quando a árvore inteira era lixo do port. Retorna true
+ * quando reescreveu ou apagou.
+ */
+export function cleanHooksJsonFile(file: string, home = homedir()): boolean {
+  const doc = readJsonObject(file);
+  if (!doc) return false;
+  const pruned = pruneDeadHookCommands(doc, home);
+  if (!pruned.removed) return false;
+  return writeCleanedJson(file, isPlainObject(pruned.value) ? pruned.value : {});
+}
+
+/** Caminhos de config de hook no $HOME do usuário (existentes ou não). */
+function homeHookConfigFiles(home: string): string[] {
+  const files = [
+    CODEX_HOME_HOOKS_CONFIG,
+    GROK_HOME_HOOKS_CONFIG,
+    KIMI_HOME_HOOKS_CONFIG,
+  ].map((parts) => join(home, ...parts));
+
+  const grokDir = join(home, ...GROK_HOOKS_DIR);
+  try {
+    for (const name of readdirSync(grokDir)) {
+      if (name.endsWith('.json')) files.push(join(grokDir, name));
+    }
+  } catch {
+    // sem o diretório (ou sem permissão) → não há o que varrer
+  }
+  return files;
+}
+
+/**
+ * Limpa os configs de hook de $HOME das CLIs (~/.codex, ~/.grok, ~/.kimi-code).
+ * Alvo ausente é no-op; um alvo que falha não impede os outros. Devolve os
+ * caminhos reescritos ou apagados, na ordem em que foram tratados.
+ */
+export function cleanHomeHooksConfigs(home = homedir()): string[] {
+  const cleaned: string[] = [];
+  for (const file of homeHookConfigFiles(home)) {
+    try {
+      if (cleanHooksJsonFile(file, home)) cleaned.push(file);
+    } catch {
+      // best-effort: um arquivo preso não bloqueia os demais nem o boot
+    }
+  }
+  return cleaned;
+}
+
 /**
  * Apaga os scripts legados de ~/.nexus/agent-hooks/. Retorna os nomes
  * removidos (vazio quando não havia nada — boot idempotente).
@@ -330,21 +456,27 @@ export function deleteLegacyHandoffHookScripts(home = homedir()): string[] {
 
 /**
  * Boot-time: uma chamada, idempotente, nunca lança. `cleaned` lista os
- * hooks.json de workspace que foram reescritos ou apagados.
+ * configs de hook — de workspace e de $HOME — reescritos ou apagados.
  */
 export function cleanupLegacyHandoffHooks(
   home = homedir(),
   workspace = process.cwd(),
 ): { unregistered: boolean; deleted: string[]; cleaned: string[] } {
   const cleaned: string[] = [];
+  const mark = (file: string) => {
+    if (!cleaned.includes(file)) cleaned.push(file);
+  };
   try {
     const unregistered = removeLegacyHandoffHookRegistration(home);
     if (cleanCodexWorkspaceHooks(workspace, home)) {
-      cleaned.push(join(workspace, ...CODEX_HOOKS_CONFIG));
+      mark(join(workspace, ...CODEX_HOOKS_CONFIG));
     }
     if (cleanAgentsWorkspaceHooks(workspace, home)) {
-      cleaned.push(join(workspace, ...AGENTS_HOOKS_CONFIG));
+      mark(join(workspace, ...AGENTS_HOOKS_CONFIG));
     }
+    // $HOME depois do workspace: quando os dois coincidem (home == workspace)
+    // o arquivo já foi tratado e a segunda passada vira no-op.
+    for (const file of cleanHomeHooksConfigs(home)) mark(file);
     const deleted = deleteLegacyHandoffHookScripts(home);
     return { unregistered, deleted, cleaned };
   } catch {
