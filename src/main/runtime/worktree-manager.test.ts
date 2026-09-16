@@ -132,6 +132,27 @@ afterEach(() => {
 });
 
 describe("WorktreeManager", () => {
+  it("creates concurrent pane-owned branches from HEAD even with coordination WIP, and recovers reservations", async () => {
+    const scope = projectScope();
+    const head = git(root, "rev-parse", "HEAD");
+    write("README.md", "operator WIP\n");
+    const records = await Promise.all(["worker one/../", "worker two:*"].map((workerId) => manager.create({
+      scope, missionId: "mission /..:*", taskId: `pane-${workerId}`, workerId,
+      ownerKind: "pane",
+      ownership: { files: [], symbols: [], domains: [workerId] },
+    })));
+    expect(new Set(records.map((r) => r.branchRef)).size).toBe(2);
+    for (const record of records) {
+      expect(record.branchRef).toMatch(/^refs\/heads\/nexus\/[a-f0-9]{16}\/[a-f0-9]{24}$/);
+      expect(record.baseSha).toBe(head);
+      expect(git(record.worktreePath, "rev-parse", "HEAD")).toBe(head);
+    }
+    stateStore.overwrite(manager.scopeKey(scope), records.map((r) => ({ ...r, status: "reserved" })));
+    expect(makeManager().reconcileInterruptedReservations(scope).every((r) => r.status === "ready")).toBe(true);
+    expect(fs.readFileSync(path.join(root, "README.md"), "utf8")).toBe("operator WIP\n");
+    expect(manager.purgeRecordsWithoutTask(scope, new Set())).toHaveLength(0);
+  });
+
   it("never delegates versioned context authority to executor worktrees", async () => {
     await expect(manager.create({
         scope: projectScope(),

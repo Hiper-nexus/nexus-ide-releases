@@ -875,6 +875,7 @@ export interface SpawnToolOptions {
   role?: 'orchestrator' | 'worker';
   /** Forma de execução selada do dispatch; decide o escopo de escrita válido. */
   executionMode?: 'same_checkout' | 'isolated_worktree' | 'read_only';
+  isolatedWriter?: boolean;
   /**
    * "Escolha livre de agentes" da missão (contract-sealed). Propagado ao
    * backstop físico assertReleaseQualifiedMissionWorkerSpawn para que o gate de

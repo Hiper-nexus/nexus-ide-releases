@@ -131,6 +131,14 @@ export class WorktreeRuntimeRegistry {
       worktreeState,
       worktrees,
     });
+    // Pane-owned writers have no durable task to resume after process restart.
+    // Release only their reservation; retain Git output for manual integration.
+    for (const record of worktreeState.read(worktrees.scopeKey(immutableScope)).records) {
+      if (record.ownerKind === "pane" && (record.status === "ready" || record.status === "reserved")) {
+        worktrees.markFailed(immutableScope, record.missionId, record.taskId,
+          "pane writer interrupted by application restart; worktree and branch retained");
+      }
+    }
     queue.reconcile(immutableScope);
     // A durable merge block can only be acknowledged by its exact blocked
     // task. If that task's mission was deleted, the block is permanently

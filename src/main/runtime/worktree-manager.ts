@@ -20,6 +20,7 @@ import {
   normalizeOwnership,
   sameValues,
   worktreeTaskKey,
+  worktreeBranchRef,
   type CreateWorktreeInput,
   type IntegrationCheckoutSnapshot,
   type IntegrationCheckoutInspection,
@@ -229,18 +230,19 @@ export class WorktreeManager {
     const scopeKey = this.scopeKey(scope);
     return this.#mutate(scopeKey, (records) => {
       const orphans = records.filter(
-        (record) => !liveTaskIds.has(record.taskId),
+        (record) => record.ownerKind !== "pane" && !liveTaskIds.has(record.taskId),
       );
       if (orphans.length === 0) return { records, result: [] };
       return {
-        records: records.filter((record) => liveTaskIds.has(record.taskId)),
+        records: records.filter((record) => record.ownerKind === "pane" || liveTaskIds.has(record.taskId)),
         result: orphans,
       };
     });
   }
 
   async create(input: CreateWorktreeInput): Promise<WorktreeRecord> {
-    const repository = readRepositorySnapshot(this.#git, input.scope, true);
+    const requireClean = input.ownerKind !== "pane";
+    const repository = readRepositorySnapshot(this.#git, input.scope, requireClean);
     const missionId = assertIdentifier(input.missionId, "missionId");
     const taskId = assertIdentifier(input.taskId, "taskId");
     const workerId = assertIdentifier(input.workerId, "workerId");
@@ -276,9 +278,10 @@ export class WorktreeManager {
       this.worktreesRoot,
     );
     const worktreePath = path.join(taskDirectory, `task-${taskKey}`);
-    const branchRef = `refs/heads/nexus/${projectKey.slice(0, 16)}/${taskKey.slice(0, 32)}`;
+    const branchRef = worktreeBranchRef({ ...input, projectId: input.scope.projectId });
     const now = this.#timestamp();
     const candidate = cloneRecord({
+      ...(input.ownerKind ? { ownerKind: input.ownerKind } : {}),
       id: `worktree-${taskKey}`,
       scopeKey,
       projectId: input.scope.projectId,
@@ -303,6 +306,7 @@ export class WorktreeManager {
       const existing = records.find((record) => record.taskKey === taskKey);
       if (existing) {
         if (
+          existing.ownerKind !== input.ownerKind ||
           existing.rootRealPath !== repository.rootRealPath ||
           existing.integrationRef !== repository.integrationRef
         ) {
@@ -420,7 +424,7 @@ export class WorktreeManager {
     }
 
     try {
-      assertRepositoryUnchanged(this.#git, repository, true);
+      assertRepositoryUnchanged(this.#git, repository, requireClean);
       if (reservation.resurrected) {
         // The derived path and branch exist by design: the slot was released
         // without touching Git. Prove the exact physical identity instead of
@@ -455,7 +459,7 @@ export class WorktreeManager {
         });
         assertTaskWorktree(this.#git, candidate);
       }
-      assertRepositoryUnchanged(this.#git, repository, true);
+      assertRepositoryUnchanged(this.#git, repository, requireClean);
       return this.#transition(scopeKey, taskKey, (record) => ({
         ...record,
         status: "ready",

@@ -29,6 +29,8 @@ export const ALL_WORKTREE_STATUSES = new Set<WorktreeStatus>([
 ]);
 
 export interface WorktreeRecord {
+  /** Via Rápida ownership follows a pane, without a sealed task row. */
+  readonly ownerKind?: "pane";
   readonly id: string;
   readonly scopeKey: string;
   readonly projectId: string;
@@ -73,6 +75,7 @@ export interface WorktreeDependencyInput {
 }
 
 export interface CreateWorktreeInput {
+  readonly ownerKind?: "pane";
   readonly scope: ProjectExecutionScope;
   readonly missionId: string;
   readonly taskId: string;
@@ -490,6 +493,15 @@ export function cloneWorktreeRecord(record: WorktreeRecord): WorktreeRecord {
     }),
     dependencies: Object.freeze([...record.dependencies]),
   });
+}
+
+/** Derived refs remain short and safe even when mission/worker ids are labels. */
+export function worktreeBranchRef(input: Pick<WorktreeRecord,
+  "ownerKind" | "projectId" | "missionId" | "taskId" | "workerId"
+>): string {
+  return input.ownerKind === "pane"
+    ? `refs/heads/nexus/${digest("pane-mission", input.missionId).slice(0, 16)}/${digest("pane-worker", input.workerId).slice(0, 24)}`
+    : `refs/heads/nexus/${digest("worktree-project", input.projectId).slice(0, 16)}/${worktreeTaskKey(input.missionId, input.taskId).slice(0, 32)}`;
 }
 
 export function worktreeTaskKey(missionId: string, taskId: string): string {

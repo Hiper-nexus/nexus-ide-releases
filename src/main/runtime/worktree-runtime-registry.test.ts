@@ -125,6 +125,28 @@ afterEach(() => {
 });
 
 describe("project worktree runtime registry", () => {
+  it("keeps pane writers through task sweeps and releases their claims after restart without deleting output", async () => {
+    const { root, scope, manager } = fixture();
+    const registry = new WorktreeRuntimeRegistry(manager);
+    seedMission(manager, scope, "quick-mission");
+    const createPane = (workerId: string) => registry.create({
+      scope, missionId: "quick-mission", taskId: `pane-${workerId}`, workerId,
+      ownerKind: "pane",
+      ownership: { files: [], symbols: [], domains: [workerId] },
+    });
+    const first = await createPane("worker-a");
+    await createPane("worker-b");
+    expect(registry.listMission(scope, "quick-mission")).toHaveLength(2);
+    expect(registry.get(scope, "quick-mission", first.taskId)?.status).toBe("ready");
+    fs.writeFileSync(path.join(first.worktreePath, "untracked.txt"), "keep me");
+    registry.dispose();
+    const restarted = new WorktreeRuntimeRegistry(manager);
+    expect(restarted.listMission(scope, "quick-mission").every((r) => r.status === "failed")).toBe(true);
+    expect(fs.readFileSync(path.join(first.worktreePath, "untracked.txt"), "utf8")).toBe("keep me");
+    expect(git(root, "rev-parse", first.branchRef)).toBe(first.baseSha);
+    restarted.dispose();
+  });
+
   it("resolves a physically validated no-change QA task without inventing a merge entry", async () => {
     const { root, scope, manager } = fixture();
     const registry = new WorktreeRuntimeRegistry(manager);

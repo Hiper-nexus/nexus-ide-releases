@@ -219,7 +219,7 @@ export function reconcileInterruptedReservation(
           "reserved worktree does not belong to the requested scope",
         );
       }
-      const repository = readRepositorySnapshot(deps.git, scope, true);
+      const repository = readRepositorySnapshot(deps.git, scope, current.ownerKind !== "pane");
       if (
         repository.integrationRef !== current.integrationRef ||
         repository.headSha !== current.baseSha

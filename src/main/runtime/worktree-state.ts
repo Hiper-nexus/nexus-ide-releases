@@ -12,6 +12,7 @@ import {
   normalizeOwnership,
   sameValues,
   worktreeTaskKey,
+  worktreeBranchRef,
   type WorktreeOwnership,
   type WorktreeRecord,
   type WorktreeStateSnapshot,
@@ -106,11 +107,11 @@ function validateRecord(
     `checkout-${checkoutKey}`,
     `task-${expectedTaskKey}`,
   );
-  const expectedBranch =
-    `refs/heads/nexus/${projectKey.slice(0, 16)}/${expectedTaskKey.slice(0, 32)}`;
+  const expectedBranch = worktreeBranchRef(record);
   const dependencies = record.dependencies;
 
   if (
+    (record.ownerKind !== undefined && record.ownerKind !== "pane") ||
     record.scopeKey !== options.scopeKey ||
     record.scopeKey !== expectedScopeKey ||
     record.taskKey !== expectedTaskKey ||

@@ -53,6 +53,8 @@ describe('orchestrator doctrine', () => {
   it('carrega a política de workspace same_checkout sem stash/reset/checkout/clean', () => {
     const text = buildOrchestratorDoctrine(squad(), mission());
     expect(text).toContain('same_checkout');
+    expect(text).toContain('isolatedWriter:true');
+    expect(text).toContain('integre as branches ao final, na ordem de dependência');
     expect(text).toMatch(/stash/);
     expect(text).toMatch(/reset/);
     expect(text).toMatch(/checkout/);

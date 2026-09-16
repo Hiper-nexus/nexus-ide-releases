@@ -8,6 +8,7 @@ import {
   digest,
   ALL_WORKTREE_STATUSES,
   worktreeTaskKey,
+  worktreeBranchRef,
   type WorktreeRecord,
   type WorktreeStateSnapshot,
   type WorktreeStateStore,
@@ -160,6 +161,7 @@ function recoverableIdentities(
       !isIdentifier(record.missionId) ||
       !isIdentifier(record.taskId) ||
       !isIdentifier(record.workerId) ||
+      (record.ownerKind !== undefined && record.ownerKind !== "pane") ||
       typeof record.status !== 'string' ||
       !ALL_WORKTREE_STATUSES.has(record.status as WorktreeRecord['status'])
     ) {
@@ -172,8 +174,13 @@ function recoverableIdentities(
       `task-${taskKey}`,
     );
     const worktreePath = record.worktreePath;
-    const expectedBranch =
-      `refs/heads/nexus/${projectKey.slice(0, 16)}/${taskKey.slice(0, 32)}`;
+    const expectedBranch = worktreeBranchRef({
+      projectId: scope.projectId,
+      missionId: record.missionId,
+      taskId: record.taskId,
+      workerId: record.workerId,
+      ownerKind: record.ownerKind as "pane" | undefined,
+    });
     if (
       record.taskKey !== taskKey ||
       record.id !== `worktree-${taskKey}` ||

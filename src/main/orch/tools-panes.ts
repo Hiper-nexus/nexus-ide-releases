@@ -75,6 +75,7 @@ import {
   isTaskQueueManagedMission,
   viaRapidaAllowsOrchestratorWorkerSpawn,
 } from './task-dispatch-authority';
+import { allocateIsolatedWriterWorktree } from './isolated-writer-worktree';
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { missionControlPlaneSnapshot } from './mission-control-plane-ipc';
@@ -300,6 +301,18 @@ export function withSameCheckoutWorkerContract(prompt: string): string {
   );
 }
 
+export function withIsolatedWriterContract(
+  prompt: string,
+  workspace: { branch: string; worktreePath: string },
+): string {
+  return '## Nexus execution authority\n' +
+    `executionMode=\`isolated_worktree\`: esta tarefa roda na worktree própria ${workspace.worktreePath}, ` +
+    `na branch ${workspace.branch}. Commit na própria branch é permitido e esperado. ` +
+    'Não faça push, não toque em outras branches nem no checkout de coordenação. ' +
+    'Ao terminar, chame nexus_handoff_submit uma vez com branch, sha e arquivos tocados, ' +
+    'além das validações e bloqueios. O orquestrador integra as branches ao final, na ordem de dependência.\n\n' + prompt;
+}
+
 export function childMissionId(
   ctx: AgentGateContext,
   requested?: string,
@@ -383,6 +396,10 @@ const paneSpawn: McpToolDef = {
         description:
           'Spawn with provider-native read-only enforcement. Required before PREVC execution. ' +
           'Read-only workers spawn in parallel even with an active writer — use for review/analysis that edits nothing.',
+      },
+      isolatedWriter: {
+        type: 'boolean',
+        description: 'Spawn this writer in its own git worktree/branch so several writers run in parallel; the orchestrator integrates the branch afterwards',
       },
       autoCloseOnHandoff: {
         type: 'boolean',
@@ -598,6 +615,9 @@ const paneSpawn: McpToolDef = {
           'abra esse CLI manualmente no Terminal fora da missão',
       );
     }
+    options = coerceSpawnReadOnly(options, ctx.readOnly);
+    let isolatedWriter: Awaited<ReturnType<typeof allocateIsolatedWriterWorktree>> | undefined;
+    let isolatedWriterPending = false;
     let releaseWorkerSlot: (() => void) | undefined;
     let spawnedWorkerPaneId: string | undefined;
     let consumeReservedRoute: (() => void) | undefined;
@@ -852,6 +872,17 @@ const paneSpawn: McpToolDef = {
               `Task ownership: ${JSON.stringify(worktree.ownership)}\n\n` +
               options.prompt;
           }
+        } else if (args.isolatedWriter === true && !options.readOnly && options.executionMode !== 'read_only') {
+          isolatedWriter = await allocateIsolatedWriterWorktree(ctx.scope, missionId);
+          executionMode = 'isolated_worktree';
+          options = {
+            ...options,
+            executionMode,
+            isolatedWriter: true,
+            cwd: isolatedWriter.worktreePath,
+            executionScope: Object.freeze({ ...ctx.scope, rootRealPath: isolatedWriter.worktreePath }),
+            prompt: withIsolatedWriterContract(options.prompt ?? 'Execute a tarefa delegada.', isolatedWriter),
+          };
         } else {
           executionMode = 'same_checkout';
           const decision = decideSameCheckoutSpawn({
@@ -924,6 +955,7 @@ const paneSpawn: McpToolDef = {
         // compatibility throw back into the successful effect result.
         const pending = takePendingPaneSpawnResult(invocation?.signal);
         if (!pending) throw error;
+        isolatedWriterPending = Boolean(isolatedWriter);
         return {
           ...pending,
           ...(executionMode ? { executionMode } : {}),
@@ -951,6 +983,9 @@ const paneSpawn: McpToolDef = {
         harness,
       };
     } finally {
+      if (isolatedWriter && !isolatedWriterPending && !spawnedWorkerPaneId && !listPaneSnapshots().some(
+        (pane) => pane.executionScope?.rootRealPath === isolatedWriter!.worktreePath && pane.state !== 'exited',
+      )) isolatedWriter.release();
       if (releaseWorkerSlot) {
         const missionId = options.missionId;
         const recordedPaneIds =

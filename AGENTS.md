@@ -136,3 +136,20 @@ saber isto antes de mexer:
   invoke the `landing-page-design` skill from `.devin/skills/landing-page-design/SKILL.md`
   before designing or writing a single line of code. Do not ask the user to point
   to it manually.
+
+## Via Rápida: escritores isolados
+
+- `nexus_pane_spawn({ isolatedWriter: true })` sem contrato congelado cria
+  uma worktree por spawn pelo `WorktreeManager` (GitRunner + CoW opcional).
+  `readOnly` explícito ou herdado prevalece e não aloca worktree.
+- Registros `ownerKind: 'pane'` usam um taskId técnico, sem criar task de plano;
+  a varredura de tasks órfãs deve preservá-los. Branches usam hashes curtos dos
+  ids de missão/worker, derivados por `worktreeBranchRef` nos validadores também.
+- A base é HEAD do escopo; WIP do checkout de coordenação não é copiado nem
+  exige limpeza. O caminho selado mantém a exigência de checkout limpo.
+- `isolated-writer-worktree.ts` libera a reserva por `markFailed` no tap de
+  saída física do PTY, inclusive fechamento/teardown de missão, ou em falha
+  de spawn sem pane vivo. ACK pendente mantém a reserva de worktree.
+  Recovery no registry libera reservas de pane de um processo anterior.
+  Branch e diretório ficam preservados para integração manual pelo Maestro;
+  liberar a reserva não autoriza apagar commits ou WIP não integrados.

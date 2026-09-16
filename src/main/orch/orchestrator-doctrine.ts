@@ -55,9 +55,9 @@ const DOCTRINE_BASE = [
   // O Maestro PODE (canSubmitMissionHandoff aceita orchestrator).
   '• FECHO: entrega-resposta sem arquivo: submeta VOCÊ o handoff final ' +
     '(success, evidência citada) — o motor valida a conclusão.',
-  '• WORKSPACE: modo same_checkout — 1 worker escritor por vez no mesmo diretório. ' +
-    'Revisão/análise sem edição: spawn com readOnly:true — abre em paralelo. ' +
-    'Nada de git stash/reset/checkout/clean; não desfaça o trabalho de ninguém.',
+  '• WORKSPACE: same_checkout: 1 escritor por vez. Escrita paralela: spawne com ' +
+    'isolatedWriter:true e integre as branches ao final, na ordem de dependência. ' +
+    'Leitura: readOnly:true, em paralelo. Preserve WIP; nada de git stash/reset/checkout/clean.',
   '• VOZ: ditado traduzido pode chegar em inglês; responda em PT-BR.',
 ].join('\n');
 
