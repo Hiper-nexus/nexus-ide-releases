@@ -655,15 +655,34 @@ const ENV_ALLOWLIST = new Set<string>([
 ]);
 
 const ENV_ALLOW_PREFIXES = ["LC_"];
+const WINDOWS_ENV_ALLOWLIST = new Set(
+  [...ENV_ALLOWLIST].map((key) => key.toUpperCase()),
+);
+
+function isAllowedChildEnvKey(key: string): boolean {
+  if (
+    ENV_ALLOWLIST.has(key) ||
+    ENV_ALLOW_PREFIXES.some((prefix) => key.startsWith(prefix))
+  ) {
+    return true;
+  }
+  // Windows environment variable names are case-insensitive, but Node keeps
+  // the spelling inherited from the parent process (`Path`, not necessarily
+  // `PATH`). Treat only allowlisted names as equivalent there; this preserves
+  // the security boundary while keeping the system PATH available to shells.
+  if (process.platform !== "win32") return false;
+  const normalized = key.toUpperCase();
+  return (
+    WINDOWS_ENV_ALLOWLIST.has(normalized) ||
+    ENV_ALLOW_PREFIXES.some((prefix) => normalized.startsWith(prefix))
+  );
+}
 
 function baseChildEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (value === undefined) continue;
-    const allowed =
-      ENV_ALLOWLIST.has(key) ||
-      ENV_ALLOW_PREFIXES.some((prefix) => key.startsWith(prefix));
-    if (allowed) env[key] = value;
+    if (isAllowedChildEnvKey(key)) env[key] = value;
   }
   env.TERM = "xterm-256color";
   env.COLORTERM = "truecolor";

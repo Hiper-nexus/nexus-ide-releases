@@ -1188,6 +1188,45 @@ describe("PTY session ownership (renderer capability boundary)", () => {
     expect(operatorShellLoginArgs(shell, {})).toEqual([]);
   });
 
+  it.runIf(process.platform === 'win32')(
+    'preserves Windows Path spelling in the shell environment',
+    () => {
+      // Node keeps the inherited key spelling (`Path`) on Windows. A
+      // case-sensitive allowlist silently dropped it, leaving every CLI
+      // installed by npm unreachable inside Nexus shells.
+      const inheritedPath = Object.entries(process.env).find(
+        ([key]) => key.toLowerCase() === 'path',
+      );
+      for (const [key] of Object.entries(process.env)) {
+        if (key.toLowerCase() === 'path') delete process.env[key];
+      }
+      process.env.Path = 'C:\\Nexus\\cli';
+      try {
+        const h = fakeHost();
+        setPtyHost(h.host);
+        const trusted = trustedSpawn();
+        const { sessionId } = spawnSession(
+          fakeWc(),
+          { kind: 'shell', cols: 80, rows: 24 },
+          {
+            scope: trusted.scope,
+            cwd: trusted.cwd,
+            shell: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+          },
+        );
+
+        expect(h.specFor(sessionId).env.Path).toBe('C:\\Nexus\\cli');
+        orchKillSession(sessionId);
+      } finally {
+        for (const [key] of Object.entries(process.env)) {
+          if (key.toLowerCase() === 'path') delete process.env[key];
+        }
+        if (inheritedPath) process.env[inheritedPath[0]] = inheritedPath[1];
+      }
+    },
+  );
+
+
   it("does not authorize replacement until the PTY host proves physical exit", async () => {
     let handlers: PtySessionHandlers | null = null;
     let resolveProof!: (proof: {
