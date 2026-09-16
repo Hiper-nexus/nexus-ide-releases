@@ -47,6 +47,7 @@ import {
   isRevisionBoundWritableWorkerAdapterAllowed,
 } from './mission-worker-spawn-authority';
 import { waitOutBootPrompts } from './boot-prompt-hold';
+import { cliPromptAutoResponder } from './cli-prompt-autoresponder';
 import { adapterCircuitBreakers } from './circuit-breaker';
 import { assertPreSpawnProbe } from '../pty/pre-spawn-probe';
 import { classifySeatAuth } from '../adapters/seat-auth-readiness';
@@ -97,7 +98,6 @@ const ENTER_RETRY_MS = 400;
 // into a terminal that is still booting, so the prompt is swallowed and the
 // pane sits idle while every watchdog waits for a busy transition.
 const AGENT_BOOT_TIMEOUT_MS = 120_000;
-/** Max wait for Claude-family bypass/trust menus before typing the mission prompt. */
 /**
  * After a brief is typed, the session must report busy within this window.
  * A still-idle session means a dialog with no autoresponder signature ate the
@@ -105,6 +105,9 @@ const AGENT_BOOT_TIMEOUT_MS = 120_000;
  * blind to idle panes: stall needs busy, login-stuck needs a busy transition).
  */
 const PROMPT_ACCEPTANCE_WINDOW_MS = 12_000;
+/** Devin composer footer (herdr welcome_prompt_footer) before PTY paste. */
+const DEVIN_COMPOSER_READY = /ask devin to build/i;
+const DEVIN_COMPOSER_WAIT_MS = 8_000;
 const RESTORED_PROMPT_ACCEPTANCE_WINDOW_MS = 3_000;
 /**
  * After a provider-native argv brief, the provider must open a turn within
@@ -618,6 +621,27 @@ export function submitPendingAgentPrompt(
 }
 
 /**
+ * Devin paints trust first, then the composer. Paste before "Ask Devin to
+ * build" is the F-537 swallow; waitOutBootPrompts only holds while the
+ * autoresponder already saw the modal.
+ */
+async function waitUntilDevinComposerReady(
+  sessionId: string,
+  adapterId: string | undefined,
+): Promise<void> {
+  if (adapterId !== 'devin') return;
+  const deadline = Date.now() + DEVIN_COMPOSER_WAIT_MS;
+  while (Date.now() < deadline) {
+    if (cliPromptAutoResponder.shouldDeferInjection(sessionId)) {
+      await delay(50);
+      continue;
+    }
+    if (DEVIN_COMPOSER_READY.test(readSessionOutput(sessionId))) return;
+    await delay(50);
+  }
+}
+
+/**
  * Type a brief into an agent pane and PROVE it was accepted: after the paste,
  * the session must turn busy within the acceptance window, else we run the
  * boot-prompt gauntlet again and re-deliver once. Fire-and-forget injection
@@ -633,6 +657,7 @@ export async function deliverAgentPrompt(
   let lastError: unknown;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     await waitOutBootPrompts(sessionId);
+    await waitUntilDevinComposerReady(sessionId, options.adapterId);
     // Linearization point after boot/menu waits and immediately before paste.
     assertMcpInvocationCurrent(invocation);
     try {

@@ -42,6 +42,10 @@ import {
 import { requireRendererWorkspaceScope } from "../persistence/renderer-workspace-scope";
 import { trackManagedSession } from "../adapters/managed-credentials";
 import { isFileAuthAdapter } from "../adapters/managed-credentials";
+import {
+  resolveRotatingAuthFile,
+  waitForRotatingAuthSpawnGate,
+} from "../adapters/managed-auth-spawn-gate";
 import type { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
 import { attachSessionScope } from "../orch/pane-registry";
 import {
@@ -186,6 +190,7 @@ function spawnCliPtyAgentPane(
   adapter: CliPtyAdapter,
   spawn: ResolvedMainOwnedAgentSpawn,
   authoritativePreparation?: ProviderSpawnPreparation,
+  authSpawnGated = false,
 ): SpawnResult | Promise<SpawnResult> {
   try {
     const {
@@ -195,6 +200,28 @@ function spawnCliPtyAgentPane(
       recovery,
       persistedPane,
     } = spawn;
+    if (!authSpawnGated) {
+      const authFile = resolveRotatingAuthFile(adapter.id, request.accountId);
+      if (authFile) {
+        return waitForRotatingAuthSpawnGate({ authFile }).then(
+          () =>
+            spawnCliPtyAgentPane(
+              sender,
+              adapter,
+              spawn,
+              authoritativePreparation,
+              true,
+            ),
+          (error) => ({
+            ok: false,
+            error:
+              error instanceof Error
+                ? error.message
+                : "failed to coordinate Codex auth refresh",
+          }),
+        );
+      }
+    }
     const operatorChoice = isOperatorChoicePolicy(
       getOrchSettings().squadCliPolicy,
     );

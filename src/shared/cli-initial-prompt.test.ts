@@ -34,6 +34,9 @@ describe('initialPromptChannel', () => {
       initialPromptChannel({ declared: 'paste', interactive: ['claude'] }),
     ).toEqual({ kind: 'paste' });
     expect(
+      initialPromptChannel({ declared: 'paste', interactive: ['devin'] }),
+    ).toEqual({ kind: 'paste' });
+    expect(
       initialPromptChannel({ declared: 'positional', interactive: ['aider'] }),
     ).toEqual({ kind: 'positional' });
   });

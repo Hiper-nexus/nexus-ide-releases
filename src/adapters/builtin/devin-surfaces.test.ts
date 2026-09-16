@@ -122,6 +122,7 @@ describe('Devin CLI on every CLI/provider surface', () => {
   const adapter = devinAdapter();
 
   it('is a builtin CLI with its own binary, login and install channel', () => {
+    expect(adapter.spawn.initialPrompt).toBe('paste');
     expect(adapter.bin).toBe('devin');
     expect(adapter.auth.method).toBe('oauth');
     expect(adapter.auth.loginCommand).toBe('devin auth login');

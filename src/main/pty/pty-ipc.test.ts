@@ -199,6 +199,12 @@ vi.mock("../path-resolver", () => ({
     typeof binPath === "string" && binPath.startsWith("/"),
 }));
 
+vi.mock("../adapters/managed-auth-spawn-gate", () => ({
+  resolveRotatingAuthFile: () => null,
+  waitForRotatingAuthSpawnGate: vi.fn(async () => "fresh"),
+  ROTATING_REFRESH_SPAWN_ADAPTERS: new Set(["codex"]),
+}));
+
 vi.mock("../persistence/provider-config-store", () => ({
   isProviderEnabled: () => true,
   prepareProviderSpawn: providerDeps.prepareProviderSpawn,

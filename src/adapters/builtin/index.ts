@@ -33,9 +33,11 @@ export const BUILTIN_ADAPTERS: unknown[] = [
   // em diretório não confiado — está no próprio --help da CLI), e o headless
   // daqui alimenta só o executor de benchmark (cli-benchmark-executor), que não
   // aplica control args: ali o modo é o default da CLI (`auto`, que aprova
-  // leitura e ainda pede aprovação para edição). No interativo o prompt de
-  // confiança aparece uma vez por workspace: é consentimento do usuário, e o
-  // Nexus não responde por ele.
+  // leitura e ainda pede aprovação para edição). No interativo o trust
+  // ("Do you trust the authors of this directory?") é aceito pelo
+  // cliPromptAutoResponder, e o brief da missão entra por colagem depois do
+  // composer ("Ask Devin to build") — o mesmo canal do Kimi. Argv posicional
+  // (`-- <PROMPT>`) nascia antes do trust e o pane ficava mudo.
   //
   // Permissão: como TODOS os outros builtins, o adapter declara
   // `control.permission.yolo` ("--permission-mode dangerous"). buildControlArgs

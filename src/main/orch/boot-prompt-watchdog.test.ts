@@ -9,6 +9,7 @@ import {
 describe('matchBootPrompt (padrões de confirmação de boot)', () => {
   it('casa folder-trust do Kimi e press-enter genéricos', () => {
     expect(matchBootPrompt('Do you trust the files in this folder?')).toBeTruthy();
+    expect(matchBootPrompt('Do you trust the authors of this directory?')).toBeTruthy();
     expect(matchBootPrompt('Trust this folder? [y/N]')).toBeTruthy();
     expect(matchBootPrompt('Press Enter to continue')).toBeTruthy();
     expect(matchBootPrompt('Press enter to accept and continue')).toBeTruthy();

@@ -169,6 +169,22 @@ export const BUILTIN_PROMPT_SIGNATURES: readonly PromptSignature[] = [
     earlyPhrase: 'trust this folder?',
     watchMs: TRUST_WATCH_WINDOW_MS,
   },
+  {
+    // Devin CLI (herdr workspace_trust_prompt). Interactive spawn cannot pass
+    // `--respect-workspace-trust false` (print-mode only). The cursor starts on
+    // "Yes, trust …"; Enter accepts. Unanswered, the mission brief is pasted
+    // into the modal and spawn dies with "agent pane did not start".
+    adapterIds: ['devin'],
+    name: 'devin-workspace-trust',
+    phrases: [
+      'do you trust the authors of this directory?',
+      'with untrusted content.',
+      'yes, trust ',
+    ],
+    response: ACCEPT_DEFAULT_PROMPT_RESPONSE,
+    earlyPhrase: 'do you trust the authors of this directory?',
+    watchMs: TRUST_WATCH_WINDOW_MS,
+  },
 ];
 
 function normalizePromptText(output: string): string {

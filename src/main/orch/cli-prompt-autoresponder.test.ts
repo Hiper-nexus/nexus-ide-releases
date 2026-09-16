@@ -32,6 +32,17 @@ Grok Build may run or modify contents in this directory, posing security risks.
   No, exit
 `;
 
+/** Devin CLI workspace trust — herdr `workspace_trust_prompt`. */
+const DEVIN_TRUST_PROMPT = `
+Do you trust the authors of this directory?
+
+Devin can read, edit, and run commands here. Only continue
+with untrusted content.
+
+> Yes, trust this folder
+  No, exit
+`;
+
 /** Kimi Code 0.41/0.42 — transcrito ao vivo na primeira abertura numa pasta. */
 const KIMI_TRUST_PROMPT = `
 Trust this folder?
@@ -188,6 +199,34 @@ describe('CLI prompt autoresponder', () => {
     expect(
       matchesPromptSignature(GROK_TRUST_PROMPT, signature('grok-folder-trust')),
     ).toBe(true);
+  });
+
+  it('recognizes and accepts the Devin workspace trust prompt with Enter', () => {
+    expect(
+      matchesPromptSignature(DEVIN_TRUST_PROMPT, signature('devin-workspace-trust')),
+    ).toBe(true);
+
+    const responder = new CliPromptAutoResponder();
+    responder.bind('session-devin', 'devin');
+    expect(responder.observe('session-devin', DEVIN_TRUST_PROMPT)).toBe(
+      ACCEPT_DEFAULT_PROMPT_RESPONSE,
+    );
+    expect(responder.observe('session-devin', DEVIN_TRUST_PROMPT)).toBeNull();
+  });
+
+  it('holds Devin injection on the trust banner before options finish painting', () => {
+    const responder = new CliPromptAutoResponder();
+    responder.bind('session-devin', 'devin');
+    expect(
+      responder.observe(
+        'session-devin',
+        'Do you trust the authors of this directory?\n',
+      ),
+    ).toBeNull();
+    expect(responder.shouldDeferInjection('session-devin')).toBe(true);
+    expect(responder.forceAcceptResponse('session-devin')).toEqual({
+      response: ACCEPT_DEFAULT_PROMPT_RESPONSE,
+    });
   });
 
   it('recognizes and accepts the Kimi folder trust prompt with Enter', () => {

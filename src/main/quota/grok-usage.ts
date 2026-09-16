@@ -5,6 +5,9 @@
  *   GET https://cli-chat-proxy.grok.com/v1/billing
  *   Authorization: Bearer <oauth JWT from ~/.grok/auth.json>
  *
+ * Probe with the token already on disk. Never spawn `grok models` / `grok`
+ * here — the CLI silently refreshes (and rotates) the user's refresh token.
+ *
  * Shape:
  *   config.monthlyLimit.val / config.used.val
  *   config.billingPeriodStart / billingPeriodEnd

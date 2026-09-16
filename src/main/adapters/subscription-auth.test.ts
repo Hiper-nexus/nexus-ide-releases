@@ -34,6 +34,9 @@ beforeEach(() => {
   vi.stubEnv('OPENCLAUDE_CONFIG_DIR', '');
   vi.stubEnv('XDG_CONFIG_HOME', '');
   vi.stubEnv('MUSE_AUTH_PATH', '');
+  vi.stubEnv('GROK_HOME', '');
+  vi.stubEnv('CODEX_HOME', '');
+  vi.stubEnv('KIMI_CODE_HOME', '');
 });
 
 function tempHome(): string {

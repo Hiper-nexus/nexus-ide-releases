@@ -54,6 +54,7 @@ const stubs = vi.hoisted(() => ({
     designPro: false,
     squadCliPolicy: 'operator-choice',
     agentAttestationGate: 'off' as 'off' | 'required',
+    cliPromptAutoResponderEnabled: true,
   },
   issueAgentIdentityBestEffort: vi.fn(),
 }));
@@ -171,14 +172,33 @@ vi.mock('../adapters/adapter-registry', () => ({
               models: { default: 'provider/model', list: ['provider/model'] },
               quirks: { nexusMcp: 'opencode' },
             }
-          : {
-              id,
-              kind: 'cli-pty',
-              bin: id,
-              spawn: { interactive: [id], extraArgs: [] },
-              models: { default: 'provider/model', list: ['provider/model'] },
-              quirks: {},
-            },
+          : id === 'devin'
+            ? {
+                id: 'devin',
+                kind: 'cli-pty',
+                label: 'Devin CLI',
+                bin: 'devin',
+                spawn: {
+                  interactive: ['devin'],
+                  extraArgs: [],
+                  initialPrompt: 'paste',
+                },
+                models: { default: 'swe-2-high', list: ['swe-2-high'] },
+                quirks: { nexusMcp: 'none', mcpAutoload: false },
+                promptInjection: {
+                  method: 'arg',
+                  trailingNewline: false,
+                  bracketedPaste: false,
+                },
+              }
+            : {
+                id,
+                kind: 'cli-pty',
+                bin: id,
+                spawn: { interactive: [id], extraArgs: [] },
+                models: { default: 'provider/model', list: ['provider/model'] },
+                quirks: {},
+              },
   ),
   isBuiltinAdapter: vi.fn((id: string) => id === 'codex'),
   isAdapterInstalled: vi.fn(() => false),
@@ -219,7 +239,21 @@ import {
   submitPendingAgentPrompt,
   withHandoffContract,
 } from './tool-util';
+import { cliPromptAutoResponder } from './cli-prompt-autoresponder';
 import { testProjectScope } from './__tests__/scope-fixture';
+
+const DEVIN_TRUST_SCREEN = `
+Do you trust the authors of this directory?
+
+Devin can read, edit, and run commands here. Only continue
+with untrusted content.
+
+> Yes, trust this folder
+  No, exit
+`;
+
+const DEVIN_COMPOSER_SCREEN =
+  '❭ Ask Devin to build features, fix bugs, and understand your code';
 
 const scope = testProjectScope();
 const taskExecutionScope = {
@@ -244,6 +278,8 @@ describe('agent pane workspace confinement', () => {
     stubs.terminateSession.mockResolvedValue(true);
     stubs.taskDispatchesList.mockReturnValue([]);
     stubs.orchSettings.agentAttestationGate = 'off';
+    stubs.orchSettings.cliPromptAutoResponderEnabled = true;
+    cliPromptAutoResponder.clear();
   });
 
   it('pins every orchestration spawn to the canonical active workspace', async () => {
@@ -1707,6 +1743,120 @@ describe('agent prompt injection', () => {
 
       await rejected;
     } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('starts a Devin mission worker by pasting after boot, never native argv', async () => {
+    vi.useFakeTimers();
+    try {
+      const onPromptAccepted = vi.fn();
+      stubs.sessionState.mockReturnValue('idle');
+      stubs.injectable = true;
+      stubs.readSessionOutput.mockReturnValue(DEVIN_COMPOSER_SCREEN);
+      stubs.writeSession.mockImplementation(
+        ((sessionId: string, data: string) => {
+          if (data === '\r') {
+            queueMicrotask(() => {
+              stubs.sessionState.mockReturnValue('busy');
+              for (const tap of [...stubs.stateTaps]) tap(sessionId, 'busy');
+              for (const tap of [...stubs.dataTaps]) {
+                tap(sessionId, 'running tools');
+              }
+            });
+          }
+          return true;
+        }) as typeof stubs.writeSession,
+      );
+
+      const pending = spawnPaneAndMaybePrompt(
+        {
+          adapterId: 'devin',
+          missionId: 'm1',
+          role: 'worker',
+          readOnly: true,
+          prompt: 'Implemente o spawn do Devin.',
+          scope,
+          executionScope: taskExecutionScope,
+        },
+        { onPromptAccepted },
+      );
+      await vi.advanceTimersByTimeAsync(2_000);
+      await pending;
+
+      const spawnCalls = stubs.requestPaneSpawn.mock.calls as unknown as Array<
+        [{ initialPrompt?: string; adapterId?: string }]
+      >;
+      const spawnOptions = spawnCalls.at(-1)?.[0];
+      expect(spawnOptions?.adapterId).toBe('devin');
+      expect(spawnOptions?.initialPrompt).toBeUndefined();
+      expect(stubs.waitForIdle).toHaveBeenCalledWith(
+        'session-1',
+        120_000,
+        undefined,
+      );
+      expect(stubs.writeSession).toHaveBeenCalledWith(
+        'session-1',
+        expect.stringContaining('Implemente o spawn do Devin.'),
+        { markInputBusy: false },
+      );
+      expect(onPromptAccepted).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not paste a Devin brief into workspace trust; delivers after the composer', async () => {
+    vi.useFakeTimers();
+    try {
+      stubs.sessionState.mockReturnValue('idle');
+      stubs.injectable = true;
+      stubs.readSessionOutput.mockReturnValue(DEVIN_TRUST_SCREEN);
+      cliPromptAutoResponder.bind('session-1', 'devin');
+      expect(cliPromptAutoResponder.observe('session-1', DEVIN_TRUST_SCREEN)).toBe(
+        '\r',
+      );
+      expect(cliPromptAutoResponder.shouldDeferInjection('session-1')).toBe(true);
+
+      const pending = deliverAgentPrompt(
+        'session-1',
+        'build the feature',
+        undefined,
+        { adapterId: 'devin' },
+      );
+
+      await vi.advanceTimersByTimeAsync(200);
+      expect(stubs.writeSession).not.toHaveBeenCalled();
+
+      cliPromptAutoResponder.observe(
+        'session-1',
+        'Welcome to Devin\nAsk Devin to build features, fix bugs',
+      );
+      stubs.readSessionOutput.mockReturnValue(DEVIN_COMPOSER_SCREEN);
+      stubs.writeSession.mockImplementation(
+        ((sessionId: string, data: string) => {
+          if (data === '\r') {
+            queueMicrotask(() => {
+              stubs.sessionState.mockReturnValue('busy');
+              for (const tap of [...stubs.stateTaps]) tap(sessionId, 'busy');
+              for (const tap of [...stubs.dataTaps]) {
+                tap(sessionId, 'running tools');
+              }
+            });
+          }
+          return true;
+        }) as typeof stubs.writeSession,
+      );
+
+      await vi.advanceTimersByTimeAsync(2_000);
+      await expect(pending).resolves.toBe(true);
+      expect(stubs.writeSession).toHaveBeenCalledWith(
+        'session-1',
+        'build the feature',
+        { markInputBusy: false },
+      );
+    } finally {
+      cliPromptAutoResponder.clear();
       vi.useRealTimers();
     }
   });

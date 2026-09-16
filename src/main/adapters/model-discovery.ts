@@ -1,6 +1,10 @@
 import { execFile } from 'node:child_process';
 import { isModelId } from '../../shared/model-id';
 import { getEffectivePath, resolveCliBinary } from '../path-resolver';
+import {
+  CLI_MODEL_CACHE_SOURCES,
+  readCliModelCache,
+} from './cli-model-discovery';
 
 /**
  * Descoberta VIVA de modelos por CLI: "saiu modelo novo → aparece no Nexus"
@@ -142,15 +146,21 @@ export interface ModelDiscoveryInventoryEntry {
 
 /**
  * CLIs do catálogo builtin + overlays em ~/.nexus/plugins/adapters.
- * kind `cli` entra no refresh automático (abertura, settings/missão, 5 min).
- * Claude/Codex: cache oficial já lido por cli-model-discovery — sem comando list.
+ * kind `cli` entra no refresh automático (abertura, settings/missão, 1 h).
+ * Claude/Codex/Grok: cache oficial já lido por cli-model-discovery — sem
+ * spawn do binário. `grok models` faz silent refresh do token a cada
+ * invocação (~10 min no poll antigo de 5 min + TTL 5 min).
  * Sem listagem: lista bundled do adapter + enrich do catálogo; não fingimos.
  */
 export const MODEL_DISCOVERY_INVENTORY: Readonly<
   Record<string, ModelDiscoveryInventoryEntry>
 > = Object.freeze({
   agy: { kind: 'cli', command: 'agy models' },
-  grok: { kind: 'cli', command: 'grok models' },
+  grok: {
+    kind: 'cache',
+    reason:
+      'nunca spawna `grok models` (silent refresh do token); usa ~/.grok/models_cache.json + bundled',
+  },
   kimi: { kind: 'cli', command: 'kimi provider list --json' },
   opencode: { kind: 'cli', command: 'opencode models' },
   'cursor-agent': { kind: 'cli', command: 'cursor-agent models' },
@@ -210,11 +220,6 @@ const STRATEGIES: Readonly<Record<string, DiscoveryStrategy>> = Object.freeze({
     args: ['models'],
     parse: parseAgyModelsOutput,
   },
-  grok: {
-    bin: 'grok',
-    args: ['models'],
-    parse: parseGrokModelsOutput,
-  },
   kimi: {
     bin: 'kimi',
     args: ['provider', 'list', '--json'],
@@ -247,7 +252,15 @@ const STRATEGIES: Readonly<Record<string, DiscoveryStrategy>> = Object.freeze({
   },
 });
 
-const TTL_MS = 5 * 60_000;
+/** In-memory freshness for a successful live listing or cache hydrate. */
+export const MODEL_DISCOVERY_TTL_MS = 60 * 60_000;
+/**
+ * Periodic re-ask / cache re-read. Combined with TTL_MS=5 min this used to
+ * spawn `grok models` every ~10 min (interval still saw a fresh cache). Floor
+ * is 1 h; grok never execs the binary even then.
+ */
+export const MODEL_DISCOVERY_POLL_MS = 60 * 60_000;
+const TTL_MS = MODEL_DISCOVERY_TTL_MS;
 const FAILURE_TTL_MS = 60_000;
 /** Qoder/OMP listagens reais passam de 8s em máquina fria. */
 const EXEC_TIMEOUT_MS = 15_000;
@@ -263,8 +276,29 @@ interface CacheEntry {
 const cache = new Map<string, CacheEntry>();
 const inFlight = new Map<string, Promise<void>>();
 
+/** Adapters whose official `models_cache.json` is the listing — never a CLI exec. */
+const CACHE_HYDRATE_ADAPTERS: ReadonlySet<string> = new Set(['grok']);
+
 export function supportsModelDiscovery(adapterId: string): boolean {
+  return adapterId in STRATEGIES || CACHE_HYDRATE_ADAPTERS.has(adapterId);
+}
+
+/** True only when refresh will `execFile` the provider binary. */
+export function usesCliExecForModelDiscovery(adapterId: string): boolean {
   return adapterId in STRATEGIES;
+}
+
+export function modelsFromOfficialCliCache(files: readonly string[]): string[] {
+  return sanitizeDiscoveredModels(
+    files.flatMap((file) => readCliModelCache(file)),
+  );
+}
+
+function officialCacheFiles(adapterId: string): readonly string[] {
+  return (
+    CLI_MODEL_CACHE_SOURCES.find((source) => source.adapterId === adapterId)
+      ?.files ?? []
+  );
 }
 
 /** Leitura síncrona do cache — usada na montagem de listProviderSettings. */
@@ -329,14 +363,40 @@ function execDiscovery(strategy: DiscoveryStrategy): Promise<string[]> {
   });
 }
 
+function hydrateFromOfficialCache(
+  adapterId: string,
+  options: { force?: boolean; cacheFiles?: readonly string[] } = {},
+): Promise<void> {
+  const now = Date.now();
+  if (!options.force && isFresh(cache.get(adapterId), now)) {
+    return Promise.resolve();
+  }
+  const files = options.cacheFiles ?? officialCacheFiles(adapterId);
+  const models = modelsFromOfficialCliCache(files);
+  cache.set(adapterId, {
+    models,
+    fetchedAt: Date.now(),
+    failed: models.length === 0,
+  });
+  return Promise.resolve();
+}
+
 /**
  * Atualiza o cache de um adapter (dedupe de chamadas concorrentes; falha vira
  * cache vazio com TTL curto — a CLI pode estar deslogada ou sem o comando).
+ * Grok never execs `grok models`: that CLI silently rotates the refresh token.
  */
 export function refreshDiscoveredModels(
   adapterId: string,
-  options: { force?: boolean } = {},
+  options: {
+    force?: boolean;
+    /** Test seam: official cache paths without touching $HOME. */
+    cacheFiles?: readonly string[];
+  } = {},
 ): Promise<void> {
+  if (CACHE_HYDRATE_ADAPTERS.has(adapterId)) {
+    return hydrateFromOfficialCache(adapterId, options);
+  }
   const strategy = STRATEGIES[adapterId];
   if (!strategy) return Promise.resolve();
   const now = Date.now();

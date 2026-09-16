@@ -32,6 +32,7 @@ import {
 } from './cli-model-discovery';
 import {
   discoveredModelsFor,
+  MODEL_DISCOVERY_POLL_MS,
   refreshAllDiscoveredModels,
 } from './model-discovery';
 import {
@@ -565,13 +566,15 @@ export function initAdapterRegistry(): void {
   );
 
   // Remote metadata is eventually consistent; CLI cache watchers provide the
-  // immediate path (Claude/Codex). Polling covers providers that atomically
+  // immediate path (Claude/Codex/Grok). Polling covers providers that atomically
   // replace caches in directories the platform watcher cannot observe, and
   // re-asks CLIs that expose a live models command (see MODEL_DISCOVERY_INVENTORY).
+  // Grok is cache-only: the poll re-reads ~/.grok/models_cache.json and never
+  // spawns `grok models` (that CLI rotates the refresh token on every run).
   periodicRefresh ??= setInterval(() => {
     refreshAllDiscoveredModels([...registry.keys()]);
     void refreshRemoteModelCatalog().finally(() => scheduleReloadAndBroadcast());
-  }, 5 * 60_000);
+  }, MODEL_DISCOVERY_POLL_MS);
   periodicRefresh.unref?.();
 }
 

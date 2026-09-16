@@ -103,6 +103,12 @@ const providerDeps = vi.hoisted(() => ({
   })),
 }));
 
+vi.mock("../adapters/managed-auth-spawn-gate", () => ({
+  resolveRotatingAuthFile: () => null,
+  waitForRotatingAuthSpawnGate: vi.fn(async () => "fresh"),
+  ROTATING_REFRESH_SPAWN_ADAPTERS: new Set(["codex"]),
+}));
+
 vi.mock("electron", () => ({
   ipcMain: { handle: ipcDeps.handle, on: ipcDeps.on },
 }));
