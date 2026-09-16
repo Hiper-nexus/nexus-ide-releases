@@ -22,35 +22,47 @@
  *   preload/renderer consumption is intentionally left to the serial wiring.
  * - The runtime manager locator and domain registry must share the manager,
  *   as configured in main.ts. Missing initialization fails closed.
+ * - release clears A by the store CAS; C's demotion-only update is scoped to
+ *   the same transaction, because the pane store only exposes promotion.
+ *   Create/release preserve the gate's original-user provenance for teardown.
  */
-import { webContents } from 'electron';
+import { webContents, type WebContents } from 'electron';
+import type Database from 'better-sqlite3';
 import { hasCurrentDispatchAuthority } from '../../shared/mission-intent';
-import { projectExecutionScopeSchema, type ProjectExecutionScope } from '../../shared/project-identity-types';
-import { getRendererWorkspaceScope } from '../persistence/renderer-workspace-scope';
+import type { ProjectExecutionScope } from '../../shared/project-identity-types';
+import { getRendererWorkspaceScope, requireLiveRendererWorkspaceScope } from '../persistence/renderer-workspace-scope';
 import {
   getAgentSessionInfo,
+  getOwnedAgentSessionInfo,
   getSessionState,
   listAgentSessions,
   registeredOrchestratorSessionsForMission,
 } from '../pty/pty-manager';
-import { getContextBySession, promoteMissionSessionAuthority, type AgentGateContext } from './gate';
+import { getContextBySession, promoteMissionSessionAuthority, rollbackSessionAuthorityMission, type AgentGateContext } from './gate';
 import {
   MissionLeadership,
+  MissionLeadershipError,
+  normalizeLeadershipScope,
+  sameLeadershipScope,
+  type LeadershipChange,
+  type LeadershipRelease,
+  type LeadershipTakeoverInput,
+  type AppliedLeadership,
   type LeaderIdentity,
   type LeadershipClaim,
   type MissionLeadershipPorts,
 } from './mission-leadership';
 import { fastLaneOrchestratorPaneSummary } from './mission-fast-lane';
 import { getMissionEventRuntimeManager } from './mission-event-emit';
-import { getProjectDomainStores, sameProjectExecutionScope } from './project-domain-store-registry';
+import { getProjectDomainStores, requireProjectDomainStoreRegistry } from './project-domain-store-registry';
 import { broadcastToProject } from './project-scoped-broadcast';
 
 export const MISSION_LEADERSHIP_CHANGED_CHANNEL = 'orch:mission.leadershipChanged';
 
-// No bearer, scope, provider, readOnly, or context revision is copied/mutated.
+// Only fields changed by promote/create/release; never bearer/scope/provider.
 const GATE_FIELDS = [
   'role', 'missionId', 'allowedTools', 'allowedSkills',
-  'handoffSubmitted', 'workerIncarnationId',
+  'handoffSubmitted', 'workerIncarnationId', 'promotedFromUserSession', 'contextRevision',
 ] as const;
 type GateFields = Pick<AgentGateContext, typeof GATE_FIELDS[number]>;
 interface GateSnapshot {
@@ -73,16 +85,21 @@ function snapshotGate(sessionId: string, ctx: AgentGateContext): GateSnapshot {
 export function createMissionLeadershipPorts(
   rawScope: ProjectExecutionScope,
 ): MissionLeadershipPorts<RuntimeSnapshot> {
-  const scope = Object.freeze(projectExecutionScopeSchema.parse(rawScope));
+  const requested = normalizeLeadershipScope(rawScope);
+  // Reuse the canonical complete scope when a legacy caller lacks fs identity.
+  const existing = requireProjectDomainStoreRegistry().listSuites()
+    .find((candidate) => sameLeadershipScope(candidate.scope, requested));
+  const scope = existing?.scope ?? requested;
   const suite = getProjectDomainStores(scope);
   let inTransaction = false;
+  let transactionDb: Database.Database | undefined;
   let captured: RuntimeSnapshot = [];
 
   function requireGate(sessionId: string, missionId: string): AgentGateContext {
     const ctx = getContextBySession(sessionId);
-    if (!ctx || !sameProjectExecutionScope(ctx.scope, scope) ||
+    if (!ctx || !sameLeadershipScope(ctx.scope, scope) ||
         (ctx.missionId !== undefined && ctx.missionId !== missionId)) {
-      throw new Error('leadership_runtime_scope_mismatch');
+      throw new MissionLeadershipError('scope_mismatch', { reason: 'leadership_runtime_scope_mismatch' });
     }
     return ctx;
   }
@@ -90,27 +107,32 @@ export function createMissionLeadershipPorts(
   function requireTarget(missionId: string, leader: LeaderIdentity) {
     const info = getAgentSessionInfo(leader.sessionId);
     if (!info || info.paneId !== leader.paneId ||
-        !sameProjectExecutionScope(info.scope, scope) ||
+        !sameLeadershipScope(info.scope, scope) ||
         (info.missionId !== undefined && info.missionId !== missionId)) {
-      throw new Error('leadership_runtime_scope_mismatch');
+      throw new MissionLeadershipError('scope_mismatch', { reason: 'leadership_runtime_scope_mismatch' });
     }
     const ctx = requireGate(leader.sessionId, missionId);
-    // user→mission_create has a separate authority contract, not this adapter.
-    if (ctx.role === 'user' || info.role === 'user') {
-      throw new Error('leadership_runtime_user_requires_authorization');
+    if (leader.origin === 'create') {
+      const initialCreator = ctx.role === 'user' && info.role === 'user';
+      const replayedCreator = ctx.role === 'orchestrator' && ctx.promotedFromUserSession === true && ctx.missionId === missionId;
+      if (!initialCreator && !replayedCreator) {
+        throw new MissionLeadershipError('scope_mismatch', { missionId, reason: 'create_requires_user_creator' });
+      }
+    } else if (ctx.role === 'user' || info.role === 'user') {
+      throw new MissionLeadershipError('scope_mismatch', { reason: 'leadership_runtime_user_requires_authorization' });
     }
     return { info, ctx };
   }
 
   function observations(missionId: string) {
-    const agents = listAgentSessions().filter((s) => sameProjectExecutionScope(s.scope, scope));
+    const agents = listAgentSessions().filter((s) => sameLeadershipScope(s.scope, scope));
     const candidates = new Set(agents.map((s) => s.sessionId));
     const claims: LeadershipClaim[] = [];
     const durable = suite.missions.get(missionId)?.orchestratorSessionId;
     if (durable) candidates.add(durable);
     for (const registered of registeredOrchestratorSessionsForMission(missionId)) {
       const info = getAgentSessionInfo(registered.sessionId);
-      if (info && sameProjectExecutionScope(info.scope, scope)) candidates.add(registered.sessionId);
+      if (info && sameLeadershipScope(info.scope, scope)) candidates.add(registered.sessionId);
     }
     const specs = suite.missionPanes.list(missionId);
     for (const spec of specs.filter((p) => p.role === 'orchestrator')) {
@@ -128,9 +150,12 @@ export function createMissionLeadershipPorts(
       const ctx = getContextBySession(fast.sessionId);
       const ownerScope = info?.scope ?? ctx?.scope;
       const belongs = ownerScope
-        ? sameProjectExecutionScope(ownerScope, scope)
+        ? sameLeadershipScope(ownerScope, scope)
         : specs.some((spec) => spec.paneId === fast.paneId);
-      if (belongs) {
+      // After an explicit release, a leftover cache entry cannot elect itself
+      // again: it must still have a durable pane/mission or gate attachment.
+      const stillAttached = durable || specs.some((spec) => spec.role === 'orchestrator') || ctx?.missionId === missionId;
+      if (belongs && stillAttached) {
         candidates.add(fast.sessionId);
         claims.push({ source: 'fast-lane', sessionId: fast.sessionId, paneId: fast.paneId });
       }
@@ -138,14 +163,38 @@ export function createMissionLeadershipPorts(
     for (const sessionId of candidates) {
       const ctx = getContextBySession(sessionId);
       if (ctx?.missionId !== missionId || ctx.role !== 'orchestrator' ||
-          !sameProjectExecutionScope(ctx.scope, scope)) continue;
+          !sameLeadershipScope(ctx.scope, scope)) continue;
       claims.push({ source: 'gate', sessionId, paneId: getAgentSessionInfo(sessionId)?.paneId ?? null });
     }
     return { claims, candidates };
   }
 
   function requireTransaction(): void {
-    if (!inTransaction) throw new Error('leadership_runtime_transaction_required');
+    if (!inTransaction) throw new MissionLeadershipError('write_incomplete', { reason: 'leadership_runtime_transaction_required' });
+  }
+
+  function captureContexts(missionId: string, sessionId: string): RuntimeSnapshot {
+    const { candidates } = observations(missionId);
+    candidates.add(sessionId);
+    captured = [...candidates].flatMap((id): GateSnapshot[] => {
+      const ctx = getContextBySession(id);
+      if (!ctx || !sameLeadershipScope(ctx.scope, scope) ||
+          (id !== sessionId && (ctx.missionId !== missionId || ctx.role !== 'orchestrator'))) return [];
+      if (ctx.missionId !== undefined && ctx.missionId !== missionId) {
+        throw new MissionLeadershipError('scope_mismatch', { missionId, sessionIds: [id] });
+      }
+      return [snapshotGate(id, ctx)];
+    });
+    return captured;
+  }
+
+  function emit(event: LeadershipChange | LeadershipRelease): void {
+    if (!sameLeadershipScope(event.scope, scope)) throw new MissionLeadershipError('scope_mismatch');
+    const targets = webContents.getAllWebContents().filter((wc) => {
+      const ownerScope = getRendererWorkspaceScope(wc);
+      return ownerScope && sameLeadershipScope(ownerScope, scope);
+    });
+    broadcastToProject(targets, scope, MISSION_LEADERSHIP_CHANGED_CHANNEL, event);
   }
 
   return {
@@ -155,7 +204,7 @@ export function createMissionLeadershipPorts(
       const info = getAgentSessionInfo(sessionId);
       if (!info) return null;
       // Registered but lacking a pane is not physical proof of absence.
-      if (!info.paneId) throw new Error('leadership_runtime_pane_missing');
+      if (!info.paneId) throw new MissionLeadershipError('scope_mismatch', { reason: 'leadership_runtime_pane_missing' });
       return {
         sessionId: info.sessionId, paneId: info.paneId, scope: info.scope,
         missionId: info.missionId, state: getSessionState(sessionId),
@@ -163,18 +212,20 @@ export function createMissionLeadershipPorts(
       };
     },
     transaction: (commit) => {
-      if (inTransaction) throw new Error('leadership_runtime_transaction_nested');
+      if (inTransaction) throw new MissionLeadershipError('busy', { reason: 'leadership_runtime_transaction_nested' });
       const manager = getMissionEventRuntimeManager();
-      if (!manager) throw new Error('leadership_runtime_not_initialized');
+      if (!manager) throw new MissionLeadershipError('write_incomplete', { reason: 'leadership_runtime_not_initialized' });
       const lease = manager.acquire(scope);
       try {
         lease.runtime.assertWritable();
         // Prevent F from being emitted before an unknown outer commit.
-        if (lease.runtime.db.inTransaction) throw new Error('leadership_runtime_transaction_nested');
+        if (lease.runtime.db.inTransaction) throw new MissionLeadershipError('busy', { reason: 'leadership_runtime_transaction_nested' });
         inTransaction = true;
-        lease.runtime.db.transaction(commit).immediate();
+        transactionDb = lease.runtime.db;
+        transactionDb.transaction(commit).immediate();
       } finally {
         inTransaction = false;
+        transactionDb = undefined;
         lease.release();
       }
     },
@@ -182,8 +233,15 @@ export function createMissionLeadershipPorts(
       requireTransaction();
       requireTarget(missionId, leader);
       const mission = suite.missions.get(missionId);
+      if (leader.origin === 'create') {
+        if (!mission) throw new MissionLeadershipError('mission_missing', { missionId });
+        if (mission.status !== 'pending' || (mission.orchestratorSessionId && mission.orchestratorSessionId !== leader.sessionId)) {
+          throw new MissionLeadershipError('existing_session', { missionId, reason: 'create_requires_initial_binding' });
+        }
+        return Boolean(suite.missions.setOrchestratorSession(missionId, leader.sessionId));
+      }
       if (!mission || !hasCurrentDispatchAuthority(mission)) {
-        throw new Error('leadership_dispatch_unavailable');
+        throw new MissionLeadershipError('scope_mismatch', { reason: 'leadership_dispatch_unavailable' });
       }
       // Even when teardown cleared A, accepted deliveries for an older session
       // can remain. Rebind handles that queue and is also valid for first bind.
@@ -193,38 +251,41 @@ export function createMissionLeadershipPorts(
       requireTransaction();
       const { info, ctx } = requireTarget(missionId, leader);
       const spec = suite.missionPanes.findByPaneId(leader.paneId);
-      if (spec && spec.missionId !== missionId) throw new Error('leadership_runtime_pane_mismatch');
+      if (spec && spec.missionId !== missionId) throw new MissionLeadershipError('scope_mismatch', { reason: 'leadership_runtime_pane_mismatch' });
       if (!spec) {
-        // Record a worker first so promotion always demotes every previous C.
+        // create has no predecessor and preserves the creator's capabilities.
+        // Other origins record a worker first, then demote previous C leaders.
         suite.missionPanes.record({
           missionId, paneId: leader.paneId, adapterId: info.adapterId,
-          role: 'worker', model: info.model, accountId: info.accountId,
+          role: leader.origin === 'create' ? 'orchestrator' : 'worker', model: info.model, accountId: info.accountId,
           effort: info.effort, cwd: info.cwd, agentName: info.agentName,
           title: info.agentName ?? info.adapterId,
-          workerIncarnationId: info.workerIncarnationId,
+          workerIncarnationId: leader.origin === 'create' ? undefined : info.workerIncarnationId,
           allowedTools: ctx.allowedTools, allowedSkills: ctx.allowedSkills,
           readOnly: info.readOnly || ctx.readOnly === true,
-          executionScope: ctx.executionScope, authoritySeal: info.authoritySeal,
+          executionScope: ctx.executionScope ? normalizeLeadershipScope(ctx.executionScope) : undefined,
+          authoritySeal: info.authoritySeal,
         });
+      }
+      if (leader.origin === 'create') {
+        return suite.missionPanes.findByPaneId(leader.paneId)?.role === 'orchestrator';
       }
       return Boolean(suite.missionPanes.promotePaneToOrchestrator(missionId, leader.paneId));
     },
     captureRuntime: (missionId, leader) => {
       requireTarget(missionId, leader);
-      const { candidates } = observations(missionId);
-      candidates.add(leader.sessionId);
-      captured = [...candidates].flatMap((sessionId): GateSnapshot[] => {
-        const ctx = getContextBySession(sessionId);
-        if (!ctx || !sameProjectExecutionScope(ctx.scope, scope) ||
-            (sessionId !== leader.sessionId && (ctx.missionId !== missionId || ctx.role !== 'orchestrator'))) return [];
-        return [snapshotGate(sessionId, ctx)];
-      });
-      return captured;
+      return captureContexts(missionId, leader.sessionId);
     },
     replaceRuntimeLeader: (missionId, leader) => {
       requireTransaction();
       const { ctx } = requireTarget(missionId, leader);
       ctx.missionId = missionId;
+      if (leader.origin === 'create') {
+        // Matches nexus_mission_create: preserve creator capability limits.
+        ctx.role = 'orchestrator';
+        ctx.promotedFromUserSession = true;
+        return true;
+      }
       const previous = captured.filter((s) => s.sessionId !== leader.sessionId && s.fields.role === 'orchestrator');
       // Also run once when there is no previous leader. The primitive resets
       // only the exact promotion fields; unrelated authority stays untouched.
@@ -245,22 +306,108 @@ export function createMissionLeadershipPorts(
           failures.push(error);
         }
       }
-      if (failures.length) throw new AggregateError(failures, 'leadership_runtime_restore_failed');
+      if (failures.length) throw new MissionLeadershipError('write_incomplete', { reason: 'leadership_runtime_restore_failed' });
     },
-    emitLeadershipChanged: (event) => {
-      if (!sameProjectExecutionScope(event.scope, scope)) throw new Error('leadership_runtime_scope_mismatch');
-      const targets = webContents.getAllWebContents().filter((wc) => {
-        const ownerScope = getRendererWorkspaceScope(wc);
-        return ownerScope && sameProjectExecutionScope(ownerScope, scope);
-      });
-      broadcastToProject(targets, scope, MISSION_LEADERSHIP_CHANGED_CHANNEL, event);
+    clearDurableLeaderIfMatches: (missionId, sessionId) => {
+      requireTransaction();
+      return Boolean(suite.missions.clearOrchestratorSessionIfMatches(missionId, sessionId));
     },
+    releasePaneLeader: (missionId) => {
+      requireTransaction();
+      // No demotion-only store primitive exists. Keep rows/ids/history and
+      // scoped authority intact; this narrow update shares A's transaction.
+      transactionDb!.prepare(`UPDATE mission_panes
+        SET role = 'worker', allowed_tools_json = '[]', allowed_skills_json = 'null'
+        WHERE mission_id = ? AND role = 'orchestrator'`).run(missionId);
+      return true;
+    },
+    captureReleaseRuntime: captureContexts,
+    releaseRuntimeLeader: (missionId) => {
+      requireTransaction();
+      for (const entry of captured) {
+        const ctx = requireGate(entry.sessionId, missionId);
+        if (!rollbackSessionAuthorityMission(entry.sessionId, missionId)) continue;
+        if (ctx.role === 'orchestrator') {
+          ctx.role = 'worker';
+          ctx.allowedTools = [];
+          ctx.allowedSkills = null;
+          ctx.handoffSubmitted = false;
+        }
+      }
+      return true;
+    },
+    emitLeadershipChanged: emit,
+    emitLeadershipReleased: emit,
   };
 }
 
 let leadership: MissionLeadership<RuntimeSnapshot> | undefined;
+let operatorTakeover: {
+  readonly owner: WebContents;
+  readonly scope: ProjectExecutionScope;
+  readonly missionId: string;
+  readonly input: LeadershipTakeoverInput;
+  consumed: boolean;
+} | undefined;
+
+function operatorScope(owner: WebContents, expected?: ProjectExecutionScope): ProjectExecutionScope {
+  try {
+    return requireLiveRendererWorkspaceScope(owner, expected);
+  } catch {
+    throw new MissionLeadershipError('scope_mismatch', { reason: 'takeover_renderer_unavailable' });
+  }
+}
+
+function authorizeOperatorTakeover(
+  scope: ProjectExecutionScope,
+  missionId: string,
+  input: LeadershipTakeoverInput,
+): boolean {
+  const grant = operatorTakeover;
+  if (!grant || grant.consumed || !sameLeadershipScope(grant.scope, scope) ||
+      grant.missionId !== missionId || grant.input.sessionId !== input.sessionId ||
+      grant.input.paneId !== input.paneId || grant.input.reason !== input.reason) return false;
+  grant.consumed = true;
+  const liveScope = operatorScope(grant.owner, grant.scope);
+  const session = getOwnedAgentSessionInfo(grant.owner, input.sessionId);
+  return Boolean(session && session.paneId === input.paneId &&
+    sameLeadershipScope(session.scope, liveScope) &&
+    (session.missionId === undefined || session.missionId === missionId));
+}
+
+/**
+ * Main-only entry for RendererMissionAuthority's explicit operator action.
+ * Not exposed to MCP or connected to existing callers in this adapter stage.
+ * Ownership comes from WebContents/PTY state; the payload cannot grant itself
+ * takeover. Authorization is exact, synchronous, one-use and always revoked.
+ */
+export function takeoverMissionLeadershipFromRenderer(
+  owner: WebContents,
+  missionId: string,
+  input: Omit<LeadershipTakeoverInput, 'origin'>,
+): AppliedLeadership {
+  if (operatorTakeover) throw new MissionLeadershipError('busy', { missionId });
+  const scope = operatorScope(owner);
+  const session = getOwnedAgentSessionInfo(owner, input.sessionId);
+  if (!session || session.paneId !== input.paneId || !sameLeadershipScope(session.scope, scope) ||
+      (session.missionId !== undefined && session.missionId !== missionId)) {
+    throw new MissionLeadershipError('scope_mismatch', { missionId, reason: 'takeover_requires_owned_pane' });
+  }
+  const takeover: LeadershipTakeoverInput = Object.freeze({
+    origin: 'takeover', sessionId: input.sessionId, paneId: input.paneId, reason: input.reason,
+  });
+  operatorTakeover = { owner, scope, missionId, input: takeover, consumed: false };
+  try {
+    return getMissionLeadership().applyLeadership(scope, missionId, takeover);
+  } finally {
+    operatorTakeover = undefined;
+  }
+}
 
 /** Does not resolve stores, open a database or register listeners until used. */
 export function getMissionLeadership(): MissionLeadership<RuntimeSnapshot> {
-  return leadership ??= new MissionLeadership({ forScope: createMissionLeadershipPorts });
+  return leadership ??= new MissionLeadership({
+    forScope: createMissionLeadershipPorts,
+    authorizeTakeover: authorizeOperatorTakeover,
+  });
 }

@@ -73,6 +73,20 @@ function depsFixture() {
     emitLeadershipChanged: (event) => {
       events.push(event);
     },
+    clearDurableLeaderIfMatches: (missionId, sessionId) => {
+      if (missions.get(missionId) !== sessionId) return false;
+      missions.set(missionId, null);
+      return true;
+    },
+    releasePaneLeader: (missionId) => { panes.delete(missionId); return true; },
+    captureReleaseRuntime: () => new Map(sessionContexts),
+    releaseRuntimeLeader: (missionId) => {
+      for (const [id, ctx] of sessionContexts) {
+        if (ctx?.missionId === missionId) sessionContexts.delete(id);
+      }
+      return true;
+    },
+    emitLeadershipReleased: () => {},
   };
 
   const forScope = vi.fn(() => ports);
@@ -198,18 +212,17 @@ describe("invariante 4 — origin:'respawn' com líder VIVO: recusa explícita, 
     expect(f.sessions.get('session-old')?.state).toBe('busy');
   });
 
-  it('respawn sobre líder EXITED também é recusado — spawn/respawn contam até registro morto', () => {
+  it('respawn sobre líder EXITED substitui a autoridade sem terminar a sessão', () => {
     const f = depsFixture();
     f.registerSession('session-old', 'pane-old', 'busy');
     f.engine.applyLeadership(scope, MISSION_ID, { sessionId: 'session-old', paneId: 'pane-old', origin: 'spawn' });
     f.sessions.set('session-old', { ...f.sessions.get('session-old')!, state: 'exited' });
     f.registerSession('session-new', 'pane-new', 'busy');
 
-    expect(() =>
-      f.engine.applyLeadership(scope, MISSION_ID, { sessionId: 'session-new', paneId: 'pane-new', origin: 'respawn' }),
-    ).toThrow(/leadership_existing_session/);
+    f.engine.applyLeadership(scope, MISSION_ID, { sessionId: 'session-new', paneId: 'pane-new', origin: 'respawn' });
 
-    expect(f.engine.resolveMissionLeader(scope, MISSION_ID)?.sessionId).toBe('session-old');
+    expect(f.engine.resolveMissionLeader(scope, MISSION_ID)?.sessionId).toBe('session-new');
+    expect(f.sessions.get('session-old')?.state).toBe('exited');
   });
 
   it('respawn sem NENHUM registro anterior funciona como um spawn normal', () => {
