@@ -2,8 +2,8 @@ import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
 import { askChoice } from '../state/choice-store';
-import { askConfirm } from '../state/confirm-store';
 import { useToastStore } from '../state/toast-store';
+import { listPanes } from './split-tree';
 
 /**
  * F-527: promoção de pane a orquestrador com vínculo EXPLÍCITO de missão.
@@ -42,29 +42,66 @@ export function resolvePanePromoteTarget(input: {
   readonly boundMissionId?: string;
   readonly missions: ReadonlyArray<{ id: string; title: string; status: string }>;
 }): PanePromoteTarget {
+  const active = input.missions.filter((m) =>
+    ACTIVE_MISSION_STATUSES.has(m.status),
+  );
   const bound =
     input.paneMissionId ?? input.destinationMissionId ?? input.boundMissionId;
-  if (bound) return { kind: 'mission', missionId: bound };
-  const active = input.missions.filter((m) => ACTIVE_MISSION_STATUSES.has(m.status));
+  // F-561: o vínculo só vence se a missão AINDA PODE receber um orquestrador.
+  // Antes qualquer id passava — abrir uma missão `done` e clicar "Tornar
+  // orquestrador" carimbava o pane numa missão encerrada (ou inexistente), e o
+  // main recusava sem que o operador visse. Vínculo morto cai na escolha.
+  if (bound && active.some((m) => m.id === bound)) {
+    return { kind: 'mission', missionId: bound };
+  }
   if (active.length > 0) return { kind: 'choose', missions: active };
   return { kind: 'no-mission' };
 }
 
-/** Corpo comum da promoção (IPC main + layout + vínculo), sem UI. */
+/**
+ * Corpo comum da promoção (IPC main + layout + vínculo), sem UI.
+ *
+ * F-561: a recusa do main é FINAL. Antes o resultado era descartado e o layout
+ * promovia mesmo assim — o pane ganhava a estrela de orquestrador enquanto o
+ * main não o reconhecia como tal. Esse é o orquestrador órfão: a UI dizia que
+ * havia um líder, o motor não tinha nenhum, e o operador só descobria quando
+ * nada acontecia. Quem manda no papel é a autoridade de missão.
+ *
+ * Devolve `true` só quando o main confirmou.
+ */
 export async function promotePaneToMissionOrchestrator(
   missionId: string,
   paneId: string,
-): Promise<void> {
+): Promise<boolean> {
+  const promote = window.nexus?.orch?.promoteMissionOrchestrator;
+  if (!promote) {
+    console.warn(
+      `[promote] sem bridge de missão — pane=${paneId} mission=${missionId}`,
+    );
+    return false;
+  }
+  let result: { ok?: boolean; error?: string } | undefined;
   try {
-    await window.nexus?.orch?.promoteMissionOrchestrator?.({
-      missionId,
-      paneId,
-    });
-  } catch {
-    // Promoção direta de layout segue se o IPC estiver indisponível.
+    result = (await promote({ missionId, paneId })) as
+      | { ok?: boolean; error?: string }
+      | undefined;
+  } catch (error) {
+    console.warn(
+      `[promote] IPC falhou pane=${paneId} mission=${missionId}:`,
+      error,
+    );
+    return false;
+  }
+  if (result?.ok !== true) {
+    console.warn(
+      `[promote] main recusou pane=${paneId} mission=${missionId} ` +
+        `motivo=${result?.error ?? 'desconhecido'}`,
+    );
+    return false;
   }
   useLayoutStore.getState().promoteMissionPaneRole(missionId, paneId);
   useOrchStore.getState().bindPaneMission(paneId, missionId);
+  return true;
 }
 
 const MISSION_STATUS_LABEL: Record<string, string> = {
@@ -83,8 +120,14 @@ export async function promotePaneWithMissionChoice(input: {
 }): Promise<string | null> {
   const orch = useOrchStore.getState();
   const destination = useProductNavigationStore.getState().destination;
+  // O vínculo GRAVADO no pane é autoridade tão boa quanto o observado — ler só
+  // `paneMissions` fazia um pane restaurado do disco (que traz `missionId` no
+  // modelo) parecer solto e cair no diálogo à toa.
+  const paneMissionId = listPanes(useLayoutStore.getState().root).find(
+    (pane) => pane.id === input.paneId,
+  )?.missionId;
   const target = resolvePanePromoteTarget({
-    paneMissionId: undefined,
+    paneMissionId,
     destinationMissionId:
       destination.kind === 'mission' ? destination.missionId : undefined,
     boundMissionId: orch.paneMissions[input.paneId],
@@ -92,19 +135,30 @@ export async function promotePaneWithMissionChoice(input: {
   });
 
   if (target.kind === 'mission') {
-    await promotePaneToMissionOrchestrator(target.missionId, input.paneId);
+    const promoted = await promotePaneToMissionOrchestrator(
+      target.missionId,
+      input.paneId,
+    );
+    if (!promoted) {
+      toastPromoteRefused();
+      return null;
+    }
     return target.missionId;
   }
 
   if (target.kind === 'no-mission') {
-    const ok = await askConfirm({
-      title: 'Nenhuma missão ativa',
-      body:
-        'Este painel não pertence a uma missão e não há missões em andamento. ' +
-        'Abrir uma nova missão para liderar a partir daqui?',
-      confirmLabel: 'Abrir nova missão',
-    });
-    if (ok) useProductNavigationStore.getState().openNewMission();
+    // F-561: sem missão não existe orquestrador — e o diálogo "Nenhuma missão
+    // ativa" só entregava um beco sem saída (confirmar abria o wizard e o pane
+    // continuava solto). Agora a ação leva DIRETO ao caminho de criar a missão,
+    // e o toast diz por que o painel ainda não lidera nada.
+    useProductNavigationStore.getState().openNewMission();
+    useToastStore.getState().push(
+      'info',
+      'Orquestrador precisa de missão',
+      'Nenhuma missão em andamento neste projeto. Descreva o pedido aqui — a ' +
+        'missão nasce com o próprio orquestrador, e este painel continua seu ' +
+        'terminal.',
+    );
     return null;
   }
 
@@ -130,8 +184,26 @@ export async function promotePaneWithMissionChoice(input: {
     useProductNavigationStore.getState().openNewMission();
     return null;
   }
-  await promotePaneToMissionOrchestrator(picked, input.paneId);
+  const promoted = await promotePaneToMissionOrchestrator(picked, input.paneId);
+  if (!promoted) {
+    toastPromoteRefused();
+    return null;
+  }
   return picked;
+}
+
+/**
+ * Recusa VISÍVEL. O silêncio era metade do bug: o main negava, a UI promovia
+ * assim mesmo, e o operador ficava com uma estrela de orquestrador que não
+ * comandava nada.
+ */
+export function toastPromoteRefused(): void {
+  useToastStore.getState().push(
+    'error',
+    'Não foi possível definir o orquestrador',
+    'A missão não aceitou este painel como líder. Abra a missão pelo Quadro e ' +
+      'tente de novo, ou crie uma nova missão.',
+  );
 }
 
 /** Toast padrão de sucesso usado pelos três pontos de entrada. */

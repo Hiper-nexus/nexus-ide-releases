@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PaneModel, WorkspaceLayout } from '../../shared/types';
 import { defaultCanvasLayout } from '../lib/canvas-layout';
-import { buildGridTree, listPanes, MAX_LIVE_PANES_SOFT } from '../lib/split-tree';
+import {
+  buildGridTree,
+  initialTree,
+  isStructuralPlaceholderPane,
+  listPanes,
+  MAX_LIVE_PANES_SOFT,
+  updatePane,
+} from '../lib/split-tree';
 import {
   detachWorkspaceLayout,
   enforceLayoutInvariants,
@@ -1179,5 +1186,78 @@ describe('layout-store stage focus mode', () => {
     useLayoutStore.getState().toggleStageFocus();
     expect(useLayoutStore.getState().stageFocusMode).toBe(false);
     expect(useLayoutStore.getState().stagePaneId).toBeNull();
+  });
+});
+
+// ── F-560: o ESPAÇO do operador acompanha o pane ────────────────────────────
+
+describe('espaço do pane (F-560)', () => {
+  beforeEach(() => {
+    useLayoutStore.setState({
+      root: initialTree(),
+      focusedPaneId: null,
+      maximizedPaneId: null,
+      hydrated: true,
+    });
+  });
+
+  it('assignPaneSpace carimba o pane solto', () => {
+    const store = useLayoutStore.getState();
+    const paneId = store.addShellPane();
+    useLayoutStore.getState().assignPaneSpace(paneId, 'space-1', 'Meus terminais');
+
+    const pane = listPanes(useLayoutStore.getState().root).find(
+      (item) => item.id === paneId,
+    );
+    expect(pane?.spaceId).toBe('space-1');
+    expect(pane?.spaceTitle).toBe('Meus terminais');
+  });
+
+  it('assignPaneSpace NÃO rouba um pane que já pertence a uma missão', () => {
+    const paneId = useLayoutStore.getState().addShellPane();
+    useLayoutStore.setState({
+      root: updatePane(useLayoutStore.getState().root, paneId, {
+        missionId: 'mission-1',
+      }),
+    });
+
+    useLayoutStore.getState().assignPaneSpace(paneId, 'space-1', 'Meus terminais');
+
+    const pane = listPanes(useLayoutStore.getState().root).find(
+      (item) => item.id === paneId,
+    );
+    expect(pane?.missionId).toBe('mission-1');
+    expect(pane?.spaceId).toBeUndefined();
+  });
+
+  it('dividir um pane de espaço mantém o irmão no MESMO espaço', () => {
+    const paneId = useLayoutStore.getState().addShellPane();
+    useLayoutStore.getState().assignPaneSpace(paneId, 'space-1', 'Meus terminais 2');
+
+    useLayoutStore.getState().split(paneId, 'row');
+
+    const panes = listPanes(useLayoutStore.getState().root);
+    const created = panes.filter((pane) => pane.spaceId === 'space-1');
+    expect(created).toHaveLength(2);
+    expect(
+      created.every((pane) => pane.spaceTitle === 'Meus terminais 2'),
+    ).toBe(true);
+  });
+
+  it('dividir um pane de missão não inventa espaço nenhum', () => {
+    const paneId = useLayoutStore.getState().addShellPane();
+    useLayoutStore.setState({
+      root: updatePane(useLayoutStore.getState().root, paneId, {
+        missionId: 'mission-1',
+        spaceId: 'space-antigo',
+      }),
+    });
+
+    useLayoutStore.getState().split(paneId, 'row');
+
+    const created = listPanes(useLayoutStore.getState().root).filter(
+      (pane) => pane.id !== paneId && !isStructuralPlaceholderPane(pane),
+    );
+    expect(created.every((pane) => pane.spaceId === undefined)).toBe(true);
   });
 });

@@ -410,6 +410,23 @@ export interface PaneModel {
   /** Mission selector for a main-verified post-approval orchestrator spawn. */
   missionId?: string;
   /**
+   * ESPAÇO do pane: o agrupamento do operador para panes que não pertencem a
+   * uma missão do motor. Existe porque "abrir 3 terminais" e "rodar a missão A"
+   * compartilham UMA árvore de layout por workspace — sem uma chave de escopo,
+   * a vista Terminais só sabia filtrar por missão e despejava tudo no mesmo
+   * mosaico (o operador via os painéis novos grudados na missão aberta).
+   *
+   * Nunca substitui `missionId`: missão vence espaço quando os dois existem.
+   * O renderer é o dono; o main não deriva autoridade nenhuma daqui.
+   */
+  spaceId?: string;
+  /**
+   * Rótulo do espaço, desnormalizado no pane de propósito. O espaço É o
+   * conjunto dos seus panes — sem registro paralelo para dessincronizar, e o
+   * nome sobrevive ao restart pelo mesmo caminho que o resto do layout.
+   */
+  spaceTitle?: string;
+  /**
    * Process-local orchestration surface. It may be visible while active but
    * must never enter the durable workspace layout or cold-start restore.
    */

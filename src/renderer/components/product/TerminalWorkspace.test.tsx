@@ -6,6 +6,12 @@ import type { PaneModel } from '../../../shared/types';
 import { buildGridTree } from '../../lib/split-tree';
 import { useLayoutStore } from '../../state/layout-store';
 import { useOrchStore } from '../../state/orch-store';
+import { usePaneScopeStore } from '../../state/pane-scope-store';
+import {
+  ALL_SCOPES_KEY,
+  LOOSE_SCOPE_KEY,
+  spaceScopeKey,
+} from '../../lib/pane-spaces';
 import { TerminalWorkspace } from './TerminalWorkspace';
 
 const terminalRuntime = vi.hoisted(() => ({
@@ -148,6 +154,31 @@ function seedLayout(viewKind: 'grid' | 'canvas' = 'grid'): void {
 }
 
 
+function attachedPaneIds(): string[] {
+  return [
+    ...new Set(
+      terminalRuntime.attachHost.mock.calls.map(
+        ([pane]) => (pane as PaneModel).id,
+      ),
+    ),
+  ].sort();
+}
+
+function chipLabels(host: HTMLElement): string[] {
+  return [
+    ...host.querySelectorAll('.terminal-workspace__filter-label'),
+  ].map((label) => label.textContent ?? '');
+}
+
+function activeChipLabel(host: HTMLElement): string | undefined {
+  return (
+    host
+      .querySelector('.terminal-workspace__filter-chip--active')
+      ?.querySelector('.terminal-workspace__filter-label')?.textContent ??
+    undefined
+  );
+}
+
 function boardReturnButtons(host: HTMLElement): HTMLButtonElement[] {
   return [...host.querySelectorAll<HTMLButtonElement>('button')].filter((button) =>
     /voltar.*quadro/i.test(
@@ -159,6 +190,7 @@ function boardReturnButtons(host: HTMLElement): HTMLButtonElement[] {
 beforeEach(() => {
   vi.clearAllMocks();
   installNexusBoundary();
+  usePaneScopeStore.getState().clearScopeFocus();
   seedLayout();
 });
 
@@ -470,23 +502,14 @@ describe('TerminalWorkspace — filtro de missões na vista global (F-527)', () 
 
     const { host } = mount(<TerminalWorkspace />);
 
-    const chips = [
-      ...host.querySelectorAll('.terminal-workspace__filter-chip'),
-    ];
-    expect(chips.map((c) => c.textContent)).toEqual([
+    expect(chipLabels(host)).toEqual([
       'Checkout da loja',
       'Blog da release',
-      'Todas as missões',
+      'Todos',
     ]);
     // Foco default: a primeira missão — só os panes dela montam.
-    expect(
-      host.querySelector('.terminal-workspace__filter-chip--active')
-        ?.textContent,
-    ).toBe('Checkout da loja');
-    const attached = terminalRuntime.attachHost.mock.calls.map(
-      ([pane]) => (pane as PaneModel).id,
-    );
-    expect(attached).toEqual(['pane-a1']);
+    expect(activeChipLabel(host)).toBe('Checkout da loja');
+    expect(attachedPaneIds()).toEqual(['pane-a1']);
   });
 });
 
@@ -523,16 +546,24 @@ describe('TerminalWorkspace — visibilidade de panes soltos (F-546)', () => {
     });
   }
 
-  it('vista global: pane sem missionId e sem entrada em paneMissions continua visível ao lado do pane da missão', () => {
+  // F-560 mudou o contrato: o pane solto não é mais EMPILHADO no mosaico da
+  // missão — ele ganha uma ABA própria. O que F-546 protege continua de pé (o
+  // pane nunca some nem fica sem montar): a aba está na tela, com a contagem, e
+  // clicar nela monta o pane.
+  it('vista global: pane sem missionId ganha aba própria e monta ao ser escolhido', () => {
     seedMissionPlusLoose();
 
     const { host } = mount(<TerminalWorkspace />);
 
-    const attached = terminalRuntime.attachHost.mock.calls.map(
-      ([pane]) => (pane as PaneModel).id,
-    );
-    expect(attached.sort()).toEqual(['pane-loose', 'pane-mission'].sort());
-    expect(host.querySelectorAll('.pane__terminal')).toHaveLength(2);
+    expect(chipLabels(host)).toEqual(['Missão X', 'Painéis soltos', 'Todos']);
+    expect(attachedPaneIds()).toEqual(['pane-mission']);
+
+    act(() => {
+      usePaneScopeStore.getState().focusScope(LOOSE_SCOPE_KEY);
+    });
+
+    expect(activeChipLabel(host)).toBe('Painéis soltos');
+    expect(attachedPaneIds()).toEqual(['pane-loose', 'pane-mission']);
   });
 
   it('dentro de uma missão: o pane solto não é adicionado só por esta regra', () => {
@@ -542,9 +573,136 @@ describe('TerminalWorkspace — visibilidade de panes soltos (F-546)', () => {
       <TerminalWorkspace missionId="mission-x" onBackToBoard={vi.fn()} />,
     );
 
-    const attached = terminalRuntime.attachHost.mock.calls.map(
-      ([pane]) => (pane as PaneModel).id,
-    );
-    expect(attached).toEqual(['pane-mission']);
+    expect(attachedPaneIds()).toEqual(['pane-mission']);
+  });
+});
+
+// ── F-560: "Novo pedido" não pode despejar painéis na missão já aberta ───────
+
+describe('TerminalWorkspace — espaços separados da missão aberta (F-560)', () => {
+  function seedMissionPlusSpace(): void {
+    useLayoutStore.setState({
+      root: buildGridTree([
+        {
+          id: 'pane-missao-a',
+          kind: 'cli-agent',
+          title: 'Worker da missão A',
+          adapterId: 'codex',
+          missionId: 'mission-a',
+        },
+        {
+          id: 'pane-novo-1',
+          kind: 'cli-agent',
+          title: 'Codex',
+          adapterId: 'codex',
+          spaceId: 'space-novo',
+          spaceTitle: 'Meus terminais 2',
+        },
+        {
+          id: 'pane-novo-2',
+          kind: 'cli-agent',
+          title: 'DeepSeek',
+          adapterId: 'deepseek',
+          spaceId: 'space-novo',
+          spaceTitle: 'Meus terminais 2',
+        },
+      ]),
+      focusedPaneId: 'pane-novo-1',
+    });
+    useOrchStore.setState({
+      paneMissions: { 'pane-missao-a': 'mission-a' },
+      missions: [],
+      missionSummaries: [
+        {
+          id: 'mission-a',
+          title: 'Missão A',
+          state: 'running',
+          progress: { completed: 0, total: 1 },
+          needsAttention: false,
+          updatedAt: 1,
+        },
+      ],
+    });
+  }
+
+  it('o espaço aberto pelo "Novo pedido" monta SÓ os painéis dele', () => {
+    seedMissionPlusSpace();
+    usePaneScopeStore.getState().focusScope(spaceScopeKey('space-novo'));
+
+    mount(<TerminalWorkspace />);
+
+    expect(attachedPaneIds()).toEqual(['pane-novo-1', 'pane-novo-2']);
+  });
+
+  it('cada escopo vira uma aba, com a contagem de painéis', () => {
+    seedMissionPlusSpace();
+    usePaneScopeStore.getState().focusScope(spaceScopeKey('space-novo'));
+
+    const { host } = mount(<TerminalWorkspace />);
+
+    expect(chipLabels(host)).toEqual(['Missão A', 'Meus terminais 2', 'Todos']);
+    expect(
+      [...host.querySelectorAll('.terminal-workspace__filter-count')].map(
+        (count) => count.textContent,
+      ),
+    ).toEqual(['1', '2']);
+    expect(activeChipLabel(host)).toBe('Meus terminais 2');
+  });
+
+  it('sem nenhuma missão viva o filtro NÃO desliga — cada espaço segue no seu mosaico', () => {
+    useLayoutStore.setState({
+      root: buildGridTree([
+        {
+          id: 'pane-espaco-1',
+          kind: 'cli-agent',
+          title: 'Codex',
+          adapterId: 'codex',
+          spaceId: 'space-um',
+          spaceTitle: 'Meus terminais',
+        },
+        { id: 'pane-solto', kind: 'shell', title: 'Shell avulso' },
+      ]),
+      focusedPaneId: 'pane-espaco-1',
+    });
+    useOrchStore.setState({
+      paneMissions: {},
+      missions: [],
+      missionSummaries: [],
+    });
+    usePaneScopeStore.getState().focusScope(spaceScopeKey('space-um'));
+
+    mount(<TerminalWorkspace />);
+
+    expect(attachedPaneIds()).toEqual(['pane-espaco-1']);
+  });
+
+  it('"Todos" continua existindo para quem quer o mosaico inteiro', () => {
+    seedMissionPlusSpace();
+    usePaneScopeStore.getState().focusScope(ALL_SCOPES_KEY);
+
+    mount(<TerminalWorkspace />);
+
+    expect(attachedPaneIds()).toEqual([
+      'pane-missao-a',
+      'pane-novo-1',
+      'pane-novo-2',
+    ]);
+  });
+
+  it('escopo que evaporou cai no primeiro com pane, nunca no mosaico inteiro', () => {
+    seedMissionPlusSpace();
+    usePaneScopeStore.getState().focusScope(spaceScopeKey('space-que-sumiu'));
+
+    mount(<TerminalWorkspace />);
+
+    expect(attachedPaneIds()).toEqual(['pane-missao-a']);
+  });
+
+  it('dentro da missão, o painel de outro espaço não entra no mosaico', () => {
+    seedMissionPlusSpace();
+
+    mount(<TerminalWorkspace missionId="mission-a" onBackToBoard={vi.fn()} />);
+
+    expect(attachedPaneIds()).toEqual(['pane-missao-a']);
   });
 });

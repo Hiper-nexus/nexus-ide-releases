@@ -161,10 +161,10 @@
 }
 
 .terminal-workspace__filter-chip {
-  max-width: 220px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  max-width: 240px;
   font-size: var(--text-sm);
   padding: 3px var(--space-2);
   border-radius: var(--radius-round);
@@ -172,6 +172,40 @@
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
+  transition:
+    border-color var(--duration-fast, 150ms) ease,
+    color var(--duration-fast, 150ms) ease;
+}
+
+/* O nome pode truncar; a contagem NUNCA — ela é a prova de que o painel está
+   ali, do outro lado da aba, e não sumiu. */
+.terminal-workspace__filter-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-inline-size: 0;
+}
+
+.terminal-workspace__filter-count {
+  flex: 0 0 auto;
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  padding: 0 5px;
+  border-radius: var(--radius-round);
+  background: var(--bg-raised, var(--bg-bar));
+  color: var(--text-dim);
+}
+
+.terminal-workspace__filter-chip--active .terminal-workspace__filter-count {
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* Espaço do operador e missão são coisas diferentes — a aba diz qual é qual
+   sem depender do texto. */
+.terminal-workspace__filter-chip[data-scope-kind='space'],
+.terminal-workspace__filter-chip[data-scope-kind='loose'] {
+  border-style: dashed;
 }
 
 .terminal-workspace__filter-chip:hover {

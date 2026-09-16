@@ -96,6 +96,14 @@ const paneModelSchema = z.object({
   titlePinned: z.boolean().optional(),
   orchRequestId: z.string().min(1).max(128).optional(),
   missionId: z.string().min(1).max(128).optional(),
+  /**
+   * Espaço do operador. Mesma razão do `paneNumber` acima: `z.object` descarta
+   * chave desconhecida em SILÊNCIO, então sem estas duas entradas o layout
+   * voltaria do disco sem escopo e todo restart remisturaria os painéis de
+   * espaços diferentes num mosaico só.
+   */
+  spaceId: z.string().min(1).max(128).optional(),
+  spaceTitle: z.string().min(1).max(256).optional(),
   transient: z.literal(true).optional(),
   terminalScrollback: z.string().max(256_000).optional(),
   /**

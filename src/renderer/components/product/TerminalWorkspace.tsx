@@ -1,10 +1,17 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { CanvasView } from '../CanvasView';
 import { PaneGrid } from '../PaneGrid';
 import { useLayoutStore } from '../../state/layout-store';
 import { useOrchStore } from '../../state/orch-store';
 import { listPanes } from '../../lib/split-tree';
 import { selectMissionTerminalPanes } from '../../lib/mission-terminal-panes';
+import {
+  ALL_SCOPES_KEY,
+  listPaneScopes,
+  missionScopeKey,
+  selectScopePanes,
+} from '../../lib/pane-spaces';
+import { usePaneScopeStore } from '../../state/pane-scope-store';
 import { missionLifecycleLabel } from '../../lib/mission-lifecycle-copy';
 import { missionAwaitsOperatorReview } from '../../../shared/mission-recovery-policy';
 import { PixelIcon } from '../PixelIcon';
@@ -81,16 +88,18 @@ export function TerminalWorkspace({
 }: TerminalWorkspaceProps) {
   const viewKind = useLayoutStore((state) => state.viewKind);
   const inMission = missionId !== undefined;
-  // F-527: filtro de missão na vista GLOBAL. Com duas ou mais missões vivendo
-  // na mesma árvore de panes, a vista "Todas" misturava tudo — a "bagunça na
-  // tela". O foco abre na missão mais recente e "Todas as missões" volta a
-  // mostrar o grid inteiro em um clique.
-  const [globalFocusMissionId, setGlobalFocusMissionId] = useState<
-    string | null
-  >(null);
-  useEffect(() => {
-    setGlobalFocusMissionId(null);
-  }, [missionId]);
+  // F-560: a vista global passou a filtrar por ESCOPO (missão | espaço do
+  // operador | soltos), não só por missão. O filtro antigo desligava inteiro
+  // quando nenhuma missão qualificava — e era exatamente aí que o assistente
+  // "Montar meus terminais" aterrissava, despejando os painéis novos no mesmo
+  // mosaico da missão já aberta.
+  // A escolha NÃO é zerada ao montar nem ao trocar de missão. Quem abre um
+  // espaço ("Montar meus terminais") escolhe o escopo ANTES de navegar; um
+  // reset no mount apagaria justamente essa escolha e devolveria o operador ao
+  // mosaico da missão anterior. A validação contra `scopes` abaixo já cobre o
+  // escopo que deixou de existir.
+  const activeScopeKey = usePaneScopeStore((state) => state.activeScopeKey);
+  const focusScope = usePaneScopeStore((state) => state.focusScope);
   // O rótulo segue a projeção canônica da missão — "Missão ativa" fixo mentia
   // em missão já concluída/falha. Done SEM carimbo do humano é revisão, não
   // Pronto: senão o header dos Terminais declara encerrado o canal que ainda
@@ -110,75 +119,86 @@ export function TerminalWorkspace({
     ? `Missão · ${missionLifecycleLabel(missionState, false, undefined, awaitsReview)}`
     : 'Missão';
   const paneMissions = useOrchStore((state) => state.paneMissions);
+  const missionSummaries = useOrchStore((state) => state.missionSummaries);
   const layoutRoot = useLayoutStore((state) => state.root);
   // Panes que o operador abriu pelo "+ Pane" DENTRO desta vista. O filtro da
   // missão esconderia shells soltos e agentes sem missão — o pane nascia no
   // layout canônico mas nunca montava (sem PaneLeaf, sem PTY): "não abre, não
   // faz nada". Fixar o id aqui o mantém visível ao lado dos panes da missão.
-  const [operatorPinIds, setOperatorPinIds] = useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
-  useEffect(() => {
-    setOperatorPinIds(new Set());
-  }, [missionId]);
-  const handlePaneCreated = useCallback((paneId: string) => {
-    setOperatorPinIds((previous) =>
-      previous.has(paneId) ? previous : new Set(previous).add(paneId),
-    );
-  }, []);
+  //
+  // O pin é POR ESCOPO. Guardar um Set solto vazava: os pins da missão A já
+  // entravam no conjunto visível da missão B no mesmo render, antes de o efeito
+  // de limpeza rodar (F-560).
+  const [operatorPins, setOperatorPins] = useState<
+    Readonly<Record<string, ReadonlySet<string>>>
+  >(() => ({}));
   const panes = useMemo(() => listPanes(layoutRoot), [layoutRoot]);
-  // Missões ativas que realmente têm panes nesta árvore (a base dos chips).
-  const missionsWithPanes = useMemo(() => {
-    const byId = new Map<string, { id: string; title: string; state: string }>();
-    for (const pane of panes) {
-      const boundId = pane.missionId ?? paneMissions[pane.id];
-      if (!boundId || byId.has(boundId)) continue;
-      const summary = useOrchStore
-        .getState()
-        .missionSummaries.find((m) => m.id === boundId);
-      if (!summary) continue;
-      const state = summary.state;
-      const live =
-        state === 'running' ||
-        state === 'starting' ||
-        state === 'recovering' ||
-        state === 'review_ready' ||
-        state === 'blocked_user' ||
-        state === 'blocked_technical';
-      if (!live) continue;
-      byId.set(boundId, { id: boundId, title: summary.title, state });
-    }
-    return [...byId.values()];
-  }, [panes, paneMissions]);
+  const scopes = useMemo(
+    () =>
+      listPaneScopes({
+        panes,
+        paneMissions,
+        missions: missionSummaries.map((summary) => ({
+          id: summary.id,
+          title: summary.title,
+          state: summary.state,
+        })),
+      }),
+    [panes, paneMissions, missionSummaries],
+  );
 
-  const multiMission = !inMission && missionsWithPanes.length >= 2;
-  const VIEW_ALL = '__all__';
-  const globalFocus =
-    globalFocusMissionId === VIEW_ALL
-      ? null
-      : (globalFocusMissionId ?? missionsWithPanes[0]?.id ?? null);
-  const effectiveMissionId = inMission ? missionId : globalFocus;
+  // Escopo desenhado agora. Dentro da missão é a própria missão, sempre. Na
+  // vista global é a escolha do operador — e quando ela evapora (espaço
+  // fechado, missão encerrada) cai no PRIMEIRO escopo com pane, nunca em
+  // "mostrar tudo".
+  const scopeExists =
+    activeScopeKey === ALL_SCOPES_KEY ||
+    scopes.some((scope) => scope.key === activeScopeKey);
+  const effectiveScopeKey = inMission
+    ? missionScopeKey(missionId)
+    : (scopeExists && activeScopeKey ? activeScopeKey : scopes[0]?.key ?? null);
+
+  const handlePaneCreated = useCallback(
+    (paneId: string) => {
+      const scopeKey = effectiveScopeKey;
+      if (!scopeKey) return;
+      // Pane aberto pelo "+ Pane" DENTRO de um espaço pertence àquele espaço.
+      // O pin abaixo só o mantém na tela nesta sessão; o carimbo é o que faz
+      // ele voltar na aba certa depois do restart.
+      const scope = scopes.find((entry) => entry.key === scopeKey);
+      if (scope?.kind === 'space' && scope.id) {
+        useLayoutStore.getState().assignPaneSpace(paneId, scope.id, scope.title);
+      }
+      setOperatorPins((previous) => {
+        const current = previous[scopeKey];
+        if (current?.has(paneId)) return previous;
+        const next = new Set(current ?? []);
+        next.add(paneId);
+        return { ...previous, [scopeKey]: next };
+      });
+    },
+    [effectiveScopeKey, scopes],
+  );
+
+  const multiScope = !inMission && scopes.length >= 2;
 
   const visiblePaneIds = useMemo(() => {
-    if (!effectiveMissionId) return undefined;
-    const visible = selectMissionTerminalPanes(
-      panes,
-      effectiveMissionId,
-      paneMissions,
-    );
+    if (!effectiveScopeKey) return undefined;
+    if (effectiveScopeKey === ALL_SCOPES_KEY) return undefined;
+    const visible = inMission
+      ? selectMissionTerminalPanes(panes, missionId, paneMissions)
+      : selectScopePanes(panes, effectiveScopeKey, paneMissions);
     const ids = new Set(visible.map((pane) => pane.id));
-    for (const pinned of operatorPinIds) ids.add(pinned);
-    // Em vista global (!inMission), panes desvinculados de missão (shells avulsos,
-    // agentes soltos montados via grid/launcher) NUNCA podem sumir da grade
-    // por causa de um filtro automático de missão anterior!
-    if (!inMission) {
-      for (const pane of panes) {
-        const boundId = pane.missionId ?? paneMissions[pane.id];
-        if (!boundId) ids.add(pane.id);
-      }
-    }
+    for (const pinned of operatorPins[effectiveScopeKey] ?? []) ids.add(pinned);
     return ids;
-  }, [panes, effectiveMissionId, paneMissions, operatorPinIds, inMission]);
+  }, [
+    panes,
+    effectiveScopeKey,
+    paneMissions,
+    operatorPins,
+    inMission,
+    missionId,
+  ]);
 
   return (
     <section
@@ -213,36 +233,46 @@ export function TerminalWorkspace({
         </header>
       ) : null}
 
-      {multiMission ? (
-        <header className="terminal-workspace__filterbar" role="toolbar" aria-label="Filtrar terminais por missão">
-          <span className="terminal-workspace__filterbar-label">Missões:</span>
-          {missionsWithPanes.map((mission) => (
+      {multiScope ? (
+        <header
+          className="terminal-workspace__filterbar"
+          role="toolbar"
+          aria-label="Filtrar terminais por missão ou espaço"
+        >
+          <span className="terminal-workspace__filterbar-label">Abas:</span>
+          {scopes.map((scope) => (
             <button
-              key={mission.id}
+              key={scope.key}
               type="button"
               className={`terminal-workspace__filter-chip${
-                globalFocus === mission.id
+                effectiveScopeKey === scope.key
                   ? ' terminal-workspace__filter-chip--active'
                   : ''
               }`}
-              aria-pressed={globalFocus === mission.id}
-              onClick={() => setGlobalFocusMissionId(mission.id)}
-              title={mission.title}
+              aria-pressed={effectiveScopeKey === scope.key}
+              onClick={() => focusScope(scope.key)}
+              title={scope.title}
+              data-scope-kind={scope.kind}
             >
-              {mission.title || 'Missão sem título'}
+              <span className="terminal-workspace__filter-label">
+                {scope.title}
+              </span>
+              <span className="terminal-workspace__filter-count">
+                {scope.paneCount}
+              </span>
             </button>
           ))}
           <button
             type="button"
             className={`terminal-workspace__filter-chip${
-              globalFocus === null
+              effectiveScopeKey === ALL_SCOPES_KEY
                 ? ' terminal-workspace__filter-chip--active'
                 : ''
             }`}
-            aria-pressed={globalFocus === null}
-            onClick={() => setGlobalFocusMissionId(VIEW_ALL)}
+            aria-pressed={effectiveScopeKey === ALL_SCOPES_KEY}
+            onClick={() => focusScope(ALL_SCOPES_KEY)}
           >
-            Todas as missões
+            <span className="terminal-workspace__filter-label">Todos</span>
           </button>
         </header>
       ) : null}

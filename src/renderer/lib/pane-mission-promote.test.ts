@@ -88,6 +88,10 @@ describe('promotePaneWithMissionChoice (fluxo com diálogo)', () => {
       missions: [mission('m1', 'running'), mission('m2', 'running')] as Mission[],
       paneMissions: {},
     });
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: { orch: { promoteMissionOrchestrator: vi.fn(async () => ({ ok: true })) } },
+    });
 
     const pending = promotePaneWithMissionChoice({ paneId: 'pane-1' });
     // Responde o diálogo como o operador: escolhe a SEGUNDA missão.
@@ -106,6 +110,28 @@ describe('promotePaneWithMissionChoice (fluxo com diálogo)', () => {
     expect(bind).toHaveBeenCalledWith('pane-1', 'm2');
     promote.mockRestore();
     bind.mockRestore();
+  });
+
+  it('sem nenhuma missão: leva direto ao Novo pedido, sem beco sem saída', async () => {
+    const { promotePaneWithMissionChoice } = await import('./pane-mission-promote');
+    const { useOrchStore } = await import('../state/orch-store');
+    const { useLayoutStore } = await import('../state/layout-store');
+    const { useProductNavigationStore } = await import(
+      '../state/product-navigation-store'
+    );
+    const promote = vi
+      .spyOn(useLayoutStore.getState(), 'promoteMissionPaneRole')
+      .mockImplementation(() => {});
+    const openNew = vi
+      .spyOn(useProductNavigationStore.getState(), 'openNewMission')
+      .mockImplementation(() => {});
+    useOrchStore.setState({ missions: [], paneMissions: {} });
+
+    expect(await promotePaneWithMissionChoice({ paneId: 'pane-3' })).toBeNull();
+    expect(openNew).toHaveBeenCalledTimes(1);
+    expect(promote).not.toHaveBeenCalled();
+    promote.mockRestore();
+    openNew.mockRestore();
   });
 
   it('opção "nova missão" abre o caminho expresso sem promover nada', async () => {
@@ -135,5 +161,116 @@ describe('promotePaneWithMissionChoice (fluxo com diálogo)', () => {
     expect(promote).not.toHaveBeenCalled();
     promote.mockRestore();
     openNew.mockRestore();
+  });
+});
+
+// ── F-561: nunca existe orquestrador sem missão que o reconheça ──────────────
+
+describe('resolvePanePromoteTarget — autoridade do vínculo (F-561)', () => {
+  it('lê o vínculo GRAVADO no pane do layout, não só o observado', () => {
+    const target = resolvePanePromoteTarget({
+      paneMissionId: 'm-layout',
+      missions: [mission('m-layout', 'running')],
+    });
+    expect(target).toEqual({ kind: 'mission', missionId: 'm-layout' });
+  });
+
+  it('missão encerrada no destino NÃO promove — ela não recebe orquestrador', () => {
+    // Antes: destination vencia sem olhar o status, então abrir uma missão
+    // `done` e clicar "Tornar orquestrador" carimbava o pane numa missão morta.
+    const target = resolvePanePromoteTarget({
+      destinationMissionId: 'm-done',
+      missions: [mission('m-done', 'done'), mission('m-viva', 'running')],
+    });
+    expect(target.kind).toBe('choose');
+    if (target.kind === 'choose') {
+      expect(target.missions.map((m) => m.id)).toEqual(['m-viva']);
+    }
+  });
+
+  it('vínculo que aponta para missão inexistente cai na escolha, não promove às cegas', () => {
+    const target = resolvePanePromoteTarget({
+      paneMissionId: 'm-fantasma',
+      missions: [mission('m-viva', 'running')],
+    });
+    expect(target.kind).toBe('choose');
+  });
+
+  it('vínculo fantasma e nenhuma missão viva → no-mission', () => {
+    const target = resolvePanePromoteTarget({
+      paneMissionId: 'm-fantasma',
+      missions: [],
+    });
+    expect(target).toEqual({ kind: 'no-mission' });
+  });
+});
+
+describe('promotePaneToMissionOrchestrator — recusa do main é final (F-561)', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  async function setupPromote(promoteResult: unknown) {
+    const { promotePaneToMissionOrchestrator } = await import(
+      './pane-mission-promote'
+    );
+    const { useLayoutStore } = await import('../state/layout-store');
+    const { useOrchStore } = await import('../state/orch-store');
+    const promoteRole = vi
+      .spyOn(useLayoutStore.getState(), 'promoteMissionPaneRole')
+      .mockImplementation(() => {});
+    const bind = vi
+      .spyOn(useOrchStore.getState(), 'bindPaneMission')
+      .mockImplementation(() => {});
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        orch: {
+          promoteMissionOrchestrator: vi.fn(async () => promoteResult),
+        },
+      },
+    });
+    return { promotePaneToMissionOrchestrator, promoteRole, bind };
+  }
+
+  it('main aceita → o layout promove e o vínculo é gravado', async () => {
+    const { promotePaneToMissionOrchestrator, promoteRole, bind } =
+      await setupPromote({ ok: true });
+
+    await expect(
+      promotePaneToMissionOrchestrator('m1', 'pane-1'),
+    ).resolves.toBe(true);
+    expect(promoteRole).toHaveBeenCalledWith('m1', 'pane-1');
+    expect(bind).toHaveBeenCalledWith('pane-1', 'm1');
+  });
+
+  it('main RECUSA → nada é promovido; o pane não vira orquestrador órfão', async () => {
+    const { promotePaneToMissionOrchestrator, promoteRole, bind } =
+      await setupPromote({ ok: false, error: 'mission_unavailable' });
+
+    await expect(
+      promotePaneToMissionOrchestrator('m1', 'pane-1'),
+    ).resolves.toBe(false);
+    expect(promoteRole).not.toHaveBeenCalled();
+    expect(bind).not.toHaveBeenCalled();
+  });
+
+  it('IPC ausente (janela sem bridge) também não promove às cegas', async () => {
+    const { promotePaneToMissionOrchestrator } = await import(
+      './pane-mission-promote'
+    );
+    const { useLayoutStore } = await import('../state/layout-store');
+    const promoteRole = vi
+      .spyOn(useLayoutStore.getState(), 'promoteMissionPaneRole')
+      .mockImplementation(() => {});
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: { orch: {} },
+    });
+
+    await expect(
+      promotePaneToMissionOrchestrator('m1', 'pane-1'),
+    ).resolves.toBe(false);
+    expect(promoteRole).not.toHaveBeenCalled();
   });
 });

@@ -8,6 +8,8 @@ import { ConfirmDialog } from './ConfirmDialog';
 import { useConfirmStore } from '../state/confirm-store';
 import { useTerminalGridDialogStore } from '../state/terminal-grid-dialog-store';
 import { useLayoutStore } from '../state/layout-store';
+import { usePaneScopeStore } from '../state/pane-scope-store';
+import { spaceScopeKey } from '../lib/pane-spaces';
 import { useProductNavigationStore } from '../state/product-navigation-store';
 import { useWorkspaceStore } from '../state/workspace-store';
 import { useProviderStore } from '../state/provider-store';
@@ -67,6 +69,7 @@ beforeEach(() => {
   useWorkspaceStore.setState({ current: project, recents: [project] });
   useLayoutStore.setState({ root: initialTree(), viewKind: 'grid', maximizedPaneId: null });
   useProductNavigationStore.getState().openLauncher();
+  usePaneScopeStore.getState().clearScopeFocus();
   useProviderStore.setState({ providers: [provider('codex'), provider('claude'), provider('missing', false)] });
   useAccountStore.setState({ accounts: [{
     id: 'codex-work', adapterId: 'codex', label: 'Trabalho', mode: 'subscription',
@@ -176,6 +179,51 @@ describe('TerminalGridDialog', () => {
     await click('Abrir sem IA');
     expect(panes()).toHaveLength(3);
     expect(panes()[0]).toEqual(running);
+  });
+
+  // F-560: era exatamente aqui que o bug nascia — os painéis entravam na árvore
+  // sem dono e a vista global os desenhava no mesmo mosaico da missão aberta.
+  it('os painéis novos nascem num ESPAÇO separado da missão em andamento', async () => {
+    const running = { ...createPane('cli-agent', project.path, 'claude'), missionId: 'live-mission' };
+    useLayoutStore.setState({ root: buildGridTree([running]) });
+    open(2);
+    await click('Abrir sem IA');
+
+    const created = panes().filter(pane => pane.id !== running.id);
+    expect(created).toHaveLength(2);
+    // Um espaço só para os dois, e nenhum deles herda a missão que já rodava.
+    const spaceIds = new Set(created.map(pane => pane.spaceId));
+    expect(spaceIds.size).toBe(1);
+    expect([...spaceIds][0]).toBeTruthy();
+    expect(created.every(pane => pane.missionId === undefined)).toBe(true);
+    expect(created.every(pane => pane.spaceTitle === 'Meus terminais')).toBe(true);
+    // O pane da missão fica intocado: nada de recarimbar o que já tem dono.
+    expect(panes().find(pane => pane.id === running.id)).toEqual(running);
+  });
+
+  it('a vista de Terminais abre JÁ dentro do espaço recém-criado', async () => {
+    open(2);
+    await click('Abrir sem IA');
+
+    const spaceId = panes().find(pane => pane.spaceId)?.spaceId;
+    expect(spaceId).toBeTruthy();
+    expect(usePaneScopeStore.getState().activeScopeKey).toBe(spaceScopeKey(spaceId!));
+  });
+
+  it('cada abertura ganha o PRÓXIMO nome livre, sem dois "Meus terminais"', async () => {
+    open(2);
+    await click('Abrir sem IA');
+    const first = panes().find(pane => pane.spaceId)!.spaceId;
+    open(2);
+    await click('Abrir sem IA');
+
+    const titles = new Map<string, string>();
+    for (const pane of panes()) {
+      if (pane.spaceId && pane.spaceTitle) titles.set(pane.spaceId, pane.spaceTitle);
+    }
+    expect(titles.size).toBe(2);
+    expect(titles.get(first!)).toBe('Meus terminais');
+    expect([...titles.values()].sort()).toEqual(['Meus terminais', 'Meus terminais 2']);
   });
 
   it('escolher pasta não troca o workspace até confirmar a abertura', async () => {

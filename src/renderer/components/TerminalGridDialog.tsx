@@ -8,6 +8,12 @@ import { useProviderStore } from '../state/provider-store';
 import { useAccountStore } from '../state/account-store';
 import { askConfirm, useConfirmStore } from '../state/confirm-store';
 import { useProductNavigationStore } from '../state/product-navigation-store';
+import { usePaneScopeStore } from '../state/pane-scope-store';
+import {
+  newPaneSpaceId,
+  nextPaneSpaceTitle,
+  spaceScopeKey,
+} from '../lib/pane-spaces';
 import { createPane, isStructuralPlaceholderPane, listPanes } from '../lib/split-tree';
 import { buildPanePickerEntries } from './PanePicker';
 import { PixelIcon } from './PixelIcon';
@@ -114,15 +120,27 @@ function TerminalGridSetup({ initialCount, close }: { initialCount: number; clos
       if (chosen.some(entry => !latestEntries.some(latest => latest.id === entry!.id))) throw new Error('Uma ferramenta ficou indisponível. Revise a escolha de cada painel.');
       const existing = listPanes(useLayoutStore.getState().root).filter(pane => !isStructuralPlaceholderPane(pane));
       if (existing.length + count > MAX_LIVE_PANES_HARD) throw new Error(`O limite é de ${MAX_LIVE_PANES_HARD} painéis. Feche alguns terminais antes de continuar.`);
+      // F-560: os painéis nascem num ESPAÇO próprio. Antes eles entravam na
+      // árvore sem dono nenhum e a vista global — que desligava o filtro quando
+      // não havia missão elegível — desenhava tudo junto: o operador pedia
+      // "Novo pedido", escolhia as IAs, e via os painéis novos grudados no
+      // mosaico da missão que já estava aberta.
+      const spaceId = newPaneSpaceId();
+      const spaceTitle = nextPaneSpaceTitle(existing);
       const panes = chosen.map(entry => {
         const intent = entry!.intent;
-        if (intent.kind !== 'agent') return createPane('shell', cwd);
-        return { ...createPane('cli-agent', cwd, intent.adapterId, intent.model), ...(intent.accountId ? { accountId: intent.accountId } : {}) };
+        const base = intent.kind !== 'agent'
+          ? createPane('shell', cwd)
+          : { ...createPane('cli-agent', cwd, intent.adapterId, intent.model), ...(intent.accountId ? { accountId: intent.accountId } : {}) };
+        return { ...base, spaceId, spaceTitle };
       });
       const layout = useLayoutStore.getState();
       layout.setPanes([...existing, ...panes]);
       if (layout.viewKind !== 'grid') layout.toggleView();
       useLayoutStore.getState().focus(panes[0].id);
+      // A escolha do escopo vem ANTES da navegação: é ela que faz os Terminais
+      // abrirem já dentro do espaço recém-criado em vez do mosaico anterior.
+      usePaneScopeStore.getState().focusScope(spaceScopeKey(spaceId));
       useProductNavigationStore.getState().openTerminal();
       close();
     } catch (cause) {

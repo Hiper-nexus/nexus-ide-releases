@@ -122,6 +122,12 @@ interface LayoutState {
   setAccountId(paneId: string, accountId: string | undefined): void;
   /** Pin the model used by this pane (used by model failover: rejected model → catalog fallback). */
   setPaneModel(paneId: string, model: string | undefined): void;
+  /**
+   * Adota o pane no ESPAÇO do operador (F-560). Quem cria pane pelo "+ Pane"
+   * dentro de um espaço quer o pane NAQUELE espaço — sem o carimbo o pane
+   * nasceria solto e pularia para outra aba no próximo restart.
+   */
+  assignPaneSpace(paneId: string, spaceId: string, spaceTitle: string): void;
   promoteMissionPaneRole(missionId: string, paneId: string): void;
   setPaneRole(paneId: string, role: 'orchestrator' | 'worker' | undefined): void;
   /**
@@ -821,10 +827,19 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
   canvasViewport: DEFAULT_CANVAS_VIEWPORT,
 
   split: (paneId, direction) => {
-    const newPane: PaneModel = createPane(
-      'shell',
-      getActiveWorkspacePath() ?? undefined,
-    );
+    // O irmão HERDA o espaço de quem foi dividido (F-560). Sem isto, dividir um
+    // painel de "Meus terminais 2" cuspia o novo pane na aba dos soltos — o
+    // operador dividia a tela e metade dela sumia da vista em que estava.
+    // Missão não se herda por split: papel de missão é concedido pelo main.
+    const source = listPanes(get().root).find((pane) => pane.id === paneId);
+    const inheritedSpace =
+      !source?.missionId && source?.spaceId
+        ? { spaceId: source.spaceId, spaceTitle: source.spaceTitle }
+        : {};
+    const newPane: PaneModel = {
+      ...createPane('shell', getActiveWorkspacePath() ?? undefined),
+      ...inheritedSpace,
+    };
     // Splitting the placeholder IS using it — claim it so the vacancy rule
     // does not reclaim the terminal the operator just asked to keep.
     const claimed = claimPlaceholderTarget(get().root, paneId);
@@ -1297,6 +1312,16 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
 
   setPaneModel: (paneId, model) => {
     const root = updatePane(get().root, paneId, { model });
+    set({ root });
+    persist();
+  },
+
+  assignPaneSpace: (paneId, spaceId, spaceTitle) => {
+    const pane = listPanes(get().root).find((item) => item.id === paneId);
+    // Missão vence espaço: um pane já adotado por uma missão não é recarimbado
+    // aqui, senão ele sairia da aba da missão que lidera.
+    if (!pane || pane.missionId) return;
+    const root = updatePane(get().root, paneId, { spaceId, spaceTitle });
     set({ root });
     persist();
   },

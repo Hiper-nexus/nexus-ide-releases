@@ -80,3 +80,72 @@ describe('workspaceLayoutSchema preserva o número do pane', () => {
     expect(() => workspaceLayoutSchema.parse(corrupt as unknown)).toThrow();
   });
 });
+
+/**
+ * Mesma fronteira, mesmo risco (F-560): o ESPAÇO do pane é o que separa "os
+ * painéis que abri agora" da missão que já estava rodando. Se ele não
+ * atravessar o parse, o primeiro restart remistura tudo num mosaico só — o
+ * bug de volta, sem nenhum teste de store notando.
+ */
+describe('workspaceLayoutSchema preserva o espaço do pane', () => {
+  it('spaceId e spaceTitle sobrevivem a gravar → ler', () => {
+    const layout: WorkspaceLayout = {
+      root: {
+        kind: 'leaf',
+        id: 'leaf-1',
+        pane: {
+          id: 'pane-a',
+          kind: 'cli-agent',
+          title: 'Codex',
+          adapterId: 'codex',
+          spaceId: 'space-7',
+          spaceTitle: 'Meus terminais 2',
+        },
+      },
+      focusedPaneId: 'pane-a',
+    };
+    const parsed = workspaceLayoutSchema.parse(
+      JSON.parse(JSON.stringify(layout)) as unknown,
+    );
+    if (parsed.root.kind !== 'leaf') throw new Error('esperava folha');
+    expect(parsed.root.pane.spaceId).toBe('space-7');
+    expect(parsed.root.pane.spaceTitle).toBe('Meus terminais 2');
+  });
+
+  it('layout anterior ao conceito de espaço continua carregando', () => {
+    const legacy = {
+      root: {
+        kind: 'leaf',
+        id: 'leaf-1',
+        pane: { id: 'pane-legado', kind: 'shell', title: 'legado' },
+      },
+      focusedPaneId: 'pane-legado',
+    };
+    const parsed = workspaceLayoutSchema.parse(legacy as unknown);
+    if (parsed.root.kind !== 'leaf') throw new Error('esperava folha');
+    expect(parsed.root.pane.spaceId).toBeUndefined();
+    expect(parsed.root.pane.spaceTitle).toBeUndefined();
+  });
+
+  it('missão e espaço coexistem no mesmo pane sem se apagarem', () => {
+    const layout = {
+      root: {
+        kind: 'leaf',
+        id: 'leaf-1',
+        pane: {
+          id: 'pane-a',
+          kind: 'cli-agent',
+          title: 'Codex',
+          missionId: 'mission-1',
+          spaceId: 'space-7',
+          spaceTitle: 'Meus terminais',
+        },
+      },
+      focusedPaneId: 'pane-a',
+    };
+    const parsed = workspaceLayoutSchema.parse(layout as unknown);
+    if (parsed.root.kind !== 'leaf') throw new Error('esperava folha');
+    expect(parsed.root.pane.missionId).toBe('mission-1');
+    expect(parsed.root.pane.spaceId).toBe('space-7');
+  });
+});

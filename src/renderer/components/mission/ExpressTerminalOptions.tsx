@@ -2,6 +2,8 @@ import { ActionCard } from '../ActionCard';
 import { useLayoutStore } from '../../state/layout-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { useTerminalGridDialogStore } from '../../state/terminal-grid-dialog-store';
+import { usePaneScopeStore } from '../../state/pane-scope-store';
+import { LOOSE_SCOPE_KEY } from '../../lib/pane-spaces';
 
 /**
  * O caminho manual da tela de criação: abrir os próprios painéis em vez de
@@ -32,6 +34,10 @@ export function ExpressTerminalOptions(): React.JSX.Element {
     // é exatamente o que a ferramenta "Abrir terminal" do ⌘K faz.
     useProductNavigationStore.getState().openTerminal();
     useLayoutStore.getState().addShellPane();
+    // Sem esta linha o terminal novo nasce na aba dos soltos e o operador fica
+    // olhando o mosaico do escopo ANTERIOR — o mesmo "abre e não aparece" que
+    // F-560 corrige no assistente ao lado.
+    usePaneScopeStore.getState().focusScope(LOOSE_SCOPE_KEY);
   };
 
   return (
