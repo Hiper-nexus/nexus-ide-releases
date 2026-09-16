@@ -1443,17 +1443,26 @@ async function reconcileCivilianCompletionAttempt(
   }
 
   let leader: MissionLeader | null;
+  // Engine indisponível (registry não inicializado — fixtures, boot parcial):
+  // leitor sem efeito degrada à ligação durável da missão, como antes da onda 1.
+  let engineUnavailable = false;
   try {
     leader = deps.resolveMissionLeader
       ? deps.resolveMissionLeader(scope, missionId)
       : getMissionLeadership().resolveMissionLeader(scope, missionId);
   } catch (error) {
-    if (error instanceof MissionLeadershipError) {
+    if (error instanceof MissionLeadershipError && error.code === 'unavailable') {
+      engineUnavailable = true;
+      leader = null;
+    } else if (error instanceof MissionLeadershipError) {
       return { ...emptyResult('refuse-fail-closed'), reason: `leadership-${error.code}` };
+    } else {
+      throw error;
     }
-    throw error;
   }
-  const provenOrchestratorSessionId = leader?.proven ? leader.sessionId : undefined;
+  const provenOrchestratorSessionId = engineUnavailable
+    ? (mission.orchestratorSessionId?.trim() || undefined)
+    : leader?.proven ? leader.sessionId : undefined;
 
   const tasks = stores.tasks.list(missionId);
   const inspection = inspectCivilianDelivery({

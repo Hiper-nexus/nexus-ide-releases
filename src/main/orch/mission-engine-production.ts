@@ -1037,11 +1037,28 @@ export function projectMissionEngineSnapshotView(
     leader = getMissionLeadership().resolveMissionLeader(scope, missionId);
   } catch (error) {
     if (!(error instanceof MissionLeadershipError)) throw error;
-    console.warn(
-      "[mission-engine] resolveMissionLeader falhou no snapshot (fail-closed, sem líder):",
-      error.code,
-    );
-    leader = null;
+    if (error.code === "unavailable") {
+      // Engine sem registry (fixtures, boot parcial): projeção de leitura
+      // degrada à derivação durável de antes da onda 1 — campo da missão +
+      // pane de papel orquestrador — sem prova física (proven=false).
+      const durableSessionId = mission.orchestratorSessionId?.trim() || null;
+      const durablePane =
+        missionPanes.find((pane) => pane.role === "orchestrator") ?? null;
+      leader = durableSessionId
+        ? {
+            sessionId: durableSessionId,
+            paneId: durablePane?.paneId ?? null,
+            source: "durable",
+            proven: false,
+          }
+        : null;
+    } else {
+      console.warn(
+        "[mission-engine] resolveMissionLeader falhou no snapshot (fail-closed, sem líder):",
+        error.code,
+      );
+      leader = null;
+    }
   }
   const orchestratorPane = leader?.paneId
     ? missionPanes.find((pane) => pane.paneId === leader.paneId) ?? null

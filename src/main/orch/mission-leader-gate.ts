@@ -57,11 +57,22 @@ export function requireMissionLeaderSession(
   if (!leader) {
     return { ok: false, code: 'no-leader', hint: HINT['no-leader'] };
   }
+  if (Object.hasOwn(ctx, 'sessionId')) {
+    if (ctx.sessionId !== leader.sessionId) {
+      return { ok: false, code: 'stale-session', hint: HINT['stale-session'] };
+    }
+    // The candidate IS the resolved leader acting through its own bound
+    // token. Absence of a physical observation ('unregistered'/'unverifiable',
+    // e.g. right after a host restart or in a fixture) is not death: the
+    // pre-onda-3 self case stays accepted. A KNOWN exit is different — a
+    // token replayed from a dead session must never act for the mission.
+    if (leader.liveness === 'exited') {
+      return { ok: false, code: 'unproven', hint: HINT.unproven };
+    }
+    return { ok: true, leader };
+  }
   if (!leader.proven) {
     return { ok: false, code: 'unproven', hint: HINT.unproven };
-  }
-  if (Object.hasOwn(ctx, 'sessionId') && ctx.sessionId !== leader.sessionId) {
-    return { ok: false, code: 'stale-session', hint: HINT['stale-session'] };
   }
   return { ok: true, leader };
 }

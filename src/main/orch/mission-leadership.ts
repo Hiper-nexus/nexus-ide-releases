@@ -30,7 +30,10 @@ export type LeadershipInput = z.infer<typeof leadershipInputSchema>;
 export type LeadershipTakeoverInput = Extract<LeadershipInput, { origin: 'takeover' }>;
 export type ReleaseLeadershipInput = z.infer<typeof releaseInputSchema>;
 export type MissionLeadershipErrorCode = 'split_brain' | 'existing_session' |
-  'target_not_live' | 'write_incomplete' | 'scope_mismatch' | 'busy' | 'mission_missing';
+  'target_not_live' | 'write_incomplete' | 'scope_mismatch' | 'busy' | 'mission_missing' |
+  /** Engine cannot observe this scope (store registry not initialized). Readers
+   * degrade to the durable mission binding; writers fail closed. */
+  'unavailable';
 export interface MissionLeadershipErrorPayload {
   readonly missionId?: string;
   readonly sessionIds?: readonly string[];
@@ -93,6 +96,12 @@ export interface MissionLeader {
   readonly source: 'durable' | 'live';
   /** Shared PTY classification, not proof that all descendants have exited. */
   readonly proven: boolean;
+  /**
+   * What the runtime actually observed for the leader session: 'exited' is a
+   * known death (a token replayed from it must be denied), 'unregistered' is
+   * absence of observation (not death). Optional for legacy/fixture leaders.
+   */
+  readonly liveness?: 'live' | 'exited' | 'unverifiable' | 'unregistered';
 }
 
 /** A comes from readMission; B–F are observations, never additional authorities. */
@@ -310,6 +319,7 @@ export class MissionLeadership<RuntimeSnapshot> {
       paneId: panes.values().next().value ?? null,
       source: observed.durable ? 'durable' : 'live',
       proven: Boolean(session && classifySessionLiveness(session.state) === 'live'),
+      liveness: session ? classifySessionLiveness(session.state) : 'unregistered',
     };
   }
 
@@ -473,6 +483,8 @@ export class MissionLeadership<RuntimeSnapshot> {
       });
       const resolved: MissionLeader = Object.freeze({
         sessionId: leader.sessionId, paneId: leader.paneId, source: 'durable', proven: true,
+        // The target was required live to be applied; resolve reports the same.
+        liveness: 'live',
       });
       // Readers invoked by the emitter now see the fully committed state.
       this.#busy.delete(key);

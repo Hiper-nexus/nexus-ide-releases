@@ -87,10 +87,23 @@ export function createMissionLeadershipPorts(
 ): MissionLeadershipPorts<RuntimeSnapshot> {
   const requested = normalizeLeadershipScope(rawScope);
   // Reuse the canonical complete scope when a legacy caller lacks fs identity.
-  const existing = requireProjectDomainStoreRegistry().listSuites()
-    .find((candidate) => sameLeadershipScope(candidate.scope, requested));
+  // Registry ausente (boot incompleto, fixtures de teste) = engine indisponível
+  // para este escopo: erro TIPADO, para leitores degradarem à ligação durável
+  // da missão e escritores falharem fechados — nunca um Error cru vazando.
+  let existing: { readonly scope: ProjectExecutionScope } | undefined;
+  try {
+    existing = requireProjectDomainStoreRegistry().listSuites()
+      .find((candidate) => sameLeadershipScope(candidate.scope, requested));
+  } catch {
+    throw new MissionLeadershipError('unavailable', { reason: 'store_registry_not_initialized' });
+  }
   const scope = existing?.scope ?? requested;
-  const suite = getProjectDomainStores(scope);
+  let suite: ReturnType<typeof getProjectDomainStores>;
+  try {
+    suite = getProjectDomainStores(scope);
+  } catch {
+    throw new MissionLeadershipError('unavailable', { reason: 'store_suite_unavailable' });
+  }
   let inTransaction = false;
   let transactionDb: Database.Database | undefined;
   let captured: RuntimeSnapshot = [];

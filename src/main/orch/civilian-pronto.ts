@@ -439,18 +439,29 @@ export async function maybeApplyCivilianPronto(
   const resolveMissionLeaderFn = deps.resolveMissionLeader ??
     ((s: ProjectExecutionScope, m: string) => getMissionLeadership().resolveMissionLeader(s, m));
   let leader: MissionLeader | null;
+  // Engine indisponível (registry não inicializado — fixtures, boot parcial):
+  // leitor sem efeito degrada à ligação durável da missão, como antes da onda 1.
+  let engineUnavailable = false;
   try {
     leader = resolveMissionLeaderFn(scope, missionId);
   } catch (error) {
-    if (error instanceof MissionLeadershipError) return empty('wait', `leadership-${error.code}`);
-    throw error;
+    if (error instanceof MissionLeadershipError && error.code === 'unavailable') {
+      engineUnavailable = true;
+      leader = null;
+    } else if (error instanceof MissionLeadershipError) {
+      return empty('wait', `leadership-${error.code}`);
+    } else {
+      throw error;
+    }
   }
-  const provenOrchestratorSessionId = leader?.proven ? leader.sessionId : undefined;
 
   const stores = deps.getStores?.(scope) ?? getProjectDomainStores(scope);
   const mission = stores.missions.get(missionId);
   if (!mission) return empty('refuse', 'missing');
   if (mission.status !== 'running') return empty('refuse', 'not-running');
+  const provenOrchestratorSessionId = engineUnavailable
+    ? (mission.orchestratorSessionId?.trim() || undefined)
+    : leader?.proven ? leader.sessionId : undefined;
 
   let handoffs: readonly Handoff[] = [];
   try {

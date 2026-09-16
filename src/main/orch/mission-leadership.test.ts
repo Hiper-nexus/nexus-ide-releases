@@ -346,6 +346,7 @@ describe('resolveMissionLeader / assertSingleLeader', () => {
     f.claims = [{ source: 'panes', sessionId: 'new', paneId: 'pane-new' }];
     expect(f.engine.resolveMissionLeader(scope, 'm')).toEqual({
       sessionId: 'old', paneId: 'pane-old', source: 'durable', proven: false,
+      liveness: 'exited',
     });
     expect(() => f.engine.assertSingleLeader(scope, 'm')).toThrow('leadership_split_brain');
   });
@@ -355,6 +356,7 @@ describe('resolveMissionLeader / assertSingleLeader', () => {
     f.durable = 'lost';
     expect(f.engine.resolveMissionLeader(scope, 'm')).toEqual({
       sessionId: 'lost', paneId: null, source: 'durable', proven: false,
+      liveness: 'unregistered',
     });
   });
 
