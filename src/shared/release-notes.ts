@@ -4001,69 +4001,40 @@ export const RELEASE_07639: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.40',
+  version: '0.76.41',
   date: '2026-09-16',
-  codename: 'Cada pedido no seu espaço, marca Nexus no Windows',
+  codename: 'Panes Windows sem eco e sem limite',
   summary:
-    'A distribuição Windows volta a carregar a marca do Nexus de ponta a ponta e o pacote de ' +
-    'validação deixa de se apresentar como uma instalação Squirrel corrompida. A mesma suíte ' +
-    'de smoke também passa a ser executável no Windows sem fingir que ele é macOS ou Linux.',
+    'Esta atualização Windows corrige a abertura real dos panes: o Codex não morre mais por ' +
+    'linha de comando longa, CLIs instaladas no Path voltam a ser encontradas e cada tecla é ' +
+    'enviada uma única vez depois de recuperar um terminal.',
   highlights: [
     {
-      title: 'Os painéis do "Novo pedido" não grudam mais na missão aberta',
+      title: 'Codex abre sem bater no limite do cmd.exe',
       detail:
-        'Cada abertura ganha um espaço próprio e os Terminais passam a ter abas por missão e por ' +
-        'espaço, com a contagem de painéis em cada uma. "Todos" continua ali para quem quer o ' +
-        'mosaico inteiro, e o escopo sobrevive ao restart.',
+        'O launcher npm `codex.cmd` agora é convertido de forma verificada para o Node nativo ' +
+        'com o mesmo `codex.js`, evitando o erro "Linha de comando muito longa" antes do prompt.',
     },
     {
-      title: 'A missão adota o painel que você já estava usando',
+      title: 'PowerShell enxerga as CLIs instaladas',
       detail:
-        'Marcar um terminal como coordenador leva ao Novo pedido com um aviso; quando a missão ' +
-        'começa, é aquele painel que assume. Nenhum terminal novo é aberto e o seu não é ' +
-        'encerrado.',
+        'O ambiente do pane preserva a grafia `Path` herdada do Windows sem abrir a allowlist ' +
+        'para outras variáveis. Login e comandos como `claude`, `codex` e ferramentas npm voltam ' +
+        'a ser localizados pelo shell.',
     },
     {
-      title: 'O painel focado está sempre na tela',
+      title: 'Recuperar um pane não duplica a digitação',
       detail:
-        'Login de ferramenta, instalação de CLI, voz e ⌘K criam painéis e pedem sua atenção ' +
-        'neles — agora a aba acompanha, então nunca mais somos mandados concluir um login num ' +
-        'terminal que não está desenhado.',
-    },
-    {
-      title: 'Ícone Nexus no executável, janela e barra de tarefas',
-      detail:
-        'O cristal Nexus multi-resolução é gerado nos formatos ICO e ICNS. No Windows, a ' +
-        'janela recebe o ícone empacotado e declara o mesmo AppUserModelID do launcher Squirrel, ' +
-        'para a barra de tarefas deixar de mostrar a folha genérica após uma atualização.',
-    },
-    {
-      title: 'Validação local não imita instalação corrompida',
-      detail:
-        'O smoke empacotado mantém atualização em modo offline antes de qualquer validação ' +
-        'Squirrel. Assim o pacote aberto diretamente para teste não acusa `Update.exe` ausente; ' +
-        'uma instalação real incompleta continua recebendo o diagnóstico correto.',
-    },
-    {
-      title: 'Smoke separado corretamente por sistema',
-      detail:
-        'As simulações estruturais de macOS e Linux usam caminhos do host e um inventário ' +
-        'injetado, então a suíte passa também no Windows sem misturar ferramentas de sistemas ' +
-        'diferentes.',
+        'Ao transformar um processo encerrado em shell, a sessão antiga é limpa antes de a nova ' +
+        'se inscrever no xterm. Uma tecla continua sendo uma tecla, sem `CC` ou `CCCOEE`.',
     },
   ],
   fixes: [
     {
-      title: 'Fim do orquestrador órfão',
+      title: 'Mac e Linux permanecem no caminho original',
       detail:
-        'A promoção passou a respeitar a recusa do processo principal: a estrela de coordenador ' +
-        'não aparece mais quando o motor não reconhece líder nenhum.',
-    },
-    {
-      title: 'Recurso de ícone não some do pacote',
-      detail:
-        'O gate do smoke verifica o ICO enviado em `resources`, incluindo todas as resoluções, ' +
-        'antes de aceitar uma candidata Windows.',
+        'As adaptações de launcher e ambiente só são ativadas em `win32`; os planos sandbox e ' +
+        'o comportamento de macOS/Linux não são reescritos por esta atualização.',
     },
   ],
 };

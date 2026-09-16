@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.41 — Panes Windows sem eco e sem limite
+
+- **Codex abre de fato no Windows (F-206)**: o Nexus reconhece o launcher npm padrão `codex.cmd`, valida o `node.exe` e o `codex.js` adjacentes e inicia o Node diretamente. Isso elimina o erro `Linha de comando muito longa` causado pelos argumentos de hook atravessando o limite do `cmd.exe`.
+- **CLIs instaladas voltam ao terminal (F-205)**: `Path` e `PATH` são a mesma variável para a allowlist do Windows; o shell volta a encontrar CLIs globais como Claude, Codex e outras instaladas pelo npm, sem ampliar o ambiente permitido.
+- **Uma tecla, uma escrita (F-353)**: recuperar um pane que encerrou limpa o listener antigo antes de criar o shell novo, eliminando a duplicação de caracteres como `CCCOEE`.
+- **Caminho isolado por SO**: o desvio de launcher e a normalização de ambiente só executam em Windows; macOS/Linux continuam usando seus caminhos nativos e os planos sandbox não são alterados.
+
 ## 0.76.40 — Cada pedido no seu espaço, marca Nexus no Windows
 
 - **Os painéis do "Novo pedido" ganham espaço próprio (F-560)**: cada painel pertence a exatamente um escopo — missão, espaço do operador ou soltos — e os Terminais passam a ter abas, com contagem. Detalhe completo na 0.76.39 abaixo, que nunca chegou a ser publicada.
