@@ -76,4 +76,15 @@ describe('resolveContinuityMission', () => {
     });
     expect(r.missionId).toBe('m-blocked');
   });
+
+  it('o Main manda no espelho: o evento vence o índice local desatualizado', () => {
+    const r = resolveContinuityMission({
+      paneId: 'p1',
+      paneMissions: { p1: 'm-pane' },
+      missions,
+      eventMissionId: 'm-global',
+    });
+    expect(r.missionId).toBe('m-global');
+    expect(r.openWorkHint).toContain('m-global');
+  });
 });

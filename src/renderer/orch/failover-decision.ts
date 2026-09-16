@@ -37,14 +37,17 @@ export interface ContinuityMissionInput {
 }
 
 /**
- * Prefer the failing pane's bound mission, then main event, then open missions.
+ * O MAIN diz a que missão o pane pertence (FailoverEvent); o índice local
+ * (`paneMissions`) é espelho e pode estar atrasado. A ordem é do principal para
+ * o derivado: seguir o espelho primeiro mandava a continuidade para a missão
+ * errada sempre que os dois discordassem. Sem nenhum dos dois, cai nas missões
+ * abertas.
  */
 export function resolveContinuityMission(input: ContinuityMissionInput): {
   missionId?: string;
   openWorkHint?: string;
 } {
-  const bound = input.paneMissions[input.paneId];
-  const missionId = bound ?? input.eventMissionId;
+  const missionId = input.eventMissionId ?? input.paneMissions[input.paneId];
   const byId = new Map(input.missions.map((m) => [m.id, m]));
   const primary = missionId ? byId.get(missionId) : undefined;
   const open = input.missions

@@ -2,8 +2,8 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { OrchPaneSpawnRequest } from '../../shared/orch-types';
-import { listPanes } from '../lib/split-tree';
+import type { Mission, OrchPaneSpawnRequest } from '../../shared/orch-types';
+import { buildGridTree, listPanes } from '../lib/split-tree';
 import { setActiveWorkspacePath } from '../state/active-workspace';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchBridge } from './orch-bridge';
@@ -253,6 +253,163 @@ describe('orchestration bridge orchestrator dedup', () => {
     );
     expect(panes).toContain('pane-old-orchestrator');
     expect(panes).toContain('pane-worker-fresh');
+    act(() => root.unmount());
+  });
+});
+
+// ── onda 2: o broadcast espelha o líder do Main, não elege ───────────────────
+
+describe('orchestration bridge leadership mirror', () => {
+  beforeEach(() => {
+    useLayoutStore.setState({ hydrated: true });
+    // Dois orquestradores da MESMA missão: o que o Main confirma (sessão
+    // durável) e um impostor que se promoveu antes da religação.
+    useLayoutStore.setState({
+      root: buildGridTree([
+        {
+          id: 'pane-real',
+          kind: 'cli-agent',
+          title: 'Real',
+          adapterId: 'claude',
+          missionId: 'mission-a',
+          role: 'orchestrator',
+        },
+        {
+          id: 'pane-impostor',
+          kind: 'cli-agent',
+          title: 'Impostor',
+          adapterId: 'codex',
+          missionId: 'mission-a',
+          role: 'orchestrator',
+        },
+        {
+          id: 'pane-vizinho',
+          kind: 'cli-agent',
+          title: 'Outra missão',
+          adapterId: 'claude',
+          missionId: 'mission-b',
+          role: 'orchestrator',
+        },
+      ]),
+    });
+  });
+
+  afterEach(() => {
+    Reflect.deleteProperty(window, 'nexus');
+    document.body.innerHTML = '';
+    vi.clearAllMocks();
+    terminal.getPaneSessionId.mockReset().mockReturnValue(null);
+  });
+
+  function mountWithMissions() {
+    let missionsHandler: ((missions: Mission[]) => void) | null = null;
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        mission: missionBridge(),
+        orch: {
+          onPaneSpawnRequest: listener(),
+          onPanePresentationRequest: listener(),
+          onPaneRecoveryRequest: listener(),
+          onBrowserOpenRequest: listener(),
+          onPaneCloseRequest: listener(),
+          onMissionsChanged: vi.fn((cb: (missions: Mission[]) => void) => {
+            missionsHandler = cb;
+            return vi.fn();
+          }),
+          onHandoffsChanged: listener(),
+          onTodosChanged: listener(),
+          onSquadsChanged: listener(),
+          syncPanes: vi.fn(),
+          sendPaneSpawnResult: vi.fn(),
+          sendPaneRecoveryResult: vi.fn(),
+          sendBrowserOpenResult: vi.fn(),
+        },
+      },
+    });
+    const root = mount();
+    return {
+      root,
+      emit: (missions: Mission[]) => act(() => missionsHandler?.(missions)),
+    };
+  }
+
+  function missionFixture(): Mission[] {
+    return [
+      {
+        id: 'mission-a',
+        title: 'A',
+        description: '',
+        status: 'running',
+        milestones: [],
+        learnings: '',
+        orchestratorSessionId: 'session-real',
+        createdAt: 1,
+        updatedAt: 2,
+      },
+    ];
+  }
+
+  it('rebaixa o orquestrador que não bate com a sessão durável do Main', () => {
+    terminal.getPaneSessionId.mockImplementation((paneId: string) =>
+      paneId === 'pane-real' ? 'session-real' : `session-${paneId}`,
+    );
+    const { root, emit } = mountWithMissions();
+
+    emit(missionFixture());
+
+    const roles = new Map(
+      listPanes(useLayoutStore.getState().root).map((p) => [p.id, p.role]),
+    );
+    expect(roles.get('pane-real')).toBe('orchestrator');
+    expect(roles.get('pane-impostor')).toBe('worker');
+    // A estrela de OUTRA missão não é minha para tirar.
+    expect(roles.get('pane-vizinho')).toBe('orchestrator');
+    act(() => root.unmount());
+  });
+
+  it('replay do mesmo broadcast não escreve de novo no layout', () => {
+    terminal.getPaneSessionId.mockImplementation((paneId: string) =>
+      paneId === 'pane-real' ? 'session-real' : `session-${paneId}`,
+    );
+    const { root, emit } = mountWithMissions();
+    emit(missionFixture());
+    const tree = useLayoutStore.getState().root;
+
+    emit(missionFixture());
+
+    // Mesma referência: nenhum `set`/`persist` por replay (o persist é
+    // debounced por workspace — escrever a cada broadcast virava tempestade).
+    expect(useLayoutStore.getState().root).toBe(tree);
+    act(() => root.unmount());
+  });
+
+  it('missão sem líder confirmado não pinta estrela', () => {
+    terminal.getPaneSessionId.mockImplementation((paneId: string) =>
+      `session-${paneId}`,
+    );
+    const { root, emit } = mountWithMissions();
+
+    emit([
+      {
+        id: 'mission-a',
+        title: 'A',
+        description: '',
+        // Missão viva, mas o Main ainda NÃO confirmou sessão durável (A):
+        // ninguém lidera até ele dizer quem lidera.
+        status: 'running',
+        milestones: [],
+        learnings: '',
+        createdAt: 1,
+        updatedAt: 2,
+      },
+    ]);
+
+    const roles = new Map(
+      listPanes(useLayoutStore.getState().root).map((p) => [p.id, p.role]),
+    );
+    expect(roles.get('pane-real')).toBe('worker');
+    expect(roles.get('pane-impostor')).toBe('worker');
     act(() => root.unmount());
   });
 });

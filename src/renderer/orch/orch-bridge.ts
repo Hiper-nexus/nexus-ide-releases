@@ -34,6 +34,7 @@ import {
 } from '../terminal/terminal-host';
 import { waitForBrowserPaneCreated } from '../browser/browser-host';
 import { initAgentNotificationBridge } from './agent-notification-bridge';
+import { reflectLeadershipFromMissions } from './leadership-reflect';
 import type { Handoff } from '../../shared/orch-types';
 import {
   newlyDispatchedPlanMissionIds,
@@ -132,8 +133,11 @@ function retireStaleMissionOrchestratorPanes(req: {
   const stale = listPanes(useLayoutStore.getState().root).filter((pane) => {
     if (pane.kind !== 'cli-agent') return false;
     if (pane.id === req.keepPaneId) return false;
+    // Quem tem sessão viva fica — e isso JÁ é o líder confirmado pelo Main: o
+    // par (missão, sessão durável) só casa com um pane que carrega a sessão de
+    // A, exatamente o que este cinto protege. Não há eleição aqui para corrigir.
+    if (getPaneSessionId(pane.id)) return false;
     if ((pane.role ?? 'worker') !== 'orchestrator') return false;
-    if (getPaneSessionId(pane.id)) return false; // cinto: sessão viva fica
     const missionId = pane.missionId ?? paneMissions[pane.id];
     return missionId === req.missionId;
   });
@@ -532,7 +536,13 @@ async function recoverMissionPane(
       }
     }
 
-    useOrchStore.getState().bindPaneMission(req.paneId, req.missionId);
+    // Vínculo de WORKER é classificação: pode ser gravado já. O de orquestrador
+    // é ESPELHO da liderança — o Main ainda não sabe desta sessão nova, então
+    // escrever aqui pintava a estrela de um líder que o motor não reconhece
+    // (o orquestrador órfão do F-561) e o layout virava autoridade.
+    if (req.role !== 'orchestrator') {
+      useOrchStore.getState().bindPaneMission(req.paneId, req.missionId);
+    }
     syncPanesNow(); // Critical: main needs latest state before prompt injection
     if (
       !(await submitPromptToPaneConfirmed(
@@ -552,6 +562,9 @@ async function recoverMissionPane(
       if (!rebound.ok) {
         throw new Error('fresh pane session was not rebound to mission');
       }
+      // Só depois do rebind durável o renderer pode afirmar quem lidera.
+      useOrchStore.getState().bindPaneMission(req.paneId, req.missionId);
+      reflectLeadershipFromMissions(useOrchStore.getState().missions);
     }
     scheduleSyncPanes(); // Final state update, can be coalesced
     return {
@@ -778,6 +791,7 @@ export function useOrchBridge(): void {
         // Vincula o pane do ORQUESTRADOR à missão dele (via sessionId): sem
         // isto a missão nova nunca constava como aberta — o rail oferecia
         // "retomar" na missão viva e o clique matava/respawnava ela mesma.
+        // Índice pane→missão: diz a quem o pane PERTENCE, nunca quem lidera.
         const panes = listPanes(useLayoutStore.getState().root);
         for (const mission of missions) {
           if (!mission.orchestratorSessionId) continue;
@@ -788,6 +802,10 @@ export function useOrchBridge(): void {
             useOrchStore.getState().bindPaneMission(pane.id, mission.id);
           }
         }
+        // E o espelho: o Main é a autoridade, o layout é consequência. O
+        // orquestrador que NÃO bate com a sessão durável dele é rebaixado, e o
+        // que bate ganha a estrela. Reaplicar o mesmo broadcast não escreve.
+        reflectLeadershipFromMissions(missions);
       }),
       window.nexus.orch.onHandoffsChanged((handoffs: Handoff[]) =>
         useOrchStore.getState().setHandoffs(handoffs),
@@ -823,6 +841,11 @@ export function useOrchBridge(): void {
       scheduleSyncPanes();
     });
     const unsubSession = onPaneSessionChange(() => {
+      // A estrela depende do par (missão, sessão durável). No boot o broadcast
+      // de missões chega ANTES do PTY anexar, então sem esta segunda passada o
+      // espelho nunca convergia: o líder confirmado ficava sem estrela até o
+      // próximo broadcast — que pode nunca vir.
+      reflectLeadershipFromMissions(useOrchStore.getState().missions);
       scheduleSyncPanes();
     });
     const unsubState = useSessionStateStore.subscribe(() => {

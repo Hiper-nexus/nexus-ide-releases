@@ -111,6 +111,39 @@ describe('resolveStrandedMissionHandoff', () => {
     expect(hit?.fromPaneId).toBe('pane-dead');
     expect(hit?.missionId).toBe('m-radar');
   });
+
+  it('prefere o líder que o MAIN confirma ao pane que se pintou de orquestrador', () => {
+    const hit = resolveStrandedMissionHandoff({
+      focusedPaneId: null,
+      panes: [
+        {
+          id: 'pane-pintado',
+          kind: 'cli-agent',
+          missionId: 'm-radar',
+          role: 'orchestrator',
+          sessionId: 'session-pintado',
+        },
+        {
+          id: 'pane-real',
+          kind: 'cli-agent',
+          missionId: 'm-radar',
+          role: 'worker',
+          sessionId: 'session-real',
+        },
+      ],
+      paneMissions: {},
+      paneStates: { 'pane-pintado': 'exited', 'pane-real': 'exited' },
+      recentOutputByPane: {},
+      missions: [
+        {
+          id: 'm-radar',
+          status: 'running',
+          orchestratorSessionId: 'session-real',
+        },
+      ],
+    });
+    expect(hit?.fromPaneId).toBe('pane-real');
+  });
 });
 
 describe('pending continuity stash', () => {

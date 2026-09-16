@@ -309,10 +309,25 @@ export async function reopenMission(
     };
   }
   const sessionIds = maybeSessions as string[];
-  const orchestratorIndex = Math.max(
-    0,
-    specs.findIndex((spec) => spec.role === 'orchestrator'),
-  );
+  // Quem lidera é o MAIN. Duas leituras dele, nesta ordem: a sessão durável
+  // (A) que alguma pane restaurada carrega, e a composição que ele registrou
+  // em `listMissionPanes` (C). O `Math.max(0, findIndex(...))` antigo promovia
+  // o PRIMEIRO pane a orquestrador sempre que nenhuma spec tinha o papel — o
+  // rebind durável gravava no motor a mentira de que um worker era o líder.
+  const durableLeaderIndex = mission.orchestratorSessionId
+    ? sessionIds.indexOf(mission.orchestratorSessionId)
+    : -1;
+  const orchestratorIndex =
+    durableLeaderIndex >= 0
+      ? durableLeaderIndex
+      : panes.findIndex((pane) => pane.role === 'orchestrator');
+  if (orchestratorIndex < 0) {
+    return {
+      ok: false,
+      error:
+        'A composição desta missão não registra um pane de orquestrador: nada foi promovido.',
+    };
+  }
   const orchestratorSessionId = sessionIds[orchestratorIndex];
   if (!orchestratorSessionId) {
     return { ok: false, error: 'O orquestrador restaurado não confirmou sessão.' };

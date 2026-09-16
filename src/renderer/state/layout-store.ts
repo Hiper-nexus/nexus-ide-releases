@@ -130,6 +130,17 @@ interface LayoutState {
    */
   assignPaneSpace(paneId: string, spaceId: string, spaceTitle: string): void;
   promoteMissionPaneRole(missionId: string, paneId: string): void;
+  /**
+   * Espelha no layout a liderança que o MAIN já confirmou (onda 2 da
+   * religação). `leaderPaneId === null` significa "esta missão não tem líder
+   * confirmado" — ninguém pinta estrela.
+   *
+   * É a ÚNICA escrita de papel de missão do renderer, e é idempotente de
+   * propósito: aplicar o mesmo snapshot duas vezes não gera `set`/`persist`
+   * (o `persist` é debounced por workspace; escrever a cada broadcast virava
+   * tempestade de save/IPC).
+   */
+  reflectMissionLeader(missionId: string, leaderPaneId: string | null): void;
   setPaneRole(paneId: string, role: 'orchestrator' | 'worker' | undefined): void;
   /**
    * Convert a dead mission/agent pane into an operator shell in place.
@@ -1333,36 +1344,73 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
     persist();
   },
 
-  promoteMissionPaneRole: (missionId, paneId) => {
+  reflectMissionLeader: (missionId, leaderPaneId) => {
+    const panes = listPanes(get().root);
+    // Classificação = vínculo GRAVADO ou o observado do orch-store. Ler só o
+    // gravado deixaria de fora o pane que a aba já mostra como da missão.
+    const belongsToMission = (pane: PaneModel): boolean =>
+      pane.missionId === missionId ||
+      (!pane.missionId &&
+        useOrchStore.getState().paneMissions[pane.id] === missionId);
     let root = get().root;
-    for (const pane of listPanes(root)) {
-      const isPromoted = pane.id === paneId;
-      const boundToThis = pane.missionId === missionId;
-      // F-527: só a missão promovida e o pane promovido mudam. Panes SEM
-      // vínculo (shells do operador, panes soltos de outro fluxo) não podem
-      // ser rebaixados a worker nem re-rotulados por uma promoção alheia —
-      // era isto que misturava missões diferentes na mesma tela.
-      if (!isPromoted && !boundToThis) continue;
-      if (isPromoted) {
-        root = updatePane(root, pane.id, {
-          role: 'orchestrator',
-          missionId: pane.missionId ?? missionId,
-        });
-      } else {
-        root = updatePane(root, pane.id, { role: 'worker' });
-      }
+    let changed = false;
+    for (const pane of panes) {
+      const isLeader = leaderPaneId !== null && pane.id === leaderPaneId;
+      // F-527: o líder nomeado é promovido mesmo sem vínculo prévio (é a
+      // adoção); os demais só entram na conta se já forem DESTA missão. Panes
+      // soltos (shells do operador, outra missão) nunca são tocados.
+      if (!isLeader && !belongsToMission(pane)) continue;
+      const needsWrite = isLeader
+        ? pane.role !== 'orchestrator' || pane.missionId === undefined
+        : pane.role !== 'worker';
+      if (!needsWrite) continue;
+      root = isLeader
+        ? updatePane(root, pane.id, {
+            role: 'orchestrator',
+            missionId: pane.missionId ?? missionId,
+          })
+        : updatePane(root, pane.id, { role: 'worker' });
+      changed = true;
     }
+    // Replay do mesmo snapshot: nada mudou, nada é escrito.
+    if (!changed) return;
     set({ root });
     persist();
   },
 
+  promoteMissionPaneRole: (missionId, paneId) => {
+    // Delega: promover X é o caso particular de "o Main confirmou X" com um só
+    // membro. Manter a eleição aqui era o que deixava o layout discordar do
+    // Main quando os dois lados escolhiam panes diferentes.
+    get().reflectMissionLeader(missionId, paneId);
+  },
+
   setPaneRole: (paneId, role) => {
+    const panes = listPanes(get().root);
+    const target = panes.find((pane) => pane.id === paneId);
+    if (!target) return;
+    // Papel de MISSÃO é do Main. Um pane que já pertence a uma missão não pode
+    // ganhar nem perder estrela por aqui: era este caminho que elegia líder
+    // localmente (e, no demote global, apagava a estrela de OUTRA missão).
+    if (
+      target.missionId ||
+      useOrchStore.getState().paneMissions[paneId]
+    ) {
+      return;
+    }
     let root = get().root;
     if (role === 'orchestrator') {
-      for (const p of listPanes(root)) {
-        if (p.role === 'orchestrator' && p.id !== paneId) {
-          root = updatePane(root, p.id, { role: 'worker' });
+      // Invariante VISUAL: uma coroa só na tela entre os panes que o operador
+      // governa. Panes de missão ficam de fora — a estrela deles não é minha.
+      for (const pane of panes) {
+        if (pane.id === paneId || pane.role !== 'orchestrator') continue;
+        if (
+          pane.missionId ||
+          useOrchStore.getState().paneMissions[pane.id]
+        ) {
+          continue;
         }
+        root = updatePane(root, pane.id, { role: 'worker' });
       }
     }
     root = updatePane(root, paneId, { role });

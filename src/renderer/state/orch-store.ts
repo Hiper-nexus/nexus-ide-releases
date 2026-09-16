@@ -24,7 +24,14 @@ interface OrchState {
   todoLists: TodoList[];
   squads: Squad[];
   mcpInfo: McpRuntimeInfo | null;
-  /** paneId → missionId for panes spawned by the orchestration layer. */
+  /**
+   * paneId → missionId for panes spawned by the orchestration layer.
+   *
+   * ÍNDICE, nunca autoridade: diz a que missão um pane pertence (classificação
+   * de aba, herança de espaço, prune). NÃO diz quem LIDERA a missão — isso é
+   * `mission.orchestratorSessionId` no Main. Nenhum leitor pode escolher líder
+   * a partir daqui.
+   */
   paneMissions: Record<string, string>;
   /**
    * Path this store currently mirrors. Null while switching workspaces so
@@ -247,6 +254,10 @@ export const useOrchStore = create<OrchState>((set, get) => ({
   bindPaneMission: (paneId, missionId) =>
     set((s) => {
       if (!missionId) return s;
+      // Rebinding do mesmo par é no-op: este método é chamado em todo broadcast
+      // de missão, e devolver um objeto novo acordava todo assinante (abas,
+      // toolbar, canvas) sem nada ter mudado.
+      if (s.paneMissions[paneId] === missionId) return s;
       return { paneMissions: { ...s.paneMissions, [paneId]: missionId } };
     }),
 

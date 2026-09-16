@@ -53,6 +53,8 @@ export interface StrandedPane {
   readonly adapterId?: string;
   readonly role?: 'orchestrator' | 'worker';
   readonly accountId?: string;
+  /** Sessão física do pane: é o par com A que confirma liderança. */
+  readonly sessionId?: string | null;
 }
 
 export interface StrandedMissionHandoff {
@@ -74,6 +76,30 @@ function isOpenMission(
 ): boolean {
   const mission = missions.find((candidate) => candidate.id === missionId);
   return mission?.status === 'running' || mission?.status === 'blocked';
+}
+
+/** Missões não bastam por id/status: a sessão durável (A) é o que confirma. */
+type LeaderAwareMissions = ReadonlyArray<{
+  id: string;
+  status: string;
+  orchestratorSessionId?: string | null;
+}>;
+
+/**
+ * O pane que o MAIN registra como líder da missão dele. Casar o papel pintado
+ * no layout não serve: é o mesmo campo que o próprio pane escreve, e era ele
+ * que escolhia o sucessor do coordenação quando o principal já tinha outro.
+ */
+function isConfirmedMissionLeader(
+  pane: StrandedPane,
+  missions: LeaderAwareMissions,
+  paneMissions: Readonly<Record<string, string>>,
+): boolean {
+  const missionId = paneMissionId(pane, paneMissions);
+  if (!missionId || !pane.sessionId) return false;
+  const mission = missions.find((candidate) => candidate.id === missionId);
+  return Boolean(mission?.orchestratorSessionId) &&
+    mission?.orchestratorSessionId === pane.sessionId;
 }
 
 function isStrandedPane(
@@ -98,7 +124,7 @@ export function resolveStrandedMissionHandoff(input: {
   readonly paneMissions: Readonly<Record<string, string>>;
   readonly paneStates: Readonly<Record<string, string | undefined>>;
   readonly recentOutputByPane: Readonly<Record<string, string>>;
-  readonly missions: ReadonlyArray<{ id: string; status: string }>;
+  readonly missions: LeaderAwareMissions;
 }): StrandedMissionHandoff | null {
   const focused = input.panes.find((pane) => pane.id === input.focusedPaneId);
   if (focused?.kind === 'cli-agent') {
@@ -131,6 +157,11 @@ export function resolveStrandedMissionHandoff(input: {
   if (stranded.length === 0) return null;
   const preferred =
     stranded.find((pane) => pane.id === input.focusedPaneId) ??
+    // Líder confirmado pelo Main ANTES do papel local: continuar o contexto de
+    // um pane que se pintou de orquestrador espalha a coordenação errada.
+    stranded.find((pane) =>
+      isConfirmedMissionLeader(pane, input.missions, input.paneMissions),
+    ) ??
     stranded.find((pane) => pane.role === 'orchestrator') ??
     stranded[0];
   if (!preferred) return null;
@@ -150,7 +181,12 @@ export function planOperatorAgentSpawn(input: {
   readonly paneMissions: Readonly<Record<string, string>>;
   readonly paneStates: Readonly<Record<string, string | undefined>>;
   readonly recentOutputByPane: Readonly<Record<string, string>>;
-  readonly missions: ReadonlyArray<{ id: string; title?: string; status: string }>;
+  readonly missions: ReadonlyArray<{
+    id: string;
+    title?: string;
+    status: string;
+    orchestratorSessionId?: string | null;
+  }>;
   readonly fromAccountLabel: string;
   readonly toAccountLabel: string;
 }): { accountId?: string; continuityPack?: string } {

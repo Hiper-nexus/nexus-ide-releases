@@ -13,6 +13,7 @@ import { useOrchStore } from '../state/orch-store';
 import { usePanePickerStore } from '../state/pane-picker-store';
 import { useProviderStore } from '../state/provider-store';
 import { useSessionStateStore } from '../state/session-state-store';
+import { getPaneSessionId } from '../terminal/terminal-host';
 import { PixelIcon, type PixelIconName } from './PixelIcon';
 import { ProviderLogo } from './ProviderLogo';
 import { AccountsManager } from './settings/AccountsManager';
@@ -696,7 +697,12 @@ export function runPanePickerIntent(intent: PanePickerIntent): string | undefine
   const planned = planOperatorAgentSpawn({
     accountId: intent.accountId,
     focusedPaneId: layout.focusedPaneId,
-    panes,
+    // A sessão física viaja junto: sem ela o sucessor da coordenação só podia
+    // ser escolhido pelo papel pintado no layout — que é do próprio pane.
+    panes: panes.map((pane) => ({
+      ...pane,
+      sessionId: getPaneSessionId(pane.id),
+    })),
     paneMissions: orch.paneMissions,
     paneStates: paneStateRecord(),
     recentOutputByPane,

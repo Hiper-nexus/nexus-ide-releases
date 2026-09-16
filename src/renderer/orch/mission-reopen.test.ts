@@ -430,6 +430,83 @@ describe('reopenMission soft / multi', () => {
     expect(window.nexus.orch.rebindMissionOrchestrator).not.toHaveBeenCalled();
   });
 
+  it('composição sem orquestrador NÃO promove o primeiro pane a líder', async () => {
+    listMissionPanes.mockResolvedValueOnce([
+      {
+        id: 'spec-a',
+        missionId: 'mission-sem-lider',
+        adapterId: 'codex',
+        title: 'worker a',
+        role: 'worker',
+        paneId: 'worker-a',
+        createdAt: 1,
+      },
+      {
+        id: 'spec-b',
+        missionId: 'mission-sem-lider',
+        adapterId: 'gemini',
+        title: 'worker b',
+        role: 'worker',
+        paneId: 'worker-b',
+        createdAt: 1,
+      },
+    ]);
+    const result = await reopenMission({
+      id: 'mission-sem-lider',
+      title: 'Sem líder',
+      description: '',
+      status: 'running',
+      milestones: [],
+      learnings: '',
+      createdAt: 1,
+      updatedAt: 2,
+    });
+    // Antes: `Math.max(0, findIndex(...))` devolvia 0 e o rebind durável gravava
+    // o worker-a como orquestrador da missão — líder inventado pelo renderer.
+    expect(result).toMatchObject({ ok: false });
+    expect(result.error).toMatch(/orquestrador/i);
+    expect(window.nexus.orch.rebindMissionOrchestrator).not.toHaveBeenCalled();
+  });
+
+  it('a sessão durável do Main manda sobre o papel registrado no pane', async () => {
+    listMissionPanes.mockResolvedValueOnce([
+      {
+        id: 'spec-orch',
+        missionId: 'mission-a',
+        adapterId: 'codex',
+        title: 'orch',
+        role: 'orchestrator',
+        paneId: 'orch-a',
+        createdAt: 1,
+      },
+      {
+        id: 'spec-worker',
+        missionId: 'mission-a',
+        adapterId: 'gemini',
+        title: 'worker',
+        role: 'worker',
+        paneId: 'worker-b',
+        createdAt: 1,
+      },
+    ]);
+    const result = await reopenMission({
+      id: 'mission-a',
+      title: 'A',
+      description: '',
+      status: 'running',
+      orchestratorSessionId: 'session-worker-b',
+      milestones: [],
+      learnings: '',
+      createdAt: 1,
+      updatedAt: 2,
+    });
+    expect(result.ok).toBe(true);
+    expect(window.nexus.orch.rebindMissionOrchestrator).toHaveBeenCalledWith(
+      'mission-a',
+      'session-worker-b',
+    );
+  });
+
   it('explicitly rearms each stable pane id before retrying a failed mission reopen', async () => {
     listMissionPanes.mockResolvedValueOnce([
       {
