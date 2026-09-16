@@ -112,13 +112,20 @@ describe('promotePaneWithMissionChoice (fluxo com diálogo)', () => {
     bind.mockRestore();
   });
 
-  it('sem nenhuma missão: leva direto ao Novo pedido, sem beco sem saída', async () => {
-    const { promotePaneWithMissionChoice } = await import('./pane-mission-promote');
+  it('sem nenhuma missão: vira coordenador do operador na hora, sem wizard', async () => {
+    // Como sempre funcionou antes do F-527 e como o operador cobra: um clique,
+    // a coroa aparece, nenhuma tela de criação de missão. A sessão `user` já
+    // tem todos os poderes sem missão.
+    const { promotePaneWithMissionChoice, PROMOTE_LOCAL_ORCHESTRATOR: local } =
+      await import('./pane-mission-promote');
     const { useOrchStore } = await import('../state/orch-store');
     const { useLayoutStore } = await import('../state/layout-store');
     const { useProductNavigationStore } = await import(
       '../state/product-navigation-store'
     );
+    const setRole = vi
+      .spyOn(useLayoutStore.getState(), 'setPaneRole')
+      .mockImplementation(() => {});
     const promote = vi
       .spyOn(useLayoutStore.getState(), 'promoteMissionPaneRole')
       .mockImplementation(() => {});
@@ -127,9 +134,11 @@ describe('promotePaneWithMissionChoice (fluxo com diálogo)', () => {
       .mockImplementation(() => {});
     useOrchStore.setState({ missions: [], paneMissions: {} });
 
-    expect(await promotePaneWithMissionChoice({ paneId: 'pane-3' })).toBeNull();
-    expect(openNew).toHaveBeenCalledTimes(1);
+    expect(await promotePaneWithMissionChoice({ paneId: 'pane-3' })).toBe(local);
+    expect(setRole).toHaveBeenCalledWith('pane-3', 'orchestrator');
+    expect(openNew).not.toHaveBeenCalled();
     expect(promote).not.toHaveBeenCalled();
+    setRole.mockRestore();
     promote.mockRestore();
     openNew.mockRestore();
   });
@@ -282,7 +291,7 @@ describe('marcação de adoção (F-561)', () => {
     vi.resetModules();
   });
 
-  it('sem missão nenhuma: marca o painel E abre o Novo pedido', async () => {
+  it.skip('(substituído: sem missão vira coordenador local, sem wizard) marca o painel E abre o Novo pedido', async () => {
     const { promotePaneWithMissionChoice } = await import('./pane-mission-promote');
     const { useOrchStore } = await import('../state/orch-store');
     const { useProductNavigationStore } = await import(

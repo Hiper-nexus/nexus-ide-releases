@@ -21,6 +21,12 @@ import { usePendingOrchestratorAdoptionStore } from '../state/pending-orchestrat
 
 /** Valor sentinel da opção "abrir nova missão" no diálogo. */
 export const PROMOTE_NEW_MISSION = '__new_mission__';
+/**
+ * Devolvido quando o painel virou coordenador do OPERADOR, sem missão: o papel
+ * foi marcado no layout e nenhuma missão foi criada. Quem chama trata como
+ * sucesso (toast genérico), não como id de missão.
+ */
+export const PROMOTE_LOCAL_ORCHESTRATOR = '__local_orchestrator__';
 
 export type PanePromoteTarget =
   | { readonly kind: 'mission'; readonly missionId: string }
@@ -148,14 +154,16 @@ export async function promotePaneWithMissionChoice(input: {
   }
 
   if (target.kind === 'no-mission') {
-    // F-561: sem missão não existe orquestrador. O diálogo "Nenhuma missão
-    // ativa" era um beco sem saída — confirmar abria o wizard e o painel
-    // continuava solto. Agora o painel fica MARCADO: o Novo pedido abre, e a
-    // missão que nascer adota este painel como Maestro em vez de subir um
-    // coordenador em branco. O objetivo é a única coisa que ainda precisa vir
-    // do operador — ninguém briefa um Maestro sem saber o que entregar.
-    requestPaneAdoptionForNextMission(input.paneId, input.paneTitle);
-    return null;
+    // Sem missão nenhuma, o painel vira o coordenador DO OPERADOR: marca o
+    // papel no layout e pronto — sem diálogo, sem wizard. É como sempre
+    // funcionou antes do F-527 e é o que o operador cobra: a sessão `user` já
+    // tem todos os poderes sem missão (spawn, write, terminal, git — modo
+    // vibe), então a coroa é só o nome do papel na tela. Mandar para o Novo
+    // pedido aqui era trocar um clique por uma tela de criação de missão que
+    // ninguém pediu. Quem QUER uma missão a partir deste painel usa a opção
+    // "Nova missão deste painel", que existe quando há missões para escolher.
+    useLayoutStore.getState().setPaneRole(input.paneId, 'orchestrator');
+    return PROMOTE_LOCAL_ORCHESTRATOR;
   }
 
   const options = target.missions.map((m) => ({
