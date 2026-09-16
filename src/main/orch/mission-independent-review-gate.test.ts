@@ -1,14 +1,34 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Mission, Squad } from '../../shared/orch-types';
 import { PET_STUDIO_SQUAD_ID } from '../../shared/pet-studio';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { getAutomaticCompletionProof, withAutomaticCompletionProof } from './automatic-completion-proof';
+import type { MissionLeader } from './mission-leadership';
+
+/**
+ * Onda 1 (religação da liderança): evaluateIndependentReviewGate compara o
+ * par PROVADO por resolveMissionLeader, não mission.orchestratorSessionId
+ * cru. O default abaixo replica "há uma sessão corrente" para as fixtures
+ * existentes; testes de religação específicos sobrescrevem via
+ * `leadershipMocks.resolveMissionLeader`.
+ */
+const leadershipMocks = vi.hoisted(() => ({
+  resolveMissionLeader: vi.fn<() => MissionLeader | null>(() => ({
+    sessionId: 'orch-1', paneId: 'pane-orch', source: 'durable', proven: true,
+  })),
+}));
+
+vi.mock('./mission-leadership-runtime', () => ({
+  getMissionLeadership: () => ({ resolveMissionLeader: leadershipMocks.resolveMissionLeader }),
+}));
+
 import {
   assertIndependentReviewForDone,
   evaluateIndependentReviewGate,
   isCivilianViaRapidaReviewExempt,
   reviewerHandoffHasEvidence,
 } from './mission-independent-review-gate';
+import { MissionLeadershipError } from './mission-leadership';
 
 function mission(overrides: Partial<Mission> = {}): Mission {
   return {
@@ -444,12 +464,12 @@ describe('leitura do veredito do revisor (gate 0.62, 19/08)', () => {
 describe('recibos de transporte não substituem verificação do candidato', () => {
   it('handoff submitted com attempt aceito continua exigindo prova de qualidade', () => {
     const result = evaluateIndependentReviewGate({
+      scope,
       mission: {
         ...mission(),
         id: 'mission-1',
         squadId: 'squad-1',
         intentContract: { lane: 'standard' } as never,
-        orchestratorSessionId: 'orch-NOVO-pós-respawn',
         intentState: 'executing',
       },
       squad: {
@@ -484,6 +504,59 @@ describe('recibos de transporte não substituem verificação do candidato', () 
   });
 });
 
+describe('religação onda 1 — sessão corrente vem de resolveMissionLeader', () => {
+  const reviewerSquad = {
+    id: 'squad-1',
+    agents: [{ id: 'rev', agentName: 'Verificar experiência', category: 'reviewer', cli: 'claude' }],
+  } as never;
+  const submittedAccepted = [{ state: 'accepted' as const, acceptedAt: 123 }];
+  const baseMission = {
+    ...mission(), id: 'mission-1', squadId: 'squad-1',
+    intentContract: { lane: 'standard' } as never, intentState: 'executing' as const,
+  };
+  const submittedHandoff = [{
+    id: 'h-rev', missionId: 'mission-1', fromAgent: 'Verificar experiência', status: 'success',
+    deliveryState: 'submitted', summary: '[VALIDADA] tudo certo. Nenhuma story reprovada.',
+    evidenceIds: [],
+  } as never];
+
+  it('A e C concordam (líder provado) — attempt aceito conta, mesmo sem prova de qualidade', () => {
+    leadershipMocks.resolveMissionLeader.mockReturnValueOnce({
+      sessionId: 'orch-vivo', paneId: 'pane-1', source: 'durable', proven: true,
+    });
+    const result = evaluateIndependentReviewGate({
+      scope, mission: baseMission, squad: reviewerSquad, handoffs: submittedHandoff,
+      deliveryAttemptsOf: () => submittedAccepted,
+    });
+    expect(result).toMatchObject({ ok: false, code: 'review_without_evidence' });
+  });
+
+  it('A morto (source live, proven:false) — sem sessão corrente, cai em review_missing', () => {
+    leadershipMocks.resolveMissionLeader.mockReturnValueOnce({
+      sessionId: 'orch-morto', paneId: 'pane-1', source: 'live', proven: false,
+    });
+    const result = evaluateIndependentReviewGate({
+      scope, mission: baseMission, squad: reviewerSquad, handoffs: submittedHandoff,
+      deliveryAttemptsOf: () => submittedAccepted,
+    });
+    expect(result).toMatchObject({ ok: false, code: 'review_missing' });
+  });
+
+  it('split-brain nunca é engolido — devolve leadership_conflict com o código, sem escolher por ordem de array', () => {
+    leadershipMocks.resolveMissionLeader.mockImplementationOnce(() => {
+      throw new MissionLeadershipError('split_brain', {
+        missionId: 'mission-1', sessionIds: ['orch-a', 'orch-b'],
+      });
+    });
+    const result = evaluateIndependentReviewGate({
+      scope, mission: baseMission, squad: reviewerSquad, handoffs: submittedHandoff,
+      deliveryAttemptsOf: () => submittedAccepted,
+    });
+    expect(result).toMatchObject({ ok: false, code: 'leadership_conflict' });
+    expect((result as { reason: string }).reason).toContain('split_brain');
+  });
+});
+
 describe('list-ack registra leitura, não qualidade', () => {
   it('revisão reconhecida via nexus_handoff_list não prova o candidato', () => {
     const result = evaluateIndependentReviewGate({
@@ -492,7 +565,6 @@ describe('list-ack registra leitura, não qualidade', () => {
         id: 'mission-1',
         squadId: 'squad-1',
         intentContract: { lane: 'standard' } as never,
-        orchestratorSessionId: 'orch-atual',
         intentState: 'executing',
       },
       squad: {
@@ -527,7 +599,6 @@ describe('list-ack registra leitura, não qualidade', () => {
         id: 'mission-1',
         squadId: 'squad-1',
         intentContract: { lane: 'standard' } as never,
-        orchestratorSessionId: 'orch-atual',
         intentState: 'executing',
       },
       squad: {

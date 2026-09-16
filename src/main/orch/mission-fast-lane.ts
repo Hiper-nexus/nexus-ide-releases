@@ -138,6 +138,12 @@ import {
 } from './via-rapida-first-wave';
 import { firstWaveWorkerPrompt, metaPaneAskPrompt } from './via-rapida-walk';
 import { hashMissionIntentAuthority } from './mission-pane-authority';
+import {
+  MissionLeadershipError,
+  type MissionLeader,
+  type MissionLeadershipErrorCode,
+} from './mission-leadership';
+import { getMissionLeadership } from './mission-leadership-runtime';
 
 /**
  * Via Rápida de missão (2026-08-12) — motor limpo, modelo PULL.
@@ -471,26 +477,33 @@ function missionProgressSignature(
 
 
 /**
- * SessionId do orquestrador desta missão SE existir um processo físico vivo
- * (sessão em spawning/busy/idle). Snapshots sem sessão viva, ids persistidos
- * pré-restart e cadáveres devolvem null.
+ * SessionId do orquestrador desta missão SE existir um processo físico vivo,
+ * segundo o par (sessionId,paneId) provado por `resolveMissionLeader`.
+ * `source:'live'` sozinho não é prova — só `proven:true` conta. Split-brain
+ * nunca é engolido aqui: propaga `MissionLeadershipError('split_brain')`.
+ *
+ * ponytail: o snapshot físico ainda escolhe o CANDIDATO (role/nome) porque
+ * esta função não recebe `scope`; quando o snapshot não carrega `.scope`
+ * (fixtures antigas, panes main-owned) cai no heurístico de liveness direta
+ * pré-religação. Upgrade: threadear `scope` explícito nos 3 chamadores.
  */
-function liveOrchestratorSessionId(
-  missionId: string,
-  fallbackSessionId?: string,
-): string | null {
+export function liveOrchestratorSessionId(missionId: string): string | null {
   const snapshot = listPaneSnapshots().find(
     (pane) =>
       pane.missionId === missionId &&
       (pane.role === 'orchestrator' ||
         pane.agentName?.toLowerCase().includes('orquestrador')),
   );
-  const sessionId = snapshot?.sessionId ?? fallbackSessionId;
+  const sessionId = snapshot?.sessionId;
   if (!sessionId) return null;
-  // Verdade única de liveness (session-liveness): só 'live' conta como vivo.
-  return classifySessionLiveness(getSessionState(sessionId)) === 'live'
-    ? sessionId
-    : null;
+  if (!snapshot?.scope) {
+    // Verdade única de liveness (session-liveness): só 'live' conta como vivo.
+    return classifySessionLiveness(getSessionState(sessionId)) === 'live'
+      ? sessionId
+      : null;
+  }
+  const leader = getMissionLeadership().resolveMissionLeader(snapshot.scope, missionId);
+  return leader?.proven ? leader.sessionId : null;
 }
 
 export { maybeCompleteFastLaneOnDelivery };
@@ -2864,10 +2877,7 @@ export async function resumeFastLaneMission(
 
 // ── UI helpers ───────────────────────────────────────────────────────────
 
-export function fastLaneOrchestratorPaneSummary(
-  _scope: ProjectExecutionScope,
-  missionId: string,
-): {
+export interface FastLaneOrchestratorPaneSummary {
   readonly paneId: string;
   readonly sessionId: string;
   readonly adapterId: string;
@@ -2875,7 +2885,9 @@ export function fastLaneOrchestratorPaneSummary(
   readonly title: string;
   readonly agentName: string;
   readonly role: 'orchestrator';
-} | null {
+}
+
+function paneSummaryFromLocalState(missionId: string): FastLaneOrchestratorPaneSummary | null {
   const entry = orchPanes.get(missionId);
   if (!entry) {
     // Fallback: procura nos snapshots vivos.
@@ -2900,6 +2912,58 @@ export function fastLaneOrchestratorPaneSummary(
     cwd: entry.cwd,
     title: entry.title,
     agentName: entry.agentName,
+    role: 'orchestrator',
+  };
+}
+
+/**
+ * Acessor CRU de B (claim do adaptador de liderança). NUNCA chama o
+ * resolver: `mission-leadership-runtime.ts` consome esta função como parte
+ * da própria observação de `resolveMissionLeader` — religar aqui causaria
+ * recursão infinita entre o motor e o adaptador. Leitores novos devem
+ * preferir `resolveFastLaneOrchestratorPaneSummary`.
+ */
+export function fastLaneOrchestratorPaneSummary(
+  _scope: ProjectExecutionScope,
+  missionId: string,
+): FastLaneOrchestratorPaneSummary | null {
+  return paneSummaryFromLocalState(missionId);
+}
+
+/**
+ * Leitor público do orquestrador da missão: resolve o par (sessionId,paneId)
+ * provado por `resolveMissionLeader` antes de projetar metadados de UI.
+ * `source:'live'` sozinho não é prova — só `proven:true` conta. Split-brain
+ * nunca é engolido: o código do erro volta em `errorCode`, nunca vira `null`
+ * silencioso nem escolhe um pane por ordem de array.
+ */
+export function resolveFastLaneOrchestratorPaneSummary(
+  scope: ProjectExecutionScope,
+  missionId: string,
+): FastLaneOrchestratorPaneSummary | { readonly errorCode: MissionLeadershipErrorCode } | null {
+  let leader: MissionLeader | null;
+  try {
+    leader = getMissionLeadership().resolveMissionLeader(scope, missionId);
+  } catch (error) {
+    if (error instanceof MissionLeadershipError) return { errorCode: error.code };
+    throw error;
+  }
+  if (!leader?.proven || !leader.paneId) return null;
+  const local = paneSummaryFromLocalState(missionId);
+  if (local && local.sessionId === leader.sessionId && local.paneId === leader.paneId) {
+    return local;
+  }
+  const snapshot = listPaneSnapshots().find(
+    (p) => p.sessionId === leader.sessionId && p.paneId === leader.paneId,
+  );
+  if (!snapshot) return null;
+  return {
+    paneId: leader.paneId,
+    sessionId: leader.sessionId,
+    adapterId: snapshot.adapterId ?? 'claude',
+    cwd: '',
+    title: snapshot.title ?? 'Orquestrador',
+    agentName: snapshot.agentName ?? 'Orquestrador',
     role: 'orchestrator',
   };
 }

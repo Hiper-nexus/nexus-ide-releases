@@ -5,6 +5,12 @@ import {
   persistOperatorReviewFeedback,
   prepareOperatorReviewAuthorityCandidate,
 } from './operator-review-feedback';
+import { MissionLeadershipError, type MissionLeader } from './mission-leadership';
+
+/** Onda 1 (religação da liderança): stub padrão — A e C concordam, provado. */
+function stubResolveMissionLeader(sessionId = 'session-orch'): () => MissionLeader | null {
+  return () => ({ sessionId, paneId: 'pane-orch', source: 'durable', proven: true });
+}
 
 const scope: ProjectExecutionScope = {
   version: 1,
@@ -88,13 +94,16 @@ describe('operator diff review feedback', () => {
         { path: 'src/checkout.ts', line: 42, body: 'Trate o valor nulo.' },
       ],
     };
-    const candidate = prepareOperatorReviewAuthorityCandidate(stores, scope, input);
+    const candidate = prepareOperatorReviewAuthorityCandidate(
+      stores, scope, input, stubResolveMissionLeader(),
+    );
     const result = persistOperatorReviewFeedback(
       stores,
       scope,
       input,
       candidate.fence,
       deliver,
+      stubResolveMissionLeader(),
     );
 
     expect(submitted).toHaveLength(1);
@@ -164,12 +173,52 @@ describe('operator diff review feedback', () => {
       missionId: current.id,
       annotations: [{ path: 'src/a.ts', line: 1, body: 'Corrija.' }],
     };
-    const candidate = prepareOperatorReviewAuthorityCandidate(stores, scope, input);
+    const candidate = prepareOperatorReviewAuthorityCandidate(
+      stores, scope, input, stubResolveMissionLeader(),
+    );
     current.title = 'Mudou durante o modal';
 
     expect(() =>
-      persistOperatorReviewFeedback(stores, scope, input, candidate.fence),
+      persistOperatorReviewFeedback(
+        stores, scope, input, candidate.fence, undefined, stubResolveMissionLeader(),
+      ),
     ).toThrow(/mudou durante a confirmação/i);
     expect(handoffs.submitOperatorConfirmed).not.toHaveBeenCalled();
+  });
+
+  it('religação onda 1: A morto (source live, proven:false) recusa mesmo com sessão durável presente', () => {
+    const stores = {
+      missions: { get: () => mission() },
+      handoffs: { submitOperatorConfirmed: vi.fn(), get: vi.fn(), list: vi.fn(() => []) },
+    };
+    const input = {
+      missionId: 'mission-a',
+      annotations: [{ path: 'src/a.ts', line: 1, body: 'Corrija.' }],
+    };
+    expect(() =>
+      prepareOperatorReviewAuthorityCandidate(stores, scope, input, () => ({
+        sessionId: 'session-orch', paneId: 'pane-orch', source: 'live', proven: false,
+      })),
+    ).toThrow(/sessão atual do orquestrador/i);
+    expect(stores.handoffs.submitOperatorConfirmed).not.toHaveBeenCalled();
+  });
+
+  it('religação onda 1: split-brain nunca é engolido — vira erro tipado reconhecível, sem escolher sessão por ordem de array', () => {
+    const stores = {
+      missions: { get: () => mission() },
+      handoffs: { submitOperatorConfirmed: vi.fn(), get: vi.fn(), list: vi.fn(() => []) },
+    };
+    const input = {
+      missionId: 'mission-a',
+      annotations: [{ path: 'src/a.ts', line: 1, body: 'Corrija.' }],
+    };
+    expect(() =>
+      prepareOperatorReviewAuthorityCandidate(stores, scope, input, () => {
+        throw new MissionLeadershipError('split_brain', {
+          missionId: 'mission-a', sessionIds: ['session-orch', 'session-orch-2'],
+        });
+      }),
+    ).toThrow(/liderança da missão sem conflito \(split_brain\)/i);
+    expect(stores.handoffs.submitOperatorConfirmed).not.toHaveBeenCalled();
   });
 });

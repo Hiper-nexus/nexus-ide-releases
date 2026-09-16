@@ -6,19 +6,20 @@ import {
   type ProjectMissionSnapshotView,
 } from './mission-snapshot';
 
+/** Onda 1 (religação): o chamador resolve o líder provado — aqui é a fixture. */
+function sessionIdOf(id: string): string {
+  return `session-${id}`;
+}
+
 function mission(
   id: string,
   status: Mission['status'] = 'blocked',
   intentState: Mission['intentState'] = 'blocked_user',
-): Pick<
-  Mission,
-  'id' | 'status' | 'intentState' | 'orchestratorSessionId'
-> {
+): Pick<Mission, 'id' | 'status' | 'intentState'> {
   return {
     id,
     status,
     ...(intentState === undefined ? {} : { intentState }),
-    orchestratorSessionId: `session-${id}`,
   };
 }
 
@@ -63,7 +64,7 @@ describe('resolveOpenMissionQuestion', () => {
     const question = resolveOpenMissionQuestion(mission('m-a'), [
       questionHandoff('q-b', 'm-b', 1),
       questionHandoff('q-a', 'm-a', 2),
-    ]);
+    ], sessionIdOf('m-a'));
 
     expect(question).toMatchObject({
       id: 'q-a',
@@ -78,12 +79,12 @@ describe('resolveOpenMissionQuestion', () => {
       questionHandoff('q-b', 'm-b', 2),
     ];
 
-    expect(resolveOpenMissionQuestion(mission('m-b'), handoffs)?.id).toBe(
-      'q-b',
-    );
-    expect(resolveOpenMissionQuestion(mission('m-a'), handoffs)?.id).toBe(
-      'q-a',
-    );
+    expect(
+      resolveOpenMissionQuestion(mission('m-b'), handoffs, sessionIdOf('m-b'))?.id,
+    ).toBe('q-b');
+    expect(
+      resolveOpenMissionQuestion(mission('m-a'), handoffs, sessionIdOf('m-a'))?.id,
+    ).toBe('q-a');
   });
 
   it('descarta respondida e consumida; sem questão da sessão corrente, a de sessão ANTERIOR fica visível (rebind)', () => {
@@ -114,7 +115,7 @@ describe('resolveOpenMissionQuestion', () => {
           ...questionHandoff('q3', 'm1', 3),
           sessionId: 'other-session',
         },
-      ]),
+      ], sessionIdOf('m1')),
     ).toMatchObject({ id: 'q3' });
   });
 
@@ -126,12 +127,38 @@ describe('resolveOpenMissionQuestion', () => {
     const oldB = { ...questionHandoff('q-old-b', 'm1', 4), sessionId: 'old-b' };
 
     expect(
-      resolveOpenMissionQuestion(mission('m1'), [oldB, current, oldA]),
+      resolveOpenMissionQuestion(mission('m1'), [oldB, current, oldA], sessionIdOf('m1')),
     ).toMatchObject({ id: 'q-new' });
 
     expect(
-      resolveOpenMissionQuestion(mission('m1'), [oldA, oldB]),
+      resolveOpenMissionQuestion(mission('m1'), [oldA, oldB], sessionIdOf('m1')),
     ).toMatchObject({ id: 'q-old-b' });
+  });
+
+  it('religação onda 1: sem sessão corrente resolvida (líder não provado), não projeta pergunta nenhuma', () => {
+    expect(
+      resolveOpenMissionQuestion(mission('m1'), [
+        questionHandoff('q1', 'm1', 1),
+      ], undefined),
+    ).toBeUndefined();
+    expect(
+      resolveOpenMissionQuestion(mission('m1'), [
+        questionHandoff('q1', 'm1', 1),
+      ], null),
+    ).toBeUndefined();
+  });
+
+  it('religação onda 1: quem decide "sessão corrente" é o terceiro argumento, não um campo da missão', () => {
+    const handoffs = [
+      { ...questionHandoff('q-x', 'm1', 1), sessionId: 'session-x' },
+      { ...questionHandoff('q-y', 'm1', 2), sessionId: 'session-y' },
+    ];
+    expect(
+      resolveOpenMissionQuestion(mission('m1'), handoffs, 'session-x'),
+    ).toMatchObject({ id: 'q-x' });
+    expect(
+      resolveOpenMissionQuestion(mission('m1'), handoffs, 'session-y'),
+    ).toMatchObject({ id: 'q-y' });
   });
 
   it('não projeta pergunta em missão running — o caminho vivo não vira blocked_user', () => {
@@ -194,7 +221,7 @@ describe('resolveOpenMissionQuestion', () => {
         version: 1,
         updatedAt: 1,
       },
-      openQuestion: resolveOpenMissionQuestion(mission('m-a'), handoffs),
+      openQuestion: resolveOpenMissionQuestion(mission('m-a'), handoffs, sessionIdOf('m-a')),
     });
     const snapshotB = projectMissionSnapshot({
       ...baseView,
@@ -207,7 +234,7 @@ describe('resolveOpenMissionQuestion', () => {
         version: 1,
         updatedAt: 1,
       },
-      openQuestion: resolveOpenMissionQuestion(mission('m-b'), handoffs),
+      openQuestion: resolveOpenMissionQuestion(mission('m-b'), handoffs, sessionIdOf('m-b')),
     });
 
     expect(snapshotA.question?.id).toBe('q-a');
@@ -233,7 +260,7 @@ describe('resolveOpenMissionQuestion', () => {
       resolveOpenMissionQuestion(mission('m1'), [
         questionHandoff('q1', 'm1', 1),
         dismiss,
-      ]),
+      ], sessionIdOf('m1')),
     ).toBeUndefined();
   });
 
@@ -242,6 +269,7 @@ describe('resolveOpenMissionQuestion', () => {
       resolveOpenMissionQuestion(
         mission('m-ask', 'blocked', 'blocked_user'),
         [questionHandoff('q-ask', 'm-ask', 1)],
+        sessionIdOf('m-ask'),
       ),
     ).toMatchObject({
       id: 'q-ask',

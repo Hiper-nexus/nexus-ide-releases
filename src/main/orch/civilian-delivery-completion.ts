@@ -45,6 +45,8 @@ import { SKIP_DIRECTORIES } from '../context/orientation/orientation-types';
 import { readFrozenMissionReviewContext } from './mission-review-proof';
 import { AsyncProcessGitRunner } from '../runtime/git-command';
 import { listMtimePathsSince } from './worker-delivery-evidence';
+import { MissionLeadershipError, type MissionLeader } from './mission-leadership';
+import { getMissionLeadership } from './mission-leadership-runtime';
 
 const execFileAsync = promisify(execFile);
 
@@ -175,6 +177,11 @@ export interface CivilianDeliveryDependencies {
       productFiles: readonly string[];
     },
   ) => Promise<CivilianAutoReviewOutcome>;
+  /** Injetável para testes; produção usa `getMissionLeadership().resolveMissionLeader`. */
+  readonly resolveMissionLeader?: (
+    scope: ProjectExecutionScope,
+    missionId: string,
+  ) => MissionLeader | null;
 }
 
 export type CivilianStores = {
@@ -704,6 +711,12 @@ export function inspectCivilianDelivery(input: {
   readonly handoffs: readonly Handoff[];
   readonly panes: readonly LivePane[];
   readonly now: number;
+  /**
+   * sessionId provado por `resolveMissionLeader` (chamador resolve antes de
+   * montar este input — `inspectCivilianDelivery` continua puro). `undefined`
+   * quando não há líder provado; nunca `mission.orchestratorSessionId` cru.
+   */
+  readonly provenOrchestratorSessionId?: string;
 }): {
   readonly hasSuccessHandoff: boolean;
   readonly workersDelivered: boolean;
@@ -856,7 +869,7 @@ export function inspectCivilianDelivery(input: {
     (boardAllDone && activeWriterCount === 0);
 
   const hasQueuedHandoffs = hasUnsettledQueuedHandoffs(input.handoffs, {
-    orchestratorSessionId: input.mission.orchestratorSessionId,
+    orchestratorSessionId: input.provenOrchestratorSessionId,
   });
 
   const orchestratorPanes = missionPanes.filter(
@@ -1066,21 +1079,6 @@ async function defaultSpawnReviewers(
   return spawned;
 }
 
-function liveOrchestratorSessionIdOf(
-  panes: readonly LivePane[],
-  missionId: string,
-): string | null {
-  const hit = panes.find(
-    (pane) =>
-      pane.missionId === missionId &&
-      pane.role === 'orchestrator' &&
-      typeof pane.sessionId === 'string' &&
-      pane.sessionId.length > 0 &&
-      ['busy', 'idle'].includes(pane.state ?? ''),
-  );
-  return hit?.sessionId ?? null;
-}
-
 /**
  * Etapa 1 do plano dev-sênior: missão civil não fecha sem verificação
  * independente. Onde o gate de revisão NÃO cobre (civil), o scanner
@@ -1092,6 +1090,7 @@ async function civilianAutoReviewGate(
   mission: Mission,
   productFiles: readonly string[],
   panes: readonly LivePane[],
+  provenOrchestratorSessionId: string | undefined,
   deps: CivilianDeliveryDependencies,
 ): Promise<
   | { readonly action: 'proceed'; readonly proof?: AutomaticCompletionProof; readonly extras?: { note?: string; evidenceIds?: readonly string[] } }
@@ -1124,10 +1123,7 @@ async function civilianAutoReviewGate(
       mission,
       scope,
       productFiles,
-      liveOrchestratorSessionId: liveOrchestratorSessionIdOf(
-        panes,
-        mission.id,
-      ),
+      liveOrchestratorSessionId: provenOrchestratorSessionId ?? null,
     }));
 
   switch (outcome.kind) {
@@ -1305,6 +1301,11 @@ export async function maybeCompleteFastLaneOnDelivery(
   }
 }
 
+/**
+ * Fingerprint de reconciliação (detecta "algo mudou" entre tentativas), não
+ * decisão de autoridade — `orchestratorSessionId` cru é intencional aqui:
+ * a mudança da própria coluna A também deve invalidar o fingerprint.
+ */
 function completionState(stores: CivilianStores, missionId: string, panes: readonly LivePane[]): string {
   const current = stores.missions.get(missionId);
   return JSON.stringify({
@@ -1441,6 +1442,19 @@ async function reconcileCivilianCompletionAttempt(
     );
   }
 
+  let leader: MissionLeader | null;
+  try {
+    leader = deps.resolveMissionLeader
+      ? deps.resolveMissionLeader(scope, missionId)
+      : getMissionLeadership().resolveMissionLeader(scope, missionId);
+  } catch (error) {
+    if (error instanceof MissionLeadershipError) {
+      return { ...emptyResult('refuse-fail-closed'), reason: `leadership-${error.code}` };
+    }
+    throw error;
+  }
+  const provenOrchestratorSessionId = leader?.proven ? leader.sessionId : undefined;
+
   const tasks = stores.tasks.list(missionId);
   const inspection = inspectCivilianDelivery({
     mission,
@@ -1449,6 +1463,7 @@ async function reconcileCivilianCompletionAttempt(
     handoffs,
     panes,
     now,
+    provenOrchestratorSessionId,
   });
 
   const markedDoneTaskIds = [
@@ -1604,6 +1619,7 @@ async function reconcileCivilianCompletionAttempt(
     mission,
     productFiles,
     panes,
+    provenOrchestratorSessionId,
     deps,
   );
   if (autoReview.action === 'wait') {

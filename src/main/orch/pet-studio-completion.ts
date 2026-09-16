@@ -28,6 +28,8 @@ import {
 } from './project-domain-store-registry';
 import type { MissionEngine } from './mission-engine';
 import { missionEngineForScope } from './mission-engine-registry';
+import { MissionLeadershipError, type MissionLeader } from './mission-leadership';
+import { getMissionLeadership } from './mission-leadership-runtime';
 
 const MAX_SPRITESHEET_BYTES = 2.5 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 64 * 1024;
@@ -70,6 +72,11 @@ interface PetStudioCompletionDependencies {
   /** Test seam; production always uses the main-owned canonical scope root. */
   readonly workspaceRoot?: string;
   readonly missionEngine?: Pick<MissionEngine, 'completeVerified'>;
+  /** Injetável para testes; produção usa `getMissionLeadership().resolveMissionLeader`. */
+  readonly resolveMissionLeader?: (
+    scope: ProjectExecutionScope,
+    missionId: string,
+  ) => MissionLeader | null;
 }
 
 function artifactPath(artifact: unknown): string | null {
@@ -620,10 +627,23 @@ export function completePetStudioHandoff(
   const mission = stores.missions.get(handoff.missionId);
   if (!mission || mission.squadId !== PET_STUDIO_SQUAD_ID) return null;
 
+  let leader: MissionLeader | null;
+  try {
+    leader = dependencies.resolveMissionLeader
+      ? dependencies.resolveMissionLeader(scope, handoff.missionId)
+      : getMissionLeadership().resolveMissionLeader(scope, handoff.missionId);
+  } catch (error) {
+    if (!(error instanceof MissionLeadershipError)) throw error;
+    return {
+      handled: true,
+      completed: false,
+      error: `liderança da missão em conflito (${error.code}) — entrega recusada até reconciliar`,
+    };
+  }
   if (
     !handoff.sessionId ||
-    !mission.orchestratorSessionId ||
-    handoff.sessionId !== mission.orchestratorSessionId
+    !leader?.proven ||
+    handoff.sessionId !== leader.sessionId
   ) {
     return {
       handled: true,

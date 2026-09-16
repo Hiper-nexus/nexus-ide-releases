@@ -3,6 +3,8 @@ import type { HandoffEvidenceBinding, Mission, SquadAgent } from '../../shared/o
 import type { ProjectExecutionScope } from '../../shared/types';
 import { isAutomaticCompletionProof } from './automatic-completion-proof';
 import { isFrozenMissionReviewProof } from './mission-review-proof';
+import { MissionLeadershipError, type MissionLeader } from './mission-leadership';
+import { getMissionLeadership } from './mission-leadership-runtime';
 
 /**
  * Gate de conclusão: decide por recibos do Main, nunca pelo resumo de um
@@ -12,7 +14,8 @@ import { isFrozenMissionReviewProof } from './mission-review-proof';
 export type IndependentReviewGateCode =
   | 'review_missing'
   | 'review_without_evidence'
-  | 'review_rejected';
+  | 'review_rejected'
+  | 'leadership_conflict';
 
 export type IndependentReviewGateResult =
   | { readonly ok: true; readonly reviewerHandoffId: string }
@@ -233,7 +236,7 @@ export function reviewerHandoffHasEvidence(handoff: ReviewGateHandoff): boolean 
 export interface IndependentReviewGateInput {
   readonly mission: Pick<
     Mission,
-    'id' | 'squadId' | 'intentContract' | 'orchestratorSessionId' | 'intentState' | 'intentVersion' | 'updatedAt'
+    'id' | 'squadId' | 'intentContract' | 'intentState' | 'intentVersion' | 'updatedAt'
   >;
   readonly scope?: ProjectExecutionScope;
   /** In-process receipts only. A serialized object can never pass the guards. */
@@ -287,7 +290,24 @@ export function evaluateIndependentReviewGate(input: IndependentReviewGateInput)
   if (proofDecision) return proofDecision;
 
   const dispatches = input.dispatches ?? [];
-  const orchSession = input.mission.orchestratorSessionId;
+  // O par provado por resolveMissionLeader decide "sessão corrente", nunca
+  // mission.orchestratorSessionId cru; sem scope (assinatura opcional de
+  // teste) segue sem sessão corrente, igual ao comportamento pré-religação.
+  let orchSession: string | undefined;
+  if (input.scope) {
+    let leader: MissionLeader | null;
+    try {
+      leader = getMissionLeadership().resolveMissionLeader(input.scope, input.mission.id);
+    } catch (error) {
+      if (!(error instanceof MissionLeadershipError)) throw error;
+      return {
+        ok: false,
+        code: 'leadership_conflict',
+        reason: `A liderança da missão está em conflito (${error.code}) — resolva antes de concluir.`,
+      };
+    }
+    orchSession = leader?.proven ? leader.sessionId : undefined;
+  }
 
   const reviewerHandoffs = input.handoffs.filter((handoff) =>
     isReviewerCategory(

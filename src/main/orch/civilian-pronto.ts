@@ -34,6 +34,8 @@ import {
   getProjectDomainStores,
   type ProjectDomainStoreSuite,
 } from './project-domain-store-registry';
+import { MissionLeadershipError, type MissionLeader } from './mission-leadership';
+import { getMissionLeadership } from './mission-leadership-runtime';
 
 const JUNK_DIR = new Set([
   '.git',
@@ -407,6 +409,11 @@ export type CivilianProntoDependencies = {
   readonly missionEngine?: Pick<MissionEngine, 'completeVerified' | 'blockUser'>;
   readonly runAutoReviewGate?: CivilianDeliveryDependencies['runAutoReviewGate'];
   readonly captureCandidate?: CivilianDeliveryDependencies['captureCandidate'];
+  /** Injetável para testes; produção usa `getMissionLeadership().resolveMissionLeader`. */
+  readonly resolveMissionLeader?: (
+    scope: ProjectExecutionScope,
+    missionId: string,
+  ) => MissionLeader | null;
 };
 
 /**
@@ -428,6 +435,17 @@ export async function maybeApplyCivilianPronto(
     completed: false,
   });
   if (!missionId) return empty('refuse', 'no-mission');
+
+  const resolveMissionLeaderFn = deps.resolveMissionLeader ??
+    ((s: ProjectExecutionScope, m: string) => getMissionLeadership().resolveMissionLeader(s, m));
+  let leader: MissionLeader | null;
+  try {
+    leader = resolveMissionLeaderFn(scope, missionId);
+  } catch (error) {
+    if (error instanceof MissionLeadershipError) return empty('wait', `leadership-${error.code}`);
+    throw error;
+  }
+  const provenOrchestratorSessionId = leader?.proven ? leader.sessionId : undefined;
 
   const stores = deps.getStores?.(scope) ?? getProjectDomainStores(scope);
   const mission = stores.missions.get(missionId);
@@ -525,7 +543,7 @@ export async function maybeApplyCivilianPronto(
     !liveWriterBusy;
 
   const hasQueuedHandoffs = hasUnsettledQueuedHandoffs(handoffs, {
-    orchestratorSessionId: mission.orchestratorSessionId,
+    orchestratorSessionId: provenOrchestratorSessionId,
   });
 
   const successHandoffs = handoffs.filter(
@@ -581,7 +599,10 @@ export async function maybeApplyCivilianPronto(
 
   let completed = false;
   try {
-    const result = await maybeCompleteFastLaneOnDelivery(scope, missionId, deps);
+    const result = await maybeCompleteFastLaneOnDelivery(scope, missionId, {
+      ...deps,
+      resolveMissionLeader: resolveMissionLeaderFn,
+    });
     completed = result.completed;
     if (!completed) {
       return {

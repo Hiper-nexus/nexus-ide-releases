@@ -19,6 +19,7 @@ import {
   completePetStudioHandoff,
   reconcileCompletedPetStudioMissions,
 } from './pet-studio-completion';
+import { MissionLeadershipError } from './mission-leadership';
 
 const engineMocks = vi.hoisted(() => ({
   completeVerified: vi.fn(),
@@ -28,6 +29,20 @@ vi.mock('./mission-engine-registry', () => ({
   missionEngineForScope: () => ({
     completeVerified: engineMocks.completeVerified,
   }),
+}));
+
+// Onda 1 (religação da liderança): completePetStudioHandoff compara
+// handoff.sessionId contra o par PROVADO por resolveMissionLeader, não mais
+// contra mission.orchestratorSessionId cru. O default abaixo replica o
+// comportamento anterior (líder provado == a sessão durável da fixture) sem
+// exigir `resolveMissionLeader` em cada um dos 14 sítios de chamada; testes
+// específicos de religação sobrescrevem via `leadershipMocks`.
+const leadershipMocks = vi.hoisted(() => ({
+  resolveMissionLeader: vi.fn(),
+}));
+
+vi.mock('./mission-leadership-runtime', () => ({
+  getMissionLeadership: () => ({ resolveMissionLeader: leadershipMocks.resolveMissionLeader }),
 }));
 
 const scope = testProjectScope();
@@ -174,6 +189,12 @@ beforeEach(() => {
   }));
   markSubmitted = vi.fn((_id: string) => true);
   markConsumed = vi.fn((_id: string, _missionId: string) => true);
+  leadershipMocks.resolveMissionLeader.mockReset();
+  leadershipMocks.resolveMissionLeader.mockImplementation(() =>
+    mission.orchestratorSessionId
+      ? { sessionId: mission.orchestratorSessionId, paneId: 'pane-pet', source: 'durable', proven: true }
+      : null,
+  );
 });
 
 afterEach(() => rmSync(sandbox, { recursive: true, force: true }));
@@ -258,6 +279,41 @@ describe('Pet Studio completion boundary', () => {
     expect(result).toMatchObject({ handled: true, completed: false });
     expect(result?.error).toMatch(/sessão Pet Maker/);
     expect(setStatus).not.toHaveBeenCalled();
+  });
+
+  it('religação onda 1: A morto (source live, proven:false) recusa mesmo com sessionId igual ao durável', () => {
+    writeValidPackage();
+    leadershipMocks.resolveMissionLeader.mockReturnValue({
+      sessionId: mission.orchestratorSessionId, paneId: 'pane-pet', source: 'live', proven: false,
+    });
+    const result = completePetStudioHandoff(handoff(), scope, {
+      codexHome, workspaceRoot, getStores: stores,
+    });
+
+    expect(result).toMatchObject({ handled: true, completed: false });
+    expect(result?.error).toMatch(/sessão Pet Maker/);
+    expect(setStatus).not.toHaveBeenCalled();
+    expect(markSubmitted).not.toHaveBeenCalled();
+  });
+
+  it('religação onda 1: split-brain nunca é engolido — recusa a entrega com o código, sem escolher sessão por ordem de array', () => {
+    writeValidPackage();
+    leadershipMocks.resolveMissionLeader.mockImplementation(() => {
+      throw new MissionLeadershipError('split_brain', {
+        missionId: mission.id, sessionIds: ['pet-session', 'pet-session-2'],
+      });
+    });
+    const result = completePetStudioHandoff(handoff(), scope, {
+      codexHome, workspaceRoot, getStores: stores,
+    });
+
+    expect(result).toEqual({
+      handled: true,
+      completed: false,
+      error: 'liderança da missão em conflito (split_brain) — entrega recusada até reconciliar',
+    });
+    expect(setStatus).not.toHaveBeenCalled();
+    expect(markSubmitted).not.toHaveBeenCalled();
   });
 
   it('rejects legacy terminal markers without physical MCP provenance', () => {

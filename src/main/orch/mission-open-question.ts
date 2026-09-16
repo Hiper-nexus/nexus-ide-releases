@@ -23,7 +23,7 @@ const OPERATOR_AGENT = 'Operador Nexus';
 
 export type OpenQuestionMission = Pick<
   Mission,
-  'id' | 'status' | 'intentState' | 'orchestratorSessionId'
+  'id' | 'status' | 'intentState'
 > & {
   readonly description?: string;
 };
@@ -90,12 +90,17 @@ function toMissionQuestion(
  * visível — a missão blocked_user está esperando resposta REAL não importa
  * qual encarnação perguntou, e sumir do rail era a trava da família
  * "elicitation não respondida" (rebind pós-respawn/restart).
+ *
+ * `currentOrchestratorSessionId` é o par resolvido por `resolveMissionLeader`
+ * no chamador (main-owned) — nunca `mission.orchestratorSessionId` cru, que
+ * pode divergir do claim físico/de pane em split-brain.
  */
 export function resolveOpenMissionQuestion(
   mission: OpenQuestionMission,
   handoffs: readonly Handoff[],
+  currentOrchestratorSessionId?: string | null,
 ): MissionQuestion | undefined {
-  if (!isAnswerableMission(mission) || !mission.orchestratorSessionId) {
+  if (!isAnswerableMission(mission) || !currentOrchestratorSessionId) {
     return undefined;
   }
   const answered = answeredQuestionIds(handoffs);
@@ -125,7 +130,7 @@ export function resolveOpenMissionQuestion(
 
   // 1ª camada: sessão corrente (ordem cronológica — a primeira em aberto).
   for (const handoff of candidates) {
-    if (handoff.sessionId !== mission.orchestratorSessionId) continue;
+    if (handoff.sessionId !== currentOrchestratorSessionId) continue;
     const question = questionOf(handoff);
     if (question) return question;
   }

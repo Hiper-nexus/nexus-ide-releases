@@ -33,13 +33,17 @@ vi.mock('./squad-store', () => ({
   getSquad: () => null,
 }));
 
-vi.mock('./civilian-auto-review', () => ({
-  resolveAutoReviewBaseSha: async () => null,
-  enforceCivilianAutoReview: async () => ({
-    kind: 'approved',
+const autoReviewSpy = vi.hoisted(() => ({
+  enforceCivilianAutoReview: vi.fn(async () => ({
+    kind: 'approved' as const,
     evidenceId: 'nexus-auto-review:test-hash',
     note: 'Scanner determinístico candidate-quality-v1: aprovado (teste).',
-  }),
+  })),
+}));
+
+vi.mock('./civilian-auto-review', () => ({
+  resolveAutoReviewBaseSha: async () => null,
+  enforceCivilianAutoReview: autoReviewSpy.enforceCivilianAutoReview,
 }));
 
 vi.mock('../context/candidate-working-tree-snapshot', () => ({
@@ -61,6 +65,7 @@ import {
 import { maybeApplyCivilianPronto } from './civilian-pronto';
 import { getAutomaticCompletionProof } from './automatic-completion-proof';
 import type { ScopedTaskRecord } from './task-store';
+import { MissionLeadershipError } from './mission-leadership';
 
 const scope = testProjectScope({ rootRealPath: '/workspace/waitlist' });
 
@@ -456,6 +461,44 @@ describe('hasUnsettledQueuedHandoffs — paste no Maestro ainda não aconteceu',
     expect(inspected.hasQueuedHandoffs).toBe(true);
     expect(inspected.workersDelivered).toBe(true);
   });
+
+  it('queued do orquestrador provado (A e C concordam) não prende a decisão', () => {
+    const inspected = inspectCivilianDelivery({
+      mission: mission(),
+      tasks: [task({ id: 't-front', title: 'UI', status: 'pending' })],
+      planned: [
+        {
+          taskId: 't-front',
+          agentCategory: 'executor',
+          agent: { id: 'frontend', agentName: 'Frontend', category: 'executor' },
+        },
+      ],
+      handoffs: [handoff({ deliveryState: 'queued', status: 'success', sessionId: 'maestro-1' })],
+      panes: [],
+      now: 20_000,
+      provenOrchestratorSessionId: 'maestro-1',
+    });
+    expect(inspected.hasQueuedHandoffs).toBe(false);
+  });
+
+  it('sem líder provado (A morto ou ausente), o queued do "orquestrador" continua contando', () => {
+    const inspected = inspectCivilianDelivery({
+      mission: mission(),
+      tasks: [task({ id: 't-front', title: 'UI', status: 'pending' })],
+      planned: [
+        {
+          taskId: 't-front',
+          agentCategory: 'executor',
+          agent: { id: 'frontend', agentName: 'Frontend', category: 'executor' },
+        },
+      ],
+      handoffs: [handoff({ deliveryState: 'queued', status: 'success', sessionId: 'maestro-1' })],
+      panes: [],
+      now: 20_000,
+      provenOrchestratorSessionId: undefined,
+    });
+    expect(inspected.hasQueuedHandoffs).toBe(true);
+  });
 });
 
 describe('toArtifactRefs — resultado sem lixo do workspace', () => {
@@ -847,10 +890,39 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
               cli: 'codex',
             })),
           }),
+          // Onda 1 (religação da liderança): default sem líder provado, o
+          // mesmo efeito que `mission.orchestratorSessionId` ausente tinha
+          // pré-religação. Testes que precisam de um líder injetam via
+          // `depsExtras.resolveMissionLeader`.
+          resolveMissionLeader: () => null,
           ...(input.depsExtras ?? {}),
         }),
     };
   }
+
+  it('religação onda 1: split-brain nunca é engolido — recusa fail-closed com o código, sem escolher líder por ordem de array', async () => {
+    completeVerified.mockClear();
+    const { reconcile } = harness({
+      missionId: 'mission-split-brain',
+      files: ['server.js'],
+      tasks: [],
+      planned: [],
+      handoffs: [],
+      depsExtras: {
+        resolveMissionLeader: () => {
+          throw new MissionLeadershipError('split_brain', {
+            missionId: 'mission-split-brain',
+            sessionIds: ['session-a', 'session-b'],
+          });
+        },
+      },
+    });
+    const result = await reconcile();
+    expect(result.action).toBe('refuse-fail-closed');
+    expect(result.reason).toBe('leadership-split_brain');
+    expect(result.completed).toBe(false);
+    expect(completeVerified).not.toHaveBeenCalled();
+  });
 
   it('files-on-disk + 20 never-started → reroute, não Pronto 0/20', async () => {
     completeVerified.mockClear();
@@ -1371,6 +1443,40 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
     expect(call.result.evidenceIds).toContain('nexus-auto-review:abc123');
   });
 
+  it('religação onda 1: enforceCivilianAutoReview recebe o sessionId PROVADO, não um pane-scan ad-hoc', async () => {
+    completeVerified.mockClear();
+    autoReviewSpy.enforceCivilianAutoReview.mockClear();
+    const { reconcile } = boardDoneHarness({
+      missionOverrides: { intentContract: civilianContract },
+      depsExtras: {
+        resolveMissionLeader: () => ({
+          sessionId: 'maestro-provado', paneId: 'pane-1', source: 'durable' as const, proven: true,
+        }),
+      },
+    });
+    await reconcile();
+    expect(autoReviewSpy.enforceCivilianAutoReview).toHaveBeenCalledWith(
+      expect.objectContaining({ liveOrchestratorSessionId: 'maestro-provado' }),
+    );
+  });
+
+  it('religação onda 1: sem líder provado, enforceCivilianAutoReview recebe null (nunca escolhe um pane por heurística própria)', async () => {
+    completeVerified.mockClear();
+    autoReviewSpy.enforceCivilianAutoReview.mockClear();
+    const { reconcile } = boardDoneHarness({
+      missionOverrides: { intentContract: civilianContract },
+      depsExtras: {
+        resolveMissionLeader: () => ({
+          sessionId: 'maestro-morto', paneId: 'pane-1', source: 'live' as const, proven: false,
+        }),
+      },
+    });
+    await reconcile();
+    expect(autoReviewSpy.enforceCivilianAutoReview).toHaveBeenCalledWith(
+      expect.objectContaining({ liveOrchestratorSessionId: null }),
+    );
+  });
+
   it('civil reprovada sem saída de reparo → bloqueia VISÍVEL com resumo simples', async () => {
     completeVerified.mockClear();
     blockUser.mockClear();
@@ -1425,6 +1531,7 @@ describe('maybeCompleteFastLaneOnDelivery', () => {
       listProductFiles: () => ['server.js'],
       missionEngine: { completeVerified, blockUser },
       runAutoReviewGate,
+      resolveMissionLeader: () => null,
     });
 
     expect(outcome.completed).toBe(false);

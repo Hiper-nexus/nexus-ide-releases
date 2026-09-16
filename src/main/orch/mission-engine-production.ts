@@ -128,6 +128,8 @@ import {
 } from "./mission-snapshot";
 import { resolveOpenMissionQuestion } from "./mission-open-question";
 import { sameMissionPaneAuthoritySeal } from "./mission-pane-authority";
+import { MissionLeadershipError, type MissionLeader } from "./mission-leadership";
+import { getMissionLeadership } from "./mission-leadership-runtime";
 
 /**
  * Produção do motor de missão da Via Rápida (2026-08-10).
@@ -1017,7 +1019,7 @@ export async function flushQueuedKickoffDirectsForMission(
   }
 }
 
-function projectMissionEngineSnapshotView(
+export function projectMissionEngineSnapshotView(
   scope: ProjectExecutionScope,
   stores: ProjectDomainStoreSuite,
   missionId: string,
@@ -1026,9 +1028,25 @@ function projectMissionEngineSnapshotView(
   if (!mission) throw new Error("mission not found");
   const missionPanes = stores.missionPanes.list(missionId);
   const worktrees = missionWorktreeViews(scope, mission.id);
-  const orchestratorPane =
-    missionPanes.find((pane) => pane.role === "orchestrator") ?? null;
-  const sessionId = mission.orchestratorSessionId;
+  // Pane e sessão do orquestrador vêm do MESMO par (sessionId,paneId)
+  // provado por resolveMissionLeader — nunca de duas derivações
+  // independentes (C: primeiro pane com role='orchestrator'; A: campo
+  // cru da missão), que podem apontar para encarnações diferentes.
+  let leader: MissionLeader | null;
+  try {
+    leader = getMissionLeadership().resolveMissionLeader(scope, missionId);
+  } catch (error) {
+    if (!(error instanceof MissionLeadershipError)) throw error;
+    console.warn(
+      "[mission-engine] resolveMissionLeader falhou no snapshot (fail-closed, sem líder):",
+      error.code,
+    );
+    leader = null;
+  }
+  const orchestratorPane = leader?.paneId
+    ? missionPanes.find((pane) => pane.paneId === leader.paneId) ?? null
+    : null;
+  const sessionId = leader?.sessionId ?? null;
   const sessionState = sessionId ? runtimeSessionState(sessionId) : null;
   // Via Rápida: coordenação viva = sessão viva. O selo cerimonial de
   // autoridade (runtimeAuthorityMismatches) pertencia ao motor antigo; o
@@ -1091,13 +1109,10 @@ function projectMissionEngineSnapshotView(
   }
   if (
     orchestratorPane?.paneId &&
-    mission.orchestratorSessionId &&
+    sessionId &&
     !sessionByPaneId.has(orchestratorPane.paneId)
   ) {
-    sessionByPaneId.set(
-      orchestratorPane.paneId,
-      mission.orchestratorSessionId,
-    );
+    sessionByPaneId.set(orchestratorPane.paneId, sessionId);
   }
   const dispatches = stores.taskDispatches.list(missionId);
   for (const dispatch of dispatches) {
@@ -1132,7 +1147,9 @@ function projectMissionEngineSnapshotView(
     let agentId: string | undefined;
     if (pane.agentName && rosterByName.has(pane.agentName)) {
       agentId = rosterByName.get(pane.agentName)!.id;
-    } else if (pane.role === "orchestrator") {
+    } else if (pane.role === "orchestrator" && pane.paneId === orchestratorPane?.paneId) {
+      // Mesmo par resolvido acima — um pane órfão com role='orchestrator'
+      // que não é o líder provado não herda o card do orquestrador.
       agentId = roster.find((agent) => agent.category === "orchestrator")?.id;
     } else {
       const dispatch = dispatches.find(
@@ -1180,6 +1197,7 @@ function projectMissionEngineSnapshotView(
   const openQuestion = resolveOpenMissionQuestion(
     mission,
     stores.handoffs.list({ missionId: mission.id, includeDelivered: true }),
+    sessionId,
   );
 
   return {

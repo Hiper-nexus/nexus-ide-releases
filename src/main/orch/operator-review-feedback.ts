@@ -16,6 +16,20 @@ import type {
   SubmitHandoffInput,
 } from './handoff-store';
 import { onHandoffSubmitted } from './idle-delivery';
+import { MissionLeadershipError, type MissionLeader } from './mission-leadership';
+import { getMissionLeadership } from './mission-leadership-runtime';
+
+type ResolveMissionLeader = (
+  scope: ProjectExecutionScope,
+  missionId: string,
+) => MissionLeader | null;
+
+function defaultResolveMissionLeader(
+  scope: ProjectExecutionScope,
+  missionId: string,
+): MissionLeader | null {
+  return getMissionLeadership().resolveMissionLeader(scope, missionId);
+}
 
 const annotationPathSchema = z
   .string()
@@ -107,9 +121,11 @@ function resolveReviewCandidate(
   stores: OperatorReviewStores,
   scope: ProjectExecutionScope,
   rawInput: unknown,
+  resolveMissionLeaderFn: ResolveMissionLeader = defaultResolveMissionLeader,
 ): {
   readonly input: OperatorReviewFeedbackInput;
   readonly mission: Mission;
+  readonly orchestratorSessionId: string;
   readonly fence: string;
 } {
   const input = operatorReviewFeedbackInputSchema.parse(rawInput);
@@ -126,9 +142,22 @@ function resolveReviewCandidate(
   if (!hasCurrentApprovedDispatchContract(mission)) {
     throw new Error('a revisão exige a versão atual da missão aprovada');
   }
-  if (!mission.orchestratorSessionId) {
+  // O par (sessionId,paneId) provado por resolveMissionLeader entra na cerca,
+  // nunca mission.orchestratorSessionId cru — source:'live' sem proven não
+  // basta, e split-brain nunca é engolido (vira erro tipado reconhecível).
+  let leader: MissionLeader | null;
+  try {
+    leader = resolveMissionLeaderFn(scope, mission.id);
+  } catch (error) {
+    if (error instanceof MissionLeadershipError) {
+      throw new Error(`a revisão exige liderança da missão sem conflito (${error.code})`);
+    }
+    throw error;
+  }
+  if (!leader?.proven) {
     throw new Error('a revisão exige a sessão atual do orquestrador');
   }
+  const orchestratorSessionId = leader.sessionId;
   const fence = createHash('sha256')
     .update(JSON.stringify({
       scope: {
@@ -144,25 +173,26 @@ function resolveReviewCandidate(
         intentState: mission.intentState,
         intentVersion: mission.intentVersion,
         intentContract: mission.intentContract,
-        orchestratorSessionId: mission.orchestratorSessionId,
+        orchestratorSessionId,
       },
       annotations: input.annotations,
     }))
     .digest('hex');
-  return { input, mission, fence };
+  return { input, mission, orchestratorSessionId, fence };
 }
 
 export function prepareOperatorReviewAuthorityCandidate(
   stores: OperatorReviewStores,
   scope: ProjectExecutionScope,
   rawInput: unknown,
+  resolveMissionLeaderFn: ResolveMissionLeader = defaultResolveMissionLeader,
 ): OperatorReviewAuthorityCandidate {
-  const resolved = resolveReviewCandidate(stores, scope, rawInput);
+  const resolved = resolveReviewCandidate(stores, scope, rawInput, resolveMissionLeaderFn);
   return Object.freeze({
     missionId: resolved.mission.id,
     missionTitle: resolved.mission.title,
     intentVersion: resolved.mission.intentVersion ?? 0,
-    orchestratorSessionId: resolved.mission.orchestratorSessionId!,
+    orchestratorSessionId: resolved.orchestratorSessionId,
     annotations: Object.freeze(
       resolved.input.annotations.map((annotation) => Object.freeze({ ...annotation })),
     ),
@@ -181,11 +211,12 @@ export function persistOperatorReviewFeedback(
   rawInput: unknown,
   expectedFence: string,
   deliver: DeliverReview = onHandoffSubmitted,
+  resolveMissionLeaderFn: ResolveMissionLeader = defaultResolveMissionLeader,
 ): OperatorReviewFeedbackResult {
   if (!/^[a-f0-9]{64}$/.test(expectedFence)) {
     throw new Error('confirmação humana ausente ou inválida');
   }
-  const resolved = resolveReviewCandidate(stores, scope, rawInput);
+  const resolved = resolveReviewCandidate(stores, scope, rawInput, resolveMissionLeaderFn);
   if (resolved.fence !== expectedFence) {
     throw new Error('a missão ou revisão mudou durante a confirmação');
   }

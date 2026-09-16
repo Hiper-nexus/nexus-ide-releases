@@ -19,6 +19,7 @@ import {
 import { hasUnsettledQueuedHandoffs } from './civilian-delivery-completion';
 import { projectMissionSnapshot } from './mission-snapshot';
 import type { ProjectDomainStoreSuite } from './project-domain-store-registry';
+import { MissionLeadershipError } from './mission-leadership';
 
 const running = {
   missionStatus: 'running',
@@ -472,6 +473,7 @@ describe('settlement — success queued espera o paste no Maestro', () => {
       ],
       listProductFiles: () => [] as readonly string[],
       missionEngine: { completeVerified },
+      resolveMissionLeader: () => null,
     };
     const completed = await maybeApplyCivilianPronto(scope, mission.id, {
       ...deps, missionEngine: { ...deps.missionEngine, blockUser: vi.fn() },
@@ -480,5 +482,81 @@ describe('settlement — success queued espera o paste no Maestro', () => {
     expect(completed.reason).toBe('queued-handoffs');
     expect(completed.completed).toBe(false);
     expect(completeVerified).not.toHaveBeenCalled();
+  });
+});
+
+describe('religação onda 1 — hasQueuedHandoffs consome resolveMissionLeader', () => {
+  const scope = testProjectScope();
+  const mission = {
+    id: 'mission-leader-reader',
+    title: 'Entregar',
+    description: 'produza server.js',
+    status: 'running',
+    intentState: 'executing',
+    intentVersion: 0,
+    updatedAt: 100,
+    learnings: '',
+  } as unknown as Mission;
+  const queuedForMaestro = {
+    id: 'handoff-maestro',
+    missionId: mission.id,
+    fromAgent: 'Coordenar e revisar',
+    sessionId: 'maestro-1',
+    status: 'success',
+    claimTrust: 'untrusted',
+    summary: 'consolidado',
+    artifacts: [],
+    evidenceIds: [],
+    evidenceTrust: 'unverified',
+    delivered: false,
+    deliveryState: 'queued',
+    createdAt: 50,
+  } as Handoff;
+
+  function deps(overrides: Record<string, unknown> = {}) {
+    return {
+      getStores: () =>
+        ({
+          missions: { get: () => mission },
+          tasks: { list: () => [], listPlannedTasks: () => [] },
+          handoffs: { list: () => [queuedForMaestro] },
+        }) as unknown as ProjectDomainStoreSuite,
+      listPanes: () => [] as const,
+      listProductFiles: () => ['server.js'] as readonly string[],
+      missionEngine: { completeVerified: vi.fn(), blockUser: vi.fn() },
+      ...overrides,
+    };
+  }
+
+  it('A e C concordam (líder provado = remetente do handoff) — não prende em queued-handoffs', async () => {
+    const result = await maybeApplyCivilianPronto(scope, mission.id, deps({
+      resolveMissionLeader: () => ({
+        sessionId: 'maestro-1', paneId: 'pane-1', source: 'durable' as const, proven: true,
+      }),
+    }));
+    expect(result.reason).not.toBe('queued-handoffs');
+  });
+
+  it('A morto (source:live sem proven) — trata como sem líder e prende em queued-handoffs', async () => {
+    const result = await maybeApplyCivilianPronto(scope, mission.id, deps({
+      resolveMissionLeader: () => ({
+        sessionId: 'maestro-1', paneId: 'pane-1', source: 'live' as const, proven: false,
+      }),
+    }));
+    expect(result.action).toBe('wait');
+    expect(result.reason).toBe('queued-handoffs');
+  });
+
+  it('split-brain nunca é engolido: devolve wait com o código, nunca escolhe um líder por ordem de array', async () => {
+    const result = await maybeApplyCivilianPronto(scope, mission.id, deps({
+      resolveMissionLeader: () => {
+        throw new MissionLeadershipError('split_brain', {
+          missionId: mission.id, sessionIds: ['maestro-1', 'maestro-2'],
+        });
+      },
+    }));
+    expect(result.action).toBe('wait');
+    expect(result.reason).toBe('leadership-split_brain');
+    expect(result.completed).toBe(false);
   });
 });
