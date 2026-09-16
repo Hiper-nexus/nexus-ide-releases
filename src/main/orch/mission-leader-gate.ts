@@ -1,6 +1,7 @@
 import type { ProjectExecutionScope } from '../../shared/project-identity-types';
 import { MissionLeadershipError, type MissionLeader } from './mission-leadership';
 import { getMissionLeadership } from './mission-leadership-runtime';
+import { registerMissionLeaderSessionCheck } from './gate';
 
 export type MissionLeaderGateCode = 'no-leader' | 'stale-session' | 'split-brain' | 'unproven';
 
@@ -76,3 +77,8 @@ export function requireMissionLeaderSession(
   }
   return { ok: true, leader };
 }
+
+// Registro tardio no gate de autoridade (ver gate.ts): todo consumidor de
+// orquestração importa este módulo no boot, então o gate passa a consultar o
+// líder resolvido sem importar este arquivo estaticamente (ciclo ESM).
+registerMissionLeaderSessionCheck(requireMissionLeaderSession);

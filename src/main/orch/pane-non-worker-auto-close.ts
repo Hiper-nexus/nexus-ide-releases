@@ -35,6 +35,7 @@ import {
 } from './pane-registry';
 import { isSessionInjectableIdle, tapAgentSemanticStatus } from './agent-status';
 import { armedDeliveryContract } from './delivery-contract';
+import { registerPaneAdmissionAdvisor } from './pane-admission';
 
 /** 30 minutos de idle antes de auto-fechar um pane sem dono. */
 export const NON_WORKER_AUTO_CLOSE_TTL_MS = 30 * 60_000;
@@ -72,6 +73,12 @@ export interface NonWorkerAutoCloseDeps {
   readonly now?: () => number;
   /** Contrato de entrega armado (`expect` do spawn) ainda por cumprir. */
   readonly hasPendingDelivery?: (sessionId: string) => boolean;
+  /**
+   * Registra o conselheiro do gate de admissão (quem NOMEIA os panes
+   * ociosos). Mora aqui, e não no pty-ipc, para o pty-ipc não importar este
+   * módulo — esse edge fechava um ciclo ESM na suíte (F-572).
+   */
+  readonly registerAdvisor?: () => void;
 }
 
 function productionDeps(): NonWorkerAutoCloseDeps {
@@ -106,6 +113,23 @@ function productionDeps(): NonWorkerAutoCloseDeps {
         )
         .map((pane) => pane.sessionId as string),
     sweepIntervalMs: PANE_GUARDIAN_SWEEP_INTERVAL_MS,
+    registerAdvisor: () =>
+      registerPaneAdmissionAdvisor({
+        idleCandidates: (now) =>
+          listPaneSnapshots()
+            .filter(
+              (pane) =>
+                pane.kind === 'cli-agent' &&
+                pane.state === 'idle' &&
+                pane.role !== 'orchestrator',
+            )
+            .map((pane) => ({
+              paneId: pane.paneId,
+              paneNumber: pane.paneNumber,
+              title: pane.title,
+              idleForMs: pane.sessionId ? getGuardianIdleForMs(pane.sessionId, now) : 0,
+            })),
+      }),
   };
 }
 
@@ -232,6 +256,7 @@ export function initNonWorkerAutoClose(
   deps: NonWorkerAutoCloseDeps = productionDeps(),
 ): void {
   if (untapStatus) return;
+  deps.registerAdvisor?.();
   untapStatus = tapAgentSemanticStatus((entry) => {
     if (entry.status === 'idle' || entry.status === 'completed') {
       if (paneIsClosable(deps, entry.sessionId)) {

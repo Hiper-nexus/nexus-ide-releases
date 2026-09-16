@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PET_STUDIO_SQUAD } from '../../shared/pet-studio';
 import { requiresSpawnGate } from './spawn-home-policy';
 import { testProjectScope } from './__tests__/scope-fixture';
@@ -26,6 +26,7 @@ const {
   mintToken,
   promoteMissionSessionAuthority,
   rollbackSessionAuthorityMission,
+  registerMissionLeaderSessionCheck,
   releaseSession,
   resetGateForTests,
   restoreSessionAuthority,
@@ -337,6 +338,24 @@ describe('token registry + stop gate', () => {
 
     beforeEach(() => {
       requireMissionLeaderSession.mockReset();
+      // gate.ts não importa mission-leader-gate (ciclo ESM); o leader-gate se
+      // registra no boot. Aqui registramos o mock explicitamente.
+      registerMissionLeaderSessionCheck((...args: unknown[]) =>
+        requireMissionLeaderSession(...args),
+      );
+    });
+
+    afterEach(() => {
+      registerMissionLeaderSessionCheck(null);
+    });
+
+    it('sem leader-gate registrado, vale a ligação durável: mesma sessão passa, outra é stale', () => {
+      registerMissionLeaderSessionCheck(null);
+      expect(() => assertCurrentMissionOrchestratorSession(ctx, mission)).not.toThrow();
+      expect(() =>
+        assertCurrentMissionOrchestratorSession({ ...ctx, sessionId: 'someone-else' }, mission),
+      ).toThrow(/orchestrator_session_stale/);
+      expect(requireMissionLeaderSession).not.toHaveBeenCalled();
     });
 
     it('passes a proven current leader through to the resolver and allows it', () => {

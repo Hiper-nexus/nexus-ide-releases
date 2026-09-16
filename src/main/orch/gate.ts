@@ -4,7 +4,26 @@ import {
   PET_STUDIO_SQUAD_ID,
 } from "../../shared/pet-studio";
 import type { ProjectExecutionScope } from "../../shared/types";
-import { requireMissionLeaderSession } from "./mission-leader-gate";
+// F-562/onda 3: o gate consulta o líder resolvido, mas NÃO importa
+// mission-leader-gate estaticamente — esse edge fechava o ciclo ESM
+// gate → leader-gate → leadership-runtime → fast-lane → squad-store →
+// guided-squad-skills → catalog → plugin-skill → gate, deixando
+// BUILTIN_SQUADS/NEXUS_GUIDED_SKILLS em TDZ na suíte. O leader-gate se
+// registra aqui ao ser carregado (todo consumidor de orquestração o importa
+// no boot); sem registro, vale a comparação durável de antes da onda 3.
+export type MissionLeaderSessionCheck = (
+  scope: ProjectExecutionScope,
+  missionId: string,
+  ctx: { readonly sessionId?: string | null },
+) => { ok: true } | { ok: false; code: string; hint: string };
+
+let missionLeaderSessionCheck: MissionLeaderSessionCheck | null = null;
+
+export function registerMissionLeaderSessionCheck(
+  check: MissionLeaderSessionCheck | null,
+): void {
+  missionLeaderSessionCheck = check;
+}
 import {
   internalPrevcReviewerAllowsTool,
   isExactInternalPrevcReviewerProfile,
@@ -492,7 +511,19 @@ export function assertCurrentMissionOrchestratorSession(
   assertOrchestratorMission(ctx, mission.id);
   const currentSessionId = mission.orchestratorSessionId?.trim();
   if (!currentSessionId) return;
-  const leader = requireMissionLeaderSession(ctx.scope, mission.id, { sessionId: ctx.sessionId });
+  if (!missionLeaderSessionCheck) {
+    // Nenhum consumidor de liderança carregado (bootstrap parcial/fixture):
+    // vale a ligação durável, como antes da onda 3.
+    if (ctx.sessionId !== currentSessionId) {
+      throw new Error(
+        'orchestrator_session_stale: somente a sessão main-owned atual da missão ' +
+          'pode planejar, reservar rota ou delegar workers; use “Retomar missão” ' +
+          'para restaurar a autoridade correta',
+      );
+    }
+    return;
+  }
+  const leader = missionLeaderSessionCheck(ctx.scope, mission.id, { sessionId: ctx.sessionId });
   if (!leader.ok) {
     throw new Error(
       `orchestrator_session_stale (${leader.code}): somente a sessão main-owned atual da missão ` +
