@@ -267,6 +267,21 @@ describe('mcp-server governed CLI profile wiring', () => {
     expect(decoration.providerStateWritePaths).toEqual([providerHome, state]);
   });
 
+  it.each(['claude', 'glm'] as const)('isolates direct %s conversation paths using the bound checkout', (id) => {
+    const home = path.join(tempRoot(), 'home');
+    const cwd = path.join(home, 'workspace');
+    fs.mkdirSync(cwd, { recursive: true });
+    vi.stubEnv('HOME', home);
+    const decoration = prepareAgentSpawnDecoration(adapter(id), { kind: 'cli-agent', cols: 80, rows: 24 }, authority(cwd, false))!;
+    try {
+      const durable = path.join(home, '.nexus-test-user-data', 'provider-state', id, 'checkout-wiring', 'claude', 'projects');
+      expect(decoration.env.HOME).toBeTruthy();
+      expect(decoration.env.HOME).not.toBe(home);
+      expect(fs.realpathSync(path.join(decoration.env.HOME, '.claude', 'projects'))).toBe(fs.realpathSync(durable));
+      expect(decoration.extraArgs).not.toContain('--continue');
+    } finally { decoration.onSpawnFailed?.(); }
+  });
+
   it('keeps packaged Arms on the legacy descriptor and isolates dev', () => {
     const home = path.join(tempRoot(), 'home');
 
@@ -385,7 +400,7 @@ describe('mcp-server governed CLI profile wiring', () => {
     decoration.onSpawnFailed?.();
   });
 
-  it('preserves native Claude HOME and session authority in operator-choice', () => {
+  it('preserves native Claude auth and session authority in a private operator-choice HOME', () => {
     const root = tempRoot();
     const home = path.join(root, 'home');
     const workspace = path.join(root, 'workspace');
@@ -406,7 +421,7 @@ describe('mcp-server governed CLI profile wiring', () => {
     );
     if (!decoration) throw new Error('expected native Claude decoration');
 
-    expect(decoration.env.HOME).toBeUndefined();
+    expect(decoration.env.HOME).toBeTruthy();
     expect(decoration.extraArgs).toContain('--mcp-config');
     expect(decoration.extraArgs).toContain('--settings');
     expect(decoration.extraArgs).toContain('--strict-mcp-config');
@@ -418,7 +433,7 @@ describe('mcp-server governed CLI profile wiring', () => {
       providerId: 'claude',
     });
     expect(
-      JSON.parse(fs.readFileSync(path.join(home, '.claude.json'), 'utf8')),
+      JSON.parse(fs.readFileSync(path.join(decoration.env.HOME, '.claude.json'), 'utf8')),
     ).toMatchObject({
       oauthAccount: { emailAddress: 'operator@example.com' },
       projects: {
@@ -432,7 +447,7 @@ describe('mcp-server governed CLI profile wiring', () => {
     decoration.onSpawnFailed?.();
   });
 
-  it('delivers only the granted skill to the real Claude profile when no overlay is taken', () => {
+  it('delivers the granted skill to the private Claude profile in operator-choice', () => {
     const root = tempRoot();
     const home = path.join(root, 'home');
     const workspace = path.join(root, 'workspace');
@@ -456,13 +471,12 @@ describe('mcp-server governed CLI profile wiring', () => {
     );
     if (!decoration) throw new Error('expected native Claude decoration');
 
-    // Operator-choice keeps the real HOME: it is the only namespace this
-    // worker reads, so the grant has to land there or it reaches nothing.
-    expect(decoration.env.HOME).toBeUndefined();
+    // The skill must reach the private HOME used by this worker.
+    expect(decoration.env.HOME).toBeTruthy();
     expect(
-      fs.existsSync(path.join(home, '.claude', 'skills', 'allowed', 'SKILL.md')),
+      fs.existsSync(path.join(decoration.env.HOME, '.claude', 'skills', 'allowed', 'SKILL.md')),
     ).toBe(true);
-    expect(fs.existsSync(path.join(home, '.claude', 'skills', 'blocked'))).toBe(
+    expect(fs.existsSync(path.join(decoration.env.HOME, '.claude', 'skills', 'blocked'))).toBe(
       false,
     );
 

@@ -4,6 +4,7 @@ import {
   isThirdPartyClaudeFamily,
   requiresSpawnGate,
   shouldUseEphemeralHome,
+  usesClaudeHomeLayout,
 } from './spawn-home-policy';
 
 function adapter(
@@ -79,12 +80,10 @@ describe('shouldUseEphemeralHome', () => {
     const glm = adapter(true, false, {
       ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic',
     });
-    expect(
-      shouldUseEphemeralHome(glm, true, { mode: 'operator-choice' }),
-    ).toBe(true);
-    expect(
-      shouldUseEphemeralHome(glm, true, { mode: 'hardened' }),
-    ).toBe(true);
+    expect(shouldUseEphemeralHome(glm, true, { mode: 'operator-choice' })).toBe(
+      true,
+    );
+    expect(shouldUseEphemeralHome(glm, true, { mode: 'hardened' })).toBe(true);
   });
 
   it('preserva HOME real para workers não-Claude mesmo com gate ativo', () => {
@@ -124,19 +123,23 @@ describe('shouldUseEphemeralHome', () => {
 
 describe('requiresSpawnGate', () => {
   it('always gates an orchestrator even with open MCP/skill allowlists', () => {
-    expect(requiresSpawnGate({
-      role: 'orchestrator',
-      allowedTools: null,
-      allowedSkills: null,
-    })).toBe(true);
+    expect(
+      requiresSpawnGate({
+        role: 'orchestrator',
+        allowedTools: null,
+        allowedSkills: null,
+      }),
+    ).toBe(true);
   });
 
   it('keeps an ordinary open user pane ungated', () => {
-    expect(requiresSpawnGate({
-      role: 'user',
-      allowedTools: null,
-      allowedSkills: null,
-    })).toBe(false);
+    expect(
+      requiresSpawnGate({
+        role: 'user',
+        allowedTools: null,
+        allowedSkills: null,
+      }),
+    ).toBe(false);
   });
 });
 
@@ -146,7 +149,9 @@ describe('isThirdPartyClaudeFamily', () => {
 
   it('isola Claude-family apontado para endpoint de terceiro (GLM/LongCat)', () => {
     expect(
-      isThirdPartyClaudeFamily(adapter(true, false, { ANTHROPIC_BASE_URL: GLM_BASE_URL })),
+      isThirdPartyClaudeFamily(
+        adapter(true, false, { ANTHROPIC_BASE_URL: GLM_BASE_URL }),
+      ),
     ).toBe(true);
     expect(
       isThirdPartyClaudeFamily(
@@ -161,13 +166,17 @@ describe('isThirdPartyClaudeFamily', () => {
 
   it('NÃO isola CLIs não-Claude mesmo que carreguem um base URL', () => {
     expect(
-      isThirdPartyClaudeFamily(adapter(false, false, { ANTHROPIC_BASE_URL: GLM_BASE_URL })),
+      isThirdPartyClaudeFamily(
+        adapter(false, false, { ANTHROPIC_BASE_URL: GLM_BASE_URL }),
+      ),
     ).toBe(false);
   });
 
   it('ignora base URL vazio', () => {
     expect(
-      isThirdPartyClaudeFamily(adapter(true, false, { ANTHROPIC_BASE_URL: '' })),
+      isThirdPartyClaudeFamily(
+        adapter(true, false, { ANTHROPIC_BASE_URL: '' }),
+      ),
     ).toBe(false);
     expect(
       isThirdPartyClaudeFamily(
@@ -262,16 +271,31 @@ describe('isThirdPartyClaudeFamily — lei física do binário (bug E 2026-08-17
   });
 
   it('bin claude sem endpoint terceiro não é isolado (Claude nativo)', () => {
-    expect(
-      isThirdPartyClaudeFamily(claudeBinAdapter({}) as never),
-    ).toBe(false);
+    expect(isThirdPartyClaudeFamily(claudeBinAdapter({}) as never)).toBe(false);
   });
 
   it('quirks autoload continua valendo sem bin declarado', () => {
     expect(
       isThirdPartyClaudeFamily(
-        adapter(true, false, { ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic' }),
+        adapter(true, false, {
+          ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic',
+        }),
       ),
     ).toBe(true);
   });
+});
+
+describe('Claude host detection for durable conversations', () => {
+  it.each(['claude', '/opt/bin/claude', 'C:\\tools\\claude.exe'])(
+    'recognizes %s even without MCP autoload',
+    (bin) => {
+      expect(usesClaudeHomeLayout({ ...adapter(false), bin })).toBe(true);
+    },
+  );
+  it.each(['openclaude', '/opt/bin/openclaude', 'C:\\tools\\openclaude.exe'])(
+    'keeps %s outside the Claude layout',
+    (bin) => {
+      expect(usesClaudeHomeLayout({ ...adapter(true), bin })).toBe(false);
+    },
+  );
 });

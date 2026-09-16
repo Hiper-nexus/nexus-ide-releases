@@ -30,9 +30,13 @@ describe('native Claude auth in the ephemeral HOME', () => {
       }),
     );
 
-    const overlay = prepareEphemeralHome(TOKEN, { mcpServers: {} }, {
-      carryNativeClaudeAuth: true,
-    });
+    const overlay = prepareEphemeralHome(
+      TOKEN,
+      { mcpServers: {} },
+      {
+        carryNativeClaudeAuth: true,
+      },
+    );
 
     const stub = JSON.parse(
       fs.readFileSync(path.join(overlay.dir, '.claude.json'), 'utf8'),
@@ -61,9 +65,13 @@ describe('native Claude auth in the ephemeral HOME', () => {
       }),
     );
 
-    const overlay = prepareEphemeralHome(TOKEN, { mcpServers: {} }, {
-      cwd: '/work/projeto',
-    });
+    const overlay = prepareEphemeralHome(
+      TOKEN,
+      { mcpServers: {} },
+      {
+        cwd: '/work/projeto',
+      },
+    );
 
     const stub = JSON.parse(
       fs.readFileSync(path.join(overlay.dir, '.claude.json'), 'utf8'),
@@ -83,9 +91,13 @@ describe('native Claude auth in the ephemeral HOME', () => {
       }),
     );
 
-    const overlay = prepareEphemeralHome(TOKEN, { mcpServers: {} }, {
-      cwd: '/work/projeto',
-    });
+    const overlay = prepareEphemeralHome(
+      TOKEN,
+      { mcpServers: {} },
+      {
+        cwd: '/work/projeto',
+      },
+    );
 
     const stub = JSON.parse(
       fs.readFileSync(path.join(overlay.dir, '.claude.json'), 'utf8'),
@@ -102,10 +114,14 @@ describe('native Claude auth in the ephemeral HOME', () => {
     });
     fs.writeFileSync(path.join(home, '.claude.json'), realProfile);
 
-    const overlay = prepareEphemeralHome(TOKEN, { mcpServers: {} }, {
-      cwd: '/work/projeto',
-      approvedMissionProjectTrust: true,
-    });
+    const overlay = prepareEphemeralHome(
+      TOKEN,
+      { mcpServers: {} },
+      {
+        cwd: '/work/projeto',
+        approvedMissionProjectTrust: true,
+      },
+    );
 
     const stub = JSON.parse(
       fs.readFileSync(path.join(overlay.dir, '.claude.json'), 'utf8'),
@@ -122,9 +138,13 @@ describe('native Claude auth in the ephemeral HOME', () => {
   });
 
   it('não projeta confiança aprovada sem um cwd exato', () => {
-    const overlay = prepareEphemeralHome(TOKEN, { mcpServers: {} }, {
-      approvedMissionProjectTrust: true,
-    });
+    const overlay = prepareEphemeralHome(
+      TOKEN,
+      { mcpServers: {} },
+      {
+        approvedMissionProjectTrust: true,
+      },
+    );
 
     const stub = JSON.parse(
       fs.readFileSync(path.join(overlay.dir, '.claude.json'), 'utf8'),
@@ -154,9 +174,13 @@ describe('native Claude auth in the ephemeral HOME', () => {
       JSON.stringify({ token: 'secret' }),
     );
 
-    const overlay = prepareEphemeralHome(TOKEN, { mcpServers: {} }, {
-      carryNativeClaudeAuth: true,
-    });
+    const overlay = prepareEphemeralHome(
+      TOKEN,
+      { mcpServers: {} },
+      {
+        carryNativeClaudeAuth: true,
+      },
+    );
 
     const linked = path.join(overlay.dir, '.claude', '.credentials.json');
     expect(
@@ -165,9 +189,13 @@ describe('native Claude auth in the ephemeral HOME', () => {
   });
 
   it('rescues a fresh in-pane login into the real profile on teardown', () => {
-    const overlay = prepareEphemeralHome(TOKEN, { mcpServers: {} }, {
-      carryNativeClaudeAuth: true,
-    });
+    const overlay = prepareEphemeralHome(
+      TOKEN,
+      { mcpServers: {} },
+      {
+        carryNativeClaudeAuth: true,
+      },
+    );
     // O CLI faz /login dentro do pane: identidade + segredo nascem no overlay.
     fs.writeFileSync(
       path.join(overlay.dir, '.claude.json'),
@@ -187,9 +215,9 @@ describe('native Claude auth in the ephemeral HOME', () => {
       fs.readFileSync(path.join(home, '.claude.json'), 'utf8'),
     ) as { oauthAccount?: { emailAddress?: string } };
     expect(real.oauthAccount?.emailAddress).toBe('fresh@example.com');
-    expect(
-      fs.existsSync(path.join(home, '.claude', '.credentials.json')),
-    ).toBe(true);
+    expect(fs.existsSync(path.join(home, '.claude', '.credentials.json'))).toBe(
+      true,
+    );
     expect(fs.existsSync(overlay.dir)).toBe(false);
   });
 
@@ -198,9 +226,13 @@ describe('native Claude auth in the ephemeral HOME', () => {
       path.join(home, '.claude.json'),
       JSON.stringify({ oauthAccount: { emailAddress: 'native@example.com' } }),
     );
-    const overlay = prepareEphemeralHome(TOKEN, { mcpServers: {} }, {
-      carryNativeClaudeAuth: true,
-    });
+    const overlay = prepareEphemeralHome(
+      TOKEN,
+      { mcpServers: {} },
+      {
+        carryNativeClaudeAuth: true,
+      },
+    );
     fs.writeFileSync(
       path.join(overlay.dir, '.claude.json'),
       JSON.stringify({
@@ -232,4 +264,152 @@ describe('native Claude auth in the ephemeral HOME', () => {
     expect(fs.existsSync(path.join(home, '.claude.json'))).toBe(false);
     expect(fs.existsSync(overlay.dir)).toBe(false);
   });
+});
+
+describe('F-567 durable Claude-family conversations', () => {
+  it('carries native auth/extensions without copying external conversation metadata', () => {
+    const realClaude = path.join(home, '.claude');
+    fs.mkdirSync(path.join(realClaude, 'skills'), { recursive: true });
+    fs.writeFileSync(
+      path.join(realClaude, '.credentials.json'),
+      '{"token":"test-secret"}',
+    );
+    fs.writeFileSync(
+      path.join(realClaude, 'settings.json'),
+      JSON.stringify({
+        apiKeyHelper: 'operator-key-helper',
+        env: {
+          CLAUDE_CONFIG_DIR: realClaude,
+          HOME: home,
+          USERPROFILE: home,
+          KEEP: 'yes',
+        },
+        hooks: {
+          Stop: [{ hooks: [{ type: 'command', command: 'operator-hook' }] }],
+        },
+      }),
+    );
+    fs.writeFileSync(
+      path.join(home, '.claude.json'),
+      JSON.stringify({
+        oauthAccount: { emailAddress: 'operator@example.com' },
+        mcpServers: { existing: { command: 'user-mcp' } },
+        projects: {
+          '/workspace': {
+            history: ['external conversation'],
+            lastSessionId: 'external-id',
+          },
+        },
+      }),
+    );
+    const prepared = prepareEphemeralHome(
+      TOKEN,
+      {},
+      {
+        userDataPath: path.join(home, 'user-data'),
+        checkoutId: 'checkout-a',
+        adapterId: 'claude',
+        carryNativeClaudeAuth: true,
+        inheritNativeProfile: true,
+        gateHooks: false,
+      },
+    );
+    const config = path.join(prepared.dir, '.claude');
+    expect(prepared.providerProfileReadPaths).toContain(
+      fs.realpathSync(path.join(realClaude, 'skills')),
+    );
+    expect(prepared.providerProfileReadPaths).not.toContain(realClaude);
+    expect(fs.realpathSync(path.join(config, '.credentials.json'))).toBe(
+      fs.realpathSync(path.join(realClaude, '.credentials.json')),
+    );
+    expect(fs.realpathSync(path.join(config, 'skills'))).toBe(
+      fs.realpathSync(path.join(realClaude, 'skills')),
+    );
+    const profile = JSON.parse(
+      fs.readFileSync(path.join(prepared.dir, '.claude.json'), 'utf8'),
+    );
+    expect(profile.oauthAccount.emailAddress).toBe('operator@example.com');
+    expect(profile.mcpServers.existing.command).toBe('user-mcp');
+    expect(profile.projects).toBeUndefined();
+    const settings = JSON.parse(
+      fs.readFileSync(path.join(config, 'settings.json'), 'utf8'),
+    );
+    expect(settings.apiKeyHelper).toBe('operator-key-helper');
+    expect(settings.env).toEqual({ KEEP: 'yes' });
+    expect(JSON.stringify(settings.hooks)).toContain('operator-hook');
+    fs.writeFileSync(path.join(config, 'projects', 'pane.jsonl'), 'pane');
+    cleanupSessionArtifacts(TOKEN);
+    expect(fs.existsSync(path.join(realClaude, 'projects', 'pane.jsonl'))).toBe(
+      false,
+    );
+    expect(fs.existsSync(path.join(realClaude, 'history.jsonl'))).toBe(false);
+  });
+
+  it.each(['claude', 'glm', 'glm-flash', 'longcat', 'deepseek', 'minimax'])(
+    'keeps %s conversations outside the native profile and across spawns',
+    (adapterId) => {
+      const userDataPath = path.join(home, 'user-data');
+      const nativeProjects = path.join(home, '.claude', 'projects');
+      fs.mkdirSync(nativeProjects, { recursive: true });
+      fs.writeFileSync(path.join(nativeProjects, 'external.jsonl'), 'external');
+      const options = {
+        userDataPath,
+        checkoutId: 'checkout-a',
+        adapterId,
+        carryNativeClaudeAuth: adapterId === 'claude',
+      };
+      const first = prepareEphemeralHome(TOKEN, {}, options);
+      const projects = path.join(first.dir, '.claude', 'projects');
+      const durable = path.join(
+        userDataPath,
+        'provider-state',
+        adapterId,
+        'checkout-a',
+        'claude',
+      );
+      expect(fs.realpathSync(projects)).toBe(
+        fs.realpathSync(path.join(durable, 'projects')),
+      );
+      expect(fs.existsSync(path.join(projects, 'external.jsonl'))).toBe(false);
+      fs.writeFileSync(
+        path.join(projects, 'exact-id.jsonl'),
+        'pane conversation',
+      );
+      fs.appendFileSync(
+        path.join(first.dir, '.claude', 'history.jsonl'),
+        'pane history',
+      );
+      cleanupSessionArtifacts(TOKEN);
+      expect(fs.existsSync(path.join(nativeProjects, 'exact-id.jsonl'))).toBe(
+        false,
+      );
+      expect(
+        fs.readFileSync(path.join(nativeProjects, 'external.jsonl'), 'utf8'),
+      ).toBe('external');
+      const second = prepareEphemeralHome(
+        TOKEN,
+        {},
+        { ...options, checkoutId: 'checkout-b' },
+      );
+      expect(
+        fs.existsSync(
+          path.join(second.dir, '.claude', 'projects', 'exact-id.jsonl'),
+        ),
+      ).toBe(false);
+      cleanupSessionArtifacts(TOKEN);
+      const resumed = prepareEphemeralHome(TOKEN, {}, options);
+      expect(
+        fs.readFileSync(
+          path.join(resumed.dir, '.claude', 'projects', 'exact-id.jsonl'),
+          'utf8',
+        ),
+      ).toBe('pane conversation');
+      expect(
+        fs.readFileSync(
+          path.join(resumed.dir, '.claude', 'history.jsonl'),
+          'utf8',
+        ),
+      ).toBe('pane history');
+    },
+  );
 });

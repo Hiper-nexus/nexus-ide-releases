@@ -6,6 +6,13 @@ import {
   syncBackClaudeEphemeralAuth,
 } from './overlay-auth-syncback';
 import { mergeClaudeStatusHooks } from './hook-status-config';
+import {
+  linkFile,
+  linkProviderSessionState,
+  linkSelectedEntries,
+  objectValue,
+  readJsonObject,
+} from './cli-mcp-session-artifacts';
 
 /**
  * Client-side half of the dual skill-gate (docs/ARCHITECTURE.md §E.4).
@@ -195,6 +202,8 @@ function hookCommand(scriptPath: string, event: string): string {
 export interface EphemeralHome {
   dir: string;
   mcpConfigPath: string;
+  providerSessionHome?: string;
+  providerProfileReadPaths?: string[];
 }
 
 /**
@@ -256,6 +265,13 @@ function exactProjectTrust(cwd: string | undefined): Record<string, unknown> {
 }
 
 export interface EphemeralHomeOptions {
+  readonly adapterId?: string;
+  readonly userDataPath?: string;
+  readonly checkoutId?: string;
+  /** Preserve the existing direct/operator-choice profile without sharing conversations. */
+  readonly inheritNativeProfile?: boolean;
+  /** False keeps direct panes on their existing flag-settings channel. */
+  readonly gateHooks?: boolean;
   /**
    * Projetar a identidade OAuth NATIVA no overlay (oauthAccount/userID do
    * ~/.claude.json real + symlink de ~/.claude/.credentials.json). Só para o
@@ -367,6 +383,41 @@ export function prepareEphemeralHome(
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const claudeDir = path.join(dir, '.claude');
   fs.mkdirSync(claudeDir, { recursive: true, mode: 0o700 });
+  // ponytail: reuse the per-pane config/auth HOME and link only conversations;
+  // teardown needs no transcript migration or copy-back to the native profile.
+  const providerSessionHome = options.checkoutId !== undefined
+    ? linkProviderSessionState(
+        options.adapterId ?? 'claude',
+        claudeDir,
+        options,
+        ['projects', 'todos', 'tasks', 'file-history', 'plans'],
+        { 'history.jsonl': '' },
+        'claude',
+      )
+    : undefined;
+  const nativeProfile = options.inheritNativeProfile
+    ? readJsonObject(path.join(os.homedir(), '.claude.json'))
+    : {};
+  const nativeSettings = options.inheritNativeProfile
+    ? readJsonObject(path.join(os.homedir(), '.claude', 'settings.json'))
+    : {};
+  const providerProfileReadPaths: string[] = [];
+  // User settings must not redirect the private HOME back to native conversations.
+  if (nativeSettings.env) {
+    const settingsEnv = { ...objectValue(nativeSettings.env) };
+    for (const key of ['HOME', 'USERPROFILE', 'CLAUDE_CONFIG_DIR']) delete settingsEnv[key];
+    nativeSettings.env = settingsEnv;
+  }
+  if (options.inheritNativeProfile) {
+    // Explicit executable/profile entries only: never projects, history or session indexes.
+    const entries = new Set(['skills', 'commands', 'agents', 'plugins', 'hooks', 'CLAUDE.md']);
+    const nativeDir = path.join(os.homedir(), '.claude');
+    linkSelectedEntries(nativeDir, claudeDir, entries);
+    for (const name of entries) {
+      const source = path.join(nativeDir, name);
+      if (fs.existsSync(source)) providerProfileReadPaths.push(fs.realpathSync(source));
+    }
+  }
 
   const scriptPath = path.join(dir, 'nexus-gate.mjs');
   fs.writeFileSync(scriptPath, HOOK_SCRIPT, { mode: 0o700 });
@@ -409,7 +460,7 @@ export function prepareEphemeralHome(
   };
   fs.writeFileSync(
     path.join(claudeDir, 'settings.json'),
-    JSON.stringify(settings, null, 2),
+    JSON.stringify(options.gateHooks === false ? nativeSettings : settings, null, 2),
     { mode: 0o600 },
   );
   // Skip the first-run onboarding flow inside the ephemeral home. Para o
@@ -437,6 +488,9 @@ export function prepareEphemeralHome(
     JSON.stringify({
       hasCompletedOnboarding: true,
       ...nativeAuth,
+      ...(options.inheritNativeProfile && nativeProfile.mcpServers
+        ? { mcpServers: nativeProfile.mcpServers }
+        : {}),
       ...projectTrust,
       autoUpdates: false,
       officialMarketplaceAutoInstallAttempted: true,
@@ -457,7 +511,7 @@ export function prepareEphemeralHome(
       const overlayCredentials = path.join(claudeDir, '.credentials.json');
       try {
         fs.rmSync(overlayCredentials, { force: true });
-        fs.symlinkSync(realCredentials, overlayCredentials);
+        linkFile(realCredentials, overlayCredentials);
       } catch {
         try {
           fs.copyFileSync(realCredentials, overlayCredentials);
@@ -477,64 +531,12 @@ export function prepareEphemeralHome(
   fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2), {
     mode: 0o600,
   });
-  return { dir, mcpConfigPath };
-}
-
-/**
- * Persistent, isolated $HOME for a Claude-family adapter that authenticates
- * against a THIRD-PARTY endpoint (GLM/LongCat: injected ANTHROPIC_AUTH_TOKEN +
- * foreign ANTHROPIC_BASE_URL). Sharing the real ~/.claude lets the Claude
- * binary rewrite the native subscription's OAuth state and log the user out
- * (/login), so these adapters get a private home under ~/.nexus/homes/<id>.
- * Persistent so the adapter keeps its own session/history; auth is injected via
- * env and is never sourced from this home.
- */
-export function prepareThirdPartyClaudeHome(
-  adapterId: string,
-  cwd?: string,
-): string {
-  // Containment: the id becomes a path segment; reject traversal from a
-  // hand-authored plugin adapter id.
-  if (
-    !adapterId ||
-    adapterId.includes('..') ||
-    adapterId.includes('/') ||
-    adapterId.includes('\\') ||
-    adapterId.includes('\0')
-  ) {
-    throw new Error(`invalid adapter id for isolated home: ${adapterId}`);
-  }
-  const dir = path.join(os.homedir(), '.nexus', 'homes', adapterId);
-  fs.mkdirSync(path.join(dir, '.claude'), { recursive: true, mode: 0o700 });
-  const onboardingMarker = path.join(dir, '.claude.json');
-  let profile: Record<string, unknown> = { hasCompletedOnboarding: true };
-  if (fs.existsSync(onboardingMarker)) {
-    try {
-      const parsed = JSON.parse(fs.readFileSync(onboardingMarker, 'utf8'));
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        profile = parsed as Record<string, unknown>;
-      }
-    } catch {
-      // keep fallback
-    }
-  }
-  profile.hasCompletedOnboarding = true;
-  if (cwd) {
-    const existingProjects = (profile.projects && typeof profile.projects === 'object' && !Array.isArray(profile.projects))
-      ? (profile.projects as Record<string, unknown>)
-      : {};
-    const trust = exactProjectTrust(cwd);
-    profile.projects = {
-      ...existingProjects,
-      ...((trust.projects as Record<string, unknown>) ?? {}),
-    };
-  }
-  fs.writeFileSync(
-    onboardingMarker,
-    JSON.stringify(profile, null, 2),
-    { mode: 0o600 },
-  );
-  return dir;
+  return {
+    dir,
+    mcpConfigPath,
+    ...(providerSessionHome ? { providerSessionHome } : {}),
+    ...(providerProfileReadPaths.length ? { providerProfileReadPaths } : {}),
+  };
 }
 
 /**

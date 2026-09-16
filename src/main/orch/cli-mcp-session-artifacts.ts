@@ -197,11 +197,12 @@ export function linkSelectedEntries(
 
 /** Conversation state survives overlay purge and never comes from the native profile. */
 export function linkProviderSessionState(
-  kind: 'grok' | 'kimi',
+  kind: string,
   artifactDir: string,
   options: CliMcpSessionOptions,
   directories: readonly string[],
   files: Readonly<Record<string, string>>,
+  subdirectory?: 'claude',
 ): string {
   const home = path.resolve(options.home ?? os.homedir());
   // Standalone callers use a stable path identity; production passes Main's checkoutId.
@@ -211,8 +212,11 @@ export function linkProviderSessionState(
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(checkoutId)) {
     throw new Error('Invalid provider-state checkout identity');
   }
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(kind)) {
+    throw new Error('Invalid provider-state adapter identity');
+  }
   let stateHome = path.resolve(options.userDataPath ?? path.join(home, '.nexus'));
-  for (const segment of ['provider-state', kind, checkoutId]) {
+  for (const segment of ['provider-state', kind, checkoutId, ...(subdirectory ? [subdirectory] : [])]) {
     stateHome = path.join(stateHome, segment);
     if (fs.lstatSync(stateHome, { throwIfNoEntry: false })?.isSymbolicLink()) {
       throw new Error('Provider session state must not be a symlink');

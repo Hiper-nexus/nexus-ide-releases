@@ -94,7 +94,6 @@ import {
   cleanupSessionArtifacts,
   ensureNativeClaudeProjectTrust,
   prepareEphemeralHome,
-  prepareThirdPartyClaudeHome,
   writeClaudeFamilyZeroClickSettings,
   writeMcpConfigFile,
 } from "./hooks-gen";
@@ -220,6 +219,7 @@ import {
   isThirdPartyClaudeFamily,
   requiresSpawnGate,
   shouldUseEphemeralHome,
+  usesClaudeHomeLayout,
 } from "./spawn-home-policy";
 import {
   findActiveContextDraftReviewerId,
@@ -925,6 +925,8 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
     // session/auth state into. The advisory sandbox grants it read+write.
     let advisoryProviderStateHome: string | undefined;
     let advisoryProviderSessionHome: string | undefined;
+    const claudeStatePaths: string[] = [];
+    const claudeProfileReadPaths: string[] = [];
     // Servidores MCP que o operador declarou explicitamente no hub do
     // workspace. Única leitura de hub no spawn; nunca lê o config ambiente de
     // outra ferramenta e nunca falha o spawn (hub quebrado ⇒ lista vazia).
@@ -946,19 +948,23 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
         ? "operator-choice"
         : "hardened";
 
+    const gateHome = shouldUseEphemeralHome(adapter, gated, {
+      mode: homeMode,
+      effectiveEnv: preparedEnv,
+    });
     try {
-      if (
-        shouldUseEphemeralHome(adapter, gated, {
-          mode: homeMode,
-          effectiveEnv: preparedEnv,
-        })
-      ) {
+      if (usesClaudeHomeLayout(adapter)) {
         // Só o Claude NATIVO carrega a identidade OAuth da assinatura para o
         // overlay; GLM/LongCat (base URL de terceiro) jamais podem recebê-la.
         const approvedMissionProjectTrust =
           hasApprovedMissionProjectTrust(authority);
         const home = prepareEphemeralHome(ctx.token, mcpConfig, {
           carryNativeClaudeAuth: !thirdPartyClaudeFamily,
+          adapterId: adapter.id,
+          userDataPath: app.getPath("userData"),
+          checkoutId: authority.scope.checkoutId,
+          inheritNativeProfile: !thirdPartyClaudeFamily && !gateHome,
+          gateHooks: gateHome,
           cwd: authority.cwd,
           approvedMissionProjectTrust,
         });
@@ -985,44 +991,29 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           }
         }
         env.HOME = home.dir;
+        if (process.platform === "win32") env.USERPROFILE = home.dir;
+        // The default config location follows this private HOME, preserving
+        // native Keychain semantics. Do not inherit a custom path to real sessions.
+        env.CLAUDE_CONFIG_DIR = "";
         ephemeralHomeDir = home.dir;
-        // Mission-owned Claude must not auto-install the official marketplace
-        // or burn boot time on nonessential traffic: both produce a busy/output
-        // edge without UserPromptSubmit and break kickoff acceptance.
-        env.CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL = "1";
-        env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
-        // A identidade OAuth carregada faz o CLI baixar os conectores MCP da
-        // CONTA (Drive, Vercel, HF…): meia dúzia de OAuth remotos no boot de
-        // um agente que só pode usar mcp__nexus. Isso atrasava/mutava o boot
-        // (o paint espera handshake MCP) e afogava o orquestrador em
-        // ferramentas que ele nunca poderia chamar. Estrito: só o nexus.
-        extraArgs.push(
-          "--mcp-config",
-          home.mcpConfigPath,
-          "--strict-mcp-config",
-        );
-      } else if (thirdPartyClaudeFamily) {
-        // GLM/LongCat run the `claude` binary against a third-party endpoint via
-        // an injected token. Sharing the native ~/.claude lets the binary
-        // rewrite the subscription's OAuth session → the native Claude
-        // orchestrator gets logged out (/login). Isolate them in a persistent
-        // private HOME; MCP + zero-click settings still arrive via flags, and
-        // skills mirror into the isolated home.
-        const isolatedHome = prepareThirdPartyClaudeHome(adapter.id, authority.cwd);
-        env.HOME = isolatedHome;
-        ephemeralHomeDir = isolatedHome;
-        // Bug D (2026-08-17): o Claude Code não reconhece ids de modelo de
-        // terceiros (deepseek-v4-pro…) e assume janela de 200k, auto-
-        // compactando cedo. Sem inventar janelas que não sabemos aferir,
-        // restauramos o comportamento esperar-a-API decidir (a própria CLI
-        // recomenda esta env). GLM continua com AUTO_COMPACT_WINDOW do adapter.
-        env.CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT = "1";
-        extraArgs.push(
-          "--mcp-config",
-          writeMcpConfigFile(ctx.token, mcpConfig),
-          "--settings",
-          writeClaudeFamilyZeroClickSettings(ctx.token),
-        );
+        if (home.providerSessionHome) claudeStatePaths.push(home.providerSessionHome);
+        claudeProfileReadPaths.push(...(home.providerProfileReadPaths ?? []));
+        const nativeCredentials = path.join(os.homedir(), ".claude", ".credentials.json");
+        if (!thirdPartyClaudeFamily && fs.existsSync(nativeCredentials)) {
+          claudeStatePaths.push(nativeCredentials);
+        }
+        if (gateHome) {
+          env.CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL = "1";
+          env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
+        }
+        if (thirdPartyClaudeFamily) {
+          env.CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT = "1";
+        }
+        extraArgs.push("--mcp-config", home.mcpConfigPath);
+        if (gateHome || gated) extraArgs.push("--strict-mcp-config");
+        if (!gateHome) {
+          extraArgs.push("--settings", writeClaudeFamilyZeroClickSettings(ctx.token));
+        }
       } else if (adapter.quirks.mcpAutoload) {
         // Real HOME: ensure native Claude also trusts the active workspace
         ensureNativeClaudeProjectTrust(os.homedir(), authority.cwd);
@@ -1122,18 +1113,12 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
         }
       }
       if (!skillsPrepared) {
-        // O Claude nativo no autopiloto mantém HOME/Keychain reais: nenhum
-        // overlay é tomado, então ~/.claude/skills é o ÚNICO namespace que
-        // esse worker lê. Sem incluir o alvo real, a skill CONCEDIDA não
-        // chega fisicamente a lugar nenhum. Esse alvo recebe SÓ os nomes
-        // concedidos — o gate lógico `null = aberto` nunca vira herança de
-        // extensão executável — e a cópia é não-destrutiva (skill já
-        // instalada sempre vence). Providers com overlay próprio (Claude de
-        // terceiro, Codex/Kimi/Grok/OpenCode governados) continuam fora daqui.
+        // Claude-family panes receive skills in their private HOME. Other
+        // autoload providers retain their existing native-profile delivery.
         const deliversToRealProfile =
           gated && ephemeralHomeDir === null && adapter.quirks.mcpAutoload;
         ensureSkillsForCli(adapter.id, {
-          allowedSkills: deliversToRealProfile
+          allowedSkills: (deliversToRealProfile || (gated && usesClaudeHomeLayout(adapter)))
             ? [...(meta?.allowedSkills ?? [])]
             : (meta?.allowedSkills ?? null),
           allowedTools: meta?.allowedTools ?? null,
@@ -1232,15 +1217,18 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           missionShimWritePaths: missionShim.writePaths,
         }
       : {}),
-    ...(advisoryProviderStateHome
+    ...((advisoryProviderStateHome || claudeStatePaths.length > 0)
       ? {
           // Grant auth/profile and the exact checkout's durable conversations.
           providerStateReadPaths: [
-            advisoryProviderStateHome,
+            ...claudeStatePaths,
+            ...claudeProfileReadPaths,
+            ...(advisoryProviderStateHome ? [advisoryProviderStateHome] : []),
             ...(advisoryProviderSessionHome ? [advisoryProviderSessionHome] : []),
           ],
           providerStateWritePaths: [
-            advisoryProviderStateHome,
+            ...claudeStatePaths,
+            ...(advisoryProviderStateHome ? [advisoryProviderStateHome] : []),
             ...(advisoryProviderSessionHome ? [advisoryProviderSessionHome] : []),
           ],
         }

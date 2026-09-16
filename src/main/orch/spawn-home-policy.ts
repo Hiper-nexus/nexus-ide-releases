@@ -32,17 +32,17 @@ export function requiresSpawnGate(meta: {
  * Claude Code for fixtures and GLM/LongCat. OpenClaude autoloads MCP too
  * but stores session in `~/.openclaude` — a Claude overlay logs it out.
  */
-function usesClaudeHomeLayout(adapter: SpawnHomeAdapter): boolean {
-  if (adapter.bin === 'openclaude') return false;
-  return adapter.quirks.mcpAutoload === true || adapter.bin === 'claude';
+export function usesClaudeHomeLayout(adapter: SpawnHomeAdapter): boolean {
+  const bin = adapter.bin?.split(/[\\/]/).pop()?.replace(/\.exe$/i, '');
+  if (bin === 'openclaude') return false;
+  return adapter.quirks.mcpAutoload === true || bin === 'claude';
 }
 
 /**
- * HOME efêmero é uma técnica do adapter Claude-like no modo Hardened e para
- * endpoints de terceiro: ele enxerga settings/MCP do Nexus sem herdar hooks
- * globais. No autopiloto, o Claude nativo mantém HOME/Keychain reais; MCP e
- * autoridade continuam confinados à sessão. CLIs como Codex, AGY, Kimi, Grok
- * e OpenClaude guardam login no HOME real; trocar HOME nelas quebra auth.
+ * Selects the gated settings profile inside the private Claude-family HOME.
+ * F-567 also gives direct/operator-choice panes a private HOME for conversation
+ * isolation, while carrying native auth and their existing profile policy.
+ * Other providers retain their own home policy.
  */
 export function shouldUseEphemeralHome(
   adapter: SpawnHomeAdapter,
@@ -62,8 +62,8 @@ export function shouldUseEphemeralHome(
     options.mode === 'operator-choice' &&
     !isThirdParty
   ) {
-    // O Claude de assinatura precisa do HOME real para preservar Keychain,
-    // login e refresh nativos. MCP/autoridade continuam por sessão.
+    // Operator-choice retains native profile settings/auth, projected into
+    // a private HOME by mcp-server; it does not enable the gated hooks.
     return false;
   }
 

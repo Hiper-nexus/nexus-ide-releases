@@ -41,6 +41,24 @@ describe('durable provider session state', () => {
     },
   );
 
+  it.each(['../escape', '/absolute', 'a\\b', ''])(
+    'rejects unsafe adapter identity %j',
+    (kind) => {
+      const { root, overlay, options } = fixture();
+      expect(() =>
+        linkProviderSessionState(
+          kind,
+          overlay,
+          options,
+          ['projects'],
+          {},
+          'claude',
+        ),
+      ).toThrow(/adapter identity/);
+      expect(fs.existsSync(path.join(root, 'provider-state'))).toBe(false);
+    },
+  );
+
   it('rejects a pre-existing session link back to the native profile', () => {
     const { root, overlay, options } = fixture();
     const native = path.join(root, 'native-sessions');
