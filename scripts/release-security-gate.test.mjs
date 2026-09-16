@@ -10,6 +10,7 @@ import {
   buildReleaseSecurityArtifactsWithPinnedNpm,
   buildFinalizedReleaseSecurityFields,
   finalizeReleaseSecurityArtifacts,
+  releaseSecurityEnvironment,
 } from './release-security-gate.mjs';
 
 const roots = [];
@@ -42,6 +43,15 @@ afterEach(() => {
 });
 
 describe('manual release security artifacts', () => {
+  it('preserves the case-insensitive Windows Path variable for the pinned npm bootstrap', () => {
+    expect(releaseSecurityEnvironment({
+      Path: 'C:\\Program Files\\nodejs',
+      SECRET_RELEASE_TOKEN: 'must not pass through',
+    }, 'win32')).toEqual({
+      Path: 'C:\\Program Files\\nodejs',
+    });
+  });
+
   it('carries the packaged smoke report in the finalized security fields', () => {
     const fields = buildFinalizedReleaseSecurityFields({
       signingIdentity:

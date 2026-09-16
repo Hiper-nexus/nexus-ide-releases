@@ -89,7 +89,10 @@ function runBootstrapCommand(command, args, options = {}) {
   };
 }
 
-function releaseSecurityEnvironment(environment) {
+export function releaseSecurityEnvironment(
+  environment,
+  platform = process.platform,
+) {
   const allowed = new Set([
     'PATH',
     'HOME',
@@ -109,7 +112,12 @@ function releaseSecurityEnvironment(environment) {
     Object.entries(environment).filter(
       ([key, value]) =>
         typeof value === 'string' &&
-        (allowed.has(key) || key.startsWith('LC_')),
+        // Windows preserves the parent's spelling (normally `Path`) while
+        // resolving variable names case-insensitively. Keep that one search
+        // path variable without broadening the sanitized environment.
+        (allowed.has(key) ||
+          (platform === 'win32' && key.toUpperCase() === 'PATH') ||
+          key.startsWith('LC_')),
     ),
   );
 }
