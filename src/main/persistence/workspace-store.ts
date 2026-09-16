@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from 'electron';
 import type { WebContents } from 'electron';
 import {
   WORKSPACE_CHANNELS,
@@ -14,6 +14,8 @@ import {
   bindRendererWorkspaceScope,
   clearRendererWorkspaceScope,
 } from './renderer-workspace-scope';
+import { resolveProjectExecutionScopeCached } from './project-identity';
+import { purgeProviderStateForCheckout } from './provider-state-purge';
 import { WorkspaceGrantRegistry } from './workspace-grants';
 import {
   scheduleOrientationForWorkspace,
@@ -180,6 +182,49 @@ function cleanWorkspaceHooksQuietly(workspaces: Iterable<string>): void {
   }
 }
 
+/**
+ * F-570: durable provider-state (auth links + conversation history) under
+ * <userData>/provider-state/<adapter>/<checkoutId> never expires on its own
+ * — it must be dropped when the checkout it belongs to leaves the recents
+ * registry. Best-effort and never blocks the removal itself: a path whose
+ * checkout can't be resolved (already gone from disk, not yet a git repo)
+ * just keeps its state on disk for a manual cleanup later. Never age-based —
+ * only this explicit "forget this workspace" action triggers it.
+ */
+function purgeCheckoutProviderStateQuietly(workspacePath: string): void {
+  let checkoutId: string;
+  try {
+    checkoutId = resolveProjectExecutionScopeCached(workspacePath).checkoutId;
+  } catch (err) {
+    console.warn(
+      '[workspace] provider-state cleanup skipped (checkout not resolvable):',
+      err,
+    );
+    return;
+  }
+  try {
+    const result = purgeProviderStateForCheckout(app.getPath('userData'), checkoutId);
+    if (result.removedAdapters.length > 0) {
+      console.info(
+        '[workspace] provider-state removido para',
+        checkoutId,
+        ':',
+        result.removedAdapters.join(', '),
+      );
+    }
+    if (result.failedAdapters.length > 0) {
+      console.warn(
+        '[workspace] falha ao remover provider-state para',
+        checkoutId,
+        ':',
+        result.failedAdapters.join(', '),
+      );
+    }
+  } catch (err) {
+    console.warn('[workspace] provider-state cleanup failed:', err);
+  }
+}
+
 function openWorkspace(dir: string, owner: WebContents): WorkspaceState {
   const canonical = canonicalDirectory(dir);
   if (!canonical) return state;
@@ -320,6 +365,7 @@ export function registerWorkspaceIpc(): void {
     if (removedCurrent) missingReported = null;
     persist();
     broadcast();
+    purgeCheckoutProviderStateQuietly(parsed.data.path);
     return state;
   });
 }
