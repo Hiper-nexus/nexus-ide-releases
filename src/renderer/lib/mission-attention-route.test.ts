@@ -8,6 +8,7 @@ import { useProductNavigationStore } from '../state/product-navigation-store';
 import { setActiveWorkspacePath } from '../state/active-workspace';
 import {
   attentionCauseForMissionState,
+  attentionMissionIdForPane,
   MISSION_ATTENTION_ROUTE_MATRIX,
   routeMissionAttention,
 } from './mission-attention-route';
@@ -160,6 +161,12 @@ describe('shared cause-aware mission attention route', () => {
       tab: 'chat',
     });
     expect(useLayoutStore.getState().focusedPaneId).toBe('shell-old');
+  });
+
+  it('treats a partially hydrated pane binding map as unbound', () => {
+    useOrchStore.setState({ paneMissions: undefined } as never);
+
+    expect(attentionMissionIdForPane(boundOnlyPane)).toBeUndefined();
   });
 
   it('does not select Terminals when a notification target is stale', () => {

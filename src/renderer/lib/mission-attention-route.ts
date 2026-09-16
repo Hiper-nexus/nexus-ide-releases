@@ -79,7 +79,11 @@ export interface RouteMissionAttentionInput {
 export function attentionMissionIdForPane(
   pane: PaneModel,
 ): string | undefined {
-  return pane.missionId ?? useOrchStore.getState().paneMissions[pane.id];
+  // `paneMissions` is persisted state that can be briefly absent while an
+  // older renderer snapshot is hydrating. A missing binding means unbound;
+  // navigation must never make a normal shell/voice command crash.
+  const paneMissions = useOrchStore.getState().paneMissions ?? {};
+  return pane.missionId ?? paneMissions[pane.id];
 }
 
 export function routeMissionAttention({
