@@ -1,6 +1,16 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PET_STUDIO_SQUAD } from '../../shared/pet-studio';
-import {
+import { requiresSpawnGate } from './spawn-home-policy';
+import { testProjectScope } from './__tests__/scope-fixture';
+import type { MissionLeaderGateResult } from './mission-leader-gate';
+
+const requireMissionLeaderSession = vi.fn<(...args: unknown[]) => MissionLeaderGateResult>();
+vi.mock('./mission-leader-gate', () => ({
+  requireMissionLeaderSession: (...args: unknown[]) => requireMissionLeaderSession(...args),
+}));
+
+const {
+  assertCurrentMissionOrchestratorSession,
   assertOrchestratorMission,
   bindContextRevision,
   bindTokenToSession,
@@ -20,9 +30,7 @@ import {
   resetGateForTests,
   restoreSessionAuthority,
   rotateContextRevisionAuthority,
-} from './gate';
-import { requiresSpawnGate } from './spawn-home-policy';
-import { testProjectScope } from './__tests__/scope-fixture';
+} = await import('./gate');
 
 function token(label: string, role: 'worker' | 'orchestrator' | 'user') {
   return mintToken({ label, role, scope: testProjectScope() });
@@ -320,6 +328,60 @@ describe('token registry + stop gate', () => {
         'mission-a',
       ),
     ).toThrow(/does not match/);
+  });
+
+  describe('assertCurrentMissionOrchestratorSession', () => {
+    const scope = testProjectScope();
+    const mission = { id: 'mission-a', orchestratorSessionId: 'leader-session' };
+    const ctx = { role: 'orchestrator' as const, missionId: 'mission-a', sessionId: 'leader-session', scope };
+
+    beforeEach(() => {
+      requireMissionLeaderSession.mockReset();
+    });
+
+    it('passes a proven current leader through to the resolver and allows it', () => {
+      requireMissionLeaderSession.mockReturnValue({
+        ok: true,
+        leader: { sessionId: 'leader-session', paneId: 'pane-1', source: 'durable', proven: true },
+      });
+      expect(() => assertCurrentMissionOrchestratorSession(ctx, mission)).not.toThrow();
+      expect(requireMissionLeaderSession).toHaveBeenCalledWith(scope, 'mission-a', { sessionId: 'leader-session' });
+    });
+
+    it('never lets a worker token through: role capability stays a separate check', () => {
+      requireMissionLeaderSession.mockReturnValue({
+        ok: true,
+        leader: { sessionId: 'leader-session', paneId: 'pane-1', source: 'durable', proven: true },
+      });
+      expect(() =>
+        assertCurrentMissionOrchestratorSession({ ...ctx, role: 'worker' }, mission),
+      ).toThrow(/only the mission orchestrator/);
+      expect(requireMissionLeaderSession).not.toHaveBeenCalled();
+    });
+
+    it('rejects a stale session with the resolver code in the message', () => {
+      requireMissionLeaderSession.mockReturnValue({
+        ok: false, code: 'stale-session', hint: 'reabra a missão',
+      });
+      expect(() =>
+        assertCurrentMissionOrchestratorSession({ ...ctx, sessionId: 'old-session' }, mission),
+      ).toThrow(/orchestrator_session_stale \(stale-session\)/);
+    });
+
+    it('rejects split-brain by code instead of picking a winner or looping', () => {
+      requireMissionLeaderSession.mockReturnValue({
+        ok: false, code: 'split-brain', hint: 'duas sessões vivas',
+      });
+      expect(() => assertCurrentMissionOrchestratorSession(ctx, mission))
+        .toThrow(/orchestrator_session_stale \(split-brain\)/);
+    });
+
+    it('skips the resolver entirely for legacy missions with no durable orchestrator binding', () => {
+      expect(() =>
+        assertCurrentMissionOrchestratorSession(ctx, { id: 'mission-a', orchestratorSessionId: null }),
+      ).not.toThrow();
+      expect(requireMissionLeaderSession).not.toHaveBeenCalled();
+    });
   });
 
   it('copies and freezes the project scope at mint time', () => {

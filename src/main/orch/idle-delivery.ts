@@ -19,6 +19,7 @@ import {
   getPaneRuntimeAuthorityBySession,
   type PaneRuntimeAuthority,
 } from './pane-registry';
+import { requireMissionLeaderSession } from './mission-leader-gate';
 import type { HandoffDeliveryAttempt } from './handoff-store';
 import { sameProjectScope } from './project-scoped-broadcast';
 import {
@@ -183,7 +184,9 @@ function runtimeRecoveryIsStillRequired(
     const mission = stores.missions.get(authority.missionId);
     if (
       mission?.status !== 'running' ||
-      mission.orchestratorSessionId !== authority.sessionId
+      !requireMissionLeaderSession(authority.scope, authority.missionId, {
+        sessionId: authority.sessionId,
+      }).ok
     ) {
       return false;
     }
@@ -441,10 +444,13 @@ function isCurrentAuthority(authority: DeliveryAuthority): boolean {
       return false;
     }
   }
-  const mission = getProjectDomainStores(authority.scope).missions.get(
-    authority.missionId,
-  );
-  if (mission?.orchestratorSessionId !== authority.sessionId) return false;
+  if (
+    !requireMissionLeaderSession(authority.scope, authority.missionId, {
+      sessionId: authority.sessionId,
+    }).ok
+  ) {
+    return false;
+  }
   const pane = getPaneRuntimeAuthorityBySession(authority.sessionId);
   return Boolean(
     pane &&
@@ -1134,17 +1140,14 @@ function noteDeliverySkip(missionId: string, reason: string): null {
 function targetAuthority(
   handoff: Handoff,
   scope: ProjectExecutionScope,
-  overrideStores?: ProjectDomainStoreSuite,
 ): DeliveryAuthority | null {
   if (!handoff.missionId) return null;
   const missionId = handoff.missionId;
-  const stores = overrideStores ?? getProjectDomainStores(scope);
-  const sessionId = stores.missions.get(
-    missionId,
-  )?.orchestratorSessionId;
-  if (!sessionId) {
-    return noteDeliverySkip(missionId, 'missão sem orchestratorSessionId');
+  const leader = requireMissionLeaderSession(scope, missionId, {});
+  if (!leader.ok) {
+    return noteDeliverySkip(missionId, `líder da missão não resolvido (${leader.code}): ${leader.hint}`);
   }
+  const sessionId = leader.leader.sessionId;
   const pane = getPaneRuntimeAuthorityBySession(sessionId);
   const rendererScope = pane?.owner
     ? getRendererWorkspaceScope(pane.owner)
@@ -1295,7 +1298,7 @@ export function onHandoffSubmitted(
       status: handoff.status,
     });
   }
-  const authority = targetAuthority(handoff, scope, overrideStores);
+  const authority = targetAuthority(handoff, scope);
   if (!authority) return null; // No trusted orchestrator — stays listed as pending.
   // Maestro's own submit must not paste back into the same PTY.
   if (handoff.sessionId && handoff.sessionId === authority.sessionId) {

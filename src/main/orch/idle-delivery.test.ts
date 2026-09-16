@@ -91,6 +91,33 @@ const storeMocks = vi.hoisted(() => ({
   nextAttemptId: 1,
 }));
 
+const missionLeaderGateMocks = vi.hoisted(() => ({
+  requireMissionLeaderSession: vi.fn(
+    (
+      scope: ProjectExecutionScope,
+      missionId: string,
+      ctx: { sessionId?: string | null },
+    ): import('./mission-leader-gate').MissionLeaderGateResult => {
+      const leaderSessionId = storeMocks.missions.get(
+        `${scope.projectId}:${scope.checkoutId}:${missionId}`,
+      )?.orchestratorSessionId;
+      if (!leaderSessionId) {
+        return { ok: false as const, code: 'no-leader' as const, hint: 'sem líder durável' };
+      }
+      if (Object.hasOwn(ctx, 'sessionId') && ctx.sessionId !== leaderSessionId) {
+        return { ok: false as const, code: 'stale-session' as const, hint: 'sessão obsoleta' };
+      }
+      return {
+        ok: true as const,
+        leader: { sessionId: leaderSessionId, paneId: null, source: 'live' as const, proven: true },
+      };
+    },
+  ),
+}));
+vi.mock('./mission-leader-gate', () => ({
+  requireMissionLeaderSession: missionLeaderGateMocks.requireMissionLeaderSession,
+}));
+
 vi.mock('../pty/pty-manager', () => ({
   getSessionState: vi.fn(() => ptyMocks.state),
   orchWriteSession: ptyMocks.writes,
@@ -493,6 +520,44 @@ describe('idle delivery authority and lifecycle', { timeout: 60_000 }, () => {
       '\r',
       { markInputBusy: false },
     );
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('denies delivery on split-brain leadership without picking a winner, and never wedges the mission', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+    missionLeaderGateMocks.requireMissionLeaderSession.mockReturnValueOnce({
+      ok: false, code: 'split-brain', hint: 'duas sessões vivas reivindicam a missão',
+    });
+
+    expect(() => delivery.onHandoffSubmitted(handoff(), scope)).not.toThrow();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(ptyMocks.writes).not.toHaveBeenCalled();
+
+    // Once leadership resolves cleanly again, a fresh handoff still delivers
+    // — the earlier split-brain denial left no permanent wedge behind.
+    delivery.onHandoffSubmitted(handoff({ id: 'handoff-b' }), scope);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(ptyMocks.writes).toHaveBeenCalled();
+    delivery.shutdownIdleDelivery();
+  });
+
+  it('denies delivery to a stale orchestrator session even when a pane authority still exists for it', async () => {
+    const delivery = await import('./idle-delivery');
+    const scope = testProjectScope();
+    authorizeTarget(scope);
+    ptyMocks.state = 'idle';
+    delivery.initIdleDelivery();
+    missionLeaderGateMocks.requireMissionLeaderSession.mockReturnValueOnce({
+      ok: false, code: 'stale-session', hint: 'outra sessão assumiu a missão',
+    });
+
+    delivery.onHandoffSubmitted(handoff(), scope);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(ptyMocks.writes).not.toHaveBeenCalled();
     delivery.shutdownIdleDelivery();
   });
 

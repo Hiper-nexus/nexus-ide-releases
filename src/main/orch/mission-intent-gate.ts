@@ -10,8 +10,10 @@ import {
   type MissionIntentState,
 } from '../../shared/mission-intent';
 import type { Mission } from '../../shared/orch-types';
+import type { ProjectExecutionScope } from '../../shared/project-identity-types';
 import { canonicalToolName } from './gate';
 import { effectPolicyForTool } from './mcp-effect-policy';
+import { requireMissionLeaderSession } from './mission-leader-gate';
 import { emitMissionIntentEvent } from './mission-intent-events';
 
 export type IntentGateCode =
@@ -57,6 +59,9 @@ export interface IntentGateContext {
   readonly role?: string | null;
   /** Caller session id for handoff origin checks. */
   readonly sessionId?: string | null;
+  /** Caller project/checkout scope, required to resolve the current mission
+   * leader. Absent means the leader-identity checks below fail closed. */
+  readonly scope?: ProjectExecutionScope;
   /**
    * When true, mission row was not found — effectful tools must fail closed
    * (used by mcp-dispatch after a null lookup).
@@ -205,8 +210,8 @@ export function assertMissionIntentAllowsTool(
       const currentSession = ctx.mission.orchestratorSessionId?.trim();
       if (
         nextStatus === 'done' && ctx.mission.status === 'done' &&
-        ctx.role === 'orchestrator' && currentSession &&
-        ctx.sessionId === currentSession
+        ctx.role === 'orchestrator' && currentSession && ctx.scope &&
+        requireMissionLeaderSession(ctx.scope, ctx.mission.id, { sessionId: ctx.sessionId }).ok
       ) {
         // Permit only the idempotent completion handler, including its final
         // push checkpoint. Other effects and stale/unbound sessions stay closed.
@@ -267,7 +272,10 @@ export function assertMissionIntentAllowsTool(
   // Handoff submit requires authenticated origin; ack is orchestrator-only in tool.
   if (policy === 'handoff-authority') {
     if (canonical === 'handoff_ack') {
-      if (ctx.role === 'orchestrator' && ctx.mission.id) {
+      if (
+        ctx.role === 'orchestrator' && ctx.mission.id && ctx.scope &&
+        requireMissionLeaderSession(ctx.scope, ctx.mission.id, { sessionId: ctx.sessionId }).ok
+      ) {
         return { ok: true, intentState, intentVersion };
       }
       return deny(

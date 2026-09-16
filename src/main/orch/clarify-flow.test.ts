@@ -10,6 +10,27 @@ vi.mock('../pty/pty-manager', () => ({
   orchWriteSession: vi.fn(() => true),
 }));
 
+const missionLeaderGateMocks = vi.hoisted(() => ({
+  requireMissionLeaderSession: vi.fn(
+    (
+      _scope: unknown,
+      _missionId: string,
+      ctx: { sessionId?: string | null },
+    ): import('./mission-leader-gate').MissionLeaderGateResult => ({
+      ok: true,
+      leader: {
+        sessionId: ctx.sessionId ?? 'default-leader',
+        paneId: null,
+        source: 'live',
+        proven: true,
+      },
+    }),
+  ),
+}));
+vi.mock('./mission-leader-gate', () => ({
+  requireMissionLeaderSession: missionLeaderGateMocks.requireMissionLeaderSession,
+}));
+
 import { orchWriteSession } from '../pty/pty-manager';
 import {
   persistClarifyAnswer,
@@ -276,6 +297,45 @@ describe('durable clarify flow', () => {
       }),
     );
     expect(fixture.markSubmitted).toHaveBeenCalledWith('handoff-1');
+  });
+
+  it('persistClarifyQuestion consults the resolver, not just the raw durable field', () => {
+    // The context's own sessionId still matches the mission's durable field,
+    // but the resolver denies (split-brain) — proves the gate is not a
+    // trivial re-comparison of the two raw fields.
+    const fixture = storesFixture([mission()]);
+    missionLeaderGateMocks.requireMissionLeaderSession.mockReturnValueOnce({
+      ok: false, code: 'split-brain', hint: 'duas sessões vivas reivindicam a missão',
+    });
+
+    expect(() =>
+      persistClarifyQuestion(
+        fixture.stores,
+        context(),
+        buildClarify({ question: 'Qual banco?', options: ['Postgres', 'SQLite'] }),
+      ),
+    ).toThrow(/sessão.*obsoleta/i);
+    expect(fixture.submit).not.toHaveBeenCalled();
+  });
+
+  it('prepareClarifyAnswerAuthorityCandidate consults the resolver for the question-asker session too', () => {
+    const fixture = storesFixture([mission()]);
+    const question = persistClarifyQuestion(
+      fixture.stores,
+      context(),
+      buildClarify({ question: 'Qual banco?', options: ['Postgres', 'SQLite'] }),
+    );
+    missionLeaderGateMocks.requireMissionLeaderSession.mockReturnValueOnce({
+      ok: false, code: 'split-brain', hint: 'duas sessões vivas reivindicam a missão',
+    });
+
+    expect(() =>
+      prepareClarifyAnswerAuthorityCandidate(fixture.stores, scope, {
+        missionId: 'mission-a',
+        questionId: question.questionId,
+        answer: 'opt-1',
+      }),
+    ).toThrow(/pergunta não pertence à sessão atual/i);
   });
 
   it('rejects worker, cross-mission authority and terminal missions before writing', () => {
@@ -555,6 +615,9 @@ describe('durable clarify flow', () => {
         answer: 'opt-1',
       }, '0'.repeat(64), undefined, workspaceB.missionEngine),
     ).rejects.toThrow(/não existe neste workspace/i);
+    missionLeaderGateMocks.requireMissionLeaderSession.mockReturnValueOnce({
+      ok: false, code: 'stale-session', hint: 'outra sessão assumiu a missão',
+    });
     expect(() =>
       persistClarifyQuestion(
         workspaceA.stores,

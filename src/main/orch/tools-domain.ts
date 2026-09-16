@@ -10,6 +10,7 @@ import {
   assertCurrentMissionOrchestratorSession,
   assertOrchestratorMission,
 } from './gate';
+import { requireMissionLeaderSession } from './mission-leader-gate';
 import {
   assertMcpInvocationCurrent,
   type McpToolDef,
@@ -524,6 +525,11 @@ const missionSetStatusTool: McpToolDef = {
             // entrega). Nota durável ≥40 mantém o "nunca verde silencioso".
             const acceptedByCurrentSession = (() => {
               try {
+                // The durable `current.orchestratorSessionId` field alone is
+                // not proof of who is leading now — resolve and require a
+                // proven leader before trusting any attempt as "current".
+                const leader = requireMissionLeaderSession(ctx.scope, missionId, {});
+                if (!leader.ok) return false;
                 return stores.handoffs
                   .list({ missionId, includeDelivered: true })
                   .some(
@@ -538,8 +544,7 @@ const missionSetStatusTool: McpToolDef = {
                         (attempt) =>
                           attempt.state === 'accepted' &&
                           attempt.acceptedAt !== undefined &&
-                          attempt.orchestratorSessionId ===
-                            current.orchestratorSessionId,
+                          attempt.orchestratorSessionId === leader.leader.sessionId,
                       ),
                   );
               } catch {

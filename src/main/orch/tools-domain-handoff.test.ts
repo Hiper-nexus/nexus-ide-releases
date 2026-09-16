@@ -22,6 +22,24 @@ const mocks = vi.hoisted(() => ({
   heartbeat: vi.fn(),
   acceptHandoff: vi.fn(),
   markConsumedFromPhysicalAck: vi.fn(),
+  requireMissionLeaderSession: vi.fn(
+    (_scope: unknown, missionId: string, ctx: { sessionId?: string | null }) => {
+      try {
+        const leaderSessionId = mocks.getStores().missions.get(missionId)
+          ?.orchestratorSessionId;
+        if (!leaderSessionId) return { ok: false, code: "no-leader", hint: "sem líder durável" };
+        if (Object.hasOwn(ctx, "sessionId") && ctx.sessionId !== leaderSessionId) {
+          return { ok: false, code: "stale-session", hint: "sessão obsoleta" };
+        }
+        return {
+          ok: true,
+          leader: { sessionId: leaderSessionId, paneId: null, source: "live", proven: true },
+        };
+      } catch {
+        return { ok: false, code: "no-leader", hint: "store indisponível" };
+      }
+    },
+  ),
 }));
 
 vi.mock("./gate", async (importOriginal) => ({
@@ -40,6 +58,10 @@ vi.mock("../pty/pty-manager", async (importOriginal) => ({
 
 vi.mock("./project-domain-store-registry", () => ({
   getProjectDomainStores: mocks.getStores,
+}));
+
+vi.mock("./mission-leader-gate", () => ({
+  requireMissionLeaderSession: mocks.requireMissionLeaderSession,
 }));
 
 import { buildDomainTools } from "./tools-domain";
@@ -574,6 +596,48 @@ describe("handoff MCP stop receipt", () => {
     );
   });
 
+  it("denies ack from a stale orchestrator token even with the right role/mission", async () => {
+    mocks.requireMissionLeaderSession.mockReturnValueOnce({
+      ok: false, code: "stale-session", hint: "outra sessão assumiu a missão",
+    });
+    const orchestrator = {
+      ...context(),
+      role: "orchestrator" as const,
+      sessionId: "orchestrator-session-old",
+      workerIncarnationId: undefined,
+    };
+
+    await expect(
+      acknowledgeTool().handler(
+        { handoffId: "handoff-a" },
+        orchestrator,
+        invocation({ toolCallId: "ack-tool-call-b", toolName: "nexus_handoff_ack" }),
+      ),
+    ).rejects.toThrow(/stale-session/);
+    expect(mocks.markConsumedFromPhysicalAck).not.toHaveBeenCalled();
+  });
+
+  it("denies ack on split-brain instead of picking a winner", async () => {
+    mocks.requireMissionLeaderSession.mockReturnValueOnce({
+      ok: false, code: "split-brain", hint: "duas sessões vivas",
+    });
+    const orchestrator = {
+      ...context(),
+      role: "orchestrator" as const,
+      sessionId: "orchestrator-session",
+      workerIncarnationId: undefined,
+    };
+
+    await expect(
+      acknowledgeTool().handler(
+        { handoffId: "handoff-a" },
+        orchestrator,
+        invocation({ toolCallId: "ack-tool-call-c", toolName: "nexus_handoff_ack" }),
+      ),
+    ).rejects.toThrow(/split-brain/);
+    expect(mocks.markConsumedFromPhysicalAck).not.toHaveBeenCalled();
+  });
+
   it("delivers an unverified report without satisfying the stop gate", async () => {
     const submitted = handoff("unverified");
     mocks.submit.mockReturnValue(submitted);
@@ -1082,5 +1146,50 @@ describe("handoff MCP stop receipt", () => {
       missionId: "mission-a",
       includeDelivered: true,
     });
+  });
+
+  it("lets the proven current orchestrator enumerate another mission's handoffs", async () => {
+    mocks.listHandoffs.mockReturnValue([]);
+
+    await listTool().handler(
+      { missionId: "mission-other", full: true },
+      orchestratorContext(),
+    );
+    expect(mocks.listHandoffs).toHaveBeenCalledWith({
+      missionId: "mission-other",
+      includeDelivered: true,
+    });
+  });
+
+  it("confines a stale orchestrator token to its own mission — role bit alone is not enough", async () => {
+    mocks.listHandoffs.mockReturnValue([]);
+    mocks.requireMissionLeaderSession.mockReturnValueOnce({
+      ok: false, code: "stale-session", hint: "outra sessão assumiu a missão",
+    });
+
+    await listTool().handler(
+      { missionId: "mission-other", full: true },
+      orchestratorContext(),
+    );
+    expect(mocks.listHandoffs).toHaveBeenCalledWith({
+      missionId: "mission-a",
+      includeDelivered: true,
+    });
+  });
+
+  it("does not credit list-ack to a split-brain orchestrator", async () => {
+    const stores = mocks.getStores();
+    const ackSpy = vi.fn();
+    mocks.getStores.mockReturnValue({
+      ...stores,
+      handoffs: { ...stores.handoffs, acknowledgeSeenByOrchestratorList: ackSpy },
+    });
+    mocks.listHandoffs.mockReturnValue([{ id: "handoff-a" }]);
+    mocks.requireMissionLeaderSession.mockReturnValueOnce({
+      ok: false, code: "split-brain", hint: "duas sessões vivas",
+    });
+
+    await listTool().handler({}, orchestratorContext());
+    expect(ackSpy).not.toHaveBeenCalled();
   });
 });

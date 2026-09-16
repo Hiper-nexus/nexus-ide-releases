@@ -4,6 +4,7 @@ import {
   PET_STUDIO_SQUAD_ID,
 } from "../../shared/pet-studio";
 import type { ProjectExecutionScope } from "../../shared/types";
+import { requireMissionLeaderSession } from "./mission-leader-gate";
 import {
   internalPrevcReviewerAllowsTool,
   isExactInternalPrevcReviewerProfile,
@@ -482,7 +483,7 @@ export function assertOrchestratorMission(
  * modern running missions are bound by the main-owned bootstrap.
  */
 export function assertCurrentMissionOrchestratorSession(
-  ctx: Pick<AgentGateContext, 'role' | 'missionId' | 'sessionId'>,
+  ctx: Pick<AgentGateContext, 'role' | 'missionId' | 'sessionId' | 'scope'>,
   mission: {
     readonly id: string;
     readonly orchestratorSessionId?: string | null;
@@ -491,11 +492,12 @@ export function assertCurrentMissionOrchestratorSession(
   assertOrchestratorMission(ctx, mission.id);
   const currentSessionId = mission.orchestratorSessionId?.trim();
   if (!currentSessionId) return;
-  if (!ctx.sessionId || ctx.sessionId !== currentSessionId) {
+  const leader = requireMissionLeaderSession(ctx.scope, mission.id, { sessionId: ctx.sessionId });
+  if (!leader.ok) {
     throw new Error(
-      'orchestrator_session_stale: somente a sessão main-owned atual da missão ' +
+      `orchestrator_session_stale (${leader.code}): somente a sessão main-owned atual da missão ` +
         'pode planejar, reservar rota ou delegar workers; use “Retomar missão” ' +
-        'para restaurar a autoridade correta',
+        `para restaurar a autoridade correta — ${leader.hint}`,
     );
   }
 }

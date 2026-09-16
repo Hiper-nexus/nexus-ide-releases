@@ -18,6 +18,7 @@ import {
   writeSwarmMailboxMessage,
 } from "./swarm-protocol";
 import { markHandoffSubmitted, type GateRole } from "./gate";
+import { requireMissionLeaderSession } from "./mission-leader-gate";
 import { onHandoffSubmitted } from "./idle-delivery";
 import {
   armedAutoClosePaneId,
@@ -669,10 +670,19 @@ const handoffListTool: McpToolDef = {
       (ctx.role === "worker" || ctx.contextRevision || ctx.workerIncarnationId)
     ) return [];
     const requestedMission = str(args, "missionId");
+    // A role bit alone can be stale (superseded orchestrator token): the
+    // cross-mission read escalation requires the resolver to still prove
+    // this exact session leads its own mission right now.
+    const isProvenCurrentOrchestrator =
+      ctx.role === "orchestrator" &&
+      ctx.missionId !== undefined &&
+      requireMissionLeaderSession(ctx.scope, ctx.missionId, {
+        sessionId: ctx.sessionId,
+      }).ok;
     const missionId =
       !ctx.missionId
         ? null
-        : ctx.role === "orchestrator"
+        : isProvenCurrentOrchestrator
           ? (requestedMission ?? ctx.missionId)
           : ctx.missionId;
     const rawPanes = Array.isArray(args.panes)
@@ -709,8 +719,7 @@ const handoffListTool: McpToolDef = {
     // o paste — ack prematuro comia a fila (campo 24/08, 2x2).
     // Leitura cross-mission é auditoria: nunca reconhece nada.
     if (
-      ctx.role === "orchestrator" &&
-      ctx.missionId &&
+      isProvenCurrentOrchestrator &&
       missionId === ctx.missionId &&
       rows.length > 0
     ) {
@@ -750,6 +759,14 @@ const handoffAcknowledgeTool: McpToolDef = {
     if (ctx.role !== "orchestrator" || !ctx.missionId || !ctx.sessionId) {
       throw new Error(
         "handoff acknowledgement requires the current physical mission orchestrator",
+      );
+    }
+    const leader = requireMissionLeaderSession(ctx.scope, ctx.missionId, {
+      sessionId: ctx.sessionId,
+    });
+    if (!leader.ok) {
+      throw new Error(
+        `handoff acknowledgement requires the current physical mission orchestrator (${leader.code}): ${leader.hint}`,
       );
     }
     const handoffId = requireStr(args, "handoffId");

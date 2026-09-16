@@ -77,6 +77,7 @@ import {
   LegacyHandoffParser,
 } from "./legacy-handoff";
 import { missionMarkerObserver } from "./mission-completion-marker";
+import { requireMissionLeaderSession } from "./mission-leader-gate";
 import { getProjectDomainStores } from "./project-domain-store-registry";
 import {
   isStaleReadOnlyObservationHandoffResult,
@@ -1282,7 +1283,7 @@ function installSpawnHook(): void {
 }
 
 /** Legacy `### NEXUS_HANDOFF v1` stream fallback (ARCHITECTURE §E.3). */
-function currentPtyMaestroContext(
+export function currentPtyMaestroContext(
   sessionId: string,
 ): AgentGateContext | null {
   const ctx = getContextBySession(sessionId);
@@ -1299,7 +1300,7 @@ function currentPtyMaestroContext(
     const mission = getProjectDomainStores(ctx.scope).missions.get(ctx.missionId);
     if (
       !mission ||
-      mission.orchestratorSessionId !== sessionId ||
+      !requireMissionLeaderSession(ctx.scope, ctx.missionId, { sessionId }).ok ||
       !hasCurrentApprovedDispatchContract(mission) ||
       mission.intentContract?.orchestratorRuntime?.nativeReadOnly !== false
     ) {

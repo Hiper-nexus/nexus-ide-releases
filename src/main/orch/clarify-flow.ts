@@ -22,6 +22,7 @@ import {
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { AgentGateContext } from './gate';
 import { assertOrchestratorMission } from './gate';
+import { requireMissionLeaderSession } from './mission-leader-gate';
 import type { SubmitHandoffInput } from './handoff-store';
 import type { MissionEngine } from './mission-engine';
 import { missionEngineForScope } from './mission-engine-registry';
@@ -180,10 +181,7 @@ function resolveAnswerCandidate(
   if (question.missionId !== input.missionId) {
     throw new Error('a pergunta não pertence a esta missão');
   }
-  if (
-    !mission.orchestratorSessionId ||
-    question.sessionId !== mission.orchestratorSessionId
-  ) {
+  if (!requireMissionLeaderSession(scope, mission.id, { sessionId: question.sessionId }).ok) {
     throw new Error(
       'a pergunta não pertence à sessão atual do orquestrador; reabra a missão',
     );
@@ -361,9 +359,8 @@ export function persistClarifyQuestion(
   assertOrchestratorMission(ctx, requestedMissionId);
   const mission = activeMission(stores, requestedMissionId);
   if (
-    !mission.orchestratorSessionId ||
     !ctx.sessionId ||
-    mission.orchestratorSessionId !== ctx.sessionId
+    !requireMissionLeaderSession(ctx.scope, mission.id, { sessionId: ctx.sessionId }).ok
   ) {
     throw new Error(
       'a sessão do orquestrador está obsoleta; reabra a missão antes de perguntar',

@@ -66,6 +66,73 @@ vi.mock("../context/context-workflow-registry", async (importOriginal) => {
   };
 });
 
+/**
+ * This suite exercises mcp-dispatch's own gating (role/allowlist/intent/PREVC),
+ * not mission-leadership resolution — that has its own dedicated test suite
+ * (mission-leader-gate.test.ts). Default: the mocked domain store's current
+ * `orchestratorSessionId` (when a test configured one, e.g. via
+ * `completedPushDispatchFixture`) is treated as the proven leader, so tests
+ * that mutate that field to simulate staleness keep working unmodified; tests
+ * that never configure a mission store fall back to trusting the caller's own
+ * session. Individual tests still override this to exercise
+ * stale-session/split-brain denial directly at the dispatch boundary.
+ */
+const missionLeaderGateMocks = vi.hoisted(() => ({
+  requireMissionLeaderSession: vi.fn(
+    (
+      scope: unknown,
+      missionId: string,
+      ctx: { sessionId?: string | null },
+    ): import('./mission-leader-gate').MissionLeaderGateResult => {
+      const fallback = {
+        ok: true as const,
+        leader: {
+          sessionId: ctx.sessionId ?? "security-test-leader",
+          paneId: null,
+          source: "live" as const,
+          proven: true,
+        },
+      };
+      let durableSessionId: string | null | undefined;
+      try {
+        durableSessionId = (
+          domainStores.getProjectDomainStores as (
+            s: unknown,
+          ) => { missions: { get(id: string): { orchestratorSessionId?: string | null } | null } }
+        )(scope).missions.get(missionId)?.orchestratorSessionId;
+      } catch {
+        // No mission store configured for this test — trust the caller.
+        return fallback;
+      }
+      if (
+        durableSessionId &&
+        Object.hasOwn(ctx, "sessionId") &&
+        ctx.sessionId !== durableSessionId
+      ) {
+        return {
+          ok: false as const,
+          code: "stale-session" as const,
+          hint: "outra sessão assumiu a missão",
+        };
+      }
+      return durableSessionId
+        ? {
+            ok: true as const,
+            leader: {
+              sessionId: durableSessionId,
+              paneId: null,
+              source: "live" as const,
+              proven: true,
+            },
+          }
+        : fallback;
+    },
+  ),
+}));
+vi.mock("./mission-leader-gate", () => ({
+  requireMissionLeaderSession: missionLeaderGateMocks.requireMissionLeaderSession,
+}));
+
 const testDir = path.join(os.tmpdir(), "nexus-mcp-dispatch-security");
 const auditScope = testProjectScope({ rootRealPath: testDir });
 const auditContext = { scope: auditScope } as const;
@@ -1228,6 +1295,86 @@ describe("MCP dispatch effect safety", () => {
     expect(result.ok).toBe(true);
     expect(confirm).not.toHaveBeenCalled();
     expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it("denies delegation from a stale orchestrator token superseded by a new mission leader", async () => {
+    missionLeaderGateMocks.requireMissionLeaderSession.mockReturnValueOnce({
+      ok: false,
+      code: "stale-session",
+      hint: "outra sessão assumiu a missão",
+    });
+    const handler = vi.fn(async () => ({ paneId: "pane-worker" }));
+    const confirm = vi.fn(async () => true);
+    const result = await dispatchToolCall(
+      "http-mcp",
+      registryWith({
+        name: "nexus_pane_spawn",
+        description: "handler-owned bounded delegation",
+        inputSchema: { type: "object", properties: {} },
+        handler,
+      }),
+      "nexus_pane_spawn",
+      { agentName: "worker-a", prompt: "Inspect the dirty checkout." },
+      orchestratorMissionContext(),
+      { confirm, ...workflowOptions() },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("stale-session"),
+    });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("denies delegation on split-brain instead of picking a winner, and never wedges by throwing raw", async () => {
+    missionLeaderGateMocks.requireMissionLeaderSession.mockReturnValueOnce({
+      ok: false,
+      code: "split-brain",
+      hint: "duas sessões físicas reivindicam a missão",
+    });
+    const handler = vi.fn(async () => ({ paneId: "pane-worker" }));
+    const confirm = vi.fn(async () => true);
+    const result = await dispatchToolCall(
+      "http-mcp",
+      registryWith({
+        name: "nexus_pane_spawn",
+        description: "handler-owned bounded delegation",
+        inputSchema: { type: "object", properties: {} },
+        handler,
+      }),
+      "nexus_pane_spawn",
+      { agentName: "worker-a", prompt: "Inspect the dirty checkout." },
+      orchestratorMissionContext(),
+      { confirm, ...workflowOptions() },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("split-brain"),
+    });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("worker continua worker: a bare worker token never reaches the leader resolver for delegation-authority tools", async () => {
+    missionLeaderGateMocks.requireMissionLeaderSession.mockClear();
+    const handler = vi.fn(async () => ({ paneId: "pane-worker" }));
+    const result = await dispatchToolCall(
+      "http-mcp",
+      registryWith({
+        name: "nexus_pane_spawn",
+        description: "handler-owned bounded delegation",
+        inputSchema: { type: "object", properties: {} },
+        handler,
+      }),
+      "nexus_pane_spawn",
+      { agentName: "worker-a", prompt: "Inspect the dirty checkout." },
+      missionContext(),
+      workflowOptions(),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(handler).not.toHaveBeenCalled();
+    expect(missionLeaderGateMocks.requireMissionLeaderSession).not.toHaveBeenCalled();
   });
 
   it("revalidates the exact intent after asynchronous confirmation", async () => {

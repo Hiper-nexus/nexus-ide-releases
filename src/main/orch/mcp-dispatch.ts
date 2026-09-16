@@ -33,6 +33,7 @@ import {
   permitsOperatorPaneEffect,
   permitsOperatorVibeEffect,
 } from "./mcp-effect-policy";
+import { requireMissionLeaderSession } from "./mission-leader-gate";
 import { validateToolArgs } from "./mcp-args-validation";
 import type { McpRegistry, McpToolDef } from "./mcp-protocol";
 import { getContextWorkflowService } from "../context/context-workflow-registry";
@@ -388,6 +389,14 @@ function bindEffectAuthority(
     if (ctx.role !== "orchestrator" || !ctx.missionId) {
       throw new Error(
         "delegation authority requires an orchestrator bound to a mission",
+      );
+    }
+    const leader = requireMissionLeaderSession(ctx.scope, ctx.missionId, {
+      sessionId: ctx.sessionId,
+    });
+    if (!leader.ok) {
+      throw new Error(
+        `delegation authority requires the current mission leader (${leader.code}): ${leader.hint}`,
       );
     }
     return { contextRevision: ctx.contextRevision };
@@ -780,6 +789,7 @@ export async function dispatchToolCall(
         tool.name,
         {
           mission: resolved.mission,
+          scope: ctx.scope,
           taskCount: resolved.taskCount,
           workerPaneCount: resolved.workerPaneCount,
           role: ctx.role,

@@ -1,9 +1,18 @@
 // @vitest-environment node
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Mission } from '../../shared/orch-types';
 import { PREPARE_PROJECT_PLACEHOLDER_GOAL } from '../../shared/mission-intent';
+import { testProjectScope } from './__tests__/scope-fixture';
+import type { MissionLeaderGateResult } from './mission-leader-gate';
 
-import { assertMissionIntentAllowsTool } from './mission-intent-gate';
+const requireMissionLeaderSession = vi.fn<
+  (scope: unknown, missionId: string, ctx: { sessionId?: string | null }) => MissionLeaderGateResult
+>();
+vi.mock('./mission-leader-gate', () => ({
+  requireMissionLeaderSession,
+}));
+
+const { assertMissionIntentAllowsTool } = await import('./mission-intent-gate');
 
 const awaitingGoal: Mission = {
   id: 'm1',
@@ -45,9 +54,15 @@ const dispatched: Mission = {
 };
 
 describe('mission intent gate', () => {
-  it('allows an idempotent done request only from the explicitly bound current orchestrator', () => {
+  it('allows an idempotent done request only from the proven current mission leader', () => {
+    const scope = testProjectScope();
+    requireMissionLeaderSession.mockImplementation((_scope, _missionId, ctx: { sessionId?: string | null }) =>
+      ctx.sessionId === 'current-session'
+        ? { ok: true, leader: { sessionId: 'current-session', paneId: 'pane-1', source: 'durable', proven: true } }
+        : { ok: false, code: 'stale-session', hint: 'reabra a missão' },
+    );
     const done: Mission = { ...dispatched, status: 'done', intentState: 'done', orchestratorSessionId: 'current-session' };
-    const current = { mission: done, role: 'orchestrator', sessionId: 'current-session' };
+    const current = { mission: done, role: 'orchestrator', sessionId: 'current-session', scope };
 
     expect(assertMissionIntentAllowsTool('nexus_mission_set_status', current, { status: 'done', push: {} }).ok).toBe(true);
     for (const rejected of [
@@ -55,6 +70,7 @@ describe('mission intent gate', () => {
       { ...current, sessionId: 'old-session' },
       { ...current, sessionId: undefined },
       { ...current, mission: { ...done, orchestratorSessionId: undefined } },
+      { ...current, scope: undefined },
     ]) {
       expect(assertMissionIntentAllowsTool('nexus_mission_set_status', rejected, { status: 'done' }).ok).toBe(false);
     }
@@ -544,5 +560,43 @@ describe('mission intent gate', () => {
     expect(
       assertMissionIntentAllowsTool('nexus_file_write', { mission: stale }).ok,
     ).toBe(true);
+  });
+
+  describe('handoff_ack', () => {
+    const scope = testProjectScope();
+    const ctx = { mission: dispatched, role: 'orchestrator', sessionId: 'leader-session', scope };
+
+    it('allows ack only for the proven current mission leader', () => {
+      requireMissionLeaderSession.mockReturnValue({
+        ok: true,
+        leader: { sessionId: 'leader-session', paneId: 'pane-1', source: 'durable', proven: true },
+      });
+      expect(assertMissionIntentAllowsTool('nexus_handoff_ack', ctx).ok).toBe(true);
+    });
+
+    it('denies ack from a stale orchestrator token with a named code', () => {
+      requireMissionLeaderSession.mockReturnValue({
+        ok: false, code: 'stale-session', hint: 'outra sessão assumiu a missão',
+      });
+      const result = assertMissionIntentAllowsTool('nexus_handoff_ack', ctx);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.code).toBe('handoff_origin');
+    });
+
+    it('denies ack on split-brain instead of picking a winner', () => {
+      requireMissionLeaderSession.mockReturnValue({
+        ok: false, code: 'split-brain', hint: 'duas sessões vivas',
+      });
+      const result = assertMissionIntentAllowsTool('nexus_handoff_ack', ctx);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.code).toBe('handoff_origin');
+    });
+
+    it('worker continua worker: a worker token never reaches the leader resolver for ack', () => {
+      requireMissionLeaderSession.mockClear();
+      const result = assertMissionIntentAllowsTool('nexus_handoff_ack', { ...ctx, role: 'worker' });
+      expect(result.ok).toBe(false);
+      expect(requireMissionLeaderSession).not.toHaveBeenCalled();
+    });
   });
 });

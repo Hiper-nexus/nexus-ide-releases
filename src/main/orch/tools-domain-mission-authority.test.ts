@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentGateContext } from './gate';
 import { testProjectScope } from './__tests__/scope-fixture';
 import { ProcessGitRunner } from '../runtime/git-command';
+import { PET_STUDIO_SQUAD_ID } from '../../shared/pet-studio';
 
 const mocks = vi.hoisted(() => ({
   getProjectDomainStores: vi.fn(),
@@ -11,10 +12,41 @@ const mocks = vi.hoisted(() => ({
   completeVerified: vi.fn(),
   reconcile: vi.fn(),
   gitRun: vi.fn(),
+  requireMissionLeaderSession: vi.fn(
+    (_scope: unknown, missionId: string, ctx: { sessionId?: string | null }) => {
+      try {
+        const leaderSessionId = mocks.getProjectDomainStores().missions.get(missionId)
+          ?.orchestratorSessionId;
+        if (!leaderSessionId) return { ok: false, code: 'no-leader', hint: 'sem líder durável' };
+        if (Object.hasOwn(ctx, 'sessionId') && ctx.sessionId !== leaderSessionId) {
+          return { ok: false, code: 'stale-session', hint: 'sessão obsoleta' };
+        }
+        return {
+          ok: true,
+          leader: { sessionId: leaderSessionId, paneId: null, source: 'live', proven: true },
+        };
+      } catch {
+        return { ok: false, code: 'no-leader', hint: 'store indisponível' };
+      }
+    },
+  ),
 }));
 
 vi.mock('./project-domain-store-registry', () => ({
   getProjectDomainStores: mocks.getProjectDomainStores,
+}));
+
+/**
+ * Default: models the resolver as "the mocked mission's durable
+ * orchestratorSessionId is the current proven leader" — the same ground
+ * truth these tests already set up by hand, so existing scenarios keep
+ * working while genuinely exercising the leader-identity check
+ * (mission-leader-gate.test.ts owns the resolution engine's own
+ * correctness). Individual tests override this to prove the resolver — not
+ * just the raw durable field — is what gates completion.
+ */
+vi.mock('./mission-leader-gate', () => ({
+  requireMissionLeaderSession: mocks.requireMissionLeaderSession,
 }));
 
 vi.mock('./civilian-delivery-completion', async (importOriginal) => ({
@@ -504,13 +536,16 @@ describe('mission creation authority', () => {
   );
 
   it('não aceita handoff aprovado por uma sessão de orquestrador já substituída', async () => {
+    // lane standard + squad exempto de revisão automática (Pet Studio) chega
+    // no caminho "ack do orquestrador corrente É a verificação" sem depender
+    // da reconciliação assíncrona.
     const setStatus = vi.fn((id: string, status: string) => ({ id, status }));
     mocks.getProjectDomainStores.mockReturnValue({
       missions: {
         get: () => ({
           id: 'mission-existing',
           status: 'running',
-          squadId: 'squad-orchestrated',
+          squadId: PET_STUDIO_SQUAD_ID,
           orchestratorSessionId: 'orchestrator-session',
           learnings: '',
           milestones: [],
@@ -519,11 +554,11 @@ describe('mission creation authority', () => {
         setStatus,
         appendLearning: vi.fn(),
       },
-      missionPanes: { list: () => [{ role: 'worker' }] },
       handoffs: {
-        list: () => [{ id: 'handoff-1', deliveryState: 'submitted' }],
+        list: () => [{ id: 'handoff-1', status: 'success', deliveryState: 'consumed' }],
         listDeliveryAttempts: () => [{
           state: 'accepted',
+          acceptedAt: 100,
           orchestratorSessionId: 'orchestrator-session-stale',
         }],
       },
@@ -537,11 +572,55 @@ describe('mission creation authority', () => {
       {
         missionId: 'mission-existing',
         status: 'done',
-        note: 'Worker concluiu, mas o aceite pertence a uma sessão antiga do orquestrador.',
+        note: 'Worker concluiu, mas o aceite pertence a uma sessão antiga do orquestrador substituída.',
       },
       context('orchestrator'),
-    )).resolves.toMatchObject({ status: 'running', completionRequested: true });
+    )).rejects.toThrow(/main-owned verified completion required/);
     expect(setStatus).not.toHaveBeenCalled();
+  });
+
+  it('split-brain no líder recusa done mesmo com o campo durável e o attempt concordando', async () => {
+    // Prova que o gate consulta o resolver, não só o campo cru: o campo
+    // durável e o attempt concordam, mas o resolver mesmo assim recusa.
+    mocks.getProjectDomainStores.mockReturnValue({
+      missions: {
+        get: () => ({
+          id: 'mission-existing',
+          status: 'running',
+          squadId: PET_STUDIO_SQUAD_ID,
+          orchestratorSessionId: 'orchestrator-current',
+          learnings: '',
+          milestones: [],
+          intentContract: { lane: 'standard' },
+        }),
+        setStatus: vi.fn(),
+        appendLearning: vi.fn(),
+      },
+      handoffs: {
+        list: () => [{ id: 'handoff-1', status: 'success', deliveryState: 'consumed' }],
+        listDeliveryAttempts: () => [{
+          state: 'accepted',
+          acceptedAt: 100,
+          orchestratorSessionId: 'orchestrator-current',
+        }],
+      },
+    });
+    mocks.getContextWorkflowService.mockReturnValue({
+      isMissionDriverComplete: () => false,
+      getMissionWorkflow: () => ({ contract: null, workflow: null }),
+    });
+    mocks.requireMissionLeaderSession.mockReturnValueOnce({
+      ok: false, code: 'split-brain', hint: 'duas sessões vivas reivindicam a missão',
+    });
+
+    await expect(missionSetStatusTool().handler(
+      {
+        missionId: 'mission-existing',
+        status: 'done',
+        note: 'Entregue e verificado: arquivos criados e handoff consumido pelo orquestrador corrente.',
+      },
+      context('orchestrator'),
+    )).rejects.toThrow(/main-owned verified completion required/);
   });
 
   it('Via Rápida devolve done somente quando a reconciliação confirma conclusão', async () => {
