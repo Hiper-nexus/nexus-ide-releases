@@ -2723,5 +2723,102 @@ describe("MCP dispatch effect safety", () => {
       });
       expect(handler).not.toHaveBeenCalled();
     });
+
+    // Bug de campo: a mão do operador num pane sem missão que tenta handoff
+    // levava sempre a mesma dica ("crie uma missão com nexus_mission_create"),
+    // mesmo quando o próprio pane não consegue chamar essa tool (readOnly ou
+    // fora do allowlist). A dica agora só nomeia uma tool que ESTE pane
+    // realmente alcança.
+    function readOnlyEmptyAllowlistUserPane() {
+      resetGateForTests();
+      // Reproduz tools-panes.ts: spawn ad-hoc da mão do operador com
+      // readOnly:true sempre zera allowedTools do filho (attenuateTools com
+      // requested=[]), então o pane nasce role "user", readOnly, allowedTools
+      // vazio — exatamente o pane que bateu no bug.
+      return mintToken({
+        label: "operator-hand-readonly",
+        role: "user",
+        readOnly: true,
+        allowedTools: [],
+        scope: auditScope,
+      });
+    }
+
+    it("hints only nexus_pane_ask for an unbound handoff from an unrestricted user pane with tools", async () => {
+      const handler = vi.fn(async () => ({ shouldNotRun: true }));
+      const result = await dispatchToolCall(
+        "http-mcp",
+        registryWith({
+          name: "nexus_handoff_submit",
+          description: "handoff",
+          inputSchema: { type: "object", properties: {} },
+          handler,
+        }),
+        "nexus_handoff_submit",
+        { status: "partial", summary: "unbound handoff attempt" },
+        userContext(),
+      );
+
+      expect(result).toMatchObject({ ok: false, denied: true });
+      expect(result.hint).toContain("nexus_pane_write");
+      expect(result.hint).toContain("nexus_pane_ask");
+      expect(result.hint).toContain("crie uma missão com nexus_mission_create");
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it("does not point a read-only, allowlist-empty user pane at nexus_mission_create or nexus_pane_write", async () => {
+      const handler = vi.fn(async () => ({ shouldNotRun: true }));
+      const result = await dispatchToolCall(
+        "http-mcp",
+        registryWith({
+          name: "nexus_handoff_submit",
+          description: "handoff",
+          inputSchema: { type: "object", properties: {} },
+          handler,
+        }),
+        "nexus_handoff_submit",
+        { status: "partial", summary: "unbound handoff attempt" },
+        readOnlyEmptyAllowlistUserPane(),
+      );
+
+      expect(result).toMatchObject({ ok: false, denied: true });
+      // The only tool this pane can actually reach without a mission.
+      expect(result.hint).toContain("nexus_pane_ask");
+      // Neither tool is reachable from this pane: readOnly and the allowlist
+      // both deny pane_write, and both deny mission_create too. The hint must
+      // never tell the agent to call something the gate itself will refuse.
+      expect(result.hint).not.toContain("crie uma missão com nexus_mission_create");
+      expect(result.hint).not.toMatch(/use nexus_pane_write/);
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it("gives no actionable hint to an orphaned worker with no mission and no reachable tool", async () => {
+      resetGateForTests();
+      const orphanedWorker = mintToken({
+        label: "orfao-handoff",
+        role: "worker",
+        scope: auditScope,
+        allowedTools: [],
+        allowedSkills: null,
+      });
+      const handler = vi.fn(async () => ({ shouldNotRun: true }));
+      const result = await dispatchToolCall(
+        "http-mcp",
+        registryWith({
+          name: "nexus_handoff_submit",
+          description: "handoff",
+          inputSchema: { type: "object", properties: {} },
+          handler,
+        }),
+        "nexus_handoff_submit",
+        { status: "partial", summary: "unbound handoff attempt" },
+        orphanedWorker,
+      );
+
+      expect(result).toMatchObject({ ok: false, denied: true });
+      // Nothing is actually reachable for this pane: no false lead offered.
+      expect(result.hint).toBeUndefined();
+      expect(handler).not.toHaveBeenCalled();
+    });
   });
 });

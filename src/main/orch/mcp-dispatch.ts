@@ -670,12 +670,61 @@ export async function dispatchToolCall(
     // comparam a string exata. A dica de caminho vai em `hint`.
     const error =
       "mission effect blocked: projectId, checkoutId, missionId and contextRevision are required";
+    // A dica só pode nomear uma tool que ESTE pane de fato alcança. `reachable`
+    // reaplica os dois gates que já rodaram acima (allowlist + readOnly) para a
+    // tool candidata — sem isso a dica mente para panes readOnly/allowlist
+    // vazio (bug de campo: nexus_mission_create sugerido a um pane readOnly
+    // spawnado sem allowedTools, que nunca chega perto de criar a missão).
+    const reachable = (name: string): boolean =>
+      isToolAllowedForRole(
+        ctx.role,
+        ctx.allowedTools,
+        name,
+        ctx.petStudioMediaAuthority,
+      ) && (!ctx.readOnly || isToolAllowedForReadOnlyContext(name));
+    // pane_write/pane_spawn/pane_ask/pane_close só furam o cabresto de missão
+    // pela mão do operador (permitsOperatorPaneEffect/modo vibe) — role
+    // "user", nunca worker/orchestrator.
+    const canPaneAsk = ctx.role === "user" && reachable("pane_ask");
+    const canPaneWrite = ctx.role === "user" && reachable("pane_write");
+    // mission_create fura o cabresto pra qualquer role (permitsUnboundEffect
+    // não olha role); só falta o allowlist/readOnly deste pane.
+    const canCreateMission = reachable("mission_create");
+    const missionCreateReason = canCreateMission
+      ? "crie uma missão com nexus_mission_create"
+      : "nexus_mission_create não está disponível neste pane (somente-leitura ou fora do allowlist)";
     const hint =
-      ctx.role === "user" && canonical === "handoff_submit"
-        ? "handoff exige missão: para falar com outro pane use nexus_pane_write ou nexus_pane_ask; para registrar um handoff, crie uma missão com nexus_mission_create"
-        : ctx.role === "user"
-          ? `${tool.name} exige missão neste pane: crie uma com nexus_mission_create (spawn/write/ask/close de panes funcionam sem missão)`
-          : undefined;
+      canonical === "handoff_submit"
+        ? (() => {
+            const talkPart =
+              canPaneWrite && canPaneAsk
+                ? "para falar com outro pane use nexus_pane_write ou nexus_pane_ask"
+                : canPaneAsk
+                  ? "para falar com outro pane use nexus_pane_ask (nexus_pane_write não está disponível neste pane)"
+                  : canPaneWrite
+                    ? "para falar com outro pane use nexus_pane_write"
+                    : undefined;
+            if (!talkPart && !canCreateMission) return undefined;
+            const missionPart = canCreateMission
+              ? `para registrar um handoff, ${missionCreateReason}`
+              : missionCreateReason;
+            return `handoff exige missão: ${[talkPart, missionPart].filter(Boolean).join("; ")}`;
+          })()
+        : (() => {
+            const availablePaneTools = (
+              ["pane_spawn", "pane_write", "pane_ask", "pane_close"] as const
+            ).filter((name) => ctx.role === "user" && reachable(name));
+            if (!canCreateMission && availablePaneTools.length === 0) {
+              return undefined;
+            }
+            const paneToolsLabel = availablePaneTools
+              .map((name) => `nexus_${name}`)
+              .join("/");
+            const verb = availablePaneTools.length > 1 ? "funcionam" : "funciona";
+            return `${tool.name} exige missão neste pane: ${missionCreateReason}${
+              paneToolsLabel ? ` (${paneToolsLabel} ${verb} sem missão)` : ""
+            }`;
+          })();
     const auditFailure = writeAudit(
       () =>
         auditDenied(
