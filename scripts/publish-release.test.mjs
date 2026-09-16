@@ -17,8 +17,11 @@ import {
   classifyGitHubReleaseResult,
   describeLocalReleaseAssets,
   assertPublishPhysicalCandidate,
+  loadMacosReleaseCandidate,
   loadReusableReleaseCandidate,
   materializeReusableReleaseCandidate,
+  parseReleasePublishMode,
+  publishMacosRelease,
   publishManualRelease,
   publishManualReleaseTestCore,
   resolveSecurityAssets,
@@ -30,12 +33,159 @@ import {
   verifyGitHubReleaseSnapshot,
 } from './publish-release.mjs';
 
+import { readAndAssertReleaseAuthority } from './release-authority.mjs';
+
 const publicationRoots = [];
 afterAll(() => {
   for (const root of publicationRoots) {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+describe('macOS-only publication (F-564)', () => {
+  it('selects exclusive platform modes and rejects mixed/unknown arguments', () => {
+    expect(parseReleasePublishMode([])).toBe('combined');
+    expect(parseReleasePublishMode(['--macos'])).toBe('macos');
+    expect(parseReleasePublishMode(['--windows'])).toBe('windows');
+    for (const args of [['--windows', '--macos'], ['--macos', '--windows']]) {
+      expect(() => parseReleasePublishMode(args)).toThrow(/same invocation/);
+    }
+    expect(() => parseReleasePublishMode(['--macoss'])).toThrow(/usage/);
+  });
+
+  it.each(['NEXUS_MAC_PUBLISH_RELEASE', 'APPLE_TEAM_ID', 'APPLE_KEYCHAIN_PROFILE'])(
+    'requires %s before any production effect', async (key) => {
+      const environment = publishEnvironment();
+      delete environment[key];
+      await expect(publishMacosRelease({ root: '/unused', environment })).rejects.toThrow(key);
+    },
+  );
+
+  it('keeps the production macOS entrypoint sealed and independent of a Windows run', async () => {
+    expect(() => publishMacosRelease({ github: {} })).toThrow(/dependency override/);
+    expect(() => publishMacosRelease(Object.create({ macosOnly: true }))).toThrow(/dependency override/);
+    // Authority metadata fails before Git; importantly, no Windows requirement.
+    await expect(publishMacosRelease({ root: '/unused', environment: publishEnvironment() }))
+      .rejects.toThrow(/release metadata/);
+  });
+
+  it('publishes the nine sealed macOS assets canonically and only DMG/ZIP in the mirror', async () => {
+    const fixture = macosPublicationFixture();
+    const commands = [];
+    for (const method of ['createDraft', 'upload', 'publish']) {
+      const original = fixture.github[method];
+      fixture.github[method] = async (repo, tag, argument) => {
+        commands.push(method === 'createDraft'
+          ? buildGitHubReleaseDraftArgs({ repo, tag, ...argument })
+          : method === 'upload'
+            ? buildGitHubReleaseUploadArgs({ repo, tag, assetPaths: argument })
+            : buildGitHubReleasePublishArgs({ repo, tag }));
+        return original(repo, tag, argument);
+      };
+    }
+    const result = await publishManualReleaseTestCore(fixture.options);
+    expect(result.resumedFromLocalGreenCandidate).toBe(true);
+    expect(fixture.release.canonicalAssets.map((a) => a.name).sort()).toEqual([
+      'NexusIDE-arm64.dmg', 'NexusIDE-arm64.zip', 'audit-build-toolchain.json',
+      'audit-production.json', 'nexus-1.2.3-toolchain.cdx.json', 'nexus-1.2.3.cdx.json',
+      'packaged-smoke-report.json', 'release-candidate-receipt.json', 'security-manifest.json',
+    ].sort());
+    expect(fixture.release.publicAssets.map((a) => a.name)).toEqual(['NexusIDE-arm64.dmg', 'NexusIDE-arm64.zip']);
+    expect(commands.filter((c) => c[1] === 'create')).toEqual([
+      buildGitHubReleaseDraftArgs({ tag: 'v1.2.3', repo: CANONICAL_RELEASE_REPO }),
+      buildGitHubReleaseDraftArgs({ tag: 'v1.2.3', repo: PUBLIC_RELEASE_REPO, verifyTag: false }),
+    ]);
+    const uploads = commands.filter((c) => c[1] === 'upload');
+    expect(uploads.map((c) => c.slice(0, 6))).toEqual([
+      ['release', 'upload', 'v1.2.3', '--repo', `github.com/${CANONICAL_RELEASE_REPO}`, '--clobber'],
+      ['release', 'upload', 'v1.2.3', '--repo', `github.com/${PUBLIC_RELEASE_REPO}`, '--clobber'],
+    ]);
+    expect(uploads[0].slice(6).map((p) => path.basename(p)).sort()).toEqual(fixture.release.canonicalAssets.map((a) => a.name).sort());
+    expect(uploads[1].slice(6).map((p) => path.basename(p))).toEqual(['NexusIDE-arm64.dmg', 'NexusIDE-arm64.zip']);
+    expect(commands.filter((c) => c[1] === 'edit')).toEqual([
+      buildGitHubReleasePublishArgs({ tag: 'v1.2.3', repo: CANONICAL_RELEASE_REPO }),
+      buildGitHubReleasePublishArgs({ tag: 'v1.2.3', repo: PUBLIC_RELEASE_REPO }),
+    ]);
+    expect(fixture.events.indexOf(`publish:${CANONICAL_RELEASE_REPO}`)).toBeLessThan(fixture.events.indexOf(`publish:${PUBLIC_RELEASE_REPO}`));
+  });
+
+  it.each([
+    ['gate receipt missing', 'release-artifacts/security/release-candidate-receipt.json', 'remove'],
+    ['build receipt missing', 'release-artifacts/candidate-build.json', 'remove'],
+    ['smoke missing', 'release-artifacts/security/packaged-smoke-report.json', 'remove'],
+    ['ZIP hash differs', 'out/make/darwin/arm64/NexusIDE-arm64.zip', 'tamper'],
+    ['audit hash differs', 'release-artifacts/security/audit-production.json', 'tamper'],
+    ['build receipt differs', 'release-artifacts/candidate-build.json', 'tamper'],
+  ])('refuses %s without rebuilding or uploading', async (_label, relative, action) => {
+    const fixture = macosPublicationFixture();
+    const file = path.join(fixture.root, relative);
+    if (action === 'remove') fs.unlinkSync(file);
+    else fs.appendFileSync(file, 'tampered');
+    await expect(publishManualReleaseTestCore(fixture.options)).rejects.toThrow();
+    expect(fixture.events).toEqual([]);
+  });
+
+  it('refuses HEAD different from the tag before upload', async () => {
+    const fixture = macosPublicationFixture();
+    fixture.repository.headSha = 'f'.repeat(40);
+    await expect(publishManualReleaseTestCore(fixture.options)).rejects.toThrow(/HEAD|commit|tag/i);
+    expect(fixture.events).toEqual([]);
+  });
+
+  it('refuses well-formed build evidence whose artifact hash differs', async () => {
+    const fixture = macosPublicationFixture();
+    const file = path.join(fixture.root, 'release-artifacts', 'candidate-build.json');
+    const receipt = JSON.parse(fs.readFileSync(file, 'utf8'));
+    receipt.artifacts[0].sha256 = 'f'.repeat(64);
+    fs.writeFileSync(file, JSON.stringify(receipt));
+    await expect(publishManualReleaseTestCore(fixture.options)).rejects.toThrow(/diverges from build receipt/);
+    expect(fixture.events).toEqual([]);
+  });
+
+  it.each([CANONICAL_RELEASE_REPO, PUBLIC_RELEASE_REPO])('rejects a published sha256 mismatch in %s', async (repo) => {
+    const fixture = macosPublicationFixture();
+    const original = fixture.github.publish;
+    fixture.github.publish = async (...args) => {
+      await original(...args);
+      if (args[0] === repo) fixture.states.get(repo).snapshot.assets[0].digest = `sha256:${'f'.repeat(64)}`;
+    };
+    await expect(publishManualReleaseTestCore(fixture.options)).rejects.toThrow(/do not match/i);
+    if (repo === CANONICAL_RELEASE_REPO) expect(fixture.events).not.toContain(`publish:${PUBLIC_RELEASE_REPO}`);
+  });
+});
+
+function macosPublicationFixture() {
+  const root = createReusableCandidateFixture();
+  publicationRoots.push(root);
+  const authority = readAndAssertReleaseAuthority(root);
+  const repository = { statusPorcelain: '', headSha: 'a'.repeat(40), tagCommitSha: 'a'.repeat(40),
+    tagObjectSha: 'e'.repeat(40), tagObjectType: 'tag', tagSignerFingerprint: null };
+  const loaderOptions = { root, authority, repository, environment: publishEnvironment() };
+  const candidate = loadReusableReleaseCandidate(loaderOptions);
+  fs.writeFileSync(path.join(root, 'release-artifacts', 'candidate-build.json'), JSON.stringify({
+    schemaVersion: 2, startedAt: '2026-07-22T00:00:00.000Z', version: authority.version,
+    tag: authority.tag, architecture: 'arm64', commitSha: candidate.receipt.commitSha,
+    tagObjectSha: candidate.receipt.tagObjectSha, tagSignerFingerprint: null, tagSignatureVerified: false,
+    provenance: { mode: 'clean-git-worktree', npmCi: true, sourceCommitSha: candidate.receipt.commitSha,
+      packageLockSha256: digest(fs.readFileSync(path.join(root, 'package-lock.json'))),
+      nodeVersion: `v${authority.nodeVersion}`, npmVersion: authority.npmVersion, npmPackageIntegrity: authority.npmPackageIntegrity },
+    artifacts: Object.values(candidate.artifacts).map((file) => ({ path: path.relative(root, file).replaceAll('\\', '/'),
+      bytes: fs.statSync(file).size, mtimeMs: fs.statSync(file).mtimeMs, sha256: digest(fs.readFileSync(file)) })),
+  }));
+  const release = materializeReusableReleaseCandidate(root, candidate);
+  const events = [];
+  const states = new Map();
+  const github = fakeGitHub({ states, fixture: { release }, events });
+  return { root, repository, release, events, states, github, options: {
+    root, authority, environment: publishEnvironment(), nodeVersion: `v${authority.nodeVersion}`,
+    macosOnly: true, github, stageReleaseAssets,
+    repositoryPublisher: { async push() { events.push('push'); }, async verify() {} },
+    loadReusableCandidate: () => loadMacosReleaseCandidate(loaderOptions),
+    materializeCandidate: materializeReusableReleaseCandidate,
+    runCandidateGate: () => { throw new Error('must not rebuild macOS candidate'); },
+    loadWindowsCandidate: () => { throw new Error('must not load Windows candidate'); },
+  } };
+}
 
 describe('manual GitHub release publication', () => {
   it('blocks ordinary publication before build or external mutations without a signed worker run', async () => {

@@ -17,6 +17,7 @@ import { withPublicationLock } from './release-publication-lock.mjs';
 
 import {
   assertAuthoritativeReleaseCandidate,
+  assertCandidateBuildReceipt,
   runReleaseCandidateGate,
 } from './release-candidate-gate.mjs';
 import {
@@ -885,6 +886,39 @@ export function loadReusableReleaseCandidate(options = {}) {
   return candidate;
 }
 
+/** macOS-only publication consumes the local gate receipt; it never rebuilds it. */
+export function loadMacosReleaseCandidate(options = {}) {
+  const root = path.resolve(options.root ?? process.cwd());
+  const authority = options.authority ?? readAndAssertReleaseAuthority(root);
+  const candidate = loadReusableReleaseCandidate({
+    ...options,
+    root,
+    authority,
+  });
+  const buildReceipt = JSON.parse(
+    fs.readFileSync(
+      path.join(root, 'release-artifacts', 'candidate-build.json'),
+      'utf8',
+    ),
+  );
+  assertCandidateBuildReceipt({
+    root,
+    receipt: buildReceipt,
+    commitSha: candidate.receipt.commitSha,
+    version: authority.version,
+    tagObjectSha: candidate.receipt.tagObjectSha,
+    tagSignerFingerprint: candidate.receipt.tagSignerFingerprint,
+    tagSignatureVerified: candidate.receipt.tagSignatureVerified,
+    packageLockSha256: fileSha256(path.join(root, 'package-lock.json')),
+    npmVersion: authority.npmVersion,
+    npmPackageIntegrity: authority.npmPackageIntegrity,
+    nodeVersion: authority.nodeVersion,
+    expectedArch: 'arm64',
+    artifacts: candidate.artifacts,
+  });
+  return candidate;
+}
+
 function assertReusableReleaseCandidate(root, candidate) {
   if (!candidate || typeof candidate !== 'object') {
     throw new Error('reusable release requires durable candidate authority');
@@ -1220,7 +1254,8 @@ async function publishManualReleaseCore(
   const root = path.resolve(options.root ?? process.cwd());
   const environment = options.environment ?? process.env;
   assertManualPublishEnvironment(environment);
-  if (authoritative) requireWindowsRunId(environment);
+  const macosOnly = options.macosOnly === true;
+  if (authoritative && !macosOnly) requireWindowsRunId(environment);
   const authority = authoritative
     ? readAndAssertReleaseAuthority(root)
     : options.authority;
@@ -1254,7 +1289,7 @@ async function publishManualReleaseCore(
     ? runReleaseCandidateGate
     : options.runCandidateGate;
   const reusableLoader = authoritative
-    ? loadReusableReleaseCandidate
+    ? (macosOnly ? loadMacosReleaseCandidate : loadReusableReleaseCandidate)
     : options.loadReusableCandidate;
   const materializeFresh = authoritative
     ? materializeReleaseCandidate
@@ -1289,8 +1324,9 @@ async function publishManualReleaseCore(
   const reusePublishedCandidate = canonical.kind === 'published';
   let reuseLocalGreenCandidate = false;
   let candidate;
-  if (reusePublishedCandidate) {
+  if (reusePublishedCandidate || macosOnly) {
     candidate = await reusableLoader({ root, environment });
+    reuseLocalGreenCandidate = !reusePublishedCandidate;
   } else {
     // Prefer a durable green local receipt bound to HEAD + packages over a
     // second packaged gate run. Fall back to the full gate when the
@@ -1329,13 +1365,15 @@ async function publishManualReleaseCore(
       ? materializeReusable
       : materializeFresh
   )(root, candidate);
-  const windows = authoritative
-    ? await loadSignedWindowsCandidate({
-        root, environment, version, commitSha: candidate.receipt.commitSha,
-      })
-    : await options.loadWindowsCandidate?.({
-        root, environment, version, commitSha: candidate.receipt.commitSha,
-      });
+  const windows = macosOnly
+    ? null
+    : authoritative
+      ? await loadSignedWindowsCandidate({
+          root, environment, version, commitSha: candidate.receipt.commitSha,
+        })
+      : await options.loadWindowsCandidate?.({
+          root, environment, version, commitSha: candidate.receipt.commitSha,
+        });
   let stagedCandidate;
   try {
     const combined = windows ? appendWindowsAssets(materialized, windows) : materialized;
@@ -1477,14 +1515,10 @@ async function publishManualReleaseCore(
   }
 }
 
-/**
- * Sealed production entrypoint. Callers may select only root/environment; all
- * build, GitHub, repository and staging authorities are module-owned.
- */
-export function publishManualRelease(options = {}) {
+function publishSealedManualRelease(options, macosOnly, label) {
   if (options === null || typeof options !== 'object') {
     throw new Error(
-      'sealed manual release rejects dependency override: prototype',
+      `sealed ${label} release rejects dependency override: prototype`,
     );
   }
   const allowed = new Set(['root', 'environment']);
@@ -1503,11 +1537,12 @@ export function publishManualRelease(options = {}) {
     unexpected !== undefined
   ) {
     throw new Error(
-      `sealed manual release rejects dependency override: ${String(unexpected ?? 'prototype')}`,
+      `sealed ${label} release rejects dependency override: ${String(unexpected ?? 'prototype')}`,
     );
   }
   return withPublicationLock(() => publishManualReleaseCore(
     {
+      macosOnly,
       ...(descriptors.root ? { root: descriptors.root.value } : {}),
       ...(descriptors.environment
         ? { environment: descriptors.environment.value }
@@ -1515,6 +1550,22 @@ export function publishManualRelease(options = {}) {
     },
     MANUAL_RELEASE_PRODUCTION_AUTHORITY,
   ));
+}
+
+/**
+ * Sealed production entrypoint. Callers may select only root/environment; all
+ * build, GitHub, repository and staging authorities are module-owned.
+ */
+export function publishManualRelease(options = {}) {
+  return publishSealedManualRelease(options, false, 'manual');
+}
+
+/**
+ * Sealed macOS-only entrypoint (F-564): publishes the local packaged
+ * candidate straight from `release-artifacts/`, without a Windows run.
+ */
+export function publishMacosRelease(options = {}) {
+  return publishSealedManualRelease(options, true, 'macOS');
 }
 
 function collectWindowsReleaseRepositoryState(root, authority) {
@@ -1817,14 +1868,37 @@ export function publishManualReleaseTestCore(options = {}) {
   return publishManualReleaseCore(options, null);
 }
 
+export function parseReleasePublishMode(args) {
+  if (args.includes('--windows') && args.includes('--macos')) {
+    throw new Error(
+      '--windows and --macos cannot be used in the same invocation',
+    );
+  }
+  if (
+    args.some((arg) => arg !== '--windows' && arg !== '--macos') ||
+    args.length > 1
+  ) {
+    throw new Error('usage: publish-release.mjs [--windows | --macos]');
+  }
+  return args[0]?.slice(2) ?? 'combined';
+}
+
 async function main() {
-  const windowsOnly = process.argv.includes('--windows');
-  const result = windowsOnly
-    ? await publishWindowsRelease()
-    : await publishManualRelease();
+  const mode = parseReleasePublishMode(process.argv.slice(2));
+  const result =
+    mode === 'windows'
+      ? await publishWindowsRelease()
+      : mode === 'macos'
+        ? await publishMacosRelease()
+        : await publishManualRelease();
+  const label =
+    mode === 'windows'
+      ? 'windows-release-publish'
+      : mode === 'macos'
+        ? 'macos-release-publish'
+        : 'release-publish';
   process.stdout.write(
-    `[${windowsOnly ? 'windows-release-publish' : 'release-publish'}] PASS ` +
-      `${result.tag} ${result.commitSha} ` +
+    `[${label}] PASS ${result.tag} ${result.commitSha} ` +
       `(${result.canonicalRepo} -> ${result.publicRepo})\n`,
   );
 }

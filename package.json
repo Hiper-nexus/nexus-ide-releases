@@ -27,6 +27,7 @@
     "release:candidate": "node scripts/release-candidate-gate.mjs",
     "release:publish": "node scripts/publish-release.mjs",
     "release:publish:windows": "node scripts/publish-release.mjs --windows",
+    "release:publish:macos": "node scripts/publish-release.mjs --macos",
     "security:renderer-sinks": "node scripts/check-renderer-sinks.mjs",
     "design:palette-check": "node --import tsx scripts/check-palette-contrast.mjs",
     "premake": "node scripts/patch-node-pty-darwin.mjs && node scripts/bundle-skills.mjs && node scripts/check-build-node.mjs && npm run build:darwin-pty-supervisor && npm run security:renderer-sinks && npm run typecheck && npm run rebuild:electron",

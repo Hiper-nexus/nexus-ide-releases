@@ -6,10 +6,12 @@ Checklist funcional da candidata **0.60** (ainda em aberto):
 As publicações são **independentes por sistema operacional**. O Windows usa a
 candidata assinada produzida pelo workflow privado protegido
 `windows-release.yml` e a publica com `npm run release:publish:windows`; esse
-comando não inicia nem exige build, assinatura ou notarização macOS. O Mac
-continua usando seu próprio caminho de Developer ID/notarização. Os dois
-publicadores fixam `--repo` em toda chamada ao `gh`; não dependem do
-repositório inferido pelo diretório atual.
+comando não inicia nem exige build, assinatura ou notarização macOS. O Mac usa
+seu próprio caminho de Developer ID/notarização e publica com
+`npm run release:publish:macos`, que consome só a candidata local já aprovada
+pelo gate (`npm run release:candidate`) e não exige nem aguarda um run
+Windows. Os publicadores fixam `--repo` em toda chamada ao `gh`; não dependem
+do repositório inferido pelo diretório atual.
 
 ## Canal Windows independente
 
@@ -58,6 +60,33 @@ quando:
 4. tag, artefatos e evidências de segurança apontarem para o mesmo commit;
 5. o manifesto incluir auditoria/SBOM de produção e da toolchain, lockfile,
    versões Node/npm e hashes finais de DMG, ZIP e evidência E2E.
+
+## Publicação somente macOS (F-564)
+
+Depois de produzir a candidata local e passar `npm run release:candidate`,
+publique com:
+
+```bash
+NEXUS_MAC_PUBLISH_RELEASE=1 APPLE_TEAM_ID=35P5XL3JN6 APPLE_KEYCHAIN_PROFILE=nexus-notary npm run release:publish:macos
+```
+
+O publicador exige `release-artifacts/candidate-build.json` e o diretório
+`release-artifacts/security/`, incluindo `release-candidate-receipt.json` e
+`packaged-smoke-report.json`. Revalida HEAD/tag, proveniência da build
+(`candidate-build.json`, arquitetura `arm64`), hashes de DMG/ZIP, SBOMs,
+auditorias e manifesto de segurança pelos SHA-256 selados pelo gate. Recibo
+inexistente, HEAD diferente da tag ou qualquer hash divergente bloqueia a
+publicação; este modo nunca dispara outra build nem busca candidato Windows.
+
+A canônica (`Hiper-nexus/nexus-ide`) recebe os nove assets selados: DMG, ZIP,
+manifesto de segurança, duas auditorias, dois SBOMs, o relatório de smoke
+empacotado e o recibo do candidato. O espelho
+(`Hiper-nexus/nexus-ide-releases`) recebe somente DMG e ZIP. A transação
+mantém o mesmo lock de publicação usado pelo fluxo composto, prepara/verifica
+os dois drafts, publica a canônica, relê o snapshot publicado e só então
+publica o espelho — o SHA-256 remoto é conferido nos dois repositórios antes
+de cada transição. `--macos` e `--windows` são mutuamente exclusivos na mesma
+invocação do CLI.
 
 ## Fluxo histórico multiplataforma (somente quando as duas candidatas existem)
 
