@@ -5,7 +5,14 @@ if ($env:OS -ne 'Windows_NT' -or (node -p 'process.arch') -ne 'x64') {
   throw 'Windows x64 is required for the Codex smoke prerequisite'
 }
 
-$prefix = Join-Path $env:RUNNER_TEMP 'nexus-smoke-cli'
+$scratchRoot = if (-not [string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)) {
+  $env:RUNNER_TEMP
+} elseif (-not [string]::IsNullOrWhiteSpace($env:TEMP)) {
+  $env:TEMP
+} else {
+  [System.IO.Path]::GetTempPath()
+}
+$prefix = Join-Path $scratchRoot 'nexus-smoke-cli'
 npm install --global --prefix $prefix '@openai/codex@0.145.0'
 if ($LASTEXITCODE -ne 0) { throw 'pinned Codex smoke prerequisite install failed' }
 
@@ -37,8 +44,8 @@ if ($LASTEXITCODE -ne 0 -or $nativeVersion -ne 'codex-cli 0.145.0') {
 }
 
 $env:NEXUS_SMOKE_CODEX_EXE = $nativeCodex.FullName
-$probeStdout = Join-Path $env:RUNNER_TEMP 'nexus-codex-pty-probe.stdout.log'
-$probeStderr = Join-Path $env:RUNNER_TEMP 'nexus-codex-pty-probe.stderr.log'
+$probeStdout = Join-Path $scratchRoot 'nexus-codex-pty-probe.stdout.log'
+$probeStderr = Join-Path $scratchRoot 'nexus-codex-pty-probe.stderr.log'
 $probe = Start-Process -FilePath (Get-Command node).Source `
   -ArgumentList @('--import', 'tsx', 'scripts/windows-codex-node-pty-probe.ts') `
   -WorkingDirectory (Get-Location).Path `
@@ -76,5 +83,7 @@ if ($probe.ExitCode -ne 0) {
 }
 Write-Host $probeOutput
 
-$nativeCodex.Directory.FullName |
-  Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+if (-not [string]::IsNullOrWhiteSpace($env:GITHUB_PATH)) {
+  $nativeCodex.Directory.FullName |
+    Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+}
