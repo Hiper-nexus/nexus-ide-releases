@@ -3897,7 +3897,7 @@ export const RELEASE_07637: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07638: AppRelease = {
   version: '0.76.38',
   date: '2026-09-15',
   codename: 'Terminais Windows com launchers nativos',
@@ -3925,6 +3925,37 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'Caminhos de CLI salvos de versões anteriores são revalidados antes do spawn; um shim inválido é ' +
         'descartado e o launcher Windows correto é resolvido novamente.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.39',
+  date: '2026-09-15',
+  codename: 'Navegação de panes resiliente',
+  summary:
+    'Fecha a regressão de navegação que podia interromper um comando de voz durante a hidratação ' +
+    'transitória dos vínculos de missão, sem diluir o isolamento entre grades de missões.',
+  highlights: [
+    {
+      title: 'Jarvis não perde o comando em estado parcial',
+      detail:
+        'Se o mapa transitório de panes ainda não estiver disponível, um shell ou agente sem missão ' +
+        'segue para a grade global de forma segura em vez de lançar uma exceção.',
+    },
+    {
+      title: 'Missões continuam separadas',
+      detail:
+        'Quando o vínculo de runtime está disponível, as rotas de rail, atalho, paleta e voz ainda ' +
+        'abrem exclusivamente a superfície de terminais da missão correspondente.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Snapshot transitório não derruba a navegação',
+      detail:
+        'A leitura de paneMissions agora trata ausência temporária do mapa como pane sem vínculo, ' +
+        'preservando o comportamento esperado de shells e agentes comuns.',
     },
   ],
 };

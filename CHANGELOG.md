@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.76.39 — Navegação de panes resiliente
+
+- **Comandos de voz continuam funcionais durante a hidratação**: se a lista transitória de vínculos de missão ainda estiver chegando do runtime, um shell ou agente comum abre normalmente na grade global; o Jarvis não interrompe o comando com erro de estado parcial.
+- **Isolamento de missão preservado**: quando o vínculo existe, rail, atalhos, paleta e Jarvis continuam abrindo exclusivamente os terminais da missão dona do pane.
+
 ## 0.76.38 — Terminais Windows com launchers nativos
 
 - **Panes de IA no Windows**: a resolução de executáveis agora ignora scripts POSIX sem extensão instalados ao lado de CLIs npm e seleciona o launcher nativo `.cmd`, `.bat`, `.exe` ou `.com` compatível com ConPTY. Isso impede que a abertura de um pane de Codex/Claude/Kimi/Grok derrube o host de PTY com `code -1`.
