@@ -416,7 +416,10 @@ describe('TerminalWorkspace em missão — "+ Pane" do operador', () => {
     useLayoutStore.setState({ viewKind: 'canvas' });
     mount(<TerminalWorkspace missionId="m-1" />);
 
-    expect([...(canvasViewProps().visiblePaneIds ?? [])]).toEqual(['pane-w1']);
+    // Só o pane da missão na árvore: não há o que filtrar, então a vista usa a
+    // árvore canônica (undefined) em vez de um Set redundante — ver o contrato
+    // "filtro é no-op quando cobre tudo".
+    expect(canvasViewProps().visiblePaneIds).toBeUndefined();
     expect(typeof canvasViewProps().onPaneCreated).toBe('function');
 
     // A barra do canvas cria o shell e avisa: o id entra no filtro da vista.
@@ -789,5 +792,71 @@ describe('TerminalWorkspace — foco puxa a aba (F-560)', () => {
     });
 
     expect(attachedPaneIds()).toEqual(['pane-da-missao']);
+  });
+});
+
+// ── F-560: escopo único não filtra — identidade da árvore é o contrato ───────
+
+describe('TerminalWorkspace — filtro é no-op quando cobre tudo (F-560)', () => {
+  it('escopo único devolve undefined, não um Set com todos os panes', () => {
+    // Por que isto importa: com um Set, PaneGrid reconstrói a árvore via
+    // buildGridTree, que cunha ids novos a cada recomputação. Como este
+    // componente assina missionSummaries/paneMissions, isso remonta o mosaico a
+    // cada atualização de missão e MATA a sessão de PTY por baixo. O gate de
+    // release pegou exatamente isso no app empacotado.
+    useLayoutStore.setState({
+      root: buildGridTree([
+        { id: 'pane-a', kind: 'shell', title: 'A' },
+        { id: 'pane-b', kind: 'shell', title: 'B' },
+      ]),
+      focusedPaneId: 'pane-a',
+      viewKind: 'canvas',
+    });
+    useOrchStore.setState({
+      paneMissions: {},
+      missions: [],
+      missionSummaries: [],
+    });
+
+    mount(<TerminalWorkspace />);
+
+    expect(canvasViewProps().visiblePaneIds).toBeUndefined();
+  });
+
+  it('com dois escopos o filtro volta a existir — aí ele tem o que filtrar', () => {
+    useLayoutStore.setState({
+      root: buildGridTree([
+        {
+          id: 'pane-missao',
+          kind: 'cli-agent',
+          title: 'Worker',
+          adapterId: 'codex',
+          missionId: 'mission-a',
+        },
+        { id: 'pane-solto', kind: 'shell', title: 'Solto' },
+      ]),
+      focusedPaneId: 'pane-missao',
+      viewKind: 'canvas',
+    });
+    useOrchStore.setState({
+      paneMissions: { 'pane-missao': 'mission-a' },
+      missions: [],
+      missionSummaries: [
+        {
+          id: 'mission-a',
+          title: 'Missão A',
+          state: 'running',
+          progress: { completed: 0, total: 1 },
+          needsAttention: false,
+          updatedAt: 1,
+        },
+      ],
+    });
+
+    mount(<TerminalWorkspace />);
+
+    const visible = canvasViewProps().visiblePaneIds;
+    expect(visible).toBeDefined();
+    expect([...visible!]).toEqual(['pane-missao']);
   });
 });

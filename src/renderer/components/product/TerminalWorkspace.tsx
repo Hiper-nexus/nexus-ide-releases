@@ -235,6 +235,15 @@ export function TerminalWorkspace({
       : selectScopePanes(panes, effectiveScopeKey, paneMissions);
     const ids = new Set(visible.map((pane) => pane.id));
     for (const pinned of operatorPins[effectiveScopeKey] ?? []) ids.add(pinned);
+    // Escopo único: NÃO filtrar. `undefined` faz o PaneGrid desenhar a árvore
+    // CANÔNICA, que é sempre a mesma referência. Devolver um Set contendo todos
+    // os panes parece equivalente e NÃO é: o grid reconstrói a árvore com
+    // buildGridTree (split-tree.ts:77), que cunha ids novos a cada chamada, e
+    // como este componente agora assina missionSummaries/paneMissions isso
+    // recomputa a cada atualização de missão — remontando o mosaico por baixo e
+    // levando a sessão de PTY junto. O gate de release pegou como
+    // "dictation-hold-to-talk (write-refused-exited)" no app empacotado.
+    if (ids.size === panes.length) return undefined;
     return ids;
   }, [
     panes,
