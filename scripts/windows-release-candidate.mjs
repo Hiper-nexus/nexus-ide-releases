@@ -54,9 +54,21 @@ export function assertWindowsArchiveEntries(entries, version) {
     !entries.includes(`nexus_ide-${version}-full.nupkg`)) fail('archive must contain exactly four flat candidate files');
 }
 
+export function windowsArchiveListingInvocation(zip, platform = process.platform) {
+  if (platform === 'win32') {
+    // Windows ships bsdtar, which reads ZIP central directories without
+    // depending on a POSIX /usr/bin/unzip path.
+    return { command: 'tar', args: ['-tf', zip] };
+  }
+  return { command: '/usr/bin/unzip', args: ['-Z', '-1', zip] };
+}
+
 export async function extractWindowsArchive(zip, destination, version) {
-  // Publication is a macOS operation. The native extractor does not support onEntry.
-  const listing = spawnSync('/usr/bin/unzip', ['-Z', '-1', zip], {
+  const invocation = windowsArchiveListingInvocation(zip);
+  // The native extractor does not support onEntry; inspect the central
+  // directory before extracting so traversal, duplicate and nested entries
+  // are rejected on every publication host.
+  const listing = spawnSync(invocation.command, invocation.args, {
     encoding: 'utf8', shell: false, timeout: 30_000, maxBuffer: 8192,
   });
   if (listing.error || listing.status !== 0) fail('cannot inspect artifact archive');
@@ -196,6 +208,16 @@ export function assertMonotonicWindowsRelease(releases, version) {
   for (const release of releases) {
     const other = String(release.tag_name ?? '').replace(/^v/u, '');
     if (release.draft || release.prerelease || !STABLE.test(other)) continue;
+    const setupName = `NexusIDE-${other}-win32-x64-Setup.exe`;
+    const assetNames = Array.isArray(release.assets)
+      ? release.assets.map((asset) =>
+          typeof asset === 'string' ? asset : asset?.name,
+        )
+      : [];
+    // Releases for macOS/Linux share the public repository but must not
+    // advance the Windows channel: electron-updater selects only the Windows
+    // payload. Older metadata without an asset list remains conservative.
+    if (assetNames.length > 0 && !assetNames.includes(setupName)) continue;
     const parts = other.split('.').map(Number);
     const difference = parts.map((part, index) => part - current[index]).find(value => value !== 0);
     if (difference > 0) fail(`newer stable ${release.tag_name} already exists; refusing non-monotonic publication`);

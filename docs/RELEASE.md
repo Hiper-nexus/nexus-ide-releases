@@ -3,11 +3,41 @@
 Checklist funcional da candidata **0.60** (ainda em aberto):
 [`RELEASE-0.60.md`](../RELEASE-0.60.md).
 
-A publicação é coordenada **localmente no Mac**, com candidato Windows assinado obrigatório produzido pelo workflow privado protegido `windows-release.yml`. O Mac de release
-assina com Developer ID, notariza com o perfil exato `"nexus-notary"`, executa
-os gates no mesmo commit da tag e envia os artefatos diretamente pelo alvo
-`npm run release:publish`. O publicador fixa `--repo` em toda chamada ao `gh`;
-não depende do repositório inferido pelo diretório atual.
+As publicações são **independentes por sistema operacional**. O Windows usa a
+candidata assinada produzida pelo workflow privado protegido
+`windows-release.yml` e a publica com `npm run release:publish:windows`; esse
+comando não inicia nem exige build, assinatura ou notarização macOS. O Mac
+continua usando seu próprio caminho de Developer ID/notarização. Os dois
+publicadores fixam `--repo` em toda chamada ao `gh`; não dependem do
+repositório inferido pelo diretório atual.
+
+## Canal Windows independente
+
+Uma publicação Windows usa somente a candidata Windows x64 do mesmo commit e
+tag estável. A release canônica privada recebe `Setup.exe`, NUPKG, `RELEASES`,
+recibo assinado e, quando autorizado, o waiver de prova de upgrade. O espelho
+público recebe **somente** `Setup.exe`, NUPKG e `RELEASES`. Assim o feed
+Squirrel Windows fica disponível sem aguardar um artefato de macOS.
+
+O repositório público é compartilhado, mas cada atualizador seleciona apenas o
+asset compatível: uma release macOS sem Setup Windows não avança o canal
+Windows, e uma release Windows sem ZIP macOS não é oferecida a Macs. Nunca
+adicione assets de outro sistema depois de uma release pública; cada sistema
+publica sua própria próxima versão estável.
+
+No host Windows de publicação, rode:
+
+```powershell
+$env:NEXUS_WINDOWS_RELEASE_RUN_ID = '<run-assinado-do-windows-release.yml>'
+# Só enquanto o harness N→N+1 ainda não produzir a prova automaticamente:
+$env:NEXUS_WINDOWS_UPGRADE_PROOF_WAIVER = '<motivo aprovado pelo operador>'
+npm run release:publish:windows
+```
+
+O run deve ser o workflow protegido, bem-sucedido e no mesmo commit da tag. O
+publicador baixa o artifact autenticado, confere seu SHA-256, assinaturas,
+timestamp e inventário Squirrel antes de criar drafts e só então publica a
+canônica seguida do espelho público.
 
 O runtime de release também é autoridade versionada: use exatamente Node
 `22.23.2`, conforme `package.json > nexusRelease.node`. Outro patch de Node 22
@@ -29,7 +59,13 @@ quando:
 5. o manifesto incluir auditoria/SBOM de produção e da toolchain, lockfile,
    versões Node/npm e hashes finais de DMG, ZIP e evidência E2E.
 
-## Publicação canônica e espelho
+## Fluxo histórico multiplataforma (somente quando as duas candidatas existem)
+
+O comando legado `npm run release:publish` descreve uma publicação composta.
+Ele não é o caminho para desbloquear uma release Windows: use sempre
+`npm run release:publish:windows` para publicar o canal Windows de forma
+independente. O fluxo composto abaixo permanece documentado apenas para uma
+publicação que já tenha candidatas completas dos sistemas envolvidos.
 
 O comando publica duas releases com a mesma tag, em ordem fail-closed:
 

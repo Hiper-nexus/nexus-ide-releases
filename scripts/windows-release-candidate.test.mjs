@@ -55,6 +55,25 @@ describe('signed Windows workflow authority', () => {
   });
 });
 describe('Windows candidate bytes within an authenticated archive', () => {
+  it.runIf(process.platform === 'win32')('extracts a real flat archive on the Windows signing host', async () => {
+    const f = fixture();
+    const container = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-win-zip-'));
+    roots.push(container);
+    const zip = path.join(container, 'candidate.zip');
+    const result = spawnSync('tar', [
+      '-a',
+      '-c',
+      '-f',
+      zip,
+      '-C',
+      f.root,
+      ...fs.readdirSync(f.root),
+    ]);
+    expect(result.status).toBe(0);
+    const extracted = path.join(container, 'extracted');
+    await extractWindowsArchive(zip, extracted, '1.2.3');
+    expect(assertWindowsCandidate(extracted, f.expected).assetPaths).toHaveLength(3);
+  });
   it.runIf(process.platform === 'darwin')('extracts a real flat archive and validates its immutable candidate', async () => {
     const f = fixture();
     const container = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-win-zip-'));
@@ -145,8 +164,26 @@ describe('Windows candidate bytes within an authenticated archive', () => {
     expect(merged.publicAssetPaths).toEqual([...mac.publicAssetPaths, ...candidate.assetPaths]);
     expect(mac.publicAssetPaths).toHaveLength(2);
   });
-  it('blocks old stable publication but permits exact-version replay and ignores drafts', () => {
-    expect(() => assertMonotonicWindowsRelease([{ tag_name: 'v1.2.4', draft: false, prerelease: false }], '1.2.3')).toThrow(/newer stable/);
-    expect(() => assertMonotonicWindowsRelease([{ tag_name: 'v1.2.3' }, { tag_name: 'v9.0.0', draft: true }], '1.2.3')).not.toThrow();
+  it('orders the Windows channel without letting a newer Mac-only release block it', () => {
+    expect(() => assertMonotonicWindowsRelease([
+      {
+        tag_name: 'v1.2.4',
+        draft: false,
+        prerelease: false,
+        assets: ['NexusIDE-1.2.4-arm64.dmg', 'NexusIDE-darwin-arm64-1.2.4.zip'],
+      },
+    ], '1.2.3')).not.toThrow();
+    expect(() => assertMonotonicWindowsRelease([
+      {
+        tag_name: 'v1.2.4',
+        draft: false,
+        prerelease: false,
+        assets: ['NexusIDE-1.2.4-win32-x64-Setup.exe'],
+      },
+    ], '1.2.3')).toThrow(/newer stable/);
+    expect(() => assertMonotonicWindowsRelease([
+      { tag_name: 'v1.2.3', assets: ['NexusIDE-1.2.3-win32-x64-Setup.exe'] },
+      { tag_name: 'v9.0.0', draft: true, assets: ['NexusIDE-9.0.0-win32-x64-Setup.exe'] },
+    ], '1.2.3')).not.toThrow();
   });
 });

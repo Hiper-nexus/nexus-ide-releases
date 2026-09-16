@@ -38,6 +38,9 @@ export const LEGACY_CANONICAL_RELEASE_REPOS = Object.freeze([
 const MANUAL_RELEASE_PRODUCTION_AUTHORITY = Symbol(
   'manual-release-production-authority',
 );
+const WINDOWS_RELEASE_PRODUCTION_AUTHORITY = Symbol(
+  'windows-release-production-authority',
+);
 const REUSABLE_RELEASE_CANDIDATES = new WeakMap();
 
 export function githubRepositoryTarget(repo) {
@@ -1010,14 +1013,14 @@ export function classifyGitHubReleaseResult(result, { repo, tag }) {
   };
 }
 
-function createGitHubClient(root) {
+export function createGitHubClient(root) {
   return {
     listStableReleases(repo) {
       githubRepositoryTarget(repo);
       const lines = runCapture('gh', [
         'api', '--hostname', 'github.com', '--paginate',
         `repos/${repo}/releases?per_page=100`,
-        '--jq', '.[] | {tag_name,draft,prerelease} | @json',
+        '--jq', '.[] | {tag_name,draft,prerelease,assets: [.assets[].name]} | @json',
       ], root).trim();
       return lines ? lines.split('\n').map(line => JSON.parse(line)) : [];
     },
@@ -1057,7 +1060,7 @@ async function assertPublicationStillMonotonic(github, repositories, version) {
   }
 }
 
-function createRepositoryPublisher(root, canonicalRepo) {
+export function createRepositoryPublisher(root, canonicalRepo) {
   const verifyOrigin = () =>
     verifyCanonicalOrigin(
       runCapture(
@@ -1130,7 +1133,7 @@ function createRepositoryPublisher(root, canonicalRepo) {
   };
 }
 
-function verifyPublished(state, { tag, expectedAssets }) {
+export function verifyPublished(state, { tag, expectedAssets }) {
   if (state.kind !== 'published') {
     throw new Error(`GitHub release ${state.repo}@${tag} is not published`);
   }
@@ -1141,7 +1144,7 @@ function verifyPublished(state, { tag, expectedAssets }) {
   });
 }
 
-function assertCanonicalPublicationOrder(canonical, mirror) {
+export function assertCanonicalPublicationOrder(canonical, mirror) {
   if (mirror.kind !== 'published') return;
   if (canonical.kind !== 'published') {
     throw new Error(
@@ -1163,7 +1166,7 @@ function assertCanonicalPublicationOrder(canonical, mirror) {
   }
 }
 
-async function prepareDraft({
+export async function prepareDraft({
   github,
   state,
   repo,
@@ -1514,6 +1517,298 @@ export function publishManualRelease(options = {}) {
   ));
 }
 
+function collectWindowsReleaseRepositoryState(root, authority) {
+  const state = collectReleaseRepositoryState({
+    version: authority.version,
+    allowedTagSignerFingerprints: authority.allowedTagSignerFingerprints,
+    gitCapture(args) {
+      return runCapture('git', args, root);
+    },
+  });
+  return assertReleaseRepositoryState({
+    ...state,
+    version: authority.version,
+    allowedTagSignerFingerprints: authority.allowedTagSignerFingerprints,
+  });
+}
+
+/**
+ * Builds the two immutable inventories for a Windows-only public release.
+ * The public mirror gets only Squirrel's payload; the signed worker receipt
+ * and an optional operator waiver remain in the private canonical release.
+ */
+export function materializeWindowsReleaseCandidate(candidate) {
+  if (
+    !candidate ||
+    !Array.isArray(candidate.assetPaths) ||
+    candidate.assetPaths.length !== 3 ||
+    !Array.isArray(candidate.assets) ||
+    candidate.assets.length !== 3 ||
+    typeof candidate.receiptPath !== 'string' ||
+    !candidate.receiptAsset
+  ) {
+    throw new Error('verified Windows candidate is incomplete');
+  }
+  if ((candidate.waiverPath === undefined) !== (candidate.waiverAsset === undefined)) {
+    throw new Error('Windows upgrade-proof waiver inventory is incoherent');
+  }
+  const canonicalAssetPaths = [
+    ...candidate.assetPaths,
+    candidate.receiptPath,
+    ...(candidate.waiverPath ? [candidate.waiverPath] : []),
+  ];
+  const publicAssets = describeLocalReleaseAssets(candidate.assetPaths);
+  const canonicalAssets = describeLocalReleaseAssets(canonicalAssetPaths);
+  const expectedCanonicalAssets = [
+    ...candidate.assets,
+    candidate.receiptAsset,
+    ...(candidate.waiverAsset ? [candidate.waiverAsset] : []),
+  ];
+  if (
+    !sameAssetInventory(publicAssets, candidate.assets) ||
+    !sameAssetInventory(canonicalAssets, expectedCanonicalAssets)
+  ) {
+    throw new Error('verified Windows candidate bytes changed before publication');
+  }
+  return {
+    canonicalAssetPaths,
+    publicAssetPaths: [...candidate.assetPaths],
+    canonicalAssets,
+    publicAssets,
+  };
+}
+
+async function publishWindowsReleaseCore(
+  options = {},
+  productionAuthority = null,
+) {
+  const authoritative =
+    productionAuthority === WINDOWS_RELEASE_PRODUCTION_AUTHORITY;
+  const root = path.resolve(options.root ?? process.cwd());
+  const environment = options.environment ?? process.env;
+  if (authoritative) requireWindowsRunId(environment);
+  const authority = authoritative
+    ? readAndAssertReleaseAuthority(root)
+    : options.authority;
+  if (!authority) {
+    throw new Error('Windows release test core requires explicit release authority');
+  }
+  const nodeVersion = authoritative
+    ? process.version
+    : (options.nodeVersion ?? process.version);
+  if (nodeVersion !== `v${authority.nodeVersion}`) {
+    throw new Error(
+      `Windows release publication requires Node ${authority.nodeVersion}; ` +
+        `found ${nodeVersion}`,
+    );
+  }
+  const tag = `v${authority.version}`;
+  const repositoryState = authoritative
+    ? collectWindowsReleaseRepositoryState(root, authority)
+    : options.repositoryState;
+  if (
+    !repositoryState ||
+    repositoryState.tag !== tag ||
+    !/^[a-f\d]{40}$/u.test(repositoryState.commitSha ?? '') ||
+    !/^[a-f\d]{40}$/u.test(repositoryState.tagObjectSha ?? '')
+  ) {
+    throw new Error('Windows release tag is not bound to the release authority');
+  }
+  const canonicalRepo = authoritative
+    ? CANONICAL_RELEASE_REPO
+    : (options.canonicalRepo ?? CANONICAL_RELEASE_REPO);
+  const publicRepo = authoritative
+    ? PUBLIC_RELEASE_REPO
+    : (options.publicRepo ?? PUBLIC_RELEASE_REPO);
+  const github = authoritative ? createGitHubClient(root) : options.github;
+  const repositoryPublisher = authoritative
+    ? createRepositoryPublisher(root, canonicalRepo)
+    : options.repositoryPublisher;
+  const stage = authoritative ? stageReleaseAssets : options.stageReleaseAssets;
+  const loadWindowsCandidate = authoritative
+    ? loadSignedWindowsCandidate
+    : options.loadWindowsCandidate;
+  if (
+    !github ||
+    !repositoryPublisher ||
+    typeof repositoryPublisher.verify !== 'function' ||
+    typeof stage !== 'function' ||
+    typeof loadWindowsCandidate !== 'function'
+  ) {
+    throw new Error(
+      'Windows release test core requires explicit non-production dependencies',
+    );
+  }
+
+  let canonical = await github.inspect(canonicalRepo, tag);
+  let mirror = await github.inspect(publicRepo, tag);
+  assertCanonicalPublicationOrder(canonical, mirror);
+  const windows = await loadWindowsCandidate({
+    root,
+    environment,
+    version: authority.version,
+    commitSha: repositoryState.commitSha,
+  });
+  let stagedCandidate;
+  try {
+    stagedCandidate = await stage(materializeWindowsReleaseCandidate(windows));
+  } finally {
+    windows?.dispose?.();
+  }
+  const release = stagedCandidate.release;
+  const binding = {
+    commitSha: repositoryState.commitSha,
+    tag,
+    tagObjectSha: repositoryState.tagObjectSha,
+  };
+  try {
+    await repositoryPublisher.verify(binding);
+    canonical = await github.inspect(canonicalRepo, tag);
+    mirror = await github.inspect(publicRepo, tag);
+    assertCanonicalPublicationOrder(canonical, mirror);
+    if (canonical.kind === 'published') {
+      verifyPublished(canonical, {
+        tag,
+        expectedAssets: release.canonicalAssets,
+      });
+    }
+    if (mirror.kind === 'published') {
+      if (canonical.kind !== 'published') {
+        throw new Error('public mirror has no published canonical Windows release');
+      }
+      verifyPublished(mirror, {
+        tag,
+        expectedAssets: release.publicAssets,
+      });
+    }
+
+    canonical = await prepareDraft({
+      github,
+      state: canonical,
+      repo: canonicalRepo,
+      tag,
+      assetPaths: release.canonicalAssetPaths,
+      expectedAssets: release.canonicalAssets,
+      verifyTag: true,
+      assertLocalAssets: () => assertStagedReleaseAssets(release),
+    });
+    mirror = await prepareDraft({
+      github,
+      state: mirror,
+      repo: publicRepo,
+      tag,
+      assetPaths: release.publicAssetPaths,
+      expectedAssets: release.publicAssets,
+      verifyTag: false,
+      assertLocalAssets: () => assertStagedReleaseAssets(release),
+    });
+
+    await repositoryPublisher.verify(binding);
+    if (canonical.kind !== 'published') {
+      verifyGitHubReleaseSnapshot(canonical.snapshot, {
+        tag,
+        expectedDraft: true,
+        expectedAssets: release.canonicalAssets,
+      });
+      assertStagedReleaseAssets(release);
+      await assertPublicationStillMonotonic(
+        github,
+        [canonicalRepo, publicRepo],
+        authority.version,
+      );
+      await github.publish(canonicalRepo, tag);
+      canonical = await github.inspect(canonicalRepo, tag);
+      verifyPublished(canonical, {
+        tag,
+        expectedAssets: release.canonicalAssets,
+      });
+    }
+
+    canonical = await github.inspect(canonicalRepo, tag);
+    await repositoryPublisher.verify(binding);
+    verifyPublished(canonical, {
+      tag,
+      expectedAssets: release.canonicalAssets,
+    });
+    mirror = await github.inspect(publicRepo, tag);
+    if (mirror.kind === 'draft') {
+      verifyGitHubReleaseSnapshot(mirror.snapshot, {
+        tag,
+        expectedDraft: true,
+        expectedAssets: release.publicAssets,
+      });
+      assertStagedReleaseAssets(release);
+      await assertPublicationStillMonotonic(
+        github,
+        [canonicalRepo, publicRepo],
+        authority.version,
+      );
+      await github.publish(publicRepo, tag);
+      mirror = await github.inspect(publicRepo, tag);
+    }
+    verifyPublished(mirror, {
+      tag,
+      expectedAssets: release.publicAssets,
+    });
+    await repositoryPublisher.verify(binding);
+    assertCanonicalPublicationOrder(canonical, mirror);
+    return {
+      tag,
+      commitSha: repositoryState.commitSha,
+      canonicalRepo,
+      publicRepo,
+    };
+  } finally {
+    stagedCandidate.cleanup();
+  }
+}
+
+/** Windows is a self-contained release channel: no macOS signing or candidate
+ * gate runs here. Its own signed worker artifact is the only binary authority. */
+export function publishWindowsRelease(options = {}) {
+  if (options === null || typeof options !== 'object') {
+    throw new Error('sealed Windows release rejects dependency override: prototype');
+  }
+  const allowed = new Set(['root', 'environment']);
+  const prototype = Object.getPrototypeOf(options);
+  const descriptors = Object.getOwnPropertyDescriptors(options);
+  const keys = Reflect.ownKeys(descriptors);
+  const unexpected = keys.find(
+    (key) =>
+      typeof key !== 'string' ||
+      !allowed.has(key) ||
+      descriptors[key]?.get !== undefined ||
+      descriptors[key]?.set !== undefined,
+  );
+  if (
+    (prototype !== Object.prototype && prototype !== null) ||
+    unexpected !== undefined
+  ) {
+    throw new Error(
+      `sealed Windows release rejects dependency override: ${String(unexpected ?? 'prototype')}`,
+    );
+  }
+  return withPublicationLock(
+    () => publishWindowsReleaseCore(
+      {
+        ...(descriptors.root ? { root: descriptors.root.value } : {}),
+        ...(descriptors.environment
+          ? { environment: descriptors.environment.value }
+          : {}),
+      },
+      WINDOWS_RELEASE_PRODUCTION_AUTHORITY,
+    ),
+    {
+      lockPath: path.join(os.tmpdir(), 'nexus-ide-windows-release-publication.lock'),
+    },
+  );
+}
+
+/** Dependency-injected controller for the Windows-only release tests. */
+export function publishWindowsReleaseTestCore(options = {}) {
+  return publishWindowsReleaseCore(options, null);
+}
+
 /**
  * Dependency-injected controller for unit tests. It has no fallback to any
  * production GitHub, git, candidate-gate, materialization or staging effect.
@@ -1523,9 +1818,13 @@ export function publishManualReleaseTestCore(options = {}) {
 }
 
 async function main() {
-  const result = await publishManualRelease();
+  const windowsOnly = process.argv.includes('--windows');
+  const result = windowsOnly
+    ? await publishWindowsRelease()
+    : await publishManualRelease();
   process.stdout.write(
-    `[release-publish] PASS ${result.tag} ${result.commitSha} ` +
+    `[${windowsOnly ? 'windows-release-publish' : 'release-publish'}] PASS ` +
+      `${result.tag} ${result.commitSha} ` +
       `(${result.canonicalRepo} -> ${result.publicRepo})\n`,
   );
 }

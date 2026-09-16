@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 
+import * as releasePublisher from './publish-release.mjs';
+
 import {
   CANONICAL_RELEASE_REPO,
   PUBLIC_RELEASE_REPO,
@@ -1106,6 +1108,65 @@ describe('manual GitHub release publication', () => {
   });
 });
 
+describe('independent Windows GitHub release publication', () => {
+  it('publishes a verified Windows candidate without invoking the macOS candidate gate', async () => {
+    const fixture = windowsPublicationFixture();
+    const independentPublisher = releasePublisher.publishWindowsReleaseTestCore
+      ?? (async () => {
+        throw new Error('independent Windows publisher is not implemented');
+      });
+
+    await expect(independentPublisher({
+      root: fixture.root,
+      environment: {
+        NEXUS_WINDOWS_RELEASE_RUN_ID: '42',
+        NEXUS_WINDOWS_UPGRADE_PROOF_WAIVER: fixture.waiver.reason,
+      },
+      authority: releaseAuthority(),
+      nodeVersion: releaseNodeVersion(),
+      repositoryState: {
+        commitSha: 'a'.repeat(40),
+        tag: 'v1.2.3',
+        tagObjectSha: 'e'.repeat(40),
+      },
+      github: fixture.github,
+      repositoryPublisher: {
+        async push() {
+          throw new Error('the signed release tag already exists and must not be recreated');
+        },
+        async verify() {
+          fixture.events.push('verify-tag');
+        },
+      },
+      stageReleaseAssets: passthroughStage,
+      loadWindowsCandidate: async () => fixture.candidate,
+      runCandidateGate: async () => {
+        throw new Error('macOS candidate gate must not run for Windows publication');
+      },
+    })).resolves.toMatchObject({
+      tag: 'v1.2.3',
+      canonicalRepo: CANONICAL_RELEASE_REPO,
+      publicRepo: PUBLIC_RELEASE_REPO,
+    });
+
+    const canonicalUpload = fixture.events.find((event) =>
+      event.startsWith(`upload:${CANONICAL_RELEASE_REPO}:`),
+    );
+    const publicUpload = fixture.events.find((event) =>
+      event.startsWith(`upload:${PUBLIC_RELEASE_REPO}:`),
+    );
+    expect(canonicalUpload).toContain('windows-release-receipt.json');
+    expect(canonicalUpload).toContain('windows-upgrade-proof-waiver.json');
+    expect(publicUpload).toContain('NexusIDE-1.2.3-win32-x64-Setup.exe');
+    expect(publicUpload).toContain('nexus_ide-1.2.3-full.nupkg');
+    expect(publicUpload).toContain('RELEASES');
+    expect(publicUpload).not.toContain('windows-release-receipt.json');
+    expect(publicUpload).not.toContain('windows-upgrade-proof-waiver.json');
+    expect(fixture.events.indexOf(`publish:${CANONICAL_RELEASE_REPO}`))
+      .toBeLessThan(fixture.events.indexOf(`publish:${PUBLIC_RELEASE_REPO}`));
+  });
+});
+
 const digest = (value) =>
   createHash('sha256').update(value).digest('hex');
 
@@ -1277,6 +1338,91 @@ function fakeGitHub({ states, fixture, events }) {
               : '2026-07-23T00:00:01.000Z',
         },
       });
+    },
+  };
+}
+
+function windowsPublicationFixture() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-windows-publish-fixture-'));
+  publicationRoots.push(root);
+  const assetNames = [
+    'NexusIDE-1.2.3-win32-x64-Setup.exe',
+    'nexus_ide-1.2.3-full.nupkg',
+    'RELEASES',
+  ];
+  for (const name of assetNames) {
+    fs.writeFileSync(path.join(root, name), `verified ${name}`);
+  }
+  const assetPaths = assetNames.map((name) => path.join(root, name));
+  const assets = describeLocalReleaseAssets(assetPaths);
+  const receiptPath = path.join(root, 'windows-release-receipt.json');
+  fs.writeFileSync(receiptPath, 'verified receipt');
+  const waiverPath = path.join(root, 'windows-upgrade-proof-waiver.json');
+  fs.writeFileSync(waiverPath, 'verified waiver');
+  const receiptAsset = describeLocalReleaseAssets([receiptPath])[0];
+  const waiverAsset = describeLocalReleaseAssets([waiverPath])[0];
+  const events = [];
+  const states = new Map();
+  const get = (repo, tag) => states.get(`${repo}:${tag}`) ?? {
+    kind: 'missing',
+    repo,
+    tag,
+  };
+  const put = (repo, tag, state) => states.set(`${repo}:${tag}`, state);
+  const github = {
+    async listStableReleases() {
+      return [{
+        tag_name: 'v1.2.4',
+        draft: false,
+        prerelease: false,
+        assets: ['NexusIDE-1.2.4-arm64.dmg'],
+      }];
+    },
+    async inspect(repo, tag) {
+      return get(repo, tag);
+    },
+    async createDraft(repo, tag, { verifyTag }) {
+      events.push(`create:${repo}:${verifyTag ? 'verify' : 'no-verify'}`);
+      put(repo, tag, releaseState(repo, tag, true, []));
+    },
+    async upload(repo, tag, paths) {
+      const uploaded = describeLocalReleaseAssets(paths);
+      events.push(`upload:${repo}:${uploaded.map((asset) => asset.name).sort().join(',')}`);
+      put(repo, tag, releaseState(repo, tag, true, uploaded));
+    },
+    async publish(repo, tag) {
+      events.push(`publish:${repo}`);
+      const state = get(repo, tag);
+      if (state.kind !== 'draft') throw new Error('test publisher expected a draft');
+      put(repo, tag, {
+        ...state,
+        kind: 'published',
+        snapshot: {
+          ...state.snapshot,
+          isDraft: false,
+          publishedAt: repo === CANONICAL_RELEASE_REPO
+            ? '2026-07-23T00:00:00.000Z'
+            : '2026-07-23T00:00:01.000Z',
+        },
+      });
+    },
+  };
+  const waiver = {
+    reason: 'upgrade Windows 1.2.2 para 1.2.3 autorizado pelo proprietário em 2026-09-16',
+  };
+  return {
+    root,
+    events,
+    github,
+    waiver,
+    candidate: {
+      assetPaths,
+      assets,
+      receiptPath,
+      receiptAsset,
+      waiverPath,
+      waiverAsset,
+      dispose() {},
     },
   };
 }
