@@ -87,6 +87,8 @@ export const FEATURE_FLAG_IDS = {
   parallelScheduler: 'orch.parallelScheduler',
   /** Auto-fechar panes não-worker (spawn manual / agentes de ferramenta) após idle > N s. */
   paneNonWorkerAutoClose: 'feature.pane.nonWorkerAutoClose',
+  /** Hub MCP compartilhado: servidores stdio do perfil do usuário sobem uma vez no main (0.76.45). */
+  mcpSharedHub: 'feature.mcp.sharedHub',
   /** PTY atrás de tmux: quit=detach, reopen=attach (paridade Xirp clean-room). */
   ptyPersistentSession: 'feature.pty.persistentSession',
   /** Superfície Project Overview + minimap + goal box. */
@@ -182,6 +184,18 @@ export const BUILTIN_FEATURE_FLAGS: readonly FeatureFlagDefinition[] = [
     killSwitch: false,
     telemetry: true,
     defaultEnabled: false,
+  },
+  {
+    id: FEATURE_FLAG_IDS.mcpSharedHub,
+    owner: 'orch',
+    description:
+      'Hub MCP compartilhado (0.76.45): os servidores MCP stdio do ~/.claude.json do usuário sobem UMA vez no processo main e os panes da mão do operador falam com eles por HTTP (/hub/<key>), em vez de cada pane subir os seus (~600 MB por pane). Desligar volta à herança por pane. Também NEXUS_MCP_SHARED_HUB_DISABLED=1.',
+    channel: 'dev',
+    createdAt: '2026-09-16',
+    removeAfter: '2027-03-31',
+    killSwitch: false,
+    telemetry: false,
+    defaultEnabled: true,
   },
   {
     id: FEATURE_FLAG_IDS.paneNonWorkerAutoClose,

@@ -1,4 +1,6 @@
 import http from "node:http";
+import { FEATURE_FLAG_IDS } from "../../shared/feature-flags";
+import { getFeatureFlagRegistry } from "../feature-flags/feature-flag-registry";
 import { createDestructiveReversibilityPreparer } from "./destructive-reversibility-production";
 import { createSystemReversibilityIo } from "./destructive-reversibility-system-io";
 import fs from "node:fs";
@@ -102,6 +104,12 @@ import { handleHookStatusHttp } from "./hook-status-endpoint";
 import { authenticateArmsToken } from "../connectors/arms-token-store";
 import { handleArmsJsonRpc, markArmsBoot } from "../connectors/arms-endpoint";
 import { emitAppEvent } from "../connectors/app-events";
+import {
+  isMcpSharedHubEnabled,
+  McpStdioBridge,
+  resolveMcpHubBridgeKeys,
+  resolveNativeStdioServerDescriptor,
+} from "../mcp-hub/mcp-stdio-bridge";
 
 export type ArmsRuntimeInstance = "prod" | "dev";
 
@@ -267,6 +275,8 @@ const missionShimBySession = new Map<string, MissionShimRuntime>(); // sessionId
 let disposeTerminationRevocation: (() => void) | null = null;
 let disposePtyMissionControl: (() => void) | null = null;
 let disposeScreenDetection: (() => void) | null = null;
+/** Hub MCP compartilhado (07645): um McpStdioBridge por vida do servidor embutido. */
+let mcpStdioHub: McpStdioBridge | null = null;
 const legacyParserTaps = new ReplaceableEventTapScope();
 /**
  * First-run interstitial responder (workspace trust, data-sharing consent,
@@ -327,6 +337,33 @@ function mcpUrl(): string {
 
 function gateUrl(): string {
   return `http://127.0.0.1:${port}/gate`;
+}
+
+/**
+ * Hub MCP compartilhado (07645): base URL onde os stdio do perfil nativo
+ * (~/.claude.json) são servidos UMA vez para todos os panes da mão do
+ * operador. Único processo por servidor no main — não um por pane.
+ */
+function mcpHubUrl(): string {
+  return `http://127.0.0.1:${port}/hub`;
+}
+
+/**
+ * `undefined` degrada hooks-gen.ts para o comportamento atual (copiar stdio
+ * verbatim): flag desligada, ou perfil nativo sem servidor stdio bridgeável,
+ * ou erro ao ler `~/.claude.json` (nunca deve travar um spawn).
+ */
+function computeMcpHubBridge(): { baseUrl: string; keys: readonly string[] } | undefined {
+  // Flag real do catálogo (painel Labs / overrides) E o kill switch por env
+  // do bridge: qualquer um desligado ⇒ herança por pane, como antes.
+  if (!isMcpSharedHubEnabled()) return undefined;
+  if (!getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.mcpSharedHub)) return undefined;
+  try {
+    const keys = resolveMcpHubBridgeKeys();
+    return keys.length > 0 ? { baseUrl: mcpHubUrl(), keys } : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -512,6 +549,75 @@ async function handleMcpRequest(
   }
   sendJson(res, 200, Array.isArray(parsed) ? responses : responses[0], headers);
   recoverStaleHandoffs();
+}
+
+/**
+ * Hub MCP compartilhado (07645): `/hub/<key>` proxies one JSON-RPC message to
+ * the ONE spawned process for that native stdio server. Security §3 of the
+ * brief: only the role that would have inherited these servers directly (the
+ * operator's own pane) may reach it — a worker must never see or reach the
+ * user's global MCP roster.
+ */
+async function handleMcpHubRequest(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  ctx: AgentGateContext,
+  rawKey: string,
+): Promise<void> {
+  if (req.method === "GET") {
+    sendJson(res, 405, { error: "SSE stream not supported" });
+    return;
+  }
+  if (req.method === "DELETE") {
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+  if (req.method !== "POST") {
+    sendJson(res, 405, { error: "method not allowed" });
+    return;
+  }
+  if (ctx.role !== "user" || !isCurrentGateContext(ctx)) {
+    sendJson(res, 403, { error: "forbidden" });
+    return;
+  }
+  let key: string;
+  try {
+    key = decodeURIComponent(rawKey);
+  } catch {
+    sendJson(res, 400, { error: "malformed hub key" });
+    return;
+  }
+  const descriptor = resolveNativeStdioServerDescriptor(key);
+  if (!descriptor) {
+    sendJson(res, 404, { error: "unknown hub server" });
+    return;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await readBody(req));
+  } catch {
+    sendJson(res, 400, {
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32700, message: "parse error" },
+    });
+    return;
+  }
+  if (!isJsonRpcRequest(parsed)) {
+    sendJson(res, 400, {
+      jsonrpc: "2.0",
+      id: null,
+      error: { code: -32600, message: "invalid request" },
+    });
+    return;
+  }
+  const response = await (mcpStdioHub ??= new McpStdioBridge()).handle(descriptor, parsed);
+  if (!response) {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+  sendJson(res, 200, response);
 }
 
 interface GateBody {
@@ -963,19 +1069,23 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
         // overlay; GLM/LongCat (base URL de terceiro) jamais podem recebê-la.
         const approvedMissionProjectTrust =
           hasApprovedMissionProjectTrust(authority);
+        // F-572: só a mão do operador (role user) herda o perfil MCP global
+        // (~19 servidores, ~600 MB por pane no incidente de 16/09). Worker e
+        // orquestrador nascem só com o MCP do Nexus — como já era em
+        // "hardened" — e ganham o resto por allowlist, não por herança.
+        const inheritNativeProfile =
+          !thirdPartyClaudeFamily &&
+          !gateHome &&
+          (meta?.role ?? "user") === "user";
         const home = prepareEphemeralHome(ctx.token, mcpConfig, {
           carryNativeClaudeAuth: !thirdPartyClaudeFamily,
           adapterId: adapter.id,
           userDataPath: app.getPath("userData"),
           checkoutId: authority.scope.checkoutId,
-          // F-572: só a mão do operador (role user) herda o perfil MCP global
-          // (~19 servidores, ~600 MB por pane no incidente de 16/09). Worker e
-          // orquestrador nascem só com o MCP do Nexus — como já era em
-          // "hardened" — e ganham o resto por allowlist, não por herança.
-          inheritNativeProfile:
-            !thirdPartyClaudeFamily &&
-            !gateHome &&
-            (meta?.role ?? "user") === "user",
+          inheritNativeProfile,
+          // Hub MCP compartilhado (07645): só computado quando o pane
+          // herdaria mesmo — nunca calculado nem exposto a worker/orquestrador.
+          mcpHubBridge: inheritNativeProfile ? computeMcpHubBridge() : undefined,
           gateHooks: gateHome,
           cwd: authority.cwd,
           approvedMissionProjectTrust,
@@ -1610,6 +1720,11 @@ export function startMcpServer(): Promise<void> {
         await handleGateRequest(req, res, ctx, gateMatch[1]);
         return;
       }
+      const hubMatch = /^\/hub\/([^/?]+)(?:\?.*)?$/.exec(url);
+      if (hubMatch) {
+        await handleMcpHubRequest(req, res, ctx, hubMatch[1]!);
+        return;
+      }
       // Semantic status hooks (emdash wave 1) — additive, never enforcement.
       if (url === "/hook/status" && req.method === "POST") {
         await handleHookStatusHttp(req, res, ctx);
@@ -1665,6 +1780,8 @@ export function stopMcpServer(): void {
   disposePtyMissionControl = null;
   disposeScreenDetection?.();
   disposeScreenDetection = null;
+  mcpStdioHub?.disposeAll();
+  mcpStdioHub = null;
   for (const token of sessionTokens.values()) {
     cleanupAgyMcpConfig(token);
     cleanupCliMcpSession(token);

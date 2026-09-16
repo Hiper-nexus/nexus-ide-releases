@@ -13,6 +13,10 @@ import {
   objectValue,
   readJsonObject,
 } from './cli-mcp-session-artifacts';
+import {
+  projectMcpServersThroughHub,
+  type McpHubRouteInfo,
+} from '../mcp-hub/mcp-stdio-bridge';
 
 /**
  * Client-side half of the dual skill-gate (docs/ARCHITECTURE.md §E.4).
@@ -293,6 +297,14 @@ export interface EphemeralHomeOptions {
    * efêmero e nunca é sincronizada para o perfil real.
    */
   readonly approvedMissionProjectTrust?: boolean;
+  /**
+   * Hub MCP compartilhado (07645): base URL + chaves stdio bridgeáveis do
+   * perfil nativo. Presente ⇒ cada stdio bridgeável vira `{type:'http',
+   * url:'<baseUrl>/<key>', headers:{Authorization}}` em vez de copiar
+   * command/args (um processo no main, não um por pane). Ausente (flag
+   * desligada ou erro ao montar a lista) ⇒ comportamento atual, verbatim.
+   */
+  readonly mcpHubBridge?: McpHubRouteInfo;
 }
 
 /**
@@ -489,7 +501,13 @@ export function prepareEphemeralHome(
       hasCompletedOnboarding: true,
       ...nativeAuth,
       ...(options.inheritNativeProfile && nativeProfile.mcpServers
-        ? { mcpServers: nativeProfile.mcpServers }
+        ? {
+            mcpServers: projectMcpServersThroughHub(
+              nativeProfile.mcpServers,
+              tokenId,
+              options.mcpHubBridge,
+            ),
+          }
         : {}),
       ...projectTrust,
       autoUpdates: false,
