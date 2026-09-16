@@ -22,8 +22,14 @@ import {
   assertPackagedSmokeProof,
   defaultPackagedTargetPath,
   formatValidationMatrix,
+  PROCESS_TREE_PROOF_TIMEOUT_MS,
+  classifyProcessTreeProof,
+  isKernelExitingRunState,
   killProcessTree,
   listProcessTreePids,
+  parseProcessStatLines,
+  processRunState,
+  readProcessTreeStats,
   packagedBinaryForApp,
   packagedSmokeArgs,
   packagedSmokeEnvironment,
@@ -694,6 +700,11 @@ describe('process tree termination', () => {
       platform: 'darwin',
       kill,
       listPids,
+      classifyRemaining: (pids) => ({
+        orphans: pids,
+        kernelExiting: [],
+        warnings: [],
+      }),
       sleep: () => undefined,
       termGraceMs: 0,
       killGraceMs: 0,
@@ -712,6 +723,11 @@ describe('process tree termination', () => {
       platform: 'darwin',
       kill,
       listPids: () => [42, 777],
+      classifyRemaining: (pids) => ({
+        orphans: pids,
+        kernelExiting: [],
+        warnings: [],
+      }),
       sleep: () => undefined,
       termGraceMs: 0,
       killGraceMs: 0,
@@ -719,6 +735,11 @@ describe('process tree termination', () => {
     });
     expect(proof.ok).toBe(false);
     expect(proof.remainingPids).toEqual([42, 777]);
+    expect(proof.processTreeProof).toEqual({
+      orphans: [42, 777],
+      kernelExiting: [],
+      elapsedMs: expect.any(Number),
+    });
   });
 
   it('fails closed when any termination inventory read fails', () => {
@@ -744,13 +765,174 @@ describe('process tree termination', () => {
       ok: true,
       remainingPids: [],
       signalled: [],
+      warnings: [],
+      processTreeProof: { orphans: [], kernelExiting: [], elapsedMs: 0 },
     });
     expect(killProcessTree(undefined, { platform: 'linux', kill })).toEqual({
       ok: true,
       remainingPids: [],
       signalled: [],
+      warnings: [],
+      processTreeProof: { orphans: [], kernelExiting: [], elapsedMs: 0 },
     });
     expect(kill).not.toHaveBeenCalled();
+  });
+
+  it('treats kernel E/Z leftovers as terminated, not as working orphans', () => {
+    const proof = killProcessTree(8638, {
+      platform: 'darwin',
+      kill: vi.fn(),
+      listPids: () => [8638, 9001],
+      classifyRemaining: () => ({
+        orphans: [],
+        kernelExiting: [8638, 9001],
+        warnings: ['kernel-exiting: 8638', 'kernel-exiting: 9001'],
+      }),
+      sleep: () => undefined,
+      termGraceMs: 0,
+      killGraceMs: 0,
+      pollMs: 0,
+    });
+    expect(proof.ok).toBe(true);
+    expect(proof.remainingPids).toEqual([]);
+    expect(proof.warnings).toEqual([
+      'kernel-exiting: 8638',
+      'kernel-exiting: 9001',
+    ]);
+    expect(proof.processTreeProof).toEqual({
+      orphans: [],
+      kernelExiting: [8638, 9001],
+      elapsedMs: expect.any(Number),
+    });
+  });
+
+  it('still fails when a live S/R/T pid remains beside kernel-exiting ones', () => {
+    const proof = killProcessTree(42, {
+      platform: 'darwin',
+      kill: vi.fn(),
+      listPids: () => [42, 43],
+      classifyRemaining: () => ({
+        orphans: [43],
+        kernelExiting: [42],
+        warnings: ['kernel-exiting: 42'],
+      }),
+      sleep: () => undefined,
+      termGraceMs: 0,
+      killGraceMs: 0,
+      pollMs: 0,
+    });
+    expect(proof.ok).toBe(false);
+    expect(proof.remainingPids).toEqual([43]);
+    expect(proof.warnings).toEqual(['kernel-exiting: 42']);
+    expect(proof.processTreeProof).toEqual({
+      orphans: [43],
+      kernelExiting: [42],
+      elapsedMs: expect.any(Number),
+    });
+  });
+
+  it('caps the process-tree proof instead of waiting on leftovers forever', () => {
+    let t = 0;
+    const proof = killProcessTree(42, {
+      platform: 'darwin',
+      kill: vi.fn(),
+      listPids: () => [42],
+      classifyRemaining: () => ({
+        orphans: [42],
+        kernelExiting: [],
+        warnings: [],
+      }),
+      now: () => t,
+      sleep: (ms) => {
+        t += ms;
+      },
+      pollMs: 20,
+      termGraceMs: 0,
+      killGraceMs: 1_000,
+      proofTimeoutMs: 60,
+    });
+    expect(proof.ok).toBe(false);
+    expect(proof.remainingPids).toEqual([42]);
+    expect(proof.processTreeProof.elapsedMs).toBe(60);
+    expect(proof.processTreeProof.orphans).toEqual([42]);
+    expect(t).toBe(60);
+  });
+});
+
+describe('process-tree STAT classification', () => {
+  it('reads the run state through a leading no-tty marker', () => {
+    expect(processRunState('?Es')).toBe('E');
+    expect(processRunState('Es')).toBe('E');
+    expect(processRunState('Z+')).toBe('Z');
+    expect(processRunState('Ss')).toBe('S');
+    expect(processRunState('R')).toBe('R');
+    expect(processRunState('T')).toBe('T');
+    expect(processRunState('')).toBe('');
+  });
+
+  it('treats only E and Z as kernel-exiting', () => {
+    expect(isKernelExitingRunState('?Es')).toBe(true);
+    expect(isKernelExitingRunState('Z')).toBe(true);
+    expect(isKernelExitingRunState('S+')).toBe(false);
+    expect(isKernelExitingRunState('R')).toBe(false);
+    expect(isKernelExitingRunState('T')).toBe(false);
+    expect(isKernelExitingRunState('U')).toBe(false);
+  });
+
+  it('parses pid/stat/command rows from ps', () => {
+    expect(
+      parseProcessStatLines(
+        ' 8638 Es   /private/tmp/dmg/NexusIDE.app/Contents/MacOS/nexus-ide\n' +
+          '  9001 Ss helper\n' +
+          '\n',
+      ),
+    ).toEqual([
+      {
+        pid: 8638,
+        stat: 'Es',
+        command: '/private/tmp/dmg/NexusIDE.app/Contents/MacOS/nexus-ide',
+      },
+      { pid: 9001, stat: 'Ss', command: 'helper' },
+    ]);
+  });
+
+  it('partitions remaining pids and names kernel-exiting warnings', () => {
+    const classified = classifyProcessTreeProof(
+      [
+        { pid: 8638, stat: '?Es', command: '(nexus-ide)' },
+        { pid: 9001, stat: 'Z', command: '<defunct>' },
+        { pid: 42, stat: 'Ss', command: 'helper' },
+      ],
+      [8638, 9001, 42, 7],
+    );
+    expect(classified).toEqual({
+      orphans: [7, 42],
+      kernelExiting: [8638, 9001],
+      warnings: ['kernel-exiting: 8638', 'kernel-exiting: 9001'],
+    });
+  });
+
+  it('reads STAT via ps -o pid=,stat=,command= with a mocked inventory', () => {
+    const runSync = vi.fn(() => ({
+      status: 0,
+      stdout:
+        ' 8638 Es   /Volumes/NexusIDE/NexusIDE.app/Contents/MacOS/nexus-ide\n' +
+        '   42 Ss helper\n',
+    }));
+    const rows = readProcessTreeStats([8638, 42], { runSync });
+    expect(rows.map((row) => row.pid)).toEqual([8638, 42]);
+    expect(isKernelExitingRunState(rows[0].stat)).toBe(true);
+    expect(classifyProcessTreeProof(rows, [8638, 42])).toEqual({
+      orphans: [42],
+      kernelExiting: [8638],
+      warnings: ['kernel-exiting: 8638'],
+    });
+    expect(runSync).toHaveBeenCalledWith(
+      'ps',
+      ['-o', 'pid=,stat=,command=', '-p', '8638,42'],
+      expect.objectContaining({ shell: false }),
+    );
+    expect(PROCESS_TREE_PROOF_TIMEOUT_MS).toBe(60_000);
   });
 });
 
@@ -916,6 +1098,13 @@ describe('runPackagedSmoke integration (fixture + fake spawn)', () => {
       ok: true,
       remainingPids: [],
       signalled: [],
+      warnings: [],
+      processTreeProof: { orphans: [], kernelExiting: [], elapsedMs: 0 },
+    });
+    expect(result.processTreeProof).toEqual({
+      orphans: [],
+      kernelExiting: [],
+      elapsedMs: 0,
     });
   });
 
@@ -1170,6 +1359,11 @@ describe('runPackagedSmoke integration (fixture + fake spawn)', () => {
       requireGracefulClose: true,
       killTree,
       listTreePids,
+      classifyRemaining: (pids) => ({
+        orphans: pids,
+        kernelExiting: [],
+        warnings: [],
+      }),
       spawnImpl: (_binary, _args, opts) => {
         queueMicrotask(() => {
           const marker = packagedSmokeMarkerPath(opts.env.NEXUS_USER_DATA_DIR);

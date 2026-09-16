@@ -15,6 +15,11 @@ const TIMEOUT_MS = 100_000;
 // a live shell pane under the signed responsibility cohort.
 const GRACEFUL_CLOSE_TIMEOUT_MS = 45_000;
 const PROCESS_TREE_POLL_MS = 50;
+// Hard cap for the post-kill process-tree proof. Kernel-exiting (E) and
+// zombie (Z) pids never leave `ps` on a wedged host; waiting on them is how
+// the packaged smoke hung. Live S/R/T leftovers still fail, but the wait
+// itself must terminate with a diagnosis.
+const PROCESS_TREE_PROOF_TIMEOUT_MS = 60_000;
 const MAX_LOG_CHARS = 32_000;
 const PACKAGED_MAIN_BUNDLE_PATH = '.vite/build/main.js';
 const PACKAGED_NOTICE_PATH = 'THIRD_PARTY_NOTICES.md';
@@ -50,6 +55,7 @@ const SENSITIVE_ENVIRONMENT_KEY =
 export {
   TIMEOUT_MS,
   GRACEFUL_CLOSE_TIMEOUT_MS,
+  PROCESS_TREE_PROOF_TIMEOUT_MS,
   PRODUCT_NAME,
   EXECUTABLE_NAME,
   PACKAGED_SMOKE_ARGUMENT,
@@ -777,6 +783,139 @@ async function findFileByName(root, fileNamePattern) {
 }
 
 /**
+ * First run-state letter in a Darwin/Linux `ps` STAT field.
+ * A leading `?` is "no controlling tty", not a state (`?Es` → `E`).
+ *
+ * @param {string | null | undefined} stat
+ * @returns {string}
+ */
+export function processRunState(stat) {
+  const token = String(stat ?? '').trim();
+  for (const ch of token) {
+    if (ch >= 'A' && ch <= 'Z') return ch;
+  }
+  return '';
+}
+
+/**
+ * Kernel is already tearing the process down. These are not working orphans.
+ *
+ * @param {string | null | undefined} stat
+ * @returns {boolean}
+ */
+export function isKernelExitingRunState(stat) {
+  const state = processRunState(stat);
+  return state === 'E' || state === 'Z';
+}
+
+/**
+ * Parse `ps -o pid=,stat=,command=` rows.
+ *
+ * @param {string} stdout
+ * @returns {{ pid: number, stat: string, command: string }[]}
+ */
+export function parseProcessStatLines(stdout) {
+  /** @type {{ pid: number, stat: string, command: string }[]} */
+  const rows = [];
+  for (const line of String(stdout).split('\n')) {
+    const match = /^\s*(\d+)\s+(\S+)\s*(.*)$/u.exec(line);
+    if (!match) continue;
+    rows.push({
+      pid: Number(match[1]),
+      stat: match[2],
+      command: match[3].trim(),
+    });
+  }
+  return rows;
+}
+
+/**
+ * Split inspected pids into live orphans vs kernel-exiting. A pid requested
+ * but missing from `ps` is fail-closed as live — an unreadable row is not
+ * proof of termination.
+ *
+ * @param {{ pid: number, stat: string, command?: string }[]} rows
+ * @param {number[]} requestedPids
+ * @returns {{
+ *   orphans: number[],
+ *   kernelExiting: number[],
+ *   warnings: string[],
+ * }}
+ */
+export function classifyProcessTreeProof(rows, requestedPids) {
+  const wanted = new Set(requestedPids);
+  /** @type {number[]} */
+  const orphans = [];
+  /** @type {number[]} */
+  const kernelExiting = [];
+  const seen = new Set();
+  for (const row of rows) {
+    if (!wanted.has(row.pid)) continue;
+    seen.add(row.pid);
+    if (isKernelExitingRunState(row.stat)) {
+      kernelExiting.push(row.pid);
+    } else {
+      orphans.push(row.pid);
+    }
+  }
+  for (const pid of requestedPids) {
+    if (!seen.has(pid)) orphans.push(pid);
+  }
+  orphans.sort((a, b) => a - b);
+  kernelExiting.sort((a, b) => a - b);
+  return {
+    orphans,
+    kernelExiting,
+    warnings: kernelExiting.map((pid) => `kernel-exiting: ${pid}`),
+  };
+}
+
+export function emptyProcessTreeProof(elapsedMs = 0) {
+  return { orphans: [], kernelExiting: [], elapsedMs };
+}
+
+/**
+ * Read STAT/command for specific pids. Throws when `ps` cannot be read.
+ *
+ * @param {number[]} pids
+ * @param {{ runSync?: typeof spawnSync }} [options]
+ * @returns {{ pid: number, stat: string, command: string }[]}
+ */
+export function readProcessTreeStats(
+  pids,
+  { runSync = spawnSync } = {},
+) {
+  if (!pids.length) return [];
+  const result = runSync(
+    'ps',
+    ['-o', 'pid=,stat=,command=', '-p', pids.join(',')],
+    {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      shell: false,
+      env: { ...process.env, LANG: 'C', LC_ALL: 'C' },
+    },
+  );
+  if (
+    result.error ||
+    result.status !== 0 ||
+    typeof result.stdout !== 'string'
+  ) {
+    const detail =
+      result.error?.message ?? `ps exited ${String(result.status)}`;
+    throw new Error(`process-stat inventory failed: ${detail}`);
+  }
+  return parseProcessStatLines(result.stdout);
+}
+
+function defaultClassifyRemaining(pids, { runSync }) {
+  return classifyProcessTreeProof(
+    readProcessTreeStats(pids, { runSync }),
+    pids,
+  );
+}
+
+/**
  * Live PIDs that still belong to the smoke process group (or are direct
  * descendants of `rootPid`). Used to prove PTY/provider orphans are gone.
  *
@@ -871,10 +1010,20 @@ function sleepMs(ms, sleep = (n) => {
  * re-scan `ps` until PTY/provider descendants exit (or timeout).
  * On Windows use taskkill /T.
  *
+ * Pids in kernel E (exiting) or Z (zombie) are not working orphans: the
+ * process-tree proof records them as `kernel-exiting: <pid>` and treats
+ * them as terminated. Live S/R/T leftovers still fail the proof.
+ *
  * @returns {{
  *   ok: boolean,
  *   remainingPids: number[],
  *   signalled: string[],
+ *   warnings: string[],
+ *   processTreeProof: {
+ *     orphans: number[],
+ *     kernelExiting: number[],
+ *     elapsedMs: number,
+ *   },
  *   inventoryError?: string,
  * }}
  */
@@ -885,14 +1034,31 @@ export function killProcessTree(
     kill = process.kill.bind(process),
     runSync = spawnSync,
     listPids = listProcessTreePids,
+    classifyRemaining = defaultClassifyRemaining,
     sleep = sleepMs,
+    now = Date.now,
     termGraceMs = 1_500,
     killGraceMs = 1_500,
     pollMs = 100,
+    proofTimeoutMs = PROCESS_TREE_PROOF_TIMEOUT_MS,
   } = {},
 ) {
+  const startedAt = now();
+  const elapsed = () => Math.max(0, now() - startedAt);
+  const proofOf = (partition) => ({
+    orphans: partition.orphans,
+    kernelExiting: partition.kernelExiting,
+    elapsedMs: elapsed(),
+  });
+
   if (!pid || pid <= 0) {
-    return { ok: true, remainingPids: [], signalled: [] };
+    return {
+      ok: true,
+      remainingPids: [],
+      signalled: [],
+      warnings: [],
+      processTreeProof: emptyProcessTreeProof(0),
+    };
   }
   if (platform === 'win32') {
     runSync('taskkill', ['/pid', String(pid), '/T', '/F'], {
@@ -900,11 +1066,24 @@ export function killProcessTree(
       windowsHide: true,
       shell: false,
     });
-    return { ok: true, remainingPids: [], signalled: ['taskkill'] };
+    return {
+      ok: true,
+      remainingPids: [],
+      signalled: ['taskkill'],
+      warnings: [],
+      processTreeProof: emptyProcessTreeProof(elapsed()),
+    };
   }
 
   /** @type {string[]} */
   const signalled = [];
+  const succeeded = (partition) => ({
+    ok: true,
+    remainingPids: [],
+    signalled,
+    warnings: partition.warnings ?? [],
+    processTreeProof: proofOf(partition),
+  });
   const signalGroup = (signal) => {
     try {
       kill(-pid, signal);
@@ -920,39 +1099,57 @@ export function killProcessTree(
   };
 
   let inventoryError = null;
-  const readInventory = () => {
+  const emptyPartition = () => ({
+    orphans: [],
+    kernelExiting: [],
+    warnings: [],
+  });
+  const inspect = () => {
+    let remaining;
     try {
-      return listPids(pid, { platform, runSync });
+      remaining = listPids(pid, { platform, runSync });
     } catch (error) {
       inventoryError =
         error instanceof Error ? error.message : String(error);
       return null;
     }
+    if (remaining.length === 0) return emptyPartition();
+    try {
+      return classifyRemaining(remaining, { platform, runSync });
+    } catch {
+      // Unreadable STAT is not proof of exit — keep the pid as a live orphan.
+      return {
+        orphans: remaining,
+        kernelExiting: [],
+        warnings: [],
+      };
+    }
   };
-  const waitUntilGone = (budgetMs) => {
-    const deadline = Date.now() + budgetMs;
-    let remaining = readInventory();
+  const waitUntilOrphansGone = (budgetMs) => {
+    const proofDeadline = startedAt + proofTimeoutMs;
+    const deadline = Math.min(now() + Math.max(0, budgetMs), proofDeadline);
+    let snapshot = inspect();
     while (
-      remaining !== null &&
-      remaining.length > 0 &&
-      Date.now() < deadline
+      snapshot !== null &&
+      snapshot.orphans.length > 0 &&
+      now() < deadline
     ) {
       sleep(pollMs);
-      remaining = readInventory();
+      snapshot = inspect();
     }
-    return remaining;
+    return snapshot;
   };
 
   // Soft stop first: Electron before-quit + real-mission evidence flush.
   signalGroup('SIGTERM');
-  let remaining = waitUntilGone(termGraceMs);
-  if (remaining !== null && remaining.length === 0 && !inventoryError) {
-    return { ok: true, remainingPids: [], signalled };
+  let snapshot = waitUntilOrphansGone(termGraceMs);
+  if (snapshot !== null && snapshot.orphans.length === 0 && !inventoryError) {
+    return succeeded(snapshot);
   }
 
-  // Hard stop process group + root, then re-check for orphans.
+  // Hard stop process group + root, then re-check for live orphans only.
   signalGroup('SIGKILL');
-  for (const orphan of remaining ?? []) {
+  for (const orphan of snapshot?.orphans ?? []) {
     try {
       kill(orphan, 'SIGKILL');
       signalled.push(`orphan:${orphan}:SIGKILL`);
@@ -960,11 +1157,25 @@ export function killProcessTree(
       // Already gone or not owned.
     }
   }
-  remaining = waitUntilGone(killGraceMs);
+  const killBudget = Math.min(
+    killGraceMs,
+    Math.max(0, startedAt + proofTimeoutMs - now()),
+  );
+  snapshot = waitUntilOrphansGone(killBudget);
+  if (snapshot !== null && snapshot.orphans.length === 0 && !inventoryError) {
+    return succeeded(snapshot);
+  }
+  const failed = snapshot ?? {
+    orphans: [pid],
+    kernelExiting: [],
+    warnings: [],
+  };
   return {
-    ok: remaining !== null && remaining.length === 0 && !inventoryError,
-    remainingPids: remaining ?? [pid],
+    ok: false,
+    remainingPids: failed.orphans,
     signalled,
+    warnings: failed.warnings,
+    processTreeProof: proofOf(failed),
     ...(inventoryError ? { inventoryError } : {}),
   };
 }
@@ -1013,6 +1224,7 @@ export async function runPackagedSmoke(
     env = process.env,
     killTree = killProcessTree,
     listTreePids = listProcessTreePids,
+    classifyRemaining = defaultClassifyRemaining,
     requireGracefulClose =
       platform === 'darwin' &&
       process.platform === 'darwin' &&
@@ -1084,11 +1296,30 @@ export async function runPackagedSmoke(
           ok: true,
           remainingPids: [],
           signalled: [],
+          warnings: [],
+          processTreeProof: emptyProcessTreeProof(0),
         };
+        if (!treeProof.processTreeProof) {
+          treeProof = {
+            ...treeProof,
+            warnings: treeProof.warnings ?? [],
+            processTreeProof: {
+              orphans: treeProof.remainingPids ?? [],
+              kernelExiting: [],
+              elapsedMs: 0,
+            },
+          };
+        }
+        for (const warning of treeProof.warnings ?? []) {
+          process.stderr.write(`[smoke] ${warning}\n`);
+        }
         if (!treeProof.ok) {
+          const proof = treeProof.processTreeProof;
           process.stderr.write(
             `[smoke] process-tree proof failed after kill: ` +
-              `pids=${treeProof.remainingPids.join(',')}` +
+              `orphans=${(proof?.orphans ?? treeProof.remainingPids).join(',')}` +
+              ` kernel-exiting=${(proof?.kernelExiting ?? []).join(',') || 'none'}` +
+              ` elapsedMs=${proof?.elapsedMs ?? 'unknown'}` +
               (treeProof.inventoryError
                 ? ` inventory=${treeProof.inventoryError}`
                 : '') +
@@ -1098,21 +1329,37 @@ export async function runPackagedSmoke(
         return treeProof;
       };
       const rejectOrphanedTree = () => {
+        const proof = treeProof?.processTreeProof;
         finish(
           reject,
           new Error(
             `packaged smoke left orphan processes after termination: ` +
-              treeProof.remainingPids.join(','),
+              (proof?.orphans ?? treeProof.remainingPids).join(',') +
+              (proof
+                ? ` (kernel-exiting: ${proof.kernelExiting.join(',') || 'none'}, elapsedMs=${proof.elapsedMs})`
+                : ''),
           ),
         );
       };
-      const finishNaturalClose = () => {
+      const finishNaturalClose = (partition = {
+        kernelExiting: [],
+        warnings: [],
+      }) => {
         shutdownMode = 'graceful';
         treeProof = {
           ok: true,
           remainingPids: [],
           signalled: [],
+          warnings: partition.warnings ?? [],
+          processTreeProof: {
+            orphans: [],
+            kernelExiting: partition.kernelExiting ?? [],
+            elapsedMs: 0,
+          },
         };
+        for (const warning of treeProof.warnings) {
+          process.stderr.write(`[smoke] ${warning}\n`);
+        }
         if (naturalExitCode !== 0 || naturalSignalCode) {
           finish(
             reject,
@@ -1154,6 +1401,20 @@ export async function runPackagedSmoke(
         }
         if (remainingPids.length === 0) {
           finishNaturalClose();
+          return true;
+        }
+        let partition;
+        try {
+          partition = classifyRemaining(remainingPids, { platform });
+        } catch {
+          partition = {
+            orphans: remainingPids,
+            kernelExiting: [],
+            warnings: [],
+          };
+        }
+        if (partition.orphans.length === 0) {
+          finishNaturalClose(partition);
           return true;
         }
         if (scheduleRetry && !settled) {
@@ -1279,12 +1540,17 @@ export async function runPackagedSmoke(
     assertPackagedSmokeProof(code, output);
     await assertFunctionalMarker(userData);
     process.stdout.write(output);
+    const processTreeProof =
+      treeProof?.processTreeProof ?? emptyProcessTreeProof(0);
     if (treeProof) {
       process.stdout.write(
         `\n[smoke] process-tree ok=${treeProof.ok} ` +
           `remaining=${treeProof.remainingPids.length} ` +
           `signalled=${treeProof.signalled.join(',') || 'none'} ` +
           `shutdown=${shutdownMode ?? 'unknown'}\n`,
+      );
+      process.stdout.write(
+        `[smoke] processTreeProof ${JSON.stringify(processTreeProof)}\n`,
       );
     }
 
@@ -1296,7 +1562,15 @@ export async function runPackagedSmoke(
     process.stdout.write(
       `\n[smoke] validation-matrix\n${formatValidationMatrix(matrix)}\n`,
     );
-    return { code, output, matrix, target, treeProof, shutdownMode };
+    return {
+      code,
+      output,
+      matrix,
+      target,
+      treeProof,
+      shutdownMode,
+      processTreeProof,
+    };
   } finally {
     await fs.rm(userData, { recursive: true, force: true });
   }
