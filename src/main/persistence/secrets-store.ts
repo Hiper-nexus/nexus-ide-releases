@@ -89,6 +89,8 @@ function decryptBlob(blob: string): string | null {
     const plain = safeStorage.decryptString(Buffer.from(blob, 'base64'));
     return plain || null;
   } catch {
+    // Keychain/safeStorage failures stay inside the vault: callers see null,
+    // never an Electron throw and never the macOS Keychain dialog as UX.
     return null;
   }
 }
@@ -258,6 +260,35 @@ function publishEncryptedVault(raw: Readonly<Record<string, string>>): void {
 }
 
 /**
+ * Cipher one plaintext. Never throws and never calls encryptString unless the
+ * OS backend already reports it is available — encryptString is the Keychain
+ * SecItemAdd that surfaces macOS "Chaves Não Encontradas / Reajustar Para
+ * Padrões" (that button wipes the default keychain).
+ *
+ * ponytail: Electron 43 exposes encryptStringAsync (non-blocking), but the
+ * vault contract is sync (`SecretWriteResult`). Ceiling: the first Keychain
+ * hop can still block the main thread. Upgrade: async vault API that calls
+ * encryptStringAsync once callers can move.
+ */
+function encryptSecret(
+  plainValue: string,
+): { ok: true; blob: string } | { ok: false; error: string } {
+  if (!isSecureStorageAvailable()) {
+    return { ok: false, error: SECURE_STORAGE_ERROR };
+  }
+  try {
+    if (!safeStorage.isEncryptionAvailable()) {
+      return { ok: false, error: SECURE_STORAGE_ERROR };
+    }
+    const blob = safeStorage.encryptString(plainValue).toString('base64');
+    if (!blob) return { ok: false, error: SECURE_STORAGE_ERROR };
+    return { ok: true, blob };
+  } catch {
+    return { ok: false, error: SECURE_STORAGE_ERROR };
+  }
+}
+
+/**
  * Persist ONE key's change by merging over the CURRENT disk contents (raw
  * blobs, no decryption), then writing atomically (tmp + rename).
  *
@@ -265,18 +296,29 @@ function publishEncryptedVault(raw: Readonly<Record<string, string>>): void {
  * (dev restarts!), the stale one would rewrite the file without keys the
  * newer one saved — that bug silently ate stored API keys. Merging at the
  * raw level also preserves entries this instance cannot decrypt.
+ *
+ * Cipher happens before the exclusive vault lock so a blocked Keychain hop
+ * does not also pin the lock file.
  */
 function persistDelta(key: string, plainValue: string | null): SecretWriteResult {
-  if (!isSecureStorageAvailable()) {
-    return { ok: false, error: SECURE_STORAGE_ERROR };
+  let blobToStore: string | null;
+  if (plainValue === null) {
+    if (!isSecureStorageAvailable()) {
+      return { ok: false, error: SECURE_STORAGE_ERROR };
+    }
+    blobToStore = null;
+  } else {
+    const encrypted = encryptSecret(plainValue);
+    if (!encrypted.ok) return encrypted;
+    blobToStore = encrypted.blob;
   }
   try {
     withVaultLock(() => {
       const raw = readRawFromDisk();
-      if (plainValue === null) {
+      if (blobToStore === null) {
         delete raw[key];
       } else {
-        raw[key] = safeStorage.encryptString(plainValue).toString('base64');
+        raw[key] = blobToStore;
       }
       publishEncryptedVault(raw);
     });

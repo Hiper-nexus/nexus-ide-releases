@@ -126,10 +126,85 @@ describe('durable secret persistence', () => {
 
     const result = setSecret('provider', 'next-secret');
 
-    expect(result.ok).toBe(false);
+    expect(result).toEqual({
+      ok: false,
+      error: 'OS secure storage is unavailable; secret was not persisted.',
+    });
     expect(result.error).not.toContain('next-secret');
     expect(getSecret('provider')).toBe('previous');
     expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('does not call encryptString when OS encryption is unavailable', async () => {
+    secretDeps.isAvailable = false;
+    const { safeStorage } = await import('electron');
+    const encrypt = vi.spyOn(safeStorage, 'encryptString');
+
+    const result = setSecret('provider', 'must-not-reach-keychain');
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'OS secure storage is unavailable; secret was not persisted.',
+    });
+    expect(encrypt).not.toHaveBeenCalled();
+    expect(fs.existsSync(secretsFile)).toBe(false);
+  });
+
+  it('does not call encryptString when the Keychain probe throws', async () => {
+    const { safeStorage } = await import('electron');
+    vi.spyOn(safeStorage, 'isEncryptionAvailable').mockImplementation(() => {
+      throw new Error('default keychain missing');
+    });
+    const encrypt = vi.spyOn(safeStorage, 'encryptString');
+
+    const result = setSecret('provider', 'must-not-reach-keychain');
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'OS secure storage is unavailable; secret was not persisted.',
+    });
+    expect(encrypt).not.toHaveBeenCalled();
+    expect(fs.existsSync(secretsFile)).toBe(false);
+    expect(fs.existsSync(secretsLockFile)).toBe(false);
+  });
+
+  it('does not acquire the vault lock when the first encrypt fails', async () => {
+    const { safeStorage } = await import('electron');
+    vi.spyOn(safeStorage, 'encryptString').mockImplementation(() => {
+      throw new Error('encrypt failed with next-secret');
+    });
+
+    const result = setSecret('provider', 'next-secret');
+
+    expect(result.ok).toBe(false);
+    expect(result.error).not.toContain('next-secret');
+    expect(fs.existsSync(secretsFile)).toBe(false);
+    expect(fs.existsSync(secretsLockFile)).toBe(false);
+    expect(getSecret('provider')).toBeNull();
+  });
+
+  it('returns null when decryption fails without throwing or warning', async () => {
+    expect(setSecret('provider', 'previous')).toEqual({ ok: true });
+    resetSecretsCacheForTests();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const { safeStorage } = await import('electron');
+    vi.spyOn(safeStorage, 'decryptString').mockImplementation(() => {
+      throw new Error('decrypt failed with previous');
+    });
+
+    expect(getSecret('provider')).toBeNull();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('does not call decryptString when OS encryption is unavailable', async () => {
+    expect(setSecret('provider', 'previous')).toEqual({ ok: true });
+    resetSecretsCacheForTests();
+    secretDeps.isAvailable = false;
+    const { safeStorage } = await import('electron');
+    const decrypt = vi.spyOn(safeStorage, 'decryptString');
+
+    expect(getSecret('provider')).toBeNull();
+    expect(decrypt).not.toHaveBeenCalled();
   });
 
   it('keeps cache unchanged and leaves no temp file when directory fsync fails', () => {
