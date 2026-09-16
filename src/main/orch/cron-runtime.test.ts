@@ -207,4 +207,32 @@ describe('runCronTick', () => {
     await stopping;
     expect(stopped).toBe(true);
   });
+
+  it('stopCronLoop solta o shutdown no teto mesmo com tick remoto pendurado', async () => {
+    vi.useFakeTimers();
+    let release!: () => void;
+    const hungSync = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const now = new Date('2026-07-06T00:00:30').getTime();
+    const fixture = deps([job()], now);
+    fixture.deps.syncSchedules = vi.fn(() => hungSync);
+    startCronLoop(fixture.deps);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fixture.deps.syncSchedules).toHaveBeenCalled();
+    let stopped = false;
+    void stopCronLoop().then(() => {
+      stopped = true;
+    });
+    await Promise.resolve();
+    expect(stopped).toBe(false);
+
+    // O primeiro passo do shutdown não pode depender de um backend remoto
+    // pendurado: o budget de 3s vence e o quit segue (teto de quit = 45s).
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(stopped).toBe(true);
+
+    release();
+  });
 });

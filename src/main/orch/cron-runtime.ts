@@ -344,11 +344,41 @@ export function startCronLoop(deps: CronRuntimeDeps = defaultCronDeps): void {
   timer.unref?.();
 }
 
+/**
+ * Teto do quit: o tick em voo consulta backend remoto por escopo (syncScope,
+ * até 32 escopos seriais sob mutex de mutação). Sem prazo, um backend ou lock
+ * pendurado segura stopCronLoop — o PRIMEIRO passo do shutdown — e sozinho
+ * estoura o teto de quit de 45s (incidente "ceiling-fired" de 13/09). O diário
+ * de cron é persistido e reconcilia na próxima sessão; soltar o voo não perde
+ * dado durável.
+ */
+const CRON_TICK_STOP_BUDGET_MS = 3_000;
+
 export async function stopCronLoop(): Promise<void> {
   if (timer) clearInterval(timer);
   timer = null;
   const active = tickFlight;
-  if (active) await active;
+  if (!active) return;
+  let budget: ReturnType<typeof setTimeout> | null = null;
+  try {
+    await Promise.race([
+      active.then(
+        () => undefined,
+        () => undefined,
+      ),
+      new Promise<void>((resolve) => {
+        budget = setTimeout(resolve, CRON_TICK_STOP_BUDGET_MS);
+        budget.unref?.();
+      }),
+    ]);
+  } finally {
+    if (budget) clearTimeout(budget);
+  }
+  if (active === tickFlight) {
+    // Voo órfão: ninguém mais observa este promise — sem este observador, uma
+    // rejeição tardia vira unhandled rejection no main já encerrando.
+    active.catch(() => {});
+  }
 }
 
 // ── CRUD helpers para as MCP tools / IPC ─────────────────────────────────────
