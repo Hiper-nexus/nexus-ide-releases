@@ -72,12 +72,17 @@ function defaultRunCommand(args, root) {
 }
 
 function runBootstrapCommand(command, args, options = {}) {
+  const windowsNpmShim =
+    process.platform === 'win32' && command.toLowerCase() === 'npm.cmd';
   const result = spawnSync(command, args, {
     cwd: options.cwd,
     encoding: 'utf8',
     maxBuffer: MAX_COMMAND_OUTPUT_BYTES,
     env: options.env,
-    shell: false,
+    // Node cannot launch the npm.cmd shim with shell:false on Windows. The
+    // bootstrap chooses this command and all arguments from pinned metadata.
+    shell: windowsNpmShim,
+    ...(windowsNpmShim ? { windowsHide: true } : {}),
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {

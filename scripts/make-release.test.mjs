@@ -194,10 +194,10 @@ describe('publishable macOS build target', () => {
           );
           fs.writeFileSync(path.join(packageRoot, 'bin', 'npm-cli.js'), 'cli');
         }
-        if (
-          command === process.execPath &&
-          args[0]?.endsWith('/npm-cli.js') &&
-          args[1] === '--version'
+          if (
+            command === process.execPath &&
+            args[0]?.replaceAll('\\', '/')?.endsWith('/npm-cli.js') &&
+            args[1] === '--version'
         ) {
           return { stdout: '12.0.0\n', stderr: '' };
         }
@@ -233,10 +233,10 @@ describe('publishable macOS build target', () => {
         args.slice(0, 3).join(' ') === 'worktree add --detach',
       )).toBe(true);
       const npmCi = calls.findIndex(
-        ([command, args]) =>
-          command === process.execPath &&
-          args[0]?.endsWith('/npm-cli.js') &&
-          args[1] === 'ci',
+          ([command, args]) =>
+            command === process.execPath &&
+            args[0]?.replaceAll('\\', '/')?.endsWith('/npm-cli.js') &&
+            args[1] === 'ci',
       );
       const forge = calls.findIndex(
         ([command, args]) =>
@@ -312,6 +312,7 @@ describe('publishable macOS build target', () => {
         version: '12.0.0',
         expectedIntegrity: `sha512-${'A'.repeat(86)}==`,
         environment: {},
+        platform: 'darwin',
         execute(command, args) {
           if (command === 'npm' && args[0] === 'pack') {
             const downloadDir = args[args.indexOf('--pack-destination') + 1];
@@ -323,6 +324,53 @@ describe('publishable macOS build target', () => {
           return { stdout: '', stderr: '' };
         },
       })).toThrow(/integrity/i);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('uses the Windows npm shim and bundled tar for the pinned npm bootstrap', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-npm-pin-win-'));
+    try {
+      const calls = [];
+      bootstrapPinnedNpm({
+        buildBase: root,
+        version: '12.0.0',
+        expectedIntegrity: npmPackageIntegrity,
+        environment: {},
+        platform: 'win32',
+        execute(command, args) {
+          calls.push([command, [...args]]);
+          if (command === 'npm.cmd' && args[0] === 'pack') {
+            const downloadDir = args[args.indexOf('--pack-destination') + 1];
+            fs.writeFileSync(
+              path.join(downloadDir, 'npm-12.0.0.tgz'),
+              npmArchive,
+            );
+            return { stdout: '', stderr: '' };
+          }
+          if (command === 'tar' && args[0] === '-xzf') {
+            const installDir = args[args.indexOf('-C') + 1];
+            const packageDir = path.join(installDir, 'package');
+            fs.mkdirSync(path.join(packageDir, 'bin'), { recursive: true });
+            fs.writeFileSync(
+              path.join(packageDir, 'package.json'),
+              JSON.stringify({ name: 'npm', version: '12.0.0' }),
+            );
+            fs.writeFileSync(path.join(packageDir, 'bin', 'npm-cli.js'), '');
+            return { stdout: '', stderr: '' };
+          }
+          if (command === process.execPath && args.at(-1) === '--version') {
+            return { stdout: '12.0.0' + String.fromCharCode(10), stderr: '' };
+          }
+          throw new Error(`unexpected bootstrap command: ${command}`);
+        },
+      });
+      expect(calls.map(([command]) => command)).toEqual([
+        'npm.cmd',
+        'tar',
+        process.execPath,
+      ]);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

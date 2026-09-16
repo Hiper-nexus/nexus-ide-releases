@@ -255,6 +255,7 @@ export function bootstrapPinnedNpm({
   expectedIntegrity,
   execute,
   environment,
+  platform = process.platform,
 }) {
   const downloadDir = path.join(buildBase, 'npm-download');
   const installDir = path.join(buildBase, 'npm-bootstrap');
@@ -271,7 +272,7 @@ export function bootstrapPinnedNpm({
     NPM_CONFIG_REGISTRY: 'https://registry.npmjs.org/',
   };
   execute(
-    'npm',
+    platform === 'win32' ? 'npm.cmd' : 'npm',
     [
       'pack',
       `npm@${version}`,
@@ -296,7 +297,7 @@ export function bootstrapPinnedNpm({
       `npm ${version} package integrity does not match repository authority`,
     );
   }
-  execute('/usr/bin/tar', ['-xzf', archives[0], '-C', installDir], {
+  execute(platform === 'win32' ? 'tar' : '/usr/bin/tar', ['-xzf', archives[0], '-C', installDir], {
     cwd: buildBase,
     env: npmEnvironment,
   });
@@ -424,6 +425,7 @@ export function runCleanReleaseBuild(options = {}) {
       expectedIntegrity: authority.npmPackageIntegrity,
       execute,
       environment: buildEnv,
+      platform,
     });
     execute(process.execPath, [pinnedNpm.npmCli, 'ci'], {
       cwd: workspace,
