@@ -6,6 +6,11 @@ import type { ProviderQuotaEntry, QuotaFleetSnapshot } from '../../../shared/quo
 import { useAccountStore } from '../../state/account-store';
 import { useQuotaStore } from '../../state/quota-store';
 import { UsageQuotaSection } from './UsageQuotaSection';
+import { openCliLoginTerminal } from './cli-login-terminal';
+
+vi.mock('./cli-login-terminal', () => ({
+  openCliLoginTerminal: vi.fn(async () => ({ ok: true, paneId: 'login-pane' })),
+}));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
@@ -376,6 +381,112 @@ describe('UsageQuotaSection', () => {
     });
 
     expect(host.textContent).toContain('Entrar novamente');
+    act(() => root.unmount());
+  });
+
+  it('reabre o login da conta salva pelo botão da linha de cota', async () => {
+    useAccountStore.setState({
+      accounts: [
+        {
+          id: 'acc-1',
+          adapterId: 'codex',
+          label: 'Plus',
+          mode: 'subscription',
+          upstream: 'codex',
+          email: 'user@example.com',
+          active: true,
+          createdAt: 1723630000000,
+          onCooldown: false,
+          needsRelogin: true,
+          hasCredential: true,
+        },
+      ],
+    });
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        quota: {
+          snapshot: vi.fn(async () => sampleSnapshot),
+          refresh: vi.fn(async () => sampleSnapshot),
+        },
+        providers: {
+          authStatus: vi.fn(async () => [
+            { adapterId: 'codex', state: 'ok', detail: 'sessão Codex' },
+          ]),
+        },
+      },
+    });
+
+    const { host, root } = mount();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const button = host.querySelector<HTMLButtonElement>(
+      '[data-adapter="codex"] button',
+    );
+    expect(button?.textContent).toContain('Entrar novamente');
+    await act(async () => {
+      button?.click();
+      await Promise.resolve();
+    });
+
+    expect(openCliLoginTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: 'codex login',
+        adapterId: 'codex',
+        adapterLabel: 'Plus',
+      }),
+    );
+    act(() => root.unmount());
+  });
+
+  it('mantém o badge quando a cota não pertence a uma conta salva', async () => {
+    useAccountStore.setState({
+      accounts: [
+        {
+          id: 'acc-1',
+          adapterId: 'codex',
+          label: 'Plus',
+          mode: 'subscription',
+          upstream: 'codex',
+          email: 'user@example.com',
+          active: true,
+          createdAt: 1723630000000,
+          onCooldown: false,
+          needsRelogin: true,
+          hasCredential: true,
+        },
+      ],
+    });
+    const nativeEntry = { ...sampleEntries[0], id: 'native-expired' };
+    vi.mocked(window.nexus.quota.snapshot).mockResolvedValue({
+      ...sampleSnapshot,
+      entries: [nativeEntry],
+    });
+
+    const { host, root } = mount();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(host.querySelector('[data-adapter="claude"] button')).toBeNull();
+    expect(host.querySelector('.quota-entry__badge')?.textContent).toContain(
+      'Cota informada',
+    );
+    act(() => root.unmount());
+  });
+
+  it('não renderiza botão para conta sem necessidade de novo login', async () => {
+    const { host, root } = mount();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(host.querySelector('[data-adapter="codex"] button')).toBeNull();
     act(() => root.unmount());
   });
 

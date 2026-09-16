@@ -1,4 +1,6 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
+import type { AccountInfo } from '../../../shared/account-types';
+import { accountLoginCommandFor } from '../../../shared/account-login-commands';
 import { useQuotaStore } from '../../state/quota-store';
 import { useAccountStore } from '../../state/account-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
@@ -15,7 +17,9 @@ import {
   type QuotaWindow,
 } from '../../../shared/quota-types';
 import { ProviderLogo } from '../ProviderLogo';
+import { useToastStore } from '../../state/toast-store';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
+import { openCliLoginTerminal } from './cli-login-terminal';
 
 const SOURCE_LABELS: Record<QuotaSource, string> = {
   'provider-api': 'Informado pelo serviço de IA',
@@ -100,15 +104,18 @@ function QuotaWindowRow({
 }
 function EntryCard({
   entry,
+  account,
   email,
   needsRelogin,
   now,
 }: {
   entry: ProviderQuotaEntry;
+  account?: AccountInfo;
   email?: string;
   needsRelogin?: boolean;
   now: number;
 }) {
+  const [loginBusy, setLoginBusy] = useState(false);
   const known = hasQuota(entry);
   const state = needsRelogin
     ? 'Entrar novamente'
@@ -126,6 +133,40 @@ function EntryCard({
       : 'Conta salva no Nexus'
     : 'Conexão atual';
   const showEmail = email && !label.includes(email);
+  const canRelogin = Boolean(needsRelogin && entry.accountId && account);
+  const loginLabel = account?.label ?? label;
+
+  async function relogin() {
+    if (!canRelogin || loginBusy) return;
+    setLoginBusy(true);
+    try {
+      const statuses = await window.nexus?.providers?.authStatus();
+      const baseline =
+        statuses?.find((status) => status.adapterId === entry.adapterId) ?? null;
+      const command = accountLoginCommandFor(entry.adapterId);
+      const result = await openCliLoginTerminal({
+        command: command ?? '',
+        adapterId: entry.adapterId,
+        adapterLabel: loginLabel,
+        baseline,
+        onFinished: () => {
+          void useAccountStore.getState().hydrate();
+        },
+      });
+      if (!result.ok) {
+        useToastStore
+          .getState()
+          .push('error', 'Não foi possível abrir o login', result.error);
+      }
+    } catch {
+      useToastStore
+        .getState()
+        .push('error', 'Não foi possível abrir o login', 'Tente novamente.');
+    } finally {
+      setLoginBusy(false);
+    }
+  }
+
   return (
     <li
       className={`quota-entry ${entry.onCooldown ? 'quota-entry--cool' : ''}`}
@@ -140,11 +181,23 @@ function EntryCard({
             {showEmail ? ` · ${email}` : ''}
           </p>
         </div>
-        <span
-          className={`quota-entry__badge ${needsRelogin || entry.onCooldown ? 'quota-entry__badge--warn' : ''}`}
-        >
-          {state}
-        </span>
+        {canRelogin ? (
+          <button
+            type="button"
+            className="settings-btn settings-btn--primary"
+            onClick={() => void relogin()}
+            disabled={loginBusy}
+            aria-busy={loginBusy}
+          >
+            {loginBusy ? 'Abrindo login…' : state}
+          </button>
+        ) : (
+          <span
+            className={`quota-entry__badge ${needsRelogin || entry.onCooldown ? 'quota-entry__badge--warn' : ''}`}
+          >
+            {state}
+          </span>
+        )}
         {!entry.installed && (
           <span className="quota-entry__badge">Não instalada</span>
         )}
@@ -295,21 +348,21 @@ export function UsageQuotaSection() {
         </div>
       ) : (
         <ul className="quota-panel__list">
-          {entries.map((entry) => (
+          {entries.map((entry) => {
+            const account = accounts.find(
+              (candidate) => candidate.id === entry.accountId,
+            );
+            return (
             <EntryCard
               key={entry.id}
               entry={entry}
+              account={account}
               now={now}
-              email={
-                accounts.find((account) => account.id === entry.accountId)
-                  ?.email
-              }
-              needsRelogin={
-                accounts.find((account) => account.id === entry.accountId)
-                  ?.needsRelogin
-              }
+              email={account?.email}
+              needsRelogin={account?.needsRelogin}
             />
-          ))}
+            );
+          })}
         </ul>
       )}
       <footer className="quota-panel__help">
