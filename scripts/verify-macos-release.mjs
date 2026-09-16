@@ -80,6 +80,7 @@ export function parseCodesignMetadata(output) {
   let teamIdentifier = "";
   let secureTimestamp = "";
   let signedTime = "";
+  let codeDirectoryHash = "";
   let codeDirectoryFlags = 0;
   let codeDirectoryFlagNames = [];
   for (const line of output.split(/\r?\n/u)) {
@@ -97,6 +98,9 @@ export function parseCodesignMetadata(output) {
     }
     if (line.startsWith("Signed Time=")) {
       signedTime = line.slice("Signed Time=".length).trim();
+    }
+    if (line.startsWith("CDHash=")) {
+      codeDirectoryHash = line.slice("CDHash=".length).trim();
     }
     // `codesign -dv --verbose=4` also emits an `Executable Segment flags=`
     // line after CodeDirectory. Only CodeDirectory carries the signature
@@ -119,9 +123,23 @@ export function parseCodesignMetadata(output) {
     teamIdentifier,
     secureTimestamp,
     signedTime,
+    codeDirectoryHash,
     codeDirectoryFlags,
     codeDirectoryFlagNames,
   };
+}
+
+export function assertMatchingCodeDirectoryHashes(mounted, copied) {
+  if (
+    !mounted.codeDirectoryHash ||
+    !copied.codeDirectoryHash ||
+    mounted.codeDirectoryHash !== copied.codeDirectoryHash
+  ) {
+    throw new Error(
+      `DMG app CodeDirectory mismatch: mounted=${mounted.codeDirectoryHash || "<missing>"} ` +
+        `copied=${copied.codeDirectoryHash || "<missing>"}`,
+    );
+  }
 }
 
 export function assertSignatureMetadata(metadata, teamId, identityName) {
@@ -637,6 +655,58 @@ async function verifyMachOBinaries(appPath, signing, expectedArchitecture) {
   }
 }
 
+export function detachDmgWithTimeout(
+  mountPoint,
+  timeoutMs = 30_000,
+  runner = runChecked,
+) {
+  try {
+    runner("/usr/bin/hdiutil", ["detach", "-force", mountPoint], {
+      timeout: timeoutMs,
+    });
+    return true;
+  } catch (error) {
+    const timedOut = error?.code === "ETIMEDOUT" || error?.killed === true;
+    const prefix = timedOut
+      ? `hdiutil detach timed out after ${timeoutMs}ms`
+      : "hdiutil detach failed";
+    console.warn(`${prefix}: ${mountPoint}`);
+    return false;
+  }
+}
+
+export async function copyCompareDetachAndSmoke({
+  mountedApp,
+  copiedApp,
+  copyApp,
+  readCodeDirectory,
+  detach,
+  smoke,
+}) {
+  await copyApp(mountedApp, copiedApp);
+  const mountedMetadata = await readCodeDirectory(mountedApp);
+  const copiedMetadata = await readCodeDirectory(copiedApp);
+  assertMatchingCodeDirectoryHashes(mountedMetadata, copiedMetadata);
+  await detach();
+  await smoke(copiedApp);
+}
+
+function readCodeDirectoryMetadata(appPath) {
+  return parseCodesignMetadata(
+    runChecked("/usr/bin/codesign", ["-dv", "--verbose=4", appPath]).combined,
+  );
+}
+
+function smokePackagedApp(appPath) {
+  const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+  const smoke = runChecked(process.execPath, [
+    path.join(scriptDir, "smoke-packaged-app.mjs"),
+    "--app",
+    appPath,
+  ]).combined;
+  assertPackagedSmokeOutput(smoke, "darwin");
+}
+
 async function verifyApp(appPath, expected, signing) {
   const infoPlist = path.join(appPath, "Contents", "Info.plist");
   const bundleId = readPlistValue(infoPlist, "CFBundleIdentifier");
@@ -688,13 +758,6 @@ async function verifyApp(appPath, expected, signing) {
   const fuses = runChecked(fuseRead.command, fuseRead.args).combined;
   assertRequiredElectronFuses(fuses);
 
-  const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-  const smoke = runChecked(process.execPath, [
-    path.join(scriptDir, "smoke-packaged-app.mjs"),
-    "--app",
-    appPath,
-  ]).combined;
-  assertPackagedSmokeOutput(smoke, "darwin");
   const mainExecutable = path.join(appPath, "Contents", "MacOS", "nexus-ide");
   return parseLipoArchitectures(
     runChecked("/usr/bin/lipo", ["-archs", mainExecutable]).stdout,
@@ -793,7 +856,9 @@ async function main() {
   );
   const mountPoint = path.join(temporaryRoot, "dmg");
   const zipRoot = path.join(temporaryRoot, "zip");
+  const copiedDmgApp = path.join(temporaryRoot, "NexusIDE.app");
   let isMounted = false;
+  let detachAttempted = false;
   try {
     await fs.mkdir(mountPoint);
     await fs.mkdir(zipRoot);
@@ -807,31 +872,47 @@ async function main() {
       artifacts.dmg,
     ]);
     isMounted = true;
-    const dmgArchitectures = await verifyApp(
-      await findSingleApp(mountPoint),
-      expected,
-      signing,
-    );
+    const mountedDmgApp = await findSingleApp(mountPoint);
+    const dmgArchitectures = await verifyApp(mountedDmgApp, expected, signing);
+    await copyCompareDetachAndSmoke({
+      mountedApp: mountedDmgApp,
+      copiedApp: copiedDmgApp,
+      copyApp: async (source, destination) => {
+        runChecked("/usr/bin/ditto", [source, destination]);
+      },
+      readCodeDirectory: async (appPath) => readCodeDirectoryMetadata(appPath),
+      detach: async () => {
+        detachAttempted = true;
+        isMounted = !detachDmgWithTimeout(mountPoint);
+      },
+      smoke: async (appPath) => smokePackagedApp(appPath),
+    });
     runChecked("/usr/bin/ditto", ["-x", "-k", artifacts.zip, zipRoot]);
     const zipArchitectures = await verifyApp(
       await findSingleApp(zipRoot),
       expected,
       signing,
     );
+    smokePackagedApp(await findSingleApp(zipRoot));
     assertMatchingReleaseArchitectures(
       dmgArchitectures,
       zipArchitectures,
       expected.architecture,
     );
   } finally {
-    if (isMounted) {
-      try {
-        runChecked("/usr/bin/hdiutil", ["detach", "-force", mountPoint]);
-      } catch (error) {
-        console.error(error instanceof Error ? error.message : error);
-      }
+    if (isMounted && !detachAttempted) {
+      detachAttempted = true;
+      isMounted = !detachDmgWithTimeout(mountPoint);
     }
-    await fs.rm(temporaryRoot, { recursive: true, force: true });
+    if (isMounted) {
+      // A failed detach may leave the volume mounted. Never recursively walk
+      // its parent: remove only the local extraction paths and let the OS
+      // clean up the mount after the warning.
+      await fs.rm(copiedDmgApp, { recursive: true, force: true });
+      await fs.rm(zipRoot, { recursive: true, force: true });
+    } else {
+      await fs.rm(temporaryRoot, { recursive: true, force: true });
+    }
   }
 
   console.log(`verified DMG: ${artifacts.dmg}`);

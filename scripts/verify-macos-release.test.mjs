@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   assertPackagedSmokeOutput,
   assertMatchingReleaseArchitectures,
+  assertMatchingCodeDirectoryHashes,
   assertNoBundledNodePtySpawnHelpers,
   assertRequiredElectronFuses,
   assertReleaseArtifacts,
@@ -15,6 +16,8 @@ import {
   expectedMachOArchitecturesForPath,
   parseCodesignMetadata,
   parseLipoArchitectures,
+  copyCompareDetachAndSmoke,
+  detachDmgWithTimeout,
 } from "./verify-macos-release.mjs";
 
 describe("macOS release artifact contract", () => {
@@ -112,6 +115,49 @@ describe("macOS release artifact contract", () => {
         "Developer ID Application: Cleofas Pereira rocha",
       ),
     ).toThrow(/secure Timestamp/);
+  });
+
+  it("preserves the mounted app identity before detaching and smoking its copy", async () => {
+    const order = [];
+    await copyCompareDetachAndSmoke({
+      mountedApp: "/tmp/mounted/NexusIDE.app",
+      copiedApp: "/tmp/copy/NexusIDE.app",
+      copyApp: async () => order.push("copy"),
+      readCodeDirectory: async () => ({ codeDirectoryHash: "abc123" }),
+      detach: async () => order.push("detach"),
+      smoke: async (appPath) => {
+        order.push("smoke");
+        expect(appPath).toBe("/tmp/copy/NexusIDE.app");
+      },
+    });
+
+    expect(order).toEqual(["copy", "detach", "smoke"]);
+    expect(() =>
+      assertMatchingCodeDirectoryHashes(
+        { codeDirectoryHash: "abc123" },
+        { codeDirectoryHash: "different" },
+      ),
+    ).toThrow(/CodeDirectory mismatch/);
+  });
+
+  it("does not wait forever when hdiutil detach times out", () => {
+    const runner = vi.fn(() => {
+      const error = new Error("hdiutil hung");
+      error.code = "ETIMEDOUT";
+      throw error;
+    });
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    expect(detachDmgWithTimeout("/tmp/mount", 123, runner)).toBe(false);
+    expect(runner).toHaveBeenCalledWith(
+      "/usr/bin/hdiutil",
+      ["detach", "-force", "/tmp/mount"],
+      { timeout: 123 },
+    );
+    expect(warning).toHaveBeenCalledWith(
+      expect.stringContaining("timed out after 123ms"),
+    );
+    warning.mockRestore();
   });
 
   it("maps Mach-O classes to the least-privilege entitlement allowlist", () => {
