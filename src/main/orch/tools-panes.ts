@@ -1029,7 +1029,8 @@ const paneList: McpToolDef = {
     'nexus_pane_read. Each pane reports paneId (protocol identity) and ' +
     'paneNumber (the short header number the operator says out loud); ' +
     'either is accepted wherever a paneId is taken. Live state is ' +
-    'spawning|busy|idle|exited, plus adapter, model and mission binding.',
+    'spawning|busy|idle|exited|parked (parked = CLI stopped to free memory, conversation kept; ' +
+    'wake with nexus_pane_spawn { resume: paneId }), plus adapter, model and mission binding.',
   inputSchema: { type: 'object', properties: {} },
   handler: async (_args, ctx) => listVisiblePaneSnapshots(ctx),
 };

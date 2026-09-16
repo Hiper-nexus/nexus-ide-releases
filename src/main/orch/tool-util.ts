@@ -6,6 +6,7 @@ import {
   requestPaneClose,
   requestPaneSpawn,
   waitForIdle,
+  listPaneSnapshots,
 } from './pane-registry';
 import { parsePaneNumberRef } from '../../shared/pane-number';
 import {
@@ -253,6 +254,18 @@ export function authorizedSessionIdOf(
 ): string {
   const info = authorizePaneRef(ctx, paneRef, action);
   if (!info.sessionId) throw new Error(`pane ${paneRef} has no live session`);
+  // 0.76.45: pane estacionado pelo guardian — o CLI foi encerrado, o pane e o
+  // scrollback ficaram. Ler continua valendo; escrever/esperar exige acordar.
+  if (action !== 'read') {
+    const snapshot = listPaneSnapshots().find((pane) => pane.paneId === info.paneId);
+    if (snapshot?.state === 'parked') {
+      throw new Error(
+        `pane ${paneRef} is parked (dormindo): the CLI was stopped to free memory and the ` +
+          `conversation is kept. Wake it with nexus_pane_spawn { resume: "${info.paneId}" } ` +
+          'or the "Acordar" button, then write again.',
+      );
+    }
+  }
   return info.sessionId;
 }
 
