@@ -31,6 +31,7 @@ import { useCheatsheetStore } from './state/cheatsheet-store';
 import { useVoiceController } from './voice/voice-controller';
 import { useOrchBridge } from './orch/orch-bridge';
 import { initDevServerStore } from './state/dev-server-store';
+import { initShotIngestToasts } from './state/shot-ingest';
 import { initDesignSelectionStore } from './state/design-selection-store';
 import { useOrchStore } from './state/orch-store';
 import { useSettingsController } from './state/settings-store';
@@ -901,6 +902,7 @@ export function App() {
   }, []);
 
   useEffect(() => initDevServerStore(), []);
+  useEffect(() => initShotIngestToasts(), []);
   useEffect(() => initDesignSelectionStore(), []);
 
   useEffect(() => {

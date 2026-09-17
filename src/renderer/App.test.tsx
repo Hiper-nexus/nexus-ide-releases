@@ -358,7 +358,7 @@ beforeEach(() => {
     configurable: true,
     writable: true,
     value: {
-      app: { onDeepOpenPath: vi.fn(() => vi.fn()) },
+      app: { onDeepOpenPath: vi.fn(() => vi.fn()), onShotFilesReceived: vi.fn(() => vi.fn()) },
       pet: {
         onOpenSettings: vi.fn(() => vi.fn()),
         onOpenOps: vi.fn(() => vi.fn()),
