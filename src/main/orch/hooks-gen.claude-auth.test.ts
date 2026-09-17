@@ -188,6 +188,116 @@ describe('native Claude auth in the ephemeral HOME', () => {
     ).toEqual({ token: 'secret' });
   });
 
+  it.skipIf(process.platform !== 'darwin')(
+    'links the real login keychain into an ungated overlay — HOME efêmero enxerga a sessão',
+    () => {
+      // Regressão do HOME privado por checkout (F-567): o macOS resolve a
+      // lista de keychains por $HOME do processo, então o pane caía em
+      // "Not logged in · Run /login" com a máquina autenticada — e um /login
+      // no pane gravava num keychain descartável, nunca persistindo.
+      const realDb = path.join(home, 'Library', 'Keychains');
+      fs.mkdirSync(realDb, { recursive: true });
+      const loginDb = path.join(realDb, 'login.keychain-db');
+      fs.writeFileSync(loginDb, 'keychain-db-bytes');
+
+      const overlay = prepareEphemeralHome(
+        TOKEN,
+        { mcpServers: {} },
+        {
+          carryNativeClaudeAuth: true,
+          gateHooks: false,
+        },
+      );
+
+      const linked = path.join(
+        overlay.dir,
+        'Library',
+        'Keychains',
+        'login.keychain-db',
+      );
+      expect(fs.lstatSync(linked).isSymbolicLink()).toBe(true);
+      expect(fs.realpathSync(linked)).toBe(fs.realpathSync(loginDb));
+    },
+  );
+
+  it.skipIf(process.platform !== 'darwin')(
+    'links every *.keychain-db present (login renamed ou keychains extras)',
+    () => {
+      const realDb = path.join(home, 'Library', 'Keychains');
+      fs.mkdirSync(realDb, { recursive: true });
+      for (const name of ['login.keychain-db', 'work.keychain-db']) {
+        fs.writeFileSync(path.join(realDb, name), 'db');
+      }
+      fs.writeFileSync(path.join(realDb, 'nao-e-keychain.txt'), 'x');
+
+      const overlay = prepareEphemeralHome(
+        TOKEN,
+        { mcpServers: {} },
+        {
+          carryNativeClaudeAuth: true,
+          gateHooks: false,
+        },
+      );
+
+      const target = path.join(overlay.dir, 'Library', 'Keychains');
+      expect(fs.existsSync(path.join(target, 'login.keychain-db'))).toBe(true);
+      expect(fs.existsSync(path.join(target, 'work.keychain-db'))).toBe(true);
+      expect(fs.existsSync(path.join(target, 'nao-e-keychain.txt'))).toBe(
+        false,
+      );
+    },
+  );
+
+  it.skipIf(process.platform !== 'darwin')(
+    'never exposes the keychain to a hooks-gated pane — env token é a superfície mínima',
+    () => {
+      const realDb = path.join(home, 'Library', 'Keychains');
+      fs.mkdirSync(realDb, { recursive: true });
+      fs.writeFileSync(path.join(realDb, 'login.keychain-db'), 'db');
+
+      for (const gateHooks of [true, undefined]) {
+        const overlay = prepareEphemeralHome(
+          TOKEN,
+          { mcpServers: {} },
+          {
+            carryNativeClaudeAuth: true,
+            ...(gateHooks === undefined ? {} : { gateHooks }),
+          },
+        );
+        expect(
+          fs.existsSync(
+            path.join(
+              overlay.dir,
+              'Library',
+              'Keychains',
+              'login.keychain-db',
+            ),
+          ),
+        ).toBe(false);
+        cleanupSessionArtifacts(TOKEN);
+      }
+    },
+  );
+
+  it.skipIf(process.platform !== 'darwin')(
+    'never links the keychain for third-party overlays (GLM/LongCat sem identidade nativa)',
+    () => {
+      const realDb = path.join(home, 'Library', 'Keychains');
+      fs.mkdirSync(realDb, { recursive: true });
+      fs.writeFileSync(path.join(realDb, 'login.keychain-db'), 'db');
+
+      const overlay = prepareEphemeralHome(
+        TOKEN,
+        { mcpServers: {} },
+        { gateHooks: false },
+      );
+
+      expect(
+        fs.existsSync(path.join(overlay.dir, 'Library', 'Keychains')),
+      ).toBe(false);
+    },
+  );
+
   it('rescues a fresh in-pane login into the real profile on teardown', () => {
     const overlay = prepareEphemeralHome(
       TOKEN,

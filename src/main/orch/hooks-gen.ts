@@ -314,6 +314,40 @@ export interface EphemeralHomeOptions {
  */
 export const CLAUDE_AUTH_SYNCBACK_MARKER = 'nexus-claude-auth-syncback';
 
+/**
+ * Liga os `*.keychain-db` de ~/Library/Keychains dentro do HOME efêmero. O
+ * macOS monta a lista de busca de keychains a partir do $HOME do processo —
+ * sem o link, o pane não enxerga "Claude Code-credentials" nem persiste um
+ * /login novo. Best-effort por arquivo: um keychain ausente não aborta spawn.
+ */
+function linkDarwinUserKeychains(realHome: string, overlayDir: string): void {
+  const realDir = path.join(realHome, 'Library', 'Keychains');
+  let names: string[];
+  try {
+    names = fs
+      .readdirSync(realDir)
+      .filter((name) => name.endsWith('.keychain-db'));
+  } catch {
+    return;
+  }
+  if (names.length === 0) return;
+  const targetDir = path.join(overlayDir, 'Library', 'Keychains');
+  try {
+    fs.mkdirSync(targetDir, { recursive: true, mode: 0o700 });
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    const target = path.join(targetDir, name);
+    try {
+      if (fs.lstatSync(target, { throwIfNoEntry: false })) continue;
+      linkFile(path.join(realDir, name), target);
+    } catch {
+      // Um keychain individual falho não derruba os demais.
+    }
+  }
+}
+
 function readNativeClaudeAuthIdentity(
   realHome: string,
 ): Record<string, unknown> {
@@ -538,6 +572,18 @@ export function prepareEphemeralHome(
           // Best effort — no macOS o segredo vive no Keychain.
         }
       }
+    }
+    // macOS: o segredo OAuth vive na login keychain, que o SO resolve como
+    // ~/Library/Keychains/*.keychain-db relativo ao $HOME do PROCESSO. Num
+    // HOME efêmero ela sai da lista de busca — o CLI abre "Not logged in" e
+    // um /login gravaria num keychain descartável que morre com o overlay (o
+    // login nunca "segura"). Linkar os keychain-db reais devolve a linhagem
+    // do HOME real: leitura e escrita atravessam o link, então o refresh é
+    // compartilhado com o perfil nativo e o /login persiste de verdade.
+    // Panes gated recebem CLAUDE_CODE_OAUTH_TOKEN por env (superfície mínima);
+    // para eles o keychain inteiro seria exposição sem ganho.
+    if (process.platform === 'darwin' && options.gateHooks === false) {
+      linkDarwinUserKeychains(os.homedir(), dir);
     }
     fs.writeFileSync(path.join(dir, CLAUDE_AUTH_SYNCBACK_MARKER), '1', {
       mode: 0o600,
