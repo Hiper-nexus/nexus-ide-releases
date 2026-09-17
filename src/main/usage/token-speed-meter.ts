@@ -54,8 +54,14 @@ const CHARS_PER_TOKEN = 4
  * Molduras de spinner, barras de progresso e bordas de TUI. Um chunk composto
  * SÓ destes glifos é repintura de tela, não geração.
  */
-const TUI_NOISE_PATTERN =
-  /[\u2500-\u257f\u2580-\u259f\u2800-\u28ff\ufe0f\u200b-\u200d]/gu
+const TUI_GLYPH_PATTERN = /[\u2500-\u257f\u2580-\u259f\u2800-\u28ff]/gu
+/**
+ * Zero-width e seletor de variação: nunca são conteúdo sozinhos. Ficam FORA
+ * da classe de caracteres de propósito — um combining mark dentro de classe
+ * parte cluster de grafema (o ZWJ de familia/emoji composto), e a intenção
+ * aqui é só decidir se sobrou texto, nunca reescrever a saída do modelo.
+ */
+const ZERO_WIDTH_PATTERN = /\u200b|\u200c|\u200d|\ufe0f/g
 /** Glifos que CLIs colocam antes do prompt redesenhado. */
 const PROMPT_PREFIX_PATTERN = /^(?:[│┃┆┊]\s*)*(?:[>›❯»]\s*)*/u
 
@@ -114,7 +120,10 @@ export function visibleText(chunk: string): string {
 
 /** Só moldura/spinner/espaço: repintura de TUI, não token do modelo. */
 export function isTuiNoise(visible: string): boolean {
-  const meaningful = visible.replace(TUI_NOISE_PATTERN, '').trim()
+  const meaningful = visible
+    .replace(TUI_GLYPH_PATTERN, '')
+    .replace(ZERO_WIDTH_PATTERN, '')
+    .trim()
   return meaningful.length === 0
 }
 

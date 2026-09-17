@@ -42,6 +42,16 @@ describe('visibleText / ruído de TUI', () => {
     expect(isTuiNoise('...')).toBe(false)
   })
 
+  it('emoji composto por ZWJ continua sendo conteúdo, não ruído', () => {
+    expect(isTuiNoise('\u{1F468}\u200d\u{1F469}\u200d\u{1F466}')).toBe(false)
+    expect(isTuiNoise('\u2B50\ufe0f')).toBe(false)
+    expect(isTuiNoise('\u{1F44D}\u{1F3FD}')).toBe(false)
+  })
+
+  it('sequência só de zero-width não conta como geração', () => {
+    expect(isTuiNoise('\u200b\u200d\ufe0f')).toBe(true)
+  })
+
   it('reconhece eco do prompt independentemente de espaçamento e caixa', () => {
     const echo = 'refatore o cost tracker'
     expect(isPromptEcho('Refatore   o Cost', echo)).toBe(true)
