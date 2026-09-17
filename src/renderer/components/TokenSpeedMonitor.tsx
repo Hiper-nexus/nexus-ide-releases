@@ -306,7 +306,7 @@ export function TokenSpeedMonitor({ paneId }: { paneId?: string | null }) {
         </span>
       </div>
 
-      <div className="tokspeed__hero tokspeed__hero--soft">
+      <div className="tokspeed__hero tokspeed__hero--secondary">
         <span className="tokspeed__hero-label">Latência do 1º token (TTFT)</span>
         <span className="tokspeed__hero-value">
           {formatMs(last?.ttftMs ?? null)}

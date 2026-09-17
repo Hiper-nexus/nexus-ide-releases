@@ -88,11 +88,7 @@
   padding: var(--space-2-5) var(--space-3);
   background: var(--surface-1);
   border: 1px solid var(--border);
-  border-left: 2px solid var(--accent);
   border-radius: var(--radius-md);
-}
-.tokspeed__hero--soft {
-  border-left-color: var(--border-strong);
 }
 .tokspeed__hero-label {
   font-size: var(--text-xs);
@@ -104,6 +100,13 @@
   line-height: 1;
   color: var(--text);
   font-variant-numeric: tabular-nums;
+}
+/* Hierarquia entre os dois heróis vem da escala tipográfica, não de cor:
+   `--accent` é reservado a ESTADO (DESIGN.md), e uma barra lateral fixa o
+   gastaria como enfeite. O TTFT é leitura de apoio do número principal. */
+.tokspeed__hero--secondary .tokspeed__hero-value {
+  font-size: 26px;
+  color: var(--text-dim);
 }
 .tokspeed__hero-detail {
   font-size: var(--text-xs);
