@@ -330,8 +330,7 @@ export interface RouteDecision {
 
 type QualityDimension = 'coding' | 'reasoning' | 'frontend' | 'security';
 
-function qualityDimension(taskText: string, tier: TaskTier): QualityDimension {
-  const specialty = classifyRouteSpecialty(taskText).specialty;
+function qualityDimension(specialty: RouteSpecialty, tier: TaskTier): QualityDimension {
   if (specialty === 'visual') return 'frontend';
   if (specialty === 'security') return 'security';
   if (specialty === 'bug') return 'reasoning';
@@ -393,12 +392,12 @@ export function resolveRoutableModel(
 }
 
 function evaluatedCandidates(
-  taskText: string,
+  specialty: RouteSpecialty,
   tier: TaskTier,
   available: ReadonlyMap<string, AdapterAvailability>,
   catalog: ModelCatalog,
 ): RouteCandidate[] {
-  const dimension = qualityDimension(taskText, tier);
+  const dimension = qualityDimension(specialty, tier);
   const effort = tier === 'critical'
     ? 'xhigh'
     : tier === 'hard'
@@ -482,7 +481,7 @@ export function routeTask(
     }),
   );
   const evaluated = evaluationCoversAllInstalled
-    ? evaluatedCandidates(taskText, tier, available, modelCatalog)
+    ? evaluatedCandidates(specialtyVerdict.specialty, tier, available, modelCatalog)
     : [];
   const why =
     classification.signals.length > 0

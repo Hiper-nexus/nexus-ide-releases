@@ -973,8 +973,9 @@ export async function dispatchToolCall(
     } catch (err) {
       console.warn("[jev] guarda de despacho falhou (ignorada):", err);
     }
-    // Autoridade revalidada depois do await de rede — mesma regra dos handlers.
-    if (!hasCurrentBearerAuthority()) {
+    // Autoridade revalidada depois do await de rede — mesma regra dos handlers;
+    // um chamador nativo que sumiu no meio (callerSignal) também não segue.
+    if (!hasCurrentBearerAuthority() || options.callerSignal?.aborted) {
       return {
         ok: false,
         tool: tool.name,

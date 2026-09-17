@@ -288,13 +288,41 @@ function saveConfirmationCapture(
   const base = userDataDir();
   if (!base) return undefined;
   try {
-    const dir = path.join(base, 'jev', 'computer', runId);
+    const root = path.join(base, 'jev', 'computer');
+    pruneOldCaptures(root);
+    const dir = path.join(root, runId);
     fs.mkdirSync(dir, { recursive: true });
     const file = path.join(dir, 'confirm.png');
     fs.writeFileSync(file, capture.png);
     return file;
   } catch {
     return undefined;
+  }
+}
+
+const CAPTURE_TTL_MS = 24 * 60 * 60_000;
+
+/**
+ * Capturas de confirmação são sensíveis (tela do usuário): vivem só o
+ * suficiente para a decisão. Toda nova gravação apaga as de mais de 24 h.
+ */
+function pruneOldCaptures(root: string, now = Date.now()): void {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(root, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const dir = path.join(root, entry.name);
+    try {
+      if (now - fs.statSync(dir).mtimeMs > CAPTURE_TTL_MS) {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    } catch {
+      // best-effort: uma pasta que não dá para ler não bloqueia a captura nova
+    }
   }
 }
 

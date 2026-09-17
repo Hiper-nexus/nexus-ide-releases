@@ -187,10 +187,28 @@ describe('guardToolCall', () => {
     );
     const state = JSON.stringify(judge.mock.calls[0][0].state);
     expect(state).not.toContain(big);
-    expect(state).toContain('<5000 chars>');
+    expect(state).toContain('<5000 chars total>');
     expect(state).not.toContain('apikey_0123456789abcdef');
     expect(state).toContain('<+20 items>');
     expect(state.length).toBeLessThan(4_000);
+  });
+
+  it('keeps a redacted prefix of long strings so injected tails are still judged from the head', async () => {
+    const judge = vi.fn<JudgeMock>(async () => result(benign));
+    const command = `echo start; export TOKEN=sk-${'a'.repeat(40)}; ${'x'.repeat(400)}`;
+    await guardToolCall(input({ toolName: 'nexus_terminal_run', args: { command } }), { judge });
+    const state = JSON.stringify(judge.mock.calls[0][0].state);
+    expect(state).toContain('echo start');
+    expect(state).toContain('[REDACTED]');
+    expect(state).not.toContain('sk-aaaaaaaa');
+  });
+
+  it('cache key uses the ORIGINAL args: commands differing after the cut are judged separately', async () => {
+    const judge = vi.fn<JudgeMock>(async () => result(benign));
+    const head = 'y'.repeat(310);
+    await guardToolCall(input({ args: { command: `${head} && echo one` } }), { judge });
+    await guardToolCall(input({ args: { command: `${head} && rm -rf /` } }), { judge });
+    expect(judge).toHaveBeenCalledTimes(2);
   });
 
   it('caps the objective and passes only the last 5 recent tools', async () => {
@@ -214,7 +232,7 @@ describe('guardToolCall', () => {
 describe('helpers', () => {
   it('compactArgs shortens strings and arrays recursively', () => {
     const out = compactArgs({ s: 'y'.repeat(301), arr: Array(25).fill(1), nested: { t: 'ok' } }) as Record<string, unknown>;
-    expect(out.s).toBe('<301 chars>');
+    expect(out.s).toBe(`${'y'.repeat(300)} …<301 chars total>`);
     expect((out.arr as unknown[]).length).toBe(21);
     expect((out.nested as Record<string, unknown>).t).toBe('ok');
   });

@@ -20,6 +20,7 @@ import { createHash } from 'node:crypto';
 import {
   capText,
   judge,
+  redactSecrets,
   redactState,
   USD_PER_INPUT_TOKEN,
   type JevAnswer,
@@ -134,10 +135,17 @@ const GUARD_QUESTIONS: Record<string, JevQuestion> = {
   },
 };
 
-/** Compacta argumentos: strings longas viram só o tamanho, arrays são cortados. */
+/**
+ * Compacta argumentos: string longa é REDIGIDA primeiro (nunca cortar um
+ * segredo pela metade) e mantém um prefixo limitado — o juiz precisa ver o
+ * começo de um comando/mensagem longo para detectar injeção; arrays são
+ * cortados.
+ */
 export function compactArgs(value: unknown, depth = 0): unknown {
   if (typeof value === 'string') {
-    return value.length > ARG_STRING_MAX ? `<${value.length} chars>` : value;
+    if (value.length <= ARG_STRING_MAX) return value;
+    const redacted = redactSecrets(value);
+    return `${redacted.slice(0, ARG_STRING_MAX)} …<${value.length} chars total>`;
   }
   if (Array.isArray(value)) {
     const head = value.slice(0, ARG_ARRAY_MAX).map((v) => compactArgs(v, depth + 1));
@@ -200,9 +208,26 @@ interface CachedVerdict {
 
 const verdictCache = new Map<string, CachedVerdict>();
 
-function cacheKey(sessionId: string, toolName: string, argsJson: string): string {
+/** JSON com chaves ordenadas — identidade estável dos argumentos ORIGINAIS. */
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) =>
+      a < b ? -1 : a > b ? 1 : 0,
+    );
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`).join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+/**
+ * A chave do cache usa os argumentos ORIGINAIS (não a versão compactada):
+ * dois comandos que só diferem depois do corte de 300 chars nunca podem
+ * compartilhar um veredito.
+ */
+function cacheKey(sessionId: string, toolName: string, args: unknown): string {
   return `${sessionId}:${createHash('sha256')
-    .update(`${canonicalToolName(toolName)}\n${argsJson}`)
+    .update(`${canonicalToolName(toolName)}\n${stableStringify(args)}`)
     .digest('hex')}`;
 }
 
@@ -333,7 +358,7 @@ export async function guardToolCall(
 
   const sessionId = input.sessionId ?? input.ctx.sessionId ?? 'anon';
   const argsJson = compactArgsJson(input.args);
-  const key = cacheKey(sessionId, input.toolName, argsJson);
+  const key = cacheKey(sessionId, input.toolName, input.args);
   const cached = cachedVerdict(key, now());
   if (cached) return cached;
 
