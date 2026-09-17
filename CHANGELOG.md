@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.48 — O Claude volta a entrar
+
+- **Pane Claude abre logado de novo (F-575)**: desde a 0.76.45 (HOME privado por checkout, F-567) todo pane do Claude nascia em "Not logged in · Run /login" com a máquina perfeitamente autenticada. A causa é do macOS, não do CLI: a lista de busca de keychains é resolvida por `~/Library/Keychains` **relativo ao $HOME do processo** — no HOME efêmero do pane, o login keychain real some da busca e "Claude Code-credentials" fica invisível. O overlay agora linka os `*.keychain-db` reais, então o pane enxerga a sessão viva da assinatura exatamente como no HOME real.
+- **Login dentro do pane passa a segurar**: sem o keychain real na busca, um `/login` feito no pane gravava a credencial num `login.keychain-db` descartável dentro do overlay — apagado no teardown, sem chance de sync-back. Com o link, a escrita atravessa direto para o keychain de verdade: o login persiste e o refresh de token continua compartilhado entre pane, CLI nativo e demais panes (sem rotação cruzada).
+- **Superfície deliberada**: só panes não-gated (a sua mão e operator-choice) recebem o link; workers e orquestradores seguem autenticando por `CLAUDE_CODE_OAUTH_TOKEN` injetado — o keychain inteiro num worker seria exposição sem ganho. Overlays de terceiro (GLM/LongCat) nunca recebem identidade nem keychain. Linux/Windows não mudam: lá o segredo já é o `~/.claude/.credentials.json` linkado no overlay.
+
 ## 0.76.47 — Swap não é pressão
 
 - **Abrir pane não trava mais por swap (F-572)**: o teto de 1 GB de swap recusava **todo** pane novo até reiniciar o app depois do incidente de 16/09 — a recusa que o operador viu (`Swap em uso alto (8535 MB > 1024 MB)`) aparecia com a máquina saudável. No macOS `vm.swapusage` "used" guarda o **pico**, não o agora: medido na máquina do operador, 8.151 MB de swap com `kern.memorystatus_vm_pressure_level` = 1 (NORMAL) e 62 % de RAM disponível — e o mesmo Mac já chegou a 16 GB de swap. Cada máquina tem a sua medida, então não existe número universal.

@@ -4098,7 +4098,7 @@ export const RELEASE_07646: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07647: AppRelease = {
   version: '0.76.47',
   date: '2026-09-16',
   codename: 'Swap não é pressão',
@@ -4147,6 +4147,62 @@ export const CURRENT_RELEASE: AppRelease = {
         'No Windows o campo de "swap" do sistema é limite de commit (memória + pagefile), não ' +
         'paginação: um desktop saudável reportava mais de 20 GB e o gate acusaria pressão ' +
         'sempre. Sem sinal de swap real, quem decide é a memória livre.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.48',
+  date: '2026-09-17',
+  codename: 'O Claude volta a entrar',
+  summary:
+    'O pane do Claude abria em "Not logged in · Run /login" mesmo com a máquina ' +
+    'autenticada — e um login feito dentro dele nunca persistia. A causa é do macOS: ' +
+    'a lista de keychains é resolvida pelo $HOME do processo, então no HOME privado ' +
+    'do pane a credencial da assinatura ficava invisível. O overlay agora enxerga o ' +
+    'keychain real: sessão viva, refresh compartilhado e /login que segura de verdade.',
+  highlights: [
+    {
+      title: 'Pane Claude abre logado de novo',
+      detail:
+        'Desde a 0.76.45 (HOME privado por checkout) todo pane do Claude nascia em ' +
+        '"Not logged in" com a máquina autenticada: o macOS só procura keychains em ' +
+        '~/Library/Keychains do $HOME do processo, e o HOME efêmero escondia ' +
+        '"Claude Code-credentials". O overlay agora linka os *.keychain-db reais — ' +
+        'o pane usa a mesma sessão viva do seu Terminal.',
+    },
+    {
+      title: 'Login dentro do pane passa a segurar',
+      detail:
+        'Sem o keychain real na busca, um /login feito no pane gravava a credencial ' +
+        'num keychain descartável que morria com o overlay. Agora a escrita atravessa ' +
+        'para o keychain de verdade: o login persiste e o refresh continua ' +
+        'compartilhado entre pane, CLI nativo e demais panes.',
+    },
+    {
+      title: 'Workers seguem no token injetado',
+      detail:
+        'A superfície de cada pane não mudou de política: workers e orquestradores ' +
+        'gated continuam autenticando por CLAUDE_CODE_OAUTH_TOKEN (superfície ' +
+        'mínima), e overlays de terceiro (GLM/LongCat) nunca recebem identidade nem ' +
+        'keychain. Linux/Windows já usavam o .credentials.json linkado.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Causa medida no macOS, não suposta',
+      detail:
+        'Reproduzido com a máquina logada: HOME efêmero → `claude auth status` = ' +
+        'false e `security` não acha a credencial; com o keychain linkado → ' +
+        'loggedIn: true, e uma escrita de teste no HOME efêmero caiu no keychain ' +
+        'real. O sync-back de identidade e .credentials.json segue como estava.',
+    },
+    {
+      title: 'Quem vem da 0.76.45/0.76.47',
+      detail:
+        'A atualização também traz o teto de panes como aviso, o gate de swap por ' +
+        'máquina (o número de swap guarda pico, não o agora) e o fim dos ' +
+        'estacionamentos em loop do reaper.',
     },
   ],
 };
