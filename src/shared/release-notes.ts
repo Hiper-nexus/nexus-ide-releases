@@ -4171,6 +4171,17 @@ export const CURRENT_RELEASE: AppRelease = {
         '<userData>/provider-cache/<adapter.id>/ aquece uma vez e reusa para sempre.',
     },
     {
+      title: 'Velocidade de geração por LLM (tok/s e TTFT)',
+      detail:
+        'Ajustes → Diagnóstico ganha um medidor de quanto cada modelo cospe por ' +
+        'segundo nesta rodada, quanto demorou até o 1º token, média e pico, e uma ' +
+        'tabela com uma linha por LLM — um pane que troca de modelo no meio da ' +
+        'sessão alimenta as duas linhas sem reescrever o passado. Métrica que a ' +
+        'medição não sustenta aparece como "—", nunca como zero falso: rodada ' +
+        'curta demais ou submit não observado não viram número inventado. Claude ' +
+        'e Codex corrigem a estimativa com a contagem exata do transcript.',
+    },
+    {
       title: 'Isolamento por adapter, como sempre',
       detail:
         'A raiz do cache é por adapter.id: GLM/LongCat e outros third-party ganham ' +
