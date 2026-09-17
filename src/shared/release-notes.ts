@@ -4184,6 +4184,23 @@ export const CURRENT_RELEASE: AppRelease = {
         'este release ataca o boot lento medido depois dela, não mexe em ' +
         'autenticação nem em concessões de sandbox.',
     },
+    {
+      title: 'Jev: julgamento tipado no produto',
+      detail:
+        'Triagem de intake no router (opt-in via orch.jevAutopilot; sem chave ' +
+        'TypeSafe o fluxo é exatamente o de antes), tool nexus_judge read-only ' +
+        'com rate limit, revisão de evidência dos handoffs, cofre ' +
+        'jev-env:TYPESAFE_API_KEY em Ajustes e skill typesafe-ai bundled. A chave ' +
+        'chega pelo shell do usuário, nunca pelo process.env do Main.',
+    },
+    {
+      title: '"Enviar para o NexusIDE" vira evento visível (F-577)',
+      detail:
+        'O shot-bridge recebia o arquivo do Nexus Shot e o evento morria no ' +
+        'renderer sem consumidor. Agora o IDE confirma a entrega com um toast e ' +
+        'ação Abrir/Abrir pasta; a validação de caminho continua no Main e ' +
+        'nenhum canal IPC novo foi criado.',
+    },
   ],
   fixes: [
     {
