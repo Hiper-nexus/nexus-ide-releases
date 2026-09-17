@@ -356,6 +356,9 @@ export function SquadsSection() {
     paneState: true,
     terminalTriage: true,
     rank: true,
+    dispatchGuard: true,
+    toolPick: true,
+    taskRouting: true,
   });
   const [designPro, setDesignPro] = useState(true);
   const [designDirection, setDesignDirection] = useState<DesignDirection>('auto');
@@ -374,6 +377,9 @@ export function SquadsSection() {
         paneState: o.jevSurfaces?.paneState !== false,
         terminalTriage: o.jevSurfaces?.terminalTriage !== false,
         rank: o.jevSurfaces?.rank !== false,
+        dispatchGuard: o.jevSurfaces?.dispatchGuard !== false,
+        toolPick: o.jevSurfaces?.toolPick !== false,
+        taskRouting: o.jevSurfaces?.taskRouting !== false,
       });
       setDesignPro(o.designPro);
       setDesignDirection(o.designDirection ?? 'auto');
@@ -602,6 +608,12 @@ export function SquadsSection() {
               ['paneState', 'Estado dos panes'],
               ['terminalTriage', 'Triagem de falha de comandos'],
               ['rank', 'Ranking de entregas'],
+              [
+                'dispatchGuard',
+                'Guarda de chamadas de ferramenta (coerência, injeção, efeito destrutivo)',
+              ],
+              ['toolPick', 'Recomendação de ferramenta (nexus_tool_pick)'],
+              ['taskRouting', 'Roteamento de tarefas (nexus_route_task)'],
             ] as const
           ).map(([surface, label]) => (
             <OrchestrationToggle

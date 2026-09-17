@@ -118,6 +118,9 @@ const ALWAYS_ALLOWED = new Set([
   "judge",
   // Same for candidate ranking: read-only judgment, composite computed in code.
   "rank",
+  // Tool recommendation: reads the caller's own visible tool list and returns
+  // a ranking; the agent still calls the recommended tool through every gate.
+  "tool_pick",
 ]);
 
 /**

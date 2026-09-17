@@ -75,6 +75,11 @@ export interface RouteContext {
    * unit tests never read `~/.nexus`.
    */
   specialtyBenchmark?: SpecialtyBenchmark | null;
+  /**
+   * Especialidade já julgada pelo chamador (Jev via jev-task-routing) —
+   * substitui só a heurística de palavras-chave; política/benchmark seguem.
+   */
+  specialtyOverride?: RouteSpecialty;
 }
 
 export type RankedRouteEntry = {
@@ -449,7 +454,14 @@ export function routeTask(
 
   const classification = classifyTask(taskText);
   const tier = tierOverride ?? classification.tier;
-  const specialtyVerdict = classifyRouteSpecialty(taskText);
+  const heuristicSpecialty = classifyRouteSpecialty(taskText);
+  const specialtyVerdict = context.specialtyOverride
+    ? {
+        ...heuristicSpecialty,
+        specialty: context.specialtyOverride,
+        reason: `especialidade julgada pelo Jev (heurística: ${heuristicSpecialty.specialty})`,
+      }
+    : heuristicSpecialty;
   const policy = resolveSpecialtyPolicy(
     specialtyVerdict.specialty,
     context.specialtyBenchmark,

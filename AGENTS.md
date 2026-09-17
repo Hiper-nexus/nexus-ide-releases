@@ -336,10 +336,42 @@ saber isto antes de mexer:
   (read-only, ALWAYS_ALLOWED, 30/min/sessão, state ≤ 32 KB); toggle
   `orch.jevAutopilot` / `NEXUS_JEV_AUTOPILOT=0`; skill `typesafe-ai` bundled e
   concedida aos roles `clean-code`.
-- Sem chave: `nexus_judge`/`nexus_rank`/`nexus_browser_do`/`nexus_computer_do`
-  somem do `tools/list` (`McpToolDef.available`) e a skill bundled não é
-  espelhada (`bundledSkillFilter` no `skill-mirror`); nada mais muda — o
-  cliente vê um Nexus 100% clássico.
+- Sem chave: `nexus_judge`/`nexus_rank`/`nexus_tool_pick`/`nexus_browser_do`/
+  `nexus_computer_do` somem do `tools/list` (`McpToolDef.available`) e a skill
+  bundled não é espelhada (`bundledSkillFilter` no `skill-mirror`); nada mais
+  muda — o cliente vê um Nexus 100% clássico.
+- **Guarda de despacho** (`orch/jev-dispatch-guard.ts`, hook em
+  `mcp-dispatch.ts`, surface `dispatchGuard`): toda chamada `nexus_*` COM
+  efeito, dentro de missão e fora da mão do operador (`role user` nunca é
+  julgado), passa por três nouls — coerente com o objetivo da missão
+  (`intentContract.goal`), argumentos com cara de instrução injetada,
+  efeito irreversível. Política em código: injeção ≥ 0.8 → `deny` auditado
+  com hint (o agente refaz com argumentos próprios); coerência ≤ 0.35 E
+  destrutivo ≥ 0.6 → o modal de confirmação VOLTA mesmo em missão aprovada
+  (exceção estreita à doutrina 09/09: é assinatura de sequestro, não
+  cerimônia); tudo o mais → passa. Read-only e o conjunto isento
+  (`GUARD_EXEMPT_TOOLS`: handoff_*, heartbeat, clarify, waits, reads, judge,
+  rank, tool_pick, route_*) nunca são julgados. Args vão compactados
+  (string > 300 chars vira `<N chars>`, JSON ≤ 2 KB, redigidos) e NUNCA
+  entram no decision log. Cache de veredito por sessão+args por 60 s.
+  Limiar 0.35 medido em 17/09 (`git push --force main` numa missão de login
+  saiu coherent 0.33 / destructive 0.88); recalibrar pelo painel.
+- **`nexus_tool_pick`** (`orch/tools-tool-pick.ts`, read-only,
+  ALWAYS_ALLOWED): pré-filtro lexical (sinônimos pt-BR → inglês) sobre as
+  ferramentas VISÍVEIS ao chamador (mesmo critério do tools/list), top 24,
+  uma `choice` do Jev com `none`; devolve top-N com probabilidades e a
+  margem 1º–2º — não corta por confiança (lição das rubricas: 24 opções
+  derrubam a confiança por ambiguidade legítima). Registry injetado no boot
+  (`setToolPickRegistry`). Medido: "ver o que outro pane está fazendo" →
+  pane_read 0.84; "rodar os testes" → terminal_run 1.00.
+- **`nexus_route_task` com Jev** (`orch/jev-task-routing.ts`, surface
+  `taskRouting`): tier e especialidade julgados numa chamada, cada campo
+  aceito só com confiança ≥ 0.6 (senão a heurística de palavras-chave, por
+  campo); `tier` passado pelo chamador continua mandando;
+  `specialtyOverride` é seam aditivo do `RouteContext` (política/benchmark/
+  catálogo/reserva intocados). Resultado ganha `classifierSource`
+  (`jev|heuristic|mixed`) e `escalate` (0..1) — informação para o Maestro,
+  nunca decisão do router.
 - `nexus_browser_do` ("Jev decide, Nexus executa"): UMA confirmação humana
   por objetivo; ação irreversível/custosa sempre para em `needs_confirmation`
   e devolve a proposta; trava de origem (`left_origin`); textos digitados são

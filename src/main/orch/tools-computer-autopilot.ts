@@ -633,7 +633,8 @@ const computerDoTool: McpToolDef = {
     'confidence / any irreversible or costly action (needs_confirmation) / ' +
     'focus leaving the app / maxSteps. Only the operator\'s own pane or the ' +
     'orchestrator may call it. Requires macOS Accessibility permission for ' +
-    'NexusIDE.',
+    'NexusIDE. `done` is Jev\'s judgment — verify the outcome yourself ' +
+    '(read the app) before reporting success.',
   inputSchema: {
     type: 'object',
     properties: {

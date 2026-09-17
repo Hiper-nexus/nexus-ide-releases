@@ -42,6 +42,8 @@ const READ_ONLY_TOOLS = new Set([
   'judge',
   // Ranking de candidatos: idem — leitura tipada, composto calculado em código.
   'rank',
+  // Recomendação de ferramenta: lê só a lista visível do próprio chamador.
+  'tool_pick',
   'pr_inspect',
   'handoff_list',
   'media_providers',

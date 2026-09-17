@@ -137,6 +137,12 @@ export const orchSettingsSchema = z.object({
       paneState: z.boolean().default(true),
       terminalTriage: z.boolean().default(true),
       rank: z.boolean().default(true),
+      /** Guarda de chamadas `nexus_*` com efeito dentro de missão. */
+      dispatchGuard: z.boolean().default(true),
+      /** Recomendação semântica de ferramenta (`nexus_tool_pick`). */
+      toolPick: z.boolean().default(true),
+      /** Tier/especialidade do `nexus_route_task` via Jev. */
+      taskRouting: z.boolean().default(true),
     })
     .prefault({}),
   /** Carta de Design anti-genérico (Impeccable) para tarefas com UI. */

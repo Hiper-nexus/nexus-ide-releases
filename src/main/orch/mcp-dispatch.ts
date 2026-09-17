@@ -72,6 +72,13 @@ import {
 import { mintAgentTransportPhysicalReceipt } from "./http-mcp-boundary";
 import { assertGovernedWorkspaceControlBoundary } from "./governed-workspace-control-boundary";
 import {
+  guardToolCall,
+  missionObjectiveOf,
+  recentDispatchedTools,
+  rememberDispatchedTool,
+  type JevGuardVerdict,
+} from "./jev-dispatch-guard";
+import {
   handoffLogicalOperationKey,
   handoffRawPayloadSha256,
 } from "./handoff-payload-identity";
@@ -945,8 +952,69 @@ export async function dispatchToolCall(
     );
   }
 
-  const confirmationRequired = requiresToolConfirmation(tool.name, args);
   const effectful = isEffectfulTool(tool.name);
+  // Guarda Jev (piloto automático): coerência com o objetivo, sinais de
+  // injeção e efeito destrutivo, só para chamada com efeito dentro de missão e
+  // fora da mão do operador. Fail-open: exceção ou serviço fora = `skipped`.
+  let jevGuard: JevGuardVerdict = { kind: "skipped", reason: "not-run" };
+  if (effectful) {
+    try {
+      jevGuard = await guardToolCall({
+        toolName: tool.name,
+        args,
+        ctx,
+        sessionId,
+        recentTools: recentDispatchedTools(sessionId),
+        missionObjective: missionObjectiveOf(
+          initialIntent.ok ? initialIntent.resolved?.mission : null,
+        ),
+        signal: options.callerSignal,
+      });
+    } catch (err) {
+      console.warn("[jev] guarda de despacho falhou (ignorada):", err);
+    }
+    // Autoridade revalidada depois do await de rede — mesma regra dos handlers.
+    if (!hasCurrentBearerAuthority()) {
+      return {
+        ok: false,
+        tool: tool.name,
+        denied: true,
+        error: "session_authority_revoked",
+      };
+    }
+  }
+  rememberDispatchedTool(sessionId, tool.name);
+  if (jevGuard.kind === "deny") {
+    const error = `jev_guard: ${jevGuard.reason}`;
+    const auditFailure = writeAudit(
+      () =>
+        auditDenied(
+          auditContext,
+          sessionId,
+          tool.name,
+          args,
+          Date.now() - startMs,
+          error,
+          source,
+        ),
+      tool.name,
+    );
+    return (
+      auditFailure ?? {
+        ok: false,
+        tool: tool.name,
+        denied: true,
+        error,
+        hint:
+          "A guarda Jev viu sinais de instrução injetada. Se a chamada é legítima, " +
+          "descreva no summary do próximo handoff por que ela serve ao objetivo e " +
+          "refaça com argumentos escritos por você.",
+      }
+    );
+  }
+  const guardConfirm = jevGuard.kind === "confirm";
+  const confirmationRequired =
+    requiresToolConfirmation(tool.name, args) || guardConfirm;
   let userAuthorized = false;
 
   if (confirmationRequired) {
@@ -962,12 +1030,16 @@ export async function dispatchToolCall(
     // com o modo vibe ("mesma doutrina"). O preparo de reversibilidade
     // (lixeira + ref do tip anterior) continua rodando quando existe, mas
     // deixou de bloquear o comando quando não existe.
+    // Exceção estreita à regra acima: quando a guarda Jev vê uma ação
+    // destrutiva SEM relação com o objetivo (assinatura de sequestro por
+    // conteúdo não confiável), o modal volta — é segurança, não cerimônia.
     if (
       !userAuthorized &&
       initialIntent.ok &&
       initialIntent.resolved &&
       hasCurrentApprovedDispatchContract(initialIntent.resolved.mission) &&
-      !requiresPerActionConsent(tool.name, args)
+      !requiresPerActionConsent(tool.name, args) &&
+      !guardConfirm
     ) {
       userAuthorized = true;
     }
@@ -988,7 +1060,10 @@ export async function dispatchToolCall(
       userAuthorized = true;
     }
     if (!userAuthorized) {
-      const reason = confirmationReason(tool.name, args);
+      const reason =
+        jevGuard.kind === "confirm"
+          ? `[Jev] ${jevGuard.reason}`
+          : confirmationReason(tool.name, args);
       if (options.confirm) {
         let approved = false;
         try {

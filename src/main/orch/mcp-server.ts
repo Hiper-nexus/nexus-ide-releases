@@ -196,6 +196,7 @@ import {
 } from "./agent-status";
 import { startAgentScreenDetection } from "../detect/detector";
 import { startJevPaneStateClassifier } from "../jev/jev-pane-state";
+import { setToolPickRegistry } from "./tools-tool-pick";
 import { installMcpSessionTerminationRevocation } from "./mcp-session-revocation";
 import { codexStatusHookArgs } from "./hook-status-config";
 import { codexHookTrustBypassArgs } from "./codex-cli-version";
@@ -1688,6 +1689,9 @@ export function startMcpServer(): Promise<void> {
     serverName: "nexus-ide",
     serverVersion: app.getVersion(),
   };
+  // nexus_tool_pick recomenda só entre as ferramentas deste servidor, filtradas
+  // por chamador na hora da chamada (mesmo critério do tools/list).
+  setToolPickRegistry(registry.tools);
   installSpawnHook();
   // F-529: reenvios do autoresponder (tecla perdida na race do desenho do
   // diálogo de trust) digitam pelo mesmo caminho da resposta original.

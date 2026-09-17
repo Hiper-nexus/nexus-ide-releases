@@ -15,9 +15,13 @@ All external input validated with Zod at process boundaries.
 | Audit + redaction | `jarvis/audit-log.ts`, `command-redaction.ts` |
 | Autonomy | `autonomy/autonomy-profiles.ts` |
 | Browser | `browser/url-policy.ts` |
-| Egress Jev (TypeSafe) | `jev/jev-client.ts` (redactState, fail-open), `orch/jev-handoff-review.ts`, `orch/tools-judge.ts`, `orch/tools-browser-autopilot.ts`, `orch/tools-computer-autopilot.ts`, `vision/desktop-control.ts` |
+| Egress Jev (TypeSafe) | `jev/jev-client.ts` (redactState, fail-open), `orch/jev-handoff-review.ts`, `orch/tools-judge.ts`, `orch/tools-browser-autopilot.ts`, `orch/tools-computer-autopilot.ts`, `vision/desktop-control.ts`, `orch/jev-dispatch-guard.ts`, `orch/tools-tool-pick.ts`, `orch/jev-task-routing.ts` |
 
 ## Error flow
+
+- Jev dispatch guard: `deny` only on injection ≥ 0.8; otherwise at most human
+  confirmation (destructive + incoherent); service failure = pass-through
+  (never blocks). Operator (`role user`) calls are never judged.
 
 - Invalid schema → reject, no side effects.
 - Path escape → throw / deny.

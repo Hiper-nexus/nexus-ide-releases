@@ -531,7 +531,9 @@ const browserDoTool: McpToolDef = {
     'purchase/payment/send/delete/publish (needs_confirmation — perform ' +
     'that single step yourself with nexus_browser_click/fill), leaving the ' +
     'starting site (left_origin), or maxSteps. Never use it for payments ' +
-    'or account changes without the human present.',
+    'or account changes without the human present. `done` is Jev\'s ' +
+    'judgment — verify the outcome yourself (read the page) before ' +
+    'reporting success.',
   inputSchema: {
     type: 'object',
     properties: {

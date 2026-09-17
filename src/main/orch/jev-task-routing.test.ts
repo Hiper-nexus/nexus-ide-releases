@@ -1,0 +1,127 @@
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('../jev/jev-decision-log', () => ({
+  recordJevDecision: vi.fn(() => 'id'),
+  jevAnswerProbabilities: () => ({}),
+  jevAnswerConfidences: () => ({}),
+}));
+vi.mock('../jev/jev-autopilot', () => ({ isJevSurfaceEnabled: vi.fn(() => true) }));
+vi.mock('../jev/jev-secrets', () => ({ hasJevCredential: vi.fn(() => true) }));
+
+import { recordJevDecision } from '../jev/jev-decision-log';
+import type { JevResult, JudgeInput } from '../jev/jev-client';
+import {
+  classifyTaskWithJev,
+  routingOverridesFrom,
+  type JevTaskClassification,
+} from './jev-task-routing';
+
+type JudgeMock = (input: JudgeInput) => Promise<JevResult | null>;
+
+function answer(
+  tier: string,
+  tierConfidence: number,
+  specialty: string,
+  specialtyConfidence: number,
+  escalate = 0.1,
+): JevResult {
+  return {
+    model: 'jev-test',
+    answers: {
+      tier: { type: 'choice', choice: tier, probabilities: { [tier]: 0.9 }, confidence: tierConfidence },
+      specialty: {
+        type: 'choice',
+        choice: specialty,
+        probabilities: { [specialty]: 0.9 },
+        confidence: specialtyConfidence,
+      },
+      escalate: { type: 'noul', noul: escalate },
+    },
+    usage: { input_tokens: 80, output_tokens: 12 },
+  };
+}
+
+describe('classifyTaskWithJev', () => {
+  it('returns the typed classification and records one decision', async () => {
+    const judge = vi.fn<JudgeMock>(async () => answer('hard', 0.8, 'bug', 0.7, 0.4));
+    const out = await classifyTaskWithJev('corrigir race condition no supervisor', { judge });
+    expect(out).toEqual({
+      tier: 'hard',
+      tierConfidence: 0.8,
+      specialty: 'bug',
+      specialtyConfidence: 0.7,
+      escalate: 0.4,
+      model: 'jev-test',
+    });
+    expect(recordJevDecision).toHaveBeenCalledWith(
+      expect.objectContaining({ surface: 'taskRouting', decision: 'tier:hard/bug' }),
+    );
+    const state = judge.mock.calls[0]![0].state as { task: string };
+    expect(state.task).toContain('race condition');
+  });
+
+  it('returns null when disabled, without a key, on empty task, or when the judge fails', async () => {
+    const judge = vi.fn<JudgeMock>(async () => answer('easy', 0.9, 'doc', 0.9));
+    expect(await classifyTaskWithJev('x', { judge, enabled: () => false })).toBeNull();
+    expect(await classifyTaskWithJev('x', { judge, hasKey: () => false })).toBeNull();
+    expect(await classifyTaskWithJev('   ', { judge })).toBeNull();
+    expect(judge).not.toHaveBeenCalled();
+    expect(await classifyTaskWithJev('x', { judge: vi.fn(async () => null) })).toBeNull();
+  });
+
+  it('returns null on an unknown tier or specialty value', async () => {
+    expect(
+      await classifyTaskWithJev('x', { judge: vi.fn(async () => answer('galactic', 0.9, 'bug', 0.9)) }),
+    ).toBeNull();
+    expect(
+      await classifyTaskWithJev('x', { judge: vi.fn(async () => answer('easy', 0.9, 'cooking', 0.9)) }),
+    ).toBeNull();
+  });
+});
+
+describe('routingOverridesFrom', () => {
+  const full: JevTaskClassification = {
+    tier: 'critical',
+    tierConfidence: 0.9,
+    specialty: 'security',
+    specialtyConfidence: 0.8,
+    escalate: 0.7,
+    model: 'jev-test',
+  };
+
+  it('uses both Jev fields when confident (source jev)', () => {
+    expect(routingOverridesFrom(full, undefined)).toEqual({
+      tierOverride: 'critical',
+      specialtyOverride: 'security',
+      classifierSource: 'jev',
+      escalate: 0.7,
+    });
+  });
+
+  it('falls back per field below the confidence floor (source mixed / heuristic)', () => {
+    expect(routingOverridesFrom({ ...full, tierConfidence: 0.3 }, undefined)).toMatchObject({
+      tierOverride: undefined,
+      specialtyOverride: 'security',
+      classifierSource: 'mixed',
+    });
+    expect(
+      routingOverridesFrom({ ...full, tierConfidence: 0.3, specialtyConfidence: 0.2 }, undefined),
+    ).toMatchObject({ tierOverride: undefined, specialtyOverride: undefined, classifierSource: 'heuristic' });
+  });
+
+  it('the caller-provided tier always wins over Jev', () => {
+    const out = routingOverridesFrom(full, 'easy');
+    expect(out.tierOverride).toBe('easy');
+    expect(out.specialtyOverride).toBe('security');
+    expect(out.classifierSource).toBe('mixed');
+  });
+
+  it('null classification → heuristic with the caller tier, no escalate', () => {
+    expect(routingOverridesFrom(null, 'medium')).toEqual({
+      tierOverride: 'medium',
+      specialtyOverride: undefined,
+      classifierSource: 'heuristic',
+      escalate: undefined,
+    });
+  });
+});

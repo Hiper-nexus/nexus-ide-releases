@@ -21,6 +21,11 @@ import { z } from 'zod';
 import { findPane, readSessionOutput, waitForIdle } from './pane-registry';
 import { listProviderSettings } from '../persistence/provider-config-store';
 import { routeTask, type TaskTier } from './task-router';
+import {
+  classifyTaskWithJev,
+  routingOverridesFrom,
+  type JevTaskClassification,
+} from './jev-task-routing';
 import { mergeAdapterUseLists } from './route-pipeline';
 import { recordRouteDecision } from './route-provenance';
 import { recordRouteLog, recentRouteLog } from './route-log';
@@ -78,6 +83,7 @@ import {
 import { buildHandoffTools } from './tools-handoff';
 import { buildJudgeTools } from './tools-judge';
 import { buildRankTools } from './tools-rank';
+import { buildToolPickTools } from './tools-tool-pick';
 import { squadSchema } from '../../shared/orch-types';
 import { collectPerfSnapshot } from '../perf/perf-ipc';
 import { canCompleteConsultLane, canCompleteOpsLane } from '../../shared/mission-intent';
@@ -1408,9 +1414,21 @@ const routeTaskTool: McpToolDef = {
     }
     const task = requireStr(args, 'task');
     const tierRaw = str(args, 'tier');
-    const tier = TIERS.includes(tierRaw as TaskTier)
+    const callerTier = TIERS.includes(tierRaw as TaskTier)
       ? (tierRaw as TaskTier)
       : undefined;
+    // Classificação Jev (piloto automático, superfície taskRouting): troca a
+    // heurística de palavras-chave por tier/especialidade calibrados, cada
+    // campo só quando confiante; o caller que passou `tier` continua mandando.
+    // Fail-open: sem chave/serviço → heurística como sempre.
+    let jevClassification: JevTaskClassification | null = null;
+    try {
+      jevClassification = await classifyTaskWithJev(task);
+    } catch (error) {
+      console.warn('[route_task] classificação Jev falhou (ignorada):', error);
+    }
+    const routing = routingOverridesFrom(jevClassification, callerTier);
+    const tier = routing.tierOverride;
     // Failover de rate limit: o orquestrador re-roteia excluindo a CLI que
     // acabou de estourar cota/quebrar, em vez de insistir nela.
     const excluded = new Set(strArray(args, 'exclude'));
@@ -1539,6 +1557,7 @@ const routeTaskTool: McpToolDef = {
         preferAdapters: preferAdapters.length > 0 ? preferAdapters : undefined,
         multiScore: Boolean(missionId),
         specialtyBenchmark: loadSpecialtyBenchmark(),
+        specialtyOverride: routing.specialtyOverride,
       },
     );
     if (!decision) {
@@ -1587,11 +1606,18 @@ const routeTaskTool: McpToolDef = {
       effort: decision.effort,
       reason: decision.reason,
     });
-    if (!missionId) return decision;
+    // Proveniência da classificação (jev | heuristic | mixed) e o sinal
+    // `escalate` do Jev — informação para o Maestro, nunca decisão do router.
+    const provenance = {
+      classifierSource: routing.classifierSource,
+      ...(routing.escalate !== undefined ? { escalate: routing.escalate } : {}),
+    };
+    if (!missionId) return { ...decision, ...provenance };
     const reservation = getProjectDomainStores(ctx.scope)
       .missions.reserveRouteDecision(missionId, task, decision);
     return {
       ...decision,
+      ...provenance,
       routeReservationId: reservation.id,
       routeReservationExpiresAt: reservation.expiresAt,
     };
@@ -2048,6 +2074,7 @@ export function buildDomainTools(): McpToolDef[] {
     ...buildHandoffTools(),
     ...buildJudgeTools(),
     ...buildRankTools(),
+    ...buildToolPickTools(),
     agentInvokeTool,
     agentListTool,
     agentGetTool,

@@ -18,7 +18,10 @@ export type JevSurface =
   | 'intake'
   | 'paneState'
   | 'terminalTriage'
-  | 'rank';
+  | 'rank'
+  | 'dispatchGuard'
+  | 'toolPick'
+  | 'taskRouting';
 
 const JEV_SURFACES: readonly JevSurface[] = [
   'handoffReview',
@@ -26,6 +29,9 @@ const JEV_SURFACES: readonly JevSurface[] = [
   'paneState',
   'terminalTriage',
   'rank',
+  'dispatchGuard',
+  'toolPick',
+  'taskRouting',
 ];
 
 /**
