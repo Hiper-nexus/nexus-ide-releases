@@ -213,6 +213,12 @@
 .tokspeed-chip[data-streaming='on'] {
   color: var(--accent);
 }
+/* No painel a unidade se separa do número grande; no chip o `gap` do flex já
+   faz esse trabalho, e somar a margem dobraria o respiro (8px) contra os 4px
+   do ícone — a unidade passaria a ler como item solto, não como sufixo. */
+.tokspeed-chip .tokspeed__unit {
+  margin-left: 0;
+}
 
 @media (prefers-reduced-motion: reduce) {
   .tokspeed[data-streaming='on'] .tokspeed__dot {

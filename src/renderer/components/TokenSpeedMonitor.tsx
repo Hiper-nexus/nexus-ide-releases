@@ -347,11 +347,25 @@ export function TokenSpeedMonitor({ paneId }: { paneId?: string | null }) {
   )
 }
 
-/** Versão compacta para a barra do topo, ao lado do resumo de custo. */
+/**
+ * Versão compacta para a toolbar de um pane.
+ *
+ * Diferente do painel, aqui a busca é ESTRITA: um pane sem medição não cai no
+ * agregado do workspace, porque exibir na barra do pane A o número que o pane
+ * B produziu é atribuir a ele uma velocidade que ele nunca teve. Sem amostra
+ * própria, o chip não ocupa espaço.
+ */
 export function TokenSpeedChip({ paneId }: { paneId?: string | null }) {
   const snapshot = useTokenSpeedStore((s) => s.snapshot)
-  const view = deriveTokenSpeedView(snapshot, paneId)
-  if (!view.last && !view.streaming) return null
+  const own = paneId
+    ? snapshot.panes.find((entry) => entry.paneId === paneId)
+    : undefined
+  const view = paneId
+    ? own
+      ? deriveTokenSpeedView(snapshot, paneId)
+      : null
+    : deriveTokenSpeedView(snapshot, null)
+  if (!view || (!view.last && !view.streaming)) return null
   const speed = view.last?.tokensPerSecond ?? null
   return (
     <span

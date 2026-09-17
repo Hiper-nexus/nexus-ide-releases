@@ -22,6 +22,7 @@ import {
 } from '../terminal/terminal-host';
 import { CostBadge } from './CostBadge';
 import { DevServerChip } from './DevServerChip';
+import { TokenSpeedChip } from './TokenSpeedMonitor';
 import { PixelIcon, type PixelIconName } from './PixelIcon';
 import { requestPaneClose } from '../terminal/pane-close-guard';
 import { getPaneSessionId } from '../terminal/terminal-host';
@@ -834,6 +835,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
         )}
         {pane.kind === 'cli-agent' && <JevHintChip paneId={pane.id} />}
         {pane.kind === 'cli-agent' && <CostBadge paneId={pane.id} />}
+        {pane.kind === 'cli-agent' && <TokenSpeedChip paneId={pane.id} />}
         {pane.kind === 'cli-agent' && <FootprintBadge paneId={pane.id} />}
         <DevServerChip pane={pane} />
         {stageFocusMode && stagePaneId && stagePaneId !== pane.id && (
