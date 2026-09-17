@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.49 — O Claude entra no Windows também
+
+- **Pane Claude no Windows abre logado (F-576)**: a 0.76.48 curou o macOS (keychain invisível no HOME privado), mas no Windows o "Not logged in · Run /login" continuava — causa raiz diferente, mesmo sintoma. O spawn escrevia `CLAUDE_CONFIG_DIR=""` para neutralizar um path herdado, só que vazio não é ausência: a variável continua no env block e o resolver de config dir do binário aceita `""` via `??` — `.credentials.json`, `projects` e `sessions` passavam a resolver **relativos ao cwd do pane**, não ao HOME privado. Todo pane novo lia `<cwd>\.credentials.json` (inexistente) em vez do `<overlay>\.claude\.credentials.json` linkado.
+- **Login completava sem nunca persistir**: o `/login` fechava o OAuth em memória (o `.claude.json` do overlay atualizava `oauthAccount` — seu resolver usa `||`, que trata `""` como unset e cai no homedir) mas a credencial ia parar num path relativo ao cwd. A divergência `??` vs `||` dentro do próprio binário mascarou o bug: identidade projetada ok, credencial nunca lida.
+- **`envRemove`: remoção real, não esvaziamento**: `AgentSpawnDecoration` ganha `envRemove` — a chave é deletada do env do filho no merge (`delete env[key]`, mesmo contrato do `suppressEnv` de providers). Sem a var, o resolver cai em `join(homedir(), '.claude')` → `<overlay>\.claude` → credencial linkada. A garantia original do F-567 (não herdar um path custom, ex.: passthrough declarado por adapter de usuário com bin `claude`) fica preservada pela remoção pós-merge. Prova controlada: `CLAUDE_CONFIG_DIR=` + cwd com credencial → `loggedIn:true`; cwd sem → `false`; var ausente + HOME do overlay → `loggedIn:true` com e-mail e org.
+
 ## 0.76.48 — O Claude volta a entrar
 
 - **Pane Claude abre logado de novo (F-575)**: desde a 0.76.45 (HOME privado por checkout, F-567) todo pane do Claude nascia em "Not logged in · Run /login" com a máquina perfeitamente autenticada. A causa é do macOS, não do CLI: a lista de busca de keychains é resolvida por `~/Library/Keychains` **relativo ao $HOME do processo** — no HOME efêmero do pane, o login keychain real some da busca e "Claude Code-credentials" fica invisível. O overlay agora linka os `*.keychain-db` reais, então o pane enxerga a sessão viva da assinatura exatamente como no HOME real.

@@ -4151,7 +4151,7 @@ export const RELEASE_07647: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07648: AppRelease = {
   version: '0.76.48',
   date: '2026-09-17',
   codename: 'O Claude volta a entrar',
@@ -4203,6 +4203,60 @@ export const CURRENT_RELEASE: AppRelease = {
         'A atualização também traz o teto de panes como aviso, o gate de swap por ' +
         'máquina (o número de swap guarda pico, não o agora) e o fim dos ' +
         'estacionamentos em loop do reaper.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.49',
+  date: '2026-09-17',
+  codename: 'O Claude entra no Windows também',
+  summary:
+    'A 0.76.48 curou o pane Claude no macOS (keychain invisível no HOME privado), ' +
+    'mas no Windows o "Not logged in" continuava — causa raiz diferente, mesmo ' +
+    'sintoma. O spawn marcava CLAUDE_CONFIG_DIR como vazio para "neutralizar" um ' +
+    'path herdado, só que vazio não é ausência: a variável continuava no env do ' +
+    'processo e o resolver de config do binário aceita "" literalmente — o store ' +
+    'de credenciais (.credentials.json, projects, sessions) passava a ser lido ' +
+    'relativo ao diretório de trabalho do pane, não ao HOME privado. A variável ' +
+    'agora é removida de verdade do env do filho e o pane volta a ler a ' +
+    'credencial linkada do overlay.',
+  highlights: [
+    {
+      title: 'Pane Claude no Windows abre logado',
+      detail:
+        'Todo pane novo lia <cwd>/.credentials.json — que não existe — em vez ' +
+        'do <HOME efêmero>/.claude/.credentials.json linkado da máquina real. ' +
+        'Resultado: "Not logged in" eterno, e um /login completava o OAuth em ' +
+        'memória sem nunca persistir. Com a variável removida do env block, o ' +
+        'resolver cai no HOME privado e a sessão da assinatura aparece.',
+    },
+    {
+      title: 'envRemove: remoção real, não esvaziamento',
+      detail:
+        'O decoration de spawn ganhou envRemove — a chave é deletada do env do ' +
+        'filho (mesmo contrato do suppressEnv de providers), em vez de receber ' +
+        '"". Um CLAUDE_CONFIG_DIR herdado de adapter com passthrough declarado ' +
+        'continua bloqueado: a garantia original do HOME privado fica de pé.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Causa provada no binário, não suposta',
+      detail:
+        'Reprodução controlada com o env literal do pane: CLAUDE_CONFIG_DIR= ' +
+        '+ cwd com credencial → loggedIn:true; cwd sem → false; var ausente + ' +
+        'HOME do overlay → loggedIn:true com e-mail e org. O .claude.json ' +
+        'seguia funcionando porque seu resolver usa || (falsy→homedir) — a ' +
+        'divergência ?? vs || dentro do binário mascarou o bug por um release ' +
+        'inteiro.',
+    },
+    {
+      title: 'macOS inalterado',
+      detail:
+        'O fix da 0.76.48 (keychain linkado no overlay) permanece: lá o store ' +
+        'de credenciais é o Keychain, não o arquivo — a remoção da variável só ' +
+        'alinha o config dir ao HOME privado nos dois sistemas.',
     },
   ],
 };
