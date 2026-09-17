@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.51 — Jev decide, Nexus executa
+
+- **Guarda Jev no despacho MCP**: toda chamada `nexus_*` com efeito dentro de missão (fora da mão do operador) passa por três nouls — coerente com o objetivo (`intentContract.goal`), argumentos injetados, efeito irreversível. Injeção ≥ 0,8 → `deny` auditado com hint; coerência ≤ 0,35 e destrutivo ≥ 0,6 → o modal de confirmação volta mesmo em missão aprovada; o resto passa. Read-only e o conjunto isento (handoff_*, heartbeat, clarify, waits, reads, judge, rank, tool_pick, route_*) nunca são julgados. Args compactados (string > 300 chars redigida e cortada, JSON ≤ 2 KB) e nunca persistidos; cache de veredito por sessão+args originais por 60 s; serviço fora = fluxo de hoje.
+- **`nexus_tool_pick`** (read-only, ALWAYS_ALLOWED): recomendação semântica entre as ferramentas visíveis ao chamador — pré-filtro lexical pt-BR→en, top 24, uma `choice` com `none`; devolve top-N com probabilidades e margem 1º–2º.
+- **`nexus_route_task` via Jev**: tier e especialidade calibrados por campo (≥ 0,6, senão heurística); `specialtyOverride` aditivo no `RouteContext`; resultado com `classifierSource` e `escalate`.
+- **`nexus_computer_do` (macOS)**: piloto automático de desktop — árvore AX do app com fallback de OCR local (pixels nunca saem), Jev decide, System Events executa; uma confirmação por objetivo, irreversível para em `needs_confirmation`, trava de app, campos sensíveis recusados, só operador/orquestrador, exige Acessibilidade; capturas de confirmação expiram em 24 h.
+- **Interruptores** `dispatchGuard`, `toolPick`, `taskRouting` em `orch.jevSurfaces` (Ajustes → Squads) e decisões no painel "Decisões do Jev". Sem chave TypeSafe as ferramentas Jev somem do `tools/list` e a skill bundled não é espelhada.
+- `browser_do`/`computer_do`: descrição passa a exigir verificação independente do `done`.
+
 ## 0.76.50 — Panes a quente
 
 - **Pane deixa de re-baixar ~500 MB de MCPs a cada abertura (F-578)**: os servidores MCP `npx`/`uvx` do perfil herdado (hub do operador + conectores da conta) resolviam o cache pelo `$HOME` — e o HOME do pane é descartável. Resultado medido no Mac do operador: **~475 MB baixados em <1 min** dentro de cada overlay, com o processo principal a ~99% de CPU em callbacks de fs durante o spawn — o "tudo fica carregando". Agora `npm_config_cache`, `XDG_CACHE_HOME` e `UV_CACHE_DIR` apontam para `<userData>/provider-cache/<adapter.id>/`: o download acontece uma vez por máquina e todo pane seguinte sobe a quente.

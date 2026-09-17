@@ -4152,6 +4152,92 @@ export const RELEASE_07647: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.51',
+  date: '2026-09-17',
+  codename: 'Jev decide, Nexus executa',
+  summary:
+    'O Jev (TypeSafe) passa a decidir onde o Nexus controla: cada chamada de ' +
+    'ferramenta com efeito dentro de missão é checada por coerência, injeção e ' +
+    'efeito irreversível; o agente ganha recomendação de ferramenta entre as ' +
+    '~170 disponíveis; o roteamento de tarefas troca palavras-chave por tier e ' +
+    'especialidade calibrados; e o piloto automático chega ao desktop do Mac ' +
+    'com nexus_computer_do. Sem chave TypeSafe, nada disso existe e o Nexus é ' +
+    'o clássico.',
+  highlights: [
+    {
+      title: 'Guarda de chamadas no despacho MCP',
+      detail:
+        'Toda chamada nexus_* com efeito, dentro de missão e fora da mão do ' +
+        'operador, passa por três perguntas ao Jev: é coerente com o objetivo? ' +
+        'os argumentos parecem instrução injetada por página, arquivo ou outro ' +
+        'agente? o efeito é difícil de reverter? Injeção ≥ 0.8 nega com auditoria ' +
+        'e devolve ao agente o motivo; ação destrutiva sem relação com o objetivo ' +
+        'traz o modal de confirmação de volta mesmo em missão aprovada — exceção ' +
+        'estreita à doutrina "missão aprovada não pergunta": é segurança, não ' +
+        'cerimônia. Tudo o mais passa; serviço fora = fluxo de hoje. Medido: ' +
+        'curl de ~/.ssh para fora → negado (injeção 0.97); rm -rf dist antes do ' +
+        'build → passa (coerente); git push --force main numa missão de login → ' +
+        'confirmação.',
+    },
+    {
+      title: 'nexus_tool_pick: qual ferramenta resolve isto?',
+      detail:
+        'O agente descreve o que precisa e recebe as ferramentas que ELE pode ' +
+        'chamar, ranqueadas por probabilidade, com a margem entre a 1ª e a 2ª. ' +
+        'Pré-filtro lexical (sinônimos pt-BR → nomes em inglês) sobre a lista ' +
+        'visível ao chamador, uma escolha do Jev com opção "nenhuma". Medido: ' +
+        '"ver o que outro pane está fazendo" → nexus_pane_read 0.84; "rodar os ' +
+        'testes" → nexus_terminal_run 1.00; "comparar três entregas" → nexus_rank ' +
+        '1.00.',
+    },
+    {
+      title: 'nexus_route_task com tier e especialidade calibrados',
+      detail:
+        'A heurística de palavras-chave vira fallback: o Jev classifica tier ' +
+        '(trivial…critical) e especialidade (visual, security, bug, feature, doc, ' +
+        'ops, general) numa chamada, cada campo aceito só com confiança ≥ 0.6. O ' +
+        'tier passado pelo Maestro continua mandando; tabela, catálogo e reserva ' +
+        'não mudam. O resultado ganha classifierSource (jev | heuristic | mixed) e ' +
+        'escalate (0..1): "isto pede o modelo mais forte ou revisão humana?".',
+    },
+    {
+      title: 'nexus_computer_do: piloto automático no desktop do Mac',
+      detail:
+        'Lê a árvore de acessibilidade do app (fallback: OCR local da janela — ' +
+        'pixels nunca saem da máquina; ao Jev vão só rótulos), o Jev escolhe ' +
+        'operação e elemento, o Nexus executa via System Events. Uma confirmação ' +
+        'por objetivo; ação irreversível para em needs_confirmation; trava de app; ' +
+        'campos de senha nunca lidos nem preenchidos; só operador ou orquestrador ' +
+        'chamam; exige permissão de Acessibilidade para o NexusIDE.',
+    },
+    {
+      title: 'Interruptores por função e log de decisões',
+      detail:
+        'Ajustes → Squads ganha um interruptor por superfície (guarda, ' +
+        'recomendação, roteamento, além dos anteriores) sob o mestre "Piloto ' +
+        'automático Jev". Cada decisão entra em Ajustes → Decisões do Jev com ' +
+        'probabilidades e custo, sem nunca guardar o texto julgado; Certo/Errado ' +
+        'alimenta a recalibração dos limiares.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'browser_do e computer_do: "done" pede verificação',
+      detail:
+        'A descrição das ferramentas passa a dizer o óbvio que faltava: done é ' +
+        'julgamento do Jev — o agente confirma o resultado (lê a página ou o app) ' +
+        'antes de reportar sucesso.',
+    },
+    {
+      title: 'Capturas de confirmação expiram',
+      detail:
+        'A imagem gravada em needs_confirmation do computer_do (tela do usuário, ' +
+        'sensível) é apagada depois de 24 h a cada nova gravação.',
+    },
+  ],
+};
+
+export const RELEASE_07650: AppRelease = {
   version: '0.76.50',
   date: '2026-09-17',
   codename: 'Panes a quente',
