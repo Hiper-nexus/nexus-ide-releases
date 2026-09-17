@@ -441,7 +441,8 @@ async function listElements(
         role: el.role,
         ...(el.subrole ? { subrole: el.subrole } : {}),
         name,
-        ...(value !== undefined ? { value } : {}),
+        // Campo sensível por nome também não carrega valor para o Jev.
+        ...(value !== undefined && !sensitive ? { value } : {}),
         enabled: el.enabled,
         frame: el.frame,
         sensitive,

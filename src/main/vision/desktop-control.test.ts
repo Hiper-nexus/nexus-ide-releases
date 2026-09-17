@@ -161,11 +161,13 @@ describe('desktop-control', () => {
     jxaResponse({
       title: 't',
       elements: [
-        { ...ELEMENT, role: 'AXTextField', name: 'Senha do banco', value: null },
+        { ...ELEMENT, role: 'AXTextField', name: 'Senha do banco', value: 'x' },
       ],
     });
     const { elements } = await desktopControl.listElements('App');
     expect(elements[0]!.sensitive).toBe(true);
+    // Campo sensível por nome também não carrega valor para o Jev.
+    expect(elements[0]).not.toHaveProperty('value');
   });
 
   it('redacts secrets from names and values before leaving the adapter', async () => {
