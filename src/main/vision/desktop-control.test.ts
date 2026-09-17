@@ -1,4 +1,5 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+
 
 vi.mock('electron', () => ({
   systemPreferences: {
@@ -22,6 +23,17 @@ import {
   setElectronForTesting,
   setExecFileForTesting,
 } from './desktop-control';
+
+// O adapter é macOS-only e o CI roda em Linux: a suíte fixa darwin (o execFile
+// é mockado, nada toca o SO) e o teste não-darwin troca para linux por conta
+// própria e restaura.
+const ORIGINAL_PLATFORM = process.platform;
+beforeAll(() => {
+  Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+});
+afterAll(() => {
+  Object.defineProperty(process, 'platform', { value: ORIGINAL_PLATFORM, configurable: true });
+});
 
 type ExecCallback = (
   err: Error | null,

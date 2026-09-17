@@ -1,4 +1,5 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi, beforeEach } from 'vitest';
+
 import type { AgentGateContext } from './gate';
 import type { JevResult } from '../jev/jev-client';
 import type { DesktopControl, DesktopElement } from '../vision/desktop-control';
@@ -36,6 +37,17 @@ import {
   buildComputerAutopilotTools,
   type ComputerDoDeps,
 } from './tools-computer-autopilot';
+
+// A ferramenta só existe no macOS; o CI roda em Linux. A suíte exercita o
+// laço com o DesktopControl mockado, então fixa a plataforma como darwin e
+// restaura no fim (o caso não-darwin tem teste próprio em desktop-control).
+const ORIGINAL_PLATFORM = process.platform;
+beforeAll(() => {
+  Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+});
+afterAll(() => {
+  Object.defineProperty(process, 'platform', { value: ORIGINAL_PLATFORM, configurable: true });
+});
 
 const scope = testProjectScope({ rootRealPath: '/tmp/nexus-computer-do-test' });
 const ctx = {
