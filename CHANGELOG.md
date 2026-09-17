@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.47 — Swap não é pressão
+
+- **Abrir pane não trava mais por swap (F-572)**: o teto de 1 GB de swap recusava **todo** pane novo até reiniciar o app depois do incidente de 16/09 — a recusa que o operador viu (`Swap em uso alto (8535 MB > 1024 MB)`) aparecia com a máquina saudável. No macOS `vm.swapusage` "used" guarda o **pico**, não o agora: medido na máquina do operador, 8.151 MB de swap com `kern.memorystatus_vm_pressure_level` = 1 (NORMAL) e 62 % de RAM disponível — e o mesmo Mac já chegou a 16 GB de swap. Cada máquina tem a sua medida, então não existe número universal.
+- **Gate de swap vira config por máquina**: `maxSwapUsedMB` nasce em 0 (o swap não gera nem aviso de paginação); quem quiser o gate numa máquina específica arma com `NEXUS_PANE_MAX_SWAP_MB`, e a mensagem nomeia essa variável.
+- **Reaper de emergência para de estacionar panes sem necessidade**: o guardian usava o mesmo `isUnderMemoryPressure`, então com swap acima de 1 GB estacionava um pane ocioso **por minuto, para sempre** — tratando um pico de swap parado como pressão viva. Agora ele só age com a memória disponível de fato baixa.
+- **O sinal de memória passa a ser o do agora**: memória disponível do kernel no macOS (o mesmo sinal do jetsam), `available` no Linux e memória livre no Windows.
+
 ## 0.76.46 — Otimizar, não limitar (canal Windows)
 
 - **Mesmo conteúdo da 0.76.45, agora no canal Windows x64**: a 0.76.45 saiu só para macOS; cada canal publica sua própria versão estável, então o Windows avança com o número seguinte recebendo o mesmo código assinado. Para quem vem da 0.76.41, a atualização também traz o conteúdo da 0.76.43 (pane guardian, sessão de CLI isolada por checkout, liderança única de missão).

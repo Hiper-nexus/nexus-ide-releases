@@ -4039,7 +4039,7 @@ export const RELEASE_07641: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07646: AppRelease = {
   version: '0.76.46',
   date: '2026-09-16',
   codename: 'Otimizar, não limitar',
@@ -4094,6 +4094,59 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'Teto entre 4 e 12 conforme a RAM (16 GB → 6, 24 GB → 12); mínimo disponível 15 % da ' +
         'RAM em vez de 1 GB fixo (tarde demais num Mac de 24 GB).',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.47',
+  date: '2026-09-16',
+  codename: 'Swap não é pressão',
+  summary:
+    'Abrir um pane não trava mais por swap em uso: o número de swap guarda o pico, não o agora, ' +
+    'e na máquina do operador ele recusava todo pane novo até reiniciar o app com o kernel ' +
+    'dizendo "normal" (8 GB de swap e 62 % de RAM livre — o mesmo Mac já chegou a 16 GB). O ' +
+    'gate segue como aviso, nunca trava, e o de swap passa a ser config por máquina. O guardian ' +
+    'deixa de estacionar panes ociosos à toa pelo mesmo motivo.',
+  highlights: [
+    {
+      title: 'Abrir pane não trava mais por swap',
+      detail:
+        'Depois que a máquina uma vez passou por pressão, o teto de 1 GB de swap passava a ' +
+        'recusar QUALQUER pane novo até reiniciar — mesmo com o kernel em NORMAL e RAM ' +
+        'sobrando. O número de swap em uso guarda o pico, não o agora, e cada máquina tem a sua ' +
+        'medida (a mesma já chegou a 16 GB). Agora o gate só avisa e quem quiser o de swap numa ' +
+        'máquina específica arma com NEXUS_PANE_MAX_SWAP_MB.',
+    },
+    {
+      title: 'Panes param de ser estacionados sem necessidade',
+      detail:
+        'O reaper de emergência do guardian lia o mesmo sinal de swap e, com o pico acima do ' +
+        'teto, estacionava um pane ocioso a cada minuto para sempre. Agora ele só age com a ' +
+        'memória disponível de fato baixa.',
+    },
+    {
+      title: 'O sinal de memória é o do agora',
+      detail:
+        'macOS usa o nível de memória do kernel (o mesmo sinal que o jetsam usa para decidir o ' +
+        'que matar), Linux usa a memória disponível e o Windows a memória livre — nunca um ' +
+        'número fixo igual para todas as máquinas.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Nada trava o spawn: o gate só avisa',
+      detail:
+        'Teto de panes e pressão de memória nomeiam o que está acontecendo e quais panes ' +
+        'ociosos fechar, mas quem decide abrir é você. Trava dura existe apenas como opt-in ' +
+        'explícito (NEXUS_PANE_CAP_HARD=1 ou NEXUS_PANE_GUARD=hard).',
+    },
+    {
+      title: 'Swap do Windows não é swap',
+      detail:
+        'No Windows o campo de "swap" do sistema é limite de commit (memória + pagefile), não ' +
+        'paginação: um desktop saudável reportava mais de 20 GB e o gate acusaria pressão ' +
+        'sempre. Sem sinal de swap real, quem decide é a memória livre.',
     },
   ],
 };
