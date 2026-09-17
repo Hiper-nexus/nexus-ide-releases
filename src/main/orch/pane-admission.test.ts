@@ -50,24 +50,33 @@ describe('pane-admission (F-572): teto de panes + gate por memória', () => {
     expect(verdict.reason).toBe('cap');
   });
 
-  it('recusa por memória livre abaixo do mínimo', () => {
-    const verdict = evaluatePaneAdmission(
-      input({ memory: { freeMB: DEFAULT_PANE_ADMISSION_LIMITS.minFreeMB - 1, swapUsedMB: 0 } }),
-    );
-    expect(verdict.ok).toBe(false);
-    if (verdict.ok) return;
-    expect(verdict.reason).toBe('memory');
-    expect(verdict.message).toMatch(/livre/i);
+  it('memória livre abaixo do mínimo AVISA por padrão e recusa com a trava dura', () => {
+    const tight = { freeMB: DEFAULT_PANE_ADMISSION_LIMITS.minFreeMB - 1, swapUsedMB: 0 };
+    const verdict = evaluatePaneAdmission(input({ memory: tight }));
+    expect(verdict.ok).toBe(true);
+    if (!verdict.ok) return;
+    expect(verdict.warning ?? '').toMatch(/livre/i);
+    // A válvula continua existindo para quem quiser o comportamento antigo.
+    const hard = readPaneAdmissionLimits({ NEXUS_PANE_CAP_HARD: '1' }, 24 * 1024);
+    const blocked = evaluatePaneAdmission(input({ limits: hard, memory: tight }));
+    expect(blocked.ok).toBe(false);
+    if (blocked.ok) return;
+    expect(blocked.reason).toBe('memory');
+    expect(blocked.message).toMatch(/livre/i);
   });
 
-  it('recusa por swap acima do teto', () => {
-    const verdict = evaluatePaneAdmission(
-      input({ memory: { freeMB: 8_000, swapUsedMB: DEFAULT_PANE_ADMISSION_LIMITS.maxSwapUsedMB + 1 } }),
-    );
-    expect(verdict.ok).toBe(false);
-    if (verdict.ok) return;
-    expect(verdict.reason).toBe('memory');
-    expect(verdict.message).toMatch(/swap/i);
+  it('swap acima do teto AVISA por padrão e recusa com a trava dura', () => {
+    const highSwap = { freeMB: 8_000, swapUsedMB: DEFAULT_PANE_ADMISSION_LIMITS.maxSwapUsedMB + 1 };
+    const verdict = evaluatePaneAdmission(input({ memory: highSwap }));
+    expect(verdict.ok).toBe(true);
+    if (!verdict.ok) return;
+    expect(verdict.warning ?? '').toMatch(/swap/i);
+    const hard = readPaneAdmissionLimits({ NEXUS_PANE_GUARD: 'hard' }, 24 * 1024);
+    const blocked = evaluatePaneAdmission(input({ limits: hard, memory: highSwap }));
+    expect(blocked.ok).toBe(false);
+    if (blocked.ok) return;
+    expect(blocked.reason).toBe('memory');
+    expect(blocked.message).toMatch(/swap/i);
   });
 
   it('memória desconhecida não bloqueia; acima do teto só avisa', () => {
@@ -106,11 +115,16 @@ describe('pane-admission (F-572): teto de panes + gate por memória', () => {
     });
 
     it('aceita inteiros válidos e ignora lixo', () => {
-      const limits = readPaneAdmissionLimits({
-        NEXUS_PANE_CAP: '20',
-        NEXUS_PANE_MIN_FREE_MB: 'abc',
-        NEXUS_PANE_MAX_SWAP_MB: '4096',
-      });
+      // 24 GB explícitos: o default da máquina real muda o mínimo livre (15 %
+      // da RAM) e o teste passaria só numa máquina daquele tamanho.
+      const limits = readPaneAdmissionLimits(
+        {
+          NEXUS_PANE_CAP: '20',
+          NEXUS_PANE_MIN_FREE_MB: 'abc',
+          NEXUS_PANE_MAX_SWAP_MB: '4096',
+        },
+        24 * 1024,
+      );
       expect(limits.maxAgentPanes).toBe(20);
       expect(limits.minFreeMB).toBe(DEFAULT_PANE_ADMISSION_LIMITS.minFreeMB);
       expect(limits.maxSwapUsedMB).toBe(4096);
@@ -135,9 +149,11 @@ describe('pane-admission: cache síncrono da memória para o gate de spawn', () 
     const verdict = evaluatePaneAdmission(
       input({ memory: getCachedSystemMemory(Date.now()) }),
     );
-    expect(verdict.ok).toBe(false);
-    if (verdict.ok) return;
-    expect(verdict.reason).toBe('memory');
+    // A amostra em cache chega ao gate sem `sysctl`; por padrão ela AVISA
+    // (0.76.47) e não recusa.
+    expect(verdict.ok).toBe(true);
+    if (!verdict.ok) return;
+    expect(verdict.warning ?? '').toMatch(/livre|swap/i);
   });
 
   it('cache vencido devolve a última amostra e não inventa pressão quando nunca houve', async () => {
@@ -198,6 +214,31 @@ describe('pane-admission: sinal do kernel no macOS + gate síncrono com conselhe
     const still = admitAgentSpawnSync(0, Date.now(), {});
     expect(still.ok).toBe(true);
     registerPaneAdmissionAdvisor(null);
+  });
+});
+
+describe('pane-admission: swap do Windows é commit, não swap (F-574)', () => {
+  it('não lê ullTotalPageFile/ullAvailPageFile como swap no win32', async () => {
+    const { parseElectronSwapUsedMB } = await import('./pane-admission');
+    // Amostra real desta máquina (16/09, 64 GB): limite de commit 75.670.796 KB
+    // − 52.091.424 KB livres = 23.023 MB de "swap", com 143 MB de pagefile real.
+    expect(
+      parseElectronSwapUsedMB({ swapTotal: 75_670_796, swapFree: 52_091_424 }, 'win32'),
+    ).toBeNull();
+    // Linux mantém a leitura real do sysinfo.
+    expect(parseElectronSwapUsedMB({ swapTotal: 2_097_152, swapFree: 1_048_576 }, 'linux')).toBe(1024);
+    expect(parseElectronSwapUsedMB({}, 'linux')).toBeNull();
+  });
+
+  it('no Windows o gate decide só pela memória livre, não pelo commit', async () => {
+    const verdict = evaluatePaneAdmission(input({ memory: { freeMB: 44_547, swapUsedMB: null } }));
+    expect(verdict.ok).toBe(true);
+    expect(verdict.ok && verdict.warning === undefined).toBe(true);
+    // O valor antigo (commit lido como swap) avisa — e só recusaria na trava
+    // dura; é o bug que o gate não pode voltar a ter nesta plataforma.
+    const warned = evaluatePaneAdmission(input({ memory: { freeMB: 44_547, swapUsedMB: 23_023 } }));
+    expect(warned.ok).toBe(true);
+    expect(warned.ok && Boolean(warned.warning)).toBe(true);
   });
 });
 

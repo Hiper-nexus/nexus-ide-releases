@@ -7,10 +7,11 @@
  * desligou no botão. Nenhum caminho de spawn tinha teto global (maxWorkers só
  * vale por missão) e nada olhava a memória antes de abrir mais um.
  *
- * Doutrina "menos travas": a recusa tem dano nomeado (freeze da máquina) e
- * SEMPRE diz o caminho que funciona — quais panes ociosos fechar e como.
- * Limites vêm de env para o operador ajustar sem rebuild; NEXUS_PANE_GUARD=off
- * desliga o teto (a telemetria continua).
+ * Doutrina "menos travas" (0.76.47): o gate AVISA por padrão — nomeia o dano
+ * (freeze da máquina) e o caminho que funciona (quais panes ociosos fechar).
+ * Trava dura é opt-in (NEXUS_PANE_CAP_HARD=1 ou NEXUS_PANE_GUARD=hard);
+ * limites vêm de env para o operador ajustar sem rebuild; NEXUS_PANE_GUARD=off
+ * desliga o teto e a pressão (a telemetria continua).
  */
 
 import { execFile } from 'node:child_process';
@@ -21,13 +22,19 @@ export interface PaneAdmissionLimits {
   /**
    * Panes de agente (cli-agent) vivos ao mesmo tempo. Por padrão é um AVISO
    * (0.76.45, doutrina "menos travas": contagem sem pressão de memória não
-   * tem dano nomeado); só bloqueia com NEXUS_PANE_CAP_HARD=1.
+   * tem dano nomeado).
    */
   readonly maxAgentPanes: number;
-  readonly capIsHard: boolean;
-  /** Abaixo disto de memória livre, nenhum pane novo. */
+  /**
+   * Trava dura (0.76.47): teto E pressão de memória voltam a recusar o spawn.
+   * O padrão é aviso — quem decide é a mão do operador; a válvula é
+   * NEXUS_PANE_CAP_HARD=1 ou NEXUS_PANE_GUARD=hard. O guardian/reaper de panes
+   * ociosos segue agindo por pressão real independentemente disto.
+   */
+  readonly hardBlocks: boolean;
+  /** Abaixo disto de memória livre o spawn AVISA (recusa só na trava dura). */
   readonly minFreeMB: number;
-  /** Acima disto de swap em uso, nenhum pane novo. */
+  /** Acima disto de swap em uso o spawn AVISA (recusa só na trava dura). */
   readonly maxSwapUsedMB: number;
 }
 
@@ -43,7 +50,7 @@ export function limitsForMachine(totalMB: number): PaneAdmissionLimits {
   const byRam = Math.floor((total - 8 * 1024) / 1280);
   return Object.freeze({
     enabled: true,
-    capIsHard: false,
+    hardBlocks: false,
     maxAgentPanes: Math.min(12, Math.max(4, byRam)),
     minFreeMB: Math.max(1024, Math.round(0.15 * total)),
     maxSwapUsedMB: 1024,
@@ -117,32 +124,32 @@ export function evaluatePaneAdmission(input: PaneAdmissionInput): PaneAdmissionV
   const { limits, memory } = input;
   if (!limits.enabled) return { ok: true };
 
+  const idleHint = describeIdleCandidates(input.idleCandidates);
   const capMessage =
     `Teto de ${limits.maxAgentPanes} panes de agente atingido ` +
-    `(${input.liveAgentPanes} vivos). ${describeIdleCandidates(input.idleCandidates)} ` +
+    `(${input.liveAgentPanes} vivos). ${idleHint} ` +
     'Ajuste o teto com NEXUS_PANE_CAP se esta máquina aguenta mais.';
-  if (input.liveAgentPanes >= limits.maxAgentPanes && limits.capIsHard) {
+  if (input.liveAgentPanes >= limits.maxAgentPanes && limits.hardBlocks) {
     return { ok: false, reason: 'cap', message: capMessage };
   }
 
   if (memory) {
+    // Pressão real (0.76.47): por padrão AVISA e deixa a mão do operador
+    // decidir; só recusa com NEXUS_PANE_CAP_HARD=1 / NEXUS_PANE_GUARD=hard.
+    // O dano nomeado (freeze da máquina) continua escrito no aviso.
     if (memory.freeMB !== null && memory.freeMB < limits.minFreeMB) {
-      return {
-        ok: false,
-        reason: 'memory',
-        message:
-          `Memória livre baixa (${Math.round(memory.freeMB)} MB < ${limits.minFreeMB} MB): ` +
-          `abrir mais um pane levaria a máquina ao swap. ${describeIdleCandidates(input.idleCandidates)}`,
-      };
+      const message =
+        `Memória livre baixa (${Math.round(memory.freeMB)} MB < ${limits.minFreeMB} MB): ` +
+        `abrir mais um pane pode levar a máquina ao swap. ${idleHint}`;
+      if (limits.hardBlocks) return { ok: false, reason: 'memory', message };
+      return { ok: true, warning: message };
     }
     if (memory.swapUsedMB !== null && memory.swapUsedMB > limits.maxSwapUsedMB) {
-      return {
-        ok: false,
-        reason: 'memory',
-        message:
-          `Swap em uso alto (${Math.round(memory.swapUsedMB)} MB > ${limits.maxSwapUsedMB} MB): ` +
-          `a máquina já está paginando. ${describeIdleCandidates(input.idleCandidates)}`,
-      };
+      const message =
+        `Swap em uso alto (${Math.round(memory.swapUsedMB)} MB > ${limits.maxSwapUsedMB} MB): ` +
+        `a máquina já está paginando. ${idleHint}`;
+      if (limits.hardBlocks) return { ok: false, reason: 'memory', message };
+      return { ok: true, warning: message };
     }
   }
 
@@ -178,7 +185,7 @@ export function readPaneAdmissionLimits(
   const hard = (env.NEXUS_PANE_CAP_HARD ?? '').trim().toLowerCase();
   return {
     enabled: !(guard === 'off' || guard === '0' || guard === 'false'),
-    capIsHard: hard === '1' || hard === 'true' || hard === 'on',
+    hardBlocks: guard === 'hard' || hard === '1' || hard === 'true' || hard === 'on',
     maxAgentPanes: envInt(env.NEXUS_PANE_CAP, base.maxAgentPanes, 1),
     minFreeMB: envInt(env.NEXUS_PANE_MIN_FREE_MB, base.minFreeMB, 0),
     maxSwapUsedMB: envInt(env.NEXUS_PANE_MAX_SWAP_MB, base.maxSwapUsedMB, 0),
@@ -273,9 +280,33 @@ function readElectronMemory(): SystemMemoryInfoLike | null {
 }
 
 /**
+ * Swap em uso a partir do `getSystemMemoryInfo()` do Electron.
+ *
+ * win32: `swapTotal`/`swapFree` são MEMORYSTATUSEX.ullTotalPageFile/
+ * ullAvailPageFile — limite e saldo de COMMIT (RAM + pagefile), não swap. Um
+ * desktop saudável reporta > 20 GB de "uso" (medido em 16/09 nesta máquina:
+ * 23.023 MB contra 143 MB de pagefile real), então lido como swap ele
+ * recusaria TODO spawn de pane com o teto de 1 GB. Commit alto não é
+ * paginação: sem sinal de swap a leitura fica ausente e o gate não inventa
+ * pressão — o `free` disponível continua decidindo. Linux expõe swap real
+ * (sysinfo) e mantém a conta.
+ */
+export function parseElectronSwapUsedMB(
+  info: SystemMemoryInfoLike,
+  platform: NodeJS.Platform,
+): number | null {
+  if (platform === 'win32') return null;
+  return typeof info.swapTotal === 'number' && typeof info.swapFree === 'number'
+    ? (info.swapTotal - info.swapFree) / 1024
+    : null;
+}
+
+/**
  * Amostra da memória do sistema para o gate. `free` do Electron é em KB.
- * macOS: swap via `sysctl vm.swapusage` (o Electron só expõe swap em
- * Windows/Linux). Ausência de dado vira null — o gate nunca inventa pressão.
+ * macOS: swap via `sysctl vm.swapusage` (o físico sai do nível do kernel).
+ * Windows: o swap do Electron é commit, não swap (ver
+ * `parseElectronSwapUsedMB`). Ausência de dado vira null — o gate nunca
+ * inventa pressão.
  */
 export async function sampleSystemMemory(
   platform: NodeJS.Platform = process.platform,
@@ -295,11 +326,7 @@ export async function sampleSystemMemory(
   }
   // Linux expõe `available`, que já conta cache recuperável; nos demais, `free`.
   const freeMB = platform === 'linux' ? kbToMB(info.available) ?? kbToMB(info.free) : kbToMB(info.free);
-  const swapUsedMB =
-    typeof info.swapTotal === 'number' && typeof info.swapFree === 'number'
-      ? (info.swapTotal - info.swapFree) / 1024
-      : null;
-  return { freeMB, swapUsedMB };
+  return { freeMB, swapUsedMB: parseElectronSwapUsedMB(info, platform) };
 }
 
 // ---------------------------------------------------------------------------
