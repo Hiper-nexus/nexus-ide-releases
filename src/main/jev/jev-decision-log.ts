@@ -17,7 +17,8 @@ export type JevDecisionSurface =
   | JevSurface
   | 'judgeTool'
   | 'rankTool'
-  | 'browserTool';
+  | 'browserTool'
+  | 'computerTool';
 
 export interface JevDecisionEntry {
   id: string;

@@ -300,6 +300,9 @@ const EXECUTION_EFFECT_TOOLS = new Set([
   // uma confirmação por objetivo, mesma classe de efeito.
   'browser_do',
   'browser_fill',
+  // computer_do executa as mesmas primitivas de escrita (System Events) —
+  // uma confirmação por objetivo, mesma classe de efeito.
+  'computer_do',
   'editor_apply_patch',
   'editor_insert',
   'editor_replace_selection',

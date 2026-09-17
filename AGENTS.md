@@ -336,12 +336,23 @@ saber isto antes de mexer:
   (read-only, ALWAYS_ALLOWED, 30/min/sessão, state ≤ 32 KB); toggle
   `orch.jevAutopilot` / `NEXUS_JEV_AUTOPILOT=0`; skill `typesafe-ai` bundled e
   concedida aos roles `clean-code`.
-- Sem chave: `nexus_judge`/`nexus_rank`/`nexus_browser_do` somem do
-  `tools/list` (`McpToolDef.available`) e a skill bundled não é espelhada
-  (`bundledSkillFilter` no `skill-mirror`); nada mais muda — o cliente vê um
-  Nexus 100% clássico.
+- Sem chave: `nexus_judge`/`nexus_rank`/`nexus_browser_do`/`nexus_computer_do`
+  somem do `tools/list` (`McpToolDef.available`) e a skill bundled não é
+  espelhada (`bundledSkillFilter` no `skill-mirror`); nada mais muda — o
+  cliente vê um Nexus 100% clássico.
 - `nexus_browser_do` ("Jev decide, Nexus executa"): UMA confirmação humana
   por objetivo; ação irreversível/custosa sempre para em `needs_confirmation`
   e devolve a proposta; trava de origem (`left_origin`); textos digitados são
   só os `values` fornecidos (Jev escolhe o label); cap de passos
   (`maxSteps ≤ 40`); uma entrada no decision log por passo.
+- `nexus_computer_do` (macOS, "Jev decide, Nexus executa no desktop"):
+  exige permissão de Acessibilidade (`permission_required` aponta o caminho
+  dos Ajustes); só a mão do operador ou o orquestrador chamam — worker nunca
+  dirige o desktop; trava de app (`focus_lost`); lê a árvore AX do app e, se
+  ela vier pobre, OCR local da janela (pixels nunca saem da máquina — ao Jev
+  vão só rótulos de elementos e labels de `values`); campos sensíveis
+  (`AXSecureTextField`, password/senha) nunca têm valor lido nem recebem
+  texto; irreversível sempre para em `needs_confirmation` (best-effort: uma
+  captura da janela em `userData/jev/computer/<runId>/confirm.png`, só nesse
+  caminho); detector de travamento (3 passos iguais); cap de passos; log por
+  passo (surface `computerTool`).

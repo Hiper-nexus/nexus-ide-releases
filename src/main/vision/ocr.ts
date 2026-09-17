@@ -20,9 +20,20 @@ interface OcrWorker {
     data: {
       text: string;
       confidence: number;
+      lines?: Array<{
+        text: string;
+        confidence: number;
+        bbox: { x0: number; y0: number; x1: number; y1: number };
+      }>;
     };
   }>;
   terminate(): Promise<unknown>;
+}
+
+export interface OcrLine {
+  text: string;
+  confidence: number;
+  bbox: { x0: number; y0: number; x1: number; y1: number };
 }
 
 const cache = new Map<string, CacheEntry>();
@@ -168,6 +179,49 @@ export async function ocrImage(
     pruneCache();
 
     return result;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`OCR failed: ${message}`);
+  } finally {
+    if (worker) {
+      await Promise.resolve(worker.terminate()).catch(() => undefined);
+    }
+  }
+}
+
+/**
+ * OCR local com bounding boxes por linha (pixels da imagem de entrada).
+ * Usado pelo `nexus_computer_do` como fallback quando a árvore de
+ * acessibilidade do app vem vazia — os pixels nunca saem da máquina.
+ * Sem cache: cada captura é um frame novo.
+ */
+export async function recognizeLinesWithBoxes(png: Buffer): Promise<OcrLine[]> {
+  validateImage(png);
+
+  const languageDirectory = await ensureOcrLanguageData();
+  const { createWorker } = await import('tesseract.js');
+  let worker: OcrWorker | null = null;
+
+  try {
+    worker = await createWorker('eng+por', 1, {
+      workerPath: resolveTesseractWorkerPath(),
+      langPath: languageDirectory,
+      cachePath: languageDirectory,
+      cacheMethod: 'none',
+      gzip: true,
+      logger: () => {
+        // Silent — no progress logging
+      },
+    }) as OcrWorker;
+
+    const { data } = await withTimeout(worker.recognize(png), ocrTimeoutMs());
+    return (data.lines ?? [])
+      .map((line) => ({
+        text: line.text.trim(),
+        confidence: Math.round(line.confidence),
+        bbox: line.bbox,
+      }))
+      .filter((line) => line.text.length > 0);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(`OCR failed: ${message}`);

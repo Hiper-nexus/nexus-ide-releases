@@ -150,3 +150,45 @@ describe('ocrImage', () => {
     expect(mockWorker.terminate).toHaveBeenCalledOnce();
   });
 });
+
+describe('recognizeLinesWithBoxes', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns trimmed lines with confidence and pixel bboxes', async () => {
+    const mockWorker = {
+      recognize: vi.fn().mockResolvedValue({
+        data: {
+          text: 'Salvar\nCancelar\n',
+          confidence: 90,
+          lines: [
+            { text: ' Salvar ', confidence: 92.4, bbox: { x0: 10, y0: 5, x1: 60, y1: 20 } },
+            { text: 'Cancelar', confidence: 88.6, bbox: { x0: 10, y0: 30, x1: 80, y1: 45 } },
+            { text: '   ', confidence: 10, bbox: { x0: 0, y0: 0, x1: 1, y1: 1 } },
+          ],
+        },
+      }),
+      terminate: vi.fn(),
+    };
+    vi.mocked(createWorker).mockResolvedValue(mockWorker as any);
+
+    const { recognizeLinesWithBoxes } = await import('./ocr');
+    const lines = await recognizeLinesWithBoxes(KNOWN_TEXT_PNG);
+
+    expect(lines).toEqual([
+      { text: 'Salvar', confidence: 92, bbox: { x0: 10, y0: 5, x1: 60, y1: 20 } },
+      { text: 'Cancelar', confidence: 89, bbox: { x0: 10, y0: 30, x1: 80, y1: 45 } },
+    ]);
+    expect(mockWorker.recognize).toHaveBeenCalledWith(KNOWN_TEXT_PNG);
+    expect(mockWorker.terminate).toHaveBeenCalled();
+  });
+
+  it('rejects non-PNG input', async () => {
+    const { recognizeLinesWithBoxes } = await import('./ocr');
+    await expect(
+      recognizeLinesWithBoxes(Buffer.from('not a png')),
+    ).rejects.toThrow(/PNG/);
+    expect(createWorker).not.toHaveBeenCalled();
+  });
+});

@@ -62,6 +62,7 @@ import {
 } from './tools-panes';
 import { buildBrowserTools } from './tools-browser';
 import { buildBrowserAutopilotTools } from './tools-browser-autopilot';
+import { buildComputerAutopilotTools } from './tools-computer-autopilot';
 import { runRemoteBridgeToolAction } from './remote-bridge-tool';
 import {
   createRemoteTmuxSession,
@@ -2068,6 +2069,7 @@ export function buildDomainTools(): McpToolDef[] {
     remoteSpawnTool,
     ...buildBrowserTools(),
     ...buildBrowserAutopilotTools(),
+    ...buildComputerAutopilotTools(),
     cronTool,
     cronScheduleTool,
     cronListTool,
