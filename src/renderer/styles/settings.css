@@ -590,8 +590,14 @@
 .acp-harness__status {
   margin: 0;
   padding: var(--space-2) var(--space-2-5);
-  border-left: 2px solid var(--accent);
-  background: color-mix(in srgb, var(--accent) 7%, var(--bg));
+  /* Mesma linguagem de card dos itens da lista abaixo. Sem acento: logo
+     acima, o botão de transporte ativo já gasta o rosa para dizer o que está
+     SELECIONADO (DESIGN.md reserva --accent a estado) — pintar também este
+     aviso enfraqueceria aquele sinal, além de ser barra lateral colorida em
+     card, o clichê visual que o sistema de design rejeita. */
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg);
   color: var(--text-dim);
   font-size: var(--text-sm);
   line-height: 1.45;
