@@ -8,6 +8,8 @@
 - **`nexus_computer_do` (macOS)**: piloto automático de desktop — árvore AX do app com fallback de OCR local (pixels nunca saem), Jev decide, System Events executa; uma confirmação por objetivo, irreversível para em `needs_confirmation`, trava de app, campos sensíveis recusados, só operador/orquestrador, exige Acessibilidade; capturas de confirmação expiram em 24 h.
 - **Interruptores** `dispatchGuard`, `toolPick`, `taskRouting` em `orch.jevSurfaces` (Ajustes → Squads) e decisões no painel "Decisões do Jev". Sem chave TypeSafe as ferramentas Jev somem do `tools/list` e a skill bundled não é espelhada.
 - `browser_do`/`computer_do`: descrição passa a exigir verificação independente do `done`.
+- **Velocidade do modelo na barra do próprio pane**: o chip de tok/s da última resposta (TTFT no tooltip) fica ao lado do badge de custo, pintando no acento enquanto o modelo gera. Busca ESTRITA por pane — sem amostra própria, o chip não ocupa espaço (nunca exibe o número de outro pane).
+- **Design**: o card de velocidade e o aviso de transporte ACP perdem a barra lateral de acento — `--accent` volta a ser só ESTADO (foco, agente ativo, item selecionado, streaming), como o `DESIGN.md` manda; a hierarquia entre os números vem da escala tipográfica.
 
 ## 0.76.50 — Panes a quente
 

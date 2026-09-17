@@ -4219,8 +4219,25 @@ export const CURRENT_RELEASE: AppRelease = {
         'probabilidades e custo, sem nunca guardar o texto julgado; Certo/Errado ' +
         'alimenta a recalibração dos limiares.',
     },
+    {
+      title: 'Velocidade do modelo na barra do próprio pane',
+      detail:
+        'O medidor já rodava desde o boot, mas só aparecia em Ajustes → ' +
+        'Diagnóstico. O chip agora fica ao lado do badge de custo, com tok/s da ' +
+        'última resposta e TTFT no tooltip, pintando no acento enquanto o modelo ' +
+        'gera. A busca é estrita por pane: sem medição própria, o chip não ocupa ' +
+        'espaço — nunca atribui a um pane a velocidade que outro produziu.',
+    },
   ],
   fixes: [
+    {
+      title: 'Acento é estado, não enfeite',
+      detail:
+        'O card de velocidade e o aviso de transporte ACP perdem a barra lateral ' +
+        'rosa: o DESIGN.md reserva --accent para estado (foco, agente ativo, item ' +
+        'selecionado, streaming). A hierarquia entre os números passa a vir da ' +
+        'escala tipográfica; o aviso ACP usa a linguagem de card dos itens abaixo.',
+    },
     {
       title: 'browser_do e computer_do: "done" pede verificação',
       detail:
