@@ -332,6 +332,11 @@ describe('mcp-server governed CLI profile wiring', () => {
       expect(decoration.env.HOME).not.toBe(home);
       expect(fs.realpathSync(path.join(decoration.env.HOME, '.claude', 'projects'))).toBe(fs.realpathSync(durable));
       expect(decoration.extraArgs).not.toContain('--continue');
+      // F-576: CLAUDE_CONFIG_DIR must be REMOVED from the child env, never
+      // blanked — "CLAUDE_CONFIG_DIR=" resolves the binary's config dir to
+      // "" and the file-backed credential store goes cwd-relative.
+      expect(decoration.env.CLAUDE_CONFIG_DIR).toBeUndefined();
+      expect(decoration.envRemove).toEqual(['CLAUDE_CONFIG_DIR']);
     } finally { decoration.onSpawnFailed?.(); }
   });
 

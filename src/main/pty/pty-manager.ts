@@ -440,6 +440,13 @@ export interface AgentSpawnDecoration {
   /** Main-owned bearer used only for internal governed-profile preparation. */
   authorityToken: string;
   env: Record<string, string>;
+  /**
+   * Env keys to delete from the child env outright (e.g. an inherited or
+   * adapter-passthrough var that must never reach the process). "Unset" is
+   * not "empty": assigning "" still lands the variable in the child env
+   * block, and CLIs that probe with `??` treat it as a real (empty) value.
+   */
+  envRemove?: readonly string[];
   extraArgs: string[];
   /**
    * Native-profile providers (AGY 1.1): the child keeps this HOME instead of
@@ -1676,6 +1683,7 @@ export function spawnAgentSession(
   );
   if (decoration) {
     Object.assign(env, decoration.env);
+    for (const key of decoration.envRemove ?? []) delete env[key];
     args.push(...decoration.extraArgs);
   }
   // Codex preparation below still needs the selected account's home. OpenCode

@@ -2683,6 +2683,43 @@ describe("cli-agent spawn argv hardening", () => {
     }
   });
 
+  it("deletes decoration envRemove keys from the spawned child env (F-576)", () => {
+    const h = fakeHost();
+    setPtyHost(h.host);
+    vi.stubEnv("NEXUS_TEST_REMOVE_ME", "inherited");
+    setAgentSpawnHook(() => ({
+      authorityToken: "envremove-test",
+      env: { NEXUS_TEST_KEEP_ME: "1" },
+      envRemove: ["NEXUS_TEST_REMOVE_ME"],
+      extraArgs: [],
+    }));
+    const owner = fakeWc();
+    try {
+      const { sessionId } = spawnAgentSession(
+        owner,
+        { kind: "cli-agent", cols: 80, rows: 24 },
+        makeAdapter({
+          static: {},
+          passthrough: ["NEXUS_TEST_REMOVE_ME"],
+          ephemeralHome: false,
+        }),
+        {},
+        trustedSpawn(),
+      );
+      const env = h.specFor(sessionId).env;
+      // Absent — not present-but-empty: the key must not land in the child
+      // env block at all (the F-576 "" poisoning kept CLAUDE_CONFIG_DIR=
+      // present and sent Claude's file-backed credential store cwd-relative).
+      expect(env.NEXUS_TEST_REMOVE_ME).toBeUndefined();
+      expect("NEXUS_TEST_REMOVE_ME" in env).toBe(false);
+      expect(env.NEXUS_TEST_KEEP_ME).toBe("1");
+      killSession(owner, sessionId);
+    } finally {
+      setAgentSpawnHook(null);
+      vi.unstubAllEnvs();
+    }
+  });
+
   it.runIf(process.platform !== "linux")(
     "lets direct panes follow writable provider policy and keeps workers writable",
     () => {

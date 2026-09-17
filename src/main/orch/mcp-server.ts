@@ -1026,6 +1026,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
         }
       : {};
     const extraArgs: string[] = [];
+    const envRemove: string[] = [];
     let ephemeralHomeDir: string | null = null;
     let skillsPrepared = false;
     // Real provider home (~/.kimi-code, ~/.grok) the governed overlay symlinks
@@ -1115,8 +1116,13 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
         env.HOME = home.dir;
         if (process.platform === "win32") env.USERPROFILE = home.dir;
         // The default config location follows this private HOME, preserving
-        // native Keychain semantics. Do not inherit a custom path to real sessions.
-        env.CLAUDE_CONFIG_DIR = "";
+        // native Keychain semantics. Do not inherit a custom path to real
+        // sessions — and never blank it either: "CLAUDE_CONFIG_DIR=" still
+        // lands in the child env block and the binary's `??` config-dir
+        // probe accepts "" literally, resolving .credentials.json/projects
+        // relative to the pane cwd (F-576: every Windows pane read its
+        // credentials from <cwd>/.credentials.json and stayed logged out).
+        envRemove.push("CLAUDE_CONFIG_DIR");
         ephemeralHomeDir = home.dir;
         if (home.providerSessionHome) claudeStatePaths.push(home.providerSessionHome);
         claudeProfileReadPaths.push(...(home.providerProfileReadPaths ?? []));
@@ -1344,6 +1350,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
   const decoration: AgentSpawnDecoration = {
     authorityToken: ctx.token,
     env,
+    ...(envRemove.length > 0 ? { envRemove } : {}),
     extraArgs,
     ...(attachmentReadPaths ? { attachmentReadPaths } : {}),
     ...(missionShim
