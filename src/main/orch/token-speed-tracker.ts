@@ -31,9 +31,12 @@ const SETTLE_GRACE_MS = 120
 const PROMPT_DRAFT_LIMIT = 4_000
 /** Ctrl+C e Ctrl+Z. */
 const CANCEL_KEY_PATTERN = /[\u0003\u001a]/
-/** Bytes de controle que não são quebra de linha. */
-const CONTROL_EXCEPT_NEWLINE_PATTERN =
-  /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g
+/** Bytes de controle sem semântica de edição nem quebra de linha. */
+const NON_EDITING_CONTROL_PATTERN =
+  /[\u0000-\u0007\u0009\u000b\u000c\u000e-\u0014\u0016\u0018-\u001f]/g
+const BACKSPACE_KEYS = new Set(['\b', '\u007f'])
+const CTRL_U = '\u0015'
+const CTRL_W = '\u0017'
 
 interface ScopeSpeedState {
   readonly scope: ProjectExecutionScope
@@ -154,19 +157,57 @@ export function splitSubmittedInput(
 ): { submitted: string | null; draft: string } {
   // Ctrl+C / Ctrl+Z abortam a composição: o rascunho morre e nada é submetido.
   if (CANCEL_KEY_PATTERN.test(data)) return { submitted: null, draft: '' }
-  const clean = stripAnsiEscapeSequences(data).replace(
-    CONTROL_EXCEPT_NEWLINE_PATTERN,
-    '',
-  )
-  const marker = Math.max(clean.lastIndexOf('\r'), clean.lastIndexOf('\n'))
+  const clean = stripAnsiEscapeSequences(data)
+    .replace(NON_EDITING_CONTROL_PATTERN, '')
+    .replace(/\r\n?/g, '\n')
+  const marker = clean.lastIndexOf('\n')
   if (marker < 0) {
     return {
       submitted: null,
-      draft: (draft + clean).slice(-PROMPT_DRAFT_LIMIT),
+      draft: applyDraftEditing(draft + clean),
     }
   }
-  const submitted = (draft + clean.slice(0, marker)).slice(-PROMPT_DRAFT_LIMIT)
-  return { submitted, draft: clean.slice(marker + 1).slice(-PROMPT_DRAFT_LIMIT) }
+  const submitted = applyDraftEditing(draft + clean.slice(0, marker))
+  return {
+    submitted,
+    draft: applyDraftEditing(clean.slice(marker + 1)),
+  }
+}
+
+function applyDraftEditing(value: string): string {
+  const chars: string[] = []
+  for (const char of value) {
+    if (BACKSPACE_KEYS.has(char)) {
+      chars.pop()
+      continue
+    }
+    if (char === CTRL_U) {
+      const lineStart = chars.lastIndexOf('\n') + 1
+      chars.splice(lineStart)
+      continue
+    }
+    if (char === CTRL_W) {
+      const lineStart = chars.lastIndexOf('\n') + 1
+      while (chars.length > lineStart && /\s/u.test(chars.at(-1)!)) chars.pop()
+      while (chars.length > lineStart && !/\s/u.test(chars.at(-1)!)) chars.pop()
+      continue
+    }
+    chars.push(char)
+  }
+  return chars.join('').slice(-PROMPT_DRAFT_LIMIT)
+}
+
+export function hasSubmittedPrompt(submitted: string): boolean {
+  return submitted.trim().length > 0
+}
+
+export function tokenSpeedUsageEventAt(
+  event: TokenSpeedUsageEvent,
+  observedAt: number,
+): number {
+  return typeof event.timestamp === 'number' && Number.isFinite(event.timestamp)
+    ? event.timestamp
+    : observedAt
 }
 
 function handleInput(sessionId: string, data: string): void {
@@ -178,7 +219,7 @@ function handleInput(sessionId: string, data: string): void {
   )
   if (draft.length > 0) drafts.set(sessionId, draft)
   else drafts.delete(sessionId)
-  if (submitted === null) return
+  if (submitted === null || !hasSubmittedPrompt(submitted)) return
 
   const state = stateFor(pane.scope, true)!
   bindings.set(sessionId, { scopeKey: scopeKey(state.scope), paneId: pane.paneId })
@@ -229,7 +270,16 @@ export function recordTokenSpeedUsage(
   if (!pane?.scope) return false
   const state = stateFor(pane.scope, false)
   if (!state) return false
-  if (!state.meter.noteUsage(paneId, Date.now(), event)) return false
+  const observedAt = Date.now()
+  if (
+    !state.meter.noteUsage(
+      paneId,
+      tokenSpeedUsageEventAt(event, observedAt),
+      event,
+    )
+  ) {
+    return false
+  }
   scheduleEmit(state)
   return true
 }

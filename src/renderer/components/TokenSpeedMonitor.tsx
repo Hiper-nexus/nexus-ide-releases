@@ -117,6 +117,13 @@ export function sparklinePoints(
 }
 
 function SourceTag({ sample }: { sample: TokenSpeedSample | null }) {
+  if (!sample) {
+    return (
+      <span className="tokspeed__source" title="Nenhuma rodada medida ainda.">
+        Aguardando dados
+      </span>
+    )
+  }
   const real = sample?.source === 'real'
   return (
     <span

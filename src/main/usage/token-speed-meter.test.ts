@@ -36,9 +36,17 @@ describe('visibleText / ruído de TUI', () => {
     expect(isTuiNoise('│ 42 tokens')).toBe(false)
   })
 
+  it('não descarta resposta válida composta por pontuação ou emoji', () => {
+    expect(isTuiNoise('{} [] =>')).toBe(false)
+    expect(isTuiNoise('⭐')).toBe(false)
+    expect(isTuiNoise('...')).toBe(false)
+  })
+
   it('reconhece eco do prompt independentemente de espaçamento e caixa', () => {
     const echo = 'refatore o cost tracker'
     expect(isPromptEcho('Refatore   o Cost', echo)).toBe(true)
+    expect(isPromptEcho('❯ Refatore o Cost', echo)).toBe(true)
+    expect(isPromptEcho('│ > Refatore o Cost', echo)).toBe(true)
     expect(isPromptEcho('claro, vou refatorar', echo)).toBe(false)
     expect(isPromptEcho('qualquer coisa', null)).toBe(false)
   })
@@ -262,6 +270,96 @@ describe('TokenSpeedMeter — correção por uso real', () => {
     expect(snap.panes[0].history).toHaveLength(1)
     expect(snap.last?.outputTokens).toBe(403)
     expect(snap.last?.tokensPerSecond).toBe(806)
+  })
+
+  it('retém uso real que chega antes do fechamento ocioso da rodada', () => {
+    const m = meter()
+    m.noteSubmit('p1', 0, 'a')
+    m.noteOutput('p1', 100, CHUNK)
+    m.noteOutput('p1', 600, CHUNK)
+    expect(
+      m.noteUsage('p1', 650, {
+        key: 's:streaming',
+        outputTokens: 403,
+        model: 'claude-sonnet-4',
+      }),
+    ).toBe(true)
+    expect(m.snapshot(2_000).last).toMatchObject({
+      outputTokens: 403,
+      tokensPerSecond: 806,
+      model: 'claude-sonnet-4',
+      source: 'real',
+    })
+  })
+
+  it('atualiza uso real pendente quando o transcript reescreve a mensagem', () => {
+    const m = meter()
+    m.noteSubmit('p1', 0, 'a')
+    m.noteOutput('p1', 100, CHUNK)
+    m.noteOutput('p1', 600, CHUNK)
+    expect(
+      m.noteUsage('p1', 300, {
+        key: 's:streaming',
+        outputTokens: 120,
+      }),
+    ).toBe(true)
+    expect(
+      m.noteUsage('p1', 650, {
+        key: 's:streaming',
+        outputTokens: 403,
+      }),
+    ).toBe(true)
+    const snap = m.snapshot(2_000)
+    expect(snap.turns).toBe(1)
+    expect(snap.last?.outputTokens).toBe(403)
+    expect(snap.last?.source).toBe('real')
+  })
+
+  it('uso real preserva resposta curta que a heurística descartaria como ruído', () => {
+    const m = meter({ minTurnTokens: 100 })
+    m.noteSubmit('p1', 0, 'a')
+    m.noteOutput('p1', 100, 'sim')
+    m.noteOutput('p1', 600, '!')
+    expect(
+      m.noteUsage('p1', 650, {
+        key: 's:curta',
+        outputTokens: 2,
+        model: 'gpt-5',
+      }),
+    ).toBe(true)
+    expect(m.snapshot(2_000).last).toMatchObject({
+      outputTokens: 2,
+      model: 'gpt-5',
+      source: 'real',
+    })
+  })
+
+  it('corrige a amostra temporalmente mais próxima, não apenas a mais recente', () => {
+    const m = meter()
+    m.noteSubmit('p1', 0, 'primeiro')
+    m.noteOutput('p1', 100, CHUNK)
+    m.noteOutput('p1', 600, CHUNK)
+    m.noteSubmit('p1', 5_000, 'segundo')
+    m.noteOutput('p1', 5_100, CHUNK)
+    m.noteOutput('p1', 5_600, CHUNK)
+    m.flushIdle(7_000)
+    expect(
+      m.noteUsage('p1', 650, {
+        key: 's:primeiro',
+        outputTokens: 100,
+        model: 'modelo-antigo',
+      }),
+    ).toBe(true)
+    const history = m.snapshot(8_000).panes[0].history
+    expect(history[0]).toMatchObject({
+      outputTokens: 100,
+      model: 'modelo-antigo',
+      source: 'real',
+    })
+    expect(history[1]).toMatchObject({
+      outputTokens: 20,
+      source: 'estimated',
+    })
   })
 
   it('ignora uso fora da janela, sem pane, zerado ou já corrigido', () => {

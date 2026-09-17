@@ -55,13 +55,23 @@ const CHARS_PER_TOKEN = 4
  * SÓ destes glifos é repintura de tela, não geração.
  */
 const TUI_NOISE_PATTERN =
-  /[\u2500-\u257f\u2580-\u259f\u25a0-\u25ff\u2800-\u28ff\u2b00-\u2bff\ufe0f\u200b-\u200d]/gu
+  /[\u2500-\u257f\u2580-\u259f\u2800-\u28ff\ufe0f\u200b-\u200d]/gu
+/** Glifos que CLIs colocam antes do prompt redesenhado. */
+const PROMPT_PREFIX_PATTERN = /^(?:[│┃┆┊]\s*)*(?:[>›❯»]\s*)*/u
 
 export interface TokenSpeedUsageEvent {
   /** Chave de dedupe estável do provider (sessionId:messageId). */
   key: string
   outputTokens: number
   model?: string | null
+  /** epoch ms do evento no transcript, quando o provider expõe. */
+  timestamp?: number | null
+}
+
+interface PendingUsage {
+  key: string | null
+  outputTokens: number
+  model: string | null
 }
 
 interface OpenTurn {
@@ -72,6 +82,8 @@ interface OpenTurn {
   model: string | null
   /** Volátil: some no 1º token ou no fechamento da rodada. */
   echo: string | null
+  /** Uso real pode chegar antes do timer que fecha a rodada. */
+  pendingUsage: PendingUsage | null
 }
 
 /**
@@ -103,13 +115,15 @@ export function visibleText(chunk: string): string {
 /** Só moldura/spinner/espaço: repintura de TUI, não token do modelo. */
 export function isTuiNoise(visible: string): boolean {
   const meaningful = visible.replace(TUI_NOISE_PATTERN, '').trim()
-  if (meaningful.length === 0) return true
-  // Sem letra nem dígito sobrando, é enfeite (barras, pontos, setas).
-  return !/[\p{L}\p{N}]/u.test(meaningful)
+  return meaningful.length === 0
 }
 
 function normalizeForEcho(value: string): string {
-  return value.replace(/\s+/g, ' ').trim().toLowerCase()
+  return value
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+    .replace(PROMPT_PREFIX_PATTERN, '')
 }
 
 /**
@@ -223,6 +237,7 @@ export class TokenSpeedMeter {
       tokens: 0,
       model: state.model,
       echo: normalizeForEcho(promptText).slice(0, PROMPT_ECHO_MEMORY_CHARS),
+      pendingUsage: null,
     }
     return closed
   }
@@ -271,6 +286,7 @@ export class TokenSpeedMeter {
         tokens,
         model: state.model,
         echo: null,
+        pendingUsage: null,
       }
       return true
     }
@@ -300,13 +316,68 @@ export class TokenSpeedMeter {
     const outputTokens = Math.round(event.outputTokens)
     const key = event.key || null
 
+    const ownedIndex = key
+      ? state.history.findIndex((entry) => entry.usageKey === key)
+      : -1
+    if (ownedIndex >= 0) {
+      return this.#updateHistoryUsage(
+        state,
+        ownedIndex,
+        key,
+        outputTokens,
+        event.model,
+      )
+    }
+
+    const open = state.open
+    if (open?.pendingUsage && open.pendingUsage.key === key) {
+      if (
+        open.pendingUsage.outputTokens === outputTokens &&
+        open.pendingUsage.model === (event.model ?? open.pendingUsage.model)
+      ) {
+        return false
+      }
+      open.pendingUsage = {
+        key,
+        outputTokens,
+        model: event.model ?? open.pendingUsage.model,
+      }
+      return true
+    }
+
+    if (open && this.#usageFitsOpenTurn(open, at)) {
+      open.pendingUsage = {
+        key,
+        outputTokens,
+        model: event.model ?? open.model ?? state.model,
+      }
+      return true
+    }
+
     const index = this.#usageTargetIndex(state, at, key)
     if (index === null) return false
+    return this.#updateHistoryUsage(
+      state,
+      index,
+      key,
+      outputTokens,
+      event.model,
+    )
+  }
+
+  #updateHistoryUsage(
+    state: PaneState,
+    index: number,
+    key: string | null,
+    outputTokens: number,
+    model: string | null | undefined,
+  ): boolean {
     const entry = state.history[index]
     if (
       entry.sample.source === 'real' &&
       entry.sample.outputTokens === outputTokens &&
-      entry.usageKey === key
+      entry.usageKey === key &&
+      entry.sample.model === (model ?? entry.sample.model)
     ) {
       return false
     }
@@ -321,13 +392,20 @@ export class TokenSpeedMeter {
                 outputTokens,
                 current.sample.generationMs,
               ),
-              model: event.model ?? current.sample.model,
+              model: model ?? current.sample.model,
               source: 'real' as const,
             },
           }
         : current,
     )
     return true
+  }
+
+  #usageFitsOpenTurn(open: OpenTurn, at: number): boolean {
+    const startedAt =
+      open.submittedAt ?? open.firstTokenAt ?? open.lastTokenAt
+    if (at < startedAt) return false
+    return at - open.lastTokenAt <= this.usageMatchWindowMs
   }
 
   /**
@@ -343,13 +421,21 @@ export class TokenSpeedMeter {
       const owned = state.history.findIndex((entry) => entry.usageKey === key)
       if (owned >= 0) return owned
     }
-    for (let index = state.history.length - 1; index >= 0; index -= 1) {
+    let nearestIndex: number | null = null
+    let nearestDistance = Number.POSITIVE_INFINITY
+    for (let index = 0; index < state.history.length; index += 1) {
       const entry = state.history[index]
-      if (at - entry.sample.at > this.usageMatchWindowMs) break
       if (entry.sample.source === 'real') continue
-      return index
+      const distance = Math.abs(at - entry.sample.at)
+      if (
+        distance <= this.usageMatchWindowMs &&
+        distance < nearestDistance
+      ) {
+        nearestIndex = index
+        nearestDistance = distance
+      }
     }
-    return null
+    return nearestIndex
   }
 
   /** Pane/sessão morreu: fecha o que dava e some com o estado. */
@@ -560,7 +646,7 @@ export class TokenSpeedMeter {
     const open = state.open
     state.open = null
     if (!open || open.firstTokenAt === null) return false
-    if (open.tokens < this.minTurnTokens) return false
+    if (!open.pendingUsage && open.tokens < this.minTurnTokens) return false
 
     const endedAt = Math.max(open.lastTokenAt, open.firstTokenAt)
     const generationMs = Math.max(0, endedAt - open.firstTokenAt)
@@ -568,22 +654,24 @@ export class TokenSpeedMeter {
       open.submittedAt !== null && open.firstTokenAt >= open.submittedAt
         ? open.firstTokenAt - open.submittedAt
         : null
+    const outputTokens = open.pendingUsage?.outputTokens ?? open.tokens
     const sample: TokenSpeedSample = {
       paneId: state.paneId,
       // Marca o ÚLTIMO token, não o instante em que o fechamento foi
       // percebido: o atraso do detector de ocioso não é tempo de geração.
       at: endedAt,
       startedAt: open.submittedAt ?? open.firstTokenAt,
-      outputTokens: open.tokens,
+      outputTokens,
       generationMs,
-      tokensPerSecond: this.#speedOf(open.tokens, generationMs),
+      tokensPerSecond: this.#speedOf(outputTokens, generationMs),
       ttftMs,
-      model: open.model ?? state.model,
-      source: 'estimated',
+      model: open.pendingUsage?.model ?? open.model ?? state.model,
+      source: open.pendingUsage ? 'real' : 'estimated',
     }
-    state.history = [...state.history, { sample, usageKey: null }].slice(
-      -this.historyLimit,
-    )
+    state.history = [
+      ...state.history,
+      { sample, usageKey: open.pendingUsage?.key ?? null },
+    ].slice(-this.historyLimit)
     state.turns += 1
     return true
   }

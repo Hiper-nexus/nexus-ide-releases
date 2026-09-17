@@ -568,6 +568,7 @@ export class UsageTelemetryService {
         key: `${provider}:${event.sessionId}:${event.messageId ?? event.timestamp ?? 'sem-id'}`,
         outputTokens: event.outputTokens,
         model: event.model,
+        timestamp: event.timestamp,
       });
     } catch (error) {
       console.warn('[usage] token speed correction failed:', error);

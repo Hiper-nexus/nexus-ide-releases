@@ -151,6 +151,8 @@ describe('TokenSpeedMonitor', () => {
     const text = container.textContent ?? ''
     expect(text).toContain('Velocidade da última resposta')
     expect(text).toContain('—')
+    expect(text).toContain('Aguardando dados')
+    expect(text).not.toContain('Estimado · stream do terminal')
     expect(text).toContain('Nenhuma rodada medida ainda nesta sessão.')
     expect(text).not.toContain('NaN')
   })

@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { splitSubmittedInput } from './token-speed-tracker'
+import {
+  hasSubmittedPrompt,
+  splitSubmittedInput,
+  tokenSpeedUsageEventAt,
+} from './token-speed-tracker'
 
 /**
  * Detecção de submit a partir do fluxo de teclas do PTY. O restante do
@@ -62,5 +66,69 @@ describe('splitSubmittedInput', () => {
 
   it('Enter isolado submete prompt vazio sem quebrar', () => {
     expect(splitSubmittedInput('', '\r')).toEqual({ submitted: '', draft: '' })
+  })
+
+  it('Backspace corrige o rascunho usado para reconhecer o eco', () => {
+    expect(splitSubmittedInput('olx', '\u007fá\r')).toEqual({
+      submitted: 'olá',
+      draft: '',
+    })
+    expect(splitSubmittedInput('olx', '\bá\r')).toEqual({
+      submitted: 'olá',
+      draft: '',
+    })
+  })
+
+  it('Ctrl+U limpa a linha e Ctrl+W apaga a última palavra', () => {
+    expect(splitSubmittedInput('texto errado', '\u0015correto\r')).toEqual({
+      submitted: 'correto',
+      draft: '',
+    })
+    expect(splitSubmittedInput('gere um relatorio', '\u0017resumo\r')).toEqual({
+      submitted: 'gere um resumo',
+      draft: '',
+    })
+  })
+
+  it('CRLF vale como um único submit e não contamina o prompt com CR', () => {
+    expect(splitSubmittedInput('', 'linha um\r\n')).toEqual({
+      submitted: 'linha um',
+      draft: '',
+    })
+  })
+})
+
+describe('hasSubmittedPrompt', () => {
+  it('recusa Enter vazio ou só com espaços', () => {
+    expect(hasSubmittedPrompt('')).toBe(false)
+    expect(hasSubmittedPrompt(' \n\t ')).toBe(false)
+  })
+
+  it('aceita conteúdo real, inclusive prompt multilinha', () => {
+    expect(hasSubmittedPrompt('explique isto')).toBe(true)
+    expect(hasSubmittedPrompt('linha um\nlinha dois')).toBe(true)
+  })
+})
+
+describe('tokenSpeedUsageEventAt', () => {
+  it('prefere o timestamp do transcript para casar a rodada correta', () => {
+    expect(
+      tokenSpeedUsageEventAt(
+        { key: 's:1', outputTokens: 10, timestamp: 1_234 },
+        9_999,
+      ),
+    ).toBe(1_234)
+  })
+
+  it('cai no instante observado quando o transcript não tem timestamp válido', () => {
+    expect(
+      tokenSpeedUsageEventAt({ key: 's:1', outputTokens: 10 }, 9_999),
+    ).toBe(9_999)
+    expect(
+      tokenSpeedUsageEventAt(
+        { key: 's:1', outputTokens: 10, timestamp: Number.NaN },
+        9_999,
+      ),
+    ).toBe(9_999)
   })
 })

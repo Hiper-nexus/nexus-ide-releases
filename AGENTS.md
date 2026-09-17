@@ -293,7 +293,17 @@ saber isto antes de mexer:
   conteúdo entra no snapshot nem no IPC.
 - Correção pelo transcript é idempotente por `sessionId:messageId`: o provider
   REESCREVE a mesma mensagem enquanto ela transmite, com total maior a cada
-  reescrita, então a chave atualiza a MESMA amostra em vez de criar outra.
+  reescrita, então a chave atualiza a MESMA amostra em vez de criar outra. O
+  uso real pode chegar antes do timer de silêncio: fica pendente na rodada
+  aberta e é aplicado no fechamento; não o descarte por ainda não haver
+  amostra no histórico. Use o timestamp do transcript para casar a amostra
+  temporalmente mais próxima — horário de chegada pode corrigir a rodada errada.
+- O rascunho volátil usado para suprimir eco respeita a edição básica do
+  terminal (Backspace/Delete, Ctrl+U, Ctrl+W e CRLF). Enter vazio ou só com
+  espaços NÃO abre rodada; sem isso o repaint do prompt da CLI vira TTFT falso.
+- Não classifique toda saída sem letra/dígito como ruído: respostas de código,
+  pontuação e emoji são saída válida. O filtro de TUI remove somente famílias
+  conhecidas de moldura/bloco/spinner; o piso de tokens cuida do ruído curto.
 
 ## TypeSafe / Jev (skill `typesafe-ai`)
 
