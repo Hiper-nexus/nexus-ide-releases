@@ -8,6 +8,20 @@ process.env.NEXUS_VOICE_LOG_MAX_BYTES ??= '1048576';
 process.env.NEXUS_JARVIS_METRICS_FILE ??= path.join(baseDir, 'jarvis-metrics.log');
 
 /**
+ * Testes herméticos do Jev (TypeSafe). A máquina do operador tem
+ * `TYPESAFE_API_KEY` no shell (~/.zshenv), e todo caminho do Jev resolve a
+ * chave por `stored → env`: com a env presente, a guarda do despacho, o
+ * route_task e as demais superfícies falariam com a API REAL dentro dos
+ * testes — vereditos não determinísticos (2 falhas medidas em
+ * mcp-dispatch-security em 17/09). Sem chave, cada superfície cai em
+ * `skipped` (fail-open), que é exatamente o comportamento que um teste sem
+ * mock deve exercitar. Quem precisa do Jev num teste injeta `judge`.
+ */
+delete process.env.TYPESAFE_API_KEY;
+delete process.env.TYPESAFE_BASE_URL;
+delete process.env.NEXUS_JEV_MODEL;
+
+/**
  * `localStorage` sob jsdom.
  *
  * O jsdom desta árvore não expõe `localStorage` no contexto do teste, então
