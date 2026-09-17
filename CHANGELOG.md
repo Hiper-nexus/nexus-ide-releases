@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.50 — Panes a quente
+
+- **Pane deixa de re-baixar ~500 MB de MCPs a cada abertura (F-578)**: os servidores MCP `npx`/`uvx` do perfil herdado (hub do operador + conectores da conta) resolviam o cache pelo `$HOME` — e o HOME do pane é descartável. Resultado medido no Mac do operador: **~475 MB baixados em <1 min** dentro de cada overlay, com o processo principal a ~99% de CPU em callbacks de fs durante o spawn — o "tudo fica carregando". Agora `npm_config_cache`, `XDG_CACHE_HOME` e `UV_CACHE_DIR` apontam para `<userData>/provider-cache/<adapter.id>/`: o download acontece uma vez por máquina e todo pane seguinte sobe a quente.
+- **Isolamento mantido por domínio de confiança**: a raiz do cache é por `adapter.id` — um pane third-party (GLM/LongCat) nunca escreve no cache que a toolchain do pane nativo executa. Os demais adapters já isolavam seus homes duráveis; só a família Claude herdava o churn.
+- **Sem mudança de política de auth**: a correção do F-575 (keychain linkado) segue intacta — este release ataca o boot lento, não a autenticação.
+
 ## 0.76.49 — O Claude entra no Windows também
 
 - **Pane Claude no Windows abre logado (F-576)**: a 0.76.48 curou o macOS (keychain invisível no HOME privado), mas no Windows o "Not logged in · Run /login" continuava — causa raiz diferente, mesmo sintoma. O spawn escrevia `CLAUDE_CONFIG_DIR=""` para neutralizar um path herdado, só que vazio não é ausência: a variável continua no env block e o resolver de config dir do binário aceita `""` via `??` — `.credentials.json`, `projects` e `sessions` passavam a resolver **relativos ao cwd do pane**, não ao HOME privado. Todo pane novo lia `<cwd>\.credentials.json` (inexistente) em vez do `<overlay>\.claude\.credentials.json` linkado.

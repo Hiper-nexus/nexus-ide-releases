@@ -340,6 +340,23 @@ describe('mcp-server governed CLI profile wiring', () => {
     } finally { decoration.onSpawnFailed?.(); }
   });
 
+  it.each(['claude', 'glm'] as const)('points %s package caches at a durable per-adapter root outside the disposable HOME', (id) => {
+    const home = path.join(tempRoot(), 'home');
+    const cwd = path.join(home, 'workspace');
+    fs.mkdirSync(cwd, { recursive: true });
+    vi.stubEnv('HOME', home);
+    const decoration = prepareAgentSpawnDecoration(adapter(id), { kind: 'cli-agent', cols: 80, rows: 24 }, authority(cwd, false))!;
+    try {
+      const cacheRoot = path.join(home, '.nexus-test-user-data', 'provider-cache', id);
+      // O cache durável reusa downloads de MCPs npx/uvx entre panes — e nunca
+      // compartilha raiz entre adapters (third-party não envenena o nativo).
+      expect(decoration.env.npm_config_cache).toBe(path.join(cacheRoot, 'npm'));
+      expect(decoration.env.XDG_CACHE_HOME).toBe(path.join(cacheRoot, 'xdg'));
+      expect(decoration.env.UV_CACHE_DIR).toBe(path.join(cacheRoot, 'uv'));
+      expect(decoration.env.npm_config_cache.startsWith(decoration.env.HOME)).toBe(false);
+    } finally { decoration.onSpawnFailed?.(); }
+  });
+
   it('keeps packaged Arms on the legacy descriptor and isolates dev', () => {
     const home = path.join(tempRoot(), 'home');
 

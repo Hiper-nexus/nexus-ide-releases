@@ -4151,6 +4151,59 @@ export const RELEASE_07647: AppRelease = {
   ],
 };
 
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.50',
+  date: '2026-09-17',
+  codename: 'Panes a quente',
+  summary:
+    'O pane parava minutos em tela preta porque re-baixava ~500 MB de servidores ' +
+    'MCP a cada abertura: o cache de pacotes morria com o HOME descartável. Agora ' +
+    'npm_config_cache, XDG_CACHE_HOME e UV_CACHE_DIR apontam para uma raiz durável ' +
+    'por adapter — o download acontece uma vez por máquina e o pane sobe a quente, ' +
+    'sem um third-party jamais tocar o cache do pane nativo.',
+  highlights: [
+    {
+      title: 'Fim do re-download de ~500 MB por pane',
+      detail:
+        'Os servidores MCP npx/uvx do perfil herdado resolviam o cache pelo $HOME ' +
+        '— descartável. Cada pane novo gastava ~475 MB de download e minutos de fs ' +
+        'churn com o Main a 99% de CPU. O cache durável em ' +
+        '<userData>/provider-cache/<adapter.id>/ aquece uma vez e reusa para sempre.',
+    },
+    {
+      title: 'Isolamento por adapter, como sempre',
+      detail:
+        'A raiz do cache é por adapter.id: GLM/LongCat e outros third-party ganham ' +
+        'raízes próprias e nunca escrevem no cache que a toolchain do pane nativo ' +
+        'executa. Os demais adapters já isolavam seus homes duráveis.',
+    },
+    {
+      title: 'Auth intacta',
+      detail:
+        'A correção do F-575 (keychain linkado no HOME efêmero) segue como estava: ' +
+        'este release ataca o boot lento medido depois dela, não mexe em ' +
+        'autenticação nem em concessões de sandbox.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Medido, não suposto',
+      detail:
+        'Reproduzido no Mac do operador com PTY real: overlay novo → ~475 MB de ' +
+        '.npm/.cache em <1 min e Main a 99% de CPU; com o env novo, npx cai na ' +
+        'raiz durável e o segundo run sai em ~0.8s. Claude renderiza a TUI em ~30s ' +
+        'a frio, ~2s a quente.',
+    },
+    {
+      title: 'Quem vem da 0.76.48',
+      detail:
+        'A atualização também traz o fix de auth do Claude (keychain real linkado ' +
+        'no HOME efêmero — /login que persiste de verdade) e o gate de swap por ' +
+        'máquina da 0.76.47.',
+    },
+  ],
+};
+
 export const RELEASE_07648: AppRelease = {
   version: '0.76.48',
   date: '2026-09-17',
@@ -4207,7 +4260,7 @@ export const RELEASE_07648: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07649: AppRelease = {
   version: '0.76.49',
   date: '2026-09-17',
   codename: 'O Claude entra no Windows também',

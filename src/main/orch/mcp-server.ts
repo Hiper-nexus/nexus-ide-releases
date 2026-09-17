@@ -1123,6 +1123,20 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
         // relative to the pane cwd (F-576: every Windows pane read its
         // credentials from <cwd>/.credentials.json and stayed logged out).
         envRemove.push("CLAUDE_CONFIG_DIR");
+        // Package managers resolve their caches from $HOME, so a disposable
+        // HOME re-downloaded every npx/uvx MCP server on each pane (~500 MB
+        // and minutes of fs churn that froze the Main process). The durable
+        // cache root is per adapter — a third-party pane can never poison the
+        // cache the native pane toolchain executes from.
+        const providerCacheRoot = path.join(
+          app.getPath("userData"),
+          "provider-cache",
+          adapter.id,
+        );
+        env.XDG_CACHE_HOME = path.join(providerCacheRoot, "xdg");
+        env.npm_config_cache = path.join(providerCacheRoot, "npm");
+        env.UV_CACHE_DIR = path.join(providerCacheRoot, "uv");
+        claudeStatePaths.push(providerCacheRoot);
         ephemeralHomeDir = home.dir;
         if (home.providerSessionHome) claudeStatePaths.push(home.providerSessionHome);
         claudeProfileReadPaths.push(...(home.providerProfileReadPaths ?? []));
