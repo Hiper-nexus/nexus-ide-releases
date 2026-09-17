@@ -643,7 +643,9 @@ export function routeTask(
     const evaluationNote = chosen.evaluated
       ? '; selecionado por avaliação Nexus por dimensão'
       : '';
-    const specialtyNote = `; specialty=${specialtyVerdict.specialty} source=${policySource}`;
+    const specialtyNote =
+      `; specialty=${specialtyVerdict.specialty} source=${policySource}` +
+      (context.specialtyOverride ? ` (${specialtyVerdict.reason})` : '');
     // Bug F (Maestro 2026-08-17): preferAdapters parecia "ignorado" porque o
     // preferido era derrubado em silêncio (não instalado, sem candidato no
     // tier, reservado). A decisão agora DIZ o destino de cada preferido.
