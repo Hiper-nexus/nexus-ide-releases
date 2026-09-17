@@ -220,3 +220,17 @@ describe('AgentScreenDetector', () => {
     expect(explain?.evaluatedRules.length).toBeGreaterThan(0);
   });
 });
+
+describe('getScreenText — cauda do buffer limpo', () => {
+  it('null sem buffer, texto com buffer, respeita maxChars pela cauda', () => {
+    const { detector } = makeDetector();
+    expect(detector.getScreenText('s-none')).toBeNull();
+    detector.onData('s1', 'primeira linha\nsegunda linha\n');
+    expect(detector.getScreenText('s1')).toBe('primeira linha\nsegunda linha\n');
+    expect(detector.getScreenText('s1', 15)).toBe('\nsegunda linha\n');
+    detector.onData('s1', 'terceira\n');
+    expect(detector.getScreenText('s1')).toContain('terceira\n');
+    detector.onExit('s1');
+    expect(detector.getScreenText('s1')).toBeNull();
+  });
+});

@@ -36,6 +36,12 @@ const READ_ONLY_TOOLS = new Set([
   'git_diff',
   'git_log',
   'git_status',
+  // Julgamento tipado (TypeSafe Jev): sem mutação de workspace nem efeito
+  // externo; o único egress é para a conta TypeSafe configurada pelo usuário,
+  // rate-limited por sessão.
+  'judge',
+  // Ranking de candidatos: idem — leitura tipada, composto calculado em código.
+  'rank',
   'pr_inspect',
   'handoff_list',
   'media_providers',
@@ -290,6 +296,9 @@ export function permitsOperatorVibeEffect(ctx: {
 const EXECUTION_EFFECT_TOOLS = new Set([
   'audio_generate',
   'browser_click',
+  // browser_do executa as mesmas primitivas de escrita que click/fill —
+  // uma confirmação por objetivo, mesma classe de efeito.
+  'browser_do',
   'browser_fill',
   'editor_apply_patch',
   'editor_insert',

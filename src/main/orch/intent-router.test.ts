@@ -9,6 +9,14 @@ import {
   routeWithDeepSeek,
 } from './intent-router';
 
+// Hermeticidade: estes testes exercitam a heurística e a cadeia de provedores.
+// Sem o mock, uma máquina com TYPESAFE_API_KEY no shell (autopilot ligado por
+// default) faz a triagem Jev REAL e a classificação externa vira o resultado
+// do teste. Os caminhos do Jev têm suíte própria (intent-router-jev.test.ts).
+vi.mock('./intent-router-jev', () => ({
+  routeWithJev: async () => null,
+}));
+
 describe('Tier 0 — heurística determinística', () => {
   it('pergunta pura curta nem vira missão', () => {
     expect(looksLikePureQuestion('quanto é 1+1?')).toBe(true);
@@ -151,6 +159,30 @@ describe('routeWithDeepSeek / routeIntent — fail-open', () => {
     expect(
       await routeIntent('crie uma landing page', { hasKeyFor: () => false }),
     ).toBeNull();
+  });
+
+  it('routeIntent: tempo do Jev conta no deadline — estourado, a cadeia não roda', async () => {
+    vi.useFakeTimers();
+    try {
+      let fetchCalled = false;
+      const route = await routeIntent('crie uma landing page', {
+        totalTimeoutMs: 1_000,
+        routeWithJev: (async () => {
+          vi.advanceTimersByTime(5_000);
+          return null;
+        }) as typeof import('./intent-router-jev').routeWithJev,
+        hasKeyFor: () => true,
+        loadKeyFor: () => 'test-key',
+        fetchImpl: (async () => {
+          fetchCalled = true;
+          throw new Error('não deveria chamar rede');
+        }) as unknown as typeof fetch,
+      });
+      expect(route).toBeNull();
+      expect(fetchCalled).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('routeIntent: nunca usa key do ambiente em teste — fetch injetado que falha ⇒ null', async () => {

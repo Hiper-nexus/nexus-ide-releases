@@ -61,6 +61,7 @@ import {
   ToolsSection,
 } from './CatalogSections';
 import { DesignSystemsSection } from './DesignSystemsSection';
+import { JevDecisionsSection } from './JevDecisionsSection';
 import { HarnessSection } from './HarnessSection';
 import { CompanionRelaySection } from './CompanionRelaySection';
 import { ArmsSection } from './ArmsSection';
@@ -164,6 +165,8 @@ function SettingsSectionContent({
       return <ModelRankingSection />;
     case 'squads':
       return <SquadsSection />;
+    case 'jev-decisions':
+      return <JevDecisionsSection />;
     case 'harness':
       return <HarnessSection overviewOnly />;
     case 'agent-connection':

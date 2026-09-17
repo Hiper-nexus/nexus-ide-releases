@@ -15,6 +15,7 @@ import {
   resolveRuntimeApiKey,
 } from '../persistence/provider-config-store';
 import { isPaneMetaTask, extractMetaPaneQuestion } from '../../shared/pane-meta-task';
+import { routeWithJev } from './intent-router-jev';
 
 export type IntentRoute =
   | { readonly kind: 'direct-answer'; readonly question: string }
@@ -115,6 +116,8 @@ export type RouterDeps = {
   readonly timeoutMs?: number;
   /** Entire classification chain, independent of each attempt timeout. */
   readonly totalTimeoutMs?: number;
+  /** Jev intake triage — injectable; default calls the real Jev router. */
+  readonly routeWithJev?: typeof routeWithJev;
 };
 
 const DEFAULT_ROUTER_TIMEOUT_MS = 6_000;
@@ -246,9 +249,15 @@ export async function routeIntent(
   if (looksLikePureQuestion(objective)) {
     return { kind: 'direct-answer', question: extractQuestion(objective) ?? objective };
   }
+  // Triagem Jev (piloto automático, superfície `intake`): UMA chamada
+  // classifica kind/complexidade/risco/ambiguidade/skills. Null = cai na
+  // cadeia de provedores exatamente como antes — e o tempo do Jev conta
+  // dentro do deadline total do router (o deadline nasce ANTES da chamada).
+  const deadline = Date.now() + (deps.totalTimeoutMs ?? DEFAULT_ROUTER_TIMEOUT_MS);
+  const viaJev = await (deps.routeWithJev ?? routeWithJev)(objective);
+  if (viaJev) return viaJev;
   const hasKeyFor = deps.hasKeyFor ?? hasRuntimeKey;
   const loadKeyFor = deps.loadKeyFor ?? resolveRuntimeApiKey;
-  const deadline = Date.now() + (deps.totalTimeoutMs ?? DEFAULT_ROUTER_TIMEOUT_MS);
   for (const provider of ROUTER_PROVIDER_CHAIN) {
     if (Date.now() >= deadline) return null;
     if (!isProviderEnabled(provider.id) || !hasKeyFor(provider.id)) continue;

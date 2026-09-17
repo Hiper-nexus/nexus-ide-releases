@@ -139,6 +139,7 @@ import {
 import { registerLayoutIpc } from "./persistence/layout-ipc";
 import { registerAdapterIpc } from "./adapters/adapter-ipc";
 import { registerVoiceIpc, closeVoiceIpc } from "./voice/voice-ipc";
+import { registerJevIpc } from "./jev/jev-ipc";
 import { registerVisionIpc } from "./vision/ipc-bridge";
 import {
   initAdapterRegistry,
@@ -291,6 +292,11 @@ import {
   registerCostListener,
   unregisterCostListener,
 } from "./orch/cost-ipc";
+import {
+  registerTokenSpeedIpc,
+  registerTokenSpeedListener,
+  unregisterTokenSpeedListener,
+} from "./orch/token-speed-ipc";
 import { registerBillingIpc } from "./persistence/billing-ipc";
 import { syncLicenseOnBoot } from "./license-sync";
 import { registerTeamIpc } from "./team-ipc";
@@ -537,6 +543,7 @@ function bootstrap(): void {
   traceBootstrap('before voice IPC');
   registerVoiceIpc(projectRuntimeManager);
   traceBootstrap('after voice IPC');
+  registerJevIpc();
   // The window is created by the app-ready handler before bootstrap starts.
   // Keep the rest of registration below it so account/secrets/billing cannot
   // delay the first visible UI.
@@ -556,6 +563,7 @@ function bootstrap(): void {
   registerFilesIpc();
   registerAccountIpc();
   registerCostIpc();
+  registerTokenSpeedIpc();
   registerMediaIpc(projectRuntimeManager);
   registerGamificationIpc(gamificationService);
   registerMcpIpc();
@@ -1055,6 +1063,7 @@ app.on("browser-window-created", (_event, win) => {
   registerProviderListener(wc);
   registerAccountListener(wc);
   registerCostListener(wc);
+  registerTokenSpeedListener(wc);
   registerNotesListener(wc);
   registerPipeListener(wc);
   registerGamificationListener(wc);
@@ -1069,6 +1078,7 @@ app.on("browser-window-created", (_event, win) => {
     unregisterProviderListener(wc);
     unregisterAccountListener(wc);
     unregisterCostListener(wc);
+    unregisterTokenSpeedListener(wc);
     unregisterNotesListener(wc);
     unregisterPipeListener(wc);
     unregisterGamificationListener(wc);

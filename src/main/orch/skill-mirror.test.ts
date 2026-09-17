@@ -2,10 +2,17 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PLUGIN_MANIFEST_SCHEMA } from './agent-plugin-manifest';
 import { IMPECCABLE_MANIFEST } from './impeccable-manifest';
 import { ensureSkillsForCli } from './skill-mirror';
+
+const jevSecrets = vi.hoisted(() => ({
+  hasJevCredential: vi.fn(() => true),
+}));
+vi.mock('../jev/jev-secrets', () => ({
+  hasJevCredential: jevSecrets.hasJevCredential,
+}));
 
 const roots: string[] = [];
 
@@ -50,6 +57,7 @@ Review the current diff.
 }
 
 afterEach(() => {
+  jevSecrets.hasJevCredential.mockReset().mockReturnValue(true);
   for (const root of roots.splice(0)) {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -628,4 +636,39 @@ describe('bundled skill delivery', () => {
 
     expect(fs.readFileSync(path.join(local, 'SKILL.md'), 'utf8')).toBe('# Mine');
   });
+
+  it('drops the bundled typesafe-ai when no TypeSafe credential exists', () => {
+    jevSecrets.hasJevCredential.mockReturnValue(false);
+    const home = tmpRoot();
+    const target = path.join(home, '.codex', 'skills');
+
+    ensureSkillsForCli('codex', { home, sourceDirs: [] });
+
+    expect(fs.existsSync(path.join(target, 'typesafe-ai', 'SKILL.md'))).toBe(false);
+    // Outros bundled skills seguem sendo espelhados normalmente.
+    expect(fs.existsSync(path.join(target, 'impeccable', 'SKILL.md'))).toBe(true);
+  });
+
+  it('keeps a user-installed typesafe-ai even without credential', () => {
+    jevSecrets.hasJevCredential.mockReturnValue(false);
+    const home = tmpRoot();
+    const userSource = tmpRoot();
+    writeSkill(userSource, 'typesafe-ai', '# My own typesafe skill');
+    const target = path.join(home, '.codex', 'skills');
+
+    ensureSkillsForCli('codex', { home, sourceDirs: [userSource] });
+
+    expect(fs.readFileSync(path.join(target, 'typesafe-ai', 'SKILL.md'), 'utf8'))
+      .toBe('# My own typesafe skill');
+  });
+
+  it('mirrors the bundled typesafe-ai when a credential exists', () => {
+    const home = tmpRoot();
+    const target = path.join(home, '.codex', 'skills');
+
+    ensureSkillsForCli('codex', { home, sourceDirs: [] });
+
+    expect(fs.existsSync(path.join(target, 'typesafe-ai', 'SKILL.md'))).toBe(true);
+  });
+
 });

@@ -261,3 +261,77 @@ saber isto antes de mexer:
 - Workers e orquestradores NÃO herdam o perfil MCP global do usuário
   (`~/.claude.json`); só a mão do operador (`role user`) herda. Quem precisa
   de um servidor MCP extra declara por allowlist.
+
+## Velocidade de geração por LLM (tok/s + TTFT)
+
+- Três medidores, três perguntas — não os confunda: `cost-tracker` diz QUANTO
+  custou, `usage` (transcript) diz QUANTOS tokens o provider cobrou, e
+  `token-speed` diz QUÃO RÁPIDO o modelo respondeu a rodada.
+- O motor é PURO (`src/main/usage/token-speed-meter.ts`): o relógio entra por
+  parâmetro em toda chamada, sem timer nem estado global. O plumbing (taps,
+  escopo, throttle) fica em `src/main/orch/token-speed-tracker.ts`, particionado
+  pela MESMA autoridade imutável do PTY que o cost-tracker usa.
+- **Métrica ausente vai `null`, nunca 0.** Rodada curta demais, submit não
+  observado ou zero token não sustentam um número; a UI imprime "—". Zero falso
+  num medidor de velocidade é pior que métrica faltando.
+- **`flushIdle` NUNCA fecha rodada que ainda espera o 1º token.** O silêncio
+  entre submit e 1º token É o TTFT, e passa dos segundos em qualquer modelo
+  real — fechá-la destruiria a métrica principal. Só o próximo submit ou o fim
+  do pane a encerram.
+- A fronteira do silêncio mora em `#isSilent` e vale para os três usos (flush,
+  corte de rodada obsoleta, indicador de streaming): intervalo de EXATAMENTE
+  `idleCloseMs` já encerra. Teste com gap igual ao limiar parte a rodada em
+  duas — calibre fixtures abaixo dele.
+- A chave de agregação por LLM é o modelo REGISTRADO NA AMOSTRA, não o modelo
+  atual do pane: quem troca de modelo no meio da sessão alimenta as duas linhas
+  sem reescrever o passado. Pico do modelo é sobre todo o histórico retido, não
+  sobre a janela recente — o teto observado de uma LLM não deve evaporar.
+- `tapSessionInput` em `pty-manager` é observador read-only: não altera a
+  escrita, e um tap que lança não derruba o terminal. Consumidores não podem
+  persistir, logar nem encaminhar o payload. O prompt só fica em memória
+  volátil até o 1º token, para separar eco de TUI de token do modelo — nenhum
+  conteúdo entra no snapshot nem no IPC.
+- Correção pelo transcript é idempotente por `sessionId:messageId`: o provider
+  REESCREVE a mesma mensagem enquanto ela transmite, com total maior a cada
+  reescrita, então a chave atualiza a MESMA amostra em vez de criar outra.
+
+## TypeSafe / Jev (skill `typesafe-ai`)
+
+- Jev é um modelo de **julgamento tipado**, não de geração: `POST
+  api.typesafe.ai/v1/systemone` recebe um `state` (texto/JSON) e perguntas
+  `noul` (probabilidade de sim), `choice` (uma opção + distribuição +
+  confiança) e `score` (níveis ordenados). Use quando um passo
+  "prompt-e-parse" pode virar decisão estruturada (triagem, roteamento,
+  ranking, verificação). Regra conhecida, cálculo e lookup ficam em código.
+- Skill instalada globalmente em `~/.agents/skills/typesafe-ai` (`npx skills
+  add typesafe-ai/skills --skill typesafe-ai -g`). O `skill-mirror` lê
+  `~/.agents/skills` (`defaultSourceDirs`) e copia para cada CLI em panes
+  diretos; em squads governados a skill só entra por `allowedSkills:
+  ['typesafe-ai']`. Leia a SKILL.md e os docs vivos antes de integrar.
+- Chave: `TYPESAFE_API_KEY` vive em `~/.config/typesafe/env` (modo 600),
+  sourçado por `~/.zshenv`. Panes recebem só o `ENV_ALLOWLIST` de
+  `pty-manager.ts`: a chave chega pelo shell do usuário, nunca pelo
+  `process.env` do Main. Não a persista em settings, logs ou no repo.
+- Terminal: `~/.local/bin/jev` (`jev --help`) lê o `state` do stdin, imprime
+  JSON quando o stdout é pipe e sai com 0/1 (`--gate`), 2 (`--min-confidence`),
+  3 (uso) ou 4 (API). Serve para triagem de saída de testes, gate semântico em
+  diff e classificação de itens de QA.
+- Todo `state` sai para um terceiro. Não envie segredos, tokens nem conteúdo
+  de cliente sem consentimento. Integração no produto (Main/renderer) é egress
+  de dados e passa pela revisão de `docs/SECURITY.md`. No produto já existe:
+  chave em Ajustes → Chaves de API (cofre `jev-env:TYPESAFE_API_KEY`, fallback
+  env); `src/main/jev/jev-client.ts` fail-open com `redactState`; revisão de
+  evidência dos handoffs em `src/main/orch/jev-handoff-review.ts` (1 devolução,
+  depois `[evidência fraca]` + artifact `nexus.jevReview`); tool `nexus_judge`
+  (read-only, ALWAYS_ALLOWED, 30/min/sessão, state ≤ 32 KB); toggle
+  `orch.jevAutopilot` / `NEXUS_JEV_AUTOPILOT=0`; skill `typesafe-ai` bundled e
+  concedida aos roles `clean-code`.
+- Sem chave: `nexus_judge`/`nexus_rank`/`nexus_browser_do` somem do
+  `tools/list` (`McpToolDef.available`) e a skill bundled não é espelhada
+  (`bundledSkillFilter` no `skill-mirror`); nada mais muda — o cliente vê um
+  Nexus 100% clássico.
+- `nexus_browser_do` ("Jev decide, Nexus executa"): UMA confirmação humana
+  por objetivo; ação irreversível/custosa sempre para em `needs_confirmation`
+  e devolve a proposta; trava de origem (`left_origin`); textos digitados são
+  só os `values` fornecidos (Jev escolhe o label); cap de passos
+  (`maxSteps ≤ 40`); uma entrada no decision log por passo.

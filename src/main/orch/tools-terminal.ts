@@ -23,6 +23,7 @@ import {
   isOperatorChoicePolicy,
   type SquadCliPolicyMode,
 } from '../../shared/squad-cli-policy';
+import { triageCommandFailure } from '../jev/jev-terminal-triage';
 
 /**
  * Terminal execution MCP tools for Jarvis agent.
@@ -169,7 +170,8 @@ const terminalRun: McpToolDef = {
     'Run a shell command in the workspace directory. Returns stdout and stderr. ' +
     'The command runs to completion or until the timeout (default 30s). ' +
     'Use this for build commands, tests, linting, and other CLI tools. ' +
-    'DESTRUCTIVE commands (rm -rf, git push --force, etc.) are BLOCKED by guardrails.',
+    'DESTRUCTIVE commands (rm -rf, git push --force, etc.) are BLOCKED by guardrails. ' +
+    'On non-zero exit, `triage` may be attached: {kind: flaky|environment|config|regression|usage, confidence, retryHelps} — use it to decide between rerun, fix environment, or fix code.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -256,7 +258,7 @@ const terminalRun: McpToolDef = {
       throw error;
     }
 
-    return await new Promise<{
+    const result = await new Promise<{
       exitCode: number | null;
       stdout: string;
       stderr: string;
@@ -391,6 +393,32 @@ const terminalRun: McpToolDef = {
         }
       }
     });
+
+    // Triagem Jev da falha (piloto automático): campo aditivo; qualquer erro
+    // ou serviço fora devolve o resultado exatamente como antes.
+    if (
+      typeof result.exitCode === 'number' &&
+      result.exitCode !== 0 &&
+      !result.killed
+    ) {
+      try {
+        // A triagem é egresso externo: revalida a autoridade ANTES de sair
+        // da máquina. Autoridade revogada devolve o resultado original.
+        assertMcpInvocationCurrent(invocation);
+        const triage = await triageCommandFailure(
+          {
+            command,
+            exitCode: result.exitCode,
+            output: `${result.stdout}\n${result.stderr}`,
+          },
+          { signal: invocation?.signal },
+        );
+        if (triage) return { ...result, triage };
+      } catch (error) {
+        console.warn('[terminal] triagem Jev falhou (ignorada):', error);
+      }
+    }
+    return result;
   },
 };
 

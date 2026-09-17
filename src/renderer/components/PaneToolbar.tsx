@@ -7,10 +7,12 @@ import {
   type MouseEvent,
 } from 'react';
 import type { PaneModel } from '../../shared/types';
+import type { JevPaneHint } from '../../shared/jev-ipc';
 import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { usePaneParkedStore } from '../state/pane-parked-store';
 import { usePaneFootprintStore } from '../state/pane-footprint-store';
+import { useJevHintStore } from '../state/jev-hint-store';
 import {
   hibernateHost,
   onPaneSessionChange,
@@ -123,6 +125,45 @@ function StateIndicator({
     >
       <PixelIcon name={STATE_ICON[view.mod]} size={10} />
       {!compact && <span className="toolbar__state-label">{view.chip}</span>}
+    </span>
+  );
+}
+
+const JEV_HINT_LABEL: Record<JevPaneHint['state'], string> = {
+  waiting_for_human: 'Jev: esperando você',
+  finished: 'Jev: terminou',
+  errored: 'Jev: erro',
+  working: 'Jev: trabalhando',
+  idle_prompt: 'Jev: ocioso',
+};
+
+const JEV_HINT_MAX_AGE_MS = 10 * 60_000;
+
+/** Chip advisory do classificador Jev (surface paneState) — hint < 10 min. */
+function JevHintChip({ paneId }: { paneId: string }) {
+  const sessionId = usePaneLiveSessionId(paneId);
+  const hint = useJevHintStore((s) =>
+    sessionId ? s.bySessionId.get(sessionId) : undefined,
+  );
+  const [, forceRender] = useState(0);
+  useEffect(() => {
+    if (!hint) return undefined;
+    // Re-renderiza quando o hint expira para o chip sumir sem depender de
+    // outra renderização do pane.
+    const ms = hint.at + JEV_HINT_MAX_AGE_MS - Date.now();
+    if (ms <= 0) return undefined;
+    const timer = setTimeout(() => forceRender((n) => n + 1), ms);
+    return () => clearTimeout(timer);
+  }, [hint, sessionId]);
+  if (!hint || Date.now() - hint.at > JEV_HINT_MAX_AGE_MS) return null;
+  const tip = `Leitura Jev do conteúdo do pane · confiança ${hint.confidence.toFixed(2)}`;
+  return (
+    <span
+      className="toolbar__state toolbar__state--chip"
+      data-tip={tip}
+      aria-label={tip}
+    >
+      <span className="toolbar__state-label">{JEV_HINT_LABEL[hint.state]}</span>
     </span>
   );
 }
@@ -791,6 +832,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
         {pane.kind === 'cli-agent' && (
           <StateIndicator paneId={pane.id} compact={density === 'compact'} />
         )}
+        {pane.kind === 'cli-agent' && <JevHintChip paneId={pane.id} />}
         {pane.kind === 'cli-agent' && <CostBadge paneId={pane.id} />}
         {pane.kind === 'cli-agent' && <FootprintBadge paneId={pane.id} />}
         <DevServerChip pane={pane} />

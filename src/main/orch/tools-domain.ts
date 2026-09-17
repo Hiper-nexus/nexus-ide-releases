@@ -61,6 +61,7 @@ import {
   paneSpawnTool,
 } from './tools-panes';
 import { buildBrowserTools } from './tools-browser';
+import { buildBrowserAutopilotTools } from './tools-browser-autopilot';
 import { runRemoteBridgeToolAction } from './remote-bridge-tool';
 import {
   createRemoteTmuxSession,
@@ -74,6 +75,8 @@ import {
   strArray,
 } from './tool-util';
 import { buildHandoffTools } from './tools-handoff';
+import { buildJudgeTools } from './tools-judge';
+import { buildRankTools } from './tools-rank';
 import { squadSchema } from '../../shared/orch-types';
 import { collectPerfSnapshot } from '../perf/perf-ipc';
 import { canCompleteConsultLane, canCompleteOpsLane } from '../../shared/mission-intent';
@@ -2042,6 +2045,8 @@ export function buildDomainTools(): McpToolDef[] {
     routeLogTool,
     clarifyTool,
     ...buildHandoffTools(),
+    ...buildJudgeTools(),
+    ...buildRankTools(),
     agentInvokeTool,
     agentListTool,
     agentGetTool,
@@ -2062,6 +2067,7 @@ export function buildDomainTools(): McpToolDef[] {
     remoteTmuxListTool,
     remoteSpawnTool,
     ...buildBrowserTools(),
+    ...buildBrowserAutopilotTools(),
     cronTool,
     cronScheduleTool,
     cronListTool,

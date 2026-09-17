@@ -53,6 +53,8 @@ import {
 import { useFilesStore } from './state/files-store';
 import { useAccountController } from './state/account-store';
 import { useCostController } from './state/cost-store';
+import { useTokenSpeedController } from './state/token-speed-store';
+import { useJevHintController } from './state/jev-hint-store';
 import { useUsageSync } from './state/usage-store';
 import { useQuotaSync } from './state/quota-store';
 import {
@@ -321,6 +323,8 @@ export function App() {
   useAdapterController();
   useAccountController();
   useCostController();
+  useTokenSpeedController();
+  useJevHintController();
   useUsageSync();
   useQuotaSync();
   useGamificationSync();

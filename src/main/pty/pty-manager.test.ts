@@ -224,6 +224,7 @@ import {
   orchWriteSession,
   operatorShellLoginArgs,
   writeSession,
+  tapSessionInput,
   inspectSessionLease,
 } from "./pty-manager";
 import type {
@@ -4509,6 +4510,102 @@ describe("cli-agent spawn argv hardening", () => {
     expect(getLastSessionInputOrigin(sessionId)).toBe("human");
 
     killSession(owner, sessionId);
+  });
+
+  it("publishes keyboard and main-owned writes to input taps without altering the write", () => {
+    const h = fakeHost();
+    setPtyHost(h.host);
+    const owner = fakeWc();
+    const trusted = trustedSpawn();
+    const { sessionId } = spawnSession(
+      owner,
+      { kind: "shell", cols: 80, rows: 24 },
+      { scope: trusted.scope, cwd: trusted.cwd, shell: "/bin/zsh" },
+    );
+
+    const seen: Array<[string, string, string]> = [];
+    const untap = tapSessionInput((id, data, origin) =>
+      seen.push([id, data, origin]),
+    );
+
+    expect(writeSession(owner, sessionId, "oi\r")).toBe(true);
+    expect(orchWriteSession(sessionId, "injetado\r")).toBe(true);
+    expect(
+      orchWriteSession(sessionId, "operador\r", { inputOrigin: "human" }),
+    ).toBe(true);
+
+    expect(seen).toEqual([
+      [sessionId, "oi\r", "human"],
+      [sessionId, "injetado\r", "system"],
+      [sessionId, "operador\r", "human"],
+    ]);
+
+    // Escrita vazia não gera evento — nada chegou ao PTY.
+    seen.length = 0;
+    writeSession(owner, sessionId, "");
+    expect(seen).toEqual([]);
+
+    // Desinscrever de fato silencia o observador.
+    untap();
+    writeSession(owner, sessionId, "depois\r");
+    expect(seen).toEqual([]);
+
+    killSession(owner, sessionId);
+  });
+
+  it("keeps the session writable when an input tap throws", () => {
+    const h = fakeHost();
+    setPtyHost(h.host);
+    const owner = fakeWc();
+    const trusted = trustedSpawn();
+    const { sessionId } = spawnSession(
+      owner,
+      { kind: "shell", cols: 80, rows: 24 },
+      { scope: trusted.scope, cwd: trusted.cwd, shell: "/bin/zsh" },
+    );
+
+    const untap = tapSessionInput(() => {
+      throw new Error("observador quebrado");
+    });
+
+    // Um cronômetro com defeito não pode derrubar o terminal do usuário.
+    expect(() => writeSession(owner, sessionId, "sobrevive\r")).not.toThrow();
+    expect(writeSession(owner, sessionId, "ainda escreve\r")).toBe(true);
+    expect(orchWriteSession(sessionId, "e o main tambem\r")).toBe(true);
+
+    untap();
+    killSession(owner, sessionId);
+  });
+
+  it("does not leak writes from a session an input tap is not entitled to see", () => {
+    const h = fakeHost();
+    setPtyHost(h.host);
+    const owner = fakeWc();
+    const trusted = trustedSpawn();
+    const first = spawnSession(
+      owner,
+      { kind: "shell", cols: 80, rows: 24 },
+      { scope: trusted.scope, cwd: trusted.cwd, shell: "/bin/zsh" },
+    );
+    const second = spawnSession(
+      owner,
+      { kind: "shell", cols: 80, rows: 24 },
+      { scope: trusted.scope, cwd: trusted.cwd, shell: "/bin/zsh" },
+    );
+
+    const seen: string[] = [];
+    const untap = tapSessionInput((id) => seen.push(id));
+
+    writeSession(owner, first.sessionId, "a\r");
+    writeSession(owner, second.sessionId, "b\r");
+
+    // Cada evento carrega a sessão exata: o consumidor particiona por
+    // autoridade, e nunca recebe um write sem saber de quem é.
+    expect(seen).toEqual([first.sessionId, second.sessionId]);
+
+    untap();
+    killSession(owner, first.sessionId);
+    killSession(owner, second.sessionId);
   });
 
   it("supports passive orchestration writes whose busy proof comes from PTY output", () => {

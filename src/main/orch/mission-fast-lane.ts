@@ -783,6 +783,20 @@ export function agentPrompt(
       objective: [
         objective,
         routingHints.paneQuestion ? `Pergunta à equipe: ${routingHints.paneQuestion}` : '',
+        routingHints.triage
+          ? `Triagem Jev: complexidade ${routingHints.triage.complexityLevel} ` +
+            `(${routingHints.triage.complexity.toFixed(1)}), risco sensível ` +
+            `${routingHints.triage.riskSensitive.toFixed(2)}, ambiguidade ` +
+            `${routingHints.triage.ambiguous.toFixed(2)}` +
+            (routingHints.triage.designReference
+              ? `, referência visual ${routingHints.triage.designReference.name} ` +
+                `${routingHints.triage.designReference.probability.toFixed(2)}`
+              : '') +
+            '. Regras: ambiguidade ≥ 0.75 → use nexus_clarify com o usuário ' +
+            'ANTES de dividir trabalho; risco ≥ 0.7 → exija revisão de ' +
+            'segurança (bridgesecurity) e evidência de testes no handoff; ' +
+            'complexidade trivial/small → um worker direto, sem cerimônia de plano.'
+          : '',
         skillNote,
         mission.learnings
           ? `Aprendizados anteriores: ${mission.learnings}`

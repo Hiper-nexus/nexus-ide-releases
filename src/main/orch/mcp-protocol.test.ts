@@ -341,6 +341,32 @@ describe('handleMcpMessage', () => {
     expect(result.content[0].text).toContain('nexus_mission_create');
   });
 
+  it('hides tools whose runtime availability predicate is false', async () => {
+    resetGateForTests();
+    const ctx = userCtx();
+    const tool = (name: string, available?: () => boolean): McpToolDef => ({
+      name,
+      description: name,
+      inputSchema: { type: 'object', properties: {} },
+      ...(available ? { available } : {}),
+      handler: async () => ({ ok: true }),
+    });
+    const registry: McpRegistry = {
+      tools: [
+        tool('nexus_file_read'),
+        tool('nexus_judge', () => false),
+        tool('nexus_rank', () => true),
+      ],
+      serverName: 'nexus-test',
+      serverVersion: '0.0.1',
+    };
+    const res = await handleMcpMessage(registry, ctx, req('tools/list'));
+    const names = (
+      res?.result as { tools: Array<{ name: string }> }
+    ).tools.map((t) => t.name);
+    expect(names).toEqual(['nexus_file_read', 'nexus_rank']);
+  });
+
   it('advertises pane_spawn to a running mission orchestrator', async () => {
     resetGateForTests();
     const ctx = orchestratorMissionCtx();

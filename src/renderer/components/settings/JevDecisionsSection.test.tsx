@@ -1,0 +1,92 @@
+/** @vitest-environment jsdom */
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { JevDecisionsSection } from './JevDecisionsSection';
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+  .IS_REACT_ACT_ENVIRONMENT = true;
+
+const mountedRoots: Array<{ host: HTMLDivElement; root: Root }> = [];
+
+function mount(node: React.ReactNode): HTMLDivElement {
+  const host = document.createElement('div');
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  mountedRoots.push({ host, root });
+  act(() => root.render(node));
+  return host;
+}
+
+const jev = vi.hoisted(() => ({
+  decisionsStats: vi.fn(async () => ({
+    totals: { calls: 2, usd: 0.00005, inputTokens: 1200 },
+    bySurface: {
+      handoffReview: {
+        calls: 2,
+        usd: 0.00005,
+        decisions: { ok: 1, retry: 1 },
+        feedback: { right: 1, wrong: 0 },
+      },
+    },
+  })),
+  decisionsList: vi.fn(async () => [
+    {
+      id: 'd1',
+      at: Date.now(),
+      surface: 'handoffReview',
+      model: 'jev-1.13.0',
+      questions: ['is_specific'],
+      probabilities: { is_specific: 0.9 },
+      decision: 'ok',
+      inputTokens: 600,
+      usd: 0.0000252,
+    },
+  ]),
+  decisionsFeedback: vi.fn(async () => ({ ok: true })),
+}));
+
+describe('JevDecisionsSection', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: { jev },
+    });
+  });
+
+  afterEach(() => {
+    for (const { host, root } of mountedRoots.splice(0)) {
+      act(() => root.unmount());
+      host.remove();
+    }
+  });
+
+  it('renders totals and the per-surface table', async () => {
+    const host = mount(<JevDecisionsSection />);
+    await act(async () => Promise.resolve());
+    expect(host.textContent).toContain('Decisões do Jev');
+    expect(host.textContent).toContain('2 chamadas');
+    expect(host.textContent).toContain('Revisão de handoff');
+    expect(host.textContent).toContain('ok ×1');
+    expect(host.textContent).toContain('retry ×1');
+  });
+
+  it('lists decisions and sends feedback', async () => {
+    const host = mount(<JevDecisionsSection />);
+    await act(async () => Promise.resolve());
+    expect(host.textContent).toContain('is_specific 0.90');
+    const right = [...host.querySelectorAll('button')].find(
+      (b) => b.textContent === 'Certo',
+    );
+    expect(right).toBeTruthy();
+    await act(async () => {
+      right!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+    });
+    expect(jev.decisionsFeedback).toHaveBeenCalledWith({
+      id: 'd1',
+      verdict: 'right',
+    });
+  });
+});

@@ -64,6 +64,14 @@ vi.mock("./mission-leader-gate", () => ({
   requireMissionLeaderSession: mocks.requireMissionLeaderSession,
 }));
 
+const jevReview = vi.hoisted(() => ({
+  reviewMissionHandoff: vi.fn<
+    () => Promise<import("./jev-handoff-review").JevReviewVerdict>
+  >(async () => ({ kind: "skipped", reason: "mocked" })),
+}));
+
+vi.mock("./jev-handoff-review", () => jevReview);
+
 import { buildDomainTools } from "./tools-domain";
 import {
   armDeliveryContract,
@@ -322,6 +330,157 @@ describe("handoff MCP stop receipt", () => {
       expect.anything(),
       expect.anything(),
     );
+  });
+
+  it("bounces a weak success handoff when the Jev review says retry", async () => {
+    jevReview.reviewMissionHandoff.mockResolvedValueOnce({
+      kind: "retry",
+      signals: ["sem evidência de verificação"],
+      attempt: 1,
+      retries: 1,
+      message:
+        "revisão de evidência (Jev) — devolução 1/1: sem evidência de verificação. Reenvie o nexus_handoff_submit com a evidência real.",
+    });
+
+    await expect(
+      submitTool().handler(
+        {
+          status: "success",
+          summary: "Worker reports that implementation is complete.",
+        },
+        context(),
+        invocation(),
+      ),
+    ).rejects.toThrow(/revisão de evidência \(Jev\) — devolução 1\/1/);
+    expect(mocks.submit).not.toHaveBeenCalled();
+  });
+
+  it("accepts a weak handoff flagged when the Jev budget is exhausted", async () => {
+    jevReview.reviewMissionHandoff.mockResolvedValueOnce({
+      kind: "weak",
+      signals: ["sem evidência de verificação"],
+      artifact: {
+        kind: "nexus.jevReview",
+        payload: {
+          outcome: "weak",
+          model: "jev-test",
+          probabilities: { has_verification: 0.1 },
+          signals: ["sem evidência de verificação"],
+        },
+      },
+    });
+    mocks.submit.mockImplementationOnce(
+      (input: { summary: string; artifacts: unknown[] }) => ({
+        ...handoff("unverified"),
+        summary: input.summary,
+        artifacts: input.artifacts,
+      }),
+    );
+
+    const result = await submitTool().handler(
+      {
+        status: "success",
+        summary: "Worker reports that implementation is complete.",
+      },
+      context(),
+      invocation(),
+    );
+
+    expect(mocks.submit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        summary: expect.stringMatching(/^\[evidência fraca\] /),
+        artifacts: expect.arrayContaining([
+          expect.objectContaining({ kind: "nexus.jevReview" }),
+        ]),
+      }),
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(result).toMatchObject({ jevReview: "weak" });
+  });
+
+  it("skips the Jev review for plan-lane handoffs", async () => {
+    const stores = mocks.getStores();
+    const baseMission = stores.missions.get();
+    stores.missions.get = () => ({
+      ...baseMission,
+      intentContract: {
+        ...baseMission.intentContract,
+        lane: "plan",
+        dispatchedAt: 1,
+      },
+    });
+    mocks.submit.mockReturnValue(handoff("unverified"));
+
+    const result = await submitTool().handler(
+      {
+        status: "success",
+        summary:
+          "# PRD físico\nArquitetura, critérios e stories verificáveis.",
+      },
+      context(),
+      invocation(),
+    );
+
+    expect(jevReview.reviewMissionHandoff).not.toHaveBeenCalled();
+    expect(mocks.submit).toHaveBeenCalled();
+    expect(result).not.toMatchObject({ jevReview: expect.anything() });
+    const persisted = mocks.submit.mock.calls[0]?.[0] as {
+      artifacts?: Array<{ kind: string }>;
+    };
+    expect(
+      persisted?.artifacts?.some((a) => a.kind === "nexus.jevReview"),
+    ).not.toBe(true);
+  });
+
+  it("skips the Jev review for read-only sessions", async () => {
+    mocks.submit.mockReturnValue(handoff("unverified"));
+
+    const result = await submitTool().handler(
+      {
+        status: "success",
+        summary:
+          "Reviewed the worker output; findings recorded for the Maestro.",
+      },
+      { ...context(), readOnly: true },
+      invocation(),
+    );
+
+    expect(jevReview.reviewMissionHandoff).not.toHaveBeenCalled();
+    expect(mocks.submit).toHaveBeenCalled();
+    expect(result).not.toMatchObject({ jevReview: expect.anything() });
+  });
+
+  it("skips the Jev review when the deterministic contract is exhausted", async () => {
+    resetDeliveryContractsForTesting();
+    armDeliveryContract(
+      "worker-session",
+      parseExpectArg({ schema: { type: "array", minItems: 1 }, retries: 0 })!,
+    );
+    mocks.submit.mockReturnValue({
+      ...handoff("unverified"),
+      status: "blocked",
+    });
+
+    const result = await submitTool().handler(
+      {
+        status: "success",
+        summary: "Entreguei tudo conforme o contrato pedido no spawn.",
+      },
+      context(),
+      invocation(),
+    );
+
+    expect(jevReview.reviewMissionHandoff).not.toHaveBeenCalled();
+    const persisted = mocks.submit.mock.calls[0]?.[0] as {
+      status?: string;
+      artifacts?: Array<{ kind: string }>;
+    };
+    expect(persisted?.status).toBe("blocked");
+    expect(
+      persisted?.artifacts?.some((a) => a.kind === "nexus.jevReview"),
+    ).not.toBe(true);
+    expect(result).not.toMatchObject({ jevReview: expect.anything() });
   });
 
   it("accepts a physical PTY-stream final handoff from the current Maestro", async () => {

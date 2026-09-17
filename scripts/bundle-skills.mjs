@@ -38,6 +38,11 @@ const SKILLS = [
     constName: 'DEMBRANDT_MANIFEST',
     outFile: 'dembrandt-manifest.ts',
   },
+  {
+    dir: 'typesafe-ai',
+    constName: 'TYPESAFE_AI_MANIFEST',
+    outFile: 'typesafe-ai-manifest.ts',
+  },
 ];
 
 function walk(dir) {

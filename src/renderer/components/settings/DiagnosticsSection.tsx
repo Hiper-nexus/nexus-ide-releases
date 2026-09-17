@@ -18,6 +18,7 @@ import { DoctorEngineSettings } from './DoctorEngineSettings';
 import { ContextDraftsSection } from './ContextDraftsSection';
 import { TerminalPerformanceStatus } from './TerminalPerformanceStatus';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
+import { TokenSpeedMonitor } from '../TokenSpeedMonitor';
 
 function useDiagnosticsSnapshot() {
   const [micPermission, setMicPermission] =
@@ -202,6 +203,8 @@ export function DiagnosticsSection() {
           detail={`${formatUsd(cost.perMinuteUsd)}/min, ${cost.tokPerSec.toFixed(1)} tok/s`}
         />
       </div>
+
+      <TokenSpeedMonitor />
 
       <div className="ops-log-strip">
         <div>

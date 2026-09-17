@@ -74,6 +74,10 @@ import {
   maybeCompleteFastLaneOnDelivery,
   normalizeFilesModified,
 } from "./worker-files-modified";
+import {
+  reviewMissionHandoff,
+  type JevReviewVerdict,
+} from "./jev-handoff-review";
 
 function buildOverclockArtifacts(
   args: Record<string, unknown>,
@@ -312,7 +316,7 @@ const handoffSubmitTool: McpToolDef = {
     const condensed = isPlanHandoff
       ? null
       : condenseHandoffSummary(cleanSummary);
-    const summary = condensed ? condensed.summary : cleanSummary;
+    let summary = condensed ? condensed.summary : cleanSummary;
     const rawEvidenceIds = args.evidenceIds;
     if (
       rawEvidenceIds !== undefined &&
@@ -382,6 +386,71 @@ const handoffSubmitTool: McpToolDef = {
     if (contractVerdict.kind === "retry") {
       throw new Error(deliveryContractRetryMessage(contractVerdict));
     }
+    // Revisão de evidência (piloto automático Jev): relatório fraco devolve ao
+    // worker uma vez com o que falta — antes de qualquer escrita durável, como
+    // o contrato determinístico. Fail-open: exceção vira `skipped` e nada muda.
+    const declaredFiles = normalizeFilesModified({
+      filesModified: args.filesModified,
+      "files-modified": args["files-modified"],
+      artifacts: args.artifacts,
+    });
+    let jevVerdict: JevReviewVerdict = { kind: "skipped", reason: "not-run" };
+    // Não julga entregas que não são trabalho de implementação: PRD/plano
+    // (documento não tem testes), sessões read-only (revisores entregam
+    // achados, não código) e contrato determinístico esgotado (o handoff já
+    // entra como blocked — um bounce do Jev contradiz o resultado registrado).
+    const jevSkipReason =
+      declaredStatus !== "success"
+        ? undefined
+        : isPlanHandoff
+          ? "plan-lane"
+          : ctx.readOnly === true
+            ? "read-only-session"
+            : contractVerdict.kind === "exhausted"
+              ? "contract-exhausted"
+              : undefined;
+    if (declaredStatus === "success" && jevSkipReason === undefined) {
+      // A revisão Jev é egresso externo: revalida a autoridade ANTES do await
+      // (o checkpoint pós-await permanece logo abaixo, antes da escrita).
+      assertMcpInvocationCurrent(invocation);
+      try {
+        jevVerdict = await reviewMissionHandoff({
+          sessionId: ctx.sessionId,
+          signal: invocation?.signal,
+          declaredStatus,
+          summary,
+          fullText:
+            typeof args.fullText === "string" ? args.fullText : undefined,
+          accomplished: args.accomplished,
+          blockers: args.blockers,
+          nextSteps: args.nextSteps,
+          declaredFiles,
+          artifactKinds: (Array.isArray(args.artifacts) ? args.artifacts : [])
+            .filter(
+              (a): a is { kind: string } =>
+                !!a &&
+                typeof a === "object" &&
+                typeof (a as Record<string, unknown>).kind === "string",
+            )
+            .map((a) => a.kind),
+          evidenceIdsCount: Array.isArray(rawEvidenceIds)
+            ? rawEvidenceIds.length
+            : 0,
+          hasObservedCommit: Boolean(worktreeHeadSha),
+        });
+      } catch (error) {
+        console.warn("[handoff] revisão Jev falhou (ignorada):", error);
+        jevVerdict = { kind: "skipped", reason: "review-error" };
+      }
+      if (jevVerdict.kind === "retry") {
+        throw new Error(jevVerdict.message);
+      }
+      if (jevVerdict.kind === "weak") {
+        summary = `[evidência fraca] ${summary}`;
+      }
+    } else if (jevSkipReason) {
+      jevVerdict = { kind: "skipped", reason: jevSkipReason };
+    }
     const status: typeof declaredStatus =
       contractVerdict.kind === "exhausted" ? "blocked" : declaredStatus;
     assertMcpInvocationCurrent(invocation);
@@ -445,6 +514,9 @@ const handoffSubmitTool: McpToolDef = {
         ? [deliveryContractExhaustedArtifact(contractVerdict, declaredStatus)]
         : []),
       ...(telemetry ? [embedTelemetryArtifact(telemetry)] : []),
+      ...(jevVerdict.kind === "ok" || jevVerdict.kind === "weak"
+        ? [jevVerdict.artifact]
+        : []),
     ];
     const handoffInput = {
       status,
@@ -514,11 +586,6 @@ const handoffSubmitTool: McpToolDef = {
         : null;
     if (ctx.missionId && !replayed) {
       try {
-        const declaredFiles = normalizeFilesModified({
-          filesModified: args.filesModified,
-          "files-modified": args["files-modified"],
-          artifacts: args.artifacts,
-        });
         const diskFiles = collectFilesModified(ctx.scope.rootRealPath);
         const filesModified =
           declaredFiles.length > 0 ? declaredFiles : diskFiles;
@@ -640,6 +707,9 @@ const handoffSubmitTool: McpToolDef = {
       ...(replayed ? { replayed: true } : {}),
       ...(taskDispatchState ? { taskDispatchState } : {}),
       ...(petStudioCompletion ? { petStudioCompletion } : {}),
+      ...(jevVerdict.kind === "ok" || jevVerdict.kind === "weak"
+        ? { jevReview: jevVerdict.kind }
+        : {}),
     };
   },
 };

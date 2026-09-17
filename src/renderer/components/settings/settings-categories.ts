@@ -13,7 +13,7 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
   { id: 'account', title: 'Chaves de API e Conta', description: 'Chaves (Gemini, Grok, Groq) e plano', icon: 'key', sections: ['api-keys', 'account'] },
   { id: 'personalization', title: 'Aparência e pets', description: 'Cores e seus mascotes', icon: 'grid', sections: ['appearance', 'pets'] },
   { id: 'voice', title: 'Jarvis & Voz', description: 'Assistente Jarvis, ativação e voz', icon: 'mic', sections: ['voice', 'vision'] },
-  { id: 'ai', title: 'Agentes e modelos', description: 'Conexões, equipes e uso', icon: 'users', sections: ['providers', 'squads', 'llms', 'ranking', 'usage-quota'] },
+  { id: 'ai', title: 'Agentes e modelos', description: 'Conexões, equipes e uso', icon: 'users', sections: ['providers', 'squads', 'llms', 'ranking', 'usage-quota', 'jev-decisions'] },
   { id: 'media', title: 'Mídia', description: 'Conectar serviços e ver modelos', icon: 'vision', sections: ['media', 'media-catalog'] },
   { id: 'resources', title: 'Recursos', description: 'Catálogos e referências', icon: 'sparkle', sections: ['harness', 'agents', 'skills', 'marketplace', 'design-systems'] },
   { id: 'automation', title: 'Automações', description: 'Fluxos, extensões e regras', icon: 'board', sections: ['recipes', 'tools', 'plugins', 'hooks', 'rules'] },
@@ -29,6 +29,7 @@ export const SETTINGS_SECTION_SHORT_LABELS: Partial<Record<SettingsSection, stri
   'api-keys': 'Chaves de API', account: 'Minha conta', voice: 'Jarvis & Voz', vision: 'Visão',
   media: 'Conexões', 'media-catalog': 'Modelos', providers: 'Contas de IA',
   llms: 'Ferramentas', ranking: 'Comparar modelos', 'usage-quota': 'Uso e cotas',
+  'jev-decisions': 'Decisões Jev',
   'agent-connection': 'Agentes', mcps: 'Ferramentas', remote: 'Servidores', 'companion-relay': 'Celular',
   harness: 'Visão geral', recipes: 'Fluxos', plugins: 'Extensões', rules: 'Permissões',
 };

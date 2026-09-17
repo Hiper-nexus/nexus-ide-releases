@@ -24,6 +24,7 @@ import type { ProductFlagResolutionRow } from '../shared/product-api';
 import { PET_CHANNELS } from '../shared/pet-types';
 import type { PetPrefs } from '../shared/pet-types';
 import { VOICE_CHANNELS } from '../shared/voice-channels';
+import { JEV_CHANNELS } from '../shared/jev-channels';
 import { VISION_CHANNELS } from '../shared/vision-ipc';
 import type { ScreenCaptureMetadata } from '../shared/vision-ipc';
 import { getAxTree, performAxAction } from './ax-tree';
@@ -65,6 +66,7 @@ import type {
   FailoverEvent,
 } from '../shared/account-types';
 import { COST_CHANNELS } from '../shared/cost-types';
+import { TOKEN_SPEED_CHANNELS } from '../shared/token-speed-types';
 import { USAGE_CHANNELS } from '../shared/usage-types';
 import type { UsageSnapshot } from '../shared/usage-types';
 import { QUOTA_CHANNELS } from '../shared/quota-types';
@@ -80,6 +82,7 @@ import type { GamificationSnapshot } from '../shared/gamification-types';
 import { BILLING_CHANNELS } from '../shared/billing-types';
 import type { CheckoutRequest } from '../shared/billing-types';
 import type { CostSnapshot } from '../shared/cost-types';
+import type { TokenSpeedSnapshot } from '../shared/token-speed-types';
 import { NOTE_CHANNELS } from '../shared/note-types';
 import type { Note, NotesChangedEvent } from '../shared/note-types';
 import { PIPE_CHANNELS } from '../shared/pipe-types';
@@ -391,6 +394,14 @@ const liveToolTurnCompleteListeners = new Set<
 const liveInterruptedListeners = new Set<(event: JarvisLiveInterruptEvent) => void>();
 const liveAudioOutListeners = new Set<(event: JarvisLiveAudioOutEvent) => void>();
 const updateStateListeners = new Set<(state: UpdateState) => void>();
+const jevPaneHintListeners = new Set<
+  (event: import('../shared/jev-ipc').JevPaneHintEvent) => void
+>();
+ipcRenderer.on(
+  JEV_CHANNELS.paneHint,
+  (_event, payload: import('../shared/jev-ipc').JevPaneHintEvent) =>
+    emitToListeners(jevPaneHintListeners, 'jevPaneHintListeners', payload),
+);
 
 ipcRenderer.on(VOICE_CHANNELS.liveAudioOut, (_event, payload: JarvisLiveAudioOutEvent) =>
   emitToListeners(liveAudioOutListeners, 'liveAudioOutListeners', payload),
@@ -603,6 +614,18 @@ ipcRenderer.on(ACCOUNT_CHANNELS.activated, (_e, event: AccountActivatedEvent) =>
 );
 ipcRenderer.on(COST_CHANNELS.changed, (_e, snapshot: CostSnapshot) =>
   emitToListeners(costChangedListeners, 'costChangedListeners', snapshot),
+);
+const tokenSpeedChangedListeners = new Set<
+  (snapshot: TokenSpeedSnapshot) => void
+>();
+ipcRenderer.on(
+  TOKEN_SPEED_CHANNELS.changed,
+  (_e, snapshot: TokenSpeedSnapshot) =>
+    emitToListeners(
+      tokenSpeedChangedListeners,
+      'tokenSpeedChangedListeners',
+      snapshot,
+    ),
 );
 const usageChangedListeners = new Set<(snapshot: UsageSnapshot) => void>();
 ipcRenderer.on(USAGE_CHANNELS.changed, (_e, snapshot: UsageSnapshot) =>
@@ -886,6 +909,17 @@ const api: NexusApi = {
     onLiveToolResult: (cb) => addListener(liveToolResultListeners, cb),
     onLiveToolTurnComplete: (cb) => addListener(liveToolTurnCompleteListeners, cb),
     onLiveInterrupted: (cb) => addListener(liveInterruptedListeners, cb),
+  },
+  jev: {
+    status: () => ipcRenderer.invoke(JEV_CHANNELS.status),
+    setKey: (req) => ipcRenderer.invoke(JEV_CHANNELS.setKey, req),
+    test: () => ipcRenderer.invoke(JEV_CHANNELS.test),
+    decisionsList: (req) =>
+      ipcRenderer.invoke(JEV_CHANNELS.decisionsList, req),
+    decisionsFeedback: (req) =>
+      ipcRenderer.invoke(JEV_CHANNELS.decisionsFeedback, req),
+    decisionsStats: () => ipcRenderer.invoke(JEV_CHANNELS.decisionsStats),
+    onPaneHint: (cb) => addListener(jevPaneHintListeners, cb),
   },
   mission: {
     prepare: (request) =>
@@ -1235,6 +1269,11 @@ const api: NexusApi = {
       ipcRenderer.invoke(COST_CHANNELS.setCap, { paneId, capUsd }),
     onChanged: (cb: (snapshot: CostSnapshot) => void) =>
       addListener(costChangedListeners, cb),
+  },
+  tokenSpeed: {
+    snapshot: () => ipcRenderer.invoke(TOKEN_SPEED_CHANNELS.snapshot),
+    onChanged: (cb: (snapshot: TokenSpeedSnapshot) => void) =>
+      addListener(tokenSpeedChangedListeners, cb),
   },
   usage: {
     snapshot: () => ipcRenderer.invoke(USAGE_CHANNELS.snapshot),

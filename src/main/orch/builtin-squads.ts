@@ -872,7 +872,7 @@ const RAW_SQUADS: Squad[] = [
         cli: 'codex',
         effort: 'medium',
         allowedTools: ['nexus_pane_spawn', 'nexus_pane_write', 'nexus_pane_close'],
-        allowedSkills: ['clean-code'],
+        allowedSkills: ['clean-code', 'typesafe-ai'],
       },
       {
         id: 'reviewer',
@@ -881,7 +881,7 @@ const RAW_SQUADS: Squad[] = [
         cli: 'codex',
         effort: 'high',
         allowedTools: ['nexus_pane_spawn', 'nexus_pane_write', 'nexus_pane_close'],
-        allowedSkills: ['clean-code'],
+        allowedSkills: ['clean-code', 'typesafe-ai'],
       },
       {
         id: 'builder',
@@ -890,7 +890,7 @@ const RAW_SQUADS: Squad[] = [
         cli: 'codex',
         effort: 'medium',
         allowedTools: ['nexus_pane_spawn', 'nexus_pane_write', 'nexus_pane_close'],
-        allowedSkills: ['clean-code'],
+        allowedSkills: ['clean-code', 'typesafe-ai'],
       },
       {
         id: 'observer',
@@ -899,7 +899,7 @@ const RAW_SQUADS: Squad[] = [
         cli: 'codex',
         effort: 'low',
         allowedTools: ['nexus_pane_spawn', 'nexus_pane_write', 'nexus_pane_close'],
-        allowedSkills: ['clean-code'],
+        allowedSkills: ['clean-code', 'typesafe-ai'],
       },
       {
         id: 'worker',
@@ -907,7 +907,7 @@ const RAW_SQUADS: Squad[] = [
         category: 'executor',
         cli: 'codex',
         effort: 'medium',
-        allowedSkills: ['clean-code'],
+        allowedSkills: ['clean-code', 'typesafe-ai'],
       },
     ],
   },

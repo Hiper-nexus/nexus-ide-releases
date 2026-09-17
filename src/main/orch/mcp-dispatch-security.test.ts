@@ -2988,4 +2988,51 @@ describe("MCP dispatch effect safety", () => {
       expect(handler).not.toHaveBeenCalled();
     });
   });
+
+  describe("runtime availability predicate", () => {
+    it("refuses a tool whose available() is false, with the settings hint", async () => {
+      const handler = vi.fn(async () => ({ shouldNotRun: true }));
+      const tool: McpToolDef = {
+        name: "nexus_judge",
+        description: "judge",
+        inputSchema: { type: "object", properties: {} },
+        available: () => false,
+        handler,
+      };
+      const result = await dispatchToolCall(
+        "http-mcp",
+        registryWith(tool),
+        "nexus_judge",
+        { state: {}, questions: {} },
+        userContext(),
+        standardWorkflowOptions(),
+      );
+      expect(result).toMatchObject({ ok: false, denied: true });
+      expect(result.error).toContain(
+        "indisponível: configure a chave TypeSafe em Ajustes",
+      );
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it("dispatches a tool whose available() is true", async () => {
+      const handler = vi.fn(async () => ({ ok: true }));
+      const tool: McpToolDef = {
+        name: "nexus_judge",
+        description: "judge",
+        inputSchema: { type: "object", properties: {} },
+        available: () => true,
+        handler,
+      };
+      const result = await dispatchToolCall(
+        "http-mcp",
+        registryWith(tool),
+        "nexus_judge",
+        { state: {}, questions: {} },
+        userContext(),
+        standardWorkflowOptions(),
+      );
+      expect(result).toMatchObject({ ok: true });
+      expect(handler).toHaveBeenCalledOnce();
+    });
+  });
 });

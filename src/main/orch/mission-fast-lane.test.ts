@@ -347,6 +347,54 @@ describe('mission fast lane', () => {
     // sem 'same_checkout' no novo formato (o orquestrador não precisa saber)
   });
 
+  it('kickoff do orquestrador injeta o bloco de triagem Jev quando presente', () => {
+    const triageMission = mission({
+      intentContract: {
+        routingAdvice: {
+          source: 'router',
+          kind: 'mission-work',
+          skills: [],
+          triage: {
+            source: 'jev',
+            model: 'jev-1.13.0',
+            complexity: 2.1,
+            complexityLevel: 'medium',
+            complexityConfidence: 0.8,
+            riskSensitive: 0.85,
+            ambiguous: 0.2,
+            designReference: { name: 'linear', probability: 0.9 },
+          },
+        },
+      } as unknown as Mission['intentContract'],
+    });
+    const prompt = agentPrompt(
+      agent({ id: 'coord', agentName: 'Coordenar', category: 'orchestrator' }),
+      triageMission,
+      ['Coordenar'],
+      false,
+      '',
+      squad(),
+    );
+    expect(prompt).toContain('Triagem Jev: complexidade medium (2.1)');
+    expect(prompt).toContain('risco sensível 0.85');
+    expect(prompt).toContain('ambiguidade 0.20');
+    expect(prompt).toContain('referência visual linear 0.90');
+    expect(prompt).toContain('nexus_clarify');
+    expect(prompt).toContain('bridgesecurity');
+  });
+
+  it('kickoff do orquestrador sem triagem não cita o bloco Jev', () => {
+    const prompt = agentPrompt(
+      agent({ id: 'coord', agentName: 'Coordenar', category: 'orchestrator' }),
+      mission(),
+      ['Coordenar'],
+      false,
+      '',
+      squad(),
+    );
+    expect(prompt).not.toContain('Triagem Jev');
+  });
+
   it('kickoff de worker NÃO recebe o bloco de delegação/doutrina', () => {
     const prompt = agentPrompt(
       agent(),

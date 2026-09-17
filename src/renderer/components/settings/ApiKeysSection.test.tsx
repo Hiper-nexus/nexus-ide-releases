@@ -64,6 +64,19 @@ describe('ApiKeysSection', () => {
           listProviders: vi.fn(async () => []),
           setKey: vi.fn(async () => ({ ok: true })),
         },
+        jev: {
+          status: vi.fn(async () => ({
+            hasStoredKey: true,
+            hasEnv: false,
+            keyMasked: 'api…ghij',
+            secureStorageAvailable: true,
+            autopilot: true,
+            model: 'jev-latest',
+            stats: { calls: 0, failures: 0, inputTokens: 0, estimatedUsd: 0 },
+          })),
+          setKey: vi.fn(async () => ({ ok: true })),
+          test: vi.fn(async () => ({ ok: true, detail: 'Conectado — modelos: jev-latest' })),
+        },
       },
     });
 
@@ -194,5 +207,71 @@ describe('ApiKeysSection', () => {
       adapterId: 'grok',
       key: 'xai-test-key-123',
     });
+  });
+
+  it('renders the TypeSafe (Jev) card', async () => {
+    const host = mount(<ApiKeysSection />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const card = [...host.querySelectorAll('.api-key-card')].find((c) =>
+      c.textContent?.includes('TypeSafe (Jev)'),
+    );
+    expect(card).toBeDefined();
+    expect(card?.textContent).toContain('TYPESAFE_API_KEY');
+  });
+
+  it('maps jev status to configured and saves via jev.setKey', async () => {
+    const host = mount(<ApiKeysSection />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const card = [...host.querySelectorAll('.api-key-card')].find((c) =>
+      c.textContent?.includes('TypeSafe (Jev)'),
+    );
+    expect(card?.textContent).toContain('Salva no Keychain');
+
+    const input = card?.querySelector<HTMLInputElement>('input[type="password"]');
+    expect(input).not.toBeNull();
+    act(() => {
+      const nativeSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value',
+      )?.set;
+      nativeSetter?.call(input, 'apikey_typed_123');
+      input!.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    const saveBtn = [...(card?.querySelectorAll('button') ?? [])].find((b) =>
+      b.textContent?.includes('Salvar chave'),
+    );
+    await act(async () => {
+      saveBtn!.click();
+      await Promise.resolve();
+    });
+    expect(window.nexus.jev.setKey).toHaveBeenCalledWith({ key: 'apikey_typed_123' });
+  });
+
+  it('test button calls jev.test', async () => {
+    const host = mount(<ApiKeysSection />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const card = [...host.querySelectorAll('.api-key-card')].find((c) =>
+      c.textContent?.includes('TypeSafe (Jev)'),
+    );
+    const testBtn = [...(card?.querySelectorAll('button') ?? [])].find((b) =>
+      b.textContent?.includes('Testar conexão'),
+    );
+    expect(testBtn).not.toBeNull();
+
+    await act(async () => {
+      testBtn!.click();
+      await Promise.resolve();
+    });
+    expect(window.nexus.jev.test).toHaveBeenCalled();
+    expect(card?.textContent).toContain('Conectado');
   });
 });

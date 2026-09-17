@@ -113,6 +113,11 @@ const ALWAYS_ALLOWED = new Set([
   "pane_ask",
   // Observation: any pane can read GitHub merge-queue state for the branch PR.
   "pr_inspect",
+  // Decision helper for any role (TypeSafe Jev); allowlists still govern
+  // everything effectful — judge itself only reads state and returns a verdict.
+  "judge",
+  // Same for candidate ranking: read-only judgment, composite computed in code.
+  "rank",
 ]);
 
 /**

@@ -15,6 +15,7 @@ export type SettingsSection =
   | 'usage-quota'
   | 'ranking'
   | 'squads'
+  | 'jev-decisions'
   | 'harness'
   | 'agent-connection'
   | 'marketplace'
@@ -290,6 +291,14 @@ export const SETTINGS_GROUPS: NavGroup[] = [
         aliases: ['catálogo · 1 clique', 'marketplace', 'catalog'],
       },
       {
+        id: 'jev-decisions',
+        icon: 'JEV',
+        pixelIcon: 'star',
+        title: 'Decisões do Jev',
+        subtitle: 'Julgamentos do piloto automático TypeSafe',
+        aliases: ['jev', 'typesafe', 'julgamentos', 'decisions', 'autopilot'],
+      },
+      {
         id: 'design-systems',
         icon: 'DS',
         pixelIcon: 'grid',
@@ -428,6 +437,7 @@ const SETTINGS_SECTION_PILLAR: Record<SettingsSection, SettingsNavPillarId> = {
   'usage-quota': 'agents',
   ranking: 'agents',
   squads: 'agents',
+  'jev-decisions': 'agents',
   harness: 'agents',
   'agent-connection': 'agents',
   mcps: 'agents',

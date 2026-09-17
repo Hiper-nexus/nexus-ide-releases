@@ -4,6 +4,13 @@ import { adapterSchema } from '../../shared/adapter-types';
 import * as providerConfig from '../persistence/provider-config-store';
 import { answerDirectQuestion, routeIntent } from './intent-router';
 
+// Hermeticidade: a máquina do operador tem TYPESAFE_API_KEY no shell e o
+// autopilot Jev liga por default — sem o mock, a triagem real externa decide
+// o resultado. Os caminhos do Jev têm suíte própria (intent-router-jev.test.ts).
+vi.mock('./intent-router-jev', () => ({
+  routeWithJev: async () => null,
+}));
+
 const credentials = vi.hoisted(() => ({
   vault: new Map<string, string>(),
   launcher: new Map<string, string>(),

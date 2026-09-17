@@ -85,6 +85,17 @@ function successfulApi(
     },
     providers: { list: vi.fn(async () => [{ adapterId: 'claude' }]) },
     voice: { getInfo: vi.fn(async () => ({ routing: 'jarvis' })) },
+    jev: {
+      status: vi.fn(async () => ({
+        hasStoredKey: false,
+        hasEnv: false,
+        keyMasked: null,
+        secureStorageAvailable: true,
+        autopilot: true,
+        model: 'jev-latest',
+        stats: { calls: 0, failures: 0, inputTokens: 0, estimatedUsd: 0 },
+      })),
+    },
     mission: {
       prepare: vi.fn(async (request: MissionPrepareRequest) =>
         successfulMissionReview(request),

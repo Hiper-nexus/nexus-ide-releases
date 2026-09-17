@@ -118,6 +118,27 @@ export const orchSettingsSchema = z.object({
   leanCode: z.boolean().default(true),
   /** Carta de Engenharia (XP/sênior) injetada em todo worker de squad. */
   seniorMode: z.boolean().default(true),
+  /**
+   * Piloto automático Jev: revisão de evidência dos handoffs de missão e
+   * triagens do Nexus; exige chave TypeSafe. Falha do serviço nunca bloqueia:
+   * sem resposta = comportamento atual.
+   */
+  jevAutopilot: z.boolean().default(true),
+  /**
+   * Superfícies do piloto automático Jev: um toggle por lugar onde o Jev
+   * decide algo (revisão de handoff, triagem do pedido, estado dos panes,
+   * triagem de falhas e ranking de entregas). O mestre `jevAutopilot`
+   * continua mandando — superfície ligada sem o mestre não chama o modelo.
+   */
+  jevSurfaces: z
+    .object({
+      handoffReview: z.boolean().default(true),
+      intake: z.boolean().default(true),
+      paneState: z.boolean().default(true),
+      terminalTriage: z.boolean().default(true),
+      rank: z.boolean().default(true),
+    })
+    .prefault({}),
   /** Carta de Design anti-genérico (Impeccable) para tarefas com UI. */
   designPro: z.boolean().default(true),
   /** Direção estética aplicada pelo motor de design junto com a carta. */

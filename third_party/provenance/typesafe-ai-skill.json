@@ -1,0 +1,12 @@
+{
+  "source": "typesafe-ai/skills",
+  "upstreamRepository": "https://github.com/typesafe-ai/skills",
+  "license": "MIT",
+  "copyright": "Copyright (c) 2026 TypeSafe AI",
+  "licenseFile": "third_party/licenses/typesafe-ai-skills-MIT.txt",
+  "importedAt": "2026-09-17",
+  "type": "vendored-verbatim",
+  "originalPath": "skills/typesafe-ai/{SKILL.md,LICENSE}",
+  "nexusPath": "assets/skills/typesafe-ai/ → src/main/orch/typesafe-ai-manifest.ts (TYPESAFE_AI_MANIFEST)",
+  "notes": "Skill de construção com os modelos System One (Jev) da TypeSafe — julgamentos tipados noul/choice/score. Embutida como manifest bundled no skill-mirror e concedida aos roles com allowedSkills ['clean-code', 'typesafe-ai']. Conteúdo verbatim."
+}

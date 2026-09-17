@@ -139,6 +139,9 @@ export interface FunctionalSmokeApi {
   voice: {
     getInfo(): Promise<unknown>;
   };
+  jev: {
+    status(): Promise<unknown>;
+  };
   mission: {
     prepare(request: MissionPrepareRequest): Promise<unknown>;
   };

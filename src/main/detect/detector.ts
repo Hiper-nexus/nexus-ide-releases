@@ -218,6 +218,13 @@ export class AgentScreenDetector {
     this.osc.drop(sessionId);
   }
 
+  /** Tail of the buffered stripped screen text; null when nothing buffered. */
+  getScreenText(sessionId: string, maxChars = 6_000): string | null {
+    const text = this.buffers.text(sessionId);
+    if (!text) return null;
+    return text.length > maxChars ? text.slice(-maxChars) : text;
+  }
+
   /** Latest accepted record for a session (debug/tooling). */
   lastExplain(sessionId: string): DetectionExplain | null {
     return this.sessions.get(sessionId)?.lastExplain ?? null;
@@ -465,6 +472,24 @@ export function startAgentScreenDetection(): () => void {
   };
   active = { detector, dispose };
   return dispose;
+}
+
+/**
+ * Subscribe to detection records on the active detector. Returns null when
+ * screen detection is not running (tests, manifest-load failure).
+ */
+export function tapActiveScreenDetections(
+  cb: ScreenDetectionTap,
+): (() => void) | null {
+  return active?.detector.tapDetections(cb) ?? null;
+}
+
+/** Screen text of a live session on the active detector; null when inactive. */
+export function activeScreenText(
+  sessionId: string,
+  maxChars = 6_000,
+): string | null {
+  return active?.detector.getScreenText(sessionId, maxChars) ?? null;
 }
 
 export function getScreenDetectionExplain(

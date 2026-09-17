@@ -10,7 +10,10 @@ import { PET_STUDIO_SQUAD_ID } from '../../../shared/pet-studio';
 import { missionDeliveryRosterIssue } from '../../../shared/mission-engine-contract';
 import { useVoiceStore } from '../../voice/voice-store';
 import { CURRENT_RELEASE } from '../../../shared/release-notes';
-import type { DesignDirection } from '../../../shared/settings-types';
+import type {
+  DesignDirection,
+  OrchSettings,
+} from '../../../shared/settings-types';
 import {
   isMissionRuntimeSquadId,
   type Squad,
@@ -31,11 +34,13 @@ function OrchestrationToggle({
   checked,
   title,
   detail,
+  disabled,
   onChange,
 }: {
   checked: boolean;
   title: string;
   detail: string;
+  disabled?: boolean;
   onChange: (checked: boolean) => void;
 }) {
   return (
@@ -47,6 +52,7 @@ function OrchestrationToggle({
       <input
         type="checkbox"
         checked={checked}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.checked)}
       />
       <span className="settings-toggle-row__control" aria-hidden="true" />
@@ -341,6 +347,16 @@ export function SquadsSection() {
   const [operation, setOperation] = useState<SquadOperation | null>(null);
   const [leanCode, setLeanCode] = useState(true);
   const [seniorMode, setSeniorMode] = useState(true);
+  const [jevAutopilot, setJevAutopilot] = useState(true);
+  const [jevSurfaces, setJevSurfaces] = useState<
+    NonNullable<OrchSettings['jevSurfaces']>
+  >({
+    handoffReview: true,
+    intake: true,
+    paneState: true,
+    terminalTriage: true,
+    rank: true,
+  });
   const [designPro, setDesignPro] = useState(true);
   const [designDirection, setDesignDirection] = useState<DesignDirection>('auto');
   const [designVariance, setDesignVariance] = useState(5);
@@ -351,6 +367,14 @@ export function SquadsSection() {
     void window.nexus.settings.orchGet().then((o) => {
       setLeanCode(o.leanCode);
       setSeniorMode(o.seniorMode);
+      setJevAutopilot(o.jevAutopilot !== false);
+      setJevSurfaces({
+        handoffReview: o.jevSurfaces?.handoffReview !== false,
+        intake: o.jevSurfaces?.intake !== false,
+        paneState: o.jevSurfaces?.paneState !== false,
+        terminalTriage: o.jevSurfaces?.terminalTriage !== false,
+        rank: o.jevSurfaces?.rank !== false,
+      });
       setDesignPro(o.designPro);
       setDesignDirection(o.designDirection ?? 'auto');
       setDesignVariance(o.designVariance ?? 5);
@@ -559,6 +583,40 @@ export function SquadsSection() {
             void window.nexus.settings.orchSet({ seniorMode: checked });
           }}
         />
+        <OrchestrationToggle
+          checked={jevAutopilot}
+          title="Piloto automático Jev"
+          detail="Revisa a evidência dos handoffs com o modelo Jev (TypeSafe) e devolve ao worker o que faltou. Precisa da chave TypeSafe em Chaves de API."
+          onChange={(checked) => {
+            setJevAutopilot(checked);
+            void window.nexus.settings.orchSet({ jevAutopilot: checked });
+          }}
+        />
+        {(
+          [
+              ['handoffReview', 'Revisão de evidência dos handoffs'],
+              [
+                'intake',
+                'Triagem do pedido (complexidade, risco, ambiguidade, skills)',
+              ],
+              ['paneState', 'Estado dos panes'],
+              ['terminalTriage', 'Triagem de falha de comandos'],
+              ['rank', 'Ranking de entregas'],
+            ] as const
+          ).map(([surface, label]) => (
+            <OrchestrationToggle
+              key={surface}
+              checked={jevSurfaces[surface] !== false}
+              disabled={!jevAutopilot}
+              title={label}
+              detail="Superfície do piloto automático Jev."
+              onChange={(checked) => {
+                const next = { ...jevSurfaces, [surface]: checked };
+                setJevSurfaces(next);
+                void window.nexus.settings.orchSet({ jevSurfaces: next });
+              }}
+            />
+          ))}
         <OrchestrationToggle
           checked={designPro}
           title="Design profissional"

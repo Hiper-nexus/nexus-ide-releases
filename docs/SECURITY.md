@@ -15,6 +15,7 @@ All external input validated with Zod at process boundaries.
 | Audit + redaction | `jarvis/audit-log.ts`, `command-redaction.ts` |
 | Autonomy | `autonomy/autonomy-profiles.ts` |
 | Browser | `browser/url-policy.ts` |
+| Egress Jev (TypeSafe) | `jev/jev-client.ts` (redactState, fail-open), `orch/jev-handoff-review.ts`, `orch/tools-judge.ts`, `orch/tools-browser-autopilot.ts` |
 
 ## Error flow
 

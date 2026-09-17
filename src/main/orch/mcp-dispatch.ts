@@ -641,6 +641,15 @@ export async function dispatchToolCall(
     };
   }
 
+  // Runtime availability (ex.: credencial TypeSafe ausente): depois dos gates
+  // de papel/allowlist/read-only para não vazar a superfície a quem não tem
+  // autoridade — e antes do intent, como os demais denyBeforeIntent.
+  if (tool.available && !tool.available()) {
+    return denyBeforeIntent(
+      `${tool.name} indisponível: configure a chave TypeSafe em Ajustes → Chaves de API`,
+    );
+  }
+
   const effectPolicy = effectPolicyForTool(tool.name);
   const canonical = canonicalToolName(tool.name);
   const permitsUnboundEffect =

@@ -195,6 +195,7 @@ import {
   resetAgentStatusOnExit,
 } from "./agent-status";
 import { startAgentScreenDetection } from "../detect/detector";
+import { startJevPaneStateClassifier } from "../jev/jev-pane-state";
 import { installMcpSessionTerminationRevocation } from "./mcp-session-revocation";
 import { codexStatusHookArgs } from "./hook-status-config";
 import { codexHookTrustBypassArgs } from "./codex-cli-version";
@@ -275,6 +276,7 @@ const missionShimBySession = new Map<string, MissionShimRuntime>(); // sessionId
 let disposeTerminationRevocation: (() => void) | null = null;
 let disposePtyMissionControl: (() => void) | null = null;
 let disposeScreenDetection: (() => void) | null = null;
+let disposeJevPaneClassifier: (() => void) | null = null;
 /** Hub MCP compartilhado (07645): um McpStdioBridge por vida do servidor embutido. */
 let mcpStdioHub: McpStdioBridge | null = null;
 const legacyParserTaps = new ReplaceableEventTapScope();
@@ -1698,6 +1700,14 @@ export function startMcpServer(): Promise<void> {
   // source into the semantic status reducer; hook authority still wins.
   disposeScreenDetection?.();
   disposeScreenDetection = startAgentScreenDetection();
+  try {
+    disposeJevPaneClassifier?.();
+    disposeJevPaneClassifier = startJevPaneStateClassifier();
+  } catch (err) {
+    // Fail-open: o classificador Jev é advisory; sem ele os manifests seguem.
+    console.warn("[jev] classificador de pane desligado:", err);
+    disposeJevPaneClassifier = null;
+  }
   disposeTerminationRevocation?.();
   disposeTerminationRevocation = installMcpSessionTerminationRevocation();
   const candidate = http.createServer((req, res) => {
@@ -1801,6 +1811,8 @@ export function stopMcpServer(): void {
   disposePtyMissionControl = null;
   disposeScreenDetection?.();
   disposeScreenDetection = null;
+  disposeJevPaneClassifier?.();
+  disposeJevPaneClassifier = null;
   mcpStdioHub?.disposeAll();
   mcpStdioHub = null;
   for (const token of sessionTokens.values()) {

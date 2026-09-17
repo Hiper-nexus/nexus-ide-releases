@@ -15,6 +15,7 @@ import {
   type AgentGateContext,
 } from '../orch/gate';
 import { getPaneAuthzInfo } from '../orch/pane-registry';
+import { recordTokenSpeedUsage } from '../orch/token-speed-tracker';
 import {
   broadcastToProject,
   sameProjectScope,
@@ -497,6 +498,7 @@ export class UsageTelemetryService {
       accountId: attribution?.accountId ?? null,
     });
     if (isNew) this.#awardAgentTurn(state, 'claude', event);
+    this.#feedTokenSpeed('claude', event, attribution?.paneId ?? null);
     this.#scheduleBroadcast(state);
   }
 
@@ -542,7 +544,34 @@ export class UsageTelemetryService {
       accountId: attribution?.accountId ?? null,
     });
     if (isNew) this.#awardAgentTurn(state, 'codex', event);
+    this.#feedTokenSpeed('codex', event, attribution?.paneId ?? null);
     this.#scheduleBroadcast(state);
+  }
+
+  /**
+   * Corrige a amostra de velocidade do pane com a contagem EXATA do
+   * transcript. A chave carrega o messageId porque o provider reescreve a
+   * mesma mensagem enquanto ela transmite — a correção precisa atualizar a
+   * amostra existente, não criar outra.
+   *
+   * À prova de falhas: cronômetro é acessório; ele não pode derrubar a
+   * telemetria de uso nem a UI de custo/quota.
+   */
+  #feedTokenSpeed(
+    provider: string,
+    event: UsageEvent,
+    paneId: string | null,
+  ): void {
+    if (!paneId || event.outputTokens <= 0) return;
+    try {
+      recordTokenSpeedUsage(paneId, {
+        key: `${provider}:${event.sessionId}:${event.messageId ?? event.timestamp ?? 'sem-id'}`,
+        outputTokens: event.outputTokens,
+        model: event.model,
+      });
+    } catch (error) {
+      console.warn('[usage] token speed correction failed:', error);
+    }
   }
 
   /**

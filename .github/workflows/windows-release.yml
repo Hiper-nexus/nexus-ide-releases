@@ -128,3 +128,10 @@ jobs:
           if-no-files-found: error
           retention-days: 90
           compression-level: 0
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-x64-signed-receipt
+          path: windows-release-assets/windows-release-receipt.json
+          if-no-files-found: error
+          retention-days: 90

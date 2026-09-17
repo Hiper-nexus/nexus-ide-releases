@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { MediaProviderId, MediaProviderInfo } from '../../../shared/media-types';
 import type { VoiceApiKeyStatus, VoiceRuntimeInfo } from '../../../shared/voice-ipc';
+import type { JevStatus } from '../../../shared/jev-ipc';
 import { credentialLinkForEnv } from '../../../shared/credential-links';
 import { openExternalFromAnchor } from '../../lib/open-external';
 import { useProviderStore } from '../../state/provider-store';
@@ -143,6 +144,18 @@ export const SYSTEM_API_KEYS: readonly SystemApiKeyDef[] = [
     placeholder: 'r8_...',
   },
   {
+    id: 'typesafe',
+    logoId: 'typesafe',
+    envVar: 'TYPESAFE_API_KEY',
+    title: 'TypeSafe (Jev)',
+    description:
+      'Juiz tipado do piloto automático do Nexus: revisa a evidência dos handoffs, alimenta a tool nexus_judge dos agentes e as triagens internas. Não gera texto — só decisões com probabilidade calibrada.',
+    category: 'core',
+    docLink: 'https://console.typesafe.ai/settings/keys',
+    docLabel: 'TypeSafe Console',
+    placeholder: 'apikey_...',
+  },
+  {
     id: 'openrouter',
     logoId: 'openrouter',
     envVar: 'OPENROUTER_API_KEY',
@@ -176,6 +189,7 @@ export function ApiKeysSection() {
   const setVoiceInfoStore = useVoiceStore((s) => s.setInfo);
 
   const [voiceInfo, setVoiceInfo] = useState<VoiceRuntimeInfo | null>(voiceInfoFromStore);
+  const [jevStatus, setJevStatus] = useState<JevStatus | null>(null);
   const [mediaList, setMediaList] = useState<MediaProviderInfo[]>([]);
   const [query, setQuery] = useState('');
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -186,10 +200,11 @@ export function ApiKeysSection() {
 
   const refreshAll = useCallback(async () => {
     try {
-      const [freshVoice, freshProviders, freshMedia] = await Promise.all([
+      const [freshVoice, freshProviders, freshMedia, freshJev] = await Promise.all([
         window.nexus?.voice?.getInfo?.().catch(() => null),
         window.nexus?.providers?.list?.().catch(() => []),
         window.nexus?.media?.listProviders?.().catch(() => []),
+        window.nexus?.jev?.status?.().catch(() => null),
       ]);
       if (freshVoice) {
         setVoiceInfo(freshVoice);
@@ -200,6 +215,9 @@ export function ApiKeysSection() {
       }
       if (Array.isArray(freshMedia)) {
         setMediaList(freshMedia);
+      }
+      if (freshJev) {
+        setJevStatus(freshJev);
       }
     } catch {
       // best effort refresh
@@ -220,15 +238,19 @@ export function ApiKeysSection() {
       const media = def.mediaProviderIds
         ? mediaList.find((m) => def.mediaProviderIds?.includes(m.id))
         : null;
+      // 4. TypeSafe/Jev vault (status próprio, sem adapter de provider)
+      const jev = def.envVar === 'TYPESAFE_API_KEY' ? jevStatus : null;
 
       const hasStoredKey = Boolean(
         voiceKey?.hasStoredKey ||
         provider?.hasKey ||
-        media?.hasKey,
+        media?.hasKey ||
+        jev?.hasStoredKey,
       );
 
       const isEnv = Boolean(
         voiceKey?.hasEnv ||
+        jev?.hasEnv ||
         (provider?.keyEnvVar && !hasStoredKey && provider.hasKey),
       );
 
@@ -236,6 +258,7 @@ export function ApiKeysSection() {
         voiceKey?.keyMasked ||
         provider?.keyMasked ||
         media?.maskedKey ||
+        jev?.keyMasked ||
         null;
 
       return {
@@ -244,7 +267,7 @@ export function ApiKeysSection() {
         masked: hasStoredKey || isEnv ? masked ?? '••••' : null,
       };
     },
-    [voiceInfo, providers, mediaList],
+    [voiceInfo, providers, mediaList, jevStatus],
   );
 
   async function handleSaveKey(def: SystemApiKeyDef, rawValue: string) {
@@ -258,6 +281,11 @@ export function ApiKeysSection() {
       // Salva no cofre de voz se for uma chave reconhecida pela Jarvis/Voz
       if (VOICE_MANAGED_ENV_VARS.has(def.envVar) && window.nexus?.voice?.setKey) {
         tasks.push(window.nexus.voice.setKey({ envVar: def.envVar, key: value }));
+      }
+
+      // Salva no cofre do Jev (TypeSafe) — vault próprio, fora dos adapters
+      if (def.envVar === 'TYPESAFE_API_KEY' && window.nexus?.jev?.setKey) {
+        tasks.push(window.nexus.jev.setKey({ key: value }));
       }
 
       // Salva no cofre de providers se houver adaptador CLI/API correspondente
@@ -293,11 +321,15 @@ export function ApiKeysSection() {
   }
 
   async function handleTestKey(def: SystemApiKeyDef) {
-    if (!def.adapterId || !window.nexus?.providers?.testKey || busyId) return;
+    const isJev = def.envVar === 'TYPESAFE_API_KEY';
+    if ((!isJev && !def.adapterId) || busyId) return;
+    if (isJev ? !window.nexus?.jev?.test : !window.nexus?.providers?.testKey) return;
     setBusyId(`test-${def.id}`);
     setTestResult((prev) => ({ ...prev, [def.id]: { ok: true, message: 'Testando conexão…' } }));
     try {
-      const result = await window.nexus.providers.testKey(def.adapterId);
+      const result = isJev
+        ? await window.nexus.jev.test()
+        : await window.nexus.providers.testKey(def.adapterId!);
       setTestResult((prev) => ({
         ...prev,
         [def.id]: {
@@ -476,7 +508,7 @@ export function ApiKeysSection() {
                       </button>
                     )}
 
-                    {def.adapterId && state.hasKey && (
+                    {(def.adapterId || def.envVar === 'TYPESAFE_API_KEY') && state.hasKey && (
                       <button
                         type="button"
                         className="settings-btn settings-btn--sm"

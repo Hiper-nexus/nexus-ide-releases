@@ -367,6 +367,17 @@ export type SessionExitTap = (
   agent: OwnedAgentSessionInfo | null,
 ) => void;
 export type SessionInputOrigin = "human" | "system";
+/**
+ * Input taps observe every byte that reaches a PTY (human keystrokes and
+ * main-owned orchestration writes) WITHOUT owning or altering the write.
+ * Consumers are read-only cronometers (token-speed meter); they must never
+ * persist, log or forward the payload.
+ */
+export type SessionInputTap = (
+  sessionId: string,
+  data: string,
+  origin: SessionInputOrigin,
+) => void;
 /** Logical authority revocation starts before physical PTY exit is proven. */
 export type SessionTerminationTap = (
   sessionId: string,
@@ -374,6 +385,7 @@ export type SessionTerminationTap = (
 ) => void;
 
 const dataTaps = new Set<SessionDataTap>();
+const inputTaps = new Set<SessionInputTap>();
 const stateTaps = new Set<SessionStateTap>();
 const exitTaps = new Set<SessionExitTap>();
 const terminationTaps = new Set<SessionTerminationTap>();
@@ -397,6 +409,11 @@ export function tapSessionData(cb: SessionDataTap): () => void {
   return () => dataTaps.delete(cb);
 }
 
+export function tapSessionInput(cb: SessionInputTap): () => void {
+  inputTaps.add(cb);
+  return () => inputTaps.delete(cb);
+}
+
 export function tapSessionState(cb: SessionStateTap): () => void {
   stateTaps.add(cb);
   return () => stateTaps.delete(cb);
@@ -415,6 +432,16 @@ export function tapSessionTermination(cb: SessionTerminationTap): () => void {
 /** Route a non-PTY process exit through the same orchestration lifecycle. */
 export function publishExternalSessionExit(sessionId: string): void {
   fireTaps(exitTaps, sessionId, null);
+}
+
+/** Notify input observers after a write physically reached the PTY. */
+function publishSessionInput(
+  sessionId: string,
+  data: string,
+  origin: SessionInputOrigin,
+): void {
+  if (inputTaps.size === 0 || data.length === 0) return;
+  fireTaps(inputTaps, sessionId, data, origin);
 }
 
 function fireTaps<T extends (...args: never[]) => void>(
@@ -2862,6 +2889,7 @@ export function writeSession(
   if (session.idleTimeoutMs > 0) armIdleTimer(sessionId, session);
   try {
     session.proc.write(data);
+    publishSessionInput(sessionId, data, "human");
     return true;
   } catch {
     return false;
@@ -2970,6 +2998,7 @@ export function orchWriteSession(
   if (session.idleTimeoutMs > 0) armIdleTimer(sessionId, session);
   markSessionInputOrigin(sessionId, options.inputOrigin ?? "system");
   session.proc.write(data);
+  publishSessionInput(sessionId, data, options.inputOrigin ?? "system");
   return true;
 }
 

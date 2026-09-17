@@ -37,6 +37,14 @@ import type {
 } from './context-draft-types';
 import type { UpdateState } from './update-ipc';
 import type {
+  JevDecisionRow,
+  JevDecisionStatsResult,
+  JevPaneHintEvent,
+  JevStatus,
+  JevTestResult,
+  SetJevKeyRequest,
+} from './jev-ipc';
+import type {
   VoiceRuntimeInfo,
   TranscribeRequest,
   TranscribeResult,
@@ -121,6 +129,7 @@ import type {
   FailoverEvent,
 } from './account-types';
 import type { CostSnapshot } from './cost-types';
+import type { TokenSpeedSnapshot } from './token-speed-types';
 import type { UsageSnapshot } from './usage-types';
 import type { PublicModelRankingSnapshot } from './eval-ranking-types';
 import type { GamificationSnapshot } from './gamification-types';
@@ -604,6 +613,24 @@ export interface NexusApi {
     ): Unsubscribe;
     onLiveInterrupted(cb: (event: JarvisLiveInterruptEvent) => void): Unsubscribe;
   };
+  jev: {
+    /** Status sem segredo (presença da chave, autopilot, stats de uso). */
+    status(): Promise<JevStatus>;
+    setKey(req: SetJevKeyRequest): Promise<{ ok: boolean; error?: string }>;
+    test(): Promise<JevTestResult>;
+    /** Últimas decisões do diário Jev (learning loop, sem texto do state). */
+    decisionsList(req?: {
+      limit?: number;
+      surface?: string;
+    }): Promise<JevDecisionRow[]>;
+    decisionsFeedback(req: {
+      id: string;
+      verdict: 'right' | 'wrong';
+    }): Promise<{ ok: boolean; error?: string }>;
+    decisionsStats(): Promise<JevDecisionStatsResult>;
+    /** Push do classificador Jev de estado do pane (surface paneState). */
+    onPaneHint(cb: (event: JevPaneHintEvent) => void): Unsubscribe;
+  };
   mission: {
     prepare(request: MissionPrepareRequest): Promise<MissionReview>;
     routeIntent(objective: string): Promise<unknown>;
@@ -1012,6 +1039,14 @@ export interface NexusApi {
     snapshot(): Promise<CostSnapshot>;
     setCap(paneId: string, capUsd: number | null): Promise<{ ok: boolean; error?: string }>;
     onChanged(cb: (snapshot: CostSnapshot) => void): Unsubscribe;
+  };
+  /**
+   * Velocidade de geração por rodada: tok/s, TTFT, média/pico das últimas N.
+   * Read-only — o renderer observa o cronômetro, nunca o comanda.
+   */
+  tokenSpeed: {
+    snapshot(): Promise<TokenSpeedSnapshot>;
+    onChanged(cb: (snapshot: TokenSpeedSnapshot) => void): Unsubscribe;
   };
   /** Telemetria REAL de tokens (transcript watchers → SQLite). */
   usage: {

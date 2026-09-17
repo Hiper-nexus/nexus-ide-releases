@@ -9,7 +9,30 @@ export const MISSION_ROUTING_SKILLS = [
   'bridgesecurity',
   'bridgeward',
   'nexus-visual-media',
+  'typesafe-ai',
 ] as const;
+
+/**
+ * Triagem Jev do intake (source: 'jev'): complexidade ponderada 0–3,
+ * probabilidades 0–1 e referência de design opcional. Persiste junto ao
+ * advice para o kickoff enxergar — nunca carrega o texto do pedido.
+ */
+export const intentTriageSchema = z.object({
+  source: z.literal('jev'),
+  model: z.string().max(64),
+  complexity: z.number().min(0).max(3),
+  complexityLevel: z.enum(['trivial', 'small', 'medium', 'large']),
+  complexityConfidence: z.number().min(0).max(1),
+  riskSensitive: z.number().min(0).max(1),
+  ambiguous: z.number().min(0).max(1),
+  designReference: z
+    .object({
+      name: z.string().max(128),
+      probability: z.number().min(0).max(1),
+    })
+    .optional(),
+});
+export type MissionIntentTriage = z.infer<typeof intentTriageSchema>;
 
 const questionSchema = z.string().trim().min(1).max(4_096);
 const rawRouteSchema = z.discriminatedUnion('kind', [
@@ -22,6 +45,7 @@ const rawRouteSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('mission-work'),
     skills: z.array(z.string().max(64)).max(64),
+    triage: intentTriageSchema.optional(),
   }).strict(),
 ]);
 
@@ -41,6 +65,7 @@ export const missionRoutingAdviceSchema = z.union([
     source: z.literal('router'),
     kind: z.literal('mission-work'),
     skills: z.array(z.enum(MISSION_ROUTING_SKILLS)).max(MISSION_ROUTING_SKILLS.length),
+    triage: intentTriageSchema.optional(),
   }).strict(),
   z.object({
     source: z.literal('deterministic-fallback'),
@@ -67,14 +92,24 @@ export function parseMissionRoutingAdvice(
   const skills = MISSION_ROUTING_SKILLS.filter((skill) =>
     route.skills.includes(skill) && (allowedSkills === null || allowedSkills.includes(skill)),
   );
-  return { source: 'router', kind: 'mission-work', skills };
+  return {
+    source: 'router',
+    kind: 'mission-work',
+    skills,
+    ...(route.triage ? { triage: route.triage } : {}),
+  };
 }
 
 /** Revalidate persisted advice; consumers may further narrow hints per seat. */
 export function getMissionRoutingHints(
   contract: { readonly routingAdvice?: MissionRoutingAdvice } | null | undefined,
   allowedSkills?: readonly string[] | null,
-): { paneQuestion: string | null; readOnlyWorkers: boolean; suggestedSkills: string[] } {
+): {
+  paneQuestion: string | null;
+  readOnlyWorkers: boolean;
+  suggestedSkills: string[];
+  triage: MissionIntentTriage | null;
+} {
   const parsed = missionRoutingAdviceSchema.safeParse(contract?.routingAdvice);
   const advice = parsed.success ? parsed.data : undefined;
   return {
@@ -83,6 +118,10 @@ export function getMissionRoutingHints(
     suggestedSkills: advice?.source === 'router' && advice.kind === 'mission-work'
       ? advice.skills.filter((skill) => allowedSkills == null || allowedSkills.includes(skill))
       : [],
+    triage:
+      advice?.source === 'router' && advice.kind === 'mission-work'
+        ? (advice.triage ?? null)
+        : null,
   };
 }
 

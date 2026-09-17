@@ -44,6 +44,12 @@ export interface McpToolDef {
   inputSchema: Record<string, unknown>;
   /** Forces native/user confirmation even if the generic guardrail changes. */
   requiresConfirm?: boolean;
+  /**
+   * Runtime availability predicate (presence of a credential, feature flag).
+   * When it returns false the tool is hidden from tools/list and dispatch
+   * refuses the call — a client without the dependency sees a classic Nexus.
+   */
+  available?: () => boolean;
   handler: (
     args: Record<string, unknown>,
     ctx: AgentGateContext,
@@ -204,7 +210,8 @@ export async function handleMcpMessage(
               tool.name,
               ctx.petStudioMediaAuthority,
             ) &&
-            (!ctx.readOnly || isToolAllowedForReadOnlyContext(tool.name)),
+            (!ctx.readOnly || isToolAllowedForReadOnlyContext(tool.name)) &&
+            (tool.available?.() ?? true),
         )
         .map((tool) => ({
           name: tool.name,

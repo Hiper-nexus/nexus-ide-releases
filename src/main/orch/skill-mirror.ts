@@ -9,6 +9,8 @@ import { ARCHIFY_MANIFEST } from './archify-manifest';
 import { BMAD_TEMPLATES_MANIFEST } from './bmad-templates-manifest';
 import { SUPERPOWERS_MANIFEST } from './superpowers-manifest';
 import { DEMBRANDT_MANIFEST } from './dembrandt-manifest';
+import { TYPESAFE_AI_MANIFEST } from './typesafe-ai-manifest';
+import { hasJevCredential } from '../jev/jev-secrets';
 import type { SkillAsset } from './impeccable-manifest';
 import {
   copyAgentPluginSkill,
@@ -193,6 +195,12 @@ export interface SkillMirrorOptions {
    * to false so mirroring cannot mutate or expose the real provider profile.
    */
   includeCliTarget?: boolean;
+  /**
+   * Gate on sources that resolve to the generated (bundled) root — a skill
+   * the user installed themselves in ~/.agents/skills etc. is never filtered.
+   * Default drops bundled `typesafe-ai` when no TypeSafe credential exists.
+   */
+  bundledSkillFilter?: (name: string) => boolean;
 }
 
 function skillName(name: string): string {
@@ -225,6 +233,7 @@ const BUNDLED_MANIFESTS: Record<string, Record<string, SkillAsset>> = {
   'bmad-templates': BMAD_TEMPLATES_MANIFEST,
   superpowers: SUPERPOWERS_MANIFEST,
   dembrandt: DEMBRANDT_MANIFEST,
+  'typesafe-ai': TYPESAFE_AI_MANIFEST,
 };
 
 const MANAGED_LEDGER_FILE = '.nexus-managed.json';
@@ -657,11 +666,24 @@ export function ensureSkillsForCli(
   const home = options.home ?? os.homedir();
   const generatedRoot =
     options.generatedRoot ?? path.join(home, '.nexus', 'generated-skills');
-  const sourceDirs = [
-    writeGeneratedSkills(generatedRoot),
-    ...(options.sourceDirs ?? defaultSourceDirs(home)),
-  ];
-  const available = readSkillSources(sourceDirs);
+  const generatedDir = writeGeneratedSkills(generatedRoot);
+  const available = readSkillSources(
+    options.sourceDirs ?? defaultSourceDirs(home),
+  );
+  // Bundled (raiz gerada) tem precedência sobre a cópia do usuário — exceto
+  // quando o filtro o derruba (ex.: typesafe-ai sem credencial TypeSafe);
+  // nesse caso a cópia do próprio usuário continua valendo e nunca é tocada.
+  const bundledSkillFilter =
+    options.bundledSkillFilter ??
+    ((name: string) => name !== 'typesafe-ai' || hasJevCredential());
+  for (const [name, source] of readSkillSources([generatedDir])) {
+    if (
+      bundledManifestFor(source, generatedRoot) === undefined ||
+      bundledSkillFilter(name)
+    ) {
+      available.set(name, source);
+    }
+  }
   const allowedTools = options.allowedTools === undefined ? null : options.allowedTools;
   addAgentPluginSources(available, home, allowedTools);
   const sources = selectSources(available, options.allowedSkills);
