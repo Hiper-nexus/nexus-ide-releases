@@ -65,18 +65,34 @@ describe('pane-admission (F-572): teto de panes + gate por memória', () => {
     expect(blocked.message).toMatch(/livre/i);
   });
 
-  it('swap acima do teto AVISA por padrão e recusa com a trava dura', () => {
-    const highSwap = { freeMB: 8_000, swapUsedMB: DEFAULT_PANE_ADMISSION_LIMITS.maxSwapUsedMB + 1 };
-    const verdict = evaluatePaneAdmission(input({ memory: highSwap }));
+  it('swap acima do teto AVISA por padrão e recusa com a trava dura (gate armado por máquina)', () => {
+    // O gate de swap nasce DESARMADO (maxSwapUsedMB = 0): swap em uso não é
+    // sinal de pressão. Quem quiser o gate numa máquina o arma por env.
+    const armed = readPaneAdmissionLimits({ NEXUS_PANE_MAX_SWAP_MB: '1024' }, 24 * 1024);
+    const highSwap = { freeMB: 8_000, swapUsedMB: 1_025 };
+    const verdict = evaluatePaneAdmission(input({ limits: armed, memory: highSwap }));
     expect(verdict.ok).toBe(true);
     if (!verdict.ok) return;
     expect(verdict.warning ?? '').toMatch(/swap/i);
-    const hard = readPaneAdmissionLimits({ NEXUS_PANE_GUARD: 'hard' }, 24 * 1024);
+    expect(verdict.warning ?? '').toContain('NEXUS_PANE_MAX_SWAP_MB');
+    const hard = readPaneAdmissionLimits(
+      { NEXUS_PANE_MAX_SWAP_MB: '1024', NEXUS_PANE_GUARD: 'hard' },
+      24 * 1024,
+    );
     const blocked = evaluatePaneAdmission(input({ limits: hard, memory: highSwap }));
     expect(blocked.ok).toBe(false);
     if (blocked.ok) return;
     expect(blocked.reason).toBe('memory');
     expect(blocked.message).toMatch(/swap/i);
+  });
+
+  it('sem o gate armado, swap alto não gera nem aviso de paginação', () => {
+    const verdict = evaluatePaneAdmission(
+      input({ memory: { freeMB: 8_000, swapUsedMB: 23_023 } }),
+    );
+    expect(verdict.ok).toBe(true);
+    if (!verdict.ok) return;
+    expect(verdict.warning).toBeUndefined();
   });
 
   it('memória desconhecida não bloqueia; acima do teto só avisa', () => {
@@ -234,20 +250,35 @@ describe('pane-admission: swap do Windows é commit, não swap (F-574)', () => {
     const verdict = evaluatePaneAdmission(input({ memory: { freeMB: 44_547, swapUsedMB: null } }));
     expect(verdict.ok).toBe(true);
     expect(verdict.ok && verdict.warning === undefined).toBe(true);
-    // O valor antigo (commit lido como swap) avisa — e só recusaria na trava
-    // dura; é o bug que o gate não pode voltar a ter nesta plataforma.
+    // O valor antigo (commit lido como swap) não avisa nem trava: é o bug que
+    // o gate não pode voltar a ter nesta plataforma (0.76.47).
     const warned = evaluatePaneAdmission(input({ memory: { freeMB: 44_547, swapUsedMB: 23_023 } }));
     expect(warned.ok).toBe(true);
-    expect(warned.ok && Boolean(warned.warning)).toBe(true);
+    expect(warned.ok && warned.warning === undefined).toBe(true);
+  });
+
+  it('um pico de swap parado não é pressão: o reaper não estaciona pane à toa', async () => {
+    const { isUnderMemoryPressure, limitsForMachine } = await import('./pane-admission');
+    // Leitura real da máquina do operador: 8.151 MB de swap com o kernel em
+    // NORMAL e 62 % de RAM livre. Antes, isto ligava o reaper de emergência
+    // a cada 60 s para sempre.
+    const limits = limitsForMachine(24 * 1024);
+    expect(isUnderMemoryPressure({ freeMB: 0.62 * 24 * 1024, swapUsedMB: 8_151 }, limits)).toBe(
+      false,
+    );
+    // Pressão de verdade (abaixo do piso) continua ligando.
+    expect(isUnderMemoryPressure({ freeMB: limits.minFreeMB - 1, swapUsedMB: 8_151 }, limits)).toBe(
+      true,
+    );
   });
 });
 
 describe('pane-admission: limites proporcionais à RAM da máquina (0.76.44)', () => {
-  it('num Mac de 24 GB o mínimo disponível é 15 % (3,6 GB), o swap 1 GB e o teto 12', async () => {
+  it('num Mac de 24 GB o mínimo disponível é 15 % (3,6 GB), o swap nasce sem gate e o teto 12', async () => {
     const { limitsForMachine } = await import('./pane-admission');
     const limits = limitsForMachine(24 * 1024);
     expect(limits.minFreeMB).toBe(Math.round(0.15 * 24 * 1024));
-    expect(limits.maxSwapUsedMB).toBe(1024);
+    expect(limits.maxSwapUsedMB).toBe(0);
     expect(limits.maxAgentPanes).toBe(12);
   });
 
@@ -275,7 +306,8 @@ describe('pane-admission: limites proporcionais à RAM da máquina (0.76.44)', (
     const limits = limitsForMachine(24 * 1024);
     expect(isUnderMemoryPressure({ freeMB: 10_000, swapUsedMB: 100 }, limits)).toBe(false);
     expect(isUnderMemoryPressure({ freeMB: 2_000, swapUsedMB: 100 }, limits)).toBe(true);
-    expect(isUnderMemoryPressure({ freeMB: 10_000, swapUsedMB: 3_000 }, limits)).toBe(true);
+    // Swap não é sinal de pressão sem o gate armado pela máquina (0.76.47).
+    expect(isUnderMemoryPressure({ freeMB: 10_000, swapUsedMB: 3_000 }, limits)).toBe(false);
     expect(isUnderMemoryPressure(null, limits)).toBe(false);
   });
 });

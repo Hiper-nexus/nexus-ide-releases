@@ -243,16 +243,21 @@ saber isto antes de mexer:
 - O guardian fecha sozinho pane ocioso sem dono (worker sem missão, helper
   aberto pela mão do operador) após 30 min; nunca orquestrador, worker de
   missão, pane aberto pelo humano no renderer ou pane com `expect` armado.
-- `spawnAgentSession` só RECUSA um pane de agente com a máquina sob pressão
-  real (menos de 15 % da RAM disponível ou mais de 1 GB de swap). O teto por
-  contagem (4–12 conforme a RAM; 12 num Mac de 24 GB) é AVISO, não trava
-  (decisão do operador 16/09: otimizar, não limitar; `NEXUS_PANE_CAP_HARD=1`
-  restaura o bloqueio). Sob pressão o guardian ESTACIONA um pane ocioso
-  elegível por minuto sem esperar o TTL: o CLI é encerrado, o pane e o
-  scrollback ficam, "Acordar" retoma a mesma conversa por resume. Ajuste por
-  env (`NEXUS_PANE_CAP`, `NEXUS_PANE_MIN_FREE_MB`, `NEXUS_PANE_MAX_SWAP_MB`,
-  `NEXUS_PANE_GUARD=off`). Não crie outro caminho de spawn que não passe
-  por `spawnAgentSession`.
+- `spawnAgentSession` NÃO trava o spawn: o gate de admissão AVISA (teto de
+  panes 4–12 conforme a RAM, e memória disponível abaixo de 15 %) e a decisão
+  de abrir é da mão do operador — doutrina "menos travas", decisão de 16/09.
+  Trava dura só como opt-in explícito (`NEXUS_PANE_CAP_HARD=1`) ou
+  `NEXUS_PANE_GUARD=off` para desligar tudo. **Swap em uso não é sinal de
+  pressão**: no macOS ele guarda o pico, não o agora (medido: 8 GB de swap com
+  o kernel em NORMAL), no Windows o campo do Electron é commit, e cada máquina
+  tem a sua medida — lido como pressão, virou trava permanente até o reboot
+  (0.76.44) e reaper em loop. O gate de swap só existe armado por máquina
+  (`NEXUS_PANE_MAX_SWAP_MB`); não o ligue por default. Sob pressão real o
+  guardian ESTACIONA um pane ocioso elegível por minuto sem esperar o TTL: o
+  CLI é encerrado, o pane e o scrollback ficam, "Acordar" retoma a mesma
+  conversa por resume. Ajuste por env (`NEXUS_PANE_CAP`,
+  `NEXUS_PANE_MIN_FREE_MB`, `NEXUS_PANE_GUARD`). Não crie outro caminho de
+  spawn que não passe por `spawnAgentSession`.
 - Workers e orquestradores NÃO herdam o perfil MCP global do usuário
   (`~/.claude.json`); só a mão do operador (`role user`) herda. Quem precisa
   de um servidor MCP extra declara por allowlist.

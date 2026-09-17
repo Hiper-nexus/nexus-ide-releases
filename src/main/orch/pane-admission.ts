@@ -12,6 +12,12 @@
  * Trava dura é opt-in (NEXUS_PANE_CAP_HARD=1 ou NEXUS_PANE_GUARD=hard);
  * limites vêm de env para o operador ajustar sem rebuild; NEXUS_PANE_GUARD=off
  * desliga o teto e a pressão (a telemetria continua).
+ *
+ * O sinal de memória tem que ser o do AGORA: `free` disponível (o nível do
+ * kernel no macOS). Swap em uso entra desarmado por padrão — no macOS ele
+ * guarda o pico, não o agora (ver `limitsForMachine`), no Windows o campo do
+ * Electron é commit (F-574), e cada máquina tem a sua medida. Lido como
+ * pressão, um pico velho vira trava permanente no spawn e reaper em loop.
  */
 
 import { execFile } from 'node:child_process';
@@ -34,16 +40,31 @@ export interface PaneAdmissionLimits {
   readonly hardBlocks: boolean;
   /** Abaixo disto de memória livre o spawn AVISA (recusa só na trava dura). */
   readonly minFreeMB: number;
-  /** Acima disto de swap em uso o spawn AVISA (recusa só na trava dura). */
+  /**
+   * Acima disto de swap em uso o spawn AVISA (recusa só na trava dura).
+   * **0 (o default) = o swap não é sinal de pressão** — ver `limitsForMachine`.
+   */
   readonly maxSwapUsedMB: number;
 }
 
 /**
- * Limites proporcionais à RAM (0.76.44). Régua: reserva 8 GB para SO + apps
- * e ~1,25 GB por pane de agente; mínimo disponível = 15 % da RAM (num Mac de
- * 24 GB, 3,6 GB — 1 GB era tarde demais, a máquina já paginava); swap > 1 GB
- * = já está paginando. Teto entre 4 e 12: acima disso quem governa é o
+ * Limites proporcionais à RAM (0.76.44; swap corrigido na 0.76.47). Régua:
+ * reserva 8 GB para SO + apps e ~1,25 GB por pane de agente; mínimo
+ * disponível = 15 % da RAM (num Mac de 24 GB, 3,6 GB — 1 GB era tarde demais,
+ * a máquina já paginava). Teto entre 4 e 12: acima disso quem governa é o
  * guardian, não a RAM.
+ *
+ * `maxSwapUsedMB` nasce em 0: **swap em uso não é sinal de pressão**.
+ * - No macOS ele nem mede o agora: `vm.swapusage` "used" guarda o pico, e o
+ *   XNU não devolve o swap quando a pressão passa. Medido na máquina do
+ *   operador com o kernel em NORMAL: 8.151 MB de swap, 62 % de RAM livre — e o
+ *   mesmo Mac já chegou a 16 GB. Lido como pressão, um pico antigo vira trava
+ *   permanente (o teto de 1 GB da 0.76.44 recusou todo spawn até o reboot) e o
+ *   reaper de emergência estaciona um pane ocioso por minuto para sempre.
+ * - No Windows o campo do Electron é commit, não swap (F-574).
+ * Cada máquina tem a sua medida, então não existe número universal: quem
+ * quiser o gate numa máquina específica arma com NEXUS_PANE_MAX_SWAP_MB.
+ * O swap segue na telemetria (custo por pane).
  */
 export function limitsForMachine(totalMB: number): PaneAdmissionLimits {
   const total = Number.isFinite(totalMB) && totalMB > 0 ? totalMB : 24 * 1024;
@@ -53,21 +74,30 @@ export function limitsForMachine(totalMB: number): PaneAdmissionLimits {
     hardBlocks: false,
     maxAgentPanes: Math.min(12, Math.max(4, byRam)),
     minFreeMB: Math.max(1024, Math.round(0.15 * total)),
-    maxSwapUsedMB: 1024,
+    maxSwapUsedMB: 0,
   });
 }
 
 /** Referência documentada: a régua aplicada a um Mac de 24 GB. */
 export const DEFAULT_PANE_ADMISSION_LIMITS: PaneAdmissionLimits = limitsForMachine(24 * 1024);
 
-/** Os mesmos limiares do gate de spawn, lidos como "a máquina já está sob pressão". */
+/**
+ * Os mesmos limiares do gate de spawn, lidos como "a máquina já está sob
+ * pressão". Swap só entra se a máquina armou o gate dela.
+ */
 export function isUnderMemoryPressure(
   sample: SystemMemorySample | null,
   limits: PaneAdmissionLimits,
 ): boolean {
   if (!sample) return false;
   if (sample.freeMB !== null && sample.freeMB < limits.minFreeMB) return true;
-  if (sample.swapUsedMB !== null && sample.swapUsedMB > limits.maxSwapUsedMB) return true;
+  if (
+    limits.maxSwapUsedMB > 0 &&
+    sample.swapUsedMB !== null &&
+    sample.swapUsedMB > limits.maxSwapUsedMB
+  ) {
+    return true;
+  }
   return false;
 }
 
@@ -144,10 +174,18 @@ export function evaluatePaneAdmission(input: PaneAdmissionInput): PaneAdmissionV
       if (limits.hardBlocks) return { ok: false, reason: 'memory', message };
       return { ok: true, warning: message };
     }
-    if (memory.swapUsedMB !== null && memory.swapUsedMB > limits.maxSwapUsedMB) {
+    // Swap (0.76.47): só AVISA onde a máquina armou o gate dela
+    // (NEXUS_PANE_MAX_SWAP_MB > 0). No macOS o número guarda o pico, não o
+    // agora, então avisar por ele acusaria paginação numa máquina saudável.
+    if (
+      limits.maxSwapUsedMB > 0 &&
+      memory.swapUsedMB !== null &&
+      memory.swapUsedMB > limits.maxSwapUsedMB
+    ) {
       const message =
         `Swap em uso alto (${Math.round(memory.swapUsedMB)} MB > ${limits.maxSwapUsedMB} MB): ` +
-        `a máquina já está paginando. ${idleHint}`;
+        `a máquina está apoiada em disco. ${idleHint} ` +
+        'Ajuste com NEXUS_PANE_MAX_SWAP_MB se esta máquina aguenta mais.';
       if (limits.hardBlocks) return { ok: false, reason: 'memory', message };
       return { ok: true, warning: message };
     }
