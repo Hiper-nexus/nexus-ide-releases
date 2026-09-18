@@ -107,3 +107,14 @@ describe('sttProviderLabel', () => {
     expect(sttProviderLabel(undefined)).toBe('STT');
   });
 });
+
+describe('xai (Grok Voice Transcribe)', () => {
+  it('rótulo amigável e hint de chave como os demais providers', () => {
+    expect(sttProviderLabel('xai')).toBe('Grok Voice Transcribe (xAI)');
+    const msg = describeSttFailure(
+      failure([{ provider: 'xai', reason: 'XAI_API_KEY not set' }]),
+    );
+    expect(msg).toContain('Grok Voice Transcribe (xAI) sem chave (XAI_API_KEY)');
+    expect(msg).toContain('Configurações → Chaves de API');
+  });
+});

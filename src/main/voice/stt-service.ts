@@ -3,6 +3,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFile, execFileSync } from 'node:child_process';
 import type { VoiceConfig, VoicePlugin } from '../../shared/voice-config';
+import {
+  DEFAULT_XAI_STT_MODEL,
+  XAI_STT_ENDPOINT,
+} from '../../shared/voice-config';
 import type {
   TranscribeRequest,
   TranscribeResult,
@@ -550,6 +554,138 @@ async function attemptGemini(
   };
 }
 
+// ── Grok Voice Transcribe 2.0 (xAI, batch multipart) ─────────────────────────
+
+/**
+ * O xAI STT fala multipart/form-data com `Bearer`, mas o contrato é próprio:
+ * `keyterm` repetido como viés de vocabulário (não `prompt`), `format=true`
+ * só vale com `language`, e `audio_format`/`sample_rate` só existem para PCM
+ * cru — container (wav/mp3/ogg/m4a) é auto-detectado. Por isso ele NÃO passa
+ * por `attemptCloud` — o dialeto Whisper aplicaria `prompt` e erraria a
+ * ordenação exigida (opções ANTES de `file`).
+ */
+export function isXaiStt(plugin: VoicePlugin): boolean {
+  return plugin.provider === 'xai';
+}
+
+/** Resposta do /v1/stt: `{ text, language, duration, words? }` — o texto vale. */
+export function extractXaiTranscript(json: unknown): string {
+  if (!json || typeof json !== 'object') return '';
+  const text = (json as Record<string, unknown>).text;
+  return typeof text === 'string' ? text.trim() : '';
+}
+
+export const XAI_KEYTERM_MAX = 100;
+export const XAI_KEYTERM_MAX_CHARS = 50;
+
+/**
+ * Viés de vocabulário por finalidade: a wake word no passive-wake, ou o
+ * jargão do modo CODE (via `req.prompt`) — cada `keyterm` ≤ 50 chars, no
+ * máximo 100 por requisição.
+ */
+export function xaiKeyterms(req: TranscribeRequest): string[] {
+  if (req.purpose === 'passive-wake') {
+    const word = req.passiveWakeWord?.trim();
+    return word ? [word] : [];
+  }
+  if (req.prompt) {
+    return [...DICTATION_CODE_VOCABULARY]
+      .filter((term) => term.length <= XAI_KEYTERM_MAX_CHARS)
+      .slice(0, XAI_KEYTERM_MAX);
+  }
+  return [];
+}
+
+const XAI_PCM_SAMPLE_RATES: ReadonlySet<number> = new Set([
+  8000, 16000, 22050, 24000, 44100, 48000,
+]);
+
+async function attemptXai(
+  plugin: VoicePlugin,
+  req: TranscribeRequest,
+  deps: SttDeps,
+  cloudTimeoutMs: number = STT_CLOUD_TIMEOUT_MS,
+): Promise<Attempt> {
+  const envVar = plugin.auth?.envVar ?? 'XAI_API_KEY';
+  const key = deps.getEnv(envVar)?.trim();
+  if (!key) {
+    return { ok: false, needsKey: true, reason: `${envVar} not set` };
+  }
+
+  // O xAI só transcreve: um pedido `translate` segue literal (a UI já marca
+  // CODE·PT) — não existe endpoint de tradução para trocar.
+  const form = new FormData();
+  // Campos de opção ANTES de `file` — a API exige o arquivo por último.
+  form.append('model', plugin.model ?? DEFAULT_XAI_STT_MODEL);
+  const language = req.language ?? plugin.language;
+  if (language) {
+    form.append('language', language);
+    // Inverse text normalization (números/datas normalizados) exige language.
+    form.append('format', 'true');
+  }
+  for (const term of xaiKeyterms(req)) {
+    form.append('keyterm', term);
+  }
+  const audio = base64ToBuffer(req.audioBase64);
+  let fileName = 'audio.wav';
+  let fileType: string = req.mime;
+  if (req.mime === 'audio/pcm') {
+    const rate = req.sampleRate;
+    if (!rate || !XAI_PCM_SAMPLE_RATES.has(rate)) {
+      return {
+        ok: false,
+        needsKey: false,
+        reason: `sample rate ${rate} not supported by xAI STT`,
+      };
+    }
+    // PCM cru precisa de formato/taxa explícitos — não há header no payload.
+    form.append('audio_format', 'pcm');
+    form.append('sample_rate', String(rate));
+    fileName = 'audio.pcm';
+    fileType = 'application/octet-stream';
+  } else if (req.mime === 'audio/webm') {
+    fileName = 'audio.webm';
+  }
+  form.append('file', new Blob([new Uint8Array(audio)], { type: fileType }), fileName);
+
+  let res: Response;
+  try {
+    res = await deps.fetchImpl(plugin.endpoint ?? XAI_STT_ENDPOINT, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key}` },
+      body: form,
+      signal: AbortSignal.timeout(cloudTimeoutMs),
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === 'TimeoutError') {
+      return {
+        ok: false,
+        needsKey: false,
+        reason: `timeout (${(cloudTimeoutMs / 1000).toFixed(1)}s sem resposta)`,
+        failureKind: 'timeout',
+      };
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, needsKey: false, reason: `network error (${message})` };
+  }
+
+  if (!res.ok) {
+    const { reason, needsKey } = describeHttpFailure(res.status);
+    const failureBody = await res.text().catch(() => '');
+    const detail = failureBody.replace(/\s+/g, ' ').trim().slice(0, 160);
+    return {
+      ok: false,
+      needsKey,
+      reason: detail ? `${reason}: ${detail}` : reason,
+      failureKind: needsKey ? 'auth' : undefined,
+    };
+  }
+
+  const text = extractXaiTranscript(await res.json().catch(() => ({})));
+  if (!text) return { ok: false, needsKey: false, reason: 'empty transcript' };
+  return { ok: true, text };
+}
+
 // ── Local whisper.cpp (keyless, offline, no rate limit) ──────────────────────
 
 /** Candidate binary names/paths for whisper.cpp, in preference order. */
@@ -634,6 +770,8 @@ async function attemptProvider(
   // Gemini ANTES de classifyKind: o shape do request/response é outro, e o
   // caminho Whisper aplicaria FormData/Bearer/swap-de-endpoint nele.
   if (isGeminiStt(plugin)) return attemptGemini(plugin, req, deps, cloudTimeoutMs);
+  // xAI idem: multipart próprio (keyterm/format/pcm) — não é dialeto Whisper.
+  if (isXaiStt(plugin)) return attemptXai(plugin, req, deps, cloudTimeoutMs);
   return classifyKind(plugin) === 'cloud'
     ? attemptCloud(plugin, req, deps, cloudTimeoutMs)
     : attemptLocal(plugin, req, deps);
@@ -755,7 +893,7 @@ export async function transcribe(
   const tried = attempts.map((a) => `${a.provider}: ${a.reason}`).join(' · ');
   const recoveryHint = passiveWake
     ? 'Passive wake ended before a realtime STT provider confirmed the name. The acoustic wake detector remains active.'
-    : 'Set GROQ_API_KEY or OPENAI_API_KEY, or install whisper.cpp for a keyless local fallback.';
+    : 'Set XAI_API_KEY, GROQ_API_KEY or OPENAI_API_KEY, or install whisper.cpp for a keyless local fallback.';
   return {
     ok: false,
     needsKey: anyNeedsKey,

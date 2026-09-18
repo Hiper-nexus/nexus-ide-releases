@@ -247,11 +247,13 @@ describe('voice-config-store', () => {
     };
 
     const loaded = store.loadVoiceConfig();
-    // O Gemini lidera e a cadeia Whisper que o usuário já tinha segue abaixo.
+    // O Gemini lidera, a cadeia Whisper que o usuário já tinha segue abaixo,
+    // e o Grok STT (xAI) entra logo após o último cloud — antes do local.
     expect(providers(loaded.stt)).toEqual([
       'gemini',
       'groq',
       'openai',
+      'xai',
       'local-whisper',
     ]);
 
@@ -261,6 +263,7 @@ describe('voice-config-store', () => {
       'gemini',
       'groq',
       'openai',
+      'xai',
       'local-whisper',
     ]);
   });
@@ -325,5 +328,109 @@ describe('voice-config-store', () => {
     // Google sem ela ter pedido — e a chave dele costuma existir, porque o
     // Gemini também é o brain padrão.
     expect(loaded.stt.provider).toBe('local-whisper');
+  });
+});
+
+describe('voice-config-store — migração do Grok Voice Transcribe (xAI)', () => {
+  afterEach(() => {
+    vi.doUnmock('node:os');
+    vi.resetModules();
+  });
+
+  const providersOf = (head: unknown): string[] => {
+    const out: string[] = [];
+    let node = head as { provider?: string; fallback?: unknown } | undefined;
+    while (node?.provider) {
+      out.push(node.provider);
+      node = node.fallback as typeof node;
+    }
+    return out;
+  };
+
+  function writeConfig(home: string) {
+    const file = path.join(home, '.nexus', 'plugins', 'voice', 'nexus-voice.json');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    return file;
+  }
+
+  it('cadeia custom com head cloud: xai entra após o último cloud, head intacto', async () => {
+    const { home, store } = await loadStoreInTempHome();
+    const { DEFAULT_VOICE_CONFIG } = await import('../../shared/voice-config');
+    const file = writeConfig(home);
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        ...DEFAULT_VOICE_CONFIG,
+        stt: {
+          type: 'stt',
+          provider: 'groq',
+          // Endpoint custom: NÃO é a cadeia de fábrica, então a migração do
+          // head Gemini não dispara — testa só a inserção do xai.
+          endpoint: 'https://stt.example.com/v1/audio/transcriptions',
+          auth: { type: 'api_key', envVar: 'GROQ_API_KEY' },
+          model: 'whisper-large-v3-turbo',
+          fallback: {
+            type: 'stt',
+            provider: 'local-whisper',
+            localBin: 'whisper-cli',
+            model: 'base',
+          },
+        },
+      }),
+    );
+
+    const loaded = store.loadVoiceConfig();
+    expect(providersOf(loaded.stt)).toEqual(['groq', 'xai', 'local-whisper']);
+  });
+
+  it('cadeia só-local (offline/privacidade) não recebe link cloud', async () => {
+    const { home, store } = await loadStoreInTempHome();
+    const { DEFAULT_VOICE_CONFIG } = await import('../../shared/voice-config');
+    const file = writeConfig(home);
+    const stt = {
+      type: 'stt',
+      provider: 'local-whisper',
+      localBin: 'whisper-cli',
+      model: 'base',
+      translate: true,
+      outputMode: 'english',
+    };
+    fs.writeFileSync(
+      file,
+      JSON.stringify({ ...DEFAULT_VOICE_CONFIG, stt }),
+    );
+
+    const loaded = store.loadVoiceConfig();
+    expect(providersOf(loaded.stt)).toEqual(['local-whisper']);
+    // Não migrado: o arquivo permanece como o usuário escreveu.
+    const saved = JSON.parse(fs.readFileSync(file, 'utf-8')) as {
+      stt: { provider: string; fallback?: unknown };
+    };
+    expect(saved.stt.provider).toBe('local-whisper');
+    expect(saved.stt.fallback).toBeUndefined();
+  });
+
+  it('a migração do xai é idempotente num segundo load', async () => {
+    const { home, store } = await loadStoreInTempHome();
+    const { DEFAULT_VOICE_CONFIG } = await import('../../shared/voice-config');
+    const file = writeConfig(home);
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        ...DEFAULT_VOICE_CONFIG,
+        stt: {
+          type: 'stt',
+          provider: 'openai',
+          endpoint: 'https://api.openai.com/v1/audio/transcriptions',
+          auth: { type: 'api_key', envVar: 'OPENAI_API_KEY' },
+          model: 'whisper-1',
+        },
+      }),
+    );
+
+    const first = store.loadVoiceConfig();
+    expect(providersOf(first.stt)).toEqual(['openai', 'xai']);
+    const second = store.loadVoiceConfig();
+    expect(providersOf(second.stt)).toEqual(['openai', 'xai']);
   });
 });

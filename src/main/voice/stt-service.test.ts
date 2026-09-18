@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { DEFAULT_VOICE_CONFIG, type VoiceConfig } from '../../shared/voice-config';
+import {
+  DEFAULT_VOICE_CONFIG,
+  DEFAULT_XAI_STT,
+  type VoiceConfig,
+} from '../../shared/voice-config';
 import type { TranscribeRequest } from '../../shared/voice-ipc';
 import type { ProviderProbes } from './provider-select';
 import { transcribe, describeHttpFailure, resolveEndpoint, type SttDeps } from './stt-service';
@@ -24,11 +28,12 @@ function jsonResponse(status: number, body: unknown): Response {
 /**
  * Base deps with everything stubbed; override per test.
  *
- * `GEMINI_API_KEY` fica SEM chave por padrão. O head da cadeia de STT hoje é o
- * Gemini, e os testes deste arquivo exercitam o fallback Whisper (Groq →
- * OpenAI → local-whisper). Com chave para tudo, o Gemini assumiria a cabeça e
- * todo teste da cadeia Whisper passaria a bater no Google primeiro. Os testes
- * do Gemini ligam a chave explicitamente via `getEnv` próprio.
+ * `GEMINI_API_KEY` e `XAI_API_KEY` ficam SEM chave por padrão. O head da
+ * cadeia de STT hoje é o Gemini, o segundo hop é o xAI, e os testes deste
+ * arquivo exercitam o fallback Whisper (Groq → OpenAI → local-whisper). Com
+ * chave para tudo, Gemini/xAI assumiriam a frente e todo teste da cadeia
+ * Whisper passaria a bater neles primeiro. Os testes de cada um ligam a
+ * chave explicitamente via `getEnv` próprio.
  */
 function deps(over: Partial<SttDeps>): SttDeps {
   return {
@@ -39,7 +44,11 @@ function deps(over: Partial<SttDeps>): SttDeps {
     removeFile: vi.fn(),
     fileExists: vi.fn(() => false),
     findBin: vi.fn(() => null),
-    getEnv: vi.fn((name: string) => (name === 'GEMINI_API_KEY' ? undefined : 'test-key')),
+    getEnv: vi.fn((name: string) =>
+      name === 'GEMINI_API_KEY' || name === 'XAI_API_KEY'
+        ? undefined
+        : 'test-key',
+    ),
     ...over,
   };
 }
@@ -252,6 +261,7 @@ describe('transcribe — quota/rate-limit fallback (free-tier Groq)', () => {
       // frustrada (mesmo tratamento dos outros), então aparece primeiro.
       expect(result.attempts.map((a) => a.provider)).toEqual([
         'gemini',
+        'xai',
         'groq',
         'openai',
         'local-whisper',
@@ -384,7 +394,13 @@ describe('transcribe — passive wake', () => {
 describe('transcribe — Gemini 3.5 Transcribe (Interactions API)', () => {
   /** deps com chave do Gemini presente — é ela que põe o Gemini na cabeça. */
   function geminiDeps(over: Partial<SttDeps> = {}): SttDeps {
-    return deps({ getEnv: vi.fn(() => 'test-key'), ...over });
+    return deps({
+      // xAI segue sem chave: os testes desta suíte exercitam Gemini→Whisper.
+      getEnv: vi.fn((name: string) =>
+        name === 'XAI_API_KEY' ? undefined : 'test-key',
+      ),
+      ...over,
+    });
   }
 
   it('monta o request do Interactions API: áudio inline, x-goog-api-key, verbatim', async () => {
@@ -683,5 +699,210 @@ describe('extractGeminiGenerateContentTranscript', () => {
     const { extractGeminiGenerateContentTranscript } = await import('./stt-service');
     expect(extractGeminiGenerateContentTranscript({})).toBe('');
     expect(extractGeminiGenerateContentTranscript(null)).toBe('');
+  });
+});
+
+describe('transcribe — Grok Voice Transcribe 2.0 (xAI)', () => {
+  /** deps com XAI_API_KEY presente — o resto da cadeia segue sem chave. */
+  function xaiDeps(over: Partial<SttDeps> = {}): SttDeps {
+    return deps({
+      getEnv: vi.fn((name: string) =>
+        name === 'XAI_API_KEY' ? 'xai-test-key' : undefined,
+      ),
+      ...over,
+    });
+  }
+
+  function xaiConfig(): VoiceConfig {
+    return { ...config(), stt: DEFAULT_XAI_STT };
+  }
+
+  function formEntries(init: RequestInit | undefined): Array<[string, FormDataEntryValue]> {
+    return [...(init?.body as FormData).entries()];
+  }
+
+  it('monta o multipart na ordem exigida: opções antes de file, file por último', async () => {
+    let url: string | undefined;
+    let init: RequestInit | undefined;
+    const fetchImpl = vi.fn(async (u: string | URL | Request, i?: RequestInit) => {
+      url = String(u);
+      init = i;
+      return jsonResponse(200, { text: 'commit e push no worktree' });
+    }) as unknown as typeof fetch;
+
+    const result = await transcribe(
+      { ...REQ, prompt: 'code priming' },
+      xaiConfig(),
+      PROBES,
+      xaiDeps({ fetchImpl }),
+    );
+
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.provider).toBe('xai');
+    expect(url).toBe('https://api.x.ai/v1/stt');
+    const headers = init?.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer xai-test-key');
+
+    const keys = formEntries(init).map(([k]) => k);
+    expect(keys[0]).toBe('model');
+    expect(keys.at(-1)).toBe('file');
+    const firstFile = keys.indexOf('file');
+    for (const option of ['model', 'language', 'format', 'keyterm']) {
+      expect(keys.indexOf(option)).toBeGreaterThanOrEqual(0);
+      expect(keys.indexOf(option)).toBeLessThan(firstFile);
+    }
+
+    const form = init?.body as FormData;
+    expect(form.get('model')).toBe('grok-voice-transcribe-2.0');
+    expect(form.get('language')).toBe('pt');
+    // `format=true` (inverse text normalization) exige language — sempre junto.
+    expect(form.get('format')).toBe('true');
+    // Modo CODE (req.prompt): keyterm = vocabulário técnico, não o prompt cru.
+    const keyterms = form.getAll('keyterm');
+    expect(keyterms.length).toBeGreaterThan(0);
+    expect(keyterms.length).toBeLessThanOrEqual(100);
+    expect(keyterms).toContain('worktree');
+    expect(form.has('prompt')).toBe(false);
+    const file = form.get('file') as File;
+    expect(file.name).toBe('audio.wav');
+    expect(file.type).toBe('audio/wav');
+  });
+
+  it('passive-wake envia a wake word como keyterm único', async () => {
+    const forms: FormData[] = [];
+    const fetchImpl = vi.fn(async (_u: string | URL | Request, i?: RequestInit) => {
+      forms.push(i?.body as FormData);
+      return jsonResponse(200, { text: 'jarvis' });
+    }) as unknown as typeof fetch;
+
+    const result = await transcribe(
+      { ...REQ, purpose: 'passive-wake', budgetMs: 3_500, passiveWakeWord: 'Jarvis' },
+      xaiConfig(),
+      PROBES,
+      xaiDeps({ fetchImpl }),
+    );
+
+    expect(result.ok).toBe(true);
+    const form = forms[0]!;
+    expect(form.getAll('keyterm')).toEqual(['Jarvis']);
+    // language vem do plugin ('pt'), então format=true acompanha.
+    expect(form.get('format')).toBe('true');
+    expect(form.get('language')).toBe('pt');
+  });
+
+  it('pcm cru exige audio_format+sample_rate; taxa fora da lista é recusada sem fetch', async () => {
+    let lastForm: FormData | undefined;
+    const fetchImpl = vi.fn(async (_u: string | URL | Request, i?: RequestInit) => {
+      lastForm = i?.body as FormData;
+      return jsonResponse(200, { text: 'pcm ok' });
+    }) as unknown as typeof fetch;
+
+    const pcm = { ...REQ, mime: 'audio/pcm' as const, sampleRate: 16_000 };
+    const result = await transcribe(pcm, xaiConfig(), PROBES, xaiDeps({ fetchImpl }));
+    expect(result.ok).toBe(true);
+    expect(lastForm?.get('audio_format')).toBe('pcm');
+    expect(lastForm?.get('sample_rate')).toBe('16000');
+    const file = lastForm?.get('file') as File;
+    expect(file.name).toBe('audio.pcm');
+    expect(file.type).toBe('application/octet-stream');
+
+    const refused = await transcribe(
+      { ...pcm, sampleRate: 11_025 },
+      xaiConfig(),
+      PROBES,
+      xaiDeps({ fetchImpl }),
+    );
+    expect(refused.ok).toBe(false);
+    expect(refused.attempts.find((a) => a.provider === 'xai')?.reason).toContain(
+      'sample rate 11025 not supported',
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('devolve o text da resposta; text vazio é "empty transcript"', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, { text: 'Olá, mundo.' })) as unknown as typeof fetch;
+    const ok = await transcribe(REQ, xaiConfig(), PROBES, xaiDeps({ fetchImpl }));
+    expect(ok).toMatchObject({ ok: true, text: 'Olá, mundo.', provider: 'xai' });
+
+    const empty = await transcribe(
+      REQ,
+      xaiConfig(),
+      PROBES,
+      xaiDeps({ fetchImpl: vi.fn(async () => jsonResponse(200, { text: '  ' })) as unknown as typeof fetch }),
+    );
+    expect(empty.ok).toBe(false);
+    expect(empty.attempts.find((a) => a.provider === 'xai')?.reason).toBe('empty transcript');
+  });
+
+  it('classifica 401 (auth), 429 (throttle), 500 (server) e timeout como o resto da cadeia', async () => {
+    const cases: Array<[Response | (() => never), RegExp]> = [
+      [jsonResponse(401, {}), /invalid key \(401\)/],
+      [jsonResponse(429, {}), /throttled \(429/],
+      [jsonResponse(500, {}), /server error \(500\)/],
+    ];
+    for (const [res, pattern] of cases) {
+      const result = await transcribe(
+        REQ,
+        xaiConfig(),
+        PROBES,
+        xaiDeps({ fetchImpl: vi.fn(async () => res) as unknown as typeof fetch }),
+      );
+      expect(result.ok).toBe(false);
+      expect(result.attempts.find((a) => a.provider === 'xai')?.reason).toMatch(pattern);
+    }
+    const unauth = await transcribe(
+      REQ,
+      xaiConfig(),
+      PROBES,
+      xaiDeps({ fetchImpl: vi.fn(async () => jsonResponse(401, {})) as unknown as typeof fetch }),
+    );
+    if (!unauth.ok) expect(unauth.needsKey).toBe(true);
+
+    const timeoutFetch = vi.fn(async () => {
+      const err = new Error('aborted');
+      err.name = 'TimeoutError';
+      throw err;
+    }) as unknown as typeof fetch;
+    const timed = await transcribe(REQ, xaiConfig(), PROBES, xaiDeps({ fetchImpl: timeoutFetch }));
+    expect(timed.ok).toBe(false);
+    expect(timed.attempts.find((a) => a.provider === 'xai')?.reason).toContain('timeout');
+  });
+
+  it('na cadeia default o xai atende quando só a sua chave existe', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, { text: 'via grok stt' })) as unknown as typeof fetch;
+    const getEnv = vi.fn((name: string) =>
+      name === 'XAI_API_KEY' ? 'xai-key' : undefined,
+    );
+    const result = await transcribe(REQ, config(), PROBES, deps({ fetchImpl, getEnv }));
+    expect(result).toMatchObject({ ok: true, provider: 'xai', text: 'via grok stt' });
+  });
+
+  it('sem XAI_API_KEY cai para o próximo hop com o motivo registrado', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(200, { text: 'via groq' })) as unknown as typeof fetch;
+    const getEnv = vi.fn((name: string) =>
+      name === 'GROQ_API_KEY' ? 'groq-key' : undefined,
+    );
+    const result = await transcribe(REQ, config(), PROBES, deps({ fetchImpl, getEnv }));
+    expect(result).toMatchObject({ ok: true, provider: 'groq' });
+    expect(result.attempts).toContainEqual({
+      provider: 'xai',
+      reason: 'XAI_API_KEY not set',
+    });
+  });
+
+  it('pedido de translate ainda transcreve literal — a API não tem rota de tradução', async () => {
+    let url: string | undefined;
+    const fetchImpl = vi.fn(async (u: string | URL | Request) => {
+      url = String(u);
+      return jsonResponse(200, { text: 'literal em pt' });
+    }) as unknown as typeof fetch;
+    const result = await transcribe(
+      { ...REQ, translate: true },
+      xaiConfig(),
+      PROBES,
+      xaiDeps({ fetchImpl }),
+    );
+    expect(result).toMatchObject({ ok: true, provider: 'xai', text: 'literal em pt' });
+    expect(url).toBe('https://api.x.ai/v1/stt');
   });
 });

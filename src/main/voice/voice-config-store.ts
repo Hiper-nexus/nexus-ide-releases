@@ -6,6 +6,7 @@ import {
   DEFAULT_GEMINI_LIVE_MODEL,
   DEFAULT_GEMINI_LIVE_VOICE,
   DEFAULT_VOICE_CONFIG,
+  DEFAULT_XAI_STT,
   LEGACY_GEMINI_LIVE_MODEL,
   LEGACY_GEMINI_LIVE_VOICE,
   flattenJarvisBrainProviders,
@@ -29,9 +30,11 @@ import type {
   VoiceRuntimeInfo,
 } from '../../shared/voice-ipc';
 import {
+  classifyKind,
   resolveChain,
   promoteProvider,
   flattenChain,
+  relink,
   type ProviderProbes,
 } from './provider-select';
 import {
@@ -255,6 +258,28 @@ export function loadVoiceConfig(): VoiceConfig {
       };
       migrated = true;
       console.log('[voice] STT: Gemini 3.5 Transcribe adicionado à cabeça da cadeia');
+    }
+    // O Grok Voice Transcribe 2.0 (xAI) entra logo após o ÚLTIMO link cloud
+    // da cadeia persistida — nunca no head (a preferência do usuário manda) e
+    // nunca em cadeias só-locais (offline/privacidade é escolha deliberada).
+    // As opções do seletor derivam da cadeia persistida: um link fora dela
+    // não pode ser escolhido — adicioná-lo não é promovê-lo.
+    const sttLinks = flattenChain(userConfig.stt);
+    const lastCloudIdx = sttLinks.reduce(
+      (acc, link, i) => (classifyKind(link) === 'cloud' ? i : acc),
+      -1,
+    );
+    if (
+      lastCloudIdx >= 0 &&
+      !sttLinks.some((link) => link.provider === 'xai')
+    ) {
+      userConfig.stt = relink([
+        ...sttLinks.slice(0, lastCloudIdx + 1),
+        DEFAULT_XAI_STT,
+        ...sttLinks.slice(lastCloudIdx + 1),
+      ]);
+      migrated = true;
+      console.log('[voice] STT: Grok Voice Transcribe 2.0 (xAI) adicionado à cadeia (seletor)');
     }
     // Keep focused-pane when the user (or peer ADE migration) chose dictation
     // into the active terminal — do not force Jarvis over NexusVoice-style PTT.

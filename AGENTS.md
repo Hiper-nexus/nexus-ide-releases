@@ -356,6 +356,15 @@ saber isto antes de mexer:
   pontuação e emoji são saída válida. O filtro de TUI remove somente famílias
   conhecidas de moldura/bloco/spinner; o piso de tokens cuida do ruído curto.
 
+## Voz: STT
+
+- **Grok Voice Transcribe 2.0 (xAI, provider `xai`)**: `POST api.x.ai/v1/stt`,
+  `model=grok-voice-transcribe-2.0`, `language=pt`+`format=true`, `keyterm` =
+  vocabulário CODE / wake word, `file` por último; chave `XAI_API_KEY` (mesma do
+  Grok realtime). Só transcreve (`TRANSCRIPTION_ONLY_STT_PROVIDERS`). Migração
+  insere o link após o último cloud da cadeia persistida, nunca no head;
+  cadeias só-local não recebem.
+
 ## TypeSafe / Jev (skill `typesafe-ai`)
 
 - Jev é um modelo de **julgamento tipado**, não de geração: `POST

@@ -264,3 +264,34 @@ describe('realtimeFallbackHasCredential', () => {
     ).toBe(false);
   });
 });
+
+describe('Grok Voice Transcribe 2.0 (xAI)', () => {
+  it('o schema aceita o link xai de fábrica', async () => {
+    const { DEFAULT_XAI_STT } = await import('./voice-config');
+    expect(voicePluginSchema.safeParse(DEFAULT_XAI_STT).success).toBe(true);
+  });
+
+  it('a cadeia default de STT é gemini → xai → groq → openai → local-whisper', () => {
+    const providers: string[] = [];
+    let node = DEFAULT_VOICE_CONFIG.stt as { provider?: string; fallback?: unknown } | undefined;
+    while (node?.provider) {
+      providers.push(node.provider);
+      node = node.fallback as typeof node;
+    }
+    expect(providers).toEqual([
+      'gemini',
+      'xai',
+      'groq',
+      'openai',
+      'local-whisper',
+    ]);
+  });
+
+  it('xai é transcription-only: não entrega PT→EN', async () => {
+    const { sttProviderTranslates } = await import('./voice-config');
+    expect(sttProviderTranslates('xai')).toBe(false);
+    // Whisper e Gemini seguem podendo traduzir.
+    expect(sttProviderTranslates('groq')).toBe(true);
+    expect(sttProviderTranslates('gemini')).toBe(true);
+  });
+});

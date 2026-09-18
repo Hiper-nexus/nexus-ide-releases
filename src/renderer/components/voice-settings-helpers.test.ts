@@ -34,3 +34,35 @@ describe('liveSmokeFailureMessage', () => {
     );
   });
 });
+
+describe('providerOption', () => {
+  it('mostra o nome amigável do provider com modelo e disponibilidade', async () => {
+    const { providerOption } = await import('./voice-settings-helpers');
+    expect(
+      providerOption({
+        provider: 'xai',
+        kind: 'cloud',
+        available: true,
+        model: 'grok-voice-transcribe-2.0',
+        reason: 'ready (XAI_API_KEY)',
+      }),
+    ).toBe('Grok Voice Transcribe 2.0 (xAI) · grok-voice-transcribe-2.0 · Disponível');
+    expect(
+      providerOption({
+        provider: 'groq',
+        kind: 'cloud',
+        available: false,
+        reason: 'GROQ_API_KEY not set',
+      }),
+    ).toBe('Groq · Indisponível');
+    // Provider desconhecido cai no id cru.
+    expect(
+      providerOption({
+        provider: 'custom-stt',
+        kind: 'cloud',
+        available: true,
+        reason: 'ready',
+      }),
+    ).toBe('custom-stt · Disponível');
+  });
+});

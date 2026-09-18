@@ -418,10 +418,13 @@ export type VoiceConfig = z.infer<typeof voiceConfigSchema>;
  * Provedores de STT que só TRANSCREVEM: não têm como entregar PT→EN. O Gemini
  * deixou de ser transcription-only (0.76.24): o modo english do ditado usa a
  * rota generativa (generateContent) que traduz; o Interactions API verbatim
- * segue para o modo literal e como etapa de alta acurácia. O conjunto fica
- * como mecanismo para futuros provedores transcription-only.
+ * segue para o modo literal e como etapa de alta acurácia. O Grok Voice
+ * Transcribe (xAI) SÓ transcreve — a API não tem endpoint de tradução — e a
+ * UI marca o modo como CODE·PT quando ele atende.
  */
-export const TRANSCRIPTION_ONLY_STT_PROVIDERS: ReadonlySet<string> = new Set([]);
+export const TRANSCRIPTION_ONLY_STT_PROVIDERS: ReadonlySet<string> = new Set([
+  'xai',
+]);
 
 /** O provedor consegue entregar PT→EN, ou só transcreve literal? */
 export function sttProviderTranslates(providerId: string): boolean {
@@ -474,11 +477,32 @@ export const DEFAULT_WHISPER_STT: VoicePlugin = {
 };
 
 /**
+ * Grok Voice Transcribe 2.0 (xAI): batch STT barato e rápido (70–500 ms,
+ * US$ 0,10/h), multipart em `POST /v1/stt` com `keyterm` como viés de
+ * vocabulário (wake word / jargão CODE). SÓ transcreve — a API não tem
+ * endpoint de tradução (`TRANSCRIPTION_ONLY_STT_PROVIDERS`). A chave é a
+ * mesma `XAI_API_KEY` do Grok realtime.
+ */
+export const XAI_STT_ENDPOINT = 'https://api.x.ai/v1/stt';
+export const DEFAULT_XAI_STT_MODEL = 'grok-voice-transcribe-2.0';
+export const DEFAULT_XAI_STT: VoicePlugin = {
+  type: 'stt',
+  provider: 'xai',
+  endpoint: XAI_STT_ENDPOINT,
+  auth: { type: 'api_key', envVar: 'XAI_API_KEY' },
+  model: DEFAULT_XAI_STT_MODEL,
+  translate: false,
+  streaming: false,
+  language: 'pt',
+  outputMode: 'english',
+};
+
+/**
  * The shipped default: Gemini 3.5 Transcribe (transcrição literal, usada quando
- * existe GEMINI_API_KEY) → cadeia Whisper (Groq translate → OpenAI →
- * whisper.cpp local); OpenAI TTS → Piper → macOS `say`. macOS `say` is the
- * always-available terminal fallback (no key, no install), so the pipeline can
- * always speak even with zero config.
+ * existe GEMINI_API_KEY) → Grok Voice Transcribe 2.0 (xAI) → cadeia Whisper
+ * (Groq translate → OpenAI → whisper.cpp local); OpenAI TTS → Piper → macOS
+ * `say`. macOS `say` is the always-available terminal fallback (no key, no
+ * install), so the pipeline can always speak even with zero config.
  */
 export const DEFAULT_VOICE_CONFIG: VoiceConfig = {
   enabled: true,
@@ -542,7 +566,12 @@ export const DEFAULT_VOICE_CONFIG: VoiceConfig = {
     translate: false,
     language: 'pt',
     outputMode: 'english',
-    fallback: DEFAULT_WHISPER_STT,
+    // Grok Voice Transcribe logo abaixo do head: batch rápido/barato na mesma
+    // XAI_API_KEY do realtime, antes da cadeia Whisper (Groq → OpenAI → local).
+    fallback: {
+      ...DEFAULT_XAI_STT,
+      fallback: DEFAULT_WHISPER_STT,
+    },
   },
   tts: {
     type: 'tts',

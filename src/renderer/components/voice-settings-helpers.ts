@@ -11,10 +11,19 @@ import {
 
 type RealtimeTransport = Exclude<JarvisLiveTransport, 'classic'>;
 
+const PROVIDER_DISPLAY: Record<string, string> = {
+  xai: 'Grok Voice Transcribe 2.0 (xAI)',
+  gemini: 'Gemini',
+  groq: 'Groq',
+  openai: 'OpenAI',
+  'local-whisper': 'Whisper local',
+};
+
 export function providerOption(provider: ResolvedProvider): string {
   const tag = provider.available ? 'Disponível' : 'Indisponível';
   const model = provider.model ? ` · ${provider.model}` : '';
-  return `${provider.provider}${model} · ${tag}`;
+  const name = PROVIDER_DISPLAY[provider.provider] ?? provider.provider;
+  return `${name}${model} · ${tag}`;
 }
 
 export function keyStatusText(key: VoiceApiKeyStatus): string {

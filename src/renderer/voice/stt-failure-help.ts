@@ -9,6 +9,7 @@ import type { TranscribeResult } from '../../shared/voice-ipc';
 
 const PROVIDER_LABELS: Record<string, string> = {
   gemini: 'Gemini',
+  xai: 'Grok Voice Transcribe (xAI)',
   groq: 'Groq',
   openai: 'OpenAI',
   'local-whisper': 'Whisper local',

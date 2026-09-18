@@ -83,7 +83,7 @@ on a hidden hardcoded provider.
 ```
 Hold Cmd+Shift+Space
   → getUserMedia 16 kHz mono + AudioWorklet PCM (renderer)
-  → STT chain (main): Groq translate → OpenAI → whisper.cpp local   (PT → EN)
+  → STT chain (main): Gemini → xAI Grok → Groq → OpenAI → whisper.cpp local
   → Jarvis brain (main): Gemini → OpenAI → Groq                  (JSON action)
   → inject text into the focused pane's PTY (same path as typing)
   → capture the agent's reply, condense to 1–3 sentences (speakMode: summary)
@@ -105,6 +105,7 @@ Secrets never reach the renderer or shell panes — they are read from
 | Provider | Env var | Notes |
 |----------|---------|-------|
 | Gemini (Jarvis brain default + **STT default**) | `GEMINI_API_KEY` | brain `gemini-3.5-flash`; STT `gemini-3.5-transcribe` (Interactions API) |
+| Grok Voice Transcribe 2.0 (xAI, STT) | `XAI_API_KEY` | STT `grok-voice-transcribe-2.0` (`/v1/stt`); mesma chave do Grok realtime. **Transcription-only** — CODE mode shows `CODE·PT` |
 | OpenAI (Jarvis brain fallback + STT/TTS) | `OPENAI_API_KEY` | brain `gpt-4o-mini`, STT `whisper-1`, TTS `tts-1` |
 | Groq (STT Whisper) | `GROQ_API_KEY` | brain `llama-3.3-70b-versatile`, STT `whisper-large-v3-turbo` |
 | whisper.cpp (STT last resort) | — (keyless) | `brew install whisper-cpp` + a model |
@@ -112,8 +113,9 @@ Secrets never reach the renderer or shell panes — they are read from
 | macOS `say` (TTS last resort) | — (keyless) | always available; voice `Luciana` |
 
 **STT default is Gemini when `GEMINI_API_KEY` is present, otherwise Groq.** The
-head of the `stt` chain is the Gemini link; the previous Whisper chain
-(groq → openai → whisper.cpp) sits under it as its `fallback`. Selection is by
+head of the `stt` chain is the Gemini link; the Grok Voice Transcribe 2.0 link
+(xAI, `XAI_API_KEY` — the same key the Grok realtime uses) sits right under it,
+then the Whisper chain (groq → openai → whisper.cpp). Selection is by
 key presence only — no separate "which provider" logic.
 
 `gemini-3.5-transcribe` **transcribes only** — the Interactions API has no
