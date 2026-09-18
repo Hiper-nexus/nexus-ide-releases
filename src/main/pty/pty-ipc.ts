@@ -425,9 +425,6 @@ function spawnCliPtyAgentPane(
     if (request.accountId && isFileAuthAdapter(adapter.id)) {
       trackManagedSession(sessionId, adapter.id, request.accountId);
     }
-    if (overrides.accountChoice) {
-      recordAccountChoiceReceipt(sessionId, overrides.accountChoice);
-    }
     const settlement = settleSpawnedMainOwnedAgentSession({
       backend: "PTY",
       owner: sender,
@@ -440,6 +437,11 @@ function spawnCliPtyAgentPane(
       terminate: () => orchTerminateSession(sessionId),
     });
     if (settlement) return settlement;
+    // O recibo só é registrado depois que o spawn se firma no Main — uma
+    // sessão rejeitada pelo settlement não pode expor conta.
+    if (overrides.accountChoice) {
+      recordAccountChoiceReceipt(sessionId, overrides.accountChoice);
+    }
     bindCommandTracking(
       sessionId,
       request.paneId ?? sessionId,

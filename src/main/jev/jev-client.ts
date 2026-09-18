@@ -279,7 +279,9 @@ export async function judge(
           ? 'rate-limited'
           : res.status === 529 || res.status >= 500
             ? 'server-error'
-            : 'network';
+            : res.status >= 400 && res.status < 500
+              ? 'client-error'
+              : 'network';
       if (retryable && attempt === 0) {
         const retryAfter = Number(res.headers.get('retry-after'));
         // retry-after do servidor é um hint, não uma ordem: teto de 2s

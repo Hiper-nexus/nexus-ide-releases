@@ -25,6 +25,7 @@ export type JevDecisionSurface =
 export type JevNoAnswerReason =
   | 'timeout'
   | 'rate-limited'
+  | 'client-error'
   | 'server-error'
   | 'network'
   | 'malformed'
@@ -44,8 +45,9 @@ export interface JevDecisionEntry {
   probabilities: Record<string, number>;
   confidence?: Record<string, number>;
   decision: string;
-  inputTokens: number;
-  usd: number;
+  /** `null` nas linhas sem resposta — métrica ausente, nunca zero fabricado. */
+  inputTokens: number | null;
+  usd: number | null;
   feedback?: 'right' | 'wrong';
   feedbackAt?: number;
 }
@@ -162,8 +164,8 @@ export function recordJevNoAnswer(
       questions: [],
       probabilities: {},
       decision: 'rule',
-      inputTokens: 0,
-      usd: 0,
+      inputTokens: null,
+      usd: null,
     },
     deps,
   );
@@ -260,8 +262,8 @@ function addToWindow(window: JevWindowStats, entry: JevDecisionEntry): void {
     return;
   }
   window.answered += 1;
-  window.usd += entry.usd;
-  window.inputTokens += entry.inputTokens;
+  window.usd += entry.usd ?? 0;
+  window.inputTokens += entry.inputTokens ?? 0;
 }
 
 export function jevDecisionStats(deps?: {
@@ -305,13 +307,13 @@ export function jevDecisionStats(deps?: {
       continue;
     }
     stats.totals.calls += 1;
-    stats.totals.usd += entry.usd;
-    stats.totals.inputTokens += entry.inputTokens;
+    stats.totals.usd += entry.usd ?? 0;
+    stats.totals.inputTokens += entry.inputTokens ?? 0;
     bucket.calls += 1;
-    bucket.usd += entry.usd;
+    bucket.usd += entry.usd ?? 0;
     if (entry.at >= last30dFrom) {
       bucket.last30d.jev += 1;
-      bucket.last30d.usd += entry.usd;
+      bucket.last30d.usd += entry.usd ?? 0;
     }
     bucket.decisions[entry.decision] = (bucket.decisions[entry.decision] ?? 0) + 1;
     if (entry.feedback === 'right') bucket.feedback.right += 1;

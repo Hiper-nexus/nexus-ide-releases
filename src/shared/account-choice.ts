@@ -53,9 +53,13 @@ export interface AccountChoiceReceipt {
 
 /**
  * Mascara o rótulo da conta para o recibo: e-mail vira
- * `g•••@l•••.com.br` (1º char do local + 1º char do domínio + sufixo do TLD
- * a partir do primeiro ponto); não-e-mail vira `ab•••yz` quando > 6 chars,
- * senão `•••`. Nunca inclui id, fingerprint nem token.
+ * `g•••@l•••.com.br` (1º char do local + 1º char do domínio + sufixo público
+ * do domínio). O sufixo nunca guarda subdomínios: 2 rótulos → só o último
+ * (`gmail.com` → `.com`); ≥ 3 rótulos e o penúltimo com ≤ 3 chars → os dois
+ * últimos (`lupygo.com.br` → `.com.br`, `x.co.uk` → `.co.uk`); senão só o
+ * último (`mail.example.com` → `.com`); 1 rótulo → sem sufixo. Não-e-mail
+ * vira `ab•••yz` quando > 6 chars, senão `•••`. Nunca inclui id,
+ * fingerprint nem token.
  */
 export function maskAccountLabel(label: string): string {
   const trimmed = label.trim();
@@ -63,8 +67,17 @@ export function maskAccountLabel(label: string): string {
   if (at > 0 && at < trimmed.length - 1) {
     const local = trimmed.slice(0, at);
     const domain = trimmed.slice(at + 1);
-    const firstDot = domain.indexOf('.');
-    const suffix = firstDot >= 0 ? domain.slice(firstDot) : '';
+    const labels = domain.split('.');
+    let suffix = '';
+    if (labels.length === 2) {
+      suffix = `.${labels[1]}`;
+    } else if (labels.length >= 3) {
+      const secondLast = labels[labels.length - 2];
+      suffix =
+        secondLast.length <= 3
+          ? `.${secondLast}.${labels[labels.length - 1]}`
+          : `.${labels[labels.length - 1]}`;
+    }
     return `${local[0]}•••@${domain[0]}•••${suffix}`;
   }
   if (trimmed.length > 6) {

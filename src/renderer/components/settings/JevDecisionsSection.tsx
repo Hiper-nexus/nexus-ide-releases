@@ -25,6 +25,7 @@ function surfaceLabel(surface: string): string {
 }
 
 function formatUsd(usd: number): string {
+  if (usd > 0 && usd < 0.0001) return '< US$ 0,0001';
   return `US$ ${usd.toFixed(4)}`;
 }
 

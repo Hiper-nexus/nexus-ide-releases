@@ -216,8 +216,8 @@ describe('judge — registro central de consultas sem resposta', () => {
       surface: 'terminalTriage',
       sessionId: 'sess-1',
       decision: 'rule',
-      inputTokens: 0,
-      usd: 0,
+      inputTokens: null,
+      usd: null,
     });
     // nunca o texto do erro
     const raw = fs.readFileSync(path.join(logDir, 'decisions.jsonl'), 'utf8');
@@ -234,6 +234,20 @@ describe('judge — registro central de consultas sem resposta', () => {
     const lines = noAnswerLines();
     expect(lines).toHaveLength(1);
     expect(lines[0].reason).toBe('server-error');
+  });
+
+  it('HTTP 400 grava client-error (4xx que não é 429)', async () => {
+    const mockFetch = vi.fn(async () =>
+      jsonResponse(400, { message: 'bad request' }),
+    );
+    const result = await judge(
+      { state: 'x', questions: { q: question }, surface: 'rankTool' },
+      { fetch: mockFetch as unknown as typeof fetch, resolveKey: () => 'k' },
+    );
+    expect(result).toBeNull();
+    const lines = noAnswerLines();
+    expect(lines).toHaveLength(1);
+    expect(lines[0].reason).toBe('client-error');
   });
 
   it('429 depois 200 não grava no-answer nem decisão (a decisão é da superfície)', async () => {

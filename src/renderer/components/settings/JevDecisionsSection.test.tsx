@@ -111,6 +111,10 @@ describe('JevDecisionsSection', () => {
     expect(host.textContent).toContain('1 sem resposta');
     expect(host.textContent).toContain('US$ 0,042 por milhão');
     expect(host.textContent).toContain('2 pelo Jev · 1 pela regra');
+    // Custo miúdo (0.0000252) não vira "US$ 0.0000": mostra o teto.
+    expect(host.textContent).toContain('< US$ 0,0001');
+    // 0.0001 exato segue no formato de 4 casas.
+    expect(host.textContent).toContain('US$ 0.0001');
   });
 
   it('lists decisions and sends feedback', async () => {

@@ -64,8 +64,9 @@ export interface JevDecisionRow {
   probabilities: Record<string, number>;
   confidence?: Record<string, number>;
   decision: string;
-  inputTokens: number;
-  usd: number;
+  /** `null` nas linhas sem resposta — métrica ausente, nunca zero fabricado. */
+  inputTokens: number | null;
+  usd: number | null;
   feedback?: 'right' | 'wrong';
   feedbackAt?: number;
 }

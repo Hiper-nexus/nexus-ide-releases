@@ -139,8 +139,8 @@ describe('jev decision log', () => {
     expect(noAnswer?.reason).toBe('timeout');
     expect(noAnswer?.decision).toBe('rule');
     expect(noAnswer?.questions).toEqual([]);
-    expect(noAnswer?.usd).toBe(0);
-    expect(noAnswer?.inputTokens).toBe(0);
+    expect(noAnswer?.usd).toBeNull();
+    expect(noAnswer?.inputTokens).toBeNull();
   });
 
   function writeEntry(d: string, e: Partial<JevDecisionEntry>): void {
@@ -175,8 +175,8 @@ describe('jev decision log', () => {
       questions: [],
       probabilities: {},
       decision: 'rule',
-      inputTokens: 0,
-      usd: 0,
+      inputTokens: null,
+      usd: null,
     });
     const stats = jevDecisionStats({ dir: d, now });
     expect(stats.windows.today.consultations).toBe(2);

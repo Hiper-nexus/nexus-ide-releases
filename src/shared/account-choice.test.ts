@@ -8,6 +8,14 @@ describe('maskAccountLabel', () => {
     expect(maskAccountLabel('maria.silva@empresa.io')).toBe('m•••@e•••.io');
   });
 
+  it('o sufixo nunca guarda subdomínios internos', () => {
+    expect(maskAccountLabel('ana@gmail.com')).toBe('a•••@g•••.com');
+    expect(maskAccountLabel('ops@mail.example.com')).toBe('o•••@m•••.com');
+    expect(maskAccountLabel('x@y.co.uk')).toBe('x•••@y•••.co.uk');
+    // Penúltimo rótulo > 3 chars → cai no último mesmo com 3+ rótulos.
+    expect(maskAccountLabel('u@mail.empresa.com.br')).toBe('u•••@m•••.com.br');
+  });
+
   it('domínio sem ponto mantém só o 1º char', () => {
     expect(maskAccountLabel('ops@localhost')).toBe('o•••@l•••');
   });
