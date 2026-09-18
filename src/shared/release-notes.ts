@@ -4152,6 +4152,115 @@ export const RELEASE_07647: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.53',
+  date: '2026-09-18',
+  codename: 'Push sai do pane (canal Windows)',
+  summary:
+    'O canal Windows x64 alcança a 0.76.52: cada canal publica a própria ' +
+    'próxima versão estável, e quem atualiza da 0.76.41 recebe de uma vez o ' +
+    'git push saindo de dentro do pane, o pane Claude que abre logado de ' +
+    'primeira, o fim do re-baixar ~500 MB de MCPs a cada abertura, a era Jev ' +
+    'no despacho e no fan-out, pane dormindo com "Acordar" e o medidor de ' +
+    'velocidade por modelo na barra do próprio pane.',
+  highlights: [
+    {
+      title: 'Git push de dentro do pane (F-579/F-580/F-581)',
+      detail:
+        'O HOME privado da família Claude nascia sem ~/.gitconfig, ~/.ssh e ' +
+        '~/.config/gh: credential helper sumido, SSH sem chave, push pedindo ' +
+        'usuário. Panes graváveis passam a receber a identidade de ' +
+        'desenvolvedor do operador; o runner de git do Main volta a honrar a ' +
+        'config global (gh auth git-credential, GCM, user.name/email) com a ' +
+        'config local executável do repo seguindo recusada; e ' +
+        'nexus_git_sync fica alcançável pela mão do operador em vibe.',
+    },
+    {
+      title: 'Pane Claude abre logado no Windows (F-576)',
+      detail:
+        'O spawn escrevia CLAUDE_CONFIG_DIR="" para neutralizar um path ' +
+        'herdado, só que vazio não é ausência: o resolver do binário aceitava ' +
+        '"" via ?? e resolvia .credentials.json relativo ao cwd do pane — todo ' +
+        'pane novo nascia em "Not logged in · Run /login" na máquina ' +
+        'autenticada. A chave agora é removida de verdade do env do filho ' +
+        '(envRemove) e o login feito no pane atravessa para a credencial de ' +
+        'verdade.',
+    },
+    {
+      title: 'Pane sobe a quente (F-578)',
+      detail:
+        'Os servidores MCP npx/uvx do perfil herdado resolviam o cache pelo ' +
+        'HOME — descartável no pane. Medido no operador: ~475 MB baixados em ' +
+        '<1 min dentro de cada overlay, main a ~99% de CPU em fs durante o ' +
+        'spawn, o "tudo fica carregando". Agora o cache de pacotes aponta ' +
+        'para <userData>/provider-cache/<adapter>: baixa uma vez por máquina, ' +
+        'e todo pane seguinte sobe a quente.',
+    },
+    {
+      title: 'Jev decide, Nexus executa',
+      detail:
+        'Toda chamada nexus_* com efeito dentro de missão passa por três ' +
+        'perguntas ao Jev (TypeSafe): coerente com o objetivo? argumento ' +
+        'injetado? efeito irreversível? Injeção ≥ 0.8 nega com auditoria; ' +
+        'destrutivo sem relação com o objetivo traz o modal de volta. O agente ' +
+        'ganha nexus_tool_pick, o roteamento vira nexus_route_task calibrado e ' +
+        'o julgamento tipado segue em nexus_judge — e o fluxo "abra X panes e ' +
+        'faça Y" sem missão passa a rotear pelo motor do route_task. Sem ' +
+        'chave TypeSafe nada disso existe — o Nexus é o clássico. ' +
+        'nexus_computer_do (piloto de desktop) é macOS nesta entrega.',
+    },
+    {
+      title: 'Pane dormindo, guardião e hub MCP (F-572/F-573)',
+      detail:
+        'Pane ocioso sem dono é ESTACIONADO após 30 min com o scrollback e ' +
+        'botão "Acordar" que retoma a mesma conversa; memória de pane ' +
+        'dormindo: zero. O teto de panes vira aviso (bloqueio só sob pressão ' +
+        'real, limites proporcionais à RAM), o reaper age sob pressão, o ' +
+        'cabeçalho mostra o custo de cada pane e os servidores stdio do ' +
+        'perfil sobem UMA vez no main, expostos por HTTP aos panes da mão do ' +
+        'operador.',
+    },
+    {
+      title: 'Velocidade do modelo, tok/s e TTFT',
+      detail:
+        'Ajustes → Diagnóstico mede quanto cada LLM gera por segundo na ' +
+        'rodada aberta, latência até o 1º token, média/pico e curva — uma ' +
+        'linha por modelo, somando panes do mesmo LLM. O chip de tok/s fica ' +
+        'na barra do próprio pane, ao lado do badge de custo, e a busca é ' +
+        'estrita: sem amostra própria, o chip não ocupa espaço. Métrica sem ' +
+        'lastro aparece como travessão, nunca zero falso.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Colar mídia no pane volta — e diz o motivo (F-582)',
+      detail:
+        'Paste aceita qualquer tipo de mídia, lê text/uri-list, imagem ' +
+        'embutida em HTML e o pasteboard do sistema; arquivo com caminho real ' +
+        'vai path-first em stream até 256 MiB. Recusa mostra a causa real em ' +
+        'toast em vez de silêncio.',
+    },
+    {
+      title: 'Swap em uso não trava pane novo (F-574)',
+      detail:
+        'O teto de 1 GB de swap recusava todo spawn depois de um pico ' +
+        'antigo — no Windows o "commit" do relatório é memória prometida, ' +
+        'não pressão viva. O gate de swap nasce em 0 (arma por máquina com ' +
+        'NEXUS_PANE_MAX_SWAP_MB) e o sinal passa a ser a memória disponível ' +
+        'de fato.',
+    },
+    {
+      title: 'Medidor de velocidade endurecido',
+      detail:
+        'O observador de input do PTY passa a respeitar Backspace, Ctrl+U, ' +
+        'Ctrl+W e CRLF, ignorar Enter vazio e não descartar respostas válidas ' +
+        'de pontuação ou emoji como ruído de TUI; a contagem do transcript é ' +
+        'retida enquanto a rodada está aberta e o filtro de TUI separa ' +
+        'zero-width dos glifos de moldura sem quebrar cluster de grafema.',
+    },
+  ],
+};
+
+export const RELEASE_07652: AppRelease = {
   version: '0.76.52',
   date: '2026-09-18',
   codename: 'Push sai do pane',
