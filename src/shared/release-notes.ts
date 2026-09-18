@@ -4152,6 +4152,113 @@ export const RELEASE_07647: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.52',
+  date: '2026-09-18',
+  codename: 'Push sai do pane',
+  summary:
+    'Três travas que impediam um agente dentro do pane de fazer git push ' +
+    'caem de uma vez: o HOME privado da família Claude passa a carregar a ' +
+    'identidade git/SSH/gh do operador, o runner de git do Main volta a ' +
+    'honrar o credential helper, e nexus_git_sync fica alcançável pela mão ' +
+    'do operador. O Jev entra no fluxo "abra X panes e faça Y" sem missão — ' +
+    'roteamento automático no spawn, guarda só-injeção nos filhos, revisão ' +
+    'do handoff e triagem de Bash. E colar mídia no pane volta a funcionar, ' +
+    'dizendo o motivo real quando não dá.',
+  highlights: [
+    {
+      title: 'Git push de dentro do pane (F-579)',
+      detail:
+        'Desde o HOME privado por checkout (F-567) o pane da família Claude ' +
+        'nascia sem ~/.gitconfig, ~/.ssh e ~/.config/gh: o credential helper ' +
+        'do gh sumia, o SSH não achava chave e todo push morria pedindo ' +
+        'usuário. Panes graváveis passam a receber a identidade de ' +
+        'desenvolvedor (.gitconfig, .git-credentials, .netrc, .ssh, .gnupg, ' +
+        '.config/git, .config/gh); a lane sem gate hooks recebe o HOME real ' +
+        'inteiro menos o estado de conversa Claude, .nexus, Library e ' +
+        '.Trash. Lane somente-leitura não recebe nada e o teardown remove ' +
+        'os links sem segui-los. Nenhuma fronteira foi relaxada: pane ' +
+        'Claude gravável nunca foi confinado pelo kernel — a omissão só ' +
+        'quebrava push, commit e gh.',
+    },
+    {
+      title:
+        'nexus_git_push e o push antes do PR voltam a funcionar em HTTPS ' +
+        '(F-580)',
+      detail:
+        'O runner de git do Main setava GIT_CONFIG_NOSYSTEM e ' +
+        'GIT_CONFIG_GLOBAL=/dev/null e descartava gh auth git-credential, ' +
+        'osxkeychain, GCM e user.name/email — "could not read Username" em ' +
+        'todo remoto HTTPS. A config global e de sistema do usuário volta ' +
+        'a valer; a config LOCAL executável do repositório continua ' +
+        'recusada e hooks, fsmonitor, gpg e protocolos seguem pinados por ' +
+        'argv.',
+    },
+    {
+      title: 'nexus_git_sync na mão do operador (F-581)',
+      detail:
+        'Fast-forward verificado, subconjunto estrito do git_pull que o ' +
+        'pane do operador já executa em vibe — negá-lo era inconsistência, ' +
+        'não fronteira. Só ui_action mantém autoridade de origem renderer; ' +
+        'workers de missão não mudam.',
+    },
+    {
+      title: 'Jev no fan-out sem missão',
+      detail:
+        'nexus_pane_spawn sem adapterId roteia task ?? prompt pelo mesmo ' +
+        'motor do nexus_route_task (tier e especialidade pelo Jev, tabela ' +
+        'de custo/capacidade) e devolve o recibo harness.source auto-route ' +
+        'com tier, especialidade e motivo; a descrição do route_task deixa ' +
+        'de ser "orchestrator-only". Filhos do operador herdam o allowlist ' +
+        'dele em Autopilot (Hardened continua atenuado) e sempre recebem ' +
+        '--strict-mcp-config / preserveUserMcp=false — um helper nunca ' +
+        'carrega o perfil MCP global (F-572). A guarda Jev passa a cobrir ' +
+        'os filhos em modo só-injeção (o prompt do spawn é o objetivo; ' +
+        'deny ≥ 0.8, nunca modal); a mão do operador segue sem julgamento. ' +
+        'O handoff sem missão passa pela mesma revisão de evidência (uma ' +
+        'devolução, depois "[evidência fraca]" no resumo entregue ao pai). ' +
+        'E o hook PostToolUseFailure com matcher Bash posta em /hook/triage: ' +
+        'a triagem Jev da falha volta ao Claude como additionalContext, sem ' +
+        'nunca bloquear.',
+    },
+    {
+      title: 'Colar mídia no pane volta a funcionar — e diz o motivo (F-582)',
+      detail:
+        'Vídeo, áudio e imagem baixados do WhatsApp: o paste aceita ' +
+        'qualquer tipo (vídeo era descartado em silêncio), lê text/uri-list ' +
+        'e DownloadURL, a imagem embutida em HTML e, por fim, o pasteboard ' +
+        'do sistema (public.file-url do Finder) via Main. Arquivo com ' +
+        'caminho real vai path-first pelo Main em stream até 256 MiB — ' +
+        'base64 e downloads seguem em 14 MiB. Texto colado (URL, caminho) ' +
+        'nunca é interceptado. Toda recusa mostra a causa real em vez de ' +
+        '"não pôde ser copiado para a missão" — inclusive a dica de ' +
+        'Privacidade do macOS para ~/Downloads. Arrastar direto da janela ' +
+        'do WhatsApp continua limitado pela promessa de arquivo que o ' +
+        'Electron não materializa.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Espelho de anexos só até 14 MiB',
+      detail:
+        'A cópia de conveniência em ~/.nexus/attachments/mission-context/ ' +
+        'deixa de duplicar vídeos grandes na home; o arquivo do workspace ' +
+        'é o único acima do teto.',
+    },
+    {
+      title: 'Triagem ignora falha sem comando',
+      detail:
+        'Um PostToolUseFailure sem tool_input.command não chega ao Jev.',
+    },
+    {
+      title: 'Consulta ao pasteboard que falha vira aviso',
+      detail:
+        'Depois de interceptar a colagem, uma falha ao consultar a área ' +
+        'de transferência do sistema avisa no toast em vez de ficar muda.',
+    },
+  ],
+};
+
+export const RELEASE_07651: AppRelease = {
   version: '0.76.51',
   date: '2026-09-17',
   codename: 'Jev decide, Nexus executa',
