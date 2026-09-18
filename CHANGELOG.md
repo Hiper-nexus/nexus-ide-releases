@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.57 — Jev sugere a skill
+
+- **Skill sugerida pelo Jev no roteamento**: `nexus_route_task` devolve `skillSuggestion` — o catálogo das skills bundled (impeccable, archify, superpowers e suas sub-skills, bmad-templates, dembrandt, typesafe-ai e as skills nativas do Nexus) é levantado em código a partir do frontmatter de cada SKILL.md, e UMA pergunta `choice` deixa o Jev escolher no máximo uma skill claramente útil ("none" quando nenhuma). Aceita só com confiança ≥ 0,6, filtrada pelas skills permitidas ao chamador (por pacote ou por nome); registrado no diário de decisões (surface `taskRouting`); sem chave TypeSafe, null.
+- **A dica chega ao pane do fan-out**: quando `nexus_pane_spawn` roteia sozinho (sem `adapterId`), o recibo `route.skill` traz a sugestão e, com confiança ≥ 0,7 e skill permitida ao filho, uma linha é acrescentada ao prompt — "Skill sugerida pelo Nexus: \<skill\> — leia a SKILL.md dela antes de começar". Nunca inventa prompt nem instala nada: o Jev sugere, o pane decide.
+- **Extração do browser em uma chamada**: `nexus_browser_extract` resolve em código o que é determinístico (JSON-LD, candidato único, nenhum candidato) e manda TODOS os campos que precisam de julgamento numa única consulta ao Jev — a latência de N campos vira a de um. Booleano indeciso (0,4–0,6) devolve null em vez de cara-ou-coroa.
+- **Correções do code review**: a sugestão de skill respeita grants por pacote (`superpowers`) e por nome, como o skill-mirror; probabilidade booleana entre 0,4 e 0,6 devolve null na extração em vez de false; `description: >` dobrada das skills é lida inteira no catálogo.
+
 ## 0.76.56 — O browser fala de volta
 
 - **Toda ação devolve o depois**: `click`, `fill`, `press`, `scroll`, `hover` e `navigate` respondem com `after` (url, título, carregando) e `changed` (`navigated: none | same-document | new-document` — o Main espera o `did-stop-loading` numa navegação real). `read: true` embute a página resultante na mesma resposta, em JSON ou no `format: "compact"` (outline com `[e12] link "Ver squads" → /squads`); `viewport` e `atBottom` dizem se ainda há página abaixo.

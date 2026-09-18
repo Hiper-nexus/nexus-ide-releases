@@ -4152,6 +4152,73 @@ export const RELEASE_07647: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.57',
+  date: '2026-09-18',
+  codename: 'Jev sugere a skill',
+  summary:
+        'Duas peças do cookbook oficial da TypeSafe entram no Nexus. O ' +
+        'roteamento de tarefas passa a sugerir a skill instalada que ' +
+        'ajuda naquela tarefa — uma escolha do Jev entre as skills ' +
+        'bundled, com "nenhuma" como resposta válida — e o pane aberto ' +
+        'pelo fan-out do operador recebe essa dica no prompt quando a ' +
+        'confiança é alta. E a extração tipada do browser faz uma única ' +
+        'consulta ao Jev para todos os campos, em vez de uma por campo.',
+  highlights: [
+    {
+      title: 'Skill sugerida pelo Jev no roteamento',
+      detail:
+        'nexus_route_task devolve skillSuggestion: o catálogo das skills ' +
+        'bundled (impeccable, archify, superpowers e suas sub-skills, ' +
+        'bmad-templates, dembrandt, typesafe-ai e as skills nativas do ' +
+        'Nexus) é levantado em código a partir do frontmatter de cada ' +
+        'SKILL.md, e UMA pergunta choice deixa o Jev escolher no máximo ' +
+        'uma skill claramente útil — "none" quando nenhuma. Aceita só com ' +
+        'confiança ≥ 0,6, filtrada pelas skills permitidas ao chamador ' +
+        '(por pacote ou por nome). Registrado no diário de decisões ' +
+        '(surface taskRouting); sem chave TypeSafe, null.',
+    },
+    {
+      title: 'A dica chega ao pane do fan-out',
+      detail:
+        'Quando nexus_pane_spawn roteia sozinho (sem adapterId), o recibo ' +
+        'route.skill traz a sugestão e, com confiança ≥ 0,7 e skill ' +
+        'permitida ao filho, uma linha é acrescentada ao prompt: "Skill ' +
+        'sugerida pelo Nexus: <skill> — leia a SKILL.md dela antes de ' +
+        'começar". Nunca inventa prompt nem instala nada — o Jev sugere, ' +
+        'o pane decide.',
+    },
+    {
+      title: 'Extração do browser em uma chamada',
+      detail:
+        'nexus_browser_extract resolve em código o que é determinístico ' +
+        '(JSON-LD, candidato único, nenhum candidato) e manda TODOS os ' +
+        'campos que precisam de julgamento numa única consulta ao Jev — ' +
+        'fan-out especulativo: a latência de N campos vira a de um. ' +
+        'Booleano indeciso (0,4–0,6) devolve null em vez de ' +
+        'cara-ou-coroa.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Skill permitida por pacote',
+      detail:
+        'A sugestão respeita grants por pacote (superpowers) e por nome, ' +
+        'como o skill-mirror.',
+    },
+    {
+      title: 'Booleano sem convicção não vira false',
+      detail:
+        'Probabilidade entre 0,4 e 0,6 devolve null na extração.',
+    },
+    {
+      title: 'Frontmatter YAML dobrado',
+      detail:
+        'description: > das skills lido inteiro no catálogo.',
+    },
+  ],
+};
+
+export const RELEASE_07656: AppRelease = {
   version: '0.76.56',
   date: '2026-09-18',
   codename: 'O browser fala de volta',
