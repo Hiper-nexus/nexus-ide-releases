@@ -4152,6 +4152,62 @@ export const RELEASE_07647: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.55',
+  date: '2026-09-18',
+  codename: 'Grok escuta (canal Windows)',
+  summary:
+    'O canal Windows x64 alcança a 0.76.54: quem atualizou para a 0.76.53 ' +
+    'recebe agora o Grok Voice Transcribe 2.0 da xAI no seletor de ' +
+    'transcrição da voz, o recibo de qual conta o pane nasceu e por quê, e o ' +
+    'consumo do Jev por janela no painel de decisões — cada canal publica a ' +
+    'própria próxima versão estável.',
+  highlights: [
+    {
+      title: 'Grok Voice Transcribe 2.0 no seletor de transcrição',
+      detail:
+        'Novo provedor xai em Ajustes → Voz → Transcrição da fala: POST ' +
+        'api.x.ai/v1/stt com grok-voice-transcribe-2.0, language=pt e o ' +
+        'arquivo por último, keyterm como viés de vocabulário (jargão do modo ' +
+        'CODE; a wake word no passive-wake). Usa a XAI_API_KEY já configurada ' +
+        'para o Grok realtime — só transcreve. Cadeia padrão: Gemini → Grok → ' +
+        'Groq → OpenAI → whisper.cpp; o link entra depois do último provedor ' +
+        'cloud, nunca no lugar do escolhido, e cadeias só-locais ficam ' +
+        'intactas.',
+    },
+    {
+      title: 'Recibo da escolha de conta no spawn',
+      detail:
+        'nexus_pane_spawn devolve harness.account e nexus_pane_whoami devolve ' +
+        'account: quem decidiu (pinada, regra de folga, ativa, fallback na ' +
+        'ativa, linhagem nativa ou legado), a conta com rótulo mascarado, a ' +
+        'folga medida da vencedora e as alternativas com o motivo de cada ' +
+        'perda. A regra continua decidindo — o Jev não escolhe conta.',
+    },
+    {
+      title: 'Consumo do Jev por janela',
+      detail:
+        'Decisões do Jev ganha "Consumo do Jev (TypeSafe)": Hoje, 30 dias e ' +
+        'desde sempre × consultas · custo estimado · sem resposta, e por ' +
+        'superfície "N pelo Jev · M pela regra". O diário grava a consulta ' +
+        'que falhou (só a categoria, nunca o texto) e a leitura sobrevive à ' +
+        'rotação. Custo = tokens de entrada × US$ 0.042 por milhão, preço ' +
+        'público da TypeSafe.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Números honestos no consumo e na máscara',
+      detail:
+        'Custo abaixo de US$ 0.0001 aparece como "< US$ 0.0001" em vez de ' +
+        'US$ 0.0000; o recibo de conta só é registrado depois que o spawn se ' +
+        'firma no Main; a máscara de conta guarda só o sufixo público ' +
+        '(.com.br, nunca subdomínios internos); linhas sem resposta ficam com ' +
+        'tokens e custo nulos em vez de zero fabricado.',
+    },
+  ],
+};
+
+export const RELEASE_07654: AppRelease = {
   version: '0.76.54',
   date: '2026-09-18',
   codename: 'Grok escuta',

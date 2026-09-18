@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.76.55 — Grok escuta (canal Windows)
+
+- **O canal Windows x64 alcança a 0.76.54**: cada canal publica a própria próxima versão estável — a v0.76.54 já está pública com assets macOS, e o publicador recusa anexar assets de outro sistema a release pública, então o Windows avança com a 0.76.55 carregando o código assinado do main atual. Para quem vem da 0.76.53, a atualização traz exatamente a seção 0.76.54 abaixo.
+- **Os itens entregues são os da seção 0.76.54 abaixo**: Grok Voice Transcribe 2.0 (xAI) no seletor de transcrição da voz, recibo da escolha de conta no `nexus_pane_spawn`/`whoami` (quem decidiu, conta mascarada, folga da vencedora, motivo da perda de cada alternativa) e consumo do Jev por janela (consultas · custo estimado · sem resposta, e "N pelo Jev · M pela regra" por superfície), mais as correções do code review da 0.76.53.
+
 ## 0.76.54 — Grok escuta
 
 - **Grok Voice Transcribe 2.0 no seletor de transcrição**: novo provedor `xai` em Ajustes → Voz → Transcrição da fala — `POST api.x.ai/v1/stt` com `grok-voice-transcribe-2.0`, `language=pt` + `format=true`, `keyterm` como viés de vocabulário (jargão do modo CODE; a wake word no passive-wake) e o arquivo por último. Usa a `XAI_API_KEY` já configurada para o Grok realtime. Só transcreve — o modo CODE mostra `CODE·PT`. Cadeia padrão: Gemini → Grok → Groq → OpenAI → whisper.cpp; instalações existentes ganham o link após o último provedor cloud, nunca no lugar do escolhido; cadeias só-locais ficam intactas.
