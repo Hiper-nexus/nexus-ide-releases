@@ -182,6 +182,31 @@ saber isto antes de mexer:
   não apaga sessões duráveis. Sessões antigas no perfil nativo ficam intactas;
   não são importadas automaticamente para o Nexus.
 
+## HOME efêmero da família Claude: o pane escreve como o operador (F-579/F-580)
+
+- O overlay `~/.nexus/ephemeral/<tok>` isola CONVERSA e auth Claude (F-567),
+  não é fronteira de segurança: pane Claude gravável nunca é confinado pelo
+  kernel (Seatbelt só em lane readOnly e Codex). Por isso `prepareEphemeralHome`
+  projeta a identidade do operador em dois tiers, ambos fail-closed por default:
+  `carryDeveloperIdentity` (`.gitconfig`, `.git-credentials`, `.netrc`,
+  `_netrc`, `.ssh`, `.gnupg`, `.config/git`, `.config/gh`) para toda lane
+  gravável, e `carryNativeHome` (POSIX; todo o topo do HOME real menos
+  `.claude`, `.claude.json*`, `.nexus`, `Library`, `.Trash`) só para a lane
+  sem gate hooks (`!gateHome`). Lane readOnly não recebe nada.
+- `Library` fica fora do tier 2 de propósito: o keychain entra arquivo a
+  arquivo pela política do F-575 (só `carryNativeClaudeAuth && gateHooks
+  false`); third-party (GLM/LongCat) nunca vê keychain nem `.claude.json`.
+- Links são symlinks (win32: junction/hardlink) e o teardown (`fs.rmSync`) não
+  os segue — teste em `hooks-gen.developer-identity.test.ts` confere o HOME
+  real depois do `cleanupSessionArtifacts`. Não substitua por cópia.
+- `ProcessGitRunner` (Main) HONRA config global e de sistema do git: é ela que
+  carrega o credential helper (`gh auth git-credential`, osxkeychain, GCM) e
+  `user.name/email`. Não volte a setar `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_NOSYSTEM`
+  — o modelo de ameaça desconfia do conteúdo do REPO (`assertSafeLocalGitConfig`
+  + `-c` pinados), não do `~/.gitconfig` do usuário.
+- `nexus_git_sync` (fast-forward verificado) é alcançável pela mão do operador
+  em vibe; só `ui_action` mantém autoridade de origem renderer (F-581).
+
 ## Política de Git do fan-out isolado (F-563)
 
 - No MCP, writers com `executionScope` distinto usam apenas Git

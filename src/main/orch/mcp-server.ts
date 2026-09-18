@@ -1093,6 +1093,15 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           gateHooks: gateHome,
           cwd: authority.cwd,
           approvedMissionProjectTrust,
+          // F-579: writable lanes commit and push as the operator; read-only
+          // lanes never commit (and may be Seatbelt-confined), so they get
+          // nothing.
+          carryDeveloperIdentity: meta?.readOnly !== true,
+          // Operator-choice/direct lane (no gate hooks): the pane is the
+          // operator's own HOME minus Claude conversation state. Hardened
+          // gated panes keep the minimal surface and receive only the
+          // identity entries above.
+          carryNativeHome: meta?.readOnly !== true && !gateHome,
         });
         if (approvedMissionProjectTrust) {
           const stagedProfile = JSON.parse(

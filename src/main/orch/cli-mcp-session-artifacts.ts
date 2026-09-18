@@ -123,7 +123,7 @@ export function objectValue(value: unknown): Record<string, unknown> {
     : {};
 }
 
-function linkEntry(source: string, target: string, entry: fs.Dirent): void {
+export function linkEntry(source: string, target: string, entry: fs.Dirent): void {
   if (process.platform !== 'win32') {
     fs.symlinkSync(source, target);
     return;

@@ -340,6 +340,85 @@ describe('mcp-server governed CLI profile wiring', () => {
     } finally { decoration.onSpawnFailed?.(); }
   });
 
+  it.each(['claude', 'glm'] as const)('projects the operator identity and native HOME into the direct %s overlay (F-579)', (id) => {
+    const home = path.join(tempRoot(), 'home');
+    const cwd = path.join(home, 'workspace');
+    fs.mkdirSync(cwd, { recursive: true });
+    write(path.join(home, '.gitconfig'), '[user]\n\temail = op@example.test\n');
+    write(path.join(home, '.ssh', 'id_test'), 'key');
+    write(path.join(home, '.zshrc'), 'zshrc');
+    write(path.join(home, '.claude.json'), '{"sentinel":"real-profile"}');
+    vi.stubEnv('HOME', home);
+    const decoration = prepareAgentSpawnDecoration(adapter(id), { kind: 'cli-agent', cols: 80, rows: 24 }, authority(cwd, false))!;
+    try {
+      const overlay = decoration.env.HOME;
+      // Lane direta/operator-choice: o pane É o HOME do operador menos o
+      // estado de conversa Claude — identidade e dotfiles resolvem no real.
+      expect(fs.realpathSync(path.join(overlay, '.gitconfig'))).toBe(fs.realpathSync(path.join(home, '.gitconfig')));
+      expect(fs.realpathSync(path.join(overlay, '.ssh'))).toBe(fs.realpathSync(path.join(home, '.ssh')));
+      if (process.platform !== 'win32') {
+        expect(fs.realpathSync(path.join(overlay, '.zshrc'))).toBe(fs.realpathSync(path.join(home, '.zshrc')));
+      }
+      // `.claude.json` do overlay é o stub Nexus, nunca o arquivo real.
+      const stub = JSON.parse(fs.readFileSync(path.join(overlay, '.claude.json'), 'utf8'));
+      expect(stub.sentinel).toBeUndefined();
+      expect(stub.hasCompletedOnboarding).toBe(true);
+    } finally { decoration.onSpawnFailed?.(); }
+  });
+
+  it.each(['claude', 'glm'] as const)('gives the gated %s worker only the developer identity entries (F-579)', (id) => {
+    homePolicyDeps.getOrchSettings.mockReturnValue({
+      squadCliPolicy: 'governed',
+    });
+    const home = path.join(tempRoot(), 'home');
+    const cwd = path.join(home, 'workspace');
+    fs.mkdirSync(cwd, { recursive: true });
+    write(path.join(home, '.gitconfig'), '[user]\n\temail = op@example.test\n');
+    write(path.join(home, '.ssh', 'id_test'), 'key');
+    write(path.join(home, '.zshrc'), 'zshrc');
+    vi.stubEnv('HOME', home);
+    const decoration = prepareAgentSpawnDecoration(adapter(id), { kind: 'cli-agent', cols: 80, rows: 24 }, authority(cwd, true))!;
+    try {
+      const overlay = decoration.env.HOME;
+      // Lane hardened: superfície mínima + identidade exata — sem o HOME
+      // inteiro do operador.
+      expect(fs.realpathSync(path.join(overlay, '.gitconfig'))).toBe(fs.realpathSync(path.join(home, '.gitconfig')));
+      expect(fs.realpathSync(path.join(overlay, '.ssh'))).toBe(fs.realpathSync(path.join(home, '.ssh')));
+      expect(fs.existsSync(path.join(overlay, '.zshrc'))).toBe(false);
+    } finally { decoration.onSpawnFailed?.(); }
+  });
+
+  it.each(['claude', 'glm'] as const)('gives the read-only %s lane no identity entries at all (F-579)', (id) => {
+    homePolicyDeps.getOrchSettings.mockReturnValue({
+      squadCliPolicy: 'governed',
+    });
+    const home = path.join(tempRoot(), 'home');
+    const cwd = path.join(home, 'workspace');
+    fs.mkdirSync(cwd, { recursive: true });
+    write(path.join(home, '.gitconfig'), '[user]\n\temail = op@example.test\n');
+    write(path.join(home, '.ssh', 'id_test'), 'key');
+    write(path.join(home, '.zshrc'), 'zshrc');
+    vi.stubEnv('HOME', home);
+    const base = authority(cwd, true);
+    const readOnlyAuthority: BoundSpawnAuthority = {
+      ...base,
+      context: {
+        ...base.context!,
+        readOnly: true,
+        nativeReadOnly: true,
+      },
+    };
+    const decoration = prepareAgentSpawnDecoration(adapter(id), { kind: 'cli-agent', cols: 80, rows: 24 }, readOnlyAuthority)!;
+    try {
+      const overlay = decoration.env.HOME;
+      // Lane read-only nunca commita e pode estar confinada — nada do HOME
+      // do operador entra no overlay.
+      expect(fs.existsSync(path.join(overlay, '.gitconfig'))).toBe(false);
+      expect(fs.existsSync(path.join(overlay, '.ssh'))).toBe(false);
+      expect(fs.existsSync(path.join(overlay, '.zshrc'))).toBe(false);
+    } finally { decoration.onSpawnFailed?.(); }
+  });
+
   it.each(['claude', 'glm'] as const)('points %s package caches at a durable per-adapter root outside the disposable HOME', (id) => {
     const home = path.join(tempRoot(), 'home');
     const cwd = path.join(home, 'workspace');

@@ -7,6 +7,7 @@ import {
 } from './overlay-auth-syncback';
 import { mergeClaudeStatusHooks } from './hook-status-config';
 import {
+  linkEntry,
   linkFile,
   linkProviderSessionState,
   linkSelectedEntries,
@@ -305,6 +306,128 @@ export interface EphemeralHomeOptions {
    * desligada ou erro ao montar a lista) ⇒ comportamento atual, verbatim.
    */
   readonly mcpHubBridge?: McpHubRouteInfo;
+  /**
+   * F-579 (tier 1): link the developer's git/SSH/gh identity entries
+   * (DEVELOPER_IDENTITY_HOME_ENTRIES) into the overlay. Sem eles o pane
+   * nasce sem `~/.gitconfig`, `~/.ssh` e `~/.config/gh` — `git push` e `gh`
+   * morrem sem credencial em todo remoto HTTPS. Default fail-closed: lanes
+   * read-only (que nunca commitam e podem estar confinadas) não recebem nada.
+   */
+  readonly carryDeveloperIdentity?: boolean;
+  /**
+   * F-579 (tier 2, POSIX only): link EVERY top-level entry of the real HOME
+   * except NATIVE_HOME_EXCLUDED_ENTRIES and `.claude.json*` — a lane da
+   * escolha do operador ("o pane é o próprio HOME menos o estado de
+   * conversa Claude"). Roda antes do tier 1; no win32 é no-op (o tier 1
+   * continua valendo). Default fail-closed: panes gated/hardened mantêm a
+   * superfície mínima.
+   */
+  readonly carryNativeHome?: boolean;
+}
+
+/**
+ * F-579 tier 1: entradas exatas de identidade/credencial do desenvolvedor
+ * (relativas ao HOME real). Os dois `.config/*` exigem `<overlay>/.config`
+ * como diretório REAL 0700 — criado só quando ainda não existe (o tier 2 pode
+ * tê-lo linkado; nesse caso o link resolve o pai e a entrada já "existe").
+ */
+export const DEVELOPER_IDENTITY_HOME_ENTRIES = [
+  '.gitconfig',
+  '.git-credentials',
+  '.netrc',
+  '_netrc',
+  '.ssh',
+  '.gnupg',
+  '.config/git',
+  '.config/gh',
+] as const;
+
+/**
+ * F-579 tier 2: entradas do topo do HOME real que NUNCA entram no overlay —
+ * estado de conversa/sessão Claude e Nexus fica privado ao overlay
+ * (`.claude.json*` cobre `.claude.json`, `.claude.json.backup` e variantes
+ * timestamped), `Library` fica de fora para que a política keychain do
+ * F-575 (arquivo a arquivo) continue sendo o único caminho. `.claude-mem`,
+ * `.claude-server-commander` etc. NÃO são excluídos: o match é `.claude`
+ * exato mais o prefixo `.claude.json`.
+ */
+export const NATIVE_HOME_EXCLUDED_ENTRIES: ReadonlySet<string> = new Set([
+  '.claude',
+  '.nexus',
+  'Library',
+  '.Trash',
+]);
+
+function isNativeHomeExcluded(name: string): boolean {
+  return (
+    NATIVE_HOME_EXCLUDED_ENTRIES.has(name) || name.startsWith('.claude.json')
+  );
+}
+
+/**
+ * F-579 tier 2: linka cada entrada do topo do HOME real no overlay, exceto o
+ * conjunto excluído. Best-effort por entrada (uma falha nunca aborta o spawn)
+ * e idempotente (pula o que já existe, então rodar antes do tier 1 é seguro).
+ */
+export function linkNativeHomeEntries(
+  realHome: string,
+  overlayDir: string,
+): void {
+  if (process.platform === 'win32') return;
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(realHome, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (isNativeHomeExcluded(entry.name)) continue;
+    try {
+      const target = path.join(overlayDir, entry.name);
+      if (fs.lstatSync(target, { throwIfNoEntry: false })) continue;
+      linkEntry(path.join(realHome, entry.name), target, entry);
+    } catch {
+      // Uma entrada falha não derruba as demais nem o spawn.
+    }
+  }
+}
+
+/**
+ * F-579 tier 1: linka apenas DEVELOPER_IDENTITY_HOME_ENTRIES. Best-effort por
+ * entrada e idempotente; quando o tier 2 já linkou `.config`, o lstat do
+ * alvo resolve através do symlink e a entrada "já existe" — o `.config`
+ * real do HOME nunca é substituído por um diretório local.
+ */
+export function linkDeveloperIdentity(
+  realHome: string,
+  overlayDir: string,
+): void {
+  for (const rel of DEVELOPER_IDENTITY_HOME_ENTRIES) {
+    try {
+      const source = path.join(realHome, rel);
+      const sourceStat = fs.lstatSync(source, { throwIfNoEntry: false });
+      if (!sourceStat) continue;
+      const target = path.join(overlayDir, rel);
+      // lstat resolve através de um `.config` linkado pelo tier 2 e encontra
+      // a entrada lá — skip sem trocar o symlink por diretório real.
+      if (fs.lstatSync(target, { throwIfNoEntry: false })) continue;
+      const parent = path.dirname(target);
+      const parentStat = fs.lstatSync(parent, { throwIfNoEntry: false });
+      if (!parentStat) {
+        fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
+      }
+      const dirent = fs
+        .readdirSync(path.dirname(source), { withFileTypes: true })
+        .find((entry) => entry.name === path.basename(source));
+      if (dirent) {
+        linkEntry(source, target, dirent);
+      } else {
+        linkFile(source, target);
+      }
+    } catch {
+      // Uma entrada falha não derruba as demais nem o spawn.
+    }
+  }
 }
 
 /**
@@ -595,6 +718,11 @@ export function prepareEphemeralHome(
   fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2), {
     mode: 0o600,
   });
+  // F-579: projeta a identidade do operador depois que .claude/, .claude.json,
+  // nexus-gate.mjs, keychains e o marcador de syncback já existem — o tier 2
+  // nunca sobrescreve o estado privado do overlay (idempotente por entrada).
+  if (options.carryNativeHome) linkNativeHomeEntries(os.homedir(), dir);
+  if (options.carryDeveloperIdentity) linkDeveloperIdentity(os.homedir(), dir);
   return {
     dir,
     mcpConfigPath,
