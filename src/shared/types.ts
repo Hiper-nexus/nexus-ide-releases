@@ -941,6 +941,12 @@ export interface NexusApi {
     importDroppedUri(
       uri: string,
     ): Promise<{ ok: boolean; path?: string; error?: string }>;
+    /**
+     * Files copied in Finder/Explorer live on the system pasteboard as file
+     * URLs Chromium does not always expose to the paste event; Main reads
+     * them. Only file:// URIs, never contents.
+     */
+    clipboardFileUris(): Promise<{ uris: string[] }>;
     /** Resolve a dragged File to its absolute filesystem path (webUtils). */
     pathForFile(file: File): string;
   };

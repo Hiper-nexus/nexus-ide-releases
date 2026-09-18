@@ -23,15 +23,21 @@ import { useToastStore } from '../state/toast-store';
 import { getActiveWorkspacePath } from '../state/active-workspace';
 import { filesFromClipboardData } from '../lib/mission-attachments';
 import {
+  clipboardAnnouncesPayload,
   describeDropWithoutFiles,
+  describePasteWithoutFiles,
   droppedFileRejectionMessage,
+  droppedProjectContextPath,
   droppedUriRejectionMessage,
   embeddedImageFromHtml,
   fileFromEmbeddedImage,
+  fileUrlForPath,
+  pasteUrisFromClipboard,
   resolveDroppedMissionContextPath,
   resolveDropUris,
   toAbsoluteContextPath,
   type DroppedUri,
+  type DroppedPayload,
 } from '../lib/mission-shell-file-intake';
 import { listPanes } from '../lib/split-tree';
 import { normalizePaneTitle } from '../lib/pane-title';
@@ -1989,30 +1995,117 @@ function hostBaseDir(host: Host): string | null {
   return paneCwd || getActiveWorkspacePath();
 }
 
-/** Copy a pasted/dropped blob into the workspace mission-context dir, inject its path. */
+/** Escreve no PTY o caminho já estagiado/relativo, como um path digitado. */
+function injectStagedPath(host: Host, stagedPath: string): void {
+  if (!host.sessionId) return;
+  const fullPath = toAbsoluteContextPath(hostBaseDir(host), stagedPath);
+  window.nexus.pty.write(host.sessionId, `${shellQuote(fullPath)} `);
+}
+
+/**
+ * Copy a pasted/dropped blob into the workspace mission-context dir, inject
+ * its path. Path-first (F-582): um File com caminho real FORA do projeto não
+ * passa pelo cap de 14 MB do renderer — o main faz o stream do `file://`
+ * (256 MiB). Sem caminho (blob do clipboard) cai na rota base64 de sempre.
+ */
 async function injectDroppedFile(host: Host, file: File): Promise<void> {
   try {
     const baseDir = hostBaseDir(host);
-    const path = await resolveDroppedMissionContextPath(
+    const absolutePath = window.nexus.files.pathForFile(file);
+    if (absolutePath) {
+      const relative = baseDir
+        ? droppedProjectContextPath(baseDir, file)
+        : null;
+      if (relative) {
+        injectStagedPath(host, relative);
+        return;
+      }
+      const result = await window.nexus.files.importDroppedUri(
+        fileUrlForPath(absolutePath),
+      );
+      if (result.ok && result.path) {
+        injectStagedPath(host, result.path);
+        return;
+      }
+      useToastStore.getState().push(
+        'warn',
+        'Arquivo não colado no terminal',
+        result.error ?? `"${file.name || 'anexo'}" não pôde ser copiado para a missão.`,
+      );
+      return;
+    }
+    const resolved = await resolveDroppedMissionContextPath(
       baseDir,
       file,
     );
-    if (path && host.sessionId) {
-      const fullPath = toAbsoluteContextPath(baseDir, path);
-      window.nexus.pty.write(host.sessionId, `${shellQuote(fullPath)} `);
+    if (resolved.ok && host.sessionId) {
+      injectStagedPath(host, resolved.path);
       return;
     }
     // "Não cola e não mostra" (screenshot 2026-08-18): arquivo que o intake
     // recusa morria em silêncio — o operador colava e NADA acontecia. Um
     // aviso toast diz o quê e o porquê sem escrever lixo no pane do agente.
     // Desde 19/08 o pane aceita QUALQUER tipo; só tamanho/falha física recusa.
+    // F-582: o motivo real sai no toast e no console (nunca conteúdo).
+    const reason = resolved.ok
+      ? droppedFileRejectionMessage(file)
+      : resolved.error;
+    console.warn(
+      '[terminal] intake recusou',
+      { name: file.name, size: file.size },
+      reason,
+    );
     useToastStore.getState().push(
       'warn',
       'Arquivo não colado no terminal',
-      droppedFileRejectionMessage(file),
+      reason,
     );
   } catch {
     // Ignore — a failed drop should never break the terminal.
+  }
+}
+
+/**
+ * F-582: o pasteboard do sistema guarda arquivos copiados no Finder/Explorer
+ * como referências (`public.file-url`/`FileNameW`) que o Chromium não expõe
+ * ao evento. O Main lê só os endereços; cada `file://` segue a rota de
+ * `importDroppedUri` (stream local, 256 MiB). Sem endereço nenhum, o toast
+ * explica o que chegou — como o drop já fazia.
+ */
+async function pasteFromSystemClipboard(
+  host: Host,
+  transfer: DataTransfer | null,
+): Promise<void> {
+  // DataTransfer morre com o evento — fotografa tipos e dados ANTES do await.
+  const types = Array.from(transfer?.types ?? []);
+  const data: Record<string, string> = {};
+  for (const type of types) {
+    try {
+      data[type] = transfer?.getData(type) ?? '';
+    } catch {
+      data[type] = '';
+    }
+  }
+  const snapshot: DroppedPayload = {
+    types,
+    getData: (type: string) => data[type] ?? '',
+    files: transfer?.files,
+  };
+  try {
+    const { uris } = await window.nexus.files.clipboardFileUris();
+    if (uris.length > 0) {
+      for (const uri of uris) {
+        void injectDroppedUri(host, { kind: 'file', uri });
+      }
+      return;
+    }
+    useToastStore.getState().push(
+      'warn',
+      'Nada foi colado no terminal',
+      describePasteWithoutFiles(snapshot),
+    );
+  } catch {
+    // Ignore — a failed paste should never break the terminal.
   }
 }
 
@@ -2031,10 +2124,8 @@ async function injectDroppedUri(host: Host, dropped: DroppedUri): Promise<void> 
       });
     }
     const result = await window.nexus.files.importDroppedUri(dropped.uri);
-    if (result.ok && result.path && host.sessionId) {
-      const baseDir = hostBaseDir(host);
-      const fullPath = toAbsoluteContextPath(baseDir, result.path);
-      window.nexus.pty.write(host.sessionId, `${shellQuote(fullPath)} `);
+    if (result.ok && result.path) {
+      injectStagedPath(host, result.path);
       return;
     }
     useToastStore.getState().push(
@@ -2113,26 +2204,46 @@ function wireInteractions(host: Host, sendJumpKeyOnScroll = false): void {
     return true;
   });
 
+  // F-582: o paste espelha o drop — qualquer tipo de arquivo, depois
+  // text/uri-list/DownloadURL, imagem embutida no HTML e por fim o pasteboard
+  // do sistema via Main. text/plain NUNCA é interceptado: uma URL ou caminho
+  // colado como texto continua sendo digitado no terminal.
   element.addEventListener(
     'paste',
     (e: ClipboardEvent) => {
-      const files = filesFromClipboardData(e.clipboardData);
-      if (files.length === 0) {
-        // F-526: WhatsApp e apps Electron colam a imagem só como HTML com
-        // data:URI (sem item file). Materializa e segue a mesma rota.
-        const embedded = embeddedImageFromHtml(
-          e.clipboardData?.getData('text/html'),
-        );
-        const file = embedded ? fileFromEmbeddedImage(embedded) : null;
-        if (!file) return;
+      const transfer = e.clipboardData;
+      const files = filesFromClipboardData(transfer, { anyKind: true });
+      if (files.length > 0) {
         e.preventDefault();
         e.stopPropagation();
-        void injectDroppedFile(host, file);
+        for (const file of files) void injectDroppedFile(host, file);
+        return;
+      }
+      const uris = pasteUrisFromClipboard(transfer);
+      if (uris.length > 0) {
+        e.preventDefault();
+        e.stopPropagation();
+        for (const dropped of uris) void injectDroppedUri(host, dropped);
+        return;
+      }
+      // F-526: WhatsApp e apps Electron colam a imagem só como HTML com
+      // data:URI (sem item file). Materializa e segue a mesma rota.
+      const embedded = embeddedImageFromHtml(
+        transfer?.getData('text/html'),
+      );
+      const embeddedFile = embedded ? fileFromEmbeddedImage(embedded) : null;
+      if (embeddedFile) {
+        e.preventDefault();
+        e.stopPropagation();
+        void injectDroppedFile(host, embeddedFile);
+        return;
+      }
+      if (!clipboardAnnouncesPayload(transfer?.types ?? [])) {
         return;
       }
       e.preventDefault();
       e.stopPropagation();
-      for (const file of files) void injectDroppedFile(host, file);
+      void pasteFromSystemClipboard(host, transfer);
     },
     true,
   );

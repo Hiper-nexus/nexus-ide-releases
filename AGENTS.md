@@ -207,6 +207,26 @@ saber isto antes de mexer:
 - `nexus_git_sync` (fast-forward verificado) é alcançável pela mão do operador
   em vibe; só `ui_action` mantém autoridade de origem renderer (F-581).
 
+## Colar/arrastar mídia no pane (F-582)
+
+- O pane aceita QUALQUER tipo de arquivo (vídeo incluído) — o whitelist de
+  `classifyMissionAttachment` vale só para wizard/App; no terminal,
+  `filesFromClipboardData(data, { anyKind: true })` classifica o resto como
+  `file` e nomes genéricos viram `print`/`audio`/`documento`/`anexo-<stamp>`.
+- O paste espelha o drop, nesta ordem: `files` → `text/uri-list`/`DownloadURL`
+  → imagem embutida no `text/html` → pasteboard do sistema via Main
+  (`clipboardFileUris`: macOS `public.file-url`, win32 `FileNameW` UTF-16LE,
+  linux `text/uri-list`). `text/plain` NUNCA é interceptado — URL ou caminho
+  colado como texto segue digitado no terminal (a assimetria drop/paste é
+  deliberada; `pasteUrisFromClipboard` não tem o fallback `text/plain` do
+  `resolveDropUris`).
+- File com caminho real é path-first: dentro do projeto injeta o relativo;
+  fora, faz stream pelo Main (`importDroppedUri` →
+  `importWorkspaceMissionAttachmentFromFile`, blocos de 1 MiB) até 256 MiB.
+  Blob sem caminho (base64) e downloads http(s) ficam em 14 MiB. Sem nada
+  aproveitável, o toast "Nada foi colado no terminal" explica — WhatsApp sem
+  arquivo materializado pede para salvar e copiar/arrastar do Finder.
+
 ## Política de Git do fan-out isolado (F-563)
 
 - No MCP, writers com `executionScope` distinto usam apenas Git

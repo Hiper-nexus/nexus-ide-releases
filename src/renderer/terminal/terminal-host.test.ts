@@ -674,3 +674,229 @@ describe('F-567 exact resume failure', () => {
     expect(getPaneSessionId(pane.id)).toBeNull();
   });
 });
+
+describe('paste de mídia no pane (F-582)', () => {
+  const write = vi.fn();
+  const importDroppedUri = vi.fn();
+  const importMissionAttachment = vi.fn();
+  const clipboardFileUris = vi.fn();
+  let filePath = '';
+
+  beforeEach(() => {
+    write.mockReset();
+    importDroppedUri.mockReset();
+    importMissionAttachment.mockReset();
+    clipboardFileUris.mockReset().mockResolvedValue({ uris: [] });
+    filePath = '';
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        pty: {
+          spawn, kill, resize: vi.fn(), write,
+          onStateChange: () => () => {}, onData: () => () => {}, onExit: () => () => {},
+        },
+        files: {
+          importDroppedUri,
+          importMissionAttachment,
+          clipboardFileUris,
+          pathForFile: () => filePath,
+        },
+      },
+    });
+    useToastStore.setState({ toasts: [] });
+  });
+
+  async function openLiveHost() {
+    const host = getOrCreateHost(pane);
+    setHostSize(host.element, 1400, 900);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(pane, slot);
+    expect(await waitForSession(pane.id, 1000)).toBe('pty-hidden');
+    return host;
+  }
+
+  function pasteEvent(
+    element: HTMLElement,
+    options: {
+      files?: File[];
+      types?: string[];
+      data?: Record<string, string>;
+    },
+  ): Event {
+    const event = new Event('paste', { bubbles: true, cancelable: true });
+    const data = options.data ?? {};
+    const types =
+      options.types ??
+      [
+        ...(options.files?.length ? ['Files'] : []),
+        ...Object.keys(data),
+      ];
+    Object.defineProperty(event, 'clipboardData', {
+      value: {
+        files: options.files ?? [],
+        items: [],
+        types,
+        getData: (type: string) => data[type] ?? '',
+      },
+    });
+    element.dispatchEvent(event);
+    return event;
+  }
+
+  it('vídeo colado sem caminho estagia via base64 e digita o caminho', async () => {
+    const host = await openLiveHost();
+    const video = new File([new Uint8Array(1024)], 'filme.mp4', {
+      type: 'video/mp4',
+    });
+    importMissionAttachment.mockResolvedValue({
+      ok: true,
+      path: '.nexus/attachments/mission-context/k-filme.mp4',
+    });
+
+    const event = pasteEvent(host.element, { files: [video] });
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(importMissionAttachment).toHaveBeenCalledOnce();
+    expect(importDroppedUri).not.toHaveBeenCalled();
+    expect(write).toHaveBeenCalledWith(
+      'pty-hidden',
+      '.nexus/attachments/mission-context/k-filme.mp4 ',
+    );
+  });
+
+  it('arquivo colado COM caminho fora do projeto faz stream via main', async () => {
+    const host = await openLiveHost();
+    filePath = '/Users/ana/Movies/filme.mp4';
+    const video = new File(['x'], 'filme.mp4', { type: 'video/mp4' });
+    importDroppedUri.mockResolvedValue({
+      ok: true,
+      path: '.nexus/attachments/mission-context/k-filme.mp4',
+    });
+
+    const event = pasteEvent(host.element, { files: [video] });
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(importDroppedUri).toHaveBeenCalledExactlyOnceWith(
+      'file:///Users/ana/Movies/filme.mp4',
+    );
+    expect(importMissionAttachment).not.toHaveBeenCalled();
+    expect(write).toHaveBeenCalledWith(
+      'pty-hidden',
+      '.nexus/attachments/mission-context/k-filme.mp4 ',
+    );
+  });
+
+  it('text/uri-list colado importa o file:// e digita o caminho, sem toast', async () => {
+    const host = await openLiveHost();
+    importDroppedUri.mockResolvedValue({
+      ok: true,
+      path: '.nexus/attachments/mission-context/k-audio.opus',
+    });
+
+    const event = pasteEvent(host.element, {
+      data: { 'text/uri-list': 'file:///Users/ana/audio.opus' },
+    });
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(importDroppedUri).toHaveBeenCalledExactlyOnceWith(
+      'file:///Users/ana/audio.opus',
+    );
+    expect(write).toHaveBeenCalledWith(
+      'pty-hidden',
+      '.nexus/attachments/mission-context/k-audio.opus ',
+    );
+    expect(useToastStore.getState().toasts).toEqual([]);
+  });
+
+  it('text/plain sozinho segue para o terminal: nada é interceptado', async () => {
+    const host = await openLiveHost();
+
+    const event = pasteEvent(host.element, {
+      data: { 'text/plain': 'https://example.com' },
+    });
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(importDroppedUri).not.toHaveBeenCalled();
+    expect(importMissionAttachment).not.toHaveBeenCalled();
+    expect(clipboardFileUris).not.toHaveBeenCalled();
+    expect(useToastStore.getState().toasts).toEqual([]);
+  });
+
+  it('payload Files sem arquivo e sem URI no sistema vira toast explicado', async () => {
+    const host = await openLiveHost();
+    clipboardFileUris.mockResolvedValue({ uris: [] });
+
+    const event = pasteEvent(host.element, { types: ['Files'], files: [] });
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(clipboardFileUris).toHaveBeenCalledOnce();
+    const toast = useToastStore
+      .getState()
+      .toasts.find((item) => item.title === 'Nada foi colado no terminal');
+    expect(toast).toBeDefined();
+    expect(toast?.detail).toContain('prometeu um arquivo');
+    expect(toast?.detail).toContain('Finder');
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it('payload Files sem arquivo usa o file:// do pasteboard do sistema', async () => {
+    const host = await openLiveHost();
+    clipboardFileUris.mockResolvedValue({
+      uris: ['file:///Users/ana/foto.jpg'],
+    });
+    importDroppedUri.mockResolvedValue({
+      ok: true,
+      path: '.nexus/attachments/mission-context/k-foto.jpg',
+    });
+
+    const event = pasteEvent(host.element, { types: ['Files'], files: [] });
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(importDroppedUri).toHaveBeenCalledExactlyOnceWith(
+      'file:///Users/ana/foto.jpg',
+    );
+    expect(write).toHaveBeenCalledWith(
+      'pty-hidden',
+      '.nexus/attachments/mission-context/k-foto.jpg ',
+    );
+  });
+
+  it('drop de arquivo com caminho fora do projeto ignora o cap de 14 MB do renderer', async () => {
+    const host = await openLiveHost();
+    filePath = '/Users/ana/Movies/filme-grande.mp4';
+    const video = new File(['x'], 'filme-grande.mp4', { type: 'video/mp4' });
+    Object.defineProperty(video, 'size', { value: 20 * 1024 * 1024 });
+    importDroppedUri.mockResolvedValue({
+      ok: true,
+      path: '.nexus/attachments/mission-context/k-filme-grande.mp4',
+    });
+
+    const event = new Event('drop', { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'dataTransfer', {
+      value: {
+        files: [video],
+        types: ['Files'],
+        getData: () => '',
+        dropEffect: 'none',
+      },
+    });
+    host.element.dispatchEvent(event);
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(importDroppedUri).toHaveBeenCalledExactlyOnceWith(
+      'file:///Users/ana/Movies/filme-grande.mp4',
+    );
+    expect(importMissionAttachment).not.toHaveBeenCalled();
+    expect(write).toHaveBeenCalledWith(
+      'pty-hidden',
+      '.nexus/attachments/mission-context/k-filme-grande.mp4 ',
+    );
+  });
+});

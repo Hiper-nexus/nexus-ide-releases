@@ -127,13 +127,16 @@ export async function attachFilesToAgent(
 
   const workspace = getActiveWorkspacePath();
   const paths: string[] = [];
+  let lastError = 'could not resolve paths';
   for (const file of list) {
     const resolved = await resolveDroppedMissionContextPath(workspace, file);
-    if (resolved) {
-      paths.push(toAbsoluteContextPath(workspace, resolved));
+    if (resolved.ok) {
+      paths.push(toAbsoluteContextPath(workspace, resolved.path));
+    } else {
+      lastError = resolved.error;
     }
   }
-  if (paths.length === 0) return { ok: false, count: 0, error: 'could not resolve paths' };
+  if (paths.length === 0) return { ok: false, count: 0, error: lastError };
   const ok = injectPathsToAgent(paths, target);
   return { ok, count: paths.length, error: ok ? undefined : 'write failed' };
 }

@@ -1161,6 +1161,8 @@ const api: NexusApi = {
       }),
     importDroppedUri: (uri: string) =>
       ipcRenderer.invoke(FILES_CHANNELS.importDroppedUri, { uri }),
+    clipboardFileUris: () =>
+      ipcRenderer.invoke(FILES_CHANNELS.clipboardFileUris),
     // webUtils resolves a dragged File to its real filesystem path — the only
     // sandbox-safe way to get it (File.path was removed).
     pathForFile: (file: File): string => {

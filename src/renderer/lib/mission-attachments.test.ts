@@ -221,3 +221,29 @@ describe('mission attachments', () => {
     expect(files[0]?.name).toBe('cliente.m4a');
   });
 });
+
+describe('filesFromClipboardData — anyKind (pane F-582)', () => {
+  it('anyKind aceita vídeo como kind file preservando o nome real', () => {
+    const files = filesFromClipboardData(
+      { files: [realFile('filme.mp4', 'video/mp4')] },
+      { anyKind: true },
+    );
+    expect(files).toHaveLength(1);
+    expect(files[0]!.name).toBe('filme.mp4');
+  });
+
+  it('anyKind renomeia blob genérico de vídeo para anexo-<stamp>.mp4', () => {
+    const files = filesFromClipboardData(
+      { files: [realFile('blob', 'video/mp4')] },
+      { anyKind: true },
+    );
+    expect(files).toHaveLength(1);
+    expect(files[0]!.name).toMatch(/^anexo-.*\.mp4$/);
+  });
+
+  it('sem anyKind o vídeo continua descartado (wizard/App)', () => {
+    expect(
+      filesFromClipboardData({ files: [realFile('filme.mp4', 'video/mp4')] }),
+    ).toEqual([]);
+  });
+});

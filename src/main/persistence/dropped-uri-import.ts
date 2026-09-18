@@ -1,11 +1,14 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dns from 'node:dns';
 import net from 'node:net';
 import {
   DROPPED_ATTACHMENT_MAX_BYTES,
+  DROPPED_LOCAL_FILE_MAX_BYTES,
   importWorkspaceMissionAttachmentBytes,
+  importWorkspaceMissionAttachmentFromFile,
   type SaveDroppedFileOptions,
   type SaveDroppedFileResult,
 } from './dropped-files';
@@ -26,6 +29,7 @@ import {
 
 export const DROPPED_URL_TIMEOUT_MS = 20_000;
 const LIMIT_LABEL = '14 MB';
+const LOCAL_LIMIT_LABEL = '256 MB';
 const SCHEME_HINT =
   'Só arquivos locais (file://) e links http(s) podem ser soltos aqui.';
 const NOFOLLOW_FLAG = fs.constants.O_NOFOLLOW ?? 0;
@@ -167,19 +171,63 @@ export function parseDroppedUri(uri: string): ParsedDroppedUri {
   };
 }
 
-function tooLargeMessage(name: string): string {
-  return `"${name}" excede o limite de ${LIMIT_LABEL} por arquivo.`;
+function tooLargeMessage(name: string, label: string = LIMIT_LABEL): string {
+  return `"${name}" excede o limite de ${label} por arquivo.`;
 }
 
 function notRegularMessage(name: string): string {
   return `"${name}" não é um arquivo comum (pasta, link ou dispositivo).`;
 }
 
+const TCC_FOLDER_LABELS: ReadonlyArray<readonly [string, string]> = [
+  ['Downloads', 'Downloads'],
+  ['Desktop', 'Desktop'],
+  ['Documents', 'Documentos'],
+];
+
+/**
+ * F-582: EPERM/EACCES num `file://` dentro de ~/Downloads, ~/Desktop ou
+ * ~/Documents no macOS quase sempre é TCC (Arquivos e Pastas), não permissão
+ * POSIX — o erro cru mandava o usuário "salvar e arrastar do Finder" para um
+ * arquivo que JÁ estava salvo. Função pura (deps injetáveis nos testes).
+ */
+export function macPrivacyMessage(
+  requested: string,
+  error: unknown,
+  deps: { platform?: NodeJS.Platform; homeDir?: string } = {},
+): string | null {
+  const platform = deps.platform ?? process.platform;
+  const code = (error as NodeJS.ErrnoException | null | undefined)?.code;
+  if (platform !== 'darwin' || (code !== 'EPERM' && code !== 'EACCES')) {
+    return null;
+  }
+  const home = deps.homeDir ?? os.homedir();
+  const name = path.basename(requested) || 'arquivo';
+  for (const [folder, label] of TCC_FOLDER_LABELS) {
+    const dir = path.join(home, folder);
+    if (requested === dir || requested.startsWith(`${dir}${path.sep}`)) {
+      return (
+        `Sem permissão para ler "${name}". Autorize o NexusIDE em ` +
+        `Ajustes do Sistema › Privacidade e Segurança › Arquivos e Pastas ` +
+        `(pasta ${label}) e tente de novo.`
+      );
+    }
+  }
+  return null;
+}
+
 /**
  * Regra mínima: caminho absoluto, `realpath` resolvido, arquivo regular e
- * dentro do teto. Sem seguir para diretórios nem dispositivos.
+ * dentro do teto de arquivo local (256 MiB, F-582 — vídeos do WhatsApp não
+ * cabiam no teto de blob). Sem seguir para diretórios nem dispositivos; os
+ * bytes NÃO são materializados aqui — quem copia é o estágio stream
+ * (`importWorkspaceMissionAttachmentFromFile`) com o fd ainda aberto.
  */
-function readLocalFile(requested: string): LoadedBytes {
+function stageLocalFile(
+  workspaceRoot: string,
+  requested: string,
+  options: SaveDroppedFileOptions,
+): SaveDroppedFileResult {
   const name = path.basename(requested) || 'arquivo';
   if (!path.isAbsolute(requested)) {
     return { ok: false, error: `Caminho precisa ser absoluto: "${name}".` };
@@ -192,27 +240,33 @@ function readLocalFile(requested: string): LoadedBytes {
     if (code === 'ENOENT' || code === 'ENOTDIR') {
       return { ok: false, error: `Arquivo não encontrado: "${name}".` };
     }
+    const privacy = macPrivacyMessage(requested, error);
+    if (privacy) return { ok: false, error: privacy };
     return { ok: false, error: `Não foi possível abrir "${name}".` };
   }
   let fd: number | null = null;
   try {
     const before = fs.lstatSync(real);
     if (!before.isFile()) return { ok: false, error: notRegularMessage(name) };
-    if (before.size > DROPPED_ATTACHMENT_MAX_BYTES) {
-      return { ok: false, error: tooLargeMessage(name) };
+    if (before.size > DROPPED_LOCAL_FILE_MAX_BYTES) {
+      return { ok: false, error: tooLargeMessage(name, LOCAL_LIMIT_LABEL) };
     }
     fd = fs.openSync(real, fs.constants.O_RDONLY | NOFOLLOW_FLAG);
     const opened = fs.fstatSync(fd);
     if (!opened.isFile()) return { ok: false, error: notRegularMessage(name) };
-    if (opened.size > DROPPED_ATTACHMENT_MAX_BYTES) {
-      return { ok: false, error: tooLargeMessage(name) };
+    if (opened.size > DROPPED_LOCAL_FILE_MAX_BYTES) {
+      return { ok: false, error: tooLargeMessage(name, LOCAL_LIMIT_LABEL) };
     }
-    const bytes = fs.readFileSync(fd);
-    if (bytes.length > DROPPED_ATTACHMENT_MAX_BYTES) {
-      return { ok: false, error: tooLargeMessage(name) };
-    }
-    return { ok: true, name, bytes };
-  } catch {
+    return importWorkspaceMissionAttachmentFromFile(
+      workspaceRoot,
+      name,
+      fd,
+      opened.size,
+      options,
+    );
+  } catch (error) {
+    const privacy = macPrivacyMessage(real, error);
+    if (privacy) return { ok: false, error: privacy };
     return { ok: false, error: `Não foi possível ler "${name}".` };
   } finally {
     if (fd !== null) fs.closeSync(fd);
@@ -459,10 +513,10 @@ export async function importDroppedUri(
 ): Promise<SaveDroppedFileResult> {
   const parsed = parseDroppedUri(uri);
   if (parsed.kind === 'rejected') return { ok: false, error: parsed.error };
-  const loaded =
-    parsed.kind === 'file'
-      ? readLocalFile(parsed.path)
-      : await downloadUrl(parsed.url, options);
+  if (parsed.kind === 'file') {
+    return stageLocalFile(workspaceRoot, parsed.path, options);
+  }
+  const loaded = await downloadUrl(parsed.url, options);
   if (!loaded.ok) return { ok: false, error: loaded.error };
   return importWorkspaceMissionAttachmentBytes(
     workspaceRoot,

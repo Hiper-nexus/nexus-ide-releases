@@ -208,6 +208,7 @@ describe('file explorer IPC renderer authority', () => {
     FILES_CHANNELS.saveDropped,
     FILES_CHANNELS.importMissionAttachment,
     FILES_CHANNELS.importDroppedUri,
+    FILES_CHANNELS.clipboardFileUris,
   ])(
     'fails closed for an unbound renderer on %s',
     (channel) => {
@@ -511,5 +512,26 @@ describe('drop sem File: file:// e http(s) via IPC', () => {
       ),
     ).toMatchObject({ ok: false, error: expect.stringMatching(/http/i) });
     expect(fs.existsSync(path.join(root, '.nexus'))).toBe(false);
+  });
+});
+
+describe('paste sem File: clipboardFileUris via IPC (F-582)', () => {
+  it('returns the system pasteboard file URIs for a bound renderer', () => {
+    const root = project('clip-root', 'inside');
+    const window = renderer(951);
+    renderers.push(window);
+    bindResolvedRendererWorkspaceScope(
+      window,
+      scope(root, 'project-a', 'checkout-a'),
+    );
+
+    const result = invoke<{ uris: string[] }>(
+      FILES_CHANNELS.clipboardFileUris,
+      window,
+    );
+
+    // Sem pasteboard real no teste, o handler nunca deve vazar exceção.
+    expect(result).toEqual({ uris: expect.any(Array) });
+    expect(result.uris.every((uri) => uri.startsWith('file:'))).toBe(true);
   });
 });

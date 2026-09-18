@@ -7,6 +7,7 @@ import {
   DROPPED_ATTACHMENT_MAX_BYTES,
   droppedFileName,
   importWorkspaceMissionAttachment,
+  importWorkspaceMissionAttachmentFromFile,
   MISSION_CONTEXT_ATTACHMENT_PREFIX,
   saveDroppedFile,
   releaseSealedAttachmentSnapshots,
@@ -159,6 +160,61 @@ describe('workspace mission-context import', () => {
     );
     expect(fs.existsSync(mirror)).toBe(true);
     expect(fs.readFileSync(mirror, 'utf8')).toBe('audio-bytes');
+  });
+
+  it('streams a local fd into mission-context (F-582)', () => {
+    const root = workspace();
+    const source = path.join(tempRoot, 'video.mp4');
+    fs.writeFileSync(source, 'v'.repeat(1024 * 1024 + 7));
+    const sourceFd = fs.openSync(source, fs.constants.O_RDONLY);
+    try {
+      const result = importWorkspaceMissionAttachmentFromFile(
+        root,
+        'video.mp4',
+        sourceFd,
+        fs.fstatSync(sourceFd).size,
+        { token: () => 'stream-tok' },
+      );
+      expect(result).toEqual({
+        ok: true,
+        path: `${MISSION_CONTEXT_ATTACHMENT_PREFIX}${droppedFileName('video.mp4', 'stream-tok')}`,
+      });
+      if (result.ok) {
+        expect(
+          fs.statSync(path.join(root, result.path)).size,
+        ).toBe(1024 * 1024 + 7);
+      }
+    } finally {
+      fs.closeSync(sourceFd);
+    }
+  });
+
+  it('aborts the streamed copy when the source grew past expectedSize and removes the staged file', () => {
+    const root = workspace();
+    const source = path.join(tempRoot, 'mutante.bin');
+    fs.writeFileSync(source, 'x'.repeat(4096));
+    const sourceFd = fs.openSync(source, fs.constants.O_RDONLY);
+    const dir = path.join(
+      root,
+      ...MISSION_CONTEXT_ATTACHMENT_PREFIX.split('/'),
+    );
+    try {
+      const result = importWorkspaceMissionAttachmentFromFile(
+        root,
+        'mutante.bin',
+        sourceFd,
+        2048, // o arquivo real tem 4096 — mudou depois do fstat
+        { token: () => 'grow-tok' },
+      );
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error).toMatch(/changed during|durável|durable/i);
+      }
+      const leftovers = fs.existsSync(dir) ? fs.readdirSync(dir) : [];
+      expect(leftovers.filter((f) => f.includes('mutante'))).toEqual([]);
+    } finally {
+      fs.closeSync(sourceFd);
+    }
   });
 
   it('does not follow a symlink out of the workspace', () => {

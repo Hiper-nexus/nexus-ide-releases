@@ -18,6 +18,7 @@ import {
   saveDroppedFile,
 } from './dropped-files';
 import { importDroppedUri } from './dropped-uri-import';
+import { readClipboardFileUris } from './clipboard-file-uris';
 import { requireRendererWorkspaceScope } from './renderer-workspace-scope';
 
 /**
@@ -398,11 +399,20 @@ export function registerFilesIpc(hooks: FilesIpcTestHooks = {}): void {
     ) {
       return { ok: false, error: 'invalid payload' };
     }
-    return importWorkspaceMissionAttachment(
+    const result = importWorkspaceMissionAttachment(
       scope.rootRealPath,
       raw.name,
       raw.base64,
     );
+    if (!result.ok) {
+      // F-582: o motivo sai no log do Main (nunca bytes/base64) — sem isto a
+      // recusa virava o toast genérico do renderer e a causa sumia.
+      console.warn(
+        '[files] mission attachment import failed:',
+        result.error,
+      );
+    }
+    return result;
   });
 
   // Drop sem `File`: o renderer só tem o endereço (`file://` ou http(s)).
@@ -411,7 +421,25 @@ export function registerFilesIpc(hooks: FilesIpcTestHooks = {}): void {
     const scope = requireRendererWorkspaceScope(event.sender);
     const parsed = importDroppedUriSchema.safeParse(raw);
     if (!parsed.success) return { ok: false, error: 'invalid payload' };
-    return importDroppedUri(scope.rootRealPath, parsed.data.uri);
+    return Promise.resolve(
+      importDroppedUri(scope.rootRealPath, parsed.data.uri),
+    ).then((result) => {
+      if (!result.ok) {
+        console.warn(
+          '[files] mission attachment import failed:',
+          result.error,
+        );
+      }
+      return result;
+    });
+  });
+
+  // Paste sem `File` materializado: Finder/Explorer só põe referências de
+  // arquivo no pasteboard do sistema (public.file-url / FileNameW). O Main
+  // devolve só os endereços file:// — nunca conteúdo (F-582).
+  ipcMain.handle(FILES_CHANNELS.clipboardFileUris, (event) => {
+    requireRendererWorkspaceScope(event.sender);
+    return { uris: readClipboardFileUris() };
   });
 
   ipcMain.handle(FILES_CHANNELS.list, (event, raw) => {

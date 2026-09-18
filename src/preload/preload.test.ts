@@ -2,6 +2,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PTY_CHANNELS } from '../shared/channels';
 import { ORCH_CHANNELS } from '../shared/orch-channels';
+import { FILES_CHANNELS } from '../shared/files-types';
 import type { NexusApi, PtyDataEvent } from '../shared/types';
 import { PTY_GAP_NOTICE } from './pty-gap-buffer';
 
@@ -330,3 +331,29 @@ describe('canonical mission preload bridge', () => {
 });
 
 
+
+describe('files.clipboardFileUris (F-582)', () => {
+  beforeEach(() => {
+    vi.resetModules();
+    electronMock.handlers.clear();
+    electronMock.ipcRenderer.on.mockClear();
+    electronMock.ipcRenderer.send.mockClear();
+    electronMock.ipcRenderer.invoke.mockReset();
+    electronMock.ipcRenderer.invoke.mockResolvedValue([]);
+    electronMock.contextBridge.exposeInMainWorld.mockClear();
+  });
+
+  it('invokes the main pasteboard channel with no payload', async () => {
+    const api = await loadPreloadApi();
+    electronMock.ipcRenderer.invoke.mockResolvedValueOnce({
+      uris: ['file:///Users/ana/foto.jpg'],
+    });
+
+    const result = await api.files.clipboardFileUris();
+
+    expect(
+      electronMock.ipcRenderer.invoke.mock.calls,
+    ).toContainEqual([FILES_CHANNELS.clipboardFileUris]);
+    expect(result).toEqual({ uris: ['file:///Users/ana/foto.jpg'] });
+  });
+});

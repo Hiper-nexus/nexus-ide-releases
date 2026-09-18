@@ -52,4 +52,5 @@ export const FILES_CHANNELS = {
   saveDropped: 'files:saveDropped',
   importMissionAttachment: 'files:importMissionAttachment',
   importDroppedUri: 'files:importDroppedUri',
+  clipboardFileUris: 'files:clipboardFileUris',
 } as const;

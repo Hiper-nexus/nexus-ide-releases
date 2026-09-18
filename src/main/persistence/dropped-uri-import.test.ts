@@ -5,12 +5,14 @@ import { pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   DROPPED_ATTACHMENT_MAX_BYTES,
+  DROPPED_LOCAL_FILE_MAX_BYTES,
   MISSION_CONTEXT_ATTACHMENT_PREFIX,
 } from './dropped-files';
 import {
   DROPPED_URL_TIMEOUT_MS,
   downloadedFileName,
   importDroppedUri,
+  macPrivacyMessage,
   parseDroppedUri,
   DROPPED_URL_MAX_REDIRECTS,
   isBlockedAddress,
@@ -160,14 +162,30 @@ describe('importDroppedUri — file://', () => {
     );
   });
 
-  it('refuses a file above 14 MB without staging anything', async () => {
-    const local = localFile('filme.mov', DROPPED_ATTACHMENT_MAX_BYTES + 1);
+  it('stages a local file above 14 MB via the streaming route (F-582)', async () => {
+    const local = localFile('filme.mp4', 20 * 1024 * 1024);
 
     const result = await importDroppedUri(workspace, pathToFileURL(local).href, {
       fetch: fetchNever(),
     });
 
-    expect(result).toMatchObject({ ok: false, error: expect.stringContaining('14 MB') });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const staged = path.join(workspace, result.path);
+    expect(fs.statSync(staged).size).toBe(20 * 1024 * 1024);
+  });
+
+  it('refuses a local file above 256 MB without staging anything', async () => {
+    const local = localFile('filme-gigante.mov', DROPPED_LOCAL_FILE_MAX_BYTES + 1);
+
+    const result = await importDroppedUri(workspace, pathToFileURL(local).href, {
+      fetch: fetchNever(),
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('256 MB'),
+    });
     expect(stagedFiles()).toEqual([]);
   });
 
@@ -536,5 +554,56 @@ describe('downloadedFileName', () => {
     expect(
       downloadedFileName(null, new URL('https://example.com/'), null, 0),
     ).toMatch(/^download-.+\.bin$/);
+  });
+});
+
+describe('macPrivacyMessage — TCC do macOS (F-582)', () => {
+  const home = '/Users/ana';
+  const deps = { platform: 'darwin' as const, homeDir: home };
+  const errno = (code: string) =>
+    Object.assign(new Error('boom'), { code }) as NodeJS.ErrnoException;
+
+  it('EPERM em ~/Downloads aponta Ajustes › Arquivos e Pastas', () => {
+    const message = macPrivacyMessage(
+      '/Users/ana/Downloads/WhatsApp Video.mp4',
+      errno('EPERM'),
+      deps,
+    );
+    expect(message).toContain('WhatsApp Video.mp4');
+    expect(message).toContain('Ajustes do Sistema');
+    expect(message).toContain('Arquivos e Pastas');
+    expect(message).toContain('Downloads');
+  });
+
+  it('EACCES em ~/Desktop e ~/Documents também dá a dica com a pasta certa', () => {
+    expect(
+      macPrivacyMessage('/Users/ana/Desktop/a.png', errno('EACCES'), deps),
+    ).toContain('Desktop');
+    expect(
+      macPrivacyMessage(
+        '/Users/ana/Documents/b.pdf',
+        errno('EACCES'),
+        deps,
+      ),
+    ).toContain('Documentos');
+  });
+
+  it('fora das pastas protegidas, ou fora do darwin, não dá dica', () => {
+    expect(
+      macPrivacyMessage('/tmp/a.png', errno('EPERM'), deps),
+    ).toBeNull();
+    expect(
+      macPrivacyMessage('/Users/ana/Downloads/a.png', errno('EPERM'), {
+        platform: 'linux',
+        homeDir: home,
+      }),
+    ).toBeNull();
+    expect(
+      macPrivacyMessage(
+        '/Users/ana/Downloads/a.png',
+        errno('ENOENT'),
+        deps,
+      ),
+    ).toBeNull();
   });
 });

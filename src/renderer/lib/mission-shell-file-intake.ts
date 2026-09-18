@@ -42,6 +42,21 @@ function isAbsolutePath(candidate: string): boolean {
 }
 
 /**
+ * F-582: `file://` de um caminho absoluto, independente do host. `encodeURI`
+ * sozinho quebrava em `#`/`?` (o `fileURLToPath` do Main perdia o fragmento
+ * → "Arquivo não encontrado") e caminhos win32 `C:\…` não viravam URL
+ * válida. Normaliza as barras, garante a `/` inicial (drive vira `/C:/…`) e
+ * escapa `?`/`#` por cima do encodeURI.
+ */
+export function fileUrlForPath(absolutePath: string): string {
+  let normalized = absolutePath.replaceAll('\\', '/');
+  if (!normalized.startsWith('/')) normalized = `/${normalized}`;
+  return `file://${encodeURI(normalized).replace(/[?#]/g, (c) =>
+    encodeURIComponent(c),
+  )}`;
+}
+
+/**
  * Converte caminhos relativos (como `.nexus/attachments/...` ou `src/...`)
  * em caminhos absolutos do sistema de arquivos quando um diretório-base
  * (workspace ou cwd do pane) está disponível. O terminal e prompts de agentes
@@ -100,19 +115,40 @@ export function partitionDroppedMissionFiles(
  * limite é físico — o cap de 14 MB por arquivo evita ler um blob gigante na
  * memória do renderer (o main já recusa payloads acima do teto dele).
  */
+export type DroppedPathResolution =
+  | { readonly ok: true; readonly path: string }
+  | { readonly ok: false; readonly error: string };
+
+/** Motivo honesto de uma recusa do intake do pane — nunca conteúdo. */
+function intakeErrorMessage(file: Pick<File, 'name'>, error: unknown): string {
+  const name = file.name.trim() || 'anexo';
+  if (error instanceof DOMException) {
+    return `"${name}" não pôde ser lido pelo Nexus (${error.name}): salve no disco e arraste do Finder.`;
+  }
+  const reason = error instanceof Error ? error.message : String(error);
+  return `"${name}" não pôde ser copiado: ${reason}`;
+}
+
 export async function resolveDroppedMissionContextPath(
   workspacePath: string | null,
   file: File,
-): Promise<string | null> {
+): Promise<DroppedPathResolution> {
   if (workspacePath && workspacePath.length > 0) {
     const relative = droppedProjectContextPath(workspacePath, file);
-    if (relative) return relative;
+    if (relative) return { ok: true, path: relative };
   }
-  if (file.size > MISSION_ATTACHMENT_LIMITS.maxBytesPerFile) return null;
+  if (file.size > MISSION_ATTACHMENT_LIMITS.maxBytesPerFile) {
+    return { ok: false, error: droppedFileRejectionMessage(file) };
+  }
   try {
-    return (await stageMissionAttachment(file, { allowAnyKind: true })).path;
-  } catch {
-    return null;
+    return {
+      ok: true,
+      path: (await stageMissionAttachment(file, { allowAnyKind: true })).path,
+    };
+  } catch (error) {
+    // F-582: o catch mudo escondia o motivo real (leitura do File, IPC) —
+    // era isso que fazia o bug "voltar" depois de cada correção parcial.
+    return { ok: false, error: intakeErrorMessage(file, error) };
   }
 }
 
@@ -211,6 +247,92 @@ export function resolveDropUris(
     else rejected.push(uri);
   }
   return { accepted, rejected };
+}
+
+/**
+ * Versão do `resolveDropUris` para PASTE: só `text/uri-list` e o flavor
+ * `DownloadURL` — NUNCA o fallback `text/plain`. A assimetria é deliberada:
+ * no drop, um link/caminho solto como texto já chegou como gesto de arquivo;
+ * no paste, uma URL ou `/abs/path` digitada é TEXTO que o usuário quer no
+ * terminal — interceptá-la baixaria/copiaria algo que ninguém pediu.
+ */
+export function pasteUrisFromClipboard(
+  transfer: DroppedPayload | null | undefined,
+): DroppedUri[] {
+  if (!transfer) return [];
+  const candidates: string[] = [
+    ...uriListLines(transfer.getData?.('text/uri-list') ?? ''),
+  ];
+  if (candidates.length === 0) {
+    // DownloadURL: "mime:filename:url" — mesmo regex do resolveDropUris.
+    const downloadUrl = (transfer.getData?.('DownloadURL') ?? '').trim();
+    const match = /^[-\w.+]+\/[-\w.+]+:[^:]*:(https?:\/\/\S+)$/i.exec(
+      downloadUrl,
+    );
+    if (match) candidates.push(match[1]!);
+  }
+  const accepted: DroppedUri[] = [];
+  const seen = new Set<string>();
+  for (const uri of candidates) {
+    if (seen.has(uri)) continue;
+    seen.add(uri);
+    const kind = classifyDroppedUri(uri);
+    if (kind) accepted.push({ kind, uri });
+  }
+  return accepted;
+}
+
+/**
+ * O pasteboard anuncia conteúdo que vale interceptar (ou ao menos diagnosticar
+ * com toast)? Espelha `acceptsShellDrag` sem a guarda de skill-drag: `Files`,
+ * `text/uri-list`, `DownloadURL`, ou `text/html` SEM `text/plain` (mídia
+ * embutida — a mesma exceção F-526 do drop). `text/plain` sozinho nunca
+ * anuncia payload: é texto que segue para o terminal.
+ */
+export function clipboardAnnouncesPayload(types: ArrayLike<string>): boolean {
+  const list = Array.from(types);
+  if (
+    list.includes('Files') ||
+    list.includes('text/uri-list') ||
+    list.includes('DownloadURL')
+  ) {
+    return true;
+  }
+  return list.includes('text/html') && !list.includes('text/plain');
+}
+
+/**
+ * Mensagem para o paste que NÃO trouxe arquivo — mesma lógica do
+ * `describeDropWithoutFiles` com a redação de colagem ("colou"/"cole").
+ */
+export function describePasteWithoutFiles(
+  transfer: DroppedPayload | null | undefined,
+): string {
+  if (!transfer) {
+    return 'A área de transferência chegou vazia. Salve o arquivo no disco e copie/cole do Finder.';
+  }
+  const types = Array.from(transfer.types ?? []);
+  const uri = firstUri(transfer);
+
+  if (uri.startsWith('file://')) {
+    let decoded = uri.slice('file://'.length);
+    try {
+      decoded = decodeURIComponent(decoded);
+    } catch {
+      // Caminho com escape inválido: melhor mostrar cru do que nada.
+    }
+    return `Veio o endereço do arquivo, não o arquivo: ${decoded}`;
+  }
+  if (uri !== '') return `Veio um link, não um arquivo: ${uri}`;
+
+  if (types.includes('Files')) {
+    return `O app de origem prometeu um arquivo que o Nexus não recebeu (tipos: ${types.join(', ')}). Salve a mídia no disco e copie/arraste do Finder.`;
+  }
+
+  const text = transfer.getData?.('text/plain')?.trim() ?? '';
+  if (text !== '') return 'Veio só texto na colagem, sem arquivo.';
+
+  return 'A colagem não trouxe arquivo. Salve a mídia no disco e copie/arraste do Finder.';
 }
 
 /** Motivo genérico quando o main recusa sem explicar (não deveria acontecer). */

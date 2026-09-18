@@ -1,12 +1,17 @@
 /** @vitest-environment jsdom */
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   acceptsShellDrag,
+  clipboardAnnouncesPayload,
+  describePasteWithoutFiles,
   describeShellDrop,
   embeddedImageFromHtml,
   fileFromEmbeddedImage,
+  fileUrlForPath,
   importDroppedUriForMission,
   partitionDroppedMissionFiles,
+  pasteUrisFromClipboard,
   resolveDroppedMissionContextPath,
   resolveDropUris,
   shellClaimsMissionFileDrop,
@@ -77,7 +82,7 @@ describe('resolveDroppedMissionContextPath', () => {
 
     await expect(
       resolveDroppedMissionContextPath('/workspace', file('app.ts', 'text/plain')),
-    ).resolves.toBe('src/app.ts');
+    ).resolves.toEqual({ ok: true, path: 'src/app.ts' });
     expect(window.nexus.files.importMissionAttachment).not.toHaveBeenCalled();
   });
 
@@ -101,7 +106,10 @@ describe('resolveDroppedMissionContextPath', () => {
         '/workspace',
         file('cliente.m4a', 'audio/mp4'),
       ),
-    ).resolves.toBe('.nexus/attachments/mission-context/token-cliente.m4a');
+    ).resolves.toEqual({
+      ok: true,
+      path: '.nexus/attachments/mission-context/token-cliente.m4a',
+    });
     expect(importMissionAttachment).toHaveBeenCalledTimes(1);
   });
 
@@ -127,7 +135,10 @@ describe('resolveDroppedMissionContextPath', () => {
         '/workspace',
         file('dados.bin', 'application/octet-stream'),
       ),
-    ).resolves.toBe('.nexus/attachments/mission-context/token-dados.bin');
+    ).resolves.toEqual({
+      ok: true,
+      path: '.nexus/attachments/mission-context/token-dados.bin',
+    });
     expect(importMissionAttachment).toHaveBeenCalledTimes(1);
   });
 
@@ -145,10 +156,39 @@ describe('resolveDroppedMissionContextPath', () => {
     const big = file('filmes.mov', 'video/quicktime');
     Object.defineProperty(big, 'size', { value: 15 * 1024 * 1024 });
 
-    await expect(
-      resolveDroppedMissionContextPath('/workspace', big),
-    ).resolves.toBeNull();
+    const result = await resolveDroppedMissionContextPath('/workspace', big);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('14 MB');
+    }
     expect(importMissionAttachment).not.toHaveBeenCalled();
+  });
+
+  it('F-582: erro de leitura do File sai com nome e motivo (não mais null mudo)', async () => {
+    const importMissionAttachment = vi.fn(async () => ({
+      ok: false as const,
+      error: 'disco cheio',
+    }));
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        files: {
+          pathForFile: () => '',
+          importMissionAttachment,
+        },
+      },
+    });
+
+    const result = await resolveDroppedMissionContextPath(
+      '/workspace',
+      file('audio.ogg', 'audio/ogg'),
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain('audio.ogg');
+      expect(result.error).toContain('disco cheio');
+    }
   });
 });
 
@@ -471,5 +511,105 @@ describe('embeddedImageFromHtml / fileFromEmbeddedImage', () => {
       files: { length: 0 },
     };
     expect(describeShellDrop(transfer)).toEqual({ action: 'files' });
+  });
+});
+
+describe('pasteUrisFromClipboard (F-582)', () => {
+  const transfer = (
+    types: readonly string[],
+    data: Record<string, string> = {},
+  ) => ({ types, getData: (type: string) => data[type] ?? '' });
+
+  it('returns the file:// from text/uri-list', () => {
+    expect(
+      pasteUrisFromClipboard(
+        transfer(['text/uri-list'], {
+          'text/uri-list': 'file:///Users/ana/audio.opus\n# comentário\n',
+        }),
+      ),
+    ).toEqual([{ kind: 'file', uri: 'file:///Users/ana/audio.opus' }]);
+  });
+
+  it('returns the url from the DownloadURL flavor', () => {
+    expect(
+      pasteUrisFromClipboard(
+        transfer(['DownloadURL'], {
+          DownloadURL:
+            'image/png:foto.png:https://example.com/foto.png?x=1',
+        }),
+      ),
+    ).toEqual([
+      { kind: 'url', uri: 'https://example.com/foto.png?x=1' },
+    ]);
+  });
+
+  it('never downloads a URL pasted as text/plain', () => {
+    expect(
+      pasteUrisFromClipboard(
+        transfer(['text/plain'], { 'text/plain': 'https://example.com/a.png' }),
+      ),
+    ).toEqual([]);
+  });
+
+  it('never intercepts an absolute path pasted as text/plain', () => {
+    expect(
+      pasteUrisFromClipboard(
+        transfer(['text/plain'], { 'text/plain': '/Users/ana/foto.png' }),
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe('clipboardAnnouncesPayload (F-582)', () => {
+  it('true for file payloads and media flavors', () => {
+    expect(clipboardAnnouncesPayload(['Files'])).toBe(true);
+    expect(clipboardAnnouncesPayload(['text/uri-list', 'text/plain'])).toBe(
+      true,
+    );
+    expect(clipboardAnnouncesPayload(['text/html'])).toBe(true);
+    expect(clipboardAnnouncesPayload(['DownloadURL'])).toBe(true);
+  });
+
+  it('false for plain text and html+plain', () => {
+    expect(clipboardAnnouncesPayload(['text/plain'])).toBe(false);
+    expect(clipboardAnnouncesPayload(['text/plain', 'text/html'])).toBe(false);
+  });
+});
+
+describe('describePasteWithoutFiles (F-582)', () => {
+  const transfer = (
+    types: readonly string[],
+    data: Record<string, string> = {},
+  ) => ({ types, getData: (type: string) => data[type] ?? '' });
+
+  it('names the file-promise case with paste wording', () => {
+    const message = describePasteWithoutFiles(transfer(['Files']));
+    expect(message).toContain('arquivo');
+    expect(message).toContain('Finder');
+    expect(message).toContain('copie');
+  });
+
+  it('points at the local file when the paste carries a file:// address', () => {
+    const message = describePasteWithoutFiles(
+      transfer(['text/uri-list'], { 'text/uri-list': 'file:///Users/ana/a.png' }),
+    );
+    expect(message).toContain('/Users/ana/a.png');
+  });
+});
+
+describe('fileUrlForPath (F-582)', () => {
+  it('escapes spaces and # so fileURLToPath round-trips the POSIX path', () => {
+    const original = '/Users/ana/Movies/foto de perfil #2.mp4';
+    const uri = fileUrlForPath(original);
+    expect(uri).toBe(
+      'file:///Users/ana/Movies/foto%20de%20perfil%20%232.mp4',
+    );
+    expect(fileURLToPath(uri)).toBe(original);
+  });
+
+  it('converts a win32 drive path into a valid file:// URI', () => {
+    expect(fileUrlForPath('C:\\Users\\ana\\v.mp4')).toBe(
+      'file:///C:/Users/ana/v.mp4',
+    );
   });
 });

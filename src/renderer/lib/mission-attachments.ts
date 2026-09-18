@@ -77,10 +77,20 @@ function extensionForMime(mime: string, kind: MissionAttachmentKind): string {
   if (normalized === 'audio/aiff' || normalized === 'audio/x-aiff') {
     return 'aiff';
   }
+  if (normalized === 'video/mp4') return 'mp4';
+  if (normalized === 'video/quicktime') return 'mov';
+  if (normalized === 'video/webm') return 'webm';
+  if (normalized === 'video/x-matroska') return 'mkv';
   if (normalized === 'application/pdf') return 'pdf';
   if (kind === 'image') return 'png';
   if (kind === 'audio') return 'm4a';
   if (kind === 'document') return 'pdf';
+  // kind 'file' (anyKind do pane): MIME desconhecido → o subtype serve de
+  // extensão quando é curto e alfanumérico; senão, bin neutro.
+  if (kind === 'file') {
+    const subtype = normalized.split('/')[1] ?? '';
+    return /^[a-z0-9]{1,5}$/.test(subtype) ? subtype : 'bin';
+  }
   return 'txt';
 }
 
@@ -92,10 +102,25 @@ export function namePastedMissionFile(file: File, kind: MissionAttachmentKind): 
   const current = file.name.trim().toLowerCase();
   if (current && !GENERIC_PASTE_NAMES.has(current)) return file;
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  const prefix = kind === 'image' ? 'print' : 'audio';
+  const prefix =
+    kind === 'image'
+      ? 'print'
+      : kind === 'audio'
+        ? 'audio'
+        : kind === 'document'
+          ? 'documento'
+          : 'anexo';
   const ext = extensionForMime(file.type, kind);
   return new File([file], `${prefix}-${stamp}.${ext}`, {
-    type: file.type || (kind === 'image' ? 'image/png' : 'audio/*'),
+    type:
+      file.type ||
+      (kind === 'image'
+        ? 'image/png'
+        : kind === 'audio'
+          ? 'audio/*'
+          : kind === 'document'
+            ? 'application/pdf'
+            : 'application/octet-stream'),
     lastModified: file.lastModified,
   });
 }
@@ -140,6 +165,7 @@ export async function missionAttachmentContentKey(file: File): Promise<string> {
  */
 export function filesFromClipboardData(
   data: ClipboardFileSource | DataTransfer | null | undefined,
+  options: { anyKind?: boolean } = {},
 ): File[] {
   if (!data) return [];
   const collected: File[] = [];
@@ -147,7 +173,9 @@ export function filesFromClipboardData(
 
   const pushIfAttachable = (file: File | null | undefined) => {
     if (!file) return;
-    const kind = classifyMissionAttachment(file);
+    // anyKind (pane): o drop aceita qualquer arquivo — a cópia é inofensiva.
+    const kind =
+      classifyMissionAttachment(file) ?? (options.anyKind ? 'file' : null);
     if (!kind) return;
     // `lastModified` NÃO entra na chave: para um blob de clipboard o navegador
     // sintetiza um File a cada acessor, carimbando o instante da chamada. O

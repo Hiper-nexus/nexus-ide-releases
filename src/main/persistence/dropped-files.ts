@@ -451,24 +451,32 @@ export function importWorkspaceMissionAttachment(
   );
 }
 
+export const DROPPED_LOCAL_FILE_MAX_BYTES = 256 * 1024 * 1024;
+
+const STREAM_CHUNK_BYTES = 1024 * 1024;
+
 /**
- * Same staging for bytes that never crossed the IPC as base64 — a `file://`
- * read or an http(s) download done in main. Enforces the same 14 MiB cap.
+ * Núcleo endurecido compartilhado pelos imports de mission-context: criação
+ * O_EXCL|O_NOFOLLOW, fstat/owner/single-link, fsync, verificação de
+ * durabilidade/identidade e o espelho best-effort em
+ * ~/.nexus/attachments/mission-context/. `writeInto` é o único ponto que
+ * varia (blob único vs. stream de um fd local); se ele lançar, o arquivo
+ * criado exclusivamente é desfeito pelo cleanup comum.
  */
-export function importWorkspaceMissionAttachmentBytes(
+function stageMissionContextFile(
   workspaceRoot: string,
   name: string,
-  decoded: Buffer,
-  options: SaveDroppedFileOptions = {},
+  options: SaveDroppedFileOptions,
+  payload: {
+    readonly expectedSize: number;
+    readonly writeInto: (fd: number) => void;
+  },
 ): SaveDroppedFileResult {
   let file = '';
   let fd: number | null = null;
   let created = false;
   let createdIdentity: fs.Stats | null = null;
   try {
-    if (decoded.length > DROPPED_ATTACHMENT_MAX_BYTES) {
-      throw new Error('dropped file exceeds the 14 MiB item limit');
-    }
     const uid = expectedUid(options);
     const root = requireMissionContextDirectory(workspaceRoot, uid);
     const token =
@@ -494,13 +502,13 @@ export function importWorkspaceMissionAttachmentBytes(
     }
     assertOwned(opened, uid, 'mission context file');
     assertSingleLink(opened, 'mission context file');
-    fs.writeFileSync(fd, decoded);
+    payload.writeInto(fd);
     fs.fchmodSync(fd, 0o600);
     fs.fsyncSync(fd);
     const written = fs.fstatSync(fd);
     if (
       !written.isFile() ||
-      written.size !== decoded.length ||
+      written.size !== payload.expectedSize ||
       !sameFileIdentity(opened, written)
     ) {
       throw new Error('mission context write was not durable');
@@ -541,7 +549,7 @@ export function importWorkspaceMissionAttachmentBytes(
           fs.mkdirSync(userMissionContext, { mode: 0o700 });
         }
         const mirrorFile = path.join(userMissionContext, storedName);
-        fs.writeFileSync(mirrorFile, decoded, { mode: 0o600 });
+        fs.copyFileSync(canonical, mirrorFile, fs.constants.COPYFILE_EXCL);
       }
     } catch {
       // Espelho é puramente auxiliar; falha silenciosa não interrompe o salvamento primário.
@@ -577,6 +585,72 @@ export function importWorkspaceMissionAttachmentBytes(
       error: error instanceof Error ? error.message : 'import failed',
     };
   }
+}
+
+/**
+ * Same staging for bytes that never crossed the IPC as base64 — a `file://`
+ * read or an http(s) download done in main. Enforces the same 14 MiB cap.
+ */
+export function importWorkspaceMissionAttachmentBytes(
+  workspaceRoot: string,
+  name: string,
+  decoded: Buffer,
+  options: SaveDroppedFileOptions = {},
+): SaveDroppedFileResult {
+  if (decoded.length > DROPPED_ATTACHMENT_MAX_BYTES) {
+    return {
+      ok: false,
+      error: 'dropped file exceeds the 14 MiB item limit',
+    };
+  }
+  return stageMissionContextFile(workspaceRoot, name, options, {
+    expectedSize: decoded.length,
+    writeInto: (fd) => fs.writeFileSync(fd, decoded),
+  });
+}
+
+/**
+ * Variante stream do staging acima: copia um arquivo local já aberto
+ * (`sourceFd`, validado pelo chamador com O_NOFOLLOW + fstat) em blocos de
+ * 1 MiB — nunca carrega o arquivo inteiro na memória. Aborta se o total
+ * ultrapassar `maxBytes` (padrão 256 MiB, F-582) ou o tamanho final não bater
+ * com `expectedSize` (o arquivo mudou durante a cópia).
+ */
+export function importWorkspaceMissionAttachmentFromFile(
+  workspaceRoot: string,
+  name: string,
+  sourceFd: number,
+  expectedSize: number,
+  options: SaveDroppedFileOptions & { maxBytes?: number } = {},
+): SaveDroppedFileResult {
+  const maxBytes = options.maxBytes ?? DROPPED_LOCAL_FILE_MAX_BYTES;
+  return stageMissionContextFile(workspaceRoot, name, options, {
+    expectedSize,
+    writeInto: (fd) => {
+      const chunk = Buffer.allocUnsafe(
+        Math.min(STREAM_CHUNK_BYTES, Math.max(1, expectedSize)),
+      );
+      let total = 0;
+      for (;;) {
+        const read = fs.readSync(
+          sourceFd,
+          chunk,
+          0,
+          chunk.length,
+          null,
+        );
+        if (read === 0) break;
+        total += read;
+        if (total > maxBytes) {
+          throw new Error('local file exceeds the 256 MiB item limit');
+        }
+        fs.writeSync(fd, chunk, 0, read);
+      }
+      if (total !== expectedSize) {
+        throw new Error('local file changed during the staged copy');
+      }
+    },
+  });
 }
 
 function assertAttachmentCount(paths: readonly unknown[]): void {
