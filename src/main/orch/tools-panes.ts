@@ -384,6 +384,24 @@ export function attenuateSkills(
   return requested.filter((skill) => allowed.has(skill.toLowerCase()));
 }
 
+/**
+ * `skill`/`skillSuggestion` do resultado do auto-route (nexus_route_task):
+ * normaliza para `{ name, confidence }` ou null. O Jev só SUGERE — quem
+ * decide usar é o spawn (confiança ≥ 0.7 e skill permitida ao filho).
+ */
+function skillSuggestionFromRoute(
+  autoRoute: Record<string, unknown> | undefined,
+): { name: string; confidence: number } | null {
+  const raw = autoRoute?.skill ?? autoRoute?.skillSuggestion;
+  if (!raw || typeof raw !== 'object') return null;
+  const rec = raw as Record<string, unknown>;
+  if (typeof rec.name !== 'string' || !rec.name.trim()) return null;
+  if (typeof rec.confidence !== 'number' || !Number.isFinite(rec.confidence)) {
+    return null;
+  }
+  return { name: rec.name, confidence: rec.confidence };
+}
+
 /** Worker may hand off; only orchestrator/maestro/user may create a pane. */
 export function assertCallerMaySpawnPane(
   role: AgentGateContext['role'],
@@ -407,7 +425,8 @@ const paneSpawn: McpToolDef = {
     'visibly. In a running mission, pass routeReservationId when the CLI is ' +
     'not the sticky roster route. Prompt is delivered in the CLI argv AT BIRTH. ' +
     'From the operator\'s own pane without a mission, adapterId may be omitted ' +
-    'when task/prompt is given — Nexus routes it automatically. ' +
+    'when task/prompt is given — Nexus routes it automatically, and a ' +
+    'confident Jev skill suggestion adds one hint line to the prompt. ' +
     'Returns {paneId, sessionId} or {paneId, sessionId:null, pending:true} ' +
     'while the CLI session is still starting; use nexus_pane_wait_idle next. ' +
     '`harness.account` diz qual conta o pane usa, quem decidiu (regra de ' +
@@ -503,6 +522,7 @@ const paneSpawn: McpToolDef = {
     let executionMode: 'same_checkout' | 'isolated_worktree' | undefined;
     let rosterRouteAuthorized = false;
     let autoRoute: Record<string, unknown> | undefined;
+    let routeSkill: { name: string; confidence: number } | null = null;
     /**
      * Mão do operador sem missão: o pane filho é a MESMA mão. Omitir `role`
      * faz o main mintar `user` (`mcp-server`: `meta?.role ?? "user"`), então o
@@ -654,6 +674,26 @@ const paneSpawn: McpToolDef = {
       // Omitir o model NÃO contorna o gate: sem model explícito, o que roda é
       // o default do adapter — é ele que precisa passar na checagem. Roster
       // selado único para esta CLI vence esse default.
+      // Skill suggestion do auto-route: com confiança ≥ 0.7 E a skill
+      // permitida ao filho, uma linha é acrescentada ao prompt existente
+      // (nunca inventa prompt). O recibo expõe `route.skill` sempre que
+      // o router devolveu uma sugestão.
+      const adHocAllowedSkills = attenuateSkills(ctx.allowedSkills, null);
+      routeSkill = skillSuggestionFromRoute(autoRoute);
+      let adHocPrompt = str(args, 'prompt');
+      if (
+        adHocPrompt &&
+        routeSkill &&
+        routeSkill.confidence >= 0.7 &&
+        (adHocAllowedSkills === null ||
+          adHocAllowedSkills.some(
+            (skill) => skill.toLowerCase() === routeSkill!.name.toLowerCase(),
+          ))
+      ) {
+        adHocPrompt =
+          `${adHocPrompt}\n\nSkill sugerida pelo Nexus: ${routeSkill.name} ` +
+          '— leia a SKILL.md dela antes de começar.';
+      }
       const gateModel =
         selectedAdHocModel ?? defaultModelForAdapter(adHocAdapterId);
       // A mão do operador escolhe o modelo: o aviso de catálogo (custo/faixa)
@@ -684,10 +724,10 @@ const paneSpawn: McpToolDef = {
           ctx.allowedTools,
           inheritOperatorFreedom ? null : [],
         ),
-        allowedSkills: attenuateSkills(ctx.allowedSkills, null),
+        allowedSkills: adHocAllowedSkills,
         role: operatorHand ? undefined : 'worker',
         readOnly: args.readOnly === true,
-        prompt: str(args, 'prompt'),
+        prompt: adHocPrompt,
         scope: ctx.scope,
         resume: str(args, 'resume') ? true : undefined,
         resumeFromPaneId: resumePaneRefOf(str(args, 'resume')),
@@ -1074,6 +1114,7 @@ const paneSpawn: McpToolDef = {
               ...(typeof autoRoute.escalate === 'number'
                 ? { escalate: autoRoute.escalate }
                 : {}),
+              ...(routeSkill ? { skill: routeSkill } : {}),
             },
           }
         : {};

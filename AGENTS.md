@@ -451,7 +451,13 @@ saber isto antes de mexer:
   julgamento Jev da página (erro visível, bloqueio humano, carregando, tipo de
   página; fail-open com `judgmentSkipped`). `nexus_browser_extract` extrai
   campos tipados: o código levanta candidatos (JSON-LD, tabelas, label→valor,
-  tokens) e o Jev só escolhe entre eles — `null` quando nada confiável.
+  tokens) e o Jev só escolhe entre eles — `null` quando nada confiável;
+  extract usa UMA chamada Jev para todos os campos (fan-out).
+- **Skill suggestion** (`jev-skill-suggestion.ts`, surface `taskRouting`):
+  uma `choice` entre as skills bundled (+`none`) para a tarefa;
+  `nexus_route_task` devolve `skillSuggestion`, o auto-route do `pane_spawn`
+  acrescenta uma linha ao prompt do filho só com confiança ≥ 0.7 e skill
+  permitida. Cookbook oficial 'skill suggestion'.
 - `nexus_computer_do` (macOS, "Jev decide, Nexus executa no desktop"):
   exige permissão de Acessibilidade (`permission_required` aponta o caminho
   dos Ajustes); só a mão do operador ou o orquestrador chamam — worker nunca

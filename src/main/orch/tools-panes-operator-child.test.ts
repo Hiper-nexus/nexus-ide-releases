@@ -244,6 +244,79 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
     expect(harness.spawnPaneAndMaybePrompt).not.toHaveBeenCalled();
   });
 
+  it('auto-route com skill ≥ 0.7 acrescenta a dica ao prompt e expõe route.skill', async () => {
+    setOperatorRouteResolver(
+      vi.fn(async () => ({
+        adapterId: 'codex',
+        skill: { name: 'ponytail', confidence: 0.9 },
+      })),
+    );
+    const result = (await paneSpawnTool.handler(
+      { prompt: 'implemente X' },
+      userPane(),
+    )) as Record<string, unknown>;
+    const options = harness.spawnPaneAndMaybePrompt.mock.calls[0]?.[0] as {
+      prompt?: string;
+    };
+    expect(options.prompt).toBe(
+      'implemente X\n\nSkill sugerida pelo Nexus: ponytail — leia a SKILL.md dela antes de começar.',
+    );
+    expect(result).toMatchObject({
+      route: { skill: { name: 'ponytail', confidence: 0.9 } },
+    });
+  });
+
+  it('skill com confiança < 0.7 não toca o prompt mas sai no recibo', async () => {
+    setOperatorRouteResolver(
+      vi.fn(async () => ({
+        adapterId: 'codex',
+        skill: { name: 'ponytail', confidence: 0.65 },
+      })),
+    );
+    const result = (await paneSpawnTool.handler(
+      { prompt: 'implemente X' },
+      userPane(),
+    )) as Record<string, unknown>;
+    const options = harness.spawnPaneAndMaybePrompt.mock.calls[0]?.[0] as {
+      prompt?: string;
+    };
+    expect(options.prompt).toBe('implemente X');
+    expect(result).toMatchObject({
+      route: { skill: { name: 'ponytail', confidence: 0.65 } },
+    });
+  });
+
+  it('skill fora do allowedSkills do filho não ganha a dica no prompt', async () => {
+    setOperatorRouteResolver(
+      vi.fn(async () => ({
+        adapterId: 'codex',
+        skill: { name: 'ponytail', confidence: 0.95 },
+      })),
+    );
+    await paneSpawnTool.handler(
+      { prompt: 'implemente X' },
+      userPane({ allowedSkills: ['impeccable'] }),
+    );
+    const options = harness.spawnPaneAndMaybePrompt.mock.calls[0]?.[0] as {
+      prompt?: string;
+    };
+    expect(options.prompt).toBe('implemente X');
+  });
+
+  it('skill sugerida sem prompt não inventa prompt', async () => {
+    setOperatorRouteResolver(
+      vi.fn(async () => ({
+        adapterId: 'codex',
+        skill: { name: 'ponytail', confidence: 0.95 },
+      })),
+    );
+    await paneSpawnTool.handler({ task: 'implemente X' }, userPane());
+    const options = harness.spawnPaneAndMaybePrompt.mock.calls[0]?.[0] as {
+      prompt?: unknown;
+    };
+    expect(options.prompt).toBeUndefined();
+  });
+
   it('resolver que falha vira erro de roteamento automático', async () => {
     setOperatorRouteResolver(
       vi.fn(async () => {

@@ -285,6 +285,112 @@ const NONE_RESULT: BrowserExtractedField = {
   source: 'none',
 };
 
+interface PendingJevField {
+  /** Question id owned by this run: sanitized field name, unique. */
+  qid: string;
+  field: BrowserExtractField;
+  kind: 'boolean' | 'enum' | 'candidates';
+  pool?: ExtractCandidate[];
+}
+
+function sanitizeQuestionId(raw: string, taken: Set<string>): string {
+  let qid = `f_${raw.replace(/[^a-zA-Z0-9_]/g, '_')}`;
+  let suffix = 2;
+  while (taken.has(qid)) qid = `f_${raw.replace(/[^a-zA-Z0-9_]/g, '_')}_${suffix++}`;
+  taken.add(qid);
+  return qid;
+}
+
+function pendingQuestion(pending: PendingJevField): JevQuestion {
+  const { field } = pending;
+  const hint = field.hint ? `(${field.hint}) ` : '';
+  if (pending.kind === 'boolean') {
+    return {
+      type: 'noul',
+      instructions:
+        `Does the visible page indicate that "${field.name}" ${hint}` +
+        'is true / applies?',
+    };
+  }
+  if (pending.kind === 'enum') {
+    const criteria: Record<string, string | null> = {};
+    for (const option of (field.enum ?? []).slice(0, 20)) {
+      criteria[option] = option;
+    }
+    criteria['none'] = 'nenhuma opção corresponde';
+    return {
+      type: 'choice',
+      instructions:
+        `Which option best describes "${field.name}" ${hint}on this page?`,
+      criteria,
+    };
+  }
+  const criteria: Record<string, string | null> = {};
+  (pending.pool ?? []).forEach((candidate, index) => {
+    criteria[`c${index + 1}`] =
+      `${candidate.label} → ${candidate.value} (${candidate.source})`.slice(
+        0,
+        256,
+      );
+  });
+  criteria['none'] = 'nenhum candidato é este campo';
+  return {
+    type: 'choice',
+    instructions:
+      `Which candidate is the value of "${field.name}" ${hint}` +
+      '? Pick none if none matches.',
+    criteria,
+  };
+}
+
+function applyJevAnswer(
+  pending: PendingJevField,
+  answer: JevResult['answers'][string] | undefined,
+): BrowserExtractedField {
+  const { field } = pending;
+  if (pending.kind === 'boolean') {
+    if (answer?.type === 'noul') {
+      return {
+        value: answer.noul >= 0.6,
+        confidence: Math.abs(answer.noul - 0.5) * 2,
+        source: 'jev',
+      };
+    }
+    return NONE_RESULT;
+  }
+  if (pending.kind === 'enum') {
+    if (
+      answer?.type === 'choice' &&
+      answer.choice !== 'none' &&
+      answer.confidence >= EXTRACT_JEV_MIN_CONFIDENCE &&
+      (field.enum ?? []).includes(answer.choice)
+    ) {
+      return { value: answer.choice, confidence: answer.confidence, source: 'jev' };
+    }
+    return NONE_RESULT;
+  }
+  if (
+    answer?.type === 'choice' &&
+    answer.choice !== 'none' &&
+    answer.confidence >= EXTRACT_JEV_MIN_CONFIDENCE
+  ) {
+    const index = Number(answer.choice.replace(/^c/, '')) - 1;
+    const chosen = pending.pool?.[index];
+    if (chosen) {
+      const coerced = coerceExtractValue(chosen.value, field);
+      if (coerced !== null) {
+        return {
+          value: coerced,
+          confidence: answer.confidence,
+          source: 'jev',
+          ...(chosen.ref ? { ref: chosen.ref } : {}),
+        };
+      }
+    }
+  }
+  return NONE_RESULT;
+}
+
 export async function resolveBrowserExtract(
   candidates: BrowserExtractCandidates,
   fields: BrowserExtractField[],
@@ -312,53 +418,16 @@ export async function resolveBrowserExtract(
     return true;
   };
 
-  const callJev = async (
-    questions: Record<string, JevQuestion>,
-    state: Record<string, unknown>,
-    decisionLabel: string,
-  ): Promise<JevResult | null> => {
-    // Once Jev is known-bad for this run, stop asking — the first reason wins.
-    if (jevSkipped) return null;
-    if (!jevUsable()) return null;
-    try {
-      const result = await judgeFn({
-        state,
-        questions,
-        timeoutMs: EXTRACT_JUDGE_TIMEOUT_MS,
-        surface: 'browserTool',
-        sessionId: context.sessionId,
-        missionId: context.missionId,
-      });
-      if (!result) {
-        jevSkipped = 'judge-unavailable';
-        return null;
-      }
-      jevCalls += 1;
-      record({
-        surface: 'browserTool',
-        sessionId: context.sessionId,
-        missionId: context.missionId,
-        model: result.model,
-        questions: Object.keys(questions),
-        probabilities: jevAnswerProbabilities(result.answers),
-        confidence: jevAnswerConfidences(result.answers),
-        decision: decisionLabel,
-        inputTokens: result.usage.input_tokens,
-        usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
-      });
-      return result;
-    } catch {
-      jevSkipped = 'judge-unavailable';
-      return null;
-    }
-  };
-
   const jsonLdLeaves: JsonLdLeaf[] = [];
   for (const doc of candidates.jsonLd.slice(0, 3)) {
     collectJsonLdLeaves(doc, 0, jsonLdLeaves);
   }
 
-  for (const field of fields.slice(0, 20)) {
+  // Pass 1 — deterministic resolution; fields that NEED Jev are collected.
+  const pending: PendingJevField[] = [];
+  const takenQids = new Set<string>();
+  const scopedFields = fields.slice(0, 20);
+  for (const field of scopedFields) {
     const query = fieldQuery(field);
     const queryWords = query.split(' ').filter((w) => w.length >= 2);
 
@@ -376,82 +445,12 @@ export async function resolveBrowserExtract(
       }
     }
 
-    if (field.type === 'boolean') {
-      // (b-boolean) noul over page state — Jev answers, code maps.
-      const result = await callJev(
-        {
-          answer: {
-            type: 'noul',
-            instructions:
-              `Does the visible page indicate that "${field.name}" ` +
-              `${field.hint ? `(${field.hint}) ` : ''}is true / applies?`,
-          },
-        },
-        {
-          field: { name: field.name, hint: field.hint ?? '' },
-          url: context.url,
-          pageTitle: context.title,
-          excerpt: (context.excerpt ?? '').slice(0, EXTRACT_EXCERPT_CHARS),
-          pairs: candidates.pairs.slice(0, EXTRACT_PAIRS_STATE_MAX),
-        },
-        `extract:${field.name}`,
-      );
-      const answer = result?.answers['answer'];
-      if (result && answer && answer.type === 'noul') {
-        out[field.name] = {
-          value: answer.noul >= 0.6,
-          confidence: Math.abs(answer.noul - 0.5) * 2,
-          source: 'jev',
-        };
-      } else {
-        out[field.name] = NONE_RESULT;
-      }
-      continue;
-    }
-
-    if (field.type === 'enum') {
-      // (b-enum) choice over the declared options + none.
-      const criteria: Record<string, string | null> = {};
-      for (const option of (field.enum ?? []).slice(0, 20)) {
-        criteria[option] = option;
-      }
-      criteria['none'] = 'nenhuma opção corresponde';
-      const result = await callJev(
-        {
-          option: {
-            type: 'choice',
-            instructions:
-              `Which option best describes "${field.name}" ` +
-              `${field.hint ? `(${field.hint}) ` : ''}on this page?`,
-            criteria,
-          },
-        },
-        {
-          field: { name: field.name, hint: field.hint ?? '' },
-          url: context.url,
-          pageTitle: context.title,
-          excerpt: (context.excerpt ?? '').slice(0, EXTRACT_EXCERPT_CHARS),
-          pairs: candidates.pairs.slice(0, EXTRACT_PAIRS_STATE_MAX),
-        },
-        `extract:${field.name}`,
-      );
-      const answer = result?.answers['option'];
-      if (
-        result &&
-        answer &&
-        answer.type === 'choice' &&
-        answer.choice !== 'none' &&
-        answer.confidence >= EXTRACT_JEV_MIN_CONFIDENCE &&
-        (field.enum ?? []).includes(answer.choice)
-      ) {
-        out[field.name] = {
-          value: answer.choice,
-          confidence: answer.confidence,
-          source: 'jev',
-        };
-      } else {
-        out[field.name] = NONE_RESULT;
-      }
+    if (field.type === 'boolean' || field.type === 'enum') {
+      pending.push({
+        qid: sanitizeQuestionId(field.name, takenQids),
+        field,
+        kind: field.type,
+      });
       continue;
     }
 
@@ -494,58 +493,69 @@ export async function resolveBrowserExtract(
             };
       continue;
     }
-
-    // ≥ 2 candidates → Jev choice; fail-open to null.
-    const criteria: Record<string, string | null> = {};
-    pool.forEach((candidate, index) => {
-      criteria[`c${index + 1}`] =
-        `${candidate.label} → ${candidate.value} (${candidate.source})`.slice(
-          0,
-          256,
-        );
+    pending.push({
+      qid: sanitizeQuestionId(field.name, takenQids),
+      field,
+      kind: 'candidates',
+      pool,
     });
-    criteria['none'] = 'nenhum candidato é este campo';
-    const result = await callJev(
-      {
-        candidate: {
-          type: 'choice',
-          instructions:
-            `Which candidate is the value of "${field.name}" ` +
-            `${field.hint ? `(${field.hint}) ` : ''}? Pick none if none matches.`,
-          criteria,
-        },
-      },
-      {
-        field: { name: field.name, type: field.type, hint: field.hint ?? '' },
-        url: context.url,
-        pageTitle: context.title,
-      },
-      `extract:${field.name}`,
-    );
-    const answer = result?.answers['candidate'];
-    if (
-      result &&
-      answer &&
-      answer.type === 'choice' &&
-      answer.choice !== 'none' &&
-      answer.confidence >= EXTRACT_JEV_MIN_CONFIDENCE
-    ) {
-      const index = Number(answer.choice.replace(/^c/, '')) - 1;
-      const chosen = pool[index];
-      if (chosen) {
-        const coerced = coerceExtractValue(chosen.value, field);
-        if (coerced !== null) {
-          out[field.name] = {
-            value: coerced,
-            confidence: answer.confidence,
-            source: 'jev',
-            ...(chosen.ref ? { ref: chosen.ref } : {}),
-          };
-          continue;
-        }
+  }
+
+  // Pass 2 — ONE Jev call for every field that still needs judgment.
+  if (pending.length > 0) {
+    let result: JevResult | null = null;
+    if (jevUsable()) {
+      const questions: Record<string, JevQuestion> = {};
+      for (const entry of pending) {
+        questions[entry.qid] = pendingQuestion(entry);
+      }
+      const fieldsState: Record<string, unknown> = {};
+      for (const entry of pending) {
+        fieldsState[entry.field.name] = {
+          type: entry.field.type,
+          hint: entry.field.hint ?? '',
+        };
+      }
+      try {
+        result = await judgeFn({
+          state: {
+            url: context.url,
+            title: context.title,
+            excerpt: (context.excerpt ?? '').slice(0, EXTRACT_EXCERPT_CHARS),
+            pairs: candidates.pairs.slice(0, EXTRACT_PAIRS_STATE_MAX),
+            fields: fieldsState,
+          },
+          questions,
+          timeoutMs: EXTRACT_JUDGE_TIMEOUT_MS,
+          surface: 'browserTool',
+          sessionId: context.sessionId,
+          missionId: context.missionId,
+        });
+      } catch {
+        result = null;
+      }
+      if (!result) {
+        jevSkipped = 'judge-unavailable';
+      } else {
+        jevCalls = 1;
+        record({
+          surface: 'browserTool',
+          sessionId: context.sessionId,
+          missionId: context.missionId,
+          model: result.model,
+          questions: Object.keys(questions),
+          probabilities: jevAnswerProbabilities(result.answers),
+          confidence: jevAnswerConfidences(result.answers),
+          decision:
+            `extract:${pending.map((entry) => entry.field.name).join(',')}`.slice(0, 200),
+          inputTokens: result.usage.input_tokens,
+          usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
+        });
       }
     }
-    out[field.name] = NONE_RESULT;
+    for (const entry of pending) {
+      out[entry.field.name] = applyJevAnswer(entry, result?.answers[entry.qid]);
+    }
   }
 
   return {

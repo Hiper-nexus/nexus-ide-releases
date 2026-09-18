@@ -100,7 +100,7 @@ describe('resolveBrowserExtract', () => {
     recordDecision.mockClear();
     const jev = vi.fn(async (_req: unknown) =>
       jevResult({
-        candidate: {
+        f_total: {
           type: 'choice',
           choice: 'c2',
           probabilities: { c1: 0.2, c2: 0.7, none: 0.1 },
@@ -135,7 +135,7 @@ describe('resolveBrowserExtract', () => {
   it('returns null when Jev confidence is below 0.6 or picks none', async () => {
     const jev = vi.fn(async (_req: unknown) =>
       jevResult({
-        candidate: {
+        f_total: {
           type: 'choice',
           choice: 'none',
           probabilities: { none: 0.9 },
@@ -236,7 +236,7 @@ describe('resolveBrowserExtract', () => {
 
   it('resolves boolean fields via noul and maps probability to value/confidence', async () => {
     const jev = vi.fn(async (_req: unknown) =>
-      jevResult({ answer: { type: 'noul', noul: 0.85 } }),
+      jevResult({ f_em_estoque: { type: 'noul', noul: 0.85 } }),
     );
     const result = await resolveBrowserExtract(
       candidates(),
@@ -254,7 +254,7 @@ describe('resolveBrowserExtract', () => {
   it('resolves enum fields via choice among declared options only', async () => {
     const jev = vi.fn(async (_req: unknown) =>
       jevResult({
-        option: {
+        f_pagamento: {
           type: 'choice',
           choice: 'boleto',
           probabilities: { boleto: 0.9 },
@@ -278,7 +278,7 @@ describe('resolveBrowserExtract', () => {
   it('rejects an enum choice outside the declared options', async () => {
     const jev = vi.fn(async (_req: unknown) =>
       jevResult({
-        option: {
+        f_pagamento: {
           type: 'choice',
           choice: 'dinheiro',
           probabilities: { dinheiro: 0.9 },
@@ -306,5 +306,128 @@ describe('resolveBrowserExtract', () => {
     );
     expect(result.fields['preço'].value).toBe(42.5);
     expect(result.fields['preço'].source).toBe('token');
+  });
+
+  it('fans out N Jev-dependent fields into exactly one judge call with N questions', async () => {
+    const jev = vi.fn(async (_req: unknown) =>
+      jevResult({
+        f_total: {
+          type: 'choice',
+          choice: 'c1',
+          probabilities: { c1: 0.9 },
+          confidence: 0.9,
+        },
+        f_em_estoque: { type: 'noul', noul: 0.9 },
+        f_pagamento: {
+          type: 'choice',
+          choice: 'pix',
+          probabilities: { pix: 0.8 },
+          confidence: 0.8,
+        },
+      }),
+    );
+    const result = await resolveBrowserExtract(
+      candidates({
+        pairs: [
+          { label: 'Total', value: '100' },
+          { label: 'Total geral', value: '200' },
+        ],
+      }),
+      [
+        { name: 'total', type: 'number' },
+        { name: 'em estoque', type: 'boolean' },
+        { name: 'pagamento', type: 'enum', enum: ['pix', 'boleto'] },
+      ],
+      context,
+      { jev, ...enabled, recordDecision },
+    );
+    expect(jev).toHaveBeenCalledOnce();
+    const request = jev.mock.calls[0][0] as {
+      questions: Record<string, unknown>;
+      state: Record<string, unknown>;
+    };
+    expect(Object.keys(request.questions).sort()).toEqual([
+      'f_em_estoque',
+      'f_pagamento',
+      'f_total',
+    ]);
+    expect(request.state).toMatchObject({
+      url: context.url,
+      title: context.title,
+    });
+    expect(result.jev.calls).toBe(1);
+    expect(result.fields.total).toMatchObject({ value: 100, source: 'jev' });
+    expect(result.fields['em estoque']).toMatchObject({
+      value: true,
+      source: 'jev',
+    });
+    expect(result.fields.pagamento).toMatchObject({
+      value: 'pix',
+      source: 'jev',
+    });
+  });
+
+  it('keeps deterministic fields while Jev resolves the rest in the same run', async () => {
+    const jev = vi.fn(async (_req: unknown) =>
+      jevResult({
+        f_total: {
+          type: 'choice',
+          choice: 'c2',
+          probabilities: { c2: 0.8 },
+          confidence: 0.8,
+        },
+      }),
+    );
+    const result = await resolveBrowserExtract(
+      candidates({
+        jsonLd: [{ preco: '42' }],
+        pairs: [
+          { label: 'Total', value: '100' },
+          { label: 'Total geral', value: '200' },
+          { label: 'Frete', value: '15' },
+        ],
+      }),
+      [
+        { name: 'preco', type: 'number' },
+        { name: 'total', type: 'number' },
+        { name: 'frete', type: 'number' },
+      ],
+      context,
+      { jev, ...enabled, recordDecision },
+    );
+    expect(jev).toHaveBeenCalledOnce();
+    expect(result.fields.preco).toMatchObject({ value: 42, source: 'json-ld' });
+    expect(result.fields.frete).toMatchObject({
+      value: 15,
+      source: 'pair',
+      confidence: 0.8,
+    });
+    expect(result.fields.total).toMatchObject({ value: 200, source: 'jev' });
+  });
+
+  it('nulls every Jev-dependent field but keeps deterministic ones when Jev fails', async () => {
+    const jev = vi.fn(async (_req: unknown) => null);
+    const result = await resolveBrowserExtract(
+      candidates({
+        jsonLd: [{ preco: '42' }],
+        pairs: [
+          { label: 'Total', value: '100' },
+          { label: 'Total geral', value: '200' },
+        ],
+      }),
+      [
+        { name: 'preco', type: 'number' },
+        { name: 'total', type: 'number' },
+        { name: 'em estoque', type: 'boolean' },
+      ],
+      context,
+      { jev, ...enabled, recordDecision },
+    );
+    expect(jev).toHaveBeenCalledOnce();
+    expect(result.jev.calls).toBe(0);
+    expect(result.jev.skipped).toBe('judge-unavailable');
+    expect(result.fields.preco).toMatchObject({ value: 42, source: 'json-ld' });
+    expect(result.fields.total.source).toBe('none');
+    expect(result.fields['em estoque'].source).toBe('none');
   });
 });

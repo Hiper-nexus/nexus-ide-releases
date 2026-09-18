@@ -227,13 +227,28 @@ function defaultSourceDirs(home: string): string[] {
  * directory name, because that is what resolves both the Main-owned cache and
  * the provider copies installed from it.
  */
-const BUNDLED_MANIFESTS: Record<string, Record<string, SkillAsset>> = {
+export const BUNDLED_MANIFESTS: Record<string, Record<string, SkillAsset>> = {
   impeccable: IMPECCABLE_MANIFEST,
   archify: ARCHIFY_MANIFEST,
   'bmad-templates': BMAD_TEMPLATES_MANIFEST,
   superpowers: SUPERPOWERS_MANIFEST,
   dembrandt: DEMBRANDT_MANIFEST,
   'typesafe-ai': TYPESAFE_AI_MANIFEST,
+};
+
+/**
+ * SKILL.md bodies written inline by this module (not manifest assets):
+ * the generated root materializes every one of them, so they belong to the
+ * same bundled catalog as BUNDLED_MANIFESTS.
+ */
+export const GENERATED_INLINE_SKILL_BODIES: Record<string, string> = {
+  ponytail: GENERATED_PONYTAIL_SKILL,
+  grilling: GENERATED_GRILLING_SKILL,
+  'nexus-visual-media': GENERATED_NEXUS_VISUAL_MEDIA_SKILL,
+  'nexus-pet-studio': GENERATED_NEXUS_PET_STUDIO_SKILL,
+  ...Object.fromEntries(
+    BUILTIN_BRIDGEMIND_SKILLS.map((skill) => [skill.name, skill.body]),
+  ),
 };
 
 const MANAGED_LEDGER_FILE = '.nexus-managed.json';

@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   isProviderEnabled: vi.fn(() => true),
   providerReadiness: vi.fn(() => ({ ready: true, reason: 'ready' })),
   hasAvailableAccount: vi.fn(),
+  suggestSkillForTask: vi.fn(async (): Promise<unknown> => null),
 }));
 
 vi.mock('../persistence/provider-config-store', () => ({
@@ -23,6 +24,11 @@ vi.mock('../persistence/account-store', async () => {
   );
   return { ...actual, hasAvailableAccount: mocks.hasAvailableAccount };
 });
+
+vi.mock('./jev-skill-suggestion', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./jev-skill-suggestion')>()),
+  suggestSkillForTask: mocks.suggestSkillForTask,
+}));
 
 import { rememberKimiSeatReadiness } from '../adapters/seat-auth-readiness';
 import { buildDomainTools } from './tools-domain';
@@ -61,6 +67,8 @@ beforeEach(() => {
   mocks.providerReadiness.mockReturnValue({ ready: true, reason: 'ready' });
   mocks.hasAvailableAccount.mockReset();
   mocks.hasAvailableAccount.mockReturnValue(true);
+  mocks.suggestSkillForTask.mockReset();
+  mocks.suggestSkillForTask.mockResolvedValue(null);
 });
 
 afterEach(() => {
@@ -86,6 +94,36 @@ describe('nexus_route_task wiring', () => {
     const log = recentRouteLog();
     expect(log[0]).toMatchObject({ adapterId: decision.adapterId });
     expect(log[0].reason).toBeTruthy();
+  });
+
+  it('devolve skillSuggestion do Jev e recebe o allowedSkills do chamador', async () => {
+    mocks.listProviderSettings.mockReturnValue([
+      { adapterId: 'codex', enabled: true, installed: true, authStrategy: 'oauth', models: ['gpt-5.6-luna'] },
+    ]);
+    mocks.suggestSkillForTask.mockResolvedValue({ name: 'ponytail', confidence: 0.9 });
+    const ctx = { ...context(), allowedSkills: ['ponytail'] };
+    const decision = (await tool('nexus_route_task').handler(
+      { task: 'tarefa de complexidade média' },
+      ctx,
+    )) as { skillSuggestion?: unknown };
+
+    expect(mocks.suggestSkillForTask).toHaveBeenCalledWith(
+      'tarefa de complexidade média',
+      expect.objectContaining({ allowedSkills: ['ponytail'] }),
+    );
+    expect(decision.skillSuggestion).toEqual({ name: 'ponytail', confidence: 0.9 });
+  });
+
+  it('skillSuggestion é null e fail-open quando a sugestão quebra', async () => {
+    mocks.listProviderSettings.mockReturnValue([
+      { adapterId: 'codex', enabled: true, installed: true, authStrategy: 'oauth', models: ['gpt-5.6-luna'] },
+    ]);
+    mocks.suggestSkillForTask.mockRejectedValue(new Error('boom'));
+    const decision = (await tool('nexus_route_task').handler(
+      { task: 'tarefa de complexidade média' },
+      context(),
+    )) as { skillSuggestion?: unknown };
+    expect(decision.skillSuggestion).toBeNull();
   });
 
   it('lança quando não há adapter roteável', async () => {

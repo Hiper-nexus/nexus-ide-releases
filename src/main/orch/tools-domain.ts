@@ -27,6 +27,7 @@ import {
   type JevTaskClassification,
 } from './jev-task-routing';
 import { mergeAdapterUseLists } from './route-pipeline';
+import { suggestSkillForTask } from './jev-skill-suggestion';
 import { recordRouteDecision } from './route-provenance';
 import { recordRouteLog, recentRouteLog } from './route-log';
 import { loadSpecialtyBenchmark } from './specialty-benchmark';
@@ -1369,7 +1370,9 @@ const routeTaskTool: McpToolDef = {
     'roster.' +
     ' Without a mission the answer is a free suggestion (no RouteReservation): ' +
     'pass adapterId/model/effort into nexus_pane_spawn — or omit adapterId in ' +
-    'nexus_pane_spawn and pass `task` so Nexus routes it automatically.',
+    'nexus_pane_spawn and pass `task` so Nexus routes it automatically. ' +
+    'The result also carries skillSuggestion: the single bundled skill Jev ' +
+    'judged clearly useful for the task (null when none).',
   inputSchema: {
     type: 'object',
     properties: {
@@ -1616,12 +1619,25 @@ const routeTaskTool: McpToolDef = {
       classifierSource: routing.classifierSource,
       ...(routing.escalate !== undefined ? { escalate: routing.escalate } : {}),
     };
-    if (!missionId) return { ...decision, ...provenance };
+    // Skill suggestion (cookbook TypeSafe): UMA choice do Jev entre as skills
+    // bundled permitidas ao chamador. Fail-open: qualquer falha → null.
+    let skillSuggestion: { name: string; confidence: number } | null = null;
+    try {
+      skillSuggestion = await suggestSkillForTask(task, {
+        allowedSkills: ctx.allowedSkills ?? null,
+        sessionId: ctx.sessionId,
+        missionId: missionId ?? undefined,
+      });
+    } catch {
+      skillSuggestion = null;
+    }
+    if (!missionId) return { ...decision, ...provenance, skillSuggestion };
     const reservation = getProjectDomainStores(ctx.scope)
       .missions.reserveRouteDecision(missionId, task, decision);
     return {
       ...decision,
       ...provenance,
+      skillSuggestion,
       routeReservationId: reservation.id,
       routeReservationExpiresAt: reservation.expiresAt,
     };
