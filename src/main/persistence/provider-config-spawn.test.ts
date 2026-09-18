@@ -37,6 +37,8 @@ const spawnDeps = vi.hoisted(() => ({
   listAccounts: vi.fn((): Array<Record<string, unknown>> => []),
   getActiveAccount: vi.fn(),
   pickAvailableForFailover: vi.fn(),
+  hasFailoverCredential: vi.fn((_account?: unknown) => true),
+  blockedForScope: vi.fn((_accountId?: string, _now?: number) => false),
   quotaSnapshot: vi.fn<() => { entries: Array<Record<string, unknown>> } | null>(
     () => null,
   ),
@@ -345,6 +347,8 @@ vi.mock('./account-store', () => ({
   getAccount: spawnDeps.getAccount,
   listAccounts: spawnDeps.listAccounts,
   pickAvailableForFailover: spawnDeps.pickAvailableForFailover,
+  accountHasFailoverCredential: spawnDeps.hasFailoverCredential,
+  isAccountBlockedForScope: spawnDeps.blockedForScope,
   prepareAccountForSpawn: spawnDeps.prepareAccount,
 }));
 
@@ -386,6 +390,8 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
     spawnDeps.listAccounts.mockReturnValue([]);
     spawnDeps.getActiveAccount.mockReset();
     spawnDeps.pickAvailableForFailover.mockReturnValue({ account: null });
+    spawnDeps.hasFailoverCredential.mockReturnValue(true);
+    spawnDeps.blockedForScope.mockReturnValue(false);
     spawnDeps.quotaSnapshot.mockReturnValue(null);
     spawnDeps.ensureSubscriptionActive.mockReturnValue(true);
     spawnDeps.activeClaudeAuthEnv.mockReturnValue({
@@ -502,6 +508,7 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
         extraArgs: [],
         keyEnv: {},
         suppressEnv: [],
+        accountChoice: expect.objectContaining({ source: 'legacy' }),
       },
     });
     expect(spawnDeps.resolveAuthStrategy).toHaveBeenCalledWith(
@@ -904,6 +911,7 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
           KIMI_MODEL_NAME: 'kimi-for-coding',
         },
         suppressEnv: [],
+        accountChoice: expect.objectContaining({ source: 'legacy' }),
       },
     });
   });
@@ -976,6 +984,10 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
         extraArgs: [],
         keyEnv: { ANTHROPIC_API_KEY: 'sk-exact-selected' },
         suppressEnv: [],
+        accountChoice: expect.objectContaining({
+          source: 'pinned',
+          account: { label: 'Se•••ed', mode: 'api_key' },
+        }),
       },
     });
   });
@@ -1012,6 +1024,10 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
           CLAUDE_CODE_OAUTH_REFRESH_TOKEN: 'refresh-account-max',
         },
         suppressEnv: ['ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL'],
+        accountChoice: expect.objectContaining({
+          source: 'pinned',
+          account: { label: 'Cl•••ax', mode: 'subscription' },
+        }),
       },
     });
   });
@@ -1206,5 +1222,182 @@ describe('main-owned quota credential resolution', () => {
     expect(resolveQuotaApiKey({ adapterId: 'grok', accountId: 'saved', usageProviderId: 'grok', authMode: 'api-key' })).toBeNull();
     expect(resolveQuotaApiKey({ adapterId: 'missing', accountId: 'saved', usageProviderId: 'longcat', authMode: 'api-key' })).toBeNull();
     expect(spawnDeps.getSecret.mock.calls.length).toBe(0);
+  });
+});
+
+describe('Recibo da escolha de conta (overrides.accountChoice)', () => {
+  const kimiAccount = (id: string, label: string, createdAt: number) => ({
+    id,
+    adapterId: 'kimi',
+    label,
+    mode: 'api_key' as const,
+    upstream: 'anthropic',
+    createdAt,
+  });
+  const quotaEntries = (entries: Array<Record<string, unknown>>) =>
+    ({ entries }) as never;
+
+  beforeEach(() => {
+    // O beforeEach do describe original tem escopo próprio — reancora os
+    // mocks que este bloco lê.
+    spawnDeps.quotaSnapshot.mockReturnValue(null);
+    spawnDeps.blockedForScope.mockReturnValue(false);
+    spawnDeps.hasFailoverCredential.mockReturnValue(true);
+    spawnDeps.listAccounts.mockReturnValue([]);
+    spawnDeps.getActiveAccount.mockReturnValue(null);
+    spawnDeps.pickAvailableForFailover.mockReturnValue({ account: null });
+  });
+
+  it('pinned: a conta do chamador vence e as irmãs viram alternativas', () => {
+    const account = kimiAccount('kimi-p', 'pinada@corp.com', 1);
+    spawnDeps.prepareAccount.mockReturnValueOnce({
+      ok: true,
+      account,
+      apiKey: 'sk-pinned',
+      authEnv: {},
+    });
+    spawnDeps.listAccounts.mockReturnValue([
+      account,
+      kimiAccount('kimi-x', 'irma@corp.com', 2),
+    ]);
+    spawnDeps.blockedForScope.mockImplementation(
+      (id?: string) => id === 'kimi-x',
+    );
+
+    const result = prepareProviderSpawn('kimi', { accountId: 'kimi-p' });
+
+    expect(result).toMatchObject({ ok: true });
+    const receipt = (result as { overrides: { accountChoice?: unknown } })
+      .overrides.accountChoice as {
+      source: string;
+      account: { label: string; mode: string };
+      alternatives: Array<{ label: string; skipped: string }>;
+    };
+    expect(receipt.source).toBe('pinned');
+    expect(receipt.account.label).toBe('p•••@c•••.com');
+    expect(receipt.alternatives).toEqual([
+      expect.objectContaining({
+        label: 'i•••@c•••.com',
+        skipped: 'cooldown',
+      }),
+    ]);
+  });
+
+  it('headroom-rule: a irmã mais livre do snapshot vence a ativa', () => {
+    spawnDeps.listAccounts.mockReturnValue([
+      kimiAccount('kimi-a', 'ana@corp.com', 1),
+      kimiAccount('kimi-b', 'bia@corp.com', 2),
+    ]);
+    spawnDeps.getActiveAccount.mockReturnValue(
+      kimiAccount('kimi-a', 'ana@corp.com', 1),
+    );
+    spawnDeps.quotaSnapshot.mockReturnValue(
+      quotaEntries([
+        {
+          adapterId: 'kimi',
+          accountId: 'kimi-a',
+          windows: [{ label: 'Sessão', usedRatio: 0.98, resetsAt: 111 }],
+        },
+        {
+          adapterId: 'kimi',
+          accountId: 'kimi-b',
+          windows: [{ label: 'Sessão', usedRatio: 0.1, resetsAt: 222 }],
+        },
+      ]),
+    );
+    spawnDeps.pickAvailableForFailover.mockReturnValue({
+      account: kimiAccount('kimi-b', 'bia@corp.com', 2),
+    });
+
+    const result = prepareProviderSpawn('kimi');
+
+    expect(result).toMatchObject({ ok: true });
+    const receipt = (result as { overrides: { accountChoice?: unknown } })
+      .overrides.accountChoice as {
+      source: string;
+      account: { label: string };
+      headroom: { usedPct: number; window: string; resetsAt: number };
+      alternatives: Array<{ label: string; skipped: string }>;
+    };
+    expect(receipt.source).toBe('headroom-rule');
+    expect(receipt.account.label).toBe('b•••@c•••.com');
+    expect(receipt.headroom).toMatchObject({
+      usedPct: 10,
+      window: 'Sessão',
+      resetsAt: 222,
+    });
+    expect(receipt.alternatives).toEqual([
+      expect.objectContaining({
+        label: 'a•••@c•••.com',
+        skipped: 'less-headroom',
+      }),
+    ]);
+  });
+
+  it('active: sem medição a ativa continua e o recibo diz isso', () => {
+    spawnDeps.listAccounts.mockReturnValue([
+      kimiAccount('kimi-a', 'ana@corp.com', 1),
+    ]);
+    spawnDeps.getActiveAccount.mockReturnValue(
+      kimiAccount('kimi-a', 'ana@corp.com', 1),
+    );
+    spawnDeps.pickAvailableForFailover.mockReturnValue({
+      account: kimiAccount('kimi-a', 'ana@corp.com', 1),
+    });
+
+    const result = prepareProviderSpawn('kimi');
+
+    const receipt = (result as { overrides: { accountChoice?: unknown } })
+      .overrides.accountChoice as {
+      source: string;
+      headroom: unknown;
+    };
+    expect(receipt.source).toBe('active');
+    expect(receipt.headroom).toBeNull();
+  });
+
+  it('active-fallback: tudo bloqueado cai na ativa com o aviso no recibo', () => {
+    spawnDeps.listAccounts.mockReturnValue([
+      kimiAccount('kimi-a', 'ana@corp.com', 1),
+      kimiAccount('kimi-b', 'bia@corp.com', 2),
+    ]);
+    spawnDeps.getActiveAccount.mockReturnValue(
+      kimiAccount('kimi-a', 'ana@corp.com', 1),
+    );
+    spawnDeps.pickAvailableForFailover.mockReturnValue({ account: null });
+    spawnDeps.blockedForScope.mockReturnValue(true);
+
+    const result = prepareProviderSpawn('kimi');
+
+    const receipt = (result as { overrides: { accountChoice?: unknown } })
+      .overrides.accountChoice as {
+      source: string;
+      note?: string;
+      alternatives: Array<{ skipped: string }>;
+    };
+    expect(receipt.source).toBe('active-fallback');
+    expect(receipt.note).toContain('nenhuma conta livre');
+    expect(receipt.alternatives[0]?.skipped).toBe('cooldown');
+  });
+
+  it('native: claude sem pin fica na linhagem nativa', () => {
+    const result = prepareProviderSpawn('claude');
+
+    const receipt = (result as { overrides: { accountChoice?: unknown } })
+      .overrides.accountChoice as { source: string; account: unknown };
+    expect(receipt.source).toBe('native');
+    expect(receipt.account).toBeNull();
+    expect(spawnDeps.pickAvailableForFailover).not.toHaveBeenCalled();
+  });
+
+  it('legacy: adapter sem contas cai no caminho providers.conf', () => {
+    spawnDeps.listAccounts.mockReturnValue([]);
+    spawnDeps.getActiveAccount.mockReturnValue(null);
+
+    const result = prepareProviderSpawn('kimi');
+
+    const receipt = (result as { overrides: { accountChoice?: unknown } })
+      .overrides.accountChoice as { source: string };
+    expect(receipt.source).toBe('legacy');
   });
 });

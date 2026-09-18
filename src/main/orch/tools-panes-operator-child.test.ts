@@ -31,6 +31,11 @@ vi.mock('../persistence/settings-store', async (importOriginal) => ({
 }));
 
 import { paneSpawnTool, setOperatorRouteResolver } from './tools-panes';
+import {
+  forgetAccountChoiceReceipt,
+  recordAccountChoiceReceipt,
+} from '../persistence/account-choice-receipts';
+import type { AccountChoiceReceipt } from '../../shared/account-choice';
 
 function userPane(overrides: Partial<AgentGateContext> = {}): AgentGateContext {
   return {
@@ -118,7 +123,44 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
       paneId: 'pane-pending',
       sessionId: null,
       pending: true,
+      // ACK pendente: sem sessionId ainda, o recibo não existe.
+      harness: { account: null },
     });
+  });
+
+  it('harness.account traz o recibo registrado para a sessão spawnada', async () => {
+    const receipt: AccountChoiceReceipt = {
+      adapterId: 'codex',
+      source: 'headroom-rule',
+      account: { label: 'g•••@l•••.com.br', mode: 'subscription' },
+      headroom: { usedPct: 12, window: 'Sessão', resetsAt: 9, score: 0.9 },
+      alternatives: [],
+      decidedAt: 1,
+    };
+    harness.spawnPaneAndMaybePrompt.mockImplementationOnce(async () => {
+      // O registro acontece no spawn real (pty-ipc / main-owned-runtime).
+      recordAccountChoiceReceipt('pty-child', receipt);
+      return { paneId: 'pane-child', sessionId: 'pty-child' };
+    });
+    try {
+      const result = (await paneSpawnTool.handler(
+        { adapterId: 'codex' },
+        userPane(),
+      )) as Record<string, unknown>;
+      expect(result).toMatchObject({
+        harness: { account: receipt },
+      });
+    } finally {
+      forgetAccountChoiceReceipt('pty-child');
+    }
+  });
+
+  it('harness.account é null quando a sessão não tem recibo registrado', async () => {
+    const result = (await paneSpawnTool.handler(
+      { adapterId: 'codex' },
+      userPane(),
+    )) as Record<string, unknown>;
+    expect(result).toMatchObject({ harness: { account: null } });
   });
 
   it('em Autopilot o filho ad-hoc herda o allowlist do operador (null)', async () => {

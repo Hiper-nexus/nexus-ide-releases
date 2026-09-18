@@ -100,16 +100,29 @@ import {
   isProviderAuthReadyForModel,
 } from '../adapters/model-auth-readiness';
 import {
+  accountHasFailoverCredential,
   activeClaudeAuthEnv,
   accountKey,
   ensureSubscriptionActive,
   fileSubscriptionAuthEnv,
   getActiveAccount,
   getAccount,
+  isAccountBlockedForScope,
   listAccounts,
   pickAvailableForFailover,
   prepareAccountForSpawn,
 } from './account-store';
+import type { Account } from '../../shared/account-types';
+import {
+  maskAccountLabel,
+  type AccountChoiceAlternative,
+  type AccountChoiceReceipt,
+  type AccountHeadroom,
+} from '../../shared/account-choice';
+import type {
+  ProviderQuotaEntry,
+  QuotaWindow,
+} from '../../shared/quota-types';
 import { quotaAvailabilityScore } from '../quota/quota-policy';
 import { requireQuotaService } from '../quota/quota-service';
 import type { ApiQuotaKeyRequest } from '../quota/provider-live-usage';
@@ -255,6 +268,8 @@ export interface ProviderSpawnOverrides {
   keyEnv: Record<string, string>;
   /** Env vars to strip so nothing hijacks an active subscription session. */
   suppressEnv: string[];
+  /** Recibo da escolha de conta (pinada/regra/ativa/nativa/legada). */
+  accountChoice?: AccountChoiceReceipt;
 }
 
 /** Key/token env vars an adapter could pick up from the parent environment. */
@@ -638,6 +653,14 @@ function buildProviderSpawnOverrides(
       adapterId,
       effectiveProviderModel(adapterId, perSpawn.model),
     );
+  // A conta do pane e o recibo de QUEM decidiu (pinada, regra de folga,
+  // ativa, fallback, nativa ou legada) — rótulos sempre mascarados.
+  const { account, receipt } = resolveSpawnAccountChoice(
+    adapterId,
+    preparedAccount,
+    options,
+    credentiallessOpenCode,
+  );
   // Control flags (permission mode / effort / verbose) always apply, whatever
   // the auth/routing path — they're how the user turns on auto-operation.
   // Prefer: (1) valid user absolute override, (2) valid discovery cache,
@@ -678,6 +701,7 @@ function buildProviderSpawnOverrides(
           )
         : null,
     extraArgs: [...controlArgsFor(adapterId, perSpawn.effort), ...cfg.extraArgs],
+    accountChoice: receipt,
   };
 
   if (options.nativeAuthAttempt) {
@@ -690,15 +714,7 @@ function buildProviderSpawnOverrides(
   // legacy implicit-active-account path: restoring an old OAuth snapshot can
   // overwrite the CLI's current native session and trigger an endless login
   // loop. Its vault is used only when the user explicitly pins that account.
-  const account =
-    preparedAccount?.account ??
-    (!perSpawn.accountId &&
-    !(adapterId === 'agy' && options.decision?.strategy === 'subscription') &&
-    !credentiallessOpenCode &&
-    adapterId !== 'claude' &&
-    listAccounts(adapterId).length > 0
-      ? pickUnpinnedAccountWithHeadroom(adapterId)
-      : null);
+  // `account`/`receipt` já vieram de resolveSpawnAccountChoice acima.
   if (account) {
     if (account.mode === 'subscription') {
       // Pane-pinned: process-scoped env (Claude OAuth token or CODEX_HOME/…).
@@ -876,6 +892,173 @@ function prepareProviderSpawnWithDecision(
   }
 }
 
+/** Snapshot de scores de quota do adapter; undefined quando não há medição. */
+function quotaScoresFor(
+  adapterId: string,
+): ReadonlyMap<string, number> | undefined {
+  try {
+    const snap = requireQuotaService().lastSnapshot();
+    if (!snap) return undefined;
+    const scores = new Map<string, number>();
+    for (const entry of snap.entries) {
+      if (entry.adapterId === adapterId && entry.accountId) {
+        scores.set(entry.accountId, quotaAvailabilityScore(entry));
+      }
+    }
+    return scores.size > 0 ? scores : undefined;
+  } catch {
+    /* quota service opcional na corrida de boot — sem medição */
+    return undefined;
+  }
+}
+
+function quotaEntryFor(
+  adapterId: string,
+  accountId: string,
+): ProviderQuotaEntry | undefined {
+  try {
+    const snap = requireQuotaService().lastSnapshot();
+    return snap?.entries.find(
+      (e) => e.adapterId === adapterId && e.accountId === accountId,
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+/** Pior janela medida da conta: a de maior usedRatio conhecido. */
+function headroomFromEntry(entry: ProviderQuotaEntry): AccountHeadroom {
+  let worst: QuotaWindow | null = null;
+  for (const w of entry.windows) {
+    if (w.usedRatio === null) continue;
+    if (!worst || (worst.usedRatio ?? -1) < w.usedRatio) worst = w;
+  }
+  return {
+    usedPct:
+      worst && worst.usedRatio !== null
+        ? Math.round(worst.usedRatio * 100)
+        : null,
+    window: worst?.label ?? null,
+    resetsAt: worst?.resetsAt ?? null,
+    score: quotaAvailabilityScore(entry),
+  };
+}
+
+function headroomFor(
+  adapterId: string,
+  accountId: string,
+): AccountHeadroom | null {
+  const entry = quotaEntryFor(adapterId, accountId);
+  return entry ? headroomFromEntry(entry) : null;
+}
+
+function receiptAccount(account: Account): {
+  label: string;
+  mode: 'subscription' | 'api_key' | 'unknown';
+} {
+  return {
+    label: maskAccountLabel(account.label),
+    mode:
+      account.mode === 'api-key'
+        ? 'api_key'
+        : account.mode === 'subscription'
+          ? 'subscription'
+          : 'unknown',
+  };
+}
+
+/** As outras contas do adapter e o motivo categórico de cada derrota. */
+function accountChoiceAlternatives(
+  adapterId: string,
+  chosenId: string | null,
+  scores: ReadonlyMap<string, number> | undefined,
+  now: number,
+): AccountChoiceAlternative[] {
+  return listAccounts(adapterId)
+    .filter((a) => a.id !== chosenId)
+    .map((a) => {
+      const entry = quotaEntryFor(adapterId, a.id);
+      const head = entry ? headroomFromEntry(entry) : null;
+      const skipped = isAccountBlockedForScope(a.id, now)
+        ? ('cooldown' as const)
+        : !accountHasFailoverCredential(a)
+          ? ('no-credential' as const)
+          : !scores?.has(a.id)
+            ? ('unknown-quota' as const)
+            : ('less-headroom' as const);
+      return {
+        label: maskAccountLabel(a.label),
+        usedPct: head?.usedPct ?? null,
+        window: head?.window ?? null,
+        resetsAt: head?.resetsAt ?? null,
+        skipped,
+      };
+    });
+}
+
+/**
+ * A conta do pane + o recibo de quem decidiu: pinada pelo chamador, regra de
+ * folga, ativa mantida, fallback na ativa, linhagem nativa ou caminho legado.
+ */
+function resolveSpawnAccountChoice(
+  adapterId: string,
+  preparedAccount: PreparedAccount | null,
+  options: { decision?: AuthDecision; nativeAuthAttempt?: boolean },
+  credentiallessOpenCode: boolean,
+): { account: Account | null; receipt: AccountChoiceReceipt } {
+  const decidedAt = Date.now();
+  if (options.nativeAuthAttempt) {
+    return {
+      account: null,
+      receipt: {
+        adapterId,
+        source: 'native',
+        account: null,
+        headroom: null,
+        alternatives: [],
+        decidedAt,
+      },
+    };
+  }
+  if (preparedAccount) {
+    const account = preparedAccount.account;
+    return {
+      account,
+      receipt: {
+        adapterId,
+        source: 'pinned',
+        account: receiptAccount(account),
+        headroom: headroomFor(adapterId, account.id),
+        alternatives: accountChoiceAlternatives(
+          adapterId,
+          account.id,
+          quotaScoresFor(adapterId),
+          decidedAt,
+        ),
+        decidedAt,
+      },
+    };
+  }
+  const nativeLineage =
+    adapterId === 'claude' ||
+    (adapterId === 'agy' && options.decision?.strategy === 'subscription') ||
+    credentiallessOpenCode;
+  if (!nativeLineage && listAccounts(adapterId).length > 0) {
+    return pickUnpinnedAccountWithHeadroom(adapterId);
+  }
+  return {
+    account: null,
+    receipt: {
+      adapterId,
+      source: nativeLineage ? 'native' : 'legacy',
+      account: null,
+      headroom: null,
+      alternatives: [],
+      decidedAt,
+    },
+  };
+}
+
 /**
  * Pane sem conta pinada nasce na conta com folga (paridade Overclock 1.3.18).
  * Sem snapshot de quota a ativa legada permanece; com snapshot, a irmã mais
@@ -884,44 +1067,81 @@ function prepareProviderSpawnWithDecision(
  */
 function pickUnpinnedAccountWithHeadroom(
   adapterId: string,
-): ReturnType<typeof getActiveAccount> {
+): { account: Account | null; receipt: AccountChoiceReceipt } {
+  const decidedAt = Date.now();
   const active = getActiveAccount(adapterId);
-  let quotaScores: ReadonlyMap<string, number> | undefined;
-  try {
-    const snap = requireQuotaService().lastSnapshot();
-    if (snap) {
-      const scores = new Map<string, number>();
-      for (const entry of snap.entries) {
-        if (entry.adapterId === adapterId && entry.accountId) {
-          scores.set(entry.accountId, quotaAvailabilityScore(entry));
-        }
-      }
-      if (scores.size > 0) quotaScores = scores;
-    }
-  } catch {
-    /* quota service opcional na corrida de boot — ativa segue */
-  }
+  const quotaScores = quotaScoresFor(adapterId);
   const picked = pickAvailableForFailover(
     adapterId,
     null,
-    Date.now(),
+    decidedAt,
     quotaScores,
   ).account;
+  const alternatives = accountChoiceAlternatives(
+    adapterId,
+    picked?.id ?? null,
+    quotaScores,
+    decidedAt,
+  );
   if (picked) {
     if (active && picked.id !== active.id) {
       console.warn(
         `[spawn] conta ativa "${active.label}" sem folga; pane nasce em "${picked.label}" (${adapterId})`,
       );
     }
-    return picked;
+    return {
+      account: picked,
+      receipt: {
+        adapterId,
+        source:
+          active && picked.id === active.id ? 'active' : 'headroom-rule',
+        account: receiptAccount(picked),
+        headroom: headroomFor(adapterId, picked.id),
+        alternatives,
+        decidedAt,
+      },
+    };
   }
   // Nada livre com credencial (quota fora do ar ou tudo em bloco): abre no
   // caminho legado — ativa quando existir, providers.conf quando não — e avisa.
-  if (active) return active;
-  console.warn(
-    `[spawn] nenhuma conta livre com credencial para ${adapterId}; abrindo no caminho legado`,
-  );
-  return null;
+  if (active) {
+    // O log do Main pode nomear a conta; o recibo viaja até o agente e só
+    // carrega o rótulo mascarado.
+    console.warn(
+      `[spawn] nenhuma conta livre com credencial para ${adapterId}; ` +
+        `abrindo na ativa "${active.label}"`,
+    );
+    return {
+      account: active,
+      receipt: {
+        adapterId,
+        source: 'active-fallback',
+        account: receiptAccount(active),
+        headroom: headroomFor(adapterId, active.id),
+        alternatives,
+        decidedAt,
+        note:
+          `nenhuma conta livre com credencial para ${adapterId}; ` +
+          `abrindo na ativa "${maskAccountLabel(active.label)}"`,
+      },
+    };
+  }
+  const note =
+    `[spawn] nenhuma conta livre com credencial para ${adapterId}; ` +
+    'abrindo no caminho legado';
+  console.warn(note);
+  return {
+    account: null,
+    receipt: {
+      adapterId,
+      source: 'legacy',
+      account: null,
+      headroom: null,
+      alternatives,
+      decidedAt,
+      note,
+    },
+  };
 }
 
 /**

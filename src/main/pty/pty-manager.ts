@@ -62,6 +62,7 @@ import {
   prepareCheckoutProviderHome,
   scrubManagedSessionAuth,
 } from "../adapters/managed-credentials";
+import { forgetAccountChoiceReceipt } from "../persistence/account-choice-receipts";
 import {
   resolveSpawnBinary,
   resolveWindowsCodexNpmShimLaunch,
@@ -1073,6 +1074,7 @@ function finalizeSession(
   }
   // M1: scrub plaintext auth.json from the managed home now that the CLI exited.
   scrubManagedSessionAuth(sessionId);
+  forgetAccountChoiceReceipt(sessionId);
   if (canSend(s.wc)) {
     s.wc.send(PTY_CHANNELS.exit, { sessionId, exitCode, signal });
   }

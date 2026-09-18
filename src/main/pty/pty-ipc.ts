@@ -42,6 +42,7 @@ import {
 import { requireRendererWorkspaceScope } from "../persistence/renderer-workspace-scope";
 import { trackManagedSession } from "../adapters/managed-credentials";
 import { isFileAuthAdapter } from "../adapters/managed-credentials";
+import { recordAccountChoiceReceipt } from "../persistence/account-choice-receipts";
 import {
   resolveRotatingAuthFile,
   waitForRotatingAuthSpawnGate,
@@ -423,6 +424,9 @@ function spawnCliPtyAgentPane(
     }
     if (request.accountId && isFileAuthAdapter(adapter.id)) {
       trackManagedSession(sessionId, adapter.id, request.accountId);
+    }
+    if (overrides.accountChoice) {
+      recordAccountChoiceReceipt(sessionId, overrides.accountChoice);
     }
     const settlement = settleSpawnedMainOwnedAgentSession({
       backend: "PTY",

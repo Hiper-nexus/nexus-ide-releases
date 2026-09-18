@@ -58,6 +58,7 @@ import {
 } from './tool-util';
 import { isMissionWorkerWriteEligibleCli } from './squad-runtime-policy';
 import { isOperatorChoicePolicy } from '../../shared/squad-cli-policy';
+import { getAccountChoiceReceipt } from '../persistence/account-choice-receipts';
 import { CODEX_MCP_TOOL_TIMEOUT_SEC } from './cli-mcp-inject';
 import {
   assertCurrentMissionOrchestratorSession,
@@ -408,7 +409,10 @@ const paneSpawn: McpToolDef = {
     'From the operator\'s own pane without a mission, adapterId may be omitted ' +
     'when task/prompt is given — Nexus routes it automatically. ' +
     'Returns {paneId, sessionId} or {paneId, sessionId:null, pending:true} ' +
-    'while the CLI session is still starting; use nexus_pane_wait_idle next.',
+    'while the CLI session is still starting; use nexus_pane_wait_idle next. ' +
+    '`harness.account` diz qual conta o pane usa, quem decidiu (regra de ' +
+    'folga/pinada/ativa/nativa) e as alternativas com sua folga — rótulos ' +
+    'mascarados.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -1094,7 +1098,8 @@ const paneSpawn: McpToolDef = {
         return {
           ...pending,
           ...(executionMode ? { executionMode } : {}),
-          harness,
+          // ACK pendente: ainda não há sessionId para buscar o recibo.
+          harness: { ...harness, account: null },
           ...routeReceipt,
         };
       }
@@ -1116,7 +1121,10 @@ const paneSpawn: McpToolDef = {
       return {
         ...spawned,
         ...(executionMode ? { executionMode } : {}),
-        harness,
+        harness: {
+          ...harness,
+          account: getAccountChoiceReceipt(spawned.sessionId) ?? null,
+        },
         ...routeReceipt,
       };
     } finally {
@@ -1218,7 +1226,9 @@ const paneWhoami: McpToolDef = {
   description:
     'Describe the calling pane and its effective authority: role, mission, ' +
     'agent/provider identity, project scope and tool/skill grants. Never returns ' +
-    'the bearer token.',
+    'the bearer token. `account` diz qual conta o pane usa, quem decidiu ' +
+    '(regra de folga/pinada/ativa/nativa) e as alternativas com sua folga — ' +
+    'rótulos mascarados.',
   inputSchema: { type: 'object', properties: {} },
   handler: async (_args, ctx) => ({
     label: ctx.label,
@@ -1238,6 +1248,9 @@ const paneWhoami: McpToolDef = {
     executionRoot: ctx.executionScope?.rootRealPath ?? ctx.scope.rootRealPath,
     allowedTools: ctx.allowedTools,
     allowedSkills: ctx.allowedSkills,
+    account: ctx.sessionId
+      ? (getAccountChoiceReceipt(ctx.sessionId) ?? null)
+      : null,
   }),
 };
 

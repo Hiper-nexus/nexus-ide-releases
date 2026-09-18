@@ -16,6 +16,7 @@ import {
   isFileAuthAdapter,
   trackManagedSession,
 } from "../adapters/managed-credentials";
+import { recordAccountChoiceReceipt } from "../persistence/account-choice-receipts";
 import {
   prepareProviderSpawn,
   prepareProviderSpawnAuthoritative,
@@ -658,6 +659,9 @@ export function spawnMainOwnedMissionPane(
     );
     if (options.accountId && isFileAuthAdapter(adapter.id)) {
       trackManagedSession(sessionId, adapter.id, options.accountId);
+    }
+    if (preparedOverrides.accountChoice) {
+      recordAccountChoiceReceipt(sessionId, preparedOverrides.accountChoice);
     }
     hooks.attachSessionScope(sessionId, options.scope);
     panes.set(paneId, {
