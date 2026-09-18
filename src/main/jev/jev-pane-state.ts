@@ -236,6 +236,7 @@ export function startJevPaneStateClassifier(
         state: { screen: text },
         questions: PANE_STATE_QUESTIONS,
         timeoutMs: CLASSIFY_TIMEOUT_MS,
+        surface: 'paneState',
       });
       if (!result) return;
       const stateAnswer = result.answers.state;

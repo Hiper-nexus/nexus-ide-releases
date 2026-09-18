@@ -95,6 +95,7 @@ export async function triageCommandFailure(
     questions: TRIAGE_QUESTIONS,
     timeoutMs: TRIAGE_TIMEOUT_MS,
     signal: deps.signal,
+    surface: 'terminalTriage',
   });
   if (!result) return null;
 

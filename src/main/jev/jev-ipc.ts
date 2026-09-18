@@ -76,6 +76,6 @@ export function registerJevIpc(): void {
   );
 
   ipcMain.handle(JEV_CHANNELS.decisionsStats, (): JevDecisionStatsResult => {
-    return jevDecisionStats();
+    return jevDecisionStats({ now: Date.now() });
   });
 }

@@ -622,6 +622,8 @@ export interface NexusApi {
     decisionsList(req?: {
       limit?: number;
       surface?: string;
+      /** Inclui consultas sem resposta (kind 'no-answer'). */
+      includeNoAnswer?: boolean;
     }): Promise<JevDecisionRow[]>;
     decisionsFeedback(req: {
       id: string;

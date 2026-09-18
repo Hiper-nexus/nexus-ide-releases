@@ -360,6 +360,7 @@ async function runBrowserDo(
       questions,
       timeoutMs: JUDGE_TIMEOUT_MS,
       signal: invocation?.signal,
+      surface: 'browserTool',
     });
     assertMcpInvocationCurrent(invocation);
 

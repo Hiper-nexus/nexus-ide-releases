@@ -253,6 +253,7 @@ export async function runToolPick(
     questions: { tool: question },
     timeoutMs: JUDGE_TIMEOUT_MS,
     signal: invocation?.signal,
+    surface: 'toolPick',
   });
   assertMcpInvocationCurrent(invocation);
   if (!result) {

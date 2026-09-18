@@ -132,6 +132,7 @@ const judgeTool: McpToolDef = {
       model: parsed.data.model,
       timeoutMs: JUDGE_TIMEOUT_MS,
       signal: invocation?.signal,
+      surface: 'judgeTool',
     });
     // Revogação durante a chamada: aborta antes de registrar/retornar.
     assertMcpInvocationCurrent(invocation);

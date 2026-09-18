@@ -1,5 +1,13 @@
 import type { JevTestResult } from '../../shared/jev-ipc';
 import { resolveJevApiKey } from './jev-secrets';
+import { USD_PER_INPUT_TOKEN } from './jev-pricing';
+import {
+  recordJevNoAnswer,
+  type JevDecisionSurface,
+  type JevNoAnswerReason,
+} from './jev-decision-log';
+
+export { USD_PER_INPUT_TOKEN };
 
 /**
  * Cliente do TypeSafe "System One" (modelo Jev): julgamentos tipados
@@ -13,7 +21,6 @@ const DEFAULT_MODEL = 'jev-latest';
 const DEFAULT_TIMEOUT_MS = 8_000;
 const RETRY_DELAY_MS = 400;
 const WARN_INTERVAL_MS = 60_000;
-export const USD_PER_INPUT_TOKEN = 0.042 / 1e6;
 
 export type JevQuestion =
   | {
@@ -168,6 +175,13 @@ export interface JudgeInput {
   timeoutMs?: number;
   /** Abort externo (ex.: autoridade MCP revogada) combinado ao timeout. */
   signal?: AbortSignal;
+  /**
+   * Superfície chamadora — só contabilidade: quando a consulta falha, o
+   * diário de decisões grava uma linha `no-answer` (nunca o erro em texto).
+   */
+  surface?: JevDecisionSurface;
+  sessionId?: string;
+  missionId?: string;
 }
 
 export interface JudgeDeps {
@@ -220,6 +234,7 @@ export async function judge(
   });
 
   let lastFailure = 'unknown error';
+  let lastReason: JevNoAnswerReason = 'network';
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       // Sinal novo por tentativa: um retry após timeout não pode herdar o
@@ -248,6 +263,7 @@ export async function judge(
       if (res.ok) {
         if (!isValidResult(data)) {
           lastFailure = 'malformed response body';
+          lastReason = 'malformed';
           break;
         }
         stats.calls += 1;
@@ -258,6 +274,12 @@ export async function judge(
       }
       const retryable = res.status === 429 || res.status === 529 || res.status >= 500;
       lastFailure = `HTTP ${res.status}: ${errorMessage(data, res.status)}`;
+      lastReason =
+        res.status === 429
+          ? 'rate-limited'
+          : res.status === 529 || res.status >= 500
+            ? 'server-error'
+            : 'network';
       if (retryable && attempt === 0) {
         const retryAfter = Number(res.headers.get('retry-after'));
         // retry-after do servidor é um hint, não uma ordem: teto de 2s
@@ -272,6 +294,12 @@ export async function judge(
       break;
     } catch (err) {
       lastFailure = err instanceof Error ? err.message : String(err);
+      const name = err instanceof Error ? err.name : '';
+      lastReason = input.signal?.aborted
+        ? 'aborted'
+        : name === 'AbortError' || name === 'TimeoutError'
+          ? 'timeout'
+          : 'network';
       if (attempt === 0) {
         await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
         continue;
@@ -279,6 +307,17 @@ export async function judge(
     }
   }
   stats.failures += 1;
+  if (input.surface) {
+    // Contabilidade central: a consulta falhou e a superfície caiu no caminho
+    // determinístico. Só o motivo categórico — nunca o texto do erro.
+    recordJevNoAnswer({
+      surface: input.surface,
+      reason: lastReason,
+      model,
+      sessionId: input.sessionId,
+      missionId: input.missionId,
+    });
+  }
   warnRateLimited(lastFailure, now);
   return null;
 }

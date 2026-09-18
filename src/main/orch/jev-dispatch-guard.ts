@@ -404,6 +404,9 @@ export async function guardToolCall(
     questions: GUARD_QUESTIONS,
     timeoutMs: GUARD_TIMEOUT_MS,
     signal: input.signal,
+    surface: 'dispatchGuard',
+    sessionId: input.ctx.sessionId,
+    missionId: input.ctx.missionId,
   });
   if (!result) return { kind: 'skipped', reason: 'judge-unavailable' };
 

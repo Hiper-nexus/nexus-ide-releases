@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { JevSurface } from './jev-autopilot';
 import type { JevAnswer } from './jev-client';
+import { USD_PER_INPUT_TOKEN } from './jev-pricing';
 
 export type JevDecisionSurface =
   | JevSurface
@@ -20,9 +21,21 @@ export type JevDecisionSurface =
   | 'browserTool'
   | 'computerTool';
 
+/** Motivo categórico de uma consulta sem resposta — nunca o texto do erro. */
+export type JevNoAnswerReason =
+  | 'timeout'
+  | 'rate-limited'
+  | 'server-error'
+  | 'network'
+  | 'malformed'
+  | 'aborted';
+
 export interface JevDecisionEntry {
   id: string;
   at: number;
+  /** Ausente = 'decision' — linhas antigas continuam válidas. */
+  kind?: 'decision' | 'no-answer';
+  reason?: JevNoAnswerReason;
   surface: JevDecisionSurface;
   sessionId?: string;
   missionId?: string;
@@ -66,6 +79,10 @@ function logFile(dir?: string): string {
   return path.join(dir ?? decisionsDir(), 'decisions.jsonl');
 }
 
+function rotatedLogFile(dir?: string): string {
+  return path.join(dir ?? decisionsDir(), 'decisions.1.jsonl');
+}
+
 function readEntries(file: string): JevDecisionEntry[] {
   let raw: string;
   try {
@@ -85,6 +102,14 @@ function readEntries(file: string): JevDecisionEntry[] {
     }
   }
   return entries;
+}
+
+/** Stats e list leem o arquivo rotacionado antes do corrente (ordem cronológica). */
+function readAllEntries(dir?: string): JevDecisionEntry[] {
+  return [
+    ...readEntries(rotatedLogFile(dir)),
+    ...readEntries(logFile(dir)),
+  ];
 }
 
 /** Append síncrono; engole erro de fs com warn (o diário nunca bloqueia). */
@@ -111,21 +136,58 @@ export function recordJevDecision(
   return id;
 }
 
+/**
+ * Consulta que não teve resposta (timeout, erro, limite): a superfície caiu
+ * no caminho determinístico. Gravado centralmente por `judge()` quando o
+ * chamador informa `surface` — nunca o texto do erro.
+ */
+export function recordJevNoAnswer(
+  input: {
+    surface: JevDecisionSurface;
+    reason: JevNoAnswerReason;
+    model: string;
+    sessionId?: string;
+    missionId?: string;
+  },
+  deps?: { dir?: string },
+): string {
+  return recordJevDecision(
+    {
+      kind: 'no-answer',
+      reason: input.reason,
+      surface: input.surface,
+      sessionId: input.sessionId,
+      missionId: input.missionId,
+      model: input.model,
+      questions: [],
+      probabilities: {},
+      decision: 'rule',
+      inputTokens: 0,
+      usd: 0,
+    },
+    deps,
+  );
+}
+
 export function listJevDecisions(opts?: {
   limit?: number;
   surface?: string;
+  includeNoAnswer?: boolean;
   dir?: string;
 }): JevDecisionEntry[] {
   const limit = Math.min(Math.max(opts?.limit ?? 50, 1), MAX_LIST_LIMIT);
   let entries: JevDecisionEntry[];
   try {
-    entries = readEntries(logFile(opts?.dir));
+    entries = readAllEntries(opts?.dir);
   } catch {
     return [];
   }
+  const answered = opts?.includeNoAnswer
+    ? entries
+    : entries.filter((e) => e.kind !== 'no-answer');
   const filtered = opts?.surface
-    ? entries.filter((e) => e.surface === opts.surface)
-    : entries;
+    ? answered.filter((e) => e.surface === opts.surface)
+    : answered;
   return filtered.slice(-limit).reverse();
 }
 
@@ -153,43 +215,104 @@ export function setJevDecisionFeedback(
   }
 }
 
+export interface JevWindowStats {
+  consultations: number;
+  answered: number;
+  noAnswer: number;
+  usd: number;
+  inputTokens: number;
+}
+
 export interface JevDecisionStats {
-  totals: { calls: number; usd: number; inputTokens: number };
+  /** calls = decisões respondidas; noAnswer = consultas sem resposta. */
+  totals: { calls: number; usd: number; inputTokens: number; noAnswer: number };
+  windows: {
+    today: JevWindowStats;
+    last30d: JevWindowStats;
+    allTime: JevWindowStats;
+  };
   bySurface: Record<
     string,
     {
       calls: number;
       usd: number;
+      noAnswer: number;
+      /** jev = decisões respondidas na janela; rule = quedas p/ o caminho determinístico. */
+      last30d: { jev: number; rule: number; usd: number };
       decisions: Record<string, number>;
       feedback: { right: number; wrong: number };
       suggestion?: string;
     }
   >;
+  pricing: { usdPerInputToken: number; source: 'typesafe-published' };
 }
 
-export function jevDecisionStats(deps?: { dir?: string }): JevDecisionStats {
+const DAY_MS = 86_400_000;
+
+function emptyWindow(): JevWindowStats {
+  return { consultations: 0, answered: 0, noAnswer: 0, usd: 0, inputTokens: 0 };
+}
+
+function addToWindow(window: JevWindowStats, entry: JevDecisionEntry): void {
+  window.consultations += 1;
+  if (entry.kind === 'no-answer') {
+    window.noAnswer += 1;
+    return;
+  }
+  window.answered += 1;
+  window.usd += entry.usd;
+  window.inputTokens += entry.inputTokens;
+}
+
+export function jevDecisionStats(deps?: {
+  dir?: string;
+  now?: number;
+}): JevDecisionStats {
+  const now = deps?.now ?? Date.now();
+  const todayStart = new Date(now);
+  todayStart.setHours(0, 0, 0, 0);
+  const todayFrom = todayStart.getTime();
+  const last30dFrom = now - 30 * DAY_MS;
   const stats: JevDecisionStats = {
-    totals: { calls: 0, usd: 0, inputTokens: 0 },
+    totals: { calls: 0, usd: 0, inputTokens: 0, noAnswer: 0 },
+    windows: { today: emptyWindow(), last30d: emptyWindow(), allTime: emptyWindow() },
     bySurface: {},
+    pricing: { usdPerInputToken: USD_PER_INPUT_TOKEN, source: 'typesafe-published' },
   };
   let entries: JevDecisionEntry[];
   try {
-    entries = readEntries(logFile(deps?.dir));
+    entries = readAllEntries(deps?.dir);
   } catch {
     return stats;
   }
   for (const entry of entries) {
-    stats.totals.calls += 1;
-    stats.totals.usd += entry.usd;
-    stats.totals.inputTokens += entry.inputTokens;
+    const isNoAnswer = entry.kind === 'no-answer';
+    addToWindow(stats.windows.allTime, entry);
+    if (entry.at >= todayFrom) addToWindow(stats.windows.today, entry);
+    if (entry.at >= last30dFrom) addToWindow(stats.windows.last30d, entry);
     const bucket = (stats.bySurface[entry.surface] ??= {
       calls: 0,
       usd: 0,
+      noAnswer: 0,
+      last30d: { jev: 0, rule: 0, usd: 0 },
       decisions: {},
       feedback: { right: 0, wrong: 0 },
     });
+    if (isNoAnswer) {
+      bucket.noAnswer += 1;
+      stats.totals.noAnswer += 1;
+      if (entry.at >= last30dFrom) bucket.last30d.rule += 1;
+      continue;
+    }
+    stats.totals.calls += 1;
+    stats.totals.usd += entry.usd;
+    stats.totals.inputTokens += entry.inputTokens;
     bucket.calls += 1;
     bucket.usd += entry.usd;
+    if (entry.at >= last30dFrom) {
+      bucket.last30d.jev += 1;
+      bucket.last30d.usd += entry.usd;
+    }
     bucket.decisions[entry.decision] = (bucket.decisions[entry.decision] ?? 0) + 1;
     if (entry.feedback === 'right') bucket.feedback.right += 1;
     if (entry.feedback === 'wrong') bucket.feedback.wrong += 1;

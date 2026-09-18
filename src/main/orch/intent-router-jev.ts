@@ -182,6 +182,7 @@ export async function routeWithJev(
     state: { request: capText(objective, 6_000) },
     questions,
     timeoutMs: JEV_INTAKE_TIMEOUT_MS,
+    surface: 'intake',
   });
   if (!result) return null;
 

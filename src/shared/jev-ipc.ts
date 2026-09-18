@@ -34,6 +34,8 @@ export interface JevTestResult {
 export const jevDecisionsListRequestSchema = z.object({
   limit: z.number().int().min(1).max(500).optional(),
   surface: z.string().max(64).optional(),
+  /** Inclui consultas sem resposta (kind 'no-answer'). Default: só decisões. */
+  includeNoAnswer: z.boolean().optional(),
 });
 
 export const jevDecisionFeedbackRequestSchema = z.object({
@@ -45,6 +47,15 @@ export const jevDecisionFeedbackRequestSchema = z.object({
 export interface JevDecisionRow {
   id: string;
   at: number;
+  /** 'no-answer' = consulta sem resposta (ausente em linhas antigas = decisão). */
+  kind?: 'decision' | 'no-answer';
+  reason?:
+    | 'timeout'
+    | 'rate-limited'
+    | 'server-error'
+    | 'network'
+    | 'malformed'
+    | 'aborted';
   surface: string;
   sessionId?: string;
   missionId?: string;
@@ -59,18 +70,36 @@ export interface JevDecisionRow {
   feedbackAt?: number;
 }
 
+export interface JevWindowStatsResult {
+  consultations: number;
+  answered: number;
+  noAnswer: number;
+  usd: number;
+  inputTokens: number;
+}
+
 export interface JevDecisionStatsResult {
-  totals: { calls: number; usd: number; inputTokens: number };
+  /** calls = decisões respondidas; noAnswer = consultas sem resposta. */
+  totals: { calls: number; usd: number; inputTokens: number; noAnswer: number };
+  windows: {
+    today: JevWindowStatsResult;
+    last30d: JevWindowStatsResult;
+    allTime: JevWindowStatsResult;
+  };
   bySurface: Record<
     string,
     {
       calls: number;
       usd: number;
+      noAnswer: number;
+      /** jev = decisões respondidas na janela; rule = quedas p/ a regra. */
+      last30d: { jev: number; rule: number; usd: number };
       decisions: Record<string, number>;
       feedback: { right: number; wrong: number };
       suggestion?: string;
     }
   >;
+  pricing: { usdPerInputToken: number; source: 'typesafe-published' };
 }
 
 /** Hint do classificador Jev de estado do pane (surface `paneState`). */

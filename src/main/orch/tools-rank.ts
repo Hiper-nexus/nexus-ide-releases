@@ -140,6 +140,7 @@ const rankTool: McpToolDef = {
           questions,
           timeoutMs: RANK_TIMEOUT_MS,
           signal: invocation?.signal,
+          surface: 'rankTool',
         });
         return { candidate, result };
       }),

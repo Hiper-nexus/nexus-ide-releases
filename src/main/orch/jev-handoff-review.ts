@@ -277,6 +277,7 @@ export async function reviewMissionHandoff(
     state: buildHandoffReviewState(params),
     questions,
     signal: params.signal,
+    surface: 'handoffReview',
   });
   if (!result) {
     recordJevDecision({

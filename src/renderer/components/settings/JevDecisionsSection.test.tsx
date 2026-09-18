@@ -20,15 +20,41 @@ function mount(node: React.ReactNode): HTMLDivElement {
 
 const jev = vi.hoisted(() => ({
   decisionsStats: vi.fn(async () => ({
-    totals: { calls: 2, usd: 0.00005, inputTokens: 1200 },
+    totals: { calls: 2, usd: 0.00005, inputTokens: 1200, noAnswer: 1 },
+    windows: {
+      today: {
+        consultations: 2,
+        answered: 1,
+        noAnswer: 1,
+        usd: 0.0000252,
+        inputTokens: 600,
+      },
+      last30d: {
+        consultations: 3,
+        answered: 2,
+        noAnswer: 1,
+        usd: 0.00005,
+        inputTokens: 1200,
+      },
+      allTime: {
+        consultations: 5,
+        answered: 4,
+        noAnswer: 1,
+        usd: 0.0001,
+        inputTokens: 2400,
+      },
+    },
     bySurface: {
       handoffReview: {
         calls: 2,
         usd: 0.00005,
+        noAnswer: 1,
+        last30d: { jev: 2, rule: 1, usd: 0.00005 },
         decisions: { ok: 1, retry: 1 },
         feedback: { right: 1, wrong: 0 },
       },
     },
+    pricing: { usdPerInputToken: 0.042 / 1e6, source: 'typesafe-published' },
   })),
   decisionsList: vi.fn(async () => [
     {
@@ -70,6 +96,21 @@ describe('JevDecisionsSection', () => {
     expect(host.textContent).toContain('Revisão de handoff');
     expect(host.textContent).toContain('ok ×1');
     expect(host.textContent).toContain('retry ×1');
+  });
+
+  it('renders the consumption block with the three windows', async () => {
+    const host = mount(<JevDecisionsSection />);
+    await act(async () => Promise.resolve());
+    expect(host.textContent).toContain('Consumo do Jev (TypeSafe)');
+    expect(host.textContent).toContain('Hoje');
+    expect(host.textContent).toContain('30 dias');
+    expect(host.textContent).toContain('Desde sempre');
+    expect(host.textContent).toContain('2 consultas');
+    expect(host.textContent).toContain('3 consultas');
+    expect(host.textContent).toContain('5 consultas');
+    expect(host.textContent).toContain('1 sem resposta');
+    expect(host.textContent).toContain('US$ 0,042 por milhão');
+    expect(host.textContent).toContain('2 pelo Jev · 1 pela regra');
   });
 
   it('lists decisions and sends feedback', async () => {

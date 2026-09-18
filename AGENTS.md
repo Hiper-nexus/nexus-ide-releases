@@ -120,6 +120,12 @@ saber isto antes de mexer:
 - A ação administrativa do "+ Pane" vive na decoração local
   (`withAccountActions`), fora de `buildPanePickerEntries` — aquele catálogo é
   compartilhado com a grade de terminais, onde cada linha é um terminal.
+- **Recibo da escolha de conta** (`account-choice-receipts.ts`): a regra de
+  folga decide (Jev NÃO escolhe conta — comparar cota medida é aritmética);
+  `prepareProviderSpawn` devolve `overrides.accountChoice`, registrado por
+  sessionId no spawn e devolvido em `nexus_pane_spawn` (`harness.account`) e
+  `nexus_pane_whoami`. Rótulos sempre mascarados (`maskAccountLabel`); nunca
+  id, fingerprint ou token.
 
 ## Conventions
 
@@ -452,3 +458,10 @@ saber isto antes de mexer:
   `Bash` → `POST /hook/triage` (mesmo bearer do gate) → `triageCommandFailure`
   → `hookSpecificOutput.additionalContext` de volta ao agente. O hook nunca
   bloqueia (`-sf … || true`, `{}` quando a superfície está off).
+- **Consumo do Jev** (`jev-decision-log.ts`): além das decisões, o diário
+  grava consultas SEM resposta (`kind: 'no-answer'`, motivo categórico,
+  nunca texto) — `judge()` registra centralmente quando o chamador informa
+  `surface`. O painel Decisões do Jev mostra Hoje/30 dias/desde sempre
+  (consultas · custo estimado · sem resposta) e, por superfície,
+  `pelo Jev · pela regra`; custo = tokens de entrada × US$ 0,042/M (preço
+  público TypeSafe, chamada direta, sem OpenRouter).

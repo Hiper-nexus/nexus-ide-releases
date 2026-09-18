@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   capText,
   getJevStats,
@@ -8,6 +11,10 @@ import {
   resetJevStatsForTesting,
   testJevConnection,
 } from './jev-client';
+import {
+  configureJevDecisionLog,
+  listJevDecisions,
+} from './jev-decision-log';
 
 function jsonResponse(status: number, body: unknown, headers?: Record<string, string>) {
   return new Response(typeof body === 'string' ? body : JSON.stringify(body), {
@@ -164,6 +171,102 @@ describe('judge', () => {
     await judge({ state: 'x', questions: { q: question } }, deps);
     expect(JSON.parse(bodies[0]).model).toBe('jev-preview');
     expect(JSON.parse(bodies[1]).model).toBe('env-model');
+  });
+});
+
+describe('judge — registro central de consultas sem resposta', () => {
+  let logDir: string;
+
+  beforeEach(() => {
+    resetJevStatsForTesting();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    logDir = fs.mkdtempSync(path.join(os.tmpdir(), 'jev-client-log-'));
+    configureJevDecisionLog(logDir);
+  });
+
+  afterEach(() => {
+    configureJevDecisionLog(undefined);
+    fs.rmSync(logDir, { recursive: true, force: true });
+  });
+
+  function noAnswerLines() {
+    return listJevDecisions({ dir: logDir, includeNoAnswer: true, limit: 500 });
+  }
+
+  it('timeout com surface grava uma linha no-answer com motivo timeout', async () => {
+    const mockFetch = vi.fn(async () => {
+      throw new DOMException('The operation timed out.', 'TimeoutError');
+    });
+    const result = await judge(
+      {
+        state: 'x',
+        questions: { q: question },
+        timeoutMs: 10,
+        surface: 'terminalTriage',
+        sessionId: 'sess-1',
+      },
+      { fetch: mockFetch as unknown as typeof fetch, resolveKey: () => 'k' },
+    );
+    expect(result).toBeNull();
+    const lines = noAnswerLines();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({
+      kind: 'no-answer',
+      reason: 'timeout',
+      surface: 'terminalTriage',
+      sessionId: 'sess-1',
+      decision: 'rule',
+      inputTokens: 0,
+      usd: 0,
+    });
+    // nunca o texto do erro
+    const raw = fs.readFileSync(path.join(logDir, 'decisions.jsonl'), 'utf8');
+    expect(raw).not.toContain('timed out');
+  });
+
+  it('HTTP 500 duas vezes grava server-error', async () => {
+    const mockFetch = vi.fn(async () => jsonResponse(500, { message: 'oops' }));
+    const result = await judge(
+      { state: 'x', questions: { q: question }, surface: 'dispatchGuard' },
+      { fetch: mockFetch as unknown as typeof fetch, resolveKey: () => 'k' },
+    );
+    expect(result).toBeNull();
+    const lines = noAnswerLines();
+    expect(lines).toHaveLength(1);
+    expect(lines[0].reason).toBe('server-error');
+  });
+
+  it('429 depois 200 não grava no-answer nem decisão (a decisão é da superfície)', async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(429, 'slow', { 'retry-after': '0' }))
+      .mockResolvedValueOnce(jsonResponse(200, okBody));
+    const result = await judge(
+      { state: 'x', questions: { q: question }, surface: 'intake' },
+      { fetch: mockFetch as unknown as typeof fetch, resolveKey: () => 'k' },
+    );
+    expect(result).not.toBeNull();
+    expect(noAnswerLines()).toHaveLength(0);
+  });
+
+  it('falha sem surface não grava nada', async () => {
+    const mockFetch = vi.fn(async () => jsonResponse(500, { message: 'x' }));
+    const result = await judge(
+      { state: 'x', questions: { q: question } },
+      { fetch: mockFetch as unknown as typeof fetch, resolveKey: () => 'k' },
+    );
+    expect(result).toBeNull();
+    expect(noAnswerLines()).toHaveLength(0);
+  });
+
+  it('sem chave não grava nada (Jev simplesmente desligado)', async () => {
+    const mockFetch = vi.fn();
+    const result = await judge(
+      { state: 'x', questions: { q: question }, surface: 'intake' },
+      { fetch: mockFetch as unknown as typeof fetch, resolveKey: () => undefined },
+    );
+    expect(result).toBeNull();
+    expect(noAnswerLines()).toHaveLength(0);
   });
 });
 

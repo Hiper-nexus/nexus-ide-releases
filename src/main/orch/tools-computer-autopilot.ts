@@ -435,6 +435,7 @@ async function runComputerDo(
       questions,
       timeoutMs: JUDGE_TIMEOUT_MS,
       signal: invocation?.signal,
+      surface: 'computerTool',
     });
     assertMcpInvocationCurrent(invocation);
 

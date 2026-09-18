@@ -126,6 +126,7 @@ export async function classifyTaskWithJev(
     state: { task: capText(task, TASK_MAX_CHARS) },
     questions: TASK_ROUTING_QUESTIONS,
     timeoutMs: TASK_ROUTING_TIMEOUT_MS,
+    surface: 'taskRouting',
   });
   if (!result) return null;
 

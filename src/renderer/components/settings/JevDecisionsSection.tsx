@@ -11,6 +11,11 @@ const SURFACE_LABELS: Record<string, string> = {
   paneState: 'Estado dos panes',
   terminalTriage: 'Triagem de falhas',
   rank: 'Ranking de entregas',
+  dispatchGuard: 'Guarda de despacho',
+  toolPick: 'Escolha de ferramenta',
+  taskRouting: 'Roteamento de tarefas',
+  browserTool: 'Piloto do browser',
+  computerTool: 'Piloto do desktop',
   judgeTool: 'Tool nexus_judge',
   rankTool: 'Tool nexus_rank',
 };
@@ -89,10 +94,39 @@ export function JevDecisionsSection() {
 
       {stats && (
         <>
-          <h4 className="settings-section-heading">Totais</h4>
+          <h4 className="settings-section-heading">
+            Consumo do Jev (TypeSafe)
+          </h4>
+          <ul className="settings-list">
+            {(
+              [
+                ['Hoje', stats.windows.today],
+                ['30 dias', stats.windows.last30d],
+                ['Desde sempre', stats.windows.allTime],
+              ] as const
+            ).map(([label, window]) => (
+              <li key={label} className="settings-list__item">
+                <div className="settings-list__head">
+                  <span className="settings-list__title">{label}</span>
+                  <span className="settings-chip">
+                    {window.consultations} consultas
+                  </span>
+                  <span className="settings-chip">
+                    {formatUsd(window.usd)}
+                  </span>
+                  <span className="settings-chip">
+                    {window.noAnswer} sem resposta
+                  </span>
+                </div>
+              </li>
+            ))}
+          </ul>
           <p className="settings-detail__hint">
-            {stats.totals.calls} chamadas · {formatUsd(stats.totals.usd)} ·{' '}
-            {stats.totals.inputTokens} tokens de entrada
+            Custo estimado: tokens de entrada × US$ 0,042 por milhão (tabela
+            pública da TypeSafe; saída é grátis). "Pela regra" = o Jev foi
+            consultado e não respondeu (timeout, erro, limite) — a superfície
+            decidiu pelo caminho determinístico. Chamada direta à TypeSafe,
+            sem intermediário.
           </p>
 
           <h4 className="settings-section-heading">Por superfície</h4>
@@ -114,6 +148,15 @@ export function JevDecisionsSection() {
                     <span className="settings-chip">
                       {formatUsd(bucket.usd)}
                     </span>
+                    <span className="settings-chip">
+                      {bucket.last30d.jev} pelo Jev · {bucket.last30d.rule}{' '}
+                      pela regra · {formatUsd(bucket.last30d.usd)} (30 dias)
+                    </span>
+                    {bucket.noAnswer > 0 && (
+                      <span className="settings-chip">
+                        {bucket.noAnswer} sem resposta
+                      </span>
+                    )}
                     <span className="settings-chip settings-chip--ok">
                       {bucket.feedback.right} certas
                     </span>
