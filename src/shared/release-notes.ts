@@ -4152,6 +4152,91 @@ export const RELEASE_07647: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.54',
+  date: '2026-09-18',
+  codename: 'Grok escuta',
+  summary:
+    'O Grok Voice Transcribe 2.0 da xAI entra no seletor de transcrição ' +
+    'da voz — batch rápido e barato, na mesma chave do Grok realtime, com ' +
+    'viés de vocabulário para o modo CODE e a wake word. O ' +
+    'nexus_pane_spawn passa a dizer em qual conta o pane nasceu e por quê ' +
+    '(regra de folga, pinada, ativa, fallback), com as alternativas e a ' +
+    'folga de cada uma. E o painel Decisões do Jev mostra o consumo por ' +
+    'janela — hoje, 30 dias, desde sempre — incluindo as consultas sem ' +
+    'resposta e a divisão "pelo Jev · pela regra".',
+  highlights: [
+    {
+      title: 'Grok Voice Transcribe 2.0 no seletor de transcrição',
+      detail:
+        'Novo provedor xai em Ajustes → Voz → Transcrição da fala: POST ' +
+        'api.x.ai/v1/stt com model grok-voice-transcribe-2.0, language=pt ' +
+        '+ format=true (números, datas e valores saem escritos), keyterm ' +
+        'como viés de vocabulário (jargão do modo CODE; a wake word no ' +
+        'passive-wake) e o arquivo por último, como a API exige. Usa a ' +
+        'XAI_API_KEY já configurada para o Grok realtime. Só transcreve — ' +
+        'sem tradução, o modo CODE mostra CODE·PT como já acontece com ' +
+        'provedores transcription-only. Cadeia padrão: Gemini → Grok → ' +
+        'Groq → OpenAI → whisper.cpp; instalações existentes ganham o ' +
+        'link após o último provedor cloud, nunca no lugar do escolhido; ' +
+        'cadeias só-locais ficam intactas. Contrato validado contra a ' +
+        'documentação oficial da xAI e coberto por testes; qualquer ' +
+        'recusa da API cai no próximo provedor da cadeia, como sempre.',
+    },
+    {
+      title: 'Recibo da escolha de conta no spawn',
+      detail:
+        'nexus_pane_spawn devolve harness.account e nexus_pane_whoami ' +
+        'devolve account: quem decidiu (pinada pelo chamador, regra de ' +
+        'folga, ativa, fallback na ativa, linhagem nativa ou legado), a ' +
+        'conta com rótulo mascarado (g•••@l•••.com.br), a folga medida da ' +
+        'vencedora (pior janela, % usado, quando reseta) e as ' +
+        'alternativas com o motivo de cada perda (cooldown, sem ' +
+        'credencial, menos folga, sem medição). A regra continua ' +
+        'decidindo — Jev não escolhe conta: comparar cota medida é ' +
+        'aritmética, e um decisor com 38% de confiança escolhendo a conta ' +
+        'com 77% queimado foi exatamente o caso observado no Overclock.',
+    },
+    {
+      title: 'Consumo do Jev por janela',
+      detail:
+        'Decisões do Jev ganha "Consumo do Jev (TypeSafe)": Hoje, 30 dias ' +
+        'e desde sempre × consultas · custo estimado · sem resposta, e ' +
+        'por superfície "N pelo Jev · M pela regra". O diário passa a ' +
+        'gravar a consulta que falhou (timeout, limite, servidor, rede, ' +
+        'malformado, abortado, erro do cliente — só a categoria, nunca o ' +
+        'texto) e a leitura sobrevive à rotação do arquivo. Custo = ' +
+        'tokens de entrada × US$ 0,042 por milhão, preço público da ' +
+        'TypeSafe; chamada direta, sem OpenRouter.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Custo miúdo não vira zero',
+      detail:
+        'Consumo abaixo de US$ 0,0001 aparece como "< US$ 0,0001" em vez ' +
+        'de US$ 0,0000.',
+    },
+    {
+      title: 'Recibo de conta só depois da sessão firmada',
+      detail:
+        'O registro por sessionId acontece depois que o spawn se firma no ' +
+        'Main.',
+    },
+    {
+      title: 'Máscara de conta guarda só o sufixo público',
+      detail:
+        'g•••@l•••.com.br, nunca subdomínios internos.',
+    },
+    {
+      title: 'Consulta sem resposta não inventa zero',
+      detail:
+        'Tokens e custo ficam nulos nas linhas sem resposta, seguindo a ' +
+        'doutrina do app para métrica ausente.',
+    },
+  ],
+};
+
+export const RELEASE_07653: AppRelease = {
   version: '0.76.53',
   date: '2026-09-18',
   codename: 'Push sai do pane (canal Windows)',

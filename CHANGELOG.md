@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.54 — Grok escuta
+
+- **Grok Voice Transcribe 2.0 no seletor de transcrição**: novo provedor `xai` em Ajustes → Voz → Transcrição da fala — `POST api.x.ai/v1/stt` com `grok-voice-transcribe-2.0`, `language=pt` + `format=true`, `keyterm` como viés de vocabulário (jargão do modo CODE; a wake word no passive-wake) e o arquivo por último. Usa a `XAI_API_KEY` já configurada para o Grok realtime. Só transcreve — o modo CODE mostra `CODE·PT`. Cadeia padrão: Gemini → Grok → Groq → OpenAI → whisper.cpp; instalações existentes ganham o link após o último provedor cloud, nunca no lugar do escolhido; cadeias só-locais ficam intactas.
+- **Recibo da escolha de conta no spawn**: `nexus_pane_spawn` devolve `harness.account` e `nexus_pane_whoami` devolve `account` — quem decidiu (pinada, regra de folga, ativa, fallback na ativa, linhagem nativa ou legado), a conta com rótulo mascarado, a folga medida da vencedora e as alternativas com o motivo de cada perda. A regra continua decidindo — Jev não escolhe conta.
+- **Consumo do Jev por janela**: "Decisões do Jev" ganha "Consumo do Jev (TypeSafe)" — Hoje, 30 dias e desde sempre × consultas · custo estimado · sem resposta, e por superfície "N pelo Jev · M pela regra". O diário grava a consulta que falhou (só a categoria, nunca o texto) e a leitura sobrevive à rotação. Custo = tokens de entrada × US$ 0,042 por milhão, preço público da TypeSafe; chamada direta, sem OpenRouter.
+- **Correções do code review**: custo abaixo de US$ 0,0001 aparece como "< US$ 0,0001" em vez de US$ 0,0000; o recibo de conta só é registrado depois que o spawn se firma no Main; a máscara de conta guarda só o sufixo público (`.com.br`, nunca subdomínios internos); linhas sem resposta ficam com tokens e custo nulos em vez de zero fabricado.
+
+- **Canal macOS**: a 0.76.53 saiu só para Windows; esta é a primeira build macOS com as três novidades.
+
 ## 0.76.53 — Push sai do pane (canal Windows)
 
 - **O canal Windows x64 alcança a 0.76.52**: cada canal publica a própria próxima versão estável — v0.76.51 e v0.76.52 já estão públicas com assets macOS, e o publicador recusa anexar assets de outro sistema a release pública, então o Windows avança com a 0.76.53 carregando o código assinado do main atual. Para quem vem da 0.76.41, a atualização traz de uma vez as seções 0.76.43 → 0.76.52 abaixo — pane guardian e sessão de CLI isolada por checkout, pane dormindo com "Acordar", hub MCP compartilhado, **pane Claude logado de primeira (o F-576 é fix de Windows)**, cache MCP durável, a era Jev e o push saindo do pane — e o endurecimento do medidor de velocidade pós-0.76.51.
