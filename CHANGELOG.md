@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.56 — O browser fala de volta
+
+- **Toda ação devolve o depois**: `click`, `fill`, `press`, `scroll`, `hover` e `navigate` respondem com `after` (url, título, carregando) e `changed` (`navigated: none | same-document | new-document` — o Main espera o `did-stop-loading` numa navegação real). `read: true` embute a página resultante na mesma resposta, em JSON ou no `format: "compact"` (outline com `[e12] link "Ver squads" → /squads`); `viewport` e `atBottom` dizem se ainda há página abaixo.
+- **Alvo por texto, nunca por seletor**: `nexus_browser_find` busca elementos visíveis pelo nome acessível (e pelo caminho do link), sem CSS nem JavaScript. `click` e `fill` aceitam `text`/`label` no lugar do `ref`: um vencedor claro age; empate devolve os candidatos sem fazer nada — e o Jev desempata só com 2 a 5 candidatos e confiança ≥ 0,7, registrado no diário de decisões.
+- **Ver erros pelo browser**: cada resposta traz `errors` desde a última ação — erros de console JS, respostas HTTP ≥ 400 e falhas de carregamento capturados no Main (redigidos, no máximo 5 itens) — mais os `alerts` da página (`role=alert`, `aria-invalid`). `judge: true` anexa o julgamento Jev: erro visível, bloqueado por humano (login, captcha, 2FA), ainda carregando e o tipo de página — opt-in, fail-open, superfície `browserTool`.
+- **`nexus_browser_extract`: da página para campos tipados**: o agente declara os campos (nome, tipo `string|number|boolean|date|enum`, hint); o código levanta candidatos limitados e redigidos — JSON-LD embutido, tabelas, label→valor, números, datas, e-mails — e resolve: JSON-LD bate direto, candidato único vale 0,8, dois ou mais vão ao Jev (confiança ≥ 0,6); booleano e enum são perguntas tipadas. Números pt-BR/en e datas normalizados em código; `null` quando não há candidato confiável. Valores digitados em campos nunca saem da página.
+- **Correções do code review**: `nexus_browser_find` e `nexus_browser_extract` passam pelas mesmas checagens de superfície e URL do `read` na revisão automatizada; os rótulos dos candidatos de extração também passam pela máscara de redação; uma extração com várias colunas não repete a chamada ao Jev depois da primeira falha; a assinatura posicional legada do `console-message` do Electron volta a ser lida no campo certo.
+- **Canal macOS**: a 0.76.55 saiu só para Windows; esta é a primeira build macOS com o browser do agente completo.
+
 ## 0.76.55 — Grok escuta (canal Windows)
 
 - **O canal Windows x64 alcança a 0.76.54**: cada canal publica a própria próxima versão estável — a v0.76.54 já está pública com assets macOS, e o publicador recusa anexar assets de outro sistema a release pública, então o Windows avança com a 0.76.55 carregando o código assinado do main atual. Para quem vem da 0.76.53, a atualização traz exatamente a seção 0.76.54 abaixo.

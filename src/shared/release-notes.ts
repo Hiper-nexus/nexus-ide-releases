@@ -4152,6 +4152,93 @@ export const RELEASE_07647: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.56',
+  date: '2026-09-18',
+  codename: 'O browser fala de volta',
+  summary:
+    'O browser do agente deixa de ser um passo às cegas: toda ação devolve ' +
+    'onde a página ficou, o que mudou e que erros apareceram — console, ' +
+    'HTTP e falhas de carregamento — na mesma resposta. O agente acha o ' +
+    'alvo por texto sem seletor, lê a página resultante sem uma chamada ' +
+    'extra, sabe se ainda há página abaixo e, quando pede, o Jev diz se ' +
+    'aquilo é um erro, se precisa de humano ou que tipo de página é. E ' +
+    'nexus_browser_extract transforma a página em campos tipados: o código ' +
+    'levanta os candidatos, o Jev escolhe — nunca inventa.',
+  highlights: [
+    {
+      title: 'Toda ação devolve o depois',
+      detail:
+        'click, fill, press, scroll, hover e navigate respondem com after ' +
+        '(url, título, carregando) e changed (url, título e navigated: ' +
+        'none, same-document ou new-document — o Main espera o ' +
+        'did-stop-loading numa navegação real). read: true embute a página ' +
+        'resultante na mesma resposta, em JSON ou no format compact ' +
+        '(outline com [e12] link "Ver squads" → /squads); viewport e ' +
+        'atBottom dizem se ainda há página abaixo. Menos idas e voltas que ' +
+        'um browser_act que só diz changed: false.',
+    },
+    {
+      title: 'Alvo por texto, nunca por seletor',
+      detail:
+        'nexus_browser_find busca elementos visíveis pelo nome acessível (e ' +
+        'pelo caminho do link), sem CSS nem JavaScript. click e fill ' +
+        'aceitam text/label no lugar do ref: um vencedor claro age; empate ' +
+        'devolve os candidatos sem fazer nada — e o Jev desempata só com 2 ' +
+        'a 5 candidatos e confiança ≥ 0,7, registrado no diário de ' +
+        'decisões.',
+    },
+    {
+      title: 'Ver erros pelo browser',
+      detail:
+        'Cada resposta traz errors desde a última ação: erros de console ' +
+        'JS, respostas HTTP ≥ 400 e falhas de carregamento capturados no ' +
+        'Main (redigidos, no máximo 5 itens), mais os alerts da página ' +
+        '(role=alert, aria-invalid). judge: true anexa o julgamento Jev: ' +
+        'erro visível, bloqueado por humano (login, captcha, 2FA), ainda ' +
+        'carregando e o tipo de página — opt-in, fail-open, superfície ' +
+        'browserTool.',
+    },
+    {
+      title: 'nexus_browser_extract: da página para campos tipados',
+      detail:
+        'O agente declara os campos (nome, tipo ' +
+        'string/number/boolean/date/enum, hint). O código levanta ' +
+        'candidatos limitados e redigidos — JSON-LD embutido, tabelas, ' +
+        'label→valor, números, datas, e-mails e valores — e resolve: ' +
+        'JSON-LD bate direto, candidato único vale 0,8, dois ou mais vão ao ' +
+        'Jev, que escolhe com confiança ≥ 0,6; booleano e enum são ' +
+        'perguntas tipadas. Números pt-BR/en e datas normalizados em ' +
+        'código; null quando não há candidato confiável. Valores digitados ' +
+        'em campos nunca saem da página.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Find e extract respeitam a revisão automatizada',
+      detail:
+        'Os dois passam pelas mesmas checagens de superfície e URL do read.',
+    },
+    {
+      title: 'Rótulos de candidatos também redigidos',
+      detail:
+        'Label e valor passam pela mesma máscara antes de sair da página.',
+    },
+    {
+      title: 'Jev indisponível não é reconsultado',
+      detail:
+        'Uma extração com várias colunas não repete a chamada depois da ' +
+        'primeira falha.',
+    },
+    {
+      title: 'Console legado do Electron',
+      detail:
+        'A assinatura posicional (event, level, message) volta a ser lida ' +
+        'no campo certo.',
+    },
+  ],
+};
+
+export const RELEASE_07655: AppRelease = {
   version: '0.76.55',
   date: '2026-09-18',
   codename: 'Grok escuta (canal Windows)',
