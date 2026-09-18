@@ -354,6 +354,25 @@ export function attenuateTools(
   return requested.filter((tool) => allowed.has(canonicalToolName(tool)));
 }
 
+/**
+ * Fan-out do operador sem missão: `nexus_pane_spawn` sem `adapterId` roteia
+ * `task ?? prompt` pelo mesmo motor do `nexus_route_task`. Registrado por
+ * tools-domain.ts (late-bound: tools-panes não pode importar tools-domain —
+ * ciclo tools-panes → tools-domain → tools-panes).
+ */
+export type OperatorRouteResolver = (
+  task: string,
+  ctx: AgentGateContext,
+) => Promise<Record<string, unknown>>;
+
+let operatorRouteResolver: OperatorRouteResolver | null = null;
+
+export function setOperatorRouteResolver(
+  resolver: OperatorRouteResolver | null,
+): void {
+  operatorRouteResolver = resolver;
+}
+
 export function attenuateSkills(
   parent: string[] | null,
   requested: string[] | null,
@@ -386,13 +405,28 @@ const paneSpawn: McpToolDef = {
     'model on the same CLI. If the sealed model cannot be applied, spawn fails ' +
     'visibly. In a running mission, pass routeReservationId when the CLI is ' +
     'not the sticky roster route. Prompt is delivered in the CLI argv AT BIRTH. ' +
+    'From the operator\'s own pane without a mission, adapterId may be omitted ' +
+    'when task/prompt is given — Nexus routes it automatically. ' +
     'Returns {paneId, sessionId} or {paneId, sessionId:null, pending:true} ' +
     'while the CLI session is still starting; use nexus_pane_wait_idle next.',
   inputSchema: {
     type: 'object',
     properties: {
-      adapterId: { type: 'string', description: 'Adapter id (cli) to run' },
+      adapterId: {
+        type: 'string',
+        description:
+          'Adapter id (cli) to run. Operator pane without a mission may omit ' +
+          'it and pass task/prompt for automatic routing.',
+      },
       agentName: { type: 'string', description: 'Squad agent name or id' },
+      task: {
+        type: 'string',
+        description:
+          'Operator fan-out without a mission: what this pane will do. When ' +
+          'adapterId is omitted, Nexus routes task (Jev tier/specialty + cost ' +
+          'table) to a CLI/model automatically; prompt is used when task is ' +
+          'absent.',
+      },
       model: { type: 'string' },
       effort: {
         type: 'string',
@@ -464,6 +498,7 @@ const paneSpawn: McpToolDef = {
     let options: SpawnToolOptions;
     let executionMode: 'same_checkout' | 'isolated_worktree' | undefined;
     let rosterRouteAuthorized = false;
+    let autoRoute: Record<string, unknown> | undefined;
     /**
      * Mão do operador sem missão: o pane filho é a MESMA mão. Omitir `role`
      * faz o main mintar `user` (`mcp-server`: `meta?.role ?? "user"`), então o
@@ -472,6 +507,12 @@ const paneSpawn: McpToolDef = {
      * liberdade". Com missão nada muda: worker/orchestrator seguem como sempre.
      */
     const operatorHand = ctx.role === 'user' && !ctx.missionId;
+    // Decisão 09/09 "panes que você abre herdam a liberdade": em Autopilot o
+    // filho ad-hoc do operador herda o allowlist dele (não nasce worker de
+    // allowlist vazio). Em Hardened (governed) continua atenuado — workers-of-
+    // the-operator como hoje.
+    const inheritOperatorFreedom =
+      operatorHand && isOperatorChoicePolicy(getOrchSettings().squadCliPolicy);
     if (agentRef) {
       const requestedMissionId = childMissionId(ctx, str(args, 'missionId'));
       const mission = requestedMissionId
@@ -534,7 +575,8 @@ const paneSpawn: McpToolDef = {
         agentCategory: agent.category,
         allowedTools: attenuateTools(
           ctx.allowedTools,
-          agent.allowedTools ?? (role === 'orchestrator' ? null : []),
+          agent.allowedTools ??
+            (role === 'orchestrator' || inheritOperatorFreedom ? null : []),
         ),
         allowedSkills: attenuateSkills(ctx.allowedSkills, agent.allowedSkills ?? null),
         // Sem missão a categoria do roster não confere autoridade: o filho do
@@ -547,9 +589,49 @@ const paneSpawn: McpToolDef = {
         resumeFromPaneId: resumePaneRefOf(str(args, 'resume')),
       };
     } else {
-      const adHocAdapterId = requireStr(args, 'adapterId');
-      const adHocModel = str(args, 'model');
-      const adHocEffort = str(args, 'effort');
+      // Fan-out do operador sem missão: sem `adapterId`, roteia `task ??
+      // prompt` pelo mesmo motor do nexus_route_task (sugestão livre, sem
+      // RouteReservation). Fora da mão do operador o adapterId segue
+      // obrigatório como sempre.
+      let adHocAdapterId = str(args, 'adapterId');
+      if (adHocAdapterId === undefined && operatorHand && operatorRouteResolver) {
+        const task =
+          str(args, 'task') ?? str(args, 'prompt') ?? str(args, 'title');
+        if (!task) {
+          throw new Error(
+            'nexus_pane_spawn sem adapterId: informe adapterId ou um ' +
+              '`task`/`prompt` para o roteamento automático',
+          );
+        }
+        try {
+          autoRoute = await operatorRouteResolver(task, ctx);
+        } catch (error) {
+          const message =
+            error instanceof Error ? error.message : String(error);
+          throw new Error(
+            `nexus_pane_spawn: roteamento automático falhou (${message}); ` +
+              'informe adapterId',
+          );
+        }
+        const routedAdapter = autoRoute.adapterId;
+        if (typeof routedAdapter !== 'string' || !routedAdapter.trim()) {
+          throw new Error(
+            'nexus_pane_spawn: roteamento automático falhou (sem adapterId); ' +
+              'informe adapterId',
+          );
+        }
+        adHocAdapterId = routedAdapter;
+      }
+      if (adHocAdapterId === undefined) {
+        adHocAdapterId = requireStr(args, 'adapterId');
+      }
+      assertMcpInvocationCurrent(invocation);
+      const adHocModel =
+        str(args, 'model') ??
+        (typeof autoRoute?.model === 'string' ? autoRoute.model : undefined);
+      const adHocEffort =
+        str(args, 'effort') ??
+        (typeof autoRoute?.effort === 'string' ? autoRoute.effort : undefined);
       const adHocMissionId = childMissionId(ctx, str(args, 'missionId'));
       const uniqueSealed = adHocMissionId
         ? uniqueSealedRuntimeForMission(
@@ -592,8 +674,12 @@ const paneSpawn: McpToolDef = {
         // An MCP-initiated spawn is the orchestrator delegating: default to a
         // WORKER (gated) so an ad-hoc spawn without agentName never lands as an
         // unrestricted 'user'-role token (SEC#5). A mão do operador sem missão
-        // é a exceção explícita: o filho É o operador (ver `operatorHand`).
-        allowedTools: attenuateTools(ctx.allowedTools, []),
+        // é a exceção explícita: o filho É o operador (ver `operatorHand`) —
+        // em Autopilot herda o allowlist dele (ver `inheritOperatorFreedom`).
+        allowedTools: attenuateTools(
+          ctx.allowedTools,
+          inheritOperatorFreedom ? null : [],
+        ),
         allowedSkills: attenuateSkills(ctx.allowedSkills, null),
         role: operatorHand ? undefined : 'worker',
         readOnly: args.readOnly === true,
@@ -950,17 +1036,43 @@ const paneSpawn: McpToolDef = {
         adapterId: options.adapterId,
         model: options.model ?? null,
         effort: options.effort ?? null,
-        source: agentRef
-          ? 'sealed-roster'
-          : routeReservationId
-            ? 'route'
-            : str(args, 'model')
-              ? 'explicit'
-              : 'cli-default',
+        source: autoRoute
+          ? 'auto-route'
+          : agentRef
+            ? 'sealed-roster'
+            : routeReservationId
+              ? 'route'
+              : str(args, 'model')
+                ? 'explicit'
+                : 'cli-default',
         ...(deliveryContract
           ? { deliveryContract: { retries: deliveryContract.retries } }
           : {}),
       };
+      // Auto-route receipt: quem spawnou lê tier/especialidade/motivo do
+      // roteamento Jev sem ter acionado nexus_route_task explicitamente.
+      const routeReceipt = autoRoute
+        ? {
+            route: {
+              ...(typeof autoRoute.tier === 'string'
+                ? { tier: autoRoute.tier }
+                : {}),
+              ...(typeof autoRoute.specialty === 'string'
+                ? { specialty: autoRoute.specialty }
+                : {}),
+              ...(typeof autoRoute.reason === 'string'
+                ? { reason: autoRoute.reason }
+                : {}),
+              ...(typeof autoRoute.classifierSource === 'string'
+                ? { classifierSource: autoRoute.classifierSource }
+                : {}),
+              // `escalate` é noul 0..1 (jev-task-routing), não booleano.
+              ...(typeof autoRoute.escalate === 'number'
+                ? { escalate: autoRoute.escalate }
+                : {}),
+            },
+          }
+        : {};
       let spawned: { paneId: string; sessionId: string };
       try {
         spawned = await spawnPaneAndMaybePrompt(options, {
@@ -983,6 +1095,7 @@ const paneSpawn: McpToolDef = {
           ...pending,
           ...(executionMode ? { executionMode } : {}),
           harness,
+          ...routeReceipt,
         };
       }
       // F-104: sem marcação de "handoff pendente" no spawn — o marcador só
@@ -1004,6 +1117,7 @@ const paneSpawn: McpToolDef = {
         ...spawned,
         ...(executionMode ? { executionMode } : {}),
         harness,
+        ...routeReceipt,
       };
     } finally {
       if (isolatedWriter && !isolatedWriterPending && !spawnedWorkerPaneId && !listPaneSnapshots().some(

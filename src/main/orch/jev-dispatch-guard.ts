@@ -12,7 +12,11 @@
  *   - qualquer outra coisa                   → `pass`
  *
  * A doutrina "missão aprovada não pergunta nada" (09/09) continua valendo para
- * ação destrutiva COERENTE com a missão. FAIL-OPEN em tudo: sem chave, toggle
+ * ação destrutiva COERENTE com a missão. A MÃO do operador (`role user`) nunca
+ * é julgada; FILHOS do operador (pane com `operatorParentSessionId` →
+ * `operatorBrief` no token, `role user`, sem missão) são julgados com o brief
+ * do spawn como objetivo, em modo só-injeção (`deny` ≥ 0.8, nunca modal);
+ * sem `prompt` no spawn não há guarda. FAIL-OPEN em tudo: sem chave, toggle
  * desligado, timeout ou erro → `skipped` e o despacho segue como hoje.
  * Argumentos nunca entram no decision log; só ids, números e o veredito.
  */
@@ -287,10 +291,15 @@ export function missionObjectiveOf(
   return null;
 }
 
+export type GuardMode = 'mission' | 'operator-child';
+
 export interface GuardToolCallInput {
   toolName: string;
   args: unknown;
-  ctx: Pick<AgentGateContext, 'role' | 'missionId' | 'sessionId'>;
+  ctx: Pick<
+    AgentGateContext,
+    'role' | 'missionId' | 'sessionId' | 'operatorBrief'
+  >;
   recentTools: readonly string[];
   missionObjective: string | null;
   /** Sessão física usada para o cache e o log (default: ctx.sessionId). */
@@ -308,6 +317,7 @@ export interface GuardToolCallDeps {
 /** Regras determinísticas sobre as probabilidades — exportadas para teste. */
 export function evaluateGuardAnswers(
   answers: Record<string, JevAnswer>,
+  mode: GuardMode = 'mission',
 ): JevGuardVerdict {
   const probabilities = jevAnswerProbabilities(answers);
   const injected = noulOf(answers, 'injected');
@@ -322,6 +332,9 @@ export function evaluateGuardAnswers(
       probabilities,
     };
   }
+  // Filho do operador (vibe): só a regra de injeção se aplica — nunca modal
+  // para os helpers do operador.
+  if (mode === 'operator-child') return { kind: 'pass', probabilities };
   if (
     coherent !== null &&
     destructive !== null &&
@@ -346,9 +359,23 @@ export async function guardToolCall(
   const now = deps.now ?? Date.now;
   const canonical = canonicalToolName(input.toolName);
 
-  if (input.ctx.role === 'user') return { kind: 'skipped', reason: 'operator-hand' };
-  if (!input.ctx.missionId) return { kind: 'skipped', reason: 'no-mission' };
-  if (!input.missionObjective) return { kind: 'skipped', reason: 'no-objective' };
+  // Filho do operador: `role user` sem missão MAS com brief do spawn mintado
+  // pelo Main — julgado em modo só-injeção. Sem brief continua sendo a própria
+  // mão do operador (ou um filho sem prompt): nunca julgado.
+  const operatorChild =
+    input.ctx.role === 'user' &&
+    !input.ctx.missionId &&
+    Boolean(input.ctx.operatorBrief?.trim());
+  if (input.ctx.role === 'user' && !operatorChild) {
+    return { kind: 'skipped', reason: 'operator-hand' };
+  }
+  if (!input.ctx.missionId && !operatorChild) {
+    return { kind: 'skipped', reason: 'no-mission' };
+  }
+  const objective = operatorChild
+    ? input.ctx.operatorBrief!.trim()
+    : input.missionObjective;
+  if (!objective) return { kind: 'skipped', reason: 'no-objective' };
   if (effectPolicyForTool(input.toolName) === 'read-only') {
     return { kind: 'skipped', reason: 'read-only' };
   }
@@ -356,18 +383,22 @@ export async function guardToolCall(
   if (!enabled()) return { kind: 'skipped', reason: 'surface-disabled' };
   if (!hasKey()) return { kind: 'skipped', reason: 'no-credential' };
 
+  const mode: GuardMode = operatorChild ? 'operator-child' : 'mission';
   const sessionId = input.sessionId ?? input.ctx.sessionId ?? 'anon';
   const argsJson = compactArgsJson(input.args);
-  const key = cacheKey(sessionId, input.toolName, input.args);
+  const key = `${mode}:${cacheKey(sessionId, input.toolName, input.args)}`;
   const cached = cachedVerdict(key, now());
   if (cached) return cached;
 
   const judgeFn = deps.judge ?? judge;
   const result = await judgeFn({
     state: {
-      mission: { objective: capText(input.missionObjective, OBJECTIVE_MAX) },
+      mission: { objective: capText(objective, OBJECTIVE_MAX) },
       call: { tool: canonical, args: argsJson },
-      caller: { role: input.ctx.role },
+      caller: {
+        role: input.ctx.role,
+        lane: operatorChild ? 'operator-child' : 'mission',
+      },
       recent: input.recentTools.slice(-5),
     },
     questions: GUARD_QUESTIONS,
@@ -376,7 +407,7 @@ export async function guardToolCall(
   });
   if (!result) return { kind: 'skipped', reason: 'judge-unavailable' };
 
-  const verdict = evaluateGuardAnswers(result.answers);
+  const verdict = evaluateGuardAnswers(result.answers, mode);
   rememberVerdict(key, verdict, now());
   recordJevDecision({
     surface: 'dispatchGuard',

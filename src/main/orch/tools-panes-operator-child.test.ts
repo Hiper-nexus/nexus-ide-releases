@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentGateContext } from './gate';
 import { testProjectScope } from './__tests__/scope-fixture';
 
@@ -8,6 +8,9 @@ const harness = vi.hoisted(() => ({
     sessionId: 'pty-child',
   })),
   takePendingPaneSpawnResult: vi.fn((): unknown => null),
+  settings: {
+    squadCliPolicy: 'operator-choice' as 'operator-choice' | 'governed',
+  },
 }));
 
 vi.mock('./tool-util', async (importOriginal) => ({
@@ -18,8 +21,16 @@ vi.mock('./pane-registry', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./pane-registry')>()),
   takePendingPaneSpawnResult: harness.takePendingPaneSpawnResult,
 }));
+vi.mock('../persistence/settings-store', async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import('../persistence/settings-store')
+  >()),
+  getOrchSettings: vi.fn(() => ({
+    squadCliPolicy: harness.settings.squadCliPolicy,
+  })),
+}));
 
-import { paneSpawnTool } from './tools-panes';
+import { paneSpawnTool, setOperatorRouteResolver } from './tools-panes';
 
 function userPane(overrides: Partial<AgentGateContext> = {}): AgentGateContext {
   return {
@@ -45,6 +56,11 @@ function spawnedRole(): unknown {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  harness.settings.squadCliPolicy = 'operator-choice';
+});
+
+afterEach(() => {
+  setOperatorRouteResolver(null);
 });
 
 /**
@@ -103,5 +119,98 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
       sessionId: null,
       pending: true,
     });
+  });
+
+  it('em Autopilot o filho ad-hoc herda o allowlist do operador (null)', async () => {
+    await paneSpawnTool.handler({ adapterId: 'codex' }, userPane());
+    const options = harness.spawnPaneAndMaybePrompt.mock.calls[0]?.[0] as {
+      allowedTools?: unknown;
+      allowedSkills?: unknown;
+    };
+    expect(options.allowedTools).toBeNull();
+    expect(options.allowedSkills).toBeNull();
+  });
+
+  it('em Hardened (governed) o filho continua worker atenuado ([])', async () => {
+    harness.settings.squadCliPolicy = 'governed';
+    await paneSpawnTool.handler({ adapterId: 'codex' }, userPane());
+    const options = harness.spawnPaneAndMaybePrompt.mock.calls[0]?.[0] as {
+      allowedTools?: unknown;
+    };
+    expect(options.allowedTools).toEqual([]);
+  });
+
+  it('sem adapterId roteia task/prompt pelo resolver do operador', async () => {
+    const resolver = vi.fn(async () => ({
+      adapterId: 'codex',
+      model: 'gpt-5.1-codex',
+      effort: 'medium',
+      tier: 'medium',
+      reason: 'r',
+      classifierSource: 'jev',
+      escalate: 0.2,
+    }));
+    setOperatorRouteResolver(resolver);
+
+    const ctx = userPane();
+    const result = (await paneSpawnTool.handler(
+      { prompt: 'implemente X' },
+      ctx,
+    )) as Record<string, unknown>;
+
+    expect(resolver).toHaveBeenCalledWith('implemente X', ctx);
+    const options = harness.spawnPaneAndMaybePrompt.mock.calls[0]?.[0] as {
+      adapterId?: unknown;
+      model?: unknown;
+      effort?: unknown;
+    };
+    expect(options.adapterId).toBe('codex');
+    expect(options.model).toBe('gpt-5.1-codex');
+    expect(options.effort).toBe('medium');
+    expect(result).toMatchObject({
+      harness: { adapterId: 'codex', model: 'gpt-5.1-codex', effort: 'medium', source: 'auto-route' },
+      route: { tier: 'medium', classifierSource: 'jev', reason: 'r', escalate: 0.2 },
+    });
+  });
+
+  it('com adapterId explícito o resolver não é chamado', async () => {
+    const resolver = vi.fn(async () => ({ adapterId: 'kimi' }));
+    setOperatorRouteResolver(resolver);
+    await paneSpawnTool.handler({ adapterId: 'codex' }, userPane());
+    expect(resolver).not.toHaveBeenCalled();
+    const options = harness.spawnPaneAndMaybePrompt.mock.calls[0]?.[0] as {
+      adapterId?: unknown;
+    };
+    expect(options.adapterId).toBe('codex');
+  });
+
+  it('worker de missão sem adapterId segue exigindo adapterId (sem resolver)', async () => {
+    const resolver = vi.fn(async () => ({ adapterId: 'codex' }));
+    setOperatorRouteResolver(resolver);
+    await expect(
+      paneSpawnTool.handler(
+        { prompt: 'implemente X' },
+        userPane({
+          role: 'worker',
+          label: 'worker',
+          missionId: 'mission-a',
+          allowedTools: [],
+        }),
+      ),
+    ).rejects.toBeTruthy();
+    expect(resolver).not.toHaveBeenCalled();
+    expect(harness.spawnPaneAndMaybePrompt).not.toHaveBeenCalled();
+  });
+
+  it('resolver que falha vira erro de roteamento automático', async () => {
+    setOperatorRouteResolver(
+      vi.fn(async () => {
+        throw new Error('sem CLI elegível');
+      }),
+    );
+    await expect(
+      paneSpawnTool.handler({ prompt: 'implemente X' }, userPane()),
+    ).rejects.toThrow(/roteamento automático falhou/);
+    expect(harness.spawnPaneAndMaybePrompt).not.toHaveBeenCalled();
   });
 });

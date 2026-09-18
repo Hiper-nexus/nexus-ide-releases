@@ -101,6 +101,7 @@ import {
   writeMcpConfigFile,
 } from "./hooks-gen";
 import { handleHookStatusHttp } from "./hook-status-endpoint";
+import { handleHookTriageHttp } from "./hook-triage-endpoint";
 import { authenticateArmsToken } from "../connectors/arms-token-store";
 import { handleArmsJsonRpc, markArmsBoot } from "../connectors/arms-endpoint";
 import { emitAppEvent } from "../connectors/app-events";
@@ -375,6 +376,11 @@ function computeMcpHubBridge(): { baseUrl: string; keys: readonly string[] } | u
  */
 function hookStatusUrl(): string {
   return `http://127.0.0.1:${port}/hook/status`;
+}
+
+/** PostToolUseFailure Bash-triage ingest — same loopback server/bearer. */
+function hookTriageUrl(): string {
+  return `http://127.0.0.1:${port}/hook/triage`;
 }
 
 const SHA256_HEX = /^[a-f0-9]{64}$/u;
@@ -953,6 +959,13 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
 ) => {
     const meta = authority.context;
     const gated = requiresSpawnGate(meta);
+    // Filho ad-hoc do operador sem missão: o token nasce `user` (o role é
+    // omitido no spawn para o Main mintar user) mas o vínculo
+    // `operatorParentSessionId` o distingue da própria mão do operador.
+    const operatorChild =
+      (meta?.role ?? "user") === "user" &&
+      typeof meta?.operatorParentSessionId === "string" &&
+      !meta?.missionId;
     const internalPrevcReviewerAuthority =
       resolveInternalPrevcReviewerAuthorityForSpawn(adapter.id, authority);
     const governedNativeProvider =
@@ -1016,6 +1029,15 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
       allowedSkills: meta?.allowedSkills ?? null,
       scope: authority.coordinationScope ?? authority.scope,
       executionScope: authority.scope,
+      // Jev dispatch guard (modo operator-child): o brief do spawn é o
+      // objetivo contra o qual as tool calls do helper são julgadas —
+      // só injeção, nunca modal. Não é persistido nem devolvido a callers.
+      operatorBrief:
+        operatorChild &&
+        typeof meta?.initialPrompt === "string" &&
+        meta.initialPrompt.trim()
+          ? meta.initialPrompt.trim().slice(0, 1_500)
+          : undefined,
     });
 
     const env: Record<string, string> = canUseNexusMcp(adapter)
@@ -1026,6 +1048,8 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           NEXUS_GATE_TOKEN: ctx.token,
           // Status hooks inherit this from the PTY env (never written to disk).
           NEXUS_HOOK_URL: hookStatusUrl(),
+          // PostToolUseFailure Bash triage hook — same transport contract.
+          NEXUS_HOOK_TRIAGE_URL: hookTriageUrl(),
         }
       : {};
     const extraArgs: string[] = [];
@@ -1164,7 +1188,12 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           env.CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT = "1";
         }
         extraArgs.push("--mcp-config", home.mcpConfigPath);
-        if (gateHome || gated) extraArgs.push("--strict-mcp-config");
+        // F-572: um helper aberto pelo operador NÃO pode herdar o perfil MCP
+        // global dele (~19 servidores, ~600 MB por pane, incidente 16/09).
+        // Os servidores do hub declarados em `.nexus/mcp-hub.json` seguem
+        // viajando no `--mcp-config`.
+        if (gateHome || gated || operatorChild)
+          extraArgs.push("--strict-mcp-config");
         if (!gateHome) {
           extraArgs.push("--settings", writeClaudeFamilyZeroClickSettings(ctx.token));
         }
@@ -1772,6 +1801,11 @@ export function startMcpServer(): Promise<void> {
       // Semantic status hooks (emdash wave 1) — additive, never enforcement.
       if (url === "/hook/status" && req.method === "POST") {
         await handleHookStatusHttp(req, res, ctx);
+        return;
+      }
+      // PostToolUseFailure/Bash triage — additive, never blocks the CLI.
+      if (url === "/hook/triage" && req.method === "POST") {
+        await handleHookTriageHttp(req, res, ctx);
         return;
       }
       sendJson(res, 404, { error: "not found" });

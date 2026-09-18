@@ -19,6 +19,18 @@ import { buildHandoffTools } from "./tools-handoff";
 import * as panes from "./pane-registry";
 import * as transport from "./tool-util";
 import type { PaneRuntimeAuthority } from "./pane-registry";
+import { reviewMissionHandoff } from "./jev-handoff-review";
+
+const jevReview = vi.hoisted(() => ({
+  reviewMissionHandoff: vi.fn(
+    async (): Promise<unknown> => ({ kind: "skipped", reason: "test" }),
+  ),
+}));
+
+vi.mock("./jev-handoff-review", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./jev-handoff-review")>()),
+  reviewMissionHandoff: jevReview.reviewMissionHandoff,
+}));
 
 const scope = testProjectScope();
 let dir: string;
@@ -40,6 +52,11 @@ const args = {
 
 beforeEach(() => {
   resetGateForTests();
+  jevReview.reviewMissionHandoff.mockReset();
+  jevReview.reviewMissionHandoff.mockResolvedValue({
+    kind: "skipped",
+    reason: "test",
+  });
   dir = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-workspace-handoff-"));
   manager = new ProjectRuntimeManager({ baseDir: dir, appVersion: "test" });
   configureProjectDomainStoreRegistry(manager);
@@ -234,6 +251,81 @@ describe("workspace handoff", () => {
     expect(getProjectDomainStores(scope).handoffs.list()).toMatchObject([
       { deliveryState: "queued" },
     ]);
+  });
+
+  it("retry verdict devolve ao filho uma vez sem persistir nada", async () => {
+    caller("parent");
+    const child = caller("child");
+    jevReview.reviewMissionHandoff.mockResolvedValue({
+      kind: "retry",
+      signals: ["missing-evidence"],
+      attempt: 1,
+      retries: 1,
+      message: "handoff devolvido: cite arquivos e verificação",
+    });
+    await expect(tool("submit").handler(args, child)).rejects.toThrow(
+      "handoff devolvido: cite arquivos e verificação",
+    );
+    expect(
+      getProjectDomainStores(scope).handoffs.list({ includeDelivered: true }),
+    ).toEqual([]);
+    expect(transport.injectPrompt).not.toHaveBeenCalled();
+  });
+
+  it("weak verdict prefixa [evidência fraca] no resumo do store e da injeção", async () => {
+    caller("parent");
+    const child = caller("child");
+    jevReview.reviewMissionHandoff.mockResolvedValue({
+      kind: "weak",
+      signals: ["generic-summary"],
+      artifact: { kind: "nexus.jevReview", payload: { outcome: "weak" } },
+    });
+    const result = await tool("submit").handler(args, child);
+    expect(result).toMatchObject({ ok: true, delivered: true });
+    const rows = getProjectDomainStores(scope).handoffs.list({
+      includeDelivered: true,
+    });
+    expect(rows[0]?.summary).toMatch(/^\[evidência fraca\] /);
+    expect(transport.injectPrompt).toHaveBeenCalledWith(
+      "parent",
+      expect.stringContaining("[evidência fraca]"),
+      expect.anything(),
+    );
+    expect(rows[0]?.artifacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "nexus.jevReview" }),
+      ]),
+    );
+  });
+
+  it("ok verdict mantém o resumo e anexa o artifact nexus.jevReview", async () => {
+    caller("parent");
+    const child = caller("child");
+    jevReview.reviewMissionHandoff.mockResolvedValue({
+      kind: "ok",
+      artifact: { kind: "nexus.jevReview", payload: { outcome: "ok" } },
+    });
+    await tool("submit").handler(args, child);
+    const rows = getProjectDomainStores(scope).handoffs.list({
+      includeDelivered: true,
+    });
+    expect(rows[0]?.summary).toBe(args.summary);
+    expect(rows[0]?.artifacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "nexus.jevReview" }),
+      ]),
+    );
+  });
+
+  it("não revisa status não-success nem sessão read-only", async () => {
+    caller("parent");
+    const child = caller("child");
+    await tool("submit").handler({ ...args, status: "partial" }, child);
+    expect(reviewMissionHandoff).not.toHaveBeenCalled();
+
+    child.readOnly = true;
+    await tool("submit").handler(args, child);
+    expect(reviewMissionHandoff).not.toHaveBeenCalled();
   });
 
   it("does not list mission history without a mission or grant mission ACK", async () => {

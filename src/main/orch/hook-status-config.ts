@@ -34,6 +34,7 @@ import {
   mergeNestedEntries,
 } from '../../vendor/emdash/hooks/hook-config';
 import { filterUserHooks } from '../../vendor/emdash/hooks/hook-commands';
+import { makeClaudeTriageHookCommand } from './hook-triage-command';
 
 // ── Claude (family: claude/glm/glm-flash/longcat) ───────────────────────────
 
@@ -51,6 +52,22 @@ export function mergeClaudeStatusHooks(existing: ClaudeHooksMap): ClaudeHooksMap
     const current = Array.isArray(next[spec.hookKey]) ? next[spec.hookKey] : [];
     next[spec.hookKey] = mergeNestedEntries(current, spec.command);
   }
+  // PostToolUseFailure/Bash → POST /hook/triage: a RESPOSTA do endpoint vira o
+  // output do hook (additionalContext), então o comando não usa
+  // `--output /dev/null`. O mergeNestedEntries acima já removeu entradas
+  // antigas com o marker, então a reescrita por spawn segue idempotente.
+  const failure = Array.isArray(next.PostToolUseFailure)
+    ? next.PostToolUseFailure
+    : [];
+  next.PostToolUseFailure = [
+    ...failure,
+    {
+      matcher: 'Bash',
+      hooks: [
+        { type: 'command', command: makeClaudeTriageHookCommand(), timeout: 15 },
+      ],
+    },
+  ];
   return next;
 }
 

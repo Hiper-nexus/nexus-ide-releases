@@ -720,3 +720,27 @@ describe('token registry + stop gate', () => {
     });
   });
 });
+
+describe('operatorBrief (Jev dispatch guard — filho do operador)', () => {
+  beforeEach(() => resetGateForTests());
+
+  it('token do filho do operador carrega o brief mintado', () => {
+    const ctx = mintToken({
+      label: 'filho do operador',
+      role: 'user',
+      scope: testProjectScope(),
+      operatorBrief: 'implemente a tela de login',
+    });
+    expect(ctx.operatorBrief).toBe('implemente a tela de login');
+  });
+
+  it('worker de missão não ganha operatorBrief', () => {
+    const ctx = mintToken({
+      label: 'worker',
+      role: 'worker',
+      missionId: 'mission-1',
+      scope: testProjectScope(),
+    });
+    expect(ctx.operatorBrief).toBeUndefined();
+  });
+});

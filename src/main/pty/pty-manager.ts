@@ -1787,7 +1787,11 @@ export function spawnAgentSession(
         checkoutId: authority.scope.checkoutId,
         codexResumeSessionId: resumeMode === "exact" ? trustedResumeArgs[trustedResumeArgs.length - 1] : undefined,
         providerHome: env.CODEX_HOME,
-        preserveUserMcp: !gatedSpawn,
+        // F-572: um helper aberto pelo operador também não herda o perfil MCP
+        // global dele — mesma razão do --strict-mcp-config do Claude.
+        preserveUserMcp:
+          !gatedSpawn &&
+          authority.context?.operatorParentSessionId === undefined,
         cwd,
         workspaceRoot: authority.scope.rootRealPath,
       });

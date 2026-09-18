@@ -85,6 +85,12 @@ export interface AgentGateContext {
   executionScope?: Readonly<ProjectExecutionScope>;
   allowedTools: string[] | null;
   allowedSkills: string[] | null;
+  /**
+   * Main-owned brief (spawn prompt, capped) of an operator-spawned helper;
+   * only used by the Jev dispatch guard as the objective — never persisted,
+   * never returned to callers.
+   */
+  operatorBrief?: string;
   /** Stop-gate attempts (worker may leave after MAX_STOP_ATTEMPTS). */
   stopAttempts: number;
   handoffSubmitted: boolean;
@@ -308,6 +314,11 @@ export interface MintTokenInput {
   executionScope?: ProjectExecutionScope;
   allowedTools?: string[] | null;
   allowedSkills?: string[] | null;
+  /**
+   * Main-owned spawn brief of an operator-spawned helper (see
+   * AgentGateContext.operatorBrief). Never persisted nor returned to callers.
+   */
+  operatorBrief?: string;
 }
 
 export function mintToken(input: MintTokenInput): AgentGateContext {
@@ -427,6 +438,7 @@ export function mintToken(input: MintTokenInput): AgentGateContext {
       input.allowedSkills === null || input.allowedSkills === undefined
         ? null
         : [...input.allowedSkills],
+    operatorBrief: input.operatorBrief,
     stopAttempts: 0,
     handoffSubmitted: false,
   };

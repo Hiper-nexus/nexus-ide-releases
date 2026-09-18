@@ -693,6 +693,46 @@ describe('mcp-server governed CLI profile wiring', () => {
     expect(decoration.extraArgs).toContain('--mcp-config');
     expect(decoration.extraArgs).toContain('--settings');
     expect(decoration.extraArgs).not.toContain('--strict-mcp-config');
+    // PostToolUseFailure/Bash triage hook: mesma família de env do status hook.
+    expect(decoration.env.NEXUS_HOOK_TRIAGE_URL).toMatch(/\/hook\/triage$/);
+
+    decoration.onSpawnFailed?.();
+  });
+
+  it('keeps the operator global MCP profile out of operator-spawned helpers', () => {
+    const root = tempRoot();
+    const home = path.join(root, 'home');
+    const workspace = path.join(root, 'workspace');
+    fs.mkdirSync(workspace, { recursive: true });
+    fs.mkdirSync(home, { recursive: true });
+    const cwd = fs.realpathSync(workspace);
+    vi.stubEnv('HOME', home);
+
+    const base = authority(cwd, false);
+    // Filho ad-hoc do operador (Autopilot): nasce `user` com allowlist herdada
+    // (null → não-gated), mas o vínculo operatorParentSessionId proíbe o perfil
+    // MCP global do operador — F-572, ~19 servidores / ~600 MB por pane.
+    const decoration = prepareAgentSpawnDecoration(
+      adapter('claude'),
+      { kind: 'cli-agent', cols: 80, rows: 24 },
+      {
+        ...base,
+        source: 'pending',
+        context: {
+          operatorParentSessionId: 'parent-1',
+          initialPrompt: 'implemente X',
+          allowedTools: null,
+          allowedSkills: null,
+          scope: base.scope,
+          executionScope: base.scope,
+        },
+      },
+      undefined,
+    );
+    if (!decoration) throw new Error('expected operator-child Claude decoration');
+
+    expect(decoration.extraArgs).toContain('--strict-mcp-config');
+    expect(decoration.env.NEXUS_HOOK_TRIAGE_URL).toMatch(/\/hook\/triage$/);
 
     decoration.onSpawnFailed?.();
   });

@@ -24,6 +24,11 @@ import {
   disarmDeliveryContract,
   evaluateDeliveryContract,
 } from "./delivery-contract";
+import { normalizeFilesModified } from "./worker-files-modified";
+import {
+  reviewMissionHandoff,
+  type JevReviewVerdict,
+} from "./jev-handoff-review";
 
 /** Workspace delivery is untrusted correspondence, never mission completion evidence. */
 export async function submitWorkspaceHandoff(
@@ -63,6 +68,56 @@ export async function submitWorkspaceHandoff(
   const condensed = condenseHandoffSummary(
     filterAntiSocialChatter(rawSummary).clean,
   );
+  // Revisão de evidência Jev no handoff sem missão: mesmo motor do handoff de
+  // missão (1 devolução, depois `[evidência fraca]` no resumo que vai ao store
+  // e ao pane pai + artifact `nexus.jevReview`). A correspondência continua
+  // `unverified` — a revisão só filtra relatórios vazios para o operador, não
+  // minta evidência nem recibo.
+  let jevVerdict: JevReviewVerdict = { kind: "skipped", reason: "not-run" };
+  let reviewedSummary = condensed.summary;
+  if (
+    declaredStatus === "success" &&
+    ctx.readOnly !== true &&
+    verdict.kind !== "exhausted"
+  ) {
+    assertMcpInvocationCurrent(invocation);
+    try {
+      jevVerdict = await reviewMissionHandoff({
+        sessionId: ctx.sessionId,
+        signal: invocation?.signal,
+        declaredStatus,
+        summary: rawSummary,
+        fullText: typeof args.fullText === "string" ? args.fullText : undefined,
+        accomplished: args.accomplished,
+        blockers: args.blockers,
+        nextSteps: args.nextSteps,
+        declaredFiles: normalizeFilesModified({
+          filesModified: args.filesModified,
+          "files-modified": args["files-modified"],
+          artifacts: args.artifacts,
+        }),
+        artifactKinds: (Array.isArray(args.artifacts) ? args.artifacts : [])
+          .filter(
+            (a): a is { kind: string } =>
+              !!a &&
+              typeof a === "object" &&
+              typeof (a as Record<string, unknown>).kind === "string",
+          )
+          .map((a) => a.kind),
+        evidenceIdsCount: 0,
+        hasObservedCommit: false,
+      });
+    } catch (error) {
+      console.warn("[handoff-workspace] revisão Jev falhou (ignorada):", error);
+      jevVerdict = { kind: "skipped", reason: "review-error" };
+    }
+    if (jevVerdict.kind === "retry") {
+      throw new Error(jevVerdict.message);
+    }
+    if (jevVerdict.kind === "weak") {
+      reviewedSummary = `[evidência fraca] ${condensed.summary}`;
+    }
+  }
   const telemetry = sanitizeHandoffTelemetry(args.telemetry);
   const artifacts = [
     ...(Array.isArray(args.artifacts) ? args.artifacts : []),
@@ -79,6 +134,9 @@ export async function submitWorkspaceHandoff(
       ? [deliveryContractExhaustedArtifact(verdict, declaredStatus)]
       : []),
     ...(telemetry ? [embedTelemetryArtifact(telemetry)] : []),
+    ...(jevVerdict.kind === "ok" || jevVerdict.kind === "weak"
+      ? [jevVerdict.artifact]
+      : []),
   ];
   const assertDestinationCurrent = () => {
     assertMcpInvocationCurrent(invocation);
@@ -100,7 +158,7 @@ export async function submitWorkspaceHandoff(
   // no mission receipt chain or task/mission transition is minted here.
   const handoff = store.submit({
     status,
-    summary: condensed.summary,
+    summary: reviewedSummary,
     artifacts,
     sessionId: ctx.sessionId,
     fromAgent: ctx.agentName ?? ctx.label,

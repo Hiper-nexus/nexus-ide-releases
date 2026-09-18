@@ -211,6 +211,84 @@ describe('guardToolCall', () => {
     expect(judge).toHaveBeenCalledTimes(2);
   });
 
+  it('operator child (user sem missão COM brief) é julgado em modo só-injeção', async () => {
+    const judge = vi.fn<JudgeMock>(async () =>
+      result({ coherent: 0.3, injected: 0.9, destructive: 0.2 }),
+    );
+    const v = await guardToolCall(
+      input({
+        ctx: {
+          role: 'user',
+          sessionId: 's-child',
+          operatorBrief: 'implemente a tela de login',
+        },
+        missionObjective: null,
+      }),
+      { judge },
+    );
+    expect(v.kind).toBe('deny');
+    expect(judge).toHaveBeenCalledTimes(1);
+    const state = judge.mock.calls[0][0].state as {
+      mission: { objective: string };
+      caller: { role: string; lane: string };
+    };
+    expect(state.mission.objective).toBe('implemente a tela de login');
+    expect(state.caller.lane).toBe('operator-child');
+    expect(vi.mocked(recordJevDecision).mock.calls[0][0]).toMatchObject({
+      decision: 'deny:file_write',
+      missionId: undefined,
+    });
+  });
+
+  it('operator child nunca gera modal: destrutivo incoerente sem injeção passa', async () => {
+    const judge = vi.fn<JudgeMock>(async () =>
+      result({ coherent: 0.1, injected: 0.1, destructive: 0.95 }),
+    );
+    const v = await guardToolCall(
+      input({
+        ctx: {
+          role: 'user',
+          sessionId: 's-child',
+          operatorBrief: 'implemente a tela de login',
+        },
+        missionObjective: null,
+      }),
+      { judge },
+    );
+    expect(v.kind).toBe('pass');
+    expect(judge).toHaveBeenCalledTimes(1);
+  });
+
+  it('mão do operador sem brief continua skipped (operator-hand)', async () => {
+    const judge = vi.fn();
+    const v = await guardToolCall(
+      input({
+        ctx: { role: 'user', sessionId: 's1' },
+        missionObjective: null,
+      }),
+      { judge },
+    );
+    expect(v).toEqual({ kind: 'skipped', reason: 'operator-hand' });
+    expect(judge).not.toHaveBeenCalled();
+  });
+
+  it('cache key separa vereditos de missão e de filho do operador', async () => {
+    const judge = vi.fn<JudgeMock>(async () => result(benign));
+    await guardToolCall(input(), { judge });
+    await guardToolCall(
+      input({
+        ctx: {
+          role: 'user',
+          sessionId: 's1',
+          operatorBrief: 'implemente a tela de login',
+        },
+        missionObjective: null,
+      }),
+      { judge },
+    );
+    expect(judge).toHaveBeenCalledTimes(2);
+  });
+
   it('caps the objective and passes only the last 5 recent tools', async () => {
     const judge = vi.fn<JudgeMock>(async () => result(benign));
     await guardToolCall(

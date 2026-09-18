@@ -42,6 +42,20 @@ describe('mergeClaudeStatusHooks (Claude JSON settings)', () => {
     expect(merged.UserPromptSubmit).toHaveLength(2);
     expect(merged.Notification).toHaveLength(1);
 
+    // PostToolUseFailure carrega o status hook padrão + o hook de triagem
+    // (matcher Bash → POST /hook/triage, cuja RESPOSTA é o output do hook).
+    const failure = merged.PostToolUseFailure as Array<{
+      matcher?: string;
+      hooks: Array<{ type: string; command: string; timeout?: number }>;
+    }>;
+    expect(failure).toHaveLength(2);
+    const triage = failure.find((entry) => entry.matcher === 'Bash');
+    expect(triage).toBeDefined();
+    expect(triage!.hooks[0]!.command).toContain('$NEXUS_HOOK_TRIAGE_URL');
+    expect(triage!.hooks[0]!.command).toContain(MARKER);
+    expect(triage!.hooks[0]!.command).not.toContain('--output /dev/null');
+    expect(triage!.hooks[0]!.command).toContain('|| true');
+
     const serialized = JSON.stringify(merged);
     expect(serialized).toContain(MARKER);
     expect(serialized).toContain('$NEXUS_HOOK_URL');
@@ -54,7 +68,8 @@ describe('mergeClaudeStatusHooks (Claude JSON settings)', () => {
     const twice = mergeClaudeStatusHooks(once);
 
     expect(twice).toEqual(once);
-    expect(JSON.stringify(twice).match(new RegExp(MARKER, 'g'))).toHaveLength(6);
+    // 6 status hooks (claudeHookSpecs) + 1 hook de triagem PostToolUseFailure.
+    expect(JSON.stringify(twice).match(new RegExp(MARKER, 'g'))).toHaveLength(7);
   });
 });
 

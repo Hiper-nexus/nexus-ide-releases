@@ -64,6 +64,7 @@ import {
 import {
   childMissionId,
   paneSpawnTool,
+  setOperatorRouteResolver,
 } from './tools-panes';
 import { buildBrowserTools } from './tools-browser';
 import { buildBrowserAutopilotTools } from './tools-browser-autopilot';
@@ -1349,7 +1350,7 @@ const routeLogTool: McpToolDef = {
 const routeTaskTool: McpToolDef = {
   name: 'nexus_route_task',
   description:
-    'Mission-orchestrator-only: reserve the best cost/capability route for a task before spawning it. ' +
+    'Mission orchestrator OR the operator\'s own pane (fan-out without a mission): pick the best cost/capability route for a task before spawning it. ' +
     'The decision is resolved against the current installed provider and model ' +
     'catalog, never against model names remembered by the orchestrator. ' +
     'Classifies the task (trivial|easy|medium|hard|critical) and the work ' +
@@ -1365,7 +1366,10 @@ const routeTaskTool: McpToolDef = {
     'When the mission has a sealed task plan, routing is closed: the task must ' +
     'match a planned task (by title or taskId) and the answer is exactly that ' +
     "task's roster cli/model/effort — never an adapter outside the sealed " +
-    'roster.',
+    'roster.' +
+    ' Without a mission the answer is a free suggestion (no RouteReservation): ' +
+    'pass adapterId/model/effort into nexus_pane_spawn — or omit adapterId in ' +
+    'nexus_pane_spawn and pass `task` so Nexus routes it automatically.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -1623,6 +1627,14 @@ const routeTaskTool: McpToolDef = {
     };
   },
 };
+
+// Fan-out do operador sem missão: `nexus_pane_spawn` sem adapterId resolve
+// `task ?? prompt` por este mesmo handler (sugestão livre, sem reserva).
+// Late-bound porque tools-panes não pode importar tools-domain (ciclo).
+setOperatorRouteResolver(
+  (task, ctx) =>
+    routeTaskTool.handler({ task }, ctx) as Promise<Record<string, unknown>>,
+);
 
 const cronTool: McpToolDef = {
   name: 'nexus_cron',

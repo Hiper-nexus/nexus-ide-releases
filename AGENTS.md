@@ -367,8 +367,11 @@ saber isto antes de mexer:
   muda — o cliente vê um Nexus 100% clássico.
 - **Guarda de despacho** (`orch/jev-dispatch-guard.ts`, hook em
   `mcp-dispatch.ts`, surface `dispatchGuard`): toda chamada `nexus_*` COM
-  efeito, dentro de missão e fora da mão do operador (`role user` nunca é
-  julgado), passa por três nouls — coerente com o objetivo da missão
+  efeito, dentro de missão e fora da mão do operador (a MÃO do operador nunca
+  é julgada; FILHOS dela — pane com `operatorParentSessionId`, `role user`,
+  sem missão — são julgados com o `prompt` do spawn (≤1500 chars,
+  `operatorBrief` no token) como objetivo, em modo só-injeção: `deny` ≥ 0.8,
+  nunca modal; sem `prompt` no spawn não há guarda), passa por três nouls — coerente com o objetivo da missão
   (`intentContract.goal`), argumentos com cara de instrução injetada,
   efeito irreversível. Política em código: injeção ≥ 0.8 → `deny` auditado
   com hint (o agente refaz com argumentos próprios); coerência ≤ 0.35 E
@@ -413,3 +416,19 @@ saber isto antes de mexer:
   captura da janela em `userData/jev/computer/<runId>/confirm.png`, só nesse
   caminho); detector de travamento (3 passos iguais); cap de passos; log por
   passo (surface `computerTool`).
+- **Fan-out do operador sem missão** (`tools-panes.ts`): filho ad-hoc herda
+  o allowlist do operador (`attenuateTools(ctx.allowedTools, null)`) em
+  Autopilot — em Hardened continua `[]`. Filho do operador sempre recebe
+  `--strict-mcp-config` (Claude) / `preserveUserMcp: false` (Codex): F-572,
+  um helper nunca carrega o perfil MCP global. `nexus_pane_spawn` sem
+  `adapterId` na mão do operador roteia `task ?? prompt` pelo mesmo motor do
+  `nexus_route_task` (Jev tier/especialidade + tabela) — receipt
+  `harness.source: 'auto-route'` + `route`.
+- **Handoff sem missão** passa pela mesma revisão Jev do handoff de missão
+  (`reviewMissionHandoff`): 1 devolução, depois `[evidência fraca]` no resumo
+  que chega ao pane pai + artifact `nexus.jevReview`. Continua correspondência
+  `unverified`.
+- **Triagem de Bash nativo** (Claude): hook `PostToolUseFailure` com matcher
+  `Bash` → `POST /hook/triage` (mesmo bearer do gate) → `triageCommandFailure`
+  → `hookSpecificOutput.additionalContext` de volta ao agente. O hook nunca
+  bloqueia (`-sf … || true`, `{}` quando a superfície está off).
