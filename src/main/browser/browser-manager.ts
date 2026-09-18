@@ -901,8 +901,9 @@ async function createEntry(
       level = details.level;
       message = details.message;
     } else {
-      level = args[0];
-      message = args[1];
+      // Legacy positional signature: (event, level, message, line, sourceId).
+      level = args[1];
+      message = args[2];
     }
     const isError =
       level === 'error' || (typeof level === 'number' && level >= 3);

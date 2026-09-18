@@ -343,11 +343,16 @@ const browserFindTool: McpToolDef = {
     const paneId = requireStr(args, 'paneId');
     const reviewAuthority = authorizeBrowserPane(ctx, paneId, 'read');
     assertReviewSurfaceCurrent(ctx, reviewAuthority);
-    return findBrowserElements(paneId, ctx.scope, {
+    const result = await findBrowserElements(paneId, ctx.scope, {
       text: str(args, 'text'),
       role: str(args, 'role'),
       limit: num(args, 'limit'),
     });
+    if (reviewAuthority) {
+      assertReviewSurfaceCurrent(ctx, reviewAuthority);
+      recordAutomatedReviewBrowserInspection(reviewAuthority, 'find');
+    }
+    return result;
   },
 };
 
@@ -371,12 +376,22 @@ const browserExtractTool: McpToolDef = {
     const paneId = requireStr(args, 'paneId');
     const reviewAuthority = authorizeBrowserPane(ctx, paneId, 'read');
     assertReviewSurfaceCurrent(ctx, reviewAuthority);
-    return extractBrowserFields(
+    const result = await extractBrowserFields(
       paneId,
       ctx.scope,
       args.fields as BrowserExtractField[],
       { sessionId: ctx.sessionId, missionId: ctx.missionId },
     );
+    if (reviewAuthority) {
+      assertReviewSurfaceCurrent(ctx, reviewAuthority);
+      if (result.url !== reviewAuthority.surface.url) {
+        throw new Error(
+          'automated design-review extract came from another URL',
+        );
+      }
+      recordAutomatedReviewBrowserInspection(reviewAuthority, 'extract');
+    }
+    return result;
   },
 };
 

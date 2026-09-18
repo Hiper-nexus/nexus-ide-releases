@@ -206,6 +206,34 @@ describe('resolveBrowserExtract', () => {
     expect(noCredential.jev.skipped).toBe('no-credential');
   });
 
+  it('stops calling Jev for later fields after the first unavailable answer', async () => {
+    const jev = vi.fn(async (_req: unknown) => null);
+    const result = await resolveBrowserExtract(
+      candidates({
+        pairs: [
+          { label: 'Total', value: '100' },
+          { label: 'Total geral', value: '200' },
+          { label: 'Preço', value: '10' },
+          { label: 'Preço final', value: '20' },
+        ],
+      }),
+      [
+        { name: 'total', type: 'number' },
+        { name: 'preço', type: 'number' },
+        { name: 'em estoque', type: 'boolean' },
+      ],
+      context,
+      { jev, ...enabled, recordDecision },
+    );
+    // one attempt only: after judge-unavailable, later fields never ask again
+    expect(jev).toHaveBeenCalledOnce();
+    expect(result.jev.calls).toBe(0);
+    expect(result.jev.skipped).toBe('judge-unavailable');
+    expect(result.fields.total.source).toBe('none');
+    expect(result.fields['preço'].source).toBe('none');
+    expect(result.fields['em estoque'].source).toBe('none');
+  });
+
   it('resolves boolean fields via noul and maps probability to value/confidence', async () => {
     const jev = vi.fn(async (_req: unknown) =>
       jevResult({ answer: { type: 'noul', noul: 0.85 } }),

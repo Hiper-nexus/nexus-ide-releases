@@ -317,6 +317,8 @@ export async function resolveBrowserExtract(
     state: Record<string, unknown>,
     decisionLabel: string,
   ): Promise<JevResult | null> => {
+    // Once Jev is known-bad for this run, stop asking — the first reason wins.
+    if (jevSkipped) return null;
     if (!jevUsable()) return null;
     try {
       const result = await judgeFn({

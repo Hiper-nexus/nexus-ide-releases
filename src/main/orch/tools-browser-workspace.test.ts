@@ -21,6 +21,23 @@ const stubs = vi.hoisted(() => ({
     url: 'http://127.0.0.1:1234/',
     bodyText: '',
   })),
+  readBrowserPageCompact: vi.fn(async () => ({
+    paneId: 'browser-1',
+    url: 'http://127.0.0.1:1234/',
+    outline: '',
+  })),
+  findBrowserElements: vi.fn(async () => ({
+    paneId: 'browser-1',
+    matches: [],
+    total: 0,
+  })),
+  extractBrowserFields: vi.fn(async () => ({
+    paneId: 'browser-1',
+    url: 'http://127.0.0.1:1234/',
+    title: '',
+    fields: {},
+    jev: { calls: 0 },
+  })),
   inspectBrowserElement: vi.fn(async () => ({ paneId: 'browser-1', ref: 'r1' })),
   waitForBrowser: vi.fn(async () => ({
     paneId: 'browser-1',
@@ -65,6 +82,9 @@ vi.mock('../browser/browser-manager', () => ({
   inspectBrowserElement: vi.fn(),
   loadBrowser: stubs.loadBrowser,
   readBrowserPage: stubs.readBrowserPage,
+  readBrowserPageCompact: stubs.readBrowserPageCompact,
+  findBrowserElements: stubs.findBrowserElements,
+  extractBrowserFields: stubs.extractBrowserFields,
   waitForBrowser: stubs.waitForBrowser,
   scrollBrowserPane: vi.fn(),
   pressBrowserKey: vi.fn(),
@@ -302,6 +322,98 @@ describe('preview tool workspace confinement', () => {
         } as never,
       ),
     ).rejects.toThrow(/read came from another URL/i);
+    expect(stubs.recordReviewInspection).not.toHaveBeenCalled();
+  });
+
+  it('records find and extract inspections for a verified reviewer', async () => {
+    const url = 'http://127.0.0.1:1234/';
+    const authority = {
+      reviewSessionId: '11111111-1111-4111-8111-111111111111',
+      reviewerSessionId: 'reviewer-session',
+      surface: {
+        paneId: 'browser-review',
+        previewId: 'preview-review',
+        url,
+        missionId: 'mission-a',
+        scope,
+        executionScope: scope,
+      },
+    };
+    stubs.resolveReviewAuthority.mockReturnValue(authority);
+    const worker = {
+      role: 'worker',
+      scope,
+      missionId: 'mission-a',
+    } as never;
+
+    const find = buildBrowserTools().find(
+      (item) => item.name === 'nexus_browser_find',
+    )!;
+    await expect(
+      find.handler({ paneId: 'browser-review', text: 'ok' }, worker),
+    ).resolves.toMatchObject({ paneId: 'browser-1' });
+    expect(stubs.recordReviewInspection).toHaveBeenCalledWith(
+      authority,
+      'find',
+    );
+
+    const extract = buildBrowserTools().find(
+      (item) => item.name === 'nexus_browser_extract',
+    )!;
+    await expect(
+      extract.handler(
+        {
+          paneId: 'browser-review',
+          fields: [{ name: 'total', type: 'number' }],
+        },
+        worker,
+      ),
+    ).resolves.toMatchObject({ paneId: 'browser-1' });
+    expect(stubs.recordReviewInspection).toHaveBeenCalledWith(
+      authority,
+      'extract',
+    );
+  });
+
+  it('does not count an extract whose page URL diverged from the bound preview', async () => {
+    const url = 'http://127.0.0.1:1234/';
+    const authority = {
+      reviewSessionId: '11111111-1111-4111-8111-111111111111',
+      reviewerSessionId: 'reviewer-session',
+      surface: {
+        paneId: 'browser-review',
+        previewId: 'preview-review',
+        url,
+        missionId: 'mission-a',
+        scope,
+        executionScope: scope,
+      },
+    };
+    stubs.resolveReviewAuthority.mockReturnValue(authority);
+    stubs.extractBrowserFields.mockResolvedValueOnce({
+      paneId: 'browser-review',
+      url: 'https://attacker.example/',
+      title: '',
+      fields: {},
+      jev: { calls: 0 },
+    });
+    const tool = buildBrowserTools().find(
+      (item) => item.name === 'nexus_browser_extract',
+    )!;
+
+    await expect(
+      tool.handler(
+        {
+          paneId: 'browser-review',
+          fields: [{ name: 'total', type: 'number' }],
+        },
+        {
+          role: 'worker',
+          scope,
+          missionId: 'mission-a',
+        } as never,
+      ),
+    ).rejects.toThrow(/extract came from another URL/i);
     expect(stubs.recordReviewInspection).not.toHaveBeenCalled();
   });
 

@@ -591,7 +591,10 @@ export function createBrowserAutomation(
       element?: Element,
     ): void => {
       if (pairs.length >= EXTRACT_PAIRS_MAX) return;
-      const l = normalizedText(label).slice(0, PAIR_LABEL_CHARS);
+      const l = redactBrowserText(normalizedText(label)).slice(
+        0,
+        PAIR_LABEL_CHARS,
+      );
       const v = redactBrowserText(normalizedText(value)).slice(0, PAIR_VALUE_CHARS);
       if (!l || !v) return;
       pairs.push({

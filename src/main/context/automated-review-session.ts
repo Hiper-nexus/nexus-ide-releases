@@ -64,7 +64,9 @@ export type AutomatedReviewDesignInspection =
   | 'read'
   | 'inspect'
   | 'screenshot'
-  | 'wait';
+  | 'wait'
+  | 'find'
+  | 'extract';
 
 function abortError(signal: AbortSignal): Error {
   return signal.reason instanceof Error

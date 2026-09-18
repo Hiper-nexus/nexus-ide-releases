@@ -338,7 +338,10 @@ describe('browser manager actions (after/changed, errors, judge, text)', () => {
         };
       }
       if (command !== 'click') throw new Error('unexpected');
+      // Modern signature: (event, messageDetails).
       fire('console-message', {}, { level: 3, message: 'TypeError: boom' });
+      // Legacy positional signature: (event, level, message, line, sourceId).
+      fire('console-message', {}, 'error', 'legacy positional boom', 1, 'x');
       fire('did-fail-load', {}, -3, 'ERR_ABORTED', 'https://example.test/x', true);
       state.guestHandlers.get('webRequest:onCompleted')?.[0]?.({
         webContentsId: state.guest.id,
@@ -353,16 +356,16 @@ describe('browser manager actions (after/changed, errors, judge, text)', () => {
     });
 
     const first = await clickBrowserElement(PANE, scope, 'e1');
-    expect(first.errors?.consoleErrors).toBe(1);
+    expect(first.errors?.consoleErrors).toBe(2);
     expect(first.errors?.httpErrors).toBe(1);
     expect(first.errors?.loadErrors).toBe(1);
-    expect(first.errors?.items.length).toBe(3);
+    expect(first.errors?.items.length).toBe(4);
     const http = first.errors?.items.find((item) => item.kind === 'http');
     expect(http?.urlPath).not.toContain('segredo');
 
     // read reports the same window without resetting it.
     const read = await readBrowserPage(PANE, scope);
-    expect(read.errors.consoleErrors).toBe(1);
+    expect(read.errors.consoleErrors).toBe(2);
     // the next action opens a fresh window
     state.runAutomation.mockImplementation(async (_p, _wc, command: string) => {
       if (command !== 'click') throw new Error('unexpected');

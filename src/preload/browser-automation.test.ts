@@ -333,7 +333,7 @@ describe('isolated browser automation', () => {
       `<!doctype html><head>
         <script type="application/ld+json">{"name":"Produto X","price":42.5}</script>
       </head><body>
-        <dl><dt>Autor</dt><dd>Maria Silva</dd></dl>
+        <dl><dt>Autor</dt><dd>Maria Silva</dd><dt>Chave sk-abcdefghijklmnopqrstuvwxyz</dt><dd>ok</dd></dl>
         <table><tr><th>Total</th><td>R$ 1.234,56</td></tr></table>
         <label for="email">E-mail</label><input id="email" value="a@b.com">
         <label for="plano">Plano</label><select id="plano"><option>Basic</option><option selected>Pro</option></select>
@@ -359,6 +359,11 @@ describe('isolated browser automation', () => {
     expect(result.pairs.some((p) => p.value === 'a@b.com')).toBe(false);
     expect(result.pairs.some((p) => p.label === 'E-mail')).toBe(false);
     expect(result.pairs.some((p) => p.label === 'Plano' && p.value === 'Pro')).toBe(true);
+    // labels também passam pela máscara de redação
+    expect(result.pairs.some((p) => p.label.includes('sk-abc'))).toBe(false);
+    expect(
+      result.pairs.some((p) => p.label.includes('[REDACTED]')),
+    ).toBe(true);
     expect(result.tokens.some((t) => t.kind === 'money')).toBe(true);
     expect(result.tokens.some((t) => t.kind === 'date')).toBe(true);
     expect(result.pairs.length).toBeLessThanOrEqual(60);
