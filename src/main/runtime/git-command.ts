@@ -172,8 +172,14 @@ function safeGitEnvironment(
   if (options.privateIndexFile) {
     env.GIT_INDEX_FILE = assertPrivateIndexPath(options.privateIndexFile);
   }
-  env.GIT_CONFIG_NOSYSTEM = '1';
-  env.GIT_CONFIG_GLOBAL = process.platform === 'win32' ? 'NUL' : '/dev/null';
+  // F-580: the user's global and system git config is trusted — it is not
+  // repository content — and it is what carries credential helpers
+  // (`gh auth git-credential`, osxkeychain, GCM), `user.name`/`user.email`,
+  // `url.insteadOf` and proxy settings. Stripping it via
+  // GIT_CONFIG_NOSYSTEM/GIT_CONFIG_GLOBAL killed every HTTPS push/pull from
+  // Main with "could not read Username". Repo-LOCAL executable config is
+  // still refused by assertSafeLocalGitConfig, and hooks/fsmonitor/gpg/
+  // protocols stay pinned by the `-c` overrides in safeGitArgv.
   env.GIT_TERMINAL_PROMPT = '0';
   env.GIT_PAGER = 'cat';
   env.GIT_EDITOR = 'true';

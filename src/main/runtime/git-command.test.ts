@@ -1,9 +1,13 @@
-import { describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   assertSafeLocalGitConfig,
   assertSafeLocalGitConfigAsync,
   AsyncProcessGitRunner,
   isExecutableGitConfigEntry,
+  ProcessGitRunner,
   type GitRunner,
 } from './git-command';
 
@@ -101,6 +105,39 @@ describe('assertSafeLocalGitConfig', () => {
     await expect(
       assertSafeLocalGitConfigAsync({ run }, '/repo'),
     ).rejects.toThrow(/core\.hookspath/);
+  });
+});
+
+describe('ProcessGitRunner global/system config (F-580)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('honours the user global git config (credential helpers, user.name/email)', () => {
+    // Antes do F-580 o runner impunha GIT_CONFIG_NOSYSTEM=1 e
+    // GIT_CONFIG_GLOBAL=/dev/null: todo helper de credencial (gh
+    // git-credential, osxkeychain, GCM) e o user.name/email sumiam, e qualquer
+    // push/pull HTTPS morria com "could not read Username".
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-git-home-'));
+    try {
+      fs.writeFileSync(
+        path.join(home, '.gitconfig'),
+        '[user]\n\temail = runner@example.test\n',
+      );
+      vi.stubEnv('HOME', home);
+      vi.stubEnv('XDG_CONFIG_HOME', path.join(home, '.config'));
+
+      const result = new ProcessGitRunner().run(process.cwd(), [
+        'config',
+        '--global',
+        '--get',
+        'user.email',
+      ]);
+
+      expect(result.stdout.trim()).toBe('runner@example.test');
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 
