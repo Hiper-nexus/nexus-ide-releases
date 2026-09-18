@@ -1882,7 +1882,7 @@ describe("MCP dispatch effect safety", () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
-  it("permits repository sync only from the renderer-owned user path", async () => {
+  it("permits repository sync from the renderer or the operator's own pane", async () => {
     const handler = vi.fn(async () => ({ status: "up_to_date" }));
     const registry = registryWith({
       name: "nexus_git_sync",
@@ -1898,6 +1898,16 @@ describe("MCP dispatch effect safety", () => {
       {},
       userContext(),
     );
+    // F-581: git_sync é fast-forward verificado — subconjunto estrito do
+    // git_pull que a mão do operador já roda em vibe; a recusa anterior era
+    // inconsistência, não fronteira. O worker de missão continua barrado.
+    const fromOperatorPane = await dispatchToolCall(
+      "http-mcp",
+      registry,
+      "nexus_git_sync",
+      {},
+      userContext(),
+    );
     const fromAgent = await dispatchToolCall(
       "http-mcp",
       registry,
@@ -1907,8 +1917,11 @@ describe("MCP dispatch effect safety", () => {
     );
 
     expect(fromRenderer).toMatchObject({ ok: true });
+    expect(fromOperatorPane).toMatchObject({ ok: true });
+    // O worker de missão segue barrado (a lane routine-local continua
+    // exigindo autoridade de usuário renderer para quem não é vibe).
     expect(fromAgent).toMatchObject({ ok: false, denied: true });
-    expect(handler).toHaveBeenCalledOnce();
+    expect(handler).toHaveBeenCalledTimes(2);
   });
 
   it("lets the exact orchestrator block a mission when bootstrap cannot freeze", async () => {

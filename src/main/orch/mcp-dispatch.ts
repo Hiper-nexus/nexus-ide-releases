@@ -377,13 +377,15 @@ function bindEffectAuthority(
   }
   // Modo vibe (hardcoded): a mão do operador num pane sem missão não passa por
   // missão, PREVC nem authority de workflow — inclusive destrutivo/externo. O
-  // handler segue como fronteira e o registro continua em auditoria. As duas
-  // classes abaixo têm autoridade própria de ORIGEM (renderer) e continuam
-  // valendo: um agente MCP não dirige a UI nem usa a lane routine do renderer.
+  // handler segue como fronteira e o registro continua em auditoria. Apenas
+  // `renderer-authorized-effect` (`ui_action`) mantém autoridade de ORIGEM
+  // renderer: um agente MCP nunca dirige a UI. `routine-local-operation`
+  // (git_sync) saiu da exclusão: é um fast-forward verificado, subconjunto
+  // estrito do git_pull que o pane do operador já executa em vibe — negá-lo
+  // era inconsistência, não fronteira.
   if (
     isOperatorVibeDispatch(source, ctx) &&
-    policy !== "renderer-authorized-effect" &&
-    policy !== "routine-local-operation"
+    policy !== "renderer-authorized-effect"
   ) {
     return { contextRevision: ctx.contextRevision };
   }
