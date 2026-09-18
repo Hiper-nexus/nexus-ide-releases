@@ -56,6 +56,95 @@ describe('browser MCP argument validation', () => {
       }),
     ).toThrow();
   });
+
+  it('accepts text targets for click/fill and rejects ref+text together', () => {
+    expect(
+      validateToolArgs('nexus_browser_click', {
+        paneId: 'browser-1',
+        text: 'Ver squads',
+      }),
+    ).toEqual({ paneId: 'browser-1', text: 'Ver squads' });
+    expect(
+      validateToolArgs('nexus_browser_fill', {
+        paneId: 'browser-1',
+        label: 'Email',
+        text: 'a@b.com',
+      }),
+    ).toEqual({ paneId: 'browser-1', label: 'Email', text: 'a@b.com' });
+    expect(() =>
+      validateToolArgs('nexus_browser_click', {
+        paneId: 'browser-1',
+        ref: 'e1',
+        text: 'Ver squads',
+      }),
+    ).toThrow();
+    expect(() =>
+      validateToolArgs('nexus_browser_click', { paneId: 'browser-1' }),
+    ).toThrow();
+    expect(() =>
+      validateToolArgs('nexus_browser_fill', {
+        paneId: 'browser-1',
+        ref: 'e1',
+        label: 'Email',
+        text: 'x',
+      }),
+    ).toThrow();
+  });
+
+  it('accepts read/judge/format options and bounds extraction fields', () => {
+    expect(
+      validateToolArgs('nexus_browser_read', {
+        paneId: 'browser-1',
+        format: 'compact',
+        judge: true,
+      }),
+    ).toEqual({ paneId: 'browser-1', format: 'compact', judge: true });
+    expect(
+      validateToolArgs('nexus_browser_click', {
+        paneId: 'browser-1',
+        ref: 'e1',
+        read: { format: 'compact', maxChars: 500 },
+      }),
+    ).toEqual({
+      paneId: 'browser-1',
+      ref: 'e1',
+      read: { format: 'compact', maxChars: 500 },
+    });
+
+    expect(
+      validateToolArgs('nexus_browser_extract', {
+        paneId: 'browser-1',
+        fields: [
+          { name: 'total', type: 'number', hint: 'total do pedido' },
+          { name: 'pagamento', type: 'enum', enum: ['pix', 'boleto'] },
+        ],
+      }),
+    ).toEqual({
+      paneId: 'browser-1',
+      fields: [
+        { name: 'total', type: 'number', hint: 'total do pedido' },
+        { name: 'pagamento', type: 'enum', enum: ['pix', 'boleto'] },
+      ],
+    });
+    expect(() =>
+      validateToolArgs('nexus_browser_extract', {
+        paneId: 'browser-1',
+        fields: [{ name: 'pagamento', type: 'enum' }],
+      }),
+    ).toThrow();
+    expect(() =>
+      validateToolArgs('nexus_browser_extract', {
+        paneId: 'browser-1',
+        fields: [],
+      }),
+    ).toThrow();
+    expect(() =>
+      validateToolArgs('nexus_browser_extract', {
+        paneId: 'browser-1',
+        fields: [{ name: 'x'.repeat(65), type: 'string' }],
+      }),
+    ).toThrow();
+  });
 });
 
 describe('Nexus UI MCP argument validation', () => {

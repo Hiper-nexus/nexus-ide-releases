@@ -232,4 +232,136 @@ describe('isolated browser automation', () => {
     expect(result.element.tag).toBe('button');
     expect(hovered).toBe(true);
   });
+
+  it('read reports viewport metrics and scroll reports atBottom', async () => {
+    const { dom, automation } = fixture();
+    const read = (await automation.run('read', {})) as {
+      viewport: {
+        scrollY: number;
+        scrollHeight: number;
+        innerHeight: number;
+        pagesBelow: number;
+      };
+    };
+    expect(read.viewport.scrollY).toBe(0);
+    expect(read.viewport.innerHeight).toBeGreaterThan(0);
+    expect(read.viewport.pagesBelow).toBe(0);
+
+    const scrolled = (await automation.run('scroll', { dx: 0, dy: 10 })) as {
+      atBottom: boolean;
+      viewport: { pagesBelow: number };
+    };
+    expect(typeof scrolled.atBottom).toBe('boolean');
+    expect(scrolled.atBottom).toBe(true);
+    expect(scrolled.viewport.pagesBelow).toBe(0);
+    void dom;
+  });
+
+  it('read reports alerts from roles, aria-invalid, and allowlisted error classes', async () => {
+    const dom = new JSDOM(
+      `<!doctype html><body>
+        <div role="alert">Falha ao salvar</div>
+        <div role="alertdialog"><h2>Erro fatal</h2></div>
+        <input aria-invalid="true" aria-label="CPF">
+        <div class="error-message">Campo obrigatório</div>
+        <div class="unrelated">não é alerta</div>
+        <div data-sensitive="true"><div role="alert">segredo escondido</div></div>
+      </body>`,
+      { url: 'https://example.test/', pretendToBeVisual: true },
+    );
+    const automation = createBrowserAutomation(
+      dom.window as unknown as BrowserDomWindow,
+    );
+    const read = (await automation.run('read', {})) as {
+      alerts: Array<{ ref?: string; role: string; text: string }>;
+    };
+    const texts = read.alerts.map((alert) => alert.text);
+    expect(texts.some((t) => t.includes('Falha ao salvar'))).toBe(true);
+    expect(texts.some((t) => t.includes('Campo obrigatório'))).toBe(true);
+    expect(texts.some((t) => t.includes('segredo escondido'))).toBe(false);
+    expect(texts.some((t) => t.includes('não é alerta'))).toBe(false);
+    expect(read.alerts.length).toBeLessThanOrEqual(10);
+    const invalid = read.alerts.find((a) => a.text === 'CPF');
+    expect(invalid?.role).toBe('textbox');
+  });
+
+  it('find scores accessible names and filters by role without CSS selectors', async () => {
+    const dom = new JSDOM(
+      `<!doctype html><body>
+        <a href="/en/squads">See the squads</a>
+        <a href="/en/squadron">Squadron</a>
+        <button>Abrir menu</button>
+        <button>Salvar edição</button>
+      </body>`,
+      { url: 'https://example.test/', pretendToBeVisual: true },
+    );
+    const automation = createBrowserAutomation(
+      dom.window as unknown as BrowserDomWindow,
+    );
+
+    const exact = (await automation.run('find', { text: 'See the squads' })) as {
+      matches: Array<{ name: string; score: number }>;
+    };
+    expect(exact.matches[0]?.score).toBe(1);
+    expect(exact.matches[0]?.name).toBe('See the squads');
+
+    const diacritics = (await automation.run('find', {
+      text: 'edicao',
+    })) as { matches: Array<{ name: string; score: number }> };
+    expect(diacritics.matches.some((m) => m.name === 'Salvar edição')).toBe(true);
+
+    const byRole = (await automation.run('find', {
+      text: 'squads',
+      role: 'button',
+    })) as { matches: Array<{ role: string }> };
+    expect(byRole.matches).toHaveLength(0);
+    const byLink = (await automation.run('find', {
+      text: 'squads',
+      role: 'link',
+    })) as { matches: Array<{ role: string; score: number }> };
+    expect(byLink.matches.every((m) => m.role === 'link')).toBe(true);
+    expect(byLink.matches.length).toBeGreaterThan(0);
+
+    const hrefMatch = (await automation.run('find', { text: 'en/squads' })) as {
+      matches: Array<{ name: string; score: number }>;
+    };
+    expect(hrefMatch.matches.some((m) => m.score === 0.5)).toBe(true);
+  });
+
+  it('extract_candidates returns bounded jsonLd, pairs, and typed tokens', async () => {
+    const dom = new JSDOM(
+      `<!doctype html><head>
+        <script type="application/ld+json">{"name":"Produto X","price":42.5}</script>
+      </head><body>
+        <dl><dt>Autor</dt><dd>Maria Silva</dd></dl>
+        <table><tr><th>Total</th><td>R$ 1.234,56</td></tr></table>
+        <label for="email">E-mail</label><input id="email" value="a@b.com">
+        <label for="plano">Plano</label><select id="plano"><option>Basic</option><option selected>Pro</option></select>
+        <p>Entrega em 12/03/2026</p>
+        <div data-sensitive="true"><dl><dt>Secret</dt><dd>hidden</dd></dl></div>
+      </body>`,
+      { url: 'https://example.test/', pretendToBeVisual: true },
+    );
+    const automation = createBrowserAutomation(
+      dom.window as unknown as BrowserDomWindow,
+    );
+    const result = (await automation.run('extract_candidates', {})) as {
+      jsonLd: unknown[];
+      pairs: Array<{ label: string; value: string; ref?: string }>;
+      tokens: Array<{ kind: string; text: string; context: string }>;
+    };
+    expect(result.jsonLd).toHaveLength(1);
+    expect(JSON.stringify(result.jsonLd[0])).toContain('Produto X');
+    expect(result.pairs.some((p) => p.label === 'Autor' && p.value === 'Maria Silva')).toBe(true);
+    expect(result.pairs.some((p) => p.label === 'Total')).toBe(true);
+    expect(result.pairs.some((p) => p.label === 'Secret')).toBe(false);
+    // valores digitados nunca saem da página; a opção de um select sai
+    expect(result.pairs.some((p) => p.value === 'a@b.com')).toBe(false);
+    expect(result.pairs.some((p) => p.label === 'E-mail')).toBe(false);
+    expect(result.pairs.some((p) => p.label === 'Plano' && p.value === 'Pro')).toBe(true);
+    expect(result.tokens.some((t) => t.kind === 'money')).toBe(true);
+    expect(result.tokens.some((t) => t.kind === 'date')).toBe(true);
+    expect(result.pairs.length).toBeLessThanOrEqual(60);
+    expect(result.tokens.length).toBeLessThanOrEqual(40);
+  });
 });

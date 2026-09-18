@@ -27,7 +27,7 @@ const state = vi.hoisted(() => {
     setPermissionCheckHandler: vi.fn(),
     setDevicePermissionHandler: vi.fn(),
     on: vi.fn(),
-    webRequest: { onBeforeRequest: vi.fn() },
+    webRequest: { onBeforeRequest: vi.fn(), onCompleted: vi.fn() },
   };
   const guest = {
     id: 22,

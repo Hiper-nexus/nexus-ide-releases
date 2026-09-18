@@ -1,11 +1,20 @@
 import type {
   BrowserAutomationCommand,
   BrowserElementDescriptor,
+  BrowserExtractCandidates,
+  BrowserFindMatch,
+  BrowserFindResult,
+  BrowserPageAlert,
   BrowserPageReadResult,
+  BrowserViewport,
   BrowserWaitCondition,
 } from '../shared/browser-automation';
 import type { BrowserDesignEvent } from '../shared/browser-design';
-import { redactVisibleSecrets } from '../shared/vision-ipc';
+import {
+  isSensitiveBrowserMarker,
+  redactBrowserText,
+  redactPageUrl,
+} from '../shared/browser-redaction';
 import {
   createAnnotationMarkerLayer,
   parseAnnotationMarkers,
@@ -95,8 +104,10 @@ const SKIP_TEXT_SELECTOR = [
   '[aria-hidden="true"]',
 ].join(',');
 
-const SENSITIVE_MARKER =
-  /(?:password|passwd|secret|token|api[_ -]?key|access[_ -]?key|private[_ -]?key|authorization|credential|one[_ -]?time|otp|cookie|session)/i;
+// Redaction moved to shared/browser-redaction.ts so the main process applies
+// the same masking to post-action `after` snapshots. Re-exported here because
+// browser-design-mode.ts imports them from this module.
+export { redactBrowserText, redactPageUrl };
 
 function clampInt(value: unknown, fallback: number, max: number): number {
   return typeof value === 'number' && Number.isInteger(value) && value > 0
@@ -106,37 +117,6 @@ function clampInt(value: unknown, fallback: number, max: number): number {
 
 function normalizedText(value: string): string {
   return value.replace(/[\t\r\n ]+/g, ' ').trim();
-}
-
-export function redactBrowserText(value: string): string {
-  return redactVisibleSecrets(value);
-}
-
-export function redactPageUrl(raw: string): string {
-  try {
-    const url = new URL(raw);
-    url.username = '';
-    url.password = '';
-    const keys = [...new Set([...url.searchParams.keys()])];
-    url.search = '';
-    keys.slice(0, 32).forEach((key) => {
-      url.searchParams.append(key, SENSITIVE_MARKER.test(key) ? '[REDACTED]' : '');
-    });
-    if (
-      url.hash.length > 129 ||
-      SENSITIVE_MARKER.test(url.hash) ||
-      !/^#[#/a-z0-9._-]*$/i.test(url.hash)
-    ) {
-      url.hash = url.hash ? '#[REDACTED]' : '';
-    }
-    // Query values and hash are handled above; the PATH can still carry a
-    // secret (magic-link / reset / share token), so redact just the pathname
-    // (leaving the already-encoded query values intact).
-    url.pathname = redactVisibleSecrets(url.pathname);
-    return url.toString();
-  } catch {
-    return '[invalid URL]';
-  }
 }
 
 function elementHasSensitiveMarker(element: Element): boolean {
@@ -156,7 +136,7 @@ function elementHasSensitiveMarker(element: Element): boolean {
   ]
     .filter(Boolean)
     .join(' ');
-  return SENSITIVE_MARKER.test(marker);
+  return isSensitiveBrowserMarker(marker);
 }
 
 export function isSensitiveTree(element: Element): boolean {
@@ -361,6 +341,23 @@ export function createBrowserAutomation(
     return element;
   }
 
+  function viewportState(): BrowserViewport {
+    const doc = win.document.documentElement;
+    const scrollHeight = Math.max(
+      doc?.scrollHeight ?? 0,
+      win.document.body?.scrollHeight ?? 0,
+    );
+    const innerHeight = Math.max(0, Math.round(win.innerHeight));
+    const scrollY = Math.round(win.scrollY);
+    const pagesBelow =
+      innerHeight > 0
+        ? Math.round(
+            Math.max(0, (scrollHeight - scrollY - innerHeight) / innerHeight) * 10,
+          ) / 10
+        : 0;
+    return { scrollY, scrollHeight, innerHeight, pagesBelow };
+  }
+
   function describe(element: Element): BrowserElementDescriptor {
     const tag = element.tagName.toLowerCase();
     const type = tag === 'input' ? (element.getAttribute('type') ?? 'text').toLowerCase() : '';
@@ -427,7 +424,285 @@ export function createBrowserAutomation(
       headings,
       elements: visible.map(describe),
       truncated: text.truncated || candidates.length > visible.length,
+      viewport: viewportState(),
+      alerts: collectAlerts(),
     };
+  }
+
+  const MAX_ALERTS = 10;
+  const MAX_ALERT_CHARS = 200;
+  const ALERT_ROLE_SELECTOR =
+    '[role="alert"],[role="alertdialog"],[aria-invalid="true"]';
+  // Semantic error classes only — a fixed allowlist, never a page selector
+  // built from outside input.
+  const ALERT_CLASS_CANDIDATE_SELECTOR =
+    '[class*="error"],[class*="invalid"],[class*="alert"]';
+  const ALERT_CLASS_PATTERN =
+    /(?:^|[\s_-])(error|errors|invalid|is-invalid|has-error|alert-danger|alert-error|form-error|field-error|error-message)(?:[\s_-]|$)/i;
+
+  function collectAlerts(): BrowserPageAlert[] {
+    const out: BrowserPageAlert[] = [];
+    const seen = new Set<Element>();
+    const push = (element: Element, role: string, ref: boolean): void => {
+      if (out.length >= MAX_ALERTS || seen.has(element)) return;
+      if (!isElementVisible(win, element) || isSensitiveTree(element)) return;
+      const isField = element.getAttribute('aria-invalid') === 'true';
+      const text = (
+        isField
+          ? elementName(win, element)
+          : collectVisibleText(win, element, MAX_ALERT_CHARS).text
+      ).slice(0, MAX_ALERT_CHARS);
+      if (!text) return;
+      seen.add(element);
+      out.push({
+        ...(ref ? { ref: refFor(element) } : {}),
+        role,
+        text,
+      });
+    };
+    for (const element of win.document.querySelectorAll(ALERT_ROLE_SELECTOR)) {
+      if (out.length >= MAX_ALERTS) break;
+      push(element, implicitRole(element), true);
+    }
+    for (const element of win.document.querySelectorAll(
+      ALERT_CLASS_CANDIDATE_SELECTOR,
+    )) {
+      if (out.length >= MAX_ALERTS) break;
+      const cls = element.getAttribute('class') ?? '';
+      if (!ALERT_CLASS_PATTERN.test(cls)) continue;
+      push(element, 'alert', false);
+    }
+    return out;
+  }
+
+  /** Diacritics- and case-insensitive fold for `find` matching. */
+  function fold(value: string): string {
+    return normalizedText(value)
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLocaleLowerCase();
+  }
+
+  const FIND_DEFAULT_LIMIT = 10;
+  const FIND_MAX_LIMIT = 25;
+
+  function find(args: Record<string, unknown>): BrowserFindResult {
+    const rawText = typeof args.text === 'string' ? normalizedText(args.text) : '';
+    if (rawText.length > 200) throw new Error('browser find text is too long');
+    const query = fold(rawText);
+    const role = typeof args.role === 'string' ? fold(args.role) : '';
+    const limit = clampInt(args.limit, FIND_DEFAULT_LIMIT, FIND_MAX_LIMIT);
+    // The query NEVER reaches a selector: candidates come from the fixed
+    // INTERACTIVE_SELECTOR and are scored by accessible name / href path.
+    const scored: BrowserFindMatch[] = [];
+    for (const element of win.document.querySelectorAll(INTERACTIVE_SELECTOR)) {
+      if (!isElementVisible(win, element)) continue;
+      const descriptor = describe(element);
+      if (role && descriptor.role !== role) continue;
+      let score = 0;
+      if (!query) {
+        score = 0;
+      } else {
+        const name = fold(descriptor.name);
+        const href = descriptor.href ? fold(descriptor.href) : '';
+        if (name === query) score = 1.0;
+        else if (name.startsWith(query)) score = 0.9;
+        else if (name.includes(query)) score = 0.75;
+        else if (href.includes(query)) score = 0.5;
+        if (score === 0) continue;
+      }
+      scored.push({ ...descriptor, score });
+    }
+    scored.sort((a, b) => b.score - a.score);
+    return { matches: scored.slice(0, limit), total: scored.length };
+  }
+
+  const EXTRACT_JSONLD_MAX = 3;
+  const EXTRACT_JSONLD_CHARS = 8_192;
+  const EXTRACT_JSONLD_SOURCE_CHARS = 200_000;
+  const EXTRACT_PAIRS_MAX = 60;
+  const EXTRACT_TOKENS_MAX = 40;
+  const PAIR_LABEL_CHARS = 80;
+  const PAIR_VALUE_CHARS = 300;
+  const TOKEN_TEXT_CHARS = 60;
+  const TOKEN_CONTEXT_CHARS = 80;
+  const EXTRACT_MAX_CANDIDATE_NODES = 4_000;
+  const LABEL_LINE_PATTERN = /^(.{2,60}?):\s+(\S.{0,299})$/;
+
+  const LABEL_LINE_ELEMENTS = 'p,li,dd,span,div';
+
+  /** Bounded, redacted JSON-LD subtree (never the raw script). */
+  function redactJsonLd(value: unknown, depth: number): unknown {
+    if (depth > 8) return undefined;
+    if (typeof value === 'string') {
+      return redactBrowserText(value).slice(0, 512);
+    }
+    if (
+      typeof value === 'number' ||
+      typeof value === 'boolean' ||
+      value === null
+    ) {
+      return value;
+    }
+    if (Array.isArray(value)) {
+      return value
+        .slice(0, 20)
+        .map((item) => redactJsonLd(item, depth + 1))
+        .filter((item) => item !== undefined);
+    }
+    if (value && typeof value === 'object') {
+      const out: Record<string, unknown> = {};
+      for (const [key, child] of Object.entries(value).slice(0, 40)) {
+        const redacted = redactJsonLd(child, depth + 1);
+        if (redacted !== undefined) out[key.slice(0, 64)] = redacted;
+      }
+      return out;
+    }
+    return undefined;
+  }
+
+  /**
+   * `extract_candidates`: the page proposes, never decides — bounded JSON-LD
+   * docs, label→value pairs and typed text tokens. Sensitive trees and
+   * credential-shaped fields are skipped before anything leaves the page.
+   */
+  function extractCandidates(): BrowserExtractCandidates {
+    pruneReferences();
+    const jsonLd: unknown[] = [];
+    for (const script of win.document.querySelectorAll(
+      'script[type="application/ld+json"]',
+    )) {
+      if (jsonLd.length >= EXTRACT_JSONLD_MAX) break;
+      const raw = script.textContent ?? '';
+      if (!raw.trim() || raw.length > EXTRACT_JSONLD_SOURCE_CHARS) continue;
+      try {
+        const redacted = redactJsonLd(JSON.parse(raw), 0);
+        if (JSON.stringify(redacted).length > EXTRACT_JSONLD_CHARS) continue;
+        jsonLd.push(redacted);
+      } catch {
+        // Malformed JSON-LD is skipped.
+      }
+    }
+
+    const pairs: BrowserExtractCandidates['pairs'] = [];
+    const pushPair = (
+      label: string,
+      value: string,
+      element?: Element,
+    ): void => {
+      if (pairs.length >= EXTRACT_PAIRS_MAX) return;
+      const l = normalizedText(label).slice(0, PAIR_LABEL_CHARS);
+      const v = redactBrowserText(normalizedText(value)).slice(0, PAIR_VALUE_CHARS);
+      if (!l || !v) return;
+      pairs.push({
+        label: l,
+        value: v,
+        ...(element ? { ref: refFor(element) } : {}),
+      });
+    };
+
+    let visited = 0;
+    const overBudget = (): boolean =>
+      pairs.length >= EXTRACT_PAIRS_MAX ||
+      ++visited > EXTRACT_MAX_CANDIDATE_NODES;
+
+    // dl: dt → next dd sibling.
+    for (const dt of win.document.querySelectorAll('dt')) {
+      if (overBudget()) break;
+      if (isSensitiveTree(dt) || !isElementVisible(win, dt)) continue;
+      let dd = dt.nextElementSibling;
+      while (dd && dd.tagName.toLowerCase() !== 'dd') {
+        dd = dd.nextElementSibling;
+      }
+      if (!dd || isSensitiveTree(dd)) continue;
+      pushPair(dt.textContent ?? '', dd.textContent ?? '', dd);
+    }
+
+    // tables: th → td, or first cell → remaining cells.
+    for (const row of win.document.querySelectorAll('tr')) {
+      if (overBudget()) break;
+      if (isSensitiveTree(row) || !isElementVisible(win, row)) continue;
+      const cells = [...row.querySelectorAll('th,td')];
+      if (cells.length < 2) continue;
+      pushPair(
+        cells[0].textContent ?? '',
+        cells
+          .slice(1)
+          .map((cell) => cell.textContent ?? '')
+          .join(' · '),
+        cells[1],
+      );
+    }
+
+    // label[for] / wrapping label → campo: só <select> (a opção escolhida é
+    // conteúdo da página); valores digitados nunca saem da página — só a
+    // opção escolhida de um select.
+    for (const label of win.document.querySelectorAll('label')) {
+      if (overBudget()) break;
+      if (isSensitiveTree(label) || !isElementVisible(win, label)) continue;
+      const forId = label.getAttribute('for');
+      const field = forId
+        ? win.document.getElementById(forId)
+        : label.querySelector('input,textarea,select');
+      if (!field || isSensitiveTree(field)) continue;
+      if (field.tagName.toLowerCase() !== 'select') continue;
+      const value =
+        (field as HTMLSelectElement).selectedOptions?.[0]?.textContent ??
+        (field as HTMLSelectElement).value ??
+        '';
+      if (!normalizedText(String(value))) continue;
+      const labelText = normalizedText(
+        (label.textContent ?? '').replace(String(value), ''),
+      );
+      pushPair(labelText, String(value), field);
+    }
+
+    // "Label: value" on leaf elements.
+    for (const el of win.document.querySelectorAll(LABEL_LINE_ELEMENTS)) {
+      if (overBudget()) break;
+      if (isSensitiveTree(el) || !isElementVisible(win, el)) continue;
+      if (el.children.length > 0) continue;
+      const match = LABEL_LINE_PATTERN.exec(
+        normalizedText(el.textContent ?? ''),
+      );
+      if (!match) continue;
+      pushPair(match[1], match[2], el);
+    }
+
+    // Typed tokens over the already-redacted visible text.
+    const bodyText = win.document.body
+      ? collectVisibleText(win, win.document.body, MAX_TEXT_CHARS).text
+      : '';
+    const tokens: BrowserExtractCandidates['tokens'] = [];
+    const seenTokens = new Set<string>();
+    const collectTokens = (
+      kind: BrowserExtractCandidates['tokens'][number]['kind'],
+      pattern: RegExp,
+    ): void => {
+      if (tokens.length >= EXTRACT_TOKENS_MAX) return;
+      for (const match of bodyText.matchAll(pattern)) {
+        if (tokens.length >= EXTRACT_TOKENS_MAX) break;
+        const text = match[0].slice(0, TOKEN_TEXT_CHARS);
+        const key = `${kind}:${text}`;
+        if (seenTokens.has(key)) continue;
+        seenTokens.add(key);
+        const index = match.index ?? 0;
+        const start = Math.max(0, index - 40);
+        const context = bodyText
+          .slice(start, index + match[0].length + 40)
+          .slice(0, TOKEN_CONTEXT_CHARS);
+        tokens.push({ kind, text, context });
+      }
+    };
+    collectTokens('email', /[\w.+-]+@[\w-]+\.[\w.-]+/g);
+    collectTokens('money', /(?:R\$|US\$|\$|€|£)\s?\d[\d.,]*/g);
+    collectTokens('percent', /\d[\d.,]*\s?%/g);
+    collectTokens(
+      'date',
+      /\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}[/.\-]\d{1,2}[/.\-]\d{2,4}\b|\b\d{1,2} de (?:janeiro|fevereiro|março|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro) de \d{4}\b|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]* \d{1,2},? \d{4}\b/gi,
+    );
+    collectTokens('number', /\b\d{1,3}(?:[.,]\d{3})+[.,]\d+\b|\b\d+[.,]\d+\b|\b\d{4,}\b/g);
+    return { jsonLd, pairs, tokens };
   }
 
   function inspect(args: Record<string, unknown>): BrowserElementDescriptor {
@@ -620,11 +895,32 @@ export function createBrowserAutomation(
     };
   }
 
+  function scrollResult(target: 'page' | 'element'): {
+    scrolled: true;
+    scrollX: number;
+    scrollY: number;
+    target: 'page' | 'element';
+    atBottom: boolean;
+    viewport: BrowserViewport;
+  } {
+    const viewport = viewportState();
+    return {
+      scrolled: true,
+      scrollX: Math.round(win.scrollX),
+      scrollY: Math.round(win.scrollY),
+      target,
+      atBottom: viewport.pagesBelow <= 0,
+      viewport,
+    };
+  }
+
   function scroll(args: Record<string, unknown>): {
     scrolled: true;
     scrollX: number;
     scrollY: number;
     target: 'page' | 'element';
+    atBottom: boolean;
+    viewport: BrowserViewport;
   } {
     const behavior = args.behavior === 'smooth' ? 'smooth' : 'auto';
     if (args.ref !== undefined && args.ref !== null) {
@@ -641,12 +937,7 @@ export function createBrowserAutomation(
       if (typeof scroller.scrollIntoView === 'function') {
         scroller.scrollIntoView({ block: 'center', inline: 'center', behavior });
       }
-      return {
-        scrolled: true,
-        scrollX: Math.round(win.scrollX),
-        scrollY: Math.round(win.scrollY),
-        target: 'element',
-      };
+      return scrollResult('element');
     }
     const dx = finiteClampInt(args.dx, -MAX_SCROLL_OFFSET, MAX_SCROLL_OFFSET, 0);
     const dy = finiteClampInt(args.dy, -MAX_SCROLL_OFFSET, MAX_SCROLL_OFFSET, 0);
@@ -663,12 +954,7 @@ export function createBrowserAutomation(
     } else {
       win.scrollBy(dx, dy);
     }
-    return {
-      scrolled: true,
-      scrollX: Math.round(win.scrollX),
-      scrollY: Math.round(win.scrollY),
-      target: 'page',
-    };
+    return scrollResult('page');
   }
 
   function press(args: Record<string, unknown>): {
@@ -765,12 +1051,14 @@ export function createBrowserAutomation(
     async run(command, args) {
       if (command === 'read') return read(args);
       if (command === 'inspect') return inspect(args);
+      if (command === 'find') return find(args);
       if (command === 'click') return click(args);
       if (command === 'fill') return fill(args);
       if (command === 'wait') return wait(args);
       if (command === 'scroll') return scroll(args);
       if (command === 'press') return press(args);
       if (command === 'hover') return hover(args);
+      if (command === 'extract_candidates') return extractCandidates();
       if (command === 'design_enable') {
         return ensureDesignMode().enable(designGeneration(args));
       }

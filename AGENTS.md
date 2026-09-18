@@ -440,6 +440,18 @@ saber isto antes de mexer:
   e devolve a proposta; trava de origem (`left_origin`); textos digitados são
   só os `values` fornecidos (Jev escolhe o label); cap de passos
   (`maxSteps ≤ 40`); uma entrada no decision log por passo.
+- **Browser do agente**: toda ação devolve `after`/`changed` (Main, cobre
+  navegação entre documentos); `read: true` embute a página; `nexus_browser_find`
+  e `click/fill` por `text` (nome acessível, nunca CSS; ambíguo devolve
+  candidatos; Jev desempata só com 2–5 candidatos e confiança ≥ 0.7);
+  `viewport`/`atBottom`; `format: 'compact'` no read. Cada ação e o read
+  devolvem `errors` (console/HTTP ≥ 400/falha de carga desde a ação anterior)
+  e o read traz `alerts` da página (role=alert, aria-invalid, allowlist de
+  classes de erro — árvores sensíveis excluídas). `judge: true` anexa um
+  julgamento Jev da página (erro visível, bloqueio humano, carregando, tipo de
+  página; fail-open com `judgmentSkipped`). `nexus_browser_extract` extrai
+  campos tipados: o código levanta candidatos (JSON-LD, tabelas, label→valor,
+  tokens) e o Jev só escolhe entre eles — `null` quando nada confiável.
 - `nexus_computer_do` (macOS, "Jev decide, Nexus executa no desktop"):
   exige permissão de Acessibilidade (`permission_required` aponta o caminho
   dos Ajustes); só a mão do operador ou o orquestrador chamam — worker nunca

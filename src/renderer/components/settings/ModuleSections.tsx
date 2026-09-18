@@ -359,6 +359,7 @@ export function SquadsSection() {
     dispatchGuard: true,
     toolPick: true,
     taskRouting: true,
+    browserTool: true,
   });
   const [designPro, setDesignPro] = useState(true);
   const [designDirection, setDesignDirection] = useState<DesignDirection>('auto');
@@ -380,6 +381,7 @@ export function SquadsSection() {
         dispatchGuard: o.jevSurfaces?.dispatchGuard !== false,
         toolPick: o.jevSurfaces?.toolPick !== false,
         taskRouting: o.jevSurfaces?.taskRouting !== false,
+        browserTool: o.jevSurfaces?.browserTool !== false,
       });
       setDesignPro(o.designPro);
       setDesignDirection(o.designDirection ?? 'auto');
@@ -614,6 +616,7 @@ export function SquadsSection() {
               ],
               ['toolPick', 'Recomendação de ferramenta (nexus_tool_pick)'],
               ['taskRouting', 'Roteamento de tarefas (nexus_route_task)'],
+              ['browserTool', 'Navegador do agente (desempate, julgamento, extração)'],
             ] as const
           ).map(([surface, label]) => (
             <OrchestrationToggle

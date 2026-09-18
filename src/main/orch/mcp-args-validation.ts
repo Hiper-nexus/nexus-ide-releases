@@ -67,6 +67,76 @@ const browserWaitSchema = z
     }
   });
 
+/** Inline `read` arg shared by every mutating browser tool. */
+const browserInlineReadSchema = z
+  .union([
+    z.boolean(),
+    z
+      .object({
+        maxChars: positiveInt.max(20_000).optional(),
+        maxElements: positiveInt.max(200).optional(),
+        format: z.enum(['json', 'compact']).optional(),
+      })
+      .strict(),
+  ])
+  .optional();
+const browserJudgeArg = z.boolean().optional();
+
+const browserClickSchema = z
+  .object({
+    paneId,
+    ref: browserRef.optional(),
+    text: z.string().min(1).max(200).optional(),
+    read: browserInlineReadSchema,
+    judge: browserJudgeArg,
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if ((value.ref === undefined) === (value.text === undefined)) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'provide exactly one of ref or text',
+      });
+    }
+  });
+
+const browserFillSchema = z
+  .object({
+    paneId,
+    ref: browserRef.optional(),
+    label: z.string().min(1).max(200).optional(),
+    text: z.string().max(8192),
+    read: browserInlineReadSchema,
+    judge: browserJudgeArg,
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if ((value.ref === undefined) === (value.label === undefined)) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'provide exactly one of ref or label',
+      });
+    }
+  });
+
+const browserExtractFieldSchema = z
+  .object({
+    name: z.string().min(1).max(64),
+    type: z.enum(['string', 'number', 'boolean', 'date', 'enum']),
+    enum: z.array(z.string().min(1).max(64)).min(1).max(20).optional(),
+    hint: z.string().min(1).max(200).optional(),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (value.type === 'enum' && !(value.enum && value.enum.length > 0)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['enum'],
+        message: 'enum options are required when type=enum',
+      });
+    }
+  });
+
 const auditSourceSchema = z
   .object({
     path: pathText.optional(),
@@ -292,7 +362,14 @@ const schemas = new Map<string, z.ZodType<Record<string, unknown>>>([
   ],
   [
     'browser_navigate',
-    z.object({ paneId, url: z.string().min(1).max(4096) }).strict(),
+    z
+      .object({
+        paneId,
+        url: z.string().min(1).max(4096),
+        read: browserInlineReadSchema,
+        judge: browserJudgeArg,
+      })
+      .strict(),
   ],
   ['browser_screenshot', z.object({ paneId }).strict()],
   [
@@ -302,16 +379,78 @@ const schemas = new Map<string, z.ZodType<Record<string, unknown>>>([
         paneId,
         maxChars: positiveInt.max(20_000).optional(),
         maxElements: positiveInt.max(200).optional(),
+        format: z.enum(['json', 'compact']).optional(),
+        judge: browserJudgeArg,
+      })
+      .strict(),
+  ],
+  [
+    'browser_find',
+    z
+      .object({
+        paneId,
+        text: z.string().min(1).max(200).optional(),
+        role: z.string().min(1).max(64).optional(),
+        limit: z.number().int().min(1).max(25).optional(),
+      })
+      .strict(),
+  ],
+  [
+    'browser_extract',
+    z
+      .object({
+        paneId,
+        fields: z.array(browserExtractFieldSchema).min(1).max(20),
       })
       .strict(),
   ],
   ['browser_inspect', z.object({ paneId, ref: browserRef }).strict()],
-  ['browser_click', z.object({ paneId, ref: browserRef }).strict()],
-  [
-    'browser_fill',
-    z.object({ paneId, ref: browserRef, text: z.string().max(8192) }).strict(),
-  ],
+  ['browser_click', browserClickSchema],
+  ['browser_fill', browserFillSchema],
   ['browser_wait', browserWaitSchema],
+  [
+    'browser_scroll',
+    z
+      .object({
+        paneId,
+        ref: browserRef.optional(),
+        dx: z.number().finite().optional(),
+        dy: z.number().finite().optional(),
+        x: z.number().finite().optional(),
+        y: z.number().finite().optional(),
+        behavior: z.enum(['auto', 'smooth']).optional(),
+        read: browserInlineReadSchema,
+        judge: browserJudgeArg,
+      })
+      .strict(),
+  ],
+  [
+    'browser_press',
+    z
+      .object({
+        paneId,
+        key: z.string().min(1).max(32),
+        ref: browserRef.optional(),
+        modifiers: z
+          .array(z.enum(['Shift', 'Control', 'Alt', 'Meta']))
+          .max(4)
+          .optional(),
+        read: browserInlineReadSchema,
+        judge: browserJudgeArg,
+      })
+      .strict(),
+  ],
+  [
+    'browser_hover',
+    z
+      .object({
+        paneId,
+        ref: browserRef,
+        read: browserInlineReadSchema,
+        judge: browserJudgeArg,
+      })
+      .strict(),
+  ],
   ['ui_action', uiActionSchema],
   ['content_audit', auditSourceSchema],
   ['security_audit', auditSourceSchema],

@@ -14,6 +14,23 @@ export const browserElementDescriptorSchema = z
   })
   .strict();
 
+export const browserViewportSchema = z
+  .object({
+    scrollY: z.number().finite().min(-100_000).max(100_000_000),
+    scrollHeight: z.number().finite().min(0).max(100_000_000),
+    innerHeight: z.number().finite().min(0).max(100_000),
+    pagesBelow: z.number().finite().min(0).max(100_000),
+  })
+  .strict();
+
+export const browserPageAlertSchema = z
+  .object({
+    ref: z.string().regex(/^e[1-9]\d{0,7}$/).optional(),
+    role: z.string().min(1).max(64),
+    text: z.string().min(1).max(200),
+  })
+  .strict();
+
 export const browserPageReadResultSchema = z
   .object({
     url: z.string().max(4096),
@@ -34,6 +51,19 @@ export const browserPageReadResultSchema = z
       .max(40),
     elements: z.array(browserElementDescriptorSchema).max(200),
     truncated: z.boolean(),
+    viewport: browserViewportSchema,
+    alerts: z.array(browserPageAlertSchema).max(10),
+  })
+  .strict();
+
+export const browserFindMatchSchema = browserElementDescriptorSchema
+  .extend({ score: z.number().finite().min(0).max(1) })
+  .strict();
+
+export const browserFindResultSchema = z
+  .object({
+    matches: z.array(browserFindMatchSchema).max(25),
+    total: z.number().int().min(0).max(100_000),
   })
   .strict();
 
@@ -72,6 +102,8 @@ export const browserScrollResultSchema = z
     scrollX: z.number().finite().min(-100_000).max(100_000),
     scrollY: z.number().finite().min(-100_000).max(100_000),
     target: z.enum(['page', 'element']),
+    atBottom: z.boolean(),
+    viewport: browserViewportSchema,
   })
   .strict();
 
@@ -85,4 +117,32 @@ export const browserPressResultSchema = z
 
 export const browserHoverResultSchema = z
   .object({ hovered: z.literal(true), element: browserElementDescriptorSchema })
+  .strict();
+
+export const browserExtractCandidatesSchema = z
+  .object({
+    jsonLd: z.array(z.unknown()).max(3),
+    pairs: z
+      .array(
+        z
+          .object({
+            label: z.string().min(1).max(80),
+            value: z.string().min(1).max(300),
+            ref: z.string().regex(/^e[1-9]\d{0,7}$/).optional(),
+          })
+          .strict(),
+      )
+      .max(60),
+    tokens: z
+      .array(
+        z
+          .object({
+            kind: z.enum(['number', 'date', 'email', 'money', 'percent']),
+            text: z.string().min(1).max(60),
+            context: z.string().max(80),
+          })
+          .strict(),
+      )
+      .max(40),
+  })
   .strict();

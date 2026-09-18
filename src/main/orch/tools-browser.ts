@@ -6,15 +6,20 @@ import {
   assertBrowserAtExactUrl,
   captureBrowserScreenshot,
   clickBrowserElement,
+  extractBrowserFields,
   fillBrowserElement,
+  findBrowserElements,
   hoverBrowserElement,
   inspectBrowserElement,
   loadBrowser,
   pressBrowserKey,
   readBrowserPage,
+  readBrowserPageCompact,
   scrollBrowserPane,
   waitForBrowser,
+  type BrowserInlineRead,
 } from '../browser/browser-manager';
+import type { BrowserExtractField } from '../../shared/browser-automation';
 import { collectPerfSnapshotDetailed } from '../perf/perf-ipc';
 import { listPreviews, startPreview, stopPreview } from './preview-server';
 import { requestBrowserPane, requestPaneClose } from './pane-registry';
@@ -55,6 +60,27 @@ function assertReviewSurfaceCurrent(
     authority.surface.url,
   );
 }
+
+/** `read: true` or a bounded read-options object → inline page read. */
+function inlineReadArg(args: Record<string, unknown>): BrowserInlineRead | undefined {
+  if (args.read === true) return true;
+  if (args.read && typeof args.read === 'object') {
+    return args.read as Exclude<BrowserInlineRead, boolean>;
+  }
+  return undefined;
+}
+
+const READ_ARG_PROP = {
+  description:
+    'read: true devolve a página resultante na mesma resposta — evita um ' +
+    'nexus_browser_read a mais. Também aceita {maxChars, maxElements, format}.',
+};
+const JUDGE_ARG_PROP = {
+  type: 'boolean',
+  description:
+    'judge: true anexa um julgamento Jev da página (erro visível, ' +
+    'bloqueio humano, carregando, tipo) — falha aberta, nunca bloqueia.',
+};
 
 const previewStartTool: McpToolDef = {
   name: 'nexus_preview_start',
@@ -189,10 +215,16 @@ const browserNavigateTool: McpToolDef = {
   requiresConfirm: true,
   description:
     'Navigate an owned browser pane to a confirmed URL. Redirects and DNS are ' +
-    'revalidated independently.',
+    'revalidated independently. Every result carries after/changed and the ' +
+    'errors observed since the previous action.',
   inputSchema: {
     type: 'object',
-    properties: { paneId: { type: 'string' }, url: { type: 'string' } },
+    properties: {
+      paneId: { type: 'string' },
+      url: { type: 'string' },
+      read: READ_ARG_PROP,
+      judge: JUDGE_ARG_PROP,
+    },
     required: ['paneId', 'url'],
   },
   handler: async (args, ctx, invocation) => {
@@ -203,6 +235,10 @@ const browserNavigateTool: McpToolDef = {
       privateAccessConfirmed: false,
       signal: invocation?.signal,
       assertCurrentAuthority: invocation?.assertCurrentAuthority,
+      read: inlineReadArg(args),
+      judge: args.judge === true,
+      sessionId: ctx.sessionId,
+      missionId: ctx.missionId,
     });
   },
 };
@@ -244,14 +280,19 @@ const browserScreenshotTool: McpToolDef = {
 const browserReadTool: McpToolDef = {
   name: 'nexus_browser_read',
   description:
-    'Read bounded visible page text and accessible interactive elements. ' +
-    'Returns opaque refs for click/fill/inspect; never input values or storage.',
+    'Read bounded visible page text, alerts and accessible interactive ' +
+    'elements. Returns opaque refs for click/fill/inspect; never input ' +
+    'values or storage. `format: "compact"` devolve um outline LLM-friendly ' +
+    'em vez do JSON completo. `errors` traz os erros vistos desde a última ' +
+    'ação. `judge: true` anexa um julgamento Jev (fail-open).',
   inputSchema: {
     type: 'object',
     properties: {
       paneId: { type: 'string' },
       maxChars: { type: 'number', description: 'Visible text cap; max 20000' },
       maxElements: { type: 'number', description: 'Element cap; max 200' },
+      format: { type: 'string', enum: ['json', 'compact'] },
+      judge: JUDGE_ARG_PROP,
     },
     required: ['paneId'],
   },
@@ -259,10 +300,17 @@ const browserReadTool: McpToolDef = {
     const paneId = requireStr(args, 'paneId');
     const reviewAuthority = authorizeBrowserPane(ctx, paneId, 'read');
     assertReviewSurfaceCurrent(ctx, reviewAuthority);
-    const result = await readBrowserPage(paneId, ctx.scope, {
+    const options = {
       maxChars: num(args, 'maxChars'),
       maxElements: num(args, 'maxElements'),
-    });
+      judge: args.judge === true,
+      sessionId: ctx.sessionId,
+      missionId: ctx.missionId,
+    };
+    const result =
+      str(args, 'format') === 'compact'
+        ? await readBrowserPageCompact(paneId, ctx.scope, options)
+        : await readBrowserPage(paneId, ctx.scope, options);
     if (reviewAuthority) {
       assertReviewSurfaceCurrent(ctx, reviewAuthority);
       if (result.url !== reviewAuthority.surface.url) {
@@ -271,6 +319,64 @@ const browserReadTool: McpToolDef = {
       recordAutomatedReviewBrowserInspection(reviewAuthority, 'read');
     }
     return result;
+  },
+};
+
+const browserFindTool: McpToolDef = {
+  name: 'nexus_browser_find',
+  description:
+    'Find visible interactive elements by accessible name (case- and ' +
+    'diacritics-insensitive) and/or implicit role. The query is scored ' +
+    'against names and link paths — it never becomes a CSS selector. ' +
+    'Returns scored matches with opaque refs for click/fill.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      paneId: { type: 'string' },
+      text: { type: 'string', description: 'Accessible name text; max 200' },
+      role: { type: 'string', description: 'Filter by implicit role' },
+      limit: { type: 'number', description: 'Max matches; default 10, max 25' },
+    },
+    required: ['paneId'],
+  },
+  handler: async (args, ctx) => {
+    const paneId = requireStr(args, 'paneId');
+    const reviewAuthority = authorizeBrowserPane(ctx, paneId, 'read');
+    assertReviewSurfaceCurrent(ctx, reviewAuthority);
+    return findBrowserElements(paneId, ctx.scope, {
+      text: str(args, 'text'),
+      role: str(args, 'role'),
+      limit: num(args, 'limit'),
+    });
+  },
+};
+
+const browserExtractTool: McpToolDef = {
+  name: 'nexus_browser_extract',
+  description:
+    'Extrai campos tipados da página visível: o código levanta candidatos ' +
+    '(JSON-LD, tabelas, label→valor, números/datas/e-mails) e o Jev escolhe ' +
+    'o candidato certo por campo com confiança; nunca inventa valor — null ' +
+    'quando não há candidato confiável — e nunca lê valores digitados em ' +
+    'campos. Sem CSS/JS.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      paneId: { type: 'string' },
+      fields: { type: 'array' },
+    },
+    required: ['paneId', 'fields'],
+  },
+  handler: async (args, ctx) => {
+    const paneId = requireStr(args, 'paneId');
+    const reviewAuthority = authorizeBrowserPane(ctx, paneId, 'read');
+    assertReviewSurfaceCurrent(ctx, reviewAuthority);
+    return extractBrowserFields(
+      paneId,
+      ctx.scope,
+      args.fields as BrowserExtractField[],
+      { sessionId: ctx.sessionId, missionId: ctx.missionId },
+    );
   },
 };
 
@@ -304,17 +410,38 @@ const browserClickTool: McpToolDef = {
   name: 'nexus_browser_click',
   requiresConfirm: true,
   description:
-    'Click a visible opaque ref from browser_read. CSS selectors and JavaScript ' +
-    'are not accepted; the click requires user confirmation.',
+    'Click a visible element by opaque `ref` from browser_read/find — or by ' +
+    'plain `text` (accessible name, never a CSS selector or JavaScript). ' +
+    'With text, a clear winner is clicked; when ambiguous the response ' +
+    'carries `candidates` and nothing is clicked (Jev only breaks ties ' +
+    'with ≥ 0.7 confidence). The click requires user confirmation.',
   inputSchema: {
     type: 'object',
-    properties: { paneId: { type: 'string' }, ref: { type: 'string' } },
-    required: ['paneId', 'ref'],
+    properties: {
+      paneId: { type: 'string' },
+      ref: { type: 'string' },
+      text: {
+        type: 'string',
+        description: 'Accessible name to click instead of a ref',
+      },
+      read: READ_ARG_PROP,
+      judge: JUDGE_ARG_PROP,
+    },
+    required: ['paneId'],
   },
   handler: async (args, ctx) => {
     const paneId = requireStr(args, 'paneId');
     authorizePaneRef(ctx, paneId, 'write');
-    return clickBrowserElement(paneId, ctx.scope, requireStr(args, 'ref'));
+    const target =
+      str(args, 'ref') ??
+      (typeof args.text === 'string' ? { text: args.text } : null);
+    if (!target) throw new Error('missing required argument: ref or text');
+    return clickBrowserElement(paneId, ctx.scope, target, {
+      read: inlineReadArg(args),
+      judge: args.judge === true,
+      sessionId: ctx.sessionId,
+      missionId: ctx.missionId,
+    });
   },
 };
 
@@ -322,27 +449,40 @@ const browserFillTool: McpToolDef = {
   name: 'nexus_browser_fill',
   requiresConfirm: true,
   description:
-    'Fill or clear a visible text field by opaque ref. Password, payment, ' +
-    'token, file, hidden and other sensitive fields are refused.',
+    'Fill or clear a visible text field by opaque `ref` — or by `label` ' +
+    '(accessible name/label text, never a selector). With label, a clear ' +
+    'winner is filled; when ambiguous the response carries `candidates` and ' +
+    'nothing is filled. Password, payment, token, file, hidden and other ' +
+    'sensitive fields are refused.',
   inputSchema: {
     type: 'object',
     properties: {
       paneId: { type: 'string' },
       ref: { type: 'string' },
+      label: {
+        type: 'string',
+        description: 'Accessible field name to fill instead of a ref',
+      },
       text: { type: 'string' },
+      read: READ_ARG_PROP,
+      judge: JUDGE_ARG_PROP,
     },
-    required: ['paneId', 'ref', 'text'],
+    required: ['paneId', 'text'],
   },
   handler: async (args, ctx) => {
     const paneId = requireStr(args, 'paneId');
     authorizePaneRef(ctx, paneId, 'write');
     if (typeof args.text !== 'string') throw new Error('missing required argument: text');
-    return fillBrowserElement(
-      paneId,
-      ctx.scope,
-      requireStr(args, 'ref'),
-      args.text,
-    );
+    const target =
+      str(args, 'ref') ??
+      (typeof args.label === 'string' ? { text: args.label } : null);
+    if (!target) throw new Error('missing required argument: ref or label');
+    return fillBrowserElement(paneId, ctx.scope, target, args.text, {
+      read: inlineReadArg(args),
+      judge: args.judge === true,
+      sessionId: ctx.sessionId,
+      missionId: ctx.missionId,
+    });
   },
 };
 
@@ -410,6 +550,8 @@ const browserScrollTool: McpToolDef = {
       x: { type: 'number' },
       y: { type: 'number' },
       behavior: { type: 'string', enum: ['auto', 'smooth'] },
+      read: READ_ARG_PROP,
+      judge: JUDGE_ARG_PROP,
     },
     required: ['paneId'],
   },
@@ -423,6 +565,10 @@ const browserScrollTool: McpToolDef = {
       x: num(args, 'x'),
       y: num(args, 'y'),
       behavior: str(args, 'behavior') === 'smooth' ? 'smooth' : undefined,
+      read: inlineReadArg(args),
+      judge: args.judge === true,
+      sessionId: ctx.sessionId,
+      missionId: ctx.missionId,
     });
   },
 };
@@ -444,6 +590,8 @@ const browserPressTool: McpToolDef = {
         type: 'array',
         items: { type: 'string', enum: ['Shift', 'Control', 'Alt', 'Meta'] },
       },
+      read: READ_ARG_PROP,
+      judge: JUDGE_ARG_PROP,
     },
     required: ['paneId', 'key'],
   },
@@ -454,6 +602,10 @@ const browserPressTool: McpToolDef = {
       key: requireStr(args, 'key'),
       ref: str(args, 'ref'),
       modifiers: strArray(args, 'modifiers'),
+      read: inlineReadArg(args),
+      judge: args.judge === true,
+      sessionId: ctx.sessionId,
+      missionId: ctx.missionId,
     });
   },
 };
@@ -466,13 +618,23 @@ const browserHoverTool: McpToolDef = {
     'dropdown menus, and :hover-driven UI.',
   inputSchema: {
     type: 'object',
-    properties: { paneId: { type: 'string' }, ref: { type: 'string' } },
+    properties: {
+      paneId: { type: 'string' },
+      ref: { type: 'string' },
+      read: READ_ARG_PROP,
+      judge: JUDGE_ARG_PROP,
+    },
     required: ['paneId', 'ref'],
   },
   handler: async (args, ctx) => {
     const paneId = requireStr(args, 'paneId');
     authorizePaneRef(ctx, paneId, 'write');
-    return hoverBrowserElement(paneId, ctx.scope, requireStr(args, 'ref'));
+    return hoverBrowserElement(paneId, ctx.scope, requireStr(args, 'ref'), {
+      read: inlineReadArg(args),
+      judge: args.judge === true,
+      sessionId: ctx.sessionId,
+      missionId: ctx.missionId,
+    });
   },
 };
 
@@ -484,6 +646,8 @@ export function buildBrowserTools(): McpToolDef[] {
     browserNavigateTool,
     browserScreenshotTool,
     browserReadTool,
+    browserFindTool,
+    browserExtractTool,
     browserInspectTool,
     browserClickTool,
     browserFillTool,
