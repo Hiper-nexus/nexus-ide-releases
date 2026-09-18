@@ -35,6 +35,36 @@ describe('parseBashFailure', () => {
     expect(parseBashFailure({ tool_name: 'Bash' })).toBeNull();
   });
 
+  it('returns null when tool_input or a non-empty command is missing', () => {
+    expect(
+      parseBashFailure({
+        tool_name: 'Bash',
+        error: 'Exit code 1\nboom',
+      }),
+    ).toBeNull();
+    expect(
+      parseBashFailure({
+        tool_name: 'Bash',
+        tool_input: 'não-objeto',
+        error: 'Exit code 1\nboom',
+      }),
+    ).toBeNull();
+    expect(
+      parseBashFailure({
+        tool_name: 'Bash',
+        tool_input: { command: '   ' },
+        error: 'Exit code 1\nboom',
+      }),
+    ).toBeNull();
+    expect(
+      parseBashFailure({
+        tool_name: 'Bash',
+        tool_input: { command: 42 },
+        error: 'Exit code 1\nboom',
+      }),
+    ).toBeNull();
+  });
+
   it('defaults exitCode to 1 and keeps the full text without an exit-code line', () => {
     expect(
       parseBashFailure({

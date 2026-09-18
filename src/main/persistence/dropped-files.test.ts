@@ -189,6 +189,71 @@ describe('workspace mission-context import', () => {
     }
   });
 
+  it('does not mirror a streamed file above 14 MiB into ~/.nexus (F-582 review)', () => {
+    const root = workspace();
+    fs.mkdirSync(path.join(homeDir, '.nexus'), { mode: 0o700 });
+    const source = path.join(tempRoot, 'grande.mp4');
+    fs.writeFileSync(source, '');
+    fs.truncateSync(source, DROPPED_ATTACHMENT_MAX_BYTES + 1024);
+    const sourceFd = fs.openSync(source, fs.constants.O_RDONLY);
+    try {
+      const result = importWorkspaceMissionAttachmentFromFile(
+        root,
+        'grande.mp4',
+        sourceFd,
+        fs.fstatSync(sourceFd).size,
+        { homeDir, token: () => 'big-tok' },
+      );
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(fs.statSync(path.join(root, result.path)).size).toBe(
+          DROPPED_ATTACHMENT_MAX_BYTES + 1024,
+        );
+      }
+      const mirrorDir = path.join(
+        homeDir,
+        '.nexus',
+        'attachments',
+        'mission-context',
+      );
+      const mirrorFile = path.join(
+        mirrorDir,
+        droppedFileName('grande.mp4', 'big-tok'),
+      );
+      expect(fs.existsSync(mirrorFile)).toBe(false);
+    } finally {
+      fs.closeSync(sourceFd);
+    }
+  });
+
+  it('still mirrors a streamed file at or under 14 MiB into ~/.nexus', () => {
+    const root = workspace();
+    fs.mkdirSync(path.join(homeDir, '.nexus'), { mode: 0o700 });
+    const source = path.join(tempRoot, 'pequeno.mp4');
+    fs.writeFileSync(source, 'v'.repeat(1024));
+    const sourceFd = fs.openSync(source, fs.constants.O_RDONLY);
+    try {
+      const result = importWorkspaceMissionAttachmentFromFile(
+        root,
+        'pequeno.mp4',
+        sourceFd,
+        fs.fstatSync(sourceFd).size,
+        { homeDir, token: () => 'small-tok' },
+      );
+      expect(result.ok).toBe(true);
+      const mirrorFile = path.join(
+        homeDir,
+        '.nexus',
+        'attachments',
+        'mission-context',
+        droppedFileName('pequeno.mp4', 'small-tok'),
+      );
+      expect(fs.existsSync(mirrorFile)).toBe(true);
+    } finally {
+      fs.closeSync(sourceFd);
+    }
+  });
+
   it('aborts the streamed copy when the source grew past expectedSize and removes the staged file', () => {
     const root = workspace();
     const source = path.join(tempRoot, 'mutante.bin');

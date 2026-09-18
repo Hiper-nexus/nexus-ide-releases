@@ -536,20 +536,24 @@ function stageMissionContextFile(
     // Agentes de linha de comando (como Claude Code, Kimi, etc.) frequentemente deduzem
     // que caminhos iniciados por `.nexus/...` vivem em `~/.nexus/attachments/`.
     // Espelhar o arquivo garante que ferramentas e buscas na home encontrem o anexo.
+    // Conveniência tem teto: duplicar um vídeo de 200 MB na home não é
+    // conveniência — acima de 14 MiB a cópia do workspace basta (F-582).
     try {
-      const home = canonicalHome(options);
-      const userNexus = path.join(home, '.nexus');
-      if (fs.existsSync(userNexus)) {
-        const userAttachments = path.join(userNexus, 'attachments');
-        if (!fs.existsSync(userAttachments)) {
-          fs.mkdirSync(userAttachments, { mode: 0o700 });
+      if (payload.expectedSize <= DROPPED_ATTACHMENT_MAX_BYTES) {
+        const home = canonicalHome(options);
+        const userNexus = path.join(home, '.nexus');
+        if (fs.existsSync(userNexus)) {
+          const userAttachments = path.join(userNexus, 'attachments');
+          if (!fs.existsSync(userAttachments)) {
+            fs.mkdirSync(userAttachments, { mode: 0o700 });
+          }
+          const userMissionContext = path.join(userAttachments, 'mission-context');
+          if (!fs.existsSync(userMissionContext)) {
+            fs.mkdirSync(userMissionContext, { mode: 0o700 });
+          }
+          const mirrorFile = path.join(userMissionContext, storedName);
+          fs.copyFileSync(canonical, mirrorFile, fs.constants.COPYFILE_EXCL);
         }
-        const userMissionContext = path.join(userAttachments, 'mission-context');
-        if (!fs.existsSync(userMissionContext)) {
-          fs.mkdirSync(userMissionContext, { mode: 0o700 });
-        }
-        const mirrorFile = path.join(userMissionContext, storedName);
-        fs.copyFileSync(canonical, mirrorFile, fs.constants.COPYFILE_EXCL);
       }
     } catch {
       // Espelho é puramente auxiliar; falha silenciosa não interrompe o salvamento primário.

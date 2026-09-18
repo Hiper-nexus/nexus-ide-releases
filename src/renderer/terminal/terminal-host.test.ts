@@ -845,6 +845,22 @@ describe('paste de mídia no pane (F-582)', () => {
     expect(write).not.toHaveBeenCalled();
   });
 
+  it('falha ao consultar o pasteboard do sistema vira toast, nunca silêncio', async () => {
+    const host = await openLiveHost();
+    clipboardFileUris.mockRejectedValue(new Error('ipc morto'));
+
+    const event = pasteEvent(host.element, { types: ['Files'], files: [] });
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(event.defaultPrevented).toBe(true);
+    const toast = useToastStore
+      .getState()
+      .toasts.find((item) => item.title === 'Nada foi colado no terminal');
+    expect(toast?.detail).toContain('área de transferência do sistema');
+    expect(toast?.detail).toContain('Finder');
+    expect(write).not.toHaveBeenCalled();
+  });
+
   it('payload Files sem arquivo usa o file:// do pasteboard do sistema', async () => {
     const host = await openLiveHost();
     clipboardFileUris.mockResolvedValue({

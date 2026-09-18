@@ -2105,7 +2105,14 @@ async function pasteFromSystemClipboard(
       describePasteWithoutFiles(snapshot),
     );
   } catch {
-    // Ignore — a failed paste should never break the terminal.
+    // O paste já foi interceptado: ficar mudo repetiria o F-582 — avisa que a
+    // consulta ao pasteboard do sistema falhou (sem detalhes internos).
+    console.warn('[terminal] pasteboard lookup failed');
+    useToastStore.getState().push(
+      'warn',
+      'Nada foi colado no terminal',
+      'Não foi possível consultar a área de transferência do sistema. Salve a mídia no disco e copie/arraste do Finder.',
+    );
   }
 }
 

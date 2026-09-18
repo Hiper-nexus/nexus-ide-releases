@@ -65,13 +65,10 @@ export function parseBashFailure(
   const output =
     exitMatch && firstLineBreak !== -1 ? error.slice(firstLineBreak + 1) : error;
   const toolInput = record.tool_input;
-  const command =
-    toolInput &&
-    typeof toolInput === 'object' &&
-    typeof (toolInput as Record<string, unknown>).command === 'string'
-      ? ((toolInput as Record<string, unknown>).command as string)
-      : '';
-  return { command, exitCode, output };
+  if (!toolInput || typeof toolInput !== 'object') return null;
+  const rawCommand = (toolInput as Record<string, unknown>).command;
+  if (typeof rawCommand !== 'string' || rawCommand.trim() === '') return null;
+  return { command: rawCommand, exitCode, output };
 }
 
 /** Texto pt-BR curto (≤ ~400 chars) injetado como additionalContext. */
