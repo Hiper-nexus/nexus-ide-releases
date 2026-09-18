@@ -350,9 +350,12 @@ function applyJevAnswer(
   const { field } = pending;
   if (pending.kind === 'boolean') {
     if (answer?.type === 'noul') {
+      const confidence = Math.abs(answer.noul - 0.5) * 2;
+      // Indeciso (0.4 < p < 0.6): cara-ou-coroa não é extração — null.
+      if (confidence < 0.2) return NONE_RESULT;
       return {
         value: answer.noul >= 0.6,
-        confidence: Math.abs(answer.noul - 0.5) * 2,
+        confidence,
         source: 'jev',
       };
     }

@@ -1621,7 +1621,7 @@ const routeTaskTool: McpToolDef = {
     };
     // Skill suggestion (cookbook TypeSafe): UMA choice do Jev entre as skills
     // bundled permitidas ao chamador. Fail-open: qualquer falha → null.
-    let skillSuggestion: { name: string; confidence: number } | null = null;
+    let skillSuggestion: { name: string; pkg: string; confidence: number } | null = null;
     try {
       skillSuggestion = await suggestSkillForTask(task, {
         allowedSkills: ctx.allowedSkills ?? null,

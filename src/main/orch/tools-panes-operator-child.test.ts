@@ -286,6 +286,28 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
     });
   });
 
+  it('grant por pacote: filho com superpowers recebe a dica da sub-skill brainstorming', async () => {
+    setOperatorRouteResolver(
+      vi.fn(async () => ({
+        adapterId: 'codex',
+        skill: { name: 'brainstorming', pkg: 'superpowers', confidence: 0.9 },
+      })),
+    );
+    const result = (await paneSpawnTool.handler(
+      { prompt: 'implemente X' },
+      userPane({ allowedSkills: ['superpowers'] }),
+    )) as Record<string, unknown>;
+    const options = harness.spawnPaneAndMaybePrompt.mock.calls[0]?.[0] as {
+      prompt?: string;
+    };
+    expect(options.prompt).toBe(
+      'implemente X\n\nSkill sugerida pelo Nexus: brainstorming — leia a SKILL.md dela antes de começar.',
+    );
+    expect(result).toMatchObject({
+      route: { skill: { name: 'brainstorming', pkg: 'superpowers', confidence: 0.9 } },
+    });
+  });
+
   it('skill fora do allowedSkills do filho não ganha a dica no prompt', async () => {
     setOperatorRouteResolver(
       vi.fn(async () => ({

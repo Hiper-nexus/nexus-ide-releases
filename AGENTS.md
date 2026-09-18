@@ -452,7 +452,8 @@ saber isto antes de mexer:
   página; fail-open com `judgmentSkipped`). `nexus_browser_extract` extrai
   campos tipados: o código levanta candidatos (JSON-LD, tabelas, label→valor,
   tokens) e o Jev só escolhe entre eles — `null` quando nada confiável;
-  extract usa UMA chamada Jev para todos os campos (fan-out).
+  extract usa UMA chamada Jev para todos os campos (fan-out); booleano
+  indeciso (0,4–0,6) vira null.
 - **Skill suggestion** (`jev-skill-suggestion.ts`, surface `taskRouting`):
   uma `choice` entre as skills bundled (+`none`) para a tarefa;
   `nexus_route_task` devolve `skillSuggestion`, o auto-route do `pane_spawn`

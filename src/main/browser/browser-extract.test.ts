@@ -251,6 +251,42 @@ describe('resolveBrowserExtract', () => {
     });
   });
 
+  it('maps low noul probability to value false on boolean fields', async () => {
+    const jev = vi.fn(async (_req: unknown) =>
+      jevResult({ f_em_estoque: { type: 'noul', noul: 0.2 } }),
+    );
+    const result = await resolveBrowserExtract(
+      candidates(),
+      [{ name: 'em estoque', type: 'boolean' }],
+      context,
+      { jev, ...enabled, recordDecision },
+    );
+    expect(result.fields['em estoque']).toEqual({
+      value: false,
+      confidence: 0.6,
+      source: 'jev',
+    });
+  });
+
+  it('returns null when the boolean noul is undecided (0.4 < p < 0.6)', async () => {
+    for (const p of [0.45, 0.5, 0.55]) {
+      const jev = vi.fn(async (_req: unknown) =>
+        jevResult({ f_em_estoque: { type: 'noul', noul: p } }),
+      );
+      const result = await resolveBrowserExtract(
+        candidates(),
+        [{ name: 'em estoque', type: 'boolean' }],
+        context,
+        { jev, ...enabled, recordDecision },
+      );
+      expect(result.fields['em estoque']).toEqual({
+        value: null,
+        confidence: 0,
+        source: 'none',
+      });
+    }
+  });
+
   it('resolves enum fields via choice among declared options only', async () => {
     const jev = vi.fn(async (_req: unknown) =>
       jevResult({

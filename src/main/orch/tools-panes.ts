@@ -391,7 +391,7 @@ export function attenuateSkills(
  */
 function skillSuggestionFromRoute(
   autoRoute: Record<string, unknown> | undefined,
-): { name: string; confidence: number } | null {
+): { name: string; pkg: string; confidence: number } | null {
   const raw = autoRoute?.skill ?? autoRoute?.skillSuggestion;
   if (!raw || typeof raw !== 'object') return null;
   const rec = raw as Record<string, unknown>;
@@ -399,7 +399,11 @@ function skillSuggestionFromRoute(
   if (typeof rec.confidence !== 'number' || !Number.isFinite(rec.confidence)) {
     return null;
   }
-  return { name: rec.name, confidence: rec.confidence };
+  return {
+    name: rec.name,
+    pkg: typeof rec.pkg === 'string' ? rec.pkg : '',
+    confidence: rec.confidence,
+  };
 }
 
 /** Worker may hand off; only orchestrator/maestro/user may create a pane. */
@@ -522,7 +526,8 @@ const paneSpawn: McpToolDef = {
     let executionMode: 'same_checkout' | 'isolated_worktree' | undefined;
     let rosterRouteAuthorized = false;
     let autoRoute: Record<string, unknown> | undefined;
-    let routeSkill: { name: string; confidence: number } | null = null;
+    let routeSkill: { name: string; pkg: string; confidence: number } | null =
+      null;
     /**
      * Mão do operador sem missão: o pane filho é a MESMA mão. Omitir `role`
      * faz o main mintar `user` (`mcp-server`: `meta?.role ?? "user"`), então o
@@ -687,7 +692,11 @@ const paneSpawn: McpToolDef = {
         routeSkill.confidence >= 0.7 &&
         (adHocAllowedSkills === null ||
           adHocAllowedSkills.some(
-            (skill) => skill.toLowerCase() === routeSkill!.name.toLowerCase(),
+            // Grants são por pacote OU por nome, como o skill-mirror.
+            (skill) =>
+              skill.toLowerCase() === routeSkill!.name.toLowerCase() ||
+              (routeSkill!.pkg !== '' &&
+                skill.toLowerCase() === routeSkill!.pkg.toLowerCase()),
           ))
       ) {
         adHocPrompt =

@@ -138,19 +138,24 @@ export async function suggestSkillForTask(
     missionId?: string;
     deps?: SkillSuggestionDeps;
   },
-): Promise<{ name: string; confidence: number } | null> {
+): Promise<{ name: string; pkg: string; confidence: number } | null> {
   const enabled = opts.deps?.enabled ?? (() => isJevSurfaceEnabled('taskRouting'));
   const hasKey = opts.deps?.hasKey ?? hasJevCredential;
   const judgeFn = opts.deps?.judge ?? judge;
   const record = opts.deps?.record ?? recordJevDecision;
   if (!task.trim() || !enabled() || !hasKey()) return null;
 
+  // Grants são por PACOTE no skill-mirror (ex.: `superpowers`) enquanto as
+  // entradas do catálogo são sub-skills (`brainstorming`): vale pkg OU name.
   const allowed =
     opts.allowedSkills === null
       ? null
       : new Set(opts.allowedSkills.map((s) => s.trim().toLocaleLowerCase()));
   const catalog = listBundledSkillCatalog().filter(
-    (entry) => !allowed || allowed.has(entry.name.toLocaleLowerCase()),
+    (entry) =>
+      !allowed ||
+      allowed.has(entry.name.toLocaleLowerCase()) ||
+      allowed.has(entry.pkg.toLocaleLowerCase()),
   );
   if (catalog.length === 0) return null;
 
@@ -199,7 +204,12 @@ export async function suggestSkillForTask(
       inputTokens: result.usage.input_tokens,
       usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
     });
-    return { name: answer.choice, confidence: answer.confidence };
+    const picked = catalog.find((entry) => entry.name === answer.choice);
+    return {
+      name: answer.choice,
+      pkg: picked?.pkg ?? '',
+      confidence: answer.confidence,
+    };
   } catch {
     return null;
   }

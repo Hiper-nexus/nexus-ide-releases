@@ -134,7 +134,11 @@ describe('suggestSkillForTask', () => {
       sessionId: 's1',
       deps: { judge, record, ...on },
     });
-    expect(suggestion).toEqual({ name: 'impeccable', confidence: 0.9 });
+    expect(suggestion).toEqual({
+      name: 'impeccable',
+      pkg: 'impeccable',
+      confidence: 0.9,
+    });
     const request = judge.mock.calls[0][0] as {
       surface?: string;
       questions: Record<string, { criteria: Record<string, unknown> }>;
@@ -226,6 +230,30 @@ describe('suggestSkillForTask', () => {
       'none',
       'ponytail',
     ]);
+  });
+
+  it('a package-level grant keeps that package sub-skills in the criteria', async () => {
+    const judge = vi.fn(async (_req: unknown) =>
+      jevResult({
+        skill: {
+          type: 'choice',
+          choice: 'brainstorming',
+          probabilities: { brainstorming: 0.85 },
+          confidence: 0.85,
+        },
+      }),
+    );
+    const suggestion = await suggestSkillForTask('task', {
+      allowedSkills: ['superpowers'],
+      deps: { judge, record: vi.fn(), ...on },
+    });
+    const request = judge.mock.calls[0][0] as {
+      questions: Record<string, { criteria: Record<string, unknown> }>;
+    };
+    const keys = Object.keys(request.questions.skill.criteria);
+    expect('brainstorming' in request.questions.skill.criteria).toBe(true);
+    expect(keys.every((k) => k === 'none' || k != 'impeccable')).toBe(true);
+    expect(suggestion).toMatchObject({ name: 'brainstorming', pkg: 'superpowers' });
   });
 
   it('fails open to null when judge returns null or throws', async () => {
