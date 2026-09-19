@@ -4191,6 +4191,18 @@ export const CURRENT_RELEASE: AppRelease = {
         'Overlays gerenciados do Codex agora configuram automaticamente 1.000.000 de tokens de contexto e 950.000 ' +
         'de teto para compactação de conversa, eliminando a limitação padrão de 256k e aproveitando toda a capacidade dos modelos.',
     },
+    {
+      title: 'Estacionamento de panes ociosos sob pressão e otimização para máquinas inferiores (F-588)',
+      detail:
+        'O reaper de emergência e a varredura pós-TTL agora podem estacionar (parkPane) workers e helpers ociosos, ' +
+        'liberando ~1 GB de RAM por pane enquanto preservam o histórico no grid com botão "Acordar". O teto seguro de panes foi calibrado para 2 em máquinas de 8 GB.',
+    },
+    {
+      title: 'Resiliência adaptativa no envio de Enter / Correção do "Pane Dormindo" (F-589)',
+      detail:
+        'Eliminado o travamento de prompts e cutucadas de handoff que aguardavam Enter manual: ' +
+        'retentativas adaptativas com backoff (600ms, 1200ms, 2000ms) e alternância de \\r e \\r\\n garantem início imediato do turno.',
+    },
   ],
   fixes: [
     {
@@ -4214,6 +4226,18 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'prepareCodexGovernedSession e prepareCodexOperatorMissionHome estabelecem 1.000.000 como piso garantido ' +
         'para model_context_window e 950.000 para model_auto_compact_token_limit no config.toml do Codex.',
+    },
+    {
+      title: 'F-588: Panes ociosos fantasma e sobrecarga de RAM sob pressão de memória em máquinas inferiores',
+      detail:
+        'isGuardianParkablePane e paneIsParkableUnderPressure autorizam estacionamento limpo de workers e panes de operador, ' +
+        'e limitsForMachine calibra o teto de panes proporcionalmente à memória total (2 panes para 8 GB).',
+    },
+    {
+      title: 'F-589: Pane travado em repouso após colagem de briefing aguardando Enter humano',
+      detail:
+        'scheduleAdaptiveEnterRescue em tool-util e retentativas adaptativas em worker-handoff-enforcement e idle-delivery ' +
+        're-enviam o sinal de submissão enquanto o TUI permanecer idle, prevenindo bloqueio autônomo.',
     },
   ],
 };
