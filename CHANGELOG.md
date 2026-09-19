@@ -6,6 +6,7 @@
 - **Painéis Laterais Acolhedores e Funcionais (F-584)**: estados vazios dos painéis contextuais de Missão, Busca, Skills e Git agora trazem cartões explicativos com botões de ação direta: "+ Armar Nova Missão", busca guiada de arquivos/símbolos e botão para abrir o catálogo de skills diretamente no Marketplace.
 - **Velocidade de Tokens Sempre Visível nos Agentes (F-585)**: o chip de medição de velocidade (tok/s e TTFT) permanece visível nos panes de IA em estado pronto (`⚡ — tok/s`) com estilo discreto e tooltip explicativo, mudando para ativo com destaque em acento assim que a LLM entra em streaming e encerra rodadas.
 - **Correção de Modelos do Google Gemini 3.8 (F-586)**: remoção do modelo inexistente `gemini-3.8-pro` e promoção de `gemini-3.8-flash-high` como default oficial do Antigravity/AGY, corrigindo o catálogo de modelos, definições de squad, prompts Jarvis e garantindo migração transparente de IDs legados em tempo de spawn.
+- **Padrão de 1M de Contexto para LLMs de Grande Janela (F-587)**: o Nexus estabelece 1.000.000 de tokens como padrão oficial nos overlays do Codex (`model_context_window = 1000000`, `model_auto_compact_token_limit = 950000`) em squads, missões e helpers isolados, elevando automaticamente o teto conservador de 256k de fábrica sem necessidade de ajustes manuais no `config.toml`.
 
 ## 0.76.58 — Resiliência de failover no Claude e organização das abas no grid
 

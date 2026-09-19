@@ -483,6 +483,8 @@ export function prepareCodexGovernedSession(
       const config = stringify({
         sqlite_home: providerSessionHome,
         ...(sealedModel ? { model: sealedModel } : {}),
+        model_context_window: 1_000_000,
+        model_auto_compact_token_limit: 950_000,
         default_permissions: permissionProfile,
         shell_environment_policy: {
           inherit: 'core',
@@ -663,9 +665,22 @@ export function prepareCodexOperatorMissionHome(
         userConfig = {};
       }
       const { mcp_servers: _drop, ...rest } = userConfig;
+      const contextWindow =
+        typeof userConfig.model_context_window === 'number'
+          ? Math.max(userConfig.model_context_window, 1_000_000)
+          : 1_000_000;
+      const autoCompactLimit =
+        typeof userConfig.model_auto_compact_token_limit === 'number'
+          ? Math.max(userConfig.model_auto_compact_token_limit, 950_000)
+          : 950_000;
       writePrivateFileAtomic(
         path.join(artifactDir, 'config.toml'),
-        `${stringify({ ...(options.preserveUserMcp ? userConfig : rest), sqlite_home: providerSessionHome }).trimEnd()}\n`,
+        `${stringify({
+          ...(options.preserveUserMcp ? userConfig : rest),
+          model_context_window: contextWindow,
+          model_auto_compact_token_limit: autoCompactLimit,
+          sqlite_home: providerSessionHome,
+        }).trimEnd()}\n`,
       );
       // Skills live under the private home so deliverGrantedSkills can land
       // without mutating the operator's real ~/.codex/skills permanently.

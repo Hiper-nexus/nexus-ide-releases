@@ -355,11 +355,37 @@ describe('prepareCodexOperatorMissionHome', () => {
     const parsed = parse(privateConfig) as Record<string, unknown>;
     expect(parsed.mcp_servers).toBeUndefined();
     expect(parsed.model).toBe('gpt-5.4');
+    expect(parsed.model_context_window).toBe(1_000_000);
+    expect(parsed.model_auto_compact_token_limit).toBe(950_000);
     expect(privateConfig).not.toContain('cloudflare');
     expect(privateConfig).not.toContain('figma');
     expect(fs.existsSync(path.join(result.env.CODEX_HOME, 'skills'))).toBe(
       true,
     );
+  });
+
+  it('eleva o context window conservador de 256k para 1M como padrão de produto (F-587)', () => {
+    const root = tempRoot();
+    const home = path.join(root, 'home');
+    const artifacts = path.join(root, 'artifacts');
+    const codexHome = path.join(home, '.codex');
+    write(path.join(codexHome, 'auth.json'), '{"tokens":{"access":"live"}}');
+    write(
+      path.join(codexHome, 'config.toml'),
+      'model_context_window = 256000\nmodel_auto_compact_token_limit = 200000\n',
+    );
+    const token = 'operator-1m-elevation-token';
+    tokens.push(token);
+    const result = prepareCodexOperatorMissionHome(token, {
+      home,
+      providerHome: codexHome,
+      artifactRoot: artifacts,
+    });
+    const parsed = parse(
+      fs.readFileSync(path.join(result.env.CODEX_HOME, 'config.toml'), 'utf8'),
+    ) as Record<string, unknown>;
+    expect(parsed.model_context_window).toBe(1_000_000);
+    expect(parsed.model_auto_compact_token_limit).toBe(950_000);
   });
 });
 
@@ -860,6 +886,8 @@ describe('prepareCodexGovernedSession', () => {
     ) as {
       default_permissions?: string;
       features?: { network_proxy?: boolean };
+      model_context_window?: number;
+      model_auto_compact_token_limit?: number;
       permissions?: Record<
         string,
         {
@@ -870,6 +898,8 @@ describe('prepareCodexGovernedSession', () => {
     };
 
     expect(config.default_permissions).toBe(CODEX_WORKSPACE_PERMISSION_PROFILE);
+    expect(config.model_context_window).toBe(1_000_000);
+    expect(config.model_auto_compact_token_limit).toBe(950_000);
     expect(config.features?.network_proxy).toBe(false);
     expect(
       config.permissions?.[CODEX_WORKSPACE_PERMISSION_PROFILE]?.network,

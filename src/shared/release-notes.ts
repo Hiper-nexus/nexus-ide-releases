@@ -4185,6 +4185,12 @@ export const CURRENT_RELEASE: AppRelease = {
         'Remoção de referências ao modelo inexistente gemini-3.8-pro e promoção oficial de gemini-3.8-flash-high ' +
         'como padrão do Antigravity/AGY, alinhando catálogo, squads, prompts Jarvis e migração automática de legado.',
     },
+    {
+      title: 'Padrão de 1M de janela de contexto para LLMs de grande capacidade (F-587)',
+      detail:
+        'Overlays gerenciados do Codex agora configuram automaticamente 1.000.000 de tokens de contexto e 950.000 ' +
+        'de teto para compactação de conversa, eliminando a limitação padrão de 256k e aproveitando toda a capacidade dos modelos.',
+    },
   ],
   fixes: [
     {
@@ -4202,6 +4208,12 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'F-586: Modelo inexistente gemini-3.8-pro corrigido para gemini-3.8-flash-high',
       detail:
         'Alinhado catálogo oficial da CLI Antigravity, corrigidos defaults em agy.json, model-catalog, squads e migração no spawn.',
+    },
+    {
+      title: 'F-587: Limitação de 256k de contexto no Codex elevada para 1M como padrão de produto',
+      detail:
+        'prepareCodexGovernedSession e prepareCodexOperatorMissionHome estabelecem 1.000.000 como piso garantido ' +
+        'para model_context_window e 950.000 para model_auto_compact_token_limit no config.toml do Codex.',
     },
   ],
 };
