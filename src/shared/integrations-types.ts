@@ -53,6 +53,10 @@ export const INTEGRATIONS_CHANNELS = {
   gitLog: 'integrations:git.log',
   gitFileDiff: 'integrations:git.fileDiff',
   gitPush: 'integrations:git.push',
+  gitPull: 'integrations:git.pull',
+  gitDiscard: 'integrations:git.discard',
+  gitBranches: 'integrations:git.branches',
+  gitCheckout: 'integrations:git.checkout',
   setGithubToken: 'integrations:github.setToken',
   hasGithubToken: 'integrations:github.hasToken',
   githubDeviceFlowStatus: 'integrations:github.deviceFlowStatus',
@@ -278,3 +282,20 @@ export const setAutoMergeSchema = z.object({
   enabled: z.boolean(),
   mergeMethod: z.enum(['squash', 'merge', 'rebase']).optional(),
 });
+
+export const gitPullSchema = z.object({
+  rebase: z.boolean().optional(),
+}).optional();
+
+export const gitCheckoutSchema = z.object({
+  branch: z.string().min(1).max(256),
+  create: z.boolean().optional(),
+});
+
+export type GitBranchesResult = {
+  ok: boolean;
+  current: string | null;
+  branches: string[];
+  error?: string;
+};
+

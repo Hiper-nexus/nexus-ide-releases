@@ -7,8 +7,11 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import {
+  gitBranches,
+  gitCheckoutBranch,
   gitCommitMessage,
   gitCurrentBranch,
+  gitDiscard,
   gitFileDiff,
   gitLogOneline,
   gitScmStatus,
@@ -123,5 +126,39 @@ describe('git-workspace SCM integration (real git)', () => {
     expect(gitStage(root, ['../escape.txt']).ok).toBe(false);
     expect(gitCommitMessage(root, '   ').ok).toBe(false);
     expect(gitFileDiff(root, '/etc/passwd').ok).toBe(false);
+  });
+
+  it('branches → checkout -b → checkout existing → discard changes', () => {
+    let b = gitBranches(root);
+    expect(b.ok).toBe(true);
+    expect(b.current).toBe('main');
+    expect(b.branches).toContain('main');
+
+    // Create and switch branch
+    const created = gitCheckoutBranch(root, 'feature-orca', true);
+    expect(created).toEqual({ ok: true });
+    expect(gitCurrentBranch(root)).toBe('feature-orca');
+
+    b = gitBranches(root);
+    expect(b.current).toBe('feature-orca');
+    expect(b.branches).toContain('feature-orca');
+    expect(b.branches).toContain('main');
+
+    // Switch back to main
+    const switched = gitCheckoutBranch(root, 'main', false);
+    expect(switched).toEqual({ ok: true });
+    expect(gitCurrentBranch(root)).toBe('main');
+
+    // Discard modified file
+    fs.writeFileSync(path.join(root, 'README.md'), '# modified\n');
+    const statusMod = gitScmStatus(root);
+    expect(statusMod.ok).toBe(true);
+    if (statusMod.ok) expect(statusMod.clean).toBe(false);
+    const discarded = gitDiscard(root, ['README.md']);
+    expect(discarded).toEqual({ ok: true });
+    const statusClean = gitScmStatus(root);
+    expect(statusClean.ok).toBe(true);
+    if (statusClean.ok) expect(statusClean.clean).toBe(true);
+    expect(fs.readFileSync(path.join(root, 'README.md'), 'utf8')).toBe('# scm\n');
   });
 });

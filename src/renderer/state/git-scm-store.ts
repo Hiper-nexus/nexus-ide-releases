@@ -55,10 +55,17 @@ interface GitScmStore {
   unstageAll(): Promise<void>;
   commit(): Promise<boolean>;
   pushCurrentBranch(): Promise<boolean>;
+  pull(): Promise<boolean>;
+  discard(paths: string[]): Promise<boolean>;
   createPrFromDraft(): Promise<boolean>;
   runPrimaryAction(): Promise<boolean>;
   enqueuePr(mode?: 'when-ready' | 'now'): Promise<boolean>;
   setAutoMerge(enabled: boolean): Promise<boolean>;
+  branches: string[];
+  branchesLoading: boolean;
+  loadBranches(): Promise<void>;
+  checkout(branch: string, create?: boolean): Promise<boolean>;
+  pulling: boolean;
   issues: ExternalIssue[];
   issuesError: string | null;
   issuesLoading: boolean;
@@ -97,6 +104,9 @@ export const useGitScmStore = create<GitScmStore>((set, get) => ({
   mutating: false,
   committing: false,
   remoteBusy: false,
+  pulling: false,
+  branches: [],
+  branchesLoading: false,
   error: null,
   pr: null,
   prBusy: false,
@@ -368,6 +378,99 @@ export const useGitScmStore = create<GitScmStore>((set, get) => ({
     }
   },
 
+  pull: async () => {
+    const api = window.nexus?.integrations;
+    if (!api?.gitPull) {
+      set({ error: 'API git pull indisponível' });
+      return false;
+    }
+    set({ remoteBusy: true, pulling: true, error: null });
+    try {
+      const r = await api.gitPull();
+      set({ remoteBusy: false, pulling: false });
+      if (!r.ok) {
+        set({ error: r.error });
+        return false;
+      }
+      await get().refresh();
+      return true;
+    } catch (err) {
+      set({
+        remoteBusy: false,
+        pulling: false,
+        error: gitErrorCopy(err).message,
+      });
+      return false;
+    }
+  },
+
+  discard: async (paths) => {
+    const api = window.nexus?.integrations;
+    if (!api?.gitDiscard) {
+      set({ error: 'API git discard indisponível' });
+      return false;
+    }
+    set({ mutating: true, error: null });
+    try {
+      const r = await api.gitDiscard(paths);
+      set({ mutating: false });
+      if (!r.ok) {
+        set({ error: r.error });
+        return false;
+      }
+      await get().refresh();
+      return true;
+    } catch (err) {
+      set({
+        mutating: false,
+        error: gitErrorCopy(err).message,
+      });
+      return false;
+    }
+  },
+
+  loadBranches: async () => {
+    const api = window.nexus?.integrations;
+    if (!api?.gitBranches) return;
+    set({ branchesLoading: true });
+    try {
+      const res = await api.gitBranches();
+      if (res.ok) {
+        set({ branches: res.branches, branchesLoading: false });
+      } else {
+        set({ branchesLoading: false });
+      }
+    } catch {
+      set({ branchesLoading: false });
+    }
+  },
+
+  checkout: async (branch, create = false) => {
+    const api = window.nexus?.integrations;
+    if (!api?.gitCheckout) {
+      set({ error: 'API git checkout indisponível' });
+      return false;
+    }
+    set({ mutating: true, error: null });
+    try {
+      const r = await api.gitCheckout(branch, create);
+      set({ mutating: false });
+      if (!r.ok) {
+        set({ error: r.error });
+        return false;
+      }
+      await get().refresh();
+      await get().loadBranches();
+      return true;
+    } catch (err) {
+      set({
+        mutating: false,
+        error: gitErrorCopy(err).message,
+      });
+      return false;
+    }
+  },
+
   createPrFromDraft: async () => {
     const api = window.nexus?.integrations;
     if (!api?.createPr) {
@@ -423,6 +526,7 @@ export const useGitScmStore = create<GitScmStore>((set, get) => ({
       commit: () => get().commit(),
       stageAll: () => get().stageAll('all'),
       push: () => get().pushCurrentBranch(),
+      pull: () => get().pull(),
       createPr: () => get().createPrFromDraft(),
       enqueuePr: () => get().enqueuePr('when-ready'),
     });
@@ -524,6 +628,9 @@ export const useGitScmStore = create<GitScmStore>((set, get) => ({
       mutating: false,
       committing: false,
       remoteBusy: false,
+      pulling: false,
+      branches: [],
+      branchesLoading: false,
       error: null,
       pr: null,
       prBusy: false,

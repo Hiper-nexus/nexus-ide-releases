@@ -54,6 +54,12 @@ export function createIntegrationsBridge(ipcRenderer: IpcRenderer): Integrations
     gitFileDiff: (input) =>
       ipcRenderer.invoke(INTEGRATIONS_CHANNELS.gitFileDiff, input),
     gitPush: () => ipcRenderer.invoke(INTEGRATIONS_CHANNELS.gitPush),
+    gitPull: (opts) => ipcRenderer.invoke(INTEGRATIONS_CHANNELS.gitPull, opts ?? {}),
+    gitDiscard: (paths: string[]) =>
+      ipcRenderer.invoke(INTEGRATIONS_CHANNELS.gitDiscard, { paths }),
+    gitBranches: () => ipcRenderer.invoke(INTEGRATIONS_CHANNELS.gitBranches),
+    gitCheckout: (branch: string, create?: boolean) =>
+      ipcRenderer.invoke(INTEGRATIONS_CHANNELS.gitCheckout, { branch, create }),
     createPr: (req) => ipcRenderer.invoke(INTEGRATIONS_CHANNELS.forgeCreatePr, req),
     listPrs: () => ipcRenderer.invoke(INTEGRATIONS_CHANNELS.forgeListPrs),
     branchReview: () =>

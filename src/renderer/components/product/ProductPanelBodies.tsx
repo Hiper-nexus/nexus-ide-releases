@@ -22,6 +22,7 @@ import {
 } from '../../lib/pane-interactions';
 import { useToastStore } from '../../state/toast-store';
 import { useFilesStore } from '../../state/files-store';
+import { useContextualPanelNavStore } from '../../state/contextual-panel-nav-store';
 import { readableMemoryBody } from './memory-note-readable';
 
 type Hit = {
@@ -108,6 +109,17 @@ export function SearchPanelBody() {
       />
       {busy && <p className="product-pane__meta">Buscando…</p>}
       {error && <p className="product-pane__error">{error}</p>}
+      {!query.trim() && hits.length === 0 && !busy && (
+        <div className="product-empty-card">
+          <PixelIcon name="search" size={24} />
+          <p className="product-pane__meta">
+            Busque rapidamente por arquivos do workspace, histórico de missões e catálogo de skills.
+          </p>
+        </div>
+      )}
+      {query.trim() && !busy && hits.length === 0 && !error && (
+        <p className="product-pane__meta">Nenhum resultado encontrado para &ldquo;{query}&rdquo;.</p>
+      )}
       <ul className="product-pane__list">
         {hits.map((h) => (
           <li key={h.id} className="product-pane__item">
@@ -151,7 +163,21 @@ export function SkillsPanelBody() {
     <div className="product-pane" data-testid="product-skills">
       {error && <p className="product-pane__error">{error}</p>}
       {!error && skills.length === 0 && (
-        <p className="product-pane__meta">Nenhuma skill nos caminhos do catálogo.</p>
+        <div className="product-empty-card">
+          <PixelIcon name="sparkle" size={24} />
+          <p className="product-pane__meta">
+            Nenhuma skill nos caminhos do catálogo local. Acesse o Market para instalar novas skills.
+          </p>
+          <button
+            type="button"
+            className="product-pane__btn"
+            onClick={() => {
+              useContextualPanelNavStore.getState().openTab('marketplace');
+            }}
+          >
+            Abrir Marketplace
+          </button>
+        </div>
       )}
       {skills.length > 0 && (
         <p className="product-pane__meta product-pane__drag-hint">

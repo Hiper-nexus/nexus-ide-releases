@@ -34,6 +34,10 @@ describe('git-scm-store runPrimaryAction', () => {
           gitStage: vi.fn(async () => ({ ok: true })),
           gitCommit: vi.fn(async () => ({ ok: true, summary: 'ok' })),
           gitPush: vi.fn(async () => ({ ok: true })),
+          gitPull: vi.fn(async () => ({ ok: true })),
+          gitDiscard: vi.fn(async () => ({ ok: true })),
+          gitBranches: vi.fn(async () => ({ ok: true, current: 'main', branches: ['main', 'feature/x'] })),
+          gitCheckout: vi.fn(async () => ({ ok: true })),
           gitLog: vi.fn(async () => ({
             ok: true,
             commits: [{ hash: 'abc', subject: 'feat: login' }],
@@ -117,5 +121,27 @@ describe('git-scm-store runPrimaryAction', () => {
     expect(window.nexus.integrations.enqueuePr).toHaveBeenCalledWith({
       mode: 'when-ready',
     });
+  });
+
+  it('puxa commits quando a branch está atrás (pull)', async () => {
+    useGitScmStore.setState({ behind: 3, hasUpstream: true, branch: 'feature/x' });
+    const ok = await useGitScmStore.getState().runPrimaryAction();
+    expect(ok).toBe(true);
+    expect(window.nexus.integrations.gitPull).toHaveBeenCalled();
+  });
+
+  it('descarta alterações via discard()', async () => {
+    const ok = await useGitScmStore.getState().discard(['file.ts']);
+    expect(ok).toBe(true);
+    expect(window.nexus.integrations.gitDiscard).toHaveBeenCalledWith(['file.ts']);
+  });
+
+  it('carrega branches e alterna de branch', async () => {
+    await useGitScmStore.getState().loadBranches();
+    expect(useGitScmStore.getState().branches).toEqual(['main', 'feature/x']);
+
+    const ok = await useGitScmStore.getState().checkout('feature/x');
+    expect(ok).toBe(true);
+    expect(window.nexus.integrations.gitCheckout).toHaveBeenCalledWith('feature/x', false);
   });
 });

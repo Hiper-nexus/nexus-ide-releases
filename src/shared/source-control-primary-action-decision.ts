@@ -13,6 +13,7 @@ export type SourceControlPrimaryActionKind =
   | 'stage'
   | 'publish'
   | 'push'
+  | 'pull'
   | 'create_pr'
   | 'enqueue';
 
@@ -135,17 +136,19 @@ export function resolveSourceControlPrimaryActionDecision(
   }
 
   if (inputs.ahead > 0 && inputs.behind > 0) {
-    return disabled(
-      'push',
-      'Enviar',
-      'A branch divergiu do remoto — resolva no terminal',
+    return enabled(
+      'pull',
+      'Puxar',
+      `A branch divergiu (${inputs.behind} atrás, ${inputs.ahead} à frente) — puxe as alterações remotas`,
     );
   }
   if (inputs.behind > 0) {
-    return disabled(
-      'push',
-      'Enviar',
-      'A branch está atrasada em relação ao remoto',
+    return enabled(
+      'pull',
+      'Puxar',
+      inputs.behind === 1
+        ? 'Puxar 1 commit do remoto'
+        : `Puxar ${inputs.behind} commits do remoto`,
     );
   }
   if (inputs.ahead > 0) {

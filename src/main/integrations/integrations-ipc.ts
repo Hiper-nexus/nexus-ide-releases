@@ -7,10 +7,12 @@ import {
   INTEGRATIONS_CHANNELS,
   createPrSchema,
   enqueuePrSchema,
+  gitCheckoutSchema,
   gitCommitSchema,
   gitFileDiffSchema,
   gitLogSchema,
   gitPathsSchema,
+  gitPullSchema,
   listIssuesSchema,
   portForwardSchema,
   remoteWorktreeSchema,
@@ -39,12 +41,16 @@ import { getIntegrationsSettings } from '../persistence/settings-store';
 import { listLinearIssues } from './linear-api';
 import {
   gitBranchPushState,
+  gitBranches,
+  gitCheckoutBranch,
   gitCommitMessage,
   gitCurrentBranch,
   gitDefaultBranch,
   gitDiff,
+  gitDiscard,
   gitFileDiff,
   gitLogOneline,
+  gitPullCurrentBranch,
   gitPushCurrentBranch,
   gitRemoteOrigin,
   gitScmStatus,
@@ -264,6 +270,44 @@ export function registerIntegrationsIpc(): void {
       return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
     }
   });
+
+  ipcMain.handle(INTEGRATIONS_CHANNELS.gitPull, (event, raw) => {
+    const parsed = gitPullSchema.safeParse(raw ?? {});
+    try {
+      return gitPullCurrentBranch(workspaceCwd(event), parsed.success ? parsed.data?.rebase : false);
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle(INTEGRATIONS_CHANNELS.gitDiscard, (event, raw) => {
+    const parsed = gitPathsSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false as const, error: 'caminhos inválidos para descarte' };
+    try {
+      return gitDiscard(workspaceCwd(event), parsed.data.paths);
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle(INTEGRATIONS_CHANNELS.gitBranches, (event) => {
+    try {
+      return gitBranches(workspaceCwd(event));
+    } catch (err) {
+      return { ok: false as const, current: null, branches: [], error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle(INTEGRATIONS_CHANNELS.gitCheckout, (event, raw) => {
+    const parsed = gitCheckoutSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false as const, error: 'dados de branch inválidos' };
+    try {
+      return gitCheckoutBranch(workspaceCwd(event), parsed.data.branch, parsed.data.create);
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
 
   ipcMain.handle(INTEGRATIONS_CHANNELS.forgeCreatePr, async (event, raw) => {
     const parsed = createPrSchema.safeParse(raw);

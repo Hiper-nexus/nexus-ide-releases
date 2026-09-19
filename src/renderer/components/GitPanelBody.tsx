@@ -34,6 +34,7 @@ function FileRow({
   section,
   actionLabel,
   onAction,
+  onDiscard,
   onSelect,
   selected,
   disabled,
@@ -42,6 +43,7 @@ function FileRow({
   section: SelectedGitFile['section'];
   actionLabel: string;
   onAction: () => void;
+  onDiscard?: () => void;
   onSelect: () => void;
   selected: boolean;
   disabled: boolean;
@@ -68,6 +70,18 @@ function FileRow({
             : file.path}
         </span>
       </button>
+      {onDiscard && (
+        <button
+          type="button"
+          className="git-scm__file-action git-scm__file-discard"
+          onClick={onDiscard}
+          disabled={disabled}
+          title="Descartar alterações neste arquivo"
+          aria-label={`Descartar alterações em ${file.path}`}
+        >
+          ↺
+        </button>
+      )}
       <button
         type="button"
         className="git-scm__file-action"
@@ -89,6 +103,8 @@ function Section({
   actionLabel,
   onAction,
   onActionAll,
+  onDiscard,
+  onDiscardAll,
   allLabel,
   disabled,
 }: {
@@ -98,6 +114,8 @@ function Section({
   actionLabel: string;
   onAction: (path: string) => void;
   onActionAll?: () => void;
+  onDiscard?: (path: string) => void;
+  onDiscardAll?: () => void;
   allLabel?: string;
   disabled: boolean;
 }) {
@@ -112,16 +130,29 @@ function Section({
           {title}
           <span className="git-scm__count">{files.length}</span>
         </h4>
-        {onActionAll && allLabel && (
-          <button
-            type="button"
-            className="git-scm__link"
-            onClick={onActionAll}
-            disabled={disabled}
-          >
-            {allLabel}
-          </button>
-        )}
+        <div className="git-scm__section-actions">
+          {onDiscardAll && (
+            <button
+              type="button"
+              className="git-scm__link git-scm__link--danger"
+              onClick={onDiscardAll}
+              disabled={disabled}
+              title="Descartar todas as alterações nesta seção"
+            >
+              Descartar tudo
+            </button>
+          )}
+          {onActionAll && allLabel && (
+            <button
+              type="button"
+              className="git-scm__link"
+              onClick={onActionAll}
+              disabled={disabled}
+            >
+              {allLabel}
+            </button>
+          )}
+        </div>
       </header>
       <ul className="git-scm__files">
         {files.map((file) => (
@@ -136,6 +167,7 @@ function Section({
             disabled={disabled}
             onSelect={() => void selectFile({ path: file.path, section })}
             onAction={() => onAction(file.path)}
+            onDiscard={onDiscard ? () => onDiscard(file.path) : undefined}
           />
         ))}
       </ul>
@@ -458,6 +490,14 @@ export function GitPanelBody() {
   const mutating = useGitScmStore((s) => s.mutating);
   const committing = useGitScmStore((s) => s.committing);
   const remoteBusy = useGitScmStore((s) => s.remoteBusy);
+  const pulling = useGitScmStore((s) => s.pulling);
+  const branches = useGitScmStore((s) => s.branches);
+  const branchesLoading = useGitScmStore((s) => s.branchesLoading);
+  const loadBranches = useGitScmStore((s) => s.loadBranches);
+  const checkout = useGitScmStore((s) => s.checkout);
+  const pull = useGitScmStore((s) => s.pull);
+  const pushCurrentBranch = useGitScmStore((s) => s.pushCurrentBranch);
+  const discard = useGitScmStore((s) => s.discard);
   const error = useGitScmStore((s) => s.error);
   const setTab = useGitScmStore((s) => s.setTab);
   const setCommitMessage = useGitScmStore((s) => s.setCommitMessage);
@@ -482,6 +522,11 @@ export function GitPanelBody() {
   const hasUnresolvedConflicts = useGitScmStore((s) => s.hasUnresolvedConflicts);
   const defaultBranch = useGitScmStore((s) => s.defaultBranch);
   const prView = pr ? presentGitHubPRMergeState(pr) : null;
+
+  const [branchMenuOpen, setBranchMenuOpen] = useState(false);
+  const [newBranchName, setNewBranchName] = useState('');
+  const [branchFilter, setBranchFilter] = useState('');
+  const [branchError, setBranchError] = useState<string | null>(null);
 
   const decision = decideGitPrimaryAction({
     stagedCount: staged.length,
@@ -519,26 +564,163 @@ export function GitPanelBody() {
   const workspaceLabel = workspacePath
     ? workspacePath.split(/[/\\]/).filter(Boolean).slice(-2).join('/')
     : 'sem workspace';
-  const busy = loading || mutating || committing || remoteBusy;
+  const busy = loading || mutating || committing || remoteBusy || pulling;
+
+  const handleCreateBranch = async () => {
+    const name = newBranchName.trim();
+    if (!name) return;
+    setBranchError(null);
+    const ok = await checkout(name, true);
+    if (ok) {
+      setNewBranchName('');
+      setBranchMenuOpen(false);
+    } else {
+      setBranchError('Não foi possível criar a branch');
+    }
+  };
+
+  const handleSwitchBranch = async (target: string) => {
+    if (target === branch) {
+      setBranchMenuOpen(false);
+      return;
+    }
+    setBranchError(null);
+    const ok = await checkout(target, false);
+    if (ok) {
+      setBranchMenuOpen(false);
+    } else {
+      setBranchError(`Não foi possível alternar para ${target}`);
+    }
+  };
+
+  const filteredBranches = useMemo(() => {
+    const q = branchFilter.trim().toLowerCase();
+    if (!q) return branches;
+    return branches.filter((b) => b.toLowerCase().includes(q));
+  }, [branches, branchFilter]);
 
   return (
     <div className="git-scm product-pane" data-testid="git-scm-panel">
       <header className="git-scm__toolbar">
         <div className="git-scm__repo" title={workspacePath ?? undefined}>
           <span className="git-scm__repo-path">{workspaceLabel}</span>
-          <span className="git-scm__branch">{branch ?? '—'}</span>
+          <button
+            type="button"
+            className="git-scm__branch-btn"
+            onClick={() => {
+              const next = !branchMenuOpen;
+              setBranchMenuOpen(next);
+              if (next) {
+                setBranchError(null);
+                void loadBranches();
+              }
+            }}
+            title="Trocar ou criar branch"
+            aria-label={`Branch atual: ${branch ?? 'nenhuma'}. Clique para trocar.`}
+          >
+            <span className="git-scm__branch">{branch ?? '—'}</span>
+            <span className="git-scm__branch-caret">▾</span>
+          </button>
         </div>
-        <button
-          type="button"
-          className="product-pane__btn"
-          onClick={() => void refresh()}
-          disabled={busy}
-          title="Atualizar"
-          aria-label="Atualizar status git"
-        >
-          ↻
-        </button>
+        <div className="git-scm__toolbar-actions">
+          <button
+            type="button"
+            className="product-pane__btn"
+            onClick={() => void pull()}
+            disabled={busy || !hasUpstream}
+            title={hasUpstream ? (behind > 0 ? `Puxar ${behind} commits do remoto (git pull)` : 'Puxar do remoto (git pull)') : 'Sem upstream configurado'}
+            aria-label="Puxar do remoto"
+          >
+            {pulling ? '…' : `↓${behind > 0 ? ` ${behind}` : ''}`}
+          </button>
+          <button
+            type="button"
+            className="product-pane__btn"
+            onClick={() => void pushCurrentBranch()}
+            disabled={busy || ahead === 0}
+            title={ahead > 0 ? `Enviar ${ahead} commit(s) para o remoto (git push)` : 'Nenhum commit pendente para envio'}
+            aria-label="Enviar para o remoto"
+          >
+            {remoteBusy ? '…' : `↑${ahead > 0 ? ` ${ahead}` : ''}`}
+          </button>
+          <button
+            type="button"
+            className="product-pane__btn"
+            onClick={() => void refresh()}
+            disabled={busy}
+            title="Atualizar status git"
+            aria-label="Atualizar status git"
+          >
+            ↻
+          </button>
+        </div>
       </header>
+
+      {branchMenuOpen && (
+        <div className="git-scm__branch-menu" role="dialog" aria-label="Gerenciador de Branches">
+          <div className="git-scm__branch-menu-head">
+            <strong>Branches</strong>
+            <button
+              type="button"
+              className="git-scm__link"
+              onClick={() => setBranchMenuOpen(false)}
+              aria-label="Fechar"
+            >
+              ✕
+            </button>
+          </div>
+          <input
+            className="product-pane__input git-scm__branch-filter"
+            placeholder="Filtrar branches…"
+            value={branchFilter}
+            onChange={(e) => setBranchFilter(e.target.value)}
+            aria-label="Filtrar branches"
+          />
+          <div className="git-scm__branch-list" role="listbox">
+            {branchesLoading ? (
+              <p className="product-pane__meta">Carregando branches…</p>
+            ) : filteredBranches.length === 0 ? (
+              <p className="product-pane__meta">Nenhuma branch encontrada.</p>
+            ) : (
+              filteredBranches.map((b) => (
+                <button
+                  key={b}
+                  type="button"
+                  role="option"
+                  aria-selected={b === branch}
+                  className={`git-scm__branch-item${b === branch ? ' is-current' : ''}`}
+                  onClick={() => void handleSwitchBranch(b)}
+                >
+                  <span className="git-scm__branch-item-name">{b}</span>
+                  {b === branch && <span className="git-scm__branch-item-tag">atual</span>}
+                </button>
+              ))
+            )}
+          </div>
+          <div className="git-scm__new-branch-form">
+            <input
+              className="product-pane__input"
+              placeholder="Nome da nova branch"
+              value={newBranchName}
+              onChange={(e) => setNewBranchName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void handleCreateBranch();
+              }}
+              aria-label="Nome da nova branch"
+            />
+            <button
+              type="button"
+              className="product-pane__btn"
+              disabled={!newBranchName.trim() || mutating}
+              onClick={() => void handleCreateBranch()}
+            >
+              Criar
+            </button>
+          </div>
+          {branchError && <p className="product-pane__error">{branchError}</p>}
+        </div>
+      )}
+
 
       <div className="git-scm__tabs" role="tablist" aria-label="Git">
         <button
@@ -650,9 +832,68 @@ export function GitPanelBody() {
               <h3>Mesa limpa</h3>
               <p>
                 {decision.disabled
-                  ? 'Nada para commitar.'
+                  ? 'Nenhuma alteração pendente no working tree.'
                   : decision.title}
               </p>
+              <div className="git-scm__clean-status">
+                <span className="git-scm__clean-badge">
+                  Branch: <strong>{branch ?? '—'}</strong>
+                </span>
+                {hasUpstream ? (
+                  <span className="git-scm__clean-badge">
+                    {ahead > 0 && behind > 0
+                      ? `${ahead} à frente, ${behind} atrás`
+                      : ahead > 0
+                      ? `${ahead} commit(s) para enviar`
+                      : behind > 0
+                      ? `${behind} commit(s) para puxar`
+                      : 'Sincronizado com o remoto'}
+                  </span>
+                ) : (
+                  <span className="git-scm__clean-badge git-scm__clean-badge--dim">
+                    Sem upstream configurado
+                  </span>
+                )}
+              </div>
+              <div className="git-scm__clean-actions">
+                {behind > 0 && (
+                  <button
+                    type="button"
+                    className="product-pane__btn product-pane__btn--primary"
+                    disabled={busy || pulling}
+                    onClick={() => void pull()}
+                  >
+                    {pulling ? 'Puxando…' : `Puxar ${behind} commit(s)`}
+                  </button>
+                )}
+                {ahead > 0 && (
+                  <button
+                    type="button"
+                    className="product-pane__btn product-pane__btn--primary"
+                    disabled={busy}
+                    onClick={() => void pushCurrentBranch()}
+                  >
+                    {remoteBusy ? 'Enviando…' : `Enviar ${ahead} commit(s)`}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="product-pane__btn"
+                  onClick={() => setTab('history')}
+                >
+                  Ver histórico
+                </button>
+                <button
+                  type="button"
+                  className="product-pane__btn"
+                  onClick={() => {
+                    setBranchMenuOpen(true);
+                    void loadBranches();
+                  }}
+                >
+                  Trocar branch
+                </button>
+              </div>
             </div>
           ) : (
             <div className="git-scm__lists">
@@ -675,6 +916,8 @@ export function GitPanelBody() {
                 disabled={busy}
                 onAction={(path) => void stage([path])}
                 onActionAll={() => void stageAll('unstaged')}
+                onDiscard={(path) => void discard([path])}
+                onDiscardAll={() => void discard(unstaged.map((f) => f.path))}
               />
               <Section
                 title="Untracked"
@@ -685,6 +928,8 @@ export function GitPanelBody() {
                 disabled={busy}
                 onAction={(path) => void stage([path])}
                 onActionAll={() => void stageAll('untracked')}
+                onDiscard={(path) => void discard([path])}
+                onDiscardAll={() => void discard(untracked.map((f) => f.path))}
               />
             </div>
           )}

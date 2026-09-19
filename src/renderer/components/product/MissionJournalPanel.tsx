@@ -5,6 +5,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { missionEventSchema, type MissionEvent } from '../../../shared/mission-events';
 import { useOrchStore } from '../../state/orch-store';
 import { useToastStore } from '../../state/toast-store';
+import { useProductNavigationStore } from '../../state/product-navigation-store';
+import { PixelIcon } from '../PixelIcon';
 
 const CONSUMER_ID = 'ui-main';
 
@@ -221,10 +223,21 @@ export function MissionJournalPanel() {
 
   if (sortedMissions.length === 0) {
     return (
-      <div className="product-pane" data-testid="mission-journal-empty">
-        <p className="product-pane__meta">
-          Nenhuma missão neste workspace. Arme uma missão para ver o journal.
-        </p>
+      <div className="product-pane product-pane--empty-mission" data-testid="mission-journal-empty">
+        <div className="product-empty-card">
+          <PixelIcon name="terminal" size={32} />
+          <h3>Diário da Missão</h3>
+          <p className="product-pane__meta">
+            Nenhuma missão neste workspace. Arme uma missão para ver o journal e acompanhar entregas em tempo real.
+          </p>
+          <button
+            type="button"
+            className="product-pane__btn product-pane__btn--primary"
+            onClick={() => useProductNavigationStore.getState().openNewMission()}
+          >
+            + Armar Nova Missão
+          </button>
+        </div>
       </div>
     );
   }
@@ -244,6 +257,15 @@ export function MissionJournalPanel() {
             </option>
           ))}
         </select>
+        <button
+          type="button"
+          className="product-pane__btn"
+          onClick={() => useProductNavigationStore.getState().openNewMission()}
+          title="Armar nova missão"
+          aria-label="Nova missão"
+        >
+          +
+        </button>
         <button
           type="button"
           className="product-pane__btn"

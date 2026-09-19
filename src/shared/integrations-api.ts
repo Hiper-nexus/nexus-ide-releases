@@ -13,6 +13,7 @@ import type {
   BranchReviewResult,
   CreatePrResult,
   EnqueuePrResult,
+  GitBranchesResult,
   GitHubAuthErrorPayload,
   GitHubDeviceCodePayload,
   GitHubDeviceFlowIpcResult,
@@ -55,6 +56,10 @@ export interface IntegrationsApi {
     untracked?: boolean;
   }): Promise<GitFileDiffResult>;
   gitPush(): Promise<GitMutateResult>;
+  gitPull(opts?: { rebase?: boolean }): Promise<GitMutateResult>;
+  gitDiscard(paths: string[]): Promise<GitMutateResult>;
+  gitBranches(): Promise<GitBranchesResult>;
+  gitCheckout(branch: string, create?: boolean): Promise<GitMutateResult>;
   createPr(req: {
     title: string;
     body?: string;

@@ -62,6 +62,7 @@ export function gitPrimaryActionBusyLabel(
   if (flags.committing) return 'Commitando…';
   if (flags.prBusy && decision.kind === 'enqueue') return 'Enfileirando…';
   if (flags.remoteBusy) {
+    if (decision.kind === 'pull') return 'Puxando…';
     if (decision.kind === 'create_pr') return 'Abrindo PR…';
     if (decision.kind === 'publish') return 'Publicando…';
     return 'Enviando…';
@@ -75,6 +76,7 @@ export async function dispatchGitPrimaryAction(
     commit: () => Promise<boolean>;
     stageAll: () => Promise<void>;
     push: () => Promise<boolean>;
+    pull: () => Promise<boolean>;
     createPr: () => Promise<boolean>;
     enqueuePr: () => Promise<boolean>;
   },
@@ -89,6 +91,8 @@ export async function dispatchGitPrimaryAction(
     case 'publish':
     case 'push':
       return deps.push();
+    case 'pull':
+      return deps.pull();
     case 'create_pr':
       return deps.createPr();
     case 'enqueue':

@@ -397,6 +397,34 @@
   word-break: break-all;
 }
 
+.product-empty-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: var(--space-6, 32px) var(--space-4, 16px);
+  gap: var(--space-3, 12px);
+  color: var(--text-dim, #aaa2a8);
+}
+
+.product-empty-card h3 {
+  margin: 0;
+  font-size: var(--text-sm, 13px);
+  font-weight: 600;
+  color: var(--text, #faf7f9);
+}
+
+.product-pane__btn--primary {
+  background: var(--accent, #ff4f8b);
+  color: #fff;
+  font-weight: 600;
+}
+
+.product-pane__btn--primary:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
 
 
 /* ---- Command blocks menu (pane toolbar) ---- */

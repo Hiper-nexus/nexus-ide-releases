@@ -123,6 +123,90 @@ export function gitPushCurrentBranch(cwd: string, branch: string): GitMutateResu
   return { ok: true };
 }
 
+export function gitPullCurrentBranch(cwd: string, rebase = false): GitMutateResult {
+  const unsafe = refuseUnsafeConfig(cwd);
+  if (unsafe) return { ok: false, error: unsafe };
+  const args = rebase ? ['pull', '--rebase'] : ['pull'];
+  const r = git(cwd, args);
+  if (!r.ok) {
+    return { ok: false, error: r.stderr.trim() || r.stdout.trim() || `git pull exit ${r.code}` };
+  }
+  return { ok: true };
+}
+
+export function gitDiscard(cwd: string, paths: string[]): GitMutateResult {
+  const unsafe = refuseUnsafeConfig(cwd);
+  if (unsafe) return { ok: false, error: unsafe };
+  const normalized = normalizePaths(paths);
+  if ('error' in normalized) return { ok: false, error: normalized.error };
+  const restoreRes = git(cwd, ['restore', '--', ...normalized]);
+  const cleanRes = git(cwd, ['clean', '-fd', '--', ...normalized]);
+  if (!restoreRes.ok && !cleanRes.ok) {
+    return {
+      ok: false,
+      error: restoreRes.stderr.trim() || cleanRes.stderr.trim() || 'falha ao descartar alterações',
+    };
+  }
+  return { ok: true };
+}
+
+export function gitBranches(cwd: string): {
+  ok: boolean;
+  current: string | null;
+  branches: string[];
+  error?: string;
+} {
+  const unsafe = refuseUnsafeConfig(cwd);
+  if (unsafe) return { ok: false, current: null, branches: [], error: unsafe };
+  const r = git(cwd, ['branch', '--list', '--no-color']);
+  if (!r.ok) {
+    return {
+      ok: false,
+      current: null,
+      branches: [],
+      error: r.stderr.trim() || `git branch exit ${r.code}`,
+    };
+  }
+  let current: string | null = null;
+  const branches: string[] = [];
+  for (const line of r.stdout.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (trimmed.startsWith('*')) {
+      const name = trimmed.slice(1).trim();
+      current = name;
+      branches.push(name);
+    } else {
+      branches.push(trimmed);
+    }
+  }
+  return { ok: true, current, branches };
+}
+
+export function gitCheckoutBranch(
+  cwd: string,
+  branch: string,
+  create = false,
+): GitMutateResult {
+  const unsafe = refuseUnsafeConfig(cwd);
+  if (unsafe) return { ok: false, error: unsafe };
+  const name = branch.trim();
+  if (!name || name === 'HEAD') return { ok: false, error: 'nome de branch inválido' };
+  if (!SAFE_BRANCH_NAME.test(name) || name.startsWith('-') || name.includes('..')) {
+    return { ok: false, error: `nome de branch inválido: ${name}` };
+  }
+  const args = create ? ['checkout', '-b', name] : ['checkout', name];
+  const r = git(cwd, args);
+  if (!r.ok) {
+    return {
+      ok: false,
+      error: r.stderr.trim() || r.stdout.trim() || `git checkout exit ${r.code}`,
+    };
+  }
+  return { ok: true };
+}
+
+
 /**
  * Remote-sync view of a branch for the PR push gate (emdash pattern:
  * needsPush = !isOnRemote || aheadCount > 0). Invalid/unknown branch names

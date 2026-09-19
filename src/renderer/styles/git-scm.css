@@ -649,3 +649,164 @@
 .git-scm__issue-action {
   flex-shrink: 0;
 }
+
+/* Branch switcher & toolbar enhancements */
+.git-scm__branch-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  padding: 1px 4px;
+  border-radius: var(--radius-sm, 4px);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s ease;
+}
+
+.git-scm__branch-btn:hover {
+  background: color-mix(in srgb, var(--accent, #ff4f8b) 14%, transparent);
+}
+
+.git-scm__branch-caret {
+  font-size: 10px;
+  color: var(--text-dim, #aaa2a8);
+}
+
+.git-scm__toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.git-scm__branch-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border-strong, rgb(255 255 255 / 0.16));
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-elevated, #111013);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  animation: gitFadeIn 0.15s ease-out;
+}
+
+@keyframes gitFadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.git-scm__branch-menu-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: var(--text-xs, 12px);
+  color: var(--text, #faf7f9);
+}
+
+.git-scm__branch-filter {
+  font-size: var(--text-xs, 12px);
+}
+
+.git-scm__branch-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 160px;
+  overflow-y: auto;
+  border: 1px solid var(--border, rgb(255 255 255 / 0.08));
+  border-radius: var(--radius-sm, 4px);
+  padding: 4px;
+  background: var(--bg, #080709);
+}
+
+.git-scm__branch-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  color: var(--text-dim, #aaa2a8);
+  font-size: var(--text-xs, 12px);
+  cursor: pointer;
+  text-align: left;
+}
+
+.git-scm__branch-item:hover {
+  color: var(--text, #faf7f9);
+  background: color-mix(in srgb, var(--accent, #ff4f8b) 12%, transparent);
+}
+
+.git-scm__branch-item.is-current {
+  color: var(--accent, #ff4f8b);
+  font-weight: 600;
+}
+
+.git-scm__branch-item-tag {
+  font-size: var(--text-2xs, 10px);
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent, #ff4f8b) 20%, transparent);
+}
+
+.git-scm__new-branch-form {
+  display: flex;
+  gap: 6px;
+}
+
+.git-scm__new-branch-form .product-pane__input {
+  flex: 1;
+}
+
+.git-scm__file-discard {
+  color: var(--text-dim, #aaa2a8);
+}
+
+.git-scm__file-discard:hover {
+  color: var(--danger, #ff6b4a) !important;
+  background: color-mix(in srgb, var(--danger, #ff6b4a) 15%, transparent) !important;
+}
+
+.git-scm__section-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.git-scm__link--danger {
+  color: var(--danger, #ff6b4a);
+}
+
+.git-scm__link--danger:hover {
+  text-decoration: underline;
+}
+
+.git-scm__clean-status {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0;
+}
+
+.git-scm__clean-badge {
+  font-size: var(--text-2xs, 11px);
+  padding: 3px 8px;
+  border-radius: var(--radius-sm, 4px);
+  background: color-mix(in srgb, var(--border, rgb(255 255 255 / 0.1)) 40%, transparent);
+  color: var(--text, #faf7f9);
+}
+
+.git-scm__clean-badge--dim {
+  color: var(--text-dim, #aaa2a8);
+}
+
+.git-scm__clean-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
