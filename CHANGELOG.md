@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.59 — Paridade de Git com Orca, empty states amigáveis e velocidade de tokens contínua
+
+- **Paridade de Git / Source Control com Orca (F-584)**: menu interativo de branches com alternância imediata e criação de nova branch (`git checkout` / `checkout -b`), botões dedicados de pull e push com badges de contadores na barra de ferramentas, descarte seguro de arquivos modificados ou untracked (`git checkout --` / `git clean -f`) e ação primária inteligente que assume pull quando o branch local estiver atrás do repositório remoto.
+- **Painéis Laterais Acolhedores e Funcionais (F-584)**: estados vazios dos painéis contextuais de Missão, Busca, Skills e Git agora trazem cartões explicativos com botões de ação direta: "+ Armar Nova Missão", busca guiada de arquivos/símbolos e botão para abrir o catálogo de skills diretamente no Marketplace.
+- **Velocidade de Tokens Sempre Visível nos Agentes (F-585)**: o chip de medição de velocidade (tok/s e TTFT) permanece visível nos panes de IA em estado pronto (`⚡ — tok/s`) com estilo discreto e tooltip explicativo, mudando para ativo com destaque em acento assim que a LLM entra em streaming e encerra rodadas.
+
 ## 0.76.58 — Resiliência de failover no Claude e organização das abas no grid
 
 - **Resiliência e Desacoplamento no Failover Claude (F-583)**: contas secundárias com renovação de token OAuth falhando/pendente são filtradas antes da escolha no failover automático, prevenindo loops de erro. O toast de erro não acusa mais a conta ativa com o motivo da secundária, e a janela de quarentena de refresh foi reduzida para 2 minutos.

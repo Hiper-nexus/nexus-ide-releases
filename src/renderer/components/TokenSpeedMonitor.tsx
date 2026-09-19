@@ -352,8 +352,8 @@ export function TokenSpeedMonitor({ paneId }: { paneId?: string | null }) {
  *
  * Diferente do painel, aqui a busca é ESTRITA: um pane sem medição não cai no
  * agregado do workspace, porque exibir na barra do pane A o número que o pane
- * B produziu é atribuir a ele uma velocidade que ele nunca teve. Sem amostra
- * própria, o chip não ocupa espaço.
+ * B produziu é atribuir a ele uma velocidade que ele nunca teve. Em repouso,
+ * o chip exibe o estado pronto ('— tok/s') sem inventar números.
  */
 export function TokenSpeedChip({ paneId }: { paneId?: string | null }) {
   const snapshot = useTokenSpeedStore((s) => s.snapshot)
@@ -365,13 +365,24 @@ export function TokenSpeedChip({ paneId }: { paneId?: string | null }) {
       ? deriveTokenSpeedView(snapshot, paneId)
       : null
     : deriveTokenSpeedView(snapshot, null)
-  if (!view || (!view.last && !view.streaming)) return null
-  const speed = view.last?.tokensPerSecond ?? null
+
+  const speed = view?.last?.tokensPerSecond ?? null
+  const streaming = view?.streaming ?? false
+  const turns = view?.turns ?? 0
+  const isIdle = !view?.last && !streaming
+
+  const title = view?.last
+    ? `Última resposta: ${formatSpeed(speed)} tok/s · TTFT ${formatMs(view.last?.ttftMs ?? null)} · ${turns} rodada(s)`
+    : streaming
+      ? 'Modelo gerando tokens em tempo real…'
+      : 'Velocidade do modelo: aguardando resposta para medir tok/s e TTFT'
+
   return (
     <span
       className="tokspeed-chip"
-      data-streaming={view.streaming ? 'on' : 'off'}
-      title={`Última resposta: ${formatSpeed(speed)} tok/s · TTFT ${formatMs(view.last?.ttftMs ?? null)} · ${view.turns} rodada(s)`}
+      data-streaming={streaming ? 'on' : 'off'}
+      data-idle={isIdle ? 'true' : undefined}
+      title={title}
     >
       <PixelIcon name="bolt" size={10} />
       {formatSpeed(speed)}

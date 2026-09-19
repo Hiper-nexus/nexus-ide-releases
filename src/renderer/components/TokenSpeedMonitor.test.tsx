@@ -209,9 +209,12 @@ describe('TokenSpeedMonitor', () => {
 })
 
 describe('TokenSpeedChip', () => {
-  it('não ocupa espaço enquanto não houver medição', () => {
+  it('mostra estado em repouso com traço enquanto não houver medição', () => {
     render(<TokenSpeedChip />)
-    expect(container.querySelector('.tokspeed-chip')).toBeNull()
+    const chip = container.querySelector('.tokspeed-chip')
+    expect(chip).not.toBeNull()
+    expect(chip?.textContent).toContain('—')
+    expect(chip?.getAttribute('data-idle')).toBe('true')
   })
 
   it('aparece com a última velocidade medida', () => {

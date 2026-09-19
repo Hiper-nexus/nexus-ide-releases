@@ -213,6 +213,10 @@
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
 }
+.tokspeed-chip[data-idle='true'] {
+  color: var(--text-faint);
+  opacity: 0.75;
+}
 .tokspeed-chip[data-streaming='on'] {
   color: var(--accent);
 }

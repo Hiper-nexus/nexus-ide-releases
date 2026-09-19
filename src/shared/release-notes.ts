@@ -4152,6 +4152,50 @@ export const RELEASE_07647: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.59',
+  date: '2026-09-19',
+  codename: 'Paridade de Git com Orca, empty states amigáveis e velocidade de tokens contínua',
+  summary:
+    'Paridade completa de Source Control com o Orca (troca e criação de branches, puxar alterações com pull, descartar alterações ' +
+    'individuais ou em lote), empty states acolhedores e interativos nos painéis contextuais laterais, e visibilidade ' +
+    'contínua do medidor de velocidade de tokens (tok/s e TTFT) em repouso nos panes de agentes.',
+  highlights: [
+    {
+      title: 'Paridade de Git / Source Control com Orca (F-584)',
+      detail:
+        'Menu de branches completo com alternância imediata e criação de nova branch (git checkout / checkout -b), ' +
+        'botões dedicados de pull e push com contadores na barra de ferramentas, descarte seguro de arquivos modificados ou untracked ' +
+        '(git checkout -- / git clean -f) e ação primária de pull quando atrás do repositório remoto.',
+    },
+    {
+      title: 'Painéis laterais acolhedores e funcionais (F-584)',
+      detail:
+        'Estados vazios de Missão, Busca, Skills e Git agora trazem cartões explicativos com ações diretas: "+ Armar Nova Missão", ' +
+        'busca orientada por símbolos e arquivos, e botão para abrir o catálogo de skills diretamente no Marketplace.',
+    },
+    {
+      title: 'Velocidade de tokens sempre visível nos agentes (F-585)',
+      detail:
+        'O chip de velocidade de geração (tok/s e TTFT) permanece visível nos panes de IA em estado pronto ("— tok/s"), ' +
+        'confirmando a prontidão do medidor sem exibir números fictícios antes da resposta do modelo.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'F-584: Paridade de Source Control e resolução de telas vazias nos painéis contextuais',
+      detail:
+        'Implementados IPC e workspace handlers de branches, pull e discard com sanitização rígida de argumentos Git; ' +
+        'atualizados stores do renderer e empty states com botões acionáveis.',
+    },
+    {
+      title: 'F-585: Chip de velocidade de tokens invisível em repouso',
+      detail:
+        'TokenSpeedChip passa a renderizar estado em repouso com indicador data-idle e tooltip explicativo nos panes cli-agent.',
+    },
+  ],
+};
+
+export const RELEASE_07658: AppRelease = {
   version: '0.76.58',
   date: '2026-09-19',
   codename: 'Resiliência de providers no failover, desambiguação e nova missão nas abas do grid',

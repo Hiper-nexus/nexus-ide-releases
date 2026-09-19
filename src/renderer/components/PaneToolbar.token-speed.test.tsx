@@ -91,10 +91,12 @@ afterEach(() => {
 });
 
 describe('PaneToolbar — chip de velocidade de tokens', () => {
-  it('não ocupa espaço no pane sem medição', () => {
+  it('exibe estado em repouso no pane de agente sem medição', () => {
     const { host, root } = mount(agentPane);
     mounted = root;
-    expect(host.querySelector('.tokspeed-chip')).toBeNull();
+    const chip = host.querySelector('.tokspeed-chip');
+    expect(chip).not.toBeNull();
+    expect(chip?.textContent).toContain('—');
   });
 
   it('mostra a velocidade DO PANE, não o agregado do workspace', () => {
@@ -141,8 +143,11 @@ describe('PaneToolbar — chip de velocidade de tokens', () => {
     });
     const { host, root } = mount(agentPane);
     mounted = root;
-    // Exibir 900 aqui seria atribuir a este pane a velocidade do vizinho.
-    expect(host.querySelector('.tokspeed-chip')).toBeNull();
+    // Exibir 900 aqui seria atribuir a este pane a velocidade do vizinho: mostra repouso (—).
+    const chip = host.querySelector('.tokspeed-chip');
+    expect(chip).not.toBeNull();
+    expect(chip?.textContent).toContain('—');
+    expect(chip?.textContent).not.toContain('900');
   });
 
   it('pane que não é agente nunca recebe o chip', () => {
