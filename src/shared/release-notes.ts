@@ -4203,6 +4203,12 @@ export const CURRENT_RELEASE: AppRelease = {
         'Eliminado o travamento de prompts e cutucadas de handoff que aguardavam Enter manual: ' +
         'retentativas adaptativas com backoff (600ms, 1200ms, 2000ms) e alternância de \\r e \\r\\n garantem início imediato do turno.',
     },
+    {
+      title: 'Paridade do dialeto cron de automações com o Orca (F-590)',
+      detail:
+        'Expansão de passos N/step (sequência aberta N-max/step) e restrição lexical POSIX/vixie para dias, ' +
+        'garantindo paridade exata com o Orca e evitando disparos indevidos em agendamentos recorrentes.',
+    },
   ],
   fixes: [
     {
@@ -4238,6 +4244,12 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'scheduleAdaptiveEnterRescue em tool-util e retentativas adaptativas em worker-handoff-enforcement e idle-delivery ' +
         're-enviam o sinal de submissão enquanto o TUI permanecer idle, prevenindo bloqueio autônomo.',
+    },
+    {
+      title: 'F-590: Divergência na expansão de passo e semântica de dia em expressões cron de automação',
+      detail:
+        'parseCronField expande N/step até o teto do campo e isCronDayFieldRestricted preserva a semântica ' +
+        'lexical de curingas (*), eliminando disparos excessivos em intervalos fracionados.',
     },
   ],
 };
