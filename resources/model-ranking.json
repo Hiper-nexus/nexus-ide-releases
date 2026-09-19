@@ -24,9 +24,9 @@
       "rank": 1
     },
     {
-      "id": "agy/gemini-3.8-pro-high",
+      "id": "agy/gemini-3.8-flash-high",
       "adapterId": "agy",
-      "modelId": "gemini-3.8-pro-high",
+      "modelId": "gemini-3.8-flash-high",
       "overall": 74,
       "coding": 75,
       "reasoning": 76,

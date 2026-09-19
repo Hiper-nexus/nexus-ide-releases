@@ -213,16 +213,22 @@
       ]
     },
     "agy": {
-      "default": "gemini-3.8-pro-high",
+      "default": "gemini-3.8-flash-high",
       "models": [
         {
-          "id": "gemini-3.8-pro-high",
-          "availability": "paid",
+          "id": "gemini-3.8-flash-high",
+          "availability": "cheap",
           "costTier": "high",
           "source": "remote"
         },
         {
-          "id": "gemini-3.8-flash-high",
+          "id": "gemini-3.8-flash-medium",
+          "availability": "cheap",
+          "costTier": "medium",
+          "source": "remote"
+        },
+        {
+          "id": "gemini-3.8-flash-low",
           "availability": "cheap",
           "costTier": "low",
           "source": "remote"

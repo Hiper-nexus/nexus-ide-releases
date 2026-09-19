@@ -208,13 +208,14 @@ describe('published catalog JSON', () => {
     const agy = PUBLISHED_MODEL_CATALOG.adapters?.agy;
     const ids = agy?.models?.map((model) => model.id) ?? [];
 
-    // Doutrina do produto (2026-09-14): o agy abre sempre na geração mais
-    // recente com reasoning high — 3.8 pro hoje.
-    expect(agy?.default).toBe('gemini-3.8-pro-high');
+    // Doutrina do produto: o agy abre sempre na geração mais recente
+    // com reasoning high — 3.8 flash high hoje (gemini-3.8-pro não existe).
+    expect(agy?.default).toBe('gemini-3.8-flash-high');
     expect(ids).toEqual(
       expect.arrayContaining([
-        'gemini-3.8-pro-high',
         'gemini-3.8-flash-high',
+        'gemini-3.8-flash-medium',
+        'gemini-3.8-flash-low',
         'gemini-3.7-flash-high',
         'gemini-3.7-flash-medium',
         'gemini-3.7-flash-low',
@@ -235,11 +236,11 @@ describe('published catalog JSON', () => {
         ?.quality,
     ).toBeUndefined();
     expect(BUILTIN_MODEL_CATALOG.adapters?.agy?.default).toBe(
-      'gemini-3.8-pro-high',
+      'gemini-3.8-flash-high',
     );
     expect(
-      modelCatalogInfo(BUILTIN_MODEL_CATALOG, 'agy', 'gemini-3.8-pro-high')?.id,
-    ).toBe('gemini-3.8-pro-high');
+      modelCatalogInfo(BUILTIN_MODEL_CATALOG, 'agy', 'gemini-3.8-flash-high')?.id,
+    ).toBe('gemini-3.8-flash-high');
   });
 });
 

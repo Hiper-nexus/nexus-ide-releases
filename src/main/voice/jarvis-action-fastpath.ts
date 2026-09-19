@@ -128,7 +128,7 @@ export function jarvisActionFastPath(
       return {
         say: say(ctx, 'Abrindo o Antigravity com Gemini 3.8 em esforço máximo.'),
         expectReply: false,
-        action: { type: 'open_agent', agentId: 'agy', model: 'gemini-3.8-pro-high' },
+        action: { type: 'open_agent', agentId: 'agy', model: 'gemini-3.8-flash-high' },
       };
     }
     if (agentId === 'kimi') {

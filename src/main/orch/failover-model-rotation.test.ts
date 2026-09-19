@@ -3,8 +3,8 @@ import { pickModelRotation } from './failover';
 
 describe('pickModelRotation (F-520: failover de modelo, conta sadia)', () => {
   it('migra id aposentado para a linhagem ativa', () => {
-    expect(pickModelRotation('gemini-3.1-pro-high', 'gemini-3.8-pro-high')).toBe(
-      'gemini-3.8-pro-high',
+    expect(pickModelRotation('gemini-3.1-pro-high', 'gemini-3.8-flash-high')).toBe(
+      'gemini-3.8-flash-high',
     );
     expect(pickModelRotation('gpt-5.4-pro', 'gpt-5.6-sol')).toBe('gpt-5.6-sol');
   });
@@ -24,7 +24,7 @@ describe('pickModelRotation (F-520: failover de modelo, conta sadia)', () => {
   it('pane sem modelo explícito não rotaciona: já roda no default do adapter', () => {
     // Respawnar "no default" repetiria o mesmo modelo rejeitado com toast de
     // sucesso — a orientação certa (atualizar CLI) vem do toast bloqueado.
-    expect(pickModelRotation(undefined, 'gemini-3.8-pro-high')).toBeUndefined();
+    expect(pickModelRotation(undefined, 'gemini-3.8-flash-high')).toBeUndefined();
     expect(pickModelRotation(undefined, undefined)).toBeUndefined();
   });
 });

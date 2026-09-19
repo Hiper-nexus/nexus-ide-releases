@@ -4179,6 +4179,12 @@ export const CURRENT_RELEASE: AppRelease = {
         'O chip de velocidade de geração (tok/s e TTFT) permanece visível nos panes de IA em estado pronto ("— tok/s"), ' +
         'confirmando a prontidão do medidor sem exibir números fictícios antes da resposta do modelo.',
     },
+    {
+      title: 'Correção de catálogo e roteamento do Google Gemini 3.8 (F-586)',
+      detail:
+        'Remoção de referências ao modelo inexistente gemini-3.8-pro e promoção oficial de gemini-3.8-flash-high ' +
+        'como padrão do Antigravity/AGY, alinhando catálogo, squads, prompts Jarvis e migração automática de legado.',
+    },
   ],
   fixes: [
     {
@@ -4191,6 +4197,11 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'F-585: Chip de velocidade de tokens invisível em repouso',
       detail:
         'TokenSpeedChip passa a renderizar estado em repouso com indicador data-idle e tooltip explicativo nos panes cli-agent.',
+    },
+    {
+      title: 'F-586: Modelo inexistente gemini-3.8-pro corrigido para gemini-3.8-flash-high',
+      detail:
+        'Alinhado catálogo oficial da CLI Antigravity, corrigidos defaults em agy.json, model-catalog, squads e migração no spawn.',
     },
   ],
 };

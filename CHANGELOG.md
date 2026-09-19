@@ -5,6 +5,7 @@
 - **Paridade de Git / Source Control com Orca (F-584)**: menu interativo de branches com alternância imediata e criação de nova branch (`git checkout` / `checkout -b`), botões dedicados de pull e push com badges de contadores na barra de ferramentas, descarte seguro de arquivos modificados ou untracked (`git checkout --` / `git clean -f`) e ação primária inteligente que assume pull quando o branch local estiver atrás do repositório remoto.
 - **Painéis Laterais Acolhedores e Funcionais (F-584)**: estados vazios dos painéis contextuais de Missão, Busca, Skills e Git agora trazem cartões explicativos com botões de ação direta: "+ Armar Nova Missão", busca guiada de arquivos/símbolos e botão para abrir o catálogo de skills diretamente no Marketplace.
 - **Velocidade de Tokens Sempre Visível nos Agentes (F-585)**: o chip de medição de velocidade (tok/s e TTFT) permanece visível nos panes de IA em estado pronto (`⚡ — tok/s`) com estilo discreto e tooltip explicativo, mudando para ativo com destaque em acento assim que a LLM entra em streaming e encerra rodadas.
+- **Correção de Modelos do Google Gemini 3.8 (F-586)**: remoção do modelo inexistente `gemini-3.8-pro` e promoção de `gemini-3.8-flash-high` como default oficial do Antigravity/AGY, corrigindo o catálogo de modelos, definições de squad, prompts Jarvis e garantindo migração transparente de IDs legados em tempo de spawn.
 
 ## 0.76.58 — Resiliência de failover no Claude e organização das abas no grid
 

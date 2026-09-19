@@ -191,7 +191,7 @@ describe('resolveOrchestratorRuntime', () => {
         defaultAccountId: '',
         accounts: [],
       }).model,
-    ).toBe('gemini-3.8-pro-high');
+    ).toBe('gemini-3.8-flash-high');
   });
 
   it('uses only an available credentialed account owned by the selected provider', () => {

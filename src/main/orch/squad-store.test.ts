@@ -680,7 +680,7 @@ describe('squad-store save path', () => {
 
     expect(getSquad('normalized-save')).toBeNull();
     expect(candidate.squad.agents[0]).toMatchObject({
-      model: 'gemini-3.8-pro-high',
+      model: 'gemini-3.8-flash-high',
       allowedTools: null,
     });
     expect(candidate.squad.agents[1]).toMatchObject({ allowedTools: [] });
@@ -941,7 +941,7 @@ describe('squad-store save path', () => {
     expect(candidate.canonicalSha256).toMatch(/^[a-f0-9]{64}$/);
     expect(candidate.squads[0]).toMatchObject({ builtin: false });
     expect(candidate.squads[0].agents[0]).toMatchObject({
-      model: 'gemini-3.8-pro-high',
+      model: 'gemini-3.8-flash-high',
       allowedTools: null,
     });
     expect(candidate.squads[0].agents[1]).toMatchObject({ allowedTools: [] });

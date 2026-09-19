@@ -346,7 +346,7 @@ describe('jarvisActionFastPath', () => {
     expect(jarvisActionFastPath('abre agy', CTX)?.action).toEqual({
       type: 'open_agent',
       agentId: 'agy',
-      model: 'gemini-3.8-pro-high',
+      model: 'gemini-3.8-flash-high',
     });
     expect(jarvisActionFastPath('abre o kimi', CTX)?.action).toEqual({
       type: 'open_agent',

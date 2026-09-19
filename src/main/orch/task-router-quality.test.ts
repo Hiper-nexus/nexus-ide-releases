@@ -171,7 +171,7 @@ describe('tier critical com diversidade instalada', () => {
     );
     expect(decision!.tier).toBe('critical');
     expect(decision!.adapterId).toBe('agy');
-    expect(decision!.model).toBe('gemini-3.8-pro-high');
+    expect(decision!.model).toBe('gemini-3.8-flash-high');
     expect(decision!.reason).not.toContain('melhor opção instalada');
   });
 });

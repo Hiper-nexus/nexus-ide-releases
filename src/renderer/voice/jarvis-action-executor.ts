@@ -885,7 +885,7 @@ export async function executeJarvisAction(
       if (agentId === 'codex') {
         model = action.model || 'gpt-5.6-luna';
       } else if (agentId === 'agy') {
-        model = action.model || 'gemini-3.8-pro-high';
+        model = action.model || 'gemini-3.8-flash-high';
         effort = 'max';
       } else if (agentId === 'kimi') {
         model = action.model || 'kimi-code/k3';
@@ -1237,7 +1237,7 @@ export async function executeJarvisAction(
     if (terminalCommand === 'codex') {
       terminalCommand = 'codex --model gpt-5.6-luna';
     } else if (terminalCommand === 'agy' || terminalCommand === 'antigravity') {
-      terminalCommand = 'agy --model gemini-3.8-pro-high --effort max';
+      terminalCommand = 'agy --model gemini-3.8-flash-high --effort max';
     } else if (terminalCommand === 'kimi') {
       terminalCommand = 'kimi --model kimi-code/k3';
     } else if (terminalCommand === 'devin') {
