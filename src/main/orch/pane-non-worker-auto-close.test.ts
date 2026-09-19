@@ -621,4 +621,88 @@ describe('pane guardian (0.76.45): carência pós-acordar e gate cego', () => {
     vi.advanceTimersByTime(5_000);
     expect(logs.filter((m) => m.includes('gate de pressão está cego'))).toHaveLength(1);
   });
+
+  it('sob pressão de memória, estaciona worker de missão ocioso via parkPane', () => {
+    const idle = new Set<string>(['pty-worker-1', 'pty-orch']);
+    const parked: Array<{ paneId: string; reason: string }> = [];
+    const closed: string[] = [];
+    const refs = new Map<string, NonWorkerPaneRef>([
+      ['pty-worker-1', refFor('pty-worker-1', { role: 'worker', missionId: 'm-123' })],
+      ['pty-orch', refFor('pty-orch', { role: 'orchestrator', missionId: 'm-123' })],
+    ]);
+    const deps: NonWorkerAutoCloseDeps = {
+      isEnabled: () => true,
+      getPaneRef: (sid) => refs.get(sid) ?? null,
+      isIdle: (sid) => idle.has(sid),
+      closePane: (paneId) => { closed.push(paneId); return true; },
+      parkPane: (paneId, reason) => {
+        parked.push({ paneId, reason });
+        idle.delete(paneId.replace('pane-', ''));
+        return 'parked';
+      },
+      ttlMs: 30 * 60_000,
+      log: () => {},
+      listIdleSessions: () => [...idle],
+      sweepIntervalMs: 1_000,
+      isUnderMemoryPressure: () => true,
+    };
+    initNonWorkerAutoClose(deps);
+    vi.advanceTimersByTime(1_000); // visto idle
+    vi.advanceTimersByTime(1_000); // pressão dispara estacionamento
+    expect(parked).toEqual([{ paneId: 'pane-pty-worker-1', reason: 'memory-pressure' }]);
+    expect(closed).toHaveLength(0);
+    // Orquestrador continua intocado
+    expect(idle.has('pty-orch')).toBe(true);
+  });
+
+  it('sem parkPane, worker de missão ocioso NUNCA é fechado destrutivamente sob pressão', () => {
+    const idle = new Set<string>(['pty-worker-1']);
+    const closed: string[] = [];
+    const refs = new Map<string, NonWorkerPaneRef>([
+      ['pty-worker-1', refFor('pty-worker-1', { role: 'worker', missionId: 'm-123' })],
+    ]);
+    const deps: NonWorkerAutoCloseDeps = {
+      isEnabled: () => true,
+      getPaneRef: (sid) => refs.get(sid) ?? null,
+      isIdle: (sid) => idle.has(sid),
+      closePane: (paneId) => { closed.push(paneId); return true; },
+      ttlMs: 30 * 60_000,
+      log: () => {},
+      listIdleSessions: () => [...idle],
+      sweepIntervalMs: 1_000,
+      isUnderMemoryPressure: () => true,
+    };
+    initNonWorkerAutoClose(deps);
+    vi.advanceTimersByTime(5_000);
+    expect(closed).toHaveLength(0);
+  });
+
+  it('após vencer o TTL, worker de missão ocioso é estacionado se parkPane existir', () => {
+    const idle = new Set<string>(['pty-worker-old']);
+    const parked: Array<{ paneId: string; reason: string }> = [];
+    const closed: string[] = [];
+    const refs = new Map<string, NonWorkerPaneRef>([
+      ['pty-worker-old', refFor('pty-worker-old', { role: 'worker', missionId: 'm-456' })],
+    ]);
+    const deps: NonWorkerAutoCloseDeps = {
+      isEnabled: () => true,
+      getPaneRef: (sid) => refs.get(sid) ?? null,
+      isIdle: (sid) => idle.has(sid),
+      closePane: (paneId) => { closed.push(paneId); return true; },
+      parkPane: (paneId, reason) => {
+        parked.push({ paneId, reason });
+        idle.delete(paneId.replace('pane-', ''));
+        return 'parked';
+      },
+      ttlMs: 10_000,
+      log: () => {},
+      listIdleSessions: () => [...idle],
+      sweepIntervalMs: 1_000,
+      isUnderMemoryPressure: () => false,
+    };
+    initNonWorkerAutoClose(deps);
+    vi.advanceTimersByTime(11_000);
+    expect(parked).toEqual([{ paneId: 'pane-pty-worker-old', reason: 'idle' }]);
+    expect(closed).toHaveLength(0);
+  });
 });

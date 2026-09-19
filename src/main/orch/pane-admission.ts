@@ -68,11 +68,14 @@ export interface PaneAdmissionLimits {
  */
 export function limitsForMachine(totalMB: number): PaneAdmissionLimits {
   const total = Number.isFinite(totalMB) && totalMB > 0 ? totalMB : 24 * 1024;
+  // F-588: Em máquinas inferiores (<= 8 GB), 2 panes é o limite de segurança;
+  // em 12 GB, 3; em 16 GB+, 4 a 12 proporcional à RAM livre.
+  const minPanes = total <= 8 * 1024 ? 2 : total <= 12 * 1024 ? 3 : 4;
   const byRam = Math.floor((total - 8 * 1024) / 1280);
   return Object.freeze({
     enabled: true,
     hardBlocks: false,
-    maxAgentPanes: Math.min(12, Math.max(4, byRam)),
+    maxAgentPanes: Math.min(12, Math.max(minPanes, byRam)),
     minFreeMB: Math.max(1024, Math.round(0.15 * total)),
     maxSwapUsedMB: 0,
   });

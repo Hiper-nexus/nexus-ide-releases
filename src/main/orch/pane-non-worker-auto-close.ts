@@ -143,13 +143,23 @@ function productionDeps(): NonWorkerAutoCloseDeps {
     // renderer cai no fechamento dentro de requestPanePark.
     parkPane: (paneId, reason) => {
       // Adapter sem resume por id (ex.: aider) não tem como acordar com a
-      // conversa: estacionar seria fechar com outro nome. Fecha de verdade.
+      // conversa: estacionar seria fechar com outro nome. Fecha de verdade
+      // APENAS se for pane sem dono elegível a fechamento definitivo.
       const sessionId = getPaneAuthzInfo(paneId)?.sessionId ?? null;
       const adapterId = sessionId ? getAgentSessionInfo(sessionId)?.adapterId : undefined;
       const adapter = adapterId ? getAdapter(adapterId) : null;
       const canResume =
         adapter?.kind === 'cli-pty' && (adapter.spawn.resumeIdArgs?.length ?? 0) > 0;
       if (!canResume) {
+        const authority = sessionId ? getPaneRuntimeAuthorityBySession(sessionId) : null;
+        const isDestructiveCloseEligible =
+          authority &&
+          authority.role !== 'orchestrator' &&
+          (authority.role !== 'worker' || authority.missionId === undefined) &&
+          authority.operatorParentSessionId !== undefined;
+        if (!isDestructiveCloseEligible) {
+          return false;
+        }
         return Promise.resolve(requestPaneClose(paneId)).then((closed) =>
           closed ? 'closed' : false,
         );
@@ -212,6 +222,17 @@ export function isGuardianEligiblePane(ref: NonWorkerPaneRef): boolean {
   return ref.operatorParentSessionId !== undefined;
 }
 
+/**
+ * Quem pode ser estacionado (CLI suspenso, pane e scrollback preservados na UI):
+ * - qualquer worker (com ou sem missão), se estiver idle e sem entrega pendente;
+ * - panes do operador (helper ou pane aberto pelo humano no renderer).
+ * NUNCA: orquestrador (governa a missão).
+ */
+export function isGuardianParkablePane(ref: NonWorkerPaneRef): boolean {
+  if (ref.role === 'orchestrator') return false;
+  return true;
+}
+
 function paneIsClosable(
   deps: NonWorkerAutoCloseDeps,
   sessionId: string,
@@ -222,6 +243,19 @@ function paneIsClosable(
   const ref = deps.getPaneRef(sessionId);
   if (!ref) return null;
   if (!isGuardianEligiblePane(ref)) return null;
+  return ref;
+}
+
+export function paneIsParkableUnderPressure(
+  deps: NonWorkerAutoCloseDeps,
+  sessionId: string,
+): NonWorkerPaneRef | null {
+  if (!deps.isEnabled()) return null;
+  if (!deps.isIdle(sessionId)) return null;
+  if (deps.hasPendingDelivery?.(sessionId)) return null;
+  const ref = deps.getPaneRef(sessionId);
+  if (!ref) return null;
+  if (!isGuardianParkablePane(ref)) return null;
   return ref;
 }
 
@@ -323,13 +357,24 @@ export function sweepIdlePanes(deps: NonWorkerAutoCloseDeps): void {
     }
     if (now - since < deps.ttlMs) continue;
     const ref = paneIsClosable(deps, sessionId);
-    if (!ref) continue;
-    closeIdlePane(deps, ref, sessionId, 'varredura');
+    if (ref) {
+      closeIdlePane(deps, ref, sessionId, 'varredura');
+      continue;
+    }
+    // F-588: se o pane não é elegível a fechamento destrutivo (ex.: worker de
+    // missão ou pane do operador), mas parkPane está disponível, estacionamos
+    // o pane ocioso após o TTL para libertar memória sem perder buffer.
+    if (deps.parkPane) {
+      const parkRef = paneIsParkableUnderPressure(deps, sessionId);
+      if (parkRef) {
+        closeIdlePane(deps, parkRef, sessionId, 'varredura', 'idle');
+      }
+    }
   }
-  // 0.76.44 — reaper de emergência: com a máquina sob pressão (mesmos
-  // limiares do gate de spawn), não espera o TTL. Fecha UM pane ocioso
-  // elegível por tick, o mais parado primeiro; os vetos (orquestrador, worker
-  // de missão, pane do humano, entrega armada, awaiting-input) continuam.
+  // 0.76.44 / F-588 — reaper de emergência: com a máquina sob pressão (mesmos
+  // limiares do gate de spawn), não espera o TTL. Estaciona UM pane ocioso
+  // elegível por tick, o mais parado primeiro; os vetos (orquestrador,
+  // entrega armada, awaiting-input) continuam.
   if (deps.isUnderMemoryPressure?.()) {
     const oldestFirst = [...idleSince.entries()]
       .filter(([sessionId]) => idleNow.has(sessionId) && !closing.has(sessionId))
@@ -337,13 +382,18 @@ export function sweepIdlePanes(deps: NonWorkerAutoCloseDeps): void {
     for (const [sessionId] of oldestFirst) {
       const wokeAgo = deps.wokeAgoMs?.(sessionId);
       if (wokeAgo !== null && wokeAgo !== undefined && wokeAgo < PANE_WAKE_GRACE_MS) continue;
-      const ref = paneIsClosable(deps, sessionId);
-      if (!ref) continue;
+      const parkRef = paneIsParkableUnderPressure(deps, sessionId);
+      if (!parkRef) continue;
+      // Se não temos parkPane (apenas closePane destrutivo), fechamos apenas
+      // se for elegível a fechamento definitivo (isGuardianEligiblePane).
+      if (!deps.parkPane && !isGuardianEligiblePane(parkRef)) continue;
+      const verb = deps.parkPane ? 'estacionando' : 'fechando';
+      const roleLabel = parkRef.role ?? 'none';
       deps.log(
-        `pressão de memória: fechando o pane ocioso mais antigo sem esperar o TTL ` +
-          `(pane=${ref.paneId}, ocioso há ${Math.round((now - (idleSince.get(sessionId) ?? now)) / 1000)} s)`,
+        `pressão de memória: ${verb} o pane ocioso mais antigo sem esperar o TTL ` +
+          `(pane=${parkRef.paneId}, role=${roleLabel}, ocioso há ${Math.round((now - (idleSince.get(sessionId) ?? now)) / 1000)} s)`,
       );
-      closeIdlePane(deps, ref, sessionId, 'varredura', 'memory-pressure');
+      closeIdlePane(deps, parkRef, sessionId, 'varredura', 'memory-pressure');
       break;
     }
   }
