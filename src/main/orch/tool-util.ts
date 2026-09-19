@@ -275,6 +275,7 @@ export async function injectPrompt(
   prompt: string,
   invocation?: McpToolInvocation,
 ): Promise<void> {
+  clearAdaptiveEnterTimers(sessionId);
   const safePrompt = assertSafePtyPrompt(prompt);
   // Agent briefs routinely contain Markdown and many newlines. Sending those
   // bytes as ordinary keypresses makes interactive TUIs execute/repaint each
@@ -288,6 +289,94 @@ export async function injectPrompt(
     throw new Error('session is gone');
   }
   await submitEnter(sessionId, invocation);
+}
+
+const adaptiveEnterTimers = new Map<string, Set<ReturnType<typeof setTimeout>>>();
+const adaptiveEnterCleanups = new Map<string, () => void>();
+
+export function clearAdaptiveEnterTimers(sessionId?: string): void {
+  if (sessionId) {
+    const cleanup = adaptiveEnterCleanups.get(sessionId);
+    if (cleanup) {
+      cleanup();
+      adaptiveEnterCleanups.delete(sessionId);
+    }
+    const timers = adaptiveEnterTimers.get(sessionId);
+    if (timers) {
+      for (const t of timers) clearTimeout(t);
+      adaptiveEnterTimers.delete(sessionId);
+    }
+  } else {
+    for (const [, cleanup] of adaptiveEnterCleanups) {
+      try { cleanup(); } catch {}
+    }
+    adaptiveEnterCleanups.clear();
+    for (const [, timers] of adaptiveEnterTimers) {
+      for (const t of timers) clearTimeout(t);
+    }
+    adaptiveEnterTimers.clear();
+  }
+}
+
+function scheduleAdaptiveEnterRescue(
+  sessionId: string,
+  requireInjectableIdle = false,
+): void {
+  clearAdaptiveEnterTimers(sessionId);
+  const timers = new Set<ReturnType<typeof setTimeout>>();
+  adaptiveEnterTimers.set(sessionId, timers);
+
+  const delays = [600, 1200, 2000];
+  let idx = 0;
+
+  let untapExit: (() => void) | null = null;
+  let untapState: (() => void) | null = null;
+
+  const teardown = () => {
+    untapExit?.();
+    untapExit = null;
+    untapState?.();
+    untapState = null;
+    for (const t of timers) clearTimeout(t);
+    timers.clear();
+    adaptiveEnterTimers.delete(sessionId);
+    adaptiveEnterCleanups.delete(sessionId);
+  };
+
+  adaptiveEnterCleanups.set(sessionId, teardown);
+
+  untapExit = tapSessionExit((exitedSessionId) => {
+    if (exitedSessionId === sessionId) teardown();
+  });
+
+  untapState = tapSessionState((changedSessionId, state) => {
+    if (changedSessionId === sessionId && state === 'busy') teardown();
+  });
+
+  function scheduleNext(): void {
+    if (idx >= delays.length) {
+      teardown();
+      return;
+    }
+    const delayMs = delays[idx++];
+    const timer = setTimeout(() => {
+      timers.delete(timer);
+      const isIdleNow = requireInjectableIdle
+        ? isSessionInjectableIdle(sessionId)
+        : getSessionState(sessionId) === 'idle';
+      if (!isIdleNow || getSessionState(sessionId) === 'busy') {
+        teardown();
+        return;
+      }
+      const enterKey = idx >= 2 ? '\r\n' : '\r';
+      orchWriteSession(sessionId, enterKey, { markInputBusy: false });
+      scheduleNext();
+    }, delayMs);
+    if (typeof timer.unref === 'function') timer.unref();
+    timers.add(timer);
+  }
+
+  scheduleNext();
 }
 
 /**
@@ -306,7 +395,10 @@ async function submitEnter(
 ): Promise<void> {
   let observedBusy = getSessionState(sessionId) === 'busy';
   const untapState = tapSessionState((changedSessionId, state) => {
-    if (changedSessionId === sessionId && state === 'busy') observedBusy = true;
+    if (changedSessionId === sessionId && state === 'busy') {
+      observedBusy = true;
+      clearAdaptiveEnterTimers(sessionId);
+    }
   });
   try {
     await delay(PROMPT_SETTLE_MS);
@@ -328,6 +420,7 @@ async function submitEnter(
     const untapEnterBusy = tapSessionState((changedSessionId, state) => {
       if (changedSessionId === sessionId && state === 'busy') {
         enterAcceptedBusy = true;
+        clearAdaptiveEnterTimers(sessionId);
       }
     });
     try {
@@ -346,6 +439,10 @@ async function submitEnter(
         if (!secondEnter) {
           throw new Error('agent prompt Enter was not delivered to the PTY');
         }
+        // F-589: Se o pane continua idle após 2 Enters, agenda resgate adaptativo
+        // progressivo (600ms, 1200ms, 2000ms) com \r\n para acordar CLIs
+        // que ainda estavam processando o paste ou repintando a TUI sob carga alta.
+        scheduleAdaptiveEnterRescue(sessionId, requireInjectableIdle);
       }
     } finally {
       untapEnterBusy();
@@ -380,6 +477,7 @@ export async function injectPastedPrompt(
   prompt: string,
   invocation?: McpToolInvocation,
 ): Promise<void> {
+  clearAdaptiveEnterTimers(sessionId);
   const safePrompt = assertSafePtyPrompt(prompt);
   assertMcpInvocationCurrent(invocation);
   if (!orchWriteSession(
@@ -667,6 +765,7 @@ export async function deliverAgentPrompt(
   invocation?: McpToolInvocation,
   options: { readonly adapterId?: string } = {},
 ): Promise<boolean> {
+  clearAdaptiveEnterTimers(sessionId);
   let lastError: unknown;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     await waitOutBootPrompts(sessionId);

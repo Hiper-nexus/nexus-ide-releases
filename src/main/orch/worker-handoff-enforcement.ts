@@ -55,6 +55,7 @@ import type { Handoff } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
   getLastSessionInputOrigin,
+  getSessionState,
   orchWriteSession,
   tapSessionExit,
   type SessionInputOrigin,
@@ -267,7 +268,7 @@ interface EnforcementWatch {
 }
 
 const watches = new Map<string, EnforcementWatch>();
-const nudgeSubmitTimers = new Set<ReturnType<typeof setTimeout>>();
+const nudgeSubmitTimers = new Map<string, Set<ReturnType<typeof setTimeout>>>();
 let untapStatus: (() => void) | null = null;
 let untapExit: (() => void) | null = null;
 let activeDeps: WorkerHandoffEnforcementDeps | null = null;
@@ -284,26 +285,50 @@ function watchFor(sessionId: string): EnforcementWatch {
   return created;
 }
 
-function clearNudgeSubmitTimers(): void {
-  for (const timer of nudgeSubmitTimers) clearTimeout(timer);
-  nudgeSubmitTimers.clear();
+function clearNudgeSubmitTimers(sessionId?: string): void {
+  if (sessionId) {
+    const timers = nudgeSubmitTimers.get(sessionId);
+    if (timers) {
+      for (const timer of timers) clearTimeout(timer);
+      nudgeSubmitTimers.delete(sessionId);
+    }
+  } else {
+    for (const [, timers] of nudgeSubmitTimers) {
+      for (const timer of timers) clearTimeout(timer);
+    }
+    nudgeSubmitTimers.clear();
+  }
 }
 
 function scheduleNudgedEnter(sessionId: string): void {
-  const settle = setTimeout(() => {
-    nudgeSubmitTimers.delete(settle);
-    orchWriteSession(sessionId, '\r', { markInputBusy: false });
-    const retry = setTimeout(() => {
-      nudgeSubmitTimers.delete(retry);
-      if (isSessionInjectableIdle(sessionId)) {
-        orchWriteSession(sessionId, '\r', { markInputBusy: false });
+  clearNudgeSubmitTimers(sessionId);
+  const timers = new Set<ReturnType<typeof setTimeout>>();
+  nudgeSubmitTimers.set(sessionId, timers);
+
+  const delays = [HANDOFF_PROMPT_SETTLE_MS, HANDOFF_ENTER_RETRY_MS, 600, 1200, 2000];
+  let idx = 0;
+
+  function scheduleNext(): void {
+    if (idx >= delays.length) {
+      nudgeSubmitTimers.delete(sessionId);
+      return;
+    }
+    const currentDelay = delays[idx++];
+    const timer = setTimeout(() => {
+      timers.delete(timer);
+      if (!isSessionInjectableIdle(sessionId) || getSessionState(sessionId) === 'busy') {
+        clearNudgeSubmitTimers(sessionId);
+        return;
       }
-    }, HANDOFF_ENTER_RETRY_MS);
-    if (typeof retry.unref === 'function') retry.unref();
-    nudgeSubmitTimers.add(retry);
-  }, HANDOFF_PROMPT_SETTLE_MS);
-  if (typeof settle.unref === 'function') settle.unref();
-  nudgeSubmitTimers.add(settle);
+      const enterKey = idx >= 3 ? '\r\n' : '\r';
+      orchWriteSession(sessionId, enterKey, { markInputBusy: false });
+      scheduleNext();
+    }, currentDelay);
+    if (typeof timer.unref === 'function') timer.unref();
+    timers.add(timer);
+  }
+
+  scheduleNext();
 }
 
 function clearTimer(watch: EnforcementWatch): void {
@@ -571,10 +596,12 @@ export function initWorkerHandoffEnforcement(
     // eventual novo silêncio (mas nunca desfaz uma cobrança já feita).
     clearTimer(watch);
     watch.nudged = false;
+    clearNudgeSubmitTimers(entry.sessionId);
   });
   untapExit = tapSessionExit((sessionId) => {
     const watch = watches.get(sessionId);
     if (watch) clearTimer(watch);
+    clearNudgeSubmitTimers(sessionId);
     evaluate(deps, sessionId, true);
     // H3: only drop the watch after durable inbox write (enforced). If
     // submit failed, the re-armed inactivity timer still owns this entry.

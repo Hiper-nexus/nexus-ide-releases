@@ -786,16 +786,26 @@ function submitDelivery(
   // prompt in their editor (notably after resume/modal transitions). A
   // bounded second CR is safe only while the exact session is still
   // idle; once it became busy the first submit is proven and we stop.
-  pending.retryTimer = setTimeout(() => {
-    if (
-      isCurrentAuthority(authority) &&
-      canPasteHandoff(authority.sessionId)
-    ) {
-      orchWriteSession(authority.sessionId, '\r', {
-        markInputBusy: false,
-      });
-    }
-  }, HANDOFF_ENTER_RETRY_MS);
+  const retryDelays = [HANDOFF_ENTER_RETRY_MS, 600, 1200];
+  let retryIdx = 0;
+  function scheduleDeliveryRetry(): void {
+    if (retryIdx >= retryDelays.length) return;
+    const delayMs = retryDelays[retryIdx++];
+    pending.retryTimer = setTimeout(() => {
+      if (
+        isCurrentAuthority(authority) &&
+        canPasteHandoff(authority.sessionId) &&
+        pendingEnters.has(pending)
+      ) {
+        const enterKey = retryIdx >= 2 ? '\r\n' : '\r';
+        orchWriteSession(authority.sessionId, enterKey, {
+          markInputBusy: false,
+        });
+        scheduleDeliveryRetry();
+      }
+    }, delayMs);
+  }
+  scheduleDeliveryRetry();
 }
 
 function deliverNow(authority: DeliveryAuthority, handoff: Handoff): boolean {
