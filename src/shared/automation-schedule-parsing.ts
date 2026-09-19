@@ -5,6 +5,7 @@ import { isClipboardTextByteLengthOverLimit } from './clipboard-text'
 import {
   DAY_NAMES,
   MONTH_NAMES,
+  isCronDayFieldRestricted,
   parseCronField,
   type CronParseOptions
 } from './automation-cron-field-parsing'
@@ -113,8 +114,8 @@ export function parseCronExpression(
       rejectOversizedStep
     }),
     daysOfWeek,
-    dayOfMonthRestricted: daysOfMonth.size !== 31,
-    dayOfWeekRestricted: daysOfWeek.size !== 7
+    dayOfMonthRestricted: isCronDayFieldRestricted(dayOfMonth),
+    dayOfWeekRestricted: isCronDayFieldRestricted(dayOfWeek)
   }
 }
 
