@@ -4152,6 +4152,46 @@ export const RELEASE_07647: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.60',
+  date: '2026-09-19',
+  codename: 'Pacing EAGAIN no PTY e resume verificado do uso Codex',
+  summary:
+    'Retry de escrita do PTY com pacing de 1ms (fim do busy-loop sob leitor travado) e ' +
+    'resume verificado do scanner de uso do Codex entre restarts, com totais idênticos e ' +
+    'reparse integral em qualquer dúvida.',
+  highlights: [
+    {
+      title: 'Retry EAGAIN com pacing no node-pty (F-591)',
+      detail:
+        'Porte do Orca #15319: o retry de EAGAIN espera 1ms em vez de re-tentar em microssegundos ' +
+        '(121k/s a ~100% CPU viram 805/s a ~4%), e o dispose aposenta o master fd com drop da ' +
+        'fila (Orca #17914). Panes sob leitor travado deixam de saturar a máquina.',
+    },
+    {
+      title: 'Resume verificado do scanner de uso Codex (F-592)',
+      detail:
+        'Offsets e snapshot do ingestor persistem entre restarts e só retomam com duplo digest ' +
+        'verificado (head+boundary); restart no meio de rollout preserva totais idênticos sem ' +
+        'revarrer megabytes (desenho Orca #21102).',
+    },
+  ],
+  fixes: [
+    {
+      title: 'F-591: Busy-loop de CPU no thread do PTY sob EAGAIN contínuo',
+      detail:
+        'applyEagainPacing com 5 âncoras fail-closed no patch darwin pinado; fluxo em 3 estados ' +
+        'com caminho de upgrade para instalações já seladas.',
+    },
+    {
+      title: 'F-592: Scanner Codex perdia offsets no restart e revarria tudo',
+      detail:
+        'Resume store atômico com validação estrita, snapshot/restore do ingestor (ordinal incluído) ' +
+        'e checkpoints por scan; 8 achados do code review sênior corrigidos com regressões.',
+    },
+  ],
+};
+
+export const RELEASE_07659: AppRelease = {
   version: '0.76.59',
   date: '2026-09-19',
   codename: 'Paridade de Git com Orca, empty states amigáveis e velocidade de tokens contínua',

@@ -186,15 +186,23 @@ describe('resolveSourceControlPrimaryActionDecision', () => {
     ).toMatchObject({ disabled: true, kind: 'push' });
   });
 
-  it('não oferece sync/pull — divergência e behind ficam desligados', () => {
+  it('oferece pull habilitado — divergência e behind puxam do remoto (F-584)', () => {
     expect(
       resolveSourceControlPrimaryActionDecision(
         inputs({ ahead: 1, behind: 2 }),
       ),
-    ).toMatchObject({ disabled: true, title: expect.stringMatching(/divergiu/i) });
+    ).toMatchObject({
+      kind: 'pull',
+      disabled: false,
+      title: expect.stringMatching(/divergiu/i),
+    });
 
     expect(
       resolveSourceControlPrimaryActionDecision(inputs({ behind: 2 })),
-    ).toMatchObject({ disabled: true, title: expect.stringMatching(/atrasada/i) });
+    ).toMatchObject({
+      kind: 'pull',
+      disabled: false,
+      title: 'Puxar 2 commits do remoto',
+    });
   });
 });

@@ -3,6 +3,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { splitTailChunk, type UsageEvent } from './claude-transcript';
+import {
+  findLastLineBoundary,
+  isResumablePrefixLength,
+  readHeadDigest,
+  readPrefixDigests,
+  verifyResumedPrefix,
+} from './codex-rollout-resume-state';
+import { CodexResumeStore } from './codex-resume-store';
 import { CodexFileIngest } from './codex-transcript';
 
 /**
@@ -21,6 +29,12 @@ interface FileState {
   skip: boolean;
   /** Known cwd not currently owned by an active project scope. */
   inactiveCwd: string | null;
+  /** Maior offset em fim-de-linha completa alcançado (fronteira persistível). */
+  committedOffset: number;
+  /** Offset já gravado no resume store (evita re-digest por scan). */
+  savedOffset: number;
+  /** Tamanho visto no último save (detecta rotação sob skip). */
+  savedSize: number;
 }
 
 export interface CodexRolloutSource {
@@ -44,6 +58,25 @@ export interface CodexScannerOptions {
   ) => void;
   sessionsDir?: string;
   pollMs?: number;
+  /**
+   * Diretório do resume store (`codex-resume.json`). Omitido = `<userData>/usage`
+   * no Electron; fora dele (testes sem dir) o resume desliga e o scanner opera
+   * só em memória, como antes.
+   */
+  persistDir?: string;
+}
+
+function defaultPersistDir(): string | null {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const electron = require('electron') as {
+      app?: { getPath(name: 'userData'): string };
+    };
+    if (typeof electron?.app?.getPath !== 'function') return null;
+    return path.join(electron.app.getPath('userData'), 'usage');
+  } catch {
+    return null;
+  }
 }
 
 const DEFAULT_POLL_MS = 10_000;
@@ -73,8 +106,13 @@ export class CodexUsageScanner {
   private timer: ReturnType<typeof setInterval> | null = null;
   private scanInFlight: Promise<void> | null = null;
   private stopped = false;
+  private readonly resumeStore: CodexResumeStore | null;
+  private resumeDirty = false;
 
-  constructor(private opts: CodexScannerOptions) {}
+  constructor(private opts: CodexScannerOptions) {
+    const dir = opts.persistDir ?? defaultPersistDir();
+    this.resumeStore = dir ? new CodexResumeStore(dir) : null;
+  }
 
   start(): void {
     if (this.timer) return;
@@ -91,6 +129,13 @@ export class CodexUsageScanner {
     this.stopped = true;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    this.flushResumeStore();
+  }
+
+  private flushResumeStore(): void {
+    if (!this.resumeDirty || !this.resumeStore) return;
+    this.resumeDirty = false;
+    this.resumeStore.save();
   }
 
   private root(): string {
@@ -129,21 +174,166 @@ export class CodexUsageScanner {
         await this.ingestTail(path.join(dir, name));
       }
     }
+    this.flushResumeStore();
+  }
+
+  private freshFileState(): FileState {
+    return {
+      offset: 0,
+      remainder: '',
+      decoder: new StringDecoder('utf8'),
+      ingest: new CodexFileIngest(),
+      skip: false,
+      inactiveCwd: null,
+      committedOffset: 0,
+      savedOffset: 0,
+      savedSize: 0,
+    };
+  }
+
+  /**
+   * Tenta retomar o arquivo a partir do resume store. Qualquer dúvida (sem
+   * registro, digest divergente, snapshot inválido) cai para reparse integral
+   * — o estado fresco já está montado, basta não tocar nele.
+   */
+  private async tryRestoreResume(file: string, state: FileState): Promise<void> {
+    const store = this.resumeStore;
+    if (!store) return;
+    const record = store.get(file);
+    if (!record) return;
+    let size: number;
+    try {
+      size = (await fs.promises.stat(file)).size;
+    } catch {
+      return;
+    }
+    if (record.skip) {
+      // skip sem meta no head vale entre restarts; rotação (encolheu) ou head
+      // trocado invalida — sem isso um arquivo novo com nome velho sumiria.
+      if (size < record.size) {
+        store.delete(file);
+        this.resumeDirty = true;
+        return;
+      }
+      if (record.headDigest !== null) {
+        const current = await readHeadDigest(file);
+        if (current !== record.headDigest) {
+          store.delete(file);
+          this.resumeDirty = true;
+          return;
+        }
+      }
+      state.skip = true;
+      state.savedOffset = 0;
+      state.savedSize = record.size;
+      return;
+    }
+    if (record.inactiveCwd) {
+      // Rotação sob park: arquivo novo precisa de head fresco, não do cwd velho.
+      if (size < record.size) {
+        store.delete(file);
+        this.resumeDirty = true;
+        return;
+      }
+      // O replay-sob-ativação recomeça do head de qualquer forma.
+      state.inactiveCwd = record.inactiveCwd;
+      state.savedSize = record.size;
+      return;
+    }
+    if (
+      !record.ingest ||
+      record.headDigest === null ||
+      record.boundaryDigest === null
+    ) {
+      store.delete(file);
+      this.resumeDirty = true;
+      return;
+    }
+    const verified = await verifyResumedPrefix(file, {
+      offset: record.offset,
+      headDigest: record.headDigest,
+      boundaryDigest: record.boundaryDigest,
+    });
+    if (!verified) {
+      store.delete(file);
+      this.resumeDirty = true;
+      return;
+    }
+    state.ingest.restore(record.ingest);
+    state.offset = record.offset;
+    state.committedOffset = record.offset;
+    state.savedOffset = record.offset;
+    state.savedSize = size;
+  }
+
+  private async checkpointResume(
+    file: string,
+    state: FileState,
+    size: number,
+  ): Promise<void> {
+    const store = this.resumeStore;
+    if (!store) return;
+    if (state.skip) {
+      // Achado Rabbit: sem digest de head, não persiste skip — um registro sem
+      // prova enfraqueceria todos os restarts futuros; revarrer uma vez por
+      // boot até o digest vingar é limitado e seguro.
+      const headDigest = await readHeadDigest(file);
+      if (headDigest === null) return;
+      store.set(file, {
+        offset: 0,
+        size,
+        ingest: null,
+        skip: true,
+        inactiveCwd: null,
+        headDigest,
+        boundaryDigest: null,
+      });
+      state.savedSize = size;
+      this.resumeDirty = true;
+      return;
+    }
+    if (state.inactiveCwd) {
+      store.set(file, {
+        offset: 0,
+        size,
+        ingest: null,
+        skip: false,
+        inactiveCwd: state.inactiveCwd,
+        headDigest: null,
+        boundaryDigest: null,
+      });
+      state.savedSize = size;
+      this.resumeDirty = true;
+      return;
+    }
+    if (state.committedOffset <= state.savedOffset) return;
+    if (!isResumablePrefixLength(state.committedOffset)) return;
+    const snapshot = state.ingest.snapshot();
+    if (!snapshot) return;
+    const digests = await readPrefixDigests(file, state.committedOffset);
+    if (!digests) return;
+    store.set(file, {
+      offset: state.committedOffset,
+      size,
+      ingest: snapshot,
+      skip: false,
+      inactiveCwd: null,
+      headDigest: digests.headDigest,
+      boundaryDigest: digests.boundaryDigest,
+    });
+    state.savedOffset = state.committedOffset;
+    state.savedSize = size;
+    this.resumeDirty = true;
   }
 
   private async ingestTail(file: string): Promise<void> {
     if (this.stopped) return;
     let state = this.files.get(file);
     if (!state) {
-      state = {
-        offset: 0,
-        remainder: '',
-        decoder: new StringDecoder('utf8'),
-        ingest: new CodexFileIngest(),
-        skip: false,
-        inactiveCwd: null,
-      };
+      state = this.freshFileState();
       this.files.set(file, state);
+      await this.tryRestoreResume(file, state);
+      if (this.stopped) return;
     }
     if (state.skip) return;
     if (state.inactiveCwd) {
@@ -156,6 +346,14 @@ export class CodexUsageScanner {
       state.decoder = new StringDecoder('utf8');
       state.ingest = new CodexFileIngest();
       state.inactiveCwd = null;
+      state.committedOffset = 0;
+      state.savedOffset = 0;
+      if (this.resumeStore) {
+        // Achado review: sem isto, rollout < piso regravava o registro
+        // inactive a cada boot e repetia o replay para sempre.
+        this.resumeStore.delete(file);
+        this.resumeDirty = true;
+      }
     }
 
     let size: number;
@@ -166,15 +364,12 @@ export class CodexUsageScanner {
     }
     if (size < state.offset) {
       // Truncado/rotacionado — recomeça com ingest limpo.
-      this.files.set(file, {
-        offset: 0,
-        remainder: '',
-        decoder: new StringDecoder('utf8'),
-        ingest: new CodexFileIngest(),
-        skip: false,
-        inactiveCwd: null,
-      });
-      state = this.files.get(file)!;
+      state = this.freshFileState();
+      this.files.set(file, state);
+      if (this.resumeStore) {
+        this.resumeStore.delete(file);
+        this.resumeDirty = true;
+      }
     }
     if (size === state.offset) return;
 
@@ -203,6 +398,15 @@ export class CodexUsageScanner {
         }
         if (bytesRead <= 0) return;
         state.offset = readOffset + bytesRead;
+        const lastNewline = findLastLineBoundary(
+          buffer.subarray(0, bytesRead),
+        );
+        if (lastNewline >= 0) {
+          state.committedOffset = Math.max(
+            state.committedOffset,
+            readOffset + lastNewline,
+          );
+        }
 
         const chunk = state.decoder.write(buffer.subarray(0, bytesRead));
         const { lines, remainder } = splitTailChunk(state.remainder, chunk);
@@ -214,6 +418,7 @@ export class CodexUsageScanner {
           // from the head when its immutable scope is registered.
           if (cwd && !this.opts.isWatched(cwd)) {
             state.inactiveCwd = cwd;
+            await this.checkpointResume(file, state, size);
             return;
           }
           if (event && cwd) {
@@ -254,9 +459,11 @@ export class CodexUsageScanner {
           state.offset > META_DISCOVERY_BYTES
         ) {
           state.skip = true;
+          await this.checkpointResume(file, state, size);
           return;
         }
       }
+      await this.checkpointResume(file, state, size);
     } finally {
       await fh.close().catch(() => undefined);
     }

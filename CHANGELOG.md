@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.76.60 — Pacing EAGAIN no PTY e resume verificado do uso Codex
+
+- **Retry EAGAIN com pacing no node-pty (F-591)**: porte do Orca #15319 — o retry de escrita que travava o thread do PTY a ~100% de CPU quando o leitor parava de drenar agora espera 1ms (medido: 121k→805 EAGAIN/s), e o `dispose` aposenta o master fd com drop da fila (Orca #17914), impedindo escritas pós-dispose em descritores reutilizados.
+- **Resume verificado do scanner de uso Codex (F-592)**: offsets e snapshot do ingestor persistem entre restarts com verificação por digest duplo (head+boundary, piso 12KB); restart no meio de rollout preserva totais idênticos sem revarrer megabytes, e qualquer dúvida cai para reparse integral (porte do desenho Orca #21102; 8 achados do code review corrigidos com regressões pinadas).
+
 ## 0.76.59 — Paridade de Git com Orca, empty states amigáveis e velocidade de tokens contínua
 
 - **Paridade de Git / Source Control com Orca (F-584)**: menu interativo de branches com alternância imediata e criação de nova branch (`git checkout` / `checkout -b`), botões dedicados de pull e push com badges de contadores na barra de ferramentas, descarte seguro de arquivos modificados ou untracked (`git checkout --` / `git clean -f`) e ação primária inteligente que assume pull quando o branch local estiver atrás do repositório remoto.

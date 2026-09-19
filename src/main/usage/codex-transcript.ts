@@ -189,6 +189,43 @@ export function parseCodexLine(line: string): CodexLine | null {
 }
 
 /**
+ * Snapshot serializável do ingestor para resume verificado entre restarts.
+ * `usageOrdinal` é o campo crítico: ele compõe o messageId estável, então
+ * retomá-lo errado duplicaria eventos no store sob ids diferentes.
+ */
+export interface CodexIngestSnapshot {
+  readonly sessionId: string | null;
+  readonly threadId: string | null;
+  readonly cwd: string | null;
+  readonly parentThreadId: string | null;
+  readonly sessionStartedAt: number | null;
+  readonly model: string;
+  readonly usageOrdinal: number;
+  readonly requiresPhysicalTurnFence: boolean;
+  readonly hasPhysicalTurnStarted: boolean;
+}
+
+export function isCodexIngestSnapshot(value: unknown): value is CodexIngestSnapshot {
+  if (!value || typeof value !== 'object') return false;
+  const snap = value as Record<string, unknown>;
+  return (
+    (snap.sessionId === null || typeof snap.sessionId === 'string') &&
+    (snap.threadId === null || typeof snap.threadId === 'string') &&
+    (snap.cwd === null || typeof snap.cwd === 'string') &&
+    (snap.parentThreadId === null || typeof snap.parentThreadId === 'string') &&
+    (snap.sessionStartedAt === null ||
+      (typeof snap.sessionStartedAt === 'number' &&
+        Number.isFinite(snap.sessionStartedAt))) &&
+    typeof snap.model === 'string' &&
+    snap.model.length > 0 &&
+    Number.isSafeInteger(snap.usageOrdinal) &&
+    (snap.usageOrdinal as number) >= 0 &&
+    typeof snap.requiresPhysicalTurnFence === 'boolean' &&
+    typeof snap.hasPhysicalTurnStarted === 'boolean'
+  );
+}
+
+/**
  * Ingestor com estado por ARQUIVO: costura session_meta (sessionId/cwd) e
  * turn_context (modelo corrente) nos eventos de uso, produzindo UsageEvent
  * completos para o usage-store. `cwd` fica exposto para o caller decidir a
@@ -205,6 +242,41 @@ export class CodexFileIngest {
   private usageOrdinal = 0;
   private requiresPhysicalTurnFence = false;
   private hasPhysicalTurnStarted = true;
+
+  /** Captura o estado para persistência de resume; null = nada atribuível ainda. */
+  snapshot(): CodexIngestSnapshot | null {
+    if (!this.sessionId) return null;
+    return {
+      sessionId: this.sessionId,
+      threadId: this.threadId,
+      cwd: this.cwd,
+      parentThreadId: this.parentThreadId,
+      sessionStartedAt: this.sessionStartedAt,
+      model: this.model,
+      usageOrdinal: this.usageOrdinal,
+      requiresPhysicalTurnFence: this.requiresPhysicalTurnFence,
+      hasPhysicalTurnStarted: this.hasPhysicalTurnStarted,
+    };
+  }
+
+  /**
+   * Restaura um snapshot validado. O fingerprint deriva do threadId, igual ao
+   * caminho da primeira session_meta — nunca persistido para não divergir.
+   */
+  restore(snapshot: CodexIngestSnapshot): void {
+    this.sessionId = snapshot.sessionId;
+    this.threadId = snapshot.threadId;
+    this.threadFingerprint = snapshot.threadId
+      ? createHash('sha256').update(snapshot.threadId).digest('hex')
+      : null;
+    this.cwd = snapshot.cwd;
+    this.parentThreadId = snapshot.parentThreadId;
+    this.sessionStartedAt = snapshot.sessionStartedAt;
+    this.model = snapshot.model;
+    this.usageOrdinal = snapshot.usageOrdinal;
+    this.requiresPhysicalTurnFence = snapshot.requiresPhysicalTurnFence;
+    this.hasPhysicalTurnStarted = snapshot.hasPhysicalTurnStarted;
+  }
 
   /** Processa uma linha; retorna o UsageEvent quando ela fecha um uso. */
   ingestLine(line: string): UsageEvent | null {
