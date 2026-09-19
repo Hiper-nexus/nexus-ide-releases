@@ -4152,6 +4152,38 @@ export const RELEASE_07647: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.58',
+  date: '2026-09-19',
+  codename: 'Resiliência de providers no failover, desambiguação e nova missão nas abas do grid',
+  summary:
+    'Fim definitivo do loop de failover com toast enganoso ao ocorrer falha transiente no Claude quando há conta secundária ' +
+    'com renovação pendente, redução do tempo de quarentena de refresh, desambiguação automática de títulos idênticos ' +
+    'entre escopos de terminais, indicação visual por badge e status dot de missão, e atalho rápido "+ Nova missão" na barra de abas.',
+  highlights: [
+    {
+      title: 'Resiliência e Desacoplamento no Failover Claude (F-583)',
+      detail:
+        'Contas secundárias com renovação OAuth pendente ou falhando são filtradas preventivamente antes da escolha de failover. ' +
+        'O erro da secundária não culpa mais a conta ativa em toasts, e a janela de quarentena de refresh foi reduzida para 2 minutos.',
+    },
+    {
+      title: 'Legibilidade e Ação Rápida nas Abas do Grid (F-583)',
+      detail:
+        'A barra de abas de terminais exibe as contagens de painéis em badges destacadas (sem colar números no título), ' +
+        'desambigua títulos idênticos com índices (#1, #2), exibe status dots para missões em execução e adiciona o botão "+ Nova missão".',
+    },
+  ],
+  fixes: [
+    {
+      title: 'F-583: Loop de toasts de failover da conta Claude e legibilidade das abas de escopo no grid',
+      detail:
+        'Implementada checagem hasRecentClaudeRefreshFailure em accountHasFailoverCredential, flexibilizado prepareAccountForSpawn ' +
+        'para tokens válidos em cofre, desambiguação automática de escopos em listPaneScopes e botão de nova missão no TerminalWorkspace.',
+    },
+  ],
+};
+
+export const RELEASE_07657: AppRelease = {
   version: '0.76.57',
   date: '2026-09-18',
   codename: 'Jev sugere a skill',

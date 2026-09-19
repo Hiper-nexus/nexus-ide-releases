@@ -605,7 +605,7 @@ async function performSwitch(req: SwitchRequest): Promise<void> {
       fromAccountLabel: fromLabel,
       toAccountLabel: '',
       reason: prepareError
-        ? `${hit.reason} (falha na conta: ${prepareError})`
+        ? `${hit.reason} (troca indisponível: ${prepareError})`
         : hit.reason,
       kind: hit.kind,
       switched: false,

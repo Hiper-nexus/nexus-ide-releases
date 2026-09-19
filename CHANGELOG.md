@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.76.58 — Resiliência de failover no Claude e organização das abas no grid
+
+- **Resiliência e Desacoplamento no Failover Claude (F-583)**: contas secundárias com renovação de token OAuth falhando/pendente são filtradas antes da escolha no failover automático, prevenindo loops de erro. O toast de erro não acusa mais a conta ativa com o motivo da secundária, e a janela de quarentena de refresh foi reduzida para 2 minutos.
+- **Legibilidade e Ações Rápidas nas Abas do Grid (F-583)**: a barra de abas dos terminais separa a contagem de painéis com badge visual dedicada (evitando aglutinações confusas como `[Meus terminais 2 1]`), desambigua automaticamente títulos idênticos com sufixos (#1, #2), exibe indicador de status dot para missões ativas e adiciona o atalho rápido `+ Nova missão` direto na barra.
+
 ## 0.76.57 — Jev sugere a skill
 
 - **Skill sugerida pelo Jev no roteamento**: `nexus_route_task` devolve `skillSuggestion` — o catálogo das skills bundled (impeccable, archify, superpowers e suas sub-skills, bmad-templates, dembrandt, typesafe-ai e as skills nativas do Nexus) é levantado em código a partir do frontmatter de cada SKILL.md, e UMA pergunta `choice` deixa o Jev escolher no máximo uma skill claramente útil ("none" quando nenhuma). Aceita só com confiança ≥ 0,6, filtrada pelas skills permitidas ao chamador (por pacote ou por nome); registrado no diário de decisões (surface `taskRouting`); sem chave TypeSafe, null.

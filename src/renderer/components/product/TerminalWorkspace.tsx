@@ -17,6 +17,7 @@ import { missionLifecycleLabel } from '../../lib/mission-lifecycle-copy';
 import { missionAwaitsOperatorReview } from '../../../shared/mission-recovery-policy';
 import { PixelIcon } from '../PixelIcon';
 import { EmptyState } from '../ActionCard';
+import { useProductNavigationStore } from '../../state/product-navigation-store';
 
 export interface TerminalWorkspaceProps {
   /** Quando presente, a vista mostra só os panes desta missão. Hosts das outras ficam vivos. */
@@ -293,41 +294,60 @@ export function TerminalWorkspace({
           role="toolbar"
           aria-label="Filtrar terminais por missão ou espaço"
         >
-          <span className="terminal-workspace__filterbar-label">Abas:</span>
-          {scopes.map((scope) => (
+          <div className="terminal-workspace__filterbar-group">
+            <span className="terminal-workspace__filterbar-label">Abas:</span>
+            {scopes.map((scope) => (
+              <button
+                key={scope.key}
+                type="button"
+                className={`terminal-workspace__filter-chip${
+                  effectiveScopeKey === scope.key
+                    ? ' terminal-workspace__filter-chip--active'
+                    : ''
+                }`}
+                aria-pressed={effectiveScopeKey === scope.key}
+                onClick={() => focusScope(scope.key)}
+                title={scope.title}
+                data-scope-kind={scope.kind}
+              >
+                {scope.kind === 'mission' && scope.state ? (
+                  <span
+                    className={`terminal-workspace__chip-dot terminal-workspace__chip-dot--${scope.state}`}
+                    aria-hidden="true"
+                  />
+                ) : null}
+                <span className="terminal-workspace__filter-label">
+                  {scope.title}
+                </span>
+                <span className="terminal-workspace__filter-count terminal-workspace__chip-badge">
+                  {scope.paneCount}
+                </span>
+              </button>
+            ))}
             <button
-              key={scope.key}
               type="button"
               className={`terminal-workspace__filter-chip${
-                effectiveScopeKey === scope.key
+                effectiveScopeKey === ALL_SCOPES_KEY
                   ? ' terminal-workspace__filter-chip--active'
                   : ''
               }`}
-              aria-pressed={effectiveScopeKey === scope.key}
-              onClick={() => focusScope(scope.key)}
-              title={scope.title}
-              data-scope-kind={scope.kind}
+              aria-pressed={effectiveScopeKey === ALL_SCOPES_KEY}
+              onClick={() => focusScope(ALL_SCOPES_KEY)}
             >
-              <span className="terminal-workspace__filter-label">
-                {scope.title}
-              </span>
-              <span className="terminal-workspace__filter-count">
-                {scope.paneCount}
-              </span>
+              <span className="terminal-workspace__filter-label">Todos</span>
             </button>
-          ))}
-          <button
-            type="button"
-            className={`terminal-workspace__filter-chip${
-              effectiveScopeKey === ALL_SCOPES_KEY
-                ? ' terminal-workspace__filter-chip--active'
-                : ''
-            }`}
-            aria-pressed={effectiveScopeKey === ALL_SCOPES_KEY}
-            onClick={() => focusScope(ALL_SCOPES_KEY)}
-          >
-            <span className="terminal-workspace__filter-label">Todos</span>
-          </button>
+          </div>
+          <div className="terminal-workspace__filterbar-actions">
+            <button
+              type="button"
+              className="terminal-workspace__new-mission-btn"
+              onClick={() => useProductNavigationStore.getState().openNewMission()}
+              title="Iniciar uma nova missão"
+            >
+              <PixelIcon name="plus" size={10} />
+              <span>Nova missão</span>
+            </button>
+          </div>
         </header>
       ) : null}
 

@@ -165,6 +165,21 @@ describe('listPaneScopes — as abas que o operador vê', () => {
     expect(scopes.map((s) => s.key)).toEqual([missionScopeKey('desconhecida')]);
     expect(scopes[0]?.title).toBe('Missão');
   });
+
+  it('desambigua títulos idênticos entre escopos com índices #1 e #2', () => {
+    const scopes = listPaneScopes({
+      panes: [
+        pane({ id: 's1', spaceId: 'sp1', spaceTitle: 'Meus terminais' }),
+        pane({ id: 's2', spaceId: 'sp2', spaceTitle: 'Meus terminais' }),
+      ],
+      paneMissions: {},
+      missions,
+    });
+    expect(scopes.map((s) => s.title)).toEqual([
+      'Meus terminais #1',
+      'Meus terminais #2',
+    ]);
+  });
 });
 
 describe('nomes de espaço', () => {

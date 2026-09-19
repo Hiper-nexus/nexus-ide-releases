@@ -13,6 +13,7 @@ import {
   spaceScopeKey,
 } from '../../lib/pane-spaces';
 import { TerminalWorkspace } from './TerminalWorkspace';
+import { useProductNavigationStore } from '../../state/product-navigation-store';
 
 const terminalRuntime = vi.hoisted(() => ({
   attachHost: vi.fn(),
@@ -650,6 +651,33 @@ describe('TerminalWorkspace — espaços separados da missão aberta (F-560)', (
       ),
     ).toEqual(['1', '2']);
     expect(activeChipLabel(host)).toBe('Meus terminais 2');
+  });
+
+  it('exibe botão de + Nova missão no filterbar e aciona openNewMission', () => {
+    seedMissionPlusSpace();
+    const { host } = mount(<TerminalWorkspace />);
+
+    const newMissionBtn = host.querySelector<HTMLButtonElement>(
+      '.terminal-workspace__new-mission-btn',
+    );
+    expect(newMissionBtn).not.toBeNull();
+    act(() => {
+      newMissionBtn?.click();
+    });
+
+    expect(useProductNavigationStore.getState().destination).toEqual({
+      kind: 'mission-setup',
+    });
+  });
+
+  it('exibe dot de status na aba de missão', () => {
+    seedMissionPlusSpace();
+    const { host } = mount(<TerminalWorkspace />);
+
+    const chipDot = host.querySelector(
+      '.terminal-workspace__chip-dot--running',
+    );
+    expect(chipDot).not.toBeNull();
   });
 
   it('sem nenhuma missão viva o filtro NÃO desliga — cada espaço segue no seu mosaico', () => {

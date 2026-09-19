@@ -143,13 +143,50 @@
    ganha chips de foco por missão — separação explícita, "todas" a um clique. */
 .terminal-workspace__filterbar {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-1-5);
+  justify-content: space-between;
+  gap: var(--space-2);
   padding: var(--space-1-5) var(--space-3);
   border-bottom: 1px solid var(--border);
   background: var(--bg-bar);
   min-inline-size: 0;
+}
+
+.terminal-workspace__filterbar-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1-5);
+  min-inline-size: 0;
+}
+
+.terminal-workspace__filterbar-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.terminal-workspace__new-mission-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  padding: 3px var(--space-2);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-raised, var(--bg-bar));
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all var(--duration-fast, 150ms) ease;
+}
+
+.terminal-workspace__new-mission-btn:hover {
+  border-color: var(--accent);
+  color: var(--text);
+  background: var(--accent-soft);
 }
 
 .terminal-workspace__filterbar-label {
@@ -158,6 +195,27 @@
   letter-spacing: 0.05em;
   color: var(--text-dim);
   margin-right: var(--space-1);
+}
+
+.terminal-workspace__chip-dot {
+  display: inline-block;
+  inline-size: 6px;
+  block-size: 6px;
+  border-radius: var(--radius-round);
+  background: var(--status-dot-info, #4c96ff);
+  flex-shrink: 0;
+}
+
+.terminal-workspace__chip-dot--running {
+  background: var(--status-dot-success, #29a35e);
+}
+
+.terminal-workspace__chip-dot--stopped {
+  background: var(--text-dim);
+}
+
+.terminal-workspace__chip-dot--failed {
+  background: var(--status-dot-error, #f2555a);
 }
 
 .terminal-workspace__filter-chip {
@@ -194,6 +252,11 @@
   border-radius: var(--radius-round);
   background: var(--bg-raised, var(--bg-bar));
   color: var(--text-dim);
+}
+
+.terminal-workspace__chip-badge {
+  margin-left: 3px;
+  border: 1px solid var(--border);
 }
 
 .terminal-workspace__filter-chip--active .terminal-workspace__filter-count {

@@ -541,10 +541,18 @@ export function accountHasFailoverCredential(account: Account): boolean {
     // expiresAt confiável não há juízo — presença continua valendo.
     if (account.adapterId === 'claude' && account.mode === 'subscription') {
       const blob = getSecret(CRED_PREFIX + account.id);
+      const now = Date.now();
       if (
         typeof blob === 'string' &&
-        claudeBlobIsExpiredUnhealable(blob, Date.now())
+        claudeBlobIsExpiredUnhealable(blob, now)
       ) {
+        return false;
+      }
+      const nativeEmail = activeClaudeEmail();
+      const isNative = Boolean(
+        nativeEmail && account.email && emailsEqual(account.email, nativeEmail),
+      );
+      if (!isNative && hasRecentClaudeRefreshFailure(account.id, now)) {
         return false;
       }
     }
@@ -653,17 +661,24 @@ export function prepareAccountForSpawn(
   // sessão nova — recusa aqui para o failover tentar a irmã ou esperar com
   // motivo acionável, em vez de descobrir no 401 do pane.
   if (hasRecentClaudeRefreshFailure(account.id, now)) {
-    return {
-      ok: false,
-      error:
-        `conta "${account.label}" com renovação de token falhando — entre ` +
-        'novamente em Configurações › Providers',
-    };
+    const vaultBlob = getSecret(CRED_PREFIX + account.id);
+    if (
+      typeof vaultBlob !== 'string' ||
+      claudeBlobNeedsRefresh(vaultBlob, now) !== null ||
+      claudeBlobIsExpiredUnhealable(vaultBlob, now)
+    ) {
+      return {
+        ok: false,
+        error:
+          `conta "${account.label}" com renovação de token falhando — entre ` +
+          'novamente em Configurações › Providers',
+      };
+    }
   }
   // Token vencido sem refresh: o sweeper nunca tenta este blob
   // (`claudeBlobNeedsRefresh` exige refresh token) e nunca o sinaliza — sem
   // esta recusa, todo failover queimava uma sessão nova num 401 garantido
-  // (F-511). Marca a falha para o veto de 1h valer aqui também.
+  // (F-511). Marca a falha para o veto valer aqui também.
   const vaultBlob = getSecret(CRED_PREFIX + account.id);
   if (
     typeof vaultBlob === 'string' &&
@@ -698,8 +713,8 @@ const claudeRefreshInFlight = new Set<string>();
  * Limpa no sucesso do refresh e no re-login (blob fresco do CLI vivo).
  */
 const claudeRefreshFailedAt = new Map<string, number>();
-/** Janela em que a falha de renovação veta a conta no failover/spawn. */
-export const CLAUDE_REFRESH_FAILURE_SKIP_MS = 60 * 60 * 1000;
+/** Janela em que a falha de renovação veta a conta no failover/spawn (2 min para absorver glitches sem travar o operador por 1h). */
+export const CLAUDE_REFRESH_FAILURE_SKIP_MS = 2 * 60 * 1000;
 
 export function hasRecentClaudeRefreshFailure(
   accountId: string,

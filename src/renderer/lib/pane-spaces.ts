@@ -112,7 +112,23 @@ export function listPaneScopes(input: ListPaneScopesInput): PaneScopeEntry[] {
     byKey.set(key, scopeEntryFor(key, pane, missionById));
   }
 
-  return order.map((key) => byKey.get(key)!);
+  const scopes = order.map((key) => byKey.get(key)!);
+  const titleCounts = new Map<string, number>();
+  for (const s of scopes) {
+    titleCounts.set(s.title, (titleCounts.get(s.title) ?? 0) + 1);
+  }
+  const duplicates = new Set(
+    [...titleCounts.entries()].filter(([, count]) => count > 1).map(([title]) => title),
+  );
+  if (duplicates.size === 0) return scopes;
+
+  const seenIndices = new Map<string, number>();
+  return scopes.map((s) => {
+    if (!duplicates.has(s.title)) return s;
+    const nextIdx = (seenIndices.get(s.title) ?? 0) + 1;
+    seenIndices.set(s.title, nextIdx);
+    return { ...s, title: `${s.title} #${nextIdx}` };
+  });
 }
 
 function scopeEntryFor(
