@@ -7,6 +7,10 @@ const xtermEvents = vi.hoisted(() => ({
   onTitleChange: new Set<(title: string) => void>(),
 }));
 
+const resizeCalls = vi.hoisted(() => [] as Array<{ cols: number; rows: number }>);
+/** Shared timeline: which happened first, the grid fit or the output-scheduler resume. */
+const eventOrder = vi.hoisted(() => [] as string[]);
+
 vi.mock('@xterm/xterm', () => ({
   Terminal: class {
     cols = 80;
@@ -30,18 +34,36 @@ vi.mock('@xterm/xterm', () => ({
     writeln() {}
     refresh() {}
     dispose() {}
+    // Mirrors real xterm.js: resize() reflows the live buffer at the given
+    // width. Tracked here so tests can catch an intermediate reflow at a
+    // throwaway width (F-356) — real xterm has no way to "undo" that reflow.
+    resize(cols: number, rows: number) {
+      this.cols = cols;
+      this.rows = rows;
+      resizeCalls.push({ cols, rows });
+      eventOrder.push('resize');
+    }
   },
 }));
 
 vi.mock('@xterm/addon-fit', () => ({
   FitAddon: class {
-    private terminal?: { element?: HTMLElement; cols: number; rows: number };
+    private terminal?: { element?: HTMLElement; cols: number; rows: number; resize(cols: number, rows: number): void };
     activate(term: NonNullable<typeof this.terminal>) { this.terminal = term; }
+    // Real @xterm/addon-fit#fit() measures the container AND calls
+    // terminal.resize() itself — it is not a pure measurement.
     fit() {
+      const dims = this.proposeDimensions();
+      if (!dims) return;
+      this.terminal!.resize(dims.cols, dims.rows);
+    }
+    proposeDimensions(): { cols: number; rows: number } | undefined {
       const term = this.terminal;
-      if (!term?.element?.clientWidth || !term.element.clientHeight) return;
-      term.cols = Math.floor(term.element.clientWidth / 10);
-      term.rows = Math.floor(term.element.clientHeight / 20);
+      if (!term?.element?.clientWidth || !term.element.clientHeight) return undefined;
+      return {
+        cols: Math.floor(term.element.clientWidth / 10),
+        rows: Math.floor(term.element.clientHeight / 20),
+      };
     }
   },
 }));
@@ -64,6 +86,7 @@ import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { useToastStore } from '../state/toast-store';
 import { buildGridTree } from '../lib/split-tree';
+import * as terminalOutputScheduler from './terminal-output-scheduler';
 import {
   attachHost,
   cancelPaneRecovery,
@@ -79,6 +102,8 @@ import {
   holdSpawnUntilApproved,
   orchAutoReliveGate,
   reconcileHosts,
+  refitAllPanesBeforePaint,
+  refreshHost,
   revealTerminalHostsAfterWorkspaceShow,
   setHostVisibility,
   waitForSession,
@@ -89,6 +114,7 @@ const spawn = vi.fn();
 const kill = vi.fn();
 const ptyWrite = vi.fn();
 const ptyExitListeners = new Map<string, (event: { exitCode: number }) => void>();
+const ptyDataListeners = new Map<string, (data: string) => void>();
 const originalNexus = Object.getOwnPropertyDescriptor(window, 'nexus');
 
 function setHostSize(element: HTMLElement, width: number, height: number): void {
@@ -117,13 +143,19 @@ beforeEach(() => {
   kill.mockReset();
   ptyWrite.mockReset();
   ptyExitListeners.clear();
+  ptyDataListeners.clear();
+  resizeCalls.length = 0;
   xtermEvents.onData.clear();
   xtermEvents.onTitleChange.clear();
   Object.defineProperty(window, 'nexus', {
     configurable: true,
     value: { voice: { logVoice: vi.fn().mockResolvedValue(undefined) }, pty: {
       spawn, kill, resize: vi.fn(), write: ptyWrite,
-      onStateChange: () => () => {}, onData: () => () => {},
+      onStateChange: () => () => {},
+      onData: (sessionId: string, listener: (data: string) => void) => {
+        ptyDataListeners.set(sessionId, listener);
+        return () => ptyDataListeners.delete(sessionId);
+      },
       onExit: (sessionId: string, listener: (event: { exitCode: number }) => void) => {
         ptyExitListeners.set(sessionId, listener);
         return () => ptyExitListeners.delete(sessionId);
@@ -194,6 +226,101 @@ describe('F-603 — pane não some ao voltar dos Ajustes', () => {
     revealTerminalHostsAfterWorkspaceShow();
 
     expect(host.isVisible).toBe(true);
+  });
+});
+
+describe('F-356 — geometria não repinta em cima de conteúdo já desenhado', () => {
+  it('clampa para MIN_USABLE_COLS com UM só resize físico, não fit()+resize()', async () => {
+    // Repro real (xterm 0.19 + addon-fit): fit.fit() já reflowa o buffer na
+    // largura estreita medida (ex.: 30 cols) e SÓ DEPOIS o clamp reflowa de
+    // novo para 80. Um TUI com cursor absoluto (Codex) não sobrevive ao
+    // reflow intermediário — texto em colunas altas (ex. col 72) é
+    // permanentemente perdido no ciclo 80→30→80, mesmo a grade final
+    // reportada acabando em 80 de novo.
+    const host = getOrCreateHost(pane);
+    setHostSize(host.element, 1200, 800);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(pane, slot);
+    expect(await waitForSession(pane.id, 1000)).toBe('pty-hidden');
+
+    resizeCalls.length = 0;
+    // Pane estreitado (ex.: squad grande) para menos de 80 cols efetivas.
+    setHostSize(host.element, 300, 800);
+    refitAllPanesBeforePaint();
+
+    expect(resizeCalls).toEqual([{ cols: 80, rows: 40 }]);
+    resizeCalls.length = 0;
+    refitAllPanesBeforePaint();
+    expect(resizeCalls).toEqual([]);
+  });
+
+  it('mantém a saída retida se o pane revelado ainda não tem dimensões', async () => {
+    const host = getOrCreateHost(pane);
+    setHostSize(host.element, 1200, 800);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(pane, slot);
+    expect(await waitForSession(pane.id, 1000)).toBe('pty-hidden');
+    setHostVisibility(pane.id, false);
+    const write = vi.spyOn(host.term, 'write');
+    terminalOutputScheduler.writeTerminalOutput(host.term, '\x1b[Hquadro pendente', {
+      foreground: false, holdBackground: true,
+    });
+    setHostSize(host.element, 0, 0);
+    setHostVisibility(pane.id, true);
+    await vi.advanceTimersByTimeAsync(60);
+    ptyDataListeners.get('pty-hidden')!('\x1b[Hnovo quadro');
+    await vi.advanceTimersByTimeAsync(60);
+    expect(write).not.toHaveBeenCalled();
+    expect(terminalOutputScheduler.getQueuedChars(host.term)).toBeGreaterThan(0);
+
+    setHostSize(host.element, 1200, 800);
+    refreshHost(pane.id);
+    await vi.advanceTimersByTimeAsync(60);
+    expect(write).toHaveBeenCalledWith('\x1b[Hquadro pendente\x1b[Hnovo quadro', expect.any(Function));
+    expect(terminalOutputScheduler.getQueuedChars(host.term)).toBe(0);
+  });
+
+  it('reajusta a grade antes de destravar o scheduler de saída ao revelar (F-356)', async () => {
+    // setHostVisibility(true) destravava o scheduler (resumeTerminalOutput)
+    // NA HORA e só reajustava a grade depois, dentro de um
+    // requestAnimationFrame — o dreno do backlog em segundo plano corre num
+    // timer próprio (scheduleDrain), então podia escrever no xterm com a
+    // grade ANTIGA (medida enquanto o pane estava oculto/minimizado) antes
+    // do fit do reveal rodar. Isto é o padrão de corrupção do F-356: saída
+    // de TUI pintada contra uma geometria que já não é a real.
+    const host = getOrCreateHost(pane);
+    setHostSize(host.element, 1200, 800);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(pane, slot);
+    expect(await waitForSession(pane.id, 1000)).toBe('pty-hidden');
+
+    setHostVisibility(pane.id, false);
+    // O pane muda de tamanho enquanto está escondido (ex.: outros splits
+    // fecham) — a grade "antiga" na hora do reveal não é mais a real.
+    setHostSize(host.element, 1600, 900);
+
+    resizeCalls.length = 0;
+    eventOrder.length = 0;
+    const originalResume = terminalOutputScheduler.resumeTerminalOutput;
+    const resumeSpy = vi
+      .spyOn(terminalOutputScheduler, 'resumeTerminalOutput')
+      .mockImplementation((terminal) => {
+        eventOrder.push('resume-output');
+        return originalResume(terminal);
+      });
+
+    setHostVisibility(pane.id, true);
+    await vi.advanceTimersByTimeAsync(50);
+
+    expect(eventOrder).toContain('resize');
+    expect(eventOrder).toContain('resume-output');
+    expect(eventOrder.indexOf('resize')).toBeLessThan(
+      eventOrder.indexOf('resume-output'),
+    );
+    resumeSpy.mockRestore();
   });
 });
 

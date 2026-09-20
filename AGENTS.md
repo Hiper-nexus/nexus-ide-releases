@@ -412,6 +412,13 @@ saber isto antes de mexer:
   (`~/.claude.json`); só a mão do operador (`role user`) herda. Quem precisa
   de um servidor MCP extra declara por allowlist.
 
+## Terminais: geometria e retomada (F-356)
+
+- F-356 (terminal): `fitHostGrid` mede com `proposeDimensions`, aplica o piso
+  de colunas e só então faz um único resize. `fit.fit()` antes do clamp apaga
+  texto no ciclo estreita→alarga. Enquanto `gridReady` for falso, saída antiga
+  E nova ficam retidas; visibilidade sozinha não autoriza drenar o PTY.
+
 ## Velocidade de geração por LLM (tok/s + TTFT)
 
 - Três medidores, três perguntas — não os confunda: `cost-tracker` diz QUANTO

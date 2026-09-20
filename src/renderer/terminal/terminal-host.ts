@@ -181,6 +181,8 @@ interface Host {
   /** Last grid already propagated to the PTY; avoids duplicate SIGWINCH. */
   reportedGrid: { cols: number; rows: number } | null;
   isVisible: boolean;
+  /** False between reveal/failed measurement and the next successful fit. */
+  gridReady: boolean;
   /** One-shot notice when agent is held pending user approval. */
   holdNoticeWritten?: boolean;
   /** Invalidates a late async spawn after recovery timeout/replacement. */
@@ -367,6 +369,7 @@ function resumeVisibleHost(paneId: string, host: Host): boolean {
     fitVisibleGrid: () => fitHostGrid(host),
     propagateSize: () => propagateHostSize(host),
     flushOutput: () => {
+      resumeTerminalOutput(host.term);
       flushPendingScrollback(host);
       flushTerminalOutput(host.term);
     },
@@ -487,8 +490,7 @@ export function applyTerminalSettings(settings: TerminalSettings): void {
       // Terminal not opened yet.
     }
     try {
-      fitHostGrid(host);
-      propagateHostSize(host);
+      if (fitHostGrid(host)) propagateHostSize(host);
     } catch {
       // Not measurable yet — the ResizeObserver will settle it.
     }
@@ -1034,12 +1036,16 @@ function startSpawn(
             ).slice(-HIBERNATE_PENDING_OUTPUT_CHARS);
             return;
           }
+          if (!host.gridReady && host.isVisible && document.visibilityState !== 'hidden') {
+            resumeVisibleHost(pane.id, host);
+          }
           const policy = terminalOutputPolicy({
             kind: pane.kind,
             isFocused:
               useLayoutStore.getState().focusedPaneId === pane.id,
             isPaneVisible: host.isVisible,
             isDocumentVisible: document.visibilityState !== 'hidden',
+            isGridReady: host.gridReady,
             performanceMode: currentSettings.performanceMode,
           });
           writeTerminalOutput(host.term, data, {
@@ -1421,25 +1427,36 @@ const HEADLESS_SPAWN_FALLBACK_MS = 200;
  * de qualquer TUI quebrar — e o `\r` seguinte passar a descer de linha, subindo
  * lixo permanente. Ver `clampGridToUsableCols` para a medição completa.
  *
+ * POR ISSO usamos `proposeDimensions()` em vez de `fit.fit()`: `fit()` já
+ * aplica um `term.resize()` físico na largura estreita medida, e um segundo
+ * `resize()` para o piso clampado reflowaria o buffer DUAS vezes na mesma
+ * passada (F-356). Uma TUI de cursor absoluto (Codex) não sobrevive a esse
+ * reflow intermediário — colunas altas do frame já pintado são cortadas no
+ * ciclo largo→estreito e o reflow de volta não as traz de volta, mesmo a
+ * grade final acabando idêntica à original. `proposeDimensions()` só mede;
+ * o clamp decide o alvo FINAL antes do único `resize()` físico.
+ *
  * Envolver o fit num só lugar garante que nenhum dos caminhos de resize (observer
  * por host, refit global, reveal, spawn) escape da regra.
  */
 function fitHostGrid(host: Host): boolean {
+  host.gridReady = false;
+  if (host.element.clientWidth <= 0 || host.element.clientHeight <= 0) return false;
   try {
-    host.fit.fit();
+    const proposed = host.fit.proposeDimensions();
+    if (!proposed || !Number.isFinite(proposed.cols) || !Number.isFinite(proposed.rows) ||
+        proposed.cols <= 0 || proposed.rows <= 0) return false;
+    const grid = clampGridToUsableCols({
+      cols: proposed.cols,
+      rows: proposed.rows,
+      hasSession: host.sessionId != null,
+    });
+    if (grid.cols !== host.term.cols || grid.rows !== host.term.rows) {
+      host.term.resize(grid.cols, grid.rows);
+    }
+    host.gridReady = true;
   } catch {
-    return false;
-  }
-  const grid = clampGridToUsableCols({
-    cols: host.term.cols,
-    rows: host.term.rows,
-    hasSession: host.sessionId != null,
-  });
-  if (!grid.clamped) return true;
-  try {
-    host.term.resize(grid.cols, grid.rows);
-  } catch {
-    // Terminal descartado no meio; a grade pequena volta no próximo fit.
+    // Hidden slot, unloaded font or a disposed terminal: retry after layout.
     return false;
   }
   return true;
@@ -1455,7 +1472,7 @@ function settleHostGrid(host: Host): boolean {
     return false;
   }
   try {
-    fitHostGrid(host);
+    if (!fitHostGrid(host)) return false;
   } catch {
     return false;
   }
@@ -1592,7 +1609,10 @@ function makeResizeObserver(paneId: string, host: Host): ResizeObserver {
         return;
       }
       try {
-        fitHostGrid(host);
+        if (!fitHostGrid(host)) {
+          tryDeferredSpawn(host);
+          return;
+        }
       } catch {
         tryDeferredSpawn(host);
         return;
@@ -1601,6 +1621,7 @@ function makeResizeObserver(paneId: string, host: Host): ResizeObserver {
       // na largura certa.
       flushPendingScrollback(host);
       propagateHostSize(host);
+      if (host.isVisible && document.visibilityState !== 'hidden') resumeTerminalOutput(host.term);
       tryDeferredSpawn(host);
     }, RESIZE_DEBOUNCE_MS);
   });
@@ -1618,7 +1639,7 @@ function refitAllHosts(reason: RefitReason): void {
     if (host.disposed || !host.opened || host.virtualized) continue;
     const before = { cols: host.term.cols, rows: host.term.rows };
     try {
-      fitHostGrid(host);
+      if (!fitHostGrid(host)) continue;
     } catch {
       continue; // Not measurable right now; the ResizeObserver will settle it.
     }
@@ -1626,6 +1647,7 @@ function refitAllHosts(reason: RefitReason): void {
       host.term.cols !== before.cols || host.term.rows !== before.rows;
     if (gridChanged) flushPendingScrollback(host);
     propagateHostSize(host);
+    if (host.isVisible && document.visibilityState !== 'hidden') resumeTerminalOutput(host.term);
     tryDeferredSpawn(host);
     if (!shouldRepaintOnRefit({ reason, gridChanged })) continue;
     try {
@@ -1905,6 +1927,7 @@ function createShellHost(pane: PaneModel): Host {
     virtualized: null,
     reportedGrid: null,
     isVisible: true,
+    gridReady: false,
     spawnGeneration: 0,
     opened: false,
     spawnStarted: false,
@@ -1962,6 +1985,7 @@ function createCliAgentHost(pane: PaneModel): Host {
     virtualized: null,
     reportedGrid: null,
     isVisible: true,
+    gridReady: false,
     spawnGeneration: 0,
     opened: false,
     spawnStarted: false,
@@ -2383,9 +2407,10 @@ export function attachHost(pane: PaneModel, slot: HTMLElement): void {
   const beforeGrid = host.reportedGrid;
   if (useLayoutStore.getState().focusedPaneId !== pane.id) {
     try {
-      fitHostGrid(host);
-      flushPendingScrollback(host);
-      propagateHostSize(host);
+      if (fitHostGrid(host)) {
+        flushPendingScrollback(host);
+        propagateHostSize(host);
+      }
     } catch {
       // Slot not measurable yet; the ResizeObserver will retry.
     }
@@ -2702,7 +2727,15 @@ export function setHostVisibility(paneId: string, isVisible: boolean): void {
     return;
   }
   if (!host.opened) return;
-  resumeTerminalOutput(host.term);
+  host.gridReady = false;
+  // Grade PRIMEIRO, scheduler depois: `resumeTerminalOutput` só destrava o
+  // dreno de fundo — o dreno em si corre no timer próprio do scheduler
+  // (`scheduleDrain`), então destravar antes do fit do reveal deixava o
+  // backlog livre para pintar contra a grade ANTIGA (medida enquanto o pane
+  // estava oculto), correndo contra o fit síncrono do rAF (F-356). Adiar o
+  // destravamento para dentro do próprio rAF, depois do refit, fecha essa
+  // corrida: o timer do dreno só pode disparar depois que este callback (e o
+  // fit síncrono que ele faz) já terminou.
   requestAnimationFrame(() => {
     if (host.disposed || !host.opened || !host.isVisible) return;
     refreshHost(paneId);
@@ -2723,10 +2756,12 @@ function handleDocumentVisibilityChange(): void {
   const focusedPaneId = useLayoutStore.getState().focusedPaneId;
   for (const [paneId, host] of hosts) {
     if (host.disposed || !host.isVisible) continue;
-    resumeTerminalOutput(host.term);
-    if (paneId === focusedPaneId) {
-      requestAnimationFrame(() => focusHost(paneId));
-    }
+    host.gridReady = false;
+    requestAnimationFrame(() => {
+      if (host.disposed || !host.opened || !host.isVisible || document.visibilityState === 'hidden') return;
+      if (paneId === focusedPaneId) focusHost(paneId);
+      else refreshHost(paneId);
+    });
   }
 }
 
@@ -2749,10 +2784,8 @@ export function blurHost(paneId: string): void {
 export function refreshHost(paneId: string): void {
   const host = hosts.get(paneId);
   if (!host || host.disposed || !host.opened) return;
-  // Resume WebGL rendering if it was evicted while hidden.
+  // Refit, release queued output and repaint only when the slot is measurable.
   resumeVisibleHost(paneId, host);
-  // Force a full repaint of the visible area.
-  host.term.refresh(0, host.term.rows - 1);
 }
 
 export interface TerminalRendererPerformanceSnapshot {

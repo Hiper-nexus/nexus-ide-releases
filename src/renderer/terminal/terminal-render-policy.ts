@@ -5,6 +5,8 @@ export interface TerminalOutputPolicyInput {
   readonly isFocused: boolean;
   readonly isPaneVisible: boolean;
   readonly isDocumentVisible: boolean;
+  /** A revealed slot must finish fitting before old OR new PTY bytes paint. */
+  readonly isGridReady?: boolean;
   readonly performanceMode: 'adaptive' | 'quality';
 }
 
@@ -17,11 +19,12 @@ export function terminalOutputPolicy(
   holdForeground: boolean;
   holdBackground: boolean;
 } {
+  const gridReady = input.isGridReady !== false;
   const foreground =
-    input.isFocused && input.isPaneVisible && input.isDocumentVisible;
+    gridReady && input.isFocused && input.isPaneVisible && input.isDocumentVisible;
   const shouldHoldHidden =
-    input.performanceMode === 'adaptive' &&
-    (!input.isPaneVisible || !input.isDocumentVisible);
+    !gridReady || (input.performanceMode === 'adaptive' &&
+    (!input.isPaneVisible || !input.isDocumentVisible));
   return {
     foreground,
     latencySensitive: foreground,

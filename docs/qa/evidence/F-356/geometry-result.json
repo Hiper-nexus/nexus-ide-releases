@@ -1,0 +1,34 @@
+{
+  "before": {
+    "cursor": 76,
+    "hasText": true,
+    "proposed": {
+      "cols": 31,
+      "rows": 8
+    }
+  },
+  "broken": {
+    "cursor": 30,
+    "hasText": false,
+    "resizeEvents": [
+      {
+        "cols": 31,
+        "rows": 8,
+        "colsChanged": true,
+        "rowsChanged": false
+      },
+      {
+        "cols": 80,
+        "rows": 8,
+        "colsChanged": true,
+        "rowsChanged": false
+      }
+    ]
+  },
+  "fixed": {
+    "ok": true,
+    "cursor": 76,
+    "hasText": true,
+    "resizeEvents": []
+  }
+}

@@ -14,6 +14,13 @@ import {
 } from './terminal-render-policy';
 
 describe('terminal render policy', () => {
+  it.each(['adaptive', 'quality'] as const)('retém saída nova até a grade estar pronta em modo %s', (performanceMode) => {
+    expect(terminalOutputPolicy({
+      kind: 'cli-agent', isFocused: true, isPaneVisible: true,
+      isDocumentVisible: true, isGridReady: false, performanceMode,
+    })).toMatchObject({ foreground: false, holdBackground: true });
+  });
+
   it('coalesces focused agent output but keeps focused shells immediate', () => {
     expect(
       terminalOutputPolicy({

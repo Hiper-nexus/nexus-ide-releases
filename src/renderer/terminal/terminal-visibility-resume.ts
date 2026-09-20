@@ -8,7 +8,14 @@
  */
 export interface TerminalVisibilityResumeOperations {
   resumeRenderer(): void;
-  fitVisibleGrid(): void;
+  /**
+   * Measure and apply the visible grid. Returns whether the slot was
+   * actually measurable and fitted — the real implementation (fitHostGrid)
+   * never throws on failure, it catches its own errors and reports them as
+   * `false` (see F-356: a `void`-typed contract here silently discarded that
+   * `false` and let propagate/flush/repaint run against the STALE grid).
+   */
+  fitVisibleGrid(): boolean;
   propagateSize(): void;
   flushOutput(): void;
   repaint(): void;
@@ -30,11 +37,13 @@ export function resumeTerminalVisibilityBeforePaint(
   } catch {
     // GPU reacquisition is best effort; xterm can continue on its DOM renderer.
   }
+  let fitted: boolean;
   try {
-    operations.fitVisibleGrid();
+    fitted = operations.fitVisibleGrid();
   } catch {
-    return false;
+    fitted = false;
   }
+  if (!fitted) return false;
   try {
     operations.propagateSize();
   } catch {
