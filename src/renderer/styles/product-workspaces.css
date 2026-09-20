@@ -276,6 +276,20 @@
   color: var(--text);
 }
 
+/* Edição inline do nome do espaço (duplo clique no chip). Herda a tipografia
+   do chip para a aba não "pular" de tamanho ao entrar em edição. */
+.terminal-workspace__chip-rename {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-round);
+  padding: 0 var(--space-1);
+  min-inline-size: 8ch;
+  max-inline-size: 180px;
+  outline: none;
+}
+
 .terminal-workspace__filter-chip--active {
   border-color: var(--accent);
   background: var(--accent-soft);

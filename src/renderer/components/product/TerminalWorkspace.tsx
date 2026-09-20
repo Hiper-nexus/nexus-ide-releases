@@ -11,6 +11,7 @@ import {
   missionScopeKey,
   paneScopeKey,
   selectScopePanes,
+  type PaneScopeEntry,
 } from '../../lib/pane-spaces';
 import { usePaneScopeStore } from '../../state/pane-scope-store';
 import { missionLifecycleLabel } from '../../lib/mission-lifecycle-copy';
@@ -128,6 +129,13 @@ export function TerminalWorkspace({
     ? `Missão · ${missionLifecycleLabel(missionState, false, undefined, awaitsReview)}`
     : 'Missão';
   const focusedPaneId = useLayoutStore((state) => state.focusedPaneId);
+  const renamePaneSpace = useLayoutStore((state) => state.renamePaneSpace);
+  // Renomear a aba do espaço (duplo clique no chip): edição inline, mesmo
+  // padrão do título do pane no PaneToolbar. Enter/blur gravam, Esc cancela.
+  const [editingSpace, setEditingSpace] = useState<{
+    key: string;
+    draft: string;
+  } | null>(null);
   const paneMissions = useOrchStore((state) => state.paneMissions);
   const missionSummaries = useOrchStore((state) => state.missionSummaries);
   const layoutRoot = useLayoutStore((state) => state.root);
@@ -235,6 +243,26 @@ export function TerminalWorkspace({
 
   const multiScope = !inMission && scopes.length >= 2;
 
+  const startSpaceRename = (scope: PaneScopeEntry) => {
+    if (scope.kind !== 'space' || !scope.id) return;
+    // O rascunho vem do carimbo real do pane, não do rótulo da aba — a aba
+    // pode estar com o sufixo de desambiguação ("Título #2"), que não é nome.
+    const raw =
+      panes.find((pane) => pane.spaceId === scope.id && !pane.missionId)
+        ?.spaceTitle ?? scope.title;
+    setEditingSpace({ key: scope.key, draft: raw });
+  };
+
+  const commitSpaceRename = () => {
+    const current = editingSpace;
+    if (!current) return;
+    const scope = scopes.find((entry) => entry.key === current.key);
+    if (scope?.kind === 'space' && scope.id) {
+      renamePaneSpace(scope.id, current.draft);
+    }
+    setEditingSpace(null);
+  };
+
   const visiblePaneIds = useMemo(() => {
     if (!effectiveScopeKey) return undefined;
     if (effectiveScopeKey === ALL_SCOPES_KEY) return undefined;
@@ -303,34 +331,82 @@ export function TerminalWorkspace({
         >
           <div className="terminal-workspace__filterbar-group">
             <span className="terminal-workspace__filterbar-label">Abas:</span>
-            {scopes.map((scope) => (
-              <button
-                key={scope.key}
-                type="button"
-                className={`terminal-workspace__filter-chip${
-                  effectiveScopeKey === scope.key
-                    ? ' terminal-workspace__filter-chip--active'
-                    : ''
-                }`}
-                aria-pressed={effectiveScopeKey === scope.key}
-                onClick={() => focusScope(scope.key)}
-                title={scope.title}
-                data-scope-kind={scope.kind}
-              >
-                {scope.kind === 'mission' && scope.state ? (
-                  <span
-                    className={`terminal-workspace__chip-dot terminal-workspace__chip-dot--${scope.state}`}
-                    aria-hidden="true"
+            {scopes.map((scope) =>
+              editingSpace?.key === scope.key ? (
+                <span
+                  key={scope.key}
+                  className="terminal-workspace__filter-chip terminal-workspace__filter-chip--active"
+                  data-scope-kind={scope.kind}
+                >
+                  <input
+                    className="terminal-workspace__chip-rename"
+                    value={editingSpace.draft}
+                    autoFocus
+                    aria-label="Renomear espaço"
+                    onChange={(event) =>
+                      setEditingSpace({
+                        key: scope.key,
+                        draft: event.target.value,
+                      })
+                    }
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault();
+                        commitSpaceRename();
+                      } else if (event.key === 'Escape') {
+                        event.preventDefault();
+                        setEditingSpace(null);
+                      }
+                    }}
+                    onBlur={commitSpaceRename}
                   />
-                ) : null}
-                <span className="terminal-workspace__filter-label">
-                  {scope.title}
+                  <span className="terminal-workspace__filter-count terminal-workspace__chip-badge">
+                    {scope.paneCount}
+                  </span>
                 </span>
-                <span className="terminal-workspace__filter-count terminal-workspace__chip-badge">
-                  {scope.paneCount}
-                </span>
-              </button>
-            ))}
+              ) : (
+                <button
+                  key={scope.key}
+                  type="button"
+                  className={`terminal-workspace__filter-chip${
+                    effectiveScopeKey === scope.key
+                      ? ' terminal-workspace__filter-chip--active'
+                      : ''
+                  }`}
+                  aria-pressed={effectiveScopeKey === scope.key}
+                  onClick={() => focusScope(scope.key)}
+                  title={
+                    scope.kind === 'space'
+                      ? `${scope.title} — duplo clique para renomear`
+                      : scope.title
+                  }
+                  data-scope-kind={scope.kind}
+                >
+                  {scope.kind === 'mission' && scope.state ? (
+                    <span
+                      className={`terminal-workspace__chip-dot terminal-workspace__chip-dot--${scope.state}`}
+                      aria-hidden="true"
+                    />
+                  ) : null}
+                  <span
+                    className="terminal-workspace__filter-label"
+                    onDoubleClick={
+                      scope.kind === 'space'
+                        ? (event) => {
+                            event.stopPropagation();
+                            startSpaceRename(scope);
+                          }
+                        : undefined
+                    }
+                  >
+                    {scope.title}
+                  </span>
+                  <span className="terminal-workspace__filter-count terminal-workspace__chip-badge">
+                    {scope.paneCount}
+                  </span>
+                </button>
+              ),
+            )}
             <button
               type="button"
               className={`terminal-workspace__filter-chip${

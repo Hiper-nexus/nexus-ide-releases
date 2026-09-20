@@ -129,6 +129,12 @@ interface LayoutState {
    * nasceria solto e pularia para outra aba no próximo restart.
    */
   assignPaneSpace(paneId: string, spaceId: string, spaceTitle: string): void;
+  /**
+   * Renomeia o espaço do operador inteiro: todos os panes carimbados com
+   * `spaceId` passam a exibir o novo título na aba. Panes adotados por uma
+   * missão não são tocados (a aba deles é a da missão, não a do espaço).
+   */
+  renamePaneSpace(spaceId: string, title: string): void;
   promoteMissionPaneRole(missionId: string, paneId: string): void;
   /**
    * Espelha no layout a liderança que o MAIN já confirmou (onda 2 da
@@ -1340,6 +1346,25 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
     // aqui, senão ele sairia da aba da missão que lidera.
     if (!pane || pane.missionId) return;
     const root = updatePane(get().root, paneId, { spaceId, spaceTitle });
+    set({ root });
+    persist();
+  },
+
+  renamePaneSpace: (spaceId, title) => {
+    const clean = title.trim();
+    if (!clean) return;
+    let root = get().root;
+    let changed = false;
+    for (const pane of listPanes(root)) {
+      // Mesma fronteira do assignPaneSpace: o carimbo de espaço do pane já
+      // adotado por missão é inerte e a aba dele é a da missão — reescrevê-lo
+      // faria o espaço "voltar" num pane que o operador vê na missão.
+      if (pane.spaceId !== spaceId || pane.missionId) continue;
+      if (pane.spaceTitle === clean) continue;
+      root = updatePane(root, pane.id, { spaceTitle: clean });
+      changed = true;
+    }
+    if (!changed) return;
     set({ root });
     persist();
   },

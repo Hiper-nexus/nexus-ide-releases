@@ -1289,3 +1289,84 @@ describe('split não herda espaço de pane com vínculo OBSERVADO de missão (F-
     useOrchStore.setState({ paneMissions: {} });
   });
 });
+
+describe('renamePaneSpace — renomear a aba do espaço inteiro', () => {
+  function seedSpace(): void {
+    seedLayout({
+      root: buildGridTree([
+        {
+          id: 'pane-1',
+          kind: 'shell',
+          title: 'Terminal 1',
+          spaceId: 'space-1',
+          spaceTitle: 'Meus terminais',
+        },
+        {
+          id: 'pane-2',
+          kind: 'shell',
+          title: 'Terminal 2',
+          spaceId: 'space-1',
+          spaceTitle: 'Meus terminais',
+        },
+        {
+          id: 'pane-outro',
+          kind: 'shell',
+          title: 'Outro',
+          spaceId: 'space-2',
+          spaceTitle: 'Meus terminais 2',
+        },
+      ]),
+      focusedPaneId: 'pane-1',
+      maximizedPaneId: null,
+      hydrated: true,
+    });
+  }
+
+  it('renomeia todos os panes carimbados com o espaço, sem tocar nos outros', () => {
+    seedSpace();
+
+    useLayoutStore.getState().renamePaneSpace('space-1', 'Build da API');
+
+    const panes = listPanes(useLayoutStore.getState().root);
+    const doEspaco = panes.filter((pane) => pane.spaceId === 'space-1');
+    expect(doEspaco).toHaveLength(2);
+    expect(doEspaco.every((pane) => pane.spaceTitle === 'Build da API')).toBe(
+      true,
+    );
+    expect(
+      panes.find((pane) => pane.spaceId === 'space-2')?.spaceTitle,
+    ).toBe('Meus terminais 2');
+  });
+
+  it('pane adotado por missão não é recarimbado — a aba dele é a da missão', () => {
+    seedSpace();
+    useLayoutStore.setState({
+      root: updatePane(useLayoutStore.getState().root, 'pane-1', {
+        missionId: 'mission-1',
+      }),
+    });
+
+    useLayoutStore.getState().renamePaneSpace('space-1', 'Build da API');
+
+    const panes = listPanes(useLayoutStore.getState().root);
+    expect(panes.find((pane) => pane.id === 'pane-1')?.spaceTitle).toBe(
+      'Meus terminais',
+    );
+    expect(panes.find((pane) => pane.id === 'pane-2')?.spaceTitle).toBe(
+      'Build da API',
+    );
+  });
+
+  it('título vazio ou só espaços é ignorado', () => {
+    seedSpace();
+
+    useLayoutStore.getState().renamePaneSpace('space-1', '   ');
+
+    const doEspaco = listPanes(useLayoutStore.getState().root).filter(
+      (pane) => pane.spaceId === 'space-1',
+    );
+    expect(doEspaco.every((pane) => pane.spaceTitle === 'Meus terminais')).toBe(
+      true,
+    );
+  });
+});

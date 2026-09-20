@@ -3,7 +3,7 @@ import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PaneModel } from '../../../shared/types';
-import { buildGridTree } from '../../lib/split-tree';
+import { buildGridTree, listPanes } from '../../lib/split-tree';
 import { useLayoutStore } from '../../state/layout-store';
 import { useOrchStore } from '../../state/orch-store';
 import { usePaneScopeStore } from '../../state/pane-scope-store';
@@ -904,5 +904,153 @@ describe('TerminalWorkspace — filtro é no-op quando cobre tudo (F-560)', () =
     const visible = canvasViewProps().visiblePaneIds;
     expect(visible).toBeDefined();
     expect([...visible!]).toEqual(['pane-missao']);
+  });
+});
+
+// ── Renomear a aba do espaço (duplo clique no chip) ────────────────────────
+
+describe('TerminalWorkspace — renomear espaço pelo chip', () => {
+  function seedSpaceScope(): void {
+    useLayoutStore.setState({
+      root: buildGridTree([
+        {
+          id: 'pane-missao-a',
+          kind: 'cli-agent',
+          title: 'Worker da missão A',
+          adapterId: 'codex',
+          missionId: 'mission-a',
+        },
+        {
+          id: 'pane-espaco-1',
+          kind: 'cli-agent',
+          title: 'Codex',
+          adapterId: 'codex',
+          spaceId: 'space-novo',
+          spaceTitle: 'Meus terminais 2',
+        },
+        {
+          id: 'pane-espaco-2',
+          kind: 'cli-agent',
+          title: 'DeepSeek',
+          adapterId: 'deepseek',
+          spaceId: 'space-novo',
+          spaceTitle: 'Meus terminais 2',
+        },
+      ]),
+      focusedPaneId: 'pane-espaco-1',
+    });
+    useOrchStore.setState({
+      paneMissions: { 'pane-missao-a': 'mission-a' },
+      missions: [],
+      missionSummaries: [
+        {
+          id: 'mission-a',
+          title: 'Missão A',
+          state: 'running',
+          progress: { completed: 0, total: 1 },
+          needsAttention: false,
+          updatedAt: 1,
+        },
+      ],
+    });
+  }
+
+  function spaceChipLabel(host: HTMLElement): HTMLElement {
+    const chip = host.querySelector(
+      '.terminal-workspace__filter-chip[data-scope-kind="space"]',
+    );
+    const label = chip?.querySelector<HTMLElement>(
+      '.terminal-workspace__filter-label',
+    );
+    expect(label).not.toBeNull();
+    return label!;
+  }
+
+  function setInputValue(input: HTMLInputElement, value: string): void {
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      'value',
+    )!.set!;
+    setter.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  it('duplo clique abre edição inline e Enter renomeia a aba inteira', () => {
+    seedSpaceScope();
+    const { host } = mount(<TerminalWorkspace />);
+
+    act(() => {
+      spaceChipLabel(host).dispatchEvent(
+        new MouseEvent('dblclick', { bubbles: true }),
+      );
+    });
+
+    const input = host.querySelector<HTMLInputElement>(
+      '.terminal-workspace__chip-rename',
+    );
+    expect(input).not.toBeNull();
+    expect(input!.value).toBe('Meus terminais 2');
+
+    act(() => {
+      setInputValue(input!, 'Build da API');
+      input!.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+      );
+    });
+
+    expect(spaceChipLabel(host).textContent).toBe('Build da API');
+    const storeTitles = listPanes(useLayoutStore.getState().root)
+      .filter((pane) => pane.spaceId === 'space-novo')
+      .map((pane) => pane.spaceTitle);
+    expect(storeTitles).toEqual(['Build da API', 'Build da API']);
+  });
+
+  it('Escape cancela a edição sem tocar no nome', () => {
+    seedSpaceScope();
+    const { host } = mount(<TerminalWorkspace />);
+
+    act(() => {
+      spaceChipLabel(host).dispatchEvent(
+        new MouseEvent('dblclick', { bubbles: true }),
+      );
+    });
+    const input = host.querySelector<HTMLInputElement>(
+      '.terminal-workspace__chip-rename',
+    );
+    expect(input).not.toBeNull();
+
+    act(() => {
+      setInputValue(input!, 'Nome que não pega');
+      input!.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+      );
+    });
+
+    expect(
+      host.querySelector('.terminal-workspace__chip-rename'),
+    ).toBeNull();
+    expect(spaceChipLabel(host).textContent).toBe('Meus terminais 2');
+  });
+
+  it('chip de missão não entra em edição', () => {
+    seedSpaceScope();
+    const { host } = mount(<TerminalWorkspace />);
+
+    const missionLabel = host
+      .querySelector(
+        '.terminal-workspace__filter-chip[data-scope-kind="mission"]',
+      )
+      ?.querySelector<HTMLElement>('.terminal-workspace__filter-label');
+    expect(missionLabel).not.toBeNull();
+
+    act(() => {
+      missionLabel!.dispatchEvent(
+        new MouseEvent('dblclick', { bubbles: true }),
+      );
+    });
+
+    expect(
+      host.querySelector('.terminal-workspace__chip-rename'),
+    ).toBeNull();
   });
 });
