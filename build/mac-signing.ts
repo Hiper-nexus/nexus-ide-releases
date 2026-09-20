@@ -9,6 +9,8 @@ export const EXPECTED_DEVELOPER_ID_IDENTITY =
 export const EXPECTED_APPLE_TEAM_ID = '35P5XL3JN6';
 export const EXPECTED_NOTARY_PROFILE = 'nexus-notary';
 export const DARWIN_PTY_SUPERVISOR_IDENTIFIER = 'nexus-pty-supervisor';
+export const NEXUS_REDLINE_IDENTIFIER = 'com.nexuside.redline';
+export const NEXUS_REDLINE_BUNDLE = 'Nexus Redline.app';
 
 const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 
@@ -93,8 +95,9 @@ export function assertMacPublishReleaseEnvironment(
  * opaque data, not Mach-O code. osx-sign walks every binary-looking resource
  * and otherwise invokes codesign on them; with a Developer ID identity that
  * makes the release stall/retry on harmless .webp/.pak files. Native modules
- * and the signed Nexus PTY supervisor remain deliberately in the walk. The
- * node-pty spawn-helper is forbidden from the package.
+ * the signed Nexus PTY supervisor, and the nested Redline companion remain
+ * deliberately in the walk. The node-pty spawn-helper is forbidden from the
+ * package.
  */
 export function shouldIgnoreMacSigningFile(filePath: string): boolean {
   const normalized = filePath.replaceAll('\\', '/');
@@ -110,7 +113,8 @@ export function shouldIgnoreMacSigningFile(filePath: string): boolean {
   if (!normalized.includes('/Contents/Resources/')) return false;
   return !(
     /\.(?:node|dylib)$/u.test(normalized) ||
-    /\/nexus-pty-supervisor$/u.test(normalized)
+    /\/nexus-pty-supervisor$/u.test(normalized) ||
+    isNexusRedlineSigningTarget(normalized)
   );
 }
 
@@ -118,6 +122,16 @@ function isDarwinPtySupervisorTarget(filePath: string): boolean {
   const normalized = filePath.replaceAll('\\', '/');
   return normalized.endsWith(
     `/Contents/Resources/${DARWIN_PTY_SUPERVISOR_IDENTIFIER}`,
+  );
+}
+
+function isNexusRedlineSigningTarget(filePath: string): boolean {
+  const normalized = filePath.replaceAll('\\', '/').replace(/\/$/u, '');
+  return (
+    normalized.endsWith(`/nexus-redline/${NEXUS_REDLINE_BUNDLE}`) ||
+    normalized.endsWith(
+      `/nexus-redline/${NEXUS_REDLINE_BUNDLE}/Contents/MacOS/NexusRedline`,
+    )
   );
 }
 
@@ -153,7 +167,14 @@ export function createMacSignOptions(teamId: string | undefined) {
               DARWIN_PTY_SUPERVISOR_IDENTIFIER,
             ],
           }
-        : {}),
+        : isNexusRedlineSigningTarget(filePath)
+          ? {
+              additionalArguments: [
+                '--identifier',
+                NEXUS_REDLINE_IDENTIFIER,
+              ],
+            }
+          : {}),
       // Usa a autoridade oficial de carimbo de tempo da Apple com URL explícita
       // para evitar falhas de timeout ("A timestamp was expected but was not found").
       timestamp: isRelease ? APPLE_TIMESTAMP_AUTHORITY_URL : 'none',

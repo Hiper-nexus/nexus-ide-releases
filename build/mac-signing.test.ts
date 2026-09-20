@@ -9,6 +9,7 @@ import {
   APPLE_TIMESTAMP_AUTHORITY_URL,
   createMacSignOptions,
   DARWIN_PTY_SUPERVISOR_IDENTIFIER,
+  NEXUS_REDLINE_IDENTIFIER,
   entitlementProfileForMacTarget,
   EXPECTED_DEVELOPER_ID_IDENTITY,
   assertMacPublishReleaseEnvironment,
@@ -134,6 +135,26 @@ describe('macOS signing modes', () => {
       ),
     ).toBe(false);
     expect(
+      shouldIgnoreMacSigningFile(
+        '/tmp/NexusIDE.app/Contents/Resources/nexus-redline/Nexus Redline.app',
+      ),
+    ).toBe(false);
+    expect(
+      shouldIgnoreMacSigningFile(
+        '/tmp/NexusIDE.app/Contents/Resources/nexus-redline/Nexus Redline.app/Contents/MacOS/NexusRedline',
+      ),
+    ).toBe(false);
+    expect(
+      shouldIgnoreMacSigningFile(
+        '/tmp/NexusIDE.app/Contents/Resources/nexus-redline/Nexus Redline.app/Contents/Resources/AppIcon.icns',
+      ),
+    ).toBe(true);
+    expect(
+      shouldIgnoreMacSigningFile(
+        '/tmp/NexusIDE.app/Contents/Resources/nexus-redline/Nexus Redline.app/Contents/Info.plist',
+      ),
+    ).toBe(true);
+    expect(
       createMacSignOptions('35P5XL3JN6').ignore(
         '/tmp/NexusIDE.app/Contents/Resources/wake/custom.onnx',
       ),
@@ -175,6 +196,31 @@ describe('macOS signing modes', () => {
           options.optionsForFile(otherTarget).additionalArguments,
         ).toBeUndefined();
       }
+    },
+  );
+
+  it.each([
+    [undefined, false],
+    ['35P5XL3JN6', true],
+  ])(
+    're-signs the nested Redline companion with a fixed identifier in %s signing mode',
+    (teamId, hardenedRuntime) => {
+      const options = createMacSignOptions(teamId);
+      const companion =
+        '/tmp/NexusIDE.app/Contents/Resources/nexus-redline/Nexus Redline.app/Contents/MacOS/NexusRedline';
+      const bundle =
+        '/tmp/NexusIDE.app/Contents/Resources/nexus-redline/Nexus Redline.app';
+
+      expect(options.optionsForFile(companion)).toMatchObject({
+        additionalArguments: ['--identifier', NEXUS_REDLINE_IDENTIFIER],
+        entitlements: 'build/entitlements.mac.none.plist',
+        hardenedRuntime,
+      });
+      expect(options.optionsForFile(bundle)).toMatchObject({
+        additionalArguments: ['--identifier', NEXUS_REDLINE_IDENTIFIER],
+        entitlements: 'build/entitlements.mac.none.plist',
+        hardenedRuntime,
+      });
     },
   );
 
