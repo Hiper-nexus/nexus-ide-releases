@@ -280,6 +280,17 @@ describe('fetchLiveProviderWindows', () => {
     expect(w?.find((x) => x.kind === 'weekly')?.usedRatio).toBeCloseTo(0.2, 4);
   });
 
+  it('cursor-agent: sem sessão local (editor/keychain) → null honesto', async () => {
+    // Nesta máquina não há state.vscdb do editor nem item de keychain do
+    // cursor-agent — o probe tem de devolver null, nunca inventar janela.
+    const windows = await fetchLiveProviderWindows('cursor-agent', undefined, {
+      fetchImpl: async () => {
+        throw new Error('sem sessão local não deve haver fetch');
+      },
+    } as never);
+    expect(windows).toBeNull();
+  });
+
   it('returns null when resolver missing or token null', async () => {
     expect(await fetchLiveProviderWindows('claude', undefined, {})).toBeNull();
     expect(

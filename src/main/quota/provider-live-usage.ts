@@ -21,6 +21,7 @@ import {
   fetchDevinUsageWindows,
   resolveDevinApiKey,
 } from './devin-usage';
+import { fetchCursorUsageWindowsLive } from './cursor-usage';
 import { fetchAgyUsageWindows, type GeminiOauthCreds } from './agy-usage';
 import {
   fetchKimiCodingUsageWindows,
@@ -231,6 +232,10 @@ export async function fetchLiveProviderWindows(
       return key
         ? fetchDevinUsageWindows(key, { fetchImpl, now })
         : null;
+    }
+    case 'cursor-agent': {
+      // Sessão local do editor/`cursor-agent login` (só leitura) + usage-summary.
+      return fetchCursorUsageWindowsLive({ fetchImpl, now });
     }
     case 'kimi': {
       // 1) OAuth from ~/.kimi-code (same as `kimi login`) — refresh if expired.
