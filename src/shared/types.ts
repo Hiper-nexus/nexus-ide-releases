@@ -402,6 +402,8 @@ export interface NexusApi {
     onDeepOpenPath(
       cb: (payload: { path: string; isDir: boolean }) => void,
     ): Unsubscribe;
+    /** Deep link nexus://quota (Redline → seção Uso e cotas). */
+    onDeepOpenQuota(cb: () => void): Unsubscribe;
     /**
      * Arquivos entregues pelo Nexus Shot via shot-bridge (main → renderer).
      * Metadados já validados no main: realpath sob ~/Pictures|Movies/Nexus Shot.
@@ -1071,6 +1073,12 @@ export interface NexusApi {
     onChanged(
       cb: (snapshot: import('./quota-types').QuotaFleetSnapshot) => void,
     ): Unsubscribe;
+  };
+  /** Nexus Redline — app companheiro de menu bar (instalar/abrir/status). */
+  redline: {
+    status(): Promise<import('./redline-types').RedlineInstallStatus>;
+    install(): Promise<{ ok: boolean; message: string }>;
+    open(): Promise<{ ok: boolean; message: string }>;
   };
   /** Gamificação power-scaling: XP por entrega, nunca por consumo. */
   gamification: {

@@ -215,6 +215,9 @@ export const WINDOW_CHANNELS = {
   /** event: main → renderer. Deep link/document open (nexus://open ou
    * abrir-com): { path, isDir }. O renderer abre o workspace (ou o do pai). */
   deepOpenPath: 'app:deepOpenPath',
+  /** event: main → renderer. Deep link nexus://quota (Redline): navega para
+   * a seção Uso e cotas. Read-only, sem confirmação. */
+  deepOpenQuota: 'app:deepOpenQuota',
   /** invoke: renderer → main. Open a trusted https URL in the OS browser. */
   openExternal: 'app:openExternal',
   /** invoke: renderer → main. Inicia o login OAuth: o main gera o nonce

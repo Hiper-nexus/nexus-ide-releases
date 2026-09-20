@@ -85,6 +85,7 @@ import {
 import { buildHandoffTools } from './tools-handoff';
 import { buildJudgeTools } from './tools-judge';
 import { buildRankTools } from './tools-rank';
+import { pickAccountTool } from './tools-pick-account';
 import { buildToolPickTools } from './tools-tool-pick';
 import { squadSchema } from '../../shared/orch-types';
 import { collectPerfSnapshot } from '../perf/perf-ipc';
@@ -2098,6 +2099,7 @@ export function buildDomainTools(): McpToolDef[] {
   return [
     routeTaskTool,
     routeLogTool,
+    pickAccountTool,
     clarifyTool,
     ...buildHandoffTools(),
     ...buildJudgeTools(),

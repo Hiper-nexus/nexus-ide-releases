@@ -155,6 +155,15 @@ describe('native terminal packaging', () => {
       );
     }
   });
+
+  it('ships the Redline menu bar companion on Darwin build hosts only', () => {
+    const resources = forgeConfig.packagerConfig?.extraResource;
+    if (process.platform === 'darwin') {
+      expect(resources).toContain('resources/native/darwin/nexus-redline');
+    } else {
+      expect(resources).not.toContain('resources/native/darwin/nexus-redline');
+    }
+  });
 });
 
 describe('required PT-BR wake model packaging', () => {

@@ -348,7 +348,13 @@ const config: ForgeConfig = {
       // src/main/detect/ (ver THIRD_PARTY_NOTICES.md).
       'resources/agent-detection',
       ...(process.platform === 'darwin'
-        ? ['resources/native/darwin/nexus-pty-supervisor']
+        ? [
+            'resources/native/darwin/nexus-pty-supervisor',
+            // App companheiro de menu bar (Nexus Redline): o pacote carrega o
+            // .app inteiro; a instalação em /Applications é feita pelo
+            // redline-install com oferta one-time.
+            'resources/native/darwin/nexus-redline',
+          ]
         : []),
     ],
     // App icon (nó-nexus pixel: anel + núcleo aceso + satélites): packager

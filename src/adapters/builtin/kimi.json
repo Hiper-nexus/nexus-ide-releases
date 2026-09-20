@@ -14,7 +14,7 @@
     "method": "api_key",
     "credentialStore": "keychain",
     "envVarFallback": "KIMI_MODEL_API_KEY",
-    "loginHint": "Rode `kimi login --region global` (página em inglês, Google). CLI antiga: `kimi migrate`.",
+    "loginHint": "Na hora do login o Nexus pergunta kimi.ai (internacional, Google) ou kimi.com (China). CLI antiga: `kimi migrate`.",
     "loginCommand": "kimi login --region global"
   },
   "spawn": {

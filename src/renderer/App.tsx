@@ -901,6 +901,13 @@ export function App() {
     });
   }, []);
 
+  // Deep link nexus://quota (Redline): abre a seção Uso e cotas.
+  useEffect(() => {
+    return window.nexus.app.onDeepOpenQuota(() => {
+      useProductNavigationStore.getState().openSettings('usage-quota');
+    });
+  }, []);
+
   useEffect(() => initDevServerStore(), []);
   useEffect(() => initShotIngestToasts(), []);
   useEffect(() => initDesignSelectionStore(), []);

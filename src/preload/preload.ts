@@ -22,6 +22,7 @@ import { COMPANION_RELAY_CHANNELS } from '../shared/companion-relay-types';
 import { OPS_CHANNELS } from '../shared/ops-ipc';
 import type { ProductFlagResolutionRow } from '../shared/product-api';
 import { PET_CHANNELS } from '../shared/pet-types';
+import { REDLINE_IPC } from '../shared/redline-types';
 import type { PetPrefs } from '../shared/pet-types';
 import { VOICE_CHANNELS } from '../shared/voice-channels';
 import { JEV_CHANNELS } from '../shared/jev-channels';
@@ -194,6 +195,10 @@ ipcRenderer.on(
   WINDOW_CHANNELS.deepOpenPath,
   (_event, payload: { path: string; isDir: boolean }) =>
     emitToListeners(deepOpenListeners, 'deepOpenListeners', payload),
+);
+const deepOpenQuotaListeners = new Set<() => void>();
+ipcRenderer.on(WINDOW_CHANNELS.deepOpenQuota, () =>
+  emitToListeners(deepOpenQuotaListeners, 'deepOpenQuotaListeners'),
 );
 
 // shot-bridge: arquivos entregues pelo Nexus Shot (contrato em
@@ -717,6 +722,7 @@ const api: NexusApi = {
       ipcRenderer.invoke(WINDOW_CHANNELS.openTerminalPath, path),
     onDeepOpenPath: (cb: (payload: { path: string; isDir: boolean }) => void) =>
       addListener(deepOpenListeners, cb),
+    onDeepOpenQuota: (cb: () => void) => addListener(deepOpenQuotaListeners, cb),
     onShotFilesReceived: (cb: (payload: ShotFilesReceivedPayload) => void) =>
       addListener(shotFilesListeners, cb),
   },
@@ -1289,6 +1295,11 @@ const api: NexusApi = {
       ipcRenderer.invoke(QUOTA_CHANNELS.refresh) as Promise<QuotaFleetSnapshot>,
     onChanged: (cb: (snapshot: QuotaFleetSnapshot) => void) =>
       addListener(quotaChangedListeners, cb),
+  },
+  redline: {
+    status: () => ipcRenderer.invoke(REDLINE_IPC.status),
+    install: () => ipcRenderer.invoke(REDLINE_IPC.install),
+    open: () => ipcRenderer.invoke(REDLINE_IPC.open),
   },
   gamification: {
     snapshot: (options?: { rescan?: boolean }) =>

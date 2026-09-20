@@ -7,6 +7,8 @@ import { useProductNavigationStore } from '../../state/product-navigation-store'
 import { useProviderStore } from '../../state/provider-store';
 import { useSessionStateStore } from '../../state/session-state-store';
 import { waitForSession, writeToPane } from '../../terminal/terminal-host';
+import { kimiLoginCommandFor } from '../../../shared/kimi-login-command';
+import { askKimiLoginRegion } from './kimi-login-region';
 
 /**
  * Aspas simples POSIX, sempre — deliberadamente sem a variante condicional do
@@ -33,7 +35,22 @@ function posixSingleQuote(value: string): string {
 
 export type CliLoginOutcome =
   | { readonly ok: true; readonly paneId: string }
-  | { readonly ok: false; readonly error: string };
+  | { readonly ok: false; readonly error: string; readonly cancelled?: boolean };
+
+/**
+ * What the login pane types into the PTY. Kimi `exec`s the CLI so the pane
+ * IS `kimi login` (device-code TUI + URL), not a raw shell that happens to
+ * run the command (F-354). Other CLIs stay typed into the surviving shell.
+ */
+export function cliLoginTypeLine(input: {
+  readonly command: string;
+  readonly adapterId?: string;
+  readonly platform?: NodeJS.Platform;
+}): string {
+  const platform = input.platform ?? process.platform;
+  const replaceShell = input.adapterId === 'kimi' && platform !== 'win32';
+  return replaceShell ? `exec ${input.command}\n` : `${input.command}\n`;
+}
 
 /**
  * O que o terminal de login provou quando o watcher soltou.
@@ -106,7 +123,14 @@ export async function openCliLoginTerminal(input: {
   /** Chamado quando o login conclui, o pane some, ou o tempo esgota. */
   readonly onFinished?: (finish: CliLoginFinish) => void;
 }): Promise<CliLoginOutcome> {
-  const command = input.command.trim();
+  let command = input.command.trim();
+  if (input.adapterId === 'kimi') {
+    const region = await askKimiLoginRegion();
+    if (!region) {
+      return { ok: false, error: 'Login cancelado.', cancelled: true };
+    }
+    command = kimiLoginCommandFor(region);
+  }
   if (command.length === 0) {
     return { ok: false, error: 'Esta CLI não declara comando de login.' };
   }
@@ -157,7 +181,10 @@ export async function openCliLoginTerminal(input: {
       `printf '%s\\n%s\\n%s\\n\\n' ${posixSingleQuote(safeMsg)} ${posixSingleQuote(safeCmdMsg)} ${posixSingleQuote(tipMsg)}\n`,
     );
   } else {
-    writeToPane(paneId, `${command}\n`);
+    writeToPane(
+      paneId,
+      cliLoginTypeLine({ command, adapterId: input.adapterId }),
+    );
   }
   useLayoutStore.getState().focus(paneId);
   useProductNavigationStore.getState().openTerminal();

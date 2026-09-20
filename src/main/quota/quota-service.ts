@@ -120,6 +120,15 @@ export interface QuotaServiceDeps {
    * no account-store.clearCooldown.
    */
   clearRefutedCooldown?: (accountId: string, adapterId: string) => void;
+  /**
+   * Sink opcional do Nexus Redline (app de menu bar): recebe o snapshot assim
+   * que ele vira `lastSnapshot`. Best-effort — falha do sink nunca afeta o
+   * serviço (produção liga no redline-sink, que coalesce e grava atômico).
+   */
+  persistSnapshot?: (
+    snap: QuotaFleetSnapshot,
+    accounts: AccountInfo[],
+  ) => void;
   /** Injectable fetch for tests. */
   fetchImpl?: FetchLike;
 }
@@ -412,6 +421,11 @@ export class QuotaService {
     if (generation === this.#snapshotGeneration && !this.#stopped) {
       this.#lastSnapshot = snap;
       this.#lastSnapshotGeneration = generation;
+      try {
+        this.#deps.persistSnapshot?.(snap, accounts);
+      } catch {
+        /* sink é best-effort: nunca derruba o snapshot */
+      }
     }
     return snap;
   }

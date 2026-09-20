@@ -20,6 +20,72 @@ import { ProviderLogo } from '../ProviderLogo';
 import { useToastStore } from '../../state/toast-store';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
 import { openCliLoginTerminal } from './cli-login-terminal';
+import type { RedlineInstallStatus } from '../../../shared/redline-types';
+import { buildPulseMarkers, buildPulseTicks } from '../../lib/quota-pulse';
+// Puro (só imports de shared) — o chip "melhor folga" usa a MESMA aritmética
+// que o scorer do main e o app de menu bar; nenhuma implementação paralela.
+import { scoreFleet } from '../../../main/quota/smart-pick';
+
+/**
+ * Linha do Nexus Redline (app de menu bar): instalar na primeira vez,
+ * abrir quando já está em /Applications. Sumida em não-macOS ou quando o
+ * companheiro não veio no pacote.
+ */
+function RedlineMenuBarRow() {
+  const [status, setStatus] = useState<RedlineInstallStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const pushToast = useToastStore((state) => state.push);
+  useEffect(() => {
+    // Ambientes sem a ponte (testes, embeds) apenas omitem a linha.
+    const api = window.nexus?.redline;
+    if (!api) return;
+    void api
+      .status()
+      .then(setStatus)
+      .catch(() =>
+        setStatus({ platform: 'unknown', bundled: false, running: false }),
+      );
+  }, []);
+  if (!status || status.platform !== 'darwin' || !status.bundled) return null;
+  const installed = Boolean(status.installedPath);
+
+  async function run(action: 'install' | 'open'): Promise<void> {
+    setBusy(true);
+    try {
+      const result = await window.nexus.redline[action]();
+      pushToast(result.ok ? 'success' : 'warn', 'Nexus Redline', result.message);
+      const next = await window.nexus.redline.status();
+      setStatus(next);
+    } catch (error) {
+      pushToast('warn', 'Nexus Redline', String((error as Error).message ?? error));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="quota-panel__redline">
+      <div>
+        <strong>App na barra do menu</strong>
+        <p className="settings-detail__hint">
+          {installed
+            ? status.running
+              ? 'Nexus Redline está no topo do Mac mostrando as cotas.'
+              : 'Nexus Redline está instalado — abra para ver as cotas no topo do Mac.'
+            : 'Mostra a folga de cada conta no topo do Mac (instala em /Applications).'}
+        </p>
+      </div>
+      <button
+        type="button"
+        className="settings-btn"
+        disabled={busy}
+        onClick={() => void run(installed ? 'open' : 'install')}
+      >
+        {busy ? 'Aguarde…' : installed ? 'Abrir Redline' : 'Instalar na barra do menu'}
+      </button>
+    </div>
+  );
+}
 
 const SOURCE_LABELS: Record<QuotaSource, string> = {
   'provider-api': 'Informado pelo serviço de IA',
@@ -108,12 +174,14 @@ function EntryCard({
   email,
   needsRelogin,
   now,
+  recommended,
 }: {
   entry: ProviderQuotaEntry;
   account?: AccountInfo;
   email?: string;
   needsRelogin?: boolean;
   now: number;
+  recommended: boolean;
 }) {
   const [loginBusy, setLoginBusy] = useState(false);
   const known = hasQuota(entry);
@@ -198,6 +266,11 @@ function EntryCard({
             {state}
           </span>
         )}
+        {recommended && (
+          <span className="quota-entry__flag" title="Conta com mais folga agora, pelo mesmo cálculo que o Nexus usa para escolher conta">
+            Melhor folga
+          </span>
+        )}
         {!entry.installed && (
           <span className="quota-entry__badge">Não instalada</span>
         )}
@@ -246,6 +319,96 @@ function EntryCard({
   );
 }
 
+/**
+ * Banda Fleet Pulse: eixo de renovação (horizonte 7d) com uma marca por
+ * conta — a janela decisiva de cada uma. Responde "quando respira de novo?"
+ * sem número inventado: só marcas com reset conhecido entram no eixo.
+ */
+function QuotaPulseBand({
+  entries,
+  now,
+}: {
+  entries: ProviderQuotaEntry[];
+  now: number;
+}) {
+  const markers = buildPulseMarkers(entries, now).slice(0, 24);
+  if (markers.length === 0) return null;
+  const ticks = buildPulseTicks();
+  const next = markers[0];
+  const nextIn = formatResetCountdown(next.resetsAt, now);
+  const X = (position: number) => 8 + position * 624;
+  const BASE = 32;
+  return (
+    <section className="quota-pulse" aria-label="Renovação das janelas mais apertadas">
+      <div className="quota-pulse__head">
+        <h2 className="quota-pulse__title">Renovação das janelas mais apertadas</h2>
+        <p className="quota-pulse__next">
+          Próxima renovação:{' '}
+          <strong>
+            {nextIn ? `${nextIn} · ${next.windowLabel}` : next.windowLabel}
+          </strong>
+        </p>
+      </div>
+      <svg
+        className="quota-pulse__axis"
+        viewBox="0 0 640 52"
+        role="img"
+        aria-label={
+          nextIn
+            ? `Eixo de renovação em 7 dias; próxima em ${nextIn} (${next.windowLabel}), ${markers.length} contas com reset conhecido`
+            : `Eixo de renovação em 7 dias; ${markers.length} contas com reset conhecido`
+        }
+      >
+        <line
+          className="quota-pulse__baseline"
+          x1={X(0)}
+          x2={X(1)}
+          y1={BASE}
+          y2={BASE}
+        />
+        {ticks.map((tick) => (
+          <g key={tick.label} className="quota-pulse__tick">
+            <line
+              x1={X(tick.position)}
+              x2={X(tick.position)}
+              y1={BASE}
+              y2={BASE + 5}
+            />
+            <text x={X(tick.position)} y={BASE + 16} textAnchor="middle">
+              {tick.label}
+            </text>
+          </g>
+        ))}
+        <text x={X(0)} y={BASE + 16} textAnchor="end" className="quota-pulse__now">
+          agora
+        </text>
+        {markers.map((marker, index) => {
+          const lane = index % 3;
+          const cy = BASE - 7 - lane * 8;
+          return (
+            <g
+              key={marker.entryId}
+              className={`quota-pulse__marker quota-pulse__marker--${marker.tone}`}
+            >
+              <title>
+                {`${marker.windowLabel} · reseta em ${formatResetCountdown(marker.resetsAt, now) ?? '—'}`}
+              </title>
+              <line
+                className="quota-pulse__stem"
+                x1={X(marker.position)}
+                x2={X(marker.position)}
+                y1={BASE - 1}
+                y2={cy + 4}
+              />
+              <circle className="quota-pulse__dot" cx={X(marker.position)} cy={cy} r={3.2} />
+            </g>
+          );
+        })}
+      </svg>
+    </section>
+  );
+}
+
 /** Credential sources remain separate; matching an email never proves equal quota scope. */
 export function UsageQuotaSection() {
   const snapshot = useQuotaStore((state) => state.snapshot);
@@ -267,6 +430,12 @@ export function UsageQuotaSection() {
   ).length;
   const unknownCount = entries.filter((entry) => !hasQuota(entry)).length;
   const loading = status === 'loading';
+  // Vencedor por adapter do mesmo scorer que o Redline usa (aritmética pura).
+  const recommendedIds = new Set(
+    Object.values(scoreFleet(entries, accounts, now).ranking)
+      .map((rows) => rows[0]?.entryId)
+      .filter((entryId): entryId is string => Boolean(entryId)),
+  );
   return (
     <section
       className="quota-panel"
@@ -314,6 +483,10 @@ export function UsageQuotaSection() {
               : `Consulta: ${observationTime(snapshot.updatedAt)}`}
         </span>
       </div>
+      {status !== 'error' && entries.length > 0 && (
+        <QuotaPulseBand entries={entries} now={now} />
+      )}
+      <RedlineMenuBarRow />
       {status === 'error' ? (
         <div
           className="quota-panel__empty quota-panel__empty--error"
@@ -360,6 +533,7 @@ export function UsageQuotaSection() {
               now={now}
               email={account?.email}
               needsRelogin={account?.needsRelogin}
+              recommended={recommendedIds.has(entry.id)}
             />
             );
           })}

@@ -9,8 +9,9 @@
  * login impossible (F-595: operator got Chinese page, could not authenticate).
  *
  * Policy: default to `global`. Only the mainland China locale (`zh_CN` /
- * `zh_Hans`) uses `mainland-cn`. `zh_TW` / `zh_HK` stay on global so Settings
- * and + Pane do not open the Chinese auth page (F-595).
+ * `zh_Hans`) uses `mainland-cn`. `zh_TW` / `zh_HK` stay on global so the
+ * suggested option is kimi.ai. The operator still picks the site at login
+ * time (F-354): some clients use kimi.com.
  */
 
 /** Visible for testing. */
@@ -23,8 +24,13 @@ export function kimiRegion(
   return /^(zh[_-]CN|zh[_-]Hans)\b/i.test(lang) ? 'mainland-cn' : 'global';
 }
 
+export function kimiLoginCommandFor(region: KimiRegion): string {
+  return `kimi login --region ${region}`;
+}
+
 export function kimiLoginCommand(
   env: Readonly<Record<string, string | undefined>> = process.env,
+  region: KimiRegion = kimiRegion(env),
 ): string {
-  return `kimi login --region ${kimiRegion(env)}`;
+  return kimiLoginCommandFor(region);
 }

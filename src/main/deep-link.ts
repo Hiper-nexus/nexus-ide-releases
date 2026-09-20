@@ -17,7 +17,9 @@ const SAFE_TOKEN = /^[A-Za-z0-9._~-]+$/;
 export type DeepLink =
   | { kind: 'license'; token: string }
   | { kind: 'open'; path: string }
-  | { kind: 'auth'; code: string; state: string | null };
+  | { kind: 'auth'; code: string; state: string | null }
+  /** `nexus://quota` — o Redline abre as cotas dentro do Nexus. */
+  | { kind: 'quota' };
 
 /**
  * decodeURIComponent fora de try/catch lançava URIError síncrono no
@@ -70,6 +72,10 @@ export function parseDeepLink(raw: string): DeepLink | null {
       return null; // state presente mas fora do conjunto seguro → link inteiro cai
     }
     return { kind: 'auth', code, state };
+  }
+
+  if (host === 'quota') {
+    return { kind: 'quota' };
   }
 
   return null;
@@ -145,6 +151,12 @@ function defaultHandler(link: DeepLink, trusted: boolean): void {
       .catch((err) => {
         console.warn('[auth] exchange rejeitou:', err);
       });
+  } else if (link.kind === 'quota') {
+    // Read-only: só foca a janela e navega para a seção de cotas. Sem efeito
+    // colateral — qualquer site pode disparar este link.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { WINDOW_CHANNELS } = require('../shared/channels') as typeof import('../shared/channels');
+    win?.webContents.send(WINDOW_CHANNELS.deepOpenQuota);
   }
 }
 

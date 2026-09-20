@@ -235,8 +235,15 @@ import {
 } from "./usage/usage-service";
 import {
   initQuotaService,
+  requireQuotaService,
   shutdownQuotaService,
 } from "./quota/quota-service";
+import { createRedlineSink } from "./quota/redline-sink";
+import {
+  initRedlineIpc,
+  maybeOfferRedlineInstall,
+  shutdownRedlineIpc,
+} from "./redline/redline-install";
 import {
   initializeProviderConfigStore,
   listProviderSettings,
@@ -389,6 +396,9 @@ import { startMainThreadHangWatchdog } from "./hang-watchdog/main-thread-hang-wa
 let projectRuntimeManager: ProjectRuntimeManager | null = null;
 let hookDropBoxWatcher: AgentHookDropBoxWatcher | null = null;
 let sessionAliveSentinel: SessionAliveSentinel | null = null;
+/** Nexus Redline (menu bar): sink de snapshots + vigia do pedido de refresh. */
+let redlineSink: ReturnType<typeof createRedlineSink> | null = null;
+let stopRedlineRefreshWatch: (() => void) | null = null;
 
 function traceBootstrap(phase: string): void {
   if (process.env.NEXUS_BOOT_TRACE === '1') {
@@ -590,12 +600,31 @@ function bootstrap(): void {
       void maybeOfferFirstRunProvisioning(app.getPath("userData")).catch((err) =>
         console.warn("[provisioning] oferta de primeiro boot falhou:", err),
       );
+      // Nexus Redline: oferta única de instalação do companheiro na barra
+      // ("instalou um, instala outro") — depois do provisioning de CLIs.
+      setTimeout(() => {
+        void maybeOfferRedlineInstall(app.getPath("userData")).catch((err) =>
+          console.warn("[redline] oferta de instalação falhou:", err),
+        );
+      }, 4_000);
     }, 6_000);
   }
+  // Nexus Redline (app de menu bar): publica snapshots em
+  // ~/.nexus/redline-last-good.json e consome o arquivo-sinal de refresh
+  // escrito pelo companheiro.
+  redlineSink = createRedlineSink();
+  stopRedlineRefreshWatch = redlineSink.watchRefreshRequests(() => {
+    void requireQuotaService().refresh();
+  });
+  initRedlineIpc();
   initQuotaService({
     listProviders: () => listProviderSettings({ nonBlockingAuth: true }),
     listAccounts: () => listAccountInfos(),
     resolveApiQuotaKey: resolveQuotaApiKey,
+    // Nexus Redline (app de menu bar): publica cada snapshot que vira
+    // lastSnapshot em ~/.nexus/redline-last-good.json. Best-effort — falha
+    // de disco nunca afeta o serviço.
+    persistSnapshot: (snap, accounts) => redlineSink?.persist(snap, accounts),
     // Leitura provider-api fresca e saudável refuta cooldown persistido
     // (resíduo da cascata de limite fantasma) — a conta volta ao pool.
     clearRefutedCooldown: (accountId) =>
@@ -1207,6 +1236,11 @@ function shutdown(): Promise<void> {
     closeAdapterRegistry();
     closeVoiceIpc();
     shutdownUsageTelemetry();
+    stopRedlineRefreshWatch?.();
+    stopRedlineRefreshWatch = null;
+    redlineSink?.stop();
+    redlineSink = null;
+    shutdownRedlineIpc();
     shutdownQuotaService();
     shutdownGamificationService();
     disposeCronRuntime();

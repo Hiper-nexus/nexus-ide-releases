@@ -14,6 +14,11 @@ describe('parseDeepLink', () => {
     });
   });
 
+  it('reconhece nexus://quota (Redline → Uso e cotas)', () => {
+    expect(parseDeepLink('nexus://quota')).toEqual({ kind: 'quota' });
+    expect(parseDeepLink('nexus://quota/')).toEqual({ kind: 'quota' });
+  });
+
   it('reconhece nexus://open?path=<abs> só com caminho absoluto', () => {
     expect(parseDeepLink('nexus://open?path=%2FUsers%2Fme%2Fp')).toEqual({
       kind: 'open',

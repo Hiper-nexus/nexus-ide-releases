@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { kimiLoginCommand, kimiRegion } from './kimi-login-command';
+import {
+  kimiLoginCommand,
+  kimiLoginCommandFor,
+  kimiRegion,
+} from './kimi-login-command';
 
 describe('kimiRegion', () => {
   it('defaults to global when no locale is set', () => {
@@ -46,6 +50,16 @@ describe('kimiLoginCommand', () => {
 
   it('returns kimi login --region mainland-cn for zh locale', () => {
     expect(kimiLoginCommand({ LANG: 'zh_CN.UTF-8' })).toBe('kimi login --region mainland-cn');
+  });
+
+  it('honors an explicit region over the locale default', () => {
+    expect(kimiLoginCommand({ LANG: 'pt_BR.UTF-8' }, 'mainland-cn')).toBe(
+      'kimi login --region mainland-cn',
+    );
+    expect(kimiLoginCommandFor('global')).toBe('kimi login --region global');
+    expect(kimiLoginCommandFor('mainland-cn')).toBe(
+      'kimi login --region mainland-cn',
+    );
   });
 
   it('the command is a safe single-line shell string (no metacharacters)', () => {
