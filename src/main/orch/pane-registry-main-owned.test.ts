@@ -169,6 +169,12 @@ vi.mock("../adapters/adapter-registry", () => ({
   resolveAdapterBinary: vi.fn((id: string) => `/mock/bin/${id}`),
 }));
 
+vi.mock("../adapters/managed-auth-spawn-gate", () => ({
+  resolveRotatingAuthFile: () => "/synthetic/codex/auth.json",
+  ROTATING_REFRESH_SPAWN_ADAPTERS: new Set(["codex"]),
+  waitForRotatingAuthSpawnGate: vi.fn(async () => "fresh"),
+}));
+
 vi.mock("../persistence/provider-config-store", () => ({
   prepareProviderSpawn: provider.prepare,
   prepareProviderSpawnAuthoritative: provider.prepareAuthoritative,

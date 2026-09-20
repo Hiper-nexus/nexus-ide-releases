@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { PTY_CHANNELS } from "../../shared/channels";
 
 const ipcDeps = vi.hoisted(() => {
@@ -73,6 +76,11 @@ const settingsDeps = vi.hoisted(() => ({
     squadCliPolicy:
       "operator-choice" as "operator-choice" | "governed",
   })),
+}));
+
+const authGateDeps = vi.hoisted(() => ({
+  wait: vi.fn<(...args: unknown[]) => Promise<string>>(async () => "fresh"),
+  track: vi.fn(),
 }));
 
 const providerDeps = vi.hoisted(() => ({
@@ -174,7 +182,7 @@ vi.mock("../adapters/adapter-registry", () => ({
             },
           },
         }
-      : id === "opencode" || id === "custom" || id === "agy" || id === "muse"
+      : id === "opencode" || id === "custom" || id === "agy" || id === "muse" || id === "codex"
         ? {
             id,
             kind: "cli-pty",
@@ -201,10 +209,14 @@ vi.mock("../path-resolver", () => ({
     typeof binPath === "string" && binPath.startsWith("/"),
 }));
 
-vi.mock("../adapters/managed-auth-spawn-gate", () => ({
-  resolveRotatingAuthFile: () => null,
-  waitForRotatingAuthSpawnGate: vi.fn(async () => "fresh"),
-  ROTATING_REFRESH_SPAWN_ADAPTERS: new Set(["codex"]),
+vi.mock("../adapters/managed-credentials", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../adapters/managed-credentials")>(),
+  trackManagedSession: authGateDeps.track,
+}));
+
+vi.mock("../adapters/managed-auth-spawn-gate", async (importOriginal) => ({
+  ...await importOriginal<typeof import("../adapters/managed-auth-spawn-gate")>(),
+  waitForRotatingAuthSpawnGate: authGateDeps.wait,
 }));
 
 vi.mock("../persistence/provider-config-store", () => ({
@@ -315,9 +327,17 @@ function sealedPendingSpawn() {
   };
 }
 
+const gateFixtureDirs: string[] = [];
+afterEach(() => {
+  for (const dir of gateFixtureDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+});
+
 describe("registerPtyIpc account fail-fast", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    authGateDeps.wait.mockReset().mockResolvedValue("fresh");
+    providerDeps.prepareProviderSpawn.mockReset();
+    authorityDeps.assertPendingSpawnGrantActive.mockReset();
     ipcDeps.handlers.clear();
     authorityDeps.requireRendererWorkspaceScope.mockReturnValue(
       authorityDeps.scope,
@@ -593,6 +613,126 @@ describe("registerPtyIpc account fail-fast", () => {
       "pty-created",
       authorityDeps.scope,
     );
+  });
+
+  it.each([undefined, "acct-selected"])(
+    "gates materialized Codex auth for account %s before spawning and keeps that selection",
+    async (accountId) => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nexus-ipc-auth-gate-"));
+      gateFixtureDirs.push(home);
+      const authFile = path.join(home, "auth.json");
+      const order: string[] = [];
+      const overrides = { binPath: "/mock/bin/codex", keyEnv: { CODEX_HOME: home } };
+      providerDeps.prepareProviderSpawn.mockImplementationOnce(() => {
+        // A scrubbed managed home is materialized by preparation, before the gate.
+        fs.writeFileSync(authFile, JSON.stringify({ tokens: { access_token: "synthetic-stale" } }));
+        order.push("materialize");
+        return { ok: true, overrides };
+      });
+      let release!: () => void;
+      authGateDeps.wait.mockImplementationOnce(async (options) => {
+        expect(options).toEqual({ authFile });
+        expect(fs.existsSync(authFile)).toBe(true);
+        order.push("gate");
+        await new Promise<void>((resolve) => { release = resolve; });
+        return "follower-fresh";
+      });
+      const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+      const result = handler?.({ sender: { id: 7 } }, {
+        kind: "cli-agent", adapterId: "codex", accountId, cols: 100, rows: 30,
+      });
+      expect(order).toEqual(["materialize", "gate"]);
+      expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
+      release();
+      await expect(result).resolves.toEqual({ ok: true, sessionId: "pty-created" });
+      expect(providerDeps.prepareProviderSpawn).toHaveBeenCalledTimes(1);
+      expect(authGateDeps.wait).toHaveBeenCalledTimes(1);
+      expect(ptyDeps.spawnAgentSession).toHaveBeenCalledWith(
+        expect.anything(), expect.anything(), expect.objectContaining({ id: "codex" }),
+        overrides, expect.anything(),
+      );
+    },
+  );
+
+  it("binds an automatically selected account to the physical session and auth lifecycle", async () => {
+    providerDeps.prepareProviderSpawn.mockReturnValueOnce({
+      ok: true,
+      overrides: { binPath: "/mock/bin/codex", selectedAccountId: "acct-main-selected", keyEnv: { CODEX_HOME: "/synthetic/account" } },
+    });
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+    await expect(handler?.({ sender: { id: 7 } }, {
+      kind: "cli-agent", adapterId: "codex", cols: 100, rows: 30,
+    })).resolves.toMatchObject({ ok: true, accountId: "acct-main-selected" });
+    expect(ptyDeps.spawnAgentSession).toHaveBeenCalledWith(
+      expect.anything(), expect.objectContaining({ accountId: "acct-main-selected" }),
+      expect.anything(), expect.anything(), expect.anything(),
+    );
+    expect(authGateDeps.track).toHaveBeenCalledWith("pty-created", "codex", "acct-main-selected");
+  });
+
+  it("refuses a prepared account that diverges from the explicit Main-sealed pin", async () => {
+    const base = sealedPendingSpawn();
+    const pending = { ...base, sealedRequest: { ...base.sealedRequest, adapterId: "codex" } };
+    authorityDeps.claimPendingSpawnMeta.mockReturnValueOnce(pending);
+    authorityDeps.getMission.mockReturnValueOnce(approvedMissionForSpawn());
+    providerDeps.prepareProviderSpawn.mockReturnValueOnce({
+      ok: true, overrides: { selectedAccountId: "different-account", keyEnv: { CODEX_HOME: "/synthetic/account" } },
+    });
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+    const result = await handler?.({ sender: { id: 7 } }, {
+      ...pending.sealedRequest, kind: "cli-agent", orchRequestId: "orchspawn-1", cols: 100, rows: 30,
+    });
+    expect(result).toMatchObject({ ok: false, error: expect.stringMatching(/selected account.*pin/i) });
+    expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
+    expect(authGateDeps.track).not.toHaveBeenCalled();
+  });
+
+  it("does not create a PTY after auth refresh coordination times out", async () => {
+    providerDeps.prepareProviderSpawn.mockReturnValueOnce({ ok: true, overrides: { keyEnv: { CODEX_HOME: "/synthetic/account" } } });
+    authGateDeps.wait.mockRejectedValueOnce(new Error("Codex auth refresh timed out; retry shortly"));
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+    await expect(handler?.({ sender: { id: 7 } }, {
+      kind: "cli-agent", adapterId: "codex", cols: 100, rows: 30,
+    })).resolves.toEqual({ ok: false, error: "Codex auth refresh timed out; retry shortly" });
+    expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
+  });
+
+  it("does not gate Codex auth when account preparation fails", async () => {
+    providerDeps.prepareProviderSpawn.mockReturnValueOnce({ ok: false, error: "selected account unavailable" });
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+    const result = await handler?.({ sender: { id: 7 } }, {
+      kind: "cli-agent", adapterId: "codex", cols: 100, rows: 30,
+    });
+    expect(result).toEqual({ ok: false, error: "selected account unavailable" });
+    expect(authGateDeps.wait).not.toHaveBeenCalled();
+    expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
+  });
+
+  it("revalidates the pending Main grant after the Codex auth wait", async () => {
+    const base = sealedPendingSpawn();
+    const pending = { ...base, sealedRequest: { ...base.sealedRequest, adapterId: "codex" } };
+    authorityDeps.claimPendingSpawnMeta.mockReturnValueOnce(pending);
+    authorityDeps.getMission.mockReturnValueOnce(approvedMissionForSpawn());
+    providerDeps.prepareProviderSpawn.mockReturnValueOnce({
+      ok: true, overrides: { binPath: "/mock/bin/codex", keyEnv: { CODEX_HOME: "/synthetic/account" } },
+    });
+    let release!: () => void;
+    authGateDeps.wait.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => { release = resolve; });
+      return "follower-fresh";
+    });
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+    const result = handler?.({ sender: { id: 7 } }, {
+      ...pending.sealedRequest, kind: "cli-agent", orchRequestId: "orchspawn-1", cols: 100, rows: 30,
+    });
+    expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
+    authorityDeps.assertPendingSpawnGrantActive.mockImplementationOnce(() => {
+      throw new Error("pending spawn grant revoked during auth wait");
+    });
+    release();
+    await expect(result).resolves.toEqual({ ok: false, error: "pending spawn grant revoked during auth wait" });
+    expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
+    expect(providerDeps.prepareProviderSpawn).toHaveBeenCalledTimes(1);
   });
 
   it("revalidates AGY auth at the final PTY spawn boundary", async () => {

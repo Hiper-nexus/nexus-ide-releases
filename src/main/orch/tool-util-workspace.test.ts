@@ -30,6 +30,8 @@ const stubs = vi.hoisted(() => ({
     (entry: { sessionId: string; sequence: number }) => void
   >,
   missionPanesRecord: vi.fn(),
+  physicalSessionInfo: vi.fn<() => unknown>(() => null),
+  acpSessionInfo: vi.fn<() => unknown>(() => null),
   taskDispatchesList: vi.fn((): Array<unknown> => []),
   missionGet: vi.fn((missionId: string) =>
     missionId === 'm1'
@@ -71,7 +73,7 @@ vi.mock('./pane-registry', () => ({
 }));
 vi.mock('./pane-authz', () => ({ authorizePaneAccess: vi.fn() }));
 vi.mock('../pty/pty-manager', () => ({
-  getAgentSessionInfo: vi.fn(() => null),
+  getAgentSessionInfo: stubs.physicalSessionInfo,
   orchWriteSession: stubs.writeSession,
   orchTerminateSession: stubs.terminateSession,
   getSessionState: stubs.sessionState,
@@ -98,6 +100,7 @@ vi.mock('../pty/pty-manager', () => ({
     };
   }),
 }));
+vi.mock('../acp/acp-harness-driver', () => ({ getAcpDriverSession: stubs.acpSessionInfo }));
 vi.mock('./agent-status', () => ({
   isSessionInjectableIdle: vi.fn(
     () => stubs.sessionState() === 'idle' && stubs.injectable,
@@ -265,6 +268,8 @@ const taskExecutionScope = {
 describe('agent pane workspace confinement', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    stubs.physicalSessionInfo.mockReset().mockReturnValue(null);
+    stubs.acpSessionInfo.mockReset().mockReturnValue(null);
     stubs.stateTaps.length = 0;
     stubs.dataTaps.length = 0;
     stubs.exitTaps.length = 0;
@@ -292,6 +297,50 @@ describe('agent pane workspace confinement', () => {
       executionScope: scope,
       scope,
     });
+  });
+
+  it('persists the physical Main account without trusting an account in the spawn reply', async () => {
+    stubs.physicalSessionInfo.mockReturnValue({
+      sessionId: 'session-1', paneId: 'pane-1', adapterId: 'codex', missionId: 'm1',
+      accountId: 'main-selected', scope,
+    });
+    stubs.requestPaneSpawn.mockResolvedValueOnce(Object.assign({
+      ok: true, paneId: 'pane-1', sessionId: 'session-1',
+    }, { accountId: 'renderer-supplied' }));
+    const requested = { adapterId: 'codex', missionId: 'm1', role: 'worker' as const, scope };
+    await spawnPaneAndMaybePrompt(requested);
+    expect(stubs.missionPanesRecord).toHaveBeenCalledWith(expect.objectContaining({
+      paneId: 'pane-1', accountId: 'main-selected',
+      authoritySeal: stubs.resolveMissionPaneAuthoritySeal(),
+    }));
+    expect(requested).not.toHaveProperty('accountId');
+  });
+
+  it('retains the ACP account when its physical authority uses the coordination scope', async () => {
+    stubs.acpSessionInfo.mockReturnValue({ agent: {
+      sessionId: 'session-1', paneId: 'pane-1', adapterId: 'codex', missionId: 'm1',
+      accountId: 'acp-main-selected', scope,
+    } });
+    await spawnPaneAndMaybePrompt({
+      adapterId: 'codex', missionId: 'm1', role: 'worker', scope, executionScope: taskExecutionScope,
+    });
+    expect(stubs.missionPanesRecord).toHaveBeenCalledWith(expect.objectContaining({ accountId: 'acp-main-selected' }));
+  });
+
+  it.each([
+    { sessionId: 'another-session' },
+    { paneId: 'another-pane' },
+    { scope: { ...scope, checkoutId: 'another-checkout' } },
+    { accountId: 'different-account' },
+  ])('refuses a physical account binding with mismatched identity %o', async (changed) => {
+    stubs.physicalSessionInfo.mockReturnValue({
+      sessionId: 'session-1', paneId: 'pane-1', adapterId: 'codex', missionId: 'm1',
+      accountId: 'pinned-account', scope, ...changed,
+    });
+    await expect(spawnPaneAndMaybePrompt({
+      adapterId: 'codex', missionId: 'm1', role: 'worker', scope, accountId: 'pinned-account',
+    })).rejects.toThrow(/physical.*account.*authority/i);
+    expect(stubs.missionPanesRecord).not.toHaveBeenCalled();
   });
 
   it('passes the resolved selected model into the credential probe', async () => {

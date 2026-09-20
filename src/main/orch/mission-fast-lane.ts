@@ -224,9 +224,9 @@ function bindSpawnedMissionPane(
     readOnly?: boolean;
   },
 ): void {
-  const physical = role === 'worker'
-    ? getAgentSessionInfo(spawn.sessionId) ?? getAcpDriverSession(spawn.sessionId)?.agent
-    : undefined;
+  const spawnedSession = getAgentSessionInfo(spawn.sessionId)
+    ?? getAcpDriverSession(spawn.sessionId)?.agent;
+  const physical = role === 'worker' ? spawnedSession : undefined;
   if (role === 'worker' && (!physical || physical.sessionId !== spawn.sessionId ||
     physical.paneId !== spawn.paneId || physical.missionId !== mission.id ||
     physical.role !== role || physical.agentName !== agent.agentName ||
@@ -242,6 +242,7 @@ function bindSpawnedMissionPane(
     missionId: mission.id,
     paneId: spawn.paneId,
     adapterId: agent.cli,
+    accountId: spawnedSession?.accountId,
     model: agent.model || undefined,
     effort: agent.effort || undefined,
     cwd: scope.rootRealPath,

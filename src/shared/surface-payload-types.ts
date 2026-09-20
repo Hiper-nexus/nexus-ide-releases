@@ -556,6 +556,8 @@ export type SpawnResult =
   | {
       ok: true;
       sessionId: string;
+      /** Main-selected account to retain in the trusted renderer's pane layout. */
+      accountId?: string;
       resumeMode?: 'exact' | 'latest' | 'unsupported' | 'fresh-context';
       /** Existing main-owned mission PTY was attached; no provider restart. */
       adopted?: boolean;

@@ -206,28 +206,6 @@ function spawnCliPtyAgentPane(
       recovery,
       persistedPane,
     } = spawn;
-    if (!authSpawnGated) {
-      const authFile = resolveRotatingAuthFile(adapter.id, request.accountId);
-      if (authFile) {
-        return waitForRotatingAuthSpawnGate({ authFile }).then(
-          () =>
-            spawnCliPtyAgentPane(
-              sender,
-              adapter,
-              spawn,
-              authoritativePreparation,
-              true,
-            ),
-          (error) => ({
-            ok: false,
-            error:
-              error instanceof Error
-                ? error.message
-                : "failed to coordinate Codex auth refresh",
-          }),
-        );
-      }
-    }
     const operatorChoice = isOperatorChoicePolicy(
       getOrchSettings().squadCliPolicy,
     );
@@ -292,6 +270,38 @@ function spawnCliPtyAgentPane(
     if (!preparation.ok) {
       throw new Error(preparation.error);
     }
+    const selectedAccountId = preparation.overrides.selectedAccountId ?? request.accountId;
+    if (request.accountId && selectedAccountId !== request.accountId) {
+      throw new Error("selected account diverges from the authorized account pin");
+    }
+    // Selection can be automatic and preparation can restore scrubbed auth.
+    // Gate the selected, materialized file; reuse this preparation after waiting
+    // so account rotation cannot switch the credential underneath the lock.
+    if (!authSpawnGated) {
+      const authFile = resolveRotatingAuthFile(
+        adapter.id,
+        preparation.overrides.keyEnv,
+      );
+      if (authFile) {
+        return waitForRotatingAuthSpawnGate({ authFile }).then(
+          () =>
+            spawnCliPtyAgentPane(
+              sender,
+              adapter,
+              spawn,
+              preparation,
+              true,
+            ),
+          (error) => ({
+            ok: false,
+            error:
+              error instanceof Error
+                ? error.message
+                : "failed to coordinate Codex auth refresh",
+          }),
+        );
+      }
+    }
     // Revalidate immediately before spawn: discovery cache can go stale after
     // uninstall/move, and Finder launches must never re-search a bare name.
     // Do not mutate preparation.overrides — build a fresh overrides object.
@@ -331,7 +341,11 @@ function spawnCliPtyAgentPane(
       ...preparation.overrides,
       binPath: spawnBin,
     };
-    const authorizedRequest = { ...request, cwd: authority.cwd };
+    const authorizedRequest = {
+      ...request,
+      cwd: authority.cwd,
+      ...(selectedAccountId ? { accountId: selectedAccountId } : {}),
+    };
     const adopted =
       persistedPane && request.paneId
         ? adoptMainOwnedAgentSession(sender, {
@@ -341,7 +355,7 @@ function spawnCliPtyAgentPane(
             role: persistedPane.role,
             workerIncarnationId: persistedPane.workerIncarnationId,
             model: request.model,
-            accountId: request.accountId,
+            accountId: selectedAccountId,
             effort: request.effort,
             cwd: authority.cwd,
             agentName: persistedPane.agentName,
@@ -380,6 +394,7 @@ function spawnCliPtyAgentPane(
       return {
         ok: true,
         sessionId: adopted.sessionId,
+        ...(preparation.overrides.selectedAccountId ? { accountId: selectedAccountId } : {}),
         adopted: true,
         state: adopted.state,
       };
@@ -422,8 +437,8 @@ function spawnCliPtyAgentPane(
         return terminateRejectedWorkerRestart(sessionId, error);
       }
     }
-    if (request.accountId && isFileAuthAdapter(adapter.id)) {
-      trackManagedSession(sessionId, adapter.id, request.accountId);
+    if (selectedAccountId && isFileAuthAdapter(adapter.id)) {
+      trackManagedSession(sessionId, adapter.id, selectedAccountId);
     }
     const settlement = settleSpawnedMainOwnedAgentSession({
       backend: "PTY",
@@ -457,6 +472,7 @@ function spawnCliPtyAgentPane(
     return {
       ok: true,
       sessionId,
+      ...(preparation.overrides.selectedAccountId ? { accountId: selectedAccountId } : {}),
       ...(request.resume && resumeMode ? { resumeMode } : {}),
     };
   } catch (err) {

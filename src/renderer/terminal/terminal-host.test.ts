@@ -85,7 +85,7 @@ vi.mock('./terminal-ghost-assist', () => ({
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { useToastStore } from '../state/toast-store';
-import { buildGridTree } from '../lib/split-tree';
+import { buildGridTree, listPanes } from '../lib/split-tree';
 import * as terminalOutputScheduler from './terminal-output-scheduler';
 import {
   attachHost,
@@ -184,6 +184,22 @@ function fireTitle(title: string): void {
 }
 
 describe('spawn adiado sem ninguém esperando a sessão', () => {
+  it('persiste a conta realmente escolhida pelo Main quando a lista de contas do renderer não está disponível', async () => {
+    const agent: PaneModel = { id: 'main-account-choice', kind: 'cli-agent', adapterId: 'codex', title: 'Codex' };
+    const other: PaneModel = { id: 'other-account', kind: 'cli-agent', adapterId: 'codex', title: 'Outra', accountId: 'account-b' };
+    useLayoutStore.setState({ root: buildGridTree([agent, other]), focusedPaneId: agent.id });
+    spawn.mockResolvedValueOnce({ ok: true, sessionId: 'pty-selected-a', accountId: 'account-a' });
+    const host = getOrCreateHost(agent);
+    setHostSize(host.element, 1200, 800);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(agent, slot);
+    expect(await waitForSession(agent.id, 1000)).toBe('pty-selected-a');
+    const panes = listPanes(useLayoutStore.getState().root);
+    expect(panes.find((p) => p.id === agent.id)?.accountId).toBe('account-a');
+    expect(panes.find((p) => p.id === other.id)?.accountId).toBe('account-b');
+  });
+
   it('nasce sozinho quando o canvas oculto fica mensurável, mesmo sem ResizeObserver', async () => {
     // Campo 09/09: pane aberto pelo picker com o destino em Início (canvas
     // de terminais `hidden`, 0×0). Ninguém chama waitForSession, o

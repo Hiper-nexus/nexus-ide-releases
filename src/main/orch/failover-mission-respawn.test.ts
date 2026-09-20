@@ -1,5 +1,19 @@
-import { describe, expect, it } from 'vitest';
-import { planMainOwnedFailoverRespawn } from './failover-mission-respawn';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { OrchPaneSpawnResult } from '../../shared/orch-types';
+const deps = vi.hoisted(() => ({
+  getPane: vi.fn(),
+  spawnSync: vi.fn(() => ({ requestId: 'sync', ok: true, paneId: 'sync-pane', sessionId: 'sync-session' })),
+  spawnAsync: vi.fn<(...args: unknown[]) => Promise<OrchPaneSpawnResult>>(),
+  terminate: vi.fn(async () => true),
+}));
+vi.mock('./main-owned-pane-runtime', () => ({ getMainOwnedPane: deps.getPane }));
+vi.mock('./pane-registry', () => ({
+  spawnMainOwnedMissionPane: deps.spawnSync,
+  spawnMainOwnedMissionPaneAsync: deps.spawnAsync,
+}));
+vi.mock('../pty/pty-manager', () => ({ orchTerminateSession: deps.terminate }));
+
+import { planMainOwnedFailoverRespawn, respawnMainOwnedPaneWithAccount } from './failover-mission-respawn';
 
 const meta = {
   missionId: 'mission-1',
@@ -53,5 +67,37 @@ describe('planMainOwnedFailoverRespawn (failover de conta em pane de missão)', 
       reason: 'auth',
     });
     expect(plan).toMatchObject({ action: 'skip' });
+  });
+});
+
+describe('respawnMainOwnedPaneWithAccount', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    deps.spawnAsync.mockReset();
+    deps.getPane.mockReturnValue({ meta });
+  });
+
+  it('waits for the asynchronous account gate before reporting a successful failover', async () => {
+    let release!: (result: OrchPaneSpawnResult) => void;
+    deps.spawnAsync.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
+    let finished = false;
+    const result = respawnMainOwnedPaneWithAccount({
+      paneId: 'old-pane', adapterId: 'codex', toAccountId: 'account-reserve',
+      fromAccountLabel: 'synthetic', reason: 'quota',
+    }).then((value) => { finished = true; return value; });
+    expect(deps.spawnAsync).toHaveBeenCalledWith(expect.objectContaining({ accountId: 'account-reserve', adapterId: 'codex' }));
+    expect(deps.spawnSync).not.toHaveBeenCalled();
+    expect(finished).toBe(false);
+    release({ requestId: 'async', ok: true, paneId: 'new-pane', sessionId: 'new-session' });
+    await expect(result).resolves.toBe(true);
+  });
+
+  it('reports an auth gate refusal as failed failover', async () => {
+    deps.spawnAsync.mockResolvedValueOnce({ requestId: 'async', ok: false, error: 'auth refresh timeout' });
+    await expect(respawnMainOwnedPaneWithAccount({
+      paneId: 'old-pane', adapterId: 'codex', toAccountId: 'account-reserve',
+      fromAccountLabel: 'synthetic', reason: 'quota',
+    })).resolves.toBe(false);
+    expect(deps.spawnSync).not.toHaveBeenCalled();
   });
 });

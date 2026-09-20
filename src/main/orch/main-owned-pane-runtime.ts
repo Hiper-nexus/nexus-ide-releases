@@ -18,6 +18,11 @@ import {
 } from "../adapters/managed-credentials";
 import { recordAccountChoiceReceipt } from "../persistence/account-choice-receipts";
 import {
+  resolveRotatingAuthFile,
+  ROTATING_REFRESH_SPAWN_ADAPTERS,
+  waitForRotatingAuthSpawnGate,
+} from "../adapters/managed-auth-spawn-gate";
+import {
   prepareProviderSpawn,
   prepareProviderSpawnAuthoritative,
   type ProviderSpawnPreparation,
@@ -348,18 +353,32 @@ export function retainClaimedPendingSpawn(
   return { requestId, ok: true, paneId, sessionId };
 }
 
+type MissionPaneSpawnOptions = PaneSpawnOptions & {
+  missionId: string;
+  role: "orchestrator" | "worker";
+};
+
 /**
  * Create a physical mission PTY owned by main. Presentation can be adopted by
  * a renderer later without changing pane/session identity.
  */
 export function spawnMainOwnedMissionPane(
-  options: PaneSpawnOptions & {
-    missionId: string;
-    role: "orchestrator" | "worker";
-  },
+  options: MissionPaneSpawnOptions,
   hooks: MainOwnedPaneHooks,
   authoritativePreparation?: ProviderSpawnPreparation,
-): OrchPaneSpawnResult {
+): OrchPaneSpawnResult;
+export function spawnMainOwnedMissionPane(
+  options: MissionPaneSpawnOptions,
+  hooks: MainOwnedPaneHooks,
+  authoritativePreparation: ProviderSpawnPreparation | undefined,
+  coordinateAuthRefresh: true,
+): OrchPaneSpawnResult | Promise<OrchPaneSpawnResult>;
+export function spawnMainOwnedMissionPane(
+  options: MissionPaneSpawnOptions,
+  hooks: MainOwnedPaneHooks,
+  authoritativePreparation?: ProviderSpawnPreparation,
+  coordinateAuthRefresh = false,
+): OrchPaneSpawnResult | Promise<OrchPaneSpawnResult> {
   const requestId = makeId("orchspawn");
   const paneId = makeId("pane");
   const operatorChoice = isOperatorChoicePolicy(
@@ -565,6 +584,27 @@ export function spawnMainOwnedMissionPane(
       ),
     });
   if (!prepared.ok) return { requestId, ok: false, error: prepared.error };
+  const selectedAccountId = prepared.overrides.selectedAccountId ?? options.accountId;
+  if (options.accountId && selectedAccountId !== options.accountId) {
+    return { requestId, ok: false, error: "selected account diverges from the authorized account pin" };
+  }
+  if (coordinateAuthRefresh) {
+    const authFile = resolveRotatingAuthFile(adapter.id, prepared.overrides.keyEnv);
+    if (authFile) {
+      return waitForRotatingAuthSpawnGate({ authFile }).then(
+        // Recheck Main authority after waiting, without selecting/materializing
+        // again: that could switch the account or restore its stale credential.
+        () => spawnMainOwnedMissionPane(options, hooks, prepared),
+        (error) => ({
+          requestId,
+          ok: false,
+          error: error instanceof Error
+            ? error.message
+            : "failed to coordinate Codex auth refresh",
+        }),
+      );
+    }
+  }
   let preparedOverrides = prepared.overrides;
   if (nativeReadOnly || missionBoundWritableWorker) {
     if (!preparedOverrides.binPath) {
@@ -648,7 +688,7 @@ export function spawnMainOwnedMissionPane(
         paneId,
         adapterId: adapter.id,
         model: options.model,
-        accountId: options.accountId,
+        accountId: selectedAccountId,
         effort: options.effort,
         cwd,
         missionId: options.missionId,
@@ -657,8 +697,8 @@ export function spawnMainOwnedMissionPane(
       preparedOverrides,
       authority,
     );
-    if (options.accountId && isFileAuthAdapter(adapter.id)) {
-      trackManagedSession(sessionId, adapter.id, options.accountId);
+    if (selectedAccountId && isFileAuthAdapter(adapter.id)) {
+      trackManagedSession(sessionId, adapter.id, selectedAccountId);
     }
     if (preparedOverrides.accountChoice) {
       recordAccountChoiceReceipt(sessionId, preparedOverrides.accountChoice);
@@ -672,7 +712,7 @@ export function spawnMainOwnedMissionPane(
         kind: "cli-agent",
         adapterId: adapter.id,
         model: options.model,
-        accountId: options.accountId,
+        accountId: selectedAccountId,
         state: getSessionState(sessionId) ?? "spawning",
       },
       meta: { ...context, scope: options.scope, executionScope },
@@ -693,7 +733,8 @@ export function spawnMainOwnedMissionPane(
 
 /**
  * Async mission-pane spawn. Besides ACP, the PTY path uses this boundary to
- * revalidate Keychain-only AGY auth without blocking Electron's main loop.
+ * revalidate Keychain-only AGY auth and coordinate Codex account refresh without
+ * blocking Electron's main loop.
  */
 export async function spawnMainOwnedMissionPaneAsync(
   options: PaneSpawnOptions & {
@@ -704,6 +745,13 @@ export async function spawnMainOwnedMissionPaneAsync(
 ): Promise<OrchPaneSpawnResult> {
   if (getOrchSettings().agentTransport !== "acp") {
     const adapter = getAdapter(options.adapterId);
+    if (
+      adapter?.kind === "cli-pty" &&
+      ROTATING_REFRESH_SPAWN_ADAPTERS.has(adapter.id)
+    ) {
+      // Run the normal validation and preparation before entering the wait.
+      return spawnMainOwnedMissionPane(options, hooks, undefined, true);
+    }
     if (
       adapter?.kind === "cli-pty" &&
       adapter.id === "agy" &&

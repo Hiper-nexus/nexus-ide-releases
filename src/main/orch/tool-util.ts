@@ -39,6 +39,8 @@ import {
   resolveRoutableModel,
 } from './task-router';
 import { getProjectDomainStores } from './project-domain-store-registry';
+import { getAcpDriverSession } from '../acp/acp-harness-driver';
+import { sameProjectScope } from './project-scoped-broadcast';
 import { hasBoundHandoffForExactDispatchWorker } from './task-dispatch-codec';
 import { migrateModelId } from '../../shared/model-defaults';
 import { resolveCwdForScope } from './workspace-path';
@@ -1503,11 +1505,25 @@ export async function spawnPaneAndMaybePrompt(
   // Remember the mission's composition so it can be reopened from history.
   if (options.missionId && options.transient !== true) {
     assertMcpInvocationCurrent(hooks.invocation);
+    const physicalPty = getAgentSessionInfo(result.sessionId);
+    const physical = physicalPty ?? getAcpDriverSession(result.sessionId)?.agent;
+    const physicalScope = physicalPty
+      ? safeOptions.executionScope ?? options.scope
+      : options.scope;
+    if (physical && (
+      physical.sessionId !== result.sessionId || physical.paneId !== result.paneId ||
+      physical.adapterId !== options.adapterId || physical.missionId !== options.missionId ||
+      !sameProjectScope(physical.scope, physicalScope) ||
+      (options.accountId !== undefined && physical.accountId !== options.accountId)
+    )) {
+      throw new Error('physical pane account authority does not match the spawned mission pane');
+    }
     getProjectDomainStores(options.scope).missionPanes.record({
       missionId: options.missionId,
       adapterId: options.adapterId,
       model: effectiveModel,
-      accountId: options.accountId,
+      // Use Main's physical selection, never a renderer-authored spawn reply.
+      accountId: physical?.accountId ?? options.accountId,
       effort: options.effort,
       cwd: safeOptions.cwd,
       executionScope: safeOptions.executionScope,

@@ -13,7 +13,7 @@
 import type { PaneSpawnOptions } from './main-owned-pane-runtime';
 import type { PaneOrchMeta } from './main-owned-pane-runtime';
 import { getMainOwnedPane } from './main-owned-pane-runtime';
-import { spawnMainOwnedMissionPane } from './pane-registry';
+import { spawnMainOwnedMissionPaneAsync } from './pane-registry';
 import { orchTerminateSession } from '../pty/pty-manager';
 
 export interface MainOwnedFailoverPlanInput {
@@ -133,7 +133,7 @@ export async function respawnMainOwnedPaneWithAccount(input: {
       // Sessão já morta: o alvo do respawn é o novo processo.
     }
   }
-  const spawned = spawnMainOwnedMissionPane(plan.options);
+  const spawned = await spawnMainOwnedMissionPaneAsync(plan.options);
   if (!spawned.ok) {
     console.warn(
       `[failover-mission-respawn] respawn recusado para ${input.paneId}: ` +

@@ -972,6 +972,12 @@ function startSpawn(
         useSessionStateStore.getState().setPaneState(pane.id, 'exited');
         return null;
       }
+      if (pane.kind === 'cli-agent' && !missionId && res.accountId) {
+        // The renderer's early account-list request may fail. Persist only the
+        // account actually selected by Main so resume cannot choose a sibling.
+        // Mission account bindings are persisted by Main's sealed pane store.
+        useLayoutStore.getState().setAccountId(pane.id, res.accountId);
+      }
       setHostSession(host, pane.id, res.sessionId);
       clearPaneSpawnError(pane.id);
       const spawnedAt = Date.now();

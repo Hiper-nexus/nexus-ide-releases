@@ -17,7 +17,6 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   isFileAuthAdapter,
-  managedHomePath,
   MANAGED_PROVIDER_SPECS,
   type FileAuthAdapterId,
 } from './managed-credentials';
@@ -28,11 +27,11 @@ export const ROTATING_REFRESH_SPAWN_ADAPTERS: ReadonlySet<string> = new Set([
 
 /** Treat the access token as stale this long before JWT exp. */
 export const AUTH_SPAWN_GATE_SKEW_MS = 5 * 60_000;
-/** Followers give up waiting and spawn anyway. */
+/** Followers refuse the spawn if the first pane has not refreshed by then. */
 export const AUTH_SPAWN_GATE_TIMEOUT_MS = 12_000;
 export const AUTH_SPAWN_GATE_POLL_MS = 50;
 
-export type AuthSpawnGateRole = 'fresh' | 'leader' | 'follower-fresh' | 'timeout';
+export type AuthSpawnGateRole = 'fresh' | 'leader' | 'follower-fresh';
 
 const watchers = new Set<ReturnType<typeof setInterval>>();
 
@@ -47,21 +46,18 @@ export function rotatingAuthLockPath(authFile: string): string {
 
 export function resolveRotatingAuthFile(
   adapterId: string,
-  accountId?: string,
+  preparedEnv: Readonly<Record<string, string>> = {},
   home = os.homedir(),
 ): string | null {
   if (!ROTATING_REFRESH_SPAWN_ADAPTERS.has(adapterId)) return null;
   if (!isFileAuthAdapter(adapterId)) return null;
   const spec = MANAGED_PROVIDER_SPECS[adapterId as FileAuthAdapterId];
-  if (accountId?.trim()) {
-    return path.join(
-      managedHomePath(adapterId as FileAuthAdapterId, accountId, home),
-      spec.authRelativePath,
-    );
-  }
-  const native = spec.systemHome(home);
-  if (!native) return null;
-  return path.join(native, spec.authRelativePath);
+  // The caller must prepare the account first. A request without accountId
+  // may still select a managed account; only its prepared environment tells
+  // us which shared credential the CLI will actually read.
+  const providerHome = preparedEnv[spec.homeEnvVar] || spec.systemHome(home);
+  if (!providerHome) return null;
+  return path.join(providerHome, spec.authRelativePath);
 }
 
 function decodeJwtPayload(token: string): Record<string, unknown> | null {
@@ -285,18 +281,11 @@ export async function waitForRotatingAuthSpawnGate(options: {
     ) {
       return 'follower-fresh';
     }
-    if (tryAcquireLock(lockPath, now(), timeoutMs)) {
-      watchUntilRefreshed({
-        authFile,
-        lockPath,
-        freshnessAtStart: currentFreshness,
-        timeoutMs,
-        pollMs,
-        now,
-        readAuth,
-      });
-      return 'leader';
-    }
+    // A follower never promotes itself merely because the leader's lease
+    // expired. Its CLI may still be refreshing; only changed auth proves it
+    // is safe to reuse. A later explicit retry can recover an abandoned lock.
   }
-  return 'timeout';
+  throw new Error(
+    'A renovação de login do Codex ainda não terminou. Aguarde alguns segundos e tente abrir o pane novamente.',
+  );
 }

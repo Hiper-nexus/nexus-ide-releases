@@ -76,7 +76,7 @@ describe('resolveRotatingAuthFile', () => {
     expect(resolveRotatingAuthFile('codex', undefined, home)).toBe(
       path.join(home, '.codex', 'auth.json'),
     );
-    expect(resolveRotatingAuthFile('codex', 'acct-1', home)).toBe(
+    expect(resolveRotatingAuthFile('codex', { CODEX_HOME: path.join(home, '.nexus', 'managed-accounts', 'codex', 'acct-1', 'home') }, home)).toBe(
       path.join(
         home,
         '.nexus',
@@ -87,7 +87,7 @@ describe('resolveRotatingAuthFile', () => {
         'auth.json',
       ),
     );
-    expect(resolveRotatingAuthFile('kimi', 'acct-1', home)).toBeNull();
+    expect(resolveRotatingAuthFile('kimi', { KIMI_CODE_HOME: home }, home)).toBeNull();
   });
 });
 
@@ -157,7 +157,24 @@ describe('waitForRotatingAuthSpawnGate', () => {
     expect(await follower).toBe('follower-fresh');
   });
 
-  it('times out instead of blocking the pane forever', async () => {
+  it('gives independent managed accounts distinct refresh locks', async () => {
+    const home = tempDir();
+    const now = 1_700_000_000_000;
+    const authFiles = ['account-a', 'account-b'].map((account) => {
+      const providerHome = path.join(home, account);
+      fs.mkdirSync(providerHome);
+      const authFile = resolveRotatingAuthFile('codex', { CODEX_HOME: providerHome }, home)!;
+      fs.writeFileSync(authFile, blob({ expSec: Math.floor(now / 1000) }));
+      return authFile;
+    });
+    expect(await Promise.all(authFiles.map((authFile) =>
+      waitForRotatingAuthSpawnGate({ authFile, now: () => now }),
+    ))).toEqual(['leader', 'leader']);
+    expect(authFiles[0]).not.toBe(authFiles[1]);
+    for (const authFile of authFiles) expect(fs.existsSync(rotatingAuthLockPath(authFile))).toBe(true);
+  });
+
+  it('rejects timed-out followers rather than spawning with the stale refresh token', async () => {
     const dir = tempDir();
     const authFile = path.join(dir, 'auth.json');
     let now = 1_700_000_000_000;
@@ -183,7 +200,18 @@ describe('waitForRotatingAuthSpawnGate', () => {
       timeoutMs: 40,
       pollMs: 10,
     });
-    expect(await follower).toBe('timeout');
+    await expect(follower).rejects.toThrow(/renovação.*Codex.*tente/i);
+  });
+
+  it('does not promote a waiting follower when its deadline outlasts the leader lock', async () => {
+    const authFile = path.join(tempDir(), 'auth.json');
+    let now = 1_700_000_000_000;
+    fs.writeFileSync(authFile, blob({ expSec: Math.floor(now / 1000) }));
+    expect(await waitForRotatingAuthSpawnGate({ authFile, now: () => now, timeoutMs: 40 })).toBe('leader');
+    await expect(waitForRotatingAuthSpawnGate({
+      authFile, now: () => now, timeoutMs: 40,
+      sleep: async () => { now += 50; },
+    })).rejects.toThrow(/renovação.*Codex.*tente/i);
   });
 
   it('steals a stale lock left by a crashed leader', async () => {

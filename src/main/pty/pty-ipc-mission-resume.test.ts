@@ -341,6 +341,7 @@ function authoritySealForWorkflow(
 describe("registerPtyIpc account fail-fast", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    providerDeps.prepareProviderSpawn.mockReset();
     ipcDeps.handlers.clear();
     authorityDeps.requireRendererWorkspaceScope.mockReturnValue(
       authorityDeps.scope,
@@ -1012,7 +1013,7 @@ describe("registerPtyIpc account fail-fast", () => {
   it("reattaches instead of fresh when the persisted pane session is alive", () => {
     providerDeps.prepareProviderSpawn.mockReturnValueOnce({
       ok: true,
-      overrides: {},
+      overrides: { selectedAccountId: "account-main" },
     });
     const persisted = {
       id: "mpane-orch-alive",
@@ -1062,6 +1063,7 @@ describe("registerPtyIpc account fail-fast", () => {
     expect(result).toEqual({
       ok: true,
       sessionId: "pty-adopted",
+      accountId: "account-main",
       adopted: true,
       state: "idle",
     });

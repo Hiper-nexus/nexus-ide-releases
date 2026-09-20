@@ -53,6 +53,7 @@ vi.mock('./pane-registry', () => ({
     const paneId = `pane-${options.agentName}`;
     const issued: OwnedAgentSessionInfo = {
       sessionId, paneId, adapterId: options.adapterId, cwd: options.scope.rootRealPath,
+      accountId: `main-selected-${options.agentName}`,
       scope: options.scope, source: 'pending', role: 'worker', missionId: options.missionId,
       agentName: options.agentName, readOnly: options.readOnly, allowedTools: ['nexus_handoff_submit'], allowedSkills: [],
       workerIncarnationId: `main-minted-${options.agentName}`,
@@ -139,6 +140,7 @@ describe('first-wave physical pane binding', () => {
     for (const info of physical) {
       expect(persisted.find((pane) => pane.paneId === info.paneId)).toMatchObject({
         workerIncarnationId: info.workerIncarnationId, authoritySeal: info.authoritySeal,
+        accountId: info.accountId,
         readOnly: true, allowedTools: ['nexus_handoff_submit'], allowedSkills: [],
       });
     }

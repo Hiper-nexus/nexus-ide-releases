@@ -33,6 +33,7 @@ const harness = vi.hoisted(() => ({
 }));
 
 vi.mock('../pty/pty-manager', () => ({
+  getAgentSessionInfo: vi.fn(() => null),
   getSessionState: (sessionId: string) =>
     harness.sessionStates.get(sessionId) ?? null,
   getSessionCwd: () => null,
