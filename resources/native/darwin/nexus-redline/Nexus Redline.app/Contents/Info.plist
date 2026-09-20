@@ -5,8 +5,8 @@
   <key>CFBundleName</key><string>Nexus Redline</string>
   <key>CFBundleDisplayName</key><string>Nexus Redline</string>
   <key>CFBundleIdentifier</key><string>com.nexuside.redline</string>
-  <key>CFBundleVersion</key><string>0.76.60</string>
-  <key>CFBundleShortVersionString</key><string>0.76.60</string>
+  <key>CFBundleVersion</key><string>0.76.61</string>
+  <key>CFBundleShortVersionString</key><string>0.76.61</string>
   <key>CFBundleExecutable</key><string>NexusRedline</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
