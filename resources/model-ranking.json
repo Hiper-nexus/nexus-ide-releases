@@ -150,24 +150,6 @@
       "rank": 8
     },
     {
-      "id": "agy/gemini-3.8-flash-high",
-      "adapterId": "agy",
-      "modelId": "gemini-3.8-flash-high",
-      "overall": 68,
-      "coding": 69,
-      "reasoning": 68,
-      "frontend": 69,
-      "security": 66,
-      "costTier": "low",
-      "availability": "cheap",
-      "evaluatedAt": "2026-09-13T00:00:00.000Z",
-      "source": "nexus-eval/v1/fixture",
-      "estimate": true,
-      "sourceLabel": "estimativa (fixture)",
-      "confidence": 1,
-      "rank": 9
-    },
-    {
       "id": "claude/claude-sonnet-5",
       "adapterId": "claude",
       "modelId": "claude-sonnet-5",
@@ -183,7 +165,7 @@
       "estimate": true,
       "sourceLabel": "estimativa (fixture)",
       "confidence": 1,
-      "rank": 10
+      "rank": 9
     },
     {
       "id": "muse/muse-spark-1.3",
@@ -201,7 +183,7 @@
       "estimate": true,
       "sourceLabel": "estimativa (fixture)",
       "confidence": 1,
-      "rank": 11
+      "rank": 10
     },
     {
       "id": "grok/grok-4.6",
@@ -219,7 +201,7 @@
       "estimate": true,
       "sourceLabel": "estimativa (fixture)",
       "confidence": 1,
-      "rank": 12
+      "rank": 11
     },
     {
       "id": "codex/gpt-5.6-terra",
@@ -237,7 +219,7 @@
       "estimate": true,
       "sourceLabel": "estimativa (fixture)",
       "confidence": 1,
-      "rank": 13
+      "rank": 12
     },
     {
       "id": "claude/claude-opus-4-8",
@@ -255,7 +237,7 @@
       "estimate": true,
       "sourceLabel": "estimativa (fixture)",
       "confidence": 1,
-      "rank": 14
+      "rank": 13
     },
     {
       "id": "glm/glm-5.3",
@@ -273,7 +255,7 @@
       "estimate": true,
       "sourceLabel": "estimativa (fixture)",
       "confidence": 1,
-      "rank": 15
+      "rank": 14
     },
     {
       "id": "grok/grok-4.5",
@@ -291,7 +273,7 @@
       "estimate": true,
       "sourceLabel": "estimativa (fixture)",
       "confidence": 1,
-      "rank": 16
+      "rank": 15
     }
   ]
 }
