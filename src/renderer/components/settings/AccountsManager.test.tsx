@@ -178,6 +178,42 @@ describe('AccountsManager', () => {
     act(() => root.unmount());
   });
 
+  it('cancelar a escolha de site do Kimi não pinta erro de login (F-354)', async () => {
+    vi.mocked(openCliLoginTerminal).mockResolvedValueOnce({
+      ok: false,
+      error: 'Login cancelado.',
+      cancelled: true,
+    });
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    await act(async () => {
+      root.render(
+        <AccountsManager
+          adapterId="kimi"
+          adapterLabel="Kimi"
+          loginCommand="kimi login --region global"
+          authStatus={{
+            adapterId: 'kimi',
+            state: 'missing',
+            detail: 'Entre na ferramenta.',
+          }}
+        />,
+      );
+    });
+    const login = host.querySelector<HTMLButtonElement>(
+      '[data-testid="acct-login-cta"]',
+    );
+    expect(login).toBeTruthy();
+    await act(async () => {
+      login!.click();
+    });
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    expect(host.textContent).not.toContain('Login cancelado');
+    expect(host.textContent).not.toContain('Tentar abrir novamente');
+    act(() => root.unmount());
+  });
+
   it('sem sessão viva não oferece Salvar conta logada e pede login da CLI', async () => {
     Object.defineProperty(window, 'nexus', {
       configurable: true,

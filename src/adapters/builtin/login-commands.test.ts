@@ -82,7 +82,7 @@ describe('builtin CLI login commands', () => {
     expect(accountLoginCommandFor('openclaude')).toBe('openclaude auth login');
   });
 
-  it('Kimi login forces the international region (English OAuth / Google)', () => {
+  it('Kimi login default is international; the operator picks the site at login (F-354)', () => {
     expect(accountLoginCommandFor('kimi')).toBe('kimi login --region global');
     const adapter = adapters.find((item) => item.id === 'kimi');
     expect(adapter?.kind).toBe('cli-pty');

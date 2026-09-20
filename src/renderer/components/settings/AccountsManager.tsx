@@ -479,6 +479,9 @@ export function AccountsManager({
           detail: 'Terminal aberto. Continue o login nesse pane — esta tela avisa se a sessão for comprovada.',
           dedupeKey: `cli-login:${adapterId}`,
         });
+      } else if (result.cancelled) {
+        setNotice(null);
+        setLoginFailed(false);
       } else {
         showNotice(result.error, 'err');
         setLoginFailed(true);

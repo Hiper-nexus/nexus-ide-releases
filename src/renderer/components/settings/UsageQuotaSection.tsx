@@ -221,7 +221,7 @@ function EntryCard({
           void useAccountStore.getState().hydrate();
         },
       });
-      if (!result.ok) {
+      if (!result.ok && !result.cancelled) {
         useToastStore
           .getState()
           .push('error', 'Não foi possível abrir o login', result.error);

@@ -69,8 +69,16 @@ vi.mock('../../lib/split-tree', () => ({
   listPanes: () => panes.open,
 }));
 
+const kimiAsk = vi.hoisted(() => ({
+  askKimiLoginRegion: vi.fn(
+    async (): Promise<'global' | 'mainland-cn' | null> => 'global',
+  ),
+}));
+vi.mock('./kimi-login-region', () => kimiAsk);
+
 import {
   cliLoginProvedNewSession,
+  cliLoginTypeLine,
   openCliLoginTerminal,
   type CliLoginFinish,
 } from './cli-login-terminal';
@@ -86,6 +94,7 @@ describe('openCliLoginTerminal', () => {
     host.writeToPane.mockClear();
     panes.open = [{ id: 'pane-login' }];
     providerState.providers = [];
+    kimiAsk.askKimiLoginRegion.mockReset().mockResolvedValue('global');
   });
 
   it('espera a sessão e só então sai de Configurações (F-003)', async () => {
@@ -131,6 +140,82 @@ describe('openCliLoginTerminal', () => {
       'cli-login-terminal-unavailable',
     );
     expect(navigation.openTerminal).not.toHaveBeenCalled();
+  });
+});
+
+describe('cliLoginTypeLine — F-354', () => {
+  it('Kimi no POSIX substitui o shell pela CLI de login', () => {
+    expect(
+      cliLoginTypeLine({
+        command: 'kimi login --region global',
+        adapterId: 'kimi',
+        platform: 'darwin',
+      }),
+    ).toBe('exec kimi login --region global\n');
+  });
+
+  it('outras CLIs e Windows ficam no shell', () => {
+    expect(
+      cliLoginTypeLine({
+        command: 'claude auth login',
+        adapterId: 'claude',
+        platform: 'darwin',
+      }),
+    ).toBe('claude auth login\n');
+    expect(
+      cliLoginTypeLine({
+        command: 'kimi login --region global',
+        adapterId: 'kimi',
+        platform: 'win32',
+      }),
+    ).toBe('kimi login --region global\n');
+  });
+});
+
+describe('openCliLoginTerminal — Kimi pergunta o site (F-354)', () => {
+  it('pergunta a região e abre a CLI com exec, não um shell cru', async () => {
+    kimiAsk.askKimiLoginRegion.mockResolvedValueOnce('mainland-cn');
+    const result = await openCliLoginTerminal({
+      command: 'kimi login --region global',
+      adapterId: 'kimi',
+      adapterLabel: 'Kimi',
+    });
+    expect(result).toEqual({ ok: true, paneId: 'pane-login' });
+    expect(kimiAsk.askKimiLoginRegion).toHaveBeenCalledOnce();
+    expect(host.writeToPane).toHaveBeenCalledWith(
+      'pane-login',
+      cliLoginTypeLine({
+        command: 'kimi login --region mainland-cn',
+        adapterId: 'kimi',
+      }),
+    );
+  });
+
+  it('cancelar a escolha não abre pane nenhum', async () => {
+    kimiAsk.askKimiLoginRegion.mockResolvedValueOnce(null);
+    const result = await openCliLoginTerminal({
+      command: 'kimi login --region global',
+      adapterId: 'kimi',
+    });
+    expect(result).toEqual({
+      ok: false,
+      error: 'Login cancelado.',
+      cancelled: true,
+    });
+    expect(layout.addShellPane).not.toHaveBeenCalled();
+    expect(host.writeToPane).not.toHaveBeenCalled();
+  });
+
+  it('outras CLIs não perguntam região', async () => {
+    await openCliLoginTerminal({
+      command: 'claude auth login',
+      adapterId: 'claude',
+    });
+    expect(kimiAsk.askKimiLoginRegion).not.toHaveBeenCalled();
+    expect(host.writeToPane).toHaveBeenCalledWith(
+      'pane-login',
+      'claude auth login\n',
+    );
   });
 });
 
