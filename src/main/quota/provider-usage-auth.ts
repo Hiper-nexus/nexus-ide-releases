@@ -26,6 +26,7 @@ import {
   refreshClaudeOauthBlob,
 } from './claude-oauth-refresh';
 import { readNativeOAuthCredential } from '../adapters/native-oauth-keychain';
+import { hasManagedClaudeAuth, readManagedClaudeAuthAsync } from '../adapters/managed-claude-auth';
 
 const CRED_PREFIX = 'acctcred:';
 const KEY_PREFIX = 'acctkey:';
@@ -84,6 +85,14 @@ function declaredAnthropicToken(adapterId: string): string | null {
 export async function resolveClaudeToken(accountId?: string): Promise<string | null> {
   if (accountId) {
     if (getAccount(accountId)?.adapterId !== 'claude') return null;
+    // Managed Claude profiles are renewed by the CLI/sweeper through their
+    // scoped secure-storage directory. A quota probe must only read that
+    // profile; refreshing the vault blob here would create a second OAuth
+    // actor and race the pane's refresh lock.
+    if (hasManagedClaudeAuth(accountId)) {
+      const managed = await readManagedClaudeAuthAsync(accountId);
+      return managed ? extractClaudeAccessToken(managed) : null;
+    }
     const blob = safeGetSecret(CRED_PREFIX + accountId);
     if (!blob) return null;
     const now = Date.now();

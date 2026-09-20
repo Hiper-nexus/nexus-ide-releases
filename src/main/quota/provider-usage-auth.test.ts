@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   claudeOAuthAccessToken: vi.fn(),
   loadLauncherProviderKey: vi.fn(),
   nativeCredential: vi.fn(),
+  hasManagedClaudeAuth: vi.fn(() => false),
+  readManagedClaudeAuthAsync: vi.fn(async () => null as string | null),
 }));
 
 vi.mock('../persistence/secrets-store', () => ({
@@ -32,6 +34,10 @@ vi.mock('../adapters/launcher-provider-manager', () => ({
 }));
 
 vi.mock('../adapters/native-oauth-keychain', () => ({ readNativeOAuthCredential: mocks.nativeCredential }));
+vi.mock('../adapters/managed-claude-auth', () => ({
+  hasManagedClaudeAuth: mocks.hasManagedClaudeAuth,
+  readManagedClaudeAuthAsync: mocks.readManagedClaudeAuthAsync,
+}));
 
 import {
   resolveClaudeToken, resolveCodexAuthCandidates, resolveProviderApiKeyCandidates,
@@ -104,6 +110,15 @@ describe('resolveClaudeToken boot safety', () => {
 });
 
 describe('multi-account credential scoping', () => {
+  it('reads managed Claude auth without becoming a second refresh actor', async () => {
+    mocks.getAccount.mockReturnValue({ adapterId: 'claude' });
+    mocks.hasManagedClaudeAuth.mockReturnValue(true);
+    mocks.readManagedClaudeAuthAsync.mockResolvedValue(credentialBlob('scoped-token'));
+    mocks.getSecret.mockReturnValue(credentialBlob('stale-vault-token'));
+    expect(await resolveClaudeToken('managed-claude')).toBe('scoped-token');
+    expect(mocks.readManagedClaudeAuthAsync).toHaveBeenCalledWith('managed-claude');
+    expect(mocks.claudeOAuthAccessToken).not.toHaveBeenCalled();
+  });
   it.each([
     ['glm', 'https://api.z.ai'],
     ['glm-flash', 'https://api.z.ai'],
