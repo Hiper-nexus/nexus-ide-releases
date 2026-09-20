@@ -291,6 +291,54 @@ describe('fetchLiveProviderWindows', () => {
     expect(windows).toBeNull();
   });
 
+  it('agy: refresca access expirado no caminho live (refresh Google não rota o grant)', async () => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (String(url).includes('oauth2.googleapis.com')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            access_token: 'agy-fresh-at',
+            expires_in: 3600,
+          }),
+          text: async (): Promise<string> => '',
+        };
+      }
+      if (String(url).includes('cloudcode-pa')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            buckets: [
+              {
+                remainingFraction: 0.75,
+                tokenType: 'REQUESTS',
+                resetTime: '2026-09-21T00:00:00Z',
+              },
+            ],
+          }),
+          text: async (): Promise<string> => '',
+        };
+      }
+      return { ok: false, status: 404, json: async () => ({}), text: async (): Promise<string> => '' };
+    });
+    const w = await fetchLiveProviderWindows('agy', undefined, {
+      resolveGeminiOauthCreds: () => ({
+        accessToken: 'expired-at',
+        refreshToken: 'valid-rt',
+        expiryDate: 1,
+      }),
+      fetchImpl: fetchImpl as never,
+    });
+    expect(
+      fetchImpl,
+    ).toHaveBeenCalledWith(
+      'https://oauth2.googleapis.com/token',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(w?.some((x) => x.usedRatio !== null)).toBe(true);
+  });
+
   it('returns null when resolver missing or token null', async () => {
     expect(await fetchLiveProviderWindows('claude', undefined, {})).toBeNull();
     expect(

@@ -284,7 +284,10 @@ export async function fetchLiveProviderWindows(
         if (access) creds = { accessToken: access };
       }
       if (!creds) return null;
-      return fetchAgyUsageWindows(creds, { fetchImpl, now });
+      // Access expirado + refresh válido não pode ficar vazio (mesmo buraco do
+      // Kimi). O refresh Google devolve access novo em memória — o grant do
+      // ~/.gemini do CLI não é rotacionado nem consumido por isso.
+      return fetchAgyUsageWindows(creds, { fetchImpl, now, allowRefresh: true });
     }
     case 'opencode': {
       return fetchOpenCodeFleetWindows(deps, accountId, fetchImpl, now);
