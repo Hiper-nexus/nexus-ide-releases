@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import type { QuotaWindow } from '../../shared/quota-types';
 import { fetchLiveProviderWindows, parseKimiUsage } from './provider-live-usage';
 
 const nativeOpenCode = vi.hoisted(() => vi.fn(() => [{ providerId: 'custom', key: 'native-other-account' }]));
@@ -205,6 +206,54 @@ describe('fetchLiveProviderWindows', () => {
       expect.objectContaining({ method: 'POST' }),
     );
     expect(w?.some((x) => x.kind === 'weekly')).toBe(true);
+  });
+
+  it('claude: cai no /usage do CLI quando o OAuth falha (row CLI nativo)', async () => {
+    const failFetch = vi.fn(async () => ({
+      ok: false,
+      status: 429,
+      json: async () => ({}),
+      text: async () => '',
+    }));
+    const windows = await fetchLiveProviderWindows('claude', undefined, {
+      resolveClaudeToken: () => 'stale-token',
+      claudeCliUsage: async () => [
+        {
+          kind: 'session',
+          label: 'Sessão',
+          usedRatio: 0.38,
+          source: 'provider-api',
+          confidence: 'medium',
+        },
+      ],
+      fetchImpl: failFetch,
+    });
+    expect(windows?.find((x) => x.kind === 'session')?.usedRatio).toBe(0.38);
+  });
+
+  it('claude: account row NÃO herda a leitura única do CLI', async () => {
+    const failFetch = vi.fn(async () => ({
+      ok: false,
+      status: 429,
+      json: async () => ({}),
+      text: async () => '',
+    }));
+    const cliUsage = vi.fn(async (): Promise<QuotaWindow[]> => [
+      {
+        kind: 'session',
+        label: 'Sessão',
+        usedRatio: 0.38,
+        source: 'provider-api',
+        confidence: 'medium',
+      },
+    ]);
+    const windows = await fetchLiveProviderWindows('claude', 'acct-1', {
+      resolveClaudeToken: () => null,
+      claudeCliUsage: cliUsage,
+      fetchImpl: failFetch,
+    });
+    expect(windows).toBeNull();
+    expect(cliUsage).not.toHaveBeenCalled();
   });
 
   it('returns null when resolver missing or token null', async () => {

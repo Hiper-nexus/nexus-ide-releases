@@ -7,8 +7,20 @@
  *
  * Returns authoritative five_hour / seven_day utilization (0–100).
  * Pure parse is unit-tested; network is best-effort and never invents %.
+ *
+ * Fallback print-only (Codenotch, ClaudeUsageCLI.swift): `claude --print
+ * --no-session-persistence --strict-mcp-config /usage` responde com as mesmas
+ * janelas usando o login que o CLI já tem — cobre 429/backoff do endpoint e
+ * token de keychain rodado. Só --print: sem isso cada chamada grava sessão em
+ * ~/.claude/projects e pode levantar diálogo de workspace-trust;
+ * --strict-mcp-config sem --mcp-config = zero servidor MCP. Timeout mata o
+ * processo; exit ≠ 0 é «precisa de login» (null — a UI fica no «—» honesto).
  */
 
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
 import type { QuotaWindow } from '../../shared/quota-types';
 import { knownWindow } from './quota-normalize';
 
@@ -155,4 +167,275 @@ export async function fetchClaudeOauthUsageWindows(
   } finally {
     clearTimeout(timer);
   }
+}
+
+// ---------------------------------------------------------------------------
+// CLI /usage fallback (print-only) — Codenotch ClaudeUsageCLI.swift
+// ---------------------------------------------------------------------------
+
+export const CLAUDE_CLI_USAGE_ARGS = [
+  '--print',
+  '--no-session-persistence',
+  '--strict-mcp-config',
+  '/usage',
+] as const;
+
+/** Frio + Node a arrancar numa máquina ocupada; wedge não segura o probe. */
+export const CLAUDE_CLI_USAGE_TIMEOUT_MS = 20_000;
+
+export interface ClaudeCliRunResult {
+  code: number;
+  stdout: string;
+}
+
+export type ClaudeCliRunImpl = (
+  binary: string,
+  args: readonly string[],
+  cwd: string,
+) => Promise<ClaudeCliRunResult>;
+
+/**
+ * `Current session: 38% used · resets Sep 7 at 2:59pm (Asia/Jakarta)`
+ * `Current week (all models): 4% used · resets Sep 14 at 5:59am (Asia/Jakarta)`
+ * O resto do output é prosa aproximada — nunca janela.
+ */
+const CLI_LINE_RE =
+  /^Current (?:(session)|week \(([^)]+)\)):\s*(\d{1,3})%\s*used(?:\s*·\s*resets\s*(.+?))?\s*$/gm;
+
+/** Sep→0 … Dec→11. */
+const MONTHS: Record<string, number> = {
+  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+  jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
+};
+
+function tzOffsetMs(instantUtcMs: number, timeZone: string): number {
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+  const parts: Record<string, string> = {};
+  for (const p of dtf.formatToParts(new Date(instantUtcMs))) {
+    parts[p.type] = p.value;
+  }
+  const asUtc = Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day),
+    Number(parts.hour),
+    Number(parts.minute),
+    Number(parts.second),
+  );
+  return asUtc - instantUtcMs;
+}
+
+/** Componentes de parede numa zona IANA → epoch ms (duas passadas: DST). */
+function wallTimeInZoneMs(
+  y: number, mo: number, d: number, h: number, mi: number,
+  timeZone: string,
+): number {
+  const naive = Date.UTC(y, mo, d, h, mi);
+  let ms = naive - tzOffsetMs(naive, timeZone);
+  ms = naive - tzOffsetMs(ms, timeZone);
+  return ms;
+}
+
+/**
+ * `Sep 7 at 2:59pm (Asia/Jakarta)` → epoch ms.
+ * Sem ano impresso: o candidato mais próximo de `now` entre [ano-1, ano,
+ * ano+1] — Dec 31 lido a 2 de janeiro é do ano passado, e não o contrário.
+ */
+export function parseClaudeCliResetDate(
+  raw: string,
+  now: number,
+): number | undefined {
+  let stamp = raw.trim();
+  let timeZone: string | undefined;
+
+  const zone = stamp.match(/\(([^)]+)\)\s*$/);
+  if (zone) {
+    timeZone = zone[1];
+    stamp = stamp.slice(0, zone.index).trim();
+  }
+  stamp = stamp.replace(/am/g, 'AM').replace(/pm/g, 'PM');
+  const m = stamp.match(
+    /^([A-Za-z]{3,4})\s+(\d{1,2})\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(AM|PM)$/,
+  );
+  if (!m) return undefined;
+
+  const mo = MONTHS[m[1].slice(0, 3).toLowerCase()];
+  if (mo === undefined) return undefined;
+  const day = Number(m[2]);
+  let h = Number(m[3]);
+  const mi = m[4] ? Number(m[4]) : 0;
+  if (m[5] === 'AM') {
+    if (h === 12) h = 0;
+  } else if (h !== 12) {
+    h += 12;
+  }
+
+  const nowDate = new Date(now);
+  const thisYear = nowDate.getFullYear();
+  // now em UTC vs getFullYear local: diff sub-ano, irrelevante p/ vizinhança.
+  const years = [thisYear - 1, thisYear, thisYear + 1];
+  const toInstant = (year: number): number =>
+    timeZone
+      ? wallTimeInZoneMs(year, mo, day, h, mi, timeZone)
+      : new Date(year, mo, day, h, mi).getTime();
+  return years
+    .map(toInstant)
+    .reduce((best, t) =>
+      Math.abs(t - now) < Math.abs(best - now) ? t : best,
+    );
+}
+
+function cliWindowKindAndLabel(
+  session: string | undefined,
+  weekName: string | undefined,
+): { kind: 'session' | 'weekly'; label: string } {
+  if (session) return { kind: 'session', label: 'Sessão' };
+  const name = (weekName ?? '').trim().toLowerCase();
+  if (!name || name === 'all models') return { kind: 'weekly', label: 'Semanal' };
+  const pretty = weekName!.trim().replace(/\s+/g, ' ');
+  return { kind: 'weekly', label: `Semanal (${pretty})` };
+}
+
+/**
+ * Parse do print do `claude /usage` → janelas. Percentagem que parseou é
+ * mantida mesmo com reset ilegível (resetsAt é opcional por contrato).
+ */
+export function parseClaudeCliUsage(
+  text: string,
+  now = Date.now(),
+): QuotaWindow[] {
+  if (!text) return [];
+  const out: QuotaWindow[] = [];
+  const seen = new Set<string>();
+  for (const m of text.matchAll(CLI_LINE_RE)) {
+    const pct = Number(m[3]);
+    if (!Number.isFinite(pct)) continue;
+    const { kind, label } = cliWindowKindAndLabel(m[1], m[2]);
+    const key = `${kind}:${label}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(
+      knownWindow({
+        kind,
+        label,
+        usedRatio: Math.max(0, Math.min(1, pct / 100)),
+        source: 'provider-api',
+        confidence: 'medium',
+        resetsAt: m[4] ? parseClaudeCliResetDate(m[4], now) : undefined,
+        now,
+      }),
+    );
+  }
+  return out;
+}
+
+/** Caminhos onde o instalador nativo/npm/version managers deixam o `claude`. */
+export function claudeCliBinaryCandidates(
+  home = os.homedir(),
+  nvmDir = path.join(home, '.nvm', 'versions', 'node'),
+): string[] {
+  const fixed = [
+    path.join(home, '.local', 'bin', 'claude'),
+    path.join(home, '.claude', 'local', 'claude'),
+    path.join(home, '.bun', 'bin', 'claude'),
+    path.join(home, '.volta', 'bin', 'claude'),
+    path.join(home, 'Library', 'pnpm', 'claude'),
+    path.join(home, '.npm-global', 'bin', 'claude'),
+  ];
+  let nvm: string[] = [];
+  try {
+    nvm = fs
+      .readdirSync(nvmDir)
+      .filter((d) => /^v\d/.test(d))
+      .sort((a, b) => a.localeCompare(b, 'en', { numeric: true }))
+      .reverse()
+      .map((v) => path.join(nvmDir, v, 'bin', 'claude'));
+  } catch {
+    // sem nvm
+  }
+  return [
+    ...fixed,
+    ...nvm,
+    '/opt/homebrew/bin/claude',
+    '/usr/local/bin/claude',
+  ];
+}
+
+function locateClaudeBinary(): string | null {
+  for (const candidate of claudeCliBinaryCandidates()) {
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch {
+      // next
+    }
+  }
+  return null;
+}
+
+/** Execução real (injetável nos testes). */
+async function runClaudeCli(
+  binary: string,
+  args: readonly string[],
+  cwd: string,
+): Promise<ClaudeCliRunResult> {
+  return new Promise((resolve) => {
+    const child = spawn(binary, [...args], {
+      cwd,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      env: { ...process.env, PWD: cwd },
+    });
+    let stdout = '';
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString('utf8');
+    });
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+    }, CLAUDE_CLI_USAGE_TIMEOUT_MS);
+    timer.unref?.();
+    child.on('error', () => {
+      clearTimeout(timer);
+      resolve({ code: -1, stdout: '' });
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve({ code: code ?? -1, stdout });
+    });
+  });
+}
+
+/**
+ * Probe pelo binário do próprio CLI. null em qualquer falha — login ausente
+ * (exit ≠ 0), binário ausente, timeout. Nunca inventa janela.
+ */
+export async function fetchClaudeCliUsageWindows(opts?: {
+  runImpl?: ClaudeCliRunImpl;
+  now?: number;
+  cwd?: string;
+}): Promise<QuotaWindow[] | null> {
+  const run = opts?.runImpl ?? runClaudeCli;
+  const cwd =
+    opts?.cwd ??
+    path.join(os.tmpdir(), 'nexus-ide-claude-usage');
+  try {
+    fs.mkdirSync(cwd, { recursive: true });
+  } catch {
+    // cwd fixo é defesa, não requisito
+  }
+  const binary = locateClaudeBinary();
+  if (!binary) return null;
+
+  const { code, stdout } = await run(binary, CLAUDE_CLI_USAGE_ARGS, cwd);
+  if (code !== 0 || !stdout.trim()) return null;
+  const windows = parseClaudeCliUsage(stdout, opts?.now ?? Date.now());
+  return windows.length > 0 ? windows : null;
 }

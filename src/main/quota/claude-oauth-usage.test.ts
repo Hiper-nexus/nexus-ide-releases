@@ -1,9 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  CLAUDE_CLI_USAGE_ARGS,
+  CLAUDE_CLI_USAGE_TIMEOUT_MS,
   CLAUDE_OAUTH_BETA,
   CLAUDE_OAUTH_USAGE_URL,
   extractClaudeAccessToken,
+  fetchClaudeCliUsageWindows,
   fetchClaudeOauthUsageWindows,
+  parseClaudeCliResetDate,
+  parseClaudeCliUsage,
   parseClaudeOauthUsage,
 } from './claude-oauth-usage';
 
@@ -170,6 +175,131 @@ describe('fetchClaudeOauthUsageWindows', () => {
           throw new Error('network down');
         },
       }),
+    ).toBeNull();
+  });
+});
+
+describe('parseClaudeCliUsage', () => {
+  const NOW = Date.parse('2026-09-08T12:00:00Z');
+
+  it('parses session + week lines with resets (Codenotch fixture)', () => {
+    const text = [
+      'Claude usage',
+      '',
+      'Current session: 38% used · resets Sep 7 at 2:59pm (Asia/Jakarta)',
+      'Current week (all models): 4% used · resets Sep 14 at 5:59am (Asia/Jakarta)',
+      '',
+      'Current session is low because you have not used Opus recently.',
+    ].join('\n');
+    const w = parseClaudeCliUsage(text, NOW);
+    expect(w).toHaveLength(2);
+
+    const session = w.find((x) => x.kind === 'session');
+    expect(session).toMatchObject({
+      label: 'Sessão',
+      usedRatio: 0.38,
+      source: 'provider-api',
+    });
+    expect(session?.resetsAt).toBe(
+      // 2:59pm em Jakarta (UTC+7) = 07:59Z.
+      Date.parse('2026-09-07T07:59:00Z'),
+    );
+    expect(session?.remainingLabel).toBeTruthy();
+
+    const weekly = w.find((x) => x.kind === 'weekly');
+    expect(weekly).toMatchObject({ label: 'Semanal', usedRatio: 0.04 });
+    // 5:59am de 14/09 em Jakarta = 22:59Z de 13/09.
+    expect(weekly?.resetsAt).toBe(Date.parse('2026-09-13T22:59:00Z'));
+  });
+
+  it('reads on-the-hour resets without minutes and named weeks', () => {
+    const w = parseClaudeCliUsage(
+      [
+        'Current session: 12% used',
+        'Current week (Opus): 9% used · resets Sep 14 at 6pm (UTC)',
+      ].join('\n'),
+      NOW,
+    );
+    const session = w.find((x) => x.kind === 'session');
+    expect(session?.usedRatio).toBe(0.12);
+    const opus = w.find((x) => x.label === 'Semanal (Opus)');
+    expect(opus?.usedRatio).toBe(0.09);
+    expect(opus?.resetsAt).toBe(Date.parse('2026-09-14T18:00:00Z'));
+  });
+
+  it('returns empty for garbage without inventing windows', () => {
+    expect(parseClaudeCliUsage('', NOW)).toEqual([]);
+    expect(parseClaudeCliUsage('not a usage table', NOW)).toEqual([]);
+    expect(parseClaudeCliUsage('Current session: banana% used', NOW)).toEqual(
+      [],
+    );
+  });
+});
+
+describe('parseClaudeCliResetDate', () => {
+  const NOW = Date.parse('2026-09-08T12:00:00Z');
+
+  it('picks the nearest year around now', () => {
+    // Jan 2 lido em Setembro → é do ano que vem.
+    expect(
+      parseClaudeCliResetDate('Jan 2 at 3am (Asia/Jakarta)', NOW),
+    ).toBe(Date.parse('2027-01-02T03:00:00+07:00'));
+    // Dec 31 lido em Janeiro → é do ano passado.
+    expect(
+      parseClaudeCliResetDate('Dec 31 at 11pm (America/Sao_Paulo)', Date.parse('2026-01-02T12:00:00Z')),
+    ).toBe(Date.parse('2025-12-31T23:00:00-03:00'));
+  });
+
+  it('keeps the printed zone and drops the minutes when they are zero', () => {
+    expect(parseClaudeCliResetDate('Jul 4 at 3pm (UTC)', NOW)).toBe(
+      Date.parse('2026-07-04T15:00:00Z'),
+    );
+  });
+
+  it('returns undefined for unparseable stamps instead of throwing', () => {
+    expect(parseClaudeCliResetDate('tomorrow maybe', NOW)).toBeUndefined();
+    expect(parseClaudeCliResetDate('', NOW)).toBeUndefined();
+  });
+});
+
+describe('fetchClaudeCliUsageWindows', () => {
+  it('spawna print-only: sem sessão persistida, sem MCP, stdin fechado', () => {
+    // Contrato ToS/higiene (Codenotch): só --print evita gravar
+    // ~/.claude/projects e diálogos de trust; --strict-mcp-config sem
+    // --mcp-config impede MCP servers no probe.
+    expect(CLAUDE_CLI_USAGE_ARGS).toEqual([
+      '--print',
+      '--no-session-persistence',
+      '--strict-mcp-config',
+      '/usage',
+    ]);
+    expect(CLAUDE_CLI_USAGE_TIMEOUT_MS).toBe(20_000);
+  });
+
+  const CLI_TEXT = [
+    'Current session: 38% used · resets Sep 7 at 2:59pm (Asia/Jakarta)',
+    'Current week (all models): 4% used · resets Sep 14 at 5:59am (Asia/Jakarta)',
+  ].join('\n');
+
+  it('parses the CLI print into windows', async () => {
+    const w = await fetchClaudeCliUsageWindows({
+      runImpl: async () => ({ code: 0, stdout: CLI_TEXT }),
+      now: Date.parse('2026-09-08T12:00:00Z'),
+    });
+    expect(w?.find((x) => x.kind === 'session')?.usedRatio).toBe(0.38);
+    expect(w?.find((x) => x.kind === 'weekly')?.usedRatio).toBe(0.04);
+  });
+
+  it('returns null when the CLI declines (exit != 0 → precisa de login)', async () => {
+    const windows = await fetchClaudeCliUsageWindows({
+      runImpl: async () => ({ code: 1, stdout: '' }),
+    });
+    expect(windows).toBeNull();
+  });
+
+  it('returns null on empty output even with exit 0', async () => {
+    expect(
+      await fetchClaudeCliUsageWindows({ runImpl: async () => ({ code: 0, stdout: '' }) }),
     ).toBeNull();
   });
 });

@@ -8,6 +8,7 @@
 
 import type { QuotaWindow } from '../../shared/quota-types';
 import {
+  fetchClaudeCliUsageWindows,
   fetchClaudeOauthUsageWindows,
   type FetchLike,
 } from './claude-oauth-usage';
@@ -42,6 +43,12 @@ export interface LiveUsageAuthResolvers {
   resolveClaudeToken?: (
     accountId?: string,
   ) => string | null | Promise<string | null>;
+  /**
+   * Fallback print-only `claude /usage` (injetável nos testes). Só corre na
+   * row do CLI nativo (accountId indefinido) — o login do CLI é de UMA conta;
+   * pintá-la em rows de contas vault seria fabricar dado por conta.
+   */
+  claudeCliUsage?: () => Promise<QuotaWindow[] | null>;
   /** Prefer multi-candidate; single still supported. */
   resolveCodexAuth?: (
     accountId?: string,
@@ -134,10 +141,24 @@ export async function fetchLiveProviderWindows(
 
   switch (adapterId) {
     case 'claude': {
-      if (!deps.resolveClaudeToken) return null;
-      const token = await Promise.resolve(deps.resolveClaudeToken(accountId));
-      if (!token) return null;
-      return fetchClaudeOauthUsageWindows(token, { fetchImpl, now });
+      if (deps.resolveClaudeToken) {
+        const token = await Promise.resolve(deps.resolveClaudeToken(accountId));
+        if (token) {
+          const windows = await fetchClaudeOauthUsageWindows(token, {
+            fetchImpl,
+            now,
+          });
+          if (windows) return windows;
+        }
+      }
+      // OAuth falhou (429/backoff, keychain rodada) ou sem token. O fallback
+      // `claude /usage` (print-only; Codenotch ClaudeUsageCLI) só vale na row
+      // do CLI nativo: o login do CLI é de UMA conta — pintá-lo em rows de
+      // contas vault seria fabricar dado por conta.
+      if (accountId) return null;
+      return deps.claudeCliUsage
+        ? deps.claudeCliUsage()
+        : fetchClaudeCliUsageWindows({ now });
     }
     case 'codex': {
       let candidates: CodexChatGptAuth[] = [];
