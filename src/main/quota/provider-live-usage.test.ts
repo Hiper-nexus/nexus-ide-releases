@@ -162,6 +162,51 @@ describe('fetchLiveProviderWindows', () => {
     ).toBeNull();
   });
 
+  it('kimi: refreshes an expired OAuth access token in memory (allowRefresh on the live path)', async () => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (String(url).includes('auth.kimi.com')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            access_token: 'live-refreshed-at',
+            expires_in: 900,
+          }),
+          text: async () => '',
+        };
+      }
+      if (String(url).includes('/usages')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            usage: { limit: '100', used: '10', remaining: '90' },
+            limits: [],
+          }),
+          text: async () => '',
+        };
+      }
+      return { ok: false, status: 404, json: async () => ({}), text: async () => '' };
+    });
+
+    const w = await fetchLiveProviderWindows('kimi', undefined, {
+      resolveKimiOauthCreds: () => ({
+        accessToken: 'expired-at',
+        refreshToken: 'valid-rt',
+        expiresAt: 1,
+      }),
+      fetchImpl: fetchImpl as never,
+    });
+
+    // Antes: allowRefresh:false devolvia null com token expirado, mesmo com
+    // refresh válido — a conta aparecia vazia com consumo real.
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://auth.kimi.com/api/oauth/token',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(w?.some((x) => x.kind === 'weekly')).toBe(true);
+  });
+
   it('returns null when resolver missing or token null', async () => {
     expect(await fetchLiveProviderWindows('claude', undefined, {})).toBeNull();
     expect(

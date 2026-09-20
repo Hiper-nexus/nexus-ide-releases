@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   fetchKimiCodingUsageWindows,
   fetchKimiUsageWithOauth,
@@ -6,6 +9,18 @@ import {
   KIMI_USAGES_URL,
   parseKimiUsagesPayload,
 } from './kimi-usage';
+
+const kfs = fs;
+const kpath = path;
+let tmpHome = '';
+
+beforeAll(() => {
+  tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'kimi-quota-test-'));
+});
+
+afterAll(() => {
+  fs.rmSync(tmpHome, { recursive: true, force: true });
+});
 
 /** Live shape from Kimi CLI OAuth /usages (2026-07). */
 const LIVE_USAGES = {
@@ -58,6 +73,18 @@ describe('parseKimiUsagesPayload', () => {
     expect(w.find((x) => x.kind === 'weekly')?.usedRatio).toBeCloseTo(0.6);
     expect(w.find((x) => x.kind === 'hours')?.usedRatio).toBeCloseTo(0.8);
   });
+
+  it('names TIME_UNIT_WEEK windows as weekly (Codenotch live shape)', () => {
+    const w = parseKimiUsagesPayload({
+      limits: [
+        {
+          window: { duration: 1, timeUnit: 'TIME_UNIT_WEEK' },
+          detail: { limit: '200', used: '50', remaining: '150' },
+        },
+      ],
+    });
+    expect(w.find((x) => x.kind === 'weekly')?.usedRatio).toBeCloseTo(0.25);
+  });
 });
 
 describe('fetchKimiUsageWithOauth', () => {
@@ -72,7 +99,7 @@ describe('fetchKimiUsageWithOauth', () => {
             refresh_token: 'fresh-rt',
             expires_in: 900,
           }),
-          text: async () => '',
+          text: async (): Promise<string> => '',
         };
       }
       if (String(url).includes('/usages')) {
@@ -80,10 +107,10 @@ describe('fetchKimiUsageWithOauth', () => {
           ok: true,
           status: 200,
           json: async () => LIVE_USAGES,
-          text: async () => '',
+          text: async (): Promise<string> => '',
         };
       }
-      return { ok: false, status: 404, json: async () => ({}), text: async () => '' };
+      return { ok: false, status: 404, json: async () => ({}), text: async (): Promise<string> => '' };
     });
 
     const w = await fetchKimiUsageWithOauth(
@@ -126,10 +153,10 @@ describe('fetchKimiUsageWithOauth', () => {
           ok: true,
           status: 200,
           json: async () => LIVE_USAGES,
-          text: async () => '',
+          text: async (): Promise<string> => '',
         };
       }
-      return { ok: false, status: 404, json: async () => ({}), text: async () => '' };
+      return { ok: false, status: 404, json: async () => ({}), text: async (): Promise<string> => '' };
     });
 
     const w = await fetchKimiUsageWithOauth(
@@ -147,6 +174,140 @@ describe('fetchKimiUsageWithOauth', () => {
     );
     expect(w?.some((x) => x.kind === 'weekly')).toBe(true);
   });
+
+  it('allowRefresh sem rotação: refresca em memória e não toca ~/.kimi-code', async () => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (String(url).includes('auth.kimi.com')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            access_token: 'mem-only-at',
+            expires_in: 900,
+          }),
+          text: async (): Promise<string> => '',
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => LIVE_USAGES,
+        text: async (): Promise<string> => '',
+      };
+    });
+    const writeSpy = vi.spyOn(kfs, 'writeFileSync');
+
+    const w = await fetchKimiUsageWithOauth(
+      {
+        accessToken: 'expired-at',
+        refreshToken: 'rt-still-valid',
+        expiresAt: 1,
+      },
+      {
+        fetchImpl: fetchImpl as never,
+        allowRefresh: true,
+        persistRefresh: false,
+        home: tmpHome,
+        now: Date.now(),
+      },
+    );
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      KIMI_USAGES_URL,
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: 'Bearer mem-only-at' }),
+      }),
+    );
+    expect(w?.some((x) => x.kind === 'weekly')).toBe(true);
+    // Sem rotação na resposta → grant do CLI intocado, nenhum write.
+    expect(writeSpy).not.toHaveBeenCalled();
+    writeSpy.mockRestore();
+  });
+
+  it('rotação na resposta: devolve o grant novo ao ficheiro do CLI', async () => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (String(url).includes('auth.kimi.com')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            access_token: 'rotated-at',
+            refresh_token: 'rotated-rt',
+            expires_in: 900,
+          }),
+          text: async (): Promise<string> => '',
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => LIVE_USAGES,
+        text: async (): Promise<string> => '',
+      };
+    });
+
+    const w = await fetchKimiUsageWithOauth(
+      {
+        accessToken: 'expired-at',
+        refreshToken: 'rt-being-rotated',
+        expiresAt: 1,
+      },
+      {
+        fetchImpl: fetchImpl as never,
+        allowRefresh: true,
+        persistRefresh: false,
+        persistOnRotation: true,
+        home: tmpHome,
+        now: Date.now(),
+      },
+    );
+
+    expect(w?.length).toBeGreaterThan(0);
+    const blob = kfs.readFileSync(
+      kpath.join(tmpHome, '.kimi-code', 'credentials', 'kimi-code.json'),
+      'utf8',
+    );
+    const parsed = JSON.parse(blob) as { access_token?: string; refresh_token?: string };
+    expect(parsed.access_token).toBe('rotated-at');
+    expect(parsed.refresh_token).toBe('rotated-rt');
+  });
+
+  it('rotação sem persistOnRotation: não escreve (testes ficam puros)', async () => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (String(url).includes('auth.kimi.com')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            access_token: 'rotated-at',
+            refresh_token: 'rotated-rt',
+          }),
+          text: async (): Promise<string> => '',
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => LIVE_USAGES,
+        text: async (): Promise<string> => '',
+      };
+    });
+    const writeSpy = vi.spyOn(kfs, 'writeFileSync');
+
+    await fetchKimiUsageWithOauth(
+      { accessToken: 'expired-at', refreshToken: 'rt', expiresAt: 1 },
+      {
+        fetchImpl: fetchImpl as never,
+        allowRefresh: true,
+        persistRefresh: false,
+        home: tmpHome,
+        now: Date.now(),
+      },
+    );
+
+    expect(writeSpy).not.toHaveBeenCalled();
+    writeSpy.mockRestore();
+  });
 });
 
 describe('fetchKimiCodingUsageWindows', () => {
@@ -155,7 +316,7 @@ describe('fetchKimiCodingUsageWindows', () => {
       ok: true,
       status: 200,
       json: async () => LIVE_USAGES,
-      text: async () => '',
+      text: async (): Promise<string> => '',
     }));
     const w = await fetchKimiCodingUsageWindows('sk-kimi-test', { fetchImpl });
     expect(fetchImpl).toHaveBeenCalledWith(

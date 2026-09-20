@@ -95,6 +95,7 @@ function isWeeklyWindow(window: Record<string, unknown>): boolean {
   if (duration === null) return false;
   if (unit.includes('DAY') && duration === 7) return true;
   if (unit.includes('HOUR') && duration === 168) return true;
+  if (unit.includes('WEEK') && duration === 1) return true;
   return false;
 }
 
@@ -372,6 +373,16 @@ export async function fetchKimiUsageWithOauth(
     allowRefresh?: boolean;
     /** Só vale com allowRefresh. Escreve ~/.kimi-code — perigoso no login nativo. */
     persistRefresh?: boolean;
+    /**
+     * Se o servidor ROTACIONOU o refresh token na resposta, devolve o grant
+     * novo ao ficheiro do CLI mesmo com persistRefresh:false. Consumir uma
+     * rotação sem gravar deixa o refresh token do ~/.kimi-code morto e derruba
+     * o login nativo (`Stored token … rejected; re-login required`) — pior que
+     * o write. Sem rotação na resposta, nenhum write acontece (refresh fica
+     * só em memória). `home` existe para os testes apontarem um tmpdir.
+     */
+    persistOnRotation?: boolean;
+    home?: string;
   },
 ): Promise<QuotaWindow[] | null> {
   const now = opts?.now ?? Date.now();
@@ -395,12 +406,18 @@ export async function fetchKimiUsageWithOauth(
     });
     if (refreshed) {
       access = refreshed.accessToken;
-      if (opts.persistRefresh === true) {
-        writeKimiCredentialsFile({
-          accessToken: refreshed.accessToken,
-          refreshToken: refreshed.refreshToken ?? refresh,
-          expiresIn: refreshed.expiresIn,
-        });
+      const rotated =
+        typeof refreshed.refreshToken === 'string' &&
+        refreshed.refreshToken !== refresh;
+      if (opts.persistRefresh === true || (rotated && opts.persistOnRotation === true)) {
+        writeKimiCredentialsFile(
+          {
+            accessToken: refreshed.accessToken,
+            refreshToken: refreshed.refreshToken ?? refresh,
+            expiresIn: refreshed.expiresIn,
+          },
+          opts.home,
+        );
       }
     }
   }

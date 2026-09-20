@@ -202,12 +202,16 @@ export async function fetchLiveProviderWindows(
           deps.resolveKimiOauthCreds(accountId),
         );
         if (oauth?.refreshToken || oauth?.accessToken) {
-          // Never rotate native ~/.kimi-code from the quota probe.
+          // Access expirado + refresh válido não pode ficar vazio (conta com
+          // consumo aparecia «—»). Refresca em memória; se o servidor ROTACIONAR
+          // o grant, persistOnRotation devolve o refresh token novo ao
+          // ~/.kimi-code do CLI — consumi-lo sem gravar derruba o login nativo.
           const w = await fetchKimiUsageWithOauth(oauth, {
             fetchImpl,
             now,
-            allowRefresh: false,
+            allowRefresh: true,
             persistRefresh: false,
+            persistOnRotation: true,
           });
           if (w?.length) return w;
         }
