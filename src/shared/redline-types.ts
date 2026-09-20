@@ -93,6 +93,24 @@ export interface RedlineSnapshotFile {
   entries: RedlineEntry[];
   /** adapterId → ranking (scorer determinístico; Jev refina on-demand via MCP). */
   ranking: Record<string, RedlineRankingRow[]>;
+  /**
+   * Contas que cabem na faixa da barra (só usedRatio conhecido, teto 6).
+   * O menu dropdown continua listando `entries` inteiro.
+   */
+  statusBarEntryIds: string[];
+}
+
+/** Quantas contas com leitura cabem na faixa sem o macOS esconder o extra. */
+export const REDLINE_STATUS_BAR_MAX = 6;
+
+/** Ids na ordem da frota: só janelas com usedRatio; vazio se ninguém tem leitura. */
+export function selectRedlineStatusBarEntryIds(
+  entries: readonly RedlineEntry[],
+): string[] {
+  return entries
+    .filter((entry) => entry.windows.some((window) => window.usedRatio != null))
+    .slice(0, REDLINE_STATUS_BAR_MAX)
+    .map((entry) => entry.id);
 }
 
 /**

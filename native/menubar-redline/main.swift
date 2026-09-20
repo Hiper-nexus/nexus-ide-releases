@@ -62,6 +62,7 @@ struct RedlineSnapshotFile: Codable {
     let worstUsedRatio: Double?
     let entries: [RedlineEntry]
     let ranking: [String: [RedlineRankingRow]]
+    let statusBarEntryIds: [String]?
 }
 
 // MARK: - Caminhos
@@ -271,15 +272,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return age / 1000 > staleThreshold
     }
 
+    func entriesForBar(_ snap: RedlineSnapshotFile) -> [RedlineEntry] {
+        if let ids = snap.statusBarEntryIds, !ids.isEmpty {
+            let wanted = Set(ids)
+            return snap.entries.filter { wanted.contains($0.id) }
+        }
+        return Array(snap.entries.filter { entry in
+            entry.windows.contains { $0.usedRatio != nil }
+        }.prefix(6))
+    }
+
     func renderStatusItem() {
         guard let button = statusItem.button else { return }
+        let compact: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold),
+            .foregroundColor: NSColor.systemGray
+        ]
         guard let snap = snapshot, !snap.entries.isEmpty else {
-            button.attributedTitle = NSAttributedString(
-                string: " ⬡ ",
-                attributes: [.font: NSFont.monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold),
-                             .foregroundColor: NSColor.systemGray]
-            )
+            button.attributedTitle = NSAttributedString(string: " ⬡ ", attributes: compact)
             button.toolTip = "Nexus Redline — sem dados do Nexus ainda"
+            return
+        }
+
+        let bar = entriesForBar(snap)
+        if bar.isEmpty {
+            button.attributedTitle = NSAttributedString(
+                string: " ⬡ \(snap.entries.count) ",
+                attributes: compact
+            )
+            button.toolTip = "Nexus Redline — \(snap.entries.count) contas, ainda sem leitura de cota"
             return
         }
 
@@ -290,14 +311,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if isStale() {
             title.append(NSAttributedString(string: "◌ ", attributes: base.merge([.foregroundColor: NSColor.systemGray])))
         }
-        for entry in snap.entries.prefix(8) {
+        for entry in bar {
             title.append(attributedSegment(entry: entry))
             title.append(NSAttributedString(string: "│", attributes: base.merge([.foregroundColor: NSColor.separatorColor])))
         }
-        // tira o separador final
         title.deleteCharacters(in: NSRange(location: title.length - 1, length: 1))
         button.attributedTitle = title
-        button.toolTip = "Nexus Redline — \(snap.entries.count) contas · \(ageLabel(snap.updatedAt))"
+        button.toolTip = "Nexus Redline — \(bar.count) com leitura · \(snap.entries.count) contas · \(ageLabel(snap.updatedAt))"
     }
 
     // MARK: Menu

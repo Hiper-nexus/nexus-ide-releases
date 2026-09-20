@@ -120,6 +120,54 @@ describe('buildRedlineSnapshotFile', () => {
     expect(file.entries[0]?.label).toBe('Claude · g•••@g•••.com');
     expect(file.ranking.claude[0]?.label).toBe('Claude · g•••@g•••.com');
   });
+
+  it('statusBarEntryIds só inclui contas com usedRatio (F-612)', () => {
+    const file = buildRedlineSnapshotFile(
+      snapshotWith([
+        {
+          id: 'glm',
+          adapterId: 'glm',
+          label: 'GLM',
+          installed: true,
+          onCooldown: false,
+          active: true,
+          windows: [
+            {
+              kind: 'weekly',
+              label: 'Semanal',
+              usedRatio: 0.13,
+              source: 'provider-api',
+              confidence: 'high',
+            },
+          ],
+          updatedAt: NOW,
+        },
+        {
+          id: 'claude:a',
+          adapterId: 'claude',
+          accountId: 'a',
+          label: 'Claude',
+          installed: true,
+          onCooldown: false,
+          active: true,
+          windows: [
+            {
+              kind: 'hours',
+              label: '5 Horas',
+              usedRatio: null,
+              source: 'unknown',
+              confidence: 'low',
+            },
+          ],
+          updatedAt: NOW,
+        },
+      ]),
+      [account('a')],
+      NOW,
+    );
+    expect(file.statusBarEntryIds).toEqual(['glm']);
+    expect(file.entries.map((entry) => entry.id)).toEqual(['glm', 'claude:a']);
+  });
 });
 
 describe('writeRedlineSnapshotFileSync + sink', () => {

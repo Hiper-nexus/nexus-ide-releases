@@ -188,6 +188,15 @@ saber isto antes de mexer:
   não apaga sessões duráveis. Sessões antigas no perfil nativo ficam intactas;
   não são importadas automaticamente para o Nexus.
 
+## Redline na barra depois de atualizar o Nexus (F-612)
+
+- Quem já instalou o companheiro em `/Applications` precisa de
+  `syncInstalledRedline` no boot: se o binário empacotado diferir, substitui e
+  relança. A oferta one-time não cobre update. `open` num LSUIElement já
+  rodando não reconstrói o extra — "Abrir Redline" mata e abre de novo.
+- A faixa só pinta contas com `usedRatio` (`statusBarEntryIds`, teto 6).
+  Unknown (`·····`) fica no menu, senão o extra some no overflow do macOS.
+
 ## Overlay Kimi leva o catálogo de modelos (F-611)
 
 - `$KIMI_CODE_HOME` do pane é o overlay efêmero, não `~/.kimi-code`. Sem

@@ -243,6 +243,7 @@ import {
   initRedlineIpc,
   maybeOfferRedlineInstall,
   shutdownRedlineIpc,
+  syncInstalledRedline,
 } from "./redline/redline-install";
 import {
   initializeProviderConfigStore,
@@ -617,6 +618,11 @@ function bootstrap(): void {
     void requireQuotaService().refresh();
   });
   initRedlineIpc();
+  if (process.platform === "darwin" && !isAutomatedReleaseTest()) {
+    void syncInstalledRedline(process.resourcesPath).catch((err) =>
+      console.warn("[redline] sync da instalação falhou:", err),
+    );
+  }
   initQuotaService({
     listProviders: () => listProviderSettings({ nonBlockingAuth: true }),
     listAccounts: () => listAccountInfos(),

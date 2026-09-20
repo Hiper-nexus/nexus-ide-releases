@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const handleTrusted = vi.hoisted(() => vi.fn());
 const showMessageBox = vi.hoisted(() => vi.fn());
@@ -20,10 +20,14 @@ vi.mock('../security/trusted-ipc', () => ({
 }));
 
 import { REDLINE_IPC } from '../../shared/redline-types';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import {
   confirmAndInstallRedline,
   initRedlineIpc,
   installRedline,
+  redlineAppNeedsReplace,
   shutdownRedlineIpc,
 } from './redline-install';
 
@@ -82,5 +86,39 @@ describe('redline install IPC', () => {
       REDLINE_IPC.install,
       REDLINE_IPC.open,
     ]);
+  });
+});
+
+describe('redlineAppNeedsReplace (F-612)', () => {
+  const roots: string[] = [];
+  afterEach(() => {
+    for (const root of roots.splice(0))
+      rmSync(root, { recursive: true, force: true });
+  });
+  function fakeApp(bytes: Buffer): string {
+    const root = mkdtempSync(path.join(tmpdir(), 'redline-app-'));
+    roots.push(root);
+    const exec = path.join(root, 'Contents', 'MacOS', 'NexusRedline');
+    mkdirSync(path.dirname(exec), { recursive: true });
+    writeFileSync(exec, bytes);
+    return root;
+  }
+
+  it('is true when the bundled companion differs from /Applications', () => {
+    const bundled = fakeApp(Buffer.from('bundled-v2'));
+    const installed = fakeApp(Buffer.from('installed-v1'));
+    expect(redlineAppNeedsReplace(bundled, installed)).toBe(true);
+  });
+
+  it('is false when the binaries are identical', () => {
+    const bytes = Buffer.from('same-build');
+    expect(redlineAppNeedsReplace(fakeApp(bytes), fakeApp(bytes))).toBe(false);
+  });
+
+  it('is true when the installed executable is missing', () => {
+    const bundled = fakeApp(Buffer.from('bundled'));
+    const installed = mkdtempSync(path.join(tmpdir(), 'redline-empty-'));
+    roots.push(installed);
+    expect(redlineAppNeedsReplace(bundled, installed)).toBe(true);
   });
 });

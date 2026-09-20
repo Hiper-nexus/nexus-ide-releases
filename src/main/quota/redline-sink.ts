@@ -15,6 +15,7 @@ import {
   REDLINE_REFRESH_FILENAME,
   REDLINE_SNAPSHOT_FILENAME,
   REDLINE_SNAPSHOT_FORMAT_VERSION,
+  selectRedlineStatusBarEntryIds,
   type RedlineSnapshotFile,
 } from '../../shared/redline-types';
 import { scoreFleet } from './smart-pick';
@@ -48,6 +49,7 @@ export function buildRedlineSnapshotFile(
     worstUsedRatio: snap.worstUsedRatio,
     entries: scored.entries,
     ranking: scored.ranking,
+    statusBarEntryIds: selectRedlineStatusBarEntryIds(scored.entries),
   };
 }
 

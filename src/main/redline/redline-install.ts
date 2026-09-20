@@ -14,6 +14,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import {
   cpSync,
   existsSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -62,6 +63,41 @@ function isRunning(): boolean {
   }
 }
 
+export function redlineExecPath(appPath: string): string {
+  return path.join(appPath, 'Contents', 'MacOS', REDLINE_EXEC_NAME);
+}
+
+/** True when /Applications is missing or is a different build than the bundle. */
+export function redlineAppNeedsReplace(
+  bundledApp: string,
+  installedApp: string,
+): boolean {
+  const bundledExec = redlineExecPath(bundledApp);
+  const installedExec = redlineExecPath(installedApp);
+  try {
+    if (!existsSync(bundledExec) || !existsSync(installedExec)) return true;
+    const bundled = readFileSync(bundledExec);
+    const installed = readFileSync(installedExec);
+    return bundled.length !== installed.length || !bundled.equals(installed);
+  } catch {
+    return true;
+  }
+}
+
+function launchRedline(target: string): void {
+  spawn('open', [target], { detached: true, stdio: 'ignore' }).unref();
+}
+
+async function stopRunningRedline(): Promise<void> {
+  if (!isRunning()) return;
+  try {
+    execFileSync('pkill', ['-x', REDLINE_EXEC_NAME], { stdio: 'pipe' });
+  } catch {
+    /* pkill sem match sai != 0 — ok */
+  }
+  await wait(400);
+}
+
 export function redlineStatus(resourcesPath?: string): RedlineInstallStatus {
   const bundledPath = resolveBundledRedlineApp(resourcesPath, app.isPackaged);
   const installedPath = resolveInstalledRedlineApp();
@@ -100,12 +136,7 @@ export async function installRedline(
 
   // Instância anterior morre antes da substituição (rm de app rodando falha).
   if (existsSync(destination)) {
-    try {
-      execFileSync('pkill', ['-x', REDLINE_EXEC_NAME], { stdio: 'pipe' });
-    } catch {
-      /* pkill sem match sai != 0 — ok */
-    }
-    await wait(400);
+    await stopRunningRedline();
     try {
       rmSync(destination, { recursive: true, force: true });
     } catch (error) {
@@ -124,7 +155,7 @@ export async function installRedline(
     };
   }
   try {
-    spawn('open', [destination], { detached: true, stdio: 'ignore' }).unref();
+    launchRedline(destination);
   } catch {
     /* instalação vale mesmo se o abrir falhar */
   }
@@ -178,17 +209,41 @@ export async function confirmAndInstallRedline(
   return installRedline(resourcesPath);
 }
 
-export function openRedline(): RedlineInstallResult {
+export async function openRedline(): Promise<RedlineInstallResult> {
   const installed = resolveInstalledRedlineApp();
   const target = installed ?? resolveBundledRedlineApp(process.resourcesPath, app.isPackaged);
   if (!target) {
     return { ok: false, message: 'Companheiro não encontrado.' };
   }
   try {
-    spawn('open', [target], { detached: true, stdio: 'ignore' }).unref();
+    // `open` num LSUIElement já rodando não reconstruí o extra — o operador
+    // clica "Abrir" justamente quando não vê a faixa (F-612).
+    await stopRunningRedline();
+    launchRedline(target);
     return { ok: true, message: 'Redline aberto.' };
   } catch (error) {
     return { ok: false, message: (error as Error).message };
+  }
+}
+
+/**
+ * Depois de um update do Nexus: se o operador já instalou o companheiro,
+ * substitui /Applications pelo binário empacotado quando diferem e garante
+ * que o processo está no ar. Não instala sem consentimento.
+ */
+export async function syncInstalledRedline(
+  resourcesPath?: string,
+): Promise<void> {
+  if (process.platform !== 'darwin') return;
+  const bundled = resolveBundledRedlineApp(resourcesPath, app.isPackaged);
+  const installed = resolveInstalledRedlineApp();
+  if (!bundled || !installed) return;
+  if (redlineAppNeedsReplace(bundled, installed)) {
+    await installRedline(resourcesPath);
+    return;
+  }
+  if (!isRunning()) {
+    launchRedline(installed);
   }
 }
 
