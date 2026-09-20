@@ -26,6 +26,8 @@ export interface ArtifactSession {
   syncBackExcludeAnywhere?: ReadonlySet<string>;
   /** Direct-pane overlays may persist a newly completed login; governed ones do not. */
   syncBack: boolean;
+  /** Best-effort live overlay maintenance (e.g. Kimi catalog guard). */
+  dispose?: () => void;
 }
 
 const activeArtifactDirs = new Map<string, ArtifactSession>();
@@ -339,6 +341,11 @@ export function cleanupCliMcpSession(token: string): void {
   const session = activeArtifactDirs.get(token);
   if (!session) return;
   activeArtifactDirs.delete(token);
+  try {
+    session.dispose?.();
+  } catch {
+    // Never let a watcher/lease block teardown.
+  }
   // Persist a fresh in-pane login before the overlay is removed, otherwise the
   // provider stays "login-needed" even though the user just authenticated in
   // the pane (the overlay is ephemeral and would take the new auth with it).

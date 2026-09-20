@@ -5,8 +5,12 @@ import {
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { prepareKimiMcpSession } from './cli-mcp-session-kimi';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  prepareKimiMcpSession,
+  projectKimiNativeCatalog,
+  restoreKimiOverlayCatalog,
+} from './cli-mcp-session-kimi';
 
 const tempDirs: string[] = [];
 afterEach(() => {
@@ -210,4 +214,139 @@ describe('F-566 kimi checkout session isolation', () => {
       }
     },
   );
+});
+
+const KIMI_NATIVE_CATALOG = `default_model = "kimi-code/k3"
+
+[providers."managed:kimi-code"]
+type = "kimi"
+api_key = ""
+base_url = "https://api.kimi.com/coding/v1"
+
+[models."kimi-code/kimi-for-coding"]
+provider = "managed:kimi-code"
+model = "kimi-for-coding"
+
+[models."kimi-code/k3"]
+provider = "managed:kimi-code"
+model = "k3"
+`;
+
+describe('F-611 kimi overlay model catalog', () => {
+  function seedCatalogHome(): {
+    home: string;
+    providerHome: string;
+    artifactRoot: string;
+    nativeToml: string;
+  } {
+    const root = tempDir();
+    const home = path.join(root, 'home');
+    const nativeHome = path.join(home, '.kimi-code');
+    const nativeToml = path.join(nativeHome, 'config.toml');
+    fs.mkdirSync(nativeHome, { recursive: true });
+    fs.writeFileSync(nativeToml, KIMI_NATIVE_CATALOG);
+    return {
+      home,
+      providerHome: nativeHome,
+      artifactRoot: path.join(root, 'ephemeral'),
+      nativeToml,
+    };
+  }
+
+  it('projects native models into an overlay that lost the catalog', () => {
+    expect(
+      projectKimiNativeCatalog(
+        { default_model: 'kimi-code/kimi-for-coding' },
+        {
+          default_model: 'kimi-code/k3',
+          models: {
+            'kimi-code/k3': { model: 'k3' },
+            'kimi-code/kimi-for-coding': { model: 'kimi-for-coding' },
+          },
+          providers: { 'managed:kimi-code': { type: 'kimi' } },
+        },
+      ),
+    ).toEqual({
+      default_model: 'kimi-code/kimi-for-coding',
+      models: {
+        'kimi-code/k3': { model: 'k3' },
+        'kimi-code/kimi-for-coding': { model: 'kimi-for-coding' },
+      },
+      providers: { 'managed:kimi-code': { type: 'kimi' } },
+    });
+  });
+
+  it('writes models/providers into the overlay when native config.toml is a symlink', () => {
+    const seeded = seedCatalogHome();
+    const managedHome = path.join(seeded.home, 'managed-kimi');
+    fs.mkdirSync(managedHome, { recursive: true });
+    fs.symlinkSync(seeded.nativeToml, path.join(managedHome, 'config.toml'));
+    const token = 'kimi-f611-symlink-catalog';
+    const result = prepareKimiMcpSession('http://127.0.0.1:9/mcp', token, {
+      home: seeded.home,
+      providerHome: managedHome,
+      artifactRoot: seeded.artifactRoot,
+    });
+    try {
+      const overlayToml = fs.readFileSync(
+        path.join(result.env.KIMI_CODE_HOME, 'config.toml'),
+        'utf8',
+      );
+      expect(overlayToml).toContain('kimi-code/k3');
+      expect(overlayToml).toContain('managed:kimi-code');
+      expect(overlayToml).toContain('NEXUS_HOOK_STATUS');
+      expect(fs.readFileSync(seeded.nativeToml, 'utf8')).toBe(
+        KIMI_NATIVE_CATALOG,
+      );
+    } finally {
+      cleanupCliMcpSession(token);
+    }
+  });
+
+  it('restores native models after the CLI rewrites overlay config.toml', () => {
+    const seeded = seedCatalogHome();
+    const overlayToml = path.join(tempDir(), 'overlay', 'config.toml');
+    fs.mkdirSync(path.dirname(overlayToml), { recursive: true });
+    fs.writeFileSync(
+      overlayToml,
+      'default_model = "kimi-code/kimi-for-coding"\n',
+    );
+    expect(restoreKimiOverlayCatalog(overlayToml, seeded.nativeToml)).toBe(
+      true,
+    );
+    const restored = fs.readFileSync(overlayToml, 'utf8');
+    expect(restored).toContain('default_model = "kimi-code/kimi-for-coding"');
+    expect(restored).toContain('kimi-code/k3');
+    expect(restored).toContain('managed:kimi-code');
+    expect(restored).toContain('NEXUS_HOOK_STATUS');
+    expect(restoreKimiOverlayCatalog(overlayToml, seeded.nativeToml)).toBe(
+      false,
+    );
+  });
+
+  it('reprojects the catalog when the live overlay config.toml is replaced', async () => {
+    const seeded = seedCatalogHome();
+    const token = 'kimi-f611-live-rewrite';
+    const result = prepareKimiMcpSession('http://127.0.0.1:9/mcp', token, {
+      home: seeded.home,
+      providerHome: seeded.providerHome,
+      artifactRoot: seeded.artifactRoot,
+    });
+    const overlayToml = path.join(result.env.KIMI_CODE_HOME, 'config.toml');
+    try {
+      const tmp = `${overlayToml}.tmp`;
+      fs.writeFileSync(
+        tmp,
+        'default_model = "kimi-code/kimi-for-coding"\n',
+      );
+      fs.renameSync(tmp, overlayToml);
+      await vi.waitFor(() => {
+        const body = fs.readFileSync(overlayToml, 'utf8');
+        expect(body).toContain('kimi-code/k3');
+        expect(body).toContain('default_model = "kimi-code/kimi-for-coding"');
+      });
+    } finally {
+      cleanupCliMcpSession(token);
+    }
+  });
 });

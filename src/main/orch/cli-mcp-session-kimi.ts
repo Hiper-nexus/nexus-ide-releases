@@ -29,6 +29,126 @@ import {
 } from './governed-cli-profile';
 import { mergeKimiStatusHooks } from './hook-status-config';
 import { claudeFamilyHubMcpServers } from '../mcp-hub/mcp-hub-spawn';
+import { NEXUS_HOOK_MARKER } from '../../vendor/emdash/hooks/hook-commands';
+
+const KIMI_CATALOG_OBJECT_KEYS = ['models', 'providers', 'services'] as const;
+
+/**
+ * Copy the native model catalog into an overlay config. Overlay keys win
+ * (a TUI model switch may change `default_model`); missing native models,
+ * providers and services are filled back in so `kimi --model kimi-code/k3`
+ * keeps resolving after the CLI rewrites config.toml (F-611).
+ */
+export function projectKimiNativeCatalog(
+  overlay: Record<string, unknown>,
+  native: Record<string, unknown>,
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...overlay };
+  for (const key of KIMI_CATALOG_OBJECT_KEYS) {
+    const nativeObj = objectValue(native[key]);
+    if (Object.keys(nativeObj).length === 0) continue;
+    next[key] = { ...nativeObj, ...objectValue(overlay[key]) };
+  }
+  if (
+    (typeof next.default_model !== 'string' || !next.default_model.trim()) &&
+    typeof native.default_model === 'string' &&
+    native.default_model.trim()
+  ) {
+    next.default_model = native.default_model;
+  }
+  return next;
+}
+
+function kimiCatalogHasNativeModels(
+  overlay: Record<string, unknown>,
+  native: Record<string, unknown>,
+): boolean {
+  const nativeModels = objectValue(native.models);
+  if (Object.keys(nativeModels).length === 0) return true;
+  const overlayModels = objectValue(overlay.models);
+  return Object.keys(nativeModels).every((key) => key in overlayModels);
+}
+
+/** Re-merge native models/providers when the overlay config lost the catalog. */
+export function restoreKimiOverlayCatalog(
+  overlayToml: string,
+  nativeToml: string,
+): boolean {
+  const native = readTomlObject(nativeToml);
+  if (Object.keys(objectValue(native.models)).length === 0) return false;
+  let overlayRaw = '';
+  try {
+    overlayRaw = fs.readFileSync(overlayToml, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+  }
+  let overlay: Record<string, unknown> = {};
+  if (overlayRaw) {
+    try {
+      overlay = readTomlObject(overlayToml);
+    } catch {
+      overlay = {};
+    }
+  }
+  if (
+    kimiCatalogHasNativeModels(overlay, native) &&
+    overlayRaw.includes(NEXUS_HOOK_MARKER)
+  ) {
+    return false;
+  }
+  writePrivateFileAtomic(
+    overlayToml,
+    stringify(
+      mergeKimiStatusHooks(projectKimiNativeCatalog(overlay, native)),
+      { maxDepth: MAX_CLI_TOML_CONFIG_DEPTH },
+    ),
+  );
+  return true;
+}
+
+function startKimiCatalogGuard(
+  overlayDir: string,
+  nativeToml: string,
+): () => void {
+  const overlayToml = path.join(overlayDir, 'config.toml');
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let closed = false;
+  const kick = (): void => {
+    if (closed) return;
+    try {
+      restoreKimiOverlayCatalog(overlayToml, nativeToml);
+    } catch {
+      // A catalog rewrite must never take the pane down.
+    }
+  };
+  let watcher: fs.FSWatcher;
+  try {
+    watcher = fs.watch(overlayDir, { persistent: false }, (_event, filename) => {
+      if (closed) return;
+      const name = filename?.toString() ?? '';
+      if (
+        name &&
+        name !== 'config.toml' &&
+        !name.startsWith('.config.toml.')
+      ) {
+        return;
+      }
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(kick, 25);
+    });
+  } catch {
+    return () => {};
+  }
+  return () => {
+    closed = true;
+    if (timer) clearTimeout(timer);
+    try {
+      watcher.close();
+    } catch {
+      // Overlay may already be gone.
+    }
+  };
+}
 
 /**
  * Real subpaths the governed overlay symlinks credential material from
@@ -139,10 +259,11 @@ export function ensureKimiWorkspaceTrust(
  * links auth/profile data from the real home, conversations from durable Nexus
  * checkout state, and adds a private, token-free MCP declaration;
  * `bearerTokenEnvVar` reads the already session-scoped Nexus token at runtime.
- * config.toml is overlaid the same way to carry the additive semantic-status
- * hooks (emdash wave 1: flat `hooks = [{event, command}]`, marker-separated);
- * both files stay out of the auth sync-back so they never reach the real
- * profile.
+ * config.toml is a private copy: native `models`/`providers`/`services`
+ * (F-611) plus additive semantic-status hooks (emdash wave 1: flat
+ * `hooks = [{event, command}]`, marker-separated). A live TUI rewrite that
+ * drops the catalog is restored in-place. Both files stay out of the auth
+ * sync-back so they never reach the real profile.
  */
 export function prepareKimiMcpSession(
   url: string,
@@ -220,36 +341,56 @@ export function prepareKimiMcpSession(
         path.join(artifactDir, 'mcp.json'),
         `${JSON.stringify(merged, null, 2)}\n`,
       );
-      // config.toml carries the additive status hooks. A malformed user config
-      // must not break the spawn: degrade to a plain link (hooks off, MCP on).
+      // config.toml carries the native model catalog (F-611) plus additive
+      // status hooks. A malformed user config must not break the spawn, but
+      // dropping models/providers leaves `kimi --model kimi-code/k3` dead.
+      const realToml = path.join(providerHome, 'config.toml');
+      const overlayToml = path.join(artifactDir, 'config.toml');
       let tomlMerged: string | null = null;
       try {
-        const tomlRaw = readTomlObject(path.join(providerHome, 'config.toml'));
+        const tomlRaw = readTomlObject(realToml);
         const tomlSource = policy.governed
           ? stripExecutableProfileConfig(tomlRaw)
           : tomlRaw;
-        tomlMerged = stringify(mergeKimiStatusHooks(tomlSource), {
-          maxDepth: MAX_CLI_TOML_CONFIG_DEPTH,
-        });
+        tomlMerged = stringify(
+          projectKimiNativeCatalog(
+            mergeKimiStatusHooks(tomlSource),
+            tomlRaw,
+          ),
+          { maxDepth: MAX_CLI_TOML_CONFIG_DEPTH },
+        );
       } catch {
-        const realToml = path.join(providerHome, 'config.toml');
-        // A direct pane may retain the historical best-effort fallback. A
-        // governed pane must fail closed: linking an unparsed user config would
-        // reintroduce exactly the hooks/plugins/agents this overlay isolates.
-        if (!policy.governed && fs.existsSync(realToml)) {
-          try {
-            linkFile(realToml, path.join(artifactDir, 'config.toml'));
-          } catch {
-            // Best effort — MCP still works without the user config linked in.
+        try {
+          const tomlRaw = readTomlObject(realToml);
+          tomlMerged = stringify(
+            projectKimiNativeCatalog(
+              policy.governed ? stripExecutableProfileConfig(tomlRaw) : {},
+              tomlRaw,
+            ),
+            { maxDepth: MAX_CLI_TOML_CONFIG_DEPTH },
+          );
+        } catch {
+          // Last resort: copy native bytes (follows a managed-home symlink)
+          // so the overlay still has models. Governed panes stay fail-closed
+          // on an unparsed user config — linking it would reintroduce hooks.
+          if (!policy.governed && fs.existsSync(realToml)) {
+            try {
+              fs.copyFileSync(realToml, overlayToml);
+              fs.chmodSync(overlayToml, 0o600);
+            } catch {
+              try {
+                linkFile(realToml, overlayToml);
+              } catch {
+                // MCP still works; the catalog guard may restore later.
+              }
+            }
           }
         }
       }
       if (tomlMerged !== null) {
-        writePrivateFileAtomic(
-          path.join(artifactDir, 'config.toml'),
-          tomlMerged,
-        );
+        writePrivateFileAtomic(overlayToml, tomlMerged);
       }
+      const stopCatalogGuard = startKimiCatalogGuard(artifactDir, realToml);
       const governedSkillsDir = path.join(artifactDir, 'skills');
       if (policy.governed) {
         mirrorGovernedSkills(
@@ -265,6 +406,7 @@ export function prepareKimiMcpSession(
         providerHome,
         configFiles: ['mcp.json', 'config.toml', ...KIMI_SESSION_ENTRIES],
         syncBack: !policy.governed,
+        dispose: stopCatalogGuard,
       });
       const authGrantPaths = policy.governed
         ? kimiAuthGrantPaths(providerHome)

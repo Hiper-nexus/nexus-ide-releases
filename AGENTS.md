@@ -188,6 +188,19 @@ saber isto antes de mexer:
   não apaga sessões duráveis. Sessões antigas no perfil nativo ficam intactas;
   não são importadas automaticamente para o Nexus.
 
+## Overlay Kimi leva o catálogo de modelos (F-611)
+
+- `$KIMI_CODE_HOME` do pane é o overlay efêmero, não `~/.kimi-code`. Sem
+  `models`/`providers` no `config.toml` do overlay, `kimi --model kimi-code/k3`
+  cai em `config.invalid` mesmo com o catálogo nativo intacto.
+- `prepareKimiMcpSession` projeta `models`, `providers`, `services` e
+  `default_model` do perfil nativo (segue symlink de conta gerenciada) para a
+  cópia privada do overlay, junto dos hooks de status. Não deixe o merge de
+  hooks falhar em silêncio e nascer overlay sem catálogo.
+- A TUI do Kimi pode substituir o `config.toml` do overlay (rename atômico) e
+  apagar o catálogo. O guarda no overlay reescreve modelos/providers nativos e
+  preserva o `default_model` que a TUI escolheu. Nunca sync-back desse arquivo.
+
 ## HOME efêmero da família Claude: o pane escreve como o operador (F-579/F-580)
 
 - O overlay `~/.nexus/ephemeral/<tok>` isola CONVERSA e auth Claude (F-567),
