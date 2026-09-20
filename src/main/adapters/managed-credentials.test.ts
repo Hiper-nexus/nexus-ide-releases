@@ -12,6 +12,7 @@ import {
   managedHomeEnv,
   managedHomePath,
   materializeManagedHome,
+  readBackFresherAuth,
   nativeAuthIdentity,
   removeManagedHome,
   scrubManagedSessionAuth,
@@ -34,6 +35,28 @@ afterEach(() => {
 });
 
 describe('managed-credentials', () => {
+  it.each([1, 1000])('keeps a fresh Kimi login and later CLI refresh (expiry scale %s)', (scale) => {
+    const home = tempHome();
+    const blob = (token: string, expires: number) => JSON.stringify({
+      access_token: token, refresh_token: `refresh-${token}`, expires_at: expires * scale,
+    });
+    const old = blob('old', 1_800_000_000);
+    const login = blob('new-login', 1_800_003_600);
+    const rotated = blob('cli-rotation', 1_800_007_200);
+    const managed = materializeManagedHome('kimi', 'account-a', old, { home, systemHome: null });
+    const authFile = path.join(managed, 'credentials', 'kimi-code.json');
+    materializeManagedHome('kimi', 'account-a', login, { home, systemHome: null });
+    expect(fs.readFileSync(authFile, 'utf8')).toBe(login);
+    expect(readBackFresherAuth('kimi', 'account-a', login, { home })).toBeNull();
+    fs.writeFileSync(authFile, rotated);
+    materializeManagedHome('kimi', 'account-a', login, { home, systemHome: null });
+    expect(fs.readFileSync(authFile, 'utf8')).toBe(rotated);
+    expect(readBackFresherAuth('kimi', 'account-a', login, { home })).toBe(rotated);
+    const second = materializeManagedHome('kimi', 'account-b', blob('other-account', 1_800_001_000), { home, systemHome: null });
+    expect(second).not.toBe(managed);
+    expect(fs.readFileSync(authFile, 'utf8')).toBe(rotated);
+  });
+
   it('recognizes file-auth adapters', () => {
     expect(isFileAuthAdapter('codex')).toBe(true);
     expect(isFileAuthAdapter('grok')).toBe(true);

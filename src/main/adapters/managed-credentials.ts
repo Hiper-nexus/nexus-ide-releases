@@ -573,12 +573,21 @@ function freshnessFromAuthContents(contents: string): number | null {
       const t = Date.parse(parsed.last_refresh);
       if (!Number.isNaN(t)) return t;
     }
+    // Kimi stores OAuth at the top level, with expires_at in seconds (some
+    // imported snapshots use milliseconds). Ignoring it restored the old
+    // managed token immediately after a successful login of the same account.
+    const expiry = Number(parsed.expires_at);
+    if (typeof parsed.access_token === 'string' && parsed.access_token &&
+        Number.isFinite(expiry) && expiry > 0) {
+      return expiry >= 1_000_000_000_000 ? expiry : expiry * 1000;
+    }
     const tokens =
       parsed.tokens && typeof parsed.tokens === 'object'
         ? (parsed.tokens as Record<string, unknown>)
         : null;
     const access =
-      typeof tokens?.access_token === 'string' ? tokens.access_token : null;
+      typeof tokens?.access_token === 'string' ? tokens.access_token :
+        typeof parsed.access_token === 'string' ? parsed.access_token : null;
     if (access) {
       const payload = decodeJwtPayload(access);
       const exp = payload && typeof payload.exp === 'number' ? payload.exp * 1000 : null;
