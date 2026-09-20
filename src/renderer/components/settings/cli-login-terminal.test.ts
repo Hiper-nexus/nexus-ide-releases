@@ -141,6 +141,24 @@ describe('openCliLoginTerminal', () => {
     );
     expect(navigation.openTerminal).not.toHaveBeenCalled();
   });
+
+  it('comando que não pode ser digitado fecha o pane e devolve erro (F-355)', async () => {
+    host.writeToPane.mockImplementationOnce(() => {
+      throw new Error('process is not defined');
+    });
+    const result = await openCliLoginTerminal({
+      command: 'muse login',
+      adapterId: 'muse',
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected failure');
+    expect(result.error).toMatch(/comando de login/i);
+    expect(layout.close).toHaveBeenCalledWith(
+      'pane-login',
+      'cli-login-write-failed',
+    );
+    expect(navigation.openTerminal).not.toHaveBeenCalled();
+  });
 });
 
 describe('cliLoginTypeLine — F-354', () => {
@@ -169,6 +187,42 @@ describe('cliLoginTypeLine — F-354', () => {
         platform: 'win32',
       }),
     ).toBe('kimi login --region global\n');
+  });
+
+  /**
+   * F-355: o renderer é sandboxed — `process` não existe na página e
+   * `process.platform` derrubava todo login de CLI. Sem `platform` explícita a
+   * fonte é `window.nexus.platform` (preload), não o `process` do host.
+   */
+  it('sem platform explícita, a ponte window.nexus.platform decide (F-355)', () => {
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: { platform: 'win32' },
+    });
+    try {
+      expect(
+        cliLoginTypeLine({
+          command: 'kimi login --region global',
+          adapterId: 'kimi',
+        }),
+      ).toBe('kimi login --region global\n');
+    } finally {
+      Reflect.deleteProperty(window, 'nexus');
+    }
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: { platform: 'darwin' },
+    });
+    try {
+      expect(
+        cliLoginTypeLine({
+          command: 'kimi login --region global',
+          adapterId: 'kimi',
+        }),
+      ).toBe('exec kimi login --region global\n');
+    } finally {
+      Reflect.deleteProperty(window, 'nexus');
+    }
   });
 });
 

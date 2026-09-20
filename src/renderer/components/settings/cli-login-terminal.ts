@@ -47,7 +47,15 @@ export function cliLoginTypeLine(input: {
   readonly adapterId?: string;
   readonly platform?: NodeJS.Platform;
 }): string {
-  const platform = input.platform ?? process.platform;
+  // O renderer roda sandboxed (contextIsolation + nodeIntegration:false): não
+  // existe `process` na página e ler `process.platform` aqui derrubava TODO
+  // login de CLI com "Não foi possível abrir o terminal de login." (F-355). A
+  // plataforma vem da ponte `window.nexus.platform` do preload; `process` só
+  // entra como fallback fora do Electron (testes).
+  const platform =
+    input.platform ??
+    (typeof window === 'undefined' ? undefined : window.nexus?.platform) ??
+    (typeof process === 'undefined' ? undefined : process.platform);
   const replaceShell = input.adapterId === 'kimi' && platform !== 'win32';
   return replaceShell ? `exec ${input.command}\n` : `${input.command}\n`;
 }
@@ -169,22 +177,35 @@ export async function openCliLoginTerminal(input: {
         .providers.find((candidate) => candidate.adapterId === input.adapterId)
     : undefined;
   const isInstalled = provider ? provider.installed : true;
-  if (!isInstalled && provider) {
-    const installCmd =
-      provider.installCommand ||
-      `consulte a documentação para instalar a CLI ${provider.label}`;
-    const safeMsg = `⚠️ A CLI '${provider.label || input.adapterId}' não foi encontrada no PATH.`;
-    const safeCmdMsg = `Instalação sugerida: ${installCmd}`;
-    const tipMsg = 'Execute o comando acima neste terminal para instalar a CLI.';
-    writeToPane(
-      paneId,
-      `printf '%s\\n%s\\n%s\\n\\n' ${posixSingleQuote(safeMsg)} ${posixSingleQuote(safeCmdMsg)} ${posixSingleQuote(tipMsg)}\n`,
-    );
-  } else {
-    writeToPane(
-      paneId,
-      cliLoginTypeLine({ command, adapterId: input.adapterId }),
-    );
+  try {
+    if (!isInstalled && provider) {
+      const installCmd =
+        provider.installCommand ||
+        `consulte a documentação para instalar a CLI ${provider.label}`;
+      const safeMsg = `⚠️ A CLI '${provider.label || input.adapterId}' não foi encontrada no PATH.`;
+      const safeCmdMsg = `Instalação sugerida: ${installCmd}`;
+      const tipMsg = 'Execute o comando acima neste terminal para instalar a CLI.';
+      writeToPane(
+        paneId,
+        `printf '%s\\n%s\\n%s\\n\\n' ${posixSingleQuote(safeMsg)} ${posixSingleQuote(safeCmdMsg)} ${posixSingleQuote(tipMsg)}\n`,
+      );
+    } else {
+      writeToPane(
+        paneId,
+        cliLoginTypeLine({ command, adapterId: input.adapterId }),
+      );
+    }
+  } catch (err) {
+    // Sem o comando digitado o pane é um shell órfão chamado "Login X":
+    // fecha e devolve erro honesto em vez de propagar para o catch genérico.
+    console.warn('[cli-login] comando de login não foi digitado:', err);
+    useLayoutStore.getState().close(paneId, 'cli-login-write-failed');
+    return {
+      ok: false,
+      error:
+        'O terminal abriu, mas o comando de login não foi digitado. ' +
+        'Tente de novo.',
+    };
   }
   useLayoutStore.getState().focus(paneId);
   useProductNavigationStore.getState().openTerminal();

@@ -491,7 +491,8 @@ export function AccountsManager({
           dedupeKey: `cli-login:${adapterId}`,
         });
       }
-    } catch {
+    } catch (err) {
+      console.warn('[cli-login] falha ao abrir o terminal de login:', err);
       showNotice('Não foi possível abrir o terminal de login.', 'err');
       setLoginFailed(true);
       onLoginActivity?.('err', 'Não foi possível abrir o terminal de login.');
