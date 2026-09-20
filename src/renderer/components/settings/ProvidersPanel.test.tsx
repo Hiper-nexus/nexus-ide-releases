@@ -397,6 +397,34 @@ describe('ProvidersPanel hub', () => {
     act(() => root.unmount());
   });
 
+  it('shows live then success status in the detail when updating a CLI', async () => {
+    let finish: ((value: { ok: true }) => void) | undefined;
+    vi.mocked(window.nexus.providers.installCli).mockImplementation(
+      () => new Promise((resolve) => { finish = resolve; }),
+    );
+    useProviderStore.setState({
+      providers: [provider('agy', 'Antigravity (agy)', { canAutoInstall: true })],
+      hydrate: vi.fn(async () => undefined),
+    } as never);
+    const { host, root } = mount();
+    await act(async () => { await Promise.resolve(); });
+    const update = [...host.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Atualizar CLI',
+    );
+    expect(update).toBeTruthy();
+    await act(async () => { update!.click(); });
+    expect(host.querySelector('[data-testid="prov-cli-job"]')?.textContent)
+      .toMatch(/Atualizando Antigravity/);
+    expect(host.querySelector('.prov-row__status')?.textContent).toBe('atualizando…');
+    await act(async () => { finish!({ ok: true }); });
+    expect(host.querySelector('[data-testid="prov-cli-job"]')?.textContent)
+      .toMatch(/atualizada/i);
+    expect(host.querySelector('.prov-row__status')?.textContent).not.toBe(
+      'atualizando…',
+    );
+    act(() => root.unmount());
+  });
+
   it('keeps installation available in the selected detail without adding a list action', async () => {
     useProviderStore.setState({ providers: [provider('kimi', 'Kimi', {
       installed: false, canAutoInstall: true,

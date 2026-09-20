@@ -16,7 +16,7 @@ const SESSION_LOGIN_IDS = [
   'openclaude',
 ] as const;
 
-const KEY_ONLY_IDS = ['aider', 'glm', 'glm-flash', 'longcat'] as const;
+const KEY_ONLY_IDS = ['aider', 'glm', 'glm-flash', 'longcat', 'muse-claude'] as const;
 
 describe('builtin CLI login commands', () => {
   const adapters = BUILTIN_ADAPTERS.map((raw) => adapterSchema.parse(raw));
@@ -80,5 +80,13 @@ describe('builtin CLI login commands', () => {
 
   it('OpenClaude logs in with its own binary, not claude auth login', () => {
     expect(accountLoginCommandFor('openclaude')).toBe('openclaude auth login');
+  });
+
+  it('Kimi login forces the international region (English OAuth / Google)', () => {
+    expect(accountLoginCommandFor('kimi')).toBe('kimi login --region global');
+    const adapter = adapters.find((item) => item.id === 'kimi');
+    expect(adapter?.kind).toBe('cli-pty');
+    if (adapter?.kind !== 'cli-pty') return;
+    expect(adapter.auth.loginCommand).toBe('kimi login --region global');
   });
 });

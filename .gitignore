@@ -168,6 +168,8 @@ scripts/codesign-retry-bin/
 /docs/analysis/overclock-13318-extract/*
 !/docs/analysis/overclock-13318-extract/sidecar-tools-runtime.json
 /.nexus/tmp-cdp/
+# Distill/scratch local de panes (binários de terceiros, notas). Nunca fonte.
+/.nexus/work/
 
 # Runtime state dumped into the repo root by local agent/tooling runs.
 # Present on disk, invisible to Git — never part of a release commit.

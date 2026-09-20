@@ -12,7 +12,7 @@
   },
   "auth": {
     "method": "oauth",
-    "loginHint": "muse login (credenciais em ~/.config/muse/auth.json)",
+    "loginHint": "Rode `muse login` (conta Meta) ou cole META_API_KEY. Esta é a CLI própria. Para usar Muse Spark dentro do Claude Code, abra o provider “Muse Spark (via Claude)”.",
     "loginCommand": "muse login"
   },
   "spawn": {
@@ -21,7 +21,7 @@
     "ptyRequired": true,
     "resumeArgs": [],
     "resumeIdArgs": ["resume"],
-    "extraArgs": []
+    "extraArgs": ["--trust-workspace"]
   },
   "env": {
     "static": {},
@@ -30,8 +30,8 @@
   },
   "models": {
     "flag": "--model",
-    "list": ["muse"],
-    "default": "muse"
+    "list": ["muse-spark-1.3", "muse-spark-1.2"],
+    "default": "muse-spark-1.3"
   },
   "promptInjection": {
     "method": "arg",
@@ -70,7 +70,7 @@
     "altScreen": true,
     "requiresNoAutoUpdate": false,
     "approvalFlag": "--approval-mode",
-    "mcpAutoload": true,
-    "nexusMcp": "autoload"
+    "mcpAutoload": false,
+    "nexusMcp": "none"
   }
 }

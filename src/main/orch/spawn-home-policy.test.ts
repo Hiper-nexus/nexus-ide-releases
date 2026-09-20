@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { CliPtyAdapter } from '../../shared/adapter-types';
 import {
+  acceptsClaudeMcpCliFlags,
   isThirdPartyClaudeFamily,
   requiresSpawnGate,
   shouldUseEphemeralHome,
@@ -298,4 +299,16 @@ describe('Claude host detection for durable conversations', () => {
       expect(usesClaudeHomeLayout({ ...adapter(true), bin })).toBe(false);
     },
   );
+  it.each(['muse', '/opt/homebrew/bin/muse', 'kimi', 'grok', 'codex'])(
+    'does not treat %s as Claude HOME even with mcpAutoload copied on',
+    (bin) => {
+      expect(usesClaudeHomeLayout({ ...adapter(true), bin })).toBe(false);
+      expect(acceptsClaudeMcpCliFlags({ ...adapter(true), bin })).toBe(false);
+    },
+  );
+  it('OpenClaude still accepts Claude MCP argv on its own home', () => {
+    expect(
+      acceptsClaudeMcpCliFlags({ ...adapter(true), bin: 'openclaude' }),
+    ).toBe(true);
+  });
 });

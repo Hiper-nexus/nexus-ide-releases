@@ -26,7 +26,6 @@ import {
   clipboardAnnouncesPayload,
   describeDropWithoutFiles,
   describePasteWithoutFiles,
-  droppedFileRejectionMessage,
   droppedProjectContextPath,
   droppedUriRejectionMessage,
   embeddedImageFromHtml,
@@ -40,7 +39,7 @@ import {
   type DroppedPayload,
 } from '../lib/mission-shell-file-intake';
 import { listPanes } from '../lib/split-tree';
-import { normalizePaneTitle } from '../lib/pane-title';
+import { cliPaneDisplayTitle, normalizePaneTitle } from '../lib/pane-title';
 import {
   missionAwaitsOperatorReview,
   wasMissionRuntimeClosedByOperator,
@@ -124,6 +123,7 @@ import {
   terminalScrollbackLines,
   type RefitReason,
 } from './terminal-render-policy';
+import { notifyPaneWorkspaceReveal } from '../lib/pane-intersection';
 import { tuiWheelPageSequence } from './tui-wheel';
 
 /**
@@ -1842,6 +1842,14 @@ const titleThrottleState = new WeakMap<Host, PaneTitleThrottleState>();
 function applyIncomingPaneTitle(host: Host, rawTitle: string): void {
   const { title } = normalizePaneTitle(rawTitle);
   if (!title) return;
+  const pane = listPanes(useLayoutStore.getState().root).find(
+    (candidate) => candidate.id === host.paneId,
+  );
+  const display =
+    pane?.kind === 'cli-agent'
+      ? cliPaneDisplayTitle(pane.adapterId, title)
+      : title;
+  if (!display) return;
 
   let state = titleThrottleState.get(host);
   if (!state) {
@@ -1851,9 +1859,9 @@ function applyIncomingPaneTitle(host: Host, rawTitle: string): void {
       if (state!.timer !== null) clearTimeout(state!.timer);
     });
   }
-  if (title === state.lastApplied) return;
+  if (display === state.lastApplied) return;
 
-  state.pendingTitle = title;
+  state.pendingTitle = display;
   if (state.timer !== null) return;
   state.timer = setTimeout(() => {
     state!.timer = null;
@@ -1967,9 +1975,7 @@ function createCliAgentHost(pane: PaneModel): Host {
   host.ro = makeResizeObserver(pane.id, host);
   host.ro.observe(element);
 
-  term.onTitleChange((title) =>
-    useLayoutStore.getState().setTitle(pane.id, title),
-  );
+  term.onTitleChange((title) => applyIncomingPaneTitle(host, title));
   term.onScroll((viewportY) => {
     host.inputVisibility.onScroll(viewportY, host.term.buffer.active.baseY);
   });
@@ -2024,6 +2030,15 @@ async function injectDroppedFile(host: Host, file: File): Promise<void> {
         fileUrlForPath(absolutePath),
       );
       if (result.ok && result.path) {
+        if (!host.sessionId) {
+          // Cópia ok; sessão morta — não reusar a recusa de intake.
+          useToastStore.getState().push(
+            'warn',
+            'Pane sem sessão ativa',
+            `"${file.name || 'anexo'}" foi copiado, mas este pane não tem processo ativo para recebê-lo. Reabra o agente e cole de novo.`,
+          );
+          return;
+        }
         injectStagedPath(host, result.path);
         return;
       }
@@ -2038,7 +2053,16 @@ async function injectDroppedFile(host: Host, file: File): Promise<void> {
       baseDir,
       file,
     );
-    if (resolved.ok && host.sessionId) {
+    if (resolved.ok) {
+      if (!host.sessionId) {
+        // Cópia ok; sessão morta — não reusar a recusa de intake.
+        useToastStore.getState().push(
+          'warn',
+          'Pane sem sessão ativa',
+          `"${file.name || 'anexo'}" foi copiado, mas este pane não tem processo ativo para recebê-lo. Reabra o agente e cole de novo.`,
+        );
+        return;
+      }
       injectStagedPath(host, resolved.path);
       return;
     }
@@ -2047,9 +2071,7 @@ async function injectDroppedFile(host: Host, file: File): Promise<void> {
     // aviso toast diz o quê e o porquê sem escrever lixo no pane do agente.
     // Desde 19/08 o pane aceita QUALQUER tipo; só tamanho/falha física recusa.
     // F-582: o motivo real sai no toast e no console (nunca conteúdo).
-    const reason = resolved.ok
-      ? droppedFileRejectionMessage(file)
-      : resolved.error;
+    const reason = resolved.error;
     console.warn(
       '[terminal] intake recusou',
       { name: file.name, size: file.size },
@@ -2132,6 +2154,17 @@ async function injectDroppedUri(host: Host, dropped: DroppedUri): Promise<void> 
     }
     const result = await window.nexus.files.importDroppedUri(dropped.uri);
     if (result.ok && result.path) {
+      if (!host.sessionId) {
+        // Cópia ok; sessão morta — não reusar a recusa de intake.
+        useToastStore.getState().push(
+          'warn',
+          'Pane sem sessão ativa',
+          dropped.kind === 'url'
+            ? 'O link foi baixado, mas este pane não tem processo ativo para recebê-lo. Reabra o agente e cole de novo.'
+            : 'O arquivo foi copiado, mas este pane não tem processo ativo para recebê-lo. Reabra o agente e cole de novo.',
+        );
+        return;
+      }
       injectStagedPath(host, result.path);
       return;
     }
@@ -2607,6 +2640,34 @@ export function focusHost(paneId: string): void {
     resumeVisibleHost(paneId, host);
   }
   host.term.focus();
+}
+
+/**
+ * Settings/Missions hide the terminal workspace with `display:none`. Coming
+ * back, IntersectionObserver often stays silent (F-603) so the live pane
+ * looks gone until a split retriggers layout. Force slot CSS + host
+ * visibility and a synchronous refit that always repaints (WebGL canvases
+ * go blank under display:none even when the host stayed "visible").
+ */
+export function revealTerminalHostsAfterWorkspaceShow(): void {
+  notifyPaneWorkspaceReveal();
+  for (const [paneId, host] of hosts) {
+    if (host.disposed) continue;
+    if (!host.isVisible) {
+      setHostVisibility(paneId, true);
+      continue;
+    }
+    if (host.opened && !host.virtualized) refreshHost(paneId);
+  }
+  if (refitAllTimer) {
+    clearTimeout(refitAllTimer);
+    refitAllTimer = null;
+  }
+  const pending = pendingRefitReason;
+  pendingRefitReason = null;
+  refitAllHosts(
+    pending ? escalateRefitReason(pending, 'workspace-reveal') : 'workspace-reveal',
+  );
 }
 
 export function setHostVisibility(paneId: string, isVisible: boolean): void {

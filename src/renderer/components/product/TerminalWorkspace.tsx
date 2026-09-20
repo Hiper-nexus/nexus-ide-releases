@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { CanvasView } from '../CanvasView';
 import { PaneGrid } from '../PaneGrid';
 import { useLayoutStore } from '../../state/layout-store';
@@ -18,6 +18,7 @@ import { missionAwaitsOperatorReview } from '../../../shared/mission-recovery-po
 import { PixelIcon } from '../PixelIcon';
 import { EmptyState } from '../ActionCard';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
+import { revealTerminalHostsAfterWorkspaceShow } from '../../terminal/terminal-host';
 
 export interface TerminalWorkspaceProps {
   /** Quando presente, a vista mostra só os panes desta missão. Hosts das outras ficam vivos. */
@@ -88,6 +89,12 @@ export function TerminalWorkspace({
   hidden = false,
   className = '',
 }: TerminalWorkspaceProps) {
+  const wasHiddenRef = useRef(hidden);
+  useLayoutEffect(() => {
+    const becameVisible = wasHiddenRef.current && !hidden;
+    wasHiddenRef.current = hidden;
+    if (becameVisible) revealTerminalHostsAfterWorkspaceShow();
+  }, [hidden]);
   const viewKind = useLayoutStore((state) => state.viewKind);
   const inMission = missionId !== undefined;
   // F-560: a vista global passou a filtrar por ESCOPO (missão | espaço do

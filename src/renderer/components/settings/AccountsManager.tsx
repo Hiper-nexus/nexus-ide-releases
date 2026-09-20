@@ -9,6 +9,8 @@ import { defaultAccountLabel, emailFromAuthDetail } from './account-default-labe
 import { ADD_ACCOUNT_CTA, accountsPanelView } from './accounts-login-view';
 import { PixelIcon } from '../PixelIcon';
 import { openCliLoginTerminal, type CliLoginFinish } from './cli-login-terminal';
+import { useToastStore } from '../../state/toast-store';
+import type { ProviderOpPhase } from './providers-panel-view';
 
 /**
  * Multi-account manager for one adapter — the failover roster.
@@ -76,6 +78,7 @@ export function AccountsManager({
   onAuthStatusChange,
   loginCommand: declaredLoginCommand,
   onAccountAdded,
+  onLoginActivity,
   compact = false,
 }: {
   adapterId: string;
@@ -85,6 +88,8 @@ export function AccountsManager({
   authStatus?: AdapterAuthStatus | null;
   onAuthStatusChange?: (status: AdapterAuthStatus) => void;
   loginCommand?: string | null;
+  /** Hub de CLIs: LED da lista + banner do detalhe enquanto o login corre. */
+  onLoginActivity?: (phase: ProviderOpPhase, error?: string) => void;
   /**
    * Conta recém-cadastrada, pelo `id` que o motor devolveu. Quem embute este
    * painel (o menu "+ Pane") usa o id para levar a escolha até o modelo — sem
@@ -445,6 +450,11 @@ export function AccountsManager({
     const typedLabel = nameHint.trim();
     setBusy(true);
     showNotice('Abrindo o terminal de login…', 'info');
+    onLoginActivity?.('running');
+    useToastStore.getState().push('info', `Login ${displayName}`, {
+      detail: 'Abrindo o terminal de login…',
+      dedupeKey: `cli-login:${adapterId}`,
+    });
     try {
       const baseline = await refreshAuth();
       // Só o cadastro de MAIS uma conta preserva a atual. Reentrar numa conta
@@ -460,14 +470,32 @@ export function AccountsManager({
       });
       if (result.ok) {
         closeForm();
-        showNotice('Terminal de login aberto. Siga as instruções da ferramenta.', 'info');
+        showNotice(
+          'Terminal de login aberto. Siga as instruções da ferramenta no pane de login.',
+          'info',
+        );
+        onLoginActivity?.('ok');
+        useToastStore.getState().push('success', `Login ${displayName}`, {
+          detail: 'Terminal aberto. Continue o login nesse pane — esta tela avisa se a sessão for comprovada.',
+          dedupeKey: `cli-login:${adapterId}`,
+        });
       } else {
         showNotice(result.error, 'err');
         setLoginFailed(true);
+        onLoginActivity?.('err', result.error);
+        useToastStore.getState().push('error', `Login ${displayName}`, {
+          detail: result.error,
+          dedupeKey: `cli-login:${adapterId}`,
+        });
       }
     } catch {
       showNotice('Não foi possível abrir o terminal de login.', 'err');
       setLoginFailed(true);
+      onLoginActivity?.('err', 'Não foi possível abrir o terminal de login.');
+      useToastStore.getState().push('error', `Login ${displayName}`, {
+        detail: 'Não foi possível abrir o terminal de login.',
+        dedupeKey: `cli-login:${adapterId}`,
+      });
     } finally {
       setBusy(false);
     }
@@ -722,6 +750,26 @@ export function AccountsManager({
         )}
       </div>
 
+      {notice && (
+        <div
+          className={`acct__notice acct__notice--${noticeTone}`}
+          role={noticeTone === 'err' ? 'alert' : 'status'}
+          aria-live="polite"
+        >
+          <span>{notice}</span>
+          {loginFailed && (
+            <button
+              type="button"
+              className="settings-btn"
+              onClick={() => void openLoginTerminal()}
+              disabled={busy}
+            >
+              Tentar abrir novamente
+            </button>
+          )}
+        </div>
+      )}
+
       {(panel.showLoginHero || auth?.state === 'unknown') && (
         <div className="acct__login-hero" role="status">
           {auth?.detail && auth.state !== 'unknown' && (
@@ -732,6 +780,7 @@ export function AccountsManager({
             className="settings-btn settings-btn--primary acct__login-cta"
             onClick={() => auth?.state === 'unknown' ? void verifyAuth() : void openLoginTerminal()}
             disabled={busy}
+            aria-busy={busy}
             data-testid="acct-login-cta"
             title={
               loginCommand
@@ -1019,25 +1068,6 @@ export function AccountsManager({
         )}
 
       </div>
-
-      {notice && (
-        <div
-          className={`acct__notice acct__notice--${noticeTone}`}
-          role={noticeTone === 'err' ? 'alert' : 'status'}
-        >
-          <span>{notice}</span>
-          {loginFailed && (
-            <button
-              type="button"
-              className="settings-btn"
-              onClick={() => void openLoginTerminal()}
-              disabled={busy}
-            >
-              Tentar abrir novamente
-            </button>
-          )}
-        </div>
-      )}
     </div>
   );
 }

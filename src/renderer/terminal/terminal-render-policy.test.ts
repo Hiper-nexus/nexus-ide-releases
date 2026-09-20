@@ -170,6 +170,15 @@ describe('shouldRepaintOnRefit', () => {
       shouldRepaintOnRefit({ reason: 'layout-change', gridChanged: true }),
     ).toBe(true);
   });
+
+  it('voltar dos Ajustes repinta mesmo com a grade igual (F-603)', () => {
+    expect(
+      shouldRepaintOnRefit({ reason: 'workspace-reveal', gridChanged: false }),
+    ).toBe(true);
+    expect(
+      shouldRepaintOnRefit({ reason: 'workspace-reveal', gridChanged: true }),
+    ).toBe(true);
+  });
 });
 
 describe('hostSlotIsMeasurable (F-009)', () => {
@@ -223,6 +232,18 @@ describe('escalateRefitReason', () => {
       'display-scale',
     );
     expect(escalateRefitReason(null, 'window-resize')).toBe('window-resize');
+  });
+
+  it('workspace-reveal vence window-resize; display-scale ainda manda (F-603)', () => {
+    expect(escalateRefitReason('window-resize', 'workspace-reveal')).toBe(
+      'workspace-reveal',
+    );
+    expect(escalateRefitReason('workspace-reveal', 'layout-change')).toBe(
+      'workspace-reveal',
+    );
+    expect(escalateRefitReason('workspace-reveal', 'display-scale')).toBe(
+      'display-scale',
+    );
   });
 });
 

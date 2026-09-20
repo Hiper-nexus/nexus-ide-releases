@@ -29,6 +29,11 @@ function basename(path: string): string {
   return i === -1 ? path : path.slice(i + 1);
 }
 
+function dirname(path: string): string {
+  const i = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+  return i === -1 ? '' : path.slice(0, i);
+}
+
 function FileRow({
   file,
   section,
@@ -64,34 +69,32 @@ function FileRow({
           {file.status}
         </span>
         <span className="git-scm__name">{basename(file.path)}</span>
-        <span className="git-scm__path">
-          {file.originalPath
-            ? `${file.originalPath} → ${file.path}`
-            : file.path}
-        </span>
+        <span className="git-scm__path">{dirname(file.path)}</span>
       </button>
-      {onDiscard && (
+      <span className="git-scm__file-actions">
+        {onDiscard && (
+          <button
+            type="button"
+            className="git-scm__file-action git-scm__file-discard"
+            onClick={onDiscard}
+            disabled={disabled}
+            title="Descartar alterações neste arquivo"
+            aria-label={`Descartar alterações em ${file.path}`}
+          >
+            ↺
+          </button>
+        )}
         <button
           type="button"
-          className="git-scm__file-action git-scm__file-discard"
-          onClick={onDiscard}
+          className="git-scm__file-action"
+          onClick={onAction}
           disabled={disabled}
-          title="Descartar alterações neste arquivo"
-          aria-label={`Descartar alterações em ${file.path}`}
+          title={actionLabel}
+          aria-label={`${actionLabel} ${file.path}`}
         >
-          ↺
+          {section === 'staged' ? '−' : '+'}
         </button>
-      )}
-      <button
-        type="button"
-        className="git-scm__file-action"
-        onClick={onAction}
-        disabled={disabled}
-        title={actionLabel}
-        aria-label={`${actionLabel} ${file.path}`}
-      >
-        {section === 'staged' ? '−' : '+'}
-      </button>
+      </span>
     </li>
   );
 }

@@ -222,18 +222,9 @@
   gap: 8px;
 }
 
-/* Floor for product inputs in settings */
-.settings-input {
-  min-height: 40px;
-  padding: 9px 12px;
-  font-size: 13px;
-}
-
-.settings-btn {
-  min-height: 40px;
-  padding: 8px 14px;
-  font-size: 13px;
-}
+/* Piso de toque para inputs/botões de settings fica só no pointer:coarse
+   abaixo. A densidade base (32px, tokens) é definida em settings-controls.css —
+   redefinições aqui venciam a cascata e inflavam todas as páginas. */
 
 @media (prefers-reduced-motion: reduce) {
   .action-card:hover:not(:disabled) {

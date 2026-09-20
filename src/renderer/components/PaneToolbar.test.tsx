@@ -12,6 +12,7 @@ vi.mock('../terminal/pane-close-guard', () => ({ requestPaneClose: close }));
 vi.mock('../terminal/terminal-host', () => ({
   hibernateHost: vi.fn(), wakeHost: vi.fn(), respawnWithResume: vi.fn(), scrollPaneToBottom: vi.fn(),
   getPaneSessionId: vi.fn(() => null),
+  onPaneSessionChange: vi.fn(() => () => {}),
 }));
 vi.mock('./CostBadge', () => ({ CostBadge: () => null }));
 vi.mock('./DevServerChip', () => ({ DevServerChip: () => null }));
@@ -166,6 +167,30 @@ describe('PaneToolbar narrow controls', () => {
       expect(titleEl().getAttribute('style')).toBe(stableStyle);
       expect(titleEl().textContent).toBe(title);
     }
+  });
+
+  it('F-597: pane Claude cujo título OSC fala de Codex mostra Claude na frente', () => {
+    const agent: PaneModel = {
+      id: 'claude-as-codex',
+      kind: 'cli-agent',
+      title: 'Codex pane boot crash',
+      adapterId: 'claude',
+      model: 'claude-sonnet-5',
+    };
+    useLayoutStore.setState({
+      root: buildGridTree([agent]),
+      focusedPaneId: agent.id,
+      maximizedPaneId: null,
+    });
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    roots.push(root);
+    act(() => root.render(<PaneToolbar pane={agent} isFocused />));
+    act(() => measure(900));
+    expect(host.querySelector('.toolbar__title')?.textContent).toBe(
+      'Claude · Codex pane boot crash',
+    );
   });
 
   it('exibe o botão de Foco Stage na barra de ferramentas em largura normal', () => {

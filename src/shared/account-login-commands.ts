@@ -11,13 +11,15 @@
  * segredo no Keychain) mas segue sem snapshot-save (não é file-auth spec).
  * GLM/LongCat autenticam por token injetado (API key) e ficam de fora.
  */
+import { kimiLoginCommand } from './kimi-login-command';
+
 export const ACCOUNT_LOGIN_COMMANDS: Readonly<Record<string, string>> =
   Object.freeze({
     claude: 'claude auth login',
     openclaude: 'openclaude auth login',
     codex: 'codex login',
     grok: 'grok login',
-    kimi: 'kimi login',
+    kimi: 'kimi login --region global',
     opencode: 'opencode auth login',
     muse: 'muse login',
     // AGY inicia o OAuth sozinho quando abre sem sessão.
@@ -28,5 +30,6 @@ export const ACCOUNT_LOGIN_COMMANDS: Readonly<Record<string, string>> =
   });
 
 export function accountLoginCommandFor(adapterId: string): string | null {
+  if (adapterId === 'kimi') return kimiLoginCommand();
   return ACCOUNT_LOGIN_COMMANDS[adapterId] ?? null;
 }

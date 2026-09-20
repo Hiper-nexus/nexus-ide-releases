@@ -51,6 +51,7 @@ const PROVIDER_LOGOS: Record<string, { src: string; mono?: boolean }> = {
   qoder: { src: qoderLogo },
   omp: { src: ompLogo },
   muse: { src: museLogo },
+  'muse-claude': { src: museLogo },
   'prime-agent': { src: primeAgentLogo },
   'cursor-agent': { src: cursorAgentLogo, mono: true },
   devin: { src: devinLogo },

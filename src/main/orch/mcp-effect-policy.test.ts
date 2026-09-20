@@ -140,6 +140,13 @@ describe('MCP effect policy', () => {
     expect(effectPolicyForTool('nexus_future_unknown_tool')).toBe('mission-effect');
   });
 
+  it('classifies nexus_pick_account as read-only like quota_status', () => {
+    expect(effectPolicyForTool('nexus_pick_account')).toBe('read-only');
+    expect(effectPolicyForTool('pick_account')).toBe('read-only');
+    expect(isToolAllowedForReadOnlyContext('nexus_pick_account')).toBe(true);
+    expect(requiresHumanConfirmationForTool('nexus_pick_account')).toBe(false);
+  });
+
   it('limits read-only contexts to observations and narrow Nexus metadata receipts', () => {
     for (const tool of [
       'nexus_file_read',

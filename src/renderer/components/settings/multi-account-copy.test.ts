@@ -110,6 +110,7 @@ describe('supportsSessionSnapshot matrix (main vault)', () => {
     glm: false,
     'glm-flash': false,
     longcat: false,
+    'muse-claude': false,
     aider: false,
     devin: true,
   };

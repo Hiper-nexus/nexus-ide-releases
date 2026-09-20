@@ -464,12 +464,21 @@ function mergeCodexToml(
     if (Object.keys(block).some((k) => normalizeMcpServerKey(k) === server.id)) {
       continue;
     }
-    if (!server.command && !server.url) continue;
+    // Codex rejects a [mcp_servers.*] entry that mixes `url` (HTTP) with
+    // `command`/`args` (stdio) — it crashes the whole pane at boot. Gate
+    // every field on the server's own transport instead of raw presence, so
+    // a mixed/stale hub record (e.g. imported with both fields set) degrades
+    // to a clean single-transport entry rather than a fatal one.
+    const isHttp = server.transport !== 'stdio';
+    if (isHttp ? !server.url : !server.command) continue;
     const entry: Record<string, unknown> = {};
-    if (server.command) entry.command = server.command;
-    if (server.args?.length) entry.args = server.args;
-    if (server.cwd) entry.cwd = server.cwd;
-    if (server.url) entry.url = server.url;
+    if (isHttp) {
+      entry.url = server.url;
+    } else {
+      entry.command = server.command;
+      if (server.args?.length) entry.args = server.args;
+      if (server.cwd) entry.cwd = server.cwd;
+    }
     if (server.headers) entry.headers = server.headers;
     if (server.env) entry.env = server.env;
     block[server.id] = entry;

@@ -106,6 +106,7 @@ export const ALL_MULTI_ACCOUNT_ADAPTER_IDS = [
   'glm',
   'glm-flash',
   'longcat',
+  'muse-claude',
   'aider',
   'devin',
 ] as const;

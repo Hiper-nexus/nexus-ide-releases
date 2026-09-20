@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { parse as parseToml } from 'smol-toml';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
@@ -396,6 +397,62 @@ describe('plan + apply fill-gaps', () => {
       .readdirSync(clineDir)
       .find((f) => f.startsWith('cline_mcp_settings.json.') && f.endsWith('.bak'));
     expect(bak).toBeTruthy();
+  });
+
+  it('export → Codex nunca mistura url em server stdio nem command em server http', () => {
+    // Bug reproduzido em campo (2026-09-19): um hub server mal formado com
+    // transport 'stdio' mas com um `url` remanescente (e vice-versa) fazia
+    // mergeCodexToml gravar as duas chaves no mesmo [mcp_servers.*] — Codex
+    // recusa essa combinação no boot: "url is not supported for stdio".
+    const home = tmpHome();
+    fs.mkdirSync(path.join(home, '.codex'), { recursive: true });
+    const codexPath = path.join(home, '.codex', 'config.toml');
+    fs.writeFileSync(codexPath, '');
+    const hubPath = path.join(home, 'hub.json');
+    const hub: McpHubConfig = {
+      schemaVersion: 1,
+      servers: [
+        {
+          id: 'supabase',
+          name: 'supabase',
+          transport: 'stdio',
+          command: 'npx',
+          args: ['-y', 'mcp-remote', 'https://mcp.supabase.com/mcp'],
+          // Campo url remanescente de uma importação anterior (bug):
+          // mergeCodexToml não pode escrevê-lo junto de command.
+          url: 'https://mcp.supabase.com/mcp',
+          tools: [],
+          source: 'other',
+        },
+        {
+          id: 'httpserver',
+          name: 'httpserver',
+          transport: 'streamable-http',
+          url: 'https://example.com/mcp',
+          // command remanescente: não pode ir para um entry HTTP.
+          command: 'npx',
+          tools: [],
+          source: 'other',
+        },
+      ],
+    };
+
+    applyMcpSync({
+      hub,
+      hubPath,
+      home,
+      mode: 'export',
+      exportTools: ['codex'],
+    });
+
+    const parsed = parseToml(fs.readFileSync(codexPath, 'utf8')) as {
+      mcp_servers: Record<string, Record<string, unknown>>;
+    };
+
+    expect(parsed.mcp_servers.supabase.command).toBe('npx');
+    expect(parsed.mcp_servers.supabase.url).toBeUndefined();
+    expect(parsed.mcp_servers.httpserver.url).toBe('https://example.com/mcp');
+    expect(parsed.mcp_servers.httpserver.command).toBeUndefined();
   });
 
   it('Cline fail-closed quando settings ausente', () => {

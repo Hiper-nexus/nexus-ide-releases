@@ -215,6 +215,7 @@ import {
   prepareOpenCodeMcpSession,
   purgeStaleCliMcpSessions,
 } from "./cli-mcp-session-config";
+import { readTomlObject } from "./cli-mcp-session-artifacts";
 import {
   claudeFamilyHubMcpServers,
   codexHubMcpArgs,
@@ -231,6 +232,7 @@ import {
   isThirdPartyClaudeFamily,
   requiresSpawnGate,
   shouldUseEphemeralHome,
+  acceptsClaudeMcpCliFlags,
   usesClaudeHomeLayout,
 } from "./spawn-home-policy";
 import {
@@ -947,6 +949,28 @@ function missionAttachmentReadPathsForSpawn(
 }
 
 /**
+ * Names already declared in the Codex home this pane will preserve.
+ * Missing/unreadable config degrades to "none" — hub `-c` then injects
+ * the full list, same as a worker overlay that stripped ambient MCP.
+ */
+function existingCodexMcpServerKeys(
+  providerHome: string | undefined,
+): string[] {
+  const home =
+    typeof providerHome === "string" && providerHome.trim().length > 0
+      ? providerHome
+      : path.join(os.homedir(), ".codex");
+  try {
+    const parsed = readTomlObject(path.join(home, "config.toml"));
+    const block = parsed.mcp_servers;
+    if (!block || typeof block !== "object" || Array.isArray(block)) return [];
+    return Object.keys(block);
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Build the main-owned spawn boundary for one agent. Exported so integration
  * tests can prove the real wiring, rather than exercising overlay helpers in
  * isolation.
@@ -1197,7 +1221,10 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
         if (!gateHome) {
           extraArgs.push("--settings", writeClaudeFamilyZeroClickSettings(ctx.token));
         }
-      } else if (adapter.quirks.mcpAutoload) {
+      } else if (
+        adapter.quirks.mcpAutoload &&
+        acceptsClaudeMcpCliFlags(adapter)
+      ) {
         // Real HOME: ensure native Claude also trusts the active workspace
         ensureNativeClaudeProjectTrust(os.homedir(), authority.cwd);
         // still force zero-click via flag settings (system default).
@@ -1248,10 +1275,20 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
               approveBoundTools: approveBoundCodexTools,
             }),
           );
-          // Servidores do hub pelo MESMO canal `-c` — o strip do ambiente do
-          // ~/.codex real continua valendo; o que o pane ganha é só o que o
-          // operador declarou.
-          extraArgs.push(...codexHubMcpArgs(hubServers));
+          // Hub servers via the same `-c` channel. Gated/helper overlays
+          // strip ambient `mcp_servers`, so the full hub list is safe.
+          // Operator-hand panes keep the user's config (preserveUserMcp):
+          // skip names that already exist so a hub HTTP `url` cannot land
+          // on a preserved stdio `command` (Codex: "url is not supported
+          // for stdio" — pane 2, 2026-09-19).
+          extraArgs.push(
+            ...codexHubMcpArgs(hubServers, {
+              skipKeys:
+                !gated && !operatorChild
+                  ? existingCodexMcpServerKeys(preparedEnv?.CODEX_HOME)
+                  : undefined,
+            }),
+          );
           // Additive status hooks as per-session -c overrides (emdash wave 1)
           // — same argv-only channel as the MCP injection, zero disk writes.
           extraArgs.push(...codexStatusHookArgs());

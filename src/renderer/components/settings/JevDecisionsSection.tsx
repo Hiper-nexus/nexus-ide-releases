@@ -91,7 +91,11 @@ export function JevDecisionsSection() {
         precisa de ajuste.
       </p>
 
-      {error && <p role="alert" className="settings-detail__hint">{error}</p>}
+      {error && <p role="alert" className="settings-error">{error}</p>}
+
+      {!stats && !error && (
+        <p className="settings-detail__hint">Carregando decisões…</p>
+      )}
 
       {stats && (
         <>

@@ -6,6 +6,7 @@ import {
   isExternalLoginProvider,
   modelCountLabel,
   pickDefaultSelection,
+  providerOpFeedback,
   providerRowCta,
   providerStatusLabel,
   selectModelValue,
@@ -224,5 +225,30 @@ describe('providers-panel-view', () => {
       label: 'conectado',
       tone: 'ok',
     });
+  });
+});
+
+describe('providerOpFeedback — F-598', () => {
+  it('diz o que está acontecendo enquanto a receita roda', () => {
+    expect(providerOpFeedback('update', 'running', 'Antigravity (agy)')).toEqual({
+      title: 'Atualizando Antigravity (agy)…',
+      detail: 'Confirme o diálogo do sistema se aparecer. A CLI continua nesta tela até terminar.',
+      rowLabel: 'atualizando…',
+      tone: 'live',
+    });
+    expect(providerOpFeedback('login', 'running', 'Kimi').rowLabel).toBe('entrando…');
+  });
+
+  it('confirma sucesso sem fingir que o terminal já acabou o login', () => {
+    const login = providerOpFeedback('login', 'ok', 'Kimi');
+    expect(login.tone).toBe('info');
+    expect(login.title).toContain('aberto');
+    expect(providerOpFeedback('update', 'ok', 'Codex').tone).toBe('ok');
+  });
+
+  it('expõe o erro cru quando a receita falha', () => {
+    const failed = providerOpFeedback('install', 'err', 'Muse', 'instalação cancelada');
+    expect(failed.tone).toBe('danger');
+    expect(failed.title).toBe('instalação cancelada');
   });
 });

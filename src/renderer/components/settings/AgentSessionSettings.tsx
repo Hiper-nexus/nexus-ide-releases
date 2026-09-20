@@ -119,7 +119,7 @@ export function AgentSessionSettings() {
           Multi-SO: {restorePolicy === 'ask' ? 'perguntar' : restorePolicy}
         </span>
       </div>
-      <p className="settings-section-desc" style={{ marginBottom: 12 }}>
+      <p className="settings-field__note">
         Missões em andamento retomam automaticamente pela autoridade persistida
         do Main em <strong>macOS, Linux e Windows</strong>. Esta preferência
         controla somente agentes avulsos.
@@ -139,11 +139,12 @@ export function AgentSessionSettings() {
               disabled={isLoading || isSaving}
               onChange={() => void saveRestorePolicy(opt.value)}
             />
+            <span className="settings-toggle-row__control" aria-hidden="true" />
           </label>
         ))}
       </div>
 
-      <div className="settings-section-heading settings-section-heading--with-count" style={{ marginTop: 20 }}>
+      <div className="settings-section-heading settings-section-heading--with-count">
         <h4>Prompts de boot</h4>
         <span
           className={`settings-chip ${autoResponderEnabled ? 'settings-chip--ok' : ''}`}

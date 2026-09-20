@@ -35,6 +35,7 @@ import {
   resolveAdapterBinary,
 } from '../adapters/adapter-registry';
 import { resolveCliLoginCommand } from '../../shared/cli-login';
+import { kimiLoginCommand } from '../../shared/kimi-login-command';
 import { revalidateExecutable, resolveCliBinary } from '../path-resolver';
 import {
   availableEfforts,
@@ -1333,11 +1334,13 @@ function toInfo(
       adapter.kind === 'cli-pty' ? adapter.auth.loginHint : undefined,
     loginCommand:
       adapter.kind === 'cli-pty'
-        ? (resolveCliLoginCommand({
-            loginCommand: adapter.auth.loginCommand,
-            authMethod: adapter.auth.method,
-            interactive: adapter.spawn.interactive,
-          }) ?? undefined)
+        ? (adapterId === 'kimi'
+            ? kimiLoginCommand()
+            : (resolveCliLoginCommand({
+                loginCommand: adapter.auth.loginCommand,
+                authMethod: adapter.auth.method,
+                interactive: adapter.spawn.interactive,
+              }) ?? undefined))
         : undefined,
     secureStorageAvailable: isSecureStorageAvailable({ probe: false }),
     authStrategy: strategy,

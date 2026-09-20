@@ -10,6 +10,7 @@ import { credentialLinkForKeySlot } from '../../../shared/credential-links';
 import { useAccountStore } from '../../state/account-store';
 import { useProviderStore } from '../../state/provider-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
+import { useToastStore } from '../../state/toast-store';
 import { useLayoutStore } from '../../state/layout-store';
 import { waitForSession, writeToPane } from '../../terminal/terminal-host';
 import { openExternalFromAnchor } from '../../lib/open-external';
@@ -24,16 +25,43 @@ import {
   modelCountLabel,
   pickDefaultSelection,
   PROVIDERS_HUB_TABS,
+  providerOpFeedback,
   providerRowCta,
   providerStatusLabel,
   selectModelValue,
   tabDetectedLabel,
+  type ProviderOpFeedback,
+  type ProviderOpKind,
+  type ProviderOpPhase,
   type ProvidersHubTab,
 } from './providers-panel-view';
 
 /**
  * Provider selection stays separate from the selected tool's account actions.
  */
+
+function CliJobBanner({ job }: { job: ProviderOpFeedback | null }) {
+  if (!job) return null;
+  const icon =
+    job.tone === 'live' ? 'status-busy' : job.tone === 'danger' ? 'warn' : 'check';
+  return (
+    <div
+      className={`prov-detail__job prov-detail__job--${job.tone}`}
+      data-testid="prov-cli-job"
+      role={job.tone === 'danger' ? 'alert' : 'status'}
+      aria-live={job.tone === 'danger' ? 'assertive' : 'polite'}
+      aria-busy={job.tone === 'live'}
+    >
+      <span className="prov-detail__job-icon" aria-hidden="true">
+        <PixelIcon name={icon} size={12} />
+      </span>
+      <span className="prov-detail__job-copy">
+        <strong className="prov-detail__job-title">{job.title}</strong>
+        <span className="prov-detail__job-detail">{job.detail}</span>
+      </span>
+    </div>
+  );
+}
 
 function modelLabel(provider: ProviderSettingsInfo, model: string): string {
   const info = provider.modelInfo?.[model];
@@ -340,6 +368,7 @@ function ProviderRow({
   accountCount,
   needsRelogin,
   authState,
+  liveLabel,
   onSelect,
 }: {
   provider: ProviderSettingsInfo;
@@ -347,9 +376,12 @@ function ProviderRow({
   accountCount: number;
   needsRelogin: boolean;
   authState: AdapterAuthStatus['state'] | 'checking';
+  liveLabel?: string | null;
   onSelect: () => void;
 }) {
-  const status = providerStatusLabel(provider, { needsRelogin, authState });
+  const status = liveLabel
+    ? { label: liveLabel, tone: 'live' as const }
+    : providerStatusLabel(provider, { needsRelogin, authState });
   const models = modelCountLabel(provider);
 
   return (
@@ -397,12 +429,14 @@ function ProviderDetail({
   authStatus,
   onAuthStatusChange,
   batchBusy,
+  onLiveRow,
 }: {
   provider: ProviderSettingsInfo;
   authStatus: AdapterAuthStatus | null;
   onAuthStatusChange: (status: AdapterAuthStatus) => void;
   /** Lote (instalar/atualizar todas) em curso: os botões locais cedem. */
   batchBusy: boolean;
+  onLiveRow: (rowLabel: string | null) => void;
 }) {
   const setConfig = useProviderStore((s) => s.setConfig);
   const hydrateProviders = useProviderStore((s) => s.hydrate);
@@ -411,19 +445,52 @@ function ProviderDetail({
   const [argsDraft, setArgsDraft] = useState(provider.extraArgs.join(' '));
   const [installBusy, setInstallBusy] = useState(false);
   const [installError, setInstallError] = useState<string | null>(null);
+  const [cliJob, setCliJob] = useState<ProviderOpFeedback | null>(null);
   const riskWarning = providerRiskWarning(provider);
 
+  function announceOp(
+    kind: ProviderOpKind,
+    phase: ProviderOpPhase,
+    error?: string,
+    toastAction?: { label: string; onClick: () => void },
+  ) {
+    const job = providerOpFeedback(kind, phase, provider.label, error);
+    setCliJob(job);
+    onLiveRow(phase === 'running' ? job.rowLabel : null);
+    const toastKind =
+      job.tone === 'danger' ? 'error' : job.tone === 'ok' ? 'success' : 'info';
+    useToastStore.getState().push(toastKind, job.title, {
+      detail: job.detail,
+      dedupeKey: `cli-job:${provider.adapterId}`,
+      action: toastAction,
+      ttlMs: toastAction ? 20_000 : undefined,
+    });
+  }
+
   async function installCli(mode: 'install' | 'update' = 'install') {
+    const kind = mode === 'update' ? 'update' : 'install';
     setInstallBusy(true);
     setInstallError(null);
+    announceOp(kind, 'running');
     try {
       const result = await window.nexus.providers.installCli(
         provider.adapterId,
         mode,
       );
-      if (!result.ok)
-        setInstallError(result.error ?? (mode === 'update' ? 'atualização falhou' : 'instalação falhou'));
-      else await hydrateProviders();
+      if (!result.ok) {
+        const error =
+          result.error ??
+          (mode === 'update' ? 'atualização falhou' : 'instalação falhou');
+        setInstallError(error);
+        announceOp(kind, 'err', error);
+      } else {
+        await hydrateProviders();
+        announceOp(kind, 'ok');
+      }
+    } catch (err) {
+      const error = err instanceof Error ? err.message : 'falhou';
+      setInstallError(error);
+      announceOp(kind, 'err', error);
     } finally {
       setInstallBusy(false);
     }
@@ -433,15 +500,24 @@ function ProviderDetail({
     const command =
       provider.installCommand?.trim() ||
       `echo "Consulte a documentação oficial para instalar a CLI ${provider.label}."`;
+    const paneTitle = `Instalar ${provider.label}`;
+    announceOp('terminal-install', 'running');
     const layout = useLayoutStore.getState();
     const paneId = layout.addShellPane({ focus: true });
-    layout.renameTitle(paneId, `Instalar ${provider.label}`);
-    useProductNavigationStore.getState().openTerminal();
+    layout.renameTitle(paneId, paneTitle);
     try {
       await waitForSession(paneId, 10_000);
       writeToPane(paneId, `${command}\n`);
+      announceOp('terminal-install', 'ok', undefined, {
+        label: 'Ver terminal',
+        onClick: () => useProductNavigationStore.getState().openTerminal(),
+      });
     } catch {
-      // sessao terminal inicializada
+      announceOp(
+        'terminal-install',
+        'err',
+        'O terminal não ficou disponível. A instalação não começou.',
+      );
     }
   }
 
@@ -450,6 +526,11 @@ function ProviderDetail({
     setBinDraft(provider.binPath);
     setArgsDraft(provider.extraArgs.join(' '));
   }, [provider.adapterId, provider.binPath, extraArgsKey, provider.extraArgs]);
+  useEffect(() => {
+    setCliJob(null);
+    setInstallError(null);
+    setInstallBusy(false);
+  }, [provider.adapterId]);
 
   const patch = (p: Partial<Parameters<typeof setConfig>[0]>) => {
     void setConfig({ adapterId: provider.adapterId, ...p }).catch((err) => {
@@ -481,6 +562,7 @@ function ProviderDetail({
                   type="button"
                   className="settings-btn settings-btn--primary prov-detail__install"
                   disabled={installBusy || batchBusy}
+                  aria-busy={installBusy}
                   onClick={() => void installCli()}
                   title="Instala a CLI do provider pela fonte oficial (confirmação nativa mostra o comando exato)"
                 >
@@ -510,6 +592,7 @@ function ProviderDetail({
                 type="button"
                 className="settings-btn settings-btn--ghost prov-detail__install"
                 disabled={installBusy || batchBusy}
+                aria-busy={installBusy}
                 onClick={() => void installCli('update')}
                 title="Reexecuta o instalador oficial para colocar esta CLI na última versão — modelos novos exigem CLI atualizada (confirmação nativa mostra o comando exato)"
               >
@@ -517,7 +600,8 @@ function ProviderDetail({
               </button>
             </div>
           )}
-          {installError && (
+          <CliJobBanner job={cliJob} />
+          {installError && !cliJob && (
             <p className="prov-detail__install-error" role="alert">
               <PixelIcon name="warn" size={11} /> {installError}
             </p>
@@ -546,6 +630,9 @@ function ProviderDetail({
           authStatus={authStatus}
           onAuthStatusChange={onAuthStatusChange}
           loginCommand={provider.loginCommand}
+          onLoginActivity={(phase, error) => {
+            announceOp('login', phase, error);
+          }}
         />
       </div>
 
@@ -802,6 +889,7 @@ export function ProvidersPanel() {
   );
   const [provisioning, setProvisioning] = useState<string | null>(null);
   const [provisionSummary, setProvisionSummary] = useState<string | null>(null);
+  const [liveRow, setLiveRow] = useState<{ adapterId: string; label: string } | null>(null);
 
   /**
    * Provisionador de máquina nova: instala TODAS as CLIs ausentes em
@@ -1067,6 +1155,9 @@ export function ProvidersPanel() {
                 needsRelogin={reloginByAdapter.has(p.adapterId)}
                 authState={authStatuses?.find((status) => status.adapterId === p.adapterId)?.state
                   ?? p.authState ?? (authStatuses === null ? 'checking' : 'unknown')}
+                liveLabel={
+                  liveRow?.adapterId === p.adapterId ? liveRow.label : null
+                }
                 onSelect={() => setSelectedId(p.adapterId)}
               />
             ))}
@@ -1082,6 +1173,13 @@ export function ProvidersPanel() {
             ) ?? { adapterId: selected.adapterId, state: selected.authState ?? 'unknown', detail: 'Não foi possível verificar a conexão.' }}
             onAuthStatusChange={acceptAuthStatus}
             batchBusy={provisioning !== null}
+            onLiveRow={(label) => {
+              setLiveRow(
+                label
+                  ? { adapterId: selected.adapterId, label }
+                  : null,
+              );
+            }}
           />
         )}
         </div>

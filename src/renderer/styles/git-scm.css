@@ -154,6 +154,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 4px;
 }
@@ -182,6 +183,7 @@
   font-size: var(--text-2xs);
   cursor: pointer;
   padding: 0;
+  white-space: nowrap;
 }
 
 .git-scm__files {
@@ -194,9 +196,7 @@
 }
 
 .git-scm__file {
-  display: flex;
-  align-items: stretch;
-  gap: 2px;
+  position: relative;
   border-radius: 6px;
 }
 
@@ -205,11 +205,11 @@
 }
 
 .git-scm__file-main {
-  flex: 1;
+  width: 100%;
   min-width: 0;
   display: grid;
-  grid-template-columns: 16px 1fr;
-  grid-template-rows: auto auto;
+  grid-template-columns: 14px minmax(0, max-content) minmax(0, 1fr);
+  align-items: baseline;
   column-gap: 6px;
   appearance: none;
   border: none;
@@ -226,7 +226,6 @@
 }
 
 .git-scm__code {
-  grid-row: 1 / span 2;
   align-self: center;
   font-size: var(--text-2xs);
   font-weight: 700;
@@ -251,12 +250,40 @@
 }
 
 .git-scm__path {
-  grid-column: 2;
   font-size: var(--text-2xs);
   color: var(--text-dim, #aaa2a8);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* Corta o INÍCIO do diretório ("…/main/orch"), não o fim — o que
+     diferencia o arquivo é o final do caminho. */
+  direction: rtl;
+  text-align: left;
+}
+
+.git-scm__file-actions {
+  position: absolute;
+  inset-block: 0;
+  right: 2px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-left: 20px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    var(--bg-elevated, #111013) 45%
+  );
+  border-radius: 6px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 100ms ease;
+}
+
+.git-scm__file:hover .git-scm__file-actions,
+.git-scm__file:focus-within .git-scm__file-actions {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .git-scm__file-action {

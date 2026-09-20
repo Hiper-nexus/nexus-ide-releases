@@ -41,7 +41,7 @@ const EFFORT_LABELS: Readonly<Record<string, { abbr: string; label: string }>> =
   mini: { abbr: 'Mi', label: 'Mini' },
 };
 
-function familyFromAdapterId(adapterId: string): string | null {
+export function familyFromAdapterId(adapterId: string): string | null {
   const lower = adapterId.toLowerCase();
   // Exact match first
   for (const [pattern, family] of FAMILY_MAP) {
@@ -161,6 +161,16 @@ function parseModelVersion(model: string): ParsedModel {
   if (lower.startsWith('glm-')) {
     const parts = clean.slice(4).split('-');
     return { version: normalizeVersionParts(parts) };
+  }
+
+  // Muse Spark: "muse-spark-1.3" → "Spark 1.3"
+  // O placeholder "muse" (id do adapter) não é modelo — versão vazia.
+  if (lower === 'muse') {
+    return { version: '' };
+  }
+  if (lower.startsWith('muse-spark-')) {
+    const parts = clean.slice('muse-spark-'.length).split('-');
+    return { version: normalizeVersionParts(['spark', ...parts]) };
   }
 
   // Qwen: "qwen2.5-coder" → "2.5 Coder"

@@ -171,8 +171,8 @@ export function TerminalSection() {
 export function VoiceSection() {
   const openVoice = useVoiceStore((s) => s.openSettings);
   return (
-    <section className="settings-section">
-      <div className="settings-row-between">
+    <section>
+      <div className="settings-detail__split-head">
         <div>
           <SettingsSectionTitle>Jarvis & Voz</SettingsSectionTitle>
           <p className="settings-detail__hint">
@@ -624,7 +624,7 @@ export function SquadsSection() {
               checked={jevSurfaces[surface] !== false}
               disabled={!jevAutopilot}
               title={label}
-              detail="Superfície do piloto automático Jev."
+              detail=""
               onChange={(checked) => {
                 const next = { ...jevSurfaces, [surface]: checked };
                 setJevSurfaces(next);

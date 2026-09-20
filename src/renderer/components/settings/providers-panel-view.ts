@@ -179,6 +179,123 @@ export function providerRowCta(
   return null;
 }
 
+/** Operação visível no hub de CLIs: login, instalar, atualizar, reexaminar. */
+export type ProviderOpKind =
+  | 'install'
+  | 'update'
+  | 'terminal-install'
+  | 'login'
+  | 'rescan';
+
+export type ProviderOpPhase = 'running' | 'ok' | 'err';
+
+export interface ProviderOpFeedback {
+  readonly title: string;
+  readonly detail: string;
+  readonly rowLabel: string;
+  readonly tone: 'live' | 'ok' | 'danger' | 'info';
+}
+
+/**
+ * Copy operacional para o strip do detalhe e o LED da lista. Sem isso o
+ * operador clica "Atualizar CLI" / "Adicionar conta" e a tela não responde
+ * (F-598).
+ */
+export function providerOpFeedback(
+  kind: ProviderOpKind,
+  phase: ProviderOpPhase,
+  label: string,
+  error?: string,
+): ProviderOpFeedback {
+  const name = label.trim() || 'CLI';
+  if (phase === 'running') {
+    if (kind === 'install') {
+      return {
+        title: `Instalando ${name}…`,
+        detail: 'Confirme o diálogo do sistema se aparecer. A receita oficial está rodando.',
+        rowLabel: 'instalando…',
+        tone: 'live',
+      };
+    }
+    if (kind === 'update') {
+      return {
+        title: `Atualizando ${name}…`,
+        detail: 'Confirme o diálogo do sistema se aparecer. A CLI continua nesta tela até terminar.',
+        rowLabel: 'atualizando…',
+        tone: 'live',
+      };
+    }
+    if (kind === 'terminal-install') {
+      return {
+        title: `Abrindo o pane de instalação de ${name}…`,
+        detail: 'O comando oficial vai para um terminal. Esta tela permanece aberta.',
+        rowLabel: 'instalando…',
+        tone: 'live',
+      };
+    }
+    if (kind === 'login') {
+      return {
+        title: `Login de ${name} em andamento…`,
+        detail: 'A CLI abre o próprio fluxo (Google etc.). Esta tela avisa quando a sessão for comprovada.',
+        rowLabel: 'entrando…',
+        tone: 'live',
+      };
+    }
+    return {
+      title: 'Reexaminando CLIs no PATH…',
+      detail: 'Descoberta de binários, sessão e catálogo de modelos.',
+      rowLabel: 'examinando…',
+      tone: 'live',
+    };
+  }
+  if (phase === 'ok') {
+    if (kind === 'install') {
+      return {
+        title: `${name} instalada.`,
+        detail: 'PATH reexaminado. Já pode logar ou abrir um pane.',
+        rowLabel: 'instalada',
+        tone: 'ok',
+      };
+    }
+    if (kind === 'update') {
+      return {
+        title: `${name} atualizada.`,
+        detail: 'PATH reexaminado. Modelos novos passam a aparecer no catálogo.',
+        rowLabel: 'atualizada',
+        tone: 'ok',
+      };
+    }
+    if (kind === 'terminal-install') {
+      return {
+        title: `Instalação de ${name} no terminal.`,
+        detail: `O pane “Instalar ${name}” recebeu o comando. Acompanhe a saída lá; esta tela fica.`,
+        rowLabel: 'no terminal',
+        tone: 'info',
+      };
+    }
+    if (kind === 'login') {
+      return {
+        title: `Terminal de login de ${name} aberto.`,
+        detail: 'Siga as instruções no pane de login. O Nexus só grava a conta quando a sessão nova for comprovada.',
+        rowLabel: 'login aberto',
+        tone: 'info',
+      };
+    }
+    return {
+      title: 'Catálogo reexaminado.',
+      detail: 'Detecção, sessão e modelos foram relidos nesta máquina.',
+      rowLabel: 'ok',
+      tone: 'ok',
+    };
+  }
+  return {
+    title: error?.trim() || `Não concluiu: ${name}.`,
+    detail: 'Tente de novo. O diálogo nativo mostra o comando exato quando a receita é automática.',
+    rowLabel: 'falhou',
+    tone: 'danger',
+  };
+}
+
 export function pickDefaultSelection(
   providers: readonly ProviderSettingsInfo[],
   preferredId: string | null,

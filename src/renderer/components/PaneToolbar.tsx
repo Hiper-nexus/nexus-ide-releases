@@ -44,6 +44,7 @@ import {
   paneSlotOf,
 } from '../lib/split-tree';
 import { resolveModelChipLabel } from '../lib/pane-model-label';
+import { cliPaneDisplayTitle } from '../lib/pane-title';
 import { OverlayLayer } from '../overlay/overlay-layer';
 
 interface Props {
@@ -752,7 +753,9 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
               setEditing(true);
             }}
           >
-            {pane.title}
+            {pane.kind === 'cli-agent'
+              ? cliPaneDisplayTitle(pane.adapterId, pane.title)
+              : pane.title}
           </span>
         )}
         {/*

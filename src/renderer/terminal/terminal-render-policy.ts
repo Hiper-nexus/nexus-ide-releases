@@ -48,7 +48,11 @@ export function terminalScrollbackLines(
  * grade não mudou produziria pixels idênticos — repaint é desperdício puro
  * (forma do bug herdado do Overclock: N panes parados = N repaints/ciclo).
  */
-export type RefitReason = 'window-resize' | 'display-scale' | 'layout-change';
+export type RefitReason =
+  | 'window-resize'
+  | 'display-scale'
+  | 'layout-change'
+  | 'workspace-reveal';
 
 /**
  * Slot ainda 0×0: o xterm fica em 80×24 e a TUI desenha a moldura nessa
@@ -83,7 +87,9 @@ export function shouldRepaintOnRefit(input: {
   readonly reason: RefitReason;
   readonly gridChanged: boolean;
 }): boolean {
-  if (input.reason === 'display-scale') return true;
+  if (input.reason === 'display-scale' || input.reason === 'workspace-reveal') {
+    return true;
+  }
   return input.gridChanged;
 }
 
@@ -94,6 +100,9 @@ export function escalateRefitReason(
 ): RefitReason {
   if (pending === 'display-scale' || next === 'display-scale') {
     return 'display-scale';
+  }
+  if (pending === 'workspace-reveal' || next === 'workspace-reveal') {
+    return 'workspace-reveal';
   }
   return next;
 }

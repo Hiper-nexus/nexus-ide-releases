@@ -418,10 +418,33 @@
       ]
     },
     "muse": {
-      "default": "muse",
+      "default": "muse-spark-1.3",
       "models": [
         {
-          "id": "muse",
+          "id": "muse-spark-1.3",
+          "availability": "free",
+          "costTier": "free",
+          "source": "bundled"
+        },
+        {
+          "id": "muse-spark-1.2",
+          "availability": "free",
+          "costTier": "free",
+          "source": "bundled"
+        }
+      ]
+    },
+    "muse-claude": {
+      "default": "muse-spark-1.3",
+      "models": [
+        {
+          "id": "muse-spark-1.3",
+          "availability": "free",
+          "costTier": "free",
+          "source": "bundled"
+        },
+        {
+          "id": "muse-spark-1.2",
           "availability": "free",
           "costTier": "free",
           "source": "bundled"

@@ -32,10 +32,31 @@ export function requiresSpawnGate(meta: {
  * Claude Code for fixtures and GLM/LongCat. OpenClaude autoloads MCP too
  * but stores session in `~/.openclaude` — a Claude overlay logs it out.
  */
+function spawnBinName(adapter: SpawnHomeAdapter): string {
+  return adapter.bin?.split(/[\\/]/).pop()?.replace(/\.exe$/i, '') ?? '';
+}
+
 export function usesClaudeHomeLayout(adapter: SpawnHomeAdapter): boolean {
-  const bin = adapter.bin?.split(/[\\/]/).pop()?.replace(/\.exe$/i, '');
+  const bin = spawnBinName(adapter);
   if (bin === 'openclaude') return false;
-  return adapter.quirks.mcpAutoload === true || bin === 'claude';
+  if (bin === 'claude') return true;
+  // Fixtures and GLM-like adapters may omit `bin` and only set mcpAutoload.
+  // A real non-Claude binary (muse, kimi, grok, …) must never inherit Claude
+  // HOME just because someone copied `mcpAutoload: true` into the adapter.
+  if (!bin) return adapter.quirks.mcpAutoload === true;
+  return false;
+}
+
+/**
+ * `--mcp-config` / `--settings` / `--strict-mcp-config` are Claude Code
+ * flags. OpenClaude accepts them too. Muse/Kimi/Codex dump `--help` and
+ * exit 2 if they appear on argv (F-596).
+ */
+export function acceptsClaudeMcpCliFlags(adapter: SpawnHomeAdapter): boolean {
+  const bin = spawnBinName(adapter);
+  if (bin === 'claude' || bin === 'openclaude') return true;
+  if (!bin) return adapter.quirks.mcpAutoload === true;
+  return false;
 }
 
 /**

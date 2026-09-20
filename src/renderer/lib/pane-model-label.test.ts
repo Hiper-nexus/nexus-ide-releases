@@ -168,4 +168,22 @@ describe('resolveModelChipLabel', () => {
       expect(label!.full).toContain('XHigh');
     });
   });
+
+  describe('Muse Spark', () => {
+    it('muse-spark-1.3 is Spark 1.3, not the adapter placeholder', () => {
+      const label = resolveModelChipLabel('muse', 'muse-spark-1.3', 'xhigh');
+      expect(label!.family).toBe('Muse');
+      expect(label!.version).toBe('Spark 1.3');
+      expect(label!.medium).toBe('Muse Spark');
+      expect(label!.full).toBe('Muse Spark 1.3 · XHigh');
+    });
+
+    it('placeholder id "muse" does not become "Muse muse"', () => {
+      const label = resolveModelChipLabel('muse', 'muse', undefined);
+      expect(label!.family).toBe('Muse');
+      expect(label!.version).toBe('');
+      expect(label!.medium).toBe('Muse');
+      expect(label!.full).toBe('Muse');
+    });
+  });
 });

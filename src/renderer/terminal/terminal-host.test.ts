@@ -79,6 +79,8 @@ import {
   holdSpawnUntilApproved,
   orchAutoReliveGate,
   reconcileHosts,
+  revealTerminalHostsAfterWorkspaceShow,
+  setHostVisibility,
   waitForSession,
 } from './terminal-host';
 
@@ -179,6 +181,22 @@ describe('spawn adiado sem ninguém esperando a sessão', () => {
   });
 });
 
+describe('F-603 — pane não some ao voltar dos Ajustes', () => {
+  it('reveal recoloca host que o IO marcou invisível', () => {
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    setHostSize(slot, 1200, 800);
+    attachHost(pane, slot);
+    const host = getOrCreateHost(pane);
+    setHostVisibility(pane.id, false);
+    expect(host.isVisible).toBe(false);
+
+    revealTerminalHostsAfterWorkspaceShow();
+
+    expect(host.isVisible).toBe(true);
+  });
+});
+
 describe('F-568 — título do pane não treme com o spinner do CLI', () => {
   function mountedHost() {
     const host = getOrCreateHost(pane);
@@ -228,6 +246,35 @@ describe('F-568 — título do pane não treme com o spinner do CLI', () => {
     fireTitle('⠋');
     await vi.advanceTimersByTimeAsync(300);
     expect(setTitle).not.toHaveBeenCalled();
+  });
+});
+
+describe('F-597 — OSC de tarefa não disfarça o CLI do pane', () => {
+  it('worker Claude cujo OSC fala de Codex grava Claude · …', async () => {
+    const agent: PaneModel = {
+      id: 'cli-title-id',
+      kind: 'cli-agent',
+      title: 'Fix Codex pane',
+      adapterId: 'claude',
+      model: 'claude-sonnet-5',
+    };
+    useLayoutStore.setState({
+      root: buildGridTree([agent]),
+      focusedPaneId: agent.id,
+    });
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(agent, slot);
+    const host = getOrCreateHost(agent);
+    setHostSize(host.element, 1200, 800);
+    const setTitle = vi.spyOn(useLayoutStore.getState(), 'setTitle');
+    fireTitle('* Codex pane boot crash');
+    await vi.advanceTimersByTimeAsync(300);
+    expect(setTitle).toHaveBeenCalledWith(
+      agent.id,
+      'Claude · Codex pane boot crash',
+    );
+    discardPaneSpawnState(agent.id);
   });
 });
 
@@ -680,6 +727,7 @@ describe('paste de mídia no pane (F-582)', () => {
   const importDroppedUri = vi.fn();
   const importMissionAttachment = vi.fn();
   const clipboardFileUris = vi.fn();
+  const localExitListeners = new Map<string, (event: { exitCode: number }) => void>();
   let filePath = '';
 
   beforeEach(() => {
@@ -688,12 +736,17 @@ describe('paste de mídia no pane (F-582)', () => {
     importMissionAttachment.mockReset();
     clipboardFileUris.mockReset().mockResolvedValue({ uris: [] });
     filePath = '';
+    localExitListeners.clear();
     Object.defineProperty(window, 'nexus', {
       configurable: true,
       value: {
         pty: {
           spawn, kill, resize: vi.fn(), write,
-          onStateChange: () => () => {}, onData: () => () => {}, onExit: () => () => {},
+          onStateChange: () => () => {}, onData: () => () => {},
+          onExit: (sessionId: string, listener: (event: { exitCode: number }) => void) => {
+            localExitListeners.set(sessionId, listener);
+            return () => localExitListeners.delete(sessionId);
+          },
         },
         files: {
           importDroppedUri,
@@ -914,5 +967,62 @@ describe('paste de mídia no pane (F-582)', () => {
       'pty-hidden',
       '.nexus/attachments/mission-context/k-filme-grande.mp4 ',
     );
+  });
+
+  it('F-593: PTY morta antes do paste — avisa que o pane está sem sessão, não que a cópia falhou', async () => {
+    const host = await openLiveHost();
+    filePath = '/Users/ana/Desktop/print-2026-09-19T22-22-51.png';
+    const screenshot = new File(['x'], 'print-2026-09-19T22-22-51.png', {
+      type: 'image/png',
+    });
+    importDroppedUri.mockResolvedValue({
+      ok: true,
+      path: '.nexus/attachments/mission-context/k-print.png',
+    });
+
+    // Codex saiu: onExit dispara e zera host.sessionId ANTES do paste.
+    localExitListeners.get('pty-hidden')!({ exitCode: 0 });
+
+    const event = pasteEvent(host.element, { files: [screenshot] });
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(importDroppedUri).toHaveBeenCalledExactlyOnceWith(
+      'file:///Users/ana/Desktop/print-2026-09-19T22-22-51.png',
+    );
+    // A cópia aconteceu — nada deve ser escrito num PTY que não existe mais.
+    expect(write).not.toHaveBeenCalled();
+    const toast = useToastStore
+      .getState()
+      .toasts.find((item) => item.title === 'Pane sem sessão ativa');
+    expect(toast).toBeDefined();
+    expect(toast?.detail).toContain('foi copiado');
+    expect(toast?.detail).not.toContain('não pôde ser copiado');
+    expect(
+      useToastStore.getState().toasts.some((item) => item.title === 'Arquivo não colado no terminal'),
+    ).toBe(false);
+  });
+
+  it('F-593: text/uri-list colado com PTY morta avisa sem digitar nada', async () => {
+    const host = await openLiveHost();
+    importDroppedUri.mockResolvedValue({
+      ok: true,
+      path: '.nexus/attachments/mission-context/k-audio.opus',
+    });
+
+    localExitListeners.get('pty-hidden')!({ exitCode: 0 });
+
+    const event = pasteEvent(host.element, {
+      data: { 'text/uri-list': 'file:///Users/ana/audio.opus' },
+    });
+    await vi.advanceTimersByTimeAsync(10);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(write).not.toHaveBeenCalled();
+    const toast = useToastStore
+      .getState()
+      .toasts.find((item) => item.title === 'Pane sem sessão ativa');
+    expect(toast).toBeDefined();
+    expect(toast?.detail).toContain('foi copiado');
   });
 });

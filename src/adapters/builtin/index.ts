@@ -10,6 +10,7 @@ import agyRaw from './agy.json';
 import opencodeRaw from './opencode.json';
 import openclaudeRaw from './openclaude.json';
 import museRaw from './muse.json';
+import museClaudeRaw from './muse-claude.json';
 import devinRaw from './devin.json';
 import deepseekRaw from './deepseek.json';
 import qwenRaw from './qwen.json';
@@ -28,6 +29,9 @@ export const BUILTIN_ADAPTERS: unknown[] = [
   opencodeRaw,
   openclaudeRaw,
   museRaw,
+  // Opcional: Muse Spark dentro do Claude Code (ANTHROPIC_BASE_URL Meta).
+  // O default continua `muse` — CLI própria. Este adapter é a rota GLM-like.
+  museClaudeRaw,
   // devin: `extraArgs` fica vazio de propósito. O `--respect-workspace-trust
   // false` só existe no headless (print mode não sabe mostrar o prompt e falha
   // em diretório não confiado — está no próprio --help da CLI), e o headless

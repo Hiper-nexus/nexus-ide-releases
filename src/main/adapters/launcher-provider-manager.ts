@@ -168,6 +168,23 @@ export const UPSTREAM_PROVIDERS: Record<string, UpstreamProvider> = {
     requiresToken: true,
     local: false,
   },
+  'muse-claude': {
+    id: 'muse-claude',
+    label: 'Muse Spark (via Claude)',
+    baseUrl: 'https://api.meta.ai',
+    defaultModel: 'muse-spark-1.3',
+    extraEnv: {
+      ...THIRD_PARTY_EXTRA,
+      ENABLE_TOOL_SEARCH: 'true',
+      ANTHROPIC_MODEL: 'muse-spark-1.3',
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'muse-spark-1.3',
+      ANTHROPIC_DEFAULT_SONNET_MODEL: 'muse-spark-1.3',
+      ANTHROPIC_DEFAULT_OPUS_MODEL: 'muse-spark-1.3',
+      CLAUDE_CODE_SUBAGENT_MODEL: 'muse-spark-1.3',
+    },
+    requiresToken: true,
+    local: false,
+  },
   longcat: {
     id: 'longcat',
     label: 'LongCat (Meituan)',

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { normalizePaneTitle } from './pane-title';
+import { cliPaneDisplayTitle, normalizePaneTitle } from './pane-title';
 
 describe('normalizePaneTitle', () => {
   it.each([
@@ -62,5 +62,37 @@ describe('normalizePaneTitle', () => {
   it('retorna título vazio quando a mensagem é só o glifo', () => {
     expect(normalizePaneTitle('⠋')).toEqual({ title: '', activity: 'busy' });
     expect(normalizePaneTitle('·')).toEqual({ title: '', activity: 'idle' });
+  });
+
+  it('trata o * ASCII do Claude Code como glifo de atividade, não como o nome do pane', () => {
+    expect(normalizePaneTitle('* Codex pane boot crash')).toEqual({
+      title: 'Codex pane boot crash',
+      activity: 'busy',
+    });
+  });
+});
+
+describe('cliPaneDisplayTitle — F-597 identidade da CLI no cabeçalho', () => {
+  it('prefixa a família do adapter quando o OSC/título fala de outro CLI', () => {
+    const { title } = normalizePaneTitle('* Codex pane boot crash');
+    expect(cliPaneDisplayTitle('claude', title)).toBe(
+      'Claude · Codex pane boot crash',
+    );
+  });
+
+  it('não duplica o prefixo quando o título já começa com a família', () => {
+    expect(cliPaneDisplayTitle('claude', 'Claude · supabase MCP')).toBe(
+      'Claude · supabase MCP',
+    );
+    expect(cliPaneDisplayTitle('codex', 'GPT-5.6 review')).toBe('GPT-5.6 review');
+  });
+
+  it('sem adapterId (shell) devolve o título cru', () => {
+    expect(cliPaneDisplayTitle(undefined, 'zsh')).toBe('zsh');
+  });
+
+  it('título vazio cai na família sozinha', () => {
+    expect(cliPaneDisplayTitle('grok', '')).toBe('Grok');
+    expect(cliPaneDisplayTitle('codex', '   ')).toBe('GPT');
   });
 });

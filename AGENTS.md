@@ -233,6 +233,50 @@ saber isto antes de mexer:
   aproveitável, o toast "Nada foi colado no terminal" explica — WhatsApp sem
   arquivo materializado pede para salvar e copiar/arrastar do Finder.
 
+## Muse pane imprime `--help` e sai code 2 (F-596)
+
+- Muse Code (`muse`) **não** é Claude: não tem `--mcp-config` / `--settings` /
+  `--strict-mcp-config`. Marcá-lo `mcpAutoload: true` / `nexusMcp: autoload`
+  faz o spawn injetar essas flags; o binário 1.3 recusa, dumpa o help
+  (incluindo `--subagent-worktree-isolation`) e sai 2.
+- Adapter `muse`: CLI própria (`bin: muse`, `mcpAutoload: false`). Handoff
+  cai no fallback PTY/nx-mail. `spawn.extraArgs` inclui `--trust-workspace`.
+- Opcional `muse-claude`: Claude Code apontado a `https://api.meta.ai`
+  (Muse Spark). Key `ANTHROPIC_AUTH_TOKEN` (Model API da Meta). Não mistura
+  com a sessão Anthropic nativa (família terceiro + HOME isolado).
+- Lei do binário: `--mcp-config`/`--settings` só no argv de `claude` e
+  `openclaude`. Copiar `mcpAutoload: true` no adapter `muse` não injeta
+  flags Claude.
+
+## Codex pane: `url is not supported for stdio` em mcp_servers (F-594)
+
+- Pane direto do operador (`preserveUserMcp`) copia o `config.toml` real,
+  inclusive `[mcp_servers.supabase] command = …` (stdio). O hub do workspace
+  pode declarar o mesmo id como `streamable-http` (`url`).
+- `codexHubMcpArgs` injeta `-c mcp_servers.<id>.url=…` por cima. O Codex
+  recusa a mistura no load (`Error loading config.toml: url is not supported
+  for stdio in mcp_servers.supabase`) e o pane sai com code 1.
+- Fix: no spawn da mão do operador, pular chaves do hub que já existem no
+  config preservado. Workers (overlay sem ambient MCP) continuam recebendo
+  o hub inteiro. Export do hub (`mergeCodexToml`) também não grava url+command
+  no mesmo bloco.
+
+## Paste/drop no pane já morto mente sobre "cópia falhou" (F-593)
+
+- `injectDroppedFile`/`injectDroppedUri` (`terminal-host.ts`) copiam o
+  arquivo/URI para `.nexus/attachments/mission-context/` (`importDroppedUri`)
+  e só DEPOIS chamam `injectStagedPath`, que escreve no PTY via
+  `host.sessionId`. Quando o PTY já saiu (Codex/CLI morto), `setHostSession`
+  zera `host.sessionId` e `injectStagedPath` faz early-return em silêncio.
+- Bug: o código tratava esse caso como se a cópia tivesse falhado —
+  `droppedFileRejectionMessage` ("não pôde ser copiado para a missão") saía
+  no toast mesmo com o arquivo já staged com sucesso no disco. O operador via
+  um erro de cópia mentiroso quando o problema real era pane sem processo.
+- Fix: checar `host.sessionId` no momento de injetar, não só no de copiar.
+  Se `result.ok` mas sessão morta → toast "Pane sem sessão ativa" dizendo que
+  o arquivo FOI copiado e pedindo para reabrir o agente — nunca reusar a
+  mensagem de recusa de intake para esse caso.
+
 ## Política de Git do fan-out isolado (F-563)
 
 - No MCP, writers com `executionScope` distinto usam apenas Git
@@ -477,7 +521,10 @@ saber isto antes de mexer:
   um helper nunca carrega o perfil MCP global. `nexus_pane_spawn` sem
   `adapterId` na mão do operador roteia `task ?? prompt` pelo mesmo motor do
   `nexus_route_task` (Jev tier/especialidade + tabela) — receipt
-  `harness.source: 'auto-route'` + `route`.
+  `harness.source: 'auto-route'` + `route`. **Não despachar N helpers no
+  mesmo adapter** (três Sonnet, três Claude) só porque o Codex está
+  indisponível: misturar CLIs vivas (Codex/Claude/Grok/Kimi/AGY/GLM). O
+  título OSC da tarefa não é a identidade do pane (F-597).
 - **Handoff sem missão** passa pela mesma revisão Jev do handoff de missão
   (`reviewMissionHandoff`): 1 devolução, depois `[evidência fraca]` no resumo
   que chega ao pane pai + artifact `nexus.jevReview`. Continua correspondência

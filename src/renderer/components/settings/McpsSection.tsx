@@ -160,40 +160,12 @@ export function McpsSection() {
                 (loading
                   ? 'Verificando conexões…'
                   : running
-                    ? `${toolCount} ferramentas disponíveis`
+                    ? `${toolCount} ferramentas disponíveis${hub?.config?.servers ? ` · ${hub.config.servers.length} no hub` : ''}`
                     : 'Agentes sem ferramentas até o servidor voltar.')}
             </span>
           </>
         }
       />
-
-      <div className="arsenal-fleet" role="status">
-        <span className="arsenal-fleet__stat">
-          <span
-            className={`arsenal-fleet__led ${
-              loading ? '' : running ? 'arsenal-fleet__led--ok' : 'arsenal-fleet__led--warn'
-            }`}
-            aria-hidden="true"
-          />
-          {loading ? 'verificando…' : running ? 'online' : 'offline'}
-        </span>
-        <span className="arsenal-fleet__sep" aria-hidden="true">
-          ·
-        </span>
-        <span className="arsenal-fleet__stat">
-          <strong>{loading ? '…' : toolCount}</strong> tools
-        </span>
-        {hub?.config?.servers ? (
-          <>
-            <span className="arsenal-fleet__sep" aria-hidden="true">
-              ·
-            </span>
-            <span className="arsenal-fleet__stat">
-              <strong>{hub.config.servers.length}</strong> hub
-            </span>
-          </>
-        ) : null}
-      </div>
 
       {acrossError ? (
         <p className="settings-list__detail" role="alert">
@@ -225,6 +197,15 @@ export function McpsSection() {
             >
               {loading ? '…' : running ? 'online' : 'offline'}
             </span>
+            <button
+              type="button"
+              className="settings-btn settings-btn--sm"
+              onClick={() =>
+                useProductNavigationStore.getState().openSettings('tools')
+              }
+            >
+              Ver ferramentas
+            </button>
           </div>
           <details className="settings-advanced-field">
           <summary>Detalhes da conexão local</summary>
@@ -237,17 +218,6 @@ export function McpsSection() {
             </p>
           ) : null}
           </details>
-          <div className="arsenal-card__actions" style={{ marginTop: 8 }}>
-            <button
-              type="button"
-              className="settings-btn"
-              onClick={() =>
-                useProductNavigationStore.getState().openSettings('tools')
-              }
-            >
-              Ver ferramentas
-            </button>
-          </div>
         </li>
       </ul>
     </section>

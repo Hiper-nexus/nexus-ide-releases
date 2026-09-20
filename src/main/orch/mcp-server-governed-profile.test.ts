@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { CliPtyAdapter } from '../../shared/adapter-types';
+import { adapterSchema, type CliPtyAdapter } from '../../shared/adapter-types';
+import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import { PET_STUDIO_SQUAD } from '../../shared/pet-studio';
 import type { AgentSpawnDecoration } from '../pty/pty-manager';
 import type { BoundSpawnAuthority } from './spawn-authority';
@@ -1265,6 +1266,53 @@ describe('mcp-server governed CLI profile wiring', () => {
     );
     expect(codexArgs).toMatch(/mcp_servers\.nexus_[0-9a-f]{12}\.url=/);
 
+    // Campo 2026-09-19: pane direto do operador com supabase stdio no
+    // ~/.codex e o mesmo id no hub como HTTP. O `-c url` por cima do
+    // command derrubava o Codex no boot. Worker (overlay sem ambient MCP)
+    // continua recebendo o url do hub.
+    write(
+      path.join(home, '.codex', 'config.toml'),
+      '[mcp_servers.supabase]\ncommand = "/opt/supabase-mcp"\n',
+    );
+    writeHub(cwd, {
+      schemaVersion: 1,
+      servers: [
+        {
+          id: 'supabase',
+          name: 'supabase',
+          transport: 'streamable-http',
+          url: 'https://mcp.supabase.com/mcp',
+        },
+        HUB_STDIO_SERVER,
+      ],
+    });
+    const operatorCodex = prepareAgentSpawnDecoration(
+      adapter('codex'),
+      { kind: 'cli-agent', cols: 80, rows: 24 },
+      authority(cwd, false),
+      { CODEX_HOME: path.join(home, '.codex') },
+    );
+    if (!operatorCodex) throw new Error('expected operator Codex decoration');
+    const operatorArgs = operatorCodex.extraArgs.join(' ');
+    expect(operatorArgs).not.toContain('mcp_servers.supabase.url');
+    expect(operatorArgs).toContain('mcp_servers.context7.command="npx"');
+    expect(operatorArgs).toMatch(/mcp_servers\.nexus_[0-9a-f]{12}\.url=/);
+
+    const workerCodex = prepareAgentSpawnDecoration(
+      adapter('codex'),
+      { kind: 'cli-agent', cols: 80, rows: 24 },
+      authority(cwd, true),
+      { CODEX_HOME: path.join(home, '.codex') },
+    );
+    if (!workerCodex) throw new Error('expected worker Codex decoration');
+    expect(workerCodex.extraArgs.join(' ')).toContain(
+      'mcp_servers.supabase.url="https://mcp.supabase.com/mcp"',
+    );
+    writeHub(cwd, {
+      schemaVersion: 1,
+      servers: [HUB_HTTP_SERVER, HUB_STDIO_SERVER],
+    });
+
     const opencode = prepareAgentSpawnDecoration(
       adapter('opencode'),
       { kind: 'cli-agent', cols: 80, rows: 24 },
@@ -1397,5 +1445,71 @@ describe('mcp-server governed CLI profile wiring', () => {
     expect(decoration.extraArgs).not.toContain('--no-subagents');
     expect(decoration.env.HOME).toBeUndefined();
     decoration.onSpawnFailed?.();
+  });
+});
+
+describe('Muse is not Claude MCP autoload (F-596)', () => {
+  function museAdapter(): CliPtyAdapter {
+    const parsed = adapterSchema.parse(
+      BUILTIN_ADAPTERS.find((raw) => (raw as { id?: string }).id === 'muse'),
+    );
+    if (parsed.kind !== 'cli-pty') throw new Error('muse must be cli-pty');
+    return parsed;
+  }
+
+  it('direct Muse pane does not receive Claude --mcp-config/--settings', () => {
+    // Campo 2026-09-19: o adapter marcava mcpAutoload, o spawn injetava
+    // --mcp-config/--settings (flags do Claude) e o Muse 1.3 imprimia o
+    // --help e saía com code 2.
+    const root = tempRoot();
+    const home = path.join(root, 'home');
+    const cwd = path.join(root, 'workspace');
+    fs.mkdirSync(cwd, { recursive: true });
+    vi.stubEnv('HOME', home);
+
+    const decoration = prepareAgentSpawnDecoration(
+      museAdapter(),
+      { kind: 'cli-agent', cols: 80, rows: 24 },
+      authority(cwd, false),
+    );
+    expect(decoration).not.toBeNull();
+    if (!decoration) throw new Error('expected Muse spawn decoration');
+    try {
+      expect(decoration.extraArgs).not.toContain('--mcp-config');
+      expect(decoration.extraArgs).not.toContain('--settings');
+      expect(decoration.extraArgs).not.toContain('--strict-mcp-config');
+      expect(decoration.env.HOME).toBeUndefined();
+    } finally {
+      decoration.onSpawnFailed?.();
+    }
+  });
+
+  it('even a poisoned mcpAutoload on the Muse binary does not inject Claude flags', () => {
+    const root = tempRoot();
+    const cwd = path.join(root, 'workspace');
+    fs.mkdirSync(cwd, { recursive: true });
+    vi.stubEnv('HOME', path.join(root, 'home'));
+    const poisoned: CliPtyAdapter = {
+      ...museAdapter(),
+      quirks: {
+        ...museAdapter().quirks,
+        mcpAutoload: true,
+        nexusMcp: 'autoload',
+      },
+    };
+    const decoration = prepareAgentSpawnDecoration(
+      poisoned,
+      { kind: 'cli-agent', cols: 80, rows: 24 },
+      authority(cwd, false),
+    );
+    expect(decoration).not.toBeNull();
+    if (!decoration) throw new Error('expected Muse spawn decoration');
+    try {
+      expect(decoration.extraArgs).not.toContain('--mcp-config');
+      expect(decoration.extraArgs).not.toContain('--settings');
+      expect(decoration.env.HOME).toBeUndefined();
+    } finally {
+      decoration.onSpawnFailed?.();
+    }
   });
 });

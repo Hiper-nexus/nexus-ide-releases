@@ -279,14 +279,29 @@ export function grokHubMcpServers(
  * mesma postura do bearer do Nexus, que também nunca entra em argv. Os demais
  * adapters recebem esses valores por arquivo 0600 / env da sessão.
  */
+export interface CodexHubMcpArgsOptions {
+  /**
+   * Names already present in the pane's Codex `config.toml` (operator-hand
+   * `preserveUserMcp`). Hub `-c` is a partial key overlay: injecting
+   * `mcp_servers.supabase.url` on top of a preserved stdio `command` makes
+   * Codex refuse the config (`url is not supported for stdio`) and exit 1
+   * before the TUI starts. Skip colliding keys; the user's entry wins.
+   */
+  readonly skipKeys?: Iterable<string>;
+}
+
+/** Overrides `-c mcp_servers.<key>.*` for one Codex spawn. */
 export function codexHubMcpArgs(
   servers: readonly McpHubSpawnServer[],
+  options: CodexHubMcpArgsOptions = {},
 ): string[] {
+  const skip = new Set(options.skipKeys);
   const args: string[] = [];
   const push = (key: string, value: unknown): void => {
     args.push('-c', `${key}=${JSON.stringify(value)}`);
   };
   for (const server of servers) {
+    if (skip.has(server.key)) continue;
     const base = `mcp_servers.${server.key}`;
     if (isStdioHubServer(server)) {
       push(`${base}.command`, server.command);

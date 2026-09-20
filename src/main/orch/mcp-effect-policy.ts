@@ -107,6 +107,9 @@ const READ_ONLY_TOOLS = new Set([
   // response. Gating them behind confirmation would make consulting the fuel
   // gauge cost a human click on every routing decision.
   'quota_status',
+  // Mesma família do quota_status: projeção do snapshot, sem write, sem
+  // contato com provider. A decisão é aritmética (scorer), nunca Jev.
+  'pick_account',
   'model_ranking',
   'mcp_servers',
   'skills_inventory',

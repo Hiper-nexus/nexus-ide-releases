@@ -32,6 +32,7 @@ const terminalRuntime = vi.hoisted(() => ({
   waitForSession: vi.fn(async () => null as string | null),
   writeToPane: vi.fn(),
   applyTerminalSettings: vi.fn(),
+  revealTerminalHostsAfterWorkspaceShow: vi.fn(),
   terminalRendererPerformanceSnapshot: vi.fn(() => ({
     performanceMode: 'adaptive' as const,
     hosts: 0,
@@ -262,6 +263,23 @@ describe('TerminalWorkspace contracts', () => {
 
     expect(terminalRuntime.reconcileHosts).toHaveBeenCalledTimes(1);
     expect(ptySpawn).not.toHaveBeenCalled();
+  });
+
+  it('F-603: voltar dos Ajustes revela os hosts — não espera um pane novo', () => {
+    const mounted = mount(<TerminalWorkspace hidden />);
+    expect(
+      terminalRuntime.revealTerminalHostsAfterWorkspaceShow,
+    ).not.toHaveBeenCalled();
+
+    act(() => mounted.root.render(<TerminalWorkspace />));
+    expect(
+      terminalRuntime.revealTerminalHostsAfterWorkspaceShow,
+    ).toHaveBeenCalledTimes(1);
+
+    act(() => mounted.root.render(<TerminalWorkspace hidden />));
+    expect(
+      terminalRuntime.revealTerminalHostsAfterWorkspaceShow,
+    ).toHaveBeenCalledTimes(1);
   });
 
   it('explica quando o filtro não tem panes em vez de entregar uma tela preta', () => {

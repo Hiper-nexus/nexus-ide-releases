@@ -31,6 +31,7 @@ describe('squad model defaults', () => {
     expect(migrateModelId('gpt-5.5')).toBe('gpt-5.6-luna');
     expect(migrateModelId('gpt-5.4-pro')).toBe('gpt-5.6-sol');
     expect(migrateModelId('gpt-5.6-sol')).toBe('gpt-5.6-sol');
+    expect(migrateModelId('muse')).toBe('muse-spark-1.3');
     expect(migrateModelId(undefined)).toBeUndefined();
   });
 });

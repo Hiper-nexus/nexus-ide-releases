@@ -17,6 +17,10 @@ import { PaneInteractionSurface } from './PaneInteractionSurface';
 import { PaneToolbar } from './PaneToolbar';
 import { PaneVacancy } from './PaneVacancy';
 import { AcpPaneView } from './AcpPaneView';
+import {
+  paneIntersectionApplies,
+  subscribePaneWorkspaceReveal,
+} from '../lib/pane-intersection';
 
 interface Props {
   pane: PaneModel;
@@ -83,6 +87,7 @@ function TerminalPaneLeaf({ pane }: Props) {
   const handleIntersection = useCallback(
     (entries: IntersectionObserverEntry[]) => {
       for (const entry of entries) {
+        if (!paneIntersectionApplies(entry)) continue;
         const nowVisible = entry.isIntersecting;
         setIsVisible((prev) => {
           if (prev === nowVisible) return prev;
@@ -92,6 +97,11 @@ function TerminalPaneLeaf({ pane }: Props) {
       }
     },
     [pane.id],
+  );
+
+  useLayoutEffect(
+    () => subscribePaneWorkspaceReveal(() => setIsVisible(true)),
+    [],
   );
 
   useLayoutEffect(() => {

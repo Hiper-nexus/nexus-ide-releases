@@ -186,9 +186,9 @@
       "rank": 10
     },
     {
-      "id": "muse/muse",
+      "id": "muse/muse-spark-1.3",
       "adapterId": "muse",
-      "modelId": "muse",
+      "modelId": "muse-spark-1.3",
       "overall": 67,
       "coding": 68,
       "reasoning": 67,

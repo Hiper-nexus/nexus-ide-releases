@@ -408,32 +408,34 @@ export function ToolsSection() {
         <button type="button" className="settings-btn" disabled={loading} onClick={() => void catalog.reload()}>Atualizar lista</button>
       </header>
 
-      <div className="arsenal-fleet" role="status">
-        <span className="arsenal-fleet__stat">
-          {catalog.data === null && error ? 'Contagem indisponível' : <><strong>{loading ? '…' : tools.length}</strong> ferramentas</>}
-        </span>
-        {query.trim() && (
-          <>
-            <span className="arsenal-fleet__sep" aria-hidden="true">
-              ·
-            </span>
-            <span className="arsenal-fleet__stat">
-              {filtered.length} na busca
-            </span>
-          </>
-        )}
-      </div>
+      <div className="arsenal-toolbar">
+        <div className="arsenal-fleet" role="status">
+          <span className="arsenal-fleet__stat">
+            {catalog.data === null && error ? 'Contagem indisponível' : <><strong>{loading ? '…' : tools.length}</strong> ferramentas</>}
+          </span>
+          {query.trim() && (
+            <>
+              <span className="arsenal-fleet__sep" aria-hidden="true">
+                ·
+              </span>
+              <span className="arsenal-fleet__stat">
+                {filtered.length} na busca
+              </span>
+            </>
+          )}
+        </div>
 
-      <label className="arsenal-search">
-        <span className="settings-visually-hidden">Buscar ferramentas</span>
-        <input
-          className="settings-input arsenal-search__input"
-          type="search"
-          value={query}
-          placeholder="Nome ou descrição"
-          onChange={(e) => setQuery(e.target.value)}
-        />
-      </label>
+        <label className="arsenal-search">
+          <span className="settings-visually-hidden">Buscar ferramentas</span>
+          <input
+            className="settings-input arsenal-search__input"
+            type="search"
+            value={query}
+            placeholder="Nome ou descrição"
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </label>
+      </div>
 
       <CatalogStatus {...catalog} reload={() => void catalog.reload()} label="Carregando ferramentas MCP…" />
 

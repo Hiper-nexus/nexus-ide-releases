@@ -84,7 +84,9 @@ export function AppearanceSection() {
         </div>
       </div>
 
-      <button type="button" className="settings-btn" onClick={() => useProductNavigationStore.getState().openSettings('pets')}>Abrir Meus pets</button>
+      <div className="settings-row">
+        <button type="button" className="settings-btn" onClick={() => useProductNavigationStore.getState().openSettings('pets')}>Abrir Meus pets</button>
+      </div>
     </section>
   );
 }

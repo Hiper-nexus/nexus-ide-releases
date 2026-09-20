@@ -296,7 +296,7 @@ export function ShortcutsSection() {
       </p>
       {SHORTCUT_GROUP_ORDER.map((groupId) => (
         <div key={groupId}>
-          <p className="settings-detail__hint">
+          <p className="arsenal-band__label">
             {SHORTCUT_GROUP_LABELS[groupId]}
           </p>
           <ul className="settings-list">
@@ -315,7 +315,7 @@ export function ShortcutsSection() {
           </ul>
         </div>
       ))}
-      <p className="settings-detail__hint">Mouse</p>
+      <p className="arsenal-band__label">Mouse</p>
       <ul className="settings-list">
         {GESTURES.map((gesture) => (
           <li key={gesture.keys} className="settings-list__item">
