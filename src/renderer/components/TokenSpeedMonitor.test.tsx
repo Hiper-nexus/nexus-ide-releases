@@ -105,6 +105,7 @@ describe('deriveTokenSpeedView', () => {
             peakTokensPerSecond: 310,
             lastTtftMs: 5_200,
             streaming: true,
+            liveTokensPerSecond: 47.5,
             history: [sample()],
           },
         ],
@@ -176,6 +177,7 @@ describe('TokenSpeedMonitor', () => {
               peakTokensPerSecond: 547.6,
               lastTtftMs: 5_200,
               streaming: false,
+              liveTokensPerSecond: null,
               history: [
                 sample({ tokensPerSecond: 90 }),
                 sample({ tokensPerSecond: 310 }),
@@ -227,6 +229,37 @@ describe('TokenSpeedChip', () => {
     expect(chip?.getAttribute('data-kind')).toBe('last')
     expect(chip?.getAttribute('data-streaming')).toBe('off')
   })
+
+  it('em streaming mostra o tok/s ao vivo, não o da rodada fechada', () => {
+    act(() => {
+      useTokenSpeedStore.getState().receive(
+        snapshot({
+          streaming: true,
+          liveTokensPerSecond: 47.5,
+          last: sample({ tokensPerSecond: 2.3 }),
+          panes: [
+            {
+              paneId: 'p1',
+              model: 'grok-4.6',
+              turns: 1,
+              last: sample({ tokensPerSecond: 2.3 }),
+              averageTokensPerSecond: 2.3,
+              peakTokensPerSecond: 2.3,
+              lastTtftMs: 1_000,
+              streaming: true,
+              liveTokensPerSecond: 47.5,
+              history: [sample({ tokensPerSecond: 2.3 })],
+            },
+          ],
+        }),
+      )
+    })
+    render(<TokenSpeedChip paneId="p1" />)
+    const chip = container.querySelector('.tokspeed-chip')
+    expect(chip?.textContent).toContain('47.5')
+    expect(chip?.textContent).not.toContain('2.3')
+    expect(chip?.getAttribute('data-kind')).toBe('live')
+  })
 })
 
 function modelRow(over: Partial<ModelTokenSpeed> = {}): ModelTokenSpeed {
@@ -240,6 +273,7 @@ function modelRow(over: Partial<ModelTokenSpeed> = {}): ModelTokenSpeed {
     averageTtftMs: 4_800,
     lastTtftMs: 5_200,
     streaming: false,
+    liveTokensPerSecond: null,
     history: [sample()],
     ...over,
   }

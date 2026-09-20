@@ -53,6 +53,11 @@ export interface PaneTokenSpeed {
   lastTtftMs: number | null
   /** Há um turno aberto recebendo tokens agora. */
   streaming: boolean
+  /**
+   * tok/s da rodada ABERTA (tokens até agora / tempo desde o 1º token).
+   * `null` no TTFT, com poucos tokens, ou fora de streaming.
+   */
+  liveTokensPerSecond: number | null
   /** Buffer limitado (mais antigo -> mais recente) para a curva. */
   history: TokenSpeedSample[]
 }
@@ -85,6 +90,8 @@ export interface ModelTokenSpeed {
   lastTtftMs: number | null
   /** Algum pane deste modelo está gerando agora. */
   streaming: boolean
+  /** tok/s da rodada aberta deste modelo, se houver. */
+  liveTokensPerSecond: number | null
   /** Buffer limitado (mais antigo -> mais recente) para a curva. */
   history: TokenSpeedSample[]
 }
@@ -102,6 +109,8 @@ export interface TokenSpeedSnapshot {
   turns: number
   /** Algum pane está gerando agora. */
   streaming: boolean
+  /** tok/s ao vivo no escopo (máximo entre panes em streaming). */
+  liveTokensPerSecond: number | null
   panes: PaneTokenSpeed[]
   /**
    * Um item por LLM observada, mais recente primeiro (desempate por nome).
@@ -118,6 +127,7 @@ export const EMPTY_TOKEN_SPEED_SNAPSHOT: TokenSpeedSnapshot = {
   peakTokensPerSecond: null,
   turns: 0,
   streaming: false,
+  liveTokensPerSecond: null,
   panes: [],
   models: [],
 }
@@ -159,6 +169,7 @@ export const tokenSpeedSnapshotSchema: z.ZodType<TokenSpeedSnapshot> = z.lazy(
       peakTokensPerSecond: z.number().nullable(),
       turns: z.number(),
       streaming: z.boolean(),
+      liveTokensPerSecond: z.number().nullable(),
       panes: z.array(
         z.object({
           paneId: z.string(),
@@ -169,6 +180,7 @@ export const tokenSpeedSnapshotSchema: z.ZodType<TokenSpeedSnapshot> = z.lazy(
           peakTokensPerSecond: z.number().nullable(),
           lastTtftMs: z.number().nullable(),
           streaming: z.boolean(),
+          liveTokensPerSecond: z.number().nullable(),
           history: z.array(sample),
         }),
       ),
@@ -183,6 +195,7 @@ export const tokenSpeedSnapshotSchema: z.ZodType<TokenSpeedSnapshot> = z.lazy(
           averageTtftMs: z.number().nullable(),
           lastTtftMs: z.number().nullable(),
           streaming: z.boolean(),
+          liveTokensPerSecond: z.number().nullable(),
           history: z.array(sample),
         }),
       ),

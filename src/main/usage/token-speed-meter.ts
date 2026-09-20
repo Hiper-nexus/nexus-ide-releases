@@ -180,6 +180,18 @@ function round1(value: number): number {
   return Math.round(value * 10) / 10
 }
 
+function liveSpeedOf(lives: number[] | undefined): number | null {
+  if (!lives || lives.length === 0) return null
+  return round1(Math.max(...lives))
+}
+
+function liveScopeSpeed(panes: PaneTokenSpeed[]): number | null {
+  const lives = panes
+    .map((pane) => pane.liveTokensPerSecond)
+    .filter((value): value is number => value !== null)
+  return liveSpeedOf(lives)
+}
+
 export class TokenSpeedMeter {
   readonly idleCloseMs: number
   readonly historyLimit: number
@@ -481,7 +493,7 @@ export class TokenSpeedMeter {
     const panes: PaneTokenSpeed[] = []
     const streamingModels = new Map<
       string,
-      { model: string | null; paneIds: Set<string> }
+      { model: string | null; paneIds: Set<string>; lives: number[] }
     >()
     let merged: TokenSpeedSample[] = []
     let turns = 0
@@ -496,6 +508,7 @@ export class TokenSpeedMeter {
         .map((sample) => sample.tokensPerSecond)
         .filter((value): value is number => value !== null)
       const paneStreaming = this.#paneStreaming(state, now)
+      const liveTokensPerSecond = this.#liveSpeed(state, now)
       streaming ||= paneStreaming
       if (paneStreaming) {
         // O modelo que está gerando AGORA é o da rodada aberta, que pode já
@@ -503,11 +516,15 @@ export class TokenSpeedMeter {
         const liveModel = state.open?.model ?? state.model
         const key = modelKey(liveModel)
         const live = streamingModels.get(key)
-        if (live) live.paneIds.add(state.paneId)
-        else {
+        if (live) {
+          live.paneIds.add(state.paneId)
+          if (liveTokensPerSecond !== null) live.lives.push(liveTokensPerSecond)
+        } else {
           streamingModels.set(key, {
             model: liveModel,
             paneIds: new Set([state.paneId]),
+            lives:
+              liveTokensPerSecond !== null ? [liveTokensPerSecond] : [],
           })
         }
       }
@@ -523,6 +540,7 @@ export class TokenSpeedMeter {
         peakTokensPerSecond: speeds.length > 0 ? round1(Math.max(...speeds)) : null,
         lastTtftMs: last?.ttftMs ?? null,
         streaming: paneStreaming,
+        liveTokensPerSecond,
         history: samples,
       })
     }
@@ -542,6 +560,7 @@ export class TokenSpeedMeter {
       peakTokensPerSecond: speeds.length > 0 ? round1(Math.max(...speeds)) : null,
       turns,
       streaming,
+      liveTokensPerSecond: liveScopeSpeed(panes),
       panes,
       models,
     }
@@ -557,7 +576,10 @@ export class TokenSpeedMeter {
    */
   #aggregateByModel(
     ordered: TokenSpeedSample[],
-    streamingModels: Map<string, { model: string | null; paneIds: Set<string> }>,
+    streamingModels: Map<
+      string,
+      { model: string | null; paneIds: Set<string>; lives: number[] }
+    >,
   ): ModelTokenSpeed[] {
     const groups = new Map<string, TokenSpeedSample[]>()
     for (const sample of ordered) {
@@ -597,6 +619,7 @@ export class TokenSpeedMeter {
         averageTtftMs: ttfts.length > 0 ? Math.round(mean(ttfts)) : null,
         lastTtftMs: last?.ttftMs ?? null,
         streaming: live !== undefined,
+        liveTokensPerSecond: liveSpeedOf(live?.lives),
         history,
       })
     }
@@ -616,6 +639,7 @@ export class TokenSpeedMeter {
         averageTtftMs: null,
         lastTtftMs: null,
         streaming: true,
+        liveTokensPerSecond: liveSpeedOf(live.lives),
         history: [],
       })
     }
@@ -643,6 +667,19 @@ export class TokenSpeedMeter {
     const open = state.open
     if (!open || open.firstTokenAt === null) return false
     return !this.#isSilent(open.lastTokenAt, now)
+  }
+
+  /**
+   * tok/s da rodada aberta neste instante. Relógio é `now` (velocímetro),
+   * não o último chunk — senão o número congela entre bytes do PTY.
+   */
+  #liveSpeed(state: PaneState, now: number): number | null {
+    const open = state.open
+    if (!open || open.firstTokenAt === null) return null
+    if (this.#isSilent(open.lastTokenAt, now)) return null
+    const tokens = open.pendingUsage?.outputTokens ?? open.tokens
+    if (tokens < this.minTurnTokens) return null
+    return this.#speedOf(tokens, now - open.firstTokenAt)
   }
 
   #speedOf(outputTokens: number, generationMs: number): number | null {

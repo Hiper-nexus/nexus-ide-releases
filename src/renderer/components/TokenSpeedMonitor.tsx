@@ -50,6 +50,7 @@ export interface TokenSpeedView {
   peakTokensPerSecond: number | null
   turns: number
   streaming: boolean
+  liveTokensPerSecond: number | null
   recentWindow: number
   history: TokenSpeedSample[]
   /** Escopo exibido: um pane específico ou o workspace inteiro. */
@@ -74,6 +75,7 @@ export function deriveTokenSpeedView(
       peakTokensPerSecond: pane.peakTokensPerSecond,
       turns: pane.turns,
       streaming: pane.streaming,
+      liveTokensPerSecond: pane.liveTokensPerSecond,
       recentWindow: snapshot.recentWindow,
       history: pane.history,
       scopeLabel: 'Pane atual',
@@ -88,6 +90,7 @@ export function deriveTokenSpeedView(
     peakTokensPerSecond: snapshot.peakTokensPerSecond,
     turns: snapshot.turns,
     streaming: snapshot.streaming,
+    liveTokensPerSecond: snapshot.liveTokensPerSecond,
     recentWindow: snapshot.recentWindow,
     history,
     scopeLabel: 'Workspace',
@@ -235,7 +238,13 @@ function ModelTable({ models }: { models: ModelTokenSpeed[] }) {
                 ) : null}
                 {modelLabel(entry.model)}
               </th>
-              <td>{formatSpeed(entry.last?.tokensPerSecond ?? null)}</td>
+              <td>
+                {formatSpeed(
+                  entry.streaming
+                    ? (entry.liveTokensPerSecond ?? entry.last?.tokensPerSecond ?? null)
+                    : (entry.last?.tokensPerSecond ?? null),
+                )}
+              </td>
               <td>{formatSpeed(entry.averageTokensPerSecond)}</td>
               <td>{formatSpeed(entry.peakTokensPerSecond)}</td>
               <td>{formatMs(entry.averageTtftMs)}</td>
@@ -269,6 +278,8 @@ export function TokenSpeedMonitor({ paneId }: { paneId?: string | null }) {
     [snapshot, paneId],
   )
   const last = view.last
+  const live = view.streaming ? view.liveTokensPerSecond : null
+  const heroSpeed = live ?? last?.tokensPerSecond ?? null
 
   return (
     <section
@@ -293,10 +304,12 @@ export function TokenSpeedMonitor({ paneId }: { paneId?: string | null }) {
 
       <div className="tokspeed__hero">
         <span className="tokspeed__hero-label">
-          Velocidade da última resposta
+          {view.streaming
+            ? 'Velocidade agora'
+            : 'Velocidade da última resposta'}
         </span>
         <span className="tokspeed__hero-value">
-          {formatSpeed(last?.tokensPerSecond ?? null)}
+          {formatSpeed(heroSpeed)}
           <em className="tokspeed__unit">tok/s</em>
         </span>
         <span className="tokspeed__hero-detail">
@@ -366,16 +379,19 @@ export function TokenSpeedChip({ paneId }: { paneId?: string | null }) {
       : null
     : deriveTokenSpeedView(snapshot, null)
 
-  const speed = view?.last?.tokensPerSecond ?? null
   const streaming = view?.streaming ?? false
+  const live = streaming ? (view?.liveTokensPerSecond ?? null) : null
+  const speed = streaming ? live : (view?.last?.tokensPerSecond ?? null)
   const turns = view?.turns ?? 0
   const isIdle = !view?.last && !streaming
   const kind = streaming ? 'live' : view?.last ? 'last' : 'idle'
 
   const title = streaming
-    ? `Ao vivo: ${formatSpeed(speed)} tok/s nesta rodada`
+    ? live !== null
+      ? `Ao vivo: ${formatSpeed(live)} tok/s nesta rodada`
+      : 'Gerando… aguardando tokens suficientes para medir'
     : view?.last
-      ? `Última rodada: ${formatSpeed(speed)} tok/s · TTFT ${formatMs(view.last?.ttftMs ?? null)} · ${turns} rodada(s) — não é o agora`
+      ? `Última rodada: ${formatSpeed(speed)} tok/s · TTFT ${formatMs(view.last?.ttftMs ?? null)} · ${turns} rodada(s)`
       : 'Velocidade do modelo: aguardando resposta para medir tok/s e TTFT'
 
   return (

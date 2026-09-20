@@ -25,6 +25,8 @@ import {
  */
 
 const EMIT_THROTTLE_MS = 500
+/** Enquanto gera, reemite o velocímetro com o relógio atual (não só no chunk). */
+const LIVE_TICK_MS = 250
 /** Folga sobre o idle do medidor para fechar a rodada e emitir o número final. */
 const SETTLE_GRACE_MS = 120
 /** Teto do rascunho de prompt mantido em memória volátil por sessão. */
@@ -43,6 +45,7 @@ interface ScopeSpeedState {
   readonly meter: TokenSpeedMeter
   emitTimer: ReturnType<typeof setTimeout> | null
   settleTimer: ReturnType<typeof setTimeout> | null
+  liveTimer: ReturnType<typeof setInterval> | null
   dirty: boolean
 }
 
@@ -90,6 +93,7 @@ function stateFor(
     meter: new TokenSpeedMeter(),
     emitTimer: null,
     settleTimer: null,
+    liveTimer: null,
     dirty: false,
   }
   states.set(key, state)
@@ -99,6 +103,8 @@ function stateFor(
 function emitNow(state: ScopeSpeedState): void {
   state.dirty = false
   const snapshot = state.meter.snapshot(Date.now())
+  if (snapshot.streaming) startLiveTick(state)
+  else stopLiveTick(state)
   for (const listener of listeners) {
     try {
       listener(state.scope, snapshot)
@@ -106,6 +112,20 @@ function emitNow(state: ScopeSpeedState): void {
       console.warn('[token-speed] change listener threw:', error)
     }
   }
+}
+
+function startLiveTick(state: ScopeSpeedState): void {
+  if (state.liveTimer) return
+  state.liveTimer = setInterval(() => {
+    emitNow(state)
+  }, LIVE_TICK_MS)
+  state.liveTimer.unref?.()
+}
+
+function stopLiveTick(state: ScopeSpeedState): void {
+  if (!state.liveTimer) return
+  clearInterval(state.liveTimer)
+  state.liveTimer = null
 }
 
 function scheduleEmit(state: ScopeSpeedState): void {
@@ -306,6 +326,7 @@ export function resetTokenSpeedTrackerForTests(): void {
   for (const state of states.values()) {
     if (state.emitTimer) clearTimeout(state.emitTimer)
     if (state.settleTimer) clearTimeout(state.settleTimer)
+    stopLiveTick(state)
   }
   states.clear()
   bindings.clear()

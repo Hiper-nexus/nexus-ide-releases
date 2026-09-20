@@ -141,6 +141,39 @@ describe('TokenSpeedMeter — uma rodada de ponta a ponta', () => {
     expect(m.snapshot(2_500).streaming).toBe(false)
     expect(m.snapshot(2_500).turns).toBe(1)
   })
+
+  it('expõe tok/s ao vivo da rodada aberta (tokens / tempo desde o 1º token)', () => {
+    const m = meter()
+    m.noteSubmit('p1', 0, 'oi')
+    m.noteOutput('p1', 500, CHUNK)
+    const live = m.snapshot(900)
+    expect(live.streaming).toBe(true)
+    expect(live.turns).toBe(0)
+    expect(live.last).toBeNull()
+    // 10 tok em 400 ms = 25 tok/s. Relógio é `now`, não o último chunk.
+    expect(live.liveTokensPerSecond).toBe(25)
+    expect(live.panes[0]?.liveTokensPerSecond).toBe(25)
+    expect(live.models[0]?.liveTokensPerSecond).toBe(25)
+
+    m.noteOutput('p1', 1_000, CHUNK)
+    const later = m.snapshot(1_100)
+    expect(later.liveTokensPerSecond).toBe(33.3)
+
+    const closed = m.snapshot(2_500)
+    expect(closed.streaming).toBe(false)
+    expect(closed.liveTokensPerSecond).toBeNull()
+    expect(closed.last?.tokensPerSecond).toBe(40)
+  })
+
+  it('live fica null no TTFT e com poucos tokens — nunca inventa 0', () => {
+    const m = meter()
+    m.noteSubmit('p1', 0, 'oi')
+    expect(m.snapshot(400).liveTokensPerSecond).toBeNull()
+    expect(m.snapshot(400).streaming).toBe(false)
+    m.noteOutput('p1', 500, 'ab')
+    expect(m.snapshot(600).streaming).toBe(true)
+    expect(m.snapshot(600).liveTokensPerSecond).toBeNull()
+  })
 })
 
 describe('TokenSpeedMeter — honestidade da métrica', () => {

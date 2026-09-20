@@ -391,6 +391,10 @@ saber isto antes de mexer:
 - **Métrica ausente vai `null`, nunca 0.** Rodada curta demais, submit não
   observado ou zero token não sustentam um número; a UI imprime "—". Zero falso
   num medidor de velocidade é pior que métrica faltando.
+- **Ao vivo é a rodada ABERTA.** `liveTokensPerSecond` = tokens até agora /
+  tempo desde o 1º token (relógio `now`). O chip/painel usam isso enquanto
+  `streaming`; a última fechada só aparece em repouso. Sem 1º token (TTFT) o
+  live fica `null` — não recicla o número da rodada anterior.
 - **`flushIdle` NUNCA fecha rodada que ainda espera o 1º token.** O silêncio
   entre submit e 1º token É o TTFT, e passa dos segundos em qualquer modelo
   real — fechá-la destruiria a métrica principal. Só o próximo submit ou o fim

@@ -68,6 +68,7 @@ function paneSpeed(over: Partial<PaneTokenSpeed> = {}): PaneTokenSpeed {
     peakTokensPerSecond: 310,
     lastTtftMs: 5_200,
     streaming: false,
+    liveTokensPerSecond: null,
     history: [sample()],
     ...over,
   };
