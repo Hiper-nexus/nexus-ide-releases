@@ -93,11 +93,27 @@ func initial(for entry: RedlineEntry) -> String {
     return " \(first)"
 }
 
+func color(hex: UInt32) -> NSColor {
+    NSColor(srgbRed: CGFloat((hex >> 16) & 0xFF) / 255,
+            green: CGFloat((hex >> 8) & 0xFF) / 255,
+            blue: CGFloat(hex & 0xFF) / 255, alpha: 1)
+}
+
+/// O menu nativo segue a aparência do macOS e no claro os tons de sistema
+/// lavam sobre o branco (systemGreen ≈3:1 em texto pequeno). Resolvemos a
+/// paleta na montagem — o menu é reconstruído a cada abertura — e o KVO de
+/// effectiveAppearance repinta a faixa ao trocar de tema. No escuro ficam os
+/// tons do sistema; no claro, variantes escuras ≥4.5:1.
+func prefersDarkMenu() -> Bool {
+    NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+}
+
 func urgencyColor(forUsed used: Double?) -> NSColor {
-    guard let used else { return .systemGray }
-    if used >= 0.85 { return .systemRed }
-    if used >= 0.60 { return .systemOrange }
-    return .systemGreen
+    let dark = prefersDarkMenu()
+    guard let used else { return dark ? .systemGray : color(hex: 0x6E6E73) }
+    if used >= 0.85 { return dark ? .systemRed : color(hex: 0xB3382C) }
+    if used >= 0.60 { return dark ? .systemOrange : color(hex: 0x9A5B00) }
+    return dark ? .systemGreen : color(hex: 0x1B7A3D)
 }
 
 /// Melhor janela de um tipo ("hours" = 5h, "weekly" = semana).
@@ -196,6 +212,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refreshLaunchAtLoginState()
         reloadSnapshot()
         startWatching()
+        // Tema do macOS mudou → faixa repinta com a paleta da nova aparência
+        // (o menu em si já remonta a cada abertura, via menuNeedsUpdate).
+        _ = NSApp.observe(\.effectiveAppearance, options: []) { [weak self] _, _ in
+            DispatchQueue.main.async { self?.renderStatusItem() }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -382,10 +403,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let bar = bars(for: win.usedRatio)
             let detail = NSMenuItem()
             let label = win.label.padding(toLength: 10, withPad: " ", startingAt: 0)
-            detail.attributedTitle = NSAttributedString(
-                string: "   \(label) \(bar.text)  \(pct(win.usedRatio)) · reseta em \(countdown(win.resetsAt))",
+            // Barra no tom de urgência; número e reset em labelColor —
+            // a leitura não pode depender só da cor (doutrina de estado).
+            let line = NSMutableAttributedString(string: "   \(label) ")
+            line.append(NSAttributedString(
+                string: bar.text,
                 attributes: detailFont.merge([.foregroundColor: bar.color])
-            )
+            ))
+            line.append(NSAttributedString(
+                string: "  \(pct(win.usedRatio)) · reseta em \(countdown(win.resetsAt))",
+                attributes: detailFont.merge([.foregroundColor: NSColor.labelColor])
+            ))
+            detail.attributedTitle = line
             detail.isEnabled = false
             detail.indentationLevel = 1
             items.append(detail)

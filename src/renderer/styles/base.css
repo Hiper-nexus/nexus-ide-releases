@@ -329,6 +329,10 @@
   --status-dot-success: #228845;
   --status-dot-danger: #d02727;
   --status-dot-warning: #9a671d;
+
+  /* Perigo no claro: #ff6b4a lava no branco (~2.9:1); espelho do
+     ui-theme.ts (nexus-light). */
+  --danger: #c73a52;
 }
 
 /* O terceiro nível de texto é calculado POR TEMA. Cada valor fica ≥4.5:1
