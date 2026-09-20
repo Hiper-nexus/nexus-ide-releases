@@ -430,6 +430,47 @@ describe('F-567 checkout provider homes', () => {
     expect(prepareCheckoutProviderHome('agy', options).stateHome).toBe(home.stateHome);
   });
 
+  it('normalizes AGY skill aliases on respawn without changing auth or conversations', () => {
+    const root = tempHome();
+    const sourceHome = path.join(root, 'native');
+    fs.mkdirSync(path.join(sourceHome, 'config/skills'), { recursive: true });
+    fs.mkdirSync(path.join(sourceHome, 'antigravity-cli/skills'), { recursive: true });
+    fs.writeFileSync(path.join(sourceHome, 'config/skills/SKILL.md'), 'config skill');
+    fs.writeFileSync(path.join(sourceHome, 'oauth_creds.json'), 'account A');
+    const options = { userDataPath: path.join(root, 'userData'), checkoutId: 'checkout-aliases', sourceHome };
+    const first = prepareCheckoutProviderHome('agy', options);
+    const profile = first.env.GEMINI_CLI_HOME;
+    const configSkills = path.join(profile, 'config/skills');
+    const cliSkills = path.join(profile, 'antigravity-cli/skills');
+    fs.unlinkSync(configSkills);
+    fs.symlinkSync(path.join(sourceHome, 'antigravity-cli/skills'), configSkills, 'junction');
+    fs.unlinkSync(cliSkills);
+    fs.symlinkSync(configSkills, cliSkills, 'junction');
+    const conversation = path.join(profile, 'antigravity-cli/conversations/keep.txt');
+    fs.writeFileSync(conversation, 'existing conversation');
+
+    expect(prepareCheckoutProviderHome('agy', options).stateHome).toBe(first.stateHome);
+    expect(fs.readlinkSync(configSkills)).toBe(path.join(sourceHome, 'config/skills'));
+    expect(fs.readlinkSync(cliSkills)).toBe(path.join(sourceHome, 'antigravity-cli/skills'));
+    expect(fs.readFileSync(path.join(profile, 'config/skills/SKILL.md'), 'utf8')).toBe('config skill');
+    expect(fs.readFileSync(path.join(sourceHome, 'oauth_creds.json'), 'utf8')).toBe('account A');
+    expect(fs.readFileSync(conversation, 'utf8')).toBe('existing conversation');
+  });
+
+  it('rejects AGY skills pointing at another profile and preserves that profile', () => {
+    const root = tempHome();
+    const options = { userDataPath: path.join(root, 'userData'), checkoutId: 'checkout-skills', sourceHome: path.join(root, 'account-a') };
+    const first = prepareCheckoutProviderHome('agy', options);
+    const foreign = path.join(root, 'account-b/antigravity-cli/skills');
+    fs.mkdirSync(foreign, { recursive: true });
+    fs.writeFileSync(path.join(foreign, 'SKILL.md'), 'other account');
+    const target = path.join(first.env.GEMINI_CLI_HOME, 'config/skills');
+    fs.unlinkSync(target);
+    fs.symlinkSync(foreign, target, 'junction');
+    expect(() => prepareCheckoutProviderHome('agy', options)).toThrow(/skill link/);
+    expect(fs.readFileSync(path.join(foreign, 'SKILL.md'), 'utf8')).toBe('other account');
+  });
+
   it('refreshes a Windows-style credential copy from the selected account on respawn', () => {
     const root = tempHome();
     const sourceHome = path.join(root, 'native');

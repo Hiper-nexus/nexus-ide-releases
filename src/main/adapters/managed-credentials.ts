@@ -745,13 +745,27 @@ export function prepareCheckoutProviderHome(
   if (kind === 'agy') {
     // Skill mirroring may populate these AFTER this helper, during MCP decoration.
     // Directory links may start dangling; conversations never use these links.
-    for (const relative of ['config/skills', 'antigravity/skills', 'antigravity-cli/skills', 'antigravity-ide/skills']) {
+    const skillAliases = ['config/skills', 'antigravity/skills', 'antigravity-cli/skills', 'antigravity-ide/skills'];
+    const allowedSkillTargets = new Set(skillAliases.flatMap((relative) => [
+      path.toNamespacedPath(path.join(sourceHome, relative)),
+      path.toNamespacedPath(path.join(providerHome, relative)),
+    ]));
+    for (const relative of skillAliases) {
       const source = path.join(sourceHome, relative);
       const target = path.join(providerHome, relative);
       const entry = fs.lstatSync(target, { throwIfNoEntry: false });
-      if (!entry) fs.symlinkSync(source, target, 'junction');
-      else if (!entry.isSymbolicLink() || path.toNamespacedPath(path.resolve(path.dirname(target), fs.readlinkSync(target))) !== path.toNamespacedPath(source)) {
-        throw new Error('AGY skill link points outside its profile source');
+      if (entry) {
+        if (!entry.isSymbolicLink()) throw new Error('AGY skill link points outside its profile source');
+        const linked = path.toNamespacedPath(path.resolve(path.dirname(target), fs.readlinkSync(target)));
+        if (linked !== path.toNamespacedPath(source)) {
+          if (!allowedSkillTargets.has(linked)) throw new Error('AGY skill link points outside its profile source');
+          // The CLI/mirror can consolidate its known skill aliases. Restore
+          // Main's link on respawn, without following it or touching its target.
+          fs.unlinkSync(target);
+          fs.symlinkSync(source, target, 'junction');
+        }
+      } else {
+        fs.symlinkSync(source, target, 'junction');
       }
       sharedReadPaths.push(source);
     }
