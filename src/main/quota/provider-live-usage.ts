@@ -17,6 +17,10 @@ import {
   type CodexChatGptAuth,
 } from './codex-usage';
 import { fetchGrokUsageWindows } from './grok-usage';
+import {
+  fetchDevinUsageWindows,
+  resolveDevinApiKey,
+} from './devin-usage';
 import { fetchAgyUsageWindows, type GeminiOauthCreds } from './agy-usage';
 import {
   fetchKimiCodingUsageWindows,
@@ -68,6 +72,10 @@ export interface LiveUsageAuthResolvers {
   resolveGrokTokenCandidates?: (
     accountId?: string,
   ) => string[] | Promise<string[]>;
+  /** Sessão do Devin CLI (credentials.toml); default lê o ficheiro. */
+  resolveDevinApiKey?: (
+    accountId?: string,
+  ) => string | null | Promise<string | null>;
   resolveKimiToken?: (
     accountId?: string,
   ) => string | null | Promise<string | null>;
@@ -215,6 +223,14 @@ export async function fetchLiveProviderWindows(
         if (windows && windows.length > 0) return windows;
       }
       return null;
+    }
+    case 'devin': {
+      const key = deps.resolveDevinApiKey
+        ? await Promise.resolve(deps.resolveDevinApiKey(accountId))
+        : resolveDevinApiKey();
+      return key
+        ? fetchDevinUsageWindows(key, { fetchImpl, now })
+        : null;
     }
     case 'kimi': {
       // 1) OAuth from ~/.kimi-code (same as `kimi login`) — refresh if expired.

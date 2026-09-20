@@ -166,7 +166,7 @@ const DEVIN_CREDENTIAL_KEYS = new Set([
   'token',
 ]);
 
-function devinTomlCredentialValue(blob: string): string | null {
+export function devinTomlCredentialValue(blob: string): string | null {
   for (const rawLine of blob.split(/\r?\n/u)) {
     const line = rawLine.trim();
     if (!line || line.startsWith('#') || line.startsWith('[')) continue;

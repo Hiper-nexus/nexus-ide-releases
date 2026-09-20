@@ -256,6 +256,30 @@ describe('fetchLiveProviderWindows', () => {
     expect(cliUsage).not.toHaveBeenCalled();
   });
 
+  it('devin: GetUserStatus via credentials.toml → janelas reais', async () => {
+    const LIVE = {
+      userStatus: {
+        planStatus: {
+          dailyQuotaRemainingPercent: '95.5',
+          dailyQuotaResetAtUnix: '1757563200',
+          weeklyQuotaRemainingPercent: '80',
+          weeklyQuotaResetAtUnix: '1757995200',
+        },
+      },
+    };
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => LIVE,
+      text: async () => JSON.stringify(LIVE),
+    }));
+    const w = await fetchLiveProviderWindows('devin', undefined, {
+      resolveDevinApiKey: () => 'wc-key',
+      fetchImpl: fetchImpl as never,
+    });
+    expect(w?.find((x) => x.kind === 'weekly')?.usedRatio).toBeCloseTo(0.2, 4);
+  });
+
   it('returns null when resolver missing or token null', async () => {
     expect(await fetchLiveProviderWindows('claude', undefined, {})).toBeNull();
     expect(
