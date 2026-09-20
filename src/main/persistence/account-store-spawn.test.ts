@@ -4,6 +4,7 @@ import type { Db } from './db';
 
 const accountDeps = vi.hoisted(() => ({
   secrets: new Map<string, string>(),
+  managedClaude: new Map<string, string>(),
   deleteFailures: new Set<string>(),
   activeEmail: 'operator@example.test' as string | null,
   activeCredential: JSON.stringify({
@@ -122,6 +123,19 @@ vi.mock('../adapters/managed-credentials', async () => {
   };
 });
 
+vi.mock('../adapters/managed-claude-auth', () => ({
+  hasManagedClaudeAuth: (id: string) => accountDeps.managedClaude.has(id),
+  readManagedClaudeAuth: (id: string) => accountDeps.managedClaude.get(id) ?? null,
+  readManagedClaudeAuthAsync: async (id: string) => accountDeps.managedClaude.get(id) ?? null,
+  removeManagedClaudeAuth: (id: string) => accountDeps.managedClaude.delete(id),
+  freshestClaudeCredential: (...blobs: Array<string | null>) => blobs.find(Boolean) ?? null,
+  materializeManagedClaudeAuth: (id: string, blob: string, options?: { replace?: boolean }) => {
+    if (!accountDeps.managedClaude.has(id) || options?.replace) accountDeps.managedClaude.set(id, blob);
+    return { blob: accountDeps.managedClaude.get(id)!, directory: `/tmp/claude/${id}/auth`,
+      env: { CLAUDE_SECURESTORAGE_CONFIG_DIR: `/tmp/claude/${id}/auth` } };
+  },
+}));
+
 import {
   addAccount,
   addActiveClaudeAccount,
@@ -164,6 +178,7 @@ describe('prepareAccountForSpawn', () => {
     openDb = makeDb();
     initAccountStore(openDb);
     accountDeps.secrets.clear();
+    accountDeps.managedClaude.clear();
     accountDeps.deleteFailures.clear();
     accountDeps.activeEmail = 'operator@example.test';
     accountDeps.writeActiveCredential.mockReset();
@@ -287,26 +302,19 @@ describe('prepareAccountForSpawn', () => {
     });
   });
 
-  it('conta que É o login nativo do Keychain spawna SEM token env (linhagem única)', () => {
-    // Regressão de campo: o env era um snapshot do vault que expirava em
-    // horas e o CLI não refresca token de env → "401 OAuth access token has
-    // expired" no respawn de failover. A conta nativa usa o Keychain, que o
-    // próprio CLI mantém fresco.
+  it('conta gerenciada recebe armazenamento renovável sem token fixo nem escrita no Keychain nativo', () => {
     const account = addActiveClaudeAccount('Claude Max');
     expect(account).not.toBeNull();
     expect(account?.email).toBe('operator@example.test');
 
     const result = prepareAccountForSpawn('claude', account!.id);
 
-    expect(result).toMatchObject({ ok: true, account, apiKey: null, authEnv: {} });
+    expect(result).toMatchObject({ ok: true, account, apiKey: null,
+      authEnv: { CLAUDE_SECURESTORAGE_CONFIG_DIR: `/tmp/claude/${account!.id}/auth` } });
     expect(accountDeps.writeActiveCredential).not.toHaveBeenCalled();
   });
 
-  it('a MESMA conta nativa recebe token env quando o pane roda em HOME isolado', () => {
-    // "Linhagem compartilhada" só existe no HOME real. Um pane gated
-    // (orquestrador) roda em HOME efêmero, onde o CLI NÃO enxerga o login do
-    // Keychain: sem token env ele abre "Not logged in · Run /login" com a
-    // máquina autenticada — verificado na mão. Ali o snapshot é a única ponte.
+  it('HOME isolado mantém o mesmo diretório de autenticação renovável da conta', () => {
     const account = addActiveClaudeAccount('Claude Max');
     expect(account).not.toBeNull();
 
@@ -318,16 +326,17 @@ describe('prepareAccountForSpawn', () => {
       ok: true,
       account,
       apiKey: null,
-      authEnv: { CLAUDE_CODE_OAUTH_TOKEN: 'claude-access' },
+      authEnv: { CLAUDE_SECURESTORAGE_CONFIG_DIR: `/tmp/claude/${account!.id}/auth` },
     });
     expect(accountDeps.writeActiveCredential).not.toHaveBeenCalled();
   });
 
-  it('conta SECUNDÁRIA recebe OAuth process-scoped sem trocar o slot do keychain', () => {
+  it('conta SECUNDÁRIA recebe perfil renovável sem trocar o slot nativo do keychain', () => {
     const account = addActiveClaudeAccount('Claude Max');
     expect(account).not.toBeNull();
     // O login nativo mudou para outra conta — a do vault vira secundária.
     accountDeps.activeEmail = 'someone-else@example.test';
+    accountDeps.activeCredential = oauthCredential('other-native');
 
     const result = prepareAccountForSpawn('claude', account!.id);
 
@@ -336,13 +345,13 @@ describe('prepareAccountForSpawn', () => {
       account,
       apiKey: null,
       authEnv: {
-        CLAUDE_CODE_OAUTH_TOKEN: 'claude-access',
-        CLAUDE_CODE_OAUTH_SCOPES: 'user:profile user:inference',
+        CLAUDE_SECURESTORAGE_CONFIG_DIR: `/tmp/claude/${account!.id}/auth`,
       },
     });
     // Refresh token nunca sai do vault para o env do pane (ver claudeAuthEnvFromBlob).
     if (!result.ok) throw new Error('expected ok spawn preparation');
     expect(result.authEnv).not.toHaveProperty('CLAUDE_CODE_OAUTH_REFRESH_TOKEN');
+    expect(result.authEnv).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN');
     expect(accountDeps.writeActiveCredential).not.toHaveBeenCalled();
   });
 
@@ -358,18 +367,21 @@ describe('prepareAccountForSpawn', () => {
     expect(work!.id).not.toBe(personal!.id);
     // Nenhuma das duas é o login nativo atual → ambas process-scoped.
     accountDeps.activeEmail = 'someone-else@example.test';
+    accountDeps.activeCredential = oauthCredential('other-native');
 
     const personalSpawn = prepareAccountForSpawn('claude', personal!.id);
     const workSpawn = prepareAccountForSpawn('claude', work!.id);
 
     expect(personalSpawn).toMatchObject({
       ok: true,
-      authEnv: { CLAUDE_CODE_OAUTH_TOKEN: 'oauth-personal' },
+      authEnv: { CLAUDE_SECURESTORAGE_CONFIG_DIR: `/tmp/claude/${personal!.id}/auth` },
     });
     expect(workSpawn).toMatchObject({
       ok: true,
-      authEnv: { CLAUDE_CODE_OAUTH_TOKEN: 'oauth-work' },
+      authEnv: { CLAUDE_SECURESTORAGE_CONFIG_DIR: `/tmp/claude/${work!.id}/auth` },
     });
+    expect(accountDeps.managedClaude.get(personal!.id)).toBe(oauthCredential('oauth-personal'));
+    expect(accountDeps.managedClaude.get(work!.id)).toBe(oauthCredential('oauth-work'));
     expect(accountDeps.writeActiveCredential).not.toHaveBeenCalled();
   });
 

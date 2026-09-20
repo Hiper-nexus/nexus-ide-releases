@@ -272,6 +272,8 @@ export interface ProviderSpawnOverrides {
   suppressEnv: string[];
   /** Recibo da escolha de conta (pinada/regra/ativa/nativa/legada). */
   accountChoice?: AccountChoiceReceipt;
+  /** Main-only account binding for the physical session; never part of the receipt. */
+  selectedAccountId?: string;
 }
 
 /** Key/token env vars an adapter could pick up from the parent environment. */
@@ -704,6 +706,7 @@ function buildProviderSpawnOverrides(
         : null,
     extraArgs: [...controlArgsFor(adapterId, perSpawn.effort), ...cfg.extraArgs],
     accountChoice: receipt,
+    ...(account ? { selectedAccountId: account.id } : {}),
   };
 
   if (options.nativeAuthAttempt) {
@@ -712,14 +715,22 @@ function buildProviderSpawnOverrides(
     return { ...base, keyEnv: {}, suppressEnv: [] };
   }
 
-  // A per-pane account is exact. Claude is deliberately excluded from the
-  // legacy implicit-active-account path: restoring an old OAuth snapshot can
-  // overwrite the CLI's current native session and trigger an endless login
-  // loop. Its vault is used only when the user explicitly pins that account.
-  // `account`/`receipt` já vieram de resolveSpawnAccountChoice acima.
+  // Both a pin and an automatic selection must use the chosen account's
+  // own credential. Claude preparation must never switch the global Keychain.
   if (account) {
     if (account.mode === 'subscription') {
-      // Pane-pinned: process-scoped env (Claude OAuth token or CODEX_HOME/…).
+      if (adapterId === 'claude' && !preparedAccount) {
+        const selected = prepareAccountForSpawn(adapterId, account.id, undefined, {
+          isolatedHome: perSpawn.isolatedHome === true,
+        });
+        if (!selected.ok) throw new Error(selected.error);
+        return {
+          ...base,
+          keyEnv: { ...selected.authEnv },
+          suppressEnv: subscriptionSuppressEnvVars(adapterId),
+        };
+      }
+      // Pane-pinned: account-scoped auth profile (or API credential).
       if (preparedAccount) {
         return {
           ...base,
@@ -732,16 +743,8 @@ function buildProviderSpawnOverrides(
           `selected subscription "${account.label}" could not be activated`,
         );
       }
-      // Unpinned active path: Claude via linhagem nativa (token env só no HOME
-      // efêmero); file providers via managed home.
+      // Other file providers use the selected account's managed home.
       // Fail closed for file-auth: empty keyEnv would silently use the system login.
-      if (adapterId === 'claude') {
-        return {
-          ...base,
-          keyEnv: nativeClaudeSubscriptionEnv(perSpawn.isolatedHome === true),
-          suppressEnv: subscriptionSuppressEnvVars(adapterId),
-        };
-      }
       const keyEnv = fileSubscriptionAuthEnv(account);
       if (!keyEnv || Object.keys(keyEnv).length === 0) {
         throw new Error(
@@ -854,7 +857,9 @@ function prepareProviderSpawnWithDecision(
     !perSpawn.accountId &&
     spawnDecision?.strategy === 'login-needed' &&
     subscriptionAuthStatusIsUnknown(adapterId);
-  const readiness = perSpawn.accountId || nativeAuthAttempt
+  const managedAccountSelection = !perSpawn.accountId &&
+    adapterId === 'claude' && listAccounts(adapterId).length > 0;
+  const readiness = perSpawn.accountId || nativeAuthAttempt || managedAccountSelection
     ? infrastructure
     : resolveProviderReadiness(adapterId, perSpawn.model, {
         decision: spawnDecision,
@@ -1041,11 +1046,12 @@ function resolveSpawnAccountChoice(
       },
     };
   }
+  const hasManagedAccounts = listAccounts(adapterId).length > 0;
   const nativeLineage =
-    adapterId === 'claude' ||
+    (adapterId === 'claude' && !hasManagedAccounts) ||
     (adapterId === 'agy' && options.decision?.strategy === 'subscription') ||
     credentiallessOpenCode;
-  if (!nativeLineage && listAccounts(adapterId).length > 0) {
+  if (!nativeLineage && hasManagedAccounts) {
     return pickUnpinnedAccountWithHeadroom(adapterId);
   }
   return {

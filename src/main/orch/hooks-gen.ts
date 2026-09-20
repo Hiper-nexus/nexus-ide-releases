@@ -286,6 +286,8 @@ export interface EphemeralHomeOptions {
    * terceiro. Default fail-closed: sem projeção.
    */
   readonly carryNativeClaudeAuth?: boolean;
+  /** Stable account-owned auth store; never project the native login into this pane. */
+  readonly managedClaudeAuthDir?: string;
   /**
    * cwd do pane. Usado só para carregar a confiança de pasta que o usuário já
    * concedeu no HOME real ou a confiança efêmera de uma missão selada.
@@ -540,6 +542,7 @@ export function prepareEphemeralHome(
   mcpConfig: object,
   options: EphemeralHomeOptions = {},
 ): EphemeralHome {
+  const carryNativeClaudeAuth = options.carryNativeClaudeAuth === true && !options.managedClaudeAuthDir;
   const dir = path.join(
     os.homedir(),
     '.nexus',
@@ -574,7 +577,10 @@ export function prepareEphemeralHome(
   // User settings must not redirect the private HOME back to native conversations.
   if (nativeSettings.env) {
     const settingsEnv = { ...objectValue(nativeSettings.env) };
-    for (const key of ['HOME', 'USERPROFILE', 'CLAUDE_CONFIG_DIR']) delete settingsEnv[key];
+    for (const key of ['HOME', 'USERPROFILE', 'CLAUDE_CONFIG_DIR', 'CLAUDE_SECURESTORAGE_CONFIG_DIR']) delete settingsEnv[key];
+    if (options.managedClaudeAuthDir) {
+      for (const key of ['CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_OAUTH_REFRESH_TOKEN', 'CLAUDE_CODE_OAUTH_SCOPES', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN']) delete settingsEnv[key];
+    }
     nativeSettings.env = settingsEnv;
   }
   if (options.inheritNativeProfile) {
@@ -637,7 +643,7 @@ export function prepareEphemeralHome(
   // "logado" pelo oauthAccount de ~/.claude.json — o segredo do Keychain
   // sozinho não basta, então um stub vazio força /login com a máquina
   // autenticada. Third-party family (GLM/LongCat) nunca recebe a identidade.
-  const nativeAuth = options.carryNativeClaudeAuth
+  const nativeAuth = carryNativeClaudeAuth
     ? readNativeClaudeAuthIdentity(os.homedir())
     : {};
   // Uma missão main-owned, selada e já aprovada pode projetar trust para o cwd
@@ -674,7 +680,7 @@ export function prepareEphemeralHome(
     }),
     { mode: 0o600 },
   );
-  if (options.carryNativeClaudeAuth) {
+  if (carryNativeClaudeAuth) {
     // Linux/Windows mantêm o segredo OAuth em arquivo; symlink faz o refresh
     // de token dentro do pane escrever direto no perfil real.
     const realCredentials = path.join(

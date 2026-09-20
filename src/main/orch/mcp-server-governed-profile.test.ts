@@ -250,6 +250,29 @@ afterEach(() => {
 });
 
 describe('mcp-server governed CLI profile wiring', () => {
+  it('keeps managed Claude auth separate from the native login and disposable conversation home', () => {
+    const home = path.join(tempRoot(), 'home');
+    const cwd = path.join(home, 'workspace');
+    fs.mkdirSync(cwd, { recursive: true });
+    vi.stubEnv('HOME', home);
+    const authDir = path.join(home, '.nexus/managed-accounts/claude/account-b/auth');
+    write(path.join(authDir, '.credentials.json'), '{"claudeAiOauth":{"accessToken":"synthetic-b"}}');
+    write(path.join(home, '.claude.json'), '{"oauthAccount":{"emailAddress":"native-a@example.test"}}');
+    write(path.join(home, '.claude/.credentials.json'), 'native-fixture');
+    const decoration = prepareAgentSpawnDecoration(
+      adapter('claude'), { kind: 'cli-agent', cols: 80, rows: 24 }, authority(cwd, true),
+      { CLAUDE_SECURESTORAGE_CONFIG_DIR: authDir, CLAUDE_CODE_OAUTH_TOKEN: 'stale-env-fixture' },
+    )!;
+    expect(decoration.env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe(authDir);
+    expect(decoration.envRemove).toContain('CLAUDE_CODE_OAUTH_TOKEN');
+    expect(decoration.env.HOME).not.toBe(authDir);
+    expect(decoration.providerStateWritePaths).toContain(authDir);
+    expect(decoration.providerStateReadPaths).not.toContain(path.join(home, '.claude/.credentials.json'));
+    expect(JSON.parse(fs.readFileSync(path.join(decoration.env.HOME, '.claude.json'), 'utf8')).oauthAccount).toBeUndefined();
+    decoration.onSpawnFailed?.();
+    expect(fs.existsSync(authDir)).toBe(true);
+  });
+
   it.each([false, true])('binds OpenCode data and exact auth grants to Main checkout identity (governed=%s)', (governed) => {
     const home = path.join(tempRoot(), 'home');
     const cwd = path.join(home, 'workspace');
@@ -337,7 +360,7 @@ describe('mcp-server governed CLI profile wiring', () => {
       // blanked — "CLAUDE_CONFIG_DIR=" resolves the binary's config dir to
       // "" and the file-backed credential store goes cwd-relative.
       expect(decoration.env.CLAUDE_CONFIG_DIR).toBeUndefined();
-      expect(decoration.envRemove).toEqual(['CLAUDE_CONFIG_DIR']);
+      expect(decoration.envRemove).toEqual(['CLAUDE_SECURESTORAGE_CONFIG_DIR', 'CLAUDE_CONFIG_DIR']);
     } finally { decoration.onSpawnFailed?.(); }
   });
 

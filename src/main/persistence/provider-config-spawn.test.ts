@@ -780,38 +780,31 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
     expect(spawnDeps.ensureSubscriptionActive).not.toHaveBeenCalled();
   });
 
-  it('keeps the native Claude session authoritative for unpinned panes', () => {
-    spawnDeps.listAccounts.mockReturnValueOnce([{
-      id: 'acct-stale',
-      adapterId: 'claude',
-      label: 'Stale Claude Max',
-      mode: 'subscription',
-      upstream: 'anthropic',
-      createdAt: 1,
-    }]);
-    spawnDeps.getActiveAccount.mockReturnValueOnce({
-      id: 'acct-stale',
-      adapterId: 'claude',
-      label: 'Stale Claude Max',
-      mode: 'subscription',
-      upstream: 'anthropic',
-      createdAt: 1,
-    });
+  it('uses the selected managed Claude account without falling back to the native login', () => {
+    const account = { id: 'acct-b', adapterId: 'claude', label: 'Conta B', mode: 'subscription', upstream: 'anthropic', createdAt: 1 };
+    spawnDeps.listAccounts.mockReturnValue([account]);
+    spawnDeps.getActiveAccount.mockReturnValue(account);
+    spawnDeps.pickAvailableForFailover.mockReturnValue({ account });
+    spawnDeps.prepareAccount.mockReturnValueOnce({ ok: true, account,
+      authEnv: { CLAUDE_SECURESTORAGE_CONFIG_DIR: '/fixture/accounts/claude/b' } });
 
-    const result = prepareProviderSpawn('claude');
-
-    expect(result).toMatchObject({
-      ok: true,
-      overrides: {
-        // HOME real: nenhum token env. O CLI usa e RENOVA a linhagem nativa;
-        // um snapshot estático com precedência sobre o login expira em horas
-        // (401 no respawn de failover).
-        keyEnv: {},
-        suppressEnv: ['ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL'],
+    expect(prepareProviderSpawn('claude')).toMatchObject({
+      ok: true, overrides: { selectedAccountId: 'acct-b',
+        keyEnv: { CLAUDE_SECURESTORAGE_CONFIG_DIR: '/fixture/accounts/claude/b' },
       },
     });
-    expect(spawnDeps.getActiveAccount).not.toHaveBeenCalled();
-    expect(spawnDeps.ensureSubscriptionActive).not.toHaveBeenCalled();
+    expect(spawnDeps.prepareAccount).toHaveBeenCalledWith('claude', 'acct-b', undefined, { isolatedHome: false });
+    expect(spawnDeps.activeClaudeAuthEnv).not.toHaveBeenCalled();
+  });
+
+  it('fails visibly when the selected Claude account cannot be prepared instead of opening another login', () => {
+    const account = { id: 'acct-b', adapterId: 'claude', label: 'Conta B', mode: 'subscription', upstream: 'anthropic', createdAt: 1 };
+    spawnDeps.listAccounts.mockReturnValue([account]);
+    spawnDeps.getActiveAccount.mockReturnValue(account);
+    spawnDeps.pickAvailableForFailover.mockReturnValue({ account });
+    spawnDeps.prepareAccount.mockReturnValueOnce({ ok: false, error: 'Conta B precisa de login' });
+    expect(prepareProviderSpawn('claude')).toEqual({ ok: false, error: 'Conta B precisa de login' });
+    expect(spawnDeps.activeClaudeAuthEnv).not.toHaveBeenCalled();
   });
 
   it('does not decrypt the global vault when native subscription auth wins', () => {
@@ -983,6 +976,7 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
         defaultModel: null,
         extraArgs: [],
         keyEnv: { ANTHROPIC_API_KEY: 'sk-exact-selected' },
+        selectedAccountId: 'acct-selected',
         suppressEnv: [],
         accountChoice: expect.objectContaining({
           source: 'pinned',
@@ -1023,6 +1017,7 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
           CLAUDE_CODE_OAUTH_TOKEN: 'oauth-account-max',
           CLAUDE_CODE_OAUTH_REFRESH_TOKEN: 'refresh-account-max',
         },
+        selectedAccountId: 'acct-max',
         suppressEnv: ['ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL'],
         accountChoice: expect.objectContaining({
           source: 'pinned',

@@ -24,6 +24,7 @@ const deps = vi.hoisted(() => ({
   failSecretWrites: false,
   activeEmail: null as string | null,
   keychain: null as string | null,
+  managedProfiles: new Map<string, string>(),
   needsRefresh: vi.fn(
     (_blob: string, _now: number): { refreshToken: string } | null => null,
   ),
@@ -110,6 +111,20 @@ vi.mock('../adapters/managed-credentials', async () => {
   };
 });
 
+vi.mock('../adapters/managed-claude-auth', () => ({
+  CLAUDE_MANAGED_AUTH_ENV: 'CLAUDE_SECURESTORAGE_CONFIG_DIR',
+  hasManagedClaudeAuth: (id: string) => deps.managedProfiles.has(id),
+  readManagedClaudeAuth: (id: string) => deps.managedProfiles.get(id) ?? null,
+  readManagedClaudeAuthAsync: async (id: string) => deps.managedProfiles.get(id) ?? null,
+  removeManagedClaudeAuth: (id: string) => deps.managedProfiles.delete(id),
+  freshestClaudeCredential: (...blobs: Array<string | null>) => blobs.find(Boolean) ?? null,
+  materializeManagedClaudeAuth: (id: string, blob: string, options?: { replace?: boolean }) => {
+    if (!deps.managedProfiles.has(id) || options?.replace) deps.managedProfiles.set(id, blob);
+    return { blob: deps.managedProfiles.get(id)!, directory: `/tmp/claude/${id}/auth`,
+      env: { CLAUDE_SECURESTORAGE_CONFIG_DIR: `/tmp/claude/${id}/auth` } };
+  },
+}));
+
 import {
   accountHasFailoverCredential,
   activateAccount,
@@ -126,6 +141,7 @@ import {
   listAccountInfos,
   onAccountsChange,
   prepareAccountForSpawn,
+  removeAccount,
   setCooldown,
   startClaudeSubscriptionFreshness,
 } from './account-store';
@@ -171,6 +187,7 @@ beforeEach(() => {
   deps.keychainWrites.length = 0;
   deps.activeEmail = null;
   deps.keychain = null;
+  deps.managedProfiles.clear();
   deps.needsRefresh.mockReset();
   deps.needsRefresh.mockReturnValue(null);
   deps.refreshBlob.mockReset();
@@ -188,7 +205,106 @@ afterEach(() => {
 });
 
 describe('read-back Keychain → vault (linhagem Claude nativa)', () => {
-  it('activateAccount persiste a conta que SAI com o valor fresco ANTES de escrever a nova', () => {
+  it('prepara perfil renovável por conta e persiste a renovação da CLI sem outro refresh HTTP', async () => {
+    const account = addClaudeAccount('Conta B', 'b@example.test', oauthBlob('b-old'));
+    deps.activeEmail = 'native@example.test';
+    deps.keychain = oauthBlob('native');
+    const prepared = prepareAccountForSpawn('claude', account.id);
+    expect(prepared).toMatchObject({ ok: true, authEnv: {
+      CLAUDE_SECURESTORAGE_CONFIG_DIR: `/tmp/claude/${account.id}/auth`,
+    } });
+    if (!prepared.ok) throw new Error('spawn must be prepared');
+    expect(prepared.authEnv).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN');
+    deps.managedProfiles.set(account.id, oauthBlob('b-renewed-by-cli'));
+    deps.needsRefresh.mockReturnValue({ refreshToken: 'old' });
+    await ensureFreshClaudeSubscription(account.id);
+    expect(deps.secrets.get(`acctcred:${account.id}`)).toBe(oauthBlob('b-renewed-by-cli'));
+    expect(deps.refreshBlob).not.toHaveBeenCalled();
+  });
+
+  it('read-back assíncrono não recria a credencial de uma conta removida', async () => {
+    const account = addClaudeAccount('Conta B', 'b@example.test', oauthBlob('old'));
+    prepareAccountForSpawn('claude', account.id);
+    deps.managedProfiles.set(account.id, oauthBlob('new'));
+    const pending = ensureFreshClaudeSubscription(account.id);
+    removeAccount(account.id);
+    await pending;
+    expect(deps.secrets.has(`acctcred:${account.id}`)).toBe(false);
+  });
+  it('read-back gerenciado não reescreve o cofre quando a credencial existe mas o decrypt falhou', async () => {
+    const account = addClaudeAccount('Conta B', 'b@example.test', oauthBlob('old'));
+    prepareAccountForSpawn('claude', account.id);
+    deps.managedProfiles.set(account.id, oauthBlob('renewed'));
+    deps.secrets.set(`acctcred:${account.id}`, null as unknown as string);
+    deps.calls.length = 0;
+    await ensureFreshClaudeSubscription(account.id);
+    expect(deps.calls).not.toContain(`setSecret:acctcred:${account.id}`);
+  });
+  it('seleciona B e volta a A sem substituir o login nativo nem perder snapshots', () => {
+    const a = addClaudeAccount('Conta A', 'a@example.test', oauthBlob('a-live'));
+    const b = addClaudeAccount('Conta B', 'b@example.test', oauthBlob('b-live'));
+    deps.activeEmail = 'a@example.test';
+    deps.keychain = oauthBlob('a-live');
+
+    expect(activateAccount(b.id)).toBe(true);
+    expect(deps.keychain).toBe(oauthBlob('a-live'));
+    expect(prepareAccountForSpawn('claude', b.id)).toMatchObject({
+      ok: true,
+      authEnv: { CLAUDE_SECURESTORAGE_CONFIG_DIR: `/tmp/claude/${b.id}/auth` },
+    });
+    expect(activateAccount(a.id)).toBe(true);
+    expect(deps.secrets.get(`acctcred:${a.id}`)).toBe(oauthBlob('a-live'));
+    expect(deps.secrets.get(`acctcred:${b.id}`)).toBe(oauthBlob('b-live'));
+    expect(deps.keychainWrites).toEqual([]);
+  });
+
+  it('token conhecido de B vence e-mail antigo de A ao preparar e consultar A', () => {
+    const a = addClaudeAccount('Conta A', 'a@example.test', oauthBlob('a-live'));
+    const b = addClaudeAccount('Conta B', 'b@example.test', oauthBlob('b-live'));
+    // Estado que uma versão antiga deixava ao trocar só o Keychain.
+    deps.activeEmail = 'a@example.test';
+    deps.keychain = oauthBlob('b-live');
+
+    expect(prepareAccountForSpawn('claude', a.id, undefined, { isolatedHome: true }))
+      .toMatchObject({ ok: true, authEnv: { CLAUDE_SECURESTORAGE_CONFIG_DIR: `/tmp/claude/${a.id}/auth` } });
+    expect(prepareAccountForSpawn('claude', a.id))
+      .toMatchObject({ ok: true, authEnv: { CLAUDE_SECURESTORAGE_CONFIG_DIR: `/tmp/claude/${a.id}/auth` } });
+    expect(deps.managedProfiles.get(a.id)).toBe(oauthBlob('a-live'));
+    expect(deps.secrets.get(`acctcred:${a.id}`)).toBe(oauthBlob('a-live'));
+    expect(deps.secrets.get(`acctcred:${b.id}`)).toBe(oauthBlob('b-live'));
+  });
+
+  it('salvar B com e-mail antigo de A atualiza somente o snapshot que possui o token', () => {
+    const a = addClaudeAccount('Conta A', 'a@example.test', oauthBlob('a-live'));
+    const b = addClaudeAccount('Conta B', 'b@example.test', oauthBlob('b-live'));
+    deps.activeEmail = 'a@example.test';
+    deps.keychain = oauthBlob('b-live');
+
+    const captured = addActiveSessionAccount('claude', 'reautenticada');
+    expect(captured?.id).toBe(b.id);
+    expect(captured?.email).toBe('b@example.test');
+    expect(deps.secrets.get(`acctcred:${a.id}`)).toBe(oauthBlob('a-live'));
+  });
+
+  it('preserva renovação comprovada pelo refresh token mesmo com metadado antigo', () => {
+    const a = addClaudeAccount('Conta A', 'a@example.test', oauthBlob('a-live'));
+    const b = addClaudeAccount('Conta B', 'b@example.test', oauthBlob('b-live'));
+    const renewed = JSON.stringify({
+      claudeAiOauth: {
+        accessToken: 'b-renewed', refreshToken: 'refresh-b-live',
+        scopes: ['user:profile', 'user:inference'],
+      },
+    });
+    deps.activeEmail = 'a@example.test';
+    deps.keychain = renewed;
+
+    expect(ensureSubscriptionActive(b)).toBe(true);
+    expect(deps.keychain).toBe(renewed);
+    expect(deps.secrets.get(`acctcred:${b.id}`)).toBe(renewed);
+    expect(deps.secrets.get(`acctcred:${a.id}`)).toBe(oauthBlob('a-live'));
+  });
+
+  it('activateAccount preserva o refresh nativo ao selecionar outra conta no Nexus', () => {
     const a = addClaudeAccount('Conta A', 'a@example.test', oauthBlob('a-old'));
     const b = addClaudeAccount('Conta B', 'b@example.test', oauthBlob('b-live'));
     // O snapshot de A no vault apodreceu; o CLI rotacionou o Keychain sozinho.
@@ -199,15 +315,10 @@ describe('read-back Keychain → vault (linhagem Claude nativa)', () => {
 
     expect(activateAccount(b.id)).toBe(true);
 
-    // A que sai foi persistida com o valor FRESCO do Keychain…
+    // A conta nativa foi persistida com o valor fresco, sem trocar seu login.
     expect(deps.secrets.get(`acctcred:${a.id}`)).toBe(oauthBlob('a-fresh-rotated'));
-    // …ANTES da escrita do blob de B no Keychain (ordem importa).
-    const syncIdx = deps.calls.indexOf(`setSecret:acctcred:${a.id}`);
-    const writeIdx = deps.calls.indexOf('keychainWrite');
-    expect(syncIdx).toBeGreaterThanOrEqual(0);
-    expect(writeIdx).toBeGreaterThan(syncIdx);
-    // E a troca se efetivou: o Keychain terminou com o blob de B.
-    expect(deps.keychainWrites).toEqual([oauthBlob('b-live')]);
+    expect(deps.keychain).toBe(oauthBlob('a-fresh-rotated'));
+    expect(deps.keychainWrites).toEqual([]);
   });
 
   it('decrypt que falhou com a chave presente NÃO força reescrita no Keychain', () => {
@@ -262,9 +373,8 @@ describe('read-back Keychain → vault (linhagem Claude nativa)', () => {
     // Nada de gravar leitura falha por cima do snapshot: vault de A intacto…
     expect(deps.secrets.get(`acctcred:${a.id}`)).toBe(oauthBlob('a-stale'));
     expect(deps.calls).not.toContain(`setSecret:acctcred:${a.id}`);
-    // …e a troca para B aconteceu normalmente (comportamento documentado:
-    // melhor trocar com o blob do vault do que derrubar o activate).
-    expect(deps.keychainWrites).toEqual([oauthBlob('b-live')]);
+    // B continua selecionável usando seu snapshot; nenhum login global é escrito.
+    expect(deps.keychainWrites).toEqual([]);
   });
 
   it('sweeper não faz read-back implícito da conta nativa', async () => {
@@ -402,6 +512,7 @@ describe('F-511: secundária com token morto não queima sessão', () => {
   it('prepare recusa secundária vencida-sem-refresh com motivo acionável', () => {
     const a = addClaudeAccount('Conta B', 'b@example.test', deadBlob());
     deps.activeEmail = 'native@example.test'; // B é secundária
+    deps.keychain = oauthBlob('native-access');
     const result = prepareAccountForSpawn('claude', a.id);
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -411,12 +522,14 @@ describe('F-511: secundária com token morto não queima sessão', () => {
   it('pick do failover pula a conta morta', () => {
     const a = addClaudeAccount('Conta B', 'b@example.test', deadBlob());
     deps.activeEmail = 'native@example.test';
+    deps.keychain = oauthBlob('native-access');
     expect(accountHasFailoverCredential(a)).toBe(false);
   });
 
   it('secundária fresca sem refresh continua spawnável (presença vale)', () => {
     const a = addClaudeAccount('Conta B', 'b@example.test', freshBlob());
     deps.activeEmail = 'native@example.test';
+    deps.keychain = oauthBlob('native-access');
     expect(accountHasFailoverCredential(a)).toBe(true);
     expect(prepareAccountForSpawn('claude', a.id).ok).toBe(true);
   });
@@ -431,24 +544,25 @@ describe('F-511: secundária com token morto não queima sessão', () => {
     });
     const a = addClaudeAccount('Conta B', 'b@example.test', withRefresh);
     deps.activeEmail = 'native@example.test';
+    deps.keychain = oauthBlob('native-access');
     expect(accountHasFailoverCredential(a)).toBe(true);
     expect(prepareAccountForSpawn('claude', a.id).ok).toBe(true);
   });
 });
 
 describe('contrato de env OAuth de pane pinado', () => {
-  it('não emite CLAUDE_CODE_OAUTH_REFRESH_TOKEN; emite TOKEN e SCOPES', () => {
+  it('não emite tokens no env da conta gerenciada; conserva OAuth renovável no perfil', () => {
     const a = addClaudeAccount('Conta A', 'a@example.test', oauthBlob('a-access'));
     // Outra conta é o login nativo → A é secundária e recebe env process-scoped.
     deps.activeEmail = 'someone-else@example.test';
+    deps.keychain = oauthBlob('native-access');
 
     const result = prepareAccountForSpawn('claude', a.id);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.authEnv.CLAUDE_CODE_OAUTH_TOKEN).toBe('a-access');
-    expect(result.authEnv.CLAUDE_CODE_OAUTH_SCOPES).toBe(
-      'user:profile user:inference',
-    );
+    expect(result.authEnv.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe(`/tmp/claude/${a.id}/auth`);
+    expect(result.authEnv).not.toHaveProperty('CLAUDE_CODE_OAUTH_TOKEN');
+    expect(JSON.parse(deps.managedProfiles.get(a.id)!).claudeAiOauth.refreshToken).toBe('refresh-a-access');
     expect(result.authEnv).not.toHaveProperty('CLAUDE_CODE_OAUTH_REFRESH_TOKEN');
 
     // O env da sessão ativa (lido do Keychain) segue o mesmo contrato.
@@ -467,6 +581,7 @@ describe('renovação morta veta failover no escuro', () => {
   function addSecondary(label: string, email: string, blob: string): Account {
     const account = addClaudeAccount(label, email, blob);
     deps.activeEmail = 'nativo@example.test';
+    deps.keychain = oauthBlob('native-access');
     clearClaudeRefreshFailure(account.id);
     return account;
   }

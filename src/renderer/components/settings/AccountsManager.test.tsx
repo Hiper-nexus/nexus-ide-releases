@@ -453,6 +453,12 @@ describe('AccountsManager', () => {
     expect(openCliLoginTerminal).not.toHaveBeenCalled();
     expect(host.querySelector('[role="alert"]')?.textContent).toMatch(/guardar a conta atual/i);
     expect(useAccountStore.getState().accounts[0].id).toBe('acct-1');
+    await act(async () => {
+      [...host.querySelectorAll('button')].find((button) => button.textContent === 'Tentar abrir novamente')!.click();
+      await Promise.resolve(); await Promise.resolve();
+    });
+    expect(openCliLoginTerminal).not.toHaveBeenCalled();
+    expect(addActiveSession).toHaveBeenCalledTimes(2);
     act(() => root.unmount());
   });
 

@@ -759,6 +759,7 @@ describe("gateway de IA local (OmniRoute-like)", () => {
     });
     const thirdParty: CliPtyAdapter = {
       ...glmLike,
+      bin: 'claude',
       quirks: { ...glmLike.quirks, mcpAutoload: true },
     };
     expect(
@@ -1358,6 +1359,36 @@ describe("PTY session ownership (renderer capability boundary)", () => {
     await expect(termination).resolves.toBe(true);
     expect(getSessionState(sessionId)).toBeNull();
     expect(replacement).toHaveBeenCalledOnce();
+  });
+});
+
+describe('managed Claude auth capability at the physical spawn boundary', () => {
+  it.each([false, true])('requires secure-storage support only for managed profiles (supported=%s)', async (supported) => {
+    setSquadCliPolicyLookupForTests(() => 'operator-choice');
+    setAgentSpawnHook(null);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-auth-capability-'));
+    const binary = path.join(root, 'claude');
+    fs.writeFileSync(binary, supported ? 'CLAUDE_SECURESTORAGE_CONFIG_DIR' : 'older CLI');
+    fs.chmodSync(binary, 0o700);
+    const host = fakeHost();
+    setPtyHost(host.host);
+    let sessionId: string | undefined;
+    try {
+      const spawn = () => {
+        const session = spawnAgentSession(fakeWc(), { kind: 'cli-agent', cols: 80, rows: 24 },
+          builtinCliPtyAdapter('claude'), { binPath: binary, keyEnv: {
+            CLAUDE_SECURESTORAGE_CONFIG_DIR: path.join(root, 'account-auth'),
+          } }, trustedSpawn(fs.realpathSync(root)));
+        sessionId = session.sessionId;
+      };
+      if (supported) {
+        expect(spawn).not.toThrow();
+        expect(host.specFor(sessionId!).env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe(path.join(root, 'account-auth'));
+      } else expect(spawn).toThrow(/CLAUDE_SECURESTORAGE_CONFIG_DIR/);
+    } finally {
+      if (sessionId) await orchTerminateSession(sessionId);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

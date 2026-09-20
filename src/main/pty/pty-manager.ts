@@ -16,6 +16,7 @@ import {
 import { ensureUtf8Locale } from "./pty-env-locale";
 import { materializeProviderState, providerStateEnvFor } from "./provider-state-env";
 import { applyPaneTerminalIdentity } from "./pane-terminal-identity";
+import { assertManagedClaudeAuthSupported, CLAUDE_MANAGED_AUTH_ENV } from "../adapters/managed-claude-auth";
 import { PTY_CHANNELS } from "../../shared/channels";
 import { migrateModelId } from "../../shared/model-defaults";
 import type { SpawnRequest, PaneSessionState } from "../../shared/types";
@@ -1577,6 +1578,14 @@ export function spawnAgentSession(
   for (const [key, value] of Object.entries(overrides.keyEnv ?? {})) {
     if (isDangerousEnvKey(key)) continue;
     for (const target of spawnEnvs) target[key] = value;
+  }
+  if (adapter.id === "claude" && env[CLAUDE_MANAGED_AUTH_ENV]) {
+    assertManagedClaudeAuthSupported(bin);
+    for (const target of spawnEnvs) {
+      delete target.CLAUDE_CODE_OAUTH_TOKEN;
+      delete target.CLAUDE_CODE_OAUTH_REFRESH_TOKEN;
+      delete target.CLAUDE_CODE_OAUTH_SCOPES;
+    }
   }
   // A credencial do gateway vence a do provider e por isso entra DEPOIS do
   // keyEnv: se o operador configurou uma chave para o gateway, é ela que

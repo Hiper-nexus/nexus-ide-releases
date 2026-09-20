@@ -93,6 +93,7 @@ import {
   PtyStreamMissionControl,
 } from "./pty-stream-mission-control";
 import { cliPromptAutoResponder } from "./cli-prompt-autoresponder";
+import { CLAUDE_MANAGED_AUTH_ENV, validateManagedClaudeAuthDirectory } from "../adapters/managed-claude-auth";
 import {
   cleanupSessionArtifacts,
   ensureNativeClaudeProjectTrust,
@@ -1104,6 +1105,16 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
       adapter,
       preparedEnv,
     );
+    const managedClaudeAuthDir = adapter.id === "claude" && !thirdPartyClaudeFamily && preparedEnv?.[CLAUDE_MANAGED_AUTH_ENV]
+      ? validateManagedClaudeAuthDirectory(preparedEnv[CLAUDE_MANAGED_AUTH_ENV])
+      : undefined;
+    if (managedClaudeAuthDir) {
+      env[CLAUDE_MANAGED_AUTH_ENV] = managedClaudeAuthDir;
+      envRemove.push("CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_OAUTH_REFRESH_TOKEN", "CLAUDE_CODE_OAUTH_SCOPES");
+      claudeStatePaths.push(managedClaudeAuthDir);
+    } else {
+      envRemove.push(CLAUDE_MANAGED_AUTH_ENV);
+    }
     const homeMode =
       adapter.quirks.mcpAutoload &&
       isOperatorChoicePolicy(getOrchSettings().squadCliPolicy) &&
@@ -1130,7 +1141,8 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           !gateHome &&
           (meta?.role ?? "user") === "user";
         const home = prepareEphemeralHome(ctx.token, mcpConfig, {
-          carryNativeClaudeAuth: !thirdPartyClaudeFamily,
+          carryNativeClaudeAuth: !thirdPartyClaudeFamily && !managedClaudeAuthDir,
+          managedClaudeAuthDir,
           adapterId: adapter.id,
           userDataPath: app.getPath("userData"),
           checkoutId: authority.scope.checkoutId,
@@ -1201,7 +1213,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
         if (home.providerSessionHome) claudeStatePaths.push(home.providerSessionHome);
         claudeProfileReadPaths.push(...(home.providerProfileReadPaths ?? []));
         const nativeCredentials = path.join(os.homedir(), ".claude", ".credentials.json");
-        if (!thirdPartyClaudeFamily && fs.existsSync(nativeCredentials)) {
+        if (!thirdPartyClaudeFamily && !managedClaudeAuthDir && fs.existsSync(nativeCredentials)) {
           claudeStatePaths.push(nativeCredentials);
         }
         if (gateHome) {

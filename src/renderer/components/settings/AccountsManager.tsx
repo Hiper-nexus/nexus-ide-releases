@@ -135,7 +135,10 @@ export function AccountsManager({
     detail: 'Verificando a sessão desta CLI…',
   });
   const [busy, setBusy] = useState(false);
-  const [loginFailed, setLoginFailed] = useState(false);
+  const [loginRetry, setLoginRetry] = useState<{
+    nameHint: string;
+    preserveCurrent: boolean;
+  } | null>(null);
   const [canSnapshot, setCanSnapshot] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState('');
@@ -233,7 +236,13 @@ export function AccountsManager({
   async function preserveCurrentSession(
     baseline: AdapterAuthStatus | null,
   ): Promise<void> {
-    if (!canSnapshot || baseline?.state !== 'ok') return;
+    if (!canSnapshot) return;
+    if (baseline?.state !== 'ok') {
+      if (accounts.some((a) => a.adapterId === adapterId)) {
+        throw new AccountPreservationError();
+      }
+      return;
+    }
     // A matching email does not prove that the saved token is current. The
     // CLI may have rotated it since the last snapshot; save before replacing it.
     const name = defaultAccountLabel({
@@ -303,8 +312,15 @@ export function AccountsManager({
         'ok',
       );
       if (res.id) onAccountAdded?.(res.id);
-    } catch {
-      // O login já aconteceu na CLI; falha aqui não pode derrubar a tela.
+    } catch (error) {
+      const detail = error instanceof Error
+        ? error.message : 'Não foi possível salvar o login comprovado no Nexus.';
+      showNotice(detail, 'err');
+      onLoginActivity?.('err', detail);
+      useToastStore.getState().push('error', `Login ${displayName}`, {
+        detail,
+        dedupeKey: `cli-login:${adapterId}`,
+      });
     }
   }
 
@@ -358,7 +374,7 @@ export function AccountsManager({
   }
 
   function showNotice(message: string, tone: 'ok' | 'err' | 'info' = 'info') {
-    setLoginFailed(false);
+    setLoginRetry(null);
     setNotice(message);
     setNoticeTone(tone);
   }
@@ -479,10 +495,10 @@ export function AccountsManager({
         });
       } else if (result.cancelled) {
         setNotice(null);
-        setLoginFailed(false);
+        setLoginRetry(null);
       } else {
         showNotice(result.error, 'err');
-        setLoginFailed(true);
+        setLoginRetry({ nameHint, preserveCurrent });
         onLoginActivity?.('err', result.error);
         useToastStore.getState().push('error', `Login ${displayName}`, {
           detail: result.error,
@@ -494,7 +510,7 @@ export function AccountsManager({
       const detail = err instanceof AccountPreservationError
         ? err.message : 'Não foi possível abrir o terminal de login.';
       showNotice(detail, 'err');
-      setLoginFailed(true);
+      setLoginRetry({ nameHint, preserveCurrent });
       onLoginActivity?.('err', detail);
       useToastStore.getState().push('error', `Login ${displayName}`, {
         detail,
@@ -761,11 +777,11 @@ export function AccountsManager({
           aria-live="polite"
         >
           <span>{notice}</span>
-          {loginFailed && (
+          {loginRetry && (
             <button
               type="button"
               className="settings-btn"
-              onClick={() => void openLoginTerminal()}
+              onClick={() => void openLoginTerminal(loginRetry.nameHint, loginRetry.preserveCurrent)}
               disabled={busy}
             >
               Tentar abrir novamente

@@ -37,6 +37,14 @@ import {
 } from '../adapters/managed-credentials';
 import { chooseAccount } from './account-select';
 import {
+  freshestClaudeCredential,
+  hasManagedClaudeAuth,
+  materializeManagedClaudeAuth,
+  readManagedClaudeAuth,
+  readManagedClaudeAuthAsync,
+  removeManagedClaudeAuth,
+} from '../adapters/managed-claude-auth';
+import {
   failedPersistenceError,
   PersistenceUnavailableError,
   readOnlyPersistenceError,
@@ -298,6 +306,68 @@ export function accountKey(account: Account): string | null {
   return null;
 }
 
+/** A saved token identifies its owner more reliably than ~/.claude.json metadata. */
+function claudeCredentialOwner(blob: string | null): Account | null {
+  if (!blob) return null;
+  let native: ClaudeOauthCredential | undefined;
+  try {
+    native = JSON.parse(blob)?.claudeAiOauth;
+  } catch {
+    return null;
+  }
+  if (!native) return null;
+  for (const account of listAccounts('claude')) {
+    if (account.mode !== 'subscription') continue;
+    const saved = getSecret(CRED_PREFIX + account.id);
+    if (!saved) continue;
+    try {
+      const stored = JSON.parse(saved)?.claudeAiOauth;
+      if ((['accessToken', 'refreshToken'] as const).some((key) => {
+        const token = native?.[key];
+        return typeof token === 'string' && token.length > 0 && stored?.[key] === token;
+      })) return account;
+    } catch {
+      // An unreadable snapshot cannot establish ownership of another login.
+    }
+  }
+  return null;
+}
+
+function nativeClaudeAccount(blob: string | null, email: string | null): Account | null {
+  const owner = claudeCredentialOwner(blob);
+  if (owner) return owner;
+  // A full native rotation can change both opaque tokens. Preserve the existing
+  // email-based read-back only when no saved session contradicts that identity.
+  return email ? listAccounts('claude').find((account) =>
+    account.mode === 'subscription' && account.email && emailsEqual(account.email, email),
+  ) ?? null : null;
+}
+
+interface NativeClaudeSnapshot {
+  blob: string | null;
+  account: Account | null;
+}
+
+/** Share one native snapshot across an operation instead of probing per account. */
+function readNativeClaudeSnapshot(): NativeClaudeSnapshot {
+  const blob = readActiveClaudeCredentialSlim() ?? (() => {
+    const raw = readActiveClaudeCredential();
+    return raw ? slimClaudeCredentialBlob(raw) : null;
+  })();
+  return { blob, account: nativeClaudeAccount(blob, activeClaudeEmail()) };
+}
+
+function persistManagedClaudeReadback(account: Account, renewed: string | null): string | null {
+  const saved = getSecret(CRED_PREFIX + account.id);
+  if (saved === null && hasSecret(CRED_PREFIX + account.id)) return null;
+  const latest = freshestClaudeCredential(renewed, saved);
+  if (latest && latest !== saved) {
+    const result = setSecret(CRED_PREFIX + account.id, latest);
+    if (result.ok) clearClaudeRefreshFailure(account.id);
+  }
+  return latest;
+}
+
 /**
  * Claude read-back, mirroring readBackFresherAuth for file-backed providers:
  * the real Claude CLI rotates the refresh token on its own inside the native
@@ -309,24 +379,19 @@ export function accountKey(account: Account): string | null {
  * keychain or a failed vault write keeps the existing snapshot and never
  * breaks activate/spawn.
  */
-function syncClaudeBlobFromKeychainIfNative(account: Account): void {
+function syncClaudeBlobFromKeychainIfNative(
+  account: Account,
+  snapshot?: NativeClaudeSnapshot,
+): void {
   if (account.adapterId !== 'claude' || account.mode !== 'subscription') return;
-  const nativeEmail = activeClaudeEmail();
-  if (
-    !nativeEmail ||
-    !account.email ||
-    nativeEmail.trim().toLowerCase() !== account.email.trim().toLowerCase()
-  ) {
+  if (hasManagedClaudeAuth(account.id)) {
+    persistManagedClaudeReadback(account, readManagedClaudeAuth(account.id));
     return;
   }
-  // Vault only the slim OAuth slice — never the fat mcpOAuth plugin map.
-  const nativeBlob =
-    readActiveClaudeCredentialSlim() ??
-    (() => {
-      const raw = readActiveClaudeCredential();
-      return raw ? slimClaudeCredentialBlob(raw) : null;
-    })();
+  const native = snapshot ?? readNativeClaudeSnapshot();
+  const nativeBlob = native.blob;
   if (!nativeBlob) return; // Keychain unreadable / unusable → keep vault snapshot.
+  if (native.account?.id !== account.id) return;
   const vaultKey = CRED_PREFIX + account.id;
   const current = getSecret(vaultKey);
   if (current === nativeBlob) return; // In sync.
@@ -420,12 +485,23 @@ interface ClaudeOauthCredential {
  * `CLAUDE_CODE_OAUTH_TOKEN` has higher precedence than the global login
  * Keychain item, so concurrent panes can use different accounts safely.
  */
-function subscriptionAuthEnv(account: Account): Record<string, string> | null {
+function subscriptionAuthEnv(
+  account: Account,
+  snapshot?: NativeClaudeSnapshot,
+): Record<string, string> | null {
   // Same read-back contract as ensureSubscriptionActive: never build an env
   // from a stale vault snapshot when the native lineage has moved on.
-  syncClaudeBlobFromKeychainIfNative(account);
+  syncClaudeBlobFromKeychainIfNative(account, snapshot);
   const blob = getSecret(CRED_PREFIX + account.id);
   if (!blob) return null;
+  if (account.adapterId === 'claude' && hasManagedClaudeAuth(account.id)) {
+    void readManagedClaudeAuthAsync(account.id).then((renewed) => {
+      // A re-login/removal while the read was in flight owns the newer state.
+      if (getAccount(account.id) === account && getSecret(CRED_PREFIX + account.id) === blob) {
+        persistManagedClaudeReadback(account, renewed);
+      }
+    }).catch(() => {});
+  }
   return claudeAuthEnvFromBlob(blob as string);
 }
 
@@ -622,41 +698,9 @@ export function prepareAccountForSpawn(
     return { ok: true, account, apiKey: null, authEnv };
   }
 
-  // Claude (and any future token-env providers).
-  // Conta pinada que É o login nativo do Keychain: NENHUM token env — o pane
-  // usa a linhagem compartilhada, que o CLI refresca sozinho. O env era um
-  // snapshot estático do vault: expirava em horas e o CLI não refresca token
-  // de env → "401 OAuth access token has expired" no respawn de failover
-  // (caso de campo). Env token fica só para contas SECUNDÁRIAS, cuja
-  // linhagem vive apenas no vault (e é renovada pelo freshness sweeper).
-  const nativeEmail = activeClaudeEmail();
-  if (
-    nativeEmail &&
-    account.email &&
-    nativeEmail.trim().toLowerCase() === account.email.trim().toLowerCase()
-  ) {
-    // …MAS "linhagem compartilhada" só existe quando o pane roda no HOME REAL.
-    // Um pane isolado (Hardened/Claude-family de terceiro) NÃO enxerga o
-    // login do Keychain: sem token env ele abre
-    // "Not logged in · Run /login" mesmo com a máquina autenticada — a
-    // identidade projetada no .claude.json ainda mostra "Welcome back", o que
-    // mascarava a causa. Verificado na mão: HOME efêmero + identidade + sem
-    // token = exatamente essa tela. Nesse caso o snapshot é a ÚNICA ponte.
-    if (!options?.isolatedHome) {
-      return { ok: true, account, apiKey: null, authEnv: {} };
-    }
-    const nativeEnv = activeClaudeAuthEnv();
-    if (!nativeEnv) {
-      return {
-        ok: false,
-        error:
-          `não foi possível ler a credencial nativa do Claude para "${account.label}" ` +
-          '(Keychain indisponível). Desbloqueie o login keychain ou rode `claude` ' +
-          'num terminal para renovar a sessão',
-      };
-    }
-    return { ok: true, account, apiKey: null, authEnv: nativeEnv };
-  }
+  // Managed Claude accounts use the CLI's renewable store, independent from
+  // both the native login and the pane's disposable conversation HOME.
+  syncClaudeBlobFromKeychainIfNative(account);
   // Renovação morta: trocar para esta conta é 401 garantido queimando uma
   // sessão nova — recusa aqui para o failover tentar a irmã ou esperar com
   // motivo acionável, em vez de descobrir no 401 do pane.
@@ -692,14 +736,20 @@ export function prepareAccountForSpawn(
         'novamente em Configurações › Providers',
     };
   }
-  const authEnv = subscriptionAuthEnv(account);
-  if (!authEnv) {
+  const credential = getSecret(CRED_PREFIX + account.id);
+  if (!credential) {
     return {
       ok: false,
       error: `selected subscription "${account.label}" has no usable OAuth credential`,
     };
   }
-  return { ok: true, account, apiKey: null, authEnv };
+  try {
+    const prepared = materializeManagedClaudeAuth(account.id, credential);
+    persistManagedClaudeReadback(account, prepared.blob);
+    return { ok: true, account, apiKey: null, authEnv: prepared.env };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'failed to prepare isolated Claude account' };
+  }
 }
 
 const claudeRefreshInFlight = new Set<string>();
@@ -765,6 +815,14 @@ export async function ensureFreshClaudeSubscription(
 ): Promise<boolean> {
   const account = accounts.get(accountId);
   if (!account || account.adapterId !== 'claude') return false;
+  if (hasManagedClaudeAuth(accountId)) {
+    // The CLI owns its shared .oauth_refresh.lock. A second HTTP refresher here
+    // would rotate the same token family independently and log panes out.
+    const previous = getSecret(CRED_PREFIX + accountId);
+    const latest = await readManagedClaudeAuthAsync(accountId);
+    if (getAccount(accountId) !== account || getSecret(CRED_PREFIX + accountId) !== previous) return false;
+    return persistManagedClaudeReadback(account, latest) !== previous;
+  }
   const nativeEmail = activeClaudeEmail();
   if (
     nativeEmail &&
@@ -1193,7 +1251,9 @@ export function addActiveSessionAccount(
   }
   if (!blob) return null;
 
-  const existing = findSessionDuplicate(adapterId, email, blob);
+  const credentialOwner = adapterId === 'claude' ? claudeCredentialOwner(blob) : null;
+  if (credentialOwner?.email) email = credentialOwner.email;
+  const existing = credentialOwner ?? findSessionDuplicate(adapterId, email, blob);
   if (existing) {
     const secretKey = CRED_PREFIX + existing.id;
     const previousSecret = getSecret(secretKey);
@@ -1209,6 +1269,8 @@ export function addActiveSessionAccount(
     try {
       if (isFileAuthAdapter(adapterId)) {
         materializeManagedHome(adapterId as FileAuthAdapterId, existing.id, blob);
+      } else if (adapterId === 'claude' && hasManagedClaudeAuth(existing.id)) {
+        materializeManagedClaudeAuth(existing.id, blob, { replace: true });
       }
       const nextAccounts = new Map(accounts);
       // Identidade pode ter chegado agora (capture antigo sem e-mail).
@@ -1418,6 +1480,8 @@ export function removeAccount(id: string): void {
   }
   if (isFileAuthAdapter(account.adapterId)) {
     removeManagedHome(account.adapterId, id);
+  } else if (account.adapterId === 'claude' && hasManagedClaudeAuth(id)) {
+    removeManagedClaudeAuth(id);
   }
   emit();
 }
@@ -1426,16 +1490,18 @@ export function activateAccount(id: string): boolean {
   const account = accounts.get(id);
   if (!account) return false;
   requireWritableDb();
-  // Sync the OUTGOING native Claude account (keychain → vault) BEFORE
-  // overwriting the keychain with the target blob below: the CLI has rotated
-  // the native lineage since our snapshot, and only a fresh vault snapshot
-  // makes a later switch back restore a live credential. Order matters.
+  // Preserve refreshed native credentials, but selecting a Nexus account must
+  // not replace the shared login underneath the operator's existing CLIs.
+  const native = listAccounts('claude').some((other) => other.mode === 'subscription')
+    ? readNativeClaudeSnapshot() : undefined;
   for (const other of accounts.values()) {
-    if (other.id !== id) syncClaudeBlobFromKeychainIfNative(other);
+    if (other.id !== id) syncClaudeBlobFromKeychainIfNative(other, native);
   }
-  // Materialize subscription credential (keychain or managed home).
-  if (account.mode === 'subscription' && !ensureSubscriptionActive(account)) {
-    return false;
+  if (account.mode === 'subscription') {
+    const ready = account.adapterId === 'claude'
+      ? subscriptionAuthEnv(account, native) !== null
+      : ensureSubscriptionActive(account);
+    if (!ready) return false;
   }
   // Se a conta tinha cooldown de auth ou erro de sessão, a ativação/sincronização
   // explícita pelo operador refuta o erro antigo:

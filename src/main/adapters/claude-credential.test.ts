@@ -40,6 +40,10 @@ import {
   readActiveClaudeCredential,
   slimClaudeCredentialBlob,
   writeActiveClaudeCredential,
+  managedClaudeKeychainService,
+  readManagedClaudeCredential,
+  writeManagedClaudeCredential,
+  deleteManagedClaudeCredential,
 } from './claude-credential';
 
 function fullFatBlob(accessToken = 'sk-ant-oat01-live'): string {
@@ -67,6 +71,7 @@ function fullFatBlob(accessToken = 'sk-ant-oat01-live'): string {
       scopes: ['user:inference', 'user:profile'],
       subscriptionType: 'max',
       rateLimitTier: 'default_claude_max_20x',
+      clientId: 'synthetic-oauth-client',
     },
   });
 }
@@ -81,6 +86,7 @@ describe('slimClaudeCredentialBlob', () => {
     expect(Object.keys(parsed)).toEqual(['claudeAiOauth']);
     expect(parsed.mcpOAuth).toBeUndefined();
     expect(parsed.claudeAiOauth.accessToken).toBe('sk-ant-oat01-live');
+    expect(parsed.claudeAiOauth.clientId).toBe('synthetic-oauth-client');
     expect(parsed.claudeAiOauth.refreshToken).toBe('sk-ant-ort01-refresh');
     expect(parsed.claudeAiOauth.scopes).toEqual([
       'user:inference',
@@ -122,6 +128,29 @@ describe.runIf(process.platform === 'darwin')('Claude Keychain boundaries', () =
         killSignal: 'SIGKILL',
       }),
     );
+  });
+
+  it('keeps managed account reads and writes outside the native Keychain service', () => {
+    const profile = '/tmp/nexus-managed-claude/account-a/auth';
+    const service = managedClaudeKeychainService(profile);
+    expect(service).toMatch(/^Claude Code-credentials-[a-f0-9]{8}$/);
+    expect(managedClaudeKeychainService('/tmp/nexus-managed-claude/account-b/auth')).not.toBe(service);
+    expect(() => managedClaudeKeychainService('')).toThrow();
+    expect(() => managedClaudeKeychainService('../native')).toThrow();
+    readManagedClaudeCredential(profile);
+    expect(childProcess.execFileSync).toHaveBeenCalledWith('security',
+      ['find-generic-password', '-s', service, '-w'], expect.any(Object));
+    const blob = fullFatBlob('synthetic-managed-token');
+    expect(writeManagedClaudeCredential(profile, blob)).toBe(true);
+    const [command, args, options] = childProcess.spawnSync.mock.calls.at(-1)! as unknown as [string, string[], { input: string }];
+    expect(command).toBe('security');
+    expect(args).toEqual(['-i']);
+    expect(options.input).toContain(service);
+    expect(options.input).not.toContain('mcpOAuth');
+    expect(args.join(' ')).not.toContain('synthetic-managed-token');
+    expect(deleteManagedClaudeCredential(profile)).toBe(true);
+    expect(childProcess.execFileSync).toHaveBeenLastCalledWith('security',
+      ['delete-generic-password', '-s', service], expect.any(Object));
   });
 
   it('bounds the Keychain write so account activation cannot freeze the main loop', () => {

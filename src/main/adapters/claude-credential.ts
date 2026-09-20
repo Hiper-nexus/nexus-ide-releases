@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
 /**
  * Claude Code subscription credential swap (macOS) — ported from the
@@ -40,6 +40,7 @@ export interface ClaudeAiOauthSlice {
   scopes?: string[] | string;
   subscriptionType?: string;
   rateLimitTier?: string;
+  clientId?: string;
   [key: string]: unknown;
 }
 
@@ -90,6 +91,7 @@ export function slimClaudeCredentialBlob(blob: string): string | null {
     if (typeof oauth.rateLimitTier === 'string' && oauth.rateLimitTier) {
       slimOauth.rateLimitTier = oauth.rateLimitTier;
     }
+    if (typeof oauth.clientId === 'string' && oauth.clientId) slimOauth.clientId = oauth.clientId;
     // Compact JSON — no whitespace, no newlines (required for security -w).
     return JSON.stringify({ claudeAiOauth: slimOauth });
   } catch {
@@ -105,11 +107,40 @@ export function claudeCredentialBlobIsUsable(blob: string | null | undefined): b
 
 /** Read the active Claude credential blob from the login keychain, or null. */
 export function readActiveClaudeCredential(): string | null {
+  return readClaudeCredential(CLAUDE_KEYCHAIN_SERVICE);
+}
+
+/** Claude 2.1.278 derives this namespace from CLAUDE_SECURESTORAGE_CONFIG_DIR. */
+export function managedClaudeKeychainService(authDir: string): string {
+  if (!path.isAbsolute(authDir) || /[\x00-\x1f]/.test(authDir)) {
+    throw new Error('managed Claude auth directory must be an absolute path');
+  }
+  return `${CLAUDE_KEYCHAIN_SERVICE}-${createHash('sha256').update(authDir.normalize('NFC')).digest('hex').slice(0, 8)}`;
+}
+
+export function readManagedClaudeCredential(authDir: string): string | null {
+  return readClaudeCredential(managedClaudeKeychainService(authDir));
+}
+
+export function deleteManagedClaudeCredential(authDir: string): boolean {
+  const service = managedClaudeKeychainService(authDir);
+  if (!isMac()) return true;
+  try {
+    execFileSync('security', ['delete-generic-password', '-s', service], {
+      stdio: ['ignore', 'ignore', 'ignore'], timeout: 2_000, killSignal: 'SIGKILL',
+    });
+    return true;
+  } catch (error) {
+    return (error as { status?: number }).status === 44;
+  }
+}
+
+function readClaudeCredential(service: string): string | null {
   if (!isMac()) return null;
   try {
     const out = execFileSync(
       'security',
-      ['find-generic-password', '-s', CLAUDE_KEYCHAIN_SERVICE, '-w'],
+      ['find-generic-password', '-s', service, '-w'],
       {
         encoding: 'utf8',
         stdio: ['ignore', 'pipe', 'ignore'],
@@ -141,10 +172,10 @@ function quoteSecurityInteractive(s: string): string {
   return `"${s.replace(/([\\"])/g, '\\$1')}"`;
 }
 
-function buildInteractiveAddCommand(slimBlob: string): string {
+function buildInteractiveAddCommand(slimBlob: string, service = CLAUDE_KEYCHAIN_SERVICE): string {
   const account = os.userInfo().username;
   return (
-    `add-generic-password -U -s ${quoteSecurityInteractive(CLAUDE_KEYCHAIN_SERVICE)} ` +
+    `add-generic-password -U -s ${quoteSecurityInteractive(service)} ` +
     `-a ${quoteSecurityInteractive(account)} -w ${quoteSecurityInteractive(slimBlob)}\n`
   );
 }
@@ -153,8 +184,8 @@ function buildInteractiveAddCommand(slimBlob: string): string {
  * Primary path: `security -i` with the full add-generic-password line on stdin
  * (secret never on argv). Only used when the command fits the line buffer.
  */
-function writeViaInteractiveStdin(slimBlob: string): boolean {
-  const cmd = buildInteractiveAddCommand(slimBlob);
+function writeViaInteractiveStdin(slimBlob: string, service = CLAUDE_KEYCHAIN_SERVICE): boolean {
+  const cmd = buildInteractiveAddCommand(slimBlob, service);
   if (Buffer.byteLength(cmd, 'utf8') > CLAUDE_KEYCHAIN_INTERACTIVE_CMD_MAX_BYTES) {
     return false;
   }
@@ -237,6 +268,15 @@ function writeViaTempFileFallback(slimBlob: string): boolean {
  * Failure returns false without claiming success.
  */
 export function writeActiveClaudeCredential(blob: string): boolean {
+  return writeClaudeCredential(blob, CLAUDE_KEYCHAIN_SERVICE, true);
+}
+
+/** Managed profiles never fall back to a secret-bearing argv or the native item. */
+export function writeManagedClaudeCredential(authDir: string, blob: string): boolean {
+  return writeClaudeCredential(blob, managedClaudeKeychainService(authDir), false);
+}
+
+function writeClaudeCredential(blob: string, service: string, allowLegacyFallback: boolean): boolean {
   if (!isMac() || !blob) return false;
   if (blob.includes('\n') || blob.includes('\r')) {
     console.warn('[claude-credential] credential blob contains newline; refusing');
@@ -252,9 +292,10 @@ export function writeActiveClaudeCredential(blob: string): boolean {
     return false;
   }
 
-  if (writeViaInteractiveStdin(slim)) {
+  if (writeViaInteractiveStdin(slim, service)) {
     return true;
   }
+  if (!allowLegacyFallback) return false;
 
   // Interactive path refused (oversized line or security status != 0).
   // Fallback must not truncate — full slim secret via temp file.

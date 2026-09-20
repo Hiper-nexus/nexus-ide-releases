@@ -20,6 +20,25 @@ afterEach(() => {
 });
 
 describe('native Claude auth in the ephemeral HOME', () => {
+  it('managed renewable auth never carries the native identity, credentials or Keychain links', () => {
+    const managed = path.join(home, '.nexus/managed-accounts/claude/account-b/auth');
+    fs.mkdirSync(managed, { recursive: true });
+    fs.mkdirSync(path.join(home, '.claude'), { recursive: true });
+    fs.mkdirSync(path.join(home, 'Library/Keychains'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.claude/.credentials.json'), 'native-secret-fixture');
+    fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ oauthAccount: { emailAddress: 'native-a@example.test' } }));
+    const overlay = prepareEphemeralHome(TOKEN, {}, {
+      carryNativeClaudeAuth: true, managedClaudeAuthDir: managed, gateHooks: false,
+    });
+    const identity = JSON.parse(fs.readFileSync(path.join(overlay.dir, '.claude.json'), 'utf8'));
+    expect(identity.oauthAccount).toBeUndefined();
+    expect(fs.existsSync(path.join(overlay.dir, '.claude/.credentials.json'))).toBe(false);
+    expect(fs.existsSync(path.join(overlay.dir, 'Library/Keychains'))).toBe(false);
+    cleanupSessionArtifacts(TOKEN);
+    expect(fs.readFileSync(path.join(home, '.claude/.credentials.json'), 'utf8')).toBe('native-secret-fixture');
+    expect(fs.existsSync(managed)).toBe(true);
+  });
+
   it('carries oauthAccount/userID (and nothing else) into the stub', () => {
     fs.writeFileSync(
       path.join(home, '.claude.json'),
