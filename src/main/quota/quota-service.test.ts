@@ -433,6 +433,39 @@ describe('QuotaService live Claude OAuth usage', () => {
     badApi.stop();
   });
 
+  it('backs off a failed probe instead of hammering a rate-limited API', async () => {
+    const failFetch = vi.fn(async () => ({
+      ok: false,
+      status: 429,
+      json: async () => ({}),
+      text: async () => 'rate limited',
+    }));
+    const svc = new QuotaService({
+      listProviders: () => [provider('claude', 'Claude')],
+      listAccounts: () => [] as AccountInfo[],
+      resolveClaudeAccessToken: () => 'tok',
+      fetchImpl: failFetch,
+    });
+
+    await svc.snapshot(HIT_AT);
+    expect(failFetch).toHaveBeenCalledTimes(1);
+
+    // Backoff: refresh dentro da janela de 5 min NÃO re-tenta a probe.
+    await svc.snapshot(HIT_AT + 60_000);
+    expect(failFetch).toHaveBeenCalledTimes(1);
+
+    // forceApi (botão Atualizar) respeita a decisão do usuário.
+    await svc.snapshot(HIT_AT + 120_000, { forceApi: true });
+    expect(failFetch).toHaveBeenCalledTimes(2);
+
+    // Backoff expirado (o forceApi reiniciou a janela: 120s + 5min < 8min):
+    // volta a sondar sozinho.
+    await svc.snapshot(HIT_AT + 8 * 60_000);
+    expect(failFetch).toHaveBeenCalledTimes(3);
+
+    svc.stop();
+  });
+
   it('resolves per-account vault tokens and does not cross-paint', async () => {
     const accounts: AccountInfo[] = [
       {

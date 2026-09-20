@@ -32,6 +32,15 @@ import {
 const PROVIDER_API_TTL_MS = 60_000;
 
 /**
+ * Backoff após uma observação que falhou (rede, auth, rate limit — ex. o
+ * /api/oauth/usage do Claude responde 429 sob uso pesado). Sem isso cada
+ * refresh re-tenta na hora e a martelada sustenta o próprio rate limit:
+ * a entry fica unknown para sempre justamente quando o provider está
+ * apertado. Sucesso limpa o backoff.
+ */
+const PROBE_FAILURE_BACKOFF_MS = 5 * 60_000;
+
+/**
  * Every fleet CLI is eligible for a live/generic probe. Unknown adapters
  * still go through key-shape routing (OpenCode/Aider/custom).
  */
@@ -194,6 +203,8 @@ export class QuotaService {
   readonly #limitByKey = new Map<string, RecordedLimitHit>();
   /** Live provider-api windows by entry id. */
   readonly #apiCache = new Map<string, CachedApiWindows>();
+  /** Entry id → epoch ms até quando a probe falhou deve esperar para voltar. */
+  readonly #probeBackoffUntil = new Map<string, number>();
   #broadcastTimer: ReturnType<typeof setTimeout> | null = null;
   #lastSnapshot: QuotaFleetSnapshot | null = null;
   #stopped = false;
@@ -478,6 +489,8 @@ export class QuotaService {
             observations.set(id, cached);
             return;
           }
+          const backoffUntil = this.#probeBackoffUntil.get(id);
+          if (backoffUntil !== undefined && now < backoffUntil) return;
         }
         try {
           const windows = await fetchLiveProviderWindows(
@@ -491,13 +504,18 @@ export class QuotaService {
           if (windows && windows.length > 0) {
             const observation = { windows, at: now, usageProviderId: row.usageProviderId, authMode: row.authMode };
             observations.set(id, observation);
+            this.#probeBackoffUntil.delete(id);
             if (generation === this.#snapshotGeneration && !this.#stopped) this.#apiCache.set(id, observation);
           } else if (generation === this.#snapshotGeneration && !this.#stopped) {
             // A failed observation cannot renew an expired percentage.
             this.#apiCache.delete(id);
+            this.#probeBackoffUntil.set(id, now + PROBE_FAILURE_BACKOFF_MS);
           }
         } catch {
-          if (generation === this.#snapshotGeneration && !this.#stopped) this.#apiCache.delete(id);
+          if (generation === this.#snapshotGeneration && !this.#stopped) {
+            this.#apiCache.delete(id);
+            this.#probeBackoffUntil.set(id, now + PROBE_FAILURE_BACKOFF_MS);
+          }
         }
       }),
     );
