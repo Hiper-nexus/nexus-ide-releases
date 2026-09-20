@@ -78,12 +78,6 @@ type QueueEntry = {
   beforeWrite?: TerminalOutputBeforeWrite;
   onBackgroundBacklogDropped?: () => void;
   backgroundBacklogDropped: boolean;
-  /**
-   * Pós-drop de backlog o próximo chunk pode COMEÇAR no meio de uma
-   * sequência ANSI cortada ("(B", "1;2m", payload Kitty do grok — voo real
-   * 19/08 renderizava isso como texto). Até achar um \n, descarta.
-   */
-  resyncToNewlinePending: boolean;
   highPriority: boolean;
   foregroundHold: boolean;
   foregroundHoldSafetyDelayMs: number;
@@ -137,9 +131,12 @@ const SYNCHRONIZED_OUTPUT_END_SEQUENCE = '\x1b[?2026l';
 const BACKGROUND_BACKLOG_WARNING =
   // \x1b[2K apaga a linha do composer do CLI antes do aviso — sem isso o
   // rodapé mostrava "> [Nexus skipped hidden" cortado (print 2026-08-16).
-  '\x18\x1b[0m\r\x1b[2K\r\n[Nexus skipped hidden output — backlog > 2 MB]\r\n\r\n';
+  '\x18\x1b[0m\r\x1b[2K\r\n[Nexus skipped hidden output — backlog limit reached]\r\n\r\n';
 
 const queuedByTerminal = new Map<TerminalOutputSink, QueueEntry>();
+// A drained queue does not mean a discarded ANSI sequence has ended. Keep
+// parser recovery attached to the terminal until a safe input boundary arrives.
+let outputNeedsResync = new WeakSet<TerminalOutputSink>();
 /**
  * Chars handed to `write` whose parse callback has not fired yet, per sink.
  * Only tracked when a parse callback exists (arity-1 sinks settle inline and
@@ -287,7 +284,6 @@ function createQueueEntry(
     beforeWrite: options.beforeWrite,
     onBackgroundBacklogDropped: options.onBackgroundBacklogDropped,
     backgroundBacklogDropped: false,
-    resyncToNewlinePending: false,
     highPriority: true,
     foregroundHold: false,
     foregroundHoldSafetyDelayMs: FOREGROUND_HOLD_SAFETY_DELAY_MS,
@@ -661,31 +657,6 @@ function enqueueChunk(
     onParsed?: TerminalOutputParsedCallback;
   },
 ): void {
-  if (entry.resyncToNewlinePending) {
-    // Fronteiras seguras de retomada: logo APÓS um '\n' ou EXATAMENTE num ESC
-    // (início de sequência nova). TUIs em alternate screen redesenham só com
-    // CSI — esperar '\n' descartava o repaint inteiro e o pane ficava em
-    // branco até o próximo newline literal.
-    const newlineAt = data.indexOf('\n');
-    const escAt = data.indexOf('\x1b');
-    let resumeAt = newlineAt === -1 ? -1 : newlineAt + 1;
-    if (escAt !== -1 && (resumeAt === -1 || escAt < resumeAt)) {
-      resumeAt = escAt;
-    }
-    if (resumeAt === -1) {
-      // Ainda no rabo da linha cortada — nada aqui é renderizável com
-      // segurança. O parse settle do chamador (onParsed) ainda precisa
-      // disparar para não vazar o contador de backpressure.
-      options?.onParsed?.();
-      return;
-    }
-    entry.resyncToNewlinePending = false;
-    data = data.slice(resumeAt);
-    if (data.length === 0) {
-      options?.onParsed?.();
-      return;
-    }
-  }
   // Own the bytes: PTY reads and restore-tape trims hand us slices of a much
   // larger buffer, and an un-flattened push would pin that whole buffer for
   // as long as this chunk sits in the queue.
@@ -713,7 +684,7 @@ function replaceBacklogWithWarning(entry: QueueEntry): void {
   entry.chunkIndex = 0;
   entry.queuedChars = BACKGROUND_BACKLOG_WARNING.length;
   entry.backgroundBacklogDropped = true;
-  entry.resyncToNewlinePending = true;
+  outputNeedsResync.add(entry.terminal);
   entry.highPriority = true;
   entry.foregroundHold = false;
   if (shouldNotify) runtimeDroppedBacklogCount += 1;
@@ -886,6 +857,18 @@ function drainQueuedOutput(): void {
   }
 }
 
+/** Skip a cut ANSI/OSC tail, including when the drop warning already drained. */
+function resynchronizeOutput(terminal: TerminalOutputSink, data: string): string {
+  if (!outputNeedsResync.has(terminal)) return data;
+  const newlineAt = data.indexOf('\n');
+  const escAt = data.indexOf('\x1b');
+  let resumeAt = newlineAt === -1 ? -1 : newlineAt + 1;
+  if (escAt !== -1 && (resumeAt === -1 || escAt < resumeAt)) resumeAt = escAt;
+  if (resumeAt === -1) return '';
+  outputNeedsResync.delete(terminal);
+  return data.slice(resumeAt);
+}
+
 /**
  * Route terminal PTY output through the shared scheduler.
  * Foreground writes prefer immediate delivery; background panes queue and
@@ -897,6 +880,11 @@ export function writeTerminalOutput(
   options: WriteTerminalOutputOptions,
 ): void {
   if (!data) return;
+  data = resynchronizeOutput(terminal, data);
+  if (!data) {
+    options.onParsed?.();
+    return;
+  }
 
   if (options.foreground) {
     const entry = queuedByTerminal.get(terminal);
@@ -1143,6 +1131,7 @@ export function flushTerminalOutput(
 
 /** Drop queued output for a disposed terminal. */
 export function discardTerminalOutput(terminal: TerminalOutputSink): void {
+  outputNeedsResync.delete(terminal);
   const entry = queuedByTerminal.get(terminal);
   if (entry) {
     clearForegroundRelease(entry);
@@ -1187,6 +1176,7 @@ export function resetTerminalOutputSchedulerForTests(): void {
   }
   queuedByTerminal.clear();
   pendingParseByTerminal.clear();
+  outputNeedsResync = new WeakSet<TerminalOutputSink>();
   runtimeDroppedBacklogCount = 0;
   resetTerminalOutputSchedulerDebug();
 }

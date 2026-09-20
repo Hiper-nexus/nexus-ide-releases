@@ -402,6 +402,33 @@ describe('terminal output scheduler', () => {
 });
 
 describe('resync pós-drop de backlog (garble do voo real 19/08)', () => {
+  it.each([true, false])('preserva resync após drenar o aviso, foreground=%s', (foreground) => {
+    vi.useFakeTimers();
+    const terminal = createTerminal();
+    for (let i = 0; i < 4096; i += 1) {
+      writeTerminalOutput(terminal, '\x1b[1;1H⠋', { foreground: false, holdBackground: true });
+    }
+    writeTerminalOutput(terminal, '\x1b[', { foreground: false, holdBackground: true });
+    resumeTerminalOutput(terminal);
+    flushTerminalOutput(terminal);
+    expect(getQueuedChars(terminal)).toBe(0);
+    expect(terminal.written.join('')).toContain('Nexus skipped hidden output');
+
+    let settled = false;
+    writeTerminalOutput(terminal, '31mBROKEN-ANSI-TAIL', {
+      foreground,
+      onParsed: () => { settled = true; },
+    });
+    flushTerminalOutput(terminal);
+    expect(terminal.written.join('')).not.toContain('31mBROKEN-ANSI-TAIL');
+    expect(settled).toBe(true);
+
+    writeTerminalOutput(terminal, 'resto\x1b[HQUADRO LIMPO', { foreground });
+    flushTerminalOutput(terminal);
+    expect(terminal.written.join('')).toContain('\x1b[HQUADRO LIMPO');
+    expect(terminal.written.join('')).not.toContain('resto');
+  });
+
   beforeEach(() => {
     resetTerminalOutputSchedulerForTests();
   });
