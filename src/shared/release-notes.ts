@@ -4152,6 +4152,79 @@ export const RELEASE_07647: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.62',
+  date: '2026-09-20',
+  codename: 'Cotas reais por CLI, contas isoladas e terminal que não some',
+  summary:
+    'Cota por CLI deixa de aparecer vazia quando há consumo (Grok credits, Kimi/AGY refresh, ' +
+    'Claude /usage, Devin, Cursor). Quem mais gastou sobe na lista. Contas Claude isoladas, ' +
+    'refresh Codex na conta materializada, e o terminal Codex não apaga texto no resize.',
+  highlights: [
+    {
+      title: 'Cota real por CLI (Codenotch)',
+      detail:
+        'Grok lê billing?format=credits (créditos semanais, não monthly vazio). Kimi e AGY ' +
+        'refrescam o access em memória. Claude cai em claude /usage print-only se o OAuth ' +
+        'falha. Devin GetUserStatus. Cursor autoPercentUsed — never plan.used/limit do free.',
+    },
+    {
+      title: 'Quem mais gastou fica à vista',
+      detail:
+        'Faixa do Redline (máx. 6), painel e Ajustes → Uso ordenam pela maior %. ' +
+        'Conta sem leitura vai para baixo; 0% conhecido fica acima de «Não informado».',
+    },
+    {
+      title: 'Contas Claude isoladas (F-153)',
+      detail:
+        'Cada conta tem diretório de auth próprio. A seleção do Nexus não reescreve o ' +
+        'Keychain global nem atribui a credencial B ao cofre A.',
+    },
+    {
+      title: 'Codex refresca a conta escolhida (F-207)',
+      detail:
+        'A trava de spawn espera o auth.json da conta materializada. Timeout não libera ' +
+        'follower com refresh token velho.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Terminal Codex não some no resize (F-356/F-357)',
+      detail:
+        'Medir sem mutar, um resize só, fila ANSI sobrevive ao descarte. Chromium: cursor ' +
+        '76 e texto preservados (antes 76→30 e SPIN apagado).',
+    },
+    {
+      title: 'Redline depois do update (F-612/F-029)',
+      detail:
+        'Copia o binário novo para /Applications e relança. Painel escuro com logos, ' +
+        'faixa compacta, só contas com leitura na barra.',
+    },
+    {
+      title: 'Pane manual não estaciona no TTL (F-150)',
+      detail:
+        'Guardian não mata pane aberto pela mão nem worker de missão só porque o relógio ' +
+        'andou, sem pressão de memória.',
+    },
+    {
+      title: 'Segundo login guarda a sessão atual (F-358)',
+      detail:
+        'AccountsManager preserva a conta ativa antes de abrir o terminal de cadastro.',
+    },
+    {
+      title: 'Kimi overlay leva o catálogo nativo (F-611)',
+      detail:
+        'models/providers entram no overlay no spawn e voltam se a TUI reescrever config.toml.',
+    },
+    {
+      title: 'AGY aliases e esforço (F-151/F-154)',
+      detail:
+        'Skills reconcilia aliases antes do pane; níveis de esforço aceitos pela CLI ' +
+        '(max → high).',
+    },
+  ],
+};
+
+export const RELEASE_07661: AppRelease = {
   version: '0.76.61',
   date: '2026-09-20',
   codename: 'Redline no menu bar, tok/s visível e abas de espaço',

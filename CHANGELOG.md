@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.76.62 — Cotas reais por CLI, contas isoladas e terminal que não some
+
+- **Cota deixa de mentir «Não informado»** (Codenotch): Grok lê `billing?format=credits`; Kimi e AGY refrescam o access em memória; Claude cai em `claude /usage` print-only se o OAuth falha; Devin usa GetUserStatus; Cursor usa `autoPercentUsed` (nunca `plan.used/limit` do free). GLM/Codex intocados.
+- **Quem mais gastou fica em cima**: faixa do Redline (máx. 6), painel e Ajustes → Uso ordenam pela maior `%`; contas sem leitura vão para baixo.
+- **Contas Claude isoladas (F-153)**: cada conta tem perfil OAuth próprio; a seleção do Nexus não reescreve o Keychain global nem pinta a credencial B no cofre A.
+- **Codex refresca a conta materializada (F-207)**: a trava de spawn espera o `auth.json` da conta escolhida, não o perfil nativo.
+- **Terminal Codex não apaga texto no resize (F-356/F-357)**: um único resize após medir; ANSI sobrevive à fila drenada.
+- **Redline depois do update (F-612/F-029)**: copia o binário novo, relança, painel escuro com logos, faixa compacta.
+- **Pane manual não estaciona no TTL (F-150)**; segundo login guarda a sessão atual (F-358); Kimi overlay leva `models`/`providers` (F-611); AGY aliases/esforço (F-151/F-154).
+
 ## 0.76.61 — Redline no menu bar, tok/s visível e abas de espaço
 
 - **Redline no menu bar**: companheiro nativo macOS com barras 5h/semana por conta, cores de urgência, cronômetro até o reset e Fleet Pulse em Uso e cotas. Snapshot em `~/.nexus/redline-last-good.json` (sem segredos, e-mail mascarado); a escolha de conta no spawn continua aritmética de folga, não o Jev.
