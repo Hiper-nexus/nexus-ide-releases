@@ -18,6 +18,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -28,7 +29,14 @@ import { fileURLToPath } from "node:url";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(scriptDir, "..");
-const source = path.join(root, "native", "menubar-redline", "main.swift");
+const sourceDir = path.join(root, "native", "menubar-redline");
+const source = path.join(sourceDir, "main.swift");
+// Todo .swift do companheiro entra no binário, exceto os de teste; ordenado
+// para o argv do swiftc ser determinístico.
+const sources = readdirSync(sourceDir)
+  .filter((name) => name.endsWith(".swift") && !name.endsWith(".test.swift"))
+  .sort()
+  .map((name) => path.join(sourceDir, name));
 const icon = path.join(root, "assets", "icon.icns");
 const defaultOutput = path.join(
   root,
@@ -112,7 +120,7 @@ export function buildMenubarCompanion({ output = defaultOutput } = {}) {
       "5",
       "-o",
       binary,
-      source,
+      ...sources,
     ], { capture: true });
 
     const contents = path.join(output, "Contents");

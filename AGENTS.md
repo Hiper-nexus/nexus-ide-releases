@@ -195,7 +195,18 @@ saber isto antes de mexer:
   relança. A oferta one-time não cobre update. `open` num LSUIElement já
   rodando não reconstrói o extra — "Abrir Redline" mata e abre de novo.
 - A faixa só pinta contas com `usedRatio` (`statusBarEntryIds`, teto 6).
-  Unknown (`·····`) fica no menu, senão o extra some no overflow do macOS.
+  Unknown (`·····`) fica no painel, senão o extra some no overflow do macOS.
+- F-029 mudou a anatomia: o clique abre um `NSPopover` com lista vertical e
+  rolagem (`QuotaPanelController`), não mais um `NSMenu` — `statusItem.menu`
+  foi embora e as ações são botões de verdade fora da área rolável.
+- A faixa virou UM resumo: `<glyph> <barra 5 blocos> <pct>` da pior janela
+  entre as contas de `statusBarEntryIds` (`entriesForBar`). Um segmento por
+  conta media ~930pt com 6 contas; o teto da spec é 100pt e não cabe
+  cronômetro no título — o reset fica na linha da janela no painel.
+- `urgencyColor` é NSColor dinâmica resolvida pela aparência da superfície
+  que desenha, com hexes fixos nos DOIS temas (não mais "tons do sistema no
+  escuro"): a barra pode ser clara sob papel de parede claro mesmo com o
+  macOS em dark mode.
 
 ## Overlay Kimi leva o catálogo de modelos (F-611)
 

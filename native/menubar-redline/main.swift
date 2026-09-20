@@ -1,7 +1,7 @@
 // Nexus Redline — app companheiro de menu bar do NexusIDE.
 // Lê ~/.nexus/redline-last-good.json (escrito pelo quota-service do Nexus)
 // e mostra, no topo do Mac, a folga de cada conta de IA: barras 5h/semana,
-// cores de urgência e cronômetro até o reset. Clique abre o menu com as quotas.
+// cores de urgência e cronômetro até o reset num painel vertical com rolagem.
 //
 // Read-only sobre os dados: nunca lê Keychain, nunca renova token, nunca fala
 // com provider. Único efeito colateral: o arquivo-sinal de refresh quando
@@ -14,20 +14,20 @@ import ServiceManagement
 
 // MARK: - Modelo (espelho de src/shared/redline-types.ts)
 
-struct RedlineWindow: Codable {
+struct RedlineWindow: Codable, Equatable {
     let kind: String
     let label: String
     let usedRatio: Double?
     let resetsAt: Double?
 }
 
-struct RedlineDecisiveWindow: Codable {
+struct RedlineDecisiveWindow: Codable, Equatable {
     let label: String
     let effectiveUsedRatio: Double
     let resetsAt: Double?
 }
 
-struct RedlineEntry: Codable {
+struct RedlineEntry: Codable, Equatable {
     let id: String
     let adapterId: String
     let accountId: String?
@@ -45,7 +45,7 @@ struct RedlineEntry: Codable {
     let decisiveWindow: RedlineDecisiveWindow?
 }
 
-struct RedlineRankingRow: Codable {
+struct RedlineRankingRow: Codable, Equatable {
     let entryId: String
     let adapterId: String
     let label: String
@@ -55,7 +55,7 @@ struct RedlineRankingRow: Codable {
     let minutesToReset: Double?
 }
 
-struct RedlineSnapshotFile: Codable {
+struct RedlineSnapshotFile: Codable, Equatable {
     let formatVersion: Int
     let generatedBy: String
     let updatedAt: Double
@@ -87,40 +87,22 @@ func glyph(for adapterId: String) -> String {
     providerGlyphs[adapterId] ?? "●"
 }
 
-/// Letrinha inicial do email mascarado quando há conta (estilo do original).
-func initial(for entry: RedlineEntry) -> String {
-    guard let masked = entry.emailMasked, !masked.isEmpty, masked != "***" else { return "" }
-    let first = String(masked.prefix(1)).lowercased()
-    return " \(first)"
-}
-
 func color(hex: UInt32) -> NSColor {
     NSColor(srgbRed: CGFloat((hex >> 16) & 0xFF) / 255,
             green: CGFloat((hex >> 8) & 0xFF) / 255,
             blue: CGFloat(hex & 0xFF) / 255, alpha: 1)
 }
 
-/// O menu nativo segue a aparência do macOS e no claro os tons de sistema
-/// lavam sobre o branco (systemGreen ≈3:1 em texto pequeno). Resolvemos a
-/// paleta na montagem — o menu é reconstruído a cada abertura — e o KVO de
-/// effectiveAppearance repinta a faixa ao trocar de tema. No escuro ficam os
-/// tons do sistema; no claro, variantes escuras ≥4.5:1.
-func prefersDarkMenu() -> Bool {
-    NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-}
-
+/// Resolve pela aparência da superfície que desenha, não pela do processo.
+/// A barra pode ser clara mesmo com o app escuro (papel de parede do macOS).
 func urgencyColor(forUsed used: Double?) -> NSColor {
-    let dark = prefersDarkMenu()
-    guard let used else { return dark ? .systemGray : color(hex: 0x6E6E73) }
-    if used >= 0.85 { return dark ? .systemRed : color(hex: 0xB3382C) }
-    if used >= 0.60 { return dark ? .systemOrange : color(hex: 0x9A5B00) }
-    return dark ? .systemGreen : color(hex: 0x1B7A3D)
-}
-
-/// Melhor janela de um tipo ("hours" = 5h, "weekly" = semana).
-func window(_ entry: RedlineEntry, kind: String) -> RedlineWindow? {
-    entry.windows.first { $0.kind == kind && $0.usedRatio != nil }
-        ?? entry.windows.first { $0.kind == kind }
+    NSColor(name: nil) { appearance in
+        let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        guard let used else { return dark ? color(hex: 0xAAAAAF) : color(hex: 0x515154) }
+        if used >= 0.85 { return dark ? color(hex: 0xFF8178) : color(hex: 0xB3382C) }
+        if used >= 0.60 { return dark ? color(hex: 0xE5C07B) : color(hex: 0x9A5B00) }
+        return dark ? color(hex: 0x7EE2A8) : color(hex: 0x1B7A3D)
+    }
 }
 
 /// "38m", "12h", "6d" — quanto falta pro reset.
@@ -142,7 +124,7 @@ func pct(_ used: Double?) -> String {
 
 /// Barra de 5 blocos: ▮ preenchidos conforme o uso.
 func bars(for used: Double?) -> (text: String, color: NSColor) {
-    guard let used else { return ("·····", .systemGray) }
+    guard let used else { return ("·····", urgencyColor(forUsed: nil)) }
     let clamped = min(1, max(0, used))
     let filled = Int((clamped * 5).rounded())
     let text = String(repeating: "▮", count: filled) + String(repeating: "░", count: 5 - filled)
@@ -160,64 +142,57 @@ func ageLabel(_ updatedAt: Double) -> String {
     return "há \(hours / 24)d"
 }
 
-// MARK: - Status item
-
-func attributedSegment(entry: RedlineEntry) -> NSAttributedString {
-    let fiveH = window(entry, kind: "hours") ?? window(entry, kind: "session")
-    let week = window(entry, kind: "weekly") ?? window(entry, kind: "monthly")
-
-    let base: [NSAttributedString.Key: Any] = [
-        .font: NSFont.monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium),
-        .baselineOffset: 0.5,
-    ]
-    let text = NSMutableAttributedString(string: "\(glyph(for: entry.adapterId))\(initial(for: entry)) ", attributes: base)
-
-    for win in [fiveH, week].compactMap({ $0 }) {
-        let bar = bars(for: win.usedRatio)
-        text.append(NSAttributedString(string: bar.text, attributes: base.merge([.foregroundColor: bar.color])))
-        text.append(NSAttributedString(string: " \(countdown(win.resetsAt)) ", attributes: base.merge([.foregroundColor: NSColor.secondaryLabelColor])))
-    }
-    if fiveH == nil && week == nil {
-        text.append(NSAttributedString(string: "sem leitura ", attributes: base.merge([.foregroundColor: NSColor.systemGray])))
-    }
-    return text
-}
-
-extension Dictionary where Key == NSAttributedString.Key, Value == Any {
-    func merge(_ other: [NSAttributedString.Key: Any]) -> [NSAttributedString.Key: Any] {
-        var copy = self
-        for (key, value) in other { copy[key] = value }
-        return copy
-    }
-}
-
 // MARK: - AppDelegate
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
     var snapshot: RedlineSnapshotFile?
     var watchSource: DispatchSourceFileSystemObject?
     var pollTimer: Timer?
+    let popover = NSPopover()
+    lazy var quotaPanel = QuotaPanelController(target: self)
     /// Guarda o estado do login item sem depender de SMAppService a cada paint.
     var launchAtLoginEnabled = false
+    /// NSKeyValueObservation morre ao sair de escopo: sem reter aqui, trocar o
+    /// tema do macOS nunca repinta a faixa (F-029).
+    var appearanceObservation: NSKeyValueObservation?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
-        let menu = NSMenu()
-        menu.delegate = self
-        menu.autoenablesItems = false
-        statusItem.menu = menu
+        statusItem.button?.target = self
+        statusItem.button?.action = #selector(togglePanel)
+        popover.behavior = .transient
+        popover.contentViewController = quotaPanel
 
         refreshLaunchAtLoginState()
         reloadSnapshot()
         startWatching()
-        // Tema do macOS mudou → faixa repinta com a paleta da nova aparência
-        // (o menu em si já remonta a cada abertura, via menuNeedsUpdate).
-        _ = NSApp.observe(\.effectiveAppearance, options: []) { [weak self] _, _ in
+        startObservingAppearance()
+    }
+
+    /// Tema do macOS mudou → repinta a faixa/tooltip com a nova aparência.
+    func startObservingAppearance() {
+        appearanceObservation = NSApp.observe(\.effectiveAppearance, options: []) { [weak self] _, _ in
             DispatchQueue.main.async { self?.renderStatusItem() }
         }
+    }
+
+    @objc func togglePanel() {
+        if popover.isShown {
+            popover.performClose(nil)
+            return
+        }
+        guard let button = statusItem.button else { return }
+        reloadSnapshot()
+        refreshLaunchAtLoginState()
+        quotaPanel.update(snapshot: snapshot, launchAtLogin: launchAtLoginEnabled)
+        // Keep the whole panel on the screen containing the status item.
+        let screenHeight = button.window?.screen?.visibleFrame.height ?? 700
+        popover.contentSize = NSSize(width: 400, height: min(600, max(240, screenHeight - 32)))
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        popover.contentViewController?.view.window?.makeKey()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -233,10 +208,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         else {
             snapshot = nil
             renderStatusItem()
+            if popover.isShown { quotaPanel.update(snapshot: nil, launchAtLogin: launchAtLoginEnabled) }
             return
         }
         snapshot = decoded
         renderStatusItem()
+        if popover.isShown { quotaPanel.update(snapshot: decoded, launchAtLogin: launchAtLoginEnabled) }
     }
 
     func startWatching() {
@@ -272,6 +249,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return age / 1000 > staleThreshold
     }
 
+    /// Contas que a faixa resume: as que o quota-service escolheu em
+    /// `statusBarEntryIds` (teto 6 — F-612); sem a lista, as primeiras seis
+    /// com leitura. A pior janela dessas contas vira o resumo da barra —
+    /// varrer o snapshot inteiro mostraria cota de conta que a faixa não cobre.
     func entriesForBar(_ snap: RedlineSnapshotFile) -> [RedlineEntry] {
         if let ids = snap.statusBarEntryIds, !ids.isEmpty {
             let wanted = Set(ids)
@@ -284,182 +265,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func renderStatusItem() {
         guard let button = statusItem.button else { return }
+        button.image = nil
         let compact: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold),
-            .foregroundColor: NSColor.systemGray
+            .foregroundColor: urgencyColor(forUsed: nil)
         ]
+        let count = snapshot?.entries.count ?? 0
+        let freshness = snapshot.map { ageLabel($0.updatedAt) } ?? "sem dados do Nexus"
+        let offline = isStale() && snapshot != nil ? " · Nexus offline" : ""
+        button.toolTip = "Nexus Redline · \(count) contas · \(freshness)\(offline). Clique para ver todas as cotas."
+
         guard let snap = snapshot, !snap.entries.isEmpty else {
             button.attributedTitle = NSAttributedString(string: " ⬡ ", attributes: compact)
-            button.toolTip = "Nexus Redline — sem dados do Nexus ainda"
+            button.setAccessibilityLabel("Nexus Redline, sem dados. Abrir cotas")
             return
         }
 
-        let bar = entriesForBar(snap)
-        if bar.isEmpty {
+        // A faixa é UM resumo — a pior janela entre as contas da faixa. O
+        // detalhe de cada conta mora no painel; aqui cabe só o aperto máximo.
+        var worst: (entry: RedlineEntry, window: RedlineWindow)?
+        for entry in entriesForBar(snap) {
+            for win in entry.windows
+            where ["hours", "session", "weekly", "monthly"].contains(win.kind) {
+                guard let used = win.usedRatio else { continue }
+                if used > (worst?.window.usedRatio ?? -1) { worst = (entry, win) }
+            }
+        }
+        guard let worst else {
             button.attributedTitle = NSAttributedString(
-                string: " ⬡ \(snap.entries.count) ",
-                attributes: compact
+                string: " ⬡ \(snap.entries.count) ", attributes: compact
             )
-            button.toolTip = "Nexus Redline — \(snap.entries.count) contas, ainda sem leitura de cota"
+            button.setAccessibilityLabel("Nexus Redline, \(count) contas, sem leitura. Abrir cotas")
             return
         }
 
         let base: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
         ]
+        let labelInk = base.merging([.foregroundColor: NSColor.labelColor]) { _, new in new }
         let title = NSMutableAttributedString()
         if isStale() {
-            title.append(NSAttributedString(string: "◌ ", attributes: base.merge([.foregroundColor: NSColor.systemGray])))
+            title.append(NSAttributedString(string: "◌ ", attributes: compact))
         }
-        for entry in bar {
-            title.append(attributedSegment(entry: entry))
-            title.append(NSAttributedString(string: "│", attributes: base.merge([.foregroundColor: NSColor.separatorColor])))
-        }
-        title.deleteCharacters(in: NSRange(location: title.length - 1, length: 1))
+        title.append(NSAttributedString(string: "\(glyph(for: worst.entry.adapterId)) ", attributes: labelInk))
+        let bar = bars(for: worst.window.usedRatio)
+        title.append(NSAttributedString(string: bar.text, attributes: base.merging(
+            [.foregroundColor: bar.color]) { _, new in new }))
+        title.append(NSAttributedString(string: " \(pct(worst.window.usedRatio))", attributes: labelInk))
         button.attributedTitle = title
-        button.toolTip = "Nexus Redline — \(bar.count) com leitura · \(snap.entries.count) contas · \(ageLabel(snap.updatedAt))"
-    }
-
-    // MARK: Menu
-
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        rebuildMenu(menu)
-    }
-
-    func rebuildMenu(_ menu: NSMenu) {
-        menu.removeAllItems()
-
-        let base: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
-        ]
-        let bold: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
-        ]
-
-        guard let snap = snapshot, !snap.entries.isEmpty else {
-            let item = NSMenuItem()
-            item.attributedTitle = NSAttributedString(
-                string: "Sem dados ainda — abra o Nexus",
-                attributes: base.merge([.foregroundColor: NSColor.secondaryLabelColor])
-            )
-            item.isEnabled = false
-            menu.addItem(item)
-            menu.addItem(.separator())
-            addCommonItems(to: menu)
-            return
-        }
-
-        let freshness = isStale() ? " · Nexus offline" : ""
-        let header = NSMenuItem()
-        header.attributedTitle = NSAttributedString(
-            string: "⬡ Nexus Redline · \(ageLabel(snap.updatedAt))\(freshness)",
-            attributes: bold.merge([.foregroundColor: NSColor.secondaryLabelColor])
+        button.setAccessibilityLabel(
+            "Nexus Redline, \(count) contas, pior leitura \(pct(worst.window.usedRatio)) em \(worst.entry.label). Abrir cotas"
         )
-        header.isEnabled = false
-        menu.addItem(header)
-        menu.addItem(.separator())
-
-        // Ranking primeiro: "qual conta usar agora" é a pergunta do menu.
-        if let best = bestRankingRow(snap) {
-            let rec = NSMenuItem()
-            rec.attributedTitle = NSAttributedString(
-                string: "⚑ Recomendada: \(shortLabel(best)) — folga \(Int((best.headroom * 100).rounded()))%",
-                attributes: bold.merge([.foregroundColor: NSColor.systemGreen])
-            )
-            rec.isEnabled = false
-            menu.addItem(rec)
-            menu.addItem(.separator())
-        }
-
-        for entry in snap.entries {
-            for item in entryItems(entry, base: base) {
-                menu.addItem(item)
-            }
-        }
-
-        menu.addItem(.separator())
-        addCommonItems(to: menu)
-    }
-
-    func bestRankingRow(_ snap: RedlineSnapshotFile) -> RedlineRankingRow? {
-        snap.ranking.values.flatMap { $0 }.max { $0.headroom < $1.headroom }
-    }
-
-    func shortLabel(_ row: RedlineRankingRow) -> String {
-        let initialPart = row.emailMasked.map { " \(String($0.prefix(2)))…" } ?? ""
-        return "\(glyph(for: row.adapterId))\(initialPart)"
-    }
-
-    /// Item da conta + itens de detalhe (um por janela com leitura).
-    func entryItems(_ entry: RedlineEntry, base: [NSAttributedString.Key: Any]) -> [NSMenuItem] {
-        let item = NSMenuItem()
-        let state: String
-        if entry.onCooldown {
-            state = " · cooldown \(countdown(entry.cooldownUntil))"
-        } else if let reason = entry.excludedReason {
-            switch reason {
-            case "no-credential": state = " · sem credencial"
-            case "needs-relogin": state = " · sessão expirada"
-            case "cooldown": state = " · cooldown"
-            case "unknown-usage": state = " · sem leitura"
-            default: state = ""
-            }
-        } else {
-            state = ""
-        }
-
-        let title = NSMutableAttributedString(
-            string: "\(glyph(for: entry.adapterId)) \(entry.label)\(state)",
-            attributes: base.merge(state.isEmpty ? [:] : [.foregroundColor: NSColor.secondaryLabelColor])
-        )
-        item.attributedTitle = title
-        item.isEnabled = false
-
-        var items = [item]
-        let detailFont: [NSAttributedString.Key: Any] = [
-            .font: NSFont.monospacedSystemFont(ofSize: NSFont.smallSystemFontSize - 1, weight: .regular)
-        ]
-        for win in entry.windows where win.usedRatio != nil {
-            let bar = bars(for: win.usedRatio)
-            let detail = NSMenuItem()
-            let label = win.label.padding(toLength: 10, withPad: " ", startingAt: 0)
-            // Barra no tom de urgência; número e reset em labelColor —
-            // a leitura não pode depender só da cor (doutrina de estado).
-            let line = NSMutableAttributedString(string: "   \(label) ")
-            line.append(NSAttributedString(
-                string: bar.text,
-                attributes: detailFont.merge([.foregroundColor: bar.color])
-            ))
-            line.append(NSAttributedString(
-                string: "  \(pct(win.usedRatio)) · reseta em \(countdown(win.resetsAt))",
-                attributes: detailFont.merge([.foregroundColor: NSColor.labelColor])
-            ))
-            detail.attributedTitle = line
-            detail.isEnabled = false
-            detail.indentationLevel = 1
-            items.append(detail)
-        }
-        return items
-    }
-
-    func addCommonItems(to menu: NSMenu) {
-        let refresh = NSMenuItem(title: "↺  Atualizar agora", action: #selector(requestRefresh), keyEquivalent: "r")
-        refresh.target = self
-        menu.addItem(refresh)
-
-        let openNexus = NSMenuItem(title: "⬡  Abrir quotas no Nexus", action: #selector(openNexusApp), keyEquivalent: "o")
-        openNexus.target = self
-        menu.addItem(openNexus)
-
-        menu.addItem(.separator())
-
-        let login = NSMenuItem(title: launchAtLoginEnabled ? "✓  Iniciar com o macOS" : "   Iniciar com o macOS",
-                               action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
-        login.target = self
-        menu.addItem(login)
-
-        let quit = NSMenuItem(title: "⏻  Sair do Redline", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-        menu.addItem(quit)
     }
 
     // MARK: Ações
@@ -473,6 +329,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc func openNexusApp() {
+        popover.performClose(nil)
         if let url = URL(string: "nexus://quota") {
             NSWorkspace.shared.open(url)
         }
@@ -498,6 +355,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             alert.runModal()
         }
         refreshLaunchAtLoginState()
+        quotaPanel.update(snapshot: snapshot, launchAtLogin: launchAtLoginEnabled)
     }
 }
 
