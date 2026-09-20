@@ -82,6 +82,23 @@ export function latestEvaluatedAt(
   return best;
 }
 
+/**
+ * Uma entrada por id (a primeira vence — os fluxos chegam ordenados por
+ * overall desc), com rank renumerado denso. Catálogos já deduplicam por id,
+ * mas payloads pré-construídos (model-ranking.json empacotado) podem carregar
+ * resíduo de régens — e o React pinta "two children with the same key" na
+ * corrida do ranking.
+ */
+export function dedupeRankingEntries(
+  entries: readonly PublicModelRankingEntry[],
+): PublicModelRankingEntry[] {
+  const byId = new Map<string, PublicModelRankingEntry>();
+  for (const e of entries) {
+    if (!byId.has(e.id)) byId.set(e.id, e);
+  }
+  return [...byId.values()].map((e, i) => ({ ...e, rank: i + 1 }));
+}
+
 export function publicEntriesFromRanks(
   ranks: readonly ModelRankResult[],
 ): PublicModelRankingEntry[] {
@@ -159,12 +176,14 @@ export function buildPublicRankingSnapshot(input: {
     suiteId: input.suiteId,
     suiteRevision: input.suiteRevision,
     description: PUBLIC_DESCRIPTION,
-    entries: input.entries.map((e, i) =>
-      withFixtureEstimateMark({
-        ...e,
-        overall: clampScore(e.overall),
-        rank: e.rank ?? i + 1,
-      }),
+    entries: dedupeRankingEntries(
+      input.entries.map((e, i) =>
+        withFixtureEstimateMark({
+          ...e,
+          overall: clampScore(e.overall),
+          rank: e.rank ?? i + 1,
+        }),
+      ),
     ),
   };
 }

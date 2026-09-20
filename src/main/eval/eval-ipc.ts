@@ -15,6 +15,7 @@ import {
 import { runOfflineEvalV1 } from './eval-pipeline';
 import {
   buildPublicRankingFromCatalog,
+  dedupeRankingEntries,
   isPublicModelRankingSnapshot,
   withFixtureEstimateMark,
 } from './public-ranking';
@@ -54,7 +55,12 @@ function loadBundledPublicRanking(): PublicModelRankingSnapshot | null {
     if (!isPublicModelRankingSnapshot(raw)) return null;
     // Bundled files predating the estimate mark get stamped on load, so the
     // served payload never lets fixture scores pose as a real audit.
-    return { ...raw, entries: raw.entries.map(withFixtureEstimateMark) };
+    // Dedupe também: arquivos empacotados podem carregar resíduo de régens
+    // (duas entradas com o mesmo id quebram a key da corrida no renderer).
+    return {
+      ...raw,
+      entries: dedupeRankingEntries(raw.entries.map(withFixtureEstimateMark)),
+    };
   } catch {
     return null;
   }

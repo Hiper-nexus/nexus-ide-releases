@@ -13,6 +13,7 @@ import {
   FIXTURE_ESTIMATE_SOURCE_LABEL,
   buildPublicRankingFromCatalog,
   buildPublicRankingFromRanks,
+  dedupeRankingEntries,
   isFixtureEvalSource,
   isPublicModelRankingSnapshot,
   parseEvalSource,
@@ -266,5 +267,38 @@ describe('published resources carry quality when pipeline seeded', () => {
     expect(loaded.schemaVersion).toBe(1);
     expect(Array.isArray(loaded.entries)).toBe(true);
     expect(loaded.entries[0].overall).toBeGreaterThan(0);
+  });
+});
+
+describe('dedupeRankingEntries', () => {
+  const base = {
+    adapterId: 'agy',
+    modelId: 'gemini-3.8-flash-high',
+    overall: 74,
+    evaluatedAt: '2026-09-13T00:00:00.000Z',
+    source: 'nexus-eval/v1/fixture',
+  };
+
+  it('keeps the first entry per id and renumbers ranks densely', () => {
+    const deduped = dedupeRankingEntries([
+      { ...base, id: 'agy/gemini-3.8-flash-high', overall: 74, rank: 2 },
+      { id: 'claude/claude-fable-5-1', adapterId: 'claude', modelId: 'claude-fable-5-1', overall: 90, evaluatedAt: base.evaluatedAt, source: base.source, rank: 1 },
+      // Resíduo de regen: mesmo id com costTier antigo (F real no
+      // model-ranking.json empacotado — "two children with the same key").
+      { ...base, id: 'agy/gemini-3.8-flash-high', overall: 68, costTier: 'low' as const, rank: 9 },
+    ]);
+    expect(deduped).toHaveLength(2);
+    expect(deduped.map((e) => e.rank)).toEqual([1, 2]);
+    expect(deduped.find((e) => e.id === 'agy/gemini-3.8-flash-high')?.overall).toBe(74);
+  });
+
+  it('drops the duplicate on the bundled loader path via snapshot builder', () => {
+    const snap = buildPublicRankingFromRanks([], 'v1', 'fixture', '2026-09-20T00:00:00.000Z');
+    void snap;
+    const rebuilt = dedupeRankingEntries([
+      { ...base, id: 'agy/gemini-3.8-flash-high', rank: 5 },
+      { ...base, id: 'agy/gemini-3.8-flash-high', rank: 6 },
+    ]);
+    expect(rebuilt).toHaveLength(1);
   });
 });
