@@ -21,6 +21,7 @@ import { knownWindow, unknownWindow } from './quota-normalize';
 import type { FetchLike } from './claude-oauth-usage';
 
 export const GROK_BILLING_URL = 'https://cli-chat-proxy.grok.com/v1/billing';
+export const GROK_CREDITS_URL = `${GROK_BILLING_URL}?format=credits`;
 export const GROK_TEAMS_URL = 'https://management-api.x.ai/auth/teams';
 export const GROK_MODELS_URL = 'https://cli-chat-proxy.grok.com/v1/models';
 export const GROK_USAGE_TIMEOUT_MS = 8_000;
@@ -44,6 +45,116 @@ function parseIsoMs(raw: unknown): number | undefined {
   if (typeof raw !== 'string' || !raw) return undefined;
   const ms = Date.parse(raw);
   return Number.isFinite(ms) ? ms : undefined;
+}
+
+/** "GrokBuild" → "Grok Build" — o nome no wire é uma palavra só. */
+function humanizeProductName(name: string): string {
+  let out = '';
+  for (const ch of name) {
+    if (ch >= 'A' && ch <= 'Z' && out) out += ' ';
+    out += ch;
+  }
+  return out;
+}
+
+function creditsConfig(body: unknown): Record<string, unknown> | null {
+  if (!body || typeof body !== 'object') return null;
+  const root = body as { config?: unknown };
+  const config =
+    root.config && typeof root.config === 'object'
+      ? root.config
+      : body;
+  return typeof config === 'object' && config !== null
+    ? (config as Record<string, unknown>)
+    : null;
+}
+
+/**
+ * Parse GET /v1/billing?format=credits — o anel semanal do SuperGrok
+ * (mesma leitura do /usage do CLI; ver Codenotch GrokUsage.swift):
+ *
+ *   config.creditUsagePercent           → percent 0–100
+ *   config.productUsage[].usagePercent  → por produto (fallback)
+ *   config.currentPeriod WEEKLY + start/end
+ *
+ * Período semanal fresco sem percent = 0% honesto com resetsAt (o /usage do
+ * próprio Grok pinta a barra a 0%). Sem percent E sem período semanal → []
+ * (desconhecido a montante; nunca inventar 0%).
+ */
+export function parseGrokCredits(
+  body: unknown,
+  now = Date.now(),
+): QuotaWindow[] {
+  const config = creditsConfig(body);
+  if (!config) return [];
+
+  const period =
+    config.currentPeriod && typeof config.currentPeriod === 'object'
+      ? (config.currentPeriod as Record<string, unknown>)
+      : null;
+  const isWeekly =
+    typeof period?.type === 'string' && period.type.includes('WEEKLY');
+  const resetsAt =
+    parseIsoMs(period?.end) ?? parseIsoMs(config.billingPeriodEnd);
+
+  const headline = valNum(config.creditUsagePercent);
+  if (headline !== null) {
+    return [
+      knownWindow({
+        kind: isWeekly ? 'weekly' : 'credits',
+        label: isWeekly ? 'Semanal' : 'Créditos',
+        usedRatio: headline / 100,
+        source: 'provider-api',
+        confidence: 'high',
+        resetsAt,
+        now,
+      }),
+    ];
+  }
+
+  const products = Array.isArray(config.productUsage)
+    ? (config.productUsage as unknown[]).filter(
+        (p): p is Record<string, unknown> =>
+          !!p && typeof p === 'object',
+      )
+    : [];
+  const out: QuotaWindow[] = [];
+  for (const p of products) {
+    const percent = valNum(p.usagePercent);
+    if (percent === null) continue;
+    const name =
+      typeof p.product === 'string' && p.product
+        ? humanizeProductName(p.product)
+        : 'Créditos';
+    out.push(
+      knownWindow({
+        kind: isWeekly ? 'weekly' : 'credits',
+        label: isWeekly ? 'Semanal' : name,
+        usedRatio: percent / 100,
+        source: 'provider-api',
+        confidence: 'high',
+        resetsAt,
+        now,
+      }),
+    );
+    break; // headline único — a janela semanal é uma só
+  }
+  if (out.length > 0) return out;
+
+  if (isWeekly) {
+    return [
+      knownWindow({
+        kind: 'weekly',
+        label: 'Semanal',
+        usedRatio: 0,
+        source: 'provider-api',
+        confidence: 'medium',
+        resetsAt,
+        now,
+      }),
+    ];
+  }
+  return [];
 }
 
 /**
@@ -178,6 +289,24 @@ export async function fetchGrokUsageWindows(
   const out: QuotaWindow[] = [];
 
   try {
+    // 0) Credits (?format=credits) — o anel semanal do SuperGrok. É a única
+    // leitura que contas com uso semanal expõem; o /billing cru fica sem
+    // monthlyLimit/used para elas. Header dedicado do CLI (Codenotch).
+    try {
+      const creditsRes = await fetchImpl(GROK_CREDITS_URL, {
+        method: 'GET',
+        headers: { ...authHeaders, 'X-XAI-Token-Auth': 'xai-grok-cli' },
+        signal: controller.signal,
+      });
+      if (creditsRes.ok) {
+        const credits = await creditsRes.json();
+        const windows = parseGrokCredits(credits, now);
+        if (windows.length > 0) return windows;
+      }
+    } catch {
+      // continue
+    }
+
     // 1) Primary: CLI billing (monthly included quota).
     try {
       const billRes = await fetchImpl(GROK_BILLING_URL, {
