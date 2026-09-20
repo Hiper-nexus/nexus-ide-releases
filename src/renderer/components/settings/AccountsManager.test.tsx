@@ -377,7 +377,7 @@ describe('AccountsManager', () => {
     act(() => root.unmount());
   });
 
-  it('não reescreve a conta atual quando ela já está no vault', async () => {
+  it('preserva o token atual antes do segundo login mesmo quando o e-mail já está no vault', async () => {
     const addActiveSession = vi.fn(async () => ({ ok: true, id: 'acct-1' }));
     useAccountStore.setState({
       // A sessão viva (dev@example.com) já é esta linha salva.
@@ -396,7 +396,7 @@ describe('AccountsManager', () => {
       await Promise.resolve();
     });
 
-    expect(addActiveSession).not.toHaveBeenCalled();
+    expect(addActiveSession).toHaveBeenCalledWith('claude', 'dev@example.com');
     expect(openCliLoginTerminal).toHaveBeenCalled();
     act(() => root.unmount());
   });
@@ -433,6 +433,26 @@ describe('AccountsManager', () => {
     expect(addActiveSession).not.toHaveBeenCalled();
     expect(host.textContent).toMatch(/não deu para confirmar um login novo/i);
     expect(host.textContent).not.toMatch(/conta .* salva no Nexus/i);
+    act(() => root.unmount());
+  });
+
+  it.each(['rejected', 'thrown'] as const)('não inicia segundo login se preservar a primeira conta falhar (%s)', async (failure) => {
+    const addActiveSession = vi.fn(async () => {
+      if (failure === 'thrown') throw new Error('vault unavailable');
+      return { ok: false, error: 'vault unavailable' };
+    });
+    useAccountStore.setState({ accounts: [account()], addActiveSession } as never);
+    const { host, root } = mount();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    vi.mocked(openCliLoginTerminal).mockClear();
+    await act(async () => { host.querySelector<HTMLButtonElement>('[data-testid="acct-add-account"]')!.click(); });
+    await act(async () => {
+      host.querySelector<HTMLButtonElement>('[data-testid="acct-add-account-login"]')!.click();
+      await Promise.resolve(); await Promise.resolve();
+    });
+    expect(openCliLoginTerminal).not.toHaveBeenCalled();
+    expect(host.querySelector('[role="alert"]')?.textContent).toMatch(/guardar a conta atual/i);
+    expect(useAccountStore.getState().accounts[0].id).toBe('acct-1');
     act(() => root.unmount());
   });
 
@@ -505,10 +525,11 @@ describe('AccountsManager', () => {
   });
 
   it('falha ao gravar a conta nova aparece como erro, não como sucesso', async () => {
-    const addActiveSession = vi.fn(async () => ({
-      ok: false,
-      error: 'Nenhuma sessão ativa detectada para este provider.',
-    }));
+    let saved = 0;
+    const addActiveSession = vi.fn(async () => {
+      if (saved++ === 0) return { ok: true, id: 'acct-1' };
+      return { ok: false, error: 'Nenhuma sessão ativa detectada para este provider.' };
+    });
     useAccountStore.setState({
       accounts: [account()],
       addActiveSession,

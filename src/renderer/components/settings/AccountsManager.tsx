@@ -35,6 +35,12 @@ const UPSTREAMS = [
   { id: 'longcat', label: 'LongCat (Meituan)' },
 ];
 
+class AccountPreservationError extends Error {
+  constructor() {
+    super('Não consegui guardar a conta atual. O novo login não foi iniciado para preservar essa sessão. Tente novamente.');
+  }
+}
+
 function cooldownLabel(a: AccountInfo): string {
   if (!a.onCooldown || !a.cooldownUntil) return '';
   const mins = Math.max(1, Math.round((a.cooldownUntil - Date.now()) / 60000));
@@ -228,17 +234,8 @@ export function AccountsManager({
     baseline: AdapterAuthStatus | null,
   ): Promise<void> {
     if (!canSnapshot || baseline?.state !== 'ok') return;
-    const liveNow = emailFromAuthDetail(baseline.detail)?.trim().toLowerCase();
-    // Quando a sonda dá identidade e ela JÁ está no vault, guardar de novo
-    // só reescreveria a mesma credencial e pediria restart de pane à toa.
-    // Sem identidade não dá para saber, e aí a proteção vence o incômodo: o
-    // motor deduplica, então o pior caso é uma reescrita idempotente.
-    if (
-      liveNow &&
-      accounts.some((a) => a.email?.trim().toLowerCase() === liveNow)
-    ) {
-      return;
-    }
+    // A matching email does not prove that the saved token is current. The
+    // CLI may have rotated it since the last snapshot; save before replacing it.
     const name = defaultAccountLabel({
       typed: '',
       adapterId,
@@ -248,9 +245,10 @@ export function AccountsManager({
     });
     try {
       const res = await addActiveSession(adapterId, name);
-      if (res.ok) await hydrate();
+      if (!res.ok) throw new AccountPreservationError();
+      await hydrate();
     } catch {
-      // Preservar é rede de proteção: se falhar, o login em si segue valendo.
+      throw new AccountPreservationError();
     }
   }
 
@@ -493,11 +491,13 @@ export function AccountsManager({
       }
     } catch (err) {
       console.warn('[cli-login] falha ao abrir o terminal de login:', err);
-      showNotice('Não foi possível abrir o terminal de login.', 'err');
+      const detail = err instanceof AccountPreservationError
+        ? err.message : 'Não foi possível abrir o terminal de login.';
+      showNotice(detail, 'err');
       setLoginFailed(true);
-      onLoginActivity?.('err', 'Não foi possível abrir o terminal de login.');
+      onLoginActivity?.('err', detail);
       useToastStore.getState().push('error', `Login ${displayName}`, {
-        detail: 'Não foi possível abrir o terminal de login.',
+        detail,
         dedupeKey: `cli-login:${adapterId}`,
       });
     } finally {
@@ -514,7 +514,7 @@ export function AccountsManager({
     showNotice(
       res.ok
         ? active?.id === id
-          ? 'Conta sincronizada com a sessão ativa da CLI.'
+          ? 'Conta selecionada no Nexus. Próximo terminal usa esta sessão.'
           : 'Conta ativada. Próximo terminal usa esta sessão.'
         : (res.error ?? 'Não consegui ativar essa conta.'),
       res.ok ? 'ok' : 'err',
@@ -684,7 +684,7 @@ export function AccountsManager({
                 className="settings-btn acct__action"
                 onClick={() => void useAccount(account.id)}
                 disabled={busy}
-                title="Reaplicar esta conta no ambiente da CLI"
+                title="Selecionar esta conta para os próximos terminais do Nexus"
               >
                 Sincronizar
               </button>
