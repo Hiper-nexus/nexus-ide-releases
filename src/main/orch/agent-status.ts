@@ -215,6 +215,18 @@ export function isSessionInjectableIdle(sessionId: string): boolean {
   return false;
 }
 
+/**
+ * Receiving a handoff after a stale hook is not permission to terminate the
+ * process. Cleanup keeps a working session protected until an explicit idle
+ * or completion signal, even when a long tool produces no terminal output.
+ */
+export function isSessionIdleForCleanup(sessionId: string): boolean {
+  return (
+    getAgentSemanticStatusBySession(sessionId)?.status !== 'working' &&
+    isSessionInjectableIdle(sessionId)
+  );
+}
+
 function resolvePaneId(sessionId: string): string {
   const owned = getAgentSessionInfo(sessionId);
   if (owned?.paneId) return owned.paneId;

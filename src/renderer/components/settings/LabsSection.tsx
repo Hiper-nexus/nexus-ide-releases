@@ -29,8 +29,8 @@ export const LABS_FLAG_COPY: Record<string, { title: string; hint?: string }> = 
     hint: 'Lembra os agentes de entregar seus resultados e registra uma entrega automática quando necessário.',
   },
   'feature.pane.nonWorkerAutoClose': {
-    title: 'Fechar terminais inativos',
-    hint: 'Fecha terminais manuais e de ferramentas após o período de inatividade configurado.',
+    title: 'Liberar memória de terminais inativos',
+    hint: 'Estaciona agentes auxiliares sem missão após 30 minutos inativos. Seus terminais só podem ser estacionados por falta de memória, preservando o histórico.',
   },
   'feature.pty.persistentSession': {
     title: 'Manter sessões ao fechar o app',

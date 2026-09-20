@@ -389,6 +389,10 @@ saber isto antes de mexer:
 - O guardian fecha sozinho pane ocioso sem dono (worker sem missão, helper
   aberto pela mão do operador) após 30 min; nunca orquestrador, worker de
   missão, pane aberto pelo humano no renderer ou pane com `expect` armado.
+- F-150: a elegibilidade mais ampla de estacionamento só vale sob pressão
+  real, nunca como fallback do TTL. `isSessionIdleForCleanup` veta `working`
+  mesmo antigo; receber um handoff (`isSessionInjectableIdle`) não é prova
+  de que se pode encerrar o processo.
 - `spawnAgentSession` NÃO trava o spawn: o gate de admissão AVISA (teto de
   panes 4–12 conforme a RAM, e memória disponível abaixo de 15 %) e a decisão
   de abrir é da mão do operador — doutrina "menos travas", decisão de 16/09.

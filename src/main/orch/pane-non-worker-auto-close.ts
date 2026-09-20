@@ -38,7 +38,7 @@ import {
 } from './pane-registry';
 import { getAgentSessionInfo } from '../pty/pty-manager';
 import { getAdapter } from '../adapters/adapter-registry';
-import { isSessionInjectableIdle, tapAgentSemanticStatus } from './agent-status';
+import { isSessionIdleForCleanup, tapAgentSemanticStatus } from './agent-status';
 import { armedDeliveryContract } from './delivery-contract';
 import {
   getCachedSystemMemory,
@@ -136,7 +136,7 @@ function productionDeps(): NonWorkerAutoCloseDeps {
         operatorParentSessionId: authority.operatorParentSessionId,
       };
     },
-    isIdle: (sessionId) => isSessionInjectableIdle(sessionId),
+    isIdle: (sessionId) => isSessionIdleForCleanup(sessionId),
     hasPendingDelivery: (sessionId) => armedDeliveryContract(sessionId) !== null,
     closePane: (paneId) => requestPaneClose(paneId),
     // 0.76.45: estacionar (pane fica, memória vai a zero); main-owned sem
@@ -361,15 +361,8 @@ export function sweepIdlePanes(deps: NonWorkerAutoCloseDeps): void {
       closeIdlePane(deps, ref, sessionId, 'varredura');
       continue;
     }
-    // F-588: se o pane não é elegível a fechamento destrutivo (ex.: worker de
-    // missão ou pane do operador), mas parkPane está disponível, estacionamos
-    // o pane ocioso após o TTL para libertar memória sem perder buffer.
-    if (deps.parkPane) {
-      const parkRef = paneIsParkableUnderPressure(deps, sessionId);
-      if (parkRef) {
-        closeIdlePane(deps, parkRef, sessionId, 'varredura', 'idle');
-      }
-    }
+    // F-150: expiry alone cannot end a human's pane or a mission worker.
+    // The broader parking policy below requires actual memory pressure.
   }
   // 0.76.44 / F-588 — reaper de emergência: com a máquina sob pressão (mesmos
   // limiares do gate de spawn), não espera o TTL. Estaciona UM pane ocioso

@@ -22,6 +22,7 @@ import {
   getAgentTurnStartSequence,
   getAgentSemanticStatus,
   isSessionInjectableIdle,
+  isSessionIdleForCleanup,
   paneStateForStatus,
   resetAgentStatusOnExit,
   semanticStatusForEvent,
@@ -269,6 +270,34 @@ describe('resetAgentStatusOnExit', () => {
     expect(transitions).toEqual(['working', 'completed', 'idle']);
     resetAgentStatusOnExit('pty-1');
     expect(transitions).toEqual(['working', 'completed', 'idle']);
+  });
+});
+
+describe('isSessionIdleForCleanup — silêncio não autoriza encerrar trabalho', () => {
+  it('preserva working antigo mesmo quando já pode receber um handoff', () => {
+    vi.useFakeTimers();
+    try {
+      applyCanonicalHookEvent({ sessionId: 'pty-1', event: start });
+      vi.advanceTimersByTime(35 * 60_000);
+      expect(isSessionInjectableIdle('pty-1')).toBe(true);
+      expect(isSessionIdleForCleanup('pty-1')).toBe(false);
+      applyCanonicalHookEvent({ sessionId: 'pty-1', event: stop });
+      expect(isSessionIdleForCleanup('pty-1')).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('preserva permissões pendentes e PTYs ocupados; permite idle sem hooks', () => {
+    expect(isSessionIdleForCleanup('pty-1')).toBe(true);
+    harness.state = 'busy';
+    expect(isSessionIdleForCleanup('pty-1')).toBe(false);
+    harness.state = 'idle';
+    applyCanonicalHookEvent({ sessionId: 'pty-1', event: permission });
+    expect(isSessionIdleForCleanup('pty-1')).toBe(false);
+    applyCanonicalHookEvent({ sessionId: 'pty-1', event: start });
+    applyCanonicalHookEvent({ sessionId: 'pty-1', event: stop });
+    expect(isSessionIdleForCleanup('pty-1')).toBe(true);
   });
 });
 

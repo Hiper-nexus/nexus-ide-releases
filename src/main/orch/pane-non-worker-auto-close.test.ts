@@ -15,7 +15,7 @@ vi.mock('./agent-status', () => ({
     statusTaps.add(cb);
     return () => statusTaps.delete(cb);
   },
-  isSessionInjectableIdle: () => true,
+  isSessionIdleForCleanup: () => true,
 }));
 
 vi.mock('../pty/pty-manager', () => ({
@@ -677,12 +677,14 @@ describe('pane guardian (0.76.45): carência pós-acordar e gate cego', () => {
     expect(closed).toHaveLength(0);
   });
 
-  it('após vencer o TTL, worker de missão ocioso é estacionado se parkPane existir', () => {
-    const idle = new Set<string>(['pty-worker-old']);
+  it('TTL sem pressão preserva panes manuais e workers de missão, mesmo com parkPane', () => {
+    const idle = new Set<string>(['pty-worker-old', 'pty-manual', 'pty-orchestrator']);
     const parked: Array<{ paneId: string; reason: string }> = [];
     const closed: string[] = [];
     const refs = new Map<string, NonWorkerPaneRef>([
       ['pty-worker-old', refFor('pty-worker-old', { role: 'worker', missionId: 'm-456' })],
+      ['pty-manual', refFor('pty-manual', { role: 'user', operatorParentSessionId: undefined })],
+      ['pty-orchestrator', refFor('pty-orchestrator', { role: 'orchestrator', missionId: 'm-456' })],
     ]);
     const deps: NonWorkerAutoCloseDeps = {
       isEnabled: () => true,
@@ -701,8 +703,8 @@ describe('pane guardian (0.76.45): carência pós-acordar e gate cego', () => {
       isUnderMemoryPressure: () => false,
     };
     initNonWorkerAutoClose(deps);
-    vi.advanceTimersByTime(11_000);
-    expect(parked).toEqual([{ paneId: 'pane-pty-worker-old', reason: 'idle' }]);
+    vi.advanceTimersByTime(31_000);
+    expect(parked).toEqual([]);
     expect(closed).toHaveLength(0);
   });
 });
