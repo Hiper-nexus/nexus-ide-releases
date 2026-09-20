@@ -80,8 +80,28 @@ is_sign_invocation() {
   return 1
 }
 
+is_adhoc_identity() {
+  local prev=""
+  local arg
+  for arg in "$@"; do
+    if [[ "$prev" == "--sign" || "$prev" == "-s" ]]; then
+      [[ "$arg" == "-" ]] && return 0
+      return 1
+    fi
+    prev="$arg"
+  done
+  return 1
+}
+
 requests_secure_timestamp() {
   local arg
+  # Ad-hoc (`--sign -`) never receives Apple's TSA token. The wrapper sits on
+  # PATH for the whole make:release, including premake's Redline companion
+  # (`codesign --sign -`). Treating a missing Timestamp= as TSA failure made
+  # 0.76.61 burn ~12 min of retries and abort (F-609).
+  if is_adhoc_identity "$@"; then
+    return 1
+  fi
   for arg in "$@"; do
     case "$arg" in
       --timestamp) return 0 ;;

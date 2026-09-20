@@ -227,3 +227,77 @@ describe('Apple timestamp IPv4 transport fallback', () => {
     expect(prepare(args, '')).toEqual(args);
   });
 });
+
+function requestsSecureTimestamp(args) {
+  return spawnSync(
+    '/bin/bash',
+    [
+      '-c',
+      'source "$1"; shift; requests_secure_timestamp "$@"',
+      'codesign-retry-ts-policy',
+      scriptPath,
+      ...args,
+    ],
+    { encoding: 'utf8' },
+  ).status;
+}
+
+describe('ad-hoc codesign never requires Apple TSA (F-609)', () => {
+  it('does not demand a secure timestamp for --sign -', () => {
+    expect(
+      requestsSecureTimestamp(['--force', '--deep', '--sign', '-', '/tmp/Redline.app']),
+    ).toBe(1);
+    expect(
+      requestsSecureTimestamp(['--sign', 'Developer ID Application: Example', '/tmp/app']),
+    ).toBe(0);
+    expect(
+      requestsSecureTimestamp([
+        '--sign',
+        'Developer ID Application: Example',
+        '--timestamp=none',
+        '/tmp/app',
+      ]),
+    ).toBe(1);
+  });
+
+  it('accepts a zero-exit ad-hoc sign that has no Timestamp= field', () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), 'nexus-codesign-adhoc-test-'));
+    const targetPath = path.join(tempDir, 'Nexus Redline.app');
+    const statePath = path.join(tempDir, 'calls.log');
+    const fakeCodesignPath = path.join(tempDir, 'codesign');
+    const wrapperPath = path.join(tempDir, 'wrapper.sh');
+    writeFileSync(targetPath, 'fixture');
+    writeFileSync(
+      fakeCodesignPath,
+      `#!/bin/bash
+printf '%s\\n' "$*" >> ${JSON.stringify(statePath)}
+if [[ "$1" == "-d" ]]; then
+  printf 'Signature=adhoc\\n' >&2
+  exit 0
+fi
+exit 0
+`,
+    );
+    chmodSync(fakeCodesignPath, 0o755);
+    const source = readFileSync(scriptPath, 'utf8')
+      .replaceAll('/usr/bin/codesign', fakeCodesignPath)
+      .replace('set -u', 'resolve_apple_timestamp_ipv4() { return 1; }\nset -u')
+      .replace('for delay in 0 4 8 15 30 60 90 120 180 240; do', 'for delay in 0; do')
+      .replace('if (( attempt < 10 )); then', 'if (( attempt < 1 )); then');
+    writeFileSync(wrapperPath, source);
+    chmodSync(wrapperPath, 0o755);
+
+    const result = spawnSync(
+      wrapperPath,
+      ['--force', '--deep', '--sign', '-', targetPath],
+      { encoding: 'utf8' },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stderr ?? '').not.toMatch(/secure timestamp/);
+    expect(readFileSync(statePath, 'utf8').trim().split('\n')).toEqual([
+      `--force --deep --sign - ${targetPath}`,
+      `--verify --strict ${targetPath}`,
+    ]);
+  });
+});

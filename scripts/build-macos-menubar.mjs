@@ -133,7 +133,14 @@ export function buildMenubarCompanion({ output = defaultOutput } = {}) {
     // Assinatura ad-hoc: o bundle precisa estar assinado para o Gatekeeper
     // aceitar spawn via NSWorkspace/SMAppService. Release re-assina por cima
     // com Developer ID no postPackage do Forge (mesmo fluxo do pty supervisor).
-    run("codesign", ["--force", "--deep", "--sign", "-", output], { capture: true });
+    run("codesign", [
+      "--force",
+      "--deep",
+      "--sign",
+      "-",
+      "--timestamp=none",
+      output,
+    ], { capture: true });
   } finally {
     rmSync(staging, { recursive: true, force: true });
   }
