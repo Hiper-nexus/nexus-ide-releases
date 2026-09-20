@@ -208,6 +208,8 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
+  flex: 0 0 auto;
+  white-space: nowrap;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   color: var(--text-dim);

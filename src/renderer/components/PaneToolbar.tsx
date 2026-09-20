@@ -837,8 +837,6 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
           <StateIndicator paneId={pane.id} compact={density === 'compact'} />
         )}
         {pane.kind === 'cli-agent' && <JevHintChip paneId={pane.id} />}
-        {pane.kind === 'cli-agent' && <CostBadge paneId={pane.id} />}
-        {pane.kind === 'cli-agent' && <TokenSpeedChip paneId={pane.id} />}
         {pane.kind === 'cli-agent' && <FootprintBadge paneId={pane.id} />}
         <DevServerChip pane={pane} />
         {stageFocusMode && stagePaneId && stagePaneId !== pane.id && (
@@ -857,6 +855,13 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
           </button>
         )}
       </div>
+
+      {pane.kind === 'cli-agent' && (
+        <div className="toolbar__telemetry">
+          <CostBadge paneId={pane.id} />
+          <TokenSpeedChip paneId={pane.id} />
+        </div>
+      )}
 
       <div className="toolbar__actions">
         {renderGroup(missionVisible, 'Missão')}

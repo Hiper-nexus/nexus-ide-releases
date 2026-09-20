@@ -162,4 +162,13 @@ describe('PaneToolbar — chip de velocidade de tokens', () => {
     mounted = root;
     expect(host.querySelector('.tokspeed-chip')).toBeNull();
   });
+
+  it('vive fora do meta que recorta overflow — senão some atrás das ações', () => {
+    const { host, root } = mount(agentPane);
+    mounted = root;
+    const chip = host.querySelector('.tokspeed-chip');
+    expect(chip).not.toBeNull();
+    expect(chip?.closest('.toolbar__meta')).toBeNull();
+    expect(chip?.closest('.toolbar__telemetry')).not.toBeNull();
+  });
 });

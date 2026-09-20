@@ -1072,6 +1072,17 @@ body {
 /* Rígido de propósito: quem poda o conteúdo é o density JS + container
    queries. Com 0 1 auto o meta (flex-grow) esmagava este container e o
    overflow:hidden cortava botões ao meio em TODAS as densidades. */
+/* Custo + tok/s ficam FORA do meta que recorta overflow. No pane cheio de
+   ações com rótulo (print 0.76.60), o chip caía na "linha 2" e sumia inteiro
+   mesmo com a janela larga — o operador via $ e "Trabalhando", nunca tok/s. */
+.toolbar__telemetry {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
 .toolbar__actions {
   display: flex;
   align-items: center;
@@ -1152,7 +1163,8 @@ body {
 }
 
 @container pane-toolbar (max-width: 96px) {
-  .toolbar__meta {
+  .toolbar__meta,
+  .toolbar__telemetry {
     display: none;
   }
 }
