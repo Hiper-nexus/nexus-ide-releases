@@ -8,7 +8,6 @@
 
 import type { QuotaWindow } from '../../shared/quota-types';
 import {
-  fetchClaudeCliUsageWindows,
   fetchClaudeOauthUsageWindows,
   type FetchLike,
 } from './claude-oauth-usage';
@@ -164,10 +163,11 @@ export async function fetchLiveProviderWindows(
       // `claude /usage` (print-only; Codenotch ClaudeUsageCLI) só vale na row
       // do CLI nativo: o login do CLI é de UMA conta — pintá-lo em rows de
       // contas vault seria fabricar dado por conta.
+      // Sem runner injetado NÃO spawnamos o binário: testes e probes sem
+      // claudeCliUsage ficam em null honesto, nunca batem no CLI da máquina.
       if (accountId) return null;
-      return deps.claudeCliUsage
-        ? deps.claudeCliUsage()
-        : fetchClaudeCliUsageWindows({ now });
+      if (!deps.claudeCliUsage) return null;
+      return deps.claudeCliUsage();
     }
     case 'codex': {
       let candidates: CodexChatGptAuth[] = [];

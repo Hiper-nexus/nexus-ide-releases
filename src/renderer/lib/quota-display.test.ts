@@ -160,7 +160,7 @@ describe('quota-display', () => {
     expect(shortWindowsLine(entry, now, { compact: true })).toBe('Sem 29% · 6d9h');
   });
 
-  it('puts confirmed quotas including zero before unknown entries without mutating the fleet', () => {
+  it('puts the hungriest known reading first and unknown last without mutating the fleet', () => {
     const entry = (id: string, ratio: number | null, active = false) =>
       ({ id, active, windows: [{ usedRatio: ratio }] }) as ProviderQuotaEntry;
     const entries = [
@@ -170,12 +170,18 @@ describe('quota-display', () => {
       entry('invalid', NaN),
       entry('reported', 0.71),
     ];
-    // Reported entries first; among reported entries, active accounts come first
     expect(prioritizeReportedQuotas(entries).map((item) => item.id)).toEqual([
+      'reported',
       'zero-active',
       'zero',
-      'reported',
-      'unknown',
       'invalid',
+      'unknown',
+    ]);
+    expect(entries.map((item) => item.id)).toEqual([
+      'unknown',
+      'zero',
+      'zero-active',
+      'invalid',
+      'reported',
     ]);
   });

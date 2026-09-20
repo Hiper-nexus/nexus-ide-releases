@@ -238,6 +238,7 @@ import {
   requireQuotaService,
   shutdownQuotaService,
 } from "./quota/quota-service";
+import { fetchClaudeCliUsageWindows } from "./quota/claude-oauth-usage";
 import { createRedlineSink } from "./quota/redline-sink";
 import {
   initRedlineIpc,
@@ -638,6 +639,7 @@ function bootstrap(): void {
     // Multi-candidate probes (vault → launcher → env → system CLI).
     // Never invents ratios; tries every credential until one yields %.
     resolveClaudeAccessToken: (accountId) => resolveClaudeToken(accountId),
+    claudeCliUsage: () => fetchClaudeCliUsageWindows(),
     resolveCodexAuthCandidates: (accountId) =>
       resolveCodexAuthCandidates(accountId),
     resolveGlmApiKeyCandidates: (accountId) =>

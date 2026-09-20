@@ -78,3 +78,48 @@ export interface QuotaFleetSnapshot {
 }
 
 export const QUOTA_HIGH_USAGE_THRESHOLD = 0.8;
+
+/** Highest known usedRatio on an entry. null = no honest reading (never treat as 0). */
+export function peakUsedRatio(
+  windows: readonly { usedRatio: number | null }[],
+): number | null {
+  let peak: number | null = null;
+  for (const window of windows) {
+    const ratio = window.usedRatio;
+    if (typeof ratio !== 'number' || !Number.isFinite(ratio) || ratio < 0 || ratio > 1) {
+      continue;
+    }
+    if (peak === null || ratio > peak) peak = ratio;
+  }
+  return peak;
+}
+
+export interface ConsumptionSortable {
+  windows: readonly { usedRatio: number | null }[];
+  active?: boolean;
+  id?: string;
+  label?: string;
+}
+
+/**
+ * Watch the hungriest accounts first. Known used% descending, unknown last,
+ * active as tie-break, then label. 0% is a real reading and ranks above "—".
+ */
+export function compareEntriesByConsumption(
+  a: ConsumptionSortable,
+  b: ConsumptionSortable,
+): number {
+  const aPeak = peakUsedRatio(a.windows);
+  const bPeak = peakUsedRatio(b.windows);
+  if (aPeak === null && bPeak === null) {
+    const active = Number(Boolean(b.active)) - Number(Boolean(a.active));
+    if (active !== 0) return active;
+    return (a.label ?? a.id ?? '').localeCompare(b.label ?? b.id ?? '', 'pt');
+  }
+  if (aPeak === null) return 1;
+  if (bPeak === null) return -1;
+  if (bPeak !== aPeak) return bPeak - aPeak;
+  const active = Number(Boolean(b.active)) - Number(Boolean(a.active));
+  if (active !== 0) return active;
+  return (a.label ?? a.id ?? '').localeCompare(b.label ?? b.id ?? '', 'pt');
+}

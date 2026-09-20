@@ -10,7 +10,10 @@ import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:f
 import { homedir as osHomedir } from 'node:os';
 import { join } from 'node:path';
 import type { AccountInfo } from '../../shared/account-types';
-import type { QuotaFleetSnapshot } from '../../shared/quota-types';
+import {
+  compareEntriesByConsumption,
+  type QuotaFleetSnapshot,
+} from '../../shared/quota-types';
 import {
   REDLINE_REFRESH_FILENAME,
   REDLINE_SNAPSHOT_FILENAME,
@@ -42,14 +45,15 @@ export function buildRedlineSnapshotFile(
   now = Date.now(),
 ): RedlineSnapshotFile {
   const scored = scoreFleet(snap.entries, accounts, now);
+  const entries = [...scored.entries].sort(compareEntriesByConsumption);
   return {
     formatVersion: REDLINE_SNAPSHOT_FORMAT_VERSION,
     generatedBy: 'nexus',
     updatedAt: snap.updatedAt || now,
     worstUsedRatio: snap.worstUsedRatio,
-    entries: scored.entries,
+    entries,
     ranking: scored.ranking,
-    statusBarEntryIds: selectRedlineStatusBarEntryIds(scored.entries),
+    statusBarEntryIds: selectRedlineStatusBarEntryIds(entries),
   };
 }
 

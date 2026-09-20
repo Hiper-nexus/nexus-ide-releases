@@ -684,7 +684,11 @@ describe('QuotaService live Claude OAuth usage', () => {
     // Claude should have exactly 2 vault entries, no duplicate "Claude · CLI nativo"
     const claudeEntries = snap.entries.filter((e) => e.adapterId === 'claude');
     expect(claudeEntries).toHaveLength(2);
-    expect(claudeEntries.map((e) => e.accountId)).toEqual(['claude-acct-1', 'claude-acct-2']);
+    expect(claudeEntries.map((e) => e.accountId).sort()).toEqual([
+      'claude-acct-1',
+      'claude-acct-2',
+    ]);
+    expect(claudeEntries[0]?.accountId).toBe('claude-acct-2');
     expect(claudeEntries.find((e) => e.accountId === 'claude-acct-2')?.active).toBe(true);
     svc.stop();
   });

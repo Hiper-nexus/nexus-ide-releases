@@ -2,12 +2,13 @@
  * Pure UI helpers for quota fleet display (tests drive these, not mocks).
  */
 
-import type {
-  ProviderQuotaEntry,
-  QuotaFleetSnapshot,
-  QuotaWindow,
+import {
+  compareEntriesByConsumption,
+  QUOTA_HIGH_USAGE_THRESHOLD,
+  type ProviderQuotaEntry,
+  type QuotaFleetSnapshot,
+  type QuotaWindow,
 } from '../../shared/quota-types';
-import { QUOTA_HIGH_USAGE_THRESHOLD } from '../../shared/quota-types';
 
 const percentageNumber = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 });
 function knownRatio(value: number | null): value is number {
@@ -117,15 +118,7 @@ export function shortWindowsLine(
   return parts.join(' · ');
 }
 
+/** Hungriest known reading first; unknown / invalid last. Does not mutate. */
 export function prioritizeReportedQuotas(entries: readonly ProviderQuotaEntry[]): ProviderQuotaEntry[] {
-  const hasReportedQuota = (entry: ProviderQuotaEntry) => entry.windows.some(window => knownRatio(window.usedRatio));
-  return [...entries].sort((a, b) => {
-    const aReported = hasReportedQuota(a);
-    const bReported = hasReportedQuota(b);
-    if (aReported !== bReported) return Number(bReported) - Number(aReported);
-    if (Boolean(a.active) !== Boolean(b.active)) {
-      return Number(Boolean(b.active)) - Number(Boolean(a.active));
-    }
-    return 0;
-  });
+  return [...entries].sort(compareEntriesByConsumption);
 }

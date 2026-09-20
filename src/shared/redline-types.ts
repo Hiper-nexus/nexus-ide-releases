@@ -11,7 +11,11 @@
  * fora do Electron decidir exibição e recomendação.
  */
 
-import type { QuotaWindowKind } from './quota-types';
+import {
+  compareEntriesByConsumption,
+  peakUsedRatio,
+  type QuotaWindowKind,
+} from './quota-types';
 
 export const REDLINE_SNAPSHOT_FORMAT_VERSION = 1;
 export const REDLINE_SNAPSHOT_FILENAME = 'redline-last-good.json';
@@ -94,8 +98,8 @@ export interface RedlineSnapshotFile {
   /** adapterId → ranking (scorer determinístico; Jev refina on-demand via MCP). */
   ranking: Record<string, RedlineRankingRow[]>;
   /**
-   * Contas que cabem na faixa da barra (só usedRatio conhecido, teto 6).
-   * O menu dropdown continua listando `entries` inteiro.
+   * Contas que cabem na faixa da barra (só usedRatio conhecido, teto 6,
+   * as de maior consumo primeiro). O painel lista `entries` inteiro.
    */
   statusBarEntryIds: string[];
 }
@@ -103,12 +107,13 @@ export interface RedlineSnapshotFile {
 /** Quantas contas com leitura cabem na faixa sem o macOS esconder o extra. */
 export const REDLINE_STATUS_BAR_MAX = 6;
 
-/** Ids na ordem da frota: só janelas com usedRatio; vazio se ninguém tem leitura. */
+/** Ids das contas com leitura, as mais gastas primeiro (teto 6). */
 export function selectRedlineStatusBarEntryIds(
   entries: readonly RedlineEntry[],
 ): string[] {
-  return entries
-    .filter((entry) => entry.windows.some((window) => window.usedRatio != null))
+  return [...entries]
+    .filter((entry) => peakUsedRatio(entry.windows) != null)
+    .sort(compareEntriesByConsumption)
     .slice(0, REDLINE_STATUS_BAR_MAX)
     .map((entry) => entry.id);
 }

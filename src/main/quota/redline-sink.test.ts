@@ -168,6 +168,48 @@ describe('buildRedlineSnapshotFile', () => {
     expect(file.statusBarEntryIds).toEqual(['glm']);
     expect(file.entries.map((entry) => entry.id)).toEqual(['glm', 'claude:a']);
   });
+
+  it('statusBarEntryIds escolhe as contas mais gastas, não as primeiras no alfabeto', () => {
+    const window = (usedRatio: number | null) => ({
+      kind: 'hours' as const,
+      label: '5 Horas',
+      usedRatio,
+      source: usedRatio == null ? ('unknown' as const) : ('provider-api' as const),
+      confidence: usedRatio == null ? ('low' as const) : ('high' as const),
+    });
+    const row = (
+      id: string,
+      adapterId: string,
+      label: string,
+      usedRatio: number | null,
+    ): ProviderQuotaEntry => ({
+      id,
+      adapterId,
+      label,
+      installed: true,
+      onCooldown: false,
+      active: true,
+      windows: [window(usedRatio)],
+      updatedAt: NOW,
+    });
+    const file = buildRedlineSnapshotFile(
+      snapshotWith([
+        row('alpha', 'agy', 'Agy · baixa', 0.05),
+        row('unknown', 'kimi', 'Kimi · sem leitura', null),
+        row('zulu', 'glm', 'Z.ai · alta', 0.91),
+        row('mid', 'codex', 'Codex · meio', 0.4),
+      ]),
+      [account('a')],
+      NOW,
+    );
+    expect(file.statusBarEntryIds).toEqual(['zulu', 'mid', 'alpha']);
+    expect(file.entries.map((entry) => entry.id)).toEqual([
+      'zulu',
+      'mid',
+      'alpha',
+      'unknown',
+    ]);
+  });
 });
 
 describe('writeRedlineSnapshotFileSync + sink', () => {

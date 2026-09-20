@@ -8,6 +8,7 @@
 import { BrowserWindow, ipcMain } from 'electron';
 import {
   QUOTA_CHANNELS,
+  compareEntriesByConsumption,
   type ProviderQuotaEntry,
   type QuotaFleetSnapshot,
   type QuotaWindow,
@@ -21,7 +22,7 @@ import type { ProviderSettingsInfo } from '../../shared/provider-settings-types'
 import { buildFleetSnapshot } from './quota-policy';
 import { defaultUnknownWindows, mergeWindows } from './quota-normalize';
 import { probeProviderWindows } from './quota-probes';
-import type { FetchLike } from './claude-oauth-usage';
+import { fetchClaudeCliUsageWindows, type FetchLike } from './claude-oauth-usage';
 import type { CodexChatGptAuth } from './codex-usage';
 import {
   fetchLiveProviderWindows,
@@ -66,6 +67,11 @@ export interface QuotaServiceDeps {
   resolveClaudeAccessToken?: (
     accountId?: string,
   ) => string | null | Promise<string | null>;
+  /**
+   * Native-row fallback `claude /usage` (print-only). Production (main.ts)
+   * wires the real runner. Tests omit it so probes never spawn the host CLI.
+   */
+  claudeCliUsage?: () => Promise<QuotaWindow[] | null>;
   resolveCodexAuth?: (
     accountId?: string,
   ) => CodexChatGptAuth | null | Promise<CodexChatGptAuth | null>;
@@ -427,7 +433,7 @@ export class QuotaService {
       this.#buildEntry({ ...d, now }, observations.get(apiCacheKey(d)), generation === this.#snapshotGeneration && !this.#stopped),
     );
 
-    entries.sort((a, b) => a.label.localeCompare(b.label, 'pt'));
+    entries.sort(compareEntriesByConsumption);
     const snap = buildFleetSnapshot(entries, now);
     if (generation === this.#snapshotGeneration && !this.#stopped) {
       this.#lastSnapshot = snap;
@@ -445,6 +451,11 @@ export class QuotaService {
     return {
       resolveApiQuotaKey: this.#deps.resolveApiQuotaKey,
       resolveClaudeToken: this.#deps.resolveClaudeAccessToken,
+      claudeCliUsage:
+        this.#deps.claudeCliUsage ??
+        (this.#deps.fetchImpl || process.env.VITEST
+          ? undefined
+          : () => fetchClaudeCliUsageWindows({ now: Date.now() })),
       resolveCodexAuth: this.#deps.resolveCodexAuth,
       resolveCodexAuthCandidates: this.#deps.resolveCodexAuthCandidates,
       resolveGlmApiKey: this.#deps.resolveGlmApiKey,

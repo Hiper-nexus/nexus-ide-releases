@@ -195,9 +195,11 @@ describe('UsageQuotaSection', () => {
     expect(progressbars.length).toBeGreaterThanOrEqual(3);
 
     const first = progressbars[0];
-    expect(first.getAttribute('aria-valuenow')).toBe('42');
+    expect(first.getAttribute('aria-valuenow')).toBe('95');
     expect(first.getAttribute('aria-valuemin')).toBe('0');
     expect(first.getAttribute('aria-valuemax')).toBe('100');
+    const values = [...progressbars].map((bar) => bar.getAttribute('aria-valuenow'));
+    expect(values).toContain('42');
 
     act(() => root.unmount());
   });
