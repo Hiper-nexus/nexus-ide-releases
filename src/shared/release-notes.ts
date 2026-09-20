@@ -4152,6 +4152,70 @@ export const RELEASE_07647: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.61',
+  date: '2026-09-20',
+  codename: 'Redline no menu bar, tok/s visível e abas de espaço',
+  summary:
+    'Cotas na barra de menu do Mac (Redline), chip de tok/s que deixa de sumir atrás das ' +
+    'ações do pane, aba do espaço com nome editável, login do Kimi perguntando o site, ' +
+    'Muse na CLI certa e cota GLM de novo visível depois da troca CREDIT_LIMIT.',
+  highlights: [
+    {
+      title: 'Redline no menu bar',
+      detail:
+        'Companheiro nativo com barras 5h/semana por conta, urgência e cronômetro até o reset. ' +
+        'O Nexus publica ~/.nexus/redline-last-good.json (sem segredos, e-mail mascarado). ' +
+        'Fleet Pulse em Uso e cotas; a escolha de conta no spawn continua aritmética de folga.',
+    },
+    {
+      title: 'tok/s visível ao lado do custo (F-607)',
+      detail:
+        'Custo e velocidade saem do recorte da toolbar e ficam em um cluster que não encolhe. ' +
+        'No pane largo com rótulos cheios o chip caía na linha clipada — o operador via $ e ' +
+        '"Trabalhando" e nunca a velocidade.',
+    },
+    {
+      title: 'Renomear a aba do espaço (F-606)',
+      detail:
+        'Duplo clique no chip "Meus terminais" edita o nome, no mesmo padrão do título do pane. ' +
+        'Missão e "Painéis soltos" não entram em edição.',
+    },
+    {
+      title: 'Login do Kimi pergunta kimi.ai vs kimi.com (F-354/F-595)',
+      detail:
+        'Antes de abrir a CLI o Nexus pergunta o site; cancelar a escolha não pinta erro de login.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Muse deixa de imprimir --help e sair 2 (F-596/F-599)',
+      detail:
+        'O adapter muse não herda mais --mcp-config/--settings do Claude. muse-claude (Spark) é opcional.',
+    },
+    {
+      title: 'Codex do operador não mistura url+stdio (F-594)',
+      detail:
+        'No spawn da mão do operador, chaves do hub que já existem no config.toml preservado são puladas.',
+    },
+    {
+      title: 'Colar em pane morto não mente "cópia falhou" (F-593)',
+      detail:
+        'O arquivo já estava no disco; o toast passa a dizer que o pane não tem sessão ativa.',
+    },
+    {
+      title: 'Cota GLM CREDIT_LIMIT (F-608)',
+      detail:
+        'A API Z.ai passou a rotular as janelas como CREDIT_LIMIT; o parser aceita o nome novo e o antigo.',
+    },
+    {
+      title: 'Pane vivo não some ao sair dos Terminais (F-603)',
+      detail:
+        'Sair da workspace de terminais não derruba mais o pane que ainda tem processo.',
+    },
+  ],
+};
+
+export const RELEASE_07660: AppRelease = {
   version: '0.76.60',
   date: '2026-09-19',
   codename: 'Pacing EAGAIN no PTY e resume verificado do uso Codex',

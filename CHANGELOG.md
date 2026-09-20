@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.76.61 — Redline no menu bar, tok/s visível e abas de espaço
+
+- **Redline no menu bar**: companheiro nativo macOS com barras 5h/semana por conta, cores de urgência, cronômetro até o reset e Fleet Pulse em Uso e cotas. Snapshot em `~/.nexus/redline-last-good.json` (sem segredos, e-mail mascarado); a escolha de conta no spawn continua aritmética de folga, não o Jev.
+- **Chip de tok/s deixa de sumir na toolbar (F-607)**: custo e velocidade saem do recorte do meta e ficam em `toolbar__telemetry`, ao lado das ações. No pane largo com rótulos cheios o operador via `$` e "Trabalhando" e nunca a velocidade.
+- **Renomear a aba do espaço (F-606)**: duplo clique no chip "Meus terminais" edita o nome (Enter/blur grava, Esc cancela). Missão e "Painéis soltos" não entram em edição.
+- **Login do Kimi pergunta o site (F-354/F-595)**: kimi.ai vs kimi.com antes de abrir a CLI; cancelar a escolha não pinta erro de login.
+- **Muse é a CLI `muse`, não Claude (F-596/F-599)**: o pane deixa de injetar `--mcp-config`/`--settings` (help + exit 2). `muse-claude` (Spark) fica opcional.
+- **Codex do operador não mistura url+stdio no mesmo MCP (F-594)**: spawn da mão do operador pula chaves do hub que já existem no `config.toml` preservado.
+- **Colar em pane morto não mente "cópia falhou" (F-593)**: o arquivo já estava no disco; o toast passa a dizer que o pane não tem sessão.
+- **Cota GLM volta a pintar (F-608)**: a API Z.ai passou a rotular as janelas como `CREDIT_LIMIT`; o parser aceita o nome novo e o antigo.
+- **Pane vivo não some ao sair dos Terminais (F-603)** e páginas de Ajustes (MCP/Harness/Conectores) deixam de vazar em 171 linhas (F-601/F-602/F-604).
+
 ## 0.76.60 — Pacing EAGAIN no PTY e resume verificado do uso Codex
 
 - **Retry EAGAIN com pacing no node-pty (F-591)**: porte do Orca #15319 — o retry de escrita que travava o thread do PTY a ~100% de CPU quando o leitor parava de drenar agora espera 1ms (medido: 121k→805 EAGAIN/s), e o `dispose` aposenta o master fd com drop da fila (Orca #17914), impedindo escritas pós-dispose em descritores reutilizados.
