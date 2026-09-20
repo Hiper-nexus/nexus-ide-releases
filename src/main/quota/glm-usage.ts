@@ -4,9 +4,10 @@
  * GET https://api.z.ai/api/monitor/usage/quota/limit
  * Authorization: <api key>   (NO "Bearer" prefix — Z.ai convention)
  *
- * limits[]:
- *   TOKENS_LIMIT unit=3 number=5 → 5-hour window
- *   TOKENS_LIMIT unit=6 number=1 → weekly window
+ * limits[] (type já foi TOKENS_LIMIT e hoje é CREDIT_LIMIT para os mesmos
+ * pares unit/number):
+ *   unit=3 number=5 → 5-hour window
+ *   unit=6 number=1 → weekly window
  *   TIME_LIMIT → MCP monthly (optional credits bar)
  *
  * Never invents percentages on failure.
@@ -71,20 +72,21 @@ function resetAtMs(raw: unknown): number | undefined {
   return raw > 1e12 ? raw : raw * 1000;
 }
 
+/**
+ * Janela de consumo do plano: a API já usou `TOKENS_LIMIT` e hoje devolve
+ * `CREDIT_LIMIT` para os mesmos pares unit/number (observado ao vivo em
+ * 2026-09-20). Casamos pelos pares, aceitando os dois rótulos.
+ */
+function hasPlanWindowType(limit: GlmLimitItem): boolean {
+  return limit.type === 'TOKENS_LIMIT' || limit.type === 'CREDIT_LIMIT';
+}
+
 function isFiveHour(limit: GlmLimitItem): boolean {
-  return (
-    limit.type === 'TOKENS_LIMIT' &&
-    limit.unit === 3 &&
-    limit.number === 5
-  );
+  return hasPlanWindowType(limit) && limit.unit === 3 && limit.number === 5;
 }
 
 function isWeekly(limit: GlmLimitItem): boolean {
-  return (
-    limit.type === 'TOKENS_LIMIT' &&
-    limit.unit === 6 &&
-    limit.number === 1
-  );
+  return hasPlanWindowType(limit) && limit.unit === 6 && limit.number === 1;
 }
 
 function isMcpMonthly(limit: GlmLimitItem): boolean {

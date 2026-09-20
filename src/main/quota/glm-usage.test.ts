@@ -85,6 +85,57 @@ describe('parseGlmQuotaLimit', () => {
     expect(w.find((x) => x.kind === 'weekly')?.usedRatio).toBe(0.25);
   });
 
+  it('parses the live CREDIT_LIMIT shape (Z.ai renamed TOKENS_LIMIT, 2026-09-20)', () => {
+    // Resposta capturada ao vivo: type CREDIT_LIMIT com os mesmos pares
+    // unit/number — sem este caso o parse volta vazio e a frota pinta
+    // unknown com dados reais disponíveis (2% 5h, 12% semanal).
+    const w = parseGlmQuotaLimit(
+      {
+        code: 200,
+        msg: 'Operation successful',
+        success: true,
+        data: {
+          level: 'pro',
+          limits: [
+            {
+              type: 'CREDIT_LIMIT',
+              unit: 3,
+              number: 5,
+              usage: 12000,
+              currentValue: 243,
+              remaining: 11756,
+              percentage: 2,
+              nextResetTime: 1789930067655,
+            },
+            {
+              type: 'CREDIT_LIMIT',
+              unit: 6,
+              number: 1,
+              usage: 60000,
+              currentValue: 7571,
+              remaining: 52428,
+              percentage: 12,
+              nextResetTime: 1790355465955,
+            },
+          ],
+        },
+      },
+      NOW,
+    );
+    expect(w.find((x) => x.kind === 'hours')).toMatchObject({
+      label: '5 Horas',
+      usedRatio: 243 / 12000,
+      source: 'provider-api',
+      confidence: 'high',
+      resetsAt: 1789930067655,
+    });
+    expect(w.find((x) => x.kind === 'weekly')).toMatchObject({
+      label: 'Semanal',
+      usedRatio: 7571 / 60000,
+      resetsAt: 1790355465955,
+    });
+  });
+
   it('falls back to percentage when counts are absent or unusable', () => {
     const w = parseGlmQuotaLimit(
       {
