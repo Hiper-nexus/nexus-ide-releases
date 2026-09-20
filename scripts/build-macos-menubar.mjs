@@ -138,6 +138,21 @@ export function buildMenubarCompanion({ output = defaultOutput } = {}) {
       copyFileSync(icon, path.join(resourcesDir, "AppIcon.icns"));
     }
 
+    // Logos de provedor rasterizados + manifest, e o NOTICE de
+    // marca/proveniência — as marcas não viajam para outro bundle sem ele.
+    const logoSrc = path.join(root, "native", "menubar-redline", "assets", "provider-logos");
+    const logoDest = path.join(resourcesDir, "provider-logos");
+    if (existsSync(logoSrc)) {
+      mkdirSync(logoDest, { recursive: true });
+      for (const name of readdirSync(logoSrc).sort()) {
+        copyFileSync(path.join(logoSrc, name), path.join(logoDest, name));
+      }
+    }
+    const notice = path.join(root, "src", "renderer", "assets", "provider-logos", "NOTICE.md");
+    if (existsSync(notice)) {
+      copyFileSync(notice, path.join(logoDest, "NOTICE.md"));
+    }
+
     // Assinatura ad-hoc: o bundle precisa estar assinado para o Gatekeeper
     // aceitar spawn via NSWorkspace/SMAppService. Release re-assina por cima
     // com Developer ID no postPackage do Forge (mesmo fluxo do pty supervisor).

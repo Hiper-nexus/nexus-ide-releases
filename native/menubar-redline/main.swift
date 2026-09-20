@@ -164,6 +164,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.target = self
         statusItem.button?.action = #selector(togglePanel)
         popover.behavior = .transient
+        // O painel é Nexus-escuro sempre: chrome e seta do popover acompanham.
+        popover.appearance = NSAppearance(named: .darkAqua)
         popover.contentViewController = quotaPanel
 
         refreshLaunchAtLoginState()

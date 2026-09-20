@@ -143,14 +143,43 @@ check(scroll.frame.minY >= 84, "refresh and app controls must stay outside the s
 func fields(_ root: NSView) -> [NSTextField] {
     (root as? NSTextField).map { [$0] } ?? root.subviews.flatMap { fields($0) }
 }
+func descendants<T: NSView>(_ root: NSView, of type: T.Type) -> [T] {
+    var found: [T] = []
+    if let match = root as? T { found.append(match) }
+    for child in root.subviews { found.append(contentsOf: descendants(child, of: type)) }
+    return found
+}
 let renderedFields = fields(panel.view)
 check(renderedFields.contains { $0.stringValue.contains("Conta 24") }, "the last account must have a visible label")
 check(renderedFields.contains { $0.stringValue.contains("37% usado") }, "usage must be readable without relying on color")
 check(renderedFields.allSatisfy(\.isEnabled), "quota text must not be dimmed as disabled menu actions")
+let panelButtons = descendants(panel.view, of: NSButton.self)
 for title in ["Atualizar agora", "Abrir no Nexus", "Iniciar com o macOS", "Sair"] {
-    check(panel.view.subviews.compactMap { $0 as? NSButton }.contains { $0.title == title && $0.action != nil && $0.target != nil },
+    check(panelButtons.contains { $0.title == title && $0.action != nil && $0.target != nil },
           "the panel must retain the working action: \(title)")
 }
+
+// O medidor é DESENHADO, não um glifo Unicode fazendo as vezes de ícone: no
+// painel não pode sobrar bloco ▮ nem o ····· de "sem leitura" em texto.
+for field in renderedFields {
+    check(
+        !field.stringValue.contains("▮") && !field.stringValue.contains("░")
+            && !field.stringValue.contains("·····"),
+        "the panel gauge must be drawn, not block glyphs (found '\(field.stringValue)')"
+    )
+}
+
+// A marca de cada provedor é o logo oficial local, e as marcas monocromáticas
+// precisam de tingimento de template — preto sobre near-black desaparece.
+let logoViews = descendants(panel.view, of: NSImageView.self).filter { $0.image != nil }
+check(
+    logoViews.count >= 2,
+    "each account row must carry its provider logo (got \(logoViews.count) images)"
+)
+check(
+    logoViews.contains { $0.image?.isTemplate == true && $0.contentTintColor != nil },
+    "monochrome provider marks must be template-tinted, or they vanish on the near-black surface"
+)
 
 func capture(_ name: String) {
     guard let directory = ProcessInfo.processInfo.environment["REDLINE_TEST_SCREENSHOTS"] else { return }
@@ -160,19 +189,101 @@ func capture(_ name: String) {
     try! bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: directory).appendingPathComponent("after-" + name + ".png"))
 }
 
-// Change the appearance of the same live view without rebuilding its labels.
+/// Toda tinta REALMENTE desenhada: cor do atributo quando há string atribuída,
+/// senão `textColor`. Deixar um label na `labelColor` do sistema é o bug —
+/// no tema claro ela é quase preta e desaparece na superfície near-black.
+func inks(_ field: NSTextField) -> [NSColor] {
+    let attributed = field.attributedStringValue
+    var colors: [NSColor] = []
+    if attributed.length > 0 {
+        attributed.enumerateAttribute(
+            .foregroundColor, in: NSRange(location: 0, length: attributed.length)
+        ) { value, _, _ in
+            if let color = value as? NSColor { colors.append(color) }
+        }
+    }
+    return colors.isEmpty ? [field.textColor ?? .labelColor] : colors
+}
+
+func contrastRatio(_ first: Double, _ second: Double) -> Double {
+    (max(first, second) + 0.05) / (min(first, second) + 0.05)
+}
+
+func insideButton(_ view: NSView) -> Bool {
+    var node: NSView? = view
+    while let current = node {
+        if current is NSButton { return true }
+        node = current.superview
+    }
+    return false
+}
+
+// O painel é superfície Nexus ESCURA sempre. Seguir a aparência do sistema é
+// exatamente o que o deixava branco e ilegível no tema claro do macOS, contra
+// a identidade dark-first do DESIGN.md ("nunca SaaS de cards brancos").
+// A aparência trocada aqui é a do APP (o sistema), não a do painel: o painel
+// tem de recusá-la.
 for appearance in [NSAppearance.Name.aqua, .darkAqua] {
-    panel.view.appearance = NSAppearance(named: appearance)
+    application.appearance = NSAppearance(named: appearance)
+    panel.view.layoutSubtreeIfNeeded()
+    check(
+        panel.view.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua,
+        "the panel must stay dark even with macOS in \(appearance.rawValue)"
+    )
     panel.view.effectiveAppearance.performAsCurrentDrawingAppearance {
-        let background = relativeLuminance(.windowBackgroundColor)
-        for ink in [NSColor.labelColor, urgencyColor(forUsed: nil), urgencyColor(forUsed: 0.2), urgencyColor(forUsed: 0.7), urgencyColor(forUsed: 0.9)] {
-            let foreground = relativeLuminance(ink)
-            let contrast = (max(background, foreground) + 0.05) / (min(background, foreground) + 0.05)
-            check(contrast >= 4.5, "small quota text must retain AA contrast in \(appearance.rawValue): \(contrast)")
+        let panelLuminance = relativeLuminance(panel.surfaceColor)
+        let listLuminance = relativeLuminance(panel.listSurfaceColor)
+        for (name, luminance) in [("painel", panelLuminance), ("lista", listLuminance)] {
+            check(
+                luminance < 0.02,
+                "the \(name) surface must be near-black Nexus with macOS in \(appearance.rawValue), "
+                    + "never the system window white (luminance \(luminance))"
+            )
+        }
+        // Um label dentro de um botão é medido contra o PREENCHIMENTO do botão,
+        // logo abaixo — não contra a superfície do painel. Sem essa exceção o
+        // gate exigiria tinta clara na CTA branca, que é o oposto do certo.
+        for field in fields(panel.view)
+        where !field.stringValue.isEmpty && !field.isHidden && !insideButton(field) {
+            for ink in inks(field) {
+                let inkLuminance = relativeLuminance(ink)
+                let worst = min(
+                    contrastRatio(inkLuminance, panelLuminance),
+                    contrastRatio(inkLuminance, listLuminance)
+                )
+                check(
+                    worst >= 4.5,
+                    "every label must clear AA on the dark surface with macOS in \(appearance.rawValue) — "
+                        + "'\(field.stringValue.prefix(28))' paints \(String(format: "%.2f", worst)):1"
+                )
+            }
         }
     }
     capture(appearance == .aqua ? "panel-light" : "panel-dark")
 }
+
+// Cada botão carrega tinta explícita e é medido contra o PRÓPRIO fundo: a CTA
+// primária é branca com tinta near-black (regra do DESIGN.md — a ação primária
+// é a coisa mais clara da tela, o acento fica reservado a ESTADO).
+for button in panelButtons {
+    let explicit = button.attributedTitle.length > 0
+        ? button.attributedTitle.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor
+        : nil
+    guard let ink = explicit else {
+        print("FAIL: the '\(button.title)' button must carry an explicit ink color")
+        exit(1)
+    }
+    let backdrop = panelButtonFill(button) ?? panel.surfaceColor
+    let ratio = contrastRatio(relativeLuminance(ink), relativeLuminance(backdrop))
+    check(
+        ratio >= 4.5,
+        "the '\(button.title)' label must clear AA on its own fill (got \(String(format: "%.2f", ratio)):1)"
+    )
+}
+check(
+    panelButtons.contains { panelButtonFill($0)?.usingColorSpace(.sRGB)?.brightnessComponent ?? 0 > 0.9 },
+    "the primary action must be the neutral white CTA, never the accent"
+)
 
 scroll.contentView.scroll(to: NSPoint(x: 0, y: document.frame.height - scroll.contentSize.height))
 scroll.reflectScrolledClipView(scroll.contentView)
@@ -199,7 +310,7 @@ let longLabel = fields(document).first { $0.stringValue.contains("Conta com nome
 // NSTextField draws two points outside its Auto Layout alignment rect.
 check(longLabel.frame.height > 20 && longLabel.alignmentRect(forFrame: longLabel.frame).width <= scroll.contentSize.width,
       "long account labels must wrap within the viewport")
-panel.view.appearance = NSAppearance(named: .aqua)
+application.appearance = NSAppearance(named: .aqua)
 capture("panel-unknown")
 let soon = Date.now.timeIntervalSince1970 * 1000 + 200
 let timed = RedlineEntry(id: "timed", adapterId: "codex", accountId: nil, label: "Conta com reset",

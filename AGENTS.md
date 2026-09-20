@@ -207,6 +207,24 @@ saber isto antes de mexer:
   que desenha, com hexes fixos nos DOIS temas (não mais "tons do sistema no
   escuro"): a barra pode ser clara sob papel de parede claro mesmo com o
   macOS em dark mode.
+- O PAINEL é superfície Nexus escura SEMPRE (`.darkAqua` no root e no popover;
+  `#111013` cabeçalho/rodapé, `#0d0b0f` lista, fios branco a 8%). Seguir a
+  aparência do sistema foi o defeito que reabriu o F-029: no tema claro o painel
+  virava folha branca, contra o dark-first do `DESIGN.md`. Não use cor dinâmica
+  do sistema (`labelColor`, `windowBackgroundColor`) dentro do painel — o spec
+  percorre todo label renderizado e reprova o que não limpar 4,5:1 contra a
+  superfície, e mede a tinta de cada botão contra o próprio preenchimento.
+  `urgencyColor` é da FAIXA (segue o tema do menu bar); o painel tem paleta
+  estática própria. O medidor é view desenhada, não bloco `▮`.
+- Logo de provider no companheiro NÃO é SVG. O AppKit lê mal os SVGs de
+  `src/renderer/assets/provider-logos/`: reporta `size 1x1` e o
+  `gemini-color.svg` desenha 14 de 1024 pixels — some na prática.
+  `scripts/build-redline-logos.mjs` rasteriza por Chromium (Electron, já
+  dependência) para PNG 48px em `native/menubar-redline/assets/provider-logos/`
+  com manifesto e guarda de cobertura ≥5%; rode à mão quando um logo mudar.
+  `scripts/build-redline-logos.test.ts` acusa deriva contra `ProviderLogo.tsx`.
+  Marca `mono` exige `isTemplate` + tinta clara, senão preto sobre near-black
+  desaparece; o `NOTICE.md` de procedência viaja com elas para o bundle.
 
 ## Overlay Kimi leva o catálogo de modelos (F-611)
 
