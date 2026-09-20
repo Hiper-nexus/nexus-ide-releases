@@ -219,7 +219,11 @@
   color: var(--text-faint);
   opacity: 0.75;
 }
-.tokspeed-chip[data-streaming='on'] {
+.tokspeed-chip[data-kind='last'] {
+  color: var(--text-dim);
+}
+.tokspeed-chip[data-streaming='on'],
+.tokspeed-chip[data-kind='live'] {
   color: var(--accent);
 }
 /* No painel a unidade se separa do número grande; no chip o `gap` do flex já

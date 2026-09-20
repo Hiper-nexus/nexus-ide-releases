@@ -222,9 +222,10 @@ describe('TokenSpeedChip', () => {
       useTokenSpeedStore.getState().receive(snapshot({ last: sample() }))
     })
     render(<TokenSpeedChip />)
-    expect(container.querySelector('.tokspeed-chip')?.textContent).toContain(
-      '310',
-    )
+    const chip = container.querySelector('.tokspeed-chip')
+    expect(chip?.textContent).toContain('310')
+    expect(chip?.getAttribute('data-kind')).toBe('last')
+    expect(chip?.getAttribute('data-streaming')).toBe('off')
   })
 })
 

@@ -370,17 +370,19 @@ export function TokenSpeedChip({ paneId }: { paneId?: string | null }) {
   const streaming = view?.streaming ?? false
   const turns = view?.turns ?? 0
   const isIdle = !view?.last && !streaming
+  const kind = streaming ? 'live' : view?.last ? 'last' : 'idle'
 
-  const title = view?.last
-    ? `Última resposta: ${formatSpeed(speed)} tok/s · TTFT ${formatMs(view.last?.ttftMs ?? null)} · ${turns} rodada(s)`
-    : streaming
-      ? 'Modelo gerando tokens em tempo real…'
+  const title = streaming
+    ? `Ao vivo: ${formatSpeed(speed)} tok/s nesta rodada`
+    : view?.last
+      ? `Última rodada: ${formatSpeed(speed)} tok/s · TTFT ${formatMs(view.last?.ttftMs ?? null)} · ${turns} rodada(s) — não é o agora`
       : 'Velocidade do modelo: aguardando resposta para medir tok/s e TTFT'
 
   return (
     <span
       className="tokspeed-chip"
       data-streaming={streaming ? 'on' : 'off'}
+      data-kind={kind}
       data-idle={isIdle ? 'true' : undefined}
       title={title}
     >

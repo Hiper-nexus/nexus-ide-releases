@@ -2,7 +2,10 @@ import { useCallback, useEffect, useState } from 'react';
 import type {
   JevDecisionRow,
   JevDecisionStatsResult,
+  JevWindowStatsResult,
 } from '../../../shared/jev-ipc';
+import { EmptyState } from '../ActionCard';
+import { PixelIcon } from '../PixelIcon';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
 
 const SURFACE_LABELS: Record<string, string> = {
@@ -18,6 +21,15 @@ const SURFACE_LABELS: Record<string, string> = {
   computerTool: 'Piloto do desktop',
   judgeTool: 'Tool nexus_judge',
   rankTool: 'Tool nexus_rank',
+};
+
+const NO_ANSWER_REASONS: Record<string, string> = {
+  timeout: 'timeout',
+  'rate-limited': 'limite',
+  'server-error': 'erro do servidor',
+  network: 'rede',
+  malformed: 'resposta inválida',
+  aborted: 'cancelada',
 };
 
 function surfaceLabel(surface: string): string {
@@ -45,6 +57,12 @@ function topProbabilities(row: JevDecisionRow): string {
   if (entries.length === 0) return '—';
   return entries.map(([id, p]) => `${id} ${p.toFixed(2)}`).join(' · ');
 }
+
+const PERIODS = [
+  ['Hoje', 'today'],
+  ['30 dias', 'last30d'],
+  ['Desde sempre', 'allTime'],
+] as const;
 
 export function JevDecisionsSection() {
   const [stats, setStats] = useState<JevDecisionStatsResult | null>(null);
@@ -82,8 +100,20 @@ export function JevDecisionsSection() {
   const surfaces = Object.entries(stats?.bySurface ?? {});
 
   return (
-    <section>
-      <SettingsSectionTitle>Decisões do Jev</SettingsSectionTitle>
+    <section className="jev-decisions">
+      <div className="jev-decisions__head">
+        <SettingsSectionTitle>Decisões do Jev</SettingsSectionTitle>
+        {stats && (
+          <button
+            type="button"
+            className="settings-btn settings-btn--sm jev-decisions__refresh"
+            onClick={() => void refresh()}
+          >
+            <PixelIcon name="refresh" size={12} />
+            Atualizar
+          </button>
+        )}
+      </div>
       <p className="settings-detail__hint">
         Cada vez que o piloto automático consulta o modelo Jev (TypeSafe), o
         Nexus registra a decisão aqui — sem nunca guardar o texto analisado.
@@ -91,10 +121,30 @@ export function JevDecisionsSection() {
         precisa de ajuste.
       </p>
 
-      {error && <p role="alert" className="settings-error">{error}</p>}
+      {error && (
+        <EmptyState
+          role="alert"
+          className="jev-decisions__error"
+          icon="warn"
+          title="Não deu para ler as decisões"
+          body={<p className="settings-error">{error}</p>}
+          action={
+            <button
+              type="button"
+              className="settings-btn settings-btn--sm"
+              onClick={() => void refresh()}
+            >
+              Tentar de novo
+            </button>
+          }
+        />
+      )}
 
       {!stats && !error && (
-        <p className="settings-detail__hint">Carregando decisões…</p>
+        <div className="jev-decisions__loading" role="status">
+          <PixelIcon name="bolt" size={14} />
+          Carregando decisões…
+        </div>
       )}
 
       {stats && (
@@ -102,30 +152,34 @@ export function JevDecisionsSection() {
           <h4 className="settings-section-heading">
             Consumo do Jev (TypeSafe)
           </h4>
-          <ul className="settings-list">
-            {(
-              [
-                ['Hoje', stats.windows.today],
-                ['30 dias', stats.windows.last30d],
-                ['Desde sempre', stats.windows.allTime],
-              ] as const
-            ).map(([label, window]) => (
-              <li key={label} className="settings-list__item">
-                <div className="settings-list__head">
-                  <span className="settings-list__title">{label}</span>
-                  <span className="settings-chip">
+          <div
+            className="jev-periods"
+            role="group"
+            aria-label="Consumo por período"
+          >
+            {PERIODS.map(([label, key], i) => {
+              const window: JevWindowStatsResult = stats.windows[key];
+              return (
+                <div
+                  key={label}
+                  className={`jev-period${i === 0 ? ' jev-period--live' : ''}`}
+                >
+                  <span className="jev-period__name">
+                    {i === 0 && (
+                      <span className="jev-period__dot" aria-hidden />
+                    )}
+                    {label}
+                  </span>
+                  <span className="jev-period__count">
                     {window.consultations} consultas
                   </span>
-                  <span className="settings-chip">
-                    {formatUsd(window.usd)}
-                  </span>
-                  <span className="settings-chip">
-                    {window.noAnswer} sem resposta
+                  <span className="jev-period__meta">
+                    {formatUsd(window.usd)} · {window.noAnswer} sem resposta
                   </span>
                 </div>
-              </li>
-            ))}
-          </ul>
+              );
+            })}
+          </div>
           <p className="settings-detail__hint">
             Custo estimado: tokens de entrada × US$ 0,042 por milhão (tabela
             pública da TypeSafe; saída é grátis). "Pela regra" = o Jev foi
@@ -136,94 +190,131 @@ export function JevDecisionsSection() {
 
           <h4 className="settings-section-heading">Por superfície</h4>
           {surfaces.length === 0 ? (
-            <p className="settings-detail__hint">
+            <p className="jev-decisions__hint">
               Nenhuma decisão registrada ainda.
             </p>
           ) : (
-            <ul className="settings-list">
+            <div
+              className="jev-table"
+              role="list"
+              aria-label="Consumo por superfície"
+            >
               {surfaces.map(([surface, bucket]) => (
-                <li key={surface} className="settings-list__item">
-                  <div className="settings-list__head">
-                    <span className="settings-list__title">
+                <div key={surface} className="jev-surface" role="listitem">
+                  <div className="jev-surface__grid">
+                    <span className="jev-surface__name">
                       {surfaceLabel(surface)}
                     </span>
-                    <span className="settings-chip">
+                    <span className="jev-cell jev-cell--num">
                       {bucket.calls} chamadas
                     </span>
-                    <span className="settings-chip">
+                    <span className="jev-cell jev-cell--num">
                       {formatUsd(bucket.usd)}
                     </span>
-                    <span className="settings-chip">
+                    <span className="jev-cell">
                       {bucket.last30d.jev} pelo Jev · {bucket.last30d.rule}{' '}
-                      pela regra · {formatUsd(bucket.last30d.usd)} (30 dias)
+                      pela regra · {formatUsd(bucket.last30d.usd)}{' '}
+                      <span className="jev-cell__u">(30 dias)</span>
                     </span>
-                    {bucket.noAnswer > 0 && (
-                      <span className="settings-chip">
-                        {bucket.noAnswer} sem resposta
+                    <span className="jev-cell jev-surface__fb">
+                      <span className="jev-tag jev-tag--ok">
+                        {bucket.feedback.right} certas
                       </span>
-                    )}
-                    <span className="settings-chip settings-chip--ok">
-                      {bucket.feedback.right} certas
-                    </span>
-                    <span className="settings-chip">
-                      {bucket.feedback.wrong} erradas
+                      <span className="jev-tag">
+                        {bucket.feedback.wrong} erradas
+                      </span>
+                      {bucket.noAnswer > 0 && (
+                        <span className="jev-tag jev-tag--warn">
+                          {bucket.noAnswer} sem resposta
+                        </span>
+                      )}
                     </span>
                   </div>
-                  <p className="settings-list__detail">
+                  <p className="jev-surface__detail">
                     {Object.entries(bucket.decisions)
                       .map(([decision, count]) => `${decision} ×${count}`)
                       .join(' · ')}
+                    {bucket.suggestion && (
+                      <span className="jev-surface__suggestion">
+                        {bucket.suggestion}
+                      </span>
+                    )}
                   </p>
-                  {bucket.suggestion && (
-                    <p className="settings-list__detail">{bucket.suggestion}</p>
-                  )}
-                </li>
+                </div>
               ))}
-            </ul>
+            </div>
           )}
 
           <h4 className="settings-section-heading">Últimas decisões</h4>
           {rows.length === 0 ? (
-            <p className="settings-detail__hint">
-              Nenhuma decisão registrada ainda.
-            </p>
+            <EmptyState
+              icon="board"
+              title="Sem decisões ainda"
+              body={
+                <p>
+                  Assim que o piloto automático consultar o Jev, cada decisão
+                  aparece aqui para você marcar certo ou errado.
+                </p>
+              }
+              action={
+                <button
+                  type="button"
+                  className="settings-btn settings-btn--sm"
+                  onClick={() => void refresh()}
+                >
+                  Atualizar
+                </button>
+              }
+            />
           ) : (
-            <ul className="settings-list">
-              {rows.map((row) => (
-                <li key={row.id} className="settings-list__item">
-                  <div className="settings-list__head">
-                    <span className="settings-list__title">
-                      {surfaceLabel(row.surface)} — {row.decision}
-                    </span>
-                    {row.feedback && (
-                      <span
-                        className={`settings-chip ${row.feedback === 'right' ? 'settings-chip--ok' : ''}`}
+            <ul className="jev-log">
+              {rows.map((row) => {
+                const noAnswer = row.kind === 'no-answer';
+                return (
+                  <li key={row.id} className="jev-log__row">
+                    <div className="jev-log__body">
+                      <div className="jev-log__line">
+                        <span className="jev-log__surface">
+                          {surfaceLabel(row.surface)}
+                        </span>
+                        <span
+                          className={`jev-log__decision${noAnswer ? ' jev-log__decision--rule' : ''}`}
+                        >
+                          {noAnswer
+                            ? `pela regra (${NO_ANSWER_REASONS[row.reason ?? ''] ?? 'sem resposta'})`
+                            : row.decision}
+                        </span>
+                      </div>
+                      <p className="jev-log__meta">
+                        {formatTime(row.at)} · {row.model} ·{' '}
+                        {topProbabilities(row)}
+                      </p>
+                    </div>
+                    <div
+                      className="jev-vote"
+                      role="group"
+                      aria-label="Este acerto estava certo ou errado?"
+                    >
+                      <button
+                        type="button"
+                        className={`jev-vote__btn jev-vote__btn--ok${row.feedback === 'right' ? ' jev-vote__btn--on' : ''}`}
+                        aria-pressed={row.feedback === 'right'}
+                        onClick={() => void sendFeedback(row.id, 'right')}
                       >
-                        {row.feedback === 'right' ? 'certa' : 'errada'}
-                      </span>
-                    )}
-                  </div>
-                  <p className="settings-list__detail">
-                    {formatTime(row.at)} · {row.model} · {topProbabilities(row)}
-                  </p>
-                  <div className="settings-list__head">
-                    <button
-                      type="button"
-                      className="settings-btn settings-btn--sm"
-                      onClick={() => void sendFeedback(row.id, 'right')}
-                    >
-                      Certo
-                    </button>
-                    <button
-                      type="button"
-                      className="settings-btn settings-btn--sm"
-                      onClick={() => void sendFeedback(row.id, 'wrong')}
-                    >
-                      Errado
-                    </button>
-                  </div>
-                </li>
-              ))}
+                        Certo
+                      </button>
+                      <button
+                        type="button"
+                        className={`jev-vote__btn jev-vote__btn--wrong${row.feedback === 'wrong' ? ' jev-vote__btn--on' : ''}`}
+                        aria-pressed={row.feedback === 'wrong'}
+                        onClick={() => void sendFeedback(row.id, 'wrong')}
+                      >
+                        Errado
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </>
