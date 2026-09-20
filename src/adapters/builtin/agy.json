@@ -93,8 +93,7 @@
       "levels": [
         "low",
         "medium",
-        "high",
-        "max"
+        "high"
       ]
     },
     "permission": {

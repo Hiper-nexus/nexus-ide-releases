@@ -211,12 +211,19 @@ describe('buildControlArgs', () => {
     const claudeBacked = BUILTIN_ADAPTERS
       .map((raw) => adapterSchema.parse(raw))
       .filter((item): item is CliPtyAdapter => item.kind === 'cli-pty' && item.bin === 'claude');
-    expect(claudeBacked.map((item) => item.id)).toEqual(['claude', 'glm', 'glm-flash', 'longcat']);
+    expect(claudeBacked.map((item) => item.id)).toEqual(['claude', 'glm', 'glm-flash', 'longcat', 'muse-claude']);
     for (const item of claudeBacked) {
       expect(defaultPermissionMode(item)).toBe('yolo');
       expect(buildControlArgs(item, { permissionMode: 'yolo' }))
         .toContain('--dangerously-skip-permissions');
     }
+  });
+
+  it('does not pass unsupported max effort to AGY 1.2', () => {
+    const agy = BUILTIN_ADAPTERS.map((raw) => adapterSchema.parse(raw))
+      .find((item): item is CliPtyAdapter => item.kind === 'cli-pty' && item.id === 'agy')!;
+    expect(buildControlArgs(agy, { effort: 'max' })).not.toContain('max');
+    expect(buildControlArgs(agy, { effort: 'high' })).toContain('high');
   });
 
   it('defaults every writable built-in CLI with a native auto flag to full-auto', () => {

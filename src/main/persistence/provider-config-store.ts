@@ -167,7 +167,7 @@ function defaultConfigFor(adapterId: string): ProviderConfig {
     extraArgs: [],
     upstream: defaultUpstream,
     permissionMode: defaultPermissionModeFor(adapterId),
-    effort: adapterId === 'agy' ? 'max' : '',
+    effort: adapterId === 'agy' ? 'high' : '',
     verbose: false,
   };
 }
@@ -188,7 +188,8 @@ function load(): void {
         extraArgs: Array.isArray(cfg.extraArgs) ? cfg.extraArgs : defaults.extraArgs,
         upstream: cfg.upstream ?? defaults.upstream,
         permissionMode: cfg.permissionMode ?? defaults.permissionMode,
-        effort: cfg.effort ?? defaults.effort,
+        effort: adapterId === 'agy' && cfg.effort === 'max'
+          ? 'high' : (cfg.effort ?? defaults.effort),
         verbose: cfg.verbose ?? defaults.verbose,
       });
     }
