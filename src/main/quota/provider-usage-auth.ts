@@ -27,6 +27,7 @@ import {
 } from './claude-oauth-refresh';
 import { readNativeOAuthCredential } from '../adapters/native-oauth-keychain';
 import { hasManagedClaudeAuth, readManagedClaudeAuthAsync } from '../adapters/managed-claude-auth';
+import { resolveVerifiedNativeClaudeToken } from './claude-native-account';
 
 const CRED_PREFIX = 'acctcred:';
 const KEY_PREFIX = 'acctkey:';
@@ -84,13 +85,18 @@ function declaredAnthropicToken(adapterId: string): string | null {
  */
 export async function resolveClaudeToken(accountId?: string): Promise<string | null> {
   if (accountId) {
-    if (getAccount(accountId)?.adapterId !== 'claude') return null;
+    const account = getAccount(accountId);
+    if (account?.adapterId !== 'claude') return null;
     // Managed Claude profiles are renewed by the CLI/sweeper through their
     // scoped secure-storage directory. A quota probe must only read that
     // profile; refreshing the vault blob here would create a second OAuth
     // actor and race the pane's refresh lock.
     if (hasManagedClaudeAuth(accountId)) {
       const managed = await readManagedClaudeAuthAsync(accountId);
+      if (account.email && (!managed || claudeAccessExpired(managed))) {
+        const native = await resolveVerifiedNativeClaudeToken(account.email);
+        if (native) return native;
+      }
       return managed ? extractClaudeAccessToken(managed) : null;
     }
     const blob = safeGetSecret(CRED_PREFIX + accountId);
@@ -98,6 +104,8 @@ export async function resolveClaudeToken(accountId?: string): Promise<string | n
     const now = Date.now();
     if (claudeBlobNeedsRefresh(blob, now)) {
       try {
+        const native = account.email ? await resolveVerifiedNativeClaudeToken(account.email) : null;
+        if (native) return native;
         const refreshed = await refreshClaudeOauthBlob(blob, now);
         if (refreshed) {
           setSecret(CRED_PREFIX + accountId, refreshed);
@@ -117,6 +125,13 @@ export async function resolveClaudeToken(accountId?: string): Promise<string | n
   if (fileToken || process.platform !== 'darwin') return fileToken;
   const native = await readNativeOAuthCredential('Claude Code-credentials');
   return native ? extractClaudeAccessToken(native) : null;
+}
+
+function claudeAccessExpired(blob: string): boolean {
+  try {
+    const expiresAt = JSON.parse(blob)?.claudeAiOauth?.expiresAt;
+    return typeof expiresAt === 'number' && expiresAt <= Date.now();
+  } catch { return true; }
 }
 
 /**

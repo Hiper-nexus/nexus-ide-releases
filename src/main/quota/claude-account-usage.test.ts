@@ -295,7 +295,7 @@ describe('fetchClaudeAccountUsageWindows', () => {
     const home = makeHome();
     fs.mkdirSync(path.join(home, '.claude'));
     writeClaudeJson(path.join(home, '.claude.json'), {
-      oauthAccount: { emailAddress: 'User@X.com' },
+      oauthAccount: { emailAddress: 'User@X.com', accountUuid: 'uuid-1' },
       cachedUsageUtilization: usagePayload(73, NOW - 60_000),
     });
     mocks.getAccount.mockReturnValue({
@@ -310,6 +310,31 @@ describe('fetchClaudeAccountUsageWindows', () => {
     expect(r.windows?.find((x) => x.label === 'Semanal')?.usedRatio).toBe(0.73);
     expect(mocks.probeClaudeCliUsage).not.toHaveBeenCalled();
     expect(mocks.materializeManagedClaudeAuth).not.toHaveBeenCalled();
+  });
+
+  it.each(['another-user', undefined])('rejects cached usage with unproved account UUID %s', async (cachedUuid) => {
+    const home = makeHome();
+    fs.mkdirSync(path.join(home, '.claude'));
+    writeClaudeJson(path.join(home, '.claude.json'), {
+      oauthAccount: { emailAddress: 'user@x.com', accountUuid: 'uuid-1' },
+      cachedUsageUtilization: { ...usagePayload(73, NOW), accountUuid: cachedUuid },
+    });
+    mocks.getAccount.mockReturnValue({ adapterId: 'claude', email: 'user@x.com' });
+    cliReturns([cliWindow('Semanal', 0.2)]);
+    const result = await fetchClaudeAccountUsageWindows('acct-1', { now: NOW, home });
+    expect(result.windows?.[0]?.usedRatio).toBe(0.2);
+  });
+
+  it('two managed accounts cannot read the native config usage cache', async () => {
+    mocks.getAccount.mockReturnValue({ adapterId: 'claude' });
+    mocks.managedClaudeAuthHasCredential.mockReturnValue(true);
+    mocks.probeClaudeCliUsage.mockImplementation(async ({ env }) => ({
+      windows: [cliWindow('Semanal', env.CLAUDE_CONFIG_DIR === '/managed/acct-a/quota' ? 0.2 : 0.7)],
+    }));
+    const first = await fetchClaudeAccountUsageWindows('acct-a', { now: NOW });
+    const second = await fetchClaudeAccountUsageWindows('acct-b', { now: NOW });
+    expect(first.windows?.[0]?.usedRatio).toBe(0.2);
+    expect(second.windows?.[0]?.usedRatio).toBe(0.7);
   });
 
   it('stale profile cache falls through to a native CLI run (no env)', async () => {

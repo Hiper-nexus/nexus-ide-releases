@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   nativeCredential: vi.fn(),
   hasManagedClaudeAuth: vi.fn(() => false),
   readManagedClaudeAuthAsync: vi.fn(async () => null as string | null),
+  verifiedNativeClaudeToken: vi.fn(async () => null as string | null),
 }));
 
 vi.mock('../persistence/secrets-store', () => ({
@@ -30,6 +31,7 @@ vi.mock('../persistence/account-store', () => ({
   // decrypt a cold vault entry.
   claudeOAuthAccessToken: mocks.claudeOAuthAccessToken,
 }));
+vi.mock('./claude-native-account', () => ({ resolveVerifiedNativeClaudeToken: mocks.verifiedNativeClaudeToken }));
 
 vi.mock('../adapters/launcher-provider-manager', () => ({
   loadLauncherProviderKey: mocks.loadLauncherProviderKey,
@@ -112,6 +114,15 @@ describe('resolveClaudeToken boot safety', () => {
 });
 
 describe('multi-account credential scoping', () => {
+  it('recovers an expired managed Claude reading only from a server-verified native identity', async () => {
+    mocks.getAccount.mockReturnValue({ adapterId: 'claude', email: 'owner@example.test' });
+    mocks.hasManagedClaudeAuth.mockReturnValue(true);
+    mocks.readManagedClaudeAuthAsync.mockResolvedValue(JSON.stringify({ claudeAiOauth: { accessToken: 'expired', expiresAt: 1 } }));
+    mocks.verifiedNativeClaudeToken.mockResolvedValueOnce('verified-native');
+    expect(await resolveClaudeToken('managed-owner')).toBe('verified-native');
+    mocks.verifiedNativeClaudeToken.mockResolvedValueOnce(null);
+    expect(await resolveClaudeToken('managed-owner')).toBe('expired');
+  });
   it('reads managed Claude auth without becoming a second refresh actor', async () => {
     mocks.getAccount.mockReturnValue({ adapterId: 'claude' });
     mocks.hasManagedClaudeAuth.mockReturnValue(true);

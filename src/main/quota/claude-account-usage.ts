@@ -92,6 +92,8 @@ export interface ClaudeProfileInfo {
 
 interface ClaudeConfigSnapshot {
   email?: string;
+  accountUuid?: string;
+  usageAccountUuid?: string;
   organizationUuid?: string;
   usageFetchedAtMs?: number;
   usage?: unknown;
@@ -136,6 +138,8 @@ export function readClaudeConfigSnapshot(
       | Record<string, unknown>
       | undefined;
     snapshot = {
+      accountUuid: typeof account?.accountUuid === 'string' ? account.accountUuid : undefined,
+      usageAccountUuid: typeof cached?.accountUuid === 'string' ? cached.accountUuid : undefined,
       email:
         typeof account?.emailAddress === 'string' && account.emailAddress
           ? account.emailAddress
@@ -371,6 +375,14 @@ export interface ClaudeAccountUsageResult {
   hint?: QuotaReadHint;
 }
 
+/** Secure storage alone does not isolate the CLI's cached usage in its config. */
+function accountUsageEnv(directory: string): Record<string, string> {
+  return {
+    [CLAUDE_MANAGED_AUTH_ENV]: directory,
+    [CLAUDE_CONFIG_DIR_ENV]: path.join(path.dirname(directory), 'quota'),
+  };
+}
+
 function persistVaultBlob(accountId: string, blob: string): void {
   try {
     setSecret(CRED_PREFIX + accountId, blob);
@@ -427,11 +439,11 @@ export async function fetchClaudeAccountUsageWindows(
   // pintou duas contas com o mesmo consumo. Sem credencial no escopo, a
   // cascata segue para as fontes ancoradas em identidade.
   if (managedClaudeAuthHasCredential(accountId, { home: opts.home })) {
-    const directory = managedClaudeAuthDirectory(accountId);
+    const directory = managedClaudeAuthDirectory(accountId, opts.home);
     const probe = await probeClaudeCliUsage({
       now,
       runImpl: opts.runImpl,
-      env: { [CLAUDE_MANAGED_AUTH_ENV]: directory },
+      env: accountUsageEnv(directory),
     });
     if (probe.windows?.length) return { windows: probe.windows };
     hint = cliFailureHint(probe.failure ?? 'unavailable');
@@ -447,7 +459,7 @@ export async function fetchClaudeAccountUsageWindows(
           const retry = await probeClaudeCliUsage({
             now,
             runImpl: opts.runImpl,
-            env: { [CLAUDE_MANAGED_AUTH_ENV]: directory },
+            env: accountUsageEnv(directory),
           });
           if (retry.windows?.length) return { windows: retry.windows };
           hint = cliFailureHint(retry.failure ?? 'unavailable');
@@ -468,8 +480,11 @@ export async function fetchClaudeAccountUsageWindows(
       const snap = readClaudeConfigSnapshot(profile.accountFile);
       if (
         snap?.usage !== undefined &&
+        Boolean(snap.accountUuid) &&
+        snap.accountUuid === snap.usageAccountUuid &&
         typeof snap.usageFetchedAtMs === 'number' &&
-        Math.abs(now - snap.usageFetchedAtMs) <= CLAUDE_USAGE_CACHE_FRESH_MS
+        now >= snap.usageFetchedAtMs &&
+        now - snap.usageFetchedAtMs <= CLAUDE_USAGE_CACHE_FRESH_MS
       ) {
         const windows = parseClaudeCachedUtilization(snap.usage, now);
         if (windows.length > 0) return { windows };
@@ -523,7 +538,7 @@ export async function fetchClaudeAccountUsageWindows(
     const probe = await probeClaudeCliUsage({
       now,
       runImpl: opts.runImpl,
-      env: { [CLAUDE_MANAGED_AUTH_ENV]: prepared.directory },
+      env: accountUsageEnv(prepared.directory),
     });
     if (probe.windows?.length) return { windows: probe.windows };
     if (probe.failure === 'auth-expired') hint = 'auth-expired';
@@ -537,7 +552,7 @@ export async function fetchClaudeAccountUsageWindows(
         const retry = await probeClaudeCliUsage({
           now,
           runImpl: opts.runImpl,
-          env: { [CLAUDE_MANAGED_AUTH_ENV]: prepared.directory },
+          env: accountUsageEnv(prepared.directory),
         });
         if (retry.windows?.length) return { windows: retry.windows };
         hint = cliFailureHint(retry.failure ?? 'unavailable');
