@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentGateContext } from './gate';
 import { testProjectScope } from './__tests__/scope-fixture';
 import { paneSpawnTool } from './tools-panes';
@@ -6,6 +6,13 @@ import {
   clearRouteProvenance,
   recordRouteDecision,
 } from './route-provenance';
+
+// Pin a user-selected default with a catalog warning. The product's current
+// default may have no warning, but omitting model must still check user choices.
+vi.mock('../adapters/adapter-registry', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../adapters/adapter-registry')>(),
+  listAdapterInfos: () => [{ id: 'grok', models: { default: 'grok-4.5' } }],
+}));
 
 function context(overrides: Partial<AgentGateContext> = {}): AgentGateContext {
   return {
@@ -54,7 +61,7 @@ describe('fiação do gate de proveniência no nexus_pane_spawn ad-hoc', () => {
   });
 
   it('spawn ad-hoc SEM model não contorna o gate: o default do adapter é avaliado', async () => {
-    // O default do adapter grok é exatamente o grok-4.5 com warning — omitir
+    // O default escolhido no registry é o grok-4.5 com warning — omitir
     // o model não pode virar bypass do gate.
     const message = await spawnError({ adapterId: 'grok' });
     expect(message).toContain('route_required');
