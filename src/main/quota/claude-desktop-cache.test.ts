@@ -2,11 +2,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { readClaudeDesktopUsage } from './claude-desktop-cache';
 
 const NOW = Date.parse('2026-09-20T20:00:00Z');
 const ORG = 'a1b2c3d4-0000-4000-8000-000000000001';
+const HOST_PLATFORM = process.platform;
+
+beforeEach(() => Object.defineProperty(process, 'platform', { value: 'darwin' }));
 
 const tempDirs: string[] = [];
 function makeDir(): string {
@@ -15,6 +18,7 @@ function makeDir(): string {
   return dir;
 }
 afterEach(() => {
+  Object.defineProperty(process, 'platform', { value: HOST_PLATFORM });
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -55,6 +59,12 @@ const USAGE = {
 };
 
 describe('readClaudeDesktopUsage', () => {
+  it('does not read the macOS cache on other platforms', () => {
+    const dir = makeDir();
+    writeEntry(dir, `https://claude.ai/api/organizations/${ORG}/usage`, USAGE);
+    Object.defineProperty(process, 'platform', { value: 'linux' });
+    expect(readClaudeDesktopUsage(ORG, { directory: dir, now: NOW })).toBeNull();
+  });
   it('lê a resposta de usage da org pedida — janelas reais do Desktop', () => {
     const dir = makeDir();
     writeEntry(dir, `1/0/https://claude.ai/api/organizations/${ORG}/usage`, USAGE);

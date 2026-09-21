@@ -61,10 +61,16 @@ describe('redline install IPC', () => {
   });
 
   it('confirmAndInstallRedline does not copy when the operator cancels', async () => {
-    showMessageBox.mockResolvedValue({ response: 0 });
-    const result = await confirmAndInstallRedline('/no-such-resources');
-    expect(result.ok).toBe(false);
-    expect(result.message).toMatch(/cancelada/i);
+    const platform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'darwin' });
+    try {
+      showMessageBox.mockResolvedValue({ response: 0 });
+      const result = await confirmAndInstallRedline('/no-such-resources');
+      expect(result.ok).toBe(false);
+      expect(result.message).toMatch(/cancelada/i);
+    } finally {
+      Object.defineProperty(process, 'platform', { value: platform });
+    }
   });
 
   it('installRedline refuses non-darwin', async () => {
