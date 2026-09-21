@@ -236,6 +236,7 @@ export async function probeAdapterAuth(
           adapterId: info.adapterId,
           state,
           detail: finalDetail,
+          ...(identity.revision ? { sessionRevision: identity.revision } : {}),
           ...(sessionFingerprint || identity.fingerprint
             ? {
                 sessionFingerprint:

@@ -147,6 +147,7 @@ import {
   setCooldown,
   startClaudeSubscriptionFreshness,
 } from './account-store';
+import { captureNativeAuth } from '../adapters/managed-credentials';
 import type { Account } from '../../shared/account-types';
 
 function makeDb(): Db {
@@ -526,6 +527,17 @@ describe('addActiveSessionAccount não duplica o mesmo assinante', () => {
     ).toThrow(/Conta A.*Conta B/);
     expect(deps.secrets.get(`acctcred:${b.id}`)).toBe(oauthBlob('b-dead'));
     expect(deps.secrets.get(`acctcred:${a.id}`)).toBe(oauthBlob('a-live'));
+  });
+
+  it('rejects a new Codex workspace with the target email during targeted relogin', () => {
+    const blob = (subject: string) => JSON.stringify({ tokens: {
+      account_id: subject, access_token: `access-${subject}`, refresh_token: `refresh-${subject}`,
+    } });
+    vi.mocked(captureNativeAuth).mockReturnValueOnce({ blob: blob('workspace-a'), email: 'same@example.test', authRelativePath: 'auth.json' });
+    const target = addActiveSessionAccount('codex', 'Work')!;
+    vi.mocked(captureNativeAuth).mockReturnValueOnce({ blob: blob('workspace-b'), email: 'same@example.test', authRelativePath: 'auth.json' });
+    expect(() => addActiveSessionAccount('codex', 'Work', target.id)).toThrow(/identidade|conta/i);
+    expect(deps.secrets.get(`acctcred:${target.id}`)).toBe(blob('workspace-a'));
   });
 
   it('reautenticação direcionada recusa accountId de outro provider', () => {

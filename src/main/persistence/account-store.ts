@@ -1325,6 +1325,11 @@ export function addActiveSessionAccount(
       `O login concluído é de ${email}, mas a conta escolhida é ${targeted.email}.`,
     );
   }
+  const targetedBlob = targeted ? getSecret(CRED_PREFIX + targeted.id) : null;
+  if (targetedBlob && isFileAuthAdapter(adapterId) &&
+    compareAuthBlobIdentity(adapterId, blob, targetedBlob) === 'different') {
+    throw new Error('O login concluído pertence a outra identidade, não à conta escolhida.');
+  }
   const existing =
     targeted ??
     credentialOwner ??
@@ -1343,7 +1348,7 @@ export function addActiveSessionAccount(
     clearCooldown(existing.id, 'sessão reautenticada no CLI');
     try {
       if (isFileAuthAdapter(adapterId)) {
-        materializeManagedHome(adapterId as FileAuthAdapterId, existing.id, blob);
+        materializeManagedHome(adapterId as FileAuthAdapterId, existing.id, blob, { replace: Boolean(targeted) });
       } else if (adapterId === 'claude' && hasManagedClaudeAuth(existing.id)) {
         materializeManagedClaudeAuth(existing.id, blob, { replace: true });
       }
