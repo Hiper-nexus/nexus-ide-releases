@@ -4,8 +4,22 @@ import { fetchLiveProviderWindows, parseKimiUsage } from './provider-live-usage'
 
 const nativeOpenCode = vi.hoisted(() => vi.fn(() => [{ providerId: 'custom', key: 'native-other-account' }]));
 vi.mock('./opencode-auth', () => ({ loadOpenCodeAuthKeys: nativeOpenCode }));
+const agyCli = vi.hoisted(() => vi.fn<() => Promise<QuotaWindow[] | null>>(async () => null));
+vi.mock('./agy-cli-usage', () => ({ fetchAgyCliUsageWindows: agyCli }));
 
 describe('fetchLiveProviderWindows', () => {
+  it('reads native AGY quota with the CLI while no bridge or legacy credential is available', async () => {
+    agyCli.mockResolvedValueOnce([{ kind: 'weekly', label: 'Gemini Models · Semanal', usedRatio: 0.25, source: 'provider-api', confidence: 'high' }]);
+    const result = await fetchLiveProviderWindows('agy', undefined, {});
+    expect(result.windows?.[0].usedRatio).toBe(0.25);
+  });
+
+  it('does not lend native AGY CLI quota to a saved account', async () => {
+    agyCli.mockClear();
+    expect((await fetchLiveProviderWindows('agy', 'saved-account', {})).windows).toBeNull();
+    expect(agyCli).not.toHaveBeenCalled();
+  });
+
   it('uses an explicitly routed provider without changing the adapter/account that owns the key', async () => {
     const resolveApiQuotaKey = vi.fn(() => 'owner-bound-key');
     const requests: string[] = [];

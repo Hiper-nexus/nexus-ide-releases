@@ -24,6 +24,7 @@ import {
 import { fetchCursorUsageWindowsLive } from './cursor-usage';
 import { fetchAgyUsageWindows, type GeminiOauthCreds } from './agy-usage';
 import { fetchAgyBridgeUsage } from './agy-bridge';
+import { fetchAgyCliUsageWindows } from './agy-cli-usage';
 import {
   probeKimiCodingUsageWindows,
   probeKimiUsageWithOauth,
@@ -408,6 +409,10 @@ export async function fetchLiveProviderWindows(
       if (!accountId) {
         const bridged = await fetchAgyBridgeUsage({ now }).catch(() => null);
         if (bridged && bridged.length > 0) return { windows: bridged };
+        // An open IDE/pane is not required: the native read-only slash command
+        // uses AGY's current keychain identity and returns zero model turns.
+        const native = await fetchAgyCliUsageWindows({ now }).catch(() => null);
+        if (native && native.length > 0) return { windows: native };
       }
       let creds: GeminiOauthCreds | null = null;
       if (deps.resolveGeminiOauthCreds) {
