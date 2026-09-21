@@ -1115,6 +1115,7 @@ describe("MCP dispatch effect safety", () => {
       ["nexus_terminal_run", { command: "npm test" }],
       ["nexus_file_write", { path: "src/x.ts", content: "x" }],
       ["nexus_git_commit", { message: "vibe" }],
+      ["nexus_pr_create", { title: "feat: tool", body: "Validated" }],
     ] as const) {
       const handler = vi.fn(async () => ({ ok: true }));
       const confirm = vi.fn(async () => false);
@@ -1138,15 +1139,18 @@ describe("MCP dispatch effect safety", () => {
     }
   });
 
-  it("modo vibe não vale para worker sem missão", async () => {
+  it.each([
+    ["nexus_terminal_run", { command: "npm test" }],
+    ["nexus_pr_create", { title: "feat: tool", body: "Validated" }],
+  ])("modo vibe não vale para worker sem missão: %s", async (toolName, args) => {
     resetGateForTests();
     const worker = mintToken({ label: "orfao", role: "worker", scope: auditScope, allowedTools: null, allowedSkills: null });
     const handler = vi.fn(async () => ({ ok: true }));
     const result = await dispatchToolCall(
       "http-mcp",
-      registryWith({ name: "nexus_terminal_run", description: "x", inputSchema: { type: "object", properties: {} }, handler }),
-      "nexus_terminal_run",
-      { command: "npm test" },
+      registryWith({ name: toolName, description: "x", inputSchema: { type: "object", properties: {} }, handler }),
+      toolName,
+      args,
       worker,
     );
     expect(result).toMatchObject({ ok: false, denied: true });

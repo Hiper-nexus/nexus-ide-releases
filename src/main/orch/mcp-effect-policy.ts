@@ -323,6 +323,7 @@ const EXECUTION_EFFECT_TOOLS = new Set([
   'git_commit',
   'git_pull',
   'git_push',
+  'pr_create',
   'pr_enqueue',
   'pr_auto_merge',
   'image_generate',
