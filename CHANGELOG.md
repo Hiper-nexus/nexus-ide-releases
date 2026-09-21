@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.69 — Grok conectado também no Redline
+
+- **Cota Grok após expirar o access token (F-626)**: renovação pela própria CLI via ACP, somente initialize/authenticate com sessão salva; sem prompt, conversa ou `grok models`. Credenciais nativas e gerenciadas continuam vinculadas à conta certa.
+- **Uma renovação por sessão compartilhada**: panes e sonda coordenam cópias do mesmo grant dentro do Main, reutilizam a credencial renovada e recusam troca de identidade ou time durante a espera.
+- **Aviso antigo de login removido após prova real**: resposta válida da API limpa apenas o cooldown de autenticação. A publicação ao Redline usa as contas atualizadas na mesma consulta; quota real e bloqueios por tier permanecem protegidos.
+- **Falhas temporárias**: indisponibilidade da CLI/rede não é tratada como grant revogado. Falha ao salvar a limpeza de um aviso não descarta o consumo que já foi medido.
+
 ## 0.76.68 — Grok 4.7
 
 - **Grok 4.7 no catálogo**: disponível no seletor e como padrão de novas escolhas Grok, inclusive com cache local de modelos antigo. Escolhas já salvas são preservadas.
