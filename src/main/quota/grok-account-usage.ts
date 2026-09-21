@@ -13,8 +13,19 @@ function read(file: string): string | null {
   try { return fs.readFileSync(file, 'utf8'); } catch { return null; }
 }
 
-/** Choose the freshest source BEFORE creating another copy of a refresh family. */
+const inFlight = new Map<string | undefined, Promise<LiveProviderProbe>>();
+
+/** One renewal/read-back transaction per account, even across forced snapshots. */
 export async function fetchGrokAccountUsage(accountId?: string): Promise<LiveProviderProbe> {
+  const existing = inFlight.get(accountId);
+  if (existing) return existing;
+  const pending = renewAccountUsage(accountId);
+  inFlight.set(accountId, pending);
+  try { return await pending; } finally { if (inFlight.get(accountId) === pending) inFlight.delete(accountId); }
+}
+
+/** Choose the freshest source BEFORE creating another copy of a refresh family. */
+async function renewAccountUsage(accountId?: string): Promise<LiveProviderProbe> {
   const unavailable: LiveProviderProbe = { windows: null, hint: 'unavailable' };
   try {
     const nativeFile = path.join(os.homedir(), '.grok', 'auth.json');

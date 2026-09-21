@@ -55,3 +55,9 @@ it('does not renew a different provider or an API-key account', async () => {
   expect((await fetchGrokAccountUsage('account-a')).windows).toBeNull();
   expect(mocks.probe).not.toHaveBeenCalled();
 });
+it('shares renewal and vault convergence across overlapping refreshes of the same account', async () => {
+  fs.writeFileSync(nativeFile, blob('a', now));
+  mocks.env.mockImplementation(() => { mocks.secret.mockReturnValue(blob('a', now + 1000)); return { GROK_HOME: managedHome }; });
+  const results = await Promise.all([fetchGrokAccountUsage('account-a'), fetchGrokAccountUsage('account-a')]);
+  expect(results.map(r => r.windows?.[0].usedRatio)).toEqual([0.06, 0.06]);
+});
