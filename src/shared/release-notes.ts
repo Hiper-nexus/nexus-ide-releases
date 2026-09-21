@@ -4189,6 +4189,10 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'Estado de login e bloqueios confiáveis',
       detail: 'O e-mail salvo não esconde mais uma sessão revogada nem apaga um bloqueio real de consumo.',
     },
+    {
+      title: 'Menos tentativas repetidas no Keychain',
+      detail: 'Consultas simultâneas ao mesmo item são reunidas. Uma negação não abre outra CLI para tentar de novo, e a gravação não repete a tentativa por shell.',
+    },
   ],
 };
 

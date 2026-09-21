@@ -10,6 +10,7 @@
 - **Antigravity sem pane aberto (F-619)**: consulta estruturada da própria CLI, sem turnos de modelo, com limite de tempo e saída e uso restrito à linha nativa.
 - **Login e troca preservam as contas (F-620)**: retry mantém a conta escolhida; reautenticação preserva a sessão anterior e exige prova de conclusão. Outro workspace do mesmo e-mail não pode sobrescrever a conta selecionada.
 - **Bloqueios não somem por metadados (F-622)**: e-mail no perfil não prova login, não oculta credencial revogada e não remove cooldown real de quota.
+- **Keychain com menos tentativas repetidas (F-617/F-624)**: consultas concorrentes são reunidas por item; acesso negado fica desconhecido sem sondar outra CLI. A escrita por stdin não recorre mais a shell, evitando segunda tentativa e segredo em argumentos de processo. Permissões e sandbox não foram afrouxados.
 
 ## 0.76.66 — Multi-conta: o login novo gruda, em qualquer LLM
 
