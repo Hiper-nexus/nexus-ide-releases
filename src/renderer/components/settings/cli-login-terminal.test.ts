@@ -433,6 +433,51 @@ describe('openCliLoginTerminal — o que o watcher entrega ao fechar', () => {
     await vi.waitFor(() => expect(finished).toHaveLength(1));
     expect(finished[0]!.verified).toBe(false);
   });
+
+  it('linha Signed in não encerra antes de a credencial nova ficar visível', async () => {
+    panes.open = [{ id: 'pane-login' }];
+    let current = { ...baseline };
+    let onData: ((chunk: string) => void) | undefined;
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        providers: {
+          authStatus: vi.fn(async () => [current]),
+        },
+        pty: {
+          onData: vi.fn(
+            (_sessionId: string, listener: (chunk: string) => void) => {
+              onData = listener;
+              return () => undefined;
+            },
+          ),
+        },
+      },
+    });
+    const finished: CliLoginFinish[] = [];
+    await openCliLoginTerminal({
+      command: 'codex login',
+      adapterId: 'codex',
+      baseline,
+      onFinished: (finish) => finished.push(finish),
+    });
+
+    // A CLI imprime sucesso antes de o auth.json/Keychain ficar visível para
+    // outra leitura. O watcher antigo soltava `verified:false` aqui e nunca
+    // tentava de novo.
+    onData?.('Signed in as user@example.com\n');
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(finished).toHaveLength(0);
+
+    current = { ...baseline, sessionFingerprint: 'depois' };
+    onData?.('shell prompt\n');
+    await vi.waitFor(() => expect(finished).toHaveLength(1));
+    expect(finished[0]).toMatchObject({
+      verified: true,
+      status: { sessionFingerprint: 'depois' },
+    });
+  });
 });
 
 /**

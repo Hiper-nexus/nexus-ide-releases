@@ -851,7 +851,11 @@ describe('AccountsManager', () => {
       await Promise.resolve();
     });
 
-    expect(addActiveSession).toHaveBeenCalledWith('claude', 'Conta Adm');
+    expect(addActiveSession).toHaveBeenCalledWith(
+      'claude',
+      'Conta Adm',
+      'acct-adm',
+    );
     act(() => root.unmount());
   });
 

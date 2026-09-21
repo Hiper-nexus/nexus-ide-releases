@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
 const authMocks = vi.hoisted(() => ({
-  claude: vi.fn(async () => ({ value: true, cacheUpdated: true })),
+  claude: vi.fn(
+    async (): Promise<{
+      value: boolean;
+      cacheUpdated: boolean;
+      credential?: string;
+    }> => ({ value: true, cacheUpdated: true }),
+  ),
   openclaude: vi.fn(async () => ({ value: true, cacheUpdated: true })),
   changed: vi.fn(),
   kimiReadiness: 'missing' as 'missing' | 'present',
@@ -85,6 +91,31 @@ describe('probeAdapterAuth provider-specific diagnostics', () => {
     expect(result.find((entry) => entry.adapterId === 'openclaude')?.state).toBe('ok');
     expect(authMocks.claude).toHaveBeenCalled();
     expect(authMocks.changed).toHaveBeenCalled();
+  });
+
+  it('exposes an opaque Claude fingerprint so same-email re-login is provable', async () => {
+    const credential = JSON.stringify({
+      claudeAiOauth: {
+        accessToken: 'new-access-after-login',
+        refreshToken: 'new-refresh-after-login',
+      },
+    });
+    authMocks.claude.mockResolvedValueOnce({
+      value: true,
+      cacheUpdated: true,
+      credential,
+    });
+
+    const result = await probeAdapterAuth();
+    const claude = result.find((entry) => entry.adapterId === 'claude');
+
+    expect(claude).toMatchObject({
+      state: 'ok',
+      detail: expect.stringContaining('retornoja@gmail.com'),
+      sessionFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
+    expect(claude?.sessionFingerprint).not.toContain('new-access');
+    expect(claude?.sessionFingerprint).not.toContain('new-refresh');
   });
 
   it('does not ask a Keychain-backed Muse session to log in without checking it', async () => {

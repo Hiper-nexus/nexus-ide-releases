@@ -122,6 +122,7 @@ export function registerAccountIpc(): void {
       const account = addActiveSessionAccount(
         parsed.data.adapterId,
         parsed.data.label,
+        parsed.data.accountId,
       );
       if (!account) {
         const hints: Record<string, string> = {

@@ -915,7 +915,9 @@ export interface NexusApi {
     setConfig(patch: ProviderConfigPatch): Promise<ProviderSettingsInfo[]>;
     setKey(req: SetKeyRequest): Promise<{ ok: boolean; error?: string }>;
     testKey(adapterId: string): Promise<TestConnectionResult>;
-    authStatus(): Promise<AdapterAuthStatus[]>;
+    authStatus(options?: {
+      freshClaudeCredential?: boolean;
+    }): Promise<AdapterAuthStatus[]>;
     /** Instala a CLI pela receita oficial (confirmação nativa no main). */
     installCli(
       adapterId: string,
@@ -1034,6 +1036,7 @@ export interface NexusApi {
     addActiveSession(
       adapterId: string,
       label: string,
+      accountId?: string,
     ): Promise<{ ok: boolean; id?: string; email?: string; error?: string }>;
     supportsSnapshot(
       adapterId: string,

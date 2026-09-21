@@ -24,6 +24,7 @@ import {
   detailWithIdentity,
   emailFromAuthDetail,
 } from '../../shared/auth-detail-identity';
+import { claudeCredentialFingerprint } from './claude-credential';
 
 /**
  * Sonda de login das CLIs — SEM navegador. Cada CLI guarda a sessão OAuth
@@ -38,6 +39,15 @@ import {
  */
 
 const HOME = os.homedir();
+
+export interface ProbeAdapterAuthOptions {
+  /**
+   * O terminal da CLI acabou de imprimir sucesso. Ignore uma credencial
+   * positiva/ausente cacheada antes do login; backoff de ACL negada continua
+   * valendo para não reabrir o diálogo do macOS em loop.
+   */
+  freshClaudeCredential?: boolean;
+}
 
 function fileExists(p: string): boolean {
   try {
@@ -64,18 +74,32 @@ function keychainHas(service: string): Promise<boolean> {
 /** Sondas específicas por CLI OAuth (as demais caem em hasKey do cofre). */
 const OAUTH_PROBES: Record<
   string,
-  () => Promise<{ state: AuthState; detail: string }>
+  (options?: ProbeAdapterAuthOptions) => Promise<{
+    state: AuthState;
+    detail: string;
+    sessionFingerprint?: string;
+  }>
 > = {
-  claude: async () => {
+  claude: async (options) => {
     // Live session ≠ identity. Prefer the same detector as spawn readiness
     // (usable OAuth token / credentials file). Email alone is identity only.
-    if ((await refreshClaudeSubscriptionAuthCache(HOME, undefined, { authoritative: true })).value) {
+    const proof = await refreshClaudeSubscriptionAuthCache(
+      HOME,
+      undefined,
+      {
+        authoritative: true,
+        freshCredential: options?.freshClaudeCredential === true,
+      },
+    );
+    if (proof.value) {
       const email = claudeOauthEmail(HOME);
+      const sessionFingerprint = claudeCredentialFingerprint(proof.credential);
       return {
         state: 'ok',
         detail: email
           ? `sessão Claude viva: ${email}`
           : 'sessão Claude OAuth detectada',
+        ...(sessionFingerprint ? { sessionFingerprint } : {}),
       };
     }
     const email = claudeOauthEmail(HOME);
@@ -173,16 +197,22 @@ const OAUTH_PROBES: Record<
   }),
 };
 
-export async function probeAdapterAuth(): Promise<AdapterAuthStatus[]> {
+export async function probeAdapterAuth(
+  options: ProbeAdapterAuthOptions = {},
+): Promise<AdapterAuthStatus[]> {
   const infos = listProviderSettings({ nonBlockingAuth: true }).filter((p) => p.adapterId !== 'shell');
   const statuses = await Promise.all(
     infos.map(async (info): Promise<AdapterAuthStatus> => {
       const probe = OAUTH_PROBES[info.adapterId];
       if (probe) {
-        const { state, detail } = await probe().catch(() => ({
-          state: 'unknown' as const,
-          detail: 'Não foi possível verificar a sessão agora. Verifique novamente.',
-        }));
+        const { state, detail, sessionFingerprint } = await probe(options).catch(
+          () => ({
+            state: 'unknown' as const,
+            detail:
+              'Não foi possível verificar a sessão agora. Verifique novamente.',
+            sessionFingerprint: undefined,
+          }),
+        );
         // Chave de API no cofre cobre a CLI mesmo sem sessão OAuth.
         if (state !== 'ok' && info.hasKey) {
           return {
@@ -206,8 +236,11 @@ export async function probeAdapterAuth(): Promise<AdapterAuthStatus[]> {
           adapterId: info.adapterId,
           state,
           detail: finalDetail,
-          ...(identity.fingerprint
-            ? { sessionFingerprint: identity.fingerprint }
+          ...(sessionFingerprint || identity.fingerprint
+            ? {
+                sessionFingerprint:
+                  sessionFingerprint ?? identity.fingerprint,
+              }
             : {}),
         };
       }
@@ -236,5 +269,14 @@ export async function probeAdapterAuth(): Promise<AdapterAuthStatus[]> {
 }
 
 export function registerAuthProbeIpc(): void {
-  ipcMain.handle(PROVIDER_CHANNELS.authStatus, () => probeAdapterAuth());
+  ipcMain.handle(PROVIDER_CHANNELS.authStatus, (_event, raw?: unknown) => {
+    const freshClaudeCredential =
+      Boolean(
+        raw &&
+          typeof raw === 'object' &&
+          (raw as { freshClaudeCredential?: unknown })
+            .freshClaudeCredential === true,
+      );
+    return probeAdapterAuth({ freshClaudeCredential });
+  });
 }

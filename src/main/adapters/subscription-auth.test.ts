@@ -602,6 +602,28 @@ describe('detectSubscriptionAuth', () => {
     expect(hasSubscriptionAuthForStatus('claude', undefined, home)).toBe(true);
   });
 
+  it('returns the slim Keychain credential only to Main for fingerprinting', async () => {
+    const home = tempHome();
+    const credential = JSON.stringify({
+      claudeAiOauth: {
+        accessToken: 'access-after-login',
+        refreshToken: 'refresh-after-login',
+      },
+    });
+
+    await expect(
+      refreshClaudeSubscriptionAuthCache(
+        home,
+        async () => credential,
+        { authoritative: true },
+      ),
+    ).resolves.toEqual({
+      value: true,
+      cacheUpdated: true,
+      credential,
+    });
+  });
+
   it('recognizes newly written credentials before the next background refresh', async () => {
     const home = tempHome();
     await refreshClaudeSubscriptionAuthCache(home, async () => false);
@@ -640,15 +662,31 @@ describe('detectSubscriptionAuth', () => {
     expect(subscriptionAuthStatusIsUnknown('claude', home)).toBe(process.platform === 'darwin');
   });
 
-  it('reports Muse Keychain metadata as unverified, not a missing or verified token', () => {
+  it('resolves the Muse Keychain session instead of parking it on unverified', () => {
     const home = tempHome();
     const authFile = path.join(home, '.config', 'muse', 'auth.json');
     fs.mkdirSync(path.dirname(authFile), { recursive: true });
     fs.writeFileSync(authFile, JSON.stringify({ providers: { meta: {
       mechanism: 'oauth', storage: 'keychain',
     } } }));
-    expect(detectSubscriptionAuth('muse', home)).toBe(false);
-    expect(subscriptionAuthStatusIsUnknown('muse', home)).toBe(true);
+
+    // Item presente = sessão provada. Antes ficava «não verificado» com a CLI
+    // logada e operacional (regressão de campo 21/09).
+    expect(
+      detectSubscriptionAuth('muse', home, undefined, {
+        museKeychainProbe: () => true,
+      }),
+    ).toBe(true);
+
+    // Item ausente: o arquivo sozinho não prova nada — segue indeterminado,
+    // porque o segredo está fora do alcance desta leitura.
+    expect(
+      detectSubscriptionAuth('muse', home, undefined, {
+        museKeychainProbe: () => false,
+      }),
+    ).toBe(false);
+
+    // Sem delegação declarada não há o que consultar no Keychain.
     fs.writeFileSync(authFile, JSON.stringify({ providers: { meta: { user_email: 'test@example.com' } } }));
     expect(subscriptionAuthStatusIsUnknown('muse', home)).toBe(false);
   });

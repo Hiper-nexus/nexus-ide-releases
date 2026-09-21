@@ -271,6 +271,7 @@ export function AccountsManager({
   async function saveVerifiedLogin(
     finish: CliLoginFinish,
     typedLabel: string,
+    targetAccountId?: string,
   ): Promise<void> {
     try {
       if (finish.status) {
@@ -300,7 +301,11 @@ export function AccountsManager({
           .map((a) => a.label),
         authDetail: finish.status?.detail,
       });
-      const res = await addActiveSession(adapterId, name);
+      const res = await addActiveSession(
+        adapterId,
+        name,
+        targetAccountId,
+      );
       await hydrate();
       if (!res.ok) {
         showNotice(res.error ?? 'Não foi possível salvar a conta nova.', 'err');
@@ -459,7 +464,11 @@ export function AccountsManager({
    * a sonda é relida (o BASELINE contra o qual o login novo será provado), a
    * conta que está logada agora é guardada, e só então a CLI recebe o comando.
    */
-  async function openLoginTerminal(nameHint = '', preserveCurrent = false) {
+  async function openLoginTerminal(
+    nameHint = '',
+    preserveCurrent = false,
+    targetAccountId?: string,
+  ) {
     if (!loginCommand) return;
     const typedLabel = nameHint.trim();
     setBusy(true);
@@ -480,7 +489,9 @@ export function AccountsManager({
         adapterId,
         adapterLabel: displayName,
         baseline,
-        onFinished: (finish) => { void saveVerifiedLogin(finish, typedLabel); },
+        onFinished: (finish) => {
+          void saveVerifiedLogin(finish, typedLabel, targetAccountId);
+        },
       });
       if (result.ok) {
         closeForm();
@@ -691,7 +702,9 @@ export function AccountsManager({
               <button
                 type="button"
                 className="settings-btn settings-btn--primary acct__action"
-                onClick={() => void openLoginTerminal(account.label)}
+                onClick={() =>
+                  void openLoginTerminal(account.label, false, account.id)
+                }
                 disabled={busy}
                 title="Abre o terminal de login desta CLI de novo"
               >

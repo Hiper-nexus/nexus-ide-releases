@@ -1,4 +1,4 @@
-import { shouldFinishCliLoginWatch } from '../../../shared/cli-login';
+import { cliLoginLooksComplete } from '../../../shared/cli-login';
 import { emailFromAuthDetail } from '../../../shared/auth-detail-identity';
 import type { AdapterAuthStatus } from '../../../shared/provider-settings-types';
 import { listPanes } from '../../lib/split-tree';
@@ -244,6 +244,10 @@ function watchLoginPane(input: {
   readonly onFinished: (finish: CliLoginFinish) => void;
 }): void {
   let done = false;
+  let probeInFlight = false;
+  let probeQueued = false;
+  let queuedProbeIsFinal = false;
+  let queuedProbeNeedsFreshClaude = false;
   let output = '';
   let unsubscribeData: (() => void) | undefined;
 
@@ -259,9 +263,15 @@ function watchLoginPane(input: {
   };
 
   /** Sonda desta CLI, ou null quando ela não responde. */
-  async function probe(): Promise<AdapterAuthStatus | null> {
+  async function probe(
+    freshClaudeCredential = false,
+  ): Promise<AdapterAuthStatus | null> {
     try {
-      const list = await window.nexus?.providers?.authStatus();
+      const list = await window.nexus?.providers?.authStatus(
+        freshClaudeCredential && input.adapterId === 'claude'
+          ? { freshClaudeCredential: true }
+          : undefined,
+      );
       return list?.find((s) => s.adapterId === input.adapterId) ?? null;
     } catch {
       return null;
@@ -274,13 +284,38 @@ function watchLoginPane(input: {
    * prova de login — a prova é a sonda, comparada com o baseline. Assim
    * cancelar não vira conta nova, e concluir sem fechar o pane também conta.
    */
-  async function releaseAfterProbe(): Promise<void> {
+  async function probeAndMaybeRelease(
+    final: boolean,
+    freshClaudeCredential = false,
+  ): Promise<void> {
     if (done) return;
-    const status = await probe();
-    release({
-      verified: cliLoginProvedNewSession(input.baseline, status),
-      status,
-    });
+    if (probeInFlight) {
+      // Uma nova saída pode chegar enquanto a leitura anterior ainda observa
+      // o Keychain antigo. Não perca esse edge: refaça assim que ela terminar.
+      probeQueued = true;
+      queuedProbeIsFinal ||= final;
+      queuedProbeNeedsFreshClaude ||= freshClaudeCredential;
+      return;
+    }
+    probeInFlight = true;
+    try {
+      const status = await probe(freshClaudeCredential);
+      const verified = cliLoginProvedNewSession(input.baseline, status);
+      // "Signed in" é só um gatilho para reler. Keychain/auth.json pode ficar
+      // visível alguns milissegundos depois da linha impressa; encerrar aqui
+      // com `verified:false` perdia para sempre o login recém-concluído.
+      if (verified || final) release({ verified, status });
+    } finally {
+      probeInFlight = false;
+      if (!done && probeQueued) {
+        const nextIsFinal = queuedProbeIsFinal;
+        const nextNeedsFreshClaude = queuedProbeNeedsFreshClaude;
+        probeQueued = false;
+        queuedProbeIsFinal = false;
+        queuedProbeNeedsFreshClaude = false;
+        void probeAndMaybeRelease(nextIsFinal, nextNeedsFreshClaude);
+      }
+    }
   }
 
   const consider = () => {
@@ -288,21 +323,20 @@ function watchLoginPane(input: {
     const stillOpen = listPanes(useLayoutStore.getState().root).some(
       (pane) => pane.id === input.paneId,
     );
-    if (
-      shouldFinishCliLoginWatch({
-        output,
-        paneStillOpen: stillOpen,
-        paneExited:
-          useSessionStateStore.getState().paneStates.get(input.paneId) ===
-          'exited',
-        // Login de N-ésima conta: authReady já era true ao abrir — ignorá-lo
-        // como sinal, senão o watcher "termina" antes do novo OAuth existir.
-        authReady: input.authReadyAtStart
-          ? false
-          : adapterAuthReady(input.adapterId),
-      })
-    ) {
-      void releaseAfterProbe();
+    const paneExited =
+      useSessionStateStore.getState().paneStates.get(input.paneId) ===
+      'exited';
+    if (!stillOpen || paneExited) {
+      void probeAndMaybeRelease(true);
+      return;
+    }
+    // Login de N-ésima conta: authReady já era true ao abrir — ignorá-lo como
+    // sinal, senão o watcher termina antes do novo OAuth existir.
+    const authBecameReady =
+      !input.authReadyAtStart && adapterAuthReady(input.adapterId);
+    const loginLooksComplete = cliLoginLooksComplete(output);
+    if (authBecameReady || loginLooksComplete) {
+      void probeAndMaybeRelease(false, loginLooksComplete);
     }
   };
 
@@ -313,15 +347,11 @@ function watchLoginPane(input: {
    */
   async function considerNewSession(): Promise<void> {
     if (done || !input.adapterId) return;
-    const status = await probe();
-    if (done) return;
-    if (cliLoginProvedNewSession(input.baseline, status)) {
-      release({ verified: true, status });
-    }
+    await probeAndMaybeRelease(false);
   }
 
   const timer = setTimeout(() => {
-    void releaseAfterProbe();
+    void probeAndMaybeRelease(true);
   }, LOGIN_WATCH_TIMEOUT_MS);
   const poll = setInterval(() => {
     void useProviderStore

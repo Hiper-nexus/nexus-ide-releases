@@ -1144,7 +1144,8 @@ const api: NexusApi = {
     setKey: (req) => ipcRenderer.invoke(PROVIDER_CHANNELS.setKey, req),
     testKey: (adapterId) =>
       ipcRenderer.invoke(PROVIDER_CHANNELS.testKey, { adapterId }),
-    authStatus: () => ipcRenderer.invoke(PROVIDER_CHANNELS.authStatus),
+    authStatus: (options?: { freshClaudeCredential?: boolean }) =>
+      ipcRenderer.invoke(PROVIDER_CHANNELS.authStatus, options),
     installCli: (adapterId: string, mode?: 'install' | 'update') =>
       ipcRenderer.invoke(PROVIDER_CHANNELS.installCli, { adapterId, mode }),
     addModel: (adapterId: string, model: string) =>
@@ -1259,8 +1260,16 @@ const api: NexusApi = {
     add: (req) => ipcRenderer.invoke(ACCOUNT_CHANNELS.add, req),
     addActiveClaude: (label: string) =>
       ipcRenderer.invoke(ACCOUNT_CHANNELS.addActiveClaude, { label }),
-    addActiveSession: (adapterId: string, label: string) =>
-      ipcRenderer.invoke(ACCOUNT_CHANNELS.addActiveSession, { adapterId, label }),
+    addActiveSession: (
+      adapterId: string,
+      label: string,
+      accountId?: string,
+    ) =>
+      ipcRenderer.invoke(ACCOUNT_CHANNELS.addActiveSession, {
+        adapterId,
+        label,
+        ...(accountId ? { accountId } : {}),
+      }),
     supportsSnapshot: (adapterId: string) =>
       ipcRenderer.invoke(ACCOUNT_CHANNELS.supportsSnapshot, { adapterId }),
     rename: (id: string, label: string) =>

@@ -80,6 +80,14 @@ describe('cliLoginLooksComplete', () => {
     ).toBe(true);
   });
 
+  it('recognizes the current Claude "Signed in as" confirmation', () => {
+    expect(
+      cliLoginLooksComplete(
+        '\u001b[32m✓ Signed in as retornoja@gmail.com\u001b[0m',
+      ),
+    ).toBe(true);
+  });
+
   it('ignores a CLI merely talking about login', () => {
     expect(cliLoginLooksComplete('Select login method')).toBe(false);
     expect(cliLoginLooksComplete('waiting for authentication')).toBe(false);

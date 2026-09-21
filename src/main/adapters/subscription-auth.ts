@@ -8,7 +8,11 @@ import {
 } from './claude-credential';
 import { realUserHome, resolveCliBinary } from '../path-resolver';
 import { hasNativeFileAuth } from './managed-credentials';
-import { openClaudeKeychainService, readNativeOAuthKeychain } from './native-oauth-keychain';
+import {
+  openClaudeKeychainService,
+  readNativeOAuthCredential,
+  readNativeOAuthKeychain,
+} from './native-oauth-keychain';
 import {
   peekKimiSeatReadiness,
   type AuthReadiness,
@@ -99,11 +103,25 @@ export interface SubscriptionAuthDetectionOptions {
   agyKeychainProbe?: () => boolean;
   probeOpenClaudeKeychain?: boolean;
   openClaudeKeychainProbe?: () => boolean;
+  /**
+   * Muse Spark delega o token ao Keychain (`credential_backend: keychain`).
+   * Opt-out para chamadores que precisam ficar fora do Keychain; o padrão
+   * consulta só ATRIBUTOS do item, que não passam pela ACL e não pedem senha.
+   */
+  probeMuseKeychain?: boolean;
+  /** Seam de teste espelhando `openClaudeKeychainProbe` para o Muse. */
+  museKeychainProbe?: (account: string) => boolean;
 }
 
 export interface ClaudeAuthRefreshResult {
   value: boolean;
   cacheUpdated: boolean;
+  /**
+   * Slim credential observed by the authoritative async Keychain probe.
+   * Main-only: callers may hash it into `sessionFingerprint`, never expose,
+   * persist or log it.
+   */
+  credential?: string;
 }
 
 function subscriptionCacheKey(adapterId: string, model?: string): string {
@@ -303,12 +321,21 @@ export function claudeCliAuthStatusLoggedInAsync(
  * first, CLI attestation when the secret is missing OR unreadable (a TCC/ACL
  * denial rejects instead of resolving false — that must not read as logout).
  */
-function probeClaudeNativeSessionAsync(): Promise<boolean> {
+async function probeClaudeNativeSessionAsync(
+  freshCredential = false,
+): Promise<boolean | string> {
   if (process.platform !== 'darwin') return Promise.resolve(false);
-  return readNativeOAuthKeychain('Claude Code-credentials').then(
-    (ok) => (ok ? true : claudeCliAuthStatusLoggedInAsync()),
-    () => claudeCliAuthStatusLoggedInAsync(),
-  );
+  try {
+    const credential = await readNativeOAuthCredential(
+      'Claude Code-credentials',
+      execFile,
+      { bypassCache: freshCredential },
+    );
+    if (credential) return credential;
+  } catch {
+    // ACL/TCC indisponível não significa logout: a CLI ainda pode atestar.
+  }
+  return claudeCliAuthStatusLoggedInAsync();
 }
 
 function openclaudeConfigDir(home: string): string {
@@ -754,6 +781,63 @@ export function museAuthBlobIsUsable(blob: string): boolean {
   }
 }
 
+/**
+ * Serviço do Keychain onde o Muse guarda o segredo quando
+ * `credential_backend` é `keychain` (verificado no binário 1.3.0 e no item
+ * desta máquina). A conta do item é o NOME DO PROVIDER declarado em
+ * `auth.json` — `meta` para o login padrão.
+ */
+export const MUSE_KEYCHAIN_SERVICE = 'ai.meta.dev.credentials';
+
+/**
+ * Providers que o `auth.json` declara como guardados no Keychain. O arquivo
+ * sozinho só tem identidade (e-mail, mecanismo); o segredo vive no item.
+ */
+export function museKeychainDelegatedProviders(blob: string): string[] {
+  try {
+    const parsed = JSON.parse(blob) as {
+      providers?: Record<string, { storage?: unknown; mechanism?: unknown }>;
+    };
+    return Object.entries(parsed.providers ?? {})
+      .filter(
+        ([, provider]) =>
+          provider?.storage === 'keychain' &&
+          (provider.mechanism === 'oauth' || provider.mechanism === 'api_key'),
+      )
+      .map(([name]) => name);
+  } catch {
+    return [];
+  }
+}
+
+/** Só atributos (`-s`/`-a`, sem `-w`): confirma sem custar prompt. */
+function museKeychainItemExists(account: string): boolean {
+  if (process.platform !== 'darwin') return false;
+  try {
+    return execFileSync(
+      'security',
+      ['find-generic-password', '-s', MUSE_KEYCHAIN_SERVICE, '-a', account],
+      { stdio: ['ignore', 'ignore', 'ignore'], timeout: 5_000, killSignal: 'SIGKILL' },
+    ) !== undefined;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Sessão Muse comprovada: o `auth.json` declara um provider delegado ao
+ * Keychain E o item correspondente existe. Antes disto o Nexus só sabia dizer
+ * «não verificado» para uma CLI perfeitamente logada.
+ */
+export function museKeychainSessionExists(
+  blob: string,
+  options: SubscriptionAuthDetectionOptions = {},
+): boolean {
+  if (options.probeMuseKeychain === false) return false;
+  const probe = options.museKeychainProbe ?? museKeychainItemExists;
+  return museKeychainDelegatedProviders(blob).some((account) => probe(account));
+}
+
 function museAuthPath(home: string): string {
   return process.env.MUSE_AUTH_PATH?.trim() || path.join(
     process.env.XDG_CONFIG_HOME?.trim() || path.join(home, '.config'), 'muse', 'auth.json',
@@ -764,12 +848,15 @@ function museAuthPath(home: string): string {
 export function subscriptionAuthStatusIsUnknown(adapterId: string, home = os.homedir()): boolean {
   if (adapterId === 'muse') {
     try {
-      const parsed = JSON.parse(fs.readFileSync(museAuthPath(home), 'utf8')) as {
-        providers?: Record<string, { storage?: string; mechanism?: string }>;
-      };
-      return Object.values(parsed.providers ?? {}).some((provider) =>
-        provider?.storage === 'keychain' &&
-        (provider.mechanism === 'oauth' || provider.mechanism === 'api_key'));
+      const blob = fs.readFileSync(museAuthPath(home), 'utf8');
+      // Delegado ao Keychain E sem item confirmável: só aí a sessão é
+      // indeterminada. Com o item presente, `hasSubscriptionAuth` já provou a
+      // sessão e devolver «unknown» aqui deixaria a UI em «não verificado»
+      // com a CLI logada — o sintoma que este ramo causava.
+      return (
+        museKeychainDelegatedProviders(blob).length > 0 &&
+        !museKeychainSessionExists(blob)
+      );
     } catch {
       return false;
     }
@@ -923,8 +1010,10 @@ export function detectSubscriptionAuth(
       return cursorCliConfigHasSession(home);
     case 'muse': {
       try {
-        return museAuthBlobIsUsable(
-          fs.readFileSync(museAuthPath(home), 'utf8'),
+        const blob = fs.readFileSync(museAuthPath(home), 'utf8');
+        // Token no próprio arquivo, ou delegado ao Keychain com item presente.
+        return (
+          museAuthBlobIsUsable(blob) || museKeychainSessionExists(blob, options)
         );
       } catch {
         return false;
@@ -1035,8 +1124,12 @@ export function hasSubscriptionAuthForStatus(
  */
 export function refreshClaudeSubscriptionAuthCache(
   home = os.homedir(),
-  keychainProbe: () => Promise<boolean> = () => probeClaudeNativeSessionAsync(),
-  options: { authoritative?: boolean } = {},
+  keychainProbe?: () => Promise<boolean | string>,
+  options: {
+    authoritative?: boolean;
+    /** CLI printed login success: bypass a cached old credential once. */
+    freshCredential?: boolean;
+  } = {},
 ): Promise<ClaudeAuthRefreshResult> {
   const cached = cachedSubscriptionAuth('claude');
   if (cached === true && !options.authoritative) {
@@ -1055,19 +1148,37 @@ export function refreshClaudeSubscriptionAuthCache(
     return Promise.resolve({ value: true, cacheUpdated: true });
   }
 
-  if (claudeRefreshInFlight) return claudeRefreshInFlight;
+  if (claudeRefreshInFlight) {
+    if (!options.freshCredential) return claudeRefreshInFlight;
+    // A fresh post-login read must not share a probe that started before the
+    // CLI replaced the Keychain item. Wait, then perform the bypassed read.
+    return claudeRefreshInFlight.then(() =>
+      refreshClaudeSubscriptionAuthCache(home, keychainProbe, options),
+    );
+  }
   // Require a usable payload, without blocking the Electron event loop.
-  claudeRefreshInFlight = Promise.resolve()
-    .then(() => keychainProbe())
-    .then((value) => {
+  const runProbe =
+    keychainProbe ??
+    (() => probeClaudeNativeSessionAsync(options.freshCredential === true));
+  const flight = Promise.resolve()
+    .then(() => runProbe())
+    .then((proof) => {
+      const credential = typeof proof === 'string' ? proof : undefined;
+      const value: boolean =
+        typeof proof === 'string' ? true : proof;
       cacheSubscriptionAuth('claude', value);
-      return { value, cacheUpdated: value !== cached };
+      return {
+        value,
+        cacheUpdated: value !== cached,
+        ...(credential ? { credential } : {}),
+      };
     })
     .catch((error) => { cache.delete('claude'); throw error; })
     .finally(() => {
       claudeRefreshInFlight = null;
     });
-  return claudeRefreshInFlight;
+  claudeRefreshInFlight = flight;
+  return flight;
 }
 
 export function refreshOpenClaudeSubscriptionAuthCache(
