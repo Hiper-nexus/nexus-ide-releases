@@ -29,6 +29,8 @@ import {
 import { ProviderLogo } from "../ProviderLogo";
 import { PixelIcon } from "../PixelIcon";
 import { SettingsSectionTitle } from "./SettingsSectionTitle";
+import { unrankedModels } from "./unranked-models";
+import { UnrankedModelDetail, UnrankedModelList } from "./UnrankedModelList";
 
 /**
  * Per-adapter free capacity 0..1 for ranking blend. Uses freest account of each
@@ -475,10 +477,17 @@ export function ModelRankingSection() {
     return sorted.filter((row) => installed.has(row.adapterId));
   }, [snapshot, sort, onlyInstalled, installed]);
 
+  const unranked = useMemo(
+    () => unrankedModels(providers, snapshot?.entries ?? []),
+    [providers, snapshot],
+  );
+  const visibleUnranked = onlyInstalled ? unranked.filter((model) => model.installed) : unranked;
+  const selectedUnranked = visibleUnranked.find((model) => model.id === selectedId);
+
   const selected = useMemo(() => {
-    if (!snapshot || !selectedId) return null;
+    if (!snapshot || !selectedId || selectedUnranked) return null;
     return snapshot.entries.find((e) => e.id === selectedId) ?? rows[0] ?? null;
-  }, [snapshot, selectedId, rows]);
+  }, [snapshot, selectedId, rows, selectedUnranked]);
 
   const leader = useMemo(() => {
     if (!snapshot) return null;
@@ -486,8 +495,8 @@ export function ModelRankingSection() {
   }, [snapshot]);
 
   const liveCount = useMemo(
-    () => rows.filter((r) => installed.has(r.adapterId)).length,
-    [rows, installed],
+    () => rows.filter((r) => installed.has(r.adapterId)).length + visibleUnranked.filter((model) => model.installed).length,
+    [rows, installed, visibleUnranked],
   );
 
   return (
@@ -524,7 +533,8 @@ export function ModelRankingSection() {
               ·
             </span>
             <span>
-              <strong>{snapshot.entries.length}</strong> modelos
+              <strong>{snapshot.entries.length + unranked.length}</strong> modelos
+              {unranked.length > 0 && ` · ${unranked.length} não avaliados`}
             </span>
             <span className="rank-ops__sep" aria-hidden="true">
               ·
@@ -593,6 +603,11 @@ export function ModelRankingSection() {
                 installed={installed}
                 onSelect={setSelectedId}
               />
+              <UnrankedModelList
+                models={visibleUnranked}
+                selectedId={selectedId}
+                onSelect={setSelectedId}
+              />
             </div>
             <div className="rank-ops__stage-side">
               <h4 className="rank-ops__block-title">Radar operacional</h4>
@@ -600,11 +615,13 @@ export function ModelRankingSection() {
                 <RadarChart entry={selected} ghost={leader} />
               ) : (
                 <p className="rank-ops__status">
-                  Selecione um modelo na lista.
+                  {selectedUnranked ? 'Não avaliado: o radar aguarda notas de benchmark.' : 'Selecione um modelo na lista.'}
                 </p>
               )}
             </div>
           </div>
+
+          {selectedUnranked && <UnrankedModelDetail model={selectedUnranked} />}
 
           {selected && (
             <div className="rank-ops__detail" aria-live="polite">

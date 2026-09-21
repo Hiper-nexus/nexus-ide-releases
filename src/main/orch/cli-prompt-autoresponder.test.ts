@@ -552,3 +552,15 @@ describe('CLI prompt autoresponder', () => {
     });
   });
 });
+
+describe('MiMo startup permission prompt', () => {
+  it('recognizes the exact official MiMo warning only for its own adapter', () => {
+    const signature = BUILTIN_PROMPT_SIGNATURES.find(s => s.name === 'mimo-bypass-permissions');
+    expect(signature).toBeDefined();
+    const prompt = 'WARNING: Bypass Permissions mode\nMiMo Code will read, edit, and execute files\nNo, exit (recommended)\nYes, I accept the risks and want to skip permissions';
+    expect(matchesPromptSignature(prompt, signature!)).toBe(true);
+    expect(signature!.adapterIds).toEqual(['mimo-code']);
+    expect(signature!.response).toBe(ACCEPT_SECOND_PROMPT_RESPONSE);
+    expect(matchesPromptSignature('MiMo Code ready', signature!)).toBe(false);
+  });
+});

@@ -21,6 +21,7 @@ export const ACCOUNT_LOGIN_COMMANDS: Readonly<Record<string, string>> =
     grok: 'grok login',
     kimi: 'kimi login --region global',
     opencode: 'opencode auth login',
+    'mimo-code': 'mimo providers login --provider xiaomi',
     muse: 'muse login',
     // AGY inicia o OAuth sozinho quando abre sem sessão.
     agy: 'agy',

@@ -339,7 +339,8 @@ async function probe(
     // The exact model matters: external OpenRouter routes and unreviewed
     // `opencode/*-free` lookalikes must still fail before a pane exists.
     if (credentiallessOpenCode) return null;
-    if (deps.hasNativeFileAuth(adapterId)) return null;
+    if (adapterId === 'mimo-code' && currentAuthStrategy === 'subscription') return null;
+    if (adapterId !== 'mimo-code' && deps.hasNativeFileAuth(adapterId)) return null;
     if (deps.hasStoredKey(adapterId, effectiveModel)) return null;
     return {
       code: 'missing-credential',

@@ -18,6 +18,7 @@ import {
 import { publishAgentHookActivity } from '../agent-runtime/agent-runtime-bridge';
 import { getAgentSessionInfo } from '../pty/pty-manager';
 import { saveProviderPaneSession } from '../persistence/provider-session-store';
+import { publishMimoSessionBinding, validateMimoSessionBinding } from './mimo-session-registry';
 
 let listenerState: HookListenerState | null = null;
 
@@ -61,7 +62,7 @@ export type IngestAgentHookResult =
 export function ingestAgentHookStatus(
   sessionId: string,
   payload: unknown,
-  options?: { pathname?: string },
+  options?: { pathname?: string; mimoToken?: string },
 ): IngestAgentHookResult {
   if (!sessionId || sessionId.length > 200) {
     return { ok: false, reason: 'invalid-session-id' };
@@ -75,28 +76,35 @@ export function ingestAgentHookStatus(
   if (!parsed) {
     return { ok: false, reason: 'invalid-status-payload' };
   }
-  const published = publishAgentHookActivity(parsed.state, {
-    sessionId,
-    agentType: parsed.agentType,
-  });
-  for (const tap of hookStatusTaps) tap(sessionId, parsed.state);
   const providerSession =
     parsed.providerSession ??
     (source && typeof payload === 'object' && payload !== null
       ? extractAgentProviderSession(source, payload as Record<string, unknown>)
       : null);
+  const agent = getAgentSessionInfo(sessionId);
+  const isMimo = source === 'mimo-code' || parsed.agentType === 'mimo-code' || agent?.adapterId === 'mimo-code';
+  if (isMimo && (source !== 'mimo-code' || parsed.agentType !== 'mimo-code')) {
+    return { ok: false, reason: 'unverified-mimo-session' };
+  }
+  const mimoBinding = isMimo && providerSession?.key === 'session_id'
+    ? validateMimoSessionBinding(sessionId, providerSession.id, options?.mimoToken) : null;
+  if (isMimo && !mimoBinding) return { ok: false, reason: 'unverified-mimo-session' };
   if (providerSession) {
-    const agent = getAgentSessionInfo(sessionId);
     if (agent?.paneId) {
-      saveProviderPaneSession(
+      const saved = saveProviderPaneSession(
         agent.scope,
         agent.paneId,
         agent.adapterId,
         providerSession,
         agent.accountId,
+        mimoBinding?.nativeOwnerKey,
       );
+      if (mimoBinding && !saved) return { ok: false, reason: 'unverified-mimo-session' };
     }
   }
+  const published = publishAgentHookActivity(parsed.state, { sessionId, agentType: parsed.agentType });
+  for (const tap of hookStatusTaps) tap(sessionId, parsed.state);
+  if (mimoBinding) publishMimoSessionBinding(mimoBinding);
   return {
     ok: true,
     sessionId,

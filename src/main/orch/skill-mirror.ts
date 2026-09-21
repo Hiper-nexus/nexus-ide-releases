@@ -11,6 +11,7 @@ import { SUPERPOWERS_MANIFEST } from './superpowers-manifest';
 import { DEMBRANDT_MANIFEST } from './dembrandt-manifest';
 import { TYPESAFE_AI_MANIFEST } from './typesafe-ai-manifest';
 import { hasJevCredential } from '../jev/jev-secrets';
+import { mimoNativePaths } from '../adapters/mimo-auth';
 import type { SkillAsset } from './impeccable-manifest';
 import {
   copyAgentPluginSkill,
@@ -219,6 +220,7 @@ function defaultSourceDirs(home: string): string[] {
     path.join(home, '.kimi-code', 'skills'),
     path.join(home, '.grok', 'skills'),
     path.join(home, '.config', 'opencode', 'skills'),
+    path.join(mimoNativePaths(home).config, 'skills'),
   ];
 }
 
@@ -622,6 +624,8 @@ function cliSkillDirs(adapterId: string, home: string): string[] {
       return [path.join(home, '.grok', 'skills')];
     case 'opencode':
       return [path.join(home, '.config', 'opencode', 'skills')];
+    case 'mimo-code':
+      return [path.join(mimoNativePaths(home).config, 'skills')];
     default:
       return [];
   }

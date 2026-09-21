@@ -17,6 +17,8 @@ import type {
 } from "../../shared/orch-types";
 import { ORCH_CHANNELS } from "../../shared/orch-channels";
 import { copyProviderPaneSession } from "../persistence/provider-session-store";
+import { currentMimoSessionOwnerKey } from "../adapters/mimo-session-owner";
+import { providerAuthStrategy, resolveRuntimeApiKey } from "../persistence/provider-config-store";
 import { DEV_SERVER_CHANNELS } from "../../shared/channels";
 import {
   detachOwnedMissionAgentSession,
@@ -2219,12 +2221,17 @@ export function requestPaneSpawn(
   // lookup de resume exato é por paneId, então o registro é copiado ANTES do
   // spawn. Sem registro antigo, o spawn segue (fresh) com aviso no log.
   if (options.resumeFromPaneId && options.resumeFromPaneId !== paneId) {
+    const nativeOwnerKey = options.adapterId === 'mimo-code' && !options.accountId
+      ? currentMimoSessionOwnerKey(providerAuthStrategy('mimo-code', options.model) === 'api-key'
+          ? resolveRuntimeApiKey('mimo-code') ?? undefined : undefined) ?? undefined
+      : undefined;
     const copied = copyProviderPaneSession(
       options.scope,
       options.resumeFromPaneId,
       paneId,
       options.adapterId,
       options.accountId,
+      nativeOwnerKey,
     );
     if (!copied) {
       console.warn(

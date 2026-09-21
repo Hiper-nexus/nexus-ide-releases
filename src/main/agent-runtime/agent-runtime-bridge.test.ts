@@ -6,6 +6,7 @@ const getCrashBreadcrumbSnapshot = vi.fn(() => []);
 const registerRecoveryAttempt = vi.fn(() => ({ allowed: true }));
 
 vi.mock('../pty/pty-manager', () => ({
+  getAgentSessionInfo: () => ({ adapterId: 'codex' }),
   publishSessionActivityState: (sessionId: string, state: string) =>
     publishSessionActivityState(sessionId, state),
 }));

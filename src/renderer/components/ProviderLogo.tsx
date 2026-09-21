@@ -22,6 +22,7 @@ import museLogo from '../assets/provider-logos/muse.svg';
 import primeAgentLogo from '../assets/provider-logos/prime-agent.svg';
 import cursorAgentLogo from '../assets/provider-logos/cursor.svg';
 import devinLogo from '../assets/provider-logos/devin.svg';
+import mimoLogo from '../assets/provider-logos/mimo-code.png';
 
 const PROVIDER_LOGOS: Record<string, { src: string; mono?: boolean }> = {
   groq: { src: groqLogo, mono: true },
@@ -55,6 +56,9 @@ const PROVIDER_LOGOS: Record<string, { src: string; mono?: boolean }> = {
   'prime-agent': { src: primeAgentLogo },
   'cursor-agent': { src: cursorAgentLogo, mono: true },
   devin: { src: devinLogo },
+  'mimo-code': { src: mimoLogo },
+  mimo: { src: mimoLogo },
+  xiaomi: { src: mimoLogo },
 };
 
 export function hasProviderLogo(adapterId: string): boolean {

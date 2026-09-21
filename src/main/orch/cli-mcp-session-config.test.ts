@@ -1402,7 +1402,7 @@ describe('purgeStaleCliMcpSessions', () => {
       artifactRoot: linkedArtifacts,
     });
 
-    expect(result.failed).toBe(4);
+    expect(result.failed).toBe(5);
     expect(result.removed).toBe(0);
     expect(fs.readFileSync(outsideMarker, 'utf8')).toBe('never-delete');
   });

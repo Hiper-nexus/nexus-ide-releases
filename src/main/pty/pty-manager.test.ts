@@ -243,6 +243,8 @@ import {
 } from "../orch/gate";
 import { installMcpSessionTerminationRevocation } from "../orch/mcp-session-revocation";
 import { cleanupCliMcpSession } from "../orch/cli-mcp-session-config";
+import { saveProviderPaneSession } from "../persistence/provider-session-store";
+import { mimoSessionOwnerKey } from "../adapters/mimo-session-owner";
 
 afterAll(() => fs.rmSync(app.getPath("userData"), { recursive: true, force: true }));
 
@@ -2620,6 +2622,28 @@ describe("cli-agent spawn argv hardening", () => {
       orchKillSession(spawned.sessionId);
     } finally {
       setResumeSessionLookup(null);
+    }
+  });
+
+  it('never emits --session for native MiMo account B when the stored conversation belongs to A', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'mimo-resume-owner-'));
+    fs.mkdirSync(path.join(home, 'data'));
+    vi.stubEnv('MIMOCODE_HOME', home);
+    const auth = { key: 'native-a', uid: 'a', baseUrl: 'https://api.xiaomimimo.com/v1' };
+    const authority = trustedSpawn();
+    saveProviderPaneSession(authority.scope, 'pane-native-mimo', 'mimo-code', { key: 'session_id', id: 'session-native-a' }, undefined, mimoSessionOwnerKey(auth));
+    fs.writeFileSync(path.join(home, 'data', 'auth.json'), JSON.stringify({ xiaomi: { type: 'api', key: 'native-b', metadata: { uid: 'b', base_url: auth.baseUrl } } }));
+    const h = fakeHost(); setPtyHost(h.host); setResumeSessionLookup(() => 'session-native-a');
+    const adapter = { ...makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }, { resumeIdArgs: ['--session'] }), id: 'mimo-code' };
+    adapterTrust.builtinIds.add('mimo-code');
+    try {
+      const spawned = spawnAgentSession(fakeWc(), { kind: 'cli-agent', paneId: 'pane-native-mimo', resume: true, cols: 80, rows: 24 }, adapter, {}, authority);
+      expect(spawned.resumeMode).toBe('fresh-context');
+      expect(h.specFor(spawned.sessionId).args).not.toContain('--session');
+      orchKillSession(spawned.sessionId);
+    } finally {
+      setResumeSessionLookup(null); adapterTrust.builtinIds.delete('mimo-code');
+      vi.unstubAllEnvs(); fs.rmSync(home, { recursive: true, force: true });
     }
   });
 

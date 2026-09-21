@@ -6,6 +6,9 @@
  */
 
 import { BrowserWindow, ipcMain } from 'electron';
+import { z } from 'zod';
+import { handleTrusted } from '../security/trusted-ipc';
+import { closeMimoQuotaConnections, connectMimoQuota, fetchMimoAccountUsage } from './mimo-console-session';
 import {
   QUOTA_CHANNELS,
   compareEntriesByConsumption,
@@ -64,6 +67,7 @@ const PROBE_FAILURE_BACKOFF_MS = 5 * 60_000;
 const LIVE_PROBE_ADAPTERS: ReadonlySet<string> | 'all' = 'all';
 
 export interface QuotaServiceDeps {
+  mimoAccountUsage?: LiveUsageAuthResolvers['mimoAccountUsage'];
   codexAccountUsage?: LiveUsageAuthResolvers['codexAccountUsage'];
   resolveApiQuotaKey?: LiveUsageAuthResolvers['resolveApiQuotaKey'];
   listProviders: () => ProviderSettingsInfo[] | Promise<ProviderSettingsInfo[]>;
@@ -520,6 +524,7 @@ export class QuotaService {
 
   #liveResolvers(): LiveUsageAuthResolvers {
     return {
+      mimoAccountUsage: this.#deps.mimoAccountUsage ?? (process.env.VITEST ? undefined : fetchMimoAccountUsage),
       resolveApiQuotaKey: this.#deps.resolveApiQuotaKey,
       resolveClaudeToken: this.#deps.resolveClaudeAccessToken,
       claudeCliUsage:
@@ -823,6 +828,13 @@ export function initQuotaService(deps: QuotaServiceDeps): QuotaService {
   configured = new QuotaService(deps);
   ipcMain.removeHandler(QUOTA_CHANNELS.snapshot);
   ipcMain.removeHandler(QUOTA_CHANNELS.refresh);
+  ipcMain.removeHandler(QUOTA_CHANNELS.connectMimo);
+  handleTrusted(QUOTA_CHANNELS.connectMimo, async (_event, input) => {
+    const accountId = z.string().min(1).max(256).optional().parse(input);
+    const result = await connectMimoQuota(accountId);
+    await configured?.refresh();
+    return result;
+  });
   ipcMain.handle(QUOTA_CHANNELS.snapshot, async () => configured!.snapshot());
   ipcMain.handle(QUOTA_CHANNELS.refresh, async () => configured!.refresh());
   return configured;
@@ -842,6 +854,8 @@ export function noteQuotaLimitHit(
 }
 
 export function shutdownQuotaService(): void {
+  ipcMain.removeHandler(QUOTA_CHANNELS.connectMimo);
+  closeMimoQuotaConnections();
   ipcMain.removeHandler(QUOTA_CHANNELS.snapshot);
   ipcMain.removeHandler(QUOTA_CHANNELS.refresh);
   configured?.stop();

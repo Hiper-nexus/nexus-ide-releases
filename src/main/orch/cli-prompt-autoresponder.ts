@@ -79,6 +79,18 @@ export const ACCEPT_SECOND_TRUST_OPTION_RESPONSE = '\x1b[B\r';
  */
 export const BUILTIN_PROMPT_SIGNATURES: readonly PromptSignature[] = [
   {
+    adapterIds: ['mimo-code'],
+    name: 'mimo-bypass-permissions',
+    phrases: [
+      'warning: bypass permissions mode',
+      'mimo code will read, edit, and execute files',
+      'no, exit (recommended)',
+      'yes, i accept the risks and want to skip permissions',
+    ],
+    response: ACCEPT_SECOND_PROMPT_RESPONSE,
+    earlyPhrase: 'warning: bypass permissions mode',
+  },
+  {
     adapterIds: ['claude', 'glm', 'glm-flash', 'longcat'],
     name: 'claude-bypass-acknowledgement',
     phrases: [

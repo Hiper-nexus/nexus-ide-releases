@@ -9,6 +9,7 @@ import type {
   ModelInfoMap,
 } from '../../shared/adapter-types';
 import publishedCatalogRaw from '../../../resources/model-catalog.json';
+import { MIMO_CODE_DEFAULT_MODEL, MIMO_CODE_MODEL_IDS } from '../../shared/mimo-models';
 import { CODEX_FRONTIER_MODEL, GROK_FRONTIER_MODEL } from '../../shared/model-defaults';
 import { bareModelId } from '../../vendor/omp/catalog/identity';
 import {
@@ -109,6 +110,10 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
         { id: 'gpt-5.6-terra', availability: 'paid', costTier: 'high', source: 'bundled' },
         { id: 'gpt-5.6-luna', availability: 'paid', costTier: 'medium', source: 'bundled' },
       ],
+    },
+    'mimo-code': {
+      default: MIMO_CODE_DEFAULT_MODEL,
+      models: MIMO_CODE_MODEL_IDS.map(id => ({ id, availability: id.endsWith('ultraspeed') ? 'api-only' : 'paid', costTier: id.endsWith('ultraspeed') ? 'high' : 'low', source: 'bundled' })),
     },
     grok: {
       default: GROK_FRONTIER_MODEL,

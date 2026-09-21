@@ -32,6 +32,9 @@ import {
   saveProviderPaneSession,
 } from '../persistence/provider-session-store';
 import { ClaudeTranscriptWatcher } from './claude-transcript-watcher';
+import { MimoUsageScanner, type MimoSessionBinding } from './mimo-scanner';
+import { tapMimoSessionBindings } from '../agent-hooks/mimo-session-registry';
+import type { UsageRecord } from './usage-store';
 import type { UsageEvent } from './claude-transcript';
 import {
   CodexUsageScanner,
@@ -163,6 +166,8 @@ export class UsageTelemetryService {
   readonly #states = new Map<string, ScopeTelemetryState>();
   readonly #rootOwners = new Map<string, string>();
   #codexScanner: CodexUsageScanner | null = null;
+  #mimoScanner: MimoUsageScanner | null = null;
+  #stopMimoBindings: (() => void) | null = null;
   #stopped = false;
 
   constructor(registry: ProjectUsageStoreRegistry) {
@@ -172,6 +177,14 @@ export class UsageTelemetryService {
   start(): void {
     if (this.#stopped) throw new Error('usage telemetry service is stopped');
     setSessionDictationHook((info) => this.#onSessionDictated(info));
+    if (!this.#mimoScanner) {
+      this.#mimoScanner = new MimoUsageScanner((binding, event) => this.#onMimoEvent(binding, event));
+      this.#stopMimoBindings = tapMimoSessionBindings((id, binding) => {
+        if (binding) this.#mimoScanner?.bind(binding);
+        else this.#mimoScanner?.remove(id);
+      });
+      this.#mimoScanner.start();
+    }
     // O lookup só existe para acrescentar `--resume <id>` ao spawn. Falhar aqui
     // não é motivo para matar o pane: sem id o pane nasce com sessão nova, que
     // é o resultado estritamente MAIS restrito. Uma exceção vazando daqui
@@ -277,6 +290,10 @@ export class UsageTelemetryService {
     this.#rootOwners.clear();
     this.#codexScanner?.stop();
     this.#codexScanner = null;
+    this.#stopMimoBindings?.();
+    this.#stopMimoBindings = null;
+    this.#mimoScanner?.stop();
+    this.#mimoScanner = null;
   }
 
   #ensureScope(scope: ProjectExecutionScope): ScopeTelemetryState {
@@ -482,6 +499,16 @@ export class UsageTelemetryService {
     if (executionRoot !== configuredRoot) return null;
     this.#registerExecutionRoot(state, executionRoot);
     return executionRoot;
+  }
+
+  #onMimoEvent(binding: MimoSessionBinding, event: UsageRecord): void {
+    const state = this.#ensureScope(binding.scope);
+    state.stores.usage.record('mimo-code', {
+      ...event, paneId: binding.paneId, accountId: binding.accountId ?? null,
+      missionId: binding.missionId ?? null,
+    });
+    this.#feedTokenSpeed('mimo-code', event, binding.paneId);
+    this.#scheduleBroadcast(state);
   }
 
   #onClaudeEvent(state: ScopeTelemetryState, event: UsageEvent): void {

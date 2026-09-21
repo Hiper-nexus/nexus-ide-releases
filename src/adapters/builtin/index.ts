@@ -8,6 +8,7 @@ import longcatRaw from './longcat.json';
 import aiderRaw from './aider.json';
 import agyRaw from './agy.json';
 import opencodeRaw from './opencode.json';
+import mimoCodeRaw from './mimo-code.json';
 import openclaudeRaw from './openclaude.json';
 import museRaw from './muse.json';
 import museClaudeRaw from './muse-claude.json';
@@ -27,6 +28,7 @@ export const BUILTIN_ADAPTERS: unknown[] = [
   aiderRaw,
   agyRaw,
   opencodeRaw,
+  mimoCodeRaw,
   openclaudeRaw,
   museRaw,
   // Opcional: Muse Spark dentro do Claude Code (ANTHROPIC_BASE_URL Meta).

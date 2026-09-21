@@ -4,6 +4,30 @@ import { getDb } from './db';
 
 const ID_MAX = 512;
 
+/** A provider conversation cannot acquire a different account through a hook. */
+export function providerSessionAccountIsCompatible(
+  scope: Readonly<ProjectExecutionScope>,
+  adapterId: string,
+  sessionId: string,
+  accountId?: string,
+  nativeOwnerKey?: string,
+): boolean {
+  const db = getDb();
+  if (!db) return false;
+  const owners = db.prepare(`SELECT account_id, 'ledger' AS source FROM provider_session_accounts
+    WHERE installation_id = ? AND project_id = ? AND checkout_id = ? AND adapter_id = ? AND session_id = ?
+    UNION ALL SELECT account_id, 'pane' AS source FROM provider_pane_sessions
+    WHERE installation_id = ? AND project_id = ? AND checkout_id = ?
+      AND adapter_id = ? AND session_key = 'session_id' AND session_id = ?`)
+    .all(scope.installationId, scope.projectId, scope.checkoutId, adapterId, sessionId,
+      scope.installationId, scope.projectId, scope.checkoutId, adapterId, sessionId) as
+      Array<{ account_id: string | null; source?: string }>;
+  const durable = owners.filter(owner => owner.source === 'ledger');
+  if (durable.length) return durable.every(owner => sessionBelongsToAccount(owner.account_id, accountId ?? nativeOwnerKey));
+  if (!accountId && nativeOwnerKey && owners.length) return false;
+  return owners.every(owner => sessionBelongsToAccount(owner.account_id, accountId));
+}
+
 function valid(value: string, max = ID_MAX): string {
   const clean = value.trim();
   if (!clean || clean.length > max || clean.startsWith('-') || /[\u0000-\u001f\u007f]/.test(clean)) {
@@ -25,6 +49,7 @@ export function saveProviderPaneSession(
   adapterId: string,
   session: AgentProviderSessionMetadata,
   accountId?: string,
+  nativeOwnerKey?: string,
 ): boolean {
   const db = getDb();
   if (!db) return false;
@@ -36,6 +61,13 @@ export function saveProviderPaneSession(
       ? valid(accountId.trim(), 128)
       : null;
   const transcript = session.transcriptPath?.trim() || null;
+  if (adapter === 'mimo-code') {
+    if ((!account && !nativeOwnerKey) || session.key !== 'session_id' || !providerSessionAccountIsCompatible(scope, adapter, id, accountId, nativeOwnerKey)) return false;
+    db.prepare(`INSERT OR IGNORE INTO provider_session_accounts
+      (installation_id, project_id, checkout_id, adapter_id, session_id, account_id) VALUES (?, ?, ?, ?, ?, ?)`)
+      .run(scope.installationId, scope.projectId, scope.checkoutId, adapter, id, account ?? nativeOwnerKey);
+    if (!providerSessionAccountIsCompatible(scope, adapter, id, accountId, nativeOwnerKey)) return false;
+  }
   db.prepare(
     `INSERT INTO provider_pane_sessions
        (installation_id, project_id, checkout_id, pane_id, adapter_id,
@@ -149,8 +181,9 @@ export function copyProviderPaneSession(
   toPaneId: string,
   adapterId: string,
   accountId?: string,
+  nativeOwnerKey?: string,
 ): boolean {
   const session = getProviderPaneSession(scope, fromPaneId, adapterId, accountId);
   if (!session) return false;
-  return saveProviderPaneSession(scope, toPaneId, adapterId, session, accountId);
+  return saveProviderPaneSession(scope, toPaneId, adapterId, session, accountId, nativeOwnerKey);
 }

@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { canResumeMimoNativeSession } from "../adapters/mimo-session-owner";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -1447,7 +1448,7 @@ export function spawnAgentSession(
   // philosophy as the cross-account failover above.
   if (req.resume) {
     if (authority.source === "persisted-pane") {
-      const captured =
+      let captured =
         !req.resumeLatestOnly &&
         req.paneId &&
         adapter.spawn.resumeIdArgs?.length
@@ -1458,6 +1459,7 @@ export function spawnAgentSession(
               req.accountId,
             ) ?? null)
           : null;
+      if (captured && adapter.id === "mimo-code" && !req.accountId && !canResumeMimoNativeSession(authority.scope, captured, overrides.keyEnv?.XIAOMI_API_KEY)) captured = null;
       if (captured) {
         args.push(...adapter.spawn.resumeIdArgs!, captured);
         trustedResumeArgs = [...adapter.spawn.resumeIdArgs!, captured];
@@ -1473,7 +1475,7 @@ export function spawnAgentSession(
         );
       }
     } else {
-      const captured =
+      let captured =
         !req.resumeLatestOnly &&
         req.paneId &&
         adapter.spawn.resumeIdArgs?.length
@@ -1484,6 +1486,7 @@ export function spawnAgentSession(
               req.accountId,
             ) ?? null)
           : null;
+      if (captured && adapter.id === "mimo-code" && !req.accountId && !canResumeMimoNativeSession(authority.scope, captured, overrides.keyEnv?.XIAOMI_API_KEY)) captured = null;
       if (captured) {
         args.push(...adapter.spawn.resumeIdArgs!, captured);
         trustedResumeArgs = [...adapter.spawn.resumeIdArgs!, captured];

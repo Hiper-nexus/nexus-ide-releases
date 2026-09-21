@@ -8,6 +8,7 @@ import {
   CURSOR_SESSION_OPTION_CATALOG,
   GEMINI_SESSION_OPTION_CATALOG
 } from './agent-session-option-catalog-gemini-cursor'
+import { MIMO_SESSION_OPTION_CATALOG } from './agent-session-option-catalog-mimo'
 import { GROK_SESSION_OPTION_CATALOG } from './agent-session-option-catalog-grok'
 import type {
   AgentSessionOptionCatalog,
@@ -33,7 +34,8 @@ const CATALOGS: AgentSessionOptionCatalogMap = {
   codex: CODEX_SESSION_OPTION_CATALOG,
   gemini: GEMINI_SESSION_OPTION_CATALOG,
   cursor: CURSOR_SESSION_OPTION_CATALOG,
-  grok: GROK_SESSION_OPTION_CATALOG
+  grok: GROK_SESSION_OPTION_CATALOG,
+  'mimo-code': MIMO_SESSION_OPTION_CATALOG
 }
 
 export function getAgentSessionOptionCatalog(agent: AgentType): AgentSessionOptionCatalog | null {
