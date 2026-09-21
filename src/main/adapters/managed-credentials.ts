@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { ensurePrivateDirectory, linkFile, linkProviderSessionState } from '../orch/cli-mcp-session-artifacts';
+import { compareAuthFreshness } from './auth-freshness';
 import {
   isFileAuthAdapter,
   type FileAuthAdapterId,
@@ -553,50 +554,16 @@ export function shouldWriteAuthFile(
     // anterior sem nenhum sinal visível; reescrever, no pior caso, custa um
     // login de novo.
     if (adapterId === 'devin') return true;
-    // If both are JSON with token freshness fields, keep the fresher one.
-    const diskFresh = freshnessFromAuthContents(onDisk);
-    const vaultFresh = freshnessFromAuthContents(vaultBlob);
-    if (diskFresh !== null && vaultFresh !== null) {
-      return vaultFresh > diskFresh;
-    }
-    // Unknown shapes: do not clobber an existing managed file (CLI may have refreshed).
+    // Comparáveis: manda o mais fresco; empate NÃO reescreve, porque o arquivo
+    // em disco é o que a CLI está usando agora.
+    const order = compareAuthFreshness(vaultBlob, onDisk);
+    if (order !== null) return order > 0;
+    // Opaco dos dois lados: não sobrescreve o arquivo gerenciado — a CLI pode
+    // tê-lo renovado e o vault não tem como provar o contrário.
     return false;
   } catch {
     return true;
   }
-}
-
-function freshnessFromAuthContents(contents: string): number | null {
-  try {
-    const parsed = JSON.parse(contents) as Record<string, unknown>;
-    if (typeof parsed.last_refresh === 'string') {
-      const t = Date.parse(parsed.last_refresh);
-      if (!Number.isNaN(t)) return t;
-    }
-    // Kimi stores OAuth at the top level, with expires_at in seconds (some
-    // imported snapshots use milliseconds). Ignoring it restored the old
-    // managed token immediately after a successful login of the same account.
-    const expiry = Number(parsed.expires_at);
-    if (typeof parsed.access_token === 'string' && parsed.access_token &&
-        Number.isFinite(expiry) && expiry > 0) {
-      return expiry >= 1_000_000_000_000 ? expiry : expiry * 1000;
-    }
-    const tokens =
-      parsed.tokens && typeof parsed.tokens === 'object'
-        ? (parsed.tokens as Record<string, unknown>)
-        : null;
-    const access =
-      typeof tokens?.access_token === 'string' ? tokens.access_token :
-        typeof parsed.access_token === 'string' ? parsed.access_token : null;
-    if (access) {
-      const payload = decodeJwtPayload(access);
-      const exp = payload && typeof payload.exp === 'number' ? payload.exp * 1000 : null;
-      if (exp) return exp;
-    }
-  } catch {
-    // ignore
-  }
-  return null;
 }
 
 /**
@@ -680,16 +647,24 @@ export function readBackFresherAuth(
     if (adapterId === 'devin') return null;
     const onDisk = fs.readFileSync(authPath, 'utf8');
     if (onDisk === vaultBlob) return null;
-    const diskFresh = freshnessFromAuthContents(onDisk);
-    const vaultFresh = freshnessFromAuthContents(vaultBlob);
-    if (diskFresh !== null && vaultFresh !== null && diskFresh > vaultFresh) {
-      return onDisk;
+    // Um arquivo inutilizável (shell vazio, sessão apagada pelo scrub) nunca
+    // substitui uma credencial viva no cofre.
+    if (!authBlobIsUsable(adapterId, onDisk)) return null;
+    // Trava 1 — identidade: sessão de OUTRA conta não entra no cofre desta.
+    // Sem ela, um managed home que ficou com a conta anterior reescrevia a
+    // conta salva, e duas linhas da UI passavam a apontar para a mesma
+    // credencial.
+    if (compareAuthBlobIdentity(adapterId, onDisk, vaultBlob) === 'different') {
+      return null;
     }
-    // Non-JSON or unknown freshness: if files differ, prefer disk after any spawn.
-    if (diskFresh === null && vaultFresh === null && onDisk !== vaultBlob) {
-      return onDisk;
-    }
-    return null;
+    // Trava 2 — frescor: só o comprovadamente mais novo volta.
+    const order = compareAuthFreshness(onDisk, vaultBlob);
+    if (order !== null) return order > 0 ? onDisk : null;
+    // Formato opaco dos dois lados: aceita apenas como rotação in-place da
+    // MESMA conta, que é o caso que este read-back existe para preservar.
+    return compareAuthBlobIdentity(adapterId, onDisk, vaultBlob) === 'same'
+      ? onDisk
+      : null;
   } catch {
     return null;
   }
