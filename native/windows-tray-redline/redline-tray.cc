@@ -21,9 +21,11 @@
 #include <windowsx.h>
 #include <shellapi.h>
 #include <shlobj.h>
+#include <dwmapi.h>
 #include <gdiplus.h>
 
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <map>
@@ -35,14 +37,17 @@
 
 #pragma comment(lib, "gdiplus.lib")
 #pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "advapi32.lib")
 
 namespace {
 
 // â”€â”€ Paleta (tokens fixos â€” painel escuro sempre, igual ao Mac) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-constexpr COLORREF kBgHeader = RGB(0x11, 0x10, 0x13);
-constexpr COLORREF kBgList = RGB(0x0D, 0x0B, 0x0F);
+constexpr COLORREF kBgHeader = RGB(0x14, 0x12, 0x18);
+constexpr COLORREF kBgList = RGB(0x0C, 0x0A, 0x10);
+constexpr COLORREF kGlassLine = RGB(0x32, 0x2E, 0x38);
+constexpr COLORREF kGlassFill = RGB(0x1C, 0x19, 0x22);
 constexpr COLORREF kText = RGB(0xFA, 0xF7, 0xF9);
 constexpr COLORREF kTextDim = RGB(0xAA, 0xA2, 0xA8);
 constexpr COLORREF kTextFaint = RGB(0x92, 0x8B, 0x90);
@@ -242,10 +247,20 @@ int gDpi = 96;
 int S(int px) { return MulDiv(px, gDpi, 96); }  // escala p/ o DPI do monitor
 
 HFONT makeFont(int px, int weight) {
-  return CreateFontW(-MulDiv(px, gDpi, 72), 0, 0, 0, weight, FALSE, FALSE,
-                     FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                     CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-                     DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+  // Pixels do painel (S), não pontos. /72 deixava o tipo ~33% maior que as
+  // faixas de 20px e o rodapé empilhava em cima da última conta.
+  return CreateFontW(-S(px), 0, 0, 0, weight, FALSE, FALSE, FALSE,
+                     DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                     CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
+                     L"Segoe UI");
+}
+
+int fontBox(HDC hdc, HFONT font) {
+  HGDIOBJ old = SelectObject(hdc, font);
+  TEXTMETRICW tm{};
+  GetTextMetricsW(hdc, &tm);
+  SelectObject(hdc, old);
+  return tm.tmHeight + tm.tmExternalLeading;
 }
 
 void initFonts() {
@@ -291,68 +306,153 @@ void reloadSnapshot() {
 
 // â”€â”€ Ãcone da bandeja â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+bool insideRoundRect(int x, int y, int n, int rad) {
+  const int left = 1;
+  const int top = 1;
+  const int right = n - 2;
+  const int bottom = n - 2;
+  if (x < left || y < top || x > right || y > bottom) return false;
+  const int rr = rad * rad;
+  if (x < left + rad && y < top + rad) {
+    int dx = x - (left + rad);
+    int dy = y - (top + rad);
+    return dx * dx + dy * dy <= rr;
+  }
+  if (x > right - rad && y < top + rad) {
+    int dx = x - (right - rad);
+    int dy = y - (top + rad);
+    return dx * dx + dy * dy <= rr;
+  }
+  if (x < left + rad && y > bottom - rad) {
+    int dx = x - (left + rad);
+    int dy = y - (bottom - rad);
+    return dx * dx + dy * dy <= rr;
+  }
+  if (x > right - rad && y > bottom - rad) {
+    int dx = x - (right - rad);
+    int dy = y - (bottom - rad);
+    return dx * dx + dy * dy <= rr;
+  }
+  return true;
+}
+
+// Placa clara + losango rosa/ciano. O ícone antigo era a marca em cima de
+// preto: no overflow escuro do Windows virava um quadrado preto e sumia.
 HICON makeTrayIcon(redline::Urgency urgency, bool stale) {
-  const int N = 16;
+  const int N = 32;
+  BITMAPINFO bi{};
+  bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+  bi.bmiHeader.biWidth = N;
+  bi.bmiHeader.biHeight = N;  // bottom-up: CreateIconIndirect ignora DIB top-down
+  bi.bmiHeader.biPlanes = 1;
+  bi.bmiHeader.biBitCount = 32;
+  bi.bmiHeader.biCompression = BI_RGB;
+  void* bits = nullptr;
   HDC screen = GetDC(nullptr);
-  HDC dc = CreateCompatibleDC(screen);
-  HBITMAP bmp = CreateCompatibleBitmap(screen, N, N);
-  HBITMAP old = static_cast<HBITMAP>(SelectObject(dc, bmp));
-  // Fundo transparente via mÃ¡scara: preenche de preto e recorta o chip.
-  PatBlt(dc, 0, 0, N, N, BLACKNESS);
-  // Base: o proprio icone do app (IDI_ICON1 embutido no build). O chip
-  // generico nao se identifica como Redline no overflow.
-  HICON base = static_cast<HICON>(LoadImageW(
-      GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1), IMAGE_ICON, N, N,
-      LR_DEFAULTCOLOR));
-  if (base) {
-    DrawIconEx(dc, 0, 0, base, N, N, 0, nullptr, DI_NORMAL);
-    DestroyIcon(base);
-  } else {
-    // Fallback: chip da cor de urgencia (sem marca, mas com estado).
-    HBRUSH brush = CreateSolidBrush(trayInk(urgency));
-    HGDIOBJ prevB = SelectObject(dc, brush);
-    HPEN pen = CreatePen(PS_SOLID, 1, trayInk(urgency));
-    HGDIOBJ prevP = SelectObject(dc, pen);
-    RoundRect(dc, 1, 3, N - 1, N - 3, 5, 5);
-    SelectObject(dc, prevP);
-    SelectObject(dc, prevB);
-    DeleteObject(brush);
-    DeleteObject(pen);
+  HBITMAP color = CreateDIBSection(screen, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+  ReleaseDC(nullptr, screen);
+  if (!color || !bits) {
+    if (color) DeleteObject(color);
+    return static_cast<HICON>(LoadImageW(nullptr, IDI_APPLICATION, IMAGE_ICON,
+                                         N, N, LR_SHARED));
   }
-  {
-    // Stale com dados: contorno vazado (o â—Œ do Mac).
-    COLORREF ink = trayInk(urgency);
-    HBRUSH dot = CreateSolidBrush(stale ? RGB(0, 0, 0) : ink);
-    HGDIOBJ prevB = SelectObject(dc, dot);
-    HPEN ring = CreatePen(PS_SOLID, 1, stale ? ink : RGB(0, 0, 0));
-    HGDIOBJ prevP = SelectObject(dc, ring);
-    Ellipse(dc, N - 7, N - 7, N - 1, N - 1);
-    SelectObject(dc, prevP);
-    SelectObject(dc, prevB);
-    DeleteObject(dot);
-    DeleteObject(ring);
+  auto* px = static_cast<std::uint32_t*>(bits);
+  std::memset(px, 0, static_cast<size_t>(N) * N * 4);
+  auto put = [&](int x, int y, int red, int green, int blue, int a) {
+    if (static_cast<unsigned>(x) >= static_cast<unsigned>(N) ||
+        static_cast<unsigned>(y) >= static_cast<unsigned>(N) || a <= 0) {
+      return;
+    }
+    int row = (N - 1) - y;
+    auto* p = reinterpret_cast<std::uint8_t*>(&px[row * N + x]);
+    p[0] = static_cast<std::uint8_t>(blue * a / 255);
+    p[1] = static_cast<std::uint8_t>(green * a / 255);
+    p[2] = static_cast<std::uint8_t>(red * a / 255);
+    p[3] = static_cast<std::uint8_t>(a);
+  };
+  for (int y = 0; y < N; ++y) {
+    for (int x = 0; x < N; ++x) {
+      if (!insideRoundRect(x, y, N, 8)) continue;
+      put(x, y, 0xF6, 0xF3, 0xF8, 255);
+    }
   }
-  // MÃ¡scara: tudo que nÃ£o Ã© chip vira transparente.
+  const int cx = N / 2;
+  const int cy = N / 2 - 1;
+  for (int y = 0; y < N; ++y) {
+    for (int x = 0; x < N; ++x) {
+      int dx = x > cx ? x - cx : cx - x;
+      int dy = y > cy ? y - cy : cy - y;
+      int man = dx + dy;
+      if (man > 8 || man < 3) continue;
+      if (x < cx) put(x, y, 0xFF, 0x4F, 0x8B, 255);
+      else put(x, y, 0x3C, 0xD0, 0xFF, 255);
+    }
+  }
+  COLORREF ink = trayInk(urgency);
+  const int ox = N - 8;
+  const int oy = N - 8;
+  const int rad = 5;
+  for (int y = oy - rad; y <= oy + rad; ++y) {
+    for (int x = ox - rad; x <= ox + rad; ++x) {
+      int dx = x - ox;
+      int dy = y - oy;
+      int d2 = dx * dx + dy * dy;
+      if (d2 > rad * rad) continue;
+      if (stale && d2 <= (rad - 2) * (rad - 2)) continue;
+      put(x, y, GetRValue(ink), GetGValue(ink), GetBValue(ink), 255);
+    }
+  }
+  // Máscara zerada: o canal alpha do DIB de 32 bpp é que recorta.
   HBITMAP mask = CreateBitmap(N, N, 1, 1, nullptr);
-  HDC mdc = CreateCompatibleDC(screen);
-  HBITMAP oldMask = static_cast<HBITMAP>(SelectObject(mdc, mask));
-  PatBlt(mdc, 0, 0, N, N, WHITENESS);
-  BitBlt(mdc, 0, 0, N, N, dc, 0, 0, SRCCOPY);
-  // AND mask: 0 = cor do chip, 1 = transparente â€” por isso inverte.
-  PatBlt(mdc, 0, 0, N, N, DSTINVERT);
-  SelectObject(mdc, oldMask);
-  DeleteDC(mdc);
-  ICONINFO info = {};
+  ICONINFO info{};
   info.fIcon = TRUE;
-  info.hbmColor = bmp;
+  info.hbmColor = color;
   info.hbmMask = mask;
   HICON icon = CreateIconIndirect(&info);
-  SelectObject(dc, old);
-  DeleteObject(bmp);
+  DeleteObject(color);
   DeleteObject(mask);
-  DeleteDC(dc);
-  ReleaseDC(nullptr, screen);
   return icon;
+}
+
+// O Windows esconde ícone novo no ^ e, sem IsPromoted, ele nem fica óbvio
+// ali. Marca o exe que está rodando para a bandeja visível.
+bool promoteTrayIcon() {
+  wchar_t exe[MAX_PATH];
+  DWORD n = GetModuleFileNameW(nullptr, exe, MAX_PATH);
+  if (n == 0 || n >= MAX_PATH) return false;
+  HKEY root = nullptr;
+  if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Control Panel\\NotifyIconSettings",
+                    0, KEY_READ, &root) != ERROR_SUCCESS) {
+    return false;
+  }
+  bool promoted = false;
+  DWORD index = 0;
+  wchar_t name[80];
+  while (!promoted) {
+    DWORD nameLen = 80;
+    LONG st = RegEnumKeyExW(root, index++, name, &nameLen, nullptr, nullptr,
+                            nullptr, nullptr);
+    if (st != ERROR_SUCCESS) break;
+    HKEY sub = nullptr;
+    if (RegOpenKeyExW(root, name, 0, KEY_QUERY_VALUE | KEY_SET_VALUE, &sub) !=
+        ERROR_SUCCESS) {
+      continue;
+    }
+    wchar_t path[MAX_PATH];
+    DWORD cb = sizeof(path);
+    DWORD type = 0;
+    if (RegQueryValueExW(sub, L"ExecutablePath", nullptr, &type,
+                         reinterpret_cast<BYTE*>(path), &cb) == ERROR_SUCCESS &&
+        type == REG_SZ && _wcsicmp(path, exe) == 0) {
+      DWORD one = 1;
+      promoted = RegSetValueExW(sub, L"IsPromoted", 0, REG_DWORD,
+                               reinterpret_cast<const BYTE*>(&one),
+                               sizeof(one)) == ERROR_SUCCESS;
+    }
+    RegCloseKey(sub);
+  }
+  RegCloseKey(root);
+  return promoted;
 }
 
 // Tooltip sÃ³-texto (fonte da bandeja nem sempre tem os glifos â–®/âœ³).
@@ -445,10 +545,13 @@ void addTrayIcon() {
   nid.hIcon = makeTrayIcon(redline::Urgency::Unknown, true);
   g.trayIcon = nid.hIcon;
   wcsncpy_s(nid.szTip, L"Nexus Redline", _TRUNCATE);
+  // Ícone zumbi do exe anterior ocupa o mesmo uID e o ADD novo falha em silêncio.
+  Shell_NotifyIconW(NIM_DELETE, &nid);
   Shell_NotifyIconW(NIM_ADD, &nid);
   // VersÃ£o 4: clique esquerdo selecionÃ¡vel + balÃµes modernos.
   nid.uVersion = NOTIFYICON_VERSION_4;
   Shell_NotifyIconW(NIM_SETVERSION, &nid);
+  promoteTrayIcon();
 }
 
 // â”€â”€ Painel: controles e geometria â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -461,6 +564,7 @@ Ctl gFocus = Ctl::Refresh;
 bool gPanelEverOpened = false;
 // --toggle-panel abre e sai sozinho (~3s); --open-panel abre e fica.
 bool gTogglePanelProbe = false;
+bool gTrayPromoted = false;
 int gScrollY = 0;
 int gContentH = 0;
 RECT gRefreshRc = {};
@@ -494,11 +598,14 @@ int drawSingleLine(HDC hdc, const std::wstring& text, HFONT font,
   HGDIOBJ old = SelectObject(hdc, font);
   SetTextColor(hdc, color);
   SetBkMode(hdc, TRANSPARENT);
-  RECT rc = {x, y, x + w, y + 100};
+  RECT rc = {x, y, x + w, y + 400};
   DrawTextW(hdc, text.c_str(), static_cast<int>(text.size()), &rc,
             DT_SINGLELINE | DT_LEFT | DT_TOP | DT_END_ELLIPSIS | DT_NOPREFIX);
-  int drawn = rc.right - x;
+  SIZE sz{};
+  GetTextExtentPoint32W(hdc, text.c_str(), static_cast<int>(text.size()), &sz);
   SelectObject(hdc, old);
+  int drawn = sz.cx;
+  if (drawn > w) drawn = w;
   return drawn < 0 ? 0 : drawn;
 }
 
@@ -714,10 +821,11 @@ void paintButton(HDC hdc, const RECT& rc, const std::wstring& text, bool primary
     if (hover) c = RGB(0xD8, 0xD4, 0xD8);
     fill = CreateSolidBrush(c);
   } else if (hover) {
-    fill = CreateSolidBrush(RGB(0x1C, 0x1A, 0x1F));
-    border = CreatePen(PS_SOLID, S(1), RGB(0x3D, 0x3A, 0x40));
+    fill = CreateSolidBrush(RGB(0x2A, 0x26, 0x30));
+    border = CreatePen(PS_SOLID, 1, RGB(0x4A, 0x45, 0x52));
   } else {
-    border = CreatePen(PS_SOLID, S(1), RGB(0x2B, 0x29, 0x2E));
+    fill = CreateSolidBrush(kGlassFill);
+    border = CreatePen(PS_SOLID, 1, kGlassLine);
   }
   HBRUSH oldB = static_cast<HBRUSH>(SelectObject(hdc, fill ? fill : static_cast<HBRUSH>(GetStockObject(HOLLOW_BRUSH))));
   HPEN oldP = static_cast<HPEN>(SelectObject(hdc, border));
@@ -801,110 +909,86 @@ int measureContent(HDC hdc, int listW, std::int64_t now) {
   return h;
 }
 
+struct ChromeBand {
+  int topH = 0;
+  int bottomH = 0;
+  int row1Y = 0;
+  int row1H = 0;
+  int row2Y = 0;
+  int row2H = 0;
+  int titleY = 0;
+  int summaryY = 0;
+  int recoY = 0;
+};
+
+ChromeBand measureChrome(HDC hdc, int H) {
+  // `small` é macro do Windows (rpcndr.h → char). Não usar esse nome.
+  int smallH = fontBox(hdc, gFonts.fSmall);
+  int titleH = fontBox(hdc, gFonts.fTitle);
+  int pad = S(14);
+  int gap = S(4);
+  ChromeBand c;
+  c.row1H = smallH + S(6);
+  if (c.row1H < S(22)) c.row1H = S(22);
+  c.row2H = S(32);
+  c.row1Y = pad;
+  c.row2Y = c.row1Y + c.row1H + S(8);
+  c.topH = c.row2Y + c.row2H + pad;
+  c.bottomH = pad + titleH + gap + smallH + gap + smallH + pad;
+  int minList = S(80);
+  if (c.topH + c.bottomH + minList > H && H > minList) {
+    int overflow = c.topH + c.bottomH + minList - H;
+    if (c.bottomH > overflow + pad) c.bottomH -= overflow;
+  }
+  int y = (H - c.bottomH) + pad;
+  c.titleY = y;
+  y += titleH + gap;
+  c.summaryY = y;
+  y += smallH + gap;
+  c.recoY = y;
+  return c;
+}
+
+void paintSheen(HDC hdc, int W) {
+  Gdiplus::Graphics gfx(hdc);
+  Gdiplus::LinearGradientBrush top(
+      Gdiplus::Point(0, 0), Gdiplus::Point(0, S(64)),
+      Gdiplus::Color(48, 255, 255, 255), Gdiplus::Color(0, 255, 255, 255));
+  gfx.FillRectangle(&top, 0, 0, W, S(64));
+  Gdiplus::LinearGradientBrush edge(
+      Gdiplus::Point(0, 0), Gdiplus::Point(0, S(2)),
+      Gdiplus::Color(90, 255, 255, 255), Gdiplus::Color(0, 255, 255, 255));
+  gfx.FillRectangle(&edge, 0, 0, W, S(2));
+}
+
+void paintGlassFrame(HDC hdc, int W, int H) {
+  HPEN pen = CreatePen(PS_SOLID, 1, kGlassLine);
+  HPEN oldP = static_cast<HPEN>(SelectObject(hdc, pen));
+  HBRUSH oldB = static_cast<HBRUSH>(SelectObject(hdc, GetStockObject(HOLLOW_BRUSH)));
+  int rad = S(20);
+  RoundRect(hdc, 0, 0, W - 1, H - 1, rad, rad);
+  SelectObject(hdc, oldP);
+  SelectObject(hdc, oldB);
+  DeleteObject(pen);
+}
+
 // Corpo do paint sem Begin/EndPaint: o app vivo chama via paintPanel, e o
 // --paint-check desenha o MESMO código num DIB em memória (janela offscreen
 // não ganha superfície do compositor — BitBlt devolvia branco).
 void paintPanelDC(HDC hdc, HWND hwndOrNull, int W, int H) {
   std::int64_t now = nowMs();
+  ChromeBand band = measureChrome(hdc, H);
+  int listTop = band.topH;
+  int listBottom = H - band.bottomH;
+  if (listBottom < listTop) listBottom = listTop;
 
-  // Fundos: header/footer #111013, lista recuada #0D0B0F.
-  const int headerH = S(88);
-  const int footerH = S(96);
-  const int listTop = footerH + S(1);
-  const int listBottom = H - headerH;
-  HBRUSH bgH = CreateSolidBrush(kBgHeader);
-  RECT hr = {0, listBottom, W, H};
-  FillRect(hdc, &hr, bgH);
-  RECT fr = {0, 0, W, listTop};
-  FillRect(hdc, &fr, bgH);
-  DeleteObject(bgH);
   HBRUSH bgL = CreateSolidBrush(kBgList);
-  RECT lr = {0, listTop, W, listBottom};
-  FillRect(hdc, &lr, bgL);
+  RECT all = {0, 0, W, H};
+  FillRect(hdc, &all, bgL);
   DeleteObject(bgL);
-  // Hairlines.
-  HBRUSH hair = CreateSolidBrush(kHairline);
-  RECT h1 = {0, listBottom - S(1), W, listBottom};
-  FillRect(hdc, &h1, hair);
-  RECT h2 = {0, listTop - S(1), W, listTop};
-  FillRect(hdc, &h2, hair);
-  DeleteObject(hair);
 
-  // Header: tÃ­tulo, resumo, recomendaÃ§Ã£o.
-  const int hx = S(16);
-  const int hw = W - S(32);
-  drawSingleLine(hdc, L"Nexus Redline", gFonts.fTitle, kText, hx, H - S(34), hw);
-  std::wstring summary;
-  std::wstring reco;
-  COLORREF recoInk = kTextDim;
-  if (g.hasSnap && g.snap && !g.snap->entries.empty()) {
-    const auto& snap = *g.snap;
-    size_t prov = 0;
-    {
-      std::vector<std::string> seen;
-      for (const auto& e : snap.entries) {
-        bool found = false;
-        for (const auto& s : seen) {
-          if (s == e.adapterId) {
-            found = true;
-            break;
-          }
-        }
-        if (!found) {
-          seen.push_back(e.adapterId);
-          ++prov;
-        }
-      }
-    }
-    size_t n = snap.entries.size();
-    wchar_t buf[160];
-    swprintf_s(buf, L"%zu %s \u00B7 %zu %s", prov,
-               prov == 1 ? L"provedor" : L"provedores", n,
-               n == 1 ? L"conta" : L"contas");
-    summary = buf;
-    summary += L" \u00B7 atualizado " + toWide(redline::ageLabel(snap.updatedAt, now));
-    if (redline::isStale(snap, now)) {
-      // "Â· Nexus offline" em warn: desenha o sufixo separado.
-      drawSingleLine(hdc, summary + L" \u00B7", gFonts.fSmall, kTextDim, hx,
-                     H - S(54), hw);
-      int sw = textWidth(hdc, summary + L" \u00B7 ", gFonts.fSmall);
-      drawSingleLine(hdc, L"Nexus offline", gFonts.fSmall, kWarn, hx + sw,
-                     H - S(54), hw - sw);
-    } else {
-      drawSingleLine(hdc, summary, gFonts.fSmall, kTextDim, hx, H - S(54), hw);
-    }
-    auto best = redline::bestRankingPick(snap);
-    if (best) {
-      char pct[16];
-      std::snprintf(pct, sizeof(pct), "%d%%",
-                    static_cast<int>(std::lround(best->row.headroom * 100.0)));
-      reco = L"Mais folga: " + toWide(redline::providerName(best->adapterId)) +
-             L" \u00B7 " + toWide(best->row.label) + L" \u00B7 " + toWide(pct);
-      recoInk = kOk;
-    } else {
-      reco = L"Uso por conta \u00B7 role para ver todas";
-    }
-  } else {
-    summary = L"0 provedores \u00B7 0 contas \u00B7 abra o Nexus para carregar";
-    reco = L"Uso por conta \u00B7 role para ver todas";
-    drawSingleLine(hdc, summary, gFonts.fSmall, kTextDim, hx, H - S(54), hw);
-  }
-  // RecomendaÃ§Ã£o sempre desenhada (com a cor resolvida acima).
-  if (!summary.empty() && g.hasSnap && g.snap && !g.snap->entries.empty() &&
-      redline::bestRankingPick(*g.snap)) {
-    // "Mais folga: â€¦ Â· NN%" â€” sÃ³ o percentual vai em verde.
-    size_t sep = reco.rfind(L" \u00B7 ");
-    std::wstring head = sep == std::wstring::npos ? reco : reco.substr(0, sep + 3);
-    std::wstring tail = sep == std::wstring::npos ? L"" : reco.substr(sep + 3);
-    int whead = drawSingleLine(hdc, head, gFonts.fSmall, kTextDim, hx,
-                               H - S(74), hw);
-    drawSingleLine(hdc, tail, gFonts.fSmallSB, recoInk, hx + whead, H - S(74),
-                   hw - whead);
-  } else {
-    drawSingleLine(hdc, reco, gFonts.fSmall, recoInk, hx, H - S(74), hw);
-  }
-
-  // Lista (com scroll + clip).
+  // Lista primeiro. O cromo vem depois, opaco, para o rodapé nunca
+  // vazar por cima da última conta.
   gListRc = {0, listTop, W, listBottom};
   int listH = listBottom - listTop;
   gContentH = measureContent(hdc, W, now);
@@ -949,21 +1033,117 @@ void paintPanelDC(HDC hdc, HWND hwndOrNull, int W, int H) {
   }
   RestoreDC(hdc, save);
 
-  // Footer: botÃµes + checkbox + sair.
-  const int bw = S(172);
-  const int bh = S(30);
-  gRefreshRc = {S(16), S(50), S(16) + bw, S(50) + bh};
-  gOpenRc = {W - S(16) - bw, S(50), W - S(16), S(50) + bh};
-  gLoginRc = {S(16), S(18), S(16) + S(230), S(18) + S(20)};
-  gQuitRc = {W - S(80), S(18), W - S(16), S(18) + S(20)};
+  // Cromo por cima da lista, com fundo próprio: título, resumo e folga
+  // ficam cada um na sua linha, e a última conta não aparece por baixo.
+  HBRUSH bgH = CreateSolidBrush(kBgHeader);
+  RECT topR = {0, 0, W, listTop};
+  RECT botR = {0, listBottom, W, H};
+  FillRect(hdc, &topR, bgH);
+  FillRect(hdc, &botR, bgH);
+  DeleteObject(bgH);
+  paintSheen(hdc, W);
+  HBRUSH hair = CreateSolidBrush(kGlassLine);
+  RECT h1 = {S(14), listTop - 1, W - S(14), listTop};
+  RECT h2 = {S(14), listBottom, W - S(14), listBottom + 1};
+  FillRect(hdc, &h1, hair);
+  FillRect(hdc, &h2, hair);
+  DeleteObject(hair);
+
+  const int hx = S(16);
+  const int hw = W - S(32);
+  const int gapBtn = S(8);
+  const int bw = (W - S(32) - gapBtn) / 2;
+  gLoginRc = {hx, band.row1Y, hx + S(230), band.row1Y + band.row1H};
+  gQuitRc = {W - S(16) - S(64), band.row1Y, W - S(16), band.row1Y + band.row1H};
+  gRefreshRc = {hx, band.row2Y, hx + bw, band.row2Y + band.row2H};
+  gOpenRc = {W - S(16) - bw, band.row2Y, W - S(16), band.row2Y + band.row2H};
   paintButton(hdc, gRefreshRc, L"Atualizar agora", true,
               gHover == Ctl::Refresh, gFocus == Ctl::Refresh);
   paintButton(hdc, gOpenRc, L"Abrir no Nexus", false, gHover == Ctl::Open,
               gFocus == Ctl::Open);
   paintCheckbox(hdc, gLoginRc, g.launchAtLogin, gHover == Ctl::Login,
                 gFocus == Ctl::Login);
-  paintGhost(hdc, gQuitRc, L"Sair", gHover == Ctl::Quit,
-             gFocus == Ctl::Quit);
+  paintGhost(hdc, gQuitRc, L"Sair", gHover == Ctl::Quit, gFocus == Ctl::Quit);
+
+  drawSingleLine(hdc, L"Nexus Redline", gFonts.fTitle, kText, hx, band.titleY, hw);
+  std::wstring summary;
+  std::wstring reco;
+  COLORREF recoInk = kTextDim;
+  bool splitReco = false;
+  if (g.hasSnap && g.snap && !g.snap->entries.empty()) {
+    const auto& snap = *g.snap;
+    size_t prov = 0;
+    std::vector<std::string> seen;
+    for (const auto& e : snap.entries) {
+      bool found = false;
+      for (const auto& s : seen) {
+        if (s == e.adapterId) {
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        seen.push_back(e.adapterId);
+        ++prov;
+      }
+    }
+    size_t n = snap.entries.size();
+    wchar_t buf[160];
+    swprintf_s(buf, L"%zu %s \u00B7 %zu %s", prov,
+               prov == 1 ? L"provedor" : L"provedores", n,
+               n == 1 ? L"conta" : L"contas");
+    summary = buf;
+    summary += L" \u00B7 atualizado " + toWide(redline::ageLabel(snap.updatedAt, now));
+    if (redline::isStale(snap, now)) summary += L" \u00B7 Nexus offline";
+    auto best = redline::bestRankingPick(snap);
+    if (best) {
+      char pct[16];
+      std::snprintf(pct, sizeof(pct), "%d%%",
+                    static_cast<int>(std::lround(best->row.headroom * 100.0)));
+      std::string providerLabel = redline::providerName(best->adapterId);
+      reco = L"Mais folga: " + toWide(providerLabel);
+      if (!best->row.label.empty() &&
+          _stricmp(best->row.label.c_str(), providerLabel.c_str()) != 0) {
+        reco += L" \u00B7 " + toWide(best->row.label);
+      }
+      reco += L" \u00B7 " + toWide(pct);
+      recoInk = kOk;
+      splitReco = true;
+    } else {
+      reco = L"Uso por conta \u00B7 role para ver todas";
+    }
+  } else {
+    summary = L"0 provedores \u00B7 0 contas \u00B7 abra o Nexus para carregar";
+    reco = L"Uso por conta \u00B7 role para ver todas";
+  }
+  if (summary.find(L"Nexus offline") != std::wstring::npos) {
+    std::wstring head = summary.substr(0, summary.size() - std::wstring(L"Nexus offline").size());
+    int sw = textWidth(hdc, head, gFonts.fSmall);
+    if (sw > hw) sw = hw;
+    drawSingleLine(hdc, head, gFonts.fSmall, kTextDim, hx, band.summaryY, hw);
+    if (sw < hw) {
+      drawSingleLine(hdc, L"Nexus offline", gFonts.fSmall, kWarn, hx + sw,
+                     band.summaryY, hw - sw);
+    }
+  } else {
+    drawSingleLine(hdc, summary, gFonts.fSmall, kTextDim, hx, band.summaryY, hw);
+  }
+  if (splitReco) {
+    size_t sep = reco.rfind(L" \u00B7 ");
+    std::wstring head = sep == std::wstring::npos ? reco : reco.substr(0, sep + 3);
+    std::wstring tail = sep == std::wstring::npos ? L"" : reco.substr(sep + 3);
+    int headW = textWidth(hdc, head, gFonts.fSmall);
+    if (headW > hw) headW = hw;
+    drawSingleLine(hdc, head, gFonts.fSmall, kTextDim, hx, band.recoY,
+                   headW < hw ? headW : hw);
+    if (headW < hw && !tail.empty()) {
+      drawSingleLine(hdc, tail, gFonts.fSmallSB, recoInk, hx + headW, band.recoY,
+                     hw - headW);
+    }
+  } else {
+    drawSingleLine(hdc, reco, gFonts.fSmall, recoInk, hx, band.recoY, hw);
+  }
+  paintGlassFrame(hdc, W, H);
 }
 
 void paintPanel(HWND hwnd) {
@@ -1029,6 +1209,48 @@ void cycleFocus(bool back) {
 }
 
 // â”€â”€ Painel popup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+void clipPanelShape(HWND w) {
+  RECT rc{};
+  if (!GetWindowRect(w, &rc)) return;
+  int width = rc.right - rc.left;
+  int height = rc.bottom - rc.top;
+  if (width < 2 || height < 2) return;
+  int rad = S(22);
+  HRGN rgn = CreateRoundRectRgn(0, 0, width + 1, height + 1, rad, rad);
+  if (rgn) SetWindowRgn(w, rgn, TRUE);
+}
+
+// Vidro líquido: acrílico do DWM por baixo e a janela levemente translúcida,
+// para o blur aparecer através da tinta escura. Sem isto o FillRect opaco
+// cobre o material e o painel volta a ser uma chapa.
+void applyLiquidGlass(HWND w) {
+  const DWORD corner = 2;  // DWMWCP_ROUND
+  DwmSetWindowAttribute(w, 33 /*DWMWA_WINDOW_CORNER_PREFERENCE*/, &corner,
+                        sizeof(corner));
+  const DWORD backdrop = 3;  // DWMSBT_TRANSIENTWINDOW (acrílico Win11)
+  DwmSetWindowAttribute(w, 38 /*DWMWA_SYSTEMBACKDROP_TYPE*/, &backdrop,
+                        sizeof(backdrop));
+  struct AccentPolicy {
+    int state;
+    int flags;
+    DWORD color;
+    int animation;
+  } policy{4, 2, 0xE6100E14, 0};  // acrylic, AABBGGRR ~ #14100E a 90%
+  struct CompData {
+    DWORD attribute;
+    void* data;
+    SIZE_T size;
+  } data{19, &policy, sizeof(policy)};
+  if (HMODULE user = GetModuleHandleW(L"user32.dll")) {
+    using Fn = BOOL(WINAPI*)(HWND, CompData*);
+    auto fn = reinterpret_cast<Fn>(
+        GetProcAddress(user, "SetWindowCompositionAttribute"));
+    if (fn) fn(w, &data);
+  }
+  SetLayeredWindowAttributes(w, 0, 214, LWA_ALPHA);
+  clipPanelShape(w);
+}
 
 void closePanel() {
   if (!g.panelWnd) return;
@@ -1105,10 +1327,11 @@ void showPanel() {
   }
 
   HWND w = CreateWindowExW(
-      WS_EX_TOOLWINDOW | WS_EX_TOPMOST, L"NexusRedlinePanel",
+      WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED, L"NexusRedlinePanel",
       L"Nexus Redline", WS_POPUP | WS_VSCROLL | WS_CLIPCHILDREN, x, y, W, H,
       nullptr, nullptr, g.inst, nullptr);
   if (!w) return;
+  applyLiquidGlass(w);
   g.panelWnd = w;
   gPanelEverOpened = true;
   // Ativa de propÃ³sito (igual ao popover makeKey do Mac): Esc/R/O/Q/Tab
@@ -1121,6 +1344,8 @@ void showPanel() {
 
 LRESULT CALLBACK panelProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   switch (msg) {
+    case WM_ERASEBKGND:
+      return 1;
     case WM_PAINT:
       paintPanel(hwnd);
       return 0;
@@ -1208,6 +1433,7 @@ LRESULT CALLBACK panelProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       initFonts();
       SetWindowPos(hwnd, nullptr, rc->left, rc->top, rc->right - rc->left,
                    rc->bottom - rc->top, SWP_NOZORDER | SWP_NOACTIVATE);
+      clipPanelShape(hwnd);
       InvalidateRect(hwnd, nullptr, TRUE);
       return 0;
     }
@@ -1283,6 +1509,8 @@ LRESULT CALLBACK trayProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       return 0;
     case WM_TIMER:
       if (wp == kPollTimer) {
+        // O shell só cria a chave do ícone depois do NIM_ADD.
+        if (!gTrayPromoted) gTrayPromoted = promoteTrayIcon();
         // Poll de 2s: rede de seguranÃ§a (rename atÃ´mico) + countdowns.
         if (snapshotChangedOnDisk()) reloadSnapshot();
         refreshTray();

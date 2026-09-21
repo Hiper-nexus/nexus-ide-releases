@@ -211,7 +211,7 @@ export function buildWindowsTray({ output = defaultOutput } = {}) {
       "echo WINDOWS_SDK=%WindowsSDKVersion%",
       `rc /nologo /fo "${resPath}" "${rcPath}"`,
       "if errorlevel 1 exit /b 1",
-      `cl /nologo /EHsc /std:c++17 /W4 /WX /permissive- /utf-8 /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0A00 /Fe:"${exePath}" /Fo:"${objDir}" "${modelSource}" "${traySource}" "${resPath}" /link /INCREMENTAL:NO /DYNAMICBASE /NXCOMPAT /SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup gdiplus.lib shell32.lib advapi32.lib user32.lib gdi32.lib`,
+      `cl /nologo /EHsc /std:c++17 /W4 /WX /permissive- /utf-8 /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0A00 /Fe:"${exePath}" /Fo:"${objDir}" "${modelSource}" "${traySource}" "${resPath}" /link /INCREMENTAL:NO /DYNAMICBASE /NXCOMPAT /SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup gdiplus.lib shell32.lib advapi32.lib dwmapi.lib user32.lib gdi32.lib`,
       "exit /b %errorlevel%",
     ];
     writeFileSync(compileCmd, lines.join("\r\n"), "ascii");
