@@ -1,5 +1,6 @@
 /** Defaults de produto que devem permanecer alinhados em adapters e catálogo. */
 export const CODEX_FRONTIER_MODEL = 'gpt-5.6-sol';
+export const GROK_FRONTIER_MODEL = 'grok-4.7';
 
 /**
  * Modelos legados/aposentados pelos provedores que causam erro 400 se solicitados.

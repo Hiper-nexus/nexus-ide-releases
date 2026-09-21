@@ -113,6 +113,16 @@ describe('model catalog overlays', () => {
 });
 
 describe('published catalog JSON', () => {
+  it('offers Grok 4.7 even alongside an older user catalog, preserving explicit defaults', () => {
+    const combined = mergeModelCatalogs(PUBLISHED_MODEL_CATALOG, {
+      adapters: { grok: { default: 'grok-4.6', models: [{ id: 'grok-4.6', availability: 'paid' }] } },
+    });
+    const adapter = applyModelCatalogToAdapter(ADAPTER, combined);
+    expect(adapter.models.list).toContain('grok-4.7');
+    expect(adapter.models.default).toBe('grok-4.6');
+    expect(applyModelCatalogToAdapter(ADAPTER, PUBLISHED_MODEL_CATALOG).models.default).toBe('grok-4.7');
+    expect(modelCatalogInfo(BUILTIN_MODEL_CATALOG, 'grok', 'grok-4.7')).toMatchObject({ availability: 'paid', costTier: 'high' });
+  });
   it('ships Claude Opus 5 and grok-4.5, and marks claude-fable-5 as api-only/high', () => {
     expect(PUBLISHED_MODEL_CATALOG.version).toBe(1);
     expect(

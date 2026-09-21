@@ -5,6 +5,7 @@ import type {
   CatalogOption
 } from './agent-session-option-catalog-types'
 import { parseGrokModelList } from './grok-model-list-probe'
+import { GROK_FRONTIER_MODEL } from './model-defaults'
 
 // The offered slice of grok's canonical ladder, low to high. Its `none` tier is
 // omitted because `native-chat-session-option-labels.ts` leaves it untranslated;
@@ -52,10 +53,16 @@ export const GROK_SESSION_OPTION_CATALOG: AgentSessionOptionCatalog = {
   // config. Seed only what is verified; discovery supplies the rest.
   models: [
     {
-      id: 'grok-4.6',
-      label: 'Grok 4.6',
+      id: GROK_FRONTIER_MODEL,
+      label: 'Grok 4.7',
       description: "xAI's latest frontier model",
       isDefault: true,
+      options: [grokEffort('xhigh')]
+    },
+    {
+      id: 'grok-4.6',
+      label: 'Grok 4.6',
+      description: "xAI's previous frontier model",
       options: [grokEffort('xhigh')]
     },
     {
@@ -80,8 +87,7 @@ export const GROK_SESSION_OPTION_CATALOG: AgentSessionOptionCatalog = {
   // Why: grok's selectable ids retire between releases, so a stale seed entry
   // must be droppable — picking one is a fatal launch, not a warning.
   discoveredModelsAreAuthoritative: true,
-  // Why: `grok models` prints `Default model: grok-4.6` and marks the row `(default)`,
-  // so the seed states the CLI's own choice rather than a preference of ours.
+  // Grok Build's documented default is 4.7; explicit user/CLI choices still win.
   defaultModelIsCliDefault: true,
   listModels: { command: 'grok models', parse: parseGrokCatalogModels }
 }

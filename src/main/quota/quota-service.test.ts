@@ -41,6 +41,26 @@ const LIVE_USAGE = {
 };
 
 describe('QuotaService limit-hit expiry', () => {
+  it('reports a revoked saved Codex login without assigning its sibling quota', async () => {
+    const marked: string[] = [];
+    const svc = new QuotaService({
+      listProviders: () => [provider('codex')],
+      listAccounts: () => ['healthy', 'revoked'].map((id) => ({ id, adapterId: 'codex', label: id, mode: 'subscription', hasCredential: true, onCooldown: false } as AccountInfo)),
+      resolveCodexAuthCandidates: () => [{ accessToken: 'expired-access' }],
+      fetchImpl: async () => ({ ok: false, status: 401, json: async () => ({}), text: async () => '' }),
+      codexAccountUsage: async (id) => id === 'revoked'
+        ? { windows: null, hint: 'auth-expired' }
+        : { windows: [{ kind: 'weekly', label: 'Semanal', usedRatio: 0.2, source: 'provider-api', confidence: 'high' }] },
+      markAccountAuthExpired: (id) => { marked.push(id); },
+    });
+    const result = await svc.snapshot(HIT_AT);
+    expect(result.entries.find((entry) => entry.accountId === 'healthy')?.windows.some((window) => window.usedRatio === 0.2)).toBe(true);
+    const revoked = result.entries.find((entry) => entry.accountId === 'revoked');
+    expect(revoked?.readHint).toBe('auth-expired');
+    expect(revoked?.windows.every((window) => window.usedRatio === null)).toBe(true);
+    expect(marked).toEqual(['revoked']);
+    svc.stop();
+  });
   it.each([true, false])('never probes an incompatible or orphaned routed account (provider exists=%s)', async (exists) => {
     const fetchImpl = vi.fn(async () => ({ ok: false, status: 403, json: async () => ({}), text: async () => '' }));
     const svc = new QuotaService({

@@ -320,23 +320,19 @@ export function claudeCliAuthStatusLoggedInAsync(
 
 /**
  * Default native-session probe for the async Claude warm: Keychain secret
- * first, CLI attestation when the secret is missing OR unreadable (a TCC/ACL
- * denial rejects instead of resolving false — that must not read as logout).
+ * first, CLI attestation only when the secret is missing. A TCC/ACL denial
+ * stays unknown; spawning the CLI then would bypass the Keychain backoff.
  */
 async function probeClaudeNativeSessionAsync(
   freshCredential = false,
 ): Promise<boolean | string> {
   if (process.platform !== 'darwin') return Promise.resolve(false);
-  try {
-    const credential = await readNativeOAuthCredential(
-      'Claude Code-credentials',
-      execFile,
-      { bypassCache: freshCredential },
-    );
-    if (credential) return credential;
-  } catch {
-    // ACL/TCC indisponível não significa logout: a CLI ainda pode atestar.
-  }
+  const credential = await readNativeOAuthCredential(
+    'Claude Code-credentials',
+    execFile,
+    { bypassCache: freshCredential },
+  );
+  if (credential) return credential;
   return claudeCliAuthStatusLoggedInAsync();
 }
 

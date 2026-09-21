@@ -57,6 +57,46 @@ describe('managed-credentials', () => {
     expect(fs.readFileSync(authFile, 'utf8')).toBe(rotated);
   });
 
+  it('replaces another identity even when its managed token is fresher', () => {
+    const home = tempHome();
+    const blob = (id: string, last: string) => JSON.stringify({
+      tokens: { account_id: id, access_token: `token-${id}`, refresh_token: `refresh-${id}` },
+      last_refresh: last,
+    });
+    const wrong = blob('wrong', '2026-09-21T12:00:00Z');
+    const selected = blob('selected', '2026-09-20T12:00:00Z');
+    const managed = materializeManagedHome('codex', 'selected', wrong, { home, systemHome: null });
+    materializeManagedHome('codex', 'selected', selected, { home, systemHome: null });
+    expect(fs.readFileSync(path.join(managed, 'auth.json'), 'utf8')).toBe(selected);
+  });
+
+  it('installs an explicitly renewed opaque login over a managed credential', () => {
+    const home = tempHome();
+    const old = JSON.stringify({ key: 'old' });
+    const renewed = JSON.stringify({ key: 'renewed' });
+    const managed = materializeManagedHome('grok', 'account', old, { home, systemHome: null });
+    materializeManagedHome('grok', 'account', renewed, { home, systemHome: null, replace: true });
+    expect(fs.readFileSync(path.join(managed, 'auth.json'), 'utf8')).toBe(renewed);
+  });
+
+  it('restores the selected Codex identity over a fresher unidentified managed token', () => {
+    const home = tempHome();
+    const unknown = JSON.stringify({ tokens: { access_token: 'unknown' }, last_refresh: '2026-09-21T12:00:00Z' });
+    const selected = JSON.stringify({ tokens: { account_id: 'selected', access_token: 'selected' }, last_refresh: '2026-09-20T12:00:00Z' });
+    const managed = materializeManagedHome('codex', 'selected', unknown, { home, systemHome: null });
+    materializeManagedHome('codex', 'selected', selected, { home, systemHome: null });
+    expect(fs.readFileSync(path.join(managed, 'auth.json'), 'utf8')).toBe(selected);
+  });
+
+  it('restores a saved login over a newer managed logout shell of the same subject', () => {
+    const home = tempHome();
+    const shell = JSON.stringify({ tokens: { account_id: 'selected' }, last_refresh: '2026-09-21T12:00:00Z' });
+    const selected = JSON.stringify({ tokens: { account_id: 'selected', access_token: 'selected' }, last_refresh: '2026-09-20T12:00:00Z' });
+    const managed = materializeManagedHome('codex', 'selected', shell, { home, systemHome: null });
+    materializeManagedHome('codex', 'selected', selected, { home, systemHome: null });
+    expect(fs.readFileSync(path.join(managed, 'auth.json'), 'utf8')).toBe(selected);
+  });
+
   it('recognizes file-auth adapters', () => {
     expect(isFileAuthAdapter('codex')).toBe(true);
     expect(isFileAuthAdapter('grok')).toBe(true);
@@ -149,14 +189,18 @@ describe('managed-credentials', () => {
       });
 
     fs.writeFileSync(file, blob('kimi-user-a', 'old'));
-    const before = nativeAuthIdentity('kimi', home).fingerprint;
+    const beforeIdentity = nativeAuthIdentity('kimi', home);
+    const before = beforeIdentity.fingerprint;
     fs.writeFileSync(file, blob('kimi-user-a', 'rotated'));
-    const rotated = nativeAuthIdentity('kimi', home).fingerprint;
+    const rotatedIdentity = nativeAuthIdentity('kimi', home);
+    const rotated = rotatedIdentity.fingerprint;
     fs.writeFileSync(file, blob('kimi-user-b', 'other'));
     const other = nativeAuthIdentity('kimi', home).fingerprint;
 
     expect(before).toMatch(/^[a-f0-9]{64}$/);
     expect(rotated).toBe(before);
+    expect(beforeIdentity.revision).toMatch(/^[a-f0-9]{64}$/);
+    expect(rotatedIdentity.revision).not.toBe(beforeIdentity.revision);
     expect(other).not.toBe(before);
   });
 

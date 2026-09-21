@@ -498,6 +498,49 @@ describe('openCliLoginTerminal — o que o watcher entrega ao fechar', () => {
     expect(finished[0]!.verified).toBe(false);
   });
 
+  it.each([
+    { reauthenticate: true, success: false, revision: 'new' },
+    { reauthenticate: false, success: true, revision: 'new' },
+    { reauthenticate: true, success: true, revision: 'old' },
+  ])('does not prove same-account login without all evidence: %j', async ({ reauthenticate, success, revision }) => {
+    panes.open = [{ id: 'pane-login' }];
+    const before = { ...baseline, sessionRevision: 'old' };
+    let onData: ((chunk: string) => void) | undefined;
+    Object.defineProperty(window, 'nexus', { configurable: true, value: {
+      providers: { authStatus: vi.fn(async () => [{ ...before, sessionRevision: revision }]) },
+      pty: { onData: (_id: string, cb: (text: string) => void) => { onData = cb; return () => undefined; } },
+    } });
+    const finished: CliLoginFinish[] = [];
+    await openCliLoginTerminal({ command: 'codex login', adapterId: 'codex', baseline: before,
+      reauthenticate, onFinished: (finish) => finished.push(finish) });
+    panes.open = [];
+    onData?.(success ? 'Signed in as user@example.com\n' : 'shell prompt\n');
+    await vi.waitFor(() => expect(finished).toHaveLength(1));
+    expect(finished[0]!.verified).toBe(false);
+  });
+
+  it('accepts same-account renewal only after explicit login success and changed credentials', async () => {
+    panes.open = [{ id: 'pane-login' }];
+    const before = { ...baseline, sessionRevision: 'old' };
+    let current = { ...before };
+    let onData: ((chunk: string) => void) | undefined;
+    Object.defineProperty(window, 'nexus', { configurable: true, value: {
+      providers: { authStatus: vi.fn(async () => [current]) },
+      pty: { onData: (_id: string, cb: (text: string) => void) => { onData = cb; return () => undefined; } },
+    } });
+    const finished: CliLoginFinish[] = [];
+    await openCliLoginTerminal({ command: 'codex login', adapterId: 'codex', baseline: before,
+      reauthenticate: true, onFinished: (finish) => finished.push(finish) });
+    await Promise.resolve();
+    current = { ...before, sessionRevision: 'new' };
+    onData?.('background output\n');
+    await Promise.resolve();
+    expect(finished).toHaveLength(0);
+    onData?.('Signed in as user@example.com\n');
+    await vi.waitFor(() => expect(finished).toHaveLength(1));
+    expect(finished[0]!.verified).toBe(true);
+  });
+
   it('linha Signed in não encerra antes de a credencial nova ficar visível', async () => {
     panes.open = [{ id: 'pane-login' }];
     let current = { ...baseline };

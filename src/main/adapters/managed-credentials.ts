@@ -548,6 +548,14 @@ export function shouldWriteAuthFile(
     if (!exists(existingPath)) return true;
     const onDisk = fs.readFileSync(existingPath, 'utf8');
     if (onDisk === vaultBlob) return false;
+    if (adapterId && authBlobIsUsable(adapterId, vaultBlob) && !authBlobIsUsable(adapterId, onDisk)) return true;
+    if (adapterId === 'codex' || adapterId === 'grok') {
+      const subject = identityFromAuthBlob(adapterId, vaultBlob).subject;
+      if (subject && identityFromAuthBlob(adapterId, onDisk).subject !== subject) return true;
+    }
+    if (adapterId && compareAuthBlobIdentity(adapterId, vaultBlob, onDisk) === 'different') {
+      return true;
+    }
     // TOML plano não carrega sinal de frescor e o blob não guarda identidade —
     // então "diferente" só pode significar troca de conta, e a escolha do
     // usuário (o vault) manda. Recusar aqui faria o spawn rodar como a conta
@@ -578,6 +586,8 @@ export function materializeManagedHome(
     home?: string;
     systemHome?: string | null;
     authRelativePath?: string;
+    /** Explicit, verified reauthentication supersedes the previous session. */
+    replace?: boolean;
   } = {},
 ): string {
   const spec = MANAGED_PROVIDER_SPECS[adapterId];
@@ -620,7 +630,7 @@ export function materializeManagedHome(
   }
 
   const authPath = authTargetPath(adapterId, managedHome, options.authRelativePath);
-  if (shouldWriteAuthFile(authPath, authBlob, adapterId)) {
+  if (options.replace || shouldWriteAuthFile(authPath, authBlob, adapterId)) {
     writePrivateFile(authPath, authBlob);
   }
 
@@ -1023,7 +1033,7 @@ export function hasNativeFileAuth(adapterId: string, home = os.homedir()): boole
 export function nativeAuthIdentity(
   adapterId: string,
   home = os.homedir(),
-): { email?: string; fingerprint?: string } {
+): { email?: string; fingerprint?: string; revision?: string } {
   const capture = captureNativeAuth(adapterId, home);
   if (!capture) return {};
   const parsedIdentity = identityFromAuthBlob(adapterId, capture.blob);
@@ -1034,6 +1044,9 @@ export function nativeAuthIdentity(
   const fingerprint = authFingerprint(adapterId, capture.blob, identity);
   return {
     ...(identity.email ? { email: identity.email } : {}),
-    ...(fingerprint ? { fingerprint } : {}),
+    ...(fingerprint ? {
+      fingerprint,
+      revision: createHash('sha256').update(`${adapterId}\0${capture.blob}`).digest('hex'),
+    } : {}),
   };
 }

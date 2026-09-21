@@ -4,8 +4,33 @@ import { fetchLiveProviderWindows, parseKimiUsage } from './provider-live-usage'
 
 const nativeOpenCode = vi.hoisted(() => vi.fn(() => [{ providerId: 'custom', key: 'native-other-account' }]));
 vi.mock('./opencode-auth', () => ({ loadOpenCodeAuthKeys: nativeOpenCode }));
+const agyCli = vi.hoisted(() => vi.fn<() => Promise<QuotaWindow[] | null>>(async () => null));
+vi.mock('./agy-cli-usage', () => ({ fetchAgyCliUsageWindows: agyCli }));
 
 describe('fetchLiveProviderWindows', () => {
+  it('uses each saved Codex account CLI when its access token needs renewal', async () => {
+    const quotaFor = async (id: string) => ({ windows: [{ kind: 'weekly' as const, label: 'Semanal', usedRatio: id === 'account-a' ? 0.2 : 0.8, source: 'provider-api' as const, confidence: 'high' as const }] });
+    const deps = {
+      resolveCodexAuthCandidates: () => [{ accessToken: 'expired' }],
+      codexAccountUsage: quotaFor,
+      fetchImpl: async () => ({ ok: false, status: 401, json: async () => ({}), text: async () => '' }),
+    };
+    expect((await fetchLiveProviderWindows('codex', 'account-a', deps)).windows?.[0].usedRatio).toBe(0.2);
+    expect((await fetchLiveProviderWindows('codex', 'account-b', deps)).windows?.[0].usedRatio).toBe(0.8);
+    expect((await fetchLiveProviderWindows('codex', undefined, deps)).windows).toBeNull();
+  });
+  it('reads native AGY quota with the CLI while no bridge or legacy credential is available', async () => {
+    agyCli.mockResolvedValueOnce([{ kind: 'weekly', label: 'Gemini Models · Semanal', usedRatio: 0.25, source: 'provider-api', confidence: 'high' }]);
+    const result = await fetchLiveProviderWindows('agy', undefined, {});
+    expect(result.windows?.[0].usedRatio).toBe(0.25);
+  });
+
+  it('does not lend native AGY CLI quota to a saved account', async () => {
+    agyCli.mockClear();
+    expect((await fetchLiveProviderWindows('agy', 'saved-account', {})).windows).toBeNull();
+    expect(agyCli).not.toHaveBeenCalled();
+  });
+
   it('uses an explicitly routed provider without changing the adapter/account that owns the key', async () => {
     const resolveApiQuotaKey = vi.fn(() => 'owner-bound-key');
     const requests: string[] = [];

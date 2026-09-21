@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import type { Db } from './db';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 const accountDeps = vi.hoisted(() => ({
   secrets: new Map<string, string>(),
@@ -410,6 +413,28 @@ describe('prepareAccountForSpawn', () => {
     expect(result.authEnv.CODEX_HOME).toContain('codex');
     expect(result.authEnv.CODEX_HOME).toContain(account!.id);
     expect(managedDeps.materialize).toHaveBeenCalled();
+  });
+
+  it('persists a newer native login for its own Codex account before spawn', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'account-renewed-'));
+    const homeSpy = vi.spyOn(os, 'homedir').mockReturnValue(home);
+    try {
+      const old = codexCapture('owner@example.test', 'workspace-a', 'old');
+      const fresh = JSON.stringify({
+        ...JSON.parse(codexCapture('owner@example.test', 'workspace-a', 'fresh').blob),
+        last_refresh: '2026-09-21T00:00:00Z',
+      });
+      managedDeps.capture.mockReturnValue({ ...old, blob: JSON.stringify({ ...JSON.parse(old.blob), last_refresh: '2026-09-10T00:00:00Z' }) });
+      const account = addActiveSessionAccount('codex', 'Saved account')!;
+      fs.mkdirSync(path.join(home, '.codex'));
+      fs.writeFileSync(path.join(home, '.codex/auth.json'), fresh);
+
+      expect(prepareAccountForSpawn('codex', account.id).ok).toBe(true);
+      expect(accountDeps.secrets.get(`acctcred:${account.id}`)).toBe(fresh);
+    } finally {
+      homeSpy.mockRestore();
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it('keeps two Codex workspaces independent even when their email is the same', () => {

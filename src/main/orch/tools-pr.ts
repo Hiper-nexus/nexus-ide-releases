@@ -1,10 +1,13 @@
-import type { McpToolDef } from './mcp-protocol';
+import { assertMcpInvocationCurrent, type McpToolDef } from './mcp-protocol';
 import { str } from './tool-util';
+import { prCreateArgsSchema } from './mcp-args-validation';
+import { assertIsolatedWriterGitTool } from './isolated-writer-policy';
 import { resolveCwdForScope } from './workspace-path';
 import { executionScopeFor } from './gate';
 import { defaultGithubHttp } from '../integrations/github-api';
 import {
   gitCurrentBranch,
+  gitDefaultBranch,
   gitRemoteOrigin,
 } from '../integrations/git-workspace';
 import { getGithubToken } from '../integrations/token-vault';
@@ -19,6 +22,7 @@ export type PrToolDeps = {
   token: () => string | null;
   remoteUrl: (cwd: string) => string | null;
   currentBranch: (cwd: string) => string | null;
+  defaultBranch: (cwd: string) => string;
   http: GitHubHttp;
   now?: () => number;
 };
@@ -27,6 +31,7 @@ const defaultDeps: PrToolDeps = {
   token: getGithubToken,
   remoteUrl: gitRemoteOrigin,
   currentBranch: gitCurrentBranch,
+  defaultBranch: gitDefaultBranch,
   http: defaultGithubHttp,
 };
 
@@ -44,9 +49,75 @@ function operatorAuth(now: number, reason: string): ForgeAuthorization {
   };
 }
 
+function githubAuthNeeded() {
+  return {
+    ok: false,
+    code: 'auth_needed',
+    error: 'GitHub sem autenticação válida neste computador. Conclua gh auth login --hostname github.com ' +
+      'no terminal do operador ou conecte GitHub nas integrações do Nexus; depois tente novamente. ' +
+      'Um login em outra máquina não autentica este computador.',
+  };
+}
+
 export function buildPrTools(overrides: Partial<PrToolDeps> = {}): McpToolDef[] {
   const deps: PrToolDeps = { ...defaultDeps, ...overrides };
   const now = deps.now ?? Date.now;
+
+  const create: McpToolDef = {
+    name: 'nexus_pr_create',
+    description:
+      'Create a GitHub pull request from an already published branch in this checkout. ' +
+      'Works for the operator without a mission or worktree. Does not push commits. ' +
+      'Defaults head to the current branch and base to origin/HEAD (fallback main). ' +
+      'Uses the configured GitHub credential or the native gh login on this machine.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', minLength: 1, maxLength: 256 },
+        body: { type: 'string', maxLength: 65_536, description: 'PR description; empty string is allowed' },
+        head: { type: 'string', maxLength: 255, description: 'Published branch within origin (defaults to current branch)' },
+        base: { type: 'string', maxLength: 255, description: 'Target branch (defaults to origin/HEAD)' },
+        draft: { type: 'boolean' },
+        cwd: { type: 'string', description: 'Directory inside the authorized checkout' },
+      },
+      required: ['title', 'body'],
+      additionalProperties: false,
+    },
+    handler: async (args, ctx, invocation) => {
+      assertIsolatedWriterGitTool(ctx, 'nexus_pr_create');
+      const input = prCreateArgsSchema.parse(args);
+      const cwd = resolveCwd(ctx, input.cwd);
+      const forge = selectForge(deps.remoteUrl(cwd));
+      // This credential belongs to GitHub only; never hand it to another forge.
+      if (!forge || forge.providerId !== 'github' || forge.host !== 'github.com') {
+        return { ok: false, error: 'origin precisa apontar para um repositório do GitHub.com' };
+      }
+      const head = input.head ?? deps.currentBranch(cwd);
+      if (!head) return { ok: false, error: 'HEAD destacado: selecione uma branch antes de criar o PR' };
+      const base = input.base ?? deps.defaultBranch(cwd);
+      prCreateArgsSchema.parse({ ...input, head, base });
+      if (head === base) return { ok: false, error: 'head e base são a mesma branch; selecione a branch do trabalho' };
+      const token = deps.token();
+      if (!token) return githubAuthNeeded();
+      assertMcpInvocationCurrent(invocation);
+      const provider = resolveForgeProvider(forge, token, deps.http);
+      try {
+        const grantedAt = now();
+        const result = await provider.createReview(
+          { owner: forge.owner, name: forge.name, host: forge.host },
+          { title: input.title, body: input.body, sourceBranch: head, targetBranch: base, draft: input.draft },
+          { grantedBy: 'mcp-agent', grantedAt, scope: ['create-review'],
+            reason: 'Criar PR do GitHub via MCP', expiresAt: grantedAt + 2 * 60_000 },
+        );
+        if (result.ok) return { ok: true, url: result.url, number: result.number };
+        if (result.apiError?.type === 'auth_required') return githubAuthNeeded();
+        return { ok: false, error: result.reason, githubError: result.apiError };
+      } catch {
+        // Transport errors may embed authorization headers. Never return them.
+        return { ok: false, error: 'Falha ao consultar GitHub. Confira a conexão e use nexus_pr_inspect antes de repetir: o PR pode ter sido criado.' };
+      }
+    },
+  };
 
   const inspect: McpToolDef = {
     name: 'nexus_pr_inspect',
@@ -261,5 +332,5 @@ export function buildPrTools(overrides: Partial<PrToolDeps> = {}): McpToolDef[] 
     },
   };
 
-  return [inspect, enqueue, autoMerge];
+  return [create, inspect, enqueue, autoMerge];
 }

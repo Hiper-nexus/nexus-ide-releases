@@ -4152,6 +4152,74 @@ export const RELEASE_07647: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.68',
+  date: '2026-09-21',
+  codename: 'Grok 4.7',
+  summary: 'Grok 4.7 disponível no catálogo do Nexus, com quatro níveis de raciocínio e estimativa de custo atualizada.',
+  highlights: [
+    {
+      title: 'Grok 4.7 no seletor de modelos',
+      detail: 'O novo modelo vem no catálogo e é o padrão para novas escolhas Grok. As escolhas que você já salvou continuam preservadas.',
+    },
+    {
+      title: 'Raciocínio até xhigh',
+      detail: 'Escolha low, medium, high ou xhigh nas opções da sessão. High é o padrão do modelo.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Estimativa de custo do Grok 4.7',
+      detail: 'O medidor usa os preços-base publicados de US$ 2 por milhão de tokens de entrada e US$ 6 de saída, sem herdar o preço do Grok 4 antigo.',
+    },
+  ],
+};
+
+export const RELEASE_07667: AppRelease = {
+  version: '0.76.67',
+  date: '2026-09-21',
+  codename: 'Cota e login de cada conta',
+  summary:
+    'Claude, Codex, Grok e Antigravity passam a consultar as credenciais e ' +
+    'cotas corretas. Reautenticar preserva a sessão anterior e mantém a conta escolhida.',
+  highlights: [
+    {
+      title: 'Login Codex por código dentro do Nexus',
+      detail: 'O pane de login mostra o endereço e o código de autorização. A conta escolhida só é atualizada depois da confirmação da sessão.',
+    },
+    {
+      title: 'Criar PR no checkout atual',
+      detail: 'A ferramenta nexus_pr_create abre um PR no GitHub a partir de uma branch publicada, sem exigir worktree. Uma conexão GitHub válida continua necessária.',
+    },
+    {
+      title: 'Consumo separado por conta Claude',
+      detail: 'Cada conta usa seu próprio cache. Uma sessão nativa só fornece a cota de uma conta salva depois de confirmar sua identidade com o provedor.',
+    },
+    {
+      title: 'Codex e Grok acompanham o login renovado',
+      detail: 'As consultas usam a credencial atual da mesma conta. Codex pode consultar e renovar pelo próprio CLI; sessão revogada pede novo login.',
+    },
+    {
+      title: 'Cota Antigravity mesmo com o pane fechado',
+      detail: 'A CLI consulta as janelas de consumo sem abrir conversa nem gerar tokens.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Reautenticação preserva a conta certa',
+      detail: 'Tentar novamente mantém a conta selecionada. A sessão atual é preservada antes do novo login, e outra identidade não pode substituir a escolhida.',
+    },
+    {
+      title: 'Estado de login e bloqueios confiáveis',
+      detail: 'O e-mail salvo não esconde mais uma sessão revogada nem apaga um bloqueio real de consumo.',
+    },
+    {
+      title: 'Menos tentativas repetidas no Keychain',
+      detail: 'Consultas simultâneas ao mesmo item são reunidas. Uma negação não abre outra CLI para tentar de novo, e a gravação não repete a tentativa por shell.',
+    },
+  ],
+};
+
+export const RELEASE_07666: AppRelease = {
   version: '0.76.66',
   date: '2026-09-21',
   codename: 'Multi-conta: o login novo gruda, em qualquer LLM',

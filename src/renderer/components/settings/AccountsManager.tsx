@@ -138,6 +138,7 @@ export function AccountsManager({
   const [loginRetry, setLoginRetry] = useState<{
     nameHint: string;
     preserveCurrent: boolean;
+    targetAccountId?: string;
   } | null>(null);
   const [canSnapshot, setCanSnapshot] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -480,15 +481,19 @@ export function AccountsManager({
     });
     try {
       const baseline = await refreshAuth();
-      // Só o cadastro de MAIS uma conta preserva a atual. Reentrar numa conta
-      // expirada é consertar aquela linha, não trocar de conta: guardar o blob
-      // morto antes só sujaria o roster.
-      if (preserveCurrent) await preserveCurrentSession(baseline);
+      // The native login can be a healthy sibling of the row being repaired.
+      // Save it before the CLI replaces its only native credential.
+      const hasNativeSession = baseline?.state === 'ok' &&
+        Boolean(baseline.sessionFingerprint || emailFromAuthDetail(baseline.detail));
+      if (preserveCurrent || hasNativeSession) {
+        await preserveCurrentSession(baseline);
+      }
       const result = await openCliLoginTerminal({
         command: loginCommand,
         adapterId,
         adapterLabel: displayName,
         baseline,
+        reauthenticate: Boolean(targetAccountId),
         onFinished: (finish) => {
           void saveVerifiedLogin(finish, typedLabel, targetAccountId);
         },
@@ -509,7 +514,7 @@ export function AccountsManager({
         setLoginRetry(null);
       } else {
         showNotice(result.error, 'err');
-        setLoginRetry({ nameHint, preserveCurrent });
+        setLoginRetry({ nameHint, preserveCurrent, targetAccountId });
         onLoginActivity?.('err', result.error);
         useToastStore.getState().push('error', `Login ${displayName}`, {
           detail: result.error,
@@ -521,7 +526,7 @@ export function AccountsManager({
       const detail = err instanceof AccountPreservationError
         ? err.message : 'Não foi possível abrir o terminal de login.';
       showNotice(detail, 'err');
-      setLoginRetry({ nameHint, preserveCurrent });
+      setLoginRetry({ nameHint, preserveCurrent, targetAccountId });
       onLoginActivity?.('err', detail);
       useToastStore.getState().push('error', `Login ${displayName}`, {
         detail,
@@ -798,7 +803,7 @@ export function AccountsManager({
             <button
               type="button"
               className="settings-btn"
-              onClick={() => void openLoginTerminal(loginRetry.nameHint, loginRetry.preserveCurrent)}
+              onClick={() => void openLoginTerminal(loginRetry.nameHint, loginRetry.preserveCurrent, loginRetry.targetAccountId)}
               disabled={busy}
             >
               Tentar abrir novamente

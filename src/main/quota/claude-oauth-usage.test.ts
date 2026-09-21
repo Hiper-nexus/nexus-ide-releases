@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CLAUDE_CLI_USAGE_ARGS,
   CLAUDE_CLI_USAGE_TIMEOUT_MS,
@@ -11,6 +12,7 @@ import {
   parseClaudeCliUsage,
   parseClaudeOauthUsage,
 } from './claude-oauth-usage';
+const accessSync = fs.accessSync;
 
 /** Fixture shaped like live Anthropic /api/oauth/usage (2026-07). */
 const LIVE_SHAPE = {
@@ -263,6 +265,22 @@ describe('parseClaudeCliResetDate', () => {
 });
 
 describe('fetchClaudeCliUsageWindows', () => {
+  beforeEach(() => {
+    vi.spyOn(fs, 'accessSync').mockImplementation((file, mode) => {
+      if (!/(?:^|[/\\])claude$/.test(String(file))) accessSync(file, mode);
+    });
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('does not fabricate usage when no CLI binary is installed', async () => {
+    vi.mocked(fs.accessSync).mockImplementation((file, mode) => {
+      if (/(?:^|[/\\])claude$/.test(String(file))) throw new Error('missing CLI');
+      accessSync(file, mode);
+    });
+    const runImpl = vi.fn(async () => ({ code: 0, stdout: CLI_TEXT }));
+    expect(await fetchClaudeCliUsageWindows({ runImpl })).toBeNull();
+    expect(runImpl).not.toHaveBeenCalled();
+  });
   it('spawna print-only: sem sessão persistida, sem MCP, stdin fechado', () => {
     // Contrato ToS/higiene (Codenotch): só --print evita gravar
     // ~/.claude/projects e diálogos de trust; --strict-mcp-config sem

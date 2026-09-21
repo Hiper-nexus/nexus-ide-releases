@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash } from 'node:crypto';
 
 /**
  * Claude Code subscription credential swap (macOS) — ported from the
@@ -300,80 +300,23 @@ function writeViaInteractiveStdin(slimBlob: string, service = CLAUDE_KEYCHAIN_SE
 }
 
 /**
- * Fallback: write secret to a mode-0600 temp file, then `security
- * add-generic-password -w "$(cat …)"` is avoided (shell expansion). Instead
- * we pass the password via `security add-generic-password … -w` reading from
- * a file with `-w` as the file contents path is NOT supported on all macOS
- * versions. We use: `security add-generic-password -U -s … -a … -w <blob>`
- * only when the slim blob is short enough that argv is acceptable for the
- * *fallback* path AND we already refused oversized interactive lines —
- * actually argv still shows in ps. Prefer:
- *
- *   security add-generic-password -U -s S -a A -w "$(cat file)"
- *
- * is shell. The safe portable fallback without shell is still spawn with
- * `-w` and the slim secret as argv when slim is small (always ~500B after
- * slim), which is the same surface the interactive path would have put on
- * the security tool's internal command buffer — still better than truncation.
- *
- * For true no-argv secret injection without interactive line limits we use
- * a mode-0600 temp file + `security` reading via stdin protocol alternative:
- * `add-generic-password` does not support @file. So the robust fallback is
- * file-backed: write slim to temp 0600, then run:
- *   security add-generic-password -U -s S -a A -w "$(cat FILE)"
- * through `/bin/bash -c` with the path embedded but secret only in the file
- * that bash cats — still briefly in bash memory, not in Nexus argv, not in a
- * truncated -i line.
- */
-function writeViaTempFileFallback(slimBlob: string): boolean {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-claude-cred-'));
-  const file = path.join(dir, `blob-${randomBytes(8).toString('hex')}`);
-  try {
-    fs.writeFileSync(file, slimBlob, { mode: 0o600, flag: 'wx' });
-    fs.chmodSync(file, 0o600);
-    const account = os.userInfo().username;
-    // Secret lives only in the 0600 file; argv carries the path, not the blob.
-    // Use execFileSync with bash so we never put the secret on Nexus argv.
-    const script =
-      `security add-generic-password -U ` +
-      `-s ${JSON.stringify(CLAUDE_KEYCHAIN_SERVICE)} ` +
-      `-a ${JSON.stringify(account)} ` +
-      `-w "$(cat ${JSON.stringify(file)})"`;
-    const res = spawnSync('/bin/bash', ['-c', script], {
-      stdio: ['ignore', 'ignore', 'ignore'],
-      timeout: 5_000,
-      killSignal: 'SIGKILL',
-    });
-    return res.status === 0;
-  } catch {
-    return false;
-  } finally {
-    try {
-      fs.rmSync(dir, { recursive: true, force: true });
-    } catch {
-      // Best-effort cleanup; never leave secrets if we can help it.
-    }
-  }
-}
-
-/**
  * Restore a saved credential blob into the active Claude keychain service.
  *
  * Always slims to `{ claudeAiOauth }` first (drops mcpOAuth). Primary path:
- * interactive `security -i` when the command fits. Fallback: mode-0600 temp
- * file + bash cat into `add-generic-password` (never a truncated -i line).
+ * interactive `security -i` when the command fits. Never retry through a
+ * shell or expose credentials in child-process arguments.
  * Failure returns false without claiming success.
  */
 export function writeActiveClaudeCredential(blob: string): boolean {
-  return writeClaudeCredential(blob, CLAUDE_KEYCHAIN_SERVICE, true);
+  return writeClaudeCredential(blob, CLAUDE_KEYCHAIN_SERVICE);
 }
 
 /** Managed profiles never fall back to a secret-bearing argv or the native item. */
 export function writeManagedClaudeCredential(authDir: string, blob: string): boolean {
-  return writeClaudeCredential(blob, managedClaudeKeychainService(authDir), false);
+  return writeClaudeCredential(blob, managedClaudeKeychainService(authDir));
 }
 
-function writeClaudeCredential(blob: string, service: string, allowLegacyFallback: boolean): boolean {
+function writeClaudeCredential(blob: string, service: string): boolean {
   if (!isMac() || !blob) return false;
   if (blob.includes('\n') || blob.includes('\r')) {
     console.warn('[claude-credential] credential blob contains newline; refusing');
@@ -394,17 +337,8 @@ function writeClaudeCredential(blob: string, service: string, allowLegacyFallbac
   // continuaria servindo a credencial anterior.
   invalidateClaudeCredentialCache(service);
 
-  if (writeViaInteractiveStdin(slim, service)) {
-    return true;
-  }
-  if (!allowLegacyFallback) return false;
-
-  // Interactive path refused (oversized line or security status != 0).
-  // Fallback must not truncate — full slim secret via temp file.
-  const ok = writeViaTempFileFallback(slim);
-  if (!ok) {
-    console.warn('[claude-credential] failed to restore credential (interactive + fallback)');
-  }
+  const ok = writeViaInteractiveStdin(slim, service);
+  if (!ok) console.warn('[claude-credential] bounded Keychain write failed');
   return ok;
 }
 

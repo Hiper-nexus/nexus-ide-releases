@@ -9,7 +9,7 @@ import type {
   ModelInfoMap,
 } from '../../shared/adapter-types';
 import publishedCatalogRaw from '../../../resources/model-catalog.json';
-import { CODEX_FRONTIER_MODEL } from '../../shared/model-defaults';
+import { CODEX_FRONTIER_MODEL, GROK_FRONTIER_MODEL } from '../../shared/model-defaults';
 import { bareModelId } from '../../vendor/omp/catalog/identity';
 import {
   RICH_MODEL_CATALOG,
@@ -111,8 +111,9 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
       ],
     },
     grok: {
-      default: 'grok-4.6',
+      default: GROK_FRONTIER_MODEL,
       models: [
+        { id: GROK_FRONTIER_MODEL, availability: 'paid', costTier: 'high', source: 'bundled' },
         { id: 'grok-4.6', availability: 'paid', costTier: 'high', source: 'bundled' },
         {
           id: 'grok-4.5',

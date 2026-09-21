@@ -11,6 +11,11 @@ type NativeOAuthCacheEntry =
   | { kind: 'unavailable'; until: number };
 
 const nativeOAuthCache = new Map<string, NativeOAuthCacheEntry>();
+const nativeOAuthFlights = new Map<string, {
+  promise: Promise<string | null>;
+  fresh: boolean;
+}>();
+const nativeOAuthGenerations = new Map<string, symbol>();
 
 export interface NativeOAuthReadOptions {
   /**
@@ -22,8 +27,15 @@ export interface NativeOAuthReadOptions {
 }
 
 export function invalidateNativeOAuthCredentialCache(service?: string): void {
-  if (service === undefined) nativeOAuthCache.clear();
-  else nativeOAuthCache.delete(service);
+  if (service === undefined) {
+    nativeOAuthCache.clear();
+    nativeOAuthFlights.clear();
+    nativeOAuthGenerations.clear();
+  } else {
+    nativeOAuthCache.delete(service);
+    nativeOAuthFlights.delete(service);
+    nativeOAuthGenerations.delete(service);
+  }
 }
 
 /** Seed after a trusted capture/write so status probes do not reread secrets. */
@@ -31,11 +43,9 @@ export function rememberNativeOAuthCredential(
   service: string,
   blob: string,
 ): void {
+  invalidateNativeOAuthCredentialCache(service);
   const credential = slimClaudeCredentialBlob(blob);
-  if (!credential) {
-    nativeOAuthCache.delete(service);
-    return;
-  }
+  if (!credential) return;
   nativeOAuthCache.set(service, {
     kind: 'value',
     credential,
@@ -71,7 +81,23 @@ export function readNativeOAuthCredential(
       ? Promise.reject(new Error('Keychain unavailable'))
       : Promise.resolve(held.credential);
   }
-  return new Promise((resolve, reject) => {
+  const heldFlight = shouldCache ? nativeOAuthFlights.get(service) : undefined;
+  if (heldFlight) {
+    if (!options.bypassCache || heldFlight.fresh) return heldFlight.promise;
+    // A post-login observation cannot consume a pre-login result. Wait for
+    // that read, then refresh; a denial still observes the backoff above.
+    const refresh = () => readNativeOAuthCredential(service, execImpl, options);
+    return heldFlight.promise.then(refresh, refresh);
+  }
+  const generation = Symbol(service);
+  if (shouldCache) {
+    // While a fresh observation is pending, later callers must join it rather
+    // than consume the successful credential that the login just replaced.
+    if (options.bypassCache) nativeOAuthCache.delete(service);
+    nativeOAuthGenerations.set(service, generation);
+  }
+  const canPublish = () => shouldCache && nativeOAuthGenerations.get(service) === generation;
+  const pending = new Promise<string | null>((resolve, reject) => {
     execImpl('security', ['find-generic-password', '-s', service, '-w'], {
       timeout: 5_000,
       killSignal: 'SIGKILL',
@@ -80,7 +106,7 @@ export function readNativeOAuthCredential(
     }, (error, stdout) => {
       if (!error) {
         const credential = slimClaudeCredentialBlob(stdout);
-        if (shouldCache) {
+        if (canPublish()) {
           nativeOAuthCache.set(service, {
             kind: 'value',
             credential,
@@ -90,7 +116,7 @@ export function readNativeOAuthCredential(
         return resolve(credential);
       }
       if (error.code === 44) {
-        if (shouldCache) {
+        if (canPublish()) {
           nativeOAuthCache.set(service, {
             kind: 'value',
             credential: null,
@@ -99,7 +125,7 @@ export function readNativeOAuthCredential(
         }
         return resolve(null);
       }
-      if (shouldCache) {
+      if (canPublish()) {
         nativeOAuthCache.set(service, {
           kind: 'unavailable',
           until: Date.now() + NATIVE_OAUTH_DENIED_BACKOFF_MS,
@@ -108,6 +134,14 @@ export function readNativeOAuthCredential(
       reject(new Error('Keychain unavailable'));
     });
   });
+  if (!shouldCache) return pending;
+  const flight = pending.finally(() => {
+    if (!canPublish()) return;
+    nativeOAuthFlights.delete(service);
+    nativeOAuthGenerations.delete(service);
+  });
+  nativeOAuthFlights.set(service, { promise: flight, fresh: options.bypassCache === true });
+  return flight;
 }
 
 export async function readNativeOAuthKeychain(
