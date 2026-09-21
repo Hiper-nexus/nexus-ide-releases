@@ -77,6 +77,11 @@ describe('priceForModel', () => {
 });
 
 describe('estimateCost', () => {
+  it('prices Grok 4.7 at its published base rates instead of the Grok 4 fallback', () => {
+    expect(estimateCost('grok-4.7', 1_000_000, 0)).toBe(2);
+    expect(estimateCost('xai/grok-4.7', 0, 1_000_000)).toBe(6);
+  });
+
   it('prices input and output tokens separately', () => {
     // claude-opus-5: $5/M in, $25/M out.
     const cost = estimateCost('claude-opus-5', 1_000_000, 1_000_000);

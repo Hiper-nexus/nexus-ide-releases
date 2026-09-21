@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.68 — Grok 4.7
+
+- **Grok 4.7 no catálogo**: disponível no seletor e como padrão de novas escolhas Grok, inclusive com cache local de modelos antigo. Escolhas já salvas são preservadas.
+- **Quatro níveis de raciocínio**: low, medium, high (padrão) e xhigh, enviados à CLI pelas opções da sessão.
+- **Estimativa de custo atualizada**: preços-base de US$ 2/M de entrada e US$ 6/M de saída, conforme a [documentação oficial](https://docs.x.ai/developers/grok-4-7). O medidor continua sendo uma estimativa, sem preços específicos de contexto longo ou da variante Fast.
+
 ## 0.76.67 — Cota e login de cada conta
 
 - **Login Codex por código no Nexus**: o comando padrão abre o fluxo de dispositivo no pane existente; preservação e validação da conta continuam valendo. Métodos de login personalizados permanecem respeitados.
