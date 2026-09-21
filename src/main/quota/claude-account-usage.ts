@@ -35,7 +35,7 @@ import { getAccount } from '../persistence/account-store';
 import { getSecret, setSecret } from '../persistence/secrets-store';
 import {
   CLAUDE_MANAGED_AUTH_ENV,
-  hasManagedClaudeAuth,
+  managedClaudeAuthHasCredential,
   managedClaudeAuthDirectory,
   materializeManagedClaudeAuth,
   readManagedClaudeAuth,
@@ -422,7 +422,11 @@ export async function fetchClaudeAccountUsageWindows(
   // 1) Auth gerenciada: `claude /usage` scoped. O CLI lê a credencial
   //    isolada, renova sozinho se preciso e é dono do item de keychain —
   //    nenhum prompt, nenhum toque no login nativo.
-  if (hasManagedClaudeAuth(accountId)) {
+  // O diretório existir NÃO basta: um escopo vazio faz o `claude` cair na
+  // credencial nativa e devolver o uso de OUTRA conta nesta linha — foi o que
+  // pintou duas contas com o mesmo consumo. Sem credencial no escopo, a
+  // cascata segue para as fontes ancoradas em identidade.
+  if (managedClaudeAuthHasCredential(accountId, { home: opts.home })) {
     const directory = managedClaudeAuthDirectory(accountId);
     const probe = await probeClaudeCliUsage({
       now,
@@ -501,7 +505,13 @@ export async function fetchClaudeAccountUsageWindows(
   if (!blob) {
     return {
       windows: null,
-      hint: hint ?? (hasManagedClaudeAuth(accountId) ? 'unavailable' : 'no-credential'),
+      // Diretório vazio é conta SEM credencial, não fonte indisponível: o
+      // usuário precisa ver «entre novamente», não «tente mais tarde».
+      hint:
+        hint ??
+        (managedClaudeAuthHasCredential(accountId, { home: opts.home })
+          ? 'unavailable'
+          : 'no-credential'),
     };
   }
   if (!claudeCredentialBlobIsUsable(blob) || claudeBlobIsExpiredUnhealable(blob, now)) {
