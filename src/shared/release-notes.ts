@@ -4152,6 +4152,52 @@ export const RELEASE_07647: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.64',
+  date: '2026-09-21',
+  codename: 'Sessão morta vira botão, plano por conta e menus internos redesenhados',
+  summary:
+    'Cota deixa o «Sem leitura» genérico: a linha do Claude agora sabe ' +
+    'dizer «Entrar novamente» quando a sessão morreu (401 do OAuth, token ' +
+    'vencido, evidência de login no ~/.claude.json) — e o cache HTTP do ' +
+    'Claude Desktop cobre a conta mesmo com o CLI sem credencial. Cada ' +
+    'conexão mostra o plano detectado (ChatGPT Pro, Claude Max 20×) e a ' +
+    'frota soma o custo mensal das assinaturas. Todos os menus internos ' +
+    'de Configurações foram revistos.',
+  highlights: [
+    {
+      title: '«Entrar novamente» de verdade',
+      detail:
+        'auth-expired chega na linha como hint acionável: 401/403 do ' +
+        'endpoint OAuth, expiresAt vencido do token nativo e stderr do ' +
+        'CLI viram estado com CTA de re-login, não «—».',
+    },
+    {
+      title: 'Fontes Codenotch: Desktop + bridge AGY',
+      detail:
+        'Claude Desktop Simple Cache (zstd, freshness-gated, ancorado ' +
+        'por organizationUuid) lê cota quando a credencial do CLI morreu; ' +
+        'a bridge local do Antigravity lê o language-server via CSRF — ' +
+        'e rejeita o processo Windsurf/Devin (mesma família Codeium).',
+    },
+    {
+      title: 'Plano por conta e total da frota',
+      detail:
+        'Claude (rateLimitTier), Codex (chatgpt_plan_type) e AGY ' +
+        '(currentTier) detectam o plano; a seção soma «$400/mês em N ' +
+        'assinaturas» e cada linha carrega o selo do seu plano.',
+    },
+    {
+      title: 'Menus internos redesenhados',
+      detail:
+        'Seis frentes de polish em Configurações (conta, catálogo, ' +
+        'sistema, agentes, mídia, shell): grupos acessíveis, estados ' +
+        'vazios/erro consistentes, chips de status — 0 findings Impeccable.',
+    },
+  ],
+  fixes: [],
+};
+
+export const RELEASE_07663: AppRelease = {
   version: '0.76.63',
   date: '2026-09-20',
   codename: 'Cota Claude por conta, pet nos cantos de verdade e consumo real no perfil',

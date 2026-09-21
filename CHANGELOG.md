@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.64 — Sessão morta vira botão, plano por conta e menus internos redesenhados
+
+- **«Entrar novamente» na linha nativa do Claude**: o hint `auth-expired` agora chega da sonda à UI — 401/403 do endpoint OAuth, `expiresAt` vencido do token nativo, stderr do CLI (`OAuth session expired…`) e a evidência `oauthAccount` em `~/.claude.json` distinguem «sessão morreu» de «nunca conectou» e de «falha transitória».
+- **Cache HTTP do Claude Desktop (Codenotch)**: leitor do Simple Cache com zstd, freshness-gated e ancorado por `organizationUuid` — cobre a conta mesmo com a credencial do CLI morta, sem cruzar contas.
+- **Bridge AGY local**: quota do language-server Antigravity via `lsof` + `x-codeium-csrf-token`; o processo do Windsurf/Devin (mesma família Codeium) é rejeitado — sem contaminação entre providers.
+- **Planos de assinatura por conta**: Claude `organizationRateLimitTier`, Codex `chatgpt_plan_type` (JWT do id_token) e AGY `currentTier` viram selo na linha (`Claude Max 20× · $200.00/mês`) e a frota soma o total mensal — remover uma conta remove o custo; plano desconhecido não entra.
+- **Perfil do Operador global**: «Entregas · todos os projetos» soma os contadores de XP de todos os checkouts com piso monotônico persistido — apagar um checkout não rebaixa o total.
+- **Menus internos de Configurações revistos**: seis frentes de polish (shell, conta, catálogo, sistema, agentes, mídia) — agrupamento acessível, chips de plano/conexão, estados vazios consistentes, reduced-motion, 0 findings Impeccable.
+
 ## 0.76.63 — Cota Claude por conta, pet nos cantos de verdade e consumo real no perfil
 
 - **Cascata por conta Claude (Codenotch)**: contas vault saem do «Sem leitura» — cada conta tenta managed-auth scoped (`CLAUDE_SECURESTORAGE_CONFIG_DIR`, o CLI renova o próprio token), perfil de disco com o mesmo e-mail e materialização do cofre, sem nunca emprestar a leitura de outra conta.
