@@ -19,6 +19,24 @@ describe('fetchLiveProviderWindows', () => {
     expect((await fetchLiveProviderWindows('codex', 'account-b', deps)).windows?.[0].usedRatio).toBe(0.8);
     expect((await fetchLiveProviderWindows('codex', undefined, deps)).windows).toBeNull();
   });
+  it('renews an expired Grok session through its CLI before requiring another login', async () => {
+    const deps = {
+      resolveGrokTokenCandidates: () => ['expired-access'],
+      grokAccountUsage: async (id?: string) => ({ windows: [{ kind: 'weekly' as const, label: 'Semanal', usedRatio: id === 'grok-a' ? 0.06 : 0.8, source: 'provider-api' as const, confidence: 'high' as const }] }),
+      fetchImpl: async () => ({ ok: false, status: 401, json: async () => ({}), text: async () => '' }),
+    };
+    expect((await fetchLiveProviderWindows('grok', 'grok-a', deps)).windows?.[0].usedRatio).toBe(0.06);
+  });
+
+  it('does not label a transient Grok CLI renewal failure as a revoked login', async () => {
+    const result = await fetchLiveProviderWindows('grok', 'grok-a', {
+      resolveGrokTokenCandidates: () => ['expired-access'],
+      grokAccountUsage: async () => ({ windows: null, hint: 'unavailable' as const }),
+      fetchImpl: async () => ({ ok: false, status: 401, json: async () => ({}), text: async () => '' }),
+    });
+    expect(result.hint).toBe('unavailable');
+  });
+
   it('reads native AGY quota with the CLI while no bridge or legacy credential is available', async () => {
     agyCli.mockResolvedValueOnce([{ kind: 'weekly', label: 'Gemini Models · Semanal', usedRatio: 0.25, source: 'provider-api', confidence: 'high' }]);
     const result = await fetchLiveProviderWindows('agy', undefined, {});

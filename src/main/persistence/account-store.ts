@@ -1645,6 +1645,14 @@ function upsertCooldownBlock(
  * Blocos escopados (tier:*) ficam: refutação account-wide não desprova um
  * limite por tier.
  */
+export function clearRefutedAuthCooldown(id: string, adapterId: string): boolean {
+  const account = accounts.get(id);
+  if (!account || account.adapterId !== adapterId || !isAuthCooldownReason(account.lastError)) return false;
+  const globalBlock = cooldownBlocks.get(id)?.get(GLOBAL_SCOPE);
+  if (globalBlock && globalBlock.blockedUntil > Date.now() && !isAuthCooldownReason(globalBlock.reason)) return false;
+  return clearCooldown(id, 'sessão confirmada por leitura provider-api');
+}
+
 export function clearCooldown(id: string, note: string): boolean {
   const account = accounts.get(id);
   if (!account) return false;

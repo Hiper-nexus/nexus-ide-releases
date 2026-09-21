@@ -1,5 +1,5 @@
 /**
- * Serialize Codex (ChatGPT) pane spawns that share one auth.json.
+ * Serialize Codex (ChatGPT) and Grok pane spawns that share one auth.json.
  *
  * The Codex CLI itself rotates the refresh token on boot when the access
  * token is stale. Nexus does not refresh that token. Each pane gets a
@@ -15,6 +15,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { withGrokAuthFamilyGate, resetGrokAuthFamiliesForTests } from './grok-auth-family-gate';
 import {
   isFileAuthAdapter,
   MANAGED_PROVIDER_SPECS,
@@ -23,6 +24,7 @@ import {
 
 export const ROTATING_REFRESH_SPAWN_ADAPTERS: ReadonlySet<string> = new Set([
   'codex',
+  'grok',
 ]);
 
 /** Treat the access token as stale this long before JWT exp. */
@@ -38,6 +40,7 @@ const watchers = new Set<ReturnType<typeof setInterval>>();
 export function resetManagedAuthSpawnGateForTests(): void {
   for (const timer of watchers) clearInterval(timer);
   watchers.clear();
+  resetGrokAuthFamiliesForTests();
 }
 
 export function rotatingAuthLockPath(authFile: string): string {
@@ -105,8 +108,12 @@ export function authBlobFreshness(blob: string): AuthBlobFreshness {
       parsed.tokens && typeof parsed.tokens === 'object'
         ? (parsed.tokens as Record<string, unknown>)
         : parsed;
-    const access =
-      typeof tokens.access_token === 'string' ? tokens.access_token : null;
+    const grok = Object.values(parsed).find((value): value is Record<string, unknown> =>
+      Boolean(value && typeof value === 'object' && !Array.isArray(value) &&
+        typeof (value as Record<string, unknown>).user_id === 'string'));
+    const access = typeof tokens.access_token === 'string' ? tokens.access_token
+      : typeof grok?.key === 'string' ? grok.key
+        : typeof grok?.access_token === 'string' ? grok.access_token : null;
     const payload = access ? decodeJwtPayload(access) : null;
     const expMs =
       payload && typeof payload.exp === 'number' ? payload.exp * 1000 : null;
@@ -228,7 +235,7 @@ function watchUntilRefreshed(options: {
   timer.unref?.();
 }
 
-export async function waitForRotatingAuthSpawnGate(options: {
+type GateOptions = {
   authFile: string;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
@@ -236,7 +243,13 @@ export async function waitForRotatingAuthSpawnGate(options: {
   timeoutMs?: number;
   pollMs?: number;
   skewMs?: number;
-}): Promise<AuthSpawnGateRole> {
+};
+
+export function waitForRotatingAuthSpawnGate(options: GateOptions): Promise<AuthSpawnGateRole> {
+  return withGrokAuthFamilyGate(options.authFile, (authFile) => waitForAuthFile({ ...options, authFile }));
+}
+
+async function waitForAuthFile(options: GateOptions): Promise<AuthSpawnGateRole> {
   const now = options.now ?? Date.now;
   const sleep =
     options.sleep ??
@@ -286,6 +299,6 @@ export async function waitForRotatingAuthSpawnGate(options: {
     // is safe to reuse. A later explicit retry can recover an abandoned lock.
   }
   throw new Error(
-    'A renovação de login do Codex ainda não terminou. Aguarde alguns segundos e tente abrir o pane novamente.',
+    'A renovação de login ainda não terminou. Aguarde alguns segundos e tente abrir o pane novamente.',
   );
 }

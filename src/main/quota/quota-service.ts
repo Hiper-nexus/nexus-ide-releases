@@ -36,11 +36,13 @@ import {
   fetchCodexAccountUsage,
   persistKimiRotatedCreds as persistKimiRotatedCredsAuth,
 } from './provider-usage-auth';
+import { fetchGrokAccountUsage } from './grok-account-usage';
 import { PLAN_CAPABLE_ADAPTERS } from './account-plan';
 import type { CodexChatGptAuth } from './codex-usage';
 import {
   fetchLiveProviderWindows,
   type LiveUsageAuthResolvers,
+  type LiveProviderProbe,
 } from './provider-live-usage';
 
 /** Cache live API windows briefly — avoid hammering providers on every paint. */
@@ -117,6 +119,7 @@ export interface QuotaServiceDeps {
   resolveGlmApiKeyCandidates?: (
     accountId?: string,
   ) => string[] | Promise<string[]>;
+  grokAccountUsage?: (accountId?: string) => Promise<LiveProviderProbe>;
   resolveGrokToken?: (
     accountId?: string,
   ) => string | null | Promise<string | null>;
@@ -181,6 +184,7 @@ export interface QuotaServiceDeps {
    * saudável (resíduo da cascata de limite fantasma). Opcional; produção liga
    * no account-store.clearCooldown.
    */
+  clearRefutedAuthCooldown?: (accountId: string, adapterId: string) => void;
   clearRefutedCooldown?: (accountId: string, adapterId: string) => void;
   /**
    * Sink opcional do Nexus Redline (app de menu bar): recebe o snapshot assim
@@ -495,6 +499,7 @@ export class QuotaService {
     // Live provider APIs for every supported row (vault / keychain / launcher).
     const observations = await this.#hydrateLiveApiWindows(draft, now, forceApi, generation);
 
+    const refreshedAccounts = await Promise.resolve(this.#deps.listAccounts());
     const entries: ProviderQuotaEntry[] = draft.map((d) =>
       this.#buildEntry({ ...d, now }, observations.get(apiCacheKey(d)), generation === this.#snapshotGeneration && !this.#stopped),
     );
@@ -505,7 +510,7 @@ export class QuotaService {
       this.#lastSnapshot = snap;
       this.#lastSnapshotGeneration = generation;
       try {
-        this.#deps.persistSnapshot?.(snap, accounts);
+        this.#deps.persistSnapshot?.(snap, refreshedAccounts);
       } catch {
         /* sink é best-effort: nunca derruba o snapshot */
       }
@@ -544,6 +549,8 @@ export class QuotaService {
         (this.#deps.fetchImpl || process.env.VITEST ? undefined : fetchCodexAccountUsage),
       resolveGlmApiKey: this.#deps.resolveGlmApiKey,
       resolveGlmApiKeyCandidates: this.#deps.resolveGlmApiKeyCandidates,
+      grokAccountUsage: this.#deps.grokAccountUsage ??
+        (this.#deps.fetchImpl || process.env.VITEST ? undefined : fetchGrokAccountUsage),
       resolveGrokToken: this.#deps.resolveGrokToken,
       resolveGrokTokenCandidates: this.#deps.resolveGrokTokenCandidates,
       resolveKimiToken: this.#deps.resolveKimiToken,
@@ -604,6 +611,11 @@ export class QuotaService {
             row.authMode,
           );
           if (probe.windows && probe.windows.length > 0) {
+            if (row.accountId && generation === this.#snapshotGeneration && !this.#stopped &&
+                probe.windows.some(w => w.source === 'provider-api' && w.usedRatio != null && Number.isFinite(w.usedRatio))) {
+              try { this.#deps.clearRefutedAuthCooldown?.(row.accountId, row.adapterId); }
+              catch { console.warn('[quota] não foi possível limpar o aviso de autenticação confirmado'); }
+            }
             const observation = { windows: probe.windows, at: now, usageProviderId: row.usageProviderId, authMode: row.authMode };
             observations.set(id, observation);
             this.#probeBackoffUntil.delete(id);

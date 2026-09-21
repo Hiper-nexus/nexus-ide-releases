@@ -17,7 +17,7 @@ function jwtExp(expSec: number): string {
   const payload = Buffer.from(JSON.stringify({ exp: expSec })).toString(
     'base64url',
   );
-  return `hdr.${payload}.sig`;
+  return `eyJhbGciOiJSUzI1NiJ9.${payload}.sig`;
 }
 
 function blob(opts: { expSec?: number; lastRefresh?: string }): string {
@@ -46,6 +46,34 @@ afterEach(() => {
 });
 
 describe('authBlobIsFreshForSpawn', () => {
+  it('coordinates native and managed copies of one Grok refresh family', async () => {
+    const home = tempDir();
+    const nativeFile = path.join(home, 'native.json');
+    const managedFile = path.join(home, 'managed.json');
+    let now = 1_790_000_000_000;
+    const grok = (exp: number, refresh = 'same-refresh') => JSON.stringify({ issuer: {
+      user_id: 'grok-a', key: jwtExp(exp), refresh_token: refresh,
+    } });
+    const stale = grok(now / 1000 - 60);
+    fs.writeFileSync(nativeFile, stale); fs.writeFileSync(managedFile, stale);
+    expect(await waitForRotatingAuthSpawnGate({ authFile: nativeFile, now: () => now })).toBe('leader');
+    const fresh = grok(now / 1000 + 7200, 'rotated-refresh');
+    const follower = waitForRotatingAuthSpawnGate({ authFile: managedFile, now: () => now, sleep: async () => {
+      now += 50; fs.writeFileSync(nativeFile, fresh);
+    } });
+    expect(await follower).toBe('follower-fresh');
+    expect(fs.readFileSync(managedFile, 'utf8')).toBe(fresh);
+    expect(fs.existsSync(rotatingAuthLockPath(managedFile))).toBe(false);
+  });
+
+  it('recognizes the nested Grok OAuth expiry and gates its shared auth file', () => {
+    const now = Date.now();
+    const grok = JSON.stringify({ issuer: { key: jwtExp(Math.floor(now / 1000) + 3600), user_id: 'grok-a' } });
+    expect(authBlobIsFreshForSpawn(grok, now)).toBe(true);
+    expect(ROTATING_REFRESH_SPAWN_ADAPTERS.has('grok')).toBe(true);
+    expect(resolveRotatingAuthFile('grok', { GROK_HOME: '/managed/grok' })).toBe('/managed/grok/auth.json');
+  });
+
   it('treats a JWT more than skew away as fresh', () => {
     const now = 1_700_000_000_000;
     const expSec = Math.floor((now + AUTH_SPAWN_GATE_SKEW_MS + 60_000) / 1000);
@@ -69,7 +97,7 @@ describe('authBlobIsFreshForSpawn', () => {
 });
 
 describe('resolveRotatingAuthFile', () => {
-  it('only gates Codex and points at the shared auth.json (managed or native)', () => {
+  it('gates supported rotating providers and points at the shared auth.json (managed or native)', () => {
     expect(ROTATING_REFRESH_SPAWN_ADAPTERS.has('codex')).toBe(true);
     expect(ROTATING_REFRESH_SPAWN_ADAPTERS.has('claude')).toBe(false);
     const home = tempDir();
@@ -200,7 +228,7 @@ describe('waitForRotatingAuthSpawnGate', () => {
       timeoutMs: 40,
       pollMs: 10,
     });
-    await expect(follower).rejects.toThrow(/renovação.*Codex.*tente/i);
+    await expect(follower).rejects.toThrow(/renovação.*login.*tente/i);
   });
 
   it('does not promote a waiting follower when its deadline outlasts the leader lock', async () => {
@@ -211,7 +239,7 @@ describe('waitForRotatingAuthSpawnGate', () => {
     await expect(waitForRotatingAuthSpawnGate({
       authFile, now: () => now, timeoutMs: 40,
       sleep: async () => { now += 50; },
-    })).rejects.toThrow(/renovação.*Codex.*tente/i);
+    })).rejects.toThrow(/renovação.*login.*tente/i);
   });
 
   it('steals a stale lock left by a crashed leader', async () => {
