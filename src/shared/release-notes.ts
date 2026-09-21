@@ -4152,6 +4152,29 @@ export const RELEASE_07647: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.68',
+  date: '2026-09-21',
+  codename: 'Grok 4.7',
+  summary: 'Grok 4.7 disponível no catálogo do Nexus, com quatro níveis de raciocínio e estimativa de custo atualizada.',
+  highlights: [
+    {
+      title: 'Grok 4.7 no seletor de modelos',
+      detail: 'O novo modelo vem no catálogo e é o padrão para novas escolhas Grok. As escolhas que você já salvou continuam preservadas.',
+    },
+    {
+      title: 'Raciocínio até xhigh',
+      detail: 'Escolha low, medium, high ou xhigh nas opções da sessão. High é o padrão do modelo.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Estimativa de custo do Grok 4.7',
+      detail: 'O medidor usa os preços-base publicados de US$ 2 por milhão de tokens de entrada e US$ 6 de saída, sem herdar o preço do Grok 4 antigo.',
+    },
+  ],
+};
+
+export const RELEASE_07667: AppRelease = {
   version: '0.76.67',
   date: '2026-09-21',
   codename: 'Cota e login de cada conta',
