@@ -133,6 +133,7 @@ import {
   activeClaudeAuthEnv,
   addActiveSessionAccount,
   clearClaudeRefreshFailure,
+  clearRefutedAuthCooldown,
   CLAUDE_REFRESH_FAILURE_SKIP_MS,
   ensureFreshClaudeSubscription,
   ensureSubscriptionActive,
@@ -807,6 +808,23 @@ describe('renovação morta veta failover no escuro', () => {
     expect(isAuthCooldownReason('oauth token expired')).toBe(true);
     expect(isAuthCooldownReason('rate limit exceeded')).toBe(false);
     expect(isAuthCooldownReason('insufficient_quota')).toBe(false);
+  });
+
+  it('clears only an auth cooldown proven healthy by the same provider', () => {
+    const a = addSecondary('Conta B', 'b@example.test', oauthBlob('b-access'));
+    setCooldown(a.id, Date.now() + 60000, 'oauth session expired');
+    expect(clearRefutedAuthCooldown(a.id, 'grok')).toBe(false);
+    expect(clearRefutedAuthCooldown(a.id, 'claude')).toBe(true);
+    expect(listAccountInfos().find(i => i.id === a.id)?.needsRelogin).toBe(false);
+  });
+
+  it('does not erase a global quota block when a later tier auth error changes lastError', () => {
+    const a = addSecondary('Conta B', 'b@example.test', oauthBlob('b-access'));
+    const until = Date.now() + 60000;
+    setCooldown(a.id, until, 'rate limit exceeded');
+    setCooldown(a.id, until, 'oauth session expired', 'tier:opus');
+    expect(clearRefutedAuthCooldown(a.id, 'claude')).toBe(false);
+    expect(listAccounts().find(i => i.id === a.id)?.cooldownUntil).toBe(until);
   });
 
   it('listAccountInfos projeta needsRelogin: true e onCooldown: false para erro 401', () => {

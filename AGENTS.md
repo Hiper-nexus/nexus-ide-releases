@@ -353,6 +353,18 @@ saber isto antes de mexer:
 - `MODEL_DISCOVERY_POLL_MS` / `MODEL_DISCOVERY_TTL_MS` ≥ 1 h para o restante
   das CLIs com comando list.
 
+## Grok: cota renova pela CLI, sem pedir login por access token vencido (F-626)
+
+- O fallback de cota usa ACP `grok agent --no-leader stdio`, apenas
+  `initialize` e `authenticate` com `cached_token`; nunca `session/new`, prompt
+  ou `grok models`. A CLI continua dona da renovação e do arquivo de auth.
+- Panes e sondas do Main compartilham o gate da família de refresh, inclusive
+  cópias native/managed. Revalidar subject, issuer, client e team e recusar
+  arquivo alterado enquanto espera. CLI externo não participa desse gate.
+- Uma leitura provider-api real pode refutar cooldown de autenticação; presença
+  de arquivo/e-mail não pode. Preservar quota global e por tier, e publicar ao
+  Redline as contas relidas após a cura. Falha em persistir a cura não apaga a cota.
+
 ## Codex: um refresh OAuth por conta gerenciada (ciclo 5 addendum)
 
 - O binário Codex (não o Nexus) rotaciona o refresh token do ChatGPT ao
