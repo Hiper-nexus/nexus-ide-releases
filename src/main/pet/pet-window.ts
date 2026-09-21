@@ -16,9 +16,8 @@ import { tapMissionsBroadcast, tapMissionsSeed } from '../orch/orch-ipc';
 import { loadPetPrefs, savePetPrefs } from './pet-prefs';
 import {
   bestPetParkPosition,
+  clampPetCoveredByDisplays,
   clampPetDrag,
-  clampPetDragFreeDesktop,
-  EDGE_OVERHANG_DRAG,
   EDGE_OVERHANG_SETTLE,
   isWithinPetOverhang,
   snapPetToCursorEdges,
@@ -317,8 +316,9 @@ function restoredPosition(): { x: number; y: number } {
   ) {
     return defaultPosition();
   }
-  // O display salvo pode ter sido desconectado: clampa para a workArea do
-  // display mais próximo. O utilizador pode escolher qualquer canto real.
+  // O display salvo pode ter sido desconectado: clampa para os bounds do
+  // display mais próximo. O utilizador pode escolher qualquer canto real —
+  // inclusive colado na menubar/Dock (o pet flutua acima deles).
   const display = screen.getDisplayMatching({
     x: Math.round(saved.x),
     y: Math.round(saved.y),
@@ -328,7 +328,7 @@ function restoredPosition(): { x: number; y: number } {
   const clamped = clampPetDrag(
     { x: Math.round(saved.x), y: Math.round(saved.y) },
     PET_WINDOW_SIZE,
-    display.workArea,
+    display.bounds,
     EDGE_OVERHANG_SETTLE,
   );
   // Uma posição já salva é escolha explícita do utilizador. Não re-estacionar
@@ -682,10 +682,10 @@ function roamTick(): void {
       y: pos.y,
       width: PET_WINDOW_SIZE.width,
       height: PET_WINDOW_SIZE.height,
-    }).workArea;
+    }).bounds;
     if (displays.length > 1 && Math.random() < 0.08) {
       const other = displays[Math.floor(Math.random() * displays.length)];
-      if (other) area = other.workArea;
+      if (other) area = other.bounds;
     }
     roamTarget = pickRoamDestination(pos, area, PET_WINDOW_SIZE, Math.random)
       .point;
@@ -825,9 +825,14 @@ function persistPosition(pos: { x: number; y: number }): void {
   savePetPrefs(userDataDir(), prefs);
 }
 
+/** Último placement enviado — dedup: re-render do renderer só quando muda. */
+let placementLastSent: PetPlacement | null = null;
+
 /**
  * Encosta o sprite ao canto DENTRO da janela. A janela permanece 100% no
  * display; só os ~50–100 px transparentes mudam para o lado de dentro.
+ * Só emite IPC quando o placement muda — no arrasto a cada tick seria
+ * spam de re-render, e a troca de âncora no meio do gesto parecia salto.
  */
 function sendPetPlacement(pos?: { x: number; y: number }): void {
   if (!petWindow || petWindow.isDestroyed() || !petReady) return;
@@ -839,10 +844,10 @@ function sendPetPlacement(pos?: { x: number; y: number }): void {
     width: PET_WINDOW_SIZE.width,
     height: PET_WINDOW_SIZE.height,
   });
-  // workArea, não bounds: a "borda" que o usuário percebe é a útil — acima
-  // do menu bar / ao lado do Dock. Assim o sprite encosta de verdade na
-  // extremidade quando a janela está colada na workArea.
-  const area = display.workArea;
+  // bounds físicos: o nível screen-saver desenha o pet ACIMA de menubar e
+  // Dock, então a extremidade percebida é o pixel físico. O sprite encosta
+  // na beirada real quando a janela está colada nos bounds.
+  const area = display.bounds;
   const leftGap = Math.abs(current.x - area.x);
   const rightGap = Math.abs(
     area.x + area.width - (current.x + PET_WINDOW_SIZE.width),
@@ -858,6 +863,14 @@ function sendPetPlacement(pos?: { x: number; y: number }): void {
           : 'center',
     vertical: topGap <= edgePx ? 'top' : 'bottom',
   };
+  if (
+    placementLastSent &&
+    placementLastSent.horizontal === placement.horizontal &&
+    placementLastSent.vertical === placement.vertical
+  ) {
+    return;
+  }
+  placementLastSent = placement;
   petWindow.webContents.send(PET_CHANNELS.placement, placement);
 }
 
@@ -881,19 +894,16 @@ function ensurePetWindowSize(win: BrowserWindow): void {
 }
 
 /**
- * Arrasto livre: união das workAreas de todos os monitores. workArea (não
- * bounds físicos) é o limite: a janela nunca passa por baixo da menu bar nem
- * do Dock — o sprite chega na borda útil inteiro, sem "cortar pedaço".
- * A costura entre monitores continua livre porque o clamp usa a união.
+ * Arrasto livre: janela inteira coberta pela união dos bounds FÍSICOS de
+ * todos os monitores. O pet flutua no nível screen-saver — acima da menu
+ * bar e do Dock — então a extremidade real é o pixel físico, não a
+ * workArea: o sprite chega no canto verdadeiro sem nada escondido. O que
+ * continua proibido é pixel fora de tela (zona morta entre monitores de
+ * alturas diferentes), que o compositor desenha como corte/piscada.
  */
 function clampDragFree(pos: { x: number; y: number }): { x: number; y: number } {
-  const areas = screen.getAllDisplays().map((d) => d.workArea);
-  return clampPetDragFreeDesktop(
-    pos,
-    PET_WINDOW_SIZE,
-    areas,
-    EDGE_OVERHANG_DRAG,
-  );
+  const areas = screen.getAllDisplays().map((d) => d.bounds);
+  return clampPetCoveredByDisplays(pos, PET_WINDOW_SIZE, areas);
 }
 
 /** Pull the pet back into the settle envelope after display topology changes. */
@@ -906,13 +916,13 @@ function reclampPetToVisibleDisplay(): void {
     width: PET_WINDOW_SIZE.width,
     height: PET_WINDOW_SIZE.height,
   });
-  // Já totalmente dentro da workArea — não recompor a janela.
-  if (isWithinPetOverhang({ x, y }, PET_WINDOW_SIZE, display.workArea)) return;
+  // Já totalmente dentro dos bounds físicos — não recompor a janela.
+  if (isWithinPetOverhang({ x, y }, PET_WINDOW_SIZE, display.bounds)) return;
 
   const settled = clampPetDrag(
     { x, y },
     PET_WINDOW_SIZE,
-    display.workArea,
+    display.bounds,
     EDGE_OVERHANG_SETTLE,
   );
   if (x === settled.x && y === settled.y) return;
@@ -1027,7 +1037,7 @@ function createPetWindow(): void {
   const bootPos = clampPetDrag(
     position,
     PET_WINDOW_SIZE,
-    bootDisplay.workArea,
+    bootDisplay.bounds,
     EDGE_OVERHANG_SETTLE,
   );
   // Persistir se re-park/clamp divergiu da prefs (senão o restore re-aplica
@@ -1174,6 +1184,7 @@ function destroyPetWindow(): void {
   petIgnoresMouse = true;
   petPinnedTop = false;
   roamRendererHold = false;
+  placementLastSent = null;
   pendingPetEvents.length = 0;
   if (petWindow && !petWindow.isDestroyed()) petWindow.destroy();
   petWindow = null;
@@ -1457,17 +1468,17 @@ function registerPetIpc(): void {
     // pet para dentro ao soltar.
     const cursor = screen.getCursorScreenPoint();
     const display = screen.getDisplayNearestPoint(cursor);
-    // Settle 100% dentro da workArea (sem menubar/Dock) — nenhum pedaço do
-    // sprite fica escondido atrás do chrome do sistema quando solto na borda.
+    // Settle 100% dentro dos bounds físicos — o pet flutua acima de
+    // menubar/Dock, então a borda de verdade é o pixel físico do display.
     const settled = snapPetToCursorEdges(
        clampPetDrag(
          raw,
          PET_WINDOW_SIZE,
-         display.workArea,
+         display.bounds,
          EDGE_OVERHANG_SETTLE,
        ),
        PET_WINDOW_SIZE,
-       display.workArea,
+       display.bounds,
        cursor,
        0,
      );
@@ -1505,7 +1516,6 @@ function registerPetIpc(): void {
     // Watchdog: se o dragEnd do renderer se perder, assenta sozinho.
     const startedAt = Date.now();
     let lastApplied = { x: winX, y: winY };
-    let lastPlacementAt = 0;
     dragTimer = setInterval(() => {
       if (!petWindow || petWindow.isDestroyed() || !dragOrigin) {
         stopDrag();
@@ -1520,20 +1530,17 @@ function registerPetIpc(): void {
         x: Math.round(dragOrigin.winX + (c.x - dragOrigin.cursorX)),
         y: Math.round(dragOrigin.winY + (c.y - dragOrigin.cursorY)),
       };
-      // Livre na união das workAreas (Mac + LG sem parede, sem menubar/Dock).
+      // Livre coberto pelos bounds físicos (Mac + LG sem parede; zona
+      // morta entre monitores recusada, menubar/Dock alcançáveis).
       const clamped = clampDragFree(next);
       lastDragPos = clamped;
       if (clamped.x === lastApplied.x && clamped.y === lastApplied.y) return;
       lastApplied = clamped;
       // Movimento posicional: preserva a superfície transparente entre telas.
       setPetBounds(clamped);
-      // Placement ao vivo: o sprite encosta na borda DURANTE o arrasto —
-      // antes só assentava no drop e o pet parecia nunca chegar na extremidade.
-      const now = Date.now();
-      if (now - lastPlacementAt > 120) {
-        lastPlacementAt = now;
-        sendPetPlacement(clamped);
-      }
+      // Placement ao vivo a cada tick (dedup interno — IPC só na mudança):
+      // o sprite encosta na borda DURANTE o arrasto, sem salto no drop.
+      sendPetPlacement(clamped);
     }, DRAG_TICK_MS);
   });
 

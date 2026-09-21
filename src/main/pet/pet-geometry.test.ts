@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   bestPetParkPosition,
+  clampPetCoveredByDisplays,
   clampPetDrag,
   clampPetDragAcrossDisplays,
   clampPetDragFreeDesktop,
   clampPetFullyOnDisplay,
   clampToWorkArea,
+  windowFullyOnDisplays,
   petCoversMainSidebar,
   petParkCornerCandidates,
   petWindowOverlapRatio,
@@ -282,5 +284,69 @@ describe('bestPetParkPosition / sidebar cover', () => {
     expect(clampPetFullyOnDisplay(straddle, pet, mac).x).toBe(
       mac.width - pet.width,
     );
+  });
+});
+
+describe('windowFullyOnDisplays / clampPetCoveredByDisplays', () => {
+  const pet = { width: 300, height: 340 };
+  // Mac embutido + LG externa mais alta e deslocada para cima: a união é
+  // um retângulo em L — há zona morta acima do Mac, à esquerda da LG.
+  const mac = { x: 0, y: 0, width: 1440, height: 900 };
+  const lg = { x: 1440, y: -100, width: 1920, height: 1080 };
+
+  it('cobre janela inteira num display só', () => {
+    expect(windowFullyOnDisplays({ x: 100, y: 100 }, pet, [mac])).toBe(true);
+    // 1px fora da direita já é corte físico.
+    expect(
+      windowFullyOnDisplays({ x: 1440 - pet.width + 1, y: 100 }, pet, [mac]),
+    ).toBe(false);
+    // Topo da menubar é pixel físico — coberto.
+    expect(windowFullyOnDisplays({ x: 0, y: 0 }, pet, [mac])).toBe(true);
+  });
+
+  it('cobre a cavalgadura na costura quando os displays se tocam', () => {
+    // x 1300..1600: 140px no Mac + 160px na LG; mesma faixa Y coberta.
+    expect(windowFullyOnDisplays({ x: 1300, y: 200 }, pet, [mac, lg])).toBe(
+      true,
+    );
+  });
+
+  it('recusa zona morta acima do Mac (só a LG chega lá)', () => {
+    // y -80..260: slab -80..0 só tem a LG (x>=1440); left=1300 descoberto.
+    expect(windowFullyOnDisplays({ x: 1300, y: -80 }, pet, [mac, lg])).toBe(
+      false,
+    );
+  });
+
+  it('recusa slab inferior fora da LG mais baixa', () => {
+    const tall = { x: 1440, y: 0, width: 1440, height: 1200 };
+    const short = { x: 0, y: 0, width: 1440, height: 900 };
+    // Janela a cavalo descendo até y 1000: slab 900..1000 só existe na tall.
+    expect(
+      windowFullyOnDisplays({ x: 1300, y: 700 }, pet, [short, tall]),
+    ).toBe(false);
+    // Totalmente dentro da alta é válido (850+340=1190 ≤ 1200).
+    expect(
+      windowFullyOnDisplays({ x: 1500, y: 850 }, pet, [short, tall]),
+    ).toBe(true);
+  });
+
+  it('clamp coberto mantém posição válida intacta', () => {
+    const ok = { x: 1300, y: 200 };
+    expect(clampPetCoveredByDisplays(ok, pet, [mac, lg])).toEqual(ok);
+  });
+
+  it('clamp coberto tira a janela da zona morta para o display mais perto', () => {
+    const dead = { x: 1300, y: -80 };
+    const out = clampPetCoveredByDisplays(dead, pet, [mac, lg]);
+    expect(windowFullyOnDisplays(out, pet, [mac, lg])).toBe(true);
+    // A LG é o mais perto: clamp ao Mac moveria x 1300→1140 E y -80→0
+    // (32000), enquanto à LG só desliza x 1300→1440 (19600).
+    expect(out).toEqual({ x: 1440, y: -80 });
+  });
+
+  it('clamp coberto alcança o pixel físico 0,0 (menubar)', () => {
+    const out = clampPetCoveredByDisplays({ x: -500, y: -500 }, pet, [mac]);
+    expect(out).toEqual({ x: 0, y: 0 });
   });
 });

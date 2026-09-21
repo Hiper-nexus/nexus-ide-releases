@@ -249,6 +249,80 @@ export function clampPetDragFreeDesktop(
   return clampPetDrag(pos, size, unionRects(displayBoundsList), overhang);
 }
 
+/**
+ * True se TODA a janela é coberta pela união dos displays (nenhum pixel em
+ * zona morta). Na costura entre monitores alinhados a janela pode cavalgar
+ * os dois — o que é proibido é sobrar fora de qualquer tela física, porque
+ * pixel off-display pisca/some no compositor do macOS.
+ */
+export function windowFullyOnDisplays(
+  pos: Point,
+  size: Size,
+  displays: readonly Rect[],
+): boolean {
+  const left = pos.x;
+  const right = pos.x + size.width;
+  const top = pos.y;
+  const bottom = pos.y + size.height;
+  // Decompõe a altura da janela em faixas delimitadas pelas bordas
+  // verticais dos displays; em cada faixa, a união dos intervalos em X dos
+  // displays que a cobrem inteira precisa cobrir [left, right] sem buraco.
+  const cuts = new Set<number>([top, bottom]);
+  for (const d of displays) {
+    if (d.y > top && d.y < bottom) cuts.add(d.y);
+    const dBottom = d.y + d.height;
+    if (dBottom > top && dBottom < bottom) cuts.add(dBottom);
+  }
+  const ys = [...cuts].sort((a, b) => a - b);
+  for (let i = 0; i + 1 < ys.length; i += 1) {
+    const y0 = ys[i]!;
+    const y1 = ys[i + 1]!;
+    const spans = displays
+      .filter((d) => d.y <= y0 && d.y + d.height >= y1)
+      .map((d) => ({ x0: d.x, x1: d.x + d.width }))
+      .sort((a, b) => a.x0 - b.x0);
+    let coveredUntil = left;
+    for (const span of spans) {
+      if (span.x0 > coveredUntil) break;
+      coveredUntil = Math.max(coveredUntil, span.x1);
+    }
+    if (coveredUntil < right) return false;
+  }
+  return true;
+}
+
+/**
+ * Arrasto livre exigindo a janela inteira coberta pela união dos bounds
+ * físicos. Diferente do clamp por bounding-box, recusa zonas mortas entre
+ * monitores de alturas diferentes — “alguns locais ele não vai” passa a
+ * significar só “não existe tela ali”. Cruza a costura quando os displays
+ * se tocam, porque a posição compartilhada continua coberta.
+ */
+export function clampPetCoveredByDisplays(
+  pos: Point,
+  size: Size,
+  displayBoundsList: readonly Rect[],
+): Point {
+  const desired = { x: Math.round(pos.x), y: Math.round(pos.y) };
+  if (displayBoundsList.length === 0) return desired;
+  if (windowFullyOnDisplays(desired, size, displayBoundsList)) {
+    return desired;
+  }
+  let best = clampPetDrag(desired, size, displayBoundsList[0]!, 0);
+  let bestDist = Number.POSITIVE_INFINITY;
+  for (const d of displayBoundsList) {
+    const c = clampPetDrag(desired, size, d, 0);
+    const dist =
+      (c.x - desired.x) * (c.x - desired.x) +
+      (c.y - desired.y) * (c.y - desired.y);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = c;
+    }
+  }
+  return best;
+}
+
 /** True se a janela tem pixels em mais de um display (straddle = flicker). */
 export function windowStraddlesDisplays(
   pos: Point,
