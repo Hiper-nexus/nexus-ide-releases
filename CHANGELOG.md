@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.76.63 — Cota Claude por conta, pet nos cantos de verdade e consumo real no perfil
+
+- **Cascata por conta Claude (Codenotch)**: contas vault saem do «Sem leitura» — cada conta tenta managed-auth scoped (`CLAUDE_SECURESTORAGE_CONFIG_DIR`, o CLI renova o próprio token), perfil de disco com o mesmo e-mail e materialização do cofre, sem nunca emprestar a leitura de outra conta.
+- **Pet chega nos cantos físicos**: arrasto, settle, boot e patrulha agora usam os bounds reais do display — o pet flutua acima da menubar/Dock (screen-saver), então o sprite encosta na extremidade inteiro, sem corte. Zona morta entre monitores de alturas diferentes é recusada por cobertura, não por bounding-box.
+- **Pet parado por padrão**: a patrulha autônoma virou opt-in no menu («Passear pela tela»); parado ele mantém bob, olhar que segue o cursor e reações locais, e move só no arrasto. Placement recalculado ao vivo durante o gesto, com dedup de IPC.
+- **Consumo real no Perfil do Operador**: a área do «recruta» mostra tokens torrados, USD-equivalente em API paga, panes, turnos, mídia e missões — a prova de quanto a assinatura economizou. A mesma faixa aparece no cockpit Cotas do rail e em Ajustes → Uso e cotas (hook `useLifetimeUsage` compartilhado, IPC `usage:lifetime`).
+- **Menu do pet com scrollbar slim** no tema escuro; ticker de stats continua girando tokens/USD/panes.
+
 ## 0.76.62 — Cotas reais por CLI, contas isoladas e terminal que não some
 
 - **Cota deixa de mentir «Não informado»** (Codenotch): Grok lê `billing?format=credits`; Kimi e AGY refrescam o access em memória; Claude cai em `claude /usage` print-only se o OAuth falha; Devin usa GetUserStatus; Cursor usa `autoPercentUsed` (nunca `plan.used/limit` do free). GLM/Codex intocados.

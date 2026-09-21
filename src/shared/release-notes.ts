@@ -4152,6 +4152,53 @@ export const RELEASE_07647: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.63',
+  date: '2026-09-20',
+  codename: 'Cota Claude por conta, pet nos cantos de verdade e consumo real no perfil',
+  summary:
+    'Contas Claude do cofre ganham cascata própria de leitura de cota ' +
+    '(managed-auth scoped, perfil de disco casado por e-mail, materialização ' +
+    'do vault) — saem do «Sem leitura» sem emprestar a janela de outra conta. ' +
+    'O pet de mesa fica parado por padrão e o arrasto alcança os cantos ' +
+    'físicos da tela (acima da menubar/Dock, sem cortar). E o Perfil do ' +
+    'Operador mostra o consumo real: tokens torrados e quanto custariam em ' +
+    'API paga.',
+  highlights: [
+    {
+      title: 'Cascata de cota por conta Claude',
+      detail:
+        'Cada conta vault tenta managed-auth scoped via ' +
+        'CLAUDE_SECURESTORAGE_CONFIG_DIR (o CLI renova o próprio token), ' +
+        'perfil de disco com o mesmo e-mail e materialização do blob do ' +
+        'cofre. O percentual exibido é sempre daquela conta.',
+    },
+    {
+      title: 'Pet nos cantos físicos, sem corte',
+      detail:
+        'Drag/settle/boot/patrulha usam bounds físicos — o nível ' +
+        'screen-saver desenha o pet acima de menubar e Dock. Zonas mortas ' +
+        'entre monitores de alturas diferentes são recusadas por cobertura ' +
+        'de pixels, não por bounding-box.',
+    },
+    {
+      title: 'Consumo real no perfil',
+      detail:
+        'Tokens torrados, USD-equivalente em API paga, panes, turnos, ' +
+        'mídia e missões — acumulados de todos os projetos via ' +
+        'usage:lifetime. Também no rail (Cotas) e em Ajustes → Uso e cotas.',
+    },
+    {
+      title: 'Pet parado por padrão',
+      detail:
+        'A patrulha autônoma virou opt-in («Passear pela tela» no menu). ' +
+        'Parado, o pet mantém bob, olhar e reações; move só no arrasto. ' +
+        'Menu com scrollbar slim no tema.',
+    },
+  ],
+  fixes: [],
+};
+
+export const RELEASE_07662: AppRelease = {
   version: '0.76.62',
   date: '2026-09-20',
   codename: 'Cotas reais por CLI, contas isoladas e terminal que não some',
