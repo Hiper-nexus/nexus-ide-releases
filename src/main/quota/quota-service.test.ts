@@ -41,6 +41,37 @@ const LIVE_USAGE = {
 };
 
 describe('QuotaService limit-hit expiry', () => {
+  it('clears a proven stale auth warning and publishes the updated account to Redline immediately', async () => {
+    let needsRelogin = true;
+    let published: AccountInfo[] = [];
+    const svc = new QuotaService({
+      listProviders: () => [provider('grok')],
+      listAccounts: () => [{ id: 'grok-a', adapterId: 'grok', label: 'Grok', mode: 'subscription', hasCredential: true, needsRelogin, onCooldown: false } as AccountInfo],
+      resolveGrokTokenCandidates: () => ['fresh-access'],
+      fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ config: { creditUsagePercent: 6 } }), text: async () => '' }),
+      clearRefutedAuthCooldown: () => { needsRelogin = false; },
+      persistSnapshot: (_snap, accounts) => { published = [...accounts]; },
+    });
+    await svc.snapshot();
+    expect(needsRelogin).toBe(false);
+    expect(published[0]?.needsRelogin).toBe(false);
+    svc.stop();
+  });
+
+  it('retains a valid quota reading if clearing the persisted auth warning fails', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const svc = new QuotaService({
+      listProviders: () => [provider('grok')],
+      listAccounts: () => [{ id: 'grok-a', adapterId: 'grok', label: 'Grok', mode: 'subscription', hasCredential: true, needsRelogin: true, onCooldown: false } as AccountInfo],
+      resolveGrokTokenCandidates: () => ['fresh-access'],
+      fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ config: { creditUsagePercent: 6 } }), text: async () => '' }),
+      clearRefutedAuthCooldown: () => { throw new Error('storage unavailable'); },
+    });
+    const result = await svc.snapshot();
+    expect(result.entries[0].windows.some(w => w.usedRatio === 0.06)).toBe(true);
+    svc.stop(); warn.mockRestore();
+  });
+
   it('reports a revoked saved Codex login without assigning its sibling quota', async () => {
     const marked: string[] = [];
     const svc = new QuotaService({

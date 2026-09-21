@@ -96,6 +96,7 @@ export interface LiveUsageAuthResolvers {
   resolveGlmApiKeyCandidates?: (
     accountId?: string,
   ) => string[] | Promise<string[]>;
+  grokAccountUsage?: (accountId?: string) => Promise<LiveProviderProbe>;
   resolveGrokToken?: (
     accountId?: string,
   ) => string | null | Promise<string | null>;
@@ -329,6 +330,7 @@ export async function fetchLiveProviderWindows(
         }
         if (probe.authFailed) grokAuthFailed = true;
       }
+      if (grokAuthFailed && deps.grokAccountUsage) return deps.grokAccountUsage(accountId);
       return grokAuthFailed ? AUTH_EXPIRED : UNAVAILABLE;
     }
     case 'devin': {

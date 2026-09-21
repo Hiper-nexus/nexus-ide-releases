@@ -4152,6 +4152,28 @@ export const RELEASE_07647: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.69',
+  date: '2026-09-21',
+  codename: 'Grok conectado também no Redline',
+  summary: 'A cota do Grok acompanha a renovação da sessão e deixa de manter um aviso antigo de login expirado após uma leitura válida.',
+  highlights: [],
+  fixes: [
+    {
+      title: 'Grok renova a sessão para consultar a cota',
+      detail: 'Quando o token vence, o Nexus pede à própria CLI que renove a sessão salva, sem abrir conversa. Falhas temporárias não exigem um novo login.',
+    },
+    {
+      title: 'Redline remove o aviso de login já resolvido',
+      detail: 'Uma leitura válida do provedor limpa o bloqueio antigo de autenticação e atualiza o Redline na mesma consulta. Bloqueios reais de consumo são preservados.',
+    },
+    {
+      title: 'Renovação coordenada entre panes e cota',
+      detail: 'Duas cópias da mesma sessão compartilham uma única tentativa de renovação. Uma troca de conta durante a consulta invalida o resultado anterior.',
+    },
+  ],
+};
+
+export const RELEASE_07668: AppRelease = {
   version: '0.76.68',
   date: '2026-09-21',
   codename: 'Grok 4.7',

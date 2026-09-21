@@ -256,6 +256,7 @@ import {
 } from "./persistence/provider-config-store";
 import {
   clearCooldown,
+  clearRefutedAuthCooldown,
   isAuthCooldownReason,
   listAccountInfos,
   listAccounts,
@@ -650,6 +651,7 @@ function bootstrap(): void {
     // (resíduo da cascata de limite fantasma) — a conta volta ao pool.
     clearRefutedCooldown: (accountId) =>
       clearCooldown(accountId, 'cooldown refutado por leitura provider-api saudável'),
+    clearRefutedAuthCooldown,
     // Multi-candidate probes (vault → launcher → env → system CLI).
     // Never invents ratios; tries every credential until one yields %.
     resolveClaudeAccessToken: (accountId) => resolveClaudeToken(accountId),
