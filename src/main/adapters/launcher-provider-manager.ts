@@ -103,13 +103,13 @@ export const UPSTREAM_PROVIDERS: Record<string, UpstreamProvider> = {
   mimo: {
     id: 'mimo',
     label: 'MIMO / Xiaomi',
-    baseUrl: 'https://api.mimo.xiaomi.com/anthropic',
-    defaultModel: 'mimo-2.5-pro',
+    baseUrl: 'https://api.xiaomimimo.com/anthropic',
+    defaultModel: 'mimo-v2.6-pro',
     extraEnv: {
       ...THIRD_PARTY_EXTRA,
-      ANTHROPIC_DEFAULT_SONNET_MODEL: 'mimo-2.5-pro',
-      ANTHROPIC_DEFAULT_OPUS_MODEL: 'mimo-2.5-pro',
-      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'mimo-2.5',
+      ANTHROPIC_DEFAULT_SONNET_MODEL: 'mimo-v2.6-pro',
+      ANTHROPIC_DEFAULT_OPUS_MODEL: 'mimo-v2.6-pro',
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'mimo-v2.6-flash',
     },
     requiresToken: true,
     local: false,

@@ -85,6 +85,16 @@ describe('computeRealCost', () => {
 });
 
 describe.skipIf(!sqliteAvailable)('ScopedUsageStore', () => {
+  it('upserts MiMo tokens with the CLI-reported cost rather than re-pricing them', () => {
+    const { baseDir, scope } = fixture();
+    const store = createScopedUsageStore(manager(baseDir), scope);
+    const event = usage({ model: 'xiaomi/mimo-v2.6-flash', reportedCostUsd: 0.123456 });
+    expect(store.record('mimo-code', event)).toBe(true);
+    expect(store.totals().costUsd).toBe(0.123456);
+    expect(store.record('mimo-code', { ...event, outputTokens: 400, reportedCostUsd: 0.2 })).toBe(false);
+    expect(store.totals()).toMatchObject({ costUsd: 0.2, outputTokens: 400, turns: 1 });
+    expect(() => store.record('mimo-code', { ...event, reportedCostUsd: -1 })).toThrow();
+  });
   it('isolates projects and checkouts even when session ids are identical', () => {
     const { baseDir, scope } = fixture();
     const rootB = path.join(path.dirname(scope.rootRealPath), 'checkout-b');

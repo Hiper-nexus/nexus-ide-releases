@@ -4,6 +4,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { ensurePrivateDirectory, linkFile, linkProviderSessionState } from '../orch/cli-mcp-session-artifacts';
 import { compareAuthFreshness } from './auth-freshness';
+import { mimoNativePaths, mimoAuthSnapshot, parseMimoAuth } from './mimo-auth';
 import {
   isFileAuthAdapter,
   type FileAuthAdapterId,
@@ -206,6 +207,12 @@ export function identityFromAuthBlob(
   adapterId: string,
   blob: string,
 ): ManagedAuthIdentity {
+  if (adapterId === 'mimo-code') {
+    const auth = parseMimoAuth(blob);
+    return auth?.uid ? {
+      subject: createHash('sha256').update(JSON.stringify([auth.uid, auth.baseUrl])).digest('hex'),
+    } : {};
+  }
   const parsed = parsedAuthBlob(blob);
   if (!parsed) return {};
   const snapshot = parseDirSnapshot(blob);
@@ -241,6 +248,7 @@ function hasNonEmptyClaim(value: unknown, keys: string[]): boolean {
 
 /** A present file is not auth proof: reject empty/stale shells and invalid JSON. */
 export function authBlobIsUsable(adapterId: string, blob: string): boolean {
+  if (adapterId === 'mimo-code') return parseMimoAuth(blob) !== null;
   // Antes do guard de JSON: o blob do Devin é TOML plano e jamais parsearia.
   if (adapterId === 'devin' && !parseDirSnapshot(blob)) {
     return devinTomlCredentialValue(blob) !== null;
@@ -360,6 +368,16 @@ export const MANAGED_PROVIDER_SPECS: Record<FileAuthAdapterId, ManagedProviderSp
         path.join(home, '.kimi'),
       ];
       return firstExisting(candidates) ?? path.join(home, '.kimi-code');
+    },
+  },
+  'mimo-code': {
+    adapterId: 'mimo-code',
+    homeEnvVar: 'MIMOCODE_HOME',
+    authRelativePath: path.join('data', 'auth.json'),
+    skipLinkNames: ['data', 'config', 'state', 'cache'],
+    systemHome: () => {
+      const root = process.env.MIMOCODE_HOME?.trim();
+      return root && path.isAbsolute(root) ? root : null;
     },
   },
   opencode: {
@@ -548,6 +566,9 @@ export function shouldWriteAuthFile(
     if (!exists(existingPath)) return true;
     const onDisk = fs.readFileSync(existingPath, 'utf8');
     if (onDisk === vaultBlob) return false;
+    // MiMo browser login creates a non-rotating API key. Explicit vault
+    // changes are authoritative; opaque disk keys cannot establish freshness.
+    if (adapterId === 'mimo-code') return authBlobIsUsable(adapterId, vaultBlob);
     if (adapterId && authBlobIsUsable(adapterId, vaultBlob) && !authBlobIsUsable(adapterId, onDisk)) return true;
     if (adapterId === 'codex' || adapterId === 'grok') {
       const subject = identityFromAuthBlob(adapterId, vaultBlob).subject;
@@ -647,6 +668,7 @@ export function readBackFresherAuth(
   vaultBlob: string,
   options: { home?: string; authRelativePath?: string } = {},
 ): string | null {
+  if (adapterId === 'mimo-code') return null;
   try {
     const managedHome = managedHomePath(adapterId, accountId, options.home);
     const authPath = authTargetPath(adapterId, managedHome, options.authRelativePath);
@@ -796,6 +818,13 @@ export function captureNativeAuth(
     return null;
   }
   if (!isFileAuthAdapter(adapterId)) return null;
+  if (adapterId === 'mimo-code') {
+    try {
+      const raw = readText(mimoNativePaths(home).authFile);
+      const blob = raw ? mimoAuthSnapshot(raw) : null;
+      return blob ? { blob, authRelativePath: path.join('data', 'auth.json') } : null;
+    } catch { return null; }
+  }
   const spec = MANAGED_PROVIDER_SPECS[adapterId];
   const systemHome = spec.systemHome(home);
   if (!systemHome) return null;
@@ -931,7 +960,7 @@ export function scrubManagedAuth(
     const authPath = authTargetPath(adapterId, managedHome, options.authRelativePath);
     // OpenCode's Windows checkout homes share this inode so refreshes remain
     // live. Clear it before unlinking, or a durable hardlink retains the secret.
-    if (adapterId === 'opencode' && process.platform === 'win32') {
+    if ((adapterId === 'opencode' || adapterId === 'mimo-code') && process.platform === 'win32') {
       fs.truncateSync(authPath, 0);
     }
     fs.unlinkSync(authPath);

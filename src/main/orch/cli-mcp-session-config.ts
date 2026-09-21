@@ -14,6 +14,7 @@ export { deliverGrantedSkillsToProviderHome } from './cli-mcp-session-governance
 export { prepareGrokMcpSession } from './cli-mcp-session-grok';
 export { prepareKimiMcpSession } from './cli-mcp-session-kimi';
 export { prepareOpenCodeMcpSession } from './cli-mcp-session-opencode';
+export { prepareMimoMcpSession } from './cli-mcp-session-mimo';
 export type {
   CliMcpPurgeOptions,
   CliMcpSessionOptions,

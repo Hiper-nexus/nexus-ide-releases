@@ -618,3 +618,36 @@ saber isto antes de mexer:
   (consultas · custo estimado · sem resposta) e, por superfície,
   `pelo Jev · pela regra`; custo = tokens de entrada × US$ 0,042/M (preço
   público TypeSafe, chamada direta, sem OpenRouter).
+
+## Xiaomi MiMo Code (F-627)
+
+- Adapter `mimo-code`, binário oficial `mimo` (`@mimo-ai/cli`), não OpenCode
+  nem Claude. `--trust` pertence à TUI, nunca a `mimo run` headless.
+- Auth oficial: XDG `mimocode/auth.json`, ou `$MIMOCODE_HOME/data/auth.json`;
+  preservar somente `xiaomi` nas contas gerenciadas. UID + endpoint identifica
+  o perfil: API e Token Plan da mesma pessoa não devem se sobrescrever.
+  A configuração inline precisa fixar chave por referência de ENV e endpoint
+  da conta selecionada: opções nativas `provider.xiaomi.options` prevalecem
+  sobre auth.json na CLI e poderiam faturar outra conta.
+- Desktop Membership NÃO é Token Plan. Token Plan usa endpoint regional e
+  inclui V2.6 Pro/Flash; UltraSpeed exige API pay-as-you-go separada. Não
+  reutilizar cache genérico de login para elegibilidade de modelo. Benchmarks
+  automáticos exigem chave `sk-`, nunca o plano `tp-` de ferramentas interativas.
+- O catálogo remoto da CLI pode atrasar: projetar `MIMO_CLI_MODELS` no inline
+  config de panes/benchmarks; não inventar limites, esforços ou resultados.
+  Modelos sem medição devem aparecer como não avaliados na comparação.
+- Conversas ficam no provider-state do checkout, não no DB nativo. Hook privado
+  usa porta/bearer e nonce por spawn em ENV; Main valida raiz/cwd/conta antes
+  de aceitar sessionID. Retomada usa ID exato, jamais a última conversa alheia.
+  Login nativo sem accountId recebe owner opaco por UID/endpoint (hash da key
+  se UID ausente), validado antes do argv e na cópia para outro pane. O ledger
+  por sessão preserva esse dono mesmo após `/new`; não usar só a última sessão
+  do pane como prova de propriedade.
+- Cota Token Plan é outra autorização: janela explícita do console em sessão
+  Electron própria; compara userId ao UID da CLI antes/depois da consulta.
+  Consentimento persistido contém apenas hashes. Sem cookies autorizados,
+  cota fica indisponível; isso não prova logout da CLI. Não extrair cookies
+  de navegadores externos nem tratar expiração do plano como reset da quota.
+- Tokens do SQLite: input exclui cache; output exclui reasoning (somar uma vez).
+  Reescrita da mensagem atualiza uma linha. Custo reportado pela CLI é estimativa,
+  não fatura do Token Plan. Nenhum texto de prompt entra na telemetria.

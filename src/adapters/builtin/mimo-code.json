@@ -1,0 +1,90 @@
+{
+  "kind": "cli-pty",
+  "id": "mimo-code",
+  "label": "MiMo Code (Xiaomi)",
+  "version": "1.0.0",
+  "icon": "Mi",
+  "bin": "mimo",
+  "detect": "mimo --version",
+  "install": {
+    "method": "npm",
+    "command": "npm install -g @mimo-ai/cli"
+  },
+  "auth": {
+    "method": "api_key",
+    "envVarFallback": "XIAOMI_API_KEY",
+    "credentialStore": "env",
+    "loginCommand": "mimo providers login --provider xiaomi",
+    "loginHint": "Entre na plataforma Xiaomi com API ou Token Plan. A assinatura MiMo Desktop é separada."
+  },
+  "spawn": {
+    "interactive": [
+      "mimo",
+      "--trust"
+    ],
+    "headless": [
+      "mimo",
+      "run",
+      "{{PROMPT}}"
+    ],
+    "ptyRequired": true,
+    "resumeArgs": [],
+    "resumeIdArgs": [
+      "--session"
+    ],
+    "extraArgs": [],
+    "initialPrompt": "interactive-flag",
+    "initialPromptFlag": "--prompt"
+  },
+  "env": {
+    "static": {
+      "MIMOCODE_DISABLE_AUTOUPDATE": "1"
+    },
+    "passthrough": [
+      "XIAOMI_API_KEY"
+    ],
+    "ephemeralHome": false
+  },
+  "models": {
+    "flag": "--model",
+    "list": [
+      "xiaomi/mimo-v2.6-flash",
+      "xiaomi/mimo-v2.6-pro",
+      "xiaomi/mimo-v2.6-pro-ultraspeed"
+    ],
+    "default": "xiaomi/mimo-v2.6-flash"
+  },
+  "promptInjection": {
+    "method": "flag",
+    "flag": "--prompt",
+    "trailingNewline": false,
+    "bracketedPaste": false
+  },
+  "stateParsing": {
+    "idle": {
+      "type": "timeout",
+      "ms": 800
+    },
+    "shellIntegration": false,
+    "exitCodes": {
+      "0": "ok",
+      "1": "error"
+    }
+  },
+  "quirks": {
+    "altScreen": true,
+    "requiresNoAutoUpdate": false,
+    "mcpAutoload": false,
+    "nexusMcp": "mimo-code"
+  },
+  "control": {
+    "permission": {
+      "arg": "",
+      "modes": {},
+      "yolo": [
+        "--dangerously-skip-permissions"
+      ],
+      "default": ""
+    }
+  }
+}

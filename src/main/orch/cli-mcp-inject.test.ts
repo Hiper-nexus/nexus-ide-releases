@@ -53,6 +53,7 @@ describe("supportsMcpInjection", () => {
       | "codex"
       | "agy"
       | "opencode"
+      | "mimo-code"
       | "kimi"
       | "grok",
     mcpAutoload = nexusMcp === "autoload",
@@ -69,6 +70,8 @@ describe("supportsMcpInjection", () => {
     expect(supportsMcpInjection(adapter("codex"))).toBe("codex");
     expect(supportsMcpInjection(adapter("agy"))).toBe(null);
     expect(supportsMcpInjection(adapter("opencode"))).toBe("opencode");
+    expect(supportsMcpInjection(adapter("mimo-code"))).toBe("mimo-code");
+    expect(canUseNexusMcp(adapter("mimo-code"))).toBe(true);
     expect(supportsMcpInjection(adapter("kimi"))).toBe("kimi");
     expect(supportsMcpInjection(adapter("grok"))).toBe("grok");
     expect(supportsMcpInjection(adapter("autoload"))).toBe(null);

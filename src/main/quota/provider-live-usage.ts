@@ -45,6 +45,7 @@ export interface ApiQuotaKeyRequest {
 }
 
 export interface LiveUsageAuthResolvers {
+  mimoAccountUsage?: (accountId?: string) => Promise<LiveProviderProbe>;
   /** Exact saved-account CLI fallback; CLI owns its renewable credential. */
   codexAccountUsage?: (accountId: string) => Promise<LiveProviderProbe>;
   /** Main-owned exact credential selection; never a flattened multi-provider list. */
@@ -194,6 +195,9 @@ export async function fetchLiveProviderWindows(
   authMode = 'unknown',
 ): Promise<LiveProviderProbe> {
   const fetchImpl = deps.fetchImpl;
+  if (adapterId === 'mimo-code' && (!declaredUpstream || declaredUpstream === 'mimo-code')) {
+    return deps.mimoAccountUsage ? deps.mimoAccountUsage(accountId) : NO_CREDENTIAL;
+  }
   if (declaredUpstream) {
     // API-key billing has no equivalent subscription quota on these routes.
     // Never substitute the computer's OAuth session for this credential mode.

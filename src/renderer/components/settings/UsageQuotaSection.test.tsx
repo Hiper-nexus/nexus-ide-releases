@@ -151,6 +151,21 @@ describe('UsageQuotaSection', () => {
     vi.restoreAllMocks();
   });
 
+
+  it('opens MiMo quota connection only on its explicit button', async () => {
+    const connectMimo = vi.fn(async () => ({ ok: true, message: 'Cota conectada' }));
+    Object.assign(window.nexus.quota, { connectMimo });
+    vi.mocked(window.nexus.quota.refresh).mockResolvedValue({ ...sampleSnapshot, entries: [{ ...sampleEntries[0], id: 'mimo-code:mine', adapterId: 'mimo-code', accountId: 'mine', label: 'MiMo Code' }] });
+    const { host, root } = mount();
+    await act(async () => { await Promise.resolve(); });
+    expect(connectMimo).not.toHaveBeenCalled();
+    const button = [...host.querySelectorAll('button')].find(button => button.textContent === 'Conectar cota');
+    expect(button).toBeDefined();
+    await act(async () => { button!.click(); });
+    expect(connectMimo).toHaveBeenCalledWith('mine');
+    act(() => root.unmount());
+  });
+
   it('renders header, description, and status overview counters', async () => {
     const { host, root } = mount();
     await act(async () => {

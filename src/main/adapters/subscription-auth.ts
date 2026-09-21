@@ -8,7 +8,8 @@ import {
   readClaudeCredentialFile,
 } from './claude-credential';
 import { realUserHome, resolveCliBinary } from '../path-resolver';
-import { hasNativeFileAuth } from './managed-credentials';
+import { hasNativeFileAuth, captureNativeAuth } from './managed-credentials';
+import { mimoCredentialSupportsModel } from './mimo-auth';
 import {
   openClaudeKeychainService,
   readNativeOAuthCredential,
@@ -136,6 +137,9 @@ function cachedSubscriptionAuth(
   adapterId: string,
   model?: string,
 ): boolean | null {
+  // MiMo can switch product/region while retaining its adapter ID. Re-read
+  // the small auth file so a previous login cannot grant model entitlement.
+  if (adapterId === 'mimo-code') return null;
   const hit =
     cache.get(subscriptionCacheKey(adapterId, model)) ??
     (model?.trim() ? cache.get(adapterId) : undefined);
@@ -1022,6 +1026,10 @@ export function detectSubscriptionAuth(
       } catch {
         return false;
       }
+    case 'mimo-code': {
+      const capture = captureNativeAuth(adapterId, home);
+      return capture ? mimoCredentialSupportsModel(capture.blob, _model) : false;
+    }
     case 'devin':
       // Sessão em TOML plano ($XDG_DATA_HOME/devin/credentials.toml). Sem este
       // case o switch caía no default `false`, a estratégia virava

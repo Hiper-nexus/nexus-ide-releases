@@ -1,3 +1,4 @@
+import { mimoCredentialSupportsModel } from '../adapters/mimo-auth';
 import fs from 'node:fs';
 import { z } from 'zod';
 import os from 'node:os';
@@ -318,6 +319,9 @@ function nativeKeyEnv(
   key: string,
   modelOverride?: string,
 ): Record<string, string> {
+  if (adapterId === 'mimo-code' && key.startsWith('tp-')) {
+    throw new Error('Use o login oficial da CLI MiMo para vincular o Token Plan e sua região.');
+  }
   if (adapterId === 'kimi') {
     const adapter = getAdapter(adapterId);
     const model =
@@ -341,16 +345,17 @@ function authDecision(
   const adapter = getAdapter(adapterId);
   const authMethod =
     adapter?.kind === 'cli-pty' ? adapter.auth.method : 'api_key';
+  const probeSubscription = options.statusSnapshot || adapterId === 'agy'
+    ? hasSubscriptionAuthForStatus : hasSubscriptionAuth;
   return resolveAuthStrategy({
     authMethod,
     hasStoredKey: hasRuntimeKey(adapterId),
     // AGY's native Keychain is always probed asynchronously before governed
     // spawn. Synchronous settings/spawn paths consume only that warm cache so
     // a locked login Keychain can never freeze Electron's main event loop.
-    subscriptionAuthed:
-      options.statusSnapshot || adapterId === 'agy'
-        ? hasSubscriptionAuthForStatus(adapterId)
-        : hasSubscriptionAuth(adapterId),
+    subscriptionAuthed: adapterId === 'mimo-code'
+      ? probeSubscription(adapterId, effectiveProviderModel(adapterId, _selectedModel))
+      : probeSubscription(adapterId),
   });
 }
 
@@ -665,6 +670,12 @@ function buildProviderSpawnOverrides(
     options,
     credentiallessOpenCode,
   );
+  if (adapterId === 'mimo-code' && account?.mode === 'subscription') {
+    const blob = getSecret(`acctcred:${account.id}`);
+    if (!blob || !mimoCredentialSupportsModel(blob, effectiveProviderModel(adapterId, perSpawn.model))) {
+      throw new Error('Este modelo não está disponível na conta MiMo selecionada. Token Plan inclui Pro e Flash; UltraSpeed exige acesso API separado.');
+    }
+  }
   // Control flags (permission mode / effort / verbose) always apply, whatever
   // the auth/routing path — they're how the user turns on auto-operation.
   // Prefer: (1) valid user absolute override, (2) valid discovery cache,

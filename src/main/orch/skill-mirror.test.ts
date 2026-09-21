@@ -64,6 +64,13 @@ afterEach(() => {
 });
 
 describe('ensureSkillsForCli', () => {
+  it('mirrors granted skills to the native MiMo config namespace', () => {
+    const home = tmpRoot();
+    writeSkill(path.join(home, '.agents', 'skills'), 'mimo-test-grant');
+    ensureSkillsForCli('mimo-code', { home, allowedSkills: ['mimo-test-grant'] });
+    expect(fs.readFileSync(path.join(home, '.config', 'mimocode', 'skills', 'mimo-test-grant', 'SKILL.md'), 'utf8')).toBe('# Skill');
+  });
+
   it.each(['outdated', 'missing'] as const)(
     'repairs a bundled helper that is %s even when SKILL.md already matches',
     (helperState) => {

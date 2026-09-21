@@ -211,6 +211,7 @@ function EntryCard({
   recommended: boolean;
 }) {
   const [loginBusy, setLoginBusy] = useState(false);
+  const [quotaBusy, setQuotaBusy] = useState(false);
   const known = hasQuota(entry);
   const authExpired = entry.readHint === 'auth-expired';
   const state = needsRelogin || authExpired
@@ -259,6 +260,18 @@ function EntryCard({
     } catch (error) {
       push('error', 'Não foi possível atualizar a conta', error instanceof Error ? error.message : 'Tente novamente.');
     }
+  }
+
+  async function connectQuota() {
+    if (quotaBusy) return;
+    setQuotaBusy(true);
+    try {
+      const result = await window.nexus.quota.connectMimo(entry.accountId);
+      useToastStore.getState().push(result.ok ? 'success' : 'warn', 'Cota MiMo', result.message);
+      await useQuotaStore.getState().refresh();
+    } catch {
+      useToastStore.getState().push('error', 'Cota MiMo', 'Não foi possível abrir a conexão. Tente novamente.');
+    } finally { setQuotaBusy(false); }
   }
 
   async function relogin() {
@@ -313,6 +326,13 @@ function EntryCard({
             </p>
           )}
         </div>
+        {entry.adapterId === 'mimo-code' && (
+          <button type="button" className="settings-btn" disabled={quotaBusy} aria-busy={quotaBusy}
+            title="Entre no console com a mesma conta do Token Plan usada na CLI e feche a janela para verificar."
+            onClick={() => void connectQuota()}>
+            {quotaBusy ? 'Conectando cota…' : 'Conectar cota'}
+          </button>
+        )}
         {canRelogin ? (
           <button
             type="button"

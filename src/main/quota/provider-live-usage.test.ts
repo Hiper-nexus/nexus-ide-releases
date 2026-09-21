@@ -8,6 +8,15 @@ const agyCli = vi.hoisted(() => vi.fn<() => Promise<QuotaWindow[] | null>>(async
 vi.mock('./agy-cli-usage', () => ({ fetchAgyCliUsageWindows: agyCli }));
 
 describe('fetchLiveProviderWindows', () => {
+  it('uses only the explicit MiMo console resolver, including saved API credentials', async () => {
+    const mimoAccountUsage = vi.fn(async () => ({ windows: null, hint: 'unavailable' as const }));
+    const resolveApiQuotaKey = vi.fn();
+    expect(await fetchLiveProviderWindows('mimo-code', 'mimo-a', { mimoAccountUsage, resolveApiQuotaKey }, Date.now(), 'mimo-code', 'api-key')).toEqual({ windows: null, hint: 'unavailable' });
+    expect(mimoAccountUsage).toHaveBeenCalledWith('mimo-a');
+    expect(resolveApiQuotaKey).not.toHaveBeenCalled();
+    expect(await fetchLiveProviderWindows('mimo-code', undefined, {})).toEqual({ windows: null, hint: 'no-credential' });
+  });
+
   it('uses each saved Codex account CLI when its access token needs renewal', async () => {
     const quotaFor = async (id: string) => ({ windows: [{ kind: 'weekly' as const, label: 'Semanal', usedRatio: id === 'account-a' ? 0.2 : 0.8, source: 'provider-api' as const, confidence: 'high' as const }] });
     const deps = {

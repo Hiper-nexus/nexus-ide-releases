@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import path from 'node:path';
 import type { CliPtyAdapter } from '../../shared/adapter-types';
 import { resolvePlaceholders } from '../../shared/adapter-types';
+import { prepareMimoBenchmarkEnv } from './mimo-benchmark-env';
 import { getAdapter } from '../adapters/adapter-registry';
 import { MAX_BENCHMARK_TEXT_CHARS, type BenchmarkCompetitorExecutor } from './benchmark-runner';
 
@@ -38,6 +39,7 @@ interface Invocation {
   prompt: string;
   trailingNewline: boolean;
   env: Record<string, string>;
+  dispose?: () => void;
 }
 
 function safeEnv(adapter: CliPtyAdapter, baseEnv: NodeJS.ProcessEnv): Record<string, string> {
@@ -80,6 +82,8 @@ function buildInvocation(
     args = [...args, adapter.models.flag, modelId];
   }
   args = [...args, ...adapter.spawn.extraArgs];
+  const env = safeEnv(adapter, baseEnv);
+  const mimo = adapter.id === 'mimo-code' ? prepareMimoBenchmarkEnv(env, baseEnv) : null;
   return {
     file,
     args,
@@ -87,7 +91,8 @@ function buildInvocation(
     promptViaStdin: !hasPromptPlaceholder && adapter.promptInjection.method === 'stdin',
     prompt,
     trailingNewline: adapter.promptInjection.trailingNewline,
-    env: safeEnv(adapter, baseEnv),
+    env: mimo?.env ?? env,
+    ...(mimo ? { dispose: mimo.dispose } : {}),
   };
 }
 
@@ -179,8 +184,12 @@ export function createCliBenchmarkExecutor(
     }
     const adapter = options.resolveAdapter(subject.adapterId);
     if (!adapter) throw new Error(`benchmark adapter not found: ${subject.adapterId}`);
+    if (!adapter.models.list.includes(subject.modelId)) {
+      throw new Error(`benchmark model is not available for adapter ${subject.adapterId}`);
+    }
     const invocation = buildInvocation(adapter, subject.modelId, prompt, options.cwd, baseEnv);
-    return runInvocation(invocation, timeoutMs, maxOutputChars);
+    try { return await runInvocation(invocation, timeoutMs, maxOutputChars); }
+    finally { invocation.dispose?.(); }
   };
 }
 

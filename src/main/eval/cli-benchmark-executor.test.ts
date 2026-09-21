@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { CliPtyAdapter } from '../../shared/adapter-types';
 import { createCliBenchmarkExecutor } from './cli-benchmark-executor';
 
@@ -71,5 +71,15 @@ describe('CLI benchmark executor', () => {
     const enabled = createCliBenchmarkExecutor({ ...options, allowExternalExecution: true });
     const result = await enabled({ caseId: 'case-1', prompt: 'stdin payload', subject });
     expect(result.answer).toBe('stdin payload');
+  });
+
+  it('rejects a model outside the resolved adapter catalog before executing the CLI', async () => {
+    const resolveAdapter = vi.fn(() => adapter([process.execPath, '-e', 'process.exit(99)', '{{PROMPT}}']));
+    const executor = createCliBenchmarkExecutor({
+      resolveAdapter, cwd: process.cwd(), allowExternalExecution: true,
+    });
+    await expect(executor({
+      caseId: 'case-1', prompt: 'test', subject: { ...subject, modelId: 'unknown-model' },
+    })).rejects.toThrow('benchmark model is not available for adapter fake-cli');
   });
 });

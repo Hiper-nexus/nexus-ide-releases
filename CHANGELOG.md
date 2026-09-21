@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.76.75 — Xiaomi MiMo no Nexus
+
+- CLI oficial `@mimo-ai/cli` integrada a Providers, instalação, login, contas salvas, panes, MCP, skills e retomada por sessão.
+- MiMo V2.6 Pro e Flash no catálogo, roteamento e comparação interna. UltraSpeed exige API separada; Token Plan conserva seu endpoint regional e seus modelos autorizados.
+- Cota do Token Plan no Nexus/Redline após conexão explícita do console Xiaomi da mesma conta. Autorização persistente, sem reutilizar cookies de navegadores externos.
+- Tokens reais por conversa e conta, com cache/raciocínio e atualizações idempotentes. Custos informados pela CLI são estimativas, não fatura do plano.
+- Modelos sem medição ficam como não avaliados. Benchmarks automáticos não usam Token Plan.
+- A assinatura MiMo Desktop é independente da CLI. A conexão do console e o uso autenticado continuam dependendo do login do usuário.
+
+
 ## 0.76.69 — Grok conectado também no Redline
 
 - **Cota Grok após expirar o access token (F-626)**: renovação pela própria CLI via ACP, somente initialize/authenticate com sessão salva; sem prompt, conversa ou `grok models`. Credenciais nativas e gerenciadas continuam vinculadas à conta certa.

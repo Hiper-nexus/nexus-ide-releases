@@ -130,6 +130,16 @@ CREATE TABLE IF NOT EXISTS account_cooldown_blocks (
   PRIMARY KEY (account_id, block_scope)
 );
 
+CREATE TABLE IF NOT EXISTS provider_session_accounts (
+  installation_id TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  checkout_id TEXT NOT NULL,
+  adapter_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  account_id TEXT,
+  PRIMARY KEY (installation_id, project_id, checkout_id, adapter_id, session_id)
+);
+
 CREATE TABLE IF NOT EXISTS provider_pane_sessions (
   installation_id TEXT NOT NULL,
   project_id      TEXT NOT NULL,
@@ -172,6 +182,9 @@ export function getDb(): Db | null {
     db = new Database(file);
     db.exec(SCHEMA);
     migrateSchema(db);
+    db.exec(`INSERT OR IGNORE INTO provider_session_accounts
+      SELECT installation_id, project_id, checkout_id, adapter_id, session_id, account_id
+      FROM provider_pane_sessions WHERE adapter_id = 'mimo-code' AND session_key = 'session_id'`);
   } catch (err) {
     degraded = true;
     console.error(

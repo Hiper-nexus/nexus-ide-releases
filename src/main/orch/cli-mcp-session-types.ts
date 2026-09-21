@@ -34,9 +34,16 @@ export interface CliMcpSessionOptions extends GovernedCliProfileOptions {
    * default-model / migration prefs (and red-error on protectedWritePaths).
    */
   model?: string;
+  /** Main resolved a Xiaomi API-key account into XIAOMI_API_KEY for this spawn. */
+  mimoApiKeySelected?: boolean;
+  /** Main's active loopback status listener. Never persisted in the hook source. */
+  mimoHookEndpoint?: { port: number; token: string };
+  mimoCustomConfigDir?: string;
 }
 
 export interface CliMcpSessionResult {
+  /** Private accountless MiMo identity, used only for Main resume ownership. */
+  mimoNativeOwnerKey?: string;
   env: Record<string, string>;
   extraArgs: string[];
   serverName: string;

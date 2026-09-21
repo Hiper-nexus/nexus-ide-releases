@@ -35,7 +35,7 @@ import { ensureSkillsForCli } from "./skill-mirror";
  */
 
 export type McpInjectionKind =
-  "codex" | "opencode" | "kimi" | "grok";
+  "codex" | "opencode" | "kimi" | "grok" | "mimo-code";
 type NexusMcpAdapter = Pick<CliPtyAdapter, "quirks">;
 type NexusMcpAdapterLike = {
   quirks: { mcpAutoload?: boolean; nexusMcp?: unknown };
@@ -48,6 +48,7 @@ export function supportsMcpInjection(
   const integration = adapter.quirks.nexusMcp;
   return integration === "codex" ||
     integration === "opencode" ||
+    integration === "mimo-code" ||
     integration === "kimi" ||
     integration === "grok"
     ? integration

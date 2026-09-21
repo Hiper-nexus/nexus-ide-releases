@@ -172,6 +172,11 @@ const RECIPES: Readonly<Record<string, PlatformRecipes>> = Object.freeze({
     linux: [npmRecipe('@openai/codex')],
     win32: [npmRecipe('@openai/codex')],
   },
+  'mimo-code': {
+    darwin: [npmRecipe('@mimo-ai/cli')],
+    linux: [npmRecipe('@mimo-ai/cli')],
+    win32: [npmRecipe('@mimo-ai/cli')],
+  },
   opencode: {
     darwin: [brewRecipe('opencode'), npmRecipe('opencode-ai')],
     linux: [npmRecipe('opencode-ai')],

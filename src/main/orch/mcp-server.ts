@@ -214,9 +214,13 @@ import {
   prepareGrokMcpSession,
   prepareKimiMcpSession,
   prepareOpenCodeMcpSession,
+  prepareMimoMcpSession,
   purgeStaleCliMcpSessions,
 } from "./cli-mcp-session-config";
 import { readTomlObject } from "./cli-mcp-session-artifacts";
+import { getActiveAgentHookHttpServer } from "../agent-hooks/hook-http-server";
+import { registerMimoRuntime } from "../agent-hooks/mimo-session-registry";
+import { currentMimoSessionOwnerKey } from "../adapters/mimo-session-owner";
 import {
   claudeFamilyHubMcpServers,
   codexHubMcpArgs,
@@ -1085,6 +1089,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
     // session/auth state into. The advisory sandbox grants it read+write.
     let advisoryProviderStateHome: string | undefined;
     let advisoryProviderSessionHome: string | undefined;
+    let mimoNativeOwnerKey: string | undefined;
     // F-569: exact auth paths a governed Grok/Kimi session may read/write —
     // never the whole provider home. Additive to providerStateHome.
     let advisoryProviderStateReadPaths: readonly string[] = [];
@@ -1326,6 +1331,26 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           advisoryProviderSessionHome = prepared.providerSessionHome;
           advisoryProviderStateReadPaths = prepared.providerStateReadPaths ?? [];
           advisoryProviderStateWritePaths = prepared.providerStateWritePaths ?? [];
+        } else if (flavor === "mimo-code") {
+          const hookEndpoint = getActiveAgentHookHttpServer();
+          const prepared = prepareMimoMcpSession(mcpUrl(), ctx.token, {
+            userDataPath: app.getPath("userData"),
+            checkoutId: authority.scope.checkoutId,
+            providerHome: preparedEnv?.MIMOCODE_HOME,
+            mimoApiKeySelected: Boolean(preparedEnv?.XIAOMI_API_KEY?.trim()),
+            mimoHookEndpoint: hookEndpoint ? { port: hookEndpoint.port, token: hookEndpoint.token } : undefined,
+            mimoCustomConfigDir: preparedEnv?.MIMOCODE_CONFIG_DIR ?? process.env.MIMOCODE_CONFIG_DIR,
+            cwd: authority.cwd,
+            workspaceRoot: authority.scope.rootRealPath,
+            hubServers,
+          });
+          Object.assign(env, prepared.env);
+          mimoNativeOwnerKey = prepared.mimoNativeOwnerKey ?? currentMimoSessionOwnerKey(preparedEnv?.XIAOMI_API_KEY) ?? undefined;
+          extraArgs.push(...prepared.extraArgs);
+          advisoryProviderStateHome = prepared.providerStateHome;
+          advisoryProviderSessionHome = prepared.providerSessionHome;
+          advisoryProviderStateReadPaths = prepared.providerStateReadPaths ?? [];
+          advisoryProviderStateWritePaths = prepared.providerStateWritePaths ?? [];
         } else if (flavor === "kimi") {
           const prepared = prepareKimiMcpSession(mcpUrl(), ctx.token, {
             userDataPath: app.getPath("userData"),
@@ -1496,6 +1521,14 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
       // answered: the operator answers their own terminal's prompts.
       const spawned = getAgentSessionInfo(sessionId);
       if (spawned) {
+        if (spawned.adapterId === "mimo-code" && spawned.paneId && advisoryProviderSessionHome && env.MIMOCODE_DB) {
+          registerMimoRuntime({
+            ptySessionId: sessionId, paneId: spawned.paneId, accountId: spawned.accountId,
+            missionId: spawned.missionId, scope: spawned.scope, cwd: fs.realpathSync(spawned.cwd),
+            stateRoot: advisoryProviderSessionHome, databasePath: env.MIMOCODE_DB,
+            nativeOwnerKey: mimoNativeOwnerKey,
+          }, env.NEXUS_MIMO_HOOK_TOKEN);
+        }
         firstRunInterstitialResponder.bind(sessionId, {
           adapterId: spawned.adapterId,
           ...(spawned.missionId ? { missionId: spawned.missionId } : {}),
