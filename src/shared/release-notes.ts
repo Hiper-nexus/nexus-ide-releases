@@ -4151,7 +4151,7 @@ export const RELEASE_07647: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07669: AppRelease = {
   version: '0.76.69',
   date: '2026-09-21',
   codename: 'Grok conectado também no Redline',
@@ -5855,5 +5855,21 @@ export const RELEASE_07642: AppRelease = {
         'A dica de "mission effect blocked" é recalculada pela allowlist do painel: um pane ' +
         'somente-leitura ouve nexus_pane_ask, não ferramentas que o próprio gate barra.',
     },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.75',
+  date: '2026-09-21',
+  codename: 'Xiaomi MiMo no Nexus',
+  summary: 'MiMo Code ganha integração nativa, contas próprias e os modelos V2.6 Pro e Flash. A cota do Token Plan pode ser conectada ao Nexus e ao Redline.',
+  highlights: [
+    { title: 'CLI oficial e contas Xiaomi', detail: 'Instale ou conecte MiMo Code nos Providers. As contas mantêm suas credenciais e a região do plano; conversas do Nexus ficam separadas das sessões externas.' },
+    { title: 'Pro, Flash e UltraSpeed', detail: 'V2.6 Pro e Flash disponíveis no Token Plan. UltraSpeed exige API separada com cobrança por uso. Os modelos aparecem na comparação interna como não avaliados até haver medições.' },
+    { title: 'Consumo no Nexus e no Redline', detail: 'Conecte o console Xiaomi para consultar a cota da mesma conta do Token Plan. A autorização é preservada entre reinícios; falta de leitura não vira consumo zero nem aviso falso de logout.' },
+  ],
+  fixes: [
+    { title: 'Retomada e uso por conversa', detail: 'A sessão exata da CLI acompanha o pane e o registro de tokens, incluindo cache e raciocínio, sem misturar conversas de contas diferentes.' },
+    { title: 'MCP, skills e roteamento', detail: 'MiMo Code recebe o MCP do Nexus, skills permitidas e opções de modelo próprias. Benchmarks automáticos exigem chave da API separada, preservando o Token Plan para ferramentas de programação.' },
   ],
 };

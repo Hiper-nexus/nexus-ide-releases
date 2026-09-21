@@ -82,6 +82,12 @@ describe('estimateCost', () => {
     expect(estimateCost('xai/grok-4.7', 0, 1_000_000)).toBe(6);
   });
 
+  it('uses the published Xiaomi V2.6 base rates for every CLI model', () => {
+    expect(estimateCost('xiaomi/mimo-v2.6-flash', 1_000_000, 1_000_000)).toBeCloseTo(0.42);
+    expect(estimateCost('xiaomi/mimo-v2.6-pro', 1_000_000, 1_000_000)).toBeCloseTo(1.305);
+    expect(estimateCost('xiaomi/mimo-v2.6-pro-ultraspeed', 1_000_000, 1_000_000)).toBeCloseTo(13.05);
+  });
+
   it('prices input and output tokens separately', () => {
     // claude-opus-5: $5/M in, $25/M out.
     const cost = estimateCost('claude-opus-5', 1_000_000, 1_000_000);

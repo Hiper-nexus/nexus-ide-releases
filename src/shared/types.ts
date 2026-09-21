@@ -1076,6 +1076,7 @@ export interface NexusApi {
    * project token spend in `usage`. Unknown ratios are null, never fake 0%.
    */
   quota: {
+    connectMimo(accountId?: string): Promise<{ ok: boolean; message: string }>;
     snapshot(): Promise<import('./quota-types').QuotaFleetSnapshot>;
     refresh(): Promise<import('./quota-types').QuotaFleetSnapshot>;
     onChanged(

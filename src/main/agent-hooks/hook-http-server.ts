@@ -171,7 +171,11 @@ async function handleRequest(
         : typeof (payload as { sessionId?: unknown })?.sessionId === 'string'
           ? (payload as { sessionId: string }).sessionId
           : '';
-    result = ingestAgentHookStatus(sessionId, payload, { pathname: url.pathname });
+    const mimoToken = req.headers['x-nexus-mimo-session-token'];
+    result = ingestAgentHookStatus(sessionId, payload, {
+      pathname: url.pathname,
+      ...(typeof mimoToken === 'string' ? { mimoToken } : {}),
+    });
   } else {
     // Form-urlencoded (managed scripts).
     const params = new URLSearchParams(body);

@@ -162,6 +162,10 @@ const OAUTH_PROBES: Record<
       detail: 'sem source=oauth em `kimi provider list` — rode `kimi login`',
     };
   },
+  'mimo-code': async () =>
+    hasNativeFileAuth('mimo-code')
+      ? { state: 'ok', detail: 'credencial Xiaomi MiMo salva pela CLI' }
+      : { state: 'missing', detail: 'entre com sua conta Xiaomi MiMo' },
   opencode: async () =>
     hasNativeFileAuth('opencode')
       ? { state: 'ok', detail: 'credencial OpenCode local' }

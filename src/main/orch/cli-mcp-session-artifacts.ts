@@ -14,7 +14,7 @@ import type {
   CliMcpSessionOptions,
 } from './cli-mcp-session-types';
 
-type ArtifactProvider = 'codex' | 'opencode' | 'kimi' | 'grok';
+type ArtifactProvider = 'codex' | 'opencode' | 'kimi' | 'grok' | 'mimo-code';
 
 export interface ArtifactSession {
   artifactDir: string;
@@ -330,6 +330,11 @@ export function purgeStaleCliMcpSessions(
     ),
     purgeOwnedSessionRoot(
       path.join(artifactRoot, 'opencode'),
+      active,
+      trustedBoundary,
+    ),
+    purgeOwnedSessionRoot(
+      path.join(artifactRoot, 'mimo-code'),
       active,
       trustedBoundary,
     ),

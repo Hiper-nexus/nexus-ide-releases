@@ -11,6 +11,7 @@ const SESSION_LOGIN_IDS = [
   'devin',
   'grok',
   'kimi',
+  'mimo-code',
   'muse',
   'opencode',
   'openclaude',

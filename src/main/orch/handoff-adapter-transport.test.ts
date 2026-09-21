@@ -25,6 +25,7 @@ const MCP_BUILTIN_IDS = new Set([
   "opencode",
   "kimi",
   "grok",
+  "mimo-code",
 ]);
 
 const PTY_FALLBACK_BUILTIN_IDS = new Set(["agy", "aider", "devin", "muse"]);
@@ -76,7 +77,7 @@ describe("handoffTransportForAdapter catalog", () => {
     expect(builtins.map((adapter) => adapter.id).sort()).toEqual(
       [...MCP_BUILTIN_IDS, ...PTY_FALLBACK_BUILTIN_IDS].sort(),
     );
-    expect(builtins).toHaveLength(14);
+    expect(builtins).toHaveLength(15);
   });
 
   it.each(builtins)(

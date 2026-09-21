@@ -79,6 +79,14 @@ export function parseKimiModelsOutput(stdout: string): string[] {
   return models && typeof models === 'object' ? Object.keys(models) : [];
 }
 
+/** MiMo annotates each provider/model row with its context window. */
+export function parseMimoModelsOutput(stdout: string): string[] {
+  return stdout.split(/\r?\n/).flatMap(line => {
+    const match = /^\s*(xiaomi\/[A-Za-z0-9._:/-]+)(?:\s|$)/.exec(line);
+    return match ? [match[1]] : [];
+  });
+}
+
 /** OpenCode `models` — one `provider/id` per line. */
 export function parseOpenCodeModelsOutput(stdout: string): string[] {
   return stdout
@@ -163,6 +171,7 @@ export const MODEL_DISCOVERY_INVENTORY: Readonly<
   },
   kimi: { kind: 'cli', command: 'kimi provider list --json' },
   opencode: { kind: 'cli', command: 'opencode models' },
+  'mimo-code': { kind: 'cli', command: 'mimo --pure models xiaomi' },
   'cursor-agent': { kind: 'cli', command: 'cursor-agent models' },
   qoder: { kind: 'cli', command: 'qodercli --list-models' },
   'prime-agent': { kind: 'cli', command: 'prime-agent model list' },
@@ -225,6 +234,7 @@ const STRATEGIES: Readonly<Record<string, DiscoveryStrategy>> = Object.freeze({
     args: ['provider', 'list', '--json'],
     parse: parseKimiModelsOutput,
   },
+  'mimo-code': { bin: 'mimo', args: ['--pure', 'models', 'xiaomi'], parse: parseMimoModelsOutput },
   opencode: {
     bin: 'opencode',
     args: ['models'],

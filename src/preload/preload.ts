@@ -1302,6 +1302,7 @@ const api: NexusApi = {
       addListener(usageChangedListeners, cb),
   },
   quota: {
+    connectMimo: (accountId?: string) => ipcRenderer.invoke(QUOTA_CHANNELS.connectMimo, accountId) as Promise<{ ok: boolean; message: string }>,
     snapshot: () =>
       ipcRenderer.invoke(QUOTA_CHANNELS.snapshot) as Promise<QuotaFleetSnapshot>,
     refresh: () =>

@@ -1,3 +1,4 @@
+import mimoRaw from '../../adapters/builtin/mimo-code.json';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const spawnDeps = vi.hoisted(() => ({
@@ -213,7 +214,9 @@ vi.mock('electron', () => ({
 
 vi.mock('../adapters/adapter-registry', () => ({
   getAdapter: (id: string) =>
-    id === 'claude'
+    id === 'mimo-code'
+      ? mimoRaw
+      : id === 'claude'
       ? claudeAdapter
       : id === 'kimi'
         ? kimiAdapter
@@ -232,7 +235,7 @@ vi.mock('../adapters/adapter-registry', () => ({
           : null,
   isBinResolvable: () => true,
   getAdapterResolvedBin: (id: string) =>
-    id === 'claude'
+    id === 'mimo-code' ? '/usr/local/bin/mimo' : id === 'claude'
       ? '/usr/local/bin/claude'
       : id === 'kimi'
         ? '/Users/test/.kimi-code/bin/kimi'
@@ -246,7 +249,7 @@ vi.mock('../adapters/adapter-registry', () => ({
           ? '/usr/local/bin/local-agent'
         : null,
   resolveAdapterBinary: (id: string) =>
-    id === 'claude'
+    id === 'mimo-code' ? '/usr/local/bin/mimo' : id === 'claude'
       ? '/usr/local/bin/claude'
       : id === 'kimi'
         ? '/Users/test/.kimi-code/bin/kimi'
@@ -262,6 +265,7 @@ vi.mock('../adapters/adapter-registry', () => ({
   rescanAdapterBinaries: vi.fn(() => []),
   listAdapters: () => [
     claudeAdapter,
+    mimoRaw,
     kimiAdapter,
     museAdapter,
     opencodeAdapter,
@@ -362,6 +366,7 @@ import {
   prepareProviderSpawn,
   prepareProviderSpawnAuthoritative,
   providerAuthStrategyAuthoritativeAsync,
+  providerAuthStrategy,
   providerReadiness,
   initializeProviderConfigStore,
   resolveRunnerPath,
@@ -373,6 +378,7 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     spawnDeps.runtimeKey.mockReturnValue('sk-global-other-account');
+    spawnDeps.getSecret.mockReturnValue(null);
     spawnDeps.hasSecret.mockReturnValue(false);
     spawnDeps.launcherKey.mockReturnValue(null);
     spawnDeps.subscriptionAuthed.mockReturnValue(true);
@@ -397,6 +403,40 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
     spawnDeps.activeClaudeAuthEnv.mockReturnValue({
       CLAUDE_CODE_OAUTH_TOKEN: 'oauth-active',
     });
+  });
+
+  it('keeps MiMo Token Plan readiness model-aware through the public provider settings', () => {
+    spawnDeps.runtimeKey.mockReturnValue(null);
+    spawnDeps.hasSecret.mockReturnValue(false);
+    spawnDeps.subscriptionAuthed.mockImplementation((adapterId, model) => adapterId === 'mimo-code' && !model?.endsWith('ultraspeed'));
+    spawnDeps.resolveAuthStrategy.mockImplementation(input => ({ strategy: input.subscriptionAuthed ? 'subscription' : 'login-needed', injectKey:false, suppressKeyEnv:true }));
+    const provider = listProviderSettings().find(p => p.adapterId === 'mimo-code');
+    expect(provider?.authReadyModels).toContain('xiaomi/mimo-v2.6-pro');
+    expect(provider?.authReadyModels).toContain('xiaomi/mimo-v2.6-flash');
+    expect(provider?.authReadyModels).not.toContain('xiaomi/mimo-v2.6-pro-ultraspeed');
+  });
+
+  it('checks the effective MiMo default when no model override was provided', () => {
+    const original = mimoRaw.models.default;
+    mimoRaw.models.default = 'xiaomi/mimo-v2.6-pro-ultraspeed';
+    spawnDeps.subscriptionAuthed.mockImplementation((_id, model) => !model?.endsWith('ultraspeed'));
+    spawnDeps.resolveAuthStrategy.mockImplementation(input => ({ strategy: input.subscriptionAuthed ? 'subscription' : 'login-needed', injectKey:false, suppressKeyEnv:true }));
+    try {
+      expect(providerAuthStrategy('mimo-code')).toBe('login-needed');
+      expect(spawnDeps.subscriptionAuthed).toHaveBeenCalledWith('mimo-code', 'xiaomi/mimo-v2.6-pro-ultraspeed');
+    } finally {
+      mimoRaw.models.default = original;
+    }
+  });
+
+  it.each(['xiaomi/mimo-v2.6-pro', 'xiaomi/mimo-v2.6-pro-ultraspeed'])('enforces the exact saved MiMo Token Plan when spawning %s', (model) => {
+    const account = { id:'mimo-plan', adapterId:'mimo-code', label:'Plan', mode:'subscription', createdAt:1 };
+    spawnDeps.prepareAccount.mockReturnValueOnce({ ok:true, account, authEnv:{MIMOCODE_HOME:'/private/mimo-plan'} });
+    spawnDeps.getSecret.mockReturnValue(JSON.stringify({xiaomi:{type:'api',key:'tp-fixture',metadata:{uid:'a',base_url:'https://token-plan-sgp.xiaomimimo.com/v1'}}}));
+    const result = prepareProviderSpawn('mimo-code', { accountId:account.id, model });
+    expect(result.ok).toBe(!model.endsWith('ultraspeed'));
+    if (result.ok) expect(result.overrides.keyEnv).toEqual({MIMOCODE_HOME:'/private/mimo-plan'});
+    else expect(result.error).toContain('UltraSpeed');
   });
 
   it('keeps unverified display state separate from the fail-closed spawn strategy', () => {

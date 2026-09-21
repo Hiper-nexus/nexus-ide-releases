@@ -91,6 +91,7 @@ export function exhaustedWindow(input: {
 export function defaultUnknownWindows(
   adapterId: string,
 ): QuotaWindow[] {
+  if (adapterId === 'mimo-code') return [unknownWindow('credits', 'Token Plan')];
   if (adapterId === 'ollama') {
     return [
       unknownWindow('local', 'Local'),

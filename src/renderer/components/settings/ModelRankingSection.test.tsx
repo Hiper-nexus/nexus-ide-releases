@@ -237,4 +237,42 @@ describe('ModelRankingSection', () => {
     expect(host.textContent).toContain('Falha de rede');
     act(() => root.unmount());
   });
+
+  it('shows selectable MiMo models without inventing a rank, score or radar', async () => {
+    const models = ['xiaomi/mimo-v2.6-flash', 'xiaomi/mimo-v2.6-pro', 'xiaomi/mimo-v2.6-pro-ultraspeed'];
+    useProviderStore.setState({ providers: [{
+      adapterId: 'mimo-code', label: 'MiMo Code', installed: true, enabled: true,
+      models, modelInfo: { [models[0]!]: { id: models[0], costTier: 'low' } },
+    } as ProviderSettingsInfo] });
+    const { host, root } = mount();
+    await act(async () => { await Promise.resolve(); });
+
+    const list = host.querySelector('[aria-label="Modelos não avaliados"]')!;
+    expect(list.querySelectorAll('button')).toHaveLength(3);
+    expect(list.textContent).toContain('MiMo Code');
+    expect(list.textContent).not.toMatch(/#[0-9]|η[0-9]/);
+    act(() => (list.querySelector('button') as HTMLButtonElement).click());
+    expect(host.querySelector('.rank-radar__svg')).toBeNull();
+    const detail = host.querySelector('[aria-label="Modelo não avaliado selecionado"]')!;
+    expect(detail.textContent).toContain(models[0]);
+    expect(detail.textContent).toContain('Não avaliado');
+    expect(detail.querySelector('.rank-ops__detail-rank')).toBeNull();
+    expect(detail.querySelectorAll('.rank-ops__dim-val')).toHaveLength(0);
+    act(() => root.unmount());
+  });
+
+  it('keeps catalog models visible when ranking is empty and applies the installed filter', async () => {
+    const modelId = 'xiaomi/mimo-v2.6-pro';
+    useProviderStore.setState({ providers: [{
+      adapterId: 'mimo-code', label: 'MiMo Code', installed: false, enabled: true,
+      models: [modelId],
+    } as ProviderSettingsInfo] });
+    vi.mocked(window.nexus!.ranking.public).mockResolvedValue({ ...sampleSnapshot, entries: [] });
+    const { host, root } = mount();
+    await act(async () => { await Promise.resolve(); });
+    expect(host.querySelector('[aria-label="Modelos não avaliados"]')?.textContent).toContain(modelId);
+    act(() => (host.querySelector('input[type="checkbox"]') as HTMLInputElement).click());
+    expect(host.querySelector('[aria-label="Modelos não avaliados"]')).toBeNull();
+    act(() => root.unmount());
+  });
 });

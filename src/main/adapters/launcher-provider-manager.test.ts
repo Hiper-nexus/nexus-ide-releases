@@ -63,6 +63,15 @@ describe('launcher provider routing (ported from ~/ai-launcher)', () => {
     expect(buildProviderRoutingEnv('anthropic', 'x')).toEqual({});
   });
 
+  it('routes the Xiaomi API through its current Anthropic endpoint and V2.6 models', () => {
+    const env = buildProviderRoutingEnv('mimo', 'sk-mimo-fixture');
+    expect(env.ANTHROPIC_BASE_URL).toBe('https://api.xiaomimimo.com/anthropic');
+    expect(UPSTREAM_PROVIDERS.mimo.defaultModel).toBe('mimo-v2.6-pro');
+    expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('mimo-v2.6-pro');
+    expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('mimo-v2.6-pro');
+    expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('mimo-v2.6-flash');
+  });
+
   it('refuses to route a token-required provider without a token', () => {
     expect(buildProviderRoutingEnv('glm', null)).toEqual({});
     expect(buildProviderRoutingEnv('sakana', null)).toEqual({});

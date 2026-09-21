@@ -193,7 +193,10 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   'opencode/mimo-v2.5-free': { inputPerM: 0, outputPerM: 0 },
   'opencode/nemotron-3-ultra-free': { inputPerM: 0, outputPerM: 0 },
 
-  // === Xiaomi MIMO ===
+  // === Xiaomi MiMo — official overseas base rates, 2026-09-21 ===
+  'mimo-v2.6-pro-ultraspeed': { inputPerM: 4.35, outputPerM: 8.7, cacheReadPerM: 0.036 },
+  'mimo-v2.6-pro': { inputPerM: 0.435, outputPerM: 0.87, cacheReadPerM: 0.0036 },
+  'mimo-v2.6-flash': { inputPerM: 0.14, outputPerM: 0.28, cacheReadPerM: 0.0028 },
   'mimo-v2.5': { inputPerM: 0.2, outputPerM: 0.6 },
   'mimo-v2': { inputPerM: 0.2, outputPerM: 0.6 },
   mimo: { inputPerM: 0.2, outputPerM: 0.6 },

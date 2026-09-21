@@ -42,6 +42,7 @@ describe('useQuotaStore', () => {
     // @ts-expect-error test stub
     window.nexus = {
       quota: {
+        connectMimo: vi.fn(async () => ({ ok: false, message: 'Unavailable' })),
         snapshot: vi.fn(async () => snap),
         refresh: vi.fn(async () => snap),
         onChanged: () => () => {},
@@ -65,6 +66,7 @@ describe('useQuotaStore', () => {
     // @ts-expect-error test stub
     window.nexus = {
       quota: {
+        connectMimo: vi.fn(async () => ({ ok: false, message: 'Unavailable' })),
         snapshot: vi.fn(async () => snap),
         refresh: vi.fn(async () => {
           throw new Error('network down');

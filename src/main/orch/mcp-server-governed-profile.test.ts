@@ -92,6 +92,7 @@ function adapter(
     | 'codex'
     | 'agy'
     | 'opencode'
+    | 'mimo-code'
     | 'kimi'
     | 'grok',
 ): CliPtyAdapter {
@@ -250,6 +251,61 @@ afterEach(() => {
 });
 
 describe('mcp-server governed CLI profile wiring', () => {
+  it('pins the MiMo API key selected by Main instead of the native subscription account', () => {
+    const home = path.join(tempRoot(), 'home');
+    const cwd = path.join(home, 'workspace');
+    fs.mkdirSync(cwd, { recursive: true });
+    vi.stubEnv('HOME', home);
+    write(path.join(home, '.local', 'share', 'mimocode', 'auth.json'), '{"xiaomi":{"type":"api","key":"native-account"}}');
+    const decoration = prepareAgentSpawnDecoration(
+      adapter('mimo-code'), { kind: 'cli-agent', cols: 80, rows: 24 },
+      authority(cwd, true), { XIAOMI_API_KEY: 'selected-api-key' },
+    );
+    if (!decoration) throw new Error('expected MiMo API-key decoration');
+    try {
+      const config = JSON.parse(decoration.env.MIMOCODE_CONFIG_CONTENT);
+      expect(config.provider.xiaomi.options).toEqual({ apiKey: '{env:XIAOMI_API_KEY}', baseURL: 'https://api.xiaomimimo.com/v1' });
+      expect(fs.readFileSync(path.join(decoration.env.MIMOCODE_HOME, 'data', 'auth.json'), 'utf8').trim()).toBe('{}');
+      expect(decoration.providerStateReadPaths).not.toContain(path.join(home, '.local', 'share', 'mimocode', 'auth.json'));
+    } finally {
+      decoration.onSpawnFailed?.();
+    }
+  });
+
+  it.each([false, true])('binds MiMo account, checkout state and MCP without Claude flags (governed=%s)', (governed) => {
+    const home = path.join(tempRoot(), 'home');
+    const cwd = path.join(home, 'workspace');
+    const providerHome = path.join(home, 'managed-mimo');
+    fs.mkdirSync(cwd, { recursive: true });
+    write(path.join(providerHome, 'data', 'auth.json'), '{"xiaomi":{"type":"api","key":"selected"}}');
+    writeHub(cwd, { schemaVersion: 1, servers: [HUB_HTTP_SERVER, HUB_STDIO_SERVER] });
+    vi.stubEnv('HOME', home);
+    const decoration = prepareAgentSpawnDecoration(
+      adapter('mimo-code'), { kind: 'cli-agent', cols: 80, rows: 24 },
+      authority(cwd, governed), { MIMOCODE_HOME: providerHome },
+    );
+    if (!decoration) throw new Error('expected MiMo decoration');
+    try {
+      const state = path.join(home, '.nexus-test-user-data', 'provider-state', 'mimo-code', 'checkout-wiring');
+      const auth = path.join(providerHome, 'data', 'auth.json');
+      expect(decoration.env.MIMOCODE_DB).toBe(path.join(state, 'database', 'mimocode.db'));
+      expect(fs.realpathSync(path.join(decoration.env.MIMOCODE_HOME, 'data', 'auth.json'))).toBe(fs.realpathSync(auth));
+      expect(decoration.providerStateReadPaths).toEqual(expect.arrayContaining([auth, state]));
+      expect(decoration.providerStateWritePaths).toEqual([auth, state]);
+      expect(decoration.extraArgs).not.toContain('--mcp-config');
+      expect(decoration.extraArgs).not.toContain('--settings');
+      expect(decoration.extraArgs.includes('--pure')).toBe(governed);
+      const config = JSON.parse(decoration.env.MIMOCODE_CONFIG_CONTENT);
+      expect(config.mcp.context7.command).toEqual(['npx', '-y', '@upstash/context7-mcp']);
+      expect(config.mcp.linear.url).toBe('https://mcp.linear.app/mcp');
+      const nexus = config.mcp[Object.keys(config.mcp).find(key => key.startsWith('nexus_'))!];
+      expect(nexus.headers.Authorization).toBe('Bearer {env:NEXUS_MCP_TOKEN}');
+      expect(decoration.env.NEXUS_MCP_TOKEN).toBeTruthy();
+    } finally {
+      decoration.onSpawnFailed?.();
+    }
+  });
+
   it('keeps managed Claude auth separate from the native login and disposable conversation home', () => {
     const home = path.join(tempRoot(), 'home');
     const cwd = path.join(home, 'workspace');

@@ -102,6 +102,7 @@ export const ALL_MULTI_ACCOUNT_ADAPTER_IDS = [
   'grok',
   'kimi',
   'opencode',
+  'mimo-code',
   'openclaude',
   'glm',
   'glm-flash',

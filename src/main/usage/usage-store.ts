@@ -25,6 +25,8 @@ import { legacyCodexUsageMessageId } from './codex-transcript';
 export type UsageProvider = 'claude' | 'codex' | (string & {});
 
 export interface UsageRecord extends UsageEvent {
+  /** Cost computed/reported by the provider CLI; not an invoice or plan debit. */
+  reportedCostUsd?: number;
   paneId?: string | null;
   missionId?: string | null;
   /** Exact Nexus vault account that owned the provider session. */
@@ -123,6 +125,7 @@ const providerUsageEventSchema = z
   });
 const usageEventSchema = providerUsageEventSchema
   .extend({
+    reportedCostUsd: z.number().finite().nonnegative().optional(),
     paneId: nullableEntityIdSchema.optional(),
     missionId: nullableEntityIdSchema.optional(),
     accountId: nullableEntityIdSchema.optional(),
@@ -374,7 +377,7 @@ export class ScopedUsageStore {
     const accountId =
       record.accountId ??
       this.accountIdForProviderSession(provider, record.sessionId);
-    const costMicros = Math.round(computeRealCost(record) * MICROS_PER_USD);
+    const costMicros = Math.round((record.reportedCostUsd ?? computeRealCost(record)) * MICROS_PER_USD);
     if (!Number.isSafeInteger(costMicros) || costMicros < 0) {
       throw new Error('usage cost exceeds the supported range');
     }

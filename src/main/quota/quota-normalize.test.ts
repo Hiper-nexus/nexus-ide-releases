@@ -10,6 +10,9 @@ import {
 } from './quota-normalize';
 
 describe('quota-normalize', () => {
+  it('does not invent five-hour or weekly MiMo windows', () => {
+    expect(defaultUnknownWindows('mimo-code')).toEqual([unknownWindow('credits', 'Token Plan')]);
+  });
   it('never treats unknown as zero', () => {
     const u = unknownWindow('weekly', 'Semanal');
     expect(u.usedRatio).toBeNull();

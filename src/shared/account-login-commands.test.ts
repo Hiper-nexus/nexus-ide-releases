@@ -14,6 +14,7 @@ describe('account login commands', () => {
       'devin',
       'grok',
       'kimi',
+      'mimo-code',
       'muse',
       'openclaude',
       'opencode',

@@ -8,6 +8,7 @@ const publishSessionActivityState = vi.fn(
 );
 
 vi.mock('../pty/pty-manager', () => ({
+  getAgentSessionInfo: () => null,
   publishSessionActivityState: (sessionId: string, state: string) =>
     publishSessionActivityState(sessionId, state),
 }));

@@ -456,6 +456,29 @@
           "source": "bundled"
         }
       ]
+    },
+    "mimo-code": {
+      "default": "xiaomi/mimo-v2.6-flash",
+      "models": [
+        {
+          "id": "xiaomi/mimo-v2.6-flash",
+          "availability": "paid",
+          "costTier": "low",
+          "source": "bundled"
+        },
+        {
+          "id": "xiaomi/mimo-v2.6-pro",
+          "availability": "paid",
+          "costTier": "low",
+          "source": "bundled"
+        },
+        {
+          "id": "xiaomi/mimo-v2.6-pro-ultraspeed",
+          "availability": "api-only",
+          "costTier": "high",
+          "source": "bundled"
+        }
+      ]
     }
   }
 }

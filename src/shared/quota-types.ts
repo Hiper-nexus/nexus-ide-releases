@@ -9,6 +9,7 @@ export const QUOTA_CHANNELS = {
   snapshot: 'quota:snapshot',
   changed: 'quota:changed',
   refresh: 'quota:refresh',
+  connectMimo: 'quota:connect-mimo',
 } as const;
 
 export type QuotaWindowKind =
