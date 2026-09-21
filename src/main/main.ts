@@ -239,6 +239,7 @@ import {
   shutdownQuotaService,
 } from "./quota/quota-service";
 import { fetchClaudeCliUsageWindows } from "./quota/claude-oauth-usage";
+import { fetchClaudeAccountUsageWindows } from "./quota/claude-account-usage";
 import { createRedlineSink } from "./quota/redline-sink";
 import {
   initRedlineIpc,
@@ -640,6 +641,10 @@ function bootstrap(): void {
     // Never invents ratios; tries every credential until one yields %.
     resolveClaudeAccessToken: (accountId) => resolveClaudeToken(accountId),
     claudeCliUsage: () => fetchClaudeCliUsageWindows(),
+    // Cascata por conta (Codenotch): managed-auth scoped, perfil de disco
+    // com o mesmo e-mail, materialização do vault — nunca empresta a
+    // leitura de outra conta.
+    claudeAccountUsage: (accountId) => fetchClaudeAccountUsageWindows(accountId),
     resolveCodexAuthCandidates: (accountId) =>
       resolveCodexAuthCandidates(accountId),
     resolveGlmApiKeyCandidates: (accountId) =>

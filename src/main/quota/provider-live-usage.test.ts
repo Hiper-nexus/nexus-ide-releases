@@ -256,6 +256,43 @@ describe('fetchLiveProviderWindows', () => {
     expect(cliUsage).not.toHaveBeenCalled();
   });
 
+  it('claude: account row usa a cascata por conta quando o OAuth falha', async () => {
+    const failFetch = vi.fn(async () => ({
+      ok: false,
+      status: 429,
+      json: async () => ({}),
+      text: async () => '',
+    }));
+    const accountUsage = vi.fn(async (): Promise<QuotaWindow[]> => [
+      {
+        kind: 'weekly',
+        label: 'Semanal',
+        usedRatio: 0.73,
+        source: 'provider-api',
+        confidence: 'medium',
+      },
+    ]);
+    const cliUsage = vi.fn();
+    const windows = await fetchLiveProviderWindows('claude', 'acct-1', {
+      resolveClaudeToken: () => null,
+      claudeAccountUsage: accountUsage,
+      claudeCliUsage: cliUsage,
+      fetchImpl: failFetch,
+    });
+    expect(windows?.[0]?.usedRatio).toBe(0.73);
+    expect(accountUsage).toHaveBeenCalledWith('acct-1');
+    expect(cliUsage).not.toHaveBeenCalled();
+  });
+
+  it('claude: account row fica null quando a cascata por conta não acha nada', async () => {
+    const windows = await fetchLiveProviderWindows('claude', 'acct-1', {
+      resolveClaudeToken: () => null,
+      claudeAccountUsage: async () => null,
+      claudeCliUsage: vi.fn(),
+    });
+    expect(windows).toBeNull();
+  });
+
   it('devin: GetUserStatus via credentials.toml → janelas reais', async () => {
     const LIVE = {
       userStatus: {

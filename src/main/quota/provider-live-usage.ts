@@ -53,6 +53,12 @@ export interface LiveUsageAuthResolvers {
    * pintá-la em rows de contas vault seria fabricar dado por conta.
    */
   claudeCliUsage?: () => Promise<QuotaWindow[] | null>;
+  /**
+   * Fallback por conta Claude (Codenotch): auth gerenciada scoped, perfil de
+   * disco com o mesmo e-mail, materialização do vault. Cada fonte é ancorada
+   * na identidade da própria conta — só para rows pinadas (accountId set).
+   */
+  claudeAccountUsage?: (accountId: string) => Promise<QuotaWindow[] | null>;
   /** Prefer multi-candidate; single still supported. */
   resolveCodexAuth?: (
     accountId?: string,
@@ -159,13 +165,18 @@ export async function fetchLiveProviderWindows(
           if (windows) return windows;
         }
       }
-      // OAuth falhou (429/backoff, keychain rodada) ou sem token. O fallback
-      // `claude /usage` (print-only; Codenotch ClaudeUsageCLI) só vale na row
-      // do CLI nativo: o login do CLI é de UMA conta — pintá-lo em rows de
-      // contas vault seria fabricar dado por conta.
-      // Sem runner injetado NÃO spawnamos o binário: testes e probes sem
-      // claudeCliUsage ficam em null honesto, nunca batem no CLI da máquina.
-      if (accountId) return null;
+      // OAuth falhou (429/backoff, keychain rodada) ou sem token.
+      // Row pinada: a cascata por conta (Codenotch — auth gerenciada scoped,
+      // perfil de disco com o mesmo e-mail, materialização do vault) só usa
+      // fontes ancoradas na identidade DESTA conta; sem ela, null honesto.
+      // Row nativa: print-only `claude /usage` do login do CLI — que é de
+      // UMA conta, nunca pintado em rows vault. Sem runner injetado NÃO
+      // spawnamos o binário: testes ficam em null honesto.
+      if (accountId) {
+        return deps.claudeAccountUsage
+          ? deps.claudeAccountUsage(accountId)
+          : null;
+      }
       if (!deps.claudeCliUsage) return null;
       return deps.claudeCliUsage();
     }

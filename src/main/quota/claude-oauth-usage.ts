@@ -23,6 +23,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import type { QuotaWindow } from '../../shared/quota-types';
 import { knownWindow } from './quota-normalize';
+import { claudeCliDeclaresMarker } from '../adapters/managed-claude-auth';
 
 export const CLAUDE_OAUTH_USAGE_URL =
   'https://api.anthropic.com/api/oauth/usage';
@@ -193,6 +194,7 @@ export type ClaudeCliRunImpl = (
   binary: string,
   args: readonly string[],
   cwd: string,
+  env?: Record<string, string>,
 ) => Promise<ClaudeCliRunResult>;
 
 /**
@@ -388,12 +390,13 @@ async function runClaudeCli(
   binary: string,
   args: readonly string[],
   cwd: string,
+  env?: Record<string, string>,
 ): Promise<ClaudeCliRunResult> {
   return new Promise((resolve) => {
     const child = spawn(binary, [...args], {
       cwd,
       stdio: ['ignore', 'pipe', 'ignore'],
-      env: { ...process.env, PWD: cwd },
+      env: { ...process.env, ...env, PWD: cwd },
     });
     let stdout = '';
     child.stdout.on('data', (chunk: Buffer) => {
@@ -422,6 +425,14 @@ export async function fetchClaudeCliUsageWindows(opts?: {
   runImpl?: ClaudeCliRunImpl;
   now?: number;
   cwd?: string;
+  /**
+   * Env extra que isola a conta do run: CLAUDE_SECURESTORAGE_CONFIG_DIR
+   * (auth gerenciada Nexus) ou CLAUDE_CONFIG_DIR (perfil `~/.claude-<slug>`).
+   * O binário precisa declarar cada nome passado — um CLI antigo que ignora
+   * a variável cai na credencial nativa e devolveria o uso de OUTRA conta
+   * nesta linha, fabricação por conta que este probe existe para evitar.
+   */
+  env?: Record<string, string>;
 }): Promise<QuotaWindow[] | null> {
   const run = opts?.runImpl ?? runClaudeCli;
   const cwd =
@@ -434,8 +445,17 @@ export async function fetchClaudeCliUsageWindows(opts?: {
   }
   const binary = locateClaudeBinary();
   if (!binary) return null;
+  if (opts?.env) {
+    for (const name of Object.keys(opts.env)) {
+      try {
+        if (!claudeCliDeclaresMarker(binary, name)) return null;
+      } catch {
+        return null;
+      }
+    }
+  }
 
-  const { code, stdout } = await run(binary, CLAUDE_CLI_USAGE_ARGS, cwd);
+  const { code, stdout } = await run(binary, CLAUDE_CLI_USAGE_ARGS, cwd, opts?.env);
   if (code !== 0 || !stdout.trim()) return null;
   const windows = parseClaudeCliUsage(stdout, opts?.now ?? Date.now());
   return windows.length > 0 ? windows : null;

@@ -23,6 +23,7 @@ import { buildFleetSnapshot } from './quota-policy';
 import { defaultUnknownWindows, mergeWindows } from './quota-normalize';
 import { probeProviderWindows } from './quota-probes';
 import { fetchClaudeCliUsageWindows, type FetchLike } from './claude-oauth-usage';
+import { fetchClaudeAccountUsageWindows } from './claude-account-usage';
 import type { CodexChatGptAuth } from './codex-usage';
 import {
   fetchLiveProviderWindows,
@@ -72,6 +73,14 @@ export interface QuotaServiceDeps {
    * wires the real runner. Tests omit it so probes never spawn the host CLI.
    */
   claudeCliUsage?: () => Promise<QuotaWindow[] | null>;
+  /**
+   * Per-account Claude fallback (Codenotch): managed-auth scoped CLI, perfil
+   * de disco com o mesmo e-mail, materialização do vault. Só rows pinadas;
+   * produção liga o runner real em main.ts.
+   */
+  claudeAccountUsage?: (
+    accountId: string,
+  ) => Promise<QuotaWindow[] | null>;
   resolveCodexAuth?: (
     accountId?: string,
   ) => CodexChatGptAuth | null | Promise<CodexChatGptAuth | null>;
@@ -456,6 +465,11 @@ export class QuotaService {
         (this.#deps.fetchImpl || process.env.VITEST
           ? undefined
           : () => fetchClaudeCliUsageWindows({ now: Date.now() })),
+      claudeAccountUsage:
+        this.#deps.claudeAccountUsage ??
+        (this.#deps.fetchImpl || process.env.VITEST
+          ? undefined
+          : (accountId: string) => fetchClaudeAccountUsageWindows(accountId)),
       resolveCodexAuth: this.#deps.resolveCodexAuth,
       resolveCodexAuthCandidates: this.#deps.resolveCodexAuthCandidates,
       resolveGlmApiKey: this.#deps.resolveGlmApiKey,

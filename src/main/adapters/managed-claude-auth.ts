@@ -155,13 +155,19 @@ export function materializeManagedClaudeAuth(
 
 const capabilityCache = new Map<string, { signature: string; supported: boolean }>();
 
-/** Fail closed on older/wrapped CLIs instead of silently using the native account. */
-export function assertManagedClaudeAuthSupported(binary: string): void {
+/**
+ * True when the CLI binary literally declares the marker (an env var name).
+ * Quota probes gate env-scoped `claude /usage` runs on this: a CLI too old to
+ * know the variable falls back to the native login and would paint that
+ * account's usage on a different account's row — fabricated data.
+ */
+export function claudeCliDeclaresMarker(binary: string, marker: string): boolean {
   const stat = fs.statSync(binary);
   const signature = `${stat.size}:${stat.mtimeMs}`;
-  let cached = capabilityCache.get(binary);
+  const key = `${binary}${marker}`;
+  let cached = capabilityCache.get(key);
   if (cached?.signature !== signature) {
-    const marker = Buffer.from(CLAUDE_MANAGED_AUTH_ENV);
+    const needle = Buffer.from(marker);
     const chunk = Buffer.alloc(256 * 1024);
     const fd = fs.openSync(binary, 'r');
     let supported = false;
@@ -170,14 +176,19 @@ export function assertManagedClaudeAuthSupported(binary: string): void {
       let count: number;
       while ((count = fs.readSync(fd, chunk, 0, chunk.length, null)) > 0) {
         const window = Buffer.concat([tail, chunk.subarray(0, count)]);
-        if (window.includes(marker)) { supported = true; break; }
-        tail = Buffer.from(window.subarray(Math.max(0, window.length - marker.length + 1)));
+        if (window.includes(needle)) { supported = true; break; }
+        tail = Buffer.from(window.subarray(Math.max(0, window.length - needle.length + 1)));
       }
     } finally { fs.closeSync(fd); }
     cached = { signature, supported };
-    capabilityCache.set(binary, cached);
+    capabilityCache.set(key, cached);
   }
-  if (!cached.supported) {
+  return cached.supported;
+}
+
+/** Fail closed on older/wrapped CLIs instead of silently using the native account. */
+export function assertManagedClaudeAuthSupported(binary: string): void {
+  if (!claudeCliDeclaresMarker(binary, CLAUDE_MANAGED_AUTH_ENV)) {
     throw new Error('Atualize o Claude Code: esta CLI não declara CLAUDE_SECURESTORAGE_CONFIG_DIR para contas isoladas');
   }
 }
