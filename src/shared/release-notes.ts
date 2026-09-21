@@ -4152,6 +4152,51 @@ export const RELEASE_07647: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.65',
+  date: '2026-09-21',
+  codename: 'Grok e Kimi dizem «Entrar novamente» e o Kimi nativo lê de verdade',
+  summary:
+    'A cadeia de motivos honestos chega aos outros providers: Grok com ' +
+    'credencial morta (401 real do endpoint xAI) e Kimi com grant revogado ' +
+    'agora viram «Entrar novamente» em vez de «Sem informação». A rotação ' +
+    'de refresh Kimi de conta vault volta para o vault — nunca para o ' +
+    'arquivo do login nativo — e a linha nativa do Kimi, que nunca era ' +
+    'sondada por causa do upstream «moonshot», passa a ler o uso real.',
+  highlights: [
+    {
+      title: 'Grok/Kimi: sessão morta vira CTA',
+      detail:
+        '401/403 do billing xAI e refresh rejeitado do Kimi viram ' +
+        'auth-expired acionável — a linha, o rail e o Redline mostram ' +
+        '«Entrar novamente» e marcam a conta para reautenticação.',
+    },
+    {
+      title: 'Kimi nativo lê quota real',
+      detail:
+        'A linha nativa de provider por assinatura deixava de ser sondada ' +
+        'quando o upstream declarado não era «anthropic» — o veto de rota ' +
+        'confundia família de API com roteamento. Kimi nativo agora lê ' +
+        'semanal/5h do ~/.kimi-code.',
+    },
+    {
+      title: 'Rotação Kimi respeita a linhagem',
+      detail:
+        'Grant de conta vault rotacionado volta para o blob da conta ' +
+        '(persistKimiRotatedCreds); só a linha nativa escreve em ' +
+        '~/.kimi-code. Nenhuma sessão troca de identidade.',
+    },
+    {
+      title: 'Redline distingue sessão morta',
+      detail:
+        'O readHint da sonda vira excludedReason no snapshot do ' +
+        'companheiro: needs-relogin para auth-expired, no-credential ' +
+        'para linha sem credencial — mesmo em conta sem AccountInfo.',
+    },
+  ],
+  fixes: [],
+};
+
+export const RELEASE_07664: AppRelease = {
   version: '0.76.64',
   date: '2026-09-21',
   codename: 'Sessão morta vira botão, plano por conta e menus internos redesenhados',

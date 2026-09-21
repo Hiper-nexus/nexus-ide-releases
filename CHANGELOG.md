@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.76.65 — Grok e Kimi dizem «Entrar novamente» e o Kimi nativo lê de verdade
+
+- **Grok: credencial morta vira CTA** — o 401 real do billing xAI (`~/.grok/auth.json` vencido) colapsava em «Sem informação»; `probeGrokUsageWindows` expõe `authFailed` → `auth-expired` → «Entrar novamente» na linha, no rail e no Redline (`needs-relogin`).
+- **Kimi: refresh rejeitado vira auth-expired** — `probeKimiRefresh` (400/401/403 do token endpoint) e `probeKimiCodingUsageWindows` (401/403 do `/usages`) distinguem grant morto de falha transitória; conta vault marcada via `markAccountAuthExpired` (agora cobre grok/kimi, não só claude).
+- **Rotação Kimi respeita a linhagem** — grant rotacionado de conta vault voltava para `~/.kimi-code` (sessão nativa de outra identidade): `persistRotated` + `persistKimiRotatedCreds` escrevem o grant novo no blob vault da conta; a linha nativa mantém `persistOnRotation` no arquivo do CLI.
+- **Linha nativa do Kimi finalmente sondada** — `canProbeQuota` vetava provider `subscription` não-roteável com upstream declarado (`moonshot` é a família da API, não rota para outro vendor): a linha nativa passa a ler o uso real (16% semanal verificado ao vivo).
+- **Redline honesto para linhas sem conta** — `readHint` da sonda vira `excludedReason` no snapshot: `needs-relogin`/`no-credential` chegam ao companheiro de menu bar mesmo sem `AccountInfo`.
+
 ## 0.76.64 — Sessão morta vira botão, plano por conta e menus internos redesenhados
 
 - **«Entrar novamente» na linha nativa do Claude**: o hint `auth-expired` agora chega da sonda à UI — 401/403 do endpoint OAuth, `expiresAt` vencido do token nativo, stderr do CLI (`OAuth session expired…`) e a evidência `oauthAccount` em `~/.claude.json` distinguem «sessão morreu» de «nunca conectou» e de «falha transitória».
