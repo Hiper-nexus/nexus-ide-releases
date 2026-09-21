@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import type { AccountInfo } from '../../../shared/account-types';
 import { accountLoginCommandFor } from '../../../shared/account-login-commands';
 import { useQuotaStore } from '../../state/quota-store';
+import { useLifetimeUsage } from '../../state/lifetime-usage';
+import { fmtTokens, fmtUsd } from '../../lib/lifetime-format';
 import { useAccountStore } from '../../state/account-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import {
@@ -418,6 +420,7 @@ export function UsageQuotaSection() {
   const accounts = useAccountStore((state) => state.accounts);
   const openSettings = useProductNavigationStore((state) => state.openSettings);
   const now = useMinuteTick();
+  const lifetime = useLifetimeUsage();
   useEffect(() => {
     void hydrate();
   }, [hydrate]);
@@ -485,6 +488,28 @@ export function UsageQuotaSection() {
       </div>
       {status !== 'error' && entries.length > 0 && (
         <QuotaPulseBand entries={entries} now={now} />
+      )}
+      {lifetime && (lifetime.tokensBurned > 0 || lifetime.usdEquivalent > 0) && (
+        <div
+          className="quota-panel__consumption"
+          title="Consumo real acumulado em todos os projetos — o que custaria em API paga; a assinatura já cobre"
+        >
+          <span className="quota-panel__consumption-label">
+            Consumo real acumulado
+          </span>
+          <span className="quota-panel__consumption-item">
+            ⚡ <strong>{fmtTokens(lifetime.tokensBurned)}</strong> tokens
+          </span>
+          <span className="quota-panel__consumption-item">
+            💵 <strong>{fmtUsd(lifetime.usdEquivalent)}</strong> em API
+          </span>
+          <span className="quota-panel__consumption-item">
+            🪟 <strong>{lifetime.panesServed}</strong> panes
+          </span>
+          <span className="quota-panel__consumption-item">
+            🔁 <strong>{lifetime.turns}</strong> turnos
+          </span>
+        </div>
       )}
       <RedlineMenuBarRow />
       {status === 'error' ? (

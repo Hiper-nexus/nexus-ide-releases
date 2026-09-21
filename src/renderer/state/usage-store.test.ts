@@ -19,6 +19,9 @@ describe('useUsageStore', () => {
     window.nexus = {
       usage: {
         snapshot: vi.fn(async (): Promise<null> => null),
+        lifetime: vi.fn(async () => {
+          throw new Error('not used in this test');
+        }),
         onChanged: () => () => {},
       },
     };
@@ -54,6 +57,9 @@ describe('useUsageStore', () => {
     window.nexus = {
       usage: {
         snapshot: vi.fn(async () => snap),
+        lifetime: vi.fn(async () => {
+          throw new Error('not used in this test');
+        }),
         onChanged: () => () => {},
       },
     };

@@ -10,8 +10,10 @@ import {
   xpKindLabel,
 } from '../../shared/gamification-progress';
 import { useGamificationStore } from '../state/gamification-store';
+import { useLifetimeUsage } from '../state/lifetime-usage';
 import { ChosenPetPortrait } from './ChosenPetPortrait';
 import { fmt } from './operator-sprite-data';
+import { fmtTokens, fmtUsd } from '../lib/lifetime-format';
 import { formatShortcut } from '../lib/platform';
 import { PixelIcon } from './PixelIcon';
 
@@ -54,6 +56,7 @@ export function OperatorProfile() {
   const setSober = useGamificationStore((s) => s.setSober);
   const [confirmPrestige, setConfirmPrestige] = useState(false);
   const [ioMessage, setIoMessage] = useState<string | null>(null);
+  const lifetime = useLifetimeUsage(open);
   const [now, setNow] = useState(() => Date.now());
   const dialogRef = useRef<HTMLElement>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
@@ -101,6 +104,8 @@ export function OperatorProfile() {
     const id = window.setInterval(() => setNow(Date.now()), 30_000);
     return () => window.clearInterval(id);
   }, [open]);
+
+
 
   const progress = useMemo(() => tierProgress(snapshot), [snapshot]);
   const quests = useMemo(() => activeOperatorQuests(snapshot), [snapshot]);
@@ -214,6 +219,7 @@ export function OperatorProfile() {
             <span className="operator-profile__tier">
               {GAMIFICATION_COPY.tiers[snapshot.tier]}
             </span>
+            <span className="operator-profile__power-label">Poder</span>
             <span
               className="operator-profile__power"
               title={`${snapshot.powerLevel.toLocaleString('pt-BR')} de poder`}
@@ -279,6 +285,68 @@ export function OperatorProfile() {
           </div>
         )}
 
+        {lifetime && (
+          <section
+            className="operator-profile__consumo"
+            aria-label="Consumo real acumulado"
+          >
+            <div className="operator-profile__consumo-head">
+              <h3>Consumo real</h3>
+              <span className="operator-profile__consumo-note">
+                todos os projetos · quanto custaria em API paga
+              </span>
+            </div>
+            <div className="operator-profile__consumo-grid">
+              <div className="operator-profile__consumo-cell operator-profile__consumo-cell--money">
+                <span className="operator-profile__consumo-value">
+                  {fmtUsd(lifetime.usdEquivalent)}
+                </span>
+                <span className="operator-profile__consumo-label">
+                  economizados em assinatura
+                </span>
+              </div>
+              <div className="operator-profile__consumo-cell">
+                <span className="operator-profile__consumo-value">
+                  {fmtTokens(lifetime.tokensBurned)}
+                </span>
+                <span className="operator-profile__consumo-label">
+                  tokens torrados
+                </span>
+              </div>
+              <div className="operator-profile__consumo-cell">
+                <span className="operator-profile__consumo-value">
+                  {lifetime.panesServed}
+                </span>
+                <span className="operator-profile__consumo-label">panes</span>
+              </div>
+              <div className="operator-profile__consumo-cell">
+                <span className="operator-profile__consumo-value">
+                  {fmt(lifetime.turns)}
+                </span>
+                <span className="operator-profile__consumo-label">turnos</span>
+              </div>
+              {lifetime.mediaUsd > 0 && (
+                <div className="operator-profile__consumo-cell">
+                  <span className="operator-profile__consumo-value">
+                    {fmtUsd(lifetime.mediaUsd)}
+                  </span>
+                  <span className="operator-profile__consumo-label">
+                    em mídia gerada
+                  </span>
+                </div>
+              )}
+              <div className="operator-profile__consumo-cell">
+                <span className="operator-profile__consumo-value">
+                  {lifetime.missionsDone}
+                </span>
+                <span className="operator-profile__consumo-label">
+                  missões vistas
+                </span>
+              </div>
+            </div>
+          </section>
+        )}
+
         {emptyProfile ? (
           <div className="operator-profile__empty" role="status">
             <strong className="operator-profile__empty-title">
@@ -287,7 +355,8 @@ export function OperatorProfile() {
             <p>
               O XP sobe com <em>entrega real</em> — turno de agente com saída,
               missão concluída, handoff verificado, task done, mídia gerada ou
-              ação da Jarvis. Tokens queimados não contam.
+              ação da Jarvis. O consumo acima já é seu: a assinatura cobre o
+              que a API cobraria.
             </p>
           </div>
         ) : (

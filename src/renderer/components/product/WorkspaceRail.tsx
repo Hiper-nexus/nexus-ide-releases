@@ -16,6 +16,8 @@ import { useOrchStore } from '../../state/orch-store';
 import { useSessionStateStore } from '../../state/session-state-store';
 import { formatShortcut } from '../../lib/platform';
 import { useQuotaStore } from '../../state/quota-store';
+import { useLifetimeUsage } from '../../state/lifetime-usage';
+import { fmtTokens, fmtUsd } from '../../lib/lifetime-format';
 import { useAdapterStore } from '../../state/adapter-store';
 import { prioritizeReportedQuotas, shortWindowsLine } from '../../lib/quota-display';
 import { useMinuteTick } from '../../lib/use-minute-tick';
@@ -749,6 +751,7 @@ export function WorkspaceRail({
   const layoutRoot = useLayoutStore((s) => s.root);
   const totalPanes = listPanes(layoutRoot).length;
   const quotaEntries = useQuotaStore((s) => s.snapshot.entries);
+  const lifetimeUsage = useLifetimeUsage();
   const quotaTick = useMinuteTick();
   const pathLabels = useMemo(
     () => workspacePathLabels([...activeWorkspaces, ...recentWorkspaces]),
@@ -1047,6 +1050,21 @@ export function WorkspaceRail({
                 );
               })}
             </div>
+            {lifetimeUsage &&
+            (lifetimeUsage.tokensBurned > 0 ||
+              lifetimeUsage.usdEquivalent > 0) ? (
+              <div
+                className="workspace-rail__cockpit-usage"
+                title="Consumo real acumulado em todos os projetos — o que custaria em API paga; a assinatura já cobre"
+              >
+                <span>
+                  ⚡ {fmtTokens(lifetimeUsage.tokensBurned)} tok torrados
+                </span>
+                <span className="workspace-rail__cockpit-usage-usd">
+                  {fmtUsd(lifetimeUsage.usdEquivalent)} em API
+                </span>
+              </div>
+            ) : null}
           </div>
         ) : null}
         </div>

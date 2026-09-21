@@ -1741,6 +1741,29 @@
 .quota-panel__fleet > span:last-child {
   margin-left: auto;
 }
+/* Consumo real acumulado — tokens/USD/panes/turnos de vida útil. Instrumento
+   plano no mesmo registro do fleet bar; o destaque é o número, não o card. */
+.quota-panel__consumption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  padding-block: var(--space-2);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: var(--text-md);
+}
+.quota-panel__consumption-label {
+  font-weight: 600;
+  color: var(--text);
+}
+.quota-panel__consumption-item strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.quota-panel__consumption-item:nth-child(3) strong {
+  color: var(--accent);
+}
 .quota-panel__redline {
   display: flex;
   flex-wrap: wrap;
