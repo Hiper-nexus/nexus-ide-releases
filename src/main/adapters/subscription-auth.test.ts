@@ -3,6 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  AGY_CREDENTIAL_MANAGER_TARGET,
+  agyCredentialManagerHas,
   agyKeychainBlobIsUsable,
   agyKeychainCredentialIsUsable,
   agyKeychainCredentialIsUsableAsync,
@@ -213,6 +215,43 @@ describe('agyKeychainBlobIsUsable', () => {
       false,
     );
     expect(agyKeychainBlobIsUsable('plain text, not json')).toBe(false);
+  });
+});
+
+describe('agyCredentialManagerHas', () => {
+  const asExecSync = (fn: () => string) =>
+    fn as unknown as typeof import('node:child_process').execFileSync;
+
+  it('aceita a linha Destino: do cmdkey em PT-BR', () => {
+    if (process.platform !== 'win32') return;
+    const exec = vi.fn(
+      () =>
+        `Credenciais atualmente armazenadas para ${AGY_CREDENTIAL_MANAGER_TARGET}:\r\n\r\n    Destino: ${AGY_CREDENTIAL_MANAGER_TARGET}\r\n    Tipo: Genérico\r\n`,
+    );
+    expect(agyCredentialManagerHas(asExecSync(exec))).toBe(true);
+    expect(exec).toHaveBeenCalledWith(
+      'cmdkey',
+      [`/list:${AGY_CREDENTIAL_MANAGER_TARGET}`],
+      expect.objectContaining({ windowsHide: true }),
+    );
+  });
+
+  it('aceita Target: em Windows em inglês e rejeita ausência', () => {
+    if (process.platform !== 'win32') return;
+    const present = vi.fn(
+      () => `Currently stored credentials for ${AGY_CREDENTIAL_MANAGER_TARGET}:\n\n    Target: ${AGY_CREDENTIAL_MANAGER_TARGET}\n`,
+    );
+    expect(agyCredentialManagerHas(asExecSync(present))).toBe(true);
+    const missing = vi.fn(() => 'Currently stored credentials for x:\n\n* NONE *\n');
+    expect(agyCredentialManagerHas(asExecSync(missing))).toBe(false);
+  });
+
+  it('falha fechado quando o cmdkey erra', () => {
+    if (process.platform !== 'win32') return;
+    const exec = vi.fn(() => {
+      throw new Error('cmdkey indisponível');
+    });
+    expect(agyCredentialManagerHas(asExecSync(exec))).toBe(false);
   });
 });
 
@@ -579,15 +618,33 @@ describe('detectSubscriptionAuth', () => {
 
     expect(hasSubscriptionAuthForStatus('agy', model, home)).toBe(false);
     await expect(
-      refreshAgySubscriptionAuthCache(home, asyncKeychainProbe),
+      refreshAgySubscriptionAuthCache(home, asyncKeychainProbe, {
+        winCredentialHas: () => false,
+      }),
     ).resolves.toEqual({ value: true, cacheUpdated: true });
     expect(asyncKeychainProbe).toHaveBeenCalledTimes(1);
     expect(hasSubscriptionAuthForStatus('agy', model, home)).toBe(true);
 
     await expect(
-      refreshAgySubscriptionAuthCache(home, asyncKeychainProbe),
+      refreshAgySubscriptionAuthCache(home, asyncKeychainProbe, {
+        winCredentialHas: () => false,
+      }),
     ).resolves.toEqual({ value: true, cacheUpdated: false });
     expect(asyncKeychainProbe).toHaveBeenCalledTimes(1);
+  });
+
+  it('no Windows, a sessao do Credential Manager vale sem chamar a sonda', async () => {
+    if (process.platform !== 'win32') return;
+    const home = tempHome();
+    const asyncKeychainProbe = vi.fn(async () => true);
+    await expect(
+      refreshAgySubscriptionAuthCache(home, asyncKeychainProbe, {
+        authoritative: true,
+        winCredentialHas: () => true,
+      }),
+    ).resolves.toEqual({ value: true, cacheUpdated: true });
+    expect(asyncKeychainProbe).not.toHaveBeenCalled();
+    expect(hasSubscriptionAuthForStatus('agy', 'gemini-3.6-flash-high', home)).toBe(true);
   });
 
   it('refreshes Claude status after login despite a recent negative cache entry', async () => {
@@ -660,10 +717,14 @@ describe('detectSubscriptionAuth', () => {
       .mockResolvedValueOnce(true);
 
     await expect(
-      refreshAgySubscriptionAuthCache(home, asyncKeychainProbe),
+      refreshAgySubscriptionAuthCache(home, asyncKeychainProbe, {
+        winCredentialHas: () => false,
+      }),
     ).resolves.toEqual({ value: false, cacheUpdated: false });
     await expect(
-      refreshAgySubscriptionAuthCache(home, asyncKeychainProbe),
+      refreshAgySubscriptionAuthCache(home, asyncKeychainProbe, {
+        winCredentialHas: () => false,
+      }),
     ).resolves.toEqual({ value: true, cacheUpdated: true });
     expect(asyncKeychainProbe).toHaveBeenCalledTimes(2);
   });
@@ -678,11 +739,13 @@ describe('detectSubscriptionAuth', () => {
     await expect(
       refreshAgySubscriptionAuthCache(home, asyncKeychainProbe, {
         authoritative: true,
+        winCredentialHas: () => false,
       }),
     ).rejects.toThrow('AGY Keychain proof is unavailable');
     await expect(
       refreshAgySubscriptionAuthCache(home, asyncKeychainProbe, {
         authoritative: true,
+        winCredentialHas: () => false,
       }),
     ).resolves.toEqual({ value: true, cacheUpdated: true });
     expect(asyncKeychainProbe).toHaveBeenCalledTimes(2);

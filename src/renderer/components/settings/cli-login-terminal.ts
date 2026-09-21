@@ -1,4 +1,4 @@
-import { shouldFinishCliLoginWatch } from '../../../shared/cli-login';
+import { cliLoginAlreadySignedIn, shouldFinishCliLoginWatch } from '../../../shared/cli-login';
 import { emailFromAuthDetail } from '../../../shared/auth-detail-identity';
 import type { AdapterAuthStatus } from '../../../shared/provider-settings-types';
 import { listPanes } from '../../lib/split-tree';
@@ -6,6 +6,7 @@ import { useLayoutStore } from '../../state/layout-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { useProviderStore } from '../../state/provider-store';
 import { useSessionStateStore } from '../../state/session-state-store';
+import { useToastStore } from '../../state/toast-store';
 import { waitForSession, writeToPane } from '../../terminal/terminal-host';
 import { kimiLoginCommandFor } from '../../../shared/kimi-login-command';
 import { askKimiLoginRegion } from './kimi-login-region';
@@ -245,6 +246,7 @@ function watchLoginPane(input: {
 }): void {
   let done = false;
   let output = '';
+  let signedInNoticed = false;
   let unsubscribeData: (() => void) | undefined;
 
   const release = (finish: CliLoginFinish) => {
@@ -303,6 +305,20 @@ function watchLoginPane(input: {
       })
     ) {
       void releaseAfterProbe();
+      return;
+    }
+    // A CLI avisou que já estava logada: orientar uma vez em vez de calar
+    // até o timeout. Não encerra nem prova nada — a troca de sessão (sair
+    // e entrar em outra conta) continua sendo a única prova.
+    if (!signedInNoticed && cliLoginAlreadySignedIn(output)) {
+      signedInNoticed = true;
+      useToastStore.getState().push('info', 'A CLI informa que já existe um login ativo.', {
+        detail:
+          'Para trocar de conta, saia da conta atual na própria CLI (logout) ' +
+          'e entre na nova — só a troca de sessão prova o login da outra conta.',
+        dedupeKey: `cli-login-signed-in:${input.adapterId ?? 'cli'}`,
+        ttlMs: 20_000,
+      });
     }
   };
 

@@ -17,10 +17,24 @@
 /** Visible for testing. */
 export type KimiRegion = 'global' | 'mainland-cn';
 
+/**
+ * `process` nÃ£o existe no renderer (contextIsolation): o default lÃª o env
+ * ambiente sÃ³ quando ele existe (F-355 bis â€” o login Kimi caÃ­a inteiro com
+ * "NÃ£o foi possÃ­vel abrir o terminal de login."). Sem env, o operador
+ * escolhe o site no diÃ¡logo de qualquer forma.
+ */
+function ambientEnv(): Readonly<Record<string, string | undefined>> | undefined {
+  try {
+    return typeof process !== 'undefined' ? process.env : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function kimiRegion(
-  env: Readonly<Record<string, string | undefined>> = process.env,
+  env: Readonly<Record<string, string | undefined>> | undefined = ambientEnv(),
 ): KimiRegion {
-  const lang = env.LC_ALL ?? env.LC_CTYPE ?? env.LANG ?? '';
+  const lang = env?.LC_ALL ?? env?.LC_CTYPE ?? env?.LANG ?? '';
   return /^(zh[_-]CN|zh[_-]Hans)\b/i.test(lang) ? 'mainland-cn' : 'global';
 }
 
@@ -29,7 +43,7 @@ export function kimiLoginCommandFor(region: KimiRegion): string {
 }
 
 export function kimiLoginCommand(
-  env: Readonly<Record<string, string | undefined>> = process.env,
+  env: Readonly<Record<string, string | undefined>> | undefined = ambientEnv(),
   region: KimiRegion = kimiRegion(env),
 ): string {
   return kimiLoginCommandFor(region);

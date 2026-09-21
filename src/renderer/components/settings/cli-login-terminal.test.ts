@@ -65,6 +65,13 @@ vi.mock('../../state/session-state-store', () => ({
   ),
 }));
 
+const toastPush = vi.hoisted(() => vi.fn());
+vi.mock('../../state/toast-store', () => ({
+  useToastStore: Object.assign(() => ({}), {
+    getState: () => ({ push: (...args: unknown[]) => toastPush(...args) }),
+  }),
+}));
+
 vi.mock('../../lib/split-tree', () => ({
   listPanes: () => panes.open,
 }));
@@ -357,6 +364,63 @@ describe('cliLoginProvedNewSession — o que autoriza gravar uma conta nova', ()
         ok({ sessionFingerprint: 'ws-2', detail: 'sessão viva: dev@example.com' }),
       ),
     ).toBe(true);
+  });
+});
+
+describe('openCliLoginTerminal - CLI ja logada orienta sem provar nada', () => {
+  const baseline = {
+    adapterId: 'codex',
+    state: 'ok' as const,
+    detail: 'sessao viva',
+    sessionFingerprint: 'antes',
+  };
+  let dataHandler: ((chunk: string) => void) | undefined;
+
+  beforeEach(() => {
+    toastPush.mockClear();
+    dataHandler = undefined;
+    panes.open = [{ id: 'pane-login' }];
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        providers: { authStatus: vi.fn(async () => [{ ...baseline }]) },
+        pty: {
+          onData: vi.fn((_sessionId: string, cb: (chunk: string) => void) => {
+            dataHandler = cb;
+            return () => undefined;
+          }),
+        },
+      },
+    });
+  });
+
+  afterEach(() => {
+    Reflect.deleteProperty(window, 'nexus');
+  });
+
+  it('avisa uma vez no toast e fechar sem trocar de sessao nao prova login', async () => {
+    const finished: CliLoginFinish[] = [];
+    await openCliLoginTerminal({
+      command: 'codex login',
+      adapterId: 'codex',
+      baseline,
+      onFinished: (finish) => finished.push(finish),
+    });
+    expect(dataHandler).toBeDefined();
+    expect(toastPush).not.toHaveBeenCalled();
+    if (dataHandler) dataHandler('Already logged in' + '\n');
+    if (dataHandler) dataHandler('Already logged in' + '\n');
+    await vi.waitFor(() => expect(toastPush).toHaveBeenCalledTimes(1));
+    expect(toastPush).toHaveBeenCalledWith(
+      'info',
+      expect.stringMatching(/já existe um login ativo/i),
+      expect.objectContaining({ dedupeKey: expect.stringContaining('codex') }),
+    );
+    expect(finished).toHaveLength(0);
+    panes.open = [];
+    if (dataHandler) dataHandler('saindo' + '\n');
+    await vi.waitFor(() => expect(finished).toHaveLength(1));
+    expect(finished[0]!.verified).toBe(false);
   });
 });
 

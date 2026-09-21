@@ -107,6 +107,33 @@ describe('slimClaudeCredentialBlob', () => {
   });
 });
 
+describe('readActiveClaudeCredential file fallback', () => {
+  beforeEach(() => {
+    fsMock.readFileSync.mockReset();
+    childProcess.execFileSync.mockReset();
+    childProcess.execFileSync.mockImplementation(() => {
+      throw new Error('keychain indisponível');
+    });
+  });
+
+  it('lê ~/.claude/.credentials.json quando o keychain não responde', () => {
+    const fat = fullFatBlob();
+    fsMock.readFileSync.mockReturnValue(fat);
+    expect(readActiveClaudeCredential('/fake/home')).toBe(fat);
+    expect(fsMock.readFileSync).toHaveBeenCalledWith(
+      expect.stringContaining('.credentials.json'),
+      'utf8',
+    );
+  });
+
+  it('devolve null quando o arquivo falta', () => {
+    fsMock.readFileSync.mockImplementation(() => {
+      throw Object.assign(new Error('ausente'), { code: 'ENOENT' });
+    });
+    expect(readActiveClaudeCredential('/fake/home')).toBe(null);
+  });
+});
+
 describe.runIf(process.platform === 'darwin')('Claude Keychain boundaries', () => {
   beforeEach(() => {
     childProcess.execFileSync.mockClear();

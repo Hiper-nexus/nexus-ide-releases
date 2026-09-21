@@ -36,6 +36,11 @@ describe('kimiRegion', () => {
     expect(kimiRegion({ LC_ALL: 'en_US.UTF-8', LANG: 'zh_CN.UTF-8' })).toBe('global');
   });
 
+  it('não lança sem env (renderer sem process) e cai em global', () => {
+    expect(kimiRegion(undefined)).toBe('global');
+    expect(kimiLoginCommand(undefined)).toBe('kimi login --region global');
+  });
+
   it('LC_CTYPE is checked when LC_ALL is absent', () => {
     expect(kimiRegion({ LC_CTYPE: 'zh_CN.UTF-8' })).toBe('mainland-cn');
     expect(kimiRegion({ LC_CTYPE: 'en_US.UTF-8' })).toBe('global');

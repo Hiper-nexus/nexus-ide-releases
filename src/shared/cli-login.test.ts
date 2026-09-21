@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  cliLoginAlreadySignedIn,
   cliLoginLooksComplete,
   resolveCliLoginCommand,
   shouldFinishCliLoginWatch,
@@ -80,10 +81,35 @@ describe('cliLoginLooksComplete', () => {
     ).toBe(true);
   });
 
+  it('does not mistake already-logged-in for a fresh login', () => {
+    expect(
+      cliLoginLooksComplete(
+        "You are already logged in. Use `devin.exe auth logout` first to re-authenticate.",
+      ),
+    ).toBe(false);
+  });
+
   it('ignores a CLI merely talking about login', () => {
     expect(cliLoginLooksComplete('Select login method')).toBe(false);
     expect(cliLoginLooksComplete('waiting for authentication')).toBe(false);
     expect(cliLoginLooksComplete('cursor-agent login')).toBe(false);
+  });
+});
+
+describe('cliLoginAlreadySignedIn', () => {
+  it('spots a session that predates the login attempt', () => {
+    expect(
+      cliLoginAlreadySignedIn(
+        "You are already logged in. Use `devin.exe auth logout` first to re-authenticate.",
+      ),
+    ).toBe(true);
+    expect(cliLoginAlreadySignedIn('Already signed in as a@b.com')).toBe(true);
+  });
+
+  it('stays quiet on real progress and on idle output', () => {
+    expect(cliLoginAlreadySignedIn('Logged in as a@b.com')).toBe(false);
+    expect(cliLoginAlreadySignedIn('successfully logged in')).toBe(false);
+    expect(cliLoginAlreadySignedIn('')).toBe(false);
   });
 });
 

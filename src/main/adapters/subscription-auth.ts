@@ -567,6 +567,39 @@ export function agyKeychainCredentialIsUsable(
   return value;
 }
 
+/**
+ * Windows presence probe for the AGY session (go-keyring → Credential
+ * Manager, target `gemini:antigravity` — the same service:account pair as
+ * the macOS login keychain item). `cmdkey /list` prints no secret and
+ * exits 0 with or without a match, so the target line is parsed
+ * (Destino:/Target: — PT-BR and EN Windows).
+ */
+export const AGY_CREDENTIAL_MANAGER_TARGET = 'gemini:antigravity';
+
+export function agyCredentialManagerHas(
+  execImpl: typeof execFileSync = execFileSync,
+): boolean {
+  if (process.platform !== 'win32') return false;
+  try {
+    const raw = execImpl('cmdkey', [`/list:${AGY_CREDENTIAL_MANAGER_TARGET}`], {
+      stdio: 'pipe',
+      timeout: 5_000,
+      windowsHide: true,
+      encoding: 'utf8',
+    });
+    const out = typeof raw === 'string' ? raw : '';
+    return out
+      .split(/\r?\n/)
+      .some(
+        (line) =>
+          /(Destino|Target):/i.test(line) &&
+          line.includes(AGY_CREDENTIAL_MANAGER_TARGET),
+      );
+  } catch {
+    return false;
+  }
+}
+
 /** Non-blocking AGY Keychain proof for provider snapshots and mission setup UI. */
 export function agyKeychainCredentialIsUsableAsync(
   execImpl: typeof execFile = execFile,
@@ -1096,7 +1129,7 @@ export function refreshOpenClaudeSubscriptionAuthCache(
 export function refreshAgySubscriptionAuthCache(
   home = os.homedir(),
   keychainProbe?: () => Promise<boolean>,
-  options: { authoritative?: boolean } = {},
+  options: { authoritative?: boolean; winCredentialHas?: () => boolean } = {},
 ): Promise<ClaudeAuthRefreshResult> {
   const cached = cachedSubscriptionAuth('agy');
   if (options.authoritative !== true && cached === true) {
@@ -1109,6 +1142,14 @@ export function refreshAgySubscriptionAuthCache(
     { probeAgyKeychain: false },
   );
   if (fileBacked) {
+    cacheSubscriptionAuth('agy', true);
+    return Promise.resolve({ value: true, cacheUpdated: true });
+  }
+  // Windows keeps the session in Credential Manager instead of files or
+  // the macOS keychain — without this the provider list reports a signed-in
+  // CLI as "precisa login".
+  const winCredentialHas = options.winCredentialHas ?? agyCredentialManagerHas;
+  if (process.platform === 'win32' && winCredentialHas()) {
     cacheSubscriptionAuth('agy', true);
     return Promise.resolve({ value: true, cacheUpdated: true });
   }

@@ -71,6 +71,17 @@ export function cliLoginLooksComplete(output: string): boolean {
   return false;
 }
 
+/**
+ * A CLI informando que JÁ estava logada ("You are already logged in").
+ * Não é sucesso (não prova login novo) nem progresso — mas calar diante
+ * dela deixa o operador olhando um terminal parado até o timeout. O watcher
+ * usa para orientar uma vez; a prova continua sendo a troca de sessão.
+ */
+export function cliLoginAlreadySignedIn(output: string): boolean {
+  const text = output.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
+  return /already\s+(?:logged|signed)\s+in\b/i.test(text);
+}
+
 export function shouldFinishCliLoginWatch(input: {
   readonly output: string;
   readonly paneStillOpen: boolean;

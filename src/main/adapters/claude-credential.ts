@@ -105,9 +105,29 @@ export function claudeCredentialBlobIsUsable(blob: string | null | undefined): b
   return slimClaudeCredentialBlob(blob) !== null;
 }
 
-/** Read the active Claude credential blob from the login keychain, or null. */
-export function readActiveClaudeCredential(): string | null {
-  return readClaudeCredential(CLAUDE_KEYCHAIN_SERVICE);
+/** Raw `~/.claude/.credentials.json` (the same file the auth probe trusts). */
+export function readClaudeCredentialFile(home = os.homedir()): string | null {
+  try {
+    const raw = fs.readFileSync(
+      path.join(home, '.claude', '.credentials.json'),
+      'utf8',
+    );
+    return raw.trim().length > 0 ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Active Claude credential blob: login keychain first, credentials file as
+ * fallback. Off-macOS there is no `security` binary, and a locked macOS
+ * keychain must not hide a live CLI session the file probe already sees.
+ */
+export function readActiveClaudeCredential(home = os.homedir()): string | null {
+  return (
+    readClaudeCredential(CLAUDE_KEYCHAIN_SERVICE) ??
+    readClaudeCredentialFile(home)
+  );
 }
 
 /** Claude 2.1.278 derives this namespace from CLAUDE_SECURESTORAGE_CONFIG_DIR. */
