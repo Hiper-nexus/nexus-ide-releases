@@ -634,6 +634,11 @@ function bootstrap(): void {
     void requireQuotaService().refresh();
   });
   initRedlineIpc();
+  if (process.platform === "win32" && !isAutomatedReleaseTest()) {
+    void syncInstalledRedline(process.resourcesPath).catch((err) =>
+      console.warn("[redline] sync da instalação falhou:", err),
+    );
+  }
   if (process.platform === "darwin" && !isAutomatedReleaseTest()) {
     void syncInstalledRedline(process.resourcesPath).catch((err) =>
       console.warn("[redline] sync da instalação falhou:", err),

@@ -1,13 +1,18 @@
 /**
- * Nexus Redline — instalação do app companheiro de menu bar.
+ * Nexus Redline — instalação do app companheiro (menu bar no macOS,
+ * bandeja no Windows).
  *
- * O .app viaja dentro do Nexus (Contents/Resources/nexus-redline). Nesta
- * primeira execução oferecemos a instalação em /Applications ("instalou um,
- * instala outro"); quem recusar pode instalar depois na seção Uso e cotas.
+ * macOS: o .app viaja dentro do Nexus (Contents/Resources/nexus-redline).
+ * Windows: o NexusRedline.exe viaja em Resources/nexus-redline e instala em
+ * %LocalAppData%\NexusRedline (sem admin). Quem recusar a oferta instala depois
+ * em Uso e cotas.
  *
  * Doutrina de segurança: nenhum shell, argv fixo, caminhos resolvidos em
- * código; a única escrita fora do userData é a cópia para /Applications
- * (ação explícita do usuário, confirmada em diálogo nativo).
+ * código; a única escrita fora do userData é a cópia para o diretório de
+ * instalação (/Applications no macOS, %LocalAppData%\NexusRedline no Windows)
+ * e a chave de autostart HKCU — sempre por ação explícita do usuário,
+ * confirmada em diálogo nativo. No Windows os únicos binários tocados são
+ * reg.exe/tasklist.exe/taskkill.exe do System32, com argv fixo.
  */
 
 import { spawn, execFileSync } from 'node:child_process';
@@ -25,6 +30,14 @@ import {
   REDLINE_IPC,
   type RedlineInstallStatus,
 } from '../../shared/redline-types';
+import {
+  installRedlineWin,
+  isRedlineRunningWin,
+  openRedlineWin,
+  resolveBundledRedlineExe,
+  resolveInstalledRedlineExe,
+  syncInstalledRedlineWin,
+} from './redline-windows';
 
 export const REDLINE_APP_NAME = 'Nexus Redline.app';
 export const REDLINE_EXEC_NAME = 'NexusRedline';
@@ -99,6 +112,20 @@ async function stopRunningRedline(): Promise<void> {
 }
 
 export function redlineStatus(resourcesPath?: string): RedlineInstallStatus {
+  if (process.platform === 'win32') {
+    const bundledPath = resolveBundledRedlineExe(
+      resourcesPath,
+      app.isPackaged,
+    );
+    const installedPath = resolveInstalledRedlineExe();
+    return {
+      platform: process.platform,
+      bundled: bundledPath !== null,
+      ...(bundledPath ? { bundledPath } : {}),
+      ...(installedPath ? { installedPath } : {}),
+      running: isRedlineRunningWin(),
+    };
+  }
   const bundledPath = resolveBundledRedlineApp(resourcesPath, app.isPackaged);
   const installedPath = resolveInstalledRedlineApp();
   return {
@@ -125,8 +152,11 @@ function wait(ms: number): Promise<void> {
 export async function installRedline(
   resourcesPath?: string,
 ): Promise<RedlineInstallResult> {
+  if (process.platform === 'win32') {
+    return installRedlineWin(resourcesPath, app.isPackaged);
+  }
   if (process.platform !== 'darwin') {
-    return { ok: false, message: 'O Redline de menu bar é exclusivo do macOS.' };
+    return { ok: false, message: 'O Redline é exclusivo do macOS e do Windows.' };
   }
   const source = resolveBundledRedlineApp(resourcesPath, app.isPackaged);
   if (!source) {
@@ -174,6 +204,18 @@ const INSTALL_DIALOG = {
     'Sem Keychain, sem rede própria. Os dados vêm do próprio Nexus.',
 };
 
+const WIN_INSTALL_DIALOG = {
+  type: 'question' as const,
+  buttons: ['Cancelar', 'Instalar na bandeja'],
+  defaultId: 1,
+  cancelId: 0,
+  title: 'Nexus Redline',
+  message: 'Instalar o Nexus Redline na bandeja do Windows?',
+  detail:
+    'Copia o companheiro para a sua pasta (%LocalAppData%\\NexusRedline, ' +
+    'sem admin) e abre. Sem rede própria. Os dados vêm do próprio Nexus.',
+};
+
 const OFFER_DIALOG = {
   type: 'info' as const,
   buttons: ['Agora não', 'Instalar na barra do menu'],
@@ -187,12 +229,40 @@ const OFFER_DIALOG = {
     'vêm do próprio Nexus. Você pode instalar depois em Uso e cotas.',
 };
 
-/** IPC de Settings: diálogo nativo obrigatório antes de escrever em /Applications. */
+const WIN_OFFER_DIALOG = {
+  type: 'info' as const,
+  buttons: ['Agora não', 'Instalar na bandeja'],
+  defaultId: 1,
+  cancelId: 0,
+  title: 'Nexus Redline',
+  message: 'Mostrar as cotas das suas contas de IA na bandeja do Windows?',
+  detail:
+    'O Nexus Redline fica na bandeja e mostra, por conta, a folga ' +
+    'das janelas 5h e semanal — sem rede própria. Os dados vêm do próprio ' +
+    'Nexus. Você pode instalar depois em Uso e cotas.',
+};
+
+/** IPC de Settings: diálogo nativo obrigatório antes de escrever fora do userData. */
 export async function confirmAndInstallRedline(
   resourcesPath?: string,
 ): Promise<RedlineInstallResult> {
+  if (process.platform === 'win32') {
+    const win =
+      BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+    try {
+      const { response } = win
+        ? await dialog.showMessageBox(win, WIN_INSTALL_DIALOG)
+        : await dialog.showMessageBox(WIN_INSTALL_DIALOG);
+      if (response !== 1) {
+        return { ok: false, message: 'Instalação cancelada.' };
+      }
+    } catch {
+      return { ok: false, message: 'Instalação cancelada.' };
+    }
+    return installRedline(resourcesPath);
+  }
   if (process.platform !== 'darwin') {
-    return { ok: false, message: 'O Redline de menu bar é exclusivo do macOS.' };
+    return { ok: false, message: 'O Redline é exclusivo do macOS e do Windows.' };
   }
   const win =
     BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
@@ -210,6 +280,9 @@ export async function confirmAndInstallRedline(
 }
 
 export async function openRedline(): Promise<RedlineInstallResult> {
+  if (process.platform === 'win32') {
+    return openRedlineWin(process.resourcesPath, app.isPackaged);
+  }
   const installed = resolveInstalledRedlineApp();
   const target = installed ?? resolveBundledRedlineApp(process.resourcesPath, app.isPackaged);
   if (!target) {
@@ -228,12 +301,16 @@ export async function openRedline(): Promise<RedlineInstallResult> {
 
 /**
  * Depois de um update do Nexus: se o operador já instalou o companheiro,
- * substitui /Applications pelo binário empacotado quando diferem e garante
+ * substitui o instalado pelo binário empacotado quando diferem e garante
  * que o processo está no ar. Não instala sem consentimento.
  */
 export async function syncInstalledRedline(
   resourcesPath?: string,
 ): Promise<void> {
+  if (process.platform === 'win32') {
+    await syncInstalledRedlineWin(resourcesPath, app.isPackaged);
+    return;
+  }
   if (process.platform !== 'darwin') return;
   const bundled = resolveBundledRedlineApp(resourcesPath, app.isPackaged);
   const installed = resolveInstalledRedlineApp();
@@ -255,14 +332,17 @@ const ONE_TIME_COOLDOWN_MS = 0;
 export async function maybeOfferRedlineInstall(
   userDataDir: string,
 ): Promise<void> {
-  if (process.platform !== 'darwin') return;
+  if (process.platform !== 'darwin' && process.platform !== 'win32') return;
   const markerPath = path.join(userDataDir, REDLINE_MARKER);
   try {
     if (existsSync(markerPath)) return;
   } catch {
     return;
   }
-  const bundled = resolveBundledRedlineApp(process.resourcesPath, app.isPackaged);
+  const isWin = process.platform === 'win32';
+  const bundled = isWin
+    ? resolveBundledRedlineExe(process.resourcesPath, app.isPackaged)
+    : resolveBundledRedlineApp(process.resourcesPath, app.isPackaged);
   const writeMarker = (accepted: boolean): void => {
     try {
       writeFileSync(
@@ -274,17 +354,21 @@ export async function maybeOfferRedlineInstall(
       // Marker é conveniência; falha não pode quebrar o boot.
     }
   };
-  if (!bundled || resolveInstalledRedlineApp()) {
+  const alreadyInstalled = isWin
+    ? resolveInstalledRedlineExe()
+    : resolveInstalledRedlineApp();
+  if (!bundled || alreadyInstalled) {
     writeMarker(false);
     return;
   }
 
   const win =
     BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+  const offerDialog = isWin ? WIN_OFFER_DIALOG : OFFER_DIALOG;
   try {
     const { response } = win
-      ? await dialog.showMessageBox(win, OFFER_DIALOG)
-      : await dialog.showMessageBox(OFFER_DIALOG);
+      ? await dialog.showMessageBox(win, offerDialog)
+      : await dialog.showMessageBox(offerDialog);
     const accepted = response === 1;
     writeMarker(accepted);
     if (accepted) {

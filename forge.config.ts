@@ -347,6 +347,15 @@ const config: ForgeConfig = {
       // Herdr (Apache-2.0) agent screen-state manifests avaliados por
       // src/main/detect/ (ver THIRD_PARTY_NOTICES.md).
       'resources/agent-detection',
+      ...(process.platform === 'win32'
+        ? [
+            // Companheiro de bandeja (Nexus Redline): o pacote carrega o
+            // diretório inteiro (exe + provider-logos); a instalação em
+            // %LocalAppData%\NexusRedline é feita pelo redline-install com
+            // oferta one-time.
+            'resources/native/win32/nexus-redline',
+          ]
+        : []),
       ...(process.platform === 'darwin'
         ? [
             'resources/native/darwin/nexus-pty-supervisor',

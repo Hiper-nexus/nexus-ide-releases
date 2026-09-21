@@ -156,6 +156,15 @@ describe('native terminal packaging', () => {
     }
   });
 
+  it('ships the Redline tray companion on Windows build hosts only', () => {
+    const resources = forgeConfig.packagerConfig?.extraResource;
+    if (process.platform === 'win32') {
+      expect(resources).toContain('resources/native/win32/nexus-redline');
+    } else {
+      expect(resources).not.toContain('resources/native/win32/nexus-redline');
+    }
+  });
+
   it('ships the Redline menu bar companion on Darwin build hosts only', () => {
     const resources = forgeConfig.packagerConfig?.extraResource;
     if (process.platform === 'darwin') {

@@ -540,6 +540,76 @@ describe('UsageQuotaSection', () => {
     act(() => root.unmount());
   });
 
+  it('mostra a linha do Redline na bandeja no Windows e instala', async () => {
+    const status = vi.fn(async () => ({
+      platform: 'win32',
+      bundled: true,
+      bundledPath: 'C:\\bundle\\NexusRedline.exe',
+      installedPath: undefined as string | undefined,
+      running: false,
+    }));
+    const install = vi.fn(async () => ({ ok: true, message: 'instalado' }));
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        quota: {
+          snapshot: vi.fn(async () => sampleSnapshot),
+          refresh: vi.fn(async () => sampleSnapshot),
+        },
+        redline: {
+          status,
+          install,
+          open: vi.fn(async () => ({ ok: true, message: 'aberto' })),
+        },
+      },
+    });
+
+    const { host, root } = mount();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(host.textContent).toContain('App na bandeja');
+    expect(host.textContent).toContain('Instalar na bandeja');
+    const btn = host.querySelector<HTMLButtonElement>('.quota-panel__redline button');
+    expect(btn).not.toBeNull();
+
+    status.mockResolvedValueOnce({
+      platform: 'win32',
+      bundled: true,
+      bundledPath: 'C:\\bundle\\NexusRedline.exe',
+      installedPath: 'C:\\Users\\op\\NexusRedline\\NexusRedline.exe',
+      running: true,
+    });
+    await act(async () => { btn?.click(); await Promise.resolve(); await Promise.resolve(); });
+
+    expect(install).toHaveBeenCalled();
+    expect(host.textContent).toContain('Abrir Redline');
+    expect(host.textContent).toContain('na bandeja');
+    act(() => root.unmount());
+  });
+
+  it('esconde a linha do Redline fora de macOS/Windows', async () => {
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        quota: {
+          snapshot: vi.fn(async () => sampleSnapshot),
+          refresh: vi.fn(async () => sampleSnapshot),
+        },
+        redline: {
+          status: vi.fn(async () => ({ platform: 'linux', bundled: false, running: false })),
+          install: vi.fn(),
+          open: vi.fn(),
+        },
+      },
+    });
+
+    const { host, root } = mount();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(host.querySelector('.quota-panel__redline')).toBeNull();
+    act(() => root.unmount());
+  });
+
   it('triggers refresh when clicking the refresh button', async () => {
     const refreshSpy = vi.fn(async () => sampleSnapshot);
     Object.defineProperty(window, 'nexus', {

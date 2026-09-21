@@ -49,7 +49,8 @@
     "eval:benchmark:verify": "node --import tsx scripts/verify-nexus-benchmark.mjs",
     "bench:vector-retrieval": "node scripts/benchmark-vector-retrieval.mjs",
     "start:forge": "electron-forge start",
-    "build:menubar": "node scripts/build-macos-menubar.mjs"
+    "build:menubar": "node scripts/build-macos-menubar.mjs",
+    "build:tray-windows": "node scripts/build-windows-tray.mjs"
   },
   "engines": {
     "node": ">=22.12.0 <23"

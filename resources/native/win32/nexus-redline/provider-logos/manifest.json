@@ -1,0 +1,114 @@
+{
+  "agy": {
+    "file": "agy.png",
+    "mono": false
+  },
+  "aider": {
+    "file": "aider.png",
+    "mono": false
+  },
+  "antigravity": {
+    "file": "agy.png",
+    "mono": false
+  },
+  "claude": {
+    "file": "claude.png",
+    "mono": false
+  },
+  "codex": {
+    "file": "codex.png",
+    "mono": true
+  },
+  "cursor-agent": {
+    "file": "cursor.png",
+    "mono": true
+  },
+  "deepseek": {
+    "file": "deepseek-color.png",
+    "mono": false
+  },
+  "devin": {
+    "file": "devin.png",
+    "mono": false
+  },
+  "elevenlabs": {
+    "file": "elevenlabs.png",
+    "mono": true
+  },
+  "gemini": {
+    "file": "gemini-color.png",
+    "mono": false
+  },
+  "glm": {
+    "file": "glm.png",
+    "mono": false
+  },
+  "glm-flash": {
+    "file": "glm.png",
+    "mono": false
+  },
+  "google": {
+    "file": "google-color.png",
+    "mono": false
+  },
+  "grok": {
+    "file": "grok.png",
+    "mono": true
+  },
+  "groq": {
+    "file": "groq.png",
+    "mono": true
+  },
+  "kimi": {
+    "file": "kimi.png",
+    "mono": false
+  },
+  "longcat": {
+    "file": "longcat.png",
+    "mono": false
+  },
+  "muse": {
+    "file": "muse.png",
+    "mono": false
+  },
+  "muse-claude": {
+    "file": "muse.png",
+    "mono": false
+  },
+  "omp": {
+    "file": "omp.png",
+    "mono": false
+  },
+  "openai": {
+    "file": "codex.png",
+    "mono": true
+  },
+  "openclaude": {
+    "file": "openclaude.png",
+    "mono": false
+  },
+  "opencode": {
+    "file": "opencode.png",
+    "mono": true
+  },
+  "prime-agent": {
+    "file": "prime-agent.png",
+    "mono": false
+  },
+  "qoder": {
+    "file": "qoder-color.png",
+    "mono": false
+  },
+  "qwen": {
+    "file": "qwen-color.png",
+    "mono": false
+  },
+  "replicate": {
+    "file": "replicate.png",
+    "mono": true
+  },
+  "sakana": {
+    "file": "sakana.png",
+    "mono": false
+  }
+}

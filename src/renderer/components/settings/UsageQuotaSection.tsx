@@ -29,9 +29,9 @@ import { buildPulseMarkers, buildPulseTicks } from '../../lib/quota-pulse';
 import { scoreFleet } from '../../../main/quota/smart-pick';
 
 /**
- * Linha do Nexus Redline (app de menu bar): instalar na primeira vez,
- * abrir quando já está em /Applications. Sumida em não-macOS ou quando o
- * companheiro não veio no pacote.
+ * Linha do Nexus Redline (menu bar no macOS, bandeja no Windows): instala
+ * na primeira vez, abre quando já instalado (/Applications ou %LocalAppData%).
+ * Sumida fora de macOS/Windows ou sem o companheiro no pacote.
  */
 function RedlineMenuBarRow() {
   const [status, setStatus] = useState<RedlineInstallStatus | null>(null);
@@ -48,8 +48,9 @@ function RedlineMenuBarRow() {
         setStatus({ platform: 'unknown', bundled: false, running: false }),
       );
   }, []);
-  if (!status || status.platform !== 'darwin' || !status.bundled) return null;
+  if (!status || (status.platform !== 'darwin' && status.platform !== 'win32') || !status.bundled) return null;
   const installed = Boolean(status.installedPath);
+  const isWin = status.platform === 'win32';
 
   async function run(action: 'install' | 'open'): Promise<void> {
     setBusy(true);
@@ -68,13 +69,19 @@ function RedlineMenuBarRow() {
   return (
     <div className="quota-panel__redline">
       <div>
-        <strong>App na barra do menu</strong>
+        <strong>{isWin ? 'App na bandeja' : 'App na barra do menu'}</strong>
         <p className="settings-detail__hint">
           {installed
             ? status.running
-              ? 'Nexus Redline está no topo do Mac mostrando as cotas.'
-              : 'Nexus Redline está instalado — abra para ver as cotas no topo do Mac.'
-            : 'Mostra a folga de cada conta no topo do Mac (instala em /Applications).'}
+              ? isWin
+                ? 'Nexus Redline está na bandeja mostrando as cotas.'
+                : 'Nexus Redline está no topo do Mac mostrando as cotas.'
+              : isWin
+                ? 'Nexus Redline está instalado — abra para ver as cotas na bandeja.'
+                : 'Nexus Redline está instalado — abra para ver as cotas no topo do Mac.'
+            : isWin
+              ? 'Mostra a folga de cada conta na bandeja (instala sem admin).'
+              : 'Mostra a folga de cada conta no topo do Mac (instala em /Applications).'}
         </p>
       </div>
       <button
@@ -83,7 +90,7 @@ function RedlineMenuBarRow() {
         disabled={busy}
         onClick={() => void run(installed ? 'open' : 'install')}
       >
-        {busy ? 'Aguarde…' : installed ? 'Abrir Redline' : 'Instalar na barra do menu'}
+        {busy ? 'Aguarde…' : installed ? 'Abrir Redline' : isWin ? 'Instalar na bandeja' : 'Instalar na barra do menu'}
       </button>
     </div>
   );
