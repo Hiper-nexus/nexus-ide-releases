@@ -9,6 +9,7 @@ import { useSessionStateStore } from '../../state/session-state-store';
 import { waitForSession, writeToPane } from '../../terminal/terminal-host';
 import { kimiLoginCommandFor } from '../../../shared/kimi-login-command';
 import { askKimiLoginRegion } from './kimi-login-region';
+import { codexDeviceLoginCommand } from '../../../shared/codex-login-command';
 
 /**
  * Aspas simples POSIX, sempre — deliberadamente sem a variante condicional do
@@ -146,7 +147,7 @@ export async function openCliLoginTerminal(input: {
   /** Chamado quando o login conclui, o pane some, ou o tempo esgota. */
   readonly onFinished?: (finish: CliLoginFinish) => void;
 }): Promise<CliLoginOutcome> {
-  let command = input.command.trim();
+  let command = codexDeviceLoginCommand(input.command, input.adapterId);
   if (input.adapterId === 'kimi') {
     const region = await askKimiLoginRegion();
     if (!region) {
