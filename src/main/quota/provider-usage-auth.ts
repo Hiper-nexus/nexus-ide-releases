@@ -15,7 +15,7 @@ import {
   setSecret,
 } from '../persistence/secrets-store';
 import { loadLauncherProviderKey } from '../adapters/launcher-provider-manager';
-import { getAccount } from '../persistence/account-store';
+import { fileSubscriptionAuthEnv, getAccount } from '../persistence/account-store';
 import {
   parseCodexAuthJson,
   type CodexChatGptAuth,
@@ -27,6 +27,9 @@ import {
 } from './claude-oauth-refresh';
 import { readNativeOAuthCredential } from '../adapters/native-oauth-keychain';
 import { hasManagedClaudeAuth, readManagedClaudeAuthAsync } from '../adapters/managed-claude-auth';
+import { accountCredentialCandidates } from '../adapters/account-credential-candidates';
+import { probeCodexCliUsage } from './codex-cli-usage';
+import type { LiveProviderProbe } from './provider-live-usage';
 import { resolveVerifiedNativeClaudeToken } from './claude-native-account';
 
 const CRED_PREFIX = 'acctcred:';
@@ -196,17 +199,8 @@ export function resolveCodexAuthCandidates(
   if (accountId) {
     const account = getAccount(accountId);
     if (account?.adapterId === 'codex') {
-      const blob = safeGetSecret(CRED_PREFIX + accountId);
-      if (blob) add(parseCodexAuthJson(blob));
-      if (out.length === 0) {
-        const system = readText(path.join(os.homedir(), '.codex', 'auth.json'));
-        if (system) {
-          const sysAuth = parseCodexAuthJson(system);
-          if (sysAuth && (!account.email || system.includes(account.email))) {
-            add(sysAuth);
-          }
-        }
-      }
+      for (const blob of accountCredentialCandidates('codex', accountId,
+        safeGetSecret(CRED_PREFIX + accountId))) add(parseCodexAuthJson(blob));
     }
     return out;
   }
@@ -221,6 +215,17 @@ export function resolveCodexAuthCandidates(
 /** Back-compat: first codex auth candidate. */
 export function resolveCodexAuth(accountId?: string): CodexChatGptAuth | null {
   return resolveCodexAuthCandidates(accountId)[0] ?? null;
+}
+
+/** Prepare the same durable account home used by panes, never the native login. */
+export async function fetchCodexAccountUsage(accountId: string): Promise<LiveProviderProbe> {
+  const account = getAccount(accountId);
+  if (account?.adapterId !== 'codex' || account.mode !== 'subscription') return { windows: null, hint: 'no-credential' };
+  const env = fileSubscriptionAuthEnv(account);
+  const expectedAuthBlob = safeGetSecret(CRED_PREFIX + accountId);
+  if (!env?.CODEX_HOME || !expectedAuthBlob) return { windows: null, hint: 'no-credential' };
+  const probe = await probeCodexCliUsage({ authFile: path.join(env.CODEX_HOME, 'auth.json'), expectedAuthBlob });
+  return { windows: probe.windows, ...(probe.failure ? { hint: probe.failure } : {}) };
 }
 
 /**
@@ -330,9 +335,10 @@ export function resolveGrokAccessTokenCandidates(
 ): string[] {
   const out: string[] = [];
   if (accountId) {
-    if (getAccount(accountId)?.adapterId !== 'grok') return out;
-    const blob = safeGetSecret(CRED_PREFIX + accountId);
-    if (blob) {
+    const account = getAccount(accountId);
+    if (account?.adapterId !== 'grok') return out;
+    for (const blob of accountCredentialCandidates('grok', accountId,
+      safeGetSecret(CRED_PREFIX + accountId))) {
       pushUnique(out, extractGrokKeyFromAuthJson(blob));
       if (!blob.trim().startsWith('{')) pushUnique(out, blob);
     }

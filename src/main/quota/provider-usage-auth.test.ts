@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   nativeCredential: vi.fn(),
   hasManagedClaudeAuth: vi.fn(() => false),
   readManagedClaudeAuthAsync: vi.fn(async () => null as string | null),
+  fileSubscriptionAuthEnv: vi.fn(),
+  codexCliUsage: vi.fn(),
   verifiedNativeClaudeToken: vi.fn(async () => null as string | null),
 }));
 
@@ -26,11 +28,13 @@ vi.mock('../persistence/secrets-store', () => ({
 
 vi.mock('../persistence/account-store', () => ({
   getAccount: mocks.getAccount,
+  fileSubscriptionAuthEnv: mocks.fileSubscriptionAuthEnv,
   // Regression sentinel: the former quota path called this account-store
   // helper, which can synchronously read/synchronise the native Keychain and
   // decrypt a cold vault entry.
   claudeOAuthAccessToken: mocks.claudeOAuthAccessToken,
 }));
+vi.mock('./codex-cli-usage', () => ({ probeCodexCliUsage: mocks.codexCliUsage }));
 vi.mock('./claude-native-account', () => ({ resolveVerifiedNativeClaudeToken: mocks.verifiedNativeClaudeToken }));
 
 vi.mock('../adapters/launcher-provider-manager', () => ({
@@ -44,7 +48,7 @@ vi.mock('../adapters/managed-claude-auth', () => ({
 }));
 
 import {
-  resolveClaudeToken, resolveCodexAuthCandidates, resolveProviderApiKeyCandidates,
+  fetchCodexAccountUsage, resolveClaudeToken, resolveCodexAuthCandidates, resolveProviderApiKeyCandidates,
   resolveGrokAccessTokenCandidates, resolveKimiAccessTokenCandidates,
   resolveKimiOauthCreds, resolveGeminiOauthCreds, persistKimiRotatedCreds,
 } from './provider-usage-auth';
@@ -123,6 +127,65 @@ describe('multi-account credential scoping', () => {
     mocks.verifiedNativeClaudeToken.mockResolvedValueOnce(null);
     expect(await resolveClaudeToken('managed-owner')).toBe('expired');
   });
+  it('only runs the saved-account Codex CLI when a durable matching home was prepared', async () => {
+    mocks.getAccount.mockReturnValue({ id: 'acct-a', adapterId: 'codex', mode: 'subscription' });
+    mocks.getSecret.mockReturnValue('{"tokens":{"account_id":"a","access_token":"fixture"}}');
+    mocks.fileSubscriptionAuthEnv.mockReturnValue({ CODEX_HOME: '/managed/codex/acct-a/home' });
+    mocks.codexCliUsage.mockImplementation(async ({ authFile }) => authFile === '/managed/codex/acct-a/home/auth.json'
+      ? { windows: [{ kind: 'weekly', label: 'Semanal', usedRatio: 0.6, source: 'provider-api', confidence: 'high' }] } : { windows: null });
+    expect((await fetchCodexAccountUsage('acct-a')).windows?.[0].usedRatio).toBe(0.6);
+    mocks.fileSubscriptionAuthEnv.mockReturnValue(null);
+    expect((await fetchCodexAccountUsage('acct-a')).hint).toBe('no-credential');
+    mocks.getAccount.mockReturnValue({ adapterId: 'codex', mode: 'api-key' });
+    expect((await fetchCodexAccountUsage('acct-a')).hint).toBe('no-credential');
+  });
+  function writeAuth(home: string, relative: string, blob: string): void {
+    const file = path.join(home, relative);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, blob);
+  }
+
+  function session(adapter: string, subject: string, token: string, day: number): string {
+    return JSON.stringify(adapter === 'codex'
+      ? { email: 'same@example.test', tokens: { access_token: token, account_id: subject }, last_refresh: `2026-09-${day}T00:00:00Z` }
+      : { issuer: { email: 'same@example.test', user_id: subject, key: token, create_time: `2026-09-${day}T00:00:00Z` } });
+  }
+
+  it.each(['codex', 'grok'])('%s quota follows native renewal of the same saved identity', (adapterId) => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'quota-renewed-'));
+    tempHomes.push(home); vi.spyOn(os, 'homedir').mockReturnValue(home);
+    mocks.getAccount.mockReturnValue({ adapterId, email: 'same@example.test' });
+    mocks.getSecret.mockImplementation((key) => key === 'acctcred:acct-a' ? session(adapterId, 'owner-a', 'old', 10) : null);
+    writeAuth(home, `.${adapterId}/auth.json`, session(adapterId, 'owner-a', 'fresh', 21));
+    const candidates = adapterId === 'codex'
+      ? resolveCodexAuthCandidates('acct-a').map((auth) => auth.accessToken)
+      : resolveGrokAccessTokenCandidates('acct-a');
+    expect(candidates[0]).toBe('fresh');
+  });
+
+  it.each(['codex', 'grok'])('%s quota reads its refreshed managed credential without borrowing another native subject', (adapterId) => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'quota-managed-'));
+    tempHomes.push(home); vi.spyOn(os, 'homedir').mockReturnValue(home);
+    mocks.getAccount.mockReturnValue({ adapterId, email: 'same@example.test' });
+    mocks.getSecret.mockImplementation((key) => key === 'acctcred:acct-a' ? session(adapterId, 'owner-a', 'old', 10) : null);
+    writeAuth(home, `.${adapterId}/auth.json`, session(adapterId, 'owner-b', 'other-account', 21));
+    writeAuth(home, `.nexus/managed-accounts/${adapterId}/acct-a/home/auth.json`, session(adapterId, 'owner-a', 'managed-fresh', 20));
+    const candidates = adapterId === 'codex'
+      ? resolveCodexAuthCandidates('acct-a').map((auth) => auth.accessToken)
+      : resolveGrokAccessTokenCandidates('acct-a');
+    expect(candidates[0]).toBe('managed-fresh');
+    expect(candidates).not.toContain('other-account');
+  });
+
+  it('does not lend the native Codex session to an account with no identity or credential', () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'quota-no-identity-'));
+    tempHomes.push(home); vi.spyOn(os, 'homedir').mockReturnValue(home);
+    mocks.getAccount.mockReturnValue({ adapterId: 'codex' });
+    mocks.getSecret.mockReturnValue(null);
+    writeAuth(home, '.codex/auth.json', session('codex', 'owner-b', 'other-account', 21));
+    expect(resolveCodexAuthCandidates('acct-a')).toEqual([]);
+  });
+
   it('reads managed Claude auth without becoming a second refresh actor', async () => {
     mocks.getAccount.mockReturnValue({ adapterId: 'claude' });
     mocks.hasManagedClaudeAuth.mockReturnValue(true);
@@ -143,7 +206,7 @@ describe('multi-account credential scoping', () => {
     vi.stubEnv('ANTHROPIC_BASE_URL', matchingBaseUrl);
     expect(resolveProviderApiKeyCandidates(adapterId)).toEqual(['opaque-test-token']);
   });
-  it('never substitutes the system Codex session for a different pinned email, but adopts when email matches', () => {
+  it('never substitutes the system Codex session for a missing pinned credential, even when email matches', () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-quota-identity-'));
     tempHomes.push(home); vi.spyOn(os, 'homedir').mockReturnValue(home);
     fs.mkdirSync(path.join(home, '.codex'));
@@ -155,8 +218,7 @@ describe('multi-account credential scoping', () => {
     });
     mocks.getSecret.mockReturnValue(null);
     expect(resolveCodexAuthCandidates('different-account')).toEqual([]);
-    expect(resolveCodexAuthCandidates('matching-account')).toHaveLength(1);
-    expect(resolveCodexAuthCandidates('matching-account')[0].accessToken).toBe('system-user');
+    expect(resolveCodexAuthCandidates('matching-account')).toEqual([]);
     expect(resolveCodexAuthCandidates()).toHaveLength(1);
   });
 

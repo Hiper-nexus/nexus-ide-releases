@@ -45,6 +45,8 @@ export interface ApiQuotaKeyRequest {
 }
 
 export interface LiveUsageAuthResolvers {
+  /** Exact saved-account CLI fallback; CLI owns its renewable credential. */
+  codexAccountUsage?: (accountId: string) => Promise<LiveProviderProbe>;
   /** Main-owned exact credential selection; never a flattened multi-provider list. */
   resolveApiQuotaKey?: (request: ApiQuotaKeyRequest) => string | null | Promise<string | null>;
   resolveClaudeToken?: (
@@ -276,6 +278,9 @@ export async function fetchLiveProviderWindows(
       for (const auth of candidates) {
         const windows = await fetchCodexUsageWindows(auth, { fetchImpl, now });
         if (windows && windows.length > 0) return { windows };
+      }
+      if (accountId && deps.codexAccountUsage) {
+        return deps.codexAccountUsage(accountId);
       }
       return UNAVAILABLE;
     }

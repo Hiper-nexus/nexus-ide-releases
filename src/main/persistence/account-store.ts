@@ -39,6 +39,7 @@ import {
   type FileAuthAdapterId,
 } from '../adapters/managed-credentials';
 import { chooseAccount } from './account-select';
+import { accountCredentialCandidates } from '../adapters/account-credential-candidates';
 import {
   freshestClaudeCredential,
   hasManagedClaudeAuth,
@@ -458,11 +459,12 @@ export function fileSubscriptionAuthEnv(
   if (!blob) return null;
   try {
     const adapterId = account.adapterId as FileAuthAdapterId;
-    // Persist CLI-refreshed tokens before materialize decides what to write.
-    const fresher = readBackFresherAuth(adapterId, account.id, blob);
-    if (fresher) {
+    // Read-back also follows a native re-login, but only for this identity.
+    const fresher = accountCredentialCandidates(adapterId, account.id, blob)[0];
+    if (fresher && fresher !== blob) {
       const saved = setSecret(CRED_PREFIX + account.id, fresher);
-      if (saved.ok) blob = fresher;
+      if (!saved.ok) return null;
+      blob = fresher;
     }
     const home = materializeManagedHome(adapterId, account.id, blob);
     return managedHomeEnv(adapterId, home);

@@ -33,6 +33,7 @@ import { fetchClaudeAccountUsageWindows } from './claude-account-usage';
 import {
   claudeNativeAccessTokenExpiresAt,
   hasClaudeNativeSession,
+  fetchCodexAccountUsage,
   persistKimiRotatedCreds as persistKimiRotatedCredsAuth,
 } from './provider-usage-auth';
 import { PLAN_CAPABLE_ADAPTERS } from './account-plan';
@@ -61,6 +62,7 @@ const PROBE_FAILURE_BACKOFF_MS = 5 * 60_000;
 const LIVE_PROBE_ADAPTERS: ReadonlySet<string> | 'all' = 'all';
 
 export interface QuotaServiceDeps {
+  codexAccountUsage?: LiveUsageAuthResolvers['codexAccountUsage'];
   resolveApiQuotaKey?: LiveUsageAuthResolvers['resolveApiQuotaKey'];
   listProviders: () => ProviderSettingsInfo[] | Promise<ProviderSettingsInfo[]>;
   listAccounts: () => AccountInfo[] | Promise<AccountInfo[]>;
@@ -538,6 +540,8 @@ export class QuotaService {
           : (accountId: string) => fetchClaudeAccountUsageWindows(accountId)),
       resolveCodexAuth: this.#deps.resolveCodexAuth,
       resolveCodexAuthCandidates: this.#deps.resolveCodexAuthCandidates,
+      codexAccountUsage: this.#deps.codexAccountUsage ??
+        (this.#deps.fetchImpl || process.env.VITEST ? undefined : fetchCodexAccountUsage),
       resolveGlmApiKey: this.#deps.resolveGlmApiKey,
       resolveGlmApiKeyCandidates: this.#deps.resolveGlmApiKeyCandidates,
       resolveGrokToken: this.#deps.resolveGrokToken,
