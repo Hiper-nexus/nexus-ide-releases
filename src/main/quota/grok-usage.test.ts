@@ -6,6 +6,7 @@ import {
   parseGrokBilling,
   parseGrokCredits,
   parseGrokTeamsUsage,
+  probeGrokUsageWindows,
   windowsFromRateLimitHeaders,
 } from './grok-usage';
 
@@ -267,5 +268,58 @@ describe('fetchGrokUsageWindows', () => {
       21_104 / 150_000,
       4,
     );
+  });
+});
+
+describe('probeGrokUsageWindows', () => {
+  const rejected = () => ({
+    ok: false,
+    status: 401,
+    json: async () => ({ error: 'Invalid or expired credentials' }),
+    text: async (): Promise<string> => '',
+    headers: { get: (): null => null },
+  });
+
+  it('flags authFailed when every endpoint rejects the token (401)', async () => {
+    const probe = await probeGrokUsageWindows('dead-jwt', {
+      fetchImpl: vi.fn(rejected) as never,
+    });
+    expect(probe.windows).toBeNull();
+    expect(probe.authFailed).toBe(true);
+  });
+
+  it('does not flag authFailed on transient failures (500)', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: false,
+      status: 500,
+      json: async () => ({}),
+      text: async (): Promise<string> => '',
+      headers: { get: (): null => null },
+    }));
+    const probe = await probeGrokUsageWindows('jwt', {
+      fetchImpl: fetchImpl as never,
+    });
+    expect(probe.windows).toBeNull();
+    expect(probe.authFailed).toBeFalsy();
+  });
+
+  it('windows win over a partial auth rejection', async () => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (String(url).includes('format=credits')) {
+        return rejected() as never;
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => BILLING_FIXTURE,
+        text: async (): Promise<string> => '',
+        headers: { get: (): null => null },
+      };
+    });
+    const probe = await probeGrokUsageWindows('jwt', {
+      fetchImpl: fetchImpl as never,
+    });
+    expect(probe.windows?.find((x) => x.kind === 'monthly')).toBeTruthy();
+    expect(probe.authFailed).toBeFalsy();
   });
 });

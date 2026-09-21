@@ -260,6 +260,12 @@ export function windowsFromRateLimitHeaders(
   ];
 }
 
+export interface GrokUsageProbe {
+  windows: QuotaWindow[] | null;
+  /** true quando algum endpoint respondeu 401/403 — grant morto, não rede. */
+  authFailed?: boolean;
+}
+
 export async function fetchGrokUsageWindows(
   accessToken: string,
   opts?: {
@@ -268,10 +274,21 @@ export async function fetchGrokUsageWindows(
     now?: number;
   },
 ): Promise<QuotaWindow[] | null> {
+  return (await probeGrokUsageWindows(accessToken, opts)).windows;
+}
+
+export async function probeGrokUsageWindows(
+  accessToken: string,
+  opts?: {
+    fetchImpl?: FetchLike;
+    timeoutMs?: number;
+    now?: number;
+  },
+): Promise<GrokUsageProbe> {
   const token = accessToken?.trim();
-  if (!token) return null;
+  if (!token) return { windows: null };
   const fetchImpl = opts?.fetchImpl ?? (globalThis.fetch as FetchLike);
-  if (typeof fetchImpl !== 'function') return null;
+  if (typeof fetchImpl !== 'function') return { windows: null };
 
   const timeoutMs = opts?.timeoutMs ?? GROK_USAGE_TIMEOUT_MS;
   const now = opts?.now ?? Date.now();
@@ -287,6 +304,10 @@ export async function fetchGrokUsageWindows(
   };
 
   const out: QuotaWindow[] = [];
+  let authFailed = false;
+  const sawAuthReject = (res: { status?: number } | null | undefined): void => {
+    if (res && (res.status === 401 || res.status === 403)) authFailed = true;
+  };
 
   try {
     // 0) Credits (?format=credits) — o anel semanal do SuperGrok. É a única
@@ -301,7 +322,9 @@ export async function fetchGrokUsageWindows(
       if (creditsRes.ok) {
         const credits = await creditsRes.json();
         const windows = parseGrokCredits(credits, now);
-        if (windows.length > 0) return windows;
+        if (windows.length > 0) return { windows };
+      } else {
+        sawAuthReject(creditsRes);
       }
     } catch {
       // continue
@@ -317,6 +340,8 @@ export async function fetchGrokUsageWindows(
       if (billRes.ok) {
         const body = await billRes.json();
         out.push(...parseGrokBilling(body, now));
+      } else {
+        sawAuthReject(billRes);
       }
     } catch {
       // continue
@@ -340,6 +365,8 @@ export async function fetchGrokUsageWindows(
             now,
           ),
         );
+      } else {
+        sawAuthReject(modelsRes);
       }
     } catch {
       // continue
@@ -356,21 +383,27 @@ export async function fetchGrokUsageWindows(
         if (teamsRes.ok) {
           const body = await teamsRes.json();
           const tierOnly = parseGrokTeamsUsage(body, now);
-          if (tierOnly.length > 0) return tierOnly;
+          if (tierOnly.length > 0) return { windows: tierOnly };
           // Auth works but no % — leave unknown with note.
           const hours = unknownWindow('hours', '5 Horas');
           const weekly = unknownWindow('weekly', 'Semanal');
-          return [
-            { ...hours, remainingLabel: 'login OK, sem used%' },
-            { ...weekly, remainingLabel: 'login OK, sem used%' },
-          ];
+          return {
+            windows: [
+              { ...hours, remainingLabel: 'login OK, sem used%' },
+              { ...weekly, remainingLabel: 'login OK, sem used%' },
+            ],
+          };
         }
+        sawAuthReject(teamsRes);
       } catch {
         // fall through
       }
     }
 
-    return out.length > 0 ? out : null;
+    return {
+      windows: out.length > 0 ? out : null,
+      ...(authFailed && out.length === 0 ? { authFailed: true } : {}),
+    };
   } finally {
     clearTimeout(timer);
   }

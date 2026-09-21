@@ -666,7 +666,10 @@ function bootstrap(): void {
     // login nativo do CLI se auto-refuta no listAccountInfos; marcar geraria
     // churn mark/clear — o readHint da linha já carrega o aviso.
     markAccountAuthExpired: (accountId, adapterId) => {
-      if (adapterId !== "claude") return;
+      // Só adapters cuja sonda distingue grant morto de falha transitória.
+      // Conta vault marcada tem blob próprio — um 401 nele é da conta, não
+      // da sessão nativa, então marcar não cria churn com o CLI.
+      if (!["claude", "grok", "kimi"].includes(adapterId)) return;
       const account = listAccounts(adapterId).find((a) => a.id === accountId);
       if (!account) return;
       const nativeEmail = activeClaudeEmail();

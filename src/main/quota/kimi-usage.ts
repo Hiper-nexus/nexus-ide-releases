@@ -211,14 +211,31 @@ export function parseKimiCredentialsJson(blob: string): KimiOauthCreds | null {
   }
 }
 
+export interface KimiRefreshProbe {
+  refreshed: {
+    accessToken: string;
+    refreshToken?: string;
+    expiresIn?: number;
+  } | null;
+  /** 400/401/403 no token endpoint = grant revogado — precisa re-login. */
+  rejected?: boolean;
+}
+
 export async function refreshKimiAccessToken(
   refreshToken: string,
   opts?: { fetchImpl?: FetchLike; timeoutMs?: number },
 ): Promise<{ accessToken: string; refreshToken?: string; expiresIn?: number } | null> {
+  return (await probeKimiRefresh(refreshToken, opts)).refreshed;
+}
+
+export async function probeKimiRefresh(
+  refreshToken: string,
+  opts?: { fetchImpl?: FetchLike; timeoutMs?: number },
+): Promise<KimiRefreshProbe> {
   const rt = refreshToken?.trim();
-  if (!rt) return null;
+  if (!rt) return { refreshed: null };
   const fetchImpl = opts?.fetchImpl ?? (globalThis.fetch as FetchLike);
-  if (typeof fetchImpl !== 'function') return null;
+  if (typeof fetchImpl !== 'function') return { refreshed: null };
   const timeoutMs = opts?.timeoutMs ?? KIMI_USAGE_TIMEOUT_MS;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -231,7 +248,7 @@ export async function refreshKimiAccessToken(
     const res = await (fetchImpl as (
       input: string,
       init?: Record<string, unknown>,
-    ) => Promise<{ ok: boolean; json(): Promise<unknown> }>)(KIMI_OAUTH_TOKEN_URL, {
+    ) => Promise<{ ok: boolean; status?: number; json(): Promise<unknown> }>)(KIMI_OAUTH_TOKEN_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -241,22 +258,32 @@ export async function refreshKimiAccessToken(
       body,
       signal: controller.signal,
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      return {
+        refreshed: null,
+        rejected:
+          res.status === 400 || res.status === 401 || res.status === 403,
+      };
+    }
     const json = (await res.json()) as {
       access_token?: unknown;
       refresh_token?: unknown;
       expires_in?: unknown;
     };
-    if (typeof json.access_token !== 'string' || !json.access_token) return null;
+    if (typeof json.access_token !== 'string' || !json.access_token) {
+      return { refreshed: null };
+    }
     return {
-      accessToken: json.access_token,
-      refreshToken:
-        typeof json.refresh_token === 'string' ? json.refresh_token : undefined,
-      expiresIn:
-        typeof json.expires_in === 'number' ? json.expires_in : undefined,
+      refreshed: {
+        accessToken: json.access_token,
+        refreshToken:
+          typeof json.refresh_token === 'string' ? json.refresh_token : undefined,
+        expiresIn:
+          typeof json.expires_in === 'number' ? json.expires_in : undefined,
+      },
     };
   } catch {
-    return null;
+    return { refreshed: null };
   } finally {
     clearTimeout(timer);
   }
@@ -308,14 +335,27 @@ export function writeKimiCredentialsFile(
   }
 }
 
+export interface KimiUsageProbe {
+  windows: QuotaWindow[] | null;
+  /** 401/403 do endpoint = credencial rejeitada, não falha transitória. */
+  authFailed?: boolean;
+}
+
 export async function fetchKimiCodingUsageWindows(
   apiKeyOrAccessToken: string,
   opts?: { fetchImpl?: FetchLike; timeoutMs?: number; now?: number },
 ): Promise<QuotaWindow[] | null> {
+  return (await probeKimiCodingUsageWindows(apiKeyOrAccessToken, opts)).windows;
+}
+
+export async function probeKimiCodingUsageWindows(
+  apiKeyOrAccessToken: string,
+  opts?: { fetchImpl?: FetchLike; timeoutMs?: number; now?: number },
+): Promise<KimiUsageProbe> {
   const key = apiKeyOrAccessToken?.trim();
-  if (!key) return null;
+  if (!key) return { windows: null };
   const fetchImpl = opts?.fetchImpl ?? (globalThis.fetch as FetchLike);
-  if (typeof fetchImpl !== 'function') return null;
+  if (typeof fetchImpl !== 'function') return { windows: null };
   const now = opts?.now ?? Date.now();
   const timeoutMs = opts?.timeoutMs ?? KIMI_USAGE_TIMEOUT_MS;
   const controller = new AbortController();
@@ -327,6 +367,7 @@ export async function fetchKimiCodingUsageWindows(
     'User-Agent': KIMI_USER_AGENT,
   };
 
+  let authFailed = false;
   try {
     for (const url of [KIMI_USAGES_URL, KIMI_USAGE_FALLBACK_URL]) {
       try {
@@ -335,15 +376,18 @@ export async function fetchKimiCodingUsageWindows(
           headers,
           signal: controller.signal,
         });
-        if (!res.ok) continue;
+        if (!res.ok) {
+          if (res.status === 401 || res.status === 403) authFailed = true;
+          continue;
+        }
         const body = await res.json();
         const windows = parseKimiUsagesPayload(body, now);
-        if (windows.length > 0) return windows;
+        if (windows.length > 0) return { windows };
       } catch {
         // next
       }
     }
-    return null;
+    return { windows: null, ...(authFailed ? { authFailed: true } : {}) };
   } finally {
     clearTimeout(timer);
   }
@@ -380,17 +424,52 @@ export async function fetchKimiUsageWithOauth(
      * o login nativo (`Stored token … rejected; re-login required`) — pior que
      * o write. Sem rotação na resposta, nenhum write acontece (refresh fica
      * só em memória). `home` existe para os testes apontarem um tmpdir.
+     *
+     * ATENÇÃO: só para a linha NATIVA — credencial que já veio de
+     * ~/.kimi-code. Conta vault rotacionada deve usar `persistRotated`
+     * (write-back no blob da conta); gravar o arquivo nativo aqui trocaria
+     * a sessão do CLI pela identidade da conta vault.
      */
     persistOnRotation?: boolean;
+    /**
+     * Destino alternativo do grant rotacionado (vault da conta). Recebe o
+     * refresh token novo; quem chama decide onde persistir. Tem precedência
+     * sobre persistOnRotation/persistRefresh — nunca os dois.
+     */
+    persistRotated?: (rotated: {
+      accessToken: string;
+      refreshToken?: string;
+      expiresIn?: number;
+    }) => void;
     home?: string;
   },
 ): Promise<QuotaWindow[] | null> {
+  return (await probeKimiUsageWithOauth(creds, opts)).windows;
+}
+
+export async function probeKimiUsageWithOauth(
+  creds: KimiOauthCreds | string,
+  opts?: {
+    fetchImpl?: FetchLike;
+    timeoutMs?: number;
+    now?: number;
+    allowRefresh?: boolean;
+    persistRefresh?: boolean;
+    persistOnRotation?: boolean;
+    persistRotated?: (rotated: {
+      accessToken: string;
+      refreshToken?: string;
+      expiresIn?: number;
+    }) => void;
+    home?: string;
+  },
+): Promise<KimiUsageProbe> {
   const now = opts?.now ?? Date.now();
   const nowSec = Math.floor(now / 1000);
 
   // Plain API key (sk-kimi-…)
   if (typeof creds === 'string') {
-    return fetchKimiCodingUsageWindows(creds, opts);
+    return probeKimiCodingUsageWindows(creds, opts);
   }
 
   let access = creds.accessToken?.trim() || null;
@@ -398,18 +477,34 @@ export async function fetchKimiUsageWithOauth(
   const expired =
     !access ||
     (typeof creds.expiresAt === 'number' && creds.expiresAt < nowSec + 30);
+  let authFailed = false;
 
   if (expired && refresh && opts?.allowRefresh === true) {
-    const refreshed = await refreshKimiAccessToken(refresh, {
+    const probe = await probeKimiRefresh(refresh, {
       fetchImpl: opts?.fetchImpl,
       timeoutMs: opts?.timeoutMs,
     });
+    const refreshed = probe.refreshed;
+    if (probe.rejected) authFailed = true;
     if (refreshed) {
       access = refreshed.accessToken;
       const rotated =
         typeof refreshed.refreshToken === 'string' &&
         refreshed.refreshToken !== refresh;
-      if (opts.persistRefresh === true || (rotated && opts.persistOnRotation === true)) {
+      if (rotated && opts.persistRotated) {
+        try {
+          opts.persistRotated({
+            accessToken: refreshed.accessToken,
+            refreshToken: refreshed.refreshToken,
+            expiresIn: refreshed.expiresIn,
+          });
+        } catch {
+          /* write-back best-effort — a leitura deste ciclo já saiu */
+        }
+      } else if (
+        opts.persistRefresh === true ||
+        (rotated && opts.persistOnRotation === true)
+      ) {
         writeKimiCredentialsFile(
           {
             accessToken: refreshed.accessToken,
@@ -422,6 +517,12 @@ export async function fetchKimiUsageWithOauth(
     }
   }
 
-  if (!access) return null;
-  return fetchKimiCodingUsageWindows(access, opts);
+  if (!access) {
+    return { windows: null, ...(authFailed ? { authFailed: true } : {}) };
+  }
+  const probe = await probeKimiCodingUsageWindows(access, opts);
+  return {
+    windows: probe.windows,
+    ...(authFailed || probe.authFailed ? { authFailed: true } : {}),
+  };
 }

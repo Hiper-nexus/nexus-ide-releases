@@ -442,6 +442,41 @@ function parseKimiCredsBlob(blob: string): KimiOauthCredsResolved | null {
   }
 }
 
+/**
+ * Write-back do grant rotacionado no blob VAULT da conta (linhagem da
+ * conta, nunca o ~/.kimi-code nativo). Preserva campos extras do blob —
+ * o refresh do token endpoint devolve um grant inteiro, mas o vault pode
+ * carregar metadados (email, label) que a releitura precisa manter.
+ */
+export function persistKimiRotatedCreds(
+  accountId: string,
+  rotated: { accessToken: string; refreshToken?: string; expiresIn?: number },
+  now = Date.now(),
+): void {
+  if (!accountId || getAccount(accountId)?.adapterId !== 'kimi') return;
+  const prior = safeGetSecret(CRED_PREFIX + accountId);
+  let base: Record<string, unknown> = {};
+  if (prior) {
+    try {
+      const parsed = JSON.parse(prior) as unknown;
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        base = parsed as Record<string, unknown>;
+      }
+    } catch {
+      base = {};
+    }
+  }
+  const next = {
+    ...base,
+    access_token: rotated.accessToken,
+    ...(rotated.refreshToken ? { refresh_token: rotated.refreshToken } : {}),
+    ...(typeof rotated.expiresIn === 'number'
+      ? { expires_at: Math.floor(now / 1000) + rotated.expiresIn }
+      : {}),
+  };
+  setSecret(CRED_PREFIX + accountId, JSON.stringify(next));
+}
+
 function extractKimiToken(blob: string): string | null {
   return parseKimiCredsBlob(blob)?.accessToken ?? null;
 }

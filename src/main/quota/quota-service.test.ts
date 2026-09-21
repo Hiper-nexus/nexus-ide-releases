@@ -110,6 +110,38 @@ describe('QuotaService limit-hit expiry', () => {
     expect(result.entries[0].windows.find((w) => w.kind === 'hours')?.usedRatio).toBe(0.12);
     svc.stop();
   });
+  it('sonda a linha nativa de provider subscription mesmo com upstream declarado não-anthropic (kimi/moonshot)', async () => {
+    // Regressão: kimi declara upstream 'moonshot' (família da API) e
+    // routable:false — canProbeQuota lia isso como «rota para outro vendor»
+    // e nunca sondava o OAuth nativo. A linha ficava «Sem informação» com
+    // ~/.kimi-code vivo.
+    const resolveKimiOauthCreds = vi.fn(() => ({
+      accessToken: 'kimi-at',
+      refreshToken: 'kimi-rt',
+      expiresAt: 4_000_000_000,
+    }));
+    const svc = new QuotaService({
+      listProviders: () => [
+        { ...provider('kimi'), routable: false, upstream: 'moonshot', authStrategy: 'subscription' },
+      ],
+      listAccounts: () => [],
+      resolveKimiOauthCreds,
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          usage: { limit: '100', used: '16', remaining: '84' },
+          limits: [],
+        }),
+        text: async () => '',
+      }),
+    });
+    const result = await svc.snapshot(HIT_AT);
+    expect(resolveKimiOauthCreds).toHaveBeenCalled();
+    expect(result.entries[0].windows.some((w) => w.usedRatio !== null)).toBe(true);
+    svc.stop();
+  });
+
   it('keeps adapter identity while routing an explicitly configured upstream quota', async () => {
     const resolveClaudeAccessToken = vi.fn(async () => 'native-credential-not-to-use');
     const resolveApiQuotaKey = vi.fn(() => 'routed-owner-key');

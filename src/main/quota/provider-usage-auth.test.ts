@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   hasCachedSecret: vi.fn<(key: string) => boolean>(),
   getSecret: vi.fn<(key: string) => string | null>(),
+  setSecret: vi.fn<(key: string, value: string) => void>(),
   getKey: vi.fn<(adapterId: string) => string | null>(),
   getAccount: vi.fn(),
   claudeOAuthAccessToken: vi.fn(),
@@ -18,6 +19,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../persistence/secrets-store', () => ({
   hasCachedSecret: mocks.hasCachedSecret,
   getSecret: mocks.getSecret,
+  setSecret: mocks.setSecret,
   getKey: mocks.getKey,
 }));
 
@@ -42,7 +44,7 @@ vi.mock('../adapters/managed-claude-auth', () => ({
 import {
   resolveClaudeToken, resolveCodexAuthCandidates, resolveProviderApiKeyCandidates,
   resolveGrokAccessTokenCandidates, resolveKimiAccessTokenCandidates,
-  resolveKimiOauthCreds, resolveGeminiOauthCreds,
+  resolveKimiOauthCreds, resolveGeminiOauthCreds, persistKimiRotatedCreds,
 } from './provider-usage-auth';
 
 const tempHomes: string[] = [];
@@ -163,5 +165,40 @@ describe('multi-account credential scoping', () => {
     expect(resolveKimiAccessTokenCandidates('wrong-account')).toEqual([]);
     expect(resolveKimiOauthCreds('wrong-account')).toBeNull();
     expect(resolveGeminiOauthCreds('wrong-account')).toBeNull();
+  });
+});
+
+describe('persistKimiRotatedCreds', () => {
+  it('reescreve o blob vault preservando campos extras (email, label)', () => {
+    mocks.getAccount.mockReturnValue({ adapterId: 'kimi' });
+    mocks.hasCachedSecret.mockReturnValue(true);
+    mocks.getSecret.mockReturnValue(
+      JSON.stringify({
+        access_token: 'old-at',
+        refresh_token: 'old-rt',
+        expires_at: 1,
+        email: 'op@x.com',
+      }),
+    );
+    persistKimiRotatedCreds('acct-1', {
+      accessToken: 'new-at',
+      refreshToken: 'new-rt',
+      expiresIn: 900,
+    }, 1_000_000);
+    expect(mocks.setSecret).toHaveBeenCalledWith(
+      'acctcred:acct-1',
+      expect.any(String),
+    );
+    const written = JSON.parse(mocks.setSecret.mock.calls[0][1]);
+    expect(written.access_token).toBe('new-at');
+    expect(written.refresh_token).toBe('new-rt');
+    expect(written.expires_at).toBe(1900);
+    expect(written.email).toBe('op@x.com');
+  });
+
+  it('não escreve nada em conta de outro provider', () => {
+    mocks.getAccount.mockReturnValue({ adapterId: 'grok' });
+    persistKimiRotatedCreds('acct-9', { accessToken: 'x' });
+    expect(mocks.setSecret).not.toHaveBeenCalled();
   });
 });

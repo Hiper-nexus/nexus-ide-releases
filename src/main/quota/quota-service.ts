@@ -33,6 +33,7 @@ import { fetchClaudeAccountUsageWindows } from './claude-account-usage';
 import {
   claudeNativeAccessTokenExpiresAt,
   hasClaudeNativeSession,
+  persistKimiRotatedCreds as persistKimiRotatedCredsAuth,
 } from './provider-usage-auth';
 import { PLAN_CAPABLE_ADAPTERS } from './account-plan';
 import type { CodexChatGptAuth } from './codex-usage';
@@ -136,6 +137,11 @@ export interface QuotaServiceDeps {
         refreshToken?: string;
         expiresAt?: number;
       } | null>;
+  /** Write-back do grant Kimi rotacionado no vault da conta (linha pinada). */
+  persistKimiRotatedCreds?: (
+    accountId: string,
+    rotated: { accessToken: string; refreshToken?: string; expiresIn?: number },
+  ) => void;
   resolveGeminiToken?: (
     accountId?: string,
   ) => string | null | Promise<string | null>;
@@ -223,6 +229,11 @@ function apiCacheKey(input: ProbeIdentity): string {
 function canProbeQuota(provider: ProviderSettingsInfo | undefined, account?: AccountInfo): boolean {
   if (!provider || (account && account.adapterId !== provider.adapterId)) return false;
   if (account?.mode === 'subscription') return true;
+  // Linha nativa por assinatura: a sonda é o OAuth/CLI do PRÓPRIO provider —
+  // o `upstream` declara o formato da API de roteamento (moonshot etc.), não
+  // a dona da quota. Sem este bypass, kimi (upstream 'moonshot') nunca é
+  // sondado e fica «Sem informação» mesmo com sessão viva em ~/.kimi-code.
+  if (!account && provider.authStrategy === 'subscription') return true;
   const upstream = (account?.upstream ?? provider.upstream)?.trim();
   return !upstream || upstream === 'anthropic' || provider.routable === true;
 }
@@ -534,6 +545,12 @@ export class QuotaService {
       resolveKimiToken: this.#deps.resolveKimiToken,
       resolveKimiTokenCandidates: this.#deps.resolveKimiTokenCandidates,
       resolveKimiOauthCreds: this.#deps.resolveKimiOauthCreds,
+      persistKimiRotatedCreds:
+        this.#deps.persistKimiRotatedCreds ??
+        (process.env.VITEST
+          ? undefined
+          : (accountId, rotated) =>
+              persistKimiRotatedCredsAuth(accountId, rotated)),
       resolveGeminiToken: this.#deps.resolveGeminiToken,
       resolveGeminiOauthCreds: this.#deps.resolveGeminiOauthCreds,
       resolveLongcatApiKey: this.#deps.resolveLongcatApiKey,

@@ -16,7 +16,7 @@ import {
   fetchCodexUsageWindows,
   type CodexChatGptAuth,
 } from './codex-usage';
-import { fetchGrokUsageWindows } from './grok-usage';
+import { probeGrokUsageWindows } from './grok-usage';
 import {
   fetchDevinUsageWindows,
   resolveDevinApiKey,
@@ -25,8 +25,8 @@ import { fetchCursorUsageWindowsLive } from './cursor-usage';
 import { fetchAgyUsageWindows, type GeminiOauthCreds } from './agy-usage';
 import { fetchAgyBridgeUsage } from './agy-bridge';
 import {
-  fetchKimiCodingUsageWindows,
-  fetchKimiUsageWithOauth,
+  probeKimiCodingUsageWindows,
+  probeKimiUsageWithOauth,
   type KimiOauthCreds,
 } from './kimi-usage';
 import {
@@ -113,6 +113,15 @@ export interface LiveUsageAuthResolvers {
   resolveKimiOauthCreds?: (
     accountId?: string,
   ) => KimiOauthCreds | null | Promise<KimiOauthCreds | null>;
+  /**
+   * Write-back do grant rotacionado no vault DA CONTA (linhas pinadas).
+   * Sem ele, a rotação de uma credencial vault não pode ir ao ~/.kimi-code
+   * — esse arquivo é a sessão nativa, de outra identidade.
+   */
+  persistKimiRotatedCreds?: (
+    accountId: string,
+    rotated: { accessToken: string; refreshToken?: string; expiresIn?: number },
+  ) => void;
   resolveGeminiToken?: (
     accountId?: string,
   ) => string | null | Promise<string | null>;
@@ -162,6 +171,7 @@ export interface LiveProviderProbe {
 
 const NO_CREDENTIAL: LiveProviderProbe = { windows: null, hint: 'no-credential' };
 const UNAVAILABLE: LiveProviderProbe = { windows: null, hint: 'unavailable' };
+const AUTH_EXPIRED: LiveProviderProbe = { windows: null, hint: 'auth-expired' };
 
 function asProbe(windows: QuotaWindow[] | null, hint: QuotaReadHint): LiveProviderProbe {
   return windows?.length ? { windows } : { windows: null, hint };
@@ -305,11 +315,15 @@ export async function fetchLiveProviderWindows(
         accountId,
       );
       if (tokens.length === 0) return NO_CREDENTIAL;
+      let grokAuthFailed = false;
       for (const token of tokens) {
-        const windows = await fetchGrokUsageWindows(token, { fetchImpl, now });
-        if (windows && windows.length > 0) return { windows };
+        const probe = await probeGrokUsageWindows(token, { fetchImpl, now });
+        if (probe.windows && probe.windows.length > 0) {
+          return { windows: probe.windows };
+        }
+        if (probe.authFailed) grokAuthFailed = true;
       }
-      return UNAVAILABLE;
+      return grokAuthFailed ? AUTH_EXPIRED : UNAVAILABLE;
     }
     case 'devin': {
       const key = deps.resolveDevinApiKey
@@ -327,6 +341,7 @@ export async function fetchLiveProviderWindows(
     }
     case 'kimi': {
       let sawCredential = false;
+      let authFailed = false;
       // 1) OAuth from ~/.kimi-code (same as `kimi login`) — refresh if expired.
       if (deps.resolveKimiOauthCreds) {
         const oauth = await Promise.resolve(
@@ -335,17 +350,33 @@ export async function fetchLiveProviderWindows(
         if (oauth?.refreshToken || oauth?.accessToken) {
           sawCredential = true;
           // Access expirado + refresh válido não pode ficar vazio (conta com
-          // consumo aparecia «—»). Refresca em memória; se o servidor ROTACIONAR
-          // o grant, persistOnRotation devolve o refresh token novo ao
-          // ~/.kimi-code do CLI — consumi-lo sem gravar derruba o login nativo.
-          const w = await fetchKimiUsageWithOauth(oauth, {
+          // consumo aparecia «—»). Refresca em memória; quando o servidor
+          // ROTACIONA o grant, o destino do refresh token novo segue a
+          // linhagem — nunca cruza conta vault ↔ sessão nativa.
+          const probe = await probeKimiUsageWithOauth(oauth, {
             fetchImpl,
             now,
             allowRefresh: true,
             persistRefresh: false,
-            persistOnRotation: true,
+            // Linha nativa: o grant é do ~/.kimi-code — devolver a rotação
+            // lá mantém o login do CLI vivo. Linha pinada: o grant é do
+            // vault — a rotação volta ao blob da conta, NUNCA ao arquivo
+            // nativo (senão a sessão do CLI troca de identidade). Sem o dep
+            // de vault, refresh fica só em memória — honesto.
+            ...(accountId
+              ? deps.persistKimiRotatedCreds
+                ? {
+                    persistRotated: (rotated: {
+                      accessToken: string;
+                      refreshToken?: string;
+                      expiresIn?: number;
+                    }) => deps.persistKimiRotatedCreds?.(accountId, rotated),
+                  }
+                : {}
+              : { persistOnRotation: true }),
           });
-          if (w?.length) return { windows: w };
+          if (probe.windows?.length) return { windows: probe.windows };
+          if (probe.authFailed) authFailed = true;
         }
       }
       // 2) API keys (sk-kimi-…) + any bare tokens.
@@ -356,15 +387,17 @@ export async function fetchLiveProviderWindows(
       );
       if (tokens.length > 0) sawCredential = true;
       for (const token of tokens) {
-        const coding = await fetchKimiCodingUsageWindows(token, {
+        const coding = await probeKimiCodingUsageWindows(token, {
           fetchImpl,
           now,
         });
-        if (coding && coding.length > 0) return { windows: coding };
+        if (coding.windows?.length) return { windows: coding.windows };
+        if (coding.authFailed) authFailed = true;
         const windows = await fetchKimiUsageWindows(token, { fetchImpl, now });
         if (windows && windows.length > 0) return { windows };
       }
-      return sawCredential ? UNAVAILABLE : NO_CREDENTIAL;
+      if (!sawCredential) return NO_CREDENTIAL;
+      return authFailed ? AUTH_EXPIRED : UNAVAILABLE;
     }
     case 'agy': {
       // Codenotch AntigravityBridge primeiro: o language server local (IDE

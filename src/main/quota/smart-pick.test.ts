@@ -116,6 +116,25 @@ describe('scoreFleet', () => {
     expect(byId.get('claude:escuro')?.excludedReason).toBe('unknown-usage');
   });
 
+  it('linha nativa sem AccountInfo usa o readHint da sonda', () => {
+    const entries = [
+      // Linha nativa Claude com sessão morta: sem accountId, o hint é o
+      // único portador do motivo — deve virar needs-relogin no Redline.
+      { ...entry('claude', [win('5h', null)]), readHint: 'auth-expired' as const },
+      { ...entry('grok', [win('5h', null)]), readHint: 'auth-expired' as const },
+      { ...entry('kimi', [win('5h', null)]), readHint: 'no-credential' as const },
+      { ...entry('glm', [win('5h', null)]), readHint: 'unavailable' as const },
+    ];
+    const result = scoreFleet(entries, [], NOW);
+    const byId = new Map(result.entries.map((e) => [e.id, e]));
+    expect(byId.get('claude')?.excludedReason).toBe('needs-relogin');
+    expect(byId.get('grok')?.excludedReason).toBe('needs-relogin');
+    expect(byId.get('kimi')?.excludedReason).toBe('no-credential');
+    // 'unavailable' segue o caminho genérico — a UI do companheiro não tem
+    // motivo mais específico que «sem leitura» para falha transitória.
+    expect(byId.get('glm')?.excludedReason).toBe('unknown-usage');
+  });
+
   it('ranking ordena por folga: conta vazia vence conta cheia', () => {
     const entries = [
       entry('claude:cheia', [win('5h', 0.9)], { accountId: 'cheia' }),

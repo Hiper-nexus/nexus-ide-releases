@@ -210,6 +210,52 @@ describe('fetchLiveProviderWindows', () => {
     expect(w.windows?.some((x) => x.kind === 'weekly')).toBe(true);
   });
 
+  it('kimi: refresh rejeitado (400/401) vira auth-expired, não «unavailable»', async () => {
+    const fetchImpl = vi.fn(async (url: string) => {
+      if (String(url).includes('auth.kimi.com')) {
+        return {
+          ok: false,
+          status: 400,
+          json: async () => ({ error: 'invalid_grant' }),
+          text: async () => '',
+        };
+      }
+      // Access antigo também rejeitado.
+      return {
+        ok: false,
+        status: 401,
+        json: async () => ({}),
+        text: async () => '',
+      };
+    });
+
+    const probe = await fetchLiveProviderWindows('kimi', undefined, {
+      resolveKimiOauthCreds: () => ({
+        accessToken: 'expired-at',
+        refreshToken: 'dead-rt',
+        expiresAt: 1,
+      }),
+      fetchImpl: fetchImpl as never,
+    });
+    expect(probe.windows).toBeNull();
+    expect(probe.hint).toBe('auth-expired');
+  });
+
+  it('grok: 401 do billing vira auth-expired (grant morto, não rede)', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: false,
+      status: 401,
+      json: async () => ({ error: 'Invalid or expired credentials' }),
+      text: async () => '',
+    }));
+    const probe = await fetchLiveProviderWindows('grok', undefined, {
+      resolveGrokToken: () => 'dead-jwt',
+      fetchImpl: fetchImpl as never,
+    });
+    expect(probe.windows).toBeNull();
+    expect(probe.hint).toBe('auth-expired');
+  });
+
   it('claude: cai no /usage do CLI quando o OAuth falha (row CLI nativo)', async () => {
     const failFetch = vi.fn(async () => ({
       ok: false,
