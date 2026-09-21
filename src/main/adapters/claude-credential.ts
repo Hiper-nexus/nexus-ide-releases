@@ -20,7 +20,7 @@ import { createHash, randomBytes } from 'node:crypto';
  * vault and hands it here only to read/restore.
  */
 
-const CLAUDE_KEYCHAIN_SERVICE = 'Claude Code-credentials';
+export const CLAUDE_KEYCHAIN_SERVICE = 'Claude Code-credentials';
 
 /**
  * Interactive `security -i` reads each command as a single line into a fixed
@@ -119,6 +119,29 @@ export function readClaudeCredentialFile(home = os.homedir()): string | null {
 }
 
 /**
+ * Identidade opaca e VOLÁTIL da sessão Claude que está no Keychain agora.
+ *
+ * O login pode reautenticar a mesma conta (mesmo e-mail) e ainda assim
+ * substituir toda a linhagem OAuth. A UI precisa distinguir "não fez nada"
+ * de "a credencial rodou", mas nunca pode receber token, refresh token ou
+ * subject. O digest atende exatamente esse contrato: só igualdade.
+ *
+ * Não persista nem registre este valor. Ele muda quando a CLI rotaciona a
+ * credencial e existe somente para comparar o baseline do terminal de login
+ * com a leitura posterior.
+ */
+export function claudeCredentialFingerprint(
+  blob: string | null | undefined,
+): string | null {
+  const slim = blob ? slimClaudeCredentialBlob(blob) : null;
+  if (!slim) return null;
+  return createHash('sha256')
+    .update('claude-session\0')
+    .update(slim)
+    .digest('hex');
+}
+
+/**
  * Active Claude credential blob: login keychain first, credentials file as
  * fallback. Off-macOS there is no `security` binary, and a locked macOS
  * keychain must not hide a live CLI session the file probe already sees.
@@ -128,6 +151,42 @@ export function readActiveClaudeCredential(home = os.homedir()): string | null {
     readClaudeCredential(CLAUDE_KEYCHAIN_SERVICE) ??
     readClaudeCredentialFile(home)
   );
+}
+
+/**
+ * Leitura do Keychain é CARA e VISÍVEL: `find-generic-password -w` devolve o
+ * segredo, então passa pela ACL do item e pode levantar o diálogo de
+ * autorização do macOS. As mesmas chamadas acontecem em caminhos quentes
+ * (snapshot de cota, preparo de spawn, sondas de auth), e uma negação era
+ * lida como «não logado» — o que dispara novo login, que lê de novo. Era esse
+ * laço que deixava o Mac pedindo autorização o tempo todo sem nunca logar.
+ *
+ * A janela é curta de propósito: o CLI rotaciona o token por fora, e toda
+ * escrita nossa invalida a entrada na hora.
+ */
+const CREDENTIAL_READ_TTL_MS = 15_000;
+/** Negado/bloqueado: recua bem mais para não reabrir o diálogo em loop. */
+const CREDENTIAL_DENIED_BACKOFF_MS = 5 * 60_000;
+
+const credentialReadCache = new Map<string, { blob: string | null; until: number }>();
+
+function rememberCredentialRead(
+  service: string,
+  blob: string | null,
+  ttlMs: number,
+): void {
+  credentialReadCache.set(service, { blob, until: Date.now() + ttlMs });
+}
+
+/**
+ * Esquece a leitura memoizada. Obrigatório depois de escrever no item — sem
+ * isto, uma troca de conta continuaria servindo o blob anterior por até
+ * {@link CREDENTIAL_READ_TTL_MS}. Sem argumento, limpa tudo (troca de conta,
+ * logout, testes).
+ */
+export function invalidateClaudeCredentialCache(service?: string): void {
+  if (service === undefined) credentialReadCache.clear();
+  else credentialReadCache.delete(service);
 }
 
 /** Claude 2.1.278 derives this namespace from CLAUDE_SECURESTORAGE_CONFIG_DIR. */
@@ -144,6 +203,7 @@ export function readManagedClaudeCredential(authDir: string): string | null {
 
 export function deleteManagedClaudeCredential(authDir: string): boolean {
   const service = managedClaudeKeychainService(authDir);
+  invalidateClaudeCredentialCache(service);
   if (!isMac()) return true;
   try {
     execFileSync('security', ['delete-generic-password', '-s', service], {
@@ -157,6 +217,8 @@ export function deleteManagedClaudeCredential(authDir: string): boolean {
 
 function readClaudeCredential(service: string): string | null {
   if (!isMac()) return null;
+  const held = credentialReadCache.get(service);
+  if (held && Date.now() < held.until) return held.blob;
   try {
     const out = execFileSync(
       'security',
@@ -171,9 +233,24 @@ function readClaudeCredential(service: string): string | null {
       },
     );
     const trimmed = out.trim();
-    return trimmed.length > 0 ? trimmed : null;
-  } catch {
-    return null; // Not logged in / no keychain entry.
+    const blob = trimmed.length > 0 ? trimmed : null;
+    rememberCredentialRead(service, blob, CREDENTIAL_READ_TTL_MS);
+    return blob;
+  } catch (error) {
+    // Código 44 = item inexistente: resposta barata e definitiva, e o macOS
+    // nem chega a pedir autorização. Qualquer outro código é o SecurityAgent
+    // negado, keychain bloqueado ou timeout — ali houve (ou haveria) um
+    // diálogo. Repetir a leitura a cada snapshot é o que vira a enxurrada de
+    // prompts que nunca termina em login, então esse caso recua por mais
+    // tempo. Nos dois casos o retorno segue `null`: este módulo continua sem
+    // afirmar sessão que não leu.
+    const absent = (error as { status?: number }).status === 44;
+    rememberCredentialRead(
+      service,
+      null,
+      absent ? CREDENTIAL_READ_TTL_MS : CREDENTIAL_DENIED_BACKOFF_MS,
+    );
+    return null;
   }
 }
 
@@ -311,6 +388,11 @@ function writeClaudeCredential(blob: string, service: string, allowLegacyFallbac
     console.warn('[claude-credential] slim blob contains newline; refusing');
     return false;
   }
+
+  // O item MUDA a partir daqui (inclusive quando a escrita falha no meio):
+  // a leitura memoizada não pode sobreviver a isso, senão uma troca de conta
+  // continuaria servindo a credencial anterior.
+  invalidateClaudeCredentialCache(service);
 
   if (writeViaInteractiveStdin(slim, service)) {
     return true;

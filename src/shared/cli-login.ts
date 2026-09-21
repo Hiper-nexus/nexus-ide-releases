@@ -65,7 +65,7 @@ export function resolveCliLoginCommand(source: CliLoginSource): string | null {
  */
 export function cliLoginLooksComplete(output: string): boolean {
   const text = output.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
-  if (/logged in as\s+\S+/i.test(text)) return true;
+  if (/(?:logged|signed) in as\s+\S+/i.test(text)) return true;
   if (/authentication tokens stored/i.test(text)) return true;
   if (/successfully (?:logged|signed) in/i.test(text)) return true;
   return false;

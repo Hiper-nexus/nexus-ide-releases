@@ -81,6 +81,14 @@ describe('cliLoginLooksComplete', () => {
     ).toBe(true);
   });
 
+  it('recognizes the current Claude "Signed in as" confirmation', () => {
+    expect(
+      cliLoginLooksComplete(
+        '\u001b[32m✓ Signed in as retornoja@gmail.com\u001b[0m',
+      ),
+    ).toBe(true);
+  });
+
   it('does not mistake already-logged-in for a fresh login', () => {
     expect(
       cliLoginLooksComplete(

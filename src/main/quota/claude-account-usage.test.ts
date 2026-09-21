@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   getSecret: vi.fn<(key: string) => string | null>(),
   setSecret: vi.fn(),
   hasManagedClaudeAuth: vi.fn(() => false),
+  managedClaudeAuthHasCredential: vi.fn(() => false),
   managedClaudeAuthDirectory: vi.fn((id: string) => `/managed/${id}/auth`),
   materializeManagedClaudeAuth: vi.fn(),
   readManagedClaudeAuth: vi.fn(() => null),
@@ -32,6 +33,7 @@ vi.mock('../persistence/secrets-store', () => ({
 vi.mock('../adapters/managed-claude-auth', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   hasManagedClaudeAuth: mocks.hasManagedClaudeAuth,
+  managedClaudeAuthHasCredential: mocks.managedClaudeAuthHasCredential,
   managedClaudeAuthDirectory: mocks.managedClaudeAuthDirectory,
   materializeManagedClaudeAuth: mocks.materializeManagedClaudeAuth,
   readManagedClaudeAuth: mocks.readManagedClaudeAuth,
@@ -120,6 +122,7 @@ beforeEach(() => {
   mocks.getAccount.mockReset();
   mocks.getSecret.mockReset().mockReturnValue(null);
   mocks.hasManagedClaudeAuth.mockReset().mockReturnValue(false);
+  mocks.managedClaudeAuthHasCredential.mockReset().mockReturnValue(false);
   mocks.managedClaudeAuthDirectory.mockReset().mockImplementation(
     (id: string) => `/managed/${id}/auth`,
   );
@@ -260,6 +263,7 @@ describe('fetchClaudeAccountUsageWindows', () => {
       email: 'a@b.c',
     });
     mocks.hasManagedClaudeAuth.mockReturnValue(true);
+    mocks.managedClaudeAuthHasCredential.mockReturnValue(true);
     cliReturns([cliWindow('Semanal', 0.5)]);
 
     const r = await fetchClaudeAccountUsageWindows('acct-1', { now: NOW });
@@ -269,6 +273,22 @@ describe('fetchClaudeAccountUsageWindows', () => {
     };
     expect(call.env[CLAUDE_MANAGED_AUTH_ENV]).toBe('/managed/acct-1/auth');
     expect(mocks.materializeManagedClaudeAuth).not.toHaveBeenCalled();
+  });
+
+  it('empty managed scope never runs the scoped CLI (cross-account leak)', async () => {
+    // Campo 21/09: o diretório existia mas estava vazio. O `claude` caía na
+    // credencial NATIVA e esta linha herdava o consumo de OUTRA conta.
+    mocks.getAccount.mockReturnValue({ adapterId: 'claude', email: 'a@b.c' });
+    mocks.hasManagedClaudeAuth.mockReturnValue(true);
+    mocks.managedClaudeAuthHasCredential.mockReturnValue(false);
+    cliReturns([cliWindow('Semanal', 0.73)]);
+
+    const r = await fetchClaudeAccountUsageWindows('acct-empty', { now: NOW });
+
+    expect(mocks.probeClaudeCliUsage).not.toHaveBeenCalled();
+    expect(r.windows).toBeNull();
+    // Escopo sem credencial é conta sem sessão: a UI pede login, não paciência.
+    expect(r.hint).toBe('no-credential');
   });
 
   it('email-matched default profile serves the CLI-written cache without spawning', async () => {

@@ -32,6 +32,7 @@ interface AccountStore {
   addActiveSession(
     adapterId: string,
     label: string,
+    accountId?: string,
   ): Promise<{ ok: boolean; id?: string; email?: string; error?: string }>;
   supportsSnapshot(adapterId: string): Promise<boolean>;
   rename(id: string, label: string): Promise<void>;
@@ -68,8 +69,8 @@ export const useAccountStore = create<AccountStore>((set) => ({
   clearRestartNotice: () => set({ restartAdapterId: null, restartLabel: null }),
   add: (req) => window.nexus.accounts.add(req),
   addActiveClaude: (label) => window.nexus.accounts.addActiveClaude(label),
-  addActiveSession: (adapterId, label) =>
-    window.nexus.accounts.addActiveSession(adapterId, label),
+  addActiveSession: (adapterId, label, accountId) =>
+    window.nexus.accounts.addActiveSession(adapterId, label, accountId),
   supportsSnapshot: async (adapterId) => {
     try {
       const res = await window.nexus.accounts.supportsSnapshot(adapterId);

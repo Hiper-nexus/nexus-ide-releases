@@ -4152,6 +4152,72 @@ export const RELEASE_07647: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.66',
+  date: '2026-09-21',
+  codename: 'Multi-conta: o login novo gruda, em qualquer LLM',
+  summary:
+    'Cinco defeitos somados faziam o mesmo estrago: fazer login e a conta ' +
+    'continuar morta. O motor de frescor de credencial só entendia o ' +
+    'formato do Codex, então Grok/OpenCode/Kimi/AGY guardavam o token ' +
+    'velho e ainda o promoviam de volta ao cofre; um escopo Claude VAZIO ' +
+    'era aceito como conta e a CLI respondia com a cota da sessão nativa ' +
+    'em duas linhas; o Muse guardava o segredo no Keychain e aparecia ' +
+    '«não verificado»; a leitura do Keychain não tinha cache e cada ' +
+    'negação reabria o diálogo do macOS; e «Signed in as» sequer era ' +
+    'reconhecido como fim de login.',
+  highlights: [
+    {
+      title: 'Frescor de credencial deixa de ser só-Codex',
+      detail:
+        'O scanner novo lê emissão e expiração em qualquer formato — ISO, ' +
+        'epoch em s/ms/µs, JWT embutido e snapshot de diretório. Emissão ' +
+        'vence expiração: login novo de TTL curto ganha de token velho de ' +
+        'TTL longo. Sem sinal comparável, o cofre não é sobrescrito e o ' +
+        'arquivo em disco não é promovido — e uma sessão de OUTRA conta ' +
+        'nunca entra no cofre desta.',
+    },
+    {
+      title: 'Escopo Claude vazio não empresta a cota da sessão nativa',
+      detail:
+        'O diretório existir não é credencial (validar já o cria). Medido: ' +
+        '`claude /usage` apontado para escopo vazio cai na credencial ' +
+        'nativa — era a origem de duas contas exibindo 3% / 73% / 48% ' +
+        'idênticos, uma delas com a sessão morta. Agora a linha exige ' +
+        'arquivo OAuth utilizável ou item de Keychain próprio, senão diz ' +
+        '«Sem leitura» honestamente.',
+    },
+    {
+      title: 'Muse Spark logado aparece conectado',
+      detail:
+        'Com `storage: keychain` o auth.json guarda só identidade; o ' +
+        'segredo vive em `ai.meta.dev.credentials`, cuja conta é o nome do ' +
+        'provider. A sonda confere apenas os ATRIBUTOS do item — prova a ' +
+        'sessão sem pedir senha.',
+    },
+    {
+      title: 'O Keychain para de pedir permissão em laço',
+      detail:
+        'A leitura com `-w` devolve o segredo, passa pela ACL e roda em ' +
+        'caminho quente. Sem cache, cada negação virava «não logado», que ' +
+        'dispara login, que lê de novo. Agora: cache curto para leitura ' +
+        'boa ou ausente, recuo de 5 min para ACL negada, e bypass ' +
+        'pós-login que NUNCA ignora uma negação.',
+    },
+    {
+      title: '«Signed in as» conserta exatamente a conta clicada',
+      detail:
+        'A frase real da CLI não era reconhecida como fim de login. Além ' +
+        'disso ela agora só dispara nova leitura — o watcher não desiste ' +
+        'antes de a credencial ficar visível. Um fingerprint opaco do blob ' +
+        'prova reautenticação do MESMO e-mail, e o accountId viaja até o ' +
+        'Main, que recusa credencial comprovadamente de outra linha em vez ' +
+        'de adivinhar por e-mail.',
+    },
+  ],
+  fixes: [],
+};
+
+export const RELEASE_07665: AppRelease = {
   version: '0.76.65',
   date: '2026-09-21',
   codename: 'Grok e Kimi dizem «Entrar novamente» e o Kimi nativo lê de verdade',

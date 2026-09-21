@@ -1244,11 +1244,29 @@ DWORD WINAPI watchProc(LPVOID) {
 // â”€â”€ Janela dona da bandeja â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 UINT gTaskbarCreated = 0;
+// Segunda instância (duplo clique no exe, "Abrir") pede o painel em vez de
+// sair calada no mutex. 0 até RegisterWindowMessage.
+UINT gOpenPanelMsg = 0;
+// Segura o mutex pela vida do processo. Fechar o handle libera o nome.
+HANDLE gInstanceMutex = nullptr;
+
+void revealPanel() {
+  if (g.panelWnd) {
+    ShowWindow(g.panelWnd, SW_SHOW);
+    SetForegroundWindow(g.panelWnd);
+    return;
+  }
+  showPanel();
+}
 
 LRESULT CALLBACK trayProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   if (msg == gTaskbarCreated) {
     addTrayIcon();
     refreshTray();
+    return 0;
+  }
+  if (gOpenPanelMsg != 0 && msg == gOpenPanelMsg) {
+    revealPanel();
     return 0;
   }
   switch (msg) {
@@ -1471,6 +1489,29 @@ int runPaintCheck(const std::wstring& snapPath, const std::wstring& out1,
   return 0;
 }
 
+// true = esta instância é a dona. false = já havia uma; o painel dela foi
+// pedido e o chamador deve sair.
+bool claimSingleInstance() {
+  gOpenPanelMsg = RegisterWindowMessageW(L"NexusRedline-OpenPanel");
+  gInstanceMutex = CreateMutexW(
+      nullptr, FALSE, L"NexusRedline-9f3a7c2e-single-instance");
+  if (gInstanceMutex && GetLastError() != ERROR_ALREADY_EXISTS) return true;
+  if (gOpenPanelMsg != 0) {
+    // Quem acabou de abrir este exe é o foreground: libera o processo que
+    // já está na bandeja a trazer o painel para a frente.
+    AllowSetForegroundWindow(ASFW_ANY);
+    if (HWND existing =
+            FindWindowW(L"NexusRedlineTray", L"Nexus Redline Tray")) {
+      PostMessageW(existing, gOpenPanelMsg, 0, 0);
+    }
+  }
+  if (gInstanceMutex) {
+    CloseHandle(gInstanceMutex);
+    gInstanceMutex = nullptr;
+  }
+  return false;
+}
+
 }  // namespace — wWinMain tem linkage externo (o CRT o referencia).
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR cmd, int) {
@@ -1510,9 +1551,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR cmd, int) {
     }
   }
 
-  HANDLE mutex =
-      CreateMutexW(nullptr, FALSE, L"NexusRedline-9f3a7c2e-single-instance");
-  if (!mutex || GetLastError() == ERROR_ALREADY_EXISTS) return 0;
+  if (!claimSingleInstance()) return 0;
 
   // Per-monitor DPI (o painel ancora na bandeja, que pode estar em outro
   // monitor). Falha aqui sÃ³ perde nitidez, nÃ£o funÃ§Ã£o.

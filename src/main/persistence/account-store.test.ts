@@ -69,6 +69,8 @@ vi.mock('./secrets-store', () => ({
 
 vi.mock('../adapters/claude-credential', () => ({
   activeClaudeEmail: () => deps.activeEmail,
+  CLAUDE_KEYCHAIN_SERVICE: 'Claude Code-credentials',
+  invalidateClaudeCredentialCache: vi.fn(),
   readActiveClaudeCredential: () => deps.keychain,
   readActiveClaudeCredentialSlim: () => deps.keychain,
   slimClaudeCredentialBlob: (blob: string) => blob,
@@ -485,6 +487,56 @@ describe('addActiveSessionAccount não duplica o mesmo assinante', () => {
     const again = addActiveSessionAccount('claude', 'who@example.test');
     expect(again!.id).toBe(legacy!.id);
     expect(again!.email).toBe('who@example.test');
+  });
+
+  it('reautenticação direcionada atualiza exatamente a linha clicada', () => {
+    const a = addClaudeAccount('Conta A', 'a@example.test', oauthBlob('a-old'));
+    const b = addClaudeAccount('Conta B', 'b@example.test', oauthBlob('b-old'));
+
+    // Re-login completo de B: access e refresh rodaram, portanto nenhuma
+    // igualdade de token consegue descobrir o dono. O accountId da ação é a
+    // autoridade que impede o motor de atualizar a primeira linha por acaso.
+    deps.activeEmail = 'b@example.test';
+    deps.keychain = oauthBlob('b-completely-new');
+    const refreshed = addActiveSessionAccount(
+      'claude',
+      'nome ignorado',
+      b.id,
+    );
+
+    expect(refreshed?.id).toBe(b.id);
+    expect(refreshed?.label).toBe('Conta B');
+    expect(deps.secrets.get(`acctcred:${b.id}`)).toBe(
+      oauthBlob('b-completely-new'),
+    );
+    expect(deps.secrets.get(`acctcred:${a.id}`)).toBe(oauthBlob('a-old'));
+  });
+
+  it('reautenticação direcionada recusa login comprovado de outra linha', () => {
+    const a = addClaudeAccount('Conta A', 'a@example.test', oauthBlob('a-live'));
+    const b = addClaudeAccount('Conta B', 'b@example.test', oauthBlob('b-dead'));
+
+    // O operador clicou "Entrar novamente" em B, mas concluiu OAuth de A.
+    // Duplicar A sobre B destruiria a multi-conta e faria as duas linhas
+    // exibirem a mesma cota.
+    deps.activeEmail = 'a@example.test';
+    deps.keychain = oauthBlob('a-live');
+    expect(() =>
+      addActiveSessionAccount('claude', 'Conta B', b.id),
+    ).toThrow(/Conta A.*Conta B/);
+    expect(deps.secrets.get(`acctcred:${b.id}`)).toBe(oauthBlob('b-dead'));
+    expect(deps.secrets.get(`acctcred:${a.id}`)).toBe(oauthBlob('a-live'));
+  });
+
+  it('reautenticação direcionada recusa accountId de outro provider', () => {
+    const claude = addClaudeAccount(
+      'Claude',
+      'a@example.test',
+      oauthBlob('a-live'),
+    );
+    expect(() =>
+      addActiveSessionAccount('codex', 'Codex', claude.id),
+    ).toThrow(/não existe mais/);
   });
 });
 

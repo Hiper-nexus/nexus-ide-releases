@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { writeFileAtomic } from '../util/atomic-write';
 import {
   readManagedClaudeCredential,
@@ -87,6 +88,58 @@ export function freshestClaudeCredential(...blobs: Array<string | null>): string
 export function hasManagedClaudeAuth(accountId: string, home = os.homedir()): boolean {
   const stat = fs.lstatSync(managedClaudeAuthDirectory(accountId, home), { throwIfNoEntry: false });
   return Boolean(stat?.isDirectory() && !stat.isSymbolicLink());
+}
+
+/**
+ * O escopo desta conta contém MESMO uma credencial?
+ *
+ * `hasManagedClaudeAuth` responde "o diretório existe" — e o diretório passa a
+ * existir só de validá-lo (`validateManagedClaudeAuthDirectory` cria o
+ * caminho). Um diretório vazio NÃO é uma conta: rodar `claude` apontado para
+ * ele faz o binário cair na credencial NATIVA e responder pela conta errada.
+ * Foi assim que duas contas apareceram com o mesmo consumo (5h/semanal
+ * idênticos) enquanto uma delas estava com a sessão morta.
+ *
+ * A sonda é de graça e nunca abre prompt: lê o arquivo do próprio escopo e,
+ * no macOS, consulta apenas os ATRIBUTOS do item de keychain — metadado não
+ * passa pela ACL do item, então enumerar não pede autorização (mesma regra
+ * que `profileHasCredential` já usa para perfis de disco).
+ */
+export function managedClaudeAuthHasCredential(
+  accountId: string,
+  options: { home?: string; keychainProbe?: (service: string) => boolean } = {},
+): boolean {
+  const home = options.home ?? os.homedir();
+  if (!hasManagedClaudeAuth(accountId, home)) return false;
+  const directory = managedClaudeAuthDirectory(accountId, home);
+  // Blob já lido nesta sessão (cache do read-back assíncrono) ou arquivo no
+  // escopo: qualquer um dos dois prova que o escopo tem com que autenticar.
+  try {
+    if (freshestClaudeCredential(
+      scopedCache.get(directory)?.blob ?? null,
+      readFileCredential(directory),
+    )) {
+      return true;
+    }
+  } catch {
+    // Arquivo hostil (link, tamanho) não prova nada — segue para o keychain.
+  }
+  const probe = options.keychainProbe ?? keychainItemExists;
+  return probe(managedClaudeKeychainService(directory));
+}
+
+/** Só atributos (`-s`, sem `-w`): confirma existência sem custar prompt. */
+function keychainItemExists(service: string): boolean {
+  if (process.platform !== 'darwin') return false;
+  try {
+    return spawnSync('security', ['find-generic-password', '-s', service], {
+      stdio: ['ignore', 'ignore', 'ignore'],
+      timeout: 3_000,
+      killSignal: 'SIGKILL',
+    }).status === 0;
+  } catch {
+    return false;
+  }
 }
 
 export function readManagedClaudeAuth(accountId: string, options: { home?: string } = {}): string | null {

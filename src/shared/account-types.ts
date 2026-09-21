@@ -167,5 +167,11 @@ export const ACCOUNT_CHANNELS = {
 export const addActiveSessionSchema = z.object({
   adapterId: z.string().min(1).max(64),
   label: z.string().min(1).max(128),
+  /**
+   * Reautenticação de uma linha existente. Sem este id o Main precisa
+   * adivinhar o destino por e-mail/token — ambíguo quando a linhagem OAuth
+   * rodou inteira ou duas contas compartilham o mesmo e-mail.
+   */
+  accountId: z.string().min(1).max(128).optional(),
 });
 export type AddActiveSessionRequest = z.infer<typeof addActiveSessionSchema>;

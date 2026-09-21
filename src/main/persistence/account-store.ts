@@ -12,12 +12,15 @@ import {
 } from './secrets-store';
 import {
   activeClaudeEmail,
+  CLAUDE_KEYCHAIN_SERVICE,
   claudeCredentialBlobIsUsable,
+  invalidateClaudeCredentialCache,
   readActiveClaudeCredential,
   readActiveClaudeCredentialSlim,
   slimClaudeCredentialBlob,
   writeActiveClaudeCredential,
 } from '../adapters/claude-credential';
+import { rememberNativeOAuthCredential } from '../adapters/native-oauth-keychain';
 import {
   claudeBlobIsExpiredUnhealable,
   claudeBlobNeedsRefresh,
@@ -422,7 +425,11 @@ export function ensureSubscriptionActive(account: Account): boolean {
   const blob = getSecret(CRED_PREFIX + account.id);
   if (!blob) return false;
   if (account.adapterId === 'claude') {
-    return writeActiveClaudeCredential(blob);
+    const written = writeActiveClaudeCredential(blob);
+    if (written) {
+      rememberNativeOAuthCredential(CLAUDE_KEYCHAIN_SERVICE, blob);
+    }
+    return written;
   }
   if (isFileAuthAdapter(account.adapterId)) {
     try {
@@ -1216,6 +1223,30 @@ function findSessionDuplicate(
 }
 
 /**
+ * Dono comprovado pela própria credencial, sem fallback de e-mail.
+ * Usado na reautenticação direcionada: se o operador clicou na conta B, uma
+ * credencial que comprovadamente pertence à A deve ser recusada, não movida.
+ */
+function credentialIdentityOwner(
+  adapterId: string,
+  blob: string,
+): Account | null {
+  if (adapterId === 'claude') return claudeCredentialOwner(blob);
+  if (!isFileAuthAdapter(adapterId)) return null;
+  for (const account of listAccounts(adapterId)) {
+    if (account.mode !== 'subscription') continue;
+    const storedBlob = getSecret(CRED_PREFIX + account.id);
+    if (
+      storedBlob &&
+      compareAuthBlobIdentity(adapterId, blob, storedBlob) === 'same'
+    ) {
+      return account;
+    }
+  }
+  return null;
+}
+
+/**
  * Snapshot the CURRENTLY signed-in CLI session into a subscription account.
  * Claude → Keychain blob; Codex/Grok/Kimi/… → native auth.json (Orca-style).
  *
@@ -1226,13 +1257,29 @@ function findSessionDuplicate(
 export function addActiveSessionAccount(
   adapterId: string,
   label: string,
+  targetAccountId?: string,
 ): Account | null {
   requireWritableDb();
+
+  const targeted = targetAccountId ? getAccount(targetAccountId) : null;
+  if (
+    targetAccountId &&
+    (!targeted ||
+      targeted.adapterId !== adapterId ||
+      targeted.mode !== 'subscription')
+  ) {
+    throw new Error('A conta escolhida para reautenticação não existe mais.');
+  }
 
   let blob: string | null = null;
   let email: string | undefined;
 
   if (adapterId === 'claude') {
+    // A CLI acabou de escrever o Keychain fora do processo do Nexus. Esta é
+    // uma ação explícita pós-login: descarte qualquer leitura memoizada antes
+    // de capturar, senão "Signed in" salvaria o blob revogado anterior (ou o
+    // null de uma negação antiga) por até o backoff inteiro.
+    invalidateClaudeCredentialCache();
     blob =
       readActiveClaudeCredentialSlim() ??
       (() => {
@@ -1250,10 +1297,38 @@ export function addActiveSessionAccount(
     return null;
   }
   if (!blob) return null;
+  if (adapterId === 'claude') {
+    // Captura explícita do item real: alimente a sonda assíncrona com o mesmo
+    // blob em vez de fazê-la ler `-w` outra vez e potencialmente pedir ACL.
+    rememberNativeOAuthCredential(CLAUDE_KEYCHAIN_SERVICE, blob);
+  }
 
-  const credentialOwner = adapterId === 'claude' ? claudeCredentialOwner(blob) : null;
+  const credentialOwner = credentialIdentityOwner(adapterId, blob);
   if (credentialOwner?.email) email = credentialOwner.email;
-  const existing = credentialOwner ?? findSessionDuplicate(adapterId, email, blob);
+  if (
+    targeted &&
+    credentialOwner &&
+    credentialOwner.id !== targeted.id
+  ) {
+    throw new Error(
+      `O login concluído pertence a “${credentialOwner.label}”, não a “${targeted.label}”.`,
+    );
+  }
+  if (
+    targeted &&
+    !credentialOwner &&
+    email &&
+    targeted.email &&
+    !emailsEqual(email, targeted.email)
+  ) {
+    throw new Error(
+      `O login concluído é de ${email}, mas a conta escolhida é ${targeted.email}.`,
+    );
+  }
+  const existing =
+    targeted ??
+    credentialOwner ??
+    findSessionDuplicate(adapterId, email, blob);
   if (existing) {
     const secretKey = CRED_PREFIX + existing.id;
     const previousSecret = getSecret(secretKey);

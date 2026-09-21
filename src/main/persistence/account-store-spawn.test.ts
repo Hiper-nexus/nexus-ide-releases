@@ -83,6 +83,8 @@ vi.mock('./secrets-store', () => ({
 
 vi.mock('../adapters/claude-credential', () => ({
   activeClaudeEmail: () => accountDeps.activeEmail,
+  CLAUDE_KEYCHAIN_SERVICE: 'Claude Code-credentials',
+  invalidateClaudeCredentialCache: vi.fn(),
   readActiveClaudeCredential: () => accountDeps.activeCredential,
   readActiveClaudeCredentialSlim: () => accountDeps.activeCredential,
   slimClaudeCredentialBlob: (blob: string) => blob,

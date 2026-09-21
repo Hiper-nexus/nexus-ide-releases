@@ -34,8 +34,10 @@ as marcas não viajam para outro bundle sem ele), igual ao `.app` do Mac que
   própria instalação/autostart, ambos por gesto explícito do usuário.
 - Instalação por usuário (`%LocalAppData%\NexusRedline`, autostart via
   `HKCU\...\Run`) — sem admin, combinando com o Squirrel per-user.
-- Uma instância (mutex nomeado). `nexus://quota` abre as cotas no Nexus
-  (protocolo já registrado pelo app nas três plataformas via deep-link).
+- Uma instância (mutex nomeado). Abrir o exe de novo não sai calado:
+  pede o painel à instância que já está na bandeja. `nexus://quota` abre
+  as cotas no Nexus (protocolo já registrado pelo app nas três plataformas
+  via deep-link).
 
 ## Self-test
 
