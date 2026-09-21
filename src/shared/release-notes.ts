@@ -4152,6 +4152,47 @@ export const RELEASE_07647: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.67',
+  date: '2026-09-21',
+  codename: 'Cota e login de cada conta',
+  summary:
+    'Claude, Codex, Grok e Antigravity passam a consultar as credenciais e ' +
+    'cotas corretas. Reautenticar preserva a sessão anterior e mantém a conta escolhida.',
+  highlights: [
+    {
+      title: 'Login Codex por código dentro do Nexus',
+      detail: 'O pane de login mostra o endereço e o código de autorização. A conta escolhida só é atualizada depois da confirmação da sessão.',
+    },
+    {
+      title: 'Criar PR no checkout atual',
+      detail: 'A ferramenta nexus_pr_create abre um PR no GitHub a partir de uma branch publicada, sem exigir worktree. Uma conexão GitHub válida continua necessária.',
+    },
+    {
+      title: 'Consumo separado por conta Claude',
+      detail: 'Cada conta usa seu próprio cache. Uma sessão nativa só fornece a cota de uma conta salva depois de confirmar sua identidade com o provedor.',
+    },
+    {
+      title: 'Codex e Grok acompanham o login renovado',
+      detail: 'As consultas usam a credencial atual da mesma conta. Codex pode consultar e renovar pelo próprio CLI; sessão revogada pede novo login.',
+    },
+    {
+      title: 'Cota Antigravity mesmo com o pane fechado',
+      detail: 'A CLI consulta as janelas de consumo sem abrir conversa nem gerar tokens.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Reautenticação preserva a conta certa',
+      detail: 'Tentar novamente mantém a conta selecionada. A sessão atual é preservada antes do novo login, e outra identidade não pode substituir a escolhida.',
+    },
+    {
+      title: 'Estado de login e bloqueios confiáveis',
+      detail: 'O e-mail salvo não esconde mais uma sessão revogada nem apaga um bloqueio real de consumo.',
+    },
+  ],
+};
+
+export const RELEASE_07666: AppRelease = {
   version: '0.76.66',
   date: '2026-09-21',
   codename: 'Multi-conta: o login novo gruda, em qualquer LLM',

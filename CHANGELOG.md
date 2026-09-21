@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.76.67 — Cota e login de cada conta
+
+- **Login Codex por código no Nexus**: o comando padrão abre o fluxo de dispositivo no pane existente; preservação e validação da conta continuam valendo. Métodos de login personalizados permanecem respeitados.
+- **Criar PR fora de worktrees**: `nexus_pr_create` permite ao operador criar PR de uma branch publicada no checkout atual. Usa a conexão GitHub existente e informa como autenticar quando falta credencial; não faz push implícito.
+- **Reautenticação pela linha de cota (F-359)**: preserva a sessão anterior e salva a nova sessão exatamente na conta escolhida, somente após a prova de login.
+- **Claude com consumo por conta (F-615)**: config e cache isolados, validação do UUID do cache e recuperação da leitura nativa somente após confirmar a identidade no servidor. Contas diferentes deixam de herdar os mesmos percentuais.
+- **Codex e Grok usam credenciais atuais (F-621)**: seleção por identidade e frescor entre cofre, perfil gerenciado e login nativo; arquivos sem tokens ou sem identidade comprovada não substituem uma sessão válida. Codex consulta cotas pelo app-server da própria CLI quando precisa renovar; grant revogado pede reautenticação.
+- **Antigravity sem pane aberto (F-619)**: consulta estruturada da própria CLI, sem turnos de modelo, com limite de tempo e saída e uso restrito à linha nativa.
+- **Login e troca preservam as contas (F-620)**: retry mantém a conta escolhida; reautenticação preserva a sessão anterior e exige prova de conclusão. Outro workspace do mesmo e-mail não pode sobrescrever a conta selecionada.
+- **Bloqueios não somem por metadados (F-622)**: e-mail no perfil não prova login, não oculta credencial revogada e não remove cooldown real de quota.
+
 ## 0.76.66 — Multi-conta: o login novo gruda, em qualquer LLM
 
 - **Frescor de credencial deixa de ser só-Codex (F-614)** — `authBlobFreshness`/`compareAuthFreshness` leem emissão e expiração em qualquer formato (ISO, epoch em s/ms/µs, JWT embutido, `__nexusDirSnapshot`). Antes, o formato real do Grok (`<issuer>::<uuid>` + `create_time` + JWT) era invisível: `shouldWriteAuthFile` recusava atualizar o managed home E `readBackFresherAuth` promovia o token velho de volta ao cofre — a conta ficava irrecuperável por login. Emissão vence expiração, empate não reescreve, e `compareAuthBlobIdentity` impede que a sessão de outra conta entre no cofre desta.
