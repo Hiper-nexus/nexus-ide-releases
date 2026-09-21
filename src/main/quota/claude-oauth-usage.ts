@@ -21,7 +21,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import type { QuotaWindow } from '../../shared/quota-types';
+import type {
+  QuotaReadHint,
+  QuotaWindow,
+} from '../../shared/quota-types';
 import { knownWindow } from './quota-normalize';
 import { claudeCliDeclaresMarker } from '../adapters/managed-claude-auth';
 
@@ -131,19 +134,32 @@ export type FetchLike = (
  * Fetch live Claude OAuth usage windows. Returns null on any failure
  * (network, auth, parse) so UI stays on honest "—" instead of inventing 0%.
  */
-export async function fetchClaudeOauthUsageWindows(
+export interface ClaudeOauthUsageProbe {
+  windows: QuotaWindow[] | null;
+  /** `auth-expired` só em 401/403 — grant morto, re-login. 429/5xx/rede é transitório. */
+  failure?: 'auth-expired' | 'unavailable';
+}
+
+/**
+ * Probe OAuth que distingue grant morto (401/403) de falha transitória
+ * (429, 5xx, timeout). `/usage` do CLI sai quieto sem sessão — este
+ * endpoint é o sinal definitivo de auth para a linha nativa.
+ */
+export async function probeClaudeOauthUsage(
   accessToken: string,
   opts?: {
     fetchImpl?: FetchLike;
     timeoutMs?: number;
     now?: number;
   },
-): Promise<QuotaWindow[] | null> {
+): Promise<ClaudeOauthUsageProbe> {
   const token = accessToken?.trim();
-  if (!token) return null;
+  if (!token) return { windows: null, failure: 'unavailable' };
 
   const fetchImpl = opts?.fetchImpl ?? (globalThis.fetch as FetchLike);
-  if (typeof fetchImpl !== 'function') return null;
+  if (typeof fetchImpl !== 'function') {
+    return { windows: null, failure: 'unavailable' };
+  }
 
   const timeoutMs = opts?.timeoutMs ?? CLAUDE_USAGE_TIMEOUT_MS;
   const now = opts?.now ?? Date.now();
@@ -160,15 +176,36 @@ export async function fetchClaudeOauthUsageWindows(
       },
       signal: controller.signal,
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      return {
+        windows: null,
+        failure:
+          res.status === 401 || res.status === 403
+            ? 'auth-expired'
+            : 'unavailable',
+      };
+    }
     const body = await res.json();
     const windows = parseClaudeOauthUsage(body, now);
-    return windows.length > 0 ? windows : null;
+    return windows.length > 0
+      ? { windows }
+      : { windows: null, failure: 'unavailable' };
   } catch {
-    return null;
+    return { windows: null, failure: 'unavailable' };
   } finally {
     clearTimeout(timer);
   }
+}
+
+export async function fetchClaudeOauthUsageWindows(
+  accessToken: string,
+  opts?: {
+    fetchImpl?: FetchLike;
+    timeoutMs?: number;
+    now?: number;
+  },
+): Promise<QuotaWindow[] | null> {
+  return (await probeClaudeOauthUsage(accessToken, opts)).windows;
 }
 
 // ---------------------------------------------------------------------------
@@ -188,6 +225,8 @@ export const CLAUDE_CLI_USAGE_TIMEOUT_MS = 20_000;
 export interface ClaudeCliRunResult {
   code: number;
   stdout: string;
+  /** Opcional no contrato — runnables antigos de teste não capturavam. */
+  stderr?: string;
 }
 
 export type ClaudeCliRunImpl = (
@@ -395,12 +434,19 @@ async function runClaudeCli(
   return new Promise((resolve) => {
     const child = spawn(binary, [...args], {
       cwd,
-      stdio: ['ignore', 'pipe', 'ignore'],
+      // stderr tem que ser capturado: o `/usage` sai com code 0 e stdout só
+      // com a tabela de custo quando a sessão está morta — a mensagem de
+      // auth («OAuth session expired») sai por aqui.
+      stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env, ...env, PWD: cwd },
     });
     let stdout = '';
+    let stderr = '';
     child.stdout.on('data', (chunk: Buffer) => {
       stdout += chunk.toString('utf8');
+    });
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString('utf8');
     });
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
@@ -408,13 +454,105 @@ async function runClaudeCli(
     timer.unref?.();
     child.on('error', () => {
       clearTimeout(timer);
-      resolve({ code: -1, stdout: '' });
+      resolve({ code: -1, stdout: '', stderr: '' });
     });
     child.on('close', (code) => {
       clearTimeout(timer);
-      resolve({ code: code ?? -1, stdout });
+      resolve({ code: code ?? -1, stdout, stderr });
     });
   });
+}
+
+/**
+ * O `--print` sai com code 0 mesmo sem sessão — o texto é o sinal real.
+ * «Failed to authenticate» / refresh morto = a credencial daquele escopo
+ * precisa de re-login, não de retry.
+ */
+const CLAUDE_CLI_AUTH_FAILURE_RE =
+  /failed to authenticate|could not be refreshed|oauth session expired|not logged in|please run \/login|authentication required/i;
+
+export function claudeCliOutputIsAuthFailure(stdout: string): boolean {
+  return CLAUDE_CLI_AUTH_FAILURE_RE.test(stdout);
+}
+
+export type ClaudeCliUsageFailure =
+  | 'cli-missing'
+  | 'cli-unsupported'
+  | 'auth-expired'
+  | 'unavailable';
+
+/** Falha de probe CLI → hint de leitura para a UI. */
+export function cliFailureHint(
+  failure: ClaudeCliUsageFailure,
+): QuotaReadHint {
+  switch (failure) {
+    case 'auth-expired':
+      return 'auth-expired';
+    case 'cli-missing':
+      return 'cli-missing';
+    default:
+      return 'unavailable';
+  }
+}
+
+export interface ClaudeCliUsageProbe {
+  windows: QuotaWindow[] | null;
+  /** Motivo quando `windows` é null — para a UI dizer mais que «—». */
+  failure?: ClaudeCliUsageFailure;
+}
+
+/**
+ * Probe completo pelo binário do CLI: devolve as janelas ou o motivo da
+ * falha (binário ausente, env não suportada, sessão morta, saída sem dados).
+ */
+export async function probeClaudeCliUsage(opts?: {
+  runImpl?: ClaudeCliRunImpl;
+  now?: number;
+  cwd?: string;
+  env?: Record<string, string>;
+}): Promise<ClaudeCliUsageProbe> {
+  const run = opts?.runImpl ?? runClaudeCli;
+  const cwd =
+    opts?.cwd ??
+    path.join(os.tmpdir(), 'nexus-ide-claude-usage');
+  try {
+    fs.mkdirSync(cwd, { recursive: true });
+  } catch {
+    // cwd fixo é defesa, não requisito
+  }
+  const binary = locateClaudeBinary();
+  if (!binary) return { windows: null, failure: 'cli-missing' };
+  if (opts?.env) {
+    for (const name of Object.keys(opts.env)) {
+      try {
+        if (!claudeCliDeclaresMarker(binary, name)) {
+          return { windows: null, failure: 'cli-unsupported' };
+        }
+      } catch {
+        return { windows: null, failure: 'cli-unsupported' };
+      }
+    }
+  }
+
+  const { code, stdout, stderr } = await run(
+    binary,
+    CLAUDE_CLI_USAGE_ARGS,
+    cwd,
+    opts?.env,
+  );
+  // O `/usage` falha quieto no stdout (só tabela de custo) — a mensagem de
+  // sessão morta sai no stderr. Os dois lados contam como sinal.
+  if (
+    claudeCliOutputIsAuthFailure(stdout) ||
+    claudeCliOutputIsAuthFailure(stderr ?? '')
+  ) {
+    return { windows: null, failure: 'auth-expired' };
+  }
+  if (code !== 0 || !stdout.trim()) return { windows: null, failure: 'unavailable' };
+  const windows = parseClaudeCliUsage(stdout, opts?.now ?? Date.now());
+  return windows.length > 0
+    ? { windows }
+    : { windows: null, failure: 'unavailable' };
 }
 
 /**
@@ -434,29 +572,5 @@ export async function fetchClaudeCliUsageWindows(opts?: {
    */
   env?: Record<string, string>;
 }): Promise<QuotaWindow[] | null> {
-  const run = opts?.runImpl ?? runClaudeCli;
-  const cwd =
-    opts?.cwd ??
-    path.join(os.tmpdir(), 'nexus-ide-claude-usage');
-  try {
-    fs.mkdirSync(cwd, { recursive: true });
-  } catch {
-    // cwd fixo é defesa, não requisito
-  }
-  const binary = locateClaudeBinary();
-  if (!binary) return null;
-  if (opts?.env) {
-    for (const name of Object.keys(opts.env)) {
-      try {
-        if (!claudeCliDeclaresMarker(binary, name)) return null;
-      } catch {
-        return null;
-      }
-    }
-  }
-
-  const { code, stdout } = await run(binary, CLAUDE_CLI_USAGE_ARGS, cwd, opts?.env);
-  if (code !== 0 || !stdout.trim()) return null;
-  const windows = parseClaudeCliUsage(stdout, opts?.now ?? Date.now());
-  return windows.length > 0 ? windows : null;
+  return (await probeClaudeCliUsage(opts)).windows;
 }

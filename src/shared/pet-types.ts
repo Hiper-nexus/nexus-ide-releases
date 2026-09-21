@@ -307,6 +307,12 @@ export interface PetLifetimeStats {
   turns: number;
   /** Missões concluídas observadas pelo pet nesta instalação. */
   missionsDone: number;
+  /**
+   * Entregas por tipo somadas em TODOS os escopos (xp_events por checkout,
+   * com piso persistido por tipo). O `powerLevel`/tier do perfil continuam
+   * por projeto — estes são os totais de vida do operador.
+   */
+  counters: Record<string, number>;
   /** Nível da jornada (deriva de XP = entregas + tokens). */
   level: number;
   /** Progresso 0..1 até o próximo nível. */

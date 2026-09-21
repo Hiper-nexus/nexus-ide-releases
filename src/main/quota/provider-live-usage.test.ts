@@ -21,7 +21,9 @@ describe('fetchLiveProviderWindows', () => {
   it('does not replace a missing routed account credential with the destination provider global key', async () => {
     const resolveApiQuotaKey = vi.fn(() => null);
     const fetchImpl = vi.fn(async () => ({ ok: false, status: 403, json: async () => ({}), text: async () => '' }));
-    expect(await fetchLiveProviderWindows('claude', 'missing-account', { resolveApiQuotaKey, fetchImpl }, 100, 'glm', 'api-key')).toBeNull();
+    const probe = await fetchLiveProviderWindows('claude', 'missing-account', { resolveApiQuotaKey, fetchImpl }, 100, 'glm', 'api-key');
+    expect(probe.windows).toBeNull();
+    expect(probe.hint).toBe('no-credential');
     expect(resolveApiQuotaKey).toHaveBeenCalledWith({ adapterId: 'claude', accountId: 'missing-account', usageProviderId: 'glm', authMode: 'api-key' });
     expect(fetchImpl.mock.calls.length).toBe(0);
   });
@@ -29,7 +31,7 @@ describe('fetchLiveProviderWindows', () => {
   it('never falls back to the flattened generic key list for a declared route', async () => {
     const resolveGenericApiKeyCandidates = vi.fn(() => ['fixture-foreign-key']);
     const fetchImpl = vi.fn(async () => ({ ok: false, status: 403, json: async () => ({}), text: async () => '' }));
-    expect(await fetchLiveProviderWindows('aider', undefined, { resolveGenericApiKeyCandidates, fetchImpl }, 100, 'glm', 'api-key')).toBeNull();
+    expect((await fetchLiveProviderWindows('aider', undefined, { resolveGenericApiKeyCandidates, fetchImpl }, 100, 'glm', 'api-key')).windows).toBeNull();
     expect(resolveGenericApiKeyCandidates.mock.calls.length + fetchImpl.mock.calls.length).toBe(0);
   });
   it('preserves the declared provider of a native OpenCode key for quota routing', async () => {
@@ -49,7 +51,8 @@ describe('fetchLiveProviderWindows', () => {
       resolveGenericApiKeyCandidates: () => [],
       fetchImpl: vi.fn(async () => ({ ok: false, status: 403, json: async () => ({}), text: async () => '' })),
     });
-    expect(result).toBeNull();
+    expect(result.windows).toBeNull();
+    expect(result.hint).toBe('no-credential');
     expect(nativeOpenCode).not.toHaveBeenCalled();
   });
   it('dispatches claude + codex + glm with resolvers', async () => {
@@ -116,7 +119,7 @@ describe('fetchLiveProviderWindows', () => {
       resolveClaudeToken: () => 'claude-tok',
       fetchImpl,
     });
-    expect(claude?.find((w) => w.kind === 'hours')?.usedRatio).toBe(0.1);
+    expect(claude.windows?.find((w) => w.kind === 'hours')?.usedRatio).toBe(0.1);
 
     const codex = await fetchLiveProviderWindows('codex', undefined, {
       resolveCodexAuthCandidates: () => [
@@ -124,14 +127,14 @@ describe('fetchLiveProviderWindows', () => {
       ],
       fetchImpl,
     });
-    expect(codex?.find((w) => w.kind === 'weekly')?.usedRatio).toBe(0.15);
+    expect(codex.windows?.find((w) => w.kind === 'weekly')?.usedRatio).toBe(0.15);
 
     const glm = await fetchLiveProviderWindows('glm', undefined, {
       resolveGlmApiKeyCandidates: () => ['bad-key', 'glm-key'],
       fetchImpl,
     });
-    expect(glm?.find((w) => w.kind === 'hours')?.usedRatio).toBe(0.05);
-    expect(glm?.find((w) => w.kind === 'weekly')?.usedRatio).toBe(0.25);
+    expect(glm.windows?.find((w) => w.kind === 'hours')?.usedRatio).toBe(0.05);
+    expect(glm.windows?.find((w) => w.kind === 'weekly')?.usedRatio).toBe(0.25);
   });
 
   it('returns null for grok/agy/longcat without inventing %', async () => {
@@ -141,26 +144,25 @@ describe('fetchLiveProviderWindows', () => {
       json: async () => ({}),
       text: async () => '',
     }));
-    expect(
+    // Credencial existe mas o provider falhou → 'unavailable' (não 'no-credential').
+    for (const probe of [
       await fetchLiveProviderWindows('grok', undefined, {
         resolveGrokToken: () => 'jwt',
         fetchImpl: failFetch,
       }),
-    ).toBeNull();
-    expect(
       await fetchLiveProviderWindows('agy', undefined, {
         resolveGeminiToken: () => 'gat',
-        // expired-looking token without refresh → null / fail
         resolveGeminiOauthCreds: () => ({ accessToken: 'gat' }),
         fetchImpl: failFetch,
       }),
-    ).toBeNull();
-    expect(
       await fetchLiveProviderWindows('longcat', undefined, {
         resolveLongcatApiKey: () => 'longcat-key-value-here',
         fetchImpl: failFetch,
       }),
-    ).toBeNull();
+    ]) {
+      expect(probe.windows).toBeNull();
+      expect(probe.hint).toBe('unavailable');
+    }
   });
 
   it('kimi: refreshes an expired OAuth access token in memory (allowRefresh on the live path)', async () => {
@@ -205,7 +207,7 @@ describe('fetchLiveProviderWindows', () => {
       'https://auth.kimi.com/api/oauth/token',
       expect.objectContaining({ method: 'POST' }),
     );
-    expect(w?.some((x) => x.kind === 'weekly')).toBe(true);
+    expect(w.windows?.some((x) => x.kind === 'weekly')).toBe(true);
   });
 
   it('claude: cai no /usage do CLI quando o OAuth falha (row CLI nativo)', async () => {
@@ -215,20 +217,22 @@ describe('fetchLiveProviderWindows', () => {
       json: async () => ({}),
       text: async () => '',
     }));
-    const windows = await fetchLiveProviderWindows('claude', undefined, {
+    const probe = await fetchLiveProviderWindows('claude', undefined, {
       resolveClaudeToken: () => 'stale-token',
-      claudeCliUsage: async () => [
-        {
-          kind: 'session',
-          label: 'Sessão',
-          usedRatio: 0.38,
-          source: 'provider-api',
-          confidence: 'medium',
-        },
-      ],
+      claudeCliUsage: async () => ({
+        windows: [
+          {
+            kind: 'session',
+            label: 'Sessão',
+            usedRatio: 0.38,
+            source: 'provider-api',
+            confidence: 'medium',
+          },
+        ],
+      }),
       fetchImpl: failFetch,
     });
-    expect(windows?.find((x) => x.kind === 'session')?.usedRatio).toBe(0.38);
+    expect(probe.windows?.find((x) => x.kind === 'session')?.usedRatio).toBe(0.38);
   });
 
   it('claude: account row NÃO herda a leitura única do CLI', async () => {
@@ -238,21 +242,23 @@ describe('fetchLiveProviderWindows', () => {
       json: async () => ({}),
       text: async () => '',
     }));
-    const cliUsage = vi.fn(async (): Promise<QuotaWindow[]> => [
-      {
-        kind: 'session',
-        label: 'Sessão',
-        usedRatio: 0.38,
-        source: 'provider-api',
-        confidence: 'medium',
-      },
-    ]);
-    const windows = await fetchLiveProviderWindows('claude', 'acct-1', {
+    const cliUsage = vi.fn(async () => ({
+      windows: [
+        {
+          kind: 'session',
+          label: 'Sessão',
+          usedRatio: 0.38,
+          source: 'provider-api',
+          confidence: 'medium',
+        } satisfies QuotaWindow,
+      ],
+    }));
+    const probe = await fetchLiveProviderWindows('claude', 'acct-1', {
       resolveClaudeToken: () => null,
       claudeCliUsage: cliUsage,
       fetchImpl: failFetch,
     });
-    expect(windows).toBeNull();
+    expect(probe.windows).toBeNull();
     expect(cliUsage).not.toHaveBeenCalled();
   });
 
@@ -263,34 +269,112 @@ describe('fetchLiveProviderWindows', () => {
       json: async () => ({}),
       text: async () => '',
     }));
-    const accountUsage = vi.fn(async (): Promise<QuotaWindow[]> => [
-      {
-        kind: 'weekly',
-        label: 'Semanal',
-        usedRatio: 0.73,
-        source: 'provider-api',
-        confidence: 'medium',
-      },
-    ]);
+    const accountUsage = vi.fn(async () => ({
+      windows: [
+        {
+          kind: 'weekly',
+          label: 'Semanal',
+          usedRatio: 0.73,
+          source: 'provider-api',
+          confidence: 'medium',
+        } satisfies QuotaWindow,
+      ],
+      hint: 'unavailable' as const,
+    }));
     const cliUsage = vi.fn();
-    const windows = await fetchLiveProviderWindows('claude', 'acct-1', {
+    const probe = await fetchLiveProviderWindows('claude', 'acct-1', {
       resolveClaudeToken: () => null,
       claudeAccountUsage: accountUsage,
       claudeCliUsage: cliUsage,
       fetchImpl: failFetch,
     });
-    expect(windows?.[0]?.usedRatio).toBe(0.73);
+    expect(probe.windows?.[0]?.usedRatio).toBe(0.73);
     expect(accountUsage).toHaveBeenCalledWith('acct-1');
     expect(cliUsage).not.toHaveBeenCalled();
   });
 
-  it('claude: account row fica null quando a cascata por conta não acha nada', async () => {
-    const windows = await fetchLiveProviderWindows('claude', 'acct-1', {
+  it('claude: account row propaga o hint da cascata por conta', async () => {
+    const probe = await fetchLiveProviderWindows('claude', 'acct-1', {
       resolveClaudeToken: () => null,
-      claudeAccountUsage: async () => null,
+      claudeAccountUsage: async () => ({
+        windows: null,
+        hint: 'auth-expired' as const,
+      }),
       claudeCliUsage: vi.fn(),
     });
-    expect(windows).toBeNull();
+    expect(probe.windows).toBeNull();
+    expect(probe.hint).toBe('auth-expired');
+  });
+
+  it('claude: linha nativa propaga auth-expired do probe CLI', async () => {
+    const probe = await fetchLiveProviderWindows('claude', undefined, {
+      resolveClaudeToken: () => null,
+      claudeCliUsage: async () => ({
+        windows: null,
+        failure: 'auth-expired' as const,
+      }),
+    });
+    expect(probe.windows).toBeNull();
+    expect(probe.hint).toBe('auth-expired');
+  });
+
+  it('claude: linha nativa — 401 no endpoint OAuth marca auth-expired', async () => {
+    const fetch401 = vi.fn(async () => ({
+      ok: false,
+      status: 401,
+      json: async () => ({}),
+      text: async () => '',
+    }));
+    const probe = await fetchLiveProviderWindows('claude', undefined, {
+      resolveClaudeToken: () => 'dead-token',
+      fetchImpl: fetch401,
+      // `/usage` sai quieto com credencial morta (só tabela de custo) —
+      // o 401 do endpoint é quem denuncia o grant morto.
+      claudeCliUsage: async () => ({
+        windows: null,
+        failure: 'unavailable' as const,
+      }),
+    });
+    expect(probe.windows).toBeNull();
+    expect(probe.hint).toBe('auth-expired');
+  });
+
+  it('claude: linha nativa — sem token mas com sessão prévia = auth-expired', async () => {
+    const probe = await fetchLiveProviderWindows('claude', undefined, {
+      resolveClaudeToken: () => null,
+      claudeNativeSession: () => true,
+      claudeCliUsage: async () => ({
+        windows: null,
+        failure: 'unavailable' as const,
+      }),
+    });
+    expect(probe.windows).toBeNull();
+    expect(probe.hint).toBe('auth-expired');
+  });
+
+  it('claude: linha nativa — sem token e sem sessão prévia = no-credential', async () => {
+    const probe = await fetchLiveProviderWindows('claude', undefined, {
+      resolveClaudeToken: () => null,
+      claudeNativeSession: () => false,
+      claudeCliUsage: async () => ({
+        windows: null,
+        failure: 'unavailable' as const,
+      }),
+    });
+    expect(probe.windows).toBeNull();
+    expect(probe.hint).toBe('no-credential');
+  });
+
+  it('claude: linha nativa propaga cli-missing do probe CLI', async () => {
+    const probe = await fetchLiveProviderWindows('claude', undefined, {
+      resolveClaudeToken: () => null,
+      claudeCliUsage: async () => ({
+        windows: null,
+        failure: 'cli-missing' as const,
+      }),
+    });
+    expect(probe.windows).toBeNull();
+    expect(probe.hint).toBe('cli-missing');
   });
 
   it('devin: GetUserStatus via credentials.toml → janelas reais', async () => {
@@ -314,18 +398,18 @@ describe('fetchLiveProviderWindows', () => {
       resolveDevinApiKey: () => 'wc-key',
       fetchImpl: fetchImpl as never,
     });
-    expect(w?.find((x) => x.kind === 'weekly')?.usedRatio).toBeCloseTo(0.2, 4);
+    expect(w.windows?.find((x) => x.kind === 'weekly')?.usedRatio).toBeCloseTo(0.2, 4);
   });
 
   it('cursor-agent: sem sessão local (editor/keychain) → null honesto', async () => {
     // Nesta máquina não há state.vscdb do editor nem item de keychain do
     // cursor-agent — o probe tem de devolver null, nunca inventar janela.
-    const windows = await fetchLiveProviderWindows('cursor-agent', undefined, {
+    const probe = await fetchLiveProviderWindows('cursor-agent', undefined, {
       fetchImpl: async () => {
         throw new Error('sem sessão local não deve haver fetch');
       },
     } as never);
-    expect(windows).toBeNull();
+    expect(probe.windows).toBeNull();
   });
 
   it('agy: refresca access expirado no caminho live (refresh Google não rota o grant)', async () => {
@@ -373,16 +457,18 @@ describe('fetchLiveProviderWindows', () => {
       'https://oauth2.googleapis.com/token',
       expect.objectContaining({ method: 'POST' }),
     );
-    expect(w?.some((x) => x.usedRatio !== null)).toBe(true);
+    expect(w.windows?.some((x) => x.usedRatio !== null)).toBe(true);
   });
 
-  it('returns null when resolver missing or token null', async () => {
-    expect(await fetchLiveProviderWindows('claude', undefined, {})).toBeNull();
-    expect(
-      await fetchLiveProviderWindows('glm', undefined, {
-        resolveGlmApiKey: () => null,
-      }),
-    ).toBeNull();
+  it('returns no-credential when resolver missing or token null', async () => {
+    const claude = await fetchLiveProviderWindows('claude', undefined, {});
+    expect(claude.windows).toBeNull();
+    expect(claude.hint).toBe('no-credential');
+    const glm = await fetchLiveProviderWindows('glm', undefined, {
+      resolveGlmApiKey: () => null,
+    });
+    expect(glm.windows).toBeNull();
+    expect(glm.hint).toBe('no-credential');
   });
 });
 

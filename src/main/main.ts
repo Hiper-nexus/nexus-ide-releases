@@ -238,8 +238,9 @@ import {
   requireQuotaService,
   shutdownQuotaService,
 } from "./quota/quota-service";
-import { fetchClaudeCliUsageWindows } from "./quota/claude-oauth-usage";
+import { probeClaudeCliUsage } from "./quota/claude-oauth-usage";
 import { fetchClaudeAccountUsageWindows } from "./quota/claude-account-usage";
+import { detectProviderPlan } from "./quota/account-plan";
 import { createRedlineSink } from "./quota/redline-sink";
 import {
   initRedlineIpc,
@@ -255,12 +256,17 @@ import {
 } from "./persistence/provider-config-store";
 import {
   clearCooldown,
+  isAuthCooldownReason,
   listAccountInfos,
+  listAccounts,
+  setCooldown,
   startClaudeSubscriptionFreshness,
 } from "./persistence/account-store";
+import { activeClaudeEmail } from "./adapters/claude-credential";
 import {
   resolveClaudeToken,
   resolveCodexAuthCandidates,
+  resolveGeminiAccessToken,
   resolveGeminiOauthCreds,
   resolveGrokAccessTokenCandidates,
   resolveKimiAccessTokenCandidates,
@@ -310,7 +316,7 @@ import {
 import { registerBillingIpc } from "./persistence/billing-ipc";
 import { syncLicenseOnBoot } from "./license-sync";
 import { registerTeamIpc } from "./team-ipc";
-import { initDesktopPet, isPetWindow } from "./pet/pet-window";
+import { initDesktopPet, ingestPetGamification, isPetWindow } from "./pet/pet-window";
 import {
   registerNotesIpc,
   registerNotesListener,
@@ -341,6 +347,7 @@ import {
   configureGamificationService,
   shutdownGamificationService,
 } from "./gamification/gamification-service";
+import { GAMIFICATION_CHANNELS } from "../shared/gamification-types";
 import { requireProjectDomainStoreRegistry } from "./orch/project-domain-store-registry";
 import { closeMissionRuntimePreservingHistory } from "./orch/mission-runtime-termination";
 import {
@@ -502,7 +509,14 @@ function bootstrap(): void {
   const gamificationService = configureGamificationService({
     runtimeManager: projectRuntimeManager,
     domainStores: requireProjectDomainStoreRegistry(),
-    broadcast: broadcastGamificationToProject,
+    broadcast: (scope, channel, payload) => {
+      broadcastGamificationToProject(scope, channel, payload);
+      // Além do renderer, o snapshot changed alimenta os contadores globais
+      // do companion — o Perfil de Operador mostra entregas de vida inteira.
+      if (channel === GAMIFICATION_CHANNELS.changed && payload && typeof payload === 'object') {
+        ingestPetGamification(scope, payload as { counters?: Record<string, number> });
+      }
+    },
     soberMode: () => getOrchSettings().soberMode === true,
   });
   const cronBackend = createHttpCronBackendFromEnvironment();
@@ -640,11 +654,43 @@ function bootstrap(): void {
     // Multi-candidate probes (vault → launcher → env → system CLI).
     // Never invents ratios; tries every credential until one yields %.
     resolveClaudeAccessToken: (accountId) => resolveClaudeToken(accountId),
-    claudeCliUsage: () => fetchClaudeCliUsageWindows(),
+    // Probe estruturado: auth-expired/cli-missing viram readHint acionável
+    // («Entrar novamente») em vez do «—» genérico.
+    claudeCliUsage: () => probeClaudeCliUsage(),
     // Cascata por conta (Codenotch): managed-auth scoped, perfil de disco
     // com o mesmo e-mail, materialização do vault — nunca empresta a
     // leitura de outra conta.
     claudeAccountUsage: (accountId) => fetchClaudeAccountUsageWindows(accountId),
+    // A sonda viu o grant morto antes de qualquer spawn — marca needsRelogin
+    // (botão «Reautenticar») sem esperar o 401 do pane. A conta que é o
+    // login nativo do CLI se auto-refuta no listAccountInfos; marcar geraria
+    // churn mark/clear — o readHint da linha já carrega o aviso.
+    markAccountAuthExpired: (accountId, adapterId) => {
+      if (adapterId !== "claude") return;
+      const account = listAccounts(adapterId).find((a) => a.id === accountId);
+      if (!account) return;
+      const nativeEmail = activeClaudeEmail();
+      if (
+        account.mode === "subscription" &&
+        account.email &&
+        nativeEmail &&
+        account.email.trim().toLowerCase() === nativeEmail.trim().toLowerCase()
+      ) {
+        return;
+      }
+      if (
+        isAuthCooldownReason(account.lastError) &&
+        account.cooldownUntil !== undefined &&
+        account.cooldownUntil > Date.now()
+      ) {
+        return;
+      }
+      setCooldown(
+        accountId,
+        Date.now() + 12 * 60 * 60 * 1000,
+        "oauth session expired — sonda de quota",
+      );
+    },
     resolveCodexAuthCandidates: (accountId) =>
       resolveCodexAuthCandidates(accountId),
     resolveGlmApiKeyCandidates: (accountId) =>
@@ -666,6 +712,14 @@ function bootstrap(): void {
     // OpenCode / Aider / any future CLI: vault + launcher + env keys.
     resolveGenericApiKeyCandidates: (adapterId, accountId) =>
       resolveProviderApiKeyCandidates(adapterId, accountId),
+    // Plano de assinatura por linha (tier Claude/Codex/AGY → USD/mês de
+    // lista). Reusa os mesmos resolvers de credencial do probe de uso.
+    detectProviderPlan: (adapterId, accountId) =>
+      detectProviderPlan(adapterId, accountId, {
+        resolveCodexAuthCandidates,
+        resolveGeminiOauthCreds,
+        resolveGeminiToken: resolveGeminiAccessToken,
+      }),
   });
   traceBootstrap('after quota service');
   registerNotesIpc(projectRuntimeManager);

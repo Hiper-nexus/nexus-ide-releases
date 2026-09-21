@@ -151,8 +151,50 @@ async function refreshClaudeOauthBlobWithToken(
   refreshToken: string,
   fetchImpl: FetchLike,
 ): Promise<string | null> {
+  const outcome = await refreshClaudeOauthBlobDetailedWithToken(
+    blob,
+    now,
+    refreshToken,
+    fetchImpl,
+  );
+  return outcome.blob ?? null;
+}
+
+/** Resultado discriminado da renovação — 400/401 = grant morto (re-login). */
+export interface ClaudeRefreshResult {
+  outcome: 'refreshed' | 'invalid-grant' | 'error';
+  blob?: string;
+}
+
+/**
+ * Refresh com distinção de falha: `invalid-grant` só sai de resposta
+ * 400/401 do token endpoint (grant revogado/expirado — reautenticar);
+ * rede, 429 e 5xx ficam em `error` (transitório — não marca nada).
+ * Mesmas regras de linhagem dos wrappers: nunca na conta nativa viva.
+ */
+export async function refreshClaudeOauthBlobDetailed(
+  blob: string,
+  now: number,
+  fetchImpl: FetchLike = fetch as unknown as FetchLike,
+): Promise<ClaudeRefreshResult> {
+  const needs = claudeBlobNeedsRefresh(blob, now);
+  if (!needs) return { outcome: 'error' };
+  return refreshClaudeOauthBlobDetailedWithToken(
+    blob,
+    now,
+    needs.refreshToken,
+    fetchImpl,
+  );
+}
+
+async function refreshClaudeOauthBlobDetailedWithToken(
+  blob: string,
+  now: number,
+  refreshToken: string,
+  fetchImpl: FetchLike,
+): Promise<ClaudeRefreshResult> {
   const parsed = parseBlob(blob);
-  if (!parsed) return null;
+  if (!parsed) return { outcome: 'error' };
   const controller = new AbortController();
   const timeout = setTimeout(
     () => controller.abort(),
@@ -169,12 +211,21 @@ async function refreshClaudeOauthBlobWithToken(
       }),
       signal: controller.signal,
     });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      return {
+        outcome:
+          response.status === 400 || response.status === 401
+            ? 'invalid-grant'
+            : 'error',
+      };
+    }
     const payload = await response.json();
-    if (!payload || typeof payload !== 'object') return null;
+    if (!payload || typeof payload !== 'object') return { outcome: 'error' };
     const data = payload as Record<string, unknown>;
     const accessToken = data.access_token;
-    if (typeof accessToken !== 'string' || accessToken.length === 0) return null;
+    if (typeof accessToken !== 'string' || accessToken.length === 0) {
+      return { outcome: 'error' };
+    }
     const expiresIn = data.expires_in;
     const nextOauth: Record<string, unknown> = {
       ...parsed.oauth,
@@ -186,9 +237,12 @@ async function refreshClaudeOauthBlobWithToken(
         ? { expiresAt: now + expiresIn * 1000 }
         : {}),
     };
-    return JSON.stringify({ ...parsed.root, claudeAiOauth: nextOauth });
+    return {
+      outcome: 'refreshed',
+      blob: JSON.stringify({ ...parsed.root, claudeAiOauth: nextOauth }),
+    };
   } catch {
-    return null;
+    return { outcome: 'error' };
   } finally {
     clearTimeout(timeout);
   }

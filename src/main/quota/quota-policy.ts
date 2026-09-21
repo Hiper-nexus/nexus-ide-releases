@@ -74,12 +74,30 @@ export function buildFleetSnapshot(
       if (w >= threshold) highUsageCount += 1;
     }
   }
+  // Planos: soma só monthlyUsd conhecido; detectadas sem preço contam em
+  // `detected` mas não inflam o total; elegíveis sem leitura → `undetected`.
+  let monthlyUsd = 0;
+  let detected = 0;
+  let undetected = 0;
+  for (const e of entries) {
+    if (e.plan) {
+      detected += 1;
+      if (typeof e.plan.monthlyUsd === 'number') monthlyUsd += e.plan.monthlyUsd;
+    } else if (e.planEligible) {
+      undetected += 1;
+    }
+  }
+
   return {
     updatedAt: now,
     entries: [...entries],
     worstUsedRatio,
     highUsageCount,
     unknownCount,
+    plans:
+      detected > 0 || undetected > 0
+        ? { monthlyUsd, detected, undetected }
+        : undefined,
   };
 }
 

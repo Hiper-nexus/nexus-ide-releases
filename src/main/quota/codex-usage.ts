@@ -22,6 +22,40 @@ export interface CodexChatGptAuth {
   accessToken: string;
   /** ChatGPT-Account-ID header when present. */
   accountId?: string;
+  /** `chatgpt_plan_type` decodificado do id_token ('pro', 'plus', 'team'…). */
+  planType?: string;
+}
+
+/**
+ * `chatgpt_plan_type` mora no claim `https://api.openai.com/auth` do id_token.
+ * Decode local do payload — sem validar assinatura (não é verificação de
+ * auth, só leitura do plano que o próprio CLI já guardou).
+ */
+export function codexPlanTypeFromAuthJson(parsed: {
+  tokens?: { id_token?: unknown };
+  id_token?: unknown;
+}): string | undefined {
+  const idToken =
+    typeof parsed.tokens?.id_token === 'string'
+      ? parsed.tokens.id_token
+      : typeof parsed.id_token === 'string'
+        ? parsed.id_token
+        : null;
+  if (!idToken || !idToken.includes('.')) return undefined;
+  try {
+    const claims = JSON.parse(
+      Buffer.from(idToken.split('.')[1]!, 'base64url').toString('utf8'),
+    ) as Record<string, unknown>;
+    const auth = claims['https://api.openai.com/auth'] as
+      | Record<string, unknown>
+      | undefined;
+    const planType = auth?.chatgpt_plan_type;
+    return typeof planType === 'string' && planType.trim()
+      ? planType.trim().toLowerCase()
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -34,9 +68,11 @@ export function parseCodexAuthJson(blob: string): CodexChatGptAuth | null {
       tokens?: {
         access_token?: unknown;
         account_id?: unknown;
+        id_token?: unknown;
       };
       access_token?: unknown;
       account_id?: unknown;
+      id_token?: unknown;
     };
     const accessToken =
       (typeof parsed.tokens?.access_token === 'string'
@@ -49,7 +85,11 @@ export function parseCodexAuthJson(blob: string): CodexChatGptAuth | null {
         ? parsed.tokens.account_id
         : undefined) ??
       (typeof parsed.account_id === 'string' ? parsed.account_id : undefined);
-    return { accessToken, accountId };
+    return {
+      accessToken,
+      accountId,
+      planType: codexPlanTypeFromAuthJson(parsed),
+    };
   } catch {
     return null;
   }

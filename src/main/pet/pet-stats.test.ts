@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -7,6 +7,7 @@ import type { ProjectExecutionScope } from '../../shared/types';
 import {
   PetLifetimeTracker,
   petLevelForXp,
+  petStatsPath,
   petTierForLevel,
 } from './pet-stats';
 
@@ -163,6 +164,52 @@ describe('PetLifetimeTracker', () => {
     t.flush();
     const t2 = new PetLifetimeTracker(dir);
     expect(t2.stats().missionsDone).toBe(2);
+  });
+
+  it('counters de gamificação somam por escopo e persistem no piso', () => {
+    const t = new PetLifetimeTracker(dir);
+    t.ingestGamificationCounters(SCOPE, {
+      mission_done: 3,
+      agent_turn: 100,
+      task_done: 7,
+    });
+    t.ingestGamificationCounters(SCOPE_B, { mission_done: 1, agent_turn: 20 });
+    const s = t.stats();
+    expect(s.counters.mission_done).toBe(4);
+    expect(s.counters.agent_turn).toBe(120);
+    expect(s.counters.task_done).toBe(7);
+    // Rebroadcast cumulativo do mesmo escopo substitui — nunca duplica.
+    t.ingestGamificationCounters(SCOPE_B, { mission_done: 1, agent_turn: 25 });
+    expect(t.stats().counters.agent_turn).toBe(125);
+  });
+
+  it('pico persistido de counters sobrevive a checkout apagado', () => {
+    const t = new PetLifetimeTracker(dir);
+    t.ingestGamificationCounters(SCOPE, { mission_done: 5 });
+    t.flush();
+    // Restart sem o escopo: o piso mantém o total (o checkout foi apagado).
+    const t2 = new PetLifetimeTracker(dir);
+    expect(t2.stats().counters.mission_done).toBe(5);
+    // E quando um escopo volta a reportar com valor menor, o piso segura.
+    t2.ingestGamificationCounters(SCOPE, { mission_done: 2 });
+    expect(t2.stats().counters.mission_done).toBe(5);
+  });
+
+  it('counters ruins no arquivo não quebram a carga', () => {
+    const t = new PetLifetimeTracker(dir);
+    t.ingestGamificationCounters(SCOPE, { mission_done: 2 });
+    t.flush();
+    // Corrompe o arquivo: counter negativo e não-numérico são descartados.
+    const raw = JSON.parse(
+      readFileSync(petStatsPath(dir), 'utf8'),
+    ) as Record<string, unknown>;
+    raw.peakCounters = { mission_done: -4, bogus: 'x', agent_turn: 9 };
+    writeFileSync(petStatsPath(dir), JSON.stringify(raw));
+    const t2 = new PetLifetimeTracker(dir);
+    const s = t2.stats();
+    expect(s.counters.mission_done).toBeUndefined();
+    expect(s.counters.bogus).toBeUndefined();
+    expect(s.counters.agent_turn).toBe(9);
   });
 
   it('o mesmo paneId em escopos distintos conta duas vezes', () => {

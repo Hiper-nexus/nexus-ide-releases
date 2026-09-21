@@ -44,6 +44,45 @@ export interface QuotaWindow {
   confidence: QuotaConfidence;
 }
 
+/**
+ * Plano de assinatura detectado para a conta da linha — vindo de fonte do
+ * próprio provider (`organizationRateLimitTier` no perfil Claude, claim
+ * `chatgpt_plan_type` no id_token Codex, `currentTier` no loadCodeAssist).
+ * Nunca inventado: sem fonte, `plan` fica ausente e a linha conta como
+ * "não identificada" no resumo.
+ */
+export interface AccountPlan {
+  /** 'detected' = veio do provider/perfil da conta. */
+  source: 'detected';
+  /** id cru do provider: 'default_claude_max_20x', 'pro', 'free-tier'. */
+  tier: string;
+  /** Rótulo curto: 'Claude Max 20×', 'ChatGPT Pro', 'Google AI Free'. */
+  label: string;
+  /**
+   * USD/mês estimado do plano (preço de lista). null = plano detectado mas
+   * preço não mapeado (Team/Enterprise por assento, tier novo).
+   */
+  monthlyUsd: number | null;
+}
+
+/**
+ * Por que a linha não tem leitura — sinal honesto para a UI dizer o motivo
+ * em vez de um «—» mudo. Só presente quando nenhuma janela conhecida veio.
+ *
+ *  - 'auth-expired': credencial existe mas está morta (OAuth expirado e sem
+ *    refresh válido) — o caminho de saída é reautenticar a conta.
+ *  - 'no-credential': nenhuma credencial utilizável foi encontrada para a
+ *    linha (sem conta vault, sem sessão nativa, sem API key).
+ *  - 'cli-missing': a sonda depende do binário do CLI e ele não existe.
+ *  - 'unavailable': credencial consultada, provider não devolveu janelas
+ *    (rede, 429, endpoint sem dados para o plano — ex.: tier free).
+ */
+export type QuotaReadHint =
+  | 'auth-expired'
+  | 'no-credential'
+  | 'cli-missing'
+  | 'unavailable';
+
 export interface ProviderQuotaEntry {
   /** Stable list key: adapterId or adapterId:accountId */
   id: string;
@@ -51,6 +90,13 @@ export interface ProviderQuotaEntry {
   /** Declared API provider supplying quota; adapterId remains the owner of the row. */
   usageProviderId?: string;
   accountId?: string;
+  /** Plano de assinatura detectado da conta, quando o provider expõe. */
+  plan?: AccountPlan;
+  /**
+   * Linha representa uma assinatura consultável (claude/codex/agy, modo
+   * OAuth) — false em rows de API key, que não são "plano".
+   */
+  planEligible?: boolean;
   /** True when this account is currently active for the adapter */
   active?: boolean;
   /** Display name (CLI label or account label). */
@@ -63,7 +109,19 @@ export interface ProviderQuotaEntry {
   cooldownKind?: FailoverReasonKind;
   cooldownUntil?: number;
   windows: QuotaWindow[];
+  /** Motivo da ausência de leitura, quando toda janela é desconhecida. */
+  readHint?: QuotaReadHint;
   updatedAt: number;
+}
+
+/** Resumo dos planos de assinatura detectados na frota. */
+export interface QuotaPlansSummary {
+  /** Soma dos USD/mês conhecidos (planos com monthlyUsd ≠ null). */
+  monthlyUsd: number;
+  /** Linhas com plano detectado (com ou sem preço mapeado). */
+  detected: number;
+  /** Linhas elegíveis a plano (claude/codex/agy) sem tier detectado. */
+  undetected: number;
 }
 
 export interface QuotaFleetSnapshot {
@@ -75,6 +133,8 @@ export interface QuotaFleetSnapshot {
   highUsageCount: number;
   /** Entries with only unknown windows. */
   unknownCount: number;
+  /** Total de assinaturas detectadas — presente só quando algo foi lido. */
+  plans?: QuotaPlansSummary;
 }
 
 export const QUOTA_HIGH_USAGE_THRESHOLD = 0.8;

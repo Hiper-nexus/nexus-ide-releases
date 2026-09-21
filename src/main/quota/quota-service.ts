@@ -9,8 +9,10 @@ import { BrowserWindow, ipcMain } from 'electron';
 import {
   QUOTA_CHANNELS,
   compareEntriesByConsumption,
+  type AccountPlan,
   type ProviderQuotaEntry,
   type QuotaFleetSnapshot,
+  type QuotaReadHint,
   type QuotaWindow,
 } from '../../shared/quota-types';
 import type { LimitHit } from '../orch/limit-detector';
@@ -22,8 +24,17 @@ import type { ProviderSettingsInfo } from '../../shared/provider-settings-types'
 import { buildFleetSnapshot } from './quota-policy';
 import { defaultUnknownWindows, mergeWindows } from './quota-normalize';
 import { probeProviderWindows } from './quota-probes';
-import { fetchClaudeCliUsageWindows, type FetchLike } from './claude-oauth-usage';
+import {
+  probeClaudeCliUsage,
+  type ClaudeCliUsageProbe,
+  type FetchLike,
+} from './claude-oauth-usage';
 import { fetchClaudeAccountUsageWindows } from './claude-account-usage';
+import {
+  claudeNativeAccessTokenExpiresAt,
+  hasClaudeNativeSession,
+} from './provider-usage-auth';
+import { PLAN_CAPABLE_ADAPTERS } from './account-plan';
 import type { CodexChatGptAuth } from './codex-usage';
 import {
   fetchLiveProviderWindows,
@@ -72,7 +83,11 @@ export interface QuotaServiceDeps {
    * Native-row fallback `claude /usage` (print-only). Production (main.ts)
    * wires the real runner. Tests omit it so probes never spawn the host CLI.
    */
-  claudeCliUsage?: () => Promise<QuotaWindow[] | null>;
+  claudeCliUsage?: () => Promise<ClaudeCliUsageProbe>;
+  /** Evidência de login nativo Claude prévio (`oauthAccount` no ~/.claude.json). */
+  claudeNativeSession?: () => boolean;
+  /** Access token nativo vencido (expiresAt cliente — refresh é do CLI). */
+  claudeNativeTokenExpired?: () => boolean;
   /**
    * Per-account Claude fallback (Codenotch): managed-auth scoped CLI, perfil
    * de disco com o mesmo e-mail, materialização do vault. Só rows pinadas;
@@ -80,7 +95,13 @@ export interface QuotaServiceDeps {
    */
   claudeAccountUsage?: (
     accountId: string,
-  ) => Promise<QuotaWindow[] | null>;
+  ) => Promise<{ windows: QuotaWindow[] | null; hint?: QuotaReadHint }>;
+  /**
+   * A sonda de quota detectou grant morto ('auth-expired') numa conta — a UI
+   * liga o flag de reautenticação (needsRelogin) sem esperar um 401 de spawn.
+   * Produção liga no account-store (cooldown de auth). Opcional em testes.
+   */
+  markAccountAuthExpired?: (accountId: string, adapterId: string) => void;
   resolveCodexAuth?: (
     accountId?: string,
   ) => CodexChatGptAuth | null | Promise<CodexChatGptAuth | null>;
@@ -139,6 +160,15 @@ export interface QuotaServiceDeps {
     accountId?: string,
   ) => string[] | Promise<string[]>;
   /**
+   * Detecção de plano de assinatura por linha (tier do provider → USD/mês de
+   * lista quando mapeado). Produção liga `detectProviderPlan`; testes omitem
+   * e as linhas ficam sem `plan` (resumo `undetected` honesto).
+   */
+  detectProviderPlan?: (
+    adapterId: string,
+    accountId?: string,
+  ) => AccountPlan | null | Promise<AccountPlan | null>;
+  /**
    * Limpa o cooldown de uma conta refutado por leitura provider-api fresca e
    * saudável (resíduo da cascata de limite fantasma). Opcional; produção liga
    * no account-store.clearCooldown.
@@ -175,6 +205,9 @@ interface CachedApiWindows {
   usageProviderId?: string;
   authMode: string;
 }
+
+/** Plano detectado — TTL longo: assinatura muda por mês, não por minuto. */
+const PLAN_CACHE_TTL_MS = 60 * 60 * 1000;
 
 interface ProbeIdentity extends EntryKey {
   usageProviderId?: string;
@@ -218,8 +251,19 @@ export class QuotaService {
   readonly #limitByKey = new Map<string, RecordedLimitHit>();
   /** Live provider-api windows by entry id. */
   readonly #apiCache = new Map<string, CachedApiWindows>();
+  /**
+   * Último plano detectado por linha (`adapter:account`). Leituras falhas não
+   * apagam o valor anterior — plano é fato de conta, não de sonda.
+   */
+  readonly #planCache = new Map<string, { plan: AccountPlan | null; at: number }>();
   /** Entry id → epoch ms até quando a probe falhou deve esperar para voltar. */
   readonly #probeBackoffUntil = new Map<string, number>();
+  /**
+   * Motivo da última falha de sonda por linha — sobrevive ao backoff para a
+   * UI continuar dizendo «sessão expirada» em vez de voltar ao «—» mudo.
+   * Apagado na primeira leitura boa.
+   */
+  readonly #probeHints = new Map<string, QuotaReadHint>();
   #broadcastTimer: ReturnType<typeof setTimeout> | null = null;
   #lastSnapshot: QuotaFleetSnapshot | null = null;
   #stopped = false;
@@ -464,7 +508,18 @@ export class QuotaService {
         this.#deps.claudeCliUsage ??
         (this.#deps.fetchImpl || process.env.VITEST
           ? undefined
-          : () => fetchClaudeCliUsageWindows({ now: Date.now() })),
+          : () => probeClaudeCliUsage({ now: Date.now() })),
+      claudeNativeSession:
+        this.#deps.claudeNativeSession ??
+        (process.env.VITEST ? undefined : () => hasClaudeNativeSession()),
+      claudeNativeTokenExpired:
+        this.#deps.claudeNativeTokenExpired ??
+        (process.env.VITEST
+          ? undefined
+          : () => {
+              const exp = claudeNativeAccessTokenExpiresAt();
+              return exp !== null && exp <= Date.now();
+            }),
       claudeAccountUsage:
         this.#deps.claudeAccountUsage ??
         (this.#deps.fetchImpl || process.env.VITEST
@@ -508,6 +563,7 @@ export class QuotaService {
       rows.map(async (row) => {
         if (!row.canProbe) return;
         const id = apiCacheKey(row);
+        await this.#refreshPlan(row, now, forceApi, generation);
         if (!forceApi) {
           const cached = this.#apiCache.get(id);
           if (cached && now - cached.at < PROVIDER_API_TTL_MS) {
@@ -518,7 +574,7 @@ export class QuotaService {
           if (backoffUntil !== undefined && now < backoffUntil) return;
         }
         try {
-          const windows = await fetchLiveProviderWindows(
+          const probe = await fetchLiveProviderWindows(
             row.adapterId,
             row.accountId,
             resolvers,
@@ -526,15 +582,30 @@ export class QuotaService {
             row.usageProviderId,
             row.authMode,
           );
-          if (windows && windows.length > 0) {
-            const observation = { windows, at: now, usageProviderId: row.usageProviderId, authMode: row.authMode };
+          if (probe.windows && probe.windows.length > 0) {
+            const observation = { windows: probe.windows, at: now, usageProviderId: row.usageProviderId, authMode: row.authMode };
             observations.set(id, observation);
             this.#probeBackoffUntil.delete(id);
+            this.#probeHints.delete(id);
             if (generation === this.#snapshotGeneration && !this.#stopped) this.#apiCache.set(id, observation);
           } else if (generation === this.#snapshotGeneration && !this.#stopped) {
             // A failed observation cannot renew an expired percentage.
             this.#apiCache.delete(id);
             this.#probeBackoffUntil.set(id, now + PROBE_FAILURE_BACKOFF_MS);
+            if (probe.hint) {
+              this.#probeHints.set(id, probe.hint);
+              if (
+                probe.hint === 'auth-expired' &&
+                row.accountId &&
+                this.#deps.markAccountAuthExpired
+              ) {
+                try {
+                  this.#deps.markAccountAuthExpired(row.accountId, row.adapterId);
+                } catch {
+                  /* marcação é best-effort — a linha já carrega o hint */
+                }
+              }
+            }
           }
         } catch {
           if (generation === this.#snapshotGeneration && !this.#stopped) {
@@ -547,6 +618,33 @@ export class QuotaService {
     return observations;
   }
 
+  /**
+   * Detecção de plano por linha, com TTL próprio e keep-stale: uma falha de
+   * leitura não apaga o plano que já conhecíamos (fato de conta, não sonda).
+   */
+  async #refreshPlan(
+    row: ProbeIdentity,
+    now: number,
+    forceApi: boolean,
+    generation: number,
+  ): Promise<void> {
+    if (!PLAN_CAPABLE_ADAPTERS.has(row.adapterId)) return;
+    if (row.authMode === 'api-key' || row.usageProviderId) return;
+    const detect = this.#deps.detectProviderPlan;
+    if (!detect) return;
+    const key = `${row.adapterId}:${row.accountId ?? ''}`;
+    const held = this.#planCache.get(key);
+    if (!forceApi && held && now - held.at < PLAN_CACHE_TTL_MS) return;
+    try {
+      const plan = await Promise.resolve(detect(row.adapterId, row.accountId));
+      if (generation === this.#snapshotGeneration && !this.#stopped) {
+        this.#planCache.set(key, { plan, at: now });
+      }
+    } catch {
+      /* falha de detecção mantém o plano em cache — nunca inventa */
+    }
+  }
+
   lastSnapshot(): QuotaFleetSnapshot | null {
     return this.#lastSnapshot;
   }
@@ -555,6 +653,7 @@ export class QuotaService {
     adapterId: string;
     usageProviderId?: string;
     accountId?: string;
+    authMode?: string;
     active?: boolean;
     label: string;
     installed: boolean;
@@ -562,6 +661,7 @@ export class QuotaService {
     cooldownKind?: FailoverReasonKind;
     cooldownUntil?: number;
     tokens?: { inputTokens: number; outputTokens: number; costUsd: number };
+    canProbe?: boolean;
     now: number;
   }, api: CachedApiWindows | undefined, allowCooldownRefutation: boolean): ProviderQuotaEntry {
     const id = entryId({
@@ -613,6 +713,22 @@ export class QuotaService {
       onCooldown = false;
       cooldownUntil = undefined;
     }
+    const planEligible =
+      PLAN_CAPABLE_ADAPTERS.has(input.adapterId) &&
+      input.authMode !== 'api-key' &&
+      !input.usageProviderId;
+    const plan = this.#planCache.get(
+      `${input.adapterId}:${input.accountId ?? ''}`,
+    )?.plan;
+    const readHint = this.#probeHints.get(
+      apiCacheKey({
+        adapterId: input.adapterId,
+        accountId: input.accountId,
+        usageProviderId: input.usageProviderId,
+        authMode: input.authMode ?? 'unknown',
+        canProbe: input.canProbe ?? true,
+      }),
+    );
     return {
       id,
       adapterId: input.adapterId,
@@ -620,6 +736,8 @@ export class QuotaService {
       ...(input.active !== undefined ? { active: input.active } : {}),
       label: input.label,
       ...(input.usageProviderId ? { usageProviderId: input.usageProviderId } : {}),
+      ...(plan ? { plan } : {}),
+      ...(planEligible ? { planEligible: true } : {}),
       installed: input.installed,
       onCooldown,
       ...(onCooldown && input.cooldownKind
@@ -627,6 +745,7 @@ export class QuotaService {
         : {}),
       cooldownUntil,
       windows: mergeWindows(defaultUnknownWindows(input.adapterId), windows),
+      ...(readHint ? { readHint } : {}),
       updatedAt: api?.at ?? input.now,
     };
   }

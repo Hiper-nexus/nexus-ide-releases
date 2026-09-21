@@ -119,6 +119,50 @@ export async function resolveClaudeToken(accountId?: string): Promise<string | n
   return native ? extractClaudeAccessToken(native) : null;
 }
 
+/**
+ * Evidência de que o login nativo do Claude existiu: `oauthAccount` no
+ * `~/.claude.json` sobrevive à rotação da credencial do keychain. Sem
+ * token resolvível MAS com este bloco → a sessão morreu (auth-expired),
+ * não «nunca conectou» (no-credential).
+ */
+/**
+ * `expiresAt` do access token nativo (cliente). O refresh da linhagem
+ * nativa pertence ao CLI — nós só lemos: token vencido + refresh
+ * desconhecido = «sessão expirada» honesto, não «sem informação».
+ */
+export function claudeNativeAccessTokenExpiresAt(): number | null {
+  const blob = readText(
+    path.join(os.homedir(), '.claude', '.credentials.json'),
+  );
+  if (!blob) return null;
+  try {
+    const parsed = JSON.parse(blob) as Record<string, unknown>;
+    const oauth = (parsed.claudeAiOauth ?? parsed) as Record<string, unknown>;
+    const exp = oauth?.expiresAt;
+    return typeof exp === 'number' && Number.isFinite(exp) ? exp : null;
+  } catch {
+    return null;
+  }
+}
+
+export function hasClaudeNativeSession(configDir?: string): boolean {
+  try {
+    const file = configDir
+      ? path.join(configDir, '.claude.json')
+      : path.join(os.homedir(), '.claude.json');
+    const raw = JSON.parse(readText(file) ?? 'null') as Record<
+      string,
+      unknown
+    > | null;
+    const acct = raw?.oauthAccount as Record<string, unknown> | undefined;
+    return Boolean(
+      acct && (acct.emailAddress || acct.organizationUuid),
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** Codex auth for the exact account, or the unpinned native login. */
 export function resolveCodexAuthCandidates(
   accountId?: string,

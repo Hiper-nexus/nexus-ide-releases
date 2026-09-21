@@ -21,12 +21,12 @@ afterEach(() => { vi.restoreAllMocks(); vi.clearAllMocks(); });
 describe('quota refresh identity and publication', () => {
   it('never mixes a newer upstream cache into an older snapshot or republishes the old snapshot', async () => {
     let upstream = 'glm';
-    let releaseOldGrok: ((windows: QuotaWindow[]) => void) | undefined;
+    let releaseOldGrok: ((probe: { windows: QuotaWindow[] }) => void) | undefined;
     let grokCalls = 0;
     mocks.probe.mockImplementation(async (adapterId, _account, _deps, _now, route) => {
-      if (adapterId === 'claude') return window(route === 'glm' ? 0.2 : 0.8);
-      if (++grokCalls === 1) return new Promise<QuotaWindow[]>((resolve) => { releaseOldGrok = resolve; });
-      return window(0.1);
+      if (adapterId === 'claude') return { windows: window(route === 'glm' ? 0.2 : 0.8) };
+      if (++grokCalls === 1) return new Promise<{ windows: QuotaWindow[] }>((resolve) => { releaseOldGrok = resolve; });
+      return { windows: window(0.1) };
     });
     const svc = new QuotaService({ listProviders: () => providers(upstream), listAccounts: () => [] });
     const now = vi.spyOn(Date, 'now').mockReturnValue(1_000);
@@ -35,7 +35,7 @@ describe('quota refresh identity and publication', () => {
     const coalesced = svc.snapshot(1_000);
     upstream = 'longcat'; now.mockReturnValue(1_100);
     const latest = await svc.refresh();
-    releaseOldGrok!(window(0.1));
+    releaseOldGrok!({ windows: window(0.1) });
     const completedOld = await old;
     expect(completedOld).toEqual(latest);
     expect(await coalesced).toEqual(latest);
@@ -48,16 +48,16 @@ describe('quota refresh identity and publication', () => {
   });
 
   it('does not let a late same-identity response overwrite the newer cache', async () => {
-    let releaseOld: ((windows: QuotaWindow[]) => void) | undefined;
+    let releaseOld: ((probe: { windows: QuotaWindow[] }) => void) | undefined;
     mocks.probe.mockImplementation(async (_adapter, _account, _deps, now) => {
-      if (now === 1_000) return new Promise<QuotaWindow[]>((resolve) => { releaseOld = resolve; });
-      return window(0.8);
+      if (now === 1_000) return new Promise<{ windows: QuotaWindow[] }>((resolve) => { releaseOld = resolve; });
+      return { windows: window(0.8) };
     });
     const svc = new QuotaService({ listProviders: () => providers('glm').slice(0, 1), listAccounts: () => [] });
     const old = svc.snapshot(1_000);
     await vi.waitFor(() => expect(releaseOld).toBeTypeOf('function'));
     const latest = await svc.snapshot(1_100, { forceApi: true });
-    releaseOld!(window(0.2));
+    releaseOld!({ windows: window(0.2) });
     await old;
     const cached = await svc.snapshot(1_200);
     expect(cached.entries[0].windows[0].usedRatio).toBe(0.8);

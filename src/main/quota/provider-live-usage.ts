@@ -6,9 +6,10 @@
  * single stale key cannot hide real telemetry.
  */
 
-import type { QuotaWindow } from '../../shared/quota-types';
+import type { QuotaReadHint, QuotaWindow } from '../../shared/quota-types';
 import {
-  fetchClaudeOauthUsageWindows,
+  probeClaudeOauthUsage,
+  type ClaudeCliUsageFailure,
   type FetchLike,
 } from './claude-oauth-usage';
 import {
@@ -22,6 +23,7 @@ import {
 } from './devin-usage';
 import { fetchCursorUsageWindowsLive } from './cursor-usage';
 import { fetchAgyUsageWindows, type GeminiOauthCreds } from './agy-usage';
+import { fetchAgyBridgeUsage } from './agy-bridge';
 import {
   fetchKimiCodingUsageWindows,
   fetchKimiUsageWithOauth,
@@ -51,14 +53,33 @@ export interface LiveUsageAuthResolvers {
    * Fallback print-only `claude /usage` (injetável nos testes). Só corre na
    * row do CLI nativo (accountId indefinido) — o login do CLI é de UMA conta;
    * pintá-la em rows de contas vault seria fabricar dado por conta.
+   * Devolve o probe completo: o motivo (`auth-expired` etc.) vira `readHint`
+   * acionável na linha.
    */
-  claudeCliUsage?: () => Promise<QuotaWindow[] | null>;
+  claudeCliUsage?: () => Promise<{
+    windows: QuotaWindow[] | null;
+    failure?: ClaudeCliUsageFailure;
+  }>;
+  /**
+   * Evidência de login nativo Claude prévio (`oauthAccount` no
+   * `~/.claude.json`). Sem token + sem evidência = nunca conectou
+   * (`no-credential`); sem token + com evidência = sessão morta
+   * (`auth-expired` → «Entrar novamente»).
+   */
+  claudeNativeSession?: () => boolean;
+  /**
+   * Access token nativo vencido (`expiresAt` cliente). A linhagem nativa
+   * é do CLI — não refreshamos; token vencido equivale a sessão expirada.
+   */
+  claudeNativeTokenExpired?: () => boolean;
   /**
    * Fallback por conta Claude (Codenotch): auth gerenciada scoped, perfil de
    * disco com o mesmo e-mail, materialização do vault. Cada fonte é ancorada
    * na identidade da própria conta — só para rows pinadas (accountId set).
    */
-  claudeAccountUsage?: (accountId: string) => Promise<QuotaWindow[] | null>;
+  claudeAccountUsage?: (
+    accountId: string,
+  ) => Promise<{ windows: QuotaWindow[] | null; hint?: QuotaReadHint }>;
   /** Prefer multi-candidate; single still supported. */
   resolveCodexAuth?: (
     accountId?: string,
@@ -133,8 +154,22 @@ async function stringCandidates(
   return [];
 }
 
+/** Resultado da sonda ao vivo: janelas ou o motivo honesto da ausência. */
+export interface LiveProviderProbe {
+  windows: QuotaWindow[] | null;
+  hint?: QuotaReadHint;
+}
+
+const NO_CREDENTIAL: LiveProviderProbe = { windows: null, hint: 'no-credential' };
+const UNAVAILABLE: LiveProviderProbe = { windows: null, hint: 'unavailable' };
+
+function asProbe(windows: QuotaWindow[] | null, hint: QuotaReadHint): LiveProviderProbe {
+  return windows?.length ? { windows } : { windows: null, hint };
+}
+
 /**
- * Fetch live windows for one adapter row. null = keep local/unknown only.
+ * Fetch live windows for one adapter row. `windows: null` = keep
+ * local/unknown only; `hint` diz por que a leitura não veio.
  */
 export async function fetchLiveProviderWindows(
   adapterId: string,
@@ -143,26 +178,36 @@ export async function fetchLiveProviderWindows(
   now = Date.now(),
   declaredUpstream?: string,
   authMode = 'unknown',
-): Promise<QuotaWindow[] | null> {
+): Promise<LiveProviderProbe> {
   const fetchImpl = deps.fetchImpl;
   if (declaredUpstream) {
     // API-key billing has no equivalent subscription quota on these routes.
     // Never substitute the computer's OAuth session for this credential mode.
-    if (['claude', 'anthropic', 'codex', 'openai'].includes(declaredUpstream)) return null;
+    if (['claude', 'anthropic', 'codex', 'openai'].includes(declaredUpstream)) {
+      return { windows: null };
+    }
     const key = await deps.resolveApiQuotaKey?.({ adapterId, accountId, usageProviderId: declaredUpstream, authMode });
-    return key ? fetchWindowsForApiKey(key, { fetchImpl, now, adapterHint: declaredUpstream }) : null;
+    return key
+      ? asProbe(await fetchWindowsForApiKey(key, { fetchImpl, now, adapterHint: declaredUpstream }), 'unavailable')
+      : NO_CREDENTIAL;
   }
 
   switch (adapterId) {
     case 'claude': {
+      let hadToken = false;
+      let oauthDead = false;
       if (deps.resolveClaudeToken) {
         const token = await Promise.resolve(deps.resolveClaudeToken(accountId));
         if (token) {
-          const windows = await fetchClaudeOauthUsageWindows(token, {
+          hadToken = true;
+          const oauth = await probeClaudeOauthUsage(token, {
             fetchImpl,
             now,
           });
-          if (windows) return windows;
+          if (oauth.windows) return { windows: oauth.windows };
+          // 401/403 = grant morto no servidor — sinal definitivo de que a
+          // credencial desta identidade precisa de re-login.
+          oauthDead = oauth.failure === 'auth-expired';
         }
       }
       // OAuth falhou (429/backoff, keychain rodada) ou sem token.
@@ -173,12 +218,38 @@ export async function fetchLiveProviderWindows(
       // UMA conta, nunca pintado em rows vault. Sem runner injetado NÃO
       // spawnamos o binário: testes ficam em null honesto.
       if (accountId) {
-        return deps.claudeAccountUsage
-          ? deps.claudeAccountUsage(accountId)
-          : null;
+        if (!deps.claudeAccountUsage) return hadToken ? UNAVAILABLE : NO_CREDENTIAL;
+        return deps.claudeAccountUsage(accountId);
       }
-      if (!deps.claudeCliUsage) return null;
-      return deps.claudeCliUsage();
+      // Sem token resolvível (ou token nativo vencido — o refresh da
+      // linhagem nativa é do CLI, não nosso): o `oauthAccount` no
+      // ~/.claude.json distingue «sessão morreu» de «nunca conectou».
+      const sessionEvidence = deps.claudeNativeSession?.() === true;
+      const tokenExpired = deps.claudeNativeTokenExpired?.() === true;
+      const noTokenHint: QuotaReadHint =
+        oauthDead || tokenExpired
+          ? 'auth-expired'
+          : hadToken
+            ? 'unavailable'
+            : sessionEvidence
+              ? 'auth-expired'
+              : 'no-credential';
+      if (!deps.claudeCliUsage) return { windows: null, hint: noTokenHint };
+      const probe = await deps.claudeCliUsage();
+      if (probe.windows?.length) return { windows: probe.windows };
+      // O motivo (auth-expired/cli-missing) vira hint acionável — a linha
+      // nativa também precisa dizer «Entrar novamente», não só «—». O 401
+      // do endpoint e a evidência de sessão são os sinais mais fortes:
+      // valem mesmo quando o `/usage` sai quieto (só tabela de custo).
+      return {
+        windows: null,
+        hint:
+          probe.failure === 'auth-expired' || oauthDead || tokenExpired
+            ? 'auth-expired'
+            : probe.failure === 'cli-missing'
+              ? 'cli-missing'
+              : noTokenHint,
+      };
     }
     case 'codex': {
       let candidates: CodexChatGptAuth[] = [];
@@ -190,11 +261,12 @@ export async function fetchLiveProviderWindows(
         const one = await Promise.resolve(deps.resolveCodexAuth(accountId));
         if (one) candidates = [one];
       }
+      if (candidates.length === 0) return NO_CREDENTIAL;
       for (const auth of candidates) {
         const windows = await fetchCodexUsageWindows(auth, { fetchImpl, now });
-        if (windows && windows.length > 0) return windows;
+        if (windows && windows.length > 0) return { windows };
       }
-      return null;
+      return UNAVAILABLE;
     }
     case 'glm': {
       const keys = await stringCandidates(
@@ -202,11 +274,12 @@ export async function fetchLiveProviderWindows(
         deps.resolveGlmApiKey,
         accountId,
       );
+      if (keys.length === 0) return NO_CREDENTIAL;
       for (const key of keys) {
         const windows = await fetchWindowsForApiKey(key, { fetchImpl, now, adapterHint: 'glm' });
-        if (windows && windows.length > 0) return windows;
+        if (windows && windows.length > 0) return { windows };
       }
-      return null;
+      return UNAVAILABLE;
     }
     case 'longcat': {
       const keys = await stringCandidates(
@@ -214,15 +287,16 @@ export async function fetchLiveProviderWindows(
         deps.resolveLongcatApiKey,
         accountId,
       );
+      if (keys.length === 0) return NO_CREDENTIAL;
       for (const key of keys) {
         const w = await fetchWindowsForApiKey(key, {
           fetchImpl,
           now,
           adapterHint: 'longcat',
         });
-        if (w?.length) return w;
+        if (w?.length) return { windows: w };
       }
-      return null;
+      return UNAVAILABLE;
     }
     case 'grok': {
       const tokens = await stringCandidates(
@@ -230,31 +304,36 @@ export async function fetchLiveProviderWindows(
         deps.resolveGrokToken,
         accountId,
       );
+      if (tokens.length === 0) return NO_CREDENTIAL;
       for (const token of tokens) {
         const windows = await fetchGrokUsageWindows(token, { fetchImpl, now });
-        if (windows && windows.length > 0) return windows;
+        if (windows && windows.length > 0) return { windows };
       }
-      return null;
+      return UNAVAILABLE;
     }
     case 'devin': {
       const key = deps.resolveDevinApiKey
         ? await Promise.resolve(deps.resolveDevinApiKey(accountId))
         : resolveDevinApiKey();
-      return key
-        ? fetchDevinUsageWindows(key, { fetchImpl, now })
-        : null;
+      if (!key) return NO_CREDENTIAL;
+      return asProbe(await fetchDevinUsageWindows(key, { fetchImpl, now }), 'unavailable');
     }
     case 'cursor-agent': {
       // Sessão local do editor/`cursor-agent login` (só leitura) + usage-summary.
-      return fetchCursorUsageWindowsLive({ fetchImpl, now });
+      return asProbe(
+        await fetchCursorUsageWindowsLive({ fetchImpl, now }),
+        'unavailable',
+      );
     }
     case 'kimi': {
+      let sawCredential = false;
       // 1) OAuth from ~/.kimi-code (same as `kimi login`) — refresh if expired.
       if (deps.resolveKimiOauthCreds) {
         const oauth = await Promise.resolve(
           deps.resolveKimiOauthCreds(accountId),
         );
         if (oauth?.refreshToken || oauth?.accessToken) {
+          sawCredential = true;
           // Access expirado + refresh válido não pode ficar vazio (conta com
           // consumo aparecia «—»). Refresca em memória; se o servidor ROTACIONAR
           // o grant, persistOnRotation devolve o refresh token novo ao
@@ -266,7 +345,7 @@ export async function fetchLiveProviderWindows(
             persistRefresh: false,
             persistOnRotation: true,
           });
-          if (w?.length) return w;
+          if (w?.length) return { windows: w };
         }
       }
       // 2) API keys (sk-kimi-…) + any bare tokens.
@@ -275,18 +354,28 @@ export async function fetchLiveProviderWindows(
         deps.resolveKimiToken,
         accountId,
       );
+      if (tokens.length > 0) sawCredential = true;
       for (const token of tokens) {
         const coding = await fetchKimiCodingUsageWindows(token, {
           fetchImpl,
           now,
         });
-        if (coding && coding.length > 0) return coding;
+        if (coding && coding.length > 0) return { windows: coding };
         const windows = await fetchKimiUsageWindows(token, { fetchImpl, now });
-        if (windows && windows.length > 0) return windows;
+        if (windows && windows.length > 0) return { windows };
       }
-      return null;
+      return sawCredential ? UNAVAILABLE : NO_CREDENTIAL;
     }
     case 'agy': {
+      // Codenotch AntigravityBridge primeiro: o language server local (IDE
+      // ou `agy` CLI rodando) já detém a credencial e a identidade de cliente
+      // que o Google exige — contas pessoais tomam 403 "no valid license" no
+      // endpoint direto. Só a linha nativa (sem accountId): a leitura é da
+      // conta que o processo está logado, não atribuível a uma conta vault.
+      if (!accountId) {
+        const bridged = await fetchAgyBridgeUsage({ now }).catch(() => null);
+        if (bridged && bridged.length > 0) return { windows: bridged };
+      }
       let creds: GeminiOauthCreds | null = null;
       if (deps.resolveGeminiOauthCreds) {
         creds = await Promise.resolve(deps.resolveGeminiOauthCreds(accountId));
@@ -294,11 +383,14 @@ export async function fetchLiveProviderWindows(
         const access = await Promise.resolve(deps.resolveGeminiToken(accountId));
         if (access) creds = { accessToken: access };
       }
-      if (!creds) return null;
+      if (!creds) return NO_CREDENTIAL;
       // Access expirado + refresh válido não pode ficar vazio (mesmo buraco do
       // Kimi). O refresh Google devolve access novo em memória — o grant do
       // ~/.gemini do CLI não é rotacionado nem consumido por isso.
-      return fetchAgyUsageWindows(creds, { fetchImpl, now, allowRefresh: true });
+      return asProbe(
+        await fetchAgyUsageWindows(creds, { fetchImpl, now, allowRefresh: true }),
+        'unavailable',
+      );
     }
     case 'opencode': {
       return fetchOpenCodeFleetWindows(deps, accountId, fetchImpl, now);
@@ -332,7 +424,7 @@ async function fetchMultiKeyWindows(
   accountId: string | undefined,
   fetchImpl: FetchLike | undefined,
   now: number,
-): Promise<QuotaWindow[] | null> {
+): Promise<LiveProviderProbe> {
   const keys: string[] = [];
   if (deps.resolveGenericApiKeyCandidates) {
     const list = await Promise.resolve(
@@ -352,7 +444,7 @@ async function fetchMultiKeyWindows(
       if (!keys.includes(k)) keys.push(k);
     }
   }
-  if (keys.length === 0) return null;
+  if (keys.length === 0) return NO_CREDENTIAL;
   const sets: QuotaWindow[][] = [];
   for (const key of keys) {
     const w = await fetchWindowsForApiKey(key, {
@@ -362,9 +454,9 @@ async function fetchMultiKeyWindows(
     });
     if (w?.length) sets.push(w);
   }
-  if (sets.length === 0) return null;
+  if (sets.length === 0) return UNAVAILABLE;
   const merged = mergeWorstWindows(sets);
-  return merged.length > 0 ? merged : null;
+  return merged.length > 0 ? { windows: merged } : UNAVAILABLE;
 }
 
 async function fetchOpenCodeFleetWindows(
@@ -372,7 +464,7 @@ async function fetchOpenCodeFleetWindows(
   accountId: string | undefined,
   fetchImpl: FetchLike | undefined,
   now: number,
-): Promise<QuotaWindow[] | null> {
+): Promise<LiveProviderProbe> {
   const keys = new Map<string, string | undefined>();
   // ONLY keys the user actually connected inside OpenCode auth.json —
   // never steal glm/kimi/claude keys from the launcher and paint them as
@@ -389,15 +481,15 @@ async function fetchOpenCodeFleetWindows(
       if (k?.trim() && !keys.has(k.trim())) keys.set(k.trim(), undefined);
     }
   }
-  if (keys.size === 0) return null;
+  if (keys.size === 0) return NO_CREDENTIAL;
   const sets: QuotaWindow[][] = [];
   for (const [key, adapterHint] of keys) {
     const w = await fetchWindowsForApiKey(key, { fetchImpl, now, adapterHint });
     if (w?.length) sets.push(w);
   }
-  if (sets.length === 0) return null;
+  if (sets.length === 0) return UNAVAILABLE;
   const merged = mergeWorstWindows(sets);
-  return merged.length > 0 ? merged : null;
+  return merged.length > 0 ? { windows: merged } : UNAVAILABLE;
 }
 
 /**

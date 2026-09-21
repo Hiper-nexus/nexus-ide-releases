@@ -44,6 +44,7 @@ import {
   shouldRaisePetAboveAll,
   type PetWorkspacePin,
 } from './pet-fullscreen-guard';
+import type { ProjectExecutionScope } from '../../shared/types';
 import { computeLookDir } from './pet-look';
 import {
   pickRoamDestination,
@@ -221,6 +222,25 @@ function pushPetStats(): void {
 
 function userDataDir(): string {
   return app.getPath('userData');
+}
+
+/**
+ * Alimenta os contadores globais de entregas: cada broadcast de gamificação
+ * de um escopo carrega os counters cumulativos daquele checkout — o tracker
+ * soma todos eles (o perfil do operador mostra totais de vida, não do
+ * projeto aberto).
+ */
+export function ingestPetGamification(
+  scope: ProjectExecutionScope,
+  snapshot: { counters?: Record<string, number> },
+): void {
+  if (!snapshot.counters) return;
+  try {
+    getPetStats().ingestGamificationCounters(scope, snapshot.counters);
+    pushPetStats();
+  } catch (error) {
+    console.warn('[pet] ingest de counters de gamificação falhou:', error);
+  }
 }
 
 function getPrefs(): PetPrefs {
