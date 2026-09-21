@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { OrchSettings } from '../../../shared/settings-types';
 import { PRESET_HARNESSES } from '../../../shared/harness-catalog';
 import { PixelIcon } from '../PixelIcon';
+import { ProviderLogo } from '../ProviderLogo';
 
 type ProbeState = OrchSettings['acpHarnessLastProbe'];
 
@@ -196,40 +197,70 @@ export function AcpHarnessPanel() {
       </header>
 
       <div className="acp-harness__transport" role="group" aria-label="Forma de abrir agentes">
-        <button
-          type="button"
-          className={transport === 'cli-pty' ? 'is-active' : undefined}
-          disabled={busy}
-          onClick={() => void setTransport('cli-pty')}
-          aria-pressed={transport === 'cli-pty'}
-        >
-          Terminal da ferramenta
-        </button>
-        <button
-          type="button"
-          className={transport === 'acp' ? 'is-active' : undefined}
-          disabled={busy}
-          onClick={() => void setTransport('acp')}
-          aria-pressed={transport === 'acp'}
-        >
-          Conexão ACP
-        </button>
+        <div className={`acp-harness__option${transport === 'cli-pty' ? ' acp-harness__option--active' : ''}`}>
+          <div className="acp-harness__option-head">
+            <button
+              type="button"
+              className={transport === 'cli-pty' ? 'is-active' : undefined}
+              disabled={busy}
+              onClick={() => void setTransport('cli-pty')}
+              aria-pressed={transport === 'cli-pty'}
+            >
+              Terminal da ferramenta
+            </button>
+            {transport === 'cli-pty' && (
+              <span className="acp-harness__option-badge">Em uso</span>
+            )}
+          </div>
+          <p className="acp-harness__option-desc">
+            Abre a CLI do agente em um terminal do Nexus. Recomendado no dia a
+            dia — login, sessão e teclas são os da própria ferramenta.
+          </p>
+        </div>
+        <div className={`acp-harness__option${transport === 'acp' ? ' acp-harness__option--active' : ''}`}>
+          <div className="acp-harness__option-head">
+            <button
+              type="button"
+              className={transport === 'acp' ? 'is-active' : undefined}
+              disabled={busy}
+              onClick={() => void setTransport('acp')}
+              aria-pressed={transport === 'acp'}
+            >
+              Conexão ACP
+            </button>
+            {transport === 'acp' && (
+              <span className="acp-harness__option-badge">Em uso</span>
+            )}
+          </div>
+          <p className="acp-harness__option-desc">
+            Comunicação direta do Nexus com o agente, sem terminal. Opção
+            avançada — exige agente compatível com o protocolo ACP.
+          </p>
+        </div>
       </div>
 
-      {transport === 'acp' && (
-        <p className="acp-harness__status" role="status">
-          {selectedId
+      <p className="acp-harness__status" role="status">
+        {transport === 'cli-pty'
+          ? 'Os agentes abrem no terminal da própria ferramenta.'
+          : selectedId
             ? `Agente escolhido: ${catalog.find((row) => row.id === selectedId)?.label ?? selectedId}`
             : 'Escolha um agente abaixo para usar a conexão ACP.'}
-        </p>
-      )}
+      </p>
 
       {transport === 'acp' && (
         <>
           <p className="acp-harness__explanation">O agente precisa estar instalado e responder ao teste. Se a conexão ACP falhar, o Nexus informa o erro; não troca automaticamente para um terminal.</p>
           <ul className="acp-harness__list">
             {catalog.map((row) => (
-              <li key={row.id}>
+              <li
+                key={row.id}
+                className={selectedId === row.id ? 'is-selected' : undefined}
+              >
+                <ProviderLogo
+                  adapterId={row.id}
+                  label={row.label || row.id}
+                  size="sm"
+                />
                 <div>
                   <strong>{row.label || row.id}</strong>
                   <span>
@@ -306,12 +337,14 @@ export function AcpHarnessPanel() {
           }
           role="status"
         >
+          <PixelIcon name={lastProbe.ok ? 'check' : 'warn'} size={11} />{' '}
           Último teste de {catalog.find(row => row.id === lastProbe.harnessId)?.label ?? lastProbe.harnessId}: {lastProbe.ok ? 'conexão confirmada' : 'não conectou'}. {lastProbe.detail}
         </p>
       )}
       {error && (
         <p className="acp-harness__probe err" role="alert">
-          {error}. Revise a configuração e tente novamente.
+          <PixelIcon name="warn" size={11} /> {error}. Revise a configuração e
+          tente novamente.
         </p>
       )}
     </section>

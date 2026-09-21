@@ -76,94 +76,131 @@ export function TerminalSection() {
   }, []);
 
   return (
-    <section>
+    <section className="sys-section">
       <SettingsSectionTitle>Terminal</SettingsSectionTitle>
       <p className="settings-detail__hint">
         Ajuste o texto e o funcionamento dos terminais. As cores ficam em Aparência.
       </p>
 
-      <label className="settings-field">
-        Desempenho dos terminais
-        <select
-          className="settings-input"
-          value={terminal.performanceMode}
-          onChange={(event) =>
-            void update({
-              performanceMode: event.target.value as
-                | 'adaptive'
-                | 'quality',
-            })
-          }
-        >
-          <option value="adaptive">Adaptativo — recomendado</option>
-          <option value="quality">Qualidade — atualizar todos os terminais</option>
-        </select>
-        <span className="settings-field__note">
-          Adaptativo reduz o consumo de recursos nos terminais fora de vista.
-          Qualidade mantém todos os terminais atualizando.
-        </span>
-      </label>
+      <div className="sys-group">
+        <div className="sys-group__head">
+          <div className="sys-group__titles">
+            <h4 className="sys-group__title">Texto</h4>
+            <p className="sys-group__hint">
+              Fonte e tamanho aplicados a todos os terminais.
+            </p>
+          </div>
+        </div>
+        <div className="sys-group__body">
+          <label className="settings-field">
+            Fonte (vazio = padrão do sistema)
+            <input
+              className="settings-input"
+              value={terminal.fontFamily}
+              placeholder='ex.: "JetBrains Mono", monospace'
+              onChange={(e) => void update({ fontFamily: e.target.value })}
+            />
+          </label>
 
-      <details className="settings-advanced-field">
-        <summary>Detalhes de desempenho</summary>
-        <TerminalPerformanceStatus />
-      </details>
+          <label className="settings-field">
+            Tamanho da fonte:{' '}
+            <span className="sys-range-value">{terminal.fontSize}px</span>
+            <input
+              className="settings-range"
+              type="range"
+              min={9}
+              max={24}
+              value={terminal.fontSize}
+              onChange={(e) => void update({ fontSize: Number(e.target.value) })}
+            />
+          </label>
+        </div>
+      </div>
 
-      <label className="settings-field">
-        Fonte (vazio = padrão do sistema)
-        <input
-          className="settings-input"
-          value={terminal.fontFamily}
-          placeholder='ex.: "JetBrains Mono", monospace'
-          onChange={(e) => void update({ fontFamily: e.target.value })}
-        />
-      </label>
+      <div className="sys-group">
+        <div className="sys-group__head">
+          <div className="sys-group__titles">
+            <h4 className="sys-group__title">Shell</h4>
+            <p className="sys-group__hint">
+              Shell padrão para novos terminais. Terminais abertos não mudam.
+            </p>
+          </div>
+        </div>
+        <div className="sys-group__body">
+          <label className="settings-field">
+            Shell padrão
+            <select
+              className="settings-input"
+              value={terminal.shell}
+              onChange={(e) => void update({ shell: e.target.value })}
+            >
+              <option value="">
+                Padrão do sistema{shells[0] ? ` — ${shells[0].split('/').pop()}` : ''}
+              </option>
+              {terminal.shell && !shells.includes(terminal.shell) && (
+                <option value={terminal.shell}>{terminal.shell} (não detectado)</option>
+              )}
+              {shells.map((shell) => (
+                <option key={shell} value={shell}>
+                  {shell}
+                </option>
+              ))}
+            </select>
+            <span className="settings-field__note">
+              {shells.length} opções disponíveis. A mudança vale para novos terminais.
+            </span>
+          </label>
 
-      <label className="settings-field">
-        Tamanho da fonte: {terminal.fontSize}px
-        <input
-          className="settings-range"
-          type="range"
-          min={9}
-          max={24}
-          value={terminal.fontSize}
-          onChange={(e) => void update({ fontSize: Number(e.target.value) })}
-        />
-      </label>
+          <details className="settings-advanced-field">
+            <summary>Usar outro caminho absoluto</summary>
+            <input
+              className="settings-input"
+              value={terminal.shell}
+              placeholder="/caminho/para/seu/shell"
+              onChange={(e) => void update({ shell: e.target.value })}
+            />
+          </details>
+        </div>
+      </div>
 
-      <label className="settings-field">
-        Shell padrão
-        <select
-          className="settings-input"
-          value={terminal.shell}
-          onChange={(e) => void update({ shell: e.target.value })}
-        >
-          <option value="">
-            Padrão do sistema{shells[0] ? ` — ${shells[0].split('/').pop()}` : ''}
-          </option>
-          {terminal.shell && !shells.includes(terminal.shell) && (
-            <option value={terminal.shell}>{terminal.shell} (não detectado)</option>
-          )}
-          {shells.map((shell) => (
-            <option key={shell} value={shell}>
-              {shell}
-            </option>
-          ))}
-        </select>
-        <span className="settings-field__note">
-          {shells.length} opções disponíveis. A mudança vale para novos terminais.
-        </span>
-      </label>
+      <div className="sys-group">
+        <div className="sys-group__head">
+          <div className="sys-group__titles">
+            <h4 className="sys-group__title">Desempenho</h4>
+            <p className="sys-group__hint">
+              Como os terminais fora de vista consomem recursos.
+            </p>
+          </div>
+        </div>
+        <div className="sys-group__body">
+          <label className="settings-field">
+            Modo de desempenho
+            <select
+              className="settings-input"
+              value={terminal.performanceMode}
+              onChange={(event) =>
+                void update({
+                  performanceMode: event.target.value as
+                    | 'adaptive'
+                    | 'quality',
+                })
+              }
+            >
+              <option value="adaptive">Adaptativo — recomendado</option>
+              <option value="quality">Qualidade — atualizar todos os terminais</option>
+            </select>
+            <span className="settings-field__note">
+              Adaptativo reduz o consumo de recursos nos terminais fora de vista.
+              Qualidade mantém todos os terminais atualizando.
+            </span>
+          </label>
 
-      <details className="settings-advanced-field">
-        <summary>Usar outro caminho absoluto</summary>
-        <input
-          className="settings-input"
-          value={terminal.shell}
-          placeholder="/caminho/para/seu/shell"
-          onChange={(e) => void update({ shell: e.target.value })}
-        />
-      </details>
+          <details className="settings-advanced-field">
+            <summary>Detalhes de desempenho</summary>
+            <TerminalPerformanceStatus />
+          </details>
+        </div>
+      </div>
     </section>
   );
 }
@@ -171,7 +208,7 @@ export function TerminalSection() {
 export function VoiceSection() {
   const openVoice = useVoiceStore((s) => s.openSettings);
   return (
-    <section>
+    <section className="sys-section">
       <div className="settings-detail__split-head">
         <div>
           <SettingsSectionTitle>Jarvis & Voz</SettingsSectionTitle>
@@ -186,11 +223,11 @@ export function VoiceSection() {
             openVoice();
           }}
         >
-          Abrir configurações de voz em janela
+          Abrir em janela separada
         </button>
       </div>
-      <AudioDeviceControls />
       <VoiceSettings embedded />
+      <AudioDeviceControls />
     </section>
   );
 }
@@ -198,7 +235,7 @@ export function VoiceSection() {
 export function SystemSection() {
   const release = CURRENT_RELEASE;
   return (
-    <section>
+    <section className="sys-section">
       <div className="release-head">
         <div>
           <SettingsSectionTitle>Sistema</SettingsSectionTitle>
@@ -218,29 +255,40 @@ export function SystemSection() {
         <p>{release.summary}</p>
       </div>
 
-      <h4 className="release-section-title">Melhorias desta versão</h4>
-      <ul className="settings-list">
-        {release.highlights.map((item) => (
-          <li key={item.title} className="settings-list__item release-note">
-            <div className="settings-list__head">
-              <span className="settings-list__title">{item.title}</span>
-            </div>
-            <p className="settings-list__detail">{item.detail}</p>
-          </li>
-        ))}
-      </ul>
-
-      <h4 className="release-section-title">Correções desta versão</h4>
-      <ul className="settings-list">
-        {release.fixes.map((item) => (
-          <li key={item.title} className="settings-list__item release-note">
-            <div className="settings-list__head">
-              <span className="settings-list__title">{item.title}</span>
-            </div>
-            <p className="settings-list__detail">{item.detail}</p>
-          </li>
-        ))}
-      </ul>
+      <div className="sys-cols-2">
+        <div>
+          <div className="sys-subhead">
+            <h4 className="sys-subhead__title">Melhorias desta versão</h4>
+            <span className="sys-subhead__meta">{release.highlights.length}</span>
+          </div>
+          <ul className="settings-list">
+            {release.highlights.map((item) => (
+              <li key={item.title} className="settings-list__item release-note">
+                <div className="settings-list__head">
+                  <span className="settings-list__title">{item.title}</span>
+                </div>
+                <p className="settings-list__detail">{item.detail}</p>
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div>
+          <div className="sys-subhead">
+            <h4 className="sys-subhead__title">Correções desta versão</h4>
+            <span className="sys-subhead__meta">{release.fixes.length}</span>
+          </div>
+          <ul className="settings-list">
+            {release.fixes.map((item) => (
+              <li key={item.title} className="settings-list__item release-note">
+                <div className="settings-list__head">
+                  <span className="settings-list__title">{item.title}</span>
+                </div>
+                <p className="settings-list__detail">{item.detail}</p>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
 
       <UpdateReadinessPanel />
     </section>
@@ -568,13 +616,116 @@ export function SquadsSection() {
   );
 
   return (
-    <section>
+    <section className="sys-section">
       <SettingsSectionTitle>Equipes</SettingsSectionTitle>
       <p className="settings-detail__hint">
         Salve integrantes e suas configurações para montar novas equipes.
       </p>
 
       <OrchestratorDefaults />
+
+      <div className="settings-section-heading settings-section-heading--with-count">
+        <h4>Equipes salvas</h4>
+        <span className="settings-chip">{visibleSquads.length}</span>
+      </div>
+      {visibleSquads.length === 0 ? (
+        <EmptyState
+          className="settings-squads__empty"
+          icon="users"
+          title="Nenhuma equipe salva"
+          body={
+            <p>
+              Crie uma equipe reutilizável ou importe suas equipes.
+            </p>
+          }
+          action={managementActions}
+        />
+      ) : (
+        <>
+          {managementActions}
+          <ul className="settings-list" aria-label="Equipes salvas">
+            {visibleSquads.map((squad) => {
+              const deleting = operation === `delete:${squad.id}`;
+              const members = squad.agents
+                .map((agent) => agent.agentName)
+                .join(' · ');
+              return (
+                <li key={squad.id} className="settings-list__item">
+                  <div className="settings-list__head settings-squads__row">
+                    <span className="settings-list__title">{squad.name}</span>
+                    <span className="settings-chip">
+                      {squad.builtin ? 'original' : 'seu'}
+                    </span>
+                    <span className="settings-chip">
+                      {squad.agents.length}{' '}
+                      {squad.agents.length === 1 ? 'agente' : 'agentes'}
+                    </span>
+                    <div className="settings-squads__row-actions">
+                      <button
+                        type="button"
+                        className="settings-btn settings-btn--primary"
+                        disabled={operation !== null}
+                        onClick={() => useMembers(squad)}
+                      >
+                        {squad.id === PET_STUDIO_SQUAD_ID ? 'Criar pet' : 'Usar integrantes'}
+                      </button>
+                      <button
+                        type="button"
+                        className="settings-btn"
+                        disabled={operation !== null}
+                        title={
+                          squad.builtin
+                            ? 'Criar uma cópia editável desta equipe'
+                            : 'Editar nome, instruções e agentes'
+                        }
+                        onClick={() => {
+                          setFeedback(null);
+                          setEditing(squad);
+                        }}
+                      >
+                        {squad.builtin ? 'Personalizar' : 'Editar'}
+                      </button>
+                      {!squad.builtin ? (
+                        <button
+                          type="button"
+                          className="settings-btn settings-btn--danger"
+                          disabled={operation !== null}
+                          onClick={() => void deleteSavedSquad(squad)}
+                        >
+                          {deleting ? 'Apagando…' : 'Apagar'}
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                  {members && (
+                    <p
+                      className="settings-list__detail settings-squads__members"
+                      title={members}
+                    >
+                      {members}
+                    </p>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </>
+      )}
+      {feedback ? (
+        <p
+          className={`settings-squads__feedback settings-squads__feedback--${feedback.tone}`}
+          role={feedback.tone === 'error' ? 'alert' : 'status'}
+          aria-atomic="true"
+        >
+          {feedback.message}
+        </p>
+      ) : null}
+      <p className="settings-field__note">
+        Usar integrantes copia papéis, ferramentas, modelos e instruções
+        individuais para Nova missão. Permissões e skills seguem as regras de
+        execução do Nexus. As instruções globais permanecem no catálogo acessado
+        via MCP e não são aplicadas por essa ação.
+      </p>
 
       <details className="settings-advanced-field">
         <summary>Comportamento dos agentes e estilo de trabalho</summary>
@@ -600,6 +751,9 @@ export function SquadsSection() {
             void window.nexus.settings.orchSet({ jevAutopilot: checked });
           }}
         />
+        <div className="sys-toggle-divider">
+          Superfícies supervisionadas pelo Jev
+        </div>
         {(
           [
               ['handoffReview', 'Revisão de evidência dos handoffs'],
@@ -632,6 +786,9 @@ export function SquadsSection() {
               }}
             />
           ))}
+        <div className="sys-toggle-divider">
+          Estilo de trabalho
+        </div>
         <OrchestrationToggle
           checked={designPro}
           title="Design profissional"
@@ -706,97 +863,6 @@ export function SquadsSection() {
 
       </details>
 
-      <div className="settings-section-heading settings-section-heading--with-count">
-        <h4>Equipes salvas</h4>
-        <span className="settings-chip">{visibleSquads.length}</span>
-      </div>
-      {visibleSquads.length === 0 ? (
-        <EmptyState
-          className="settings-squads__empty"
-          icon="users"
-          title="Nenhuma equipe salva"
-          body={
-            <p>
-              Crie uma equipe reutilizável ou importe suas equipes.
-            </p>
-          }
-          action={managementActions}
-        />
-      ) : (
-        <>
-          {managementActions}
-          <ul className="settings-list" aria-label="Equipes salvas">
-            {visibleSquads.map((squad) => {
-              const deleting = operation === `delete:${squad.id}`;
-              return (
-                <li key={squad.id} className="settings-list__item">
-                  <div className="settings-list__head settings-squads__row">
-                    <span className="settings-list__title">{squad.name}</span>
-                    <span className="settings-chip">
-                      {squad.builtin ? 'original' : 'seu'}
-                    </span>
-                    <span className="settings-chip">
-                      {squad.agents.length}{' '}
-                      {squad.agents.length === 1 ? 'agente' : 'agentes'}
-                    </span>
-                    <div className="settings-squads__row-actions">
-                      <button
-                        type="button"
-                        className="settings-btn settings-btn--primary"
-                        disabled={operation !== null}
-                        onClick={() => useMembers(squad)}
-                      >
-                        {squad.id === PET_STUDIO_SQUAD_ID ? 'Criar pet' : 'Usar integrantes'}
-                      </button>
-                      <button
-                        type="button"
-                        className="settings-btn"
-                        disabled={operation !== null}
-                        title={
-                          squad.builtin
-                            ? 'Criar uma cópia editável desta equipe'
-                            : 'Editar nome, instruções e agentes'
-                        }
-                        onClick={() => {
-                          setFeedback(null);
-                          setEditing(squad);
-                        }}
-                      >
-                        {squad.builtin ? 'Personalizar' : 'Editar'}
-                      </button>
-                      {!squad.builtin ? (
-                        <button
-                          type="button"
-                          className="settings-btn settings-btn--danger"
-                          disabled={operation !== null}
-                          onClick={() => void deleteSavedSquad(squad)}
-                        >
-                          {deleting ? 'Apagando…' : 'Apagar'}
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        </>
-      )}
-      {feedback ? (
-        <p
-          className={`settings-squads__feedback settings-squads__feedback--${feedback.tone}`}
-          role={feedback.tone === 'error' ? 'alert' : 'status'}
-          aria-atomic="true"
-        >
-          {feedback.message}
-        </p>
-      ) : null}
-      <p className="settings-field__note">
-        Usar integrantes copia papéis, ferramentas, modelos e instruções
-        individuais para Nova missão. Permissões e skills seguem as regras de
-        execução do Nexus. As instruções globais permanecem no catálogo acessado
-        via MCP e não são aplicadas por essa ação.
-      </p>
       {editing ? (
         <SquadEditor
           key={editing.id}

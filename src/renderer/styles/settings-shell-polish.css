@@ -1,0 +1,364 @@
+/* settings-shell-polish — moldura do Settings: rail de navegação, chrome de
+   rota (breadcrumb + tabs de categoria) e estados de superfície.
+   Regras aqui carregam DEPOIS das folhas base: overrides via ordem de cascata
+   e especificidade, nunca !important. Tokens sempre de base.css (:root). */
+
+/* ---------- Rail ---------- */
+
+/* --surface-sidebar existe para isto: a rail fica um degrau abaixo de --bg-bar
+   na escala tonal, separada do canvas sem borda extra. */
+.settings-nav {
+  background: var(--surface-sidebar);
+}
+
+/* Item focado por teclado nunca nasce clipado pelo scroll do container. */
+.settings-nav__groups {
+  scroll-padding-block: var(--space-2);
+}
+
+/* ---------- Grupos da rail: rótulo + história ---------- */
+
+.settings-nav__group {
+  min-width: 0;
+}
+
+.settings-nav__section-head {
+  margin: var(--space-4) var(--space-1) var(--space-1-5);
+}
+
+.settings-nav__group:first-child > .settings-nav__section-head {
+  margin-top: var(--space-1);
+}
+
+/* Rótulo + contagem de resultados na mesma linha do eyebrow. */
+.settings-nav__section {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.settings-nav__section-count {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A história do pilar existia no modelo e na folha endorphin, mas settings.css
+   a escondia — o redesign a traz de volta como a frase de propósito de cada
+   grupo (DESIGN.md §12). */
+.settings-nav__section-story {
+  display: block;
+  margin: 2px 0 0;
+  color: var(--text-faint);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  line-height: 1.4;
+}
+
+.settings-nav__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/* ---------- Itens ---------- */
+
+/* Glifo ganha chip tonal próprio: a coluna de ícones lê como instrumento,
+   não como texto solto. */
+.settings-nav__icon {
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+.settings-nav__item--active {
+  border-color: var(--border-strong);
+}
+
+.settings-nav__item--active .settings-nav__icon {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+/* O anel global com offset +2 seria clipado pelo container rolável;
+   offset negativo desenha o anel dentro da linha. */
+.settings-nav__item:focus-visible {
+  outline-offset: -2px;
+}
+
+/* Paridade de teclado com a revelação do subtítulo no item ativo: quem
+   navega por Tab/focus merece o mesmo contexto. */
+.settings-nav__item:focus-visible .settings-nav__subtitle {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+  white-space: normal;
+}
+
+/* ---------- Busca ---------- */
+
+.settings-nav__search-clear {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.settings-nav__search-clear:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+/* Estado vazio: ensina (aliases continuam valendo) e oferece a ação. */
+.settings-nav__no-match {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: var(--space-3) var(--space-1);
+  padding: var(--space-4) var(--space-3);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.settings-nav__no-match-icon {
+  color: var(--text-faint);
+}
+
+.settings-nav__no-match-text {
+  margin: 0;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.settings-nav__no-match-hint {
+  margin: 0;
+}
+
+.settings-nav__no-match .settings-btn {
+  margin-top: var(--space-1);
+}
+
+.settings-nav__match-count {
+  margin: var(--space-1) var(--space-1) var(--space-2);
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+}
+
+/* Modo pixel promove --font-ui a VT323 — piso de 12px (DESIGN.md §3), então
+   os textos de 11px da rail sobem um degrau. */
+[data-theme-pixel='on'] .settings-nav__section-story,
+[data-theme-pixel='on'] .settings-nav__match-count {
+  font-size: var(--text-sm);
+}
+
+/* ---------- Rodapé da rail ---------- */
+
+/* Dois utilitários empilhados com ritmo próprio; borda só no hover — são
+   ações secundárias, não CTAs emoldurados. */
+.settings-nav__operator {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1-5);
+}
+
+.settings-nav__profile {
+  justify-content: flex-start;
+  border-color: transparent;
+}
+
+.settings-nav__profile:hover {
+  border-color: var(--border);
+}
+
+/* ---------- Chrome de rota (sticky) ---------- */
+
+/* A barra vira coluna: linha do breadcrumb por cima, tabs de categoria por
+   baixo — um único chrome sticky, sem offset mágico de top. */
+.settings-detail__nav {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 0;
+  padding: 0;
+}
+
+.settings-detail__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: 52px;
+  padding: var(--space-2-5) var(--space-5);
+  box-sizing: border-box;
+}
+
+/* Âncoras internas não nascem escondidas sob o chrome sticky (~92px). */
+.settings-detail {
+  scroll-padding-top: calc(var(--space-7) * 2);
+}
+
+/* ---------- Tabs de categoria ---------- */
+
+/* Fileira única com scroll horizontal: wrap criava segunda linha ragged de
+   "botões"; underline tabs leem como o que são — seções da mesma área. A
+   máscara sinaliza overflow nas bordas; uma scrollbar de 3px sob tabs de
+   ~36px seria só ruído. */
+.settings-category-tabs {
+  flex-wrap: nowrap;
+  gap: var(--space-1);
+  padding: 0 var(--space-5);
+  border-bottom: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+  mask-image: linear-gradient(
+    90deg,
+    transparent 0,
+    var(--bg) var(--space-5),
+    var(--bg) calc(100% - var(--space-5)),
+    transparent 100%
+  );
+}
+
+.settings-category-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.settings-category-tabs__item {
+  position: relative;
+  padding: var(--space-2) var(--space-2-5);
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  /* Peso fixo: um bump 500→650 no ativo mudaria a largura do rótulo e
+     empurraria os irmãos — o estado forte vem de cor + hairline, não de
+     reflow. */
+  font-weight: 600;
+  white-space: nowrap;
+  transition: color 120ms ease, background 120ms ease;
+}
+
+.settings-category-tabs__item:hover {
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+/* Ativo forte: texto cheio + hairline de acento que cobre a borda do header
+   (o item assenta na linha, não dentro de um pill). */
+.settings-category-tabs__item--active {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text);
+}
+
+.settings-category-tabs__item--active::after {
+  content: '';
+  position: absolute;
+  left: var(--space-2-5);
+  right: var(--space-2-5);
+  bottom: -1px;
+  height: 2px;
+  border-radius: var(--radius-round);
+  background: var(--accent);
+}
+
+.settings-category-tabs__item:focus-visible {
+  outline-offset: -2px;
+}
+
+/* ---------- Estados de superfície (loading / erro) ---------- */
+
+.settings-route-state {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  color: var(--text-dim);
+  font-size: var(--text-md);
+  line-height: 1.5;
+}
+
+.settings-route-state--error {
+  border-color: color-mix(in srgb, var(--danger) 42%, transparent);
+}
+
+.settings-route-state__icon {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.settings-route-state__copy {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2-5);
+}
+
+.settings-route-state__copy p {
+  margin: 0;
+}
+
+.settings-route-state--error .settings-route-state__copy p {
+  color: var(--text);
+}
+
+/* Dentro do bloco de estado o skeleton é filho de flex — a margem global de
+   settings.css criaria fosso duplo. */
+.settings-route-state .settings-skeleton {
+  width: 100%;
+  margin-top: 0;
+}
+
+/* ---------- Título + propósito ---------- */
+
+.settings-detail__hint {
+  text-wrap: pretty;
+}
+
+/* ---------- Compacto (rail vira seletor) ---------- */
+
+/* Em <760px o padding-inline do chrome mora nos filhos, não no header — o
+   header virou coluna sem padding próprio. */
+@container settings-page (max-width: 760px) {
+  .settings-detail__bar,
+  .settings-category-tabs {
+    padding-inline: var(--space-4);
+  }
+}
+
+@media (max-width: 720px) {
+  .settings-detail__bar,
+  .settings-category-tabs {
+    padding-left: var(--space-4);
+    padding-right: var(--space-4);
+  }
+}

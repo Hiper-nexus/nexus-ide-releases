@@ -389,7 +389,7 @@ describe('SettingsWorkspace contracts', () => {
     ).toEqual({ kind: 'mission-setup' });
 
     await act(async () => {
-      findButton(host, /abrir configurações de voz/i).click();
+      findButton(host, /abrir (configurações de voz|em janela separada)/i).click();
       await Promise.resolve();
     });
 

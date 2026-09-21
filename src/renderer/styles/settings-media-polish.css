@@ -1,0 +1,499 @@
+/* settings-media-polish — polish de UI por área do Settings (gerado pelo redesign interno).
+   Regras aqui carregam DEPOIS das folhas base: overrides via especificidade.
+   Escopo: Mídia (.media-section), Marketplace (.mkt-section),
+   Referências de design (.dsn-section) e MCPs (.mcps-section). */
+
+/* ---- Estado: dot + texto, nunca cor sozinha (DESIGN.md §2) ---- */
+.media-state-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-faint);
+}
+
+.settings-chip--ok .media-state-dot {
+  background: var(--status-dot-success);
+}
+
+.settings-chip--warn .media-state-dot {
+  background: var(--status-dot-warning);
+}
+
+.settings-chip--danger .media-state-dot {
+  background: var(--status-dot-danger);
+}
+
+.media-card__state,
+.mcps-state,
+.mkt-item__state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+}
+
+/* Foco visível nos disclosures das quatro seções. */
+.media-section summary:focus-visible,
+.mkt-section summary:focus-visible,
+.dsn-section summary:focus-visible,
+.mcps-section summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+
+/* ================================================================
+   Mídia — conexão de serviços (chave) separada do catálogo de modelos
+   ================================================================ */
+.media-section .arsenal-media-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 21rem), 1fr));
+}
+
+.media-section .arsenal-band {
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.media-section__band-label {
+  text-transform: capitalize;
+}
+
+.media-section__fleet {
+  align-items: center;
+}
+
+.media-section__fleet-refresh {
+  margin-inline-start: auto;
+}
+
+/* Card da casa (§5): elevado, hairline, raio xl, sombra em duas camadas. */
+.media-card {
+  gap: var(--space-2-5);
+  padding: var(--space-3);
+  border-radius: var(--radius-xl);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-1), var(--shadow-inset-hi);
+  transition: border-color 150ms var(--ease-out-expo);
+}
+
+.media-card[data-connected='true'] {
+  border-color: color-mix(in srgb, var(--ok) 28%, var(--border));
+}
+
+.media-card .arsenal-media-card__head {
+  align-items: center;
+}
+
+.media-card .provider-logo {
+  flex: 0 0 auto;
+}
+
+.media-card__sub {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+}
+
+.media-card__sub code {
+  font: inherit;
+  color: inherit;
+}
+
+.media-card .settings-advanced-field summary {
+  margin-bottom: 0;
+}
+
+.media-card .settings-advanced-field[open] summary {
+  margin-bottom: var(--space-1-5);
+}
+
+/* Conectar é a ação do card quando o serviço está sem chave: o campo fica
+   visível num poço recuado, em vez de escondido num details fechado. */
+.media-card__connect {
+  padding: var(--space-2-5) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--surface-2) 55%, transparent);
+}
+
+.media-card__connect .prov__key {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.media-card__connect .prov__key-label {
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.media-card .prov__key-input .settings-input {
+  min-width: 0;
+}
+
+.media-key__actions {
+  margin-top: var(--space-2);
+  margin-bottom: 0;
+}
+
+.media-key__status--ok {
+  color: var(--ok);
+}
+
+.media-key__status--danger {
+  color: var(--danger);
+}
+
+/* ================================================================
+   Marketplace — tabs segmentadas, cards com CTA única, avisos com tom
+   ================================================================ */
+.mkt-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.mkt-section .mkt__tabs {
+  flex: 0 1 auto;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg);
+}
+
+.mkt__tab {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  min-height: 32px;
+  padding: var(--space-1) var(--space-2-5);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 550;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.mkt__tab:hover {
+  color: var(--text);
+}
+
+/* Aba ativa = seleção: superfície elevada neutra, não o primário branco
+   (primário é CTA; aqui o estado é "selecionado", lido por aria-pressed). */
+.mkt__tab--active {
+  border-color: var(--border-strong);
+  background: var(--bg-elevated);
+  color: var(--text);
+  box-shadow: var(--shadow-1);
+}
+
+.mkt__tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.mkt__tab-count {
+  min-width: 18px;
+  padding: 0 var(--space-1-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-round);
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.mkt__tab--active .mkt__tab-count {
+  border-color: var(--border-strong);
+  color: var(--text-dim);
+}
+
+.mkt-toolbar__refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  margin-inline-start: auto;
+}
+
+.mkt-filters {
+  margin-bottom: 0;
+}
+
+/* O X nativo de type=search não segue o tema escuro (sem color-scheme). */
+.mkt-filters .settings-input::-webkit-search-cancel-button,
+.mkt-filters .settings-input::-webkit-search-decoration,
+.dsn-search .settings-input::-webkit-search-cancel-button,
+.dsn-search .settings-input::-webkit-search-decoration {
+  appearance: none;
+}
+
+.mkt-item {
+  padding: var(--space-2-5) var(--space-3);
+  background: var(--bg-elevated);
+  transition: border-color 120ms ease;
+}
+
+.mkt-item:hover {
+  border-color: var(--border-strong);
+}
+
+.mkt-item__main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.mkt-item__id {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mkt-item__id .settings-list__title {
+  flex: none;
+}
+
+.mkt-item__slug {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+}
+
+.mkt-item__meta {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Aviso de instalação/busca: barra com tom, texto inteiro, ação à direita. */
+.mkt-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  margin: 0;
+  padding: var(--space-2-5) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+.mkt-notice p {
+  flex: 1 1 16rem;
+  min-width: 0;
+  margin: 0;
+}
+
+.mkt-notice--ok {
+  border-color: color-mix(in srgb, var(--ok) 40%, var(--border));
+  background: color-mix(in srgb, var(--ok) 7%, var(--bg-elevated));
+  color: var(--ok);
+}
+
+.mkt-notice--danger {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+  background: color-mix(in srgb, var(--danger) 7%, var(--bg-elevated));
+  color: var(--danger);
+}
+
+/* ================================================================
+   Referências de design — proposta ≠ contrato aplicado (§12)
+   ================================================================ */
+.dsn-search {
+  margin-bottom: 0;
+}
+
+.dsn-section .settings-skeleton {
+  margin-top: 0;
+}
+
+.dsn-list .settings-list__item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1-5);
+}
+
+.dsn-item {
+  padding: var(--space-3);
+  background: var(--bg-elevated);
+  transition: border-color 120ms ease;
+}
+
+.dsn-item:hover {
+  border-color: var(--border-strong);
+}
+
+.dsn-item .settings-list__detail {
+  margin-top: 0;
+}
+
+.dsn-item__meta {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+.dsn-item .settings-advanced-field {
+  margin: 0;
+}
+
+.dsn-item .settings-advanced-field summary {
+  margin-bottom: 0;
+}
+
+.dsn-item .settings-advanced-field[open] summary {
+  margin-bottom: var(--space-1-5);
+}
+
+.dsn-item__actions {
+  align-items: center;
+  margin-bottom: 0;
+}
+
+.dsn-item__error {
+  margin: 0;
+}
+
+/* Recibo da proposta: verde de ação concluída + texto que separa proposta
+   de contrato — nunca lê como "aplicado". */
+.dsn-proposal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1-5);
+  margin-top: var(--space-1);
+  padding: var(--space-2-5) var(--space-3);
+  border: 1px solid color-mix(in srgb, var(--ok) 30%, var(--border));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--ok) 5%, var(--bg));
+}
+
+.dsn-proposal__note {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+.dsn-proposal .settings-advanced-field {
+  margin: 0;
+}
+
+.dsn-proposal .settings-advanced-field summary {
+  margin-bottom: 0;
+}
+
+/* ================================================================
+   MCPs — servidor embutido, inventário detectado e hub canônico
+   ================================================================ */
+.mcps-section .arsenal-band {
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.mcps-server {
+  padding: var(--space-2-5) var(--space-3);
+  background: var(--bg-elevated);
+  transition: border-color 120ms ease;
+}
+
+.mcps-server:hover {
+  border-color: var(--border-strong);
+}
+
+.mcps-server__action {
+  margin-inline-start: auto;
+}
+
+.mcps-server .settings-advanced-field {
+  margin: var(--space-1) 0 0;
+}
+
+.mcps-server .settings-advanced-field summary {
+  margin-bottom: 0;
+}
+
+.mcps-server .settings-advanced-field[open] summary {
+  margin-bottom: var(--space-1-5);
+}
+
+.mcps-hub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1-5);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mcps-hub__item {
+  padding: 3px var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.mcps-hub__item code {
+  font: inherit;
+  color: inherit;
+}
+
+@media (max-width: 620px) {
+  .mkt-item__main {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .mkt-item__meta {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .mcps-server__action {
+    margin-inline-start: 0;
+  }
+}
+
+@media (pointer: coarse) {
+  .mkt__tab {
+    min-height: 40px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .media-card,
+  .mkt-item,
+  .dsn-item,
+  .mcps-server,
+  .mkt__tab {
+    transition: none;
+  }
+}

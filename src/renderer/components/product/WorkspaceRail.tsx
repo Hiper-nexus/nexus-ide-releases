@@ -994,21 +994,30 @@ export function WorkspaceRail({
                     worst = window.usedRatio;
                   }
                 }
+                const authExpired = entry.readHint === 'auth-expired';
                 const tone =
                   worst === null
-                    ? 'unknown'
+                    ? authExpired
+                      ? 'warn'
+                      : 'unknown'
                     : worst >= 0.8
                       ? 'danger'
                       : worst >= 0.5
                         ? 'warn'
                         : 'ok';
                 const percentLabel =
-                  worst === null ? '—' : `${Math.round(worst * 100)}%`;
+                  worst === null
+                    ? authExpired
+                      ? 'relogin'
+                      : '—'
+                    : `${Math.round(worst * 100)}%`;
                 // Estilo Orca compacto: janelas informadas ("Sem 41% · 5d").
                 const line = shortWindowsLine(entry, quotaTick, { compact: true });
                 const cooldownTitle = entry.onCooldown
                   ? ' · pausa temporária após sinal de limite (percentual = última leitura do serviço)'
-                  : '';
+                  : authExpired
+                    ? ' · sessão expirada — reautentique a conta em Ajustes › Uso e cotas'
+                    : '';
                 return (
                   <div
                     key={entry.id}

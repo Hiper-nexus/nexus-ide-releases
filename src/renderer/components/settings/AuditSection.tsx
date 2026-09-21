@@ -73,9 +73,11 @@ export function AuditSection() {
       entry.result !== 'intent' &&
       (entry.user_authorized || entry.result === 'denied'),
   );
+  const deniedCount = entries.filter((entry) => entry.result === 'denied').length;
+  const failedCount = entries.filter((entry) => entry.result === 'error').length;
 
   return (
-    <section>
+    <section className="sys-section">
       <div className="settings-detail__split-head">
         <div>
           <SettingsSectionTitle>Auditoria</SettingsSectionTitle>
@@ -84,38 +86,76 @@ export function AuditSection() {
           </p>
         </div>
         <button className="settings-btn" type="button" onClick={() => void refresh()} disabled={loading}>
-          {loading ? 'Lendo' : 'Recarregar'}
+          {loading ? 'Lendo…' : 'Recarregar'}
         </button>
       </div>
 
-      {error && <p className="settings-error">{error}</p>}
-      <details className="settings-advanced-field"><summary>Origem e horário da consulta</summary>
-      <p className="settings-field__note">
-        Fonte: {snapshot?.path ?? 'aguardando'} · lido em {formatDate(snapshot?.readAt)}
-      </p>
+      {error && <p className="settings-error" role="alert">{error}</p>}
 
-      </details>
-      <h4 className="release-section-title">Confirmações</h4>
-      <ul className="settings-list">
-        {confirmations.length === 0 ? (
-          <EmptyAuditRow>Nenhuma confirmação registrada.</EmptyAuditRow>
-        ) : (
-          confirmations.slice(-8).reverse().map((entry) => (
-            <AuditRow key={`${entry.timestamp}-${entry.tool}-${entry.duration_ms}`} entry={entry} compact />
-          ))
-        )}
-      </ul>
+      {snapshot === null && !error ? (
+        <div className="settings-skeleton" role="status" aria-label="Carregando auditoria">
+          <span /><span /><span />
+        </div>
+      ) : (
+        <>
+          <div className="sys-stat-strip" aria-label="Resumo da auditoria">
+            <span className="settings-chip">{entries.length} ações lidas</span>
+            <span className="settings-chip settings-chip--ok">
+              {confirmations.length} confirmações
+            </span>
+            {deniedCount > 0 && (
+              <span className="settings-chip settings-chip--warn">
+                {deniedCount} negadas
+              </span>
+            )}
+            {failedCount > 0 && (
+              <span className="settings-chip settings-chip--danger">
+                {failedCount} com erro
+              </span>
+            )}
+          </div>
+          <details className="settings-advanced-field"><summary>Origem e horário da consulta</summary>
+          <p className="settings-field__note">
+            Fonte: {snapshot?.path ?? 'aguardando'} · lido em {formatDate(snapshot?.readAt)}
+          </p>
+          </details>
+          <div className="sys-subhead">
+            <h4 className="sys-subhead__title">Confirmações</h4>
+            <span className="sys-subhead__meta">
+              {confirmations.length === 0
+                ? 'nenhuma'
+                : `últimas ${Math.min(confirmations.length, 8)} de ${confirmations.length}`}
+            </span>
+          </div>
+          <ul className="settings-list">
+            {confirmations.length === 0 ? (
+              <EmptyAuditRow>Nenhuma confirmação registrada.</EmptyAuditRow>
+            ) : (
+              confirmations.slice(-8).reverse().map((entry) => (
+                <AuditRow key={`${entry.timestamp}-${entry.tool}-${entry.duration_ms}`} entry={entry} compact />
+              ))
+            )}
+          </ul>
 
-      <h4 className="release-section-title">Últimas ações</h4>
-      <ul className="settings-list">
-        {entries.length === 0 ? (
-          <EmptyAuditRow>Audit log vazio ou ainda não criado.</EmptyAuditRow>
-        ) : (
-          entries.slice(-16).reverse().map((entry) => (
-            <AuditRow key={`${entry.timestamp}-${entry.tool}-${entry.session}`} entry={entry} />
-          ))
-        )}
-      </ul>
+          <div className="sys-subhead">
+            <h4 className="sys-subhead__title">Últimas ações</h4>
+            <span className="sys-subhead__meta">
+              {entries.length === 0
+                ? 'nenhuma'
+                : `últimas ${Math.min(entries.length, 16)} de ${entries.length}`}
+            </span>
+          </div>
+          <ul className="settings-list">
+            {entries.length === 0 ? (
+              <EmptyAuditRow>Audit log vazio ou ainda não criado.</EmptyAuditRow>
+            ) : (
+              entries.slice(-16).reverse().map((entry) => (
+                <AuditRow key={`${entry.timestamp}-${entry.tool}-${entry.session}`} entry={entry} />
+              ))
+            )}
+          </ul>
+        </>
+      )}
     </section>
   );
 }

@@ -10,6 +10,7 @@ import {
   xpKindLabel,
 } from '../../shared/gamification-progress';
 import { useGamificationStore } from '../state/gamification-store';
+import { useQuotaStore } from '../state/quota-store';
 import { useLifetimeUsage } from '../state/lifetime-usage';
 import { ChosenPetPortrait } from './ChosenPetPortrait';
 import { fmt } from './operator-sprite-data';
@@ -57,6 +58,9 @@ export function OperatorProfile() {
   const [confirmPrestige, setConfirmPrestige] = useState(false);
   const [ioMessage, setIoMessage] = useState<string | null>(null);
   const lifetime = useLifetimeUsage(open);
+  // Assinaturas conectadas: soma dos planos detectados pelos próprios
+  // providers (sai do somatório quando a conta é removida).
+  const plans = useQuotaStore((s) => s.snapshot.plans);
   const [now, setNow] = useState(() => Date.now());
   const dialogRef = useRef<HTMLElement>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
@@ -116,7 +120,8 @@ export function OperatorProfile() {
   const unlockedCount = achievements.filter((item) => item.unlocked).length;
   const emptyProfile =
     snapshot.powerLevel === 0 &&
-    Object.values(snapshot.counters).every((value) => value === 0);
+    Object.values(snapshot.counters).every((value) => value === 0) &&
+    Object.values(lifetime?.counters ?? {}).every((value) => value === 0);
   const stars = '★'.repeat(Math.min(snapshot.prestige, 5));
   const efficient = snapshot.counters.efficient_mission ?? 0;
   const recent = snapshot.recent ?? [];
@@ -335,6 +340,25 @@ export function OperatorProfile() {
                   </span>
                 </div>
               )}
+              {plans && plans.detected > 0 && (
+                <div
+                  className="operator-profile__consumo-cell"
+                  title={
+                    plans.undetected > 0
+                      ? `${plans.detected} assinatura(s) detectada(s) · ${plans.undetected} elegível(eis) sem plano identificado não entram na soma`
+                      : `${plans.detected} assinatura(s) detectada(s) pelos providers`
+                  }
+                >
+                  <span className="operator-profile__consumo-value">
+                    {fmtUsd(plans.monthlyUsd)}
+                  </span>
+                  <span className="operator-profile__consumo-label">
+                    {plans.detected === 1
+                      ? 'assinatura por mês'
+                      : `${plans.detected} assinaturas por mês`}
+                  </span>
+                </div>
+              )}
               <div className="operator-profile__consumo-cell">
                 <span className="operator-profile__consumo-value">
                   {lifetime.missionsDone}
@@ -435,12 +459,24 @@ export function OperatorProfile() {
             className="operator-profile__section"
             aria-label="Detalhes dos pontos"
           >
-            <h3>Entregas</h3>
+            <h3>Entregas · todos os projetos</h3>
             <ul className="operator-profile__list">
               {XP_BREAKDOWN_COPY.map(([kind, label]) => (
                 <li key={kind}>
-                  <span className="operator-profile__count">
-                    {snapshot.counters[kind] ?? 0}
+                  <span
+                    className="operator-profile__count"
+                    title={
+                      lifetime?.counters[kind] !== undefined &&
+                      lifetime.counters[kind]! >
+                        (snapshot.counters[kind] ?? 0)
+                        ? `${lifetime.counters[kind]} em todos os projetos`
+                        : undefined
+                    }
+                  >
+                    {Math.max(
+                      snapshot.counters[kind] ?? 0,
+                      lifetime?.counters[kind] ?? 0,
+                    )}
                   </span>{' '}
                   {label}
                 </li>

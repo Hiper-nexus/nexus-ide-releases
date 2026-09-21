@@ -1764,6 +1764,11 @@
 .quota-panel__consumption-item:nth-child(3) strong {
   color: var(--accent);
 }
+/* Resumo de assinaturas na barra da frota — soma real dos planos detectados. */
+.quota-panel__plans strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
 .quota-panel__redline {
   display: flex;
   flex-wrap: wrap;
@@ -1935,6 +1940,14 @@
   font-size: var(--text-md);
   line-height: 1.5;
   overflow-wrap: anywhere;
+}
+/* Plano detectado da conta (tier → USD/mês de lista). */
+.quota-entry__plan {
+  margin: var(--space-1) 0 0;
+  color: var(--accent);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 .quota-entry__badge {
   flex: 0 0 auto;

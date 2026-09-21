@@ -88,8 +88,14 @@ export function ArmsSection(): React.ReactElement {
   const fmt = (ms: number | null): string =>
     ms ? new Date(ms).toLocaleString() : '—';
 
+  const stateChip = status?.configured
+    ? { className: 'settings-chip settings-chip--ok', label: 'Token ativo' }
+    : status?.revoked
+      ? { className: 'settings-chip settings-chip--warn', label: 'Revogado' }
+      : { className: 'settings-chip', label: 'Sem token' };
+
   return (
-    <section className="settings-section" aria-label="Conectores">
+    <section className="settings-section sys-section" aria-label="Conectores">
       <SettingsSectionTitle>Conectores</SettingsSectionTitle>
       <p className="settings-detail__hint">
         Permita que ferramentas externas acompanhem o estado do Nexus.
@@ -97,62 +103,77 @@ export function ArmsSection(): React.ReactElement {
       </p>
 
       {status === null ? (
-        <p className="settings-detail__hint">Carregando…</p>
+        <div
+          className="settings-skeleton"
+          role="status"
+          aria-label="Carregando estado do conector"
+        >
+          <span />
+          <span />
+        </div>
       ) : (
         <div className="arms">
-          <div className="arms__row">
-            <span className="arms__state">
-              {status.configured
-                ? 'Token ativo'
-                : status.revoked
-                  ? 'Revogado'
-                  : 'Sem token'}
-            </span>
-            {status.configured && (
-              <>
+          <div className="arms__card">
+            <div className="arms__head">
+              <span className={stateChip.className}>
+                {stateChip.label}
+              </span>
+              {status.configured && (
                 <span className="arms__meta">
                   criado {fmt(status.createdAt)} · último uso{' '}
                   {fmt(status.lastUsedAt)}
                   {status.rotatedAt ? ` · rotacionado ${fmt(status.rotatedAt)}` : ''}
                 </span>
+              )}
+              {status.revoked && (
+                <span className="arms__meta">
+                  O token anterior não dá mais acesso. Gere um novo para
+                  reconectar ferramentas.
+                </span>
+              )}
+            </div>
+            <div className="arms__actions">
+              {status.configured && (
+                <>
+                  <button
+                    type="button"
+                    className="settings-btn"
+                    disabled={busy}
+                    onClick={() => run('rotate')}
+                  >
+                    Rotacionar
+                  </button>
+                  <button
+                    type="button"
+                    className="settings-btn settings-btn--danger"
+                    disabled={busy}
+                    onClick={() => run('revoke')}
+                  >
+                    Revogar
+                  </button>
+                </>
+              )}
+              {!status.configured && !status.revoked && (
                 <button
                   type="button"
-                  className="settings-btn"
+                  className="settings-btn settings-btn--primary"
                   disabled={busy}
-                  onClick={() => run('rotate')}
+                  onClick={() => run('generate')}
                 >
-                  Rotacionar
+                  Gerar token
                 </button>
+              )}
+              {status.revoked && (
                 <button
                   type="button"
-                  className="settings-btn settings-btn--danger"
+                  className="settings-btn settings-btn--primary"
                   disabled={busy}
-                  onClick={() => run('revoke')}
+                  onClick={() => run('generate')}
                 >
-                  Revogar
+                  Gerar novo token
                 </button>
-              </>
-            )}
-            {!status.configured && !status.revoked && (
-              <button
-                type="button"
-                className="settings-btn"
-                disabled={busy}
-                onClick={() => run('generate')}
-              >
-                Gerar token
-              </button>
-            )}
-            {status.revoked && (
-              <button
-                type="button"
-                className="settings-btn"
-                disabled={busy}
-                onClick={() => run('generate')}
-              >
-                Gerar novo token
-              </button>
-            )}
+              )}
+            </div>
           </div>
 
           {plaintext && (
@@ -181,7 +202,7 @@ export function ArmsSection(): React.ReactElement {
             </div>
           )}
 
-          {error && <p className="arms__error">{error}</p>}
+          {error && <p className="arms__error" role="alert">{error}</p>}
 
           <p className="settings-detail__hint">
             Mantenha o Nexus aberto enquanto usa a conexão. Você pode revogar o acesso a qualquer momento.

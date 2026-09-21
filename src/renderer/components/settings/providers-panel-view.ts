@@ -140,6 +140,46 @@ export function providerStatusLabel(
   return { label: 'conectado', tone: 'ok' };
 }
 
+/**
+ * Faixa de estados do detalhe (DESIGN.md §12): instalação, sessão e
+ * credencial são fatos distintos — a disponibilidade fica no toggle ao lado.
+ */
+export interface ProviderStateChip {
+  readonly id: 'install' | 'session' | 'credential';
+  readonly label: string;
+  readonly tone: 'ok' | 'warn' | 'muted' | 'danger' | 'live';
+}
+
+export function providerStateChips(
+  provider: ProviderSettingsInfo,
+  health?: ProviderAccountHealth,
+): ProviderStateChip[] {
+  const chips: ProviderStateChip[] = [];
+  if (isLocalCliProvider(provider)) {
+    chips.push({
+      id: 'install',
+      label: provider.installed ? 'instalada' : 'não instalada',
+      tone: provider.installed ? 'ok' : 'warn',
+    });
+  }
+  if (
+    provider.installed &&
+    provider.enabled &&
+    (isExternalLoginProvider(provider) || health?.authState !== undefined)
+  ) {
+    const status = providerStatusLabel(provider, health);
+    chips.push({ id: 'session', label: status.label, tone: status.tone });
+  }
+  if (provider.keyEnvVar || provider.hasKey) {
+    chips.push({
+      id: 'credential',
+      label: provider.hasKey ? 'chave configurada' : 'sem chave',
+      tone: provider.hasKey ? 'ok' : 'warn',
+    });
+  }
+  return chips;
+}
+
 export type ProviderRowCta =
   | { readonly kind: 'login'; readonly label: string }
   | { readonly kind: 'verify'; readonly label: string }

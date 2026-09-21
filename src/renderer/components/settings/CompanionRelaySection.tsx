@@ -6,6 +6,7 @@ import type {
 } from '../../../shared/companion-relay-types';
 import { useProductFlags } from '../../lib/use-product-flags';
 import { MainGeneratedQr } from '../MainGeneratedQr';
+import { EmptyState } from '../ActionCard';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
 
 const PRODUCTION_RELAY_URL = 'wss://relay.nexuside.app';
@@ -78,14 +79,13 @@ function LinkRow({
         </span>
       </div>
       <p className="settings-list__detail">{hint}</p>
-      <div className="settings-row" style={{ marginBottom: 8 }}>
+      <div className="relay-link__row">
         <input
-          className="settings-input"
+          className="settings-input relay-link__input"
           readOnly
           value={link}
           aria-label={`${title} (link de pareamento)`}
           onFocus={(e) => e.currentTarget.select()}
-          style={{ flex: 1 }}
         />
         <button
           type="button"
@@ -185,7 +185,7 @@ export function CompanionRelaySection() {
   const chip = connectionChip(info);
 
   return (
-    <section>
+    <section className="sys-section">
       <SettingsSectionTitle>Acesso pelo celular</SettingsSectionTitle>
       <p className="settings-detail__hint">
         Conecte seu celular pelo QR code ou link. A conexão tem criptografia
@@ -193,48 +193,53 @@ export function CompanionRelaySection() {
       </p>
 
       {!flagOn && !running ? (
-        <div className="settings-field">
-          <div className="settings-pill-row">
-            <span className="settings-chip settings-chip--warn">recurso desligado</span>
-          </div>
-          <p className="settings-field__note">
-            Ative Acesso pelo celular em Experimental para iniciar uma conexão.
-            O serviço exige um endereço de servidor configurado.
-          </p>
-        </div>
+        <EmptyState
+          icon="link"
+          title="Acesso pelo celular desligado"
+          body={
+            <p>
+              Ative Acesso pelo celular em Experimental para iniciar uma
+              conexão. O serviço exige um endereço de servidor configurado.
+            </p>
+          }
+        />
       ) : bridgeMissing ? (
-        <div className="settings-field">
-          <p className="settings-field__note settings-field__note--warning">
-            Não foi possível acessar o serviço de conexão. Reabra o app e tente novamente.
-          </p>
-        </div>
+        <EmptyState
+          icon="warn"
+          title="Serviço de conexão indisponível"
+          role="alert"
+          body={
+            <p>
+              Não foi possível acessar o serviço de conexão. Reabra o app e
+              tente novamente.
+            </p>
+          }
+        />
       ) : (
         <>
           {!flagOn && running && (
-            <p className="settings-field__note settings-field__note--warning">
+            <p className="settings-field__note settings-field__note--warning" role="status">
               O recurso foi desligado com uma conexão ativa. Isso
               bloqueia novas sessões; use <strong>Parar</strong> abaixo para
               encerrar a atual agora.
             </p>
           )}
-          <div className="settings-pill-row">
-            <span className={`settings-chip settings-chip--${chip.tone}`}>{chip.label}</span>
-            {running && (
-              <span className="settings-chip">
-                {info?.guestCount ?? 0} dispositivos conectados
-              </span>
-            )}
-          </div>
 
-          <div className="settings-field">
+          <div className="relay-conn">
+            <div className="relay-conn__row">
+              <span className={`settings-chip settings-chip--${chip.tone}`}>{chip.label}</span>
+              {running && (
+                <span className="settings-chip">
+                  {info?.guestCount ?? 0} dispositivos conectados
+                </span>
+              )}
+            </div>
             <p className="settings-field__note">
               Relay NexusIDE protegido. O endereço é configurado automaticamente;
               quem receber o QR Full controla a sessão.
             </p>
-            <div className="settings-row" style={{ marginBottom: 0 }}>
-              <code className="settings-input" style={{ flex: 1, display: 'flex', alignItems: 'center' }}>
-                {PRODUCTION_RELAY_URL}
-              </code>
+            <div className="relay-conn__row">
+              <code className="relay-conn__url">{PRODUCTION_RELAY_URL}</code>
               {running ? (
                 <button
                   type="button"
@@ -242,7 +247,7 @@ export function CompanionRelaySection() {
                   disabled={busy}
                   onClick={() => void stop()}
                 >
-                  Parar
+                  {busy ? 'Trabalhando…' : 'Parar'}
                 </button>
               ) : (
                 <button
@@ -251,7 +256,7 @@ export function CompanionRelaySection() {
                   disabled={busy}
                   onClick={() => void start()}
                 >
-                  Iniciar Companion
+                  {busy ? 'Iniciando…' : 'Iniciar Companion'}
                 </button>
               )}
               <button
@@ -276,26 +281,16 @@ export function CompanionRelaySection() {
               <p
                 className="settings-field__note settings-field__note--warning"
                 role="note"
-                style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}
               >
-                <span className="settings-chip settings-chip--danger">segurança</span>
-                <span>
-                  Quem tiver o <strong>link full controla</strong> a sessão
-                  (mesma autoridade do desktop). O <strong>link view só
-                  observa</strong> — nada de escrita. Só compartilhe o full com
-                  quem deve pilotar.
-                </span>
+                <span className="settings-chip settings-chip--danger">segurança</span>{' '}
+                Quem tiver o <strong>link full controla</strong> a sessão
+                (mesma autoridade do desktop). O <strong>link view só
+                observa</strong> — nada de escrita. Só compartilhe o full com
+                quem deve pilotar.
               </p>
 
-              <div
-                style={{
-                  display: 'flex',
-                  gap: 16,
-                  flexWrap: 'wrap',
-                  margin: '10px 0 4px',
-                }}
-              >
-                <figure style={{ margin: 0 }}>
+              <div className="relay-qrs">
+                <figure className="relay-qr">
                   <div className="settings-qr">
                     <MainGeneratedQr
                       svg={info.qrSvgFull}
@@ -303,11 +298,12 @@ export function CompanionRelaySection() {
                       label="QR do link full (controle da sessão)"
                     />
                   </div>
-                  <figcaption className="settings-field__note" style={{ marginTop: 6 }}>
-                    Full · controle
+                  <figcaption>
+                    <span className="settings-chip settings-chip--danger">controle</span>
+                    QR Full
                   </figcaption>
                 </figure>
-                <figure style={{ margin: 0 }}>
+                <figure className="relay-qr">
                   <div className="settings-qr">
                     <MainGeneratedQr
                       svg={info.qrSvgView}
@@ -315,8 +311,9 @@ export function CompanionRelaySection() {
                       label="QR do link view (somente leitura)"
                     />
                   </div>
-                  <figcaption className="settings-field__note" style={{ marginTop: 6 }}>
-                    View · somente leitura
+                  <figcaption>
+                    <span className="settings-chip settings-chip--ok">somente leitura</span>
+                    QR View
                   </figcaption>
                 </figure>
               </div>

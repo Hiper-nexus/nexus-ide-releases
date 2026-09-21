@@ -4,6 +4,7 @@ import type {
   RemoteSshHostView,
 } from '../../../shared/remote-types';
 import { ActionCard, EmptyState } from '../ActionCard';
+import { PixelIcon } from '../PixelIcon';
 
 const EMPTY_FORM = {
   alias: '',
@@ -128,11 +129,23 @@ export function RemoteServersSection({
             className="settings-btn"
             onClick={() => void detect()}
             disabled={importing}
+            aria-busy={importing}
           >
-            Detectar do ~/.ssh/config
+            {importing ? 'Detectando…' : 'Detectar do ~/.ssh/config'}
           </button>
         </div>
       </div>
+
+      {status ? (
+        <p className="settings-card__note" role="status">
+          {status}
+        </p>
+      ) : null}
+      {error ? (
+        <p className="settings-error" role="alert">
+          {error}
+        </p>
+      ) : null}
 
       {empty ? (
         <EmptyState
@@ -168,6 +181,7 @@ export function RemoteServersSection({
       {showForm ? (
         <form
           className="settings-form-grid settings-form-grid--remote"
+          aria-label="Conectar servidor pelo apelido"
           onSubmit={(event) => {
             event.preventDefault();
             void connect();
@@ -180,6 +194,7 @@ export function RemoteServersSection({
               value={form.alias}
               placeholder="vps-1"
               autoComplete="off"
+              required
               onChange={(e) => setForm((current) => ({ ...current, alias: e.target.value }))}
             />
           </label>
@@ -190,6 +205,7 @@ export function RemoteServersSection({
               value={form.host}
               placeholder="só desta vez"
               autoComplete="off"
+              required
               onChange={(e) => setForm((current) => ({ ...current, host: e.target.value }))}
             />
           </label>
@@ -200,6 +216,7 @@ export function RemoteServersSection({
               value={form.user}
               placeholder="ubuntu"
               autoComplete="off"
+              required
               onChange={(e) => setForm((current) => ({ ...current, user: e.target.value }))}
             />
           </label>
@@ -211,6 +228,7 @@ export function RemoteServersSection({
               value={form.password}
               placeholder="não é guardada"
               autoComplete="new-password"
+              required
               onChange={(e) => setForm((current) => ({ ...current, password: e.target.value }))}
             />
           </label>
@@ -255,55 +273,56 @@ export function RemoteServersSection({
       {hosts.length > 0 ? (
         <ul className="settings-list" aria-label="Servidores pelo apelido">
           {hosts.map((host) => (
-            <li key={host.alias} className="settings-list__item">
-              <div className="settings-list__head">
-                <span className="settings-list__title settings-list__title--mono">
-                  {host.alias}
+            <li key={host.alias} className="settings-list__item catalog-item">
+              <div className="catalog-item__head">
+                <span className="catalog-item__ident" aria-hidden="true">
+                  <PixelIcon name="link" size={12} />
                 </span>
-                <span
-                  className={`settings-chip ${
-                    host.ready ? 'settings-chip--ok' : 'settings-chip--warn'
-                  }`}
-                >
-                  {host.source === 'imported' ? 'importado' : 'nexus'}
-                </span>
-                <span
-                  className={`settings-status-pill ${
-                    host.ready ? 'settings-status-pill--ok' : 'settings-status-pill--warn'
-                  }`}
-                >
-                  {host.ready ? 'Pronto' : 'Incompleto'}
-                </span>
+                <div className="catalog-item__titles">
+                  <span className="catalog-item__name catalog-item__name--mono">
+                    {host.alias}
+                  </span>
+                  <span className="catalog-item__meta">
+                    {host.user ? `usuário ${host.user}` : 'usuário do Host'}
+                    {host.port ? ` · porta ${host.port}` : ''}
+                    {host.hasNexusKey
+                      ? ' · chave Nexus'
+                      : ' · reusa a IdentityFile já declarada'}
+                  </span>
+                </div>
+                <div className="catalog-item__actions">
+                  <span className="settings-chip">
+                    {host.source === 'imported' ? 'importado' : 'nexus'}
+                  </span>
+                  <span
+                    className={`settings-status-pill ${
+                      host.ready
+                        ? 'settings-status-pill--ok'
+                        : 'settings-status-pill--warn'
+                    }`}
+                  >
+                    <span
+                      className={`catalog-dot ${host.ready ? 'catalog-dot--ok' : 'catalog-dot--warn'}`}
+                      aria-hidden="true"
+                    />
+                    {host.ready ? 'Pronto' : 'Incompleto'}
+                  </span>
+                  <button
+                    type="button"
+                    className="settings-btn settings-btn--sm"
+                    onClick={() => void remove(host.alias)}
+                    aria-label={`Remover ${host.alias}`}
+                  >
+                    Remover
+                  </button>
+                </div>
               </div>
-              <p className="settings-list__detail">
-                {host.user ? `usuário ${host.user}` : 'usuário do Host'}
-                {host.hasNexusKey ? ' · chave Nexus' : ' · reusa a IdentityFile já declarada'}
-                {' · '}
+              <p className="settings-list__detail catalog-item__command">
                 <code>ssh {host.alias}</code>
               </p>
-              <div className="settings-action-row">
-                <button
-                  type="button"
-                  className="settings-btn"
-                  onClick={() => void remove(host.alias)}
-                >
-                  Remover
-                </button>
-              </div>
             </li>
           ))}
         </ul>
-      ) : null}
-
-      {status ? (
-        <p className="settings-card__note" role="status">
-          {status}
-        </p>
-      ) : null}
-      {error ? (
-        <p className="settings-error" role="alert">
-          {error}
-        </p>
       ) : null}
     </section>
   );

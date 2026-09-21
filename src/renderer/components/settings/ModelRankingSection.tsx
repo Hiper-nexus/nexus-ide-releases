@@ -27,6 +27,7 @@ import {
   sortEntriesWithQuota,
 } from "./ranking-view";
 import { ProviderLogo } from "../ProviderLogo";
+import { PixelIcon } from "../PixelIcon";
 import { SettingsSectionTitle } from "./SettingsSectionTitle";
 
 /**
@@ -101,6 +102,9 @@ function RaceChart({
             className={`rank-race__row ${active ? "rank-race__row--active" : ""} ${live ? "" : "rank-race__row--ghost"}`}
             onClick={() => onSelect(entry.id)}
             aria-pressed={active}
+            aria-label={`${index + 1}º: ${entry.modelId} — ${SORT_LABELS[sort]} ${
+              score === null ? "sem nota" : score
+            }${live ? "" : ", ferramenta não detectada nesta máquina"}`}
             title={
               live
                 ? `Selecionar ${entry.modelId} (CLI ${entry.adapterId} detectada)`
@@ -117,22 +121,25 @@ function RaceChart({
               <strong>{entry.modelId}</strong>
               <span className="rank-race__adapter">
                 {entry.adapterId}
-                {live ? (
-                  <span className="rank-race__live"> · live</span>
-                ) : (
-                  <span className="rank-race__missing"> · off-machine</span>
-                )}
+                <span
+                  className={`rank-race__presence ${
+                    live
+                      ? "rank-race__presence--live"
+                      : "rank-race__presence--missing"
+                  }`}
+                >
+                  <span className="rank-race__presence-dot" aria-hidden="true" />
+                  {live ? "instalada" : "não detectada"}
+                </span>
                 <span className="rank-race__band">
-                  {" "}
-                  · {OPERATIONAL_BAND_LABELS[bandOfEntry(entry)]}
+                  {OPERATIONAL_BAND_LABELS[bandOfEntry(entry)]}
                 </span>
                 {estimate !== null && (
                   <span
                     className="rank-estimate"
                     title="scores de fixture offline, não auditoria real"
                   >
-                    {" "}
-                    · {estimate}
+                    {estimate}
                   </span>
                 )}
               </span>
@@ -413,6 +420,7 @@ export function ModelRankingSection() {
   const [sort, setSort] = useState<SortKey>("overall");
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [onlyInstalled, setOnlyInstalled] = useState(false);
 
   const providers = useProviderStore((s) => s.providers);
   const installed = useMemo(() => {
@@ -462,8 +470,10 @@ export function ModelRankingSection() {
 
   const rows = useMemo(() => {
     if (!snapshot) return [];
-    return sortEntries(snapshot.entries, sort);
-  }, [snapshot, sort]);
+    const sorted = sortEntries(snapshot.entries, sort);
+    if (!onlyInstalled) return sorted;
+    return sorted.filter((row) => installed.has(row.adapterId));
+  }, [snapshot, sort, onlyInstalled, installed]);
 
   const selected = useMemo(() => {
     if (!snapshot || !selectedId) return null;
@@ -494,12 +504,12 @@ export function ModelRankingSection() {
 
       {loading && (
         <p className="rank-ops__status" role="status">
-          Carregando comparação…
+          <PixelIcon name="bolt" size={11} /> Carregando comparação…
         </p>
       )}
       {error && (
         <p className="rank-ops__status rank-ops__status--error" role="alert">
-          Falha ao carregar ranking: {error}
+          <PixelIcon name="warn" size={11} /> Falha ao carregar ranking: {error}
         </p>
       )}
 
@@ -548,6 +558,7 @@ export function ModelRankingSection() {
             role="group"
             aria-label="Dimensão da corrida"
           >
+            <span className="rank-ops__sort-label">Ordenar por:</span>
             {(Object.keys(SORT_LABELS) as SortKey[]).map((key) => (
               <button
                 key={key}
@@ -559,6 +570,14 @@ export function ModelRankingSection() {
                 {SORT_LABELS[key]}
               </button>
             ))}
+            <label className="rank-ops__only-installed">
+              <input
+                type="checkbox"
+                checked={onlyInstalled}
+                onChange={(event) => setOnlyInstalled(event.target.checked)}
+              />
+              Só ferramentas instaladas
+            </label>
           </div>
           <p className="rank-ops__mission-hint">{SORT_MISSION[sort]}</p>
 
@@ -601,10 +620,28 @@ export function ModelRankingSection() {
                   </span>
                   <span className="rank-ops__detail-adapter">
                     {selected.adapterId}
-                    {installed.has(selected.adapterId)
-                      ? " · ferramenta instalada"
-                      : " · ferramenta não detectada"}
+                    <span
+                      className={`rank-race__presence ${
+                        installed.has(selected.adapterId)
+                          ? "rank-race__presence--live"
+                          : "rank-race__presence--missing"
+                      }`}
+                    >
+                      <span
+                        className="rank-race__presence-dot"
+                        aria-hidden="true"
+                      />
+                      {installed.has(selected.adapterId)
+                        ? "ferramenta instalada"
+                        : "ferramenta não detectada"}
+                    </span>
                   </span>
+                </span>
+                <span
+                  className="rank-ops__detail-rank"
+                  title="Posição no ranking geral"
+                >
+                  #{selected.rank ?? "—"}
                 </span>
               </div>
               <div className="rank-ops__dims">

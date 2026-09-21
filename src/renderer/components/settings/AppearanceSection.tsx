@@ -3,15 +3,17 @@ import {
   type TerminalThemeId,
 } from '../../../shared/settings-types';
 import { TERMINAL_THEMES } from '../../styles/terminal-theme';
+import { PALETTES } from '../../styles/ui-theme';
 import { useSettingsStore } from '../../state/settings-store';
 import { OperatorSprite } from '../OperatorSprite';
+import { PixelIcon } from '../PixelIcon';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
 
 /**
- * Aparência global: modo pixel (identidade retrô) e paleta do app.
- * O tema de cores segue os presets do terminal e restyla toda a UI via
- * applyUiTheme — fonte/shell do xterm ficam em Terminal.
+ * Aparência global: paleta do app (tema), modo pixel (identidade retrô) e
+ * atalho para o mascote de mesa. O tema restyla toda a UI via applyUiTheme —
+ * fonte/shell do xterm ficam em Terminal.
  */
 
 export function AppearanceSection() {
@@ -27,65 +29,123 @@ export function AppearanceSection() {
         Escolha as cores do app e personalize o estilo da interface.
       </p>
 
-      <div className="settings-appearance__preview" aria-hidden>
-        <OperatorSprite
-          mood="idle"
-          size={32}
-          tier="RECRUTA"
-          branch="base"
-          skin={null}
-        />
-        <span className="settings-appearance__preview-copy">
-          <strong>Operador</strong>
-          <span>Personalize seu perfil e escolha um mascote.</span>
-        </span>
-      </div>
-
-      <label className="settings-toggle-card">
-        <span className="settings-toggle-card__copy">
-          <strong>Modo pixel</strong>
-          <span>
-            Letras e cantos em estilo retrô. Você pode desativar quando quiser.
-          </span>
-        </span>
-        <input
-          type="checkbox"
-          checked={ui.pixelMode}
-          aria-label="Ativar modo pixel"
-          onChange={(e) => void updateUi({ pixelMode: e.target.checked })}
-        />
-      </label>
-
       <div className="settings-appearance__block">
-        <p className="settings-appearance__label">Paleta do app</p>
+        <p className="settings-appearance__label">Tema de cores</p>
         <p className="settings-field__note settings-appearance__note">
-          As cores são aplicadas ao app e aos terminais abertos.
+          Cada cartão mostra a paleta real do app. A escolha aplica ao app
+          inteiro e aos terminais abertos.
         </p>
-        <div className="settings-theme-grid">
+        <div
+          className="settings-theme-grid"
+          role="radiogroup"
+          aria-label="Tema de cores"
+        >
           {TERMINAL_THEME_IDS.map((id: TerminalThemeId) => {
             const entry = TERMINAL_THEMES[id];
+            const palette = PALETTES[id];
+            const active = terminal.themeId === id;
             return (
               <button
                 key={id}
                 type="button"
-                className={`settings-theme ${terminal.themeId === id ? 'settings-theme--active' : ''}`}
-                style={{
-                  background: String(entry.theme.background),
-                  color: String(entry.theme.foreground),
-                }}
-                aria-pressed={terminal.themeId === id}
+                className={`settings-theme ${active ? 'settings-theme--active' : ''}`}
+                role="radio"
+                aria-checked={active}
                 aria-label={`Paleta ${entry.label}`}
                 onClick={() => void updateTerminal({ themeId: id })}
               >
-                {entry.label}
+                <span
+                  className="settings-theme__preview"
+                  style={{
+                    background: palette.bg,
+                    borderColor: palette.borderStrong,
+                  }}
+                  aria-hidden
+                >
+                  <span
+                    className="settings-theme__chrome"
+                    style={{
+                      background: palette.bgBar,
+                      borderBottomColor: palette.border,
+                    }}
+                  >
+                    <i style={{ background: palette.textFaint }} />
+                    <i style={{ background: palette.textFaint }} />
+                    <i style={{ background: palette.accent }} />
+                  </span>
+                  <span className="settings-theme__lines">
+                    <i
+                      className="settings-theme__line"
+                      style={{ background: palette.text }}
+                    />
+                    <i
+                      className="settings-theme__line settings-theme__line--dim"
+                      style={{ background: palette.textDim }}
+                    />
+                    <i
+                      className="settings-theme__cta"
+                      style={{ background: palette.btnPrimary }}
+                    />
+                  </span>
+                </span>
+                <span className="settings-theme__foot">
+                  <span className="settings-theme__name">{entry.label}</span>
+                  {active && (
+                    <span className="settings-theme__current">
+                      <PixelIcon name="check" size={9} />
+                      em uso
+                    </span>
+                  )}
+                </span>
               </button>
             );
           })}
         </div>
       </div>
 
-      <div className="settings-row">
-        <button type="button" className="settings-btn" onClick={() => useProductNavigationStore.getState().openSettings('pets')}>Abrir Meus pets</button>
+      <div className="settings-appearance__block">
+        <p className="settings-appearance__label">Estilo</p>
+        <label className="settings-toggle-card">
+          <span className="settings-toggle-card__copy">
+            <strong>Modo pixel</strong>
+            <span>
+              Letras e cantos em estilo retrô. Você pode desativar quando quiser.
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            checked={ui.pixelMode}
+            aria-label="Ativar modo pixel"
+            onChange={(e) => void updateUi({ pixelMode: e.target.checked })}
+          />
+        </label>
+      </div>
+
+      <div className="settings-appearance__block">
+        <p className="settings-appearance__label">Mascote</p>
+        <div className="settings-appearance__preview">
+          <OperatorSprite
+            mood="idle"
+            size={32}
+            tier="RECRUTA"
+            branch="base"
+            skin={null}
+          />
+          <span className="settings-appearance__preview-copy">
+            <strong>Operador</strong>
+            <span>
+              Seu pet de mesa acompanha as missões. Troque o mascote, crie um
+              com IA ou importe spritesheets em Meus pets.
+            </span>
+          </span>
+          <button
+            type="button"
+            className="settings-btn settings-appearance__preview-cta"
+            onClick={() => useProductNavigationStore.getState().openSettings('pets')}
+          >
+            Abrir Meus pets
+          </button>
+        </div>
       </div>
     </section>
   );

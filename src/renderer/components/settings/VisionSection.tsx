@@ -131,7 +131,7 @@ export function VisionSection() {
   }, []);
 
   return (
-    <section>
+    <section className="sys-section">
       <div className="settings-detail__split-head">
         <div>
           <SettingsSectionTitle>Captura de tela</SettingsSectionTitle>
@@ -150,8 +150,11 @@ export function VisionSection() {
         pending={pending}
         onToggle={() => void toggleConsent()}
       />
-      {error && <p className="settings-error">{error}</p>}
+      {error && <p className="settings-error" role="alert">{error}</p>}
 
+      <div className="sys-subhead">
+        <h4 className="sys-subhead__title">Estado</h4>
+      </div>
       <div className="ops-metric-grid">
         <MetricTile
           label="Permissão de captura"
@@ -172,13 +175,7 @@ export function VisionSection() {
         />
       </div>
 
-      <div className="settings-row">
-        <button className="settings-btn" type="button" onClick={() => void captureMetadata()}>
-          Testar captura local
-        </button>
-        <button className="settings-btn" type="button" onClick={() => void refreshPermission()}>
-          Verificar permissão
-        </button>
+      <div className="sys-actions">
         {permission !== 'granted' && window.nexus.platform === 'darwin' && (
           <button
             className="settings-btn settings-btn--primary"
@@ -188,6 +185,12 @@ export function VisionSection() {
             Pedir permissão ao macOS
           </button>
         )}
+        <button className="settings-btn" type="button" onClick={() => void captureMetadata()}>
+          Testar captura local
+        </button>
+        <button className="settings-btn" type="button" onClick={() => void refreshPermission()}>
+          Verificar permissão
+        </button>
         {permission === 'denied' && window.nexus.platform === 'darwin' && (
           <button className="settings-btn" type="button" onClick={() => void openScreenSettings()}>
             Abrir Ajustes do Sistema
@@ -195,12 +198,15 @@ export function VisionSection() {
         )}
       </div>
       {permission !== 'granted' && window.nexus.platform === 'darwin' && (
-        <p className="settings-field__note">
-          Peça permissão, ative o NexusIDE em Gravação de Tela nos Ajustes
-          do Sistema e reabra o app.
-        </p>
+        <ol className="vision-steps">
+          <li>Peça permissão ao macOS — o sistema registra o NexusIDE.</li>
+          <li>Nos Ajustes do Sistema, ative o NexusIDE em Gravação de Tela.</li>
+          <li>Reabra o app para a captura funcionar.</li>
+        </ol>
       )}
-      {captureStatus && <p className="settings-field__note">{captureStatus}</p>}
+      {captureStatus && (
+        <p className="settings-field__note" role="status">{captureStatus}</p>
+      )}
     </section>
   );
 }

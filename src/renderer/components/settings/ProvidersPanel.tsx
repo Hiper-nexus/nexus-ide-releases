@@ -21,12 +21,15 @@ import { PixelIcon } from '../PixelIcon';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
 import {
   filterProvidersForTab,
+  isExternalLoginProvider,
   isLocalCliProvider,
+  isRemoteProvider,
   modelCountLabel,
   pickDefaultSelection,
   PROVIDERS_HUB_TABS,
   providerOpFeedback,
   providerRowCta,
+  providerStateChips,
   providerStatusLabel,
   selectModelValue,
   tabDetectedLabel,
@@ -405,6 +408,7 @@ function ProviderRow({
         <span className="prov-row__identity">
           <span className="prov-row__name">{provider.label}</span>
           <span className={`prov-row__status prov-row__status--${status.tone}`}>
+            <span className="prov-row__status-dot" aria-hidden="true" />
             {status.label}
           </span>
         </span>
@@ -418,6 +422,9 @@ function ProviderRow({
             </span>
           )}
         </span>
+        <span className="prov-row__chevron" aria-hidden="true">
+          <PixelIcon name="chevron" size={10} />
+        </span>
       </button>
 
     </div>
@@ -427,12 +434,15 @@ function ProviderRow({
 function ProviderDetail({
   provider,
   authStatus,
+  needsRelogin,
   onAuthStatusChange,
   batchBusy,
   onLiveRow,
 }: {
   provider: ProviderSettingsInfo;
   authStatus: AdapterAuthStatus | null;
+  /** Conta guardada com sessão morta: o chip de sessão acusa expirada. */
+  needsRelogin: boolean;
   onAuthStatusChange: (status: AdapterAuthStatus) => void;
   /** Lote (instalar/atualizar todas) em curso: os botões locais cedem. */
   batchBusy: boolean;
@@ -539,6 +549,10 @@ function ProviderDetail({
   };
 
   const modelValue = selectModelValue(provider);
+  const stateChips = providerStateChips(provider, {
+    needsRelogin,
+    authState: authStatus?.state ?? 'checking',
+  });
 
   return (
     <section className="prov-detail" data-adapter={provider.adapterId} aria-label={`Configurar ${provider.label}`}>
@@ -552,11 +566,33 @@ function ProviderDetail({
           <h4 className="prov-detail__title">{provider.label}</h4>
           <p className="prov-detail__sub">
             {provider.installed
-              ? 'Instalada nesta máquina'
+              ? isLocalCliProvider(provider) && provider.detectedBin
+                ? <>CLI local · binário <code>{provider.detectedBin}</code></>
+                : isRemoteProvider(provider)
+                  ? 'Provider remoto — acesso por chave de API.'
+                  : 'Disponível nesta máquina.'
               : 'Não encontrado no PATH — instale a CLI ou aponte o binário em Avançado'}
           </p>
+          {stateChips.length > 0 && (
+            <div
+              className="prov-state-chips"
+              role="list"
+              aria-label={`Estado de ${provider.label}`}
+            >
+              {stateChips.map((chip) => (
+                <span
+                  key={chip.id}
+                  role="listitem"
+                  className={`prov-state-chip prov-state-chip--${chip.tone}`}
+                >
+                  <span className="prov-state-chip__dot" aria-hidden="true" />
+                  {chip.label}
+                </span>
+              ))}
+            </div>
+          )}
           {!provider.installed && (
-            <div className="prov-detail__install-actions" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '6px' }}>
+            <div className="prov-detail__install-actions">
               {provider.canAutoInstall && (
                 <button
                   type="button"
@@ -587,7 +623,7 @@ function ProviderDetail({
             </div>
           )}
           {provider.installed && provider.canAutoInstall && (
-            <div className="prov-detail__install-actions" style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginTop: '6px' }}>
+            <div className="prov-detail__install-actions">
               <button
                 type="button"
                 className="settings-btn settings-btn--ghost prov-detail__install"
@@ -618,7 +654,7 @@ function ProviderDetail({
             <span className="prov__switch-thumb" />
           </span>
           <span className="prov__toggle-label">
-            {provider.enabled ? 'Ativa' : 'Desligada'}
+            {provider.enabled ? 'Disponível' : 'Desligada'}
           </span>
         </label>
       </header>
@@ -685,7 +721,10 @@ function ProviderDetail({
           aria-expanded={advancedOpen}
           onClick={() => setAdvancedOpen((v) => !v)}
         >
-          <span>{advancedOpen ? '▾' : '▸'} Avançado</span>
+          <span>
+            <PixelIcon name={advancedOpen ? 'chevron-down' : 'chevron'} size={10} />{' '}
+            Avançado
+          </span>
           <span className="prov-advanced__hint">
             binário, args, permissões, roteamento
           </span>
@@ -855,6 +894,17 @@ export function ProvidersPanel() {
     [tab, providers, visible.length],
   );
 
+  // Contagem por aba = tamanho do catálogo daquele tipo (independe do filtro
+  // "Mostrar ausentes"), para a pessoa ver o que cada aba cobre antes de abrir.
+  const tabCounts = useMemo(
+    () => ({
+      clis: providers.filter(isLocalCliProvider).length,
+      login: providers.filter(isExternalLoginProvider).length,
+      remote: providers.filter(isRemoteProvider).length,
+    }),
+    [providers],
+  );
+
   async function refreshCatalog() {
     setRefreshing(true);
     try {
@@ -994,7 +1044,7 @@ export function ProvidersPanel() {
           </p>
         </div>
         {(missingInstallable.length > 0 || updatableInstalled.length > 0) && (
-          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          <div className="prov-hub__header-actions">
             {missingInstallable.length > 0 && (
               <button
                 type="button"
@@ -1027,6 +1077,7 @@ export function ProvidersPanel() {
 
       <div className="prov-hub__api-keys-banner" role="region" aria-label="Acesso rápido às chaves de API">
         <div className="prov-hub__api-keys-banner-info">
+          <PixelIcon name="key" size={12} className="prov-hub__api-keys-banner-icon" />
           <span className="prov-hub__api-keys-banner-badge">Novo</span>
           <span className="prov-hub__api-keys-banner-text">
             Procurando onde inserir chaves de API (Gemini, Grok, Groq, OpenAI, Claude...)?
@@ -1037,12 +1088,12 @@ export function ProvidersPanel() {
           className="settings-btn settings-btn--sm"
           onClick={() => useProductNavigationStore.getState().openSettings('api-keys')}
         >
-          Gerenciar chaves de API →
+          Gerenciar chaves de API <PixelIcon name="arrow-right" size={10} />
         </button>
       </div>
       {provisionSummary && (
-        <p className="settings-field__note" role="status">
-          {provisionSummary}
+        <p className="settings-field__note prov-hub__notice" role="status">
+          <PixelIcon name="check" size={11} /> {provisionSummary}
         </p>
       )}
 
@@ -1065,6 +1116,7 @@ export function ProvidersPanel() {
             onClick={() => setTab(id)}
           >
             {TAB_LABELS[id]}
+            <span className="prov-hub__tab-count">{tabCounts[id]}</span>
           </button>
         ))}
       </div>
@@ -1111,9 +1163,12 @@ export function ProvidersPanel() {
         <div className="prov-hub__workspace">
         {visible.length === 0 ? (
           <div className="prov-hub__empty" data-testid="prov-empty">
+            <span className="prov-hub__empty-icon" aria-hidden="true">
+              <PixelIcon name={tab === 'remote' ? 'link' : 'agent'} size={16} />
+            </span>
             {tab === 'clis' ? (
               <>
-                <p>
+                <p className="prov-hub__empty-title">
                   Nenhuma ferramenta de IA encontrada neste computador.
                   Escolha uma para instalar ou use Reexaminar CLIs se já instalou uma.
                 </p>
@@ -1134,9 +1189,9 @@ export function ProvidersPanel() {
                 )}
               </>
             ) : tab === 'remote' ? (
-              <p>Nenhum provider remoto/API configurado neste build.</p>
+              <p className="prov-hub__empty-title">Nenhum provider remoto/API configurado neste build.</p>
             ) : (
-              <p>
+              <p className="prov-hub__empty-title">
                 Nenhuma CLI com login de assinatura nesta lista.
                 {showAbsent
                   ? ''
@@ -1168,6 +1223,7 @@ export function ProvidersPanel() {
           <ProviderDetail
             key={selected.adapterId}
             provider={selected}
+            needsRelogin={reloginByAdapter.has(selected.adapterId)}
             authStatus={authStatuses === null ? null : authStatuses.find(
               (status) => status.adapterId === selected.adapterId,
             ) ?? { adapterId: selected.adapterId, state: selected.authState ?? 'unknown', detail: 'Não foi possível verificar a conexão.' }}
@@ -1189,7 +1245,7 @@ export function ProvidersPanel() {
             role="status"
             data-testid="prov-login-notice"
           >
-            {catalogNotice}
+            <PixelIcon name="warn" size={11} /> {catalogNotice}
           </p>
         )}
       </div>

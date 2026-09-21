@@ -255,6 +255,8 @@ export function AccountSection() {
 
       <div
         className={`account__identity ${licenseLoading ? 'account__identity--loading' : ''} ${isLoggedIn ? 'account__identity--in' : ''}`}
+        role="group"
+        aria-label="Identidade da conta"
       >
         <span className="account__avatar" aria-hidden="true">
           <PixelIcon name="user" size={22} />
@@ -265,16 +267,24 @@ export function AccountSection() {
               ? 'Carregando conta…'
               : (license?.email ?? 'Conta local (sem login)')}
           </span>
-          <span className="account__status">
-            Plano <strong>{planName(currentPlan)}</strong>
-            {licenseUnconfirmed
-              ? ' · não confirmado agora'
-              : license?.status === 'active' && license.renewsAt
-                ? ` · renova em ${new Date(license.renewsAt).toLocaleDateString()}`
-                : !isLoggedIn && !licenseLoading
-                  ? ' · só nesta máquina'
-                  : ''}
-          </span>
+          <div className="account__meta">
+            <span
+              className={`account__plan-tag${currentPlan !== 'free' ? ' account__plan-tag--paid' : ''}`}
+            >
+              {planName(currentPlan)}
+            </span>
+            <span className="account__status">
+              {licenseUnconfirmed
+                ? 'Assinatura não confirmada agora'
+                : license?.status === 'active'
+                  ? license.renewsAt
+                    ? `Renova em ${new Date(license.renewsAt).toLocaleDateString('pt-BR')}`
+                    : 'Assinatura ativa'
+                  : !isLoggedIn
+                    ? 'Só nesta máquina'
+                    : ''}
+            </span>
+          </div>
           {licenseUnconfirmed && (
             <span
               className="account__status"
@@ -305,7 +315,10 @@ export function AccountSection() {
       {!licenseLoading && !isLoggedIn && (
         <div className="account__login" role="region" aria-label="Entrar na conta Nexus">
           <div className="account__login-copy">
-            <span className="account__zone-title">Entrar</span>
+            <span className="account__zone-title">
+              <PixelIcon name="user" size={13} />
+              Entrar
+            </span>
             <p className="account__zone-hint">
               Acesse seu plano e sua equipe em outras máquinas. As conexões
               com ferramentas de IA são gerenciadas em Providers.
@@ -348,7 +361,10 @@ export function AccountSection() {
         <div className="account__team" role="region" aria-label="Time">
           <div className="account__team-head">
             <div>
-              <span className="account__zone-title">Time</span>
+              <span className="account__zone-title">
+                <PixelIcon name="users" size={13} />
+                Time
+              </span>
               <p className="account__zone-hint">
                 Compartilhe equipes e fluxos de trabalho com as pessoas do seu plano.
               </p>
@@ -389,6 +405,7 @@ export function AccountSection() {
                           <button
                             type="button"
                             className="settings-btn settings-btn--danger account__member-action"
+                            aria-label={`Remover ${label} do time`}
                             onClick={() =>
                               void removeMember(member.accountId, label)
                             }
@@ -423,7 +440,13 @@ export function AccountSection() {
               </div>
               {inviteUrl && (
                 <div className="account__invite">
-                  <code className="account__invite-url">{inviteUrl}</code>
+                  <input
+                    className="settings-input account__invite-url"
+                    value={inviteUrl}
+                    readOnly
+                    aria-label="Link de convite do time"
+                    onFocus={(e) => e.currentTarget.select()}
+                  />
                   <button
                     type="button"
                     className="settings-btn"
@@ -475,7 +498,10 @@ export function AccountSection() {
 
       <div className="account__plans-zone" role="region" aria-label="Planos">
         <div className="account__plans-head">
-          <span className="account__zone-title">Planos</span>
+          <span className="account__zone-title">
+            <PixelIcon name="star" size={13} />
+            Planos
+          </span>
           <p className="account__zone-hint">
             Compare os planos. Ao assinar, o pagamento abre no navegador
             pelo Stripe.
@@ -488,6 +514,7 @@ export function AccountSection() {
               <article
                 key={plan.id}
                 className={`account__plan ${plan.id === 'pro' ? 'account__plan--featured' : ''} ${isCurrent ? 'account__plan--current' : ''}`}
+                aria-current={isCurrent || undefined}
               >
                 <div className="account__plan-head">
                   <span className="account__plan-title-row">
@@ -507,7 +534,10 @@ export function AccountSection() {
                   ))}
                 </ul>
                 {isCurrent ? (
-                  <span className="account__plan-badge">plano atual</span>
+                  <span className="account__plan-badge">
+                    <PixelIcon name="check" size={10} />
+                    plano atual
+                  </span>
                 ) : plan.id === 'free' ? (
                   <span className="account__plan-badge account__plan-badge--muted">
                     incluso

@@ -134,4 +134,19 @@ describe('JevDecisionsSection', () => {
       verdict: 'right',
     });
   });
+
+  it('labels the surface columns and keeps the verdict legible as a pill', async () => {
+    const host = mount(<JevDecisionsSection />);
+    await act(async () => Promise.resolve());
+
+    const head = host.querySelector('.jev-table__head');
+    expect(head).toBeTruthy();
+    expect(head!.textContent).toContain('Superfície');
+    expect(head!.textContent).toContain('Custo');
+    expect(head!.textContent).toContain('Feedback');
+
+    const votes = [...host.querySelectorAll('.jev-vote__btn')];
+    expect(votes.length).toBeGreaterThan(0);
+    expect(votes.every((btn) => btn.querySelector('.pixel-icon'))).toBe(true);
+  });
 });

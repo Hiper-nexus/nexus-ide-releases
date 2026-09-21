@@ -437,4 +437,28 @@ describe('ProvidersPanel hub', () => {
     expect(window.nexus.providers.installCli).toHaveBeenCalledWith('kimi', 'install');
     act(() => root.unmount());
   });
+
+  it('writes the distinct provider states next to the identity, not as color alone', async () => {
+    vi.mocked(window.nexus.providers.authStatus).mockResolvedValue([
+      { adapterId: 'claude', state: 'ok', detail: 'Sessão verificada.' },
+    ]);
+    const { host, root } = mount();
+    await act(async () => { await Promise.resolve(); });
+
+    const chips = host.querySelector('.prov-detail .prov-state-chips');
+    expect(chips).toBeTruthy();
+    expect(chips!.textContent).toContain('instalada');
+    expect(chips!.textContent).toContain('conectado');
+    // O toggle diz o estado de disponibilidade em texto, não só pela posição.
+    expect(host.querySelector('.prov-detail .prov__toggle-label')?.textContent)
+      .toBe('Disponível');
+    act(() => root.unmount());
+  });
+
+  it('announces each tab coverage with a visible catalog count', () => {
+    const { host, root } = mount();
+    const counts = [...host.querySelectorAll('.prov-hub__tab .prov-hub__tab-count')];
+    expect(counts.map((c) => c.textContent)).toEqual(['3', '3', '1']);
+    act(() => root.unmount());
+  });
 });

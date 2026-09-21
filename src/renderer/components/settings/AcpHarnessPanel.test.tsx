@@ -89,6 +89,46 @@ describe('AcpHarnessPanel', () => {
     expect(host.textContent).toContain('Agente escolhido: Claude Code (ACP)');
   });
 
+  it('marks the active transport and explains terminal mode without ACP jargon', async () => {
+    let saved: OrchSettings = {
+      ...DEFAULT_ORCH_SETTINGS,
+      agentTransport: 'cli-pty',
+    };
+    const orchSet = vi.fn(async (patch: Partial<OrchSettings>) => {
+      saved = { ...saved, ...patch };
+      return saved;
+    });
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: { settings: { orchGet: vi.fn(async () => saved), orchSet } },
+    });
+
+    const host = mount();
+    await flushEffects();
+
+    // Terminal ativo: badge "Em uso" no card e status explícito no modo cli-pty.
+    const activeOption = host.querySelector('.acp-harness__option--active');
+    expect(activeOption?.textContent).toContain('Terminal da ferramenta');
+    expect(activeOption?.textContent).toContain('Em uso');
+    expect(host.querySelector('.acp-harness__status')?.textContent).toContain(
+      'Os agentes abrem no terminal da própria ferramenta.',
+    );
+
+    const acpButton = host.querySelector<HTMLButtonElement>(
+      'button[aria-pressed="false"]:not([title])',
+    );
+    act(() => acpButton?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    await flushEffects();
+
+    // ACP ativo: o selo migra de card e o catálogo mostra identidade visual.
+    const options = [...host.querySelectorAll('.acp-harness__option')];
+    expect(options[1]?.textContent).toContain('Em uso');
+    expect(options[0]?.textContent).not.toContain('Em uso');
+    expect(
+      host.querySelectorAll('.acp-harness__list .provider-logo').length,
+    ).toBeGreaterThan(0);
+  });
+
   it('validates and saves a custom BYOH definition instead of only editing local state', async () => {
     let saved: OrchSettings = {
       ...DEFAULT_ORCH_SETTINGS,

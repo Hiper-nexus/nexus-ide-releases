@@ -199,6 +199,13 @@ export function JevDecisionsSection() {
               role="list"
               aria-label="Consumo por superfície"
             >
+              <div className="jev-table__head" aria-hidden="true">
+                <span>Superfície</span>
+                <span className="jev-cell--num">Chamadas</span>
+                <span className="jev-cell--num">Custo</span>
+                <span>Últimos 30 dias</span>
+                <span>Feedback</span>
+              </div>
               {surfaces.map(([surface, bucket]) => (
                 <div key={surface} className="jev-surface" role="listitem">
                   <div className="jev-surface__grid">
@@ -301,6 +308,7 @@ export function JevDecisionsSection() {
                         aria-pressed={row.feedback === 'right'}
                         onClick={() => void sendFeedback(row.id, 'right')}
                       >
+                        <PixelIcon name="check" size={10} />
                         Certo
                       </button>
                       <button
@@ -309,6 +317,7 @@ export function JevDecisionsSection() {
                         aria-pressed={row.feedback === 'wrong'}
                         onClick={() => void sendFeedback(row.id, 'wrong')}
                       >
+                        <PixelIcon name="close" size={10} />
                         Errado
                       </button>
                     </div>

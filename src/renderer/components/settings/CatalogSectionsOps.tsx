@@ -1,5 +1,6 @@
 import { ProviderLogo } from '../ProviderLogo';
-import { useEffect, useState } from 'react';
+import { PixelIcon } from '../PixelIcon';
+import { Fragment, useEffect, useState } from 'react';
 import type {
   AgentSpecWriteRequest,
   RecipeOverlayResult,
@@ -96,29 +97,134 @@ export function RecipesSection() {
   }
 
   return (
-    <section className="settings-recipes">
-      <SettingsSectionTitle>Fluxos de trabalho</SettingsSectionTitle>
-      <p className="settings-detail__hint">
-        Equipes sugeridas para este projeto e seus requisitos.
-      </p>
-
-      <div className="settings-pill-row">
+    <section className="catalog-settings settings-recipes">
+      <header className="catalog-settings__header">
+        <div>
+          <SettingsSectionTitle>Fluxos de trabalho</SettingsSectionTitle>
+          <p className="settings-detail__hint">
+            Equipes sugeridas para este projeto e seus requisitos.
+          </p>
+        </div>
         <button
+          type="button"
           className="settings-btn"
           onClick={() => setRefreshTick((tick) => tick + 1)}
           disabled={loading}
         >
-          {loading ? 'Atualizando…' : 'Verificar recursos'}
+          {loading ? 'Verificando…' : 'Verificar recursos'}
         </button>
+      </header>
+
+      {loading && !overlay ? (
+        <p className="catalog-settings__loading" role="status">
+          Verificando recursos do projeto…
+        </p>
+      ) : null}
+      {!loading && overlay === null ? (
+        <div className="catalog-settings__error" role="alert">
+          <PixelIcon name="warn" className="catalog-status__icon" />
+          <p>Não foi possível verificar os recursos do projeto.</p>
+          <button
+            type="button"
+            className="settings-btn"
+            onClick={() => setRefreshTick((tick) => tick + 1)}
+          >
+            Tentar novamente
+          </button>
+        </div>
+      ) : null}
+
+      <div className="settings-pill-row">
         {(overlay?.stacks.length ? overlay.stacks : ['workspace']).map((stack) => (
           <span key={stack} className="settings-chip">
             {stack}
           </span>
         ))}
         <span className={`settings-chip ${overlay?.ok ? 'settings-chip--ok' : 'settings-chip--warn'}`}>
-          {overlay?.ok ? 'Recursos verificados' : `${issues.length} pendências`}
+          {overlay === null
+            ? loading ? 'Verificando…' : 'Verificação indisponível'
+            : overlay.ok ? 'Recursos verificados' : `${issues.length} pendências`}
         </span>
       </div>
+
+      {suggestions.length > 0 && (
+        <div className="arsenal-band">
+          <h4 className="arsenal-band__label">
+            Equipes sugeridas
+            <span className="arsenal-band__count">{suggestions.length}</span>
+          </h4>
+          <ul className="settings-list">
+            {suggestions.map((recipe) => (
+              <li key={recipe.id} className="settings-list__item catalog-item">
+                <div className="catalog-item__head">
+                  <span className="catalog-item__ident" aria-hidden="true">
+                    <PixelIcon name="users" size={12} />
+                  </span>
+                  <div className="catalog-item__titles">
+                    <span className="catalog-item__name">{recipe.title}</span>
+                    <span className="catalog-item__meta settings-recipes__roles">
+                      {recipe.agents.join(' · ')}
+                    </span>
+                  </div>
+                  {recipe.gaps.length > 0 ? (
+                    <div className="catalog-item__actions">
+                      <span className="settings-chip settings-chip--warn">
+                        {recipe.gaps.length} {recipe.gaps.length === 1 ? 'pendência' : 'pendências'}
+                      </span>
+                    </div>
+                  ) : null}
+                </div>
+                <details className="catalog-item__details"><summary>Recursos necessários</summary>
+                <p className="settings-list__detail">
+                  Ferramentas: {recipe.tools.join(', ')}
+                </p>
+                {recipe.gaps.length > 0 && (
+                  <p className="settings-list__detail">Pendências: {recipe.gaps.join(', ')}</p>
+                )}
+                </details>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {issues.length === 0 ? (
+        overlay ? (
+          <p className="settings-detail__hint">
+            Nenhuma pendência nas ferramentas e instruções declaradas.
+          </p>
+        ) : null
+      ) : (
+        <details className="catalog-item__details catalog-item__details--band">
+          <summary>Ver {issues.length} pendências de configuração</summary>
+          <ul className="settings-list">
+            {issues.map((issue, index) => (
+              <li key={`${issue.squadId}-${issue.agentId}-${issue.ref}-${index}`} className="settings-list__item catalog-item">
+                <div className="catalog-item__head">
+                  <span className="catalog-item__ident" aria-hidden="true">
+                    <PixelIcon name="warn" size={12} />
+                  </span>
+                  <div className="catalog-item__titles">
+                    <span className="catalog-item__name">
+                      {issue.agentName ?? issue.squadName}
+                    </span>
+                    <span className="catalog-item__meta">
+                      {issue.squadName} · {issue.ref}
+                    </span>
+                  </div>
+                  <div className="catalog-item__actions">
+                    <span className={`settings-chip ${issue.severity === 'error' ? 'settings-chip--danger' : 'settings-chip--warn'}`}>
+                      {issue.severity === 'error' ? 'erro' : 'aviso'}
+                    </span>
+                    <span className="settings-chip">{issue.field}</span>
+                  </div>
+                </div>
+                <p className="settings-list__detail">{issue.message}</p>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
 
       <details className="settings-recipes__advanced">
         <summary>Tecnologias do projeto</summary>
@@ -140,27 +246,6 @@ export function RecipesSection() {
 
       </details>
 
-      {suggestions.length > 0 && (
-        <ul className="settings-list">
-          {suggestions.map((recipe) => (
-            <li key={recipe.id} className="settings-list__item">
-              <div className="settings-list__head">
-                <span className="settings-list__title">{recipe.title}</span>
-                <span className="settings-recipes__roles">{recipe.agents.join(' · ')}</span>
-              </div>
-              <details className="settings-advanced-field"><summary>Recursos necessários</summary>
-              <p className="settings-list__detail">
-                Ferramentas: {recipe.tools.join(', ')}
-              </p>
-              {recipe.gaps.length > 0 && (
-                <p className="settings-list__detail">Pendências: {recipe.gaps.join(', ')}</p>
-              )}
-              </details>
-            </li>
-          ))}
-        </ul>
-      )}
-
       <details className="settings-advanced-field"><summary>Criar um agente personalizado</summary>
       <div className="settings-list__item">
         <div className="settings-list__head">
@@ -178,24 +263,28 @@ export function RecipesSection() {
             className="settings-input"
             value={agentSpec.name}
             placeholder="Nome do agente"
+            aria-label="Nome do agente"
             onChange={(e) => setAgentSpec((prev) => ({ ...prev, name: e.target.value }))}
           />
           <input
             className="settings-input"
             value={agentSpec.model}
             placeholder="modelo"
+            aria-label="Modelo"
             onChange={(e) => setAgentSpec((prev) => ({ ...prev, model: e.target.value }))}
           />
           <input
             className="settings-input"
             value={agentSpec.effort}
             placeholder="Nível de raciocínio"
+            aria-label="Nível de raciocínio"
             onChange={(e) => setAgentSpec((prev) => ({ ...prev, effort: e.target.value }))}
           />
           <input
             className="settings-input"
             value={agentSpec.category}
             placeholder="categoria"
+            aria-label="Categoria"
             onChange={(e) => setAgentSpec((prev) => ({ ...prev, category: e.target.value }))}
           />
         </div>
@@ -203,6 +292,7 @@ export function RecipesSection() {
           className="settings-input"
           value={(agentSpec.tools ?? []).join(', ')}
           placeholder="Ferramentas separadas por vírgula"
+          aria-label="Ferramentas separadas por vírgula"
           onChange={(e) =>
             setAgentSpec((prev) => ({
               ...prev,
@@ -214,12 +304,13 @@ export function RecipesSection() {
           className="settings-textarea"
           value={agentSpec.systemPrompt}
           placeholder="Instruções do agente"
+          aria-label="Instruções do agente"
           onChange={(e) =>
             setAgentSpec((prev) => ({ ...prev, systemPrompt: e.target.value }))
           }
         />
         {agentSpecResult && (
-          <p className="settings-list__detail">{agentSpecResult}</p>
+          <p className="settings-list__detail" role="status">{agentSpecResult}</p>
         )}
       </div>
       </details>
@@ -236,30 +327,6 @@ export function RecipesSection() {
             </li>
           ))}
         </ul></details>
-      )}
-
-      {issues.length === 0 ? (
-        <p className="settings-detail__hint">
-          Nenhuma pendência nas ferramentas e instruções declaradas.
-        </p>
-      ) : (
-        <details className="settings-advanced-field"><summary>Ver {issues.length} pendências de configuração</summary>
-        <ul className="settings-list">
-          {issues.map((issue, index) => (
-            <li key={`${issue.squadId}-${issue.agentId}-${issue.ref}-${index}`} className="settings-list__item">
-              <div className="settings-list__head">
-                <span className="settings-list__title">
-                  {issue.agentName ?? issue.squadName}
-                </span>
-                <span className="settings-chip settings-chip--warn">{issue.field}</span>
-              </div>
-              <p className="settings-list__detail">{issue.message}</p>
-              <p className="settings-list__detail">
-                {issue.squadName} · {issue.ref}
-              </p>
-            </li>
-          ))}
-        </ul>        </details>
       )}
     </section>
   );
@@ -286,48 +353,76 @@ const SHORTCUT_GROUP_ORDER: ShortcutGroupId[] = [
   'surfaces',
 ];
 
+/**
+ * Teclas físicas ganham cap kbd; alternativas separadas por " / " viram duas
+ * caps com separador anunciado como "ou" para leitor de tela.
+ */
+function KeyCombo({ keys }: { keys: string }) {
+  const parts = keys.split(' / ');
+  return (
+    <span className="catalog-shortcut__keys">
+      {parts.map((part, index) => (
+        <Fragment key={index}>
+          {index > 0 ? (
+            <>
+              <span className="catalog-shortcut__alt" aria-hidden="true">/</span>
+              <span className="settings-visually-hidden">ou</span>
+            </>
+          ) : null}
+          <kbd className="catalog-kbd">{part}</kbd>
+        </Fragment>
+      ))}
+    </span>
+  );
+}
+
 export function ShortcutsSection() {
   return (
     <section className="catalog-settings catalog-settings--shortcuts">
       <SettingsSectionTitle>Atalhos</SettingsSectionTitle>
       <p className="settings-detail__hint">
-        Atalhos de teclado e mouse. Abra esta lista com (
-        {formatShortcut('mod', '/')}).
+        Atalhos de teclado e mouse. Abra esta lista com{' '}
+        <kbd className="catalog-kbd">{formatShortcut('mod', '/')}</kbd>.
       </p>
-      {SHORTCUT_GROUP_ORDER.map((groupId) => (
-        <div key={groupId}>
-          <p className="arsenal-band__label">
-            {SHORTCUT_GROUP_LABELS[groupId]}
-          </p>
-          <ul className="settings-list">
-            {shortcutsInGroup(groupId).map((shortcut) => (
-              <li key={shortcut.id} className="settings-list__item">
-                <div className="settings-list__head">
-                  <span className="settings-list__title settings-list__title--mono">
-                    {shortcut.keys}
-                  </span>
-                  <span className="settings-list__detail">
-                    {shortcut.action}
-                  </span>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ))}
-      <p className="arsenal-band__label">Mouse</p>
-      <ul className="settings-list">
-        {GESTURES.map((gesture) => (
-          <li key={gesture.keys} className="settings-list__item">
-            <div className="settings-list__head">
-              <span className="settings-list__title settings-list__title--mono">
-                {gesture.keys}
-              </span>
-              <span className="settings-list__detail">{gesture.action}</span>
-            </div>
-          </li>
-        ))}
-      </ul>
+      {SHORTCUT_GROUP_ORDER.map((groupId) => {
+        const shortcuts = shortcutsInGroup(groupId);
+        return (
+          <div key={groupId} className="arsenal-band">
+            <h4 className="arsenal-band__label">
+              {SHORTCUT_GROUP_LABELS[groupId]}
+              <span className="arsenal-band__count">{shortcuts.length}</span>
+            </h4>
+            <ul className="settings-list">
+              {shortcuts.map((shortcut) => (
+                <li key={shortcut.id} className="settings-list__item">
+                  <div className="settings-list__head">
+                    <KeyCombo keys={shortcut.keys} />
+                    <span className="settings-list__detail">
+                      {shortcut.action}
+                    </span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        );
+      })}
+      <div className="arsenal-band">
+        <h4 className="arsenal-band__label">
+          Mouse
+          <span className="arsenal-band__count">{GESTURES.length}</span>
+        </h4>
+        <ul className="settings-list">
+          {GESTURES.map((gesture) => (
+            <li key={gesture.keys} className="settings-list__item">
+              <div className="settings-list__head">
+                <span className="catalog-gesture">{gesture.keys}</span>
+                <span className="settings-list__detail">{gesture.action}</span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      </div>
     </section>
   );
 }
@@ -429,7 +524,12 @@ export function RemoteSection() {
             className={`settings-status-pill ${
               info?.running ? 'settings-status-pill--ok' : 'settings-status-pill--warn'
             }`}
+            role="status"
           >
+            <span
+              className={`catalog-dot ${info?.running ? 'catalog-dot--ok' : 'catalog-dot--warn'}`}
+              aria-hidden="true"
+            />
             {info?.running ? 'Online' : 'Offline'}
           </span>
         </div>
@@ -576,7 +676,7 @@ export function RemoteSection() {
               ) : (
                 hosts.map((host) => (
                   <option key={host.alias} value={host.alias}>
-                    {host.alias}
+                    {host.alias}{host.user ? ` — ${host.user}` : ''}
                   </option>
                 ))
               )}
@@ -616,9 +716,16 @@ export function RemoteSection() {
           </label>
         </div>
 
-        {result ? (
+        {result?.ok ? (
           <p className="settings-card__note" role="status">
-            {result.ok ? result.attachCommand : result.error}
+            {result.attachCommand
+              ? <>Sessão pronta — anexe com <code>{result.attachCommand}</code></>
+              : 'Sessão criada.'}
+          </p>
+        ) : null}
+        {result && !result.ok ? (
+          <p className="settings-error" role="alert">
+            {result.error}
           </p>
         ) : null}
         {terminalError ? (

@@ -61,6 +61,16 @@ describe('HarnessSection', () => {
     expect(host.querySelector('input[aria-label="Buscar recursos"]')).toBeTruthy();
     expect(host.querySelector('select[aria-label="Tipo de recurso"]')).toBeTruthy();
   });
+  it('marks each resource kind and group size explicitly', async () => {
+    const host = mount(); await flush();
+    expect(host.querySelector('.harness-settings__kind--agent')?.textContent).toBe('Agente');
+    expect(host.querySelector('.harness-settings__kind--skill')?.textContent).toBe('Skill');
+    const counts = [...host.querySelectorAll('.harness-settings__group-count')].map(c => c.textContent);
+    expect(counts).toEqual(['1', '1']);
+    const arsenalTab = host.querySelector('#harness-tab-arsenal');
+    expect(arsenalTab?.querySelector('.harness-settings__tab-count')?.textContent).toBe('2');
+    expect(host.querySelector('.harness-settings__filters')?.getAttribute('role')).toBe('group');
+  });
   it('retries a failed inventory request and then shows the installed resources', async () => {
     vi.mocked(window.nexus.orch.listInstalledCatalog).mockRejectedValueOnce(new Error('offline'));
     const host = mount(); await flush();

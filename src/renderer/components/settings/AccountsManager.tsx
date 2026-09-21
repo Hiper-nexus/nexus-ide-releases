@@ -682,7 +682,11 @@ export function AccountsManager({
           )}
         </div>
         {!isRenaming && (
-          <div className="acct__actions">
+          <div
+            className="acct__actions"
+            role="group"
+            aria-label={`Ações da conta ${account.label}`}
+          >
             {account.needsRelogin && loginCommand && (
               <button
                 type="button"
@@ -881,8 +885,15 @@ export function AccountsManager({
               </div>
               {standby.length === 0 && panel.showReservaEmpty ? (
                 <div className="acct__empty" role="status">
-                  Nenhuma reserva. Entre com outra conta ou cole uma API key
-                  para o failover.
+                  <PixelIcon
+                    name="users"
+                    size={14}
+                    className="acct__empty-icon"
+                  />
+                  <span>
+                    Nenhuma reserva. Entre com outra conta ou cole uma API key
+                    para o failover.
+                  </span>
                 </div>
               ) : (
                 <ul className="acct__list" aria-label="Contas reserva">

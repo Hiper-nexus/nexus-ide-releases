@@ -8,6 +8,7 @@ import { useProviderStore } from '../../state/provider-store';
 import { useVoiceStore } from '../../voice/voice-store';
 import { ProviderLogo } from '../ProviderLogo';
 import { PixelIcon } from '../PixelIcon';
+import { EmptyState } from '../ActionCard';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
 
 export interface SystemApiKeyDef {
@@ -168,6 +169,35 @@ export const SYSTEM_API_KEYS: readonly SystemApiKeyDef[] = [
     placeholder: 'sk-or-...',
   },
 ];
+
+const CATEGORY_ORDER: readonly SystemApiKeyDef['category'][] = [
+  'core',
+  'voice',
+  'media',
+  'models',
+];
+
+const CATEGORY_META: Record<
+  SystemApiKeyDef['category'],
+  { title: string; hint: string }
+> = {
+  core: {
+    title: 'Essenciais',
+    hint: 'CLIs de código, voz principal e automação do Nexus.',
+  },
+  voice: {
+    title: 'Voz',
+    hint: 'Ditado e síntese de voz da assistente Jarvis.',
+  },
+  media: {
+    title: 'Estúdio de Mídia',
+    hint: 'Geração de imagens e vídeos.',
+  },
+  models: {
+    title: 'Modelos extras',
+    hint: 'Provedores adicionais de inferência e gateways.',
+  },
+};
 
 const VOICE_MANAGED_ENV_VARS = new Set([
   'GEMINI_API_KEY',
@@ -334,7 +364,7 @@ export function ApiKeysSection() {
         ...prev,
         [def.id]: {
           ok: result.ok,
-          message: `${result.ok ? '✓' : '✗'} ${result.detail}`,
+          message: result.detail,
         },
       }));
     } catch (err) {
@@ -342,7 +372,7 @@ export function ApiKeysSection() {
         ...prev,
         [def.id]: {
           ok: false,
-          message: `✗ ${err instanceof Error ? err.message : 'Falha no teste'}`,
+          message: err instanceof Error ? err.message : 'Falha no teste',
         },
       }));
     } finally {
@@ -366,6 +396,173 @@ export function ApiKeysSection() {
     return SYSTEM_API_KEYS.filter((k) => resolveKeyState(k).hasKey).length;
   }, [resolveKeyState]);
 
+  const renderKeyCard = (def: SystemApiKeyDef) => {
+    const state = resolveKeyState(def);
+    const draft = drafts[def.id] ?? '';
+    const isBusy = busyId === def.id || busyId === `test-${def.id}`;
+    const isTesting = busyId === `test-${def.id}`;
+    const itemFeedback = feedback?.id === def.id ? feedback : null;
+    const itemTestResult = testResult[def.id] ?? null;
+    const showPassword = visiblePassword[def.id] ?? false;
+    const credLink = credentialLinkForEnv(def.envVar) ?? {
+      label: def.docLabel,
+      url: def.docLink,
+    };
+
+    return (
+      <article
+        key={def.id}
+        className="api-key-card"
+        data-state={state.isEnv ? 'env' : state.hasKey ? 'saved' : 'missing'}
+        role="listitem"
+        aria-label={`Chave de ${def.title}`}
+      >
+        <header className="api-key-card__head">
+          <div className="api-key-card__title-row">
+            <div className="api-key-card__brand">
+              <ProviderLogo adapterId={def.logoId} label={def.title} size="sm" />
+              <div>
+                <h4 className="api-key-card__name">{def.title}</h4>
+                <code className="api-key-card__env">{def.envVar}</code>
+              </div>
+            </div>
+            <div className="api-key-card__status-badge">
+              {state.isEnv ? (
+                <span
+                  className="settings-chip api-key-card__chip api-key-card__chip--env"
+                  title="Lida da variável de ambiente do sistema"
+                >
+                  <span className="api-key-card__dot" aria-hidden />
+                  process.env
+                </span>
+              ) : state.hasKey ? (
+                <span className="settings-chip settings-chip--ok api-key-card__chip">
+                  <span className="api-key-card__dot" data-tone="ok" aria-hidden />
+                  Salva no Keychain
+                </span>
+              ) : (
+                <span className="settings-chip api-key-card__chip api-key-card__chip--dim">
+                  Não configurada
+                </span>
+              )}
+            </div>
+          </div>
+          <p className="api-key-card__desc">{def.description}</p>
+        </header>
+
+        <div className="api-key-card__body">
+          <div className="api-key-card__input-wrapper">
+            <input
+              className="settings-input api-key-card__input"
+              type={showPassword ? 'text' : 'password'}
+              aria-label={`Chave de API de ${def.title}`}
+              placeholder={
+                state.hasKey
+                  ? `Configurada (${state.masked ?? '••••'}). Cole nova para alterar`
+                  : def.placeholder || 'Cole sua chave de acesso aqui'
+              }
+              value={draft}
+              onChange={(e) =>
+                setDrafts((prev) => ({ ...prev, [def.id]: e.target.value }))
+              }
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && draft.trim() && !isBusy) {
+                  void handleSaveKey(def, draft);
+                }
+              }}
+              autoComplete="off"
+              spellCheck={false}
+              disabled={isBusy}
+            />
+            <button
+              type="button"
+              className="api-key-card__visibility-toggle"
+              title={showPassword ? 'Ocultar chave' : 'Mostrar chave digitada'}
+              aria-label={showPassword ? 'Ocultar chave digitada' : 'Mostrar chave digitada'}
+              aria-pressed={showPassword}
+              onClick={() =>
+                setVisiblePassword((prev) => ({ ...prev, [def.id]: !showPassword }))
+              }
+            >
+              <PixelIcon name={showPassword ? 'close' : 'vision'} size={12} />
+            </button>
+          </div>
+
+          <div className="api-key-card__actions">
+            <div className="api-key-card__action-buttons">
+              <button
+                type="button"
+                className="settings-btn settings-btn--primary settings-btn--sm"
+                onClick={() => void handleSaveKey(def, draft)}
+                disabled={isBusy || !draft.trim()}
+              >
+                {busyId === def.id ? 'Salvando…' : 'Salvar chave'}
+              </button>
+
+              {state.hasKey && (
+                <button
+                  type="button"
+                  className="settings-btn settings-btn--danger settings-btn--sm"
+                  onClick={() => void handleSaveKey(def, '')}
+                  disabled={isBusy}
+                >
+                  Remover
+                </button>
+              )}
+
+              {(def.adapterId || def.envVar === 'TYPESAFE_API_KEY') && state.hasKey && (
+                <button
+                  type="button"
+                  className="settings-btn settings-btn--sm"
+                  onClick={() => void handleTestKey(def)}
+                  disabled={isBusy}
+                >
+                  {isTesting ? 'Testando…' : 'Testar conexão'}
+                </button>
+              )}
+            </div>
+
+            <a
+              className="settings-link api-key-card__get-link"
+              href={credLink.url}
+              onClick={(e) => openExternalFromAnchor(e, credLink.url)}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Obter em {credLink.label} ↗
+            </a>
+          </div>
+
+          {itemFeedback && (
+            <p
+              className={`api-key-card__feedback ${
+                itemFeedback.ok ? 'api-key-card__feedback--ok' : 'api-key-card__feedback--err'
+              }`}
+              role={itemFeedback.ok ? 'status' : 'alert'}
+            >
+              <PixelIcon name={itemFeedback.ok ? 'check' : 'warn'} size={12} />
+              <span>{itemFeedback.message}</span>
+            </p>
+          )}
+
+          {itemTestResult && (
+            <p
+              className={`api-key-card__feedback ${
+                itemTestResult.ok
+                  ? 'api-key-card__feedback--ok'
+                  : 'api-key-card__feedback--err'
+              }`}
+              role={itemTestResult.ok ? 'status' : 'alert'}
+            >
+              <PixelIcon name={itemTestResult.ok ? 'check' : 'warn'} size={12} />
+              <span>{itemTestResult.message}</span>
+            </p>
+          )}
+        </div>
+      </article>
+    );
+  };
+
   return (
     <section className="settings-section api-keys-section">
       <header className="api-keys-section__header">
@@ -378,6 +575,7 @@ export function ApiKeysSection() {
         </div>
         <div className="api-keys-section__stats">
           <span className="settings-chip settings-chip--ok">
+            <PixelIcon name="check" size={10} />
             {configuredCount} de {SYSTEM_API_KEYS.length} configuradas
           </span>
           <span className="settings-chip" title="Armazenamento seguro pelo macOS Keychain">
@@ -406,159 +604,43 @@ export function ApiKeysSection() {
         )}
       </div>
 
-      <div className="api-keys-section__grid">
-        {filteredKeys.map((def) => {
-          const state = resolveKeyState(def);
-          const draft = drafts[def.id] ?? '';
-          const isBusy = busyId === def.id || busyId === `test-${def.id}`;
-          const isTesting = busyId === `test-${def.id}`;
-          const itemFeedback = feedback?.id === def.id ? feedback : null;
-          const itemTestResult = testResult[def.id] ?? null;
-          const showPassword = visiblePassword[def.id] ?? false;
-          const credLink = credentialLinkForEnv(def.envVar) ?? {
-            label: def.docLabel,
-            url: def.docLink,
-          };
-
+      {filteredKeys.length === 0 ? (
+        <EmptyState
+          icon="search"
+          title="Nenhum serviço encontrado"
+          body={`Nada corresponde a “${query.trim()}”. Limpe o filtro para ver todos os provedores.`}
+          action={
+            <button
+              type="button"
+              className="settings-btn"
+              onClick={() => setQuery('')}
+            >
+              Limpar filtro
+            </button>
+          }
+        />
+      ) : (
+        CATEGORY_ORDER.map((category) => {
+          const items = filteredKeys.filter((k) => k.category === category);
+          if (items.length === 0) return null;
+          const meta = CATEGORY_META[category];
           return (
-            <article key={def.id} className="api-key-card" aria-label={`Chave de ${def.title}`}>
-              <header className="api-key-card__head">
-                <div className="api-key-card__title-row">
-                  <div className="api-key-card__brand">
-                    <ProviderLogo adapterId={def.logoId} label={def.title} size="sm" />
-                    <div>
-                      <h4 className="api-key-card__name">{def.title}</h4>
-                      <code className="api-key-card__env">{def.envVar}</code>
-                    </div>
-                  </div>
-                  <div className="api-key-card__status-badge">
-                    {state.isEnv ? (
-                      <span className="settings-chip" title="Lida da variável de ambiente do sistema">
-                        process.env
-                      </span>
-                    ) : state.hasKey ? (
-                      <span className="settings-chip settings-chip--ok">
-                        ✓ Salva no Keychain
-                      </span>
-                    ) : (
-                      <span className="settings-chip api-key-card__chip--dim">
-                        Não configurada
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <p className="api-key-card__desc">{def.description}</p>
+            <section
+              key={category}
+              className="api-keys-group"
+              aria-label={meta.title}
+            >
+              <header className="api-keys-group__head">
+                <h4 className="api-keys-group__title">{meta.title}</h4>
+                <p className="api-keys-group__hint">{meta.hint}</p>
               </header>
-
-              <div className="api-key-card__body">
-                <div className="api-key-card__input-wrapper">
-                  <input
-                    className="settings-input api-key-card__input"
-                    type={showPassword ? 'text' : 'password'}
-                    placeholder={
-                      state.hasKey
-                        ? `Configurada (${state.masked ?? '••••'}). Cole nova para alterar`
-                        : def.placeholder || 'Cole sua chave de acesso aqui'
-                    }
-                    value={draft}
-                    onChange={(e) =>
-                      setDrafts((prev) => ({ ...prev, [def.id]: e.target.value }))
-                    }
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && draft.trim() && !isBusy) {
-                        void handleSaveKey(def, draft);
-                      }
-                    }}
-                    autoComplete="off"
-                    spellCheck={false}
-                    disabled={isBusy}
-                  />
-                  <button
-                    type="button"
-                    className="api-key-card__visibility-toggle"
-                    title={showPassword ? 'Ocultar chave' : 'Mostrar chave digitada'}
-                    onClick={() =>
-                      setVisiblePassword((prev) => ({ ...prev, [def.id]: !showPassword }))
-                    }
-                    tabIndex={-1}
-                  >
-                    <PixelIcon name={showPassword ? 'close' : 'sparkle'} size={12} />
-                  </button>
-                </div>
-
-                <div className="api-key-card__actions">
-                  <div className="api-key-card__action-buttons">
-                    <button
-                      type="button"
-                      className="settings-btn settings-btn--primary settings-btn--sm"
-                      onClick={() => void handleSaveKey(def, draft)}
-                      disabled={isBusy || !draft.trim()}
-                    >
-                      {busyId === def.id ? 'Salvando…' : 'Salvar chave'}
-                    </button>
-
-                    {state.hasKey && (
-                      <button
-                        type="button"
-                        className="settings-btn settings-btn--sm"
-                        onClick={() => void handleSaveKey(def, '')}
-                        disabled={isBusy}
-                      >
-                        Remover
-                      </button>
-                    )}
-
-                    {(def.adapterId || def.envVar === 'TYPESAFE_API_KEY') && state.hasKey && (
-                      <button
-                        type="button"
-                        className="settings-btn settings-btn--sm"
-                        onClick={() => void handleTestKey(def)}
-                        disabled={isBusy}
-                      >
-                        {isTesting ? 'Testando…' : 'Testar conexão'}
-                      </button>
-                    )}
-                  </div>
-
-                  <a
-                    className="settings-link api-key-card__get-link"
-                    href={credLink.url}
-                    onClick={(e) => openExternalFromAnchor(e, credLink.url)}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Obter em {credLink.label} ↗
-                  </a>
-                </div>
-
-                {itemFeedback && (
-                  <p
-                    className={`api-key-card__feedback ${
-                      itemFeedback.ok ? 'api-key-card__feedback--ok' : 'api-key-card__feedback--err'
-                    }`}
-                    role="status"
-                  >
-                    {itemFeedback.message}
-                  </p>
-                )}
-
-                {itemTestResult && (
-                  <p
-                    className={`api-key-card__feedback ${
-                      itemTestResult.ok
-                        ? 'api-key-card__feedback--ok'
-                        : 'api-key-card__feedback--err'
-                    }`}
-                    role="status"
-                  >
-                    {itemTestResult.message}
-                  </p>
-                )}
+              <div className="api-keys-section__grid" role="list">
+                {items.map(renderKeyCard)}
               </div>
-            </article>
+            </section>
           );
-        })}
-      </div>
+        })
+      )}
     </section>
   );
 }

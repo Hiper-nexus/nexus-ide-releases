@@ -69,13 +69,13 @@ export function ContextDraftsSection() {
   const pending = drafts ?? [];
 
   return (
-    <div className="settings-orchestrator" aria-busy={busyId !== null}>
-      <div className="settings-orchestrator__head">
-        <div>
-          <h4 className="settings-orchestrator__title">
+    <div className="sys-group" aria-busy={busyId !== null}>
+      <div className="sys-group__head">
+        <div className="sys-group__titles">
+          <h4 className="sys-group__title">
             Revisão de contexto pendente
           </h4>
-          <p className="settings-orchestrator__summary">
+          <p className="sys-group__hint">
             O agente propôs autoridade de contexto vinculada a fontes reais, mas
             não há um segundo provider para revisar. A sua aprovação vale como
             revisão independente e destrava o bootstrap.
@@ -90,30 +90,40 @@ export function ContextDraftsSection() {
           {error}
         </p>
       )}
-      {note && <p className="settings-field__note">{note}</p>}
-      {pending.map((draft) => (
-        <div key={draft.id} className="settings-field">
-          <span>
-            <strong>{draft.targetPath}</strong>
-            {` · proposto por ${draft.authorProvider}`}
-            {draft.missionId ? ` · missão ${draft.missionId}` : ''}
-          </span>
-          <details>
-            <summary>Ver conteúdo proposto</summary>
-            <pre>{draft.content}</pre>
-          </details>
-          <button
-            type="button"
-            className="settings-btn settings-btn--primary"
-            disabled={busyId !== null}
-            onClick={() => void approve(draft)}
-          >
-            {busyId === draft.id
-              ? 'Aplicando…'
-              : 'Revisar e aprovar contexto'}
-          </button>
-        </div>
-      ))}
+      {note && (
+        <p className="settings-field__note" role="status">
+          {note}
+        </p>
+      )}
+      <div className="sys-group__body">
+        {pending.map((draft) => (
+          <div key={draft.id} className="context-draft">
+            <div className="context-draft__head">
+              <span className="context-draft__path">{draft.targetPath}</span>
+              <span className="context-draft__meta">
+                proposto por {draft.authorProvider}
+                {draft.missionId ? ` · missão ${draft.missionId}` : ''}
+              </span>
+            </div>
+            <details>
+              <summary>Ver conteúdo proposto</summary>
+              <pre>{draft.content}</pre>
+            </details>
+            <div className="context-draft__actions">
+              <button
+                type="button"
+                className="settings-btn settings-btn--primary"
+                disabled={busyId !== null}
+                onClick={() => void approve(draft)}
+              >
+                {busyId === draft.id
+                  ? 'Aplicando…'
+                  : 'Revisar e aprovar contexto'}
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

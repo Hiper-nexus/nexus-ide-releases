@@ -13,7 +13,6 @@ import {
   type PetSheet,
 } from '../../../shared/pet-types';
 import { OperatorSprite } from '../OperatorSprite';
-import { ActionCard } from '../ActionCard';
 import { CustomPetSprite } from '../../pet/CustomPetSprite';
 import { SheetPetSprite } from '../../pet/SheetPetSprite';
 import { filterPaletteActions } from '../../lib/command-palette-filter';
@@ -646,7 +645,7 @@ export function PetSection() {
   };
 
   return (
-    <div className="settings-appearance__block">
+    <div className="settings-appearance__block settings-pets">
       <p className="settings-appearance__label">Pet de mesa</p>
       <p className="settings-field__note settings-appearance__note">
         Um mascote acompanha suas missões na área de trabalho.
@@ -666,108 +665,28 @@ export function PetSection() {
         />
       </label>
 
-          {installed && installed.length > 0 && (
-            <div className="settings-pet-library settings-pet-library--mine">
-              <div className="settings-pet-library__head">
-                <p className="settings-appearance__label">
-                  Meus pets ({installed.length})
-                </p>
-                <span className="settings-pet-library__path" title="Pasta local">
-                  ~/.codex/pets
-                </span>
-              </div>
-              <p className="settings-field__note">
-                Criados no Pet Studio. Clique para usar · × para apagar do
-                disco. O companion só muda quando você escolher.
-              </p>
-              <div className="settings-pet-library__grid" role="list">
-                {installed.map((entry) => (
-                  <LibraryPetCard
-                    key={entry.id}
-                    entry={entry}
-                    busy={installedBusyId === entry.id}
-                    active={
-                      installedActiveId === entry.id && prefs.preset === 'sheet'
-                    }
-                    onPick={() => void onApplyInstalledPet(entry.id)}
-                    onDelete={
-                      petApi.installedDelete
-                        ? () => void onDeleteInstalledPet(entry)
-                        : undefined
-                    }
-                    loadPreview={
-                      petApi.installedPreview
-                        ? (id) => petApi.installedPreview!(id)
-                        : undefined
-                    }
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div className="settings-pet-import" aria-label="Criar e importar pets">
-            <p className="settings-appearance__label">Criar e importar</p>
-
-            <div className="settings-row">
-              {petApi.pickImage && <button type="button" className="settings-btn settings-btn--primary" disabled={hatchBusy} onClick={() => void onHatchPet()}>{hatchBusy ? 'Preparando revisão…' : 'Criar pet com IA'}</button>}
-              <button type="button" className="settings-btn" onClick={() => void onPickSheetNative()}>Importar pet</button>
-            </div>
-            <details className="settings-advanced-field"><summary>Como criar e importar</summary>
-              <p className="settings-field__note">A criação com IA usa uma foto e começa após revisar a missão. Para importar, escolha uma imagem de poses do Codex ou petdex.</p>
-            </details>
-            <input
-              ref={sheetRef}
-              type="file"
-              accept="image/png,image/webp,image/jpeg"
-              hidden
-              onChange={(e) => {
-                void onPickSheet(e.target.files?.[0]);
-                e.target.value = '';
-              }}
-            />
-          </div>
-      <>
-          <details className="settings-advanced-field"><summary>Opções de exibição do mascote</summary>
-          <label className="settings-toggle-card">
-            <span className="settings-toggle-card__copy">
-              <strong>Dormir</strong>
-              <span>Silencia balões e avisos; o sprite apaga o visor.</span>
-            </span>
-            <input
-              type="checkbox"
-              checked={prefs.sleeping}
-              aria-label="Pet dormindo"
-              onChange={(e) => patch({ sleeping: e.target.checked })}
-            />
-          </label>
-
-          <label className="settings-toggle-card">
-            <span className="settings-toggle-card__copy">
-              <strong>Fundo sólido</strong>
-              <span>
-                Cartão opaco em vez de transparência — necessário em alguns
-                Linux sem compositor ARGB.
-              </span>
-            </span>
-            <input
-              type="checkbox"
-              checked={prefs.solidBackground}
-              aria-label="Pet com fundo sólido"
-              onChange={(e) => patch({ solidBackground: e.target.checked })}
-            />
-          </label>
-
-          <div className="settings-pet-grid" role="radiogroup" aria-label="Pet">
-            {PET_PRESETS.map((preset) => {
-              const disabled =
-                (preset === 'custom' && !prefs.customGrid) ||
-                (preset === 'sheet' && !prefs.sheet);
-              const removable =
-                (preset === 'custom' && prefs.customGrid) ||
-                (preset === 'sheet' && prefs.sheet);
-              return (
-                <div className="settings-pet-wrap" key={preset}>
+      <div className="settings-pets__group">
+        <p className="settings-appearance__label">Aparência do mascote</p>
+        <div
+          className="settings-pet-grid"
+          role="radiogroup"
+          aria-label="Aparência do mascote"
+        >
+          {PET_PRESETS.map((preset) => {
+            const disabled =
+              (preset === 'custom' && !prefs.customGrid) ||
+              (preset === 'sheet' && !prefs.sheet);
+            const removable =
+              (preset === 'custom' && prefs.customGrid) ||
+              (preset === 'sheet' && prefs.sheet);
+            const active = prefs.preset === preset;
+            return (
+              <div className="settings-pet-wrap" key={preset}>
+                {active && (
+                  <span className="settings-pet__check" aria-hidden>
+                    <PixelIcon name="check" size={10} />
+                  </span>
+                )}
                 {removable && (
                   <button
                     type="button"
@@ -782,10 +701,10 @@ export function PetSection() {
                 <button
                   type="button"
                   className={`settings-pet ${
-                    prefs.preset === preset ? 'settings-pet--active' : ''
+                    active ? 'settings-pet--active' : ''
                   }`}
                   role="radio"
-                  aria-checked={prefs.preset === preset}
+                  aria-checked={active}
                   disabled={disabled}
                   title={
                     disabled
@@ -825,150 +744,256 @@ export function PetSection() {
                     {PRESET_LABEL[preset]}
                   </span>
                 </button>
-                </div>
-              );
-            })}
-          </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
 
-          </details>
-          {library && library.length > 0 && (
-            <details className="settings-pet-library">
-              <summary>Biblioteca inclusa ({library.length})</summary>
-              <p className="settings-field__note">
-                Pets diversos já no app — um clique aplica o spritesheet e liga
-                o companion. Offline, sem baixar da galeria.
-              </p>
-              <div className="settings-pet-library__grid" role="list">
-                {library.map((entry) => (
-                  <LibraryPetCard
-                    key={entry.id}
-                    entry={entry}
-                    busy={libraryBusyId === entry.id}
-                    active={
-                      libraryActiveId === entry.id && prefs.preset === 'sheet'
-                    }
-                    onPick={() => void onApplyLibraryPet(entry.id)}
-                    loadPreview={
-                      petApi.libraryPreview
-                        ? (id) => petApi.libraryPreview!(id)
-                        : undefined
-                    }
-                  />
-                ))}
-              </div>
-            </details>
-          )}
-
-          {petApi.galleryImport && (
-            <div className="settings-pet-gallery">
-              <p className="settings-appearance__label">Galeria da comunidade</p>
-              <div className="settings-pet-gallery__row">
-                <input
-                  className="settings-input settings-pet-gallery__input"
-                  type="text"
-                  value={gallerySlug}
-                  placeholder="Slug ou URL do pet (codex-pets.net)"
-                  aria-label="Slug ou URL do pet na galeria petdex"
-                  disabled={galleryBusy}
-                  onChange={(e) => {
-                    setGallerySlug(e.target.value);
-                    setGalleryCandidate(null);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') void onGalleryPreview();
-                  }}
-                />
-                <ActionCard
-                  icon="star"
-                  title={galleryBusy ? 'Carregando…' : 'Ver preview'}
-                  size="sm"
-                  disabled={galleryBusy || !gallerySlug.trim()}
-                  onClick={() => void onGalleryPreview()}
-                />
-                {petApi.galleryList && (
-                  <ActionCard
-                    icon="users"
-                    title={catalogOpen ? 'Fechar galeria' : 'Ver galeria…'}
-                    size="sm"
-                    onClick={() => void onOpenCatalog()}
-                  />
-                )}
-              </div>
-              <p className="settings-field__note">
-                Galeria da comunidade (codex-pets.net / petdex.dev). A arte é
-                de quem publicou — importe só o que você tem direito de usar.
-              </p>
-              {galleryCandidate && (
-                <div className="settings-pet-gallery__preview" aria-label="Pré-visualização do pet">
-                  <span className="settings-pet-gallery__preview-stage" aria-hidden>
-                    <SheetPetSprite
-                      sheet={galleryCandidate.sheet}
-                      anim="idle"
-                      size={96}
-                    />
-                  </span>
-                  <span className="settings-pet-gallery__preview-copy">
-                    <strong>Pré-visualização · {galleryCandidate.name}</strong>
-                    <small>
-                      Compatível {galleryCandidate.sheet.cols}×{galleryCandidate.sheet.rows}
-                    </small>
-                  </span>
-                  <ActionCard
-                    icon="star"
-                    title={galleryBusy ? 'Importando…' : 'Importar este pet'}
-                    subtitle="Aplicar no companion"
-                    size="sm"
-                    variant="primary"
-                    disabled={galleryBusy}
-                    onClick={() => void onApplyGalleryCandidate()}
-                  />
-                </div>
-              )}
-            </div>
-          )}
-          {catalogOpen && catalog && (
-            <div className="settings-pet-catalog">
-              <input
-                className="settings-input settings-pet-catalog__filter"
-                type="search"
-                value={catalogFilter}
-                placeholder={`Filtrar ${catalog.length} pets publicados…`}
-                aria-label="Filtrar pets da galeria"
-                onChange={(e) => setCatalogFilter(e.target.value)}
-              />
-              <p className="settings-field__note">
-                {filteredCatalog.length} de {catalog.length} — clique no nome
-                para ver o preview. Prefira a biblioteca inclusa se quiser offline.
-              </p>
-              <div className="settings-pet-catalog__chips" role="list">
-                {filteredCatalog.map((entry) => (
-                  <button
-                    key={entry.slug}
-                    type="button"
-                    role="listitem"
-                    className={`settings-pet-catalog__chip ${galleryCandidate?.query === entry.slug ? 'settings-pet-catalog__chip--selected' : ''}`}
-                    disabled={galleryBusy}
-                    aria-pressed={galleryCandidate?.query === entry.slug}
-                    title={`Ver preview de "${entry.label}" (${entry.slug})`}
-                    onClick={() => void onGalleryPreview(entry.slug)}
-                  >
-                    {entry.label}
-                  </button>
-                ))}
-                {filteredCatalog.length === 0 && (
-                  <span className="settings-field__note">
-                    Nada com esse nome na galeria.
-                  </span>
-                )}
-              </div>
-            </div>
-          )}
-          {importNote && (
-            <p className="settings-field__note" role="status">
-              {importNote}
+      {installed && (
+        <div className="settings-pet-library settings-pet-library--mine">
+          <div className="settings-pet-library__head">
+            <p className="settings-appearance__label">
+              Meus pets{installed.length > 0 ? ` (${installed.length})` : ''}
             </p>
+            <span className="settings-pet-library__path" title="Pasta local">
+              ~/.codex/pets
+            </span>
+          </div>
+          <p className="settings-field__note">
+            Criados no Pet Studio. Clique para usar · × para apagar do
+            disco. O companion só muda quando você escolher.
+          </p>
+          {installed.length > 0 ? (
+            <div className="settings-pet-library__grid" role="list">
+              {installed.map((entry) => (
+                <LibraryPetCard
+                  key={entry.id}
+                  entry={entry}
+                  busy={installedBusyId === entry.id}
+                  active={
+                    installedActiveId === entry.id && prefs.preset === 'sheet'
+                  }
+                  onPick={() => void onApplyInstalledPet(entry.id)}
+                  onDelete={
+                    petApi.installedDelete
+                      ? () => void onDeleteInstalledPet(entry)
+                      : undefined
+                  }
+                  loadPreview={
+                    petApi.installedPreview
+                      ? (id) => petApi.installedPreview!(id)
+                      : undefined
+                  }
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="settings-pets__empty" role="status">
+              <PixelIcon name="sparkle" size={14} />
+              <span>
+                Nenhum pet criado ainda — os pets do Pet Studio aparecem aqui.
+                Use “Criar pet com IA” ou “Importar pet” abaixo.
+              </span>
+            </div>
           )}
-      </>
+        </div>
+      )}
+
+      <div className="settings-pet-import" aria-label="Criar e importar pets">
+        <p className="settings-appearance__label">Criar e importar</p>
+
+        <div className="settings-row">
+          {petApi.pickImage && <button type="button" className="settings-btn settings-btn--primary" disabled={hatchBusy} onClick={() => void onHatchPet()}>{hatchBusy ? 'Preparando revisão…' : 'Criar pet com IA'}</button>}
+          <button type="button" className="settings-btn" onClick={() => void onPickSheetNative()}>Importar pet</button>
+        </div>
+        <details className="settings-advanced-field"><summary>Como criar e importar</summary>
+          <p className="settings-field__note">A criação com IA usa uma foto e começa após revisar a missão. Para importar, escolha uma imagem de poses do Codex ou petdex.</p>
+        </details>
+        <input
+          ref={sheetRef}
+          type="file"
+          accept="image/png,image/webp,image/jpeg"
+          hidden
+          onChange={(e) => {
+            void onPickSheet(e.target.files?.[0]);
+            e.target.value = '';
+          }}
+        />
+      </div>
+
+      <details className="settings-advanced-field"><summary>Opções de exibição do mascote</summary>
+        <div className="settings-pets__options">
+          <label className="settings-toggle-card">
+            <span className="settings-toggle-card__copy">
+              <strong>Dormir</strong>
+              <span>Silencia balões e avisos; o sprite apaga o visor.</span>
+            </span>
+            <input
+              type="checkbox"
+              checked={prefs.sleeping}
+              aria-label="Pet dormindo"
+              onChange={(e) => patch({ sleeping: e.target.checked })}
+            />
+          </label>
+
+          <label className="settings-toggle-card">
+            <span className="settings-toggle-card__copy">
+              <strong>Fundo sólido</strong>
+              <span>
+                Cartão opaco em vez de transparência — necessário em alguns
+                Linux sem compositor ARGB.
+              </span>
+            </span>
+            <input
+              type="checkbox"
+              checked={prefs.solidBackground}
+              aria-label="Pet com fundo sólido"
+              onChange={(e) => patch({ solidBackground: e.target.checked })}
+            />
+          </label>
+        </div>
+      </details>
+
+      {library && library.length > 0 && (
+        <details className="settings-pet-library">
+          <summary>Biblioteca inclusa ({library.length})</summary>
+          <p className="settings-field__note">
+            Pets diversos já no app — um clique aplica o spritesheet e liga
+            o companion. Offline, sem baixar da galeria.
+          </p>
+          <div className="settings-pet-library__grid" role="list">
+            {library.map((entry) => (
+              <LibraryPetCard
+                key={entry.id}
+                entry={entry}
+                busy={libraryBusyId === entry.id}
+                active={
+                  libraryActiveId === entry.id && prefs.preset === 'sheet'
+                }
+                onPick={() => void onApplyLibraryPet(entry.id)}
+                loadPreview={
+                  petApi.libraryPreview
+                    ? (id) => petApi.libraryPreview!(id)
+                    : undefined
+                }
+              />
+            ))}
+          </div>
+        </details>
+      )}
+
+      {petApi.galleryImport && (
+        <div className="settings-pet-gallery">
+          <p className="settings-appearance__label">Galeria da comunidade</p>
+          <div className="settings-pet-gallery__row">
+            <input
+              className="settings-input settings-pet-gallery__input"
+              type="text"
+              value={gallerySlug}
+              placeholder="Slug ou URL do pet (codex-pets.net)"
+              aria-label="Slug ou URL do pet na galeria petdex"
+              disabled={galleryBusy}
+              onChange={(e) => {
+                setGallerySlug(e.target.value);
+                setGalleryCandidate(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void onGalleryPreview();
+              }}
+            />
+            <button
+              type="button"
+              className="settings-btn"
+              disabled={galleryBusy || !gallerySlug.trim()}
+              onClick={() => void onGalleryPreview()}
+            >
+              {galleryBusy ? 'Carregando…' : 'Ver preview'}
+            </button>
+            {petApi.galleryList && (
+              <button
+                type="button"
+                className="settings-btn"
+                onClick={() => void onOpenCatalog()}
+              >
+                {catalogOpen ? 'Fechar galeria' : 'Ver galeria…'}
+              </button>
+            )}
+          </div>
+          <p className="settings-field__note">
+            Galeria da comunidade (codex-pets.net / petdex.dev). A arte é
+            de quem publicou — importe só o que você tem direito de usar.
+          </p>
+          {galleryCandidate && (
+            <div className="settings-pet-gallery__preview" aria-label="Pré-visualização do pet">
+              <span className="settings-pet-gallery__preview-stage" aria-hidden>
+                <SheetPetSprite
+                  sheet={galleryCandidate.sheet}
+                  anim="idle"
+                  size={96}
+                />
+              </span>
+              <span className="settings-pet-gallery__preview-copy">
+                <strong>Pré-visualização · {galleryCandidate.name}</strong>
+                <small>
+                  Compatível {galleryCandidate.sheet.cols}×{galleryCandidate.sheet.rows}
+                </small>
+                <small>Aplicar no companion</small>
+              </span>
+              <button
+                type="button"
+                className="settings-btn settings-btn--primary"
+                disabled={galleryBusy}
+                onClick={() => void onApplyGalleryCandidate()}
+              >
+                {galleryBusy ? 'Importando…' : 'Importar este pet'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+      {catalogOpen && catalog && (
+        <div className="settings-pet-catalog">
+          <input
+            className="settings-input settings-pet-catalog__filter"
+            type="search"
+            value={catalogFilter}
+            placeholder={`Filtrar ${catalog.length} pets publicados…`}
+            aria-label="Filtrar pets da galeria"
+            onChange={(e) => setCatalogFilter(e.target.value)}
+          />
+          <p className="settings-field__note">
+            {filteredCatalog.length} de {catalog.length} — clique no nome
+            para ver o preview. Prefira a biblioteca inclusa se quiser offline.
+          </p>
+          <div className="settings-pet-catalog__chips" role="list">
+            {filteredCatalog.map((entry) => (
+              <button
+                key={entry.slug}
+                type="button"
+                role="listitem"
+                className={`settings-pet-catalog__chip ${galleryCandidate?.query === entry.slug ? 'settings-pet-catalog__chip--selected' : ''}`}
+                disabled={galleryBusy}
+                aria-pressed={galleryCandidate?.query === entry.slug}
+                title={`Ver preview de "${entry.label}" (${entry.slug})`}
+                onClick={() => void onGalleryPreview(entry.slug)}
+              >
+                {entry.label}
+              </button>
+            ))}
+            {filteredCatalog.length === 0 && (
+              <span className="settings-field__note">
+                Nada com esse nome na galeria.
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+      {importNote && (
+        <p className="settings-field__note" role="status">
+          {importNote}
+        </p>
+      )}
     </div>
   );
 }

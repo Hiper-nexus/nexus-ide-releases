@@ -113,8 +113,8 @@ export function AgentSessionSettings() {
 
   return (
     <div aria-busy={isLoading || isSaving}>
-      <div className="settings-section-heading settings-section-heading--with-count">
-        <h4>Retoma de agentes</h4>
+      <div className="sys-subhead">
+        <h4 className="sys-subhead__title">Retoma de agentes</h4>
         <span className="settings-chip" aria-live="polite">
           Multi-SO: {restorePolicy === 'ask' ? 'perguntar' : restorePolicy}
         </span>
@@ -144,10 +144,10 @@ export function AgentSessionSettings() {
         ))}
       </div>
 
-      <div className="settings-section-heading settings-section-heading--with-count">
-        <h4>Prompts de boot</h4>
+      <div className="sys-subhead">
+        <h4 className="sys-subhead__title">Prompts de boot</h4>
         <span
-          className={`settings-chip ${autoResponderEnabled ? 'settings-chip--ok' : ''}`}
+          className={`settings-chip ${autoResponderEnabled ? 'settings-chip--ok' : 'settings-chip--warn'}`}
           aria-live="polite"
         >
           {autoResponderEnabled ? 'Autoaceite restrito' : 'Kill switch ativo'}

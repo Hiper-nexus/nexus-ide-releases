@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { ProductFlagResolutionRow } from '../../../shared/product-api';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
+import { EmptyState } from '../ActionCard';
 
 /**
  * Labs — todas as feature flags do produto com switch persistido.
@@ -117,6 +118,13 @@ function definitionKillSwitch(definition: unknown): boolean {
   );
 }
 
+function reasonModifier(reason: string): string {
+  if (reason === 'override') return ' labs-flag__reason--override';
+  if (reason === 'kill-switch') return ' labs-flag__reason--blocked';
+  if (reason === 'channel-blocked') return ' labs-flag__reason--unavailable';
+  return '';
+}
+
 function FlagRow({
   row,
   pending,
@@ -131,25 +139,30 @@ function FlagRow({
   const copy = LABS_FLAG_COPY[row.id];
   const killed = definitionKillSwitch(row.definition);
   return (
-    <div className="ops-consent-panel" data-flag-id={row.id}>
+    <div
+      className={`ops-consent-panel labs-flag${killed ? ' labs-flag--killed' : ''}`}
+      data-flag-id={row.id}
+    >
       <div>
         <p className="ops-consent-panel__title">{copy?.title ?? row.id}</p>
         <p className="ops-consent-panel__copy">
           {copy?.hint ?? 'Recurso experimental.'}
         </p>
-        <p className="ops-consent-panel__copy">
-          {describeFlagReason(row.reason)}
+        <p className="labs-flag__meta">
+          <span className={`labs-flag__reason${reasonModifier(row.reason)}`}>
+            {describeFlagReason(row.reason)}
+          </span>
+          {row.reason === 'override' ? (
+            <button
+              type="button"
+              className="labs-flag__reset"
+              disabled={pending}
+              onClick={() => onReset(row.id)}
+            >
+              Restaurar padrão
+            </button>
+          ) : null}
         </p>
-        {row.reason === 'override' ? (
-          <button
-            type="button"
-            className="labs-flag__reset"
-            disabled={pending}
-            onClick={() => onReset(row.id)}
-          >
-            Restaurar padrão
-          </button>
-        ) : null}
       </div>
       <button
         type="button"
@@ -164,7 +177,13 @@ function FlagRow({
           <span className="ops-switch__thumb" />
         </span>
         <span className="ops-switch__label">
-          {pending ? 'salvando' : row.enabled ? 'ligada' : 'desligada'}
+          {pending
+            ? 'salvando'
+            : killed
+              ? 'bloqueada'
+              : row.enabled
+                ? 'ligada'
+                : 'desligada'}
         </span>
       </button>
     </div>
@@ -219,26 +238,72 @@ export function LabsSection() {
     }
   };
 
+  const enabledCount = rows?.filter((row) => row.enabled).length ?? 0;
+  const overrideCount =
+    rows?.filter((row) => row.reason === 'override').length ?? 0;
+  const blockedCount =
+    rows?.filter(
+      (row) =>
+        row.reason === 'kill-switch' ||
+        row.reason === 'channel-blocked' ||
+        definitionKillSwitch(row.definition),
+    ).length ?? 0;
+
   return (
-    <section>
+    <section className="sys-section">
       <SettingsSectionTitle>Experimental</SettingsSectionTitle>
       <p className="ops-consent-panel__copy">
         Experimente recursos em desenvolvimento. Algumas mudanças exigem
         abrir um novo terminal ou reiniciar o app.
       </p>
-      {error ? <p className="labs-flags__error">{error}</p> : null}
+      {error ? <p className="labs-flags__error" role="alert">{error}</p> : null}
       {rows === null ? (
-        <p className="ops-consent-panel__copy">Carregando recursos…</p>
+        <div
+          className="settings-skeleton"
+          role="status"
+          aria-label="Carregando recursos"
+        >
+          <span />
+          <span />
+          <span />
+        </div>
+      ) : rows.length === 0 ? (
+        <EmptyState
+          icon="sparkle"
+          title="Nenhum recurso experimental"
+          body={
+            <p>
+              Esta versão não traz recursos sob flag. Novidades em teste
+              aparecem aqui.
+            </p>
+          }
+        />
       ) : (
-        rows.map((row) => (
-          <FlagRow
-            key={row.id}
-            row={row}
-            pending={pending.has(row.id)}
-            onToggle={(id, next) => void apply(id, next)}
-            onReset={(id) => void apply(id, null)}
-          />
-        ))
+        <>
+          <div className="sys-stat-strip" aria-label="Resumo dos recursos">
+            <span className="settings-chip">{rows.length} recursos</span>
+            <span className="settings-chip">{enabledCount} ligados</span>
+            {overrideCount > 0 && (
+              <span className="labs-flag__reason labs-flag__reason--override">
+                {overrideCount} personalizados
+              </span>
+            )}
+            {blockedCount > 0 && (
+              <span className="labs-flag__reason labs-flag__reason--blocked">
+                {blockedCount} bloqueados
+              </span>
+            )}
+          </div>
+          {rows.map((row) => (
+            <FlagRow
+              key={row.id}
+              row={row}
+              pending={pending.has(row.id)}
+              onToggle={(id, next) => void apply(id, next)}
+              onReset={(id) => void apply(id, null)}
+            />
+          ))}
+        </>
       )}
     </section>
   );

@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { McpAcrossToolsReport } from '../../../shared/mcp-across-tools';
+import {
+  MCP_ACROSS_TOOL_IDS,
+  type McpAcrossToolsReport,
+} from '../../../shared/mcp-across-tools';
 import { useOrchStore } from '../../state/orch-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { PixelIcon } from '../PixelIcon';
@@ -117,8 +120,14 @@ export function McpsSection() {
         ? ('ok' as const)
         : ('drift' as const);
 
+  const acrossCols =
+    across?.columns.filter((c) =>
+      (MCP_ACROSS_TOOL_IDS as readonly string[]).includes(c.id),
+    ) ?? [];
+  const hubServers = hub?.config?.servers ?? [];
+
   return (
-    <section className="arsenal-section mcp-ritual" aria-label="MCPs">
+    <section className="arsenal-section mcp-ritual mcps-section" aria-label="MCPs">
       <header className="arsenal-section__intro">
         <SettingsSectionTitle>Conexões de ferramentas</SettingsSectionTitle>
         <p className="settings-detail__hint">
@@ -172,6 +181,106 @@ export function McpsSection() {
           Across Tools: {acrossError}
         </p>
       ) : null}
+
+      <div className="arsenal-band">
+        <h4 className="arsenal-band__label">Servidor do Nexus</h4>
+        <ul className="settings-list">
+          <li className="settings-list__item arsenal-card mcps-server">
+            <div className="settings-list__head">
+              <span className="settings-list__title">
+                <PixelIcon name="bolt" size={12} /> nexus (embutido)
+              </span>
+              <span
+                className={`settings-chip mcps-state ${
+                  loading
+                    ? ''
+                    : running
+                      ? 'settings-chip--ok'
+                      : 'settings-chip--warn'
+                }`}
+              >
+                <span className="media-state-dot" aria-hidden="true" />
+                {loading ? '…' : running ? 'online' : 'offline'}
+              </span>
+              {!loading && running && (
+                <span className="settings-chip">
+                  {toolCount}{' '}
+                  {toolCount === 1 ? 'ferramenta exposta' : 'ferramentas expostas'}
+                </span>
+              )}
+              <button
+                type="button"
+                className="settings-btn settings-btn--sm mcps-server__action"
+                onClick={() =>
+                  useProductNavigationStore.getState().openSettings('tools')
+                }
+              >
+                Ver ferramentas
+              </button>
+            </div>
+            <details className="settings-advanced-field mcps-server__details">
+            <summary>Detalhes da conexão local</summary>
+            <p className="settings-list__detail">
+              Endereço: <code>{mcpInfo?.url ?? '—'}</code>
+            </p>
+            {hub?.path ? (
+              <p className="settings-list__detail arsenal-card__hint">
+                Hub: <code>{hub.path}</code>
+              </p>
+            ) : null}
+            </details>
+          </li>
+        </ul>
+      </div>
+
+      {across && across.rows.length > 0 ? (
+        <div className="arsenal-band">
+          <h4 className="arsenal-band__label">
+            Servidores detectados{' '}
+            <span className="arsenal-band__count">{across.rows.length}</span>
+          </h4>
+          <ul className="settings-list mcps-server-list">
+            {across.rows.map((row) => {
+              const presentIn = acrossCols
+                .filter((c) => row.cells[c.id] === 'present')
+                .map((c) => c.label);
+              const absentIn = acrossCols
+                .filter((c) => row.cells[c.id] === 'absent')
+                .map((c) => c.label);
+              const drifted = presentIn.length > 0 && absentIn.length > 0;
+              return (
+                <li
+                  key={row.serverKey}
+                  className="settings-list__item mcps-server"
+                >
+                  <div className="settings-list__head">
+                    <span className="settings-list__title settings-list__title--mono">
+                      {row.label}
+                    </span>
+                    <span
+                      className={`settings-chip mcps-state ${
+                        drifted
+                          ? 'settings-chip--warn'
+                          : 'settings-chip--ok'
+                      }`}
+                    >
+                      <span className="media-state-dot" aria-hidden="true" />
+                      {drifted ? 'Com diferenças' : 'Alinhado'}
+                    </span>
+                  </div>
+                  <p className="settings-list__detail">
+                    {presentIn.length > 0
+                      ? `Presente em: ${presentIn.join(' · ')}`
+                      : 'Sem presença confirmada nas configs lidas.'}
+                    {drifted ? ` Ausente em: ${absentIn.join(' · ')}.` : ''}
+                  </p>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ) : null}
+
       {across ? <details className="settings-advanced-field"><summary>Comparar conexões por aplicativo</summary><McpAcrossToolsMatrix report={across} hideBanner /></details> : null}
 
       {hubError ? (
@@ -180,46 +289,29 @@ export function McpsSection() {
         </p>
       ) : null}
 
-      <ul className="settings-list">
-        <li className="settings-list__item arsenal-card">
-          <div className="settings-list__head">
-            <span className="settings-list__title">
-              <PixelIcon name="bolt" size={12} /> nexus (embutido)
-            </span>
-            <span
-              className={`settings-chip ${
-                loading
-                  ? ''
-                  : running
-                    ? 'settings-chip--ok'
-                    : 'settings-chip--warn'
-              }`}
-            >
-              {loading ? '…' : running ? 'online' : 'offline'}
-            </span>
-            <button
-              type="button"
-              className="settings-btn settings-btn--sm"
-              onClick={() =>
-                useProductNavigationStore.getState().openSettings('tools')
-              }
-            >
-              Ver ferramentas
-            </button>
-          </div>
-          <details className="settings-advanced-field">
-          <summary>Detalhes da conexão local</summary>
-          <p className="settings-list__detail">
-            Endereço: <code>{mcpInfo?.url ?? '—'}</code>
-          </p>
+      {hubServers.length > 0 ? (
+        <div className="arsenal-band">
+          <h4 className="arsenal-band__label">
+            Hub canônico{' '}
+            <span className="arsenal-band__count">{hubServers.length}</span>
+          </h4>
+          <ul
+            className="mcps-hub"
+            aria-label="Servidores registrados no hub"
+          >
+            {hubServers.map((server) => (
+              <li key={server.id} className="mcps-hub__item">
+                <code>{server.id}</code>
+              </li>
+            ))}
+          </ul>
           {hub?.path ? (
             <p className="settings-list__detail arsenal-card__hint">
-              Hub: <code>{hub.path}</code>
+              Configuração: <code>{hub.path}</code>
             </p>
           ) : null}
-          </details>
-        </li>
-      </ul>
+        </div>
+      ) : null}
     </section>
   );
 }

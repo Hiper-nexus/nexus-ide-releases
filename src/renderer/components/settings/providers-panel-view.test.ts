@@ -8,6 +8,7 @@ import {
   pickDefaultSelection,
   providerOpFeedback,
   providerRowCta,
+  providerStateChips,
   providerStatusLabel,
   selectModelValue,
   tabDetectedLabel,
@@ -204,6 +205,42 @@ describe('providers-panel-view', () => {
       kind: 'verify', label: 'Verificar sessão',
     });
     expect(providerRowCta(cli, { authState: 'checking' })).toBeNull();
+  });
+
+  it('separa instalação, sessão e credencial em chips de estado distintos', () => {
+    // CLI ausente: só o fato de instalação — sessão/credencial não se aplicam.
+    expect(providerStateChips(missing)).toEqual([
+      { id: 'install', label: 'não instalada', tone: 'warn' },
+    ]);
+    // CLI instalada e ligada com login declarado: sessão vem do probe/conta.
+    const chips = providerStateChips(claude, { authState: 'ok' });
+    expect(chips).toContainEqual({
+      id: 'install',
+      label: 'instalada',
+      tone: 'ok',
+    });
+    expect(chips).toContainEqual({
+      id: 'session',
+      label: 'conectado',
+      tone: 'ok',
+    });
+    // Credencial só aparece quando o provider usa key de API.
+    const keyed = providerStateChips(
+      { ...glm, keyEnvVar: 'GLM_API_KEY', hasKey: false },
+      { authState: 'unknown' },
+    );
+    expect(keyed).toContainEqual({
+      id: 'credential',
+      label: 'sem chave',
+      tone: 'warn',
+    });
+    expect(
+      providerStateChips({ ...glm, keyEnvVar: 'GLM_API_KEY', hasKey: true }),
+    ).toContainEqual({ id: 'credential', label: 'chave configurada', tone: 'ok' });
+    // Desligada não mente sessão: sem chip de sessão mesmo com probe ok.
+    expect(
+      providerStateChips({ ...claude, enabled: false }, { authState: 'ok' }),
+    ).toEqual([{ id: 'install', label: 'instalada', tone: 'ok' }]);
   });
 
   it('linha conectada com sessão morta pede re-login, não finge saúde', () => {

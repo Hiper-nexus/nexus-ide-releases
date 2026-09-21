@@ -103,16 +103,19 @@ export function DesignSystemsSection() {
   }
 
   return (
-    <section>
-      <SettingsSectionTitle>Referências de design</SettingsSectionTitle>
-      <p className="settings-detail__hint">
-        Encontre estilos para orientar cores, fontes e componentes das suas interfaces.
-        A importação cria uma proposta para revisão antes de aplicar ao projeto.
-      </p>
+    <section className="arsenal-section dsn-section" aria-label="Referências de design">
+      <header className="arsenal-section__intro">
+        <SettingsSectionTitle>Referências de design</SettingsSectionTitle>
+        <p className="settings-detail__hint">
+          Encontre estilos para orientar cores, fontes e componentes das suas interfaces.
+          A importação cria uma proposta para revisão antes de aplicar ao projeto.
+        </p>
+      </header>
 
-      <div className="settings-row">
+      <div className="settings-row dsn-search" role="search">
         <input
           className="settings-input"
+          type="search"
           value={query}
           placeholder="Buscar referências…"
           aria-label="Buscar referências de design"
@@ -122,6 +125,7 @@ export function DesignSystemsSection() {
           }}
         />
         <button
+          type="button"
           className="settings-btn"
           onClick={() => void load(query)}
           disabled={loading}
@@ -131,73 +135,133 @@ export function DesignSystemsSection() {
       </div>
 
       {error && (
-        <p className="settings-detail__hint" role="alert">
-          {error}{' '}
-          <button className="settings-btn" onClick={() => void load(query)}>
+        <div className="mkt-notice mkt-notice--danger" role="alert">
+          <p>{error}</p>
+          <button type="button" className="settings-btn" onClick={() => void load(query)}>
             Tentar novamente
           </button>
-        </p>
+        </div>
       )}
 
-      {loading && <p className="settings-skeleton" role="status">Buscando referências…</p>}
-      <ul className="settings-list">
+      {loading && (
+        <div
+          className="settings-skeleton"
+          role="status"
+          aria-label="Buscando referências…"
+        >
+          <span /><span /><span />
+        </div>
+      )}
+      <ul className="settings-list dsn-list">
         {filtered.map((kit) => {
           const state = importStatus(kit.slug);
           return (
-            <li key={kit.slug} className="settings-list__item">
+            <li key={kit.slug} className="settings-list__item dsn-item">
               <div className="settings-list__head">
                 <span className="settings-list__title">
                   {kit.name}
                 </span>
                 <span className="settings-chip">{kit.license}</span>
-                <span className="settings-chip settings-chip--ok">
-                  {kit.likeCount} curtidas
-                </span>
-              </div>
-              <p className="settings-list__detail">{kit.description}</p>
-              <details className="settings-advanced-field">
-                <summary>Sobre a referência</summary>
-                <p className="settings-list__detail">{kit.slug} · {kit.tags.join(' · ') || 'Sem categorias'}</p>
-              </details>
-              <div className="settings-row">
-                <button
-                  className="settings-btn"
-                  onClick={() => void importKit(kit.slug)}
-                  disabled={state.status === 'loading'}
-                >
-                  {state.status === 'loading' ? 'Importando…' : 'Importar referência'}
-                </button>
-                {state.status === 'success' && (
-                  <>
-                    <span className="settings-chip settings-chip--ok">
-                      Proposta criada · aguardando revisão
-                    </span>
-                    <details className="settings-advanced-field">
-                      <summary>Detalhes da importação</summary>
-                      <p className="settings-list__detail">Fonte: {SOURCE_LABELS[state.servedBy]}</p>
-                      <p className="settings-list__detail">Arquivo proposto: {state.targetPath}</p>
-                      <p className="settings-list__detail">Proposta: {state.draftId}</p>
-                    </details>
-                  </>
+                {state.status === 'loading' && (
+                  <span className="settings-chip">Importando…</span>
                 )}
-                {state.status === 'error' && (
-                  <span className="settings-chip settings-chip--danger">
-                    {state.message}
+                {state.status === 'success' && (
+                  <span className="settings-chip settings-chip--ok">
+                    Proposta criada · aguardando revisão
                   </span>
                 )}
               </div>
+              <p className="settings-list__detail">{kit.description}</p>
+              <p className="dsn-item__meta">
+                {kit.author ? `${kit.author} · ` : ''}
+                {kit.downloadCount}{' '}
+                {kit.downloadCount === 1 ? 'download' : 'downloads'} ·{' '}
+                {kit.likeCount}{' '}
+                {kit.likeCount === 1 ? 'curtida' : 'curtidas'}
+              </p>
+              <details className="settings-advanced-field dsn-item__details">
+                <summary>Sobre a referência</summary>
+                <p className="settings-list__detail">{kit.slug} · {kit.tags.join(' · ') || 'Sem categorias'}</p>
+                {kit.url && (
+                  <p className="settings-list__detail">
+                    Fonte: <code>{kit.url}</code>
+                  </p>
+                )}
+              </details>
+              <div className="settings-row dsn-item__actions">
+                <button
+                  type="button"
+                  className="settings-btn"
+                  onClick={() => void importKit(kit.slug)}
+                  disabled={state.status === 'loading'}
+                  aria-busy={state.status === 'loading'}
+                >
+                  {state.status === 'loading'
+                    ? 'Importando…'
+                    : state.status === 'success'
+                      ? 'Importar novamente'
+                      : 'Importar referência'}
+                </button>
+                {state.status === 'error' && (
+                  <p className="settings-error dsn-item__error" role="alert">
+                    {state.message}
+                  </p>
+                )}
+              </div>
+              {state.status === 'success' && (
+                <div className="dsn-proposal" role="status">
+                  <p className="dsn-proposal__note">
+                    Estado: proposta — ainda não é o contrato do projeto.
+                  </p>
+                  <details className="settings-advanced-field dsn-item__details">
+                    <summary>Detalhes da importação</summary>
+                    <p className="settings-list__detail">Fonte: {SOURCE_LABELS[state.servedBy]}</p>
+                    <p className="settings-list__detail">Arquivo proposto: {state.targetPath}</p>
+                    <p className="settings-list__detail">Proposta: {state.draftId}</p>
+                  </details>
+                </div>
+              )}
             </li>
           );
         })}
       </ul>
+      {!loading && kits.length > 0 && (
+        <p className="catalog-settings__count">
+          {filtered.length} de {kits.length} referências
+        </p>
+      )}
       {!loading && filtered.length === 0 && !error && (
         <EmptyState
           icon="grid"
           title="Nenhuma referência encontrada"
           body={
             <p>
-              Tente outro nome ou estilo e selecione Buscar.
+              {query.trim()
+                ? 'Nenhuma referência corresponde à busca atual.'
+                : 'O catálogo de referências respondeu vazio.'}
             </p>
+          }
+          action={
+            query.trim() ? (
+              <button
+                type="button"
+                className="settings-btn"
+                onClick={() => {
+                  setQuery('');
+                  void load('');
+                }}
+              >
+                Limpar busca
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="settings-btn"
+                onClick={() => void load('')}
+              >
+                Buscar novamente
+              </button>
+            )
           }
         />
       )}

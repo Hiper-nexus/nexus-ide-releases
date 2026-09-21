@@ -28,13 +28,18 @@ function InventoryGroups({ rows }: { rows: readonly HarnessInventoryRow[] }) {
       if (!group.length) return null;
       return <section key={purpose.id} aria-labelledby={`harness-purpose-${purpose.id}`}>
         <header className="harness-settings__group-heading">
-          <h3 id={`harness-purpose-${purpose.id}`}>{purpose.label}</h3><span>{group.length}</span>
+          <h3 id={`harness-purpose-${purpose.id}`}>{purpose.label}</h3><span className="harness-settings__group-count">{group.length}</span>
         </header>
         <ul className="harness-settings__inventory">
           {group.map(row => <li key={`${row.item.kind}:${row.item.file}`}>
             <div className="harness-settings__resource-name">
               <strong>{row.item.name}</strong>
-              <span>{row.item.kind === 'agent' ? 'Agente' : 'Instruções (skill)'} · {row.origin}</span>
+              <span className="harness-settings__resource-meta">
+                <span className={`harness-settings__kind harness-settings__kind--${row.item.kind}`}>
+                  {row.item.kind === 'agent' ? 'Agente' : 'Skill'}
+                </span>
+                <span className="harness-settings__resource-origin">{row.origin}</span>
+              </span>
             </div>
             <div className="harness-settings__resource-description">
               <p>{row.blurb || 'Descrição ainda não adicionada.'}</p>
@@ -125,7 +130,8 @@ export function HarnessSection({ overviewOnly = false }: { overviewOnly?: boolea
     {!overviewOnly && <div className="harness-settings__tabs" role="tablist" aria-label="Seções de Harness" onKeyDown={navigateTab}>
       {VIEWS.map(item => <button key={item.id} id={`harness-tab-${item.id}`} type="button" role="tab"
         aria-selected={view === item.id} aria-controls="harness-panel" tabIndex={view === item.id ? 0 : -1}
-        onClick={() => setView(item.id)}>{item.label}</button>)}
+        onClick={() => setView(item.id)}>{item.label}
+        {item.id === 'arsenal' && !loading ? <span className="harness-settings__tab-count">{rows.length}</span> : null}</button>)}
     </div>}
     <div id="harness-panel" role={overviewOnly ? undefined : 'tabpanel'} aria-labelledby={overviewOnly ? undefined : `harness-tab-${view}`}>
       {displayedView === 'acp' ? <AcpHarnessPanel /> : displayedView === 'recipes' ? <SettingsSectionTitleProvider level={3}><RecipesSection /></SettingsSectionTitleProvider> : <>
@@ -133,7 +139,7 @@ export function HarnessSection({ overviewOnly = false }: { overviewOnly?: boolea
           {!overviewOnly && <div><h3>Seu catálogo local</h3><p>Agentes e skills são instruções disponíveis para as ferramentas de IA. A classificação abaixo descreve sua finalidade.</p></div>}
           <button type="button" className="settings-btn" disabled={loading || enriching} onClick={() => void reload()}>{loading ? 'Carregando…' : 'Atualizar lista'}</button>
         </div>
-        <div className="harness-settings__filters">
+        <div className="harness-settings__filters" role="group" aria-label="Filtros do catálogo">
           <label className="harness-settings__search">Buscar recursos<input className="settings-input" aria-label="Buscar recursos" value={query} onChange={event => setQuery(event.target.value)} placeholder="Nome ou descrição" /></label>
           <label>Tipo<select className="settings-input" aria-label="Tipo de recurso" value={kind} onChange={event => setKind(event.target.value as HarnessKindFilter)}><option value="todos">Todos os tipos</option><option value="agent">Agentes</option><option value="skill">Instruções (skills)</option></select></label>
           <label>Função<select className="settings-input" aria-label="Função do recurso" value={tier} onChange={event => setTier(event.target.value as HarnessTierFilter)}><option value="todos">Todas as funções</option>{PURPOSES.map(purpose => <option key={purpose.id} value={purpose.id}>{purpose.label}</option>)}</select></label>

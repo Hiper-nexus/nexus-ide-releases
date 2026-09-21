@@ -187,13 +187,20 @@ function EntryCard({
 }) {
   const [loginBusy, setLoginBusy] = useState(false);
   const known = hasQuota(entry);
-  const state = needsRelogin
+  const authExpired = entry.readHint === 'auth-expired';
+  const state = needsRelogin || authExpired
     ? 'Entrar novamente'
     : entry.onCooldown
       ? 'Pausa temporária'
       : known
         ? 'Cota informada'
-        : 'Sem informação';
+        : entry.readHint === 'no-credential'
+          ? entry.accountId
+            ? 'Sem credencial'
+            : 'Sem conta conectada'
+          : entry.readHint === 'cli-missing'
+            ? 'CLI não encontrada'
+            : 'Sem informação';
   const label = entry.accountId
     ? entry.label
     : entry.label.replace(/\s*·\s*CLI nativo$/u, '');
@@ -203,7 +210,11 @@ function EntryCard({
       : 'Conta salva no Nexus'
     : 'Conexão atual';
   const showEmail = email && !label.includes(email);
-  const canRelogin = Boolean(needsRelogin && entry.accountId && account);
+  // A sonda de quota pode detectar o grant morto antes do flag needsRelogin
+  // (conta nativa nunca o recebe) — o hint também abre o caminho de login.
+  const canRelogin = Boolean(
+    (needsRelogin || authExpired) && entry.accountId && account,
+  );
   const loginLabel = account?.label ?? label;
 
   async function relogin() {
@@ -250,6 +261,13 @@ function EntryCard({
             {origin}
             {showEmail ? ` · ${email}` : ''}
           </p>
+          {entry.plan && (
+            <p className="quota-entry__plan">
+              {entry.plan.label}
+              {typeof entry.plan.monthlyUsd === 'number' &&
+                ` · ${fmtUsd(entry.plan.monthlyUsd)}/mês`}
+            </p>
+          )}
         </div>
         {canRelogin ? (
           <button
@@ -263,7 +281,7 @@ function EntryCard({
           </button>
         ) : (
           <span
-            className={`quota-entry__badge ${needsRelogin || entry.onCooldown ? 'quota-entry__badge--warn' : ''}`}
+            className={`quota-entry__badge ${needsRelogin || authExpired || entry.onCooldown ? 'quota-entry__badge--warn' : ''}`}
           >
             {state}
           </span>
@@ -299,8 +317,13 @@ function EntryCard({
       </ul>
       {!known && (
         <p className="quota-entry__missing">
-          Sem percentual disponível. Isso não significa que a conta está sem uso
-          ou sem saldo.
+          {authExpired
+            ? 'A sessão desta conta expirou e não foi possível renovar — reautentique para voltar a ver os limites.'
+            : entry.readHint === 'no-credential'
+              ? 'Nenhuma credencial válida foi encontrada para esta linha.'
+              : entry.readHint === 'cli-missing'
+                ? 'O executável do CLI não foi encontrado nesta máquina.'
+                : 'Sem percentual disponível. Isso não significa que a conta está sem uso ou sem saldo.'}
         </p>
       )}
       <details className="quota-entry__meta">
@@ -476,6 +499,22 @@ export function UsageQuotaSection() {
             <span>
               <strong>{unknownCount}</strong> sem cota informada
             </span>
+            {snapshot.plans && snapshot.plans.detected > 0 && (
+              <span
+                className="quota-panel__plans"
+                title={
+                  snapshot.plans.undetected > 0
+                    ? `Assinaturas detectadas pelos próprios serviços. ${snapshot.plans.undetected} conexão(ões) elegível(eis) sem plano identificado não entram na soma.`
+                    : 'Assinaturas detectadas pelos próprios serviços — some ao remover uma conta, cresce ao conectar outra.'
+                }
+              >
+                <strong>{fmtUsd(snapshot.plans.monthlyUsd)}/mês</strong> em{' '}
+                {snapshot.plans.detected}{' '}
+                {snapshot.plans.detected === 1 ? 'assinatura' : 'assinaturas'}
+                {snapshot.plans.undetected > 0 &&
+                  ` · ${snapshot.plans.undetected} sem plano identificado`}
+              </span>
+            )}
           </>
         )}
         <span>

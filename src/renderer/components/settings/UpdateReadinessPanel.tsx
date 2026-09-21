@@ -44,8 +44,23 @@ export function UpdateReadinessPanel() {
   );
 
   return (
-    <>
-      <h4 className="release-section-title">Atualizações</h4>
+    <div className="sys-group">
+      <div className="sys-group__head">
+        <div className="sys-group__titles">
+          <h4 className="sys-group__title">Atualizações</h4>
+          <p className="sys-group__hint">
+            Estado do updater e alinhamento da versão instalada.
+          </p>
+        </div>
+        <button
+          className="settings-btn"
+          type="button"
+          onClick={() => void refresh(true)}
+          disabled={checking}
+        >
+          {checking ? 'Verificando…' : 'Verificar atualizações'}
+        </button>
+      </div>
       {error && <p className="settings-error" role="alert">{error}</p>}
       <div className="ops-metric-grid">
         <MetricTile
@@ -74,11 +89,6 @@ export function UpdateReadinessPanel() {
         ))}
       </ul>
       </details>
-      <div className="settings-row">
-        <button className="settings-btn" type="button" onClick={() => void refresh(true)} disabled={checking}>
-          {checking ? 'Verificando…' : 'Verificar atualizações'}
-        </button>
-      </div>
-    </>
+    </div>
   );
 }

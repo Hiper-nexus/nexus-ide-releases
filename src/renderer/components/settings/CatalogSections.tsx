@@ -8,7 +8,7 @@ import type {
 } from '../../../shared/types';
 import { isMissionRuntimeSquadId } from '../../../shared/orch-types';
 import { useOrchStore } from '../../state/orch-store';
-import { PixelIcon } from '../PixelIcon';
+import { PixelIcon, type PixelIconName } from '../PixelIcon';
 import { ActionCard, EmptyState } from '../ActionCard';
 import {
   catalogEmptyCta,
@@ -31,6 +31,39 @@ function timeLabel(ts: number): string {
   return new Date(ts).toLocaleString();
 }
 
+function sizeLabel(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  return `${(bytes / 1024).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} kB`;
+}
+
+/** Identidade do item quando não há logo de provider: o kind vira glifo do set. */
+function catalogItemIcon(kind: string | undefined): PixelIconName {
+  switch (kind) {
+    case 'agent':
+      return 'agent';
+    case 'skill':
+      return 'file';
+    case 'adapter':
+      return 'bolt';
+    case 'hook-home':
+      return 'bell';
+    default:
+      return 'file';
+  }
+}
+
+/** Identidade da pasta de origem — logo oficial quando a marca existe no set. */
+function originIdent(origin: string): ReactNode {
+  const id = origin.toLowerCase();
+  if (hasProviderLogo(id)) return <ProviderLogo adapterId={id} label={origin} size="xs" />;
+  return (
+    <PixelIcon
+      name={origin === 'Agents' ? 'agent' : origin === 'Nexus' ? 'config' : 'file'}
+      size={12}
+    />
+  );
+}
+
 const readInstalled = () => window.nexus.orch.listInstalledCatalog();
 const readDescriptions = () => window.nexus.orch.harnessEnriched();
 const readTools = () => window.nexus.orch.listNativeTools();
@@ -49,9 +82,21 @@ const FUNCTIONS: ReadonlyArray<{ value: HarnessTierFilter; label: string }> = [
 function CatalogStatus({ loading, error, reload, label }: {
   loading: boolean; error: string | null; reload(): void; label: string;
 }) {
-  if (loading) return <p className="catalog-settings__loading" role="status">{label}</p>;
+  if (loading) {
+    return (
+      <div className="catalog-skeleton" role="status">
+        <span className="settings-visually-hidden">{label}</span>
+        {(['a', 'b', 'c'] as const).map((row) => (
+          <div key={row} className="catalog-skeleton__row" aria-hidden="true">
+            <span className="catalog-skeleton__ident" />
+            <span className={`catalog-skeleton__line catalog-skeleton__line--${row}`} />
+          </div>
+        ))}
+      </div>
+    );
+  }
   if (!error) return null;
-  return <div className="catalog-settings__error" role="alert"><p>{error}</p><button type="button" className="settings-btn" onClick={reload}>Tentar novamente</button></div>;
+  return <div className="catalog-settings__error" role="alert"><PixelIcon name="warn" className="catalog-status__icon" /><p>{error}</p><button type="button" className="settings-btn" onClick={reload}>Tentar novamente</button></div>;
 }
 
 function useEnrichedCatalog() {
@@ -99,36 +144,71 @@ function enrichmentOf(enriched: EnrichedCatalogInfo | null, kind: 'agent' | 'ski
   return enriched?.items.find(item => item.kind === kind && item.name === name);
 }
 
-function InstalledList({ items, empty, enriched, kind, resetFilters }: {
+function InstalledList({ items, empty, enriched, kind, resetFilters, emptyIcon }: {
   items: InstalledItemInfo[]; empty: string; enriched?: EnrichedCatalogInfo | null;
-  kind?: 'agent' | 'skill'; resetFilters?: () => void;
+  kind?: 'agent' | 'skill'; resetFilters?: () => void; emptyIcon?: PixelIconName;
 }) {
   if (items.length === 0) {
     const cta = catalogEmptyCta(catalogEmptyKindFromMessage(empty));
-    return <EmptyState icon={resetFilters ? 'search' : 'sparkle'} title={resetFilters ? 'Nenhum resultado para estes filtros' : 'Nenhum recurso nesta lista'} body={<p>{empty}</p>}
+    return <EmptyState icon={resetFilters ? 'search' : emptyIcon ?? 'sparkle'} title={resetFilters ? 'Nenhum resultado para estes filtros' : 'Nenhum recurso nesta lista'} body={<p>{empty}</p>}
       action={resetFilters ? <button type="button" className="settings-btn" onClick={resetFilters}>Limpar filtros</button>
         : cta === 'marketplace' ? <ActionCard icon="star" title="Abrir Marketplace" subtitle="Instalar agentes e skills" variant="primary" size="sm" onClick={() => useProductNavigationStore.getState().openSettings('marketplace')} /> : undefined}
     />;
   }
-  return <ul className="settings-list catalog-settings__resources">
-    {items.map(item => {
-      const note = kind ? enrichmentOf(enriched ?? null, kind, item.name) : undefined;
-      return <li key={item.file} className="settings-list__item catalog-settings__resource">
-        <div className="catalog-settings__resource-name">
-          <strong>{hasProviderLogo(item.name) && <ProviderLogo adapterId={item.name} label={item.name} size="xs" />} {item.name}</strong>
-          <span>{harnessOrigin(item.file)}{note ? ` · ${FUNCTIONS.find(option => option.value === note.tier)?.label ?? note.tier}` : ''}</span>
+  const renderItem = (item: InstalledItemInfo) => {
+    const note = kind ? enrichmentOf(enriched ?? null, kind, item.name) : undefined;
+    const tierLabel = note
+      ? FUNCTIONS.find(option => option.value === note.tier)?.label ?? note.tier
+      : undefined;
+    return <li key={item.file} className="settings-list__item catalog-item">
+      <div className="catalog-item__head">
+        <span className="catalog-item__ident" aria-hidden="true">
+          {hasProviderLogo(item.name)
+            ? <ProviderLogo adapterId={item.name} label={item.name} size="xs" />
+            : <PixelIcon name={catalogItemIcon(kind ?? item.kind)} size={12} />}
+        </span>
+        <div className="catalog-item__titles">
+          <strong className="catalog-item__name">{item.name}</strong>
+          <span className="catalog-item__meta">{harnessOrigin(item.file)}</span>
         </div>
-        <div className="catalog-settings__resource-detail">
-          {note?.blurb && <p>{note.blurb}</p>}
-          <details><summary>Detalhes do recurso</summary>
-            {note?.whenToUse && <p><strong>Quando usar:</strong> {note.whenToUse}</p>}
-            <p className="catalog-settings__file">{item.file}</p>
-            <p className="catalog-settings__metadata">Modificado em {timeLabel(item.modifiedAt)}</p>
-          </details>
-        </div>
-      </li>;
-    })}
-  </ul>;
+        {tierLabel ? (
+          <div className="catalog-item__actions">
+            <span className="settings-chip">{tierLabel}</span>
+          </div>
+        ) : null}
+      </div>
+      {note?.blurb ? <p className="catalog-item__blurb">{note.blurb}</p> : null}
+      <details className="catalog-item__details">
+        <summary>Detalhes do recurso</summary>
+        {note?.whenToUse ? <p><strong>Quando usar:</strong> {note.whenToUse}</p> : null}
+        <p className="catalog-settings__file">{item.file}</p>
+        <p className="catalog-settings__metadata">
+          Modificado em {timeLabel(item.modifiedAt)} · {sizeLabel(item.size)}
+        </p>
+      </details>
+    </li>;
+  };
+  const byOrigin = new Map<string, InstalledItemInfo[]>();
+  for (const item of items) {
+    const origin = harnessOrigin(item.file);
+    const list = byOrigin.get(origin);
+    if (list) list.push(item); else byOrigin.set(origin, [item]);
+  }
+  const origins = [...byOrigin.keys()].sort((a, b) => a.localeCompare(b, 'pt'));
+  if (origins.length <= 1) {
+    return <ul className="settings-list catalog-settings__resources">{items.map(renderItem)}</ul>;
+  }
+  return <>{origins.map(origin => {
+    const list = byOrigin.get(origin)!;
+    return <div key={origin} className="arsenal-band">
+      <h4 className="arsenal-band__label">
+        <span className="catalog-band__icon">{originIdent(origin)}</span>
+        {origin}
+        <span className="arsenal-band__count">{list.length}</span>
+      </h4>
+      <ul className="settings-list catalog-settings__resources">{list.map(renderItem)}</ul>
+    </div>;
+  })}</>;
 }
 
 function ResourceCatalogSection({ kind, title, description, children }: {
@@ -146,17 +226,19 @@ function ResourceCatalogSection({ kind, title, description, children }: {
     <header className="catalog-settings__header"><div><SettingsSectionTitle>{title}</SettingsSectionTitle><p className="settings-detail__hint">{description}</p></div>
       <button type="button" className="settings-btn" disabled={catalog.loading} onClick={() => void catalog.reload()}>Atualizar lista</button>
     </header>
-    <div className="catalog-settings__filters">
+    <div className="catalog-settings__filters" role="search">
       <label>Buscar recursos<input className="settings-input" type="search" aria-label="Buscar recursos" placeholder="Nome, origem ou descrição" value={query} onChange={event => setQuery(event.target.value)} /></label>
       <label>Função<select className="settings-input" aria-label="Função do recurso" value={tier} disabled={enrich.loading} onChange={event => setTier(event.target.value as HarnessTierFilter)}>{FUNCTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+      {catalog.data !== null && !catalog.loading && !(catalog.error && items.length === 0) && (
+        <p className="catalog-settings__count" role="status">{visible.length} de {items.length} recursos</p>
+      )}
     </div>
     <CatalogStatus {...catalog} reload={() => void catalog.reload()} label="Carregando recursos instalados…" />
     <CatalogStatus loading={false} error={enrich.error} reload={() => void enrich.reload()} label="" />
-    {catalog.data !== null && !catalog.loading && !(catalog.error && items.length === 0) && <>
-      <InstalledList items={visible} enriched={enrich.enriched} kind={kind} resetFilters={filtered ? resetFilters : undefined}
+    {catalog.data !== null && !catalog.loading && !(catalog.error && items.length === 0) && (
+      <InstalledList items={visible} enriched={enrich.enriched} kind={kind} resetFilters={filtered ? resetFilters : undefined} emptyIcon={kind === 'agent' ? 'agent' : 'file'}
         empty={filtered ? 'Limpe os filtros para voltar à lista completa.' : `${kind === 'agent' ? 'Nenhum agente instalado.' : 'Nenhuma skill instalada.'} Use o Marketplace para adicionar recursos.`} />
-      <p className="catalog-settings__count">{visible.length} de {items.length} recursos</p>
-    </>}
+    )}
     <EnrichBar enrich={enrich} disabled={catalog.loading || items.length === 0} />
     {children}
   </section>;
@@ -173,18 +255,44 @@ export function SkillsSection() {
   return <ResourceCatalogSection kind="skill" title="Instruções (skills)" description="Instruções reutilizáveis instaladas nesta máquina. Seu uso durante uma missão respeita as regras de execução do Nexus." />;
 }
 
+const MEDIA_KIND_ORDER = ['image', 'video', 'audio'] as const;
+const MEDIA_KIND_LABELS: Record<(typeof MEDIA_KIND_ORDER)[number], string> = {
+  image: 'Imagem',
+  video: 'Vídeo',
+  audio: 'Voz',
+};
+const MEDIA_KIND_ICONS: Record<(typeof MEDIA_KIND_ORDER)[number], PixelIconName> = {
+  image: 'vision',
+  video: 'vision',
+  audio: 'volume',
+};
+
 /** Faixa MÍDIA do arsenal: modelos de geração habilitados (key presente). */
 export function MediaCatalogSection() {
   const catalog = useCatalogResource(readMediaProviders, 'Não foi possível carregar os modelos de mídia.');
   const providers = catalog.data ?? [];
   const enabled = providers.filter((p) => p.hasKey);
+  const groups = MEDIA_KIND_ORDER
+    .map((kind) => ({
+      kind,
+      label: MEDIA_KIND_LABELS[kind],
+      items: providers.filter((p) => p.kind === kind),
+    }))
+    .filter((group) => group.items.length > 0);
   return (
     <section className="catalog-settings">
-      <SettingsSectionTitle>Modelos de mídia</SettingsSectionTitle>
-      <p className="settings-detail__hint">
-        Consulte modelos de imagem, vídeo e voz. {enabled.length} de {providers.length} serviços conectados.
-      </p>
-      <div className="settings-row"><button type="button" className="settings-btn settings-btn--primary" onClick={() => useProductNavigationStore.getState().openSettings('media')}>Configurar conexões de mídia</button></div>
+      <header className="catalog-settings__header">
+        <div>
+          <SettingsSectionTitle>Modelos de mídia</SettingsSectionTitle>
+          <p className="settings-detail__hint">
+            Consulte modelos de imagem, vídeo e voz. {enabled.length} de {providers.length} serviços conectados.
+          </p>
+        </div>
+        <div className="settings-action-row">
+          <button type="button" className="settings-btn" disabled={catalog.loading} onClick={() => void catalog.reload()}>Atualizar lista</button>
+          <button type="button" className="settings-btn settings-btn--primary" onClick={() => useProductNavigationStore.getState().openSettings('media')}>Configurar conexões de mídia</button>
+        </div>
+      </header>
       <CatalogStatus {...catalog} reload={() => void catalog.reload()} label="Carregando modelos de mídia…" />
       {catalog.loading || catalog.error ? null : providers.length === 0 ? (
         <EmptyState
@@ -209,24 +317,41 @@ export function MediaCatalogSection() {
           }
         />
       ) : (
-        <ul className="settings-list">
-          {providers.map((p) => (
-            <li key={p.id} className="settings-list__item">
-              <div className="settings-list__head">
-                <ProviderLogo adapterId={p.id.split('-')[0]} label={p.label} size="sm" />
-                <span className="settings-list__title">{p.label}</span>
-                <span
-                  className={`settings-chip ${p.hasKey ? 'settings-chip--ok' : 'settings-chip--warn'}`}
-                >
-                  {p.hasKey ? 'chave registrada' : 'sem chave'}
-                </span>
-                <span className="settings-chip">{{ image: 'Imagem', video: 'Vídeo', audio: 'Voz' }[p.kind]}</span>
-              </div>
-              <p className="settings-list__detail">Padrão: {p.defaultModel}</p>
-              <details className="settings-advanced-field"><summary>Ver {p.models.length} modelos disponíveis</summary><p className="settings-list__detail">{p.models.join(' · ')}</p></details>
-            </li>
-          ))}
-        </ul>
+        groups.map((group) => (
+          <div key={group.kind} className="arsenal-band">
+            <h4 className="arsenal-band__label">
+              <PixelIcon name={MEDIA_KIND_ICONS[group.kind]} size={12} />
+              {group.label}
+              <span className="arsenal-band__count">{group.items.length}</span>
+            </h4>
+            <ul className="settings-list">
+              {group.items.map((p) => (
+                <li key={p.id} className="settings-list__item catalog-item">
+                  <div className="catalog-item__head">
+                    <ProviderLogo adapterId={p.id.split('-')[0]} label={p.label} size="sm" />
+                    <div className="catalog-item__titles">
+                      <span className="catalog-item__name">{p.label}</span>
+                      <span className="catalog-item__meta">
+                        Padrão: <code>{p.defaultModel}</code>
+                      </span>
+                    </div>
+                    <div className="catalog-item__actions">
+                      <span
+                        className={`settings-chip ${p.hasKey ? 'settings-chip--ok' : 'settings-chip--warn'}`}
+                      >
+                        {p.hasKey ? 'conectado' : 'sem chave'}
+                      </span>
+                    </div>
+                  </div>
+                  <details className="catalog-item__details">
+                    <summary>Ver {p.models.length} modelos disponíveis</summary>
+                    <p className="settings-list__detail">{p.models.join(' · ')}</p>
+                  </details>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))
       )}
     </section>
   );
@@ -303,16 +428,36 @@ export function LlmsSection({ adapters }: { adapters: AdapterInfo[] }) {
       ) : (
         <ul className="settings-list">
           {installed.map((a) => (
-            <li key={a.id} className="settings-list__item">
-              <div className="settings-list__head">
+            <li key={a.id} className="settings-list__item catalog-item">
+              <div className="catalog-item__head">
                 <ProviderLogo adapterId={a.id} label={a.label} size="sm" />
-                <span className="settings-list__title">{a.label}</span>
-                <span className="settings-chip settings-chip--ok">instalado</span>
+                <div className="catalog-item__titles">
+                  <span className="catalog-item__name">{a.label}</span>
+                  <span className="catalog-item__meta">
+                    {a.models.list.length > 0
+                      ? <>Padrão: <code>{a.models.default || a.models.list[0]}</code> · {a.models.list.length} {a.models.list.length === 1 ? 'modelo' : 'modelos'}</>
+                      : 'Modelos padrão da ferramenta'}
+                  </span>
+                  {a.authReady === false && a.authReason ? (
+                    <span className="catalog-item__meta">Autorização: {a.authReason}</span>
+                  ) : null}
+                </div>
+                <div className="catalog-item__actions">
+                  {a.authReady === true ? (
+                    <span className="settings-chip settings-chip--ok">autorizada</span>
+                  ) : null}
+                  {a.authReady === false ? (
+                    <span className="settings-chip settings-chip--warn">autorização pendente</span>
+                  ) : null}
+                  <span className="settings-chip settings-chip--ok">instalada</span>
+                </div>
               </div>
-              <p className="settings-list__detail">
-                {a.models.list.slice(0, 6).join(' · ') || 'Modelos padrão da ferramenta'}
-              </p>
-              {a.models.list.length > 6 && <details className="catalog-settings__model-list"><summary>Ver todos os {a.models.list.length} modelos</summary><p>{a.models.list.join(' · ')}</p></details>}
+              {a.models.list.length > 0 && (
+                <details className="catalog-item__details">
+                  <summary>Ver {a.models.list.length} {a.models.list.length === 1 ? 'modelo' : 'modelos'}</summary>
+                  <p className="settings-list__detail">{a.models.list.join(' · ')}</p>
+                </details>
+              )}
             </li>
           ))}
         </ul>
@@ -324,30 +469,38 @@ export function LlmsSection({ adapters }: { adapters: AdapterInfo[] }) {
           </h4>
           <ul className="settings-list">
             {absent.map((a) => (
-              <li key={a.id} className="settings-list__item settings-installable__item">
-                <div className="settings-list__head settings-installable__head">
+              <li key={a.id} className="settings-list__item catalog-item settings-installable__item">
+                <div className="catalog-item__head">
                   <ProviderLogo adapterId={a.id} label={a.label} size="sm" />
-                <span className="settings-list__title">{a.label}</span>
-                  {a.installCommand ? (
-                    <button
-                      className="settings-btn settings-btn--sm"
-                      onClick={() => void openInstallTerminal(a)}
-                      disabled={pendingInstallId !== null}
-                      aria-busy={pendingInstallId === a.id}
-                      title={`Executar comando: ${a.installCommand}`}
-                    >
-                      <PixelIcon name="terminal" size={10} />{' '}
-                      {pendingInstallId === a.id ? 'Abrindo…' : 'Instalar'}
-                    </button>
-                  ) : (
-                    <span className="settings-chip">manual</span>
-                  )}
+                  <div className="catalog-item__titles">
+                    <span className="catalog-item__name">{a.label}</span>
+                    {a.installCommand ? (
+                      <span className="catalog-item__meta">
+                        Comando: <code>{a.installCommand}</code>
+                      </span>
+                    ) : (
+                      <span className="catalog-item__meta">Instalação manual</span>
+                    )}
+                  </div>
+                  <div className="catalog-item__actions">
+                    {a.installCommand ? (
+                      <button
+                        type="button"
+                        className="settings-btn settings-btn--sm"
+                        onClick={() => void openInstallTerminal(a)}
+                        disabled={pendingInstallId !== null}
+                        aria-busy={pendingInstallId === a.id}
+                        aria-label={`Instalar ${a.label} em um terminal`}
+                        title={`Executar comando: ${a.installCommand}`}
+                      >
+                        <PixelIcon name="terminal" size={10} />{' '}
+                        {pendingInstallId === a.id ? 'Abrindo…' : 'Instalar'}
+                      </button>
+                    ) : (
+                      <span className="settings-chip">manual</span>
+                    )}
+                  </div>
                 </div>
-                {a.installCommand && (
-                  <p className="settings-list__detail">
-                    Comando: <code>{a.installCommand}</code>
-                  </p>
-                )}
               </li>
             ))}
           </ul>
@@ -372,6 +525,26 @@ function toolFamily(name: string): string {
   if (head === 'mission' || head === 'squad' || head === 'orch') return 'orquestração';
   return 'outras';
 }
+
+const TOOL_FAMILY_LABELS: Record<string, string> = {
+  terminal: 'Terminal',
+  arquivos: 'Arquivos',
+  navegador: 'Navegador',
+  mídia: 'Mídia',
+  git: 'Git',
+  orquestração: 'Orquestração',
+  outras: 'Outras',
+};
+
+const TOOL_FAMILY_ICONS: Record<string, PixelIconName> = {
+  terminal: 'terminal',
+  arquivos: 'files',
+  navegador: 'browser',
+  mídia: 'vision',
+  git: 'link',
+  orquestração: 'orch',
+  outras: 'config',
+};
 
 export function ToolsSection() {
   const catalog = useCatalogResource(readTools, 'Não foi possível carregar as ferramentas MCP.');
@@ -473,7 +646,8 @@ export function ToolsSection() {
       {families.map((family) => (
         <div key={family} className="arsenal-band">
           <h4 className="arsenal-band__label">
-            {family}{' '}
+            <PixelIcon name={TOOL_FAMILY_ICONS[family] ?? 'config'} size={12} />
+            {TOOL_FAMILY_LABELS[family] ?? family}{' '}
             <span className="arsenal-band__count">{grouped[family].length}</span>
           </h4>
           <ul className="settings-list">
@@ -494,8 +668,9 @@ export function ToolsSection() {
   );
 }
 
-function FileCatalogSection({ title, description, read, empty }: {
+function FileCatalogSection({ title, description, read, empty, emptyIcon }: {
   title: string; description: string; read(): Promise<InstalledItemInfo[]>; empty: string;
+  emptyIcon?: PixelIconName;
 }) {
   const catalog = useCatalogResource(read, `Não foi possível carregar o catálogo de ${title.toLocaleLowerCase()}.`);
   return <section className="catalog-settings">
@@ -504,20 +679,20 @@ function FileCatalogSection({ title, description, read, empty }: {
     </header>
     <CatalogStatus {...catalog} reload={() => void catalog.reload()} label={`Carregando ${title.toLocaleLowerCase()}…`} />
     {catalog.data !== null && !catalog.loading && !(catalog.error && catalog.data.length === 0) && <>
-      <InstalledList items={catalog.data} empty={empty} />
-      <p className="catalog-settings__count">{catalog.data.length} registros nesta lista</p>
+      <InstalledList items={catalog.data} empty={empty} emptyIcon={emptyIcon} />
+      <p className="catalog-settings__count" role="status">{catalog.data.length} registros nesta lista</p>
     </>}
   </section>;
 }
 
 export function PluginsSection({ adapters }: { adapters: AdapterInfo[] }) {
-  return <FileCatalogSection title="Plugins" read={readPlugins}
+  return <FileCatalogSection title="Plugins" read={readPlugins} emptyIcon="bolt"
     description={`${adapters.length} integrações reconhecidas. Esta lista mostra os arquivos locais de extensão do usuário.`}
     empty="Nenhum plugin de usuário encontrado. Os arquivos de integração ficam em ~/.nexus/plugins/adapters." />;
 }
 
 export function HooksSection() {
-  return <FileCatalogSection title="Eventos dos agentes" read={readHooks}
+  return <FileCatalogSection title="Eventos dos agentes" read={readHooks} emptyIcon="bell"
     description="Diretórios gerados para acompanhar eventos dos agentes. A presença de uma pasta não indica que uma sessão esteja ativa."
     empty="Nenhum diretório de hooks encontrado. Eles são gerados conforme os agentes precisam de eventos de execução." />;
 }
@@ -531,6 +706,10 @@ export function RulesSection() {
       squad: squad.name,
       squadId: squad.id,
       source: isMissionRuntimeSquadId(squad.id) ? 'Configuração de missão' : 'Equipe salva',
+      agentId: agent.id,
+      cli: agent.cli,
+      category: agent.category,
+      model: agent.model,
       agent: agent.agentName,
       tools:
         agent.allowedTools == null
@@ -546,18 +725,25 @@ export function RulesSection() {
     (!team || row.squadId === team) &&
     `${row.agent} ${row.squad} ${row.tools} ${row.skills}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
   );
+  const filteredGroups = [...filteredRows
+    .reduce((map, row) => {
+      const list = map.get(row.squadId);
+      if (list) list.push(row); else map.set(row.squadId, [row]);
+      return map;
+    }, new Map<string, typeof filteredRows>())
+    .entries()];
+  const resetFilters = () => { setQuery(''); setTeam(''); };
   return (
     <section className="catalog-settings">
       <SettingsSectionTitle>Permissões declaradas</SettingsSectionTitle>
       <p className="settings-detail__hint">
         Configurações declaradas por agente em equipes e missões. A execução também aplica as políticas e os limites do Nexus.
       </p>
-      <div className="catalog-settings__filters">
+      <div className="catalog-settings__filters" role="search">
         <label className="settings-field">Buscar regras<input type="search" className="settings-input" value={query} onChange={event => setQuery(event.target.value)} placeholder="Agente, equipe ou recurso" /></label>
         <label className="settings-field">Equipe<select className="settings-input" value={team} onChange={event => setTeam(event.target.value)}><option value="">Todas as equipes e missões</option>{squads.map(squad => <option key={squad.id} value={squad.id}>{squad.name}</option>)}</select></label>
       </div>
       <p className="catalog-settings__count" role="status">{filteredRows.length} de {rows.length} agentes</p>
-      {rows.length > 0 && filteredRows.length === 0 && <p>Nenhum agente corresponde aos filtros.</p>}
       {rows.length === 0 ? (
         <EmptyState
           icon="key"
@@ -580,21 +766,43 @@ export function RulesSection() {
             />
           }
         />
+      ) : filteredRows.length === 0 ? (
+        <EmptyState
+          icon="search"
+          title="Nenhum agente corresponde aos filtros"
+          body={<p>Ajuste a busca ou a equipe selecionada.</p>}
+          action={<button type="button" className="settings-btn" onClick={resetFilters}>Limpar filtros</button>}
+        />
       ) : (
-        <ul className="settings-list">
-          {filteredRows.map((row, index) => (
-            <li key={index} className="settings-list__item">
-              <div className="settings-list__head">
-                <span className="settings-list__title">
-                  {row.agent}
-                  <span className="settings-list__detail"> · {row.squad}</span>
-                </span>
-              </div>
-              <p className="catalog-settings__metadata">{row.source}</p>
-              <dl className="catalog-settings__permissions"><dt>Ferramentas</dt><dd>{row.tools}</dd><dt>Instruções</dt><dd>{row.skills}</dd></dl>
-            </li>
-          ))}
-        </ul>
+        filteredGroups.map(([squadId, squadRows]) => (
+          <div key={squadId} className="arsenal-band">
+            <h4 className="arsenal-band__label">
+              {squadRows[0].squad}
+              <span className="catalog-band__source">{squadRows[0].source}</span>
+              <span className="arsenal-band__count">{squadRows.length}</span>
+            </h4>
+            <ul className="settings-list">
+              {squadRows.map((row) => (
+                <li key={row.agentId} className="settings-list__item catalog-item">
+                  <div className="catalog-item__head">
+                    <span className="catalog-item__ident" aria-hidden="true">
+                      {hasProviderLogo(row.cli)
+                        ? <ProviderLogo adapterId={row.cli} label={row.cli} size="xs" />
+                        : <PixelIcon name="agent" size={12} />}
+                    </span>
+                    <div className="catalog-item__titles">
+                      <span className="catalog-item__name">{row.agent}</span>
+                      <span className="catalog-item__meta">
+                        {row.category}{row.model ? ` · ${row.model}` : ''}
+                      </span>
+                    </div>
+                  </div>
+                  <dl className="catalog-settings__permissions"><dt>Ferramentas</dt><dd>{row.tools}</dd><dt>Instruções</dt><dd>{row.skills}</dd></dl>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))
       )}
     </section>
   );

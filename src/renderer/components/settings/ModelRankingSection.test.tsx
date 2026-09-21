@@ -188,6 +188,33 @@ describe('ModelRankingSection', () => {
     act(() => root.unmount());
   });
 
+  it('labels tool presence in Portuguese and filters the race to installed tools', async () => {
+    const { host, root } = mount();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Estado escrito em pt-BR, não "live"/"off-machine".
+    expect(host.textContent).toContain('instalada');
+    expect(host.textContent).toContain('não detectada');
+    expect(host.textContent).not.toContain('off-machine');
+
+    const toggle = host.querySelector<HTMLInputElement>(
+      '.rank-ops__only-installed input',
+    );
+    expect(toggle).toBeTruthy();
+    await act(async () => {
+      toggle!.click();
+    });
+
+    const rows = host.querySelectorAll('.rank-race__row');
+    expect(rows.length).toBe(1);
+    expect(rows[0]!.textContent).toContain('gpt-5-pro');
+    expect(host.textContent).toContain('Ordenar por');
+    act(() => root.unmount());
+  });
+
   it('handles error state when public ranking API fails', async () => {
     Object.defineProperty(window, 'nexus', {
       configurable: true,

@@ -56,7 +56,10 @@ vi.mock('./state/cost-store', () => ({
   useCostController: () => undefined,
 }));
 vi.mock('./state/usage-store', () => ({ useUsageSync: () => undefined }));
-vi.mock('./state/quota-store', () => ({ useQuotaSync: () => undefined }));
+vi.mock('./state/quota-store', async (importActual) => ({
+  ...(await importActual<typeof import('./state/quota-store')>()),
+  useQuotaSync: () => undefined,
+}));
 vi.mock('./orch/failover-controller', () => ({
   useFailoverController: () => undefined,
 }));

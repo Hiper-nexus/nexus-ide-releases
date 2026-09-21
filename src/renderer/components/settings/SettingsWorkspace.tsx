@@ -1,5 +1,10 @@
 import { AcpHarnessPanel } from './AcpHarnessPanel';
-import { SETTINGS_CATEGORIES, SETTINGS_SECTION_SHORT_LABELS, settingsCategoryFor } from './settings-categories';
+import {
+  SETTINGS_CATEGORIES,
+  SETTINGS_SECTION_SHORT_LABELS,
+  settingsCategoryFor,
+  type SettingsCategory,
+} from './settings-categories';
 import { PetSection } from './PetSection';
 import {
   useEffect,
@@ -7,10 +12,16 @@ import {
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent as ReactKeyboardEvent,
   type RefObject,
 } from 'react';
 import type { AdapterInfo } from '../../../shared/types';
 import { isMissionRuntimeSquadId } from '../../../shared/orch-types';
+import {
+  settingsNavPillar,
+  type SettingsNavPillar,
+  type SettingsNavPillarId,
+} from '../../../shared/endorphin';
 import { useOrchStore } from '../../state/orch-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import {
@@ -20,7 +31,7 @@ import {
 import {
   SETTINGS_GROUPS,
   filterSettingsGroups,
-  type NavGroup,
+  settingsPrimaryPillarOrder,
   type NavItem,
   type SettingsSection,
 } from './settings-nav';
@@ -74,13 +85,54 @@ import {
 
 const SETTINGS_ITEMS = SETTINGS_GROUPS.flatMap((group) => group.items);
 
-function NavGroupHeading({ group }: { group: NavGroup }) {
+function navGroupHeadId(label: string): string {
+  return `settings-nav-head-${label.toLowerCase().replace(/[^a-z0-9]+/gi, '-')}`;
+}
+
+function NavGroupHeading({
+  label,
+  story,
+  headId,
+  count,
+}: {
+  label: string;
+  story?: string;
+  headId: string;
+  count?: number;
+}) {
   return (
     <div className="settings-nav__section-head">
-      <p className="settings-nav__section">{group.label}</p>
+      <p className="settings-nav__section" id={headId}>
+        <span className="settings-nav__section-label">{label}</span>
+        {count !== undefined ? (
+          <span className="settings-nav__section-count">{count}</span>
+        ) : null}
+      </p>
+      {story ? <p className="settings-nav__section-story">{story}</p> : null}
     </div>
   );
 }
+
+/** Agrupa as nove áreas sob os pilares da rail (Você/App/Agentes/Sistema). */
+function categoriesByPillar(): Array<{
+  pillar: SettingsNavPillar;
+  categories: SettingsCategory[];
+}> {
+  const byPillar = new Map<SettingsNavPillarId, SettingsCategory[]>();
+  for (const category of SETTINGS_CATEGORIES) {
+    const bucket = byPillar.get(category.pillar) ?? [];
+    bucket.push(category);
+    byPillar.set(category.pillar, bucket);
+  }
+  return settingsPrimaryPillarOrder()
+    .map((id) => ({
+      pillar: settingsNavPillar(id),
+      categories: byPillar.get(id) ?? [],
+    }))
+    .filter((entry) => entry.categories.length > 0);
+}
+
+const CATEGORY_GROUPS = categoriesByPillar();
 
 function NavRow({
   item,
@@ -126,12 +178,25 @@ function SettingsSectionContent({
   onRetryAdapters: () => void;
 }) {
   if ((section === "llms" || section === "plugins") && adapterStatus !== "ready") {
+    const navMeta = SETTINGS_ITEMS.find(item => item.id === section);
     return <section className="settings-section">
-      <SettingsSectionTitle>{SETTINGS_ITEMS.find(item => item.id === section)?.title}</SettingsSectionTitle>
+      <SettingsSectionTitle subtitle={navMeta?.subtitle}>{navMeta?.title}</SettingsSectionTitle>
       {adapterStatus === "loading"
-        ? <p role="status" className="settings-skeleton">Carregando ferramentas de IA…</p>
-        : <div role="alert"><p>Não foi possível carregar as ferramentas de IA.</p>
-            <button type="button" className="settings-btn" onClick={onRetryAdapters}>Tentar novamente</button></div>}
+        ? <div className="settings-route-state" role="status">
+            <div className="settings-route-state__copy">
+              <p>Carregando ferramentas de IA…</p>
+              <div className="settings-skeleton" aria-hidden="true"><span /><span /><span /></div>
+            </div>
+          </div>
+        : <div className="settings-route-state settings-route-state--error" role="alert">
+            <span className="settings-route-state__icon" aria-hidden>
+              <PixelIcon name="warn" size={14} />
+            </span>
+            <div className="settings-route-state__copy">
+              <p>Não foi possível carregar as ferramentas de IA.</p>
+              <button type="button" className="settings-btn" onClick={onRetryAdapters}>Tentar novamente</button>
+            </div>
+          </div>}
     </section>;
   }
   switch (section) {
@@ -142,7 +207,7 @@ function SettingsSectionContent({
     case 'appearance':
       return <AppearanceSection />;
     case 'pets':
-      return <section><SettingsSectionTitle>Meus pets</SettingsSectionTitle><PetSection /></section>;
+      return <section><SettingsSectionTitle subtitle={SETTINGS_ITEMS.find(item => item.id === 'pets')?.subtitle}>Meus pets</SettingsSectionTitle><PetSection /></section>;
     case 'system':
       return <SystemSection />;
     case 'terminal':
@@ -170,7 +235,7 @@ function SettingsSectionContent({
     case 'harness':
       return <HarnessSection overviewOnly />;
     case 'agent-connection':
-      return <section><SettingsSectionTitle>Conexão de agentes</SettingsSectionTitle><AcpHarnessPanel /></section>;
+      return <section><SettingsSectionTitle subtitle={SETTINGS_ITEMS.find(item => item.id === 'agent-connection')?.subtitle}>Conexão de agentes</SettingsSectionTitle><AcpHarnessPanel /></section>;
     case 'marketplace':
       return <MarketplaceSection />;
     case 'design-systems':
@@ -254,11 +319,49 @@ export function SettingsSurface({
   );
   const queryRef = useRef(query);
   queryRef.current = query;
+  const innerSearchRef = useRef<HTMLInputElement | null>(null);
   const searching = query.trim().length > 0;
   const groups = useMemo(
     () => filterSettingsGroups(SETTINGS_GROUPS, query),
     [query],
   );
+  const matchCount = useMemo(
+    () => groups.reduce((total, group) => total + group.items.length, 0),
+    [groups],
+  );
+  const clearSearch = () => {
+    setQuery('');
+    innerSearchRef.current?.focus();
+  };
+
+  /* Navegação por setas entre destinos da rail — padrão roving sem tirar
+     nenhum item da ordem de Tab. */
+  const onGroupsKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
+    const { key } = event;
+    if (
+      key !== 'ArrowDown' &&
+      key !== 'ArrowUp' &&
+      key !== 'Home' &&
+      key !== 'End'
+    ) {
+      return;
+    }
+    const items = [
+      ...event.currentTarget.querySelectorAll<HTMLElement>(
+        '.settings-nav__item',
+      ),
+    ];
+    const index = items.indexOf(document.activeElement as HTMLElement);
+    if (index === -1) return;
+    event.preventDefault();
+    const next =
+      key === 'Home'
+        ? 0
+        : key === 'End'
+          ? items.length - 1
+          : index + (key === 'ArrowDown' ? 1 : -1);
+    items[Math.max(0, Math.min(items.length - 1, next))]?.focus();
+  };
 
   useEffect(() => {
     const activeSectionIsVisible = filterSettingsGroups(
@@ -339,44 +442,121 @@ export function SettingsSurface({
               </span>
             </span>
           </div>
-          <div className="settings-nav__search">
+          <div className="settings-nav__search" role="search">
             <span className="settings-nav__search-icon" aria-hidden>
               <PixelIcon name="search" size={12} />
             </span>
             <input
-              ref={searchInputRef}
+              ref={(node) => {
+                innerSearchRef.current = node;
+                if (searchInputRef) searchInputRef.current = node;
+              }}
               className="settings-nav__search-input"
               type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape' && searching) setQuery('');
+              }}
               placeholder="Buscar configurações…"
               aria-label="Buscar nas configurações"
             />
+            {searching ? (
+              <button
+                type="button"
+                className="settings-nav__search-clear"
+                aria-label="Limpar busca"
+                onClick={clearSearch}
+              >
+                <PixelIcon name="close" size={10} />
+              </button>
+            ) : null}
           </div>
-          <div className="settings-nav__groups">
+          <div className="settings-nav__groups" onKeyDown={onGroupsKeyDown}>
           {searching && groups.length === 0 ? (
-            <p className="settings-nav__no-match">
-              Nada encontrado para “{query}”.
-            </p>
+            <div className="settings-nav__no-match" role="status">
+              <span className="settings-nav__no-match-icon" aria-hidden>
+                <PixelIcon name="search" size={14} />
+              </span>
+              <p className="settings-nav__no-match-text">
+                Nenhum ajuste encontrado para “{query}”.
+              </p>
+              <p className="settings-nav__no-match-hint">
+                Tente o nome antigo ou em inglês — os aliases continuam valendo.
+              </p>
+              <button
+                type="button"
+                className="settings-btn settings-btn--sm"
+                onClick={clearSearch}
+              >
+                Limpar busca
+              </button>
+            </div>
           ) : (
-            searching ? groups.map((group) => (
-              <div key={group.label}>
-                <NavGroupHeading group={group} />
-                {group.items.map((item) => (
-                  <NavRow
-                    key={item.id}
-                    item={item}
-                    active={section === item.id}
-                    badge={badges[item.id]}
-                    onSelect={onSelectSection}
+            searching ? <>
+              <p className="settings-nav__match-count" role="status">
+                {matchCount === 1
+                  ? '1 ajuste encontrado'
+                  : `${matchCount} ajustes encontrados`}
+              </p>
+              {groups.map((group) => {
+                const headId = navGroupHeadId(group.label);
+                return (
+                <div
+                  key={group.label}
+                  className="settings-nav__group"
+                  role="group"
+                  aria-labelledby={headId}
+                >
+                  <NavGroupHeading
+                    label={group.label}
+                    story={group.story}
+                    headId={headId}
+                    count={group.items.length}
                   />
-                ))}
-              </div>
-            )) : SETTINGS_CATEGORIES.map(item => {
-              const active = item.sections.includes(section);
-              const first = SETTINGS_ITEMS.find(entry => entry.id === (active ? section : item.sections[0]));
-              if (!first) return null;
-              return <NavRow key={item.id} item={{ ...first, title: item.title, subtitle: item.description, pixelIcon: item.icon }} active={active} onSelect={onSelectSection} />;
+                  <ul className="settings-nav__list">
+                    {group.items.map((item) => (
+                      <li key={item.id}>
+                        <NavRow
+                          item={item}
+                          active={section === item.id}
+                          badge={badges[item.id]}
+                          onSelect={onSelectSection}
+                        />
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                );
+              })}
+            </> : CATEGORY_GROUPS.map(({ pillar, categories }) => {
+              const headId = `settings-nav-head-${pillar.id}`;
+              return (
+                <div
+                  key={pillar.id}
+                  className="settings-nav__group"
+                  role="group"
+                  aria-labelledby={headId}
+                >
+                  <NavGroupHeading
+                    label={pillar.label}
+                    story={pillar.story}
+                    headId={headId}
+                  />
+                  <ul className="settings-nav__list">
+                    {categories.map(item => {
+                      const active = item.sections.includes(section);
+                      const first = SETTINGS_ITEMS.find(entry => entry.id === (active ? section : item.sections[0]));
+                      if (!first) return null;
+                      return (
+                        <li key={item.id}>
+                          <NavRow item={{ ...first, title: item.title, subtitle: item.description, pixelIcon: item.icon }} active={active} onSelect={onSelectSection} />
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              );
             })
           )}
           </div>
@@ -402,25 +582,33 @@ export function SettingsSurface({
 
       <div ref={detailRef} className="settings-detail">
         <header className="settings-detail__nav">
-          <div className="settings-detail__location" aria-live="polite">
-            <span>Configurações</span>
-            <PixelIcon name="chevron" size={9} />
-            <strong>{currentSectionTitle ?? 'Nexus'}</strong>
+          <div className="settings-detail__bar">
+            <div className="settings-detail__location" aria-live="polite">
+              <span>Configurações</span>
+              <PixelIcon name="chevron" size={9} />
+              {category ? (
+                <>
+                  <span>{category.title}</span>
+                  <PixelIcon name="chevron" size={9} />
+                </>
+              ) : null}
+              <strong>{currentSectionTitle ?? 'Nexus'}</strong>
+            </div>
+            <button
+              type="button"
+              className="settings-detail__return"
+              onClick={onBack}
+              aria-label={returnAriaLabel}
+            >
+              <PixelIcon name="arrow-left" size={11} />
+              <span>{returnLabel}</span>
+              {returnKeyboardHint ? <kbd>{returnKeyboardHint}</kbd> : null}
+            </button>
           </div>
-          <button
-            type="button"
-            className="settings-detail__return"
-            onClick={onBack}
-            aria-label={returnAriaLabel}
-          >
-            <PixelIcon name="arrow-left" size={11} />
-            <span>{returnLabel}</span>
-            {returnKeyboardHint ? <kbd>{returnKeyboardHint}</kbd> : null}
-          </button>
+          {category && category.sections.length > 1 && <nav className="settings-category-tabs" aria-label={`Seções de ${category.title}`}>
+            {category.sections.map(id => <button key={id} type="button" className={`settings-category-tabs__item ${section === id ? 'settings-category-tabs__item--active' : ''}`} aria-current={section === id ? 'page' : undefined} onClick={() => onSelectSection(id)}>{SETTINGS_SECTION_SHORT_LABELS[id] ?? SETTINGS_ITEMS.find(item => item.id === id)?.title}</button>)}
+          </nav>}
         </header>
-        {category && category.sections.length > 1 && <nav className="settings-category-tabs" aria-label={`Seções de ${category.title}`}>
-          {category.sections.map(id => <button key={id} type="button" className={`settings-category-tabs__item ${section === id ? 'settings-category-tabs__item--active' : ''}`} aria-current={section === id ? 'page' : undefined} onClick={() => onSelectSection(id)}>{SETTINGS_SECTION_SHORT_LABELS[id] ?? SETTINGS_ITEMS.find(item => item.id === id)?.title}</button>)}
-        </nav>}
         <div ref={contentRef} className="settings-detail__content" data-settings-section={section}>
           <SettingsSectionTitleProvider level={sectionTitleLevel}>
             <SettingsSectionContent

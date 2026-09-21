@@ -1,0 +1,480 @@
+/* settings-you-polish — área “Você” do Settings: Minha conta, Chaves de API,
+   contas por provider (AccountsManager), Aparência e Meus pets.
+   Carrega depois das folhas base: overrides por ordem + especificidade.
+   Só tokens de base.css :root e color-mix — nunca hex local. */
+
+/* ──────────────────────────────────────────────────────────────────────
+   Minha conta — identidade, time, planos
+   ──────────────────────────────────────────────────────────────────── */
+
+/* Pill de sessão ganha dot de estado: um estado, uma cor, sempre com palavra. */
+.account__session-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+}
+.account__session-pill::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-round);
+  background: currentColor;
+}
+.account__session-pill--in::before {
+  background: var(--status-dot-success);
+  box-shadow: 0 0 0 3px
+    color-mix(in srgb, var(--status-dot-success) 16%, transparent);
+}
+
+/* Meta da identidade: chip de plano + frase de renovação na mesma linha. */
+.account__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1-5) var(--space-2-5);
+}
+.account__plan-tag {
+  flex: 0 0 auto;
+  padding: 2px var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-round);
+  color: var(--text-dim);
+  font-size: var(--text-2xs);
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.account__plan-tag--paid {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+/* Títulos de zona com ícone pixel — escaneabilidade, não decoração. */
+.account__zone-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.account__zone-title .pixel-icon {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+}
+
+/* Membros: a linha respira no hover. */
+.account__member {
+  transition: border-color 120ms var(--ease-out-quart);
+}
+.account__member:hover {
+  border-color: var(--border-strong);
+}
+
+/* Convite: a URL virou input readonly — selecionar tudo num clique. */
+.account__invite input.account__invite-url {
+  flex: 1 1 200px;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+/* Planos: bullets pixel-dot e CTA claro de largura cheia. */
+.account__plan-features {
+  padding-left: 0;
+  list-style: none;
+}
+.account__plan-features li {
+  position: relative;
+  padding-left: var(--space-3);
+}
+.account__plan-features li::before {
+  content: '';
+  position: absolute;
+  left: 2px;
+  top: 0.55em;
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-round);
+  background: color-mix(in srgb, var(--accent) 45%, var(--text-dim));
+}
+.account__plan--featured .account__plan-features li::before {
+  background: var(--accent);
+}
+.account__plan-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.account__plan-cta {
+  align-self: stretch;
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   Chaves de API — grupos por finalidade, estado legível por card
+   ──────────────────────────────────────────────────────────────────── */
+
+.api-keys-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.api-keys-group__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-1) var(--space-3);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+.api-keys-group__title {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--text-md);
+  font-weight: 650;
+}
+.api-keys-group__hint {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+}
+
+/* Card da casa (§5): elevated + hairline + sombra. O estado mora na borda. */
+.api-key-card {
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-1), var(--shadow-inset-hi);
+}
+.api-key-card[data-state='saved'] {
+  border-color: color-mix(in srgb, var(--ok) 30%, var(--border));
+}
+.api-key-card[data-state='env'] {
+  border-color: color-mix(in srgb, var(--warn) 24%, var(--border));
+}
+
+/* Identidade separada do formulário por hairline. */
+.api-key-card__head {
+  padding-bottom: var(--space-2-5);
+  border-bottom: 1px solid var(--border);
+}
+
+/* Chip de estado: dot + palavra (nunca só cor). env fica em mono/minúsculo. */
+.api-key-card__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+}
+.api-key-card__chip--env {
+  font-family: var(--font-mono);
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+.api-key-card__dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-round);
+  background: currentColor;
+}
+.api-key-card__dot[data-tone='ok'] {
+  background: var(--status-dot-success);
+}
+
+/* Toggle de visibilidade é tabbable agora — precisa de foco visível. */
+.api-key-card__visibility-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.api-key-card__visibility-toggle[aria-pressed='true'] {
+  color: var(--accent);
+}
+
+/* Feedback: glifo pixel + token certo (base usava var(--err), inexistente). */
+.api-key-card__feedback {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1-5);
+}
+.api-key-card__feedback .pixel-icon {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+.api-key-card__feedback--ok {
+  color: var(--ok);
+}
+.api-key-card__feedback--err {
+  color: var(--danger);
+}
+
+/* Stats do header: chips com ícone alinhado. */
+.api-keys-section__stats .settings-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   Contas por provider — roster de failover (AccountsManager)
+   ──────────────────────────────────────────────────────────────────── */
+
+/* Pill de status da sonda: dot via currentColor herda o tom do estado. */
+.acct__status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+}
+.acct__status::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-round);
+  background: currentColor;
+}
+/* Sonda em curso é o único pulso permitido: estado running/transiente. */
+.acct__status--checking::before {
+  animation: acct-status-pulse 1.6s ease-in-out infinite;
+}
+@keyframes acct-status-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .acct__status--checking::before {
+    animation: none;
+  }
+}
+
+/* Herói de login: card da casa, não linha solta na página. */
+.acct__login-hero {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-1), var(--shadow-inset-hi);
+}
+
+/* Linhas do roster: o estado também mora na borda, além do LED e do texto. */
+.acct__row {
+  transition:
+    border-color 150ms var(--ease-out-quart),
+    background 150ms var(--ease-out-quart);
+}
+.acct__row:hover {
+  border-color: var(--border-strong);
+}
+.acct__row[data-state='warn'] {
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
+  background: color-mix(in srgb, var(--danger) 5%, var(--bg));
+}
+.acct__row[data-state='cooldown'] {
+  border-color: color-mix(in srgb, var(--warn) 35%, var(--border));
+  background: color-mix(in srgb, var(--warn) 4%, var(--bg));
+}
+
+/* Empty de reserva: ícone à esquerda do texto (a variante --cta já é flex). */
+.acct__empty:not(.acct__empty--cta) {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+.acct__empty-icon {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--text-faint);
+}
+
+/* Form inline: superfície elevada para separar do roster em volta. */
+.acct__form {
+  background: color-mix(in srgb, var(--bg-elevated) 80%, transparent);
+  box-shadow: var(--shadow-inset-hi);
+}
+
+/* Compacto (menu "+ Pane"): mesmo vocabulário, menos folga. */
+.acct[data-compact='true'] .acct__login-hero {
+  padding: var(--space-2-5) var(--space-3);
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   Aparência — temas com preview real da paleta
+   ──────────────────────────────────────────────────────────────────── */
+
+/* Cada opção mostra a paleta do tema (mini-chrome: barra, texto, CTA). */
+.settings-theme-grid {
+  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  gap: var(--space-2-5);
+}
+.settings-theme {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-family: var(--font-ui);
+  text-align: left;
+  transition:
+    border-color 150ms var(--ease-out-quart),
+    box-shadow 150ms var(--ease-out-quart);
+}
+.settings-theme--active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-soft);
+}
+.settings-theme__preview {
+  display: flex;
+  flex-direction: column;
+  height: 56px;
+  border: 1px solid;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.settings-theme__chrome {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 14px;
+  padding: 0 var(--space-1-5);
+  border-bottom: 1px solid;
+}
+.settings-theme__chrome i {
+  width: 5px;
+  height: 5px;
+  border-radius: var(--radius-round);
+}
+.settings-theme__chrome i:last-child {
+  margin-left: auto;
+}
+.settings-theme__lines {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 var(--space-2);
+}
+.settings-theme__line {
+  display: block;
+  width: 55%;
+  height: 3px;
+  border-radius: 2px;
+}
+.settings-theme__line--dim {
+  width: 35%;
+}
+.settings-theme__cta {
+  display: block;
+  width: 22px;
+  height: 8px;
+  margin-top: 1px;
+  border-radius: 3px;
+}
+.settings-theme__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 0 var(--space-1);
+}
+.settings-theme__name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-theme__current {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 0 auto;
+  color: var(--accent);
+  font-size: var(--text-2xs);
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* Card do mascote: CTA à direita, quebra limpa em telas estreitas. */
+.settings-appearance__preview {
+  flex-wrap: wrap;
+}
+.settings-appearance__preview-cta {
+  align-self: center;
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+/* ──────────────────────────────────────────────────────────────────────
+   Meus pets — preset ativo evidente, empty honesto, summary de sub-seção
+   ──────────────────────────────────────────────────────────────────── */
+
+/* Preset ativo: anel de acento + check canto superior esquerdo. */
+.settings-pet--active {
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.settings-pet__check {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: var(--radius-round);
+  background: color-mix(in srgb, var(--bg) 82%, var(--accent) 18%);
+  color: var(--accent);
+  pointer-events: none;
+}
+
+/* Opções de exibição dentro do details: ritmo de grid. */
+.settings-pets__options {
+  display: grid;
+  gap: var(--space-2);
+}
+
+/* Empty de “Meus pets”: ensina e aponta a ação logo abaixo. */
+.settings-pets__empty {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bg) 50%, transparent);
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+.settings-pets__empty .pixel-icon {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+/* Biblioteca inclusa: o summary lê como título de sub-seção. */
+details.settings-pet-library > summary {
+  width: fit-content;
+  color: var(--text);
+  font-size: var(--text-md);
+  font-weight: 650;
+  cursor: pointer;
+}
+details.settings-pet-library > summary:hover {
+  color: var(--accent);
+}
+details.settings-pet-library > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+details.settings-pet-library[open] > summary {
+  margin-bottom: var(--space-1);
+}

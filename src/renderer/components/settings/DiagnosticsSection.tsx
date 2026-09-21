@@ -131,7 +131,7 @@ export function DiagnosticsSection() {
     .filter((delta) => delta > 0 && delta < 5 * 60_000);
 
   return (
-    <section>
+    <section className="sys-section">
       <SettingsSectionTitle>Diagnóstico</SettingsSectionTitle>
       <p className="settings-detail__hint">
         Confira microfone, permissões e funcionamento da assistente.
@@ -142,15 +142,21 @@ export function DiagnosticsSection() {
 
       <ContextDraftsSection />
 
-      <h4 className="release-section-title">Interface e terminais</h4>
-      <TerminalPerformanceStatus />
-
+      <div className="sys-subhead">
+        <h4 className="sys-subhead__title">Permissões e microfone</h4>
+      </div>
       <div className="ops-metric-grid">
         <MetricTile
           label="Permissão do mic"
           value={permissionLabel(micPermission)}
           tone={permissionTone(micPermission)}
           detail={devices.error ?? `${devices.count} entrada(s) detectada(s)`}
+        />
+        <MetricTile
+          label="Gravação de tela"
+          value={permissionLabel(screenPermission)}
+          tone={permissionTone(screenPermission)}
+          detail="Necessário para Vision capturar a janela Nexus."
         />
         <MetricTile
           label="Microfone selecionado"
@@ -164,12 +170,12 @@ export function DiagnosticsSection() {
           tone={level > 0.05 ? 'ok' : 'warn'}
           detail={`Saúde: ${micHealthLabel(micHealth)}`}
         />
-        <MetricTile
-          label="Gravação de tela"
-          value={permissionLabel(screenPermission)}
-          tone={permissionTone(screenPermission)}
-          detail="Necessário para Vision capturar a janela Nexus."
-        />
+      </div>
+
+      <div className="sys-subhead">
+        <h4 className="sys-subhead__title">Assistente de voz</h4>
+      </div>
+      <div className="ops-metric-grid">
         <MetricTile
           label="Ativação por voz"
           value={wakeState.value}
@@ -182,6 +188,17 @@ export function DiagnosticsSection() {
           tone={liveState?.realtimeReady ? 'ok' : 'warn'}
           detail={liveState ? `${liveState.turns} turno(s), ativo ${formatAge(liveState.lastActiveAt)}` : 'Sem conversa contínua ativa.'}
         />
+      </div>
+
+      <div className="sys-subhead">
+        <h4 className="sys-subhead__title">Interface e terminais</h4>
+      </div>
+      <TerminalPerformanceStatus />
+
+      <div className="sys-subhead">
+        <h4 className="sys-subhead__title">Uso e latência</h4>
+      </div>
+      <div className="ops-metric-grid">
         <MetricTile
           label="Tokens reais"
           value={`${usage.global.inputTokens + usage.global.outputTokens}`}
@@ -206,6 +223,9 @@ export function DiagnosticsSection() {
 
       <TokenSpeedMonitor />
 
+      <div className="sys-subhead">
+        <h4 className="sys-subhead__title">Atividade</h4>
+      </div>
       <div className="ops-log-strip">
         <div>
           <span className="ops-log-strip__label">Última transcrição</span>
@@ -217,7 +237,17 @@ export function DiagnosticsSection() {
         </div>
       </div>
 
-      <div className="settings-row" style={{ flexWrap: 'wrap', gap: 8 }}>
+      <div className="sys-actions">
+        <button className="settings-btn" type="button" onClick={() => void refresh()}>
+          Atualizar diagnóstico
+        </button>
+        <button className="settings-btn" type="button" onClick={() => window.nexus.voice.openMicSettings()}>
+          Abrir privacidade do mic
+        </button>
+        <button className="settings-btn" type="button" onClick={() => window.nexus.voice.openSoundSettings()}>
+          Abrir som
+        </button>
+        <span className="sys-actions__sep" aria-hidden="true" />
         <button
           className="settings-btn"
           type="button"
@@ -235,19 +265,10 @@ export function DiagnosticsSection() {
           Licenças de terceiros
         </button>
         {legalNote && (
-          <span className="settings-detail__hint" style={{ margin: 0 }}>
+          <span className="settings-detail__hint" style={{ margin: 0 }} role="status">
             {legalNote}
           </span>
         )}
-        <button className="settings-btn" type="button" onClick={() => void refresh()}>
-          Atualizar diagnóstico
-        </button>
-        <button className="settings-btn" type="button" onClick={() => window.nexus.voice.openMicSettings()}>
-          Abrir privacidade do mic
-        </button>
-        <button className="settings-btn" type="button" onClick={() => window.nexus.voice.openSoundSettings()}>
-          Abrir som
-        </button>
       </div>
     </section>
   );
