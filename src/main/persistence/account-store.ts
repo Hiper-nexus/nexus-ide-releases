@@ -1716,25 +1716,9 @@ export function setCooldown(
 
 export function listAccountInfos(): AccountInfo[] {
   const now = Date.now();
-  const nativeClaude = activeClaudeEmail();
   return listAccounts().map((a) => {
-    const isLiveNativeClaude =
-      a.adapterId === 'claude' &&
-      a.mode === 'subscription' &&
-      Boolean(nativeClaude && a.email && emailsEqual(a.email, nativeClaude));
-
     const hasAuthError = isAuthCooldownReason(a.lastError);
     const hasActiveCooldown = Boolean(a.cooldownUntil && a.cooldownUntil > now);
-
-    // Se a conta é a sessão nativa ativa da CLI e tinha cooldown ou erro de auth,
-    // o login vivo no Keychain refuta o erro antigo: agenda a limpeza.
-    if (isLiveNativeClaude && (hasActiveCooldown || hasAuthError)) {
-      queueMicrotask(() => {
-        clearCooldown(a.id, 'sessão confirmada ativa no Keychain');
-      });
-    }
-
-    const effectiveCooldown = hasActiveCooldown && !isLiveNativeClaude;
     const hasActiveAuthCooldown = hasActiveCooldown && hasAuthError;
     const authFailure =
       hasActiveAuthCooldown || hasRecentClaudeRefreshFailure(a.id, now);
@@ -1745,11 +1729,11 @@ export function listAccountInfos(): AccountInfo[] {
       hasCredential:
         a.mode === 'api-key'
           ? hasSecret(KEY_PREFIX + a.id)
-          : hasSecret(CRED_PREFIX + a.id) || isLiveNativeClaude,
+          : hasSecret(CRED_PREFIX + a.id),
       // onCooldown é apenas para limite real de cota / rate-limit — nunca para erro de auth/login:
-      onCooldown: effectiveCooldown && !hasAuthError,
+      onCooldown: hasActiveCooldown && !hasAuthError,
       // needsRelogin indica sessão expirada / 401 / refresh morto:
-      needsRelogin: !isLiveNativeClaude && authFailure,
+      needsRelogin: authFailure,
     };
   });
 }

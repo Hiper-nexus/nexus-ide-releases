@@ -891,7 +891,7 @@ describe('renovação morta veta failover no escuro', () => {
     expect(info?.lastError).toBe('Error: 401');
   });
 
-  it('listAccountInfos não marca onCooldown nem needsRelogin na conta que é a sessão nativa viva', () => {
+  it('native account metadata cannot clear a confirmed authentication failure', () => {
     const b = addSecondary('Conta B', 'retornoja@gmail.com', oauthBlob('retorno-access'));
     deps.activeEmail = 'retornoja@gmail.com';
     deps.keychain = oauthBlob('retorno-access');
@@ -899,7 +899,18 @@ describe('renovação morta veta failover no escuro', () => {
 
     const info = listAccountInfos().find((i) => i.id === b.id);
     expect(info?.onCooldown).toBe(false);
-    expect(info?.needsRelogin).toBe(false);
+    expect(info?.needsRelogin).toBe(true);
+  });
+
+  it('native identity metadata cannot clear a real quota cooldown', async () => {
+    const account = addSecondary('Conta B', 'native@example.test', oauthBlob('native'));
+    deps.activeEmail = 'native@example.test';
+    deps.keychain = oauthBlob('native');
+    const until = Date.now() + 60_000;
+    setCooldown(account.id, until, 'rate limit quota exhausted');
+    expect(listAccountInfos().find((item) => item.id === account.id)?.onCooldown).toBe(true);
+    await Promise.resolve();
+    expect(listAccountInfos().find((item) => item.id === account.id)?.cooldownUntil).toBe(until);
   });
 
   it('addActiveSessionAccount para conta existente limpa cooldown e erros antigos', () => {
