@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { PetOpenAction, PetPlacement, PetPrefs } from '../../shared/pet-types';
+import type {
+  PetLifetimeStats,
+  PetOpenAction,
+  PetPlacement,
+  PetPrefs,
+  PetRoamState,
+} from '../../shared/pet-types';
 import { isPetUrgentEvent } from '../../shared/pet-types';
 import { OperatorSprite, type OperatorMood } from '../components/OperatorSprite';
 import { CoffeeCup } from './CoffeeCup';
@@ -54,6 +60,27 @@ function runBalloonAction(action: PetOpenAction): void {
   else window.nexusPet.focusMain();
 }
 
+/** 1_234_567 → "1.2M" — ticker compacto em px de sprite. */
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return `${Math.floor(n)}`;
+}
+
+/** Linhas do ticker sob o sprite — cicla a cada poucos segundos. */
+function tickerLines(s: PetLifetimeStats): string[] {
+  const lines = [
+    `⚡ ${fmtTokens(s.tokensBurned)} tok`,
+    `💵 $${s.usdEquivalent.toFixed(2)}`,
+    `🪟 ${s.panesServed} panes`,
+    `🔁 ${s.turns} turnos`,
+    `🏁 ${s.missionsDone} missões`,
+    `Nv.${s.level} ${s.tier}`,
+  ];
+  if (s.mediaUsd > 0) lines.splice(2, 0, `🎬 $${s.mediaUsd.toFixed(2)} mídia`);
+  return lines;
+}
+
 export function PetApp() {
   const [prefs, setPrefs] = useState<PetPrefs | null>(null);
   const [balloons, setBalloons] = useState<BalloonQueueState>(
@@ -77,7 +104,21 @@ export function PetApp() {
   const [runDir, setRunDir] = useState<'left' | 'right' | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [lastActivityText, setLastActivityText] = useState<string | null>(null);
-  const [wanderOffset, setWanderOffset] = useState(0);
+  /** Patrulha real da janela (main move; aqui só a animação acompanha). */
+  const [roam, setRoam] = useState<PetRoamState>({
+    phase: 'idle',
+    dir: null,
+    climb: null,
+  });
+  /** Contadores de vida útil — HUD gamificado (menu + ticker). */
+  const [stats, setStats] = useState<PetLifetimeStats | null>(null);
+  const [tickerTick, setTickerTick] = useState(0);
+  /** Flash de level-up — sobrepõe o ticker por alguns segundos. */
+  const [levelFlash, setLevelFlash] = useState<string | null>(null);
+  const prevLevelRef = useRef<number | null>(null);
+  const levelFlashTimer = useRef<number | null>(null);
+  /** Arrasto reativo para o veto de patrulha (o ref não re-renderiza). */
+  const [dragging, setDragging] = useState(false);
   const [placement, setPlacement] = useState<PetPlacement>({
     horizontal: 'center',
     vertical: 'bottom',
@@ -153,6 +194,26 @@ export function PetApp() {
     });
     const offPrefs = window.nexusPet.onPrefsChanged(setPrefs);
     const offPlacement = window.nexusPet.onPlacement(setPlacement);
+    const offRoam = window.nexusPet.onRoam(setRoam);
+    const offStats = window.nexusPet.onStats((next) => {
+      setStats(next);
+      const prev = prevLevelRef.current;
+      prevLevelRef.current = next.level;
+      if (prev === null || next.level <= prev) return;
+      // Level-up: burst no ticker + comemoração — a batida de endorfina.
+      setLevelFlash(`NÍVEL ${next.level} · ${next.tier}`);
+      setReaction('wave');
+      if (celebrateTimer.current) window.clearTimeout(celebrateTimer.current);
+      celebrateTimer.current = window.setTimeout(
+        () => setReaction(null),
+        CELEBRATE_MS,
+      );
+      if (levelFlashTimer.current) window.clearTimeout(levelFlashTimer.current);
+      levelFlashTimer.current = window.setTimeout(
+        () => setLevelFlash(null),
+        4_500,
+      );
+    });
     const offEvents = window.nexusPet.onEvent((event) => {
       setBalloons((state) => enqueueBalloon(state, event));
       let activity = event.title;
@@ -228,10 +289,16 @@ export function PetApp() {
       window.clearTimeout(readyTimer);
       offPrefs();
       offPlacement();
+      offRoam();
+      offStats();
       offEvents();
       window.removeEventListener('mousemove', onWinMove);
       if (celebrateTimer.current) window.clearTimeout(celebrateTimer.current);
       if (cafeinadoTimer.current) window.clearTimeout(cafeinadoTimer.current);
+      if (levelFlashTimer.current) {
+        window.clearTimeout(levelFlashTimer.current);
+        levelFlashTimer.current = null;
+      }
       if (leaveTimerRef.current !== null) {
         window.clearTimeout(leaveTimerRef.current);
         leaveTimerRef.current = null;
@@ -283,7 +350,6 @@ export function PetApp() {
     const onChange = (e: MediaQueryListEvent) => {
       setReducedMotion(e.matches);
       if (e.matches) {
-        setWanderOffset(0);
         setRunDir(null);
       }
     };
@@ -291,36 +357,34 @@ export function PetApp() {
     return () => mq.removeEventListener('change', onChange);
   }, []);
 
-  // Vaguear orgânico autônomo (vida orgânica sem presets rígidos):
-  // Quando ocioso e acordado, o mascote dá passos suaves ocasionais (±20px).
-  // Respeita estritamente prefers-reduced-motion.
+  /**
+   * Veto do renderer à patrulha do main: balão aberto (o usuário está a
+   * ler), menu aberto, arrasto, sono ou reduced-motion seguram o pet.
+   * Um único boolean — o main também veta por conta própria (drag/sono),
+   * este cobre o que só o renderer sabe (balão/menu/a11y).
+   */
+  const roamHeld =
+    Boolean(currentBalloon) ||
+    menuOpen ||
+    Boolean(prefs?.sleeping) ||
+    reducedMotion ||
+    dragging;
   useEffect(() => {
-    if (reducedMotion || prefs?.sleeping || currentBalloon || menuOpen) {
-      setWanderOffset(0);
-      return;
-    }
-    const wanderTimer = window.setInterval(() => {
-      if (reducedMotion || drag.current?.dragging || currentBalloon || menuOpen || prefs?.sleeping) return;
-      setWanderOffset((prev) => {
-        let next = 0;
-        if (prev === 0) {
-          next = Math.random() > 0.5 ? 20 : -20;
-        } else {
-          next = 0;
-        }
-        const dir = next > prev ? 'right' : 'left';
-        setRunDir(dir);
-        window.setTimeout(() => {
-          if (!drag.current?.dragging) {
-            setRunDir(null);
-          }
-        }, 900);
-        return next;
-      });
-    }, 14_000);
+    window.nexusPet.setRoamHold(roamHeld);
+  }, [roamHeld]);
 
-    return () => window.clearInterval(wanderTimer);
-  }, [reducedMotion, prefs?.sleeping, currentBalloon, menuOpen]);
+  // Ticker de stats sob o sprite: cicla uma linha a cada 3,8 s.
+  const tickerVisible =
+    Boolean(stats) &&
+    prefs?.hudTicker === true &&
+    !prefs?.sleeping &&
+    !currentBalloon &&
+    !menuOpen;
+  useEffect(() => {
+    if (!tickerVisible) return;
+    const t = window.setInterval(() => setTickerTick((v) => v + 1), 3_800);
+    return () => window.clearInterval(t);
+  }, [tickerVisible]);
 
   // Drag: limiar em screen coords (clientX “congela” quando a janela segue).
   // Main faz o follow por cursor; pointer capture + interactive forçado.
@@ -329,7 +393,6 @@ export function PetApp() {
     e.preventDefault();
     const el = hitRef.current;
     if (!el) return;
-    setWanderOffset(0);
     // Hit-test ON durante todo o gesto (click-through matava o arrasto).
     markInteractive(true);
     try {
@@ -352,7 +415,7 @@ export function PetApp() {
       const state = drag.current;
       drag.current = null;
       setRunDir(null);
-      setWanderOffset(0);
+      setDragging(false);
       el.removeEventListener('pointermove', onMove);
       el.removeEventListener('pointerup', onUp);
       el.removeEventListener('pointercancel', onCancel);
@@ -396,6 +459,7 @@ export function PetApp() {
         );
         if (dist < DRAG_THRESHOLD_PX) return;
         state.dragging = true;
+        setDragging(true);
         markInteractive(true);
         window.nexusPet.dragBegin({ x: move.clientX, y: move.clientY });
       }
@@ -437,24 +501,34 @@ export function PetApp() {
 
   if (!prefs) return null;
 
-  const celebrating = reaction === 'wave' && runDir === null;
-  const needingYou = reaction === 'waiting' && runDir === null;
+  // Corrida: do arrasto (runDir) ou da patrulha autônoma (roam.dir).
+  const roamRunDir = roam.phase === 'idle' ? null : roam.dir;
+  const activeRunDir = runDir ?? roamRunDir;
+  const celebrating = reaction === 'wave' && activeRunDir === null;
+  const needingYou = reaction === 'waiting' && activeRunDir === null;
   const mood: OperatorMood =
     prefs.sleeping && !currentBalloon?.urgent
       ? 'sleeping'
       : celebrating
         ? 'celebrating'
         : 'idle';
-  // Prioridade: dormir > correr (arrasto, pernas) > reação > idle.
+  // Prioridade: dormir > correr (arrasto/patrulha, pernas) > reação > idle.
   const sheetAnim: SheetAnim =
     prefs.sleeping && !currentBalloon?.urgent
       ? 'sleep'
-      : runDir !== null
-        ? (`run-${runDir}` as SheetAnim)
+      : activeRunDir !== null
+        ? (`run-${activeRunDir}` as SheetAnim)
         : (reaction ?? 'idle');
 
   const balloon = balloons.current;
   const showAsAwake = !prefs.sleeping || Boolean(balloon?.urgent);
+
+  const climbClass =
+    roam.phase === 'climb' && roam.climb ? `pet--climb-${roam.climb}` : '';
+  const faceLeftClass =
+    roam.phase === 'climb' && roam.dir === 'left' ? 'pet--face-left' : '';
+  const lines = stats ? tickerLines(stats) : [];
+  const tickerText = levelFlash ?? lines[tickerTick % Math.max(1, lines.length)];
 
   return (
     <div
@@ -462,7 +536,7 @@ export function PetApp() {
         prefs.solidBackground ? 'pet--solid' : ''
       } ${
         needingYou || balloon?.urgent ? 'pet--attention' : ''
-      }`}
+      } ${climbClass} ${faceLeftClass} ${activeRunDir ? 'pet--moving' : ''}`}
     >
       {balloon && showAsAwake && (
         <div
@@ -529,6 +603,50 @@ export function PetApp() {
             </div>
           </div>
 
+          {stats && (
+            <div className="pet__stats">
+              <div className="pet__stats-level">
+                <span>
+                  Nv.{stats.level} · {stats.tier}
+                </span>
+                <div
+                  className="pet__levelbar"
+                  role="progressbar"
+                  aria-valuenow={Math.round(stats.levelProgress * 100)}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-label="Progresso até o próximo nível"
+                >
+                  <i
+                    style={{ width: `${Math.round(stats.levelProgress * 100)}%` }}
+                  />
+                </div>
+              </div>
+              <div className="pet__stats-grid">
+                <span title="Tokens consumidos (input+output) em todos os projetos">
+                  ⚡ {fmtTokens(stats.tokensBurned)} tokens
+                </span>
+                <span title="O que esse uso custaria em API paga, sem assinatura">
+                  💵 ${stats.usdEquivalent.toFixed(2)} em API
+                </span>
+                <span title="Panes distintos que o companion já acompanhou">
+                  🪟 {stats.panesServed} panes
+                </span>
+                <span title="Turnos de agente com saída entregue">
+                  🔁 {stats.turns} turnos
+                </span>
+                <span title="Missões concluídas observadas pelo pet">
+                  🏁 {stats.missionsDone} missões
+                </span>
+                {stats.mediaUsd > 0 && (
+                  <span title="Custo acumulado de geração de mídia">
+                    🎬 ${stats.mediaUsd.toFixed(2)} mídia
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
           <button
             type="button"
             role="menuitem"
@@ -562,6 +680,26 @@ export function PetApp() {
             }}
           >
             {prefs.sleeping ? '⚡ Acordar' : '💤 Dormir'}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="pet__menu-item"
+            onClick={() => {
+              void window.nexusPet.setPrefs({ roam: !prefs.roam });
+            }}
+          >
+            {prefs.roam ? '📍 Ficar parado' : '🚶 Passear pela tela'}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="pet__menu-item"
+            onClick={() => {
+              void window.nexusPet.setPrefs({ hudTicker: !prefs.hudTicker });
+            }}
+          >
+            {prefs.hudTicker ? '🔢 Ocultar contador' : '🔢 Mostrar contador'}
           </button>
           <button
             type="button"
@@ -614,16 +752,15 @@ export function PetApp() {
               : 'NexusIDE Pet — clique para menu · arraste para mover'
         }
       >
-        <div
-          className="pet__wanderer"
-          style={{
-            transform: `translateX(${wanderOffset}px)`,
-            transition:
-              runDir && !drag.current?.dragging
-                ? 'transform 0.9s cubic-bezier(0.25, 1, 0.5, 1)'
-                : undefined,
-          }}
-        >
+        {tickerVisible && tickerText && (
+          <span
+            className={`pet__ticker ${levelFlash ? 'pet__ticker--level' : ''}`}
+            aria-hidden="true"
+          >
+            {tickerText}
+          </span>
+        )}
+        <div className="pet__wanderer">
           <div className="pet__visual">
             {prefs.preset === 'sheet' && prefs.sheet ? (
               <SheetPetSprite

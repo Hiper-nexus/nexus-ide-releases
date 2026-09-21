@@ -31,6 +31,8 @@ const PREFS: PetPrefs = {
   sheet: null,
   position: null,
   solidBackground: false,
+  roam: false,
+  hudTicker: false,
 };
 
 const SHEET_DATA_URL = 'data:image/webp;base64,YQ==';

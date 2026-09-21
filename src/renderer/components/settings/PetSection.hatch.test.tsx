@@ -26,6 +26,8 @@ const PREFS: PetPrefs = {
   sheet: null,
   position: null,
   solidBackground: false,
+  roam: false,
+  hudTicker: false,
 };
 
 const IMAGE_PATH = '/Users/x/Pictures/Meu Gato.png';

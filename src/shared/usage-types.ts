@@ -7,6 +7,8 @@
 export const USAGE_CHANNELS = {
   snapshot: 'usage:snapshot',
   changed: 'usage:changed',
+  /** Totais de VIDA ÚTIL (todos os escopos) — alimenta o perfil do operador. */
+  lifetime: 'usage:lifetime',
 } as const;
 
 export interface PaneUsage {

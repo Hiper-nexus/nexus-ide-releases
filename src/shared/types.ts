@@ -1061,6 +1061,11 @@ export interface NexusApi {
   /** Telemetria REAL de tokens (transcript watchers → SQLite). */
   usage: {
     snapshot(): Promise<UsageSnapshot | null>;
+    /**
+     * Totais de vida útil (todos os escopos): tokens torrados, equivalente
+     * USD de API pública, panes e turnos — alimenta o Perfil de Operador.
+     */
+    lifetime(): Promise<import('./pet-types').PetLifetimeStats>;
     onChanged(cb: (snapshot: UsageSnapshot) => void): Unsubscribe;
   };
   /**

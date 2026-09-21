@@ -56,6 +56,18 @@ export const PET_CHANNELS = {
   dragBegin: 'pet:dragBegin',
   /** send: janela do pet → main. Solta o arrasto (snap + persiste). */
   dragEnd: 'pet:dragEnd',
+  /**
+   * event: main → janela do pet. Estado da patrulha autônoma (andando /
+   * escalando borda / parado) — o renderer troca a animação do sprite.
+   */
+  roam: 'pet:roam',
+  /**
+   * send: janela do pet → main. Veto do renderer à patrulha: balão aberto,
+   * menu aberto, arrasto em curso ou prefers-reduced-motion seguram o pet.
+   */
+  roamHold: 'pet:roamHold',
+  /** event: main → janela do pet. Contadores de vida útil (HUD gamificado). */
+  stats: 'pet:stats',
   /** send: janela do pet → main. Foca a janela principal do app. */
   focusMain: 'pet:focusMain',
   /** send: janela do pet → main. Foca a principal E pede o Settings. */
@@ -257,7 +269,61 @@ export interface PetPrefs {
    * compositors Linux sem ARGB; escolhível em qualquer plataforma.
    */
   solidBackground: boolean;
+  /**
+   * Patrulha autônoma OPT-IN: o pet caminha/escala pelas bordas e interior do
+   * monitor quando acordado. Default parado — o dono decide no menu do pet;
+   * pausa sozinho em balão, menu, arrasto e sono.
+   */
+  roam: boolean;
+  /** Ticker compacto de stats sob o sprite (tokens, USD, panes, nível). */
+  hudTicker: boolean;
 }
+
+/** Estado de patrulha enviado ao renderer (troca a animação do sprite). */
+export interface PetRoamState {
+  phase: 'idle' | 'walk' | 'climb';
+  /** Direção de face durante walk/climb; null parado. */
+  dir: 'left' | 'right' | null;
+  /** Sentido vertical durante climb (sprite gira 90°); null fora de climb. */
+  climb: 'up' | 'down' | null;
+}
+
+/**
+ * Contadores de vida útil do companion — soma de TODOS os escopos de
+ * telemetria conhecidos, com piso persistido (o HUD nunca regride se um
+ * banco de escopo for apagado). USD = equivalente de API pública, isto é,
+ * o que o mesmo consumo custaria fora da assinatura.
+ */
+export interface PetLifetimeStats {
+  /** input+output+cache-read somados em todos os escopos. */
+  tokensBurned: number;
+  /** Custo equivalente em API paga (assinatura já cobre). */
+  usdEquivalent: number;
+  /** USD acumulado de geração de mídia (imagem/vídeo/áudio). */
+  mediaUsd: number;
+  /** Panes distintos que o companion já acompanhou. */
+  panesServed: number;
+  /** Turnos de agente com saída real entregue. */
+  turns: number;
+  /** Missões concluídas observadas pelo pet nesta instalação. */
+  missionsDone: number;
+  /** Nível da jornada (deriva de XP = entregas + tokens). */
+  level: number;
+  /** Progresso 0..1 até o próximo nível. */
+  levelProgress: number;
+  /** Título do nível (mesma escala de tier da gamificação). */
+  tier: PetTier;
+  updatedAt: number;
+}
+
+/** Tier do companion — espelha a escala da gamificação de projeto. */
+export type PetTier =
+  | 'RECRUTA'
+  | 'INICIADO'
+  | 'VETERANO'
+  | 'ELITE'
+  | 'MAESTRO'
+  | 'LENDA';
 
 /** Resultado do import da galeria petdex (codex-pets.net). */
 export interface PetGalleryImportResult {
@@ -467,6 +533,12 @@ export interface NexusPetApi {
    * Usado no clique do balão e no menu do pet.
    */
   openOps(): void;
+  /** Patrulha autônoma: fase + direção atuais para a animação do sprite. */
+  onRoam(cb: (state: PetRoamState) => void): () => void;
+  /** Veto do renderer à patrulha (balão/menu/arrasto/reduced-motion). */
+  setRoamHold(held: boolean): void;
+  /** Contadores de vida útil para o HUD gamificado. */
+  onStats(cb: (stats: PetLifetimeStats) => void): () => void;
 }
 
 export function defaultPetPrefs(platform: NodeJS.Platform): PetPrefs {
@@ -478,6 +550,8 @@ export function defaultPetPrefs(platform: NodeJS.Platform): PetPrefs {
     sheet: null,
     position: null,
     solidBackground: platform === 'linux',
+    roam: false,
+    hudTicker: true,
   };
 }
 
@@ -561,5 +635,7 @@ export function sanitizePetPrefsPatch(raw: unknown): Partial<PetPrefs> {
   if (typeof patch.solidBackground === 'boolean') {
     out.solidBackground = patch.solidBackground;
   }
+  if (typeof patch.roam === 'boolean') out.roam = patch.roam;
+  if (typeof patch.hudTicker === 'boolean') out.hudTicker = patch.hudTicker;
   return out;
 }

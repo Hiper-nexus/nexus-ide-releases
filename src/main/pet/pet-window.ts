@@ -8,6 +8,7 @@ import {
   type PetEvent,
   type PetPlacement,
   type PetPrefs,
+  type PetRoamState,
 } from '../../shared/pet-types';
 import { RENDERER_PROTOCOL_ENTRY_URL } from '../renderer-protocol';
 import { getAgentSessionInfo, tapSessionState } from '../pty/pty-manager';
@@ -45,6 +46,18 @@ import {
   type PetWorkspacePin,
 } from './pet-fullscreen-guard';
 import { computeLookDir } from './pet-look';
+import {
+  pickRoamDestination,
+  roamStep,
+  ROAM_PAUSE_MAX_MS,
+  ROAM_PAUSE_MIN_MS,
+  ROAM_SPRINT_CHANCE,
+  ROAM_SPRINT_FACTOR,
+  ROAM_WALK_SPEED_PX_S,
+} from './pet-roam';
+import { PetLifetimeTracker } from './pet-stats';
+import { USAGE_CHANNELS } from '../../shared/usage-types';
+import { tapUsageSnapshot } from '../usage/usage-service';
 import { copyHatchImage } from './pet-hatch-image';
 import { fetchGalleryCatalog, importGalleryPet } from './pet-gallery';
 import { listPetLibrary, loadLibrarySheet } from './pet-library';
@@ -172,6 +185,41 @@ const missionTracker = new MissionTransitionTracker();
 let attentionPolicy: AttentionPolicyState = createAttentionPolicyState();
 let digestTimer: NodeJS.Timeout | null = null;
 
+// ── Patrulha autônoma ("andar em todos os cantos") ─────────────────────
+/** Cadência do passo da patrulha — 30 fps bastam para andar ~4 px/tick. */
+const ROAM_TICK_MS = 33;
+let roamTimer: NodeJS.Timeout | null = null;
+let roamTarget: { x: number; y: number } | null = null;
+/** Fim da pausa parado; enquanto now < pauseUntil o pet descansa no lugar. */
+let roamPauseUntil = 0;
+let roamSprint = false;
+let roamLastDir: 'left' | 'right' = 'right';
+let roamLastSent: PetRoamState = { phase: 'idle', dir: null, climb: null };
+/** Veto do renderer (balão/menu/arrasto/reduced-motion/sleeping). */
+let roamRendererHold = false;
+let roamLastPlacementAt = 0;
+
+// ── Contadores de vida útil (tokens/USD/panes — o HUD gamificado) ──────
+let petStats: PetLifetimeTracker | null = null;
+let statsPushTimer: NodeJS.Timeout | null = null;
+let statsFlushTimer: NodeJS.Timeout | null = null;
+const STATS_PUSH_DEBOUNCE_MS = 1_500;
+const STATS_FLUSH_MS = 20_000;
+
+function getPetStats(): PetLifetimeTracker {
+  petStats ??= new PetLifetimeTracker(userDataDir());
+  return petStats;
+}
+
+function pushPetStats(): void {
+  if (statsPushTimer) return;
+  statsPushTimer = setTimeout(() => {
+    statsPushTimer = null;
+    if (!petWindow || petWindow.isDestroyed() || !petReady) return;
+    petWindow.webContents.send(PET_CHANNELS.stats, getPetStats().stats());
+  }, STATS_PUSH_DEBOUNCE_MS);
+}
+
 function userDataDir(): string {
   return app.getPath('userData');
 }
@@ -269,8 +317,8 @@ function restoredPosition(): { x: number; y: number } {
   ) {
     return defaultPosition();
   }
-  // O display salvo pode ter sido desconectado: clampa para os bounds físicos
-  // do display mais próximo. O utilizador pode escolher qualquer canto real.
+  // O display salvo pode ter sido desconectado: clampa para a workArea do
+  // display mais próximo. O utilizador pode escolher qualquer canto real.
   const display = screen.getDisplayMatching({
     x: Math.round(saved.x),
     y: Math.round(saved.y),
@@ -280,7 +328,7 @@ function restoredPosition(): { x: number; y: number } {
   const clamped = clampPetDrag(
     { x: Math.round(saved.x), y: Math.round(saved.y) },
     PET_WINDOW_SIZE,
-    display.bounds,
+    display.workArea,
     EDGE_OVERHANG_SETTLE,
   );
   // Uma posição já salva é escolha explícita do utilizador. Não re-estacionar
@@ -376,6 +424,11 @@ function scheduleDigestFlush(): void {
  */
 function sendPetEvent(event: PetEvent): void {
   const now = Date.now();
+  // Entregas reais alimentam o contador de missões do HUD do companion.
+  if (event.kind === 'mission-done' || event.kind === 'goal-finished') {
+    getPetStats().recordMissionDone();
+    pushPetStats();
+  }
   const result = admitPetEvent(attentionPolicy, event, now);
   attentionPolicy = result.state;
   if (result.scheduleDigest) scheduleDigestFlush();
@@ -566,6 +619,122 @@ function stopLookLoop(): void {
   lookPendingSince = 0;
 }
 
+// ── Patrulha autônoma ───────────────────────────────────────────────────
+// A janela anda de verdade (setPosition a cada tick) enquanto o renderer
+// toca run-left/right — ou gira o sprite 90° quando a subida domina.
+// Vetos: arrasto, sono, balão/menu (roamHold do renderer), fullscreen do
+// app, pet ainda não pronto e a flag prefs.roam.
+
+function sendRoamState(state: PetRoamState): void {
+  const same =
+    state.phase === roamLastSent.phase &&
+    state.dir === roamLastSent.dir &&
+    state.climb === roamLastSent.climb;
+  if (same) return;
+  roamLastSent = state;
+  if (petWindow && !petWindow.isDestroyed() && !petWindow.webContents.isCrashed()) {
+    petWindow.webContents.send(PET_CHANNELS.roam, state);
+  }
+}
+
+function roamBlocked(): boolean {
+  const p = getPrefs();
+  return (
+    !p.enabled ||
+    !p.roam ||
+    p.sleeping ||
+    roamRendererHold ||
+    !petReady ||
+    dragTimer !== null ||
+    inFullscreenTransition() ||
+    !petWindow ||
+    petWindow.isDestroyed() ||
+    !petWindow.isVisible()
+  );
+}
+
+/**
+ * Tick da patrulha. Dois estados: parado (esperando roamPauseUntil → sorteia
+ * destino) e andando (passo constante até o alvo → pausa). O destino mora na
+ * workArea do display atual — perímetro com viés, então o pet encosta em
+ * TODAS as bordas e cantos; ~8% das vezes salta para outro monitor.
+ */
+function roamTick(): void {
+  if (roamBlocked()) {
+    roamTarget = null;
+    roamSprint = false;
+    sendRoamState({ phase: 'idle', dir: null, climb: null });
+    return;
+  }
+  if (!petWindow || petWindow.isDestroyed()) return;
+  const now = Date.now();
+  const [x, y] = petWindow.getPosition();
+  const pos = { x, y };
+
+  if (!roamTarget) {
+    if (now < roamPauseUntil) {
+      sendRoamState({ phase: 'idle', dir: null, climb: null });
+      return;
+    }
+    const displays = screen.getAllDisplays();
+    let area = screen.getDisplayMatching({
+      x: pos.x,
+      y: pos.y,
+      width: PET_WINDOW_SIZE.width,
+      height: PET_WINDOW_SIZE.height,
+    }).workArea;
+    if (displays.length > 1 && Math.random() < 0.08) {
+      const other = displays[Math.floor(Math.random() * displays.length)];
+      if (other) area = other.workArea;
+    }
+    roamTarget = pickRoamDestination(pos, area, PET_WINDOW_SIZE, Math.random)
+      .point;
+    roamSprint = Math.random() < ROAM_SPRINT_CHANCE;
+    return;
+  }
+
+  const speed =
+    ROAM_WALK_SPEED_PX_S * (roamSprint ? ROAM_SPRINT_FACTOR : 1);
+  const step = roamStep(pos, roamTarget, ROAM_TICK_MS, speed, roamLastDir);
+  roamLastDir = step.dir;
+  setPetBounds(step.next);
+  sendRoamState({ phase: step.phase, dir: step.dir, climb: step.climb });
+
+  // Placement segue a janela: sprite/balão re-ancoram ao encostar na borda.
+  if (now - roamLastPlacementAt > 500) {
+    roamLastPlacementAt = now;
+    sendPetPlacement(step.next);
+  }
+
+  if (step.arrived) {
+    roamTarget = null;
+    roamSprint = false;
+    roamPauseUntil =
+      now +
+      ROAM_PAUSE_MIN_MS +
+      Math.random() * (ROAM_PAUSE_MAX_MS - ROAM_PAUSE_MIN_MS);
+    sendRoamState({ phase: 'idle', dir: null, climb: null });
+    sendPetPlacement(step.next);
+    persistPosition(step.next);
+  }
+}
+
+function startRoamLoop(): void {
+  if (roamTimer) return;
+  roamTimer = setInterval(roamTick, ROAM_TICK_MS);
+  roamTimer.unref?.();
+}
+
+function stopRoamLoop(): void {
+  if (roamTimer) {
+    clearInterval(roamTimer);
+    roamTimer = null;
+  }
+  roamTarget = null;
+  roamSprint = false;
+  roamLastSent = { phase: 'idle', dir: null, climb: null };
+}
+
 function commitLook(dir: number | null): void {
   if (dir === lookLastSent) return;
   lookLastSent = dir;
@@ -609,7 +778,11 @@ function startLookLoop(): void {
       stopLookLoop();
       return;
     }
-    if (getPrefs().sleeping || dragTimer) {
+    if (
+      getPrefs().sleeping ||
+      dragTimer ||
+      roamLastSent.phase !== 'idle'
+    ) {
       sendLook(null);
       return;
     }
@@ -666,7 +839,10 @@ function sendPetPlacement(pos?: { x: number; y: number }): void {
     width: PET_WINDOW_SIZE.width,
     height: PET_WINDOW_SIZE.height,
   });
-  const area = display.bounds;
+  // workArea, não bounds: a "borda" que o usuário percebe é a útil — acima
+  // do menu bar / ao lado do Dock. Assim o sprite encosta de verdade na
+  // extremidade quando a janela está colada na workArea.
+  const area = display.workArea;
   const leftGap = Math.abs(current.x - area.x);
   const rightGap = Math.abs(
     area.x + area.width - (current.x + PET_WINDOW_SIZE.width),
@@ -705,15 +881,17 @@ function ensurePetWindowSize(win: BrowserWindow): void {
 }
 
 /**
- * Arrasto livre: desktop virtual (união de monitores). Sem parede na costura.
- * Settle usa os bounds físicos do display sob o centro da janela.
+ * Arrasto livre: união das workAreas de todos os monitores. workArea (não
+ * bounds físicos) é o limite: a janela nunca passa por baixo da menu bar nem
+ * do Dock — o sprite chega na borda útil inteiro, sem "cortar pedaço".
+ * A costura entre monitores continua livre porque o clamp usa a união.
  */
 function clampDragFree(pos: { x: number; y: number }): { x: number; y: number } {
-  const bounds = screen.getAllDisplays().map((d) => d.bounds);
+  const areas = screen.getAllDisplays().map((d) => d.workArea);
   return clampPetDragFreeDesktop(
     pos,
     PET_WINDOW_SIZE,
-    bounds,
+    areas,
     EDGE_OVERHANG_DRAG,
   );
 }
@@ -728,13 +906,13 @@ function reclampPetToVisibleDisplay(): void {
     width: PET_WINDOW_SIZE.width,
     height: PET_WINDOW_SIZE.height,
   });
-  // Já totalmente dentro do display físico — não recompor a janela.
-  if (isWithinPetOverhang({ x, y }, PET_WINDOW_SIZE, display.bounds)) return;
+  // Já totalmente dentro da workArea — não recompor a janela.
+  if (isWithinPetOverhang({ x, y }, PET_WINDOW_SIZE, display.workArea)) return;
 
   const settled = clampPetDrag(
     { x, y },
     PET_WINDOW_SIZE,
-    display.bounds,
+    display.workArea,
     EDGE_OVERHANG_SETTLE,
   );
   if (x === settled.x && y === settled.y) return;
@@ -849,7 +1027,7 @@ function createPetWindow(): void {
   const bootPos = clampPetDrag(
     position,
     PET_WINDOW_SIZE,
-    bootDisplay.bounds,
+    bootDisplay.workArea,
     EDGE_OVERHANG_SETTLE,
   );
   // Persistir se re-park/clamp divergiu da prefs (senão o restore re-aplica
@@ -973,6 +1151,7 @@ function createPetWindow(): void {
     petReady = false;
     petIgnoresMouse = true;
     petPinnedTop = false;
+    roamRendererHold = false;
     petWindow = null;
   });
 
@@ -981,16 +1160,20 @@ function createPetWindow(): void {
   });
   startLookLoop();
   startRaiseWatch();
+  // A patrulha nasce com a janela e se auto-veta quando bloqueada.
+  startRoamLoop();
 }
 
 function destroyPetWindow(): void {
   stopDrag();
   stopLookLoop();
+  stopRoamLoop();
   stopRaiseWatch();
   clearBootReassert();
   petReady = false;
   petIgnoresMouse = true;
   petPinnedTop = false;
+  roamRendererHold = false;
   pendingPetEvents.length = 0;
   if (petWindow && !petWindow.isDestroyed()) petWindow.destroy();
   petWindow = null;
@@ -1227,6 +1410,14 @@ function registerPetIpc(): void {
     petReady = true;
     flushPendingPetEvents();
     sendPetPlacement();
+    sendRoamState({ phase: 'idle', dir: null, climb: null });
+    // Stats imediato no boot do renderer — sem esperar o debounce.
+    petWindow.webContents.send(PET_CHANNELS.stats, getPetStats().stats());
+  });
+
+  ipcMain.on(PET_CHANNELS.roamHold, (event, held: unknown) => {
+    if (!fromPetWindow(event)) return;
+    roamRendererHold = held === true;
   });
 
   ipcMain.on(PET_CHANNELS.eventShown, (event, kind: unknown) => {
@@ -1266,16 +1457,17 @@ function registerPetIpc(): void {
     // pet para dentro ao soltar.
     const cursor = screen.getCursorScreenPoint();
     const display = screen.getDisplayNearestPoint(cursor);
-    // Settle 100% dentro dos bounds físicos sem forçar snap magnético em cantos.
+    // Settle 100% dentro da workArea (sem menubar/Dock) — nenhum pedaço do
+    // sprite fica escondido atrás do chrome do sistema quando solto na borda.
     const settled = snapPetToCursorEdges(
        clampPetDrag(
          raw,
          PET_WINDOW_SIZE,
-         display.bounds,
+         display.workArea,
          EDGE_OVERHANG_SETTLE,
        ),
        PET_WINDOW_SIZE,
-       display.bounds,
+       display.workArea,
        cursor,
        0,
      );
@@ -1313,6 +1505,7 @@ function registerPetIpc(): void {
     // Watchdog: se o dragEnd do renderer se perder, assenta sozinho.
     const startedAt = Date.now();
     let lastApplied = { x: winX, y: winY };
+    let lastPlacementAt = 0;
     dragTimer = setInterval(() => {
       if (!petWindow || petWindow.isDestroyed() || !dragOrigin) {
         stopDrag();
@@ -1327,13 +1520,20 @@ function registerPetIpc(): void {
         x: Math.round(dragOrigin.winX + (c.x - dragOrigin.cursorX)),
         y: Math.round(dragOrigin.winY + (c.y - dragOrigin.cursorY)),
       };
-      // Livre em todo o desktop virtual (Mac + LG sem parede).
+      // Livre na união das workAreas (Mac + LG sem parede, sem menubar/Dock).
       const clamped = clampDragFree(next);
       lastDragPos = clamped;
       if (clamped.x === lastApplied.x && clamped.y === lastApplied.y) return;
       lastApplied = clamped;
       // Movimento posicional: preserva a superfície transparente entre telas.
       setPetBounds(clamped);
+      // Placement ao vivo: o sprite encosta na borda DURANTE o arrasto —
+      // antes só assentava no drop e o pet parecia nunca chegar na extremidade.
+      const now = Date.now();
+      if (now - lastPlacementAt > 120) {
+        lastPlacementAt = now;
+        sendPetPlacement(clamped);
+      }
     }, DRAG_TICK_MS);
   });
 
@@ -1418,6 +1618,29 @@ export function initDesktopPet(): void {
   console.log(`[pet] drag-engine=${PET_DRAG_ENGINE}`);
   registerPetIpc();
   wireOperationalEvents();
+
+  // Telemetria real → contadores de vida útil do companion. O tap recebe
+  // o snapshot cumulativo de cada escopo no mesmo instante do broadcast.
+  tapUsageSnapshot((scope, snapshot) => {
+    getPetStats().ingestSnapshot(scope, snapshot);
+    pushPetStats();
+  });
+  // Totais de vida útil também alimentam o Perfil de Operador (tokens
+  // torrados + equivalente USD de API). Autoridade: o tracker acima —
+  // o renderer principal lê via invoke, sem canal próprio de estado.
+  ipcMain.handle(USAGE_CHANNELS.lifetime, () => getPetStats().stats());
+  // Persistência preguiçosa do piso/panes — JSON pequeno, tmp+rename.
+  statsFlushTimer = setInterval(() => {
+    try {
+      getPetStats().flush();
+    } catch (error) {
+      console.warn('[pet] stats flush falhou:', error);
+    }
+  }, STATS_FLUSH_MS);
+  statsFlushTimer.unref?.();
+  // O tick da patrulha é barato e se auto-veta (prefs/drag/balão); fica
+  // ligado sempre para o pet responder sem esperar o próximo toggle.
+  startRoamLoop();
 
   const watchAppWindow = (win: BrowserWindow) => {
     if (isPetWindow(win)) return;

@@ -3,8 +3,10 @@ import {
   PET_CHANNELS,
   type NexusPetApi,
   type PetEvent,
+  type PetLifetimeStats,
   type PetPlacement,
   type PetPrefs,
+  type PetRoamState,
 } from '../shared/pet-types';
 
 /**
@@ -47,6 +49,18 @@ const api: NexusPetApi = {
   openSettings: () => ipcRenderer.send(PET_CHANNELS.requestSettings),
   openTerminal: () => ipcRenderer.send(PET_CHANNELS.requestOpenTerminal),
   openOps: () => ipcRenderer.send(PET_CHANNELS.requestOpenOps),
+  onRoam: (cb) => {
+    const listener = (_e: unknown, state: PetRoamState) => cb(state);
+    ipcRenderer.on(PET_CHANNELS.roam, listener);
+    return () => ipcRenderer.removeListener(PET_CHANNELS.roam, listener);
+  },
+  setRoamHold: (held) =>
+    ipcRenderer.send(PET_CHANNELS.roamHold, held === true),
+  onStats: (cb) => {
+    const listener = (_e: unknown, stats: PetLifetimeStats) => cb(stats);
+    ipcRenderer.on(PET_CHANNELS.stats, listener);
+    return () => ipcRenderer.removeListener(PET_CHANNELS.stats, listener);
+  },
 };
 
 contextBridge.exposeInMainWorld('nexusPet', api);

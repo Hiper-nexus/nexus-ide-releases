@@ -48,21 +48,33 @@ body,
   flex-direction: column;
   align-items: center;
   justify-content: flex-end;
-  padding-bottom: 8px;
+  /* 14px: cobre a lata (bottom:-10px) e a sombra de contato sem cortar. */
+  padding-bottom: 14px;
 }
 
 /*
- * Alinhamento contínuo e fluido: mantém o mascote ancorado no centro da janela
- * sem saltos bruscos de 80px ao se aproximar das bordas do ecrã.
+ * Ancoragem na borda: com a janela colada na workArea, o sprite ENCOSTA na
+ * extremidade física — "chegar nos cantos" de verdade, não pairar a 150px
+ * de distância. Center mantém a posição livre no meio da tela.
+ *
+ * O padding de guarda (10–26px conforme o lado) mantém os adornos absolutos
+ * (lata -8px, zzz -4px, "cafe" -22px, alert) DENTRO do rect da janela —
+ * sem ele, o pedaço que passa da borda é cortado pelo clip do próprio
+ * BrowserWindow quando a janela está colada na extremidade da tela.
  */
-.pet--left,
+.pet--left {
+  align-items: flex-start;
+  padding-left: 10px;
+}
+
 .pet--right {
-  align-items: center;
+  align-items: flex-end;
+  padding-right: 10px;
 }
 
 .pet--top {
   justify-content: flex-start;
-  padding-top: 8px;
+  padding-top: 26px;
   padding-bottom: 0;
 }
 
@@ -93,6 +105,35 @@ body,
   display: grid;
   place-items: center;
   animation: pet-bob 3.2s ease-in-out infinite;
+  transition: transform 0.3s ease;
+}
+
+/*
+ * Escalada de borda: durante climb o sprite gira 90° — o run-left/right do
+ * sheet vira "subir/descer a parede". O bob desliga para a pose ficar limpa.
+ */
+.pet--climb-up .pet__visual {
+  animation: none;
+  transform: rotate(-90deg);
+}
+
+.pet--climb-down .pet__visual {
+  animation: none;
+  transform: rotate(90deg);
+}
+
+/* Face esquerda inverte o giro — a cabeça sempre aponta o sentido do climb. */
+.pet--climb-up.pet--face-left .pet__visual {
+  transform: rotate(90deg);
+}
+
+.pet--climb-down.pet--face-left .pet__visual {
+  transform: rotate(-90deg);
+}
+
+/* Andando/escalando: a corrida do sheet já é o movimento — sem bob. */
+.pet--moving .pet__visual {
+  animation: none;
 }
 
 .pet__hit--sleeping .pet__visual {
@@ -275,8 +316,13 @@ body,
 
 .pet__menu {
   position: absolute;
-  /* Ancorado logo acima do sprite compacto com respiro */
+  /* Ancorado logo acima do sprite compacto com respiro; centrado por insets
+     + margin auto (independe do align-items do placement na borda). */
   bottom: 112px;
+  left: 10px;
+  right: 10px;
+  width: fit-content;
+  margin-inline: auto;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -569,6 +615,110 @@ body,
   100% { opacity: 0; transform: translateY(-16px); }
 }
 
+/* ── HUD gamificado ─────────────────────────────────────────────────── */
+/*
+ * Ticker de stats acima do sprite (chip pixel). Dentro de .pet__hit mas
+ * fora de .pet__wanderer — não gira na escalada e não entra no hit-test
+ * (pointer-events: none + fora do PET_INTERACTIVE_SELECTOR).
+ */
+.pet__ticker {
+  position: absolute;
+  top: -26px;
+  left: 50%;
+  translate: -50% 0;
+  padding: 2px 9px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--pet-accent) 42%, transparent);
+  background: color-mix(in srgb, var(--pet-bg) 88%, #000);
+  color: var(--pet-text);
+  font-family: var(--pet-font-pixel);
+  font-size: 15px;
+  letter-spacing: 0.06em;
+  line-height: 1.15;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+/* Sprite no topo da janela: o ticker passa a flutuar ABAIXO dele. */
+.pet--top .pet__ticker {
+  top: auto;
+  bottom: -26px;
+}
+
+.pet__ticker--level {
+  color: var(--pet-gold);
+  border-color: color-mix(in srgb, var(--pet-gold) 65%, transparent);
+  box-shadow:
+    0 4px 12px rgba(0, 0, 0, 0.4),
+    0 0 14px color-mix(in srgb, var(--pet-gold) 40%, transparent);
+  animation: pet-level-pop 0.6s ease-out;
+}
+
+@keyframes pet-level-pop {
+  0% {
+    scale: 0.6;
+    opacity: 0;
+  }
+  55% {
+    scale: 1.15;
+    opacity: 1;
+  }
+  100% {
+    scale: 1;
+  }
+}
+
+/* Bloco de stats dentro do menu de contexto. */
+.pet__stats {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 4px 5px 6px;
+  border-bottom: 1px solid color-mix(in srgb, var(--pet-border) 70%, transparent);
+  margin-bottom: 2px;
+}
+
+.pet__stats-level {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--pet-gold);
+  letter-spacing: 0.04em;
+}
+
+.pet__levelbar {
+  height: 4px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--pet-border) 60%, transparent);
+}
+
+.pet__levelbar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--pet-accent), var(--pet-gold));
+  transition: width 0.6s ease;
+}
+
+.pet__stats-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 10px;
+  font-size: 10.5px;
+  color: var(--pet-text);
+}
+
+.pet__stats-grid span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.9;
+}
+
 /* prefers-reduced-motion: fizz estático, sem entradas animadas ou vaguear autônomo */
 @media (prefers-reduced-motion: reduce) {
   .pet__coffee {
@@ -584,5 +734,15 @@ body,
   .pet__wanderer {
     transform: none !important;
     transition: none !important;
+  }
+
+  .pet--climb-up .pet__visual,
+  .pet--climb-down .pet__visual {
+    transform: none;
+    transition: none;
+  }
+
+  .pet__ticker--level {
+    animation: none;
   }
 }

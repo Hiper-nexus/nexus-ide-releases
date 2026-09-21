@@ -824,6 +824,13 @@ export class UsageTelemetryService {
       state.broadcastTimer = null;
       const snapshot = this.snapshot(state.scope);
       if (!snapshot) return;
+      for (const listener of usageSnapshotListeners) {
+        try {
+          listener(state.scope, snapshot);
+        } catch (error) {
+          console.warn('[usage] snapshot tap falhou:', error);
+        }
+      }
       broadcastToProject(
         BrowserWindow.getAllWindows().map((window) => window.webContents),
         state.scope,
@@ -833,6 +840,23 @@ export class UsageTelemetryService {
     }, 1_000);
     state.broadcastTimer.unref?.();
   }
+}
+
+/**
+ * Tap de snapshot para consumidores fora do broadcast por escopo (o HUD do
+ * pet precisa dos totais cumulativos de TODOS os escopos). Recebe o mesmo
+ * snapshot que o broadcast — nunca um recálculo separado.
+ */
+export type UsageSnapshotListener = (
+  scope: ProjectExecutionScope,
+  snapshot: UsageSnapshot,
+) => void;
+
+const usageSnapshotListeners = new Set<UsageSnapshotListener>();
+
+export function tapUsageSnapshot(listener: UsageSnapshotListener): () => void {
+  usageSnapshotListeners.add(listener);
+  return () => usageSnapshotListeners.delete(listener);
 }
 
 let configuredService: UsageTelemetryService | null = null;
