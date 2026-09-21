@@ -21,7 +21,9 @@ import {
 import { ProviderLogo } from '../ProviderLogo';
 import { useToastStore } from '../../state/toast-store';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
-import { openCliLoginTerminal } from './cli-login-terminal';
+import { openCliLoginTerminal, type CliLoginFinish } from './cli-login-terminal';
+import { defaultAccountLabel, emailFromAuthDetail } from './account-default-label';
+import type { AdapterAuthStatus } from '../../../shared/provider-settings-types';
 import type { RedlineInstallStatus } from '../../../shared/redline-types';
 import { buildPulseMarkers, buildPulseTicks } from '../../lib/quota-pulse';
 // Puro (só imports de shared) — o chip "melhor folga" usa a MESMA aritmética
@@ -119,6 +121,22 @@ function hasQuota(entry: ProviderQuotaEntry): boolean {
     (window) => windowDisplay(window).tone !== 'unknown',
   );
 }
+
+async function preserveQuotaLoginSession(adapterId: string, baseline: AdapterAuthStatus | null): Promise<void> {
+  if (baseline?.state !== 'ok' || !(baseline.sessionFingerprint || emailFromAuthDetail(baseline.detail))) return;
+  const store = useAccountStore.getState();
+  if (!await store.supportsSnapshot(adapterId)) {
+    throw new Error('Esta CLI não permite preservar a sessão atual. Revise a conexão em Providers antes de trocar a conta.');
+  }
+  const label = defaultAccountLabel({
+    typed: '', adapterId, adapterLabel: adapterId, authDetail: baseline.detail,
+    taken: store.accounts.filter((account) => account.adapterId === adapterId).map((account) => account.label),
+  });
+  const saved = await store.addActiveSession(adapterId, label);
+  if (!saved.ok) throw new Error(saved.error ?? 'Não foi possível preservar a sessão atual. Tente novamente antes de trocar a conta.');
+  await store.hydrate();
+}
+
 function QuotaWindowRow({
   window,
   now,
@@ -217,6 +235,25 @@ function EntryCard({
   );
   const loginLabel = account?.label ?? label;
 
+  async function saveVerifiedLogin(finish: CliLoginFinish): Promise<void> {
+    const push = useToastStore.getState().push;
+    if (!finish.verified) {
+      push('warn', 'Login não confirmado', 'Não foi possível confirmar um novo login. A conta salva não foi alterada.');
+      return;
+    }
+    if (!entry.accountId) return;
+    try {
+      const store = useAccountStore.getState();
+      const saved = await store.addActiveSession(entry.adapterId, loginLabel, entry.accountId);
+      if (!saved.ok) throw new Error(saved.error ?? 'Não foi possível salvar a sessão da conta escolhida.');
+      await store.hydrate();
+      await useQuotaStore.getState().refresh();
+      push('success', 'Conta atualizada', 'Sessão salva para a conta escolhida. Reinicie os panes abertos para aplicar.');
+    } catch (error) {
+      push('error', 'Não foi possível atualizar a conta', error instanceof Error ? error.message : 'Tente novamente.');
+    }
+  }
+
   async function relogin() {
     if (!canRelogin || loginBusy) return;
     setLoginBusy(true);
@@ -224,25 +261,25 @@ function EntryCard({
       const statuses = await window.nexus?.providers?.authStatus();
       const baseline =
         statuses?.find((status) => status.adapterId === entry.adapterId) ?? null;
+      await preserveQuotaLoginSession(entry.adapterId, baseline);
       const command = accountLoginCommandFor(entry.adapterId);
       const result = await openCliLoginTerminal({
         command: command ?? '',
         adapterId: entry.adapterId,
         adapterLabel: loginLabel,
         baseline,
-        onFinished: () => {
-          void useAccountStore.getState().hydrate();
-        },
+        reauthenticate: true,
+        onFinished: saveVerifiedLogin,
       });
       if (!result.ok && !result.cancelled) {
         useToastStore
           .getState()
           .push('error', 'Não foi possível abrir o login', result.error);
       }
-    } catch {
+    } catch (error) {
       useToastStore
         .getState()
-        .push('error', 'Não foi possível abrir o login', 'Tente novamente.');
+        .push('error', 'Não foi possível abrir o login', error instanceof Error ? error.message : 'Tente novamente.');
     } finally {
       setLoginBusy(false);
     }

@@ -147,6 +147,8 @@ export interface AdapterAuthStatus {
    * provider (for example Kimi/OpenCode) exposes no email claim.
    */
   sessionFingerprint?: string;
+  /** Ephemeral credential revision; equality only, never display, log or persist. */
+  sessionRevision?: string;
 }
 
 export const PROVIDER_CHANNELS = {

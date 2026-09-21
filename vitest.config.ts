@@ -16,7 +16,7 @@ export default defineConfig({
       'assets/**',
       // Archived QA artifacts may contain node:test examples, not product suites.
       'docs/qa/evidence/**',
-      'docs/analysis/overclock-13318-extract/**',
+      'docs/analysis/*-extract/**',
       // Mobile companion is a separate React Native/Expo workspace with its own runner.
       'mobile/**',
     ],

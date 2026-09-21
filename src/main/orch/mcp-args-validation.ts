@@ -11,6 +11,21 @@ const pathText = z.string().min(1).max(4096).refine((value) => !value.includes('
   message: 'path cannot contain NUL',
 });
 const optionalPathText = pathText.optional();
+// Git ref restrictions, not shell escaping: PR fields are sent as JSON.
+const prBranch = z.string().min(1).max(255)
+  .refine((value) => !/[\x00-\x20\x7f~^:?*\[\\]/.test(value) &&
+    value !== 'HEAD' && value !== '@' && !value.startsWith('-') &&
+    !value.includes('..') && !value.includes('@{') && !value.endsWith('.') &&
+    value.split('/').every((part) => part.length > 0 && !part.startsWith('.') && !part.endsWith('.lock')),
+  { message: 'invalid PR branch name' });
+export const prCreateArgsSchema = z.object({
+  title: z.string().trim().min(1).max(256).refine((value) => !/[\0\r\n]/.test(value)),
+  body: z.string().max(65_536).refine((value) => !value.includes('\0')),
+  head: prBranch.optional(),
+  base: prBranch.optional(),
+  draft: z.boolean().optional(),
+  cwd: optionalPathText,
+}).strict();
 const positiveInt = z.number().int().positive();
 const timeoutMs = z.number().int().positive().max(300_000).optional();
 const envSchema = z.record(z.string().min(1).max(128), z.string().max(4096)).optional();
@@ -286,6 +301,7 @@ const schemas = new Map<string, z.ZodType<Record<string, unknown>>>([
     'git_branch_switch',
     z.object({ name: z.string().min(1).max(255), cwd: optionalPathText }).strict(),
   ],
+  ['pr_create', prCreateArgsSchema],
   [
     'pr_inspect',
     z.object({

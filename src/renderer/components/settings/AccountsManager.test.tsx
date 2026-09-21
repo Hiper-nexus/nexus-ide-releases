@@ -831,9 +831,9 @@ describe('AccountsManager', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    // Reentrar numa conta expirada conserta AQUELA linha: nada é preservado
-    // antes, senão o blob morto viraria uma segunda gravação.
-    expect(addActiveSession).not.toHaveBeenCalled();
+    // A sessão nativa saudável é preservada antes de qualquer login, mesmo
+    // que a linha do vault selecionada esteja expirada.
+    expect(addActiveSession).toHaveBeenCalledWith('claude', expect.any(String));
 
     // O token rodou: mesmo e-mail, fingerprint novo — é o único sinal que
     // distingue "reautenticou" de "não fez nada" numa CLI já logada.
@@ -856,6 +856,34 @@ describe('AccountsManager', () => {
       'Conta Adm',
       'acct-adm',
     );
+    act(() => root.unmount());
+  });
+
+  it('does not treat an API key as a native session to preserve during relogin', async () => {
+    const addActiveSession = vi.fn(async () => ({ ok: false, error: 'No native login' }));
+    useAccountStore.setState({ accounts: [account({ id: 'target', needsRelogin: true })], addActiveSession });
+    vi.mocked(window.nexus.providers.authStatus).mockResolvedValue([
+      { adapterId: 'claude', state: 'ok', detail: 'API key no cofre' },
+    ]);
+    const callsBefore = vi.mocked(openCliLoginTerminal).mock.calls.length;
+    const { host, root } = mount();
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { [...host.querySelectorAll('button')].find(b => b.textContent?.includes('Entrar novamente'))!.click(); });
+    expect(vi.mocked(openCliLoginTerminal).mock.calls.length).toBe(callsBefore + 1);
+    expect(addActiveSession).not.toHaveBeenCalled();
+    act(() => root.unmount());
+  });
+
+  it('keeps the targeted account when retrying a login terminal that failed to open', async () => {
+    const addActiveSession = vi.fn(async () => ({ ok: true, id: 'target' }));
+    useAccountStore.setState({ accounts: [account({ id: 'target', needsRelogin: true })], addActiveSession });
+    vi.mocked(openCliLoginTerminal).mockResolvedValueOnce({ ok: false, error: 'PTY unavailable' });
+    const { host, root } = mount();
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { [...host.querySelectorAll('button')].find(b => b.textContent?.includes('Entrar novamente'))!.click(); });
+    await act(async () => { [...host.querySelectorAll('button')].find(b => b.textContent?.includes('Tentar abrir novamente'))!.click(); });
+    await act(async () => { finishLogin({ verified: true, status: { adapterId: 'claude', state: 'ok', detail: 'Logged in' } }); });
+    expect(addActiveSession).toHaveBeenLastCalledWith('claude', 'Trabalho', 'target');
     act(() => root.unmount());
   });
 

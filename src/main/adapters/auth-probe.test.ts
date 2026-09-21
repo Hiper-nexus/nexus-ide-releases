@@ -17,8 +17,8 @@ const authMocks = vi.hoisted(() => ({
     ['agy', true],
   ]),
   identity: vi.fn((adapterId: string) => {
-    const identities: Record<string, { email?: string; fingerprint: string }> = {
-      codex: { email: 'codex@example.test', fingerprint: 'codex-fingerprint' },
+    const identities: Record<string, { email?: string; fingerprint: string; revision?: string }> = {
+      codex: { email: 'codex@example.test', fingerprint: 'codex-fingerprint', revision: 'codex-revision' },
       grok: { email: 'grok@example.test', fingerprint: 'grok-fingerprint' },
       agy: { email: 'agy@example.test', fingerprint: 'agy-fingerprint' },
       kimi: { fingerprint: 'kimi-fingerprint' },
@@ -143,6 +143,7 @@ describe('probeAdapterAuth provider-specific diagnostics', () => {
       state: 'ok',
       detail: expect.stringContaining('codex@example.test'),
       sessionFingerprint: 'codex-fingerprint',
+      sessionRevision: 'codex-revision',
     });
     expect(byId.grok).toMatchObject({
       state: 'ok',

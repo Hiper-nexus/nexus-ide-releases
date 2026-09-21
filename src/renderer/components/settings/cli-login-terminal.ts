@@ -9,6 +9,7 @@ import { useSessionStateStore } from '../../state/session-state-store';
 import { waitForSession, writeToPane } from '../../terminal/terminal-host';
 import { kimiLoginCommandFor } from '../../../shared/kimi-login-command';
 import { askKimiLoginRegion } from './kimi-login-region';
+import { codexDeviceLoginCommand } from '../../../shared/codex-login-command';
 
 /**
  * Aspas simples POSIX, sempre — deliberadamente sem a variante condicional do
@@ -112,6 +113,19 @@ export function cliLoginProvedNewSession(
   return after !== sessionIdentity(baseline);
 }
 
+/** Rotation alone is not a login: require the login command's success signal too. */
+function cliLoginProvedReauthentication(
+  baseline: AdapterAuthStatus | null,
+  current: AdapterAuthStatus | null,
+): boolean {
+  return current?.state === 'ok' && Boolean(
+    baseline?.sessionFingerprint &&
+    baseline.sessionFingerprint === current.sessionFingerprint &&
+    baseline.sessionRevision && current.sessionRevision &&
+    baseline.sessionRevision !== current.sessionRevision,
+  );
+}
+
 /** Tempo máximo observando o terminal de login antes de soltar o watcher. */
 const LOGIN_WATCH_TIMEOUT_MS = 15 * 60 * 1000;
 const LOGIN_AUTH_POLL_MS = 2_000;
@@ -128,10 +142,12 @@ export async function openCliLoginTerminal(input: {
    * primeiro justamente para o baseline não ser uma leitura velha.
    */
   readonly baseline?: AdapterAuthStatus | null;
+  /** Only explicit reauthentication of an existing row may accept the same identity. */
+  readonly reauthenticate?: boolean;
   /** Chamado quando o login conclui, o pane some, ou o tempo esgota. */
   readonly onFinished?: (finish: CliLoginFinish) => void;
 }): Promise<CliLoginOutcome> {
-  let command = input.command.trim();
+  let command = codexDeviceLoginCommand(input.command, input.adapterId);
   if (input.adapterId === 'kimi') {
     const region = await askKimiLoginRegion();
     if (!region) {
@@ -217,6 +233,7 @@ export async function openCliLoginTerminal(input: {
       adapterId: input.adapterId,
       authReadyAtStart,
       baseline: input.baseline ?? null,
+      reauthenticate: input.reauthenticate,
       onFinished: input.onFinished,
     });
   }
@@ -241,6 +258,7 @@ function watchLoginPane(input: {
   /** CLI já autenticada ao abrir o terminal (login de N-ésima conta). */
   readonly authReadyAtStart: boolean;
   readonly baseline: AdapterAuthStatus | null;
+  readonly reauthenticate?: boolean;
   readonly onFinished: (finish: CliLoginFinish) => void;
 }): void {
   let done = false;
@@ -300,7 +318,9 @@ function watchLoginPane(input: {
     probeInFlight = true;
     try {
       const status = await probe(freshClaudeCredential);
-      const verified = cliLoginProvedNewSession(input.baseline, status);
+      const verified = cliLoginProvedNewSession(input.baseline, status) ||
+        (input.reauthenticate === true && cliLoginLooksComplete(output) &&
+          cliLoginProvedReauthentication(input.baseline, status));
       // "Signed in" é só um gatilho para reler. Keychain/auth.json pode ficar
       // visível alguns milissegundos depois da linha impressa; encerrar aqui
       // com `verified:false` perdia para sempre o login recém-concluído.

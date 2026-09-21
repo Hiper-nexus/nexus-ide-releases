@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProviderQuotaEntry, QuotaFleetSnapshot } from '../../../shared/quota-types';
 import { useAccountStore } from '../../state/account-store';
 import { useQuotaStore } from '../../state/quota-store';
+import { useToastStore } from '../../state/toast-store';
 import { UsageQuotaSection } from './UsageQuotaSection';
 import { openCliLoginTerminal } from './cli-login-terminal';
 
@@ -112,6 +113,8 @@ function mount(): { host: HTMLDivElement; root: Root } {
 
 describe('UsageQuotaSection', () => {
   beforeEach(() => {
+    vi.mocked(openCliLoginTerminal).mockClear();
+    useToastStore.setState({ toasts: [] });
     useQuotaStore.getState().reset();
     useAccountStore.setState({
       accounts: [
@@ -441,6 +444,75 @@ describe('UsageQuotaSection', () => {
         adapterLabel: 'Plus',
       }),
     );
+    act(() => root.unmount());
+  });
+
+  async function openSavedAccountLogin(preserveOk = true, supported = true) {
+    useAccountStore.setState({ accounts: useAccountStore.getState().accounts.map(
+      (account) => ({ ...account, needsRelogin: true }),
+    ) });
+    const events: string[] = [];
+    const addActiveSession = vi.fn(async (_adapter: string, _label: string, target?: string) => {
+      events.push(target ? 'save-target' : 'preserve');
+      return target || preserveOk ? { ok: true, id: target ?? 'native-account' }
+        : { ok: false, error: 'Não foi possível preservar a sessão atual.' };
+    });
+    Object.defineProperty(window, 'nexus', { configurable: true, value: {
+      ...window.nexus,
+      providers: { authStatus: vi.fn(async () => [{
+        adapterId: 'codex', state: 'ok', detail: 'Sessão: sibling@example.test', sessionFingerprint: 'sibling',
+      }]) },
+      accounts: {
+        supportsSnapshot: vi.fn(async () => ({ ok: true, supported })),
+        addActiveSession,
+        list: vi.fn(async () => useAccountStore.getState().accounts),
+        quota: vi.fn(async () => []),
+      },
+    } });
+    vi.mocked(openCliLoginTerminal).mockImplementation(async () => {
+      events.push('open');
+      return { ok: true, paneId: 'login-pane' };
+    });
+    const mounted = mount();
+    await act(async () => { await Promise.resolve(); });
+    await act(async () => { mounted.host.querySelector<HTMLButtonElement>('[data-adapter="codex"] button')!.click(); });
+    return { ...mounted, events, addActiveSession };
+  }
+
+  it('preserves the native sibling before login and saves only the selected account after proof', async () => {
+    const { root, events, addActiveSession } = await openSavedAccountLogin();
+    expect(events).toEqual(['preserve', 'open']);
+    const input = vi.mocked(openCliLoginTerminal).mock.calls[0][0];
+    expect(input.reauthenticate).toBe(true);
+    vi.mocked(window.nexus.quota.refresh).mockClear();
+    await act(async () => { await input.onFinished!({ verified: true, status: null }); });
+    expect(addActiveSession).toHaveBeenLastCalledWith('codex', 'Plus', 'acc-1');
+    expect(window.nexus.accounts.list).toHaveBeenCalled();
+    expect(window.nexus.quota.refresh).toHaveBeenCalled();
+    act(() => root.unmount());
+  });
+
+  it('does not save the selected account when login is closed without proof', async () => {
+    const { root, addActiveSession } = await openSavedAccountLogin();
+    await act(async () => { await vi.mocked(openCliLoginTerminal).mock.calls[0][0].onFinished!({ verified: false, status: null }); });
+    expect(addActiveSession.mock.calls.filter((call) => call[2])).toEqual([]);
+    expect(useToastStore.getState().toasts.some((toast) => /confirmar/i.test(toast.detail ?? ''))).toBe(true);
+    act(() => root.unmount());
+  });
+
+  it.each([[false, true], [true, false]])('does not replace native login when preservation fails (save=%s snapshot=%s)', async (preserveOk, supported) => {
+    const { root } = await openSavedAccountLogin(preserveOk, supported);
+    expect(openCliLoginTerminal).not.toHaveBeenCalled();
+    expect(useToastStore.getState().toasts.some((toast) => toast.kind === 'error')).toBe(true);
+    act(() => root.unmount());
+  });
+
+  it('reports rejected target identity instead of claiming login was saved', async () => {
+    const { root, addActiveSession } = await openSavedAccountLogin();
+    addActiveSession.mockResolvedValueOnce({ ok: false, error: 'O login pertence a outra conta.' });
+    await act(async () => { await vi.mocked(openCliLoginTerminal).mock.calls[0][0].onFinished!({ verified: true, status: null }); });
+    expect(useToastStore.getState().toasts.some((toast) => toast.kind === 'error' && /outra conta/.test(toast.detail ?? ''))).toBe(true);
+    expect(useToastStore.getState().toasts.some((toast) => toast.kind === 'success')).toBe(false);
     act(() => root.unmount());
   });
 

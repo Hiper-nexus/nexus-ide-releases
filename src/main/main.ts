@@ -262,7 +262,6 @@ import {
   setCooldown,
   startClaudeSubscriptionFreshness,
 } from "./persistence/account-store";
-import { activeClaudeEmail } from "./adapters/claude-credential";
 import {
   resolveClaudeToken,
   resolveCodexAuthCandidates,
@@ -661,26 +660,15 @@ function bootstrap(): void {
     // com o mesmo e-mail, materialização do vault — nunca empresta a
     // leitura de outra conta.
     claudeAccountUsage: (accountId) => fetchClaudeAccountUsageWindows(accountId),
-    // A sonda viu o grant morto antes de qualquer spawn — marca needsRelogin
-    // (botão «Reautenticar») sem esperar o 401 do pane. A conta que é o
-    // login nativo do CLI se auto-refuta no listAccountInfos; marcar geraria
-    // churn mark/clear — o readHint da linha já carrega o aviso.
+    // Rejected account credentials need reauthentication. Native identity
+    // metadata is not evidence that a rejected credential is still valid.
     markAccountAuthExpired: (accountId, adapterId) => {
       // Só adapters cuja sonda distingue grant morto de falha transitória.
       // Conta vault marcada tem blob próprio — um 401 nele é da conta, não
       // da sessão nativa, então marcar não cria churn com o CLI.
-      if (!["claude", "grok", "kimi"].includes(adapterId)) return;
+      if (!["claude", "codex", "grok", "kimi"].includes(adapterId)) return;
       const account = listAccounts(adapterId).find((a) => a.id === accountId);
       if (!account) return;
-      const nativeEmail = activeClaudeEmail();
-      if (
-        account.mode === "subscription" &&
-        account.email &&
-        nativeEmail &&
-        account.email.trim().toLowerCase() === nativeEmail.trim().toLowerCase()
-      ) {
-        return;
-      }
       if (
         isAuthCooldownReason(account.lastError) &&
         account.cooldownUntil !== undefined &&

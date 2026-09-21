@@ -20,7 +20,7 @@ let glabCliTokenCache: { value: string | null; at: number } | null = null;
 /** Token da sessão de um CLI de forge (gh/glab) — lido on-demand, nunca
  * persistido pelo Nexus, cacheado 60s. */
 function forgeCliToken(
-  bin: string,
+  bin: 'gh' | 'glab',
   cache: { value: string | null; at: number } | null,
   save: (next: { value: string | null; at: number }) => void,
 ): string | null {
@@ -28,7 +28,10 @@ function forgeCliToken(
   if (cache && now - cache.at < GH_TOKEN_TTL_MS) return cache.value;
   let value: string | null = null;
   try {
-    const out = execFileSync(bin, ['auth', 'token'], {
+    // GitHub API callers target github.com; GH_HOST/default CLI hosts must not
+    // select an enterprise credential for that request. Keep glab unchanged.
+    const args = bin === 'gh' ? ['auth', 'token', '--hostname', 'github.com'] : ['auth', 'token'];
+    const out = execFileSync(bin, args, {
       encoding: 'utf8',
       timeout: 3_000,
       stdio: ['ignore', 'pipe', 'ignore'],
@@ -43,7 +46,8 @@ function forgeCliToken(
 
 /**
  * Fallback sem setup (paridade Orca): quando não há PAT salvo nem env, usa a
- * sessão do GitHub CLI (`gh auth token`) já autenticada na máquina. O token
+ * sessão github.com do GitHub CLI (`gh auth token --hostname github.com`)
+ * já autenticada na máquina. O token
  * nunca é persistido pelo Nexus — é lido on-demand do gh (que o guarda no
  * Keychain dele) e cacheado por 60s para não pagar um exec por listagem.
  * O PATH real do usuário já foi resolvido no boot (path-resolver).

@@ -39,6 +39,7 @@ import {
   type FileAuthAdapterId,
 } from '../adapters/managed-credentials';
 import { chooseAccount } from './account-select';
+import { accountCredentialCandidates } from '../adapters/account-credential-candidates';
 import {
   freshestClaudeCredential,
   hasManagedClaudeAuth,
@@ -458,11 +459,12 @@ export function fileSubscriptionAuthEnv(
   if (!blob) return null;
   try {
     const adapterId = account.adapterId as FileAuthAdapterId;
-    // Persist CLI-refreshed tokens before materialize decides what to write.
-    const fresher = readBackFresherAuth(adapterId, account.id, blob);
-    if (fresher) {
+    // Read-back also follows a native re-login, but only for this identity.
+    const fresher = accountCredentialCandidates(adapterId, account.id, blob)[0];
+    if (fresher && fresher !== blob) {
       const saved = setSecret(CRED_PREFIX + account.id, fresher);
-      if (saved.ok) blob = fresher;
+      if (!saved.ok) return null;
+      blob = fresher;
     }
     const home = materializeManagedHome(adapterId, account.id, blob);
     return managedHomeEnv(adapterId, home);
@@ -1325,6 +1327,11 @@ export function addActiveSessionAccount(
       `O login concluído é de ${email}, mas a conta escolhida é ${targeted.email}.`,
     );
   }
+  const targetedBlob = targeted ? getSecret(CRED_PREFIX + targeted.id) : null;
+  if (targetedBlob && isFileAuthAdapter(adapterId) &&
+    compareAuthBlobIdentity(adapterId, blob, targetedBlob) === 'different') {
+    throw new Error('O login concluído pertence a outra identidade, não à conta escolhida.');
+  }
   const existing =
     targeted ??
     credentialOwner ??
@@ -1343,7 +1350,7 @@ export function addActiveSessionAccount(
     clearCooldown(existing.id, 'sessão reautenticada no CLI');
     try {
       if (isFileAuthAdapter(adapterId)) {
-        materializeManagedHome(adapterId as FileAuthAdapterId, existing.id, blob);
+        materializeManagedHome(adapterId as FileAuthAdapterId, existing.id, blob, { replace: Boolean(targeted) });
       } else if (adapterId === 'claude' && hasManagedClaudeAuth(existing.id)) {
         materializeManagedClaudeAuth(existing.id, blob, { replace: true });
       }
@@ -1711,25 +1718,9 @@ export function setCooldown(
 
 export function listAccountInfos(): AccountInfo[] {
   const now = Date.now();
-  const nativeClaude = activeClaudeEmail();
   return listAccounts().map((a) => {
-    const isLiveNativeClaude =
-      a.adapterId === 'claude' &&
-      a.mode === 'subscription' &&
-      Boolean(nativeClaude && a.email && emailsEqual(a.email, nativeClaude));
-
     const hasAuthError = isAuthCooldownReason(a.lastError);
     const hasActiveCooldown = Boolean(a.cooldownUntil && a.cooldownUntil > now);
-
-    // Se a conta é a sessão nativa ativa da CLI e tinha cooldown ou erro de auth,
-    // o login vivo no Keychain refuta o erro antigo: agenda a limpeza.
-    if (isLiveNativeClaude && (hasActiveCooldown || hasAuthError)) {
-      queueMicrotask(() => {
-        clearCooldown(a.id, 'sessão confirmada ativa no Keychain');
-      });
-    }
-
-    const effectiveCooldown = hasActiveCooldown && !isLiveNativeClaude;
     const hasActiveAuthCooldown = hasActiveCooldown && hasAuthError;
     const authFailure =
       hasActiveAuthCooldown || hasRecentClaudeRefreshFailure(a.id, now);
@@ -1740,11 +1731,11 @@ export function listAccountInfos(): AccountInfo[] {
       hasCredential:
         a.mode === 'api-key'
           ? hasSecret(KEY_PREFIX + a.id)
-          : hasSecret(CRED_PREFIX + a.id) || isLiveNativeClaude,
+          : hasSecret(CRED_PREFIX + a.id),
       // onCooldown é apenas para limite real de cota / rate-limit — nunca para erro de auth/login:
-      onCooldown: effectiveCooldown && !hasAuthError,
+      onCooldown: hasActiveCooldown && !hasAuthError,
       // needsRelogin indica sessão expirada / 401 / refresh morto:
-      needsRelogin: !isLiveNativeClaude && authFailure,
+      needsRelogin: authFailure,
     };
   });
 }

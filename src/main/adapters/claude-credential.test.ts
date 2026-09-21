@@ -110,7 +110,7 @@ describe('slimClaudeCredentialBlob', () => {
 describe.runIf(process.platform === 'darwin')('Claude Keychain boundaries', () => {
   beforeEach(() => {
     childProcess.execFileSync.mockClear();
-    childProcess.spawnSync.mockClear();
+    childProcess.spawnSync.mockReset();
     childProcess.spawnSync.mockReturnValue({ status: 0 });
     fsMock.mkdtempSync.mockClear();
     fsMock.writeFileSync.mockClear();
@@ -197,22 +197,24 @@ describe.runIf(process.platform === 'darwin')('Claude Keychain boundaries', () =
     expect(childProcess.spawnSync).not.toHaveBeenCalled();
   });
 
-  it('falls back to temp-file write when interactive path fails', () => {
+  it('does not retry a denied Keychain write through a secret-bearing shell command', () => {
     childProcess.spawnSync
       .mockReturnValueOnce({ status: 1 }) // interactive fails
       .mockReturnValueOnce({ status: 0 }); // fallback succeeds
     const slim = slimClaudeCredentialBlob(fullFatBlob())!;
-    expect(writeActiveClaudeCredential(slim)).toBe(true);
-    expect(childProcess.spawnSync).toHaveBeenCalledTimes(2);
-    const calls = childProcess.spawnSync.mock.calls as unknown as Array<
-      [string, ...unknown[]]
-    >;
-    expect(calls[1]?.[0]).toBe('/bin/bash');
-    expect(fsMock.writeFileSync).toHaveBeenCalled();
-    expect(fsMock.rmSync).toHaveBeenCalled();
+    expect(writeActiveClaudeCredential(slim)).toBe(false);
+    expect(childProcess.spawnSync).toHaveBeenCalledTimes(1);
+    expect(fsMock.writeFileSync).not.toHaveBeenCalled();
   });
 
-  it('returns false when interactive and fallback both fail (no success)', () => {
+  it('rejects oversized credentials without placing the secret in process arguments', () => {
+    const large = fullFatBlob('x'.repeat(CLAUDE_KEYCHAIN_INTERACTIVE_CMD_MAX_BYTES));
+    expect(writeActiveClaudeCredential(large)).toBe(false);
+    expect(childProcess.spawnSync).not.toHaveBeenCalled();
+    expect(fsMock.writeFileSync).not.toHaveBeenCalled();
+  });
+
+  it('returns false when the bounded Keychain write fails', () => {
     childProcess.spawnSync.mockReturnValue({ status: 1 });
     expect(writeActiveClaudeCredential(slimClaudeCredentialBlob(fullFatBlob())!)).toBe(
       false,
