@@ -430,7 +430,7 @@ export function ApiKeysSection() {
             <div className="api-key-card__brand">
               <ProviderLogo adapterId={def.logoId} label={def.title} size="sm" />
               <div>
-                <h4 className="api-key-card__name">{def.title}</h4>
+                <h3 className="api-key-card__name">{def.title}</h3>
                 <code className="api-key-card__env">{def.envVar}</code>
               </div>
             </div>
@@ -639,7 +639,7 @@ export function ApiKeysSection() {
               aria-label={meta.title}
             >
               <header className="api-keys-group__head">
-                <h4 className="api-keys-group__title">{meta.title}</h4>
+                <h3 className="api-keys-group__title">{meta.title}</h3>
                 <p className="api-keys-group__hint">{meta.hint}</p>
               </header>
               <div className="api-keys-section__grid" role="list">
@@ -652,7 +652,7 @@ export function ApiKeysSection() {
 
       <section className="api-keys-group" aria-label="Multi-PC">
         <header className="api-keys-group__head">
-          <h4 className="api-keys-group__title">Multi-PC</h4>
+          <h3 className="api-keys-group__title">Multi-PC</h3>
           <p className="api-keys-group__hint">
             O cofre de keys é cifrado pelo Keychain de cada Mac. Para levar as
             keys para outra máquina: exporte aqui com uma passphrase, importe lá.

@@ -149,9 +149,9 @@ export function JevDecisionsSection() {
 
       {stats && (
         <>
-          <h4 className="settings-section-heading">
+          <h3 className="settings-section-heading">
             Consumo do Jev (TypeSafe)
-          </h4>
+          </h3>
           <div
             className="jev-periods"
             role="group"
@@ -188,7 +188,7 @@ export function JevDecisionsSection() {
             sem intermediário.
           </p>
 
-          <h4 className="settings-section-heading">Por superfície</h4>
+          <h3 className="settings-section-heading">Por superfície</h3>
           {surfaces.length === 0 ? (
             <p className="jev-decisions__hint">
               Nenhuma decisão registrada ainda.
@@ -252,7 +252,7 @@ export function JevDecisionsSection() {
             </div>
           )}
 
-          <h4 className="settings-section-heading">Últimas decisões</h4>
+          <h3 className="settings-section-heading">Últimas decisões</h3>
           {rows.length === 0 ? (
             <EmptyState
               icon="board"

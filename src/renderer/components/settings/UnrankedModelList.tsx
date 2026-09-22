@@ -9,7 +9,7 @@ export function UnrankedModelList({ models, selectedId, onSelect }: {
   if (models.length === 0) return null;
   return (
     <div className="rank-ops__block">
-      <h4 className="rank-ops__block-title">Modelos não avaliados</h4>
+      <h3 className="rank-ops__block-title">Modelos não avaliados</h3>
       <p className="rank-ops__mission-hint">
         Modelos do catálogo disponíveis para avaliação. As notas e a posição
         aparecem depois que um benchmark é publicado.

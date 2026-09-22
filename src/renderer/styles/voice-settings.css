@@ -428,6 +428,8 @@
   margin-bottom: var(--space-1);
 }
 
+.voice-settings__card-head h3,
+.voice-settings__card-head--block h3,
 .voice-settings__card-head h4,
 .voice-settings__card-head--block h4 {
   margin: 0;

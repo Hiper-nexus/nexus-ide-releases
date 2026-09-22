@@ -787,7 +787,7 @@ export function VoiceSettings({ onClose, embedded = false }: VoiceSettingsProps 
                   {transcriptAppend.length > 0 && (
                     <div className="voice-settings__card" aria-label="Transcrição live">
                       <div className="voice-settings__card-head">
-                        <h4>Atividade recente</h4>
+                        <h3>Atividade recente</h3>
                         <span>{Math.min(transcriptAppend.length, 6)} eventos</span>
                       </div>
                       <div className="voice-settings__transcript-list">
@@ -809,7 +809,7 @@ export function VoiceSettings({ onClose, embedded = false }: VoiceSettingsProps 
               {activeTab === 'live' && (
                 <section className="voice-settings__pane" aria-label="Live e wake">
                   <div className="voice-settings__card-head voice-settings__card-head--block">
-                    <h4>Conversa contínua</h4>
+                    <h3>Conversa contínua</h3>
                     <p>Aplicado na hora. Demais ajustes usam Salvar.</p>
                   </div>
                   <div className="voice-settings__toggle-stack">
@@ -921,7 +921,7 @@ export function VoiceSettings({ onClose, embedded = false }: VoiceSettingsProps 
               {activeTab === 'voz' && (
                 <section className="voice-settings__pane" aria-label="Voz da Jarvis">
                   <div className="voice-settings__card-head voice-settings__card-head--block">
-                    <h4>Timbre</h4>
+                    <h3>Timbre</h3>
                     <p>
                       Escolha a voz usada por cada serviço. Estas escolhas são salvas na hora.
                     </p>
@@ -991,7 +991,7 @@ export function VoiceSettings({ onClose, embedded = false }: VoiceSettingsProps 
               {activeTab === 'atendimento' && (
                 <section className="voice-settings__pane" aria-label="Atendimento">
                   <div className="voice-settings__card-head voice-settings__card-head--block">
-                    <h4>Como atende</h4>
+                    <h3>Como atende</h3>
                     <p>Fala, destino do áudio e atalho global.</p>
                   </div>
                   <div className="voice-settings__form-grid voice-settings__form-grid--compact">
@@ -1169,7 +1169,7 @@ export function VoiceSettings({ onClose, embedded = false }: VoiceSettingsProps 
               {activeTab === 'fallback' && (
                 <section className="voice-settings__pane" aria-label="Fallback clássico">
                   <div className="voice-settings__card-head voice-settings__card-head--block">
-                    <h4>Serviços de voz e inteligência</h4>
+                    <h3>Serviços de voz e inteligência</h3>
                     <p>Só quando o canal Live não estiver disponível.</p>
                   </div>
                   <div className="voice-settings__form-grid">
@@ -1227,7 +1227,7 @@ export function VoiceSettings({ onClose, embedded = false }: VoiceSettingsProps 
               {activeTab === 'persona' && (
                 <section className="voice-settings__pane" aria-label="Persona Jarvis">
                   <div className="voice-settings__card-head voice-settings__card-head--block">
-                    <h4>Personalidade</h4>
+                    <h3>Personalidade</h3>
                     <p>Como a Jarvis se apresenta e fala com você.</p>
                   </div>
                   <div className="voice-settings__persona">
@@ -1269,7 +1269,7 @@ export function VoiceSettings({ onClose, embedded = false }: VoiceSettingsProps 
               {activeTab === 'credenciais' && info.keys.length > 0 && (
                 <section className="voice-settings__pane" aria-label="Credenciais">
                   <div className="voice-settings__card-head voice-settings__card-head--block">
-                    <h4>Cofre local</h4>
+                    <h3>Cofre local</h3>
                     <p>Cole a chave do serviço e selecione Salvar alterações. Remover chave tem efeito imediato.</p>
                   </div>
                   {info.keys.map((key) => {

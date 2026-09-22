@@ -513,6 +513,7 @@
   gap: var(--space-3);
 }
 
+.settings-section-heading--with-count h3,
 .settings-section-heading--with-count h4 {
   margin: 0;
   font: inherit;

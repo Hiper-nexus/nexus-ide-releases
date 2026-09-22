@@ -81,7 +81,7 @@ export function DoctorEngineSettings() {
     <div className="settings-orchestrator" aria-busy={busy}>
       <div className="settings-orchestrator__head">
         <div>
-          <h4 className="settings-orchestrator__title">Assistente de diagnóstico</h4>
+          <h3 className="settings-orchestrator__title">Assistente de diagnóstico</h3>
           <p className="settings-orchestrator__summary">
             Analisa problemas do app. As recuperações seguras são executadas pelo próprio Nexus.
           </p>

@@ -47,7 +47,7 @@ export function UpdateReadinessPanel() {
     <div className="sys-group">
       <div className="sys-group__head">
         <div className="sys-group__titles">
-          <h4 className="sys-group__title">Atualizações</h4>
+          <h3 className="sys-group__title">Atualizações</h3>
           <p className="sys-group__hint">
             Estado do updater e alinhamento da versão instalada.
           </p>

@@ -173,10 +173,10 @@ export function RecipesSection() {
 
       {suggestions.length > 0 && (
         <div className="arsenal-band">
-          <h4 className="arsenal-band__label">
+          <h3 className="arsenal-band__label">
             Equipes sugeridas
             <span className="arsenal-band__count">{suggestions.length}</span>
-          </h4>
+          </h3>
           <ul className="settings-list">
             {suggestions.map((recipe) => (
               <li key={recipe.id} className="settings-list__item catalog-item">
@@ -415,10 +415,10 @@ export function ShortcutsSection() {
         const shortcuts = shortcutsInGroup(groupId);
         return (
           <div key={groupId} className="arsenal-band">
-            <h4 className="arsenal-band__label">
+            <h3 className="arsenal-band__label">
               {SHORTCUT_GROUP_LABELS[groupId]}
               <span className="arsenal-band__count">{shortcuts.length}</span>
-            </h4>
+            </h3>
             <ul className="settings-list">
               {shortcuts.map((shortcut) => (
                 <li key={shortcut.id} className="settings-list__item">
@@ -435,10 +435,10 @@ export function ShortcutsSection() {
         );
       })}
       <div className="arsenal-band">
-        <h4 className="arsenal-band__label">
+        <h3 className="arsenal-band__label">
           Mouse
           <span className="arsenal-band__count">{GESTURES.length}</span>
-        </h4>
+        </h3>
         <ul className="settings-list">
           {GESTURES.map((gesture) => (
             <li key={gesture.keys} className="settings-list__item">

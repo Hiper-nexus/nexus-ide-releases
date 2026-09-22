@@ -85,7 +85,7 @@ export function TerminalSection() {
       <div className="sys-group">
         <div className="sys-group__head">
           <div className="sys-group__titles">
-            <h4 className="sys-group__title">Texto</h4>
+            <h3 className="sys-group__title">Texto</h3>
             <p className="sys-group__hint">
               Fonte e tamanho aplicados a todos os terminais.
             </p>
@@ -120,7 +120,7 @@ export function TerminalSection() {
       <div className="sys-group">
         <div className="sys-group__head">
           <div className="sys-group__titles">
-            <h4 className="sys-group__title">Shell</h4>
+            <h3 className="sys-group__title">Shell</h3>
             <p className="sys-group__hint">
               Shell padrão para novos terminais. Terminais abertos não mudam.
             </p>
@@ -166,7 +166,7 @@ export function TerminalSection() {
       <div className="sys-group">
         <div className="sys-group__head">
           <div className="sys-group__titles">
-            <h4 className="sys-group__title">Desempenho</h4>
+            <h3 className="sys-group__title">Desempenho</h3>
             <p className="sys-group__hint">
               Como os terminais fora de vista consomem recursos.
             </p>
@@ -258,7 +258,7 @@ export function SystemSection() {
       <div className="sys-cols-2">
         <div>
           <div className="sys-subhead">
-            <h4 className="sys-subhead__title">Melhorias desta versão</h4>
+            <h3 className="sys-subhead__title">Melhorias desta versão</h3>
             <span className="sys-subhead__meta">{release.highlights.length}</span>
           </div>
           <ul className="settings-list">
@@ -274,7 +274,7 @@ export function SystemSection() {
         </div>
         <div>
           <div className="sys-subhead">
-            <h4 className="sys-subhead__title">Correções desta versão</h4>
+            <h3 className="sys-subhead__title">Correções desta versão</h3>
             <span className="sys-subhead__meta">{release.fixes.length}</span>
           </div>
           <ul className="settings-list">
@@ -731,7 +731,7 @@ export function SquadsSection() {
 
       <section className="settings-squads__block" aria-labelledby="settings-squads-saved-title">
       <div className="settings-section-heading settings-section-heading--with-count">
-        <h4 id="settings-squads-saved-title">Equipes salvas</h4>
+        <h3 id="settings-squads-saved-title">Equipes salvas</h3>
         <span className="settings-chip">{visibleSquads.length}</span>
       </div>
       {visibleSquads.length === 0 ? (
@@ -812,7 +812,7 @@ export function SquadsSection() {
         <summary>Comportamento dos agentes e estilo de trabalho</summary>
       <AgentSessionSettings />
 
-      <h4 className="settings-section-heading">Padrões de execução</h4>
+      <h3 className="settings-section-heading">Padrões de execução</h3>
       <div className="settings-toggle-list">
         <OrchestrationToggle
           checked={seniorMode}
@@ -892,9 +892,9 @@ export function SquadsSection() {
       </div>
       {designPro && (
         <>
-          <h4 className="settings-section-heading">
+          <h3 className="settings-section-heading">
             Perfil de design (tarefas de UI)
-          </h4>
+          </h3>
           <p className="settings-detail__hint">
             Ajuste o estilo sugerido aos agentes. A direção automática segue as referências do projeto.
           </p>

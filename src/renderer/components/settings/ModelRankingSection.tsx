@@ -562,15 +562,15 @@ export function ModelRankingSection() {
           </div>
 
           <div className="rank-ops__block">
-            <h4 className="rank-ops__block-title">
+            <h3 className="rank-ops__block-title">
               Faixas de custo
-            </h4>
+            </h3>
             <p className="rank-ops__mission-hint">Escolha uma faixa econômica para tarefas simples e reserve os modelos mais caros para problemas complexos.</p>
             <BandBoard entries={snapshot.entries} onSelect={setSelectedId} />
           </div>
 
           <div className="rank-ops__block">
-            <h4 className="rank-ops__block-title">Destaques por tipo de tarefa</h4>
+            <h3 className="rank-ops__block-title">Destaques por tipo de tarefa</h3>
             <MissionPicks entries={snapshot.entries} onSelect={setSelectedId} />
           </div>
 
@@ -604,9 +604,9 @@ export function ModelRankingSection() {
 
           <div className="rank-ops__stage">
             <div className="rank-ops__stage-main">
-              <h4 className="rank-ops__block-title">
+              <h3 className="rank-ops__block-title">
                 Comparação · {SORT_LABELS[sort]}
-              </h4>
+              </h3>
               <RaceChart
                 rows={rows}
                 sort={sort}
@@ -630,7 +630,7 @@ export function ModelRankingSection() {
               ) : null}
             </div>
             <div className="rank-ops__stage-side">
-              <h4 className="rank-ops__block-title">Radar operacional</h4>
+              <h3 className="rank-ops__block-title">Radar operacional</h3>
               {selected ? (
                 <RadarChart entry={selected} ghost={leader} />
               ) : (

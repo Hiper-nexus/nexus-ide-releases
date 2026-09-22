@@ -563,7 +563,7 @@ function ProviderDetail({
           fallback={provider.icon}
         />
         <div className="prov-detail__identity">
-          <h4 className="prov-detail__title">{provider.label}</h4>
+          <h3 className="prov-detail__title">{provider.label}</h3>
           <p className="prov-detail__sub">
             {provider.installed
               ? isLocalCliProvider(provider) && provider.detectedBin

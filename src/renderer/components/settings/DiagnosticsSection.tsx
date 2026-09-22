@@ -143,7 +143,7 @@ export function DiagnosticsSection() {
       <ContextDraftsSection />
 
       <div className="sys-subhead">
-        <h4 className="sys-subhead__title">Permissões e microfone</h4>
+        <h3 className="sys-subhead__title">Permissões e microfone</h3>
       </div>
       <div className="ops-metric-grid">
         <MetricTile
@@ -173,7 +173,7 @@ export function DiagnosticsSection() {
       </div>
 
       <div className="sys-subhead">
-        <h4 className="sys-subhead__title">Assistente de voz</h4>
+        <h3 className="sys-subhead__title">Assistente de voz</h3>
       </div>
       <div className="ops-metric-grid">
         <MetricTile
@@ -191,12 +191,12 @@ export function DiagnosticsSection() {
       </div>
 
       <div className="sys-subhead">
-        <h4 className="sys-subhead__title">Interface e terminais</h4>
+        <h3 className="sys-subhead__title">Interface e terminais</h3>
       </div>
       <TerminalPerformanceStatus />
 
       <div className="sys-subhead">
-        <h4 className="sys-subhead__title">Uso e latência</h4>
+        <h3 className="sys-subhead__title">Uso e latência</h3>
       </div>
       <div className="ops-metric-grid">
         <MetricTile
@@ -224,7 +224,7 @@ export function DiagnosticsSection() {
       <TokenSpeedMonitor />
 
       <div className="sys-subhead">
-        <h4 className="sys-subhead__title">Atividade</h4>
+        <h3 className="sys-subhead__title">Atividade</h3>
       </div>
       <div className="ops-log-strip">
         <div>

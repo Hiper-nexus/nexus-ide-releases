@@ -201,11 +201,11 @@ function InstalledList({ items, empty, enriched, kind, resetFilters, emptyIcon }
   return <>{origins.map(origin => {
     const list = byOrigin.get(origin)!;
     return <div key={origin} className="arsenal-band">
-      <h4 className="arsenal-band__label">
+      <h3 className="arsenal-band__label">
         <span className="catalog-band__icon">{originIdent(origin)}</span>
         {origin}
         <span className="arsenal-band__count">{list.length}</span>
-      </h4>
+      </h3>
       <ul className="settings-list catalog-settings__resources">{list.map(renderItem)}</ul>
     </div>;
   })}</>;
@@ -319,11 +319,11 @@ export function MediaCatalogSection() {
       ) : (
         groups.map((group) => (
           <div key={group.kind} className="arsenal-band">
-            <h4 className="arsenal-band__label">
+            <h3 className="arsenal-band__label">
               <PixelIcon name={MEDIA_KIND_ICONS[group.kind]} size={12} />
               {group.label}
               <span className="arsenal-band__count">{group.items.length}</span>
-            </h4>
+            </h3>
             <ul className="settings-list">
               {group.items.map((p) => (
                 <li key={p.id} className="settings-list__item catalog-item">
@@ -464,9 +464,9 @@ export function LlmsSection({ adapters }: { adapters: AdapterInfo[] }) {
       )}
       {absent.length > 0 && (
         <div className="settings-installable">
-          <h4 className="settings-detail__title settings-installable__title">
+          <h3 className="settings-detail__title settings-installable__title">
             Disponíveis para instalação
-          </h4>
+          </h3>
           <ul className="settings-list">
             {absent.map((a) => (
               <li key={a.id} className="settings-list__item catalog-item settings-installable__item">
@@ -645,11 +645,11 @@ export function ToolsSection() {
 
       {families.map((family) => (
         <div key={family} className="arsenal-band">
-          <h4 className="arsenal-band__label">
+          <h3 className="arsenal-band__label">
             <PixelIcon name={TOOL_FAMILY_ICONS[family] ?? 'config'} size={12} />
             {TOOL_FAMILY_LABELS[family] ?? family}{' '}
             <span className="arsenal-band__count">{grouped[family].length}</span>
-          </h4>
+          </h3>
           <ul className="settings-list">
             {grouped[family].map((tool) => (
               <li key={tool.name} className="settings-list__item arsenal-tool">
@@ -797,11 +797,11 @@ export function RulesSection() {
       ) : (
         filteredGroups.map(([squadId, squadRows]) => (
           <div key={squadId} className="arsenal-band">
-            <h4 className="arsenal-band__label">
+            <h3 className="arsenal-band__label">
               {squadRows[0].squad}
               <span className="catalog-band__source">{squadRows[0].source}</span>
               <span className="arsenal-band__count">{squadRows.length}</span>
-            </h4>
+            </h3>
             <ul className="settings-list">
               {squadRows.map((row) => (
                 <li key={row.agentId} className="settings-list__item catalog-item">

@@ -416,3 +416,13 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Os subtítulos das páginas passaram de h4 para h3 (a hierarquia pulava de
+   h2 para h4 em toda página). A troca é semântica: um h3 sem classe mantém
+   o tamanho e a margem padrão do antigo h4. :where() zera a especificidade,
+   então qualquer regra de componente (ex.: .voice-settings__card-head h3)
+   continua vencendo. */
+:where(.settings-detail__content, .voice-settings) h3:where(:not([class])) {
+  font-size: 1em;
+  margin-block: 1.33em;
+}
