@@ -20,7 +20,7 @@ it.skipIf(process.platform !== 'darwin')('keeps Redline readable and every accou
     const spec = readFileSync(`${root}/main.test.swift`, 'utf8');
     writeFileSync(join(directory, 'main.swift'), `${sources.join('\n')}\n${spec}`);
     const binary = join(directory, 'redline-ui-test');
-    execFileSync('swiftc', ['-swift-version', '5', join(directory, 'main.swift'), '-o', binary], { timeout: 120_000 });
+    execFileSync('swiftc', ['-swift-version', '5', '-target', 'arm64-apple-macosx14.0', join(directory, 'main.swift'), '-o', binary], { timeout: 120_000 });
     // No .app around the probe, so point it at the committed companion assets.
     const output = execFileSync(binary, {
       encoding: 'utf8',

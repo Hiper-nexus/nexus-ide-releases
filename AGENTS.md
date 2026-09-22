@@ -190,6 +190,7 @@ saber isto antes de mexer:
 
 ## Redline na barra depois de atualizar o Nexus (F-612)
 
+- O `swiftc` do companheiro leva `-target arm64-apple-macosx14.0`, o mesmo piso de `LSMinimumSystemVersion`. Sem esse alvo o linker carimba `minos` com a versão do SDK (0.76.75 saiu `minos 27.2` num Mac 27.0) e o Launch Services recusa o app com «Você não pode usar esta versão do aplicativo» (F-628). O build confere o `minos` com `vtool` e falha se não for 14.0.
 - Quem já instalou o companheiro em `/Applications` precisa de
   `syncInstalledRedline` no boot: se o binário empacotado diferir, substitui e
   relança. A oferta one-time não cobre update. `open` num LSUIElement já
