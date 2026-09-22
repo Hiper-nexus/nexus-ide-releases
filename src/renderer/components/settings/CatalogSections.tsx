@@ -658,7 +658,14 @@ export function ToolsSection() {
                     {tool.name}
                   </span>
                 </div>
-                <details className="settings-advanced-field"><summary>O que esta ferramenta faz</summary><p className="settings-list__detail">{tool.description}</p></details>
+                {/* A descrição real em uma linha (completa no tooltip): o
+                    disclosure "O que esta ferramenta faz" se repetia 173
+                    vezes e escondia justamente a informação útil. */}
+                {tool.description ? (
+                  <p className="settings-list__detail arsenal-tool__summary" title={tool.description}>
+                    {tool.description}
+                  </p>
+                ) : null}
               </li>
             ))}
           </ul>
@@ -700,8 +707,12 @@ export function HooksSection() {
 export function RulesSection() {
   const [query, setQuery] = useState('');
   const [team, setTeam] = useState('');
+  // Cada missão deixa uma configuração própria; listadas todas, a página
+  // passava de 20 mil px com "Execução + QA" repetido e prompts de teste.
+  // O padrão mostra as equipes salvas; missões ficam a um clique.
+  const [includeMissions, setIncludeMissions] = useState(false);
   const squads = useOrchStore((s) => s.squads);
-  const rows = squads.flatMap((squad) =>
+  const allRows = squads.flatMap((squad) =>
     squad.agents.map((agent) => ({
       squad: squad.name,
       squadId: squad.id,
@@ -721,6 +732,10 @@ export function RulesSection() {
           : agent.allowedSkills.join(', ') || 'Nenhuma declarada',
     })),
   );
+  const missionRowCount = allRows.filter(row => isMissionRuntimeSquadId(row.squadId)).length;
+  const rows = includeMissions || team
+    ? allRows
+    : allRows.filter(row => !isMissionRuntimeSquadId(row.squadId));
   const filteredRows = rows.filter(row =>
     (!team || row.squadId === team) &&
     `${row.agent} ${row.squad} ${row.tools} ${row.skills}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
@@ -735,7 +750,7 @@ export function RulesSection() {
   const resetFilters = () => { setQuery(''); setTeam(''); };
   return (
     <section className="catalog-settings">
-      <SettingsSectionTitle>Permissões declaradas</SettingsSectionTitle>
+      <SettingsSectionTitle>Permissões</SettingsSectionTitle>
       <p className="settings-detail__hint">
         Configurações declaradas por agente em equipes e missões. A execução também aplica as políticas e os limites do Nexus.
       </p>
@@ -743,8 +758,14 @@ export function RulesSection() {
         <label className="settings-field">Buscar regras<input type="search" className="settings-input" value={query} onChange={event => setQuery(event.target.value)} placeholder="Agente, equipe ou recurso" /></label>
         <label className="settings-field">Equipe<select className="settings-input" value={team} onChange={event => setTeam(event.target.value)}><option value="">Todas as equipes e missões</option>{squads.map(squad => <option key={squad.id} value={squad.id}>{squad.name}</option>)}</select></label>
       </div>
+      {missionRowCount > 0 ? (
+        <label className="settings-check catalog-settings__include-missions">
+          <input type="checkbox" checked={includeMissions} onChange={event => setIncludeMissions(event.target.checked)} />
+          Incluir configurações de missões ({missionRowCount} agentes)
+        </label>
+      ) : null}
       <p className="catalog-settings__count" role="status">{filteredRows.length} de {rows.length} agentes</p>
-      {rows.length === 0 ? (
+      {allRows.length === 0 ? (
         <EmptyState
           icon="key"
           title="Nenhuma declaração carregada"

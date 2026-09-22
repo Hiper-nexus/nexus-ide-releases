@@ -362,3 +362,57 @@
     padding-right: var(--space-4);
   }
 }
+
+/* "Avançado": abas técnicas no fim da categoria, depois de um fio e de um
+   rótulo discreto. Continuam clicáveis e na busca; só deixam de competir com
+   as abas do caminho comum. */
+.settings-category-tabs__divider {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-inline: var(--space-2) var(--space-1);
+  padding-inline-start: var(--space-2);
+  border-inline-start: 1px solid var(--border);
+  color: var(--text-faint);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.settings-category-tabs__item--advanced:not(.settings-category-tabs__item--active) {
+  color: var(--text-faint);
+}
+
+/* Todo disclosure das Configurações é alvo de clique: em Equipes, três
+   <summary> mediam 15px de altura. */
+.settings-detail__content summary {
+  min-height: 24px;
+  cursor: pointer;
+}
+
+.rank-ops__show-all {
+  margin-top: var(--space-2);
+  align-self: flex-start;
+}
+
+.catalog-settings__include-missions {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 24px;
+  margin-block: var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.arsenal-tool__summary {
+  margin: 2px 0 0;
+  overflow: hidden;
+  color: var(--text-dim);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

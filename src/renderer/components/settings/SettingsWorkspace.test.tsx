@@ -176,24 +176,26 @@ afterEach(() => {
 });
 
 describe('responsive settings navigation', () => {
-  it('keeps compact navigation at nine areas and opens their first section', async () => {
+  it('keeps compact navigation at seven task areas and opens their first section', async () => {
     const selectPage = vi.fn();
     const host = mount(<SettingsWorkspace section="appearance" onSectionChange={selectPage} />);
     await settleSectionEffects();
     const select = host.querySelector<HTMLSelectElement>('.settings-nav__compact select')!;
-    expect(select.options).toHaveLength(9);
+    expect(select.options).toHaveLength(7);
     expect([...select.options].some(option => option.value === 'connections')).toBe(true);
     act(() => { select.value = 'ai'; select.dispatchEvent(new Event('change', { bubbles: true })); });
-    expect(selectPage).toHaveBeenCalledWith('providers');
+    expect(selectPage).toHaveBeenCalledWith('squads');
   });
 
-  it('opens the local pet library directly from the persistent footer', async () => {
+  it('reaches pets once, through the Aparência e teclado tabs (no duplicate footer shortcut)', async () => {
     const selectPage = vi.fn();
-    const host = mount(<SettingsWorkspace section="account" onSectionChange={selectPage} />);
+    const host = mount(<SettingsWorkspace section="appearance" onSectionChange={selectPage} />);
     await settleSectionEffects();
-    const action = host.querySelector<HTMLButtonElement>('.settings-nav__footer button');
-    expect(action?.textContent).toContain('Meus pets');
-    act(() => action?.click());
+    const footerLabels = [...host.querySelectorAll('.settings-nav__footer button')].map(button => button.textContent ?? '');
+    expect(footerLabels.some(label => /mascotes|meus pets/i.test(label))).toBe(false);
+    const tab = [...host.querySelectorAll<HTMLButtonElement>('.settings-category-tabs__item')].find(button => button.textContent === 'Mascotes');
+    expect(tab).toBeDefined();
+    act(() => tab!.click());
     expect(selectPage).toHaveBeenCalledWith('pets');
   });
 
@@ -218,10 +220,10 @@ describe('SettingsWorkspace contracts', () => {
     expect(rail).not.toBeNull();
 
     const cases: Array<[SettingsSection, RegExp, string]> = [
-      ['account', /minha conta/i, 'Chaves de API e Conta'],
-      ['appearance', /^aparência$/i, 'Aparência'],
-      ['terminal', /^terminal$/i, 'Sistema'],
-      ['remote', /^remoto$/i, 'Conexões externas'],
+      ['account', /minha conta/i, 'Conta e acesso a IAs'],
+      ['appearance', /^tema$/i, 'Aparência e teclado'],
+      ['terminal', /^terminal$/i, 'Aparência e teclado'],
+      ['remote', /^máquinas remotas$/i, 'Integrações'],
     ];
 
     for (const [section, heading, navTitle] of cases) {
@@ -239,7 +241,7 @@ describe('SettingsWorkspace contracts', () => {
     }
   });
 
-  it('keeps nine primary areas and finds individual settings through search', async () => {
+  it('keeps seven primary areas and finds individual settings through search', async () => {
     useProductNavigationStore.getState().openSettings('account');
     const host = mount(<SettingsWorkspace />);
     await settleSectionEffects();
@@ -249,7 +251,7 @@ describe('SettingsWorkspace contracts', () => {
     );
     expect(nav).not.toBeNull();
     expect(search).not.toBeNull();
-    expect(nav?.querySelectorAll('.settings-nav__item')).toHaveLength(9);
+    expect(nav?.querySelectorAll('.settings-nav__item')).toHaveLength(7);
     if (!search) throw new Error('Settings search is unavailable');
 
     setSearchValue(search, 'xterm');
@@ -289,7 +291,7 @@ describe('SettingsWorkspace contracts', () => {
       '.settings-nav__item[aria-current="page"]',
     );
     expect(active).not.toBeNull();
-    expect(active?.textContent).toContain('Chaves de API e Conta');
+    expect(active?.textContent).toContain('Conta e acesso a IAs');
   });
 
   it('provides an h1 and focused h2 route target while resetting detail scroll on deep-link changes', async () => {
@@ -366,7 +368,7 @@ describe('SettingsWorkspace contracts', () => {
     expect(scrollingGroups).not.toBeNull();
     expect(
       scrollingGroups?.querySelectorAll('.settings-nav__item'),
-    ).toHaveLength(9);
+    ).toHaveLength(7);
     expect(scrollingGroups?.contains(brand)).toBe(false);
     expect(scrollingGroups?.contains(search)).toBe(false);
   });

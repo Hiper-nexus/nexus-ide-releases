@@ -32,6 +32,9 @@ import { SettingsSectionTitle } from "./SettingsSectionTitle";
 import { unrankedModels } from "./unranked-models";
 import { UnrankedModelDetail, UnrankedModelList } from "./UnrankedModelList";
 
+/** Quantos modelos sem avaliação aparecem antes de "Mostrar todos". */
+const UNRANKED_PREVIEW = 24;
+
 /**
  * Per-adapter free capacity 0..1 for ranking blend. Uses freest account of each
  * adapter; null = no known ratios (neutral weight in scoreWithQuota).
@@ -423,6 +426,9 @@ export function ModelRankingSection() {
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [onlyInstalled, setOnlyInstalled] = useState(false);
+  // 900+ modelos sem avaliação renderizavam de uma vez (935 botões, 47k px).
+  // Os primeiros bastam para decidir; o resto sob demanda.
+  const [showAllUnranked, setShowAllUnranked] = useState(false);
 
   const providers = useProviderStore((s) => s.providers);
   const installed = useMemo(() => {
@@ -604,10 +610,19 @@ export function ModelRankingSection() {
                 onSelect={setSelectedId}
               />
               <UnrankedModelList
-                models={visibleUnranked}
+                models={showAllUnranked ? visibleUnranked : visibleUnranked.slice(0, UNRANKED_PREVIEW)}
                 selectedId={selectedId}
                 onSelect={setSelectedId}
               />
+              {!showAllUnranked && visibleUnranked.length > UNRANKED_PREVIEW ? (
+                <button
+                  type="button"
+                  className="settings-btn rank-ops__show-all"
+                  onClick={() => setShowAllUnranked(true)}
+                >
+                  Mostrar todos os {visibleUnranked.length} modelos sem avaliação
+                </button>
+              ) : null}
             </div>
             <div className="rank-ops__stage-side">
               <h4 className="rank-ops__block-title">Radar operacional</h4>

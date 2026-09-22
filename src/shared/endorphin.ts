@@ -52,12 +52,12 @@ export const SETTINGS_NAV_PILLARS: readonly SettingsNavPillar[] = [
   {
     id: "agents",
     label: "Agentes",
-    story: "Providers, frota e arsenal",
+    story: "Equipes, modelos e biblioteca",
   },
   {
     id: "system",
     label: "Sistema",
-    story: "Diagnóstico e saúde do ambiente",
+    story: "Integrações, segurança e manutenção",
   },
 ] as const;
 
