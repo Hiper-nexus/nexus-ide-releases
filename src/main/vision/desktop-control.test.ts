@@ -264,14 +264,19 @@ describe('desktop-control', () => {
     expect(script).toContain('command down');
   });
 
-  it('pressKey maps names to macOS key codes', async () => {
+  it('pressKey maps names to macOS key codes and pins the target app', async () => {
     jxaResponse({ ok: true });
-    await desktopControl.pressKey('enter');
-    expect(argvOf(lastCall().args)).toEqual(['36']);
-    await desktopControl.pressKey('escape');
-    expect(argvOf(lastCall().args)).toEqual(['53']);
-    await desktopControl.pressKey('pagedown');
-    expect(argvOf(lastCall().args)).toEqual(['121']);
+    await desktopControl.pressKey('App', 'enter');
+    expect(argvOf(lastCall().args)).toEqual(['App', '36']);
+    await desktopControl.pressKey('App', 'escape');
+    expect(argvOf(lastCall().args)).toEqual(['App', '53']);
+    await desktopControl.pressKey('App', 'pagedown');
+    expect(argvOf(lastCall().args)).toEqual(['App', '121']);
+  });
+
+  it('pressKey recusa quando o app alvo perdeu o foco — nada digita no vizinho', async () => {
+    jxaResponse({ ok: false, focus_lost: true });
+    await expect(desktopControl.pressKey('App', 'enter')).rejects.toThrow();
   });
 
   it('captureWindow matches the window title and reports px→pt scale', async () => {

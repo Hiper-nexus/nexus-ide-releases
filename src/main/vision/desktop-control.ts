@@ -100,7 +100,7 @@ export interface DesktopControl {
   press(app: string, target: DesktopTarget): Promise<void>;
   doubleClick(app: string, target: DesktopTarget): Promise<void>;
   setValue(app: string, target: DesktopTarget, text: string): Promise<void>;
-  pressKey(name: DesktopKeyName): Promise<void>;
+  pressKey(app: string, name: DesktopKeyName): Promise<void>;
   captureWindow(app: string): Promise<DesktopWindowCapture | null>;
 }
 
@@ -333,6 +333,12 @@ function run(argv) {
   var cy = Math.round(t.frame.y + t.frame.h / 2);
   try { se.click({ at: { x: cx, y: cy } }); } catch (e) {}
   delay(0.15);
+  // O click global pode ter acertado outra janela (terminal externo do
+  // operador). Só digita se o app alvo AINDA é o frontmost — sem isso o
+  // keystroke/clipboard-paste vaza para fora do Nexus.
+  var procs = se.processes.whose({ frontmost: true })();
+  var front = procs.length ? String(procs[0].name()) : '';
+  if (front !== app) return JSON.stringify({ ok: false, focus_lost: true });
   se.keystroke('a', { using: 'command down' });
   var ascii = /^[\x20-\x7E\n\t]*$/.test(text);
   if (ascii) {
@@ -352,9 +358,18 @@ function run(argv) {
   return JSON.stringify({ ok: true, verified: read2 === text });
 }`;
 
+/* argv = [app, keyCode] — só digita se o app alvo AINDA é o frontmost.
+   `se.keyCode`/`se.keystroke` vão para o app em foco do sistema: sem esta
+   guarda, uma tecla perdida cai no terminal externo do operador (leak A→B). */
 const SCRIPT_KEY = `
 function run(argv) {
-  Application('System Events').keyCode(parseInt(argv[0], 10));
+  var app = argv[0];
+  var code = parseInt(argv[1], 10);
+  var se = Application('System Events');
+  var procs = se.processes.whose({ frontmost: true })();
+  var front = procs.length ? String(procs[0].name()) : '';
+  if (front !== app) return JSON.stringify({ ok: false, focus_lost: true });
+  se.keyCode(code);
   return JSON.stringify({ ok: true });
 }`;
 
@@ -477,18 +492,23 @@ async function doubleClick(app: string, target: DesktopTarget): Promise<void> {
 
 async function setValue(app: string, target: DesktopTarget, text: string): Promise<void> {
   requireDarwin();
-  const out = parseJson<{ ok: boolean; gone?: boolean; sensitive?: boolean }>(
+  const out = parseJson<{ ok: boolean; gone?: boolean; sensitive?: boolean; focus_lost?: boolean }>(
     await runJxa(SCRIPT_SET_VALUE, [app, JSON.stringify(target), text]),
     'setValue',
   );
-  if (out.gone) throw new DesktopElementGone();
+  if (out.gone || out.focus_lost) throw new DesktopElementGone();
   if (out.sensitive) throw new DesktopSensitiveField();
   if (!out.ok) throw new Error('osascript: valor não aplicado');
 }
 
-async function pressKey(name: DesktopKeyName): Promise<void> {
+async function pressKey(app: string, name: DesktopKeyName): Promise<void> {
   requireDarwin();
-  await runJxa(SCRIPT_KEY, [String(KEY_CODES[name])]);
+  const out = parseJson<{ ok: boolean; focus_lost?: boolean }>(
+    await runJxa(SCRIPT_KEY, [app, String(KEY_CODES[name])]),
+    'pressKey',
+  );
+  if (out.focus_lost) throw new DesktopElementGone();
+  if (!out.ok) throw new Error('osascript: tecla não aplicada');
 }
 
 function pngPixelSize(png: Buffer): { w: number; h: number } {

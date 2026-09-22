@@ -58,6 +58,35 @@ const HISTORY_LEN = 5;
 const MIN_AX_ELEMENTS = 3;
 const ELEMENTS_MAX = 150;
 
+/**
+ * Terminais são proibidos como alvo do computer_do. `System Events` digita no
+ * app em FOCO: rodar contra Terminal/iTerm/etc. é o vazamento de conteúdo
+ * para fora do Nexus (um claude externo recebia prompts do agente). Escrita em
+ * terminal é exclusiva do PTY do Nexus (`nexus_pane_write` / `terminal_run`).
+ */
+const TERMINAL_APP_DENYLIST: readonly string[] = [
+  'terminal',
+  'iterm',
+  'iterm2',
+  'ghostty',
+  'alacritty',
+  'wezterm',
+  'warp',
+  'warp terminal',
+  'kitty',
+  'hyper',
+  'tabby',
+  'windows terminal',
+  'conhost',
+];
+
+export function isTerminalApp(app: string): boolean {
+  const bare = app.trim().toLowerCase();
+  return TERMINAL_APP_DENYLIST.some(
+    (name) => bare === name || bare.startsWith(`${name} `),
+  );
+}
+
 export const computerDoArgsSchema = z.object({
   app: z.string().min(1).max(128),
   goal: z.string().min(1).max(2_000),
@@ -363,6 +392,16 @@ async function runComputerDo(
     ...extra,
   });
 
+  // Terminal proibido: conteúdo jamais sai para um terminal fora do Nexus.
+  if (isTerminalApp(app)) {
+    return finish('error', {
+      error:
+        `computer_do: "${app}" é um terminal — recusado. ` +
+        'Escrita em terminal é pelo PTY do Nexus (nexus_pane_write / terminal_run); ' +
+        'nunca System Events num terminal externo.',
+    });
+  }
+
   // Pré-condições: permissão de Acessibilidade e app em primeiro plano.
   if (control.accessibilityStatus() !== 'granted') {
     control.requestAccessibility();
@@ -596,22 +635,22 @@ async function runComputerDo(
           break;
         }
         case 'PRESS_ENTER': {
-          await control.pressKey('enter');
+          await control.pressKey(app, 'enter');
           history.push({ operation, window: lastWindow });
           break;
         }
         case 'PRESS_ESCAPE': {
-          await control.pressKey('escape');
+          await control.pressKey(app, 'escape');
           history.push({ operation, window: lastWindow });
           break;
         }
         case 'SCROLL_DOWN': {
-          await control.pressKey('pagedown');
+          await control.pressKey(app, 'pagedown');
           history.push({ operation, window: lastWindow });
           break;
         }
         case 'SCROLL_UP': {
-          await control.pressKey('pageup');
+          await control.pressKey(app, 'pageup');
           history.push({ operation, window: lastWindow });
           break;
         }
