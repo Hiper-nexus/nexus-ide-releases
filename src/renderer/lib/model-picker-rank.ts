@@ -47,7 +47,7 @@ export function authViewForModel(
 ): ModelAuthView {
   if (!provider) return { ready: null, reason: 'verificando sessão…' };
   if (!provider.enabled) {
-    return { ready: false, reason: 'desabilitado em Configurações › Providers' };
+    return { ready: false, reason: 'desabilitado em Configurações › Conta e acesso a IAs › Contas de IA' };
   }
   if (provider.authStrategy !== 'login-needed') return { ready: true };
   if (Array.isArray(provider.authReadyModels)) {

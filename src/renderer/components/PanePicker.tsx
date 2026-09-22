@@ -439,6 +439,13 @@ export function buildPanePickerIndex(
   return rows;
 }
 
+/**
+ * Caminho visível até as contas/CLIs de IA. Configurações foi reorganizada por
+ * tarefa (0.76.83): "Contas" e "Providers" não existem mais como abas soltas.
+ */
+export const AI_ACCOUNTS_SETTINGS_PATH =
+  'Configurações › Conta e acesso a IAs › Contas de IA';
+
 /** Por que uma CLI conhecida ficou de fora da lista. */
 export interface PanePickerUnavailable {
   readonly adapterId: string;
@@ -466,7 +473,7 @@ export function buildPanePickerUnavailable(
       label: provider.label,
       reason:
         provider.enabled === false
-          ? 'desligada em Configurações › Contas'
+          ? `desligada em ${AI_ACCOUNTS_SETTINGS_PATH}`
           : 'CLI não encontrada no PATH',
     }))
     .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'));
@@ -1251,7 +1258,7 @@ export function PanePicker({
 
               {!hasCli && !drillCli && (
                 <p className="pane-picker__hint">
-                  Nenhuma CLI detectada — instale uma em Configurações › Providers.
+                  Nenhuma CLI detectada — instale uma em {AI_ACCOUNTS_SETTINGS_PATH}.
                 </p>
               )}
 
