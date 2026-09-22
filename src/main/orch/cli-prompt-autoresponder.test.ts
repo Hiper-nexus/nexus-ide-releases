@@ -563,4 +563,24 @@ describe('MiMo startup permission prompt', () => {
     expect(signature!.response).toBe(ACCEPT_SECOND_PROMPT_RESPONSE);
     expect(matchesPromptSignature('MiMo Code ready', signature!)).toBe(false);
   });
+
+  it('forceAcceptResponse nunca age sobre o holdPhrase da migração — só o menu', () => {
+    const writes: { sessionId: string; data: string }[] = [];
+    const responder = new CliPromptAutoResponder(() => true, (fn) => fn());
+    responder.setWriter((sessionId, data) => {
+      writes.push({ sessionId, data });
+      return undefined as void;
+    });
+    responder.bind('sess-mimo', 'mimo-code');
+    // Só o banner da migração one-time: holdPhrase segura a injeção, mas o
+    // menu ainda não existe — Down+Enter aqui entraria no stream da migração.
+    responder.observe(
+      'sess-mimo',
+      'Performing one time database migration, may take a few minutes...\n' +
+        '100% complete 1/1\nDatabase migration complete.\n',
+    );
+    expect(responder.shouldDeferInjection('sess-mimo')).toBe(true);
+    expect(responder.forceAcceptResponse('sess-mimo')).toBeNull();
+    expect(writes).toEqual([]);
+  });
 });

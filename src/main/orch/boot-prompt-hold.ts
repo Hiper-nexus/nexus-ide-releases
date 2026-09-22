@@ -1,7 +1,14 @@
 import { orchWriteSession } from '../pty/pty-manager';
 import { cliPromptAutoResponder } from './cli-prompt-autoresponder';
 
-const BOOT_PROMPT_HOLD_MS = 5_000;
+/**
+ * How long to wait for a known boot menu before force-dismissing it.
+ * 5s was tuned for menus that paint immediately; first-run CLIs (MiMo after
+ * a multi-minute DB migration, Devin trust after a cold Node boot) have not
+ * even drawn the dialog yet — force-accept finds no match and the brief is
+ * pasted into the stream and swallowed.
+ */
+const BOOT_PROMPT_HOLD_MS = 25_000;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

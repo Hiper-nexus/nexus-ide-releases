@@ -18,6 +18,15 @@ const DEFAULT_WATCH_WINDOW_MS = 20_000;
  */
 const TRUST_WATCH_WINDOW_MS = 60_000;
 /**
+ * First-run screens that only paint AFTER a one-time migration. MiMo Code
+ * prints "Performing one time database migration, may take a few minutes..."
+ * and only then the Bypass Permissions modal — a 20s watch (and even the 60s
+ * trust window) expires mid-migration, the autoresponder unbinds, and the
+ * pane sits on "No, exit (recommended)" forever while the brief is typed into
+ * the modal and swallowed.
+ */
+const FIRST_RUN_WATCH_WINDOW_MS = 180_000;
+/**
  * Um TUI que aceitou a tecla SEMPRE emite repaint na hora. Silêncio completo
  * depois da resposta = a tecla se perdeu (race com o desenho do diálogo) —
  * reenviar é idempotente e seguro; nunca digitar de novo não é.
@@ -38,9 +47,16 @@ interface PromptSignature {
   fallbackResponse?: string;
   /**
    * Banner-only hold: start deferring injection as soon as this phrase is
-   * visible, before the menu options finish painting.
+   * visible, before the menu options finish painting. Also authorizes
+   * force-accept once visible (the phrase IS the menu banner).
    */
   earlyPhrase?: string;
+  /**
+   * Pre-menu banner that ONLY holds injection (MiMo's one-time DB migration).
+   * Never authorizes force-accept: typing the accept keys here would hit the
+   * migration stream, not a menu.
+   */
+  holdPhrase?: string;
   /**
    * Resposta lida da TELA, para telas cujo aceite não é uma tecla fixa: a
    * mesma caixa lista as opções em ordem diferente entre builds e o Enter
@@ -88,7 +104,11 @@ export const BUILTIN_PROMPT_SIGNATURES: readonly PromptSignature[] = [
       'yes, i accept the risks and want to skip permissions',
     ],
     response: ACCEPT_SECOND_PROMPT_RESPONSE,
+    // Menu banner authorizes force-accept; the migration banner before it
+    // only holds injection (holdPhrase).
     earlyPhrase: 'warning: bypass permissions mode',
+    holdPhrase: 'performing one time database migration',
+    watchMs: FIRST_RUN_WATCH_WINDOW_MS,
   },
   {
     adapterIds: ['claude', 'glm', 'glm-flash', 'longcat'],
@@ -379,7 +399,10 @@ export class CliPromptAutoResponder {
           matchesPromptSignature(raw, signature) ||
           (signature.earlyPhrase !== undefined &&
             (buffer.includes(signature.earlyPhrase) ||
-              compact.includes(compactPromptText(signature.earlyPhrase)))),
+              compact.includes(compactPromptText(signature.earlyPhrase)))) ||
+          (signature.holdPhrase !== undefined &&
+            (buffer.includes(signature.holdPhrase) ||
+              compact.includes(compactPromptText(signature.holdPhrase)))),
       ) ?? null
     );
   }
@@ -406,18 +429,31 @@ export class CliPromptAutoResponder {
    * path did not fire before inject timeout. Returns the matched signature's
    * own response (plus its same-option fallback) — never a blind Down+Enter,
    * which picks "No, exit" on menus whose safe option is the first one.
+   *
+   * Full signature match OR `earlyPhrase` (the menu banner). NEVER
+   * `holdPhrase`: that is a pre-menu banner (MiMo's DB migration) where
+   * typing the accept keys would hit the migration stream.
    */
   forceAcceptResponse(
     sessionId: string,
     now = Date.now(),
   ): { response: string; fallbackResponse?: string } | null {
     if (!this.isEnabled(sessionId)) return null;
-    const match = this.pendingMatch(sessionId, now);
+    const signatures = this.watchingSignatures(sessionId, now);
+    if (!signatures) return null;
+    const raw = this.buffers.get(sessionId) ?? '';
+    const buffer = normalizePromptText(raw);
+    const compact = compactPromptText(raw);
+    const match =
+      signatures.find(
+        (signature) =>
+          matchesPromptSignature(raw, signature) ||
+          (signature.earlyPhrase !== undefined &&
+            (buffer.includes(signature.earlyPhrase) ||
+              compact.includes(compactPromptText(signature.earlyPhrase)))),
+      ) ?? null;
     if (!match) return null;
-    const response = this.answerFor(
-      match,
-      this.buffers.get(sessionId) ?? '',
-    );
+    const response = this.answerFor(match, raw);
     if (response === null) return null;
     // Settle so callers wait before typing the mission brief.
     this.unbind(sessionId);
