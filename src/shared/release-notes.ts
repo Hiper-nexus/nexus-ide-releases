@@ -5874,14 +5874,13 @@ export const RELEASE_07675: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07676: AppRelease = {
   version: '0.76.76',
   date: '2026-09-22',
   codename: 'Redline abre neste macOS',
   summary:
-    'O companheiro da barra de menu volta a abrir no macOS 27.0 e esta leva ' +
-    'fecha ditado, multi-missão, keychain, modelos novos e a trava do leak ' +
-    'de desktop-control.',
+    'O companheiro da barra de menu volta a abrir no macOS 27.0. A compilação ' +
+    'fica presa ao piso macOS 14, em vez de herdar um mínimo mais novo que o sistema.',
   highlights: [
     {
       title: 'Nexus Redline abre de novo',
@@ -5896,18 +5895,6 @@ export const CURRENT_RELEASE: AppRelease = {
         'Um pane novo continua na conta ativa enquanto a medição ainda mostra ' +
         'folga. A irmã mais livre só entra quando a ativa chega a zero, entra ' +
         'em cooldown ou toma um hit real. Sem medição, a escolha do operador permanece.',
-    },
-    {
-      title: 'Multi-missão no mesmo workspace',
-      detail:
-        'Lane bar por escopo, pinos A/B com isolamento de campo (o conteúdo ' +
-        'da missão A nunca vai para B) e crest/badge do orquestrador no header.',
-    },
-    {
-      title: 'Opus 5.5 e GPT-6 no catálogo',
-      detail:
-        'Claude Opus 5.5 substitui o 5 no roteador e defaults; GPT-6 Sol é o ' +
-        'frontier Codex e Luna cobre o tier barato — preços, OMP e adapters juntos.',
     },
   ],
   fixes: [
@@ -5934,24 +5921,83 @@ export const CURRENT_RELEASE: AppRelease = {
         'entra como $100 ou $200 quando o plano diz 5× ou 20×. Sem esse dado, ' +
         'o Nexus não inventa o valor.',
     },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.77',
+  date: '2026-09-22',
+  codename: 'Chaves no lugar',
+  summary:
+    'Os panes param de abrir o modal «Chaves Não Encontradas» e de pedir ' +
+    'gh auth login com a máquina logada. Chegam também multi-missão com ' +
+    'campos A/B, ditado que só envia ao soltar, Opus 5.5 e GPT-6.',
+  highlights: [
+    {
+      title: 'Fim do modal «Chaves Não Encontradas» nos panes',
+      detail:
+        'Todo HOME privado que o Nexus cria para uma CLI (Claude, Codex, Grok, ' +
+        'MiMo, cursor, droid…) enxerga o keychain real do macOS. gh, git e as ' +
+        'próprias CLIs deixam de abrir o modal cujo botão «Reajustar Para ' +
+        'Padrões» apagaria o seu keychain. GLM/LongCat e workers usam um item ' +
+        'de credencial Claude próprio e nunca tocam a sua sessão nativa.',
+    },
+    {
+      title: 'Agentes não pedem mais gh auth login à toa',
+      detail:
+        'Panes graváveis recebem a sua identidade de git, SSH e gh. Antes, o ' +
+        'pane de Grok, MiMo ou cursor não via o gh logado e o agente pedia ' +
+        'login com a máquina autenticada.',
+    },
+    {
+      title: 'Multi-missão no mesmo workspace',
+      detail:
+        'Barra de campos por missão, pinos A/B para alternar entre duas ' +
+        'missões e o nome do orquestrador em cada campo. Segue o tema claro ' +
+        'e escuro, e o conteúdo da missão A nunca vai para B.',
+    },
+    {
+      title: 'Opus 5.5 e GPT-6 no catálogo',
+      detail:
+        'Claude Opus 5.5 substitui o 5 no roteador e nos defaults; GPT-6 Sol ' +
+        'é o frontier do Codex e Luna cobre o tier barato, com preços, OMP e ' +
+        'adapters juntos.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'O cofre para de insistir no keychain depois da primeira falha',
+      detail:
+        'Uma falha do safeStorage desliga o cofre pelo resto da sessão em ' +
+        'todas as portas (ler, gravar, apagar), não só na gravação. Antes, ' +
+        'cada leitura voltava a consultar o keychain e podia reabrir o modal. ' +
+        'O cofre também exporta e importa entre Macs com senha.',
+    },
     {
       title: 'Ditado só envia ao soltar a tecla',
       detail:
-        'Space/PTT não entrega a transcrição prematura; o hold-to-talk tem ' +
-        'teto de segurança e não encerra no silêncio da fala.',
+        'Space/PTT não entrega a transcrição antes da hora; o hold-to-talk ' +
+        'tem teto de segurança e não encerra no silêncio da fala.',
     },
     {
-      title: 'Keychain com veneno de sessão',
+      title: 'O brief não cai no meio da migração do MiMo',
       detail:
-        'A primeira falha de safeStorage desliga a escrita no cofre para o ' +
-        'resto do processo — o modal «Chaves Não Encontradas» não volta. O vault ' +
-        'também exporta/importa multi-PC com passphrase.',
+        'Enquanto a migração de banco do MiMo está na tela, o Nexus espera em ' +
+        'vez de colar a missão no meio dela, mesmo quando passa de 25 s.',
     },
     {
       title: 'desktop-control não vaza para o terminal externo',
       detail:
-        'SCRIPT_KEY só vai para o app da frente e a denylist de terminais ' +
-        'recusa o atalho — o conteúdo do operador não cai mais no Terminal de fora.',
+        'A digitação só vai para o app da frente e terminais (Terminal, ' +
+        'iTerm, Ghostty, Warp, Termius…) são recusados: o conteúdo do ' +
+        'operador não cai mais num terminal fora do Nexus.',
+    },
+    {
+      title: 'Jev na pesquisa e no navegador',
+      detail:
+        'Triagem de pesquisa no search mixer e desempate por confiança no ' +
+        'browser_find. O browser_read passa a trazer o julgamento do Jev por ' +
+        'padrão; passe judge: false para dispensar.',
     },
   ],
 };

@@ -1,18 +1,24 @@
 # Changelog
 
+## 0.76.77 — Chaves no lugar
+
+- **Fim do modal «Chaves Não Encontradas» vindo dos panes (F-629).** Todo HOME privado que o Nexus cria para uma CLI (overlay Claude, Codex, Grok, MiMo, cursor, droid, command-code) enxerga o keychain real do macOS. gh, git osxkeychain, SDKs e o refresh das próprias CLIs deixam de abrir o modal cujo botão «Reajustar Para Padrões» apagaria o keychain. GLM/LongCat e workers gated usam `CLAUDE_SECURESTORAGE_CONFIG_DIR` privado e nunca leem nem sobrescrevem o item Claude nativo. Spawns em Seatbelt ficam de fora.
+- **Agentes não pedem mais `gh auth login` com a máquina logada.** Lanes graváveis recebem a identidade de git/SSH/gh do operador (F-579 tier 1) em qualquer CLI, não só no Claude.
+- **Veneno de sessão do cofre em todas as portas.** A primeira falha do safeStorage desliga get/set/setKey/delete pelo resto do processo; antes só a gravação respeitava a trava e cada leitura voltava ao keychain (21 idas medidas onde devia haver 1). Export/import do vault multi-PC com passphrase (PBKDF2 + AES-GCM).
+- **Ditado só envia ao soltar a tecla.** Space/PTT não entrega a transcrição prematura; o hold-to-talk tem teto de segurança e não encerra no silêncio da fala.
+- **Prompts de boot e migração não colidem no auto-responder.** Hold da migração MiMo fica separado do banner de menu (early-accept), e o brief espera a migração terminar mesmo passando do prazo de 25 s.
+- **Multi-missão no mesmo workspace.** Lane bar por escopo, pinos A/B com isolamento de campo e o nome do orquestrador no crest de cada campo. Segue os tokens do tema (antes ficava preta no tema claro) e pino de campo encerrado não vira botão morto.
+- **Claude Opus 5.5 e GPT-6 Sol/Luna** no catálogo, preços, roteador, OMP e defaults do orquestrador (Opus 5.5 substitui o 5; `gpt-6-sol` é o frontier Codex).
+- **Jev no caminho de pesquisa e no navegador.** `researchTriage` no search mixer e `browser_find` com desempate por confiança; `browser_read` com judge ligado por default (`judge: false` desliga).
+- **Escrita do desktop-control presa ao app da frente.** `SCRIPT_KEY` só vai para o frontmost e apps de terminal (incluindo Termius) ficam na denylist, então o conteúdo não vaza para o terminal externo do operador.
+
+
 ## 0.76.76 — Redline abre neste macOS
 
 - **Nexus Redline não pede mais um macOS que não existe (F-628)**: o companheiro passa a ser compilado para macOS 14.0, o piso já declarado no app. A versão 0.76.75 tinha sido carimbada com mínimo 27.2 e o sistema recusava abri-la no macOS 27.0.
 - **Re-login da mesma conta abre o terminal.** «Entrar novamente» deixa de morrer em «Não consegui guardar a conta atual» quando a sessão viva é a própria conta e o snapshot não grava. Outra conta viva, com e-mail diferente, continua protegida e o login não começa.
 - **A conta em uso não cede o pane antes de acabar.** Folga maior numa irmã não troca a conta ativa. A troca espera disponibilidade medida zero, cooldown ou hit real. Sem medição, a ativa permanece. Cada conta do vault segue com a própria linha de cota.
 - **O total de assinaturas deixa de fingir que duas contas são a frota.** Os $400 eram só Claude Max 20× e ChatGPT Pro. O cartão agora soma apenas planos com preço de lista e diz quantas contas conectadas ficaram de fora. Google AI Ultra entra na soma só quando o plano informa 5× ($100) ou 20× ($200); sem esse número, o preço não é inventado.
-- **Ditado só envia ao soltar a tecla.** Space/PTT não entrega a transcrição prematura; o hold-to-talk tem teto de segurança e não encerra no silêncio da fala.
-- **Prompts de boot e migração não colidem no auto-responder.** Hold da migração MiMo fica separado do banner de menu (early-accept); prompts iniciais dos CLIs esperam trust/bypass sem cair no stream errado.
-- **Multi-missão no mesmo workspace.** Lane bar por escopo, pinos A/B com isolamento de campo (conteúdo da missão A nunca vaza para B) e crest/badge do orquestrador no header.
-- **Keychain com veneno de sessão.** A primeira falha de safeStorage desliga a escrita no cofre para o resto do processo — o modal «Chaves Não Encontradas / Reajustar Para Padrões» não volta. Export/import do vault multi-PC com passphrase (PBKDF2 + AES-GCM).
-- **Claude Opus 5.5 e GPT-6 Sol/Luna** no catálogo, preços, roteador, OMP e defaults do orquestrador (Opus 5.5 substitui o 5; `gpt-6-sol` é o frontier Codex).
-- **Jev no caminho de pesquisa e no navegador.** `researchTriage` no search mixer e `browser_find` com desempate por confiança; `browser_read` com judge ligado por default.
-- **Escrita do desktop-control presa ao app da frente.** `SCRIPT_KEY` só vai para o frontmost e apps de terminal ficam na denylist — o conteúdo não vaza mais para o terminal externo do operador.
 
 
 ## 0.76.75 — Xiaomi MiMo no Nexus
