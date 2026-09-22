@@ -48,7 +48,7 @@ export const usePaneScopeStore = create<PaneScopeStore>((set, get) => ({
       set({ pinnedB: scopeKey, activeScopeKey: scopeKey });
       return;
     }
-    // Os dois lados ocupados: o novo pino vira o A (o B desliza para A).
+    // Os dois lados ocupados: o B antigo desliza para A e o novo pino vira o B.
     set({ pinnedA: pinnedB, pinnedB: scopeKey, activeScopeKey: scopeKey });
   },
   switchAB: (side) => {
