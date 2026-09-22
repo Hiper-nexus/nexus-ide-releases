@@ -344,8 +344,8 @@ export function OperatorProfile() {
                 <div
                   className="operator-profile__consumo-cell"
                   title={
-                    plans.undetected > 0
-                      ? `${plans.detected} assinatura(s) detectada(s) · ${plans.undetected} elegível(eis) sem plano identificado não entram na soma`
+                    plans.connected > plans.priced
+                      ? `${fmtUsd(plans.monthlyUsd)} soma só os ${plans.priced} planos com preço de lista. ${plans.connected - plans.priced} contas conectadas ficam de fora — o provider não informou o plano ou o preço não é único.`
                       : `${plans.detected} assinatura(s) detectada(s) pelos providers`
                   }
                 >
@@ -353,9 +353,12 @@ export function OperatorProfile() {
                     {fmtUsd(plans.monthlyUsd)}
                   </span>
                   <span className="operator-profile__consumo-label">
-                    {plans.detected === 1
-                      ? 'assinatura por mês'
-                      : `${plans.detected} assinaturas por mês`}
+                    {plans.priced === 1
+                      ? 'plano com preço'
+                      : `${plans.priced} planos com preço`}
+                    {plans.connected > plans.priced
+                      ? ` · ${plans.connected - plans.priced} contas fora da soma`
+                      : ''}
                   </span>
                 </div>
               )}

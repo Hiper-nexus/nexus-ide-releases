@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PLUGIN_MANIFEST_SCHEMA } from './agent-plugin-manifest';
 import { IMPECCABLE_MANIFEST } from './impeccable-manifest';
 import { ensureSkillsForCli } from './skill-mirror';
@@ -56,7 +56,13 @@ Review the current diff.
   fs.writeFileSync(path.join(skill, 'reference.md'), 'safe asset');
 }
 
+beforeEach(() => {
+  vi.stubEnv('MIMOCODE_HOME', '');
+  vi.stubEnv('XDG_CONFIG_HOME', '');
+});
+
 afterEach(() => {
+  vi.unstubAllEnvs();
   jevSecrets.hasJevCredential.mockReset().mockReturnValue(true);
   for (const root of roots.splice(0)) {
     fs.rmSync(root, { recursive: true, force: true });
@@ -69,6 +75,16 @@ describe('ensureSkillsForCli', () => {
     writeSkill(path.join(home, '.agents', 'skills'), 'mimo-test-grant');
     ensureSkillsForCli('mimo-code', { home, allowedSkills: ['mimo-test-grant'] });
     expect(fs.readFileSync(path.join(home, '.config', 'mimocode', 'skills', 'mimo-test-grant', 'SKILL.md'), 'utf8')).toBe('# Skill');
+  });
+
+  it('honors the MiMo XDG config directory without writing to the default home', () => {
+    const home = tmpRoot();
+    const config = tmpRoot();
+    vi.stubEnv('XDG_CONFIG_HOME', config);
+    writeSkill(path.join(home, '.agents', 'skills'), 'mimo-xdg-grant');
+    ensureSkillsForCli('mimo-code', { home, allowedSkills: ['mimo-xdg-grant'] });
+    expect(fs.readFileSync(path.join(config, 'mimocode', 'skills', 'mimo-xdg-grant', 'SKILL.md'), 'utf8')).toBe('# Skill');
+    expect(fs.existsSync(path.join(home, '.config', 'mimocode'))).toBe(false);
   });
 
   it.each(['outdated', 'missing'] as const)(

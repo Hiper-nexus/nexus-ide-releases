@@ -2,10 +2,12 @@ import type { Account } from '../../shared/account-types';
 
 /**
  * Pure failover selection: from the accounts of one adapter, choose the next
- * usable one — skip the exhausted account and anything still on cooldown.
- * Preserve explicit active-account intent while quota is unknown. When the
- * active account and a sibling both have measured availability, the freer
- * account wins; failover without an active account prefers measured quota.
+ * usable one — skip the excluded account and anything still on cooldown.
+ *
+ * The active account stays until its measured availability is zero (the
+ * worst window is full) or it is no longer a candidate. A sibling with more
+ * remaining quota does not take a new pane early. Unknown quota keeps the
+ * active account. With no active account, the freest measured candidate wins.
  * No I/O — unit tested in isolation.
  */
 export function chooseAccount(
@@ -37,9 +39,17 @@ export function chooseAccount(
 
   if (active) {
     const activeScore = quotaScoreByAccountId?.get(active.id);
-    if (typeof activeScore === 'number' && Number.isFinite(activeScore)) {
-      const freer = measured[0];
-      if (freer && freer.score > activeScore) return freer.account;
+    // 0 = janela cheia (quotaAvailabilityScore de usedRatio 1). Folga menor
+    // que a irmã não é término: o hit real tira a conta da lista por cooldown.
+    if (
+      typeof activeScore === 'number' &&
+      Number.isFinite(activeScore) &&
+      activeScore <= 0
+    ) {
+      const replacement = measured.find(
+        (entry) => entry.account.id !== active.id && entry.score > 0,
+      );
+      if (replacement) return replacement.account;
     }
     return active;
   }

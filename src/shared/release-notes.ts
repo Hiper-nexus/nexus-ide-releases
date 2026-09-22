@@ -5858,7 +5858,7 @@ export const RELEASE_07642: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07675: AppRelease = {
   version: '0.76.75',
   date: '2026-09-21',
   codename: 'Xiaomi MiMo no Nexus',
@@ -5871,5 +5871,55 @@ export const CURRENT_RELEASE: AppRelease = {
   fixes: [
     { title: 'Retomada e uso por conversa', detail: 'A sessão exata da CLI acompanha o pane e o registro de tokens, incluindo cache e raciocínio, sem misturar conversas de contas diferentes.' },
     { title: 'MCP, skills e roteamento', detail: 'MiMo Code recebe o MCP do Nexus, skills permitidas e opções de modelo próprias. Benchmarks automáticos exigem chave da API separada, preservando o Token Plan para ferramentas de programação.' },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.76',
+  date: '2026-09-22',
+  codename: 'Redline abre neste macOS',
+  summary:
+    'O companheiro da barra de menu volta a abrir no macOS 27.0. A compilação ' +
+    'fica presa ao piso macOS 14, em vez de herdar um mínimo mais novo que o sistema.',
+  highlights: [
+    {
+      title: 'Nexus Redline abre de novo',
+      detail:
+        'O alerta «Você não pode usar esta versão do aplicativo Nexus Redline com ' +
+        'esta versão do macOS» vinha de um binário carimbado com mínimo 27.2. ' +
+        'O app agora exige macOS 14.0, o mesmo piso do pacote, e sobe no 27.0.',
+    },
+    {
+      title: 'A conta em uso fica até a cota acabar',
+      detail:
+        'Um pane novo continua na conta ativa enquanto a medição ainda mostra ' +
+        'folga. A irmã mais livre só entra quando a ativa chega a zero, entra ' +
+        'em cooldown ou toma um hit real. Sem medição, a escolha do operador permanece.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'O mínimo do binário não flutua com o SDK',
+      detail:
+        'O build do companheiro passa -target arm64-apple-macosx14.0 e recusa ' +
+        'entregar um executável cujo minos seja outro. Atualizar o Xcode deixa ' +
+        'de gravar sozinho um piso acima do Mac em uso.',
+    },
+    {
+      title: 'Entrar novamente da mesma conta abre o login',
+      detail:
+        'O aviso «Não consegui guardar a conta atual» não trava mais o re-login ' +
+        'quando a sessão viva é a própria conta e o snapshot falha. Se o e-mail ' +
+        'vivo for de outra conta, o login continua sem começar, para não apagar ' +
+        'essa sessão. Cada conta do vault mantém a própria linha de cota.',
+    },
+    {
+      title: 'O total mensal não chama duas contas de frota inteira',
+      detail:
+        'O cartão de assinaturas soma só os planos com preço de lista publicado ' +
+        'e mostra quantas contas conectadas ficaram de fora. Google AI Ultra ' +
+        'entra como $100 ou $200 quando o plano diz 5× ou 20×. Sem esse dado, ' +
+        'o Nexus não inventa o valor.',
+    },
   ],
 };

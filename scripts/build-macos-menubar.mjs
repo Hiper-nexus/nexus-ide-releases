@@ -49,6 +49,28 @@ const defaultOutput = path.join(
 
 const SOURCE_IDENTITY = "Nexus Redline — app companheiro de menu bar do NexusIDE";
 
+/**
+ * Piso declarado no Info.plist e no Mach-O. Sem `-target`, o swiftc carimba
+ * `minos` com a versão do SDK (chegou a 27.2 num Mac 27.0). O Launch Services
+ * recusa o app com «Você não pode usar esta versão…» e oferece Atualização
+ * de Software — o plist 14.0 não vence o minos do binário.
+ */
+export const REDLINE_MINIMUM_SYSTEM_VERSION = "14.0";
+export const REDLINE_SWIFT_TARGET = `arm64-apple-macosx${REDLINE_MINIMUM_SYSTEM_VERSION}`;
+
+export function redlineSwiftcArgs(binary, sources) {
+  return [
+    "-O",
+    "-swift-version",
+    "5",
+    "-target",
+    REDLINE_SWIFT_TARGET,
+    "-o",
+    binary,
+    ...sources,
+  ];
+}
+
 export function parseBuildArguments(argv) {
   if (argv.length === 0) return { output: defaultOutput };
   if (
@@ -68,6 +90,17 @@ function run(tool, args, options = {}) {
     encoding: "utf8",
     stdio: options.capture ? "pipe" : "inherit",
   });
+}
+
+/** Falha o build se o linker carimbar um minos diferente do piso do plist. */
+export function assertRedlineDeploymentTarget(binary, showBuild = null) {
+  const observed = showBuild ?? run("vtool", ["-show-build", binary], { capture: true });
+  const minos = String(observed).match(/^\s*minos\s+(\S+)\s*$/m)?.[1];
+  if (minos !== REDLINE_MINIMUM_SYSTEM_VERSION) {
+    throw new Error(
+      `Nexus Redline minos ${minos ?? "ausente"} != ${REDLINE_MINIMUM_SYSTEM_VERSION} (LC_BUILD_VERSION)`,
+    );
+  }
 }
 
 function assertSourceIdentity() {
@@ -90,7 +123,7 @@ function infoPlist(version) {
   <key>CFBundleExecutable</key><string>NexusRedline</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
-  <key>LSMinimumSystemVersion</key><string>14.0</string>
+  <key>LSMinimumSystemVersion</key><string>${REDLINE_MINIMUM_SYSTEM_VERSION}</string>
   <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
 </dict>
@@ -114,14 +147,8 @@ export function buildMenubarCompanion({ output = defaultOutput } = {}) {
   const staging = mkdtempSync(path.join(os.tmpdir(), "redline-build-"));
   const binary = path.join(staging, "NexusRedline");
   try {
-    run("swiftc", [
-      "-O",
-      "-swift-version",
-      "5",
-      "-o",
-      binary,
-      ...sources,
-    ], { capture: true });
+    run("swiftc", redlineSwiftcArgs(binary, sources), { capture: true });
+    assertRedlineDeploymentTarget(binary);
 
     const contents = path.join(output, "Contents");
     const macosDir = path.join(contents, "MacOS");

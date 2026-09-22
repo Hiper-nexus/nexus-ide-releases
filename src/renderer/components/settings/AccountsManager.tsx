@@ -41,6 +41,35 @@ class AccountPreservationError extends Error {
   }
 }
 
+/**
+ * Re-login de uma conta já salva. Falhar o snapshot da sessão viva não pode
+ * prender o operador nesse aviso quando a sessão é a própria conta (ou não
+ * dá para provar que é outra). E-mail diferente continua bloqueado: a CLI
+ * guarda uma sessão por vez e a outra ainda não foi regravada.
+ */
+function reloginMaySkipPreserve(
+  error: unknown,
+  baseline: AdapterAuthStatus | null,
+  targetAccountId: string | undefined,
+  accounts: readonly AccountInfo[],
+  adapterId: string,
+): boolean {
+  if (!(error instanceof AccountPreservationError) || !targetAccountId) return false;
+  const target = accounts.find(
+    (account) => account.id === targetAccountId && account.adapterId === adapterId,
+  );
+  if (!target) return false;
+  const live = emailFromAuthDetail(baseline?.detail);
+  if (
+    live &&
+    target.email &&
+    live.trim().toLowerCase() !== target.email.trim().toLowerCase()
+  ) {
+    return false;
+  }
+  return true;
+}
+
 function cooldownLabel(a: AccountInfo): string {
   if (!a.onCooldown || !a.cooldownUntil) return '';
   const mins = Math.max(1, Math.round((a.cooldownUntil - Date.now()) / 60000));
@@ -239,7 +268,13 @@ export function AccountsManager({
   ): Promise<void> {
     if (!canSnapshot) return;
     if (baseline?.state !== 'ok') {
-      if (accounts.some((a) => a.adapterId === adapterId)) {
+      // Sessão ausente não tem o que guardar: o login pode abrir. Sonda
+      // desconhecida, ou nenhuma sonda, com contas já no vault continua
+      // fechada — não dá para saber se a CLI viva é outra conta.
+      if (
+        baseline?.state !== 'missing' &&
+        accounts.some((a) => a.adapterId === adapterId)
+      ) {
         throw new AccountPreservationError();
       }
       return;
@@ -486,7 +521,13 @@ export function AccountsManager({
       const hasNativeSession = baseline?.state === 'ok' &&
         Boolean(baseline.sessionFingerprint || emailFromAuthDetail(baseline.detail));
       if (preserveCurrent || hasNativeSession) {
-        await preserveCurrentSession(baseline);
+        try {
+          await preserveCurrentSession(baseline);
+        } catch (error) {
+          if (!reloginMaySkipPreserve(error, baseline, targetAccountId, accounts, adapterId)) {
+            throw error;
+          }
+        }
       }
       const result = await openCliLoginTerminal({
         command: loginCommand,

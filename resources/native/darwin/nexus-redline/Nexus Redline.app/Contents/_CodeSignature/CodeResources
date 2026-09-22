@@ -10,7 +10,7 @@
 		</data>
 		<key>Resources/provider-logos/NOTICE.md</key>
 		<data>
-		QAYRk4nDvmBGDuys+zr4qv5nBO0=
+		Jv5ohrRuJ4VgRx8mgT5WlEEZMOY=
 		</data>
 		<key>Resources/provider-logos/agy.png</key>
 		<data>
@@ -74,7 +74,11 @@
 		</data>
 		<key>Resources/provider-logos/manifest.json</key>
 		<data>
-		7op4EP40VgdjmPfHNwrIV6ce8Tw=
+		q+mJ0sf9GI6ai+z4rEIj5UiVUn0=
+		</data>
+		<key>Resources/provider-logos/mimo-code.png</key>
+		<data>
+		6XKlubrGfpJA3qFb/LPj5DCg8ds=
 		</data>
 		<key>Resources/provider-logos/muse.png</key>
 		<data>
@@ -126,7 +130,7 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			4KrP7jo5i2hZTg46Atu4cAD2pTBXBarAM94ifvUR1WQ=
+			7p/FTYY0DVka0GqEfu5BiekgHJqMfuK+HxUY00Q9FVg=
 			</data>
 		</dict>
 		<key>Resources/provider-logos/agy.png</key>
@@ -238,7 +242,14 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			Dn0wCn4wUY2TZzsU+tZSe19gI1hkRyHmOS8+Od6SvaA=
+			UWZXqnyPQTs0l//iw7oc0Caa7cw2eZfuhu9zRJ4alDw=
+			</data>
+		</dict>
+		<key>Resources/provider-logos/mimo-code.png</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			et7hz9gwI7D+3QKYNItRefUFq2f38770EBAwdYqMG8c=
 			</data>
 		</dict>
 		<key>Resources/provider-logos/muse.png</key>

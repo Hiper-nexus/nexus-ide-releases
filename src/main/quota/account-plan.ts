@@ -177,18 +177,30 @@ const AGY_LOAD_CODE_ASSIST_URL =
   'https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist';
 
 /**
- * `free-tier` → 'Google AI Free' $0 · tiers pagos Google (pro/ultra) levam
- * rótulo sem preço fixo — o tier id não distingue AI Pro de Cloud Standard.
+ * `free-tier` → $0. Pro de consumidor → $20 (lista $19,99). Ultra só ganha
+ * preço quando o id diz o multiplicador publicado no I/O 2026: 5× = $100,
+ * 20× = $200. Ultra sem esse número fica sem preço — existem os dois.
  */
 export function planFromAgyTier(
   id: string | undefined,
   name?: string,
 ): AccountPlan | null {
   const t = (id ?? '').trim().toLowerCase();
+  const named = (name ?? '').trim().toLowerCase();
+  const blob = `${t} ${named}`;
   if (!t && !name) return null;
   if (t === 'free-tier' || t === 'free') return plan(t || 'free', 'Google AI Free', 0);
-  if (t.includes('ultra')) return plan(t, name || 'Google AI Ultra', null);
-  if (t.includes('pro')) return plan(t, name || 'Google AI Pro', null);
+  if (blob.includes('ultra')) {
+    const price = blob.includes('20x') || blob.includes('20×')
+      ? 200
+      : blob.includes('5x') || blob.includes('5×')
+        ? 100
+        : null;
+    return plan(t || 'ultra', name || 'Google AI Ultra', price);
+  }
+  if (t.includes('pro') && !t.includes('enterprise')) {
+    return plan(t, name || 'Google AI Pro', 20);
+  }
   if (t.includes('enterprise')) return plan(t, name || 'Code Assist Enterprise', null);
   if (t.includes('standard')) return plan(t, name || 'Code Assist Standard', null);
   if (t) return plan(t, name || `Google (${t})`, null);
