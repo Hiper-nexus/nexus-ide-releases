@@ -284,7 +284,8 @@ const browserReadTool: McpToolDef = {
     'elements. Returns opaque refs for click/fill/inspect; never input ' +
     'values or storage. `format: "compact"` devolve um outline LLM-friendly ' +
     'em vez do JSON completo. `errors` traz os erros vistos desde a última ' +
-    'ação. `judge: true` anexa um julgamento Jev (fail-open).',
+    'ação. Julgamento Jev por padrão (auto-on, fail-open): "isso respondeu? ' +
+    'tem erro visível? precisa de humano?". `judge: false` desliga.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -303,7 +304,9 @@ const browserReadTool: McpToolDef = {
     const options = {
       maxChars: num(args, 'maxChars'),
       maxElements: num(args, 'maxElements'),
-      judge: args.judge === true,
+      // Auto-on: julgar a página é o que o Jev faz de melhor (decisão) e o
+      // agente não precisa lembrar do flag. Opt-out explícito com judge: false.
+      judge: args.judge !== false,
       sessionId: ctx.sessionId,
       missionId: ctx.missionId,
     };
@@ -328,7 +331,10 @@ const browserFindTool: McpToolDef = {
     'Find visible interactive elements by accessible name (case- and ' +
     'diacritics-insensitive) and/or implicit role. The query is scored ' +
     'against names and link paths — it never becomes a CSS selector. ' +
-    'Returns scored matches with opaque refs for click/fill.',
+    'Returns scored matches with opaque refs for click/fill. When 2–5 ' +
+    'top matches are score-tied, a Jev choice (auto-on, fail-open) picks ' +
+    'one via `picked` at confidence ≥ 0.7; otherwise the lexical ranking ' +
+    'and candidates stand. `judge: false` disables the tie-break.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -336,6 +342,7 @@ const browserFindTool: McpToolDef = {
       text: { type: 'string', description: 'Accessible name text; max 200' },
       role: { type: 'string', description: 'Filter by implicit role' },
       limit: { type: 'number', description: 'Max matches; default 10, max 25' },
+      judge: JUDGE_ARG_PROP,
     },
     required: ['paneId'],
   },
@@ -347,6 +354,11 @@ const browserFindTool: McpToolDef = {
       text: str(args, 'text'),
       role: str(args, 'role'),
       limit: num(args, 'limit'),
+      // Auto-on: o desempate Jev é a superfície `browserTool` em modo
+      // só-injeção de escolha (nunca age). Opt-out com judge: false.
+      judge: args.judge !== false,
+      sessionId: ctx.sessionId,
+      missionId: ctx.missionId,
     });
     if (reviewAuthority) {
       assertReviewSurfaceCurrent(ctx, reviewAuthority);

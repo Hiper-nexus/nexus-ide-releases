@@ -78,6 +78,20 @@ export const searchPartialResultSchema = z
     completedSources: z.array(searchSourceSchema).max(SEARCH_SOURCES.length),
     cancelled: z.boolean().default(false),
     elapsedMs: z.number().int().nonnegative(),
+    /**
+     * Triagem Jev (researchTriage): melhor hit + se a pergunta está respondida
+     * — para o agente saber se fecha a pesquisa ou busca outra fonte.
+     */
+    triage: z
+      .object({
+        bestHitId: z.string().max(256).nullable(),
+        bestConfidence: z.number().min(0).max(1),
+        answered: z.boolean(),
+        answeredConfidence: z.number().min(0).max(1),
+        model: z.string().max(64),
+        inputTokens: z.number().int().nonnegative(),
+      })
+      .optional(),
   })
   .strict();
 

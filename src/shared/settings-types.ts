@@ -145,6 +145,8 @@ export const orchSettingsSchema = z.object({
       taskRouting: z.boolean().default(true),
       /** Desempate Jev na resolução de elementos por texto no browser. */
       browserTool: z.boolean().default(true),
+      /** Triagem de hits de pesquisa: melhor resposta + se falta pesquisar. */
+      researchTriage: z.boolean().default(true),
     })
     .prefault({}),
   /** Carta de Design anti-genérico (Impeccable) para tarefas com UI. */
