@@ -1152,6 +1152,11 @@ const api: NexusApi = {
       ipcRenderer.invoke(PROVIDER_CHANNELS.addModel, { adapterId, model }),
     removeModel: (adapterId: string, model: string) =>
       ipcRenderer.invoke(PROVIDER_CHANNELS.removeModel, { adapterId, model }),
+    vaultState: () => ipcRenderer.invoke(PROVIDER_CHANNELS.vaultState),
+    exportSecrets: (passphrase: string) =>
+      ipcRenderer.invoke(PROVIDER_CHANNELS.exportSecrets, { passphrase }),
+    importSecrets: (bundle: string, passphrase: string) =>
+      ipcRenderer.invoke(PROVIDER_CHANNELS.importSecrets, { bundle, passphrase }),
     onChanged: (cb) => addListener(providersChangedListeners, cb),
   },
   files: {

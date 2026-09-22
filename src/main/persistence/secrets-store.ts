@@ -23,9 +23,30 @@ const SECRET_PERSISTENCE_ERROR =
   'Encrypted secret could not be published durably.';
 const SECRETS_LOCK_DATABASE = `${SECRETS_FILE}.lock.sqlite`;
 const LOCK_ACQUIRE_TIMEOUT_MS = 500;
+/**
+ * Uma falha do safeStorage é o suficiente. `encryptString`/`isEncryptionAvailable`
+ * são SecItemAdd/SecItemCopyMatching e levantam o modal macOS "Chaves Não
+ * Encontradas / Reajustar Para Padrões" (esse botão apaga o keychain inteiro).
+ * Com backoff curto o modal voltava a cada janela — o operador via o diálogo
+ * várias vezes por sessão. Depois da PRIMEIRA falha o vault fica envenenado
+ * pela vida do processo: nenhuma chamada nova ao Keychain, fail-closed.
+ */
+const SECURE_STORAGE_FAILURE_BACKOFF_MS = 5 * 60_000;
 
 // adapterId → decrypted key (in-memory cache; the disk copy is encrypted).
 let cache: Map<string, string> | null = null;
+/**
+ * Per-key decrypt denial (Keychain locked, ACL refused, vault from another
+ * machine/user). Presence in the raw index is NOT the same as readable:
+ * `hasSecret` stays true while `getSecret` returns null during the backoff.
+ */
+const decryptDeniedUntil = new Map<string, number>();
+/**
+ * Veneno de SESSÃO: a primeira falha do safeStorage (SecItemAdd/SecItemCopyMatching)
+ * desliga o vault para o resto do processo. Sem isto o modal "Chaves Não
+ * Encontradas" voltava a cada janela de backoff durante o uso normal.
+ */
+let secureStoragePoisoned = false;
 let temporaryFileSequence = 0;
 export interface SecretWriteResult {
   ok: boolean;
@@ -81,18 +102,29 @@ export function isSecureStorageAvailable(options?: { probe?: boolean }): boolean
 /**
  * Decrypt one blob. Keychain (SecItemCopyMatching) can block for a long time
  * when the agent launches without an unlocked session — never decrypt the whole
- * vault at once on boot/getInfo.
+ * vault at once on boot/getInfo. A failure is memoized per key: retrying the
+ * hop is what re-opens the SecurityAgent dialog in a loop.
  */
-function decryptBlob(blob: string): string | null {
+function decryptBlob(key: string, blob: string): string | null {
   if (isDevVaultDisabled()) return null;
+  const deniedUntil = decryptDeniedUntil.get(key);
+  if (deniedUntil !== undefined && Date.now() < deniedUntil) return null;
   try {
     const plain = safeStorage.decryptString(Buffer.from(blob, 'base64'));
+    decryptDeniedUntil.delete(key);
     return plain || null;
   } catch {
     // Keychain/safeStorage failures stay inside the vault: callers see null,
     // never an Electron throw and never the macOS Keychain dialog as UX.
+    decryptDeniedUntil.set(key, Date.now() + SECURE_STORAGE_FAILURE_BACKOFF_MS);
     return null;
   }
+}
+
+/** True when the key is in the raw index but decrypt is currently denied. */
+export function isSecretDecryptDenied(key: string): boolean {
+  const deniedUntil = decryptDeniedUntil.get(key);
+  return deniedUntil !== undefined && Date.now() < deniedUntil;
 }
 
 function ensureCache(): Map<string, string> {
@@ -273,17 +305,29 @@ function publishEncryptedVault(raw: Readonly<Record<string, string>>): void {
 function encryptSecret(
   plainValue: string,
 ): { ok: true; blob: string } | { ok: false; error: string } {
+  // Veneno de sessão: uma falha e o Keychain nunca mais é tocado — é o que
+  // levanta o modal "Chaves Não Encontradas / Reajustar Para Padrões".
+  if (secureStoragePoisoned) {
+    return { ok: false, error: SECURE_STORAGE_ERROR };
+  }
+  // Single availability probe: isEncryptionAvailable() already hops the
+  // Keychain; calling it twice before encryptString just doubles the chance
+  // of a SecurityAgent prompt on a locked session.
   if (!isSecureStorageAvailable()) {
+    secureStoragePoisoned = true;
     return { ok: false, error: SECURE_STORAGE_ERROR };
   }
   try {
-    if (!safeStorage.isEncryptionAvailable()) {
+    const blob = safeStorage.encryptString(plainValue).toString('base64');
+    if (!blob) {
+      secureStoragePoisoned = true;
       return { ok: false, error: SECURE_STORAGE_ERROR };
     }
-    const blob = safeStorage.encryptString(plainValue).toString('base64');
-    if (!blob) return { ok: false, error: SECURE_STORAGE_ERROR };
     return { ok: true, blob };
   } catch {
+    // SecItemAdd levantou (ou levantaria) "Chaves Não Encontradas". Nunca mais
+    // tenta: o próximo setSecret de qualquer chave não reabre o diálogo.
+    secureStoragePoisoned = true;
     return { ok: false, error: SECURE_STORAGE_ERROR };
   }
 }
@@ -344,7 +388,7 @@ export function getSecret(key: string): string | null {
   }
   const blob = raw[key];
   if (typeof blob !== 'string') return null;
-  const plain = decryptBlob(blob);
+  const plain = decryptBlob(key, blob);
   if (plain) store.set(key, plain);
   return plain;
 }
@@ -363,6 +407,47 @@ export function hasSecret(key: string): boolean {
   }
 }
 
+/** Raw index keys only — never decrypts. Used by the multi-PC export walker. */
+export function listSecretKeys(): string[] {
+  try {
+    return Object.keys(readRawFromDisk());
+  } catch {
+    return [];
+  }
+}
+
+export type VaultState = 'empty' | 'readable' | 'foreign-or-locked' | 'partial';
+
+/**
+ * Saúde do cofre para a UI multi-PC. `safeStorage` amarra a cifra ao keychain
+ * da máquina: um `secrets.enc` copiado de outro Mac tem o índice íntegro mas
+ * nenhum blob legível — a UI deve dizer "vault de outra máquina", não "redefina
+ * a chave". Sonda com o mesmo backoff do decrypt: nunca abre o SecurityAgent
+ * em loop para responder um booleano.
+ */
+export function vaultState(): VaultState {
+  const keys = listSecretKeys();
+  if (keys.length === 0) return 'empty';
+  let readable = 0;
+  let denied = 0;
+  for (const key of keys) {
+    if (cache?.has(key)) {
+      readable += 1;
+      continue;
+    }
+    if (isSecretDecryptDenied(key)) {
+      denied += 1;
+      continue;
+    }
+    if (getSecret(key) !== null) readable += 1;
+    else if (isSecretDecryptDenied(key)) denied += 1;
+  }
+  if (readable > 0 && denied > 0) return 'partial';
+  if (readable > 0) return 'readable';
+  if (denied > 0) return 'foreign-or-locked';
+  return 'empty';
+}
+
 /**
  * Cache-only lookup. Unlike `hasSecret`/`getSecret`, this never touches disk or
  * macOS Keychain and is therefore safe on the Electron boot path.
@@ -379,6 +464,7 @@ export function setSecret(key: string, value: string): SecretWriteResult {
   }
   const result = persistDelta(key, value);
   if (!result.ok) return result;
+  decryptDeniedUntil.delete(key);
   store.set(key, value);
   return { ok: true };
 }
@@ -387,6 +473,7 @@ export function deleteSecret(key: string): SecretWriteResult {
   const store = ensureCache();
   const result = persistDelta(key, null);
   if (!result.ok) return result;
+  decryptDeniedUntil.delete(key);
   store.delete(key);
   return { ok: true };
 }
@@ -423,4 +510,6 @@ export function setKey(adapterId: string, key: string): SecretWriteResult {
 /** Test-only reset. */
 export function resetSecretsCacheForTests(): void {
   cache = null;
+  decryptDeniedUntil.clear();
+  secureStoragePoisoned = false;
 }

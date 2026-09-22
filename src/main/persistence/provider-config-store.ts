@@ -19,6 +19,8 @@ import {
 import {
   PROVIDER_CHANNELS,
   addModelSchema,
+  exportSecretsSchema,
+  importSecretsSchema,
   providerConfigPatchSchema,
   setKeySchema,
   type ProviderConfig,
@@ -72,7 +74,12 @@ import {
   isSecureStorageAvailable,
   maskedKey,
   setKey,
+  vaultState,
 } from './secrets-store';
+import {
+  exportSecretsVault,
+  importSecretsVault,
+} from './secrets-portability';
 import { testProviderKey } from '../adapters/provider-test';
 import {
   buildProviderRoutingEnv,
@@ -1903,6 +1910,56 @@ export function registerProviderIpc(): void {
     if (!parsed.success) return { ok: false, error: 'invalid key request' };
     const result = setKey(parsed.data.adapterId, parsed.data.key);
     broadcast();
+    return result;
+  });
+
+  // ── Multi-PC: o safeStorage é amarrado ao keychain da máquina. Export/import
+  //    com passphrase é a única forma das keys viajarem sem plaintext em disco.
+  ipcMain.handle(PROVIDER_CHANNELS.vaultState, () => vaultState());
+
+  handleTrusted(PROVIDER_CHANNELS.exportSecrets, async (_event, raw) => {
+    const parsed = exportSecretsSchema.safeParse(raw);
+    if (!parsed.success) {
+      return { ok: false, error: 'invalid export request' };
+    }
+    const result = exportSecretsVault(parsed.data.passphrase);
+    if (!result.ok) return result;
+    const win = BrowserWindow.getFocusedWindow();
+    const saveOptions = {
+      title: 'Exportar keys (multi-PC)',
+      defaultPath: `nexus-keys-${new Date().toISOString().slice(0, 10)}.nexusvault`,
+      filters: [{ name: 'Nexus Keys', extensions: ['nexusvault'] }],
+    };
+    const save = win
+      ? await dialog.showSaveDialog(win, saveOptions)
+      : await dialog.showSaveDialog(saveOptions);
+    if (save.canceled || !save.filePath) {
+      return { ok: false, error: 'Export cancelado.' };
+    }
+    try {
+      fs.writeFileSync(save.filePath, result.bundle, { encoding: 'utf8', mode: 0o600 });
+    } catch {
+      return { ok: false, error: 'Não foi possível gravar o arquivo de export.' };
+    }
+    // O bundle já vai cifrado; o texto não volta para o renderer.
+    return {
+      ok: true,
+      exportedKeys: result.exportedKeys,
+      skippedKeys: result.skippedKeys,
+      path: save.filePath,
+    };
+  });
+
+  handleTrusted(PROVIDER_CHANNELS.importSecrets, async (_event, raw) => {
+    const parsed = importSecretsSchema.safeParse(raw);
+    if (!parsed.success) {
+      return { ok: false, error: 'invalid import request' };
+    }
+    const result = importSecretsVault(parsed.data.bundle, parsed.data.passphrase);
+    if (result.ok) {
+      broadcast();
+      notifyAdaptersChanged();
+    }
     return result;
   });
 
