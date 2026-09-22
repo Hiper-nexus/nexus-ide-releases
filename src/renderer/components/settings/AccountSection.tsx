@@ -354,7 +354,7 @@ export function AccountSection() {
             </span>
             <p className="account__zone-hint">
               Acesse seu plano e sua equipe em outras máquinas. As conexões
-              com ferramentas de IA são gerenciadas em Providers.
+              com ferramentas de IA ficam em Contas de IA.
             </p>
           </div>
           <div className="account__login-buttons">
@@ -376,6 +376,18 @@ export function AccountSection() {
               <PixelIcon name="user" size={12} />
               {loginBusy === 'google' ? 'Abrindo Google…' : 'Entrar com Google'}
             </button>
+            {reloginOpen ? (
+              // Aberto por "Entrar de novo" com a conta já ligada: sempre há
+              // saída — a sessão atual continua como estava.
+              <button
+                type="button"
+                className="settings-btn account__login-btn"
+                disabled={loginBusy !== null}
+                onClick={() => setReloginOpen(false)}
+              >
+                Cancelar
+              </button>
+            ) : null}
           </div>
           {loginError && (
             <p className="account__notice account__notice--err" role="alert">

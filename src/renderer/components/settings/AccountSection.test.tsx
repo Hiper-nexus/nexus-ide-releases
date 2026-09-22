@@ -176,7 +176,14 @@ describe('AccountSection', () => {
     expect(host.textContent).not.toContain('Entrar com GitHub');
 
     const relogin = [...host.querySelectorAll('button')].find((b) => b.textContent === 'Entrar de novo')!;
+    // Sempre há saída: Cancelar fecha o painel sem mexer na sessão.
     await act(async () => relogin.click());
+    const cancel = [...host.querySelectorAll('button')].find((b) => b.textContent === 'Cancelar')!;
+    await act(async () => cancel.click());
+    expect(host.textContent).not.toContain('Entrar com GitHub');
+    expect(window.nexus.app.authLogin).not.toHaveBeenCalled();
+    const reloginAgain = [...host.querySelectorAll('button')].find((b) => b.textContent === 'Entrar de novo')!;
+    await act(async () => reloginAgain.click());
     const github = [...host.querySelectorAll('button')].find((b) => b.textContent?.includes('Entrar com GitHub'))!;
     await act(async () => { github.click(); await Promise.resolve(); await Promise.resolve(); });
 
