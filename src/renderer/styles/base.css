@@ -182,6 +182,30 @@
   --radius-2xl: 18px;
   --radius-round: 999px;
 
+  /* Aliases de nomes que componentes usavam sem nunca terem sido definidos.
+     Sem eles a declaração era descartada: os hovers da barra lateral
+     (`--surface-hover`) e textos (`--text-muted`, `--text-primary`) morriam,
+     e os fallbacks fixos (branco a 8–10%) sumiam no tema claro. Misturas com
+     --text acompanham qualquer tema. Guardado por css-tokens.test.ts. */
+  --surface-hover: color-mix(in srgb, var(--text) 7%, transparent);
+  --surface-overlay: color-mix(in srgb, var(--text) 4%, transparent);
+  --surface-raised: var(--surface-2);
+  --bg-raised: var(--surface-2);
+  --border-subtle: var(--border);
+  --border-medium: var(--border-strong);
+  --text-muted: var(--text-dim);
+  --text-primary: var(--text);
+  --text-bright: var(--text);
+  --text-base: var(--text-md);
+  --accent-subtle: var(--accent-soft);
+  --err: var(--danger);
+  --state-error: var(--danger);
+  --status-dot-error: var(--status-dot-danger);
+  --status-dot-info: var(--status-dot-running);
+  --radius: var(--radius-md);
+  --duration-fast: 150ms;
+  --z-modal: var(--z-hard-modal);
+
   /* Sombras em DUAS camadas (contato curto + difusão larga): superfícies
      elevadas leem como material flutuando, não como mancha escura — o padrão
      de profundidade do design 2026. Mantidas neutras (sem tinta de cor). */

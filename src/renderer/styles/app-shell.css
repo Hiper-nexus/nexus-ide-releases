@@ -1248,19 +1248,29 @@
   width: var(--space-6);
   height: var(--space-6);
   padding: 0;
-  border: 1px solid transparent;
+  /* Em repouso precisa PARECER botão: sem borda nem fundo era um quadrado
+     escuro vazio ao lado de "Terminais". */
+  border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: transparent;
+  background: var(--surface-overlay);
   color: var(--text-dim);
   cursor: pointer;
-  transition: transform 120ms var(--ease-out-quart);
+  transition:
+    background-color 120ms var(--ease-out-quart),
+    border-color 120ms var(--ease-out-quart),
+    color 120ms var(--ease-out-quart);
   flex-shrink: 0;
 }
 
 .workspace-rail__row-grid-action:hover {
   background: var(--surface-hover);
-  border-color: var(--border-subtle, rgba(255, 255, 255, 0.1));
+  border-color: var(--border-strong);
   color: var(--text-main);
+}
+
+.workspace-rail__row-grid-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .workspace-rail__fixed-row,
