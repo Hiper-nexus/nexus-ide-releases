@@ -6002,7 +6002,7 @@ export const RELEASE_07679: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07681: AppRelease = {
   version: '0.76.81',
   date: '2026-09-22',
   codename: 'Nada escondido',
@@ -6051,6 +6051,51 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'Com a conta conectada, um erro do servidor agora diz que a sessão ' +
         'expirou, e não "entre na sua conta primeiro".',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.83',
+  date: '2026-09-22',
+  codename: 'Configurações no lugar',
+  summary:
+    'As Configurações foram reorganizadas pelo que você veio fazer: sete ' +
+    'áreas, um nome para cada página e o técnico recolhido em "Avançado".',
+  highlights: [
+    {
+      title: 'Sete áreas no lugar de nove',
+      detail:
+        'Conta e acesso a IAs, Jarvis e voz, Aparência e teclado, Equipes e ' +
+        'modelos, Biblioteca, Integrações e Segurança e manutenção. Chaves, ' +
+        'contas de IA e gastos agora moram juntos.',
+    },
+    {
+      title: 'Um nome por página',
+      detail:
+        'A aba, o caminho no topo e o título dizem a mesma coisa. ' +
+        '"Ferramentas" não aparece mais em três lugares diferentes.',
+    },
+    {
+      title: 'Páginas que cabem na tela',
+      detail:
+        'Comparar modelos mostra primeiro o essencial (de 47 mil para 3 mil ' +
+        'pixels de rolagem); Permissões esconde missões antigas por padrão; ' +
+        'Ações dos agentes mostra a descrição real de cada uma.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Menu do pane mais claro',
+      detail:
+        'Uma linha por ação, em grupos (terminal, workspace, papel); tornar ' +
+        'o pane orquestrador fica separado, no fim.',
+    },
+    {
+      title: 'Fonte, contraste e cliques',
+      detail:
+        'Botões e campos usam a fonte do app, o aviso "não configurada" ficou ' +
+        'legível e os controles pequenos ganharam área de clique.',
     },
   ],
 };

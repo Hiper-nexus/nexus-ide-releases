@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.83 — Configurações no lugar
+
+- **Configurações organizadas por tarefa.** Nove categorias sob quatro pilares seguiam os módulos do código ("Ferramentas" em três lugares, chaves em quatro). Agora são sete áreas: Conta e acesso a IAs, Jarvis e voz, Aparência e teclado, Equipes e modelos, Biblioteca, Integrações e Segurança e manutenção. As 35 páginas seguem alcançáveis, uma vez cada.
+- **Um nome por destino.** Aba, caminho e título da página vêm do mesmo cadastro; abas técnicas ficam depois de "Avançado". Sai o atalho duplicado "Meus pets" do rodapé.
+- **Páginas pesadas enxutas.** Comparar modelos mostra 24 modelos sem avaliação e "Mostrar todos" (935 → 69 botões, 47k → 3,3k px); Permissões oculta configurações de missões antigas por padrão; Ações dos agentes troca 173 "O que esta ferramenta faz" pela descrição real em uma linha.
+- **Menu de clique direito do pane** com uma linha por ação, grupos Terminal → Workspace → Papel e "Tornar orquestrador" separado no fim.
+- **Controles:** botões e campos herdam a fonte do app (saíam em Arial), chip "NÃO CONFIGURADA" acima de AA, botão de mostrar chave em 24 px, piso de texto de 10 px.
+
+
 ## 0.76.81 — Nada escondido
 
 - **CLIs instaladas por nvm, pnpm, mise e cia. não somem mais em outras máquinas (F-630).** App aberto pelo Finder via só pastas fixas quando o shell de login (oh-my-zsh + nvm) passava do prazo de 4 s. A busca agora cobre todas as versões do nvm, `~/.claude/local`, fnm, mise, proto, pnpm, `/snap/bin` e, no Windows, `%APPDATA%\npm`, `%LOCALAPPDATA%\pnpm`, Volta e scoop; uma sondagem que falhou no boot é refeita em background (20 s) e reexamina as CLIs sozinha. A mensagem aponta "Reexaminar CLIs"/caminho do binário antes de "instale".
