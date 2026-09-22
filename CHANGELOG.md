@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.76.77 — Chaves no lugar
+## 0.76.79 — Chaves no lugar
 
 - **Fim do modal «Chaves Não Encontradas» vindo dos panes (F-629).** Todo HOME privado que o Nexus cria para uma CLI (overlay Claude, Codex, Grok, MiMo, cursor, droid, command-code) enxerga o keychain real do macOS. gh, git osxkeychain, SDKs e o refresh das próprias CLIs deixam de abrir o modal cujo botão «Reajustar Para Padrões» apagaria o keychain. GLM/LongCat e workers gated usam `CLAUDE_SECURESTORAGE_CONFIG_DIR` privado e nunca leem nem sobrescrevem o item Claude nativo. Spawns em Seatbelt ficam de fora.
 - **Agentes não pedem mais `gh auth login` com a máquina logada.** Lanes graváveis recebem a identidade de git/SSH/gh do operador (F-579 tier 1) em qualquer CLI, não só no Claude.

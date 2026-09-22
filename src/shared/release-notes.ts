@@ -5925,7 +5925,7 @@ export const RELEASE_07676: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.77',
+  version: '0.76.79',
   date: '2026-09-22',
   codename: 'Chaves no lugar',
   summary:
