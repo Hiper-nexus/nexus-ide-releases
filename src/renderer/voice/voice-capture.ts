@@ -38,9 +38,14 @@ export interface CaptureResult {
  * Silence-based auto-stop (the wake-word flow has no key-release edge): once
  * speech was heard, `silenceMs` of quiet — or `maxMs` total — fires
  * `onAutoStop` exactly once. The caller still calls stop() to collect audio.
+ *
+ * Push-to-talk (Space / PTT) is a different contract: the key-release edge
+ * owns end-of-utterance. Use `HOLD_TO_TALK_SILENCE_MS` (Infinity — silence
+ * never ends the capture) and `HOLD_TO_TALK_SAFETY_MAX_MS` (stuck-key valve,
+ * not a speech cap) from `hold-to-talk.ts`.
  */
 export interface AutoStopOptions {
-  /** Quiet time after speech that ends the utterance. */
+  /** Quiet time after speech that ends the utterance. `Infinity` disables it. */
   silenceMs: number;
   /** Minimum open window before silence is allowed to end the utterance. */
   minListenMs?: number;
@@ -49,7 +54,7 @@ export interface AutoStopOptions {
    * the local AGC so a noisy room cannot close an automatic reply window.
    */
   rawSpeechRms?: number;
-  /** Hard cap on the whole capture. */
+  /** Hard cap on the whole capture (safety valve for hold-to-talk). */
   maxMs: number;
   onAutoStop: () => void;
 }
