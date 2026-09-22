@@ -302,7 +302,7 @@ describe('native Claude auth in the ephemeral HOME', () => {
   );
 
   it.skipIf(process.platform !== 'darwin')(
-    'never exposes the keychain to a hooks-gated pane — env token é a superfície mínima',
+    'overlay gated não linka o keychain por conta própria — F-629: o guarda do spawn liga e o securestorage escopado protege o item nativo',
     () => {
       const realDb = path.join(home, 'Library', 'Keychains');
       fs.mkdirSync(realDb, { recursive: true });
@@ -333,7 +333,7 @@ describe('native Claude auth in the ephemeral HOME', () => {
   );
 
   it.skipIf(process.platform !== 'darwin')(
-    'never links the keychain for third-party overlays (GLM/LongCat sem identidade nativa)',
+    'overlay de terceiro não linka o keychain por conta própria — F-629: guarda do spawn + securestorage escopado',
     () => {
       const realDb = path.join(home, 'Library', 'Keychains');
       fs.mkdirSync(realDb, { recursive: true });

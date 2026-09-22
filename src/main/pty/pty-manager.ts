@@ -18,6 +18,7 @@ import { ensureUtf8Locale } from "./pty-env-locale";
 import { materializeProviderState, providerStateEnvFor } from "./provider-state-env";
 import { applyPaneTerminalIdentity } from "./pane-terminal-identity";
 import { assertManagedClaudeAuthSupported, CLAUDE_MANAGED_AUTH_ENV } from "../adapters/managed-claude-auth";
+import { ensurePrivateHomeOperatorAccess } from "./private-home-operator";
 import { PTY_CHANNELS } from "../../shared/channels";
 import { migrateModelId } from "../../shared/model-defaults";
 import type { SpawnRequest, PaneSessionState } from "../../shared/types";
@@ -2356,6 +2357,20 @@ export function spawnAgentSession(
         );
       }
     }
+  }
+
+  // F-629: todo HOME privado do Nexus (overlay Claude, Codex shell-home,
+  // MiMo, Grok, provider-state de cursor/droid/…) enxerga o keychain real —
+  // senão gh/git/CLIs abrem o modal "Chaves Não Encontradas". Spawns sob
+  // Seatbelt/Bubblewrap têm contrato de arquivos próprio e ficam de fora.
+  // Lane gravável também recebe a identidade git/SSH/gh do operador (F-579
+  // tier 1), senão o agente pede `gh auth login` com a máquina autenticada.
+  if (!processSandboxActive && !codexProcessSandbox) {
+    ensurePrivateHomeOperatorAccess(spawnEnv.HOME, {
+      realHome: os.homedir(),
+      userDataDir: app.getPath("userData"),
+      writable: !nativeReadOnly && authority.context?.readOnly !== true,
+    });
   }
 
   const spec: PtySpawnSpec = {

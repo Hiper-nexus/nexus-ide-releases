@@ -1192,6 +1192,23 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
         }
         env.HOME = home.dir;
         if (process.platform === "win32") env.USERPROFILE = home.dir;
+        // F-629: no macOS o spawn liga o keychain real em todo HOME privado
+        // (senão gh/git/CLIs abrem o modal "Chaves Não Encontradas"). Terceiros
+        // (GLM/LongCat) e panes gated autenticam por env e NUNCA podem ler ou
+        // sobrescrever o item "Claude Code-credentials" nativo: um diretório de
+        // securestorage privado do overlay escopa o serviço do CLI
+        // (`Claude Code-credentials-<sha256(dir)[:8]>`, binário 2.1.280).
+        if (
+          process.platform === "darwin" &&
+          !managedClaudeAuthDir &&
+          (thirdPartyClaudeFamily || gateHome)
+        ) {
+          const scopedSecureStorage = path.join(home.dir, ".nexus-claude-securestorage");
+          fs.mkdirSync(scopedSecureStorage, { recursive: true, mode: 0o700 });
+          env[CLAUDE_MANAGED_AUTH_ENV] = scopedSecureStorage;
+          const removeAt = envRemove.indexOf(CLAUDE_MANAGED_AUTH_ENV);
+          if (removeAt >= 0) envRemove.splice(removeAt, 1);
+        }
         // The default config location follows this private HOME, preserving
         // native Keychain semantics. Do not inherit a custom path to real
         // sessions — and never blank it either: "CLAUDE_CONFIG_DIR=" still
