@@ -5889,6 +5889,13 @@ export const CURRENT_RELEASE: AppRelease = {
         'esta versão do macOS» vinha de um binário carimbado com mínimo 27.2. ' +
         'O app agora exige macOS 14.0, o mesmo piso do pacote, e sobe no 27.0.',
     },
+    {
+      title: 'A conta em uso fica até a cota acabar',
+      detail:
+        'Um pane novo continua na conta ativa enquanto a medição ainda mostra ' +
+        'folga. A irmã mais livre só entra quando a ativa chega a zero, entra ' +
+        'em cooldown ou toma um hit real. Sem medição, a escolha do operador permanece.',
+    },
   ],
   fixes: [
     {
@@ -5897,6 +5904,14 @@ export const CURRENT_RELEASE: AppRelease = {
         'O build do companheiro passa -target arm64-apple-macosx14.0 e recusa ' +
         'entregar um executável cujo minos seja outro. Atualizar o Xcode deixa ' +
         'de gravar sozinho um piso acima do Mac em uso.',
+    },
+    {
+      title: 'Entrar novamente da mesma conta abre o login',
+      detail:
+        'O aviso «Não consegui guardar a conta atual» não trava mais o re-login ' +
+        'quando a sessão viva é a própria conta e o snapshot falha. Se o e-mail ' +
+        'vivo for de outra conta, o login continua sem começar, para não apagar ' +
+        'essa sessão. Cada conta do vault mantém a própria linha de cota.',
     },
   ],
 };

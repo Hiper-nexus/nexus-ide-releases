@@ -1079,10 +1079,10 @@ function resolveSpawnAccountChoice(
 }
 
 /**
- * Pane sem conta pinada nasce na conta com folga (paridade Overclock 1.3.18).
- * Sem snapshot de quota a ativa legada permanece; com snapshot, a irmã mais
- * livre com credencial e fora de bloco vence. Nenhuma conta livre (quota fora
- * do ar, tudo em cooldown) NÃO bloqueia o spawn: abre na ativa e avisa.
+ * Pane sem conta pinada nasce na conta ativa enquanto ela ainda tem cota.
+ * A irmã só entra quando a ativa mede disponibilidade zero ou sai da lista
+ * (cooldown, sem credencial, excluída pelo hit). Sem snapshot a ativa
+ * permanece. Nenhuma conta livre NÃO bloqueia o spawn: abre na ativa e avisa.
  */
 function pickUnpinnedAccountWithHeadroom(
   adapterId: string,

@@ -859,6 +859,91 @@ describe('AccountsManager', () => {
     act(() => root.unmount());
   });
 
+  it('abre o re-login da mesma conta quando o snapshot da sessão viva falha', async () => {
+    const addActiveSession = vi.fn(async () => ({
+      ok: false,
+      error: 'Nenhuma sessão ativa detectada para este provider.',
+    }));
+    useAccountStore.setState({
+      accounts: [
+        account({
+          id: 'agy-1',
+          adapterId: 'agy',
+          label: 'retorno',
+          email: 'retornoja@gmail.com',
+          upstream: 'agy',
+          needsRelogin: true,
+          active: true,
+        }),
+      ],
+      addActiveSession,
+    } as never);
+    vi.mocked(window.nexus.providers.authStatus).mockResolvedValue([
+      {
+        adapterId: 'agy',
+        state: 'ok',
+        detail: 'sessão AGY local · retornoja@gmail.com',
+      },
+    ]);
+    const { host, root } = mount('agy');
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    vi.mocked(openCliLoginTerminal).mockClear();
+    await act(async () => {
+      [...host.querySelectorAll('button')]
+        .find((b) => b.textContent?.includes('Entrar novamente'))!
+        .click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(openCliLoginTerminal).toHaveBeenCalled();
+    expect(host.textContent).not.toMatch(/guardar a conta atual/i);
+    act(() => root.unmount());
+  });
+
+  it('não abre re-login quando a sessão viva é outra conta e não foi guardada', async () => {
+    const addActiveSession = vi.fn(async () => ({ ok: false, error: 'vault unavailable' }));
+    useAccountStore.setState({
+      accounts: [
+        account({
+          id: 'agy-1',
+          adapterId: 'agy',
+          label: 'retorno',
+          email: 'retornoja@gmail.com',
+          upstream: 'agy',
+          needsRelogin: true,
+        }),
+      ],
+      addActiveSession,
+    } as never);
+    vi.mocked(window.nexus.providers.authStatus).mockResolvedValue([
+      {
+        adapterId: 'agy',
+        state: 'ok',
+        detail: 'sessão AGY local · other@example.com',
+        sessionFingerprint: 'fp-other',
+      },
+    ]);
+    const { host, root } = mount('agy');
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    vi.mocked(openCliLoginTerminal).mockClear();
+    await act(async () => {
+      [...host.querySelectorAll('button')]
+        .find((b) => b.textContent?.includes('Entrar novamente'))!
+        .click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(openCliLoginTerminal).not.toHaveBeenCalled();
+    expect(host.textContent).toMatch(/guardar a conta atual/i);
+    act(() => root.unmount());
+  });
+
   it('does not treat an API key as a native session to preserve during relogin', async () => {
     const addActiveSession = vi.fn(async () => ({ ok: false, error: 'No native login' }));
     useAccountStore.setState({ accounts: [account({ id: 'target', needsRelogin: true })], addActiveSession });

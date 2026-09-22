@@ -126,6 +126,16 @@ saber isto antes de mexer:
   sessionId no spawn e devolvido em `nexus_pane_spawn` (`harness.account`) e
   `nexus_pane_whoami`. Rótulos sempre mascarados (`maskAccountLabel`); nunca
   id, fingerprint ou token.
+- **A conta ativa fica até a cota medida zerar.** `chooseAccount` não entrega
+  o pane à irmã só porque ela tem mais folga. Troca quando a ativa está fora
+  da lista (cooldown, sem credencial, excluída pelo hit) ou quando a
+  disponibilidade medida é 0. Cota desconhecida mantém a ativa. Sem conta
+  ativa, a mais livre vence.
+- **«Entrar novamente» da mesma conta abre o login mesmo se o snapshot vivo
+  falhar.** O aviso «Não consegui guardar a conta atual» continua quando o
+  cadastro de uma segunda conta não consegue gravar a primeira, e quando o
+  e-mail da sessão viva é de outra conta. Sessão `missing` não tem o que
+  guardar e não bloqueia o login.
 
 ## Conventions
 

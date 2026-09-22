@@ -3,6 +3,8 @@
 ## 0.76.76 — Redline abre neste macOS
 
 - **Nexus Redline não pede mais um macOS que não existe (F-628)**: o companheiro passa a ser compilado para macOS 14.0, o piso já declarado no app. A versão 0.76.75 tinha sido carimbada com mínimo 27.2 e o sistema recusava abri-la no macOS 27.0.
+- **Re-login da mesma conta abre o terminal.** «Entrar novamente» deixa de morrer em «Não consegui guardar a conta atual» quando a sessão viva é a própria conta e o snapshot não grava. Outra conta viva, com e-mail diferente, continua protegida e o login não começa.
+- **A conta em uso não cede o pane antes de acabar.** Folga maior numa irmã não troca a conta ativa. A troca espera disponibilidade medida zero, cooldown ou hit real. Sem medição, a ativa permanece. Cada conta do vault segue com a própria linha de cota.
 
 
 ## 0.76.75 — Xiaomi MiMo no Nexus

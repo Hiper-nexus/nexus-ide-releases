@@ -60,14 +60,32 @@ describe('chooseAccount (failover selection)', () => {
     expect(chosen?.id).toBe('b');
   });
 
-  it('preempts an active account only when measured quota proves another is freer', () => {
+  it('keeps the active account while it still has measured quota, even if a sibling is freer', () => {
     const accounts = [acct('a', 1), acct('b', 2)];
     const scores = new Map([
-      ['a', 0.15],
+      ['a', 0.02],
       ['b', 0.9],
     ]);
     const chosen = chooseAccount(accounts, 'a', null, NOW, scores);
-    expect(chosen?.id).toBe('b');
+    expect(chosen?.id).toBe('a');
+  });
+
+  it('moves to a sibling only after the active account measures zero availability', () => {
+    const accounts = [acct('a', 1), acct('b', 2)];
+    const scores = new Map([
+      ['a', 0],
+      ['b', 0.4],
+    ]);
+    expect(chooseAccount(accounts, 'a', null, NOW, scores)?.id).toBe('b');
+  });
+
+  it('does not hop from a full account onto another full account', () => {
+    const accounts = [acct('a', 1), acct('b', 2)];
+    const scores = new Map([
+      ['a', 0],
+      ['b', 0],
+    ]);
+    expect(chooseAccount(accounts, 'a', null, NOW, scores)?.id).toBe('a');
   });
 
   it('keeps operator intent when the active account has no measured quota', () => {
