@@ -160,6 +160,14 @@ export function buildSecondaryCommitMessageAgentSpecs({
           label: 'Claude Opus 4.7'
         },
         {
+          id: 'claude-opus-5',
+          label: 'Claude Opus 5'
+        },
+        {
+          id: 'claude-opus-5-5',
+          label: 'Claude Opus 5.5'
+        },
+        {
           id: 'gpt-4.1',
           label: 'GPT-4.1'
         },

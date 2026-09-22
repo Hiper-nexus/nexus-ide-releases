@@ -6,6 +6,12 @@
       "default": "claude-sonnet-5",
       "models": [
         {
+          "id": "claude-opus-5-5",
+          "availability": "paid",
+          "costTier": "high",
+          "source": "remote"
+        },
+        {
           "id": "claude-opus-5",
           "availability": "paid",
           "costTier": "high",
@@ -64,8 +70,20 @@
       ]
     },
     "codex": {
-      "default": "gpt-5.6-sol",
+      "default": "gpt-6-sol",
       "models": [
+        {
+          "id": "gpt-6-sol",
+          "availability": "paid",
+          "costTier": "high",
+          "source": "remote"
+        },
+        {
+          "id": "gpt-6-luna",
+          "availability": "paid",
+          "costTier": "medium",
+          "source": "remote"
+        },
         {
           "id": "gpt-6-astra",
           "availability": "api-only",

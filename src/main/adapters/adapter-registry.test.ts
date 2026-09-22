@@ -424,13 +424,13 @@ describe('builtin adapters', () => {
       .toBe(true);
   });
 
-  it('ships the official Claude Opus 5 id in Claude', () => {
+  it('ships Claude Opus 5.5 (supersedes Opus 5) in Claude', () => {
     const claude = BUILTIN_ADAPTERS.find(
       (adapter) => (adapter as { id?: string }).id === 'claude',
     ) as { models?: { list?: string[]; default?: string } } | undefined;
 
-    expect(claude?.models?.list?.[0]).toBe('claude-opus-5');
-    expect(claude?.models?.list).toContain('claude-opus-5');
+    expect(claude?.models?.list?.[0]).toBe('claude-opus-5-5');
+    expect(claude?.models?.list).toContain('claude-opus-5-5');
     expect(claude?.models?.default).toBe('claude-sonnet-5');
   });
 
@@ -439,8 +439,9 @@ describe('builtin adapters', () => {
       (adapter) => (adapter as { id?: string }).id === 'codex',
     ) as { models?: { list?: string[]; default?: string } } | undefined;
 
-    expect(codex?.models?.default).toBe('gpt-5.6-sol');
-    expect(codex?.models?.list?.[0]).toBe('gpt-6-astra');
+    expect(codex?.models?.default).toBe('gpt-6-sol');
+    expect(codex?.models?.list?.[0]).toBe('gpt-6-sol');
+    expect(codex?.models?.list).toContain('gpt-6-luna');
     expect(codex?.models?.list).toContain('gpt-5.6-sol');
   });
 

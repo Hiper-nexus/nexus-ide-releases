@@ -29,6 +29,9 @@ describe('priceForModel', () => {
       MODEL_PRICES['claude-sonnet-5'],
     );
     expect(priceForModel('gpt-5-mini')).toEqual(MODEL_PRICES['gpt-5-mini']);
+    expect(priceForModel('claude-opus-5-5')).toEqual(
+      MODEL_PRICES['claude-opus-5-5'],
+    );
     expect(priceForModel('claude-opus-5')).toEqual(
       MODEL_PRICES['claude-opus-5'],
     );
@@ -40,6 +43,12 @@ describe('priceForModel', () => {
     );
     expect(priceForModel('gpt-6-astra')).toEqual(
       MODEL_PRICES['gpt-6-astra'],
+    );
+    expect(priceForModel('gpt-6-sol')).toEqual(
+      MODEL_PRICES['gpt-6-sol'],
+    );
+    expect(priceForModel('gpt-6-luna')).toEqual(
+      MODEL_PRICES['gpt-6-luna'],
     );
   });
 

@@ -129,7 +129,7 @@ const CLAUDE_FAST_MODE: CatalogOption = {
 export const CLAUDE_SESSION_OPTION_CATALOG: AgentSessionOptionCatalog = {
   supportsWorkerLaunchPreferences: true,
   // Why: these ids are Claude CLI aliases that resolve to the newest model of
-  // each family on the host's CLI (`opus` is Opus 5 on current CLIs, older
+  // each family on the host's CLI (`opus` is Opus 5.5 on current CLIs, older
   // Opus on older CLIs), so pinned version labels lie on part of the fleet.
   // Family labels also keep header scraping and /model echo detection working
   // across CLI versions; listModels overlays exact per-host names below.
@@ -143,7 +143,7 @@ export const CLAUDE_SESSION_OPTION_CATALOG: AgentSessionOptionCatalog = {
     {
       id: 'opus',
       label: 'Opus',
-      description: 'Best for everyday, complex tasks',
+      description: 'Best for everyday, complex tasks (Opus 5.5 on current CLIs)',
       options: [claudeEffort(true), CLAUDE_FAST_MODE]
     },
     {

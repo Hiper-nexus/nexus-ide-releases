@@ -925,6 +925,27 @@ export interface NexusApi {
     ): Promise<{ ok: boolean; error?: string }>;
     addModel(adapterId: string, model: string): Promise<ProviderSettingsInfo[]>;
     removeModel(adapterId: string, model: string): Promise<ProviderSettingsInfo[]>;
+    /**
+     * Saúde do cofre multi-PC. `foreign-or-locked` = o `secrets.enc` veio de
+     * outra máquina (safeStorage é amarrado ao keychain local) — use
+     * export/import, não redefina a key.
+     */
+    vaultState(): Promise<'empty' | 'readable' | 'foreign-or-locked' | 'partial'>;
+    /** Exporta as keys legíveis para um arquivo cifrado por passphrase. */
+    exportSecrets(passphrase: string): Promise<{
+      ok: boolean;
+      error?: string;
+      exportedKeys?: number;
+      skippedKeys?: string[];
+      path?: string;
+    }>;
+    /** Importa um bundle exportado e regrava com o safeStorage desta máquina. */
+    importSecrets(bundle: string, passphrase: string): Promise<{
+      ok: boolean;
+      error?: string;
+      importedKeys?: number;
+      failedKeys?: string[];
+    }>;
     onChanged(cb: (list: ProviderSettingsInfo[]) => void): Unsubscribe;
   };
   files: {

@@ -161,4 +161,20 @@ export const PROVIDER_CHANNELS = {
   changed: 'provider:changed',
   authStatus: 'provider:authStatus',
   installCli: 'provider:installCli',
+  vaultState: 'provider:vaultState',
+  exportSecrets: 'provider:exportSecrets',
+  importSecrets: 'provider:importSecrets',
 } as const;
+
+export const exportSecretsSchema = z.object({
+  passphrase: z.string().min(8).max(256),
+});
+
+export type ExportSecretsRequest = z.infer<typeof exportSecretsSchema>;
+
+export const importSecretsSchema = z.object({
+  bundle: z.string().min(2).max(2_000_000),
+  passphrase: z.string().min(8).max(256),
+});
+
+export type ImportSecretsRequest = z.infer<typeof importSecretsSchema>;

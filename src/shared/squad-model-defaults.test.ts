@@ -18,7 +18,7 @@ describe('squad model defaults', () => {
   });
 
   it('fills only an empty model and preserves a manual choice', () => {
-    expect(applySquadModelDefault({ cli: 'codex' }).model).toBe('gpt-5.6-sol');
+    expect(applySquadModelDefault({ cli: 'codex' }).model).toBe('gpt-6-sol');
     expect(applySquadModelDefault({ cli: 'grok' }).model).toBe('grok-4.7');
     expect(applySquadModelDefault({ cli: 'agy' }).model).toBe('gemini-3.8-flash-high');
     expect(applySquadModelDefault({ cli: 'grok', model: 'grok-4.1' }).model).toBe(
@@ -33,5 +33,15 @@ describe('squad model defaults', () => {
     expect(migrateModelId('gpt-5.6-sol')).toBe('gpt-5.6-sol');
     expect(migrateModelId('muse')).toBe('muse-spark-1.3');
     expect(migrateModelId(undefined)).toBeUndefined();
+  });
+
+  it('não migra superseded que ainda roda (claude-opus-5) nem solta genérica (1.6)', () => {
+    // Superseded ≠ retired: o 5.5 lidera a lista/routing, mas o 5 continua
+    // executável em CLIs mais antigos — migrar descartaria o candidato.
+    expect(migrateModelId('claude-opus-5')).toBe('claude-opus-5');
+    expect(migrateModelId('claude-opus-5-5')).toBe('claude-opus-5-5');
+    // Chave global solta reescreveria modelo de qualquer provider.
+    expect(migrateModelId('1.6')).toBe('1.6');
+    expect(migrateModelId('swe-2')).toBe('swe-2');
   });
 });

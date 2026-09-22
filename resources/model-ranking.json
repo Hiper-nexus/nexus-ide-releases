@@ -42,9 +42,9 @@
       "rank": 2
     },
     {
-      "id": "claude/claude-opus-5",
+      "id": "claude/claude-opus-5-5",
       "adapterId": "claude",
-      "modelId": "claude-opus-5",
+      "modelId": "claude-opus-5-5",
       "overall": 72,
       "coding": 74,
       "reasoning": 71,
