@@ -425,6 +425,40 @@ export class CliPromptAutoResponder {
   }
 
   /**
+   * True quando o que segura a injeção é SÓ um banner de `holdPhrase` (a
+   * migração do MiMo): não há menu para forçar, então quem espera deve seguir
+   * esperando em vez de colar o brief no stream da migração. Limitado pela
+   * própria janela de observação da assinatura (`watchMs`).
+   */
+  isHoldingForBanner(sessionId: string, now = Date.now()): boolean {
+    if (!this.isEnabled(sessionId)) return false;
+    const match = this.pendingMatch(sessionId, now);
+    if (!match || match.holdPhrase === undefined) return false;
+    return this.forceAcceptResponseMatch(sessionId, now) === null;
+  }
+
+  /** Full match or `earlyPhrase` — never `holdPhrase` (see forceAcceptResponse). */
+  private forceAcceptResponseMatch(
+    sessionId: string,
+    now: number,
+  ): PromptSignature | null {
+    const signatures = this.watchingSignatures(sessionId, now);
+    if (!signatures) return null;
+    const raw = this.buffers.get(sessionId) ?? '';
+    const buffer = normalizePromptText(raw);
+    const compact = compactPromptText(raw);
+    return (
+      signatures.find(
+        (signature) =>
+          matchesPromptSignature(raw, signature) ||
+          (signature.earlyPhrase !== undefined &&
+            (buffer.includes(signature.earlyPhrase) ||
+              compact.includes(compactPromptText(signature.earlyPhrase)))),
+      ) ?? null
+    );
+  }
+
+  /**
    * Keys to force-dismiss a still-visible boot menu when the normal observe
    * path did not fire before inject timeout. Returns the matched signature's
    * own response (plus its same-option fallback) — never a blind Down+Enter,
@@ -439,20 +473,9 @@ export class CliPromptAutoResponder {
     now = Date.now(),
   ): { response: string; fallbackResponse?: string } | null {
     if (!this.isEnabled(sessionId)) return null;
-    const signatures = this.watchingSignatures(sessionId, now);
-    if (!signatures) return null;
-    const raw = this.buffers.get(sessionId) ?? '';
-    const buffer = normalizePromptText(raw);
-    const compact = compactPromptText(raw);
-    const match =
-      signatures.find(
-        (signature) =>
-          matchesPromptSignature(raw, signature) ||
-          (signature.earlyPhrase !== undefined &&
-            (buffer.includes(signature.earlyPhrase) ||
-              compact.includes(compactPromptText(signature.earlyPhrase)))),
-      ) ?? null;
+    const match = this.forceAcceptResponseMatch(sessionId, now);
     if (!match) return null;
+    const raw = this.buffers.get(sessionId) ?? '';
     const response = this.answerFor(match, raw);
     if (response === null) return null;
     // Settle so callers wait before typing the mission brief.

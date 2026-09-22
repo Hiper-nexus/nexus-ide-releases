@@ -24,9 +24,13 @@ export async function waitOutBootPrompts(
   maxMs = BOOT_PROMPT_HOLD_MS,
 ): Promise<void> {
   const deadline = Date.now() + maxMs;
+  // Banner de migração (holdPhrase) não tem menu para forçar: passado o
+  // prazo, colar o brief cairia no stream da migração. Segue esperando
+  // enquanto o banner segurar — a janela `watchMs` da assinatura encerra.
   while (
     cliPromptAutoResponder.shouldDeferInjection(sessionId) &&
-    Date.now() < deadline
+    (Date.now() < deadline ||
+      cliPromptAutoResponder.isHoldingForBanner(sessionId))
   ) {
     await delay(50);
   }
