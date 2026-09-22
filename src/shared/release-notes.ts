@@ -6061,41 +6061,50 @@ export const CURRENT_RELEASE: AppRelease = {
   codename: 'Configurações no lugar',
   summary:
     'As Configurações foram reorganizadas pelo que você veio fazer: sete ' +
-    'áreas, um nome para cada página e o técnico recolhido em "Avançado".',
+    'áreas, um nome por página, linguagem simples e páginas que cabem na tela.',
   highlights: [
     {
       title: 'Sete áreas no lugar de nove',
       detail:
         'Conta e acesso a IAs, Jarvis e voz, Aparência e teclado, Equipes e ' +
-        'modelos, Biblioteca, Integrações e Segurança e manutenção. Chaves, ' +
-        'contas de IA e gastos agora moram juntos.',
+        'modelos, Biblioteca, Integrações e Segurança e manutenção. A aba, o ' +
+        'caminho e o título dizem a mesma coisa; o técnico fica em "Avançado".',
     },
     {
-      title: 'Um nome por página',
+      title: 'Mais espaço para configurar',
       detail:
-        'A aba, o caminho no topo e o título dizem a mesma coisa. ' +
-        '"Ferramentas" não aparece mais em três lugares diferentes.',
+        'Nas Configurações, a barra lateral esconde projetos e cotas. Páginas ' +
+        'longas ficaram enxutas: Comparar modelos, Uso e cotas, Loja, ' +
+        'Permissões e Equipes mostram primeiro o que importa.',
     },
     {
-      title: 'Páginas que cabem na tela',
+      title: 'Sem jargão e sem sinal falso',
       detail:
-        'Comparar modelos mostra primeiro o essencial (de 47 mil para 3 mil ' +
-        'pixels de rolagem); Permissões esconde missões antigas por padrão; ' +
-        'Ações dos agentes mostra a descrição real de cada uma.',
+        'Termos internos viraram português simples, o alerta de pendências ' +
+        'virou uma contagem com o motivo e a conta não fica verde quando a ' +
+        'sessão precisa ser confirmada.',
     },
   ],
   fixes: [
     {
-      title: 'Menu do pane mais claro',
+      title: 'Menus mais claros',
       detail:
-        'Uma linha por ação, em grupos (terminal, workspace, papel); tornar ' +
-        'o pane orquestrador fica separado, no fim.',
+        'Tornar um pane orquestrador saiu da fileira de ícones para o menu ' +
+        '"…"; o menu de clique direito ficou em grupos; o "+ Pane" não corta ' +
+        'mais os nomes.',
     },
     {
-      title: 'Fonte, contraste e cliques',
+      title: 'Celular e Jev no lugar certo',
       detail:
-        'Botões e campos usam a fonte do app, o aviso "não configurada" ficou ' +
-        'legível e os controles pequenos ganharam área de clique.',
+        'O acesso pelo celular na rede local fica na página Celular, e as ' +
+        'decisões do Jev ficam na Auditoria.',
+    },
+    {
+      title: 'Fonte, contraste, cliques e leitores de tela',
+      detail:
+        'Botões e campos usam a fonte do app, avisos ficaram legíveis, ' +
+        'controles pequenos ganharam área de clique e os títulos seguem a ' +
+        'hierarquia certa.',
     },
   ],
 };
