@@ -32,7 +32,8 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   'claude-mythos-5': { inputPerM: 10, outputPerM: 50, cacheReadPerM: 1, cacheWritePerM: 12.5 },
   'claude-mythos': { inputPerM: 10, outputPerM: 50, cacheReadPerM: 1, cacheWritePerM: 12.5 },
 
-  // Claude Opus family (Opus 5 & 4.x: $5/M in, $25/M out; Opus 3 legacy: $15/M in, $75/M out)
+  // Claude Opus family (Opus 5.5/5 & 4.x: $5/M in, $25/M out; Opus 3 legacy: $15/M in, $75/M out)
+  'claude-opus-5-5': { inputPerM: 5, outputPerM: 25, cacheReadPerM: 0.5, cacheWritePerM: 6.25 },
   'claude-opus-5': { inputPerM: 5, outputPerM: 25, cacheReadPerM: 0.5, cacheWritePerM: 6.25 },
   'claude-opus-4-8': { inputPerM: 5, outputPerM: 25, cacheReadPerM: 0.5, cacheWritePerM: 6.25 },
   'claude-opus-4-7': { inputPerM: 5, outputPerM: 25, cacheReadPerM: 0.5, cacheWritePerM: 6.25 },
@@ -65,6 +66,8 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   // === OpenAI / Codex (openai.com/api/pricing & models-rich.json) ===
   'gpt-6-astra': { inputPerM: 10, outputPerM: 60, cacheReadPerM: 2.5 },
   'gpt-6': { inputPerM: 10, outputPerM: 60, cacheReadPerM: 2.5 },
+  'gpt-6-sol': { inputPerM: 5, outputPerM: 30, cacheReadPerM: 0.5, cacheWritePerM: 6.25 },
+  'gpt-6-luna': { inputPerM: 1.0, outputPerM: 6, cacheReadPerM: 0.1, cacheWritePerM: 1.25 },
   'gpt-5.6-sol': { inputPerM: 5, outputPerM: 30, cacheReadPerM: 0.5, cacheWritePerM: 6.25 },
   'gpt-5.6-terra': { inputPerM: 2.5, outputPerM: 15, cacheReadPerM: 0.25, cacheWritePerM: 3.125 },
   'gpt-5.6-luna': { inputPerM: 1.0, outputPerM: 6, cacheReadPerM: 0.1, cacheWritePerM: 1.25 },

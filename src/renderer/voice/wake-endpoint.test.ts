@@ -73,6 +73,22 @@ describe('shouldEndpointUtterance', () => {
     ).toBe(true);
   });
 
+  it('hold-to-talk: silenceMs Infinity nunca endpointa por silêncio — só o maxMs', () => {
+    const hold = {
+      heardSpeech: true,
+      speechMs: 30_000,
+      silentMs: 45_000,
+      totalMs: 80_000,
+      silenceMs: Number.POSITIVE_INFINITY,
+      minListenMs: 0,
+      maxMs: 5 * 60_000,
+    };
+    // Pausa longa com a tecla ainda baixa NÃO pode encerrar a fala.
+    expect(shouldEndpointUtterance(hold)).toBe(false);
+    // O keyup é o fim legítimo; o maxMs é só válvula de tecla presa.
+    expect(shouldEndpointUtterance({ ...hold, totalMs: 5 * 60_000 })).toBe(true);
+  });
+
   it('does not let seeded wake speech close a live-greeting capture before the command', () => {
     const greetingTurn = {
       heardSpeech: true,

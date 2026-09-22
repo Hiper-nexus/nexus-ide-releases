@@ -122,6 +122,10 @@ import {
 import { PassiveWakeDeadline } from './passive-wake-deadline';
 import { PassiveWakeAdmission } from './passive-wake-admission';
 import { pttStartAction } from './ptt-barge-in';
+import {
+  HOLD_TO_TALK_SAFETY_MAX_MS,
+  HOLD_TO_TALK_SILENCE_MS,
+} from './hold-to-talk';
 import { attachWindowPtt } from './voice-window-ptt';
 import { onDictationRequest } from './manual-dictation';
 import { writeToPane } from '../terminal/terminal-host';
@@ -161,7 +165,6 @@ const CLICK_WAKE_SILENCE_MS = 1_050;
 const CLICK_WAKE_MIN_LISTEN_MS = 1_125;
 const WAKE_MAX_MS = 15_000;
 const CLICK_WAKE_MAX_MS = 22_000;
-const PTT_HOLD_MAX_MS = 60_000;
 /** Ditado desarmado: avisa no máximo 1x a cada 30s (sem spam por pressionar). */
 const DISABLED_SPACE_HINT_MIN_INTERVAL_MS = 30_000;
 let lastDisabledSpaceHintAt = 0;
@@ -246,6 +249,38 @@ function onRealtimeTranscriptForActionBridge(event: JarvisLiveTranscriptEvent): 
 /** Está escutando por QUALQUER backend (mic quente do wake ou captura própria)? */
 function isListening(capture: VoiceCapture | null): boolean {
   return Boolean(capture?.isCapturing() || wakeMic.isUtteranceActive());
+}
+
+/**
+ * Auto-stop do push-to-talk (Space na janela e ⌘⇧Space). O keyup encerra a
+ * fala; silêncio nunca endpointa (o operador pode pausar pensando) e `maxMs`
+ * é só a válvula de tecla presa. Um texto longo deve ser enviado no release,
+ * nunca no meio do hold.
+ */
+function holdToTalkAutoStop(
+  capture: VoiceCapture,
+  busy: React.MutableRefObject<boolean>,
+): AutoStopOptions {
+  return {
+    silenceMs: HOLD_TO_TALK_SILENCE_MS,
+    maxMs: HOLD_TO_TALK_SAFETY_MAX_MS,
+    onAutoStop: () => {
+      if (!isListening(capture)) return;
+      logVoiceEvent(
+        'warn',
+        'voice.holdSafetyStop',
+        'hold-to-talk estourou a válvula de segurança',
+        { maxMs: HOLD_TO_TALK_SAFETY_MAX_MS },
+      );
+      // A nota só pode ser gravada DEPOIS do pipeline: finishAndProcess
+      // seta sttSuccessNote/erro no meio do caminho e engoliria este aviso.
+      void finishAndProcessFacade(capture, busy).then(() => {
+        useVoiceStore
+          .getState()
+          .setNote('Tempo máximo de fala atingido — enviando o que foi capturado.');
+      });
+    },
+  };
 }
 
 /** Auto-stop padrão das capturas iniciadas por voz. */
@@ -1369,14 +1404,13 @@ export function useVoiceController(active = true): void {
         logVoiceEvent('info', 'jarvis.pttBargeIn', 'PTT interrompeu a fala da Jarvis');
       }
 
-      const holdGuard: AutoStopOptions = {
-        silenceMs: PTT_HOLD_MAX_MS,
-        maxMs: PTT_HOLD_MAX_MS,
-        onAutoStop: () => {
-          if (isListening(capture.current)) void finishAndProcessFacade(capture.current!, busy);
-        },
-      };
-      void beginListening(capture.current!, holdGuard, 'ptt', undefined, busy);
+      void beginListening(
+        capture.current!,
+        holdToTalkAutoStop(capture.current!, busy),
+        'ptt',
+        undefined,
+        busy,
+      );
     };
     const onStop = () => {
       if (!isListening(capture.current)) return;
@@ -1430,14 +1464,13 @@ export function useVoiceController(active = true): void {
           'Ditado interrompeu a fala da Jarvis',
         );
       }
-      const holdGuard: AutoStopOptions = {
-        silenceMs: PTT_HOLD_MAX_MS,
-        maxMs: PTT_HOLD_MAX_MS,
-        onAutoStop: () => {
-          if (isListening(capture.current)) void finishAndProcessFacade(capture.current!, busy);
-        },
-      };
-      void beginListening(capture.current!, holdGuard, 'dictation', undefined, busy);
+      void beginListening(
+        capture.current!,
+        holdToTalkAutoStop(capture.current!, busy),
+        'dictation',
+        undefined,
+        busy,
+      );
     };
     const onDictationStop = () => {
       if (!isListening(capture.current)) return;

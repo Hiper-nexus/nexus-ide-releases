@@ -172,7 +172,7 @@ describe('resolveOrchestratorRuntime', () => {
         defaultAccountId: '',
         accounts: [],
       }),
-    ).toEqual({ model: 'gpt-5.6-sol', accountId: undefined });
+    ).toEqual({ model: 'gpt-6-sol', accountId: undefined });
   });
 
   it('uses the product defaults for Grok and AGY when no squad/global model is set', () => {

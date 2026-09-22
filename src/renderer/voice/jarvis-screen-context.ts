@@ -5,6 +5,7 @@ import {
   isStructuralPlaceholderPane,
   listPanes,
 } from '../lib/split-tree';
+import { pickFallbackInScope } from '../lib/pane-spaces';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { useWorkspaceStore } from '../state/workspace-store';
@@ -19,21 +20,34 @@ export function personaUserName(): string {
   return useVoiceStore.getState().info?.persona.userName?.trim() ?? '';
 }
 
-export function findOrchestratorPane(root: LayoutNode): string | null {
+export function findOrchestratorPane(
+  root: LayoutNode,
+  focusedPaneId?: string | null,
+): string | null {
   const panes = listPanes(root);
-  const pane = panes.find(
-    (candidate) =>
-      candidate.orchRequestId?.startsWith('squad-') ||
-      /(^|[ ·])orq\b/i.test(candidate.title),
+  const matches = panes
+    .filter(
+      (candidate) =>
+        candidate.orchRequestId?.startsWith('squad-') ||
+        /(^|[ ·])orq\b/i.test(candidate.title),
+    )
+    .map((candidate) => candidate.id);
+  if (matches.length === 0) return null;
+  // Orquestrador do MESMO escopo do foco. Sem foco = solo; foco sumiu = null
+  // (nunca reporta o orquestrador da missão vizinha como se fosse o nosso).
+  return pickFallbackInScope(
+    matches,
+    focusedPaneId,
+    panes,
+    useOrchStore.getState().paneMissions,
   );
-  return pane?.id ?? null;
 }
 
 export function currentScreenSnapshot(): ScreenSnapshot {
   const workspace = useWorkspaceStore.getState().current;
   const { root, focusedPaneId, viewKind } = useLayoutStore.getState();
   const panes = listPanes(root);
-  const orchestratorPaneId = findOrchestratorPane(root);
+  const orchestratorPaneId = findOrchestratorPane(root, focusedPaneId);
   const orch = useOrchStore.getState();
   const ui = readUiVisibilityState();
   const blockingOverlays = listBlockingOverlayLabels(ui.overlays);
@@ -63,7 +77,7 @@ export function currentScreenSnapshot(): ScreenSnapshot {
 export function buildJarvisContext(): JarvisContext {
   const { root, focusedPaneId } = useLayoutStore.getState();
   const panes = listPanes(root);
-  const orchestratorPaneId = findOrchestratorPane(root);
+  const orchestratorPaneId = findOrchestratorPane(root, focusedPaneId);
   const orchestratorPane =
     panes.find((pane) => pane.id === orchestratorPaneId) ?? null;
   const focusedPane =

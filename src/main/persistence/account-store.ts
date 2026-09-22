@@ -8,6 +8,7 @@ import {
   getSecret,
   hasCachedSecret,
   hasSecret,
+  isSecretDecryptDenied,
   setSecret,
 } from './secrets-store';
 import {
@@ -400,11 +401,12 @@ function syncClaudeBlobFromKeychainIfNative(
   const current = getSecret(vaultKey);
   if (current === nativeBlob) return; // In sync.
   // `null` com a chave PRESENTE no índice do vault não é ausência — é decrypt
-  // que falhou agora (Keychain capenga). Forçar setSecret aqui é insistir num
-  // SecItemAdd no pior momento: é isso que faz o macOS levantar o modal
-  // "Chaves Não Encontradas / Reajustar Para Padrões" (o botão que apaga o
-  // keychain). O snapshot do vault fica; o próximo read-back tenta de novo.
-  if (current === null && hasSecret(vaultKey)) return;
+  // que falhou agora (Keychain capenga / vault de outra máquina). Forçar
+  // setSecret aqui é insistir num SecItemAdd no pior momento: é isso que faz o
+  // macOS levantar o modal "Chaves Não Encontradas / Reajustar Para Padrões"
+  // (o botão que apaga o keychain). O snapshot do vault fica; o próximo
+  // read-back tenta de novo depois do backoff do decrypt.
+  if (current === null && (hasSecret(vaultKey) || isSecretDecryptDenied(vaultKey))) return;
   const saved = setSecret(vaultKey, nativeBlob);
   if (!saved.ok) {
     console.warn(

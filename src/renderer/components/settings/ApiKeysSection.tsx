@@ -227,6 +227,14 @@ export function ApiKeysSection() {
   const [testResult, setTestResult] = useState<Record<string, { ok: boolean; message: string }>>({});
   const [feedback, setFeedback] = useState<{ id: string; ok: boolean; message: string } | null>(null);
   const [visiblePassword, setVisiblePassword] = useState<Record<string, boolean>>({});
+  const [vaultState, setVaultState] = useState<
+    'empty' | 'readable' | 'foreign-or-locked' | 'partial' | null
+  >(null);
+  const [passphrase, setPassphrase] = useState('');
+  const [portabilityMsg, setPortabilityMsg] = useState<{
+    ok: boolean;
+    message: string;
+  } | null>(null);
 
   const refreshAll = useCallback(async () => {
     try {
@@ -641,6 +649,137 @@ export function ApiKeysSection() {
           );
         })
       )}
+
+      <section className="api-keys-group" aria-label="Multi-PC">
+        <header className="api-keys-group__head">
+          <h4 className="api-keys-group__title">Multi-PC</h4>
+          <p className="api-keys-group__hint">
+            O cofre de keys é cifrado pelo Keychain de cada Mac. Para levar as
+            keys para outra máquina: exporte aqui com uma passphrase, importe lá.
+            Nunca clique “Reajustar Para Padrões” no diálogo do macOS.
+          </p>
+        </header>
+        {vaultState === 'foreign-or-locked' && (
+          <p className="settings-detail__hint" role="status">
+            Este cofre parece vir de outra máquina — os blobs não abrem neste
+            Keychain. Importe o export (ou re-insira as keys); nada foi perdido
+            na máquina de origem.
+          </p>
+        )}
+        <div className="api-keys-section__filter-row" style={{ flexWrap: 'wrap', gap: 8 }}>
+          <input
+            type="password"
+            className="settings-input api-keys-section__search"
+            placeholder="Passphrase (mín. 8 caracteres)"
+            value={passphrase}
+            onChange={(e) => setPassphrase(e.target.value)}
+            aria-label="Passphrase do pacote de keys"
+            style={{ maxWidth: 240 }}
+          />
+          <button
+            type="button"
+            className="settings-btn settings-btn--sm"
+            disabled={busyId === 'export-keys' || passphrase.trim().length < 8}
+            onClick={async () => {
+              if (busyId) return;
+              setBusyId('export-keys');
+              setPortabilityMsg(null);
+              try {
+                const result = await window.nexus.providers.exportSecrets(passphrase);
+                if (result.ok) {
+                  setPortabilityMsg({
+                    ok: true,
+                    message: `Exportado ${result.exportedKeys} key(s) → ${result.path ?? 'arquivo'}. Guarde o arquivo e a passphrase; apague o arquivo depois de importar.${
+                      result.skippedKeys?.length
+                        ? ` (${result.skippedKeys.length} key(s) ilegível(eis) nesta máquina foram puladas.)`
+                        : ''
+                    }`,
+                  });
+                } else {
+                  setPortabilityMsg({ ok: false, message: result.error ?? 'Export falhou.' });
+                }
+              } catch (err) {
+                setPortabilityMsg({
+                  ok: false,
+                  message: err instanceof Error ? err.message : 'Export falhou.',
+                });
+              } finally {
+                setBusyId(null);
+              }
+            }}
+          >
+            {busyId === 'export-keys' ? 'Exportando…' : 'Exportar keys'}
+          </button>
+          <input
+            type="file"
+            accept=".nexusvault,application/json"
+            aria-label="Arquivo .nexusvault para importar"
+            className="settings-input"
+            style={{ maxWidth: 260 }}
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              e.target.value = '';
+              if (!file || busyId) return;
+              if (passphrase.trim().length < 8) {
+                setPortabilityMsg({
+                  ok: false,
+                  message: 'Informe a passphrase antes de importar.',
+                });
+                return;
+              }
+              setBusyId('import-keys');
+              setPortabilityMsg(null);
+              try {
+                const bundle = await file.text();
+                const result = await window.nexus.providers.importSecrets(bundle, passphrase);
+                if (result.ok) {
+                  setPortabilityMsg({
+                    ok: true,
+                    message: `Importado ${result.importedKeys} key(s).${
+                      result.failedKeys?.length
+                        ? ` Recusadas nesta máquina: ${result.failedKeys.join(', ')}.`
+                        : ''
+                    }`,
+                  });
+                  await refreshAll();
+                  setVaultState(await window.nexus.providers.vaultState());
+                } else {
+                  setPortabilityMsg({ ok: false, message: result.error ?? 'Import falhou.' });
+                }
+              } catch (err) {
+                setPortabilityMsg({
+                  ok: false,
+                  message: err instanceof Error ? err.message : 'Import falhou.',
+                });
+              } finally {
+                setBusyId(null);
+              }
+            }}
+          />
+          <button
+            type="button"
+            className="settings-btn settings-btn--sm"
+            onClick={async () => {
+              try {
+                setVaultState(await window.nexus.providers.vaultState());
+              } catch {
+                setVaultState(null);
+              }
+            }}
+          >
+            Verificar cofre
+          </button>
+        </div>
+        {portabilityMsg && (
+          <p
+            className="settings-detail__hint"
+            role="status"
+            style={portabilityMsg.ok ? undefined : { color: 'var(--danger, #c44)' }}
+          >
+            {portabilityMsg.message}
+          </p>
+        )}
+      </section>
     </section>
   );
 }

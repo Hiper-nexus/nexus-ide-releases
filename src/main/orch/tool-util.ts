@@ -110,7 +110,8 @@ const AGENT_BOOT_TIMEOUT_MS = 120_000;
 const PROMPT_ACCEPTANCE_WINDOW_MS = 12_000;
 /** Devin composer footer (herdr welcome_prompt_footer) before PTY paste. */
 const DEVIN_COMPOSER_READY = /ask devin to build/i;
-const DEVIN_COMPOSER_WAIT_MS = 8_000;
+/** Cold Node boot + trust + welcome paint can exceed 8s; never paste blind. */
+const DEVIN_COMPOSER_WAIT_MS = 30_000;
 const RESTORED_PROMPT_ACCEPTANCE_WINDOW_MS = 3_000;
 /**
  * After a provider-native argv brief, the provider must open a turn within
@@ -736,22 +737,24 @@ export function submitPendingAgentPrompt(
 /**
  * Devin paints trust first, then the composer. Paste before "Ask Devin to
  * build" is the F-537 swallow; waitOutBootPrompts only holds while the
- * autoresponder already saw the modal.
+ * autoresponder already saw the modal. Returns false on timeout so the
+ * caller never types a brief into a trust modal / empty TUI.
  */
 async function waitUntilDevinComposerReady(
   sessionId: string,
   adapterId: string | undefined,
-): Promise<void> {
-  if (adapterId !== 'devin') return;
+): Promise<boolean> {
+  if (adapterId !== 'devin') return true;
   const deadline = Date.now() + DEVIN_COMPOSER_WAIT_MS;
   while (Date.now() < deadline) {
     if (cliPromptAutoResponder.shouldDeferInjection(sessionId)) {
       await delay(50);
       continue;
     }
-    if (DEVIN_COMPOSER_READY.test(readSessionOutput(sessionId))) return;
+    if (DEVIN_COMPOSER_READY.test(readSessionOutput(sessionId))) return true;
     await delay(50);
   }
+  return DEVIN_COMPOSER_READY.test(readSessionOutput(sessionId));
 }
 
 /**
@@ -771,7 +774,16 @@ export async function deliverAgentPrompt(
   let lastError: unknown;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     await waitOutBootPrompts(sessionId);
-    await waitUntilDevinComposerReady(sessionId, options.adapterId);
+    const composerReady = await waitUntilDevinComposerReady(
+      sessionId,
+      options.adapterId,
+    );
+    if (!composerReady) {
+      lastError = new Error(
+        'Devin composer did not become ready before prompt delivery',
+      );
+      continue;
+    }
     // Linearization point after boot/menu waits and immediately before paste.
     assertMcpInvocationCurrent(invocation);
     try {

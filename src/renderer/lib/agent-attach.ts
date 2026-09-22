@@ -5,6 +5,7 @@ import type { PaneModel } from '../../shared/types';
 import { useLayoutStore } from '../state/layout-store';
 import { useOrchStore } from '../state/orch-store';
 import { listPanes } from './split-tree';
+import { pickFallbackInScope } from './pane-spaces';
 import {
   resolveDroppedMissionContextPath,
   toAbsoluteContextPath,
@@ -28,8 +29,17 @@ export function focusedAgentPaneId(): string | null {
     const p = panes.find((x) => x.id === focusedPaneId);
     if (p?.kind === 'cli-agent') return p.id;
   }
-  const agent = panes.find((p) => p.kind === 'cli-agent');
-  return agent?.id ?? null;
+  // Fallback: agente do MESMO escopo do foco. Um anexo da missão A nunca cai
+  // no campo de trabalho da missão B (isolamento A/B).
+  const agentIds = panes
+    .filter((p) => p.kind === 'cli-agent')
+    .map((p) => p.id);
+  return pickFallbackInScope(
+    agentIds,
+    focusedPaneId,
+    panes,
+    useOrchStore.getState().paneMissions,
+  );
 }
 
 /**

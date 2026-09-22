@@ -53,6 +53,24 @@ describe('recorte vendorado (models-rich.json)', () => {
 });
 
 describe('getRichModelMetadata — um modelo real por adapter', () => {
+  it('claude: resolve o seletor exato e metadados do Claude Opus 5.5', () => {
+    expect(getRichModelMetadata('claude', 'claude-opus-5-5')).toMatchObject({
+      id: 'claude-opus-5-5',
+      name: 'Claude Opus 5.5',
+      catalogProvider: 'anthropic',
+      cost: {
+        input: 5,
+        output: 25,
+        cacheRead: 0.5,
+        cacheWrite: 6.25,
+      },
+      contextWindow: 1_000_000,
+      maxTokens: 128_000,
+      reasoning: true,
+      input: ['text', 'image'],
+    });
+  });
+
   it('claude: resolve o seletor exato e metadados do Claude Opus 5', () => {
     expect(getRichModelMetadata('claude', 'claude-opus-5')).toMatchObject({
       id: 'claude-opus-5',

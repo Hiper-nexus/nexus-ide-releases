@@ -24,6 +24,25 @@
 /** Limiar de hold. Abaixo disso é toque (espaço); acima é fala. */
 export const HOLD_TO_TALK_THRESHOLD_MS = 250;
 
+/**
+ * Válvula de segurança do hold-to-talk (tecla presa / keyup perdido).
+ *
+ * O keyup é o ÚNICO fim legítimo da fala com a tecla baixa. Este teto não é
+ * limite de ditado: um texto longo falado com o Space/PTT ainda pressionado
+ * NUNCA pode ser enviado antes da tecla subir (bug do envio prematuro, em que
+ * `maxMs: 60_000` cortava a captura no meio da fala e o `finishAndProcess`
+ * injetava o trecho no pane). 5 min só interrompe um hold esquecido.
+ */
+export const HOLD_TO_TALK_SAFETY_MAX_MS = 5 * 60_000;
+
+/**
+ * Hold-to-talk nunca encerra por silêncio: o operador pode pausar para pensar
+ * com a tecla ainda baixa. `Infinity` desarma o ramo de silêncio nos dois
+ * detectores (`trackSilence` / `shouldEndpointUtterance`) sem flag nova —
+ * `quietFor >= Infinity` e `silentMs < Infinity` nunca endpointam.
+ */
+export const HOLD_TO_TALK_SILENCE_MS = Number.POSITIVE_INFINITY;
+
 export type HoldToTalkState = 'idle' | 'pending' | 'talking' | 'typing';
 
 export interface HoldToTalkOutcome {

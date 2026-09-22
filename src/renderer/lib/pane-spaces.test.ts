@@ -8,6 +8,7 @@ import {
   nextPaneSpaceTitle,
   newPaneSpaceId,
   paneScopeKey,
+  pickFallbackInScope,
   selectScopePanes,
   spaceScopeKey,
 } from './pane-spaces';
@@ -40,6 +41,71 @@ describe('paneScopeKey — quem é o dono do pane', () => {
 
   it('pane sem missão e sem espaço fica no balde de soltos', () => {
     expect(paneScopeKey(pane({ id: 'p1' }), {})).toBe(LOOSE_SCOPE_KEY);
+  });
+});
+
+describe('pickFallbackInScope — fallback nunca cruza missão', () => {
+  const panes = [
+    pane({ id: 'a1', missionId: 'mA' }),
+    pane({ id: 'a2', missionId: 'mA' }),
+    pane({ id: 'b1', missionId: 'mB' }),
+  ];
+
+  it('escolhe candidato vivo do MESMO escopo do foco', () => {
+    expect(pickFallbackInScope(['b1', 'a2', 'a1'], 'a1', panes, {})).toBe('a2');
+    expect(pickFallbackInScope(['a1', 'b1'], 'a1', panes, {})).toBe('a1');
+  });
+
+  it('missão A sem candidato vivo devolve null — nunca cai na missão B', () => {
+    expect(pickFallbackInScope(['b1'], 'a1', panes, {})).toBeNull();
+  });
+
+  it('layout solo (sem foco) aceita o primeiro candidato vivo', () => {
+    expect(pickFallbackInScope(['b1', 'a1'], null, panes, {})).toBe('b1');
+    expect(pickFallbackInScope([], 'a1', panes, {})).toBeNull();
+  });
+
+  it('foco que sumiu da árvore devolve null — não cai em outro campo', () => {
+    expect(pickFallbackInScope(['b1', 'a1'], 'ghost-pane', panes, {})).toBeNull();
+  });
+});
+
+describe('listPaneScopes — cada missão carrega o SEU orquestrador', () => {
+  it('dois campos lado a lado, cada um com o orquestrador próprio', () => {
+    const scopes = listPaneScopes({
+      panes: [
+        pane({ id: 'a-orq', missionId: 'mA', role: 'orchestrator', title: 'Orq A' }),
+        pane({ id: 'a-w1', missionId: 'mA', role: 'worker' }),
+        pane({ id: 'b-w1', missionId: 'mB', role: 'worker' }),
+        pane({ id: 'b-orq', missionId: 'mB', role: 'orchestrator', title: 'Orq B' }),
+      ],
+      paneMissions: {},
+      missions: [
+        { id: 'mA', title: 'Missão A', state: 'running' },
+        { id: 'mB', title: 'Missão B', state: 'running' },
+      ],
+    });
+    const a = scopes.find((s) => s.id === 'mA');
+    const b = scopes.find((s) => s.id === 'mB');
+    expect(a?.orchestrator?.paneId).toBe('a-orq');
+    expect(b?.orchestrator?.paneId).toBe('b-orq');
+    expect(a?.orchestrator?.paneId).not.toBe(b?.orchestrator?.paneId);
+  });
+
+  it('campo sem orquestrador devolve null — nunca inventa o da vizinha', () => {
+    const scopes = listPaneScopes({
+      panes: [
+        pane({ id: 'a-w1', missionId: 'mA', role: 'worker' }),
+        pane({ id: 'b-orq', missionId: 'mB', role: 'orchestrator', title: 'Orq B' }),
+      ],
+      paneMissions: {},
+      missions: [
+        { id: 'mA', title: 'Missão A', state: 'running' },
+        { id: 'mB', title: 'Missão B', state: 'running' },
+      ],
+    });
+    expect(scopes.find((s) => s.id === 'mA')?.orchestrator).toBeNull();
+    expect(scopes.find((s) => s.id === 'mB')?.orchestrator?.title).toBe('Orq B');
   });
 });
 

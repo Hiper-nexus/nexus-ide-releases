@@ -2,7 +2,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanupSessionArtifacts, prepareEphemeralHome } from './hooks-gen';
+import {
+  CLAUDE_AUTH_SYNCBACK_MARKER,
+  cleanupSessionArtifacts,
+  prepareEphemeralHome,
+} from './hooks-gen';
 
 const TOKEN = `claude-auth-test-${process.pid}-${Date.now()}`;
 
@@ -20,7 +24,37 @@ afterEach(() => {
 });
 
 describe('native Claude auth in the ephemeral HOME', () => {
-  it('managed renewable auth never carries the native identity, credentials or Keychain links', () => {
+  it.skipIf(process.platform !== 'darwin')(
+    'managed account ungated overlay links the real keychain — no "Chaves Não Encontradas" modal (F-629)',
+    () => {
+      // O CLI com CLAUDE_SECURESTORAGE_CONFIG_DIR usa só o serviço escopado
+      // da conta; sem keychain no overlay, qualquer escrita (refresh, gh,
+      // git osxkeychain) abria o modal do macOS com "Reajustar Para Padrões".
+      const managed = path.join(home, '.nexus/managed-accounts/claude/account-b/auth');
+      fs.mkdirSync(managed, { recursive: true });
+      const realDb = path.join(home, 'Library', 'Keychains');
+      fs.mkdirSync(realDb, { recursive: true });
+      const loginDb = path.join(realDb, 'login.keychain-db');
+      fs.writeFileSync(loginDb, 'db');
+
+      const overlay = prepareEphemeralHome(TOKEN, {}, {
+        carryNativeClaudeAuth: true, managedClaudeAuthDir: managed, gateHooks: false,
+      });
+
+      const linked = path.join(overlay.dir, 'Library', 'Keychains', 'login.keychain-db');
+      expect(fs.realpathSync(linked)).toBe(fs.realpathSync(loginDb));
+      expect(fs.existsSync(path.join(overlay.dir, CLAUDE_AUTH_SYNCBACK_MARKER))).toBe(false);
+      cleanupSessionArtifacts(TOKEN);
+      expect(fs.readFileSync(loginDb, 'utf8')).toBe('db');
+
+      const gated = prepareEphemeralHome(TOKEN, {}, {
+        carryNativeClaudeAuth: true, managedClaudeAuthDir: managed, gateHooks: true,
+      });
+      expect(fs.existsSync(path.join(gated.dir, 'Library', 'Keychains'))).toBe(false);
+    },
+  );
+
+  it('managed renewable auth never carries the native identity or credentials', () => {
     const managed = path.join(home, '.nexus/managed-accounts/claude/account-b/auth');
     fs.mkdirSync(managed, { recursive: true });
     fs.mkdirSync(path.join(home, '.claude'), { recursive: true });

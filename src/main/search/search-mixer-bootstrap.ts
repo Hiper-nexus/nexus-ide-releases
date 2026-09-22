@@ -14,6 +14,7 @@ import { getWorkspaceMemoryStore } from '../memory/workspace-memory';
 import {
   isInsidePath,
 } from '../orch/workspace-path';
+import { triageResearchHits } from '../orch/jev-research-triage';
 import { tryResolveSubdirUnderRoot } from '../security/scoped-workspace-fs';
 import { scanSkillsDirectory } from '../skills/skills-catalog';
 import { createRipgrepSearchProvider } from './ripgrep-fallback';
@@ -209,7 +210,26 @@ export async function runSearchMixerQuery(
     };
   }
   const query = searchQuerySchema.parse(raw) as SearchQuery;
-  return getSearchMixer(query.projectRoot).searchNow(query);
+  const result = await getSearchMixer(query.projectRoot).searchNow(query);
+  // Triagem Jev (superfície researchTriage): melhor hit + a pergunta está
+  // respondida? — para o agente saber se fecha a pesquisa ou busca outra fonte.
+  // Fail-open: sem chave/toggle o rank lexical continua mandando.
+  try {
+    const triage = await triageResearchHits(
+      query.text,
+      (result.hits ?? []).map((hit) => ({
+        id: hit.id,
+        title: hit.title,
+        snippet: hit.snippet,
+      })),
+      'search-mixer',
+      undefined,
+    );
+    if (triage) return { ...result, triage };
+  } catch {
+    // Julgamento nunca quebra a busca.
+  }
+  return result;
 }
 
 /** Test-only. */

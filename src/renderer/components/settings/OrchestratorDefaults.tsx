@@ -58,9 +58,27 @@ function selectDefaults(settings: OrchSettings): OrchestratorDefaultsValue {
 function modelLabel(adapterId: string, model: string): string {
   if (
     adapterId === "claude" &&
+    (model === "claude-opus-5-5" || model === "anthropic/claude-opus-5-5")
+  ) {
+    return `Claude Opus 5.5 · ${model}`;
+  }
+  if (
+    adapterId === "claude" &&
     (model === "claude-opus-5" || model === "anthropic/claude-opus-5")
   ) {
     return `Claude Opus 5 · ${model}`;
+  }
+  if (
+    adapterId === "codex" &&
+    (model === "gpt-6-sol" || model === "openai/gpt-6-sol")
+  ) {
+    return `GPT-6 Sol · ${model}`;
+  }
+  if (
+    adapterId === "codex" &&
+    (model === "gpt-6-luna" || model === "openai/gpt-6-luna")
+  ) {
+    return `GPT-6 Luna · ${model}`;
   }
   return model;
 }

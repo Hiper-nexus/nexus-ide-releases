@@ -709,14 +709,30 @@ export function prepareEphemeralHome(
     // login nunca "segura"). Linkar os keychain-db reais devolve a linhagem
     // do HOME real: leitura e escrita atravessam o link, então o refresh é
     // compartilhado com o perfil nativo e o /login persiste de verdade.
-    // Panes gated recebem CLAUDE_CODE_OAUTH_TOKEN por env (superfície mínima);
-    // para eles o keychain inteiro seria exposição sem ganho.
-    if (process.platform === 'darwin' && options.gateHooks === false) {
-      linkDarwinUserKeychains(os.homedir(), dir);
-    }
     fs.writeFileSync(path.join(dir, CLAUDE_AUTH_SYNCBACK_MARKER), '1', {
       mode: 0o600,
     });
+  }
+
+  // F-575/F-629: keychain real no overlay para o Claude PRIMEIRO-PARTE não
+  // gated — conta nativa E conta gerenciada. Sem o link, toda escrita de
+  // keychain no pane (refresh do próprio Claude, gh migrando token, git
+  // osxkeychain, SDKs de terceiros) cai em "Chaves Não Encontradas", o modal
+  // do macOS cujo botão "Reajustar Para Padrões" apaga o keychain do
+  // operador. Conta gerenciada é segura: com CLAUDE_SECURESTORAGE_CONFIG_DIR
+  // o CLI (2.1.280, verificado no binário) usa só o serviço
+  // `Claude Code-credentials-<sha256(dir)[:8]>` — o mesmo de
+  // managedClaudeKeychainService — e nunca lê o item nativo. Panes gated
+  // recebem token por env (superfície mínima); terceiros (GLM/LongCat) nunca
+  // recebem o link.
+  const firstPartyClaudeAuth =
+    carryNativeClaudeAuth || Boolean(options.managedClaudeAuthDir);
+  if (
+    firstPartyClaudeAuth &&
+    process.platform === 'darwin' &&
+    options.gateHooks === false
+  ) {
+    linkDarwinUserKeychains(os.homedir(), dir);
   }
 
   // Contains the bearer token — 0600.

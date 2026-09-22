@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  HOLD_TO_TALK_SAFETY_MAX_MS,
+  HOLD_TO_TALK_SILENCE_MS,
   HOLD_TO_TALK_THRESHOLD_MS,
   HoldToTalkDiscriminator,
 } from './hold-to-talk';
@@ -24,6 +26,30 @@ describe('fiação viva do hold-to-talk', () => {
     );
     expect(source).toContain('emitSpace:');
     expect(source).toContain("writeToPane(paneId, ' '.repeat(count))");
+  });
+
+  it('PTT e ditado usam holdToTalkAutoStop — nunca o auto-stop do wake (envio prematuro)', () => {
+    const source = readFileSync(
+      new URL('./voice-controller.ts', import.meta.url),
+      'utf8',
+    );
+    // O bug: holdGuard com maxMs/silenceMs = 60s encerrava a captura no meio
+    // da fala e o finishAndProcess injetava o trecho ANTES do keyup.
+    expect(source).toContain('holdToTalkAutoStop(');
+    expect(source).toMatch(/beginListening\(\s*capture\.current!,\s*holdToTalkAutoStop\(/u);
+    expect(source).not.toContain('PTT_HOLD_MAX_MS');
+    expect(source).toContain('HOLD_TO_TALK_SAFETY_MAX_MS');
+    expect(source).toContain('HOLD_TO_TALK_SILENCE_MS');
+  });
+});
+
+describe('contrato de fim de fala do hold-to-talk', () => {
+  it('silêncio nunca encerra (Infinity) e o maxMs é válvula de segurança, não teto de ditado', () => {
+    expect(HOLD_TO_TALK_SILENCE_MS).toBe(Number.POSITIVE_INFINITY);
+    // Um ditado longo legítimo (2–3 min com pausas) nunca pode ser cortado.
+    expect(HOLD_TO_TALK_SAFETY_MAX_MS).toBeGreaterThanOrEqual(3 * 60_000);
+    // A válvula ainda precisa existir: tecla presa / keyup perdido.
+    expect(HOLD_TO_TALK_SAFETY_MAX_MS).toBeLessThanOrEqual(15 * 60_000);
   });
 });
 

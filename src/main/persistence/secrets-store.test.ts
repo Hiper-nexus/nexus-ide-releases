@@ -39,6 +39,7 @@ vi.mock('electron', () => ({
 import {
   deleteSecret,
   getSecret,
+  isSecretDecryptDenied,
   isSecureStorageBackendAllowed,
   resetSecretsCacheForTests,
   setSecret,
@@ -166,6 +167,51 @@ describe('durable secret persistence', () => {
     expect(encrypt).not.toHaveBeenCalled();
     expect(fs.existsSync(secretsFile)).toBe(false);
     expect(fs.existsSync(secretsLockFile)).toBe(false);
+  });
+
+  it('para de insistir em encryptString depois de um SecItemAdd falho (modal Chaves Não Encontradas)', async () => {
+    setSecret('provider', 'previous');
+    const { safeStorage } = await import('electron');
+    const encrypt = vi
+      .spyOn(safeStorage, 'encryptString')
+      .mockImplementation(() => {
+        throw new Error('SecItemAdd: default keychain missing');
+      });
+
+    const first = setSecret('provider', 'next');
+    expect(first.ok).toBe(false);
+    expect(encrypt).toHaveBeenCalledTimes(1);
+
+    // Picos de gravação (read-back de conta, quota, spawn) não podem reabrir
+    // o diálogo do SecurityAgent — o backoff segura todas as chaves.
+    for (let i = 0; i < 10; i += 1) {
+      setSecret(`provider-${i}`, 'value');
+      setSecret('provider', 'next');
+    }
+    expect(encrypt).toHaveBeenCalledTimes(1);
+  });
+
+  it('decrypt falho memoiza por chave — uma leitura, não uma enxurrada de SecItemCopyMatching', async () => {
+    setSecret('provider', 'previous');
+    setSecret('other', 'other-value');
+    resetSecretsCacheForTests(); // força o próximo getSecret a decifrar do disco
+    const { safeStorage } = await import('electron');
+    const decrypt = vi
+      .spyOn(safeStorage, 'decryptString')
+      .mockImplementation(() => {
+        throw new Error('keychain locked');
+      });
+
+    for (let i = 0; i < 25; i += 1) {
+      expect(getSecret('provider')).toBeNull();
+      expect(getSecret('other')).toBeNull();
+    }
+    // Uma tentativa por chave: 25 rajadas viram 2 chamadas, não 50.
+    expect(decrypt).toHaveBeenCalledTimes(2);
+    expect(isSecretDecryptDenied('provider')).toBe(true);
+    expect(isSecretDecryptDenied('other')).toBe(true);
+    // Chave não lida ainda está presente no índice bruto.
+    expect(isSecretDecryptDenied('missing')).toBe(false);
   });
 
   it('does not acquire the vault lock when the first encrypt fails', async () => {

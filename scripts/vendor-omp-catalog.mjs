@@ -55,6 +55,21 @@ const OPENROUTER_FAMILY_FILTER = /claude|gpt|glm|deepseek|kimi|grok|gemini/i;
  */
 const RELEASE_AUDITED_MODEL_OVERLAYS = {
   anthropic: {
+    'claude-opus-5-5': {
+      id: 'claude-opus-5-5',
+      name: 'Claude Opus 5.5',
+      api: 'anthropic-messages',
+      cost: {
+        input: 5,
+        output: 25,
+        cacheRead: 0.5,
+        cacheWrite: 6.25,
+      },
+      contextWindow: 1_000_000,
+      maxTokens: 128_000,
+      reasoning: true,
+      input: ['text', 'image'],
+    },
     'claude-opus-5': {
       id: 'claude-opus-5',
       name: 'Claude Opus 5',
@@ -66,6 +81,70 @@ const RELEASE_AUDITED_MODEL_OVERLAYS = {
         cacheWrite: 6.25,
       },
       contextWindow: 1_000_000,
+      maxTokens: 128_000,
+      reasoning: true,
+      input: ['text', 'image'],
+    },
+  },
+  openai: {
+    'gpt-6-sol': {
+      id: 'gpt-6-sol',
+      name: 'GPT-6 Sol',
+      api: 'openai-responses',
+      cost: {
+        input: 5,
+        output: 30,
+        cacheRead: 0.5,
+        cacheWrite: 6.25,
+      },
+      contextWindow: 400_000,
+      maxTokens: 128_000,
+      reasoning: true,
+      input: ['text', 'image'],
+    },
+    'gpt-6-luna': {
+      id: 'gpt-6-luna',
+      name: 'GPT-6 Luna',
+      api: 'openai-responses',
+      cost: {
+        input: 1,
+        output: 6,
+        cacheRead: 0.1,
+        cacheWrite: 1.25,
+      },
+      contextWindow: 400_000,
+      maxTokens: 128_000,
+      reasoning: true,
+      input: ['text', 'image'],
+    },
+  },
+  'openai-codex': {
+    'gpt-6-sol': {
+      id: 'gpt-6-sol',
+      name: 'GPT-6 Sol',
+      api: 'openai-codex-responses',
+      cost: {
+        input: 5,
+        output: 30,
+        cacheRead: 0.5,
+        cacheWrite: 6.25,
+      },
+      contextWindow: 400_000,
+      maxTokens: 128_000,
+      reasoning: true,
+      input: ['text', 'image'],
+    },
+    'gpt-6-luna': {
+      id: 'gpt-6-luna',
+      name: 'GPT-6 Luna',
+      api: 'openai-codex-responses',
+      cost: {
+        input: 1,
+        output: 6,
+        cacheRead: 0.1,
+        cacheWrite: 1.25,
+      },
+      contextWindow: 400_000,
       maxTokens: 128_000,
       reasoning: true,
       input: ['text', 'image'],

@@ -81,6 +81,10 @@ import {
   resolveBrowserExtract,
   type BrowserExtractDeps,
 } from './browser-extract';
+import {
+  pickBrowserFindElement,
+  type BrowserFindJevDeps,
+} from './browser-find-jev';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import {
@@ -1769,7 +1773,16 @@ async function resolveBrowserElementByText(
 export async function findBrowserElements(
   paneId: string,
   scope: ProjectExecutionScope,
-  options: { text?: string; role?: string; limit?: number } = {},
+  options: {
+    text?: string;
+    role?: string;
+    limit?: number;
+    /** Auto-on at the tool layer: Jev tie-break among 2–5 score-tied matches. */
+    judge?: boolean;
+    sessionId?: string;
+    missionId?: string;
+    deps?: BrowserFindJevDeps;
+  } = {},
 ): Promise<BrowserFindResult & { paneId: string }> {
   const result = browserFindResultSchema.parse(
     await runBrowserAutomationForPane(paneId, scope, 'find', {
@@ -1778,7 +1791,24 @@ export async function findBrowserElements(
       ...(options.limit !== undefined ? { limit: options.limit } : {}),
     }),
   );
-  return { paneId, ...result };
+  const base = { paneId, ...result };
+  // `judge` is opt-out (`judge: false`) at the tool; programmatic callers
+  // that omit it (e.g. click/fill text resolution) keep the pure lexical path.
+  if (options.judge !== true) return base;
+  const entry = withEntry(paneId, scope);
+  const wc = entry.view.webContents;
+  const picked = await pickBrowserFindElement(
+    result.matches,
+    {
+      query: options.text ?? '',
+      pageTitle: redactBrowserText(wc.getTitle() || entry.title),
+      url: redactPageUrl(wc.getURL() || entry.url),
+      ...(options.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
+      ...(options.missionId !== undefined ? { missionId: options.missionId } : {}),
+    },
+    options.deps ?? {},
+  );
+  return picked ? { ...base, picked } : base;
 }
 
 /**

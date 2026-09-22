@@ -79,10 +79,21 @@ export interface BrowserFindMatch extends BrowserElementDescriptor {
   score: number;
 }
 
+/** Jev tie-break winner among 2–5 score-tied find candidates. */
+export interface BrowserFindPick {
+  ref: string;
+  confidence: number;
+}
+
 export interface BrowserFindResult {
   matches: BrowserFindMatch[];
   /** Candidates matching the filters before `limit` truncation. */
   total: number;
+  /**
+   * Present when a Jev choice broke a 2–5 way score tie at confidence ≥ 0.7.
+   * Additive: `matches` stays the lexical ranking either way.
+   */
+  picked?: BrowserFindPick;
 }
 
 /** Post-action page snapshot captured in the main process. */

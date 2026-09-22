@@ -123,12 +123,12 @@ describe('published catalog JSON', () => {
     expect(applyModelCatalogToAdapter(ADAPTER, PUBLISHED_MODEL_CATALOG).models.default).toBe('grok-4.7');
     expect(modelCatalogInfo(BUILTIN_MODEL_CATALOG, 'grok', 'grok-4.7')).toMatchObject({ availability: 'paid', costTier: 'high' });
   });
-  it('ships Claude Opus 5 and grok-4.5, and marks claude-fable-5 as api-only/high', () => {
+  it('ships Claude Opus 5.5 (replacing Opus 5) and grok-4.5, and marks claude-fable-5 as api-only/high', () => {
     expect(PUBLISHED_MODEL_CATALOG.version).toBe(1);
     expect(
-      modelCatalogInfo(PUBLISHED_MODEL_CATALOG, 'claude', 'claude-opus-5'),
+      modelCatalogInfo(PUBLISHED_MODEL_CATALOG, 'claude', 'claude-opus-5-5'),
     ).toMatchObject({
-      id: 'claude-opus-5',
+      id: 'claude-opus-5-5',
       availability: 'paid',
       costTier: 'high',
     });
@@ -198,8 +198,18 @@ describe('published catalog JSON', () => {
     ).toBe(false);
   });
 
-  it('ships gpt-6-astra (2026-09-03) como trusted-access, fora do roteamento automático', () => {
+  it('ships gpt-6-sol/luna (2026) como paid e mantém gpt-6-astra trusted-access', () => {
     for (const catalog of [BUILTIN_MODEL_CATALOG, PUBLISHED_MODEL_CATALOG]) {
+      expect(modelCatalogInfo(catalog, 'codex', 'gpt-6-sol')).toMatchObject({
+        id: 'gpt-6-sol',
+        availability: 'paid',
+        costTier: 'high',
+      });
+      expect(modelCatalogInfo(catalog, 'codex', 'gpt-6-luna')).toMatchObject({
+        id: 'gpt-6-luna',
+        availability: 'paid',
+        costTier: 'medium',
+      });
       const astra = modelCatalogInfo(catalog, 'codex', 'gpt-6-astra');
       expect(astra?.availability).toBe('api-only');
       expect(astra?.costTier).toBe('high');
@@ -207,10 +217,10 @@ describe('published catalog JSON', () => {
     }
     // O rollout restrito não vira default, mas o melhor modelo GA vira.
     expect(BUILTIN_MODEL_CATALOG.adapters?.codex?.default).toBe(
-      'gpt-5.6-sol',
+      'gpt-6-sol',
     );
     expect(PUBLISHED_MODEL_CATALOG.adapters?.codex?.default).toBe(
-      'gpt-5.6-sol',
+      'gpt-6-sol',
     );
   });
 

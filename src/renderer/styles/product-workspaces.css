@@ -1415,3 +1415,293 @@
     margin-inline-start: 0;
   }
 }
+
+/* ── Mission lane bar (campo A/B) ───────────────────────────────────────
+   Ancoragem: painel de rack de controle de missão — near-black, fio de 1px,
+   acento magenta na faixa ativa. Sem gradiente nem sombra. */
+.mission-lane-bar {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  padding: 8px 12px;
+  border-block-end: 1px solid rgba(255, 255, 255, 0.08);
+  background: #111013;
+}
+
+.mission-lane-bar__rail {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  flex: 1;
+  min-inline-size: 0;
+  scrollbar-width: thin;
+}
+
+.mission-lane-bar__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.mission-lane-bar__hint {
+  font-size: 11px;
+  color: #9a9590;
+  white-space: nowrap;
+}
+
+.mission-lane-bar__ab {
+  display: inline-flex;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.mission-lane-bar__ab-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: #9a9590;
+  font: 500 12px/1 -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  padding: 5px 10px;
+  cursor: pointer;
+  min-inline-size: 32px;
+}
+
+.mission-lane-bar__ab-btn--active {
+  background: #c45c9a;
+  color: #0d0b0f;
+}
+
+.mission-lane {
+  display: flex;
+  align-items: stretch;
+  flex: 0 0 auto;
+  inline-size: 232px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  background: #16141a;
+  overflow: hidden;
+}
+
+.mission-lane--active {
+  border-color: rgba(196, 92, 154, 0.55);
+}
+
+.mission-lane--all {
+  inline-size: 108px;
+}
+
+.mission-lane__main {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  flex: 1;
+  min-inline-size: 0;
+  padding: 0;
+  cursor: pointer;
+  text-align: start;
+}
+
+.mission-lane__rule {
+  inline-size: 2px;
+  background: transparent;
+  flex-shrink: 0;
+  transition: background 160ms ease-out;
+}
+
+.mission-lane--active .mission-lane__rule {
+  background: #c45c9a;
+}
+
+.mission-lane__body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 8px;
+  min-inline-size: 0;
+  flex: 1;
+}
+
+.mission-lane__top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-inline-size: 0;
+}
+
+.mission-lane__title {
+  font: 500 13px/1.2 -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  color: #e8e6e3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-inline-size: 0;
+}
+
+.mission-lane__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-inline-size: 0;
+}
+
+.mission-lane__meta-text {
+  font: 400 11px/1.2 -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  color: #9a9590;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mission-lane__crest {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  color: #c8c2bc;
+  background: #0d0b0f;
+  flex-shrink: 0;
+  font: 500 10px/1 -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+
+.mission-lane__crest--live {
+  border-color: rgba(196, 92, 154, 0.75);
+  color: #f0c8e0;
+  background: rgba(196, 92, 154, 0.18);
+  box-shadow: 0 0 0 1px rgba(196, 92, 154, 0.25);
+}
+
+.mission-lane__crest--empty {
+  opacity: 0.45;
+}
+
+.mission-lane__crest-tag {
+  font: 600 9px/1 -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.mission-lane__actions {
+  display: flex;
+  flex-direction: column;
+  border-inline-start: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+
+.mission-lane__pin {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: #9a9590;
+  font: 500 10px/1 -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  padding: 4px 6px;
+  cursor: pointer;
+  min-inline-size: 26px;
+  flex: 1;
+}
+
+.mission-lane__pin:hover {
+  color: #e8e6e3;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.mission-lane__pin--a {
+  color: #0d0b0f;
+  background: #7ec8e3;
+}
+
+.mission-lane__pin--b {
+  color: #0d0b0f;
+  background: #c45c9a;
+}
+
+/* ── Field header (identidade do campo ativo) ──────────────────────────── */
+.mission-field-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-block-end: 1px solid rgba(255, 255, 255, 0.06);
+  background: #0d0b0f;
+}
+
+.mission-field-header__pin {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 18px;
+  block-size: 18px;
+  border-radius: 3px;
+  font: 600 10px/1 -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  flex-shrink: 0;
+}
+
+.mission-field-header__pin--a {
+  background: #7ec8e3;
+  color: #0d0b0f;
+}
+
+.mission-field-header__pin--b {
+  background: #c45c9a;
+  color: #0d0b0f;
+}
+
+.mission-field-header__title {
+  font: 500 13px/1.2 -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  color: #e8e6e3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-inline-size: 0;
+  flex: 1;
+}
+
+.mission-field-header__meta {
+  font: 400 11px/1.2 -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  color: #9a9590;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* Crest do orquestrador no header do campo — o destaque principal do campo. */
+.mission-field-header__orq {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px 3px 7px;
+  border: 1px solid rgba(196, 92, 154, 0.65);
+  border-radius: 999px;
+  background: rgba(196, 92, 154, 0.16);
+  color: #f0c8e0;
+  flex-shrink: 0;
+}
+
+.mission-field-header__orq--empty {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: transparent;
+  color: #9a9590;
+  font: 400 11px/1.2 -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+
+.mission-field-header__orq-tag {
+  font: 600 9px/1 -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #c45c9a;
+}
+
+.mission-field-header__orq-name {
+  font: 500 12px/1.2 -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  max-inline-size: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

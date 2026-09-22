@@ -28,8 +28,11 @@ describe('parseModelVersion — a geração embutida no id', () => {
   it.each([
     ['claude-opus-4-8', [4, 8]],
     ['claude-fable-5-1', [5, 1]],
+    ['claude-opus-5-5', [5, 5]],
     ['claude-opus-5', [5, 0]],
     ['gpt-5.6-sol', [5, 6]],
+    ['gpt-6-sol', [6, 0]],
+    ['gpt-6-luna', [6, 0]],
     ['gpt-6-astra', [6, 0]],
     ['gpt-5.4-mini', [5, 4]],
     ['gpt-4o-mini', [4, 0]],

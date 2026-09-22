@@ -72,6 +72,7 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
   adapters: {
     claude: {
       models: [
+        { id: 'claude-opus-5-5', availability: 'paid', costTier: 'high', source: 'bundled' },
         { id: 'claude-opus-5', availability: 'paid', costTier: 'high', source: 'bundled' },
         { id: 'claude-fable-5-1', availability: 'paid', costTier: 'high', source: 'bundled' },
         {
@@ -98,6 +99,8 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
     codex: {
       default: CODEX_FRONTIER_MODEL,
       models: [
+        { id: 'gpt-6-sol', availability: 'paid', costTier: 'high', source: 'bundled' },
+        { id: 'gpt-6-luna', availability: 'paid', costTier: 'medium', source: 'bundled' },
         {
           id: 'gpt-6-astra',
           availability: 'api-only',

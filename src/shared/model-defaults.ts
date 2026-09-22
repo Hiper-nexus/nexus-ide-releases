@@ -1,10 +1,21 @@
 /** Defaults de produto que devem permanecer alinhados em adapters e catálogo. */
-export const CODEX_FRONTIER_MODEL = 'gpt-5.6-sol';
+// GPT-6 Sol é o topo GA atual; gpt-5.6-sol/terra/luna permanecem listados
+// (superseded ≠ retired) e NÃO migram em RETIRED_MODEL_MIGRATIONS.
+export const CODEX_FRONTIER_MODEL = 'gpt-6-sol';
 export const GROK_FRONTIER_MODEL = 'grok-4.7';
 
 /**
  * Modelos legados/aposentados pelos provedores que causam erro 400 se solicitados.
  * Mapeamento automático para versões ativas da mesma linhagem.
+ *
+ * REGRA: só ids que o provider REALMENTE removeu entram aqui. Um modelo
+ * superseded porém ainda executável (ex.: claude-opus-5 frente ao 5.5) NÃO
+ * migra — `resolveRoutableModel` descartaria o candidato quando o CLI ainda
+ * só tem o antigo, e o picker ainda o oferece. Supersede vive na ordem das
+ * listas e no routing table.
+ *
+ * As chaves são globais (sem adapterId): use ids inequívocos. Uma chave
+ * solta como `1.6` reescreveria modelo de QUALQUER provider.
  */
 export const RETIRED_MODEL_MIGRATIONS: Readonly<Record<string, string>> = Object.freeze({
   'gpt-5.5': 'gpt-5.6-luna',
