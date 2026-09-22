@@ -81,7 +81,7 @@ const COPY: Readonly<
   },
   'worker-no-handoff': {
     headline: 'Um integrante da equipe encerrou sem entregar o resultado.',
-    action: 'Confira login e limite da ferramenta de IA em Configurações › Providers e clique em Retomar.',
+    action: 'Confira login e limite da ferramenta de IA em Configurações › Contas de IA e clique em Retomar.',
   },
   'worker-decision': {
     headline: 'Um integrante da equipe parou e pediu uma decisão sua — a missão não falhou.',
@@ -90,7 +90,7 @@ const COPY: Readonly<
   },
   'provider-unavailable': {
     headline: 'A ferramenta de IA escolhida não está disponível para esta tarefa.',
-    action: 'Abra Configurações › Providers, corrija a instalação ou o login, e clique em Retomar.',
+    action: 'Abra Configurações › Contas de IA, corrija a instalação ou o login, e clique em Retomar.',
   },
   'ownership-conflict': {
     headline: 'Outra tarefa já reservou os mesmos arquivos desta missão.',

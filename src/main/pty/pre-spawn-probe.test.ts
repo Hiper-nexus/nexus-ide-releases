@@ -175,7 +175,7 @@ describe('probePreSpawn — claude family', () => {
     });
     const failure = await runProbe('claude', deps);
     expect(failure?.code).toBe('missing-credential');
-    expect(failure?.hint).toContain('Configurações › Contas');
+    expect(failure?.hint).toContain('Configurações › Contas de IA');
   });
 });
 
@@ -335,7 +335,7 @@ describe('probePreSpawn — api-key adapters', () => {
     );
     expect(failure?.code).toBe('key-missing');
     expect(failure?.adapterId).toBe('glm');
-    expect(failure?.hint).toContain('Providers');
+    expect(failure?.hint).toContain('Contas de IA');
   });
 
   it('glm passes with a stored key', async () => {
@@ -357,7 +357,7 @@ describe('probePreSpawn — api-key adapters', () => {
       kind: 'cli-pty',
       auth: {
         method: 'api_key',
-        loginHint: 'Cole sua API key do LongCat em Configurações › Providers',
+        loginHint: 'Cole sua API key do LongCat em Configurações › Contas de IA',
       },
     };
     const failure = await probePreSpawn('longcat', {

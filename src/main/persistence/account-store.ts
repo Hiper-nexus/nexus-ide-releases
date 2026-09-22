@@ -726,7 +726,7 @@ export function prepareAccountForSpawn(
         ok: false,
         error:
           `conta "${account.label}" com renovação de token falhando — entre ` +
-          'novamente em Configurações › Providers',
+          'novamente em Configurações › Contas de IA',
       };
     }
   }
@@ -744,7 +744,7 @@ export function prepareAccountForSpawn(
       ok: false,
       error:
         `conta "${account.label}" com token expirado e sem renovação possível — entre ` +
-        'novamente em Configurações › Providers',
+        'novamente em Configurações › Contas de IA',
     };
   }
   const credential = getSecret(CRED_PREFIX + account.id);
@@ -804,7 +804,7 @@ function markClaudeRefreshFailed(account: { id: string; label: string }): void {
   console.warn(
     '[accounts] claude oauth NÃO renovado para conta',
     account.label,
-    '— entre novamente em Configurações › Providers',
+    '— entre novamente em Configurações › Contas de IA',
   );
   if (!already) emit();
 }

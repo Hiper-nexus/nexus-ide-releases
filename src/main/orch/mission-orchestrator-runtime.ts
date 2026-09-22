@@ -208,7 +208,7 @@ export function resolveProductionMissionOrchestratorRuntime(
   if (!adapter) {
     throw new Error(
       `Provider do orquestrador \`${adapterId}\` não foi carregado. ` +
-        'Escolha outro em Configurações › Providers.',
+        'Escolha outro em Configurações › Contas de IA.',
     );
   }
   if (adapter.kind !== 'cli-pty') {
@@ -277,7 +277,7 @@ export function resolveProductionMissionOrchestratorRuntime(
     accounts.find((candidate) => usable(candidate));
   if (!deps.isProviderEnabled(adapterId)) {
     throw new Error(
-      `${adapter.label} está desativado em Configurações › Providers.`,
+      `${adapter.label} está desativado em Configurações › Contas de IA.`,
     );
   }
   if (
@@ -292,7 +292,7 @@ export function resolveProductionMissionOrchestratorRuntime(
     throw new Error(
       'Nenhuma conta do orquestrador tem credencial válida fora de cooldown.' +
         (anyExpired
-          ? ' Há sessão expirada — entre novamente em Configurações › Providers.'
+          ? ' Há sessão expirada — entre novamente em Configurações › Contas de IA.'
           : ''),
     );
   }

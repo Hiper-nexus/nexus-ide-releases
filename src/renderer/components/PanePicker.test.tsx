@@ -309,7 +309,7 @@ describe('PanePicker — abrir um pane já escolhendo o que ele é', () => {
     expect(rows[0]).toContain(
       'desligada em Configurações › Conta e acesso a IAs › Contas de IA',
     );
-    expect(rows[0]).not.toContain('Configurações › Contas ');
+    expect(rows[0]).not.toContain('Configurações › Contas de IA ');
     expect(rows[1]).toContain('Kimi');
     expect(rows[1]).toContain('CLI não encontrada no PATH');
     // Indisponível não é clicável: não vira opção navegável.

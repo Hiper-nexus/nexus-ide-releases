@@ -216,8 +216,8 @@ function assertSquadDesignAuthority(options: SquadDesignOptions): void {
 
 function noMaestroError(operatorChoice: boolean): string {
   return operatorChoice
-    ? "Nenhuma CLI autenticada com lançamento, prompt, observação de status e handoff está pronta para atuar como Maestro. Confira Configurações › Providers."
-    : "Nenhum Maestro com orquestração verificada está pronto. Instale, ative ou autentique Claude Code ou Codex e confira Configurações › Providers. Integrações experimentais só podem ser escolhidas manualmente na revisão.";
+    ? "Nenhuma CLI autenticada com lançamento, prompt, observação de status e handoff está pronta para atuar como Maestro. Confira Configurações › Contas de IA."
+    : "Nenhum Maestro com orquestração verificada está pronto. Instale, ative ou autentique Claude Code ou Codex e confira Configurações › Contas de IA. Integrações experimentais só podem ser escolhidas manualmente na revisão.";
 }
 
 export interface ConsultantRole {

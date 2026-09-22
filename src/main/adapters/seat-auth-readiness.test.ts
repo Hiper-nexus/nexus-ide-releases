@@ -222,7 +222,7 @@ describe('classifyKimiProviderList', () => {
 });
 
 describe('toast de API key — só pick civil explícito', () => {
-  const civilianHint = 'Cole sua API key do LongCat em Configurações › Providers';
+  const civilianHint = 'Cole sua API key do LongCat em Configurações › Contas de IA';
 
   it('autopilot remint nunca tosta Cole sua API key', () => {
     expect(

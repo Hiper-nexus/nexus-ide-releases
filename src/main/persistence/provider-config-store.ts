@@ -535,7 +535,7 @@ function providerInfrastructureReadiness(adapterId: string): ProviderReadiness {
   if (!cfg.enabled) {
     return {
       ready: false,
-      reason: `${adapter.label} está desativado em Configurações › Providers.`,
+      reason: `${adapter.label} está desativado em Configurações › Contas de IA.`,
     };
   }
 
@@ -548,7 +548,7 @@ function providerInfrastructureReadiness(adapterId: string): ProviderReadiness {
         // (nvm, pnpm, instalador próprio). O caminho que funciona vem antes.
         reason:
           `${adapter.label} não foi encontrado no PATH do Nexus. Se já está ` +
-          `instalado, use Configurações › Providers › Reexaminar CLIs ou ` +
+          `instalado, use Configurações › Contas de IA › Reexaminar CLIs ou ` +
           `informe o caminho do binário. Para instalar: ${adapter.install.command}`,
       };
     }

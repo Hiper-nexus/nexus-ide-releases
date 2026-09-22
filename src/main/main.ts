@@ -480,7 +480,7 @@ function bootstrap(): void {
     // provider picker remains available for an explicit repair.
     console.warn(
       "[settings] retired provider migration deferred; Nexus will continue. " +
-        "Escolha um provider atual em Configurações › Providers.",
+        "Escolha um provider atual em Configurações › Contas de IA.",
       error,
     );
   }

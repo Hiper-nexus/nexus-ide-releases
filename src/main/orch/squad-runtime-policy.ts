@@ -233,7 +233,7 @@ export function buildSquadRuntimeCliPolicy(
     }
     if (!provider.enabled) {
       unroutableReasonByCliId[provider.adapterId] =
-        "provider desabilitado em Configurações › Providers";
+        "provider desabilitado em Configurações › Contas de IA";
       continue;
     }
     if (!provider.installed) {
