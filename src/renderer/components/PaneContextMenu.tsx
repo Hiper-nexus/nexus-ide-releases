@@ -26,6 +26,18 @@ export interface PaneContextMenuProps {
   readonly onClose: () => void;
 }
 
+/** Terminal (o pane em si) → Workspace (Git, missão) → Papel (muda quem o
+ *  pane é no time). A ação de papel fica por último e separada: ela não é
+ *  "mais uma" ao lado de Copiar saída. */
+type MenuGroup = "terminal" | "workspace" | "role";
+const GROUP_ORDER: readonly MenuGroup[] = ["terminal", "workspace", "role"];
+
+function groupOf(id: string): MenuGroup {
+  if (id === "copy-output") return "terminal";
+  if (id === "promote-orchestrator") return "role";
+  return "workspace";
+}
+
 interface MenuAction {
   readonly id: string;
   readonly label: string;
@@ -256,12 +268,25 @@ export function PaneContextMenu({
       onContextMenu={(event) => event.preventDefault()}
     >
       <p className="pane-context-menu__head">{pane.title}</p>
-      {actions.map((action) => (
+      {GROUP_ORDER.flatMap((group, groupIndex) => {
+        // Git é a ação de workspace mais comum: abre o grupo.
+        const inGroup = actions
+          .filter((action) => groupOf(action.id) === group)
+          .sort((a, b) => Number(b.id === "git") - Number(a.id === "git"));
+        if (inGroup.length === 0) return [];
+        const hasEarlierGroup = GROUP_ORDER.slice(0, groupIndex).some((earlier) =>
+          actions.some((action) => groupOf(action.id) === earlier),
+        );
+        return [
+          hasEarlierGroup ? (
+            <div key={`sep-${group}`} role="separator" className="pane-context-menu__sep" />
+          ) : null,
+          ...inGroup.map((action) => (
         <button
           key={action.id}
           type="button"
           role="menuitem"
-          className="pane-context-menu__item"
+          className={`pane-context-menu__item pane-context-menu__item--${group}`}
           title={action.detail}
           onClick={() => {
             onClose();
@@ -274,7 +299,9 @@ export function PaneContextMenu({
             <small>{action.detail}</small>
           </span>
         </button>
-      ))}
+          )),
+        ];
+      })}
     </div>,
     document.body,
   );

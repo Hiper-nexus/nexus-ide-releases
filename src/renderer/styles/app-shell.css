@@ -1613,7 +1613,7 @@
 }
 
 .model-picker__model-default {
-  font-size: 9px;
+  font-size: var(--text-2xs);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-muted);
