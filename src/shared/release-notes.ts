@@ -5879,8 +5879,9 @@ export const CURRENT_RELEASE: AppRelease = {
   date: '2026-09-22',
   codename: 'Redline abre neste macOS',
   summary:
-    'O companheiro da barra de menu volta a abrir no macOS 27.0. A compilação ' +
-    'fica presa ao piso macOS 14, em vez de herdar um mínimo mais novo que o sistema.',
+    'O companheiro da barra de menu volta a abrir no macOS 27.0 e esta leva ' +
+    'fecha ditado, multi-missão, keychain, modelos novos e a trava do leak ' +
+    'de desktop-control.',
   highlights: [
     {
       title: 'Nexus Redline abre de novo',
@@ -5895,6 +5896,18 @@ export const CURRENT_RELEASE: AppRelease = {
         'Um pane novo continua na conta ativa enquanto a medição ainda mostra ' +
         'folga. A irmã mais livre só entra quando a ativa chega a zero, entra ' +
         'em cooldown ou toma um hit real. Sem medição, a escolha do operador permanece.',
+    },
+    {
+      title: 'Multi-missão no mesmo workspace',
+      detail:
+        'Lane bar por escopo, pinos A/B com isolamento de campo (o conteúdo ' +
+        'da missão A nunca vai para B) e crest/badge do orquestrador no header.',
+    },
+    {
+      title: 'Opus 5.5 e GPT-6 no catálogo',
+      detail:
+        'Claude Opus 5.5 substitui o 5 no roteador e defaults; GPT-6 Sol é o ' +
+        'frontier Codex e Luna cobre o tier barato — preços, OMP e adapters juntos.',
     },
   ],
   fixes: [
@@ -5920,6 +5933,25 @@ export const CURRENT_RELEASE: AppRelease = {
         'e mostra quantas contas conectadas ficaram de fora. Google AI Ultra ' +
         'entra como $100 ou $200 quando o plano diz 5× ou 20×. Sem esse dado, ' +
         'o Nexus não inventa o valor.',
+    },
+    {
+      title: 'Ditado só envia ao soltar a tecla',
+      detail:
+        'Space/PTT não entrega a transcrição prematura; o hold-to-talk tem ' +
+        'teto de segurança e não encerra no silêncio da fala.',
+    },
+    {
+      title: 'Keychain com veneno de sessão',
+      detail:
+        'A primeira falha de safeStorage desliga a escrita no cofre para o ' +
+        'resto do processo — o modal «Chaves Não Encontradas» não volta. O vault ' +
+        'também exporta/importa multi-PC com passphrase.',
+    },
+    {
+      title: 'desktop-control não vaza para o terminal externo',
+      detail:
+        'SCRIPT_KEY só vai para o app da frente e a denylist de terminais ' +
+        'recusa o atalho — o conteúdo do operador não cai mais no Terminal de fora.',
     },
   ],
 };
