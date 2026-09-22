@@ -785,6 +785,23 @@ describe('estacionamento de hosts na troca de workspace', () => {
     expect(getPaneSessionId(paneA1.id)).toBe('pty-park-a1');
   });
 
+  it('drena saída do workspace estacionado após o slot perder a medida', async () => {
+    const { host } = await openLiveHost(paneA1);
+    expect(host.gridReady).toBe(true);
+    parkWorkspaceHosts('/ws/a');
+    setHostVisibility(paneA1.id, false);
+    setHostSize(host.element, 0, 0);
+    refitAllPanesBeforePaint();
+    expect(host.gridReady).toBe(false);
+
+    const write = vi.spyOn(host.term, 'write');
+    ptyDataListeners.get('pty-park-a1')!('saída do outro workspace');
+    await vi.advanceTimersByTimeAsync(200);
+
+    expect(write).toHaveBeenCalledWith('saída do outro workspace', expect.any(Function));
+    expect(terminalOutputScheduler.getQueuedChars(host.term)).toBe(0);
+  });
+
   it('voltar ao workspace reanexa o mesmo host sem replay duplicado', async () => {
     const { host } = await openLiveHost(paneA1);
     parkWorkspaceHosts('/ws/a');

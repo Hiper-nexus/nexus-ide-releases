@@ -344,6 +344,9 @@ export function createMainWindow(
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
+      // xterm parses PTY output on timers. A covered second IDE window must
+      // keep parsing while its agents work, or its bounded queue drops output.
+      backgroundThrottling: process.platform !== 'darwin',
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,

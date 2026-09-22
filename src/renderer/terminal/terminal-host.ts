@@ -183,6 +183,8 @@ interface Host {
   isVisible: boolean;
   /** False between reveal/failed measurement and the next successful fit. */
   gridReady: boolean;
+  /** Last usable xterm grid remains valid for parsing while the host is detached. */
+  hasFittedGrid: boolean;
   /** One-shot notice when agent is held pending user approval. */
   holdNoticeWritten?: boolean;
   /** Invalidates a late async spawn after recovery timeout/replacement. */
@@ -1042,16 +1044,17 @@ function startSpawn(
             ).slice(-HIBERNATE_PENDING_OUTPUT_CHARS);
             return;
           }
-          if (!host.gridReady && host.isVisible && document.visibilityState !== 'hidden') {
+          const paneVisible = host.isVisible && !host.parked;
+          if (!host.gridReady && paneVisible && document.visibilityState !== 'hidden') {
             resumeVisibleHost(pane.id, host);
           }
           const policy = terminalOutputPolicy({
             kind: pane.kind,
             isFocused:
               useLayoutStore.getState().focusedPaneId === pane.id,
-            isPaneVisible: host.isVisible,
+            isPaneVisible: paneVisible,
             isDocumentVisible: document.visibilityState !== 'hidden',
-            isGridReady: host.gridReady,
+            isGridReady: host.gridReady || (!paneVisible && host.hasFittedGrid),
             performanceMode: currentSettings.performanceMode,
           });
           writeTerminalOutput(host.term, data, {
@@ -1461,6 +1464,7 @@ function fitHostGrid(host: Host): boolean {
       host.term.resize(grid.cols, grid.rows);
     }
     host.gridReady = true;
+    host.hasFittedGrid = true;
   } catch {
     // Hidden slot, unloaded font or a disposed terminal: retry after layout.
     return false;
@@ -1754,6 +1758,7 @@ export const HIBERNATE_PENDING_OUTPUT_CHARS = 64_000;
 export interface HibernationDecision {
   readonly liveHosts: number;
   readonly isPaneVisible: boolean;
+  readonly isParked: boolean;
   readonly opened: boolean;
   readonly disposed: boolean;
   readonly hasSession: boolean;
@@ -1765,6 +1770,7 @@ export function shouldHibernateHost(input: HibernationDecision): boolean {
   return (
     input.liveHosts >= HIBERNATE_MIN_LIVE_HOSTS &&
     !input.isPaneVisible &&
+    !input.isParked &&
     input.opened &&
     !input.disposed &&
     input.hasSession &&
@@ -1815,6 +1821,7 @@ function virtualizeHost(host: Host): void {
   });
   host.opened = false;
   host.reportedGrid = null;
+  host.hasFittedGrid = false;
   host.virtualized = { cols, snapshot, pendingOutput: '' };
 }
 
@@ -1934,6 +1941,7 @@ function createShellHost(pane: PaneModel): Host {
     reportedGrid: null,
     isVisible: true,
     gridReady: false,
+    hasFittedGrid: false,
     spawnGeneration: 0,
     opened: false,
     spawnStarted: false,
@@ -1992,6 +2000,7 @@ function createCliAgentHost(pane: PaneModel): Host {
     reportedGrid: null,
     isVisible: true,
     gridReady: false,
+    hasFittedGrid: false,
     spawnGeneration: 0,
     opened: false,
     spawnStarted: false,
@@ -2715,6 +2724,7 @@ export function setHostVisibility(paneId: string, isVisible: boolean): void {
       shouldHibernateHost({
         liveHosts: liveHostCount(),
         isPaneVisible: false,
+        isParked: host.parked,
         opened: host.opened,
         disposed: host.disposed,
         hasSession: host.sessionId !== null,

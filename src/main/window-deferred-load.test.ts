@@ -12,6 +12,11 @@ function between(start: string, end: string): string {
 }
 
 describe("deferred main renderer navigation", () => {
+  it("keeps xterm parsing timers active in a covered second Nexus window", () => {
+    expect(between("const win = new BrowserWindow({", "// Policy already set before construction"))
+      .toContain("backgroundThrottling: process.platform !== 'darwin'");
+  });
+
   it("keeps about:blank events outside renderer recovery authority", () => {
     for (const [start, end] of [
       ["wc.on('render-process-gone'", "win.on('unresponsive'"],

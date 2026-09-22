@@ -72,7 +72,7 @@ describe('terminal render policy', () => {
     });
   });
 
-  it('does not treat an off-screen focused pane as foreground', () => {
+  it('drains an off-screen workspace at background priority while the app is visible', () => {
     expect(
       terminalOutputPolicy({
         kind: 'cli-agent',
@@ -83,7 +83,7 @@ describe('terminal render policy', () => {
       }),
     ).toMatchObject({
       foreground: false,
-      holdBackground: true,
+      holdBackground: false,
     });
   });
 
