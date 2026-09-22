@@ -18,3 +18,7 @@ describe('resolveOpenDrawerSection', () => {
     expect(resolveOpenDrawerSection('ranking')).toBe('ranking');
   });
 });
+
+it('sends the retired Jev decisions tab to Auditoria, where the history now lives', () => {
+  expect(resolveOpenDrawerSection('jev-decisions')).toBe('audit');
+});

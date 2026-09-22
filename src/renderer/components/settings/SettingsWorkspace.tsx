@@ -220,7 +220,19 @@ function SettingsSectionContent({
     case 'diagnostics':
       return <DiagnosticsSection />;
     case 'audit':
-      return <AuditSection />;
+    case 'jev-decisions':
+      // Uma página de histórico: confirmações e, abaixo, julgamentos do Jev.
+      // O Jev entra como subseção (h3, título próprio), não como segunda rota.
+      return (
+        <>
+          <AuditSection />
+          <SettingsRouteTitleProvider title={null}>
+            <SettingsSectionTitleProvider level={3}>
+              <JevDecisionsSection />
+            </SettingsSectionTitleProvider>
+          </SettingsRouteTitleProvider>
+        </>
+      );
     case 'media':
       return <MediaSection />;
     case 'providers':
@@ -231,8 +243,6 @@ function SettingsSectionContent({
       return <ModelRankingSection />;
     case 'squads':
       return <SquadsSection />;
-    case 'jev-decisions':
-      return <JevDecisionsSection />;
     case 'harness':
       return <HarnessSection overviewOnly />;
     case 'agent-connection':

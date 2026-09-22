@@ -30,7 +30,7 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
   { id: 'ai', title: 'Equipes e modelos', description: 'Quem trabalha e com qual modelo', icon: 'users', pillar: 'agents', sections: ['squads', 'llms', 'ranking', 'media', 'media-catalog', 'agent-connection'], advanced: ['agent-connection'] },
   { id: 'library', title: 'Biblioteca', description: 'Capacidades prontas para instalar', icon: 'sparkle', pillar: 'agents', sections: ['harness', 'agents', 'skills', 'marketplace', 'recipes', 'design-systems'], advanced: ['design-systems'] },
   { id: 'connections', title: 'Integrações', description: 'Outros apps, máquinas e celular', icon: 'split-right', pillar: 'system', sections: ['mcps', 'connectors', 'plugins', 'remote', 'companion-relay', 'tools'], advanced: ['tools'] },
-  { id: 'system', title: 'Segurança e manutenção', description: 'Atualizações, diagnóstico e permissões', icon: 'config', pillar: 'system', sections: ['system', 'diagnostics', 'rules', 'audit', 'jev-decisions', 'hooks', 'labs'], advanced: ['jev-decisions', 'hooks', 'labs'] },
+  { id: 'system', title: 'Segurança e manutenção', description: 'Atualizações, diagnóstico e permissões', icon: 'config', pillar: 'system', sections: ['system', 'diagnostics', 'rules', 'audit', 'hooks', 'labs'], advanced: ['hooks', 'labs'] },
 ];
 
 export function settingsCategoryFor(section: SettingsSection): SettingsCategory | undefined {

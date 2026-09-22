@@ -291,14 +291,6 @@ export const SETTINGS_GROUPS: NavGroup[] = [
         aliases: ['catálogo · 1 clique', 'marketplace', 'catalog'],
       },
       {
-        id: 'jev-decisions',
-        icon: 'JEV',
-        pixelIcon: 'star',
-        title: 'Decisões do Jev',
-        subtitle: 'Julgamentos do piloto automático TypeSafe',
-        aliases: ['jev', 'typesafe', 'julgamentos', 'decisions', 'autopilot'],
-      },
-      {
         id: 'design-systems',
         icon: 'DS',
         pixelIcon: 'grid',
@@ -377,8 +369,8 @@ export const SETTINGS_GROUPS: NavGroup[] = [
       icon: 'AUD',
       pixelIcon: 'files',
       title: 'Auditoria',
-      subtitle: 'Ações e confirmações',
-      aliases: ['audit', 'confirmations'],
+      subtitle: 'Ações, confirmações e decisões do Jev',
+      aliases: ['audit', 'confirmations', 'jev', 'typesafe', 'julgamentos', 'decisões do jev', 'decisions', 'autopilot'],
     },
     {
       id: 'labs',
