@@ -700,19 +700,25 @@
   background: none;
   border: none;
   padding: 1px 4px;
-  border-radius: var(--radius-sm, 4px);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   text-align: left;
   transition: background 0.15s ease;
 }
 
+.git-scm__branch-btn:focus-visible,
+.git-scm__branch-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 .git-scm__branch-btn:hover {
-  background: color-mix(in srgb, var(--accent, #ff4f8b) 14%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
 .git-scm__branch-caret {
   font-size: 10px;
-  color: var(--text-dim, #aaa2a8);
+  color: var(--text-dim);
 }
 
 .git-scm__toolbar-actions {
@@ -726,10 +732,10 @@
   flex-direction: column;
   gap: 8px;
   padding: 10px;
-  border: 1px solid var(--border-strong, rgb(255 255 255 / 0.16));
-  border-radius: var(--radius-md, 8px);
-  background: var(--bg-elevated, #111013);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-2);
   animation: gitFadeIn 0.15s ease-out;
 }
 
@@ -742,12 +748,12 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: var(--text-xs, 12px);
-  color: var(--text, #faf7f9);
+  font-size: var(--text-xs);
+  color: var(--text);
 }
 
 .git-scm__branch-filter {
-  font-size: var(--text-xs, 12px);
+  font-size: var(--text-xs);
 }
 
 .git-scm__branch-list {
@@ -756,41 +762,43 @@
   gap: 2px;
   max-height: 160px;
   overflow-y: auto;
-  border: 1px solid var(--border, rgb(255 255 255 / 0.08));
-  border-radius: var(--radius-sm, 4px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   padding: 4px;
-  background: var(--bg, #080709);
+  background: var(--bg);
 }
 
 .git-scm__branch-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  /* 24px: alvo mínimo de clique numa lista densa. */
+  min-height: 24px;
   padding: 4px 8px;
   background: none;
   border: none;
-  border-radius: var(--radius-sm, 4px);
-  color: var(--text-dim, #aaa2a8);
-  font-size: var(--text-xs, 12px);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-size: var(--text-xs);
   cursor: pointer;
   text-align: left;
 }
 
 .git-scm__branch-item:hover {
-  color: var(--text, #faf7f9);
-  background: color-mix(in srgb, var(--accent, #ff4f8b) 12%, transparent);
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .git-scm__branch-item.is-current {
-  color: var(--accent, #ff4f8b);
+  color: var(--accent);
   font-weight: 600;
 }
 
 .git-scm__branch-item-tag {
-  font-size: var(--text-2xs, 10px);
+  font-size: var(--text-2xs);
   padding: 1px 4px;
   border-radius: 4px;
-  background: color-mix(in srgb, var(--accent, #ff4f8b) 20%, transparent);
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
 .git-scm__new-branch-form {

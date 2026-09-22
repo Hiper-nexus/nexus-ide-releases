@@ -264,6 +264,7 @@ export function CommandBlockMenu({
         type="button"
         className="toolbar__btn"
         aria-label="Comandos do terminal"
+        aria-haspopup="dialog"
         aria-expanded={open}
         data-tip="Histórico inteligente de comandos"
         onClick={(event) => {

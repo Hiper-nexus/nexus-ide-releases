@@ -619,6 +619,8 @@ export function GitPanelBody() {
               }
             }}
             title="Trocar ou criar branch"
+            aria-haspopup="dialog"
+            aria-expanded={branchMenuOpen}
             aria-label={`Branch atual: ${branch ?? 'nenhuma'}. Clique para trocar.`}
           >
             <span className="git-scm__branch">{branch ?? '—'}</span>
@@ -660,7 +662,16 @@ export function GitPanelBody() {
       </header>
 
       {branchMenuOpen && (
-        <div className="git-scm__branch-menu" role="dialog" aria-label="Gerenciador de Branches">
+        <div
+          className="git-scm__branch-menu"
+          role="dialog"
+          aria-label="Gerenciador de Branches"
+          onKeyDown={(e) => {
+            if (e.key !== 'Escape') return;
+            e.stopPropagation();
+            setBranchMenuOpen(false);
+          }}
+        >
           <div className="git-scm__branch-menu-head">
             <strong>Branches</strong>
             <button
