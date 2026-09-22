@@ -42,6 +42,7 @@ import {
   isSecretDecryptDenied,
   isSecureStorageBackendAllowed,
   resetSecretsCacheForTests,
+  setKey,
   setSecret,
 } from './secrets-store';
 
@@ -189,6 +190,30 @@ describe('durable secret persistence', () => {
       setSecret('provider', 'next');
     }
     expect(encrypt).toHaveBeenCalledTimes(1);
+  });
+
+  it('sonda de disponibilidade falha uma vez e nunca mais toca o Keychain — em NENHUM caminho (F-629)', async () => {
+    const { safeStorage } = await import('electron');
+    const probe = vi.spyOn(safeStorage, 'isEncryptionAvailable').mockImplementation(() => {
+      throw new Error('default keychain missing');
+    });
+    const encrypt = vi.spyOn(safeStorage, 'encryptString');
+    const decrypt = vi.spyOn(safeStorage, 'decryptString');
+
+    expect(setSecret('provider', 'value').ok).toBe(false);
+    for (let i = 0; i < 5; i += 1) {
+      setSecret(`provider-${i}`, 'value');
+      setKey(`adapter-${i}`, 'key');
+      getSecret(`provider-${i}`);
+      deleteSecret(`provider-${i}`);
+    }
+
+    // setSecret/setKey/getSecret/deleteSecret chamavam isEncryptionAvailable()
+    // antes do veneno: cada chamada era um SecItemCopyMatching novo e uma nova
+    // chance do modal "Chaves Não Encontradas / Reajustar Para Padrões".
+    expect(probe).toHaveBeenCalledTimes(1);
+    expect(encrypt).not.toHaveBeenCalled();
+    expect(decrypt).not.toHaveBeenCalled();
   });
 
   it('decrypt falho memoiza por chave — uma leitura, não uma enxurrada de SecItemCopyMatching', async () => {

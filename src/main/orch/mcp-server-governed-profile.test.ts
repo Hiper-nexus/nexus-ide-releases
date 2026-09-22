@@ -416,7 +416,50 @@ describe('mcp-server governed CLI profile wiring', () => {
       // blanked — "CLAUDE_CONFIG_DIR=" resolves the binary's config dir to
       // "" and the file-backed credential store goes cwd-relative.
       expect(decoration.env.CLAUDE_CONFIG_DIR).toBeUndefined();
-      expect(decoration.envRemove).toEqual(['CLAUDE_SECURESTORAGE_CONFIG_DIR', 'CLAUDE_CONFIG_DIR']);
+      if (id === 'glm' && process.platform === 'darwin') {
+        // F-629: terceiro no macOS ganha securestorage escopado no overlay.
+        expect(decoration.envRemove).toEqual(['CLAUDE_CONFIG_DIR']);
+      } else {
+        expect(decoration.envRemove).toEqual(['CLAUDE_SECURESTORAGE_CONFIG_DIR', 'CLAUDE_CONFIG_DIR']);
+      }
+    } finally { decoration.onSpawnFailed?.(); }
+  });
+
+  it.skipIf(process.platform !== 'darwin').each([
+    ['glm', false],
+    ['claude', true],
+  ] as const)(
+    'F-629: %s (gated=%s) never reaches the native Claude keychain item — scoped securestorage inside the overlay',
+    (id, governed) => {
+      const home = path.join(tempRoot(), 'home');
+      const cwd = path.join(home, 'workspace');
+      fs.mkdirSync(cwd, { recursive: true });
+      vi.stubEnv('HOME', home);
+      if (governed) {
+        // Lane hardened: hooks do gate + token por env (sem keychain nativo).
+        homePolicyDeps.getOrchSettings.mockReturnValue({ squadCliPolicy: 'governed' });
+      }
+      const decoration = prepareAgentSpawnDecoration(
+        adapter(id), { kind: 'cli-agent', cols: 80, rows: 24 }, authority(cwd, governed),
+      )!;
+      try {
+        const scoped = decoration.env.CLAUDE_SECURESTORAGE_CONFIG_DIR;
+        expect(scoped).toBe(path.join(decoration.env.HOME, '.nexus-claude-securestorage'));
+        expect(fs.statSync(scoped!).isDirectory()).toBe(true);
+        expect(decoration.envRemove ?? []).not.toContain('CLAUDE_SECURESTORAGE_CONFIG_DIR');
+      } finally { decoration.onSpawnFailed?.(); }
+    },
+  );
+
+  it.skipIf(process.platform !== 'darwin')('F-629: the direct native Claude lane keeps the native keychain item (no scoping)', () => {
+    const home = path.join(tempRoot(), 'home');
+    const cwd = path.join(home, 'workspace');
+    fs.mkdirSync(cwd, { recursive: true });
+    vi.stubEnv('HOME', home);
+    const decoration = prepareAgentSpawnDecoration(adapter('claude'), { kind: 'cli-agent', cols: 80, rows: 24 }, authority(cwd, false))!;
+    try {
+      expect(decoration.env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBeUndefined();
+      expect(decoration.envRemove).toContain('CLAUDE_SECURESTORAGE_CONFIG_DIR');
     } finally { decoration.onSpawnFailed?.(); }
   });
 

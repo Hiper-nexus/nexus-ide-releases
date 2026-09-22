@@ -86,17 +86,24 @@ export function isSecureStorageAvailable(options?: { probe?: boolean }): boolean
   // preventing AppKit from presenting the already-created window. macOS
   // safeStorage is the only supported backend here; actual encrypt/decrypt
   // calls remain guarded and fail closed when the user uses the vault.
+  // Veneno de sessão vale para TODA porta do vault (get/set/setKey/delete),
+  // não só para o encryptString: cada isEncryptionAvailable() é um
+  // SecItemCopyMatching novo e uma nova chance do modal "Chaves Não
+  // Encontradas / Reajustar Para Padrões" (F-629).
+  if (secureStoragePoisoned) return false;
   if (process.platform === 'darwin' && options?.probe === false) return true;
+  let available = false;
   try {
-    return (
+    available =
       safeStorage.isEncryptionAvailable() &&
       isSecureStorageBackendAllowed(process.platform, () =>
         safeStorage.getSelectedStorageBackend(),
-      )
-    );
+      );
   } catch {
-    return false;
+    available = false;
   }
+  if (!available) secureStoragePoisoned = true;
+  return available;
 }
 
 /**

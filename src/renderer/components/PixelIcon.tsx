@@ -565,12 +565,20 @@ interface PixelIconProps {
   className?: string;
 }
 
+/**
+ * A grade tem 11 células: abaixo de 11px cada célula vira menos de 1px de tela
+ * e o `crispEdges` descarta traços inteiros (o "+" da grade de terminais sumia
+ * em 10px). 11px é o menor tamanho em que o desenho sai completo.
+ */
+const MIN_CRISP_SIZE = 11;
+
 export function PixelIcon({ name, size = 12, className }: PixelIconProps) {
+  const renderSize = Math.max(size, MIN_CRISP_SIZE);
   return (
     <svg
       className={`pixel-icon ${className ?? ''}`}
-      width={size}
-      height={size}
+      width={renderSize}
+      height={renderSize}
       viewBox="0 0 11 11"
       shapeRendering="crispEdges"
       fill="currentColor"

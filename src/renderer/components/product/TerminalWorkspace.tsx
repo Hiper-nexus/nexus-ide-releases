@@ -170,6 +170,11 @@ export function TerminalWorkspace({
     [panes, paneMissions, missionSummaries],
   );
 
+  // Pino cujo escopo sumiu (missão encerrada, espaço fechado) não vira um
+  // botão A/B morto: só chega à barra o pino que ainda aponta para um campo.
+  const livePinnedA = pinnedA && scopes.some((scope) => scope.key === pinnedA) ? pinnedA : null;
+  const livePinnedB = pinnedB && scopes.some((scope) => scope.key === pinnedB) ? pinnedB : null;
+
   // Escopo desenhado agora. Dentro da missão é a própria missão, sempre. Na
   // vista global é a escolha do operador — e quando ela evapora (espaço
   // fechado, missão encerrada) cai no PRIMEIRO escopo com pane, nunca em
@@ -334,8 +339,8 @@ export function TerminalWorkspace({
           activeScopeKey={effectiveScopeKey}
           onFocusScope={focusScope}
           onStartSpaceRename={startSpaceRename}
-          pinnedA={pinnedA}
-          pinnedB={pinnedB}
+          pinnedA={livePinnedA}
+          pinnedB={livePinnedB}
           onTogglePin={togglePinScope}
           onSwitchAB={switchAB}
           onNewMission={() => useProductNavigationStore.getState().openNewMission()}

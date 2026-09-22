@@ -221,6 +221,20 @@
   white-space: nowrap;
 }
 
+/* Em repouso o pill "PRONTA" com quatro controles cobria conteúdo em toda
+   tela (terminal, cartões, planos). Parado, fica só o orb; rótulo e controles
+   voltam no hover ou no foco de teclado. Erro e fases ativas seguem
+   inteiros — só o repouso encolhe. */
+.voice-hud--mini.voice-hud--idle:not(:hover):not(:focus-within) .voice-hud__ctls,
+.voice-hud--mini.voice-hud--idle:not(:hover):not(:focus-within) .voice-hud__mini-label {
+  display: none;
+}
+
+.voice-hud--mini.voice-hud--idle:not(:hover):not(:focus-within) {
+  padding: var(--space-1);
+  gap: 0;
+}
+
 .voice-hud--mini.voice-hud--error .voice-hud__mini-label {
   color: var(--danger);
 }

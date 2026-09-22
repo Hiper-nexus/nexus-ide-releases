@@ -877,6 +877,15 @@
   cursor: default;
 }
 
+/* Primário desabilitado não pode ser o bloco claro a 45%: lia como botão
+   ativo cinza ("Entrar no time" sem código). Vira contorno apagado. */
+.settings-btn.settings-btn--primary:disabled {
+  opacity: 1;
+  background: transparent;
+  border-color: var(--border-strong);
+  color: var(--text-faint);
+}
+
 .settings-btn--primary {
   border-color: var(--btn-primary);
   background: var(--btn-primary);
@@ -2852,6 +2861,16 @@
   font-weight: 600;
   letter-spacing: 0;
   cursor: pointer;
+}
+
+.prov-hub__tab:hover:not(.prov-hub__tab--on) {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.prov-hub__tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .prov-hub__tab--on {

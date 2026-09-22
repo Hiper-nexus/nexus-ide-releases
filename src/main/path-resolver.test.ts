@@ -8,6 +8,7 @@ import {
   commonCliBinDirs,
   lookupInPath,
   probeLoginShellPath,
+  retryLoginShellPathIfMissed,
   revalidateExecutable,
   resolveCliBinary,
   resolveSpawnBinary,
@@ -53,6 +54,73 @@ describe('path-resolver CLI binary resolution', () => {
     expect(dirs).toContain(path.join(home, '.bun', 'bin'));
     expect(dirs).toContain('/opt/homebrew/opt/node@22/bin');
     expect(dirs).toContain('/opt/homebrew/bin');
+  });
+
+  it('covers version managers and legacy installers outside ~/.local/bin (multi-cliente)', () => {
+    // Máquina de colega: claude via nvm/pnpm/mise/instalador antigo. Com o
+    // shell de login lento (oh-my-zsh + nvm > 4 s) só as pastas fixas valem.
+    const home = tmp;
+    for (const version of ['v20.11.0', 'v22.23.2', 'v18.19.1']) {
+      fs.mkdirSync(path.join(home, '.nvm', 'versions', 'node', version, 'bin'), { recursive: true });
+    }
+    const dirs = commonCliBinDirs(home);
+    const nvm = dirs.filter((dir) => dir.includes(`${path.sep}.nvm${path.sep}versions`));
+    expect(nvm).toEqual([
+      path.join(home, '.nvm', 'versions', 'node', 'v22.23.2', 'bin'),
+      path.join(home, '.nvm', 'versions', 'node', 'v20.11.0', 'bin'),
+      path.join(home, '.nvm', 'versions', 'node', 'v18.19.1', 'bin'),
+    ]);
+    expect(dirs).toContain(path.join(home, '.claude', 'local'));
+    expect(dirs).toContain(path.join(home, '.local', 'share', 'mise', 'shims'));
+    expect(dirs).toContain(path.join(home, '.local', 'share', 'pnpm'));
+    if (process.platform === 'darwin') expect(dirs).toContain(path.join(home, 'Library', 'pnpm'));
+  });
+
+  it('finds claude installed under nvm with a Finder PATH and no login shell', () => {
+    const nvmBin = path.join(tmp, '.nvm', 'versions', 'node', 'v22.1.0', 'bin');
+    fs.mkdirSync(nvmBin, { recursive: true });
+    const extension = process.platform === 'win32' ? '.cmd' : '';
+    fs.writeFileSync(path.join(nvmBin, `claude-nvm${extension}`), '#!/bin/sh\necho ok\n', { mode: 0o755 });
+    const hit = resolveCliBinary(`claude-nvm${extension}`, {
+      processPath: '/usr/bin:/bin',
+      home: tmp,
+    });
+    expect(hit?.binPath).toBe(path.join(nvmBin, `claude-nvm${extension}`));
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'retries a login-shell probe that timed out at boot, with a longer deadline',
+    async () => {
+      const originalPath = process.env.PATH;
+      const timeouts: number[] = [];
+      try {
+      const missed = await retryLoginShellPathIfMissed(
+        async (_file, _args, options) => {
+          timeouts.push(options.timeout);
+          return '__NEXUS_PATH_START__/late/nvm/bin__NEXUS_PATH_END__';
+        },
+        { home: tmp, bootProbe: '' },
+      );
+      expect(missed).toBe(true);
+      expect(timeouts[0]).toBeGreaterThanOrEqual(15_000);
+      expect(process.env.PATH?.split(path.delimiter)).toContain('/late/nvm/bin');
+      } finally {
+        process.env.PATH = originalPath;
+      }
+    },
+  );
+
+  it('does not re-probe when the boot probe already succeeded', async () => {
+    let calls = 0;
+    const missed = await retryLoginShellPathIfMissed(
+      async () => {
+        calls += 1;
+        return '';
+      },
+      { home: tmp, bootProbe: '/usr/bin:/bin' },
+    );
+    expect(missed).toBe(false);
+    expect(calls).toBe(0);
   });
 
   it('finds CLIs under the real account home even when $HOME is isolated', () => {

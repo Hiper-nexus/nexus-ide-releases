@@ -583,4 +583,21 @@ describe('MiMo startup permission prompt', () => {
     expect(responder.forceAcceptResponse('sess-mimo')).toBeNull();
     expect(writes).toEqual([]);
   });
+
+  it('isHoldingForBanner: só o banner da migração segura; o menu pintado ou a janela vencida liberam', () => {
+    const responder = new CliPromptAutoResponder(() => true, (fn) => fn());
+    responder.setWriter(() => undefined);
+    const t0 = 1_000_000;
+    responder.bind('sess-mimo', 'mimo-code', t0);
+    responder.observe(
+      'sess-mimo',
+      'Performing one time database migration, may take a few minutes...\n',
+      t0 + 10,
+    );
+    expect(responder.isHoldingForBanner('sess-mimo', t0 + 30_000)).toBe(true);
+    // Janela de observação da assinatura vencida: nunca espera para sempre.
+    expect(responder.isHoldingForBanner('sess-mimo', t0 + 181_000)).toBe(false);
+    expect(responder.isHoldingForBanner('sess-unbound', t0 + 30_000)).toBe(false);
+  });
 });
+

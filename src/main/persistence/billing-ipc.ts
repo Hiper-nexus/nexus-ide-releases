@@ -266,7 +266,7 @@ export function registerBillingIpc(overrides?: Partial<BillingIpcDeps>): void {
       return {
         ok: false,
         error: result.status === 401
-          ? 'entre na sua conta primeiro'
+          ? 'Sua sessão Nexus expirou — saia e entre de novo na conta'
           : body?.error ?? 'backend indisponível — tente de novo',
       };
     }
@@ -287,7 +287,7 @@ export function registerBillingIpc(overrides?: Partial<BillingIpcDeps>): void {
       return {
         ok: false,
         error: result.status === 401
-          ? 'entre na sua conta primeiro'
+          ? 'Sua sessão Nexus expirou — saia e entre de novo na conta'
           : body?.error ?? 'backend indisponível',
       };
     }

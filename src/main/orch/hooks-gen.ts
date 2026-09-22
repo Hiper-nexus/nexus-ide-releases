@@ -18,6 +18,13 @@ import {
   projectMcpServersThroughHub,
   type McpHubRouteInfo,
 } from '../mcp-hub/mcp-stdio-bridge';
+import {
+  DEVELOPER_IDENTITY_HOME_ENTRIES,
+  linkDarwinUserKeychains,
+  linkDeveloperIdentity,
+} from '../pty/private-home-operator';
+
+export { DEVELOPER_IDENTITY_HOME_ENTRIES, linkDeveloperIdentity };
 
 /**
  * Client-side half of the dual skill-gate (docs/ARCHITECTURE.md §E.4).
@@ -328,23 +335,6 @@ export interface EphemeralHomeOptions {
 }
 
 /**
- * F-579 tier 1: entradas exatas de identidade/credencial do desenvolvedor
- * (relativas ao HOME real). Os dois `.config/*` exigem `<overlay>/.config`
- * como diretório REAL 0700 — criado só quando ainda não existe (o tier 2 pode
- * tê-lo linkado; nesse caso o link resolve o pai e a entrada já "existe").
- */
-export const DEVELOPER_IDENTITY_HOME_ENTRIES = [
-  '.gitconfig',
-  '.git-credentials',
-  '.netrc',
-  '_netrc',
-  '.ssh',
-  '.gnupg',
-  '.config/git',
-  '.config/gh',
-] as const;
-
-/**
  * F-579 tier 2: entradas do topo do HOME real que NUNCA entram no overlay —
  * estado de conversa/sessão Claude e Nexus fica privado ao overlay
  * (`.claude.json*` cobre `.claude.json`, `.claude.json.backup` e variantes
@@ -395,83 +385,11 @@ export function linkNativeHomeEntries(
 }
 
 /**
- * F-579 tier 1: linka apenas DEVELOPER_IDENTITY_HOME_ENTRIES. Best-effort por
- * entrada e idempotente; quando o tier 2 já linkou `.config`, o lstat do
- * alvo resolve através do symlink e a entrada "já existe" — o `.config`
- * real do HOME nunca é substituído por um diretório local.
- */
-export function linkDeveloperIdentity(
-  realHome: string,
-  overlayDir: string,
-): void {
-  for (const rel of DEVELOPER_IDENTITY_HOME_ENTRIES) {
-    try {
-      const source = path.join(realHome, rel);
-      const sourceStat = fs.lstatSync(source, { throwIfNoEntry: false });
-      if (!sourceStat) continue;
-      const target = path.join(overlayDir, rel);
-      // lstat resolve através de um `.config` linkado pelo tier 2 e encontra
-      // a entrada lá — skip sem trocar o symlink por diretório real.
-      if (fs.lstatSync(target, { throwIfNoEntry: false })) continue;
-      const parent = path.dirname(target);
-      const parentStat = fs.lstatSync(parent, { throwIfNoEntry: false });
-      if (!parentStat) {
-        fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
-      }
-      const dirent = fs
-        .readdirSync(path.dirname(source), { withFileTypes: true })
-        .find((entry) => entry.name === path.basename(source));
-      if (dirent) {
-        linkEntry(source, target, dirent);
-      } else {
-        linkFile(source, target);
-      }
-    } catch {
-      // Uma entrada falha não derruba as demais nem o spawn.
-    }
-  }
-}
-
-/**
  * Marcador gravado no overlay quando ele carregou a identidade NATIVA. O
  * teardown só faz sync-back de auth para o perfil real na presença dele —
  * um /login feito num pane GLM/LongCat jamais pode poluir o ~/.claude nativo.
  */
 export const CLAUDE_AUTH_SYNCBACK_MARKER = 'nexus-claude-auth-syncback';
-
-/**
- * Liga os `*.keychain-db` de ~/Library/Keychains dentro do HOME efêmero. O
- * macOS monta a lista de busca de keychains a partir do $HOME do processo —
- * sem o link, o pane não enxerga "Claude Code-credentials" nem persiste um
- * /login novo. Best-effort por arquivo: um keychain ausente não aborta spawn.
- */
-function linkDarwinUserKeychains(realHome: string, overlayDir: string): void {
-  const realDir = path.join(realHome, 'Library', 'Keychains');
-  let names: string[];
-  try {
-    names = fs
-      .readdirSync(realDir)
-      .filter((name) => name.endsWith('.keychain-db'));
-  } catch {
-    return;
-  }
-  if (names.length === 0) return;
-  const targetDir = path.join(overlayDir, 'Library', 'Keychains');
-  try {
-    fs.mkdirSync(targetDir, { recursive: true, mode: 0o700 });
-  } catch {
-    return;
-  }
-  for (const name of names) {
-    const target = path.join(targetDir, name);
-    try {
-      if (fs.lstatSync(target, { throwIfNoEntry: false })) continue;
-      linkFile(path.join(realDir, name), target);
-    } catch {
-      // Um keychain individual falho não derruba os demais.
-    }
-  }
-}
 
 function readNativeClaudeAuthIdentity(
   realHome: string,

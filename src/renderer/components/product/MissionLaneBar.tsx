@@ -59,7 +59,7 @@ function OrchestratorCrest({
       title={`Orquestrador: ${title}`}
     >
       <PixelIcon name="orch" size={10} />
-      <span className="mission-lane__crest-tag">orq</span>
+      <span className="mission-lane__crest-name">{title}</span>
     </span>
   );
 }
@@ -101,7 +101,9 @@ export function MissionLaneBar({
                 title={
                   scope.kind === 'space'
                     ? `${scope.title} — duplo clique para renomear`
-                    : scope.title
+                    : scope.kind === 'mission' && scope.state
+                      ? `${scope.title} — ${STATE_LABEL[scope.state] ?? scope.state}`
+                      : scope.title
                 }
               >
                 <span className="mission-lane__rule" aria-hidden="true" />
@@ -135,14 +137,17 @@ export function MissionLaneBar({
                       title={scope.orchestrator?.title ?? null}
                       live={active}
                     />
-                    <span className="mission-lane__meta-text">
-                      {scope.kind === 'mission' && scope.state
-                        ? (STATE_LABEL[scope.state] ?? scope.state)
-                        : scope.kind === 'space'
-                          ? 'espaço'
-                          : 'soltos'}
-                      {scope.orchestrator ? ` · ${scope.orchestrator.title}` : ''}
-                    </span>
+                    {/* Com orquestrador, o crest leva o nome e o estado fica no
+                        ponto colorido + tooltip: texto a mais aqui só cortava. */}
+                    {scope.kind === 'mission' && scope.orchestrator ? null : (
+                      <span className="mission-lane__meta-text">
+                        {scope.kind === 'mission' && scope.state
+                          ? (STATE_LABEL[scope.state] ?? scope.state)
+                          : scope.kind === 'space'
+                            ? 'espaço'
+                            : 'soltos'}
+                      </span>
+                    )}
                   </span>
                 </span>
               </button>

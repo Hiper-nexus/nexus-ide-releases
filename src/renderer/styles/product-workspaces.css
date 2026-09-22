@@ -1419,18 +1419,29 @@
 /* ── Mission lane bar (campo A/B) ───────────────────────────────────────
    Ancoragem: painel de rack de controle de missão — near-black, fio de 1px,
    acento magenta na faixa ativa. Sem gradiente nem sombra. */
+/* A e B precisam ser distinguíveis de relance nos dois temas: B segue o
+   acento do tema, A é o contraponto frio. A tinta é fixa e escura porque no
+   tema claro --accent-ink é clara e o "A" sumia sobre o ciano. Declarado nos
+   dois donos (barra e cabeçalho do campo), que não são ancestrais um do outro. */
+.mission-lane-bar,
+.mission-field-header {
+  --lane-pin-a: #7ec8e3;
+  --lane-pin-b: var(--accent);
+  --lane-pin-ink: #080709;
+}
+
 .mission-lane-bar {
   display: flex;
   align-items: stretch;
-  gap: 8px;
-  padding: 8px 12px;
-  border-block-end: 1px solid rgba(255, 255, 255, 0.08);
-  background: #111013;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-block-end: 1px solid var(--border);
+  background: var(--bg-elevated);
 }
 
 .mission-lane-bar__rail {
   display: flex;
-  gap: 6px;
+  gap: var(--space-1-5);
   overflow-x: auto;
   flex: 1;
   min-inline-size: 0;
@@ -1440,20 +1451,20 @@
 .mission-lane-bar__actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   flex-shrink: 0;
 }
 
 .mission-lane-bar__hint {
-  font-size: 11px;
-  color: #9a9590;
+  font-size: var(--text-xs);
+  color: var(--text-dim);
   white-space: nowrap;
 }
 
 .mission-lane-bar__ab {
   display: inline-flex;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
   overflow: hidden;
 }
 
@@ -1461,31 +1472,31 @@
   appearance: none;
   border: 0;
   background: transparent;
-  color: #9a9590;
-  font: 500 12px/1 -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  color: var(--text-dim);
+  font: 500 12px/1 var(--font-ui);
   padding: 5px 10px;
   cursor: pointer;
   min-inline-size: 32px;
 }
 
 .mission-lane-bar__ab-btn--active {
-  background: #c45c9a;
-  color: #0d0b0f;
+  background: var(--lane-pin-b);
+  color: var(--lane-pin-ink);
 }
 
 .mission-lane {
   display: flex;
   align-items: stretch;
   flex: 0 0 auto;
-  inline-size: 232px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 6px;
-  background: #16141a;
+  inline-size: 248px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
   overflow: hidden;
 }
 
 .mission-lane--active {
-  border-color: rgba(196, 92, 154, 0.55);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
 }
 
 .mission-lane--all {
@@ -1499,7 +1510,7 @@
   color: inherit;
   display: flex;
   align-items: stretch;
-  gap: 8px;
+  gap: var(--space-2);
   flex: 1;
   min-inline-size: 0;
   padding: 0;
@@ -1511,11 +1522,11 @@
   inline-size: 2px;
   background: transparent;
   flex-shrink: 0;
-  transition: background 160ms ease-out;
+  transition: background 160ms var(--ease-out-quart);
 }
 
 .mission-lane--active .mission-lane__rule {
-  background: #c45c9a;
+  background: var(--accent);
 }
 
 .mission-lane__body {
@@ -1530,13 +1541,13 @@
 .mission-lane__top {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-1-5);
   min-inline-size: 0;
 }
 
 .mission-lane__title {
-  font: 500 13px/1.2 -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  color: #e8e6e3;
+  font: 500 13px/1.2 var(--font-ui);
+  color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1547,13 +1558,13 @@
 .mission-lane__meta {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-1-5);
   min-inline-size: 0;
 }
 
 .mission-lane__meta-text {
-  font: 400 11px/1.2 -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  color: #9a9590;
+  font: 400 11px/1.2 var(--font-ui);
+  color: var(--text-dim);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1564,35 +1575,39 @@
   align-items: center;
   gap: 3px;
   padding: 2px 7px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 999px;
-  color: #c8c2bc;
-  background: #0d0b0f;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-round);
+  color: var(--text-dim);
+  background: var(--bg-bar);
   flex-shrink: 0;
-  font: 500 10px/1 -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font: 500 10px/1 var(--font-ui);
 }
 
 .mission-lane__crest--live {
-  border-color: rgba(196, 92, 154, 0.75);
-  color: #f0c8e0;
-  background: rgba(196, 92, 154, 0.18);
-  box-shadow: 0 0 0 1px rgba(196, 92, 154, 0.25);
+  border-color: color-mix(in srgb, var(--accent) 75%, transparent);
+  color: var(--text);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px var(--accent-strong);
 }
 
 .mission-lane__crest--empty {
   opacity: 0.45;
 }
 
-.mission-lane__crest-tag {
-  font: 600 9px/1 -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+/* O crest carrega o NOME do orquestrador: o selo "ORQ" + nome repetido no
+   meta roubava a largura do título da missão. */
+.mission-lane__crest-name {
+  font: 500 10px/1 var(--font-ui);
+  max-inline-size: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .mission-lane__actions {
   display: flex;
   flex-direction: column;
-  border-inline-start: 1px solid rgba(255, 255, 255, 0.08);
+  border-inline-start: 1px solid var(--border);
   flex-shrink: 0;
 }
 
@@ -1600,8 +1615,8 @@
   appearance: none;
   border: 0;
   background: transparent;
-  color: #9a9590;
-  font: 500 10px/1 -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  color: var(--text-dim);
+  font: 500 10px/1 var(--font-ui);
   padding: 4px 6px;
   cursor: pointer;
   min-inline-size: 26px;
@@ -1609,28 +1624,28 @@
 }
 
 .mission-lane__pin:hover {
-  color: #e8e6e3;
-  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  background: var(--card-hi);
 }
 
 .mission-lane__pin--a {
-  color: #0d0b0f;
-  background: #7ec8e3;
+  color: var(--lane-pin-ink);
+  background: var(--lane-pin-a);
 }
 
 .mission-lane__pin--b {
-  color: #0d0b0f;
-  background: #c45c9a;
+  color: var(--lane-pin-ink);
+  background: var(--lane-pin-b);
 }
 
 /* ── Field header (identidade do campo ativo) ──────────────────────────── */
 .mission-field-header {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   padding: 6px 14px;
-  border-block-end: 1px solid rgba(255, 255, 255, 0.06);
-  background: #0d0b0f;
+  border-block-end: 1px solid var(--border);
+  background: var(--bg-bar);
 }
 
 .mission-field-header__pin {
@@ -1639,24 +1654,24 @@
   justify-content: center;
   inline-size: 18px;
   block-size: 18px;
-  border-radius: 3px;
-  font: 600 10px/1 -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  border-radius: var(--radius-sm);
+  font: 600 10px/1 var(--font-ui);
   flex-shrink: 0;
 }
 
 .mission-field-header__pin--a {
-  background: #7ec8e3;
-  color: #0d0b0f;
+  background: var(--lane-pin-a);
+  color: var(--lane-pin-ink);
 }
 
 .mission-field-header__pin--b {
-  background: #c45c9a;
-  color: #0d0b0f;
+  background: var(--lane-pin-b);
+  color: var(--lane-pin-ink);
 }
 
 .mission-field-header__title {
-  font: 500 13px/1.2 -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  color: #e8e6e3;
+  font: 500 13px/1.2 var(--font-ui);
+  color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1665,8 +1680,8 @@
 }
 
 .mission-field-header__meta {
-  font: 400 11px/1.2 -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
-  color: #9a9590;
+  font: 400 11px/1.2 var(--font-ui);
+  color: var(--text-dim);
   white-space: nowrap;
   flex-shrink: 0;
 }
@@ -1677,29 +1692,29 @@
   align-items: center;
   gap: 5px;
   padding: 3px 9px 3px 7px;
-  border: 1px solid rgba(196, 92, 154, 0.65);
-  border-radius: 999px;
-  background: rgba(196, 92, 154, 0.16);
-  color: #f0c8e0;
+  border: 1px solid color-mix(in srgb, var(--accent) 65%, transparent);
+  border-radius: var(--radius-round);
+  background: var(--accent-soft);
+  color: var(--text);
   flex-shrink: 0;
 }
 
 .mission-field-header__orq--empty {
-  border-color: rgba(255, 255, 255, 0.1);
+  border-color: var(--border-strong);
   background: transparent;
-  color: #9a9590;
-  font: 400 11px/1.2 -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  color: var(--text-dim);
+  font: 400 11px/1.2 var(--font-ui);
 }
 
 .mission-field-header__orq-tag {
-  font: 600 9px/1 -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font: 600 9px/1 var(--font-ui);
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #c45c9a;
+  color: var(--accent);
 }
 
 .mission-field-header__orq-name {
-  font: 500 12px/1.2 -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font: 500 12px/1.2 var(--font-ui);
   max-inline-size: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
