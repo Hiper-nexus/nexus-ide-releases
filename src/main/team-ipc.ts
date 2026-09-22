@@ -10,7 +10,7 @@ async function call(path: string, method = 'GET', body?: unknown) {
     ...(body !== undefined ? { body } : {}),
   });
   const env = result.json as Envelope;
-  if (result.status === 401) return { ok: false, error: 'entre na sua conta primeiro' };
+  if (result.status === 401) return { ok: false, error: 'Sua sessão Nexus expirou — saia e entre de novo na conta' };
   if (result.status === 0) return { ok: false, error: 'sem conexão' };
   if (!env?.ok) return { ok: false, error: env?.error ?? 'erro do servidor' };
   return { ok: true, data: env.data };

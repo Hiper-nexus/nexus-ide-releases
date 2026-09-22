@@ -610,8 +610,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: var(--space-5);
+  height: var(--space-5);
   padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
@@ -1057,11 +1057,11 @@
   gap: 3px;
   padding: 1px 4px;
   border-radius: 3px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--surface-overlay);
+  border: 1px solid var(--border);
   font-size: 9px;
   font-weight: 600;
-  color: #d4d4d8;
+  color: var(--text-dim);
   max-width: 85px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1073,7 +1073,7 @@
   width: 4px;
   height: 4px;
   border-radius: 1px;
-  background: #3b82f6;
+  background: var(--status-merged);
   flex-shrink: 0;
 }
 
@@ -1086,8 +1086,8 @@
 .workspace-rail__mission-branch {
   font-family: var(--font-mono);
   font-size: 9.5px;
-  color: #a1a1aa;
-  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-dim);
+  background: var(--surface-overlay);
   padding: 0 3px;
   border-radius: 2px;
   max-width: 65px;
@@ -1690,8 +1690,8 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #10b981;
-  box-shadow: 0 0 5px rgba(16, 185, 129, 0.6);
+  background: var(--live);
+  box-shadow: 0 0 5px color-mix(in srgb, var(--live) 60%, transparent);
 }
 
 .workspace-rail__cockpit-conn-label {

@@ -1451,9 +1451,17 @@ body {
   padding: 3px 6px;
   border-radius: calc(var(--radius-sm) - 1px);
   line-height: 1;
-  min-height: 22px;
-  min-width: 22px;
+  /* 24px: alvo mínimo confortável. Com 22px os oito botões do pane eram
+     fáceis de errar, e um vizinho de "Ampliar" é "Tornar Orquestrador". */
+  min-height: 24px;
+  min-width: 24px;
   transition: color 120ms ease, background 120ms ease;
+}
+
+.toolbar__btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  color: var(--text);
 }
 
 .toolbar__btn-label {
