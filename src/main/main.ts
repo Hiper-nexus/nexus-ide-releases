@@ -10,7 +10,7 @@ import {
   protocol,
   systemPreferences,
 } from "electron";
-import { resolveUserPath } from "./path-resolver";
+import { resolveUserPath, retryLoginShellPathIfMissed } from "./path-resolver";
 import {
   createMainWindow,
   startMainWindowRenderer,
@@ -147,6 +147,7 @@ import {
   registerAdapterListener,
   unregisterAdapterListener,
   closeAdapterRegistry,
+  rescanAdapterBinaries,
 } from "./adapters/adapter-registry";
 import {
   initOrchestration,
@@ -850,6 +851,14 @@ if (!wireDeepLinks()) {
     try {
       await resolveUserPath();
       bootstrap();
+      // Shell de login lento (oh-my-zsh + nvm num login frio) estoura o prazo
+      // curto do boot e CLIs via nvm/fnm pareciam "não instaladas" a sessão
+      // toda. Uma segunda sondagem, longa e em background, corrige sozinha.
+      void retryLoginShellPathIfMissed()
+        .then((changed) => (changed ? rescanAdapterBinaries() : undefined))
+        .catch((error: unknown) => {
+          console.warn("[path] late login-shell PATH retry failed:", error);
+        });
       // MCP boot race (print 2026-08-16): o renderer restaurava panes de
       // agente enquanto o servidor MCP embutido ainda não tinha feito bind —
       // os CLIs spawnados imprimiam "MCP startup interrupted …

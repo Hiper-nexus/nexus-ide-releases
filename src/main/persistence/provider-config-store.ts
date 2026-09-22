@@ -544,7 +544,12 @@ function providerInfrastructureReadiness(adapterId: string): ProviderReadiness {
     if (!isBinResolvable(effectiveBin)) {
       return {
         ready: false,
-        reason: `${adapter.label} não encontrado. Instale: ${adapter.install.command}`,
+        // "Instale" mentia quando a CLI existe fora do PATH que o Nexus vê
+        // (nvm, pnpm, instalador próprio). O caminho que funciona vem antes.
+        reason:
+          `${adapter.label} não foi encontrado no PATH do Nexus. Se já está ` +
+          `instalado, use Configurações › Providers › Reexaminar CLIs ou ` +
+          `informe o caminho do binário. Para instalar: ${adapter.install.command}`,
       };
     }
   }

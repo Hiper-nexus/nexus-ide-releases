@@ -75,12 +75,54 @@ export function realUserHome(): string {
  * (Kimi Code, Grok, etc.) come before generic ~/.local/bin, which may hold a
  * different package with the same bare name (e.g. legacy kimi-cli via uv).
  */
+/**
+ * Node version managers keep one bin dir per installed version; a CLI
+ * installed with `npm i -g` lives only in the version that was active. Newest
+ * first so the version the operator most likely uses wins a name clash.
+ */
+function nvmVersionBinDirs(home: string): string[] {
+  const root = path.join(home, '.nvm', 'versions', 'node');
+  let versions: string[];
+  try {
+    versions = fs.readdirSync(root);
+  } catch {
+    return [];
+  }
+  const numeric = (version: string) =>
+    version.replace(/^v/, '').split('.').map((part) => Number.parseInt(part, 10) || 0);
+  return versions
+    .filter((version) => /^v?\d+\.\d+\.\d+/.test(version))
+    .sort((a, b) => {
+      const [x, y] = [numeric(a), numeric(b)];
+      for (let i = 0; i < 3; i += 1) {
+        if (x[i] !== y[i]) return (y[i] ?? 0) - (x[i] ?? 0);
+      }
+      return 0;
+    })
+    .map((version) => path.join(root, version, 'bin'));
+}
+
+/** Windows per-user install roots (npm/pnpm globals, native CLI installers). */
+function windowsUserBinDirs(home: string): string[] {
+  if (process.platform !== 'win32') return [];
+  const appData = process.env.APPDATA ?? path.join(home, 'AppData', 'Roaming');
+  const localAppData = process.env.LOCALAPPDATA ?? path.join(home, 'AppData', 'Local');
+  return [
+    path.join(appData, 'npm'),
+    path.join(localAppData, 'pnpm'),
+    path.join(localAppData, 'Volta', 'bin'),
+    path.join(home, 'scoop', 'shims'),
+  ];
+}
+
 export function commonCliBinDirs(home = realUserHome()): string[] {
   return [
     // Vendor-specific official installers first.
     path.join(home, '.kimi-code', 'bin'),
     path.join(home, '.grok', 'bin'),
     path.join(home, '.claude', 'bin'),
+    // Instalador local antigo do Claude Code (`claude migrate-installer`).
+    path.join(home, '.claude', 'local'),
     path.join(home, '.codex', 'bin'),
     path.join(home, '.hermes', 'node', 'bin'),
     path.join(home, '.local', 'share', 'claude', 'versions'),
@@ -97,8 +139,17 @@ export function commonCliBinDirs(home = realUserHome()): string[] {
     path.join(home, '.deno', 'bin'),
     path.join(home, '.volta', 'bin'),
     path.join(home, '.nvm', 'current', 'bin'),
+    ...nvmVersionBinDirs(home),
     path.join(home, '.fnm', 'current', 'bin'),
+    path.join(home, '.local', 'share', 'fnm', 'aliases', 'default', 'bin'),
+    path.join(home, 'Library', 'Application Support', 'fnm', 'aliases', 'default', 'bin'),
+    path.join(home, '.local', 'share', 'mise', 'shims'),
     path.join(home, '.asdf', 'shims'),
+    path.join(home, '.proto', 'shims'),
+    path.join(home, 'Library', 'pnpm'),
+    path.join(home, '.local', 'share', 'pnpm'),
+    ...windowsUserBinDirs(home),
+    '/snap/bin',
     path.join(home, '.npm-global', 'bin'),
     path.join(home, '.yarn', 'bin'),
     path.join(home, '.config', 'yarn', 'global', 'node_modules', '.bin'),
@@ -145,6 +196,7 @@ function executeLoginShellForOutput(
 export async function probeLoginShellPath(
   exec: LoginShellPathExecutor = executeLoginShellForOutput,
   home = realUserHome(),
+  timeoutMs = RESOLVE_TIMEOUT_MS,
 ): Promise<string> {
   if (process.platform === 'win32') return process.env.PATH ?? '';
   const shell = process.env.SHELL || '/bin/zsh';
@@ -157,7 +209,7 @@ export async function probeLoginShellPath(
       ['-lic', `printf '%s%s%s' '${START}' "$PATH" '${END}'`],
       {
         encoding: 'utf8',
-        timeout: RESOLVE_TIMEOUT_MS,
+        timeout: timeoutMs,
         env: {
           ...process.env,
           HOME: home,
@@ -227,10 +279,42 @@ let memoizedEffectivePath: string | null = null;
  */
 export async function resolveUserPath(): Promise<void> {
   if (folded) return;
-  const effective = await resolveEffectivePath();
+  const home = realUserHome();
+  bootLoginProbe = await probeLoginShellPath(undefined, home);
+  const effective = buildEffectivePath({ home, loginPath: bootLoginProbe });
   process.env.PATH = effective;
   memoizedEffectivePath = effective;
   folded = true;
+}
+
+/** Login-shell PATH seen at boot; '' = probe failed or timed out. */
+let bootLoginProbe: string | null = null;
+/** A slow profile (oh-my-zsh + nvm on a cold login) gets this much time. */
+const LATE_RESOLVE_TIMEOUT_MS = 20_000;
+
+/**
+ * The boot probe has a short deadline so a slow shell never delays the first
+ * window. When it missed, CLIs installed through nvm/fnm/custom PATH exports
+ * looked "not installed" for the whole session. Retry once in the background
+ * with a long deadline and fold the result; returns true when PATH changed so
+ * the caller rescans adapters.
+ */
+export async function retryLoginShellPathIfMissed(
+  exec: LoginShellPathExecutor = executeLoginShellForOutput,
+  options: { home?: string; bootProbe?: string | null } = {},
+): Promise<boolean> {
+  if (process.platform === 'win32') return false;
+  const bootProbe = options.bootProbe !== undefined ? options.bootProbe : bootLoginProbe;
+  if (bootProbe === null || bootProbe !== '') return false;
+  const home = options.home ?? realUserHome();
+  const loginPath = await probeLoginShellPath(exec, home, LATE_RESOLVE_TIMEOUT_MS);
+  if (!loginPath) return false;
+  const effective = buildEffectivePath({ home, loginPath });
+  process.env.PATH = effective;
+  memoizedEffectivePath = effective;
+  bootLoginProbe = loginPath;
+  folded = true;
+  return true;
 }
 
 /**
@@ -515,4 +599,5 @@ export function resolveWindowsCodexNpmShimLaunch(
 export function __resetPathResolverForTests(): void {
   folded = false;
   memoizedEffectivePath = null;
+  bootLoginProbe = null;
 }
