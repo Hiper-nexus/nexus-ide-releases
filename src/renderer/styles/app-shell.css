@@ -2026,11 +2026,8 @@
 /* Modo foco (Configurações): o rail fica só com marca, busca, destinos fixos e
    o rodapé de Configurações. Projetos, Recentes, Limpar e Cotas somem até
    voltar ao trabalho — a coluna de configurações já é a navegação da tela.
-   `!important` vence a largura inline que o shell aplica pela preferência. */
-.nexus-shell--focus {
-  --nexus-shell-rail-width: 208px !important;
-}
-
+   A largura do rail continua a do operador: os controles internos têm
+   largura mínima própria e cortavam abaixo dela. */
 .nexus-shell--focus .workspace-rail__scroll,
 .nexus-shell--focus .workspace-rail__utilities {
   display: none;

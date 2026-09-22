@@ -426,3 +426,11 @@
   font-size: 1em;
   margin-block: 1.33em;
 }
+
+/* Decisões do Jev dentro da Auditoria: subseção com respiro e fio próprio,
+   não um bloco colado na lista de ações. */
+.settings-audit__jev {
+  margin-top: var(--space-6);
+  padding-top: var(--space-5);
+  border-top: 1px solid var(--border);
+}

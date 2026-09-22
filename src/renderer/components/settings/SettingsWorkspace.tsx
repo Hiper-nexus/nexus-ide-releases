@@ -226,11 +226,13 @@ function SettingsSectionContent({
       return (
         <>
           <AuditSection />
-          <SettingsRouteTitleProvider title={null}>
-            <SettingsSectionTitleProvider level={3}>
-              <JevDecisionsSection />
-            </SettingsSectionTitleProvider>
-          </SettingsRouteTitleProvider>
+          <div className="settings-audit__jev">
+            <SettingsRouteTitleProvider title={null}>
+              <SettingsSectionTitleProvider level={3}>
+                <JevDecisionsSection />
+              </SettingsSectionTitleProvider>
+            </SettingsRouteTitleProvider>
+          </div>
         </>
       );
     case 'media':
