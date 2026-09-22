@@ -4,7 +4,6 @@ import { Fragment, useEffect, useState } from 'react';
 import type {
   AgentSpecWriteRequest,
   RecipeOverlayResult,
-  RemoteBridgeInfo,
   RemoteSpawnResult,
   RemoteSshHostView,
 } from '../../../shared/types';
@@ -14,10 +13,22 @@ import { useWorkspaceStore } from '../../state/workspace-store';
 import { useLayoutStore } from '../../state/layout-store';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
 import { askConfirm } from '../../state/confirm-store';
-import { QrCode } from '../QrCode';
 import { waitForSession } from '../../terminal/terminal-host';
 import { formatShortcut } from '../../lib/platform';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
+import {
+  recipeIssueKind,
+  sortRecipeIssues,
+  summarizeRecipeIssues,
+  type RecipeIssueKind,
+} from './recipe-issues-summary';
+
+const RECIPE_ISSUE_KIND_LABEL: Readonly<Record<RecipeIssueKind, string>> = {
+  'missing-tool': 'ferramenta ausente',
+  'missing-skill': 'instrução ausente',
+  'unrestricted-tools': 'sem lista de ferramentas',
+  'invalid-gap': 'anotação incompleta',
+};
 import {
   SHORTCUT_GROUP_LABELS,
   shortcutsInGroup,
@@ -26,7 +37,7 @@ import {
 
 /**
  * Seções "operacionais" do catálogo — Recipes (lint/overlay), Atalhos e
- * Remote (bridge + ssh/tmux). Extraídas de CatalogSections.tsx para manter
+ * Remote (ssh/tmux; o bridge do celular vive em CompanionRelaySection). Extraídas de CatalogSections.tsx para manter
  * cada módulo abaixo do teto de 800 linhas; a API pública não muda porque
  * CatalogSections re-exporta estas seções.
  */
@@ -71,7 +82,8 @@ export function RecipesSection() {
     };
   }, [workspace?.path, squads, refreshTick]);
 
-  const issues = overlay?.issues ?? [];
+  const issues = sortRecipeIssues(overlay?.issues ?? []);
+  const issueSummary = summarizeRecipeIssues(issues);
   const suggestions = overlay?.suggestions ?? [];
   const categories = Object.entries(overlay?.categories ?? {}).sort(([a], [b]) =>
     a.localeCompare(b),
@@ -140,12 +152,24 @@ export function RecipesSection() {
             {stack}
           </span>
         ))}
-        <span className={`settings-chip ${overlay?.ok ? 'settings-chip--ok' : 'settings-chip--warn'}`}>
+        <span
+          className={`settings-chip ${
+            overlay === null
+              ? loading ? '' : 'settings-chip--warn'
+              : issueSummary.tone === 'ok' ? 'settings-chip--ok' : ''
+          }`}
+          data-testid="recipes-status"
+        >
           {overlay === null
             ? loading ? 'Verificando…' : 'Verificação indisponível'
-            : overlay.ok ? 'Recursos verificados' : `${issues.length} pendências`}
+            : issueSummary.label}
         </span>
       </div>
+      {overlay !== null && issueSummary.reason !== null ? (
+        <p className="settings-detail__hint" data-testid="recipes-status-reason">
+          {issueSummary.reason}
+        </p>
+      ) : null}
 
       {suggestions.length > 0 && (
         <div className="arsenal-band">
@@ -168,8 +192,10 @@ export function RecipesSection() {
                   </div>
                   {recipe.gaps.length > 0 ? (
                     <div className="catalog-item__actions">
-                      <span className="settings-chip settings-chip--warn">
-                        {recipe.gaps.length} {recipe.gaps.length === 1 ? 'pendência' : 'pendências'}
+                      <span className="settings-chip">
+                        {recipe.gaps.length === 1
+                          ? 'falta 1 recurso'
+                          : `faltam ${recipe.gaps.length} recursos`}
                       </span>
                     </div>
                   ) : null}
@@ -179,7 +205,7 @@ export function RecipesSection() {
                   Ferramentas: {recipe.tools.join(', ')}
                 </p>
                 {recipe.gaps.length > 0 && (
-                  <p className="settings-list__detail">Pendências: {recipe.gaps.join(', ')}</p>
+                  <p className="settings-list__detail">Recursos que faltam: {recipe.gaps.join(', ')}</p>
                 )}
                 </details>
               </li>
@@ -191,12 +217,14 @@ export function RecipesSection() {
       {issues.length === 0 ? (
         overlay ? (
           <p className="settings-detail__hint">
-            Nenhuma pendência nas ferramentas e instruções declaradas.
+            Nenhum ajuste pendente nas ferramentas e instruções declaradas.
           </p>
         ) : null
       ) : (
         <details className="catalog-item__details catalog-item__details--band">
-          <summary>Ver {issues.length} pendências de configuração</summary>
+          <summary>
+            Ver {issues.length === 1 ? 'o ajuste' : `os ${issues.length} ajustes`}, do mais importante ao menor
+          </summary>
           <ul className="settings-list">
             {issues.map((issue, index) => (
               <li key={`${issue.squadId}-${issue.agentId}-${issue.ref}-${index}`} className="settings-list__item catalog-item">
@@ -213,10 +241,9 @@ export function RecipesSection() {
                     </span>
                   </div>
                   <div className="catalog-item__actions">
-                    <span className={`settings-chip ${issue.severity === 'error' ? 'settings-chip--danger' : 'settings-chip--warn'}`}>
-                      {issue.severity === 'error' ? 'erro' : 'aviso'}
+                    <span className="settings-chip" title={issue.field}>
+                      {RECIPE_ISSUE_KIND_LABEL[recipeIssueKind(issue)]}
                     </span>
-                    <span className="settings-chip">{issue.field}</span>
                   </div>
                 </div>
                 <p className="settings-list__detail">{issue.message}</p>
@@ -428,7 +455,6 @@ export function ShortcutsSection() {
 }
 
 export function RemoteSection() {
-  const [info, setInfo] = useState<RemoteBridgeInfo | null>(null);
   const [hosts, setHosts] = useState<RemoteSshHostView[]>([]);
   const [target, setTarget] = useState('');
   const [cli, setCli] = useState<'claude' | 'codex' | 'agy' | 'kimi'>('claude');
@@ -438,11 +464,7 @@ export function RemoteSection() {
   const [terminalError, setTerminalError] = useState<string | null>(null);
 
   async function refresh() {
-    const [bridge, list] = await Promise.all([
-      window.nexus.remote.bridgeStatus(),
-      window.nexus.remote.listSshHosts(),
-    ]);
-    setInfo(bridge);
+    const list = await window.nexus.remote.listSshHosts();
     setHosts(list);
     setTarget((current) => current || list[0]?.alias || '');
   }
@@ -494,7 +516,7 @@ export function RemoteSection() {
         <div>
           <SettingsSectionTitle>Remoto</SettingsSectionTitle>
           <p className="settings-detail__hint">
-            Conecte servidores pelo apelido ou acesse o Nexus pelo celular na rede local.
+            Conecte servidores pelo apelido e abra sessões neles. O celular fica na página Celular.
           </p>
         </div>
       </header>
@@ -509,137 +531,6 @@ export function RemoteSection() {
           );
         }}
       />
-
-      <section className="settings-card" aria-labelledby="remote-bridge-title">
-        <div className="settings-card__head">
-          <div className="settings-card__titles">
-            <h3 id="remote-bridge-title" className="settings-card__title">
-              Celular na rede local
-            </h3>
-            <p className="settings-card__subtitle">
-              Conecte o celular na mesma rede usando o código ou QR code.
-            </p>
-          </div>
-          <span
-            className={`settings-status-pill ${
-              info?.running ? 'settings-status-pill--ok' : 'settings-status-pill--warn'
-            }`}
-            role="status"
-          >
-            <span
-              className={`catalog-dot ${info?.running ? 'catalog-dot--ok' : 'catalog-dot--warn'}`}
-              aria-hidden="true"
-            />
-            {info?.running ? 'Online' : 'Offline'}
-          </span>
-        </div>
-
-        <div className="settings-action-row" role="group" aria-label="Ações do bridge">
-          <button
-            type="button"
-            className="settings-btn"
-            onClick={async () => {
-              setInfo(await window.nexus.remote.bridgeStart());
-            }}
-            title="Só este computador (127.0.0.1)"
-          >
-            Iniciar neste computador
-          </button>
-          <button
-            type="button"
-            className="settings-btn settings-btn--primary"
-            onClick={async () => {
-              setInfo(await window.nexus.remote.bridgeStart({ host: '0.0.0.0' }));
-            }}
-            title="Expõe na rede local para o celular conectar — só faça em redes de confiança"
-          >
-            Iniciar na rede local
-          </button>
-          <button
-            type="button"
-            className="settings-btn"
-            onClick={async () => {
-              setInfo(await window.nexus.remote.bridgeRotatePairing());
-            }}
-          >
-            Novo código
-          </button>
-          <button
-            type="button"
-            className="settings-btn"
-            onClick={async () => {
-              setInfo(await window.nexus.remote.bridgeRevokeTokens());
-            }}
-          >
-            Revogar acessos
-          </button>
-        </div>
-
-        {info ? (
-          <div className="settings-card__body">
-            <div className="settings-meta-grid">
-              <div className="settings-meta">
-                <span className="settings-meta__label">Código</span>
-                <strong className="settings-meta__value settings-meta__value--mono">
-                  {info.pairingCode ?? '------'}
-                </strong>
-              </div>
-              <div className="settings-meta">
-                <span className="settings-meta__label">Tokens</span>
-                <strong className="settings-meta__value">
-                  {info.tokenCount}
-                </strong>
-              </div>
-              <div className="settings-meta">
-                <span className="settings-meta__label">Clientes</span>
-                <strong className="settings-meta__value">
-                  {info.clientCount}
-                </strong>
-              </div>
-              <div className="settings-meta settings-meta--wide">
-                <span className="settings-meta__label">URL</span>
-                <strong className="settings-meta__value settings-meta__value--mono">
-                  {info.urls.join(' · ') || 'sem URL ativa'}
-                </strong>
-              </div>
-              <div className="settings-meta settings-meta--wide">
-                <span className="settings-meta__label">Certificado</span>
-                <strong className="settings-meta__value settings-meta__value--mono">
-                  {info.certFingerprint ?? '—'}
-                </strong>
-              </div>
-            </div>
-
-            {info.urls.length > 0
-              ? (() => {
-                  const lanUrl = info.urls
-                    .filter((u) => !u.includes('127.0.0.1'))
-                    .map((u) => u.replace('wss://', 'https://'))[0];
-                  return (
-                    <div className="settings-card__aside">
-                      <p className="settings-card__note">
-                        {lanUrl
-                          ? `Abra no celular: ${lanUrl}`
-                          : 'Só localhost — inicie em LAN e conecte na mesma rede.'}
-                      </p>
-                      {lanUrl ? (
-                        <div className="settings-qr">
-                          <QrCode
-                            value={`${lanUrl}#code=${info.pairingCode ?? ''}`}
-                            size={180}
-                            label="QR code para parear o celular"
-                          />
-                        </div>
-                      ) : null}
-                    </div>
-                  );
-                })()
-              : null}
-          </div>
-        ) : (
-          <p className="settings-card__note">Carregando estado do bridge…</p>
-        )}
-      </section>
 
       <section className="settings-card" aria-labelledby="remote-ssh-title">
         <div className="settings-card__head">

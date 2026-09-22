@@ -285,19 +285,22 @@ export function McpsSection() {
 
       {hubError ? (
         <p className="settings-list__detail" role="note">
-          Hub canônico: {hubError}
+          Configuração principal das conexões: {hubError}
         </p>
       ) : null}
 
       {hubServers.length > 0 ? (
         <div className="arsenal-band">
-          <h4 className="arsenal-band__label">
-            Hub canônico{' '}
+          <h4
+            className="arsenal-band__label"
+            title="Lista central de conexões (hub MCP) que o Nexus entrega aos agentes"
+          >
+            Configuração principal{' '}
             <span className="arsenal-band__count">{hubServers.length}</span>
           </h4>
           <ul
             className="mcps-hub"
-            aria-label="Servidores registrados no hub"
+            aria-label="Conexões na configuração principal"
           >
             {hubServers.map((server) => (
               <li key={server.id} className="mcps-hub__item">

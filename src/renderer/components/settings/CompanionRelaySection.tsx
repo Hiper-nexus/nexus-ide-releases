@@ -8,6 +8,7 @@ import { useProductFlags } from '../../lib/use-product-flags';
 import { MainGeneratedQr } from '../MainGeneratedQr';
 import { EmptyState } from '../ActionCard';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
+import { LocalPhoneBridgeCard } from './LocalPhoneBridgeCard';
 
 const PRODUCTION_RELAY_URL = 'wss://relay.nexuside.app';
 
@@ -336,6 +337,8 @@ export function CompanionRelaySection() {
           )}
         </>
       )}
+
+      <LocalPhoneBridgeCard />
     </section>
   );
 }

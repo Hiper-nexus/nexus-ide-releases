@@ -133,4 +133,57 @@ describe('AccountSection', () => {
     expect(host.textContent).not.toContain('Entrar com GitHub');
     act(() => root.unmount());
   });
+
+  it('never paints the session green while the subscription is unconfirmed', async () => {
+    (window.nexus.billing.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+      plan: 'pro',
+      email: 'op@nexus.dev',
+      status: 'active',
+      renewsAt: null,
+      verified: false,
+    });
+    const { host, root } = mount();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+
+    const pill = host.querySelector('.account__session-pill')!;
+    expect(host.textContent).toContain('Assinatura não confirmada agora');
+    expect(pill.textContent).toBe('a confirmar');
+    expect(pill.classList.contains('account__session-pill--in')).toBe(false);
+    expect(pill.classList.contains('account__session-pill--warn')).toBe(true);
+    act(() => root.unmount());
+  });
+
+  it('shows "sessão expirada" and lets the person sign in again', async () => {
+    (window.nexus.billing.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+      plan: 'free',
+      email: 'op@nexus.dev',
+      status: 'none',
+      renewsAt: null,
+      verified: true,
+    });
+    const teamGet = window.nexus.team.get as ReturnType<typeof vi.fn>;
+    teamGet.mockResolvedValueOnce({
+      ok: false,
+      error: 'Sua sessão Nexus expirou — saia e entre de novo na conta',
+    });
+    teamGet.mockResolvedValue({ ok: true, data: null });
+    const { host, root } = mount();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+
+    const pill = host.querySelector('.account__session-pill')!;
+    expect(pill.textContent).toBe('sessão expirada');
+    expect(pill.classList.contains('account__session-pill--in')).toBe(false);
+    expect(host.textContent).not.toContain('Entrar com GitHub');
+
+    const relogin = [...host.querySelectorAll('button')].find((b) => b.textContent === 'Entrar de novo')!;
+    await act(async () => relogin.click());
+    const github = [...host.querySelectorAll('button')].find((b) => b.textContent?.includes('Entrar com GitHub'))!;
+    await act(async () => { github.click(); await Promise.resolve(); await Promise.resolve(); });
+
+    expect(window.nexus.app.authLogin).toHaveBeenCalledWith('github');
+    expect(teamGet).toHaveBeenCalledTimes(2);
+    expect(host.querySelector('.account__session-pill')!.textContent).toBe('conectado');
+    expect(host.textContent).not.toContain('Entrar com GitHub');
+    act(() => root.unmount());
+  });
 });

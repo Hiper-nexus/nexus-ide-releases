@@ -118,6 +118,57 @@ function definitionKillSwitch(definition: unknown): boolean {
   );
 }
 
+function definitionDefaultEnabled(definition: unknown): boolean {
+  return (
+    typeof definition === 'object' &&
+    definition !== null &&
+    (definition as { defaultEnabled?: unknown }).defaultEnabled === true
+  );
+}
+
+function isBlockedRow(row: ProductFlagResolutionRow): boolean {
+  return (
+    row.reason === 'kill-switch' ||
+    row.reason === 'channel-blocked' ||
+    definitionKillSwitch(row.definition)
+  );
+}
+
+/**
+ * Um recurso ligado por padrão já faz parte do app para quem usa: não é
+ * "experimental" do ponto de vista dela. A contagem que importa é o que a
+ * pessoa PODE experimentar (desligado por padrão e não bloqueado); os
+ * recursos de fábrica aparecem à parte, só para quem quiser desligá-los.
+ */
+export interface LabsFlagSummary {
+  readonly tryRows: readonly ProductFlagResolutionRow[];
+  readonly builtInRows: readonly ProductFlagResolutionRow[];
+  /** Desligados por padrão e liberados nesta versão. */
+  readonly tryableCount: number;
+  /** Desses, quantos a pessoa já ligou. */
+  readonly tryingCount: number;
+  readonly builtInCount: number;
+  readonly overrideCount: number;
+  readonly blockedCount: number;
+}
+
+export function summarizeLabsFlags(
+  rows: readonly ProductFlagResolutionRow[],
+): LabsFlagSummary {
+  const builtInRows = rows.filter((row) => definitionDefaultEnabled(row.definition));
+  const tryRows = rows.filter((row) => !definitionDefaultEnabled(row.definition));
+  const tryable = tryRows.filter((row) => !isBlockedRow(row));
+  return {
+    tryRows,
+    builtInRows,
+    tryableCount: tryable.length,
+    tryingCount: tryable.filter((row) => row.enabled).length,
+    builtInCount: builtInRows.length,
+    overrideCount: rows.filter((row) => row.reason === 'override').length,
+    blockedCount: rows.filter(isBlockedRow).length,
+  };
+}
+
 function reasonModifier(reason: string): string {
   if (reason === 'override') return ' labs-flag__reason--override';
   if (reason === 'kill-switch') return ' labs-flag__reason--blocked';
@@ -238,16 +289,16 @@ export function LabsSection() {
     }
   };
 
-  const enabledCount = rows?.filter((row) => row.enabled).length ?? 0;
-  const overrideCount =
-    rows?.filter((row) => row.reason === 'override').length ?? 0;
-  const blockedCount =
-    rows?.filter(
-      (row) =>
-        row.reason === 'kill-switch' ||
-        row.reason === 'channel-blocked' ||
-        definitionKillSwitch(row.definition),
-    ).length ?? 0;
+  const summary = summarizeLabsFlags(rows ?? []);
+  const renderRow = (row: ProductFlagResolutionRow) => (
+    <FlagRow
+      key={row.id}
+      row={row}
+      pending={pending.has(row.id)}
+      onToggle={(id, next) => void apply(id, next)}
+      onReset={(id) => void apply(id, null)}
+    />
+  );
 
   return (
     <section className="sys-section">
@@ -281,28 +332,46 @@ export function LabsSection() {
       ) : (
         <>
           <div className="sys-stat-strip" aria-label="Resumo dos recursos">
-            <span className="settings-chip">{rows.length} recursos</span>
-            <span className="settings-chip">{enabledCount} ligados</span>
-            {overrideCount > 0 && (
-              <span className="labs-flag__reason labs-flag__reason--override">
-                {overrideCount} personalizados
+            <span className="settings-chip">
+              {summary.tryableCount === 1
+                ? '1 recurso para experimentar'
+                : `${summary.tryableCount} recursos para experimentar`}
+              {summary.tryingCount > 0 ? ` · ${summary.tryingCount} em teste` : ''}
+            </span>
+            {summary.builtInCount > 0 && (
+              <span className="settings-chip">
+                {summary.builtInCount === 1
+                  ? '1 já faz parte do app'
+                  : `${summary.builtInCount} já fazem parte do app`}
               </span>
             )}
-            {blockedCount > 0 && (
+            {summary.overrideCount > 0 && (
+              <span className="labs-flag__reason labs-flag__reason--override">
+                {summary.overrideCount} personalizados
+              </span>
+            )}
+            {summary.blockedCount > 0 && (
               <span className="labs-flag__reason labs-flag__reason--blocked">
-                {blockedCount} bloqueados
+                {summary.blockedCount} bloqueados
               </span>
             )}
           </div>
-          {rows.map((row) => (
-            <FlagRow
-              key={row.id}
-              row={row}
-              pending={pending.has(row.id)}
-              onToggle={(id, next) => void apply(id, next)}
-              onReset={(id) => void apply(id, null)}
-            />
-          ))}
+          {summary.tryRows.length > 0 && (
+            <div className="labs-flags__group" data-labs-group="try">
+              <p className="arsenal-band__label">Para experimentar</p>
+              {summary.tryRows.map(renderRow)}
+            </div>
+          )}
+          {summary.builtInRows.length > 0 && (
+            <div className="labs-flags__group" data-labs-group="built-in">
+              <p className="arsenal-band__label">Já fazem parte do app</p>
+              <p className="ops-consent-panel__copy">
+                Ligados por padrão para todo mundo. Desligue só se algum
+                deles atrapalhar o seu uso.
+              </p>
+              {summary.builtInRows.map(renderRow)}
+            </div>
+          )}
         </>
       )}
     </section>

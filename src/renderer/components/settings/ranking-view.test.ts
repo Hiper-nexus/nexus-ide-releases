@@ -3,6 +3,8 @@ import type { PublicModelRankingEntry } from '../../../shared/eval-ranking-types
 import {
   costEfficiency,
   estimateBadge,
+  estimateDetail,
+  hasEstimates,
   formatEvalTime,
   pickForDimension,
   pickValue,
@@ -139,7 +141,18 @@ describe('ranking-view', () => {
       estimate: true,
       sourceLabel: 'estimativa (fixture)',
     });
-    expect(estimateBadge(fixture)).toBe('estimativa (fixture)');
+    // The visible badge never echoes the internal "(fixture)" jargon; the
+    // technical origin only lives in the tooltip.
+    expect(estimateBadge(fixture)).toBe('estimativa');
+    expect(estimateDetail(fixture)).toContain('não medida em teste real');
+    expect(estimateDetail(fixture)).toContain('estimativa (fixture)');
+    expect(hasEstimates([fixture])).toBe(true);
+    expect(
+      hasEstimates([entry({ id: 'r/x', modelId: 'x', estimate: false })]),
+    ).toBe(false);
+    expect(
+      estimateDetail(entry({ id: 'r/y', modelId: 'y', estimate: false })),
+    ).toBeNull();
     // Mark without label falls back to the bare badge copy.
     expect(
       estimateBadge(entry({ id: 'f/bare', modelId: 'bare', estimate: true })),

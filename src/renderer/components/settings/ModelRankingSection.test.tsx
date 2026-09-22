@@ -124,9 +124,42 @@ describe('ModelRankingSection', () => {
     expect(host.textContent).toContain('Comparar modelos');
     expect(host.textContent).toContain('Faixas de custo');
     expect(host.textContent).toContain('estimativas, não avaliações reais');
-    expect(host.textContent).toContain('nexus-v1');
+    // Technical suite id stays in the tooltip, never in the visible copy.
+    expect(host.textContent).not.toContain('nexus-v1');
+    expect(host.textContent).toContain('notas medidas em teste');
+    expect(host.querySelector('[title*="nexus-v1/eval-prod"]')).not.toBeNull();
     expect(host.textContent).toContain('3 modelos');
     expect(host.textContent).toContain('1 com ferramenta instalada');
+    expect(host.textContent).not.toMatch(/η|overall/);
+
+    act(() => root.unmount());
+  });
+
+  it('marks estimates with the plain word, never fixture jargon per row', async () => {
+    const estimated: PublicModelRankingSnapshot = {
+      ...sampleSnapshot,
+      entries: sampleSnapshot.entries.map((e) => ({
+        ...e,
+        estimate: true,
+        sourceLabel: 'estimativa (fixture)',
+      })),
+    };
+    (window as unknown as { nexus: { ranking: { public: () => Promise<unknown> } } })
+      .nexus.ranking.public = vi.fn(async () => estimated);
+    const { host, root } = mount();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const badges = [...host.querySelectorAll('.rank-race .rank-estimate')];
+    expect(badges).toHaveLength(3);
+    for (const badge of badges) {
+      expect(badge.textContent).toBe('estimativa');
+      expect(badge.getAttribute('title')).toContain('não medida em teste real');
+    }
+    expect(host.textContent).not.toContain('fixture');
+    expect(host.textContent).toContain('notas estimadas');
 
     act(() => root.unmount());
   });
@@ -183,7 +216,7 @@ describe('ModelRankingSection', () => {
 
     expect(host.querySelector('.rank-radar')).not.toBeNull();
     expect(host.querySelector('.rank-ops__detail')).not.toBeNull();
-    expect(host.textContent).toContain('conf 96%');
+    expect(host.textContent).toContain('confiança 96%');
 
     act(() => root.unmount());
   });

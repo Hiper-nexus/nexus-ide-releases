@@ -26,6 +26,15 @@
   box-shadow: 0 0 0 3px
     color-mix(in srgb, var(--status-dot-success) 16%, transparent);
 }
+/* Sessão presente mas não confirmada ou expirada: nunca verde. */
+.account__session-pill--warn {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 40%, transparent);
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+}
+.account__session-pill--warn::before {
+  background: var(--status-dot-warning);
+}
 
 /* Meta da identidade: chip de plano + frase de renovação na mesma linha. */
 .account__meta {

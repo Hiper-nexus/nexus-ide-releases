@@ -215,12 +215,29 @@ export function formatEvalTime(iso: string): string {
 }
 
 /**
- * Badge copy when the entry is a fixture estimate, null for real audits.
- * Falls back to a bare 'estimativa' when the payload lacks sourceLabel.
+ * Badge copy when the entry is an estimate, null for real audits.
+ * Always the plain word 'estimativa': the payload's `sourceLabel` carries
+ * internal jargon ("estimativa (fixture)") and only reaches the tooltip
+ * through {@link estimateDetail}.
  */
 export function estimateBadge(entry: PublicModelRankingEntry): string | null {
   if (entry.estimate !== true) return null;
-  return entry.sourceLabel ?? 'estimativa';
+  return 'estimativa';
+}
+
+/** Tooltip for the estimate badge: plain explanation, technical origin last. */
+export function estimateDetail(entry: PublicModelRankingEntry): string | null {
+  if (entry.estimate !== true) return null;
+  const plain = 'Nota estimada, ainda não medida em teste real.';
+  const origin = entry.sourceLabel ?? entry.source;
+  return origin ? `${plain} Origem técnica: ${origin}` : plain;
+}
+
+/** True when at least one entry is an estimate rather than a measured score. */
+export function hasEstimates(
+  entries: readonly PublicModelRankingEntry[],
+): boolean {
+  return entries.some((entry) => entry.estimate === true);
 }
 
 export function costLabel(entry: PublicModelRankingEntry): string {

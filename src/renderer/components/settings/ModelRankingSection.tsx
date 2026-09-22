@@ -14,7 +14,9 @@ import {
   costEfficiency,
   costLabel,
   estimateBadge,
+  estimateDetail,
   formatEvalTime,
+  hasEstimates,
   gridRingPath,
   groupEntriesByBand,
   pickForDimension,
@@ -142,7 +144,7 @@ function RaceChart({
                 {estimate !== null && (
                   <span
                     className="rank-estimate"
-                    title="scores de fixture offline, não auditoria real"
+                    title={estimateDetail(entry) ?? undefined}
                   >
                     {estimate}
                   </span>
@@ -164,9 +166,6 @@ function RaceChart({
             </span>
             <span className="rank-race__score">
               {score === null ? "—" : score}
-              <span className="rank-race__eff" title="eficiência overall/custo">
-                η{costEfficiency(entry)}
-              </span>
             </span>
           </button>
         );
@@ -280,8 +279,11 @@ function RadarChart({
           <span className="rank-radar__identity-copy">
             <strong>{entry.modelId}</strong>
             <span>
-              overall {entry.overall} · η{costEfficiency(entry)} ·{" "}
-              {costLabel(entry)}
+              nota geral {entry.overall} ·{" "}
+              <span title="Nota geral dividida pelo peso do custo">
+                custo-benefício {costEfficiency(entry)}
+              </span>{" "}
+              · {costLabel(entry)}
             </span>
           </span>
         </span>
@@ -531,9 +533,12 @@ export function ModelRankingSection() {
       {snapshot && (
         <>
           <div className="rank-ops__fleet" role="status">
-            <span>
-              suite <code>{snapshot.suiteId}</code>
-              <span className="rank-ops__dim">/{snapshot.suiteRevision}</span>
+            <span
+              title={`Conjunto de testes ${snapshot.suiteId}/${snapshot.suiteRevision}`}
+            >
+              {hasEstimates(snapshot.entries)
+                ? "notas estimadas"
+                : "notas medidas em teste"}
             </span>
             <span className="rank-ops__sep" aria-hidden="true">
               ·
@@ -698,16 +703,19 @@ export function ModelRankingSection() {
                   );
                 })}
               </div>
-              <p className="rank-ops__foot">
+              <p
+                className="rank-ops__foot"
+                title={`Origem técnica: ${selected.source}`}
+              >
                 faixa {OPERATIONAL_BAND_LABELS[bandOfEntry(selected)]} · custo{" "}
-                {costLabel(selected)} · fonte {selected.source}
+                {costLabel(selected)}
                 {estimateBadge(selected) !== null && (
-                  <span className="rank-estimate">
+                  <span className="rank-estimate rank-estimate--detail">
                     {" "}
                     · {estimateBadge(selected)}
                   </span>
                 )}{" "}
-                · conf{" "}
+                · confiança{" "}
                 {typeof selected.confidence === "number" &&
                 Number.isFinite(selected.confidence)
                   ? `${Math.round(selected.confidence * 100)}%`
