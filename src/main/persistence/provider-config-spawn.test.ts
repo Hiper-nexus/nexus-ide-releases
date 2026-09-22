@@ -312,6 +312,9 @@ vi.mock('./secrets-store', () => ({
   isSecureStorageAvailable: () => true,
   maskedKey: () => null,
   setKey: vi.fn(),
+  listSecretKeys: () => [],
+  setSecret: vi.fn(() => ({ ok: true })),
+  vaultState: () => 'unknown',
 }));
 
 vi.mock('../adapters/provider-test', () => ({ testProviderKey: vi.fn() }));
