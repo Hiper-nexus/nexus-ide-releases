@@ -657,4 +657,61 @@ describe('UsageQuotaSection', () => {
     expect(refreshSpy).toHaveBeenCalled();
     act(() => root.unmount());
   });
+
+  it('recolhe as contas sem cota informada num grupo fechado no fim da lista', async () => {
+    const unknownWindow = {
+      kind: 'hours' as const,
+      label: '5 Horas',
+      usedRatio: null,
+      source: 'unknown' as const,
+      confidence: 'low' as const,
+    };
+    const extraUnknown: ProviderQuotaEntry = {
+      id: 'kimi', adapterId: 'kimi', label: 'Kimi', installed: true, onCooldown: false,
+      windows: [unknownWindow], updatedAt: 1723630000000,
+    };
+    const snapshot = { ...sampleSnapshot, entries: [...sampleEntries, extraUnknown] };
+    vi.mocked(window.nexus.quota.snapshot).mockResolvedValue(snapshot);
+    vi.mocked(window.nexus.quota.refresh).mockResolvedValue(snapshot);
+    const { host, root } = mount();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const group = host.querySelector<HTMLDetailsElement>('details.quota-panel__unreported');
+    expect(group).not.toBeNull();
+    expect(group?.open).toBe(false);
+    expect(group?.querySelector('summary')?.textContent).toBe('2 contas sem cota informada');
+    const collapsed = [...(group?.querySelectorAll('.quota-entry') ?? [])].map((row) => row.getAttribute('data-adapter'));
+    expect(collapsed).toEqual(expect.arrayContaining(['opencode', 'kimi']));
+    expect(collapsed).toHaveLength(2);
+
+    // Linhas com consumo medido (e a em pausa) seguem à vista, fora do grupo.
+    const visible = [...host.querySelectorAll('.quota-entry')]
+      .filter((row) => !group?.contains(row))
+      .map((row) => row.getAttribute('data-adapter'));
+    expect(visible).toEqual(['codex', 'claude']);
+    // O grupo fica depois da lista visível.
+    const visibleList = host.querySelector('.quota-panel__list');
+    expect(visibleList!.compareDocumentPosition(group!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    act(() => root.unmount());
+  });
+
+  it('mantém à vista a conta sem cota que precisa entrar novamente', async () => {
+    useAccountStore.setState({
+      accounts: [{ ...useAccountStore.getState().accounts[0], id: 'acc-2', adapterId: 'opencode', needsRelogin: true }],
+    });
+    const entries = sampleEntries.map((entry) => entry.id === 'opencode' ? { ...entry, accountId: 'acc-2' } : entry);
+    const snapshot = { ...sampleSnapshot, entries };
+    vi.mocked(window.nexus.quota.snapshot).mockResolvedValue(snapshot);
+    vi.mocked(window.nexus.quota.refresh).mockResolvedValue(snapshot);
+    const { host, root } = mount();
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(host.querySelector('details.quota-panel__unreported')).toBeNull();
+    act(() => root.unmount());
+  });
 });

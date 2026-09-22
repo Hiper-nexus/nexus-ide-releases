@@ -385,6 +385,33 @@ function squadFailureMessage(cause: unknown, fallback: string): string {
     : fallback;
 }
 
+export type SquadNameGroup = { name: string; squads: Squad[] };
+
+/**
+ * Agrupa equipes salvas com o MESMO nome (após aparar espaços), na ordem da
+ * primeira aparição. Cada grupo guarda as cópias na ordem original.
+ */
+export function groupSquadsByName(squads: readonly Squad[]): SquadNameGroup[] {
+  const byName = new Map<string, Squad[]>();
+  for (const squad of squads) {
+    const key = squad.name.trim();
+    byName.set(key, [...(byName.get(key) ?? []), squad]);
+  }
+  return [...byName.entries()].map(([name, grouped]) => ({ name, squads: grouped }));
+}
+
+/** Carimbos anteriores a 2000 não são datas de criação reais (fixtures, ids). */
+const MIN_PLAUSIBLE_CREATED_AT_MS = 946_684_800_000;
+
+function squadCopyLabel(squad: Squad, ordinal: number): string {
+  const createdAt = Number(squad.createdAt);
+  if (Number.isFinite(createdAt) && createdAt >= MIN_PLAUSIBLE_CREATED_AT_MS) {
+    const date = new Date(createdAt);
+    return `Cópia ${ordinal} · ${date.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}`;
+  }
+  return `Cópia ${ordinal}`;
+}
+
 export function SquadsSection() {
   const squads = useOrchStore((s) => s.squads);
   const visibleSquads = squads
@@ -588,6 +615,80 @@ export function SquadsSection() {
     }
   }
 
+  const squadGroups = groupSquadsByName(visibleSquads);
+
+  function renderSquadRow(squad: Squad, copyCount?: number, copyLabel?: string) {
+    const deleting = operation === `delete:${squad.id}`;
+    const members = squad.agents.map((agent) => agent.agentName).join(' · ');
+    const target = copyLabel ? ` (${copyLabel})` : '';
+    return (
+      <>
+        <div className="settings-list__head settings-squads__row">
+          <span className="settings-list__title">{copyLabel ?? squad.name}</span>
+          {copyCount ? (
+            <span
+              className="settings-chip settings-squads__count"
+              title={`${copyCount} equipes salvas com este nome`}
+            >
+              {copyCount} cópias
+            </span>
+          ) : null}
+          <span className="settings-chip">{squad.builtin ? 'original' : 'seu'}</span>
+          <span className="settings-chip">
+            {squad.agents.length} {squad.agents.length === 1 ? 'agente' : 'agentes'}
+          </span>
+          <div className="settings-squads__row-actions">
+            <button
+              type="button"
+              className="settings-btn settings-btn--primary"
+              disabled={operation !== null}
+              aria-label={copyLabel ? `Usar integrantes${target}` : undefined}
+              onClick={() => useMembers(squad)}
+            >
+              {squad.id === PET_STUDIO_SQUAD_ID ? 'Criar pet' : 'Usar integrantes'}
+            </button>
+            <button
+              type="button"
+              className="settings-btn"
+              disabled={operation !== null}
+              aria-label={copyLabel ? `${squad.builtin ? 'Personalizar' : 'Editar'}${target}` : undefined}
+              title={
+                squad.builtin
+                  ? 'Criar uma cópia editável desta equipe'
+                  : 'Editar nome, instruções e agentes'
+              }
+              onClick={() => {
+                setFeedback(null);
+                setEditing(squad);
+              }}
+            >
+              {squad.builtin ? 'Personalizar' : 'Editar'}
+            </button>
+            {!squad.builtin ? (
+              <>
+                <span className="settings-squads__action-sep" aria-hidden="true" />
+                <button
+                  type="button"
+                  className="settings-btn settings-squads__delete"
+                  disabled={operation !== null}
+                  aria-label={copyLabel ? `Apagar${target}` : undefined}
+                  onClick={() => void deleteSavedSquad(squad)}
+                >
+                  {deleting ? 'Apagando…' : 'Apagar'}
+                </button>
+              </>
+            ) : null}
+          </div>
+        </div>
+        {members && (
+          <p className="settings-list__detail settings-squads__members" title={members}>
+            {members}
+          </p>
+        )}
+      </>
+    );
+  }
+
   const managementActions = (
     <div className="settings-squads__actions">
       <button
@@ -624,10 +725,13 @@ export function SquadsSection() {
         Salve integrantes e suas configurações para montar novas equipes.
       </p>
 
-      <OrchestratorDefaults />
+      <section className="settings-squads__block settings-squads__block--autopilot" aria-label="Piloto automático">
+        <OrchestratorDefaults />
+      </section>
 
+      <section className="settings-squads__block" aria-labelledby="settings-squads-saved-title">
       <div className="settings-section-heading settings-section-heading--with-count">
-        <h4>Equipes salvas</h4>
+        <h4 id="settings-squads-saved-title">Equipes salvas</h4>
         <span className="settings-chip">{visibleSquads.length}</span>
       </div>
       {visibleSquads.length === 0 ? (
@@ -646,73 +750,48 @@ export function SquadsSection() {
         <>
           {managementActions}
           <ul className="settings-list" aria-label="Equipes salvas">
-            {visibleSquads.map((squad) => {
-              const deleting = operation === `delete:${squad.id}`;
-              const members = squad.agents
-                .map((agent) => agent.agentName)
-                .join(' · ');
+            {squadGroups.map((group) => {
+              const [lead, ...copies] = group.squads;
+              if (copies.length === 0) {
+                return (
+                  <li key={lead.id} className="settings-list__item">
+                    {renderSquadRow(lead)}
+                  </li>
+                );
+              }
               return (
-                <li key={squad.id} className="settings-list__item">
-                  <div className="settings-list__head settings-squads__row">
-                    <span className="settings-list__title">{squad.name}</span>
-                    <span className="settings-chip">
-                      {squad.builtin ? 'original' : 'seu'}
-                    </span>
-                    <span className="settings-chip">
-                      {squad.agents.length}{' '}
-                      {squad.agents.length === 1 ? 'agente' : 'agentes'}
-                    </span>
-                    <div className="settings-squads__row-actions">
-                      <button
-                        type="button"
-                        className="settings-btn settings-btn--primary"
-                        disabled={operation !== null}
-                        onClick={() => useMembers(squad)}
-                      >
-                        {squad.id === PET_STUDIO_SQUAD_ID ? 'Criar pet' : 'Usar integrantes'}
-                      </button>
-                      <button
-                        type="button"
-                        className="settings-btn"
-                        disabled={operation !== null}
-                        title={
-                          squad.builtin
-                            ? 'Criar uma cópia editável desta equipe'
-                            : 'Editar nome, instruções e agentes'
-                        }
-                        onClick={() => {
-                          setFeedback(null);
-                          setEditing(squad);
-                        }}
-                      >
-                        {squad.builtin ? 'Personalizar' : 'Editar'}
-                      </button>
-                      {!squad.builtin ? (
-                        <button
-                          type="button"
-                          className="settings-btn settings-btn--danger"
-                          disabled={operation !== null}
-                          onClick={() => void deleteSavedSquad(squad)}
-                        >
-                          {deleting ? 'Apagando…' : 'Apagar'}
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
-                  {members && (
-                    <p
-                      className="settings-list__detail settings-squads__members"
-                      title={members}
+                <li
+                  key={`group:${lead.id}`}
+                  className="settings-list__item settings-squads__group"
+                >
+                  {renderSquadRow(lead, group.squads.length)}
+                  <details className="settings-squads__copies">
+                    <summary>
+                      {copies.length === 1
+                        ? 'Ver a outra cópia'
+                        : `Ver as outras ${copies.length} cópias`}
+                    </summary>
+                    <ul
+                      className="settings-list"
+                      aria-label={`Cópias de ${group.name}`}
                     >
-                      {members}
-                    </p>
-                  )}
+                      {copies.map((copy, index) => (
+                        <li
+                          key={copy.id}
+                          className="settings-list__item settings-squads__copy"
+                        >
+                          {renderSquadRow(copy, undefined, squadCopyLabel(copy, index + 2))}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
                 </li>
               );
             })}
           </ul>
         </>
       )}
+      </section>
       {feedback ? (
         <p
           className={`settings-squads__feedback settings-squads__feedback--${feedback.tone}`}

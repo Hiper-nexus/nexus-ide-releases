@@ -122,6 +122,28 @@ function hasQuota(entry: ProviderQuotaEntry): boolean {
   );
 }
 
+/** Linha sem cota informada que ainda pede uma ação do operador fica à vista. */
+function needsAttention(entry: ProviderQuotaEntry, account: AccountInfo | undefined): boolean {
+  return Boolean(account?.needsRelogin) || entry.readHint === 'auth-expired' || entry.onCooldown;
+}
+
+/**
+ * Separa as linhas com consumo medido (ordem de consumo preservada) das
+ * linhas sem cota informada, que a página recolhe num grupo no fim.
+ */
+function splitUnreportedEntries(
+  entries: readonly ProviderQuotaEntry[],
+  accounts: readonly AccountInfo[],
+): { visibleEntries: ProviderQuotaEntry[]; collapsedEntries: ProviderQuotaEntry[] } {
+  const isCollapsed = (entry: ProviderQuotaEntry) =>
+    !hasQuota(entry) &&
+    !needsAttention(entry, accounts.find((account) => account.id === entry.accountId));
+  return {
+    visibleEntries: entries.filter((entry) => !isCollapsed(entry)),
+    collapsedEntries: entries.filter(isCollapsed),
+  };
+}
+
 async function preserveQuotaLoginSession(adapterId: string, baseline: AdapterAuthStatus | null): Promise<void> {
   if (baseline?.state !== 'ok' || !(baseline.sessionFingerprint || emailFromAuthDetail(baseline.detail))) return;
   const store = useAccountStore.getState();
@@ -519,6 +541,23 @@ export function UsageQuotaSection() {
       .map((rows) => rows[0]?.entryId)
       .filter((entryId): entryId is string => Boolean(entryId)),
   );
+  // Contas sem percentual nenhum não competem com as que têm consumo medido:
+  // ficam num grupo recolhido no fim. Quem pede ação (login, pausa) continua à vista.
+  const { visibleEntries, collapsedEntries } = splitUnreportedEntries(entries, accounts);
+  const renderEntry = (entry: ProviderQuotaEntry) => {
+    const account = accounts.find((candidate) => candidate.id === entry.accountId);
+    return (
+      <EntryCard
+        key={entry.id}
+        entry={entry}
+        account={account}
+        now={now}
+        email={account?.email}
+        needsRelogin={account?.needsRelogin}
+        recommended={recommendedIds.has(entry.id)}
+      />
+    );
+  };
   return (
     <section
       className="quota-panel"
@@ -641,24 +680,21 @@ export function UsageQuotaSection() {
           )}
         </div>
       ) : (
-        <ul className="quota-panel__list">
-          {entries.map((entry) => {
-            const account = accounts.find(
-              (candidate) => candidate.id === entry.accountId,
-            );
-            return (
-            <EntryCard
-              key={entry.id}
-              entry={entry}
-              account={account}
-              now={now}
-              email={account?.email}
-              needsRelogin={account?.needsRelogin}
-              recommended={recommendedIds.has(entry.id)}
-            />
-            );
-          })}
-        </ul>
+        <>
+          {visibleEntries.length > 0 && (
+            <ul className="quota-panel__list">{visibleEntries.map(renderEntry)}</ul>
+          )}
+          {collapsedEntries.length > 0 && (
+            <details className="quota-panel__unreported">
+              <summary className="quota-panel__unreported-summary">
+                {collapsedEntries.length === 1
+                  ? '1 conta sem cota informada'
+                  : `${collapsedEntries.length} contas sem cota informada`}
+              </summary>
+              <ul className="quota-panel__list">{collapsedEntries.map(renderEntry)}</ul>
+            </details>
+          )}
+        </>
       )}
       <footer className="quota-panel__help">
         <p>

@@ -457,4 +457,65 @@ describe('Settings → Squads retained management capability', () => {
     expect(announcementText(host)).toMatch(/squad ainda está em uso/i);
     expect(host.textContent).toMatch(/Equipe protegida/i);
   });
+
+  it('agrupa equipes com o mesmo nome num item com contagem e cópias expansíveis', async () => {
+    useOrchStore.setState({
+      squads: [
+        squad('qa-1', 'Execução + QA'),
+        squad('solo', 'Equipe única'),
+        squad('qa-2', 'Execução + QA'),
+        squad('qa-3', 'Execução + QA '),
+      ],
+    });
+    const host = renderSquads();
+    await settle();
+
+    const list = host.querySelector<HTMLElement>('[aria-label="Equipes salvas"]');
+    expect(list).not.toBeNull();
+    const items = [...list!.querySelectorAll(':scope > li')];
+    expect(items).toHaveLength(2);
+    const titles = items.map((item) => item.querySelector('.settings-list__title')?.textContent);
+    expect(titles).toEqual(['Execução + QA', 'Equipe única']);
+    expect(items[0].querySelector('.settings-squads__count')?.textContent).toBe('3 cópias');
+
+    const copies = items[0].querySelector<HTMLDetailsElement>('details.settings-squads__copies');
+    expect(copies).not.toBeNull();
+    expect(copies!.open).toBe(false);
+    expect(copies!.querySelector('summary')?.textContent).toBe('Ver as outras 2 cópias');
+    const copyRows = copies!.querySelectorAll('.settings-squads__copy');
+    expect(copyRows).toHaveLength(2);
+
+    // Cada cópia continua com suas ações, e apagar ainda passa pela confirmação.
+    act(() => requiredButton(copies!, /Apagar \(Cópia 3\)/).click());
+    await settle();
+    expect(squadMocks.askConfirm).toHaveBeenCalledWith(expect.objectContaining({ danger: true }));
+    expect(squadMocks.deleteSquad).toHaveBeenCalledWith('qa-3');
+  });
+
+  it('mantém Apagar depois de um separador, fora do grupo primário de ações', async () => {
+    useOrchStore.setState({ squads: [squad('owned', 'Equipe própria')] });
+    const host = renderSquads();
+    await settle();
+
+    const actions = host.querySelector<HTMLElement>('.settings-squads__row-actions');
+    const children = [...(actions?.children ?? [])];
+    const separator = children.findIndex((node) => node.classList.contains('settings-squads__action-sep'));
+    const remove = children.findIndex((node) => /Apagar/.test(node.textContent ?? ''));
+    expect(separator).toBeGreaterThan(0);
+    expect(remove).toBe(separator + 1);
+    expect(children[remove].classList.contains('settings-btn--primary')).toBe(false);
+  });
+
+  it('separa o Piloto automático das Equipes salvas em blocos titulados', async () => {
+    useOrchStore.setState({ squads: [squad('owned', 'Equipe própria')] });
+    const host = renderSquads();
+    await settle();
+
+    const autopilot = host.querySelector('section[aria-label="Piloto automático"]');
+    const saved = host.querySelector('section[aria-labelledby="settings-squads-saved-title"]');
+    expect(autopilot).not.toBeNull();
+    expect(saved).not.toBeNull();
+    expect(host.querySelector('#settings-squads-saved-title')?.textContent).toBe('Equipes salvas');
+    expect(autopilot!.compareDocumentPosition(saved!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
 });
