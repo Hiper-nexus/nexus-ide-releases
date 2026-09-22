@@ -39,7 +39,7 @@ import {
 } from '../adapters/adapter-registry';
 import { resolveCliLoginCommand } from '../../shared/cli-login';
 import { kimiLoginCommand } from '../../shared/kimi-login-command';
-import { revalidateExecutable, resolveCliBinary } from '../path-resolver';
+import { revalidateExecutable, resolveCliBinary, realUserHome } from '../path-resolver';
 import {
   availableEfforts,
   availablePermissionModes,
@@ -62,9 +62,15 @@ import {
   cliInstallCommandFor,
   compatibleManualInstallCommand,
   selectInstallRecipe,
+  selectCliUpdateRecipe,
   describeInstallRecipe,
   type CliInstallRecipe,
 } from '../adapters/cli-install-recipes';
+import {
+  windowsNpmShimInvocation,
+  windowsNpmShimTarget,
+} from '../adapters/windows-npm-shim';
+import { assessCliUpdate } from '../adapters/cli-update-observation';
 import { execFile } from 'node:child_process';
 import {
   getKey,
@@ -1435,17 +1441,19 @@ export function unregisterProviderListener(wc: WebContents): void {
 async function confirmCliInstall(
   label: string,
   description: string,
+  mode: 'install' | 'update' = 'install',
 ): Promise<boolean> {
+  const action = mode === 'update' ? 'Atualizar' : 'Instalar';
   const opts = {
     type: 'question' as const,
-    buttons: ['Cancelar', 'Instalar'],
+    buttons: ['Cancelar', action],
     defaultId: 1,
     cancelId: 0,
-    title: `Instalar ${label}`,
-    message: `Instalar a CLI de ${label} nesta máquina?`,
+    title: `${action} ${label}`,
+    message: `${action} a CLI de ${label} nesta máquina?`,
     detail:
-      `O NexusIDE vai executar exatamente:\n\n  ${description}\n\n` +
-      'Fonte oficial do provider. Nada além disto será executado.',
+      `O NexusIDE vai usar esta receita oficial:\n\n  ${description}\n\n` +
+      'O instalador pode baixar e executar dependências próprias.',
     noLink: true,
   };
   const win = BrowserWindow.getFocusedWindow();
@@ -1455,9 +1463,68 @@ async function confirmCliInstall(
   return result.response === 1;
 }
 
+/** The same priority as the pane: explicit executable, cached discovery, PATH. */
+function activeProviderBinary(adapterId: string): string | null {
+  const configured = configFor(adapterId).binPath;
+  if (configured && path.isAbsolute(configured) && revalidateExecutable(configured)) {
+    return configured;
+  }
+  const cached = getAdapterResolvedBin(adapterId);
+  return cached && revalidateExecutable(cached)
+    ? cached
+    : resolveAdapterBinary(adapterId);
+}
+
+function installedDevinDistribution(realBinPath: string): string | null {
+  let marker: string;
+  if (process.platform === 'win32' && process.env.LOCALAPPDATA) {
+    marker = path.join(process.env.LOCALAPPDATA, 'devin', 'cli', 'distribution');
+  } else if (process.platform !== 'win32' &&
+      realBinPath.replaceAll('\\', '/').includes('/devin/cli/_versions/')) {
+    marker = path.join(path.dirname(path.dirname(realBinPath)), 'distribution');
+  } else {
+    return null;
+  }
+  try {
+    return fs.readFileSync(marker, 'utf8').trim();
+  } catch {
+    return null;
+  }
+}
+
+/** Read the version from the executable itself, never another CLI on PATH. */
+async function installedCliVersion(adapterId: string, binPath: string): Promise<string | null> {
+  let executable = binPath;
+  let args = ['--version'];
+  if (process.platform === 'win32' && /\.cmd$/iu.test(binPath)) {
+    // The .cmd shim is shell text. Run its verified package entrypoint through
+    // its native binary or node.exe, without interpolating a path in cmd.exe.
+    const invocation = windowsNpmShimInvocation(adapterId, binPath, resolveRunnerPath('node'));
+    if (!invocation) return null;
+    executable = invocation.executable;
+    args = [...invocation.argsPrefix, '--version'];
+  } else if (process.platform === 'win32' && !/\.(?:exe|com)$/i.test(binPath)) {
+    return null;
+  }
+  return new Promise((resolve) => {
+    execFile(
+      executable,
+      args,
+      { timeout: 10_000, maxBuffer: 16 * 1024, windowsHide: true },
+      (error, stdout) => {
+        const version = String(stdout).trim().split(/\r?\n/u)[0]?.trim();
+        resolve(error || !version ? null : version.slice(0, 100));
+      },
+    );
+  });
+}
+
 /** Baixa o instalador oficial (HTTPS) para um arquivo temporário 0700 e o
  * executa com bash — nunca `curl | sh`: o conteúdo em disco é o que roda. */
-async function runScriptInstall(scriptUrl: string): Promise<void> {
+async function runScriptInstall(
+  scriptUrl: string,
+  envOverrides?: Readonly<Record<string, string>>,
+): Promise<void> {
   const url = new URL(scriptUrl);
   if (url.protocol !== 'https:') {
     throw new Error('instalador oficial precisa ser HTTPS');
@@ -1478,7 +1545,9 @@ async function runScriptInstall(scriptUrl: string): Promise<void> {
       execFile(
         resolveRunnerPath('bash') ?? 'bash',
         [file],
-        installExecOptions(),
+        envOverrides
+          ? { ...installExecOptions(), env: { ...process.env, ...envOverrides } }
+          : installExecOptions(),
         (error) => (error ? reject(error) : resolve()),
       );
     });
@@ -1524,20 +1593,74 @@ async function runPowerShellScriptInstall(scriptUrl: string): Promise<void> {
 }
 
 /** Executa uma receita selecionada mantendo a separação por plataforma. */
-async function runInstallRecipe(recipe: CliInstallRecipe): Promise<void> {
+type ArgvInstallInvocation = {
+  readonly executable: string;
+  readonly args: readonly string[];
+  readonly options: ReturnType<typeof installExecOptions>;
+  readonly envOverrides?: Readonly<Record<string, string>>;
+};
+
+function prepareArgvInstallInvocation(recipe: Extract<CliInstallRecipe, { kind: 'argv' }>): ArgvInstallInvocation {
+  // A Windows npm shim needs cmd.exe, which would interpret an installation
+  // prefix from the filesystem as shell text. Run npm's JS entrypoint with
+  // node.exe directly when updating a known global prefix instead.
+  let executable = resolveRunnerPath(recipe.runner);
+  if (!executable) throw new Error(`runner ${recipe.runner} não está mais disponível`);
+  let args = recipe.argv.slice(1);
+  let options = installExecOptions();
+  if (recipe.env) options = { ...options, env: { ...process.env, ...recipe.env } };
+  if (process.platform === 'win32' && /\.(?:exe|com)$/iu.test(executable)) {
+    // Native Windows executables accept argv directly. In particular, a
+    // configured CLI path must never be interpolated through cmd.exe.
+    options = { ...options, shell: false };
+  }
+  if (process.platform === 'win32' && recipe.runner === 'npm' && args.includes('--prefix')) {
+    const npmJs = path.join(path.dirname(executable), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+    const node = resolveRunnerPath('node');
+    if (!node || !fs.existsSync(npmJs)) {
+      throw new Error('não consegui executar o npm da instalação atual sem o shell');
+    }
+    executable = node;
+    args = [npmJs, ...args];
+    options = { ...options, shell: false };
+  } else if (process.platform === 'win32' && path.isAbsolute(recipe.runner) && /\.cmd$/iu.test(executable)) {
+    const adapterId = path.basename(executable).replace(/\.cmd$/iu, '');
+    const invocation = windowsNpmShimInvocation(adapterId, executable, resolveRunnerPath('node'));
+    if (!invocation) {
+      throw new Error('não consegui executar a CLI atual sem o shell');
+    }
+    executable = invocation.executable;
+    args = [...invocation.argsPrefix, ...args];
+    options = { ...options, shell: false };
+  }
+  return { executable, args, options, envOverrides: recipe.env };
+}
+
+function describeArgvInstallInvocation(invocation: ArgvInstallInvocation): string {
+  const environment = invocation.envOverrides
+    ? `\nAmbiente: ${Object.entries(invocation.envOverrides).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(' ')}`
+    : '';
+  return `Executável: ${invocation.executable}\nArgumentos: ${invocation.args.map((arg) => JSON.stringify(arg)).join(' ')}${environment}`;
+}
+
+async function runInstallRecipe(
+  recipe: CliInstallRecipe,
+  prepared?: ArgvInstallInvocation,
+): Promise<void> {
   if (recipe.kind === 'script') {
-    await runScriptInstall(recipe.scriptUrl);
+    await runScriptInstall(recipe.scriptUrl, recipe.env);
     return;
   }
   if (recipe.kind === 'powershell-script') {
     await runPowerShellScriptInstall(recipe.scriptUrl);
     return;
   }
+  const invocation = prepared ?? prepareArgvInstallInvocation(recipe);
   await new Promise<void>((resolve, reject) => {
     execFile(
-      resolveRunnerPath(recipe.runner) ?? recipe.argv[0],
-      recipe.argv.slice(1),
-      installExecOptions(),
+      invocation.executable,
+      [...invocation.args],
+      invocation.options,
       (error) => (error ? reject(error) : resolve()),
     );
   });
@@ -1672,6 +1795,7 @@ function installExecOptions(): {
   maxBuffer: number;
   windowsHide?: boolean;
   shell?: boolean;
+  env?: NodeJS.ProcessEnv;
 } {
   return {
     timeout: 15 * 60_000,
@@ -1802,48 +1926,109 @@ export function registerProviderIpc(): void {
     if (!parsed.success) return { ok: false, error: 'adapter inválido' };
     const adapter = getAdapter(parsed.data.adapterId);
     if (!adapter) return { ok: false, error: 'adapter desconhecido' };
-    const selection = selectInstallRecipe(
-      cliInstallRecipeCandidates(adapter.id),
-      (runner) => resolveRunnerPath(runner) !== null,
-    );
+    const updating = parsed.data.mode === 'update';
+    const beforeBin = updating ? activeProviderBinary(adapter.id) : null;
+    if (updating && !beforeBin) {
+      return { ok: false, error: 'CLI não encontrada; reexamine as CLIs antes de atualizar.' };
+    }
+    let realBinPath: string | null = null;
+    if (beforeBin) {
+      try {
+        realBinPath = fs.realpathSync(
+          process.platform === 'win32'
+            ? windowsNpmShimTarget(adapter.id, beforeBin) ?? beforeBin
+            : beforeBin,
+        );
+      } catch {
+        return { ok: false, error: 'O executável mudou; reexamine as CLIs antes de atualizar.' };
+      }
+    }
+    const selection = updating && beforeBin && realBinPath
+      ? selectCliUpdateRecipe({
+          adapterId: adapter.id,
+          platform: process.platform,
+          binPath: beforeBin,
+          realBinPath,
+          userHome: realUserHome(),
+          windowsLocalAppData: process.env.LOCALAPPDATA,
+          installationDistribution: adapter.id === 'devin'
+            ? installedDevinDistribution(realBinPath)
+            : null,
+          isRunnerResolvable: (runner) => resolveRunnerPath(runner) !== null,
+        })
+      : selectInstallRecipe(
+          cliInstallRecipeCandidates(adapter.id),
+          (runner) => resolveRunnerPath(runner) !== null,
+        );
     if (!selection) {
       return {
         ok: false,
-        error:
-          'Sem instalador automático para esta CLI nesta plataforma ainda — ' +
-          'use o site oficial do provider.',
+        error: updating
+          ? 'Não reconheci o canal da CLI usada pelo pane; atualize essa instalação pelo canal original.'
+          : 'Sem instalador automático para esta CLI nesta plataforma ainda — use o site oficial do provider.',
       };
     }
     if (!selection.ok) {
       return { ok: false, error: selection.missingRunnerHints.join(' OU: ') };
     }
-    const recipe =
-      parsed.data.mode === 'update' &&
-      selection.recipe.kind === 'argv' &&
-      selection.recipe.updateArgv
-        ? { ...selection.recipe, argv: selection.recipe.updateArgv }
-        : selection.recipe;
+    const recipe = selection.recipe;
+    let prepared: ArgvInstallInvocation | undefined;
+    try {
+      if (recipe.kind === 'argv') prepared = prepareArgvInstallInvocation(recipe);
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'instalador indisponível' };
+    }
     const confirmed = await confirmCliInstall(
       adapter.label,
-      describeInstallRecipe(recipe),
+      prepared ? describeArgvInstallInvocation(prepared) : describeInstallRecipe(recipe),
+      parsed.data.mode,
     );
-    if (!confirmed) return { ok: false, error: 'instalação cancelada' };
+    if (!confirmed) return { ok: false, error: updating ? 'atualização cancelada' : 'instalação cancelada' };
+    const beforeVersion = beforeBin ? await installedCliVersion(adapter.id, beforeBin) : null;
     try {
       // brew pode compilar; 15 min é teto honesto para 1ª instalação.
-      await runInstallRecipe(recipe);
+      await runInstallRecipe(recipe, prepared);
     } catch (err) {
+      const operation = updating ? 'atualização' : 'instalação';
       return {
         ok: false,
         error:
           err instanceof Error
-            ? `instalação falhou: ${err.message.slice(0, 300)}`
-            : 'instalação falhou',
+            ? `${operation} falhou: ${err.message.slice(0, 300)}`
+            : `${operation} falhou`,
       };
     }
     // Re-fold PATH + re-probe absolute bins so the new CLI is spawnable now.
     await rescanAdapterBinaries();
     broadcast();
-    return { ok: true };
+    if (!updating) return { ok: true };
+    const afterBin = activeProviderBinary(adapter.id);
+    const afterVersion = afterBin ? await installedCliVersion(adapter.id, afterBin) : null;
+    if (!afterBin || !afterVersion) {
+      return {
+        ok: false,
+        error: 'O instalador terminou, mas o Nexus não conseguiu verificar a versão da CLI usada pelo pane.',
+      };
+    }
+    if (!beforeBin) return { ok: false, error: 'CLI anterior não verificada.' };
+    const observation = assessCliUpdate({
+      beforeBin,
+      beforeVersion,
+      afterBin,
+      afterVersion,
+      platform: process.platform,
+    });
+    if (observation === 'different-launcher') {
+      return {
+        ok: false,
+        error: 'O instalador terminou, mas o Nexus passou a usar outro executável no PATH; reexamine as CLIs antes de afirmar a atualização.',
+      };
+    }
+    return {
+      ok: true,
+      changed: observation === 'verified' ? undefined : observation === 'updated',
+      version: afterVersion,
+    };
   });
 
   ipcMain.handle(PROVIDER_CHANNELS.list, () => {

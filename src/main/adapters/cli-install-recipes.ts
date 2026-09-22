@@ -37,6 +37,8 @@ interface ArgvInstallRecipe {
   readonly kind: 'argv';
   /** Comando exato (argv, sem shell). */
   readonly argv: readonly string[];
+  /** Per-install location overrides for package managers with movable stores. */
+  readonly env?: Readonly<Record<string, string>>;
   /**
    * F-520: comando de ATUALIZAÇÃO quando difere do install — `brew install`
    * com a fórmula já presente é no-op exit 0 (mentiria "atualizada");
@@ -55,6 +57,7 @@ interface ScriptInstallRecipe {
   /** Instalador oficial: baixado via HTTPS para arquivo temporário e
    * executado com bash — nunca `curl | sh` (sem shell no meio). */
   readonly scriptUrl: string;
+  readonly env?: Readonly<Record<string, string>>;
   readonly runner: string;
   readonly runnerHint: string;
 }
@@ -296,8 +299,157 @@ export function selectInstallRecipe(
   };
 }
 
+/**
+ * An update must target the CLI Nexus will spawn. Claude can coexist as a
+ * native and an npm installation, so choosing the first available package
+ * manager can update a different binary while leaving the pane unchanged.
+ */
+export function selectCliUpdateRecipe(input: {
+  readonly adapterId: string;
+  readonly platform: NodeJS.Platform;
+  readonly binPath: string;
+  readonly realBinPath: string;
+  readonly userHome?: string;
+  readonly windowsLocalAppData?: string;
+  readonly installationDistribution?: string | null;
+  readonly isRunnerResolvable: (runner: string) => boolean;
+}): InstallRecipeSelection | null {
+  const realPath = input.realBinPath.replaceAll('\\', '/');
+  const binPath = input.binPath.replaceAll('\\', '/');
+  const bindBrew = (
+    recipe: ArgvInstallRecipe,
+    root: 'Cellar' | 'Caskroom',
+    packageName: string,
+  ): InstallRecipeSelection | null => {
+    const marker = `/${root}/${packageName}/`;
+    const index = realPath.indexOf(marker);
+    if (index < 0) return null;
+    const runner = `${realPath.slice(0, index)}/bin/brew`;
+    const updateArgv = recipe.updateArgv ?? recipe.argv;
+    return selectInstallRecipe([{
+      ...recipe,
+      runner,
+      argv: [runner, ...updateArgv.slice(1)],
+    }], input.isRunnerResolvable);
+  };
+  const selfUpdate = (args: readonly string[]): InstallRecipeSelection => {
+    const recipe: ArgvInstallRecipe = {
+      kind: 'argv',
+      argv: [input.binPath, ...args],
+      runner: input.binPath,
+      runnerHint: 'A CLI instalada não está mais executável; reexamine as CLIs.',
+    };
+    return input.isRunnerResolvable(input.binPath)
+      ? { ok: true, recipe }
+      : { ok: false, missingRunnerHints: [recipe.runnerHint] };
+  };
+  if (input.adapterId === 'claude') {
+    if (input.platform === 'win32' && (
+      /\/Microsoft\/WinGet\/Packages\/Anthropic\.ClaudeCode(?:_[^/]+)?\//iu.test(realPath) ||
+      /\/Microsoft\/WinGet\/Links\/claude\.exe$/iu.test(binPath)
+    )) {
+      return selectInstallRecipe([{
+        kind: 'argv',
+        argv: ['winget', 'upgrade', '--id', 'Anthropic.ClaudeCode', '--exact'],
+        runner: 'winget',
+        runnerHint: 'O WinGet não foi encontrado para atualizar esta instalação de Claude.',
+      }], input.isRunnerResolvable);
+    }
+    const brewCask = realPath.match(/\/Caskroom\/(claude-code(?:@latest)?)\//);
+    if (input.platform === 'darwin' && brewCask) {
+      const recipe = brewCaskRecipe(brewCask[1]);
+      return bindBrew(recipe, 'Caskroom', brewCask[1]);
+    }
+    // Anthropic's own updater knows the installation that invoked it. This
+    // covers the native launcher and npm installations with custom prefixes.
+    return selfUpdate(['update']);
+  }
+  if (input.adapterId === 'kimi' && /\/\.kimi-code\/bin\/kimi$/u.test(realPath)) {
+    return selfUpdate(['upgrade', '--yes']);
+  }
+  if (input.adapterId === 'grok' && /\/\.grok\/bin\/grok(?:-[^/]+)?$/u.test(realPath)) {
+    return selfUpdate(['update']);
+  }
+  if (input.adapterId === 'agy') {
+    // Its install scripts exit successfully without touching an existing
+    // binary; the installed CLI owns the actual update operation.
+    return selfUpdate(['update']);
+  }
+
+  const candidates = cliInstallRecipeCandidates(input.adapterId, input.platform);
+  if (input.adapterId === 'devin' && input.platform === 'win32') {
+    const localRoot = input.windowsLocalAppData?.replaceAll('\\', '/').replace(/\/$/u, '');
+    const ownsLauncher = localRoot && [
+      `${localRoot}/devin/cli/bin/devin.exe`,
+      `${localRoot}/devin/bin/devin.exe`,
+    ].some((expected) => expected.toLowerCase() === binPath.toLowerCase());
+    if (!ownsLauncher || (input.installationDistribution &&
+        input.installationDistribution !== 'irm-iex')) return null;
+    return selectInstallRecipe(candidates.filter(
+      (recipe) => recipe.kind === 'powershell-script',
+    ), input.isRunnerResolvable);
+  }
+  for (const candidate of candidates) {
+    if (candidate.kind === 'argv') {
+      const command = candidate.argv[0];
+      const target = candidate.argv[candidate.argv.length - 1];
+      if (command === 'brew') {
+        const root = candidate.argv.includes('--cask') ? 'Caskroom' : 'Cellar';
+        const selected = bindBrew(candidate, root, target);
+        if (selected) return selected;
+        continue;
+      }
+      if (command === 'npm') {
+        const marker = input.platform === 'win32'
+          ? `/node_modules/${target}/`
+          : `/lib/node_modules/${target}/`;
+        const index = realPath.indexOf(marker);
+        if (index < 0 || realPath.includes('/.pnpm/')) continue;
+        const prefix = realPath.slice(0, index);
+        const expectedBinDir = input.platform === 'win32' ? prefix : `${prefix}/bin`;
+        const binPath = input.binPath.replaceAll('\\', '/');
+        const actualBinDir = binPath.slice(0, binPath.lastIndexOf('/'));
+        if (input.platform === 'win32'
+          ? actualBinDir.toLowerCase() !== expectedBinDir.toLowerCase()
+          : actualBinDir !== expectedBinDir) continue;
+        const recipe = {
+          ...candidate,
+          argv: ['npm', 'install', '-g', '--prefix', prefix, target],
+        };
+        return selectInstallRecipe([recipe], input.isRunnerResolvable);
+      }
+      if (command === 'uv' && realPath.includes(`/uv/tools/${target.split('@')[0]}/`)) {
+        const toolName = target.split('@')[0];
+        const marker = `/uv/tools/${toolName}/`;
+        const toolDir = `${realPath.slice(0, realPath.indexOf(marker))}/uv/tools`;
+        const binDir = binPath.slice(0, binPath.lastIndexOf('/'));
+        return selectInstallRecipe([{
+          ...candidate,
+          env: { UV_TOOL_DIR: toolDir, UV_TOOL_BIN_DIR: binDir },
+        }], input.isRunnerResolvable);
+      }
+      continue;
+    }
+    if (candidate.kind === 'script' && input.adapterId === 'devin') {
+      const marker = '/devin/cli/_versions/';
+      const index = realPath.indexOf(marker);
+      const userHome = input.userHome?.replaceAll('\\', '/').replace(/\/$/u, '');
+      if (index < 0 || !userHome || binPath !== `${userHome}/.local/bin/devin` ||
+          input.installationDistribution !== 'curl-bash') continue;
+      return selectInstallRecipe([{
+        ...candidate,
+        env: { HOME: userHome, XDG_DATA_HOME: realPath.slice(0, index) },
+      }], input.isRunnerResolvable);
+    }
+  }
+  return null;
+}
+
 /** Resumo do que será executado — vai no diálogo nativo de confirmação. */
 export function describeInstallRecipe(recipe: CliInstallRecipe): string {
   if (recipe.kind === 'argv') return recipe.argv.join(' ');
-  return `baixar e executar o instalador oficial: ${recipe.scriptUrl}`;
+  const environment = recipe.kind === 'script' && recipe.env
+    ? ` com ${Object.entries(recipe.env).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(' ')}`
+    : '';
+  return `baixar e executar o instalador oficial: ${recipe.scriptUrl}${environment}`;
 }

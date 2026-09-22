@@ -398,7 +398,7 @@ describe('ProvidersPanel hub', () => {
   });
 
   it('shows live then success status in the detail when updating a CLI', async () => {
-    let finish: ((value: { ok: true }) => void) | undefined;
+    let finish: ((value: { ok: true; changed: true; version: string }) => void) | undefined;
     vi.mocked(window.nexus.providers.installCli).mockImplementation(
       () => new Promise((resolve) => { finish = resolve; }),
     );
@@ -416,9 +416,9 @@ describe('ProvidersPanel hub', () => {
     expect(host.querySelector('[data-testid="prov-cli-job"]')?.textContent)
       .toMatch(/Atualizando Antigravity/);
     expect(host.querySelector('.prov-row__status')?.textContent).toBe('atualizando…');
-    await act(async () => { finish!({ ok: true }); });
+    await act(async () => { finish!({ ok: true, changed: true, version: '1.2.9' }); });
     expect(host.querySelector('[data-testid="prov-cli-job"]')?.textContent)
-      .toMatch(/atualizada/i);
+      .toMatch(/atualizada para 1\.2\.9/i);
     expect(host.querySelector('.prov-row__status')?.textContent).not.toBe(
       'atualizando…',
     );

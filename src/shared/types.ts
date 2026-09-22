@@ -922,7 +922,7 @@ export interface NexusApi {
     installCli(
       adapterId: string,
       mode?: 'install' | 'update',
-    ): Promise<{ ok: boolean; error?: string }>;
+    ): Promise<{ ok: boolean; error?: string; changed?: boolean; version?: string }>;
     addModel(adapterId: string, model: string): Promise<ProviderSettingsInfo[]>;
     removeModel(adapterId: string, model: string): Promise<ProviderSettingsInfo[]>;
     /**

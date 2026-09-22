@@ -463,8 +463,9 @@ function ProviderDetail({
     phase: ProviderOpPhase,
     error?: string,
     toastAction?: { label: string; onClick: () => void },
+    update?: { changed?: boolean; version?: string },
   ) {
-    const job = providerOpFeedback(kind, phase, provider.label, error);
+    const job = providerOpFeedback(kind, phase, provider.label, error, update);
     setCliJob(job);
     onLiveRow(phase === 'running' ? job.rowLabel : null);
     const toastKind =
@@ -495,7 +496,7 @@ function ProviderDetail({
         announceOp(kind, 'err', error);
       } else {
         await hydrateProviders();
-        announceOp(kind, 'ok');
+        announceOp(kind, 'ok', undefined, undefined, result);
       }
     } catch (err) {
       const error = err instanceof Error ? err.message : 'falhou';
@@ -982,6 +983,8 @@ export function ProvidersPanel() {
   async function updateInstalled() {
     setProvisionSummary(null);
     const done: string[] = [];
+    const unchanged: string[] = [];
+    const verified: string[] = [];
     const failed: string[] = [];
     for (const provider of updatableInstalled) {
       setProvisioning(provider.label);
@@ -990,7 +993,16 @@ export function ProvidersPanel() {
           provider.adapterId,
           'update',
         );
-        if (result.ok) done.push(provider.label);
+        if (result.ok && !result.version) failed.push(
+          `${provider.label} (versão não verificada)`,
+        );
+        else if (result.ok && result.changed === false) unchanged.push(
+          `${provider.label} (${result.version ?? 'mesma versão'})`,
+        );
+        else if (result.ok && result.changed === undefined) verified.push(
+          `${provider.label} (${result.version ?? 'versão desconhecida'})`,
+        );
+        else if (result.ok) done.push(provider.label);
         else failed.push(`${provider.label} (${result.error ?? 'falhou'})`);
       } catch {
         failed.push(provider.label);
@@ -1001,8 +1013,10 @@ export function ProvidersPanel() {
     setProvisionSummary(
       [
         done.length > 0 ? `atualizadas: ${done.join(', ')}` : null,
+        unchanged.length > 0 ? `sem mudança: ${unchanged.join(', ')}` : null,
+        verified.length > 0 ? `verificadas: ${verified.join(', ')}` : null,
         failed.length > 0 ? `pendentes: ${failed.join('; ')}` : null,
-        done.length === 0 && failed.length === 0 ? 'nada a atualizar' : null,
+        done.length === 0 && unchanged.length === 0 && verified.length === 0 && failed.length === 0 ? 'nada a atualizar' : null,
       ]
         .filter(Boolean)
         .join(' · '),
