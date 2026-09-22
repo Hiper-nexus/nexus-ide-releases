@@ -5924,7 +5924,7 @@ export const RELEASE_07676: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07679: AppRelease = {
   version: '0.76.79',
   date: '2026-09-22',
   codename: 'Chaves no lugar',
@@ -5998,6 +5998,59 @@ export const CURRENT_RELEASE: AppRelease = {
         'Triagem de pesquisa no search mixer e desempate por confiança no ' +
         'browser_find. O browser_read passa a trazer o julgamento do Jev por ' +
         'padrão; passe judge: false para dispensar.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.81',
+  date: '2026-09-22',
+  codename: 'Nada escondido',
+  summary:
+    'CLIs instaladas por nvm, pnpm ou mise param de sumir em outras ' +
+    'máquinas, e botões, hovers e o HUD de voz deixam de se esconder.',
+  highlights: [
+    {
+      title: 'Claude, Codex e cia. encontrados em qualquer máquina',
+      detail:
+        'Instalações via nvm, pnpm, mise, fnm, proto e o instalador antigo do ' +
+        'Claude entram na busca, e no Windows também npm, pnpm, Volta e scoop. ' +
+        'Se o shell do seu Mac demora para abrir, o Nexus tenta de novo sozinho ' +
+        'e reexamina as CLIs sem reiniciar.',
+    },
+    {
+      title: 'Botões e hovers que estavam invisíveis',
+      detail:
+        'Ícones pequenos perdiam traços (o "+" ao lado de Terminais sumia) e ' +
+        'vários hovers da barra lateral nunca apareciam. Agora todos aparecem, ' +
+        'nos temas escuro e claro.',
+    },
+    {
+      title: 'O HUD de voz não cobre mais a tela',
+      detail:
+        'Parado, ele vira só o orb no canto; os controles aparecem ao passar o ' +
+        'mouse ou pelo teclado.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Mensagem de CLI não encontrada que ajuda',
+      detail:
+        'Em vez de mandar instalar algo que já está instalado, o aviso aponta ' +
+        'Configurações › Providers › Reexaminar CLIs ou o caminho do binário.',
+    },
+    {
+      title: 'Abas e botões mais fáceis de usar',
+      detail:
+        'Abas dos Providers e do Git reagem ao mouse e ao teclado; botões do ' +
+        'pane e da barra lateral ganharam área de clique de 24 px; botão ' +
+        'desabilitado não parece mais ativo.',
+    },
+    {
+      title: 'Sessão expirada dita com as palavras certas',
+      detail:
+        'Com a conta conectada, um erro do servidor agora diz que a sessão ' +
+        'expirou, e não "entre na sua conta primeiro".',
     },
   ],
 };

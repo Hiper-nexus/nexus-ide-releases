@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.81 — Nada escondido
+
+- **CLIs instaladas por nvm, pnpm, mise e cia. não somem mais em outras máquinas (F-630).** App aberto pelo Finder via só pastas fixas quando o shell de login (oh-my-zsh + nvm) passava do prazo de 4 s. A busca agora cobre todas as versões do nvm, `~/.claude/local`, fnm, mise, proto, pnpm, `/snap/bin` e, no Windows, `%APPDATA%\npm`, `%LOCALAPPDATA%\pnpm`, Volta e scoop; uma sondagem que falhou no boot é refeita em background (20 s) e reexamina as CLIs sozinha. A mensagem aponta "Reexaminar CLIs"/caminho do binário antes de "instale".
+- **Ícones de 9–10 px e tokens fantasmas.** A grade 11×11 com `crispEdges` perdia traços abaixo de 11 px (o "+" ao lado de Terminais sumia; 36 ícones). Tokens usados e nunca definidos (`--surface-hover`, `--text-muted`, `--text-primary`…) invalidavam a declaração — os hovers da barra lateral estavam mortos. Aliases derivados do tema e `css-tokens.test.ts` como guarda.
+- **HUD de voz em repouso vira só o orb**; rótulo e controles no hover/foco. O pill "PRONTA" cobria terminal, cartões e planos.
+- **Abas, menus e alvos de clique.** Abas dos Providers e do Git com hover e foco; botões do pane e lixeira do projeto em 24 px; ação por arquivo do Git não colapsa em 14 px; primário desabilitado vira contorno; chips de repo/branch e LED do cockpit seguem o tema.
+- **401 com a conta conectada** diz que a sessão Nexus expirou, não "entre na sua conta primeiro".
+
+
 ## 0.76.79 — Chaves no lugar
 
 - **Fim do modal «Chaves Não Encontradas» vindo dos panes (F-629).** Todo HOME privado que o Nexus cria para uma CLI (overlay Claude, Codex, Grok, MiMo, cursor, droid, command-code) enxerga o keychain real do macOS. gh, git osxkeychain, SDKs e o refresh das próprias CLIs deixam de abrir o modal cujo botão «Reajustar Para Padrões» apagaria o keychain. GLM/LongCat e workers gated usam `CLAUDE_SECURESTORAGE_CONFIG_DIR` privado e nunca leem nem sobrescrevem o item Claude nativo. Spawns em Seatbelt ficam de fora.
