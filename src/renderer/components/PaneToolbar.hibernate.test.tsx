@@ -106,14 +106,59 @@ describe('PaneToolbar hibernate/wake regression', () => {
     act(() => root.unmount());
   });
 
-  it('exibe o botão "Tornar Orquestrador" em qualquer pane ativo que não seja líder', () => {
+  it('não põe "Tornar orquestrador" na fileira de ícones, ao lado de Ampliar', () => {
     const { host, root } = mount();
-    const promoteBtn = host.querySelector<HTMLButtonElement>(
-      'button[aria-label="Tornar Orquestrador"]',
-    );
-    expect(promoteBtn).not.toBeNull();
-    expect(promoteBtn?.textContent).toContain('Tornar Orquestrador');
+    const inline = host.querySelector('.toolbar__actions button[aria-label*="orquestrador" i]');
+    expect(inline).toBeNull();
     act(() => root.unmount());
+  });
+
+  it('oferece "Tornar este pane o orquestrador" no menu "…", em grupo próprio após separador', () => {
+    const { host, root } = mount();
+    const trigger = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="Mais ações do pane"]',
+    );
+    expect(trigger).not.toBeNull();
+    act(() => trigger!.click());
+
+    const menu = document.querySelector<HTMLElement>('.toolbar__menu[role="menu"]');
+    expect(menu).not.toBeNull();
+    const promote = menu!.querySelector<HTMLButtonElement>(
+      'button[role="menuitem"][aria-label="Tornar este pane o orquestrador"]',
+    );
+    expect(promote).not.toBeNull();
+    expect(promote?.textContent).toContain('Tornar este pane o orquestrador');
+    act(() => promote!.click());
+    expect(document.querySelector('.toolbar__menu')).toBeNull();
+    act(() => root.unmount());
+  });
+
+  it('em pane estreito, separa a troca de papel das ações de sessão/layout', () => {
+    let measure: ((width: number) => void) | null = null;
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(callback: ResizeObserverCallback) {
+        measure = (width) =>
+          callback([{ contentRect: { width } } as ResizeObserverEntry], this as unknown as ResizeObserver);
+      }
+      observe() {}
+      disconnect() {}
+    });
+    try {
+      const { host, root } = mount();
+      act(() => measure?.(300));
+      act(() =>
+        host.querySelector<HTMLButtonElement>('button[aria-label="Mais ações do pane"]')!.click(),
+      );
+      const menu = document.querySelector<HTMLElement>('.toolbar__menu')!;
+      const items = [...menu.querySelectorAll('[role="menuitem"]')];
+      expect(items.length).toBeGreaterThan(1);
+      const promote = items.at(-1)!;
+      expect(promote.getAttribute('aria-label')).toBe('Tornar este pane o orquestrador');
+      expect(promote.previousElementSibling?.getAttribute('role')).toBe('separator');
+      act(() => root.unmount());
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('exibe o botão "Orquestrador" ativo quando o pane tem papel orchestrator', () => {
