@@ -566,10 +566,10 @@ export function UsageQuotaSection() {
                 }
               >
                 <strong>{fmtUsd(snapshot.plans.monthlyUsd)}/mês</strong> em{' '}
-                {snapshot.plans.detected}{' '}
-                {snapshot.plans.detected === 1 ? 'assinatura' : 'assinaturas'}
-                {snapshot.plans.undetected > 0 &&
-                  ` · ${snapshot.plans.undetected} sem plano identificado`}
+                {snapshot.plans.priced}{' '}
+                {snapshot.plans.priced === 1 ? 'plano com preço' : 'planos com preço'}
+                {snapshot.plans.connected > snapshot.plans.priced &&
+                  ` · ${snapshot.plans.connected - snapshot.plans.priced} contas fora da soma`}
               </span>
             )}
           </>

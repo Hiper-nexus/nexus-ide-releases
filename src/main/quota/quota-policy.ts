@@ -74,15 +74,21 @@ export function buildFleetSnapshot(
       if (w >= threshold) highUsageCount += 1;
     }
   }
-  // Planos: soma só monthlyUsd conhecido; detectadas sem preço contam em
-  // `detected` mas não inflam o total; elegíveis sem leitura → `undetected`.
+  // Dólares: só preço de lista já mapeado. Plano detectado sem preço
+  // (Ultra sem 5×/20×, Team, Enterprise) conta em `detected` e não inventa
+  // valor. `connected` é a frota inteira — o cartão não pode dizer que duas
+  // assinaturas são todas as contas ligadas.
   let monthlyUsd = 0;
   let detected = 0;
+  let priced = 0;
   let undetected = 0;
   for (const e of entries) {
     if (e.plan) {
       detected += 1;
-      if (typeof e.plan.monthlyUsd === 'number') monthlyUsd += e.plan.monthlyUsd;
+      if (typeof e.plan.monthlyUsd === 'number') {
+        monthlyUsd += e.plan.monthlyUsd;
+        priced += 1;
+      }
     } else if (e.planEligible) {
       undetected += 1;
     }
@@ -95,8 +101,8 @@ export function buildFleetSnapshot(
     highUsageCount,
     unknownCount,
     plans:
-      detected > 0 || undetected > 0
-        ? { monthlyUsd, detected, undetected }
+      detected > 0 || undetected > 0 || entries.length > 0
+        ? { monthlyUsd, detected, priced, connected: entries.length, undetected }
         : undefined,
   };
 }

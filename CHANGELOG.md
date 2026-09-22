@@ -5,6 +5,7 @@
 - **Nexus Redline não pede mais um macOS que não existe (F-628)**: o companheiro passa a ser compilado para macOS 14.0, o piso já declarado no app. A versão 0.76.75 tinha sido carimbada com mínimo 27.2 e o sistema recusava abri-la no macOS 27.0.
 - **Re-login da mesma conta abre o terminal.** «Entrar novamente» deixa de morrer em «Não consegui guardar a conta atual» quando a sessão viva é a própria conta e o snapshot não grava. Outra conta viva, com e-mail diferente, continua protegida e o login não começa.
 - **A conta em uso não cede o pane antes de acabar.** Folga maior numa irmã não troca a conta ativa. A troca espera disponibilidade medida zero, cooldown ou hit real. Sem medição, a ativa permanece. Cada conta do vault segue com a própria linha de cota.
+- **O total de assinaturas deixa de fingir que duas contas são a frota.** Os $400 eram só Claude Max 20× e ChatGPT Pro. O cartão agora soma apenas planos com preço de lista e diz quantas contas conectadas ficaram de fora. Google AI Ultra entra na soma só quando o plano informa 5× ($100) ou 20× ($200); sem esse número, o preço não é inventado.
 
 
 ## 0.76.75 — Xiaomi MiMo no Nexus

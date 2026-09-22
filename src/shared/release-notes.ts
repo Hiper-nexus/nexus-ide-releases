@@ -5913,5 +5913,13 @@ export const CURRENT_RELEASE: AppRelease = {
         'vivo for de outra conta, o login continua sem começar, para não apagar ' +
         'essa sessão. Cada conta do vault mantém a própria linha de cota.',
     },
+    {
+      title: 'O total mensal não chama duas contas de frota inteira',
+      detail:
+        'O cartão de assinaturas soma só os planos com preço de lista publicado ' +
+        'e mostra quantas contas conectadas ficaram de fora. Google AI Ultra ' +
+        'entra como $100 ou $200 quando o plano diz 5× ou 20×. Sem esse dado, ' +
+        'o Nexus não inventa o valor.',
+    },
   ],
 };

@@ -121,6 +121,10 @@ export interface QuotaPlansSummary {
   monthlyUsd: number;
   /** Linhas com plano detectado (com ou sem preço mapeado). */
   detected: number;
+  /** Desses, quantos entraram na soma em dólares. */
+  priced: number;
+  /** Linhas da frota (cada conta/conexão que o painel já lista). */
+  connected: number;
   /** Linhas elegíveis a plano (claude/codex/agy) sem tier detectado. */
   undetected: number;
 }
