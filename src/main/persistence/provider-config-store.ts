@@ -1915,7 +1915,7 @@ export function registerProviderIpc(): void {
 
   // ── Multi-PC: o safeStorage é amarrado ao keychain da máquina. Export/import
   //    com passphrase é a única forma das keys viajarem sem plaintext em disco.
-  ipcMain.handle(PROVIDER_CHANNELS.vaultState, () => vaultState());
+  handleTrusted(PROVIDER_CHANNELS.vaultState, () => vaultState());
 
   handleTrusted(PROVIDER_CHANNELS.exportSecrets, async (_event, raw) => {
     const parsed = exportSecretsSchema.safeParse(raw);

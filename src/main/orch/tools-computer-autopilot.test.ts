@@ -35,6 +35,7 @@ vi.mock('../jev/jev-decision-log', () => ({
 
 import {
   buildComputerAutopilotTools,
+  isTerminalApp,
   type ComputerDoDeps,
 } from './tools-computer-autopilot';
 
@@ -217,6 +218,27 @@ describe('nexus_computer_do', () => {
     expect(out.howTo).toContain('Acessibilidade');
     expect(deps.control.requestAccessibility).toHaveBeenCalledTimes(1);
     expect(deps.judge).not.toHaveBeenCalled();
+  });
+
+  it.each(['Terminal', 'iTerm2', 'Ghostty', 'warp', 'Termius', '  WezTerm  '])(
+    'recusa o terminal externo %s antes de tocar o desktop (conteúdo nunca vaza para um terminal)',
+    async (app) => {
+      expect(isTerminalApp(app)).toBe(true);
+      const deps = makeDeps();
+      const out = (await toolFor(deps).handler({ ...baseArgs, app }, ctx)) as {
+        status: string;
+        error: string;
+      };
+      expect(out.status).toBe('error');
+      expect(out.error).toContain('é um terminal');
+      expect(deps.control.activate).not.toHaveBeenCalled();
+      expect(deps.judge).not.toHaveBeenCalled();
+    },
+  );
+
+  it('não confunde app comum com terminal', () => {
+    expect(isTerminalApp('Safari')).toBe(false);
+    expect(isTerminalApp('Terminator Notes')).toBe(false);
   });
 
   it('refuses workers — only operator/orchestrator drive the desktop', async () => {

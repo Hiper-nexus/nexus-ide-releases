@@ -76,6 +76,7 @@ const TERMINAL_APP_DENYLIST: readonly string[] = [
   'kitty',
   'hyper',
   'tabby',
+  'termius',
   'windows terminal',
   'conhost',
 ];
