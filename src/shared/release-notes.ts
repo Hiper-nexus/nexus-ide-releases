@@ -6055,7 +6055,7 @@ export const RELEASE_07681: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07683: AppRelease = {
   version: '0.76.83',
   date: '2026-09-22',
   codename: 'Configurações no lugar',
@@ -6105,6 +6105,40 @@ export const CURRENT_RELEASE: AppRelease = {
         'Botões e campos usam a fonte do app, avisos ficaram legíveis, ' +
         'controles pequenos ganharam área de clique e os títulos seguem a ' +
         'hierarquia certa.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.84',
+  date: '2026-09-22',
+  codename: 'CLI certa, janelas vivas',
+  summary:
+    'Atualizar CLI agora alcança a instalação que o pane usa, e duas janelas ' +
+    'Nexus podem continuar processando terminais ao mesmo tempo no Mac.',
+  highlights: [
+    {
+      title: 'A CLI certa recebe a atualização',
+      detail:
+        'Nexus confere o executável que abrirá no próximo pane. Claude nativo ' +
+        'usa o updater do Claude; npm, Homebrew e uv recebem o destino da ' +
+        'instalação ativa. A tela mostra a versão encontrada e avisa se ela ' +
+        'não mudou.',
+    },
+    {
+      title: 'Trabalho em duas janelas',
+      detail:
+        'No Mac, cobrir uma janela Nexus com outra não pausa os timers que ' +
+        'processam a saída do terminal. O aviso de backlog continua reservado ' +
+        'para rajadas que ultrapassam a capacidade de parsing.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Menos resultados falsos ao atualizar',
+      detail:
+        'Se a versão não mudou, ou o Nexus passou a usar outro executável, ' +
+        'o resultado deixa isso claro em vez de prometer uma atualização.',
     },
   ],
 };

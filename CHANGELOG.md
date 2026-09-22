@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.84 — CLI certa, janelas vivas
+
+- **Atualizar CLI atua na instalação usada pelo pane (F-360).** Nexus escolhe o canal pelo executável ativo: Claude nativo usa o próprio updater, Homebrew usa o prefixo dono da CLI, npm usa o prefixo global correto, uv recebe seus diretórios e instaladores oficiais mantêm o perfil. Depois, lê a versão do launcher do próximo pane; versão igual ou não verificada não vira um falso “atualizada”.
+- **Dois workspaces em janelas Nexus podem trabalhar ao mesmo tempo (F-361).** No macOS, uma janela coberta por outra continua processando os timers do terminal; saída sustentada deixa de ficar retida só por causa da oclusão e chegar ao aviso de backlog de 2 MiB. Panes de workspace estacionado também mantêm a última grade válida para drenar em segundo plano. A proteção de memória contra rajadas reais permanece.
+- **Suite raiz ignora worktrees de runtime (F-631).** `npm test` não coleta cópias de testes em `.nexus/worktrees/`.
+- **Limite conhecido:** num mosaico de 24 ou mais panes, um pane que já estava virtualizado fora da tela ainda conserva apenas um buffer curto de saída até voltar; isso é distinto do caso de duas janelas com um pane visível em cada uma.
+
 ## 0.76.83 — Configurações no lugar
 
 - **Configurações organizadas por tarefa.** Nove categorias sob quatro pilares seguiam os módulos do código ("Ferramentas" em três lugares, chaves em quatro). Agora são sete áreas: Conta e acesso a IAs, Jarvis e voz, Aparência e teclado, Equipes e modelos, Biblioteca, Integrações e Segurança e manutenção. Aba, caminho e título da página vêm do mesmo cadastro; abas técnicas ficam depois de "Avançado".
