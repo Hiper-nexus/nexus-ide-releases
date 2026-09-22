@@ -14,7 +14,9 @@ import {
   submitPromptToPaneOperatorInput,
 } from '../terminal/terminal-host';
 import { useLayoutStore } from '../state/layout-store';
+import { useOrchStore } from '../state/orch-store';
 import { listPanes } from '../lib/split-tree';
+import { pickFallbackInScope } from '../lib/pane-spaces';
 import { deliverDictationToClaim } from './dictation-target';
 import {
   deliverDictation,
@@ -346,9 +348,11 @@ export async function runJarvisTurn(
 export function routePrompt(text: string): string | null {
   const { focusedPaneId, root } = useLayoutStore.getState();
   const routing = useVoiceStore.getState().info?.routing ?? 'focused-pane';
+  // Orquestrador do MESMO escopo do foco: a fala da missão A nunca vai para o
+  // orquestrador da missão B (isolamento de campo A/B).
   const targetPaneId =
     routing === 'orchestrator'
-      ? findOrchestratorPane(root) ?? focusedPaneId
+      ? findOrchestratorPane(root, focusedPaneId) ?? focusedPaneId
       : focusedPaneId;
   if (!targetPaneId) return null;
   const ok = submitPromptToPane(targetPaneId, text);
@@ -376,10 +380,20 @@ export function routeDictation(text: string): Promise<DictationRouteResult> {
   }
   return deliverDictation(text, {
     getFocusedPaneId: () => useLayoutStore.getState().focusedPaneId,
-    listLivePaneIds: () =>
-      listPanes(useLayoutStore.getState().root)
+    listLivePaneIds: () => {
+      const { focusedPaneId, root } = useLayoutStore.getState();
+      const panes = listPanes(root);
+      const paneMissions = useOrchStore.getState().paneMissions;
+      const liveIds = panes
         .map((pane) => pane.id)
-        .filter((id) => getPaneSessionId(id) != null),
+        .filter((id) => getPaneSessionId(id) != null);
+      // Mesmo contrato de pickFallbackInScope: só panes do escopo do foco.
+      // Foco sumiu da árvore → lista vazia (nunca invade o campo vizinho).
+      return liveIds.filter(
+        (id) =>
+          pickFallbackInScope([id], focusedPaneId, panes, paneMissions) !== null,
+      );
+    },
     getSessionId: (paneId) => getPaneSessionId(paneId),
     deliverConfirmed: (paneId, promptText, sessionId) =>
       submitPromptToPaneConfirmed(paneId, promptText, sessionId),

@@ -14,6 +14,7 @@ import {
   type PaneScopeEntry,
 } from '../../lib/pane-spaces';
 import { usePaneScopeStore } from '../../state/pane-scope-store';
+import { MissionLaneBar } from './MissionLaneBar';
 import { missionLifecycleLabel } from '../../lib/mission-lifecycle-copy';
 import { missionAwaitsOperatorReview } from '../../../shared/mission-recovery-policy';
 import { PixelIcon } from '../PixelIcon';
@@ -110,6 +111,10 @@ export function TerminalWorkspace({
   // escopo que deixou de existir.
   const activeScopeKey = usePaneScopeStore((state) => state.activeScopeKey);
   const focusScope = usePaneScopeStore((state) => state.focusScope);
+  const pinnedA = usePaneScopeStore((state) => state.pinnedA);
+  const pinnedB = usePaneScopeStore((state) => state.pinnedB);
+  const togglePinScope = usePaneScopeStore((state) => state.togglePinScope);
+  const switchAB = usePaneScopeStore((state) => state.switchAB);
   // O rótulo segue a projeção canônica da missão — "Missão ativa" fixo mentia
   // em missão já concluída/falha. Done SEM carimbo do humano é revisão, não
   // Pronto: senão o header dos Terminais declara encerrado o canal que ainda
@@ -324,20 +329,48 @@ export function TerminalWorkspace({
       ) : null}
 
       {multiScope ? (
-        <header
-          className="terminal-workspace__filterbar"
-          role="toolbar"
-          aria-label="Filtrar terminais por missão ou espaço"
-        >
-          <div className="terminal-workspace__filterbar-group">
-            <span className="terminal-workspace__filterbar-label">Abas:</span>
-            {scopes.map((scope) =>
-              editingSpace?.key === scope.key ? (
+        <MissionLaneBar
+          scopes={scopes}
+          activeScopeKey={effectiveScopeKey}
+          onFocusScope={focusScope}
+          onStartSpaceRename={startSpaceRename}
+          pinnedA={pinnedA}
+          pinnedB={pinnedB}
+          onTogglePin={togglePinScope}
+          onSwitchAB={switchAB}
+          onNewMission={() => useProductNavigationStore.getState().openNewMission()}
+        />
+      ) : null}
+
+      {/* Identidade do campo só com 2+ escopos: com um único campo ela disputava
+          a linha de título com o nome do pane e o empurrava para fora da toolbar. */}
+      {multiScope &&
+        (() => {
+          const activeScope = scopes.find(
+            (scope) => scope.key === effectiveScopeKey,
+          );
+          if (!activeScope) return null;
+          const pin =
+            pinnedA === activeScope.key
+              ? 'a'
+              : pinnedB === activeScope.key
+                ? 'b'
+                : null;
+          return (
+            <div
+              className="mission-field-header"
+              data-scope-kind={activeScope.kind}
+              role="status"
+            >
+              {pin ? (
                 <span
-                  key={scope.key}
-                  className="terminal-workspace__filter-chip terminal-workspace__filter-chip--active"
-                  data-scope-kind={scope.kind}
+                  className={`mission-field-header__pin mission-field-header__pin--${pin}`}
                 >
+                  {pin.toUpperCase()}
+                </span>
+              ) : null}
+              <span className="mission-field-header__title">
+                {editingSpace?.key === activeScope.key ? (
                   <input
                     className="terminal-workspace__chip-rename"
                     value={editingSpace.draft}
@@ -345,7 +378,7 @@ export function TerminalWorkspace({
                     aria-label="Renomear espaço"
                     onChange={(event) =>
                       setEditingSpace({
-                        key: scope.key,
+                        key: activeScope.key,
                         draft: event.target.value,
                       })
                     }
@@ -360,79 +393,38 @@ export function TerminalWorkspace({
                     }}
                     onBlur={commitSpaceRename}
                   />
-                  <span className="terminal-workspace__filter-count terminal-workspace__chip-badge">
-                    {scope.paneCount}
+                ) : (
+                  activeScope.title
+                )}
+              </span>
+              {activeScope.kind === 'mission' && activeScope.state ? (
+                <span
+                  className={`terminal-workspace__chip-dot terminal-workspace__chip-dot--${activeScope.state}`}
+                  aria-hidden="true"
+                />
+              ) : null}
+              <span className="mission-field-header__meta">
+                {activeScope.paneCount} painel{activeScope.paneCount === 1 ? '' : 's'}
+              </span>
+              {activeScope.orchestrator ? (
+                <span
+                  className="mission-field-header__orq"
+                  title={`Orquestrador do campo: ${activeScope.orchestrator.title}`}
+                >
+                  <PixelIcon name="orch" size={11} />
+                  <span className="mission-field-header__orq-tag">orq</span>
+                  <span className="mission-field-header__orq-name">
+                    {activeScope.orchestrator.title}
                   </span>
                 </span>
               ) : (
-                <button
-                  key={scope.key}
-                  type="button"
-                  className={`terminal-workspace__filter-chip${
-                    effectiveScopeKey === scope.key
-                      ? ' terminal-workspace__filter-chip--active'
-                      : ''
-                  }`}
-                  aria-pressed={effectiveScopeKey === scope.key}
-                  onClick={() => focusScope(scope.key)}
-                  title={
-                    scope.kind === 'space'
-                      ? `${scope.title} — duplo clique para renomear`
-                      : scope.title
-                  }
-                  data-scope-kind={scope.kind}
-                >
-                  {scope.kind === 'mission' && scope.state ? (
-                    <span
-                      className={`terminal-workspace__chip-dot terminal-workspace__chip-dot--${scope.state}`}
-                      aria-hidden="true"
-                    />
-                  ) : null}
-                  <span
-                    className="terminal-workspace__filter-label"
-                    onDoubleClick={
-                      scope.kind === 'space'
-                        ? (event) => {
-                            event.stopPropagation();
-                            startSpaceRename(scope);
-                          }
-                        : undefined
-                    }
-                  >
-                    {scope.title}
-                  </span>
-                  <span className="terminal-workspace__filter-count terminal-workspace__chip-badge">
-                    {scope.paneCount}
-                  </span>
-                </button>
-              ),
-            )}
-            <button
-              type="button"
-              className={`terminal-workspace__filter-chip${
-                effectiveScopeKey === ALL_SCOPES_KEY
-                  ? ' terminal-workspace__filter-chip--active'
-                  : ''
-              }`}
-              aria-pressed={effectiveScopeKey === ALL_SCOPES_KEY}
-              onClick={() => focusScope(ALL_SCOPES_KEY)}
-            >
-              <span className="terminal-workspace__filter-label">Todos</span>
-            </button>
-          </div>
-          <div className="terminal-workspace__filterbar-actions">
-            <button
-              type="button"
-              className="terminal-workspace__new-mission-btn"
-              onClick={() => useProductNavigationStore.getState().openNewMission()}
-              title="Iniciar uma nova missão"
-            >
-              <PixelIcon name="plus" size={10} />
-              <span>Nova missão</span>
-            </button>
-          </div>
-        </header>
-      ) : null}
+                <span className="mission-field-header__orq mission-field-header__orq--empty">
+                  sem orquestrador
+                </span>
+              )}
+            </div>
+          );
+        })()}
 
       <div className="terminal-workspace__surface">
         {viewKind === 'canvas' ? (

@@ -25,6 +25,12 @@ export interface PaneScopeEntry {
   readonly paneCount: number;
   /** Estado da missão, quando o renderer já conhece a projeção. */
   readonly state?: string;
+  /**
+   * Orquestrador do escopo — a missão SEMPRE pode ter um, e a UI precisa
+   * mostrá-lo por campo (cada A/B tem o seu). `null` quando não há orquestrador
+   * neste escopo (campo só de workers/shells).
+   */
+  readonly orchestrator: { readonly paneId: string; readonly title: string } | null;
 }
 
 /** Escopo sentinel de "mostrar a árvore inteira". */
@@ -65,6 +71,42 @@ export function paneScopeKey(
   return LOOSE_SCOPE_KEY;
 }
 
+export function scopeKeyForPaneId(
+  paneId: string | null | undefined,
+  panes: readonly PaneModel[],
+  paneMissions: Readonly<Record<string, string>>,
+): string | null {
+  if (!paneId) return null;
+  const pane = panes.find((candidate) => candidate.id === paneId);
+  return pane ? paneScopeKey(pane, paneMissions) : null;
+}
+
+/**
+ * Fallback de entrega (ditado, anexos, shell, orquestrador): o primeiro
+ * candidato vivo do MESMO escopo do foco. Conteúdo da missão A nunca cai no
+ * campo de trabalho da missão B — mesmo que o foco esteja morto, o alvo
+ * alternativo só existe dentro do escopo dele.
+ *
+ * Sem foco (`null`/`undefined` = layout solo) devolve o primeiro candidato.
+ * Foco que SUMIU da árvore devolve `null` — tratar "não achei o foco" como
+ * "solo" reabriria o vazamento A→B no primeiro pane removido.
+ */
+export function pickFallbackInScope(
+  candidates: readonly string[],
+  focusedPaneId: string | null | undefined,
+  panes: readonly PaneModel[],
+  paneMissions: Readonly<Record<string, string>>,
+): string | null {
+  if (candidates.length === 0) return null;
+  if (!focusedPaneId) return candidates[0] ?? null;
+  const scope = scopeKeyForPaneId(focusedPaneId, panes, paneMissions);
+  if (!scope) return null;
+  for (const id of candidates) {
+    if (scopeKeyForPaneId(id, panes, paneMissions) === scope) return id;
+  }
+  return null;
+}
+
 /**
  * Panes de UM escopo. `ALL_SCOPES_KEY` devolve a árvore inteira; escopo que não
  * existe mais devolve VAZIO — nunca a árvore inteira. Um fallback "mostra tudo"
@@ -95,24 +137,41 @@ export interface ListPaneScopesInput {
  * As abas, na ordem em que os panes aparecem na árvore. Só escopo COM pane vira
  * aba: a aba é o mosaico, não um cadastro. E nenhum pane fica sem aba — missão
  * que o renderer ainda não conhece ganha rótulo neutro em vez de sumir.
+ *
+ * Cada entrada carrega o orquestrador do próprio campo: duas missões ao lado
+ * mostram cada uma o seu, nunca o da vizinha.
  */
 export function listPaneScopes(input: ListPaneScopesInput): PaneScopeEntry[] {
   const missionById = new Map(input.missions.map((m) => [m.id, m]));
   const order: string[] = [];
   const byKey = new Map<string, PaneScopeEntry>();
+  const orchestratorByKey = new Map<
+    string,
+    { paneId: string; title: string } | null
+  >();
 
   for (const pane of input.panes) {
     const key = paneScopeKey(pane, input.paneMissions);
     const existing = byKey.get(key);
     if (existing) {
       byKey.set(key, { ...existing, paneCount: existing.paneCount + 1 });
-      continue;
+    } else {
+      order.push(key);
+      byKey.set(key, scopeEntryFor(key, pane, missionById));
+      orchestratorByKey.set(key, null);
     }
-    order.push(key);
-    byKey.set(key, scopeEntryFor(key, pane, missionById));
+    if (pane.role === 'orchestrator' && !orchestratorByKey.get(key)) {
+      orchestratorByKey.set(key, {
+        paneId: pane.id,
+        title: pane.title?.trim() || 'Orquestrador',
+      });
+    }
   }
 
-  const scopes = order.map((key) => byKey.get(key)!);
+  const scopes = order.map((key) => ({
+    ...byKey.get(key)!,
+    orchestrator: orchestratorByKey.get(key) ?? null,
+  }));
   const titleCounts = new Map<string, number>();
   for (const s of scopes) {
     titleCounts.set(s.title, (titleCounts.get(s.title) ?? 0) + 1);
@@ -137,7 +196,7 @@ function scopeEntryFor(
   missionById: ReadonlyMap<string, { title: string; state: string }>,
 ): PaneScopeEntry {
   if (key === LOOSE_SCOPE_KEY) {
-    return { key, kind: 'loose', title: LOOSE_TITLE, paneCount: 1 };
+    return { key, kind: 'loose', title: LOOSE_TITLE, paneCount: 1, orchestrator: null };
   }
   if (key.startsWith(MISSION_SCOPE_PREFIX)) {
     const id = key.slice(MISSION_SCOPE_PREFIX.length);
@@ -148,6 +207,7 @@ function scopeEntryFor(
       id,
       title: summary?.title?.trim() || UNKNOWN_MISSION_TITLE,
       paneCount: 1,
+      orchestrator: null,
       ...(summary ? { state: summary.state } : {}),
     };
   }
@@ -158,6 +218,7 @@ function scopeEntryFor(
     id,
     title: pane.spaceTitle?.trim() || SPACE_TITLE_BASE,
     paneCount: 1,
+    orchestrator: null,
   };
 }
 

@@ -3,6 +3,7 @@ import { isMissionRuntimeSquadId, type SquadAgent } from '../../shared/orch-type
 import { PET_STUDIO_SQUAD_ID } from '../../shared/pet-studio';
 import { useLayoutStore } from '../state/layout-store';
 import { listPanes } from '../lib/split-tree';
+import { pickFallbackInScope } from '../lib/pane-spaces';
 import { attentionMissionIdForPane } from '../lib/mission-attention-route';
 import { useWorkspaceStore } from '../state/workspace-store';
 import { useOrchStore } from '../state/orch-store';
@@ -131,7 +132,17 @@ function openCanonicalMissionSetup(
 function findOrchestratorPane(
   root: ReturnType<typeof useLayoutStore.getState>['root'],
 ): string | null {
-  return listPanes(root).find(isOrchestratorPane)?.id ?? null;
+  const panes = listPanes(root);
+  const matches = panes.filter(isOrchestratorPane);
+  if (matches.length === 0) return null;
+  // Orquestrador do MESMO escopo do foco. Sem fallback para `matches[0]`:
+  // quando a missão A não tem orquestrador, cair no da B é o vazamento A→B.
+  return pickFallbackInScope(
+    matches.map((p) => p.id),
+    useLayoutStore.getState().focusedPaneId,
+    panes,
+    useOrchStore.getState().paneMissions,
+  );
 }
 
 function paneContext() {
@@ -1256,8 +1267,20 @@ export async function executeJarvisAction(
     }
     const { focusedPaneId: fp, root: rc } = useLayoutStore.getState();
     const panesNow = listPanes(rc);
+    const paneMissions = useOrchStore.getState().paneMissions;
     const focused = fp ? panesNow.find((p) => p.id === fp) : undefined;
-    const shellPane = focused?.kind === 'shell' ? focused : panesNow.find((p) => p.kind === 'shell');
+    // Shell do MESMO escopo do foco: o comando da missão A nunca roda no
+    // terminal da missão B (isolamento de campo A/B).
+    const shellPane =
+      focused?.kind === 'shell'
+        ? focused
+        : (() => {
+            const shellIds = panesNow
+              .filter((p) => p.kind === 'shell')
+              .map((p) => p.id);
+            const scoped = pickFallbackInScope(shellIds, fp, panesNow, paneMissions);
+            return scoped ? panesNow.find((p) => p.id === scoped) : undefined;
+          })();
     const targetPaneId = shellPane?.id ?? useLayoutStore.getState().addShellPane();
     revealPaneForUser(targetPaneId);
     markEffect(control);
