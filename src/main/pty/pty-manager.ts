@@ -963,6 +963,9 @@ function makeSessionId(): string {
  * old attachProc so a spawn path can build the host session handlers without
  * ever holding a live node-pty handle.
  */
+/** Unacked output kept for recover pulls (~1M chars). */
+const MAX_REPLAY_WINDOW_CHARS = 1_000_000;
+
 function onSessionData(
   session: Session,
   sessionId: string,
@@ -977,15 +980,20 @@ function onSessionData(
   const event = { sessionId, data, sequence: session.outputSequence };
   session.replay.push({ sequence: event.sequence, data });
   session.replayChars += data.length;
-  let bufferedChars = 0;
-  for (let index = session.replay.length - 1; index >= 0; index -= 1) {
-    bufferedChars += session.replay[index].data.length;
-    if (bufferedChars > 1_000_000) {
-      session.replay.splice(0, index + 1);
-      session.replayChars =
-        bufferedChars - session.replay[index].data.length;
-      break;
+  // Trim the oldest chunks off the running total, in batches: walking the
+  // whole window (or splicing its head) on every chunk was O(window) per
+  // chunk and pinned the main thread under streaming output (profiled on
+  // Windows, 0.76.86). The window may overshoot by 25% before one trim.
+  if (session.replayChars > MAX_REPLAY_WINDOW_CHARS * 1.25) {
+    let drop = 0;
+    while (
+      drop < session.replay.length &&
+      session.replayChars > MAX_REPLAY_WINDOW_CHARS
+    ) {
+      session.replayChars -= session.replay[drop].data.length;
+      drop += 1;
     }
+    session.replay.splice(0, drop);
   }
   if (canSend(session.wc)) {
     if (session.replayChars > MAX_UNACKED_OUTPUT_CHARS) {
@@ -2735,16 +2743,20 @@ export function acknowledgeSessionOutput(
     session.acknowledgedSequence,
     Math.min(sequence, session.outputSequence),
   );
-  const kept: Array<{ sequence: number; data: string }> = [];
-  let keptChars = 0;
-  for (const entry of session.replay) {
-    if (entry.sequence > session.acknowledgedSequence) {
-      kept.push(entry);
-      keptChars += entry.data.length;
-    }
+  // Replay is ordered by sequence: drop the acknowledged prefix in place.
+  let drop = 0;
+  let droppedChars = 0;
+  while (
+    drop < session.replay.length &&
+    session.replay[drop].sequence <= session.acknowledgedSequence
+  ) {
+    droppedChars += session.replay[drop].data.length;
+    drop += 1;
   }
-  session.replay = kept;
-  session.replayChars = keptChars;
+  if (drop > 0) {
+    session.replay.splice(0, drop);
+    session.replayChars -= droppedChars;
+  }
 }
 
 export function recoverSessionOutput(

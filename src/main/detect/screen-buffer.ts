@@ -21,7 +21,11 @@ const CSI_PREFIX = /^\x1b\[[0-9;?]*[ -/]*[@-~]/;
 const OSC_TERMINATOR = /\x07|\x1b\\/;
 
 interface ScreenBufferState {
-  text: string;
+  /** Stripped chunks since the last materialization; joined on read. */
+  chunks: string[];
+  chars: number;
+  /** Materialized tail, valid until the next append. */
+  cached: string | null;
   /** Raw tail held back because it ends mid-escape sequence. */
   pendingRaw: string;
   /** Monotonic content counter — bumped whenever visible text changed. */
@@ -44,6 +48,17 @@ function endsMidEscape(suffix: string): boolean {
   return false;
 }
 
+function materialize(state: ScreenBufferState): string {
+  if (state.cached !== null) return state.cached;
+  const joined = state.chunks.join('');
+  const tail =
+    joined.length > MAX_BUFFER_CHARS ? joined.slice(-MAX_BUFFER_CHARS) : joined;
+  state.chunks = tail ? [tail] : [];
+  state.chars = tail.length;
+  state.cached = tail;
+  return tail;
+}
+
 export class SessionScreenBuffer {
   private readonly sessions = new Map<string, ScreenBufferState>();
 
@@ -51,7 +66,7 @@ export class SessionScreenBuffer {
   append(sessionId: string, rawData: string): number {
     let state = this.sessions.get(sessionId);
     if (!state) {
-      state = { text: '', pendingRaw: '', contentSeq: 0 };
+      state = { chunks: [], chars: 0, cached: '', pendingRaw: '', contentSeq: 0 };
       this.sessions.set(sessionId, state);
     }
     let combined = state.pendingRaw + rawData;
@@ -63,17 +78,22 @@ export class SessionScreenBuffer {
     }
     const stripped = stripAnsi(combined);
     if (stripped.length === 0) return state.contentSeq;
-    state.text =
-      state.text.length + stripped.length > MAX_BUFFER_CHARS
-        ? (state.text + stripped).slice(-MAX_BUFFER_CHARS)
-        : state.text + stripped;
+    // Append is O(chunk): concatenating and slicing the full 256 KB tail on
+    // every chunk dominated main-thread CPU under streaming output. The tail
+    // is built when read (detector evals are debounced) and compacted here
+    // only after it doubles, so memory stays bounded.
+    state.chunks.push(stripped);
+    state.chars += stripped.length;
+    state.cached = null;
+    if (state.chars > 2 * MAX_BUFFER_CHARS) materialize(state);
     state.contentSeq += 1;
     return state.contentSeq;
   }
 
   /** Current stripped tail for the session (never null). */
   text(sessionId: string): string {
-    return this.sessions.get(sessionId)?.text ?? '';
+    const state = this.sessions.get(sessionId);
+    return state ? materialize(state) : '';
   }
 
   contentSeq(sessionId: string): number {
