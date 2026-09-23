@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.76.86 — A CLI cuida do próprio login
+
+- **A cota do Claude não mexe mais no login nativo do Windows.** O Nexus só lê o `.credentials.json` da CLI, sem renovar o token por conta própria. Antes o Nexus e a CLI podiam renovar ao mesmo tempo e um derrubava o login do outro. Se o token estiver vencido, a cota diz isso até a CLI renovar.
+
 ## 0.76.85 — Configurações no lugar, também no Windows
 
 - **Configurações organizadas por tarefa.** Sete áreas em vez de nove categorias por módulo, modo foco que devolve a largura ao conteúdo e páginas longas bem mais curtas (Comparar modelos, Uso e cotas, Loja, Equipes).

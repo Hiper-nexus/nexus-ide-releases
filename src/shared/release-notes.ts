@@ -6438,7 +6438,7 @@ export const RELEASE_07684: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07685: AppRelease = {
   version: '0.76.85',
   date: '2026-09-23',
   codename: 'Configurações no lugar',
@@ -6473,4 +6473,20 @@ export const CURRENT_RELEASE: AppRelease = {
         '"Tornar orquestrador" vai para o menu do pane, "+ Pane" não corta nomes, foco visível e alvos de 24 px.',
     },
   ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.86',
+  date: '2026-09-23',
+  codename: 'A CLI cuida do próprio login',
+  summary:
+    'No Windows a cota do Claude só lê o login da CLI e não renova o token por conta própria, então o Nexus e a CLI não disputam mais a mesma sessão.',
+  highlights: [
+    {
+      title: 'Login do Claude sem disputa',
+      detail:
+        'O Nexus só lê o .credentials.json da CLI. Antes os dois podiam renovar ao mesmo tempo e um derrubava o login do outro.',
+    },
+  ],
+  fixes: [],
 };
