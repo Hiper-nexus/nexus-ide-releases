@@ -5,6 +5,7 @@ import {
   app,
   type WebContents,
 } from "electron";
+import { polishCodePrompt } from "./code-prompt-polish";
 import { VOICE_CHANNELS } from "../../shared/voice-channels";
 import { isWindowScopedShortcut } from "../../shared/voice-config";
 import {
@@ -813,6 +814,16 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
             text: res.text.slice(0, 120),
           });
           return { ...res, discarded: "echo" };
+        }
+        if (res.ok && parsed.data.polish === "code-prompt") {
+          const polish = await polishCodePrompt(res.text);
+          if (!polish.polished) {
+            logVoice("warn", "stt.codePolishSkipped", "modo CODE seguiu com o texto da STT", {
+              reason: polish.reason,
+              provider: res.provider,
+            });
+          }
+          return { ...res, text: polish.text };
         }
         return res;
       } catch (err) {

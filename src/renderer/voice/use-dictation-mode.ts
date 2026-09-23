@@ -9,6 +9,14 @@ import { useVoiceStore } from './voice-store';
  */
 export type DictationMode = 'english' | 'portuguese';
 
+/** Chaves que atendem a reescrita do ditado CODE (main/voice/code-prompt-polish). */
+const CODE_POLISH_KEY_ENV_VARS: ReadonlySet<string> = new Set([
+  'GEMINI_API_KEY',
+  'OPENAI_API_KEY',
+  'GROQ_API_KEY',
+  'XAI_API_KEY',
+]);
+
 export interface DictationModeControl {
   mode: DictationMode;
   /**
@@ -34,9 +42,18 @@ export function useDictationMode(): DictationModeControl {
   // `stt` também é opcional: mocks e um info parcial não trazem a cadeia, e
   // `info?.stt.active` estourava com stt undefined.
   const activeProvider = info?.stt?.active?.provider;
-  const translates = activeProvider
+  const sttTranslates = activeProvider
     ? sttProviderTranslates(activeProvider)
     : true;
+  // O main reescreve o ditado CODE em inglês por um modelo de texto (cérebro
+  // Gemini/OpenAI/Groq ou Grok pela chave do xAI). Com qualquer uma dessas
+  // chaves, até uma STT que só transcreve entrega inglês.
+  const polishAvailable = (info?.keys ?? []).some(
+    (key) =>
+      CODE_POLISH_KEY_ENV_VARS.has(key.envVar) &&
+      (key.hasEnv || key.hasStoredKey),
+  );
+  const translates = sttTranslates || polishAvailable;
 
   const toggle = async () => {
     const next: DictationMode = mode === 'english' ? 'portuguese' : 'english';
@@ -52,7 +69,7 @@ export function useDictationMode(): DictationModeControl {
 
   const base =
     mode === 'english'
-      ? 'Ditado: Code — inglês otimizado p/ execução'
+      ? 'Ditado: Code — vira prompt em inglês para o agente'
       : 'Ditado: Chat — português literal';
   // F-524: o operador precisa saber QUAL API vai atender o ditado sem abrir
   // configuração nenhuma — o provider ativo viaja no tooltip do chip.
@@ -61,7 +78,7 @@ export function useDictationMode(): DictationModeControl {
     : '';
   const caveat = translates
     ? ''
-    : ` · ${activeProvider} só transcreve (sem tradução): o texto sai em português`;
+    : ` · ${activeProvider} só transcreve e não há chave de modelo de texto (Gemini, OpenAI, Groq ou xAI): o texto sai em português`;
 
   const baseLabel = mode === 'english' ? 'CODE' : 'CHAT';
   // Divulgação MECÂNICA, não só tooltip: quem já está ditando não passa o mouse

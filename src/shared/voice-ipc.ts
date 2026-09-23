@@ -37,6 +37,11 @@ export const transcribeRequestSchema = z.object({
    */
   prompt: z.string().min(1).max(600).optional(),
   /**
+   * Ditado no modo CODE: depois da STT, o main reescreve a fala como prompt em
+   * inglês para o agente (code-prompt-polish). Falha devolve o texto da STT.
+   */
+  polish: z.enum(['code-prompt']).optional(),
+  /**
    * ITEM 7: total wall-clock budget (ms) for the STT chain on the WAKE path.
    * When set, at most one cloud attempt runs (on a tight deadline) before
    * jumping to keyless local whisper, so a hung cloud provider can't hold a

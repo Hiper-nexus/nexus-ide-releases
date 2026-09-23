@@ -10,11 +10,13 @@ describe('dictationSttRequestParams', () => {
       translate: true,
       language: 'pt',
       prompt: DICTATION_CODE_PRIMING_PROMPT,
+      polish: 'code-prompt',
     });
     expect(dictationSttRequestParams('english')).toEqual({
       translate: true,
       language: 'pt',
       prompt: DICTATION_CODE_PRIMING_PROMPT,
+      polish: 'code-prompt',
     });
   });
 

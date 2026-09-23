@@ -26,9 +26,21 @@ export { DICTATION_CODE_PRIMING_PROMPT };
 
 export function dictationSttRequestParams(
   mode: DictationOutputMode | undefined,
-): { translate: boolean; language: 'pt'; prompt?: string } {
+): {
+  translate: boolean;
+  language: 'pt';
+  prompt?: string;
+  polish?: 'code-prompt';
+} {
   // 'portuguese': transcrição literal, intocada — sem priming.
   if (mode === 'portuguese') return { translate: false, language: 'pt' };
-  // 'english' (default ClockVoice): tradução otimizada para execução.
-  return { translate: true, language: 'pt', prompt: DICTATION_CODE_PRIMING_PROMPT };
+  // 'english' (default ClockVoice): tradução otimizada para execução, e o main
+  // reescreve como prompt em inglês para o agente — inclusive quando a STT só
+  // transcreve (xAI).
+  return {
+    translate: true,
+    language: 'pt',
+    prompt: DICTATION_CODE_PRIMING_PROMPT,
+    polish: 'code-prompt',
+  };
 }
