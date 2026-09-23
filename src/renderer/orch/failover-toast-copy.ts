@@ -37,12 +37,24 @@ export function blockedFailoverToastCopy(
           `Você pode conectar outra em Configurações → Providers.${retryNote}`,
       };
     case 'transient':
+      // Dois momentos do mesmo episódio (failover.ts, handleTransientHit):
+      // o aviso inicial e, num pane do operador, "a CLI parou" — o texto só
+      // promete o que o Main de fato faz em cada caso.
+      if (/a CLI parou/.test(event.reason)) {
+        return {
+          title: 'A CLI parou num erro do provider',
+          detail: `${event.reason}.`,
+        };
+      }
       return {
         title: 'Provider instável — conta mantida',
         detail:
           `${event.reason}. É um erro do provider, não limite da conta ` +
           `"${event.fromAccountLabel}": trocar de conta não resolve. A CLI ` +
-          `tenta de novo sozinha e a missão segue preservada.${retryNote}`,
+          `tenta de novo sozinha; ` +
+          (event.missionId
+            ? 'se ela parar no erro, o Nexus retoma a missão na mesma conta.'
+            : 'se ela parar no erro, mande "continue" no pane.'),
       };
     case 'rate-limit':
       return {

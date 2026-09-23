@@ -454,8 +454,19 @@ saber isto antes de mexer:
 - **Métrica ausente vai `null`, nunca 0.** Rodada curta demais, submit não
   observado ou zero token não sustentam um número; a UI imprime "—". Zero falso
   num medidor de velocidade é pior que métrica faltando.
+- **Janela do tok/s depende da origem da contagem (23/09).** Estimativa pela
+  tela: tokens vistos / tempo do 1º ao último texto visível. Contagem REAL do
+  transcript: inclui pensamento e tool calls gerados no silêncio ANTES do 1º
+  texto, então a janela vai do submit ao último token — dividi-la pela janela
+  da tela dava 35 mil tok/s num pane parado. Real sem submit visto não tem
+  janela honesta: `null`. A amostra expõe a janela usada em `rateWindowMs`
+  (a UI mostra ela, não `generationMs`). Acima de
+  `MAX_PLAUSIBLE_TOKENS_PER_SECOND` (6.000, guarda de sanidade acima de
+  Cerebras/Groq) a taxa vira `null`. Tudo passa por `#rateFor`; não calcule
+  tok/s em outro lugar.
 - **Ao vivo é a rodada ABERTA.** `liveTokensPerSecond` = tokens até agora /
-  tempo desde o 1º token (relógio `now`). O chip/painel usam isso enquanto
+  tempo desde o 1º token (relógio `now`); quando o uso real já chegou na
+  rodada, vale a regra acima (do submit). O chip/painel usam isso enquanto
   `streaming`; a última fechada só aparece em repouso. Sem 1º token (TTFT) o
   live fica `null` — não recicla o número da rodada anterior.
 - **`flushIdle` NUNCA fecha rodada que ainda espera o 1º token.** O silêncio

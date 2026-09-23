@@ -225,6 +225,42 @@ describe('TokenSpeedMeter — honestidade da métrica', () => {
     expect(m.snapshot(12_000).last?.tokensPerSecond).toBe(100)
   })
 
+  it('contagem real sem submit visto não tem janela honesta: "—", mesmo sem passar do teto', () => {
+    const m = meter()
+    // Prompt entrou por argv/retomada: 20 s pensando, 1 s de texto na tela.
+    m.noteOutput('p1', 20_000, chunks(2))
+    m.noteOutput('p1', 20_900, chunk())
+    m.flushIdle(23_000)
+    m.noteUsage('p1', 23_100, { key: 's:argv', outputTokens: 1_500 })
+    const sample = m.snapshot(24_000).last
+    // Antes: 1.500 / 0,9 s ≈ 1.667 tok/s marcado como "real".
+    expect(sample).toMatchObject({ source: 'real', tokensPerSecond: null, rateWindowMs: null })
+  })
+
+  it('a amostra expõe a janela usada no tok/s (tela: estimativa; submit→último: real)', () => {
+    const m = meter()
+    m.noteSubmit('p1', 0, 'a')
+    m.noteOutput('p1', 100, chunk())
+    m.noteOutput('p1', 600, chunk())
+    m.flushIdle(3_000)
+    expect(m.snapshot(3_000).last).toMatchObject({ generationMs: 500, rateWindowMs: 500 })
+    m.noteUsage('p1', 3_500, { key: 's:1', outputTokens: 403 })
+    const real = m.snapshot(4_000).last!
+    expect(real).toMatchObject({ generationMs: 500, rateWindowMs: 600, tokensPerSecond: 671.7 })
+    expect((real.outputTokens / real.rateWindowMs!) * 1_000).toBeCloseTo(real.tokensPerSecond!, 0)
+  })
+
+  it('provider rápido de verdade (~3.000 tok/s) não vira "—"', () => {
+    const m = meter()
+    m.noteSubmit('p1', 0, 'a')
+    m.noteOutput('p1', 100, chunk())
+    m.noteOutput('p1', 600, chunk())
+    m.flushIdle(3_000)
+    m.noteUsage('p1', 3_500, { key: 's:fast', outputTokens: 1_800 })
+    // 1.800 tokens / 0,6 s = 3.000 tok/s — abaixo do teto de sanidade.
+    expect(m.snapshot(4_000).last?.tokensPerSecond).toBe(3_000)
+  })
+
   it('média e pico ignoram amostras sem tok/s conhecido', () => {
     const m = meter()
     // Rodada 1: mensurável.

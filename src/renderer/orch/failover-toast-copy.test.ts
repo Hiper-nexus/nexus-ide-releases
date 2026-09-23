@@ -40,6 +40,26 @@ describe('blockedFailoverToastCopy', () => {
     expect(transient.detail).toMatch(/não limite da conta/);
     expect(transient.detail).not.toMatch(/Providers/);
   });
+
+  it('erro do provider promete só o que o Main faz: missão retoma, pane do operador pede continue', () => {
+    const mission = blockedFailoverToastCopy({
+      ...event('transient', 'status:503'),
+      missionId: 'mission-1',
+    });
+    expect(mission.detail).toMatch(/retoma a missão na mesma conta/);
+    const operator = blockedFailoverToastCopy({
+      ...event('transient', 'status:503'),
+      missionId: undefined,
+    });
+    expect(operator.detail).toMatch(/mande "continue"/);
+    const stopped = blockedFailoverToastCopy(
+      event(
+        'transient',
+        'status:503 — a CLI parou com este erro do provider; mande "continue" no pane para tentar de novo',
+      ),
+    );
+    expect(stopped.title).toBe('A CLI parou num erro do provider');
+  });
 });
 
 describe('recoveredFailoverToastCopy', () => {

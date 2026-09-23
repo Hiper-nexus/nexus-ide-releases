@@ -314,7 +314,11 @@ export function TokenSpeedMonitor({ paneId }: { paneId?: string | null }) {
         </span>
         <span className="tokspeed__hero-detail">
           {last
-            ? `${modelLabel(last.model)} · saída ${formatTokens(last.outputTokens)} tok · geração ${formatMs(last.generationMs)}`
+            ? // A janela é a MESMA do tok/s: contagem real conta do submit
+              // (pensamento incluso); sem janela honesta, formatMs mostra "—".
+              `${modelLabel(last.model)} · saída ${formatTokens(last.outputTokens)} tok · geração ${formatMs(
+                last.rateWindowMs === undefined ? last.generationMs : last.rateWindowMs,
+              )}`
             : 'Nenhuma rodada medida ainda nesta sessão.'}
         </span>
       </div>

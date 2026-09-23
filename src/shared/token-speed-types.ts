@@ -32,6 +32,13 @@ export interface TokenSpeedSample {
   outputTokens: number
   /** Janela de geração: 1º token -> último token. */
   generationMs: number
+  /**
+   * Janela sobre a qual `tokensPerSecond` foi calculado. Estimativa: igual a
+   * generationMs. Contagem real do transcript: do submit ao último token
+   * (inclui o pensamento antes do 1º texto). `null` quando não há janela
+   * honesta (contagem real sem submit visto).
+   */
+  rateWindowMs?: number | null
   /** `null` quando duração/tokens não sustentam um número honesto. */
   tokensPerSecond: number | null
   /** Latência submit -> 1º token. `null` sem submit observado. */

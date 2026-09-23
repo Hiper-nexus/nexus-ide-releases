@@ -114,18 +114,20 @@ interface PaneState {
 }
 
 /**
+ * Teto físico de tok/s: guarda de sanidade, não régua de velocidade. Os
+ * providers mais rápidos (Cerebras/Groq) ficam em poucos milhares e cabem
+ * aqui; acima disso é a janela medida que está errada (35 mil tok/s num pane
+ * parado, 23/09), e o número vira "—" em vez de mentir.
+ */
+export const MAX_PLAUSIBLE_TOKENS_PER_SECOND = 6_000
+
+/**
  * Um TUI parado redesenha a tela inteira (resize, barra de status, foco, volta
  * ao workspace). Contar esse texto de novo abria rodada e mostrava tok/s num
  * terminal ocioso (operador, 23/09). Só linha NOVA é geração: linhas já vistas
  * no pane não viram token. Linhas curtas ("}", "ok") contam sempre — repetem
  * legitimamente e pesam pouco.
  */
-/**
- * Teto físico de tok/s. Nenhum provider real chega perto (os mais rápidos
- * ficam na casa de centenas a poucos milhares); acima disso a janela medida
- * é que está errada, e o número vira "—" em vez de mentir.
- */
-export const MAX_PLAUSIBLE_TOKENS_PER_SECOND = 2_500
 const MIN_DEDUPED_LINE_CHARS = 8
 const MAX_SEEN_LINES = 4_000
 /** Saída sem submit só abre rodada com geração de verdade, não com sobra de repaint. */
@@ -454,12 +456,11 @@ export class TokenSpeedMeter {
             sample: {
               ...current.sample,
               outputTokens,
-              tokensPerSecond: this.#speedOf(
+              ...this.#rateFor(
                 outputTokens,
-                this.#realUsageWindowMs(
-                  current.sample.ttftMs,
-                  current.sample.generationMs,
-                ),
+                current.sample.generationMs,
+                current.sample.ttftMs,
+                true,
               ),
               model: model ?? current.sample.model,
               source: 'real' as const,
@@ -727,12 +728,16 @@ export class TokenSpeedMeter {
     if (this.#isSilent(open.lastTokenAt, now)) return null
     const tokens = open.pendingUsage?.outputTokens ?? open.tokens
     if (tokens < this.minTurnTokens) return null
-    // Contagem real inclui pensamento e tools gerados antes do 1º texto na
-    // tela: o relógio dela começa no submit, não no 1º token visível.
-    const since = open.pendingUsage
-      ? (open.submittedAt ?? open.firstTokenAt)
-      : open.firstTokenAt
-    return this.#speedOf(tokens, now - since)
+    const ttftMs =
+      open.submittedAt !== null && open.firstTokenAt >= open.submittedAt
+        ? open.firstTokenAt - open.submittedAt
+        : null
+    return this.#rateFor(
+      tokens,
+      Math.max(0, now - open.firstTokenAt),
+      ttftMs,
+      open.pendingUsage !== null,
+    ).tokensPerSecond
   }
 
   #speedOf(outputTokens: number, generationMs: number): number | null {
@@ -746,9 +751,34 @@ export class TokenSpeedMeter {
     return round1(rate)
   }
 
-  /** Janela de uma contagem real: do submit (quando visto) ao último token. */
-  #realUsageWindowMs(ttftMs: number | null, generationMs: number): number {
-    return (ttftMs ?? 0) + generationMs
+  /**
+   * Janela e taxa de uma amostra — um lugar só para fechamento, correção pelo
+   * transcript e velocímetro ao vivo.
+   * - Estimativa: tokens vistos / janela do 1º ao último texto na tela.
+   * - Contagem REAL do transcript: inclui pensamento e tool calls gerados no
+   *   silêncio antes do 1º texto, então a janela vai do submit ao último
+   *   token. Dividir pela janela da tela dava 35 mil tok/s (23/09).
+   * - Real SEM submit visto (prompt por argv, retomada): o início da geração
+   *   é desconhecido; não há janela honesta e a taxa fica null.
+   */
+  #rateFor(
+    outputTokens: number,
+    generationMs: number,
+    ttftMs: number | null,
+    real: boolean,
+  ): { rateWindowMs: number | null; tokensPerSecond: number | null } {
+    if (!real) {
+      return {
+        rateWindowMs: generationMs,
+        tokensPerSecond: this.#speedOf(outputTokens, generationMs),
+      }
+    }
+    if (ttftMs === null) return { rateWindowMs: null, tokensPerSecond: null }
+    const rateWindowMs = ttftMs + generationMs
+    return {
+      rateWindowMs,
+      tokensPerSecond: this.#speedOf(outputTokens, rateWindowMs),
+    }
   }
 
   #closeTurn(state: PaneState): boolean {
@@ -772,11 +802,11 @@ export class TokenSpeedMeter {
       startedAt: open.submittedAt ?? open.firstTokenAt,
       outputTokens,
       generationMs,
-      tokensPerSecond: this.#speedOf(
+      ...this.#rateFor(
         outputTokens,
-        open.pendingUsage
-          ? this.#realUsageWindowMs(ttftMs, generationMs)
-          : generationMs,
+        generationMs,
+        ttftMs,
+        open.pendingUsage !== null,
       ),
       ttftMs,
       model: open.pendingUsage?.model ?? open.model ?? state.model,
