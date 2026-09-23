@@ -107,6 +107,9 @@ import { withTimeout } from './voice-speak-pipeline';
 import { runJarvisTurn, routePrompt, routeDictation, captureResponse, type RunJarvisTurnDeps } from './voice-run-jarvis-turn';
 import { MIN_WAKE_SUPPRESSION_MS } from './voice-suppression-window';
 import type { VoiceCapture, AutoStopOptions } from './voice-capture';
+import { noticeMuffledMic } from './speech-quality';
+import { useToastStore } from '../state/toast-store';
+import { useProductNavigationStore } from '../state/product-navigation-store';
 import type { TranscribeResult } from '../../shared/voice-ipc';
 import {
   filteredLiveRescueTranscript,
@@ -323,6 +326,20 @@ export async function finishAndProcess(
     // pane focado e encerra. NUNCA abre sessão Live, cérebro Jarvis, captura
     // de reply ou TTS — a Jarvis é um produto separado com gatilhos próprios.
     if (dictationTurn) {
+      // Qualidade da fala ANTES da transcrição: quando o texto sair errado, o
+      // voice.log diz se foi o microfone (abafado, fraco) ou o provider.
+      if (result.quality) {
+        logVoiceEvent('info', 'stt.audioQuality', result.quality.verdict, {
+          ...result.quality,
+          durationSec: Number(result.durationSec.toFixed(2)),
+        });
+        noticeMuffledMic(result.quality, {
+          push: (kind, title, options) =>
+            useToastStore.getState().push(kind, title, options),
+          openVoiceSettings: () =>
+            useProductNavigationStore.getState().openSettings('voice'),
+        });
+      }
       store.setStatus('transcribing');
       const stt = await transcribeCapture();
       if (!stt.ok) {

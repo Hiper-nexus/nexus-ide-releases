@@ -1,5 +1,6 @@
 import { PCM_WORKLET_NODE_NAME, pcmWorkletBlobUrl } from './pcm-worklet';
 import { rmsToLevel } from './voice-level';
+import { analyzeSpeechQuality, type SpeechQuality } from './speech-quality';
 import { preferredInputConstraints } from './audio-device-preferences';
 import {
   DEFAULT_DUPLEX_MODE,
@@ -32,6 +33,11 @@ export interface CaptureResult {
   maxRms?: number;
   /** Peak absolute sample measured after resampling/AGC. */
   maxPeak?: number;
+  /**
+   * Quanto de fala houve, em que nível e com que fração de agudos — o
+   * microfone abafado aparece aqui antes de virar "a transcrição errou".
+   */
+  quality?: SpeechQuality;
 }
 
 /**
@@ -211,6 +217,7 @@ export class VoiceCapture {
       durationSec: downsampled.length / TARGET_SAMPLE_RATE,
       heardSpeech: this.heardSpeech,
       ...audioStats(downsampled),
+      quality: analyzeSpeechQuality(downsampled, TARGET_SAMPLE_RATE),
     };
   }
 

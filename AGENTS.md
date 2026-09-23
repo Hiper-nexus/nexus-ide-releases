@@ -544,6 +544,13 @@ saber isto antes de mexer:
   Grok realtime). Só transcreve (`TRANSCRIPTION_ONLY_STT_PROVIDERS`). Migração
   insere o link após o último cloud da cadeia persistida, nunca no head;
   cadeias só-local não recebem.
+- **Qualidade da fala antes do provider (F-638)**: `speech-quality.ts` mede
+  cada ditado no mesmo PCM de 16 kHz que vai para a STT (fala em s, nível,
+  fração 1–4 kHz) e grava `stt.audioQuality` no voice.log ANTES de
+  transcrever. Abaixo de 4% de agudos com ≥ 1 s de fala o veredito é
+  `muffled` e sai UM aviso por sessão ("Microfone chegando abafado"). Ditado
+  que "erra tudo" num PC e acerta no Mac: leia `stt.audioQuality` antes de
+  trocar de provider — em 23/09 era fone na entrada rosa, não o modelo.
 
 ## TypeSafe / Jev (skill `typesafe-ai`)
 
