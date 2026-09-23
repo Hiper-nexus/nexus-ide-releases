@@ -82,6 +82,7 @@ import {
 import {
   initPaneRegistry,
   listPaneSnapshots,
+  reclaimDetachedMissionSession,
   registerOrchRenderer,
   resolveBrowserOpen,
   resolvePaneSpawn,
@@ -1792,7 +1793,13 @@ export function registerOrchIpc(): void {
     // que não passa por este handler. A lane já exige posse de apresentação.
     // Posse de apresentação é do main, não do payload: só quem realmente
     // mostra a sessão pode falar por ela.
-    const info = getOwnedAgentSessionInfo(event.sender, sessionId);
+    // Pane de missão que voltou de outro workspace: a sessão ficou headless
+    // e o renderer ainda tem o id exato. Devolve a posse antes de recusar.
+    const info =
+      getOwnedAgentSessionInfo(event.sender, sessionId) ??
+      (reclaimDetachedMissionSession(event.sender, sessionId)
+        ? getOwnedAgentSessionInfo(event.sender, sessionId)
+        : null);
     if (!info) return false;
     return orchWriteSession(sessionId, data, {
       markInputBusy: true,

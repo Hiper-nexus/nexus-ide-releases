@@ -42,6 +42,10 @@ const pty = vi.hoisted(() => ({
   authority: null as unknown,
   claimedAuthoritySeal: missionAuthority.seal as unknown,
   live: new Set<string>(),
+  detached: new Set<string>(),
+  reattach: vi.fn((_wc: unknown, sessionId: string, _paneId: string) =>
+    pty.detached.delete(sessionId),
+  ),
   kill: vi.fn(() => true),
   terminate: vi.fn(async (sessionId: string) => {
     pty.live.delete(sessionId);
@@ -87,6 +91,7 @@ vi.mock("../pty/pty-manager", () => ({
     pty.live.has(sessionId) ? "spawning" : null,
   ),
   detachOwnedMissionAgentSession: vi.fn(() => true),
+  reattachDetachedMissionAgentSession: pty.reattach,
   getOwnedAgentSessionInfo: vi.fn(() => null),
   listAgentSessionsForPane: vi.fn(() => []),
   getAgentSessionInfo: vi.fn((sessionId: string) =>
@@ -115,7 +120,7 @@ vi.mock("../pty/pty-manager", () => ({
   ),
   isSessionOwnedBy: vi.fn(
     (_owner: WebContents, sessionId: string) =>
-      pty.live.has(sessionId),
+      pty.live.has(sessionId) && !pty.detached.has(sessionId),
   ),
   tapSessionData: vi.fn(() => () => {}),
   tapSessionExit: vi.fn(() => () => {}),
@@ -263,6 +268,7 @@ import {
   requestPaneSpawn,
   PENDING_SPAWN_RESULT,
   resolvePaneSpawn,
+  reclaimDetachedMissionSession,
   syncPanes,
   takePendingPaneSpawnResult,
   unregisterOrchRenderer,
@@ -274,6 +280,8 @@ describe("main-owned mission pane spawn", () => {
     pty.authority = null;
     pty.claimedAuthoritySeal = missionAuthority.seal;
     pty.live.clear();
+    pty.detached.clear();
+    pty.reattach.mockClear();
     pty.spawn.mockClear();
     pty.terminate.mockReset();
     pty.terminate.mockImplementation(async (sessionId: string) => {
@@ -581,6 +589,95 @@ describe("main-owned mission pane spawn", () => {
     syncPanes([], owner, "renderer-generation-b");
     unregisterOrchRenderer(owner);
     clearRendererWorkspaceScope(owner);
+  });
+
+  it("hands a detached session back when the renderer returns holding its exact id", async () => {
+    const result = await requestPaneSpawn({
+      adapterId: "codex",
+      model: "gpt-5.6-sol",
+      cwd: executionScope.rootRealPath,
+      missionId: "mission-headless",
+      agentName: "Worker Headless",
+      workerIncarnationId: "worker-incarnation-main",
+      role: "worker",
+      allowedTools: [],
+      allowedSkills: null,
+      scope,
+      executionScope,
+    });
+    const paneId = result.paneId!;
+    expect(getMainOwnedPane(paneId)?.entry.sessionId).toBe("pty-headless-1");
+    // Workspace switch revoked presentation; the parked xterm kept the id.
+    pty.detached.add("pty-headless-1");
+    const owner = {
+      id: 931,
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      send: vi.fn(),
+    } as unknown as WebContents & { send: ReturnType<typeof vi.fn> };
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerOrchRenderer(owner);
+    const entry = {
+      paneId,
+      sessionId: "pty-headless-1",
+      title: "Worker Headless",
+      kind: "cli-agent" as const,
+      adapterId: "codex",
+      model: "gpt-5.6-sol",
+      state: "idle" as const,
+    };
+
+    syncPanes([entry], owner, "renderer-generation-return");
+
+    expect(pty.reattach).toHaveBeenCalledWith(owner, "pty-headless-1", paneId);
+    expect(getMainOwnedPane(paneId)).toBeUndefined();
+    expect(getPaneRuntimeAuthorityBySession("pty-headless-1")).toMatchObject({
+      owner,
+      paneId,
+      sessionId: "pty-headless-1",
+    });
+    expect(pty.spawn).toHaveBeenCalledTimes(1);
+
+    await expect(requestPaneClose(paneId)).resolves.toBe(true);
+    syncPanes([], owner, "renderer-generation-return");
+    unregisterOrchRenderer(owner);
+    clearRendererWorkspaceScope(owner);
+  });
+
+  it("does not hand a detached session to a renderer in another workspace", async () => {
+    const result = await requestPaneSpawn({
+      adapterId: "codex",
+      model: "gpt-5.6-sol",
+      cwd: executionScope.rootRealPath,
+      missionId: "mission-headless",
+      agentName: "Worker Headless",
+      workerIncarnationId: "worker-incarnation-main",
+      role: "worker",
+      allowedTools: [],
+      allowedSkills: null,
+      scope,
+      executionScope,
+    });
+    const paneId = result.paneId!;
+    pty.detached.add("pty-headless-1");
+    const owner = {
+      id: 932,
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      send: vi.fn(),
+    } as unknown as WebContents;
+    bindResolvedRendererWorkspaceScope(owner, {
+      ...scope,
+      checkoutId: "checkout-other-workspace",
+    });
+
+    expect(reclaimDetachedMissionSession(owner, "pty-headless-1")).toBe(false);
+    expect(pty.reattach).not.toHaveBeenCalled();
+    expect(getMainOwnedPane(paneId)?.entry.sessionId).toBe("pty-headless-1");
+
+    clearRendererWorkspaceScope(owner);
+    pty.detached.clear();
+    await requestPaneClose(paneId);
   });
 
   it("operator dropping a mission pane on the same generation does not re-present it", async () => {

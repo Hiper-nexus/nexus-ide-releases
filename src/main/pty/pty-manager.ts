@@ -2651,6 +2651,38 @@ export function adoptMainOwnedAgentSession(
   return Object.freeze({ sessionId, state: session.state });
 }
 
+/**
+ * Hand a headless mission PTY back to the renderer that still presents it.
+ * A workspace switch detaches mission panes (presentation revoked), but the
+ * renderer parks the same xterm with the same session id and, on return,
+ * never respawns — so the adoption inside pty spawn never ran and every
+ * keystroke was refused. The caller proves pane identity and scope; this
+ * only accepts a session with no live presenter.
+ */
+export function reattachDetachedMissionAgentSession(
+  wc: WebContents,
+  sessionId: string,
+  paneId: string,
+): boolean {
+  const session = sessions.get(sessionId);
+  const info = session?.agent;
+  if (
+    !session ||
+    !info?.missionId ||
+    info.paneId !== paneId ||
+    info.role === "user" ||
+    info.source === "direct-user" ||
+    (session.wc !== null && canSend(session.wc)) ||
+    !canSend(wc) ||
+    physicalTerminationFlights.get(sessionId)?.session === session
+  ) {
+    return false;
+  }
+  session.wc = wc;
+  wc.send(PTY_CHANNELS.stateChange, { sessionId, state: session.state });
+  return true;
+}
+
 /** Revoke renderer presentation ownership while preserving a mission PTY. */
 export function detachOwnedMissionAgentSession(
   wc: WebContents,

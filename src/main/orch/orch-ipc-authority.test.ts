@@ -367,6 +367,7 @@ vi.mock('./pane-registry', () => ({
   getPaneRuntimeAuthorityBySession: vi.fn(),
   initPaneRegistry: vi.fn(),
   listPaneSnapshots: vi.fn(() => [...harness.paneSnapshots]),
+  reclaimDetachedMissionSession: vi.fn(() => false),
   registerOrchRenderer: vi.fn(),
   requestMissionPaneClose: vi.fn(async () => true),
   requestPaneClose: vi.fn(),

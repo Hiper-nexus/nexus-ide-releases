@@ -27,6 +27,7 @@ import {
   isSessionOwnedBy,
   listAgentSessionsForPane,
   orchTerminateSession,
+  reattachDetachedMissionAgentSession,
   tapSessionData,
   tapSessionExit,
   tapSessionState,
@@ -1277,6 +1278,35 @@ function requestMainOwnedPanePresentations(owner: WebContents): void {
   }
 }
 
+/**
+ * The renderer came back to a workspace whose mission panes were detached
+ * on the way out and still holds their exact session ids. Give presentation
+ * back when the id matches the headless record for that pane and the
+ * renderer is in the mission's scope again; restore the pane's meta.
+ */
+export function reclaimDetachedMissionSession(
+  owner: WebContents,
+  sessionId: string,
+): boolean {
+  const agent = getAgentSessionInfo(sessionId);
+  const paneId = agent?.paneId;
+  if (!agent || !paneId || !agent.scope) return false;
+  const detached = getMainOwnedPane(paneId);
+  if (!detached || detached.entry.sessionId !== sessionId) return false;
+  const scope = getRendererWorkspaceScope(owner);
+  if (!scope || !sameProjectScope(agent.scope, scope)) return false;
+  if (!reattachDetachedMissionAgentSession(owner, sessionId, paneId)) {
+    return false;
+  }
+  deleteMainOwnedPane(paneId);
+  orchMetaByPane.set(paneMetaKey(owner, paneId), detached.meta);
+  if (!panes.some((registered) => registered.owner === owner && registered.entry.paneId === paneId)) {
+    panes = [...panes, { entry: { ...detached.entry }, owner }];
+    panesVersion += 1;
+  }
+  return true;
+}
+
 export function syncPanes(
   entries: PaneRegistryEntry[],
   owner: WebContents,
@@ -1287,6 +1317,15 @@ export function syncPanes(
   const paneIdCounts = new Map<string, number>();
   for (const entry of entries) {
     paneIdCounts.set(entry.paneId, (paneIdCounts.get(entry.paneId) ?? 0) + 1);
+  }
+  for (const entry of entries) {
+    if (
+      entry.sessionId &&
+      paneIdCounts.get(entry.paneId) === 1 &&
+      !isSessionOwnedBy(owner, entry.sessionId)
+    ) {
+      reclaimDetachedMissionSession(owner, entry.sessionId);
+    }
   }
   const accepted = entries.filter(
     (entry) =>
