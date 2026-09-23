@@ -6661,7 +6661,9 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'Ditado CODE mais rápido',
       detail:
         'Uma tradução só: transcrição literal e reescrita em inglês a partir ' +
-        'do original. O voice.log registra sttMs e polishMs de cada ditado.',
+        'do original. Se a reescrita falhar, a STT transcreve de novo já ' +
+        'traduzindo — o CODE nunca entrega português. O voice.log registra ' +
+        'sttMs e polishMs de cada ditado.',
     },
     {
       title: 'Voz Gemini 3.8 e workspace confiável',
@@ -6688,7 +6690,8 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'Failover que fica na conta',
       detail:
         'Erro 5xx do provider não troca de conta em ping-pong. Depois do ' +
-        'backoff, a missão retoma na mesma conta; o aviso promete só o que o Main faz.',
+        'backoff, a missão retoma na mesma sessão com um "continue" — sem ' +
+        'respawn. Foco pedido num pane de outro campo não é desviado.',
     },
     {
       title: 'Main thread mais leve',
