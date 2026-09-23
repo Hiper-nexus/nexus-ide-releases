@@ -1148,6 +1148,10 @@ const api: NexusApi = {
       ipcRenderer.invoke(PROVIDER_CHANNELS.authStatus, options),
     installCli: (adapterId: string, mode?: 'install' | 'update') =>
       ipcRenderer.invoke(PROVIDER_CHANNELS.installCli, { adapterId, mode }),
+    getCliAutoUpdates: () =>
+      ipcRenderer.invoke(PROVIDER_CHANNELS.autoCliUpdates, { action: 'get' }),
+    setCliAutoUpdates: (enabled: boolean) =>
+      ipcRenderer.invoke(PROVIDER_CHANNELS.autoCliUpdates, { action: 'set', enabled }),
     addModel: (adapterId: string, model: string) =>
       ipcRenderer.invoke(PROVIDER_CHANNELS.addModel, { adapterId, model }),
     removeModel: (adapterId: string, model: string) =>

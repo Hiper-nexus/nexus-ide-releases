@@ -158,6 +158,7 @@ import type {
 } from './command-refinery';
 import type {
   AdapterAuthStatus,
+  CliAutoUpdateStatus,
   ProviderConfigPatch,
   ProviderSettingsInfo,
   SetKeyRequest,
@@ -923,6 +924,8 @@ export interface NexusApi {
       adapterId: string,
       mode?: 'install' | 'update',
     ): Promise<{ ok: boolean; error?: string; changed?: boolean; version?: string }>;
+    getCliAutoUpdates(): Promise<CliAutoUpdateStatus>;
+    setCliAutoUpdates(enabled: boolean): Promise<CliAutoUpdateStatus>;
     addModel(adapterId: string, model: string): Promise<ProviderSettingsInfo[]>;
     removeModel(adapterId: string, model: string): Promise<ProviderSettingsInfo[]>;
     /**

@@ -128,6 +128,8 @@ describe('ProvidersPanel hub', () => {
         providers: {
           authStatus: vi.fn(async () => []),
           installCli: vi.fn(async () => ({ ok: true })),
+          getCliAutoUpdates: vi.fn(async () => ({ enabled: true, deferredUntil: null, lastCheckedAt: 1_000 })),
+          setCliAutoUpdates: vi.fn(async (enabled: boolean) => ({ enabled, deferredUntil: null, lastCheckedAt: 1_000 })),
         },
         adapters: { rescan: vi.fn(async () => []) },
       },
@@ -155,6 +157,17 @@ describe('ProvidersPanel hub', () => {
       /Reexaminar CLIs|Examinando/.test(b.textContent ?? ''),
     );
     expect(refresh).toHaveLength(1);
+    act(() => root.unmount());
+  });
+
+  it('lets the operator disable automatic CLI updates from the CLI tab', async () => {
+    const { host, root } = mount();
+    await act(async () => { await Promise.resolve(); });
+    const toggle = host.querySelector<HTMLInputElement>('[aria-label="Atualizar CLIs automaticamente"]');
+    expect(toggle?.checked).toBe(true);
+    await act(async () => { toggle!.click(); await Promise.resolve(); });
+    expect(window.nexus.providers.setCliAutoUpdates).toHaveBeenCalledWith(false);
+    expect(toggle?.checked).toBe(false);
     act(() => root.unmount());
   });
 

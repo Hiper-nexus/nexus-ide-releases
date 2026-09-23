@@ -5,7 +5,7 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react';
-import type { AdapterAuthStatus, ProviderSettingsInfo } from '../../../shared/provider-settings-types';
+import type { AdapterAuthStatus, CliAutoUpdateStatus, ProviderSettingsInfo } from '../../../shared/provider-settings-types';
 import { credentialLinkForKeySlot } from '../../../shared/credential-links';
 import { useAccountStore } from '../../state/account-store';
 import { useProviderStore } from '../../state/provider-store';
@@ -813,6 +813,30 @@ export function ProvidersPanel() {
   const [refreshing, setRefreshing] = useState(false);
   const [catalogNotice, setCatalogNotice] = useState<string | null>(null);
   const [authStatuses, setAuthStatuses] = useState<readonly AdapterAuthStatus[] | null>(null);
+  const [autoCliUpdates, setAutoCliUpdates] = useState<CliAutoUpdateStatus | null>(null);
+  const [autoCliBusy, setAutoCliBusy] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    const refresh = () => {
+      void window.nexus.providers.getCliAutoUpdates().then(
+        (status) => { if (alive) setAutoCliUpdates(status); },
+        () => { if (alive) setAutoCliUpdates({ enabled: false, deferredUntil: null, lastCheckedAt: null }); },
+      );
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 60_000);
+    return () => { alive = false; window.clearInterval(timer); };
+  }, []);
+
+  async function changeAutoCliUpdates(enabled: boolean) {
+    setAutoCliBusy(true);
+    try {
+      setAutoCliUpdates(await window.nexus.providers.setCliAutoUpdates(enabled));
+    } catch {
+      setAutoCliUpdates((current) => current && { ...current, error: 'Não consegui salvar a preferência.' });
+    } finally { setAutoCliBusy(false); }
+  }
 
   const acceptAuthStatus = useCallback((status: AdapterAuthStatus) => {
     setAuthStatuses((current) => [
@@ -1160,6 +1184,18 @@ export function ProvidersPanel() {
               Mostrar ausentes
             </label>
           )}
+          {tab === 'clis' && autoCliUpdates && (
+            <label className="prov-hub__show-absent" title="Atualiza apenas instalações reconhecidas, sem pane ativo e após confirmação nativa dos comandos">
+              <input
+                type="checkbox"
+                checked={autoCliUpdates.enabled}
+                disabled={autoCliBusy}
+                aria-label="Atualizar CLIs automaticamente"
+                onChange={(event) => void changeAutoCliUpdates(event.target.checked)}
+              />
+              Atualizar CLIs automaticamente
+            </label>
+          )}
           <div className="prov-hub__actions">
             <button
               type="button"
@@ -1173,6 +1209,15 @@ export function ProvidersPanel() {
             </button>
           </div>
         </div>
+        {tab === 'clis' && autoCliUpdates && (
+          <p className="settings-field__note" role="status">
+            {autoCliUpdates.error
+              ? autoCliUpdates.error
+              : autoCliUpdates.enabled
+                ? `Atualizações automáticas ativas · última verificação: ${autoCliUpdates.lastCheckedAt ? new Date(autoCliUpdates.lastCheckedAt).toLocaleString('pt-BR') : 'ainda não houve'}`
+                : 'Atualizações automáticas desligadas'}
+          </p>
+        )}
 
         <div className="prov-hub__workspace">
         {visible.length === 0 ? (

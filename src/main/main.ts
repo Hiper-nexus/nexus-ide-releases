@@ -184,6 +184,7 @@ import {
 import {
   configureAgentHookEndpointPath,
   APP_SHUTDOWN_PTY_TERMINATION,
+  getAgentSessionInfo,
   listLiveSessionLocations,
   orchTerminateSession,
   terminateAllSessions,
@@ -296,6 +297,7 @@ import { resolveProjectExecutionScopeCached } from "./persistence/project-identi
 import {
   registerProviderIpc,
   registerProviderListener,
+  startCliAutoUpdate,
   unregisterProviderListener,
 } from "./persistence/provider-config-store";
 import { registerFilesIpc } from "./persistence/files-ipc";
@@ -410,6 +412,7 @@ let sessionAliveSentinel: SessionAliveSentinel | null = null;
 /** Nexus Redline (menu bar): sink de snapshots + vigia do pedido de refresh. */
 let redlineSink: ReturnType<typeof createRedlineSink> | null = null;
 let stopRedlineRefreshWatch: (() => void) | null = null;
+let stopCliAutoUpdate: (() => void) | null = null;
 
 function traceBootstrap(phase: string): void {
   if (process.env.NEXUS_BOOT_TRACE === '1') {
@@ -587,6 +590,13 @@ function bootstrap(): void {
   registerOrientationIpc();
   registerContextDraftIpc();
   registerProviderIpc();
+  if (!isAutomatedReleaseTest()) {
+    stopCliAutoUpdate = startCliAutoUpdate(app.getPath('userData'), (adapterId) =>
+      listLiveSessionLocations().some(({ sessionId }) =>
+        getAgentSessionInfo(sessionId)?.adapterId === adapterId,
+      ),
+    );
+  }
   registerArmsIpc();
   registerFilesIpc();
   registerAccountIpc();
@@ -1307,6 +1317,8 @@ function shutdown(): Promise<void> {
     sessionAliveSentinel = null;
     disposeAgentAwakeService();
     closeAdapterRegistry();
+    stopCliAutoUpdate?.();
+    stopCliAutoUpdate = null;
     closeVoiceIpc();
     shutdownUsageTelemetry();
     stopRedlineRefreshWatch?.();

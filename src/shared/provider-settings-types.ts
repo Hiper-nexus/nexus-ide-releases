@@ -161,10 +161,18 @@ export const PROVIDER_CHANNELS = {
   changed: 'provider:changed',
   authStatus: 'provider:authStatus',
   installCli: 'provider:installCli',
+  autoCliUpdates: 'provider:autoCliUpdates',
   vaultState: 'provider:vaultState',
   exportSecrets: 'provider:exportSecrets',
   importSecrets: 'provider:importSecrets',
 } as const;
+
+export interface CliAutoUpdateStatus {
+  enabled: boolean;
+  deferredUntil: number | null;
+  lastCheckedAt: number | null;
+  error?: string;
+}
 
 export const exportSecretsSchema = z.object({
   passphrase: z.string().min(8).max(256),
