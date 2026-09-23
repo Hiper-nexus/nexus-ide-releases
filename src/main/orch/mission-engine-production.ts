@@ -60,6 +60,7 @@ import {
   getAgentSessionInfo,
   getSessionState,
   listAgentSessions,
+  listAgentSessionsForPane,
   type OwnedAgentSessionInfo,
 } from "../pty/pty-manager";
 import {
@@ -1073,6 +1074,15 @@ export function projectMissionEngineSnapshotView(
       orchestratorPane &&
       (sessionState === "spawning" || sessionState === "busy"),
   );
+  // Líder à deriva (campo 23/09): a sessão durável morreu (failover Claude →
+  // GLM, restart) e o pane gravado como orquestrador voltou com a autoridade
+  // persistida DESTA missão, mas ninguém religou a liderança. O quadro mostrava
+  // o Maestro "Na fila" com o terminal trabalhando. Só leitura: o card aponta o
+  // pane vivo e o estado vira "líder à deriva" — `orchestratorLive` continua
+  // exigindo o líder provado, e nada aqui escreve autoridade.
+  const leaderDrift = leader?.proven
+    ? null
+    : driftedOrchestratorSession(scope, missionId, missionPanes);
   const squad = mission.squadId ? getSquad(mission.squadId) : null;
   const roster = (squad?.agents ?? []).map((agent) => ({
     ...agent,
@@ -1131,6 +1141,7 @@ export function projectMissionEngineSnapshotView(
   ) {
     sessionByPaneId.set(orchestratorPane.paneId, sessionId);
   }
+  if (leaderDrift) sessionByPaneId.set(leaderDrift.paneId, leaderDrift.sessionId);
   const dispatches = stores.taskDispatches.list(missionId);
   for (const dispatch of dispatches) {
     if (dispatch.paneId && dispatch.sessionId && !sessionByPaneId.has(dispatch.paneId)) {
@@ -1164,9 +1175,14 @@ export function projectMissionEngineSnapshotView(
     let agentId: string | undefined;
     if (pane.agentName && rosterByName.has(pane.agentName)) {
       agentId = rosterByName.get(pane.agentName)!.id;
-    } else if (pane.role === "orchestrator" && pane.paneId === orchestratorPane?.paneId) {
+    } else if (
+      pane.role === "orchestrator" &&
+      (pane.paneId === orchestratorPane?.paneId ||
+        pane.paneId === leaderDrift?.paneId)
+    ) {
       // Mesmo par resolvido acima — um pane órfão com role='orchestrator'
-      // que não é o líder provado não herda o card do orquestrador.
+      // que não é o líder provado não herda o card do orquestrador. A deriva
+      // só existe sem líder provado e com sessão viva selada por esta missão.
       agentId = roster.find((agent) => agent.category === "orchestrator")?.id;
     } else {
       const dispatch = dispatches.find(
@@ -1217,6 +1233,19 @@ export function projectMissionEngineSnapshotView(
     sessionId,
   );
 
+  // Missão sem plano (aberta pelo pane do operador via nexus_mission_create)
+  // herda o squad padrão só para achar agentes por nome — não é equipe
+  // planejada. Desenhar os oito papéis "Na fila" prometia panes que ninguém
+  // vai abrir. O quadro mostra o orquestrador e quem de fato tem pane.
+  const unplanned =
+    !mission.intentContract && taskAgentById.size === 0 && dispatches.length === 0;
+  const boardRoster = unplanned
+    ? roster.filter(
+        (agent) =>
+          agent.category === "orchestrator" || claimedAgentIds.has(agent.id),
+      )
+    : roster;
+
   return {
     mission: {
       id: mission.id,
@@ -1236,15 +1265,46 @@ export function projectMissionEngineSnapshotView(
     hasCurrentKickoffReceipt:
       stores.missions.hasCurrentKickoffAcceptance(mission.id),
     orchestratorLive,
+    ...(leaderDrift ? { orchestratorDrift: true } : {}),
     runtimeClosedByOperator: wasMissionRuntimeClosedByOperator(mission),
     leftoverParked: wasMissionLeftoverParked(mission),
     tasks,
     handoffs: [],
     panes,
-    roster,
+    roster: boardRoster,
     ...(openQuestion ? { openQuestion } : {}),
     ...(worktrees.length > 0 ? { worktrees } : {}),
   };
+}
+
+/**
+ * A ÚNICA sessão viva que o Main selou como orquestradora desta missão num
+ * pane gravado como orquestrador. Mais de uma é ambiguidade — não se escolhe
+ * por ordem de array; nenhuma, não há deriva.
+ */
+function driftedOrchestratorSession(
+  scope: ProjectExecutionScope,
+  missionId: string,
+  missionPanes: readonly { readonly paneId?: string; readonly role?: string }[],
+): { paneId: string; sessionId: string } | null {
+  const found: Array<{ paneId: string; sessionId: string }> = [];
+  for (const spec of missionPanes) {
+    if (spec.role !== "orchestrator" || !spec.paneId) continue;
+    for (const info of listAgentSessionsForPane(spec.paneId)) {
+      const state = runtimeSessionState(info.sessionId);
+      if (
+        info.missionId === missionId &&
+        info.role === "orchestrator" &&
+        info.scope.installationId === scope.installationId &&
+        info.scope.projectId === scope.projectId &&
+        info.scope.checkoutId === scope.checkoutId &&
+        (state === "spawning" || state === "busy" || state === "idle")
+      ) {
+        found.push({ paneId: spec.paneId, sessionId: info.sessionId });
+      }
+    }
+  }
+  return found.length === 1 ? found[0]! : null;
 }
 
 /**

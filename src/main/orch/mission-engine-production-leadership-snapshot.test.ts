@@ -17,10 +17,18 @@ import type { ProjectDomainStoreSuite } from './project-domain-store-registry';
 const harness = vi.hoisted(() => ({
   sessionStates: new Map<string, string | null>(),
   resolveMissionLeader: vi.fn<(scope: ProjectExecutionScope, missionId: string) => MissionLeader | null>(),
+  agentSessionsByPane: new Map<string, Array<Record<string, unknown>>>(),
+  squads: new Map<string, { id: string; agents: Array<Record<string, unknown>> }>(),
 }));
 
 vi.mock('../pty/pty-manager', () => ({
   getSessionState: (sessionId: string) => harness.sessionStates.get(sessionId) ?? null,
+  listAgentSessionsForPane: (paneId: string) => harness.agentSessionsByPane.get(paneId) ?? [],
+}));
+
+vi.mock('./squad-store', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./squad-store')>()),
+  getSquad: (id: string) => harness.squads.get(id) ?? null,
 }));
 
 vi.mock('./pane-registry', () => ({
@@ -35,6 +43,7 @@ vi.mock('./mission-leadership-runtime', () => ({
 
 import { MissionLeadershipError } from './mission-leadership';
 import { projectMissionEngineSnapshotView } from './mission-engine-production';
+import { projectMissionSnapshot } from './mission-snapshot';
 
 const scope = testProjectScope();
 const missionId = 'mission-1';
@@ -84,6 +93,8 @@ function stores(input: {
 beforeEach(() => {
   harness.sessionStates = new Map();
   harness.resolveMissionLeader.mockReset();
+  harness.agentSessionsByPane = new Map();
+  harness.squads = new Map();
 });
 
 describe('projectMissionEngineSnapshotView — pane/sessão do orquestrador vêm do mesmo par provado', () => {
@@ -140,5 +151,142 @@ describe('projectMissionEngineSnapshotView — pane/sessão do orquestrador vêm
     expect(view.orchestratorLive).toBe(false);
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+describe('Quadro fiel ao terminal (campo 23/09)', () => {
+  const fullstack = {
+    id: 'nexus-fullstack',
+    agents: [
+      { id: 'maestro', agentName: 'Maestro', category: 'orchestrator', cli: 'claude' },
+      { id: 'frontend', agentName: 'Frontend', category: 'executor', cli: 'codex' },
+      { id: 'qa', agentName: 'QA', category: 'reviewer', cli: 'claude' },
+    ],
+  };
+
+  function liveOrchestrator(paneId: string, sessionId: string, overrides: Record<string, unknown> = {}) {
+    harness.sessionStates.set(sessionId, 'busy');
+    harness.agentSessionsByPane.set(paneId, [
+      {
+        sessionId,
+        paneId,
+        adapterId: 'claude',
+        missionId,
+        role: 'orchestrator',
+        source: 'persisted-pane',
+        scope,
+        ...overrides,
+      },
+    ]);
+  }
+
+  it('missão aberta pelo pane do operador (sem plano) não desenha o squad inteiro como "Na fila"', () => {
+    harness.squads.set(fullstack.id, fullstack);
+    harness.resolveMissionLeader.mockReturnValue({
+      sessionId: 'session-1', paneId: 'pane-orq', source: 'durable', proven: true,
+    });
+    harness.sessionStates.set('session-1', 'busy');
+    const view = projectMissionEngineSnapshotView(
+      scope,
+      stores({
+        mission: mission({ squadId: fullstack.id, intentContract: undefined, intentVersion: 0 }),
+        panes: [pane({ paneId: 'pane-orq' })],
+      }),
+      missionId,
+    );
+
+    // Ninguém vai abrir Frontend nem QA: o operador solta os panes que quiser.
+    expect(view.roster.map((agent) => agent.id)).toEqual(['maestro']);
+  });
+
+  it('missão com plano continua mostrando a equipe planejada', () => {
+    harness.squads.set(fullstack.id, fullstack);
+    harness.resolveMissionLeader.mockReturnValue(null);
+    const view = projectMissionEngineSnapshotView(
+      scope,
+      stores({
+        mission: mission({
+          squadId: fullstack.id,
+          intentContract: { goal: 'Entregar', intentVersion: 1 } as Mission['intentContract'],
+        }),
+        panes: [],
+      }),
+      missionId,
+    );
+
+    expect(view.roster.map((agent) => agent.id)).toEqual(['maestro', 'frontend', 'qa']);
+  });
+
+  it('orquestrador reiniciado em outra CLI: o card mostra o pane vivo e o cabeçalho explica — sem fingir liderança', () => {
+    harness.squads.set(fullstack.id, fullstack);
+    // Sessão durável morreu no failover Claude → GLM; o pane voltou com
+    // autoridade persistida da MESMA missão, mas ninguém religou a liderança.
+    harness.resolveMissionLeader.mockReturnValue({
+      sessionId: 'pty-claude-morto', paneId: null, source: 'durable', proven: false,
+    });
+    liveOrchestrator('pane-orq', 'pty-glm-vivo', { adapterId: 'glm' });
+    const view = projectMissionEngineSnapshotView(
+      scope,
+      stores({
+        mission: mission({ status: 'blocked', squadId: fullstack.id, intentContract: undefined, intentVersion: 0 }),
+        panes: [pane({ paneId: 'pane-orq' })],
+      }),
+      missionId,
+    );
+
+    // Invariante da onda 1 intacta: sem líder provado, nada de coordenação viva.
+    expect(view.orchestratorLive).toBe(false);
+    expect(view.panes).toEqual([
+      expect.objectContaining({ paneId: 'pane-orq', agentId: 'maestro', state: 'working' }),
+    ]);
+
+    const snapshot = projectMissionSnapshot(view);
+    expect(snapshot.state).toBe('blocked_technical');
+    expect(snapshot.stateReason?.code).toBe('leader-drift');
+    // Tentar de novo abriria um SEGUNDO orquestrador ao lado do que trabalha.
+    expect(snapshot.allowedActions).toEqual(['stop']);
+    expect(snapshot.agents).toEqual([
+      expect.objectContaining({ id: 'maestro', state: 'working', paneId: 'pane-orq' }),
+    ]);
+  });
+
+  it('pane gravado como orquestrador mas rodando outra coisa não vira o Maestro', () => {
+    harness.squads.set(fullstack.id, fullstack);
+    harness.resolveMissionLeader.mockReturnValue({
+      sessionId: 'pty-claude-morto', paneId: null, source: 'durable', proven: false,
+    });
+    // Operador reaproveitou o pane: sessão sem a missão / de outra missão.
+    liveOrchestrator('pane-orq', 'pty-outro', { missionId: 'mission-outra' });
+    const view = projectMissionEngineSnapshotView(
+      scope,
+      stores({
+        mission: mission({ status: 'blocked', squadId: fullstack.id }),
+        panes: [pane({ paneId: 'pane-orq' })],
+      }),
+      missionId,
+    );
+
+    expect(view.panes).toEqual([]);
+    expect(projectMissionSnapshot(view).stateReason?.code).toBe('mission-blocked');
+  });
+
+  it('com líder provado, um orquestrador vivo em outro pane nunca rouba o card', () => {
+    harness.squads.set(fullstack.id, fullstack);
+    harness.sessionStates.set('session-1', 'idle');
+    harness.resolveMissionLeader.mockReturnValue({
+      sessionId: 'session-1', paneId: 'pane-1', source: 'durable', proven: true,
+    });
+    liveOrchestrator('pane-orfao', 'pty-orfao');
+    const view = projectMissionEngineSnapshotView(
+      scope,
+      stores({
+        mission: mission({ squadId: fullstack.id }),
+        panes: [pane({ paneId: 'pane-1' }), pane({ paneId: 'pane-orfao' })],
+      }),
+      missionId,
+    );
+
+    expect(view.panes.map((entry) => entry.paneId)).toEqual(['pane-1']);
+    expect(projectMissionSnapshot(view).stateReason?.code).not.toBe('leader-drift');
   });
 });

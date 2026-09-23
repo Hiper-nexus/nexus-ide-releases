@@ -123,6 +123,11 @@ export const projectMissionSnapshotViewSchema = z
     hasDispatchAuthority: z.boolean(),
     hasCurrentKickoffReceipt: z.boolean(),
     orchestratorLive: z.boolean(),
+    /**
+     * O pane gravado como orquestrador roda uma sessão selada por esta missão,
+     * mas não é o líder provado (a sessão durável morreu num failover/restart).
+     */
+    orchestratorDrift: z.boolean().optional(),
     runtimeClosedByOperator: z.boolean().optional(),
     leftoverParked: z.boolean().optional(),
     tasks: z.array(snapshotTaskViewSchema).max(256),
@@ -191,6 +196,18 @@ export function missionViewHasResidualWork(view: {
   );
 }
 
+const LEADER_DRIFT_CODE = 'leader-drift';
+
+function leaderDriftReason(): MissionStateReason {
+  return {
+    code: LEADER_DRIFT_CODE,
+    label: 'O orquestrador reiniciou e a missão não o reconhece',
+    detail:
+      'O terminal do orquestrador continua trabalhando, mas a missão ainda aponta a sessão anterior: ' +
+      'entregas dos agentes não chegam a ele. Acompanhe pelo terminal; quando terminar, encerre a missão.',
+  };
+}
+
 function projectState(view: ParsedView): {
   readonly state: MissionLifecycleState;
   readonly stateReason?: MissionStateReason;
@@ -238,6 +255,14 @@ function projectState(view: ParsedView): {
         label: 'Aguardando sua resposta',
       },
     };
+  }
+
+  // O terminal do orquestrador trabalha, mas a missão ainda aponta a sessão que
+  // morreu: handoffs e conclusão não chegam a ele. Nem "Trabalhando" (a missão
+  // não o coordena) nem "bloqueio técnico" genérico (o quadro desmentia o
+  // terminal) — o nome certo do problema.
+  if (view.orchestratorDrift) {
+    return { state: 'blocked_technical', stateReason: leaderDriftReason() };
   }
 
   const persistStillLive =
@@ -383,6 +408,9 @@ export function allowedActionsForState(
         ? ['resume']
         : ['answer-question', 'stop'];
     case 'blocked_technical':
+      // Líder à deriva: tentar de novo abriria um SEGUNDO orquestrador ao lado
+      // do que continua trabalhando no terminal.
+      if (stateReason?.code === LEADER_DRIFT_CODE) return ['stop'];
       return stateReason?.code === 'residual-work'
         ? ['resume', 'stop']
         : ['retry-kickoff', 'stop'];
