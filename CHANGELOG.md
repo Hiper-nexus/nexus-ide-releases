@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.89 — Voz Gemini 3.8
+
+- **O Jarvis fala com o Gemini 3.8 Flash-Lite TTS.** Lançado em 22/09, ele vira a voz padrão pela mesma chave Gemini da transcrição; OpenAI, Piper e say seguem de reserva. Quem trocou a cadeia de voz recebe o Gemini só como opção, e cadeia só local não muda.
+- **Escolha de voz e modelo.** Em Ajustes › Voz, com o Gemini na frente, "Voz por etapas" lista as vozes do Gemini e "Modelo da voz" alterna entre Flash-Lite (rápida) e Flash (qualidade).
+- **A voz de reserva da OpenAI não recebe mais o nome de uma voz do Gemini** nas migrações antigas de configuração.
+
 ## 0.76.88 — Tudo no mesmo campo
 
 - **Missão começada pelos panes fica junta.** Quando você usa "Tornar orquestrador" num pane sem missão, os painéis soltos entram no campo desse coordenador. Antes o orquestrador ficava em "Meus terminais" e a equipe em "Painéis soltos". Espaços nomeados e missões criadas pelo campo de missão seguem separados.

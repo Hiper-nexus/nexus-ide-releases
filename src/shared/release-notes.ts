@@ -6518,7 +6518,7 @@ export const RELEASE_07687: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07688: AppRelease = {
   version: '0.76.88',
   date: '2026-09-23',
   codename: 'Tudo no mesmo campo',
@@ -6546,6 +6546,33 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'Token só quando há texto novo',
       detail:
         'Redesenhar a tela de um terminal parado não mostra mais tok/s nem "gerando".',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.89',
+  date: '2026-09-23',
+  codename: 'Voz Gemini 3.8',
+  summary:
+    'O Jarvis passa a falar com o Gemini 3.8 Flash-Lite TTS, pela mesma chave Gemini da transcrição, com OpenAI, Piper e say de reserva.',
+  highlights: [
+    {
+      title: 'Gemini 3.8 Flash-Lite como voz padrão',
+      detail:
+        'Voz natural em português brasileiro pela chave Gemini que você já usa. Se o Gemini falhar, a OpenAI e o Piper continuam falando.',
+    },
+    {
+      title: 'Voz e modelo à sua escolha',
+      detail:
+        'Em Ajustes › Voz, escolha entre as vozes do Gemini e entre Flash-Lite (rápida) e Flash (qualidade).',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Voz de reserva preservada',
+      detail:
+        'As migrações antigas de configuração não gravam mais uma voz do Gemini na OpenAI.',
     },
   ],
 };
