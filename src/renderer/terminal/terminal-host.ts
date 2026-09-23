@@ -1240,8 +1240,9 @@ function startSpawn(
           });
           if (decision.action === 'abandon') {
             host.term.writeln(
-              '\r\n\x1b[33m[nexus] continuidade adiada: a CLI ainda pede /login. ' +
-                'Abra + Pane com outra conta para retomar a missão.\x1b[0m',
+              '\r\n\x1b[33m[nexus] continuidade adiada: a CLI ainda não está pronta ' +
+                '(login ou confirmação na tela). Responda o que ela pede e retome; ' +
+                'se for login, abra + Pane com outra conta.\x1b[0m',
             );
             return;
           }

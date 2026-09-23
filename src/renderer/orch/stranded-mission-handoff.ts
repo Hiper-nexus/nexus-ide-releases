@@ -21,8 +21,31 @@ export function takePendingContinuity(paneId: string): string | undefined {
 }
 
 /** Claude/Codex client retry ticker and login screens cannot take a prompt. */
+/**
+ * Menu de confirmação na tela (confiança de pasta, bypass, migração): o Enter
+ * da continuidade confirma o item focado — no Claude 2.1.267 o cursor nasce
+ * em "No, exit" e o pane morria com code 1. Só o FIM da tela conta: um menu
+ * já respondido fica no scrollback e não pode segurar a continuidade.
+ */
+const BOOT_MENU_TAIL_CHARS = 800;
+const BOOT_MENU_PATTERNS: readonly RegExp[] = [
+  /\bno,\s*exit\b/i,
+  /yes,\s*i\s*trust\s*this\s*folder/i,
+  /do you trust the (?:files|contents|authors)/i,
+  /quick safety check/i,
+  /enter to confirm\s*[·•|]\s*esc to cancel/i,
+];
+
+export function cliShowsBootMenu(recentOutput: string): boolean {
+  const tail = recentOutput
+    .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '')
+    .slice(-BOOT_MENU_TAIL_CHARS);
+  return BOOT_MENU_PATTERNS.some((pattern) => pattern.test(tail));
+}
+
 export function cliAcceptsContinuityPrompt(recentOutput: string): boolean {
   const text = recentOutput.replace(/\x1b\[[0-9;]*m/g, '');
+  if (cliShowsBootMenu(recentOutput)) return false;
   if (/please run \/login/i.test(text)) return false;
   if (/oauth access token has expired/i.test(text)) return false;
   if (/re-authenticate to continue/i.test(text)) return false;

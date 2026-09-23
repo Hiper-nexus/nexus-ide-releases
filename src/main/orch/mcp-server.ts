@@ -409,6 +409,23 @@ const destructiveReversibilityPreparer = createDestructiveReversibilityPreparer(
   createSystemReversibilityIo(),
 );
 
+/**
+ * O cwd do pane está dentro do workspace aberto no Nexus (mesma prova de
+ * escopo das missões: o cwd resolvido pela autoridade do Main é o próprio
+ * cwd). É a regra "workspace aberto = pasta confiada" para qualquer pane da
+ * família Claude.
+ */
+export function isCwdInsideOpenedWorkspace(
+  authority: Readonly<BoundSpawnAuthority>,
+): boolean {
+  if (!authority.cwd) return false;
+  try {
+    return resolveCwdForScope(authority.scope, authority.cwd) === authority.cwd;
+  } catch {
+    return false;
+  }
+}
+
 export function hasApprovedMissionProjectTrust(
   authority: Readonly<BoundSpawnAuthority>,
 ): boolean {
@@ -1158,6 +1175,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           gateHooks: gateHome,
           cwd: authority.cwd,
           approvedMissionProjectTrust,
+          workspaceProjectTrust: isCwdInsideOpenedWorkspace(authority),
           // F-579: writable lanes commit and push as the operator; read-only
           // lanes never commit (and may be Seatbelt-confined), so they get
           // nothing.

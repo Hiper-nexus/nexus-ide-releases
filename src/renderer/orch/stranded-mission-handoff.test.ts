@@ -10,6 +10,28 @@ import {
 } from './stranded-mission-handoff';
 
 describe('cliAcceptsContinuityPrompt', () => {
+  it('não injeta com o menu de confiança de pasta na tela (Enter cairia em "No, exit")', () => {
+    const trustMenu = [
+      'Quick safety check: Is this a project you created or one you trust?',
+      "Claude Code'll be able to read, edit, and execute files here.",
+      '❯ No, exit',
+      '  Yes, I trust this folder',
+      'Enter to confirm · Esc to cancel',
+    ].join('\n');
+    expect(cliAcceptsContinuityPrompt(trustMenu)).toBe(false);
+    expect(cliAcceptsContinuityPrompt('Do you trust the files in this folder?\n1. Yes, proceed\n2. No, exit')).toBe(false);
+  });
+
+  it('menu já respondido no scrollback não segura a continuidade', () => {
+    const answered =
+      'Quick safety check: Is this a project you created or one you trust?\n' +
+      '❯ No, exit\n  Yes, I trust this folder\n' +
+      'Welcome to Claude Code!\n' +
+      'resposta anterior do agente '.repeat(60) +
+      '\n> ';
+    expect(cliAcceptsContinuityPrompt(answered)).toBe(true);
+  });
+
   it('rejects Claude 401 /login and in-flight API retry', () => {
     expect(
       cliAcceptsContinuityPrompt(

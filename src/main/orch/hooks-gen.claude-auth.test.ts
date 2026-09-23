@@ -190,6 +190,40 @@ describe('native Claude auth in the ephemeral HOME', () => {
     );
   });
 
+  it('workspace aberto no Nexus projeta confiança no overlay, sem tocar o perfil real', () => {
+    const realProfile = JSON.stringify({
+      projects: { '/work/nunca-confiado': { hasTrustDialogAccepted: false } },
+    });
+    fs.writeFileSync(path.join(home, '.claude.json'), realProfile);
+
+    const overlay = prepareEphemeralHome(
+      TOKEN,
+      { mcpServers: {} },
+      { cwd: '/work/nunca-confiado', workspaceProjectTrust: true },
+    );
+
+    const stub = JSON.parse(
+      fs.readFileSync(path.join(overlay.dir, '.claude.json'), 'utf8'),
+    ) as { projects?: Record<string, Record<string, unknown>> };
+    expect(stub.projects?.['/work/nunca-confiado']).toEqual({
+      hasTrustDialogAccepted: true,
+      hasCompletedProjectOnboarding: true,
+    });
+    expect(fs.readFileSync(path.join(home, '.claude.json'), 'utf8')).toBe(realProfile);
+  });
+
+  it('sem workspace aberto, pasta nunca confiada continua sem confiança', () => {
+    fs.writeFileSync(
+      path.join(home, '.claude.json'),
+      JSON.stringify({ projects: { '/work/nunca-confiado': { hasTrustDialogAccepted: false } } }),
+    );
+    const overlay = prepareEphemeralHome(TOKEN, { mcpServers: {} }, { cwd: '/work/nunca-confiado' });
+    const stub = JSON.parse(
+      fs.readFileSync(path.join(overlay.dir, '.claude.json'), 'utf8'),
+    ) as { projects?: Record<string, Record<string, unknown>> };
+    expect(stub.projects?.['/work/nunca-confiado']).toBeUndefined();
+  });
+
   it('não projeta confiança aprovada sem um cwd exato', () => {
     const overlay = prepareEphemeralHome(
       TOKEN,

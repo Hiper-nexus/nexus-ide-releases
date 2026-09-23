@@ -337,6 +337,14 @@ export interface EphemeralHomeOptions {
    */
   readonly approvedMissionProjectTrust?: boolean;
   /**
+   * A pasta do pane está dentro do workspace que o operador abriu no Nexus.
+   * Abrir o workspace é a decisão de confiar nele (operador, 23/09): o pane
+   * Claude não para no "Quick safety check" — a tecla que ninguém manda
+   * travava o pane, e o Enter da continuidade caía em "No, exit". Só neste
+   * HOME efêmero; o perfil real não é tocado.
+   */
+  readonly workspaceProjectTrust?: boolean;
+  /**
    * Hub MCP compartilhado (07645): base URL + chaves stdio bridgeáveis do
    * perfil nativo. Presente ⇒ cada stdio bridgeável vira `{type:'http',
    * url:'<baseUrl>/<key>', headers:{Authorization}}` em vez de copiar
@@ -597,7 +605,8 @@ export function prepareEphemeralHome(
   // exato dentro deste overlay descartável. Nos demais fluxos, carregamos apenas
   // uma decisão que já existia no perfil real; o helper nunca amplia confiança
   // por padrão e nunca escreve o ~/.claude.json real.
-  const projectTrust = options.approvedMissionProjectTrust
+  const projectTrust =
+    options.approvedMissionProjectTrust || options.workspaceProjectTrust
     ? exactProjectTrust(options.cwd)
     : readNativeProjectTrust(os.homedir(), options.cwd);
   // Fail-closed against official marketplace auto-install inside the disposable
