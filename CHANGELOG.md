@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.88 — Tudo no mesmo campo
+
+- **Missão começada pelos panes fica junta.** Quando você usa "Tornar orquestrador" num pane sem missão, os painéis soltos entram no campo desse coordenador. Antes o orquestrador ficava em "Meus terminais" e a equipe em "Painéis soltos". Espaços nomeados e missões criadas pelo campo de missão seguem separados.
+- **Barra de campos alinhada.** Todos os cartões com borda sólida, mesma altura e texto à esquerda; "Todos" não corta mais, e a coluna A/B tem a mesma largura em todos. A segunda linha que repetia nome, contagem e orquestrador do cartão ativo só aparece enquanto você renomeia o espaço.
+- **Modo CODE entrega prompt em inglês pronto para o agente.** Depois da transcrição, o ditado é reescrito em inglês claro, no imperativo, com passos numerados quando há vários pedidos, sem mexer em nomes, caminhos e comandos e sem acrescentar nada. Funciona também com o Grok Voice, que só transcreve (o chip deixa de mostrar CODE·PT). Se falhar ou demorar, o texto transcrito segue como veio.
+- **Terminal parado não conta mais token.** Redesenhar a tela (resize, barra de status, foco, voltar ao workspace) mostrava tok/s e "gerando" num pane ocioso. Agora só texto novo conta.
+
 ## 0.76.87 — Mais leve no Windows
 
 - **O Nexus não trava mais com agente escrevendo sem parar.** O processo principal passava a maior parte do tempo copiando a saída dos terminais: cada pedaço de texto recopiava 256 KB do buffer de detecção e percorria toda a janela de replay. Agora cada pedaço custa só o próprio tamanho. Sob a mesma carga, o main foi de 11% para 60% de folga, e cliques e menus respondem na hora.

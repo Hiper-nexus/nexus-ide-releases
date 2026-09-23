@@ -6491,7 +6491,7 @@ export const RELEASE_07686: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07687: AppRelease = {
   version: '0.76.87',
   date: '2026-09-23',
   codename: 'Mais leve no Windows',
@@ -6514,6 +6514,38 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'Botões das contas alinhados',
       detail:
         'Em Conexão e contas, os botões quebram de linha alinhados ao texto e o "Remover" não sai mais do cartão.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.88',
+  date: '2026-09-23',
+  codename: 'Tudo no mesmo campo',
+  summary:
+    'Orquestrador e painéis de uma missão começada pelos panes ficam no mesmo campo, a barra de campos fica alinhada, o modo CODE entrega prompt em inglês e terminal parado para de contar token.',
+  highlights: [
+    {
+      title: 'Coordenador e equipe juntos',
+      detail:
+        'Com "Tornar orquestrador" num pane sem missão, os painéis soltos entram no campo dele. Espaços nomeados e missões seguem separados.',
+    },
+    {
+      title: 'Modo CODE em inglês para o agente',
+      detail:
+        'O ditado vira um prompt claro em inglês, com passos numerados quando há vários pedidos, sem mexer em nomes, caminhos e comandos. Funciona também com o Grok Voice.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Barra de campos alinhada',
+      detail:
+        'Cartões com borda sólida e mesma altura, "Todos" inteiro e sem a segunda linha repetida.',
+    },
+    {
+      title: 'Token só quando há texto novo',
+      detail:
+        'Redesenhar a tela de um terminal parado não mostra mais tok/s nem "gerando".',
     },
   ],
 };
