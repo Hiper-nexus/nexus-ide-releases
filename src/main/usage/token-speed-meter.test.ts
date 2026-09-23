@@ -15,8 +15,19 @@ const OPTS = {
   historyLimit: 8,
 }
 
-/** 40 chars visíveis ≈ 10 tokens pela régua de 4 chars/token. */
-const CHUNK = 'palavra '.repeat(5)
+/**
+ * 40 chars visíveis ≈ 10 tokens pela régua de 4 chars/token. Cada chamada é
+ * texto NOVO: o medidor ignora linha repetida (repaint de TUI), e geração
+ * real não repete a mesma linha inteira.
+ */
+let chunkSeq = 0
+function chunk(): string {
+  chunkSeq += 1
+  return `${'palavra '.repeat(4)}p${String(chunkSeq).padStart(6, '0')} `
+}
+function chunks(count: number): string {
+  return Array.from({ length: count }, chunk).join('')
+}
 
 function meter(overrides = {}) {
   return new TokenSpeedMeter({ ...OPTS, ...overrides })
@@ -77,8 +88,8 @@ describe('TokenSpeedMeter — estado vazio e bordas', () => {
 
   it('ignora paneId vazio, timestamp inválido e chunk vazio', () => {
     const m = meter()
-    expect(m.noteOutput('', 10, CHUNK)).toBe(false)
-    expect(m.noteOutput('p1', Number.NaN, CHUNK)).toBe(false)
+    expect(m.noteOutput('', 10, chunk())).toBe(false)
+    expect(m.noteOutput('p1', Number.NaN, chunk())).toBe(false)
     expect(m.noteOutput('p1', 10, '')).toBe(false)
     expect(m.noteSubmit('', 10, 'x')).toBe(false)
     expect(m.snapshot(5_000).panes).toHaveLength(0)
@@ -95,9 +106,9 @@ describe('TokenSpeedMeter — uma rodada de ponta a ponta', () => {
   it('mede TTFT do submit ao 1º token e tok/s da janela de geração', () => {
     const m = meter()
     m.noteSubmit('p1', 0, 'gere um relatório')
-    m.noteOutput('p1', 5_200, CHUNK, 'gemini-3.8-flash-high')
-    m.noteOutput('p1', 5_700, CHUNK)
-    m.noteOutput('p1', 6_200, CHUNK)
+    m.noteOutput('p1', 5_200, chunk(), 'gemini-3.8-flash-high')
+    m.noteOutput('p1', 5_700, chunk())
+    m.noteOutput('p1', 6_200, chunk())
     const snap = m.snapshot(7_500)
 
     expect(snap.last).toMatchObject({
@@ -118,8 +129,8 @@ describe('TokenSpeedMeter — uma rodada de ponta a ponta', () => {
     m.noteSubmit('p1', 0, 'gere um relatório completo do trimestre')
     // Repaint imediato do TUI com o próprio prompt.
     expect(m.noteOutput('p1', 30, 'gere um relatório completo do trimestre')).toBe(false)
-    m.noteOutput('p1', 2_000, CHUNK)
-    m.noteOutput('p1', 2_500, CHUNK)
+    m.noteOutput('p1', 2_000, chunk())
+    m.noteOutput('p1', 2_500, chunk())
     expect(m.snapshot(4_000).last?.ttftMs).toBe(2_000)
   })
 
@@ -135,7 +146,7 @@ describe('TokenSpeedMeter — uma rodada de ponta a ponta', () => {
   it('marca streaming enquanto os tokens continuam chegando', () => {
     const m = meter()
     m.noteSubmit('p1', 0, 'oi')
-    m.noteOutput('p1', 500, CHUNK)
+    m.noteOutput('p1', 500, chunk())
     expect(m.snapshot(900).streaming).toBe(true)
     expect(m.snapshot(900).turns).toBe(0)
     expect(m.snapshot(2_500).streaming).toBe(false)
@@ -145,7 +156,7 @@ describe('TokenSpeedMeter — uma rodada de ponta a ponta', () => {
   it('expõe tok/s ao vivo da rodada aberta (tokens / tempo desde o 1º token)', () => {
     const m = meter()
     m.noteSubmit('p1', 0, 'oi')
-    m.noteOutput('p1', 500, CHUNK)
+    m.noteOutput('p1', 500, chunk())
     const live = m.snapshot(900)
     expect(live.streaming).toBe(true)
     expect(live.turns).toBe(0)
@@ -155,7 +166,7 @@ describe('TokenSpeedMeter — uma rodada de ponta a ponta', () => {
     expect(live.panes[0]?.liveTokensPerSecond).toBe(25)
     expect(live.models[0]?.liveTokensPerSecond).toBe(25)
 
-    m.noteOutput('p1', 1_000, CHUNK)
+    m.noteOutput('p1', 1_000, chunk())
     const later = m.snapshot(1_100)
     expect(later.liveTokensPerSecond).toBe(33.3)
 
@@ -180,7 +191,7 @@ describe('TokenSpeedMeter — honestidade da métrica', () => {
   it('rodada curta demais não inventa tok/s', () => {
     const m = meter()
     m.noteSubmit('p1', 0, 'oi')
-    m.noteOutput('p1', 1_000, CHUNK.repeat(4))
+    m.noteOutput('p1', 1_000, chunks(4))
     const sample = m.snapshot(3_000).last
     expect(sample?.outputTokens).toBe(40)
     expect(sample?.generationMs).toBe(0)
@@ -191,11 +202,11 @@ describe('TokenSpeedMeter — honestidade da métrica', () => {
     const m = meter()
     // Rodada 1: mensurável.
     m.noteSubmit('p1', 0, 'a')
-    m.noteOutput('p1', 100, CHUNK)
-    m.noteOutput('p1', 600, CHUNK)
+    m.noteOutput('p1', 100, chunk())
+    m.noteOutput('p1', 600, chunk())
     // Rodada 2: chunk único, duração 0.
     m.noteSubmit('p1', 5_000, 'b')
-    m.noteOutput('p1', 5_100, CHUNK.repeat(3))
+    m.noteOutput('p1', 5_100, chunks(3))
     const snap = m.snapshot(10_000)
     expect(snap.turns).toBe(2)
     expect(snap.averageTokensPerSecond).toBe(40)
@@ -204,27 +215,54 @@ describe('TokenSpeedMeter — honestidade da métrica', () => {
 
   it('saída sem submit observado mede geração e deixa TTFT ausente', () => {
     const m = meter()
-    m.noteOutput('p1', 1_000, CHUNK)
-    m.noteOutput('p1', 1_500, CHUNK)
+    m.noteOutput('p1', 1_000, chunks(2))
+    m.noteOutput('p1', 1_500, chunk())
     const sample = m.snapshot(4_000).last
     expect(sample?.ttftMs).toBeNull()
-    expect(sample?.tokensPerSecond).toBe(40)
+    expect(sample?.tokensPerSecond).toBe(60)
     expect(sample?.startedAt).toBe(1_000)
+  })
+
+  it('terminal parado redesenhando a tela não conta token nem abre rodada', () => {
+    const m = meter()
+    const screen = [
+      '╭─ Claude Code ─────────────────────────────╮',
+      'Ran 2 shell commands in the workspace folder',
+      'A correção do serviço já está no build do Depot',
+      '> Ask Codex to do anything',
+      'GPT-6-Sol high · ~/Documents/Projetos/saasbarbearia',
+    ].join('\n')
+    m.noteSubmit('p1', 0, 'oi')
+    m.noteOutput('p1', 200, screen)
+    m.noteOutput('p1', 700, chunk())
+    const turns = m.snapshot(5_000).models[0]?.turns ?? 0
+    // Resize, foco ou barra de status: a mesma tela volta inteira.
+    m.noteOutput('p1', 60_000, screen)
+    m.noteOutput('p1', 90_000, screen)
+    const later = m.snapshot(100_000)
+    expect(later.models[0]?.turns ?? 0).toBe(turns)
+    expect(later.streaming).toBe(false)
+  })
+
+  it('sobra curta de repaint sem submit não abre rodada', () => {
+    const m = meter()
+    expect(m.noteOutput('p1', 1_000, '10:58\nok')).toBe(false)
+    expect(m.snapshot(5_000).last).toBeNull()
   })
 
   it('relógio andando para trás não produz TTFT negativo', () => {
     const m = meter()
     m.noteSubmit('p1', 10_000, 'a')
-    m.noteOutput('p1', 9_000, CHUNK)
-    m.noteOutput('p1', 10_500, CHUNK)
+    m.noteOutput('p1', 9_000, chunk())
+    m.noteOutput('p1', 10_500, chunk())
     expect(m.snapshot(13_000).last?.ttftMs).toBeNull()
   })
 
   it('rodada abaixo do piso de tokens é descartada como ruído', () => {
     const m = meter({ minTurnTokens: 25 })
     m.noteSubmit('p1', 0, 'a')
-    m.noteOutput('p1', 100, CHUNK)
-    m.noteOutput('p1', 600, CHUNK)
+    m.noteOutput('p1', 100, chunk())
+    m.noteOutput('p1', 600, chunk())
     expect(m.snapshot(4_000).turns).toBe(0)
   })
 })
@@ -233,8 +271,8 @@ describe('TokenSpeedMeter — ciclo de vida das rodadas', () => {
   it('submit novo fecha a rodada aberta', () => {
     const m = meter()
     m.noteSubmit('p1', 0, 'a')
-    m.noteOutput('p1', 100, CHUNK)
-    m.noteOutput('p1', 600, CHUNK)
+    m.noteOutput('p1', 100, chunk())
+    m.noteOutput('p1', 600, chunk())
     m.noteSubmit('p1', 700, 'b')
     const snap = m.snapshot(800)
     expect(snap.turns).toBe(1)
@@ -246,8 +284,8 @@ describe('TokenSpeedMeter — ciclo de vida das rodadas', () => {
     for (let turn = 0; turn < 6; turn += 1) {
       const base = turn * 10_000
       m.noteSubmit('p1', base, 'a')
-      m.noteOutput('p1', base + 100, CHUNK)
-      m.noteOutput('p1', base + 600, CHUNK)
+      m.noteOutput('p1', base + 100, chunk())
+      m.noteOutput('p1', base + 600, chunk())
     }
     const snap = m.snapshot(100_000)
     expect(snap.turns).toBe(6)
@@ -257,8 +295,8 @@ describe('TokenSpeedMeter — ciclo de vida das rodadas', () => {
   it('forget fecha o pane e some com ele do snapshot', () => {
     const m = meter()
     m.noteSubmit('p1', 0, 'a')
-    m.noteOutput('p1', 100, CHUNK)
-    m.noteOutput('p1', 600, CHUNK)
+    m.noteOutput('p1', 100, chunk())
+    m.noteOutput('p1', 600, chunk())
     expect(m.forget('p1')).toBe(true)
     expect(m.forget('desconhecido')).toBe(false)
     expect(m.snapshot(5_000)).toMatchObject({ panes: [], turns: 0, last: null })
@@ -267,8 +305,8 @@ describe('TokenSpeedMeter — ciclo de vida das rodadas', () => {
   it('flushIdle é idempotente', () => {
     const m = meter()
     m.noteSubmit('p1', 0, 'a')
-    m.noteOutput('p1', 100, CHUNK)
-    m.noteOutput('p1', 600, CHUNK)
+    m.noteOutput('p1', 100, chunk())
+    m.noteOutput('p1', 600, chunk())
     expect(m.flushIdle(5_000)).toBe(true)
     expect(m.flushIdle(5_001)).toBe(false)
     expect(m.snapshot(6_000).turns).toBe(1)
@@ -279,8 +317,8 @@ describe('TokenSpeedMeter — correção por uso real', () => {
   function withOneTurn() {
     const m = meter()
     m.noteSubmit('p1', 0, 'a')
-    m.noteOutput('p1', 100, CHUNK)
-    m.noteOutput('p1', 600, CHUNK)
+    m.noteOutput('p1', 100, chunk())
+    m.noteOutput('p1', 600, chunk())
     m.flushIdle(3_000)
     return m
   }
@@ -318,8 +356,8 @@ describe('TokenSpeedMeter — correção por uso real', () => {
   it('retém uso real que chega antes do fechamento ocioso da rodada', () => {
     const m = meter()
     m.noteSubmit('p1', 0, 'a')
-    m.noteOutput('p1', 100, CHUNK)
-    m.noteOutput('p1', 600, CHUNK)
+    m.noteOutput('p1', 100, chunk())
+    m.noteOutput('p1', 600, chunk())
     expect(
       m.noteUsage('p1', 650, {
         key: 's:streaming',
@@ -338,8 +376,8 @@ describe('TokenSpeedMeter — correção por uso real', () => {
   it('atualiza uso real pendente quando o transcript reescreve a mensagem', () => {
     const m = meter()
     m.noteSubmit('p1', 0, 'a')
-    m.noteOutput('p1', 100, CHUNK)
-    m.noteOutput('p1', 600, CHUNK)
+    m.noteOutput('p1', 100, chunk())
+    m.noteOutput('p1', 600, chunk())
     expect(
       m.noteUsage('p1', 300, {
         key: 's:streaming',
@@ -380,11 +418,11 @@ describe('TokenSpeedMeter — correção por uso real', () => {
   it('corrige a amostra temporalmente mais próxima, não apenas a mais recente', () => {
     const m = meter()
     m.noteSubmit('p1', 0, 'primeiro')
-    m.noteOutput('p1', 100, CHUNK)
-    m.noteOutput('p1', 600, CHUNK)
+    m.noteOutput('p1', 100, chunk())
+    m.noteOutput('p1', 600, chunk())
     m.noteSubmit('p1', 5_000, 'segundo')
-    m.noteOutput('p1', 5_100, CHUNK)
-    m.noteOutput('p1', 5_600, CHUNK)
+    m.noteOutput('p1', 5_100, chunk())
+    m.noteOutput('p1', 5_600, chunk())
     m.flushIdle(7_000)
     expect(
       m.noteUsage('p1', 650, {
@@ -419,11 +457,11 @@ describe('TokenSpeedMeter — vários panes', () => {
   it('isola panes e agrega a última amostra por tempo', () => {
     const m = meter()
     m.noteSubmit('p1', 0, 'a')
-    m.noteOutput('p1', 100, CHUNK)
-    m.noteOutput('p1', 600, CHUNK)
+    m.noteOutput('p1', 100, chunk())
+    m.noteOutput('p1', 600, chunk())
     m.noteSubmit('p2', 2_000, 'b')
-    m.noteOutput('p2', 2_100, CHUNK.repeat(2))
-    m.noteOutput('p2', 2_600, CHUNK.repeat(2))
+    m.noteOutput('p2', 2_100, chunks(2))
+    m.noteOutput('p2', 2_600, chunks(2))
 
     const snap = m.snapshot(5_000)
     expect(snap.panes.map((p) => p.paneId)).toEqual(['p1', 'p2'])
@@ -466,7 +504,7 @@ describe('TokenSpeedMeter — agregação por LLM', () => {
     m.noteSubmit(paneId, base, 'prompt')
     for (let index = 0; index < chunks; index += 1) {
       const at = base + 100 + (index * spanMs) / Math.max(1, chunks - 1)
-      m.noteOutput(paneId, at, CHUNK, model)
+      m.noteOutput(paneId, at, chunk(), model)
     }
   }
 
@@ -528,8 +566,8 @@ describe('TokenSpeedMeter — agregação por LLM', () => {
     const m = meter()
     turn(m, 'p1', 0, 'gpt-5', 2, 500)
     // Rodada sem submit: TTFT ausente, não zero.
-    m.noteOutput('p1', 20_000, CHUNK, 'gpt-5')
-    m.noteOutput('p1', 20_500, CHUNK, 'gpt-5')
+    m.noteOutput('p1', 20_000, chunks(2), 'gpt-5')
+    m.noteOutput('p1', 20_500, chunk(), 'gpt-5')
     const model = m.snapshot(30_000).models[0]
     expect(model.turns).toBe(2)
     expect(model.lastTtftMs).toBeNull()
@@ -551,7 +589,7 @@ describe('TokenSpeedMeter — agregação por LLM', () => {
     turn(m, 'p1', 0, 'claude-opus', 2, 1_000)
     m.flushIdle(5_000)
     m.noteSubmit('p1', 6_000, 'prompt')
-    m.noteOutput('p1', 6_100, CHUNK, 'gpt-5')
+    m.noteOutput('p1', 6_100, chunk(), 'gpt-5')
     const { models } = m.snapshot(6_500)
 
     const opus = models.find((entry) => entry.model === 'claude-opus')

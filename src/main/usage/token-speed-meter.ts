@@ -109,6 +109,43 @@ interface PaneState {
   turns: number
   history: HistoryEntry[]
   open: OpenTurn | null
+  /** Linhas já vistas no pane (LRU pela ordem de inserção). */
+  seenLines: Map<string, true>
+}
+
+/**
+ * Um TUI parado redesenha a tela inteira (resize, barra de status, foco, volta
+ * ao workspace). Contar esse texto de novo abria rodada e mostrava tok/s num
+ * terminal ocioso (operador, 23/09). Só linha NOVA é geração: linhas já vistas
+ * no pane não viram token. Linhas curtas ("}", "ok") contam sempre — repetem
+ * legitimamente e pesam pouco.
+ */
+const MIN_DEDUPED_LINE_CHARS = 8
+const MAX_SEEN_LINES = 4_000
+/** Saída sem submit só abre rodada com geração de verdade, não com sobra de repaint. */
+export const MIN_UNPROMPTED_OPEN_TOKENS = 12
+
+function unseenVisibleText(state: PaneState, visible: string): string {
+  const kept: string[] = []
+  for (const segment of visible.split('\n')) {
+    const normalized = segment.replace(/\s+/g, ' ').trim()
+    if (normalized.length < MIN_DEDUPED_LINE_CHARS) {
+      kept.push(segment)
+      continue
+    }
+    if (state.seenLines.has(normalized)) {
+      state.seenLines.delete(normalized)
+      state.seenLines.set(normalized, true)
+      continue
+    }
+    state.seenLines.set(normalized, true)
+    if (state.seenLines.size > MAX_SEEN_LINES) {
+      const oldest = state.seenLines.keys().next().value
+      if (oldest !== undefined) state.seenLines.delete(oldest)
+    }
+    kept.push(segment)
+  }
+  return kept.join('\n')
 }
 
 /** Texto visível de um chunk de PTY (sem ANSI, sem bytes de controle). */
@@ -238,6 +275,7 @@ export class TokenSpeedMeter {
       turns: 0,
       history: [],
       open: null,
+      seenLines: new Map(),
     }
     this.#panes.set(paneId, created)
     return created
@@ -294,10 +332,11 @@ export class TokenSpeedMeter {
       open = null
     }
 
-    const tokens = estimateVisibleTokens(visible)
+    const tokens = estimateVisibleTokens(unseenVisibleText(state, visible))
     if (tokens === 0) return false
 
     if (!open) {
+      if (tokens < MIN_UNPROMPTED_OPEN_TOKENS) return false
       // Saída sem submit observado (boot, retomada de tool call, agente
       // autônomo): mede geração, mas TTFT fica honestamente ausente.
       state.open = {
