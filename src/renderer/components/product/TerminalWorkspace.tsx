@@ -312,6 +312,31 @@ export function TerminalWorkspace({
     missionId,
   ]);
 
+  /**
+   * INVARIANTE (a volta da de cima): o pane focado está NA TELA.
+   *
+   * Trocar de campo pela barra mudava só o que é desenhado; o foco ficava no
+   * pane do campo anterior, agora escondido. Ditado, Jarvis e anexos entregam
+   * no pane focado — o texto dito olhando para o campo B ia parar no agente do
+   * campo A (operador, 23/09: pedido de outro projeto caiu no Claude do
+   * saasbarbearia). Quando o campo desenhado muda e o foco não está nele, o
+   * foco vai para o orquestrador do campo, senão para o primeiro pane dele.
+   */
+  useEffect(() => {
+    if (!visiblePaneIds) return; // a árvore inteira está na tela
+    if (focusedPaneId && visiblePaneIds.has(focusedPaneId)) return;
+    const scope = scopes.find((entry) => entry.key === effectiveScopeKey);
+    const orchestratorId = scope?.orchestrator?.paneId;
+    const target =
+      orchestratorId && visiblePaneIds.has(orchestratorId)
+        ? orchestratorId
+        : panes.find((pane) => visiblePaneIds.has(pane.id))?.id;
+    if (!target) return;
+    // O efeito de cima vai ver o foco já DENTRO do campo desenhado: sem volta.
+    lastFollowedFocusRef.current = target;
+    useLayoutStore.getState().focus(target);
+  }, [visiblePaneIds, focusedPaneId, scopes, effectiveScopeKey, panes]);
+
   return (
     <section
       className={`product-workspace terminal-workspace ${className}`.trim()}

@@ -656,6 +656,23 @@ describe('TerminalWorkspace — espaços separados da missão aberta (F-560)', (
     expect(attachedPaneIds()).toEqual(['pane-novo-1', 'pane-novo-2']);
   });
 
+  it('trocar de campo leva o foco junto — o ditado não cai no agente escondido (23/09)', () => {
+    seedMissionPlusSpace();
+    usePaneScopeStore.getState().focusScope(spaceScopeKey('space-novo'));
+    const { host } = mount(<TerminalWorkspace />);
+    expect(useLayoutStore.getState().focusedPaneId).toBe('pane-novo-1');
+
+    const missionCard = [...host.querySelectorAll<HTMLButtonElement>('.mission-lane__main')].find(
+      (button) => button.textContent?.includes('Missão A'),
+    );
+    expect(missionCard).toBeTruthy();
+    act(() => missionCard!.click());
+
+    expect(activeChipLabel(host)).toBe('Missão A');
+    // Antes: o foco ficava em pane-novo-1 (escondido) e o ditado ia para lá.
+    expect(useLayoutStore.getState().focusedPaneId).toBe('pane-missao-a');
+  });
+
   it('cada escopo vira uma aba, com a contagem de painéis', () => {
     seedMissionPlusSpace();
     usePaneScopeStore.getState().focusScope(spaceScopeKey('space-novo'));
