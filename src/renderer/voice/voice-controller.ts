@@ -1,3 +1,4 @@
+import { micErrorMessage } from './mic-error-message';
 import { useEffect, useRef } from 'react';
 import { useVoiceStore } from './voice-store';
 import { useLayoutStore } from '../state/layout-store';
@@ -1746,7 +1747,8 @@ async function beginListening(
       if (busy) busy.current = false;
       return;
     }
-    store.setError(`Mic unavailable: ${errMsg(err)}`);
-    liveStatus('error', errMsg(err));
+    const micMessage = micErrorMessage(err, window.nexus?.platform ?? '');
+    store.setError(micMessage);
+    liveStatus('error', micMessage);
   }
 }
