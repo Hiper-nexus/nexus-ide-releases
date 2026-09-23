@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.76.91 — O microfone explica
+
+- **Falha de microfone diz o que fazer, em português.** No Windows um app de desktop não recebe pedido de permissão: sem microfone ativo (USB desconectado, P2 vazio) o ditado só falhava com "Mic unavailable: Requested device not found". Agora aponta Configurações › Sistema › Som › Entrada, o interruptor de privacidade dos apps de desktop ou o outro app que está usando o microfone, conforme o caso.
+- **O log do ditado mostra quem transcreveu e o que ouviu.** Cada ditado grava no voice.log o serviço que transcreveu, o texto cru antes da reescrita e, no modo CODE, o texto final. Dá para saber se um erro veio da transcrição ou da tradução.
+
 ## 0.76.90 — Atualização que não trava
 
 - **Instalar ou atualizar o Nexus no Windows não fica mais parado.** Durante a instalação o Windows abre o Nexus rapidamente para registrar atalhos. O app seguia o boot, reabria o Nexus Redline, e o instalador esperava ele fechar para sempre (a 0.76.89 parou em "Squirrel Enabled Apps"). Agora o Nexus só responde ao instalador e sai.

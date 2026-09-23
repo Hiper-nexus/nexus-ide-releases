@@ -6577,7 +6577,7 @@ export const RELEASE_07689: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07690: AppRelease = {
   version: '0.76.90',
   date: '2026-09-23',
   codename: 'Atualização que não trava',
@@ -6588,6 +6588,27 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'Atualização até o fim',
       detail:
         'Durante a instalação o Nexus só responde ao instalador e sai. Antes ele reabria o Redline e o instalador esperava por ele para sempre.',
+    },
+  ],
+  fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.91',
+  date: '2026-09-23',
+  codename: 'O microfone explica',
+  summary:
+    'Quando o microfone falha, o Nexus diz o que fazer em português, e o log de cada ditado mostra quem transcreveu e o que ouviu.',
+  highlights: [
+    {
+      title: 'Microfone que explica o problema',
+      detail:
+        'Sem microfone, bloqueado pela privacidade ou ocupado por outro app: a mensagem aponta onde resolver, em vez de "Requested device not found".',
+    },
+    {
+      title: 'Ditado rastreável',
+      detail:
+        'O voice.log registra o serviço que transcreveu, o texto cru e, no modo CODE, o texto final de cada ditado.',
     },
   ],
   fixes: [],
