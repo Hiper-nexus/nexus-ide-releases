@@ -28,7 +28,7 @@ import {
 } from "./session-liveness";
 import { createMortalityReconciler } from "./session-mortality-reconciler";
 import { sessionLeaseRegistry, type SessionLease } from "./session-lease-registry";
-import { warmPool } from "./warm-pool";
+import { warmPool, type WarmSession } from "./warm-pool";
 import type { ProjectExecutionScope } from "../../shared/types";
 import type { SquadCliPolicy } from "../../shared/settings-types";
 import { sharedAgentAuthFamily } from "../../shared/agent-auth-family";
@@ -1367,6 +1367,26 @@ export function spawnAgentSession(
     throw new Error(admission.message);
   }
   if (admission.warning) console.warn(`[pane-admission] ${admission.warning}`);
+  // Warm pool (paridade Overclock): pane já bootando é re-destinado à missão
+  // em vez de esperar cold-start. Recursão evitada: a reposição do pool não
+  // tenta tomar de si mesma.
+  if (!warmSpawnInProgress()) {
+    try {
+      const warm = tryAdoptWarmSession(adapter.id, authority, {
+        ...(req.model ? { model: req.model } : {}),
+        ...(overrides.defaultModel ? { model: overrides.defaultModel } : {}),
+        ...(req.paneId ? { paneId: req.paneId } : {}),
+      });
+      if (warm) {
+        console.warn(
+          `[warm-pool] retarget-durante-boot pane=${warm.sessionId} cli=${adapter.id}`,
+        );
+        return warm;
+      }
+    } catch (err) {
+      console.warn('[warm-pool] adoção falhou; cold spawn:', err);
+    }
+  }
   const cwd = requireTrustedAgentCwd(authority);
   assertExclusiveOrchestratorProcessAvailable(adapter, authority);
   const requestedModel = (req.model ?? overrides.defaultModel)?.trim() || "";
@@ -1579,6 +1599,13 @@ export function spawnAgentSession(
       target.NEXUS_AGENT_HOOK_ENDPOINT = agentHookEndpointPath;
       target.NEXUS_PANE_KEY = sessionId;
       if (stablePaneId) target.NEXUS_PANE_ID = stablePaneId;
+      // OVKA-529: a CASA deste pane — o wrapper Arms usa isto para saber se
+      // fala com o próprio app (e carregar callerPaneId) ou com outro.
+      target.NEXUS_PANE_ARMS_DESCRIPTOR = path.join(
+        os.homedir(),
+        '.nexus',
+        'arms-runtime.json',
+      );
     }
   }
   // Subscription-first: strip inherited key/token vars before any injection.
@@ -3507,6 +3534,101 @@ warmPool.setIsAliveFn((sessionId) => sessions.has(sessionId));
 warmPool.setDestroyFn((sessionId, startKey) => {
   orchKillSession(sessionId, { startKey, force: !startKey });
 });
+
+/**
+ * Criação de pane warm (paridade Overclock warm-pool). Evita recursão com o
+ * `take()` do spawnAgentSession enquanto o próprio pool está repondo.
+ */
+let warmSpawnDepth = 0;
+
+function warmSpawnInProgress(): boolean {
+  return warmSpawnDepth > 0;
+}
+
+/**
+ * Tenta adotar um pane do warm pool para este spawn (retarget-durante-boot).
+ * Devolve o SpawnedSession adotado com o `session.agent` re-escrito para a
+ * autoridade atual, ou `null` (miss → cold spawn normal).
+ */
+export function tryAdoptWarmSession(
+  cli: string,
+  authority: BoundSpawnAuthority,
+  options: {
+    model?: string;
+    accountId?: string;
+    effort?: string;
+    paneId?: string;
+  } = {},
+): SpawnedSession | null {
+  const warm = warmPool.take(cli);
+  if (!warm) return null;
+  const session = sessions.get(warm.sessionId);
+  if (!session || !session.agent || !warm.startKey) {
+    try {
+      orchKillSession(warm.sessionId, {
+        startKey: warm.startKey || undefined,
+        force: !warm.startKey,
+      });
+    } catch {
+      /* pane warm já morreu — miss honesto */
+    }
+    return null;
+  }
+  if (session.agent.adapterId !== cli) {
+    warmPool.put(warm);
+    return null;
+  }
+  // Retarget: o pane que bootava sem missão passa a pertencer a esta autoridade.
+  session.agent = {
+    ...session.agent,
+    role: authority.context?.role ?? session.agent.role,
+    missionId: authority.context?.missionId,
+    squadId: authority.context?.squadId,
+    agentName: authority.context?.agentName,
+    model: options.model ?? session.agent.model,
+    accountId: options.accountId ?? session.agent.accountId,
+    effort: options.effort ?? session.agent.effort,
+    allowedTools:
+      authority.context?.allowedTools !== undefined
+        ? authority.context.allowedTools
+        : session.agent.allowedTools,
+    allowedSkills:
+      authority.context?.allowedSkills !== undefined
+        ? authority.context.allowedSkills
+        : session.agent.allowedSkills,
+    readOnly: authority.context?.readOnly === true,
+    ...(options.paneId ? { paneId: options.paneId } : {}),
+  };
+  if (session.startKey !== warm.startKey && session.startKey) {
+    // o lease vivo é o da sessão; o startKey do warm só prova a adoção
+    return { sessionId: warm.sessionId, startKey: session.startKey };
+  }
+  return { sessionId: warm.sessionId, startKey: warm.startKey };
+}
+
+/**
+ * Registra quem sabe criar um CLI ocioso para o pool. Sem criador, o pool
+ * fica vazio (take = miss) e o spawn continua frio — honesto, nunca trava.
+ */
+export function setWarmAgentSpawner(
+  fn: ((cli: string) => Promise<WarmSession | null>) | null,
+): void {
+  if (!fn) {
+    warmPool.setSpawnFn(async () => null);
+    return;
+  }
+  warmPool.setSpawnFn(async (cli) => {
+    if (warmSpawnInProgress()) return null;
+    warmSpawnDepth += 1;
+    try {
+      return await fn(cli);
+    } finally {
+      warmSpawnDepth -= 1;
+    }
+  });
+}
+
+export { warmSpawnInProgress };
 
 /**
  * F-572: footprint (RSS da árvore de processos) de cada sessão viva no host

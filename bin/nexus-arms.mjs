@@ -42,17 +42,64 @@ function validateDescriptorPath(file) {
   return file;
 }
 
+/** OVKA-529 — a casa deste pane, quando o processo nasceu dentro de um. */
+export function paneHomeDescriptor(env = process.env) {
+  const raw = env.NEXUS_PANE_ARMS_DESCRIPTOR?.trim();
+  return raw ? raw : null;
+}
+
+/**
+ * OVKA-529 — este processo é um pane do Nexus agindo no PRÓPRIO app?
+ * Exige id do pane, memória da casa, e destino não desviado.
+ */
+export function isPaneHome(env = process.env) {
+  if (!env.NEXUS_PANE_ID?.trim()) return false;
+  const home = paneHomeDescriptor(env);
+  if (!home) return false;
+  const target = env.NEXUS_ARMS_DESCRIPTOR?.trim();
+  return !target || target === home;
+}
+
+/**
+ * Id do pane que esta sessão representa — só em casa. Destino desviado
+ * (`--descriptor` para outra instância) não carrega identidade.
+ */
+export function callerPaneIdOf(env = process.env) {
+  if (!isPaneHome(env)) return null;
+  const id = env.NEXUS_PANE_ID?.trim();
+  return id ? id : null;
+}
+
+/**
+ * URL da sessão: com `callerPaneId` quando o pane está em casa (o gate aplica
+ * orçamento/papel daquele pane); anônima quando não está (conector externo).
+ */
+export function sessionUrl(baseUrl, env = process.env) {
+  const paneId = callerPaneIdOf(env);
+  if (!paneId) return baseUrl;
+  const url = new URL(baseUrl);
+  if (!url.searchParams.has('callerPaneId')) {
+    url.searchParams.set('callerPaneId', paneId);
+  }
+  return url.toString();
+}
+
 export function resolveDescriptorPath(argv, env, homedir) {
   const index = argv.indexOf('--descriptor');
   const argvValue =
     index >= 0 && typeof argv[index + 1] === 'string' && !argv[index + 1].startsWith('--')
       ? argv[index + 1].trim()
       : '';
+  // OVKA-529: `--descriptor` explícito vence; depois a CASA do pane (nunca
+  // `--dev`/env herdado que desvie para outra instância); depois env/default.
+  if (argvValue) return validateDescriptorPath(argvValue);
+  const home = paneHomeDescriptor(env);
+  if (home && isPaneHome(env)) return validateDescriptorPath(home);
   const envValue =
     typeof env.NEXUS_ARMS_DESCRIPTOR === 'string'
       ? env.NEXUS_ARMS_DESCRIPTOR.trim()
       : '';
-  return validateDescriptorPath(argvValue || envValue || defaultDescriptorPath(homedir));
+  return validateDescriptorPath(envValue || defaultDescriptorPath(homedir));
 }
 
 let descriptorPath = defaultDescriptorPath(os.homedir());
@@ -99,7 +146,12 @@ async function callApp(method, params) {
     error.code = 'NO_TOKEN';
     throw error;
   }
-  const url = `http://127.0.0.1:${descriptor.port}/arms/mcp`;
+  // OVKA-529: a chamada chega como o pane que ela é (orçamento/papel do
+  // chamador), nunca como "bootstrap do humano".
+  const url = sessionUrl(
+    `http://127.0.0.1:${descriptor.port}/arms/mcp`,
+    process.env,
+  );
   for (let attempt = 0; attempt <= RETRIES; attempt += 1) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
