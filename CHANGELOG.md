@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.76.93 — Ditado no lugar
+
+O Mac sobe com o lote 0.76.85–0.76.92 (que já estava no canal Windows) e seis correções novas.
+
+Novo desde a 0.76.92:
+
+- **Ditado entrega no pane do campo focado.** Trocar de campo leva o foco. Antes o foco ficava no campo anterior, agora fora da tela, e o texto dito olhando para um campo caía no agente de outro — um pedido de outro projeto foi parar no Claude errado. Ditado, Jarvis e anexos seguem o foco; o fallback do ditado filtra pelo campo do foco, não pelo campo visível.
+- **Ditado CODE faz uma tradução só.** A STT transcreve literal (rota mais rápida do Gemini) e a reescrita CODE traduz uma vez, a partir do original. Antes eram duas chamadas em série e a segunda recebia um texto já traduzido: 5,8–8,2 s entre parar de falar e o texto chegar, com pico de 17 s. O voice.log passa a registrar `sttMs` e `polishMs`.
+- **tok/s sem número falso.** Terminal parado redesenhando a tela não conta token; contagem real sem submit visto tem janela honesta e, sem ela, vira "—" (antes publicava ~1.667 ou até 35 mil tok/s). Janela e taxa num lugar só (`#rateFor`); teto de sanidade 2.500 → 6.000 (Cerebras/Groq cabem); a UI mostra a `rateWindowMs`.
+- **Failover que fica na conta.** Erro 5xx do provider não troca mais de conta em ping-pong A↔B. Depois do backoff o Main confere se a CLI voltou e retoma a missão na MESMA conta; o transient não arma mais o rearm de 30 s. O aviso de erro promete só o que o Main faz: pane do operador ouve "mande continue".
+- **Repaint do prompt e linhas de retry não contam como resposta.**
+
+Do lote 0.76.85–0.76.92 que este pacote do Mac ganha (detalhe nas datas acima):
+
+- **Voz Gemini 3.8 Flash-Lite TTS** como padrão da Jarvis, com escolha de voz e modelo em Ajustes › Voz; modo CODE entrega prompt em inglês pronto para o agente.
+- **Missão começada pelos panes fica junta:** painéis soltos entram no campo do coordenador local; barra de campos alinhada, sem linha repetida.
+- **Workspace aberto é pasta confiada** para Claude/GLM/LongCat (só no perfil isolado do pane); a continuidade espera o menu de confiança em vez de escolher "No, exit".
+- **Main thread mais leve** com saída contínua de terminal (o piso de cópia por pedaço cai para o tamanho do pedaço).
+- **Falha de microfone explica o que fazer**, em português; o log do ditado mostra quem transcreveu e o que ouviu antes do CODE.
+- **Cota do Claude ligada à conta certa (F-615)**; atualizar CLI mexe na instalação que o pane usa (F-360) e a atualização automática é com consentimento (F-633).
+- **Configurações organizadas por tarefa**, linguagem simples e caminhos "Configurações › Contas de IA"; menus, foco visível e alvos de 24 px.
+- **Xiaomi MiMo Code** no catálogo de contas, modelos e uso.
+
 ## 0.76.92 — Pasta confiada
 
 - **O Claude não para mais no "Quick safety check" no Windows.** O Claude grava as pastas confiadas como `C:/Users/...` e o Nexus procurava `C:\Users\...`: a confiança que você já tinha dado nunca era achada e todo pane perguntava de novo. A busca agora aceita as duas formas.

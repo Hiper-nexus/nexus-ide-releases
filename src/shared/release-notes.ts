@@ -6614,7 +6614,7 @@ export const RELEASE_07691: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07692: AppRelease = {
   version: '0.76.92',
   date: '2026-09-23',
   codename: 'Pasta confiada',
@@ -6637,6 +6637,70 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'Continuidade não escolhe "No, exit"',
       detail:
         'Com um menu de confirmação na tela, a continuidade espera em vez de mandar Enter e fechar o Claude.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.93',
+  date: '2026-09-23',
+  codename: 'Ditado no lugar',
+  summary:
+    'O Mac recebe o lote 0.76.85–0.76.92 — voz Gemini 3.8, modo CODE em ' +
+    'inglês, campos de missão juntos e workspace como pasta confiada — e o ' +
+    'ditado passa a chegar no pane certo, mais rápido, com failover que não ' +
+    'troca de conta sozinho e tok/s sem número falso.',
+  highlights: [
+    {
+      title: 'Ditado no pane do campo focado',
+      detail:
+        'Trocar de campo leva o foco. Ditado, Jarvis e anexos entregam no ' +
+        'pane focado — um pedido de outro projeto não cai mais no agente errado.',
+    },
+    {
+      title: 'Ditado CODE mais rápido',
+      detail:
+        'Uma tradução só: transcrição literal e reescrita em inglês a partir ' +
+        'do original. O voice.log registra sttMs e polishMs de cada ditado.',
+    },
+    {
+      title: 'Voz Gemini 3.8 e workspace confiável',
+      detail:
+        'A Jarvis fala com o Gemini 3.8 Flash-Lite; o modo CODE entrega prompt ' +
+        'em inglês pronto para o agente. Panes Claude/GLM/LongCat dentro do ' +
+        'workspace aberto nascem com a confiança da pasta.',
+    },
+    {
+      title: 'Campos de missão juntos',
+      detail:
+        'Painéis soltos entram no campo do coordenador local; a barra de campos ' +
+        'fica alinhada, sem linha repetida. Missões começadas pelos panes ficam juntas.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'tok/s sem número falso',
+      detail:
+        'Terminal parado não conta token; contagem real sem janela honesta ' +
+        'vira "—". Janela e taxa num lugar só; o teto de sanidade sobe para 6.000.',
+    },
+    {
+      title: 'Failover que fica na conta',
+      detail:
+        'Erro 5xx do provider não troca de conta em ping-pong. Depois do ' +
+        'backoff, a missão retoma na mesma conta; o aviso promete só o que o Main faz.',
+    },
+    {
+      title: 'Main thread mais leve',
+      detail:
+        'Com agente escrevendo sem parar, a saída do terminal não copia mais ' +
+        'o buffer inteiro a cada pedaço. Cliques e menus respondem na hora.',
+    },
+    {
+      title: 'Microfone que explica',
+      detail:
+        'Falha de microfone diz o que fazer, em português. O log do ditado ' +
+        'mostra quem transcreveu e o que ouviu antes do CODE.',
     },
   ],
 };
