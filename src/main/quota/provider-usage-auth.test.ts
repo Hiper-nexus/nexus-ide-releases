@@ -138,36 +138,25 @@ describe('resolveClaudeToken boot safety', () => {
     expect(mocks.nativeCredential).not.toHaveBeenCalled();
   });
 
-  it('renova o arquivo nativo quando o access venceu e há refresh', async () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-quota-claude-refresh-'));
+  it('não renova nem regrava o arquivo nativo vencido: a CLI é dona do refresh', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-quota-claude-native-'));
     tempHomes.push(home);
     vi.spyOn(os, 'homedir').mockReturnValue(home);
     const credPath = path.join(home, '.claude', '.credentials.json');
     fs.mkdirSync(path.dirname(credPath), { recursive: true });
-    fs.writeFileSync(credPath, JSON.stringify({
+    const original = JSON.stringify({
       claudeAiOauth: {
         accessToken: 'stale-access',
         refreshToken: 'refresh-1',
         expiresAt: Date.now() - 60_000,
       },
-    }));
-    const fetchImpl = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        access_token: 'fresh-access',
-        refresh_token: 'refresh-2',
-        expires_in: 3600,
-      }),
-    }));
+    });
+    fs.writeFileSync(credPath, original);
+    const fetchImpl = vi.fn();
     vi.stubGlobal('fetch', fetchImpl);
-    expect(await resolveClaudeToken()).toBe('fresh-access');
-    const written = JSON.parse(fs.readFileSync(credPath, 'utf8')) as {
-      claudeAiOauth: { accessToken: string; refreshToken: string };
-    };
-    expect(written.claudeAiOauth.accessToken).toBe('fresh-access');
-    expect(written.claudeAiOauth.refreshToken).toBe('refresh-2');
-    expect(mocks.nativeCredential).not.toHaveBeenCalled();
+    expect(await resolveClaudeToken()).toBe('stale-access');
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(fs.readFileSync(credPath, 'utf8')).toBe(original);
   });
 });
 

@@ -22,10 +22,6 @@ import {
   type CodexChatGptAuth,
 } from './codex-usage';
 import { extractClaudeAccessToken } from './claude-oauth-usage';
-import {
-  claudeBlobNeedsRefresh,
-  refreshClaudeOauthBlob,
-} from './claude-oauth-refresh';
 import { readNativeOAuthCredential } from '../adapters/native-oauth-keychain';
 import { hasManagedClaudeAuth, readManagedClaudeAuthAsync } from '../adapters/managed-claude-auth';
 import { accountCredentialCandidates } from '../adapters/account-credential-candidates';
@@ -109,29 +105,11 @@ export async function resolveClaudeToken(accountId?: string): Promise<string | n
     return ownedToken(blob);
   }
 
-  const credPath = path.join(os.homedir(), '.claude', '.credentials.json');
-  const blob = readText(credPath);
-  // No Mac o Keychain/CLI mantém o access token fresco. No Windows a sessão
-  // mora só no arquivo: o access vence em horas e, sem renovar com o refresh
-  // que já está ali, a cota mente «sessão expirada» numa conta logada.
-  if (blob) {
-    const now = Date.now();
-    if (claudeBlobNeedsRefresh(blob, now)) {
-      try {
-        const refreshed = await refreshClaudeOauthBlob(blob, now);
-        if (refreshed) {
-          try {
-            fs.writeFileSync(credPath, refreshed, { mode: 0o600 });
-          } catch {
-            // A sonda ainda usa o token novo em memória.
-          }
-          return extractClaudeAccessToken(refreshed);
-        }
-      } catch {
-        // Cai no token do arquivo. Se estiver vencido, a sonda diz expirado.
-      }
-    }
-  }
+  // The native file belongs to the Claude CLI, which owns its refresh.
+  // Quota only reads it; rotating the grant here would race the CLI.
+  const blob = readText(
+    path.join(os.homedir(), '.claude', '.credentials.json'),
+  );
   const fileToken = blob ? extractClaudeAccessToken(blob) : null;
   if (fileToken || process.platform !== 'darwin') return fileToken;
   const native = await readNativeOAuthCredential('Claude Code-credentials');
