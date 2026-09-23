@@ -6550,7 +6550,7 @@ export const RELEASE_07688: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07689: AppRelease = {
   version: '0.76.89',
   date: '2026-09-23',
   codename: 'Voz Gemini 3.8',
@@ -6575,4 +6575,20 @@ export const CURRENT_RELEASE: AppRelease = {
         'As migrações antigas de configuração não gravam mais uma voz do Gemini na OpenAI.',
     },
   ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.90',
+  date: '2026-09-23',
+  codename: 'Atualização que não trava',
+  summary:
+    'Instalar ou atualizar o Nexus no Windows não fica mais parado esperando o Nexus Redline.',
+  highlights: [
+    {
+      title: 'Atualização até o fim',
+      detail:
+        'Durante a instalação o Nexus só responde ao instalador e sai. Antes ele reabria o Redline e o instalador esperava por ele para sempre.',
+    },
+  ],
+  fixes: [],
 };

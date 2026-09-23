@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.76.90 — Atualização que não trava
+
+- **Instalar ou atualizar o Nexus no Windows não fica mais parado.** Durante a instalação o Windows abre o Nexus rapidamente para registrar atalhos. O app seguia o boot, reabria o Nexus Redline, e o instalador esperava ele fechar para sempre (a 0.76.89 parou em "Squirrel Enabled Apps"). Agora o Nexus só responde ao instalador e sai.
+
 ## 0.76.89 — Voz Gemini 3.8
 
 - **O Jarvis fala com o Gemini 3.8 Flash-Lite TTS.** Lançado em 22/09, ele vira a voz padrão pela mesma chave Gemini da transcrição; OpenAI, Piper e say seguem de reserva. Quem trocou a cadeia de voz recebe o Gemini só como opção, e cadeia só local não muda.
