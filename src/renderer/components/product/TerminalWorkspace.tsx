@@ -322,7 +322,19 @@ export function TerminalWorkspace({
    * saasbarbearia). Quando o campo desenhado muda e o foco não está nele, o
    * foco vai para o orquestrador do campo, senão para o primeiro pane dele.
    */
+  // Qual lado mudou nesta passada. Só o CAMPO mudou (clique no cartão) → o
+  // foco segue o campo. O FOCO mudou (login, ⌘K, notificação, voz focando um
+  // pane de outro campo) → quem manda é o efeito de cima, que leva o campo
+  // até o pane; aqui `visiblePaneIds` ainda é do campo antigo e devolver o
+  // foco ao orquestrador dele mandaria o OAuth/ditado para o agente errado.
+  const previousScopeRef = useRef(effectiveScopeKey);
+  const previousFocusRef = useRef(focusedPaneId);
   useEffect(() => {
+    const scopeChanged = previousScopeRef.current !== effectiveScopeKey;
+    const focusChanged = previousFocusRef.current !== focusedPaneId;
+    previousScopeRef.current = effectiveScopeKey;
+    previousFocusRef.current = focusedPaneId;
+    if (!scopeChanged || focusChanged) return;
     if (!visiblePaneIds) return; // a árvore inteira está na tela
     if (focusedPaneId && visiblePaneIds.has(focusedPaneId)) return;
     const scope = scopes.find((entry) => entry.key === effectiveScopeKey);

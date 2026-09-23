@@ -10,6 +10,7 @@ import { usePaneScopeStore } from '../../state/pane-scope-store';
 import {
   ALL_SCOPES_KEY,
   LOOSE_SCOPE_KEY,
+  missionScopeKey,
   spaceScopeKey,
 } from '../../lib/pane-spaces';
 import { TerminalWorkspace } from './TerminalWorkspace';
@@ -671,6 +672,22 @@ describe('TerminalWorkspace — espaços separados da missão aberta (F-560)', (
     expect(activeChipLabel(host)).toBe('Missão A');
     // Antes: o foco ficava em pane-novo-1 (escondido) e o ditado ia para lá.
     expect(useLayoutStore.getState().focusedPaneId).toBe('pane-missao-a');
+  });
+
+  it('focar um pane de OUTRO campo (login, ⌘K, voz) leva o campo sem desviar o foco', () => {
+    seedMissionPlusSpace();
+    useLayoutStore.setState({ focusedPaneId: 'pane-missao-a' });
+    usePaneScopeStore.getState().focusScope(missionScopeKey('mission-a'));
+    const { host } = mount(<TerminalWorkspace />);
+    expect(activeChipLabel(host)).toBe('Missão A');
+
+    // O terminal de login (ou o ⌘K) foca o 2º pane do outro campo.
+    act(() => useLayoutStore.getState().focus('pane-novo-2'));
+
+    expect(activeChipLabel(host)).toBe('Meus terminais 2');
+    // Antes: o efeito do campo via o foco "fora da tela" (ainda o campo
+    // antigo) e o mandava para outro pane — o OAuth/ditado ia parar errado.
+    expect(useLayoutStore.getState().focusedPaneId).toBe('pane-novo-2');
   });
 
   it('cada escopo vira uma aba, com a contagem de painéis', () => {
