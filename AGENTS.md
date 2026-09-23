@@ -185,6 +185,22 @@ saber isto antes de mexer:
 - Esse caminho nunca emite evidência/recibo de missão, ACK, avanço de task ou
   conclusão. A auditoria MCP continua no dispatcher; o handoff é `unverified`.
 
+## Uma missão nunca mistura workspace (F-634/F-635)
+
+- A árvore de layout do renderer é UMA só. Ao trocar de projeto, o que está
+  nela quando a troca começa é do workspace que SAI (`outgoingPaneIds` em
+  `switchWorkspaceLayout`): `hydrate` nunca carrega esses panes para o alvo,
+  nem os de missão. Só a missão que aterrissou durante a leitura sobrevive.
+- Todo caminho que espera (settle do layout, IPC, STT, cópia de anexo) e só
+  depois monta ou digita num pane confere o escopo de novo:
+  `isPresentationScopeCurrent` na recovery/apresentação, workspace no
+  `reopenMission`. Digitação do renderer (`writeToPane`, `submitPromptToPane*`)
+  recusa host estacionado — a sessão continua viva, mas é de outro projeto.
+- Em Autopilot a missão criada pela mão do operador (`nexus_mission_create`,
+  role `user`) nasce `running`: pendente, ela rebaixava o pane que já abria
+  panes a um orquestrador preso em `dispatch_required`. Hardened mantém o
+  despacho explícito na interface.
+
 ## Conversas Grok/Kimi por checkout (F-566)
 
 - Os overlays recebem `userDataPath` e `checkoutId` da autoridade do Main e

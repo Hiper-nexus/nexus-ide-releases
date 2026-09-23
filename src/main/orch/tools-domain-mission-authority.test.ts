@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   completeVerified: vi.fn(),
   reconcile: vi.fn(),
   gitRun: vi.fn(),
+  getOrchSettings: vi.fn(() => ({ squadCliPolicy: 'operator-choice' })),
   requireMissionLeaderSession: vi.fn(
     (_scope: unknown, missionId: string, ctx: { sessionId?: string | null }) => {
       try {
@@ -73,7 +74,13 @@ vi.mock('./squad-store', () => ({
   findAgent: vi.fn(() => null),
   getSquad: vi.fn(() => null),
   listAgents: vi.fn(() => []),
+  listSquads: vi.fn(() => []),
   saveSquad: mocks.saveSquad,
+}));
+
+vi.mock('../persistence/settings-store', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../persistence/settings-store')>()),
+  getOrchSettings: mocks.getOrchSettings,
 }));
 
 vi.mock('../remote/remote-spawn', () => ({
@@ -83,6 +90,7 @@ vi.mock('../remote/remote-spawn', () => ({
 }));
 
 import { buildDomainTools } from './tools-domain';
+import { assertMissionIntentAllowsTool } from './mission-intent-gate';
 
 const scope = testProjectScope();
 
@@ -287,6 +295,81 @@ describe('mission creation authority', () => {
       expect(mocks.getProjectDomainStores).not.toHaveBeenCalled();
     },
   );
+
+  describe('mão do operador cria a própria missão (campo 23/09)', () => {
+    function operatorHand(): AgentGateContext {
+      return {
+        token: 'user-token',
+        label: 'operador',
+        role: 'user',
+        sessionId: 'operator-session',
+        scope,
+        allowedTools: null,
+        allowedSkills: null,
+        stopAttempts: 0,
+        handoffSubmitted: false,
+      };
+    }
+
+    function missionStores() {
+      const created = {
+        id: 'mission-new',
+        title: 'Fechar o Epic 22',
+        description: '',
+        status: 'pending',
+        milestones: [],
+        learnings: '',
+        orchestratorSessionId: 'operator-session',
+        createdAt: 1,
+        updatedAt: 1,
+      };
+      const update = vi.fn((id: string, patch: { status?: string }) =>
+        id === created.id ? { ...created, ...patch, updatedAt: 2 } : null,
+      );
+      mocks.getProjectDomainStores.mockReturnValue({
+        missions: { create: vi.fn(() => created), update },
+        missionPanes: { record: vi.fn() },
+      });
+      return { update };
+    }
+
+    it('Autopilot: a missão nasce rodando e a mão continua abrindo panes', async () => {
+      // O pane do operador já abria panes sem missão. Criar a missão o
+      // promovia a orquestrador de uma missão PENDENTE — e todo pane_spawn
+      // passava a voltar dispatch_required até alguém clicar em Despachar.
+      mocks.getOrchSettings.mockReturnValue({ squadCliPolicy: 'operator-choice' });
+      const { update } = missionStores();
+      const ctx = operatorHand();
+
+      const mission = (await missionCreateTool().handler(
+        { title: 'Fechar o Epic 22' },
+        ctx,
+      )) as { id: string; status: string };
+
+      expect(update).toHaveBeenCalledWith('mission-new', { status: 'running' });
+      expect(mission.status).toBe('running');
+      expect(ctx).toMatchObject({ role: 'orchestrator', missionId: 'mission-new' });
+      const gate = assertMissionIntentAllowsTool(
+        'nexus_pane_spawn',
+        { mission: mission as never, scope, role: ctx.role, sessionId: ctx.sessionId },
+        { adapterId: 'codex', prompt: 'Feche a 22.1 num worktree próprio.' },
+      );
+      expect(gate.ok).toBe(true);
+    });
+
+    it('Hardened: a missão criada pela mão do operador espera o despacho na interface', async () => {
+      mocks.getOrchSettings.mockReturnValue({ squadCliPolicy: 'governed' });
+      const { update } = missionStores();
+
+      const mission = (await missionCreateTool().handler(
+        { title: 'Fechar o Epic 22' },
+        operatorHand(),
+      )) as { status: string };
+
+      expect(update).not.toHaveBeenCalled();
+      expect(mission.status).toBe('pending');
+    });
+  });
 
   it('rejects direct done when immutable PREVC receipts are incomplete', async () => {
     const setStatus = vi.fn();

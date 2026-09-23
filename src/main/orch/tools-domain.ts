@@ -56,6 +56,8 @@ import { missionEngineForScope } from './mission-engine-registry';
 import { maybeCompleteFastLaneOnDelivery } from './civilian-delivery-completion';
 import { missionRequiresAutomaticCompletionReview } from './mission-independent-review-gate';
 import { saveCatalogOverlay, proposeRecipes } from './catalog-overlay';
+import { getOrchSettings } from '../persistence/settings-store';
+import { isOperatorChoicePolicy } from '../../shared/squad-cli-policy';
 import {
   addCronJob,
   deleteCronJob,
@@ -248,7 +250,9 @@ const missionCreateTool: McpToolDef = {
   name: 'nexus_mission_create',
   description:
     'Create a mission (a tracked unit of orchestrated work). The calling ' +
-    'session becomes the orchestrator and receives worker handoffs when idle.',
+    'session becomes the orchestrator and receives worker handoffs when idle. ' +
+    'In Autopilot the mission starts running, so you can spawn its workers ' +
+    'right away; in Hardened it waits for the operator to dispatch it.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -270,13 +274,21 @@ const missionCreateTool: McpToolDef = {
     const defaultSquadId =
       listSquads().find((s) => s.id === 'nexus-fullstack')?.id ??
       listSquads().find((s) => s.id !== PET_STUDIO_SQUAD_ID)?.id;
-    const mission = stores.missions.create({
+    const created = stores.missions.create({
       title: requireStr(args, 'title'),
       description: str(args, 'description'),
       squadId: rawSquadId || defaultSquadId,
       milestones: strArray(args, 'milestones'),
       orchestratorSessionId: ctx.sessionId,
     });
+    // A mão do operador já abre panes e worktrees sem missão. Em Autopilot,
+    // nascer PENDENTE a rebaixava: promovida a orquestrador de uma missão que
+    // ninguém despachou, todo pane_spawn voltava dispatch_required até o
+    // operador achar o botão Despachar (campo 23/09). A missão dela nasce
+    // rodando. Hardened segue exigindo o despacho explícito na interface.
+    const mission = isOperatorChoicePolicy(getOrchSettings().squadCliPolicy)
+      ? (stores.missions.update(created.id, { status: 'running' }) ?? created)
+      : created;
     ctx.missionId = mission.id;
     ctx.role = 'orchestrator';
     // Marca a promoção para que ela possa ser desfeita se a missão for
