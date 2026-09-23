@@ -198,6 +198,33 @@ describe('TokenSpeedMeter — honestidade da métrica', () => {
     expect(sample?.tokensPerSecond).toBeNull()
   })
 
+  it('contagem real sobre milissegundos de tela vira "—", nunca 35 mil tok/s (23/09)', () => {
+    const m = meter()
+    // Sem submit visto: a CLI trabalhou (pensamento + tools) e só 2 chunks
+    // apareceram na tela, a 57 ms um do outro.
+    m.noteOutput('p1', 10_000, chunks(2))
+    m.noteOutput('p1', 10_057, chunk())
+    m.flushIdle(12_000)
+    expect(m.noteUsage('p1', 12_100, { key: 's:big', outputTokens: 2_000 })).toBe(true)
+    const sample = m.snapshot(13_000).last
+    expect(sample?.outputTokens).toBe(2_000)
+    expect(sample?.source).toBe('real')
+    expect(sample?.tokensPerSecond).toBeNull()
+  })
+
+  it('contagem real usa o tempo desde o submit (pensamento conta)', () => {
+    const m = meter()
+    m.noteSubmit('p1', 0, 'refatore')
+    // 8 s pensando/usando tools antes do 1º texto, 0,9 s de texto visível
+    // (abaixo do idleCloseMs de 1 s do fixture, senão a rodada se parte).
+    m.noteOutput('p1', 8_000, chunk())
+    m.noteOutput('p1', 8_900, chunk())
+    m.flushIdle(11_000)
+    m.noteUsage('p1', 11_100, { key: 's:think', outputTokens: 890 })
+    // 890 tokens / 8,9 s = 100 tok/s (antes: 890 / 0,9 s ≈ 989 tok/s).
+    expect(m.snapshot(12_000).last?.tokensPerSecond).toBe(100)
+  })
+
   it('média e pico ignoram amostras sem tok/s conhecido', () => {
     const m = meter()
     // Rodada 1: mensurável.
@@ -330,7 +357,7 @@ describe('TokenSpeedMeter — correção por uso real', () => {
     expect(sample).toMatchObject({
       outputTokens: 403,
       generationMs: 500,
-      tokensPerSecond: 806,
+      tokensPerSecond: 671.7,
       model: 'gpt-x',
       source: 'real',
     })
@@ -350,7 +377,7 @@ describe('TokenSpeedMeter — correção por uso real', () => {
     expect(snap.turns).toBe(1)
     expect(snap.panes[0].history).toHaveLength(1)
     expect(snap.last?.outputTokens).toBe(403)
-    expect(snap.last?.tokensPerSecond).toBe(806)
+    expect(snap.last?.tokensPerSecond).toBe(671.7)
   })
 
   it('retém uso real que chega antes do fechamento ocioso da rodada', () => {
@@ -367,7 +394,7 @@ describe('TokenSpeedMeter — correção por uso real', () => {
     ).toBe(true)
     expect(m.snapshot(2_000).last).toMatchObject({
       outputTokens: 403,
-      tokensPerSecond: 806,
+      tokensPerSecond: 671.7,
       model: 'claude-sonnet-4',
       source: 'real',
     })
@@ -611,7 +638,7 @@ describe('TokenSpeedMeter — agregação por LLM', () => {
     const { models } = m.snapshot(6_000)
     expect(models).toHaveLength(1)
     expect(models[0].model).toBe('claude-sonnet-4')
-    expect(models[0].last?.tokensPerSecond).toBe(806)
+    expect(models[0].last?.tokensPerSecond).toBe(671.7)
     expect(models[0].last?.source).toBe('real')
   })
 
