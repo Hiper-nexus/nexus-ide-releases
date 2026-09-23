@@ -665,7 +665,7 @@ function bootstrap(): void {
     claudeAccountUsage: (accountId) => fetchClaudeAccountUsageWindows(accountId),
     // Rejected account credentials need reauthentication. Native identity
     // metadata is not evidence that a rejected credential is still valid.
-    markAccountAuthExpired: (accountId, adapterId) => {
+    markAccountAuthExpired: (accountId, adapterId, reason) => {
       // Só adapters cuja sonda distingue grant morto de falha transitória.
       // Conta vault marcada tem blob próprio — um 401 nele é da conta, não
       // da sessão nativa, então marcar não cria churn com o CLI.
@@ -675,14 +675,18 @@ function bootstrap(): void {
       if (
         isAuthCooldownReason(account.lastError) &&
         account.cooldownUntil !== undefined &&
-        account.cooldownUntil > Date.now()
+        account.cooldownUntil > Date.now() &&
+        (reason !== 'identity-mismatch' ||
+          /oauth identity mismatch/i.test(account.lastError ?? ''))
       ) {
         return;
       }
       setCooldown(
         accountId,
         Date.now() + 12 * 60 * 60 * 1000,
-        "oauth session expired — sonda de quota",
+        reason === 'identity-mismatch'
+          ? 'oauth identity mismatch — sonda de quota'
+          : 'oauth session expired — sonda de quota',
       );
     },
     resolveCodexAuthCandidates: (accountId) =>

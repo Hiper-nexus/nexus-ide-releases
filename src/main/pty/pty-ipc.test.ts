@@ -86,6 +86,7 @@ const authGateDeps = vi.hoisted(() => ({
 const providerDeps = vi.hoisted(() => ({
   prepareProviderSpawn: vi.fn(),
   prepareProviderSpawnAuthoritative: vi.fn(),
+  acquireCliSpawnPermit: vi.fn(async (_adapterId: string): Promise<() => void> => () => {}),
   providerReadiness: vi.fn(() => ({ ready: true, reason: "ready" })),
   providerSpawnOverrides: vi.fn(() => ({
     binPath: "/usr/local/bin/claude",
@@ -224,6 +225,7 @@ vi.mock("../persistence/provider-config-store", () => ({
   prepareProviderSpawn: providerDeps.prepareProviderSpawn,
   prepareProviderSpawnAuthoritative:
     providerDeps.prepareProviderSpawnAuthoritative,
+  acquireCliSpawnPermit: providerDeps.acquireCliSpawnPermit,
   providerReadiness: providerDeps.providerReadiness,
   providerSpawnOverrides: providerDeps.providerSpawnOverrides,
 }));
@@ -337,6 +339,11 @@ describe("registerPtyIpc account fail-fast", () => {
     vi.clearAllMocks();
     authGateDeps.wait.mockReset().mockResolvedValue("fresh");
     providerDeps.prepareProviderSpawn.mockReset();
+    providerDeps.prepareProviderSpawnAuthoritative.mockReset().mockImplementation(
+      async (adapterId: string, perSpawn: unknown) =>
+        providerDeps.prepareProviderSpawn(adapterId, perSpawn),
+    );
+    providerDeps.acquireCliSpawnPermit.mockReset().mockResolvedValue(() => {});
     authorityDeps.assertPendingSpawnGrantActive.mockReset();
     ipcDeps.handlers.clear();
     authorityDeps.requireRendererWorkspaceScope.mockReturnValue(
@@ -373,11 +380,11 @@ describe("registerPtyIpc account fail-fast", () => {
     'selected account "Claude limite" is cooling down',
     'selected subscription "Claude Max" could not be activated',
     'selected account "Sem key" has no stored API credential',
-  ])("rejects before creating a PTY: %s", (error) => {
+  ])("rejects before creating a PTY: %s", async (error) => {
     providerDeps.prepareProviderSpawn.mockReturnValueOnce({ ok: false, error });
     const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
 
-    const result = handler?.(
+    const result = await handler?.(
       { sender: { id: 7 } },
       {
         kind: "cli-agent",
@@ -397,7 +404,7 @@ describe("registerPtyIpc account fail-fast", () => {
     expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
   });
 
-  it("creates the PTY only after the exact account preparation succeeds", () => {
+  it("creates the PTY only after the exact account preparation succeeds", async () => {
     const overrides = {
       binPath: "/usr/local/bin/claude",
       defaultModel: null,
@@ -419,7 +426,7 @@ describe("registerPtyIpc account fail-fast", () => {
     };
     const sender = { id: 7 };
 
-    const result = handler?.({ sender }, request);
+    const result = await handler?.({ sender }, request);
 
     expect(result).toEqual({ ok: true, sessionId: "pty-created" });
     expect(ptyDeps.spawnAgentSession).toHaveBeenCalledWith(
@@ -441,10 +448,10 @@ describe("registerPtyIpc account fail-fast", () => {
     );
   });
 
-  it('offers a native Muse auth attempt only for the already-authorized direct user pane', () => {
+  it('offers a native Muse auth attempt only for the already-authorized direct user pane', async () => {
     providerDeps.prepareProviderSpawn.mockReturnValueOnce({ ok: true, overrides: {} });
     const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
-    const result = handler?.({ sender: { id: 7 } }, {
+    const result = await handler?.({ sender: { id: 7 } }, {
       kind: 'cli-agent', adapterId: 'muse', cols: 100, rows: 30,
     });
     expect(result).toEqual({ ok: true, sessionId: 'pty-created' });
@@ -457,7 +464,7 @@ describe("registerPtyIpc account fail-fast", () => {
     );
   });
 
-  it('does not extend a mission-bound Muse request into a native-auth attempt', () => {
+  it('does not extend a mission-bound Muse request into a native-auth attempt', async () => {
     providerDeps.prepareProviderSpawn.mockReturnValueOnce({ ok: true, overrides: {} });
     const original = sealedPendingSpawn();
     const pending = { ...original, sealedRequest: { ...original.sealedRequest, adapterId: 'muse' } };
@@ -465,7 +472,7 @@ describe("registerPtyIpc account fail-fast", () => {
     authorityDeps.getMission.mockReturnValueOnce(approvedMissionForSpawn());
     authorityDeps.resolveCwdForScope.mockReturnValueOnce('/workspace/a/packages/api');
     const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
-    const result = handler?.({ sender: { id: 7 } }, {
+    const result = await handler?.({ sender: { id: 7 } }, {
       ...pending.sealedRequest, kind: 'cli-agent', orchRequestId: 'orchspawn-1',
       cols: 100, rows: 30,
     });
@@ -529,7 +536,7 @@ describe("registerPtyIpc account fail-fast", () => {
     expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
   });
 
-  it("uses a one-time pending scope bound to the requesting WebContents", () => {
+  it("uses a one-time pending scope bound to the requesting WebContents", async () => {
     providerDeps.prepareProviderSpawn.mockReturnValueOnce({
       ok: true,
       overrides: {},
@@ -559,7 +566,7 @@ describe("registerPtyIpc account fail-fast", () => {
       rows: 30,
     };
 
-    const result = handler?.({ sender }, request);
+    const result = await handler?.({ sender }, request);
 
     expect(result).toEqual({ ok: true, sessionId: "pty-created" });
     expect(authorityDeps.claimPendingSpawnMeta).toHaveBeenCalledWith(
@@ -793,6 +800,41 @@ describe("registerPtyIpc account fail-fast", () => {
     expect(providerDeps.prepareProviderSpawn).not.toHaveBeenCalled();
   });
 
+  it('refuses a Claude pane before PTY creation when authoritative identity differs', async () => {
+    providerDeps.prepareProviderSpawnAuthoritative.mockResolvedValueOnce({
+      ok: false, error: 'credencial Claude pertence a outra conta',
+    });
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+    await expect(handler?.({ sender: { id: 7 } }, {
+      kind: 'cli-agent', adapterId: 'claude', accountId: 'acct-selected',
+      cols: 100, rows: 30,
+    })).resolves.toEqual({ ok: false, error: 'credencial Claude pertence a outra conta' });
+    expect(providerDeps.prepareProviderSpawnAuthoritative).toHaveBeenCalledWith(
+      'claude', expect.objectContaining({ accountId: 'acct-selected' }),
+    );
+    expect(providerDeps.prepareProviderSpawn).not.toHaveBeenCalled();
+    expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
+  });
+
+  it('waits for a same-CLI update permit and releases it after physical spawn', async () => {
+    const release = vi.fn();
+    let grant!: (value: () => void) => void;
+    providerDeps.acquireCliSpawnPermit.mockImplementationOnce(() =>
+      new Promise<() => void>((resolve) => { grant = resolve; }));
+    providerDeps.prepareProviderSpawn.mockReturnValueOnce({ ok: true, overrides: {} });
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
+    const result = handler?.({ sender: { id: 7 } }, {
+      kind: 'cli-agent', adapterId: 'claude', cols: 100, rows: 30,
+    });
+    await Promise.resolve();
+    expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
+
+    grant(release);
+    await expect(result).resolves.toMatchObject({ ok: true, sessionId: 'pty-created' });
+    expect(providerDeps.acquireCliSpawnPermit).toHaveBeenCalledWith('claude');
+    expect(release).toHaveBeenCalledOnce();
+  });
+
   it.each([
     {
       mode: "operator-choice" as const,
@@ -809,7 +851,7 @@ describe("registerPtyIpc account fail-fast", () => {
     },
   ])(
     "applies native read-only confinement only when $mode requires it",
-    ({ mode, expected, shouldPrepare }) => {
+    async ({ mode, expected, shouldPrepare }) => {
       settingsDeps.getOrchSettings.mockReturnValue({
         intentFirstMissionRuntimeV1: true,
         squadCliPolicy: mode,
@@ -840,7 +882,7 @@ describe("registerPtyIpc account fail-fast", () => {
       );
       const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
 
-      const result = handler?.(
+      const result = await handler?.(
         { sender: { id: 7 } },
         {
           kind: "cli-agent",
@@ -874,7 +916,7 @@ describe("registerPtyIpc account fail-fast", () => {
     },
   );
 
-  it("rejects async mission-seal drift at the last main-owned PTY boundary", () => {
+  it("rejects async mission-seal drift at the last main-owned PTY boundary", async () => {
     providerDeps.prepareProviderSpawn.mockReturnValueOnce({
       ok: true,
       overrides: {},
@@ -891,7 +933,7 @@ describe("registerPtyIpc account fail-fast", () => {
     );
     const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
 
-    const result = handler?.(
+    const result = await handler?.(
       { sender: { id: 7 } },
       {
         kind: "cli-agent",
@@ -1061,7 +1103,7 @@ describe("registerPtyIpc account fail-fast", () => {
     { squadId: "nexus-pet-studio", intentFirst: true },
   ])(
     "accepts one exact main-owned immediate launch grant for $squadId",
-    ({ squadId, intentFirst }) => {
+    async ({ squadId, intentFirst }) => {
       providerDeps.prepareProviderSpawn.mockReturnValueOnce({ ok: true, overrides: {} });
       settingsDeps.getOrchSettings.mockReturnValueOnce({
         intentFirstMissionRuntimeV1: intentFirst,
@@ -1108,7 +1150,7 @@ describe("registerPtyIpc account fail-fast", () => {
       };
 
       expect(
-        handler?.({ sender }, request),
+        await handler?.({ sender }, request),
       ).toEqual({ ok: true, sessionId: "pty-created" });
       expect(ptyDeps.spawnAgentSession).toHaveBeenCalledWith(
         sender,
@@ -1272,7 +1314,7 @@ describe("registerPtyIpc account fail-fast", () => {
     },
   );
 
-  it("allows an approved current mission spawn and rejects a stale intent revision", () => {
+  it("allows an approved current mission spawn and rejects a stale intent revision", async () => {
     const squad = {
       id: "review-squad",
       name: "Review",
@@ -1349,7 +1391,7 @@ describe("registerPtyIpc account fail-fast", () => {
       rows: 30,
     };
 
-    expect(handler?.({ sender }, request)).toEqual({
+    expect(await handler?.({ sender }, request)).toEqual({
       ok: true,
       sessionId: "pty-created",
     });

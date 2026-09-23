@@ -31,8 +31,8 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import type { QuotaWindow } from '../../shared/quota-types';
 import { knownWindow } from './quota-normalize';
-import { getAccount } from '../persistence/account-store';
-import { getSecret, setSecret } from '../persistence/secrets-store';
+import { ensureFreshClaudeSubscription, getAccount } from '../persistence/account-store';
+import { getSecret } from '../persistence/secrets-store';
 import {
   CLAUDE_MANAGED_AUTH_ENV,
   managedClaudeAuthHasCredential,
@@ -44,15 +44,18 @@ import { claudeCredentialBlobIsUsable } from '../adapters/claude-credential';
 import {
   claudeBlobIsExpiredUnhealable,
   claudeBlobNeedsRefresh,
-  refreshClaudeOauthBlobDetailed,
 } from './claude-oauth-refresh';
 import {
   cliFailureHint,
+  extractClaudeAccessToken,
   probeClaudeCliUsage,
+  probeClaudeOauthUsage,
   parseClaudeOauthUsage,
   type ClaudeCliRunImpl,
+  type FetchLike,
 } from './claude-oauth-usage';
-import { readClaudeDesktopUsage } from './claude-desktop-cache';
+import { probeClaudeCredentialIdentity } from './claude-native-account';
+import { readNativeOAuthCredential } from '../adapters/native-oauth-keychain';
 import type { QuotaReadHint } from '../../shared/quota-types';
 
 const CRED_PREFIX = 'acctcred:';
@@ -367,6 +370,9 @@ export interface FetchClaudeAccountUsageOptions {
   now?: number;
   home?: string;
   runImpl?: ClaudeCliRunImpl;
+  fetchImpl?: FetchLike;
+  /** Test seam for the macOS scoped Keychain existence check. */
+  keychainProbe?: (service: string) => boolean;
 }
 
 /** Resultado da cascata por conta: janelas ou o motivo honesto da ausência. */
@@ -383,35 +389,30 @@ function accountUsageEnv(directory: string): Record<string, string> {
   };
 }
 
-function persistVaultBlob(accountId: string, blob: string): void {
-  try {
-    setSecret(CRED_PREFIX + accountId, blob);
-  } catch {
-    // vault indisponível — o escopo materializado já recebeu o blob
+async function readProfileCredential(
+  profile: ClaudeProfileInfo,
+  probe: (service: string) => boolean,
+): Promise<{ credential: string | null; unavailable: boolean }> {
+  if (process.platform === 'darwin') {
+    const service = profile.slug === null
+      ? CLAUDE_KEYCHAIN_SERVICE
+      : claudeProfileKeychainService(profile.configDir);
+    if (probe(service)) {
+      try {
+        const credential = await readNativeOAuthCredential(service, undefined, { bypassCache: true });
+        return { credential, unavailable: credential === null };
+      } catch {
+        // The CLI would use this item. A file cannot stand in for a denied read.
+        return { credential: null, unavailable: true };
+      }
+    }
   }
-}
-
-/**
- * A sonda CLI falhou mas a credencial da conta tem refreshToken: tenta a
- * renovação nós mesmos. `refreshed` grava no escopo gerenciado (mesma
- * linhagem que o CLI consome) e no vault, e retorna true para o chamador
- * repetir a sonda. `invalid-grant` = grant morto no provider — re-login.
- * Nunca roda na linhagem do login nativo (a CLI é dona dela).
- */
-async function healScopedCredential(
-  accountId: string,
-  blob: string,
-  now: number,
-): Promise<'refreshed' | 'invalid-grant' | 'error'> {
-  if (!claudeBlobNeedsRefresh(blob, now)) return 'error';
-  const result = await refreshClaudeOauthBlobDetailed(blob, now);
-  if (result.outcome !== 'refreshed' || !result.blob) return result.outcome;
   try {
-    materializeManagedClaudeAuth(accountId, result.blob);
-    persistVaultBlob(accountId, result.blob);
-    return 'refreshed';
+    const file = path.join(profile.configDir, '.credentials.json');
+    if (fs.statSync(file).size > 1_000_000) return { credential: null, unavailable: true };
+    return { credential: fs.readFileSync(file, 'utf8'), unavailable: false };
   } catch {
-    return 'error';
+    return { credential: null, unavailable: false };
   }
 }
 
@@ -430,6 +431,39 @@ export async function fetchClaudeAccountUsageWindows(
     return { windows: null, hint: 'no-credential' };
   }
   let hint: QuotaReadHint | undefined;
+  const ownedWindows = async (credential: string | null): Promise<ClaudeAccountUsageResult> => {
+    const identity = await probeClaudeCredentialIdentity(
+      credential, account.email, { now, fetchImpl: opts.fetchImpl },
+    );
+    if (identity !== 'match') {
+      return { windows: null, hint: identity === 'mismatch' ? 'identity-mismatch' : identity };
+    }
+    const token = credential ? extractClaudeAccessToken(credential) : null;
+    if (!token) return { windows: null, hint: 'auth-expired' };
+    // The CLI can silently use a different Keychain entry from a stale file.
+    // Only the usage returned for this proven token may enter the account row.
+    const usage = await probeClaudeOauthUsage(token, { now, fetchImpl: opts.fetchImpl });
+    return usage.windows?.length
+      ? { windows: usage.windows }
+      : { windows: null, hint: usage.failure ?? 'unavailable' };
+  };
+  const ownedScopedWindows = async (fallback: string | null = null): Promise<ClaudeAccountUsageResult> => {
+    const directory = managedClaudeAuthDirectory(accountId, opts.home);
+    const service = claudeProfileKeychainService(directory);
+    if (process.platform === 'darwin' && (opts.keychainProbe ?? keychainItemExists)(service)) {
+      // Claude chooses its scoped Keychain item over the private file. A valid
+      // file cannot prove that the CLI will use the same account. Bypass the
+      // short successful-read cache; a denied read remains backed off.
+      try {
+        const live = await readNativeOAuthCredential(service, undefined, { bypassCache: true });
+        return live ? ownedWindows(live) : { windows: null, hint: 'unavailable' };
+      } catch {
+        return { windows: null, hint: 'unavailable' };
+      }
+    }
+    const local = readManagedClaudeAuth(accountId) ?? fallback;
+    return ownedWindows(local);
+  };
 
   // 1) Auth gerenciada: `claude /usage` scoped. O CLI lê a credencial
   //    isolada, renova sozinho se preciso e é dono do item de keychain —
@@ -445,27 +479,14 @@ export async function fetchClaudeAccountUsageWindows(
       runImpl: opts.runImpl,
       env: accountUsageEnv(directory),
     });
-    if (probe.windows?.length) return { windows: probe.windows };
-    hint = cliFailureHint(probe.failure ?? 'unavailable');
-    // A sonda falhou: se a credencial isolada está só vencida (refresh
-    // possível), renovamos e tentamos de novo; grant revogado vira
-    // auth-expired explícito em vez de «unavailable» mudo.
-    if (probe.failure === 'unavailable' || probe.failure === 'auth-expired') {
-      const managed = readManagedClaudeAuth(accountId);
-      if (managed) {
-        const healed = await healScopedCredential(accountId, managed, now);
-        if (healed === 'invalid-grant') hint = 'auth-expired';
-        else if (healed === 'refreshed') {
-          const retry = await probeClaudeCliUsage({
-            now,
-            runImpl: opts.runImpl,
-            env: accountUsageEnv(directory),
-          });
-          if (retry.windows?.length) return { windows: retry.windows };
-          hint = cliFailureHint(retry.failure ?? 'unavailable');
-        }
-      }
-    }
+    // The CLI owns its refresh lock. Read its result without becoming a
+    // second refresh actor, then obtain usage from that verified token.
+    const owned = await ownedScopedWindows();
+    if (owned.windows?.length || owned.hint === 'identity-mismatch') return owned;
+    hint = owned.hint ?? cliFailureHint(probe.failure ?? 'unavailable');
+    // A managed scope that failed must not fall through to a native profile
+    // whose display metadata merely resembles this saved account.
+    return { windows: null, hint: hint ?? 'unavailable' };
   }
 
   // 2) Perfil de disco com o MESMO e-mail da conta. A sessão daquele perfil
@@ -477,36 +498,25 @@ export async function fetchClaudeAccountUsageWindows(
       return snap?.email?.trim().toLowerCase() === email;
     });
     if (profile) {
-      const snap = readClaudeConfigSnapshot(profile.accountFile);
-      if (
-        snap?.usage !== undefined &&
-        Boolean(snap.accountUuid) &&
-        snap.accountUuid === snap.usageAccountUuid &&
-        typeof snap.usageFetchedAtMs === 'number' &&
-        now >= snap.usageFetchedAtMs &&
-        now - snap.usageFetchedAtMs <= CLAUDE_USAGE_CACHE_FRESH_MS
-      ) {
-        const windows = parseClaudeCachedUtilization(snap.usage, now);
-        if (windows.length > 0) return { windows };
-      }
-      // Fonte Codenotch extra: cache HTTP do Claude Desktop. A org da conta
-      // casa com o key do entry — a resposta que o app gravou vale mesmo com
-      // a credencial do CLI morta, e é leitura de disco (sem spawn).
-      if (snap?.organizationUuid) {
-        const desktop = readClaudeDesktopUsage(snap.organizationUuid, { now });
-        if (desktop) return { windows: desktop.windows };
-      }
-      const probe = await probeClaudeCliUsage({
+      const profileRead = await readProfileCredential(profile, opts.keychainProbe ?? keychainItemExists);
+      const credential = profileRead.credential;
+      const identity = profileRead.unavailable ? 'unavailable' : await probeClaudeCredentialIdentity(credential, email, {
         now,
-        runImpl: opts.runImpl,
-        env: profile.slug
-          ? { [CLAUDE_CONFIG_DIR_ENV]: profile.configDir }
-          : undefined,
+        fetchImpl: opts.fetchImpl,
       });
-      if (probe.windows?.length) return { windows: probe.windows };
-      // Falha de auth do perfil casado vale mais que um «unavailable» vago.
-      if (probe.failure === 'auth-expired') hint = 'auth-expired';
-      else if (hint === undefined) hint = cliFailureHint(probe.failure ?? 'unavailable');
+      if (identity !== 'match') {
+        hint = identity === 'mismatch' ? 'identity-mismatch' : identity;
+      } else {
+        const token = credential ? extractClaudeAccessToken(credential) : null;
+        const live = token
+          ? await probeClaudeOauthUsage(token, { now, fetchImpl: opts.fetchImpl })
+          : { windows: null, failure: 'auth-expired' as const };
+        if (live.windows?.length) return { windows: live.windows };
+        hint = live.failure ?? 'unavailable';
+        // A local utilization cache may be 30 minutes old. The fleet/Redline
+        // snapshot cannot carry its observation timestamp, so publishing it as
+        // a fresh provider read would misstate the age of the measurement.
+      }
     }
   }
 
@@ -533,31 +543,36 @@ export async function fetchClaudeAccountUsageWindows(
     // Grant morto na origem: não há o que tentar — é re-login mesmo.
     return { windows: null, hint: 'auth-expired' };
   }
+  let verifiedBlob = blob;
+  let vaultIdentity = await probeClaudeCredentialIdentity(verifiedBlob, account.email, {
+    now, fetchImpl: opts.fetchImpl,
+  });
+  if (vaultIdentity === 'auth-expired' && claudeBlobNeedsRefresh(blob, now)) {
+    // The account store owns refresh coordination and excludes native token
+    // lineage. Quota never rotates a refresh token independently.
+    await ensureFreshClaudeSubscription(accountId, now);
+    const refreshed = readVaultCredentialBlob(accountId);
+    if (!refreshed || refreshed === blob || getAccount(accountId)?.email !== account.email) {
+      return { windows: null, hint: 'unavailable' };
+    }
+    verifiedBlob = refreshed;
+    vaultIdentity = await probeClaudeCredentialIdentity(verifiedBlob, account.email, {
+      now, fetchImpl: opts.fetchImpl,
+    });
+  }
+  if (vaultIdentity !== 'match') {
+    return { windows: null, hint: vaultIdentity === 'mismatch' ? 'identity-mismatch' : vaultIdentity };
+  }
   try {
-    const prepared = materializeManagedClaudeAuth(accountId, blob);
+    const prepared = materializeManagedClaudeAuth(accountId, verifiedBlob);
     const probe = await probeClaudeCliUsage({
       now,
       runImpl: opts.runImpl,
       env: accountUsageEnv(prepared.directory),
     });
-    if (probe.windows?.length) return { windows: probe.windows };
-    if (probe.failure === 'auth-expired') hint = 'auth-expired';
-    else if (hint === undefined) hint = cliFailureHint(probe.failure ?? 'unavailable');
-    // Mesma cura do passo 1: blob vencido com refreshToken — renovamos,
-    // gravamos nos dois lados e repetimos a sonda.
-    if (probe.failure === 'unavailable' || probe.failure === 'auth-expired') {
-      const healed = await healScopedCredential(accountId, blob, now);
-      if (healed === 'invalid-grant') hint = 'auth-expired';
-      else if (healed === 'refreshed') {
-        const retry = await probeClaudeCliUsage({
-          now,
-          runImpl: opts.runImpl,
-          env: accountUsageEnv(prepared.directory),
-        });
-        if (retry.windows?.length) return { windows: retry.windows };
-        hint = cliFailureHint(retry.failure ?? 'unavailable');
-      }
-    }
+    const owned = await ownedScopedWindows(prepared.blob);
+    if (owned.windows?.length || owned.hint === 'identity-mismatch') return owned;
+    hint = owned.hint ?? hint ?? cliFailureHint(probe.failure ?? 'unavailable');
   } catch {
     // materialização falhou (id inválido, blob sem slice) → hint honesto
   }

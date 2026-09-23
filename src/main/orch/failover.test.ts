@@ -19,6 +19,10 @@ const paneMocks = vi.hoisted(() => ({
 
 const accountMocks = vi.hoisted(() => ({
   setCooldown: vi.fn(),
+  verifyClaude: vi.fn(async (_id: string, onVerified?: (blob: string) => void) => {
+    onVerified?.('verified-claude-blob');
+    return 'match' as 'match' | 'mismatch' | 'auth-expired' | 'unavailable';
+  }),
   current: {
     id: 'account-a',
     adapterId: 'claude',
@@ -113,6 +117,7 @@ vi.mock('../persistence/account-store', () => ({
       authEnv: {},
     };
   }),
+  verifyManagedClaudeAccountForSpawn: accountMocks.verifyClaude,
 }));
 
 vi.mock('../quota/quota-service', () => ({
@@ -193,6 +198,11 @@ beforeEach(() => {
   paneMocks.panes.clear();
   paneMocks.runtimeAuthorities.clear();
   accountMocks.setCooldown.mockClear();
+  accountMocks.verifyClaude.mockReset();
+  accountMocks.verifyClaude.mockImplementation(async (_id, onVerified) => {
+    onVerified?.('verified-claude-blob');
+    return 'match';
+  });
   accountMocks.next = {
     id: 'account-b',
     adapterId: 'claude',
@@ -562,6 +572,50 @@ describe('account failover authority and lifecycle', () => {
     );
   });
 
+  it('does not materialize a Claude failover credential that proves another identity', async () => {
+    const { prepareAccountForSpawn } = await import('../persistence/account-store');
+    const scope = testProjectScope();
+    const owner = renderer(709);
+    renderers.push(owner);
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerFailoverListener(owner);
+    addPane({ owner, paneId: 'pane-mismatch', sessionId: 'sess-mismatch', missionId: 'm-mismatch', scope });
+    accountMocks.verifyClaude.mockResolvedValue('mismatch');
+    vi.mocked(prepareAccountForSpawn).mockClear();
+
+    ptyMocks.dataTaps[0]!('sess-mismatch', 'LIMIT');
+    await settleFailover();
+
+    expect(accountMocks.verifyClaude).toHaveBeenCalledWith('account-b', expect.any(Function));
+    expect(prepareAccountForSpawn).not.toHaveBeenCalled();
+    expect(owner.send).toHaveBeenCalledWith(
+      ACCOUNT_CHANNELS.failover,
+      expect.objectContaining({ switched: false }),
+    );
+  });
+
+  it('keeps Claude API key failover independent of OAuth identity probing', async () => {
+    const scope = testProjectScope();
+    const owner = renderer(710);
+    renderers.push(owner);
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerFailoverListener(owner);
+    addPane({ owner, paneId: 'pane-api', sessionId: 'sess-api', missionId: 'm-api', scope });
+    accountMocks.next = {
+      id: 'account-b', adapterId: 'claude', label: 'API B', mode: 'api-key',
+      upstream: 'anthropic', createdAt: 1,
+    };
+
+    ptyMocks.dataTaps[0]!('sess-api', 'LIMIT');
+    await settleFailover();
+
+    expect(accountMocks.verifyClaude).not.toHaveBeenCalled();
+    expect(owner.send).toHaveBeenCalledWith(
+      ACCOUNT_CHANNELS.failover,
+      expect.objectContaining({ switched: true, toAccountId: 'account-b' }),
+    );
+  });
+
   it('fails closed before account mutation for ambiguous, unscoped or ownerless panes', () => {
     const scope = testProjectScope();
     const owner = renderer(303);
@@ -753,7 +807,7 @@ describe('espera-pela-irmã + cooldown escopado (C1, derivado do oh-my-pi)', () 
       .mocked(prepareAccountForSpawn)
       .mock.calls.slice(prepareCallsBefore)
       .find((call) => call[1] === 'account-b');
-    expect(probeCall?.[3]).toEqual({ allowCoolingProbe: true });
+    expect(probeCall?.[3]).toEqual({ allowCoolingProbe: true, expectedClaudeBlob: 'verified-claude-blob' });
 
     // Segundo pane no mesmo from-account NÃO reusa a sondagem via coalesce:
     // a decisão de probe nunca é coalescida (uma request de teste por vez).
@@ -896,6 +950,7 @@ describe('espera-pela-irmã + cooldown escopado (C1, derivado do oh-my-pi)', () 
     }));
 
     ptyMocks.dataTaps[0]!('sess-814', 'LIMIT');
+    await settleFailover();
 
     expect(owner.send).toHaveBeenCalledWith(
       ACCOUNT_CHANNELS.failover,

@@ -124,7 +124,8 @@ function hasQuota(entry: ProviderQuotaEntry): boolean {
 
 /** Linha sem cota informada que ainda pede uma ação do operador fica à vista. */
 function needsAttention(entry: ProviderQuotaEntry, account: AccountInfo | undefined): boolean {
-  return Boolean(account?.needsRelogin) || entry.readHint === 'auth-expired' || entry.onCooldown;
+  return Boolean(account?.needsRelogin) || entry.readHint === 'auth-expired' ||
+    entry.readHint === 'identity-mismatch' || entry.onCooldown;
 }
 
 /**
@@ -227,9 +228,11 @@ function EntryCard({
 }) {
   const [loginBusy, setLoginBusy] = useState(false);
   const [quotaBusy, setQuotaBusy] = useState(false);
-  const known = hasQuota(entry);
   const authExpired = entry.readHint === 'auth-expired';
-  const state = needsRelogin || authExpired
+  const identityMismatch = entry.readHint === 'identity-mismatch';
+  const visibleWindows = identityMismatch ? [] : entry.windows;
+  const known = !identityMismatch && hasQuota(entry);
+  const state = needsRelogin || authExpired || identityMismatch
     ? 'Entrar novamente'
     : entry.onCooldown
       ? 'Pausa temporária'
@@ -254,7 +257,7 @@ function EntryCard({
   // A sonda de quota pode detectar o grant morto antes do flag needsRelogin
   // (conta nativa nunca o recebe) — o hint também abre o caminho de login.
   const canRelogin = Boolean(
-    (needsRelogin || authExpired) && entry.accountId && account,
+    (needsRelogin || authExpired || identityMismatch) && entry.accountId && account,
   );
   const loginLabel = account?.label ?? label;
 
@@ -386,7 +389,7 @@ function EntryCard({
         <span>Renovação ou observação</span>
       </div>
       <ul className="quota-entry__windows">
-        {entry.windows.map((window) => (
+        {visibleWindows.map((window) => (
           <QuotaWindowRow
             key={`${window.kind}-${window.label}`}
             window={window}
@@ -396,7 +399,9 @@ function EntryCard({
       </ul>
       {!known && (
         <p className="quota-entry__missing">
-          {authExpired
+          {identityMismatch
+            ? 'A credencial pertence a outra conta Claude — entre novamente nesta conta para consultar seus limites.'
+            : authExpired
             ? 'A sessão desta conta expirou e não foi possível renovar — reautentique para voltar a ver os limites.'
             : entry.readHint === 'no-credential'
               ? 'Nenhuma credencial válida foi encontrada para esta linha.'
@@ -410,7 +415,7 @@ function EntryCard({
         <p>
           {[
             ...new Set(
-              entry.windows.map((window) => SOURCE_LABELS[window.source]),
+              visibleWindows.map((window) => SOURCE_LABELS[window.source]),
             ),
           ].join(' · ')}
         </p>

@@ -47,7 +47,7 @@ function exclusionReason(
   if (account?.needsRelogin) return 'needs-relogin';
   // Linha nativa (sem accountId) não tem AccountInfo — o readHint é o
   // único portador do motivo (sessão expirada, CLI ausente, etc.).
-  if (entry.readHint === 'auth-expired') return 'needs-relogin';
+  if (entry.readHint === 'auth-expired' || entry.readHint === 'identity-mismatch') return 'needs-relogin';
   if (entry.readHint === 'no-credential') return 'no-credential';
   if (entry.onCooldown) return 'cooldown';
   const known = entry.windows.some(
@@ -110,7 +110,7 @@ export function scoreFleet(
       windows: entry.windows.map((w) => ({
         kind: w.kind,
         label: w.label,
-        usedRatio: w.usedRatio,
+        usedRatio: entry.readHint === 'identity-mismatch' ? null : w.usedRatio,
         ...(w.resetsAt !== undefined ? { resetsAt: w.resetsAt } : {}),
       })),
       updatedAt: entry.updatedAt,

@@ -93,6 +93,14 @@ describe('effectiveUsedRatio', () => {
   });
 });
 
+it('does not serialize a known percentage for a Claude identity mismatch', () => {
+  const wrong = { ...entry('claude:a', [win('Semanal', 0.86)], { accountId: 'a' }),
+    readHint: 'identity-mismatch' as const };
+  const scored = scoreFleet([wrong], [account('a')], NOW);
+  expect(scored.entries[0]?.windows.every((window) => window.usedRatio === null)).toBe(true);
+  expect(scored.ranking.claude).toBeUndefined();
+});
+
 describe('scoreFleet', () => {
   it('decora elegibilidade e exclui sem credencial / relogin / cooldown / uso desconhecido', () => {
     const entries = [

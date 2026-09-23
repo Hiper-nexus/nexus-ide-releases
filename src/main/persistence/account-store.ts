@@ -8,7 +8,6 @@ import {
   getSecret,
   hasCachedSecret,
   hasSecret,
-  isSecretDecryptDenied,
   setSecret,
 } from './secrets-store';
 import {
@@ -19,7 +18,6 @@ import {
   readActiveClaudeCredential,
   readActiveClaudeCredentialSlim,
   slimClaudeCredentialBlob,
-  writeActiveClaudeCredential,
 } from '../adapters/claude-credential';
 import { rememberNativeOAuthCredential } from '../adapters/native-oauth-keychain';
 import {
@@ -45,10 +43,10 @@ import {
   freshestClaudeCredential,
   hasManagedClaudeAuth,
   materializeManagedClaudeAuth,
-  readManagedClaudeAuth,
   readManagedClaudeAuthAsync,
   removeManagedClaudeAuth,
 } from '../adapters/managed-claude-auth';
+import { probeClaudeCredentialIdentity, resolveClaudeCredentialProfile } from '../quota/claude-native-account';
 import {
   failedPersistenceError,
   PersistenceUnavailableError,
@@ -364,6 +362,7 @@ function readNativeClaudeSnapshot(): NativeClaudeSnapshot {
 
 function persistManagedClaudeReadback(account: Account, renewed: string | null): string | null {
   const saved = getSecret(CRED_PREFIX + account.id);
+  if (isClaudeIdentityMismatch(account)) return saved;
   if (saved === null && hasSecret(CRED_PREFIX + account.id)) return null;
   const latest = freshestClaudeCredential(renewed, saved);
   if (latest && latest !== saved) {
@@ -374,66 +373,17 @@ function persistManagedClaudeReadback(account: Account, renewed: string | null):
 }
 
 /**
- * Claude read-back, mirroring readBackFresherAuth for file-backed providers:
- * the real Claude CLI rotates the refresh token on its own inside the native
- * "Claude Code-credentials" keychain item, so the vault snapshot goes stale.
- * When this account IS the current native login, re-capture the keychain blob
- * into the vault BEFORE any use of the vault snapshot — otherwise the next
- * materialize clobbers the live native session with a dead credential (the
- * mid-session logout production bug). Best-effort/fail-safe: an unreadable
- * keychain or a failed vault write keeps the existing snapshot and never
- * breaks activate/spawn.
- */
-function syncClaudeBlobFromKeychainIfNative(
-  account: Account,
-  snapshot?: NativeClaudeSnapshot,
-): void {
-  if (account.adapterId !== 'claude' || account.mode !== 'subscription') return;
-  if (hasManagedClaudeAuth(account.id)) {
-    persistManagedClaudeReadback(account, readManagedClaudeAuth(account.id));
-    return;
-  }
-  const native = snapshot ?? readNativeClaudeSnapshot();
-  const nativeBlob = native.blob;
-  if (!nativeBlob) return; // Keychain unreadable / unusable → keep vault snapshot.
-  if (native.account?.id !== account.id) return;
-  const vaultKey = CRED_PREFIX + account.id;
-  const current = getSecret(vaultKey);
-  if (current === nativeBlob) return; // In sync.
-  // `null` com a chave PRESENTE no índice do vault não é ausência — é decrypt
-  // que falhou agora (Keychain capenga / vault de outra máquina). Forçar
-  // setSecret aqui é insistir num SecItemAdd no pior momento: é isso que faz o
-  // macOS levantar o modal "Chaves Não Encontradas / Reajustar Para Padrões"
-  // (o botão que apaga o keychain). O snapshot do vault fica; o próximo
-  // read-back tenta de novo depois do backoff do decrypt.
-  if (current === null && (hasSecret(vaultKey) || isSecretDecryptDenied(vaultKey))) return;
-  const saved = setSecret(vaultKey, nativeBlob);
-  if (!saved.ok) {
-    console.warn(
-      '[accounts] claude keychain read-back persist failed:',
-      saved.error,
-    );
-  }
-}
-
-/**
  * Materialize a subscription credential for the active/global path.
  * Claude → Keychain; file-backed providers → managed home under ~/.nexus.
  */
 export function ensureSubscriptionActive(account: Account): boolean {
   if (account.mode !== 'subscription') return true;
-  // Claude: read the native keychain back into the vault first — writing a
-  // stale snapshot over the CLI-rotated session kills the live login.
-  syncClaudeBlobFromKeychainIfNative(account);
+  // Claude activation requires an async provider-profile proof. The pane
+  // paths use prepareProviderSpawnAuthoritative; do not copy an unverified
+  // vault snapshot into the operator's native Keychain here.
+  if (account.adapterId === 'claude') return false;
   const blob = getSecret(CRED_PREFIX + account.id);
   if (!blob) return false;
-  if (account.adapterId === 'claude') {
-    const written = writeActiveClaudeCredential(blob);
-    if (written) {
-      rememberNativeOAuthCredential(CLAUDE_KEYCHAIN_SERVICE, blob);
-    }
-    return written;
-  }
   if (isFileAuthAdapter(account.adapterId)) {
     try {
       materializeManagedHome(
@@ -485,6 +435,44 @@ export type AccountSpawnPreparation =
     }
   | { ok: false; error: string };
 
+/** Validate the same scoped credential the CLI will read before a managed Claude spawn. */
+export async function verifyManagedClaudeAccountForSpawn(
+  accountId: string,
+  onVerified?: (blob: string) => void,
+): Promise<'match' | 'mismatch' | 'auth-expired' | 'unavailable'> {
+  const account = getAccount(accountId);
+  if (!account || account.adapterId !== 'claude' || account.mode !== 'subscription') {
+    return 'unavailable';
+  }
+  const managed = hasManagedClaudeAuth(accountId);
+  const scoped = managed ? await readManagedClaudeAuthAsync(accountId) : null;
+  // With no managed store, prepareAccountForSpawn imports a newer native
+  // Keychain lineage for this account. Verify that exact candidate as well.
+  const native = !managed ? readNativeClaudeSnapshot() : null;
+  const nativeBlob = native?.account?.id === accountId ? native.blob : null;
+  const originalSaved = getSecret(CRED_PREFIX + accountId);
+  const credential = freshestClaudeCredential(scoped, nativeBlob, originalSaved);
+  const result = await probeClaudeCredentialIdentity(credential, account.email);
+  if (result === 'match' && (!sameClaudeAccountIdentity(account) ||
+      getSecret(CRED_PREFIX + accountId) !== originalSaved)) return 'unavailable';
+  if (result === 'mismatch') {
+    markClaudeIdentityMismatch(accountId, 'pane Claude');
+  }
+  if (result === 'match' && credential && !managed && nativeBlob === credential &&
+      credential !== originalSaved) {
+    // Only a live server profile may bind a rotated native credential to a
+    // vault row. A decrypt-denied existing secret is not safe to overwrite.
+    if (originalSaved === null && hasSecret(CRED_PREFIX + accountId)) return 'unavailable';
+    if (!setSecret(CRED_PREFIX + accountId, credential).ok) return 'unavailable';
+  }
+  if (result === 'match' && credential) {
+    onVerified?.(credential);
+  } else if (result === 'match') {
+    return 'unavailable';
+  }
+  return result;
+}
+
 interface ClaudeOauthCredential {
   accessToken?: unknown;
   refreshToken?: unknown;
@@ -498,19 +486,18 @@ interface ClaudeOauthCredential {
  */
 function subscriptionAuthEnv(
   account: Account,
-  snapshot?: NativeClaudeSnapshot,
 ): Record<string, string> | null {
-  // Same read-back contract as ensureSubscriptionActive: never build an env
-  // from a stale vault snapshot when the native lineage has moved on.
-  syncClaudeBlobFromKeychainIfNative(account, snapshot);
   const blob = getSecret(CRED_PREFIX + account.id);
   if (!blob) return null;
   if (account.adapterId === 'claude' && hasManagedClaudeAuth(account.id)) {
     void readManagedClaudeAuthAsync(account.id).then((renewed) => {
-      // A re-login/removal while the read was in flight owns the newer state.
-      if (getAccount(account.id) === account && getSecret(CRED_PREFIX + account.id) === blob) {
-        persistManagedClaudeReadback(account, renewed);
-      }
+      return probeClaudeCredentialIdentity(renewed, account.email).then((identity) => {
+        // A re-login/removal while the read was in flight owns the newer state.
+        if (identity === 'match' && getAccount(account.id) === account &&
+            getSecret(CRED_PREFIX + account.id) === blob) {
+          persistManagedClaudeReadback(account, renewed);
+        }
+      });
     }).catch(() => {});
   }
   return claudeAuthEnvFromBlob(blob as string);
@@ -603,13 +590,34 @@ export function claudeOAuthAccessToken(accountId?: string): string | null {
  */
 export function isAuthCooldownReason(reason: string | undefined): boolean {
   if (!reason) return false;
-  return /401|oauth token (?:expired|revoked)|oauth access token has expired|not logged in|session expired|refresh token (?:expired|invalid|revoked)|authentication[_\s]?error|re-authenticate|please run \/login|invalid[_\s]?(?:api[_\s]?key|x-api-key)|stored token for|token inv[aá]lido|n[aã]o autenticado/i.test(
+  return /401|identity mismatch|oauth token (?:expired|revoked)|oauth access token has expired|not logged in|session expired|refresh token (?:expired|invalid|revoked)|authentication[_\s]?error|re-authenticate|please run \/login|invalid[_\s]?(?:api[_\s]?key|x-api-key)|stored token for|token inv[aá]lido|n[aã]o autenticado/i.test(
     reason,
   );
 }
 
+function isClaudeIdentityMismatch(account: Account): boolean {
+  return account.adapterId === 'claude' && account.mode === 'subscription' &&
+    /oauth identity mismatch/i.test(account.lastError ?? '');
+}
+
+function markClaudeIdentityMismatch(accountId: string, source: string): void {
+  try {
+    setCooldown(accountId, Date.now() + 12 * 60 * 60 * 1000, `oauth identity mismatch — ${source}`);
+  } catch {
+    // A failed metadata write must not turn a rejected credential into one
+    // accepted by the current operation.
+  }
+}
+
 function emailsEqual(left: string, right: string): boolean {
   return left.trim().toLowerCase() === right.trim().toLowerCase();
+}
+
+function sameClaudeAccountIdentity(account: Account): boolean {
+  const current = getAccount(account.id);
+  return Boolean(current && current.adapterId === 'claude' &&
+    current.mode === 'subscription' &&
+    emailsEqual(current.email ?? '', account.email ?? ''));
 }
 
 /**
@@ -619,6 +627,7 @@ function emailsEqual(left: string, right: string): boolean {
  * "nenhuma credencial alternativa" while a ready sibling sat unused.
  */
 export function accountHasFailoverCredential(account: Account): boolean {
+  if (isClaudeIdentityMismatch(account)) return false;
   if (account.mode === 'api-key') {
     return hasSecret(KEY_PREFIX + account.id);
   }
@@ -664,13 +673,19 @@ export function prepareAccountForSpawn(
   adapterId: string,
   accountId: string,
   now = Date.now(),
-  options?: { allowCoolingProbe?: boolean; isolatedHome?: boolean },
+  options?: { allowCoolingProbe?: boolean; isolatedHome?: boolean; expectedClaudeBlob?: string },
 ): AccountSpawnPreparation {
   const account = getAccount(accountId);
   if (!account || account.adapterId !== adapterId) {
     return {
       ok: false,
       error: 'selected account does not belong to this provider',
+    };
+  }
+  if (isClaudeIdentityMismatch(account)) {
+    return {
+      ok: false,
+      error: `A credencial de “${account.label}” pertence a outra conta Claude — entre novamente antes de abrir um pane.`,
     };
   }
 
@@ -711,7 +726,6 @@ export function prepareAccountForSpawn(
 
   // Managed Claude accounts use the CLI's renewable store, independent from
   // both the native login and the pane's disposable conversation HOME.
-  syncClaudeBlobFromKeychainIfNative(account);
   // Renovação morta: trocar para esta conta é 401 garantido queimando uma
   // sessão nova — recusa aqui para o failover tentar a irmã ou esperar com
   // motivo acionável, em vez de descobrir no 401 do pane.
@@ -755,8 +769,8 @@ export function prepareAccountForSpawn(
     };
   }
   try {
-    const prepared = materializeManagedClaudeAuth(account.id, credential);
-    persistManagedClaudeReadback(account, prepared.blob);
+    const prepared = materializeManagedClaudeAuth(account.id, credential,
+      options?.expectedClaudeBlob ? { expectedBlob: options.expectedClaudeBlob } : undefined);
     return { ok: true, account, apiKey: null, authEnv: prepared.env };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : 'failed to prepare isolated Claude account' };
@@ -831,7 +845,14 @@ export async function ensureFreshClaudeSubscription(
     // would rotate the same token family independently and log panes out.
     const previous = getSecret(CRED_PREFIX + accountId);
     const latest = await readManagedClaudeAuthAsync(accountId);
-    if (getAccount(accountId) !== account || getSecret(CRED_PREFIX + accountId) !== previous) return false;
+    if (!sameClaudeAccountIdentity(account) || getSecret(CRED_PREFIX + accountId) !== previous) return false;
+    const identity = await probeClaudeCredentialIdentity(latest, account.email, { now });
+    if (identity === 'mismatch') {
+      markClaudeIdentityMismatch(accountId, 'readback Claude');
+      return false;
+    }
+    if (identity !== 'match' || !sameClaudeAccountIdentity(account) ||
+        getSecret(CRED_PREFIX + accountId) !== previous) return false;
     return persistManagedClaudeReadback(account, latest) !== previous;
   }
   const nativeEmail = activeClaudeEmail();
@@ -848,6 +869,16 @@ export async function ensureFreshClaudeSubscription(
   if (claudeRefreshInFlight.has(accountId)) return false;
   claudeRefreshInFlight.add(accountId);
   try {
+    // Refresh rotates an opaque grant. Prove the current access token belongs
+    // to this account before touching that grant; an expired, unproven token
+    // must be recovered through the provider login instead.
+    const beforeIdentity = await probeClaudeCredentialIdentity(blob, account.email, { now });
+    if (beforeIdentity === 'mismatch') {
+      markClaudeIdentityMismatch(accountId, 'refresh Claude');
+      return false;
+    }
+    if (beforeIdentity !== 'match' || !sameClaudeAccountIdentity(account) ||
+        getSecret(CRED_PREFIX + accountId) !== blob) return false;
     const updateBlob =
       refreshImpl ??
       (options.force ? forceRefreshClaudeOauthBlob : refreshClaudeOauthBlob);
@@ -858,6 +889,13 @@ export async function ensureFreshClaudeSubscription(
       markClaudeRefreshFailed(account);
       return false;
     }
+    const identity = await probeClaudeCredentialIdentity(updated, account.email, { now });
+    if (identity === 'mismatch') {
+      markClaudeIdentityMismatch(accountId, 'refresh Claude');
+      return false;
+    }
+    if (identity !== 'match' || !sameClaudeAccountIdentity(account) ||
+        getSecret(CRED_PREFIX + accountId) !== blob) return false;
     const saved = setSecret(CRED_PREFIX + accountId, updated);
     if (!saved.ok) {
       markClaudeRefreshFailed(account);
@@ -1250,6 +1288,38 @@ function credentialIdentityOwner(
   return null;
 }
 
+/** Provider-backed Claude capture for explicit add and targeted re-login. */
+export async function addActiveSessionAccountAuthoritative(
+  adapterId: string,
+  label: string,
+  targetAccountId?: string,
+): Promise<Account | null> {
+  if (adapterId !== 'claude') {
+    return addActiveSessionAccount(adapterId, label, targetAccountId);
+  }
+  const targeted = targetAccountId ? getAccount(targetAccountId) : null;
+  if (targetAccountId && (!targeted || targeted.adapterId !== 'claude' ||
+      targeted.mode !== 'subscription' || !targeted.email)) {
+    throw new Error('A conta Claude escolhida não tem identidade verificável; entre novamente.');
+  }
+  invalidateClaudeCredentialCache();
+  const blob = readActiveClaudeCredentialSlim() ?? (() => {
+    const raw = readActiveClaudeCredential();
+    return raw ? slimClaudeCredentialBlob(raw) : null;
+  })();
+  if (!blob) return null;
+  const profile = await resolveClaudeCredentialProfile(blob);
+  if (!profile) {
+    throw new Error('Não foi possível confirmar a identidade da sessão Claude; entre novamente.');
+  }
+  if (targeted?.email && !emailsEqual(profile.email, targeted.email)) {
+    throw new Error(`O login concluído pertence a outra conta Claude, não a “${targeted.label}”.`);
+  }
+  return addActiveSessionAccount(adapterId, label, targetAccountId, {
+    blob, email: profile.email,
+  });
+}
+
 /**
  * Snapshot the CURRENTLY signed-in CLI session into a subscription account.
  * Claude → Keychain blob; Codex/Grok/Kimi/… → native auth.json (Orca-style).
@@ -1262,6 +1332,7 @@ export function addActiveSessionAccount(
   adapterId: string,
   label: string,
   targetAccountId?: string,
+  verifiedClaude?: { blob: string; email: string },
 ): Account | null {
   requireWritableDb();
 
@@ -1274,6 +1345,9 @@ export function addActiveSessionAccount(
   ) {
     throw new Error('A conta escolhida para reautenticação não existe mais.');
   }
+  if (adapterId === 'claude' && targeted && !verifiedClaude) {
+    throw new Error('A reautenticação Claude precisa de prova de identidade do provedor.');
+  }
 
   let blob: string | null = null;
   let email: string | undefined;
@@ -1283,14 +1357,19 @@ export function addActiveSessionAccount(
     // uma ação explícita pós-login: descarte qualquer leitura memoizada antes
     // de capturar, senão "Signed in" salvaria o blob revogado anterior (ou o
     // null de uma negação antiga) por até o backoff inteiro.
-    invalidateClaudeCredentialCache();
-    blob =
-      readActiveClaudeCredentialSlim() ??
-      (() => {
-        const raw = readActiveClaudeCredential();
-        return raw ? slimClaudeCredentialBlob(raw) : null;
-      })();
-    email = activeClaudeEmail() ?? undefined;
+    if (verifiedClaude) {
+      blob = verifiedClaude.blob;
+      email = verifiedClaude.email;
+    } else {
+      invalidateClaudeCredentialCache();
+      blob =
+        readActiveClaudeCredentialSlim() ??
+        (() => {
+          const raw = readActiveClaudeCredential();
+          return raw ? slimClaudeCredentialBlob(raw) : null;
+        })();
+      email = activeClaudeEmail() ?? undefined;
+    }
   } else if (isFileAuthAdapter(adapterId)) {
     const capture = captureNativeAuth(adapterId);
     if (capture) {
@@ -1307,7 +1386,13 @@ export function addActiveSessionAccount(
     rememberNativeOAuthCredential(CLAUDE_KEYCHAIN_SERVICE, blob);
   }
 
-  const credentialOwner = credentialIdentityOwner(adapterId, blob);
+  const tokenOwner = credentialIdentityOwner(adapterId, blob);
+  const credentialOwner = verifiedClaude
+    ? targeted ?? (tokenOwner?.email && emailsEqual(tokenOwner.email, verifiedClaude.email)
+      ? tokenOwner
+      : listAccounts('claude').find((account) => account.mode === 'subscription' &&
+          account.email && emailsEqual(account.email, verifiedClaude.email)) ?? null)
+    : tokenOwner;
   if (credentialOwner?.email) email = credentialOwner.email;
   if (
     targeted &&
@@ -1337,7 +1422,7 @@ export function addActiveSessionAccount(
   const existing =
     targeted ??
     credentialOwner ??
-    findSessionDuplicate(adapterId, email, blob);
+    (verifiedClaude ? null : findSessionDuplicate(adapterId, email, blob));
   if (existing) {
     const secretKey = CRED_PREFIX + existing.id;
     const previousSecret = getSecret(secretKey);
@@ -1348,8 +1433,6 @@ export function addActiveSessionAccount(
       );
     }
     // Blob fresco vindo do CLI vivo: a renovação voltou a ser possível.
-    claudeRefreshFailedAt.delete(existing.id);
-    clearCooldown(existing.id, 'sessão reautenticada no CLI');
     try {
       if (isFileAuthAdapter(adapterId)) {
         materializeManagedHome(adapterId as FileAuthAdapterId, existing.id, blob, { replace: Boolean(targeted) });
@@ -1370,6 +1453,8 @@ export function addActiveSessionAccount(
       persistSnapshot(nextAccounts, nextActive, 'refresh subscription');
       replaceMap(accounts, nextAccounts);
       replaceMap(activeByAdapter, nextActive);
+      claudeRefreshFailedAt.delete(existing.id);
+      clearCooldown(existing.id, 'sessão reautenticada no CLI');
       emit();
       return refreshed;
     } catch (error) {
@@ -1573,17 +1658,13 @@ export function removeAccount(id: string): void {
 export function activateAccount(id: string): boolean {
   const account = accounts.get(id);
   if (!account) return false;
+  if (isClaudeIdentityMismatch(account)) return false;
   requireWritableDb();
   // Preserve refreshed native credentials, but selecting a Nexus account must
   // not replace the shared login underneath the operator's existing CLIs.
-  const native = listAccounts('claude').some((other) => other.mode === 'subscription')
-    ? readNativeClaudeSnapshot() : undefined;
-  for (const other of accounts.values()) {
-    if (other.id !== id) syncClaudeBlobFromKeychainIfNative(other, native);
-  }
   if (account.mode === 'subscription') {
     const ready = account.adapterId === 'claude'
-      ? subscriptionAuthEnv(account, native) !== null
+      ? subscriptionAuthEnv(account) !== null
       : ensureSubscriptionActive(account);
     if (!ready) return false;
   }

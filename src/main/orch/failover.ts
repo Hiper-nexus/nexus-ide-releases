@@ -37,6 +37,7 @@ import {
   pickAvailableForFailover,
   prepareAccountForSpawn,
   setCooldown,
+  verifyManagedClaudeAccountForSpawn,
 } from '../persistence/account-store';
 import { broadcastToProject, sameProjectScope } from './project-scoped-broadcast';
 import {
@@ -442,6 +443,34 @@ async function healClaudeSecondaryBeforePin(
   }
 }
 
+async function prepareFailoverAccount(
+  adapterId: string,
+  accountId: string,
+  now: number,
+  options?: Parameters<typeof prepareAccountForSpawn>[3],
+): Promise<ReturnType<typeof prepareAccountForSpawn>> {
+  let verifiedClaudeBlob: string | undefined;
+  if (adapterId === 'claude' && getAccount(accountId)?.mode === 'subscription') {
+    // The synchronous prepare can persist a rotated credential to the managed
+    // store. Prove ownership first, including on alternate/native adoption.
+    const identity = await verifyManagedClaudeAccountForSpawn(accountId, (blob) => {
+      verifiedClaudeBlob = blob;
+    });
+    if (identity !== 'match') {
+      return { ok: false, error: identity === 'mismatch'
+        ? 'credencial Claude pertence a outra conta — entre novamente'
+        : identity === 'auth-expired'
+          ? 'sessão Claude expirada — entre novamente'
+          : 'não foi possível verificar a identidade da conta Claude' };
+    }
+    if (!verifiedClaudeBlob) {
+      return { ok: false, error: 'credencial Claude verificada mudou — tente novamente' };
+    }
+  }
+  return prepareAccountForSpawn(adapterId, accountId, now,
+    verifiedClaudeBlob ? { ...options, expectedClaudeBlob: verifiedClaudeBlob } : options);
+}
+
 async function performSwitch(req: SwitchRequest): Promise<void> {
   const { key, authority, paneId, adapterId, hit, now, current, attempt } = req;
   const fromLabel = current?.label ?? adapterId;
@@ -513,7 +542,7 @@ async function performSwitch(req: SwitchRequest): Promise<void> {
     if (next.adapterId === 'claude') {
       await healClaudeSecondaryBeforePin(next.id, now);
     }
-    let prepared = prepareAccountForSpawn(adapterId, next.id, now, {
+    let prepared = await prepareFailoverAccount(adapterId, next.id, now, {
       allowCoolingProbe: probe,
     });
     if (!prepared.ok) {
@@ -539,7 +568,7 @@ async function performSwitch(req: SwitchRequest): Promise<void> {
         if (next.adapterId === 'claude') {
           await healClaudeSecondaryBeforePin(next.id, now);
         }
-        prepared = prepareAccountForSpawn(adapterId, next.id, now);
+        prepared = await prepareFailoverAccount(adapterId, next.id, now);
         if (!prepared.ok) {
           prepareError = prepared.error;
           next = null;
@@ -555,7 +584,7 @@ async function performSwitch(req: SwitchRequest): Promise<void> {
   if (!next) {
     const adopted = adoptNativeAccountForFailover(adapterId, req.excludeId);
     if (adopted) {
-      const prepared = prepareAccountForSpawn(adapterId, adopted.id, now);
+      const prepared = await prepareFailoverAccount(adapterId, adopted.id, now);
       if (prepared.ok) {
         next = adopted;
         probe = false;

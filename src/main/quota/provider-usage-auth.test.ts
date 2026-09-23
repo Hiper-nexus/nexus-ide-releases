@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   fileSubscriptionAuthEnv: vi.fn(),
   codexCliUsage: vi.fn(),
   verifiedNativeClaudeToken: vi.fn(async () => null as string | null),
+  probeClaudeCredentialIdentity: vi.fn<() => Promise<'match' | 'mismatch' | 'auth-expired' | 'unavailable'>>(async () => 'match'),
 }));
 
 vi.mock('../persistence/secrets-store', () => ({
@@ -35,7 +36,10 @@ vi.mock('../persistence/account-store', () => ({
   claudeOAuthAccessToken: mocks.claudeOAuthAccessToken,
 }));
 vi.mock('./codex-cli-usage', () => ({ probeCodexCliUsage: mocks.codexCliUsage }));
-vi.mock('./claude-native-account', () => ({ resolveVerifiedNativeClaudeToken: mocks.verifiedNativeClaudeToken }));
+vi.mock('./claude-native-account', () => ({
+  resolveVerifiedNativeClaudeToken: mocks.verifiedNativeClaudeToken,
+  probeClaudeCredentialIdentity: mocks.probeClaudeCredentialIdentity,
+}));
 
 vi.mock('../adapters/launcher-provider-manager', () => ({
   loadLauncherProviderKey: mocks.loadLauncherProviderKey,
@@ -56,6 +60,7 @@ import {
 const tempHomes: string[] = [];
 
 beforeEach(() => {
+  mocks.probeClaudeCredentialIdentity.mockReset().mockResolvedValue('match');
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-quota-isolated-'));
   tempHomes.push(home);
   vi.spyOn(os, 'homedir').mockReturnValue(home);
@@ -78,8 +83,14 @@ afterEach(() => {
 });
 
 describe('resolveClaudeToken boot safety', () => {
+  it('does not expose a pinned OAuth token before the account-owned identity probe', async () => {
+    mocks.getAccount.mockReturnValue({ adapterId: 'claude', email: 'first@example.test' });
+    mocks.getSecret.mockReturnValue(credentialBlob('second-account-token'));
+    mocks.probeClaudeCredentialIdentity.mockResolvedValue('mismatch');
+    expect(await resolveClaudeToken('first-account')).toBeNull();
+  });
   it('resolves pinned vault account token directly', async () => {
-    mocks.getAccount.mockReturnValue({ adapterId: 'claude' });
+    mocks.getAccount.mockReturnValue({ adapterId: 'claude', email: 'owner@example.test' });
     mocks.getSecret.mockImplementation((key) => {
       if (key === 'acctcred:claude-account') return credentialBlob('cached-account-token');
       return null;
@@ -91,13 +102,23 @@ describe('resolveClaudeToken boot safety', () => {
   });
 
   it('fails closed on a missing account secret without entering Keychain', async () => {
-    mocks.getAccount.mockReturnValue({ adapterId: 'claude' });
+    mocks.getAccount.mockReturnValue({ adapterId: 'claude', email: 'owner@example.test' });
     mocks.getSecret.mockReturnValue(null);
 
     expect(await resolveClaudeToken('cold-account')).toBeNull();
     expect(mocks.getSecret).toHaveBeenCalledWith('acctcred:cold-account');
     expect(mocks.claudeOAuthAccessToken).not.toHaveBeenCalled();
     expect(mocks.nativeCredential).not.toHaveBeenCalled();
+  });
+
+  it('does not rotate a saved Claude refresh token from the quota resolver', async () => {
+    mocks.getAccount.mockReturnValue({ adapterId: 'claude', email: 'owner@example.test' });
+    mocks.getSecret.mockReturnValue(JSON.stringify({ claudeAiOauth: {
+      accessToken: 'expired', refreshToken: 'refresh-only', expiresAt: 1,
+    } }));
+    expect(await resolveClaudeToken('saved-account')).toBeNull();
+    expect(mocks.setSecret).not.toHaveBeenCalled();
+    expect(mocks.verifiedNativeClaudeToken).not.toHaveBeenCalled();
   });
 
   it('prefers the unpinned file-backed token without probing Keychain', async () => {
@@ -118,14 +139,13 @@ describe('resolveClaudeToken boot safety', () => {
 });
 
 describe('multi-account credential scoping', () => {
-  it('recovers an expired managed Claude reading only from a server-verified native identity', async () => {
+  it('does not borrow the native Claude credential for an expired managed account', async () => {
     mocks.getAccount.mockReturnValue({ adapterId: 'claude', email: 'owner@example.test' });
     mocks.hasManagedClaudeAuth.mockReturnValue(true);
     mocks.readManagedClaudeAuthAsync.mockResolvedValue(JSON.stringify({ claudeAiOauth: { accessToken: 'expired', expiresAt: 1 } }));
     mocks.verifiedNativeClaudeToken.mockResolvedValueOnce('verified-native');
-    expect(await resolveClaudeToken('managed-owner')).toBe('verified-native');
-    mocks.verifiedNativeClaudeToken.mockResolvedValueOnce(null);
-    expect(await resolveClaudeToken('managed-owner')).toBe('expired');
+    expect(await resolveClaudeToken('managed-owner')).toBeNull();
+    expect(mocks.verifiedNativeClaudeToken).not.toHaveBeenCalled();
   });
   it('only runs the saved-account Codex CLI when a durable matching home was prepared', async () => {
     mocks.getAccount.mockReturnValue({ id: 'acct-a', adapterId: 'codex', mode: 'subscription' });
@@ -187,7 +207,7 @@ describe('multi-account credential scoping', () => {
   });
 
   it('reads managed Claude auth without becoming a second refresh actor', async () => {
-    mocks.getAccount.mockReturnValue({ adapterId: 'claude' });
+    mocks.getAccount.mockReturnValue({ adapterId: 'claude', email: 'owner@example.test' });
     mocks.hasManagedClaudeAuth.mockReturnValue(true);
     mocks.readManagedClaudeAuthAsync.mockResolvedValue(credentialBlob('scoped-token'));
     mocks.getSecret.mockReturnValue(credentialBlob('stale-vault-token'));

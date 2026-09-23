@@ -6,23 +6,33 @@ import type { QuotaWindow } from '../../shared/quota-types';
 
 const mocks = vi.hoisted(() => ({
   getAccount: vi.fn(),
+  ensureFreshClaudeSubscription: vi.fn(async () => false),
   getSecret: vi.fn<(key: string) => string | null>(),
   setSecret: vi.fn(),
   hasManagedClaudeAuth: vi.fn(() => false),
   managedClaudeAuthHasCredential: vi.fn(() => false),
   managedClaudeAuthDirectory: vi.fn((id: string) => `/managed/${id}/auth`),
   materializeManagedClaudeAuth: vi.fn(),
-  readManagedClaudeAuth: vi.fn(() => null),
+  readManagedClaudeAuth: vi.fn<() => string | null>(() => null),
+  readManagedClaudeAuthAsync: vi.fn(async () => null as string | null),
   probeClaudeCliUsage: vi.fn(),
+  probeClaudeOauthUsage: vi.fn(),
+  readNativeOAuthCredential: vi.fn(async () => null as string | null),
   claudeBlobIsExpiredUnhealable: vi.fn(() => false),
   claudeBlobNeedsRefresh: vi.fn<
     (blob: string, now: number) => { refreshToken: string } | null
   >(() => null),
   refreshClaudeOauthBlobDetailed: vi.fn(),
+  probeClaudeCredentialIdentity: vi.fn<(
+    blob: string | null,
+    email?: string,
+    options?: { expectedAccountUuid?: string; now?: number },
+  ) => Promise<'match' | 'mismatch' | 'auth-expired' | 'unavailable'>>(async () => 'match'),
 }));
 
 vi.mock('../persistence/account-store', () => ({
   getAccount: mocks.getAccount,
+  ensureFreshClaudeSubscription: mocks.ensureFreshClaudeSubscription,
 }));
 
 vi.mock('../persistence/secrets-store', () => ({
@@ -37,11 +47,17 @@ vi.mock('../adapters/managed-claude-auth', async (importOriginal) => ({
   managedClaudeAuthDirectory: mocks.managedClaudeAuthDirectory,
   materializeManagedClaudeAuth: mocks.materializeManagedClaudeAuth,
   readManagedClaudeAuth: mocks.readManagedClaudeAuth,
+  readManagedClaudeAuthAsync: mocks.readManagedClaudeAuthAsync,
 }));
 
 vi.mock('./claude-oauth-usage', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   probeClaudeCliUsage: mocks.probeClaudeCliUsage,
+  probeClaudeOauthUsage: mocks.probeClaudeOauthUsage,
+}));
+
+vi.mock('../adapters/native-oauth-keychain', () => ({
+  readNativeOAuthCredential: mocks.readNativeOAuthCredential,
 }));
 
 vi.mock('./claude-oauth-refresh', async (importOriginal) => ({
@@ -51,9 +67,15 @@ vi.mock('./claude-oauth-refresh', async (importOriginal) => ({
   refreshClaudeOauthBlobDetailed: mocks.refreshClaudeOauthBlobDetailed,
 }));
 
+vi.mock('./claude-native-account', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  probeClaudeCredentialIdentity: mocks.probeClaudeCredentialIdentity,
+}));
+
 import {
   CLAUDE_USAGE_CACHE_FRESH_MS,
   clearClaudeConfigSnapshotCache,
+  claudeProfileKeychainService,
   discoverClaudeProfiles,
   fetchClaudeAccountUsageWindows,
   parseClaudeCachedUtilization,
@@ -79,6 +101,10 @@ function cliWindow(label: string, ratio: number): QuotaWindow {
     source: 'provider-api',
     confidence: 'medium',
   };
+}
+
+function credentialBlob(token: string): string {
+  return JSON.stringify({ claudeAiOauth: { accessToken: token, expiresAt: NOW + 60_000 } });
 }
 
 function writeClaudeJson(
@@ -120,6 +146,7 @@ function usagePayload(percent: number, fetchedAtMs: number) {
 beforeEach(() => {
   clearClaudeConfigSnapshotCache();
   mocks.getAccount.mockReset();
+  mocks.ensureFreshClaudeSubscription.mockReset().mockResolvedValue(false);
   mocks.getSecret.mockReset().mockReturnValue(null);
   mocks.hasManagedClaudeAuth.mockReset().mockReturnValue(false);
   mocks.managedClaudeAuthHasCredential.mockReset().mockReturnValue(false);
@@ -127,17 +154,24 @@ beforeEach(() => {
     (id: string) => `/managed/${id}/auth`,
   );
   mocks.materializeManagedClaudeAuth.mockReset();
-  mocks.readManagedClaudeAuth.mockReset().mockReturnValue(null);
+  mocks.readManagedClaudeAuth.mockReset().mockReturnValue(credentialBlob('scoped-file-token'));
+  mocks.readManagedClaudeAuthAsync.mockReset().mockResolvedValue(credentialBlob('scoped-token'));
+  mocks.readNativeOAuthCredential.mockReset().mockResolvedValue(credentialBlob('profile-token'));
   mocks.setSecret.mockReset();
   mocks.probeClaudeCliUsage.mockReset().mockResolvedValue({
     windows: null,
     failure: 'unavailable',
+  });
+  mocks.probeClaudeOauthUsage.mockReset().mockImplementation(async () => {
+    const last = mocks.probeClaudeCliUsage.mock.results.at(-1);
+    return { windows: last ? (await last.value).windows : null };
   });
   mocks.claudeBlobIsExpiredUnhealable.mockReset().mockReturnValue(false);
   mocks.claudeBlobNeedsRefresh.mockReset().mockReturnValue(null);
   mocks.refreshClaudeOauthBlobDetailed.mockReset().mockResolvedValue({
     outcome: 'error',
   });
+  mocks.probeClaudeCredentialIdentity.mockReset().mockResolvedValue('match');
 });
 
 /** Atalho: configura a sonda CLI para devolver estas janelas. */
@@ -275,6 +309,108 @@ describe('fetchClaudeAccountUsageWindows', () => {
     expect(mocks.materializeManagedClaudeAuth).not.toHaveBeenCalled();
   });
 
+  it('does not open Keychain for every quota poll when the scoped file proves the account', async () => {
+    mocks.getAccount.mockReturnValue({ adapterId: 'claude', email: 'owner@example.test' });
+    mocks.managedClaudeAuthHasCredential.mockReturnValue(true);
+    mocks.readManagedClaudeAuth.mockReturnValue(credentialBlob('owned-file-token'));
+    cliReturns([cliWindow('Semanal', 0.06)]);
+    mocks.probeClaudeOauthUsage.mockResolvedValue({ windows: [cliWindow('Semanal', 0.06)] });
+    const result = await fetchClaudeAccountUsageWindows('owner', { now: NOW });
+    expect(result.windows?.[0]?.usedRatio).toBe(0.06);
+    expect(mocks.readManagedClaudeAuthAsync).not.toHaveBeenCalled();
+  });
+
+  it('does not publish file usage when the live scoped Keychain belongs to another account', async () => {
+    mocks.getAccount.mockReturnValue({ adapterId: 'claude', email: 'owner@example.test' });
+    mocks.managedClaudeAuthHasCredential.mockReturnValue(true);
+    mocks.readManagedClaudeAuth.mockReturnValue(credentialBlob('owned-file-token'));
+    mocks.readNativeOAuthCredential.mockResolvedValue(credentialBlob('other-keychain-token'));
+    mocks.probeClaudeCredentialIdentity.mockImplementation(async (blob: string | null) =>
+      blob?.includes('other-keychain-token') ? 'mismatch' : 'match');
+    mocks.probeClaudeOauthUsage.mockResolvedValue({ windows: [cliWindow('Semanal', 0.06)] });
+    cliReturns([cliWindow('Semanal', 0.86)]);
+
+    const result = await fetchClaudeAccountUsageWindows('owner', {
+      now: NOW, keychainProbe: () => true,
+    });
+    expect(result).toEqual({ windows: null, hint: 'identity-mismatch' });
+    expect(mocks.probeClaudeOauthUsage).not.toHaveBeenCalled();
+  });
+
+  it('does not turn a CLI failure into re-login when the owned usage API is temporarily unavailable', async () => {
+    mocks.getAccount.mockReturnValue({ adapterId: 'claude', email: 'owner@example.test' });
+    mocks.managedClaudeAuthHasCredential.mockReturnValue(true);
+    mocks.readManagedClaudeAuth.mockReturnValue(credentialBlob('owned-file-token'));
+    mocks.probeClaudeCliUsage.mockResolvedValue({ windows: null, failure: 'auth-expired' });
+    mocks.probeClaudeOauthUsage.mockResolvedValue({ windows: null, failure: 'unavailable' });
+    expect(await fetchClaudeAccountUsageWindows('owner', { now: NOW }))
+      .toEqual({ windows: null, hint: 'unavailable' });
+  });
+
+  it('rejects quota from a managed credential owned by the other Claude account', async () => {
+    mocks.getAccount.mockReturnValue({ adapterId: 'claude', email: 'owner@example.test' });
+    mocks.managedClaudeAuthHasCredential.mockReturnValue(true);
+    mocks.readManagedClaudeAuth.mockReturnValue(JSON.stringify({
+      claudeAiOauth: { accessToken: 'other-account', expiresAt: NOW + 60_000 },
+    }));
+    mocks.probeClaudeCredentialIdentity.mockResolvedValue('mismatch');
+    cliReturns([cliWindow('Semanal', 0.86)]);
+
+    const result = await fetchClaudeAccountUsageWindows('owner', { now: NOW });
+    expect(result).toEqual({ windows: null, hint: 'identity-mismatch' });
+    expect(mocks.probeClaudeCredentialIdentity).toHaveBeenCalledWith(
+      expect.any(String), 'owner@example.test', expect.objectContaining({ now: NOW }),
+    );
+  });
+
+  it('uses the live scoped credential and its own API usage, not a stale file or CLI output', async () => {
+    mocks.getAccount.mockReturnValue({ adapterId: 'claude', email: 'owner@example.test' });
+    mocks.managedClaudeAuthHasCredential.mockReturnValue(true);
+    mocks.readManagedClaudeAuth.mockReturnValue('stale-file-credential');
+    mocks.readNativeOAuthCredential.mockResolvedValue(credentialBlob('live-scoped-credential'));
+    cliReturns([cliWindow('Semanal', 0.86)]);
+    mocks.probeClaudeOauthUsage.mockResolvedValue({ windows: [cliWindow('Semanal', 0.06)] });
+
+    const result = await fetchClaudeAccountUsageWindows('owner', { now: NOW, keychainProbe: () => true });
+    expect(mocks.probeClaudeCredentialIdentity).toHaveBeenCalledWith(
+      credentialBlob('live-scoped-credential'), 'owner@example.test', expect.objectContaining({ now: NOW }),
+    );
+    expect(mocks.probeClaudeOauthUsage).toHaveBeenCalledWith(
+      expect.any(String), expect.objectContaining({ now: NOW }),
+    );
+    expect(result.windows?.[0]?.usedRatio).toBe(0.06);
+  });
+
+  it('keeps managed quota unknown if the owned token usage endpoint is unavailable', async () => {
+    mocks.getAccount.mockReturnValue({ adapterId: 'claude', email: 'owner@example.test' });
+    mocks.managedClaudeAuthHasCredential.mockReturnValue(true);
+    mocks.readManagedClaudeAuthAsync.mockResolvedValue(JSON.stringify({
+      claudeAiOauth: { accessToken: 'owned-token', expiresAt: NOW + 60_000 },
+    }));
+    cliReturns([cliWindow('Semanal', 0.86)]);
+    mocks.probeClaudeOauthUsage.mockResolvedValue({ windows: null, failure: 'unavailable' });
+
+    const result = await fetchClaudeAccountUsageWindows('owner', { now: NOW });
+    expect(result).toEqual({ windows: null, hint: 'unavailable' });
+  });
+
+  it('never becomes a second refresh actor for a failed managed scope', async () => {
+    mocks.getAccount.mockReturnValue({ adapterId: 'claude', email: 'owner@example.test' });
+    mocks.managedClaudeAuthHasCredential.mockReturnValue(true);
+    mocks.readManagedClaudeAuth.mockReturnValue(credentialBlob('expired-scoped'));
+    mocks.probeClaudeCliUsage.mockResolvedValue({ windows: null, failure: 'auth-expired' });
+    mocks.claudeBlobNeedsRefresh.mockReturnValue({ refreshToken: 'refresh' });
+    mocks.refreshClaudeOauthBlobDetailed.mockResolvedValue({
+      outcome: 'refreshed', blob: credentialBlob('other-account'),
+    });
+    mocks.probeClaudeCredentialIdentity.mockResolvedValue('mismatch');
+    const result = await fetchClaudeAccountUsageWindows('owner', { now: NOW });
+    expect(result).toEqual({ windows: null, hint: 'identity-mismatch' });
+    expect(mocks.materializeManagedClaudeAuth).not.toHaveBeenCalled();
+    expect(mocks.setSecret).not.toHaveBeenCalled();
+    expect(mocks.refreshClaudeOauthBlobDetailed).not.toHaveBeenCalled();
+  });
+
   it('empty managed scope never runs the scoped CLI (cross-account leak)', async () => {
     // Campo 21/09: o diretório existia mas estava vazio. O `claude` caía na
     // credencial NATIVA e esta linha herdava o consumo de OUTRA conta.
@@ -291,13 +427,15 @@ describe('fetchClaudeAccountUsageWindows', () => {
     expect(r.hint).toBe('no-credential');
   });
 
-  it('email-matched default profile serves the CLI-written cache without spawning', async () => {
+  it('does not report a CLI-written cache as a fresh reading when live usage is unavailable', async () => {
     const home = makeHome();
     fs.mkdirSync(path.join(home, '.claude'));
     writeClaudeJson(path.join(home, '.claude.json'), {
       oauthAccount: { emailAddress: 'User@X.com', accountUuid: 'uuid-1' },
       cachedUsageUtilization: usagePayload(73, NOW - 60_000),
     });
+    fs.writeFileSync(path.join(home, '.claude', '.credentials.json'), credentialBlob('owner-token'));
+    mocks.probeClaudeOauthUsage.mockResolvedValue({ windows: null, failure: 'unavailable' });
     mocks.getAccount.mockReturnValue({
       adapterId: 'claude',
       email: 'user@x.com',
@@ -307,9 +445,72 @@ describe('fetchClaudeAccountUsageWindows', () => {
       now: NOW,
       home,
     });
-    expect(r.windows?.find((x) => x.label === 'Semanal')?.usedRatio).toBe(0.73);
+    expect(r).toEqual({ windows: null, hint: 'unavailable' });
     expect(mocks.probeClaudeCliUsage).not.toHaveBeenCalled();
     expect(mocks.materializeManagedClaudeAuth).not.toHaveBeenCalled();
+  });
+
+  it('rejects a profile cache when the current credential belongs to another account', async () => {
+    const home = makeHome();
+    fs.mkdirSync(path.join(home, '.claude'));
+    writeClaudeJson(path.join(home, '.claude.json'), {
+      oauthAccount: { emailAddress: 'owner@example.test', accountUuid: 'uuid-1' },
+      cachedUsageUtilization: usagePayload(86, NOW),
+    });
+    mocks.getAccount.mockReturnValue({ adapterId: 'claude', email: 'owner@example.test' });
+    mocks.readNativeOAuthCredential.mockResolvedValue(credentialBlob('other-account'));
+    mocks.probeClaudeCredentialIdentity.mockResolvedValue('mismatch');
+
+    const result = await fetchClaudeAccountUsageWindows('owner', { now: NOW, home });
+    expect(result.windows).toBeNull();
+    expect(result.hint).toBe('identity-mismatch');
+    expect(mocks.probeClaudeCliUsage).not.toHaveBeenCalled();
+  });
+
+  it('does not fall back to a profile file when the effective Keychain item is unreadable', async () => {
+    const home = makeHome();
+    fs.mkdirSync(path.join(home, '.claude'));
+    writeClaudeJson(path.join(home, '.claude.json'), {
+      oauthAccount: { emailAddress: 'owner@example.test', accountUuid: 'uuid-1' },
+      cachedUsageUtilization: usagePayload(86, NOW),
+    });
+    fs.writeFileSync(path.join(home, '.claude', '.credentials.json'), credentialBlob('owned-file'));
+    mocks.getAccount.mockReturnValue({ adapterId: 'claude', email: 'owner@example.test' });
+    mocks.readNativeOAuthCredential.mockRejectedValue(new Error('Keychain denied'));
+    mocks.probeClaudeOauthUsage.mockResolvedValue({ windows: [cliWindow('Semanal', 0.86)] });
+    const result = await fetchClaudeAccountUsageWindows('owner', {
+      now: NOW, home, keychainProbe: () => true,
+    });
+    expect(result).toEqual({ windows: null, hint: 'unavailable' });
+    expect(mocks.probeClaudeOauthUsage).not.toHaveBeenCalled();
+  });
+
+  it('uses live verified usage when only stale profile metadata has an old UUID', async () => {
+    const home = makeHome();
+    fs.mkdirSync(path.join(home, '.claude'));
+    writeClaudeJson(path.join(home, '.claude.json'), {
+      oauthAccount: { emailAddress: 'owner@example.test', accountUuid: 'old-uuid' },
+      cachedUsageUtilization: usagePayload(86, NOW),
+    });
+    mocks.getAccount.mockReturnValue({ adapterId: 'claude', email: 'owner@example.test' });
+    mocks.probeClaudeCredentialIdentity.mockImplementation(async (_blob, _email, options) =>
+      options?.expectedAccountUuid ? 'mismatch' : 'match');
+    mocks.probeClaudeOauthUsage.mockResolvedValue({ windows: [cliWindow('Semanal', 0.06)] });
+    const result = await fetchClaudeAccountUsageWindows('owner', { now: NOW, home });
+    expect(result.windows?.[0]?.usedRatio).toBe(0.06);
+  });
+
+  it('does not show cached profile percentages after the usage API revokes auth', async () => {
+    const home = makeHome();
+    fs.mkdirSync(path.join(home, '.claude'));
+    writeClaudeJson(path.join(home, '.claude.json'), {
+      oauthAccount: { emailAddress: 'owner@example.test', accountUuid: 'uuid-1' },
+      cachedUsageUtilization: usagePayload(86, NOW),
+    });
+    mocks.getAccount.mockReturnValue({ adapterId: 'claude', email: 'owner@example.test' });
+    mocks.probeClaudeOauthUsage.mockResolvedValue({ windows: null, failure: 'auth-expired' });
+    const result = await fetchClaudeAccountUsageWindows('owner', { now: NOW, home });
+    expect(result).toEqual({ windows: null, hint: 'auth-expired' });
   });
 
   it.each(['another-user', undefined])('rejects cached usage with unproved account UUID %s', async (cachedUuid) => {
@@ -320,7 +521,7 @@ describe('fetchClaudeAccountUsageWindows', () => {
       cachedUsageUtilization: { ...usagePayload(73, NOW), accountUuid: cachedUuid },
     });
     mocks.getAccount.mockReturnValue({ adapterId: 'claude', email: 'user@x.com' });
-    cliReturns([cliWindow('Semanal', 0.2)]);
+    mocks.probeClaudeOauthUsage.mockResolvedValue({ windows: [cliWindow('Semanal', 0.2)] });
     const result = await fetchClaudeAccountUsageWindows('acct-1', { now: NOW, home });
     expect(result.windows?.[0]?.usedRatio).toBe(0.2);
   });
@@ -337,7 +538,7 @@ describe('fetchClaudeAccountUsageWindows', () => {
     expect(second.windows?.[0]?.usedRatio).toBe(0.7);
   });
 
-  it('stale profile cache falls through to a native CLI run (no env)', async () => {
+  it('stale profile cache falls through to the verified token usage API', async () => {
     const home = makeHome();
     fs.mkdirSync(path.join(home, '.claude'));
     writeClaudeJson(path.join(home, '.claude.json'), {
@@ -351,20 +552,20 @@ describe('fetchClaudeAccountUsageWindows', () => {
       adapterId: 'claude',
       email: 'user@x.com',
     });
-    cliReturns([cliWindow('Semanal', 0.8)]);
+    mocks.probeClaudeOauthUsage.mockResolvedValue({ windows: [cliWindow('Semanal', 0.8)] });
 
     const r = await fetchClaudeAccountUsageWindows('acct-1', {
       now: NOW,
       home,
+      keychainProbe: () => true,
     });
     expect(r.windows?.[0]?.usedRatio).toBe(0.8);
-    expect(mocks.probeClaudeCliUsage).toHaveBeenCalledWith(
-      expect.objectContaining({ env: undefined }),
-    );
+    expect(mocks.probeClaudeCliUsage).not.toHaveBeenCalled();
+    expect(mocks.probeClaudeOauthUsage).toHaveBeenCalledWith('profile-token', expect.objectContaining({ now: NOW }));
     expect(mocks.materializeManagedClaudeAuth).not.toHaveBeenCalled();
   });
 
-  it('named profile match runs the CLI with CLAUDE_CONFIG_DIR', async () => {
+  it('named profile uses only the verified credential usage API', async () => {
     const home = makeHome();
     fs.mkdirSync(path.join(home, '.claude'));
     writeClaudeJson(path.join(home, '.claude.json'), {
@@ -382,17 +583,18 @@ describe('fetchClaudeAccountUsageWindows', () => {
       adapterId: 'claude',
       email: 'work@x.com',
     });
-    cliReturns([cliWindow('Semanal', 0.2)]);
+    mocks.probeClaudeOauthUsage.mockResolvedValue({ windows: [cliWindow('Semanal', 0.2)] });
 
     const r = await fetchClaudeAccountUsageWindows('acct-1', {
       now: NOW,
       home,
+      keychainProbe: () => true,
     });
     expect(r.windows?.[0]?.usedRatio).toBe(0.2);
-    const call = mocks.probeClaudeCliUsage.mock.calls[0]![0] as {
-      env: Record<string, string>;
-    };
-    expect(call.env.CLAUDE_CONFIG_DIR).toBe(work);
+    expect(mocks.probeClaudeCliUsage).not.toHaveBeenCalled();
+    expect(mocks.readNativeOAuthCredential).toHaveBeenCalledWith(
+      claudeProfileKeychainService(work), undefined, { bypassCache: true },
+    );
   });
 
   it('vault-only account materializes managed auth then probes scoped CLI', async () => {
@@ -428,6 +630,28 @@ describe('fetchClaudeAccountUsageWindows', () => {
       env: Record<string, string>;
     };
     expect(call.env[CLAUDE_MANAGED_AUTH_ENV]).toBe('/managed/acct-1/auth');
+  });
+
+  it('does not materialize a vault credential owned by another Claude account', async () => {
+    mocks.getAccount.mockReturnValue({ adapterId: 'claude', email: 'owner@example.test' });
+    mocks.getSecret.mockReturnValue(credentialBlob('other-account'));
+    mocks.probeClaudeCredentialIdentity.mockResolvedValue('mismatch');
+    const result = await fetchClaudeAccountUsageWindows('owner', { now: NOW });
+    expect(result).toEqual({ windows: null, hint: 'identity-mismatch' });
+    expect(mocks.materializeManagedClaudeAuth).not.toHaveBeenCalled();
+    expect(mocks.probeClaudeCliUsage).not.toHaveBeenCalled();
+  });
+
+  it('delegates an expired vault grant to the account freshness owner before materializing', async () => {
+    mocks.getAccount.mockReturnValue({ adapterId: 'claude', email: 'owner@example.test' });
+    mocks.getSecret.mockReturnValue(credentialBlob('expired-vault'));
+    mocks.probeClaudeCredentialIdentity.mockResolvedValue('auth-expired');
+    mocks.claudeBlobNeedsRefresh.mockReturnValue({ refreshToken: 'refresh' });
+    const result = await fetchClaudeAccountUsageWindows('owner', { now: NOW });
+    expect(mocks.ensureFreshClaudeSubscription).toHaveBeenCalledWith('owner', NOW);
+    expect(mocks.materializeManagedClaudeAuth).not.toHaveBeenCalled();
+    expect(mocks.probeClaudeCliUsage).not.toHaveBeenCalled();
+    expect(result).toEqual({ windows: null, hint: 'unavailable' });
   });
 
   it('expired-unhealable vault blob → auth-expired, nunca materializa', async () => {
@@ -500,7 +724,7 @@ describe('fetchClaudeAccountUsageWindows', () => {
     );
   });
 
-  it('dead grant: refresh inválido na cura do vault → auth-expired', async () => {
+  it('does not turn a CLI auth failure into an expired owned grant without provider proof', async () => {
     const home = makeHome();
     fs.mkdirSync(path.join(home, '.claude'));
     writeClaudeJson(path.join(home, '.claude.json'), {});
@@ -512,7 +736,7 @@ describe('fetchClaudeAccountUsageWindows', () => {
     );
     mocks.probeClaudeCliUsage.mockResolvedValue({
       windows: null,
-      failure: 'unavailable',
+      failure: 'auth-expired',
     });
     mocks.materializeManagedClaudeAuth.mockReturnValue({
       directory: '/managed/acct-1/auth',
@@ -529,10 +753,11 @@ describe('fetchClaudeAccountUsageWindows', () => {
       home,
     });
     expect(r.windows).toBeNull();
-    expect(r.hint).toBe('auth-expired');
+    expect(r.hint).toBe('unavailable');
+    expect(mocks.refreshClaudeOauthBlobDetailed).not.toHaveBeenCalled();
   });
 
-  it('cura: refresh válido grava escopo+vault e a sonda retorna janelas', async () => {
+  it('uses a CLI-refreshed scoped token without an independent HTTP refresh', async () => {
     const home = makeHome();
     fs.mkdirSync(path.join(home, '.claude'));
     writeClaudeJson(path.join(home, '.claude.json'), {});
@@ -546,9 +771,8 @@ describe('fetchClaudeAccountUsageWindows', () => {
       blob: 'slim',
       env: {},
     });
-    mocks.probeClaudeCliUsage
-      .mockResolvedValueOnce({ windows: null, failure: 'unavailable' })
-      .mockResolvedValueOnce({ windows: [cliWindow('Semanal', 0.3)] });
+    mocks.probeClaudeCliUsage.mockResolvedValue({ windows: [cliWindow('Semanal', 0.3)] });
+    mocks.probeClaudeOauthUsage.mockResolvedValue({ windows: [cliWindow('Semanal', 0.3)] });
     mocks.claudeBlobNeedsRefresh.mockReturnValue({ refreshToken: 'rt' });
     mocks.refreshClaudeOauthBlobDetailed.mockResolvedValue({
       outcome: 'refreshed',
@@ -561,10 +785,8 @@ describe('fetchClaudeAccountUsageWindows', () => {
     });
     expect(r.windows?.[0]?.usedRatio).toBe(0.3);
     // O blob renovado volta ao escopo gerenciado e ao vault (linhagem coerente).
-    expect(mocks.materializeManagedClaudeAuth).toHaveBeenLastCalledWith(
-      'acct-1',
-      'fresh-blob',
-    );
-    expect(mocks.setSecret).toHaveBeenCalledWith('acctcred:acct-1', 'fresh-blob');
+    expect(mocks.materializeManagedClaudeAuth).toHaveBeenLastCalledWith('acct-1', blob);
+    expect(mocks.refreshClaudeOauthBlobDetailed).not.toHaveBeenCalled();
+    expect(mocks.setSecret).not.toHaveBeenCalled();
   });
 });

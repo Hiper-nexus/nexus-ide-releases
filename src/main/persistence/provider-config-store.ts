@@ -126,6 +126,7 @@ import {
   listAccounts,
   pickAvailableForFailover,
   prepareAccountForSpawn,
+  verifyManagedClaudeAccountForSpawn,
 } from './account-store';
 import type { Account } from '../../shared/account-types';
 import {
@@ -671,6 +672,8 @@ function buildProviderSpawnOverrides(
   options: {
     decision?: AuthDecision;
     nativeAuthAttempt?: boolean;
+    selectedChoice?: ReturnType<typeof pickUnpinnedAccountWithHeadroom>;
+    verifiedClaudeBlob?: string;
   } = {},
 ): ProviderSpawnOverrides {
   const cfg = configFor(adapterId);
@@ -682,11 +685,8 @@ function buildProviderSpawnOverrides(
     );
   // A conta do pane e o recibo de QUEM decidiu (pinada, regra de folga,
   // ativa, fallback, nativa ou legada) — rótulos sempre mascarados.
-  const { account, receipt } = resolveSpawnAccountChoice(
-    adapterId,
-    preparedAccount,
-    options,
-    credentiallessOpenCode,
+  const { account, receipt } = options.selectedChoice ?? resolveSpawnAccountChoice(
+    adapterId, preparedAccount, options, credentiallessOpenCode,
   );
   if (adapterId === 'mimo-code' && account?.mode === 'subscription') {
     const blob = getSecret(`acctcred:${account.id}`);
@@ -751,6 +751,7 @@ function buildProviderSpawnOverrides(
       if (adapterId === 'claude' && !preparedAccount) {
         const selected = prepareAccountForSpawn(adapterId, account.id, undefined, {
           isolatedHome: perSpawn.isolatedHome === true,
+          ...(options.verifiedClaudeBlob ? { expectedClaudeBlob: options.verifiedClaudeBlob } : {}),
         });
         if (!selected.ok) throw new Error(selected.error);
         return {
@@ -874,6 +875,8 @@ function prepareProviderSpawnWithDecision(
   adapterId: string,
   perSpawn: ProviderPerSpawn,
   spawnDecision: AuthDecision | undefined,
+  selectedChoice?: ReturnType<typeof pickUnpinnedAccountWithHeadroom>,
+  verifiedClaudeBlob?: string,
 ): ProviderSpawnPreparation {
   const infrastructure = providerInfrastructureReadiness(adapterId);
   if (!infrastructure.ready) {
@@ -901,7 +904,8 @@ function prepareProviderSpawnWithDecision(
       adapterId,
       perSpawn.accountId,
       undefined,
-      { isolatedHome: perSpawn.isolatedHome === true },
+      { isolatedHome: perSpawn.isolatedHome === true,
+        ...(verifiedClaudeBlob ? { expectedClaudeBlob: verifiedClaudeBlob } : {}) },
     );
     if (!prepared.ok) return prepared;
     preparedAccount = prepared;
@@ -914,7 +918,7 @@ function prepareProviderSpawnWithDecision(
         adapterId,
         perSpawn,
         preparedAccount,
-        { decision: spawnDecision, nativeAuthAttempt },
+        { decision: spawnDecision, nativeAuthAttempt, selectedChoice, verifiedClaudeBlob },
       ),
     };
   } catch (err) {
@@ -1253,11 +1257,45 @@ export async function prepareProviderSpawnAuthoritative(
       };
     }
   }
-  return prepareProviderSpawnWithDecision(
+  // A synchronous prepare can write the chosen Claude credential into its
+  // managed auth store. Prove the account *before* crossing that boundary.
+  const selectedChoice = adapterId === 'claude' && !perSpawn.accountId &&
+    listAccounts('claude').length > 0
+    ? pickUnpinnedAccountWithHeadroom('claude')
+    : undefined;
+  const account = perSpawn.accountId
+    ? getAccount(perSpawn.accountId)
+    : selectedChoice?.account;
+  let verifiedClaudeBlob: string | undefined;
+  if (adapterId === 'claude' && account?.mode === 'subscription') {
+    const identity = await verifyManagedClaudeAccountForSpawn(account.id, (blob) => {
+      verifiedClaudeBlob = blob;
+    });
+    if (identity !== 'match') {
+      return { ok: false, error: identity === 'mismatch'
+        ? `A credencial de “${account.label}” pertence a outra conta Claude — entre novamente antes de abrir um pane.`
+        : identity === 'auth-expired'
+          ? `A sessão de “${account.label}” expirou — entre novamente antes de abrir um pane.`
+          : `Não foi possível verificar a identidade de “${account.label}” — tente novamente.` };
+    }
+    const current = getAccount(account.id);
+    if (!current || current.adapterId !== account.adapterId ||
+        current.mode !== account.mode ||
+        current.email?.trim().toLowerCase() !== account.email?.trim().toLowerCase()) {
+      return { ok: false, error: 'A conta Claude mudou durante a verificação — tente novamente.' };
+    }
+    if (!verifiedClaudeBlob) {
+      return { ok: false, error: 'Não foi possível fixar a credencial Claude verificada — tente novamente.' };
+    }
+  }
+  const prepared = prepareProviderSpawnWithDecision(
     adapterId,
     perSpawn,
     spawnDecision,
+    selectedChoice,
+    verifiedClaudeBlob,
   );
+  return prepared;
 }
 
 /** Backward-compatible strict accessor for non-IPC callers. */

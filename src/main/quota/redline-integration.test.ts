@@ -9,7 +9,7 @@ vi.mock('electron', () => ({
 }));
 
 import { QuotaService } from './quota-service';
-import { createRedlineSink } from './redline-sink';
+import { buildRedlineSnapshotFile, createRedlineSink } from './redline-sink';
 import { resolveRedlineSnapshotPath } from './redline-sink';
 import type { AccountInfo } from '../../shared/account-types';
 import type { ProviderSettingsInfo } from '../../shared/provider-settings-types';
@@ -50,16 +50,13 @@ describe('QuotaService publica o snapshot do Redline', () => {
             needsRelogin: false,
           } as AccountInfo,
         ],
-      resolveClaudeAccessToken: () => 'fixture-token-not-to-be-persisted',
-      fetchImpl: async () => ({
-        ok: true,
-        status: 200,
-        json: async () => ({
-          five_hour: { utilization: 42, resets_at: new Date(NOW + 3_600_000).toISOString() },
-          seven_day: { utilization: 11, resets_at: new Date(NOW + 5 * 86_400_000).toISOString() },
-        }),
-        text: async () => '',
-      }),
+      resolveClaudeAccessToken: () => { throw new Error('pinned token resolver must not run'); },
+      claudeAccountUsage: async () => ({ windows: [
+        { kind: 'hours', label: '5 Horas', usedRatio: 0.42, source: 'provider-api', confidence: 'high',
+          resetsAt: NOW + 3_600_000 },
+        { kind: 'weekly', label: 'Semanal', usedRatio: 0.11, source: 'provider-api', confidence: 'high',
+          resetsAt: NOW + 5 * 86_400_000 },
+      ] }),
       persistSnapshot: (snap, accounts) => sink.persist(snap, accounts),
     });
 
@@ -82,5 +79,19 @@ describe('QuotaService publica o snapshot do Redline', () => {
       sink.stop();
       svc.stop();
     }
+  });
+
+  it('never sends a mismatched Claude percentage to the Redline bar', () => {
+    const snap = { updatedAt: NOW, worstUsedRatio: 0.86, highUsageCount: 1,
+      unknownCount: 0, entries: [{
+        id: 'claude:a1', adapterId: 'claude', accountId: 'a1', label: 'Claude · A',
+        installed: true, onCooldown: true, readHint: 'identity-mismatch' as const,
+        windows: [{ kind: 'weekly' as const, label: 'Semanal', usedRatio: 0.86,
+          source: 'provider-api' as const, confidence: 'high' as const }], updatedAt: NOW,
+      }] };
+    const file = buildRedlineSnapshotFile(snap, [], NOW);
+    expect(file.entries[0]?.windows[0]?.usedRatio).toBeNull();
+    expect(file.statusBarEntryIds).toEqual([]);
+    expect(file.worstUsedRatio).toBeNull();
   });
 });

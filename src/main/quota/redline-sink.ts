@@ -46,11 +46,13 @@ export function buildRedlineSnapshotFile(
 ): RedlineSnapshotFile {
   const scored = scoreFleet(snap.entries, accounts, now);
   const entries = [...scored.entries].sort(compareEntriesByConsumption);
+  const ratios = entries.flatMap((entry) => entry.windows.map((window) => window.usedRatio))
+    .filter((ratio): ratio is number => ratio !== null);
   return {
     formatVersion: REDLINE_SNAPSHOT_FORMAT_VERSION,
     generatedBy: 'nexus',
     updatedAt: snap.updatedAt || now,
-    worstUsedRatio: snap.worstUsedRatio,
+    worstUsedRatio: ratios.length > 0 ? Math.max(...ratios) : null,
     entries,
     ranking: scored.ranking,
     statusBarEntryIds: selectRedlineStatusBarEntryIds(entries),

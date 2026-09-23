@@ -93,6 +93,8 @@ const workflowDeps = vi.hoisted(() => ({
 
 const providerDeps = vi.hoisted(() => ({
   prepareProviderSpawn: vi.fn(),
+  prepareProviderSpawnAuthoritative: vi.fn(),
+  acquireCliSpawnPermit: vi.fn(async (_adapterId: string): Promise<() => void> => () => {}),
   providerReadiness: vi.fn(() => ({ ready: true, reason: "ready" })),
   providerSpawnOverrides: vi.fn(() => ({
     binPath: "/usr/local/bin/claude",
@@ -230,6 +232,8 @@ vi.mock("../path-resolver", () => ({
 vi.mock("../persistence/provider-config-store", () => ({
   isProviderEnabled: () => true,
   prepareProviderSpawn: providerDeps.prepareProviderSpawn,
+  prepareProviderSpawnAuthoritative: providerDeps.prepareProviderSpawnAuthoritative,
+  acquireCliSpawnPermit: providerDeps.acquireCliSpawnPermit,
   providerReadiness: providerDeps.providerReadiness,
   providerSpawnOverrides: providerDeps.providerSpawnOverrides,
 }));
@@ -342,6 +346,10 @@ describe("registerPtyIpc account fail-fast", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     providerDeps.prepareProviderSpawn.mockReset();
+    providerDeps.prepareProviderSpawnAuthoritative.mockReset().mockImplementation(
+      async (adapterId: string, perSpawn: unknown) =>
+        providerDeps.prepareProviderSpawn(adapterId, perSpawn),
+    );
     ipcDeps.handlers.clear();
     authorityDeps.requireRendererWorkspaceScope.mockReturnValue(
       authorityDeps.scope,
@@ -387,7 +395,7 @@ describe("registerPtyIpc account fail-fast", () => {
     { mode: "governed" as const, isolatedHome: true },
   ])(
     "uses the exact main-persisted provider request for mission resume in $mode",
-    ({ mode, isolatedHome }) => {
+    async ({ mode, isolatedHome }) => {
       settingsDeps.getOrchSettings.mockReturnValue({
         intentFirstMissionRuntimeV1: true,
         squadCliPolicy: mode,
@@ -416,7 +424,7 @@ describe("registerPtyIpc account fail-fast", () => {
       authorityDeps.resolveCwdForScope.mockReturnValueOnce(persisted.cwd);
       const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
 
-      const result = handler?.(
+      const result = await handler?.(
         { sender: { id: 7 } },
         {
           kind: "cli-agent",
@@ -481,7 +489,7 @@ describe("registerPtyIpc account fail-fast", () => {
     },
   ])(
     "reseals the exact crashed orchestrator on $label",
-    ({ previousSeal, contextRevision, contractHash }) => {
+    async ({ previousSeal, contextRevision, contractHash }) => {
       providerDeps.prepareProviderSpawn.mockReturnValueOnce({
         ok: true,
         overrides: {},
@@ -514,7 +522,7 @@ describe("registerPtyIpc account fail-fast", () => {
       authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
       const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
 
-      const result = handler?.(
+      const result = await handler?.(
         { sender: { id: 7 } },
         {
           kind: "cli-agent",
@@ -605,7 +613,7 @@ describe("registerPtyIpc account fail-fast", () => {
     },
   );
 
-  it("rejects a legacy persisted worker without a revision seal", () => {
+  it("rejects a legacy persisted worker without a revision seal", async () => {
     providerDeps.prepareProviderSpawn.mockReturnValueOnce({ ok: true, overrides: {} });
     const persisted = {
       id: "mpane-worker",
@@ -623,7 +631,7 @@ describe("registerPtyIpc account fail-fast", () => {
     const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
     const sender = { id: 7 };
 
-    const result = handler?.(
+    const result = await handler?.(
       { sender },
       {
         kind: "cli-agent",
@@ -891,7 +899,7 @@ describe("registerPtyIpc account fail-fast", () => {
     });
   });
 
-  it("respawns a proven-dead persisted orchestrator fresh without a grant", () => {
+  it("respawns a proven-dead persisted orchestrator fresh without a grant", async () => {
     providerDeps.prepareProviderSpawn.mockReturnValueOnce({
       ok: true,
       overrides: {},
@@ -917,7 +925,7 @@ describe("registerPtyIpc account fail-fast", () => {
     authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
     const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
 
-    const result = handler?.(
+    const result = await handler?.(
       { sender: { id: 7 } },
       {
         kind: "cli-agent",
@@ -943,7 +951,7 @@ describe("registerPtyIpc account fail-fast", () => {
     expect(ptyDeps.spawnAgentSession).toHaveBeenCalled();
   });
 
-  it("forwards the fresh-context resumeMode when the dead provider session respawns fresh", () => {
+  it("forwards the fresh-context resumeMode when the dead provider session respawns fresh", async () => {
     providerDeps.prepareProviderSpawn.mockReturnValueOnce({
       ok: true,
       overrides: {},
@@ -973,7 +981,7 @@ describe("registerPtyIpc account fail-fast", () => {
     });
     const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
 
-    const result = handler?.(
+    const result = await handler?.(
       { sender: { id: 7 } },
       {
         kind: "cli-agent",
@@ -1010,7 +1018,7 @@ describe("registerPtyIpc account fail-fast", () => {
     );
   });
 
-  it("reattaches instead of fresh when the persisted pane session is alive", () => {
+  it("reattaches instead of fresh when the persisted pane session is alive", async () => {
     providerDeps.prepareProviderSpawn.mockReturnValueOnce({
       ok: true,
       overrides: { selectedAccountId: "account-main" },
@@ -1039,7 +1047,7 @@ describe("registerPtyIpc account fail-fast", () => {
     });
     const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
 
-    const result = handler?.(
+    const result = await handler?.(
       { sender: { id: 7 } },
       {
         kind: "cli-agent",
@@ -1073,7 +1081,7 @@ describe("registerPtyIpc account fail-fast", () => {
     ).not.toHaveBeenCalled();
   });
 
-  it("keeps the ambiguous resume+fresh payload fenced", () => {
+  it("keeps the ambiguous resume+fresh payload fenced", async () => {
     const persisted = {
       id: "mpane-orch-ambiguous",
       missionId: "mission-a",
@@ -1093,7 +1101,7 @@ describe("registerPtyIpc account fail-fast", () => {
     authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
     const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
 
-    const result = handler?.(
+    const result = await handler?.(
       { sender: { id: 7 } },
       {
         kind: "cli-agent",
@@ -1119,7 +1127,7 @@ describe("registerPtyIpc account fail-fast", () => {
     expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
   });
 
-  it("resumes a persisted pane carrying its historical orchRequestId after restart", () => {
+  it("resumes a persisted pane carrying its historical orchRequestId after restart", async () => {
     providerDeps.prepareProviderSpawn.mockReturnValueOnce({
       ok: true,
       overrides: {},
@@ -1153,7 +1161,7 @@ describe("registerPtyIpc account fail-fast", () => {
     // The saved layout persists the pane's historical orchRequestId, but the
     // main-process grant maps are empty after a restart (both claims → null).
     // The stale token must not fence the resume: the persisted record wins.
-    const result = handler?.(
+    const result = await handler?.(
       { sender: { id: 7 } },
       {
         kind: "cli-agent",
@@ -1182,7 +1190,7 @@ describe("registerPtyIpc account fail-fast", () => {
     expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
   });
 
-  it("reattaches an already-live persisted mission pane even when a stale renderer retries with no resume flags", () => {
+  it("reattaches an already-live persisted mission pane even when a stale renderer retries with no resume flags", async () => {
     providerDeps.prepareProviderSpawn.mockReturnValueOnce({
       ok: true,
       overrides: {},
@@ -1213,7 +1221,7 @@ describe("registerPtyIpc account fail-fast", () => {
     });
     const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
 
-    const result = handler?.(
+    const result = await handler?.(
       { sender: { id: 7 } },
       {
         kind: "cli-agent",
@@ -1244,7 +1252,7 @@ describe("registerPtyIpc account fail-fast", () => {
     expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
   });
 
-  it("adopts the exact live main-owned pane instead of spawning a duplicate provider process", () => {
+  it("adopts the exact live main-owned pane instead of spawning a duplicate provider process", async () => {
     providerDeps.prepareProviderSpawn.mockReturnValueOnce({ ok: true, overrides: {} });
     const persisted = {
       id: "mpane-worker",
@@ -1270,7 +1278,7 @@ describe("registerPtyIpc account fail-fast", () => {
     const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
     const sender = { id: 7 };
 
-    const result = handler?.(
+    const result = await handler?.(
       { sender },
       {
         kind: "cli-agent",
@@ -1328,7 +1336,7 @@ describe("registerPtyIpc account fail-fast", () => {
     );
   });
 
-  it("rejects persisted pane restore after the mission intent version changes", () => {
+  it("rejects persisted pane restore after the mission intent version changes", async () => {
     providerDeps.prepareProviderSpawn.mockReturnValueOnce({ ok: true, overrides: {} });
     authorityDeps.findMissionPaneByPaneId.mockReturnValueOnce({
       id: "mpane-worker",
@@ -1368,7 +1376,7 @@ describe("registerPtyIpc account fail-fast", () => {
     expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
   });
 
-  it("rejects a resumed mission pane when the renderer substitutes its adapter", () => {
+  it("rejects a resumed mission pane when the renderer substitutes its adapter", async () => {
     providerDeps.prepareProviderSpawn.mockReturnValueOnce({
       ok: true,
       overrides: {},
@@ -1387,7 +1395,7 @@ describe("registerPtyIpc account fail-fast", () => {
     authorityDeps.getMission.mockReturnValue(approvedMissionForSpawn());
     const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
 
-    const result = handler?.(
+    const result = await handler?.(
       { sender: { id: 7 } },
       {
         kind: "cli-agent",
@@ -1407,7 +1415,7 @@ describe("registerPtyIpc account fail-fast", () => {
     expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
   });
 
-  it("falls back to direct-user spawn when orchRequestId is spent (Reiniciar)", () => {
+  it("falls back to direct-user spawn when orchRequestId is spent (Reiniciar)", async () => {
     providerDeps.prepareProviderSpawn.mockReturnValueOnce({
       ok: true,
       overrides: {},
@@ -1416,7 +1424,7 @@ describe("registerPtyIpc account fail-fast", () => {
     const sender = { id: 7 };
 
     // claimPending returns null (default) → spent token; must not throw.
-    const result = handler?.(
+    const result = await handler?.(
       { sender },
       {
         kind: "cli-agent",
@@ -1448,11 +1456,11 @@ describe("registerPtyIpc account fail-fast", () => {
     );
   });
 
-  it("binds a user shell to the renderer-authorized workspace and configured shell", () => {
+  it("binds a user shell to the renderer-authorized workspace and configured shell", async () => {
     const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
     const sender = { id: 7 };
 
-    const result = handler?.(
+    const result = await handler?.(
       { sender },
       {
         kind: "shell",
@@ -1479,10 +1487,10 @@ describe("registerPtyIpc account fail-fast", () => {
     );
   });
 
-  it("rejects a renderer-selected shell that differs from main settings", () => {
+  it("rejects a renderer-selected shell that differs from main settings", async () => {
     const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn);
 
-    const result = handler?.(
+    const result = await handler?.(
       { sender: { id: 7 } },
       {
         kind: "shell",
@@ -1499,7 +1507,7 @@ describe("registerPtyIpc account fail-fast", () => {
     expect(ptyDeps.spawnSession).not.toHaveBeenCalled();
   });
 
-  it("confirms a PTY write only when the main process accepts the owned session", () => {
+  it("confirms a PTY write only when the main process accepts the owned session", async () => {
     const handler = ipcDeps.handlers.get(PTY_CHANNELS.writeConfirmed);
     const sender = { id: 7 };
 

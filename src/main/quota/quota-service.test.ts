@@ -92,6 +92,22 @@ describe('QuotaService limit-hit expiry', () => {
     expect(marked).toEqual(['revoked']);
     svc.stop();
   });
+
+  it('marks a Claude account for re-login when the provider proves another identity', async () => {
+    const marked: Array<[string, string, string | undefined]> = [];
+    const svc = new QuotaService({
+      listProviders: () => [provider('claude')],
+      listAccounts: () => [{ id: 'wrong-claude', adapterId: 'claude', label: 'Wrong', mode: 'subscription', hasCredential: true, onCooldown: false } as AccountInfo],
+      claudeAccountUsage: async () => ({ windows: null, hint: 'identity-mismatch' }),
+      markAccountAuthExpired: (id, adapter, reason) => { marked.push([id, adapter, reason]); },
+    });
+    const result = await svc.snapshot(HIT_AT);
+    const entry = result.entries.find((row) => row.accountId === 'wrong-claude');
+    expect(entry?.readHint).toBe('identity-mismatch');
+    expect(entry?.windows.every((window) => window.usedRatio === null)).toBe(true);
+    expect(marked).toEqual([['wrong-claude', 'claude', 'identity-mismatch']]);
+    svc.stop();
+  });
   it.each([true, false])('never probes an incompatible or orphaned routed account (provider exists=%s)', async (exists) => {
     const fetchImpl = vi.fn(async () => ({ ok: false, status: 403, json: async () => ({}), text: async () => '' }));
     const svc = new QuotaService({
@@ -549,7 +565,7 @@ describe('QuotaService live Claude OAuth usage', () => {
     svc.stop();
   });
 
-  it('resolves per-account vault tokens and does not cross-paint', async () => {
+  it('uses account-owned Claude readings without resolving an unchecked pinned token', async () => {
     const accounts: AccountInfo[] = [
       {
         id: 'acc-a',
@@ -573,26 +589,17 @@ describe('QuotaService live Claude OAuth usage', () => {
       } as AccountInfo,
     ];
 
-    const fetchImpl = vi.fn(async (_url: string, init?: { headers?: Record<string, string> }) => {
-      const auth = init?.headers?.Authorization ?? '';
-      const util = auth.includes('token-a') ? 10 : 80;
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({
-          five_hour: { utilization: util, resets_at: '2026-07-13T00:00:00Z' },
-          seven_day: { utilization: util, resets_at: '2026-07-15T00:00:00Z' },
-        }),
-        text: async () => '',
-      };
-    });
+    const resolveClaudeAccessToken = vi.fn(() => 'unchecked-other-account');
+    const claudeAccountUsage = vi.fn(async (id: string) => ({ windows: [{
+      kind: 'hours' as const, label: '5 Horas', usedRatio: id === 'acc-a' ? 0.1 : 0.8,
+      source: 'provider-api' as const, confidence: 'high' as const,
+    }] }));
 
     const svc = new QuotaService({
       listProviders: () => [provider('claude', 'Claude')],
       listAccounts: () => accounts,
-      resolveClaudeAccessToken: (accountId) =>
-        accountId === 'acc-a' ? 'token-a' : accountId === 'acc-b' ? 'token-b' : null,
-      fetchImpl,
+      resolveClaudeAccessToken,
+      claudeAccountUsage,
     });
 
     const snap = await svc.snapshot(HIT_AT);
@@ -600,7 +607,8 @@ describe('QuotaService live Claude OAuth usage', () => {
     const b = snap.entries.find((e) => e.accountId === 'acc-b');
     expect(a?.windows.find((w) => w.kind === 'hours')?.usedRatio).toBe(0.1);
     expect(b?.windows.find((w) => w.kind === 'hours')?.usedRatio).toBe(0.8);
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(claudeAccountUsage).toHaveBeenCalledTimes(2);
+    expect(resolveClaudeAccessToken).not.toHaveBeenCalled();
     svc.stop();
   });
 

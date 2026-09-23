@@ -212,6 +212,13 @@ export async function fetchLiveProviderWindows(
 
   switch (adapterId) {
     case 'claude': {
+      // Saved account rows must pass the account-owned identity probe first.
+      // A readable OAuth token is not proof that it belongs to this row.
+      if (accountId) {
+        return deps.claudeAccountUsage
+          ? deps.claudeAccountUsage(accountId)
+          : NO_CREDENTIAL;
+      }
       let hadToken = false;
       let oauthDead = false;
       if (deps.resolveClaudeToken) {
@@ -229,16 +236,7 @@ export async function fetchLiveProviderWindows(
         }
       }
       // OAuth falhou (429/backoff, keychain rodada) ou sem token.
-      // Row pinada: a cascata por conta (Codenotch — auth gerenciada scoped,
-      // perfil de disco com o mesmo e-mail, materialização do vault) só usa
-      // fontes ancoradas na identidade DESTA conta; sem ela, null honesto.
-      // Row nativa: print-only `claude /usage` do login do CLI — que é de
-      // UMA conta, nunca pintado em rows vault. Sem runner injetado NÃO
-      // spawnamos o binário: testes ficam em null honesto.
-      if (accountId) {
-        if (!deps.claudeAccountUsage) return hadToken ? UNAVAILABLE : NO_CREDENTIAL;
-        return deps.claudeAccountUsage(accountId);
-      }
+      // The unpinned native row can use the computer's native CLI session.
       // Sem token resolvível (ou token nativo vencido — o refresh da
       // linhagem nativa é do CLI, não nosso): o `oauthAccount` no
       // ~/.claude.json distingue «sessão morreu» de «nunca conectou».

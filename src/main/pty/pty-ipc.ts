@@ -252,7 +252,7 @@ function spawnCliPtyAgentPane(
         },
       ),
     };
-    if (adapter.id === "agy" && authoritativePreparation === undefined) {
+    if ((adapter.id === "agy" || adapter.id === "claude") && authoritativePreparation === undefined) {
       return prepareProviderSpawnAuthoritative(adapter.id, perSpawn).then(
         (preparation) =>
           spawnCliPtyAgentPane(sender, adapter, spawn, preparation),

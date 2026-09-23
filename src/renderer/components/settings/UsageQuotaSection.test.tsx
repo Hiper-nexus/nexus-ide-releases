@@ -404,6 +404,31 @@ describe('UsageQuotaSection', () => {
     act(() => root.unmount());
   });
 
+  it('credencial Claude de outra conta mostra re-login e não mostra percentual', async () => {
+    useAccountStore.setState({ accounts: [{
+      id: 'claude-wrong', adapterId: 'claude', label: 'Conta Claude', mode: 'subscription',
+      upstream: 'claude', email: 'first@example.com', active: true,
+      createdAt: 1723630000000, onCooldown: false, needsRelogin: true, hasCredential: true,
+    }] });
+    const snapshot: QuotaFleetSnapshot = { ...sampleSnapshot, entries: [{
+      ...sampleEntries[0]!, id: 'claude:claude-wrong', accountId: 'claude-wrong',
+      label: 'Claude · Conta Claude', readHint: 'identity-mismatch', windows: [{
+        kind: 'weekly', label: 'Semanal', usedRatio: 0.86,
+        source: 'provider-api', confidence: 'high',
+      }],
+    }] };
+    Object.defineProperty(window, 'nexus', { configurable: true, value: {
+      quota: { snapshot: vi.fn(async () => snapshot), refresh: vi.fn(async () => snapshot) },
+      providers: { authStatus: vi.fn(async () => []) },
+    } });
+    const { host, root } = mount();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(host.textContent).toContain('Entrar novamente');
+    expect(host.textContent).toContain('credencial pertence a outra conta Claude');
+    expect(host.textContent).not.toContain('86%');
+    act(() => root.unmount());
+  });
+
   it('reabre o login da conta salva pelo botão da linha de cota', async () => {
     useAccountStore.setState({
       accounts: [

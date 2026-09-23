@@ -72,6 +72,8 @@ export interface AccountPlan {
  *
  *  - 'auth-expired': credencial existe mas está morta (OAuth expirado e sem
  *    refresh válido) — o caminho de saída é reautenticar a conta.
+ *  - 'identity-mismatch': o provider provou que a credencial pertence a outra
+ *    conta; nunca atribuir sua cota a esta linha.
  *  - 'no-credential': nenhuma credencial utilizável foi encontrada para a
  *    linha (sem conta vault, sem sessão nativa, sem API key).
  *  - 'cli-missing': a sonda depende do binário do CLI e ele não existe.
@@ -80,6 +82,7 @@ export interface AccountPlan {
  */
 export type QuotaReadHint =
   | 'auth-expired'
+  | 'identity-mismatch'
   | 'no-credential'
   | 'cli-missing'
   | 'unavailable';
