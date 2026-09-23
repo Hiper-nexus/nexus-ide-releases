@@ -6,6 +6,7 @@ import {
   type WebContents,
 } from "electron";
 import { polishCodePrompt } from "./code-prompt-polish";
+import { finalizeCodeDictation } from "./code-dictation";
 import { VOICE_CHANNELS } from "../../shared/voice-channels";
 import { isWindowScopedShortcut } from "../../shared/voice-config";
 import {
@@ -818,29 +819,12 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
           return { ...res, discarded: "echo" };
         }
         if (res.ok && parsed.data.polish === "code-prompt") {
-          const polishStartedAt = Date.now();
-          const polish = await polishCodePrompt(res.text);
-          const polishMs = Date.now() - polishStartedAt;
-          if (!polish.polished) {
-            logVoice("warn", "stt.codePolishSkipped", "modo CODE seguiu com o texto da STT", {
-              reason: polish.reason,
-              provider: res.provider,
-            });
-          }
-          // Quem transcreveu e o que ouviu ANTES da reescrita: sem isto o
-          // operador não sabe se o erro veio da STT ou da tradução do CODE.
-          logVoice("info", "stt.dictationRaw", res.text.slice(0, 400), {
-            provider: res.provider,
-            fallbackNote: res.fallbackNote,
-            mode: "code",
-            translate: parsed.data.translate === true,
-            polished: polish.polished,
-            final: polish.text.slice(0, 400),
-            // Onde foi a espera depois de parar de falar: STT x reescrita.
-            sttMs,
-            polishMs,
+          return await finalizeCodeDictation(parsed.data, res, sttMs, {
+            polish: polishCodePrompt,
+            transcribe: (request) =>
+              transcribe(request, getVoiceConfig(), currentProbes()),
+            log: (level, event, msg, data) => logVoice(level, event, msg, data),
           });
-          return { ...res, text: polish.text };
         }
         if (res.ok && parsed.data.purpose !== "passive-wake") {
           logVoice("info", "stt.dictationRaw", res.text.slice(0, 400), {

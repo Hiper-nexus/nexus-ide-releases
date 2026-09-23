@@ -46,3 +46,15 @@ export const DICTATION_CODE_PRIMING_PROMPT =
   'imperative English without commentary. Technical vocabulary: ' +
   DICTATION_CODE_VOCABULARY.join(', ') +
   '.';
+
+/**
+ * Priming da transcrição LITERAL do CODE (a reescrita traduz depois). Em
+ * português e sem falar em tradução: o Whisper segue o idioma e o estilo do
+ * prompt, e um prompt em inglês sobre "traduzir" num pedido language=pt
+ * puxava trechos em inglês, cortes e texto inventado — a reescrita partiria
+ * de uma fonte já corrompida.
+ */
+export const DICTATION_CODE_LITERAL_PRIMING_PROMPT =
+  'Ditado técnico em português para um agente de programação. Termos: ' +
+  DICTATION_CODE_VOCABULARY.join(', ') +
+  '.';

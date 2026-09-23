@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DICTATION_CODE_PRIMING_PROMPT,
+  DICTATION_CODE_LITERAL_PRIMING_PROMPT,
   codePolishAvailable,
   dictationSttRequestParams,
 } from './dictation-output-mode';
@@ -44,7 +45,7 @@ describe('CODE com reescrita: STT literal, tradução uma vez só', () => {
     expect(dictationSttRequestParams('english', { polishAvailable: true })).toEqual({
       translate: false,
       language: 'pt',
-      prompt: DICTATION_CODE_PRIMING_PROMPT,
+      prompt: DICTATION_CODE_LITERAL_PRIMING_PROMPT,
       polish: 'code-prompt',
     });
   });

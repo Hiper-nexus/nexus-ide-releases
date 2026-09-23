@@ -7,7 +7,10 @@
  * request explícito, qualquer engine honra o modo configurado —
  * `req.translate` vence `plugin.translate` em stt-service.
  */
-import { DICTATION_CODE_PRIMING_PROMPT } from '../../shared/dictation-vocabulary';
+import {
+  DICTATION_CODE_LITERAL_PRIMING_PROMPT,
+  DICTATION_CODE_PRIMING_PROMPT,
+} from '../../shared/dictation-vocabulary';
 
 export type DictationOutputMode = 'english' | 'portuguese';
 
@@ -22,7 +25,7 @@ export type DictationOutputMode = 'english' | 'portuguese';
  * o `custom_vocabulary` do Gemini a partir da MESMA lista. Reexportado aqui
  * para os consumidores do renderer não precisarem saber disso.
  */
-export { DICTATION_CODE_PRIMING_PROMPT };
+export { DICTATION_CODE_LITERAL_PRIMING_PROMPT, DICTATION_CODE_PRIMING_PROMPT };
 
 /** Chaves que atendem a reescrita do ditado CODE (main/voice/code-prompt-polish). */
 export const CODE_POLISH_KEY_ENV_VARS: ReadonlySet<string> = new Set([
@@ -62,7 +65,7 @@ export function dictationSttRequestParams(
     return {
       translate: false,
       language: 'pt',
-      prompt: DICTATION_CODE_PRIMING_PROMPT,
+      prompt: DICTATION_CODE_LITERAL_PRIMING_PROMPT,
       polish: 'code-prompt',
     };
   }
