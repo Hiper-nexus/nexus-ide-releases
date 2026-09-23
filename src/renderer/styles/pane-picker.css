@@ -56,6 +56,64 @@
   background: color-mix(in srgb, var(--accent) 12%, var(--bg-elevated));
 }
 
+/* "+" da barra de abas: mora no fluxo da barra (não flutua na grelha) e abre
+   PARA BAIXO. Mesmo menu, mesmo catálogo — só muda onde o gatilho vive. */
+.pane-picker--tabbar {
+  position: relative;
+  right: auto;
+  bottom: auto;
+  display: flex;
+  align-items: center;
+}
+
+.pane-picker--tabbar .pane-picker__trigger {
+  justify-content: center;
+  inline-size: 28px;
+  block-size: 28px;
+  padding: 0;
+  border-color: transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-dim);
+}
+
+.pane-picker--tabbar .pane-picker__trigger .pixel-icon {
+  color: currentColor;
+}
+
+.pane-picker--tabbar .pane-picker__trigger:hover,
+.pane-picker--tabbar .pane-picker__trigger:focus-visible {
+  border-color: var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.pane-picker--tabbar .pane-picker__trigger[aria-expanded='true'] {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-2));
+  color: var(--text);
+}
+
+.pane-picker--tabbar .pane-picker__panel {
+  top: calc(100% + var(--space-1-5));
+  bottom: auto;
+  left: 0;
+  right: auto;
+  animation-name: pane-picker-in-down;
+}
+
+@keyframes pane-picker-in-down {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 /* ---- Painel ---- */
 
 .pane-picker__panel {

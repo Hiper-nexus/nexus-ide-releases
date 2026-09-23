@@ -723,11 +723,33 @@ export function runPanePickerIntent(intent: PanePickerIntent): string | undefine
   return layout.spawnAgent(intent.adapterId, intent.model);
 }
 
+export interface PanePickerTrigger {
+  /** Texto visível; sem ele o gatilho é só o ícone. */
+  readonly label?: string;
+  readonly ariaLabel: string;
+  readonly title: string;
+}
+
 export function PanePicker({
   onPaneCreated,
+  placement = 'grid',
+  trigger,
+  acceptsPendingOpen = true,
 }: {
   /** Chamado com o id do pane criado — vistas filtradas o tornam visível. */
   readonly onPaneCreated?: (paneId: string) => void;
+  /**
+   * `grid`: flutua no rodapé da grelha e abre para cima (o "+ Pane").
+   * `tabbar`: mora na barra de abas e abre para baixo (o "+" de aba nova).
+   */
+  readonly placement?: 'grid' | 'tabbar';
+  readonly trigger?: PanePickerTrigger;
+  /**
+   * Pedidos globais de "abrir o picker" (Início → Abrir um pane) servem UMA
+   * instância. Com duas grelhas na tela (abas lado a lado) ou o "+" da barra,
+   * só a principal atende — senão os dois menus abririam juntos.
+   */
+  readonly acceptsPendingOpen?: boolean;
 } = {}) {
   const providers = useProviderStore((state) => state.providers);
   const accounts = useAccountStore((state) => state.accounts);
@@ -830,7 +852,7 @@ export function PanePicker({
   // até este picker montar/ficar vivo. Quando o pedido nomeia uma CLI, o
   // menu volta direto na vista de contas dela.
   useEffect(() => {
-    if (!pendingOpen) return;
+    if (!pendingOpen || !acceptsPendingOpen) return;
     setOpen(true);
     if (pendingAccountsAdapterId) {
       // Voltar das contas devolve a matriz daquela CLI, não o índice geral.
@@ -838,7 +860,7 @@ export function PanePicker({
       setAccountsFor(pendingAccountsAdapterId);
     }
     consumePendingOpen();
-  }, [pendingOpen, pendingAccountsAdapterId, consumePendingOpen]);
+  }, [pendingOpen, pendingAccountsAdapterId, consumePendingOpen, acceptsPendingOpen]);
 
   // O login sai para Terminais e pode desmontar este menu no caminho. Se
   // isso acontecer com a vista de contas aberta, o pedido fica na store e a
@@ -1005,7 +1027,10 @@ export function PanePicker({
   let lastAccountKey: string | null = null;
 
   return (
-    <div className="pane-picker" ref={rootRef}>
+    <div
+      className={`pane-picker${placement === 'tabbar' ? ' pane-picker--tabbar' : ''}`}
+      ref={rootRef}
+    >
       {open && (
         <div
           className="pane-picker__panel"
@@ -1299,12 +1324,22 @@ export function PanePicker({
         className="pane-picker__trigger"
         aria-haspopup="dialog"
         aria-expanded={open}
-        data-testid="pane-picker-trigger"
-        title="Abrir um pane novo: terminal, browser ou uma CLI numa conta e modelo exatos"
+        aria-label={trigger?.ariaLabel}
+        data-testid={
+          placement === 'tabbar' ? 'tab-picker-trigger' : 'pane-picker-trigger'
+        }
+        title={
+          trigger?.title ??
+          'Abrir um pane novo: terminal, browser ou uma CLI numa conta e modelo exatos'
+        }
         onClick={() => setOpen((current) => !current)}
       >
         <PixelIcon name="plus" size={12} />
-        <span>Pane</span>
+        {trigger ? (
+          trigger.label ? <span>{trigger.label}</span> : null
+        ) : (
+          <span>Pane</span>
+        )}
       </button>
     </div>
   );

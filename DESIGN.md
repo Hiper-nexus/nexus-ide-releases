@@ -215,6 +215,15 @@ já o desliga sozinho e compensa em opacidade.
   missão** (única primária sólida). Secundário mora no `⋯` e no ⌘K.
   Gamificação (XP) fora da zona de status. "Novo workspace" é uma ação compacta
   única junto à identidade do workspace; nunca se repete no menu ▾ da marca.
+- **Abas dos Terminais** (`WorkspaceTabs`): uma aba por feature — os panes
+  dela e a missão que um deles começou. Linguagem de editor, não de
+  dashboard: a ativa é o mesmo chão da grelha (`--bg`, sem fio embaixo) com
+  fio de 2px de acento em cima; as demais são texto `--text-dim` sobre
+  `--bg-bar`. Sem cartão, sem sombra. Estado da missão vai no glifo
+  (`--state-*`) e na palavra (tooltip + nome acessível), nunca só em cor.
+  Visão geral (ícone `grid`) fica antes das abas; "ver ao lado" divide a tela
+  em duas grelhas com o nome de cada metade. O "+" é o mesmo picker do
+  "+ Pane", ancorado na barra e abrindo para baixo.
 - Frota em linguagem clara: "2 trabalhando · 1 morto" (nunca "zzz"/"x").
 - Pane comunica estado pela borda: busy = acento, morto = danger, hibernado =
   tracejado dim; foco = acento + glow contido.

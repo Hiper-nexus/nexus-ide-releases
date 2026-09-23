@@ -15,6 +15,13 @@ import type { PaneModel } from '../../shared/types';
  */
 export type PaneScopeKind = 'mission' | 'space' | 'loose';
 
+export interface PaneScopeMission {
+  readonly id: string;
+  readonly title: string;
+  /** Estado da projeção; ausente enquanto o renderer não conhece a missão. */
+  readonly state?: string;
+}
+
 export interface PaneScopeEntry {
   /** Chave opaca do escopo — é o que a aba guarda e o filtro compara. */
   readonly key: string;
@@ -26,8 +33,13 @@ export interface PaneScopeEntry {
   /** Estado da missão, quando o renderer já conhece a projeção. */
   readonly state?: string;
   /**
+   * Missões que moram nesta aba: a própria (aba de missão) ou as que um pane
+   * do operador desta aba adotou (`missionHost`) — a aba é a feature.
+   */
+  readonly missions: readonly PaneScopeMission[];
+  /**
    * Orquestrador do escopo — a missão SEMPRE pode ter um, e a UI precisa
-   * mostrá-lo por campo (cada A/B tem o seu). `null` quando não há orquestrador
+   * mostrá-lo por campo (cada aba tem o seu). `null` quando não há orquestrador
    * neste escopo (campo só de workers/shells).
    */
   readonly orchestrator: { readonly paneId: string; readonly title: string } | null;
@@ -54,7 +66,8 @@ export function spaceScopeKey(spaceId: string): string {
 
 /** Rótulo neutro de missão que o renderer ainda não projetou. */
 const UNKNOWN_MISSION_TITLE = 'Missão';
-const LOOSE_TITLE = 'Painéis soltos';
+/** A aba dos panes sem espaço: é a casa padrão do checkout. */
+export const LOOSE_SCOPE_TITLE = 'Terminais';
 
 /**
  * Casa dos painéis soltos quando o operador tem um coordenador local.
@@ -79,9 +92,47 @@ export function looseHomeScopeKey(
 }
 
 /**
+ * A aba de cada missão HOSPEDADA por um pane do operador.
+ *
+ * O operador abre panes numa aba e começa a missão direto por eles: o agente
+ * de um pane cria a missão (`nexus_mission_create`) ou o operador adota o pane
+ * como orquestrador. A aba é a feature — a missão, o orquestrador e os workers
+ * que ele abrir ficam nela, não numa aba separada ao lado dos panes que a
+ * começaram (campo 23/09: "todos fazem parte de uma missão só").
+ *
+ * `missionHost` é carimbado no pane na adoção (`reflectMissionLeader`); a casa
+ * é o escopo do pane anfitrião ignorando a missão. Missão lançada pelo
+ * assistente não tem anfitrião e segue com a aba própria.
+ */
+export function missionHomeScopeKeys(
+  panes: readonly PaneModel[],
+  paneMissions: Readonly<Record<string, string>>,
+  looseHome: string | null = looseHomeScopeKey(panes, paneMissions),
+): ReadonlyMap<string, string> {
+  const homes = new Map<string, string>();
+  const hosts = panes
+    .filter((pane) => pane.missionHost && (pane.missionId ?? paneMissions[pane.id]))
+    // O orquestrador anfitrião decide; outro pane adotado só na falta dele.
+    .sort(
+      (left, right) =>
+        Number(right.role === 'orchestrator') - Number(left.role === 'orchestrator'),
+    );
+  for (const host of hosts) {
+    const missionId = (host.missionId ?? paneMissions[host.id])!;
+    if (homes.has(missionId)) continue;
+    homes.set(
+      missionId,
+      host.spaceId ? spaceScopeKey(host.spaceId) : (looseHome ?? LOOSE_SCOPE_KEY),
+    );
+  }
+  return homes;
+}
+
+/**
  * A missão VENCE o espaço. Um pane adotado por uma missão não volta para o
  * espaço em que nasceu só porque o carimbo antigo continua no modelo — senão o
- * painel promovido sumiria da missão que ele lidera.
+ * painel promovido sumiria da missão que ele lidera. A exceção é a missão com
+ * casa (`missionHomes`): ela mora na aba do pane que a começou.
  *
  * `looseHome` (ver looseHomeScopeKey) recebe os panes sem missão e sem espaço.
  */
@@ -89,11 +140,27 @@ export function paneScopeKey(
   pane: PaneModel,
   paneMissions: Readonly<Record<string, string>>,
   looseHome: string | null = null,
+  missionHomes: ReadonlyMap<string, string> | null = null,
 ): string {
   const missionId = pane.missionId ?? paneMissions[pane.id];
-  if (missionId) return missionScopeKey(missionId);
+  if (missionId) return missionHomes?.get(missionId) ?? missionScopeKey(missionId);
   if (pane.spaceId) return spaceScopeKey(pane.spaceId);
   return looseHome ?? LOOSE_SCOPE_KEY;
+}
+
+/**
+ * O escopo de cada pane com casa de missão e coordenador local resolvidos UMA
+ * vez para a árvore inteira. Quem classifica mais de um pane usa isto — cada
+ * chamada solta de `paneScopeKey` sem as casas mandaria a missão hospedada
+ * para uma aba que não existe.
+ */
+export function paneScopeResolver(
+  panes: readonly PaneModel[],
+  paneMissions: Readonly<Record<string, string>>,
+): (pane: PaneModel) => string {
+  const looseHome = looseHomeScopeKey(panes, paneMissions);
+  const homes = missionHomeScopeKeys(panes, paneMissions, looseHome);
+  return (pane) => paneScopeKey(pane, paneMissions, looseHome, homes);
 }
 
 export function scopeKeyForPaneId(
@@ -103,9 +170,7 @@ export function scopeKeyForPaneId(
 ): string | null {
   if (!paneId) return null;
   const pane = panes.find((candidate) => candidate.id === paneId);
-  return pane
-    ? paneScopeKey(pane, paneMissions, looseHomeScopeKey(panes, paneMissions))
-    : null;
+  return pane ? paneScopeResolver(panes, paneMissions)(pane) : null;
 }
 
 /**
@@ -126,10 +191,15 @@ export function pickFallbackInScope(
 ): string | null {
   if (candidates.length === 0) return null;
   if (!focusedPaneId) return candidates[0] ?? null;
-  const scope = scopeKeyForPaneId(focusedPaneId, panes, paneMissions);
+  const scopeOf = paneScopeResolver(panes, paneMissions);
+  const keyOf = (id: string): string | null => {
+    const pane = panes.find((candidate) => candidate.id === id);
+    return pane ? scopeOf(pane) : null;
+  };
+  const scope = keyOf(focusedPaneId);
   if (!scope) return null;
   for (const id of candidates) {
-    if (scopeKeyForPaneId(id, panes, paneMissions) === scope) return id;
+    if (keyOf(id) === scope) return id;
   }
   return null;
 }
@@ -147,10 +217,8 @@ export function selectScopePanes(
   paneMissions: Readonly<Record<string, string>>,
 ): PaneModel[] {
   if (scopeKey === ALL_SCOPES_KEY) return [...panes];
-  const looseHome = looseHomeScopeKey(panes, paneMissions);
-  return panes.filter(
-    (pane) => paneScopeKey(pane, paneMissions, looseHome) === scopeKey,
-  );
+  const scopeOf = paneScopeResolver(panes, paneMissions);
+  return panes.filter((pane) => scopeOf(pane) === scopeKey);
 }
 
 export interface ListPaneScopesInput {
@@ -180,9 +248,10 @@ export function listPaneScopes(input: ListPaneScopesInput): PaneScopeEntry[] {
     { paneId: string; title: string } | null
   >();
 
-  const looseHome = looseHomeScopeKey(input.panes, input.paneMissions);
+  const scopeOf = paneScopeResolver(input.panes, input.paneMissions);
+  const missionsByKey = new Map<string, PaneScopeMission[]>();
   for (const pane of input.panes) {
-    const key = paneScopeKey(pane, input.paneMissions, looseHome);
+    const key = scopeOf(pane);
     const existing = byKey.get(key);
     if (existing) {
       byKey.set(key, { ...existing, paneCount: existing.paneCount + 1 });
@@ -190,6 +259,7 @@ export function listPaneScopes(input: ListPaneScopesInput): PaneScopeEntry[] {
       order.push(key);
       byKey.set(key, scopeEntryFor(key, pane, missionById, input.panes));
       orchestratorByKey.set(key, null);
+      missionsByKey.set(key, []);
     }
     if (pane.role === 'orchestrator' && !orchestratorByKey.get(key)) {
       orchestratorByKey.set(key, {
@@ -197,12 +267,36 @@ export function listPaneScopes(input: ListPaneScopesInput): PaneScopeEntry[] {
         title: pane.title?.trim() || 'Orquestrador',
       });
     }
+    const missionId = pane.missionId ?? input.paneMissions[pane.id];
+    const hosted = missionsByKey.get(key)!;
+    if (missionId && !hosted.some((mission) => mission.id === missionId)) {
+      const summary = missionById.get(missionId);
+      hosted.push({
+        id: missionId,
+        title: summary?.title?.trim() || UNKNOWN_MISSION_TITLE,
+        ...(summary ? { state: summary.state } : {}),
+      });
+    }
   }
 
-  const scopes = order.map((key) => ({
-    ...byKey.get(key)!,
-    orchestrator: orchestratorByKey.get(key) ?? null,
-  }));
+  const scopes = order.map((key) => {
+    const entry = byKey.get(key)!;
+    const missions = missionsByKey.get(key) ?? [];
+    // Aba de feature que hospeda missão mostra o estado dela (o ponto da aba).
+    const hostedState =
+      entry.kind !== 'mission' && missions.length > 0
+        ? (missions.find((mission) => mission.state === 'running') ?? missions[0])!
+            .state
+        : undefined;
+    return {
+      ...entry,
+      ...(entry.state === undefined && hostedState !== undefined
+        ? { state: hostedState }
+        : {}),
+      missions,
+      orchestrator: orchestratorByKey.get(key) ?? null,
+    };
+  });
   const titleCounts = new Map<string, number>();
   for (const s of scopes) {
     titleCounts.set(s.title, (titleCounts.get(s.title) ?? 0) + 1);
@@ -228,7 +322,14 @@ function scopeEntryFor(
   panes: readonly PaneModel[],
 ): PaneScopeEntry {
   if (key === LOOSE_SCOPE_KEY) {
-    return { key, kind: 'loose', title: LOOSE_TITLE, paneCount: 1, orchestrator: null };
+    return {
+      key,
+      kind: 'loose',
+      title: LOOSE_SCOPE_TITLE,
+      paneCount: 1,
+      missions: [],
+      orchestrator: null,
+    };
   }
   if (key.startsWith(MISSION_SCOPE_PREFIX)) {
     const id = key.slice(MISSION_SCOPE_PREFIX.length);
@@ -239,22 +340,29 @@ function scopeEntryFor(
       id,
       title: summary?.title?.trim() || UNKNOWN_MISSION_TITLE,
       paneCount: 1,
+      missions: [],
       orchestrator: null,
       ...(summary ? { state: summary.state } : {}),
     };
   }
   const id = key.slice(SPACE_SCOPE_PREFIX.length);
   // O primeiro pane do campo pode ser um solto que entrou no campo do
-  // coordenador: o nome vem de quem carrega o carimbo do espaço.
+  // coordenador ou um worker da missão hospedada: o nome vem de quem carrega
+  // o carimbo do espaço — o anfitrião da missão inclusive.
   const stamped = pane.spaceId === id
     ? pane
-    : panes.find((candidate) => candidate.spaceId === id && !candidate.missionId);
+    : panes.find(
+        (candidate) =>
+          candidate.spaceId === id &&
+          (!candidate.missionId || candidate.missionHost === true),
+      );
   return {
     key,
     kind: 'space',
     id,
     title: stamped?.spaceTitle?.trim() || SPACE_TITLE_BASE,
     paneCount: 1,
+    missions: [],
     orchestrator: null,
   };
 }

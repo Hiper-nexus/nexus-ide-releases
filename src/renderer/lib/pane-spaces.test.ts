@@ -4,11 +4,13 @@ import {
   ALL_SCOPES_KEY,
   LOOSE_SCOPE_KEY,
   listPaneScopes,
+  missionHomeScopeKeys,
   missionScopeKey,
   nextPaneSpaceTitle,
   newPaneSpaceId,
   paneScopeKey,
   pickFallbackInScope,
+  scopeKeyForPaneId,
   selectScopePanes,
   spaceScopeKey,
 } from './pane-spaces';
@@ -319,5 +321,102 @@ describe('coordenador local — missão começada direto pelos panes', () => {
 
   it('sem coordenador os soltos continuam no próprio balde', () => {
     expect(paneScopeKey(pane({ id: 'w1' }), {})).toBe(LOOSE_SCOPE_KEY);
+  });
+});
+
+describe('aba = feature — a missão mora na aba do pane que a começou (23/09)', () => {
+  const running = [{ id: 'mx', title: 'Fechar o Epic 22', state: 'running' }];
+
+  it('pane solto que adotou a missão leva ela, e os workers dela, para a aba Terminais', () => {
+    // O agente do pane do operador criou a missão (nexus_mission_create): o
+    // pane virou orquestrador e anfitrião; os workers que ele abriu nascem
+    // com missionId. Antes: aba "Fechar o Epic 22" separada de "Painéis soltos".
+    const panes = [
+      pane({ id: 'shell', kind: 'shell' }),
+      pane({ id: 'orq', role: 'orchestrator', missionId: 'mx', missionHost: true }),
+      pane({ id: 'worker', role: 'worker', missionId: 'mx' }),
+    ];
+    const scopes = listPaneScopes({ panes, paneMissions: {}, missions: running });
+
+    expect(scopes).toEqual([
+      expect.objectContaining({
+        key: LOOSE_SCOPE_KEY,
+        title: 'Terminais',
+        paneCount: 3,
+        state: 'running',
+        missions: [{ id: 'mx', title: 'Fechar o Epic 22', state: 'running' }],
+        orchestrator: expect.objectContaining({ paneId: 'orq' }),
+      }),
+    ]);
+    expect(
+      selectScopePanes(panes, LOOSE_SCOPE_KEY, {}).map((entry) => entry.id),
+    ).toEqual(['shell', 'orq', 'worker']);
+  });
+
+  it('anfitrião num espaço: a missão mora no espaço, com o nome dele', () => {
+    const panes = [
+      pane({
+        id: 'orq',
+        role: 'orchestrator',
+        missionId: 'mx',
+        missionHost: true,
+        spaceId: 's1',
+        spaceTitle: 'Checkout v2',
+      }),
+      pane({ id: 'worker', missionId: 'mx' }),
+      pane({ id: 'solto' }),
+    ];
+    const scopes = listPaneScopes({ panes, paneMissions: {}, missions: running });
+
+    expect(scopes.map((scope) => [scope.title, scope.paneCount])).toEqual([
+      ['Checkout v2', 2],
+      ['Terminais', 1],
+    ]);
+  });
+
+  it('missão lançada pelo assistente (sem anfitrião) segue com aba própria', () => {
+    const panes = [
+      pane({ id: 'solto' }),
+      pane({ id: 'maestro', role: 'orchestrator', missionId: 'mx', orchRequestId: 'orchspawn-1' }),
+    ];
+    const scopes = listPaneScopes({ panes, paneMissions: {}, missions: running });
+
+    expect(scopes.map((scope) => scope.key)).toEqual([
+      LOOSE_SCOPE_KEY,
+      missionScopeKey('mx'),
+    ]);
+    expect(scopes[1]).toMatchObject({
+      kind: 'mission',
+      missions: [{ id: 'mx', title: 'Fechar o Epic 22', state: 'running' }],
+    });
+  });
+
+  it('vínculo observado (paneMissions) também segue a casa do anfitrião', () => {
+    const panes = [
+      pane({ id: 'orq', role: 'orchestrator', missionHost: true, spaceId: 's1', spaceTitle: 'API' }),
+      pane({ id: 'worker' }),
+    ];
+    const paneMissions = { orq: 'mx', worker: 'mx' };
+
+    expect(scopeKeyForPaneId('worker', panes, paneMissions)).toBe(spaceScopeKey('s1'));
+    // Ditado/anexo: o fallback enxerga orquestrador e worker no mesmo campo.
+    expect(pickFallbackInScope(['worker'], 'orq', panes, paneMissions)).toBe('worker');
+  });
+
+  it('a casa é por missão: duas missões em abas diferentes nunca se misturam', () => {
+    const panes = [
+      pane({ id: 'orq-a', role: 'orchestrator', missionId: 'ma', missionHost: true, spaceId: 'sa', spaceTitle: 'A' }),
+      pane({ id: 'orq-b', role: 'orchestrator', missionId: 'mb', missionHost: true, spaceId: 'sb', spaceTitle: 'B' }),
+      pane({ id: 'wa', missionId: 'ma' }),
+      pane({ id: 'wb', missionId: 'mb' }),
+    ];
+    const homes = missionHomeScopeKeys(panes, {});
+
+    expect(homes.get('ma')).toBe(spaceScopeKey('sa'));
+    expect(homes.get('mb')).toBe(spaceScopeKey('sb'));
+    expect(selectScopePanes(panes, spaceScopeKey('sa'), {}).map((entry) => entry.id)).toEqual([
+      'orq-a',
+      'wa',
+    ]);
   });
 });

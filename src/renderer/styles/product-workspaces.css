@@ -1416,340 +1416,442 @@
   }
 }
 
-/* ── Mission lane bar (campo A/B) ───────────────────────────────────────
-   Ancoragem: painel de rack de controle de missão — near-black, fio de 1px,
-   acento magenta na faixa ativa. Sem gradiente nem sombra. */
-/* A e B precisam ser distinguíveis de relance nos dois temas: B segue o
-   acento do tema, A é o contraponto frio. A tinta é fixa e escura porque no
-   tema claro --accent-ink é clara e o "A" sumia sobre o ciano. Declarado nos
-   dois donos (barra e cabeçalho do campo), que não são ancestrais um do outro. */
-.mission-lane-bar,
-.mission-field-header {
-  --lane-pin-a: #7ec8e3;
-  --lane-pin-b: var(--accent);
-  --lane-pin-ink: #080709;
-}
-
-.mission-lane-bar {
+/* ── Abas do workspace ──────────────────────────────────────────────────
+   Cada aba é uma feature: os panes dela e a missão que um deles começou.
+   Linguagem de editor, não de dashboard — a aba ativa É o chão da grelha
+   (mesmo --bg, sem fio embaixo) com um fio de acento em cima; as demais são
+   texto sobre a barra. Sem cartão, sem gradiente, sem sombra: o rack de
+   cartões que vivia aqui competia com os terminais pela atenção. */
+.workspace-tabs {
+  position: relative;
+  z-index: var(--z-soft-panel);
   display: flex;
-  align-items: stretch;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border-block-end: 1px solid var(--border);
-  background: var(--bg-elevated);
-}
-
-.mission-lane-bar__rail {
-  display: flex;
-  gap: var(--space-1-5);
-  overflow-x: auto;
-  flex: 1;
-  min-inline-size: 0;
-  scrollbar-width: thin;
-}
-
-.mission-lane-bar__actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
   flex-shrink: 0;
+  align-items: stretch;
+  gap: var(--space-1);
+  min-block-size: 36px;
+  padding-inline: var(--space-2) var(--space-3);
+  border-block-end: 1px solid var(--border);
+  background: var(--bg-bar);
 }
 
-.mission-lane-bar__hint {
-  font-size: var(--text-xs);
-  color: var(--text-dim);
-  white-space: nowrap;
-}
-
-.mission-lane-bar__ab {
-  display: inline-flex;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-}
-
-.mission-lane-bar__ab-btn {
-  appearance: none;
-  border: 0;
+.workspace-tabs__icon-btn {
+  align-self: center;
+  display: inline-grid;
+  place-items: center;
+  inline-size: 28px;
+  block-size: 28px;
+  flex-shrink: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-dim);
-  font: 500 12px/1 var(--font-ui);
-  padding: 5px 10px;
   cursor: pointer;
-  min-inline-size: 32px;
+  transition:
+    background 140ms var(--ease-out-quart),
+    color 140ms var(--ease-out-quart),
+    border-color 140ms var(--ease-out-quart);
 }
 
-.mission-lane-bar__ab-btn--active {
-  background: var(--lane-pin-b);
-  color: var(--lane-pin-ink);
-}
-
-.mission-lane {
-  display: flex;
-  align-items: stretch;
-  flex: 0 0 auto;
-  inline-size: 248px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
+.workspace-tabs__icon-btn:hover,
+.workspace-tabs__icon-btn:focus-visible {
+  border-color: var(--border);
   background: var(--surface-2);
-  overflow: hidden;
-}
-
-/* O cartão ainda carrega a classe da aba antiga (testes e seletores de
-   escopo). As regras dela — pílula, max-width 240px, padding, borda tracejada
-   de espaço/soltos, fundo do ativo — vazavam por cima e deixavam cada cartão
-   de um jeito. Aqui o cartão manda. */
-.mission-lane.terminal-workspace__filter-chip {
-  gap: 0;
-  max-width: none;
-  padding: 0;
-  border-style: solid;
-  border-radius: var(--radius-md);
-  font-size: inherit;
-  font-weight: inherit;
-  color: var(--text-muted);
-  min-block-size: 50px;
-}
-
-.mission-lane--active,
-.mission-lane.terminal-workspace__filter-chip--active {
-  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
-  background: color-mix(in srgb, var(--accent) 6%, var(--surface-2));
   color: var(--text);
 }
 
-.mission-lane--all {
-  inline-size: auto;
-  min-inline-size: 108px;
+.workspace-tabs__icon-btn[aria-pressed='true'] {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-2));
+  color: var(--text);
 }
 
-.mission-lane--all .mission-lane__body {
-  justify-content: center;
+.workspace-tabs__icon-btn:focus-visible,
+.workspace-tab__main:focus-visible,
+.workspace-tab__close:focus-visible,
+.workspace-tabs__mission:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
-.mission-lane__main {
-  appearance: none;
+/* A visão geral fica separada das abas por um fio: é o mosaico de TODAS, não
+   mais uma aba entre as outras. */
+.workspace-tabs__overview {
+  margin-inline-end: var(--space-1);
+}
+
+.workspace-tabs__overview::after {
+  content: '';
+  position: absolute;
+  inset-block: 10px;
+  inset-inline-start: calc(var(--space-2) + 28px + var(--space-1));
+  inline-size: 1px;
+  background: var(--border);
+  pointer-events: none;
+}
+
+.workspace-tabs__rail {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: stretch;
+  min-inline-size: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  /* Rolagem horizontal com as bordas esmaecidas: a barra avisa que há mais
+     abas sem ganhar uma setinha de navegação. Na máscara só o alfa conta. */
+  mask-image: linear-gradient(
+    90deg,
+    transparent 0,
+    var(--bg) var(--space-2),
+    var(--bg) calc(100% - var(--space-4)),
+    transparent 100%
+  );
+}
+
+.workspace-tabs__rail::-webkit-scrollbar {
+  display: none;
+}
+
+.workspace-tab {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: stretch;
+  min-inline-size: 112px;
+  max-inline-size: 240px;
+  margin-block-end: -1px;
+  color: var(--text-dim);
+}
+
+/* Fio vertical entre abas inativas; some ao lado da ativa e no hover. */
+.workspace-tab + .workspace-tab::before {
+  content: '';
+  position: absolute;
+  inset-block: 10px;
+  inset-inline-start: 0;
+  inline-size: 1px;
+  background: var(--border);
+  pointer-events: none;
+}
+
+.workspace-tab[data-active]::before,
+.workspace-tab[data-active] + .workspace-tab::before,
+.workspace-tab:hover::before,
+.workspace-tab:hover + .workspace-tab::before {
+  opacity: 0;
+}
+
+.workspace-tab__main {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--space-2);
+  min-inline-size: 0;
+  padding-inline: var(--space-3) var(--space-2);
   border: 0;
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
   background: transparent;
   color: inherit;
-  display: flex;
-  align-items: stretch;
-  gap: var(--space-2);
-  flex: 1;
-  min-inline-size: 0;
-  padding: 0;
-  cursor: pointer;
+  font: 500 var(--text-sm) / 1 var(--font-ui);
   text-align: start;
-}
-
-.mission-lane__rule {
-  inline-size: 2px;
-  background: transparent;
-  flex-shrink: 0;
-  transition: background 160ms var(--ease-out-quart);
-}
-
-.mission-lane--active .mission-lane__rule {
-  background: var(--accent);
-}
-
-.mission-lane__body {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 4px;
-  padding: 7px 10px 7px 8px;
-  min-inline-size: 0;
-  flex: 1;
-}
-
-.mission-lane__top {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1-5);
-  min-inline-size: 0;
-}
-
-.mission-lane__title {
-  font: 500 13px/1.2 var(--font-ui);
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex: 1;
-  min-inline-size: 0;
-}
-
-.mission-lane__meta {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1-5);
-  min-inline-size: 0;
-}
-
-.mission-lane__meta-text {
-  font: 400 11px/1.2 var(--font-ui);
-  color: var(--text-dim);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.mission-lane__crest {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 2px 7px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-round);
-  color: var(--text-dim);
-  background: var(--bg-bar);
-  flex-shrink: 0;
-  font: 500 10px/1 var(--font-ui);
-}
-
-.mission-lane__crest--live {
-  border-color: color-mix(in srgb, var(--accent) 75%, transparent);
-  color: var(--text);
-  background: var(--accent-soft);
-  box-shadow: 0 0 0 1px var(--accent-strong);
-}
-
-.mission-lane__crest--empty {
-  opacity: 0.45;
-}
-
-/* O crest carrega o NOME do orquestrador: o selo "ORQ" + nome repetido no
-   meta roubava a largura do título da missão. */
-.mission-lane__crest-name {
-  font: 500 10px/1 var(--font-ui);
-  max-inline-size: 160px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mission-lane__actions {
-  display: flex;
-  flex-direction: column;
-  inline-size: 34px;
-  border-inline-start: 1px solid var(--border);
-  flex-shrink: 0;
-}
-
-.mission-lane__actions > .mission-lane__pin + .mission-lane__pin {
-  border-block-start: 1px solid var(--border);
-}
-
-.mission-lane__pin {
-  appearance: none;
-  border: 0;
-  background: transparent;
-  color: var(--text-dim);
-  font: 500 10px/1 var(--font-ui);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
   cursor: pointer;
-  inline-size: 100%;
-  flex: 1;
+  transition:
+    background 140ms var(--ease-out-quart),
+    color 140ms var(--ease-out-quart);
 }
 
-.mission-lane__pin:hover {
+.workspace-tab__main--editing {
+  cursor: default;
+}
+
+.workspace-tab:hover .workspace-tab__main {
+  background: color-mix(in srgb, var(--surface-2) 70%, transparent);
   color: var(--text);
-  background: var(--card-hi);
 }
 
-.mission-lane__pin--a {
-  color: var(--lane-pin-ink);
-  background: var(--lane-pin-a);
+.workspace-tab[data-active] {
+  color: var(--text);
 }
 
-.mission-lane__pin--b {
-  color: var(--lane-pin-ink);
-  background: var(--lane-pin-b);
+.workspace-tab[data-active] .workspace-tab__main {
+  border-inline: 1px solid var(--border);
+  background: var(--bg);
+  font-weight: 600;
 }
 
-/* ── Field header (identidade do campo ativo) ──────────────────────────── */
-.mission-field-header {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: 6px 14px;
-  border-block-end: 1px solid var(--border);
-  background: var(--bg-bar);
+/* O fio de acento em cima É o "você está aqui". */
+.workspace-tab[data-active]::after {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  inset-block-start: 0;
+  block-size: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--accent);
+  pointer-events: none;
 }
 
-.mission-field-header__pin {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  inline-size: 18px;
-  block-size: 18px;
-  border-radius: var(--radius-sm);
-  font: 600 10px/1 var(--font-ui);
+/* Aba aberta ao lado: mesma superfície da ativa, sem o fio de acento. */
+.workspace-tab[data-side] .workspace-tab__main {
+  border-inline: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 60%, var(--bg-bar));
+  color: var(--text);
+}
+
+.workspace-tab__glyph {
+  display: inline-grid;
   flex-shrink: 0;
+  place-items: center;
+  color: var(--text-faint);
 }
 
-.mission-field-header__pin--a {
-  background: var(--lane-pin-a);
-  color: var(--lane-pin-ink);
+.workspace-tab[data-active] .workspace-tab__glyph {
+  color: var(--text-dim);
 }
 
-.mission-field-header__pin--b {
-  background: var(--lane-pin-b);
-  color: var(--lane-pin-ink);
+/* Estado da missão que mora na aba: o glifo toma a cor do estado (a palavra
+   está no tooltip e no nome acessível — cor nunca viaja sozinha). */
+.workspace-tab[data-tone='live'] .workspace-tab__glyph {
+  color: var(--state-running);
+  animation: workspace-tab-live 2.4s var(--ease-out-quart) infinite;
 }
 
-.mission-field-header__title {
-  font: 500 13px/1.2 var(--font-ui);
-  color: var(--text);
-  white-space: nowrap;
+.workspace-tab[data-tone='attention'] .workspace-tab__glyph {
+  color: var(--state-blocked);
+}
+
+.workspace-tab[data-tone='repair'] .workspace-tab__glyph,
+.workspace-tab[data-tone='failed'] .workspace-tab__glyph {
+  color: var(--state-failed);
+}
+
+.workspace-tab[data-tone='done'] .workspace-tab__glyph {
+  color: var(--state-done);
+}
+
+@keyframes workspace-tab-live {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.workspace-tab__title {
+  flex: 1 1 auto;
+  min-inline-size: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  min-inline-size: 0;
-  flex: 1;
-}
-
-.mission-field-header__meta {
-  font: 400 11px/1.2 var(--font-ui);
-  color: var(--text-dim);
   white-space: nowrap;
+}
+
+.workspace-tab__side {
+  display: inline-grid;
   flex-shrink: 0;
-}
-
-/* Crest do orquestrador no header do campo — o destaque principal do campo. */
-.mission-field-header__orq {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 9px 3px 7px;
-  border: 1px solid color-mix(in srgb, var(--accent) 65%, transparent);
-  border-radius: var(--radius-round);
-  background: var(--accent-soft);
-  color: var(--text);
-  flex-shrink: 0;
-}
-
-.mission-field-header__orq--empty {
-  border-color: var(--border-strong);
-  background: transparent;
-  color: var(--text-dim);
-  font: 400 11px/1.2 var(--font-ui);
-}
-
-.mission-field-header__orq-tag {
-  font: 600 9px/1 var(--font-ui);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  place-items: center;
   color: var(--accent);
 }
 
-.mission-field-header__orq-name {
-  font: 500 12px/1.2 var(--font-ui);
-  max-inline-size: 220px;
+/* A contagem nunca trunca: é a prova de que os painéis estão do outro lado
+   da aba e não sumiram. */
+.workspace-tab__count {
+  flex-shrink: 0;
+  min-inline-size: 16px;
+  padding: 2px 5px;
+  border-radius: var(--radius-round);
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font: 500 var(--text-2xs) / 1 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.workspace-tab[data-active] .workspace-tab__count {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.workspace-tab__close {
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-end: var(--space-1-5);
+  display: inline-grid;
+  place-items: center;
+  inline-size: 18px;
+  block-size: 18px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface-3);
+  color: var(--text-dim);
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-50%);
+  transition: opacity 120ms var(--ease-out-quart);
+}
+
+.workspace-tab:hover .workspace-tab__close,
+.workspace-tab[data-active] .workspace-tab__close,
+.workspace-tab__close:focus-visible {
+  opacity: 1;
+}
+
+.workspace-tab__close:hover {
+  background: color-mix(in srgb, var(--danger) 22%, var(--surface-3));
+  color: var(--text);
+}
+
+/* O × aparece por cima da contagem: ela cede o lugar enquanto ele existe. */
+.workspace-tab:has(.workspace-tab__close):hover .workspace-tab__count,
+.workspace-tab[data-active]:has(.workspace-tab__close) .workspace-tab__count {
+  visibility: hidden;
+}
+
+.workspace-tab__rename {
+  flex: 1 1 auto;
+  min-inline-size: 8ch;
+  padding: 3px var(--space-1-5);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  outline: none;
+  background: var(--bg);
+  color: var(--text);
+  font: 600 var(--text-sm) / 1.2 var(--font-ui);
+}
+
+.workspace-tabs .pane-picker--tabbar {
+  align-self: center;
+  margin-inline-start: var(--space-1);
+}
+
+.workspace-tabs__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-inline-start: auto;
+  padding-inline-start: var(--space-3);
+}
+
+.workspace-tabs__mission {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  block-size: 28px;
+  padding-inline: var(--space-2-5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-dim);
+  font: 500 var(--text-xs) / 1 var(--font-ui);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background 140ms var(--ease-out-quart),
+    color 140ms var(--ease-out-quart),
+    border-color 140ms var(--ease-out-quart);
+}
+
+.workspace-tabs__mission:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.workspace-tab-menu .pane-context-menu__item[aria-disabled='true'] {
+  cursor: default;
+  opacity: 0.7;
+}
+
+/* ── Duas abas lado a lado ──────────────────────────────────────────────
+   Cada metade leva o nome da aba que mostra: com dois mosaicos na tela, o
+   operador precisa saber de relance qual é qual antes de digitar. */
+.terminal-workspace__split {
+  display: flex;
+  inline-size: 100%;
+  block-size: 100%;
+  min-inline-size: 0;
+}
+
+.terminal-workspace__split > .panel-group {
+  flex: 1 1 auto;
+}
+
+.terminal-workspace__half {
+  display: flex;
+  flex-direction: column;
+  block-size: 100%;
+  min-inline-size: 0;
+}
+
+.terminal-workspace__half-head {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--space-2);
+  block-size: 26px;
+  padding-inline: var(--space-3) var(--space-2);
+  border-block-end: 1px solid var(--border);
+  color: var(--text-dim);
+  font: 600 var(--text-xs) / 1 var(--font-ui);
+}
+
+.terminal-workspace__half[data-primary] .terminal-workspace__half-head {
+  box-shadow: inset 0 2px 0 var(--accent);
+  color: var(--text);
+}
+
+.terminal-workspace__half-title {
+  flex: 1 1 auto;
+  min-inline-size: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.terminal-workspace__half-close {
+  display: inline-grid;
+  place-items: center;
+  inline-size: 20px;
+  block-size: 20px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.terminal-workspace__half-close:hover,
+.terminal-workspace__half-close:focus-visible {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.terminal-workspace__half-close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.terminal-workspace__half-body {
+  flex: 1 1 auto;
+  min-block-size: 0;
+}
+
+.terminal-workspace__half-body > .grid {
+  inline-size: 100%;
+  block-size: 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-tab[data-tone='live'] .workspace-tab__glyph {
+    animation: none;
+  }
+
+  .workspace-tabs__icon-btn,
+  .workspace-tab__main,
+  .workspace-tab__close,
+  .workspace-tabs__mission {
+    transition: none;
+  }
 }

@@ -201,6 +201,26 @@ saber isto antes de mexer:
   panes a um orquestrador preso em `dispatch_required`. Hardened mantém o
   despacho explícito na interface.
 
+## Abas dos Terminais: aba = feature (23/09)
+
+- `WorkspaceTabs` substituiu o rack de cartões (`MissionLaneBar`), os pinos
+  A/B e o "Todos". Uma aba por escopo de `listPaneScopes`; visão geral é
+  `ALL_SCOPES_KEY`; "ver ao lado" é `sideScopeKey` e desenha duas `PaneGrid`
+  (a secundária com `primary={false}`, que não atende o `pendingOpen` do
+  picker — senão dois menus abririam juntos).
+- Missão começada por um pane do operador mora na aba DELE: a adoção em
+  `reflectMissionLeader` carimba `missionHost` (persistido no layout) e
+  `missionHomeScopeKeys` manda missão e workers para o escopo do anfitrião.
+  Missão do assistente não tem anfitrião e mantém a aba própria. Classifique
+  vários panes com `paneScopeResolver`, nunca com `paneScopeKey` solto (sem
+  as casas, a missão hospedada iria para uma aba que não existe).
+- Aba com missão viva não fecha pelo ×: encerrar é no Quadro. "Terminais"
+  (panes sem espaço) renomeada vira um espaço (`nameLooseSpace`).
+- Branch + worktree por aba AINDA NÃO existe — o Main recusa cwd fora da
+  raiz e a worktree gerenciada mora fora dela. Desenho e bloqueios em
+  `docs/analysis/2026-09-23-abas-feature-worktree.md`; não contorne criando
+  worktree dentro da raiz do projeto.
+
 ## Conversas Grok/Kimi por checkout (F-566)
 
 - Os overlays recebem `userDataPath` e `checkoutId` da autoridade do Main e

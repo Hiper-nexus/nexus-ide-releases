@@ -465,6 +465,13 @@ export interface PaneModel {
    */
   spaceTitle?: string;
   /**
+   * Este pane do operador ADOTOU uma missão (o agente dele a criou, ou o
+   * operador o fez orquestrador). A missão mora na aba deste pane — a aba é a
+   * feature — em vez de abrir uma aba própria ao lado dos panes que a
+   * começaram. Só agrupamento visual; o main não deriva autoridade daqui.
+   */
+  missionHost?: true;
+  /**
    * Process-local orchestration surface. It may be visible while active but
    * must never enter the durable workspace layout or cold-start restore.
    */

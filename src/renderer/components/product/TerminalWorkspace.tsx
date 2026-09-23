@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Group, Panel, Separator } from 'react-resizable-panels';
 import { CanvasView } from '../CanvasView';
 import { PaneGrid } from '../PaneGrid';
 import { useLayoutStore } from '../../state/layout-store';
@@ -11,12 +12,16 @@ import {
   listPaneScopes,
   looseHomeScopeKey,
   missionScopeKey,
-  paneScopeKey,
+  newPaneSpaceId,
+  nextPaneSpaceTitle,
+  paneScopeResolver,
   selectScopePanes,
+  spaceScopeKey,
   type PaneScopeEntry,
 } from '../../lib/pane-spaces';
 import { usePaneScopeStore } from '../../state/pane-scope-store';
-import { MissionLaneBar } from './MissionLaneBar';
+import { askConfirm, useConfirmStore } from '../../state/confirm-store';
+import { WorkspaceTabs, workspaceTabIsClosable } from './WorkspaceTabs';
 import { missionLifecycleLabel } from '../../lib/mission-lifecycle-copy';
 import { missionAwaitsOperatorReview } from '../../../shared/mission-recovery-policy';
 import { PixelIcon } from '../PixelIcon';
@@ -112,11 +117,10 @@ export function TerminalWorkspace({
   // mosaico da missão anterior. A validação contra `scopes` abaixo já cobre o
   // escopo que deixou de existir.
   const activeScopeKey = usePaneScopeStore((state) => state.activeScopeKey);
+  const sideScopeKey = usePaneScopeStore((state) => state.sideScopeKey);
   const focusScope = usePaneScopeStore((state) => state.focusScope);
-  const pinnedA = usePaneScopeStore((state) => state.pinnedA);
-  const pinnedB = usePaneScopeStore((state) => state.pinnedB);
-  const togglePinScope = usePaneScopeStore((state) => state.togglePinScope);
-  const switchAB = usePaneScopeStore((state) => state.switchAB);
+  const showBeside = usePaneScopeStore((state) => state.showBeside);
+  const closeBeside = usePaneScopeStore((state) => state.closeBeside);
   // O rótulo segue a projeção canônica da missão — "Missão ativa" fixo mentia
   // em missão já concluída/falha. Done SEM carimbo do humano é revisão, não
   // Pronto: senão o header dos Terminais declara encerrado o canal que ainda
@@ -137,8 +141,8 @@ export function TerminalWorkspace({
     : 'Missão';
   const focusedPaneId = useLayoutStore((state) => state.focusedPaneId);
   const renamePaneSpace = useLayoutStore((state) => state.renamePaneSpace);
-  // Renomear a aba do espaço (duplo clique no chip): edição inline, mesmo
-  // padrão do título do pane no PaneToolbar. Enter/blur gravam, Esc cancela.
+  // Renomear a aba (duplo clique, F2 ou menu): edição inline na própria aba.
+  // Enter/blur gravam, Esc cancela.
   const [editingSpace, setEditingSpace] = useState<{
     key: string;
     draft: string;
@@ -163,6 +167,11 @@ export function TerminalWorkspace({
     () => looseHomeScopeKey(panes, paneMissions),
     [panes, paneMissions],
   );
+  // A aba de cada pane, com a casa das missões hospedadas resolvida uma vez.
+  const scopeOf = useMemo(
+    () => paneScopeResolver(panes, paneMissions),
+    [panes, paneMissions],
+  );
   const scopes = useMemo(
     () =>
       listPaneScopes({
@@ -176,11 +185,6 @@ export function TerminalWorkspace({
       }),
     [panes, paneMissions, missionSummaries],
   );
-
-  // Pino cujo escopo sumiu (missão encerrada, espaço fechado) não vira um
-  // botão A/B morto: só chega à barra o pino que ainda aponta para um campo.
-  const livePinnedA = pinnedA && scopes.some((scope) => scope.key === pinnedA) ? pinnedA : null;
-  const livePinnedB = pinnedB && scopes.some((scope) => scope.key === pinnedB) ? pinnedB : null;
 
   // Escopo desenhado agora. Dentro da missão é a própria missão, sempre. Na
   // vista global é a escolha do operador — e quando ela evapora (espaço
@@ -199,13 +203,26 @@ export function TerminalWorkspace({
   const focusedScopeKey = (() => {
     if (!focusedPaneId) return null;
     const focused = panes.find((pane) => pane.id === focusedPaneId);
-    return focused ? paneScopeKey(focused, paneMissions, looseHome) : null;
+    return focused ? scopeOf(focused) : null;
   })();
   const effectiveScopeKey = inMission
     ? missionScopeKey(missionId)
     : scopeExists && requestedScopeKey
       ? requestedScopeKey
       : (focusedScopeKey ?? scopes[0]?.key ?? null);
+  const overview = !inMission && effectiveScopeKey === ALL_SCOPES_KEY;
+
+  // Aba ao lado: só na grelha, só fora da visão geral, só se ainda existe e
+  // não é a própria aba ativa. Qualquer outra coisa é uma aba só.
+  const liveSideKey =
+    !inMission &&
+    !overview &&
+    viewKind === 'grid' &&
+    sideScopeKey &&
+    sideScopeKey !== effectiveScopeKey &&
+    scopes.some((scope) => scope.key === sideScopeKey)
+      ? sideScopeKey
+      : null;
 
   /**
    * INVARIANTE: um painel que acabou de receber foco está NA TELA.
@@ -219,31 +236,36 @@ export function TerminalWorkspace({
    *
    * Então a regra mora aqui, uma vez: quando o pane FOCADO muda e ele está em
    * outro escopo, a aba acompanha. Só na MUDANÇA — clicar numa aba não é
-   * puxado de volta pelo foco antigo.
+   * puxado de volta pelo foco antigo. Pane da aba aberta ao lado já está na
+   * tela: não troca aba nenhuma.
    */
   const lastFollowedFocusRef = useRef<string | null>(null);
   useEffect(() => {
     if (inMission || !focusedPaneId) return;
     if (lastFollowedFocusRef.current === focusedPaneId) return;
     lastFollowedFocusRef.current = focusedPaneId;
+    // Na visão geral todo pane já está na tela: o foco não tira o operador dela.
+    if (overview) return;
     const focused = panes.find((pane) => pane.id === focusedPaneId);
     if (!focused) return;
-    const scopeOfFocused = paneScopeKey(focused, paneMissions, looseHome);
-    if (scopeOfFocused === effectiveScopeKey) return;
+    const scopeOfFocused = scopeOf(focused);
+    if (scopeOfFocused === effectiveScopeKey || scopeOfFocused === liveSideKey) {
+      return;
+    }
     focusScope(scopeOfFocused);
   }, [
     focusedPaneId,
     panes,
-    paneMissions,
-    looseHome,
+    scopeOf,
     effectiveScopeKey,
+    liveSideKey,
     focusScope,
     inMission,
+    overview,
   ]);
 
-  const handlePaneCreated = useCallback(
-    (paneId: string) => {
-      const scopeKey = effectiveScopeKey;
+  const pinPaneToScope = useCallback(
+    (scopeKey: string | null, paneId: string) => {
       if (!scopeKey) return;
       // Pane aberto pelo "+ Pane" DENTRO de um espaço pertence àquele espaço.
       // O pin abaixo só o mantém na tela nesta sessão; o carimbo é o que faz
@@ -260,39 +282,103 @@ export function TerminalWorkspace({
         return { ...previous, [scopeKey]: next };
       });
     },
-    [effectiveScopeKey, scopes],
+    [scopes],
+  );
+  const handlePaneCreated = useCallback(
+    (paneId: string) => pinPaneToScope(effectiveScopeKey, paneId),
+    [pinPaneToScope, effectiveScopeKey],
+  );
+  const handleSidePaneCreated = useCallback(
+    (paneId: string) => pinPaneToScope(liveSideKey, paneId),
+    [pinPaneToScope, liveSideKey],
   );
 
-  const multiScope = !inMission && scopes.length >= 2;
+  // "+" da barra: o pane escolhido nasce numa aba NOVA, e o operador vai com ele.
+  const handleTabPaneCreated = useCallback((paneId: string) => {
+    const layout = useLayoutStore.getState();
+    const others = listPanes(layout.root).filter((pane) => pane.id !== paneId);
+    const spaceId = newPaneSpaceId();
+    layout.assignPaneSpace(paneId, spaceId, nextPaneSpaceTitle(others));
+    usePaneScopeStore.getState().focusScope(spaceScopeKey(spaceId));
+    layout.focus(paneId);
+  }, []);
+
+  const closeTab = useCallback(
+    async (scope: PaneScopeEntry) => {
+      if (!workspaceTabIsClosable(scope)) return;
+      const members = selectScopePanes(
+        listPanes(useLayoutStore.getState().root),
+        scope.key,
+        useOrchStore.getState().paneMissions,
+      ).filter((pane) => !pane.isStructuralPlaceholder);
+      if (members.length === 0) return;
+      const confirmed = await askConfirm({
+        title: `Fechar a aba “${scope.title}”?`,
+        body:
+          members.length === 1
+            ? 'O painel desta aba será encerrado, com o que estiver rodando nele.'
+            : `Os ${members.length} painéis desta aba serão encerrados, com o que estiver rodando neles.`,
+        confirmLabel: 'Fechar aba',
+        danger: true,
+      });
+      if (!confirmed) return;
+      const layout = useLayoutStore.getState();
+      for (const pane of members) layout.close(pane.id, 'tab-close');
+      if (usePaneScopeStore.getState().sideScopeKey === scope.key) closeBeside();
+    },
+    [closeBeside],
+  );
 
   const startSpaceRename = (scope: PaneScopeEntry) => {
-    if (scope.kind !== 'space' || !scope.id) return;
+    if (scope.kind === 'mission') return;
     // O rascunho vem do carimbo real do pane, não do rótulo da aba — a aba
     // pode estar com o sufixo de desambiguação ("Título #2"), que não é nome.
     const raw =
-      panes.find((pane) => pane.spaceId === scope.id && !pane.missionId)
-        ?.spaceTitle ?? scope.title;
+      scope.kind === 'space'
+        ? (panes.find((pane) => pane.spaceId === scope.id && pane.spaceTitle)
+            ?.spaceTitle ?? scope.title)
+        : scope.title;
     setEditingSpace({ key: scope.key, draft: raw });
   };
 
   const commitSpaceRename = () => {
     const current = editingSpace;
     if (!current) return;
-    const scope = scopes.find((entry) => entry.key === current.key);
-    if (scope?.kind === 'space' && scope.id) {
-      renamePaneSpace(scope.id, current.draft);
-    }
     setEditingSpace(null);
+    const scope = scopes.find((entry) => entry.key === current.key);
+    if (!scope) return;
+    if (scope.kind === 'space' && scope.id) {
+      renamePaneSpace(scope.id, current.draft);
+      return;
+    }
+    if (scope.kind === 'loose') {
+      // "Terminais" não tinha espaço: dar nome é criar um, com os panes dela.
+      const clean = current.draft.trim();
+      if (!clean || clean === scope.title) return;
+      const spaceId = newPaneSpaceId();
+      if (useLayoutStore.getState().nameLooseSpace(spaceId, clean)) {
+        focusScope(spaceScopeKey(spaceId));
+      }
+    }
   };
+
+  const visibleIdsFor = useCallback(
+    (scopeKey: string): Set<string> => {
+      const visible =
+        inMission && scopeKey === missionScopeKey(missionId)
+          ? selectMissionTerminalPanes(panes, missionId, paneMissions)
+          : selectScopePanes(panes, scopeKey, paneMissions);
+      const ids = new Set(visible.map((pane) => pane.id));
+      for (const pinned of operatorPins[scopeKey] ?? []) ids.add(pinned);
+      return ids;
+    },
+    [panes, paneMissions, operatorPins, inMission, missionId],
+  );
 
   const visiblePaneIds = useMemo(() => {
     if (!effectiveScopeKey) return undefined;
     if (effectiveScopeKey === ALL_SCOPES_KEY) return undefined;
-    const visible = inMission
-      ? selectMissionTerminalPanes(panes, missionId, paneMissions)
-      : selectScopePanes(panes, effectiveScopeKey, paneMissions);
-    const ids = new Set(visible.map((pane) => pane.id));
-    for (const pinned of operatorPins[effectiveScopeKey] ?? []) ids.add(pinned);
+    const ids = visibleIdsFor(effectiveScopeKey);
     // Escopo único: NÃO filtrar. `undefined` faz o PaneGrid desenhar a árvore
     // CANÔNICA, que é sempre a mesma referência. Devolver um Set contendo todos
     // os panes parece equivalente e NÃO é: o grid reconstrói a árvore com
@@ -303,14 +389,12 @@ export function TerminalWorkspace({
     // "dictation-hold-to-talk (write-refused-exited)" no app empacotado.
     if (ids.size === panes.length) return undefined;
     return ids;
-  }, [
-    panes,
-    effectiveScopeKey,
-    paneMissions,
-    operatorPins,
-    inMission,
-    missionId,
-  ]);
+  }, [effectiveScopeKey, visibleIdsFor, panes.length]);
+
+  const sidePaneIds = useMemo(
+    () => (liveSideKey ? visibleIdsFor(liveSideKey) : undefined),
+    [liveSideKey, visibleIdsFor],
+  );
 
   /**
    * INVARIANTE (a volta da de cima): o pane focado está NA TELA.
@@ -322,7 +406,7 @@ export function TerminalWorkspace({
    * saasbarbearia). Quando o campo desenhado muda e o foco não está nele, o
    * foco vai para o orquestrador do campo, senão para o primeiro pane dele.
    */
-  // Qual lado mudou nesta passada. Só o CAMPO mudou (clique no cartão) → o
+  // Qual lado mudou nesta passada. Só o CAMPO mudou (clique na aba) → o
   // foco segue o campo. O FOCO mudou (login, ⌘K, notificação, voz focando um
   // pane de outro campo) → quem manda é o efeito de cima, que leva o campo
   // até o pane; aqui `visiblePaneIds` ainda é do campo antigo e devolver o
@@ -348,6 +432,53 @@ export function TerminalWorkspace({
     lastFollowedFocusRef.current = target;
     useLayoutStore.getState().focus(target);
   }, [visiblePaneIds, focusedPaneId, scopes, effectiveScopeKey, panes]);
+
+  // ⌘/Ctrl+Alt+→/← troca de aba. Capture-phase pelo mesmo motivo do
+  // Ctrl+Tab do App: a tecla precisa chegar ANTES do xterm escrever no PTY.
+  const cycleRef = useRef({ scopes, effectiveScopeKey, overview });
+  cycleRef.current = { scopes, effectiveScopeKey, overview };
+  useEffect(() => {
+    if (hidden || inMission) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return;
+      if (!(event.ctrlKey || event.metaKey) || !event.altKey || event.shiftKey) {
+        return;
+      }
+      if (useConfirmStore.getState().pending) return;
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      const target = event.target instanceof Element ? event.target : null;
+      // Campo de texto do app é edição; o textarea do xterm é o terminal.
+      if (
+        target?.closest('input, textarea, [contenteditable="true"]') &&
+        !target.closest('.xterm')
+      ) {
+        return;
+      }
+      const current = cycleRef.current;
+      if (current.scopes.length === 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const index = current.overview
+        ? -1
+        : current.scopes.findIndex((scope) => scope.key === current.effectiveScopeKey);
+      const step = event.key === 'ArrowRight' ? 1 : -1;
+      const next =
+        current.scopes[
+          (index + step + current.scopes.length) % current.scopes.length
+        ] ?? current.scopes[0]!;
+      usePaneScopeStore.getState().focusScope(next.key);
+    };
+    window.addEventListener('keydown', onKey, { capture: true });
+    return () => window.removeEventListener('keydown', onKey, { capture: true });
+  }, [hidden, inMission]);
+
+  const sideScope = liveSideKey
+    ? scopes.find((scope) => scope.key === liveSideKey)
+    : undefined;
+  const activeScope =
+    effectiveScopeKey && !overview
+      ? scopes.find((scope) => scope.key === effectiveScopeKey)
+      : undefined;
 
   return (
     <section
@@ -380,106 +511,34 @@ export function TerminalWorkspace({
             </button>
           ) : null}
         </header>
-      ) : null}
-
-      {multiScope ? (
-        <MissionLaneBar
+      ) : (
+        <WorkspaceTabs
           scopes={scopes}
-          activeScopeKey={effectiveScopeKey}
+          activeScopeKey={overview ? null : effectiveScopeKey}
+          sideScopeKey={liveSideKey}
+          overview={overview}
+          editing={editingSpace}
           onFocusScope={focusScope}
-          onStartSpaceRename={startSpaceRename}
-          pinnedA={livePinnedA}
-          pinnedB={livePinnedB}
-          onTogglePin={togglePinScope}
-          onSwitchAB={switchAB}
+          onToggleOverview={() =>
+            focusScope(
+              overview
+                ? (focusedScopeKey ?? scopes[0]?.key ?? ALL_SCOPES_KEY)
+                : ALL_SCOPES_KEY,
+            )
+          }
+          onToggleBeside={(scopeKey) => showBeside(scopeKey, effectiveScopeKey)}
+          onCloseBeside={closeBeside}
+          onStartRename={startSpaceRename}
+          onRenameDraft={(draft) =>
+            setEditingSpace((current) => (current ? { ...current, draft } : current))
+          }
+          onCommitRename={commitSpaceRename}
+          onCancelRename={() => setEditingSpace(null)}
+          onCloseTab={(scope) => void closeTab(scope)}
+          onTabPaneCreated={handleTabPaneCreated}
           onNewMission={() => useProductNavigationStore.getState().openNewMission()}
         />
-      ) : null}
-
-      {/* Linha do campo só enquanto o espaço é renomeado: o cartão ativo da
-          barra já mostra nome, contagem, pino e orquestrador — repetir tudo
-          numa segunda linha era ruído (operador, 23/09). */}
-      {multiScope &&
-        (() => {
-          const activeScope = scopes.find(
-            (scope) => scope.key === effectiveScopeKey,
-          );
-          if (!activeScope || editingSpace?.key !== activeScope.key) return null;
-          const pin =
-            pinnedA === activeScope.key
-              ? 'a'
-              : pinnedB === activeScope.key
-                ? 'b'
-                : null;
-          return (
-            <div
-              className="mission-field-header"
-              data-scope-kind={activeScope.kind}
-              role="status"
-            >
-              {pin ? (
-                <span
-                  className={`mission-field-header__pin mission-field-header__pin--${pin}`}
-                >
-                  {pin.toUpperCase()}
-                </span>
-              ) : null}
-              <span className="mission-field-header__title">
-                {editingSpace?.key === activeScope.key ? (
-                  <input
-                    className="terminal-workspace__chip-rename"
-                    value={editingSpace.draft}
-                    autoFocus
-                    aria-label="Renomear espaço"
-                    onChange={(event) =>
-                      setEditingSpace({
-                        key: activeScope.key,
-                        draft: event.target.value,
-                      })
-                    }
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') {
-                        event.preventDefault();
-                        commitSpaceRename();
-                      } else if (event.key === 'Escape') {
-                        event.preventDefault();
-                        setEditingSpace(null);
-                      }
-                    }}
-                    onBlur={commitSpaceRename}
-                  />
-                ) : (
-                  activeScope.title
-                )}
-              </span>
-              {activeScope.kind === 'mission' && activeScope.state ? (
-                <span
-                  className={`terminal-workspace__chip-dot terminal-workspace__chip-dot--${activeScope.state}`}
-                  aria-hidden="true"
-                />
-              ) : null}
-              <span className="mission-field-header__meta">
-                {activeScope.paneCount} painel{activeScope.paneCount === 1 ? '' : 's'}
-              </span>
-              {activeScope.orchestrator ? (
-                <span
-                  className="mission-field-header__orq"
-                  title={`Orquestrador do campo: ${activeScope.orchestrator.title}`}
-                >
-                  <PixelIcon name="orch" size={11} />
-                  <span className="mission-field-header__orq-tag">orq</span>
-                  <span className="mission-field-header__orq-name">
-                    {activeScope.orchestrator.title}
-                  </span>
-                </span>
-              ) : (
-                <span className="mission-field-header__orq mission-field-header__orq--empty">
-                  sem orquestrador
-                </span>
-              )}
-            </div>
-          );
-        })()}
+      )}
 
       <div className="terminal-workspace__surface">
         {viewKind === 'canvas' ? (
@@ -487,6 +546,52 @@ export function TerminalWorkspace({
             visiblePaneIds={visiblePaneIds}
             onPaneCreated={handlePaneCreated}
           />
+        ) : sideScope && sidePaneIds && activeScope ? (
+          <div className="terminal-workspace__split">
+            <Group orientation="horizontal" className="panel-group">
+              <Panel className="panel" defaultSize="50%" minSize="24%">
+                <div className="terminal-workspace__half" data-primary="">
+                  <div className="terminal-workspace__half-head">
+                    <span className="terminal-workspace__half-title">
+                      {activeScope.title}
+                    </span>
+                  </div>
+                  <div className="terminal-workspace__half-body">
+                    <PaneGrid
+                      visiblePaneIds={visiblePaneIds ?? visibleIdsFor(activeScope.key)}
+                      onPaneCreated={handlePaneCreated}
+                    />
+                  </div>
+                </div>
+              </Panel>
+              <Separator className="resize-handle resize-handle--horizontal" />
+              <Panel className="panel" defaultSize="50%" minSize="24%">
+                <div className="terminal-workspace__half">
+                  <div className="terminal-workspace__half-head">
+                    <span className="terminal-workspace__half-title">
+                      {sideScope.title}
+                    </span>
+                    <button
+                      type="button"
+                      className="terminal-workspace__half-close"
+                      aria-label={`Fechar a divisão com ${sideScope.title}`}
+                      title="Fechar a divisão"
+                      onClick={closeBeside}
+                    >
+                      <PixelIcon name="close" size={9} />
+                    </button>
+                  </div>
+                  <div className="terminal-workspace__half-body">
+                    <PaneGrid
+                      visiblePaneIds={sidePaneIds}
+                      onPaneCreated={handleSidePaneCreated}
+                      primary={false}
+                    />
+                  </div>
+                </div>
+              </Panel>
+            </Group>
+          </div>
         ) : (
           <PaneGrid
             visiblePaneIds={visiblePaneIds}

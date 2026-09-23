@@ -149,3 +149,29 @@ describe('workspaceLayoutSchema preserva o espaço do pane', () => {
     expect(parsed.root.pane.spaceId).toBe('space-7');
   });
 });
+
+/** Sem `missionHost` no parse, a missão hospedada voltaria à aba própria no restart. */
+describe('workspaceLayoutSchema preserva o anfitrião de missão', () => {
+  it('missionHost sobrevive a gravar → ler', () => {
+    const layout: WorkspaceLayout = {
+      root: {
+        kind: 'leaf',
+        id: 'leaf-1',
+        pane: {
+          id: 'pane-a',
+          kind: 'cli-agent',
+          title: 'claude',
+          role: 'orchestrator',
+          missionId: 'mission-1',
+          missionHost: true,
+        },
+      },
+      focusedPaneId: 'pane-a',
+    };
+    const parsed = workspaceLayoutSchema.parse(
+      JSON.parse(JSON.stringify(layout)) as unknown,
+    );
+    if (parsed.root.kind !== 'leaf') throw new Error('esperava folha');
+    expect(parsed.root.pane.missionHost).toBe(true);
+  });
+});

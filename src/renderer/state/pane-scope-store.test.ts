@@ -3,51 +3,42 @@ import { usePaneScopeStore } from './pane-scope-store';
 
 const store = () => usePaneScopeStore.getState();
 
-describe('pane-scope-store — pinos A/B', () => {
+describe('pane-scope-store — aba ativa e aba ao lado', () => {
   beforeEach(() => {
-    usePaneScopeStore.setState({ activeScopeKey: null, pinnedA: null, pinnedB: null });
+    usePaneScopeStore.setState({ activeScopeKey: null, sideScopeKey: null });
   });
 
-  it('fixa o primeiro campo como A e o segundo como B, focando cada um', () => {
-    store().togglePinScope('mission:1');
-    expect(store()).toMatchObject({ pinnedA: 'mission:1', pinnedB: null, activeScopeKey: 'mission:1' });
-    store().togglePinScope('mission:2');
-    expect(store()).toMatchObject({ pinnedA: 'mission:1', pinnedB: 'mission:2', activeScopeKey: 'mission:2' });
+  it('abrir ao lado fixa a ativa à esquerda e a escolhida à direita', () => {
+    store().showBeside('space:b', 'space:a');
+    expect(store()).toMatchObject({ activeScopeKey: 'space:a', sideScopeKey: 'space:b' });
   });
 
-  it('com A e B ocupados, o B antigo desliza para A e o novo vira B', () => {
-    store().togglePinScope('mission:1');
-    store().togglePinScope('mission:2');
-    store().togglePinScope('mission:3');
-    expect(store()).toMatchObject({ pinnedA: 'mission:2', pinnedB: 'mission:3', activeScopeKey: 'mission:3' });
+  it('a aba ativa nunca abre ao lado dela mesma', () => {
+    store().showBeside('space:a', 'space:a');
+    expect(store().sideScopeKey).toBeNull();
   });
 
-  it('clicar de novo no pino desafixa só aquele lado', () => {
-    store().togglePinScope('mission:1');
-    store().togglePinScope('mission:2');
-    store().togglePinScope('mission:1');
-    expect(store()).toMatchObject({ pinnedA: null, pinnedB: 'mission:2' });
-    // O lado livre é reocupado primeiro.
-    store().togglePinScope('mission:3');
-    expect(store()).toMatchObject({ pinnedA: 'mission:3', pinnedB: 'mission:2' });
+  it('pedir de novo a mesma aba ao lado fecha a divisão', () => {
+    store().showBeside('space:b', 'space:a');
+    store().showBeside('space:b', 'space:a');
+    expect(store().sideScopeKey).toBeNull();
   });
 
-  it('switchAB vai para o campo fixado e ignora lado vazio', () => {
-    store().togglePinScope('mission:1');
-    store().togglePinScope('mission:2');
-    store().switchAB('a');
-    expect(store().activeScopeKey).toBe('mission:1');
-    store().switchAB('b');
-    expect(store().activeScopeKey).toBe('mission:2');
-    usePaneScopeStore.setState({ pinnedA: null });
-    store().switchAB('a');
-    expect(store().activeScopeKey).toBe('mission:2');
+  it('clicar na aba que está ao lado troca as duas de posição, sem fechar nenhuma', () => {
+    store().showBeside('space:b', 'space:a');
+    store().focusScope('space:b');
+    expect(store()).toMatchObject({ activeScopeKey: 'space:b', sideScopeKey: 'space:a' });
   });
 
-  it('nunca muta o estado anterior (snapshots independentes)', () => {
-    const before = store();
-    store().togglePinScope('mission:1');
-    expect(before.pinnedA).toBeNull();
-    expect(store()).not.toBe(before);
+  it('clicar numa terceira aba mantém a divisão com a aba ao lado', () => {
+    store().showBeside('space:b', 'space:a');
+    store().focusScope('space:c');
+    expect(store()).toMatchObject({ activeScopeKey: 'space:c', sideScopeKey: 'space:b' });
+  });
+
+  it('limpar o foco desfaz também a divisão', () => {
+    store().showBeside('space:b', 'space:a');
+    store().clearScopeFocus();
+    expect(store()).toMatchObject({ activeScopeKey: null, sideScopeKey: null });
   });
 });

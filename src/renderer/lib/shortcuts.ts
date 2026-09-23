@@ -98,6 +98,12 @@ export const SHORTCUTS: readonly ShortcutEntry[] = Object.freeze([
     short: 'circular',
   }),
   Object.freeze({
+    id: 'cycle-tab',
+    keys: `${formatShortcut('mod', 'alt', '→')} / ${formatShortcut('mod', 'alt', '←')}`,
+    action: 'Ir para a próxima ou a aba anterior dos Terminais',
+    group: 'fleet' as const,
+  }),
+  Object.freeze({
     id: 'split-right',
     keys: formatShortcut('mod', 'D'),
     action: 'Dividir o terminal à direita',

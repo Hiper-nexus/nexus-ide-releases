@@ -1429,3 +1429,105 @@ describe('renamePaneSpace — renomear a aba do espaço inteiro', () => {
     );
   });
 });
+
+describe('layout-store — a missão mora na aba do pane que a começou', () => {
+  it('adotar um pane do operador como líder o marca anfitrião da missão', () => {
+    const operatorPane: PaneModel = {
+      id: 'pane-operador',
+      kind: 'cli-agent',
+      title: 'claude',
+      adapterId: 'claude',
+      spaceId: 'space-api',
+      spaceTitle: 'API',
+    };
+    seedLayout({
+      root: buildGridTree([operatorPane]),
+      focusedPaneId: operatorPane.id,
+      maximizedPaneId: null,
+      hydrated: true,
+      viewKind: 'grid',
+      canvasNodeLayouts: {},
+      canvasViewport: { x: 0, y: 0, zoom: 1 },
+    });
+
+    useLayoutStore.getState().reflectMissionLeader('mission-epic', operatorPane.id);
+
+    expect(listPanes(useLayoutStore.getState().root)[0]).toMatchObject({
+      role: 'orchestrator',
+      missionId: 'mission-epic',
+      missionHost: true,
+      spaceId: 'space-api',
+    });
+  });
+
+  it('o pane que o motor abriu para a missão não hospeda nada', () => {
+    const maestro: PaneModel = {
+      id: 'pane-maestro',
+      kind: 'cli-agent',
+      title: 'Maestro',
+      adapterId: 'codex',
+      missionId: 'mission-epic',
+      orchRequestId: 'orchspawn-1',
+    };
+    seedLayout({
+      root: buildGridTree([maestro]),
+      focusedPaneId: maestro.id,
+      maximizedPaneId: null,
+      hydrated: true,
+      viewKind: 'grid',
+      canvasNodeLayouts: {},
+      canvasViewport: { x: 0, y: 0, zoom: 1 },
+    });
+
+    useLayoutStore.getState().reflectMissionLeader('mission-epic', maestro.id);
+
+    expect(listPanes(useLayoutStore.getState().root)[0]).not.toHaveProperty(
+      'missionHost',
+    );
+  });
+
+  it('dar nome à aba Terminais transforma os panes dela num espaço — anfitrião incluso', () => {
+    const shell: PaneModel = { id: 'pane-shell', kind: 'shell', title: 'shell' };
+    const host: PaneModel = {
+      id: 'pane-host',
+      kind: 'cli-agent',
+      title: 'claude',
+      role: 'orchestrator',
+      missionId: 'mission-epic',
+      missionHost: true,
+    };
+    const worker: PaneModel = {
+      id: 'pane-worker',
+      kind: 'cli-agent',
+      title: 'codex',
+      missionId: 'mission-epic',
+    };
+    const named: PaneModel = {
+      id: 'pane-named',
+      kind: 'shell',
+      title: 'shell',
+      spaceId: 'space-outro',
+      spaceTitle: 'Outro',
+    };
+    seedLayout({
+      root: buildGridTree([shell, host, worker, named]),
+      focusedPaneId: shell.id,
+      maximizedPaneId: null,
+      hydrated: true,
+      viewKind: 'grid',
+      canvasNodeLayouts: {},
+      canvasViewport: { x: 0, y: 0, zoom: 1 },
+    });
+
+    expect(useLayoutStore.getState().nameLooseSpace('space-epic', '  Epic 22  ')).toBe(true);
+
+    const byId = new Map(
+      listPanes(useLayoutStore.getState().root).map((pane) => [pane.id, pane]),
+    );
+    expect(byId.get('pane-shell')).toMatchObject({ spaceId: 'space-epic', spaceTitle: 'Epic 22' });
+    expect(byId.get('pane-host')).toMatchObject({ spaceId: 'space-epic', spaceTitle: 'Epic 22' });
+    // O worker segue a casa da missão (o anfitrião) — não recebe carimbo.
+    expect(byId.get('pane-worker')).not.toHaveProperty('spaceId');
+    expect(byId.get('pane-named')).toMatchObject({ spaceId: 'space-outro' });
+  });
+});

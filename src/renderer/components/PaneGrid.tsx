@@ -41,10 +41,16 @@ function renderNode(node: LayoutNode): React.ReactNode {
 export function PaneGrid({
   visiblePaneIds,
   onPaneCreated,
+  primary = true,
 }: {
   readonly visiblePaneIds?: ReadonlySet<string>;
   /** Repassado ao picker: o id do pane que o operador acabou de criar. */
   readonly onPaneCreated?: (paneId: string) => void;
+  /**
+   * Grelha principal. Com duas abas lado a lado, a secundária não atende os
+   * pedidos globais de abrir o picker — só uma instância abre o menu.
+   */
+  readonly primary?: boolean;
 } = {}) {
   const root = useLayoutStore((s) => s.root);
   const maximizedPaneId = useLayoutStore((s) => s.maximizedPaneId);
@@ -202,7 +208,7 @@ export function PaneGrid({
         </div>
       )}
       {/* Controle flutuante da grelha: abrir um pane novo sem sair do trabalho. */}
-      <PanePicker onPaneCreated={onPaneCreated} />
+      <PanePicker onPaneCreated={onPaneCreated} acceptsPendingOpen={primary} />
     </div>
   );
 }

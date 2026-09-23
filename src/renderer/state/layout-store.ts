@@ -135,6 +135,11 @@ interface LayoutState {
    * missão não são tocados (a aba deles é a da missão, não a do espaço).
    */
   renamePaneSpace(spaceId: string, title: string): void;
+  /**
+   * Dá nome à aba dos panes sem espaço ("Terminais"): eles viram um espaço
+   * com esse nome. Devolve false se não havia o que nomear.
+   */
+  nameLooseSpace(spaceId: string, title: string): boolean;
   promoteMissionPaneRole(missionId: string, paneId: string): void;
   /**
    * Espelha no layout a liderança que o MAIN já confirmou (onda 2 da
@@ -1373,8 +1378,9 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
     for (const pane of listPanes(root)) {
       // Mesma fronteira do assignPaneSpace: o carimbo de espaço do pane já
       // adotado por missão é inerte e a aba dele é a da missão — reescrevê-lo
-      // faria o espaço "voltar" num pane que o operador vê na missão.
-      if (pane.spaceId !== spaceId || pane.missionId) continue;
+      // faria o espaço "voltar" num pane que o operador vê na missão. O
+      // anfitrião é a exceção: a missão mora na aba dele, o nome é da aba.
+      if (pane.spaceId !== spaceId || (pane.missionId && !pane.missionHost)) continue;
       if (pane.spaceTitle === clean) continue;
       root = updatePane(root, pane.id, { spaceTitle: clean });
       changed = true;
@@ -1382,6 +1388,25 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
     if (!changed) return;
     set({ root });
     persist();
+  },
+
+  nameLooseSpace: (spaceId, title) => {
+    const clean = title.trim();
+    if (!clean) return false;
+    let root = get().root;
+    let changed = false;
+    for (const pane of listPanes(root)) {
+      // Os membros da aba "Terminais": sem espaço e sem missão própria — o
+      // anfitrião entra (a missão dele mora nesta aba e vai junto).
+      if (pane.spaceId || (pane.missionId && !pane.missionHost)) continue;
+      if (pane.isStructuralPlaceholder || pane.transient) continue;
+      root = updatePane(root, pane.id, { spaceId, spaceTitle: clean });
+      changed = true;
+    }
+    if (!changed) return false;
+    set({ root });
+    persist();
+    return true;
   },
 
   reflectMissionLeader: (missionId, leaderPaneId) => {
@@ -1408,6 +1433,10 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
         ? updatePane(root, pane.id, {
             role: 'orchestrator',
             missionId: pane.missionId ?? missionId,
+            // Adoção de um pane que não era de missão nenhuma: a missão passa a
+            // morar na aba DELE (a aba é a feature). O pane que o motor abriu
+            // para a missão já nasce com missionId e não hospeda nada.
+            ...(pane.missionId === undefined ? { missionHost: true as const } : {}),
           })
         : updatePane(root, pane.id, { role: 'worker' });
       changed = true;

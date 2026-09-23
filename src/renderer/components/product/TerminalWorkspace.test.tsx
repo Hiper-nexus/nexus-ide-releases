@@ -15,6 +15,7 @@ import {
 } from '../../lib/pane-spaces';
 import { TerminalWorkspace } from './TerminalWorkspace';
 import { useProductNavigationStore } from '../../state/product-navigation-store';
+import { useConfirmStore } from '../../state/confirm-store';
 
 const terminalRuntime = vi.hoisted(() => ({
   attachHost: vi.fn(),
@@ -167,18 +168,18 @@ function attachedPaneIds(): string[] {
   ].sort();
 }
 
+/** Títulos das abas, na ordem da barra (a visão geral não é aba). */
 function chipLabels(host: HTMLElement): string[] {
   return [
-    ...host.querySelectorAll('.terminal-workspace__filter-label'),
+    ...host.querySelectorAll('[role="tab"] .workspace-tab__title'),
   ].map((label) => label.textContent ?? '');
 }
 
 function activeChipLabel(host: HTMLElement): string | undefined {
   return (
     host
-      .querySelector('.terminal-workspace__filter-chip--active')
-      ?.querySelector('.terminal-workspace__filter-label')?.textContent ??
-    undefined
+      .querySelector('[role="tab"][aria-selected="true"]')
+      ?.querySelector('.workspace-tab__title')?.textContent ?? undefined
   );
 }
 
@@ -525,11 +526,7 @@ describe('TerminalWorkspace — filtro de missões na vista global (F-527)', () 
 
     const { host } = mount(<TerminalWorkspace />);
 
-    expect(chipLabels(host)).toEqual([
-      'Checkout da loja',
-      'Blog da release',
-      'Todos',
-    ]);
+    expect(chipLabels(host)).toEqual(['Checkout da loja', 'Blog da release']);
     // Foco default: a primeira missão — só os panes dela montam.
     expect(activeChipLabel(host)).toBe('Checkout da loja');
     expect(attachedPaneIds()).toEqual(['pane-a1']);
@@ -578,14 +575,14 @@ describe('TerminalWorkspace — visibilidade de panes soltos (F-546)', () => {
 
     const { host } = mount(<TerminalWorkspace />);
 
-    expect(chipLabels(host)).toEqual(['Missão X', 'Painéis soltos', 'Todos']);
+    expect(chipLabels(host)).toEqual(['Missão X', 'Terminais']);
     expect(attachedPaneIds()).toEqual(['pane-mission']);
 
     act(() => {
       usePaneScopeStore.getState().focusScope(LOOSE_SCOPE_KEY);
     });
 
-    expect(activeChipLabel(host)).toBe('Painéis soltos');
+    expect(activeChipLabel(host)).toBe('Terminais');
     expect(attachedPaneIds()).toEqual(['pane-loose', 'pane-mission']);
   });
 
@@ -663,7 +660,7 @@ describe('TerminalWorkspace — espaços separados da missão aberta (F-560)', (
     const { host } = mount(<TerminalWorkspace />);
     expect(useLayoutStore.getState().focusedPaneId).toBe('pane-novo-1');
 
-    const missionCard = [...host.querySelectorAll<HTMLButtonElement>('.mission-lane__main')].find(
+    const missionCard = [...host.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(
       (button) => button.textContent?.includes('Missão A'),
     );
     expect(missionCard).toBeTruthy();
@@ -696,21 +693,21 @@ describe('TerminalWorkspace — espaços separados da missão aberta (F-560)', (
 
     const { host } = mount(<TerminalWorkspace />);
 
-    expect(chipLabels(host)).toEqual(['Missão A', 'Meus terminais 2', 'Todos']);
+    expect(chipLabels(host)).toEqual(['Missão A', 'Meus terminais 2']);
     expect(
-      [...host.querySelectorAll('.terminal-workspace__filter-count')].map(
+      [...host.querySelectorAll('.workspace-tab__count')].map(
         (count) => count.textContent,
       ),
     ).toEqual(['1', '2']);
     expect(activeChipLabel(host)).toBe('Meus terminais 2');
   });
 
-  it('exibe botão de + Nova missão no filterbar e aciona openNewMission', () => {
+  it('exibe o botão Nova missão na barra de abas e aciona openNewMission', () => {
     seedMissionPlusSpace();
     const { host } = mount(<TerminalWorkspace />);
 
     const newMissionBtn = host.querySelector<HTMLButtonElement>(
-      '.terminal-workspace__new-mission-btn',
+      '.workspace-tabs__mission',
     );
     expect(newMissionBtn).not.toBeNull();
     act(() => {
@@ -722,14 +719,16 @@ describe('TerminalWorkspace — espaços separados da missão aberta (F-560)', (
     });
   });
 
-  it('exibe dot de status na aba de missão', () => {
+  it('a aba da missão carrega o estado dela — no glifo e na palavra', () => {
     seedMissionPlusSpace();
     const { host } = mount(<TerminalWorkspace />);
 
-    const chipDot = host.querySelector(
-      '.terminal-workspace__chip-dot--running',
-    );
-    expect(chipDot).not.toBeNull();
+    const missionTab = host.querySelector('.workspace-tab[data-scope-kind="mission"]');
+    expect(missionTab?.getAttribute('data-tone')).toBe('live');
+    // Estado nunca viaja só em cor: o nome acessível diz a palavra.
+    expect(
+      missionTab?.querySelector('[role="tab"]')?.getAttribute('aria-label'),
+    ).toMatch(/Missão A, .+, 1 painel/);
   });
 
   it('sem nenhuma missão viva o filtro NÃO desliga — cada espaço segue no seu mosaico', () => {
@@ -759,11 +758,18 @@ describe('TerminalWorkspace — espaços separados da missão aberta (F-560)', (
     expect(attachedPaneIds()).toEqual(['pane-espaco-1']);
   });
 
-  it('"Todos" continua existindo para quem quer o mosaico inteiro', () => {
+  it('a visão geral continua existindo para quem quer o mosaico inteiro', () => {
     seedMissionPlusSpace();
     usePaneScopeStore.getState().focusScope(ALL_SCOPES_KEY);
 
-    mount(<TerminalWorkspace />);
+    const { host } = mount(<TerminalWorkspace />);
+
+    expect(
+      host
+        .querySelector('.workspace-tabs__overview')
+        ?.getAttribute('aria-pressed'),
+    ).toBe('true');
+    expect(host.querySelector('[role="tab"][aria-selected="true"]')).toBeNull();
 
     expect(attachedPaneIds()).toEqual([
       'pane-missao-a',
@@ -847,7 +853,7 @@ describe('TerminalWorkspace — foco puxa a aba (F-560)', () => {
       useLayoutStore.getState().focus('pane-de-login');
     });
 
-    expect(activeChipLabel(host)).toBe('Painéis soltos');
+    expect(activeChipLabel(host)).toBe('Terminais');
     expect(attachedPaneIds()).toContain('pane-de-login');
   });
 
@@ -860,7 +866,7 @@ describe('TerminalWorkspace — foco puxa a aba (F-560)', () => {
     });
 
     // O foco continua no pane da missão, mas o operador escolheu esta aba.
-    expect(activeChipLabel(host)).toBe('Painéis soltos');
+    expect(activeChipLabel(host)).toBe('Terminais');
   });
 
   it('dentro de uma missão o foco não troca a aba — a vista é daquela missão', () => {
@@ -991,10 +997,10 @@ describe('TerminalWorkspace — renomear espaço pelo chip', () => {
 
   function spaceChipLabel(host: HTMLElement): HTMLElement {
     const chip = host.querySelector(
-      '.terminal-workspace__filter-chip[data-scope-kind="space"]',
+      '.workspace-tab[data-scope-kind="space"]',
     );
     const label = chip?.querySelector<HTMLElement>(
-      '.terminal-workspace__filter-label',
+      '.workspace-tab__title',
     );
     expect(label).not.toBeNull();
     return label!;
@@ -1020,7 +1026,7 @@ describe('TerminalWorkspace — renomear espaço pelo chip', () => {
     });
 
     const input = host.querySelector<HTMLInputElement>(
-      '.terminal-workspace__chip-rename',
+      '.workspace-tab__rename',
     );
     expect(input).not.toBeNull();
     expect(input!.value).toBe('Meus terminais 2');
@@ -1049,7 +1055,7 @@ describe('TerminalWorkspace — renomear espaço pelo chip', () => {
       );
     });
     const input = host.querySelector<HTMLInputElement>(
-      '.terminal-workspace__chip-rename',
+      '.workspace-tab__rename',
     );
     expect(input).not.toBeNull();
 
@@ -1061,7 +1067,7 @@ describe('TerminalWorkspace — renomear espaço pelo chip', () => {
     });
 
     expect(
-      host.querySelector('.terminal-workspace__chip-rename'),
+      host.querySelector('.workspace-tab__rename'),
     ).toBeNull();
     expect(spaceChipLabel(host).textContent).toBe('Meus terminais 2');
   });
@@ -1072,9 +1078,9 @@ describe('TerminalWorkspace — renomear espaço pelo chip', () => {
 
     const missionLabel = host
       .querySelector(
-        '.terminal-workspace__filter-chip[data-scope-kind="mission"]',
+        '.workspace-tab[data-scope-kind="mission"]',
       )
-      ?.querySelector<HTMLElement>('.terminal-workspace__filter-label');
+      ?.querySelector<HTMLElement>('.workspace-tab__title');
     expect(missionLabel).not.toBeNull();
 
     act(() => {
@@ -1084,7 +1090,269 @@ describe('TerminalWorkspace — renomear espaço pelo chip', () => {
     });
 
     expect(
-      host.querySelector('.terminal-workspace__chip-rename'),
+      host.querySelector('.workspace-tab__rename'),
     ).toBeNull();
+  });
+});
+
+// ── Abas de feature (23/09): a aba agrupa panes, missão e divisão de tela ──
+
+describe('TerminalWorkspace — abas de feature', () => {
+  const running = {
+    progress: { completed: 0, total: 1 },
+    needsAttention: false,
+    updatedAt: 1,
+  };
+
+  beforeEach(() => {
+    // O picker rola a opção ativa para a vista; jsdom não implementa.
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: vi.fn(),
+    });
+  });
+
+  afterEach(() => {
+    Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
+    useConfirmStore.setState({ pending: null, queue: [] });
+  });
+
+  function seedTwoSpaces(): void {
+    useLayoutStore.setState({
+      root: buildGridTree([
+        { id: 'pane-a1', kind: 'shell', title: 'a1', spaceId: 'space-a', spaceTitle: 'Checkout' },
+        { id: 'pane-a2', kind: 'shell', title: 'a2', spaceId: 'space-a', spaceTitle: 'Checkout' },
+        { id: 'pane-b1', kind: 'shell', title: 'b1', spaceId: 'space-b', spaceTitle: 'Blog' },
+      ]),
+      focusedPaneId: 'pane-a1',
+      maximizedPaneId: null,
+    });
+    useOrchStore.setState({ paneMissions: {}, missions: [], missionSummaries: [] });
+  }
+
+  it('missão começada por um pane do operador fica na aba dele, junto dos soltos', () => {
+    // Campo 23/09: a missão "Fechar o Epic 22" nascia numa aba e o pane que a
+    // começou (e o shell ao lado) em "Painéis soltos".
+    useLayoutStore.setState({
+      root: buildGridTree([
+        { id: 'pane-shell', kind: 'shell', title: 'shell' },
+        {
+          id: 'pane-host',
+          kind: 'cli-agent',
+          title: 'Claude',
+          adapterId: 'claude',
+          role: 'orchestrator',
+          missionId: 'mission-epic',
+          missionHost: true,
+        },
+        {
+          id: 'pane-worker',
+          kind: 'cli-agent',
+          title: 'Codex',
+          adapterId: 'codex',
+          missionId: 'mission-epic',
+        },
+      ]),
+      focusedPaneId: 'pane-host',
+      maximizedPaneId: null,
+    });
+    useOrchStore.setState({
+      paneMissions: {},
+      missions: [],
+      missionSummaries: [
+        { id: 'mission-epic', title: 'Fechar o Epic 22', state: 'running', ...running },
+      ],
+    });
+
+    const { host } = mount(<TerminalWorkspace />);
+
+    expect(chipLabels(host)).toEqual(['Terminais']);
+    expect(attachedPaneIds()).toEqual(['pane-host', 'pane-shell', 'pane-worker']);
+    const tab = host.querySelector('.workspace-tab');
+    expect(tab?.getAttribute('data-tone')).toBe('live');
+    expect(tab?.querySelector('[role="tab"]')?.getAttribute('title')).toMatch(
+      /Missão: Fechar o Epic 22/,
+    );
+  });
+
+  it('o "+" da barra abre uma aba NOVA com o pane escolhido e leva o operador até ela', () => {
+    useLayoutStore.setState({
+      root: buildGridTree([{ id: 'pane-shell', kind: 'shell', title: 'shell' }]),
+      focusedPaneId: 'pane-shell',
+      maximizedPaneId: null,
+    });
+    useOrchStore.setState({ paneMissions: {}, missions: [], missionSummaries: [] });
+    const { host } = mount(<TerminalWorkspace />);
+    expect(chipLabels(host)).toEqual(['Terminais']);
+
+    const trigger = host.querySelector<HTMLButtonElement>('[data-testid="tab-picker-trigger"]');
+    if (!trigger) throw new Error('sem o "+" da barra de abas');
+    act(() => trigger.click());
+    const entry = host.querySelector<HTMLButtonElement>(
+      '[data-testid="pane-picker-entry-type:terminal"]',
+    );
+    if (!entry) throw new Error('sem a entrada Terminal no picker');
+    act(() => entry.click());
+
+    expect(chipLabels(host)).toEqual(['Terminais', 'Meus terminais']);
+    expect(activeChipLabel(host)).toBe('Meus terminais');
+    const created = listPanes(useLayoutStore.getState().root).find(
+      (pane) => pane.id !== 'pane-shell',
+    );
+    expect(created).toMatchObject({ spaceTitle: 'Meus terminais' });
+    expect(useLayoutStore.getState().focusedPaneId).toBe(created?.id);
+  });
+
+  it('ver ao lado: duas abas na tela, cada metade com os painéis dela', () => {
+    seedTwoSpaces();
+    usePaneScopeStore.getState().focusScope(spaceScopeKey('space-a'));
+    const { host } = mount(<TerminalWorkspace />);
+    expect(host.querySelectorAll('.terminal-workspace__half')).toHaveLength(0);
+
+    act(() =>
+      usePaneScopeStore
+        .getState()
+        .showBeside(spaceScopeKey('space-b'), spaceScopeKey('space-a')),
+    );
+
+    const halves = [...host.querySelectorAll('.terminal-workspace__half')];
+    expect(
+      halves.map(
+        (half) => half.querySelector('.terminal-workspace__half-title')?.textContent,
+      ),
+    ).toEqual(['Checkout', 'Blog']);
+    expect(halves[0]?.querySelectorAll('.pane__terminal')).toHaveLength(2);
+    expect(halves[1]?.querySelectorAll('.pane__terminal')).toHaveLength(1);
+    expect(
+      host
+        .querySelector('.workspace-tab[data-side]')
+        ?.querySelector('.workspace-tab__title')?.textContent,
+    ).toBe('Blog');
+
+    act(() =>
+      host.querySelector<HTMLButtonElement>('.terminal-workspace__half-close')!.click(),
+    );
+    expect(host.querySelectorAll('.terminal-workspace__half')).toHaveLength(0);
+  });
+
+  it('focar um pane da aba ao lado não troca de aba — ele já está na tela', () => {
+    seedTwoSpaces();
+    usePaneScopeStore.getState().focusScope(spaceScopeKey('space-a'));
+    const { host } = mount(<TerminalWorkspace />);
+    act(() =>
+      usePaneScopeStore
+        .getState()
+        .showBeside(spaceScopeKey('space-b'), spaceScopeKey('space-a')),
+    );
+
+    act(() => useLayoutStore.getState().focus('pane-b1'));
+
+    expect(activeChipLabel(host)).toBe('Checkout');
+    expect(host.querySelectorAll('.terminal-workspace__half')).toHaveLength(2);
+    expect(useLayoutStore.getState().focusedPaneId).toBe('pane-b1');
+  });
+
+  it('fechar a aba pede confirmação e encerra só os painéis dela', async () => {
+    seedTwoSpaces();
+    usePaneScopeStore.getState().focusScope(spaceScopeKey('space-a'));
+    const { host } = mount(<TerminalWorkspace />);
+
+    const blogClose = host
+      .querySelector('.workspace-tab[data-scope-kind="space"]:not([data-active])')
+      ?.querySelector<HTMLButtonElement>('.workspace-tab__close');
+    expect(blogClose?.getAttribute('aria-label')).toBe('Fechar a aba Blog');
+    act(() => blogClose!.click());
+    expect(useConfirmStore.getState().pending?.title).toBe('Fechar a aba “Blog”?');
+    await act(async () => {
+      useConfirmStore.getState().decide(true);
+    });
+
+    expect(listPanes(useLayoutStore.getState().root).map((pane) => pane.id)).toEqual([
+      'pane-a1',
+      'pane-a2',
+    ]);
+  });
+
+  it('aba com missão viva não oferece o × — a missão se encerra pelo Quadro', () => {
+    useLayoutStore.setState({
+      root: buildGridTree([
+        { id: 'pane-m', kind: 'cli-agent', title: 'w', adapterId: 'codex', missionId: 'mission-x' },
+        { id: 'pane-s', kind: 'shell', title: 's' },
+      ]),
+      focusedPaneId: 'pane-s',
+      maximizedPaneId: null,
+    });
+    useOrchStore.setState({
+      paneMissions: {},
+      missions: [],
+      missionSummaries: [{ id: 'mission-x', title: 'Missão X', state: 'running', ...running }],
+    });
+
+    const { host } = mount(<TerminalWorkspace />);
+
+    expect(
+      host
+        .querySelector('.workspace-tab[data-scope-kind="mission"]')
+        ?.querySelector('.workspace-tab__close'),
+    ).toBeNull();
+    expect(
+      host
+        .querySelector('.workspace-tab[data-scope-kind="loose"]')
+        ?.querySelector('.workspace-tab__close'),
+    ).not.toBeNull();
+  });
+
+  it('dar nome à aba Terminais cria um espaço com os panes dela', () => {
+    useLayoutStore.setState({
+      root: buildGridTree([{ id: 'pane-shell', kind: 'shell', title: 'shell' }]),
+      focusedPaneId: 'pane-shell',
+      maximizedPaneId: null,
+    });
+    useOrchStore.setState({ paneMissions: {}, missions: [], missionSummaries: [] });
+    const { host } = mount(<TerminalWorkspace />);
+
+    act(() => {
+      host
+        .querySelector('.workspace-tab__title')!
+        .dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    });
+    const input = host.querySelector<HTMLInputElement>('.workspace-tab__rename');
+    if (!input) throw new Error('sem edição inline');
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value',
+      )!.set!;
+      setter.call(input, 'Epic 22');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    act(() => {
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+
+    expect(chipLabels(host)).toEqual(['Epic 22']);
+    expect(listPanes(useLayoutStore.getState().root)[0]).toMatchObject({
+      spaceTitle: 'Epic 22',
+    });
+  });
+
+  it('⌘/Ctrl+Alt+→ passa para a próxima aba', () => {
+    seedTwoSpaces();
+    usePaneScopeStore.getState().focusScope(spaceScopeKey('space-a'));
+    const { host } = mount(<TerminalWorkspace />);
+
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'ArrowRight',
+          ctrlKey: true,
+          altKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+
+    expect(activeChipLabel(host)).toBe('Blog');
   });
 });

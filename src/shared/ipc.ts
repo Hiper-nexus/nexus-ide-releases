@@ -104,6 +104,8 @@ const paneModelSchema = z.object({
    */
   spaceId: z.string().min(1).max(128).optional(),
   spaceTitle: z.string().min(1).max(256).optional(),
+  /** Mesma razão: sem a entrada, a missão hospedada voltaria à aba própria no restart. */
+  missionHost: z.literal(true).optional(),
   transient: z.literal(true).optional(),
   terminalScrollback: z.string().max(256_000).optional(),
   /**

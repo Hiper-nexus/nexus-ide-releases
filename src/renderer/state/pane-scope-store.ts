@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 
 /**
- * Qual ESCOPO a vista global de Terminais está desenhando.
+ * Qual ESCOPO (aba) a vista global de Terminais está desenhando.
  *
  * Mora numa store, não no componente, porque quem escolhe o escopo quase nunca
  * é a própria vista: o assistente "Montar meus terminais" abre um espaço novo e
@@ -13,47 +13,43 @@ import { create } from 'zustand';
  */
 interface PaneScopeStore {
   readonly activeScopeKey: string | null;
-  /** Campos fixados como A e B — cada missão pode ocupar um lado. */
-  readonly pinnedA: string | null;
-  readonly pinnedB: string | null;
+  /**
+   * Aba aberta AO LADO da ativa (tela dividida). Substitui os pinos A/B: o
+   * operador não fixava dois campos para alternar — queria ver os dois.
+   */
+  readonly sideScopeKey: string | null;
   focusScope(scopeKey: string): void;
   clearScopeFocus(): void;
-  /** Fixa o escopo no lado livre (A → B → desafixa se já está em algum). */
-  togglePinScope(scopeKey: string): void;
-  /** Vai para o campo A ou B já fixado. */
-  switchAB(side: 'a' | 'b'): void;
+  /** Abre `scopeKey` ao lado da aba ativa; a mesma aba fecha a divisão. */
+  showBeside(scopeKey: string, activeScopeKey: string | null): void;
+  closeBeside(): void;
 }
 
 export const usePaneScopeStore = create<PaneScopeStore>((set, get) => ({
   activeScopeKey: null,
-  pinnedA: null,
-  pinnedB: null,
-  focusScope: (scopeKey) => set({ activeScopeKey: scopeKey }),
-  clearScopeFocus: () => set({ activeScopeKey: null }),
-  togglePinScope: (scopeKey) => {
-    const { pinnedA, pinnedB } = get();
-    if (pinnedA === scopeKey) {
-      set({ pinnedA: null });
+  sideScopeKey: null,
+  focusScope: (scopeKey) => {
+    const { activeScopeKey, sideScopeKey } = get();
+    // Clicar na aba que está ao lado a traz para a frente e manda a ativa para
+    // o lado: as duas continuam na tela, só trocam de posição.
+    if (sideScopeKey === scopeKey) {
+      set({
+        activeScopeKey: scopeKey,
+        sideScopeKey:
+          activeScopeKey && activeScopeKey !== scopeKey ? activeScopeKey : null,
+      });
       return;
     }
-    if (pinnedB === scopeKey) {
-      set({ pinnedB: null });
-      return;
-    }
-    if (!pinnedA) {
-      set({ pinnedA: scopeKey, activeScopeKey: scopeKey });
-      return;
-    }
-    if (!pinnedB) {
-      set({ pinnedB: scopeKey, activeScopeKey: scopeKey });
-      return;
-    }
-    // Os dois lados ocupados: o B antigo desliza para A e o novo pino vira o B.
-    set({ pinnedA: pinnedB, pinnedB: scopeKey, activeScopeKey: scopeKey });
+    set({ activeScopeKey: scopeKey });
   },
-  switchAB: (side) => {
-    const { pinnedA, pinnedB } = get();
-    const target = side === 'a' ? pinnedA : pinnedB;
-    if (target) set({ activeScopeKey: target });
+  clearScopeFocus: () => set({ activeScopeKey: null, sideScopeKey: null }),
+  showBeside: (scopeKey, activeScopeKey) => {
+    if (!activeScopeKey || scopeKey === activeScopeKey) return;
+    if (get().sideScopeKey === scopeKey) {
+      set({ sideScopeKey: null });
+      return;
+    }
+    set({ activeScopeKey, sideScopeKey: scopeKey });
   },
+  closeBeside: () => set({ sideScopeKey: null }),
 }));
