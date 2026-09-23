@@ -270,3 +270,54 @@ describe('nomes de espaço', () => {
     expect(newPaneSpaceId()).not.toBe(newPaneSpaceId());
   });
 });
+
+describe('coordenador local — missão começada direto pelos panes', () => {
+  const panes = [
+    pane({ id: 'orq', role: 'orchestrator', spaceId: 's1', spaceTitle: 'Meus terminais' }),
+    pane({ id: 'w1' }),
+    pane({ id: 'w2' }),
+    pane({ id: 'other', spaceId: 's2', spaceTitle: 'Build da API' }),
+    pane({ id: 'm1', missionId: 'mx' }),
+  ];
+
+  it('os soltos entram no campo do coordenador; espaço nomeado e missão ficam fora', () => {
+    const scopes = listPaneScopes({ panes, paneMissions: {}, missions: [] });
+    expect(scopes.map((s) => [s.title, s.paneCount])).toEqual([
+      ['Meus terminais', 3],
+      ['Build da API', 1],
+      ['Missão', 1],
+    ]);
+    expect(scopes[0]?.orchestrator?.paneId).toBe('orq');
+    expect(scopes.some((s) => s.key === LOOSE_SCOPE_KEY)).toBe(false);
+    expect(
+      selectScopePanes(panes, spaceScopeKey('s1'), {}).map((p) => p.id),
+    ).toEqual(['orq', 'w1', 'w2']);
+  });
+
+  it('o nome do campo vem do espaço mesmo quando um solto vem primeiro', () => {
+    const scopes = listPaneScopes({
+      panes: [pane({ id: 'w1' }), ...panes.slice(0, 1)],
+      paneMissions: {},
+      missions: [],
+    });
+    expect(scopes[0]?.title).toBe('Meus terminais');
+  });
+
+  it('fallback de voz/anexo trata coordenador e soltos como o mesmo campo', () => {
+    expect(pickFallbackInScope(['w2'], 'orq', panes, {})).toBe('w2');
+    expect(pickFallbackInScope(['other'], 'orq', panes, {})).toBeNull();
+  });
+
+  it('orquestrador de missão não puxa os soltos', () => {
+    const scopes = listPaneScopes({
+      panes: [pane({ id: 'orq', role: 'orchestrator', missionId: 'mx' }), pane({ id: 'w1' })],
+      paneMissions: {},
+      missions: [],
+    });
+    expect(scopes.map((s) => s.key)).toEqual([missionScopeKey('mx'), LOOSE_SCOPE_KEY]);
+  });
+
+  it('sem coordenador os soltos continuam no próprio balde', () => {
+    expect(paneScopeKey(pane({ id: 'w1' }), {})).toBe(LOOSE_SCOPE_KEY);
+  });
+});

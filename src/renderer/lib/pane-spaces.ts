@@ -57,18 +57,43 @@ const UNKNOWN_MISSION_TITLE = 'Missão';
 const LOOSE_TITLE = 'Painéis soltos';
 
 /**
+ * Casa dos painéis soltos quando o operador tem um coordenador local.
+ *
+ * O operador abre panes e começa a missão direto por eles: "Tornar
+ * orquestrador" num pane sem missão cria o coordenador DO OPERADOR (uma coroa
+ * só entre os panes sem missão), que comanda os demais. Os soltos que ele
+ * coordena ficavam numa aba e ele em outra, como se fossem trabalhos
+ * diferentes. Com coordenador num espaço, os soltos entram no campo dele;
+ * espaços nomeados e missões continuam separados.
+ */
+export function looseHomeScopeKey(
+  panes: readonly PaneModel[],
+  paneMissions: Readonly<Record<string, string>>,
+): string | null {
+  const leader = panes.find(
+    (pane) =>
+      pane.role === 'orchestrator' &&
+      !(pane.missionId ?? paneMissions[pane.id]),
+  );
+  return leader?.spaceId ? spaceScopeKey(leader.spaceId) : null;
+}
+
+/**
  * A missão VENCE o espaço. Um pane adotado por uma missão não volta para o
  * espaço em que nasceu só porque o carimbo antigo continua no modelo — senão o
  * painel promovido sumiria da missão que ele lidera.
+ *
+ * `looseHome` (ver looseHomeScopeKey) recebe os panes sem missão e sem espaço.
  */
 export function paneScopeKey(
   pane: PaneModel,
   paneMissions: Readonly<Record<string, string>>,
+  looseHome: string | null = null,
 ): string {
   const missionId = pane.missionId ?? paneMissions[pane.id];
   if (missionId) return missionScopeKey(missionId);
   if (pane.spaceId) return spaceScopeKey(pane.spaceId);
-  return LOOSE_SCOPE_KEY;
+  return looseHome ?? LOOSE_SCOPE_KEY;
 }
 
 export function scopeKeyForPaneId(
@@ -78,7 +103,9 @@ export function scopeKeyForPaneId(
 ): string | null {
   if (!paneId) return null;
   const pane = panes.find((candidate) => candidate.id === paneId);
-  return pane ? paneScopeKey(pane, paneMissions) : null;
+  return pane
+    ? paneScopeKey(pane, paneMissions, looseHomeScopeKey(panes, paneMissions))
+    : null;
 }
 
 /**
@@ -120,7 +147,10 @@ export function selectScopePanes(
   paneMissions: Readonly<Record<string, string>>,
 ): PaneModel[] {
   if (scopeKey === ALL_SCOPES_KEY) return [...panes];
-  return panes.filter((pane) => paneScopeKey(pane, paneMissions) === scopeKey);
+  const looseHome = looseHomeScopeKey(panes, paneMissions);
+  return panes.filter(
+    (pane) => paneScopeKey(pane, paneMissions, looseHome) === scopeKey,
+  );
 }
 
 export interface ListPaneScopesInput {
@@ -150,14 +180,15 @@ export function listPaneScopes(input: ListPaneScopesInput): PaneScopeEntry[] {
     { paneId: string; title: string } | null
   >();
 
+  const looseHome = looseHomeScopeKey(input.panes, input.paneMissions);
   for (const pane of input.panes) {
-    const key = paneScopeKey(pane, input.paneMissions);
+    const key = paneScopeKey(pane, input.paneMissions, looseHome);
     const existing = byKey.get(key);
     if (existing) {
       byKey.set(key, { ...existing, paneCount: existing.paneCount + 1 });
     } else {
       order.push(key);
-      byKey.set(key, scopeEntryFor(key, pane, missionById));
+      byKey.set(key, scopeEntryFor(key, pane, missionById, input.panes));
       orchestratorByKey.set(key, null);
     }
     if (pane.role === 'orchestrator' && !orchestratorByKey.get(key)) {
@@ -194,6 +225,7 @@ function scopeEntryFor(
   key: string,
   pane: PaneModel,
   missionById: ReadonlyMap<string, { title: string; state: string }>,
+  panes: readonly PaneModel[],
 ): PaneScopeEntry {
   if (key === LOOSE_SCOPE_KEY) {
     return { key, kind: 'loose', title: LOOSE_TITLE, paneCount: 1, orchestrator: null };
@@ -212,11 +244,16 @@ function scopeEntryFor(
     };
   }
   const id = key.slice(SPACE_SCOPE_PREFIX.length);
+  // O primeiro pane do campo pode ser um solto que entrou no campo do
+  // coordenador: o nome vem de quem carrega o carimbo do espaço.
+  const stamped = pane.spaceId === id
+    ? pane
+    : panes.find((candidate) => candidate.spaceId === id && !candidate.missionId);
   return {
     key,
     kind: 'space',
     id,
-    title: pane.spaceTitle?.trim() || SPACE_TITLE_BASE,
+    title: stamped?.spaceTitle?.trim() || SPACE_TITLE_BASE,
     paneCount: 1,
     orchestrator: null,
   };

@@ -7,7 +7,9 @@ import { listPanes } from '../../lib/split-tree';
 import { selectMissionTerminalPanes } from '../../lib/mission-terminal-panes';
 import {
   ALL_SCOPES_KEY,
+  LOOSE_SCOPE_KEY,
   listPaneScopes,
+  looseHomeScopeKey,
   missionScopeKey,
   paneScopeKey,
   selectScopePanes,
@@ -156,6 +158,11 @@ export function TerminalWorkspace({
     Readonly<Record<string, ReadonlySet<string>>>
   >(() => ({}));
   const panes = useMemo(() => listPanes(layoutRoot), [layoutRoot]);
+  // Soltos moram no campo do coordenador local, quando ele existe.
+  const looseHome = useMemo(
+    () => looseHomeScopeKey(panes, paneMissions),
+    [panes, paneMissions],
+  );
   const scopes = useMemo(
     () =>
       listPaneScopes({
@@ -179,21 +186,25 @@ export function TerminalWorkspace({
   // vista global é a escolha do operador — e quando ela evapora (espaço
   // fechado, missão encerrada) cai no PRIMEIRO escopo com pane, nunca em
   // "mostrar tudo".
+  // "Focar os soltos" (Montar terminais, ⌘K) com coordenador local = focar o
+  // campo dele: é lá que os soltos estão agora.
+  const requestedScopeKey =
+    activeScopeKey === LOOSE_SCOPE_KEY && looseHome ? looseHome : activeScopeKey;
   const scopeExists =
-    activeScopeKey === ALL_SCOPES_KEY ||
-    scopes.some((scope) => scope.key === activeScopeKey);
+    requestedScopeKey === ALL_SCOPES_KEY ||
+    scopes.some((scope) => scope.key === requestedScopeKey);
   // O escopo do pane focado entra JÁ no cálculo, não só no efeito abaixo: sem
   // isto o primeiro quadro desenharia o escopo antigo e só então pularia — o
   // operador veria um piscar de painéis que não são dele.
   const focusedScopeKey = (() => {
     if (!focusedPaneId) return null;
     const focused = panes.find((pane) => pane.id === focusedPaneId);
-    return focused ? paneScopeKey(focused, paneMissions) : null;
+    return focused ? paneScopeKey(focused, paneMissions, looseHome) : null;
   })();
   const effectiveScopeKey = inMission
     ? missionScopeKey(missionId)
-    : scopeExists && activeScopeKey
-      ? activeScopeKey
+    : scopeExists && requestedScopeKey
+      ? requestedScopeKey
       : (focusedScopeKey ?? scopes[0]?.key ?? null);
 
   /**
@@ -217,13 +228,14 @@ export function TerminalWorkspace({
     lastFollowedFocusRef.current = focusedPaneId;
     const focused = panes.find((pane) => pane.id === focusedPaneId);
     if (!focused) return;
-    const scopeOfFocused = paneScopeKey(focused, paneMissions);
+    const scopeOfFocused = paneScopeKey(focused, paneMissions, looseHome);
     if (scopeOfFocused === effectiveScopeKey) return;
     focusScope(scopeOfFocused);
   }, [
     focusedPaneId,
     panes,
     paneMissions,
+    looseHome,
     effectiveScopeKey,
     focusScope,
     inMission,
