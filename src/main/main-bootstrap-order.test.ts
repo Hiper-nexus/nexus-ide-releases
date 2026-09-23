@@ -76,3 +76,15 @@ describe("main bootstrap settings migration order", () => {
     expect(startRenderer).toBeLessThan(bootstrapFailure);
   });
 });
+
+describe("main Squirrel install/update events", () => {
+  it("do not run the app boot, so nothing launched from the hook holds the installer", () => {
+    const flag = mainSource.indexOf("squirrelStartupEvent = true;");
+    const gate = mainSource.indexOf("if (squirrelStartupEvent || !wireDeepLinks()) {");
+    const ready = mainSource.indexOf("app.whenReady().then");
+    expect(flag).toBeGreaterThan(-1);
+    expect(gate).toBeGreaterThan(flag);
+    // O boot (e o sync do Redline dentro dele) só existe no ramo else do gate.
+    expect(ready).toBeGreaterThan(gate);
+  });
+});

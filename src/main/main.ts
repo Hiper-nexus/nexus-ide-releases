@@ -438,10 +438,16 @@ function knownCronScopes() {
 }
 
 // Windows installer housekeeping (no-op elsewhere).
+// Evento do Squirrel (--squirrel-install/-updated/-uninstall): o app só
+// responde e sai. Rodar o boot aqui relançava o Redline, que herdava o pipe
+// de saída do hook, e o instalador/atualizador esperava por ele para sempre
+// (0.76.89 travado em "Squirrel Enabled Apps" até o Redline fechar).
+let squirrelStartupEvent = false;
 if (process.platform === "win32") {
   try {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     if (require("electron-squirrel-startup")) {
+      squirrelStartupEvent = true;
       app.quit();
     }
   } catch {
@@ -782,7 +788,7 @@ initSmokeTest();
 
 // Single-instance + protocolo nexus:// precisam ser registrados ANTES do
 // whenReady. Se outra instância já detém o lock, saímos (ela recebe o link).
-if (!wireDeepLinks()) {
+if (squirrelStartupEvent || !wireDeepLinks()) {
   app.quit();
 } else {
   app.whenReady().then(async () => {
