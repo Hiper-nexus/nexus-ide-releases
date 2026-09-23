@@ -6593,7 +6593,7 @@ export const RELEASE_07690: AppRelease = {
   fixes: [],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07691: AppRelease = {
   version: '0.76.91',
   date: '2026-09-23',
   codename: 'O microfone explica',
@@ -6612,4 +6612,31 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
   fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.92',
+  date: '2026-09-23',
+  codename: 'Pasta confiada',
+  summary:
+    'O Claude para de perguntar se confia na pasta a cada pane no Windows, e a continuidade automática não fecha mais o pane no menu de confiança.',
+  highlights: [
+    {
+      title: 'Workspace aberto é pasta confiada',
+      detail:
+        'Panes Claude, GLM e LongCat dentro do workspace aberto nascem com a confiança da pasta, só no perfil isolado do pane.',
+    },
+    {
+      title: 'Confiança já dada vale no Windows',
+      detail:
+        'O Nexus agora acha a pasta que o Claude gravou com barra normal (C:/...), e o pane não pergunta de novo.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Continuidade não escolhe "No, exit"',
+      detail:
+        'Com um menu de confirmação na tela, a continuidade espera em vez de mandar Enter e fechar o Claude.',
+    },
+  ],
 };

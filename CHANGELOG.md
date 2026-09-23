@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.92 — Pasta confiada
+
+- **O Claude não para mais no "Quick safety check" no Windows.** O Claude grava as pastas confiadas como `C:/Users/...` e o Nexus procurava `C:\Users\...`: a confiança que você já tinha dado nunca era achada e todo pane perguntava de novo. A busca agora aceita as duas formas.
+- **Workspace aberto no Nexus é pasta confiada.** Pane Claude, GLM ou LongCat cuja pasta está dentro do workspace aberto nasce com a confiança da pasta, só no perfil isolado do pane; o seu `.claude.json` real não muda. Pasta fora do workspace segue perguntando.
+- **A continuidade automática não fecha mais o pane.** Ela mandava Enter com o menu de confiança na tela, o cursor estava em "No, exit" e o Claude saía com code 1. Com um menu de confirmação na tela, a continuidade espera.
+
 ## 0.76.91 — O microfone explica
 
 - **Falha de microfone diz o que fazer, em português.** No Windows um app de desktop não recebe pedido de permissão: sem microfone ativo (USB desconectado, P2 vazio) o ditado só falhava com "Mic unavailable: Requested device not found". Agora aponta Configurações › Sistema › Som › Entrada, o interruptor de privacidade dos apps de desktop ou o outro app que está usando o microfone, conforme o caso.
