@@ -5,7 +5,12 @@ import {
   type FailoverEvent,
 } from '../../shared/account-types';
 import type { ProjectExecutionScope } from '../../shared/types';
-import { tapSessionData, tapSessionExit, getAgentSessionInfo } from '../pty/pty-manager';
+import {
+  getAgentSessionInfo,
+  getSessionState,
+  tapSessionData,
+  tapSessionExit,
+} from '../pty/pty-manager';
 import { getAdapter } from '../adapters/adapter-registry';
 import { migrateModelId } from '../../shared/model-defaults';
 import { respawnMainOwnedPaneWithAccount } from './failover-mission-respawn';
@@ -95,7 +100,31 @@ interface SessionWatch {
   readonly startedAt: number;
   buffer: string;
   firedAt: number;
+  /**
+   * Episódio de erro do PROVIDER (5xx/capacidade) em curso: instante do 1º
+   * hit (0 = nenhum). Um episódio avisa uma vez e agenda uma verificação —
+   * nunca troca de conta.
+   */
+  transientAt: number;
+  /** Último hit transitório do episódio (a CLI reimprime o erro a cada retry). */
+  lastTransientAt: number;
+  /** Texto NOVO (linhas inéditas) desde o último hit transitório. */
+  progressChars: number;
+  /** Linhas já vistas no episódio: repaint do prompt não conta como resposta. */
+  seenLines: Set<string>;
 }
+
+/**
+ * Erro do provider: a CLI tenta de novo sozinha. Depois do backoff o Main
+ * confere se ela voltou; se parou com o erro na tela, retoma na MESMA conta.
+ */
+const TRANSIENT_MIN_CHECK_MS = 20_000;
+const TRANSIENT_RECHECK_MS = 30_000;
+/** ~3 min de CLI ainda ocupada (retries internos) antes de deixar com ela. */
+const MAX_TRANSIENT_CHECKS = 6;
+/** Texto inédito que prova resposta de verdade depois do erro. */
+const TRANSIENT_PROGRESS_CHARS = 400;
+const TRANSIENT_MIN_LINE_CHARS = 20;
 
 /**
  * Disjuntor de morte instantânea: sessão que morre de auth com segundos de
@@ -784,7 +813,16 @@ function watchFor(authority: FailoverAuthority): [string, SessionWatch] {
   const key = watchKey(authority);
   let watch = watches.get(key);
   if (!watch) {
-    watch = { authority, buffer: '', firedAt: 0, startedAt: Date.now() };
+    watch = {
+      authority,
+      buffer: '',
+      firedAt: 0,
+      startedAt: Date.now(),
+      transientAt: 0,
+      lastTransientAt: 0,
+      progressChars: 0,
+      seenLines: new Set(),
+    };
     watches.set(key, watch);
   }
   return [key, watch];
@@ -811,18 +849,272 @@ export function pickModelRotation(
   return fallback && fallback !== paneModel ? fallback : undefined;
 }
 
+type PaneDetails = NonNullable<ReturnType<typeof resolvePaneDetails>>;
+type PaneAccount = ReturnType<typeof getActiveAccount>;
+
+/** Conta que o pane usa agora: a fixada no pane, senão a ativa do adapter. */
+function paneAccount(pane: PaneDetails): PaneAccount {
+  const pinned = pane.accountId ? getAccount(pane.accountId) : null;
+  return pinned?.adapterId === pane.adapterId
+    ? pinned
+    : getActiveAccount(pane.adapterId);
+}
+
+/** Linha de auditoria de toda decisão de NÃO trocar — um formato só. */
+function logSuppressedFailover(
+  pane: PaneDetails,
+  current: PaneAccount | null | undefined,
+  hit: LimitHit,
+  suppressed: string,
+  source: FailoverSignalSource | 'transient-watch',
+  extra: Record<string, unknown> = {},
+): void {
+  console.info(
+    '[failover]',
+    JSON.stringify({
+      paneId: pane.paneId,
+      adapterId: pane.adapterId,
+      fromAccountId: current?.id ?? null,
+      reason: hit.reason,
+      ...extra,
+      switched: false,
+      suppressed,
+      source,
+    }),
+  );
+}
+
+/** Evento "sem troca" para o renderer — mesmos campos em todos os ramos. */
+function emitNoSwitch(
+  authority: FailoverAuthority,
+  pane: PaneDetails,
+  current: PaneAccount | null | undefined,
+  hit: LimitHit,
+  reason: string = hit.reason,
+): void {
+  emitFailover(authority, {
+    paneId: pane.paneId,
+    fromAccountLabel: current?.label ?? pane.adapterId,
+    toAccountLabel: '',
+    reason,
+    kind: hit.kind,
+    switched: false,
+    fromAccountId: current?.id,
+    missionId: authority.missionId,
+  });
+}
+
+function transientKey(key: string): string {
+  return `${key}\0transient`;
+}
+
+function endTransientEpisode(watch: SessionWatch): void {
+  watch.transientAt = 0;
+  watch.lastTransientAt = 0;
+  watch.progressChars = 0;
+  watch.seenLines = new Set();
+}
+
+/** Linha que é o próprio erro/retry da CLI, não resposta do modelo. */
+const TRANSIENT_NOISE_LINE =
+  /retrying\s+in\s+\d|attempt\s+\d+\s*\/\s*\d+|\b5\d\d\b|overload|unavailable|capacity/i;
+
+/**
+ * Conta texto NOVO depois do último erro do provider. Linha repetida (repaint
+ * do prompt/da moldura) e a linha do próprio erro/retry não provam resposta.
+ */
+function noteTransientProgress(watch: SessionWatch, text: string): void {
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.replace(/\s+/g, ' ').trim();
+    if (line.length < TRANSIENT_MIN_LINE_CHARS) continue;
+    if (TRANSIENT_NOISE_LINE.test(line) || watch.seenLines.has(line)) continue;
+    if (watch.seenLines.size >= 2_000) watch.seenLines = new Set();
+    watch.seenLines.add(line);
+    watch.progressChars += line.length;
+  }
+}
+
+/**
+ * Erro do PROVIDER (5xx, sobrecarga, capacidade do modelo). A conta está
+ * sadia e a irmã recebe o mesmo erro: trocar de conta virava ping-pong A→B→A
+ * a cada 503, com respawn e handoff a cada volta ("status:503", 23/09). Não
+ * troca, não põe cooldown, não pinta a cota e não arma o rearm (um limite de
+ * VERDADE logo depois precisa ser visto). Avisa uma vez por episódio e agenda
+ * a verificação: a CLI costuma se recuperar sozinha nos próprios retries.
+ */
+function handleTransientHit(
+  authority: FailoverAuthority,
+  pane: PaneDetails,
+  key: string,
+  watch: SessionWatch,
+  hit: LimitHit,
+  now: number,
+  source: FailoverSignalSource,
+): void {
+  watch.lastTransientAt = now;
+  watch.progressChars = 0;
+  // A CLI reimprime o erro a cada retry interno: o episódio já avisou e já
+  // tem verificação agendada.
+  if (watch.transientAt !== 0) return;
+  watch.transientAt = now;
+  watch.seenLines = new Set();
+  const current = paneAccount(pane);
+  logSuppressedFailover(pane, current, hit, 'transient-provider-error', source);
+  emitNoSwitch(authority, pane, current, hit);
+  scheduleTransientCheck(
+    key,
+    authority,
+    hit,
+    now + Math.max(hit.cooldownMs, TRANSIENT_MIN_CHECK_MS),
+    1,
+  );
+}
+
+function scheduleTransientCheck(
+  key: string,
+  authority: FailoverAuthority,
+  hit: LimitHit,
+  atMs: number,
+  attempt: number,
+): void {
+  const tKey = transientKey(key);
+  cancelScheduledRetry(tKey);
+  const timer = setTimeout(
+    () => {
+      pendingRetries.delete(tKey);
+      try {
+        checkTransientRecovery(key, authority, hit, attempt);
+      } catch (err) {
+        console.warn('[failover] transient check error:', err);
+      }
+    },
+    Math.max(atMs - Date.now(), RETRY_BUFFER_MS),
+  );
+  timer.unref?.();
+  pendingRetries.set(tKey, { timer, authority });
+}
+
+/**
+ * Depois do backoff: a CLI voltou a responder (texto novo) → nada a fazer;
+ * ainda ocupada (retries internos) → confere de novo; parada no erro →
+ * retoma na MESMA conta. Pane do operador sem missão só recebe o aviso — o
+ * Nexus não mata e reabre a CLI que o humano está dirigindo.
+ */
+function checkTransientRecovery(
+  key: string,
+  authority: FailoverAuthority,
+  hit: LimitHit,
+  attempt: number,
+): void {
+  const watch = watches.get(key);
+  if (!watch || watch.transientAt === 0) return;
+  const pane = isCurrentAuthority(authority) ? resolvePaneDetails(authority) : null;
+  const state = getSessionState(authority.sessionId);
+  if (!pane || state === null || state === 'exited' || state === 'hibernated') {
+    endTransientEpisode(watch);
+    return;
+  }
+  const current = paneAccount(pane);
+  if (watch.progressChars >= TRANSIENT_PROGRESS_CHARS) {
+    logSuppressedFailover(pane, current, hit, 'transient-recovered', 'transient-watch', {
+      progressChars: watch.progressChars,
+    });
+    endTransientEpisode(watch);
+    return;
+  }
+  if (state !== 'idle') {
+    if (attempt < MAX_TRANSIENT_CHECKS) {
+      scheduleTransientCheck(
+        key,
+        authority,
+        hit,
+        Date.now() + TRANSIENT_RECHECK_MS,
+        attempt + 1,
+      );
+      return;
+    }
+    logSuppressedFailover(pane, current, hit, 'transient-cli-still-busy', 'transient-watch', {
+      attempt,
+    });
+    endTransientEpisode(watch);
+    return;
+  }
+  endTransientEpisode(watch);
+  if (!authority.missionId && authority.owner) {
+    logSuppressedFailover(pane, current, hit, 'transient-cli-stopped-operator-pane', 'transient-watch');
+    emitNoSwitch(
+      authority,
+      pane,
+      current,
+      hit,
+      `${hit.reason} — a CLI parou com este erro do provider; mande "continue" no pane para tentar de novo`,
+    );
+    return;
+  }
+  resumeOnSameAccount(authority, pane, current, hit);
+}
+
+/** Missão parada num erro do provider: retoma a MESMA conta, sem trocar. */
+function resumeOnSameAccount(
+  authority: FailoverAuthority,
+  pane: PaneDetails,
+  current: PaneAccount | null | undefined,
+  hit: LimitHit,
+): void {
+  const label = current?.label ?? pane.adapterId;
+  console.info(
+    '[failover]',
+    JSON.stringify({
+      paneId: pane.paneId,
+      adapterId: pane.adapterId,
+      fromAccountId: current?.id ?? null,
+      toAccountId: current?.id ?? null,
+      reason: hit.reason,
+      switched: true,
+      sameAccount: true,
+      source: 'transient-watch',
+    }),
+  );
+  emitFailover(authority, {
+    paneId: pane.paneId,
+    fromAccountLabel: label,
+    toAccountLabel: label,
+    reason: `${hit.reason} — a CLI parou com o erro do provider; retomando na mesma conta`,
+    kind: hit.kind,
+    switched: true,
+    crossAccount: false,
+    fromAccountId: current?.id,
+    toAccountId: current?.id,
+    missionId: authority.missionId,
+  });
+  // Worker headless: não há renderer dono para consumir o evento.
+  if (!authority.owner && current) {
+    void respawnMainOwnedPaneWithAccount({
+      paneId: pane.paneId,
+      sessionId: authority.sessionId,
+      adapterId: pane.adapterId,
+      toAccountId: current.id,
+      fromAccountLabel: label,
+      reason: hit.reason,
+    }).catch((error) => {
+      console.warn(
+        '[failover] main-owned transient resume falhou:',
+        error instanceof Error ? error.message : error,
+      );
+    });
+  }
+}
+
 function handleLimitHit(
   authority: FailoverAuthority,
-  pane: NonNullable<ReturnType<typeof resolvePaneDetails>>,
+  pane: PaneDetails,
   key: string,
   hit: LimitHit,
   now: number,
   source: FailoverSignalSource,
 ): void {
   const adapterId = pane.adapterId;
-  const pinned = pane.accountId ? getAccount(pane.accountId) : null;
-  const current =
-    pinned?.adapterId === adapterId ? pinned : getActiveAccount(adapterId);
+  const current = paneAccount(pane);
   const quotaEntry = current
     ? quotaEntryFor(adapterId, current.id)
     : undefined;
@@ -834,39 +1126,25 @@ function handleLimitHit(
     current &&
     providerApiRefutesLimit(quotaEntry, hit, now)
   ) {
-    console.info(
-      '[failover]',
-      JSON.stringify({
-        paneId: pane.paneId,
-        adapterId,
-        fromAccountId: current.id,
-        reason: hit.reason,
-        switched: false,
-        suppressed: 'provider-api-healthy',
-        source,
-      }),
-    );
+    logSuppressedFailover(pane, current, hit, 'provider-api-healthy', source);
     return;
   }
 
   // A long multi-hour usage quarantine cannot be authorized without a fresh
-  // matching provider-api window. Short backoff plus auth/transient recovery remain available.
+  // matching provider-api window. Short backoff and auth recovery remain
+  // available; provider errors (transient) never reach this function — they
+  // are an episode of their own (handleTransientHit).
   if (
     longCooldownNeedsFreshProviderApi(hit) &&
     !hasFreshProviderApiWindowForLimit(quotaEntry, hit, now)
   ) {
-    console.info(
-      '[failover]',
-      JSON.stringify({
-        paneId: pane.paneId,
-        adapterId,
-        fromAccountId: current?.id ?? null,
-        reason: hit.reason,
-        cooldownMs: hit.cooldownMs,
-        switched: false,
-        suppressed: 'provider-api-required-for-long-cooldown',
-        source,
-      }),
+    logSuppressedFailover(
+      pane,
+      current,
+      hit,
+      'provider-api-required-for-long-cooldown',
+      source,
+      { cooldownMs: hit.cooldownMs },
     );
     return;
   }
@@ -917,35 +1195,10 @@ function handleLimitHit(
     return;
   }
 
-  // Erro do PROVIDER (5xx, capacidade do modelo, sobrecarga): a conta está
-  // sadia e a irmã recebe o mesmo erro. Trocar de conta aqui virava um
-  // ping-pong — A→B→A a cada 503, respawn e handoff a cada volta, com as
-  // duas contas cheias de limite (operador, 23/09, "status:503"). A CLI já
-  // tenta de novo sozinha; o Nexus só avisa, sem cooldown, sem trocar e sem
-  // pintar a barra de cota.
+  // Guarda: erro do provider é episódio próprio (handleTransientHit) e nunca
+  // chega à troca de conta, nem por um caminho novo que esqueça de desviar.
   if (hit.kind === 'transient') {
-    console.info(
-      '[failover]',
-      JSON.stringify({
-        paneId: pane.paneId,
-        adapterId,
-        fromAccountId: current?.id ?? null,
-        reason: hit.reason,
-        switched: false,
-        suppressed: 'transient-provider-error',
-        source,
-      }),
-    );
-    emitFailover(authority, {
-      paneId: pane.paneId,
-      fromAccountLabel: current?.label ?? adapterId,
-      toAccountLabel: '',
-      reason: hit.reason,
-      kind: hit.kind,
-      switched: false,
-      fromAccountId: current?.id,
-      missionId: authority.missionId,
-    });
+    logSuppressedFailover(pane, current, hit, 'transient-provider-error', source);
     return;
   }
 
@@ -988,37 +1241,24 @@ function handleLimitHit(
     if (sessionAgeMs < INSTANT_DEATH_MS) {
       const deaths = noteInstantAuthDeath(adapterId, now);
       if (deaths >= INSTANT_DEATH_TRIP) {
-        console.info(
-          '[failover]',
-          JSON.stringify({
-            paneId: pane.paneId,
-            adapterId,
-            fromAccountId: current?.id ?? null,
-            reason: hit.reason,
-            sessionAgeMs,
-            deaths,
-            switched: false,
-            suppressed: 'instant-auth-death-breaker',
-          }),
-        );
+        logSuppressedFailover(pane, current, hit, 'instant-auth-death-breaker', source, {
+          sessionAgeMs,
+          deaths,
+        });
         // Emite SEMPRE: suprimir aqui deixava o pane morrer sem nenhum
         // feedback no renderer. Repetição idêntica não empilha toast — a
-        // store deduplica por kind+título+detalhe e troca no lugar.
-        emitFailover(authority, {
-          paneId: pane.paneId,
-          fromAccountLabel: current?.label ?? adapterId,
-          toAccountLabel: '',
-          // Sem ponteiro de re-login aqui: o toast de kind auth
-          // (blockedFailoverToastCopy) já instrui "Entre novamente em
-          // Configurações → Providers".
-          reason:
-            `${hit.reason} (sessão morreu com segundos de vida ` +
+        // store deduplica por kind+título+detalhe e troca no lugar. Sem
+        // ponteiro de re-login no motivo: o toast de kind auth
+        // (blockedFailoverToastCopy) já instrui "Entre novamente em
+        // Configurações → Providers".
+        emitNoSwitch(
+          authority,
+          pane,
+          current,
+          hit,
+          `${hit.reason} (sessão morreu com segundos de vida ` +
             `${deaths}x seguidas — credencial provavelmente expirada)`,
-          kind: hit.kind,
-          switched: false,
-          fromAccountId: current?.id,
-          missionId: authority.missionId,
-        });
+        );
         return;
       }
     }
@@ -1047,19 +1287,38 @@ function handleChunk(sessionId: string, data: string, now: number): void {
   if (!pane) return;
 
   const [key, watch] = watchFor(authority);
+  const text = stripAnsi(data);
+  // Episódio de erro do provider em curso: mede se a CLI voltou a responder.
+  if (watch.transientAt !== 0) noteTransientProgress(watch, text);
   // Debounce: don't re-fire within REARM_MS of a switch.
   if (now - watch.firedAt < REARM_MS) return;
 
-  watch.buffer = (watch.buffer + stripAnsi(data)).slice(-WINDOW_CHARS);
+  watch.buffer = (watch.buffer + text).slice(-WINDOW_CHARS);
   const hit = detectLimit(watch.buffer);
   if (!hit) return;
 
-  watch.firedAt = now;
   watch.buffer = ''; // consumed
-  // Um 5xx do provider não pode cancelar a nova tentativa já agendada para
-  // um limite de verdade: o pane ficaria parado esperando nada.
-  if (hit.kind !== 'transient') cancelScheduledRetry(key);
+  if (hit.kind === 'transient') {
+    // Sem rearm: um limite de VERDADE logo depois do 503 ainda é detectado.
+    handleTransientHit(authority, pane, key, watch, hit, now, 'scrollback');
+    return;
+  }
+  beginLimitHandling(key, watch, now);
   handleLimitHit(authority, pane, key, hit, now, 'scrollback');
+}
+
+/**
+ * Limite de verdade (cota/taxa/auth/modelo): arma o rearm, cancela a espera
+ * anterior e encerra um episódio de erro do provider — a troca assume o pane.
+ * Erro do provider NÃO passa por aqui: ele não pode cancelar a nova tentativa
+ * já agendada para um limite real, senão o pane fica parado esperando nada.
+ */
+function beginLimitHandling(key: string, watch: SessionWatch, now: number): void {
+  watch.firedAt = now;
+  watch.buffer = '';
+  cancelScheduledRetry(key);
+  cancelScheduledRetry(transientKey(key));
+  endTransientEpisode(watch);
 }
 
 function handleObserverFrame(frame: ObserverFrame): void {
@@ -1072,22 +1331,18 @@ function handleObserverFrame(frame: ObserverFrame): void {
   const now = frame.at;
   const [key, watch] = watchFor(authority);
   if (now - watch.firedAt < REARM_MS) return;
-  watch.firedAt = now;
-  watch.buffer = '';
-  if (frame.payload.kind !== 'transient') cancelScheduledRetry(key);
-  handleLimitHit(
-    authority,
-    pane,
-    key,
-    {
-      kind: frame.payload.kind,
-      reason: frame.payload.reason,
-      cooldownMs: frame.payload.cooldownMs,
-      ...(frame.payload.scope ? { scope: frame.payload.scope } : {}),
-    },
-    now,
-    'observer',
-  );
+  const hit: LimitHit = {
+    kind: frame.payload.kind,
+    reason: frame.payload.reason,
+    cooldownMs: frame.payload.cooldownMs,
+    ...(frame.payload.scope ? { scope: frame.payload.scope } : {}),
+  };
+  if (hit.kind === 'transient') {
+    handleTransientHit(authority, pane, key, watch, hit, now, 'observer');
+    return;
+  }
+  beginLimitHandling(key, watch, now);
+  handleLimitHit(authority, pane, key, hit, now, 'observer');
 }
 
 export function initFailover(): void {

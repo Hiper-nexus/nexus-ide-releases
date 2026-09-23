@@ -9,6 +9,7 @@ const ptyMocks = vi.hoisted(() => ({
   dataTaps: [] as Array<(sessionId: string, data: string) => void>,
   exitTaps: [] as Array<(sessionId: string) => void>,
   agentSessions: new Map<string, unknown>(),
+  sessionStates: new Map<string, string>(),
 }));
 
 const paneMocks = vi.hoisted(() => ({
@@ -58,6 +59,9 @@ vi.mock('../pty/pty-manager', () => ({
   }),
   getAgentSessionInfo: vi.fn(
     (sessionId: string) => ptyMocks.agentSessions.get(sessionId) ?? null,
+  ),
+  getSessionState: vi.fn(
+    (sessionId: string) => ptyMocks.sessionStates.get(sessionId) ?? null,
   ),
 }));
 
@@ -194,6 +198,7 @@ beforeEach(() => {
   ptyMocks.dataTaps.length = 0;
   ptyMocks.exitTaps.length = 0;
   ptyMocks.agentSessions.clear();
+  ptyMocks.sessionStates.clear();
   paneMocks.authorities.clear();
   paneMocks.panes.clear();
   paneMocks.runtimeAuthorities.clear();
@@ -349,54 +354,6 @@ describe('account failover authority and lifecycle', () => {
       ACCOUNT_CHANNELS.failover,
       expect.anything(),
     );
-  });
-
-  it('503 do provider não troca de conta nem põe a conta em cooldown (ping-pong A↔B)', async () => {
-    const { detectLimit } = await import('./limit-detector');
-    vi.mocked(detectLimit).mockImplementation((buffer: string) =>
-      buffer.includes('LIMIT')
-        ? { kind: 'transient', reason: 'status:503', cooldownMs: 45_000 }
-        : null,
-    );
-    try {
-      const scope = testProjectScope();
-      const owner = renderer(503);
-      renderers.push(owner);
-      bindResolvedRendererWorkspaceScope(owner, scope);
-      registerFailoverListener(owner);
-      addPane({
-        owner,
-        paneId: 'pane-503',
-        sessionId: 'session-503',
-        missionId: 'mission-503',
-        scope,
-      });
-
-      ptyMocks.dataTaps[0]('session-503', 'LIMIT');
-      await settleFailover();
-
-      expect(accountMocks.setCooldown).not.toHaveBeenCalled();
-      expect(owner.send).toHaveBeenCalledTimes(1);
-      expect(owner.send).toHaveBeenCalledWith(
-        ACCOUNT_CHANNELS.failover,
-        expect.objectContaining({
-          paneId: 'pane-503',
-          kind: 'transient',
-          switched: false,
-          fromAccountId: 'account-a',
-        }),
-      );
-      expect(owner.send).not.toHaveBeenCalledWith(
-        ACCOUNT_CHANNELS.failover,
-        expect.objectContaining({ switched: true }),
-      );
-    } finally {
-      vi.mocked(detectLimit).mockImplementation((buffer: string) =>
-        buffer.includes('LIMIT')
-          ? ({ reason: 'rate limit', cooldownMs: 60_000 } as ReturnType<typeof detectLimit>)
-          : null,
-      );
-    }
   });
 
   it('does not create a long quarantine from PTY text without fresh provider-api authority', async () => {
@@ -1201,5 +1158,158 @@ describe('disjuntor de morte instantânea (401-loop multi-conta)', () => {
         toAccountId: 'account-b',
       }),
     );
+  });
+});
+
+describe('erro do provider (5xx) — episódio sem troca de conta', () => {
+  const E503 = 'API Error (status:503): Service Unavailable';
+
+  async function setupTransient(options: { missionId?: string } = { missionId: 'mission-503' }) {
+    const { detectLimit } = await import('./limit-detector');
+    vi.mocked(detectLimit).mockImplementation((buffer: string) => {
+      if (buffer.includes('LIMIT')) {
+        return { kind: 'rate-limit', reason: 'rate limit', cooldownMs: 60_000 };
+      }
+      if (buffer.includes('status:503')) {
+        return { kind: 'transient', reason: 'status:503', cooldownMs: 20_000 };
+      }
+      return null;
+    });
+    const scope = testProjectScope();
+    const owner = renderer(503);
+    renderers.push(owner);
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerFailoverListener(owner);
+    addPane({
+      owner,
+      paneId: 'pane-503',
+      sessionId: 'session-503',
+      ...(options.missionId ? { missionId: options.missionId } : {}),
+      scope,
+    });
+    ptyMocks.sessionStates.set('session-503', 'busy');
+    return owner;
+  }
+
+  function failoverEvents(owner: Renderer): Array<Record<string, unknown>> {
+    return owner.send.mock.calls
+      .filter(([channel]) => channel === ACCOUNT_CHANNELS.failover)
+      .map(([, event]) => event as Record<string, unknown>);
+  }
+
+  afterEach(async () => {
+    const { detectLimit } = await import('./limit-detector');
+    vi.mocked(detectLimit).mockImplementation((buffer: string) =>
+      buffer.includes('LIMIT')
+        ? ({ reason: 'rate limit', cooldownMs: 60_000 } as ReturnType<typeof detectLimit>)
+        : null,
+    );
+  });
+
+  it('não troca, não põe cooldown e avisa uma vez por episódio (ping-pong A↔B, 23/09)', async () => {
+    const owner = await setupTransient();
+    ptyMocks.dataTaps[0]('session-503', E503);
+    // A CLI reimprime o erro a cada retry interno.
+    ptyMocks.dataTaps[0]('session-503', `${E503} · Retrying in 2 seconds (attempt 2/10)`);
+    await settleFailover();
+
+    expect(accountMocks.setCooldown).not.toHaveBeenCalled();
+    const events = failoverEvents(owner);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ kind: 'transient', switched: false, fromAccountId: 'account-a' });
+  });
+
+  it('CLI parada no erro: retoma a missão na MESMA conta depois do backoff', async () => {
+    const owner = await setupTransient();
+    ptyMocks.dataTaps[0]('session-503', E503);
+    ptyMocks.sessionStates.set('session-503', 'idle');
+    await vi.advanceTimersByTimeAsync(21_000);
+
+    const events = failoverEvents(owner);
+    expect(events).toHaveLength(2);
+    expect(events[1]).toMatchObject({
+      kind: 'transient',
+      switched: true,
+      crossAccount: false,
+      fromAccountId: 'account-a',
+      toAccountId: 'account-a',
+    });
+    expect(accountMocks.setCooldown).not.toHaveBeenCalled();
+  });
+
+  it('CLI voltou a responder: não retoma nem mexe no pane', async () => {
+    const owner = await setupTransient();
+    ptyMocks.dataTaps[0]('session-503', E503);
+    const answer = Array.from(
+      { length: 12 },
+      (_, i) => `Linha ${i} da resposta do modelo depois da recuperação do provider.`,
+    ).join('\n');
+    ptyMocks.dataTaps[0]('session-503', answer);
+    ptyMocks.sessionStates.set('session-503', 'idle');
+    await vi.advanceTimersByTimeAsync(21_000);
+
+    expect(failoverEvents(owner)).toHaveLength(1);
+  });
+
+  it('repaint do prompt não conta como resposta: retoma mesmo com a moldura redesenhada', async () => {
+    const owner = await setupTransient();
+    ptyMocks.dataTaps[0]('session-503', E503);
+    const prompt = '╭────────────────────────────╮\n│ > Try "fix the failing tests" │\n╰────────────────────────────╯';
+    for (let i = 0; i < 20; i += 1) ptyMocks.dataTaps[0]('session-503', prompt);
+    ptyMocks.sessionStates.set('session-503', 'idle');
+    await vi.advanceTimersByTimeAsync(21_000);
+
+    expect(failoverEvents(owner).at(-1)).toMatchObject({ switched: true, toAccountId: 'account-a' });
+  });
+
+  it('CLI ainda ocupada nos próprios retries: confere de novo em vez de matar', async () => {
+    const owner = await setupTransient();
+    ptyMocks.dataTaps[0]('session-503', E503);
+    await vi.advanceTimersByTimeAsync(21_000);
+    expect(failoverEvents(owner)).toHaveLength(1);
+
+    ptyMocks.sessionStates.set('session-503', 'idle');
+    await vi.advanceTimersByTimeAsync(31_000);
+    expect(failoverEvents(owner).at(-1)).toMatchObject({ switched: true, toAccountId: 'account-a' });
+  });
+
+  it('limite de VERDADE logo depois do 503 ainda troca de conta (sem rearm)', async () => {
+    const owner = await setupTransient();
+    ptyMocks.dataTaps[0]('session-503', E503);
+    await settleFailover();
+    await vi.advanceTimersByTimeAsync(5_000);
+    ptyMocks.dataTaps[0]('session-503', 'LIMIT');
+    await settleFailover();
+
+    expect(accountMocks.setCooldown).toHaveBeenCalledOnce();
+    expect(failoverEvents(owner).at(-1)).toMatchObject({ switched: true, toAccountId: 'account-b' });
+    // O limite real encerra o episódio: nenhuma retomada tardia na conta A.
+    ptyMocks.sessionStates.set('session-503', 'idle');
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(
+      failoverEvents(owner).filter((event) => event.toAccountId === 'account-a'),
+    ).toHaveLength(0);
+  });
+
+  it('pane do operador sem missão: só avisa que a CLI parou, sem matar e reabrir', async () => {
+    const owner = await setupTransient({});
+    ptyMocks.dataTaps[0]('session-503', E503);
+    ptyMocks.sessionStates.set('session-503', 'idle');
+    await vi.advanceTimersByTimeAsync(21_000);
+
+    const events = failoverEvents(owner);
+    expect(events).toHaveLength(2);
+    expect(events[1]).toMatchObject({ kind: 'transient', switched: false });
+    expect(String(events[1].reason)).toContain('continue');
+  });
+
+  it('sessão que saiu encerra o episódio sem retomada', async () => {
+    const owner = await setupTransient();
+    ptyMocks.dataTaps[0]('session-503', E503);
+    ptyMocks.exitTaps[0]('session-503');
+    ptyMocks.sessionStates.set('session-503', 'exited');
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(failoverEvents(owner)).toHaveLength(1);
   });
 });
