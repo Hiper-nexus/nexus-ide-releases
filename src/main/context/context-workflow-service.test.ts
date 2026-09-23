@@ -288,8 +288,15 @@ beforeEach(() => {
 
 afterEach(() => {
   for (const manager of managers.splice(0)) manager.closeAll();
-  for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
-  fs.rmSync(baseDir, { recursive: true, force: true });
+  // A full concurrent suite can briefly repopulate Git's info files while a
+  // fixture is being removed. Bound the native ENOTEMPTY retry instead of
+  // failing a passing workflow assertion on transient teardown timing.
+  for (const root of roots.splice(0)) fs.rmSync(root, {
+    recursive: true, force: true, maxRetries: 5, retryDelay: 50,
+  });
+  fs.rmSync(baseDir, {
+    recursive: true, force: true, maxRetries: 5, retryDelay: 50,
+  });
 });
 
 describe('native context workflow service', () => {

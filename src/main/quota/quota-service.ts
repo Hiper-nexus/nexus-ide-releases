@@ -110,7 +110,11 @@ export interface QuotaServiceDeps {
    * liga o flag de reautenticação (needsRelogin) sem esperar um 401 de spawn.
    * Produção liga no account-store (cooldown de auth). Opcional em testes.
    */
-  markAccountAuthExpired?: (accountId: string, adapterId: string) => void;
+  markAccountAuthExpired?: (
+    accountId: string,
+    adapterId: string,
+    reason?: 'auth-expired' | 'identity-mismatch',
+  ) => void;
   resolveCodexAuth?: (
     accountId?: string,
   ) => CodexChatGptAuth | null | Promise<CodexChatGptAuth | null>;
@@ -633,12 +637,12 @@ export class QuotaService {
             if (probe.hint) {
               this.#probeHints.set(id, probe.hint);
               if (
-                probe.hint === 'auth-expired' &&
+                (probe.hint === 'auth-expired' || probe.hint === 'identity-mismatch') &&
                 row.accountId &&
                 this.#deps.markAccountAuthExpired
               ) {
                 try {
-                  this.#deps.markAccountAuthExpired(row.accountId, row.adapterId);
+                  this.#deps.markAccountAuthExpired(row.accountId, row.adapterId, probe.hint);
                 } catch {
                   /* marcação é best-effort — a linha já carrega o hint */
                 }

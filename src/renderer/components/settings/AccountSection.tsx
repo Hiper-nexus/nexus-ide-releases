@@ -10,6 +10,7 @@ import type { PublicPlanId } from '../../../../shared/pricing';
 import { askConfirm } from '../../state/confirm-store';
 import { PixelIcon } from '../PixelIcon';
 import { SettingsSectionTitle } from './SettingsSectionTitle';
+import { accountSessionBadge, isSessionExpiredError } from './account-session-badge';
 
 /**
  * Minha Conta — identidade Nexus (login), time e plano.
@@ -65,6 +66,7 @@ export function AccountSection() {
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loginBusy, setLoginBusy] = useState<'github' | 'google' | null>(null);
   const [checkoutBusy, setCheckoutBusy] = useState(false);
+  const [reloginOpen, setReloginOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -140,6 +142,12 @@ export function AccountSection() {
       }
       const next = await window.nexus.billing.get();
       setLicense(next);
+      if (reloginOpen) {
+        setReloginOpen(false);
+        setTeamError(null);
+        setCheckoutError(null);
+        await reloadTeam();
+      }
     } catch (err) {
       setLoginError(err instanceof Error ? err.message : 'Falha no login.');
     } finally {
@@ -236,6 +244,15 @@ export function AccountSection() {
     }
   };
 
+  const sessionBadge = accountSessionBadge({
+    loading: licenseLoading,
+    isLoggedIn,
+    licenseUnconfirmed,
+    sessionExpired:
+      isSessionExpiredError(teamError) || isSessionExpiredError(checkoutError),
+  });
+  const showLogin = !licenseLoading && (!isLoggedIn || reloginOpen);
+
   if (licenseLoading || licenseFailed) {
     return <section className="account" aria-busy={licenseLoading}>
       <AccountHeader />
@@ -296,10 +313,26 @@ export function AccountSection() {
           )}
         </div>
         <span
-          className={`account__session-pill ${isLoggedIn ? 'account__session-pill--in' : ''}`}
+          className={`account__session-pill${
+            sessionBadge.tone === 'in'
+              ? ' account__session-pill--in'
+              : sessionBadge.tone === 'warn'
+                ? ' account__session-pill--warn'
+                : ''
+          }`}
+          data-session-tone={sessionBadge.tone}
         >
-          {licenseLoading ? '…' : isLoggedIn ? 'conectado' : 'local'}
+          {sessionBadge.label}
         </span>
+        {sessionBadge.offerRelogin && !reloginOpen && (
+          <button
+            type="button"
+            className="settings-btn"
+            onClick={() => setReloginOpen(true)}
+          >
+            Entrar de novo
+          </button>
+        )}
         {license?.status === 'active' && (
           <button
             type="button"
@@ -312,7 +345,7 @@ export function AccountSection() {
         )}
       </div>
 
-      {!licenseLoading && !isLoggedIn && (
+      {showLogin && (
         <div className="account__login" role="region" aria-label="Entrar na conta Nexus">
           <div className="account__login-copy">
             <span className="account__zone-title">
@@ -321,7 +354,7 @@ export function AccountSection() {
             </span>
             <p className="account__zone-hint">
               Acesse seu plano e sua equipe em outras máquinas. As conexões
-              com ferramentas de IA são gerenciadas em Providers.
+              com ferramentas de IA ficam em Contas de IA.
             </p>
           </div>
           <div className="account__login-buttons">
@@ -343,6 +376,18 @@ export function AccountSection() {
               <PixelIcon name="user" size={12} />
               {loginBusy === 'google' ? 'Abrindo Google…' : 'Entrar com Google'}
             </button>
+            {reloginOpen ? (
+              // Aberto por "Entrar de novo" com a conta já ligada: sempre há
+              // saída — a sessão atual continua como estava.
+              <button
+                type="button"
+                className="settings-btn account__login-btn"
+                disabled={loginBusy !== null}
+                onClick={() => setReloginOpen(false)}
+              >
+                Cancelar
+              </button>
+            ) : null}
           </div>
           {loginError && (
             <p className="account__notice account__notice--err" role="alert">

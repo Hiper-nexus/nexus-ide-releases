@@ -187,7 +187,8 @@ export function removeManagedClaudeAuth(accountId: string, options: { home?: str
 export function materializeManagedClaudeAuth(
   accountId: string,
   vaultBlob: string,
-  options: { home?: string; replace?: boolean } = {},
+  options: { home?: string; replace?: boolean; expectedBlob?: string;
+    keychainProbe?: (service: string) => boolean } = {},
 ): { directory: string; blob: string; env: Record<string, string> } {
   const home = options.home ?? os.homedir();
   const directory = managedClaudeAuthDirectory(accountId, home);
@@ -196,7 +197,13 @@ export function materializeManagedClaudeAuth(
   ensurePrivateDirectory(directory, home);
   const file = readFileCredential(directory);
   const scoped = readManagedClaudeCredential(directory);
+  if (!scoped && (options.keychainProbe ?? keychainItemExists)(managedClaudeKeychainService(directory))) {
+    throw new Error('managed Claude Keychain credential is unreadable; unlock Keychain and retry');
+  }
   const selected = options.replace ? vault : freshestClaudeCredential(scoped, file, vault)!;
+  if (options.expectedBlob !== undefined && selected !== slimClaudeCredentialBlob(options.expectedBlob)) {
+    throw new Error('managed Claude credential changed after verified profile; retry spawn');
+  }
   if (scoped && slimClaudeCredentialBlob(scoped) !== selected &&
       !writeManagedClaudeCredential(directory, selected)) {
     throw new Error('não foi possível atualizar o Keychain isolado desta conta Claude');

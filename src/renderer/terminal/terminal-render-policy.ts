@@ -23,8 +23,8 @@ export function terminalOutputPolicy(
   const foreground =
     gridReady && input.isFocused && input.isPaneVisible && input.isDocumentVisible;
   const shouldHoldHidden =
-    !gridReady || (input.performanceMode === 'adaptive' &&
-    (!input.isPaneVisible || !input.isDocumentVisible));
+    !gridReady ||
+    (input.performanceMode === 'adaptive' && !input.isDocumentVisible);
   return {
     foreground,
     latencySensitive: foreground,

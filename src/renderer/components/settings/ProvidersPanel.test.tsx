@@ -128,6 +128,8 @@ describe('ProvidersPanel hub', () => {
         providers: {
           authStatus: vi.fn(async () => []),
           installCli: vi.fn(async () => ({ ok: true })),
+          getCliAutoUpdates: vi.fn(async () => ({ enabled: true, deferredUntil: null, lastCheckedAt: 1_000 })),
+          setCliAutoUpdates: vi.fn(async (enabled: boolean) => ({ enabled, deferredUntil: null, lastCheckedAt: 1_000 })),
         },
         adapters: { rescan: vi.fn(async () => []) },
       },
@@ -155,6 +157,17 @@ describe('ProvidersPanel hub', () => {
       /Reexaminar CLIs|Examinando/.test(b.textContent ?? ''),
     );
     expect(refresh).toHaveLength(1);
+    act(() => root.unmount());
+  });
+
+  it('lets the operator disable automatic CLI updates from the CLI tab', async () => {
+    const { host, root } = mount();
+    await act(async () => { await Promise.resolve(); });
+    const toggle = host.querySelector<HTMLInputElement>('[aria-label="Atualizar CLIs automaticamente"]');
+    expect(toggle?.checked).toBe(true);
+    await act(async () => { toggle!.click(); await Promise.resolve(); });
+    expect(window.nexus.providers.setCliAutoUpdates).toHaveBeenCalledWith(false);
+    expect(toggle?.checked).toBe(false);
     act(() => root.unmount());
   });
 
@@ -398,7 +411,7 @@ describe('ProvidersPanel hub', () => {
   });
 
   it('shows live then success status in the detail when updating a CLI', async () => {
-    let finish: ((value: { ok: true }) => void) | undefined;
+    let finish: ((value: { ok: true; changed: true; version: string }) => void) | undefined;
     vi.mocked(window.nexus.providers.installCli).mockImplementation(
       () => new Promise((resolve) => { finish = resolve; }),
     );
@@ -416,9 +429,9 @@ describe('ProvidersPanel hub', () => {
     expect(host.querySelector('[data-testid="prov-cli-job"]')?.textContent)
       .toMatch(/Atualizando Antigravity/);
     expect(host.querySelector('.prov-row__status')?.textContent).toBe('atualizando…');
-    await act(async () => { finish!({ ok: true }); });
+    await act(async () => { finish!({ ok: true, changed: true, version: '1.2.9' }); });
     expect(host.querySelector('[data-testid="prov-cli-job"]')?.textContent)
-      .toMatch(/atualizada/i);
+      .toMatch(/atualizada para 1\.2\.9/i);
     expect(host.querySelector('.prov-row__status')?.textContent).not.toBe(
       'atualizando…',
     );

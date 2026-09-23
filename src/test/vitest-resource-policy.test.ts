@@ -11,6 +11,7 @@ describe('root Vitest resource policy', () => {
   });
 
   it('never discovers copied suites inside Nexus runtime worktrees', () => {
+    expect(config.test?.exclude).toContain('.nexus/worktrees/**');
     expect(config.test?.exclude).toContain('.dev-user-data/**');
     expect(config.test?.exclude).toContain('.dev-user-data.bak-*/**');
   });

@@ -108,3 +108,17 @@
   .catalog-settings--shortcuts .settings-list__head { grid-template-columns: minmax(0, 1fr); gap: var(--space-2); }
   .catalog-settings__header > button { flex: 0 0 auto; }
 }
+
+/* Marketplace: rodapé da página com a contagem e "Mostrar mais (N)". */
+.mkt-more {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.mkt-more > .catalog-settings__count {
+  margin: 0;
+}

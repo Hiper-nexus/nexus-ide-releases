@@ -292,6 +292,39 @@ describe('terminal output scheduler', () => {
     expect(terminal.written.join('')).toBe('already-queued');
   });
 
+  it('resumes a parked workspace queue when hidden output is allowed to drain', () => {
+    vi.useFakeTimers();
+    const terminal = createTerminal();
+    writeTerminalOutput(terminal, 'before-', { foreground: false });
+    pauseTerminalOutput(terminal);
+    writeTerminalOutput(terminal, 'after', {
+      foreground: false,
+      holdBackground: false,
+    });
+
+    vi.runAllTimers();
+    expect(terminal.written.join('')).toBe('before-after');
+    expect(getTerminalOutputRuntimeSnapshot().droppedBacklogCount).toBe(0);
+  });
+
+  it('preserves sustained output from a second workspace without reaching the drop cap', () => {
+    vi.useFakeTimers();
+    const terminal = createTerminal();
+    const chunk = 'x'.repeat(256 * 1024);
+    pauseTerminalOutput(terminal);
+
+    for (let i = 0; i < 12; i += 1) {
+      writeTerminalOutput(terminal, chunk, {
+        foreground: false,
+        holdBackground: false,
+      });
+      vi.advanceTimersByTime(200);
+    }
+
+    expect(terminal.written.join('').length).toBe(12 * chunk.length);
+    expect(getTerminalOutputRuntimeSnapshot().droppedBacklogCount).toBe(0);
+  });
+
   it('keeps parked hidden output bounded and reports runtime pressure', () => {
     vi.useFakeTimers();
     const terminal = createTerminal();

@@ -1,7 +1,7 @@
 {
   "name": "nexus-ide",
   "productName": "NexusIDE",
-  "version": "0.76.82",
+  "version": "0.76.84",
   "description": "Terminal IDE multi-agente: grid de panes de terminal com PTYs reais, base para adapters de CLIs de IA e orquestração de squads.",
   "main": ".vite/build/main.js",
   "author": "NexusIDE",
@@ -49,8 +49,7 @@
     "eval:benchmark:verify": "node --import tsx scripts/verify-nexus-benchmark.mjs",
     "bench:vector-retrieval": "node scripts/benchmark-vector-retrieval.mjs",
     "start:forge": "electron-forge start",
-    "build:menubar": "node scripts/build-macos-menubar.mjs",
-    "build:tray-windows": "node scripts/build-windows-tray.mjs"
+    "build:menubar": "node scripts/build-macos-menubar.mjs"
   },
   "engines": {
     "node": ">=22.12.0 <23"

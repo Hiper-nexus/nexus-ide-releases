@@ -13,8 +13,7 @@ import { getDb } from './db';
 import {
   activateAccount,
   addAccount,
-  addActiveClaudeAccount,
-  addActiveSessionAccount,
+  addActiveSessionAccountAuthoritative,
   getAccount,
   initAccountStore,
   listAccountInfos,
@@ -88,11 +87,11 @@ export function registerAccountIpc(): void {
     }
   });
 
-  handleTrusted(ACCOUNT_CHANNELS.addActiveClaude, (_e, raw) => {
+  handleTrusted(ACCOUNT_CHANNELS.addActiveClaude, async (_e, raw) => {
     const parsed = addActiveClaudeSchema.safeParse(raw);
     if (!parsed.success) return { ok: false, error: 'invalid label' };
     try {
-      const account = addActiveClaudeAccount(parsed.data.label);
+      const account = await addActiveSessionAccountAuthoritative('claude', parsed.data.label);
       if (account) resetInstantAuthDeaths(account.adapterId);
       return account
         ? { ok: true, id: account.id, email: account.email }
@@ -109,7 +108,7 @@ export function registerAccountIpc(): void {
     }
   });
 
-  handleTrusted(ACCOUNT_CHANNELS.addActiveSession, (_e, raw) => {
+  handleTrusted(ACCOUNT_CHANNELS.addActiveSession, async (_e, raw) => {
     const parsed = addActiveSessionSchema.safeParse(raw);
     if (!parsed.success) return { ok: false, error: 'invalid request' };
     if (!supportsSessionSnapshot(parsed.data.adapterId)) {
@@ -119,7 +118,7 @@ export function registerAccountIpc(): void {
       };
     }
     try {
-      const account = addActiveSessionAccount(
+      const account = await addActiveSessionAccountAuthoritative(
         parsed.data.adapterId,
         parsed.data.label,
         parsed.data.accountId,

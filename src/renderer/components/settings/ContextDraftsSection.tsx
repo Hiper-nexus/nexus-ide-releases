@@ -72,9 +72,9 @@ export function ContextDraftsSection() {
     <div className="sys-group" aria-busy={busyId !== null}>
       <div className="sys-group__head">
         <div className="sys-group__titles">
-          <h4 className="sys-group__title">
+          <h3 className="sys-group__title">
             Revisão de contexto pendente
-          </h4>
+          </h3>
           <p className="sys-group__hint">
             O agente propôs autoridade de contexto vinculada a fontes reais, mas
             não há um segundo provider para revisar. A sua aprovação vale como

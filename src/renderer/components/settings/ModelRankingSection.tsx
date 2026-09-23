@@ -14,7 +14,9 @@ import {
   costEfficiency,
   costLabel,
   estimateBadge,
+  estimateDetail,
   formatEvalTime,
+  hasEstimates,
   gridRingPath,
   groupEntriesByBand,
   pickForDimension,
@@ -31,6 +33,9 @@ import { PixelIcon } from "../PixelIcon";
 import { SettingsSectionTitle } from "./SettingsSectionTitle";
 import { unrankedModels } from "./unranked-models";
 import { UnrankedModelDetail, UnrankedModelList } from "./UnrankedModelList";
+
+/** Quantos modelos sem avaliação aparecem antes de "Mostrar todos". */
+const UNRANKED_PREVIEW = 24;
 
 /**
  * Per-adapter free capacity 0..1 for ranking blend. Uses freest account of each
@@ -139,7 +144,7 @@ function RaceChart({
                 {estimate !== null && (
                   <span
                     className="rank-estimate"
-                    title="scores de fixture offline, não auditoria real"
+                    title={estimateDetail(entry) ?? undefined}
                   >
                     {estimate}
                   </span>
@@ -161,9 +166,6 @@ function RaceChart({
             </span>
             <span className="rank-race__score">
               {score === null ? "—" : score}
-              <span className="rank-race__eff" title="eficiência overall/custo">
-                η{costEfficiency(entry)}
-              </span>
             </span>
           </button>
         );
@@ -277,8 +279,11 @@ function RadarChart({
           <span className="rank-radar__identity-copy">
             <strong>{entry.modelId}</strong>
             <span>
-              overall {entry.overall} · η{costEfficiency(entry)} ·{" "}
-              {costLabel(entry)}
+              nota geral {entry.overall} ·{" "}
+              <span title="Nota geral dividida pelo peso do custo">
+                custo-benefício {costEfficiency(entry)}
+              </span>{" "}
+              · {costLabel(entry)}
             </span>
           </span>
         </span>
@@ -423,6 +428,9 @@ export function ModelRankingSection() {
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [onlyInstalled, setOnlyInstalled] = useState(false);
+  // 900+ modelos sem avaliação renderizavam de uma vez (935 botões, 47k px).
+  // Os primeiros bastam para decidir; o resto sob demanda.
+  const [showAllUnranked, setShowAllUnranked] = useState(false);
 
   const providers = useProviderStore((s) => s.providers);
   const installed = useMemo(() => {
@@ -525,9 +533,12 @@ export function ModelRankingSection() {
       {snapshot && (
         <>
           <div className="rank-ops__fleet" role="status">
-            <span>
-              suite <code>{snapshot.suiteId}</code>
-              <span className="rank-ops__dim">/{snapshot.suiteRevision}</span>
+            <span
+              title={`Conjunto de testes ${snapshot.suiteId}/${snapshot.suiteRevision}`}
+            >
+              {hasEstimates(snapshot.entries)
+                ? "notas estimadas"
+                : "notas medidas em teste"}
             </span>
             <span className="rank-ops__sep" aria-hidden="true">
               ·
@@ -551,15 +562,15 @@ export function ModelRankingSection() {
           </div>
 
           <div className="rank-ops__block">
-            <h4 className="rank-ops__block-title">
+            <h3 className="rank-ops__block-title">
               Faixas de custo
-            </h4>
+            </h3>
             <p className="rank-ops__mission-hint">Escolha uma faixa econômica para tarefas simples e reserve os modelos mais caros para problemas complexos.</p>
             <BandBoard entries={snapshot.entries} onSelect={setSelectedId} />
           </div>
 
           <div className="rank-ops__block">
-            <h4 className="rank-ops__block-title">Destaques por tipo de tarefa</h4>
+            <h3 className="rank-ops__block-title">Destaques por tipo de tarefa</h3>
             <MissionPicks entries={snapshot.entries} onSelect={setSelectedId} />
           </div>
 
@@ -593,9 +604,9 @@ export function ModelRankingSection() {
 
           <div className="rank-ops__stage">
             <div className="rank-ops__stage-main">
-              <h4 className="rank-ops__block-title">
+              <h3 className="rank-ops__block-title">
                 Comparação · {SORT_LABELS[sort]}
-              </h4>
+              </h3>
               <RaceChart
                 rows={rows}
                 sort={sort}
@@ -604,13 +615,22 @@ export function ModelRankingSection() {
                 onSelect={setSelectedId}
               />
               <UnrankedModelList
-                models={visibleUnranked}
+                models={showAllUnranked ? visibleUnranked : visibleUnranked.slice(0, UNRANKED_PREVIEW)}
                 selectedId={selectedId}
                 onSelect={setSelectedId}
               />
+              {!showAllUnranked && visibleUnranked.length > UNRANKED_PREVIEW ? (
+                <button
+                  type="button"
+                  className="settings-btn rank-ops__show-all"
+                  onClick={() => setShowAllUnranked(true)}
+                >
+                  Mostrar todos os {visibleUnranked.length} modelos sem avaliação
+                </button>
+              ) : null}
             </div>
             <div className="rank-ops__stage-side">
-              <h4 className="rank-ops__block-title">Radar operacional</h4>
+              <h3 className="rank-ops__block-title">Radar operacional</h3>
               {selected ? (
                 <RadarChart entry={selected} ghost={leader} />
               ) : (
@@ -683,16 +703,19 @@ export function ModelRankingSection() {
                   );
                 })}
               </div>
-              <p className="rank-ops__foot">
+              <p
+                className="rank-ops__foot"
+                title={`Origem técnica: ${selected.source}`}
+              >
                 faixa {OPERATIONAL_BAND_LABELS[bandOfEntry(selected)]} · custo{" "}
-                {costLabel(selected)} · fonte {selected.source}
+                {costLabel(selected)}
                 {estimateBadge(selected) !== null && (
-                  <span className="rank-estimate">
+                  <span className="rank-estimate rank-estimate--detail">
                     {" "}
                     · {estimateBadge(selected)}
                   </span>
                 )}{" "}
-                · conf{" "}
+                · confiança{" "}
                 {typeof selected.confidence === "number" &&
                 Number.isFinite(selected.confidence)
                   ? `${Math.round(selected.confidence * 100)}%`

@@ -265,10 +265,10 @@ export function MediaSection() {
 
       {!error && byKind.map(({ kind, items }) => (
         <div key={kind} className="arsenal-band">
-          <h4 className="arsenal-band__label media-section__band-label">
+          <h3 className="arsenal-band__label media-section__band-label">
             {KIND_LABEL[kind]}{' '}
             <span className="arsenal-band__count">{items.length}</span>
-          </h4>
+          </h3>
           <div className="arsenal-media-grid">
             {items.map((provider) => (
               <article

@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.76.84 — CLI certa, janelas vivas
+
+- **Atualizar CLI atua na instalação usada pelo pane (F-360).** Nexus escolhe o canal pelo executável ativo: Claude nativo usa o próprio updater, Homebrew usa o prefixo dono da CLI, npm usa o prefixo global correto, uv recebe seus diretórios e instaladores oficiais mantêm o perfil. Depois, lê a versão do launcher do próximo pane; versão igual ou não verificada não vira um falso “atualizada”.
+- **Atualização automática com consentimento (F-633).** O Nexus oferece manter CLIs instaladas em dia pelos canais locais reconhecidos. As tentativas são serializadas, esperam não haver pane ativo da CLI e verificam a versão do executável usado pelo próximo pane. Canais que exigem script, WinGet, cask, caminho personalizado ou privilégio continuam no botão manual; “Agora não” adia a oferta por sete dias.
+- **Dois workspaces em janelas Nexus podem trabalhar ao mesmo tempo (F-361).** No macOS, uma janela coberta por outra continua processando os timers do terminal; saída sustentada deixa de ficar retida só por causa da oclusão e chegar ao aviso de backlog de 2 MiB. Panes de workspace estacionado também mantêm a última grade válida para drenar em segundo plano. A proteção de memória contra rajadas reais permanece.
+- **Suite raiz ignora worktrees de runtime (F-631).** `npm test` não coleta cópias de testes em `.nexus/worktrees/`.
+- **Cotas Claude ligadas à conta certa (F-615).** Nexus confirma a identidade da credencial no servidor antes de mostrar percentuais ou abrir um pane gerenciado. Se o token salvo pertence a outra conta, a leitura fica indisponível e a interface pede novo login, sem copiar a cota da irmã.
+- **Limite conhecido:** num mosaico de 24 ou mais panes, um pane que já estava virtualizado fora da tela ainda conserva apenas um buffer curto de saída até voltar; isso é distinto do caso de duas janelas com um pane visível em cada uma.
+
+## 0.76.83 — Configurações no lugar
+
+- **Configurações organizadas por tarefa.** Nove categorias sob quatro pilares seguiam os módulos do código ("Ferramentas" em três lugares, chaves em quatro). Agora são sete áreas: Conta e acesso a IAs, Jarvis e voz, Aparência e teclado, Equipes e modelos, Biblioteca, Integrações e Segurança e manutenção. Aba, caminho e título da página vêm do mesmo cadastro; abas técnicas ficam depois de "Avançado".
+- **Modo foco nas Configurações.** O rail do app esconde Projetos, Recentes, Limpar e Cotas enquanto você configura; o conteúdo ganha a largura que as três colunas de navegação roubavam.
+- **Auditoria reúne as Decisões do Jev** como subseção; links antigos caem nela. O atalho duplicado "Meus pets" sai do rodapé.
+- **Páginas enxutas.** Comparar modelos (47k → 3k px), Uso e cotas (6,3k → 2,8k px, contas sem cota num grupo recolhido), Loja (5,2k → 1k px, 12 por vez), Permissões (missões antigas ocultas por padrão), Equipes ("Piloto automático" e "Equipes salvas" separados, nomes repetidos agrupados em "N cópias", "Apagar" depois de um separador) e Ações dos agentes (descrição real em uma linha).
+- **Linguagem simples.** "fixture", "η" e "suite" viram "estimativa"; "Hub canônico" vira "Configuração principal"; o alerta âmbar de pendências dos Fluxos vira contagem neutra com o motivo; Experimental separa o que dá para experimentar do que já faz parte do app.
+- **Celular num lugar só**: "Celular na rede local" sai de Máquinas remotas e vai para a página Celular.
+- **Conta sem verde falso**: o selo mostra "a confirmar" ou "sessão expirada" quando é o caso, com "Entrar de novo" (e Cancelar).
+- **Menus.** "Tornar orquestrador" sai da fileira de ícones do pane para o menu "…", depois de um separador; menu de clique direito com uma linha por ação e grupos; "+ Pane" não corta nomes nem o motivo de indisponível; menu de branch do Git fecha com Esc e tem itens de 24 px; foco visível na paleta ⌘K.
+- **Mensagens com o caminho certo**: "Configurações › Providers/Contas" viram "Configurações › Contas de IA" no app inteiro.
+- **Acessibilidade e controles.** Subtítulos das Configurações em h3 (a hierarquia pulava de h2 para h4), botões e campos na fonte do app (saíam em Arial), chip "NÃO CONFIGURADA" acima de AA, alvos pequenos em 24 px, piso de texto de 10 px.
+
 ## 0.76.82 — Nada escondido no Windows
 
 - **CLIs instaladas por nvm, pnpm, mise, Volta e scoop não somem.** A busca cobre essas pastas no Windows. Se a sondagem do boot falha, o Nexus tenta de novo sozinho e reexamina as CLIs.

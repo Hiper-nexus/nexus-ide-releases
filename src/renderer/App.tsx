@@ -1337,6 +1337,9 @@ export function App() {
   return (
     <div className="app">
       <AppShell
+        // Configurações em modo foco: o rail mantém só a navegação principal
+        // (três colunas de navegação apertavam o conteúdo a ~60%).
+        className={destination.kind === 'settings' ? 'nexus-shell--focus' : ''}
         rail={
           <WorkspaceRail
             activeWorkspaces={activeWorkspaces}

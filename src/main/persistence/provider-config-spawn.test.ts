@@ -47,6 +47,9 @@ const spawnDeps = vi.hoisted(() => ({
   activeClaudeAuthEnv: vi.fn<() => Record<string, string> | null>(() => ({
     CLAUDE_CODE_OAUTH_TOKEN: 'oauth-active',
   })),
+  verifyClaudeAccount: vi.fn<(_id: string, onVerified?: (blob: string) => void) => Promise<'match' | 'mismatch' | 'auth-expired' | 'unavailable'>>(
+    async (_id, onVerified) => { onVerified?.('verified-claude-blob'); return 'match'; },
+  ),
 }));
 
 vi.mock('node:os', async (importOriginal) => {
@@ -357,6 +360,7 @@ vi.mock('./account-store', () => ({
   accountHasFailoverCredential: spawnDeps.hasFailoverCredential,
   isAccountBlockedForScope: spawnDeps.blockedForScope,
   prepareAccountForSpawn: spawnDeps.prepareAccount,
+  verifyManagedClaudeAccountForSpawn: spawnDeps.verifyClaudeAccount,
 }));
 
 vi.mock('../quota/quota-service', () => ({
@@ -827,6 +831,7 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
     const account = { id: 'acct-b', adapterId: 'claude', label: 'Conta B', mode: 'subscription', upstream: 'anthropic', createdAt: 1 };
     spawnDeps.listAccounts.mockReturnValue([account]);
     spawnDeps.getActiveAccount.mockReturnValue(account);
+    spawnDeps.getAccount.mockReturnValue(account);
     spawnDeps.pickAvailableForFailover.mockReturnValue({ account });
     spawnDeps.prepareAccount.mockReturnValueOnce({ ok: true, account,
       authEnv: { CLAUDE_SECURESTORAGE_CONFIG_DIR: '/fixture/accounts/claude/b' } });
@@ -838,6 +843,48 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
     });
     expect(spawnDeps.prepareAccount).toHaveBeenCalledWith('claude', 'acct-b', undefined, { isolatedHome: false });
     expect(spawnDeps.activeClaudeAuthEnv).not.toHaveBeenCalled();
+  });
+
+  it('refuses to launch a Claude pane when its scoped credential belongs to another account', async () => {
+    const account = { id: 'acct-b', adapterId: 'claude', label: 'Conta B',
+      mode: 'subscription', upstream: 'anthropic', email: 'b@example.com', createdAt: 1 };
+    spawnDeps.listAccounts.mockReturnValue([account]);
+    spawnDeps.getActiveAccount.mockReturnValue(account);
+    spawnDeps.getAccount.mockReturnValue(account);
+    spawnDeps.pickAvailableForFailover.mockReturnValue({ account });
+    spawnDeps.prepareAccount.mockReturnValue({ ok: true, account,
+      authEnv: { CLAUDE_SECURESTORAGE_CONFIG_DIR: '/fixture/accounts/claude/b' } });
+    spawnDeps.verifyClaudeAccount.mockResolvedValueOnce('mismatch');
+    await expect(prepareProviderSpawnAuthoritative('claude', { accountId: account.id }))
+      .resolves.toMatchObject({ ok: false, error: expect.stringContaining('outra conta Claude') });
+    expect(spawnDeps.prepareAccount).not.toHaveBeenCalled();
+  });
+
+  it('checks the automatically selected Claude account before preparing its credential', async () => {
+    const account = { id: 'acct-auto', adapterId: 'claude', label: 'Conta Auto',
+      mode: 'subscription', upstream: 'anthropic', email: 'auto@example.com', createdAt: 1 };
+    spawnDeps.listAccounts.mockReturnValue([account]);
+    spawnDeps.getActiveAccount.mockReturnValue(account);
+    spawnDeps.getAccount.mockReturnValue(account);
+    spawnDeps.pickAvailableForFailover.mockReturnValue({ account });
+    spawnDeps.verifyClaudeAccount.mockResolvedValueOnce('mismatch');
+
+    await expect(prepareProviderSpawnAuthoritative('claude'))
+      .resolves.toMatchObject({ ok: false, error: expect.stringContaining('outra conta Claude') });
+    expect(spawnDeps.prepareAccount).not.toHaveBeenCalled();
+  });
+
+  it('accepts the same Claude account after a verified refresh replaces its metadata object', async () => {
+    const account = { id: 'acct-b', adapterId: 'claude', label: 'Conta B',
+      mode: 'subscription', upstream: 'anthropic', email: 'b@example.com', createdAt: 1 };
+    spawnDeps.listAccounts.mockReturnValue([account]);
+    spawnDeps.getAccount.mockReturnValueOnce(account).mockReturnValueOnce({ ...account, lastError: 'credential refreshed' });
+    spawnDeps.prepareAccount.mockReturnValue({ ok: true, account,
+      authEnv: { CLAUDE_SECURESTORAGE_CONFIG_DIR: '/fixture/accounts/claude/b' } });
+
+    await expect(prepareProviderSpawnAuthoritative('claude', { accountId: account.id }))
+      .resolves.toMatchObject({ ok: true });
+    expect(spawnDeps.prepareAccount).toHaveBeenCalledOnce();
   });
 
   it('fails visibly when the selected Claude account cannot be prepared instead of opening another login', () => {

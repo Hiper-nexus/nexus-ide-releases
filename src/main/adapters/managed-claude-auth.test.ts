@@ -3,10 +3,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const keychain = vi.hoisted(() => ({ entries: new Map<string, string>(), writable: true, reads: 0 }));
+const keychain = vi.hoisted(() => ({ entries: new Map<string, string>(), writable: true, readable: true, reads: 0 }));
 vi.mock('./claude-credential', async (original) => ({
   ...await original<typeof import('./claude-credential')>(),
-  readManagedClaudeCredential: (dir: string) => { keychain.reads++; return keychain.entries.get(dir) ?? null; },
+  readManagedClaudeCredential: (dir: string) => { keychain.reads++; return keychain.readable ? keychain.entries.get(dir) ?? null : null; },
   writeManagedClaudeCredential: (dir: string, blob: string) => {
     if (!keychain.writable) return false;
     keychain.entries.set(dir, blob);
@@ -33,6 +33,7 @@ beforeEach(() => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-managed-claude-test-'));
   keychain.entries.clear();
   keychain.writable = true;
+  keychain.readable = true;
   keychain.reads = 0;
 });
 afterEach(() => fs.rmSync(home, { recursive: true, force: true }));
@@ -73,6 +74,31 @@ describe('renewable managed Claude profiles', () => {
     const next = materializeManagedClaudeAuth('account-a', blob('old', 100), { home });
     expect(next.blob).toBe(renewed);
     expect(fs.readFileSync(path.join(a.directory, '.credentials.json'), 'utf8')).toBe(renewed);
+  });
+
+  it('refuses a newer unverified scoped Keychain token before writing the managed file', () => {
+    const verified = blob('account-a', 100);
+    const other = blob('account-b', 300);
+    const a = materializeManagedClaudeAuth('account-a', verified, { home });
+    keychain.entries.set(a.directory, other);
+
+    expect(() => materializeManagedClaudeAuth('account-a', verified, {
+      home, expectedBlob: verified,
+    })).toThrow(/verified.*changed|credential changed/i);
+    expect(fs.readFileSync(path.join(a.directory, '.credentials.json'), 'utf8')).toBe(verified);
+    expect(keychain.entries.get(a.directory)).toBe(other);
+  });
+
+  it('refuses an existing but unreadable scoped Keychain item despite a valid account file', () => {
+    const verified = blob('account-a', 100);
+    const a = materializeManagedClaudeAuth('account-a', verified, { home });
+    keychain.entries.set(a.directory, blob('account-b', 300));
+    keychain.readable = false;
+
+    expect(() => materializeManagedClaudeAuth('account-a', verified, {
+      home, expectedBlob: verified, keychainProbe: () => true,
+    })).toThrow(/Keychain.*unreadable|unreadable.*Keychain/i);
+    expect(fs.readFileSync(path.join(a.directory, '.credentials.json'), 'utf8')).toBe(verified);
   });
 
   it('replaces only the selected scoped store after an explicit new login', () => {

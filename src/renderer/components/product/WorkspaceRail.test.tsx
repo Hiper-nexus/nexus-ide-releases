@@ -634,6 +634,28 @@ describe('WorkspaceRail', () => {
     expect(cockpit?.textContent).toContain('41%');
   });
 
+  it('esconde percentual antigo de uma conta Claude com identidade trocada', () => {
+    const now = Date.now();
+    act(() => useQuotaStore.getState().receive({
+      updatedAt: now,
+      entries: [{
+        id: 'claude:owner', adapterId: 'claude', accountId: 'owner',
+        label: 'Claude · Conta Claude', installed: true, onCooldown: true,
+        readHint: 'identity-mismatch', updatedAt: now,
+        windows: [{ kind: 'weekly', label: 'Semanal', usedRatio: 0.86,
+          source: 'provider-api', confidence: 'high' }],
+      }],
+      worstUsedRatio: 0.86, highUsageCount: 1, unknownCount: 0,
+    }));
+    const { host } = renderRail();
+    const item = host.querySelector('.workspace-rail__quota-item');
+    expect(item?.textContent).toContain('relogin');
+    expect(item?.textContent).not.toContain('86%');
+    expect(item?.getAttribute('title')).toContain('credencial de outra conta Claude');
+    expect(item?.textContent).not.toContain('pausa');
+    expect(item?.classList.contains('workspace-rail__quota-item--cool')).toBe(false);
+  });
+
   it('conta em cooldown mostra a telemetria real + selo pausa — nunca 100% falso', () => {
     // Regressão do bug real: conta "retornoja" em cooldown(quota) aparecia com
     // barra 100% vermelha enquanto o serviço reportava Semanal 54%.

@@ -276,7 +276,7 @@ export function OrchestratorDefaults() {
             />
           )}
           <div>
-            <h4 className="settings-orchestrator__title">Piloto automático</h4>
+            <h3 className="settings-orchestrator__title">Piloto automático</h3>
             <p className="settings-orchestrator__summary">
               Escolha quem coordena as missões, com qual modelo e conta.
             </p>

@@ -31,7 +31,7 @@ import { hasManagedClaudeAuth, readManagedClaudeAuthAsync } from '../adapters/ma
 import { accountCredentialCandidates } from '../adapters/account-credential-candidates';
 import { probeCodexCliUsage } from './codex-cli-usage';
 import type { LiveProviderProbe } from './provider-live-usage';
-import { resolveVerifiedNativeClaudeToken } from './claude-native-account';
+import { probeClaudeCredentialIdentity } from './claude-native-account';
 
 const CRED_PREFIX = 'acctcred:';
 const KEY_PREFIX = 'acctkey:';
@@ -84,42 +84,29 @@ function declaredAnthropicToken(adapterId: string): string | null {
 /**
  * Claude OAuth token for the renderer quota probe.
  *
- * Pinned probes use the vault account secret, refreshing the token if expired.
+ * Pinned probes only read the verified account secret. Refresh is owned by
+ * account-store or the Claude CLI so quota cannot rotate the same grant twice.
  * Unpinned probes read file credentials or the native Keychain asynchronously.
  */
 export async function resolveClaudeToken(accountId?: string): Promise<string | null> {
   if (accountId) {
     const account = getAccount(accountId);
     if (account?.adapterId !== 'claude') return null;
+    const ownedToken = async (blob: string | null): Promise<string | null> => {
+      if (!blob || claudeAccessExpired(blob) ||
+          await probeClaudeCredentialIdentity(blob, account.email) !== 'match') return null;
+      return extractClaudeAccessToken(blob);
+    };
     // Managed Claude profiles are renewed by the CLI/sweeper through their
     // scoped secure-storage directory. A quota probe must only read that
     // profile; refreshing the vault blob here would create a second OAuth
     // actor and race the pane's refresh lock.
     if (hasManagedClaudeAuth(accountId)) {
       const managed = await readManagedClaudeAuthAsync(accountId);
-      if (account.email && (!managed || claudeAccessExpired(managed))) {
-        const native = await resolveVerifiedNativeClaudeToken(account.email);
-        if (native) return native;
-      }
-      return managed ? extractClaudeAccessToken(managed) : null;
+      return ownedToken(managed);
     }
     const blob = safeGetSecret(CRED_PREFIX + accountId);
-    if (!blob) return null;
-    const now = Date.now();
-    if (claudeBlobNeedsRefresh(blob, now)) {
-      try {
-        const native = account.email ? await resolveVerifiedNativeClaudeToken(account.email) : null;
-        if (native) return native;
-        const refreshed = await refreshClaudeOauthBlob(blob, now);
-        if (refreshed) {
-          setSecret(CRED_PREFIX + accountId, refreshed);
-          return extractClaudeAccessToken(refreshed);
-        }
-      } catch {
-        // Fall back to extracted token below if refresh network request fails
-      }
-    }
-    return extractClaudeAccessToken(blob);
+    return ownedToken(blob);
   }
 
   const credPath = path.join(os.homedir(), '.claude', '.credentials.json');

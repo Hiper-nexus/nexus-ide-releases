@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ProductFlagResolutionRow } from '../../../shared/product-api';
 import { BUILTIN_FEATURE_FLAGS } from '../../../shared/feature-flags';
-import { describeFlagReason, LABS_FLAG_COPY, LabsSection } from './LabsSection';
+import { describeFlagReason, LABS_FLAG_COPY, LabsSection, summarizeLabsFlags } from './LabsSection';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
@@ -138,6 +138,46 @@ describe('LabsSection', () => {
     const toggle = host.querySelector<HTMLButtonElement>('[role="switch"]');
     expect(toggle?.disabled).toBe(true);
     expect(host.textContent).toContain('desativado pelo sistema');
+  });
+
+  it('separates what can be tried from what already ships on by default', async () => {
+    installNexus([
+      row('feature.search.mixer', true, 'default', { defaultEnabled: true }),
+      row('feature.ui.contextualPanel', true, 'default', { defaultEnabled: true }),
+      row('feature.mcp.hub', false, 'default', { defaultEnabled: false }),
+      row('orch.parallelScheduler', true, 'override', { defaultEnabled: false }),
+      row('feature.autonomy.profiles', false, 'kill-switch', { killSwitch: true }),
+    ]);
+    const { host } = mount();
+    await flushEffects();
+
+    const strip = host.querySelector('[aria-label="Resumo dos recursos"]')!;
+    expect(strip.textContent).toContain('2 recursos para experimentar · 1 em teste');
+    expect(strip.textContent).toContain('2 já fazem parte do app');
+    expect(strip.textContent).not.toMatch(/\d+ ligados/);
+
+    const tryIds = [...host.querySelectorAll('[data-labs-group="try"] [data-flag-id]')]
+      .map((el) => el.getAttribute('data-flag-id'));
+    const builtInIds = [...host.querySelectorAll('[data-labs-group="built-in"] [data-flag-id]')]
+      .map((el) => el.getAttribute('data-flag-id'));
+    expect(tryIds).toEqual(['feature.mcp.hub', 'orch.parallelScheduler', 'feature.autonomy.profiles']);
+    expect(builtInIds).toEqual(['feature.search.mixer', 'feature.ui.contextualPanel']);
+  });
+});
+
+describe('summarizeLabsFlags', () => {
+  it('counts only unblocked off-by-default flags as tryable', () => {
+    const summary = summarizeLabsFlags([
+      row('a', true, 'default', { defaultEnabled: true }),
+      row('b', false, 'override', { defaultEnabled: true }),
+      row('c', false, 'default', {}),
+      row('d', false, 'channel-blocked', {}),
+    ]);
+    expect(summary.builtInCount).toBe(2);
+    expect(summary.tryableCount).toBe(1);
+    expect(summary.tryingCount).toBe(0);
+    expect(summary.blockedCount).toBe(1);
+    expect(summary.overrideCount).toBe(1);
   });
 });
 

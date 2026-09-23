@@ -8,6 +8,7 @@ describe('shouldHibernateHost — hibernação de pane oculto em grid grande', (
   const base = {
     liveHosts: HIBERNATE_MIN_LIVE_HOSTS,
     isPaneVisible: false,
+    isParked: false,
     opened: true,
     disposed: false,
     hasSession: true,
@@ -22,6 +23,10 @@ describe('shouldHibernateHost — hibernação de pane oculto em grid grande', (
     expect(
       shouldHibernateHost({ ...base, liveHosts: HIBERNATE_MIN_LIVE_HOSTS - 1 }),
     ).toBe(false);
+  });
+
+  it('workspace oculto no app visível não descarta o xterm de uma sessão viva', () => {
+    expect(shouldHibernateHost({ ...base, isParked: true })).toBe(false);
   });
 
   it('pane visível, sem sessão, mid-spawn ou held → nunca hiberna', () => {

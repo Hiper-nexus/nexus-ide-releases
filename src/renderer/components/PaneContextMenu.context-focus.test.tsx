@@ -118,10 +118,9 @@ describe("PaneContextMenu contextual focus handoff", () => {
   });
 
   it("focuses Git after keyboard activation and does not replay the request on hide", () => {
+    // Grupos: Terminal (Copiar saída) → Workspace (Git primeiro) → Papel.
+    expect((document.activeElement as HTMLElement).textContent).toContain("Copiar saída");
     act(() => {
-      document.dispatchEvent(
-        new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
-      );
       document.dispatchEvent(
         new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
       );

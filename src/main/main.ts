@@ -184,6 +184,7 @@ import {
 import {
   configureAgentHookEndpointPath,
   APP_SHUTDOWN_PTY_TERMINATION,
+  getAgentSessionInfo,
   listLiveSessionLocations,
   orchTerminateSession,
   terminateAllSessions,
@@ -296,6 +297,7 @@ import { resolveProjectExecutionScopeCached } from "./persistence/project-identi
 import {
   registerProviderIpc,
   registerProviderListener,
+  startCliAutoUpdate,
   unregisterProviderListener,
 } from "./persistence/provider-config-store";
 import { registerFilesIpc } from "./persistence/files-ipc";
@@ -410,6 +412,7 @@ let sessionAliveSentinel: SessionAliveSentinel | null = null;
 /** Nexus Redline (menu bar): sink de snapshots + vigia do pedido de refresh. */
 let redlineSink: ReturnType<typeof createRedlineSink> | null = null;
 let stopRedlineRefreshWatch: (() => void) | null = null;
+let stopCliAutoUpdate: (() => void) | null = null;
 
 function traceBootstrap(phase: string): void {
   if (process.env.NEXUS_BOOT_TRACE === '1') {
@@ -480,7 +483,7 @@ function bootstrap(): void {
     // provider picker remains available for an explicit repair.
     console.warn(
       "[settings] retired provider migration deferred; Nexus will continue. " +
-        "Escolha um provider atual em Configurações › Providers.",
+        "Escolha um provider atual em Configurações › Contas de IA.",
       error,
     );
   }
@@ -587,6 +590,13 @@ function bootstrap(): void {
   registerOrientationIpc();
   registerContextDraftIpc();
   registerProviderIpc();
+  if (!isAutomatedReleaseTest()) {
+    stopCliAutoUpdate = startCliAutoUpdate(app.getPath('userData'), (adapterId) =>
+      listLiveSessionLocations().some(({ sessionId }) =>
+        getAgentSessionInfo(sessionId)?.adapterId === adapterId,
+      ),
+    );
+  }
   registerArmsIpc();
   registerFilesIpc();
   registerAccountIpc();
@@ -670,7 +680,7 @@ function bootstrap(): void {
     claudeAccountUsage: (accountId) => fetchClaudeAccountUsageWindows(accountId),
     // Rejected account credentials need reauthentication. Native identity
     // metadata is not evidence that a rejected credential is still valid.
-    markAccountAuthExpired: (accountId, adapterId) => {
+    markAccountAuthExpired: (accountId, adapterId, reason) => {
       // Só adapters cuja sonda distingue grant morto de falha transitória.
       // Conta vault marcada tem blob próprio — um 401 nele é da conta, não
       // da sessão nativa, então marcar não cria churn com o CLI.
@@ -680,14 +690,18 @@ function bootstrap(): void {
       if (
         isAuthCooldownReason(account.lastError) &&
         account.cooldownUntil !== undefined &&
-        account.cooldownUntil > Date.now()
+        account.cooldownUntil > Date.now() &&
+        (reason !== 'identity-mismatch' ||
+          /oauth identity mismatch/i.test(account.lastError ?? ''))
       ) {
         return;
       }
       setCooldown(
         accountId,
         Date.now() + 12 * 60 * 60 * 1000,
-        "oauth session expired — sonda de quota",
+        reason === 'identity-mismatch'
+          ? 'oauth identity mismatch — sonda de quota'
+          : 'oauth session expired — sonda de quota',
       );
     },
     resolveCodexAuthCandidates: (accountId) =>
@@ -1308,6 +1322,8 @@ function shutdown(): Promise<void> {
     sessionAliveSentinel = null;
     disposeAgentAwakeService();
     closeAdapterRegistry();
+    stopCliAutoUpdate?.();
+    stopCliAutoUpdate = null;
     closeVoiceIpc();
     shutdownUsageTelemetry();
     stopRedlineRefreshWatch?.();

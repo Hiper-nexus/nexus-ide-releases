@@ -5,6 +5,28 @@ export type SettingsSectionTitleLevel = 2 | 3;
 const SettingsSectionTitleLevelContext =
   createContext<SettingsSectionTitleLevel>(3);
 
+/**
+ * Nome canônico da rota atual (o mesmo da aba e do caminho). Com ele, o
+ * título da página não pode divergir: "Contas de IA" na aba não vira
+ * "Providers" no título. Fora do SettingsWorkspace fica null e vale o texto
+ * passado pelo call site.
+ */
+const SettingsRouteTitleContext = createContext<string | null>(null);
+
+export function SettingsRouteTitleProvider({
+  title,
+  children,
+}: {
+  title: string | null;
+  children: ReactNode;
+}) {
+  return (
+    <SettingsRouteTitleContext.Provider value={title}>
+      {children}
+    </SettingsRouteTitleContext.Provider>
+  );
+}
+
 export function SettingsSectionTitleProvider({
   level,
   children,
@@ -33,6 +55,8 @@ export function SettingsSectionTitle({
   children: ReactNode;
 }) {
   const level = useContext(SettingsSectionTitleLevelContext);
+  const routeTitle = useContext(SettingsRouteTitleContext);
+  if (routeTitle) children = routeTitle;
   const classes = `settings-detail__title settings-detail__route-title ${className}`.trim();
 
   const heading =

@@ -246,6 +246,7 @@ export function providerOpFeedback(
   phase: ProviderOpPhase,
   label: string,
   error?: string,
+  update?: { readonly changed?: boolean; readonly version?: string },
 ): ProviderOpFeedback {
   const name = label.trim() || 'CLI';
   if (phase === 'running') {
@@ -298,9 +299,33 @@ export function providerOpFeedback(
       };
     }
     if (kind === 'update') {
+      if (!update?.version?.trim()) {
+        return {
+          title: `${name}: atualização sem versão verificada.`,
+          detail: 'O comando terminou, mas não há prova da versão que o próximo pane usará.',
+          rowLabel: 'não verificada',
+          tone: 'info',
+        };
+      }
+      if (update?.changed === false) {
+        return {
+          title: `${name} continua na versão ${update.version}.`,
+          detail: 'Nenhuma versão nova foi aplicada à CLI usada pelos panes.',
+          rowLabel: 'sem mudança',
+          tone: 'info',
+        };
+      }
+      if (update.changed === undefined) {
+        return {
+          title: `${name} verificada na versão ${update.version}.`,
+          detail: 'O comando terminou e a versão em uso foi lida; a versão anterior não estava disponível para comparação.',
+          rowLabel: 'verificada',
+          tone: 'info',
+        };
+      }
       return {
-        title: `${name} atualizada.`,
-        detail: 'PATH reexaminado. Modelos novos passam a aparecer no catálogo.',
+        title: `${name} atualizada para ${update.version}.`,
+        detail: 'Versão da CLI usada pelos panes verificada após a atualização.',
         rowLabel: 'atualizada',
         tone: 'ok',
       };

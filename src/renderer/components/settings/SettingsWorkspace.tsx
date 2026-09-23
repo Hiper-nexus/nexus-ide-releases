@@ -1,12 +1,12 @@
 import { AcpHarnessPanel } from './AcpHarnessPanel';
 import {
   SETTINGS_CATEGORIES,
-  SETTINGS_SECTION_SHORT_LABELS,
   settingsCategoryFor,
   type SettingsCategory,
 } from './settings-categories';
 import { PetSection } from './PetSection';
 import {
+  Fragment,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -79,6 +79,7 @@ import { ArmsSection } from './ArmsSection';
 import { LabsSection } from './LabsSection';
 import {
   SettingsSectionTitle,
+  SettingsRouteTitleProvider,
   SettingsSectionTitleProvider,
   type SettingsSectionTitleLevel,
 } from './SettingsSectionTitle';
@@ -219,7 +220,21 @@ function SettingsSectionContent({
     case 'diagnostics':
       return <DiagnosticsSection />;
     case 'audit':
-      return <AuditSection />;
+    case 'jev-decisions':
+      // Uma página de histórico: confirmações e, abaixo, julgamentos do Jev.
+      // O Jev entra como subseção (h3, título próprio), não como segunda rota.
+      return (
+        <>
+          <AuditSection />
+          <div className="settings-audit__jev">
+            <SettingsRouteTitleProvider title={null}>
+              <SettingsSectionTitleProvider level={3}>
+                <JevDecisionsSection />
+              </SettingsSectionTitleProvider>
+            </SettingsRouteTitleProvider>
+          </div>
+        </>
+      );
     case 'media':
       return <MediaSection />;
     case 'providers':
@@ -230,8 +245,6 @@ function SettingsSectionContent({
       return <ModelRankingSection />;
     case 'squads':
       return <SquadsSection />;
-    case 'jev-decisions':
-      return <JevDecisionsSection />;
     case 'harness':
       return <HarnessSection overviewOnly />;
     case 'agent-connection':
@@ -563,7 +576,6 @@ export function SettingsSurface({
         </div>
         <div className="settings-nav__footer">
           <div className="settings-nav__operator">
-            <button type="button" className="settings-nav__profile" onClick={() => onSelectSection('pets')}><PixelIcon name="grid" size={14} /> Meus pets</button>
             <button type="button" className="settings-nav__profile" onClick={openProfile}>
               <PixelIcon name="user" size={14} /> Meu perfil
             </button>
@@ -606,17 +618,29 @@ export function SettingsSurface({
             </button>
           </div>
           {category && category.sections.length > 1 && <nav className="settings-category-tabs" aria-label={`Seções de ${category.title}`}>
-            {category.sections.map(id => <button key={id} type="button" className={`settings-category-tabs__item ${section === id ? 'settings-category-tabs__item--active' : ''}`} aria-current={section === id ? 'page' : undefined} onClick={() => onSelectSection(id)}>{SETTINGS_SECTION_SHORT_LABELS[id] ?? SETTINGS_ITEMS.find(item => item.id === id)?.title}</button>)}
+            {category.sections.map(id => {
+              // Um nome por destino: a aba usa o mesmo título da página e do
+              // caminho. As técnicas vêm depois do rótulo "Avançado".
+              const firstAdvanced = category.advanced?.[0] === id;
+              return (
+                <Fragment key={id}>
+                  {firstAdvanced ? <span className="settings-category-tabs__divider" aria-hidden="true">Avançado</span> : null}
+                  <button type="button" className={`settings-category-tabs__item ${section === id ? 'settings-category-tabs__item--active' : ''}${category.advanced?.includes(id) ? ' settings-category-tabs__item--advanced' : ''}`} aria-current={section === id ? 'page' : undefined} onClick={() => onSelectSection(id)}>{SETTINGS_ITEMS.find(item => item.id === id)?.title}</button>
+                </Fragment>
+              );
+            })}
           </nav>}
         </header>
         <div ref={contentRef} className="settings-detail__content" data-settings-section={section}>
           <SettingsSectionTitleProvider level={sectionTitleLevel}>
+          <SettingsRouteTitleProvider title={SETTINGS_ITEMS.find(item => item.id === section)?.title ?? null}>
             <SettingsSectionContent
               section={section}
               adapters={adapters}
               adapterStatus={adapterStatus}
               onRetryAdapters={() => setAdapterAttempt(attempt => attempt + 1)}
             />
+          </SettingsRouteTitleProvider>
           </SettingsSectionTitleProvider>
         </div>
       </div>

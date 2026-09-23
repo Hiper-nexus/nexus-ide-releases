@@ -110,7 +110,7 @@ export function AudioDeviceControls() {
     >
       <div className="settings-audio__head">
         <div>
-          <h4 className="settings-audio__title">Dispositivos de áudio</h4>
+          <h3 className="settings-audio__title">Dispositivos de áudio</h3>
           <p className="settings-audio__summary">
             {counts.inputs} entrada(s) · {counts.outputs} saída(s) detectada(s)
           </p>

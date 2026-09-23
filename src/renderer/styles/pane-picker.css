@@ -282,20 +282,28 @@
   outline-offset: -2px;
 }
 
+/* O NOME tem prioridade de largura: "Antigravity (Google)" cortado em
+   "Antigravity (…" não identifica nada, enquanto o id do modelo ao lado é
+   detalhe. O nome não encolhe; se passar do teto, quebra em até duas linhas.
+   Quem recebe a reticência é o detalhe (flex-basis 0 = só a sobra). */
 .pane-picker__item-label {
+  display: -webkit-box;
   min-width: 0;
-  max-width: 46%;
-  flex: 0 1 auto;
+  max-width: 70%;
+  flex: 0 0 auto;
   overflow: hidden;
   font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
 
 .pane-picker__item-detail {
   display: flex;
   min-width: 0;
-  flex: 1 1 auto;
+  flex: 1 1 0;
   align-items: center;
   gap: 5px;
   overflow: hidden;
@@ -398,6 +406,11 @@
 .pane-picker__item[data-model='true'] .pane-picker__item-label {
   max-width: none;
   flex: 1 1 auto;
+  /* Id de modelo é token único: uma linha, reticência no fim (title tem o todo). */
+  display: block;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: var(--font-mono);
   font-size: var(--text-sm);
 }
@@ -408,11 +421,6 @@
    único "há mais aqui" que a linha precisa. */
 .pane-picker__item[data-cli='true'] .provider-logo {
   flex: 0 0 auto;
-}
-
-.pane-picker__item[data-cli='true'] .pane-picker__item-label {
-  max-width: none;
-  flex: 0 1 auto;
 }
 
 .pane-picker__item[data-cli='true'] > .pixel-icon:last-child {
@@ -518,7 +526,8 @@
 
 .pane-picker__unavailable-row {
   display: flex;
-  align-items: center;
+  /* O motivo pode quebrar em duas linhas: logo e nome ficam no topo. */
+  align-items: flex-start;
   gap: 8px;
   margin: 0;
   padding: 4px 12px;
@@ -526,10 +535,20 @@
   font-size: var(--text-xs);
 }
 
+.pane-picker__unavailable-row .pane-picker__item-label {
+  max-width: 45%;
+}
+
+/* O motivo diz o QUE fazer (onde religar, o que instalar): nunca cortado.
+   Ocupa a sobra da linha e quebra quando não cabe. */
 .pane-picker__unavailable-reason {
+  min-width: 0;
+  flex: 1 1 0;
   margin-left: auto;
   color: var(--text-faint);
   font-size: var(--text-xs);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
   text-align: right;
 }
 

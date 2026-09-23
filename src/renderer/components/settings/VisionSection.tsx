@@ -153,7 +153,7 @@ export function VisionSection() {
       {error && <p className="settings-error" role="alert">{error}</p>}
 
       <div className="sys-subhead">
-        <h4 className="sys-subhead__title">Estado</h4>
+        <h3 className="sys-subhead__title">Estado</h3>
       </div>
       <div className="ops-metric-grid">
         <MetricTile

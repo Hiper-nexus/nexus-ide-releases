@@ -183,7 +183,7 @@ export function McpsSection() {
       ) : null}
 
       <div className="arsenal-band">
-        <h4 className="arsenal-band__label">Servidor do Nexus</h4>
+        <h3 className="arsenal-band__label">Servidor do Nexus</h3>
         <ul className="settings-list">
           <li className="settings-list__item arsenal-card mcps-server">
             <div className="settings-list__head">
@@ -235,10 +235,10 @@ export function McpsSection() {
 
       {across && across.rows.length > 0 ? (
         <div className="arsenal-band">
-          <h4 className="arsenal-band__label">
+          <h3 className="arsenal-band__label">
             Servidores detectados{' '}
             <span className="arsenal-band__count">{across.rows.length}</span>
-          </h4>
+          </h3>
           <ul className="settings-list mcps-server-list">
             {across.rows.map((row) => {
               const presentIn = acrossCols
@@ -285,19 +285,22 @@ export function McpsSection() {
 
       {hubError ? (
         <p className="settings-list__detail" role="note">
-          Hub canônico: {hubError}
+          Configuração principal das conexões: {hubError}
         </p>
       ) : null}
 
       {hubServers.length > 0 ? (
         <div className="arsenal-band">
-          <h4 className="arsenal-band__label">
-            Hub canônico{' '}
+          <h3
+            className="arsenal-band__label"
+            title="Lista central de conexões (hub MCP) que o Nexus entrega aos agentes"
+          >
+            Configuração principal{' '}
             <span className="arsenal-band__count">{hubServers.length}</span>
-          </h4>
+          </h3>
           <ul
             className="mcps-hub"
-            aria-label="Servidores registrados no hub"
+            aria-label="Conexões na configuração principal"
           >
             {hubServers.map((server) => (
               <li key={server.id} className="mcps-hub__item">

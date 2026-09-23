@@ -114,7 +114,7 @@ export function AgentSessionSettings() {
   return (
     <div aria-busy={isLoading || isSaving}>
       <div className="sys-subhead">
-        <h4 className="sys-subhead__title">Retoma de agentes</h4>
+        <h3 className="sys-subhead__title">Retoma de agentes</h3>
         <span className="settings-chip" aria-live="polite">
           Multi-SO: {restorePolicy === 'ask' ? 'perguntar' : restorePolicy}
         </span>
@@ -145,7 +145,7 @@ export function AgentSessionSettings() {
       </div>
 
       <div className="sys-subhead">
-        <h4 className="sys-subhead__title">Prompts de boot</h4>
+        <h3 className="sys-subhead__title">Prompts de boot</h3>
         <span
           className={`settings-chip ${autoResponderEnabled ? 'settings-chip--ok' : 'settings-chip--warn'}`}
           aria-live="polite"

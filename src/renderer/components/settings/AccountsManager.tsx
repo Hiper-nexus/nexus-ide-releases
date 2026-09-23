@@ -841,7 +841,7 @@ export function AccountsManager({
       <div className="acct__head">
         <div className="acct__head-copy">
           <div className="acct__title-row">
-            <h4 className="acct__title">Conexão e contas</h4>
+            <h3 className="acct__title">Conexão e contas</h3>
           </div>
           <p className="acct__hint">{panel.hint}</p>
         </div>

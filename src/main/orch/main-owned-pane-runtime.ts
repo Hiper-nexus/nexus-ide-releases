@@ -23,6 +23,7 @@ import {
   waitForRotatingAuthSpawnGate,
 } from "../adapters/managed-auth-spawn-gate";
 import {
+  acquireCliSpawnPermit,
   prepareProviderSpawn,
   prepareProviderSpawnAuthoritative,
   type ProviderSpawnPreparation,
@@ -371,13 +372,22 @@ export function spawnMainOwnedMissionPane(
   options: MissionPaneSpawnOptions,
   hooks: MainOwnedPaneHooks,
   authoritativePreparation: ProviderSpawnPreparation | undefined,
+  coordinateAuthRefresh: false,
+  spawnPermitHeld: true,
+): OrchPaneSpawnResult;
+export function spawnMainOwnedMissionPane(
+  options: MissionPaneSpawnOptions,
+  hooks: MainOwnedPaneHooks,
+  authoritativePreparation: ProviderSpawnPreparation | undefined,
   coordinateAuthRefresh: true,
+  spawnPermitHeld?: boolean,
 ): OrchPaneSpawnResult | Promise<OrchPaneSpawnResult>;
 export function spawnMainOwnedMissionPane(
   options: MissionPaneSpawnOptions,
   hooks: MainOwnedPaneHooks,
   authoritativePreparation?: ProviderSpawnPreparation,
   coordinateAuthRefresh = false,
+  spawnPermitHeld = false,
 ): OrchPaneSpawnResult | Promise<OrchPaneSpawnResult> {
   const requestId = makeId("orchspawn");
   const paneId = makeId("pane");
@@ -480,6 +490,20 @@ export function spawnMainOwnedMissionPane(
       ok: false,
       error:
         `adapter ${options.adapterId} has no main-owned PTY transport`,
+    };
+  }
+  if (!spawnPermitHeld) {
+    return {
+      requestId,
+      ok: false,
+      error: 'CLI mission panes require async spawn update coordination',
+    };
+  }
+  if (adapter.id === 'claude' && authoritativePreparation === undefined) {
+    return {
+      requestId,
+      ok: false,
+      error: 'Claude mission panes require async account identity verification before provider preparation',
     };
   }
   const executionScope = options.executionScope ?? options.scope;
@@ -594,7 +618,7 @@ export function spawnMainOwnedMissionPane(
       return waitForRotatingAuthSpawnGate({ authFile }).then(
         // Recheck Main authority after waiting, without selecting/materializing
         // again: that could switch the account or restore its stale credential.
-        () => spawnMainOwnedMissionPane(options, hooks, prepared),
+        () => spawnMainOwnedMissionPane(options, hooks, prepared, false, spawnPermitHeld),
         (error) => ({
           requestId,
           ok: false,
@@ -745,17 +769,24 @@ export async function spawnMainOwnedMissionPaneAsync(
 ): Promise<OrchPaneSpawnResult> {
   if (getOrchSettings().agentTransport !== "acp") {
     const adapter = getAdapter(options.adapterId);
+    const withPermit = async (
+      run: () => OrchPaneSpawnResult | Promise<OrchPaneSpawnResult>,
+    ): Promise<OrchPaneSpawnResult> => {
+      const release = await acquireCliSpawnPermit(options.adapterId);
+      try { return await run(); }
+      finally { release(); }
+    };
     if (
       adapter?.kind === "cli-pty" &&
       ROTATING_REFRESH_SPAWN_ADAPTERS.has(adapter.id)
     ) {
       // Run the normal validation and preparation before entering the wait.
-      return spawnMainOwnedMissionPane(options, hooks, undefined, true);
+      return withPermit(() => spawnMainOwnedMissionPane(options, hooks, undefined, true, true));
     }
     if (
       adapter?.kind === "cli-pty" &&
-      adapter.id === "agy" &&
-      !options.accountId
+      (adapter.id === "agy" || adapter.id === "claude") &&
+      (adapter.id === "claude" || !options.accountId)
     ) {
       const operatorChoice = isOperatorChoicePolicy(
         getOrchSettings().squadCliPolicy,
@@ -776,9 +807,11 @@ export async function spawnMainOwnedMissionPaneAsync(
           },
         ),
       });
-      return spawnMainOwnedMissionPane(options, hooks, prepared);
+      return withPermit(() => spawnMainOwnedMissionPane(options, hooks, prepared, false, true));
     }
-    return spawnMainOwnedMissionPane(options, hooks);
+    return adapter?.kind === 'cli-pty'
+      ? withPermit(() => spawnMainOwnedMissionPane(options, hooks, undefined, false, true))
+      : spawnMainOwnedMissionPane(options, hooks);
   }
   const requestId = makeId("orchspawn");
   const authoritySeal = options.authoritySeal;

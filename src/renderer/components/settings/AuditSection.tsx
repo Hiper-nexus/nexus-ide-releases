@@ -120,7 +120,7 @@ export function AuditSection() {
           </p>
           </details>
           <div className="sys-subhead">
-            <h4 className="sys-subhead__title">Confirmações</h4>
+            <h3 className="sys-subhead__title">Confirmações</h3>
             <span className="sys-subhead__meta">
               {confirmations.length === 0
                 ? 'nenhuma'
@@ -138,7 +138,7 @@ export function AuditSection() {
           </ul>
 
           <div className="sys-subhead">
-            <h4 className="sys-subhead__title">Últimas ações</h4>
+            <h3 className="sys-subhead__title">Últimas ações</h3>
             <span className="sys-subhead__meta">
               {entries.length === 0
                 ? 'nenhuma'

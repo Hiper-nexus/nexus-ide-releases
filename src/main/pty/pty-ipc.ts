@@ -35,6 +35,7 @@ import {
 import { revalidateExecutable } from "../path-resolver";
 import type { CliPtyAdapter } from "../../shared/adapter-types";
 import {
+  acquireCliSpawnPermit,
   prepareProviderSpawn,
   prepareProviderSpawnAuthoritative,
   type ProviderSpawnPreparation,
@@ -197,6 +198,7 @@ function spawnCliPtyAgentPane(
   spawn: ResolvedMainOwnedAgentSpawn,
   authoritativePreparation?: ProviderSpawnPreparation,
   authSpawnGated = false,
+  spawnPermitAcquired = false,
 ): SpawnResult | Promise<SpawnResult> {
   try {
     const {
@@ -252,7 +254,7 @@ function spawnCliPtyAgentPane(
         },
       ),
     };
-    if (adapter.id === "agy" && authoritativePreparation === undefined) {
+    if ((adapter.id === "agy" || adapter.id === "claude") && authoritativePreparation === undefined) {
       return prepareProviderSpawnAuthoritative(adapter.id, perSpawn).then(
         (preparation) =>
           spawnCliPtyAgentPane(sender, adapter, spawn, preparation),
@@ -332,7 +334,7 @@ function spawnCliPtyAgentPane(
       }
       throw new Error(
         `${adapter.label} is installed but Nexus could not resolve an absolute ` +
-          `executable path for "${adapter.bin}". Open Settings → Providers → ` +
+          `executable path for "${adapter.bin}". Open Settings → AI accounts → ` +
           `Reexaminar CLIs, or set an absolute binary path. Common locations: ` +
           `~/.kimi-code/bin, ~/.local/bin, /opt/homebrew/bin, npm global bin.`,
       );
@@ -398,6 +400,24 @@ function spawnCliPtyAgentPane(
         adopted: true,
         state: adopted.state,
       };
+    }
+
+    if (!spawnPermitAcquired) {
+      return acquireCliSpawnPermit(adapter.id).then(
+        async (release) => {
+          try {
+            return await spawnCliPtyAgentPane(
+              sender, adapter, spawn, preparation, true, true,
+            );
+          } finally {
+            release();
+          }
+        },
+        (error) => ({
+          ok: false,
+          error: error instanceof Error ? error.message : 'failed to coordinate CLI update',
+        }),
+      );
     }
 
     assertNoLivePhysicalPaneProcess(spawn);

@@ -8,11 +8,14 @@ const deps = vi.hoisted(() => ({
   spawn: vi.fn(() => ({ sessionId: 'synthetic-codex-session' })),
   assertCurrent: vi.fn(),
   track: vi.fn(),
+  adapterId: 'codex',
+  authoritative: vi.fn<(...args: unknown[]) => Promise<ProviderSpawnPreparation>>(),
+  acquirePermit: vi.fn(async (_adapterId: string): Promise<() => void> => () => {}),
 }));
 
 vi.mock('../adapters/adapter-registry', () => ({
   getAdapter: () => ({
-    kind: 'cli-pty', id: 'codex', label: 'Codex', bin: 'codex',
+    kind: 'cli-pty', id: deps.adapterId, label: 'Codex', bin: 'codex',
     quirks: { mcpAutoload: false }, env: { passthrough: [], ephemeralHome: false },
     control: {}, install: { command: 'install codex' },
   }),
@@ -22,7 +25,8 @@ vi.mock('../adapters/adapter-registry', () => ({
 }));
 vi.mock('../persistence/provider-config-store', () => ({
   prepareProviderSpawn: deps.prepare,
-  prepareProviderSpawnAuthoritative: vi.fn(),
+  prepareProviderSpawnAuthoritative: deps.authoritative,
+  acquireCliSpawnPermit: deps.acquirePermit,
 }));
 vi.mock('../adapters/managed-auth-spawn-gate', async (importOriginal) => ({
   ...await importOriginal<typeof import('../adapters/managed-auth-spawn-gate')>(),
@@ -49,7 +53,7 @@ vi.mock('./mission-pane-authority', () => ({ sameMissionPaneAuthoritySeal: vi.fn
 vi.mock('./acp-mission-spawn', () => ({ spawnMainOwnedAcpMissionPane: vi.fn() }));
 vi.mock('./agent-identity-spawn', () => ({ issueAgentIdentityBestEffort: vi.fn() }));
 
-import { getMainOwnedPane, spawnMainOwnedMissionPaneAsync } from './main-owned-pane-runtime';
+import { getMainOwnedPane, spawnMainOwnedMissionPane, spawnMainOwnedMissionPaneAsync } from './main-owned-pane-runtime';
 
 const options: PaneSpawnOptions & { missionId: string; role: 'worker' } = {
   adapterId: 'codex', missionId: 'synthetic-mission', role: 'worker',
@@ -72,9 +76,43 @@ beforeEach(() => {
   deps.spawn.mockReturnValue({ sessionId: 'synthetic-codex-session' });
   deps.prepare.mockReturnValue({ ok: true, overrides });
   deps.gate.mockResolvedValue('fresh');
+  deps.adapterId = 'codex';
+  deps.authoritative.mockResolvedValue({ ok: true, overrides });
+  deps.acquirePermit.mockReset().mockResolvedValue(() => {});
 });
 
 describe('main-owned Codex auth gate', () => {
+  it('requires the async identity boundary for direct main-owned Claude spawns', () => {
+    deps.adapterId = 'claude';
+    expect(spawnMainOwnedMissionPane({ ...options, adapterId: 'claude', role: 'orchestrator' }, hooks))
+      .toMatchObject({ ok: false, error: expect.stringContaining('async') });
+    expect(deps.prepare).not.toHaveBeenCalled();
+    expect(deps.spawn).not.toHaveBeenCalled();
+  });
+  it('checks managed Claude identity before spawning a mission pane', async () => {
+    deps.adapterId = 'claude';
+    deps.authoritative.mockResolvedValueOnce({ ok: false, error: 'credencial de outra conta Claude' });
+    await expect(spawnMainOwnedMissionPaneAsync({ ...options, adapterId: 'claude', role: 'orchestrator' }, hooks))
+      .resolves.toMatchObject({ ok: false, error: 'credencial de outra conta Claude' });
+    expect(deps.authoritative).toHaveBeenCalledOnce();
+    expect(deps.spawn).not.toHaveBeenCalled();
+  });
+  it('waits for the Claude update permit before physical main-owned spawn', async () => {
+    deps.adapterId = 'claude';
+    const release = vi.fn();
+    let grant!: (value: () => void) => void;
+    deps.acquirePermit.mockImplementationOnce(() =>
+      new Promise<() => void>((resolve) => { grant = resolve; }));
+
+    const pending = spawnMainOwnedMissionPaneAsync({ ...options, adapterId: 'claude', role: 'orchestrator' }, hooks);
+    await Promise.resolve();
+    expect(deps.spawn).not.toHaveBeenCalled();
+
+    grant(release);
+    await expect(pending).resolves.toMatchObject({ ok: true });
+    expect(deps.acquirePermit).toHaveBeenCalledWith('claude');
+    expect(release).toHaveBeenCalledOnce();
+  });
   it('waits on the prepared account before creating a physical pane and never reselects it', async () => {
     let release!: () => void;
     deps.gate.mockImplementationOnce(async () => {
@@ -83,6 +121,7 @@ describe('main-owned Codex auth gate', () => {
       return 'follower-fresh';
     });
     const result = spawnMainOwnedMissionPaneAsync(options, hooks);
+    await Promise.resolve();
     expect(deps.gate).toHaveBeenCalledWith({ authFile: '/synthetic/account-a/auth.json' });
     expect(deps.spawn).not.toHaveBeenCalled();
     deps.prepare.mockReturnValue({ ok: true, overrides: { ...overrides, keyEnv: { CODEX_HOME: '/synthetic/account-b' } } });
@@ -126,6 +165,7 @@ describe('main-owned Codex auth gate', () => {
       return 'follower-fresh';
     });
     const result = spawnMainOwnedMissionPaneAsync(options, hooks);
+    await Promise.resolve();
     expect(deps.spawn).not.toHaveBeenCalled();
     deps.assertCurrent.mockImplementation(() => { throw new Error('mission authority revoked during auth wait'); });
     release();

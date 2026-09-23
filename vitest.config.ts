@@ -8,6 +8,7 @@ export default defineConfig({
       // Runtime worktrees contain full project copies, including their tests.
       // Collecting them runs stale suites multiple times and may load native
       // modules built for another Node/Electron ABI.
+      '.nexus/worktrees/**',
       '.dev-user-data/**',
       '.dev-user-data.bak-*/**',
       '.dev-user-data-qa/**',

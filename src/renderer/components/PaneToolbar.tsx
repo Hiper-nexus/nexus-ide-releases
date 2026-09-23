@@ -60,6 +60,9 @@ const FULL_TOOLBAR_WIDTH = 760;
 const MENU_VIEWPORT_GUTTER = 8;
 const MENU_ANCHOR_GAP = 4;
 
+/** Ação que muda o papel do pane — nunca inline, sempre no menu "…". */
+const ROLE_CHANGE_ACTION_ID = 'promote-orchestrator';
+
 interface ToolbarAction {
   id: string;
   label: string;
@@ -415,11 +418,13 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
         });
       } else {
         list.push({
+          // Muda o PAPEL do pane (consequência alta): mora no menu "…", em
+          // grupo próprio, e não ao lado de "Ampliar"/"À direita", onde um
+          // clique de layout errado virava troca de liderança.
           id: 'promote-orchestrator',
-          label: 'Tornar Orquestrador',
-          detail: 'Tornar este painel o orquestrador líder',
+          label: 'Tornar este pane o orquestrador',
+          detail: 'Este pane passa a coordenar a missão e receber delegações',
           icon: 'crown-outline',
-          primary: true,
           run: () => {
             // F-527: vínculo explícito — pane sem missão pergunta QUAL missão
             // liderar (ou abre uma nova separada), nunca anexa à "padrão".
@@ -611,7 +616,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
         : a.id === 'scroll-end' || a.id === 'hibernate' || a.id === 'restart',
   );
   const missionVisible = density === 'compact' ? [] : actions.filter(
-    (a) => a.id === 'mission-leader' || a.id === 'promote-orchestrator',
+    (a) => a.id === 'mission-leader',
   );
   const layoutVisible = density === 'compact' ? [] : actions.filter(
     (a) =>
@@ -620,17 +625,27 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
       a.id === 'split-right' ||
       a.id === 'split-down',
   );
-  const overflow =
+  const overflowActions =
     density === 'compact'
       ? actions
       : density === 'icons'
-        ? actions.filter((a) => a.id === 'scroll-end' || a.id === 'hibernate')
+        ? actions.filter(
+            (a) =>
+              a.id === 'scroll-end' ||
+              a.id === 'hibernate' ||
+              a.id === ROLE_CHANGE_ACTION_ID,
+          )
         : actions.filter(
             (a) =>
               !sessionVisible.some((s) => s.id === a.id) &&
               !missionVisible.some((m) => m.id === a.id) &&
               !layoutVisible.some((l) => l.id === a.id),
           );
+  // Troca de papel fica por último, depois de um separador: ação de outra
+  // natureza que as de sessão/layout do mesmo menu.
+  const overflow = overflowActions.filter((a) => a.id !== ROLE_CHANGE_ACTION_ID);
+  const overflowRole = overflowActions.filter((a) => a.id === ROLE_CHANGE_ACTION_ID);
+  const hasOverflow = overflowActions.length > 0;
 
   useLayoutEffect(() => {
     if (!menuOpen || !menuRef.current || !menuTriggerRef.current) return;
@@ -648,6 +663,24 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
     });
     menuRef.current.querySelector<HTMLButtonElement>('button')?.focus();
   }, [menuOpen, density]);
+
+  function renderMenuItem(a: ToolbarAction) {
+    return (
+      <ToolbarBtn
+        key={a.id}
+        action={{
+          ...a,
+          run: () => {
+            setMenuOpen(false);
+            menuTriggerRef.current?.focus();
+            a.run();
+          },
+        }}
+        density="full"
+        menu
+      />
+    );
+  }
 
   function renderGroup(items: ToolbarAction[], aria: string) {
     if (items.length === 0) return null;
@@ -872,7 +905,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
           </div>
         )}
         {renderGroup(layoutVisible, 'Layout')}
-        {overflow.length > 0 && (
+        {hasOverflow && (
           <div className="toolbar__more">
             <button
               ref={menuTriggerRef}
@@ -904,21 +937,11 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
               <OverlayLayer>
               <div ref={menuRef} className="toolbar__menu" role="menu" style={menuPosition}>
                 <p className="toolbar__menu-head">Ações do pane</p>
-                {overflow.map((a) => (
-                  <ToolbarBtn
-                    key={a.id}
-                    action={{
-                      ...a,
-                      run: () => {
-                        setMenuOpen(false);
-                        menuTriggerRef.current?.focus();
-                        a.run();
-                      },
-                    }}
-                    density="full"
-                    menu
-                  />
-                ))}
+                {overflow.map(renderMenuItem)}
+                {overflow.length > 0 && overflowRole.length > 0 && (
+                  <div className="toolbar__menu-sep" role="separator" />
+                )}
+                {overflowRole.map(renderMenuItem)}
               </div>
               </OverlayLayer>
             )}

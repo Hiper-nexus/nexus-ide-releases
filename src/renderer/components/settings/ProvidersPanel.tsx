@@ -5,7 +5,7 @@ import {
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react';
-import type { AdapterAuthStatus, ProviderSettingsInfo } from '../../../shared/provider-settings-types';
+import type { AdapterAuthStatus, CliAutoUpdateStatus, ProviderSettingsInfo } from '../../../shared/provider-settings-types';
 import { credentialLinkForKeySlot } from '../../../shared/credential-links';
 import { useAccountStore } from '../../state/account-store';
 import { useProviderStore } from '../../state/provider-store';
@@ -463,8 +463,9 @@ function ProviderDetail({
     phase: ProviderOpPhase,
     error?: string,
     toastAction?: { label: string; onClick: () => void },
+    update?: { changed?: boolean; version?: string },
   ) {
-    const job = providerOpFeedback(kind, phase, provider.label, error);
+    const job = providerOpFeedback(kind, phase, provider.label, error, update);
     setCliJob(job);
     onLiveRow(phase === 'running' ? job.rowLabel : null);
     const toastKind =
@@ -495,7 +496,7 @@ function ProviderDetail({
         announceOp(kind, 'err', error);
       } else {
         await hydrateProviders();
-        announceOp(kind, 'ok');
+        announceOp(kind, 'ok', undefined, undefined, result);
       }
     } catch (err) {
       const error = err instanceof Error ? err.message : 'falhou';
@@ -563,7 +564,7 @@ function ProviderDetail({
           fallback={provider.icon}
         />
         <div className="prov-detail__identity">
-          <h4 className="prov-detail__title">{provider.label}</h4>
+          <h3 className="prov-detail__title">{provider.label}</h3>
           <p className="prov-detail__sub">
             {provider.installed
               ? isLocalCliProvider(provider) && provider.detectedBin
@@ -812,6 +813,30 @@ export function ProvidersPanel() {
   const [refreshing, setRefreshing] = useState(false);
   const [catalogNotice, setCatalogNotice] = useState<string | null>(null);
   const [authStatuses, setAuthStatuses] = useState<readonly AdapterAuthStatus[] | null>(null);
+  const [autoCliUpdates, setAutoCliUpdates] = useState<CliAutoUpdateStatus | null>(null);
+  const [autoCliBusy, setAutoCliBusy] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    const refresh = () => {
+      void window.nexus.providers.getCliAutoUpdates().then(
+        (status) => { if (alive) setAutoCliUpdates(status); },
+        () => { if (alive) setAutoCliUpdates({ enabled: false, deferredUntil: null, lastCheckedAt: null }); },
+      );
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 60_000);
+    return () => { alive = false; window.clearInterval(timer); };
+  }, []);
+
+  async function changeAutoCliUpdates(enabled: boolean) {
+    setAutoCliBusy(true);
+    try {
+      setAutoCliUpdates(await window.nexus.providers.setCliAutoUpdates(enabled));
+    } catch {
+      setAutoCliUpdates((current) => current && { ...current, error: 'Não consegui salvar a preferência.' });
+    } finally { setAutoCliBusy(false); }
+  }
 
   const acceptAuthStatus = useCallback((status: AdapterAuthStatus) => {
     setAuthStatuses((current) => [
@@ -982,6 +1007,8 @@ export function ProvidersPanel() {
   async function updateInstalled() {
     setProvisionSummary(null);
     const done: string[] = [];
+    const unchanged: string[] = [];
+    const verified: string[] = [];
     const failed: string[] = [];
     for (const provider of updatableInstalled) {
       setProvisioning(provider.label);
@@ -990,7 +1017,16 @@ export function ProvidersPanel() {
           provider.adapterId,
           'update',
         );
-        if (result.ok) done.push(provider.label);
+        if (result.ok && !result.version) failed.push(
+          `${provider.label} (versão não verificada)`,
+        );
+        else if (result.ok && result.changed === false) unchanged.push(
+          `${provider.label} (${result.version ?? 'mesma versão'})`,
+        );
+        else if (result.ok && result.changed === undefined) verified.push(
+          `${provider.label} (${result.version ?? 'versão desconhecida'})`,
+        );
+        else if (result.ok) done.push(provider.label);
         else failed.push(`${provider.label} (${result.error ?? 'falhou'})`);
       } catch {
         failed.push(provider.label);
@@ -1001,8 +1037,10 @@ export function ProvidersPanel() {
     setProvisionSummary(
       [
         done.length > 0 ? `atualizadas: ${done.join(', ')}` : null,
+        unchanged.length > 0 ? `sem mudança: ${unchanged.join(', ')}` : null,
+        verified.length > 0 ? `verificadas: ${verified.join(', ')}` : null,
         failed.length > 0 ? `pendentes: ${failed.join('; ')}` : null,
-        done.length === 0 && failed.length === 0 ? 'nada a atualizar' : null,
+        done.length === 0 && unchanged.length === 0 && verified.length === 0 && failed.length === 0 ? 'nada a atualizar' : null,
       ]
         .filter(Boolean)
         .join(' · '),
@@ -1146,6 +1184,18 @@ export function ProvidersPanel() {
               Mostrar ausentes
             </label>
           )}
+          {tab === 'clis' && autoCliUpdates && (
+            <label className="prov-hub__show-absent" title="Atualiza apenas instalações reconhecidas, sem pane ativo e após confirmação nativa dos comandos">
+              <input
+                type="checkbox"
+                checked={autoCliUpdates.enabled}
+                disabled={autoCliBusy}
+                aria-label="Atualizar CLIs automaticamente"
+                onChange={(event) => void changeAutoCliUpdates(event.target.checked)}
+              />
+              Atualizar CLIs automaticamente
+            </label>
+          )}
           <div className="prov-hub__actions">
             <button
               type="button"
@@ -1159,6 +1209,15 @@ export function ProvidersPanel() {
             </button>
           </div>
         </div>
+        {tab === 'clis' && autoCliUpdates && (
+          <p className="settings-field__note" role="status">
+            {autoCliUpdates.error
+              ? autoCliUpdates.error
+              : autoCliUpdates.enabled
+                ? `Atualizações automáticas ativas · última verificação: ${autoCliUpdates.lastCheckedAt ? new Date(autoCliUpdates.lastCheckedAt).toLocaleString('pt-BR') : 'ainda não houve'}`
+                : 'Atualizações automáticas desligadas'}
+          </p>
+        )}
 
         <div className="prov-hub__workspace">
         {visible.length === 0 ? (

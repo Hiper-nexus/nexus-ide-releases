@@ -243,7 +243,7 @@ async function probe(
   ) {
     const civilianHint = hintFor(
       adapter,
-      'faça login no CLI ou adicione a conta em Configurações › Contas',
+      'faça login no CLI ou adicione a conta em Configurações › Contas de IA',
     );
     return {
       code: 'missing-credential',
@@ -301,7 +301,7 @@ async function probe(
       adapterId,
       hint: hintFor(
         adapter,
-        'rode `claude auth login` num terminal para autenticar, ou adicione a conta em Configurações › Contas',
+        'rode `claude auth login` num terminal para autenticar, ou adicione a conta em Configurações › Contas de IA',
       ),
     };
   }
@@ -347,7 +347,7 @@ async function probe(
       adapterId,
       hint: hintFor(
         adapter,
-        'faça login no CLI ou adicione a conta em Configurações › Contas',
+        'faça login no CLI ou adicione a conta em Configurações › Contas de IA',
       ),
     };
   }
@@ -360,7 +360,7 @@ async function probe(
     if (deps.hasStoredKey(adapterId, effectiveModel)) return null;
     const civilianHint = hintFor(
       adapter,
-      'cole a API key em Configurações › Providers',
+      'cole a API key em Configurações › Contas de IA',
     );
     const silentRemint =
       options.silentRemint === true && options.explicitCivilianPick !== true;
@@ -413,7 +413,7 @@ export async function probePreSpawn(
         adapterId,
         hint:
           'não foi possível comprovar a prontidão do CLI; tente novamente ' +
-          'ou revise Configurações › Providers',
+          'ou revise Configurações › Contas de IA',
       };
     }
     // A direct user terminal may still open when the lightweight precheck is

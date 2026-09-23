@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import { z } from 'zod';
 import os from 'node:os';
 import path from 'node:path';
-import { BrowserWindow, dialog, ipcMain, net } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, net } from 'electron';
 import type { WebContents } from 'electron';
 import { handleTrusted } from '../security/trusted-ipc';
 import {
@@ -31,6 +31,7 @@ import {
   getAdapter,
   getAdapterResolvedBin,
   isBinResolvable,
+  isBuiltinAdapter,
   listAdapters,
   notifyAdaptersChanged,
   primaryKeyEnvVar,
@@ -39,7 +40,7 @@ import {
 } from '../adapters/adapter-registry';
 import { resolveCliLoginCommand } from '../../shared/cli-login';
 import { kimiLoginCommand } from '../../shared/kimi-login-command';
-import { revalidateExecutable, resolveCliBinary } from '../path-resolver';
+import { revalidateExecutable, resolveCliBinary, realUserHome } from '../path-resolver';
 import {
   availableEfforts,
   availablePermissionModes,
@@ -62,9 +63,16 @@ import {
   cliInstallCommandFor,
   compatibleManualInstallCommand,
   selectInstallRecipe,
+  selectCliUpdateRecipe,
   describeInstallRecipe,
   type CliInstallRecipe,
 } from '../adapters/cli-install-recipes';
+import {
+  windowsNpmShimInvocation,
+  windowsNpmShimTarget,
+} from '../adapters/windows-npm-shim';
+import { assessCliUpdate } from '../adapters/cli-update-observation';
+import { CliAutoUpdateQueue, CliUpdateLease, selectAutomaticCliUpdateRecipe, shouldOfferAutoCliConsent } from '../adapters/cli-auto-update';
 import { execFile } from 'node:child_process';
 import {
   getKey,
@@ -120,6 +128,7 @@ import {
   listAccounts,
   pickAvailableForFailover,
   prepareAccountForSpawn,
+  verifyManagedClaudeAccountForSpawn,
 } from './account-store';
 import type { Account } from '../../shared/account-types';
 import {
@@ -148,6 +157,12 @@ const CONFIG_FILE = path.join(os.homedir(), '.nexus', 'providers.json');
 let configs = new Map<string, ProviderConfig>();
 let isProviderConfigInitialized = false;
 const listeners = new Set<WebContents>();
+const cliUpdateLease = new CliUpdateLease();
+
+/** Hold until a pane has registered its PTY, so an updater cannot replace its launcher mid-spawn. */
+export function acquireCliSpawnPermit(adapterId: string): Promise<() => void> {
+  return cliUpdateLease.acquireSpawnPermit(adapterId);
+}
 
 function defaultPermissionModeFor(adapterId: string): string {
   const adapter = getAdapter(adapterId);
@@ -535,7 +550,7 @@ function providerInfrastructureReadiness(adapterId: string): ProviderReadiness {
   if (!cfg.enabled) {
     return {
       ready: false,
-      reason: `${adapter.label} está desativado em Configurações › Providers.`,
+      reason: `${adapter.label} está desativado em Configurações › Contas de IA.`,
     };
   }
 
@@ -548,7 +563,7 @@ function providerInfrastructureReadiness(adapterId: string): ProviderReadiness {
         // (nvm, pnpm, instalador próprio). O caminho que funciona vem antes.
         reason:
           `${adapter.label} não foi encontrado no PATH do Nexus. Se já está ` +
-          `instalado, use Configurações › Providers › Reexaminar CLIs ou ` +
+          `instalado, use Configurações › Contas de IA › Reexaminar CLIs ou ` +
           `informe o caminho do binário. Para instalar: ${adapter.install.command}`,
       };
     }
@@ -665,6 +680,8 @@ function buildProviderSpawnOverrides(
   options: {
     decision?: AuthDecision;
     nativeAuthAttempt?: boolean;
+    selectedChoice?: ReturnType<typeof pickUnpinnedAccountWithHeadroom>;
+    verifiedClaudeBlob?: string;
   } = {},
 ): ProviderSpawnOverrides {
   const cfg = configFor(adapterId);
@@ -676,11 +693,8 @@ function buildProviderSpawnOverrides(
     );
   // A conta do pane e o recibo de QUEM decidiu (pinada, regra de folga,
   // ativa, fallback, nativa ou legada) — rótulos sempre mascarados.
-  const { account, receipt } = resolveSpawnAccountChoice(
-    adapterId,
-    preparedAccount,
-    options,
-    credentiallessOpenCode,
+  const { account, receipt } = options.selectedChoice ?? resolveSpawnAccountChoice(
+    adapterId, preparedAccount, options, credentiallessOpenCode,
   );
   if (adapterId === 'mimo-code' && account?.mode === 'subscription') {
     const blob = getSecret(`acctcred:${account.id}`);
@@ -745,6 +759,7 @@ function buildProviderSpawnOverrides(
       if (adapterId === 'claude' && !preparedAccount) {
         const selected = prepareAccountForSpawn(adapterId, account.id, undefined, {
           isolatedHome: perSpawn.isolatedHome === true,
+          ...(options.verifiedClaudeBlob ? { expectedClaudeBlob: options.verifiedClaudeBlob } : {}),
         });
         if (!selected.ok) throw new Error(selected.error);
         return {
@@ -868,6 +883,8 @@ function prepareProviderSpawnWithDecision(
   adapterId: string,
   perSpawn: ProviderPerSpawn,
   spawnDecision: AuthDecision | undefined,
+  selectedChoice?: ReturnType<typeof pickUnpinnedAccountWithHeadroom>,
+  verifiedClaudeBlob?: string,
 ): ProviderSpawnPreparation {
   const infrastructure = providerInfrastructureReadiness(adapterId);
   if (!infrastructure.ready) {
@@ -895,7 +912,8 @@ function prepareProviderSpawnWithDecision(
       adapterId,
       perSpawn.accountId,
       undefined,
-      { isolatedHome: perSpawn.isolatedHome === true },
+      { isolatedHome: perSpawn.isolatedHome === true,
+        ...(verifiedClaudeBlob ? { expectedClaudeBlob: verifiedClaudeBlob } : {}) },
     );
     if (!prepared.ok) return prepared;
     preparedAccount = prepared;
@@ -908,7 +926,7 @@ function prepareProviderSpawnWithDecision(
         adapterId,
         perSpawn,
         preparedAccount,
-        { decision: spawnDecision, nativeAuthAttempt },
+        { decision: spawnDecision, nativeAuthAttempt, selectedChoice, verifiedClaudeBlob },
       ),
     };
   } catch (err) {
@@ -1247,11 +1265,45 @@ export async function prepareProviderSpawnAuthoritative(
       };
     }
   }
-  return prepareProviderSpawnWithDecision(
+  // A synchronous prepare can write the chosen Claude credential into its
+  // managed auth store. Prove the account *before* crossing that boundary.
+  const selectedChoice = adapterId === 'claude' && !perSpawn.accountId &&
+    listAccounts('claude').length > 0
+    ? pickUnpinnedAccountWithHeadroom('claude')
+    : undefined;
+  const account = perSpawn.accountId
+    ? getAccount(perSpawn.accountId)
+    : selectedChoice?.account;
+  let verifiedClaudeBlob: string | undefined;
+  if (adapterId === 'claude' && account?.mode === 'subscription') {
+    const identity = await verifyManagedClaudeAccountForSpawn(account.id, (blob) => {
+      verifiedClaudeBlob = blob;
+    });
+    if (identity !== 'match') {
+      return { ok: false, error: identity === 'mismatch'
+        ? `A credencial de “${account.label}” pertence a outra conta Claude — entre novamente antes de abrir um pane.`
+        : identity === 'auth-expired'
+          ? `A sessão de “${account.label}” expirou — entre novamente antes de abrir um pane.`
+          : `Não foi possível verificar a identidade de “${account.label}” — tente novamente.` };
+    }
+    const current = getAccount(account.id);
+    if (!current || current.adapterId !== account.adapterId ||
+        current.mode !== account.mode ||
+        current.email?.trim().toLowerCase() !== account.email?.trim().toLowerCase()) {
+      return { ok: false, error: 'A conta Claude mudou durante a verificação — tente novamente.' };
+    }
+    if (!verifiedClaudeBlob) {
+      return { ok: false, error: 'Não foi possível fixar a credencial Claude verificada — tente novamente.' };
+    }
+  }
+  const prepared = prepareProviderSpawnWithDecision(
     adapterId,
     perSpawn,
     spawnDecision,
+    selectedChoice,
+    verifiedClaudeBlob,
   );
+  return prepared;
 }
 
 /** Backward-compatible strict accessor for non-IPC callers. */
@@ -1435,17 +1487,19 @@ export function unregisterProviderListener(wc: WebContents): void {
 async function confirmCliInstall(
   label: string,
   description: string,
+  mode: 'install' | 'update' = 'install',
 ): Promise<boolean> {
+  const action = mode === 'update' ? 'Atualizar' : 'Instalar';
   const opts = {
     type: 'question' as const,
-    buttons: ['Cancelar', 'Instalar'],
+    buttons: ['Cancelar', action],
     defaultId: 1,
     cancelId: 0,
-    title: `Instalar ${label}`,
-    message: `Instalar a CLI de ${label} nesta máquina?`,
+    title: `${action} ${label}`,
+    message: `${action} a CLI de ${label} nesta máquina?`,
     detail:
-      `O NexusIDE vai executar exatamente:\n\n  ${description}\n\n` +
-      'Fonte oficial do provider. Nada além disto será executado.',
+      `O NexusIDE vai usar esta receita oficial:\n\n  ${description}\n\n` +
+      'O instalador pode baixar e executar dependências próprias.',
     noLink: true,
   };
   const win = BrowserWindow.getFocusedWindow();
@@ -1455,9 +1509,265 @@ async function confirmCliInstall(
   return result.response === 1;
 }
 
+/** The same priority as the pane: explicit executable, cached discovery, PATH. */
+function activeProviderBinary(adapterId: string): string | null {
+  const configured = configFor(adapterId).binPath;
+  if (configured && path.isAbsolute(configured) && revalidateExecutable(configured)) {
+    return configured;
+  }
+  const cached = getAdapterResolvedBin(adapterId);
+  return cached && revalidateExecutable(cached)
+    ? cached
+    : resolveAdapterBinary(adapterId);
+}
+
+type AutomaticCliCandidate = {
+  readonly adapterId: string;
+  readonly label: string;
+  readonly binPath: string;
+  readonly realBinPath: string;
+  readonly recipe: Extract<CliInstallRecipe, { kind: 'argv' }>;
+  readonly prepared: ArgvInstallInvocation;
+};
+
+function automaticCliCandidate(adapterId: string): AutomaticCliCandidate | null {
+  const adapter = getAdapter(adapterId);
+  if (!adapter || adapter.kind !== 'cli-pty' || !isBuiltinAdapter(adapterId) ||
+      configFor(adapterId).binPath) return null;
+  const binPath = activeProviderBinary(adapterId);
+  if (!binPath) return null;
+  let realBinPath: string;
+  try { realBinPath = fs.realpathSync(process.platform === 'win32'
+    ? windowsNpmShimTarget(adapterId, binPath) ?? binPath : binPath); }
+  catch { return null; }
+  const recipe = selectAutomaticCliUpdateRecipe({
+    adapterId, platform: process.platform, binPath, realBinPath,
+    userHome: realUserHome(), windowsLocalAppData: process.env.LOCALAPPDATA,
+    installationDistribution: adapterId === 'devin' ? installedDevinDistribution(realBinPath) : null,
+    isRunnerResolvable: (runner) => resolveRunnerPath(runner) !== null,
+    isTargetWritable: (target) => {
+      try { fs.accessSync(path.dirname(target), fs.constants.W_OK); return true; }
+      catch { return false; }
+    },
+  });
+  if (!recipe || recipe.kind !== 'argv') return null;
+  try {
+    return { adapterId, label: adapter.label, binPath, realBinPath, recipe,
+      prepared: prepareArgvInstallInvocation(recipe) };
+  } catch { return null; }
+}
+
+type AutoCliPreferences = {
+  readonly enabled: boolean;
+  readonly askAgainAt?: number;
+  readonly checkedAt: Readonly<Record<string, number>>;
+};
+
+function readAutoCliPreferences(file: string): AutoCliPreferences | null {
+  try {
+    const data: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const parsed = z.object({
+      enabled: z.boolean(),
+      askAgainAt: z.number().finite().nonnegative().optional(),
+      checkedAt: z.record(z.string(), z.number().finite().nonnegative()).default({}),
+    }).safeParse(data);
+    return parsed.success ? parsed.data : null;
+  } catch { return null; }
+}
+
+function writeAutoCliPreferences(file: string, state: AutoCliPreferences): boolean {
+  const temp = `${file}.${process.pid}.tmp`;
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(temp, JSON.stringify(state), { mode: 0o600 });
+    fs.renameSync(temp, file);
+    return true;
+  } catch {
+    try { fs.rmSync(temp, { force: true }); } catch { /* no-op */ }
+    return false;
+  }
+}
+
+function autoCliStatus(state: AutoCliPreferences | null): import('../../shared/provider-settings-types').CliAutoUpdateStatus {
+  const checks = Object.values(state?.checkedAt ?? {});
+  return {
+    enabled: state?.enabled ?? false,
+    deferredUntil: !state?.enabled && state?.askAgainAt !== Number.MAX_SAFE_INTEGER
+      ? state?.askAgainAt ?? null : null,
+    lastCheckedAt: checks.length ? Math.max(...checks) : null,
+  };
+}
+
+async function confirmAutomaticCliConsent(candidates: readonly AutomaticCliCandidate[]): Promise<boolean> {
+  const opts = {
+    type: 'question' as const,
+    buttons: ['Agora não', 'Ativar atualizações automáticas'],
+    defaultId: 0, cancelId: 0,
+    title: 'Atualização automática das CLIs',
+    message: 'Manter as CLIs instaladas atualizadas?',
+    detail: 'O Nexus verifica no máximo uma vez por dia cada CLI, quando ela não tem pane ativo. ' +
+      'Se escolher Agora não, perguntaremos novamente em 7 dias. ' +
+      'Estes são os comandos reconhecidos agora; instalações desconhecidas e canais que pedem privilégios ficam manuais:\n\n' +
+      candidates.map((candidate) =>
+        `• ${candidate.label}: ${describeArgvInstallInvocation(candidate.prepared).replaceAll('\n', ' ')}`,
+      ).join('\n'),
+    noLink: true,
+  };
+  const win = BrowserWindow.getFocusedWindow();
+  const result = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
+  return result.response === 1;
+}
+
+/** One background update per pass; run only while this adapter has no live pane. */
+export function startCliAutoUpdate(
+  userDataDir: string,
+  hasLivePane: (adapterId: string) => boolean,
+): () => void {
+  if (process.platform !== 'darwin' && process.platform !== 'win32') return () => {};
+  const file = path.join(userDataDir, 'cli-auto-update.json');
+  let preferences = readAutoCliPreferences(file);
+  const queue = new CliAutoUpdateQueue(preferences?.checkedAt);
+  let prompting = false;
+  let checking = false;
+  let stopped = false;
+  let lastDiscoveryAt = 0;
+  let candidates: AutomaticCliCandidate[] = [];
+  const tick = async () => {
+    preferences = readAutoCliPreferences(file) ?? preferences;
+    if (stopped || prompting || checking || cliUpdateLease.isProvisioning() ||
+        (preferences?.enabled === false && !shouldOfferAutoCliConsent(preferences, Date.now()))) return;
+    checking = true;
+    try {
+      if (Date.now() - lastDiscoveryAt >= 30 * 60_000) {
+        await rescanAdapterBinaries();
+        candidates = listAdapters()
+          .map((adapter) => automaticCliCandidate(adapter.id))
+          .filter((candidate): candidate is AutomaticCliCandidate => candidate !== null);
+        lastDiscoveryAt = Date.now();
+      }
+      if (candidates.length === 0) return;
+      if (shouldOfferAutoCliConsent(preferences, Date.now())) {
+        if (candidates.every((candidate) => hasLivePane(candidate.adapterId))) return;
+        if (!cliUpdateLease.beginAutoConsent()) return;
+        prompting = true;
+        try {
+          const accepted = await confirmAutomaticCliConsent(candidates);
+          const next = {
+            enabled: accepted,
+            askAgainAt: accepted ? undefined : Date.now() + 7 * 24 * 60 * 60_000,
+            checkedAt: preferences?.checkedAt ?? {},
+          };
+          if (!writeAutoCliPreferences(file, next)) return;
+          preferences = next;
+        } finally { prompting = false; cliUpdateLease.endAutoConsent(); }
+      }
+      if (!preferences?.enabled || stopped) return;
+      if (readAutoCliPreferences(file)?.enabled !== true) return;
+      const now = Date.now();
+      await queue.runOne(candidates.map((candidate) => candidate.adapterId), now,
+        (id) => hasLivePane(id) || cliUpdateLease.isHeld(id), async (id) => {
+        // Revalidate the effective launcher and permissions immediately before mutation.
+        const selected = automaticCliCandidate(id);
+        if (!selected || hasLivePane(id) || readAutoCliPreferences(file)?.enabled !== true ||
+            !cliUpdateLease.acquire(id)) return false;
+        try {
+          const beforeVersion = await installedCliVersion(id, selected.binPath);
+          let stillSameTarget = false;
+          try {
+            stillSameTarget = fs.realpathSync(process.platform === 'win32'
+              ? windowsNpmShimTarget(id, selected.binPath) ?? selected.binPath
+              : selected.binPath) === selected.realBinPath;
+          } catch { /* The launcher disappeared while being checked. */ }
+          if (!beforeVersion || !stillSameTarget || hasLivePane(id) ||
+              readAutoCliPreferences(file)?.enabled !== true ||
+              activeProviderBinary(id) !== selected.binPath) return false;
+          try { await runInstallRecipe(selected.recipe, selected.prepared); }
+          catch (error) {
+            console.warn(`[cli-auto-update] ${id}: update failed`, error);
+            return false;
+          }
+          await rescanAdapterBinaries();
+          broadcast();
+          const afterBin = activeProviderBinary(id);
+          const afterVersion = afterBin ? await installedCliVersion(id, afterBin) : null;
+          if (!afterBin || !afterVersion) return false;
+          const result = assessCliUpdate({
+            beforeBin: selected.binPath, beforeVersion, afterBin, afterVersion,
+            platform: process.platform,
+          });
+          if (result === 'different-launcher') return false;
+          console.info(`[cli-auto-update] ${id}: ${result === 'updated' ? 'updated' : 'checked'}, ${afterVersion}`);
+          return true;
+        } finally { cliUpdateLease.release(id); }
+      });
+      const current = readAutoCliPreferences(file);
+      if (current?.enabled) {
+        preferences = { ...current, checkedAt: queue.snapshot() };
+        if (!writeAutoCliPreferences(file, preferences)) {
+          console.warn('[cli-auto-update] could not persist last check');
+        }
+      } else {
+        preferences = current;
+      }
+    } catch (error) {
+      console.warn('[cli-auto-update] background check deferred', error);
+    } finally { checking = false; }
+  };
+  const initial = setTimeout(() => { void tick(); }, 60_000);
+  const interval = setInterval(() => { void tick(); }, 60_000);
+  return () => { stopped = true; clearTimeout(initial); clearInterval(interval); };
+}
+
+function installedDevinDistribution(realBinPath: string): string | null {
+  let marker: string;
+  if (process.platform === 'win32' && process.env.LOCALAPPDATA) {
+    marker = path.join(process.env.LOCALAPPDATA, 'devin', 'cli', 'distribution');
+  } else if (process.platform !== 'win32' &&
+      realBinPath.replaceAll('\\', '/').includes('/devin/cli/_versions/')) {
+    marker = path.join(path.dirname(path.dirname(realBinPath)), 'distribution');
+  } else {
+    return null;
+  }
+  try {
+    return fs.readFileSync(marker, 'utf8').trim();
+  } catch {
+    return null;
+  }
+}
+
+/** Read the version from the executable itself, never another CLI on PATH. */
+async function installedCliVersion(adapterId: string, binPath: string): Promise<string | null> {
+  let executable = binPath;
+  let args = ['--version'];
+  if (process.platform === 'win32' && /\.cmd$/iu.test(binPath)) {
+    // The .cmd shim is shell text. Run its verified package entrypoint through
+    // its native binary or node.exe, without interpolating a path in cmd.exe.
+    const invocation = windowsNpmShimInvocation(adapterId, binPath, resolveRunnerPath('node'));
+    if (!invocation) return null;
+    executable = invocation.executable;
+    args = [...invocation.argsPrefix, '--version'];
+  } else if (process.platform === 'win32' && !/\.(?:exe|com)$/i.test(binPath)) {
+    return null;
+  }
+  return new Promise((resolve) => {
+    execFile(
+      executable,
+      args,
+      { timeout: 10_000, maxBuffer: 16 * 1024, windowsHide: true },
+      (error, stdout) => {
+        const version = String(stdout).trim().split(/\r?\n/u)[0]?.trim();
+        resolve(error || !version ? null : version.slice(0, 100));
+      },
+    );
+  });
+}
+
 /** Baixa o instalador oficial (HTTPS) para um arquivo temporário 0700 e o
  * executa com bash — nunca `curl | sh`: o conteúdo em disco é o que roda. */
-async function runScriptInstall(scriptUrl: string): Promise<void> {
+async function runScriptInstall(
+  scriptUrl: string,
+  envOverrides?: Readonly<Record<string, string>>,
+): Promise<void> {
   const url = new URL(scriptUrl);
   if (url.protocol !== 'https:') {
     throw new Error('instalador oficial precisa ser HTTPS');
@@ -1478,7 +1788,9 @@ async function runScriptInstall(scriptUrl: string): Promise<void> {
       execFile(
         resolveRunnerPath('bash') ?? 'bash',
         [file],
-        installExecOptions(),
+        envOverrides
+          ? { ...installExecOptions(), env: { ...process.env, ...envOverrides } }
+          : installExecOptions(),
         (error) => (error ? reject(error) : resolve()),
       );
     });
@@ -1524,20 +1836,74 @@ async function runPowerShellScriptInstall(scriptUrl: string): Promise<void> {
 }
 
 /** Executa uma receita selecionada mantendo a separação por plataforma. */
-async function runInstallRecipe(recipe: CliInstallRecipe): Promise<void> {
+type ArgvInstallInvocation = {
+  readonly executable: string;
+  readonly args: readonly string[];
+  readonly options: ReturnType<typeof installExecOptions>;
+  readonly envOverrides?: Readonly<Record<string, string>>;
+};
+
+function prepareArgvInstallInvocation(recipe: Extract<CliInstallRecipe, { kind: 'argv' }>): ArgvInstallInvocation {
+  // A Windows npm shim needs cmd.exe, which would interpret an installation
+  // prefix from the filesystem as shell text. Run npm's JS entrypoint with
+  // node.exe directly when updating a known global prefix instead.
+  let executable = resolveRunnerPath(recipe.runner);
+  if (!executable) throw new Error(`runner ${recipe.runner} não está mais disponível`);
+  let args = recipe.argv.slice(1);
+  let options = installExecOptions();
+  if (recipe.env) options = { ...options, env: { ...process.env, ...recipe.env } };
+  if (process.platform === 'win32' && /\.(?:exe|com)$/iu.test(executable)) {
+    // Native Windows executables accept argv directly. In particular, a
+    // configured CLI path must never be interpolated through cmd.exe.
+    options = { ...options, shell: false };
+  }
+  if (process.platform === 'win32' && recipe.runner === 'npm' && args.includes('--prefix')) {
+    const npmJs = path.join(path.dirname(executable), 'node_modules', 'npm', 'bin', 'npm-cli.js');
+    const node = resolveRunnerPath('node');
+    if (!node || !fs.existsSync(npmJs)) {
+      throw new Error('não consegui executar o npm da instalação atual sem o shell');
+    }
+    executable = node;
+    args = [npmJs, ...args];
+    options = { ...options, shell: false };
+  } else if (process.platform === 'win32' && path.isAbsolute(recipe.runner) && /\.cmd$/iu.test(executable)) {
+    const adapterId = path.basename(executable).replace(/\.cmd$/iu, '');
+    const invocation = windowsNpmShimInvocation(adapterId, executable, resolveRunnerPath('node'));
+    if (!invocation) {
+      throw new Error('não consegui executar a CLI atual sem o shell');
+    }
+    executable = invocation.executable;
+    args = [...invocation.argsPrefix, ...args];
+    options = { ...options, shell: false };
+  }
+  return { executable, args, options, envOverrides: recipe.env };
+}
+
+function describeArgvInstallInvocation(invocation: ArgvInstallInvocation): string {
+  const environment = invocation.envOverrides
+    ? `\nAmbiente: ${Object.entries(invocation.envOverrides).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(' ')}`
+    : '';
+  return `Executável: ${invocation.executable}\nArgumentos: ${invocation.args.map((arg) => JSON.stringify(arg)).join(' ')}${environment}`;
+}
+
+async function runInstallRecipe(
+  recipe: CliInstallRecipe,
+  prepared?: ArgvInstallInvocation,
+): Promise<void> {
   if (recipe.kind === 'script') {
-    await runScriptInstall(recipe.scriptUrl);
+    await runScriptInstall(recipe.scriptUrl, recipe.env);
     return;
   }
   if (recipe.kind === 'powershell-script') {
     await runPowerShellScriptInstall(recipe.scriptUrl);
     return;
   }
+  const invocation = prepared ?? prepareArgvInstallInvocation(recipe);
   await new Promise<void>((resolve, reject) => {
     execFile(
-      resolveRunnerPath(recipe.runner) ?? recipe.argv[0],
-      recipe.argv.slice(1),
-      installExecOptions(),
+      invocation.executable,
+      [...invocation.args],
+      invocation.options,
       (error) => (error ? reject(error) : resolve()),
     );
   });
@@ -1672,6 +2038,7 @@ function installExecOptions(): {
   maxBuffer: number;
   windowsHide?: boolean;
   shell?: boolean;
+  env?: NodeJS.ProcessEnv;
 } {
   return {
     timeout: 15 * 60_000,
@@ -1698,6 +2065,8 @@ export async function maybeOfferFirstRunProvisioning(
   } catch {
     return;
   }
+  if (!cliUpdateLease.beginProvisioning()) return;
+  try {
   const missing = listProviderSettings().filter(
     (provider) => !provider.installed && provider.canAutoInstall,
   );
@@ -1761,6 +2130,10 @@ export async function maybeOfferFirstRunProvisioning(
       continue;
     }
     const recipe = selection.recipe;
+    if (!cliUpdateLease.acquire(provider.adapterId, 'provisioning')) {
+      pending.push(`${provider.label} — instalação ocupada; tente pelo botão da CLI`);
+      continue;
+    }
     try {
       await runInstallRecipe(recipe);
       done.push(provider.label);
@@ -1768,7 +2141,7 @@ export async function maybeOfferFirstRunProvisioning(
       pending.push(
         `${provider.label} — ${err instanceof Error ? err.message.slice(0, 120) : 'falhou'}`,
       );
-    }
+    } finally { cliUpdateLease.release(provider.adapterId); }
   }
   broadcast();
   const summary = {
@@ -1786,10 +2159,49 @@ export async function maybeOfferFirstRunProvisioning(
   };
   if (win && !win.isDestroyed()) await dialog.showMessageBox(win, summary);
   else await dialog.showMessageBox(summary);
+  } finally { cliUpdateLease.endProvisioning(); }
 }
 
 export function registerProviderIpc(): void {
   initializeProviderConfigStore();
+
+  handleTrusted(PROVIDER_CHANNELS.autoCliUpdates, async (_event, raw) => {
+    const parsed = z.discriminatedUnion('action', [
+      z.object({ action: z.literal('get') }),
+      z.object({ action: z.literal('set'), enabled: z.boolean() }),
+    ]).safeParse(raw);
+    const file = path.join(app.getPath('userData'), 'cli-auto-update.json');
+    const previous = readAutoCliPreferences(file);
+    if (!parsed.success) return { ...autoCliStatus(previous), error: 'pedido inválido' };
+    if (parsed.data.action === 'get') return autoCliStatus(previous);
+    if (!parsed.data.enabled) {
+      const next = { enabled: false, askAgainAt: Number.MAX_SAFE_INTEGER,
+        checkedAt: previous?.checkedAt ?? {} };
+      return writeAutoCliPreferences(file, next)
+        ? autoCliStatus(next)
+        : { ...autoCliStatus(previous), error: 'não consegui salvar a preferência' };
+    }
+    if (!cliUpdateLease.beginAutoConsent()) {
+      return { ...autoCliStatus(previous), error: 'outra instalação ou confirmação está em andamento' };
+    }
+    try {
+      await rescanAdapterBinaries();
+      const candidates = listAdapters()
+        .map((adapter) => automaticCliCandidate(adapter.id))
+        .filter((candidate): candidate is AutomaticCliCandidate => candidate !== null);
+      if (candidates.length === 0) {
+        return { ...autoCliStatus(previous), error: 'nenhuma CLI elegível para atualização automática nesta máquina' };
+      }
+      const accepted = await confirmAutomaticCliConsent(candidates);
+      if (!accepted) return autoCliStatus(previous);
+      const next = { enabled: true, checkedAt: previous?.checkedAt ?? {} };
+      return writeAutoCliPreferences(file, next)
+        ? autoCliStatus(next)
+        : { ...autoCliStatus(previous), error: 'não consegui salvar a preferência' };
+    } catch {
+      return { ...autoCliStatus(previous), error: 'não consegui verificar as CLIs instaladas' };
+    } finally { cliUpdateLease.endAutoConsent(); }
+  });
 
   handleTrusted(PROVIDER_CHANNELS.installCli, async (_e, raw) => {
     const parsed = z
@@ -1802,48 +2214,114 @@ export function registerProviderIpc(): void {
     if (!parsed.success) return { ok: false, error: 'adapter inválido' };
     const adapter = getAdapter(parsed.data.adapterId);
     if (!adapter) return { ok: false, error: 'adapter desconhecido' };
-    const selection = selectInstallRecipe(
-      cliInstallRecipeCandidates(adapter.id),
-      (runner) => resolveRunnerPath(runner) !== null,
-    );
+    if (!cliUpdateLease.acquire(adapter.id)) {
+      return { ok: false, error: 'Já existe uma instalação ou atualização desta CLI em andamento.' };
+    }
+    try {
+    const updating = parsed.data.mode === 'update';
+    const beforeBin = updating ? activeProviderBinary(adapter.id) : null;
+    if (updating && !beforeBin) {
+      return { ok: false, error: 'CLI não encontrada; reexamine as CLIs antes de atualizar.' };
+    }
+    let realBinPath: string | null = null;
+    if (beforeBin) {
+      try {
+        realBinPath = fs.realpathSync(
+          process.platform === 'win32'
+            ? windowsNpmShimTarget(adapter.id, beforeBin) ?? beforeBin
+            : beforeBin,
+        );
+      } catch {
+        return { ok: false, error: 'O executável mudou; reexamine as CLIs antes de atualizar.' };
+      }
+    }
+    const selection = updating && beforeBin && realBinPath
+      ? selectCliUpdateRecipe({
+          adapterId: adapter.id,
+          platform: process.platform,
+          binPath: beforeBin,
+          realBinPath,
+          userHome: realUserHome(),
+          windowsLocalAppData: process.env.LOCALAPPDATA,
+          installationDistribution: adapter.id === 'devin'
+            ? installedDevinDistribution(realBinPath)
+            : null,
+          isRunnerResolvable: (runner) => resolveRunnerPath(runner) !== null,
+        })
+      : selectInstallRecipe(
+          cliInstallRecipeCandidates(adapter.id),
+          (runner) => resolveRunnerPath(runner) !== null,
+        );
     if (!selection) {
       return {
         ok: false,
-        error:
-          'Sem instalador automático para esta CLI nesta plataforma ainda — ' +
-          'use o site oficial do provider.',
+        error: updating
+          ? 'Não reconheci o canal da CLI usada pelo pane; atualize essa instalação pelo canal original.'
+          : 'Sem instalador automático para esta CLI nesta plataforma ainda — use o site oficial do provider.',
       };
     }
     if (!selection.ok) {
       return { ok: false, error: selection.missingRunnerHints.join(' OU: ') };
     }
-    const recipe =
-      parsed.data.mode === 'update' &&
-      selection.recipe.kind === 'argv' &&
-      selection.recipe.updateArgv
-        ? { ...selection.recipe, argv: selection.recipe.updateArgv }
-        : selection.recipe;
+    const recipe = selection.recipe;
+    let prepared: ArgvInstallInvocation | undefined;
+    try {
+      if (recipe.kind === 'argv') prepared = prepareArgvInstallInvocation(recipe);
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'instalador indisponível' };
+    }
     const confirmed = await confirmCliInstall(
       adapter.label,
-      describeInstallRecipe(recipe),
+      prepared ? describeArgvInstallInvocation(prepared) : describeInstallRecipe(recipe),
+      parsed.data.mode,
     );
-    if (!confirmed) return { ok: false, error: 'instalação cancelada' };
+    if (!confirmed) return { ok: false, error: updating ? 'atualização cancelada' : 'instalação cancelada' };
+    const beforeVersion = beforeBin ? await installedCliVersion(adapter.id, beforeBin) : null;
     try {
       // brew pode compilar; 15 min é teto honesto para 1ª instalação.
-      await runInstallRecipe(recipe);
+      await runInstallRecipe(recipe, prepared);
     } catch (err) {
+      const operation = updating ? 'atualização' : 'instalação';
       return {
         ok: false,
         error:
           err instanceof Error
-            ? `instalação falhou: ${err.message.slice(0, 300)}`
-            : 'instalação falhou',
+            ? `${operation} falhou: ${err.message.slice(0, 300)}`
+            : `${operation} falhou`,
       };
     }
     // Re-fold PATH + re-probe absolute bins so the new CLI is spawnable now.
     await rescanAdapterBinaries();
     broadcast();
-    return { ok: true };
+    if (!updating) return { ok: true };
+    const afterBin = activeProviderBinary(adapter.id);
+    const afterVersion = afterBin ? await installedCliVersion(adapter.id, afterBin) : null;
+    if (!afterBin || !afterVersion) {
+      return {
+        ok: false,
+        error: 'O instalador terminou, mas o Nexus não conseguiu verificar a versão da CLI usada pelo pane.',
+      };
+    }
+    if (!beforeBin) return { ok: false, error: 'CLI anterior não verificada.' };
+    const observation = assessCliUpdate({
+      beforeBin,
+      beforeVersion,
+      afterBin,
+      afterVersion,
+      platform: process.platform,
+    });
+    if (observation === 'different-launcher') {
+      return {
+        ok: false,
+        error: 'O instalador terminou, mas o Nexus passou a usar outro executável no PATH; reexamine as CLIs antes de afirmar a atualização.',
+      };
+    }
+    return {
+      ok: true,
+      changed: observation === 'verified' ? undefined : observation === 'updated',
+      version: afterVersion,
+    };
+    } finally { cliUpdateLease.release(adapter.id); }
   });
 
   ipcMain.handle(PROVIDER_CHANNELS.list, () => {

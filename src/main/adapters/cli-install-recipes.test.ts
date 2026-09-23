@@ -6,6 +6,7 @@ import {
   describeInstallRecipe,
   compatibleManualInstallCommand,
   selectInstallRecipe,
+  selectCliUpdateRecipe,
 } from './cli-install-recipes';
 
 const ARGV_IDS = [
@@ -155,5 +156,281 @@ describe('candidatos em cascata (máquina sem runner primário)', () => {
 
   it('CLI sem receita devolve null (nunca inventa canal)', () => {
     expect(selectInstallRecipe(cliInstallRecipeCandidates('glm', 'darwin'), () => true)).toBeNull();
+  });
+});
+
+describe('updating the CLI that Nexus launches', () => {
+  it('updates the native Claude launcher even when npm is available', () => {
+    const selected = selectCliUpdateRecipe({
+      adapterId: 'claude',
+      platform: 'darwin',
+      binPath: '/Users/operator/.local/bin/claude',
+      realBinPath: '/Users/operator/.local/share/claude/versions/2.1.278',
+      isRunnerResolvable: () => true,
+    });
+    expect(selected).toMatchObject({
+      ok: true,
+      recipe: {
+        kind: 'argv',
+        argv: ['/Users/operator/.local/bin/claude', 'update'],
+      },
+    });
+  });
+
+  it('updates an npm Claude binary through that binary, not a second npm prefix', () => {
+    const selected = selectCliUpdateRecipe({
+      adapterId: 'claude',
+      platform: 'darwin',
+      binPath: '/Users/operator/.npm-global/bin/claude',
+      realBinPath: '/Users/operator/.npm-global/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe',
+      isRunnerResolvable: () => true,
+    });
+    expect(selected).toMatchObject({
+      ok: true,
+      recipe: {
+        argv: ['/Users/operator/.npm-global/bin/claude', 'update'],
+      },
+    });
+  });
+
+  it('uses Homebrew for a Claude cask installation', () => {
+    const selected = selectCliUpdateRecipe({
+      adapterId: 'claude',
+      platform: 'darwin',
+      binPath: '/opt/homebrew/bin/claude',
+      realBinPath: '/opt/homebrew/Caskroom/claude-code/2.1.278/claude',
+      isRunnerResolvable: (runner) => runner === '/opt/homebrew/bin/brew',
+    });
+    expect(selected).toMatchObject({
+      ok: true,
+      recipe: { argv: ['/opt/homebrew/bin/brew', 'upgrade', '--cask', 'claude-code'] },
+    });
+  });
+
+  it('updates a native Kimi binary instead of installing another Kimi with Homebrew', () => {
+    const selected = selectCliUpdateRecipe({
+      adapterId: 'kimi',
+      platform: 'darwin',
+      binPath: '/Users/operator/.local/bin/kimi',
+      realBinPath: '/Users/operator/.kimi-code/bin/kimi',
+      isRunnerResolvable: () => true,
+    });
+    expect(selected).toMatchObject({
+      ok: true,
+      recipe: { argv: ['/Users/operator/.local/bin/kimi', 'upgrade', '--yes'] },
+    });
+  });
+
+  it('updates the npm prefix that owns the active Codex binary', () => {
+    const selected = selectCliUpdateRecipe({
+      adapterId: 'codex',
+      platform: 'darwin',
+      binPath: '/Users/operator/.npm-global/bin/codex',
+      realBinPath: '/Users/operator/.npm-global/lib/node_modules/@openai/codex/bin/codex.js',
+      isRunnerResolvable: () => true,
+    });
+    expect(selected).toMatchObject({
+      ok: true,
+      recipe: {
+        argv: ['npm', 'install', '-g', '--prefix', '/Users/operator/.npm-global', '@openai/codex'],
+      },
+    });
+  });
+
+  it('keeps the owning npm prefix for a Windows Codex shim', () => {
+    const selected = selectCliUpdateRecipe({
+      adapterId: 'codex',
+      platform: 'win32',
+      binPath: 'C:\\Users\\Operator\\AppData\\Roaming\\npm\\codex.cmd',
+      realBinPath: 'C:\\Users\\Operator\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\bin\\codex.js',
+      isRunnerResolvable: () => true,
+    });
+    expect(selected).toMatchObject({
+      ok: true,
+      recipe: {
+        argv: ['npm', 'install', '-g', '--prefix', 'C:/Users/Operator/AppData/Roaming/npm', '@openai/codex'],
+      },
+    });
+  });
+
+  it('does not turn a project-local Windows npm CLI into a global installation', () => {
+    expect(selectCliUpdateRecipe({
+      adapterId: 'codex',
+      platform: 'win32',
+      binPath: 'C:\\project\\node_modules\\.bin\\codex.cmd',
+      realBinPath: 'C:\\project\\node_modules\\@openai\\codex\\bin\\codex.js',
+      isRunnerResolvable: () => true,
+    })).toBeNull();
+  });
+
+  it('uses WinGet for a WinGet-managed Claude binary', () => {
+    const selected = selectCliUpdateRecipe({
+      adapterId: 'claude',
+      platform: 'win32',
+      binPath: 'C:\\Users\\Operator\\AppData\\Local\\Microsoft\\WinGet\\Links\\claude.exe',
+      realBinPath: 'C:\\Users\\Operator\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe\\claude.exe',
+      isRunnerResolvable: (runner) => runner === 'winget',
+    });
+    expect(selected).toMatchObject({
+      ok: true,
+      recipe: { argv: ['winget', 'upgrade', '--id', 'Anthropic.ClaudeCode', '--exact'] },
+    });
+  });
+
+  it('uses the installed AGY executable updater on macOS and Windows', () => {
+    for (const [platform, binPath] of [
+      ['darwin', '/Users/operator/.local/bin/agy'],
+      ['win32', 'C:\\Users\\Operator\\AppData\\Local\\agy\\bin\\agy.exe'],
+    ] as const) {
+      const selected = selectCliUpdateRecipe({
+        adapterId: 'agy', platform, binPath, realBinPath: binPath,
+        isRunnerResolvable: () => true,
+      });
+      expect(selected).toMatchObject({
+        ok: true,
+        recipe: { argv: [binPath, 'update'] },
+      });
+    }
+  });
+
+  it('uses the official PowerShell installer for a Windows Devin launcher', () => {
+    const binPath = 'C:\\Users\\Operator\\AppData\\Local\\devin\\cli\\bin\\devin.exe';
+    const selected = selectCliUpdateRecipe({
+      adapterId: 'devin', platform: 'win32', binPath, realBinPath: binPath,
+      windowsLocalAppData: 'C:\\Users\\Operator\\AppData\\Local',
+      installationDistribution: 'irm-iex',
+      isRunnerResolvable: (runner) => runner === 'powershell',
+    });
+    expect(selected).toMatchObject({
+      ok: true,
+      recipe: { kind: 'powershell-script', scriptUrl: 'https://static.devin.ai/cli/setup.ps1' },
+    });
+  });
+
+  it('declines Devin installs the public script would update at another Windows root or channel', () => {
+    const base = {
+      adapterId: 'devin', platform: 'win32' as const,
+      windowsLocalAppData: 'C:\\Users\\Operator\\AppData\\Local',
+      isRunnerResolvable: () => true,
+    };
+    const custom = 'D:\\custom\\devin\\cli\\bin\\devin.exe';
+    expect(selectCliUpdateRecipe({ ...base, binPath: custom, realBinPath: custom })).toBeNull();
+    const standard = 'C:\\Users\\Operator\\AppData\\Local\\devin\\cli\\bin\\devin.exe';
+    expect(selectCliUpdateRecipe({
+      ...base, binPath: standard, realBinPath: standard,
+      installationDistribution: 'enterprise-portal',
+    })).toBeNull();
+    const legacy = 'C:\\Users\\Operator\\AppData\\Local\\devin\\bin\\devin.exe';
+    expect(selectCliUpdateRecipe({
+      ...base, binPath: legacy, realBinPath: legacy,
+    })?.ok).toBe(true);
+  });
+
+  it('binds macOS Devin installer to the XDG data root owning its active launcher', () => {
+    const selected = selectCliUpdateRecipe({
+      adapterId: 'devin', platform: 'darwin',
+      userHome: '/Users/operator',
+      binPath: '/Users/operator/.local/bin/devin',
+      realBinPath: '/Users/operator/custom/share/devin/cli/_versions/3000.11.1/bin/devin',
+      installationDistribution: 'curl-bash',
+      isRunnerResolvable: () => true,
+    });
+    expect(selected).toMatchObject({
+      ok: true,
+      recipe: { kind: 'script', env: { XDG_DATA_HOME: '/Users/operator/custom/share' } },
+    });
+  });
+
+  it('does not replace an enterprise Devin installation with the public macOS channel', () => {
+    const base = {
+      adapterId: 'devin', platform: 'darwin' as const,
+      userHome: '/Users/operator',
+      binPath: '/Users/operator/.local/bin/devin',
+      realBinPath: '/Users/operator/.local/share/devin/cli/_versions/3000.11.1/bin/devin',
+      isRunnerResolvable: () => true,
+    };
+    expect(selectCliUpdateRecipe({
+      ...base, installationDistribution: 'enterprise-portal',
+    })).toBeNull();
+    expect(selectCliUpdateRecipe(base)).toBeNull();
+    expect(selectCliUpdateRecipe({
+      ...base,
+      binPath: '/Users/other/.local/bin/devin',
+      installationDistribution: 'curl-bash',
+    })).toBeNull();
+  });
+
+  it('uses brew upgrade for the installed OpenCode formula', () => {
+    const selected = selectCliUpdateRecipe({
+      adapterId: 'opencode',
+      platform: 'darwin',
+      binPath: '/opt/homebrew/bin/opencode',
+      realBinPath: '/opt/homebrew/Cellar/opencode/1.18.30_2/bin/opencode',
+      isRunnerResolvable: (runner) => runner === '/opt/homebrew/bin/brew',
+    });
+    expect(selected).toMatchObject({
+      ok: true,
+      recipe: { argv: ['/opt/homebrew/bin/brew', 'upgrade', 'opencode'] },
+    });
+  });
+
+  it('updates the Homebrew prefix that owns the active binary', () => {
+    const selected = selectCliUpdateRecipe({
+      adapterId: 'opencode',
+      platform: 'darwin',
+      binPath: '/usr/local/bin/opencode',
+      realBinPath: '/usr/local/Cellar/opencode/1.18.30/bin/opencode',
+      isRunnerResolvable: (runner) => runner === '/usr/local/bin/brew',
+    });
+    expect(selected).toMatchObject({
+      ok: true,
+      recipe: { argv: ['/usr/local/bin/brew', 'upgrade', 'opencode'] },
+    });
+  });
+
+  it('pins uv tool and bin directories to the installed Aider copy', () => {
+    const selected = selectCliUpdateRecipe({
+      adapterId: 'aider',
+      platform: 'darwin',
+      binPath: '/Users/operator/.local/bin/aider',
+      realBinPath: '/Users/operator/custom/uv/tools/aider-chat/bin/aider',
+      isRunnerResolvable: () => true,
+    });
+    expect(selected).toMatchObject({
+      ok: true,
+      recipe: {
+        env: {
+          UV_TOOL_DIR: '/Users/operator/custom/uv/tools',
+          UV_TOOL_BIN_DIR: '/Users/operator/.local/bin',
+        },
+      },
+    });
+  });
+
+  it.each([
+    ['grok', '/Users/operator/.local/bin/grok', '/Users/operator/.grok/bin/grok-1.0.40', ['/Users/operator/.local/bin/grok', 'update']],
+    ['agy', '/Users/operator/.local/bin/agy', '/Users/operator/.local/bin/agy', ['/Users/operator/.local/bin/agy', 'update']],
+    ['aider', '/Users/operator/.local/bin/aider', '/Users/operator/.local/share/uv/tools/aider-chat/bin/aider', ['uv', 'tool', 'install']],
+    ['muse', '/opt/homebrew/bin/muse', '/opt/homebrew/Caskroom/muse-code/1.3.0/muse', ['/opt/homebrew/bin/brew', 'upgrade', '--cask', 'muse-code']],
+  ] as const)('updates the installed %s channel', (adapterId, binPath, realBinPath, expectedArgv) => {
+    const selected = selectCliUpdateRecipe({
+      adapterId, platform: 'darwin', binPath, realBinPath,
+      isRunnerResolvable: () => true,
+    });
+    expect(selected?.ok).toBe(true);
+    if (selected?.ok) {
+      if (expectedArgv) expect(selected.recipe.kind === 'argv' && selected.recipe.argv.slice(0, expectedArgv.length)).toEqual(expectedArgv);
+      else expect(selected.recipe.kind).toBe('script');
+    }
+  });
+
+  it('does not update an unrelated install when the current channel is unknown', () => {
+    expect(selectCliUpdateRecipe({
+      adapterId: 'codex',
+      platform: 'darwin',
+      binPath: '/private/custom/codex',
+      realBinPath: '/private/custom/codex',
+      isRunnerResolvable: () => true,
+    })).toBeNull();
   });
 });

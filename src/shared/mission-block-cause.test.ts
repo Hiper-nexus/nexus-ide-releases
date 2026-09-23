@@ -101,7 +101,7 @@ describe('missionBlockCause — uma causa nomeada por caso', () => {
       'Um integrante da equipe encerrou sem entregar o resultado.',
     );
     expect(cause.action).toBe(
-      'Confira login e limite da ferramenta de IA em Configurações › Providers e clique em Retomar.',
+      'Confira login e limite da ferramenta de IA em Configurações › Contas de IA e clique em Retomar.',
     );
   });
 
@@ -117,7 +117,7 @@ describe('missionBlockCause — uma causa nomeada por caso', () => {
       'A ferramenta de IA escolhida não está disponível para esta tarefa.',
     );
     expect(cause.action).toBe(
-      'Abra Configurações › Providers, corrija a instalação ou o login, e clique em Retomar.',
+      'Abra Configurações › Contas de IA, corrija a instalação ou o login, e clique em Retomar.',
     );
   });
 
@@ -230,7 +230,7 @@ describe('missionBlockCause — descrição real de campo', () => {
     expect(cause.code).toBe('worker-no-handoff');
     expect(missionBlockCauseText(cause)).toBe(
       'Um integrante da equipe encerrou sem entregar o resultado. ' +
-        'Confira login e limite da ferramenta de IA em Configurações › Providers e clique em Retomar.',
+        'Confira login e limite da ferramenta de IA em Configurações › Contas de IA e clique em Retomar.',
     );
   });
 

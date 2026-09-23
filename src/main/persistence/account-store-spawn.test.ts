@@ -18,6 +18,7 @@ const accountDeps = vi.hoisted(() => ({
     },
   }),
   writeActiveCredential: vi.fn(() => true),
+  probeClaudeIdentity: vi.fn<() => Promise<'match' | 'mismatch' | 'auth-expired' | 'unavailable'>>(async () => 'match'),
 }));
 
 function oauthCredential(accessToken: string): string {
@@ -141,10 +142,16 @@ vi.mock('../adapters/managed-claude-auth', () => ({
   },
 }));
 
+vi.mock('../quota/claude-native-account', () => ({
+  probeClaudeCredentialIdentity: accountDeps.probeClaudeIdentity,
+}));
+
 import {
   addAccount,
   addActiveClaudeAccount,
   addActiveSessionAccount,
+  activateAccount,
+  accountHasFailoverCredential,
   adoptNativeAccountForFailover,
   getAccount,
   initAccountStore,
@@ -152,6 +159,7 @@ import {
   listAccounts,
   pickAvailableForFailover,
   prepareAccountForSpawn,
+  verifyManagedClaudeAccountForSpawn,
   removeAccount,
   renameAccount,
   setCooldown,
@@ -188,6 +196,8 @@ describe('prepareAccountForSpawn', () => {
     accountDeps.activeEmail = 'operator@example.test';
     accountDeps.writeActiveCredential.mockReset();
     accountDeps.writeActiveCredential.mockReturnValue(true);
+    accountDeps.probeClaudeIdentity.mockReset();
+    accountDeps.probeClaudeIdentity.mockResolvedValue('match');
     accountDeps.activeCredential = oauthCredential('claude-access');
     managedDeps.homes.clear();
     managedDeps.materialize.mockClear();
@@ -218,6 +228,32 @@ describe('prepareAccountForSpawn', () => {
       ok: false,
       error: 'selected account does not belong to this provider',
     });
+  });
+
+  it('proves the selected managed Claude credential before spawning and marks a mismatch', async () => {
+    accountDeps.activeEmail = 'a@example.com';
+    accountDeps.activeCredential = oauthCredential('wrong-access');
+    const account = addActiveClaudeAccount('Conta A')!;
+    accountDeps.probeClaudeIdentity.mockResolvedValueOnce('mismatch');
+    expect(await verifyManagedClaudeAccountForSpawn(account.id)).toBe('mismatch');
+    expect(accountDeps.probeClaudeIdentity).toHaveBeenCalledWith(
+      expect.any(String), 'a@example.com',
+    );
+    expect(prepareAccountForSpawn('claude', account.id)).toMatchObject({ ok: false });
+  });
+
+  it('proves the current native Claude lineage when it will replace a stale vault snapshot', async () => {
+    accountDeps.activeEmail = 'a@example.com';
+    accountDeps.activeCredential = oauthCredential('native-fresh');
+    const account = addActiveClaudeAccount('Conta A')!;
+    accountDeps.secrets.set(`acctcred:${account.id}`, oauthCredential('vault-stale'));
+
+    const verified = vi.fn();
+    expect(await verifyManagedClaudeAccountForSpawn(account.id, verified)).toBe('match');
+    expect(accountDeps.probeClaudeIdentity).toHaveBeenCalledWith(
+      oauthCredential('native-fresh'), 'a@example.com',
+    );
+    expect(verified).toHaveBeenCalledWith(oauthCredential('native-fresh'));
   });
 
   it('rejects an account that is still cooling down', () => {
@@ -317,6 +353,19 @@ describe('prepareAccountForSpawn', () => {
     expect(result).toMatchObject({ ok: true, account, apiKey: null,
       authEnv: { CLAUDE_SECURESTORAGE_CONFIG_DIR: `/tmp/claude/${account!.id}/auth` } });
     expect(accountDeps.writeActiveCredential).not.toHaveBeenCalled();
+  });
+
+  it('never spawns or activates a Claude account whose credential proved another identity', () => {
+    const account = addActiveClaudeAccount('Claude Max');
+    expect(account).not.toBeNull();
+    setCooldown(account!.id, Date.now() + 60_000, 'oauth identity mismatch — sonda de quota');
+
+    expect(accountHasFailoverCredential(getAccount(account!.id)!)).toBe(false);
+    expect(activateAccount(account!.id)).toBe(false);
+    expect(prepareAccountForSpawn('claude', account!.id)).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('outra conta'),
+    });
   });
 
   it('HOME isolado mantém o mesmo diretório de autenticação renovável da conta', () => {

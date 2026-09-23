@@ -178,6 +178,7 @@ vi.mock("../adapters/managed-auth-spawn-gate", () => ({
 vi.mock("../persistence/provider-config-store", () => ({
   prepareProviderSpawn: provider.prepare,
   prepareProviderSpawnAuthoritative: provider.prepareAuthoritative,
+  acquireCliSpawnPermit: vi.fn(async () => () => {}),
 }));
 
 vi.mock("../persistence/settings-store", () => ({
@@ -860,7 +861,7 @@ describe("main-owned mission pane spawn", () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(provider.prepare).toHaveBeenCalledWith(
+    expect(provider.prepareAuthoritative).toHaveBeenCalledWith(
       "claude",
       expect.objectContaining({ isolatedHome: false }),
     );

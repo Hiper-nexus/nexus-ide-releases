@@ -404,6 +404,21 @@ describe('fetchLiveProviderWindows', () => {
     expect(probe.hint).toBe('auth-expired');
   });
 
+  it('claude: never publishes a pinned token usage before account identity is proved', async () => {
+    const accountUsage = vi.fn(async () => ({ windows: null, hint: 'identity-mismatch' as const }));
+    const fetchImpl = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({
+      five_hour: { utilization: 2 }, seven_day: { utilization: 86 },
+    }), text: async () => '' }));
+    const probe = await fetchLiveProviderWindows('claude', 'first-account', {
+      resolveClaudeToken: () => 'token-from-second-account',
+      claudeAccountUsage: accountUsage,
+      fetchImpl,
+    });
+    expect(probe).toEqual({ windows: null, hint: 'identity-mismatch' });
+    expect(accountUsage).toHaveBeenCalledWith('first-account');
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it('claude: linha nativa propaga auth-expired do probe CLI', async () => {
     const probe = await fetchLiveProviderWindows('claude', undefined, {
       resolveClaudeToken: () => null,

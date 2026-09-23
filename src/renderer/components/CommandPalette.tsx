@@ -408,7 +408,7 @@ export function CommandPalette() {
                     />
                     <ActionCard
                       icon="key"
-                      title="Providers"
+                      title="Contas de IA"
                       size="sm"
                       onClick={() => {
                         close();

@@ -280,12 +280,46 @@ describe('providerOpFeedback — F-598', () => {
     const login = providerOpFeedback('login', 'ok', 'Kimi');
     expect(login.tone).toBe('info');
     expect(login.title).toContain('aberto');
-    expect(providerOpFeedback('update', 'ok', 'Codex').tone).toBe('ok');
+    expect(providerOpFeedback('update', 'ok', 'Codex').tone).toBe('info');
   });
 
   it('expõe o erro cru quando a receita falha', () => {
     const failed = providerOpFeedback('install', 'err', 'Muse', 'instalação cancelada');
     expect(failed.tone).toBe('danger');
     expect(failed.title).toBe('instalação cancelada');
+  });
+});
+
+describe('providerOpFeedback — F-360', () => {
+  it('does not claim success without a version from the pane executable', () => {
+    const feedback = providerOpFeedback('update', 'ok', 'Claude');
+    expect(feedback.title).toContain('sem versão verificada');
+    expect(feedback.rowLabel).toBe('não verificada');
+  });
+  it('does not claim an update when the launched CLI version is unchanged', () => {
+    const feedback = providerOpFeedback(
+      'update', 'ok', 'Claude', undefined,
+      { changed: false, version: '2.1.278 (Claude Code)' },
+    );
+    expect(feedback.title).toBe('Claude continua na versão 2.1.278 (Claude Code).');
+    expect(feedback.detail).toContain('Nenhuma versão nova');
+    expect(feedback.rowLabel).toBe('sem mudança');
+  });
+
+  it('shows the version observed after a real update', () => {
+    const feedback = providerOpFeedback(
+      'update', 'ok', 'Claude', undefined,
+      { changed: true, version: '2.1.280 (Claude Code)' },
+    );
+    expect(feedback.title).toBe('Claude atualizada para 2.1.280 (Claude Code).');
+  });
+
+  it('reports verification without claiming a change when the old version was unreadable', () => {
+    const feedback = providerOpFeedback(
+      'update', 'ok', 'Claude', undefined,
+      { version: '2.1.280 (Claude Code)' },
+    );
+    expect(feedback.title).toBe('Claude verificada na versão 2.1.280 (Claude Code).');
+    expect(feedback.rowLabel).toBe('verificada');
   });
 });

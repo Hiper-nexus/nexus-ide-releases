@@ -513,6 +513,7 @@
   gap: var(--space-3);
 }
 
+.settings-section-heading--with-count h3,
 .settings-section-heading--with-count h4 {
   margin: 0;
   font: inherit;
@@ -1001,6 +1002,63 @@
   flex-wrap: wrap;
   gap: var(--space-2);
   margin-left: auto;
+}
+
+.settings-squads__block {
+  margin-bottom: var(--space-5);
+}
+
+.settings-squads__count {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.settings-squads__action-sep {
+  align-self: stretch;
+  width: 1px;
+  margin-inline: var(--space-1);
+  background: var(--border-strong);
+}
+
+/* Apagar fica depois do separador, sem preenchimento: disponível, mas sem
+   competir com Usar integrantes/Editar. */
+.settings-btn.settings-squads__delete {
+  border-color: transparent;
+  background: transparent;
+  color: var(--danger);
+}
+
+.settings-btn.settings-squads__delete:hover:not(:disabled),
+.settings-btn.settings-squads__delete:focus-visible {
+  border-color: color-mix(in srgb, var(--danger) 50%, transparent);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.settings-squads__copies {
+  margin-top: var(--space-2);
+}
+
+.settings-squads__copies > summary {
+  width: fit-content;
+  min-height: 32px;
+  padding-block: var(--space-1-5);
+  color: var(--text-dim);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.settings-squads__copies > summary:hover,
+.settings-squads__copies > summary:focus-visible {
+  color: var(--text);
+}
+
+.settings-squads__copies > .settings-list {
+  margin-top: var(--space-2);
+}
+
+.settings-squads__copy {
+  background: var(--surface-1);
 }
 
 .settings-squads__feedback {
@@ -2076,6 +2134,25 @@
 }
 .quota-panel__empty--error {
   border-color: var(--danger);
+}
+.quota-panel__unreported {
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-3);
+}
+.quota-panel__unreported-summary {
+  width: fit-content;
+  min-height: 32px;
+  padding-block: var(--space-2);
+  color: var(--text-dim);
+  font-size: var(--text-md);
+  cursor: pointer;
+}
+.quota-panel__unreported-summary:hover,
+.quota-panel__unreported-summary:focus-visible {
+  color: var(--text);
+}
+.quota-panel__unreported[open] > .quota-panel__list {
+  margin-top: var(--space-3);
 }
 .quota-panel__help {
   display: flex;
@@ -3758,8 +3835,8 @@
   right: 6px;
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   border: 0;
   background: transparent;
   color: var(--text-dim);
@@ -3791,7 +3868,9 @@
 }
 
 .api-key-card__chip--dim {
-  opacity: 0.65;
+  /* Com opacity 0.65 o chip "NÃO CONFIGURADA" media 3,86:1 (abaixo de AA). */
+  color: var(--text-dim);
+  border-color: var(--border);
 }
 
 .api-key-card__feedback {

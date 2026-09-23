@@ -987,14 +987,16 @@ export function WorkspaceRail({
                 // serviço. Um cooldown/limit-hit jamais pinta 100% falso por
                 // cima de uma leitura fresca (ex.: conta pausada com Semanal
                 // 54%) — a pausa aparece como selo, o percentual é o fato.
+                const identityMismatch = entry.readHint === 'identity-mismatch';
+                const visibleEntry = identityMismatch ? { ...entry, windows: [] } : entry;
                 let worst: number | null = null;
-                for (const window of entry.windows) {
+                for (const window of visibleEntry.windows) {
                   if (window.usedRatio === null) continue;
                   if (worst === null || window.usedRatio > worst) {
                     worst = window.usedRatio;
                   }
                 }
-                const authExpired = entry.readHint === 'auth-expired';
+                const authExpired = entry.readHint === 'auth-expired' || identityMismatch;
                 const tone =
                   worst === null
                     ? authExpired
@@ -1012,24 +1014,26 @@ export function WorkspaceRail({
                       : '—'
                     : `${Math.round(worst * 100)}%`;
                 // Estilo Orca compacto: janelas informadas ("Sem 41% · 5d").
-                const line = shortWindowsLine(entry, quotaTick, { compact: true });
-                const cooldownTitle = entry.onCooldown
-                  ? ' · pausa temporária após sinal de limite (percentual = última leitura do serviço)'
-                  : authExpired
-                    ? ' · sessão expirada — reautentique a conta em Ajustes › Uso e cotas'
+                const line = shortWindowsLine(visibleEntry, quotaTick, { compact: true });
+                const cooldownTitle = authExpired
+                  ? identityMismatch
+                    ? ' · credencial de outra conta Claude — entre novamente em Ajustes › Uso e cotas'
+                    : ' · sessão expirada — reautentique a conta em Ajustes › Uso e cotas'
+                  : entry.onCooldown
+                    ? ' · pausa temporária após sinal de limite (percentual = última leitura do serviço)'
                     : '';
                 return (
                   <div
                     key={entry.id}
                     className={`workspace-rail__quota-item${
-                      entry.onCooldown ? ' workspace-rail__quota-item--cool' : ''
+                      entry.onCooldown && !authExpired ? ' workspace-rail__quota-item--cool' : ''
                     }`}
                     title={`${line}${cooldownTitle}`}
                   >
                     <div className="workspace-rail__quota-info">
                       <span className="workspace-rail__quota-name"><ProviderLogo adapterId={entry.adapterId} label={entry.label} size="xs" /><span>{entry.label}</span></span>
                       <span className="workspace-rail__quota-tail">
-                        {entry.onCooldown ? (
+                        {entry.onCooldown && !authExpired ? (
                           <span className="workspace-rail__quota-pause" title="Conta em pausa temporária">pausa</span>
                         ) : null}
                         <span

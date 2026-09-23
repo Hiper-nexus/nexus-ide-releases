@@ -20,6 +20,9 @@ const KIND_TABS: ReadonlyArray<{ value: Kind; label: string }> = [
 
 type Notice = { tone: 'ok' | 'danger'; text: string };
 
+/** Itens por página: a busca e a categoria sempre varrem o catálogo inteiro. */
+export const MARKETPLACE_PAGE_SIZE = 12;
+
 export function MarketplaceSection() {
   const [kind, setKind] = useState<Kind>('agent');
   const [query, setQuery] = useState('');
@@ -31,6 +34,10 @@ export function MarketplaceSection() {
   const [error, setError] = useState<string | null>(null);
   const [busySlug, setBusySlug] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
+  // Página ligada ao filtro atual: trocar tipo, busca ou categoria volta à 1ª.
+  const filterKey = `${kind}|${query}|${category}`;
+  const [page, setPage] = useState({ key: filterKey, count: MARKETPLACE_PAGE_SIZE });
+  const visibleCount = page.key === filterKey ? page.count : MARKETPLACE_PAGE_SIZE;
 
   async function loadIndex(refresh = false) {
     setLoading(true);
@@ -72,9 +79,16 @@ export function MarketplaceSection() {
           e.name.toLowerCase().includes(q) ||
           e.slug.toLowerCase().includes(q) ||
           e.category.toLowerCase().includes(q),
-      )
-      .slice(0, 80);
+      );
   }, [entries, query, category]);
+
+  const visible = filtered.slice(0, visibleCount);
+  const remaining = filtered.length - visible.length;
+  const noun = kind === 'agent' ? 'agentes' : 'instruções';
+
+  function showMore() {
+    setPage({ key: filterKey, count: visibleCount + MARKETPLACE_PAGE_SIZE });
+  }
 
   const filtering = Boolean(query.trim() || category);
 
@@ -230,7 +244,7 @@ export function MarketplaceSection() {
 
       {!error && (
         <ul className="settings-list mkt-list">
-          {filtered.map((entry) => {
+          {visible.map((entry) => {
             const installed = isInstalled(entry);
             return (
               <li key={entry.slug} className="settings-list__item mkt-item">
@@ -298,10 +312,19 @@ export function MarketplaceSection() {
         />
       )}
       {!loading && !error && filtered.length > 0 && (
-        <p className="catalog-settings__count">
-          {filtered.length} de {entries.length}{' '}
-          {kind === 'agent' ? 'agentes' : 'instruções'}
-        </p>
+        <div className="mkt-more">
+          <p className="catalog-settings__count">
+            {visible.length} de {filtered.length} {noun}
+            {filtering && filtered.length < entries.length
+              ? ` (${entries.length} no catálogo)`
+              : ''}
+          </p>
+          {remaining > 0 && (
+            <button type="button" className="settings-btn" onClick={showMore}>
+              Mostrar mais ({remaining})
+            </button>
+          )}
+        </div>
       )}
     </section>
   );
