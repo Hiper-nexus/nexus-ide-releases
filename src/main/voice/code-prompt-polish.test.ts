@@ -13,7 +13,10 @@ vi.mock('./jarvis-brain', () => ({
 
 describe('polishCodePrompt — ditado CODE vira prompt em inglês', () => {
   it('devolve o prompt do modelo e manda a fala crua como mensagem do usuário', async () => {
-    const chat = vi.fn(async () => '{"prompt": "Commit the changes and open a pull request."}');
+    const chat = vi.fn(
+      async (_messages: Array<{ role: string; content: string }>, _signal: AbortSignal) =>
+        '{"prompt": "Commit the changes and open a pull request."}',
+    );
     const result = await polishCodePrompt('comita as mudança e abre um pull request', { chat });
     expect(result).toEqual({ text: 'Commit the changes and open a pull request.', polished: true });
     const [messages] = chat.mock.calls[0]!;

@@ -359,14 +359,15 @@ export function TerminalWorkspace({
         />
       ) : null}
 
-      {/* Identidade do campo só com 2+ escopos: com um único campo ela disputava
-          a linha de título com o nome do pane e o empurrava para fora da toolbar. */}
+      {/* Linha do campo só enquanto o espaço é renomeado: o cartão ativo da
+          barra já mostra nome, contagem, pino e orquestrador — repetir tudo
+          numa segunda linha era ruído (operador, 23/09). */}
       {multiScope &&
         (() => {
           const activeScope = scopes.find(
             (scope) => scope.key === effectiveScopeKey,
           );
-          if (!activeScope) return null;
+          if (!activeScope || editingSpace?.key !== activeScope.key) return null;
           const pin =
             pinnedA === activeScope.key
               ? 'a'

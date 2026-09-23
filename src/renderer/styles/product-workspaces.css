@@ -1495,12 +1495,36 @@
   overflow: hidden;
 }
 
-.mission-lane--active {
+/* O cartão ainda carrega a classe da aba antiga (testes e seletores de
+   escopo). As regras dela — pílula, max-width 240px, padding, borda tracejada
+   de espaço/soltos, fundo do ativo — vazavam por cima e deixavam cada cartão
+   de um jeito. Aqui o cartão manda. */
+.mission-lane.terminal-workspace__filter-chip {
+  gap: 0;
+  max-width: none;
+  padding: 0;
+  border-style: solid;
+  border-radius: var(--radius-md);
+  font-size: inherit;
+  font-weight: inherit;
+  color: var(--text-muted);
+  min-block-size: 50px;
+}
+
+.mission-lane--active,
+.mission-lane.terminal-workspace__filter-chip--active {
   border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface-2));
+  color: var(--text);
 }
 
 .mission-lane--all {
-  inline-size: 108px;
+  inline-size: auto;
+  min-inline-size: 108px;
+}
+
+.mission-lane--all .mission-lane__body {
+  justify-content: center;
 }
 
 .mission-lane__main {
@@ -1532,8 +1556,9 @@
 .mission-lane__body {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  padding: 7px 8px;
+  justify-content: center;
+  gap: 4px;
+  padding: 7px 10px 7px 8px;
   min-inline-size: 0;
   flex: 1;
 }
@@ -1607,8 +1632,13 @@
 .mission-lane__actions {
   display: flex;
   flex-direction: column;
+  inline-size: 34px;
   border-inline-start: 1px solid var(--border);
   flex-shrink: 0;
+}
+
+.mission-lane__actions > .mission-lane__pin + .mission-lane__pin {
+  border-block-start: 1px solid var(--border);
 }
 
 .mission-lane__pin {
@@ -1617,9 +1647,12 @@
   background: transparent;
   color: var(--text-dim);
   font: 500 10px/1 var(--font-ui);
-  padding: 4px 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
   cursor: pointer;
-  min-inline-size: 26px;
+  inline-size: 100%;
   flex: 1;
 }
 
