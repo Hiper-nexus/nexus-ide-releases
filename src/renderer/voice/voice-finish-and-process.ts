@@ -7,7 +7,7 @@
  */
 import type React from 'react';
 import { useVoiceStore } from './voice-store';
-import { dictationSttRequestParams } from './dictation-output-mode';
+import { codePolishAvailable, dictationSttRequestParams } from './dictation-output-mode';
 import { describeSttFailure, sttSuccessNote } from './stt-failure-help';
 import { hasUsableLocalSpeech, shouldDiscardBeforeRealtime } from './capture-gate';
 import {
@@ -257,6 +257,11 @@ export async function finishAndProcess(
           ...(dictationTurn
             ? dictationSttRequestParams(
                 useVoiceStore.getState().info?.dictationOutputMode,
+                {
+                  polishAvailable: codePolishAvailable(
+                    useVoiceStore.getState().info?.keys,
+                  ),
+                },
               )
             : {}),
           ...(isAckGatedCapture() ? { budgetMs: WAKE_STT_BUDGET_MS } : {}),

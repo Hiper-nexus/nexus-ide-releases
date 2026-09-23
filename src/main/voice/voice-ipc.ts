@@ -782,11 +782,13 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
         };
       }
       try {
+        const sttStartedAt = Date.now();
         const res = await transcribe(
           parsed.data,
           getVoiceConfig(),
           currentProbes(),
         );
+        const sttMs = Date.now() - sttStartedAt;
         // ITEM 7: a wake-path STT stall (cloud skipped to local por orçamento)
         // nunca é silenciosa — o motivo/attempts entram no voice.log.
         if (res.stalled) {
@@ -816,7 +818,9 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
           return { ...res, discarded: "echo" };
         }
         if (res.ok && parsed.data.polish === "code-prompt") {
+          const polishStartedAt = Date.now();
           const polish = await polishCodePrompt(res.text);
+          const polishMs = Date.now() - polishStartedAt;
           if (!polish.polished) {
             logVoice("warn", "stt.codePolishSkipped", "modo CODE seguiu com o texto da STT", {
               reason: polish.reason,
@@ -829,8 +833,12 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
             provider: res.provider,
             fallbackNote: res.fallbackNote,
             mode: "code",
+            translate: parsed.data.translate === true,
             polished: polish.polished,
             final: polish.text.slice(0, 400),
+            // Onde foi a espera depois de parar de falar: STT x reescrita.
+            sttMs,
+            polishMs,
           });
           return { ...res, text: polish.text };
         }
@@ -839,6 +847,7 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
             provider: res.provider,
             fallbackNote: res.fallbackNote,
             mode: parsed.data.translate ? "translate" : "literal",
+            sttMs,
           });
         }
         return res;

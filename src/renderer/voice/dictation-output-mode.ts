@@ -24,8 +24,27 @@ export type DictationOutputMode = 'english' | 'portuguese';
  */
 export { DICTATION_CODE_PRIMING_PROMPT };
 
+/** Chaves que atendem a reescrita do ditado CODE (main/voice/code-prompt-polish). */
+export const CODE_POLISH_KEY_ENV_VARS: ReadonlySet<string> = new Set([
+  'GEMINI_API_KEY',
+  'OPENAI_API_KEY',
+  'GROQ_API_KEY',
+  'XAI_API_KEY',
+]);
+
+/** Há modelo de texto para a reescrita do CODE (presença de chave, nunca o valor). */
+export function codePolishAvailable(
+  keys: ReadonlyArray<{ envVar: string; hasEnv: boolean; hasStoredKey: boolean }> | undefined,
+): boolean {
+  return (keys ?? []).some(
+    (key) =>
+      CODE_POLISH_KEY_ENV_VARS.has(key.envVar) && (key.hasEnv || key.hasStoredKey),
+  );
+}
+
 export function dictationSttRequestParams(
   mode: DictationOutputMode | undefined,
+  options: { readonly polishAvailable?: boolean } = {},
 ): {
   translate: boolean;
   language: 'pt';
@@ -34,9 +53,21 @@ export function dictationSttRequestParams(
 } {
   // 'portuguese': transcrição literal, intocada — sem priming.
   if (mode === 'portuguese') return { translate: false, language: 'pt' };
-  // 'english' (default ClockVoice): tradução otimizada para execução, e o main
-  // reescreve como prompt em inglês para o agente — inclusive quando a STT só
-  // transcreve (xAI).
+  // 'english' (CODE) com reescrita disponível: a STT transcreve LITERAL e a
+  // reescrita traduz uma vez só, a partir do português original. Pedir
+  // tradução à STT e depois reescrever de novo eram duas chamadas de modelo
+  // em série (5,8–8,2 s de espera medidos em 23/09) e a reescrita recebia um
+  // texto já traduzido em vez do que foi dito.
+  if (options.polishAvailable) {
+    return {
+      translate: false,
+      language: 'pt',
+      prompt: DICTATION_CODE_PRIMING_PROMPT,
+      polish: 'code-prompt',
+    };
+  }
+  // Sem chave de modelo de texto: a própria STT traduz (quando o provider
+  // traduz) e a reescrita segue pedida — falha sozinha e devolve a tradução.
   return {
     translate: true,
     language: 'pt',

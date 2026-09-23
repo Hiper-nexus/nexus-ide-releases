@@ -1,4 +1,5 @@
 import { sttProviderTranslates } from '../../shared/voice-config';
+import { codePolishAvailable } from './dictation-output-mode';
 import { sttProviderLabel } from './stt-failure-help';
 import { useVoiceStore } from './voice-store';
 
@@ -9,13 +10,6 @@ import { useVoiceStore } from './voice-store';
  */
 export type DictationMode = 'english' | 'portuguese';
 
-/** Chaves que atendem a reescrita do ditado CODE (main/voice/code-prompt-polish). */
-const CODE_POLISH_KEY_ENV_VARS: ReadonlySet<string> = new Set([
-  'GEMINI_API_KEY',
-  'OPENAI_API_KEY',
-  'GROQ_API_KEY',
-  'XAI_API_KEY',
-]);
 
 export interface DictationModeControl {
   mode: DictationMode;
@@ -48,11 +42,7 @@ export function useDictationMode(): DictationModeControl {
   // O main reescreve o ditado CODE em inglês por um modelo de texto (cérebro
   // Gemini/OpenAI/Groq ou Grok pela chave do xAI). Com qualquer uma dessas
   // chaves, até uma STT que só transcreve entrega inglês.
-  const polishAvailable = (info?.keys ?? []).some(
-    (key) =>
-      CODE_POLISH_KEY_ENV_VARS.has(key.envVar) &&
-      (key.hasEnv || key.hasStoredKey),
-  );
+  const polishAvailable = codePolishAvailable(info?.keys);
   const translates = sttTranslates || polishAvailable;
 
   const toggle = async () => {
