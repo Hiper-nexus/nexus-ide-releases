@@ -351,6 +351,54 @@ describe('account failover authority and lifecycle', () => {
     );
   });
 
+  it('503 do provider não troca de conta nem põe a conta em cooldown (ping-pong A↔B)', async () => {
+    const { detectLimit } = await import('./limit-detector');
+    vi.mocked(detectLimit).mockImplementation((buffer: string) =>
+      buffer.includes('LIMIT')
+        ? { kind: 'transient', reason: 'status:503', cooldownMs: 45_000 }
+        : null,
+    );
+    try {
+      const scope = testProjectScope();
+      const owner = renderer(503);
+      renderers.push(owner);
+      bindResolvedRendererWorkspaceScope(owner, scope);
+      registerFailoverListener(owner);
+      addPane({
+        owner,
+        paneId: 'pane-503',
+        sessionId: 'session-503',
+        missionId: 'mission-503',
+        scope,
+      });
+
+      ptyMocks.dataTaps[0]('session-503', 'LIMIT');
+      await settleFailover();
+
+      expect(accountMocks.setCooldown).not.toHaveBeenCalled();
+      expect(owner.send).toHaveBeenCalledTimes(1);
+      expect(owner.send).toHaveBeenCalledWith(
+        ACCOUNT_CHANNELS.failover,
+        expect.objectContaining({
+          paneId: 'pane-503',
+          kind: 'transient',
+          switched: false,
+          fromAccountId: 'account-a',
+        }),
+      );
+      expect(owner.send).not.toHaveBeenCalledWith(
+        ACCOUNT_CHANNELS.failover,
+        expect.objectContaining({ switched: true }),
+      );
+    } finally {
+      vi.mocked(detectLimit).mockImplementation((buffer: string) =>
+        buffer.includes('LIMIT')
+          ? ({ reason: 'rate limit', cooldownMs: 60_000 } as ReturnType<typeof detectLimit>)
+          : null,
+      );
+    }
+  });
+
   it('does not create a long quarantine from PTY text without fresh provider-api authority', async () => {
     const { detectLimit } = await import('./limit-detector');
     vi.mocked(detectLimit).mockImplementationOnce((buffer: string) =>

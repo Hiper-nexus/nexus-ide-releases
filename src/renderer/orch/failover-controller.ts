@@ -34,6 +34,13 @@ export function useFailoverController(): void {
           return;
         }
         const copy = blockedFailoverToastCopy(event);
+        // Erro do provider (5xx/capacidade): nada a fazer em Providers — é
+        // aviso, não erro, e sem botão que manda o operador procurar culpa
+        // na conta.
+        if (event.kind === 'transient') {
+          push('warn', copy.title, copy.detail);
+          return;
+        }
         // O texto já diz "Configurações → Providers" — a ação leva até lá
         // (toast com ação ganha TTL de 20s em vez de 7s).
         push('error', copy.title, {

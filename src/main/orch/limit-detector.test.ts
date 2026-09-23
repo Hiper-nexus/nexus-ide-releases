@@ -404,6 +404,18 @@ describe('detectLimit — classificador vendorado do oh-my-pi', () => {
     expect(hit!.cooldownMs).toBe(20_000);
   });
 
+  it('"status:503" do provider é transient, nunca limite de conta (ping-pong 23/09)', () => {
+    for (const text of [
+      'API Error (status:503): Service Unavailable',
+      'Request failed with status:503',
+      'HTTP 503 Service Unavailable',
+      'overloaded_error: Overloaded',
+    ]) {
+      const hit = detectLimit(text);
+      expect(hit?.kind, text).toBe('transient');
+    }
+  });
+
   it('estouro por minuto fora do legado → rate-limit com 30s do omp', () => {
     // "queries per minute" não casa os padrões legados (tpm/rpm/requests);
     // o classificador do omp cobre com o cooldown transitório curto.

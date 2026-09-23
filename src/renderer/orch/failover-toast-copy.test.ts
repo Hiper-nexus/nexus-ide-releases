@@ -34,8 +34,11 @@ describe('blockedFailoverToastCopy', () => {
       .toMatch(/Cota esgotada/);
     expect(blockedFailoverToastCopy(event('rate-limit', 'HTTP 429')).title)
       .toMatch(/Limite temporário/);
-    expect(blockedFailoverToastCopy(event('transient', 'HTTP 503')).title)
-      .toMatch(/Provider indisponível/);
+    const transient = blockedFailoverToastCopy(event('transient', 'HTTP 503'));
+    expect(transient.title).toMatch(/Provider instável — conta mantida/);
+    // Não pode sugerir limite da conta nem mandar procurar outra conta.
+    expect(transient.detail).toMatch(/não limite da conta/);
+    expect(transient.detail).not.toMatch(/Providers/);
   });
 });
 

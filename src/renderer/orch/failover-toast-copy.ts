@@ -38,10 +38,11 @@ export function blockedFailoverToastCopy(
       };
     case 'transient':
       return {
-        title: `Provider indisponível em "${event.fromAccountLabel}"`,
+        title: 'Provider instável — conta mantida',
         detail:
-          `${event.reason}. O Nexus preservou a missão e tentará novamente ` +
-          `quando o provider estiver disponível.${retryNote}`,
+          `${event.reason}. É um erro do provider, não limite da conta ` +
+          `"${event.fromAccountLabel}": trocar de conta não resolve. A CLI ` +
+          `tenta de novo sozinha e a missão segue preservada.${retryNote}`,
       };
     case 'rate-limit':
       return {

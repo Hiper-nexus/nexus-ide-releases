@@ -917,6 +917,38 @@ function handleLimitHit(
     return;
   }
 
+  // Erro do PROVIDER (5xx, capacidade do modelo, sobrecarga): a conta está
+  // sadia e a irmã recebe o mesmo erro. Trocar de conta aqui virava um
+  // ping-pong — A→B→A a cada 503, respawn e handoff a cada volta, com as
+  // duas contas cheias de limite (operador, 23/09, "status:503"). A CLI já
+  // tenta de novo sozinha; o Nexus só avisa, sem cooldown, sem trocar e sem
+  // pintar a barra de cota.
+  if (hit.kind === 'transient') {
+    console.info(
+      '[failover]',
+      JSON.stringify({
+        paneId: pane.paneId,
+        adapterId,
+        fromAccountId: current?.id ?? null,
+        reason: hit.reason,
+        switched: false,
+        suppressed: 'transient-provider-error',
+        source,
+      }),
+    );
+    emitFailover(authority, {
+      paneId: pane.paneId,
+      fromAccountLabel: current?.label ?? adapterId,
+      toAccountLabel: '',
+      reason: hit.reason,
+      kind: hit.kind,
+      switched: false,
+      fromAccountId: current?.id,
+      missionId: authority.missionId,
+    });
+    return;
+  }
+
   // Feed fleet quota UI (session/5h/weekly bars) from the same limit signal.
   noteQuotaLimitHit(adapterId, hit, current?.id);
 
@@ -1024,7 +1056,9 @@ function handleChunk(sessionId: string, data: string, now: number): void {
 
   watch.firedAt = now;
   watch.buffer = ''; // consumed
-  cancelScheduledRetry(key);
+  // Um 5xx do provider não pode cancelar a nova tentativa já agendada para
+  // um limite de verdade: o pane ficaria parado esperando nada.
+  if (hit.kind !== 'transient') cancelScheduledRetry(key);
   handleLimitHit(authority, pane, key, hit, now, 'scrollback');
 }
 
@@ -1040,7 +1074,7 @@ function handleObserverFrame(frame: ObserverFrame): void {
   if (now - watch.firedAt < REARM_MS) return;
   watch.firedAt = now;
   watch.buffer = '';
-  cancelScheduledRetry(key);
+  if (frame.payload.kind !== 'transient') cancelScheduledRetry(key);
   handleLimitHit(
     authority,
     pane,
