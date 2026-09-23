@@ -6708,7 +6708,7 @@ export const RELEASE_07693: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07694: AppRelease = {
   version: '0.76.94',
   date: '2026-09-23',
   codename: 'Abas de feature',
@@ -6757,6 +6757,32 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'Missão sem plano não mostra papéis fantasmas "Na fila"; orquestrador ' +
         'que reiniciou em outra CLI aparece vivo no card, com o aviso certo.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.95',
+  date: '2026-09-23',
+  codename: 'Voz medida',
+  summary:
+    'O ditado mede a sua voz antes de transcrever e avisa quando o microfone ' +
+    'chega abafado — a causa mais comum de a transcrição trocar palavras.',
+  highlights: [
+    {
+      title: 'Microfone abafado avisa',
+      detail:
+        'Voz sem agudos perde as consoantes e a transcrição adivinha palavras. ' +
+        'O Nexus agora percebe isso e avisa uma vez, com o caminho: microfone ' +
+        'USB ou adaptador que separa microfone e fone.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Qualidade de cada ditado no voice.log',
+      detail:
+        'Fala em segundos, nível e agudos ficam registrados antes da ' +
+        'transcrição: dá para saber se o erro veio do microfone ou do serviço.',
     },
   ],
 };

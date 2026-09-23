@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.76.95 — Voz medida
+
+- **O ditado mede a sua voz antes de transcrever (F-638).** No Windows o ditado trocava palavras e no Mac acertava. Medido: com o ganho do Windows no máximo, a voz chegava a −45 dBFS e com só 2,8% de agudos (voz limpa tem 7–9%) — um fone ligado na entrada rosa estava fazendo papel de microfone. Sem agudos a voz perde as consoantes e qualquer serviço de transcrição adivinha palavras. Agora cada ditado grava no voice.log quanto de fala houve, em que nível e com quantos agudos (`stt.audioQuality`), e voz abafada gera, uma vez por sessão, o aviso "Microfone chegando abafado" com o caminho: microfone USB ou adaptador que separa microfone e fone, e o botão Abrir Voz.
+
 ## 0.76.94 — Abas de feature
 
 - **Terminais em abas.** A barra de cartões (missões, "Painéis soltos", pinos A/B e "Todos") virou uma barra de abas de editor: cada aba é uma feature, com os panes dela e a missão que um deles começou. A aba ativa é o mesmo chão da grelha, com um fio de acento em cima; o estado da missão vai no glifo e na palavra. O "+" abre o picker de sempre e o pane escolhido nasce numa aba nova. Duplo clique (ou F2) renomeia — inclusive a aba "Terminais", que vira um espaço com esse nome. ⌘/Ctrl+Alt+→/← troca de aba.
