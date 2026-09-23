@@ -823,7 +823,23 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
               provider: res.provider,
             });
           }
+          // Quem transcreveu e o que ouviu ANTES da reescrita: sem isto o
+          // operador não sabe se o erro veio da STT ou da tradução do CODE.
+          logVoice("info", "stt.dictationRaw", res.text.slice(0, 400), {
+            provider: res.provider,
+            fallbackNote: res.fallbackNote,
+            mode: "code",
+            polished: polish.polished,
+            final: polish.text.slice(0, 400),
+          });
           return { ...res, text: polish.text };
+        }
+        if (res.ok && parsed.data.purpose !== "passive-wake") {
+          logVoice("info", "stt.dictationRaw", res.text.slice(0, 400), {
+            provider: res.provider,
+            fallbackNote: res.fallbackNote,
+            mode: parsed.data.translate ? "translate" : "literal",
+          });
         }
         return res;
       } catch (err) {
