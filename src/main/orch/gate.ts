@@ -143,6 +143,9 @@ const REQUIRES_EXPLICIT_ALLOW = new Set([
   "remote_bridge_status",
   "agent_spec_write",
   "catalog_install",
+  // OVKA-702: install/remove de skill toca o perfil REAL de cada CLI — só com
+  // allowlist explícita (mesma fronteira do catalog_install).
+  "skills",
   "cron",
   "cron_schedule",
   "cron_list",

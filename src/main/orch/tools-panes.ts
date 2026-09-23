@@ -31,6 +31,11 @@ import {
 } from './pane-close-scopes';
 import { armDeliveryContract, parseExpectArg } from './delivery-contract';
 import {
+  briefingPointerWarning,
+  formatBriefingWarning,
+} from './briefing-warnings';
+import { harnessReceiptForTask } from './tools-harness';
+import {
   findAgentInAnySquad,
   findAgentInSquad,
   getSquad,
@@ -1165,17 +1170,29 @@ const paneSpawn: McpToolDef = {
       if (deliveryContract && spawned.sessionId) {
         armDeliveryContract(spawned.sessionId, deliveryContract);
       }
-      // Receipt de harness (Overclock 1.3.23): quem spawnou lê O QUE foi
-      // decidido — CLI, modelo, esforço e de onde a escolha veio — em vez
-      // de inferir pelo título do pane.
+      // Receipt de harness (Overclock 1.3.23 + OVKA-748): quem spawnou lê O QUE
+      // foi decidido — CLI, modelo, esforço e de onde a escolha veio — em vez
+      // de inferir pelo título do pane. `harnessReceipt` (tabela por task) entra
+      // quando o chamador declarou `task`.
+      const briefingWarn = briefingPointerWarning(
+        options.prompt ?? str(args, 'prompt') ?? null,
+      );
+      const taskHarnessReceipt = harnessReceiptForTask(str(args, 'task'), {
+        ...(options.model ? { model: options.model } : {}),
+        ...(options.effort ? { effort: options.effort as 'low' | 'medium' | 'high' } : {}),
+      });
       return {
         ...spawned,
         ...(executionMode ? { executionMode } : {}),
         harness: {
           ...harness,
           account: getAccountChoiceReceipt(spawned.sessionId) ?? null,
+          ...(taskHarnessReceipt ? { receipt: taskHarnessReceipt } : {}),
         },
         ...routeReceipt,
+        ...(briefingWarn
+          ? { briefingWarnings: [formatBriefingWarning(briefingWarn)] }
+          : {}),
       };
     } finally {
       if (isolatedWriter && !isolatedWriterPending && !spawnedWorkerPaneId && !listPaneSnapshots().some(
@@ -1439,7 +1456,14 @@ const paneWrite: McpToolDef = {
     } else {
       await injectPrompt(sessionId, text, invocation);
     }
-    return { ok: true };
+    // OVKA-750 (soft): brief longo que cita card/task file → avisa o ponteiro.
+    const briefingWarn = briefingPointerWarning(text);
+    return {
+      ok: true,
+      ...(briefingWarn
+        ? { briefingWarnings: [formatBriefingWarning(briefingWarn)] }
+        : {}),
+    };
   },
 };
 

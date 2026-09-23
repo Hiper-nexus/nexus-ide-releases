@@ -1169,6 +1169,9 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           userDataPath: app.getPath("userData"),
           checkoutId: authority.scope.checkoutId,
           inheritNativeProfile,
+          // OVKA-713/747: filtro declarado de skill → skillOverrides off no
+          // overlay (pessoais/projeto fora do conjunto não invocam).
+          skillFilter: meta?.allowedSkills,
           // Hub MCP compartilhado (07645): só computado quando o pane
           // herdaria mesmo — nunca calculado nem exposto a worker/orquestrador.
           mcpHubBridge: inheritNativeProfile ? computeMcpHubBridge() : undefined,
@@ -1948,6 +1951,33 @@ export function startMcpServer(): Promise<void> {
       console.log(`[orch] embedded MCP server on ${mcpUrl()}`);
       writeArmsRuntimeDescriptor(boundPort);
       markArmsBoot();
+      // Warm pool (paridade Overclock): registra o criador de CLI ocioso.
+      // Sem workspace ativo o provider devolve null — miss honesto, nunca cwd inventado.
+      void (async () => {
+        try {
+          const { registerWarmAgentSpawner } = await import('../pty/warm-agent-spawner');
+          const { getAdapter } = await import('../adapters/adapter-registry');
+          const { requireProjectDomainStoreRegistry } = await import(
+            './project-domain-store-registry'
+          );
+          const { resolveCwdForScope } = await import('./workspace-path');
+          registerWarmAgentSpawner({
+            resolveAdapter: (cli) => getAdapter(cli),
+            resolveContext: () => {
+              try {
+                const suite = requireProjectDomainStoreRegistry().listSuites()[0];
+                if (!suite) return null;
+                const cwd = resolveCwdForScope(suite.scope);
+                return { scope: suite.scope, cwd };
+              } catch {
+                return null;
+              }
+            },
+          });
+        } catch (err) {
+          console.warn('[warm-pool] spawner não registrado:', err);
+        }
+      })();
       emitAppEvent('app.boot', { port: boundPort });
     })
     .catch((error: unknown) => {

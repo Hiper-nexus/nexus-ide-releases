@@ -325,6 +325,13 @@ export interface EphemeralHomeOptions {
   /** Stable account-owned auth store; never project the native login into this pane. */
   readonly managedClaudeAuthDir?: string;
   /**
+   * OVKA-713/747 — filtro de skill DECLARADO (allowlist dura). `null`/vazio =
+   * sem filtro (liberdade). Lista não vazia esconde do Claude as skills
+   * pessoais/projeto/CLI fora do conjunto (`skillOverrides: 'off'`) e NÃO
+   * linka o diretório nativo de skills no overlay.
+   */
+  readonly skillFilter?: readonly string[] | null;
+  /**
    * cwd do pane. Usado só para carregar a confiança de pasta que o usuário já
    * concedeu no HOME real ou a confiança efêmera de uma missão selada.
    */
@@ -540,7 +547,16 @@ export function prepareEphemeralHome(
   }
   if (options.inheritNativeProfile) {
     // Explicit executable/profile entries only: never projects, history or session indexes.
-    const entries = new Set(['skills', 'commands', 'agents', 'plugins', 'hooks', 'CLAUDE.md']);
+    // OVKA-747: pane COM filtro declarado não herda o diretório nativo de
+    // skills — as skills autorizadas chegam pelo skill-mirror; as pessoais
+    // ficam ocultas (`skillOverrides: 'off'` abaixo).
+    const skillFilterActive =
+      Array.isArray(options.skillFilter) && options.skillFilter.length > 0;
+    const entries = new Set(
+      skillFilterActive
+        ? ['commands', 'agents', 'plugins', 'hooks', 'CLAUDE.md']
+        : ['skills', 'commands', 'agents', 'plugins', 'hooks', 'CLAUDE.md'],
+    );
     const nativeDir = path.join(os.homedir(), '.claude');
     linkSelectedEntries(nativeDir, claudeDir, entries);
     for (const name of entries) {
@@ -559,9 +575,14 @@ export function prepareEphemeralHome(
   // marker-separated and never touching the gate entries.
   // enabledPlugins:{} is an empty override map — mission panes must not inherit
   // the operator's plugin roster through the ephemeral overlay.
+  // OVKA-747: filtro declarado → skillOverrides 'off' (skills fora do conjunto
+  // não listam e não invocam; a lista do plugin pode aparecer mas é recusada).
+  const skillFilterActive =
+    Array.isArray(options.skillFilter) && options.skillFilter.length > 0;
   const settings = {
     ...CLAUDE_FAMILY_ZERO_CLICK_SETTINGS,
     enabledPlugins: Object.freeze({}),
+    ...(skillFilterActive ? { skillOverrides: 'off' as const } : {}),
     hooks: mergeClaudeStatusHooks({
       PreToolUse: [
         {

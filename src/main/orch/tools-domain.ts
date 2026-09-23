@@ -88,6 +88,10 @@ import { buildHandoffTools } from './tools-handoff';
 import { buildJudgeTools } from './tools-judge';
 import { buildRankTools } from './tools-rank';
 import { pickAccountTool } from './tools-pick-account';
+import { accountWindowsTool } from './tools-account-windows';
+import { harnessTool } from './tools-harness';
+import { skillOpsTool } from './tools-skill-ops';
+import { describeEnvelope, DESCRIBE_PROPERTY } from './tool-describe';
 import { buildToolPickTools } from './tools-tool-pick';
 import { squadSchema } from '../../shared/orch-types';
 import { collectPerfSnapshot } from '../perf/perf-ipc';
@@ -731,13 +735,55 @@ const squadSaveTool: McpToolDef = {
   name: 'nexus_squad_save',
   description:
     'Save a squad definition (JSON schema: {id, name, ' +
-    'createdAt, builtin, orchestratorInstructions, agents[]}).',
+    'createdAt, builtin, orchestratorInstructions, agents[]}). Pass ' +
+    'describe:true to get the full argument schema and stop (schema-on-demand).',
   inputSchema: {
     type: 'object',
-    properties: { squad: { type: 'object' } },
-    required: ['squad'],
+    properties: {
+      squad: { type: 'object' },
+      ...DESCRIBE_PROPERTY,
+    },
   },
   handler: async (args, ctx) => {
+    if (args.describe === true) {
+      return describeEnvelope(true, 'save', {
+        type: 'object',
+        properties: {
+          squad: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              name: { type: 'string' },
+              createdAt: { type: 'number' },
+              builtin: { type: 'boolean' },
+              orchestratorInstructions: { type: 'string' },
+              nativeInstructions: { type: 'string' },
+              agents: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    id: { type: 'string' },
+                    agentName: { type: 'string' },
+                    category: { type: 'string' },
+                    cli: { type: 'string' },
+                    model: { type: 'string' },
+                    effort: { type: 'string' },
+                    allowedSkills: { type: 'array', items: { type: 'string' } },
+                    delegateOnly: { type: 'boolean' },
+                    leaf: { type: 'boolean' },
+                    invocable: { type: 'boolean' },
+                  },
+                  required: ['agentName'],
+                },
+              },
+            },
+            required: ['name', 'agents'],
+          },
+        },
+        required: ['squad'],
+      });
+    }
     if (ctx.role !== 'user' || ctx.missionId) {
       throw new Error(
         'squad save is operator-owned: mission agents cannot mutate the persistent squad catalog',
@@ -2112,6 +2158,9 @@ export function buildDomainTools(): McpToolDef[] {
     routeTaskTool,
     routeLogTool,
     pickAccountTool,
+    accountWindowsTool,
+    harnessTool,
+    skillOpsTool,
     clarifyTool,
     ...buildHandoffTools(),
     ...buildJudgeTools(),

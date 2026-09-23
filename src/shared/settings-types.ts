@@ -337,6 +337,12 @@ export const orchSettingsSchema = z.object({
     })
     .nullable()
     .default(null),
+  /**
+   * Harness por tarefa (paridade Overclock 1.4): categorias × tipos ×
+   * {cli, model, account, effort, skills, agent}. `null` = tabela de fábrica.
+   * Persistida pelo `nexus_harness` action=apply via replaceOrchSettings.
+   */
+  taskHarnessTable: z.record(z.string(), z.unknown()).nullable().default(null),
 });
 export type OrchSettings = z.infer<typeof orchSettingsSchema>;
 export const DEFAULT_ORCH_SETTINGS: OrchSettings = orchSettingsSchema.parse({});

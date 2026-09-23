@@ -22,6 +22,10 @@ export const NEXUS_GUIDED_SKILL_ORDER = [
   'archify',
   'superpowers',
   'nexus-visual-media',
+  'oc-pilot',
+  'oc-builder',
+  'oc-scout',
+  'oc-conveyor',
 ] as const;
 
 const NEXUS_GUIDED_SKILLS = new Set<string>(NEXUS_GUIDED_SKILL_ORDER);
@@ -45,6 +49,10 @@ export const BUNDLED_GUIDED_SKILLS = [
   'archify',
   'superpowers',
   'nexus-visual-media',
+  'oc-pilot',
+  'oc-builder',
+  'oc-scout',
+  'oc-conveyor',
 ] as const;
 
 /*
