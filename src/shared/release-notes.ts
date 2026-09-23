@@ -6389,7 +6389,7 @@ export const RELEASE_07683: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07684: AppRelease = {
   version: '0.76.84',
   date: '2026-09-22',
   codename: 'CLI certa, janelas vivas',
@@ -6434,6 +6434,43 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'Se a versão não mudou, ou o Nexus passou a usar outro executável, ' +
         'o resultado deixa isso claro em vez de prometer uma atualização.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.85',
+  date: '2026-09-23',
+  codename: 'Configurações no lugar',
+  summary:
+    'O Windows recebe as Configurações organizadas por tarefa, a CLI atualizada onde o pane realmente roda e a cota do Claude presa à conta certa.',
+  highlights: [
+    {
+      title: 'Configurações por tarefa',
+      detail:
+        'Sete áreas em vez de nove categorias por módulo. O modo foco devolve a largura ao conteúdo e as páginas longas ficaram bem mais curtas.',
+    },
+    {
+      title: 'CLI atualizada onde o pane roda',
+      detail:
+        'Atualizar mexe na instalação que o pane usa. Se você deixar, o Nexus mantém as CLIs em dia sozinho, sem pane aberto da CLI no meio.',
+    },
+    {
+      title: 'Cota do Claude na conta certa',
+      detail:
+        'A identidade da credencial é confirmada antes de mostrar a cota. Token de outra conta pede novo login em vez de copiar a cota da irmã.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Conta sem verde falso',
+      detail:
+        'O selo mostra "a confirmar" ou "sessão expirada", com "Entrar de novo" e Cancelar. As mensagens apontam Configurações › Contas de IA.',
+    },
+    {
+      title: 'Menus e alvos de clique',
+      detail:
+        '"Tornar orquestrador" vai para o menu do pane, "+ Pane" não corta nomes, foco visível e alvos de 24 px.',
     },
   ],
 };

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.76.85 — Configurações no lugar, também no Windows
+
+- **Configurações organizadas por tarefa.** Sete áreas em vez de nove categorias por módulo, modo foco que devolve a largura ao conteúdo e páginas longas bem mais curtas (Comparar modelos, Uso e cotas, Loja, Equipes).
+- **Linguagem simples e caminhos certos.** As mensagens apontam “Configurações › Contas de IA”. A conta não mostra verde falso: aparece “a confirmar” ou “sessão expirada”, com “Entrar de novo” e Cancelar.
+- **Menus e acessibilidade.** “Tornar orquestrador” vai para o menu “…” do pane, “+ Pane” não corta nomes, foco visível, alvos de 24 px e botões na fonte do app.
+- **Atualizar CLI mexe na instalação que o pane usa (F-360)**, e o Nexus pode manter as CLIs em dia sozinho, se você deixar (F-633). Versão igual ou não verificada não vira “atualizada”.
+- **Cota do Claude ligada à conta certa (F-615).** A identidade da credencial é confirmada antes de mostrar a cota ou abrir um pane gerenciado. Token de outra conta pede novo login em vez de copiar a cota da irmã. A leitura da cota não renova o token das contas gerenciadas em paralelo com a CLI.
+- **Saída do terminal preservada entre janelas do Nexus (F-361).**
+- **Continua desta linha Windows:** CLIs de nvm/pnpm/Volta/scoop, seletor de pasta que responde, cofre que para de verdade e Git/gh em todo pane gravável.
+
 ## 0.76.84 — CLI certa, janelas vivas
 
 - **Atualizar CLI atua na instalação usada pelo pane (F-360).** Nexus escolhe o canal pelo executável ativo: Claude nativo usa o próprio updater, Homebrew usa o prefixo dono da CLI, npm usa o prefixo global correto, uv recebe seus diretórios e instaladores oficiais mantêm o perfil. Depois, lê a versão do launcher do próximo pane; versão igual ou não verificada não vira um falso “atualizada”.
