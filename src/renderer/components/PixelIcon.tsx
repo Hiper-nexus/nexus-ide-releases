@@ -371,17 +371,25 @@ const ICONS: Record<PixelIconName, Rect[]> = {
     [9, 6, 1, 4],
     [6, 9, 4, 1],
   ],
-  // dois painéis lado a lado (split horizontal / à direita)
+  // moldura dividida ao meio, metade da direita cheia (split / ao lado).
+  // Os dois blocos cheios de antes, com a divisória também cheia, viravam
+  // um retângulo sólido — lia como "parar", não como dividir.
   'split-right': [
-    [1, 2, 4, 7],
-    [6, 2, 4, 7],
-    [5, 2, 1, 7],
+    [1, 2, 9, 1],
+    [1, 8, 9, 1],
+    [1, 3, 1, 5],
+    [9, 3, 1, 5],
+    [5, 3, 1, 5],
+    [6, 3, 3, 5],
   ],
-  // dois painéis um sobre o outro (split vertical / para baixo)
+  // moldura dividida ao meio, metade de baixo cheia (split para baixo)
   'split-down': [
-    [2, 1, 7, 4],
-    [2, 6, 7, 4],
-    [2, 5, 7, 1],
+    [2, 1, 7, 1],
+    [2, 9, 7, 1],
+    [2, 2, 1, 7],
+    [8, 2, 1, 7],
+    [3, 5, 5, 1],
+    [3, 6, 5, 3],
   ],
   // menu ⋯
   more: [
