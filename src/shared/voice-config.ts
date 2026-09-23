@@ -477,6 +477,57 @@ export const DEFAULT_WHISPER_STT: VoicePlugin = {
 };
 
 /**
+ * Gemini 3.8 Flash-Lite TTS (GA 22/09/2026): voz da Jarvis pela mesma
+ * GEMINI_API_KEY do STT/brain. `POST /v1beta/interactions`, WAV 24 kHz mono
+ * em `steps[].content[]` (type `audio`). O 3.8 Flash (`gemini-3.8-flash-tts`)
+ * é a opção de qualidade no mesmo contrato.
+ */
+export const GEMINI_TTS_ENDPOINT =
+  'https://generativelanguage.googleapis.com/v1beta/interactions';
+export const DEFAULT_GEMINI_TTS_MODEL = 'gemini-3.8-flash-lite-tts';
+export const GEMINI_TTS_QUALITY_MODEL = 'gemini-3.8-flash-tts';
+export const DEFAULT_GEMINI_TTS_VOICE = 'Charon';
+/** Modelos do Gemini 3.8 TTS oferecidos no seletor da voz por etapas. */
+export const GEMINI_TTS_MODEL_OPTIONS = [
+  { id: DEFAULT_GEMINI_TTS_MODEL, label: 'Flash-Lite (rápida, padrão)' },
+  { id: GEMINI_TTS_QUALITY_MODEL, label: 'Flash (qualidade)' },
+] as const;
+
+/** Vozes prontas do Gemini TTS, com o estilo que o Google descreve para cada uma. */
+export const GEMINI_TTS_VOICE_OPTIONS = [
+  { id: 'Charon', label: 'Charon (informativa)' },
+  { id: 'Kore', label: 'Kore (firme)' },
+  { id: 'Orus', label: 'Orus (firme)' },
+  { id: 'Alnilam', label: 'Alnilam (firme)' },
+  { id: 'Puck', label: 'Puck (animada)' },
+  { id: 'Fenrir', label: 'Fenrir (empolgada)' },
+  { id: 'Iapetus', label: 'Iapetus (clara)' },
+  { id: 'Erinome', label: 'Erinome (clara)' },
+  { id: 'Algieba', label: 'Algieba (suave)' },
+  { id: 'Despina', label: 'Despina (suave)' },
+  { id: 'Schedar', label: 'Schedar (equilibrada)' },
+  { id: 'Achird', label: 'Achird (amigável)' },
+  { id: 'Sulafat', label: 'Sulafat (calorosa)' },
+  { id: 'Gacrux', label: 'Gacrux (madura)' },
+  { id: 'Sadaltager', label: 'Sadaltager (conhecedora)' },
+  { id: 'Algenib', label: 'Algenib (grave)' },
+  { id: 'Zephyr', label: 'Zephyr (brilhante)' },
+  { id: 'Aoede', label: 'Aoede (leve)' },
+  { id: 'Leda', label: 'Leda (jovial)' },
+  { id: 'Vindemiatrix', label: 'Vindemiatrix (gentil)' },
+] as const;
+
+export const DEFAULT_GEMINI_TTS: VoicePlugin = {
+  type: 'tts',
+  provider: 'gemini',
+  endpoint: GEMINI_TTS_ENDPOINT,
+  auth: { type: 'api_key', envVar: 'GEMINI_API_KEY' },
+  model: DEFAULT_GEMINI_TTS_MODEL,
+  voice: DEFAULT_GEMINI_TTS_VOICE,
+  format: 'wav',
+};
+
+/**
  * Grok Voice Transcribe 2.0 (xAI): batch STT barato e rápido (70–500 ms,
  * US$ 0,10/h), multipart em `POST /v1/stt` com `keyterm` como viés de
  * vocabulário (wake word / jargão CODE). SÓ transcreve — a API não tem
@@ -573,26 +624,30 @@ export const DEFAULT_VOICE_CONFIG: VoiceConfig = {
       fallback: DEFAULT_WHISPER_STT,
     },
   },
+  // Gemini 3.8 Flash-Lite na cabeça; OpenAI → Piper → say seguem de reserva.
   tts: {
-    type: 'tts',
-    provider: 'openai',
-    endpoint: 'https://api.openai.com/v1/audio/speech',
-    auth: { type: 'api_key', envVar: 'OPENAI_API_KEY' },
-    model: 'gpt-4o-mini-tts',
-    voice: DEFAULT_OPENAI_VOICE,
-    speed: 1.0,
-    streaming: true,
-    format: 'mp3',
+    ...DEFAULT_GEMINI_TTS,
     fallback: {
       type: 'tts',
-      provider: 'piper',
-      localBin: 'piper',
-      voice: 'pt_BR-faber-medium',
+      provider: 'openai',
+      endpoint: 'https://api.openai.com/v1/audio/speech',
+      auth: { type: 'api_key', envVar: 'OPENAI_API_KEY' },
+      model: 'gpt-4o-mini-tts',
+      voice: DEFAULT_OPENAI_VOICE,
+      speed: 1.0,
+      streaming: true,
+      format: 'mp3',
       fallback: {
         type: 'tts',
-        provider: 'macos-say',
-        localBin: '/usr/bin/say',
-        voice: 'Felipe',
+        provider: 'piper',
+        localBin: 'piper',
+        voice: 'pt_BR-faber-medium',
+        fallback: {
+          type: 'tts',
+          provider: 'macos-say',
+          localBin: '/usr/bin/say',
+          voice: 'Felipe',
+        },
       },
     },
   },

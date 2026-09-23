@@ -8,6 +8,11 @@ import type {
   VoicePersona,
   VoicePlugin,
 } from '../../shared/voice-config';
+import {
+  DEFAULT_GEMINI_TTS_MODEL,
+  DEFAULT_GEMINI_TTS_VOICE,
+  GEMINI_TTS_ENDPOINT,
+} from '../../shared/voice-config';
 import type { SpeakRequest, SpeakResult } from '../../shared/voice-ipc';
 import { toSpeakable } from './speakable';
 import { echoSuppressor } from './echo-suppress';
@@ -226,6 +231,89 @@ function ttsInstructions(persona: VoicePersona): string {
     .join(' ');
 }
 
+/**
+ * Áudio da resposta do Interactions API: o WAV vem em
+ * `steps[].content[]` com `type: 'audio'` (medido em 23/09 contra o
+ * gemini-3.8-flash-lite-tts; o guia citava `output_audio.data`, que não vem).
+ */
+export function extractGeminiTtsAudio(
+  payload: unknown,
+): { data: string; mimeType: string } | null {
+  const steps = (payload as { steps?: unknown })?.steps;
+  if (!Array.isArray(steps)) return null;
+  for (const step of steps) {
+    const content = (step as { content?: unknown })?.content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      const item = part as { type?: unknown; data?: unknown; mime_type?: unknown };
+      if (item?.type === 'audio' && typeof item.data === 'string' && item.data) {
+        return {
+          data: item.data,
+          mimeType: typeof item.mime_type === 'string' ? item.mime_type : 'audio/wav',
+        };
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Gemini 3.8 TTS (Flash-Lite padrão, Flash de qualidade). A persona da Jarvis
+ * vai no `style` do speech_metadata — é ali que o modelo lê tom e ritmo.
+ */
+async function speakGemini(
+  plugin: VoicePlugin,
+  text: string,
+  deps: TtsDeps,
+  persona: VoicePersona,
+  key: string,
+): Promise<SpeakResult> {
+  const res = await deps.fetchImpl(plugin.endpoint ?? GEMINI_TTS_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+    signal: AbortSignal.timeout(TTS_CLOUD_TIMEOUT_MS),
+    body: JSON.stringify({
+      model: plugin.model ?? DEFAULT_GEMINI_TTS_MODEL,
+      input: [
+        {
+          type: 'user_input',
+          content: [
+            {
+              type: 'text',
+              text,
+              annotations: [
+                { type: 'speech_metadata', style: ttsInstructions(persona) },
+              ],
+            },
+          ],
+        },
+      ],
+      response_format: { type: 'audio' },
+      generation_config: {
+        speech_config: [{ voice: plugin.voice ?? DEFAULT_GEMINI_TTS_VOICE }],
+      },
+    }),
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      detail = (await res.text()).slice(0, 400);
+    } catch {
+      // ignore
+    }
+    return { ok: false, error: `TTS ${res.status}: ${detail}` };
+  }
+  const audio = extractGeminiTtsAudio(await res.json().catch(() => null));
+  if (!audio) return { ok: false, error: 'gemini TTS returned no audio' };
+  return {
+    ok: true,
+    provider: plugin.provider,
+    mode: 'audio',
+    format: audio.mimeType.includes('wav') ? 'wav' : (plugin.format ?? 'wav'),
+    audioBase64: audio.data,
+  };
+}
+
 async function speakCloud(
   plugin: VoicePlugin,
   text: string,
@@ -236,6 +324,9 @@ async function speakCloud(
   const key = envVar ? deps.getEnv(envVar)?.trim() : undefined;
   if ((plugin.auth?.type ?? 'api_key') !== 'none' && !key) {
     return { ok: false, error: `${plugin.provider} needs ${envVar ?? 'an API key'}` };
+  }
+  if (plugin.provider === 'gemini') {
+    return speakGemini(plugin, text, deps, persona, key ?? '');
   }
   const endpoint = plugin.endpoint ?? 'https://api.openai.com/v1/audio/speech';
   const format = plugin.format ?? 'mp3';

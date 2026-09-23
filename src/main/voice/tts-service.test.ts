@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_VOICE_CONFIG, type VoiceConfig, type VoicePlugin } from '../../shared/voice-config';
 import type { ProviderProbes } from './provider-select';
 import {
+  extractGeminiTtsAudio,
   resetStickyTtsProvider,
   speak,
   TTS_STICKY_FALLBACK_RETRY_MS,
@@ -341,5 +342,82 @@ describe('speak', () => {
     expect(body.instructions).toContain('pronúncia brasileira');
     expect(body.instructions).toContain('patrão');
     expect(body.instructions).toContain('seja cordial e breve');
+  });
+});
+
+describe('Gemini 3.8 TTS', () => {
+  beforeEach(() => {
+    resetStickyTtsProvider();
+  });
+
+  const geminiResponse = (data: string) =>
+    new Response(
+      JSON.stringify({
+        status: 'completed',
+        steps: [{ type: 'model_output', content: [{ type: 'audio', mime_type: 'audio/wav', data }] }],
+      }),
+      { status: 200 },
+    );
+
+  it('fala pelo Flash-Lite com a key Gemini, persona no style e WAV de volta', async () => {
+    const fetchImpl = vi.fn(async (_url: string, _init: RequestInit) => geminiResponse('UklGRg=='));
+    const result = await speak(
+      { text: 'O build terminou.', speakMode: 'full' },
+      DEFAULT_VOICE_CONFIG,
+      PROBES,
+      deps({
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        getEnv: vi.fn((name: string) => (name === 'GEMINI_API_KEY' ? 'g-key' : undefined)),
+      }),
+    );
+    expect(result).toMatchObject({ ok: true, provider: 'gemini', mode: 'audio', format: 'wav', audioBase64: 'UklGRg==' });
+    const [url, init] = fetchImpl.mock.calls[0]!;
+    expect(url).toBe('https://generativelanguage.googleapis.com/v1beta/interactions');
+    expect((init.headers as Record<string, string>)['x-goog-api-key']).toBe('g-key');
+    const body = JSON.parse(String(init.body));
+    expect(body.model).toBe('gemini-3.8-flash-lite-tts');
+    expect(body.generation_config.speech_config).toEqual([{ voice: 'Charon' }]);
+    expect(body.input[0].content[0].text).toBe('O build terminou.');
+    expect(body.input[0].content[0].annotations[0].style).toContain('português brasileiro');
+  });
+
+  it('sem key Gemini cai direto no OpenAI de reserva, sem chamar o Google', async () => {
+    const fetchImpl = vi.fn(async (_url: string, _init: RequestInit) => new Response('mp3', { status: 200 }));
+    const result = await speak(
+      { text: 'Oi.', speakMode: 'full' },
+      DEFAULT_VOICE_CONFIG,
+      PROBES,
+      deps({
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        getEnv: vi.fn((name: string) => (name === 'OPENAI_API_KEY' ? 'o-key' : undefined)),
+      }),
+    );
+    expect(result).toMatchObject({ ok: true, provider: 'openai' });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(fetchImpl.mock.calls[0]![0]).toContain('api.openai.com');
+  });
+
+  it('resposta sem áudio conta como falha e segue a cadeia', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ steps: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response('mp3', { status: 200 }));
+    const result = await speak(
+      { text: 'Oi.', speakMode: 'full' },
+      DEFAULT_VOICE_CONFIG,
+      PROBES,
+      deps({ fetchImpl: fetchImpl as unknown as typeof fetch, getEnv: vi.fn(() => 'k') }),
+    );
+    expect(result).toMatchObject({ ok: true, provider: 'openai' });
+    if (result.ok) expect(result.fallbackNote).toContain('gemini TTS returned no audio');
+  });
+
+  it('extrai o áudio de steps[].content[]', () => {
+    expect(
+      extractGeminiTtsAudio({
+        steps: [{ content: [{ type: 'text', text: 'x' }, { type: 'audio', data: 'AA', mime_type: 'audio/wav' }] }],
+      }),
+    ).toEqual({ data: 'AA', mimeType: 'audio/wav' });
+    expect(extractGeminiTtsAudio({ output_audio: { data: 'AA' } })).toBeNull();
   });
 });

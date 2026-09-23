@@ -100,8 +100,10 @@ export const setConfigRequestSchema = z.object({
   jarvisLiveOpenaiVoice: z.string().min(1).max(64).optional(),
   /** Gemini Live prebuilt voice override (e.g. Charon, Fenrir). */
   jarvisLiveGeminiVoice: z.string().min(1).max(64).optional(),
-  /** Classic OpenAI TTS voice (speech API). */
+  /** Voz da cabeça da cadeia TTS (OpenAI ou Gemini, conforme o provider). */
   ttsVoice: z.string().min(1).max(64).optional(),
+  /** Modelo do Gemini TTS na cabeça (Flash-Lite ou Flash). Ignorado para outros providers. */
+  ttsModel: z.enum(['gemini-3.8-flash-lite-tts', 'gemini-3.8-flash-tts']).optional(),
   /** Preferred chat-model provider for the Jarvis brain. */
   jarvisBrainProvider: z.enum(['gemini', 'openai', 'groq']).optional(),
   /** Persona da voz: nome do assistente / do usuário / instruções custom. */
@@ -218,8 +220,11 @@ export interface VoiceRuntimeInfo {
     dormantAfterMs: number;
     maxWindowTurns: number;
   };
-  /** Voice id on the head of the TTS chain (openai/piper/macos-say). */
+  /** Voice id on the head of the TTS chain (gemini/openai/piper/macos-say). */
   ttsVoice?: string;
+  /** Provider e modelo na cabeça da cadeia TTS — o seletor de voz depende deles. */
+  ttsProvider?: string;
+  ttsModel?: string;
   persona: {
     assistantName: string;
     userName?: string;

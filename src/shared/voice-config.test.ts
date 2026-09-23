@@ -25,7 +25,13 @@ describe('voiceConfigSchema', () => {
 
   it('ships one male OpenAI voice across realtime and classic TTS', () => {
     expect(DEFAULT_VOICE_CONFIG.jarvisLive.openaiVoice).toBe('ash');
-    expect(DEFAULT_VOICE_CONFIG.tts.voice).toBe('ash');
+    // Gemini 3.8 Flash-Lite na cabeça fala com Charon, a mesma voz do Live;
+    // o OpenAI de reserva segue com ash.
+    expect(DEFAULT_VOICE_CONFIG.tts.provider).toBe('gemini');
+    expect(DEFAULT_VOICE_CONFIG.tts.model).toBe('gemini-3.8-flash-lite-tts');
+    expect(DEFAULT_VOICE_CONFIG.tts.voice).toBe('Charon');
+    expect(DEFAULT_VOICE_CONFIG.tts.fallback?.provider).toBe('openai');
+    expect(DEFAULT_VOICE_CONFIG.tts.fallback?.voice).toBe('ash');
     expect(DEFAULT_VOICE_CONFIG.jarvisLive.voiceName).toBe('Charon');
   });
 
@@ -172,7 +178,8 @@ describe('migrateLegacyVoiceConfig', () => {
     // Groq → OpenAI → local-whisper.
     expect(config.stt.fallback?.provider).toBe('openai');
     expect(config.stt.fallback?.fallback?.provider).toBe('local-whisper');
-    expect(config.tts.provider).toBe('openai');
+    expect(config.tts.provider).toBe('gemini');
+    expect(config.tts.fallback?.provider).toBe('openai');
     expect(voiceConfigSchema.safeParse(config).success).toBe(true);
   });
 

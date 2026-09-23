@@ -13,6 +13,8 @@ import {
   normalizeKeyCode,
   GEMINI_LIVE_VOICE_OPTIONS,
   OPENAI_REALTIME_VOICE_OPTIONS,
+  GEMINI_TTS_MODEL_OPTIONS,
+  GEMINI_TTS_VOICE_OPTIONS,
   OPENAI_TTS_VOICE_OPTIONS,
 } from '../../shared/voice-config';
 import type { JarvisLiveTransport } from '../../shared/voice-config';
@@ -182,6 +184,7 @@ export function VoiceSettings({ onClose, embedded = false }: VoiceSettingsProps 
   const [openaiVoice, setOpenaiVoice] = useState('ash');
   const [geminiVoice, setGeminiVoice] = useState('Charon');
   const [ttsVoice, setTtsVoice] = useState('ash');
+  const ttsIsGemini = info?.ttsProvider === 'gemini';
   const [triggerAccel, setTriggerAccel] = useState('CommandOrControl+Shift+Space');
   const [captureHint, setCaptureHint] = useState<string | null>(null);
   const [capturingKey, setCapturingKey] = useState(false);
@@ -520,6 +523,7 @@ export function VoiceSettings({ onClose, embedded = false }: VoiceSettingsProps 
     jarvisLiveOpenaiVoice?: string;
     jarvisLiveGeminiVoice?: string;
     ttsVoice?: string;
+    ttsModel?: 'gemini-3.8-flash-lite-tts' | 'gemini-3.8-flash-tts';
   }) => {
     try {
       const next = await window.nexus.voice.setConfig(patch);
@@ -966,7 +970,11 @@ export function VoiceSettings({ onClose, embedded = false }: VoiceSettingsProps 
                         </select>
                       </label>
                       <label className="agent-picker__label">
-                        Voz por etapas
+                        {ttsIsGemini ? (
+                          <span><ProviderLogo adapterId="gemini" label="Gemini" size="xs" /> Voz por etapas</span>
+                        ) : (
+                          'Voz por etapas'
+                        )}
                         <select
                           className="agent-picker__select"
                           value={ttsVoice}
@@ -976,13 +984,33 @@ export function VoiceSettings({ onClose, embedded = false }: VoiceSettingsProps 
                             void persistVoicePick({ ttsVoice: v });
                           }}
                         >
-                          {OPENAI_TTS_VOICE_OPTIONS.map((v) => (
+                          {(ttsIsGemini ? GEMINI_TTS_VOICE_OPTIONS : OPENAI_TTS_VOICE_OPTIONS).map((v) => (
                             <option key={v.id} value={v.id}>
                               {v.label}
                             </option>
                           ))}
                         </select>
                       </label>
+                      {ttsIsGemini ? (
+                        <label className="agent-picker__label">
+                          Modelo da voz
+                          <select
+                            className="agent-picker__select"
+                            value={info?.ttsModel ?? GEMINI_TTS_MODEL_OPTIONS[0].id}
+                            onChange={(e) => {
+                              void persistVoicePick({
+                                ttsModel: e.target.value as 'gemini-3.8-flash-lite-tts' | 'gemini-3.8-flash-tts',
+                              });
+                            }}
+                          >
+                            {GEMINI_TTS_MODEL_OPTIONS.map((m) => (
+                              <option key={m.id} value={m.id}>
+                                {m.label}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      ) : null}
                     </div>
                   </details>
                 </section>

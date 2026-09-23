@@ -6,6 +6,8 @@ import {
   DEFAULT_GEMINI_LIVE_MODEL,
   DEFAULT_GEMINI_LIVE_VOICE,
   DEFAULT_VOICE_CONFIG,
+  DEFAULT_GEMINI_TTS,
+  DEFAULT_OPENAI_VOICE,
   DEFAULT_XAI_STT,
   LEGACY_GEMINI_LIVE_MODEL,
   LEGACY_GEMINI_LIVE_VOICE,
@@ -167,7 +169,7 @@ export function loadVoiceConfig(): VoiceConfig {
       userConfig.tts = {
         ...userConfig.tts,
         model: 'gpt-4o-mini-tts',
-        voice: DEFAULT_VOICE_CONFIG.tts.voice,
+        voice: DEFAULT_OPENAI_VOICE,
       };
       migrated = true;
       console.log('[voice] TTS migrado para gpt-4o-mini-tts (qualidade)');
@@ -181,7 +183,7 @@ export function loadVoiceConfig(): VoiceConfig {
     ) {
       userConfig.tts = {
         ...userConfig.tts,
-        voice: DEFAULT_VOICE_CONFIG.tts.voice,
+        voice: DEFAULT_OPENAI_VOICE,
       };
       if (
         userConfig.jarvisLive.openaiVoice === 'marin' ||
@@ -281,6 +283,33 @@ export function loadVoiceConfig(): VoiceConfig {
       migrated = true;
       console.log('[voice] STT: Grok Voice Transcribe 2.0 (xAI) adicionado à cadeia (seletor)');
     }
+    // Gemini 3.8 Flash-Lite TTS (GA 22/09/2026) vira a voz padrão da Jarvis.
+    // Mesma política do STT: só assume a cabeça de quem está na cadeia de
+    // FÁBRICA (head OpenAI); cadeia trocada ganha o Gemini como opção depois do
+    // último link cloud, e cadeia só-local não recebe nada (privacidade).
+    const ttsLinks = flattenChain(userConfig.tts);
+    if (!ttsLinks.some((link) => link.provider === 'gemini')) {
+      const onShippedTtsChain =
+        userConfig.tts.provider === 'openai' &&
+        (userConfig.tts.endpoint ?? '').includes('api.openai.com');
+      const lastCloudTtsIdx = ttsLinks.reduce(
+        (acc, link, i) => (classifyKind(link) === 'cloud' ? i : acc),
+        -1,
+      );
+      if (onShippedTtsChain) {
+        userConfig.tts = { ...DEFAULT_GEMINI_TTS, fallback: userConfig.tts };
+        migrated = true;
+        console.log('[voice] TTS: Gemini 3.8 Flash-Lite na cabeça da cadeia');
+      } else if (lastCloudTtsIdx >= 0) {
+        userConfig.tts = relink([
+          ...ttsLinks.slice(0, lastCloudTtsIdx + 1),
+          DEFAULT_GEMINI_TTS,
+          ...ttsLinks.slice(lastCloudTtsIdx + 1),
+        ]);
+        migrated = true;
+        console.log('[voice] TTS: Gemini 3.8 Flash-Lite adicionado à cadeia (seletor)');
+      }
+    }
     // Keep focused-pane when the user (or peer ADE migration) chose dictation
     // into the active terminal — do not force Jarvis over NexusVoice-style PTT.
     if (migrated) persist(userConfig);
@@ -373,9 +402,13 @@ export function applyConfigPatch(patch: SetConfigRequest): VoiceConfig {
       pushToTalkKey: { code: pushToTalkKeyCode },
     },
     stt,
-    tts: patch.ttsVoice
-      ? { ...tts, voice: patch.ttsVoice }
-      : tts,
+    // Voz e modelo valem para a CABEÇA da cadeia; modelo Gemini só quando é
+    // o Gemini que lidera (um id Gemini no OpenAI quebraria a fala).
+    tts: {
+      ...tts,
+      ...(patch.ttsVoice ? { voice: patch.ttsVoice } : {}),
+      ...(patch.ttsModel && tts.provider === 'gemini' ? { model: patch.ttsModel } : {}),
+    },
   };
 
   current = next;
@@ -537,5 +570,7 @@ export function buildRuntimeInfo(): VoiceRuntimeInfo {
     stt: resolveChain(current.stt, probes),
     tts: resolveChain(current.tts, probes),
     ttsVoice: current.tts.voice,
+    ttsProvider: current.tts.provider,
+    ttsModel: current.tts.model,
   };
 }

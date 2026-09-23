@@ -21,6 +21,32 @@ describe('voice-config-store', () => {
     vi.resetModules();
   });
 
+  it('troca voz e modelo do Gemini TTS na cabeça da cadeia', async () => {
+    const { store } = await loadStoreInTempHome();
+    store.loadVoiceConfig();
+    const next = store.applyConfigPatch({ ttsVoice: 'Kore', ttsModel: 'gemini-3.8-flash-tts' });
+    expect(next.tts.provider).toBe('gemini');
+    expect(next.tts.voice).toBe('Kore');
+    expect(next.tts.model).toBe('gemini-3.8-flash-tts');
+    expect(next.tts.fallback?.voice).toBe('ash');
+    const info = store.buildRuntimeInfo();
+    expect(info.ttsProvider).toBe('gemini');
+    expect(info.ttsModel).toBe('gemini-3.8-flash-tts');
+  });
+
+  it('modelo Gemini não entra numa cadeia liderada pelo OpenAI', async () => {
+    const { home, store } = await loadStoreInTempHome();
+    const { DEFAULT_VOICE_CONFIG } = await import('../../shared/voice-config');
+    const file = path.join(home, '.nexus', 'plugins', 'voice', 'nexus-voice.json');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const custom = { ...DEFAULT_VOICE_CONFIG.tts.fallback!, endpoint: 'https://proxy.example/v1/audio/speech' };
+    fs.writeFileSync(file, JSON.stringify({ ...DEFAULT_VOICE_CONFIG, tts: custom }, null, 2));
+    store.loadVoiceConfig();
+    const next = store.applyConfigPatch({ ttsModel: 'gemini-3.8-flash-tts' });
+    expect(next.tts.provider).toBe('openai');
+    expect(next.tts.model).toBe('gpt-4o-mini-tts');
+  });
+
   it('persiste jarvisLiveEnabled quando setConfig aplica patch parcial', async () => {
     const { home, store } = await loadStoreInTempHome();
     store.loadVoiceConfig();
@@ -200,8 +226,9 @@ describe('voice-config-store', () => {
             enabled: true,
             transport: 'openai-realtime',
           },
+          // Cadeia de fábrica ANTERIOR ao Gemini TTS: head OpenAI.
           tts: {
-            ...DEFAULT_VOICE_CONFIG.tts,
+            ...DEFAULT_VOICE_CONFIG.tts.fallback!,
             voice: 'nova',
           },
         },
@@ -212,11 +239,46 @@ describe('voice-config-store', () => {
 
     const loaded = store.loadVoiceConfig();
     const saved = JSON.parse(fs.readFileSync(file, 'utf-8')) as {
-      tts: { voice: string };
+      tts: { provider: string; voice: string; fallback: { provider: string; voice: string } };
     };
 
-    expect(loaded.tts.voice).toBe('ash');
-    expect(saved.tts.voice).toBe('ash');
+    // nova → ash no OpenAI, e o Gemini 3.8 Flash-Lite assume a cabeça.
+    expect(loaded.tts.provider).toBe('gemini');
+    expect(loaded.tts.fallback?.provider).toBe('openai');
+    expect(loaded.tts.fallback?.voice).toBe('ash');
+    expect(saved.tts.provider).toBe('gemini');
+    expect(saved.tts.fallback.voice).toBe('ash');
+  });
+
+  it('Gemini TTS entra como opção, sem tomar a cabeça, numa cadeia trocada', async () => {
+    const { home, store } = await loadStoreInTempHome();
+    const { DEFAULT_VOICE_CONFIG } = await import('../../shared/voice-config');
+    const file = path.join(home, '.nexus', 'plugins', 'voice', 'nexus-voice.json');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const custom = {
+      type: 'tts',
+      provider: 'elevenlabs',
+      endpoint: 'https://api.elevenlabs.io/v1/text-to-speech',
+      auth: { type: 'api_key', envVar: 'ELEVENLABS_API_KEY' },
+      fallback: { type: 'tts', provider: 'piper', localBin: 'piper' },
+    };
+    fs.writeFileSync(file, JSON.stringify({ ...DEFAULT_VOICE_CONFIG, tts: custom }, null, 2));
+    const loaded = store.loadVoiceConfig();
+    expect(loaded.tts.provider).toBe('elevenlabs');
+    expect(loaded.tts.fallback?.provider).toBe('gemini');
+    expect(loaded.tts.fallback?.fallback?.provider).toBe('piper');
+  });
+
+  it('cadeia de TTS só local não recebe o Gemini', async () => {
+    const { home, store } = await loadStoreInTempHome();
+    const { DEFAULT_VOICE_CONFIG } = await import('../../shared/voice-config');
+    const file = path.join(home, '.nexus', 'plugins', 'voice', 'nexus-voice.json');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const local = { type: 'tts', provider: 'piper', localBin: 'piper', voice: 'pt_BR-faber-medium' };
+    fs.writeFileSync(file, JSON.stringify({ ...DEFAULT_VOICE_CONFIG, tts: local }, null, 2));
+    const loaded = store.loadVoiceConfig();
+    expect(loaded.tts.provider).toBe('piper');
+    expect(loaded.tts.fallback).toBeUndefined();
   });
 
   it('injeta o Gemini na cabeça do STT uma vez, preservando a cadeia do usuário', async () => {
