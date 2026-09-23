@@ -6475,7 +6475,7 @@ export const RELEASE_07685: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07686: AppRelease = {
   version: '0.76.86',
   date: '2026-09-23',
   codename: 'A CLI cuida do próprio login',
@@ -6489,4 +6489,31 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
   fixes: [],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.87',
+  date: '2026-09-23',
+  codename: 'Mais leve no Windows',
+  summary:
+    'O Nexus para de travar quando os agentes escrevem sem parar, o pane de missão volta a aceitar digitação depois de trocar de workspace e os botões das contas ficam no lugar.',
+  highlights: [
+    {
+      title: 'Sem travar com agente escrevendo',
+      detail:
+        'Cada pedaço de saída do terminal recopiava 256 KB e percorria toda a janela de replay. Agora custa só o próprio tamanho, e cliques e menus respondem na hora.',
+    },
+    {
+      title: 'Digitação de volta no pane da missão',
+      detail:
+        'Depois de trocar de workspace, o pane do Codex ou do Claude recusava as teclas e congelava. O Nexus devolve a sessão ao pane quando você volta.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Botões das contas alinhados',
+      detail:
+        'Em Conexão e contas, os botões quebram de linha alinhados ao texto e o "Remover" não sai mais do cartão.',
+    },
+  ],
 };

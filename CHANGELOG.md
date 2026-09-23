@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.87 — Mais leve no Windows
+
+- **O Nexus não trava mais com agente escrevendo sem parar.** O processo principal passava a maior parte do tempo copiando a saída dos terminais: cada pedaço de texto recopiava 256 KB do buffer de detecção e percorria toda a janela de replay. Agora cada pedaço custa só o próprio tamanho. Sob a mesma carga, o main foi de 11% para 60% de folga, e cliques e menus respondem na hora.
+- **O pane de missão volta a aceitar digitação depois de trocar de workspace.** Ao voltar, o Codex ou o Claude da missão mostrava "o main recusou a digitação neste pane" e a tela congelava. O Nexus agora devolve a sessão ao pane quando você volta ao workspace da missão.
+- **Botões das contas no lugar.** Em Conexão e contas, os botões desciam por cima do nome e o "Remover" saía do cartão numa coluna estreita. Agora eles quebram de linha alinhados ao texto.
+
 ## 0.76.86 — A CLI cuida do próprio login
 
 - **A cota do Claude não mexe mais no login nativo do Windows.** O Nexus só lê o `.credentials.json` da CLI, sem renovar o token por conta própria. Antes o Nexus e a CLI podiam renovar ao mesmo tempo e um derrubava o login do outro. Se o token estiver vencido, a cota diz isso até a CLI renovar.
