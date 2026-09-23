@@ -242,34 +242,63 @@ function readNativeProjectTrust(
     );
     const projects = (parsed as { projects?: unknown })?.projects;
     if (!projects || typeof projects !== 'object') return {};
-    const entry = (projects as Record<string, unknown>)[cwd];
-    if (!entry || typeof entry !== 'object') return {};
-    const trusted = (entry as Record<string, unknown>).hasTrustDialogAccepted;
-    if (trusted !== true) return {};
+    const wanted = new Set(projectTrustKeys(cwd).map(projectKeyIdentity));
+    const trusted = Object.entries(projects as Record<string, unknown>).some(
+      ([key, entry]) =>
+        wanted.has(projectKeyIdentity(key)) &&
+        !!entry &&
+        typeof entry === 'object' &&
+        (entry as Record<string, unknown>).hasTrustDialogAccepted === true,
+    );
+    if (!trusted) return {};
     return exactProjectTrust(cwd);
   } catch {
     return {};
   }
 }
 
-function exactProjectTrust(cwd: string | undefined): Record<string, unknown> {
-  if (!cwd) return {};
-  const projects: Record<string, unknown> = {
-    [cwd]: {
-      hasTrustDialogAccepted: true,
-      hasCompletedProjectOnboarding: true,
-    },
-  };
+/**
+ * Chaves de `projects` que o Claude pode usar para esta pasta. No Windows o
+ * CLI grava `C:/Users/...` (barra normal) e o Nexus trabalha com
+ * `C:\\Users\\...`: a busca por texto exato nunca achava a confiança já
+ * dada e o pane perguntava toda vez (no Mac os dois lados usam o mesmo texto).
+ */
+export function projectTrustKeys(
+  cwd: string,
+  platform: NodeJS.Platform = process.platform,
+): string[] {
+  const keys = new Set<string>([cwd]);
   try {
     const real = fs.realpathSync(cwd);
-    if (real && real !== cwd) {
-      projects[real] = {
-        hasTrustDialogAccepted: true,
-        hasCompletedProjectOnboarding: true,
-      };
-    }
+    if (real) keys.add(real);
   } catch {
     // best-effort
+  }
+  // Só caminho Windows de verdade (com letra de drive) ganha as duas barras.
+  if (platform === 'win32' && /^[A-Za-z]:[\\/]/.test(cwd)) {
+    for (const key of [...keys]) {
+      keys.add(key.replace(/\\/g, '/'));
+      keys.add(key.replace(/\//g, '\\'));
+    }
+  }
+  return [...keys];
+}
+
+/** Igualdade de chave de projeto: no Windows sem diferenciar barra nem caixa. */
+function projectKeyIdentity(key: string): string {
+  return process.platform === 'win32'
+    ? key.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+    : key;
+}
+
+function exactProjectTrust(cwd: string | undefined): Record<string, unknown> {
+  if (!cwd) return {};
+  const projects: Record<string, unknown> = {};
+  for (const key of projectTrustKeys(cwd)) {
+    projects[key] = {
+      hasTrustDialogAccepted: true,
+      hasCompletedProjectOnboarding: true,
+    };
   }
   return {
     projects,
