@@ -46,19 +46,31 @@ describe('blockedFailoverToastCopy', () => {
       ...event('transient', 'status:503'),
       missionId: 'mission-1',
     });
-    expect(mission.detail).toMatch(/retoma a missão na mesma conta/);
+    expect(mission.detail).toMatch(/pede para ela continuar, na mesma conta e na mesma conversa/);
     const operator = blockedFailoverToastCopy({
       ...event('transient', 'status:503'),
       missionId: undefined,
     });
     expect(operator.detail).toMatch(/mande "continue"/);
-    const stopped = blockedFailoverToastCopy(
-      event(
-        'transient',
-        'status:503 — a CLI parou com este erro do provider; mande "continue" no pane para tentar de novo',
-      ),
-    );
+  });
+
+  it('a fase do episódio vem do campo estruturado, nunca do texto do motivo', () => {
+    const stopped = blockedFailoverToastCopy({
+      ...event('transient', 'status:503'),
+      transientPhase: 'stopped',
+    });
     expect(stopped.title).toBe('A CLI parou num erro do provider');
+    const nudged = blockedFailoverToastCopy({
+      ...event('transient', 'status:503'),
+      transientPhase: 'nudged',
+    });
+    expect(nudged.title).toBe('Missão continuou na mesma conta');
+    // Um motivo que por acaso contém "a CLI parou" não troca a cópia.
+    const detected = blockedFailoverToastCopy({
+      ...event('transient', 'provider disse: a CLI parou'),
+      transientPhase: 'detected',
+    });
+    expect(detected.title).toBe('Provider instável — conta mantida');
   });
 });
 

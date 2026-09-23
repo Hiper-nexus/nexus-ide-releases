@@ -12,6 +12,12 @@ const ptyMocks = vi.hoisted(() => ({
   sessionStates: new Map<string, string>(),
 }));
 
+const toolMocks = vi.hoisted(() => ({
+  injectPrompt: vi.fn(async (_sessionId: string, _prompt: string) => undefined),
+}));
+
+vi.mock('./tool-util', () => ({ injectPrompt: toolMocks.injectPrompt }));
+
 const paneMocks = vi.hoisted(() => ({
   authorities: new Map<string, unknown>(),
   panes: new Map<string, unknown>(),
@@ -203,6 +209,7 @@ beforeEach(() => {
   paneMocks.panes.clear();
   paneMocks.runtimeAuthorities.clear();
   accountMocks.setCooldown.mockClear();
+  toolMocks.injectPrompt.mockClear();
   accountMocks.verifyClaude.mockReset();
   accountMocks.verifyClaude.mockImplementation(async (_id, onVerified) => {
     onVerified?.('verified-claude-blob');
@@ -1219,21 +1226,22 @@ describe('erro do provider (5xx) — episódio sem troca de conta', () => {
     expect(events[0]).toMatchObject({ kind: 'transient', switched: false, fromAccountId: 'account-a' });
   });
 
-  it('CLI parada no erro: retoma a missão na MESMA conta depois do backoff', async () => {
+  it('CLI parada no erro: a MESMA sessão recebe "continue" — sem respawn, sem trocar conta', async () => {
     const owner = await setupTransient();
     ptyMocks.dataTaps[0]('session-503', E503);
     ptyMocks.sessionStates.set('session-503', 'idle');
     await vi.advanceTimersByTimeAsync(21_000);
+    await settleFailover();
 
+    expect(toolMocks.injectPrompt).toHaveBeenCalledOnce();
+    const [sessionId, prompt] = toolMocks.injectPrompt.mock.calls[0]!;
+    expect(sessionId).toBe('session-503');
+    // O pedido não ecoa o erro: o detector não pode relê-lo no próprio pane.
+    expect(prompt).not.toMatch(/503|overload|unavailable|limit/i);
     const events = failoverEvents(owner);
     expect(events).toHaveLength(2);
-    expect(events[1]).toMatchObject({
-      kind: 'transient',
-      switched: true,
-      crossAccount: false,
-      fromAccountId: 'account-a',
-      toAccountId: 'account-a',
-    });
+    expect(events[1]).toMatchObject({ kind: 'transient', switched: false, transientPhase: 'nudged' });
+    expect(events.some((event) => event.switched === true)).toBe(false);
     expect(accountMocks.setCooldown).not.toHaveBeenCalled();
   });
 
@@ -1258,19 +1266,78 @@ describe('erro do provider (5xx) — episódio sem troca de conta', () => {
     for (let i = 0; i < 20; i += 1) ptyMocks.dataTaps[0]('session-503', prompt);
     ptyMocks.sessionStates.set('session-503', 'idle');
     await vi.advanceTimersByTimeAsync(21_000);
+    await settleFailover();
 
-    expect(failoverEvents(owner).at(-1)).toMatchObject({ switched: true, toAccountId: 'account-a' });
+    expect(toolMocks.injectPrompt).toHaveBeenCalledOnce();
+    expect(failoverEvents(owner).at(-1)).toMatchObject({ transientPhase: 'nudged' });
   });
 
-  it('CLI ainda ocupada nos próprios retries: confere de novo em vez de matar', async () => {
+  it('repaint do transcript ANTIGO depois do erro não conta como resposta (semeado)', async () => {
+    await setupTransient();
+    const oldTranscript = Array.from(
+      { length: 30 },
+      (_, i) => `Linha antiga ${i} do transcript que já estava na tela antes do erro.`,
+    ).join('\n');
+    ptyMocks.dataTaps[0]('session-503', `${oldTranscript}
+${E503}`);
+    // Resize/foco: a tela inteira volta, sem nada novo.
+    ptyMocks.dataTaps[0]('session-503', oldTranscript);
+    ptyMocks.sessionStates.set('session-503', 'idle');
+    await vi.advanceTimersByTimeAsync(21_000);
+    await settleFailover();
+
+    expect(toolMocks.injectPrompt).toHaveBeenCalledOnce();
+  });
+
+  it('repaint do MESMO erro não apaga a resposta que já chegou', async () => {
+    const owner = await setupTransient();
+    ptyMocks.dataTaps[0]('session-503', E503);
+    const answer = Array.from(
+      { length: 12 },
+      (_, i) => `Linha ${i} da resposta do modelo depois da recuperação do provider.`,
+    ).join('\n');
+    ptyMocks.dataTaps[0]('session-503', answer);
+    // A região dinâmica da TUI redesenha o erro antigo junto.
+    ptyMocks.dataTaps[0]('session-503', E503);
+    ptyMocks.sessionStates.set('session-503', 'idle');
+    await vi.advanceTimersByTimeAsync(21_000);
+    await settleFailover();
+
+    expect(toolMocks.injectPrompt).not.toHaveBeenCalled();
+    expect(failoverEvents(owner)).toHaveLength(1);
+  });
+
+  it('CLI ainda ocupada nos próprios retries: confere de novo em vez de interromper', async () => {
     const owner = await setupTransient();
     ptyMocks.dataTaps[0]('session-503', E503);
     await vi.advanceTimersByTimeAsync(21_000);
     expect(failoverEvents(owner)).toHaveLength(1);
+    expect(toolMocks.injectPrompt).not.toHaveBeenCalled();
 
     ptyMocks.sessionStates.set('session-503', 'idle');
     await vi.advanceTimersByTimeAsync(31_000);
-    expect(failoverEvents(owner).at(-1)).toMatchObject({ switched: true, toAccountId: 'account-a' });
+    await settleFailover();
+    expect(toolMocks.injectPrompt).toHaveBeenCalledOnce();
+  });
+
+  it('limite de verdade esperando a conta: o 503 não abre episódio nem pede continue', async () => {
+    const owner = await setupTransient();
+    accountMocks.next = null; // sem irmã: o limite real agenda a espera
+    ptyMocks.dataTaps[0]('session-503', 'LIMIT');
+    await settleFailover();
+    const before = failoverEvents(owner).length;
+    await vi.advanceTimersByTimeAsync(31_000); // passa o rearm do limite
+    ptyMocks.dataTaps[0]('session-503', E503);
+    ptyMocks.sessionStates.set('session-503', 'idle');
+    await vi.advanceTimersByTimeAsync(21_000);
+    await settleFailover();
+
+    expect(toolMocks.injectPrompt).not.toHaveBeenCalled();
+    expect(
+      failoverEvents(owner)
+        .slice(before)
+        .filter((event) => event.kind === 'transient'),
+    ).toHaveLength(0);
   });
 
   it('limite de VERDADE logo depois do 503 ainda troca de conta (sem rearm)', async () => {

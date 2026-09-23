@@ -163,6 +163,7 @@ export const tokenSpeedSnapshotSchema: z.ZodType<TokenSpeedSnapshot> = z.lazy(
       startedAt: z.number(),
       outputTokens: z.number(),
       generationMs: z.number(),
+      rateWindowMs: z.number().nullable().optional(),
       tokensPerSecond: z.number().nullable(),
       ttftMs: z.number().nullable(),
       model: z.string().nullable(),

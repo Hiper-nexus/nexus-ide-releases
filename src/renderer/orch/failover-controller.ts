@@ -38,7 +38,7 @@ export function useFailoverController(): void {
         // aviso, não erro, e sem botão que manda o operador procurar culpa
         // na conta.
         if (event.kind === 'transient') {
-          push('warn', copy.title, copy.detail);
+          push(event.transientPhase === 'nudged' ? 'info' : 'warn', copy.title, copy.detail);
           return;
         }
         // O texto já diz "Configurações → Providers" — a ação leva até lá

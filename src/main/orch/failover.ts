@@ -106,17 +106,26 @@ interface SessionWatch {
    * nunca troca de conta.
    */
   transientAt: number;
-  /** Último hit transitório do episódio (a CLI reimprime o erro a cada retry). */
-  lastTransientAt: number;
-  /** Texto NOVO (linhas inéditas) desde o último hit transitório. */
+  /** Texto NOVO (linhas inéditas) desde o último erro NOVO do provider. */
   progressChars: number;
-  /** Linhas já vistas no episódio: repaint do prompt não conta como resposta. */
+  /**
+   * Linhas já vistas: semeado com o que estava na tela ANTES do erro, então
+   * repaint do transcript antigo (resize, foco) e do próprio erro não contam
+   * como resposta nem como erro novo.
+   */
   seenLines: Set<string>;
+  /**
+   * Assinaturas de erro já vistas (o trecho a partir de onde o padrão de erro
+   * casa). Um erro redesenhado grudado a outra linha continua sendo o MESMO
+   * erro; um retry novo ("attempt 2/10") é outra assinatura.
+   */
+  errorSignatures: Set<string>;
 }
 
 /**
  * Erro do provider: a CLI tenta de novo sozinha. Depois do backoff o Main
- * confere se ela voltou; se parou com o erro na tela, retoma na MESMA conta.
+ * confere se ela voltou; se parou no erro, um pane de MISSÃO recebe um
+ * "continue" na mesma sessão (nunca respawn: o processo está vivo no prompt).
  */
 const TRANSIENT_MIN_CHECK_MS = 20_000;
 const TRANSIENT_RECHECK_MS = 30_000;
@@ -125,6 +134,14 @@ const MAX_TRANSIENT_CHECKS = 6;
 /** Texto inédito que prova resposta de verdade depois do erro. */
 const TRANSIENT_PROGRESS_CHARS = 400;
 const TRANSIENT_MIN_LINE_CHARS = 20;
+/**
+ * Pedido de continuação. Neutro de propósito: não ecoa o texto do erro
+ * ("503", "overloaded", "unavailable"…), que o detector leria de volta no
+ * próprio pane e abriria outro episódio.
+ */
+export const TRANSIENT_CONTINUE_PROMPT =
+  'The last request was interrupted by a temporary provider issue. ' +
+  'Retry it now and continue exactly where you stopped.';
 
 /**
  * Disjuntor de morte instantânea: sessão que morre de auth com segundos de
@@ -785,9 +802,7 @@ function fireScheduledRetry(
   }
   const now = Date.now();
   const adapterId = pane.adapterId;
-  const pinned = pane.accountId ? getAccount(pane.accountId) : null;
-  const current =
-    pinned?.adapterId === adapterId ? pinned : getActiveAccount(adapterId);
+  const current = paneAccount(pane);
   void performSwitch({
     key,
     authority,
@@ -819,9 +834,9 @@ function watchFor(authority: FailoverAuthority): [string, SessionWatch] {
       firedAt: 0,
       startedAt: Date.now(),
       transientAt: 0,
-      lastTransientAt: 0,
       progressChars: 0,
       seenLines: new Set(),
+      errorSignatures: new Set(),
     };
     watches.set(key, watch);
   }
@@ -891,6 +906,7 @@ function emitNoSwitch(
   current: PaneAccount | null | undefined,
   hit: LimitHit,
   reason: string = hit.reason,
+  transientPhase?: FailoverEvent['transientPhase'],
 ): void {
   emitFailover(authority, {
     paneId: pane.paneId,
@@ -901,6 +917,7 @@ function emitNoSwitch(
     switched: false,
     fromAccountId: current?.id,
     missionId: authority.missionId,
+    ...(transientPhase ? { transientPhase } : {}),
   });
 }
 
@@ -910,26 +927,51 @@ function transientKey(key: string): string {
 
 function endTransientEpisode(watch: SessionWatch): void {
   watch.transientAt = 0;
-  watch.lastTransientAt = 0;
   watch.progressChars = 0;
   watch.seenLines = new Set();
+  watch.errorSignatures = new Set();
 }
 
-/** Linha que é o próprio erro/retry da CLI, não resposta do modelo. */
-const TRANSIENT_NOISE_LINE =
-  /retrying\s+in\s+\d|attempt\s+\d+\s*\/\s*\d+|\b5\d\d\b|overload|unavailable|capacity/i;
+function normalizedLines(text: string): string[] {
+  return text
+    .split(/\r?\n/)
+    .map((raw) => raw.replace(/\s+/g, ' ').trim())
+    .filter((line) => line.length >= TRANSIENT_MIN_LINE_CHARS);
+}
+
+function rememberLine(watch: SessionWatch, line: string): void {
+  if (watch.seenLines.size >= 2_000) watch.seenLines = new Set();
+  watch.seenLines.add(line);
+}
 
 /**
- * Conta texto NOVO depois do último erro do provider. Linha repetida (repaint
- * do prompt/da moldura) e a linha do próprio erro/retry não provam resposta.
+ * Linha que é o próprio erro/retry da CLI, não resposta do modelo. Estreito
+ * de propósito: uma resposta que cita "HTTP 500" ou "unavailable" na prosa
+ * continua contando como resposta.
+ */
+const TRANSIENT_NOISE_LINE =
+  /retrying\s+in\s+\d|attempt\s+\d+\s*\/\s*\d+|api\s*error|overloaded_error|service unavailable|status[\s:(]*5\d\d\b|\bhttp\s*5\d\d\b/i;
+
+/** O trecho da linha a partir do erro/retry, ou null se a linha não é erro. */
+function errorSignature(line: string): string | null {
+  const match = TRANSIENT_NOISE_LINE.exec(line);
+  return match ? line.slice(match.index) : null;
+}
+
+/**
+ * Conta texto NOVO depois do último erro do provider. Linha já vista (repaint
+ * do transcript antigo, da moldura, do próprio erro) e a linha de erro/retry
+ * não provam resposta.
  */
 function noteTransientProgress(watch: SessionWatch, text: string): void {
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.replace(/\s+/g, ' ').trim();
-    if (line.length < TRANSIENT_MIN_LINE_CHARS) continue;
-    if (TRANSIENT_NOISE_LINE.test(line) || watch.seenLines.has(line)) continue;
-    if (watch.seenLines.size >= 2_000) watch.seenLines = new Set();
-    watch.seenLines.add(line);
+  for (const line of normalizedLines(text)) {
+    if (watch.seenLines.has(line)) continue;
+    rememberLine(watch, line);
+    const signature = errorSignature(line);
+    if (signature !== null) {
+      watch.errorSignatures.add(signature);
+      continue;
+    }
     watch.progressChars += line.length;
   }
 }
@@ -941,6 +983,10 @@ function noteTransientProgress(watch: SessionWatch, text: string): void {
  * troca, não põe cooldown, não pinta a cota e não arma o rearm (um limite de
  * VERDADE logo depois precisa ser visto). Avisa uma vez por episódio e agenda
  * a verificação: a CLI costuma se recuperar sozinha nos próprios retries.
+ *
+ * `detectedText` é o trecho em que o erro foi visto: semeia as linhas já na
+ * tela, e só um erro com linha INÉDITA zera o progresso — repaint do mesmo
+ * erro não apaga a resposta que já chegou.
  */
 function handleTransientHit(
   authority: FailoverAuthority,
@@ -950,17 +996,37 @@ function handleTransientHit(
   hit: LimitHit,
   now: number,
   source: FailoverSignalSource,
+  detectedText = '',
 ): void {
-  watch.lastTransientAt = now;
-  watch.progressChars = 0;
-  // A CLI reimprime o erro a cada retry interno: o episódio já avisou e já
-  // tem verificação agendada.
-  if (watch.transientAt !== 0) return;
-  watch.transientAt = now;
-  watch.seenLines = new Set();
+  const lines = normalizedLines(detectedText);
+  if (watch.transientAt !== 0) {
+    let freshError = false;
+    for (const line of lines) {
+      const signature = errorSignature(line);
+      if (signature !== null && !watch.errorSignatures.has(signature)) {
+        freshError = true;
+        watch.errorSignatures.add(signature);
+      }
+      rememberLine(watch, line);
+    }
+    // A CLI reimprimiu o erro num retry NOVO: a resposta ainda não veio.
+    if (freshError) watch.progressChars = 0;
+    return;
+  }
   const current = paneAccount(pane);
+  // Um limite de verdade já está esperando a conta liberar: o pane é dele.
+  if (pendingRetries.has(key)) {
+    logSuppressedFailover(pane, current, hit, 'transient-deferred-to-limit-retry', source);
+    return;
+  }
+  watch.transientAt = now;
+  watch.progressChars = 0;
+  watch.seenLines = new Set(lines);
+  watch.errorSignatures = new Set(
+    lines.map(errorSignature).filter((signature): signature is string => signature !== null),
+  );
   logSuppressedFailover(pane, current, hit, 'transient-provider-error', source);
-  emitNoSwitch(authority, pane, current, hit);
+  emitNoSwitch(authority, pane, current, hit, hit.reason, 'detected');
   scheduleTransientCheck(
     key,
     authority,
@@ -995,10 +1061,12 @@ function scheduleTransientCheck(
 }
 
 /**
- * Depois do backoff: a CLI voltou a responder (texto novo) → nada a fazer;
- * ainda ocupada (retries internos) → confere de novo; parada no erro →
- * retoma na MESMA conta. Pane do operador sem missão só recebe o aviso — o
- * Nexus não mata e reabre a CLI que o humano está dirigindo.
+ * Depois do backoff: a CLI voltou a responder (texto novo inédito) → nada a
+ * fazer; ainda ocupada (retries internos) → confere de novo; parada no erro →
+ * pane de MISSÃO recebe um "continue" na mesma sessão. Nunca respawn: o
+ * processo está vivo no prompt, respawn perdia o contexto e dizia que a conta
+ * bateu limite. Pane do operador (sem missão) só recebe o aviso — o Nexus não
+ * digita no terminal que o humano está dirigindo.
  */
 function checkTransientRecovery(
   key: string,
@@ -1039,8 +1107,15 @@ function checkTransientRecovery(
     endTransientEpisode(watch);
     return;
   }
+  // Limite de verdade esperando a conta (ou a conta em cooldown): pedir para
+  // continuar agora só bateria no limite de novo e reiniciaria a espera.
+  if (pendingRetries.has(key) || (current?.cooldownUntil ?? 0) > Date.now()) {
+    logSuppressedFailover(pane, current, hit, 'transient-deferred-to-limit-retry', 'transient-watch');
+    endTransientEpisode(watch);
+    return;
+  }
   endTransientEpisode(watch);
-  if (!authority.missionId && authority.owner) {
+  if (!authority.missionId) {
     logSuppressedFailover(pane, current, hit, 'transient-cli-stopped-operator-pane', 'transient-watch');
     emitNoSwitch(
       authority,
@@ -1048,61 +1123,56 @@ function checkTransientRecovery(
       current,
       hit,
       `${hit.reason} — a CLI parou com este erro do provider; mande "continue" no pane para tentar de novo`,
+      'stopped',
     );
     return;
   }
-  resumeOnSameAccount(authority, pane, current, hit);
+  nudgeTransientContinue(authority, pane, current, hit);
 }
 
-/** Missão parada num erro do provider: retoma a MESMA conta, sem trocar. */
-function resumeOnSameAccount(
+/**
+ * Missão parada num erro do provider: o mesmo processo, a mesma conta e a
+ * mesma conversa recebem o pedido de continuar. Um falso positivo (a CLI já
+ * tinha respondido curto) custa um "continue" inofensivo, não um restart.
+ */
+function nudgeTransientContinue(
   authority: FailoverAuthority,
   pane: PaneDetails,
   current: PaneAccount | null | undefined,
   hit: LimitHit,
 ): void {
-  const label = current?.label ?? pane.adapterId;
-  console.info(
-    '[failover]',
-    JSON.stringify({
-      paneId: pane.paneId,
-      adapterId: pane.adapterId,
-      fromAccountId: current?.id ?? null,
-      toAccountId: current?.id ?? null,
-      reason: hit.reason,
-      switched: true,
-      sameAccount: true,
-      source: 'transient-watch',
-    }),
-  );
-  emitFailover(authority, {
-    paneId: pane.paneId,
-    fromAccountLabel: label,
-    toAccountLabel: label,
-    reason: `${hit.reason} — a CLI parou com o erro do provider; retomando na mesma conta`,
-    kind: hit.kind,
-    switched: true,
-    crossAccount: false,
-    fromAccountId: current?.id,
-    toAccountId: current?.id,
-    missionId: authority.missionId,
+  void (async () => {
+    // Import tardio: tool-util puxa o grafo de ferramentas MCP, que não pode
+    // entrar no ciclo de carga do failover.
+    const { injectPrompt } = await import('./tool-util');
+    if (!isCurrentAuthority(authority)) return;
+    await injectPrompt(authority.sessionId, TRANSIENT_CONTINUE_PROMPT);
+    console.info(
+      '[failover]',
+      JSON.stringify({
+        paneId: pane.paneId,
+        adapterId: pane.adapterId,
+        fromAccountId: current?.id ?? null,
+        reason: hit.reason,
+        switched: false,
+        nudged: true,
+        source: 'transient-watch',
+      }),
+    );
+    emitNoSwitch(
+      authority,
+      pane,
+      current,
+      hit,
+      `${hit.reason} — a CLI parou; o Nexus pediu para ela continuar na mesma conta e na mesma conversa`,
+      'nudged',
+    );
+  })().catch((error) => {
+    console.warn(
+      '[failover] continue após erro do provider falhou:',
+      error instanceof Error ? error.message : error,
+    );
   });
-  // Worker headless: não há renderer dono para consumir o evento.
-  if (!authority.owner && current) {
-    void respawnMainOwnedPaneWithAccount({
-      paneId: pane.paneId,
-      sessionId: authority.sessionId,
-      adapterId: pane.adapterId,
-      toAccountId: current.id,
-      fromAccountLabel: label,
-      reason: hit.reason,
-    }).catch((error) => {
-      console.warn(
-        '[failover] main-owned transient resume falhou:',
-        error instanceof Error ? error.message : error,
-      );
-    });
-  }
 }
 
 function handleLimitHit(
@@ -1288,21 +1358,28 @@ function handleChunk(sessionId: string, data: string, now: number): void {
 
   const [key, watch] = watchFor(authority);
   const text = stripAnsi(data);
-  // Episódio de erro do provider em curso: mede se a CLI voltou a responder.
-  if (watch.transientAt !== 0) noteTransientProgress(watch, text);
   // Debounce: don't re-fire within REARM_MS of a switch.
-  if (now - watch.firedAt < REARM_MS) return;
+  if (now - watch.firedAt < REARM_MS) {
+    if (watch.transientAt !== 0) noteTransientProgress(watch, text);
+    return;
+  }
 
   watch.buffer = (watch.buffer + text).slice(-WINDOW_CHARS);
   const hit = detectLimit(watch.buffer);
+  if (hit?.kind === 'transient') {
+    const detectedText = watch.buffer;
+    watch.buffer = ''; // consumed
+    // Sem rearm: um limite de VERDADE logo depois do 503 ainda é detectado.
+    // A detecção vem ANTES do progresso: ela decide se o erro é inédito.
+    handleTransientHit(authority, pane, key, watch, hit, now, 'scrollback', detectedText);
+    if (watch.transientAt !== 0) noteTransientProgress(watch, text);
+    return;
+  }
+  // Episódio de erro do provider em curso: mede se a CLI voltou a responder.
+  if (watch.transientAt !== 0) noteTransientProgress(watch, text);
   if (!hit) return;
 
   watch.buffer = ''; // consumed
-  if (hit.kind === 'transient') {
-    // Sem rearm: um limite de VERDADE logo depois do 503 ainda é detectado.
-    handleTransientHit(authority, pane, key, watch, hit, now, 'scrollback');
-    return;
-  }
   beginLimitHandling(key, watch, now);
   handleLimitHit(authority, pane, key, hit, now, 'scrollback');
 }
@@ -1338,7 +1415,7 @@ function handleObserverFrame(frame: ObserverFrame): void {
     ...(frame.payload.scope ? { scope: frame.payload.scope } : {}),
   };
   if (hit.kind === 'transient') {
-    handleTransientHit(authority, pane, key, watch, hit, now, 'observer');
+    handleTransientHit(authority, pane, key, watch, hit, now, 'observer', hit.reason);
     return;
   }
   beginLimitHandling(key, watch, now);
