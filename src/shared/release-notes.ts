@@ -4151,6 +4151,284 @@ export const RELEASE_07647: AppRelease = {
   ],
 };
 
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.82',
+  date: '2026-09-22',
+  codename: 'Nada escondido',
+  summary:
+    'No Windows as CLIs instaladas por nvm, pnpm, Volta e scoop deixam de sumir, e botões, hovers e o HUD de voz param de se esconder. O cofre fecha todas as portas depois da primeira falha.',
+  highlights: [
+    {
+      title: 'As CLIs aparecem nesta máquina',
+      detail:
+        'A busca cobre nvm, pnpm, mise, fnm, Volta e scoop. Se a sondagem do boot falha, o Nexus tenta de novo sozinho e reexamina as CLIs.',
+    },
+    {
+      title: 'Botões que tinham sumido',
+      detail:
+        'Ícones pequenos e cores que não existiam apagavam o + e os hovers. O HUD de voz em repouso fica só o orb e não cobre o terminal.',
+    },
+    {
+      title: 'O cofre para de verdade',
+      detail:
+        'Depois da primeira falha, leitura e gravação ficam desligadas juntas. Antes cada leitura voltava ao cofre.',
+    },
+    {
+      title: 'Git e gh em todo pane gravável',
+      detail:
+        'A identidade de git, SSH e gh do operador entra em qualquer CLI gravável, não só no Claude. O brief espera a migração do MiMo acabar.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'A faixa de missões segue o tema',
+      detail:
+        'Ela não fica preta no tema claro. Pino de missão encerrada deixa de ser botão morto e o nome do orquestrador não repete.',
+    },
+    {
+      title: 'Pasta, Claude, MiMo e o .env',
+      detail:
+        'O seletor de pasta responde, o Claude abre pelo executável, o MiMo é lido em .local\\share e o hook não pede um programa para o .env.',
+    },
+  ],
+};
+
+export const RELEASE_07680: AppRelease = {
+  version: '0.76.80',
+  date: '2026-09-22',
+  codename: 'O lote do Mac no Windows',
+  summary:
+    'Entra no Windows o lote novo da main: ditado, várias missões, Opus 5.5, GPT-6, cofre entre PCs e a trava do desktop. O seletor de pasta, o Claude, o MiMo e o hook do .env continuam corrigidos.',
+  highlights: [
+    {
+      title: 'Ditado só envia ao soltar',
+      detail:
+        'Segurar a tecla não entrega a frase no meio. O hold-to-talk espera o soltar e tem teto de segurança.',
+    },
+    {
+      title: 'Várias missões no mesmo workspace',
+      detail:
+        'A faixa separa as missões. Os pinos A e B não misturam o conteúdo, e o orquestrador aparece no header.',
+    },
+    {
+      title: 'Opus 5.5 e GPT-6',
+      detail:
+        'Claude Opus 5.5 entra no lugar do 5. GPT-6 Sol é o frontier do Codex e Luna cobre o tier barato.',
+    },
+    {
+      title: 'O cofre não se envenena',
+      detail:
+        'A primeira falha do cofre para de reabrir o modal de chaves perdidas. O vault também exporta e importa entre PCs com senha.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'A pasta do workspace responde',
+      detail:
+        'No Windows o seletor nativo não fica mais preso à janela do Nexus. A lista deixa de travar em «Não está respondendo».',
+    },
+    {
+      title: 'Claude, MiMo e o .env',
+      detail:
+        'O pane do Claude abre pelo executável de verdade, o login do MiMo é lido em .local\\share, e o hook não pede mais um programa para abrir .env.',
+    },
+  ],
+};
+
+export const RELEASE_07679: AppRelease = {
+  version: '0.76.79',
+  date: '2026-09-22',
+  codename: 'A pasta abre',
+  summary:
+    'No Windows o seletor de pasta deixa de travar e o pane do Claude volta a abrir com a conta isolada.',
+  highlights: [
+    {
+      title: 'Escolher a pasta do workspace responde',
+      detail:
+        'O diálogo nativo não fica mais preso à janela do Nexus. No Windows isso deixava a lista vazia e o título em «Não está respondendo».',
+    },
+    {
+      title: 'O terminal do Claude abre',
+      detail:
+        'O atalho claude.cmd não contém o marcador da conta isolada; o executável que ele abre contém. A checagem passa a ler esse executável.',
+    },
+    {
+      title: 'O login do MiMo fica pronto',
+      detail:
+        'A sessão da CLI está em .local\\share\\mimocode, não no AppData. O Nexus passa a ler esse arquivo e a conta deixa de pedir login de novo.',
+    },
+  ],
+  fixes: [],
+};
+
+export const RELEASE_07678: AppRelease = {
+  version: '0.76.78',
+  date: '2026-09-22',
+  codename: 'Claude com leitura',
+  summary:
+    'A cota do Claude no Windows volta a aparecer. O token vencido é renovado e lido no mesmo endpoint do Mac, sem depender do comando da CLI.',
+  highlights: [
+    {
+      title: 'Claude deixa de ficar sem leitura',
+      detail:
+        'No Windows o access token do arquivo vence. A renovação acontecia, mas a leitura ainda pedia claude /usage, que não devolve número. Agora a cota sai do token renovado.',
+    },
+  ],
+  fixes: [],
+};
+
+export const RELEASE_07677: AppRelease = {
+  version: '0.76.77',
+  date: '2026-09-22',
+  codename: 'A conta fica até acabar',
+  summary:
+    'No Windows entra o que saiu no Mac 0.76.76: re-login da mesma conta, a conta ativa só troca quando a cota zera, e o total mensal deixa de fingir a frota inteira.',
+  highlights: [
+    {
+      title: 'Entrar novamente da mesma conta abre',
+      detail:
+        'Se a sessão viva é a própria conta e o snapshot falha, o login abre mesmo assim. E-mail de outra conta continua bloqueado, para não apagar essa sessão.',
+    },
+    {
+      title: 'A conta em uso fica até a cota acabar',
+      detail:
+        'Folga maior numa irmã não troca a conta ativa. A troca espera zero medido, cooldown ou um hit real. Sem medição, a escolha permanece.',
+    },
+    {
+      title: 'O total mensal não é a frota inteira',
+      detail:
+        'O cartão soma só planos com preço de lista e diz quantas contas ficaram de fora. Google AI Ultra entra como $100 ou $200 só quando o plano diz 5× ou 20×.',
+    },
+  ],
+  fixes: [],
+};
+
+export const RELEASE_07676: AppRelease = {
+  version: '0.76.76',
+  date: '2026-09-22',
+  codename: 'MiMo 2.6',
+  summary:
+    'MiMo V2.6 Pro e Flash no Windows, com contas, cota e o Redline. O login do Codex abre.',
+  highlights: [
+    {
+      title: 'MiMo V2.6 no Windows',
+      detail:
+        'MiMo Code, as contas Xiaomi e os modelos V2.6 Pro e Flash. No Windows a sessão fica em %LOCALAPPDATA%\\mimocode.',
+    },
+    {
+      title: 'O Codex abre para logar',
+      detail:
+        'Guardar a conta que já está na CLI não cancela mais o terminal de login no Windows.',
+    },
+  ],
+  fixes: [],
+};
+
+export const RELEASE_07675: AppRelease = {
+  version: '0.76.75',
+  date: '2026-09-21',
+  codename: 'Xiaomi MiMo no Nexus',
+  summary:
+    'MiMo Code ganha integração nativa, contas próprias e os modelos V2.6 Pro e Flash.',
+  highlights: [
+    {
+      title: 'CLI oficial e contas Xiaomi',
+      detail:
+        'Instale ou conecte MiMo Code nos Providers. As contas mantêm a região do plano e as conversas do Nexus ficam separadas.',
+    },
+    {
+      title: 'Pro, Flash e UltraSpeed',
+      detail:
+        'V2.6 Pro e Flash no Token Plan. UltraSpeed exige API separada. Sem medição, o modelo aparece como não avaliado.',
+    },
+  ],
+  fixes: [],
+};
+
+export const RELEASE_07674: AppRelease = {
+  version: '0.76.74',
+  date: '2026-09-21',
+  codename: 'Segunda conta',
+  summary:
+    'O login do Claude no Windows que termina em «Login successful!» salva a conta nova e ela aparece no Redline.',
+  highlights: [
+    {
+      title: 'A segunda conta entra no Redline',
+      detail:
+        'A primeira conta já era guardada antes do login. A frase de sucesso do Claude no Windows não era reconhecida, então a conta nova não era salva e o Redline continuava com uma linha só.',
+    },
+  ],
+  fixes: [],
+};
+
+export const RELEASE_07673: AppRelease = {
+  version: '0.76.73',
+  date: '2026-09-21',
+  codename: 'Conta por conta',
+  summary:
+    'No multi-conta, cada conta mostra o próprio limite. A cota de A não entra na linha de B.',
+  highlights: [
+    {
+      title: 'Conta A e conta B ficam separadas',
+      detail:
+        'Cada conta salva consulta o próprio token. O painel de cota e o Redline mostram uma linha por conta, com o limite dela.',
+    },
+  ],
+  fixes: [],
+};
+
+export const RELEASE_07672: AppRelease = {
+  version: '0.76.72',
+  date: '2026-09-21',
+  codename: 'Cota no Windows',
+  summary:
+    'Claude e Antigravity logados no Windows passam a mostrar a cota, como no Mac.',
+  highlights: [
+    {
+      title: 'Claude renova e mostra os limites',
+      detail:
+        'A conta continua conectada, mas o token de acesso do arquivo vencia. A leitura agora renova com o refresh que já está na máquina.',
+    },
+    {
+      title: 'Antigravity lê a cota pelo mesmo comando do Mac',
+      detail:
+        'O agy instalado em AppData entra na sonda. O painel do Redline também deixa de piscar a cada atualização.',
+    },
+  ],
+  fixes: [],
+};
+
+export const RELEASE_07671: AppRelease = {
+  version: '0.76.71',
+  date: '2026-09-21',
+  codename: 'Cota de quem está logado',
+  summary:
+    'No Windows o Redline passa a ler a cota do Devin e do Antigravity que já estão logados.',
+  highlights: [
+    {
+      title: 'Devin e Antigravity logados aparecem no Redline',
+      detail:
+        'A cota do Devin vinha da pasta errada. A do Antigravity ignorava o Gerenciador de Credenciais. As duas contas logadas deixam de aparecer como sem credencial.',
+    },
+  ],
+  fixes: [],
+};
+
+export const RELEASE_07670: AppRelease = {
+  version: '0.76.70',
+  date: '2026-09-21',
+  codename: 'O clique abre',
+  summary: 'O clique no ícone do Redline no Windows abre o painel de cotas.',
+  highlights: [
+    {
+      title: 'Clique no Redline abre o painel',
+      detail:
+        'Um clique na bandeja gerava dois avisos. O segundo fechava o painel na hora. Agora o clique abre e o painel fica.',
+    },
+  ],
+  fixes: [],
+};
+
 export const RELEASE_07669: AppRelease = {
   version: '0.76.69',
   date: '2026-09-21',
@@ -4172,6 +4450,8 @@ export const RELEASE_07669: AppRelease = {
     },
   ],
 };
+
+
 
 export const RELEASE_07668: AppRelease = {
   version: '0.76.68',
@@ -5854,203 +6134,6 @@ export const RELEASE_07642: AppRelease = {
       detail:
         'A dica de "mission effect blocked" é recalculada pela allowlist do painel: um pane ' +
         'somente-leitura ouve nexus_pane_ask, não ferramentas que o próprio gate barra.',
-    },
-  ],
-};
-
-export const RELEASE_07675: AppRelease = {
-  version: '0.76.75',
-  date: '2026-09-21',
-  codename: 'Xiaomi MiMo no Nexus',
-  summary: 'MiMo Code ganha integração nativa, contas próprias e os modelos V2.6 Pro e Flash. A cota do Token Plan pode ser conectada ao Nexus e ao Redline.',
-  highlights: [
-    { title: 'CLI oficial e contas Xiaomi', detail: 'Instale ou conecte MiMo Code nos Providers. As contas mantêm suas credenciais e a região do plano; conversas do Nexus ficam separadas das sessões externas.' },
-    { title: 'Pro, Flash e UltraSpeed', detail: 'V2.6 Pro e Flash disponíveis no Token Plan. UltraSpeed exige API separada com cobrança por uso. Os modelos aparecem na comparação interna como não avaliados até haver medições.' },
-    { title: 'Consumo no Nexus e no Redline', detail: 'Conecte o console Xiaomi para consultar a cota da mesma conta do Token Plan. A autorização é preservada entre reinícios; falta de leitura não vira consumo zero nem aviso falso de logout.' },
-  ],
-  fixes: [
-    { title: 'Retomada e uso por conversa', detail: 'A sessão exata da CLI acompanha o pane e o registro de tokens, incluindo cache e raciocínio, sem misturar conversas de contas diferentes.' },
-    { title: 'MCP, skills e roteamento', detail: 'MiMo Code recebe o MCP do Nexus, skills permitidas e opções de modelo próprias. Benchmarks automáticos exigem chave da API separada, preservando o Token Plan para ferramentas de programação.' },
-  ],
-};
-
-export const RELEASE_07676: AppRelease = {
-  version: '0.76.76',
-  date: '2026-09-22',
-  codename: 'Redline abre neste macOS',
-  summary:
-    'O companheiro da barra de menu volta a abrir no macOS 27.0. A compilação ' +
-    'fica presa ao piso macOS 14, em vez de herdar um mínimo mais novo que o sistema.',
-  highlights: [
-    {
-      title: 'Nexus Redline abre de novo',
-      detail:
-        'O alerta «Você não pode usar esta versão do aplicativo Nexus Redline com ' +
-        'esta versão do macOS» vinha de um binário carimbado com mínimo 27.2. ' +
-        'O app agora exige macOS 14.0, o mesmo piso do pacote, e sobe no 27.0.',
-    },
-    {
-      title: 'A conta em uso fica até a cota acabar',
-      detail:
-        'Um pane novo continua na conta ativa enquanto a medição ainda mostra ' +
-        'folga. A irmã mais livre só entra quando a ativa chega a zero, entra ' +
-        'em cooldown ou toma um hit real. Sem medição, a escolha do operador permanece.',
-    },
-  ],
-  fixes: [
-    {
-      title: 'O mínimo do binário não flutua com o SDK',
-      detail:
-        'O build do companheiro passa -target arm64-apple-macosx14.0 e recusa ' +
-        'entregar um executável cujo minos seja outro. Atualizar o Xcode deixa ' +
-        'de gravar sozinho um piso acima do Mac em uso.',
-    },
-    {
-      title: 'Entrar novamente da mesma conta abre o login',
-      detail:
-        'O aviso «Não consegui guardar a conta atual» não trava mais o re-login ' +
-        'quando a sessão viva é a própria conta e o snapshot falha. Se o e-mail ' +
-        'vivo for de outra conta, o login continua sem começar, para não apagar ' +
-        'essa sessão. Cada conta do vault mantém a própria linha de cota.',
-    },
-    {
-      title: 'O total mensal não chama duas contas de frota inteira',
-      detail:
-        'O cartão de assinaturas soma só os planos com preço de lista publicado ' +
-        'e mostra quantas contas conectadas ficaram de fora. Google AI Ultra ' +
-        'entra como $100 ou $200 quando o plano diz 5× ou 20×. Sem esse dado, ' +
-        'o Nexus não inventa o valor.',
-    },
-  ],
-};
-
-export const RELEASE_07679: AppRelease = {
-  version: '0.76.79',
-  date: '2026-09-22',
-  codename: 'Chaves no lugar',
-  summary:
-    'Os panes param de abrir o modal «Chaves Não Encontradas» e de pedir ' +
-    'gh auth login com a máquina logada. Chegam também multi-missão com ' +
-    'campos A/B, ditado que só envia ao soltar, Opus 5.5 e GPT-6.',
-  highlights: [
-    {
-      title: 'Fim do modal «Chaves Não Encontradas» nos panes',
-      detail:
-        'Todo HOME privado que o Nexus cria para uma CLI (Claude, Codex, Grok, ' +
-        'MiMo, cursor, droid…) enxerga o keychain real do macOS. gh, git e as ' +
-        'próprias CLIs deixam de abrir o modal cujo botão «Reajustar Para ' +
-        'Padrões» apagaria o seu keychain. GLM/LongCat e workers usam um item ' +
-        'de credencial Claude próprio e nunca tocam a sua sessão nativa.',
-    },
-    {
-      title: 'Agentes não pedem mais gh auth login à toa',
-      detail:
-        'Panes graváveis recebem a sua identidade de git, SSH e gh. Antes, o ' +
-        'pane de Grok, MiMo ou cursor não via o gh logado e o agente pedia ' +
-        'login com a máquina autenticada.',
-    },
-    {
-      title: 'Multi-missão no mesmo workspace',
-      detail:
-        'Barra de campos por missão, pinos A/B para alternar entre duas ' +
-        'missões e o nome do orquestrador em cada campo. Segue o tema claro ' +
-        'e escuro, e o conteúdo da missão A nunca vai para B.',
-    },
-    {
-      title: 'Opus 5.5 e GPT-6 no catálogo',
-      detail:
-        'Claude Opus 5.5 substitui o 5 no roteador e nos defaults; GPT-6 Sol ' +
-        'é o frontier do Codex e Luna cobre o tier barato, com preços, OMP e ' +
-        'adapters juntos.',
-    },
-  ],
-  fixes: [
-    {
-      title: 'O cofre para de insistir no keychain depois da primeira falha',
-      detail:
-        'Uma falha do safeStorage desliga o cofre pelo resto da sessão em ' +
-        'todas as portas (ler, gravar, apagar), não só na gravação. Antes, ' +
-        'cada leitura voltava a consultar o keychain e podia reabrir o modal. ' +
-        'O cofre também exporta e importa entre Macs com senha.',
-    },
-    {
-      title: 'Ditado só envia ao soltar a tecla',
-      detail:
-        'Space/PTT não entrega a transcrição antes da hora; o hold-to-talk ' +
-        'tem teto de segurança e não encerra no silêncio da fala.',
-    },
-    {
-      title: 'O brief não cai no meio da migração do MiMo',
-      detail:
-        'Enquanto a migração de banco do MiMo está na tela, o Nexus espera em ' +
-        'vez de colar a missão no meio dela, mesmo quando passa de 25 s.',
-    },
-    {
-      title: 'desktop-control não vaza para o terminal externo',
-      detail:
-        'A digitação só vai para o app da frente e terminais (Terminal, ' +
-        'iTerm, Ghostty, Warp, Termius…) são recusados: o conteúdo do ' +
-        'operador não cai mais num terminal fora do Nexus.',
-    },
-    {
-      title: 'Jev na pesquisa e no navegador',
-      detail:
-        'Triagem de pesquisa no search mixer e desempate por confiança no ' +
-        'browser_find. O browser_read passa a trazer o julgamento do Jev por ' +
-        'padrão; passe judge: false para dispensar.',
-    },
-  ],
-};
-
-export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.81',
-  date: '2026-09-22',
-  codename: 'Nada escondido',
-  summary:
-    'CLIs instaladas por nvm, pnpm ou mise param de sumir em outras ' +
-    'máquinas, e botões, hovers e o HUD de voz deixam de se esconder.',
-  highlights: [
-    {
-      title: 'Claude, Codex e cia. encontrados em qualquer máquina',
-      detail:
-        'Instalações via nvm, pnpm, mise, fnm, proto e o instalador antigo do ' +
-        'Claude entram na busca, e no Windows também npm, pnpm, Volta e scoop. ' +
-        'Se o shell do seu Mac demora para abrir, o Nexus tenta de novo sozinho ' +
-        'e reexamina as CLIs sem reiniciar.',
-    },
-    {
-      title: 'Botões e hovers que estavam invisíveis',
-      detail:
-        'Ícones pequenos perdiam traços (o "+" ao lado de Terminais sumia) e ' +
-        'vários hovers da barra lateral nunca apareciam. Agora todos aparecem, ' +
-        'nos temas escuro e claro.',
-    },
-    {
-      title: 'O HUD de voz não cobre mais a tela',
-      detail:
-        'Parado, ele vira só o orb no canto; os controles aparecem ao passar o ' +
-        'mouse ou pelo teclado.',
-    },
-  ],
-  fixes: [
-    {
-      title: 'Mensagem de CLI não encontrada que ajuda',
-      detail:
-        'Em vez de mandar instalar algo que já está instalado, o aviso aponta ' +
-        'Configurações › Providers › Reexaminar CLIs ou o caminho do binário.',
-    },
-    {
-      title: 'Abas e botões mais fáceis de usar',
-      detail:
-        'Abas dos Providers e do Git reagem ao mouse e ao teclado; botões do ' +
-        'pane e da barra lateral ganharam área de clique de 24 px; botão ' +
-        'desabilitado não parece mais ativo.',
-    },
-    {
-      title: 'Sessão expirada dita com as palavras certas',
-      detail:
-        'Com a conta conectada, um erro do servidor agora diz que a sessão ' +
-        'expirou, e não "entre na sua conta primeiro".',
     },
   ],
 };

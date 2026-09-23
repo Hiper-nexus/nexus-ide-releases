@@ -4,7 +4,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { ensurePrivateDirectory, linkFile, linkProviderSessionState } from '../orch/cli-mcp-session-artifacts';
 import { compareAuthFreshness } from './auth-freshness';
-import { mimoNativePaths, mimoAuthSnapshot, parseMimoAuth } from './mimo-auth';
+import { parseMimoAuth, readMimoNativeAuthBlob } from './mimo-auth';
 import {
   isFileAuthAdapter,
   type FileAuthAdapterId,
@@ -154,8 +154,36 @@ function parsedAuthBlob(blob: string): Record<string, unknown> | null {
 }
 
 /**
+ * Onde o Devin guarda `credentials.toml`.
+ *
+ * Linux/macOS: `$XDG_DATA_HOME` ou `~/.local/share`.
+ * Windows: o instalador grava em `%APPDATA%\devin` (Roaming). Sem isso a CLI
+ * diz "already logged in" e o Nexus continua em «precisa login».
+ * `XDG_DATA_HOME` explícito continua mandando, em qualquer plataforma.
+ * Um home que não é o do operador (teste, conta gerenciada) não herda o
+ * Roaming real.
+ */
+export function devinDataHome(
+  home: string,
+  env: { XDG_DATA_HOME?: string; APPDATA?: string } = process.env,
+  platform: NodeJS.Platform = process.platform,
+  operatorHome = os.homedir(),
+): string {
+  const ambient = env.XDG_DATA_HOME?.trim();
+  if (ambient) return ambient;
+  if (
+    platform === 'win32' &&
+    path.resolve(home) === path.resolve(operatorHome)
+  ) {
+    const roaming = env.APPDATA?.trim();
+    if (roaming) return roaming;
+  }
+  return path.join(home, '.local', 'share');
+}
+
+/**
  * Devin guarda a sessão em TOML **plano** (sem seções) em
- * ~/.local/share/devin/credentials.toml. Todos os helpers acima parseiam JSON e
+ * `<data-home>/devin/credentials.toml`. Todos os helpers acima parseiam JSON e
  * devolvem null para esse blob — sem um ramo próprio, uma conta Devin logada
  * seria lida como "sem auth" e o fingerprint da sessão nunca sairia.
  *
@@ -412,15 +440,11 @@ export const MANAGED_PROVIDER_SPECS: Record<FileAuthAdapterId, ManagedProviderSp
     // O instalador oficial respeita XDG_DATA_HOME e instala em
     // $XDG_DATA_HOME/devin — o mesmo env var do opencode, mas aqui ele desloca
     // também credentials.toml, mcp/ e summaries/, não só a árvore de auth.
+    // No Windows, sem essa variável, o diretório real é %APPDATA%.
     homeEnvVar: 'XDG_DATA_HOME',
     authRelativePath: path.join('devin', 'credentials.toml'),
     skipLinkNames: ['devin'],
-    systemHome: (home = os.homedir()) => {
-      const ambient = process.env.XDG_DATA_HOME?.trim();
-      const xdg = ambient ? ambient : path.join(home, '.local', 'share');
-      // XDG é convenção de Linux; no macOS o Devin ainda usa ~/.local/share.
-      return xdg;
-    },
+    systemHome: (home = os.homedir()) => devinDataHome(home),
   },
 };
 
@@ -820,8 +844,7 @@ export function captureNativeAuth(
   if (!isFileAuthAdapter(adapterId)) return null;
   if (adapterId === 'mimo-code') {
     try {
-      const raw = readText(mimoNativePaths(home).authFile);
-      const blob = raw ? mimoAuthSnapshot(raw) : null;
+      const blob = readMimoNativeAuthBlob(home);
       return blob ? { blob, authRelativePath: path.join('data', 'auth.json') } : null;
     } catch { return null; }
   }

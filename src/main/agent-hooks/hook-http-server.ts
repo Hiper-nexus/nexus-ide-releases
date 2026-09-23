@@ -59,12 +59,20 @@ function writeEndpointFile(
     throw new Error('hook-http-server: invalid port');
   }
   mkdirSync(dirname(path), { recursive: true });
-  // Sourced by managed shell scripts (NEXUS_AGENT_HOOK_ENDPOINT).
-  const body = [
-    `export NEXUS_AGENT_HOOK_PORT='${port}'`,
-    `export NEXUS_AGENT_HOOK_TOKEN='${token}'`,
-    '',
-  ].join('\n');
+  // Windows must be a .cmd of `set` lines. `call file.env` is ShellExecute
+  // and opens the "choose an app for this .env" dialog on every hook.
+  const body = path.toLowerCase().endsWith('.cmd')
+    ? [
+        `@echo off`,
+        `set "NEXUS_AGENT_HOOK_PORT=${port}"`,
+        `set "NEXUS_AGENT_HOOK_TOKEN=${token}"`,
+        '',
+      ].join('\r\n')
+    : [
+        `export NEXUS_AGENT_HOOK_PORT='${port}'`,
+        `export NEXUS_AGENT_HOOK_TOKEN='${token}'`,
+        '',
+      ].join('\n');
   writeFileSync(path, body, { mode: 0o600 });
 }
 
@@ -79,7 +87,11 @@ export async function startAgentHookHttpServer(options: {
   if (active) return active;
 
   const token = options.token ?? randomBytes(24).toString('hex');
-  const endpointFilePath = join(options.userDataPath, 'agent-hooks', 'endpoint.env');
+  const endpointFilePath = join(
+    options.userDataPath,
+    'agent-hooks',
+    process.platform === 'win32' ? 'endpoint.cmd' : 'endpoint.env',
+  );
 
   const server: Server = createServer(async (req, res) => {
     try {

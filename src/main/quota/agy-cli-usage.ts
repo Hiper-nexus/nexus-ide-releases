@@ -44,8 +44,25 @@ export function parseAgyCliUsage(output: string, now = Date.now()): QuotaWindow[
 }
 
 function locateBinary(): string | null {
-  for (const candidate of [path.join(os.homedir(), '.local', 'bin', 'agy'), '/opt/homebrew/bin/agy', '/usr/local/bin/agy']) {
-    try { fs.accessSync(candidate, fs.constants.X_OK); return candidate; }
+  const candidates = [
+    path.join(os.homedir(), '.local', 'bin', 'agy'),
+    '/opt/homebrew/bin/agy',
+    '/usr/local/bin/agy',
+  ];
+  // O instalador Windows põe o mesmo `agy` do Mac em %LOCALAPPDATA%\agy\bin.
+  // Sem este caminho a cota nativa (agy --print /quota) nunca roda aqui.
+  if (process.platform === 'win32') {
+    const local = process.env.LOCALAPPDATA;
+    if (local) {
+      candidates.unshift(
+        path.join(local, 'agy', 'bin', 'agy.exe'),
+        path.join(local, 'agy', 'bin', 'agy.cmd'),
+      );
+    }
+  }
+  const mode = process.platform === 'win32' ? fs.constants.F_OK : fs.constants.X_OK;
+  for (const candidate of candidates) {
+    try { fs.accessSync(candidate, mode); return candidate; }
     catch { /* Try the next native installation location. */ }
   }
   return null;

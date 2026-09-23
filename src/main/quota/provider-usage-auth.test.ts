@@ -51,6 +51,7 @@ import {
   fetchCodexAccountUsage, resolveClaudeToken, resolveCodexAuthCandidates, resolveProviderApiKeyCandidates,
   resolveGrokAccessTokenCandidates, resolveKimiAccessTokenCandidates,
   resolveKimiOauthCreds, resolveGeminiOauthCreds, persistKimiRotatedCreds,
+  parseGeminiOauthBlob,
 } from './provider-usage-auth';
 
 const tempHomes: string[] = [];
@@ -113,6 +114,38 @@ describe('resolveClaudeToken boot safety', () => {
     );
 
     expect(await resolveClaudeToken()).toBe('file-token');
+    expect(mocks.nativeCredential).not.toHaveBeenCalled();
+  });
+
+  it('renova o arquivo nativo quando o access venceu e há refresh', async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-quota-claude-refresh-'));
+    tempHomes.push(home);
+    vi.spyOn(os, 'homedir').mockReturnValue(home);
+    const credPath = path.join(home, '.claude', '.credentials.json');
+    fs.mkdirSync(path.dirname(credPath), { recursive: true });
+    fs.writeFileSync(credPath, JSON.stringify({
+      claudeAiOauth: {
+        accessToken: 'stale-access',
+        refreshToken: 'refresh-1',
+        expiresAt: Date.now() - 60_000,
+      },
+    }));
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        access_token: 'fresh-access',
+        refresh_token: 'refresh-2',
+        expires_in: 3600,
+      }),
+    }));
+    vi.stubGlobal('fetch', fetchImpl);
+    expect(await resolveClaudeToken()).toBe('fresh-access');
+    const written = JSON.parse(fs.readFileSync(credPath, 'utf8')) as {
+      claudeAiOauth: { accessToken: string; refreshToken: string };
+    };
+    expect(written.claudeAiOauth.accessToken).toBe('fresh-access');
+    expect(written.claudeAiOauth.refreshToken).toBe('refresh-2');
     expect(mocks.nativeCredential).not.toHaveBeenCalled();
   });
 });
@@ -273,5 +306,27 @@ describe('persistKimiRotatedCreds', () => {
     mocks.getAccount.mockReturnValue({ adapterId: 'grok' });
     persistKimiRotatedCreds('acct-9', { accessToken: 'x' });
     expect(mocks.setSecret).not.toHaveBeenCalled();
+  });
+});
+
+describe('parseGeminiOauthBlob', () => {
+  it('lê o arquivo plano e o blob do Gerenciador de Credenciais', () => {
+    expect(parseGeminiOauthBlob(JSON.stringify({
+      access_token: 'at',
+      refresh_token: 'rt',
+      expiry_date: 50,
+    }))).toEqual({ accessToken: 'at', refreshToken: 'rt', expiryDate: 50 });
+    expect(parseGeminiOauthBlob(JSON.stringify({
+      token: {
+        access_token: 'at2',
+        refresh_token: 'rt2',
+        expiry: '2026-09-21T12:00:00.000Z',
+      },
+    }))).toEqual({
+      accessToken: 'at2',
+      refreshToken: 'rt2',
+      expiryDate: Date.parse('2026-09-21T12:00:00.000Z'),
+    });
+    expect(parseGeminiOauthBlob('não é json')).toBeNull();
   });
 });

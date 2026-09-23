@@ -62,6 +62,29 @@ describe('quota-normalize', () => {
     expect(hours?.label).toBe('5 Horas');
   });
 
+  it('drops the empty 5h and weekly shells when a named window already has a reading', () => {
+    const m = mergeWindows(defaultUnknownWindows('agy'), [
+      knownWindow({
+        kind: 'hours',
+        label: 'Gemini Models · 5 Horas',
+        usedRatio: 0,
+        source: 'provider-api',
+        confidence: 'high',
+      }),
+      knownWindow({
+        kind: 'weekly',
+        label: 'Gemini Models · Semanal',
+        usedRatio: 0.03,
+        source: 'provider-api',
+        confidence: 'high',
+      }),
+    ]);
+    expect(m.map((w) => w.label)).toEqual([
+      'Gemini Models · 5 Horas',
+      'Gemini Models · Semanal',
+    ]);
+  });
+
   it('fleet defaults are 5 Horas + Semanal for cloud LLMs', () => {
     for (const id of [
       'claude',

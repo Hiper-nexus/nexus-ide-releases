@@ -68,6 +68,8 @@ export function cliLoginLooksComplete(output: string): boolean {
   if (/(?:logged|signed) in as\s+\S+/i.test(text)) return true;
   if (/authentication tokens stored/i.test(text)) return true;
   if (/successfully (?:logged|signed) in/i.test(text)) return true;
+  // Claude no Windows: "Paste code here if prompted > Login successful!"
+  if (/\blogin successful\b/i.test(text)) return true;
   return false;
 }
 

@@ -32,6 +32,11 @@ describe('claude-hook-service', () => {
       process.platform === 'win32' ? 'claude-hook.cmd' : 'claude-hook.sh',
     );
     expect(existsSync(scriptPath)).toBe(true);
+    if (process.platform === 'win32') {
+      const script = readFileSync(scriptPath, 'utf8');
+      expect(script).not.toContain('call "%NEXUS_AGENT_HOOK_ENDPOINT%" 2>nul');
+      expect(script).toContain('findstr /b /c:"export NEXUS_AGENT_HOOK_PORT="');
+    }
     const settings = readFileSync(join(home, '.claude', 'settings.json'), 'utf8');
     expect(settings).toContain('UserPromptSubmit');
     expect(settings).toContain('agent-hooks/');

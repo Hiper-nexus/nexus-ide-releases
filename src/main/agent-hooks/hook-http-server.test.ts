@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -85,6 +85,15 @@ describe('hook-http-server', () => {
       'pty-session-1',
       'busy',
     );
+    const endpoint = readFileSync(handle.endpointFilePath, 'utf8');
+    if (process.platform === 'win32') {
+      expect(handle.endpointFilePath.endsWith('endpoint.cmd')).toBe(true);
+      expect(endpoint).toContain('set "NEXUS_AGENT_HOOK_PORT=');
+      expect(endpoint).not.toContain('export ');
+    } else {
+      expect(handle.endpointFilePath.endsWith('endpoint.env')).toBe(true);
+      expect(endpoint).toContain("export NEXUS_AGENT_HOOK_PORT='");
+    }
   });
 
   it('rejects bad token', async () => {

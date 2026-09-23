@@ -168,7 +168,10 @@ function syncDirectory(directory: string): void {
 }
 
 function syncFile(file: string): void {
-  const fd = fs.openSync(file, 'r');
+  // Windows FlushFileBuffers rejects a read-only handle with EPERM. The
+  // backup of an existing vault is opened only to flush it; without write
+  // access that flush aborts every secret after the first.
+  const fd = fs.openSync(file, process.platform === 'win32' ? 'r+' : 'r');
   try {
     fs.fsyncSync(fd);
   } finally {

@@ -209,20 +209,61 @@ export function materializeManagedClaudeAuth(
 const capabilityCache = new Map<string, { signature: string; supported: boolean }>();
 
 /**
+ * Windows npm installs `claude.cmd`, which ConPTY must spawn, but the marker
+ * lives in the exe that shim launches. Scanning the 160-byte cmd reports the
+ * CLI as too old and the pane dies before it starts. Only a relative payload
+ * inside the shim's own directory counts — anything else keeps the shim, and
+ * the check stays fail-closed.
+ */
+export function claudeCapabilityProbePath(binary: string): string {
+  const ext = path.extname(binary).toLowerCase();
+  if (ext !== '.cmd' && ext !== '.bat') return binary;
+  let text: string;
+  let root: string;
+  try {
+    const stat = fs.statSync(binary);
+    if (!stat.isFile() || stat.size > 64 * 1024) return binary;
+    text = fs.readFileSync(binary, 'utf8');
+    root = fs.realpathSync(path.dirname(binary));
+  } catch {
+    return binary;
+  }
+  const resolved: string[] = [];
+  for (const match of text.matchAll(/"%dp0%\\([^"]+)"/gi)) {
+    const rel = match[1] ?? '';
+    const parts = rel.split(/[\\/]/).filter(Boolean);
+    if (parts.length === 0 || parts.some((part) => part === '.' || part === '..' || part.includes('%'))) {
+      continue;
+    }
+    let real: string;
+    try {
+      real = fs.realpathSync(path.resolve(root, ...parts));
+      const stay = path.relative(root, real);
+      if (stay.startsWith('..') || path.isAbsolute(stay) || !fs.statSync(real).isFile()) continue;
+    } catch {
+      continue;
+    }
+    resolved.push(real);
+  }
+  return resolved.find((file) => !/^node(?:\.exe)?$/i.test(path.basename(file))) ?? binary;
+}
+
+/**
  * True when the CLI binary literally declares the marker (an env var name).
  * Quota probes gate env-scoped `claude /usage` runs on this: a CLI too old to
  * know the variable falls back to the native login and would paint that
  * account's usage on a different account's row — fabricated data.
  */
 export function claudeCliDeclaresMarker(binary: string, marker: string): boolean {
-  const stat = fs.statSync(binary);
+  const probe = claudeCapabilityProbePath(binary);
+  const stat = fs.statSync(probe);
   const signature = `${stat.size}:${stat.mtimeMs}`;
-  const key = `${binary}${marker}`;
+  const key = `${probe}${marker}`;
   let cached = capabilityCache.get(key);
   if (cached?.signature !== signature) {
     const needle = Buffer.from(marker);
     const chunk = Buffer.alloc(256 * 1024);
-    const fd = fs.openSync(binary, 'r');
+    const fd = fs.openSync(probe, 'r');
     let supported = false;
     let tail = Buffer.alloc(0);
     try {

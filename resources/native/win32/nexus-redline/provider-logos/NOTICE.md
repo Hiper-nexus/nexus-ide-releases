@@ -31,3 +31,7 @@ does not contact provider domains merely to render an icon.
 - `deepseek-color.svg`, `qwen-color.svg`, `qoder-color.svg`, and `cursor.svg`
   are vendor marks from `@lobehub/icons-static-svg` 1.91.0 (MIT), replacing
   original identifiers for those services in ProviderLogo.
+
+- `mimo-code.png` reuses the unchanged Xiaomi MiMo identifier already bundled
+  at `src/shared/agent-icons/mimo-code.png`. It is used only to identify the
+  corresponding official CLI/service; the mark remains Xiaomi's trademark.

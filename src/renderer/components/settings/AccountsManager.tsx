@@ -10,6 +10,7 @@ import { ADD_ACCOUNT_CTA, accountsPanelView } from './accounts-login-view';
 import { PixelIcon } from '../PixelIcon';
 import { openCliLoginTerminal, type CliLoginFinish } from './cli-login-terminal';
 import { useToastStore } from '../../state/toast-store';
+import { useQuotaStore } from '../../state/quota-store';
 import type { ProviderOpPhase } from './providers-panel-view';
 
 /**
@@ -36,8 +37,14 @@ const UPSTREAMS = [
 ];
 
 class AccountPreservationError extends Error {
-  constructor() {
-    super('Não consegui guardar a conta atual. O novo login não foi iniciado para preservar essa sessão. Tente novamente.');
+  constructor(detail?: string) {
+    const reason = detail?.trim().slice(0, 180);
+    super(
+      reason
+        ? `Não consegui guardar a conta atual (${reason}). O novo login não foi iniciado para preservar essa sessão.`
+        : 'Não consegui guardar a conta atual. O novo login não foi iniciado para preservar essa sessão. Tente novamente.',
+    );
+    this.name = 'AccountPreservationError';
   }
 }
 
@@ -288,12 +295,23 @@ export function AccountsManager({
       authDetail: baseline.detail,
       taken: accounts.map((a) => a.label),
     });
+    let saved = false;
     try {
       const res = await addActiveSession(adapterId, name);
-      if (!res.ok) throw new AccountPreservationError();
-      await hydrate();
-    } catch {
-      throw new AccountPreservationError();
+      if (!res.ok) throw new AccountPreservationError(res.error);
+      saved = true;
+    } catch (error) {
+      if (error instanceof AccountPreservationError) throw error;
+      const detail = error instanceof Error ? error.message : undefined;
+      throw new AccountPreservationError(detail);
+    }
+    if (saved) {
+      try {
+        await hydrate();
+        void useQuotaStore.getState().refresh({ silent: true });
+      } catch (error) {
+        console.warn('[cli-login] conta guardada, mas a lista não atualizou:', error);
+      }
     }
   }
 
@@ -343,6 +361,7 @@ export function AccountsManager({
         targetAccountId,
       );
       await hydrate();
+      void useQuotaStore.getState().refresh({ silent: true });
       if (!res.ok) {
         showNotice(res.error ?? 'Não foi possível salvar a conta nova.', 'err');
         return;

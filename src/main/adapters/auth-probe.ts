@@ -188,7 +188,8 @@ const OAUTH_PROBES: Record<
     };
     return { state: 'missing', detail: 'sem credencial Muse detectada — rode `muse login`' };
   },
-  // Devin grava TOML plano em $XDG_DATA_HOME/devin/credentials.toml (sem
+  // Devin grava TOML plano em $XDG_DATA_HOME/devin/credentials.toml
+  // (no Windows, %APPDATA%\devin\credentials.toml). Sem
   // seções nem campo de frescor) — o detector é o mesmo hasNativeFileAuth dos
   // outros, com ramo próprio em managed-credentials.
   devin: async () =>

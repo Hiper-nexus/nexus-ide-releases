@@ -6,6 +6,7 @@
  * configured vault, launcher, environment, and native login candidates.
  */
 
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -121,9 +122,29 @@ export async function resolveClaudeToken(accountId?: string): Promise<string | n
     return extractClaudeAccessToken(blob);
   }
 
-  const blob = readText(
-    path.join(os.homedir(), '.claude', '.credentials.json'),
-  );
+  const credPath = path.join(os.homedir(), '.claude', '.credentials.json');
+  const blob = readText(credPath);
+  // No Mac o Keychain/CLI mantém o access token fresco. No Windows a sessão
+  // mora só no arquivo: o access vence em horas e, sem renovar com o refresh
+  // que já está ali, a cota mente «sessão expirada» numa conta logada.
+  if (blob) {
+    const now = Date.now();
+    if (claudeBlobNeedsRefresh(blob, now)) {
+      try {
+        const refreshed = await refreshClaudeOauthBlob(blob, now);
+        if (refreshed) {
+          try {
+            fs.writeFileSync(credPath, refreshed, { mode: 0o600 });
+          } catch {
+            // A sonda ainda usa o token novo em memória.
+          }
+          return extractClaudeAccessToken(refreshed);
+        }
+      } catch {
+        // Cai no token do arquivo. Se estiver vencido, a sonda diz expirado.
+      }
+    }
+  }
   const fileToken = blob ? extractClaudeAccessToken(blob) : null;
   if (fileToken || process.platform !== 'darwin') return fileToken;
   const native = await readNativeOAuthCredential('Claude Code-credentials');
@@ -526,28 +547,100 @@ export function resolveGeminiOauthCreds(
     return null;
   }
   const blob = readText(path.join(os.homedir(), '.gemini', 'oauth_creds.json'));
-  if (blob) return parseGeminiCredsBlob(blob);
+  if (blob) {
+    const parsed = parseGeminiCredsBlob(blob);
+    if (parsed) return parsed;
+  }
+  if (process.platform === 'win32') return readAgyWindowsCredential();
   return null;
 }
 
-function parseGeminiCredsBlob(blob: string): GeminiOauthCredsResolved | null {
+function tokenFields(source: {
+  access_token?: unknown;
+  refresh_token?: unknown;
+  expiry_date?: unknown;
+  expiry?: unknown;
+}): GeminiOauthCredsResolved | null {
+  const accessToken =
+    typeof source.access_token === 'string' ? source.access_token : undefined;
+  const refreshToken =
+    typeof source.refresh_token === 'string' ? source.refresh_token : undefined;
+  let expiryDate: number | undefined;
+  if (typeof source.expiry_date === 'number') expiryDate = source.expiry_date;
+  else if (typeof source.expiry === 'number') expiryDate = source.expiry;
+  else if (typeof source.expiry === 'string') {
+    const parsed = Date.parse(source.expiry);
+    if (!Number.isNaN(parsed)) expiryDate = parsed;
+  }
+  if (!accessToken && !refreshToken) return null;
+  return { accessToken, refreshToken, expiryDate };
+}
+
+/**
+ * Arquivo `~/.gemini/oauth_creds.json` (tokens no topo) ou o blob do
+ * Gerenciador de Credenciais do Windows (`token.access_token`).
+ */
+export function parseGeminiOauthBlob(blob: string): GeminiOauthCredsResolved | null {
   try {
     const parsed = JSON.parse(blob) as {
       access_token?: unknown;
       refresh_token?: unknown;
       expiry_date?: unknown;
+      expiry?: unknown;
+      token?: {
+        access_token?: unknown;
+        refresh_token?: unknown;
+        expiry_date?: unknown;
+        expiry?: unknown;
+      };
     };
-    const accessToken =
-      typeof parsed.access_token === 'string' ? parsed.access_token : undefined;
-    const refreshToken =
-      typeof parsed.refresh_token === 'string' ? parsed.refresh_token : undefined;
-    const expiryDate =
-      typeof parsed.expiry_date === 'number' ? parsed.expiry_date : undefined;
-    if (!accessToken && !refreshToken) return null;
-    return { accessToken, refreshToken, expiryDate };
+    return tokenFields(parsed.token ?? parsed);
   } catch {
     return null;
   }
+}
+
+function parseGeminiCredsBlob(blob: string): GeminiOauthCredsResolved | null {
+  return parseGeminiOauthBlob(blob);
+}
+
+const AGY_WIN_CRED_TTL_MS = 60_000;
+let agyWinCredCache: { at: number; value: GeminiOauthCredsResolved | null } | null = null;
+
+/** go-keyring no Windows grava o OAuth em `gemini:antigravity`. Sem segredo no log. */
+function readAgyWindowsCredential(): GeminiOauthCredsResolved | null {
+  if (process.platform !== 'win32') return null;
+  const now = Date.now();
+  if (agyWinCredCache && now - agyWinCredCache.at < AGY_WIN_CRED_TTL_MS) {
+    return agyWinCredCache.value;
+  }
+  let value: GeminiOauthCredsResolved | null = null;
+  try {
+    const script = [
+      'Add-Type @"',
+      'using System; using System.Runtime.InteropServices; using System.Text;',
+      'public class NexusAgyCred {',
+      '  [DllImport("advapi32", SetLastError=true, CharSet=CharSet.Unicode)]',
+      '  public static extern bool CredRead(string t, int type, int f, out IntPtr p);',
+      '  [DllImport("advapi32")] public static extern void CredFree(IntPtr p);',
+      '  [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]',
+      '  public struct C { public uint Flags; public uint Type; public IntPtr TargetName; public IntPtr Comment; public long LastWritten; public uint CredentialBlobSize; public IntPtr CredentialBlob; public uint Persist; public uint AttributeCount; public IntPtr Attributes; public IntPtr TargetAlias; public IntPtr UserName; }',
+      '  public static string Read() { IntPtr p; if (!CredRead("gemini:antigravity", 1, 0, out p)) return ""; try { var c = Marshal.PtrToStructure<C>(p); if (c.CredentialBlobSize==0) return ""; var b = new byte[c.CredentialBlobSize]; Marshal.Copy(c.CredentialBlob, b, 0, b.Length); return Encoding.UTF8.GetString(b); } finally { CredFree(p); } }',
+      '}',
+      '"@',
+      '[Console]::Out.Write([NexusAgyCred]::Read())',
+    ].join('\n');
+    const raw = execFileSync(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', script],
+      { encoding: 'utf8', timeout: 8_000, windowsHide: true },
+    );
+    value = raw.trim() ? parseGeminiOauthBlob(raw) : null;
+  } catch {
+    value = null;
+  }
+  agyWinCredCache = { at: now, value };
+  return value;
 }
 
 export { extractClaudeAccessToken };

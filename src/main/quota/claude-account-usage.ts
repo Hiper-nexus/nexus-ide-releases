@@ -48,7 +48,9 @@ import {
 } from './claude-oauth-refresh';
 import {
   cliFailureHint,
+  extractClaudeAccessToken,
   probeClaudeCliUsage,
+  probeClaudeOauthUsage,
   parseClaudeOauthUsage,
   type ClaudeCliRunImpl,
 } from './claude-oauth-usage';
@@ -383,6 +385,23 @@ function accountUsageEnv(directory: string): Record<string, string> {
   };
 }
 
+/**
+ * Cota desta conta pelo mesmo endpoint da linha nativa, usando SÓ o token
+ * dela. No Windows o `claude /usage` isolado falha e as contas A e B ficavam
+ * sem número. Nunca chama a sessão nativa.
+ */
+async function usageFromOwnClaudeToken(
+  blob: string,
+  now: number,
+): Promise<ClaudeAccountUsageResult | null> {
+  const token = extractClaudeAccessToken(blob);
+  if (!token) return null;
+  const probe = await probeClaudeOauthUsage(token, { now });
+  if (probe.windows?.length) return { windows: probe.windows };
+  if (probe.failure === 'auth-expired') return { windows: null, hint: 'auth-expired' };
+  return null;
+}
+
 function persistVaultBlob(accountId: string, blob: string): void {
   try {
     setSecret(CRED_PREFIX + accountId, blob);
@@ -402,17 +421,43 @@ async function healScopedCredential(
   accountId: string,
   blob: string,
   now: number,
-): Promise<'refreshed' | 'invalid-grant' | 'error'> {
-  if (!claudeBlobNeedsRefresh(blob, now)) return 'error';
+): Promise<{ status: 'refreshed' | 'invalid-grant' | 'error'; blob?: string }> {
+  if (!claudeBlobNeedsRefresh(blob, now)) return { status: 'error' };
   const result = await refreshClaudeOauthBlobDetailed(blob, now);
-  if (result.outcome !== 'refreshed' || !result.blob) return result.outcome;
+  if (result.outcome !== 'refreshed' || !result.blob) return { status: result.outcome };
   try {
     materializeManagedClaudeAuth(accountId, result.blob);
     persistVaultBlob(accountId, result.blob);
-    return 'refreshed';
+    return { status: 'refreshed', blob: result.blob };
   } catch {
-    return 'error';
+    return { status: 'error' };
   }
+}
+
+/**
+ * Depois de renovar, a cota vem do token novo no mesmo endpoint do Mac.
+ * `claude /usage` no Windows segue sem número mesmo com o token fresco.
+ */
+async function windowsAfterCredentialHeal(
+  accountId: string,
+  blob: string,
+  now: number,
+  directory: string | undefined,
+  runImpl: ClaudeCliRunImpl | undefined,
+): Promise<ClaudeAccountUsageResult | null> {
+  const healed = await healScopedCredential(accountId, blob, now);
+  if (healed.status === 'invalid-grant') return { windows: null, hint: 'auth-expired' };
+  if (healed.status !== 'refreshed' || !healed.blob) return null;
+  const own = await usageFromOwnClaudeToken(healed.blob, now);
+  if (own?.windows?.length) return own;
+  if (!directory) return null;
+  const retry = await probeClaudeCliUsage({
+    now,
+    runImpl,
+    env: accountUsageEnv(directory),
+  });
+  if (retry.windows?.length) return { windows: retry.windows };
+  return { windows: null, hint: cliFailureHint(retry.failure ?? 'unavailable') };
 }
 
 /**
@@ -439,6 +484,24 @@ export async function fetchClaudeAccountUsageWindows(
   // pintou duas contas com o mesmo consumo. Sem credencial no escopo, a
   // cascata segue para as fontes ancoradas em identidade.
   if (managedClaudeAuthHasCredential(accountId, { home: opts.home })) {
+    const managedBlob = readManagedClaudeAuth(accountId);
+    if (managedBlob && claudeCredentialBlobIsUsable(managedBlob)) {
+      if (claudeBlobNeedsRefresh(managedBlob, now)) {
+        const healed = await windowsAfterCredentialHeal(
+          accountId,
+          managedBlob,
+          now,
+          managedClaudeAuthDirectory(accountId, opts.home),
+          opts.runImpl,
+        );
+        if (healed?.windows?.length || healed?.hint === 'auth-expired') return healed;
+        if (healed?.hint) hint = healed.hint;
+      } else {
+        const own = await usageFromOwnClaudeToken(managedBlob, now);
+        if (own?.windows?.length) return own;
+        if (own?.hint === 'auth-expired') return own;
+      }
+    }
     const directory = managedClaudeAuthDirectory(accountId, opts.home);
     const probe = await probeClaudeCliUsage({
       now,
@@ -452,18 +515,16 @@ export async function fetchClaudeAccountUsageWindows(
     // auth-expired explícito em vez de «unavailable» mudo.
     if (probe.failure === 'unavailable' || probe.failure === 'auth-expired') {
       const managed = readManagedClaudeAuth(accountId);
-      if (managed) {
-        const healed = await healScopedCredential(accountId, managed, now);
-        if (healed === 'invalid-grant') hint = 'auth-expired';
-        else if (healed === 'refreshed') {
-          const retry = await probeClaudeCliUsage({
-            now,
-            runImpl: opts.runImpl,
-            env: accountUsageEnv(directory),
-          });
-          if (retry.windows?.length) return { windows: retry.windows };
-          hint = cliFailureHint(retry.failure ?? 'unavailable');
-        }
+      if (managed && claudeBlobNeedsRefresh(managed, now)) {
+        const healed = await windowsAfterCredentialHeal(
+          accountId,
+          managed,
+          now,
+          directory,
+          opts.runImpl,
+        );
+        if (healed?.windows?.length || healed?.hint === 'auth-expired') return healed;
+        if (healed?.hint) hint = healed.hint;
       }
     }
   }
@@ -533,6 +594,11 @@ export async function fetchClaudeAccountUsageWindows(
     // Grant morto na origem: não há o que tentar — é re-login mesmo.
     return { windows: null, hint: 'auth-expired' };
   }
+  const own = await usageFromOwnClaudeToken(blob, now);
+  if (own?.windows?.length) return own;
+  if (own?.hint === 'auth-expired' && !claudeBlobNeedsRefresh(blob, now)) {
+    return own;
+  }
   try {
     const prepared = materializeManagedClaudeAuth(accountId, blob);
     const probe = await probeClaudeCliUsage({
@@ -546,17 +612,15 @@ export async function fetchClaudeAccountUsageWindows(
     // Mesma cura do passo 1: blob vencido com refreshToken — renovamos,
     // gravamos nos dois lados e repetimos a sonda.
     if (probe.failure === 'unavailable' || probe.failure === 'auth-expired') {
-      const healed = await healScopedCredential(accountId, blob, now);
-      if (healed === 'invalid-grant') hint = 'auth-expired';
-      else if (healed === 'refreshed') {
-        const retry = await probeClaudeCliUsage({
-          now,
-          runImpl: opts.runImpl,
-          env: accountUsageEnv(prepared.directory),
-        });
-        if (retry.windows?.length) return { windows: retry.windows };
-        hint = cliFailureHint(retry.failure ?? 'unavailable');
-      }
+      const healed = await windowsAfterCredentialHeal(
+        accountId,
+        blob,
+        now,
+        prepared.directory,
+        opts.runImpl,
+      );
+      if (healed?.windows?.length || healed?.hint === 'auth-expired') return healed;
+      if (healed?.hint) hint = healed.hint;
     }
   } catch {
     // materialização falhou (id inválido, blob sem slice) → hint honesto

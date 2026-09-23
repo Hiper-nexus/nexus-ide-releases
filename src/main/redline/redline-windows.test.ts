@@ -119,8 +119,23 @@ describe('autostart HKCU', () => {
 
   it('grava com argv fixo e aspas no /d', () => {
     const calls: RecordedCall[] = [];
-    const deps = winDeps({ execFile: fakeExec({ 'reg add': '' }, calls) });
+    const deps = winDeps({
+      execFile: fakeExec({ 'reg add': '', 'schtasks /Create': '' }, calls),
+    });
     expect(setWindowsAutostart(true, exe, deps)).toBe(true);
+    expect(calls.some((c) => c.file === 'schtasks' && c.args[0] === '/Create')).toBe(true);
+    expect(calls.find((c) => c.file === 'schtasks')?.args).toEqual([
+      '/Create',
+      '/F',
+      '/SC',
+      'ONLOGON',
+      '/RL',
+      'LIMITED',
+      '/TN',
+      'NexusRedline',
+      '/TR',
+      `"${exe}"`,
+    ]);
     expect(calls[0]).toEqual({
       file: 'reg',
       args: [
@@ -146,7 +161,11 @@ describe('autostart HKCU', () => {
       },
     });
     expect(setWindowsAutostart(false, exe, deps)).toBe(true);
-    expect(calls).toHaveLength(1); // só o query
+    // schtasks /Delete (ausente é ok) e o query do Run.
+    expect(calls.map((c) => `${c.file} ${c.args[0]}`)).toEqual([
+      'schtasks /Delete',
+      'reg query',
+    ]);
   });
 });
 

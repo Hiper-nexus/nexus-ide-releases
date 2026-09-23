@@ -1,4 +1,5 @@
 import { BrowserWindow, dialog, ipcMain } from "electron";
+import { showOwnedOpenDialog } from "../dialog/owned-open-dialog";
 import type { WebContents } from "electron";
 import fs from "node:fs";
 import path from "node:path";
@@ -3054,7 +3055,7 @@ export function registerOrchIpc(): void {
       if (!window || window.isDestroyed()) {
         throw new Error('renderer window is unavailable');
       }
-      const result = await dialog.showOpenDialog(window, {
+      const result = await showOwnedOpenDialog(window, {
         title: "Import squads",
         properties: ["openFile"],
         filters: [{ name: "JSON", extensions: ["json"] }],

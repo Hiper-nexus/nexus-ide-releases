@@ -38,6 +38,21 @@ export type HooksConfig = {
 
 export const MANAGED_HOOK_TIMEOUT_SECONDS = 10;
 
+/**
+ * Load port/token from the hook endpoint file. On Windows `call file.env`
+ * is ShellExecute: every Claude/Codex hook opened the "choose an app for
+ * .env" dialog. A `.cmd` may still be called; a `.env` is only parsed.
+ */
+export function windowsHookEndpointLoadLines(): readonly string[] {
+  return [
+    'if defined NEXUS_AGENT_HOOK_ENDPOINT if /i "%NEXUS_AGENT_HOOK_ENDPOINT:~-4%"==".cmd" if exist "%NEXUS_AGENT_HOOK_ENDPOINT%" call "%NEXUS_AGENT_HOOK_ENDPOINT%"',
+    'if defined NEXUS_AGENT_HOOK_ENDPOINT if /i not "%NEXUS_AGENT_HOOK_ENDPOINT:~-4%"==".cmd" if exist "%NEXUS_AGENT_HOOK_ENDPOINT%" (',
+    '  for /f "usebackq tokens=2 delims=\'" %%P in (`findstr /b /c:"export NEXUS_AGENT_HOOK_PORT=" "%NEXUS_AGENT_HOOK_ENDPOINT%"`) do set "NEXUS_AGENT_HOOK_PORT=%%P"',
+    '  for /f "usebackq tokens=2 delims=\'" %%T in (`findstr /b /c:"export NEXUS_AGENT_HOOK_TOKEN=" "%NEXUS_AGENT_HOOK_ENDPOINT%"`) do set "NEXUS_AGENT_HOOK_TOKEN=%%T"',
+    ')',
+  ];
+}
+
 export function buildManagedCommandHook(
   command: string,
   timeout = MANAGED_HOOK_TIMEOUT_SECONDS,

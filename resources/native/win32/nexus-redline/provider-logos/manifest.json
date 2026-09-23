@@ -67,6 +67,14 @@
     "file": "longcat.png",
     "mono": false
   },
+  "mimo": {
+    "file": "mimo-code.png",
+    "mono": false
+  },
+  "mimo-code": {
+    "file": "mimo-code.png",
+    "mono": false
+  },
   "muse": {
     "file": "muse.png",
     "mono": false
@@ -109,6 +117,10 @@
   },
   "sakana": {
     "file": "sakana.png",
+    "mono": false
+  },
+  "xiaomi": {
+    "file": "mimo-code.png",
     "mono": false
   }
 }

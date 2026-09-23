@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
@@ -13,17 +14,72 @@ const API_HOSTS = new Set([
   'token-plan-ams.xiaomimimo.com',
 ]);
 
-export function mimoNativePaths(home = os.homedir(), env: NodeJS.ProcessEnv = process.env) {
+export function mimoNativePaths(
+  home = os.homedir(),
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+) {
   const root = env.MIMOCODE_HOME?.trim();
-  if (root && !path.isAbsolute(root)) throw new Error('MIMOCODE_HOME deve ser um caminho absoluto');
-  const xdg = (key: string, fallback: string) => env[key] && path.isAbsolute(env[key]!) ? env[key]! : fallback;
-  const data = root ? path.join(root, 'data') : path.join(xdg('XDG_DATA_HOME', path.join(home, '.local', 'share')), 'mimocode');
-  return {
-    data, authFile: path.join(data, 'auth.json'),
-    config: root ? path.join(root, 'config') : path.join(xdg('XDG_CONFIG_HOME', path.join(home, '.config')), 'mimocode'),
-    state: root ? path.join(root, 'state') : path.join(xdg('XDG_STATE_HOME', path.join(home, '.local', 'state')), 'mimocode'),
-    cache: root ? path.join(root, 'cache') : path.join(xdg('XDG_CACHE_HOME', path.join(home, '.cache')), 'mimocode'),
+  const join = platform === 'win32' ? path.win32.join : path.posix.join;
+  const isAbsolute = platform === 'win32' ? path.win32.isAbsolute : path.posix.isAbsolute;
+  if (root && !isAbsolute(root)) throw new Error('MIMOCODE_HOME deve ser um caminho absoluto');
+  const xdg = (key: string, fallback: string) => {
+    const value = env[key]?.trim();
+    return value && isAbsolute(value) ? value : fallback;
   };
+  // MiMo Code 0.1.14 no Windows grava o XDG Unix em %USERPROFILE%\.local\share,
+  // não em %LOCALAPPDATA%. Um home de conta gerenciada segue o mesmo layout
+  // relativo, para o teste não herdar o AppData do operador.
+  const data = root
+    ? join(root, 'data')
+    : join(xdg('XDG_DATA_HOME', join(home, '.local', 'share')), 'mimocode');
+  return {
+    data,
+    authFile: join(data, 'auth.json'),
+    config: root
+      ? join(root, 'config')
+      : join(xdg('XDG_CONFIG_HOME', join(home, '.config')), 'mimocode'),
+    state: root
+      ? join(root, 'state')
+      : join(xdg('XDG_STATE_HOME', join(home, '.local', 'state')), 'mimocode'),
+    cache: root
+      ? join(root, 'cache')
+      : join(xdg('XDG_CACHE_HOME', join(home, '.cache')), 'mimocode'),
+  };
+}
+
+/** Auth files the CLI may have written. The Unix path is the one 0.1.14 uses. */
+export function mimoAuthCandidateFiles(
+  home = os.homedir(),
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string[] {
+  const primary = mimoNativePaths(home, env, platform).authFile;
+  if (platform !== 'win32' || env.MIMOCODE_HOME?.trim()) return [primary];
+  const local = env.LOCALAPPDATA?.trim();
+  const join = path.win32.join;
+  const isAbsolute = path.win32.isAbsolute;
+  if (!local || !isAbsolute(local)) return [primary];
+  const alternate = join(local, 'mimocode', 'auth.json');
+  return alternate === primary ? [primary] : [primary, alternate];
+}
+
+/** First saved Xiaomi credential, or null. Never logs the key. */
+export function readMimoNativeAuthBlob(
+  home = os.homedir(),
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string | null {
+  for (const file of mimoAuthCandidateFiles(home, env, platform)) {
+    try {
+      if (fs.statSync(file).size > 1_048_576) continue;
+      const blob = mimoAuthSnapshot(fs.readFileSync(file, 'utf8'));
+      if (blob) return blob;
+    } catch {
+      // Missing or unreadable candidate. Try the next layout.
+    }
+  }
+  return null;
 }
 
 function parse(blob: string): z.infer<typeof authFile> | null {

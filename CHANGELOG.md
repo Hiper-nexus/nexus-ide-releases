@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.76.82 — Nada escondido no Windows
+
+- **CLIs instaladas por nvm, pnpm, mise, Volta e scoop não somem.** A busca cobre essas pastas no Windows. Se a sondagem do boot falha, o Nexus tenta de novo sozinho e reexamina as CLIs.
+- **Botões e hovers que sumiam.** Ícones pequenos demais e tokens de cor que não existiam deixavam o “+” e os hovers da barra mortos. O HUD de voz em repouso fica só o orb e não cobre o terminal.
+- **Abas e alvos de clique.** Hover e foco nas abas, botões do pane em 24 px, e o 401 com conta conectada diz que a sessão expirou.
+- **O cofre fecha todas as portas depois da primeira falha.** Leitura e gravação param juntas. Antes cada leitura voltava ao cofre.
+- **Git, SSH e gh entram em todo HOME privado de CLI gravável**, não só no Claude. O keychain do macOS continua só no Mac.
+- **O brief não é colado no meio da migração do MiMo**, mesmo se ela passar de 25 segundos.
+- **A faixa de várias missões segue o tema.** Pino de missão encerrada deixa de ser botão morto e o nome do orquestrador não repete.
+- **Continua desta linha Windows:** pasta que responde, Claude pelo executável, MiMo em `.local\share`, terminal em UTF-8 e o hook que não abre o `.env`.
+
 ## 0.76.81 — Nada escondido
 
 - **CLIs instaladas por nvm, pnpm, mise e cia. não somem mais em outras máquinas (F-630).** App aberto pelo Finder via só pastas fixas quando o shell de login (oh-my-zsh + nvm) passava do prazo de 4 s. A busca agora cobre todas as versões do nvm, `~/.claude/local`, fnm, mise, proto, pnpm, `/snap/bin` e, no Windows, `%APPDATA%\npm`, `%LOCALAPPDATA%\pnpm`, Volta e scoop; uma sondagem que falhou no boot é refeita em background (20 s) e reexamina as CLIs sozinha. A mensagem aponta "Reexaminar CLIs"/caminho do binário antes de "instale".
@@ -21,6 +32,35 @@
 - **Jev no caminho de pesquisa e no navegador.** `researchTriage` no search mixer e `browser_find` com desempate por confiança; `browser_read` com judge ligado por default (`judge: false` desliga).
 - **Escrita do desktop-control presa ao app da frente.** `SCRIPT_KEY` só vai para o frontmost e apps de terminal (incluindo Termius) ficam na denylist, então o conteúdo não vaza para o terminal externo do operador.
 
+## 0.76.80 — O lote do Mac no Windows
+
+- **Ditado só envia ao soltar a tecla.** Space/PTT não entrega a transcrição no meio. O hold-to-talk tem teto de segurança e não encerra no silêncio da fala.
+- **Prompts de boot e migração não colidem.** A espera da migração fica separada do aceite cedo do menu. O prompt inicial do CLI espera trust/bypass sem cair no fluxo errado.
+- **Várias missões no mesmo workspace.** Faixa por escopo, pinos A/B isolados e a marca do orquestrador no header.
+- **O cofre para de se envenenar.** A primeira falha do safeStorage desliga a escrita pelo resto do processo, então o modal de chaves perdidas não volta. O vault exporta e importa entre PCs com senha.
+- **Claude Opus 5.5 e GPT-6 Sol/Luna** no catálogo, preços, roteador e padrão do orquestrador. Opus 5.5 substitui o 5. `gpt-6-sol` é o frontier do Codex.
+- **Jev na pesquisa e no navegador.** Triagem no mixer de busca e desempate por confiança no browser_find.
+- **A escrita do desktop fica no app da frente.** A tecla de script não vai para o terminal de fora.
+- **No Windows desta leva:** seletor de pasta que responde, pane do Claude pelo executável real, login do MiMo em `.local\share\mimocode`, terminal em UTF-8 e o hook que não abre mais o `.env`.
+
+## 0.76.79 — A pasta do workspace abre
+
+- **O seletor de pasta deixa de travar no Windows.** O diálogo nativo estava preso à janela do Nexus e o Windows marcava «Não está respondendo», com a lista vazia em «Nenhum item corresponde à pesquisa». Agora abre solto e a lista responde.
+- **O pane do Claude volta a abrir.** O instalador npm no Windows é um `claude.cmd` que aponta para o `claude.exe`. A checagem lia só o atalho, não achava `CLAUDE_SECURESTORAGE_CONFIG_DIR` e recusava a conta isolada. Agora lê o executivo que o atalho abre.
+- **O login do MiMo deixa de sumir.** A CLI grava a sessão em `%USERPROFILE%\.local\share\mimocode\auth.json`. O Windows procurava em `%LOCALAPPDATA%` e a conta ficava em «precisa login».
+- **O terminal do Windows nasce em UTF-8.** Sem `LANG`, o Git Bash contava o texto em bytes e o launcher `ai` morria em `BANNER_GRAD[i] unbound`. O pane passa a definir `C.UTF-8`.
+- **O Windows para de pedir um programa para abrir `.env`.** O hook do Claude fazia `call` no arquivo de endpoint, e o Windows trata isso como “abrir este .env”. Agora o script só lê a porta e o token.
+
+## 0.76.78 — Cota do Claude no Windows
+
+- **Claude deixa de ficar em «Sem leitura»** — o access token do arquivo vence e a renovação existia, mas a leitura seguinte ainda pedia `claude /usage`, que no Windows não devolve número. Agora a cota sai do token renovado, no mesmo endpoint do Mac.
+
+## 0.76.77 — O Mac 0.76.76 no Windows
+
+- **Re-login da mesma conta abre o terminal.** «Entrar novamente» deixa de morrer em «Não consegui guardar a conta atual» quando a sessão viva é a própria conta e o snapshot não grava. Outra conta viva, com e-mail diferente, continua protegida e o login não começa.
+- **A conta em uso não cede o pane antes de acabar.** Folga maior numa irmã não troca a conta ativa. A troca espera disponibilidade medida zero, cooldown ou hit real. Sem medição, a ativa permanece.
+- **O total de assinaturas deixa de fingir que duas contas são a frota.** Os $400 eram só Claude Max 20× e ChatGPT Pro. O cartão soma apenas planos com preço de lista e diz quantas contas conectadas ficaram de fora. Google AI Ultra entra só quando o plano informa 5× ($100) ou 20× ($200).
+- **MiMo V2.6 continua no Windows**, com a sessão em `%LOCALAPPDATA%\mimocode`, o login do Codex que abre e o painel opaco do Redline.
 
 ## 0.76.76 — Redline abre neste macOS
 
@@ -38,6 +78,27 @@
 - Modelos sem medição ficam como não avaliados. Benchmarks automáticos não usam Token Plan.
 - A assinatura MiMo Desktop é independente da CLI. A conexão do console e o uso autenticado continuam dependendo do login do usuário.
 
+## 0.76.74 — A segunda conta entra no Redline
+
+- **«Login successful!» grava a conta nova** — o Claude no Windows termina o login com essa frase, e o Nexus não reconhecia. A primeira conta ficava salva e a segunda não aparecia no Redline. Agora a frase dispara a prova, salva a conta nova e atualiza a cota.
+
+## 0.76.73 — Cada conta com o seu limite
+
+- **Multi-conta não mistura a cota** — a conta A e a conta B do mesmo provedor são linhas separadas. Cada uma lê o próprio token. O limite de uma não aparece na outra.
+
+## 0.76.72 — Cota do Claude e do Antigravity no Windows
+
+- **Claude logado volta a ter cota** — no Windows o access token do arquivo vence e a sonda não renovava, mesmo com refresh válido e a conta conectada. Agora renova o arquivo e lê os limites.
+- **Antigravity usa o mesmo `agy --print /quota` do Mac** — o binário fica em `%LOCALAPPDATA%\agy\bin\agy.exe`. Sem esse caminho a cota nativa nunca rodava.
+- **O painel do Redline para de piscar** — o redesenho a cada 2s e o ícone recriado na bandeja faziam a janela em camadas piscar. Só pinta quando a cota ou o cronômetro mudam.
+
+## 0.76.71 — Cota de quem está logado
+
+- **Redline no Windows deixa de dizer «Sem credencial» para conta logada** — o Devin é lido em `%APPDATA%\devin` e o Antigravity no Gerenciador de Credenciais (`gemini:antigravity`). Antes a cota só olhava `~/.local/share` e `~/.gemini`.
+
+## 0.76.70 — O clique no Redline abre
+
+- **Clique no ícone da bandeja abre o painel** — o Windows manda dois avisos por clique. O primeiro abria e o segundo fechava na hora, então parecia que o Redline não respondia.
 
 ## 0.76.69 — Grok conectado também no Redline
 
@@ -45,6 +106,7 @@
 - **Uma renovação por sessão compartilhada**: panes e sonda coordenam cópias do mesmo grant dentro do Main, reutilizam a credencial renovada e recusam troca de identidade ou time durante a espera.
 - **Aviso antigo de login removido após prova real**: resposta válida da API limpa apenas o cooldown de autenticação. A publicação ao Redline usa as contas atualizadas na mesma consulta; quota real e bloqueios por tier permanecem protegidos.
 - **Falhas temporárias**: indisponibilidade da CLI/rede não é tratada como grant revogado. Falha ao salvar a limpeza de um aviso não descarta o consumo que já foi medido.
+- **No Windows**: Devin é lido em `%APPDATA%\devin`, e o Redline da bandeja deixa de ser um quadrado preto.
 
 ## 0.76.68 — Grok 4.7
 

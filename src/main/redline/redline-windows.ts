@@ -23,6 +23,8 @@ export const REDLINE_WIN_DIR_NAME = 'NexusRedline';
 export const REDLINE_WIN_RUN_VALUE = 'NexusRedline';
 export const REDLINE_WIN_RUN_KEY =
   'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
+/** Tarefa de logon. O Run do registro o Windows 11 muitas vezes ignora. */
+export const REDLINE_WIN_LOGON_TASK = 'NexusRedline';
 
 export interface WinExecResult {
   stdout: string;
@@ -195,6 +197,33 @@ export function readWindowsAutostart(
   }
 }
 
+function setWindowsLogonTask(
+  on: boolean,
+  installedExe: string,
+  exec: NonNullable<WinDeps['execFile']>,
+): void {
+  if (!on) {
+    try {
+      exec('schtasks', ['/Delete', '/F', '/TN', REDLINE_WIN_LOGON_TASK]);
+    } catch {
+      /* tarefa ausente sai != 0 */
+    }
+    return;
+  }
+  exec('schtasks', [
+    '/Create',
+    '/F',
+    '/SC',
+    'ONLOGON',
+    '/RL',
+    'LIMITED',
+    '/TN',
+    REDLINE_WIN_LOGON_TASK,
+    '/TR',
+    `"${installedExe}"`,
+  ]);
+}
+
 export function setWindowsAutostart(
   on: boolean,
   installedExe: string,
@@ -203,6 +232,7 @@ export function setWindowsAutostart(
   const exec = deps?.execFile ?? defaultExecFile;
   try {
     if (!on) {
+      setWindowsLogonTask(false, installedExe, exec);
       if (!readWindowsAutostart(installedExe, deps)) return true;
       exec('reg', [
         'delete',
@@ -224,6 +254,7 @@ export function setWindowsAutostart(
       `"${installedExe}"`,
       '/f',
     ]);
+    setWindowsLogonTask(true, installedExe, exec);
     return true;
   } catch {
     return false;
@@ -313,10 +344,14 @@ function installRedlineWinFrom(
       message: `Falha ao copiar para ${destination}: ${(error as Error).message}`,
     };
   }
+  const installedExe = path.join(destination, REDLINE_WIN_EXE_NAME);
+  // Logon do Windows, não só quando o Nexus abre. A tarefa ONLOGON é o
+  // que o Run do registro não garante no Windows 11.
+  setWindowsAutostart(true, installedExe, deps);
   try {
     // --first-run: o Windows esconde ícones novos no overflow; o balão
     // aponta o operador para o ^ na primeira execução pós-instalação.
-    launchDetached(path.join(destination, REDLINE_WIN_EXE_NAME), deps, [
+    launchDetached(installedExe, deps, [
       '--first-run',
     ]);
   } catch {

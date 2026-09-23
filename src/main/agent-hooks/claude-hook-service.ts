@@ -19,6 +19,7 @@ import {
   removeManagedCommands,
   wrapPosixHookCommand,
   writeHooksJson,
+  windowsHookEndpointLoadLines,
   writeManagedScript,
   type HookDefinition,
   type HooksConfig,
@@ -61,7 +62,7 @@ function buildManagedScriptBody(): string {
     return [
       '@echo off',
       'setlocal',
-      'if defined NEXUS_AGENT_HOOK_ENDPOINT if exist "%NEXUS_AGENT_HOOK_ENDPOINT%" call "%NEXUS_AGENT_HOOK_ENDPOINT%" 2>nul',
+      ...windowsHookEndpointLoadLines(),
       'if "%NEXUS_PANE_KEY%"=="" exit /b 0',
       'set "DROP_DIR=%USERPROFILE%\\.nexus\\agent-hooks\\global"',
       'if not exist "%DROP_DIR%" mkdir "%DROP_DIR%" 2>nul',

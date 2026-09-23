@@ -139,7 +139,32 @@ export function mergeWindows(
     'credits',
     'local',
   ];
-  return [...byKind.values()].sort(
+  return dropPlaceholderUnknowns([...byKind.values()]).sort(
     (a, b) => order.indexOf(a.kind) - order.indexOf(b.kind),
   );
+}
+
+const PLACEHOLDER_LABEL: Partial<Record<QuotaWindowKind, string>> = {
+  hours: '5 Horas',
+  weekly: 'Semanal',
+  monthly: 'Mensal',
+};
+
+/**
+ * «5 Horas · Sem leitura» ao lado de «Gemini Models · 5 Horas · 3%» é a
+ * mesma janela duas vezes: o molde genérico ficou porque o rótulo real é
+ * mais específico. Se a cadência já tem leitura, o molde sai.
+ */
+function dropPlaceholderUnknowns(windows: QuotaWindow[]): QuotaWindow[] {
+  return windows.filter((window) => {
+    if (window.usedRatio !== null) return true;
+    const placeholder = PLACEHOLDER_LABEL[window.kind];
+    if (!placeholder || window.label !== placeholder) return true;
+    return !windows.some(
+      (other) =>
+        other !== window &&
+        other.kind === window.kind &&
+        other.usedRatio !== null,
+    );
+  });
 }

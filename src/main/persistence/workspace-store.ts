@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { app, BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from 'electron';
+import { app, BrowserWindow, ipcMain, type OpenDialogOptions } from 'electron';
+import { showOwnedOpenDialog } from '../dialog/owned-open-dialog';
 import type { WebContents } from 'electron';
 import {
   WORKSPACE_CHANNELS,
@@ -301,9 +302,7 @@ export function registerWorkspaceIpc(): void {
       title: 'Escolher pasta do workspace',
       properties: ['openDirectory', 'createDirectory'],
     };
-    const result = owner
-      ? await dialog.showOpenDialog(owner, options)
-      : await dialog.showOpenDialog(options);
+    const result = await showOwnedOpenDialog(owner, options);
     if (result.canceled || result.filePaths.length === 0) return state;
     return openWorkspace(result.filePaths[0], event.sender);
   });
@@ -316,9 +315,7 @@ export function registerWorkspaceIpc(): void {
       title: 'Escolher pasta do workspace',
       properties: ['openDirectory', 'createDirectory'],
     };
-    const result = owner
-      ? await dialog.showOpenDialog(owner, options)
-      : await dialog.showOpenDialog(options);
+    const result = await showOwnedOpenDialog(owner, options);
     if (result.canceled || result.filePaths.length === 0) return null;
     const canonical = canonicalDirectory(result.filePaths[0]);
     if (!canonical) return null;

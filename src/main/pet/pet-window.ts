@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { app, BrowserWindow, ipcMain, screen } from 'electron';
+import { showOwnedOpenDialog } from '../dialog/owned-open-dialog';
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import {
   PET_CHANNELS,
@@ -1352,18 +1353,15 @@ function registerPetIpc(): void {
   ipcMain.handle(PET_CHANNELS.pickImage, async (event) => {
     if (!fromTrustedWindow(event)) throw new Error('pet: sender não autorizado');
     const owner = BrowserWindow.fromWebContents(event.sender);
-    const { dialog, app: electronApp } = await import('electron');
     const options = {
       title: 'Imagem-base do pet (geração com IA)',
-      defaultPath: electronApp.getPath('pictures'),
+      defaultPath: app.getPath('pictures'),
       properties: ['openFile' as const],
       filters: [
         { name: 'Imagem', extensions: ['png', 'webp', 'jpg', 'jpeg'] },
       ],
     };
-    const picked = owner
-      ? await dialog.showOpenDialog(owner, options)
-      : await dialog.showOpenDialog(options);
+    const picked = await showOwnedOpenDialog(owner, options);
     if (picked.canceled || picked.filePaths.length === 0) {
       return { ok: false, canceled: true };
     }
@@ -1393,7 +1391,6 @@ function registerPetIpc(): void {
     const owner = BrowserWindow.fromWebContents(event.sender);
     // Abre direto onde o Codex guarda os pets (mesmo caminho nos 3 OS).
     const codexPets = path.join(homedir(), '.codex', 'pets');
-    const { dialog } = await import('electron');
     const dialogOptions = {
       title: 'Importar spritesheet do Codex',
       defaultPath: existsSync(codexPets) ? codexPets : homedir(),
@@ -1405,9 +1402,7 @@ function registerPetIpc(): void {
         },
       ],
     };
-    const picked = owner
-      ? await dialog.showOpenDialog(owner, dialogOptions)
-      : await dialog.showOpenDialog(dialogOptions);
+    const picked = await showOwnedOpenDialog(owner, dialogOptions);
     if (picked.canceled || picked.filePaths.length === 0) {
       return { ok: false, canceled: true };
     }

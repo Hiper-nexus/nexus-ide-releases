@@ -10,8 +10,11 @@
  * Regra: só corrige AUSÊNCIA, C/POSIX ou UTF-8 INEXISTENTE no `locale -a`
  * (sufixo não é prova: en_BR.UTF-8 não existe); um locale UTF-8 instalado do
  * usuário (LANG ou LC_ALL) nunca é sobrescrito. Sem como verificar
- * (fail-open), confia no herdado. Windows fica fora — codepage não é regida
- * por LANG lá.
+ * (fail-open), confia no herdado. No Windows o codepage do cmd não segue
+ * LANG, mas o Git Bash sim: sem LANG ele conta ${#texto} em bytes e um
+ * script com `set -u` morre ao indexar um array pelo tamanho do banner
+ * (ai-launcher: BANNER_GRAD[i] unbound). Lá o fallback é C.UTF-8, sem
+ * consultar `locale -a`.
  */
 import { execFileSync } from 'node:child_process';
 
@@ -81,7 +84,20 @@ export function ensureUtf8Locale(
   platform: NodeJS.Platform = process.platform,
   deps?: Utf8LocaleAvailability,
 ): void {
-  if (platform === 'win32') return;
+  if (platform === 'win32') {
+    for (const key of LOCALE_OVERRIDES) {
+      if (env[key] !== undefined && isBrokenLocale(env[key])) delete env[key];
+    }
+    if (
+      providesUtf8(env.LC_ALL) ||
+      providesUtf8(env.LC_CTYPE) ||
+      providesUtf8(env.LANG)
+    ) {
+      return;
+    }
+    if (isBrokenLocale(env.LANG)) env.LANG = 'C.UTF-8';
+    return;
+  }
 
   // Sufixo UTF-8 não é prova: en_BR.UTF-8 (idioma en + região BR) termina
   // assim e não existe em `locale -a` — todo filho cuspia warnings de perl.

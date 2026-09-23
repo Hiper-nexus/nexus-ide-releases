@@ -140,6 +140,24 @@ describe('resolveDevinApiKey', () => {
     ).toBe('wc-xdg');
   });
 
+  it('no Windows lê %APPDATA%/devin/credentials.toml', () => {
+    const user = path.join(tmpHome, 'user');
+    const roaming = path.join(tmpHome, 'roaming');
+    fs.mkdirSync(path.join(roaming, 'devin'), { recursive: true });
+    fs.writeFileSync(
+      path.join(roaming, 'devin', 'credentials.toml'),
+      'windsurf_api_key = "wc-win"\n',
+    );
+    expect(
+      resolveDevinApiKey({
+        home: user,
+        operatorHome: user,
+        platform: 'win32',
+        env: { APPDATA: roaming },
+      }),
+    ).toBe('wc-win');
+  });
+
   it('sem ficheiro → null', () => {
     expect(
       resolveDevinApiKey({

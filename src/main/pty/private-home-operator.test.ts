@@ -38,8 +38,13 @@ describe('ensurePrivateHomeKeychains (F-629)', () => {
     const linked = ensurePrivateHomeKeychains(home, { realHome, userDataDir: userData, platform: 'darwin' });
     expect(linked).toBe(true);
     const target = path.join(home, 'Library', 'Keychains', 'login.keychain-db');
-    expect(fs.lstatSync(target).isSymbolicLink()).toBe(true);
-    expect(fs.realpathSync(target)).toBe(path.join(realHome, 'Library', 'Keychains', 'login.keychain-db'));
+    const source = path.join(realHome, 'Library', 'Keychains', 'login.keychain-db');
+    if (process.platform === 'win32') {
+      expect(fs.readFileSync(target, 'utf8')).toBe('db');
+    } else {
+      expect(fs.lstatSync(target).isSymbolicLink()).toBe(true);
+      expect(fs.realpathSync(target)).toBe(fs.realpathSync(source));
+    }
     expect(fs.existsSync(path.join(home, 'Library', 'Keychains', 'notes.txt'))).toBe(false);
   });
 
@@ -85,8 +90,13 @@ describe('ensurePrivateHomeKeychains (F-629)', () => {
     fs.writeFileSync(path.join(realHome, '.gitconfig'), '[user]');
     const home = privateHome(userData, 'mcp-clients', 'grok', 'x', '.nexus-home');
     ensurePrivateHomeOperatorAccess(home, { realHome, userDataDir: userData, platform: 'darwin', writable: true });
-    expect(fs.realpathSync(path.join(home, '.config', 'gh'))).toBe(path.join(realHome, '.config', 'gh'));
-    expect(fs.realpathSync(path.join(home, '.gitconfig'))).toBe(path.join(realHome, '.gitconfig'));
+    const sameFile = (linked: string, source: string) => {
+      const a = fs.statSync(linked);
+      const b = fs.statSync(source);
+      return a.dev === b.dev && a.ino === b.ino;
+    };
+    expect(sameFile(path.join(home, '.config', 'gh'), path.join(realHome, '.config', 'gh'))).toBe(true);
+    expect(sameFile(path.join(home, '.gitconfig'), path.join(realHome, '.gitconfig'))).toBe(true);
     expect(fs.existsSync(path.join(home, 'Library', 'Keychains', 'login.keychain-db'))).toBe(true);
   });
 

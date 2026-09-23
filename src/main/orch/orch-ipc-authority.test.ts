@@ -3667,10 +3667,16 @@ describe('squad import/export global authority boundary', () => {
     });
     expect(harness.applyPreparedSquadsImport).not.toHaveBeenCalled();
     expect(harness.squads).toHaveLength(0);
-    expect(harness.dialog.showOpenDialog).toHaveBeenCalledWith(
-      window,
-      expect.anything(),
-    );
+    if (process.platform === 'win32') {
+      expect(harness.dialog.showOpenDialog).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Import squads' }),
+      );
+    } else {
+      expect(harness.dialog.showOpenDialog).toHaveBeenCalledWith(
+        window,
+        expect.anything(),
+      );
+    }
     const options = harness.dialog.showMessageBox.mock.calls.at(-1)?.[1];
     expect(options).toMatchObject({ defaultId: 0, cancelId: 0, noLink: true });
     // Compacto: o par de SHA-256 fixa o conteúdo integral; o dump não cabe

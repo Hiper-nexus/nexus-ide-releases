@@ -1,8 +1,7 @@
-import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { providerSessionAccountIsCompatible } from '../persistence/provider-session-store';
-import { mimoNativePaths, parseMimoAuth } from './mimo-auth';
+import { parseMimoAuth, readMimoNativeAuthBlob } from './mimo-auth';
 
 /** Private ownership key, never the renderer's sessionFingerprint or a public account id. */
 export function mimoSessionOwnerKey(auth: { key: string; uid?: string; baseUrl: string }): string {
@@ -14,9 +13,7 @@ export function mimoSessionOwnerKey(auth: { key: string; uid?: string; baseUrl: 
 export function currentMimoSessionOwnerKey(selectedApiKey?: string): string | null {
   if (selectedApiKey?.trim()) return mimoSessionOwnerKey({ key: selectedApiKey.trim(), baseUrl: 'https://api.xiaomimimo.com/v1' });
   try {
-    const file = mimoNativePaths().authFile;
-    if (fs.statSync(file).size > 1_048_576) return null;
-    const auth = parseMimoAuth(fs.readFileSync(file, 'utf8'));
+    const auth = parseMimoAuth(readMimoNativeAuthBlob() ?? '');
     return auth ? mimoSessionOwnerKey(auth) : null;
   } catch { return null; }
 }

@@ -64,10 +64,20 @@ describe('ensureUtf8Locale', () => {
     expect(env.LANG).toBeUndefined();
   });
 
-  it('não toca em Windows (LANG não rege codepage lá)', () => {
+  it('no Windows define C.UTF-8 para o Git Bash quando não há locale', () => {
     const env: NodeJS.ProcessEnv = {};
     ensureUtf8Locale(env, 'win32');
-    expect(env.LANG).toBeUndefined();
+    expect(env.LANG).toBe('C.UTF-8');
+  });
+
+  it('no Windows tira LC_ALL=C e preserva um LANG UTF-8 já escolhido', () => {
+    const broken: NodeJS.ProcessEnv = { LC_ALL: 'C' };
+    ensureUtf8Locale(broken, 'win32');
+    expect(broken.LC_ALL).toBeUndefined();
+    expect(broken.LANG).toBe('C.UTF-8');
+    const kept: NodeJS.ProcessEnv = { LANG: 'pt_BR.UTF-8' };
+    ensureUtf8Locale(kept, 'win32');
+    expect(kept.LANG).toBe('pt_BR.UTF-8');
   });
 
   it('troca LANG UTF-8 inexistente (en_BR) pelo fallback', () => {

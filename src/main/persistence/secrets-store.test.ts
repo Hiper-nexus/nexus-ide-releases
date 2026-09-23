@@ -83,6 +83,15 @@ describe('durable secret persistence', () => {
     fs.rmSync(secretDeps.home, { recursive: true, force: true });
   });
 
+  it('publishes a second secret without dropping the first', () => {
+    expect(setSecret('provider', 'first-secret')).toEqual({ ok: true });
+    expect(setSecret('other', 'second-secret')).toEqual({ ok: true });
+    resetSecretsCacheForTests();
+    expect(getSecret('provider')).toBe('first-secret');
+    expect(getSecret('other')).toBe('second-secret');
+    expectVaultDirectoryClean();
+  });
+
   it('publishes encrypted bytes durably before updating the cache', () => {
     const result = setSecret('provider', 'super-secret-value');
 

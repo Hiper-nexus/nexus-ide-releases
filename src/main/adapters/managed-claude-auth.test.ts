@@ -18,6 +18,7 @@ vi.mock('./claude-credential', async (original) => ({
 import {
   CLAUDE_MANAGED_AUTH_ENV,
   assertManagedClaudeAuthSupported,
+  claudeCapabilityProbePath,
   managedClaudeAuthDirectory,
   materializeManagedClaudeAuth,
   readManagedClaudeAuth,
@@ -119,5 +120,38 @@ describe('renewable managed Claude profiles', () => {
     expect(() => assertManagedClaudeAuthSupported(binary)).toThrow(/CLAUDE_SECURESTORAGE_CONFIG_DIR/);
     fs.writeFileSync(binary, 'verified CLI capability: CLAUDE_SECURESTORAGE_CONFIG_DIR');
     expect(() => assertManagedClaudeAuthSupported(binary)).not.toThrow();
+  });
+
+  it('reads the marker from the exe launched by the Windows claude.cmd shim', () => {
+    const exeDir = path.join(home, 'node_modules', '@anthropic-ai', 'claude-code', 'bin');
+    fs.mkdirSync(exeDir, { recursive: true });
+    const exe = path.join(exeDir, 'claude.exe');
+    fs.writeFileSync(exe, 'payload CLAUDE_SECURESTORAGE_CONFIG_DIR');
+    const cmd = path.join(home, 'claude.cmd');
+    fs.writeFileSync(
+      cmd,
+      [
+        '@ECHO off',
+        'SET dp0=%~dp0',
+        '"%dp0%\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe"   %*',
+      ].join('\r\n'),
+    );
+    expect(claudeCapabilityProbePath(cmd)).toBe(fs.realpathSync(exe));
+    expect(() => assertManagedClaudeAuthSupported(cmd)).not.toThrow();
+    fs.writeFileSync(exe, 'old cli without the marker');
+    expect(() => assertManagedClaudeAuthSupported(cmd)).toThrow(/CLAUDE_SECURESTORAGE_CONFIG_DIR/);
+  });
+
+  it('does not follow a shim that points outside its own directory', () => {
+    const outside = path.join(os.tmpdir(), `claude-outside-${process.pid}.exe`);
+    fs.writeFileSync(outside, 'CLAUDE_SECURESTORAGE_CONFIG_DIR');
+    const cmd = path.join(home, 'claude.cmd');
+    fs.writeFileSync(cmd, `"%dp0%\\..\\..\\${path.basename(outside)}"\r\n`);
+    try {
+      expect(claudeCapabilityProbePath(cmd)).toBe(cmd);
+      expect(() => assertManagedClaudeAuthSupported(cmd)).toThrow(/CLAUDE_SECURESTORAGE_CONFIG_DIR/);
+    } finally {
+      fs.rmSync(outside, { force: true });
+    }
   });
 });

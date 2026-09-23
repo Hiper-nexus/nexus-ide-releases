@@ -6,6 +6,7 @@ import {
   prepareCheckoutProviderHome,
   authBlobIsUsable,
   captureNativeAuth,
+  devinDataHome,
   compareAuthBlobIdentity,
   identityFromAuthBlob,
   isFileAuthAdapter,
@@ -457,6 +458,33 @@ describe('managed-credentials', () => {
   });
 });
 
+
+describe('devinDataHome', () => {
+  it('prefere XDG_DATA_HOME em qualquer plataforma', () => {
+    expect(
+      devinDataHome('/home/op', { XDG_DATA_HOME: '/xdg', APPDATA: 'C:\\Roaming' }, 'win32', '/home/op'),
+    ).toBe('/xdg');
+  });
+
+  it('no Windows lê %APPDATA% da sessão do operador', () => {
+    const roaming = 'C:\\Users\\op\\AppData\\Roaming';
+    expect(
+      devinDataHome('C:\\Users\\op', { APPDATA: roaming }, 'win32', 'C:\\Users\\op'),
+    ).toBe(roaming);
+  });
+
+  it('não empresta o Roaming real para um home de teste', () => {
+    expect(
+      devinDataHome('/tmp/fake', { APPDATA: 'C:\\Users\\op\\AppData\\Roaming' }, 'win32', 'C:\\Users\\op'),
+    ).toBe(path.join('/tmp/fake', '.local', 'share'));
+  });
+
+  it('no macOS continua em ~/.local/share', () => {
+    expect(
+      devinDataHome('/Users/op', { APPDATA: 'C:\\Roaming' }, 'darwin', '/Users/op'),
+    ).toBe(path.join('/Users/op', '.local', 'share'));
+  });
+});
 
 describe('F-567 checkout provider homes', () => {
   it.each(['agy', 'devin'] as const)('isolates %s conversations across checkouts and preserves credential links', (kind) => {

@@ -2,15 +2,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { MIMO_CLI_MODELS } from '../../shared/mimo-models';
-import { mimoNativePaths, parseMimoAuth } from '../adapters/mimo-auth';
+import { parseMimoAuth, readMimoNativeAuthBlob } from '../adapters/mimo-auth';
 
 function explicitApiKey(base: NodeJS.ProcessEnv): string | null {
   const explicit = base.XIAOMI_API_KEY?.trim();
   if (explicit) return explicit;
   try {
-    const file = mimoNativePaths(base.HOME ?? os.homedir(), base).authFile;
-    if (fs.statSync(file).size > 1_048_576) return null;
-    const auth = parseMimoAuth(fs.readFileSync(file, 'utf8'));
+    const auth = parseMimoAuth(readMimoNativeAuthBlob(base.HOME ?? os.homedir(), base) ?? '');
     if (!auth || new URL(auth.baseUrl).hostname.startsWith('token-plan-')) return null;
     return auth.key;
   } catch { return null; }

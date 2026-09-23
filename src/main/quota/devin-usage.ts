@@ -27,7 +27,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { QuotaWindow } from '../../shared/quota-types';
 import { knownWindow } from './quota-normalize';
-import { devinTomlCredentialValue } from '../adapters/managed-credentials';
+import { devinDataHome, devinTomlCredentialValue } from '../adapters/managed-credentials';
 import type { FetchLike } from './claude-oauth-usage';
 
 export const DEVIN_GET_USER_STATUS_URL =
@@ -105,17 +105,26 @@ export function devinApiKeyFromToml(blob: string): string | null {
 }
 
 /**
- * Sessão do Devin CLI: $XDG_DATA_HOME/devin/credentials.toml
- * (default ~/.local/share — no macOS o Devin não segue XDG sem a var).
+ * Sessão do Devin CLI: `$XDG_DATA_HOME/devin/credentials.toml`.
+ * Sem essa variável, Linux/macOS usam `~/.local/share` e o Windows usa
+ * `%APPDATA%` — é lá que o `devin auth login` grava.
  */
 export function resolveDevinApiKey(opts?: {
   xdgDataHome?: string;
   home?: string;
+  env?: { XDG_DATA_HOME?: string; APPDATA?: string };
+  platform?: NodeJS.Platform;
+  operatorHome?: string;
 }): string | null {
+  const home = opts?.home ?? os.homedir();
   const root =
-    opts?.xdgDataHome ??
-    process.env.XDG_DATA_HOME?.trim() ??
-    path.join(opts?.home ?? os.homedir(), '.local', 'share');
+    opts?.xdgDataHome?.trim() ||
+    devinDataHome(
+      home,
+      opts?.env ?? process.env,
+      opts?.platform ?? process.platform,
+      opts?.operatorHome ?? os.homedir(),
+    );
   const filePath = path.join(root, 'devin', 'credentials.toml');
   try {
     return devinApiKeyFromToml(fs.readFileSync(filePath, 'utf8'));

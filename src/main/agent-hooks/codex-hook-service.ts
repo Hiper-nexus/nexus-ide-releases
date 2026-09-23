@@ -25,6 +25,7 @@ import {
   removeManagedCommands,
   wrapPosixHookCommand,
   writeHooksJson,
+  windowsHookEndpointLoadLines,
   writeManagedScript,
   type HookDefinition,
   type HooksConfig,
@@ -67,7 +68,7 @@ function buildManagedScriptBody(): string {
     return [
       '@echo off',
       'setlocal',
-      'if defined NEXUS_AGENT_HOOK_ENDPOINT if exist "%NEXUS_AGENT_HOOK_ENDPOINT%" call "%NEXUS_AGENT_HOOK_ENDPOINT%" 2>nul',
+      ...windowsHookEndpointLoadLines(),
       'if "%NEXUS_AGENT_HOOK_PORT%"=="" exit /b 0',
       'if "%NEXUS_AGENT_HOOK_TOKEN%"=="" exit /b 0',
       'if "%NEXUS_PANE_KEY%"=="" exit /b 0',

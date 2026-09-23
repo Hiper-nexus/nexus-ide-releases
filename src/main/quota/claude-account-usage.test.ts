@@ -12,8 +12,9 @@ const mocks = vi.hoisted(() => ({
   managedClaudeAuthHasCredential: vi.fn(() => false),
   managedClaudeAuthDirectory: vi.fn((id: string) => `/managed/${id}/auth`),
   materializeManagedClaudeAuth: vi.fn(),
-  readManagedClaudeAuth: vi.fn(() => null),
+  readManagedClaudeAuth: vi.fn<(accountId?: string) => string | null>(() => null),
   probeClaudeCliUsage: vi.fn(),
+  probeClaudeOauthUsage: vi.fn(),
   claudeBlobIsExpiredUnhealable: vi.fn(() => false),
   claudeBlobNeedsRefresh: vi.fn<
     (blob: string, now: number) => { refreshToken: string } | null
@@ -42,6 +43,7 @@ vi.mock('../adapters/managed-claude-auth', async (importOriginal) => ({
 vi.mock('./claude-oauth-usage', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   probeClaudeCliUsage: mocks.probeClaudeCliUsage,
+  probeClaudeOauthUsage: mocks.probeClaudeOauthUsage,
 }));
 
 vi.mock('./claude-oauth-refresh', async (importOriginal) => ({
@@ -133,6 +135,7 @@ beforeEach(() => {
     windows: null,
     failure: 'unavailable',
   });
+  mocks.probeClaudeOauthUsage.mockReset().mockResolvedValue({ windows: null });
   mocks.claudeBlobIsExpiredUnhealable.mockReset().mockReturnValue(false);
   mocks.claudeBlobNeedsRefresh.mockReset().mockReturnValue(null);
   mocks.refreshClaudeOauthBlobDetailed.mockReset().mockResolvedValue({
@@ -328,8 +331,10 @@ describe('fetchClaudeAccountUsageWindows', () => {
   it('two managed accounts cannot read the native config usage cache', async () => {
     mocks.getAccount.mockReturnValue({ adapterId: 'claude' });
     mocks.managedClaudeAuthHasCredential.mockReturnValue(true);
+    const quotaDir = (id: string) =>
+      path.join(path.dirname(`/managed/${id}/auth`), 'quota');
     mocks.probeClaudeCliUsage.mockImplementation(async ({ env }) => ({
-      windows: [cliWindow('Semanal', env.CLAUDE_CONFIG_DIR === '/managed/acct-a/quota' ? 0.2 : 0.7)],
+      windows: [cliWindow('Semanal', env.CLAUDE_CONFIG_DIR === quotaDir('acct-a') ? 0.2 : 0.7)],
     }));
     const first = await fetchClaudeAccountUsageWindows('acct-a', { now: NOW });
     const second = await fetchClaudeAccountUsageWindows('acct-b', { now: NOW });
@@ -393,6 +398,39 @@ describe('fetchClaudeAccountUsageWindows', () => {
       env: Record<string, string>;
     };
     expect(call.env.CLAUDE_CONFIG_DIR).toBe(work);
+  });
+
+  it('conta A e conta B mostram o limite do próprio token', async () => {
+    const blob = (token: string) =>
+      JSON.stringify({ claudeAiOauth: { accessToken: token } });
+    mocks.probeClaudeOauthUsage.mockImplementation(async (token: string) => ({
+      windows: [cliWindow(token, token === 'token-a' ? 0.2 : 0.8)],
+    }));
+
+    mocks.getAccount.mockReturnValue({
+      id: 'acct-a',
+      adapterId: 'claude',
+      label: 'Conta A',
+    });
+    mocks.getSecret.mockImplementation((key: string) =>
+      key.endsWith('acct-a') ? blob('token-a') : null,
+    );
+    const a = await fetchClaudeAccountUsageWindows('acct-a', { now: NOW });
+    expect(a.windows?.[0]?.usedRatio).toBe(0.2);
+    expect(mocks.probeClaudeCliUsage).not.toHaveBeenCalled();
+
+    mocks.probeClaudeCliUsage.mockClear();
+    mocks.getAccount.mockReturnValue({
+      id: 'acct-b',
+      adapterId: 'claude',
+      label: 'Conta B',
+    });
+    mocks.getSecret.mockImplementation((key: string) =>
+      key.endsWith('acct-b') ? blob('token-b') : null,
+    );
+    const b = await fetchClaudeAccountUsageWindows('acct-b', { now: NOW });
+    expect(b.windows?.[0]?.usedRatio).toBe(0.8);
+    expect(mocks.probeClaudeCliUsage).not.toHaveBeenCalled();
   });
 
   it('vault-only account materializes managed auth then probes scoped CLI', async () => {
@@ -530,6 +568,34 @@ describe('fetchClaudeAccountUsageWindows', () => {
     });
     expect(r.windows).toBeNull();
     expect(r.hint).toBe('auth-expired');
+  });
+
+  it('no Windows a cota sai do token renovado mesmo sem claude /usage', async () => {
+    mocks.managedClaudeAuthHasCredential.mockReturnValue(true);
+    mocks.getAccount.mockReturnValue({ adapterId: 'claude', email: 'user@x.com' });
+    const stale = JSON.stringify({
+      claudeAiOauth: { accessToken: 'old', refreshToken: 'rt' },
+    });
+    const fresh = JSON.stringify({
+      claudeAiOauth: { accessToken: 'new', refreshToken: 'rt2' },
+    });
+    mocks.readManagedClaudeAuth.mockReturnValue(stale);
+    mocks.claudeBlobNeedsRefresh.mockReturnValue({ refreshToken: 'rt' });
+    mocks.refreshClaudeOauthBlobDetailed.mockResolvedValue({
+      outcome: 'refreshed',
+      blob: fresh,
+    });
+    mocks.probeClaudeOauthUsage.mockImplementation(async (token: string) =>
+      token === 'new'
+        ? { windows: [cliWindow('5 Horas', 0.12)] }
+        : { windows: null, failure: 'auth-expired' as const },
+    );
+
+    const result = await fetchClaudeAccountUsageWindows('acct-1', { now: NOW });
+
+    expect(result.windows?.[0]?.usedRatio).toBe(0.12);
+    expect(mocks.probeClaudeCliUsage).not.toHaveBeenCalled();
+    expect(mocks.setSecret).toHaveBeenCalledWith('acctcred:acct-1', fresh);
   });
 
   it('cura: refresh válido grava escopo+vault e a sonda retorna janelas', async () => {

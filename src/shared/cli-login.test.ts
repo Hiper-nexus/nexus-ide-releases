@@ -81,6 +81,14 @@ describe('cliLoginLooksComplete', () => {
     ).toBe(true);
   });
 
+  it('recognizes Claude on Windows printing Login successful', () => {
+    expect(
+      cliLoginLooksComplete(
+        'Paste code here if prompted > Login successful!.',
+      ),
+    ).toBe(true);
+  });
+
   it('recognizes the current Claude "Signed in as" confirmation', () => {
     expect(
       cliLoginLooksComplete(

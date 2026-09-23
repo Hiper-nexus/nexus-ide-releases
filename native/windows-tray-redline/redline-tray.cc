@@ -128,12 +128,59 @@ bool autostartEnabled() {
   return _wcsicmp(data, quotedExePath().c_str()) == 0;
 }
 
+bool runHidden(const std::wstring& app, const std::wstring& cmdline) {
+  STARTUPINFOW si{};
+  si.cb = sizeof(si);
+  si.dwFlags = STARTF_USESHOWWINDOW;
+  si.wShowWindow = SW_HIDE;
+  PROCESS_INFORMATION pi{};
+  std::wstring mutableCmd = cmdline;
+  if (!CreateProcessW(app.c_str(), mutableCmd.data(), nullptr, nullptr, FALSE,
+                      CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+    return false;
+  }
+  WaitForSingleObject(pi.hProcess, 15000);
+  DWORD code = 1;
+  GetExitCodeProcess(pi.hProcess, &code);
+  CloseHandle(pi.hThread);
+  CloseHandle(pi.hProcess);
+  return code == 0;
+}
+
+// Run do registro o Windows 11 frequentemente não executa. A tarefa de
+// logon sobe o Redline toda vez que a conta entra, sem abrir o Nexus.
+bool setLogonTask(bool on, const std::wstring& quotedExe) {
+  wchar_t sys[MAX_PATH];
+  if (GetSystemDirectoryW(sys, MAX_PATH) == 0) return false;
+  std::wstring schtasks = std::wstring(sys) + L"\\schtasks.exe";
+  std::wstring args = on
+      ? L"\"" + schtasks + L"\" /Create /F /SC ONLOGON /RL LIMITED /TN " +
+            kRunValue + L" /TR " + quotedExe
+      : L"\"" + schtasks + L"\" /Delete /F /TN " + kRunValue;
+  return runHidden(schtasks, args) || !on;
+}
+
+void setStartupApproved(bool on) {
+  constexpr wchar_t kApproved[] =
+      L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\Run";
+  if (!on) {
+    RegDeleteKeyValueW(HKEY_CURRENT_USER, kApproved, kRunValue);
+    return;
+  }
+  // 0x02 = habilitado. Sem isto o Windows trata o Run como desligado.
+  BYTE enabled[12] = {0x02, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  RegSetKeyValueW(HKEY_CURRENT_USER, kApproved, kRunValue, REG_BINARY,
+                  enabled, sizeof(enabled));
+}
+
 bool setAutostart(bool on) {
+  std::wstring v = quotedExePath();
+  setLogonTask(on, v);
+  setStartupApproved(on);
   if (!on) {
     LONG rc = RegDeleteKeyValueW(HKEY_CURRENT_USER, kRunKey, kRunValue);
     return rc == ERROR_SUCCESS || rc == ERROR_FILE_NOT_FOUND;
   }
-  std::wstring v = quotedExePath();
   LONG rc = RegSetKeyValueW(
       HKEY_CURRENT_USER, kRunKey, kRunValue, REG_SZ, v.c_str(),
       static_cast<DWORD>((v.size() + 1) * sizeof(wchar_t)));
@@ -490,6 +537,26 @@ std::wstring trayTooltip() {
   return tip;
 }
 
+redline::Urgency gLastTrayUrgency = redline::Urgency::Unknown;
+bool gLastTrayStale = true;
+bool gTrayPainted = false;
+std::wstring gLastTrayTip;
+std::string gPanelClock;
+
+std::string panelClockKey() {
+  if (!g.hasSnap || !g.snap) return {};
+  std::int64_t now = nowMs();
+  std::string key = redline::isStale(*g.snap, now) ? "S" : "F";
+  for (const redline::RedlineEntry& entry : g.snap->entries) {
+    for (const redline::RedlineWindow& win : entry.windows) {
+      if (!win.hasResetsAt) continue;
+      key.push_back('|');
+      key += redline::countdownText(true, win.resetsAt, now);
+    }
+  }
+  return key;
+}
+
 void refreshTray() {
   redline::Urgency urgency = redline::Urgency::Unknown;
   bool stale = true;
@@ -500,6 +567,17 @@ void refreshTray() {
     if (w.window)
       urgency = redline::urgencyFor(true, w.window->usedRatio);
   }
+  std::wstring tip = trayTooltip();
+  // Recriar o ícone a cada poll faz a bandeja piscar. Só troca quando
+  // a cor, o stale ou o texto mudam.
+  if (gTrayPainted && g.trayIcon && urgency == gLastTrayUrgency &&
+      stale == gLastTrayStale && tip == gLastTrayTip) {
+    return;
+  }
+  gLastTrayUrgency = urgency;
+  gLastTrayStale = stale;
+  gLastTrayTip = tip;
+  gTrayPainted = true;
   HICON icon = makeTrayIcon(urgency, stale);
   if (g.trayIcon) DestroyIcon(g.trayIcon);
   g.trayIcon = icon;
@@ -510,7 +588,6 @@ void refreshTray() {
   nid.uFlags = NIF_ICON | NIF_TIP | NIF_MESSAGE;
   nid.uCallbackMessage = kTrayCallbackMsg;
   nid.hIcon = icon;
-  std::wstring tip = trayTooltip();
   wcsncpy_s(nid.szTip, tip.c_str(), _TRUNCATE);
   Shell_NotifyIconW(NIM_MODIFY, &nid);
 }
@@ -1151,7 +1228,18 @@ void paintPanel(HWND hwnd) {
   HDC hdc = BeginPaint(hwnd, &ps);
   RECT client;
   GetClientRect(hwnd, &client);
-  paintPanelDC(hdc, hwnd, client.right, client.bottom);
+  const int W = client.right;
+  const int H = client.bottom;
+  // Pintar direto no DC da janela em camadas faz o vidro piscar a cada
+  // redesenho. O blit único entrega o quadro pronto.
+  HDC mem = CreateCompatibleDC(hdc);
+  HBITMAP bmp = CreateCompatibleBitmap(hdc, W > 0 ? W : 1, H > 0 ? H : 1);
+  HGDIOBJ old = SelectObject(mem, bmp);
+  paintPanelDC(mem, hwnd, W, H);
+  BitBlt(hdc, 0, 0, W, H, mem, 0, 0, SRCCOPY);
+  SelectObject(mem, old);
+  DeleteObject(bmp);
+  DeleteDC(mem);
   EndPaint(hwnd, &ps);
 }
 
@@ -1221,35 +1309,25 @@ void clipPanelShape(HWND w) {
   if (rgn) SetWindowRgn(w, rgn, TRUE);
 }
 
-// Vidro líquido: acrílico do DWM por baixo e a janela levemente translúcida,
-// para o blur aparecer através da tinta escura. Sem isto o FillRect opaco
-// cobre o material e o painel volta a ser uma chapa.
+// Painel opaco. A transparência deixava o que estava atrás (página, cookies)
+// vazar por cima das cotas. Cantos arredondados ficam; o fundo não.
 void applyLiquidGlass(HWND w) {
   const DWORD corner = 2;  // DWMWCP_ROUND
   DwmSetWindowAttribute(w, 33 /*DWMWA_WINDOW_CORNER_PREFERENCE*/, &corner,
                         sizeof(corner));
-  const DWORD backdrop = 3;  // DWMSBT_TRANSIENTWINDOW (acrílico Win11)
-  DwmSetWindowAttribute(w, 38 /*DWMWA_SYSTEMBACKDROP_TYPE*/, &backdrop,
-                        sizeof(backdrop));
-  struct AccentPolicy {
-    int state;
-    int flags;
-    DWORD color;
-    int animation;
-  } policy{4, 2, 0xE6100E14, 0};  // acrylic, AABBGGRR ~ #14100E a 90%
-  struct CompData {
-    DWORD attribute;
-    void* data;
-    SIZE_T size;
-  } data{19, &policy, sizeof(policy)};
-  if (HMODULE user = GetModuleHandleW(L"user32.dll")) {
-    using Fn = BOOL(WINAPI*)(HWND, CompData*);
-    auto fn = reinterpret_cast<Fn>(
-        GetProcAddress(user, "SetWindowCompositionAttribute"));
-    if (fn) fn(w, &data);
-  }
-  SetLayeredWindowAttributes(w, 0, 214, LWA_ALPHA);
   clipPanelShape(w);
+}
+
+// Um clique na bandeja manda NIN_SELECT e, em seguida, WM_LBUTTONUP.
+// Os dois chamavam showPanel: o primeiro abria e o segundo fechava na hora
+// (o painel só pisca). O clique também tira o foco e manda WM_ACTIVATE
+// inativo. O UP desse clique é ignorado, e a perda de foco logo depois
+// também.
+DWORD gPanelOpenedAt = 0;
+
+bool panelJustOpened() {
+  if (gPanelOpenedAt == 0) return false;
+  return GetTickCount() - gPanelOpenedAt < 2000;
 }
 
 void closePanel() {
@@ -1260,6 +1338,8 @@ void closePanel() {
 }
 
 void showPanel() {
+  if (g.panelWnd && panelJustOpened()) return;
+  gPanelOpenedAt = GetTickCount();
   if (g.panelWnd) {
     closePanel();
     return;
@@ -1327,7 +1407,7 @@ void showPanel() {
   }
 
   HWND w = CreateWindowExW(
-      WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED, L"NexusRedlinePanel",
+      WS_EX_TOOLWINDOW | WS_EX_TOPMOST, L"NexusRedlinePanel",
       L"Nexus Redline", WS_POPUP | WS_VSCROLL | WS_CLIPCHILDREN, x, y, W, H,
       nullptr, nullptr, g.inst, nullptr);
   if (!w) return;
@@ -1424,7 +1504,7 @@ LRESULT CALLBACK panelProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       InvalidateRect(hwnd, nullptr, FALSE);
       return 0;
     case WM_ACTIVATE:
-      if (LOWORD(wp) == WA_INACTIVE) closePanel();
+      if (LOWORD(wp) == WA_INACTIVE && !panelJustOpened()) closePanel();
       return 0;
     case WM_DPICHANGED: {
       RECT* rc = reinterpret_cast<RECT*>(lp);
@@ -1496,12 +1576,18 @@ LRESULT CALLBACK trayProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     return 0;
   }
   switch (msg) {
-    case kTrayCallbackMsg:
-      if (LOWORD(lp) == NIN_SELECT || LOWORD(lp) == WM_LBUTTONUP)
+    case kTrayCallbackMsg: {
+      const UINT ev = LOWORD(lp);
+      // Versão 4: NIN_SELECT é o clique. O WM_LBUTTONUP que vem junto
+      // não pode fechar o painel que acabou de abrir.
+      if (ev == WM_LBUTTONUP) {
+        if (!panelJustOpened()) showPanel();
+      } else if (ev == NIN_SELECT || ev == NIN_KEYSELECT || ev == WM_RBUTTONUP ||
+                 ev == WM_CONTEXTMENU) {
         showPanel();
-      else if (LOWORD(lp) == WM_RBUTTONUP)
-        showPanel();
+      }
       return 0;
+    }
     case kReloadMsg:
       if (snapshotChangedOnDisk()) reloadSnapshot();
       refreshTray();
@@ -1512,9 +1598,15 @@ LRESULT CALLBACK trayProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         // O shell só cria a chave do ícone depois do NIM_ADD.
         if (!gTrayPromoted) gTrayPromoted = promoteTrayIcon();
         // Poll de 2s: rede de seguranÃ§a (rename atÃ´mico) + countdowns.
-        if (snapshotChangedOnDisk()) reloadSnapshot();
+        const bool changed = snapshotChangedOnDisk();
+        if (changed) reloadSnapshot();
         refreshTray();
-        if (g.panelWnd) InvalidateRect(g.panelWnd, nullptr, FALSE);
+        const std::string clock = panelClockKey();
+        const bool clockChanged = clock != gPanelClock;
+        gPanelClock = clock;
+        if (g.panelWnd && (changed || clockChanged)) {
+          InvalidateRect(g.panelWnd, nullptr, FALSE);
+        }
       } else if (wp == 9876) {
         // Abertura real (clique/"Abrir") e seam --toggle-panel: o painel
         // abre pelo showPanel(); só o probe agenda a saída.
