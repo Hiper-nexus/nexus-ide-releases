@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.76.94 — Abas de feature
+
+- **Terminais em abas.** A barra de cartões (missões, "Painéis soltos", pinos A/B e "Todos") virou uma barra de abas de editor: cada aba é uma feature, com os panes dela e a missão que um deles começou. A aba ativa é o mesmo chão da grelha, com um fio de acento em cima; o estado da missão vai no glifo e na palavra. O "+" abre o picker de sempre e o pane escolhido nasce numa aba nova. Duplo clique (ou F2) renomeia — inclusive a aba "Terminais", que vira um espaço com esse nome. ⌘/Ctrl+Alt+→/← troca de aba.
+- **Missão começada pelos panes fica na aba deles.** Quando o agente de um pane seu cria a missão, ou você torna o pane orquestrador, a missão, o orquestrador e os workers que ele abrir ficam na aba desse pane — não numa aba separada ao lado dos panes que a começaram. Missão lançada pelo assistente continua com a aba própria.
+- **Ver ao lado.** Clique direito numa aba (ou o botão de dividir) mostra duas abas na tela, cada metade com o nome dela e divisória ajustável. Pane da aba ao lado já está na tela: focar nele não troca de aba. A visão geral (ícone de grade) mostra todos os painéis e não é mais desfeita pelo foco ao abrir.
+- **Fechar aba** pede confirmação e encerra só os painéis dela. Aba com missão viva não tem ×: a missão se encerra pelo Quadro.
+- **Uma missão nunca mistura workspace (F-634).** Trocar de projeto com qualquer pane abrindo ou fechando carregava todos os panes de missão do projeto que saía para o que entrava — e a gravação seguinte os salvava lá. Agora o que está na tela quando a troca começa é do projeto que sai e não atravessa. Ditado, anexo e Jarvis não digitam mais no terminal escondido de outro projeto; recuperação de missão e "Retomar missão" desistem se o projeto mudou durante a espera.
+- **Criar missão pelo pane não trava mais os panes (F-635).** Em Autopilot a missão que o agente do seu pane cria nasce rodando: antes ela ficava pendente e todo pane novo voltava `dispatch_required` até alguém achar "Despachar". Hardened continua pedindo o despacho.
+- **O Quadro mostra o que o terminal faz (F-636).** Missão sem plano não desenha mais os oito papéis do squad "Na fila". Se o orquestrador reiniciou em outra CLI (failover Claude → GLM), o card do Maestro aponta o pane vivo e a missão aparece como "O orquestrador reiniciou e a missão não o reconhece", só com Encerrar — tentar de novo abriria um segundo orquestrador (religar a liderança fica para o F-637).
+- **Ícones de dividir legíveis.** "À direita" e "Abaixo" na barra do pane eram um quadrado cheio; viraram uma moldura dividida com a metade nova cheia.
+
 ## 0.76.93 — Ditado no lugar
 
 O Mac sobe com o lote 0.76.85–0.76.92 (que já estava no canal Windows) e seis correções novas.

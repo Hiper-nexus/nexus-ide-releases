@@ -6641,7 +6641,7 @@ export const RELEASE_07692: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07693: AppRelease = {
   version: '0.76.93',
   date: '2026-09-23',
   codename: 'Ditado no lugar',
@@ -6704,6 +6704,59 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'Falha de microfone diz o que fazer, em português. O log do ditado ' +
         'mostra quem transcreveu e o que ouviu antes do CODE.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.94',
+  date: '2026-09-23',
+  codename: 'Abas de feature',
+  summary:
+    'Os Terminais viram abas: cada aba é uma feature, com os panes dela e a ' +
+    'missão que um deles começou, e duas abas cabem lado a lado. Uma missão ' +
+    'nunca mais mistura projetos, o Quadro mostra o que o terminal faz e ' +
+    'criar missão pelo pane não trava os panes novos.',
+  highlights: [
+    {
+      title: 'Terminais em abas',
+      detail:
+        'Cada aba é uma feature: os panes dela e a missão que um deles ' +
+        'começou. O "+" abre o pane numa aba nova; duplo clique renomeia; ' +
+        '⌘/Ctrl+Alt+→/← troca de aba; a grade mostra a visão geral.',
+    },
+    {
+      title: 'Missão começada pelos panes fica junto deles',
+      detail:
+        'Quando o agente do seu pane cria a missão, ela, o orquestrador e os ' +
+        'workers ficam na aba desse pane. Missão do assistente segue com aba própria.',
+    },
+    {
+      title: 'Duas abas lado a lado',
+      detail:
+        'Clique direito numa aba → Ver ao lado. Cada metade leva o nome da aba ' +
+        'e a divisória se ajusta.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Missão nunca mistura projeto',
+      detail:
+        'Trocar de projeto com um pane abrindo ou fechando não carrega mais a ' +
+        'missão do projeto anterior. Ditado, anexo e Jarvis não digitam no ' +
+        'terminal escondido de outro projeto.',
+    },
+    {
+      title: 'Criar missão pelo pane não trava os panes',
+      detail:
+        'Em Autopilot a missão criada pelo agente do seu pane nasce rodando — ' +
+        'sem dispatch_required até alguém achar Despachar.',
+    },
+    {
+      title: 'Quadro fiel ao terminal',
+      detail:
+        'Missão sem plano não mostra papéis fantasmas "Na fila"; orquestrador ' +
+        'que reiniciou em outra CLI aparece vivo no card, com o aviso certo.',
     },
   ],
 };
