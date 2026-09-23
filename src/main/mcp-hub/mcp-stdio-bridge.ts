@@ -325,7 +325,26 @@ class McpStdioChannel {
     } catch (error) {
       return errorResponse(message.id ?? null, bridgeErrorMessage(error));
     }
-    return this.forward(message);
+    // OVKA-754 (padrão boardRelay): listagens idempotentes repetem quando a
+    // resposta se perde no transporte (timeout/erro de frame) — a sessão não
+    // pode ficar com tools/list mudo. `tools/call` NUNCA é repetido (muda
+    // estado; retry cega duplicaria task_claim/deliver).
+    const idempotentListing =
+      message.method === 'tools/list' || message.method === 'ping';
+    if (!idempotentListing) return this.forward(message);
+    let last: JsonRpcResponse | null = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      last = await this.forward(message);
+      const lostInTransit =
+        last.error &&
+        /timed out|transport|exited|EPIPE/i.test(last.error.message ?? '');
+      if (!lostInTransit) return last;
+      if (attempt < 2) await new Promise((r) => setTimeout(r, 300 * (attempt + 1)));
+    }
+    return (
+      last ??
+      errorResponse(message.id ?? null, `listagem perdida no transporte (${message.method})`)
+    );
   }
 
   dispose(): void {
