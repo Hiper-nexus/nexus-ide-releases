@@ -492,6 +492,7 @@ function requestLiveMainOwnedPanePresentation(
 
 async function recoverMissionPane(
   req: MissionPaneRecoveryRequest,
+  scope: PresentationScope,
 ): Promise<MissionPaneRecoveryResult> {
   let replacementSessionId: string | undefined;
   let recoveryOwned = false;
@@ -499,6 +500,12 @@ async function recoverMissionPane(
     // Same ordering contract as presentLiveMainOwnedPane: never race the
     // workspace layout hydrate with recovery-mounted panes.
     await whenWorkspaceLayoutSettled();
+    // O layout que assentou pode ser o de OUTRO workspace: o operador trocou
+    // de projeto enquanto a recovery esperava. A árvore agora é a de B e o
+    // pane da missão de A não entra nela (o Main já retomou a missão headless).
+    if (!isPresentationScopeCurrent(scope)) {
+      throw new Error('renderer workspace changed during pane recovery');
+    }
     let pane = listPanes(useLayoutStore.getState().root).find(
       (candidate) => candidate.id === req.paneId,
     );
@@ -709,7 +716,7 @@ export function useOrchBridge(): void {
         }
         if (recoveryInFlight.has(req.requestId)) return;
         recoveryInFlight.add(req.requestId);
-        void recoverMissionPane(req).then((result) => {
+        void recoverMissionPane(req, capturePresentationScope()).then((result) => {
           recoveryInFlight.delete(req.requestId);
           cacheRecoveryResult(result);
           window.nexus.orch.sendPaneRecoveryResult(result);

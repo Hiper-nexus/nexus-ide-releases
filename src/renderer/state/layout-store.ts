@@ -156,11 +156,15 @@ interface LayoutState {
   /**
    * Restore a persisted tree. A restore is a HINT, never authority: with
    * `preserveLiveMissionPanes` the panes bound to a live mission survive it
-   * (see enforceLayoutInvariants / I3).
+   * (see enforceLayoutInvariants / I3). `outgoingPaneIds` are panes of the
+   * workspace that is LEAVING: they never cross into the tree being restored.
    */
   hydrate(
     layout: WorkspaceLayout | null,
-    options?: { readonly preserveLiveMissionPanes?: boolean },
+    options?: {
+      readonly preserveLiveMissionPanes?: boolean;
+      readonly outgoingPaneIds?: ReadonlySet<string>;
+    },
   ): void;
   toggleView(): void;
   updateCanvasNodeLayout(paneId: string, patch: Partial<CanvasNodeLayout>): void;
@@ -472,6 +476,12 @@ export function switchWorkspaceLayout(workspacePath: string): Promise<boolean> {
     flushLayout();
     persistKey = workspacePath;
     const versionAtStart = treeVersion;
+    // Trocar de workspace: o que já está na árvore agora é do workspace que
+    // SAI. Só o que aterrissar durante a leitura pode pertencer ao alvo.
+    const outgoingPaneIds: ReadonlySet<string> | undefined =
+      layoutWorkspacePath === workspacePath
+        ? undefined
+        : new Set(listPanes(useLayoutStore.getState().root).map((pane) => pane.id));
     let layout: WorkspaceLayout | null;
     try {
       layout = await window.nexus.layout.load(workspacePath);
@@ -499,14 +509,19 @@ export function switchWorkspaceLayout(workspacePath: string): Promise<boolean> {
     // silêncio. O desfecho correto é hidratar o alvo — a leitura já chegou —
     // preservando os panes de MISSÃO que aterrissaram nesta janela, que é
     // exatamente o que o carimbo existia para proteger.
+    //
+    // SÓ os que aterrissaram. Os panes de missão que já estavam na árvore são
+    // do workspace que sai: carregá-los punha a missão de A no grid de B
+    // (campo 23/09) — e a debounce seguinte os gravava no layout de B.
     if (treeVersion !== versionAtStart) {
       const durableLayout = layout ? sanitizeWorkspaceLayout(layout) : null;
       if (durableLayout) {
         restoredPanesHandler?.(listPanes(durableLayout.root));
       }
-      useLayoutStore
-        .getState()
-        .hydrate(durableLayout, { preserveLiveMissionPanes: true });
+      useLayoutStore.getState().hydrate(durableLayout, {
+        preserveLiveMissionPanes: true,
+        outgoingPaneIds,
+      });
       layoutWorkspacePath = workspacePath;
       return layout !== null;
     }
@@ -1474,9 +1489,13 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
     // reported bug: a shell replaying its persisted scrollback takes the whole
     // grid, the running mission is gone, and closing the shell forces a replay
     // that brings the mission back.
+    const outgoing = options.outgoingPaneIds;
     const carried =
       options.preserveLiveMissionPanes === true
-        ? listPanes(get().root).filter((pane) => pane.missionId !== undefined)
+        ? listPanes(get().root).filter(
+            (pane) =>
+              pane.missionId !== undefined && !outgoing?.has(pane.id),
+          )
         : [];
     if (!layout) {
       const restored = initialTree();

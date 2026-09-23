@@ -3444,6 +3444,20 @@ export function getPaneSessionId(paneId: string): string | null {
   return hosts.get(paneId)?.sessionId ?? null;
 }
 
+/**
+ * Sessão que pode receber DIGITAÇÃO do renderer. Um host estacionado é de
+ * outro workspace: a sessão continua viva, mas texto de ditado, anexo ou
+ * Jarvis que chegue a ele depois de uma troca de projeto mistura um
+ * workspace no outro sem ninguém ver (campo 23/09).
+ */
+function typingSessionId(paneId: string): string | null {
+  if (hosts.get(paneId)?.parked) {
+    console.warn(`[terminal] digitação recusada: ${paneId} está estacionado em outro workspace`);
+    return null;
+  }
+  return getPaneSessionId(paneId);
+}
+
 // Cold CLI start under Seatbelt pays for the signed-helper handshake and the
 // sandbox profile before the PTY reports a session. 20s expired on machines
 // that were merely slow, turning "still starting" into "failed".
@@ -3734,7 +3748,7 @@ export function writeToPane(paneId: string, data: string): boolean {
     if (host.opened) webglPool.touch(paneId);
     flushTerminalOutput(host.term);
   }
-  const sessionId = getPaneSessionId(paneId);
+  const sessionId = typingSessionId(paneId);
   if (!sessionId) return false;
   // Mesma lane do teclado (BUG 1, 06/08): pane governado recusa escrita crua
   // do renderer por design — o espaço retido do hold-to-talk morria em
@@ -3763,7 +3777,7 @@ export function submitPromptToPane(paneId: string, text: string): boolean {
   const host = hosts.get(paneId);
   if (host && !host.disposed) host.inputVisibility.onUserInput();
   return submitPanePrompt(paneId, text, {
-    getSessionId: getPaneSessionId,
+    getSessionId: typingSessionId,
     write: (sessionId, data) => window.nexus.pty.write(sessionId, data),
     writeConfirmed: (sessionId, data) =>
       window.nexus.pty.writeConfirmed(sessionId, data),
@@ -3780,7 +3794,7 @@ export function submitPromptToPaneConfirmed(
   const host = hosts.get(paneId);
   if (host && !host.disposed) host.inputVisibility.onUserInput();
   return submitPanePromptConfirmed(paneId, text, expectedSessionId, {
-    getSessionId: getPaneSessionId,
+    getSessionId: typingSessionId,
     write: (sessionId, data) => window.nexus.pty.write(sessionId, data),
     writeConfirmed: (sessionId, data) =>
       window.nexus.pty.writeConfirmed(sessionId, data),
@@ -3800,7 +3814,7 @@ export function submitPromptToPaneOperatorInput(
   const host = hosts.get(paneId);
   if (host && !host.disposed) host.inputVisibility.onUserInput();
   return submitPanePromptOperator(paneId, text, expectedSessionId, {
-    getSessionId: getPaneSessionId,
+    getSessionId: typingSessionId,
     operatorWrite: (sessionId, data) =>
       window.nexus.orch.sendPaneOperatorInput({ sessionId, data }),
     schedule: (callback, delayMs) => setTimeout(callback, delayMs),

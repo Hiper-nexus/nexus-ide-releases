@@ -170,6 +170,19 @@ export async function reopenMission(
     };
   }
 
+  // A árvore de layout é uma só no renderer. Se o operador trocar de projeto
+  // enquanto o Main responde, a árvore viva passa a ser a do OUTRO workspace e
+  // a missão não pode entrar nela.
+  const workspaceAtStart = getActiveWorkspacePath();
+  const workspaceChanged = (): MissionReopenResult | null =>
+    getActiveWorkspacePath() === workspaceAtStart
+      ? null
+      : {
+          ok: false,
+          error:
+            'O projeto mudou enquanto a missão reabria. Volte ao projeto dela e tente de novo.',
+        };
+
   // Every blocked mission resumes through the main-owned authority. Main
   // either adopts the exact still-live PTY or clears a proven-dead identity and
   // creates one fresh sealed pane. Renderer-side persisted-pane spawning here
@@ -178,6 +191,9 @@ export async function reopenMission(
     const resumed = await window.nexus.orch.resumeMissionBootstrap({
       missionId: mission.id,
     });
+    // O processo já é do Main: na volta ao projeto dele, a apresentação o monta.
+    const moved = workspaceChanged();
+    if (moved) return moved;
     if (resumed.ok) {
       const presentation = await presentMainOwnedMissionPane(
         resumed.missionId,
@@ -210,6 +226,8 @@ export async function reopenMission(
       error: err instanceof Error ? err.message : 'falha ao ler os panes da missão',
     };
   }
+  const moved = workspaceChanged();
+  if (moved) return moved;
   if (specs.length === 0) {
     // Intent-first / modo agêntico: the shell is armed with 0 panes on purpose.
     // Reopen means resume the goal wizard, not invent a pane history.

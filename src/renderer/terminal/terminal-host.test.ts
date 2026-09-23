@@ -106,7 +106,9 @@ import {
   refreshHost,
   revealTerminalHostsAfterWorkspaceShow,
   setHostVisibility,
+  submitPromptToPane,
   waitForSession,
+  writeToPane,
 } from './terminal-host';
 
 const pane: PaneModel = { id: 'hidden-spawn-test', kind: 'shell', title: 'Terminal' };
@@ -842,6 +844,25 @@ describe('estacionamento de hosts na troca de workspace', () => {
     await openLiveHost(paneA1);
     reconcileHosts(new Set());
     expect(kill).toHaveBeenCalledWith('pty-park-a1');
+  });
+
+  it('texto nunca entra no pane estacionado de outro workspace', async () => {
+    // Campo 23/09: ditado/anexo/Jarvis guardam o id do pane, esperam (STT,
+    // cópia do arquivo) e só então digitam. Se o operador trocou de projeto
+    // nesse meio-tempo, o pane-alvo está estacionado e a sessão dele continua
+    // viva — digitar ali mistura um workspace no outro sem ninguém ver.
+    await openLiveHost(paneA1);
+    parkWorkspaceHosts('/ws/a');
+    reconcileHosts(new Set(['pane-de-b']));
+    ptyWrite.mockClear();
+
+    expect(writeToPane(paneA1.id, 'front-end e-commerce')).toBe(false);
+    expect(submitPromptToPane(paneA1.id, 'front-end e-commerce')).toBe(false);
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(ptyWrite).not.toHaveBeenCalled();
+    // A sessão continua viva e volta a receber texto quando o pane volta.
+    expect(getPaneSessionId(paneA1.id)).toBe('pty-park-a1');
   });
 
   it('remover um projeto mata só os estacionados dele', async () => {

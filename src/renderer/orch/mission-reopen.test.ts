@@ -50,8 +50,10 @@ vi.mock('../lib/split-tree', () => ({
   createPane: vi.fn(() => ({ id: 'new-id', kind: 'cli-agent' })),
 }));
 
+let activeWorkspace = '/tmp/ws';
+
 vi.mock('../state/active-workspace', () => ({
-  getActiveWorkspacePath: () => '/tmp/ws',
+  getActiveWorkspacePath: () => activeWorkspace,
 }));
 
 vi.mock('../terminal/terminal-host', () => ({
@@ -67,6 +69,7 @@ import { reopenMission } from './mission-reopen';
 describe('reopenMission soft / multi', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    activeWorkspace = '/tmp/ws';
     layoutPanes = [
       { id: 'live-1', kind: 'cli-agent', role: 'orchestrator', adapterId: 'codex' },
     ];
@@ -162,6 +165,40 @@ describe('reopenMission soft / multi', () => {
 
     expect(result.ok).toBe(true);
     expect(terminalMocks.prepareMissionPaneResume).toHaveBeenCalledWith('live-1');
+  });
+
+  it('a missão reaberta nunca entra na árvore de outro workspace', async () => {
+    // O operador clicou "Retomar" em A e trocou de projeto enquanto o Main
+    // lia a composição: a árvore agora é a de B.
+    listMissionPanes.mockImplementationOnce(async () => {
+      activeWorkspace = '/tmp/outro-ws';
+      return [
+        {
+          id: 'spec-1',
+          missionId: 'mission-b',
+          adapterId: 'gemini',
+          title: 'orch-b',
+          role: 'orchestrator',
+          paneId: 'orch-b',
+          createdAt: 1,
+        },
+      ];
+    });
+    const result = await reopenMission({
+      id: 'mission-b',
+      title: 'B',
+      description: '',
+      status: 'running',
+      milestones: [],
+      learnings: '',
+      createdAt: 1,
+      updatedAt: 2,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(setPanes).not.toHaveBeenCalled();
+    expect(bindPaneMission).not.toHaveBeenCalled();
+    expect(terminalMocks.prepareMissionPaneResume).not.toHaveBeenCalled();
   });
 
   it('merges without kill when reopening another mission without Claude conflict', async () => {

@@ -917,6 +917,90 @@ describe('orchestration bridge pane recovery', () => {
     act(() => mounted.root.unmount());
   });
 
+  it('a recovery de A nunca monta o pane de missão na árvore de B', async () => {
+    // Campo 23/09: a recovery espera o layout assentar. Se o operador troca de
+    // projeto nesse meio-tempo, o layout que assenta é o de B — e o pane da
+    // missão de A caía no grid de B (e na gravação seguinte, no layout de B).
+    let recoveryHandler: ((req: MissionPaneRecoveryRequest) => void) | null = null;
+    const sendPaneRecoveryResult = vi.fn();
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        mission: missionBridge(),
+        orch: {
+          onPaneSpawnRequest: listener(),
+          onPaneRecoveryRequest: vi.fn(
+            (cb: (req: MissionPaneRecoveryRequest) => void) => {
+              recoveryHandler = cb;
+              return vi.fn();
+            },
+          ),
+          onBrowserOpenRequest: listener(),
+          onPaneCloseRequest: listener(),
+          onPaneParkRequest: listener(),
+          onMissionsChanged: listener(),
+          onHandoffsChanged: listener(),
+          onTodosChanged: listener(),
+          onSquadsChanged: listener(),
+          syncPanes: vi.fn(),
+          sendPaneSpawnResult: vi.fn(),
+          sendPaneRecoveryResult,
+          sendBrowserOpenResult: vi.fn(),
+          rebindMissionOrchestrator: vi.fn(async () => ({ ok: true })),
+        },
+      },
+    });
+    setActiveWorkspacePath('/workspace/a');
+    useOrchStore.setState({ workspaceEpoch: 20 });
+    useLayoutStore.setState({
+      root: {
+        kind: 'leaf',
+        id: 'leaf-a',
+        pane: { id: 'shell-a', kind: 'shell', title: 'A' },
+      },
+      focusedPaneId: 'shell-a',
+      // Uma leitura de layout em voo: a recovery fica parada no settle.
+      hydrated: false,
+    });
+    const mounted = mount();
+
+    act(() => {
+      recoveryHandler?.({
+        requestId: 'recovery-cross-workspace',
+        missionId: 'mission-a',
+        paneId: 'pane-worker-a',
+        role: 'worker',
+        pane: { adapterId: 'codex', title: 'Worker de A', role: 'worker' },
+        recap: 'Continue.',
+      });
+    });
+
+    setActiveWorkspacePath('/workspace/b');
+    useOrchStore.setState({ workspaceEpoch: 21 });
+    act(() => {
+      useLayoutStore.setState({
+        root: {
+          kind: 'leaf',
+          id: 'leaf-b',
+          pane: { id: 'shell-b', kind: 'shell', title: 'B' },
+        },
+        focusedPaneId: 'shell-b',
+        hydrated: true,
+      });
+    });
+
+    await vi.waitFor(() => {
+      expect(sendPaneRecoveryResult).toHaveBeenCalledWith(
+        expect.objectContaining({ requestId: 'recovery-cross-workspace', ok: false }),
+      );
+    });
+    expect(
+      listPanes(useLayoutStore.getState().root).map((pane) => pane.id),
+    ).toEqual(['shell-b']);
+    expect(terminal.markPersistedAuthorityOnSpawn).not.toHaveBeenCalled();
+    act(() => mounted.root.unmount());
+  });
+
   it('does not cancel a newer session when a stale recovery loses the CAS race', async () => {
     let recoveryHandler: ((req: MissionPaneRecoveryRequest) => void) | null = null;
     const sendPaneRecoveryResult = vi.fn();

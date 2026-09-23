@@ -859,6 +859,65 @@ describe('layout-store persistence key vs. the tree it owns', () => {
 
     expect(save.mock.calls.map(([path]) => path)).toContain('/workspace/b');
   });
+
+  it('a missão do workspace que SAI nunca atravessa para o que entra', async () => {
+    // Campo 23/09: missão de um projeto aparecendo no grid de outro. Basta
+    // QUALQUER mutação da árvore cair durante a leitura do layout de B (um
+    // pane fechando, um spawn) para o ramo da corrida hidratar B carregando
+    // os panes de missão da árvore viva — e a árvore viva ainda é a de A.
+    const missionPaneA: PaneModel = {
+      id: 'pane-mission-a',
+      kind: 'cli-agent',
+      title: 'orquestrador de A',
+      adapterId: 'claude',
+      missionId: 'mission-a',
+      role: 'orchestrator',
+    };
+    const layoutA: WorkspaceLayout = {
+      root: buildGridTree([missionPaneA]),
+      focusedPaneId: missionPaneA.id,
+      viewKind: 'grid',
+      canvasNodeLayouts: {},
+      canvasViewport: { x: 0, y: 0, zoom: 1 },
+    };
+    let releaseB: () => void = () => undefined;
+    const load = vi.fn(async (path: string) => {
+      if (path === '/workspace/a') return layoutA;
+      await new Promise<void>((resolve) => {
+        releaseB = resolve;
+      });
+      return null;
+    });
+    vi.stubGlobal('window', {
+      nexus: { layout: { load, save: vi.fn(async () => undefined), saveSync: vi.fn() } },
+    });
+
+    await switchWorkspaceLayout('/workspace/a');
+    expect(
+      listPanes(useLayoutStore.getState().root).map((pane) => pane.id),
+    ).toContain(missionPaneA.id);
+
+    const switching = switchWorkspaceLayout('/workspace/b');
+    // A missão lançada em B durante a leitura é a razão de ser do ramo: ela
+    // tem de sobreviver à hidratação de B.
+    useLayoutStore.getState().spawnOrchPane({
+      paneId: 'pane-mission-b',
+      adapterId: 'claude',
+      title: 'orquestrador de B',
+      orchRequestId: 'orchspawn-mission-b',
+      missionId: 'mission-b',
+      role: 'orchestrator',
+    });
+    releaseB();
+    await switching;
+
+    const idsInB = listPanes(useLayoutStore.getState().root).map(
+      (pane) => pane.id,
+    );
+    expect(idsInB).not.toContain(missionPaneA.id);
+    expect(idsInB).toContain('pane-mission-b');
+    expect(useLayoutStore.getState().focusedPaneId).not.toBe(missionPaneA.id);
+  });
 });
 
 describe('layout-store test fixtures go through the seam', () => {
