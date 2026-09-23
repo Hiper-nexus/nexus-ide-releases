@@ -6118,6 +6118,14 @@ export const CURRENT_RELEASE: AppRelease = {
     'Nexus podem continuar processando terminais ao mesmo tempo no Mac.',
   highlights: [
     {
+      title: 'CLIs atualizadas automaticamente com sua autorização',
+      detail:
+        'O Nexus oferece a atualização em segundo plano para instalações ' +
+        'locais reconhecidas. Espera a CLI ficar sem pane ativo e confere a ' +
+        'versão do executável usado pelo próximo pane; canais que precisam ' +
+        'de instalação manual continuam no botão Atualizar CLI.',
+    },
+    {
       title: 'A CLI certa recebe a atualização',
       detail:
         'Nexus confere o executável que abrirá no próximo pane. Claude nativo ' +
@@ -6134,6 +6142,13 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
   fixes: [
+    {
+      title: 'Cotas Claude por identidade confirmada',
+      detail:
+        'Uma credencial salva na conta errada deixa de repetir o consumo de ' +
+        'outra conta. Nexus pede novo login e impede que um pane gerenciado ' +
+        'abra com essa credencial.',
+    },
     {
       title: 'Menos resultados falsos ao atualizar',
       detail:

@@ -3,8 +3,10 @@
 ## 0.76.84 — CLI certa, janelas vivas
 
 - **Atualizar CLI atua na instalação usada pelo pane (F-360).** Nexus escolhe o canal pelo executável ativo: Claude nativo usa o próprio updater, Homebrew usa o prefixo dono da CLI, npm usa o prefixo global correto, uv recebe seus diretórios e instaladores oficiais mantêm o perfil. Depois, lê a versão do launcher do próximo pane; versão igual ou não verificada não vira um falso “atualizada”.
+- **Atualização automática com consentimento (F-633).** O Nexus oferece manter CLIs instaladas em dia pelos canais locais reconhecidos. As tentativas são serializadas, esperam não haver pane ativo da CLI e verificam a versão do executável usado pelo próximo pane. Canais que exigem script, WinGet, cask, caminho personalizado ou privilégio continuam no botão manual; “Agora não” adia a oferta por sete dias.
 - **Dois workspaces em janelas Nexus podem trabalhar ao mesmo tempo (F-361).** No macOS, uma janela coberta por outra continua processando os timers do terminal; saída sustentada deixa de ficar retida só por causa da oclusão e chegar ao aviso de backlog de 2 MiB. Panes de workspace estacionado também mantêm a última grade válida para drenar em segundo plano. A proteção de memória contra rajadas reais permanece.
 - **Suite raiz ignora worktrees de runtime (F-631).** `npm test` não coleta cópias de testes em `.nexus/worktrees/`.
+- **Cotas Claude ligadas à conta certa (F-615).** Nexus confirma a identidade da credencial no servidor antes de mostrar percentuais ou abrir um pane gerenciado. Se o token salvo pertence a outra conta, a leitura fica indisponível e a interface pede novo login, sem copiar a cota da irmã.
 - **Limite conhecido:** num mosaico de 24 ou mais panes, um pane que já estava virtualizado fora da tela ainda conserva apenas um buffer curto de saída até voltar; isso é distinto do caso de duas janelas com um pane visível em cada uma.
 
 ## 0.76.83 — Configurações no lugar
