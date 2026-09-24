@@ -6787,7 +6787,7 @@ export const RELEASE_07695: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07696: AppRelease = {
   version: '0.76.96',
   date: '2026-09-24',
   codename: 'Harness declarado',
@@ -6838,6 +6838,55 @@ export const CURRENT_RELEASE: AppRelease = {
         'nexus_skills recusa path traversal no nome e só remove skill que o ' +
         'app embarca. Filtro declarado esconde skills pessoais no overlay ' +
         'Claude (skillOverrides: off).',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.97',
+  date: '2026-09-24',
+  codename: 'Sessão renovada',
+  summary:
+    'Pane Claude de conta gerenciada não é mais recusado só porque o token de ' +
+    'acesso venceu: a própria CLI renova e o Nexus prova a identidade antes de ' +
+    'decidir. A cota das contas Claude volta a ler no Windows, as skills de papel ' +
+    'embarcam de verdade e o warm pool só adota pane com o mesmo contrato.',
+  highlights: [
+    {
+      title: 'Token vencido não é sessão perdida',
+      detail:
+        'Conta Claude parada há mais de 8 h abre pane de novo: a CLI renova no ' +
+        'escopo da conta, e "Entre novamente" só aparece quando nem ela conseguiu.',
+    },
+    {
+      title: 'Cota Claude no Windows',
+      detail:
+        'A sonda acha o claude pelo PATH e usa o claude.exe do shim do npm — ' +
+        'cota das contas e renovação de fundo voltam a funcionar no Windows.',
+    },
+    {
+      title: 'Skills de papel no pacote',
+      detail:
+        'oc-pilot, oc-builder, oc-scout e oc-conveyor saem do bundle, são ' +
+        'espelhadas por CLI e nexus_skills instala a partir do cache do app.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Warm pool honesto',
+      detail:
+        'Só adota um pane pré-aberto quando o pedido é o contrato com que ele ' +
+        'nasceu; antes trocava só o rótulo de um processo do operador.',
+    },
+    {
+      title: 'Arms do npm start',
+      detail:
+        'Pane da instância de desenvolvimento fala com ela, não com o app instalado.',
+    },
+    {
+      title: 'Testes de scripts no Windows',
+      detail:
+        'Scripts .mjs/.cjs sempre em LF: quatro suítes voltam a carregar no Windows.',
     },
   ],
 };
