@@ -6,6 +6,8 @@ export interface WarmSession {
   readonly cli: string;
   readonly bornAtMs: number;
   readonly cwd: string;
+  /** Projeto em que o pane nasceu; adoção exige o mesmo (F-642). */
+  readonly scopeRootRealPath?: string;
 }
 
 export interface WarmPoolMetrics {
