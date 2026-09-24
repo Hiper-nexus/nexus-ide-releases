@@ -6761,7 +6761,7 @@ export const RELEASE_07694: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07695: AppRelease = {
   version: '0.76.95',
   date: '2026-09-23',
   codename: 'Voz medida',
@@ -6783,6 +6783,61 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'Fala em segundos, nível e agudos ficam registrados antes da ' +
         'transcrição: dá para saber se o erro veio do microfone ou do serviço.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.96',
+  date: '2026-09-24',
+  codename: 'Harness declarado',
+  summary:
+    'Paridade Overclock 1.4: a tabela de harness por tarefa vira editável e ' +
+    'persistida, o recibo do spawn declara o que foi decidido, a cota de ' +
+    'conta aparece como janela honesta (missing ≠ zero) e o pane ganha ' +
+    'identidade na sessão MCP. Warm pool retargeta pane em boot; tools/list ' +
+    'perdida não deixa a sessão muda.',
+  highlights: [
+    {
+      title: 'Harness por tarefa',
+      detail:
+        'nexus_harness: categorias × tipos com CLI, modelo, conta, effort e ' +
+        'skills. Apply all-or-nothing (worker só propõe). O recibo do spawn ' +
+        'traz ▸ harness / ▸ decisor / ▸ origens. Tabela persistida em settings.',
+    },
+    {
+      title: 'Folga de conta visível',
+      detail:
+        'nexus_account_windows lista as janelas de cada conta com status ok / ' +
+        'queimada / sem leitura e a idade da leitura. Missing nunca vira zero.',
+    },
+    {
+      title: 'Identidade de pane no MCP',
+      detail:
+        'O wrapper Arms carrega callerPaneId só quando fala com a casa do ' +
+        'pane — worker não herda orçamento de bootstrap; --descriptor alheio ' +
+        'apaga a identidade (orquestrador externo).',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Warm pool com retarget',
+      detail:
+        'Pane já bootando é re-destinado à missão em vez de esperar cold-start. ' +
+        'Sem startKey real nada entra no pool.',
+    },
+    {
+      title: 'tools/list perdida não silencia a sessão',
+      detail:
+        'Listagens idempotentes repetem em transporte perdido; tools/call nunca ' +
+        'repete. Placeholder de reconexão + recovery com list_changed.',
+    },
+    {
+      title: 'Skills seguras',
+      detail:
+        'nexus_skills recusa path traversal no nome e só remove skill que o ' +
+        'app embarca. Filtro declarado esconde skills pessoais no overlay ' +
+        'Claude (skillOverrides: off).',
     },
   ],
 };

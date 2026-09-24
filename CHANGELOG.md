@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.76.96 — Harness declarado
+
+Paridade Overclock 1.4: decisão de harness visível e persistida, folga de conta honesta, identidade de pane no MCP e resiliência de listagem.
+
+Novo desde a 0.76.95:
+
+- **Harness por tarefa (`nexus_harness`).** Tabela categorias × tipos com CLI, modelo, conta, effort e skills. `apply` all-or-nothing (worker só `propose` com reason; a assertiva do agente nunca é aprovação). O recibo do spawn declara `▸ harness` / `▸ decisor` / `▸ origens`. Tabela persistida em `orch.taskHarnessTable` — sobrevive a restart.
+- **Skill gate por declaração (OVKA-713/747).** Ausência de filtro libera; filtro declarado é whitelist dura e, no overlay Claude, esconde skills pessoais/projeto fora do conjunto (`skillOverrides: off`).
+- **Folga de conta (`nexus_account_windows`).** Janelas por conta com status `ok` / `queimada` / `sem leitura` e a idade da leitura. Missing ≠ zero.
+- **Identidade de pane no Arms (OVKA-529/543).** O wrapper carrega `callerPaneId` só em casa; `--descriptor` alheio apaga a identidade. Worker não herda orçamento de "bootstrap do humano".
+- **Warm pool com retarget.** Pane em boot é re-destinado à missão; sem `startKey` real nada entra no pool.
+- **tools/list perdida não silencia (OVKA-754).** Listagens idempotentes repetem em transporte perdido; `tools/call` nunca repete. Placeholder `nexus_reconectar` + recovery com `list_changed`.
+- **Skills de papel** `oc-pilot` / `oc-builder` / `oc-scout` / `oc-conveyor` embarcadas e espelhadas por CLI.
+- **`nexus_skills`** install/remove por CLI (só skill embarcada; nome é slug — path traversal recusado). Precisa de allowlist explícita.
+- **Briefing por ponteiro (OVKA-750).** Brief longo citando card/task file ganha aviso soft com o ponteiro de uma linha.
+
 ## 0.76.95 — Voz medida
 
 - **O ditado mede a sua voz antes de transcrever (F-638).** No Windows o ditado trocava palavras e no Mac acertava. Medido: com o ganho do Windows no máximo, a voz chegava a −45 dBFS e com só 2,8% de agudos (voz limpa tem 7–9%) — um fone ligado na entrada rosa estava fazendo papel de microfone. Sem agudos a voz perde as consoantes e qualquer serviço de transcrição adivinha palavras. Agora cada ditado grava no voice.log quanto de fala houve, em que nível e com quantos agudos (`stt.audioQuality`), e voz abafada gera, uma vez por sessão, o aviso "Microfone chegando abafado" com o caminho: microfone USB ou adaptador que separa microfone e fone, e o botão Abrir Voz.
