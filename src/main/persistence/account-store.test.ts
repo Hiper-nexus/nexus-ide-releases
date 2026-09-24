@@ -735,6 +735,53 @@ describe('contrato de env OAuth de pane pinado', () => {
   });
 });
 
+describe('F-645: a conta que é o login nativo tem um dono só da linhagem', () => {
+  it('prova o store nativo, ignora a cópia gerenciada antiga e não semeia outra', async () => {
+    const a = addClaudeAccount('Conta A', 'a@example.test', oauthBlob('a-vault'));
+    deps.managedProfiles.set(a.id, oauthBlob('a-stale-scope'));
+    deps.keychain = oauthBlob('a-native-rotated');
+    const verified = vi.fn();
+
+    expect(await verifyManagedClaudeAccountForSpawn(a.id, verified)).toBe('match');
+    expect(deps.probeClaudeIdentity).toHaveBeenCalledWith(
+      oauthBlob('a-native-rotated'), 'a@example.test',
+    );
+    expect(verified).toHaveBeenCalledWith(oauthBlob('a-native-rotated'));
+    expect(deps.probeClaudeCliUsage).not.toHaveBeenCalled();
+
+    expect(prepareAccountForSpawn('claude', a.id)).toMatchObject({ ok: true, authEnv: {} });
+    expect(deps.managedProfiles.get(a.id)).toBe(oauthBlob('a-stale-scope'));
+  });
+
+  it('access token nativo vencido: a CLI nativa renova e a prova é no token novo', async () => {
+    const a = addClaudeAccount('Conta A', 'a@example.test', oauthBlob('a-native'));
+    deps.needsRefresh.mockReturnValue({ refreshToken: 'refresh-a-native' });
+    deps.probeClaudeIdentity
+      .mockResolvedValueOnce('auth-expired')
+      .mockResolvedValueOnce('match');
+    deps.probeClaudeCliUsage.mockImplementationOnce(async () => {
+      deps.keychain = oauthBlob('a-native-renewed');
+      return { windows: null };
+    });
+
+    expect(await verifyManagedClaudeAccountForSpawn(a.id)).toBe('match');
+    // Run nativo: sem env de escopo, a CLI renova o próprio store.
+    expect(deps.probeClaudeCliUsage).toHaveBeenCalledWith();
+    expect(deps.probeClaudeIdentity).toHaveBeenLastCalledWith(
+      oauthBlob('a-native-renewed'), 'a@example.test',
+    );
+    expect(deps.managedProfiles.has(a.id)).toBe(false);
+  });
+
+  it('store nativo ilegível não vira "sessão expirada" nem cai no vault', async () => {
+    const a = addClaudeAccount('Conta A', 'a@example.test', oauthBlob('a-native'));
+    deps.keychain = null;
+
+    expect(await verifyManagedClaudeAccountForSpawn(a.id)).toBe('unavailable');
+    expect(deps.probeClaudeCliUsage).not.toHaveBeenCalled();
+  });
+});
+
 describe('renovação morta veta failover no escuro', () => {
   /** Conta secundária: o login nativo é de outro e-mail. */
   function addSecondary(label: string, email: string, blob: string): Account {

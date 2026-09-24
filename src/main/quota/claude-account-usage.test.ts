@@ -6,6 +6,7 @@ import type { QuotaWindow } from '../../shared/quota-types';
 
 const mocks = vi.hoisted(() => ({
   getAccount: vi.fn(),
+  claudeAccountIsNativeLogin: vi.fn((_account: unknown) => false),
   ensureFreshClaudeSubscription: vi.fn(async () => false),
   getSecret: vi.fn<(key: string) => string | null>(),
   setSecret: vi.fn(),
@@ -32,6 +33,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../persistence/account-store', () => ({
   getAccount: mocks.getAccount,
+  claudeAccountIsNativeLogin: mocks.claudeAccountIsNativeLogin,
   ensureFreshClaudeSubscription: mocks.ensureFreshClaudeSubscription,
 }));
 
@@ -306,6 +308,24 @@ describe('fetchClaudeAccountUsageWindows', () => {
       env: Record<string, string>;
     };
     expect(call.env[CLAUDE_MANAGED_AUTH_ENV]).toBe('/managed/acct-1/auth');
+    expect(mocks.materializeManagedClaudeAuth).not.toHaveBeenCalled();
+  });
+
+  it('conta que é o login nativo nunca roda a CLI no escopo gerenciado dela (F-645)', async () => {
+    mocks.getAccount.mockReturnValue({ adapterId: 'claude', email: 'a@b.c' });
+    mocks.hasManagedClaudeAuth.mockReturnValue(true);
+    mocks.managedClaudeAuthHasCredential.mockReturnValue(true);
+    mocks.claudeAccountIsNativeLogin.mockReturnValueOnce(true);
+    // Vault com blob: o passo 3 semearia um escopo novo e rodaria a CLI nele.
+    mocks.getSecret.mockReturnValue(credentialBlob('vault-token'));
+
+    await fetchClaudeAccountUsageWindows('acct-1', { now: NOW });
+
+    const scopedRuns = mocks.probeClaudeCliUsage.mock.calls.filter(
+      (args) => (args[0] as { env?: Record<string, string> } | undefined)
+        ?.env?.[CLAUDE_MANAGED_AUTH_ENV] !== undefined,
+    );
+    expect(scopedRuns).toEqual([]);
     expect(mocks.materializeManagedClaudeAuth).not.toHaveBeenCalled();
   });
 

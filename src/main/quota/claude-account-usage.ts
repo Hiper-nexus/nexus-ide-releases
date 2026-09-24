@@ -31,7 +31,11 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import type { QuotaWindow } from '../../shared/quota-types';
 import { knownWindow } from './quota-normalize';
-import { ensureFreshClaudeSubscription, getAccount } from '../persistence/account-store';
+import {
+  claudeAccountIsNativeLogin,
+  ensureFreshClaudeSubscription,
+  getAccount,
+} from '../persistence/account-store';
 import { getSecret } from '../persistence/secrets-store';
 import {
   managedClaudeAuthHasCredential,
@@ -463,7 +467,13 @@ export async function fetchClaudeAccountUsageWindows(
   // credencial nativa e devolver o uso de OUTRA conta nesta linha — foi o que
   // pintou duas contas com o mesmo consumo. Sem credencial no escopo, a
   // cascata segue para as fontes ancoradas em identidade.
-  if (managedClaudeAuthHasCredential(accountId, { home: opts.home })) {
+  // F-645: a conta que é o login nativo lê só pelo perfil nativo (passo 2).
+  // Rodar `claude /usage` num escopo dela — o existente ou um semeado do
+  // vault no passo 3 — renovaria uma cópia da linhagem nativa, e quem perde
+  // a corrida é o login do operador.
+  const nativeLogin = claudeAccountIsNativeLogin(account);
+  if (!nativeLogin &&
+      managedClaudeAuthHasCredential(accountId, { home: opts.home })) {
     const directory = managedClaudeAuthDirectory(accountId, opts.home);
     const probe = await probeClaudeCliUsage({
       now,
@@ -517,6 +527,7 @@ export async function fetchClaudeAccountUsageWindows(
   //    para o keychain com escopo — do qual ele é dono — e passa a renová-la.
   //    Blob morto sem refresh token: hint de sessão expirada, sem diretório
   //    órfão.
+  if (nativeLogin) return { windows: null, hint: hint ?? 'unavailable' };
   const blob = readVaultCredentialBlob(accountId);
   if (!blob) {
     return {
