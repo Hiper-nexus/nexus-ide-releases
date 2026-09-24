@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.98 — Linhagem única
+
+A conta Claude que é o seu login nativo não ganha mais uma segunda cópia do refresh token.
+
+- **Um dono só para o login nativo (F-645).** Toda conta Claude escolhida no "+ Pane" ganhava um escopo gerenciado semeado do vault. Para a conta que é o próprio login nativo, isso deixava o mesmo refresh token em dois lugares, e quem renovava primeiro matava o outro: o pane dizia "A sessão expirou" (caso da 0.76.97) ou, quando o pane ou a sonda de cota renovavam antes, caía o Claude que você usa fora do Nexus. Agora essa conta abre pelo login nativo, como um pane sem conta, e a cota lê o perfil nativo. Contas que não são o login nativo continuam isoladas no escopo delas.
+- **Windows: renovação no arquivo real (F-646).** A CLI regrava a credencial por temporário + rename, então o link do overlay virava uma cópia na primeira renovação do pane e o `~/.claude/.credentials.json` real ficava com o token consumido. Agora o pane com login nativo grava direto no `~/.claude` real; as conversas continuam isoladas no overlay.
+
 ## 0.76.97 — Sessão renovada
 
 Pane Claude não é mais recusado por token vencido, a cota das contas Claude volta a ler no Windows e o que a 0.76.96 prometia passa a ser verdade.

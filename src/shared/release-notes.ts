@@ -6842,7 +6842,7 @@ export const RELEASE_07696: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07697: AppRelease = {
   version: '0.76.97',
   date: '2026-09-24',
   codename: 'Sessão renovada',
@@ -6887,6 +6887,34 @@ export const CURRENT_RELEASE: AppRelease = {
       title: 'Testes de scripts no Windows',
       detail:
         'Scripts .mjs/.cjs sempre em LF: quatro suítes voltam a carregar no Windows.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.98',
+  date: '2026-09-24',
+  codename: 'Linhagem única',
+  summary:
+    'A conta Claude que é o seu login nativo abre pane pelo próprio login, sem ' +
+    'cópia gerenciada: o refresh token tem um dono só, e nem o pane nem a sonda ' +
+    'de cota derrubam mais o Claude que você usa fora do Nexus. No Windows, o ' +
+    'pane com login nativo renova direto no ~/.claude real.',
+  highlights: [
+    {
+      title: 'Um dono só para o login nativo',
+      detail:
+        'A conta que é o login nativo não ganha mais cópia gerenciada: o pane usa ' +
+        'o store nativo, como um pane sem conta, e a cota lê o perfil nativo. Duas ' +
+        'cópias do mesmo refresh token não sobrevivem — quem renova primeiro mata a outra.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Windows: renovação no arquivo real',
+      detail:
+        'A CLI regrava a credencial por rename; o link do overlay virava cópia e o ' +
+        'Claude de fora caía. Agora o pane grava direto no ~/.claude real.',
     },
   ],
 };
