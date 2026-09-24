@@ -44,6 +44,7 @@ import {
   readManagedClaudeCredential,
   writeManagedClaudeCredential,
   deleteManagedClaudeCredential,
+  invalidateClaudeCredentialCache,
 } from './claude-credential';
 
 function fullFatBlob(accessToken = 'sk-ant-oat01-live'): string {
@@ -136,7 +137,13 @@ describe('readActiveClaudeCredential file fallback', () => {
 
 describe.runIf(process.platform === 'darwin')('Claude Keychain boundaries', () => {
   beforeEach(() => {
-    childProcess.execFileSync.mockClear();
+    // O bloco "file fallback" acima faz mockReset + mockImplementation(throw)
+    // no execFileSync: mockClear limpa as calls mas MANTÉM o throw. Sem
+    // restaurar a implementação, a leitura daqui continua "indisponível".
+    // O cache memoizado também precisa zerar (o bloco anterior grava null).
+    invalidateClaudeCredentialCache();
+    childProcess.execFileSync.mockReset();
+    childProcess.execFileSync.mockImplementation(() => 'credential-blob\n');
     childProcess.spawnSync.mockReset();
     childProcess.spawnSync.mockReturnValue({ status: 0 });
     fsMock.mkdtempSync.mockClear();
