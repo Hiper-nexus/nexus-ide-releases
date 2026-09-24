@@ -42,11 +42,13 @@ import { accountCredentialCandidates } from '../adapters/account-credential-cand
 import {
   freshestClaudeCredential,
   hasManagedClaudeAuth,
+  managedClaudeAuthDirectory,
   materializeManagedClaudeAuth,
   readManagedClaudeAuthAsync,
   removeManagedClaudeAuth,
 } from '../adapters/managed-claude-auth';
 import { probeClaudeCredentialIdentity, resolveClaudeCredentialProfile } from '../quota/claude-native-account';
+import { managedClaudeCliEnv, probeClaudeCliUsage } from '../quota/claude-oauth-usage';
 import {
   failedPersistenceError,
   PersistenceUnavailableError,
@@ -435,6 +437,16 @@ export type AccountSpawnPreparation =
     }
   | { ok: false; error: string };
 
+/** One CLI run in the account's managed scope; the CLI refreshes under its own lock. */
+async function renewManagedClaudeAuthThroughCli(accountId: string): Promise<string | null> {
+  try {
+    await probeClaudeCliUsage({ env: managedClaudeCliEnv(managedClaudeAuthDirectory(accountId)) });
+    return await readManagedClaudeAuthAsync(accountId, { fresh: true });
+  } catch {
+    return null;
+  }
+}
+
 /** Validate the same scoped credential the CLI will read before a managed Claude spawn. */
 export async function verifyManagedClaudeAccountForSpawn(
   accountId: string,
@@ -451,8 +463,20 @@ export async function verifyManagedClaudeAccountForSpawn(
   const native = !managed ? readNativeClaudeSnapshot() : null;
   const nativeBlob = native?.account?.id === accountId ? native.blob : null;
   const originalSaved = getSecret(CRED_PREFIX + accountId);
-  const credential = freshestClaudeCredential(scoped, nativeBlob, originalSaved);
-  const result = await probeClaudeCredentialIdentity(credential, account.email);
+  let credential = freshestClaudeCredential(scoped, nativeBlob, originalSaved);
+  let result = await probeClaudeCredentialIdentity(credential, account.email);
+  if (result === 'auth-expired' && managed && credential &&
+      claudeBlobNeedsRefresh(credential, Date.now())) {
+    // F-639: access token vencido com refresh token no escopo não é sessão
+    // perdida. A CLI é dona da renovação (.oauth_refresh.lock): um run dela no
+    // escopo da conta renova, e a identidade é provada de novo sobre o token
+    // novo. "Entre novamente" só quando nem a própria CLI conseguiu.
+    const renewed = await renewManagedClaudeAuthThroughCli(accountId);
+    if (renewed && renewed !== credential) {
+      credential = freshestClaudeCredential(renewed, originalSaved);
+      result = await probeClaudeCredentialIdentity(credential, account.email);
+    }
+  }
   if (result === 'match' && (!sameClaudeAccountIdentity(account) ||
       getSecret(CRED_PREFIX + accountId) !== originalSaved)) return 'unavailable';
   if (result === 'mismatch') {

@@ -38,6 +38,8 @@ const deps = vi.hoisted(() => ({
       'match' as 'match' | 'mismatch' | 'auth-expired' | 'unavailable',
   ),
   resolveClaudeProfile: vi.fn(async (): Promise<{ email: string; accountUuid: string } | null> => null),
+  /** Run da CLI no escopo gerenciado (F-639): o teste decide se ela renovou. */
+  probeClaudeCliUsage: vi.fn(async (_opts?: { env?: Record<string, string> }) => ({ windows: null })),
 }));
 
 function oauthBlob(accessToken: string): string {
@@ -120,8 +122,14 @@ vi.mock('../adapters/managed-credentials', async () => {
   };
 });
 
+vi.mock('../quota/claude-oauth-usage', () => ({
+  managedClaudeCliEnv: (directory: string) => ({ CLAUDE_SECURESTORAGE_CONFIG_DIR: directory }),
+  probeClaudeCliUsage: deps.probeClaudeCliUsage,
+}));
+
 vi.mock('../adapters/managed-claude-auth', () => ({
   CLAUDE_MANAGED_AUTH_ENV: 'CLAUDE_SECURESTORAGE_CONFIG_DIR',
+  managedClaudeAuthDirectory: (id: string) => `/tmp/claude/${id}/auth`,
   hasManagedClaudeAuth: (id: string) => deps.managedProfiles.has(id),
   readManagedClaudeAuth: (id: string) => deps.managedProfiles.get(id) ?? null,
   readManagedClaudeAuthAsync: async (id: string) => deps.managedProfiles.get(id) ?? null,
@@ -215,6 +223,8 @@ beforeEach(() => {
   deps.refreshBlob.mockResolvedValue(null);
   deps.probeClaudeIdentity.mockReset();
   deps.probeClaudeIdentity.mockResolvedValue('match');
+  deps.probeClaudeCliUsage.mockReset();
+  deps.probeClaudeCliUsage.mockResolvedValue({ windows: null });
   deps.resolveClaudeProfile.mockReset();
   deps.resolveClaudeProfile.mockImplementation(async () => {
     const email = deps.serverEmail ?? deps.activeEmail;
@@ -778,7 +788,75 @@ describe('renovação morta veta failover no escuro', () => {
     expect(await verifyManagedClaudeAccountForSpawn(a.id)).toBe('auth-expired');
     expect(await ensureFreshClaudeSubscription(a.id)).toBe(false);
     expect(deps.refreshBlob).not.toHaveBeenCalled();
+    // Sem escopo gerenciado não há CLI dona da renovação para chamar.
+    expect(deps.probeClaudeCliUsage).not.toHaveBeenCalled();
     expect(deps.secrets.get(`acctcred:${a.id}`)).toBe(oauthBlob('expired'));
+  });
+
+  describe('F-639: access token vencido no escopo gerenciado', () => {
+    function addManagedExpired(): Account {
+      const a = addSecondary('Conta B', 'b@example.test', oauthBlob('b-expired'));
+      deps.managedProfiles.set(a.id, oauthBlob('b-expired'));
+      deps.needsRefresh.mockReturnValue({ refreshToken: 'refresh-b-expired' });
+      return a;
+    }
+
+    it('deixa a CLI renovar no escopo da conta e prova a identidade no token novo', async () => {
+      const a = addManagedExpired();
+      deps.probeClaudeIdentity
+        .mockResolvedValueOnce('auth-expired')
+        .mockResolvedValueOnce('match');
+      deps.probeClaudeCliUsage.mockImplementationOnce(async () => {
+        deps.managedProfiles.set(a.id, oauthBlob('b-renewed-by-cli'));
+        return { windows: null };
+      });
+      const verified = vi.fn();
+
+      expect(await verifyManagedClaudeAccountForSpawn(a.id, verified)).toBe('match');
+      expect(deps.probeClaudeCliUsage).toHaveBeenCalledTimes(1);
+      expect(deps.probeClaudeCliUsage.mock.calls[0]?.[0]?.env).toEqual({
+        CLAUDE_SECURESTORAGE_CONFIG_DIR: `/tmp/claude/${a.id}/auth`,
+      });
+      expect(deps.probeClaudeIdentity).toHaveBeenLastCalledWith(
+        oauthBlob('b-renewed-by-cli'), 'b@example.test',
+      );
+      expect(verified).toHaveBeenCalledWith(oauthBlob('b-renewed-by-cli'));
+      // A CLI é o único ator da rotação: nada de refresh HTTP do Nexus.
+      expect(deps.refreshBlob).not.toHaveBeenCalled();
+    });
+
+    it('continua pedindo login quando nem a CLI conseguiu renovar', async () => {
+      const a = addManagedExpired();
+      deps.probeClaudeIdentity.mockResolvedValue('auth-expired');
+
+      expect(await verifyManagedClaudeAccountForSpawn(a.id)).toBe('auth-expired');
+      expect(deps.probeClaudeCliUsage).toHaveBeenCalledTimes(1);
+      expect(deps.probeClaudeIdentity).toHaveBeenCalledTimes(1);
+    });
+
+    it('renovação que devolve outra conta é mismatch, nunca match', async () => {
+      const a = addManagedExpired();
+      deps.probeClaudeIdentity
+        .mockResolvedValueOnce('auth-expired')
+        .mockResolvedValueOnce('mismatch');
+      deps.probeClaudeCliUsage.mockImplementationOnce(async () => {
+        deps.managedProfiles.set(a.id, oauthBlob('other-account'));
+        return { windows: null };
+      });
+      const verified = vi.fn();
+
+      expect(await verifyManagedClaudeAccountForSpawn(a.id, verified)).toBe('mismatch');
+      expect(verified).not.toHaveBeenCalled();
+    });
+
+    it('sem refresh token não há o que a CLI renovar: nenhum run', async () => {
+      const a = addManagedExpired();
+      deps.needsRefresh.mockReturnValue(null);
+      deps.probeClaudeIdentity.mockResolvedValue('auth-expired');
+
+      expect(await verifyManagedClaudeAccountForSpawn(a.id)).toBe('auth-expired');
+      expect(deps.probeClaudeCliUsage).not.toHaveBeenCalled();
+    });
   });
 
   it('falha real de refresh marca a conta (skips não marcam)', async () => {
