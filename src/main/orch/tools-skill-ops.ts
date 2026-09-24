@@ -13,6 +13,7 @@ import os from 'node:os';
 import type { McpToolDef } from './mcp-protocol';
 import { assertMcpInvocationCurrent } from './mcp-protocol';
 import { BUNDLED_GUIDED_SKILLS } from './guided-squad-skills';
+import { bundledSkillSourceDir } from './skill-mirror';
 
 const skillOpsArgsSchema = z
   .object({
@@ -35,14 +36,9 @@ function bundledSkillSourcePath(name: string): string | null {
   if (!BUNDLED_GUIDED_SKILLS.includes(name as (typeof BUNDLED_GUIDED_SKILLS)[number])) {
     return null;
   }
-  const candidates = [
-    path.join(process.resourcesPath ?? '', 'skills', name),
-    path.join(__dirname, '..', '..', '..', 'resources', 'skills', name),
-  ];
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) return candidate;
-  }
-  return null;
+  // F-641: o app empacotado não tem pasta solta de skills — só os manifestos
+  // que o skill-mirror materializa na raiz gerada do Main.
+  return bundledSkillSourceDir(name);
 }
 
 function listTargets(cliFilter?: string): Array<{ cli: string; dir: string }> {

@@ -26,6 +26,12 @@ vi.mock('node:fs', async () => {
   };
 });
 
+const mirror = vi.hoisted(() => ({
+  bundledSkillSourceDir: vi.fn((_name: string): string | null => null),
+}));
+vi.mock('./skill-mirror', () => ({ bundledSkillSourceDir: mirror.bundledSkillSourceDir }));
+
+import os from 'node:os';
 import { skillOpsTool } from './tools-skill-ops';
 
 function ctx() {
@@ -59,6 +65,19 @@ describe('nexus_skills safety', () => {
     expect(out.ok).toBe(false);
     expect(out.reason).toContain('embarcadas');
     expect(removals).toHaveLength(0);
+  });
+
+  it('install copia a skill embarcada da raiz gerada pelo skill-mirror (F-641)', async () => {
+    mirror.bundledSkillSourceDir.mockReturnValueOnce('/generated/oc-pilot');
+    const out = (await skillOpsTool.handler(
+      { op: 'install', name: 'oc-pilot', cli: 'claude' },
+      ctx(),
+      undefined,
+    )) as { ok: boolean; results: Array<{ cli: string; status: string }> };
+    expect(mirror.bundledSkillSourceDir).toHaveBeenCalledWith('oc-pilot');
+    expect(out.ok).toBe(true);
+    expect(out.results).toEqual([{ cli: 'claude', status: 'instalada' }]);
+    expect(copies).toContain(path.join(os.homedir(), '.claude', 'skills', 'oc-pilot'));
   });
 
   it('does not leak absolute home paths in list', async () => {

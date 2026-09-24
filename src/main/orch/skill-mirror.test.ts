@@ -5,7 +5,8 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PLUGIN_MANIFEST_SCHEMA } from './agent-plugin-manifest';
 import { IMPECCABLE_MANIFEST } from './impeccable-manifest';
-import { ensureSkillsForCli } from './skill-mirror';
+import { bundledSkillSourceDir, ensureSkillsForCli } from './skill-mirror';
+import { BUNDLED_GUIDED_SKILLS } from './guided-squad-skills';
 
 const jevSecrets = vi.hoisted(() => ({
   hasJevCredential: vi.fn(() => true),
@@ -694,4 +695,24 @@ describe('bundled skill delivery', () => {
     expect(fs.existsSync(path.join(target, 'typesafe-ai', 'SKILL.md'))).toBe(true);
   });
 
+  describe('bundledSkillSourceDir (F-641)', () => {
+    it('toda skill que o app declara embarcada existe no bundle materializado', () => {
+      const generatedRoot = path.join(tmpRoot(), 'generated-skills');
+      const missing = BUNDLED_GUIDED_SKILLS.filter(
+        (name) => bundledSkillSourceDir(name, generatedRoot) === null,
+      );
+      expect(missing).toEqual([]);
+    });
+
+    it('materializa a skill de papel a partir do manifesto, sem pasta solta no pacote', () => {
+      const generatedRoot = path.join(tmpRoot(), 'generated-skills');
+      const dir = bundledSkillSourceDir('oc-pilot', generatedRoot);
+      expect(dir).toBe(path.join(generatedRoot, 'oc-pilot'));
+      expect(fs.readFileSync(path.join(dir!, 'SKILL.md'), 'utf8')).toMatch(/oc-pilot/);
+    });
+
+    it('nome fora do bundle não vira fonte', () => {
+      expect(bundledSkillSourceDir('users-personal-skill', path.join(tmpRoot(), 'g'))).toBeNull();
+    });
+  });
 });
