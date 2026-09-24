@@ -113,20 +113,13 @@ import {
   resolveNativeStdioServerDescriptor,
 } from "../mcp-hub/mcp-stdio-bridge";
 
-export type ArmsRuntimeInstance = "prod" | "dev";
+import {
+  resolveArmsRuntimeDescriptorPath,
+  resolveArmsRuntimeInstance,
+  type ArmsRuntimeInstance,
+} from "./arms-runtime-path";
 
-export function resolveArmsRuntimeInstance(isPackaged: boolean): ArmsRuntimeInstance {
-  return isPackaged ? "prod" : "dev";
-}
-
-export function resolveArmsRuntimeDescriptorPath(
-  homedir: string,
-  instance: ArmsRuntimeInstance,
-): string {
-  const filename =
-    instance === "prod" ? "arms-runtime.json" : "arms-runtime.dev.json";
-  return path.join(homedir, ".nexus", filename);
-}
+export { resolveArmsRuntimeDescriptorPath, resolveArmsRuntimeInstance, type ArmsRuntimeInstance };
 
 export function getArmsRuntimeDescriptorInfo(): {
   instance: ArmsRuntimeInstance;

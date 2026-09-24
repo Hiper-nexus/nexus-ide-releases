@@ -30,6 +30,10 @@ import { createMortalityReconciler } from "./session-mortality-reconciler";
 import { sessionLeaseRegistry, type SessionLease } from "./session-lease-registry";
 import { warmPool, type WarmSession } from "./warm-pool";
 import { requestMatchesWarmContract, warmSessionServes } from "./warm-adoption";
+import {
+  resolveArmsRuntimeDescriptorPath,
+  resolveArmsRuntimeInstance,
+} from "../orch/arms-runtime-path";
 import type { ProjectExecutionScope } from "../../shared/types";
 import type { SquadCliPolicy } from "../../shared/settings-types";
 import { sharedAgentAuthFamily } from "../../shared/agent-auth-family";
@@ -1595,11 +1599,12 @@ export function spawnAgentSession(
       target.NEXUS_PANE_KEY = sessionId;
       if (stablePaneId) target.NEXUS_PANE_ID = stablePaneId;
       // OVKA-529: a CASA deste pane — o wrapper Arms usa isto para saber se
-      // fala com o próprio app (e carregar callerPaneId) ou com outro.
-      target.NEXUS_PANE_ARMS_DESCRIPTOR = path.join(
+      // fala com o próprio app (e carregar callerPaneId) ou com outro. A casa
+      // é a instância que abriu o pane: `npm start` publica o descriptor dev
+      // (F-644), nunca o do app instalado.
+      target.NEXUS_PANE_ARMS_DESCRIPTOR = resolveArmsRuntimeDescriptorPath(
         os.homedir(),
-        '.nexus',
-        'arms-runtime.json',
+        resolveArmsRuntimeInstance(app.isPackaged),
       );
     }
   }

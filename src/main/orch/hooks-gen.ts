@@ -70,7 +70,10 @@ function normalizeBaseUrl(value) {
 
 function readArmsRuntimeGateUrl(primary) {
   try {
-    const raw = fs.readFileSync(path.join(os.homedir(), '.nexus', 'arms-runtime.json'), 'utf8');
+    // F-644: o descriptor da instância que abriu o pane (dev ≠ app instalado).
+    const descriptor = String(process.env.NEXUS_PANE_ARMS_DESCRIPTOR || '').trim() ||
+      path.join(os.homedir(), '.nexus', 'arms-runtime.json');
+    const raw = fs.readFileSync(descriptor, 'utf8');
     const parsed = JSON.parse(raw);
     const port = Number(parsed && parsed.port);
     if (!Number.isInteger(port) || port < 1 || port > 65535) return '';
