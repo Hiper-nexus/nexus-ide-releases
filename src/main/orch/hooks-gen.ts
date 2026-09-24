@@ -325,6 +325,12 @@ export interface EphemeralHomeOptions {
    * terceiro. Default fail-closed: sem projeção.
    */
   readonly carryNativeClaudeAuth?: boolean;
+  /**
+   * F-646: o spawn aponta o secure storage da CLI para o ~/.claude real, então
+   * o `.credentials.json` NÃO entra no overlay — cópia ou link ali vira segunda
+   * linhagem na primeira renovação (a CLI regrava por temporário + rename).
+   */
+  readonly nativeCredentialsInPlace?: boolean;
   /** Stable account-owned auth store; never project the native login into this pane. */
   readonly managedClaudeAuthDir?: string;
   /**
@@ -668,7 +674,7 @@ export function prepareEphemeralHome(
       '.claude',
       '.credentials.json',
     );
-    if (fs.existsSync(realCredentials)) {
+    if (!options.nativeCredentialsInPlace && fs.existsSync(realCredentials)) {
       const overlayCredentials = path.join(claudeDir, '.credentials.json');
       try {
         fs.rmSync(overlayCredentials, { force: true });

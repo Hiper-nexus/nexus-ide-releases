@@ -139,6 +139,11 @@ saber isto antes de mexer:
   e-mail antigo); o pane dessa conta usa o store nativo (`{}` ou access token
   por env em HOME isolado) e a cota lê só o perfil nativo. Não volte a
   materializar escopo nem rodar `claude /usage` em escopo para ela.
+- **Fora do macOS o login nativo é gravado no lugar (F-646).** A CLI regrava
+  `.credentials.json` por temporário + rename, então link ou cópia no overlay
+  vira segunda linhagem na primeira renovação. Pane direto com login nativo
+  recebe `CLAUDE_SECURESTORAGE_CONFIG_DIR=<~/.claude real>` e o overlay não
+  recebe o arquivo (`nativeCredentialsInPlace`).
 - **Token de acesso vencido não é sessão perdida (F-639).** Com refresh token,
   o spawn deixa a própria CLI renovar (um run no store que o pane vai usar) e
   prova a identidade no token novo; "entre novamente" só se nem ela conseguiu.
