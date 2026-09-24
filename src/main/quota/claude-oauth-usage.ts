@@ -26,7 +26,12 @@ import type {
   QuotaWindow,
 } from '../../shared/quota-types';
 import { knownWindow } from './quota-normalize';
-import { claudeCliDeclaresMarker } from '../adapters/managed-claude-auth';
+import {
+  CLAUDE_MANAGED_AUTH_ENV,
+  claudeCapabilityProbePath,
+  claudeCliDeclaresMarker,
+} from '../adapters/managed-claude-auth';
+import { resolveCliBinary } from '../path-resolver';
 
 export const CLAUDE_OAUTH_USAGE_URL =
   'https://api.anthropic.com/api/oauth/usage';
@@ -412,7 +417,23 @@ export function claudeCliBinaryCandidates(
   ];
 }
 
+/**
+ * F-640: no Windows o `claude` vem do PATH (npm global → `claude.cmd`,
+ * instalador nativo → `claude.exe`) e nenhum candidato POSIX existe. `spawn`
+ * sem shell não executa `.cmd` (Node recusa desde o CVE-2024-27980), então o
+ * shim do npm vira o exe que ele lança — o mesmo arquivo que a checagem de
+ * marcador lê. Shim que não aponta para um exe dentro da própria pasta: null.
+ */
+export function windowsClaudeExecutable(resolved: string | null): string | null {
+  if (!resolved) return null;
+  const direct = claudeCapabilityProbePath(resolved);
+  return path.extname(direct).toLowerCase() === '.exe' ? direct : null;
+}
+
 function locateClaudeBinary(): string | null {
+  if (process.platform === 'win32') {
+    return windowsClaudeExecutable(resolveCliBinary('claude')?.binPath ?? null);
+  }
   for (const candidate of claudeCliBinaryCandidates()) {
     try {
       fs.accessSync(candidate, fs.constants.X_OK);
@@ -505,6 +526,19 @@ export interface ClaudeCliUsageProbe {
  * Probe completo pelo binário do CLI: devolve as janelas ou o motivo da
  * falha (binário ausente, env não suportada, sessão morta, saída sem dados).
  */
+/**
+ * Env que prende um run da CLI no escopo gerenciado de uma conta: a auth
+ * renovável da conta e um config dir irmão dela — secure storage sozinho não
+ * isola o uso que a CLI guarda em cache no config, e o run não toca o perfil
+ * nativo nem a conversa de um pane.
+ */
+export function managedClaudeCliEnv(authDirectory: string): Record<string, string> {
+  return {
+    [CLAUDE_MANAGED_AUTH_ENV]: authDirectory,
+    CLAUDE_CONFIG_DIR: path.join(path.dirname(authDirectory), 'quota'),
+  };
+}
+
 export async function probeClaudeCliUsage(opts?: {
   runImpl?: ClaudeCliRunImpl;
   now?: number;

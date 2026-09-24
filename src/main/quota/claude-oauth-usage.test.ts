@@ -1,5 +1,15 @@
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const pathMocks = vi.hoisted(() => ({
+  resolveCliBinary: vi.fn((): { binPath: string; effectivePath: string; source: 'process-path' } | null => null),
+}));
+vi.mock('../path-resolver', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../path-resolver')>()),
+  resolveCliBinary: pathMocks.resolveCliBinary,
+}));
 import {
   CLAUDE_CLI_USAGE_ARGS,
   CLAUDE_CLI_USAGE_TIMEOUT_MS,
@@ -11,6 +21,7 @@ import {
   parseClaudeCliResetDate,
   parseClaudeCliUsage,
   parseClaudeOauthUsage,
+  windowsClaudeExecutable,
 } from './claude-oauth-usage';
 const accessSync = fs.accessSync;
 
@@ -269,6 +280,10 @@ describe('fetchClaudeCliUsageWindows', () => {
     vi.spyOn(fs, 'accessSync').mockImplementation((file, mode) => {
       if (!/(?:^|[/\\])claude$/.test(String(file))) accessSync(file, mode);
     });
+    // No Windows o CLI vem do PATH (F-640); o teste não depende do PC.
+    pathMocks.resolveCliBinary.mockReturnValue({
+      binPath: path.join(os.tmpdir(), 'claude.exe'), effectivePath: '', source: 'process-path',
+    });
   });
   afterEach(() => vi.restoreAllMocks());
 
@@ -277,9 +292,29 @@ describe('fetchClaudeCliUsageWindows', () => {
       if (/(?:^|[/\\])claude$/.test(String(file))) throw new Error('missing CLI');
       accessSync(file, mode);
     });
+    pathMocks.resolveCliBinary.mockReturnValue(null);
     const runImpl = vi.fn(async () => ({ code: 0, stdout: CLI_TEXT }));
     expect(await fetchClaudeCliUsageWindows({ runImpl })).toBeNull();
     expect(runImpl).not.toHaveBeenCalled();
+  });
+
+  it('no Windows acha o CLI pelo PATH, onde nenhum candidato POSIX existe (F-640)', async () => {
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    vi.mocked(fs.accessSync).mockImplementation((file, mode) => {
+      if (/(?:^|[/\\])claude$/.test(String(file))) throw new Error('POSIX candidate');
+      accessSync(file, mode);
+    });
+    const exe = path.join(os.tmpdir(), 'claude.exe');
+    pathMocks.resolveCliBinary.mockReturnValue({ binPath: exe, effectivePath: '', source: 'process-path' });
+    const runImpl = vi.fn(async () => ({ code: 0, stdout: CLI_TEXT }));
+    try {
+      const windows = await fetchClaudeCliUsageWindows({ runImpl, now: Date.parse('2026-09-08T12:00:00Z') });
+      expect(runImpl).toHaveBeenCalledWith(exe, CLAUDE_CLI_USAGE_ARGS, expect.any(String), undefined);
+      expect(windows?.length).toBeGreaterThan(0);
+    } finally {
+      Object.defineProperty(process, 'platform', platform);
+    }
   });
   it('spawna print-only: sem sessão persistida, sem MCP, stdin fechado', () => {
     // Contrato ToS/higiene (Codenotch): só --print evita gravar
@@ -319,5 +354,41 @@ describe('fetchClaudeCliUsageWindows', () => {
     expect(
       await fetchClaudeCliUsageWindows({ runImpl: async () => ({ code: 0, stdout: '' }) }),
     ).toBeNull();
+  });
+});
+
+describe('windowsClaudeExecutable (F-640)', () => {
+  let root: string;
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-win-bin-'));
+  });
+  afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+
+  function npmShim(target: string): string {
+    const cmd = path.join(root, 'claude.cmd');
+    fs.writeFileSync(cmd, ['@ECHO off', 'SET dp0=%~dp0', `"%dp0%\\${target}"   %*`].join('\r\n'));
+    return cmd;
+  }
+
+  it('troca o shim do npm pelo claude.exe que ele lança (spawn sem shell não roda .cmd)', () => {
+    const exe = path.join(root, 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe');
+    fs.mkdirSync(path.dirname(exe), { recursive: true });
+    fs.writeFileSync(exe, 'CLAUDE_SECURESTORAGE_CONFIG_DIR');
+    const cmd = npmShim('node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe');
+    expect(windowsClaudeExecutable(cmd)).toBe(fs.realpathSync(exe));
+  });
+
+  it('mantém o exe do instalador nativo como está', () => {
+    const exe = path.join(root, 'claude.exe');
+    fs.writeFileSync(exe, 'CLAUDE_SECURESTORAGE_CONFIG_DIR');
+    expect(windowsClaudeExecutable(exe)).toBe(exe);
+  });
+
+  it('recusa shim que não aponta para um exe (script JS, ou nada resolvido)', () => {
+    const js = path.join(root, 'cli.js');
+    fs.writeFileSync(js, 'CLAUDE_SECURESTORAGE_CONFIG_DIR');
+    expect(windowsClaudeExecutable(npmShim('cli.js'))).toBeNull();
+    expect(windowsClaudeExecutable(npmShim('missing\\claude.exe'))).toBeNull();
+    expect(windowsClaudeExecutable(null)).toBeNull();
   });
 });

@@ -34,7 +34,6 @@ import { knownWindow } from './quota-normalize';
 import { ensureFreshClaudeSubscription, getAccount } from '../persistence/account-store';
 import { getSecret } from '../persistence/secrets-store';
 import {
-  CLAUDE_MANAGED_AUTH_ENV,
   managedClaudeAuthHasCredential,
   managedClaudeAuthDirectory,
   materializeManagedClaudeAuth,
@@ -48,6 +47,7 @@ import {
 import {
   cliFailureHint,
   extractClaudeAccessToken,
+  managedClaudeCliEnv,
   probeClaudeCliUsage,
   probeClaudeOauthUsage,
   parseClaudeOauthUsage,
@@ -60,7 +60,6 @@ import type { QuotaReadHint } from '../../shared/quota-types';
 
 const CRED_PREFIX = 'acctcred:';
 const CLAUDE_KEYCHAIN_SERVICE = 'Claude Code-credentials';
-const CLAUDE_CONFIG_DIR_ENV = 'CLAUDE_CONFIG_DIR';
 
 /**
  * Frescor do `cachedUsageUtilization` que o próprio `claude` escreve em
@@ -381,14 +380,6 @@ export interface ClaudeAccountUsageResult {
   hint?: QuotaReadHint;
 }
 
-/** Secure storage alone does not isolate the CLI's cached usage in its config. */
-function accountUsageEnv(directory: string): Record<string, string> {
-  return {
-    [CLAUDE_MANAGED_AUTH_ENV]: directory,
-    [CLAUDE_CONFIG_DIR_ENV]: path.join(path.dirname(directory), 'quota'),
-  };
-}
-
 async function readProfileCredential(
   profile: ClaudeProfileInfo,
   probe: (service: string) => boolean,
@@ -477,7 +468,7 @@ export async function fetchClaudeAccountUsageWindows(
     const probe = await probeClaudeCliUsage({
       now,
       runImpl: opts.runImpl,
-      env: accountUsageEnv(directory),
+      env: managedClaudeCliEnv(directory),
     });
     // The CLI owns its refresh lock. Read its result without becoming a
     // second refresh actor, then obtain usage from that verified token.
@@ -568,7 +559,7 @@ export async function fetchClaudeAccountUsageWindows(
     const probe = await probeClaudeCliUsage({
       now,
       runImpl: opts.runImpl,
-      env: accountUsageEnv(prepared.directory),
+      env: managedClaudeCliEnv(prepared.directory),
     });
     const owned = await ownedScopedWindows(prepared.blob);
     if (owned.windows?.length || owned.hint === 'identity-mismatch') return owned;
