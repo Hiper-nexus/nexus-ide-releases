@@ -1359,7 +1359,11 @@ export function spawnAgentSession(
   // main-owned), então o gate mora aqui. Shells comuns (spawnSession) são
   // baratos e não contam. A recusa nomeia os panes ociosos a fechar.
   const liveAgentPanes = countLiveAgentSessions();
-  const admission = admitAgentSpawnSync(liveAgentPanes);
+  const admission = admitAgentSpawnSync(liveAgentPanes, Date.now(), process.env, {
+    // `authority` pode faltar num chamador inválido: a recusa "trusted spawn
+    // authority" logo abaixo é quem responde, não um TypeError aqui.
+    agentRequested: authority?.context?.operatorParentSessionId !== undefined,
+  });
   if (!admission.ok) {
     console.warn(
       `[pane-admission] spawn recusado (${admission.reason}): ${admission.message}`,
