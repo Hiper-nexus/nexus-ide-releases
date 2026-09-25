@@ -27,8 +27,12 @@ function runHook(
   input: unknown,
   env: NodeJS.ProcessEnv,
 ): Promise<{ status: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string }> {
+  // O descriptor da instância (F-644) vem do ambiente: rodando os testes
+  // dentro de um pane do Nexus ele aponta para o gate VIVO do app, e o
+  // fallback "gate inacessível" acabava permitindo. Só o teste decide.
+  const { NEXUS_PANE_ARMS_DESCRIPTOR: _ambientDescriptor, ...ambient } = process.env;
   const childEnv: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...ambient,
     HOME: makeTempDir(),
     NEXUS_GATE_TOKEN: 'test-token',
     ...env,
