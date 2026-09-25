@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   providerReadiness: vi.fn(() => ({ ready: true, reason: 'ready' })),
   hasAvailableAccount: vi.fn(),
   suggestSkillForTask: vi.fn(async (): Promise<unknown> => null),
+  classifyTaskForRouting: vi.fn(async (): Promise<unknown> => ({ kind: 'skipped' })),
 }));
 
 vi.mock('../persistence/provider-config-store', () => ({
@@ -30,8 +31,13 @@ vi.mock('./jev-skill-suggestion', async (importOriginal) => ({
   suggestSkillForTask: mocks.suggestSkillForTask,
 }));
 
+vi.mock('./jev-task-routing', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./jev-task-routing')>()),
+  classifyTaskForRouting: mocks.classifyTaskForRouting,
+}));
+
 import { rememberKimiSeatReadiness } from '../adapters/seat-auth-readiness';
-import { buildDomainTools } from './tools-domain';
+import { buildDomainTools, routeTaskForCaller } from './tools-domain';
 import { clearRouteProvenance, hasRecentRouteMatch } from './route-provenance';
 import { clearRouteLog, recentRouteLog } from './route-log';
 
@@ -69,6 +75,8 @@ beforeEach(() => {
   mocks.hasAvailableAccount.mockReturnValue(true);
   mocks.suggestSkillForTask.mockReset();
   mocks.suggestSkillForTask.mockResolvedValue(null);
+  mocks.classifyTaskForRouting.mockReset();
+  mocks.classifyTaskForRouting.mockResolvedValue({ kind: 'skipped' });
 });
 
 afterEach(() => {
@@ -251,5 +259,66 @@ describe('nexus_clarify handler', () => {
     await expect(
       tool('nexus_clarify').handler({ question: 'x', options: ['só uma'] }, context()),
     ).rejects.toThrow(/opç/i);
+  });
+});
+
+describe('nexus_route_task — Jev fora e desempate interno', () => {
+  const providers = [
+    { adapterId: 'kimi', enabled: true, installed: true, authStrategy: 'oauth', models: ['kimi-code/k3'] },
+    { adapterId: 'codex', enabled: true, installed: true, authStrategy: 'oauth', models: ['gpt-5.6-luna'] },
+  ];
+
+  it('devolve jevUnavailable e grava origem + motivo no route log', async () => {
+    mocks.listProviderSettings.mockReturnValue(providers);
+    mocks.classifyTaskForRouting.mockResolvedValue({ kind: 'unavailable', reason: 'timeout' });
+    const decision = (await tool('nexus_route_task').handler(
+      { task: 'tarefa média' },
+      context(),
+    )) as Record<string, unknown>;
+    expect(decision.jevUnavailable).toBe('timeout');
+    expect(decision.classifierSource).toBe('heuristic');
+    expect(recentRouteLog()[0]).toMatchObject({
+      classifierSource: 'heuristic',
+      jevUnavailable: 'timeout',
+    });
+  });
+
+  it('Jev respondeu: sem jevUnavailable', async () => {
+    mocks.listProviderSettings.mockReturnValue(providers);
+    mocks.classifyTaskForRouting.mockResolvedValue({
+      kind: 'classified',
+      classification: {
+        tier: 'medium', tierConfidence: 0.9, specialty: 'feature',
+        specialtyConfidence: 0.9, escalate: 0.1, model: 'jev-test',
+      },
+    });
+    const decision = (await tool('nexus_route_task').handler(
+      { task: 'tarefa média' },
+      context(),
+    )) as Record<string, unknown>;
+    expect(decision.jevUnavailable).toBeUndefined();
+    expect(decision.classifierSource).toBe('jev');
+  });
+
+  it('argumento MCP não injeta contagens; parâmetro interno sim', async () => {
+    mocks.listProviderSettings.mockReturnValue(providers);
+    const base = (await routeTaskForCaller({ task: 'tarefa média' }, context())) as {
+      adapterId: string;
+      alternatives: Array<{ adapterId: string }>;
+    };
+    const spoofed = (await tool('nexus_route_task').handler(
+      { task: 'tarefa média', tieBreakUseCounts: { [base.adapterId]: 9 } },
+      context(),
+    )) as { adapterId: string };
+    expect(spoofed.adapterId).toBe(base.adapterId);
+    const internal = (await routeTaskForCaller({ task: 'tarefa média' }, context(), {
+      tieBreakUseCounts: new Map([[base.adapterId, 1]]),
+    })) as { adapterId: string; reason: string };
+    // Pode ou não trocar (depende da margem real do catálogo); se trocar, o
+    // motivo tem que dizer. Nunca pode escolher algo fora das alternativas.
+    if (internal.adapterId !== base.adapterId) {
+      expect(internal.reason).toContain('desempate');
+      expect(base.alternatives.map((alt) => alt.adapterId)).toContain(internal.adapterId);
+    }
   });
 });

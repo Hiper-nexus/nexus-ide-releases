@@ -366,9 +366,15 @@ export function attenuateTools(
  * tools-domain.ts (late-bound: tools-panes não pode importar tools-domain —
  * ciclo tools-panes → tools-domain → tools-panes).
  */
+/** Parâmetros internos do roteamento do spawn — nunca vêm de argumento MCP. */
+export interface OperatorRouteInternal {
+  readonly tieBreakUseCounts?: ReadonlyMap<string, number>;
+}
+
 export type OperatorRouteResolver = (
   task: string,
   ctx: AgentGateContext,
+  internal: OperatorRouteInternal,
 ) => Promise<Record<string, unknown>>;
 
 let operatorRouteResolver: OperatorRouteResolver | null = null;
@@ -638,7 +644,7 @@ const paneSpawn: McpToolDef = {
           );
         }
         try {
-          autoRoute = await operatorRouteResolver(task, ctx);
+          autoRoute = await operatorRouteResolver(task, ctx, {});
         } catch (error) {
           const message =
             error instanceof Error ? error.message : String(error);

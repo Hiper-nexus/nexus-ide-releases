@@ -200,7 +200,7 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
       ctx,
     )) as Record<string, unknown>;
 
-    expect(resolver).toHaveBeenCalledWith('implemente X', ctx);
+    expect(resolver).toHaveBeenCalledWith('implemente X', ctx, expect.any(Object));
     const options = harness.spawnPaneAndMaybePrompt.mock.calls[0]?.[0] as {
       adapterId?: unknown;
       model?: unknown;

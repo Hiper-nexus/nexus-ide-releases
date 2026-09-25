@@ -22,9 +22,9 @@ import { findPane, readSessionOutput, waitForIdle } from './pane-registry';
 import { listProviderSettings } from '../persistence/provider-config-store';
 import { routeTask, type TaskTier } from './task-router';
 import {
-  classifyTaskWithJev,
+  classifyTaskForRouting,
   routingOverridesFrom,
-  type JevTaskClassification,
+  type JevTaskRoutingResult,
 } from './jev-task-routing';
 import { mergeAdapterUseLists } from './route-pipeline';
 import { suggestSkillForTask } from './jev-skill-suggestion';
@@ -68,6 +68,7 @@ import {
   childMissionId,
   paneSpawnTool,
   setOperatorRouteResolver,
+  type OperatorRouteInternal,
 } from './tools-panes';
 import { buildBrowserTools } from './tools-browser';
 import { buildBrowserAutopilotTools } from './tools-browser-autopilot';
@@ -1407,6 +1408,265 @@ const routeLogTool: McpToolDef = {
   },
 };
 
+/**
+ * Corpo do nexus_route_task. `internal` só é preenchido pelo resolver do spawn
+ * da mão do operador (contagens de uso para o desempate) — o handler MCP nunca
+ * repassa argumentos para cá.
+ */
+export async function routeTaskForCaller(
+  args: Record<string, unknown>,
+  ctx: AgentGateContext,
+  internal: OperatorRouteInternal = {},
+): Promise<Record<string, unknown>> {
+  if (ctx.role !== 'orchestrator' && ctx.role !== 'user') {
+    throw new Error(
+      'route_task delegation authority is reserved to the mission orchestrator or operator',
+    );
+  }
+  const missionId = childMissionId(ctx, str(args, 'missionId'));
+  const missionStores = missionId ? getProjectDomainStores(ctx.scope) : null;
+  const mission = missionId && missionStores
+    ? missionStores.missions.get(missionId)
+    : null;
+  if (missionId) {
+    if (!mission) throw new Error(`mission not found: ${missionId}`);
+    assertCurrentMissionOrchestratorSession(ctx, mission);
+  }
+  const task = requireStr(args, 'task');
+  const tierRaw = str(args, 'tier');
+  const callerTier = TIERS.includes(tierRaw as TaskTier)
+    ? (tierRaw as TaskTier)
+    : undefined;
+  // Classificação Jev (piloto automático, superfície taskRouting): troca a
+  // heurística de palavras-chave por tier/especialidade calibrados, cada
+  // campo só quando confiante; o caller que passou `tier` continua mandando.
+  // Fail-open: sem chave/serviço → heurística como sempre.
+  let jevRouting: JevTaskRoutingResult = { kind: 'skipped' };
+  try {
+    jevRouting = await classifyTaskForRouting(task);
+  } catch (error) {
+    console.warn('[route_task] classificação Jev falhou (ignorada):', error);
+    jevRouting = { kind: 'unavailable', reason: 'network' };
+  }
+  const jevClassification =
+    jevRouting.kind === 'classified' ? jevRouting.classification : null;
+  const jevUnavailable =
+    jevRouting.kind === 'unavailable' ? jevRouting.reason : undefined;
+  const routing = routingOverridesFrom(jevClassification, callerTier);
+  const tier = routing.tierOverride;
+  // Failover de rate limit: o orquestrador re-roteia excluindo a CLI que
+  // acabou de estourar cota/quebrar, em vez de insistir nela.
+  const excluded = new Set(strArray(args, 'exclude'));
+  // 'shell' não é um provider roteável (sem modelos avaliados); incluí-lo
+  // mantinha o gate de cobertura do task-router sempre falso, matando a
+  // avaliação por dimensão. Alinha com o filtro id!=='shell' do architect.
+  if (missionId) {
+    // O inventário síncrono lê apenas o cache quente de assinatura; aqueça
+    // os providers keychain-only (AGY) para não ler uma sessão viva como
+    // login-needed e derrubar o roteamento da missão.
+    await warmSquadRuntimeSubscriptionAuth();
+  }
+  const governedMissionWorkerIds = missionId
+    ? liveSquadRuntimeInventory().policy.routableWorkerCliIds
+    : null;
+  const providers = listProviderSettings().filter(
+    (a) =>
+      a.adapterId !== 'shell' &&
+      (governedMissionWorkerIds === null ||
+        governedMissionWorkerIds.has(a.adapterId)),
+  );
+  if (missionId && providers.length === 0) {
+    throw new Error(
+      'mission_worker_route_unavailable: nenhuma CLI do roster está instalada, ' +
+      'habilitada, autenticada e pronta para handoff. Confira Providers e tente ' +
+      'novamente; nenhuma RouteReservation foi criada.',
+    );
+  }
+  // Quota-aware auto-exclude: an adapter whose Nexus-managed accounts are
+  // ALL on an active cooldown is treated as excluded, so routing no longer
+  // depends on the orchestrator remembering to pass `exclude` (prompt-hope).
+  // Adapters with no Nexus accounts report available (hasAvailableAccount →
+  // true — third-party auth state is not ours to judge) and are never
+  // affected; only a fully-cooling account pool leaves the route.
+  const quotaExcluded = providers
+    .map((a) => a.adapterId)
+    .filter((id) => !excluded.has(id) && !hasAvailableAccount(id));
+  const buildAdapters = (skip: ReadonlySet<string>) =>
+    providers.map((a) => {
+      const models = [
+        ...authReadyModelsForProvider(a, a.models),
+      ];
+      return {
+        id: a.adapterId,
+        installed:
+          !skip.has(a.adapterId) &&
+          a.enabled &&
+          a.installed &&
+          firstWaveCanSeat({
+            adapterId: a.adapterId,
+            authStrategy: a.authStrategy,
+            hasKey: a.hasKey,
+            kimiListReadiness:
+              a.adapterId === 'kimi' ? peekKimiSeatReadiness() : undefined,
+            hasCredentiallessModel:
+              a.adapterId === 'opencode' && models.length > 0,
+          }) &&
+          !writerCircuitBlocksSeat({
+            adapterId: a.adapterId,
+            role: 'worker',
+            missionId: missionId ?? undefined,
+          }),
+        models,
+      };
+    });
+  let adapters = buildAdapters(new Set([...excluded, ...quotaExcluded]));
+  let quotaFallbackNote = '';
+  if (quotaExcluded.length > 0 && !adapters.some((a) => a.installed)) {
+    // Fail-safe: the auto-exclude
+    // emptied the routable pool → revert to the caller-provided list. A
+    // spawn on a cooling account surfaces the real cooldown error; no route
+    // at all would hide it.
+    adapters = buildAdapters(excluded);
+    quotaFallbackNote = `; quota auto-exclude reverted, all candidates cooling: ${quotaExcluded.join(',')}`;
+  }
+  let missionAdapterIds: string[] | undefined;
+  let reservedAdapterIds: string[] | undefined;
+  if (missionId) {
+    try {
+      const stores = getProjectDomainStores(ctx.scope);
+      missionAdapterIds = stores.missionPanes
+        .list(missionId)
+        .map((pane) => pane.adapterId)
+        .filter(Boolean);
+      reservedAdapterIds = stores.missions.listOpenRouteAdapterIds(missionId);
+    } catch {
+      missionAdapterIds = undefined;
+      reservedAdapterIds = undefined;
+    }
+  }
+  const preferAdapters = strArray(args, 'preferAdapters');
+  const missionUseCounts = mergeAdapterUseLists(
+    missionAdapterIds,
+    reservedAdapterIds,
+  );
+  const usedAdapterIds = [
+    ...(missionAdapterIds ?? []),
+    ...(reservedAdapterIds ?? []),
+  ];
+  // Claude shares one OAuth credential state. Another CLI may route one
+  // Claude worker in autopilot, but once any Claude pane belongs to this
+  // mission a second concurrent Claude route is physically unavailable.
+  const reserveClaude = Boolean(
+    missionId &&
+      (ctx.providerId === 'claude' ||
+        usedAdapterIds.includes('claude')),
+  );
+  if (reserveClaude) {
+    adapters = adapters.map((adapter) =>
+      adapter.id === 'claude'
+        ? { ...adapter, installed: false }
+        : adapter,
+    );
+  }
+  let decision = routeTask(
+    task,
+    adapters,
+    undefined,
+    tier,
+    reserveClaude,
+    undefined,
+    {
+      missionUsedAdapters:
+        usedAdapterIds.length > 0 ? new Set(usedAdapterIds) : undefined,
+      missionUseCounts,
+      preferAdapters: preferAdapters.length > 0 ? preferAdapters : undefined,
+      multiScore: Boolean(missionId),
+      specialtyBenchmark: loadSpecialtyBenchmark(),
+      specialtyOverride: routing.specialtyOverride,
+      ...(internal.tieBreakUseCounts
+        ? { tieBreakUseCounts: internal.tieBreakUseCounts }
+        : {}),
+    },
+  );
+  if (!decision) {
+    if (missionId) {
+      throw new Error(
+        'mission_worker_route_unavailable: nenhuma CLI elegível está disponível ' +
+        'agora (confira autenticação, cota, cooldown, exclusões e a reserva de ' +
+        'uma única sessão Claude). Nenhuma RouteReservation foi criada.',
+      );
+    }
+    throw new Error('no installed adapters to route to');
+  }
+  // Fail-safe: append note without mutating a frozen/shared decision object.
+  if (quotaFallbackNote) {
+    decision = {
+      ...decision,
+      reason: `${decision.reason}${quotaFallbackNote}`,
+    };
+  }
+  if (!missionId) {
+    // Sem missão vinculada não existe roster para honrar — e o chamador não
+    // tem como saber disso pelo retorno. Dizer que é SUGESTÃO evita que uma
+    // resposta livre seja lida como a rota selada de alguma missão.
+    decision = {
+      ...decision,
+      reason:
+        `${decision.reason}; sugestão livre: nenhuma missão vinculada, ` +
+        'portanto nenhum roster selado foi consultado',
+    };
+  } else if (mission?.squadId) {
+    const squad = getSquad(mission.squadId);
+    if (squad) {
+      decision = pinUniqueSealedRosterOnDecision(decision, squad.agents);
+    }
+  }
+  // Proveniência: o spawn ad-hoc de modelos com warning de catálogo exige
+  // uma decisão recente do router (ver adHocSpawnGateError em tools-panes).
+  recordRouteDecision({ adapterId: decision.adapterId, model: decision.model });
+  // Observabilidade ("ver para crer"): registra a decisão + motivo para
+  // inspeção, já que o reason antes só existia no retorno consumido pelo LLM.
+  recordRouteLog({
+    task,
+    tier: decision.tier,
+    adapterId: decision.adapterId,
+    model: decision.model,
+    effort: decision.effort,
+    reason: decision.reason,
+    classifierSource: routing.classifierSource,
+    ...(jevUnavailable ? { jevUnavailable } : {}),
+  });
+  // Proveniência da classificação (jev | heuristic | mixed) e o sinal
+  // `escalate` do Jev — informação para o Maestro, nunca decisão do router.
+  const provenance = {
+    classifierSource: routing.classifierSource,
+    ...(routing.escalate !== undefined ? { escalate: routing.escalate } : {}),
+    ...(jevUnavailable ? { jevUnavailable } : {}),
+  };
+  // Skill suggestion (cookbook TypeSafe): UMA choice do Jev entre as skills
+  // bundled permitidas ao chamador. Fail-open: qualquer falha → null.
+  let skillSuggestion: { name: string; pkg: string; confidence: number } | null = null;
+  try {
+    skillSuggestion = await suggestSkillForTask(task, {
+      allowedSkills: ctx.allowedSkills ?? null,
+      sessionId: ctx.sessionId,
+      missionId: missionId ?? undefined,
+    });
+  } catch {
+    skillSuggestion = null;
+  }
+  if (!missionId) return { ...decision, ...provenance, skillSuggestion };
+  const reservation = getProjectDomainStores(ctx.scope)
+    .missions.reserveRouteDecision(missionId, task, decision);
+  return {
+    ...decision,
+    ...provenance,
+    skillSuggestion,
+    routeReservationId: reservation.id,
+    routeReservationExpiresAt: reservation.expiresAt,
+  };
+}
+
 const routeTaskTool: McpToolDef = {
   name: 'nexus_route_task',
   description:
@@ -1463,252 +1723,14 @@ const routeTaskTool: McpToolDef = {
     },
     required: ['task'],
   },
-  handler: async (args, ctx) => {
-    if (ctx.role !== 'orchestrator' && ctx.role !== 'user') {
-      throw new Error(
-        'route_task delegation authority is reserved to the mission orchestrator or operator',
-      );
-    }
-    const missionId = childMissionId(ctx, str(args, 'missionId'));
-    const missionStores = missionId ? getProjectDomainStores(ctx.scope) : null;
-    const mission = missionId && missionStores
-      ? missionStores.missions.get(missionId)
-      : null;
-    if (missionId) {
-      if (!mission) throw new Error(`mission not found: ${missionId}`);
-      assertCurrentMissionOrchestratorSession(ctx, mission);
-    }
-    const task = requireStr(args, 'task');
-    const tierRaw = str(args, 'tier');
-    const callerTier = TIERS.includes(tierRaw as TaskTier)
-      ? (tierRaw as TaskTier)
-      : undefined;
-    // Classificação Jev (piloto automático, superfície taskRouting): troca a
-    // heurística de palavras-chave por tier/especialidade calibrados, cada
-    // campo só quando confiante; o caller que passou `tier` continua mandando.
-    // Fail-open: sem chave/serviço → heurística como sempre.
-    let jevClassification: JevTaskClassification | null = null;
-    try {
-      jevClassification = await classifyTaskWithJev(task);
-    } catch (error) {
-      console.warn('[route_task] classificação Jev falhou (ignorada):', error);
-    }
-    const routing = routingOverridesFrom(jevClassification, callerTier);
-    const tier = routing.tierOverride;
-    // Failover de rate limit: o orquestrador re-roteia excluindo a CLI que
-    // acabou de estourar cota/quebrar, em vez de insistir nela.
-    const excluded = new Set(strArray(args, 'exclude'));
-    // 'shell' não é um provider roteável (sem modelos avaliados); incluí-lo
-    // mantinha o gate de cobertura do task-router sempre falso, matando a
-    // avaliação por dimensão. Alinha com o filtro id!=='shell' do architect.
-    if (missionId) {
-      // O inventário síncrono lê apenas o cache quente de assinatura; aqueça
-      // os providers keychain-only (AGY) para não ler uma sessão viva como
-      // login-needed e derrubar o roteamento da missão.
-      await warmSquadRuntimeSubscriptionAuth();
-    }
-    const governedMissionWorkerIds = missionId
-      ? liveSquadRuntimeInventory().policy.routableWorkerCliIds
-      : null;
-    const providers = listProviderSettings().filter(
-      (a) =>
-        a.adapterId !== 'shell' &&
-        (governedMissionWorkerIds === null ||
-          governedMissionWorkerIds.has(a.adapterId)),
-    );
-    if (missionId && providers.length === 0) {
-      throw new Error(
-        'mission_worker_route_unavailable: nenhuma CLI do roster está instalada, ' +
-        'habilitada, autenticada e pronta para handoff. Confira Providers e tente ' +
-        'novamente; nenhuma RouteReservation foi criada.',
-      );
-    }
-    // Quota-aware auto-exclude: an adapter whose Nexus-managed accounts are
-    // ALL on an active cooldown is treated as excluded, so routing no longer
-    // depends on the orchestrator remembering to pass `exclude` (prompt-hope).
-    // Adapters with no Nexus accounts report available (hasAvailableAccount →
-    // true — third-party auth state is not ours to judge) and are never
-    // affected; only a fully-cooling account pool leaves the route.
-    const quotaExcluded = providers
-      .map((a) => a.adapterId)
-      .filter((id) => !excluded.has(id) && !hasAvailableAccount(id));
-    const buildAdapters = (skip: ReadonlySet<string>) =>
-      providers.map((a) => {
-        const models = [
-          ...authReadyModelsForProvider(a, a.models),
-        ];
-        return {
-          id: a.adapterId,
-          installed:
-            !skip.has(a.adapterId) &&
-            a.enabled &&
-            a.installed &&
-            firstWaveCanSeat({
-              adapterId: a.adapterId,
-              authStrategy: a.authStrategy,
-              hasKey: a.hasKey,
-              kimiListReadiness:
-                a.adapterId === 'kimi' ? peekKimiSeatReadiness() : undefined,
-              hasCredentiallessModel:
-                a.adapterId === 'opencode' && models.length > 0,
-            }) &&
-            !writerCircuitBlocksSeat({
-              adapterId: a.adapterId,
-              role: 'worker',
-              missionId: missionId ?? undefined,
-            }),
-          models,
-        };
-      });
-    let adapters = buildAdapters(new Set([...excluded, ...quotaExcluded]));
-    let quotaFallbackNote = '';
-    if (quotaExcluded.length > 0 && !adapters.some((a) => a.installed)) {
-      // Fail-safe: the auto-exclude
-      // emptied the routable pool → revert to the caller-provided list. A
-      // spawn on a cooling account surfaces the real cooldown error; no route
-      // at all would hide it.
-      adapters = buildAdapters(excluded);
-      quotaFallbackNote = `; quota auto-exclude reverted, all candidates cooling: ${quotaExcluded.join(',')}`;
-    }
-    let missionAdapterIds: string[] | undefined;
-    let reservedAdapterIds: string[] | undefined;
-    if (missionId) {
-      try {
-        const stores = getProjectDomainStores(ctx.scope);
-        missionAdapterIds = stores.missionPanes
-          .list(missionId)
-          .map((pane) => pane.adapterId)
-          .filter(Boolean);
-        reservedAdapterIds = stores.missions.listOpenRouteAdapterIds(missionId);
-      } catch {
-        missionAdapterIds = undefined;
-        reservedAdapterIds = undefined;
-      }
-    }
-    const preferAdapters = strArray(args, 'preferAdapters');
-    const missionUseCounts = mergeAdapterUseLists(
-      missionAdapterIds,
-      reservedAdapterIds,
-    );
-    const usedAdapterIds = [
-      ...(missionAdapterIds ?? []),
-      ...(reservedAdapterIds ?? []),
-    ];
-    // Claude shares one OAuth credential state. Another CLI may route one
-    // Claude worker in autopilot, but once any Claude pane belongs to this
-    // mission a second concurrent Claude route is physically unavailable.
-    const reserveClaude = Boolean(
-      missionId &&
-        (ctx.providerId === 'claude' ||
-          usedAdapterIds.includes('claude')),
-    );
-    if (reserveClaude) {
-      adapters = adapters.map((adapter) =>
-        adapter.id === 'claude'
-          ? { ...adapter, installed: false }
-          : adapter,
-      );
-    }
-    let decision = routeTask(
-      task,
-      adapters,
-      undefined,
-      tier,
-      reserveClaude,
-      undefined,
-      {
-        missionUsedAdapters:
-          usedAdapterIds.length > 0 ? new Set(usedAdapterIds) : undefined,
-        missionUseCounts,
-        preferAdapters: preferAdapters.length > 0 ? preferAdapters : undefined,
-        multiScore: Boolean(missionId),
-        specialtyBenchmark: loadSpecialtyBenchmark(),
-        specialtyOverride: routing.specialtyOverride,
-      },
-    );
-    if (!decision) {
-      if (missionId) {
-        throw new Error(
-          'mission_worker_route_unavailable: nenhuma CLI elegível está disponível ' +
-          'agora (confira autenticação, cota, cooldown, exclusões e a reserva de ' +
-          'uma única sessão Claude). Nenhuma RouteReservation foi criada.',
-        );
-      }
-      throw new Error('no installed adapters to route to');
-    }
-    // Fail-safe: append note without mutating a frozen/shared decision object.
-    if (quotaFallbackNote) {
-      decision = {
-        ...decision,
-        reason: `${decision.reason}${quotaFallbackNote}`,
-      };
-    }
-    if (!missionId) {
-      // Sem missão vinculada não existe roster para honrar — e o chamador não
-      // tem como saber disso pelo retorno. Dizer que é SUGESTÃO evita que uma
-      // resposta livre seja lida como a rota selada de alguma missão.
-      decision = {
-        ...decision,
-        reason:
-          `${decision.reason}; sugestão livre: nenhuma missão vinculada, ` +
-          'portanto nenhum roster selado foi consultado',
-      };
-    } else if (mission?.squadId) {
-      const squad = getSquad(mission.squadId);
-      if (squad) {
-        decision = pinUniqueSealedRosterOnDecision(decision, squad.agents);
-      }
-    }
-    // Proveniência: o spawn ad-hoc de modelos com warning de catálogo exige
-    // uma decisão recente do router (ver adHocSpawnGateError em tools-panes).
-    recordRouteDecision({ adapterId: decision.adapterId, model: decision.model });
-    // Observabilidade ("ver para crer"): registra a decisão + motivo para
-    // inspeção, já que o reason antes só existia no retorno consumido pelo LLM.
-    recordRouteLog({
-      task,
-      tier: decision.tier,
-      adapterId: decision.adapterId,
-      model: decision.model,
-      effort: decision.effort,
-      reason: decision.reason,
-    });
-    // Proveniência da classificação (jev | heuristic | mixed) e o sinal
-    // `escalate` do Jev — informação para o Maestro, nunca decisão do router.
-    const provenance = {
-      classifierSource: routing.classifierSource,
-      ...(routing.escalate !== undefined ? { escalate: routing.escalate } : {}),
-    };
-    // Skill suggestion (cookbook TypeSafe): UMA choice do Jev entre as skills
-    // bundled permitidas ao chamador. Fail-open: qualquer falha → null.
-    let skillSuggestion: { name: string; pkg: string; confidence: number } | null = null;
-    try {
-      skillSuggestion = await suggestSkillForTask(task, {
-        allowedSkills: ctx.allowedSkills ?? null,
-        sessionId: ctx.sessionId,
-        missionId: missionId ?? undefined,
-      });
-    } catch {
-      skillSuggestion = null;
-    }
-    if (!missionId) return { ...decision, ...provenance, skillSuggestion };
-    const reservation = getProjectDomainStores(ctx.scope)
-      .missions.reserveRouteDecision(missionId, task, decision);
-    return {
-      ...decision,
-      ...provenance,
-      skillSuggestion,
-      routeReservationId: reservation.id,
-      routeReservationExpiresAt: reservation.expiresAt,
-    };
-  },
+  handler: (args, ctx) => routeTaskForCaller(args, ctx),
 };
 
 // Fan-out do operador sem missão: `nexus_pane_spawn` sem adapterId resolve
 // `task ?? prompt` por este mesmo handler (sugestão livre, sem reserva).
 // Late-bound porque tools-panes não pode importar tools-domain (ciclo).
-setOperatorRouteResolver(
-  (task, ctx) =>
-    routeTaskTool.handler({ task }, ctx) as Promise<Record<string, unknown>>,
+setOperatorRouteResolver((task, ctx, internal) =>
+  routeTaskForCaller({ task }, ctx, internal),
 );
 
 const cronTool: McpToolDef = {
