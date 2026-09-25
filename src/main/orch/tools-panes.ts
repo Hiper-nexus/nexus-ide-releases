@@ -27,6 +27,7 @@ import {
 } from '../adapters/adapter-registry';
 import {
   armAutoCloseOnHandoff,
+  armAutoCloseOnHandoffForPane,
   selectScopedPaneCloseTargets,
 } from './pane-close-scopes';
 import { armDeliveryContract, parseExpectArg } from './delivery-contract';
@@ -1198,6 +1199,11 @@ const paneSpawn: McpToolDef = {
             },
           }
         : {};
+      // C3 (25/09): helper da mão do operador fecha sozinho no handoff de
+      // sucesso por padrão — a aba não enche de panes que já entregaram.
+      const autoClose =
+        args.autoCloseOnHandoff === true ||
+        (operatorHand && !options.missionId && args.autoCloseOnHandoff !== false);
       let spawned: { paneId: string; sessionId: string };
       try {
         spawned = await spawnPaneAndMaybePrompt(options, {
@@ -1215,6 +1221,9 @@ const paneSpawn: McpToolDef = {
         // compatibility throw back into the successful effect result.
         const pending = takePendingPaneSpawnResult(invocation?.signal);
         if (!pending) throw error;
+        // ACK pendente: ainda não há sessão para armar; o braço vai no pane e
+        // o handoff da sessão que nascer nele o encontra.
+        if (autoClose && pending.paneId) armAutoCloseOnHandoffForPane(pending.paneId);
         isolatedWriterPending = Boolean(isolatedWriter);
         return {
           ...pending,
@@ -1230,11 +1239,6 @@ const paneSpawn: McpToolDef = {
       // Declarado no nascimento (registro, não pergunta): o pane se fecha
       // sozinho no handoff SUCCESS — paridade Bridge, libera a vaga sem
       // segurar slot da onda seguinte; falha preserva pane para diagnóstico.
-      // C3 (25/09): helper da mão do operador fecha sozinho no handoff de
-      // sucesso por padrão — a aba não enche de panes que já entregaram.
-      const autoClose =
-        args.autoCloseOnHandoff === true ||
-        (operatorHand && !options.missionId && args.autoCloseOnHandoff !== false);
       if (autoClose && spawned.sessionId) {
         armAutoCloseOnHandoff(spawned.sessionId, spawned.paneId);
       }

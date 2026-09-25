@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  armAutoCloseOnHandoff,
+  armAutoCloseOnHandoffForPane,
+  armedAutoClosePaneId,
+  disarmAutoCloseOnHandoff,
   selectScopedPaneCloseTargets,
   shouldAutoCloseAfterHandoff,
 } from "./pane-close-scopes";
@@ -85,5 +89,23 @@ describe("shouldAutoCloseAfterHandoff", () => {
     expect(
       shouldAutoCloseAfterHandoff({ armed: false, status: "success" }),
     ).toBe(false);
+  });
+});
+
+describe("braço de autoClose por pane (spawn com ACK pendente)", () => {
+  it("armado pelo pane antes de a sessão existir, o handoff da sessão desse pane acha o braço", () => {
+    armAutoCloseOnHandoffForPane("pane-pending");
+    expect(armedAutoClosePaneId("sess-late", "pane-pending")).toBe("pane-pending");
+    expect(armedAutoClosePaneId("sess-late", "pane-other")).toBeNull();
+    expect(armedAutoClosePaneId("sess-late")).toBeNull();
+    disarmAutoCloseOnHandoff("sess-late", "pane-pending");
+    expect(armedAutoClosePaneId("sess-late", "pane-pending")).toBeNull();
+  });
+
+  it("o braço por sessão continua valendo sem paneId", () => {
+    armAutoCloseOnHandoff("sess-a", "pane-a");
+    expect(armedAutoClosePaneId("sess-a")).toBe("pane-a");
+    disarmAutoCloseOnHandoff("sess-a");
+    expect(armedAutoClosePaneId("sess-a")).toBeNull();
   });
 });

@@ -25,7 +25,7 @@ import {
   disarmAutoCloseOnHandoff,
   shouldAutoCloseAfterHandoff,
 } from "./pane-close-scopes";
-import { listPaneSnapshots, requestPaneClose } from "./pane-registry";
+import { findPane, listPaneSnapshots, requestPaneClose } from "./pane-registry";
 import {
   assertMcpInvocationCurrent,
   type McpToolDef,
@@ -680,14 +680,16 @@ const handoffSubmitTool: McpToolDef = {
     // no success — falha preserva pane e scrollback. Fora do caminho da
     // resposta: o fechamento nunca atrasa nem derruba o handoff.
     if (ctx.sessionId) {
-      const autoClosePaneId = armedAutoClosePaneId(ctx.sessionId);
+      // Spawn com ACK pendente arma pelo pane (a sessão ainda não existia).
+      const handoffPaneId = findPane(ctx.sessionId)?.paneId ?? null;
+      const autoClosePaneId = armedAutoClosePaneId(ctx.sessionId, handoffPaneId);
       if (
         shouldAutoCloseAfterHandoff({
           armed: autoClosePaneId !== null,
           status,
         })
       ) {
-        disarmAutoCloseOnHandoff(ctx.sessionId);
+        disarmAutoCloseOnHandoff(ctx.sessionId, handoffPaneId);
         setTimeout(() => {
           void Promise.resolve(requestPaneClose(autoClosePaneId!)).catch(
             (error) =>

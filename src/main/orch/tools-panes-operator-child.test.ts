@@ -9,6 +9,7 @@ const harness = vi.hoisted(() => ({
   })),
   takePendingPaneSpawnResult: vi.fn((): unknown => null),
   armAutoCloseOnHandoff: vi.fn(),
+  armAutoCloseOnHandoffForPane: vi.fn(),
   settings: {
     squadCliPolicy: 'operator-choice' as 'operator-choice' | 'governed',
   },
@@ -35,6 +36,7 @@ vi.mock('./pane-registry', async (importOriginal) => ({
 vi.mock('./pane-close-scopes', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./pane-close-scopes')>()),
   armAutoCloseOnHandoff: harness.armAutoCloseOnHandoff,
+  armAutoCloseOnHandoffForPane: harness.armAutoCloseOnHandoffForPane,
 }));
 vi.mock('./squad-store', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./squad-store')>()),
@@ -336,6 +338,19 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
   it('helper do operador arma o auto-close por padrão', async () => {
     await paneSpawnTool.handler({ adapterId: 'codex' }, userPane());
     expect(harness.armAutoCloseOnHandoff).toHaveBeenCalledWith('pty-child', 'pane-child');
+  });
+
+  it('ACK pendente (sessão ainda não existe) arma o auto-close pelo pane', async () => {
+    harness.spawnPaneAndMaybePrompt.mockRejectedValueOnce(new Error('pane spawn pending'));
+    harness.takePendingPaneSpawnResult.mockReturnValueOnce({
+      requestId: 'orchspawn-pending',
+      ok: true,
+      paneId: 'pane-pending',
+      sessionId: null,
+      pending: true,
+    });
+    await paneSpawnTool.handler({ adapterId: 'codex' }, userPane());
+    expect(harness.armAutoCloseOnHandoffForPane).toHaveBeenCalledWith('pane-pending');
   });
 
   it('autoCloseOnHandoff: false explícito é respeitado', async () => {
