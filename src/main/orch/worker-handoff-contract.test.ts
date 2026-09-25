@@ -129,3 +129,20 @@ describe('charter tier — pergunta aos panes não paga carta nenhuma', () => {
     expect(tier.lean).toBe(true);
   });
 });
+
+describe('charter tier — helper somente leitura entrega texto, não diff', () => {
+  it('não recebe carta de engenharia, de design nem a ponytail', () => {
+    expect(
+      charterTierForWorker({
+        prompt: 'Analise o renderer e redesenhe a tela de login — só leitura, relatório.',
+        readOnly: true,
+      }),
+    ).toEqual({ engineering: false, design: false, lean: false });
+  });
+
+  it('o mesmo pedido num escritor continua com as cartas', () => {
+    expect(
+      charterTierForWorker({ prompt: 'Implemente e redesenhe a tela de login.' }),
+    ).toEqual({ engineering: true, design: true, lean: true });
+  });
+});

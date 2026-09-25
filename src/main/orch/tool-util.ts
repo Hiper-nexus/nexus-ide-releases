@@ -1370,6 +1370,7 @@ export async function spawnPaneAndMaybePrompt(
       : withHandoffContract(options.prompt, adapter, {
           category: options.agentCategory,
           hints: [options.title, options.agentName],
+          readOnly: options.readOnly === true,
           // C-194.1: todo worker de missão com MCP tem fechamento mecânico
           // (turn-end-handoff colhe o fim de turno via /hook/status) — o
           // contrato ensina a regra condicional, não "sempre chame a tool".
