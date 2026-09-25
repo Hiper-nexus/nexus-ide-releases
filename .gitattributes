@@ -1,0 +1,4 @@
+# Scripts Node rodam como estão: `#!/usr/bin/env node` seguido de CR não carrega
+# no vitest (Vite) do Windows, e o CRLF quebra comparações byte a byte (F-643).
+*.mjs text eol=lf
+*.cjs text eol=lf

@@ -419,6 +419,11 @@ describe('mcp-server governed CLI profile wiring', () => {
       if (id === 'glm' && process.platform === 'darwin') {
         // F-629: terceiro no macOS ganha securestorage escopado no overlay.
         expect(decoration.envRemove).toEqual(['CLAUDE_CONFIG_DIR']);
+      } else if (id === 'claude' && process.platform !== 'darwin') {
+        // F-646: o login nativo é gravado no ~/.claude real, sem cópia no overlay.
+        expect(decoration.env.CLAUDE_SECURESTORAGE_CONFIG_DIR).toBe(path.join(os.homedir(), '.claude'));
+        expect(fs.existsSync(path.join(decoration.env.HOME, '.claude', '.credentials.json'))).toBe(false);
+        expect(decoration.envRemove).toEqual(['CLAUDE_CONFIG_DIR']);
       } else {
         expect(decoration.envRemove).toEqual(['CLAUDE_SECURESTORAGE_CONFIG_DIR', 'CLAUDE_CONFIG_DIR']);
       }

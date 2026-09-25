@@ -10,6 +10,10 @@ import { BMAD_TEMPLATES_MANIFEST } from './bmad-templates-manifest';
 import { SUPERPOWERS_MANIFEST } from './superpowers-manifest';
 import { DEMBRANDT_MANIFEST } from './dembrandt-manifest';
 import { TYPESAFE_AI_MANIFEST } from './typesafe-ai-manifest';
+import { OC_PILOT_MANIFEST } from './oc-pilot-manifest';
+import { OC_BUILDER_MANIFEST } from './oc-builder-manifest';
+import { OC_SCOUT_MANIFEST } from './oc-scout-manifest';
+import { OC_CONVEYOR_MANIFEST } from './oc-conveyor-manifest';
 import { hasJevCredential } from '../jev/jev-secrets';
 import { mimoNativePaths } from '../adapters/mimo-auth';
 import type { SkillAsset } from './impeccable-manifest';
@@ -236,6 +240,10 @@ export const BUNDLED_MANIFESTS: Record<string, Record<string, SkillAsset>> = {
   superpowers: SUPERPOWERS_MANIFEST,
   dembrandt: DEMBRANDT_MANIFEST,
   'typesafe-ai': TYPESAFE_AI_MANIFEST,
+  'oc-pilot': OC_PILOT_MANIFEST,
+  'oc-builder': OC_BUILDER_MANIFEST,
+  'oc-scout': OC_SCOUT_MANIFEST,
+  'oc-conveyor': OC_CONVEYOR_MANIFEST,
 };
 
 /**
@@ -559,6 +567,22 @@ function materializeManifestSkill(
     placeSkillAsset(path.join(skillRoot, relPath), asset);
   }
   pruneManifestDir(skillRoot, skillRoot, new Set(Object.keys(manifest)));
+}
+
+/**
+ * Directory of a skill Nexus ships, freshly materialized in the Main-owned
+ * generated root. `null` when the name is not in the bundle — the packaged
+ * app has no loose skill folder to copy from, only these manifests.
+ */
+export function bundledSkillSourceDir(
+  name: string,
+  generatedRoot = path.join(os.homedir(), '.nexus', 'generated-skills'),
+): string | null {
+  if (!(name in BUNDLED_MANIFESTS) && !(name in GENERATED_INLINE_SKILL_BODIES)) {
+    return null;
+  }
+  const dir = path.join(writeGeneratedSkills(generatedRoot), name);
+  return fs.existsSync(path.join(dir, 'SKILL.md')) ? dir : null;
 }
 
 function readSkillSources(sourceDirs: string[]): Map<string, SkillSource> {

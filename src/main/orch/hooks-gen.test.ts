@@ -207,4 +207,41 @@ describe('HOOK_SCRIPT', () => {
     expect(result.stdout).toBe('');
     expect(result.stderr).toBe('');
   });
+
+  it('usa o descriptor da instância do pane, não o do app instalado (F-644)', async () => {
+    const gate = await listen((req, res) => {
+      void readBody(req).then(() => {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ allow: true }));
+      });
+    });
+    const home = makeTempDir();
+    fs.mkdirSync(path.join(home, '.nexus'), { recursive: true });
+    // O app instalado publicou uma porta morta; o `npm start` publicou a viva.
+    fs.writeFileSync(
+      path.join(home, '.nexus', 'arms-runtime.json'),
+      `${JSON.stringify({ schemaVersion: 1, port: 9, at: Date.now() })}\n`,
+    );
+    const devDescriptor = path.join(home, '.nexus', 'arms-runtime.dev.json');
+    fs.writeFileSync(
+      devDescriptor,
+      `${JSON.stringify({ schemaVersion: 1, port: gate.port, at: Date.now() })}\n`,
+    );
+    const script = writeHook();
+
+    const result = await runHook(
+      script,
+      'pretool',
+      { tool_name: 'Bash', tool_input: { command: 'date' } },
+      {
+        HOME: home,
+        USERPROFILE: home,
+        NEXUS_GATE_URL: 'http://127.0.0.1:9/gate',
+        NEXUS_PANE_ARMS_DESCRIPTOR: devDescriptor,
+      },
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe('');
+  });
 });

@@ -6787,7 +6787,7 @@ export const RELEASE_07695: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07696: AppRelease = {
   version: '0.76.96',
   date: '2026-09-24',
   codename: 'Harness declarado',
@@ -6838,6 +6838,83 @@ export const CURRENT_RELEASE: AppRelease = {
         'nexus_skills recusa path traversal no nome e só remove skill que o ' +
         'app embarca. Filtro declarado esconde skills pessoais no overlay ' +
         'Claude (skillOverrides: off).',
+    },
+  ],
+};
+
+export const RELEASE_07697: AppRelease = {
+  version: '0.76.97',
+  date: '2026-09-24',
+  codename: 'Sessão renovada',
+  summary:
+    'Pane Claude de conta gerenciada não é mais recusado só porque o token de ' +
+    'acesso venceu: a própria CLI renova e o Nexus prova a identidade antes de ' +
+    'decidir. A cota das contas Claude volta a ler no Windows, as skills de papel ' +
+    'embarcam de verdade e o warm pool só adota pane com o mesmo contrato.',
+  highlights: [
+    {
+      title: 'Token vencido não é sessão perdida',
+      detail:
+        'Conta Claude parada há mais de 8 h abre pane de novo: a CLI renova no ' +
+        'escopo da conta, e "Entre novamente" só aparece quando nem ela conseguiu.',
+    },
+    {
+      title: 'Cota Claude no Windows',
+      detail:
+        'A sonda acha o claude pelo PATH e usa o claude.exe do shim do npm — ' +
+        'cota das contas e renovação de fundo voltam a funcionar no Windows.',
+    },
+    {
+      title: 'Skills de papel no pacote',
+      detail:
+        'oc-pilot, oc-builder, oc-scout e oc-conveyor saem do bundle, são ' +
+        'espelhadas por CLI e nexus_skills instala a partir do cache do app.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Warm pool honesto',
+      detail:
+        'Só adota um pane pré-aberto quando o pedido é o contrato com que ele ' +
+        'nasceu; antes trocava só o rótulo de um processo do operador.',
+    },
+    {
+      title: 'Arms do npm start',
+      detail:
+        'Pane da instância de desenvolvimento fala com ela, não com o app instalado.',
+    },
+    {
+      title: 'Testes de scripts no Windows',
+      detail:
+        'Scripts .mjs/.cjs sempre em LF: quatro suítes voltam a carregar no Windows.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.98',
+  date: '2026-09-24',
+  codename: 'Linhagem única',
+  summary:
+    'A conta Claude que é o seu login nativo abre pane pelo próprio login, sem ' +
+    'cópia gerenciada: o refresh token tem um dono só, e nem o pane nem a sonda ' +
+    'de cota derrubam mais o Claude que você usa fora do Nexus. No Windows, o ' +
+    'pane com login nativo renova direto no ~/.claude real.',
+  highlights: [
+    {
+      title: 'Um dono só para o login nativo',
+      detail:
+        'A conta que é o login nativo não ganha mais cópia gerenciada: o pane usa ' +
+        'o store nativo, como um pane sem conta, e a cota lê o perfil nativo. Duas ' +
+        'cópias do mesmo refresh token não sobrevivem — quem renova primeiro mata a outra.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Windows: renovação no arquivo real',
+      detail:
+        'A CLI regrava a credencial por rename; o link do overlay virava cópia e o ' +
+        'Claude de fora caía. Agora o pane grava direto no ~/.claude real.',
     },
   ],
 };

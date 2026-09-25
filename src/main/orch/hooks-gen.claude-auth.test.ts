@@ -24,6 +24,27 @@ afterEach(() => {
 });
 
 describe('native Claude auth in the ephemeral HOME', () => {
+  it('F-646: com o store nativo no lugar, o overlay não tem cópia e o fechamento não devolve token velho', () => {
+    const realCredentials = path.join(home, '.claude', '.credentials.json');
+    fs.mkdirSync(path.dirname(realCredentials), { recursive: true });
+    fs.writeFileSync(realCredentials, '{"claudeAiOauth":{"accessToken":"old"}}');
+
+    const overlay = prepareEphemeralHome(TOKEN, { mcpServers: {} }, {
+      carryNativeClaudeAuth: true,
+      nativeCredentialsInPlace: true,
+      gateHooks: false,
+    });
+    expect(fs.existsSync(path.join(overlay.dir, '.claude', '.credentials.json'))).toBe(false);
+
+    // A CLI do pane renova no ~/.claude real por temporário + rename.
+    const staged = `${realCredentials}.tmp`;
+    fs.writeFileSync(staged, '{"claudeAiOauth":{"accessToken":"renewed"}}');
+    fs.renameSync(staged, realCredentials);
+    cleanupSessionArtifacts(TOKEN);
+
+    expect(fs.readFileSync(realCredentials, 'utf8')).toContain('renewed');
+  });
+
   it.skipIf(process.platform !== 'darwin')(
     'managed account ungated overlay links the real keychain — no "Chaves Não Encontradas" modal (F-629)',
     () => {

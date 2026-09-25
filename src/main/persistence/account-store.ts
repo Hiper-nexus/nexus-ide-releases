@@ -42,11 +42,13 @@ import { accountCredentialCandidates } from '../adapters/account-credential-cand
 import {
   freshestClaudeCredential,
   hasManagedClaudeAuth,
+  managedClaudeAuthDirectory,
   materializeManagedClaudeAuth,
   readManagedClaudeAuthAsync,
   removeManagedClaudeAuth,
 } from '../adapters/managed-claude-auth';
 import { probeClaudeCredentialIdentity, resolveClaudeCredentialProfile } from '../quota/claude-native-account';
+import { managedClaudeCliEnv, probeClaudeCliUsage } from '../quota/claude-oauth-usage';
 import {
   failedPersistenceError,
   PersistenceUnavailableError,
@@ -435,6 +437,44 @@ export type AccountSpawnPreparation =
     }
   | { ok: false; error: string };
 
+/** One CLI run in the account's managed scope; the CLI refreshes under its own lock. */
+async function renewManagedClaudeAuthThroughCli(accountId: string): Promise<string | null> {
+  try {
+    await probeClaudeCliUsage({ env: managedClaudeCliEnv(managedClaudeAuthDirectory(accountId)) });
+    return await readManagedClaudeAuthAsync(accountId, { fresh: true });
+  } catch {
+    return null;
+  }
+}
+
+/** Same, for the native store — only while that store still belongs to the account. */
+async function renewNativeClaudeAuthThroughCli(accountId: string): Promise<string | null> {
+  try {
+    await probeClaudeCliUsage();
+    invalidateClaudeCredentialCache();
+    const native = readNativeClaudeSnapshot();
+    return native.account?.id === accountId ? native.blob : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * F-645: a conta é o login nativo agora? Então a linhagem dela tem um dono
+ * só — o store nativo da CLI — e o pane usa esse store. Semear um escopo
+ * gerenciado com o mesmo refresh token cria duas cópias: quem renova primeiro
+ * invalida a outra (o escopo morto, ou o login nativo no meio da sessão).
+ */
+export function claudeAccountIsNativeLogin(
+  account: Account,
+  snapshot: NativeClaudeSnapshot = readNativeClaudeSnapshot(),
+): boolean {
+  if (account.adapterId !== 'claude' || account.mode !== 'subscription') return false;
+  // Mesma regra do read-back: o dono do token vence um e-mail antigo no
+  // ~/.claude.json; sem token legível, vale o e-mail (e nada é semeado).
+  return snapshot.account?.id === account.id;
+}
+
 /** Validate the same scoped credential the CLI will read before a managed Claude spawn. */
 export async function verifyManagedClaudeAccountForSpawn(
   accountId: string,
@@ -444,15 +484,36 @@ export async function verifyManagedClaudeAccountForSpawn(
   if (!account || account.adapterId !== 'claude' || account.mode !== 'subscription') {
     return 'unavailable';
   }
-  const managed = hasManagedClaudeAuth(accountId);
+  // F-645: a conta que É o login nativo abre pelo store nativo, então é ele
+  // que se prova — um escopo gerenciado antigo dela é cópia morta da linhagem.
+  const native = readNativeClaudeSnapshot();
+  const nativeLogin = claudeAccountIsNativeLogin(account, native);
+  const managed = !nativeLogin && hasManagedClaudeAuth(accountId);
   const scoped = managed ? await readManagedClaudeAuthAsync(accountId) : null;
   // With no managed store, prepareAccountForSpawn imports a newer native
   // Keychain lineage for this account. Verify that exact candidate as well.
-  const native = !managed ? readNativeClaudeSnapshot() : null;
-  const nativeBlob = native?.account?.id === accountId ? native.blob : null;
+  const nativeBlob = !managed && native.account?.id === accountId ? native.blob : null;
+  // Store nativo ilegível (Keychain travado) não é sessão expirada.
+  if (nativeLogin && !nativeBlob) return 'unavailable';
   const originalSaved = getSecret(CRED_PREFIX + accountId);
-  const credential = freshestClaudeCredential(scoped, nativeBlob, originalSaved);
-  const result = await probeClaudeCredentialIdentity(credential, account.email);
+  let credential = nativeLogin
+    ? nativeBlob
+    : freshestClaudeCredential(scoped, nativeBlob, originalSaved);
+  let result = await probeClaudeCredentialIdentity(credential, account.email);
+  if (result === 'auth-expired' && (managed || nativeLogin) && credential &&
+      claudeBlobNeedsRefresh(credential, Date.now())) {
+    // F-639: access token vencido com refresh token não é sessão perdida. A
+    // CLI é dona da renovação (.oauth_refresh.lock): um run dela no store que
+    // o pane vai usar renova, e a identidade é provada de novo sobre o token
+    // novo. "Entre novamente" só quando nem a própria CLI conseguiu.
+    const renewed = nativeLogin
+      ? await renewNativeClaudeAuthThroughCli(accountId)
+      : await renewManagedClaudeAuthThroughCli(accountId);
+    if (renewed && renewed !== credential) {
+      credential = nativeLogin ? renewed : freshestClaudeCredential(renewed, originalSaved);
+      result = await probeClaudeCredentialIdentity(credential, account.email);
+    }
+  }
   if (result === 'match' && (!sameClaudeAccountIdentity(account) ||
       getSecret(CRED_PREFIX + accountId) !== originalSaved)) return 'unavailable';
   if (result === 'mismatch') {
@@ -722,6 +783,21 @@ export function prepareAccountForSpawn(
       };
     }
     return { ok: true, account, apiKey: null, authEnv };
+  }
+
+  // F-645: a conta que é o login nativo usa o store nativo, como um pane sem
+  // conta — HOME real: `{}` (a CLI lê e renova a própria linhagem); HOME
+  // isolado: só o access token por env, que não rotaciona nada. Nunca semeia
+  // um escopo gerenciado com o refresh token do login nativo.
+  if (claudeAccountIsNativeLogin(account)) {
+    if (!options?.isolatedHome) return { ok: true, account, apiKey: null, authEnv: {} };
+    const nativeEnv = activeClaudeAuthEnv();
+    return nativeEnv
+      ? { ok: true, account, apiKey: null, authEnv: nativeEnv }
+      : {
+          ok: false,
+          error: 'não foi possível ler a credencial nativa do Claude para um pane com HOME isolado',
+        };
   }
 
   // Managed Claude accounts use the CLI's renewable store, independent from

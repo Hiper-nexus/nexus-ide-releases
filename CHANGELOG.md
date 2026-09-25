@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.76.98 — Linhagem única
+
+A conta Claude que é o seu login nativo não ganha mais uma segunda cópia do refresh token.
+
+- **Um dono só para o login nativo (F-645).** Toda conta Claude escolhida no "+ Pane" ganhava um escopo gerenciado semeado do vault. Para a conta que é o próprio login nativo, isso deixava o mesmo refresh token em dois lugares, e quem renovava primeiro matava o outro: o pane dizia "A sessão expirou" (caso da 0.76.97) ou, quando o pane ou a sonda de cota renovavam antes, caía o Claude que você usa fora do Nexus. Agora essa conta abre pelo login nativo, como um pane sem conta, e a cota lê o perfil nativo. Contas que não são o login nativo continuam isoladas no escopo delas.
+- **Windows: renovação no arquivo real (F-646).** A CLI regrava a credencial por temporário + rename, então o link do overlay virava uma cópia na primeira renovação do pane e o `~/.claude/.credentials.json` real ficava com o token consumido. Agora o pane com login nativo grava direto no `~/.claude` real; as conversas continuam isoladas no overlay.
+
+## 0.76.97 — Sessão renovada
+
+Pane Claude não é mais recusado por token vencido, a cota das contas Claude volta a ler no Windows e o que a 0.76.96 prometia passa a ser verdade.
+
+- **Token vencido não é sessão perdida (F-639).** Pane de conta Claude gerenciada parada há mais de 8 h dizia "A sessão expirou — entre novamente" mesmo com refresh token válido. Agora o Nexus deixa a própria CLI renovar no escopo da conta (ela é a dona da renovação), prova a identidade no token novo e só então decide. "Entre novamente" aparece só quando nem a CLI conseguiu.
+- **Cota Claude no Windows (F-640).** A sonda procurava a CLI em caminhos de Mac/Linux e nunca rodava no Windows — sem cota das contas e sem a renovação de fundo. Agora acha o `claude` pelo PATH e troca o shim do npm pelo `claude.exe`.
+- **Skills de papel embarcadas de verdade (F-641).** `oc-pilot`, `oc-builder`, `oc-scout` e `oc-conveyor` não entravam no pacote, e `nexus_skills install` recusava toda skill embarcada. Agora saem do bundle como as demais, são espelhadas por CLI e o install copia do cache do app.
+- **Warm pool honesto (F-642).** O pool só adota um pane pré-aberto quando o pedido é o mesmo contrato com que ele nasceu (pane do operador, sem restrição, mesmo projeto). Antes trocava só o rótulo: um worker `readOnly` podia herdar um processo gravável de outro projeto. Continua desligado por padrão.
+- **Arms do `npm start` (F-644).** Pane da instância de desenvolvimento fala com ela, não com o app instalado.
+- **Testes de scripts no Windows (F-643).** `.mjs`/`.cjs` sempre em LF: o teste do conector Arms e mais três suítes voltam a rodar no Windows.
+
 ## 0.76.96 — Harness declarado
 
 Paridade Overclock 1.4: decisão de harness visível e persistida, folga de conta honesta, identidade de pane no MCP e resiliência de listagem.

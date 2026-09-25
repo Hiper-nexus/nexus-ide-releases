@@ -343,15 +343,16 @@ describe('prepareAccountForSpawn', () => {
     });
   });
 
-  it('conta gerenciada recebe armazenamento renovável sem token fixo nem escrita no Keychain nativo', () => {
+  it('conta que é o login nativo usa o store nativo, sem semear escopo gerenciado (F-645)', () => {
     const account = addActiveClaudeAccount('Claude Max');
     expect(account).not.toBeNull();
     expect(account?.email).toBe('operator@example.test');
 
     const result = prepareAccountForSpawn('claude', account!.id);
 
-    expect(result).toMatchObject({ ok: true, account, apiKey: null,
-      authEnv: { CLAUDE_SECURESTORAGE_CONFIG_DIR: `/tmp/claude/${account!.id}/auth` } });
+    // `{}`: a CLI lê e renova a própria linhagem — um dono só do refresh token.
+    expect(result).toMatchObject({ ok: true, account, apiKey: null, authEnv: {} });
+    expect(accountDeps.managedClaude.has(account!.id)).toBe(false);
     expect(accountDeps.writeActiveCredential).not.toHaveBeenCalled();
   });
 
@@ -368,7 +369,7 @@ describe('prepareAccountForSpawn', () => {
     });
   });
 
-  it('HOME isolado mantém o mesmo diretório de autenticação renovável da conta', () => {
+  it('HOME isolado da conta nativa recebe só o access token, que não rotaciona nada (F-645)', () => {
     const account = addActiveClaudeAccount('Claude Max');
     expect(account).not.toBeNull();
 
@@ -380,9 +381,28 @@ describe('prepareAccountForSpawn', () => {
       ok: true,
       account,
       apiKey: null,
+      authEnv: { CLAUDE_CODE_OAUTH_TOKEN: 'claude-access' },
+    });
+    const env = (result as { authEnv: Record<string, string> }).authEnv;
+    expect(env).not.toHaveProperty('CLAUDE_CODE_OAUTH_REFRESH_TOKEN');
+    expect(env).not.toHaveProperty('CLAUDE_SECURESTORAGE_CONFIG_DIR');
+    expect(accountDeps.managedClaude.has(account!.id)).toBe(false);
+    expect(accountDeps.writeActiveCredential).not.toHaveBeenCalled();
+  });
+
+  it('conta secundária com HOME isolado mantém o diretório renovável dela', () => {
+    const account = addActiveClaudeAccount('Claude Max');
+    accountDeps.activeEmail = 'someone-else@example.test';
+    accountDeps.activeCredential = oauthCredential('other-native');
+
+    const result = prepareAccountForSpawn('claude', account!.id, undefined, {
+      isolatedHome: true,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
       authEnv: { CLAUDE_SECURESTORAGE_CONFIG_DIR: `/tmp/claude/${account!.id}/auth` },
     });
-    expect(accountDeps.writeActiveCredential).not.toHaveBeenCalled();
   });
 
   it('conta SECUNDÁRIA recebe perfil renovável sem trocar o slot nativo do keychain', () => {

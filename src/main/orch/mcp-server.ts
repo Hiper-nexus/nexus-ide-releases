@@ -113,20 +113,13 @@ import {
   resolveNativeStdioServerDescriptor,
 } from "../mcp-hub/mcp-stdio-bridge";
 
-export type ArmsRuntimeInstance = "prod" | "dev";
+import {
+  resolveArmsRuntimeDescriptorPath,
+  resolveArmsRuntimeInstance,
+  type ArmsRuntimeInstance,
+} from "./arms-runtime-path";
 
-export function resolveArmsRuntimeInstance(isPackaged: boolean): ArmsRuntimeInstance {
-  return isPackaged ? "prod" : "dev";
-}
-
-export function resolveArmsRuntimeDescriptorPath(
-  homedir: string,
-  instance: ArmsRuntimeInstance,
-): string {
-  const filename =
-    instance === "prod" ? "arms-runtime.json" : "arms-runtime.dev.json";
-  return path.join(homedir, ".nexus", filename);
-}
+export { resolveArmsRuntimeDescriptorPath, resolveArmsRuntimeInstance, type ArmsRuntimeInstance };
 
 export function getArmsRuntimeDescriptorInfo(): {
   instance: ArmsRuntimeInstance;
@@ -1148,6 +1141,20 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
       mode: homeMode,
       effectiveEnv: preparedEnv,
     });
+    // F-646: fora do macOS o segredo do login nativo é o arquivo
+    // ~/.claude/.credentials.json, e a CLI o regrava por temporário + rename.
+    // Um link no overlay virava arquivo próprio na primeira renovação do pane,
+    // o perfil real ficava com o refresh token já consumido (o Claude de fora
+    // caía) e o sync-back do fechamento podia devolver um token velho. O
+    // secure storage da CLI aponta para o ~/.claude real e o overlay não
+    // recebe cópia: o store nativo tem um dono só. Gated e terceiros
+    // autenticam por env e ficam fora.
+    const nativeSecureStorageInPlace =
+      process.platform !== "darwin" &&
+      adapter.id === "claude" &&
+      !managedClaudeAuthDir &&
+      !thirdPartyClaudeFamily &&
+      !gateHome;
     try {
       if (usesClaudeHomeLayout(adapter)) {
         // Só o Claude NATIVO carrega a identidade OAuth da assinatura para o
@@ -1164,6 +1171,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           (meta?.role ?? "user") === "user";
         const home = prepareEphemeralHome(ctx.token, mcpConfig, {
           carryNativeClaudeAuth: !thirdPartyClaudeFamily && !managedClaudeAuthDir,
+          nativeCredentialsInPlace: nativeSecureStorageInPlace,
           managedClaudeAuthDir,
           adapterId: adapter.id,
           userDataPath: app.getPath("userData"),
@@ -1227,6 +1235,11 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           const scopedSecureStorage = path.join(home.dir, ".nexus-claude-securestorage");
           fs.mkdirSync(scopedSecureStorage, { recursive: true, mode: 0o700 });
           env[CLAUDE_MANAGED_AUTH_ENV] = scopedSecureStorage;
+          const removeAt = envRemove.indexOf(CLAUDE_MANAGED_AUTH_ENV);
+          if (removeAt >= 0) envRemove.splice(removeAt, 1);
+        }
+        if (nativeSecureStorageInPlace) {
+          env[CLAUDE_MANAGED_AUTH_ENV] = path.join(os.homedir(), ".claude");
           const removeAt = envRemove.indexOf(CLAUDE_MANAGED_AUTH_ENV);
           if (removeAt >= 0) envRemove.splice(removeAt, 1);
         }

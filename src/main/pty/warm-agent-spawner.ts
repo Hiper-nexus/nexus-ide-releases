@@ -11,6 +11,7 @@ import type { BoundSpawnAuthority } from '../orch/spawn-authority';
 import type { ProjectExecutionScope, SpawnRequest } from '../../shared/types';
 import type { Adapter } from '../../shared/adapter-types';
 import type { WarmSession } from './warm-pool';
+import { WARM_IDLE_CONTEXT } from './warm-adoption';
 import {
   setWarmAgentSpawner,
   spawnAgentSession,
@@ -27,12 +28,9 @@ export type WarmScopeProvider = () => WarmSpawnContext | null;
 function idleWarmAuthority(ctx: WarmSpawnContext): BoundSpawnAuthority {
   return {
     source: 'direct-user',
-    // Pane warm nasce sem missão/role — o retarget no take() re-selada o papel.
-    context: {
-      allowedTools: null,
-      allowedSkills: null,
-      readOnly: false,
-    },
+    // Pane warm nasce sem missão/role e só serve um pedido com este mesmo
+    // contrato (F-642) — a adoção nunca troca o papel de um processo vivo.
+    context: { ...WARM_IDLE_CONTEXT },
     scope: ctx.scope,
     cwd: ctx.cwd,
   };
@@ -70,6 +68,7 @@ export function registerWarmAgentSpawner(deps: {
         cli: adapter.id,
         bornAtMs: Date.now(),
         cwd: ctx.cwd,
+        scopeRootRealPath: ctx.scope.rootRealPath,
       };
     } catch (err) {
       console.warn('[warm-pool] boot falhou pane=', err);

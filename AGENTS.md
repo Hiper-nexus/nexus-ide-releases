@@ -131,6 +131,22 @@ saber isto antes de mexer:
   da lista (cooldown, sem credencial, excluída pelo hit) ou quando a
   disponibilidade medida é 0. Cota desconhecida mantém a ativa. Sem conta
   ativa, a mais livre vence.
+- **A conta que É o login nativo não ganha escopo gerenciado (F-645).**
+  Refresh token rotaciona: duas cópias dele (o store nativo e um
+  `managed-accounts/claude/<id>/auth` semeado do vault) não sobrevivem juntas —
+  quem renova primeiro mata a outra, e se for o pane ou a sonda de cota, cai o
+  login do operador. `claudeAccountIsNativeLogin` decide (dono do token vence
+  e-mail antigo); o pane dessa conta usa o store nativo (`{}` ou access token
+  por env em HOME isolado) e a cota lê só o perfil nativo. Não volte a
+  materializar escopo nem rodar `claude /usage` em escopo para ela.
+- **Fora do macOS o login nativo é gravado no lugar (F-646).** A CLI regrava
+  `.credentials.json` por temporário + rename, então link ou cópia no overlay
+  vira segunda linhagem na primeira renovação. Pane direto com login nativo
+  recebe `CLAUDE_SECURESTORAGE_CONFIG_DIR=<~/.claude real>` e o overlay não
+  recebe o arquivo (`nativeCredentialsInPlace`).
+- **Token de acesso vencido não é sessão perdida (F-639).** Com refresh token,
+  o spawn deixa a própria CLI renovar (um run no store que o pane vai usar) e
+  prova a identidade no token novo; "entre novamente" só se nem ela conseguiu.
 - **«Entrar novamente» da mesma conta abre o login mesmo se o snapshot vivo
   falhar.** O aviso «Não consegui guardar a conta atual» continua quando o
   cadastro de uma segunda conta não consegue gravar a primeira, e quando o

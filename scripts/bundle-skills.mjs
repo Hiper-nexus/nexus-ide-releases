@@ -43,6 +43,11 @@ const SKILLS = [
     constName: 'TYPESAFE_AI_MANIFEST',
     outFile: 'typesafe-ai-manifest.ts',
   },
+  // Skills de papel (paridade Overclock 1.4): um SKILL.md cada.
+  { dir: 'oc-pilot', constName: 'OC_PILOT_MANIFEST', outFile: 'oc-pilot-manifest.ts' },
+  { dir: 'oc-builder', constName: 'OC_BUILDER_MANIFEST', outFile: 'oc-builder-manifest.ts' },
+  { dir: 'oc-scout', constName: 'OC_SCOUT_MANIFEST', outFile: 'oc-scout-manifest.ts' },
+  { dir: 'oc-conveyor', constName: 'OC_CONVEYOR_MANIFEST', outFile: 'oc-conveyor-manifest.ts' },
 ];
 
 function walk(dir) {

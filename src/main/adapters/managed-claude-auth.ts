@@ -150,19 +150,27 @@ export function readManagedClaudeAuth(accountId: string, options: { home?: strin
   return freshestClaudeCredential(scopedCache.get(directory)?.blob ?? null, readFileCredential(directory));
 }
 
-/** Background read-back must not block Main while SecurityAgent is unavailable. */
-export async function readManagedClaudeAuthAsync(accountId: string): Promise<string | null> {
+/**
+ * Background read-back must not block Main while SecurityAgent is unavailable.
+ * `fresh` skips the 60 s cache: right after a CLI run renewed the scope, the
+ * cached Keychain blob is the token that run just replaced.
+ */
+export async function readManagedClaudeAuthAsync(
+  accountId: string,
+  options: { fresh?: boolean } = {},
+): Promise<string | null> {
   if (!hasManagedClaudeAuth(accountId)) return null;
   const directory = managedClaudeAuthDirectory(accountId);
   ensurePrivateDirectory(directory, os.homedir());
   const cached = scopedCache.get(directory);
-  if (cached && Date.now() - cached.at < 60_000) {
+  if (!options.fresh && cached && Date.now() - cached.at < 60_000) {
     return freshestClaudeCredential(cached.blob, readFileCredential(directory));
   }
-  let flight = scopedFlights.get(directory);
+  let flight = options.fresh ? undefined : scopedFlights.get(directory);
   if (!flight) {
     flight = (process.platform === 'darwin'
-      ? readNativeOAuthCredential(managedClaudeKeychainService(directory)).catch(() => null)
+      ? readNativeOAuthCredential(managedClaudeKeychainService(directory), undefined,
+        { bypassCache: options.fresh === true }).catch(() => null)
       : Promise.resolve(null))
       .then((blob) => {
         if (hasManagedClaudeAuth(accountId)) scopedCache.set(directory, { blob, at: Date.now() });

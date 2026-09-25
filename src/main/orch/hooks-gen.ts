@@ -70,7 +70,10 @@ function normalizeBaseUrl(value) {
 
 function readArmsRuntimeGateUrl(primary) {
   try {
-    const raw = fs.readFileSync(path.join(os.homedir(), '.nexus', 'arms-runtime.json'), 'utf8');
+    // F-644: o descriptor da instância que abriu o pane (dev ≠ app instalado).
+    const descriptor = String(process.env.NEXUS_PANE_ARMS_DESCRIPTOR || '').trim() ||
+      path.join(os.homedir(), '.nexus', 'arms-runtime.json');
+    const raw = fs.readFileSync(descriptor, 'utf8');
     const parsed = JSON.parse(raw);
     const port = Number(parsed && parsed.port);
     if (!Number.isInteger(port) || port < 1 || port > 65535) return '';
@@ -322,6 +325,12 @@ export interface EphemeralHomeOptions {
    * terceiro. Default fail-closed: sem projeção.
    */
   readonly carryNativeClaudeAuth?: boolean;
+  /**
+   * F-646: o spawn aponta o secure storage da CLI para o ~/.claude real, então
+   * o `.credentials.json` NÃO entra no overlay — cópia ou link ali vira segunda
+   * linhagem na primeira renovação (a CLI regrava por temporário + rename).
+   */
+  readonly nativeCredentialsInPlace?: boolean;
   /** Stable account-owned auth store; never project the native login into this pane. */
   readonly managedClaudeAuthDir?: string;
   /**
@@ -665,7 +674,7 @@ export function prepareEphemeralHome(
       '.claude',
       '.credentials.json',
     );
-    if (fs.existsSync(realCredentials)) {
+    if (!options.nativeCredentialsInPlace && fs.existsSync(realCredentials)) {
       const overlayCredentials = path.join(claudeDir, '.credentials.json');
       try {
         fs.rmSync(overlayCredentials, { force: true });
