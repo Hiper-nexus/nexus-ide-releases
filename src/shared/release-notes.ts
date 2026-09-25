@@ -6955,7 +6955,7 @@ export const RELEASE_07699: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076100: AppRelease = {
   version: '0.76.100',
   date: '2026-09-25',
   codename: 'Pasta reconhecida',
@@ -6978,6 +6978,65 @@ export const CURRENT_RELEASE: AppRelease = {
         'Caminho com outra caixa (c:\\users\\…) ou com nome curto (ADMINI~1) ' +
         'é reconhecido como a mesma pasta e abre o mesmo checkout, em vez de ' +
         'cair em quarentena.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.101',
+  date: '2026-09-25',
+  codename: 'Motor leve',
+  summary:
+    'O Nexus abre mais rápido, gasta menos RAM e CPU parado e não trava mais ' +
+    'ao fechar um pane depois de reiniciar. Os panes "+" e os helpers ganham o ' +
+    'motor que só as missões tinham: regra de design, ponytail e memória.',
+  highlights: [
+    {
+      title: 'Boot e panes mais leves',
+      detail:
+        'O processo principal carrega 83% menos JavaScript no boot; voz, ONNX, ' +
+        'AEC e o TypeScript da revisão carregam sob demanda, e abrir um pane ' +
+        'prepara as skills em 6 ms quando o overlay já existe.',
+    },
+    {
+      title: 'Panes "+" com o motor das missões',
+      detail:
+        'Pedido de interface recebe a regra de design do projeto (DESIGN.md ou a ' +
+        'referência certa de ~/.design-references) e a Carta de Design contra a ' +
+        '"cara de IA"; pedido de código lembra a skill ponytail. O Codex também ' +
+        'recebe esse contexto.',
+    },
+    {
+      title: 'Helpers que entregam',
+      detail:
+        'O helper acha o pane pai mesmo com a janela noutro workspace, nasce com ' +
+        'a memória do projeto, só leva os servidores MCP que pediu e fecha ' +
+        'sozinho só se ainda for a mesma sessão.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Fechar pane depois de reiniciar não trava',
+      detail:
+        'O histórico de uso do Claude era relido inteiro e de forma síncrona ao ' +
+        'retomar; agora a leitura é incremental. A atribuição de uso por conta ' +
+        'deixou de ser apagada a cada reinício.',
+    },
+    {
+      title: 'Menos CPU parado',
+      detail:
+        'Pet, failover e polls do renderer deixam de acordar à toa, e o feixe do ' +
+        'pane ocupado só anima enquanto ele trabalha.',
+    },
+    {
+      title: 'Codex sem doutrina repetida',
+      detail:
+        'As instruções do operador eram coladas em cada tool do Codex (cerca de ' +
+        '37 mil tokens por pane); agora chegam uma vez por sessão.',
+    },
+    {
+      title: 'Ponytail em YAML válido',
+      detail: 'A skill voltou a carregar em CLIs com YAML estrito, como Kimi e OpenCode.',
     },
   ],
 };

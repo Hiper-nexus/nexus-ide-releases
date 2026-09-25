@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.76.101 — Motor leve
+
+O Nexus abre mais rápido, gasta menos RAM e CPU parado e não trava mais ao fechar um pane depois de reiniciar. Os panes "+" e os helpers ganham o motor que só as missões tinham.
+
+- **Boot e panes mais leves.** O processo principal carrega 83% menos JavaScript no boot: as skills embutidas saem do bundle para o disco, e voz, ONNX, AEC e o TypeScript da revisão carregam só quando usados. Abrir um pane prepara as skills em 6 ms quando o overlay já existe (antes, 39 ms).
+- **Reiniciar não trava mais.** Depois de um restart, retomar um Claude relia o histórico de uso inteiro de forma síncrona e travava o app: fechar um pane ficava girando. Agora a leitura é incremental e retoma de onde parou, e a atribuição de uso por conta deixou de ser apagada a cada reinício.
+- **Menos CPU parado.** O pet não acorda à toa quando está parado, a detecção de limite do failover deixou de rodar a cada pedaço de saída do terminal, os polls do renderer dormem com a janela oculta e o feixe do pane ocupado só anima enquanto ele trabalha (e respeita "reduzir movimento"). O `nexus.db` roda em WAL.
+- **Panes "+" com o motor das missões.** Pedido de interface recebe a regra de design do projeto (o DESIGN.md ou, sem ele, a referência certa do seu catálogo `~/.design-references`, com o import do contrato em uma chamada) e a Carta de Design contra a "cara de IA". Pedido de código lembra a skill ponytail. O Codex passou a receber esse contexto também, e a doutrina do operador não é mais colada em cada tool dele (cerca de 37 mil tokens por pane).
+- **Helpers que entregam.** O helper acha o pane pai mesmo com a janela noutro workspace, nasce com a memória do projeto, só leva os servidores MCP que pediu e fecha sozinho só se ainda for a mesma sessão. O Jev não escolhe mais para helper uma CLI sem MCP do Nexus, e a entrega de um helper não é tratada como pedido novo. Pesquisa somente leitura não carrega mais as cartas de código.
+- **Ponytail em YAML válido.** A skill voltou a carregar em CLIs com YAML estrito, como Kimi e OpenCode.
+
 ## 0.76.100 — Pasta reconhecida
 
 No Windows, abrir um projeto com `.nexus/project.json` voltou a funcionar.
