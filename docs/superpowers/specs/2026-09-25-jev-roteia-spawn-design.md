@@ -228,4 +228,5 @@ desse caminho, com o `redactState` do `judge`.
   distribui o trabalho abrindo panes sem precisar ser marcado como
   orquestrador, em vez de executar tudo sozinho, para economizar tokens entre
   LLMs e ganhar velocidade. Depende deste design: sem o Jev roteando, os
-  panes delegados nasceriam todos na CLI do agente que delegou.
+  panes delegados nasceriam todos na CLI do agente que delegou. Design em
+  `docs/superpowers/specs/2026-09-25-delegacao-automatica-design.md`.
