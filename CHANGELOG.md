@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.99 — Jev no comando
+
+Os panes que os seus agentes abrem passam a ser escolhidos pelo Jev, e todo pane seu aprende a dividir o trabalho em vez de fazer tudo sozinho.
+
+- **O Jev escolhe a CLI dos panes que os seus agentes abrem.** Quando o Claude (ou qualquer agente seu) abre um pane, quem decide CLI, modelo e esforço é o Jev com a tabela de rotas — o `adapterId` que o agente pediu é ignorado e aparece em `route.ignored` no recibo. Retomar um pane (`resume`) mantém a CLI dele. No empate, vence a CLI que ainda não está aberta por aquele agente; um vencedor claro nunca é trocado.
+- **Jev fora é visível.** Sem chave, desligado, tempo esgotado ou erro: o pane abre pela heurística e o motivo aparece no recibo, no `nexus_route_log`, num chip "sem Jev" no cabeçalho e num aviso único por motivo. Quando o Jev decide, o cabeçalho mostra "Jev".
+- **Delegação automática.** Todo pane seu nasce com a regra "delegue o que dá para dividir; leitura em paralelo; quem escreve, um por vez; faça sozinho o que é pequeno", e a cada mensagem longa o Jev avisa quando ela se divide em partes. Liga e desliga em Configurações › Equipes › Piloto automático Jev › "Delegação automática".
+- **Helpers organizados.** O helper nasce na aba do pane que pediu; helpers que escrevem entram em fila no mesmo checkout; o helper fecha sozinho quando entrega com sucesso (falha fica aberta); e o teto de panes recusa spawns pedidos por agentes para não abrir panes em cascata — o seu "+" continua só avisando.
+
 ## 0.76.98 — Linhagem única
 
 A conta Claude que é o seu login nativo não ganha mais uma segunda cópia do refresh token.

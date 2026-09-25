@@ -6891,7 +6891,7 @@ export const RELEASE_07697: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07698: AppRelease = {
   version: '0.76.98',
   date: '2026-09-24',
   codename: 'Linhagem única',
@@ -6915,6 +6915,42 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'A CLI regrava a credencial por rename; o link do overlay virava cópia e o ' +
         'Claude de fora caía. Agora o pane grava direto no ~/.claude real.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.99',
+  date: '2026-09-25',
+  codename: 'Jev no comando',
+  summary:
+    'Quando um agente seu abre um pane, quem escolhe CLI, modelo e esforço é o ' +
+    'Jev — não mais o próprio agente. E todo pane seu aprende a dividir o ' +
+    'trabalho em helpers em vez de fazer tudo sozinho.',
+  highlights: [
+    {
+      title: 'O Jev escolhe a CLI dos helpers',
+      detail:
+        'O adapterId pedido pelo agente é ignorado e aparece em route.ignored no ' +
+        'recibo; no empate vence a CLI que ainda não está aberta. Quando o Jev não ' +
+        'responde, o pane abre pela heurística com o motivo no chip "sem Jev" e ' +
+        'num aviso único.',
+    },
+    {
+      title: 'Delegação automática',
+      detail:
+        'Todo pane nasce com a regra de delegar o que dá para dividir, e a cada ' +
+        'mensagem longa o Jev avisa quando ela se divide em partes. Liga e desliga ' +
+        'em Configurações › Equipes › Piloto automático Jev.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Helpers na aba certa e sem cascata',
+      detail:
+        'O helper nasce na aba de quem pediu, writers entram em fila no checkout, ' +
+        'o helper fecha sozinho no sucesso e o teto de panes recusa spawns pedidos ' +
+        'por agentes.',
     },
   ],
 };
