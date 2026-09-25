@@ -182,6 +182,12 @@ export interface JudgeInput {
   surface?: JevDecisionSurface;
   sessionId?: string;
   missionId?: string;
+  /**
+   * Chamado uma vez quando a consulta termina sem resposta, com o motivo
+   * categórico (o mesmo que vai ao diário). Permite à superfície dizer POR QUE
+   * caiu no caminho determinístico sem mudar o retorno `null`.
+   */
+  onNoAnswer?: (reason: JevNoAnswerReason) => void;
 }
 
 export interface JudgeDeps {
@@ -309,6 +315,11 @@ export async function judge(
     }
   }
   stats.failures += 1;
+  try {
+    input.onNoAnswer?.(lastReason);
+  } catch {
+    // callback do chamador nunca derruba o contrato fail-open
+  }
   if (input.surface) {
     // Contabilidade central: a consulta falhou e a superfície caiu no caminho
     // determinístico. Só o motivo categórico — nunca o texto do erro.
