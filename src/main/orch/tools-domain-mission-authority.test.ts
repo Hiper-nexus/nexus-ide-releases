@@ -91,6 +91,14 @@ vi.mock('../remote/remote-spawn', () => ({
 
 import { buildDomainTools } from './tools-domain';
 import { assertMissionIntentAllowsTool } from './mission-intent-gate';
+import { listSquads } from './squad-store';
+import {
+  isFreeAgentChoiceContract,
+  requiresRouteReservation,
+  squadBindingViolationError,
+} from './free-agent-choice';
+import { hasCurrentDispatchAuthority } from '../../shared/mission-intent';
+import type { Mission } from '../../shared/orch-types';
 
 const scope = testProjectScope();
 
@@ -312,26 +320,38 @@ describe('mission creation authority', () => {
     }
 
     function missionStores() {
-      const created = {
-        id: 'mission-new',
-        title: 'Fechar o Epic 22',
-        description: '',
-        status: 'pending',
-        milestones: [],
-        learnings: '',
-        orchestratorSessionId: 'operator-session',
-        createdAt: 1,
-        updatedAt: 1,
-      };
+      let created: Record<string, unknown> = {};
+      const create = vi.fn((input: Record<string, unknown>) => {
+        created = {
+          id: 'mission-new',
+          description: '',
+          status: 'pending',
+          milestones: [],
+          learnings: '',
+          createdAt: 1,
+          updatedAt: 1,
+          ...input,
+        };
+        return created;
+      });
       const update = vi.fn((id: string, patch: { status?: string }) =>
         id === created.id ? { ...created, ...patch, updatedAt: 2 } : null,
       );
       mocks.getProjectDomainStores.mockReturnValue({
-        missions: { create: vi.fn(() => created), update },
+        missions: { create, update },
         missionPanes: { record: vi.fn() },
       });
-      return { update };
+      return { create, update };
     }
+
+    beforeEach(() => {
+      // O catálogo real tem o nexus-fullstack: é ele que o Nexus colava em
+      // toda missão da mão do operador sem ninguém pedir.
+      vi.mocked(listSquads).mockReturnValue([
+        { id: 'nexus-fullstack', name: 'Nexus Fullstack', agents: [] } as never,
+      ]);
+    });
+    afterEach(() => vi.mocked(listSquads).mockReturnValue([]));
 
     it('Autopilot: a missão nasce rodando e a mão continua abrindo panes', async () => {
       // O pane do operador já abria panes sem missão. Criar a missão o
@@ -357,9 +377,57 @@ describe('mission creation authority', () => {
       expect(gate.ok).toBe(true);
     });
 
+    it('Autopilot: a missão nasce em modo livre, despachada e sem squad imposto', async () => {
+      // Campo 25/09: a missão nascia sem contrato e presa ao nexus-fullstack.
+      // O spawn real recusava cada worker — approval_required (sem contrato),
+      // squad_binding_violation (agy fora do roster) e
+      // route_reservation_required (claude sem reserva) — e o agente pedia ao
+      // operador um despacho em "modo livre" que o Quadro não oferece.
+      mocks.getOrchSettings.mockReturnValue({ squadCliPolicy: 'operator-choice' });
+      const { create } = missionStores();
+
+      const mission = (await missionCreateTool().handler(
+        {
+          title: 'Revisão visual HiperGO',
+          description: 'Crítica de design de todas as superfícies do app web.',
+          milestones: ['Relatório final com o plano de redesign'],
+        },
+        operatorHand(),
+      )) as unknown as Mission;
+
+      const input = create.mock.calls[0]![0];
+      expect(input.squadId).toBeUndefined();
+      expect(input).toMatchObject({ intentState: 'dispatched', intentVersion: 1 });
+      expect(mission.intentContract).toMatchObject({
+        goal: 'Crítica de design de todas as superfícies do app web.',
+        acceptanceCriteria: ['Relatório final com o plano de redesign'],
+        freeAgentChoice: true,
+        intentVersion: 1,
+      });
+      // As três condições que o spawn de worker da missão exige.
+      expect(hasCurrentDispatchAuthority(mission)).toBe(true);
+      const free = isFreeAgentChoiceContract(mission.intentContract);
+      expect(
+        squadBindingViolationError({
+          hasNamedAgent: false,
+          missionSquadId: mission.squadId,
+          rosterClis: new Set(['claude', 'codex']),
+          adapterId: 'agy',
+          freeAgentChoice: free,
+        }),
+      ).toBeNull();
+      expect(
+        requiresRouteReservation({
+          missionRunning: mission.status === 'running',
+          rosterRouteAuthorized: false,
+          freeAgentChoice: free,
+        }),
+      ).toBe(false);
+    });
+
     it('Hardened: a missão criada pela mão do operador espera o despacho na interface', async () => {
       mocks.getOrchSettings.mockReturnValue({ squadCliPolicy: 'governed' });
-      const { update } = missionStores();
+      const { create, update } = missionStores();
 
       const mission = (await missionCreateTool().handler(
         { title: 'Fechar o Epic 22' },
@@ -368,6 +436,9 @@ describe('mission creation authority', () => {
 
       expect(update).not.toHaveBeenCalled();
       expect(mission.status).toBe('pending');
+      const input = create.mock.calls[0]![0];
+      expect(input.squadId).toBe('nexus-fullstack');
+      expect(input).not.toHaveProperty('intentContract');
     });
   });
 

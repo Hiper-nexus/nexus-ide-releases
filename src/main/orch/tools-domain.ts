@@ -96,7 +96,13 @@ import { describeEnvelope, DESCRIBE_PROPERTY } from './tool-describe';
 import { buildToolPickTools } from './tools-tool-pick';
 import { squadSchema } from '../../shared/orch-types';
 import { collectPerfSnapshot } from '../perf/perf-ipc';
-import { canCompleteConsultLane, canCompleteOpsLane } from '../../shared/mission-intent';
+import {
+  canCompleteConsultLane,
+  canCompleteOpsLane,
+  compileIntentContract,
+  MISSION_INTENT_GOAL_MAX_CHARS,
+  type MissionIntentContract,
+} from '../../shared/mission-intent';
 import { isTaskQueueManagedMission } from './task-dispatch-authority';
 import {
   countMissionItems,
@@ -251,13 +257,48 @@ const agentInvokeTool: McpToolDef = {
   },
 };
 
+/**
+ * Contrato da missão que a mão do operador cria em Autopilot: aprovado e
+ * despachado agora (é o próprio operador pedindo), em modo livre. Os
+ * guardrails que não são cerimônia — containment, allowlists, 1 escritor por
+ * checkout, maxWorkers — continuam valendo a jusante.
+ */
+function operatorHandMissionContract(
+  title: string,
+  description: string | undefined,
+  milestones: readonly string[],
+): MissionIntentContract {
+  const now = Date.now();
+  const acceptanceCriteria = milestones
+    .map((milestone) => milestone.trim().slice(0, 2_048))
+    .filter((milestone) => milestone.length > 0)
+    .slice(0, 32);
+  return {
+    ...compileIntentContract({
+      goal: (description?.trim() || title).slice(0, MISSION_INTENT_GOAL_MAX_CHARS),
+      source: 'typed',
+      intentVersion: 1,
+      executionMode: 'autopilot',
+      contextPolicy: 'on-demand',
+      freeAgentChoice: true,
+      ...(acceptanceCriteria.length > 0 ? { acceptanceCriteria } : {}),
+    }),
+    approvedAt: now,
+    dispatchedAt: now,
+  };
+}
+
 const missionCreateTool: McpToolDef = {
   name: 'nexus_mission_create',
   description:
-    'Create a mission (a tracked unit of orchestrated work). The calling ' +
-    'session becomes the orchestrator and receives worker handoffs when idle. ' +
-    'In Autopilot the mission starts running, so you can spawn its workers ' +
-    'right away; in Hardened it waits for the operator to dispatch it.',
+    'Create a mission (a tracked unit of orchestrated work). Optional: a pane ' +
+    'the operator opened already spawns helper panes with nexus_pane_spawn ' +
+    'without any mission. The calling session becomes the orchestrator and ' +
+    'receives worker handoffs when idle. In Autopilot the mission starts ' +
+    'running in free agent choice (any installed CLI; no squad unless squadId ' +
+    'is given), so you can spawn its workers right away, and once it is done ' +
+    'or failed this pane is the operator hand again. In Hardened it waits for ' +
+    'the operator to dispatch it.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -275,23 +316,43 @@ const missionCreateTool: McpToolDef = {
       );
     }
     const stores = getProjectDomainStores(ctx.scope);
+    const title = requireStr(args, 'title');
+    const description = str(args, 'description');
+    const milestones = strArray(args, 'milestones');
     const rawSquadId = str(args, 'squadId');
-    const defaultSquadId =
-      listSquads().find((s) => s.id === 'nexus-fullstack')?.id ??
-      listSquads().find((s) => s.id !== PET_STUDIO_SQUAD_ID)?.id;
+    const autopilot = isOperatorChoicePolicy(getOrchSettings().squadCliPolicy);
+    // A mão do operador já abre panes e worktrees sem missão; a missão dela só
+    // registra o trabalho. Em Autopilot ela nasce como o "modo livre" da UI:
+    // rodando, com contrato despachado e Escolha livre de agentes, e SEM squad
+    // que ninguém pediu. Antes nascia sem contrato (todo spawn de worker voltava
+    // approval_required) e presa ao nexus-fullstack (squad_binding_violation,
+    // route_reservation_required, cutucada de delegação no pane do operador) —
+    // o agente acabava pedindo ao operador um despacho que a UI não oferece
+    // (campos 23/09 e 25/09). Hardened segue com squad padrão e despacho
+    // explícito na interface.
+    const defaultSquadId = autopilot
+      ? undefined
+      : (listSquads().find((s) => s.id === 'nexus-fullstack')?.id ??
+        listSquads().find((s) => s.id !== PET_STUDIO_SQUAD_ID)?.id);
     const created = stores.missions.create({
-      title: requireStr(args, 'title'),
-      description: str(args, 'description'),
+      title,
+      description,
       squadId: rawSquadId || defaultSquadId,
-      milestones: strArray(args, 'milestones'),
+      milestones,
       orchestratorSessionId: ctx.sessionId,
+      ...(autopilot
+        ? {
+            intentState: 'dispatched' as const,
+            intentVersion: 1,
+            intentContract: operatorHandMissionContract(
+              title,
+              description,
+              milestones,
+            ),
+          }
+        : {}),
     });
-    // A mão do operador já abre panes e worktrees sem missão. Em Autopilot,
-    // nascer PENDENTE a rebaixava: promovida a orquestrador de uma missão que
-    // ninguém despachou, todo pane_spawn voltava dispatch_required até o
-    // operador achar o botão Despachar (campo 23/09). A missão dela nasce
-    // rodando. Hardened segue exigindo o despacho explícito na interface.
-    const mission = isOperatorChoicePolicy(getOrchSettings().squadCliPolicy)
+    const mission = autopilot
       ? (stores.missions.update(created.id, { status: 'running' }) ?? created)
       : created;
     ctx.missionId = mission.id;
