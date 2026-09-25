@@ -10,18 +10,19 @@ vi.mock('./jev-secrets', () => ({ hasJevCredential: vi.fn(() => true) }));
 
 import type { JevResult, JudgeInput } from './jev-client';
 import { recordJevDecision } from './jev-decision-log';
-import { adviseDelegation, DELEGATE_MIN_PROMPT_CHARS } from './jev-delegation';
+import { adviseDelegation, advisePrompt, DELEGATE_MIN_PROMPT_CHARS } from './jev-delegation';
 
 type JudgeMock = (input: JudgeInput) => Promise<JevResult | null>;
 const LONG = 'Implemente a tela de login, escreva os testes e revise a segurança do fluxo inteiro.';
 
-function verdict(divisible: number, parts: string, writers: string): JevResult {
+function verdict(divisible: number, parts: string, writers: string, writesCode = 0.1): JevResult {
   return {
     model: 'jev-test',
     answers: {
       divisible: { type: 'noul', noul: divisible },
       parts: { type: 'choice', choice: parts, probabilities: {}, confidence: 0.8 },
       writers: { type: 'choice', choice: writers, probabilities: {}, confidence: 0.8 },
+      writesCode: { type: 'noul', noul: writesCode },
     },
     usage: { input_tokens: 50, output_tokens: 5 },
   };
@@ -70,5 +71,31 @@ describe('adviseDelegation', () => {
     const { redactState } = await import('./jev-client');
     const sent = redactState(judge.mock.calls[0]![0].state) as { message: string };
     expect(sent.message).not.toContain(secret);
+  });
+});
+
+describe('advisePrompt', () => {
+  it('pergunta na MESMA chamada se a mensagem pede para escrever código', async () => {
+    const judge = vi.fn<JudgeMock>(async () => verdict(0.2, '1', '1', 0.9));
+    expect(await advisePrompt(LONG, { judge })).toEqual({ delegation: null, writesCode: 0.9 });
+    expect(judge).toHaveBeenCalledTimes(1);
+    expect(Object.keys(judge.mock.calls[0]![0].questions)).toContain('writesCode');
+  });
+
+  it('traz o conselho de delegação junto', async () => {
+    const judge = vi.fn<JudgeMock>(async () => verdict(0.8, '3', '1', 0.7));
+    expect(await advisePrompt(LONG, { judge })).toEqual({
+      delegation: { parts: 3, writers: 1, confidence: 0.8, model: 'jev-test' },
+      writesCode: 0.7,
+    });
+  });
+
+  it('sem resposta de writesCode, a probabilidade vale 0', async () => {
+    const judge = vi.fn<JudgeMock>(async () => {
+      const result = verdict(0.2, '1', '0');
+      delete (result.answers as Record<string, unknown>).writesCode;
+      return result;
+    });
+    expect(await advisePrompt(LONG, { judge })).toEqual({ delegation: null, writesCode: 0 });
   });
 });

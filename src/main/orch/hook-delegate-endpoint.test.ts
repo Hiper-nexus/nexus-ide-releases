@@ -2,6 +2,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  __resetLeanRemindersForTests,
   formatDelegationContext,
   handleHookDelegateHttp,
   handleHookDelegateRequest,
@@ -18,8 +19,13 @@ describe('hook /hook/delegate', () => {
     expect(parseUserPrompt('lixo')).toBeNull();
   });
 
+  const delegation = (parts: number, writers: number) => ({
+    delegation: { parts, writers, confidence: 0.8, model: 'j' },
+    writesCode: 0.1,
+  });
+
   it('aconselha: additionalContext curto com as partes', async () => {
-    const advise = vi.fn(async () => ({ parts: 3, writers: 1, confidence: 0.8, model: 'j' }));
+    const advise = vi.fn(async () => delegation(3, 1));
     const out = await handleHookDelegateRequest(operator, { prompt: LONG }, { advise });
     const text = (out.payload.hookSpecificOutput as { additionalContext: string }).additionalContext;
     expect(out.payload.hookSpecificOutput).toMatchObject({ hookEventName: 'UserPromptSubmit' });
@@ -30,13 +36,53 @@ describe('hook /hook/delegate', () => {
 
   it('silêncio: sem conselho, sessão de missão, worker, payload inválido, exceção', async () => {
     expect((await handleHookDelegateRequest(operator, { prompt: LONG }, { advise: vi.fn(async () => null) })).payload).toEqual({});
-    const advise = vi.fn(async () => ({ parts: 3, writers: 0, confidence: 0.9, model: 'j' }));
+    const advise = vi.fn(async () => delegation(3, 0));
     expect((await handleHookDelegateRequest({ ...operator, missionId: 'm' }, { prompt: LONG }, { advise })).payload).toEqual({});
     expect((await handleHookDelegateRequest({ role: 'worker', sessionId: 's' }, { prompt: LONG }, { advise })).payload).toEqual({});
     expect((await handleHookDelegateRequest(operator, { nope: 1 }, { advise })).payload).toEqual({});
     expect(advise).not.toHaveBeenCalled();
     const boom = vi.fn(async () => { throw new Error('x'); });
     expect((await handleHookDelegateRequest(operator, { prompt: LONG }, { advise: boom })).payload).toEqual({});
+  });
+
+  describe('lembrete da ponytail (pedido de código)', () => {
+    const code = { delegation: null, writesCode: 0.9 };
+
+    it('pedido de código recebe o lembrete curto da skill ponytail', async () => {
+      __resetLeanRemindersForTests();
+      const out = await handleHookDelegateRequest(operator, { prompt: LONG }, { advise: vi.fn(async () => code) });
+      const text = (out.payload.hookSpecificOutput as { additionalContext: string }).additionalContext;
+      expect(text).toContain('ponytail');
+      expect(text.length).toBeLessThanOrEqual(260);
+    });
+
+    it('lembra uma vez por sessão dentro do intervalo, e de novo depois dele', async () => {
+      __resetLeanRemindersForTests();
+      let now = 1_000_000;
+      const deps = { advise: vi.fn(async () => code), now: () => now };
+      expect((await handleHookDelegateRequest(operator, { prompt: LONG }, deps)).payload).not.toEqual({});
+      expect((await handleHookDelegateRequest(operator, { prompt: LONG }, deps)).payload).toEqual({});
+      expect((await handleHookDelegateRequest({ ...operator, sessionId: 's2' }, { prompt: LONG }, deps)).payload)
+        .not.toEqual({});
+      now += 31 * 60_000;
+      expect((await handleHookDelegateRequest(operator, { prompt: LONG }, deps)).payload).not.toEqual({});
+    });
+
+    it('conversa, pergunta ou leitura (writesCode baixo) não recebe lembrete', async () => {
+      __resetLeanRemindersForTests();
+      const advise = vi.fn(async () => ({ delegation: null, writesCode: 0.3 }));
+      expect((await handleHookDelegateRequest(operator, { prompt: LONG }, { advise })).payload).toEqual({});
+    });
+
+    it('delegação e lembrete saem juntos no mesmo additionalContext', async () => {
+      __resetLeanRemindersForTests();
+      const advise = vi.fn(async () => ({ ...delegation(3, 1), writesCode: 0.9 }));
+      const out = await handleHookDelegateRequest(operator, { prompt: LONG }, { advise });
+      const text = (out.payload.hookSpecificOutput as { additionalContext: string }).additionalContext;
+      expect(text).toContain('~3 partes');
+      expect(text).toContain('ponytail');
+      expect(text.length).toBeLessThanOrEqual(660);
+    });
   });
 
   it('formatDelegationContext conta leitura e escrita', () => {
