@@ -61,6 +61,34 @@ quando:
 5. o manifesto incluir auditoria/SBOM de produção e da toolchain, lockfile,
    versões Node/npm e hashes finais de DMG, ZIP e evidência E2E.
 
+## Um comando, de dentro do Nexus ou do Terminal: `npm run release:mac`
+
+Depois de commitar versão, CHANGELOG e release notes e criar a tag anotada
+local, rode:
+
+```bash
+npm run release:mac                              # build → gate → publicação macOS
+npm run release:mac -- --from candidate          # artefatos já em out/make: pula o build
+npm run release:mac -- --from candidate --no-publish   # só o gate
+```
+
+O comando sobe um job do launchd de uma execução (`KeepAlive=false`), repassa
+o log do job em primeiro plano e sai com o código das etapas. Cada etapa só
+roda se a anterior passar, e `rebuild:node` roda sempre no fim. Ele usa o
+Node fixado em `nexusRelease.node` (ou `NEXUS_RELEASE_NODE=/caminho/node`),
+a home real do usuário e o `PATH` do shell de login, e nunca repassa
+`APPLE_ID`/`APPLE_APP_SPECIFIC_PASSWORD`. Recusa se outra release estiver
+carregada ou rodando.
+
+**Por que launchd.** Dentro de um pane do Nexus, todo processo tem o
+`nexus-pty-supervisor` do pane como "processo responsável" do macOS. O app
+empacotado lançado dali herda esse responsável e o supervisor dele recusa
+abrir terminal (`responsible_is_supervisor` em
+`/tmp/nexus-pty-launch-auth-fail.log`). O smoke do gate morre em
+`dictation-hold-to-talk (write-refused-exited)`. Um job do launchd nasce com
+a cadeia de responsabilidade limpa, como o app aberto pelo Finder. Os
+comandos manuais abaixo continuam valendo fora de um pane.
+
 ## Publicação somente macOS (F-564)
 
 Depois de produzir a candidata local e passar `npm run release:candidate`,
