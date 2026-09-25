@@ -39,7 +39,10 @@ import { validateToolArgs } from "./mcp-args-validation";
 import type { McpRegistry, McpToolDef } from "./mcp-protocol";
 import { getContextWorkflowService } from "../context/context-workflow-registry";
 import { mutationTargetPaths } from "../context/context-workflow-service";
-import { assertMissionIntentAllowsTool } from "./mission-intent-gate";
+import {
+  assertMissionIntentAllowsTool,
+  type IntentGateCode,
+} from "./mission-intent-gate";
 import {
   cancelMissionPrompt,
   completeMissionPrompt,
@@ -115,6 +118,44 @@ export const DENIAL_HINTS = Object.freeze({
   internalReviewer:
     "Reviewer interno só lê e opina: conclua com nexus_merge_review_submit ou o handoff de revisão, sem tentar editar.",
 });
+
+/**
+ * Saída para o pane do operador preso a uma missão que não roda (F-651). Sem
+ * ela o agente lia `dispatch_required` e pedia ao operador um "despacho" que a
+ * interface não oferece para missão criada pelo MCP. Todo caminho sugerido aqui
+ * é uma chamada que o próprio pane tem autoridade para fazer (mission-intent-gate
+ * aceita running em blocked e failed em qualquer estado não concluído).
+ */
+export function operatorHandMissionExitHint(
+  mission: Pick<Mission, "id" | "status">,
+  code: IntentGateCode,
+): string | undefined {
+  if (
+    code !== "dispatch_required" &&
+    code !== "intent_required" &&
+    code !== "approval_required"
+  ) {
+    return undefined;
+  }
+  const release =
+    'encerrada, este pane volta a ser a mão do operador e abre panes sem missão. ' +
+    "Não peça ao operador para despachar: não há o que clicar.";
+  if (mission.status === "blocked") {
+    return (
+      `A missão ${mission.id} está bloqueada e este pane é a mão do operador: ` +
+      `retome-a com nexus_mission_set_status { missionId: "${mission.id}", status: "running" } ` +
+      `ou encerre-a com status "failed" e uma nota — ${release}`
+    );
+  }
+  if (mission.status === "pending") {
+    return (
+      `A missão ${mission.id} não foi despachada e este pane é a mão do operador: ` +
+      `para seguir sem ela, encerre-a com nexus_mission_set_status ` +
+      `{ missionId: "${mission.id}", status: "failed" } e uma nota — ${release}`
+    );
+  }
+  return undefined;
+}
 
 function resolveProductionWorkflowAuthority(
   scope: ProjectExecutionScope,
@@ -822,7 +863,7 @@ export async function dispatchToolCall(
         readonly ok: true;
         readonly resolved: ReturnType<IntentGateMissionResolver>;
       }
-    | { readonly ok: false; readonly error: string };
+    | { readonly ok: false; readonly error: string; readonly hint?: string };
   const checkMissionIntent = (): IntentCheck => {
     if (!ctx.missionId || !isEffectfulTool(tool.name)) {
       return { ok: true, resolved: null };
@@ -845,6 +886,7 @@ export async function dispatchToolCall(
           workerPaneCount: resolved.workerPaneCount,
           role: ctx.role,
           sessionId,
+          operatorHand: ctx.promotedFromUserSession === true,
         },
         args,
       );
@@ -862,13 +904,16 @@ export async function dispatchToolCall(
       ) {
         return { ok: true, resolved };
       }
-      return { ok: false, error: gate.error };
+      const hint = ctx.promotedFromUserSession
+        ? operatorHandMissionExitHint(resolved.mission, gate.code)
+        : undefined;
+      return { ok: false, error: gate.error, ...(hint ? { hint } : {}) };
     } catch (err) {
       console.warn("[mcp-dispatch] intent gate lookup failed (deny):", err);
       return { ok: false, error: "intent_gate_unavailable" };
     }
   };
-  const denyIntentCheck = (error: string): ToolDispatchResult => {
+  const denyIntentCheck = (error: string, hint?: string): ToolDispatchResult => {
     const auditFailure = writeAudit(
       () =>
         auditDenied(
@@ -882,12 +927,22 @@ export async function dispatchToolCall(
         ),
       tool.name,
     );
-    return auditFailure ?? { ok: false, tool: tool.name, denied: true, error };
+    return (
+      auditFailure ?? {
+        ok: false,
+        tool: tool.name,
+        denied: true,
+        error,
+        ...(hint ? { hint } : {}),
+      }
+    );
   };
 
   // First check avoids asking for confirmation when authority is already stale.
   const initialIntent = checkMissionIntent();
-  if (!initialIntent.ok) return denyIntentCheck(initialIntent.error);
+  if (!initialIntent.ok) {
+    return denyIntentCheck(initialIntent.error, initialIntent.hint);
+  }
 
   try {
     const boundAuthority = bindEffectAuthority(
@@ -1228,7 +1283,9 @@ export async function dispatchToolCall(
   }
 
   const finalIntent = checkMissionIntent();
-  if (!finalIntent.ok) return denyIntentCheck(finalIntent.error);
+  if (!finalIntent.ok) {
+    return denyIntentCheck(finalIntent.error, finalIntent.hint);
+  }
 
   const invocationId = effectful ? randomUUID() : undefined;
   if (invocationId) {

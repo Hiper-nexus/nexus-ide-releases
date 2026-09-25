@@ -59,6 +59,12 @@ export interface IntentGateContext {
   readonly role?: string | null;
   /** Caller session id for handoff origin checks. */
   readonly sessionId?: string | null;
+  /**
+   * The caller is the operator's own pane, promoted to orchestrator by
+   * `nexus_mission_create` (gate `promotedFromUserSession`). Main-owned, never
+   * derived from MCP arguments.
+   */
+  readonly operatorHand?: boolean;
   /** Caller project/checkout scope, required to resolve the current mission
    * leader. Absent means the leader-identity checks below fail closed. */
   readonly scope?: ProjectExecutionScope;
@@ -224,9 +230,22 @@ export function assertMissionIntentAllowsTool(
         (intentState === 'ready_to_start' ||
           intentState === 'dispatched' ||
           canDispatchWorkers(intentState));
+      // A mão do operador retoma a própria missão bloqueada (F-651). O agente
+      // do "+ Pane" que marcou blocked ficava sem volta: running caía aqui como
+      // dispatch_required e o destravamento dependia de uma tela que não existe.
+      const operatorResume =
+        nextStatus === 'running' &&
+        ctx.mission.status === 'blocked' &&
+        ctx.operatorHand === true &&
+        ctx.role === 'orchestrator' &&
+        Boolean(ctx.scope) &&
+        requireMissionLeaderSession(ctx.scope!, ctx.mission.id, {
+          sessionId: ctx.sessionId,
+        }).ok;
       if (
         failSafe ||
         canStart ||
+        operatorResume ||
         (canDispatchWorkers(intentState) && isDispatchAuthorized)
       ) {
         return { ok: true, intentState, intentVersion };

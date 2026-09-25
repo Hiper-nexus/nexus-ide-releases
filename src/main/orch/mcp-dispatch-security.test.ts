@@ -1251,6 +1251,109 @@ describe("MCP dispatch effect safety", () => {
       },
     );
 
+    // Rede de proteção (F-651): qualquer trava nova que deixe o pane do "+ Pane"
+    // sem saída numa missão quebra este teste. A saída tem de vir na própria
+    // recusa (hint) e ser uma chamada que o pane faz sozinho — nunca "peça ao
+    // operador para despachar".
+    const REALISTIC_INTENT: Record<Mission["status"], Mission["intentState"]> = {
+      pending: "legacy",
+      running: "dispatched",
+      blocked: "blocked_user",
+      failed: "blocked_technical",
+      done: "done",
+    };
+
+    it.each(["pending", "running", "blocked", "failed", "done"] as const)(
+      "invariante: missão %s nunca deixa o pane do operador sem abrir panes",
+      async (initial) => {
+        const ctx = promotedOperatorPane();
+        const fixture = dispatchedMissionFixture();
+        let status: Mission["status"] = initial;
+        const options: McpDispatchOptions = {
+          ...workflowOptions(),
+          resolveMissionForIntentGate: () => ({
+            // Missão recém-criada pelo pane: nenhuma task nem worker ainda.
+            taskCount: 0,
+            workerPaneCount: 0,
+            mission: {
+              ...fixture.mission,
+              status,
+              intentState: REALISTIC_INTENT[status],
+              // Missão pendente criada pelo MCP no Hardened não tem contrato.
+              ...(status === "pending" ? { intentContract: undefined, intentVersion: 0 } : {}),
+            },
+          }),
+        };
+        const spawnHandler = vi.fn(async () => ({ ok: true }));
+        const spawn = () =>
+          dispatchToolCall(
+            "http-mcp",
+            registryWith(spawnTool(spawnHandler)),
+            "nexus_pane_spawn",
+            { adapterId: "codex", prompt: "revisor A1" },
+            ctx,
+            options,
+          );
+
+        let result = await spawn();
+        if (!result.ok) {
+          const hint = (result as { hint?: string }).hint ?? "";
+          const next = /status: "(running|failed)"/.exec(hint)?.[1];
+          expect(next, `missão ${initial} sem saída: ${JSON.stringify(result)}`).toBeDefined();
+          expect(hint).not.toMatch(/Escolha livre|inicie a missão/i);
+          const setStatus = vi.fn(async (input: Record<string, unknown>) => {
+            status = input.status as Mission["status"];
+            return { ok: true };
+          });
+          const exit = await dispatchToolCall(
+            "http-mcp",
+            registryWith({
+              name: "nexus_mission_set_status",
+              description: "x",
+              inputSchema: { type: "object", properties: {} },
+              handler: setStatus,
+            }),
+            "nexus_mission_set_status",
+            { missionId: TEST_MISSION_ID, status: next, note: "saída pela mão do operador" },
+            ctx,
+            options,
+          );
+          expect(exit, `saída sugerida recusada para ${initial}`).toMatchObject({ ok: true });
+          result = await spawn();
+        }
+
+        expect(result).toMatchObject({ ok: true, tool: "nexus_pane_spawn" });
+        expect(spawnHandler).toHaveBeenCalledOnce();
+      },
+    );
+
+    it("worker e orquestrador de squad não ganham o atalho da mão do operador", async () => {
+      resetGateForTests();
+      const maestro = orchestratorMissionContext();
+      const fixture = dispatchedMissionFixture();
+      const result = await dispatchToolCall(
+        "http-mcp",
+        registryWith({
+          name: "nexus_mission_set_status",
+          description: "x",
+          inputSchema: { type: "object", properties: {} },
+          handler: vi.fn(async () => ({ ok: true })),
+        }),
+        "nexus_mission_set_status",
+        { missionId: TEST_MISSION_ID, status: "running" },
+        maestro,
+        {
+          ...workflowOptions(),
+          resolveMissionForIntentGate: () => ({
+            ...fixture,
+            mission: { ...fixture.mission, status: "blocked", intentState: "blocked_user" },
+          }),
+        },
+      );
+      expect(result).toMatchObject({ ok: false, denied: true });
+      expect(result).not.toHaveProperty("hint");
+    });
+
     it("mission_set_status da própria missão concluída segue com o orquestrador", async () => {
       const ctx = promotedOperatorPane();
       await dispatchToolCall(

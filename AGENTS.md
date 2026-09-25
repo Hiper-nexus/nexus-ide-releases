@@ -223,6 +223,12 @@ saber isto antes de mexer:
   (`returnOperatorHandFromEndedMission`, no `dispatchToolCall`, F-650).
   `blocked` mantém o vínculo: é a espera pela resposta do operador. O Nexus
   opera pelo "+ Pane" E por missão; missão nunca deixa o pane do operador estéril.
+- Missão parada tem saída na mão do próprio pane (F-651): ele retoma a `blocked`
+  (`running`, `operatorHand` no intent gate) e toda recusa de intenção traz o
+  `hint` com a chamada exata. Recusa nunca manda pedir "despacho" ao operador —
+  missão criada pelo MCP não tem botão de despacho. A invariante em
+  `mcp-dispatch-security.test.ts` percorre todo status; trava nova no caminho
+  do pane do operador precisa passar nela.
 
 ## Abas dos Terminais: aba = feature (23/09)
 
