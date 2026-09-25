@@ -75,7 +75,7 @@ export function scheduleAutoCloseAfterHandoff(
   sessionId: string | undefined,
   status: string,
   paneIdOf: (sessionId: string) => string | null,
-  close: (paneId: string) => Promise<unknown>,
+  close: (paneId: string, expectedSessionId: string) => Promise<unknown>,
 ): void {
   if (!sessionId) return;
   const paneId = paneIdOf(sessionId);
@@ -83,7 +83,8 @@ export function scheduleAutoCloseAfterHandoff(
   if (!shouldAutoCloseAfterHandoff({ armed: armedPaneId !== null, status })) return;
   disarmAutoCloseOnHandoff(sessionId, paneId);
   setTimeout(() => {
-    void Promise.resolve().then(() => close(armedPaneId!)).catch((error) =>
+    if (paneIdOf(sessionId) !== armedPaneId) return;
+    void Promise.resolve().then(() => close(armedPaneId!, sessionId)).catch((error) =>
       console.warn(`[handoff] auto-close do pane ${armedPaneId} falhou:`, error),
     );
   }, 0);

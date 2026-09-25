@@ -760,7 +760,9 @@ export function useOrchBridge(): void {
 
       window.nexus.orch.onPaneCloseRequest((request) => {
         const paneId = typeof request === 'string' ? request : request.paneId;
-        if (typeof request !== 'string') {
+        if (typeof request !== 'string' && 'expectedSessionId' in request) {
+          if (getPaneSessionId(paneId) !== request.expectedSessionId) return;
+        } else if (typeof request !== 'string') {
           const pane = listPanes(useLayoutStore.getState().root).find(
             (candidate) => candidate.id === request.paneId,
           );
