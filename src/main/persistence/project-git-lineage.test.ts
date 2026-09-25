@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+  collectGitRepositoryContext,
   collectGitRepositoryProof,
   compareRepositoryLineage,
   processGitRunner,
@@ -151,6 +152,49 @@ describe('processGitRunner', () => {
     const config = processGitRunner.run(repo, ['config', '--list', '--show-origin']);
     expect(config.status).toBe(0);
     expect(config.stdout).not.toContain('config-global-vazou');
+  });
+});
+
+describe('collectGitRepositoryContext', () => {
+  const tempDirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of tempDirs.splice(0)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  function gitRepo(): string {
+    const repo = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-lineage-root-')),
+    );
+    tempDirs.push(repo);
+    execFileSync('git', ['init', '-q', repo]);
+    return repo;
+  }
+
+  it('aceita a raiz do worktree escrita com outra caixa', (ctx) => {
+    // No Windows o git devolve a grafia do disco; a pasta escolhida podia vir
+    // como `c:\users\…` (ou `ADMINI~1`) e a raiz certa virava "manifesto
+    // fora da raiz do worktree".
+    const repo = gitRepo();
+    const respelled = repo.toUpperCase() === repo ? repo.toLowerCase() : repo.toUpperCase();
+    if (respelled === repo || !fs.existsSync(respelled)) ctx.skip();
+
+    const context = collectGitRepositoryContext(respelled);
+    expect(fs.realpathSync.native(context.topLevelRealPath)).toBe(
+      fs.realpathSync.native(repo),
+    );
+  });
+
+  it('continua recusando manifesto num subdiretório do worktree', () => {
+    const repo = gitRepo();
+    const nested = path.join(repo, 'pacote');
+    fs.mkdirSync(nested);
+
+    expect(() => collectGitRepositoryContext(nested)).toThrow(
+      'project manifest must live at the Git worktree root',
+    );
   });
 });
 

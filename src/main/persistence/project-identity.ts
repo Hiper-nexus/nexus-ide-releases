@@ -20,6 +20,7 @@ import {
   collectGitRepositoryContext,
   compareRepositoryLineage,
   isGitCommitReachable,
+  isSameDirectory,
   processGitRunner,
   repositoryLineageId,
   type GitRepositoryContext,
@@ -678,7 +679,7 @@ function assertNoLiveCheckoutDuplicate(
   } catch {
     return;
   }
-  if (previousRoot === rootRealPath) return;
+  if (isSameDirectory(previousRoot, rootRealPath)) return;
   const previousToken = existingCheckoutToken(previousRoot, runner);
   if (previousToken?.checkoutToken === entry.checkoutToken) {
     quarantine(

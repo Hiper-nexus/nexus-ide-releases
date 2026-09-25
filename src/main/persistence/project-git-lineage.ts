@@ -312,7 +312,9 @@ function resolveGitDirectory(rootRealPath: string, rawPath: string): string {
   const absolute = path.isAbsolute(rawPath)
     ? rawPath
     : path.resolve(rootRealPath, rawPath);
-  const resolved = fs.realpathSync(absolute);
+  // Canônico do sistema: `--absolute-git-dir` vem na grafia do disco e
+  // `--git-common-dir` relativo à raiz recebida — só assim os dois se comparam.
+  const resolved = fs.realpathSync.native(absolute);
   if (!fs.statSync(resolved).isDirectory()) {
     throw new Error(`Git administrative path is not a directory: ${absolute}`);
   }
@@ -329,6 +331,21 @@ function isInside(parent: string, child: string): boolean {
   );
 }
 
+/**
+ * O mesmo diretório pode chegar escrito de outro jeito: no Windows o git
+ * devolve a grafia do disco (caixa real, nome longo) e a pasta pode vir como
+ * `c:\users\…` ou `ADMINI~1`. Compara a forma canônica do sistema, que resolve
+ * caixa e nome curto, em vez da string.
+ */
+export function isSameDirectory(left: string, right: string): boolean {
+  if (left === right) return true;
+  try {
+    return fs.realpathSync.native(left) === fs.realpathSync.native(right);
+  } catch {
+    return false;
+  }
+}
+
 export function collectGitRepositoryContext(
   rootRealPath: string,
   runner: ProjectGitRunner = processGitRunner,
@@ -337,7 +354,7 @@ export function collectGitRepositoryContext(
   const topLevelRealPath = fs.realpathSync(
     requiredGit(runner, rootRealPath, ['rev-parse', '--show-toplevel']),
   );
-  if (topLevelRealPath !== rootRealPath) {
+  if (!isSameDirectory(topLevelRealPath, rootRealPath)) {
     throw new Error('project manifest must live at the Git worktree root');
   }
   const gitDirRealPath = resolveGitDirectory(
