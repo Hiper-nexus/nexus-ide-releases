@@ -19,6 +19,10 @@ export interface RouteLogEntry {
   model?: string;
   effort?: string;
   reason: string;
+  /** jev | mixed | heuristic — de onde veio tier/especialidade. */
+  classifierSource?: string;
+  /** Motivo da queda para a heurística quando o Jev não respondeu. */
+  jevUnavailable?: string;
 }
 
 export interface RouteLogInput {
@@ -28,6 +32,10 @@ export interface RouteLogInput {
   model?: string;
   effort?: string;
   reason: string;
+  /** jev | mixed | heuristic — de onde veio tier/especialidade. */
+  classifierSource?: string;
+  /** Motivo da queda para a heurística quando o Jev não respondeu. */
+  jevUnavailable?: string;
 }
 
 const LOG_CAP = 50;
@@ -51,6 +59,8 @@ export function recordRouteLog(input: RouteLogInput): RouteLogEntry {
     model: input.model,
     effort: input.effort,
     reason: input.reason,
+    ...(input.classifierSource ? { classifierSource: input.classifierSource } : {}),
+    ...(input.jevUnavailable ? { jevUnavailable: input.jevUnavailable } : {}),
   };
   log = [...log.slice(-(LOG_CAP - 1)), entry];
   return entry;
