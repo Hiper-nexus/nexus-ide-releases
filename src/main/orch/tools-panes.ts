@@ -51,6 +51,10 @@ import {
   spawnRouteFrom,
 } from './operator-spawn-route';
 import {
+  decideDelegatedWriterSpawn,
+  delegatedPaneFacts,
+} from './delegated-writer-gate';
+import {
   isFreeAgentChoiceContract,
   requiresRouteReservation,
   squadBindingViolationError,
@@ -824,6 +828,20 @@ const paneSpawn: McpToolDef = {
       );
     }
     options = coerceSpawnReadOnly(options, ctx.readOnly);
+    // C3 (25/09): na mão do operador, writer delegado entra um por vez no
+    // checkout; helpers de leitura seguem em paralelo.
+    if (operatorHand && !options.missionId) {
+      const writerDecision = decideDelegatedWriterSpawn({
+        spawnReadOnly: options.readOnly === true,
+        checkoutId: ctx.scope.checkoutId,
+        panes: delegatedPaneFacts(
+          listPaneSnapshots(),
+          (sessionId) =>
+            getPaneRuntimeAuthorityBySession(sessionId)?.operatorParentSessionId,
+        ),
+      });
+      if (!writerDecision.allowed) throw new Error(writerDecision.reason);
+    }
     let isolatedWriter: Awaited<ReturnType<typeof allocateIsolatedWriterWorktree>> | undefined;
     let isolatedWriterPending = false;
     let releaseWorkerSlot: (() => void) | undefined;

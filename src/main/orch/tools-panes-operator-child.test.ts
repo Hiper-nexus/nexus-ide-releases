@@ -317,6 +317,17 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
     expect(harness.spawnPaneAndMaybePrompt).not.toHaveBeenCalled();
   });
 
+  it('writer delegado ativo no checkout recusa outro writer; readOnly passa', async () => {
+    harness.snapshots = [
+      { paneId: 'pane-w', paneNumber: 4, sessionId: 's-w', adapterId: 'codex', state: 'busy', title: 'w', kind: 'cli-agent', scope: testProjectScope() },
+    ];
+    harness.parentBySession = { 's-w': 'session-user' };
+    setOperatorRouteResolver(vi.fn(async () => ({ adapterId: 'kimi' })));
+    await expect(paneSpawnTool.handler({ prompt: 'edite X' }, userPane())).rejects.toThrow(/writer pane 4 ainda ativo/);
+    await paneSpawnTool.handler({ prompt: 'revise X', readOnly: true }, userPane());
+    expect(harness.spawnPaneAndMaybePrompt).toHaveBeenCalledTimes(1);
+  });
+
   it('agentName: título e agente do roster, CLI e modelo da rota', async () => {
     setOperatorRouteResolver(vi.fn(async () => ({ adapterId: 'codex', model: 'gpt-5.6-luna' })));
     await paneSpawnTool.handler({ agentName: 'Executor', prompt: 'tela de login' }, userPane());
