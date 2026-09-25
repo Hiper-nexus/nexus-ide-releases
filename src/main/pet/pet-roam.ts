@@ -24,6 +24,34 @@ export const ROAM_PAUSE_MAX_MS = 9_000;
 export const ROAM_ARRIVE_PX = 3;
 /** Razão |dy|/|dx| acima da qual o movimento vira escalada (sprite gira). */
 export const ROAM_CLIMB_RATIO = 1.6;
+/** Parada (vetada ou em pausa), a patrulha re-checa neste ritmo. */
+export const ROAM_IDLE_RECHECK_MS = 1_000;
+
+export interface RoamDelayInput {
+  /** Algum veto ativo (prefs.roam off, sono, arrasto, balão, fullscreen…). */
+  blocked: boolean;
+  /** Há destino em curso: a janela anda a cada passo. */
+  walking: boolean;
+  now: number;
+  /** Fim da pausa parado entre destinos. */
+  pauseUntil: number;
+  /** Passo da caminhada (cadência da animação). */
+  tickMs: number;
+}
+
+/**
+ * Atraso até o próximo tick da patrulha. Só a caminhada pede ~30 fps; vetada
+ * ou parada ela acorda no fim exato da pausa, no máximo a cada
+ * ROAM_IDLE_RECHECK_MS — antes eram 30 wakeups/s do processo principal
+ * mesmo com a patrulha desligada.
+ */
+export function nextRoamDelayMs(input: RoamDelayInput): number {
+  if (input.blocked) return ROAM_IDLE_RECHECK_MS;
+  if (input.walking) return input.tickMs;
+  const remaining = input.pauseUntil - input.now;
+  if (remaining <= 0) return input.tickMs;
+  return Math.min(ROAM_IDLE_RECHECK_MS, Math.max(input.tickMs, remaining));
+}
 
 export type Rng = () => number;
 

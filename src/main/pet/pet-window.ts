@@ -48,8 +48,10 @@ import {
 import type { ProjectExecutionScope } from '../../shared/types';
 import { computeLookDir } from './pet-look';
 import {
+  nextRoamDelayMs,
   pickRoamDestination,
   roamStep,
+  ROAM_IDLE_RECHECK_MS,
   ROAM_PAUSE_MAX_MS,
   ROAM_PAUSE_MIN_MS,
   ROAM_SPRINT_CHANCE,
@@ -189,7 +191,9 @@ let digestTimer: NodeJS.Timeout | null = null;
 // ── Patrulha autônoma ("andar em todos os cantos") ─────────────────────
 /** Cadência do passo da patrulha — 30 fps bastam para andar ~4 px/tick. */
 const ROAM_TICK_MS = 33;
+/** Próximo tick agendado; a cadência vem de nextRoamDelayMs. */
 let roamTimer: NodeJS.Timeout | null = null;
+let roamLoopActive = false;
 let roamTarget: { x: number; y: number } | null = null;
 /** Fim da pausa parado; enquanto now < pauseUntil o pet descansa no lugar. */
 let roamPauseUntil = 0;
@@ -740,15 +744,54 @@ function roamTick(): void {
   }
 }
 
-function startRoamLoop(): void {
-  if (roamTimer) return;
-  roamTimer = setInterval(roamTick, ROAM_TICK_MS);
+function scheduleRoamTick(delayMs: number): void {
+  if (roamTimer) clearTimeout(roamTimer);
+  roamTimer = setTimeout(runRoamTick, delayMs);
   roamTimer.unref?.();
 }
 
+function runRoamTick(): void {
+  roamTimer = null;
+  if (!roamLoopActive) return;
+  try {
+    roamTick();
+  } finally {
+    // Como o setInterval de antes, um tick que lança não mata a patrulha.
+    if (roamLoopActive && roamTimer === null) {
+      let delayMs = ROAM_IDLE_RECHECK_MS;
+      try {
+        delayMs = nextRoamDelayMs({
+          blocked: roamBlocked(),
+          walking: roamTarget !== null,
+          now: Date.now(),
+          pauseUntil: roamPauseUntil,
+          tickMs: ROAM_TICK_MS,
+        });
+      } finally {
+        scheduleRoamTick(delayMs);
+      }
+    }
+  }
+}
+
+function startRoamLoop(): void {
+  if (roamLoopActive) return;
+  roamLoopActive = true;
+  scheduleRoamTick(ROAM_TICK_MS);
+}
+
+/**
+ * Um veto pode ter caído (prefs, balão/menu do renderer): reavalia já, em vez
+ * de esperar a re-checagem lenta da patrulha parada.
+ */
+function kickRoamLoop(): void {
+  if (roamLoopActive) scheduleRoamTick(0);
+}
+
 function stopRoamLoop(): void {
+  roamLoopActive = false;
   if (roamTimer) {
-    clearInterval(roamTimer);
+    clearTimeout(roamTimer);
     roamTimer = null;
   }
   roamTarget = null;
@@ -1228,6 +1271,7 @@ function applyPrefsPatch(raw: unknown): PetPrefs {
   savePetPrefs(userDataDir(), prefs);
   syncWindowToPrefs();
   broadcastPrefs();
+  kickRoamLoop();
   return prefs;
 }
 
@@ -1444,6 +1488,7 @@ function registerPetIpc(): void {
   ipcMain.on(PET_CHANNELS.roamHold, (event, held: unknown) => {
     if (!fromPetWindow(event)) return;
     roamRendererHold = held === true;
+    if (!roamRendererHold) kickRoamLoop();
   });
 
   ipcMain.on(PET_CHANNELS.eventShown, (event, kind: unknown) => {
@@ -1660,8 +1705,9 @@ export function initDesktopPet(): void {
     }
   }, STATS_FLUSH_MS);
   statsFlushTimer.unref?.();
-  // O tick da patrulha é barato e se auto-veta (prefs/drag/balão); fica
-  // ligado sempre para o pet responder sem esperar o próximo toggle.
+  // A patrulha fica armada sempre e se auto-veta (prefs/drag/balão); vetada
+  // ou em pausa ela re-checa no máximo 1×/s (nextRoamDelayMs), e prefs/hold
+  // a acordam na hora — só a caminhada roda a ~30 fps.
   startRoamLoop();
 
   const watchAppWindow = (win: BrowserWindow) => {
