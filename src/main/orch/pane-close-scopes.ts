@@ -70,6 +70,25 @@ export function shouldAutoCloseAfterHandoff(input: {
   return input.armed && input.status === "success";
 }
 
+/** Consome o braço apenas depois de um handoff persistido; fechar fica fora da resposta. */
+export function scheduleAutoCloseAfterHandoff(
+  sessionId: string | undefined,
+  status: string,
+  paneIdOf: (sessionId: string) => string | null,
+  close: (paneId: string) => Promise<unknown>,
+): void {
+  if (!sessionId) return;
+  const paneId = paneIdOf(sessionId);
+  const armedPaneId = armedAutoClosePaneId(sessionId, paneId);
+  if (!shouldAutoCloseAfterHandoff({ armed: armedPaneId !== null, status })) return;
+  disarmAutoCloseOnHandoff(sessionId, paneId);
+  setTimeout(() => {
+    void Promise.resolve().then(() => close(armedPaneId!)).catch((error) =>
+      console.warn(`[handoff] auto-close do pane ${armedPaneId} falhou:`, error),
+    );
+  }, 0);
+}
+
 /**
  * Braços de autoCloseOnHandoff por sessão física. Registro em memória: o
  * braço morre com o processo — um pane sobrevivente de crash nunca fecha
