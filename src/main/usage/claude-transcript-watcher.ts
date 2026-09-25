@@ -260,8 +260,7 @@ export class ClaudeTranscriptWatcher {
     } catch {
       return; // leitura falhou — o próximo poll tenta de novo
     }
-    let linesInSlice = 0;
-    let sliceStartedAt = Date.now();
+    const slice = { lines: 0, startedAt: Date.now() };
     try {
       while (state.offset < size) {
         if (this.stopped) return;
@@ -285,31 +284,41 @@ export class ClaudeTranscriptWatcher {
           state.decoder.write(bytes),
         );
         state.remainder = remainder;
-        for (const line of lines) {
-          const event = parseTranscriptLine(line);
-          if (event) {
-            try {
-              this.opts.onEvent(event, file);
-            } catch {
-              // Consumidor nunca pode derrubar o watcher.
-            }
-          }
-          linesInSlice += 1;
-          if (
-            linesInSlice >= MAX_LINES_PER_SLICE ||
-            Date.now() - sliceStartedAt >= MAX_SLICE_MS
-          ) {
-            await yieldToEventLoop();
-            if (this.stopped) return;
-            linesInSlice = 0;
-            sliceStartedAt = Date.now();
-          }
-        }
+        if (!(await this.deliverLines(lines, file, slice))) return;
       }
     } finally {
       await fh.close().catch(() => undefined);
     }
     await this.checkpoint(file, state);
+  }
+
+  /** Entrega as linhas cedendo o event loop a cada fatia; false = watcher parado. */
+  private async deliverLines(
+    lines: readonly string[],
+    file: string,
+    slice: { lines: number; startedAt: number },
+  ): Promise<boolean> {
+    for (const line of lines) {
+      const event = parseTranscriptLine(line);
+      if (event) this.emit(event, file);
+      slice.lines += 1;
+      if (slice.lines < MAX_LINES_PER_SLICE && Date.now() - slice.startedAt < MAX_SLICE_MS) {
+        continue;
+      }
+      await yieldToEventLoop();
+      if (this.stopped) return false;
+      slice.lines = 0;
+      slice.startedAt = Date.now();
+    }
+    return true;
+  }
+
+  private emit(event: NonNullable<ReturnType<typeof parseTranscriptLine>>, file: string): void {
+    try {
+      this.opts.onEvent(event, file);
+    } catch {
+      // Consumidor nunca pode derrubar o watcher.
+    }
   }
 
   /** Grava a fronteira da última linha completa, com os digests do prefixo. */
