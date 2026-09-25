@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.100 — Pasta reconhecida
+
+No Windows, abrir um projeto com `.nexus/project.json` voltou a funcionar.
+
+- **Workspace com manifesto abre no Windows (F-647).** O aviso "o manifesto .nexus/project.json não bate com este repositório" aparecia em todo projeto com manifesto, mesmo com o manifesto certo. A causa era o git: o Nexus o rodava com `GIT_CONFIG_GLOBAL=\\.\nul`, que o Git para Windows 2.55 recusa. Agora usa `/dev/null`, que o Git mapeia no Windows, e a prova de linhagem continua isolada da sua config global.
+- **Mesma pasta, outra grafia (F-648).** `c:\users\…` ou `C:\Users\ADMINI~1\…` é reconhecido como a mesma pasta e abre o mesmo checkout, em vez de cair em quarentena ou virar "token de checkout duplicado".
+
 ## 0.76.99 — Jev no comando
 
 Os panes que os seus agentes abrem passam a ser escolhidos pelo Jev, e todo pane seu aprende a dividir o trabalho em vez de fazer tudo sozinho.

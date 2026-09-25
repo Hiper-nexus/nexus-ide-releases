@@ -6919,7 +6919,7 @@ export const RELEASE_07698: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_07699: AppRelease = {
   version: '0.76.99',
   date: '2026-09-25',
   codename: 'Jev no comando',
@@ -6951,6 +6951,33 @@ export const CURRENT_RELEASE: AppRelease = {
         'O helper nasce na aba de quem pediu, writers entram em fila no checkout, ' +
         'o helper fecha sozinho no sucesso e o teto de panes recusa spawns pedidos ' +
         'por agentes.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.100',
+  date: '2026-09-25',
+  codename: 'Pasta reconhecida',
+  summary:
+    'No Windows, abrir um projeto com .nexus/project.json voltou a funcionar. ' +
+    'O aviso "o manifesto não bate com este repositório" era um erro do git, ' +
+    'não do manifesto.',
+  highlights: [],
+  fixes: [
+    {
+      title: 'Workspace com manifesto abre no Windows',
+      detail:
+        'O Nexus rodava o git com uma config vazia que o Git para Windows 2.55 ' +
+        'recusa, e toda prova de linhagem falhava. Agora o git aceita a config ' +
+        'e o projeto abre com a identidade do manifesto.',
+    },
+    {
+      title: 'Mesma pasta, outra grafia',
+      detail:
+        'Caminho com outra caixa (c:\\users\\…) ou com nome curto (ADMINI~1) ' +
+        'é reconhecido como a mesma pasta e abre o mesmo checkout, em vez de ' +
+        'cair em quarentena.',
     },
   ],
 };
