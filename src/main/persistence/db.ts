@@ -180,6 +180,14 @@ export function getDb(): Db | null {
     const Database = require('better-sqlite3') as new (file: string) => Db;
     const file = path.join(app.getPath('userData'), 'nexus.db');
     db = new Database(file);
+    // WAL + synchronous FULL: a mesma durabilidade do journal de rollback,
+    // com um fsync por commit em vez de criar/apagar o -journal a cada
+    // escrita (contas, cooldowns e sessões de pane são gravados no spawn), e
+    // leitores que não bloqueiam o escritor. Mesmo padrão dos bancos de
+    // runtime do projeto. Cópias do arquivo precisam levar -wal e -shm juntos.
+    db.exec('PRAGMA journal_mode = WAL');
+    db.exec('PRAGMA synchronous = FULL');
+    db.exec('PRAGMA busy_timeout = 5000');
     db.exec(SCHEMA);
     migrateSchema(db);
     db.exec(`INSERT OR IGNORE INTO provider_session_accounts
