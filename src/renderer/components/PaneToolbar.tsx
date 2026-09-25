@@ -8,6 +8,10 @@ import {
 } from 'react';
 import type { PaneModel } from '../../shared/types';
 import type { JevPaneHint } from '../../shared/jev-ipc';
+import {
+  JEV_UNAVAILABLE_LABEL,
+  type SpawnRouteInfo,
+} from '../../shared/spawn-route';
 import { useLayoutStore } from '../state/layout-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { usePaneParkedStore } from '../state/pane-parked-store';
@@ -169,6 +173,26 @@ function JevHintChip({ paneId }: { paneId: string }) {
       aria-label={tip}
     >
       <span className="toolbar__state-label">{JEV_HINT_LABEL[hint.state]}</span>
+    </span>
+  );
+}
+
+/** Quem escolheu a CLI deste pane: o Jev, ou a heurística porque ele caiu. */
+function SpawnRouteChip({ route }: { route: SpawnRouteInfo | undefined }) {
+  if (!route) return null;
+  if (route.jevUnavailable) {
+    const tip = `CLI escolhida pela heurística — Jev ${JEV_UNAVAILABLE_LABEL[route.jevUnavailable]}`;
+    return (
+      <span className="toolbar__state toolbar__state--chip" data-rota-chip="fallback" data-tip={tip} aria-label={tip}>
+        <span className="toolbar__state-label">sem Jev</span>
+      </span>
+    );
+  }
+  if (route.source === 'heuristic') return null;
+  const tip = 'CLI escolhida pelo Jev para esta tarefa';
+  return (
+    <span className="toolbar__state toolbar__state--chip" data-rota-chip="jev" data-tip={tip} aria-label={tip}>
+      <span className="toolbar__state-label">Jev</span>
     </span>
   );
 }
@@ -870,6 +894,7 @@ export function PaneToolbar({ pane, isFocused, isCanvas }: Props) {
           <StateIndicator paneId={pane.id} compact={density === 'compact'} />
         )}
         {pane.kind === 'cli-agent' && <JevHintChip paneId={pane.id} />}
+        {pane.kind === 'cli-agent' && <SpawnRouteChip route={pane.spawnRoute} />}
         {pane.kind === 'cli-agent' && <FootprintBadge paneId={pane.id} />}
         <DevServerChip pane={pane} />
         {stageFocusMode && stagePaneId && stagePaneId !== pane.id && (
