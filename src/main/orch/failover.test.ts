@@ -1380,3 +1380,61 @@ ${E503}`);
     expect(failoverEvents(owner)).toHaveLength(1);
   });
 });
+
+describe('varredura de limite sob saída contínua de PTY', () => {
+  function armPane(id: number): Renderer {
+    const scope = testProjectScope();
+    const owner = renderer(id);
+    renderers.push(owner);
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerFailoverListener(owner);
+    addPane({
+      owner,
+      paneId: `pane-${id}`,
+      sessionId: `sess-${id}`,
+      missionId: `m-${id}`,
+      scope,
+    });
+    return owner;
+  }
+
+  it('não revarre a janela a cada chunk de uma rajada', async () => {
+    const { detectLimit } = await import('./limit-detector');
+    armPane(900);
+    vi.mocked(detectLimit).mockClear();
+
+    for (let i = 0; i < 40; i += 1) ptyMocks.dataTaps[0]!('sess-900', 'thinking…');
+
+    expect(vi.mocked(detectLimit).mock.calls.length).toBeLessThanOrEqual(1);
+    vi.advanceTimersByTime(250);
+    expect(vi.mocked(detectLimit).mock.calls.length).toBeLessThanOrEqual(2);
+  });
+
+  it('um limite que chega logo depois de outra saída é pego pela varredura final', async () => {
+    armPane(901);
+    ptyMocks.dataTaps[0]!('sess-901', 'working on it');
+    ptyMocks.dataTaps[0]!('sess-901', 'LIMIT');
+    await settleFailover();
+
+    vi.advanceTimersByTime(250);
+    await settleFailover();
+
+    expect(accountMocks.setCooldown).toHaveBeenCalled();
+  });
+
+  it('rajada longa é varrida pelo menos a cada meia janela', async () => {
+    const { detectLimit } = await import('./limit-detector');
+    armPane(902);
+    ptyMocks.dataTaps[0]!('sess-902', 'start');
+    vi.mocked(detectLimit).mockClear();
+
+    for (let i = 0; i < 10; i += 1) ptyMocks.dataTaps[0]!('sess-902', 'x'.repeat(500));
+    ptyMocks.dataTaps[0]!('sess-902', 'LIMIT');
+
+    // 5 000 chars no mesmo instante: varredura a cada 2 000, sem esperar timer.
+    expect(vi.mocked(detectLimit).mock.calls.length).toBeGreaterThanOrEqual(2);
+    vi.advanceTimersByTime(250);
+    await settleFailover();
+    expect(accountMocks.setCooldown).toHaveBeenCalled();
+  });
+});
