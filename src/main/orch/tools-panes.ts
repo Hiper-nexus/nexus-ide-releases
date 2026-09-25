@@ -1230,7 +1230,12 @@ const paneSpawn: McpToolDef = {
       // Declarado no nascimento (registro, não pergunta): o pane se fecha
       // sozinho no handoff SUCCESS — paridade Bridge, libera a vaga sem
       // segurar slot da onda seguinte; falha preserva pane para diagnóstico.
-      if (args.autoCloseOnHandoff === true && spawned.sessionId) {
+      // C3 (25/09): helper da mão do operador fecha sozinho no handoff de
+      // sucesso por padrão — a aba não enche de panes que já entregaram.
+      const autoClose =
+        args.autoCloseOnHandoff === true ||
+        (operatorHand && !options.missionId && args.autoCloseOnHandoff !== false);
+      if (autoClose && spawned.sessionId) {
         armAutoCloseOnHandoff(spawned.sessionId, spawned.paneId);
       }
       if (deliveryContract && spawned.sessionId) {

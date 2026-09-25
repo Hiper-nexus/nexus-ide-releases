@@ -8,6 +8,7 @@ const harness = vi.hoisted(() => ({
     sessionId: 'pty-child',
   })),
   takePendingPaneSpawnResult: vi.fn((): unknown => null),
+  armAutoCloseOnHandoff: vi.fn(),
   settings: {
     squadCliPolicy: 'operator-choice' as 'operator-choice' | 'governed',
   },
@@ -30,6 +31,10 @@ vi.mock('./pane-registry', async (importOriginal) => ({
       : null,
   ),
   findPane: vi.fn((ref: string) => harness.panesByRef[ref] ?? null),
+}));
+vi.mock('./pane-close-scopes', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./pane-close-scopes')>()),
+  armAutoCloseOnHandoff: harness.armAutoCloseOnHandoff,
 }));
 vi.mock('./squad-store', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./squad-store')>()),
@@ -326,6 +331,16 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
     await expect(paneSpawnTool.handler({ prompt: 'edite X' }, userPane())).rejects.toThrow(/writer pane 4 ainda ativo/);
     await paneSpawnTool.handler({ prompt: 'revise X', readOnly: true }, userPane());
     expect(harness.spawnPaneAndMaybePrompt).toHaveBeenCalledTimes(1);
+  });
+
+  it('helper do operador arma o auto-close por padrão', async () => {
+    await paneSpawnTool.handler({ adapterId: 'codex' }, userPane());
+    expect(harness.armAutoCloseOnHandoff).toHaveBeenCalledWith('pty-child', 'pane-child');
+  });
+
+  it('autoCloseOnHandoff: false explícito é respeitado', async () => {
+    await paneSpawnTool.handler({ adapterId: 'codex', autoCloseOnHandoff: false }, userPane());
+    expect(harness.armAutoCloseOnHandoff).not.toHaveBeenCalled();
   });
 
   it('agentName: título e agente do roster, CLI e modelo da rota', async () => {
