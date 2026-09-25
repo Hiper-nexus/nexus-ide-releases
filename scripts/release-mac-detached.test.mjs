@@ -7,6 +7,7 @@ import {
   assertNoReleaseRunning,
   assertReleaseNode,
   buildLaunchdPlist,
+  parseJobStatus,
   parseReleaseMacArgs,
   releaseSteps,
   runDetachedRelease,
@@ -139,6 +140,18 @@ describe('buildLaunchdPlist', () => {
   });
 });
 
+describe('parseJobStatus', () => {
+  it('lê state e last exit code do launchctl print', () => {
+    expect(parseJobStatus('\tstate = running\n')).toEqual({ running: true, lastExitCode: null });
+    expect(parseJobStatus('\tstate = not running\n\tlast exit code = 127\n')).toEqual({
+      running: false,
+      lastExitCode: 127,
+    });
+    // Recém-carregado, ainda sem linha de estado: conta como rodando.
+    expect(parseJobStatus('')).toEqual({ running: true, lastExitCode: null });
+  });
+});
+
 describe('runDetachedRelease', () => {
   const tempDirs = [];
   afterEach(() => {
@@ -174,6 +187,7 @@ describe('runDetachedRelease', () => {
         }
         return { status: 0, stderr: '' };
       },
+      jobStatus: () => ({ running: true, lastExitCode: null }),
       write: () => {},
       sleep: async () => {},
     };
@@ -191,6 +205,22 @@ describe('runDetachedRelease', () => {
   it('job vermelho: bootout mesmo assim e o código volta', async () => {
     const { deps, calls } = fakeDeps({ jobExitCode: 7 });
     expect(await runDetachedRelease({ from: 'candidate', publish: true }, deps)).toBe(7);
+    expect(calls.at(-1)[0]).toBe('bootout');
+  });
+
+  it('job que morre sem gravar estado não trava: falha com o exit do launchd e faz bootout', async () => {
+    const { deps, calls } = fakeDeps();
+    const noState = {
+      ...deps,
+      launchctl: (args) => {
+        calls.push(args);
+        return { status: 0, stderr: '' };
+      },
+      jobStatus: () => ({ running: false, lastExitCode: 127 }),
+    };
+    await expect(runDetachedRelease({ from: 'candidate', publish: false }, noState)).rejects.toThrow(
+      /sem gravar o estado.*127/,
+    );
     expect(calls.at(-1)[0]).toBe('bootout');
   });
 

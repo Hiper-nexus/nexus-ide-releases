@@ -205,6 +205,17 @@ function readFrom(file, offset) {
   }
 }
 
+/** Lê `launchctl print`: job rodando e o último código de saída. */
+export function parseJobStatus(printOutput) {
+  const state = /^\s*state = (.+)$/mu.exec(printOutput)?.[1]?.trim();
+  const exit = /^\s*last exit code = (-?\d+)/mu.exec(printOutput)?.[1];
+  return {
+    // Job ainda não listado (bootstrap acabou de voltar) conta como rodando.
+    running: state === undefined || state === 'running' || state === 'spawn scheduled',
+    lastExitCode: exit === undefined ? null : Number(exit),
+  };
+}
+
 /** Controlador: sobe o job, repassa o log, espera o estado e sempre faz bootout. */
 export async function runDetachedRelease(options, deps) {
   if (deps.platform !== 'darwin') {
@@ -260,6 +271,16 @@ export async function runDetachedRelease(options, deps) {
         if (tail.text) deps.write(tail.text);
         const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
         return Number.isInteger(state.exitCode) ? state.exitCode : 1;
+      }
+      // O runner pode morrer antes de gravar o estado (Node ausente, erro no
+      // shell de login): sem esta checagem o comando esperaria para sempre.
+      const status = deps.jobStatus(label);
+      if (!status.running && !fs.existsSync(statePath)) {
+        const tail = readFrom(logPath, offset);
+        if (tail.text) deps.write(tail.text);
+        throw new Error(
+          `o job ${label} terminou sem gravar o estado (último exit ${status.lastExitCode ?? 'desconhecido'})`,
+        );
       }
       await deps.sleep(POLL_MS);
     }
@@ -321,6 +342,9 @@ async function main(argv) {
     releaseProcesses: () =>
       spawnSync('pgrep', ['-fl', RELEASE_PROCESS_PATTERN], { encoding: 'utf8' }).stdout ?? '',
     launchctl: (args) => spawnSync('launchctl', args, { encoding: 'utf8' }),
+    jobStatus: (label) => parseJobStatus(
+      spawnSync('launchctl', ['print', `gui/${process.getuid()}/${label}`], { encoding: 'utf8' }).stdout ?? '',
+    ),
     write: (text) => process.stdout.write(text),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   });
