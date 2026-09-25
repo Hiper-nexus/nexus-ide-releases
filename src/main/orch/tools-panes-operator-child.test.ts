@@ -271,6 +271,27 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
     expect((result.route as { reason: string }).reason).toMatch(/agy.*MCP/i);
   });
 
+  it.each(['agy', 'aider', 'devin', 'muse'])(
+    'com missionId explícito mantém %s elegível na rota sem adapterId',
+    async (cli) => {
+      const resolver = vi.fn(async (_task: string, _ctx: AgentGateContext, internal: { excludeAdapterIds?: readonly string[] }) =>
+        internal.excludeAdapterIds?.includes(cli)
+          ? { adapterId: 'codex' }
+          : { adapterId: cli },
+      );
+      setOperatorRouteResolver(resolver);
+
+      // O fixture não inicializa os stores de missão; a recusa posterior vem
+      // depois da escolha de CLI e mantém os gates de missão intactos.
+      await expect(paneSpawnTool.handler(
+        { missionId: 'mission-a', prompt: 'implemente X' },
+        userPane(),
+      )).rejects.toThrow(/project-scoped domain stores/);
+      expect(resolver).toHaveBeenCalledTimes(1);
+      expect(harness.spawnPaneAndMaybePrompt).not.toHaveBeenCalled();
+    },
+  );
+
   it('adapterId/model/effort do agente são ignorados: o resolver decide e o recibo diz', async () => {
     const resolver = vi.fn(async () => ({
       adapterId: 'kimi', model: 'kimi-code/k3', effort: 'low', classifierSource: 'jev',

@@ -617,7 +617,7 @@ const paneSpawn: McpToolDef = {
         if (!adapter || adapter.kind !== 'cli-pty') {
           throw new Error(`nexus_pane_spawn: rota sem adapter CLI válido (${adapterId})`);
         }
-        if (canUseNexusMcp(adapter)) {
+        if (str(args, 'missionId') || canUseNexusMcp(adapter)) {
           return excluded.length === 0 ? route : {
             ...route,
             reason: `${typeof route.reason === 'string' ? route.reason : 'rota elegível'}; ` +
