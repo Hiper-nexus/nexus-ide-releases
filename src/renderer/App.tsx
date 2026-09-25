@@ -135,6 +135,7 @@ import {
   type ContextualPanelState,
   type ContextualTab,
 } from '../shared/contextual-panel';
+import { setVisibleInterval } from './lib/visible-interval';
 
 const TERMINAL_CONTEXTUAL_TABS: readonly ContextualTab[] = [
   'mission',
@@ -393,8 +394,7 @@ export function App() {
         .hydrateCrossWorkspace(paths.filter((path) => path !== activePath));
     };
     refresh();
-    const timer = setInterval(refresh, 60_000);
-    return () => clearInterval(timer);
+    return setVisibleInterval(refresh, 60_000);
   }, [recentWorkspaceKey]);
 
   // Restore each workspace's panes without replacing the creation home with
