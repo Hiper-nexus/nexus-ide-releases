@@ -87,10 +87,13 @@ ganha uma entrada `UserPromptSubmit` com um comando novo,
 a resposta do endpoint vira a saída do hook, e o comando termina em
 `|| true`. Vale para a família Claude (claude, glm, glm-flash, longcat).
 
-**Codex** entra só se o plano confirmar, num teste com a CLI real, que o
-`UserPromptSubmit` do Codex injeta `additionalContext`. Sem essa prova, o
-Codex fica só com a doutrina (C1). Kimi, Grok e demais CLIs ficam só com a
-doutrina.
+**Codex**: testado em 25/09 com `codex-cli 0.155.1`, `codex exec` e o hook
+passado por `-c hooks.UserPromptSubmit=[…]` (o mesmo formato do
+`codexStatusHookArgs`). O hook **não rodou** (o script marcador nunca foi
+executado) e a resposta ignorou o contexto. O TUI interativo, que é como o
+Nexus abre o Codex, não foi testado. Sem prova, o Codex fica só com a
+doutrina (C1); reabrir quando houver teste no TUI. Kimi, Grok e demais CLIs
+ficam só com a doutrina.
 
 **Endpoint.** `POST /hook/delegate`, módulo novo
 `src/main/orch/hook-delegate-endpoint.ts`, mesmo servidor loopback e bearer
