@@ -715,4 +715,67 @@ describe('bundled skill delivery', () => {
       expect(bundledSkillSourceDir('users-personal-skill', path.join(tmpRoot(), 'g'))).toBeNull();
     });
   });
+
+  describe('repeated spawns', () => {
+    const largestAsset = Object.keys(IMPECCABLE_MANIFEST).sort(
+      (a, b) =>
+        IMPECCABLE_MANIFEST[b]!.content.length - IMPECCABLE_MANIFEST[a]!.content.length,
+    )[0]!;
+    const largestBytes = Buffer.from(
+      IMPECCABLE_MANIFEST[largestAsset]!.content,
+      IMPECCABLE_MANIFEST[largestAsset]!.encoding,
+    );
+    const endsWithAsset = (file: unknown): boolean =>
+      String(file).endsWith(path.join(...largestAsset.split('/')));
+
+    it('neither re-reads nor rewrites unchanged bundled assets on the next spawn', () => {
+      const home = tmpRoot();
+      const options = { home, sourceDirs: [], ephemeralHomeDir: tmpRoot() };
+      ensureSkillsForCli('claude', options);
+      const reads = vi.spyOn(fs, 'readFileSync');
+      const writes = vi.spyOn(fs, 'writeFileSync');
+      try {
+        ensureSkillsForCli('claude', options);
+        expect(reads.mock.calls.filter(([file]) => endsWithAsset(file))).toEqual([]);
+        expect(writes.mock.calls.filter(([file]) => endsWithAsset(file))).toEqual([]);
+      } finally {
+        reads.mockRestore();
+        writes.mockRestore();
+      }
+    });
+
+    it('repairs a bundled asset overwritten with same-size bytes', () => {
+      const home = tmpRoot();
+      const options = { home, sourceDirs: [], allowedSkills: ['impeccable'] };
+      ensureSkillsForCli('codex', options);
+      const generated = path.join(
+        home, '.nexus', 'generated-skills', 'impeccable', ...largestAsset.split('/'),
+      );
+      fs.writeFileSync(generated, Buffer.alloc(largestBytes.length, 0x78));
+
+      ensureSkillsForCli('codex', options);
+
+      expect(fs.readFileSync(generated).equals(largestBytes)).toBe(true);
+    });
+
+    it('clones a fresh overlay copy from the verified generated root', () => {
+      const home = tmpRoot();
+      ensureSkillsForCli('claude', { home, sourceDirs: [], ephemeralHomeDir: tmpRoot() });
+      const overlay = tmpRoot();
+      const copies = vi.spyOn(fs, 'copyFileSync');
+      try {
+        ensureSkillsForCli('claude', { home, sourceDirs: [], ephemeralHomeDir: overlay });
+        const target = path.join(
+          overlay, '.claude', 'skills', 'impeccable', ...largestAsset.split('/'),
+        );
+        expect(copies.mock.calls.some(([, dest]) => String(dest) === target)).toBe(true);
+        expect(fs.readFileSync(target).equals(largestBytes)).toBe(true);
+        if (IMPECCABLE_MANIFEST[largestAsset]!.executable && process.platform !== 'win32') {
+          expect(fs.statSync(target).mode & 0o111).not.toBe(0);
+        }
+      } finally {
+        copies.mockRestore();
+      }
+    });
+  });
 });
