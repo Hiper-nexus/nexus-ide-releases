@@ -1,0 +1,74 @@
+// Encanamento HTTP comum aos hooks aditivos (/hook/triage, /hook/delegate):
+// 401 sem bearer, 405 não-POST, 400 corpo grande/inválido; o resto é 200.
+import type http from 'node:http';
+
+export function sendHookJson(res: http.ServerResponse, status: number, payload: unknown): void {
+  const body = JSON.stringify(payload);
+  res.writeHead(status, {
+    'content-type': 'application/json',
+    'content-length': Buffer.byteLength(body),
+  });
+  res.end(body);
+}
+
+function readBodyCapped(req: http.IncomingMessage, maxBytes: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let size = 0;
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > maxBytes) {
+        // Rejeita SEM destruir o socket para o handler ainda enviar o 400
+        // (destruir antes de responder corre com o cliente, que veria só a
+        // conexão caída em vez do erro de validação).
+        reject(new Error('body-too-large'));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
+}
+
+/** POST de hook com bearer já resolvido pelo servidor (`ctx` null → 401). */
+export async function handleHookJsonPost(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  ctx: unknown | null,
+  maxBytes: number,
+  onBody: (body: unknown) => Promise<{ statusCode: number; payload: unknown }>,
+): Promise<void> {
+  if (!ctx) {
+    sendHookJson(res, 401, { ok: false, error: 'missing or unknown bearer token' });
+    return;
+  }
+  if (req.method !== 'POST') {
+    sendHookJson(res, 405, { ok: false, error: 'method not allowed' });
+    return;
+  }
+  let raw: string;
+  try {
+    raw = await readBodyCapped(req, maxBytes);
+  } catch {
+    // Resposta antecipada: o resto de um corpo grande ainda pode estar
+    // chegando, então a conexão fecha depois que o 400 sair.
+    const bodyOut = JSON.stringify({ ok: false, error: 'hook payload too large' });
+    res.writeHead(400, {
+      'content-type': 'application/json',
+      'content-length': Buffer.byteLength(bodyOut),
+      connection: 'close',
+    });
+    res.end(bodyOut, () => req.destroy());
+    return;
+  }
+  let body: unknown;
+  try {
+    body = raw.length > 0 ? JSON.parse(raw) : {};
+  } catch {
+    sendHookJson(res, 400, { ok: false, error: 'invalid hook payload JSON' });
+    return;
+  }
+  const result = await onBody(body);
+  sendHookJson(res, result.statusCode, result.payload);
+}

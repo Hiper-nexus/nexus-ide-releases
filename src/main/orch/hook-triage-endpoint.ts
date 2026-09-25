@@ -16,6 +16,7 @@ import {
   type CommandTriage,
   type CommandTriageKind,
 } from '../jev/jev-terminal-triage';
+import { handleHookJsonPost } from './hook-http';
 
 /** Mesmo teto do /hook/status — payloads de hook são metadados de evento. */
 export const HOOK_TRIAGE_MAX_BODY_BYTES = 64 * 1024;
@@ -125,39 +126,6 @@ export async function handleHookTriageRequest(
 // 400 body inválido/grande).
 // ---------------------------------------------------------------------------
 
-function sendJson(
-  res: http.ServerResponse,
-  status: number,
-  payload: unknown,
-): void {
-  const body = JSON.stringify(payload);
-  res.writeHead(status, {
-    'content-type': 'application/json',
-    'content-length': Buffer.byteLength(body),
-  });
-  res.end(body);
-}
-
-function readBodyCapped(req: http.IncomingMessage): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let size = 0;
-    const chunks: Buffer[] = [];
-    req.on('data', (chunk: Buffer) => {
-      size += chunk.length;
-      if (size > HOOK_TRIAGE_MAX_BODY_BYTES) {
-        // Reject WITHOUT destroying the socket so the handler can still flush
-        // a 400 (destroy-then-respond races and the client sees a dropped
-        // connection instead of the validation error).
-        reject(new Error('body-too-large'));
-        return;
-      }
-      chunks.push(chunk);
-    });
-    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-    req.on('error', reject);
-  });
-}
-
 /** Full HTTP path for POST /hook/triage. `ctx` is the bearer context resolved
  *  by the gate server (null → 401, same contract as /gate/*). */
 export async function handleHookTriageHttp(
@@ -165,39 +133,7 @@ export async function handleHookTriageHttp(
   res: http.ServerResponse,
   ctx: Pick<AgentGateContext, 'sessionId'> | null,
 ): Promise<void> {
-  if (!ctx) {
-    sendJson(res, 401, { ok: false, error: 'missing or unknown bearer token' });
-    return;
-  }
-  if (req.method !== 'POST') {
-    sendJson(res, 405, { ok: false, error: 'method not allowed' });
-    return;
-  }
-
-  let raw: string;
-  try {
-    raw = await readBodyCapped(req);
-  } catch {
-    // Early response: the unread remainder of an oversized body may still be
-    // in flight, so close the connection once the 400 has been flushed.
-    const bodyOut = JSON.stringify({ ok: false, error: 'hook payload too large' });
-    res.writeHead(400, {
-      'content-type': 'application/json',
-      'content-length': Buffer.byteLength(bodyOut),
-      connection: 'close',
-    });
-    res.end(bodyOut, () => req.destroy());
-    return;
-  }
-
-  let body: unknown;
-  try {
-    body = raw.length > 0 ? JSON.parse(raw) : {};
-  } catch {
-    sendJson(res, 400, { ok: false, error: 'invalid hook payload JSON' });
-    return;
-  }
-
-  const result = await handleHookTriageRequest(ctx, body);
-  sendJson(res, result.statusCode, result.payload);
+  await handleHookJsonPost(req, res, ctx, HOOK_TRIAGE_MAX_BODY_BYTES, (body) =>
+    handleHookTriageRequest(ctx!, body),
+  );
 }

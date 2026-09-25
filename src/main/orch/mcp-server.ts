@@ -103,6 +103,7 @@ import {
 } from "./hooks-gen";
 import { handleHookStatusHttp } from "./hook-status-endpoint";
 import { handleHookTriageHttp } from "./hook-triage-endpoint";
+import { handleHookDelegateHttp } from "./hook-delegate-endpoint";
 import { authenticateArmsToken } from "../connectors/arms-token-store";
 import { handleArmsJsonRpc, markArmsBoot } from "../connectors/arms-endpoint";
 import { emitAppEvent } from "../connectors/app-events";
@@ -388,6 +389,11 @@ function hookStatusUrl(): string {
 /** PostToolUseFailure Bash-triage ingest — same loopback server/bearer. */
 function hookTriageUrl(): string {
   return `http://127.0.0.1:${port}/hook/triage`;
+}
+
+/** UserPromptSubmit delegation advice — same loopback server/bearer. */
+function hookDelegateUrl(): string {
+  return `http://127.0.0.1:${port}/hook/delegate`;
 }
 
 const SHA256_HEX = /^[a-f0-9]{64}$/u;
@@ -1096,6 +1102,8 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
           NEXUS_HOOK_URL: hookStatusUrl(),
           // PostToolUseFailure Bash triage hook — same transport contract.
           NEXUS_HOOK_TRIAGE_URL: hookTriageUrl(),
+          // UserPromptSubmit delegation advice hook — same transport contract.
+          NEXUS_HOOK_DELEGATE_URL: hookDelegateUrl(),
         }
       : {};
     const extraArgs: string[] = [];
@@ -1926,6 +1934,11 @@ export function startMcpServer(): Promise<void> {
       // PostToolUseFailure/Bash triage — additive, never blocks the CLI.
       if (url === "/hook/triage" && req.method === "POST") {
         await handleHookTriageHttp(req, res, ctx);
+        return;
+      }
+      // UserPromptSubmit → conselho de delegação do Jev — aditivo, nunca bloqueia.
+      if (url === "/hook/delegate" && req.method === "POST") {
+        await handleHookDelegateHttp(req, res, ctx);
         return;
       }
       sendJson(res, 404, { error: "not found" });
