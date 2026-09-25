@@ -411,6 +411,57 @@ describe.skipIf(!sqliteAvailable)('ScopedUsageStore', () => {
     ]);
   });
 
+  it('retains mission and pane attribution when a transcript replay omits it', () => {
+    const { baseDir, scope } = fixture();
+    const runtimeManager = manager(baseDir);
+    const mission = createScopedMissionStore(runtimeManager, scope).create({
+      title: 'Scoped mission',
+    });
+    createScopedMissionPaneStore(runtimeManager, scope).record({
+      missionId: mission.id,
+      adapterId: 'claude',
+      title: 'Worker',
+      paneId: 'pane-a',
+    });
+    const store = createScopedUsageStore(runtimeManager, scope);
+    store.record('claude', usage({ paneId: 'pane-a', missionId: mission.id }));
+
+    // A restart replays the transcript: the session is only "known", so the
+    // replay carries no pane or mission. It must not erase the attribution.
+    store.record('claude', usage({ paneId: null, missionId: null, outputTokens: 300 }));
+
+    expect(store.totalsByMission(mission.id)).toMatchObject({ turns: 1, outputTokens: 300 });
+    expect(store.totalsByPane()).toEqual([
+      expect.objectContaining({ paneId: 'pane-a', turns: 1 }),
+    ]);
+  });
+
+  it('does not rewrite an event that a replay brings back unchanged', () => {
+    const { baseDir, scope } = fixture();
+    const store = createScopedUsageStore(manager(baseDir), scope);
+    store.record('claude', usage());
+    const changes: unknown[] = [];
+    store.onChange((change) => changes.push(change));
+
+    expect(store.record('claude', usage())).toBe(false);
+    expect(changes).toEqual([]);
+
+    store.record('claude', usage({ outputTokens: 999 }));
+    expect(changes).toHaveLength(1);
+    expect(store.totalsBySession('session-a').outputTokens).toBe(999);
+  });
+
+  it('knows a provider session as soon as its first event is recorded', () => {
+    const { baseDir, scope } = fixture();
+    const store = createScopedUsageStore(manager(baseDir), scope);
+    expect(store.hasProviderSession('claude', 'session-new')).toBe(false);
+
+    store.record('claude', usage({ sessionId: 'session-new' }));
+
+    expect(store.hasProviderSession('claude', 'session-new')).toBe(true);
+    expect(store.hasProviderSession('codex', 'session-new')).toBe(false);
+  });
+
   it('stores scope identity in the database location, never an absolute path row', () => {
     const { baseDir, scope } = fixture();
     const runtimeManager = manager(baseDir);
