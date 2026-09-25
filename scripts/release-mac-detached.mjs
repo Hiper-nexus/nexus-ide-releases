@@ -210,8 +210,13 @@ export function parseJobStatus(printOutput) {
   const state = /^\s*state = (.+)$/mu.exec(printOutput)?.[1]?.trim();
   const exit = /^\s*last exit code = (-?\d+)/mu.exec(printOutput)?.[1];
   return {
-    // Job ainda não listado (bootstrap acabou de voltar) conta como rodando.
-    running: state === undefined || state === 'running' || state === 'spawn scheduled',
+    // Parado só nos estados finais. A partida passa por spawn scheduled →
+    // spawning → xpcproxy → running, e ler um desses como "terminou" derrubou
+    // o job 7 ms após o bootstrap (0.76.101). Sem linha de estado (bootstrap
+    // acabou de voltar) também conta como rodando.
+    // ponytail: um estado final desconhecido faria o controlador esperar;
+    // se aparecer, entra nesta lista.
+    running: state !== 'not running' && state !== 'exited',
     lastExitCode: exit === undefined ? null : Number(exit),
   };
 }

@@ -150,6 +150,13 @@ describe('parseJobStatus', () => {
     // Recém-carregado, ainda sem linha de estado: conta como rodando.
     expect(parseJobStatus('')).toEqual({ running: true, lastExitCode: null });
   });
+
+  it('estados de partida do launchd contam como rodando (0.76.101: bootout 7 ms após o bootstrap)', () => {
+    for (const state of ['spawn scheduled', 'spawning', 'xpcproxy']) {
+      expect(parseJobStatus(`\tstate = ${state}\n\tlast exit code = (never exited)\n`).running).toBe(true);
+    }
+    expect(parseJobStatus('\tstate = exited\n\tlast exit code = 1\n').running).toBe(false);
+  });
 });
 
 describe('runDetachedRelease', () => {
