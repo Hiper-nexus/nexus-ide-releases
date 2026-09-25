@@ -60,7 +60,8 @@ módulo novo, `src/main/orch/operator-delegation-doctrine.ts`, com teto de
    `nexus_pane_spawn({ task, prompt })`. O Nexus (Jev) escolhe CLI, modelo e
    esforço. Não passe `adapterId`.
 2. Pesquisa, revisão, análise e leitura de testes usam `readOnly: true` e
-   rodam em paralelo (N helpers independentes = uma chamada só).
+   rodam em paralelo (uma chamada por helper: o `nexus_pane_spawn` não tem
+   spawn em lote).
 3. Quem altera código: um helper por vez. Enquanto um helper writer roda,
    você não edita arquivos.
 4. Depois de delegar, encerre o turno: a entrega chega no seu input sozinha.
