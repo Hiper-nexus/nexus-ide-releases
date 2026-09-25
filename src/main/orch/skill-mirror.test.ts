@@ -5,7 +5,12 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PLUGIN_MANIFEST_SCHEMA } from './agent-plugin-manifest';
 import { IMPECCABLE_MANIFEST } from './impeccable-manifest';
-import { bundledSkillSourceDir, ensureSkillsForCli } from './skill-mirror';
+import { parse as parseYaml } from 'yaml';
+import {
+  GENERATED_INLINE_SKILL_BODIES,
+  bundledSkillSourceDir,
+  ensureSkillsForCli,
+} from './skill-mirror';
 import { BUNDLED_GUIDED_SKILLS } from './guided-squad-skills';
 
 const jevSecrets = vi.hoisted(() => ({
@@ -777,5 +782,17 @@ describe('bundled skill delivery', () => {
         copies.mockRestore();
       }
     });
+  });
+});
+
+describe('generated inline skills', () => {
+  // Kimi (PyYAML) and OpenCode (js-yaml) parse SKILL.md frontmatter strictly:
+  // an unquoted ": " inside the description drops the whole skill there.
+  it.each(Object.entries(GENERATED_INLINE_SKILL_BODIES))('%s frontmatter is strict YAML', (name, body) => {
+    const block = /^---\n([\s\S]*?)\n---/.exec(body)?.[1];
+    expect(block).toBeDefined();
+    const meta = parseYaml(block!) as { name?: unknown; description?: unknown };
+    expect(meta.name).toBe(name);
+    expect(typeof meta.description).toBe('string');
   });
 });

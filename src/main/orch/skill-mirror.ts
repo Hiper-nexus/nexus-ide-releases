@@ -27,7 +27,7 @@ import {
 
 const GENERATED_PONYTAIL_SKILL = `---
 name: ponytail
-description: Use for lean senior implementation: reuse existing code, avoid speculative abstractions, and write the smallest correct diff.
+description: "Use for lean senior implementation: reuse existing code, avoid speculative abstractions, and write the smallest correct diff."
 ---
 
 ${PONYTAIL_RULES}
