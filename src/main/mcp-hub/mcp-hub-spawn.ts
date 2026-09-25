@@ -155,6 +155,38 @@ export function loadMcpHubServersForSpawn(
   }
 }
 
+/** `mcp__<servidor>__<tool>` → `<servidor>` (chave saneada do hub). */
+const MCP_TOOL_SERVER = /^mcp__(.+?)__/u;
+
+/**
+ * Servidores do hub que um spawn recebe. Pane do operador e pane de missão
+ * recebem o hub inteiro, como sempre. Um helper que um agente abriu sem
+ * missão (`operatorChild`) nasce só com o MCP do Nexus: decisão do operador
+ * em 25/09, depois de medir 700–980 MB de servidores MCP por helper — o hub
+ * do workspace tinha virado o perfil global inteiro. Um servidor entra quando
+ * o allowlist do helper pede uma tool dele (`mcp__<servidor>__…`), o mesmo
+ * formato de nome que o gate já usa para as tools de plugin.
+ */
+export function selectHubServersForSpawn(
+  servers: readonly McpHubSpawnServer[],
+  spawn: { readonly operatorChild: boolean; readonly allowedTools: readonly string[] | null },
+): readonly McpHubSpawnServer[] {
+  if (!spawn.operatorChild) return servers;
+  const requested = new Set<string>();
+  for (const tool of spawn.allowedTools ?? []) {
+    const server = MCP_TOOL_SERVER.exec(tool.trim().toLowerCase())?.[1];
+    if (server) requested.add(server);
+  }
+  if (requested.size === 0) return Object.freeze([]);
+  return Object.freeze(
+    servers.filter((server) => {
+      const key = server.key.toLowerCase();
+      // A CLI Claude recebe `computer-use` como `user-computer-use`.
+      return requested.has(key) || requested.has(`user-${key}`);
+    }),
+  );
+}
+
 /**
  * Nomes que a CLI Claude reserva e pula em silêncio no boot
  * (`1 MCP server skipped due to invalid config`). Observado em campo com

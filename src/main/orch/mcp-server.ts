@@ -219,6 +219,7 @@ import {
   claudeFamilyHubMcpServers,
   codexHubMcpArgs,
   loadMcpHubServersForSpawn,
+  selectHubServersForSpawn,
   type McpHubSpawnServer,
 } from "../mcp-hub/mcp-hub-spawn";
 import { ensureSkillsForCli } from "./skill-mirror";
@@ -1117,8 +1118,10 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
     // Servidores MCP que o operador declarou explicitamente no hub do
     // workspace. Única leitura de hub no spawn; nunca lê o config ambiente de
     // outra ferramenta e nunca falha o spawn (hub quebrado ⇒ lista vazia).
-    const hubServers = loadMcpHubServersForSpawn(
-      authority.scope.rootRealPath,
+    // Helper aberto por agente sem missão só leva os que o allowlist pede.
+    const hubServers = selectHubServersForSpawn(
+      loadMcpHubServersForSpawn(authority.scope.rootRealPath),
+      { operatorChild, allowedTools: meta?.allowedTools ?? null },
     );
     // Delegação VISÍVEL (benchmark §4.5): Claude recebe o hard-deny de Task
     // pelo adapter base, então o bloqueio vale para panes diretos e

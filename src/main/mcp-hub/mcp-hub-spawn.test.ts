@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   claudeFamilyHubMcpServers,
   codexHubMcpArgs,
+  selectHubServersForSpawn,
   type McpHubSpawnServer,
 } from './mcp-hub-spawn';
 
@@ -82,5 +83,29 @@ describe('codexHubMcpArgs — colisão com mcp_servers preservados', () => {
     expect(args).toContain(
       'mcp_servers.supabase.url="https://mcp.supabase.com/mcp"',
     );
+  });
+});
+
+describe('selectHubServersForSpawn — helpers enxutos', () => {
+  const hub = [stdio('firecrawl'), stdio('node_repl'), stdio('computer-use')];
+
+  it('pane do operador e pane de missão recebem o hub inteiro', () => {
+    expect(selectHubServersForSpawn(hub, { operatorChild: false, allowedTools: null }))
+      .toBe(hub);
+  });
+
+  it('helper aberto por agente nasce sem os servidores do hub', () => {
+    expect(selectHubServersForSpawn(hub, { operatorChild: true, allowedTools: null }))
+      .toEqual([]);
+    expect(selectHubServersForSpawn(hub, { operatorChild: true, allowedTools: ['Read', 'nexus_file_read'] }))
+      .toEqual([]);
+  });
+
+  it('recebe só o servidor cujas tools o allowlist nomeia', () => {
+    const picked = selectHubServersForSpawn(hub, {
+      operatorChild: true,
+      allowedTools: ['mcp__node_repl__js', 'mcp__user-computer-use__click'],
+    });
+    expect(picked.map((server) => server.key)).toEqual(['node_repl', 'computer-use']);
   });
 });
