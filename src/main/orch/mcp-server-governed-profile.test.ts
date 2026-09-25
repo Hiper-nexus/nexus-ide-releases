@@ -861,6 +861,9 @@ describe('mcp-server governed CLI profile wiring', () => {
 
     expect(decoration.extraArgs).toContain('--strict-mcp-config');
     expect(decoration.env.NEXUS_HOOK_TRIAGE_URL).toMatch(/\/hook\/triage$/);
+    // O vínculo com o pai vai no token: o handoff sem missão o usa quando a
+    // janela mostra outro workspace.
+    expect(getContext(decoration.env.NEXUS_MCP_TOKEN!)?.operatorParentSessionId).toBe('parent-1');
 
     decoration.onSpawnFailed?.();
   });

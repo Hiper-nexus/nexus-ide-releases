@@ -91,6 +91,13 @@ export interface AgentGateContext {
    * never returned to callers.
    */
   operatorBrief?: string;
+  /**
+   * Main-owned link to the operator pane that spawned this helper (spawn
+   * authority, never caller input). Lets a workspace handoff find its parent
+   * while the window shows another workspace and the renderer-fed pane
+   * registry no longer mirrors these panes.
+   */
+  operatorParentSessionId?: string;
   /** Stop-gate attempts (worker may leave after MAX_STOP_ATTEMPTS). */
   stopAttempts: number;
   handoffSubmitted: boolean;
@@ -322,6 +329,8 @@ export interface MintTokenInput {
    * AgentGateContext.operatorBrief). Never persisted nor returned to callers.
    */
   operatorBrief?: string;
+  /** See AgentGateContext.operatorParentSessionId (operator helpers only). */
+  operatorParentSessionId?: string;
 }
 
 export function mintToken(input: MintTokenInput): AgentGateContext {
@@ -408,6 +417,12 @@ export function mintToken(input: MintTokenInput): AgentGateContext {
     );
   }
   if (
+    input.operatorParentSessionId !== undefined &&
+    (input.role !== "user" || input.missionId || input.contextRevision)
+  ) {
+    throw new Error("operator parent link requires a user token without a mission");
+  }
+  if (
     executionScope.installationId !== input.scope.installationId ||
     executionScope.projectId !== input.scope.projectId ||
     executionScope.checkoutId !== input.scope.checkoutId
@@ -442,6 +457,7 @@ export function mintToken(input: MintTokenInput): AgentGateContext {
         ? null
         : [...input.allowedSkills],
     operatorBrief: input.operatorBrief,
+    operatorParentSessionId: input.operatorParentSessionId,
     stopAttempts: 0,
     handoffSubmitted: false,
   };

@@ -1084,6 +1084,8 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
         meta.initialPrompt.trim()
           ? meta.initialPrompt.trim().slice(0, 1_500)
           : undefined,
+      // Handoff sem missão acha o pai mesmo com a janela noutro workspace.
+      operatorParentSessionId: operatorChild ? meta?.operatorParentSessionId : undefined,
     });
 
     const env: Record<string, string> = canUseNexusMcp(adapter)
