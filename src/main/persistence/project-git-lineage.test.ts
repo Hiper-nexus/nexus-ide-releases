@@ -1,7 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   collectGitRepositoryProof,
   compareRepositoryLineage,
+  processGitRunner,
   projectGitResultFromSpawn,
 } from './project-git-lineage';
 import type { GitRepositoryLineage } from '../../shared/project-identity-types';
@@ -106,6 +111,46 @@ describe('projectGitResultFromSpawn', () => {
       stdout: '',
       stderr: 'spawnSync git ETIMEDOUT',
     });
+  });
+});
+
+describe('processGitRunner', () => {
+  const savedEnv = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  const tempDirs: string[] = [];
+
+  afterEach(() => {
+    for (const [key, value] of Object.entries(savedEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    for (const dir of tempDirs.splice(0)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('roda o git com a config global neutralizada em todas as plataformas', () => {
+    // No Windows `os.devNull` é `\\.\nul`, que o Git para Windows 2.55 recusa
+    // ("unable to access '\\.\nul': Invalid argument"): toda prova de linhagem
+    // falhava e o workspace com manifesto não abria.
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-lineage-home-'));
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-lineage-repo-'));
+    tempDirs.push(home, repo);
+    execFileSync('git', ['init', '-q', repo]);
+    fs.writeFileSync(
+      path.join(home, '.gitconfig'),
+      '[nexus]\n\tsentinela = config-global-vazou\n',
+    );
+    process.env.HOME = home;
+    process.env.USERPROFILE = home;
+
+    const inside = processGitRunner.run(repo, ['rev-parse', '--is-inside-work-tree']);
+    expect(inside.stderr).toBe('');
+    expect(inside.status).toBe(0);
+    expect(inside.stdout.trim()).toBe('true');
+
+    const config = processGitRunner.run(repo, ['config', '--list', '--show-origin']);
+    expect(config.status).toBe(0);
+    expect(config.stdout).not.toContain('config-global-vazou');
   });
 });
 

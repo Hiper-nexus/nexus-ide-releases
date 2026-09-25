@@ -1,7 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import type {
   GitRepositoryLineage,
@@ -11,6 +10,13 @@ import type {
 const MAX_GIT_OUTPUT_BYTES = 128 * 1024;
 /** Slow disks / a loaded Mac used to ETIMEDOUT at 5s and quarantine a valid repo. */
 export const GIT_TIMEOUT_MS = 30_000;
+/**
+ * Não é `os.devNull`: no Windows ele vale `\\.\nul`, que o Git para Windows
+ * 2.55 recusa ("unable to access '\\.\nul': Invalid argument") — toda prova
+ * de linhagem falhava e o workspace com manifesto não abria. `/dev/null` é o
+ * idioma do próprio Git, que o Git para Windows mapeia para `nul`.
+ */
+const EMPTY_GIT_CONFIG = '/dev/null';
 
 export function projectGitResultFromSpawn(result: {
   readonly error?: Error | null;
@@ -91,7 +97,7 @@ export const processGitRunner: ProjectGitRunner = Object.freeze({
       maxBuffer: MAX_GIT_OUTPUT_BYTES,
       env: {
         ...env,
-        GIT_CONFIG_GLOBAL: os.devNull,
+        GIT_CONFIG_GLOBAL: EMPTY_GIT_CONFIG,
         GIT_CONFIG_NOSYSTEM: '1',
         GIT_NO_REPLACE_OBJECTS: '1',
         GIT_OPTIONAL_LOCKS: '0',
