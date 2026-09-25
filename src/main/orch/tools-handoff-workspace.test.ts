@@ -20,6 +20,11 @@ import * as panes from "./pane-registry";
 import * as transport from "./tool-util";
 import type { PaneRuntimeAuthority } from "./pane-registry";
 import { reviewMissionHandoff } from "./jev-handoff-review";
+import {
+  armAutoCloseOnHandoff,
+  armedAutoClosePaneId,
+  disarmAutoCloseOnHandoff,
+} from "./pane-close-scopes";
 
 const jevReview = vi.hoisted(() => ({
   reviewMissionHandoff: vi.fn(
@@ -87,9 +92,15 @@ beforeEach(() => {
   vi.spyOn(panes, "getPaneRuntimeAuthorityBySession").mockImplementation(
     (id) => runtime.get(id) ?? null,
   );
+  vi.spyOn(panes, "findPane").mockImplementation((id) => {
+    const current = runtime.get(id);
+    return current ? { paneId: current.paneId, sessionId: id } as ReturnType<typeof panes.findPane> : null;
+  });
   vi.spyOn(transport, "injectPrompt").mockResolvedValue();
 });
 afterEach(() => {
+  disarmAutoCloseOnHandoff("child");
+  vi.useRealTimers();
   vi.restoreAllMocks();
   disposeProjectDomainStoreRegistry();
   disposeAuditLogRuntime();
@@ -99,6 +110,66 @@ afterEach(() => {
 });
 
 describe("workspace handoff", () => {
+  it("fecha helper armado só depois de registrar a entrega de sucesso", async () => {
+    caller("parent");
+    const child = caller("child");
+    const close = vi.spyOn(panes, "requestPaneClose").mockResolvedValue(true);
+    armAutoCloseOnHandoff("child", "pane-child");
+    vi.useFakeTimers();
+
+    expect(await tool("submit").handler(args, child)).toMatchObject({ delivered: true });
+    expect(close).not.toHaveBeenCalled();
+    expect(getProjectDomainStores(scope).handoffs.list({ includeDelivered: true })).toMatchObject([
+      { deliveryState: "submitted" },
+    ]);
+    await vi.runAllTimersAsync();
+    expect(close).toHaveBeenCalledWith("pane-child", "child");
+    expect(armedAutoClosePaneId("child")).toBeNull();
+  });
+
+  it("não fecha o pane se outra sessão o ocupou após o handoff", async () => {
+    caller("parent");
+    const close = vi.spyOn(panes, "requestPaneClose").mockResolvedValue(true);
+    armAutoCloseOnHandoff("child", "pane-child");
+    vi.useFakeTimers();
+
+    expect(await tool("submit").handler(args, caller("child"))).toMatchObject({ delivered: true });
+    runtime.delete("child");
+    runtime.set("replacement", {
+      paneId: "pane-child",
+      sessionId: "replacement",
+      kind: "cli-agent",
+      scope,
+      owner: null,
+    });
+    await vi.runAllTimersAsync();
+
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  it.each(["blocked", "failed"])("mantém helper armado no handoff %s", async (status) => {
+    caller("parent");
+    const close = vi.spyOn(panes, "requestPaneClose").mockResolvedValue(true);
+    armAutoCloseOnHandoff("child", "pane-child");
+    vi.useFakeTimers();
+    await tool("submit").handler({ ...args, status }, caller("child"));
+    await vi.runAllTimersAsync();
+    expect(close).not.toHaveBeenCalled();
+    expect(armedAutoClosePaneId("child")).toBe("pane-child");
+  });
+
+  it("mantém helper quando o handoff de sucesso ficou na fila", async () => {
+    caller("parent");
+    const close = vi.spyOn(panes, "requestPaneClose").mockResolvedValue(true);
+    vi.mocked(transport.injectPrompt).mockRejectedValueOnce(new Error("parent gone"));
+    armAutoCloseOnHandoff("child", "pane-child");
+    vi.useFakeTimers();
+    expect(await tool("submit").handler(args, caller("child"))).toMatchObject({ delivered: false });
+    await vi.runAllTimersAsync();
+    expect(close).not.toHaveBeenCalled();
+    expect(armedAutoClosePaneId("child")).toBe("pane-child");
+  });
+
   it("persists NULL mission, delivers to the spawner and lists delivered workspace rows", async () => {
     const parent = caller("parent");
     const child = caller("child");

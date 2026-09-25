@@ -1494,4 +1494,43 @@ describe('orchestration bridge pane recovery', () => {
     expect(syncPanes).toHaveBeenCalled();
     act(() => mounted.root.unmount());
   });
+
+  it('fecha pedido por sessão só se o terminal ainda tem a sessão esperada', () => {
+    let closeHandler: ((request: PaneCloseRequest) => void) | null = null;
+    const syncPanes = vi.fn();
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        mission: missionBridge(),
+        orch: {
+          onPaneSpawnRequest: listener(),
+          onPaneRecoveryRequest: listener(),
+          onBrowserOpenRequest: listener(),
+          onPaneCloseRequest: vi.fn((cb: (request: PaneCloseRequest) => void) => {
+            closeHandler = cb;
+            return vi.fn();
+          }),
+          onPaneParkRequest: listener(),
+          onMissionsChanged: listener(),
+          onHandoffsChanged: listener(),
+          onTodosChanged: listener(),
+          onSquadsChanged: listener(),
+          syncPanes,
+        },
+      },
+    });
+    const pane = { id: 'pane-reused', kind: 'cli-agent' as const, title: 'Helper', adapterId: 'codex' };
+    useLayoutStore.setState({ root: { kind: 'leaf', id: 'leaf-helper', pane }, focusedPaneId: pane.id });
+    terminal.getPaneSessionId.mockReturnValue('session-new');
+    const mounted = mount();
+    syncPanes.mockClear();
+
+    act(() => closeHandler?.({ paneId: pane.id, expectedSessionId: 'session-old' }));
+    expect(listPanes(useLayoutStore.getState().root).some((candidate) => candidate.id === pane.id)).toBe(true);
+    expect(syncPanes).not.toHaveBeenCalled();
+
+    act(() => closeHandler?.({ paneId: pane.id, expectedSessionId: 'session-new' }));
+    expect(listPanes(useLayoutStore.getState().root).some((candidate) => candidate.id === pane.id)).toBe(false);
+    act(() => mounted.root.unmount());
+  });
 });

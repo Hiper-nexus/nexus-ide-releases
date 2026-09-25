@@ -1456,7 +1456,10 @@ export async function routeTaskForCaller(
   const tier = routing.tierOverride;
   // Failover de rate limit: o orquestrador re-roteia excluindo a CLI que
   // acabou de estourar cota/quebrar, em vez de insistir nela.
-  const excluded = new Set(strArray(args, 'exclude'));
+  const excluded = new Set([
+    ...strArray(args, 'exclude'),
+    ...(internal.excludeAdapterIds ?? []),
+  ]);
   // 'shell' não é um provider roteável (sem modelos avaliados); incluí-lo
   // mantinha o gate de cobertura do task-router sempre falso, matando a
   // avaliação por dimensão. Alinha com o filtro id!=='shell' do architect.

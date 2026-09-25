@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   armAutoCloseOnHandoff,
@@ -6,6 +6,7 @@ import {
   armedAutoClosePaneId,
   disarmAutoCloseOnHandoff,
   selectScopedPaneCloseTargets,
+  scheduleAutoCloseAfterHandoff,
   shouldAutoCloseAfterHandoff,
 } from "./pane-close-scopes";
 
@@ -68,6 +69,32 @@ describe("selectScopedPaneCloseTargets", () => {
       isMissionRunning: () => false,
     });
     expect(result.close).toEqual([]);
+  });
+});
+
+describe("scheduleAutoCloseAfterHandoff", () => {
+  it("não fecha a sessão substituta quando o pane muda antes do callback", async () => {
+    vi.useFakeTimers();
+    try {
+      let currentSession = "sess-original";
+      const close = vi.fn(async (_paneId: string, _expectedSessionId: string) => true);
+      armAutoCloseOnHandoff("sess-original", "pane-reused");
+
+      scheduleAutoCloseAfterHandoff(
+        "sess-original",
+        "success",
+        (sessionId) => sessionId === currentSession ? "pane-reused" : null,
+        close,
+      );
+      currentSession = "sess-replacement";
+      await vi.runAllTimersAsync();
+
+      expect(close).not.toHaveBeenCalled();
+      expect(armedAutoClosePaneId("sess-original")).toBeNull();
+    } finally {
+      disarmAutoCloseOnHandoff("sess-original", "pane-reused");
+      vi.useRealTimers();
+    }
   });
 });
 

@@ -879,8 +879,11 @@ export interface PaneAttemptCleanupRequest {
 /** Backward-compatible name retained for browser-open callers. */
 export type BrowserPaneCleanupRequest = PaneAttemptCleanupRequest;
 
-/** Legacy/general closes remain pane-id strings; attempt cleanup is sealed. */
-export type PaneCloseRequest = string | PaneAttemptCleanupRequest;
+/** Legacy/general closes remain pane-id strings; session and attempt closes are sealed. */
+export type PaneCloseRequest =
+  | string
+  | PaneAttemptCleanupRequest
+  | { paneId: string; expectedSessionId: string };
 
 /**
  * Main → renderer (0.76.45): o guardian estacionou este pane. A sessão PTY

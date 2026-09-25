@@ -3110,8 +3110,11 @@ export async function requestPanePark(
   return "parked";
 }
 
-export async function requestPaneClose(paneId: string): Promise<boolean> {
-  forgetParkedRecords(paneId);
+export async function requestPaneClose(
+  paneId: string,
+  expectedSessionId?: string,
+): Promise<boolean> {
+  if (!expectedSessionId) forgetParkedRecords(paneId);
   const owners = new Set(
     panes
       .filter(
@@ -3126,6 +3129,8 @@ export async function requestPaneClose(paneId: string): Promise<boolean> {
   if (detached && owners.size > 0) return false;
   if (detached) {
     const sessionId = detached.entry.sessionId;
+    if (expectedSessionId && sessionId !== expectedSessionId) return false;
+    if (expectedSessionId) forgetParkedRecords(paneId);
     if (sessionId) {
       const exited = await terminateOwnedMissionSession(sessionId);
       if (!exited) return false;
@@ -3150,6 +3155,8 @@ export async function requestPaneClose(paneId: string): Promise<boolean> {
   if (registered.length !== 1) return false;
   const target = registered[0]!;
   const sessionId = target.entry.sessionId;
+  if (expectedSessionId && sessionId !== expectedSessionId) return false;
+  if (expectedSessionId) forgetParkedRecords(paneId);
   const expectedScope = authzInfoOf(target).scope;
   if (expectedScope) {
     try {
@@ -3182,6 +3189,9 @@ export async function requestPaneClose(paneId: string): Promise<boolean> {
   ) {
     return false;
   }
-  owner.send(ORCH_CHANNELS.paneCloseRequest, paneId);
+  owner.send(
+    ORCH_CHANNELS.paneCloseRequest,
+    expectedSessionId ? { paneId, expectedSessionId } : paneId,
+  );
   return true;
 }

@@ -10,7 +10,8 @@ import {
 } from "./mcp-protocol";
 import { resolveWorkspaceHandoffParent } from "./workspace-handoff-authority";
 import { WORKSPACE_HANDOFF_DELIVERY_PREFIX } from "./workspace-handoff-delivery";
-import { listPaneSnapshots } from "./pane-registry";
+import { findPane, listPaneSnapshots, requestPaneClose } from "./pane-registry";
+import { scheduleAutoCloseAfterHandoff } from "./pane-close-scopes";
 import { getProjectDomainStores } from "./project-domain-store-registry";
 import { injectPrompt, requireStr } from "./tool-util";
 import { normalizeHandoffStatusInput } from "./legacy-handoff";
@@ -185,6 +186,14 @@ export async function submitWorkspaceHandoff(
   } catch (error) {
     // Persist first: a dead parent must never erase the worker's delivery.
     deliveryError = error instanceof Error ? error.message : String(error);
+  }
+  if (delivered) {
+    scheduleAutoCloseAfterHandoff(
+      ctx.sessionId,
+      status,
+      (sessionId) => findPane(sessionId)?.paneId ?? null,
+      requestPaneClose,
+    );
   }
   return {
     ok: true,
