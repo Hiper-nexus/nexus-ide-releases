@@ -81,3 +81,14 @@ export function routeString(
 ): string | undefined {
   return nonBlank(route?.[key]);
 }
+
+/**
+ * O renderer herda a aba do pai pelo PANE id. A sessão do pai
+ * (`operatorParentSessionId`) é autoridade do Main e nunca cruza para lá.
+ */
+export function parentPaneIdFor(
+  parentSessionId: string | undefined,
+  findPaneId: (sessionId: string) => string | undefined,
+): string | undefined {
+  return parentSessionId ? findPaneId(parentSessionId) : undefined;
+}

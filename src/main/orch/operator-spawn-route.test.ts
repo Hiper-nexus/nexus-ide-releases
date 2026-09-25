@@ -3,6 +3,7 @@ import {
   ignoredRouteChoice,
   operatorChildUseCounts,
   operatorRouteTask,
+  parentPaneIdFor,
   routeString,
   spawnRouteFrom,
 } from './operator-spawn-route';
@@ -55,5 +56,12 @@ describe('operator-spawn-route', () => {
     expect(routeString({ model: 'm' }, 'model')).toBe('m');
     expect(routeString({ model: '' }, 'model')).toBeUndefined();
     expect(routeString(undefined, 'model')).toBeUndefined();
+  });
+
+  it('parentPaneIdFor converte a sessão do pai em paneId, nunca vaza a sessão', () => {
+    const lookup = (sid: string) => (sid === 'sess-parent' ? 'pane-7' : undefined);
+    expect(parentPaneIdFor('sess-parent', lookup)).toBe('pane-7');
+    expect(parentPaneIdFor('sess-gone', lookup)).toBeUndefined();
+    expect(parentPaneIdFor(undefined, lookup)).toBeUndefined();
   });
 });

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { SpawnRouteInfo } from './spawn-route';
 import { canonicalCliAdapterId } from './cli-adapter-id';
 import type { ProjectExecutionScope } from './types';
 import type {
@@ -768,6 +769,13 @@ export interface OrchPaneSpawnRequest {
   /** Agente do squad que este pane representa — exibido no badge do pane. */
   agentName?: string;
   role?: 'orchestrator' | 'worker';
+  /** Origem da rota do spawn roteado (chip "Jev"/"sem Jev"); só exibição. */
+  route?: SpawnRouteInfo;
+  /**
+   * Pane que pediu este (helper de agente do operador): o renderer herda a
+   * aba dele. Só o id do pane — a sessão do pai nunca sai do Main.
+   */
+  parentPaneId?: string;
   /** Main-authorized public spawn may settle before a session id exists. */
   allowPending?: true;
   /** New mission workers are always fresh by default; main may request resume. */
