@@ -35,6 +35,7 @@ import {
 } from '../../vendor/emdash/hooks/hook-config';
 import { filterUserHooks } from '../../vendor/emdash/hooks/hook-commands';
 import { makeClaudeTriageHookCommand } from './hook-triage-command';
+import { makeClaudeDelegateHookCommand } from './hook-delegate-command';
 
 // ── Claude (family: claude/glm/glm-flash/longcat) ───────────────────────────
 
@@ -65,6 +66,18 @@ export function mergeClaudeStatusHooks(existing: ClaudeHooksMap): ClaudeHooksMap
       matcher: 'Bash',
       hooks: [
         { type: 'command', command: makeClaudeTriageHookCommand(), timeout: 15 },
+      ],
+    },
+  ];
+  // UserPromptSubmit → POST /hook/delegate (C2): o conselho do Jev vira
+  // additionalContext. O loop de status acima já removeu as entradas antigas
+  // com o marker neste evento, então a reescrita por spawn segue idempotente.
+  const prompt = Array.isArray(next.UserPromptSubmit) ? next.UserPromptSubmit : [];
+  next.UserPromptSubmit = [
+    ...prompt,
+    {
+      hooks: [
+        { type: 'command', command: makeClaudeDelegateHookCommand(), timeout: 5 },
       ],
     },
   ];
