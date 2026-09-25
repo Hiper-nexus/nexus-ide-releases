@@ -23,8 +23,11 @@ import {
   sessionLeaseRegistry,
 } from '../pty/pty-manager';
 import {
+  getAdapter,
   listAdapterInfos,
 } from '../adapters/adapter-registry';
+import { canUseNexusMcp } from './cli-mcp-inject';
+import { adapterSchema } from '../../shared/adapter-types';
 import {
   armAutoCloseOnHandoff,
   armAutoCloseOnHandoffForPane,
@@ -381,6 +384,7 @@ export function attenuateTools(
 /** Parâmetros internos do roteamento do spawn — nunca vêm de argumento MCP. */
 export interface OperatorRouteInternal {
   readonly tieBreakUseCounts?: ReadonlyMap<string, number>;
+  readonly excludeAdapterIds?: readonly string[];
 }
 
 export type OperatorRouteResolver = (
@@ -590,17 +594,42 @@ const paneSpawn: McpToolDef = {
         listPaneSnapshots(),
         (sessionId) => getPaneRuntimeAuthorityBySession(sessionId)?.operatorParentSessionId,
       );
-      let route: Record<string, unknown>;
-      try {
-        route = await operatorRouteResolver!(task, ctx, { tieBreakUseCounts });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`nexus_pane_spawn: roteamento automático falhou (${message})`);
+      const excluded: string[] = [];
+      for (;;) {
+        let route: Record<string, unknown>;
+        try {
+          route = await operatorRouteResolver!(task, ctx, {
+            tieBreakUseCounts,
+            excludeAdapterIds: excluded,
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          throw new Error(`nexus_pane_spawn: roteamento automático falhou (${message})`);
+        }
+        const adapterId = routeString(route, 'adapterId');
+        if (!adapterId) {
+          throw new Error('nexus_pane_spawn: roteamento automático falhou (sem adapterId)');
+        }
+        const builtin = BUILTIN_ADAPTERS.find(
+          (item) => (item as { id?: string }).id === adapterId,
+        );
+        const adapter = getAdapter(adapterId) ?? (builtin ? adapterSchema.parse(builtin) : null);
+        if (!adapter || adapter.kind !== 'cli-pty') {
+          throw new Error(`nexus_pane_spawn: rota sem adapter CLI válido (${adapterId})`);
+        }
+        if (canUseNexusMcp(adapter)) {
+          return excluded.length === 0 ? route : {
+            ...route,
+            reason: `${typeof route.reason === 'string' ? route.reason : 'rota elegível'}; ` +
+              `${excluded.join(', ')} sem MCP do Nexus para handoff sem missão`,
+            ignoredMcpAdapterId: excluded[0],
+          };
+        }
+        if (excluded.includes(adapterId)) {
+          throw new Error('nexus_pane_spawn: roteador repetiu CLI sem MCP do Nexus');
+        }
+        excluded.push(adapterId);
       }
-      if (!routeString(route, 'adapterId')) {
-        throw new Error('nexus_pane_spawn: roteamento automático falhou (sem adapterId)');
-      }
-      return route;
     };
     if (agentRef) {
       const requestedMissionId = childMissionId(ctx, str(args, 'missionId'));
@@ -1196,6 +1225,9 @@ const paneSpawn: McpToolDef = {
                 ? { jevUnavailable: autoRoute.jevUnavailable }
                 : {}),
               ...(ignoredChoice ? { ignored: ignoredChoice } : {}),
+              ...(!ignoredChoice && typeof autoRoute.ignoredMcpAdapterId === 'string'
+                ? { ignored: { adapterId: autoRoute.ignoredMcpAdapterId } }
+                : {}),
             },
           }
         : {};
