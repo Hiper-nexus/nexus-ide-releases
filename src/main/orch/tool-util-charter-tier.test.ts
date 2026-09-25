@@ -35,7 +35,7 @@ vi.mock('../persistence/settings-store', () => ({
   })),
 }));
 
-import { charterTierForWorker, withHandoffContract } from './tool-util';
+import { charterTierForWorker, recallsWorkspaceMemory, withHandoffContract } from './tool-util';
 
 const mcpAdapter = { quirks: { nexusMcp: 'opencode' } };
 
@@ -159,5 +159,23 @@ describe('withHandoffContract tiering', () => {
     expect(prompt).not.toContain('[ENGINEERING]');
     expect(prompt).not.toContain('[DESIGN]');
     expect(prompt).not.toContain('[PONYTAIL]');
+  });
+});
+
+describe('recallsWorkspaceMemory', () => {
+  const brief = 'Implemente a validação do formulário de cadastro';
+
+  it('mission workers and orchestrators keep the recall', () => {
+    expect(recallsWorkspaceMemory({ prompt: brief, missionId: 'm1', role: 'worker' })).toBe(true);
+    expect(recallsWorkspaceMemory({ prompt: brief, missionId: 'm1', role: 'orchestrator' })).toBe(true);
+  });
+
+  it('the operator helper (no role, no mission) is born with a brief and gets it too', () => {
+    expect(recallsWorkspaceMemory({ prompt: brief })).toBe(true);
+  });
+
+  it('no brief, or an internal transient pane, recalls nothing', () => {
+    expect(recallsWorkspaceMemory({ missionId: 'm1', role: 'worker' })).toBe(false);
+    expect(recallsWorkspaceMemory({ prompt: brief, transient: true })).toBe(false);
   });
 });

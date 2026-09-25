@@ -998,6 +998,20 @@ export async function proveNativeArgvBriefAccepted(
   await ensureNativeArgvPromptAccepted(sessionId, finalPrompt, adapterId);
 }
 
+/**
+ * Memória do workspace no brief: worker/orquestrador de missão e o helper da
+ * mão do operador (sem papel, sem missão), que também nasce com um brief. Só
+ * memória trusted, com teto de bytes (withAutoRecalledWorkspaceMemory). Pane
+ * interno transitório não recebe.
+ */
+export function recallsWorkspaceMemory(
+  options: Pick<SpawnToolOptions, 'prompt' | 'missionId' | 'role' | 'transient'>,
+): boolean {
+  if (!options.prompt) return false;
+  if (options.missionId) return true;
+  return options.role === undefined && options.transient !== true;
+}
+
 export interface SpawnToolOptions {
   adapterId: string;
   /** Origem da rota (A, 25/09) exibida no cabeçalho do pane; nunca autoridade. */
@@ -1348,7 +1362,7 @@ export async function spawnPaneAndMaybePrompt(
       agentId: options.agentName?.trim() || adapter.id,
     });
   }
-  if (options.missionId && options.prompt) {
+  if (recallsWorkspaceMemory(options)) {
     options = {
       ...options,
       prompt: withAutoRecalledWorkspaceMemory(
