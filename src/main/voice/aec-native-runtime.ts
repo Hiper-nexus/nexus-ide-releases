@@ -3,7 +3,7 @@ import { AecHelperClient, type AecHelperMetrics } from './aec-helper-client';
 import { AecLiveProcessor, type LiveAecProcessor } from './aec-live-processor';
 import { spawnAecHelper } from './aec-process-transport';
 import { logVoice } from './voice-log';
-import { WasmAecProcessor } from './aec-wasm-processor';
+import { LazyWasmAecProcessor, WasmAecProcessor } from './aec-wasm-processor';
 
 export interface NativeAecRuntime {
   processor?: LiveAecProcessor;
@@ -12,7 +12,8 @@ export interface NativeAecRuntime {
 
 export function startNativeAecRuntime(status: AecRuntimeStatus): NativeAecRuntime {
   if (status.backend === 'wasm-aec3') {
-    const processor = new WasmAecProcessor(
+    // Nasce no primeiro frame de áudio, não no boot (ver LazyWasmAecProcessor).
+    const processor = new LazyWasmAecProcessor(() => new WasmAecProcessor(
       () => logVoice('info', 'voice.aecReady', 'AEC3 WebAssembly pronto', {
         backend: status.backend,
       }),
@@ -20,7 +21,7 @@ export function startNativeAecRuntime(status: AecRuntimeStatus): NativeAecRuntim
         backend: status.backend,
         error: error.message.slice(0, 300),
       }),
-    );
+    ));
     return { processor, stop: () => processor.dispose() };
   }
   if (!status.native || !status.helperPath) return { stop() {} };
