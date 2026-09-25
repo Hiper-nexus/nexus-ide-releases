@@ -228,6 +228,15 @@ describe('handleMcpMessage', () => {
     });
   });
 
+  it('initialize entrega a doutrina de delegação só à mão do operador sem missão', async () => {
+    const user = await handleMcpMessage(makeRegistry(), userCtx(), req('initialize', {}));
+    expect((user?.result as { instructions?: string }).instructions).toContain('nexus_pane_spawn');
+    const worker = await handleMcpMessage(makeRegistry(), missionCtx(), req('initialize', {}));
+    expect((worker?.result as { instructions?: string }).instructions).toBeUndefined();
+    const orch = await handleMcpMessage(makeRegistry(), orchestratorMissionCtx(), req('initialize', {}));
+    expect((orch?.result as { instructions?: string }).instructions).toBeUndefined();
+  });
+
   it('reports the completed tool result to the transport observer without changing the response', async () => {
     const onToolResult = vi.fn();
     const response = await handleMcpMessage(

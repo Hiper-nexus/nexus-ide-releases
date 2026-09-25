@@ -8,9 +8,14 @@ const harness = vi.hoisted(() => ({
     sessionId: 'pty-child',
   })),
   takePendingPaneSpawnResult: vi.fn((): unknown => null),
+  armAutoCloseOnHandoff: vi.fn(),
+  armAutoCloseOnHandoffForPane: vi.fn(),
   settings: {
     squadCliPolicy: 'operator-choice' as 'operator-choice' | 'governed',
   },
+  snapshots: [] as Array<Record<string, unknown>>,
+  parentBySession: {} as Record<string, string>,
+  panesByRef: {} as Record<string, { paneId: string; adapterId?: string }>,
 }));
 
 vi.mock('./tool-util', async (importOriginal) => ({
@@ -20,6 +25,36 @@ vi.mock('./tool-util', async (importOriginal) => ({
 vi.mock('./pane-registry', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./pane-registry')>()),
   takePendingPaneSpawnResult: harness.takePendingPaneSpawnResult,
+  listPaneSnapshots: vi.fn(() => harness.snapshots),
+  getPaneRuntimeAuthorityBySession: vi.fn((sessionId: string) =>
+    harness.parentBySession[sessionId]
+      ? { operatorParentSessionId: harness.parentBySession[sessionId] }
+      : null,
+  ),
+  findPane: vi.fn((ref: string) => harness.panesByRef[ref] ?? null),
+}));
+vi.mock('./pane-close-scopes', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./pane-close-scopes')>()),
+  armAutoCloseOnHandoff: harness.armAutoCloseOnHandoff,
+  armAutoCloseOnHandoffForPane: harness.armAutoCloseOnHandoffForPane,
+}));
+vi.mock('./squad-store', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./squad-store')>()),
+  // Roster selado em outra CLI: prova que a rota vence o selo na mão do operador.
+  findAgentInAnySquad: vi.fn((ref: string) =>
+    ref === 'Executor'
+      ? {
+          squad: { id: 'squad-test', name: 'Teste', agents: [] },
+          agent: {
+            id: 'executor',
+            agentName: 'Executor',
+            category: 'executor',
+            cli: 'agy',
+            model: 'gemini-sealed',
+          },
+        }
+      : null,
+  ),
 }));
 vi.mock('../persistence/settings-store', async (importOriginal) => ({
   ...(await importOriginal<
@@ -62,6 +97,9 @@ function spawnedRole(): unknown {
 beforeEach(() => {
   vi.clearAllMocks();
   harness.settings.squadCliPolicy = 'operator-choice';
+  harness.snapshots = [];
+  harness.parentBySession = {};
+  harness.panesByRef = {};
 });
 
 afterEach(() => {
@@ -200,7 +238,11 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
       ctx,
     )) as Record<string, unknown>;
 
-    expect(resolver).toHaveBeenCalledWith('implemente X', ctx);
+    expect(resolver).toHaveBeenCalledWith(
+      'implemente X',
+      ctx,
+      expect.objectContaining({ tieBreakUseCounts: expect.any(Map) }),
+    );
     const options = harness.spawnPaneAndMaybePrompt.mock.calls[0]?.[0] as {
       adapterId?: unknown;
       model?: unknown;
@@ -215,15 +257,116 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
     });
   });
 
-  it('com adapterId explícito o resolver não é chamado', async () => {
+  it('adapterId/model/effort do agente são ignorados: o resolver decide e o recibo diz', async () => {
+    const resolver = vi.fn(async () => ({
+      adapterId: 'kimi', model: 'kimi-code/k3', effort: 'low', classifierSource: 'jev',
+    }));
+    setOperatorRouteResolver(resolver);
+    const result = (await paneSpawnTool.handler(
+      { adapterId: 'claude', model: 'claude-opus-5-5', effort: 'high', prompt: 'revise X' },
+      userPane(),
+    )) as Record<string, unknown>;
+    expect(resolver).toHaveBeenCalledTimes(1);
+    expect(harness.spawnPaneAndMaybePrompt.mock.calls[0]?.[0]).toMatchObject({
+      adapterId: 'kimi',
+      model: 'kimi-code/k3',
+      effort: 'low',
+      spawnRoute: { source: 'jev' },
+    });
+    expect(result).toMatchObject({
+      harness: { source: 'auto-route' },
+      route: {
+        ignored: { adapterId: 'claude', model: 'claude-opus-5-5', effort: 'high' },
+      },
+    });
+  });
+
+  it('Jev fora: rota heurística com o motivo no recibo e nas opções do pane', async () => {
+    setOperatorRouteResolver(vi.fn(async () => ({
+      adapterId: 'codex', classifierSource: 'heuristic', jevUnavailable: 'no-key',
+    })));
+    const result = (await paneSpawnTool.handler({ prompt: 'implemente X' }, userPane())) as Record<string, unknown>;
+    expect(result).toMatchObject({ route: { jevUnavailable: 'no-key' } });
+    expect(harness.spawnPaneAndMaybePrompt.mock.calls[0]?.[0]).toMatchObject({
+      spawnRoute: { source: 'heuristic', jevUnavailable: 'no-key' },
+    });
+  });
+
+  it('desempate recebe as CLIs do pai e dos filhos vivos dele', async () => {
+    harness.snapshots = [
+      { paneId: 'p1', sessionId: 'c1', adapterId: 'codex', state: 'busy', title: 'a', kind: 'cli-agent' },
+    ];
+    harness.parentBySession = { c1: 'session-user' };
     const resolver = vi.fn(async () => ({ adapterId: 'kimi' }));
     setOperatorRouteResolver(resolver);
-    await paneSpawnTool.handler({ adapterId: 'codex' }, userPane());
-    expect(resolver).not.toHaveBeenCalled();
-    const options = harness.spawnPaneAndMaybePrompt.mock.calls[0]?.[0] as {
-      adapterId?: unknown;
+    await paneSpawnTool.handler({ prompt: 'x' }, userPane({ providerId: 'claude' }));
+    const internal = (resolver.mock.calls[0] as unknown[])[2] as {
+      tieBreakUseCounts: Map<string, number>;
     };
-    expect(options.adapterId).toBe('codex');
+    expect(Object.fromEntries(internal.tieBreakUseCounts)).toEqual({ claude: 1, codex: 1 });
+  });
+
+  it('resume mantém a CLI do pane retomado e não roteia', async () => {
+    harness.panesByRef = { 'pane-old': { paneId: 'pane-old', adapterId: 'codex' } };
+    const resolver = vi.fn(async () => ({ adapterId: 'kimi' }));
+    setOperatorRouteResolver(resolver);
+    await paneSpawnTool.handler({ resume: 'pane-old', adapterId: 'claude', prompt: 'ajuste' }, userPane());
+    expect(resolver).not.toHaveBeenCalled();
+    expect(harness.spawnPaneAndMaybePrompt.mock.calls[0]?.[0]).toMatchObject({
+      adapterId: 'codex',
+      resumeFromPaneId: 'pane-old',
+    });
+  });
+
+  it('sem task, prompt nem title o spawn roteado pede a tarefa', async () => {
+    setOperatorRouteResolver(vi.fn(async () => ({ adapterId: 'kimi' })));
+    await expect(paneSpawnTool.handler({ adapterId: 'claude' }, userPane())).rejects.toThrow(/task/);
+    expect(harness.spawnPaneAndMaybePrompt).not.toHaveBeenCalled();
+  });
+
+  it('writer delegado ativo no checkout recusa outro writer; readOnly passa', async () => {
+    harness.snapshots = [
+      { paneId: 'pane-w', paneNumber: 4, sessionId: 's-w', adapterId: 'codex', state: 'busy', title: 'w', kind: 'cli-agent', scope: testProjectScope() },
+    ];
+    harness.parentBySession = { 's-w': 'session-user' };
+    setOperatorRouteResolver(vi.fn(async () => ({ adapterId: 'kimi' })));
+    await expect(paneSpawnTool.handler({ prompt: 'edite X' }, userPane())).rejects.toThrow(/writer pane 4 ainda ativo/);
+    await paneSpawnTool.handler({ prompt: 'revise X', readOnly: true }, userPane());
+    expect(harness.spawnPaneAndMaybePrompt).toHaveBeenCalledTimes(1);
+  });
+
+  it('helper do operador arma o auto-close por padrão', async () => {
+    await paneSpawnTool.handler({ adapterId: 'codex' }, userPane());
+    expect(harness.armAutoCloseOnHandoff).toHaveBeenCalledWith('pty-child', 'pane-child');
+  });
+
+  it('ACK pendente (sessão ainda não existe) arma o auto-close pelo pane', async () => {
+    harness.spawnPaneAndMaybePrompt.mockRejectedValueOnce(new Error('pane spawn pending'));
+    harness.takePendingPaneSpawnResult.mockReturnValueOnce({
+      requestId: 'orchspawn-pending',
+      ok: true,
+      paneId: 'pane-pending',
+      sessionId: null,
+      pending: true,
+    });
+    await paneSpawnTool.handler({ adapterId: 'codex' }, userPane());
+    expect(harness.armAutoCloseOnHandoffForPane).toHaveBeenCalledWith('pane-pending');
+  });
+
+  it('autoCloseOnHandoff: false explícito é respeitado', async () => {
+    await paneSpawnTool.handler({ adapterId: 'codex', autoCloseOnHandoff: false }, userPane());
+    expect(harness.armAutoCloseOnHandoff).not.toHaveBeenCalled();
+  });
+
+  it('agentName: título e agente do roster, CLI e modelo da rota', async () => {
+    setOperatorRouteResolver(vi.fn(async () => ({ adapterId: 'codex', model: 'gpt-5.6-luna' })));
+    await paneSpawnTool.handler({ agentName: 'Executor', prompt: 'tela de login' }, userPane());
+    expect(harness.spawnPaneAndMaybePrompt.mock.calls[0]?.[0]).toMatchObject({
+      adapterId: 'codex',
+      model: 'gpt-5.6-luna',
+      title: 'Executor',
+      agentName: 'Executor',
+    });
   });
 
   it('worker de missão sem adapterId segue exigindo adapterId (sem resolver)', async () => {

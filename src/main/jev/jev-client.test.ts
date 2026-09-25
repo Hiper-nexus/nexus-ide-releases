@@ -282,6 +282,32 @@ describe('judge — registro central de consultas sem resposta', () => {
     expect(result).toBeNull();
     expect(noAnswerLines()).toHaveLength(0);
   });
+
+  it('onNoAnswer recebe o motivo categórico, com ou sem surface', async () => {
+    const onNoAnswer = vi.fn();
+    const mockFetch = vi.fn(async () => jsonResponse(500, { message: 'oops' }));
+    const result = await judge(
+      { state: 'x', questions: { q: question }, onNoAnswer },
+      { fetch: mockFetch as unknown as typeof fetch, resolveKey: () => 'k' },
+    );
+    expect(result).toBeNull();
+    expect(onNoAnswer).toHaveBeenCalledTimes(1);
+    expect(onNoAnswer).toHaveBeenCalledWith('server-error');
+  });
+
+  it('onNoAnswer não é chamado no sucesso nem sem chave', async () => {
+    const onNoAnswer = vi.fn();
+    const ok = vi.fn(async () => jsonResponse(200, okBody));
+    await judge(
+      { state: 'x', questions: { q: question }, onNoAnswer },
+      { fetch: ok as unknown as typeof fetch, resolveKey: () => 'k' },
+    );
+    await judge(
+      { state: 'x', questions: { q: question }, onNoAnswer },
+      { fetch: ok as unknown as typeof fetch, resolveKey: () => undefined },
+    );
+    expect(onNoAnswer).not.toHaveBeenCalled();
+  });
 });
 
 describe('redactSecrets / redactState', () => {

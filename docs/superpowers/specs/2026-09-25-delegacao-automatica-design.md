@@ -60,7 +60,8 @@ módulo novo, `src/main/orch/operator-delegation-doctrine.ts`, com teto de
    `nexus_pane_spawn({ task, prompt })`. O Nexus (Jev) escolhe CLI, modelo e
    esforço. Não passe `adapterId`.
 2. Pesquisa, revisão, análise e leitura de testes usam `readOnly: true` e
-   rodam em paralelo (N helpers independentes = uma chamada só).
+   rodam em paralelo (uma chamada por helper: o `nexus_pane_spawn` não tem
+   spawn em lote).
 3. Quem altera código: um helper por vez. Enquanto um helper writer roda,
    você não edita arquivos.
 4. Depois de delegar, encerre o turno: a entrega chega no seu input sozinha.
@@ -86,10 +87,13 @@ ganha uma entrada `UserPromptSubmit` com um comando novo,
 a resposta do endpoint vira a saída do hook, e o comando termina em
 `|| true`. Vale para a família Claude (claude, glm, glm-flash, longcat).
 
-**Codex** entra só se o plano confirmar, num teste com a CLI real, que o
-`UserPromptSubmit` do Codex injeta `additionalContext`. Sem essa prova, o
-Codex fica só com a doutrina (C1). Kimi, Grok e demais CLIs ficam só com a
-doutrina.
+**Codex**: testado em 25/09 com `codex-cli 0.155.1`, `codex exec` e o hook
+passado por `-c hooks.UserPromptSubmit=[…]` (o mesmo formato do
+`codexStatusHookArgs`). O hook **não rodou** (o script marcador nunca foi
+executado) e a resposta ignorou o contexto. O TUI interativo, que é como o
+Nexus abre o Codex, não foi testado. Sem prova, o Codex fica só com a
+doutrina (C1); reabrir quando houver teste no TUI. Kimi, Grok e demais CLIs
+ficam só com a doutrina.
 
 **Endpoint.** `POST /hook/delegate`, módulo novo
 `src/main/orch/hook-delegate-endpoint.ts`, mesmo servidor loopback e bearer

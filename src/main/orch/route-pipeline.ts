@@ -159,6 +159,69 @@ export function multiScoreRerank(input: MultiScoreInput): {
 }
 
 /**
+ * Faixa de empate do desempate por uso (spawn da mão do operador, 25/09):
+ * ~2 posições da tabela, que desce 4 pontos por posição.
+ */
+export const TIE_MARGIN = 8;
+
+export interface TieBreakInput {
+  readonly ranked: RankedRouteEntry[];
+  /** CLI → quantos panes do mesmo agente pai (e ele próprio) já a usam. */
+  readonly useCounts: ReadonlyMap<string, number>;
+  readonly tier: TaskTier;
+  readonly modelCatalog: ModelCatalog;
+  readonly context?: RouteContext;
+  readonly circuitOpen?: MultiScoreInput['circuitOpen'];
+  readonly margin?: number;
+}
+
+/**
+ * "Melhor por tarefa, espalha no empate": entre os candidatos a até `margin`
+ * pontos do topo, vence o menos usado; fora da faixa ninguém sobe. Diferente
+ * da atenuação de missão (−18 por uso), nunca troca um vencedor claro.
+ */
+export function tieBreakByUse(input: TieBreakInput): {
+  ranked: RankedRouteEntry[];
+  note: string;
+} {
+  if (input.ranked.length < 2 || input.useCounts.size === 0) {
+    return { ranked: input.ranked, note: '' };
+  }
+  const margin = input.margin ?? TIE_MARGIN;
+  const scoreInput: Omit<MultiScoreInput, 'ranked'> = {
+    tier: input.tier,
+    modelCatalog: input.modelCatalog,
+    circuitOpen: input.circuitOpen,
+    // Sem histórico de missão: o total aqui é "qualidade da escolha", não
+    // diversidade — a diversidade é justamente o que este passo decide.
+    context: input.context
+      ? { ...input.context, missionUsedAdapters: undefined, missionUseCounts: undefined }
+      : undefined,
+  };
+  const totals = input.ranked.map(
+    (candidate, index) => scoreRouteCandidate(candidate, index, scoreInput).total,
+  );
+  const floor = totals[0]! - margin;
+  const uses = (adapterId: string): number => input.useCounts.get(adapterId) ?? 0;
+  let best = 0;
+  for (let index = 1; index < input.ranked.length; index += 1) {
+    if (totals[index]! < floor) continue;
+    if (uses(input.ranked[index]!.c.adapterId) < uses(input.ranked[best]!.c.adapterId)) {
+      best = index;
+    }
+  }
+  if (best === 0) return { ranked: input.ranked, note: '' };
+  const head = input.ranked[0]!;
+  const chosen = input.ranked[best]!;
+  return {
+    ranked: [chosen, ...input.ranked.filter((_, index) => index !== best)],
+    note:
+      `; desempate: ${chosen.c.adapterId} (${uses(chosen.c.adapterId)} aberto(s)) ` +
+      `no lugar de ${head.c.adapterId} (${uses(head.c.adapterId)} aberto(s))`,
+  };
+}
+
+/**
  * Build mission use counts from a list of adapter ids (panes).
  */
 export function countAdapterUses(

@@ -1,4 +1,5 @@
 import type { WebContents } from "electron";
+import { parentPaneIdFor } from "./operator-spawn-route";
 import { emitAppEvent } from '../connectors/app-events';
 import type {
   OrchPaneSpawnRequest,
@@ -2293,6 +2294,14 @@ export function requestPaneSpawn(
     transient: options.transient === true ? true : undefined,
     agentName: options.agentName,
     role: options.role,
+    ...(options.spawnRoute ? { route: options.spawnRoute } : {}),
+    ...(() => {
+      const parentPaneId = parentPaneIdFor(
+        options.operatorParentSessionId,
+        (sessionId) => findPane(sessionId)?.paneId,
+      );
+      return parentPaneId ? { parentPaneId } : {};
+    })(),
     allowPending:
       options[PENDING_SPAWN_RESULT] === true ? true : undefined,
     resume: options.resume != null && options.resume !== false,

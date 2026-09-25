@@ -68,4 +68,20 @@ describe('route log', () => {
     expect(e.model).toBeUndefined();
     expect(e.effort).toBeUndefined();
   });
+
+  it('guarda classifierSource e jevUnavailable quando informados', () => {
+    clearRouteLog();
+    recordRouteLog({
+      task: 't',
+      tier: 'medium',
+      adapterId: 'codex',
+      reason: 'r',
+      classifierSource: 'heuristic',
+      jevUnavailable: 'no-key',
+    });
+    expect(recentRouteLog()[0]).toMatchObject({
+      classifierSource: 'heuristic',
+      jevUnavailable: 'no-key',
+    });
+  });
 });

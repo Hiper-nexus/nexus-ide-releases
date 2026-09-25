@@ -1,4 +1,5 @@
 import { withWorkspaceDesignRule } from './workspace-design-rule';
+import type { SpawnRouteInfo } from '../../shared/spawn-route';
 import {
   getPaneAuthzInfo,
   listLivePaneNumbers,
@@ -999,6 +1000,8 @@ export async function proveNativeArgvBriefAccepted(
 
 export interface SpawnToolOptions {
   adapterId: string;
+  /** Origem da rota (A, 25/09) exibida no cabeçalho do pane; nunca autoridade. */
+  spawnRoute?: SpawnRouteInfo;
   /** Main-only provider-native first turn; never accepted from renderer IPC. */
   initialPrompt?: string;
   /** Main-selected vault identity; never let the renderer choose for missions. */

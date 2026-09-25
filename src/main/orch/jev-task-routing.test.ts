@@ -11,6 +11,7 @@ vi.mock('../jev/jev-secrets', () => ({ hasJevCredential: vi.fn(() => true) }));
 import { recordJevDecision } from '../jev/jev-decision-log';
 import type { JevResult, JudgeInput } from '../jev/jev-client';
 import {
+  classifyTaskForRouting,
   classifyTaskWithJev,
   routingOverridesFrom,
   type JevTaskClassification,
@@ -76,6 +77,46 @@ describe('classifyTaskWithJev', () => {
     expect(
       await classifyTaskWithJev('x', { judge: vi.fn(async () => answer('easy', 0.9, 'cooking', 0.9)) }),
     ).toBeNull();
+  });
+});
+
+describe('classifyTaskForRouting', () => {
+  it('classified quando o Jev responde', async () => {
+    const judge = vi.fn<JudgeMock>(async () => answer('hard', 0.8, 'bug', 0.7));
+    const out = await classifyTaskForRouting('corrigir race', { judge });
+    expect(out).toMatchObject({ kind: 'classified', classification: { tier: 'hard' } });
+  });
+
+  it('unavailable com o motivo: desligado, sem chave, resposta inválida e falha do judge', async () => {
+    const judge = vi.fn<JudgeMock>(async () => answer('easy', 0.9, 'doc', 0.9));
+    expect(await classifyTaskForRouting('x', { judge, enabled: () => false })).toEqual({
+      kind: 'unavailable',
+      reason: 'disabled',
+    });
+    expect(await classifyTaskForRouting('x', { judge, hasKey: () => false })).toEqual({
+      kind: 'unavailable',
+      reason: 'no-key',
+    });
+    expect(
+      await classifyTaskForRouting('x', {
+        judge: vi.fn<JudgeMock>(async () => answer('galactic', 0.9, 'bug', 0.9)),
+      }),
+    ).toEqual({ kind: 'unavailable', reason: 'invalid-answer' });
+    const timingOut = vi.fn<JudgeMock>(async (input) => {
+      input.onNoAnswer?.('timeout');
+      return null;
+    });
+    expect(await classifyTaskForRouting('x', { judge: timingOut })).toEqual({
+      kind: 'unavailable',
+      reason: 'timeout',
+    });
+  });
+
+  it('judge null sem callback vira network; tarefa em branco é skipped', async () => {
+    expect(
+      await classifyTaskForRouting('x', { judge: vi.fn<JudgeMock>(async () => null) }),
+    ).toEqual({ kind: 'unavailable', reason: 'network' });
+    expect(await classifyTaskForRouting('   ', {})).toEqual({ kind: 'skipped' });
   });
 });
 

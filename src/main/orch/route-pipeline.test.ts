@@ -5,7 +5,10 @@ import {
   mergeAdapterUseLists,
   multiScoreRerank,
   scoreRouteCandidate,
+  tieBreakByUse,
+  TIE_MARGIN,
 } from './route-pipeline';
+import type { ModelCatalog } from '../adapters/model-catalog';
 import type { RankedRouteEntry } from './task-router';
 
 const catalog = loadModelCatalog();
@@ -168,5 +171,42 @@ describe('mergeAdapterUseLists', () => {
 
   it('retorna undefined quando não há histórico', () => {
     expect(mergeAdapterUseLists([], undefined)).toBeUndefined();
+  });
+});
+
+describe('tieBreakByUse', () => {
+  // Catálogo vazio: qualidade e custo iguais para todos, então o total só
+  // difere pela posição na tabela (60, 56, 52, 48…).
+  const flat = { adapters: {} } as ModelCatalog;
+  const ranked = [entry('grok'), entry('agy'), entry('kimi'), entry('codex')];
+  const run = (counts: Record<string, number>) =>
+    tieBreakByUse({
+      ranked,
+      useCounts: new Map(Object.entries(counts)),
+      tier: 'medium',
+      modelCatalog: flat,
+    });
+
+  it('dentro da margem vence a CLI menos usada', () => {
+    const out = run({ grok: 1 });
+    expect(out.ranked[0]!.c.adapterId).toBe('agy');
+    expect(out.note).toContain('desempate');
+  });
+
+  it('pula para o terceiro quando o segundo também já está aberto', () => {
+    expect(run({ grok: 1, agy: 1 }).ranked[0]!.c.adapterId).toBe('kimi');
+  });
+
+  it('fora da margem o melhor vence mesmo repetindo', () => {
+    // codex está a 12 pontos do topo (> TIE_MARGIN = 8).
+    expect(TIE_MARGIN).toBe(8);
+    const out = run({ grok: 1, agy: 1, kimi: 1 });
+    expect(out.ranked[0]!.c.adapterId).toBe('grok');
+    expect(out.note).toBe('');
+  });
+
+  it('sem contagem ou topo ainda não usado: ordem intacta, mesmo array', () => {
+    expect(run({}).ranked).toBe(ranked);
+    expect(run({ agy: 2 }).ranked).toBe(ranked);
   });
 });

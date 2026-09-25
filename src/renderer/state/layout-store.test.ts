@@ -1531,3 +1531,69 @@ describe('layout-store — a missão mora na aba do pane que a começou', () => 
     expect(byId.get('pane-named')).toMatchObject({ spaceId: 'space-outro' });
   });
 });
+
+describe('spawnOrchPane — helper nasce na aba do pai (C3/B1)', () => {
+  beforeEach(() => {
+    seedLayout({
+      root: buildGridTree([
+        { ...basePane, id: 'pane-parent', kind: 'cli-agent', spaceId: 'space-b', spaceTitle: 'Feature B' },
+        { ...basePane, id: 'pane-other' },
+      ]),
+      focusedPaneId: 'pane-parent',
+      viewKind: 'grid',
+    });
+  });
+
+  it('herda spaceId/spaceTitle do pai e guarda a rota', () => {
+    const id = useLayoutStore.getState().spawnOrchPane({
+      orchRequestId: 'req-child',
+      paneId: 'pane-child',
+      adapterId: 'codex',
+      parentPaneId: 'pane-parent',
+      spawnRoute: { source: 'heuristic', jevUnavailable: 'no-key' },
+    });
+    const child = listPanes(useLayoutStore.getState().root).find((p) => p.id === id)!;
+    expect(child).toMatchObject({
+      spaceId: 'space-b',
+      spaceTitle: 'Feature B',
+      spawnRoute: { source: 'heuristic', jevUnavailable: 'no-key' },
+    });
+  });
+
+  it('pai ausente: nasce como hoje (sem espaço)', () => {
+    const id = useLayoutStore.getState().spawnOrchPane({
+      orchRequestId: 'req-orphan',
+      paneId: 'pane-orphan',
+      adapterId: 'codex',
+      parentPaneId: 'pane-gone',
+    });
+    const child = listPanes(useLayoutStore.getState().root).find((p) => p.id === id)!;
+    expect(child.spaceId).toBeUndefined();
+  });
+
+  it('pai de missão não passa espaço; pane de missão nunca herda', () => {
+    seedLayout({
+      root: buildGridTree([
+        { ...basePane, id: 'pane-parent', kind: 'cli-agent', missionId: 'm1', spaceId: 'space-old' },
+      ]),
+      focusedPaneId: 'pane-parent',
+    });
+    const id = useLayoutStore.getState().spawnOrchPane({
+      orchRequestId: 'req-m',
+      paneId: 'pane-m',
+      adapterId: 'codex',
+      parentPaneId: 'pane-parent',
+    });
+    expect(listPanes(useLayoutStore.getState().root).find((p) => p.id === id)!.spaceId).toBeUndefined();
+  });
+
+  it('spawnRoute não sobrevive ao schema persistido', async () => {
+    const { layoutNodeSchema } = await import('../../shared/ipc');
+    const parsed = layoutNodeSchema.parse({
+      kind: 'leaf',
+      id: 'n1',
+      pane: { id: 'p', kind: 'cli-agent', title: 't', spawnRoute: { source: 'jev' } },
+    }) as unknown as { pane: Record<string, unknown> };
+    expect(parsed.pane.spawnRoute).toBeUndefined();
+  });
+});

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { SpawnRouteInfo } from '../../shared/spawn-route';
 import {
   claimPaneNumber,
   hydratePaneNumbers,
@@ -98,6 +99,10 @@ interface LayoutState {
     transient?: true;
     agentName?: string;
     role?: 'orchestrator' | 'worker';
+    /** Pane que pediu este helper: o helper nasce na aba dele (C3/B1). */
+    parentPaneId?: string;
+    /** Origem da rota, só exibição. */
+    spawnRoute?: SpawnRouteInfo;
   }): string;
   /**
    * Remove a pane. `reason` is logged for operational forensics (why did two
@@ -924,6 +929,18 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
     // número para sempre, e o operador subiria para "pane 40" com 6 panes na
     // tela. O registro é o MESMO — nunca existem dois numeradores.
     if (req.paneId !== base.id) releasePaneNumber(base.id);
+    // Helper aberto por agente do operador nasce na aba do pai — mesma regra
+    // do split (F-560): missão não se herda, e pane de missão não herda aba.
+    const parent = req.parentPaneId
+      ? existingPanes.find((pane) => pane.id === req.parentPaneId)
+      : undefined;
+    const parentHasMission = Boolean(
+      parent && (parent.missionId ?? useOrchStore.getState().paneMissions[parent.id]),
+    );
+    const inheritedSpace =
+      parent?.spaceId && !parentHasMission && !req.missionId
+        ? { spaceId: parent.spaceId, spaceTitle: parent.spaceTitle }
+        : {};
     const newPane: PaneModel = {
       ...base,
       id: req.paneId,
@@ -936,6 +953,8 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
       transient: req.transient,
       agentName: req.agentName,
       role: req.role,
+      ...inheritedSpace,
+      ...(req.spawnRoute ? { spawnRoute: req.spawnRoute } : {}),
     };
     // Um placeholder estrutural solitário nunca é conteúdo do operador: o
     // primeiro pane real da orquestração o SUBSTITUI (mesma regra de

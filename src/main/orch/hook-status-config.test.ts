@@ -37,9 +37,9 @@ describe('mergeClaudeStatusHooks (Claude JSON settings)', () => {
     // Skill-gate Stop entry intact, ours appended alongside.
     expect(merged.Stop).toHaveLength(2);
     expect(merged.Stop![0]).toEqual(SKILL_GATE_STOP);
-    // User hook intact, ours appended.
+    // User hook intact, ours appended: status + conselho de delegação (C2).
     expect(merged.UserPromptSubmit![0]).toEqual(USER_PROMPT_HOOK);
-    expect(merged.UserPromptSubmit).toHaveLength(2);
+    expect(merged.UserPromptSubmit).toHaveLength(3);
     expect(merged.Notification).toHaveLength(1);
 
     // PostToolUseFailure carrega o status hook padrão + o hook de triagem
@@ -68,8 +68,20 @@ describe('mergeClaudeStatusHooks (Claude JSON settings)', () => {
     const twice = mergeClaudeStatusHooks(once);
 
     expect(twice).toEqual(once);
-    // 6 status hooks (claudeHookSpecs) + 1 hook de triagem PostToolUseFailure.
-    expect(JSON.stringify(twice).match(new RegExp(MARKER, 'g'))).toHaveLength(7);
+    // 6 status hooks (claudeHookSpecs) + 1 hook de triagem PostToolUseFailure
+    // + 1 hook de delegação UserPromptSubmit (C2).
+    expect(JSON.stringify(twice).match(new RegExp(MARKER, 'g'))).toHaveLength(8);
+  });
+});
+
+describe('mergeClaudeStatusHooks — conselho de delegação (C2)', () => {
+  it('UserPromptSubmit ganha o hook de delegação sem perder o de status, e é idempotente', () => {
+    const once = mergeClaudeStatusHooks({});
+    const twice = mergeClaudeStatusHooks(once);
+    const commands = (twice.UserPromptSubmit as Array<{ hooks: Array<{ command: string }> }>)
+      .flatMap((entry) => entry.hooks.map((hook) => hook.command));
+    expect(commands.filter((c) => c.includes('NEXUS_HOOK_DELEGATE_URL'))).toHaveLength(1);
+    expect(commands.some((c) => c.includes('NEXUS_HOOK_URL'))).toBe(true);
   });
 });
 

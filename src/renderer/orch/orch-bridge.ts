@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { noticeJevRouteFallback } from './jev-route-notice';
 import type {
   MissionPaneRecoveryRequest,
   MissionPaneRecoveryResult,
@@ -648,10 +649,13 @@ export function useOrchBridge(): void {
                 transient: req.transient,
                 agentName: req.agentName,
                 role: req.role ?? 'worker',
+                ...(req.parentPaneId ? { parentPaneId: req.parentPaneId } : {}),
+                ...(req.route ? { spawnRoute: req.route } : {}),
               });
             console.info(
               `[orch] pane spawn materialized id=${req.requestId} pane=${paneId}`,
             );
+            noticeJevRouteFallback(req.route);
             useOrchStore.getState().bindPaneMission(paneId, req.missionId);
             // The pane identity is already main-owned and durable enough to
             // address. Do not make the MCP caller pay for a cold CLI boot just

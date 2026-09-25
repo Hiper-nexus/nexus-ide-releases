@@ -1,3 +1,4 @@
+import type { SpawnRouteInfo } from './spawn-route';
 /**
  * Catalog / browser / design / layout / PTY payload types shared across IPC.
  * Extracted from types.ts for the Akita ~800-line module budget.
@@ -471,6 +472,12 @@ export interface PaneModel {
    * começaram. Só agrupamento visual; o main não deriva autoridade daqui.
    */
   missionHost?: true;
+  /**
+   * Origem da rota de um pane aberto por agente do operador (chip "Jev" /
+   * "sem Jev"). Informação do nascimento: fica FORA do paneModelSchema de
+   * propósito, então não persiste nem volta no restart.
+   */
+  spawnRoute?: SpawnRouteInfo;
   /**
    * Process-local orchestration surface. It may be visible while active but
    * must never enter the durable workspace layout or cold-start restore.

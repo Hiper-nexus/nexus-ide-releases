@@ -84,10 +84,30 @@ export function armAutoCloseOnHandoff(
   armedBySession.set(sessionId, paneId);
 }
 
-export function disarmAutoCloseOnHandoff(sessionId: string): void {
-  armedBySession.delete(sessionId);
+/**
+ * Braço por PANE para o spawn com ACK pendente: a mão do operador recebe o
+ * paneId antes de a sessão existir, então não há sessão para armar ainda. O
+ * handoff da sessão que nascer nesse pane encontra o braço pelo pane.
+ */
+const armedByPane = new Set<string>();
+
+export function armAutoCloseOnHandoffForPane(paneId: string): void {
+  armedByPane.add(paneId);
 }
 
-export function armedAutoClosePaneId(sessionId: string): string | null {
-  return armedBySession.get(sessionId) ?? null;
+export function disarmAutoCloseOnHandoff(
+  sessionId: string,
+  paneId?: string | null,
+): void {
+  armedBySession.delete(sessionId);
+  if (paneId) armedByPane.delete(paneId);
+}
+
+export function armedAutoClosePaneId(
+  sessionId: string,
+  paneId?: string | null,
+): string | null {
+  const bySession = armedBySession.get(sessionId);
+  if (bySession) return bySession;
+  return paneId && armedByPane.has(paneId) ? paneId : null;
 }

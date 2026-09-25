@@ -6,6 +6,7 @@ import type {
   PaneSnapshot,
 } from "../../shared/orch-types";
 import type { ProjectExecutionScope } from "../../shared/types";
+import type { SpawnRouteInfo } from '../../shared/spawn-route';
 import {
   getAdapter,
   isAdapterInstalled,
@@ -97,6 +98,8 @@ export interface PaneSpawnOptions {
   readonly resumeFromPaneId?: string;
   /** Main-authored spawner; never copied into the renderer request. */
   operatorParentSessionId?: string;
+  /** Origem da rota exibida no renderer; não confere autoridade nenhuma. */
+  spawnRoute?: SpawnRouteInfo;
   adapterId: string;
   model?: string;
   /**
