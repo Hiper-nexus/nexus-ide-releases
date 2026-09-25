@@ -213,9 +213,16 @@ saber isto antes de mexer:
   `reopenMission`. Digitação do renderer (`writeToPane`, `submitPromptToPane*`)
   recusa host estacionado — a sessão continua viva, mas é de outro projeto.
 - Em Autopilot a missão criada pela mão do operador (`nexus_mission_create`,
-  role `user`) nasce `running`: pendente, ela rebaixava o pane que já abria
-  panes a um orquestrador preso em `dispatch_required`. Hardened mantém o
-  despacho explícito na interface.
+  role `user`) nasce `running` com contrato aprovado e despachado em modo
+  livre (`freeAgentChoice`) e sem squad, salvo `squadId` explícito (F-649).
+  Sem contrato todo worker voltava `approval_required`; com o `nexus-fullstack`
+  imposto vinham `squad_binding_violation` e `route_reservation_required`.
+  Validar "a missão nasce rodando" só no intent gate não prova nada — o spawn
+  real exige contrato. Hardened mantém squad padrão e despacho na interface.
+- Missão `done`/`failed` devolve a mão do operador ao pane que ela promoveu
+  (`returnOperatorHandFromEndedMission`, no `dispatchToolCall`, F-650).
+  `blocked` mantém o vínculo: é a espera pela resposta do operador. O Nexus
+  opera pelo "+ Pane" E por missão; missão nunca deixa o pane do operador estéril.
 
 ## Abas dos Terminais: aba = feature (23/09)
 

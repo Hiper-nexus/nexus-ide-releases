@@ -24,6 +24,7 @@ import {
   isInternalPrevcReviewerToolAllowed,
   isCurrentGateContext,
   isToolAllowedForRole,
+  returnOperatorHandFromEndedMission,
   type AgentGateContext,
 } from "./gate";
 import {
@@ -544,6 +545,38 @@ export async function dispatchToolCall(
       tool: tool.name,
       error: `invalid arguments: ${detail}`,
     };
+  }
+
+  // Missão encerrada devolve a mão do operador ANTES dos gates de papel: o pane
+  // que o operador abriu pelo "+ Pane" e que criou uma missão volta a abrir
+  // panes, rodar comandos e criar outra missão assim que ela falha ou conclui.
+  // `mission_set_status` da própria missão fica de fora para o done idempotente
+  // (e o push dele) continuar sendo do orquestrador. Leitura falha = nada muda.
+  if (
+    ctx.promotedFromUserSession &&
+    ctx.missionId &&
+    !(
+      canonicalToolName(tool.name) === "mission_set_status" &&
+      args.missionId === ctx.missionId
+    )
+  ) {
+    let ended = false;
+    try {
+      const status = (
+        options.resolveMissionForIntentGate ??
+        resolveProductionMissionForIntentGate
+      )(ctx.scope, ctx.missionId)?.mission.status;
+      ended = status === "done" || status === "failed";
+    } catch {
+      ended = false;
+    }
+    if (ended && returnOperatorHandFromEndedMission(ctx)) {
+      auditContext = {
+        scope: ctx.scope,
+        missionId: undefined,
+        contextRevision: undefined,
+      };
+    }
   }
 
   const denyBeforeIntent = (

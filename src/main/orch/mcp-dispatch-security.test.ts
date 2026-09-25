@@ -1172,6 +1172,104 @@ describe("MCP dispatch effect safety", () => {
     expect(handler).not.toHaveBeenCalled();
   });
 
+  describe("missão encerrada devolve a mão do operador (campo 25/09)", () => {
+    // O pane aberto pelo "+ Pane" criou uma missão; ela falhou e o pane seguiu
+    // orquestrador de uma missão morta: pane_spawn/agent_invoke voltavam
+    // dispatch_required e nexus_mission_create "only a user-owned session".
+    function promotedOperatorPane() {
+      const ctx = userContext();
+      ctx.missionId = TEST_MISSION_ID;
+      ctx.role = "orchestrator";
+      ctx.promotedFromUserSession = true;
+      return ctx;
+    }
+
+    function withMissionStatus(status: Mission["status"]): McpDispatchOptions {
+      const fixture = dispatchedMissionFixture();
+      return {
+        ...workflowOptions(),
+        resolveMissionForIntentGate: () => ({
+          ...fixture,
+          mission: { ...fixture.mission, status },
+        }),
+      };
+    }
+
+    function spawnTool(handler: McpToolDef["handler"]): McpToolDef {
+      return {
+        name: "nexus_pane_spawn",
+        description: "x",
+        inputSchema: { type: "object", properties: {} },
+        handler,
+      };
+    }
+
+    it.each(["failed", "done"] as const)(
+      "missão %s: o pane volta a spawnar como mão do operador",
+      async (status) => {
+        const ctx = promotedOperatorPane();
+        const seen: Array<{ role: string; missionId?: string }> = [];
+        const handler = vi.fn(async (_args, caller) => {
+          seen.push({ role: caller.role, missionId: caller.missionId });
+          return { ok: true };
+        });
+
+        const result = await dispatchToolCall(
+          "http-mcp",
+          registryWith(spawnTool(handler)),
+          "nexus_pane_spawn",
+          { adapterId: "codex", prompt: "revisor A1" },
+          ctx,
+          withMissionStatus(status),
+        );
+
+        expect(result).toMatchObject({ ok: true, tool: "nexus_pane_spawn" });
+        expect(seen).toEqual([{ role: "user", missionId: undefined }]);
+        expect(ctx).not.toHaveProperty("promotedFromUserSession");
+      },
+    );
+
+    it.each(["running", "blocked"] as const)(
+      "missão %s: o orquestrador continua vinculado",
+      async (status) => {
+        // blocked é a espera por resposta do operador: o orquestrador retoma
+        // a mesma missão quando ela volta, então o vínculo fica.
+        const ctx = promotedOperatorPane();
+        await dispatchToolCall(
+          "http-mcp",
+          registryWith(spawnTool(vi.fn(async () => ({ ok: true })))),
+          "nexus_pane_spawn",
+          { adapterId: "codex", prompt: "revisor A1" },
+          ctx,
+          withMissionStatus(status),
+        );
+        expect(ctx).toMatchObject({
+          role: "orchestrator",
+          missionId: TEST_MISSION_ID,
+          promotedFromUserSession: true,
+        });
+      },
+    );
+
+    it("mission_set_status da própria missão concluída segue com o orquestrador", async () => {
+      const ctx = promotedOperatorPane();
+      await dispatchToolCall(
+        "http-mcp",
+        registryWith({
+          name: "nexus_mission_set_status",
+          description: "x",
+          inputSchema: { type: "object", properties: {} },
+          handler: vi.fn(async () => ({ ok: true })),
+        }),
+        "nexus_mission_set_status",
+        { missionId: TEST_MISSION_ID, status: "done" },
+        ctx,
+        withMissionStatus("done"),
+      );
+      expect(ctx).toMatchObject({ role: "orchestrator", missionId: TEST_MISSION_ID });
+    });
+  });
+
   it("accepts workspace handoff only for a live operator child without stale context", async () => {
     const ctx = userContext();
     bindTokenToSession(ctx.token, 'workspace-child');

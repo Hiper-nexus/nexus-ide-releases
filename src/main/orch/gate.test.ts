@@ -26,6 +26,7 @@ const {
   mintToken,
   promoteMissionSessionAuthority,
   rollbackSessionAuthorityMission,
+  returnOperatorHandFromEndedMission,
   registerMissionLeaderSessionCheck,
   releaseSession,
   resetGateForTests,
@@ -288,6 +289,59 @@ describe('token registry + stop gate', () => {
       rollbackSessionAuthorityMission('pty-outro', 'mission-descartada'),
     ).toBe(false);
     expect(getContextBySession('pty-outro')?.role).toBe('orchestrator');
+  });
+
+  it('missão encerrada devolve a mão do operador sem alargar o allowlist dela', () => {
+    // Campo 25/09: o pane aberto pelo "+ Pane" criou uma missão, ela falhou, e
+    // o pane seguiu orquestrador de uma missão morta — sem pane_spawn e sem
+    // poder criar outra missão. O rollback só rodava quando a missão era apagada.
+    const scope = testProjectScope();
+    const pane = mintToken({
+      label: 'pane do operador',
+      role: 'user',
+      scope,
+      allowedTools: ['nexus_pane_spawn', 'nexus_mission_create'],
+    });
+    bindTokenToSession(pane.token, 'pty-operador-falhou');
+    const ctx = getContextBySession('pty-operador-falhou')!;
+    ctx.missionId = 'mission-falhou';
+    ctx.role = 'orchestrator';
+    ctx.promotedFromUserSession = true;
+    ctx.contextRevision = 'c'.repeat(64);
+
+    expect(returnOperatorHandFromEndedMission(ctx)).toBe(true);
+
+    expect(ctx.role).toBe('user');
+    expect(ctx.missionId).toBeUndefined();
+    expect(ctx.contextRevision).toBeUndefined();
+    expect(ctx).not.toHaveProperty('promotedFromUserSession');
+    expect(ctx.allowedTools).toEqual(['nexus_pane_spawn', 'nexus_mission_create']);
+  });
+
+  it('missão encerrada nunca devolve como user quem não era a mão do operador', () => {
+    const scope = testProjectScope();
+    const worker = mintToken({
+      label: 'worker',
+      role: 'worker',
+      missionId: 'mission-falhou',
+      scope,
+      allowedTools: [],
+    });
+    bindTokenToSession(worker.token, 'pty-worker-falhou');
+    const workerCtx = getContextBySession('pty-worker-falhou')!;
+    expect(returnOperatorHandFromEndedMission(workerCtx)).toBe(false);
+    expect(workerCtx).toMatchObject({ role: 'worker', missionId: 'mission-falhou' });
+
+    // Promovido pelo operador mas rebaixado a worker por troca de liderança:
+    // essa autoridade é da missão, não volta sozinha para a mão do operador.
+    const pane = mintToken({ label: 'pane', role: 'user', scope, allowedTools: null });
+    bindTokenToSession(pane.token, 'pty-rebaixado');
+    const demoted = getContextBySession('pty-rebaixado')!;
+    demoted.missionId = 'mission-falhou';
+    demoted.role = 'worker';
+    demoted.promotedFromUserSession = true;
+    expect(returnOperatorHandFromEndedMission(demoted)).toBe(false);
+    expect(demoted.role).toBe('worker');
   });
 
   it('refuses to promote a session from another mission', () => {

@@ -743,6 +743,39 @@ export function rollbackSessionAuthorityMission(
   return true;
 }
 
+/**
+ * Missão ENCERRADA (done/failed) não aprisiona a mão do operador (campo 25/09).
+ *
+ * O rollback acima só rodava quando a missão era APAGADA. Missão que falhava ou
+ * concluía deixava o pane que a criou `orchestrator` de uma missão morta: todo
+ * `pane_spawn`/`terminal_run` voltava `dispatch_required`, `nexus_mission_create`
+ * respondia "only a user-owned session may create a mission", e o agente pedia
+ * ao operador um despacho que o Quadro de missão falha nem oferece.
+ *
+ * Devolve SÓ quem `nexus_mission_create` promoveu de `user` e continua
+ * orquestrador. A promoção não mexeu no allowlist, então a devolução também não
+ * mexe — nunca alarga o que o pane tinha. Quem uma troca de liderança rebaixou a
+ * worker fica como está: essa é autoridade da missão, não da mão do operador.
+ */
+export function returnOperatorHandFromEndedMission(
+  ctx: AgentGateContext,
+): boolean {
+  if (
+    !ctx.promotedFromUserSession ||
+    !ctx.missionId ||
+    ctx.role !== "orchestrator"
+  ) {
+    return false;
+  }
+  delete ctx.missionId;
+  delete ctx.contextRevision;
+  delete ctx.workerIncarnationId;
+  delete ctx.promotedFromUserSession;
+  ctx.role = "user";
+  ctx.handoffSubmitted = false;
+  return true;
+}
+
 /** Toda sessão presa à missão que sumiu, devolvida de uma vez. */
 export function rollbackMissionSessionAuthorities(missionId: string): number {
   const target = missionId.trim();
