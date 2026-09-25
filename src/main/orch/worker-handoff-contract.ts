@@ -1,7 +1,4 @@
-import {
-  collectUiWorkEvidence,
-  isUiWorkText,
-} from '../../shared/ui-work-signal';
+import { hasUiWorkTerm } from '../../shared/ui-work-signal';
 import { LEGACY_MARKER } from './legacy-handoff';
 import { PONYTAIL_RULES } from './ponytail';
 import { ENGINEERING_CHARTER } from './engineering-charter';
@@ -35,9 +32,7 @@ import { isPaneMetaTask } from './mission-fast-lane';
  * as fronteiras vêm da tabela compartilhada, não de um regex paralelo.
  */
 function isUiShapedWork(corpus: string): boolean {
-  if (isUiWorkText(corpus)) return true;
-  const evidence = collectUiWorkEvidence(corpus);
-  return evidence.matches.length > 0;
+  return hasUiWorkTerm(corpus);
 }
 
 export interface HandoffContractHints {

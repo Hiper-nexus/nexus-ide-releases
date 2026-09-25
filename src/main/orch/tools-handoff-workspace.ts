@@ -9,6 +9,7 @@ import {
   type McpToolInvocation,
 } from "./mcp-protocol";
 import { resolveWorkspaceHandoffParent } from "./workspace-handoff-authority";
+import { WORKSPACE_HANDOFF_DELIVERY_PREFIX } from "./workspace-handoff-delivery";
 import { listPaneSnapshots } from "./pane-registry";
 import { getProjectDomainStores } from "./project-domain-store-registry";
 import { injectPrompt, requireStr } from "./tool-util";
@@ -176,7 +177,7 @@ export async function submitWorkspaceHandoff(
     const title = (snapshot?.title ?? ctx.label).replace(/[\r\n\u001b]/g, " ");
     await injectPrompt(
       destination.parentContext.sessionId!,
-      `[handoff sem missão] de ${destination.child.paneId} (${title}): ${handoff.summary}\n`,
+      `${WORKSPACE_HANDOFF_DELIVERY_PREFIX} de ${destination.child.paneId} (${title}): ${handoff.summary}\n`,
       { ...invocation, assertCurrentAuthority: assertDestinationCurrent },
     );
     assertDestinationCurrent();

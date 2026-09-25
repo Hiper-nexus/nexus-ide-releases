@@ -2,6 +2,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  AUXILIARY_CONTEXT_HEADER,
   __resetLeanRemindersForTests,
   formatDelegationContext,
   handleHookDelegateHttp,
@@ -83,6 +84,100 @@ describe('hook /hook/delegate', () => {
       expect(text).toContain('ponytail');
       expect(text.length).toBeLessThanOrEqual(660);
     });
+  });
+
+  describe('contexto de design (pedido de interface)', () => {
+    const scope = { rootRealPath: '/repo' } as never;
+    const withScope = { ...operator, scope };
+    const UI = 'Crie a tela de checkout de pagamentos com o resumo do pedido.';
+    const noAdvice = vi.fn(async () => null);
+    const designText = 'Regra de design do projeto (teste)';
+
+    function context(out: { payload: Record<string, unknown> }): string {
+      return (out.payload.hookSpecificOutput as { additionalContext: string }).additionalContext;
+    }
+
+    it('injeta a regra de design do workspace do pane, mesmo sem conselho do Jev', async () => {
+      __resetLeanRemindersForTests();
+      const design = vi.fn(() => designText);
+      const out = await handleHookDelegateRequest(withScope, { prompt: UI }, { advise: noAdvice, design });
+      expect(design).toHaveBeenCalledWith(UI, '/repo');
+      expect(context(out)).toContain(designText);
+    });
+
+    it('prefere a worktree da execução ao checkout de coordenação', async () => {
+      __resetLeanRemindersForTests();
+      const design = vi.fn(() => designText);
+      const ctx = { ...withScope, executionScope: { rootRealPath: '/repo/.nexus/worktrees/t1' } as never };
+      await handleHookDelegateRequest(ctx, { prompt: UI }, { advise: noAdvice, design });
+      expect(design).toHaveBeenCalledWith(UI, '/repo/.nexus/worktrees/t1');
+    });
+
+    it('uma vez por sessão dentro do intervalo', async () => {
+      __resetLeanRemindersForTests();
+      let now = 5_000_000;
+      const deps = { advise: noAdvice, design: vi.fn(() => designText), now: () => now };
+      expect(context(await handleHookDelegateRequest(withScope, { prompt: UI }, deps))).toContain(designText);
+      expect((await handleHookDelegateRequest(withScope, { prompt: UI }, deps)).payload).toEqual({});
+      now += 31 * 60_000;
+      expect(context(await handleHookDelegateRequest(withScope, { prompt: UI }, deps))).toContain(designText);
+    });
+
+    it('helper que nasceu com a regra ou a carta no brief não recebe de novo', async () => {
+      __resetLeanRemindersForTests();
+      const design = vi.fn(() => designText);
+      for (const brief of [`${UI}\n\nRegra de design do projeto (sempre que…)`, `${UI}\n\n# Design Charter (anti-generic AI look)`]) {
+        expect((await handleHookDelegateRequest(withScope, { prompt: brief }, { advise: noAdvice, design })).payload)
+          .toEqual({});
+      }
+      expect(design).not.toHaveBeenCalled();
+    });
+
+    it('sem escopo de workspace ou sem sessão, fica em silêncio', async () => {
+      __resetLeanRemindersForTests();
+      const design = vi.fn(() => designText);
+      expect((await handleHookDelegateRequest(operator, { prompt: UI }, { advise: noAdvice, design })).payload).toEqual({});
+      expect((await handleHookDelegateRequest({ role: 'user' as const, scope }, { prompt: UI }, { advise: noAdvice, design })).payload)
+        .toEqual({});
+      expect(design).not.toHaveBeenCalled();
+    });
+
+    it('Jev com erro não derruba o contexto de design', async () => {
+      __resetLeanRemindersForTests();
+      const boom = vi.fn(async () => { throw new Error('x'); });
+      const out = await handleHookDelegateRequest(withScope, { prompt: UI }, { advise: boom, design: () => designText });
+      expect(context(out)).toContain(designText);
+    });
+  });
+
+  it('no Codex o contexto se apresenta como auxiliar (chega depois do prompt)', async () => {
+    __resetLeanRemindersForTests();
+    const advise = vi.fn(async () => delegation(3, 1));
+    const codex = await handleHookDelegateRequest({ ...operator, providerId: 'codex' }, { prompt: LONG }, { advise });
+    const claude = await handleHookDelegateRequest({ ...operator, providerId: 'claude' }, { prompt: LONG }, { advise });
+    const text = (out: typeof codex) => (out.payload.hookSpecificOutput as { additionalContext: string }).additionalContext;
+    expect(text(codex).startsWith(AUXILIARY_CONTEXT_HEADER)).toBe(true);
+    expect(text(claude)).not.toContain(AUXILIARY_CONTEXT_HEADER);
+  });
+
+  it('entrega de handoff de helper não é pedido novo: nem Jev nem contexto', async () => {
+    __resetLeanRemindersForTests();
+    const advise = vi.fn(async () => ({ ...delegation(5, 0), writesCode: 0.9 }));
+    const design = vi.fn(() => 'Regra de design do projeto (teste)');
+    const delivery = '[handoff sem missão] de pane-7 (Grok): Inventário concluído. Top 5: recall, cartas, fechamento, design, isolatedWriter.';
+    const out = await handleHookDelegateRequest(
+      { ...operator, scope: { rootRealPath: '/repo' } as never }, { prompt: delivery }, { advise, design },
+    );
+    expect(out.payload).toEqual({});
+    expect(advise).not.toHaveBeenCalled();
+    expect(design).not.toHaveBeenCalled();
+  });
+
+  it('pedido de código de helper que já nasceu com as regras da ponytail não recebe o lembrete', async () => {
+    __resetLeanRemindersForTests();
+    const advise = vi.fn(async () => ({ delegation: null, writesCode: 0.9 }));
+    const brief = `${LONG}\n\n# Ponytail, lazy senior dev mode\n...`;
+    expect((await handleHookDelegateRequest(operator, { prompt: brief }, { advise })).payload).toEqual({});
   });
 
   it('formatDelegationContext conta leitura e escrita', () => {
