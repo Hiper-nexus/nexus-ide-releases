@@ -35,7 +35,7 @@ import {
 } from '../../vendor/emdash/hooks/hook-config';
 import { filterUserHooks } from '../../vendor/emdash/hooks/hook-commands';
 import { makeClaudeTriageHookCommand } from './hook-triage-command';
-import { makeClaudeDelegateHookCommand } from './hook-delegate-command';
+import { makeDelegateHookCommand } from './hook-delegate-command';
 
 // ── Claude (family: claude/glm/glm-flash/longcat) ───────────────────────────
 
@@ -77,7 +77,7 @@ export function mergeClaudeStatusHooks(existing: ClaudeHooksMap): ClaudeHooksMap
     ...prompt,
     {
       hooks: [
-        { type: 'command', command: makeClaudeDelegateHookCommand(), timeout: 5 },
+        { type: 'command', command: makeDelegateHookCommand(), timeout: 5 },
       ],
     },
   ];
@@ -110,8 +110,16 @@ function tomlBasicString(value: string): string {
 export function codexStatusHookArgs(): string[] {
   const args: string[] = [];
   for (const spec of codexHookSpecs()) {
-    const value = `[{hooks=[{type="command",command=${tomlBasicString(spec.command)}}]}]`;
-    args.push('-c', `hooks.${spec.hookKey}=${value}`);
+    // UserPromptSubmit também pede contexto ao /hook/delegate, no MESMO array:
+    // um segundo `-c` com a mesma chave sombrearia o hook de status.
+    const commands =
+      spec.hookKey === 'UserPromptSubmit'
+        ? [spec.command, makeDelegateHookCommand()]
+        : [spec.command];
+    const hooks = commands
+      .map((command) => `{type="command",command=${tomlBasicString(command)}}`)
+      .join(',');
+    args.push('-c', `hooks.${spec.hookKey}=[{hooks=[${hooks}]}]`);
   }
   return args;
 }
