@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.76.102 — Mão livre
+
+O pane que você abre pelo "+ Pane" nunca mais fica preso a uma missão. Se o agente dele criar uma missão, ela nasce pronta para abrir workers, e quando termina, falha ou para, o pane volta a ser seu. Inclui tudo da 0.76.101 (Motor leve).
+
+- **Missão criada pelo pane abre workers.** Ela nascia sem contrato e presa a um squad que ninguém pediu: cada worker era recusado (contrato ausente, CLI fora do roster, reserva de rota) e o agente pedia um "despacho em modo livre" que o Quadro não oferece. Agora nasce rodando, em Escolha livre de agentes e sem squad imposto.
+- **Missão encerrada devolve o pane.** Depois de uma missão falhar ou concluir, o pane que a criou seguia preso a ela: não abria panes nem criava outra missão. Agora volta a ser a sua mão na chamada seguinte.
+- **Missão parada tem saída.** Missão bloqueada pelo próprio agente pode ser retomada por ele, e toda recusa diz ao agente a chamada exata para retomar ou encerrar, em vez de pedir a você um clique que não existe.
+
 ## 0.76.101 — Motor leve
 
 O Nexus abre mais rápido, gasta menos RAM e CPU parado e não trava mais ao fechar um pane depois de reiniciar. Os panes "+" e os helpers ganham o motor que só as missões tinham.

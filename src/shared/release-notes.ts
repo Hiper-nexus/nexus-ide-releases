@@ -6982,7 +6982,7 @@ export const RELEASE_076100: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076101: AppRelease = {
   version: '0.76.101',
   date: '2026-09-25',
   codename: 'Motor leve',
@@ -7037,6 +7037,41 @@ export const CURRENT_RELEASE: AppRelease = {
     {
       title: 'Ponytail em YAML válido',
       detail: 'A skill voltou a carregar em CLIs com YAML estrito, como Kimi e OpenCode.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.102',
+  date: '2026-09-25',
+  codename: 'Mão livre',
+  summary:
+    'O pane que você abre pelo "+ Pane" nunca mais fica preso a uma missão: ' +
+    'se o agente dele criar uma, ela já abre workers, e quando termina, falha ' +
+    'ou para, o pane volta a ser seu. Inclui tudo da 0.76.101 (Motor leve).',
+  highlights: [
+    {
+      title: 'Missão criada pelo pane abre workers',
+      detail:
+        'Nasce rodando, em Escolha livre de agentes e sem squad imposto. Antes ' +
+        'cada worker era recusado e o agente pedia um despacho que o Quadro não ' +
+        'oferece.',
+    },
+    {
+      title: 'Missão parada tem saída',
+      detail:
+        'O próprio agente retoma a missão bloqueada, e toda recusa diz a ele a ' +
+        'chamada exata para retomar ou encerrar, em vez de pedir a você um ' +
+        'clique que não existe.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Missão encerrada devolve o pane',
+      detail:
+        'Depois de uma missão falhar ou concluir, o pane que a criou seguia ' +
+        'preso a ela, sem abrir panes nem criar outra missão. Agora volta a ser ' +
+        'a sua mão na chamada seguinte.',
     },
   ],
 };
