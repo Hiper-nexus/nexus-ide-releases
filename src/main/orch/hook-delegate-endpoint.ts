@@ -14,6 +14,7 @@ import {
   operatorDesignContext,
 } from './workspace-design-rule';
 import { WORKSPACE_HANDOFF_DELIVERY_PREFIX } from './workspace-handoff-delivery';
+import { OPERATOR_DELEGATION_DOCTRINE } from './operator-delegation-doctrine';
 
 export const HOOK_DELEGATE_MAX_BODY_BYTES = 64 * 1024;
 
@@ -52,6 +53,7 @@ export const LEAN_CODE_REMINDER =
 
 const leanRemindedAt = new Map<string, number>();
 const designRemindedAt = new Map<string, number>();
+const doctrineDeliveredAt = new Map<string, number>();
 
 function remindedRecently(ledger: Map<string, number>, sessionId: string, now: number): boolean {
   const last = ledger.get(sessionId);
@@ -75,6 +77,7 @@ function claimLeanReminder(sessionId: string, now: number): boolean {
 export function __resetLeanRemindersForTests(): void {
   leanRemindedAt.clear();
   designRemindedAt.clear();
+  doctrineDeliveredAt.clear();
 }
 
 type HookContext = Pick<AgentGateContext, 'role' | 'missionId' | 'sessionId'> &
@@ -129,6 +132,12 @@ export async function handleHookDelegateRequest(
     // Jev fora do ar não pode levar junto o contexto de design, que é local.
     const advice = await advise(prompt, { sessionId: ctx.sessionId }).catch(() => null);
     const parts: string[] = [];
+    // O Codex não recebe a doutrina pelas instructions do MCP (ele as repete
+    // em cada tool); ela chega aqui, uma vez por sessão a cada 30 min.
+    if (ctx.providerId === 'codex' && ctx.sessionId && !remindedRecently(doctrineDeliveredAt, ctx.sessionId, now)) {
+      markReminded(doctrineDeliveredAt, ctx.sessionId, now);
+      parts.push(OPERATOR_DELEGATION_DOCTRINE);
+    }
     if (advice?.delegation) parts.push(formatDelegationContext(advice.delegation));
     if (
       advice &&

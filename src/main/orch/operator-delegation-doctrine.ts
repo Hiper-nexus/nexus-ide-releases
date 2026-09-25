@@ -23,8 +23,15 @@ export const OPERATOR_DELEGATION_DOCTRINE = [
   '10. UI: leia antes o contrato do projeto (DESIGN.md ou .context/docs/design-system.md); sem contrato, escolha uma referência com nexus_design_system_local_list e diga qual usou. Nada de cara de IA: emoji como ícone, texto em gradiente, gradiente roxo, cards idênticos.',
 ].join('\n');
 
+/**
+ * O Codex (0.155, provado em 25/09) cola as instructions do servidor MCP no
+ * começo da descrição de CADA tool: a doutrina viraria ~150 KB num pane
+ * gravável de 165 tools. Para ele a doutrina vai pelo hook UserPromptSubmit
+ * (hook-delegate-endpoint), uma vez por sessão.
+ */
 export function operatorDelegationInstructions(
-  ctx: Pick<AgentGateContext, 'role' | 'missionId'>,
+  ctx: Pick<AgentGateContext, 'role' | 'missionId' | 'providerId'>,
 ): string | undefined {
-  return ctx.role === 'user' && !ctx.missionId ? OPERATOR_DELEGATION_DOCTRINE : undefined;
+  if (ctx.role !== 'user' || ctx.missionId || ctx.providerId === 'codex') return undefined;
+  return OPERATOR_DELEGATION_DOCTRINE;
 }

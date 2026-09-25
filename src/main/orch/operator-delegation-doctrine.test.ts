@@ -15,6 +15,11 @@ describe('doutrina de delegação da mão do operador', () => {
     expect(OPERATOR_DELEGATION_DOCTRINE).not.toContain('adapterId:');
   });
 
+  it('Codex não recebe pelo MCP: ele cola as instructions em cada tool (vai pelo hook)', () => {
+    expect(operatorDelegationInstructions({ role: 'user', providerId: 'codex' })).toBeUndefined();
+    expect(operatorDelegationInstructions({ role: 'user', providerId: 'claude' })).toBe(OPERATOR_DELEGATION_DOCTRINE);
+  });
+
   it('só a mão do operador sem missão recebe', () => {
     expect(operatorDelegationInstructions({ role: 'user' })).toBe(OPERATOR_DELEGATION_DOCTRINE);
     expect(operatorDelegationInstructions({ role: 'user', missionId: 'm' })).toBeUndefined();

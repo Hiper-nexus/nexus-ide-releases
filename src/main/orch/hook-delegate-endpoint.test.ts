@@ -1,6 +1,7 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { OPERATOR_DELEGATION_DOCTRINE } from './operator-delegation-doctrine';
 import {
   AUXILIARY_CONTEXT_HEADER,
   __resetLeanRemindersForTests,
@@ -158,6 +159,24 @@ describe('hook /hook/delegate', () => {
     const text = (out: typeof codex) => (out.payload.hookSpecificOutput as { additionalContext: string }).additionalContext;
     expect(text(codex).startsWith(AUXILIARY_CONTEXT_HEADER)).toBe(true);
     expect(text(claude)).not.toContain(AUXILIARY_CONTEXT_HEADER);
+  });
+
+  it('Codex recebe a doutrina do operador pelo hook, uma vez por sessão a cada 30 min', async () => {
+    __resetLeanRemindersForTests();
+    let now = 9_000_000;
+    const deps = { advise: vi.fn(async () => null), now: () => now };
+    const codex = { ...operator, providerId: 'codex' };
+    const text = (out: { payload: Record<string, unknown> }) =>
+      (out.payload.hookSpecificOutput as { additionalContext: string }).additionalContext;
+    const first = text(await handleHookDelegateRequest(codex, { prompt: 'oi, tudo certo?' }, deps));
+    expect(first.startsWith(AUXILIARY_CONTEXT_HEADER)).toBe(true);
+    expect(first).toContain(OPERATOR_DELEGATION_DOCTRINE);
+    expect((await handleHookDelegateRequest(codex, { prompt: 'e agora?' }, deps)).payload).toEqual({});
+    now += 31 * 60_000;
+    expect(text(await handleHookDelegateRequest(codex, { prompt: 'de novo' }, deps))).toContain(OPERATOR_DELEGATION_DOCTRINE);
+    // Claude lê as instructions do MCP uma vez no system prompt: não precisa do hook.
+    expect((await handleHookDelegateRequest({ ...operator, providerId: 'claude' }, { prompt: 'oi' }, deps)).payload)
+      .toEqual({});
   });
 
   it('entrega de handoff de helper não é pedido novo: nem Jev nem contexto', async () => {
