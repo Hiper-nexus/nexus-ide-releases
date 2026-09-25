@@ -1004,9 +1004,11 @@ export async function proveNativeArgvBriefAccepted(
  * memória trusted, com teto de bytes (withAutoRecalledWorkspaceMemory). Pane
  * interno transitório não recebe.
  */
+type RecallCandidate = Pick<SpawnToolOptions, 'prompt' | 'missionId' | 'role' | 'transient'>;
+
 export function recallsWorkspaceMemory(
-  options: Pick<SpawnToolOptions, 'prompt' | 'missionId' | 'role' | 'transient'>,
-): boolean {
+  options: RecallCandidate,
+): options is RecallCandidate & { prompt: string } {
   if (!options.prompt) return false;
   if (options.missionId) return true;
   return options.role === undefined && options.transient !== true;
