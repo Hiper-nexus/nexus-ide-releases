@@ -147,6 +147,8 @@ export const orchSettingsSchema = z.object({
       browserTool: z.boolean().default(true),
       /** Triagem de hits de pesquisa: melhor resposta + se falta pesquisar. */
       researchTriage: z.boolean().default(true),
+      /** Conselho de delegação por mensagem nos panes do operador (hook). */
+      delegation: z.boolean().default(true),
     })
     .prefault({}),
   /** Carta de Design anti-genérico (Impeccable) para tarefas com UI. */
