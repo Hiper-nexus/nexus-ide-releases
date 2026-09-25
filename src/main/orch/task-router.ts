@@ -41,7 +41,7 @@ import {
 } from '../../shared/model-operational-bands';
 import { CODEX_FRONTIER_MODEL, migrateModelId } from '../../shared/model-defaults';
 import { adapterCircuitBreakers } from './circuit-breaker';
-import { multiScoreRerank } from './route-pipeline';
+import { multiScoreRerank, tieBreakByUse } from './route-pipeline';
 
 export type TaskTier = 'trivial' | 'easy' | 'medium' | 'hard' | 'critical';
 
@@ -80,6 +80,12 @@ export interface RouteContext {
    * substitui só a heurística de palavras-chave; política/benchmark seguem.
    */
   specialtyOverride?: RouteSpecialty;
+  /**
+   * Spawn da mão do operador (25/09): CLIs já abertas pelo mesmo agente pai.
+   * Só desempata dentro de TIE_MARGIN (route-pipeline.tieBreakByUse); ausente
+   * = decisão de hoje. Nunca vem de argumento MCP.
+   */
+  tieBreakUseCounts?: ReadonlyMap<string, number>;
 }
 
 export type RankedRouteEntry = {
@@ -630,6 +636,19 @@ export function routeTask(
     ranked = scored.ranked;
     multiScoreNote = scored.note;
   }
+  let tieBreakNote = '';
+  if (context.tieBreakUseCounts && ranked.length > 1) {
+    const tie = tieBreakByUse({
+      ranked,
+      useCounts: context.tieBreakUseCounts,
+      tier,
+      modelCatalog,
+      context,
+      circuitOpen: (id) => adapterCircuitBreakers.isOpen(id),
+    });
+    ranked = tie.ranked;
+    tieBreakNote = tie.note;
+  }
 
   if (ranked.length > 0) {
     let chosen = ranked[0];
@@ -676,7 +695,7 @@ export function routeTask(
       adapterId: pick.adapterId,
       model: pick.model,
       effort,
-      reason: `${tier}${borrowed}${specialtyNote}; ${why}${costNote}${evaluationNote}${riskNote}${bandNote}${multiScoreNote}${preferNote}`,
+      reason: `${tier}${borrowed}${specialtyNote}; ${why}${costNote}${evaluationNote}${riskNote}${bandNote}${multiScoreNote}${tieBreakNote}${preferNote}`,
       alternatives: ranked.filter((r) => r.c !== pick).map((r) => r.c),
       specialty: specialtyVerdict.specialty,
       policySource,

@@ -7,6 +7,7 @@ import {
   describePreferAdaptersOutcome,
 } from './task-router';
 import { countAdapterUses } from './route-pipeline';
+import type { ModelCatalog } from '../adapters/model-catalog';
 
 function adapters(...installed: string[]): AdapterAvailability[] {
   const all = [
@@ -457,5 +458,28 @@ describe('describePreferAdaptersOutcome (bug F — prefer não é silêncio)', (
     expect(
       describePreferAdaptersOutcome(undefined, 'codex', availability, ['codex']),
     ).toBe('');
+  });
+});
+
+describe('routeTask — desempate por uso (tieBreakUseCounts)', () => {
+  const flat = { adapters: {} } as ModelCatalog;
+  const installed = adapters('grok', 'agy', 'kimi', 'codex', 'claude');
+
+  it('sem contagens a decisão é idêntica à de hoje', () => {
+    const base = routeTask('listar arquivos', installed, DEFAULT_ROUTING_TABLE, 'trivial', false, flat, {});
+    const same = routeTask('listar arquivos', installed, DEFAULT_ROUTING_TABLE, 'trivial', false, flat, {
+      tieBreakUseCounts: new Map(),
+    });
+    expect(same).toEqual(base);
+  });
+
+  it('com o topo já aberto, a alternativa dentro da margem vence e o motivo diz', () => {
+    const base = routeTask('listar arquivos', installed, DEFAULT_ROUTING_TABLE, 'trivial', false, flat, {})!;
+    const runnerUp = base.alternatives.find((alt) => alt.adapterId !== base.adapterId)!;
+    const tie = routeTask('listar arquivos', installed, DEFAULT_ROUTING_TABLE, 'trivial', false, flat, {
+      tieBreakUseCounts: new Map([[base.adapterId, 1]]),
+    })!;
+    expect(tie.adapterId).toBe(runnerUp.adapterId);
+    expect(tie.reason).toContain('desempate');
   });
 });
