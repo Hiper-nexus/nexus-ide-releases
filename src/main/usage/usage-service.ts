@@ -1,6 +1,7 @@
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain } from 'electron';
 import type { ProjectExecutionScope } from '../../shared/types';
 import {
   USAGE_CHANNELS,
@@ -32,6 +33,7 @@ import {
   saveProviderPaneSession,
 } from '../persistence/provider-session-store';
 import { ClaudeTranscriptWatcher } from './claude-transcript-watcher';
+import { ClaudeTranscriptResumeStore } from './claude-transcript-resume-store';
 import { MimoUsageScanner, type MimoSessionBinding } from './mimo-scanner';
 import { tapMimoSessionBindings } from '../agent-hooks/mimo-session-registry';
 import type { UsageRecord } from './usage-store';
@@ -92,6 +94,30 @@ const SESSION_CLOCK_SKEW_MS = 5 * 60_000;
 const SESSION_BIND_WINDOW_MS = 24 * 60 * 60_000;
 const CODEX_ROLLOUT_SPAWN_SKEW_MS = 30_000;
 const CODEX_ROLLOUT_START_WINDOW_MS = 5 * 60_000;
+
+/**
+ * Where the Claude watcher of one scope left each transcript, across
+ * restarts (`<userData>/usage/claude-resume-<scope>.json`). Outside Electron
+ * (tests without an app) the watcher keeps offsets in memory only.
+ */
+function claudeResumeStoreFor(
+  scope: ProjectExecutionScope,
+): ClaudeTranscriptResumeStore | null {
+  let userData: string;
+  try {
+    userData = app.getPath('userData');
+  } catch {
+    return null;
+  }
+  if (!userData) return null;
+  const scopeId = createHash('sha256')
+    .update(`${scope.installationId}\0${scope.projectId}\0${scope.checkoutId}`)
+    .digest('hex')
+    .slice(0, 16);
+  return new ClaudeTranscriptResumeStore(
+    path.join(userData, 'usage', `claude-resume-${scopeId}.json`),
+  );
+}
 
 function scopeKey(scope: ProjectExecutionScope): string {
   return [
@@ -259,10 +285,12 @@ export class UsageTelemetryService {
   ): void {
     const state = this.#ensureScope(scope);
     if (provider === 'claude' && !state.watcher) {
+      const resumeStore = claudeResumeStoreFor(state.scope);
       const watcher = new ClaudeTranscriptWatcher({
         workspacePath: state.scope.rootRealPath,
         workspacePaths: () => state.executionRoots,
         onEvent: (event) => this.#onClaudeEvent(state, event),
+        ...(resumeStore ? { resumeStore } : {}),
       });
       watcher.start();
       state.watcher = watcher;

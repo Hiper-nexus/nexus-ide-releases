@@ -66,6 +66,16 @@ import type { ObserverFrame } from '../../shared/observer-frame';
 
 const WINDOW_CHARS = 4000;
 const REARM_MS = 30_000;
+/**
+ * detectLimit varre a janela inteira (~120 µs em 4 KB de TUI) e rodava a cada
+ * chunk de PTY — 2–6% de um núcleo do main com cinco panes transmitindo. Fora
+ * de um episódio de erro ela roda no máximo a cada DETECT_MIN_INTERVAL_MS, ou
+ * antes, a cada DETECT_MAX_PENDING_CHARS de texto novo: metade da janela, então
+ * toda mensagem de limite passa inteira por pelo menos uma varredura. Uma
+ * varredura final cobre o que chegou por último quando a saída para.
+ */
+const DETECT_MIN_INTERVAL_MS = 250;
+const DETECT_MAX_PENDING_CHARS = WINDOW_CHARS / 2;
 /** Reuse the same A→B decision for concurrent panes hitting the same limit. */
 const COALESCE_MS = 5_000;
 // Derived from can1357/oh-my-pi@03c48d073 auth-storage cooldown machine (MIT)
@@ -100,6 +110,12 @@ interface SessionWatch {
   readonly startedAt: number;
   buffer: string;
   firedAt: number;
+  /** Última varredura de detectLimit na janela (0 = nunca). */
+  lastDetectAt: number;
+  /** Texto chegado desde a última varredura. */
+  pendingChars: number;
+  /** Varredura final agendada para o texto que ficou sem checagem. */
+  detectTimer: ReturnType<typeof setTimeout> | null;
   /**
    * Episódio de erro do PROVIDER (5xx/capacidade) em curso: instante do 1º
    * hit (0 = nenhum). Um episódio avisa uma vez e agenda uma verificação —
@@ -832,6 +848,9 @@ function watchFor(authority: FailoverAuthority): [string, SessionWatch] {
       authority,
       buffer: '',
       firedAt: 0,
+      lastDetectAt: 0,
+      pendingChars: 0,
+      detectTimer: null,
       startedAt: Date.now(),
       transientAt: 0,
       progressChars: 0,
@@ -1350,6 +1369,36 @@ function handleLimitHit(
   });
 }
 
+function armTrailingDetect(
+  sessionId: string,
+  watch: SessionWatch,
+  now: number,
+): void {
+  if (watch.detectTimer) return;
+  const delay = Math.max(0, DETECT_MIN_INTERVAL_MS - (now - watch.lastDetectAt));
+  watch.detectTimer = setTimeout(() => {
+    watch.detectTimer = null;
+    try {
+      detectPending(sessionId);
+    } catch (err) {
+      console.warn('[failover] trailing detection failed:', err);
+    }
+  }, delay);
+  watch.detectTimer.unref?.();
+}
+
+/** Varredura final: o texto que chegou dentro do intervalo não fica sem checagem. */
+function detectPending(sessionId: string): void {
+  const now = Date.now();
+  const authority = resolveAuthority(sessionId);
+  if (!authority) return;
+  const pane = resolvePaneDetails(authority);
+  if (!pane) return;
+  const [key, watch] = watchFor(authority);
+  if (watch.pendingChars === 0 || now - watch.firedAt < REARM_MS) return;
+  detectInWindow(authority, pane, key, watch, '', now);
+}
+
 function handleChunk(sessionId: string, data: string, now: number): void {
   const authority = resolveAuthority(sessionId);
   if (!authority) return;
@@ -1365,6 +1414,33 @@ function handleChunk(sessionId: string, data: string, now: number): void {
   }
 
   watch.buffer = (watch.buffer + text).slice(-WINDOW_CHARS);
+  watch.pendingChars += text.length;
+  if (
+    watch.transientAt === 0 &&
+    now - watch.lastDetectAt < DETECT_MIN_INTERVAL_MS &&
+    watch.pendingChars < DETECT_MAX_PENDING_CHARS
+  ) {
+    armTrailingDetect(sessionId, watch, now);
+    return;
+  }
+  detectInWindow(authority, pane, key, watch, text, now);
+}
+
+/** Varre a janela acumulada; `text` é o chunk que disparou (vazio no timer). */
+function detectInWindow(
+  authority: FailoverAuthority,
+  pane: FailoverPaneDetails,
+  key: string,
+  watch: SessionWatch,
+  text: string,
+  now: number,
+): void {
+  watch.lastDetectAt = now;
+  watch.pendingChars = 0;
+  if (watch.detectTimer) {
+    clearTimeout(watch.detectTimer);
+    watch.detectTimer = null;
+  }
   const hit = detectLimit(watch.buffer);
   if (hit?.kind === 'transient') {
     const detectedText = watch.buffer;
@@ -1433,7 +1509,9 @@ export function initFailover(): void {
   });
   untapExit = tapSessionExit((sessionId) => {
     for (const [key, watch] of [...watches]) {
-      if (watch.authority.sessionId === sessionId) watches.delete(key);
+      if (watch.authority.sessionId !== sessionId) continue;
+      if (watch.detectTimer) clearTimeout(watch.detectTimer);
+      watches.delete(key);
     }
     for (const [key, pending] of [...pendingRetries]) {
       if (pending.authority.sessionId === sessionId) cancelScheduledRetry(key);

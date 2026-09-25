@@ -24,17 +24,32 @@ import {
   onRendererWorkspaceScopeChange,
   requireLiveRendererWorkspaceScope,
 } from '../persistence/renderer-workspace-scope';
-import {
-  applyDesignAction,
-  designActionTargetPath,
-  designWritebackStatus,
-  redoDesignAction,
-  startDesignWriteback,
-  stopDesignWriteback,
-  undoDesignAction,
-  type DesignWritebackAction,
-  type DesignWritebackAuthority,
+import type {
+  DesignWritebackAction,
+  DesignWritebackAuthority,
 } from './design-writeback-service';
+
+type DesignWritebackService = typeof import('./design-writeback-service');
+
+/**
+ * The write-back service carries Babel + recast (~15 MB and ~30 ms of init in
+ * Main). It loads the first time a renderer asks about design write-back,
+ * never at app boot. A record only exists after `start` resolved the service,
+ * so the synchronous paths that act on a live record read the loaded module.
+ */
+let writebackService: DesignWritebackService | null = null;
+let writebackServiceLoad: Promise<DesignWritebackService> | null = null;
+
+function loadWritebackService(): Promise<DesignWritebackService> {
+  writebackServiceLoad ??= import('./design-writeback-service').then(
+    (service) => (writebackService = service),
+    (error: unknown) => {
+      writebackServiceLoad = null;
+      throw error;
+    },
+  );
+  return writebackServiceLoad;
+}
 
 const nexusId = z.string().min(1).max(64);
 const missionBindingSchema = z
@@ -336,7 +351,9 @@ function requireOwnedRecord(
 function stopRecord(record: DesignOwnerRecord): Promise<{ ok: true }> {
   if (record.stopPromise) return record.stopPromise;
   record.phase = 'stopping';
-  record.stopPromise = stopDesignWriteback(record.sessionKey).then(
+  record.stopPromise = loadWritebackService()
+    .then((service) => service.stopDesignWriteback(record.sessionKey))
+    .then(
     (result) => {
       if (ownersByScope.get(scopeKey(record.scope)) === record) {
         ownersByScope.delete(scopeKey(record.scope));
@@ -398,9 +415,11 @@ function registerTrustedReorderBridge(): void {
     } catch {
       return;
     }
+    const service = writebackService;
+    if (!service) return;
     const selectedNexusId =
       getLastSelection(browserKey)?.attributes['data-nexus-id'];
-    const targetPath = designActionTargetPath(
+    const targetPath = service.designActionTargetPath(
       { kind: 'reorder', ...reorder },
       record.sessionKey,
     );
@@ -444,7 +463,7 @@ function registerTrustedReorderBridge(): void {
       'nexus_design_writeback_reorder',
       auditArgs,
       () =>
-        applyDesignAction(
+        service.applyDesignAction(
           { kind: 'reorder', ...reorder },
           record.sessionKey,
         ),
@@ -500,6 +519,7 @@ export function registerDesignWritebackIpc(options: {
   registerTrustedReorderBridge();
 
   ipcMain.handle(DESIGN_WRITEBACK_CHANNELS.status, async (event, rawBinding) => {
+    const { designWritebackStatus } = await loadWritebackService();
     const scope = requireLiveRendererWorkspaceScope(event.sender);
     const status = designWritebackStatus(
       scope.rootRealPath,
@@ -542,6 +562,9 @@ export function registerDesignWritebackIpc(options: {
   ipcMain.handle(DESIGN_WRITEBACK_CHANNELS.start, async (event, rawBinding) => {
     const parsedBinding = missionBindingSchema.safeParse(rawBinding);
     if (!parsedBinding.success) throw new Error('invalid design mission binding');
+    // Loaded before any ownership check, so the check-and-claim below keeps
+    // running in one uninterrupted turn, exactly as before.
+    const service = await loadWritebackService();
     const scope = requireLiveRendererWorkspaceScope(event.sender);
     const resolved = resolveMissionAuthority(event.sender, scope, parsedBinding.data);
     const key = scopeKey(scope);
@@ -579,7 +602,7 @@ export function registerDesignWritebackIpc(options: {
         'nexus_design_writeback_start',
         { paneId: record.binding.paneId },
         () =>
-          startDesignWriteback(
+          service.startDesignWriteback(
             scope.rootRealPath,
             record.sessionKey,
             authorityFor(record),
@@ -590,7 +613,7 @@ export function registerDesignWritebackIpc(options: {
       return result;
     } catch (error) {
       if (ownersByScope.get(key) === record) ownersByScope.delete(key);
-      await stopDesignWriteback(record.sessionKey).catch(() => undefined);
+      await service.stopDesignWriteback(record.sessionKey).catch(() => undefined);
       throw error;
     }
   });
@@ -621,6 +644,7 @@ export function registerDesignWritebackIpc(options: {
   ipcMain.handle(DESIGN_WRITEBACK_CHANNELS.action, async (event, raw) => {
     const parsed = actionRequestSchema.safeParse(raw);
     if (!parsed.success) throw new Error('invalid design action payload');
+    const service = await loadWritebackService();
     const scope = requireLiveRendererWorkspaceScope(event.sender);
     const record = requireOwnedRecord(event.sender, scope);
     if (
@@ -630,7 +654,7 @@ export function registerDesignWritebackIpc(options: {
       throw new Error('design write-back mission binding changed');
     }
     const action = parsed.data.action as DesignWritebackAction;
-    const targetPath = designActionTargetPath(action, record.sessionKey);
+    const targetPath = service.designActionTargetPath(action, record.sessionKey);
     const auditArgs = {
       paneId: record.binding.paneId,
       kind: action.kind,
@@ -641,13 +665,14 @@ export function registerDesignWritebackIpc(options: {
       record,
       `nexus_design_writeback_${action.kind}`,
       auditArgs,
-      () => applyDesignAction(action, record.sessionKey),
+      () => service.applyDesignAction(action, record.sessionKey),
     );
   });
 
   ipcMain.handle(DESIGN_WRITEBACK_CHANNELS.undo, async (event, rawBinding) => {
     const parsedBinding = missionBindingSchema.safeParse(rawBinding);
     if (!parsedBinding.success) throw new Error('invalid design mission binding');
+    const service = await loadWritebackService();
     const scope = requireLiveRendererWorkspaceScope(event.sender);
     const record = requireOwnedRecord(event.sender, scope);
     if (
@@ -658,13 +683,14 @@ export function registerDesignWritebackIpc(options: {
       record,
       'nexus_design_writeback_undo',
       { paneId: record.binding.paneId },
-      () => undoDesignAction(record.sessionKey),
+      () => service.undoDesignAction(record.sessionKey),
     );
   });
 
   ipcMain.handle(DESIGN_WRITEBACK_CHANNELS.redo, async (event, rawBinding) => {
     const parsedBinding = missionBindingSchema.safeParse(rawBinding);
     if (!parsedBinding.success) throw new Error('invalid design mission binding');
+    const service = await loadWritebackService();
     const scope = requireLiveRendererWorkspaceScope(event.sender);
     const record = requireOwnedRecord(event.sender, scope);
     if (
@@ -675,7 +701,7 @@ export function registerDesignWritebackIpc(options: {
       record,
       'nexus_design_writeback_redo',
       { paneId: record.binding.paneId },
-      () => redoDesignAction(record.sessionKey),
+      () => service.redoDesignAction(record.sessionKey),
     );
   });
 }

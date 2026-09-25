@@ -873,8 +873,10 @@ body {
 
 /* O feixe rotativo ao redor do terminal:
    Usa máscara de borda (padding 1.5px com mask-composite: exclude) para NUNCA
-   tocar nem embaçar o canvas do xterm. A rotação em ângulo do conic-gradient
-   executa no compositor GPU via @property. */
+   tocar nem embaçar o canvas do xterm. O giro anima o ângulo do conic-gradient
+   via @property — isso NÃO roda só no compositor: a camada é re-rasterizada a
+   cada quadro. Por isso ele gira apenas enquanto o orquestrador trabalha
+   (ver abaixo); em repouso o feixe fica parado e a GPU não repinta nada. */
 .pane__crown-beam {
   position: absolute;
   inset: 0;
@@ -902,8 +904,16 @@ body {
     #ffffff 355deg,
     transparent 360deg
   );
-  animation: crown-beam-spin 4s linear infinite;
-  will-change: transform;
+}
+
+/* Motion comunica estado (DESIGN.md §4): o giro marca o orquestrador vivo.
+   Girando sempre, a IDE parada repintava a borda a 60–120 Hz. */
+@media (prefers-reduced-motion: no-preference) {
+  .pane--state-busy > .pane__crown-beam::before,
+  .pane--state-spawning > .pane__crown-beam::before {
+    animation: crown-beam-spin 4s linear infinite;
+    will-change: transform;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

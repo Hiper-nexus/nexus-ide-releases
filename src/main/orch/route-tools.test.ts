@@ -321,4 +321,17 @@ describe('nexus_route_task — Jev fora e desempate interno', () => {
       expect(base.alternatives.map((alt) => alt.adapterId)).toContain(internal.adapterId);
     }
   });
+
+  it('exclusão interna do spawn pula adapter sem MCP e preserva candidato viável', async () => {
+    mocks.listProviderSettings.mockReturnValue([
+      { adapterId: 'agy', enabled: true, installed: true, authStrategy: 'oauth', models: ['gemini-3.8-flash-high'] },
+      { adapterId: 'codex', enabled: true, installed: true, authStrategy: 'oauth', models: ['gpt-5.6-luna'] },
+    ]);
+    const decision = await routeTaskForCaller(
+      { task: 'tarefa média' },
+      context(),
+      { excludeAdapterIds: ['agy'] },
+    );
+    expect(decision.adapterId).toBe('codex');
+  });
 });

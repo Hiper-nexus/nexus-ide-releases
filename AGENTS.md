@@ -732,3 +732,15 @@ saber isto antes de mexer:
 - Tokens do SQLite: input exclui cache; output exclui reasoning (somar uma vez).
   Reescrita da mensagem atualiza uma linha. Custo reportado pela CLI é estimativa,
   não fatura do Token Plan. Nenhum texto de prompt entra na telemetria.
+
+## Helpers do operador sem missão (F-156/F-157)
+
+- O handoff de workspace só fecha um helper armado após `markSubmitted` confirmar
+  a entrega ao pai e somente com status `success`. Se a entrega ficou `queued`,
+  o pane permanece vivo para retry. O braço de auto-close é consumido pelo mesmo
+  helper usado no handoff de missão; o fechamento roda após a resposta MCP.
+- A rota automática desse spawn exige `canUseNexusMcp(adapter)`: sem missão não
+  há shim de nx-mail. Se a tabela/Jev escolher AGY, Aider, Devin ou Muse, o
+  resolver exclui essa CLI, tenta a próxima e expõe o descarte no recibo.
+- Primeiro uso do AGY pode mostrar esquema de cores e Termos antes do composer.
+  Consentimento sobre Termos cabe ao operador; nunca marcar aceite por ele.

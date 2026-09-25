@@ -45,6 +45,17 @@ const DELEGATION_QUESTIONS: Record<string, JevQuestion> = {
     instructions: 'How many of those parts change code or files (the rest only read)?',
     criteria: { '0': null, '1': null, '2+': null },
   },
+  // Mesma chamada, uma pergunta a mais: pedido de escrever código recebe o
+  // lembrete da skill ponytail no hook (hook-delegate-endpoint).
+  writesCode: {
+    type: 'noul',
+    instructions:
+      'Does this message ask the coding agent to write, change, refactor or fix code?',
+    criteria: {
+      true: 'implement, change, refactor or fix code or config in the repository',
+      false: 'a question, an explanation, research, review, planning or conversation',
+    },
+  },
 };
 
 export interface DelegationAdvice {
@@ -52,6 +63,13 @@ export interface DelegationAdvice {
   readonly writers: number;
   readonly confidence: number;
   readonly model: string;
+}
+
+export interface PromptAdvice {
+  /** Lembrete de delegação (2+ partes com confiança) ou null. */
+  readonly delegation: DelegationAdvice | null;
+  /** Probabilidade de a mensagem pedir para escrever ou mudar código. */
+  readonly writesCode: number;
 }
 
 export interface AdviseDelegationDeps {
@@ -70,6 +88,14 @@ export async function adviseDelegation(
   message: string,
   deps: AdviseDelegationDeps = {},
 ): Promise<DelegationAdvice | null> {
+  return (await advisePrompt(message, deps))?.delegation ?? null;
+}
+
+/** Uma chamada ao Jev por mensagem: delegação e intenção de escrever código. */
+export async function advisePrompt(
+  message: string,
+  deps: AdviseDelegationDeps = {},
+): Promise<PromptAdvice | null> {
   if (message.trim().length < DELEGATE_MIN_PROMPT_CHARS) return null;
   const enabled = deps.enabled ?? (() => isJevSurfaceEnabled('delegation'));
   const hasKey = deps.hasKey ?? hasJevCredential;
@@ -109,6 +135,11 @@ export async function adviseDelegation(
     inputTokens: result.usage.input_tokens,
     usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
   });
-  if (!advise) return null;
-  return { parts, writers, confidence: divisible.noul, model: result.model };
+  const writesCodeAnswer = result.answers.writesCode;
+  return {
+    delegation: advise
+      ? { parts, writers, confidence: divisible.noul, model: result.model }
+      : null,
+    writesCode: writesCodeAnswer?.type === 'noul' ? writesCodeAnswer.noul : 0,
+  };
 }

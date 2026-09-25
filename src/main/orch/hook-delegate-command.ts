@@ -1,13 +1,14 @@
-// Conselho de delegação via hook Claude `UserPromptSubmit` (C2, 25/09). Como
-// na triagem, a resposta do endpoint É a saída do hook (additionalContext) —
-// sem `--output /dev/null`. `--max-time 4` cobre o teto de 2,5 s do Jev mais o
-// atraso de retry do judge. Nunca bloqueia: `-sf … || true`.
+// Contexto do motor via hook `UserPromptSubmit` (C2, 25/09) — Claude e Codex
+// usam o mesmo formato (`hookSpecificOutput.additionalContext`; Codex 0.155
+// provado em 25/09). Como na triagem, a resposta do endpoint É a saída do hook
+// — sem `--output /dev/null`. `--max-time 4` cobre o teto de 2,5 s do Jev mais
+// o atraso de retry do judge. Nunca bloqueia: `-sf … || true`.
 import {
   NEXUS_HOOK_MARKER,
   makeWindowsPowerShellHookCommand,
 } from '../../vendor/emdash/hooks/hook-commands';
 
-export function makeClaudeDelegateHookCommand(
+export function makeDelegateHookCommand(
   platform: NodeJS.Platform = process.platform,
 ): string {
   if (platform === 'win32') {

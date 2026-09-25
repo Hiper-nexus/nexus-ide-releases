@@ -18,6 +18,7 @@ import {
   latestBootstrapProgress,
   type PaneVacancyProgress,
 } from './pane-vacancy-progress';
+import { setVisibleInterval } from '../lib/visible-interval';
 
 /**
  * A structural placeholder is a VACANCY — a slot the tree needs because it can
@@ -100,15 +101,10 @@ export function PaneVacancyBody({ pane }: { readonly pane: PaneModel }) {
       }
     };
     void poll();
-    const timer = setInterval(() => void poll(), 5_000);
-    const onVisibility = (): void => {
-      if (!document.hidden) void poll();
-    };
-    document.addEventListener('visibilitychange', onVisibility);
+    const stopPolling = setVisibleInterval(() => void poll(), 5_000);
     return () => {
       cancelled = true;
-      clearInterval(timer);
-      document.removeEventListener('visibilitychange', onVisibility);
+      stopPolling();
     };
   }, [pollingMissionId, vacancySurfaceLive]);
 

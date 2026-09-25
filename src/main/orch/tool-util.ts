@@ -998,6 +998,22 @@ export async function proveNativeArgvBriefAccepted(
   await ensureNativeArgvPromptAccepted(sessionId, finalPrompt, adapterId);
 }
 
+/**
+ * Memória do workspace no brief: worker/orquestrador de missão e o helper da
+ * mão do operador (sem papel, sem missão), que também nasce com um brief. Só
+ * memória trusted, com teto de bytes (withAutoRecalledWorkspaceMemory). Pane
+ * interno transitório não recebe.
+ */
+type RecallCandidate = Pick<SpawnToolOptions, 'prompt' | 'missionId' | 'role' | 'transient'>;
+
+export function recallsWorkspaceMemory(
+  options: RecallCandidate,
+): options is RecallCandidate & { prompt: string } {
+  if (!options.prompt) return false;
+  if (options.missionId) return true;
+  return options.role === undefined && options.transient !== true;
+}
+
 export interface SpawnToolOptions {
   adapterId: string;
   /** Origem da rota (A, 25/09) exibida no cabeçalho do pane; nunca autoridade. */
@@ -1348,7 +1364,7 @@ export async function spawnPaneAndMaybePrompt(
       agentId: options.agentName?.trim() || adapter.id,
     });
   }
-  if (options.missionId && options.prompt) {
+  if (recallsWorkspaceMemory(options)) {
     options = {
       ...options,
       prompt: withAutoRecalledWorkspaceMemory(
@@ -1370,6 +1386,7 @@ export async function spawnPaneAndMaybePrompt(
       : withHandoffContract(options.prompt, adapter, {
           category: options.agentCategory,
           hints: [options.title, options.agentName],
+          readOnly: options.readOnly === true,
           // C-194.1: todo worker de missão com MCP tem fechamento mecânico
           // (turn-end-handoff colhe o fim de turno via /hook/status) — o
           // contrato ensina a regra condicional, não "sempre chame a tool".

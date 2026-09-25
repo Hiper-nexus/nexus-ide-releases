@@ -7,12 +7,17 @@ import {
 describe('doutrina de delegação da mão do operador', () => {
   it('cabe em 1,5 KB e cobre os pontos da spec', () => {
     expect(Buffer.byteLength(OPERATOR_DELEGATION_DOCTRINE, 'utf8')).toBeLessThanOrEqual(1536);
-    for (const needle of ['nexus_pane_spawn', 'readOnly: true', 'um helper por vez', 'encerre o turno', 'nexus_handoff_submit', 'não insista']) {
+    for (const needle of ['nexus_pane_spawn', 'readOnly: true', 'um helper por vez', 'encerre o turno', 'nexus_handoff_submit', 'não insista', 'ponytail', 'DESIGN.md', 'nexus_design_system_local_list', 'cara de IA']) {
       expect(OPERATOR_DELEGATION_DOCTRINE).toContain(needle);
     }
     // Não existe spawn em lote (`panes: [...]`) — a doutrina não pode prometer.
     expect(OPERATOR_DELEGATION_DOCTRINE).not.toContain('panes:');
     expect(OPERATOR_DELEGATION_DOCTRINE).not.toContain('adapterId:');
+  });
+
+  it('Codex não recebe pelo MCP: ele cola as instructions em cada tool (vai pelo hook)', () => {
+    expect(operatorDelegationInstructions({ role: 'user', providerId: 'codex' })).toBeUndefined();
+    expect(operatorDelegationInstructions({ role: 'user', providerId: 'claude' })).toBe(OPERATOR_DELEGATION_DOCTRINE);
   });
 
   it('só a mão do operador sem missão recebe', () => {

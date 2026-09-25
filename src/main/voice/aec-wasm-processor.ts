@@ -7,15 +7,27 @@ type AecInstance = Awaited<ReturnType<typeof WebRtcAec3>>['AEC3'] extends new (.
 
 // Emscripten installs process-level rejection/exception hooks per module
 // creation. Share one module for the process; individual AEC3 instances are
-// still freed on voice runtime teardown.
+// still freed on voice runtime teardown. It is compiled on first use, not at
+// import: the app boot must not pay for the WASM when nobody is talking.
 const require = createRequire(__filename);
-const wasmBinary = readFileSync(
-  require.resolve('@ennuicastr/webrtcaec3.js/dist/webrtcaec3-0.3.0.wasm'),
-);
 const loadAecModule = WebRtcAec3 as unknown as (
   options?: { wasmBinary?: Uint8Array },
 ) => ReturnType<typeof WebRtcAec3>;
-const sharedAecModule = loadAecModule({ wasmBinary });
+let sharedAecModule: ReturnType<typeof WebRtcAec3> | null = null;
+
+function aecModule(): ReturnType<typeof WebRtcAec3> {
+  if (!sharedAecModule) {
+    try {
+      const wasmBinary = readFileSync(
+        require.resolve('@ennuicastr/webrtcaec3.js/dist/webrtcaec3-0.3.0.wasm'),
+      );
+      sharedAecModule = loadAecModule({ wasmBinary });
+    } catch (error) {
+      sharedAecModule = Promise.reject(error) as ReturnType<typeof WebRtcAec3>;
+    }
+  }
+  return sharedAecModule;
+}
 
 function int16ToFloat(samples: Int16Array): Float32Array {
   const out = new Float32Array(samples.length);
@@ -44,7 +56,7 @@ export class WasmAecProcessor implements LiveAecProcessor {
     private readonly onReady?: () => void,
     private readonly onError?: (error: Error) => void,
   ) {
-    void sharedAecModule
+    void aecModule()
       .then((module) => {
         if (this.failed) return;
         this.aec = new module.AEC3(48_000, 1, 1) as AecInstance;
@@ -104,5 +116,47 @@ export class WasmAecProcessor implements LiveAecProcessor {
     this.aec?.free();
     this.aec = null;
     this.onError?.(error instanceof Error ? error : new Error(String(error)));
+  }
+}
+
+/**
+ * Voice registration creates the AEC runtime at app boot, but most sessions
+ * never capture audio. This defers the WASM compile and the AEC3 instance
+ * (~10 MB) to the first frame; until the real processor is ready it fails
+ * open to the original PCM, exactly like WasmAecProcessor while it loads.
+ */
+export class LazyWasmAecProcessor implements LiveAecProcessor {
+  private inner: WasmAecProcessor | null = null;
+  private disposed = false;
+
+  constructor(private readonly create: () => WasmAecProcessor) {}
+
+  capture(samples: Int16Array, sink: (processed: Int16Array) => void): void {
+    const processor = this.processor();
+    if (!processor) {
+      sink(samples);
+      return;
+    }
+    processor.capture(samples, sink);
+  }
+
+  render24k(samples: Int16Array): void {
+    this.processor()?.render24k(samples);
+  }
+
+  reset(): void {
+    this.inner?.reset();
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    this.inner?.dispose();
+    this.inner = null;
+  }
+
+  private processor(): WasmAecProcessor | null {
+    if (this.disposed) return null;
+    this.inner ??= this.create();
+    return this.inner;
   }
 }

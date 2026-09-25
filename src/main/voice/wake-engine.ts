@@ -1,21 +1,12 @@
 import fs from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import * as ort from 'onnxruntime-node';
-import {
-  MELSPEC_ONNX_B64,
-  EMBEDDING_ONNX_B64,
-  HEY_JARVIS_ONNX_B64,
-} from './wake-models';
-import {
-  EI_JARVIS_PTBR_ONNX_B64,
-  EI_JARVIS_PTBR_ONNX_SHA256,
-} from './wake-models-ptbr';
+import type { InferenceSession } from 'onnxruntime-node';
 import {
   DEFAULT_PTBR_WAKE_MODEL_FILE,
   DEFAULT_WAKE_MODEL_FILE,
   resolveWakeModelDirectory,
-} from './ensure-wake-models';
+} from './wake-model-paths';
 import { PcmRingBuffer } from './pcm-ring-buffer';
 import {
   CUSTOM_WAKE_SCORE_THRESHOLD,
@@ -24,6 +15,42 @@ import {
   WAKE_SCORE_THRESHOLD,
   type WakeScoreSource,
 } from './wake-score-gate';
+
+type OrtRuntime = typeof import('onnxruntime-node');
+type EmbeddedWakeModels = typeof import('./wake-models');
+type EmbeddedPtbrWakeModel = typeof import('./wake-models-ptbr');
+
+/**
+ * onnxruntime (lib nativa de ~26 MB, ~200 ms de dlopen) e os modelos
+ * embutidos (~4,7 MB em base64) carregam só quando um WakeEngine inicializa —
+ * não no boot do app para todo operador, a maioria nunca arma o wake. Os três
+ * são atribuídos antes de qualquer sessão existir, então todo uso abaixo roda
+ * depois do init.
+ */
+let ort: OrtRuntime;
+let embeddedModels: EmbeddedWakeModels;
+let embeddedPtbrModel: EmbeddedPtbrWakeModel;
+let wakeRuntimeLoad: Promise<void> | null = null;
+
+function loadWakeRuntime(): Promise<void> {
+  wakeRuntimeLoad ??= Promise.all([
+    import('onnxruntime-node'),
+    import('./wake-models'),
+    import('./wake-models-ptbr'),
+  ]).then(
+    ([runtime, models, ptbr]) => {
+      ort = runtime;
+      embeddedModels = models;
+      embeddedPtbrModel = ptbr;
+    },
+    (error: unknown) => {
+      // Falha transitória não pode travar o wake para o resto da sessão.
+      wakeRuntimeLoad = null;
+      throw error;
+    },
+  );
+  return wakeRuntimeLoad;
+}
 
 /**
  * Override opcional do usuário (re-treino local). Quando presente e válido,
@@ -95,7 +122,7 @@ function fromB64(b64: string): Uint8Array {
 }
 
 async function releaseSessions(
-  sessions: readonly (ort.InferenceSession | null)[],
+  sessions: readonly (InferenceSession | null)[],
 ): Promise<void> {
   for (const session of sessions) {
     try {
@@ -156,7 +183,7 @@ function checkOfficialWakeModel(): string | null {
 }
 
 /** Guard against a valid-looking ONNX file with an incompatible wake head. */
-async function verifyWakeHead(wake: ort.InferenceSession): Promise<void> {
+async function verifyWakeHead(wake: InferenceSession): Promise<void> {
   if (wake.inputNames.length !== 1 || wake.outputNames.length !== 1) {
     throw new Error('contrato ONNX inválido: esperado um input e um output');
   }
@@ -179,7 +206,7 @@ async function verifyWakeHead(wake: ort.InferenceSession): Promise<void> {
  * A healthy openWakeWord head scores near 0 on silence embeddings.
  */
 async function probeWakeHeadFalsePositive(
-  wake: ort.InferenceSession,
+  wake: InferenceSession,
 ): Promise<number> {
   const silence = new Float32Array(EMB_WINDOW * 96); // zeros
   const outSilence = await wake.run({
@@ -218,11 +245,11 @@ const CUSTOM_WAKE_FP_PROBE_MAX = 0.85;
 const WAKE_ENERGY_HOLD_CHUNKS = 10; // 10 × 80 ms = 800 ms
 
 export class WakeEngine {
-  private mel: ort.InferenceSession | null = null;
-  private emb: ort.InferenceSession | null = null;
-  private baseWake: ort.InferenceSession | null = null;
-  private customWake: ort.InferenceSession | null = null;
-  private officialWake: ort.InferenceSession | null = null;
+  private mel: InferenceSession | null = null;
+  private emb: InferenceSession | null = null;
+  private baseWake: InferenceSession | null = null;
+  private customWake: InferenceSession | null = null;
+  private officialWake: InferenceSession | null = null;
 
   private readonly pcmQueue = new PcmRingBuffer(PCM_QUEUE_MAX);
   private rawTail: Float32Array = new Float32Array(0); // últimos CTX samples
@@ -249,27 +276,29 @@ export class WakeEngine {
 
   async init(): Promise<void> {
     if (this.disposed || this.mel) return;
-    const opts: ort.InferenceSession.SessionOptions = {
+    const opts: InferenceSession.SessionOptions = {
       executionProviders: ['cpu'],
       interOpNumThreads: 1,
       intraOpNumThreads: 1,
     };
-    let mel: ort.InferenceSession | null = null;
-    let emb: ort.InferenceSession | null = null;
-    let baseWake: ort.InferenceSession | null = null;
-    let customWake: ort.InferenceSession | null = null;
-    let officialWake: ort.InferenceSession | null = null;
+    let mel: InferenceSession | null = null;
+    let emb: InferenceSession | null = null;
+    let baseWake: InferenceSession | null = null;
+    let customWake: InferenceSession | null = null;
+    let officialWake: InferenceSession | null = null;
     let installed = false;
     try {
-      await yieldMainLoop();
-      if (this.disposed) return;
-      mel = await ort.InferenceSession.create(fromB64(MELSPEC_ONNX_B64), opts);
+      await loadWakeRuntime();
       if (this.disposed) return;
       await yieldMainLoop();
-      emb = await ort.InferenceSession.create(fromB64(EMBEDDING_ONNX_B64), opts);
+      if (this.disposed) return;
+      mel = await ort.InferenceSession.create(fromB64(embeddedModels.MELSPEC_ONNX_B64), opts);
       if (this.disposed) return;
       await yieldMainLoop();
-      baseWake = await ort.InferenceSession.create(fromB64(HEY_JARVIS_ONNX_B64), opts);
+      emb = await ort.InferenceSession.create(fromB64(embeddedModels.EMBEDDING_ONNX_B64), opts);
+      if (this.disposed) return;
+      await yieldMainLoop();
+      baseWake = await ort.InferenceSession.create(fromB64(embeddedModels.HEY_JARVIS_ONNX_B64), opts);
       if (this.disposed) return;
       await yieldMainLoop();
       customWake = await this.loadCustomWakeModel(opts);
@@ -308,8 +337,8 @@ export class WakeEngine {
    * Roda EM PARALELO ao embutido EN; nunca o substitui.
    */
   private async loadCustomWakeModel(
-    opts: ort.InferenceSession.SessionOptions,
-  ): Promise<ort.InferenceSession | null> {
+    opts: InferenceSession.SessionOptions,
+  ): Promise<InferenceSession | null> {
     const rejected = checkCustomWakeModel();
     if (rejected === null) {
       const modelPath = customWakeModelPath();
@@ -346,7 +375,7 @@ export class WakeEngine {
 
     // Default global: head PT-BR shipado no app (todos os installs).
     try {
-      const bytes = fromB64(EI_JARVIS_PTBR_ONNX_B64);
+      const bytes = fromB64(embeddedPtbrModel.EI_JARVIS_PTBR_ONNX_B64);
       if (bytes[0] !== 0x08) {
         throw new Error('cabeçalho embutido PT-BR inválido');
       }
@@ -360,7 +389,7 @@ export class WakeEngine {
         );
       }
       console.log(
-        `[wake] modelo PT-BR embutido carregado (sha=${EI_JARVIS_PTBR_ONNX_SHA256.slice(0, 12)}…, fpProbe=${fp.toFixed(3)})`,
+        `[wake] modelo PT-BR embutido carregado (sha=${embeddedPtbrModel.EI_JARVIS_PTBR_ONNX_SHA256.slice(0, 12)}…, fpProbe=${fp.toFixed(3)})`,
       );
       return wake;
     } catch (err) {
@@ -376,8 +405,8 @@ export class WakeEngine {
    * therefore cannot degrade or replace the embedded detector.
    */
   private async loadOfficialWakeModel(
-    opts: ort.InferenceSession.SessionOptions,
-  ): Promise<ort.InferenceSession | null> {
+    opts: InferenceSession.SessionOptions,
+  ): Promise<InferenceSession | null> {
     const rejected = checkOfficialWakeModel();
     if (rejected === 'ausente') return null;
     if (rejected !== null) {
@@ -402,8 +431,8 @@ export class WakeEngine {
 
   /** Espelha o init oficial: mel = ones(76,32); features = ruído de 4 s. */
   private async seedBuffers(
-    mel: ort.InferenceSession,
-    emb: ort.InferenceSession,
+    mel: InferenceSession,
+    emb: InferenceSession,
   ): Promise<{ melFrames: Float32Array[]; features: Float32Array[] }> {
     const melFrames: Float32Array[] = [];
     for (let i = 0; i < MEL_WINDOW; i += 1) {
@@ -432,7 +461,7 @@ export class WakeEngine {
   }
 
   private async runMel(
-    mel: ort.InferenceSession,
+    mel: InferenceSession,
     samplesInt16Range: Float32Array,
   ): Promise<Float32Array[]> {
     const out = await mel.run({
@@ -453,7 +482,7 @@ export class WakeEngine {
   }
 
   private async runEmb(
-    emb: ort.InferenceSession,
+    emb: InferenceSession,
     window: Float32Array[],
   ): Promise<Float32Array> {
     const flat = new Float32Array(MEL_WINDOW * 32);
@@ -709,7 +738,7 @@ export class WakeEngine {
   }
 
   private async runWakeHead(
-    wake: ort.InferenceSession,
+    wake: InferenceSession,
     features: Float32Array,
   ): Promise<number> {
     const wakeOut = await wake.run({

@@ -861,8 +861,70 @@ describe('mcp-server governed CLI profile wiring', () => {
 
     expect(decoration.extraArgs).toContain('--strict-mcp-config');
     expect(decoration.env.NEXUS_HOOK_TRIAGE_URL).toMatch(/\/hook\/triage$/);
+    // O vínculo com o pai vai no token: o handoff sem missão o usa quando a
+    // janela mostra outro workspace.
+    expect(getContext(decoration.env.NEXUS_MCP_TOKEN!)?.operatorParentSessionId).toBe('parent-1');
 
     decoration.onSpawnFailed?.();
+  });
+
+  it('keeps the workspace MCP hub out of operator-spawned helpers unless their allowlist names a server', () => {
+    const root = tempRoot();
+    const home = path.join(root, 'home');
+    const workspace = path.join(root, 'workspace');
+    fs.mkdirSync(workspace, { recursive: true });
+    fs.mkdirSync(home, { recursive: true });
+    const cwd = fs.realpathSync(workspace);
+    vi.stubEnv('HOME', home);
+    writeHub(cwd, { schemaVersion: 1, servers: [HUB_HTTP_SERVER, HUB_STDIO_SERVER] });
+
+    const base = authority(cwd, false);
+    const helper = (allowedTools: string[] | null) =>
+      prepareAgentSpawnDecoration(
+        adapter('claude'),
+        { kind: 'cli-agent', cols: 80, rows: 24 },
+        {
+          ...base,
+          source: 'pending',
+          context: {
+            operatorParentSessionId: 'parent-1',
+            initialPrompt: 'revise X',
+            allowedTools,
+            allowedSkills: null,
+            scope: base.scope,
+            executionScope: base.scope,
+          },
+        },
+        undefined,
+      );
+
+    // Helper aberto por um agente: só o MCP do Nexus (decisão do operador,
+    // 25/09 — o hub do workspace virou o perfil global inteiro, 700–980 MB).
+    const lean = helper(null);
+    if (!lean) throw new Error('expected operator-child Claude decoration');
+    expect(Object.keys(generatedClaudeMcpServers(lean))).toEqual(['nexus']);
+    lean.onSpawnFailed?.();
+
+    // O allowlist pede um servidor do hub nomeando uma tool dele.
+    const asked = helper(['mcp__context7__resolve-library-id']);
+    if (!asked) throw new Error('expected operator-child Claude decoration');
+    expect(Object.keys(generatedClaudeMcpServers(asked)).sort()).toEqual(['context7', 'nexus']);
+    asked.onSpawnFailed?.();
+
+    // O pane direto do operador segue com o hub inteiro.
+    const direct = prepareAgentSpawnDecoration(
+      adapter('claude'),
+      { kind: 'cli-agent', cols: 80, rows: 24 },
+      base,
+      undefined,
+    );
+    if (!direct) throw new Error('expected direct Claude decoration');
+    expect(Object.keys(generatedClaudeMcpServers(direct)).sort()).toEqual([
+      'context7',
+      'linear',
+      'nexus',
+    ]);
+    direct.onSpawnFailed?.();
   });
 
   it('projects the same exact trust into a sealed GLM worker overlay', () => {

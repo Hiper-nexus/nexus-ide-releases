@@ -27,7 +27,7 @@ import {
 
 const GENERATED_PONYTAIL_SKILL = `---
 name: ponytail
-description: Use for lean senior implementation: reuse existing code, avoid speculative abstractions, and write the smallest correct diff.
+description: "Use for lean senior implementation: reuse existing code, avoid speculative abstractions, and write the smallest correct diff."
 ---
 
 ${PONYTAIL_RULES}
@@ -287,6 +287,127 @@ function sha256Hex(buffer: Buffer): string {
   return createHash('sha256').update(buffer).digest('hex');
 }
 
+function assetBytes(asset: SkillAsset): Buffer {
+  return Buffer.from(asset.content, asset.encoding);
+}
+
+/**
+ * Build-time metadata the Main bundle attaches to offloaded manifests (see
+ * skill-manifest-offload): with it an asset is identified without its bytes.
+ */
+interface AssetBuildDigest {
+  readonly sha256?: unknown;
+  readonly size?: unknown;
+}
+
+function buildDigestOf(asset: SkillAsset): { sha256: string; size: number } | null {
+  const meta = asset as SkillAsset & AssetBuildDigest;
+  return typeof meta.sha256 === 'string' && typeof meta.size === 'number'
+    ? { sha256: meta.sha256, size: meta.size }
+    : null;
+}
+
+/**
+ * sha256 of each bundled asset, computed once per process. Manifests are
+ * module constants, so an asset object keeps its identity for the whole run.
+ */
+const assetDigests = new WeakMap<SkillAsset, string>();
+
+function assetDigest(asset: SkillAsset): string {
+  let digest = assetDigests.get(asset);
+  if (digest === undefined) {
+    digest = buildDigestOf(asset)?.sha256 ?? sha256Hex(assetBytes(asset));
+    assetDigests.set(asset, digest);
+  }
+  return digest;
+}
+
+/** True when the file already holds exactly the bytes of `asset`. */
+function fileHoldsAsset(
+  file: string,
+  stat: fs.Stats,
+  asset: SkillAsset,
+  digest: string,
+): boolean {
+  const build = buildDigestOf(asset);
+  if (build) {
+    // Offloaded manifest: prove an unchanged file against the build-time
+    // digest instead of pulling megabytes of payload into memory.
+    return stat.size === build.size && sha256Hex(fs.readFileSync(file)) === digest;
+  }
+  const expected = assetBytes(asset);
+  // Size first: a mismatch costs one stat instead of a full read.
+  return stat.size === expected.length && fs.readFileSync(file).equals(expected);
+}
+
+interface VerifiedFile {
+  readonly digest: string;
+  readonly size: number;
+  readonly mtimeMs: number;
+  readonly ctimeMs: number;
+  readonly ino: number;
+}
+
+/**
+ * Files this process already proved byte-identical to a bundled asset.
+ * ensureSkillsForCli runs on every agent spawn, and re-decoding, re-reading
+ * and re-comparing ~17 MB of bundled assets each time blocked the Main thread
+ * for ~40 ms per spawn. A file whose size, mtime, ctime and inode still match
+ * what was recorded after writing or verifying it is trusted; any change falls
+ * back to the full byte comparison, so a tampered or stale copy is repaired.
+ */
+const verifiedFiles = new Map<string, VerifiedFile>();
+/** Fresh overlays add new paths on every spawn; keep the memo bounded. */
+const MAX_VERIFIED_FILES = 8_192;
+
+function statIfPresent(file: string): fs.Stats | null {
+  try {
+    return fs.statSync(file);
+  } catch (error) {
+    if (isMissingError(error)) return null;
+    throw error;
+  }
+}
+
+function isVerified(file: string, digest: string, stat: fs.Stats): boolean {
+  const known = verifiedFiles.get(file);
+  return (
+    known !== undefined &&
+    known.digest === digest &&
+    known.size === stat.size &&
+    known.mtimeMs === stat.mtimeMs &&
+    known.ctimeMs === stat.ctimeMs &&
+    known.ino === stat.ino
+  );
+}
+
+function recordVerified(file: string, digest: string, stat: fs.Stats): void {
+  verifiedFiles.delete(file);
+  if (verifiedFiles.size >= MAX_VERIFIED_FILES) {
+    const oldest = verifiedFiles.keys().next().value;
+    if (oldest !== undefined) verifiedFiles.delete(oldest);
+  }
+  verifiedFiles.set(file, {
+    digest,
+    size: stat.size,
+    mtimeMs: stat.mtimeMs,
+    ctimeMs: stat.ctimeMs,
+    ino: stat.ino,
+  });
+}
+
+/** A verified copy of `digest` at `file`, usable as a copy-on-write source. */
+function verifiedSource(file: string | undefined, digest: string): string | null {
+  if (file === undefined) return null;
+  const stat = statIfPresent(file);
+  return stat && isVerified(file, digest, stat) ? file : null;
+}
+
+/** Test-only: forget what this process verified on disk. */
+export function __resetSkillMirrorCachesForTests(): void {
+  verifiedFiles.clear();
+}
+
 function isMissingError(error: unknown): boolean {
   return (
     error instanceof Error &&
@@ -342,29 +463,48 @@ function toManifestKey(root: string, abs: string): string {
   return path.relative(root, abs).split(path.sep).join('/');
 }
 
-function placeSkillAsset(destPath: string, asset: SkillAsset): boolean {
-  const expected = Buffer.from(asset.content, asset.encoding);
+/**
+ * Makes `destPath` hold exactly `asset`. `cloneFrom` names a copy this
+ * process already verified (the Main-owned generated root): a missing file is
+ * then cloned from it (copy-on-write on APFS/Btrfs) instead of decoding and
+ * writing the bytes again.
+ */
+function placeSkillAsset(
+  destPath: string,
+  asset: SkillAsset,
+  cloneFrom?: string,
+): boolean {
+  const digest = assetDigest(asset);
+  const before = statIfPresent(destPath);
   let changed = false;
-  try {
-    if (!fs.readFileSync(destPath).equals(expected)) {
-      fs.writeFileSync(destPath, expected);
-      changed = true;
-    }
-  } catch (error) {
-    if (!isMissingError(error)) throw error;
+  if (before === null) {
     fs.mkdirSync(path.dirname(destPath), { recursive: true });
-    fs.writeFileSync(destPath, expected);
+    const source = verifiedSource(cloneFrom, digest);
+    if (source) {
+      fs.copyFileSync(source, destPath, fs.constants.COPYFILE_FICLONE);
+    } else {
+      fs.writeFileSync(destPath, assetBytes(asset));
+    }
+    changed = true;
+  } else if (
+    !isVerified(destPath, digest, before) &&
+    !fileHoldsAsset(destPath, before, asset, digest)
+  ) {
+    fs.writeFileSync(destPath, assetBytes(asset));
     changed = true;
   }
+  let stat = before !== null && !changed ? before : fs.statSync(destPath);
   // Matching bytes do not prove the mode is right: releases before this one
   // wrote the vendored CLI 0644, and bailing out on "unchanged content" would
   // perpetuate that broken cache forever.
   if (asset.executable && process.platform !== 'win32') {
-    if ((fs.statSync(destPath).mode & 0o111) === 0) {
+    if ((stat.mode & 0o111) === 0) {
       fs.chmodSync(destPath, 0o755);
       changed = true;
+      stat = fs.statSync(destPath);
     }
   }
+  recordVerified(destPath, digest, stat);
   return changed;
 }
 
@@ -426,7 +566,10 @@ function looksLikeBundledDelivery(
   manifest: Record<string, SkillAsset>,
 ): boolean {
   const probes = Object.entries(manifest)
-    .filter(([, asset]) => asset.content.length <= DELIVERY_PROBE_MAX_BYTES)
+    // The build-time size keeps offloaded (large) assets out of the probe set
+    // without reading their payload.
+    .filter(([, asset]) =>
+      (buildDigestOf(asset)?.size ?? asset.content.length) <= DELIVERY_PROBE_MAX_BYTES)
     .sort((a, b) => a[1].content.length - b[1].content.length)
     .slice(0, DELIVERY_PROBE_LIMIT);
   for (const [relPath, asset] of probes) {
@@ -491,6 +634,7 @@ function installBundledSkill(
   name: string,
   manifest: Record<string, SkillAsset>,
   ledger: ManagedLedger,
+  cloneRoot?: string,
 ): BundledInstall {
   const target = path.join(targetRoot, name);
   const recorded = ledger.skills[skillName(name)] ?? {};
@@ -504,8 +648,9 @@ function installBundledSkill(
   let changed = false;
   const managed: Record<string, string> = {};
   for (const [relPath, asset] of Object.entries(manifest)) {
-    changed = placeSkillAsset(path.join(target, relPath), asset) || changed;
-    managed[relPath] = sha256Hex(Buffer.from(asset.content, asset.encoding));
+    const cloneFrom = cloneRoot === undefined ? undefined : path.join(cloneRoot, relPath);
+    changed = placeSkillAsset(path.join(target, relPath), asset, cloneFrom) || changed;
+    managed[relPath] = assetDigest(asset);
   }
   for (const [relPath, digest] of Object.entries(recorded)) {
     if (relPath in managed) continue;
@@ -520,32 +665,25 @@ function installBundledSkill(
   return { applied: true, changed, managed };
 }
 
+/** Inline SKILL.md bodies as assets, so they share the verified-file memo. */
+const inlineSkillAssets = new Map<string, SkillAsset>();
+
+function writeInlineSkill(root: string, name: string, body: string): void {
+  let asset = inlineSkillAssets.get(body);
+  if (!asset) {
+    asset = { content: body, encoding: 'utf8' };
+    inlineSkillAssets.set(body, asset);
+  }
+  placeSkillAsset(path.join(root, name, 'SKILL.md'), asset);
+}
+
 function writeGeneratedSkills(root: string): string {
-  const dir = path.join(root, 'ponytail');
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, 'SKILL.md'), GENERATED_PONYTAIL_SKILL);
-  const grillingDir = path.join(root, 'grilling');
-  fs.mkdirSync(grillingDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(grillingDir, 'SKILL.md'),
-    GENERATED_GRILLING_SKILL,
-  );
-  const visualMediaDir = path.join(root, 'nexus-visual-media');
-  fs.mkdirSync(visualMediaDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(visualMediaDir, 'SKILL.md'),
-    GENERATED_NEXUS_VISUAL_MEDIA_SKILL,
-  );
-  const petStudioDir = path.join(root, 'nexus-pet-studio');
-  fs.mkdirSync(petStudioDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(petStudioDir, 'SKILL.md'),
-    GENERATED_NEXUS_PET_STUDIO_SKILL,
-  );
+  writeInlineSkill(root, 'ponytail', GENERATED_PONYTAIL_SKILL);
+  writeInlineSkill(root, 'grilling', GENERATED_GRILLING_SKILL);
+  writeInlineSkill(root, 'nexus-visual-media', GENERATED_NEXUS_VISUAL_MEDIA_SKILL);
+  writeInlineSkill(root, 'nexus-pet-studio', GENERATED_NEXUS_PET_STUDIO_SKILL);
   for (const skill of BUILTIN_BRIDGEMIND_SKILLS) {
-    const skillDir = path.join(root, skill.name);
-    fs.mkdirSync(skillDir, { recursive: true });
-    fs.writeFileSync(path.join(skillDir, 'SKILL.md'), skill.body);
+    writeInlineSkill(root, skill.name, skill.body);
   }
   // Bundled multi-file skills (impeccable, archify, ...). Repair the
   // Main-owned generated cache asset by asset: helper-only updates must reach
@@ -768,6 +906,7 @@ export function ensureSkillsForCli(
               source.name,
               manifest,
               ledger,
+              source.dir,
             );
             if (install.applied) {
               ledger = {

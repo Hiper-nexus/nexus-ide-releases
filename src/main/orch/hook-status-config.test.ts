@@ -115,8 +115,10 @@ describe('codexStatusHookArgs (Codex TOML -c overrides)', () => {
       const parsed = parseOverride(args[i]!) as {
         hooks: Record<string, Array<{ hooks: Array<{ type: string; command: string }> }>>;
       };
-      const [, entries] = Object.entries(parsed.hooks)[0]!;
+      const [event, entries] = Object.entries(parsed.hooks)[0]!;
       expect(entries).toHaveLength(1);
+      // UserPromptSubmit also carries the delegate hook (next test); status is first.
+      expect(entries[0]!.hooks).toHaveLength(event === 'UserPromptSubmit' ? 2 : 1);
       const [hook] = entries[0]!.hooks;
       expect(hook!.type).toBe('command');
       expect(hook!.command).toContain(MARKER);
@@ -125,6 +127,22 @@ describe('codexStatusHookArgs (Codex TOML -c overrides)', () => {
       expect(hook!.command).toContain('|| true');
       expect(hook!.command).toContain('X-Nexus-Hook-Flavor: codex');
     }
+  });
+
+  it('UserPromptSubmit runs status and delegate in ONE array (a second -c with the same key would shadow it)', () => {
+    const values = codexStatusHookArgs().filter(
+      (arg, index) => index % 2 === 1 && arg.startsWith('hooks.UserPromptSubmit='),
+    );
+    expect(values).toHaveLength(1);
+    const parsed = parseOverride(values[0]!) as {
+      hooks: { UserPromptSubmit: Array<{ hooks: Array<{ command: string }> }> };
+    };
+    const [status, delegate] = parsed.hooks.UserPromptSubmit[0]!.hooks.map((hook) => hook.command);
+    expect(status).toContain('X-Nexus-Hook-Event: user-submit');
+    // The delegate response IS the hook output (additionalContext): never discarded.
+    expect(delegate).toContain('$NEXUS_HOOK_DELEGATE_URL');
+    expect(delegate).not.toContain('/dev/null');
+    expect(delegate).toContain(MARKER);
   });
 
   it('is deterministic — a second spawn produces identical argv (no accumulation)', () => {

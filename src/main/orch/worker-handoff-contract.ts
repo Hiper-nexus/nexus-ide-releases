@@ -1,7 +1,4 @@
-import {
-  collectUiWorkEvidence,
-  isUiWorkText,
-} from '../../shared/ui-work-signal';
+import { hasUiWorkTerm } from '../../shared/ui-work-signal';
 import { LEGACY_MARKER } from './legacy-handoff';
 import { PONYTAIL_RULES } from './ponytail';
 import { ENGINEERING_CHARTER } from './engineering-charter';
@@ -35,9 +32,7 @@ import { isPaneMetaTask } from './mission-fast-lane';
  * as fronteiras vêm da tabela compartilhada, não de um regex paralelo.
  */
 function isUiShapedWork(corpus: string): boolean {
-  if (isUiWorkText(corpus)) return true;
-  const evidence = collectUiWorkEvidence(corpus);
-  return evidence.matches.length > 0;
+  return hasUiWorkTerm(corpus);
 }
 
 export interface HandoffContractHints {
@@ -55,6 +50,11 @@ export interface HandoffContractHints {
    * sem isso, ensinar "apenas encerre" perderia a resposta.
    */
   systemDelivers?: boolean;
+  /**
+   * Spawn somente leitura (análise, revisão, pesquisa): entrega texto, não
+   * diff, então nenhuma carta se aplica — eram ~8 KB de prompt por helper.
+   */
+  readOnly?: boolean;
 }
 
 /** Charters only help roles that produce code/UI; for the rest they are noise. */
@@ -63,8 +63,9 @@ export function charterTierForWorker(
 ): { engineering: boolean; design: boolean; lean: boolean } {
   const category = input.category?.toLowerCase();
   // Recon/planning roles deliver analysis, not diffs — build discipline and
-  // diff-size rules only dilute their brief.
-  if (category === 'scout' || category === 'architect') {
+  // diff-size rules only dilute their brief. A read-only spawn cannot ship a
+  // diff whatever its category.
+  if (input.readOnly === true || category === 'scout' || category === 'architect') {
     return { engineering: false, design: false, lean: false };
   }
   const corpus = [input.prompt, ...(input.hints ?? [])]

@@ -23,6 +23,7 @@ import { useGitScmStore, type SelectedGitFile } from '../state/git-scm-store';
 import { useWorkspaceStore } from '../state/workspace-store';
 import { CoffeeCup } from '../pet/CoffeeCup';
 import { gitErrorCopy } from '../lib/git-error-copy';
+import { setVisibleInterval } from '../lib/visible-interval';
 
 function basename(path: string): string {
   const i = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
@@ -557,10 +558,11 @@ export function GitPanelBody() {
     void refresh();
     const onFocus = () => void refresh();
     window.addEventListener('focus', onFocus);
-    const id = window.setInterval(() => void refresh(), 8_000);
+    // Cada refresh roda `git` no main: com a janela oculta o poll dorme.
+    const stopPolling = setVisibleInterval(() => void refresh(), 8_000);
     return () => {
       window.removeEventListener('focus', onFocus);
-      window.clearInterval(id);
+      stopPolling();
     };
   }, [workspacePath, refresh, reset]);
 

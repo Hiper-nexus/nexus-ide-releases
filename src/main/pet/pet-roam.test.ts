@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   nearestPerimeterT,
+  nextRoamDelayMs,
   perimeterPoint,
   pickRoamDestination,
   roamStep,
+  ROAM_IDLE_RECHECK_MS,
   ROAM_WALK_SPEED_PX_S,
 } from './pet-roam';
 import type { Rect, Size } from './pet-geometry';
@@ -135,5 +137,37 @@ describe('roamStep', () => {
     const seconds = (AREA.width - SIZE.width) / ROAM_WALK_SPEED_PX_S;
     expect(seconds).toBeGreaterThan(10);
     expect(seconds).toBeLessThan(40);
+  });
+});
+
+describe('nextRoamDelayMs', () => {
+  const tickMs = 33;
+
+  it('caminhando mantém o passo da animação', () => {
+    expect(nextRoamDelayMs({ blocked: false, walking: true, now: 0, pauseUntil: 0, tickMs }))
+      .toBe(tickMs);
+  });
+
+  it('bloqueada re-checa os vetos 1×/s em vez de a cada quadro', () => {
+    expect(nextRoamDelayMs({ blocked: true, walking: false, now: 0, pauseUntil: 0, tickMs }))
+      .toBe(ROAM_IDLE_RECHECK_MS);
+    expect(ROAM_IDLE_RECHECK_MS).toBeGreaterThanOrEqual(10 * tickMs);
+  });
+
+  it('em pausa acorda no fim dela, no máximo a cada re-checagem', () => {
+    expect(nextRoamDelayMs({ blocked: false, walking: false, now: 1_000, pauseUntil: 1_400, tickMs }))
+      .toBe(400);
+    expect(nextRoamDelayMs({ blocked: false, walking: false, now: 0, pauseUntil: 9_000, tickMs }))
+      .toBe(ROAM_IDLE_RECHECK_MS);
+  });
+
+  it('pausa vencida sorteia o próximo destino no passo seguinte', () => {
+    expect(nextRoamDelayMs({ blocked: false, walking: false, now: 5_000, pauseUntil: 4_000, tickMs }))
+      .toBe(tickMs);
+  });
+
+  it('fim de pausa iminente nunca agenda abaixo do passo', () => {
+    expect(nextRoamDelayMs({ blocked: false, walking: false, now: 1_000, pauseUntil: 1_010, tickMs }))
+      .toBe(tickMs);
   });
 });

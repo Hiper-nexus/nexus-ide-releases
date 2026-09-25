@@ -1,29 +1,29 @@
 import { createHash, randomUUID } from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { HEY_JARVIS_ONNX_B64 } from './wake-models';
 import {
   EI_JARVIS_PTBR_ONNX_B64,
   EI_JARVIS_PTBR_ONNX_SHA256,
 } from './wake-models-ptbr';
+import {
+  DEFAULT_PTBR_WAKE_MODEL_FILE,
+  DEFAULT_WAKE_MODEL_FILE,
+  resolveWakeModelDirectory,
+} from './wake-model-paths';
+
+export {
+  DEFAULT_PTBR_WAKE_MODEL_FILE,
+  DEFAULT_WAKE_MODEL_FILE,
+  resolveWakeModelDirectory,
+};
 
 /** SpeechKit `hey_jarvis` head, installed as an optional second detector. */
 export const DEFAULT_WAKE_MODEL_SHA256 =
   '7256019a18029c7bea33abc3344f7a3d0e07655cf4a5f18e65c9b6329eac3fb6';
-export const DEFAULT_WAKE_MODEL_FILE = 'speechkit-hey-jarvis.onnx';
 
 /** PT-BR trained head installed as custom.onnx for every client by default. */
-export const DEFAULT_PTBR_WAKE_MODEL_FILE = 'custom.onnx';
 export const DEFAULT_PTBR_WAKE_MODEL_SHA256 = EI_JARVIS_PTBR_ONNX_SHA256;
-
-export function resolveWakeModelDirectory(): string {
-  const configuredRoot = process.env.NEXUS_USER_DATA_DIR?.trim();
-  const nexusRoot = configuredRoot
-    ? path.resolve(configuredRoot)
-    : path.join(os.homedir(), '.nexus');
-  return path.join(nexusRoot, 'models', 'wake');
-}
 
 function sha256(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex');
@@ -40,12 +40,14 @@ function hasExpectedHash(filePath: string, expected: string): boolean {
 function installModelFile(
   targetDirectory: string,
   fileName: string,
-  bytes: Buffer,
+  embedded: () => Buffer,
   expectedSha: string,
   label: string,
 ): string | null {
   const target = path.join(targetDirectory, fileName);
   if (hasExpectedHash(target, expectedSha)) return target;
+  // Decode the embedded model only when the copy on disk has to be written.
+  const bytes = embedded();
   if (sha256(bytes) !== expectedSha) {
     console.warn(`[wake] ${label} checksum mismatch — skip disk install`);
     return null;
@@ -88,7 +90,7 @@ export function ensureDefaultWakeModelInstalled(
   return installModelFile(
     targetDirectory,
     DEFAULT_WAKE_MODEL_FILE,
-    Buffer.from(HEY_JARVIS_ONNX_B64, 'base64'),
+    () => Buffer.from(HEY_JARVIS_ONNX_B64, 'base64'),
     DEFAULT_WAKE_MODEL_SHA256,
     'modelo treinado EN (SpeechKit)',
   );
@@ -109,7 +111,7 @@ export function ensureDefaultPtbrWakeModelInstalled(
   return installModelFile(
     targetDirectory,
     DEFAULT_PTBR_WAKE_MODEL_FILE,
-    Buffer.from(EI_JARVIS_PTBR_ONNX_B64, 'base64'),
+    () => Buffer.from(EI_JARVIS_PTBR_ONNX_B64, 'base64'),
     DEFAULT_PTBR_WAKE_MODEL_SHA256,
     'modelo treinado PT-BR (Ei Jarvis)',
   );

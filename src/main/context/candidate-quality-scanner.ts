@@ -8,10 +8,9 @@ import {
 } from '../runtime/git-command';
 import { canonicalJson } from './canonical-json';
 import { captureWorkingTreeCandidate, readCandidateFile } from './candidate-working-tree-snapshot';
-import {
-  analyzeCandidateQualityFacts,
-  type CandidateQualityLineRange,
-  type CandidateQualitySourceFact,
+import type {
+  CandidateQualityLineRange,
+  CandidateQualitySourceFact,
 } from './candidate-quality-analysis';
 import {
   DEFAULT_ORIENTATION_LIMITS,
@@ -365,6 +364,9 @@ export async function runCandidateQualityAnalysis(
   const uniqueReasons = Object.freeze(
     [...new Set(reasons.map(boundedReason).filter(Boolean))].slice(0, 32),
   );
+  // A análise carrega o compilador TypeScript inteiro (~70 MB de RSS no
+  // main): só entra quando uma revisão roda, não no boot do app.
+  const { analyzeCandidateQualityFacts } = await import('./candidate-quality-analysis');
   const findings = analyzeCandidateQualityFacts({
     changedFiles: limitedChanged,
     sources,

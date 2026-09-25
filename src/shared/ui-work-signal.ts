@@ -464,6 +464,16 @@ export function isUiWorkText(value: string): boolean {
   return collectUiWorkEvidence(value).isUiWork;
 }
 
+/**
+ * The PROMPT-GUIDANCE threshold: any UI term, no quorum. Used where a false
+ * positive costs a few KB of self-gating prompt text ("applies whenever the
+ * work touches UI") and a false negative sends someone to build "a página de
+ * onboarding" with no design guidance at all.
+ */
+export function hasUiWorkTerm(value: string): boolean {
+  return collectUiWorkEvidence(value).matches.length > 0;
+}
+
 // ---------------------------------------------------------------------------
 // Visual ASSETS — a different concept, deliberately not fused with UI work.
 // ---------------------------------------------------------------------------

@@ -87,7 +87,6 @@ import {
   liveRuntimeFingerprint,
 } from "./live-runtime-config";
 import { requiresVoiceCommandConfirmation } from "../jarvis/guardrails";
-import { ensureAllDefaultWakeModelsInstalled } from "./ensure-wake-models";
 import { isCurrentProcessSmokeTest } from "../smoke-core";
 import { shouldAllowVoiceCapture } from "./voice-capture-policy";
 
@@ -696,11 +695,21 @@ export function registerVoiceIpc(runtimeManager: ProjectRuntimeManager): void {
       "captura de voz desabilitada por política de automação/desenvolvimento",
     );
   }
-  const wakeModels = ensureAllDefaultWakeModelsInstalled();
-  logVoice("info", "wake.defaultModels", "modelos wake padrão verificados", {
-    en: Boolean(wakeModels.en),
-    ptbr: Boolean(wakeModels.ptbr),
-  });
+  // Os modelos padrão carregam ~1,1 MB em base64 e hash de disco: ficam fora
+  // do caminho síncrono do boot (o módulo vira chunk próprio, só lido aqui).
+  void import("./ensure-wake-models")
+    .then(({ ensureAllDefaultWakeModelsInstalled }) => {
+      const wakeModels = ensureAllDefaultWakeModelsInstalled();
+      logVoice("info", "wake.defaultModels", "modelos wake padrão verificados", {
+        en: Boolean(wakeModels.en),
+        ptbr: Boolean(wakeModels.ptbr),
+      });
+    })
+    .catch((error: unknown) => {
+      logVoice("warn", "wake.defaultModels", "modelos wake padrão não verificados", {
+        error: error instanceof Error ? error.message.slice(0, 300) : String(error).slice(0, 300),
+      });
+    });
   // Narração proativa: handoff novo (entrega/travamento/falha) vira aviso de
   // voz — o renderer fala quando não houver turno ativo.
   initJarvisNarrator(broadcastToScope);

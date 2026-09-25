@@ -257,6 +257,41 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
     });
   });
 
+  it('ignora rota agy sem MCP e escolhe outra CLI com motivo no recibo', async () => {
+    const resolver = vi.fn(async (_task: string, _ctx: AgentGateContext, internal: { excludeAdapterIds?: readonly string[] }) =>
+      internal.excludeAdapterIds?.includes('agy')
+        ? { adapterId: 'codex', model: 'gpt-5.6-luna', reason: 'segunda opção' }
+        : { adapterId: 'agy', model: 'gemini-3.8-flash-high', reason: 'primeira opção' },
+    );
+    setOperatorRouteResolver(resolver);
+    const result = await paneSpawnTool.handler({ prompt: 'implemente X' }, userPane()) as Record<string, unknown>;
+    expect(resolver).toHaveBeenCalledTimes(2);
+    expect(harness.spawnPaneAndMaybePrompt.mock.calls[0]?.[0]).toMatchObject({ adapterId: 'codex' });
+    expect(result).toMatchObject({ route: { ignored: { adapterId: 'agy' } } });
+    expect((result.route as { reason: string }).reason).toMatch(/agy.*MCP/i);
+  });
+
+  it.each(['agy', 'aider', 'devin', 'muse'])(
+    'com missionId explícito mantém %s elegível na rota sem adapterId',
+    async (cli) => {
+      const resolver = vi.fn(async (_task: string, _ctx: AgentGateContext, internal: { excludeAdapterIds?: readonly string[] }) =>
+        internal.excludeAdapterIds?.includes(cli)
+          ? { adapterId: 'codex' }
+          : { adapterId: cli },
+      );
+      setOperatorRouteResolver(resolver);
+
+      // O fixture não inicializa os stores de missão; a recusa posterior vem
+      // depois da escolha de CLI e mantém os gates de missão intactos.
+      await expect(paneSpawnTool.handler(
+        { missionId: 'mission-a', prompt: 'implemente X' },
+        userPane(),
+      )).rejects.toThrow(/project-scoped domain stores/);
+      expect(resolver).toHaveBeenCalledTimes(1);
+      expect(harness.spawnPaneAndMaybePrompt).not.toHaveBeenCalled();
+    },
+  );
+
   it('adapterId/model/effort do agente são ignorados: o resolver decide e o recibo diz', async () => {
     const resolver = vi.fn(async () => ({
       adapterId: 'kimi', model: 'kimi-code/k3', effort: 'low', classifierSource: 'jev',

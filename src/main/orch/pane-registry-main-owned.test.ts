@@ -1950,4 +1950,36 @@ describe("main-owned mission pane spawn", () => {
     unregisterOrchRenderer(owner);
     clearRendererWorkspaceScope(owner);
   });
+
+  it("recusa fechamento selado quando o pane já tem outra sessão", async () => {
+    pty.live.add("pty-replacement");
+    const owner = {
+      id: 913,
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      send: vi.fn(),
+    } as unknown as WebContents & { send: ReturnType<typeof vi.fn> };
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerOrchRenderer(owner);
+    syncPanes([{
+      paneId: "pane-reused",
+      sessionId: "pty-replacement",
+      title: "replacement",
+      kind: "cli-agent",
+      adapterId: "codex",
+      state: "busy",
+    }], owner);
+
+    expect(await requestPaneClose("pane-reused", "pty-original")).toBe(false);
+    expect(pty.terminate).not.toHaveBeenCalledWith("pty-replacement");
+    expect(owner.send).not.toHaveBeenCalledWith(ORCH_CHANNELS.paneCloseRequest, expect.anything());
+    expect(await requestPaneClose("pane-reused", "pty-replacement")).toBe(true);
+    expect(owner.send).toHaveBeenCalledWith(ORCH_CHANNELS.paneCloseRequest, {
+      paneId: "pane-reused",
+      expectedSessionId: "pty-replacement",
+    });
+    syncPanes([], owner);
+    unregisterOrchRenderer(owner);
+    clearRendererWorkspaceScope(owner);
+  });
 });

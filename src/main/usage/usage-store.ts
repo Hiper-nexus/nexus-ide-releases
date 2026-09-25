@@ -298,6 +298,60 @@ function resolveMessageUsageIdentity(
   return { id: legacyId, existed: true };
 }
 
+interface PersistedUsageRow {
+  mission_id: string | null;
+  pane_id: string | null;
+  provider: string;
+  event_type: string;
+  model: string | null;
+  input_units: number;
+  output_units: number;
+  cost_micros: number;
+  metadata: UsageMetadata | null;
+  occurred_at: number;
+}
+
+function readPersistedUsageRow(
+  db: Database.Database,
+  id: string,
+): PersistedUsageRow | null {
+  const row = db
+    .prepare(
+      `SELECT mission_id, pane_id, provider, event_type, model, input_units,
+              output_units, cost_micros, metadata_json, occurred_at
+       FROM usage_events WHERE id = ?`,
+    )
+    .get(id) as (Omit<PersistedUsageRow, 'metadata'> & { metadata_json: unknown }) | undefined;
+  if (!row) return null;
+  let metadata: UsageMetadata | null = null;
+  try {
+    metadata = sessionMetadataSchema.parse(JSON.parse(String(row.metadata_json)));
+  } catch {
+    // Unreadable metadata: the caller rewrites the row instead of merging.
+  }
+  return { ...row, metadata };
+}
+
+/** Same persisted content, ignoring when it was (re)recorded. */
+function sameUsageContent(
+  existing: PersistedUsageRow,
+  next: Omit<PersistedUsageRow, 'provider' | 'event_type'>,
+): boolean {
+  if (!existing.metadata || !next.metadata) return false;
+  const { recordedAt: _existingAt, ...existingMeta } = existing.metadata;
+  const { recordedAt: _nextAt, ...nextMeta } = next.metadata;
+  return (
+    existing.mission_id === next.mission_id &&
+    existing.pane_id === next.pane_id &&
+    existing.model === next.model &&
+    existing.input_units === next.input_units &&
+    existing.output_units === next.output_units &&
+    existing.cost_micros === next.cost_micros &&
+    existing.occurred_at === next.occurred_at &&
+    JSON.stringify(existingMeta) === JSON.stringify(nextMeta)
+  );
+}
+
 function toTotals(row: TotalsRow | undefined): UsageTotals {
   const values = [
     row?.input_tokens ?? 0,
@@ -340,6 +394,15 @@ interface PaneOwnership {
 
 export class ScopedUsageStore {
   readonly #binding: ScopedStoreBinding;
+  /**
+   * provider -> sessions with token events in this scope. Every transcript
+   * line asks this; the SQL form was a full json_extract scan of
+   * usage_events per line (~1.3 ms each, ~18k lines on a boot replay). Built
+   * once from the table, then kept current by record(), the only writer.
+   */
+  #knownSessions: Map<string, Set<string>> | null = null;
+  /** `${provider}\0${session}` -> distinct attributed accounts (max 2). */
+  readonly #sessionAccounts = new Map<string, string[]>();
 
   constructor(
     runtimeManager: ProjectRuntimeManager,
@@ -401,6 +464,46 @@ export class ScopedUsageStore {
           record.messageId,
         )
       : { id: this.#binding.makeId('usage'), existed: false };
+    const existing = identity.existed ? readPersistedUsageRow(db, identity.id) : null;
+    const sameRow =
+      existing !== null &&
+      existing.provider === provider &&
+      existing.event_type === TOKEN_EVENT_TYPE;
+    // A transcript replay of a session that is only "known" (not dictated or
+    // resumed by this process) carries no pane or mission. It must never erase
+    // the attribution a live spawn recorded — that lost per-mission cost on
+    // every restart.
+    const keepAttribution =
+      sameRow &&
+      ownership.internalPaneId === null &&
+      ownership.missionId === null;
+    const missionId = keepAttribution ? existing.mission_id : ownership.missionId;
+    const internalPaneId = keepAttribution ? existing.pane_id : ownership.internalPaneId;
+    const previous = sameRow ? existing.metadata : null;
+    const merged: UsageMetadata = previous
+      ? {
+          ...metadata,
+          displayPaneId: metadata.displayPaneId ?? previous.displayPaneId,
+          accountId: metadata.accountId ?? previous.accountId ?? null,
+        }
+      : metadata;
+    const occurredAt = record.timestamp ?? now;
+    if (
+      sameRow &&
+      sameUsageContent(existing, {
+        mission_id: missionId,
+        pane_id: internalPaneId,
+        model: record.model,
+        input_units: record.inputTokens,
+        output_units: record.outputTokens,
+        cost_micros: costMicros,
+        metadata: merged,
+        occurred_at: occurredAt,
+      })
+    ) {
+      // Replayed unchanged: no write, no fsync, no change broadcast.
+      return false;
+    }
     db.prepare(
       `INSERT INTO usage_events
          (id, mission_id, pane_id, provider, model, event_type, input_units,
@@ -419,19 +522,77 @@ export class ScopedUsageStore {
          AND usage_events.event_type = excluded.event_type`,
     ).run(
       identity.id,
-      ownership.missionId,
-      ownership.internalPaneId,
+      missionId,
+      internalPaneId,
       provider,
       record.model,
       TOKEN_EVENT_TYPE,
       record.inputTokens,
       record.outputTokens,
       costMicros,
-      JSON.stringify(metadata),
-      record.timestamp ?? now,
+      JSON.stringify(merged),
+      occurredAt,
+    );
+    this.#noteSessionWrite(
+      provider,
+      record.sessionId,
+      merged.accountId ?? null,
+      sameRow ? existing.metadata?.accountId ?? null : null,
     );
     this.#binding.emitChange();
     return !identity.existed;
+  }
+
+  /** Keeps the in-memory session indexes equal to what the table now holds. */
+  #noteSessionWrite(
+    provider: string,
+    sessionId: string,
+    accountId: string | null,
+    replacedAccountId: string | null,
+  ): void {
+    if (this.#knownSessions) {
+      let sessions = this.#knownSessions.get(provider);
+      if (!sessions) {
+        sessions = new Set();
+        this.#knownSessions.set(provider, sessions);
+      }
+      sessions.add(sessionId);
+    }
+    const key = `${provider}\0${sessionId}`;
+    const accounts = this.#sessionAccounts.get(key);
+    if (!accounts) return;
+    if (replacedAccountId !== null && replacedAccountId !== accountId) {
+      // The row that carried the old account changed: recount lazily.
+      this.#sessionAccounts.delete(key);
+      return;
+    }
+    if (accountId !== null && !accounts.includes(accountId) && accounts.length < 2) {
+      accounts.push(accountId);
+    }
+  }
+
+  #sessionIndex(): Map<string, Set<string>> {
+    if (this.#knownSessions) return this.#knownSessions;
+    const rows = this.#binding
+      .readDatabase()
+      .prepare(
+        `SELECT DISTINCT provider, json_extract(metadata_json, '$.sessionId') AS session_id
+         FROM usage_events
+         WHERE event_type = ?`,
+      )
+      .all(TOKEN_EVENT_TYPE) as Array<{ provider: unknown; session_id: unknown }>;
+    const index = new Map<string, Set<string>>();
+    for (const row of rows) {
+      if (typeof row.provider !== 'string' || typeof row.session_id !== 'string') continue;
+      let sessions = index.get(row.provider);
+      if (!sessions) {
+        sessions = new Set();
+        index.set(row.provider, sessions);
+      }
+      sessions.add(row.session_id);
+    }
+    this.#knownSessions = index;
+    return index;
   }
 
   totals(): UsageTotals {
@@ -536,22 +697,28 @@ export class ScopedUsageStore {
   ): string | null {
     const provider = usageProviderSchema.parse(rawProvider);
     const sessionId = z.string().min(1).max(512).parse(rawSessionId);
-    const rows = this.#binding
-      .readDatabase()
-      .prepare(
-        `SELECT DISTINCT json_extract(metadata_json, '$.accountId') AS account_id
-         FROM usage_events
-         WHERE event_type = ?
-           AND provider = ?
-           AND json_extract(metadata_json, '$.sessionId') = ?
-           AND json_extract(metadata_json, '$.accountId') IS NOT NULL
-         LIMIT 2`,
-      )
-      .all(TOKEN_EVENT_TYPE, provider, sessionId) as Array<{
-        account_id: unknown;
-      }>;
-    if (rows.length !== 1) return null;
-    return entityIdSchema.parse(rows[0].account_id);
+    const key = `${provider}\0${sessionId}`;
+    let accounts = this.#sessionAccounts.get(key);
+    if (!accounts) {
+      if (!this.#sessionIndex().get(provider)?.has(sessionId)) return null;
+      const rows = this.#binding
+        .readDatabase()
+        .prepare(
+          `SELECT DISTINCT json_extract(metadata_json, '$.accountId') AS account_id
+           FROM usage_events
+           WHERE event_type = ?
+             AND provider = ?
+             AND json_extract(metadata_json, '$.sessionId') = ?
+             AND json_extract(metadata_json, '$.accountId') IS NOT NULL
+           LIMIT 2`,
+        )
+        .all(TOKEN_EVENT_TYPE, provider, sessionId) as Array<{
+          account_id: unknown;
+        }>;
+      accounts = rows.map((row) => entityIdSchema.parse(row.account_id));
+      this.#sessionAccounts.set(key, accounts);
+    }
+    return accounts.length === 1 ? accounts[0] : null;
   }
 
   latestProviderSessionByPane(
@@ -599,18 +766,7 @@ export class ScopedUsageStore {
   ): boolean {
     const provider = usageProviderSchema.parse(rawProvider);
     const sessionId = z.string().min(1).max(512).parse(rawSessionId);
-    const row = this.#binding
-      .readDatabase()
-      .prepare(
-        `SELECT 1 AS found FROM usage_events
-         WHERE event_type = ? AND provider = ?
-           AND json_extract(metadata_json, '$.sessionId') = ?
-         LIMIT 1`,
-      )
-      .get(TOKEN_EVENT_TYPE, provider, sessionId) as
-      | { found?: unknown }
-      | undefined;
-    return row?.found === 1;
+    return this.#sessionIndex().get(provider)?.has(sessionId) ?? false;
   }
 
   /**

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { missionEventSchema, type MissionEvent } from '../../shared/mission-events';
+import { setVisibleInterval } from '../lib/visible-interval';
 
 interface Props {
   missionId: string;
@@ -83,10 +84,10 @@ export function AcpPaneView({ missionId, compact = false }: Props) {
       }
     };
     void refresh();
-    const timer = window.setInterval(() => void refresh(), compact ? 2_000 : 1_200);
+    const stopPolling = setVisibleInterval(() => void refresh(), compact ? 2_000 : 1_200);
     return () => {
       disposed = true;
-      window.clearInterval(timer);
+      stopPolling();
     };
   }, [compact, missionId]);
 
