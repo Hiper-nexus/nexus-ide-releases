@@ -28,6 +28,7 @@ import {
   type RouteSpecialty,
 } from '../../shared/mission-route-specialty';
 import type { TaskTier } from './task-router';
+import type { JevUnavailableReason } from '../../shared/spawn-route';
 
 export const TASK_ROUTING_MIN_CONFIDENCE = 0.6;
 const TASK_ROUTING_TIMEOUT_MS = 5_000;
@@ -113,22 +114,38 @@ function isSpecialty(value: string): value is RouteSpecialty {
   return (ROUTE_SPECIALTIES as readonly string[]).includes(value);
 }
 
-export async function classifyTaskWithJev(
+export type JevTaskRoutingResult =
+  | { readonly kind: 'classified'; readonly classification: JevTaskClassification }
+  | { readonly kind: 'unavailable'; readonly reason: JevUnavailableReason }
+  | { readonly kind: 'skipped' };
+
+/**
+ * Classificação para o roteador COM o motivo quando o Jev não respondeu — o
+ * spawn da mão do operador mostra "sem Jev: <motivo>" em vez de cair calado na
+ * heurística. `skipped` = tarefa em branco, nada a julgar e nada a avisar.
+ */
+export async function classifyTaskForRouting(
   task: string,
   deps: ClassifyTaskDeps = {},
-): Promise<JevTaskClassification | null> {
+): Promise<JevTaskRoutingResult> {
+  if (!task.trim()) return { kind: 'skipped' };
   const enabled = deps.enabled ?? (() => isJevSurfaceEnabled('taskRouting'));
   const hasKey = deps.hasKey ?? hasJevCredential;
-  if (!task.trim() || !enabled() || !hasKey()) return null;
+  if (!enabled()) return { kind: 'unavailable', reason: 'disabled' };
+  if (!hasKey()) return { kind: 'unavailable', reason: 'no-key' };
 
+  let noAnswer: JevUnavailableReason | undefined;
   const judgeFn = deps.judge ?? judge;
   const result = await judgeFn({
     state: { task: capText(task, TASK_MAX_CHARS) },
     questions: TASK_ROUTING_QUESTIONS,
     timeoutMs: TASK_ROUTING_TIMEOUT_MS,
     surface: 'taskRouting',
+    onNoAnswer: (reason) => {
+      noAnswer = reason;
+    },
   });
-  if (!result) return null;
+  if (!result) return { kind: 'unavailable', reason: noAnswer ?? 'network' };
 
   const tierAnswer = result.answers.tier;
   const specialtyAnswer = result.answers.specialty;
@@ -139,7 +156,7 @@ export async function classifyTaskWithJev(
     !isTier(tierAnswer.choice) ||
     !isSpecialty(specialtyAnswer.choice)
   ) {
-    return null;
+    return { kind: 'unavailable', reason: 'invalid-answer' };
   }
 
   const classification: JevTaskClassification = {
@@ -160,7 +177,16 @@ export async function classifyTaskWithJev(
     inputTokens: result.usage.input_tokens,
     usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
   });
-  return classification;
+  return { kind: 'classified', classification };
+}
+
+/** Contrato antigo (classificação ou null) — mantido para os chamadores atuais. */
+export async function classifyTaskWithJev(
+  task: string,
+  deps: ClassifyTaskDeps = {},
+): Promise<JevTaskClassification | null> {
+  const result = await classifyTaskForRouting(task, deps);
+  return result.kind === 'classified' ? result.classification : null;
 }
 
 export type ClassifierSource = 'jev' | 'heuristic' | 'mixed';
