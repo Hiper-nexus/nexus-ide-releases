@@ -292,6 +292,22 @@ function assetBytes(asset: SkillAsset): Buffer {
 }
 
 /**
+ * Build-time metadata the Main bundle attaches to offloaded manifests (see
+ * skill-manifest-offload): with it an asset is identified without its bytes.
+ */
+interface AssetBuildDigest {
+  readonly sha256?: unknown;
+  readonly size?: unknown;
+}
+
+function buildDigestOf(asset: SkillAsset): { sha256: string; size: number } | null {
+  const meta = asset as SkillAsset & AssetBuildDigest;
+  return typeof meta.sha256 === 'string' && typeof meta.size === 'number'
+    ? { sha256: meta.sha256, size: meta.size }
+    : null;
+}
+
+/**
  * sha256 of each bundled asset, computed once per process. Manifests are
  * module constants, so an asset object keeps its identity for the whole run.
  */
@@ -300,10 +316,28 @@ const assetDigests = new WeakMap<SkillAsset, string>();
 function assetDigest(asset: SkillAsset): string {
   let digest = assetDigests.get(asset);
   if (digest === undefined) {
-    digest = sha256Hex(assetBytes(asset));
+    digest = buildDigestOf(asset)?.sha256 ?? sha256Hex(assetBytes(asset));
     assetDigests.set(asset, digest);
   }
   return digest;
+}
+
+/** True when the file already holds exactly the bytes of `asset`. */
+function fileHoldsAsset(
+  file: string,
+  stat: fs.Stats,
+  asset: SkillAsset,
+  digest: string,
+): boolean {
+  const build = buildDigestOf(asset);
+  if (build) {
+    // Offloaded manifest: prove an unchanged file against the build-time
+    // digest instead of pulling megabytes of payload into memory.
+    return stat.size === build.size && sha256Hex(fs.readFileSync(file)) === digest;
+  }
+  const expected = assetBytes(asset);
+  // Size first: a mismatch costs one stat instead of a full read.
+  return stat.size === expected.length && fs.readFileSync(file).equals(expected);
 }
 
 interface VerifiedFile {
@@ -452,13 +486,12 @@ function placeSkillAsset(
       fs.writeFileSync(destPath, assetBytes(asset));
     }
     changed = true;
-  } else if (!isVerified(destPath, digest, before)) {
-    const expected = assetBytes(asset);
-    // Size first: a mismatch costs one stat instead of a full read.
-    if (before.size !== expected.length || !fs.readFileSync(destPath).equals(expected)) {
-      fs.writeFileSync(destPath, expected);
-      changed = true;
-    }
+  } else if (
+    !isVerified(destPath, digest, before) &&
+    !fileHoldsAsset(destPath, before, asset, digest)
+  ) {
+    fs.writeFileSync(destPath, assetBytes(asset));
+    changed = true;
   }
   let stat = before !== null && !changed ? before : fs.statSync(destPath);
   // Matching bytes do not prove the mode is right: releases before this one
@@ -533,7 +566,10 @@ function looksLikeBundledDelivery(
   manifest: Record<string, SkillAsset>,
 ): boolean {
   const probes = Object.entries(manifest)
-    .filter(([, asset]) => asset.content.length <= DELIVERY_PROBE_MAX_BYTES)
+    // The build-time size keeps offloaded (large) assets out of the probe set
+    // without reading their payload.
+    .filter(([, asset]) =>
+      (buildDigestOf(asset)?.size ?? asset.content.length) <= DELIVERY_PROBE_MAX_BYTES)
     .sort((a, b) => a[1].content.length - b[1].content.length)
     .slice(0, DELIVERY_PROBE_LIMIT);
   for (const [relPath, asset] of probes) {
