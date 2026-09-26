@@ -744,6 +744,12 @@
   to { opacity: 1; transform: translateY(0); }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .git-scm__branch-menu {
+    animation: none;
+  }
+}
+
 .git-scm__branch-menu-head {
   display: flex;
   align-items: center;
