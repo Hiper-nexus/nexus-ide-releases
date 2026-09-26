@@ -149,7 +149,7 @@ const PATTERNS: Pattern[] = [
     // rate_limit_exceeded / rate_limit_reached (código da OpenAI, separador
     // underscore) e RateLimitError (classe de exceção dos SDKs, CamelCase).
     // A prosa nua "rate limit" continua fora (ver comentário acima).
-    re: /rate[_\s]?limit(?:ed|_error)|rate[_\s]?limit[_\s]+(?:exceeded|reached|hit)|ratelimiterror|rate[_\s]?limit.{0,24}\btry again\b|(?:error|failed|failure)\b.{0,40}\brate[_\s]?limit/i,
+    re: /rate[_\s]?limit(?:ed|_error)|rate[_\s]?limit[_\s]+(?:exceeded|reached|hit)|ratelimiterror|rate[_\s]?limit.{0,24}\btry again\b|(?:error|failed|failure)\b[^|\n]{0,40}\brate[_\s]?limit/i,
   },
   { kind: 'rate-limit', cooldownMs: HOUR, re: /(?:http(?:\/\d(?:\.\d)?)?\s*|status(?: code)?\s*[:=]?\s*|error\s*[:=]?\s*)429\b|too many requests/i },
   { kind: 'rate-limit', cooldownMs: HOUR, re: /resource[_\s]?exhausted/i },

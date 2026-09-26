@@ -92,7 +92,8 @@ const REASON_PATTERNS: readonly ReasonPattern[] = [
   // omp: includes("rate limit") nu — proibido no Nexus (prosa de squad ecoada
   // no PTY menciona a frase). Só grafias com erro embutido.
   { reason: 'RATE_LIMIT_EXCEEDED', re: /rate[-_\s]?limit[-_\s]?(?:exceeded|reached|error)\b/i },
-  { reason: 'RATE_LIMIT_EXCEEDED', re: /\b(?:error|failed|failure|exception)\b[^\n]{0,40}\brate[-_\s]?limit/i },
+  // A table/status label such as Failure|rate-limit is not a response.
+  { reason: 'RATE_LIMIT_EXCEEDED', re: /\b(?:error|failed|failure|exception)\b[^|\n]{0,40}\brate[-_\s]?limit/i },
   // Reason-phrase do HTTP 429 — carrega erro por si.
   { reason: 'RATE_LIMIT_EXCEEDED', re: /too many requests/i },
   // omp: includes("presque") (Antigravity em francês, "quase") — nu é frouxo
@@ -130,7 +131,10 @@ const REASON_PATTERNS: readonly ReasonPattern[] = [
   // só 20s de cooldown, debounced pelo failover.
   { reason: 'SERVER_ERROR', re: /(?:http(?:\/\d(?:\.\d)?)?\s*|status(?: code)?\s*[:=]?\s*|error\s*[:=]?\s*|code\s*[:=]?\s*)500\b/i },
   { reason: 'SERVER_ERROR', re: /\b500\s+internal\s+server\s+error\b/i },
-  { reason: 'SERVER_ERROR', re: /\binternal[_-]server[_-]error\b|\binternal_error\b/i },
+  // Bare codes embedded in a task ("corrija internal_error no meu app")
+  // are not provider events. Require a response line or a JSON error code.
+  { reason: 'SERVER_ERROR', re: /^[ \t]*[│┃⎿•·✖×!>-]?[ \t]*(?:(?:api|provider|server)\s+)?(?:(?:error|failed|failure)\s*:\s*)?(?<signal>internal[_-]server[_-]error|internal_error)\b(?:\s*:|(?=\s*$))/im },
+  { reason: 'SERVER_ERROR', re: /^[ \t]*[│┃⎿•·✖×!>-]?[ \t]*(?:(?:api\s+)?error\s*:\s*)?\{[^\n]*"(?:type|code)"\s*:\s*"(?<signal>internal[_-]server[_-]error|internal_error)"/im },
   { reason: 'SERVER_ERROR', re: /\binternal (?:server )?error\b[^\n]{0,20}\b(?:occurred|encountered)\b/i },
 ];
 
@@ -143,7 +147,7 @@ export function classifyRateLimitText(text: string): RateLimitClassification | n
   for (const pattern of REASON_PATTERNS) {
     const match = pattern.re.exec(text);
     if (match) {
-      return { reason: pattern.reason, matched: match[0] };
+      return { reason: pattern.reason, matched: match.groups?.signal ?? match[0] };
     }
   }
   return null;

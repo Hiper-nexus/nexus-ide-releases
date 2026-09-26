@@ -3,6 +3,24 @@ import { detectLimit, tierScopeFromModelId } from './limit-detector';
 import { sanitizeHandoffExcerptForDetector } from '../../shared/failover-handoff';
 
 describe('detectLimit', () => {
+  it.each([
+    'Corrija o internal_error que aparece no nosso aplicativo iOS.',
+    'A missão investiga internal-server-error na tela do cliente.',
+    'Failure|rate-limit',
+    'Failure | rate_limit',
+    'O aviso mostra Failure|rate-limit, mas o provider está funcionando.',
+  ])('does not use prompt prose or a status-table label as a provider error: %s', (text) => {
+    expect(detectLimit(text)).toBeNull();
+  });
+
+  it.each([
+    'internal_error',
+    'Error: internal_error: request failed',
+    'API Error: {"error":{"type":"internal_error","message":"retry later"}}',
+    '{"error":{"type":"internal_error","message":"retry later"}}',
+  ])('still recognizes an actual internal-error response: %s', (text) => {
+    expect(detectLimit(text)?.kind).toBe('transient');
+  });
   it('detects Claude usage-limit messages as rate-limit', () => {
     const hit = detectLimit("Claude usage limit reached. Your limit will reset at 3pm.");
     expect(hit?.kind).toBe('rate-limit');
