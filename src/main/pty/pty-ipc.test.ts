@@ -4,6 +4,9 @@ import os from "node:os";
 import path from "node:path";
 import { PTY_CHANNELS } from "../../shared/channels";
 
+const tabDeps = vi.hoisted(() => ({ prepare: vi.fn(), requireLive: vi.fn() }));
+vi.mock('./pane-space-worktree', () => ({ preparePaneSpaceWorktree: tabDeps.prepare }));
+
 const ipcDeps = vi.hoisted(() => {
   const handlers = new Map<string, (...args: unknown[]) => unknown>();
   return {
@@ -121,6 +124,7 @@ vi.mock("./pty-host-client", () => ({
 
 vi.mock("../persistence/renderer-workspace-scope", () => ({
   requireRendererWorkspaceScope: authorityDeps.requireRendererWorkspaceScope,
+  requireLiveRendererWorkspaceScope: tabDeps.requireLive,
 }));
 
 vi.mock("../orch/workspace-path", () => ({
@@ -337,6 +341,8 @@ afterEach(() => {
 describe("registerPtyIpc account fail-fast", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    tabDeps.prepare.mockReset();
+    tabDeps.requireLive.mockReset();
     authGateDeps.wait.mockReset().mockResolvedValue("fresh");
     providerDeps.prepareProviderSpawn.mockReset();
     providerDeps.prepareProviderSpawnAuthoritative.mockReset().mockImplementation(
@@ -446,6 +452,61 @@ describe("registerPtyIpc account fail-fast", () => {
       "pty-created",
       authorityDeps.scope,
     );
+  });
+
+  it.each(['shell', 'cli-agent'] as const)('spawns %s inside the Main-owned tab worktree and returns its cwd', async (kind) => {
+    providerDeps.prepareProviderSpawn.mockReturnValue({ ok: true, overrides: {} });
+    const scope = { ...authorityDeps.scope, rootRealPath: '/private/tab-a' };
+    tabDeps.prepare.mockResolvedValue({ scope, cwd: scope.rootRealPath });
+    const handler = ipcDeps.handlers.get(PTY_CHANNELS.spawn)!;
+    const result = await handler({ sender: { id: 7 } }, {
+      kind, adapterId: kind === 'cli-agent' ? 'claude' : undefined,
+      paneId: 'pane-tab', worktreeSpaceId: 'space-a', cwd: '/private/tab-a', cols: 80, rows: 24,
+    });
+    expect(result).toMatchObject({ ok: true, cwd: '/private/tab-a' });
+    expect(tabDeps.prepare).toHaveBeenCalledWith(authorityDeps.scope, 'space-a', '/private/tab-a');
+    expect(tabDeps.requireLive).toHaveBeenCalledWith({ id: 7 }, authorityDeps.scope);
+    if (kind === 'cli-agent') expect(ptyDeps.spawnAgentSession).toHaveBeenCalledWith(
+      expect.anything(), expect.anything(), expect.anything(), expect.anything(), expect.objectContaining({
+      scope, coordinationScope: authorityDeps.scope, cwd: '/private/tab-a', source: 'direct-user',
+    }));
+    else expect(ptyDeps.spawnSession).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ scope, cwd: '/private/tab-a' }));
+  });
+
+  it('restores an operator helper tab after its ad-hoc spawn grant expired', async () => {
+    providerDeps.prepareProviderSpawn.mockReturnValue({ ok: true, overrides: {} });
+    const scope = { ...authorityDeps.scope, rootRealPath: '/private/tab-a' };
+    tabDeps.prepare.mockResolvedValue({ scope, cwd: scope.rootRealPath });
+    const result = await ipcDeps.handlers.get(PTY_CHANNELS.spawn)!({ sender: { id: 7 } }, {
+      kind: 'cli-agent', adapterId: 'claude', paneId: 'pane-helper', resume: true,
+      orchRequestId: 'orchspawn-spent', worktreeSpaceId: 'space-a', cwd: '/private/tab-a', cols: 80, rows: 24,
+    });
+    expect(result).toMatchObject({ ok: true, cwd: '/private/tab-a' });
+    expect(tabDeps.prepare).toHaveBeenCalledTimes(1);
+  });
+
+  it('rechecks tab authority after provider authentication waits, immediately before physical spawn', async () => {
+    const scope = { ...authorityDeps.scope, rootRealPath: '/private/tab-a' };
+    tabDeps.prepare.mockResolvedValue({ scope, cwd: scope.rootRealPath });
+    providerDeps.prepareProviderSpawnAuthoritative.mockImplementationOnce(async () => {
+      tabDeps.requireLive.mockImplementation(() => { throw new Error('renderer workspace authority changed'); });
+      return { ok: true, overrides: {} };
+    });
+    const result = await ipcDeps.handlers.get(PTY_CHANNELS.spawn)!({ sender: { id: 7 } }, {
+      kind: 'cli-agent', adapterId: 'claude', worktreeSpaceId: 'space-a', cols: 80, rows: 24,
+    });
+    expect(result).toMatchObject({ ok: false });
+    expect(ptyDeps.spawnAgentSession).not.toHaveBeenCalled();
+  });
+
+  it('never spawns into the old tab after the renderer switches workspace while Git is preparing it', async () => {
+    tabDeps.prepare.mockResolvedValue({ scope: authorityDeps.scope, cwd: '/private/tab-a' });
+    tabDeps.requireLive.mockImplementation(() => { throw new Error('renderer workspace authority changed'); });
+    const result = await ipcDeps.handlers.get(PTY_CHANNELS.spawn)!({ sender: { id: 7 } }, {
+      kind: 'shell', worktreeSpaceId: 'space-a', cols: 80, rows: 24,
+    });
+    expect(result).toMatchObject({ ok: false });
+    expect(ptyDeps.spawnSession).not.toHaveBeenCalled();
   });
 
   it('offers a native Muse auth attempt only for the already-authorized direct user pane', async () => {

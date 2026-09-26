@@ -5,11 +5,12 @@ interface ExecutionContext {
   readonly role: string;
   readonly scope?: ProjectExecutionScope;
   readonly executionScope?: ProjectExecutionScope;
+  readonly sharedTabWorktree?: true;
 }
 
 /** Derived from main-issued scopes, never from tool arguments or prompt text. */
 export function isIsolatedWriterContext(ctx: ExecutionContext): boolean {
-  return ctx.role === 'worker' && Boolean(ctx.scope && ctx.executionScope &&
+  return ctx.role === 'worker' && ctx.sharedTabWorktree !== true && Boolean(ctx.scope && ctx.executionScope &&
     ctx.executionScope.rootRealPath !== ctx.scope.rootRealPath);
 }
 

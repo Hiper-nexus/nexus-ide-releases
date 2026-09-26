@@ -1,3 +1,6 @@
+import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
+import { configureWorktreeRuntimeRegistry, disposeWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
+import { newMissionWorkspaceBinding, prepareMissionExecutionScope } from './mission-execution-scope';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -21,11 +24,14 @@ vi.mock('electron', () => ({
 }));
 
 const roots: string[] = [];
+const managers: ProjectRuntimeManager[] = [];
 const GOOD_SOURCE = 'export function bookingLabel() {\n  return "Agendamento";\n}\n';
 const BAD_SOURCE = 'export function bookingLabel() {\n  return "Agendamento";\n  console.log("unreachable");\n}\n';
 
 beforeEach(() => __resetCivilianAutoReviewForTests());
 afterEach(() => {
+  disposeWorktreeRuntimeRegistry();
+  managers.splice(0).forEach(manager => manager.closeAll());
   roots.splice(0).forEach((root) => fs.rmSync(root, { recursive: true, force: true }));
 });
 
@@ -111,15 +117,55 @@ function fixture(options: { git?: boolean; goal?: string; lane?: 'standard' | 'c
     readFrozenReviewContext: () => null, runAutoReviewGate: review,
     missionEngine: { completeVerified: complete, blockUser },
   });
-  const writeProduct = (body = GOOD_SOURCE) => {
-    fs.mkdirSync(path.join(root, 'src'), { recursive: true });
-    fs.writeFileSync(path.join(root, 'src/bookings.ts'), body);
+  let executionRoot = root;
+  const writeProduct = (body = GOOD_SOURCE, target = executionRoot) => {
+    fs.mkdirSync(path.join(target, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(target, 'src/bookings.ts'), body);
   };
-  return { root, scope, squad, handoffs, runGit, writeProduct, reconcile, complete, review, deliverRepair,
+  const isolate = async () => {
+    const runtime = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-completion-tab-runtime-')));
+    roots.push(runtime);
+    const manager = new ProjectRuntimeManager({ baseDir: runtime, appVersion: 'test' });
+    managers.push(manager);
+    configureWorktreeRuntimeRegistry(manager);
+    mission = { ...mission, intentContract: { ...mission.intentContract!, workspaceBinding: newMissionWorkspaceBinding() } };
+    executionRoot = (await prepareMissionExecutionScope(scope, mission)).rootRealPath;
+    mission.intentContract!.dispatchedAt = Date.now();
+    return executionRoot;
+  };
+  return { root, scope, squad, handoffs, isolate, runGit, writeProduct, reconcile, complete, review, deliverRepair,
     observedProofs, transition, mission: () => mission, advanceClock: () => { clock += 100000; } };
 }
 
 describe('autopilot completion through the real production boundary', () => {
+  it.each([true, false])('reviews the tab bytes, independent of opposite main content (tab bad=%s)', async (tabBad) => {
+    const state = fixture({ git: true });
+    const tab = await state.isolate();
+    state.writeProduct(tabBad ? GOOD_SOURCE : BAD_SOURCE, state.root);
+    state.writeProduct(tabBad ? BAD_SOURCE : GOOD_SOURCE);
+    const result = await state.reconcile();
+    expect(result.completed).toBe(!tabBad);
+    expect(state.deliverRepair.mock.calls.length).toBe(tabBad ? 1 : 0);
+    expect(fs.readFileSync(path.join(state.root, 'src/bookings.ts'), 'utf8')).toBe(tabBad ? GOOD_SOURCE : BAD_SOURCE);
+    expect(tab).not.toBe(state.root);
+    if (!tabBad) expect(state.mission().result?.artifactRefs).toContain('src/bookings.ts');
+  });
+
+  it('rejects a missing tab even when main contains a complete product', async () => {
+    const state = fixture({ git: true });
+    const tab = await state.isolate();
+    state.writeProduct(GOOD_SOURCE, state.root);
+    const empty = await state.reconcile();
+    expect(empty.completed).toBe(false);
+    expect(empty.productFiles).not.toContain('src/bookings.ts');
+    expect(state.transition).not.toHaveBeenCalled();
+    const attempts = state.complete.mock.calls.length;
+    fs.rmSync(tab, { recursive: true });
+    await expect(state.reconcile()).rejects.toThrow();
+    expect(state.complete).toHaveBeenCalledTimes(attempts);
+    expect(state.transition).not.toHaveBeenCalled();
+  });
+
   it.each([false, true])('discovers the real product and completes without path metadata or approval (Git=%s)', async (withGit) => {
     const state = fixture({ git: withGit });
     state.writeProduct();

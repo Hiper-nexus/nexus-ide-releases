@@ -1,3 +1,4 @@
+import { missionExecutionScope } from './mission-execution-scope';
 import {
   closeSync,
   constants,
@@ -691,7 +692,7 @@ export function completePetStudioHandoff(
       handoff.artifacts,
       handoff.missionId,
       mission.createdAt,
-      resolve(dependencies.workspaceRoot ?? scope.rootRealPath),
+      resolve(dependencies.workspaceRoot ?? missionExecutionScope(scope, mission).rootRealPath),
       resolve(
         dependencies.codexHome ??
           process.env.CODEX_HOME ??

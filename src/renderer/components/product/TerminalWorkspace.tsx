@@ -131,6 +131,9 @@ export function TerminalWorkspace({
         null)
       : null,
   );
+  const missionSpaceId = useOrchStore((state) => missionId
+    ? state.missions.find((item) => item.id === missionId)?.intentContract?.workspaceBinding?.spaceId
+    : undefined);
   const awaitsReview = useOrchStore((state) => {
     if (!missionId) return false;
     const mission = state.missions.find((item) => item.id === missionId);
@@ -206,7 +209,7 @@ export function TerminalWorkspace({
     return focused ? scopeOf(focused) : null;
   })();
   const effectiveScopeKey = inMission
-    ? missionScopeKey(missionId)
+    ? missionSpaceId ? spaceScopeKey(missionSpaceId) : missionScopeKey(missionId)
     : scopeExists && requestedScopeKey
       ? requestedScopeKey
       : (focusedScopeKey ?? scopes[0]?.key ?? null);
@@ -298,7 +301,7 @@ export function TerminalWorkspace({
     const layout = useLayoutStore.getState();
     const others = listPanes(layout.root).filter((pane) => pane.id !== paneId);
     const spaceId = newPaneSpaceId();
-    layout.assignPaneSpace(paneId, spaceId, nextPaneSpaceTitle(others));
+    layout.assignPaneSpace(paneId, spaceId, nextPaneSpaceTitle(others), true);
     usePaneScopeStore.getState().focusScope(spaceScopeKey(spaceId));
     layout.focus(paneId);
   }, []);

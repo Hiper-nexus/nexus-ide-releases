@@ -1,4 +1,5 @@
 import path from "node:path";
+import { missionExecutionScope, prepareMissionExecutionScope } from './mission-execution-scope';
 import { requireWorktreeRuntimeRegistry } from "../runtime/worktree-runtime-registry";
 import type { WorktreeRecord } from "../runtime/worktree-contract";
 import { createHash } from "node:crypto";
@@ -286,7 +287,10 @@ export function runtimeAuthorityMismatches(
   if (!sameCapabilities(agent.allowedSkills, pane.allowedSkills)) {
     mismatches.push("agent.allowedSkills×pane");
   }
-  if (!sameScope(agent.scope, scope)) mismatches.push("agent.scope");
+  const executionScope = mission.intentContract?.workspaceBinding
+    ? missionExecutionScope(scope, mission) : pane.executionScope ?? scope;
+  if (!sameScope(agent.scope, executionScope)) mismatches.push("agent.scope");
+  if (pane.executionScope && !sameScope(pane.executionScope, executionScope)) mismatches.push("pane.executionScope");
   check("authority.sessionId×agent", authority.sessionId, agent.sessionId);
   check("authority.paneId×pane", authority.paneId, pane.paneId);
   check("authority.kind", authority.kind, "cli-agent");
@@ -1465,7 +1469,7 @@ export function completeVerifiedMission(
     assertDeliveryArtifactsForDone({
       lane: current.intentContract?.lane,
       goal: current.intentContract?.goal.trim() || current.description?.trim() || current.title?.trim() || '',
-      rootRealPath: scope.rootRealPath,
+      rootRealPath: missionExecutionScope(scope, current).rootRealPath,
       handoffs,
       artifactRefs: input.result.artifactRefs,
       resultSummary: input.result.summary,
@@ -1517,7 +1521,12 @@ const productionMissionEngines = new MissionEngineRegistry((scope, stores) =>
         workspaceRootAuthority: workspaceRootAuthorityFromScope(scope),
         checkoutId: scope.checkoutId,
       }),
-    seal: async (input) => {
+    seal: async (input, assertCurrentScope) => {
+      const mission = stores.missions.get(input.missionId);
+      if (!mission || mission.intentContract?.approvalReviewSha256 !== input.reviewSha256) throw new Error('mission review changed');
+      await prepareMissionExecutionScope(scope, mission);
+      assertCurrentScope?.();
+      if (stores.missions.get(input.missionId)?.updatedAt !== mission.updatedAt) throw new Error('mission changed while preparing its workspace');
       sealMissionStartReview(stores.missions, input);
     },
     bootstrap: async (missionId) => {

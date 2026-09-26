@@ -245,10 +245,18 @@ saber isto antes de mexer:
   as casas, a missão hospedada iria para uma aba que não existe).
 - Aba com missão viva não fecha pelo ×: encerrar é no Quadro. "Terminais"
   (panes sem espaço) renomeada vira um espaço (`nameLooseSpace`).
-- Branch + worktree por aba AINDA NÃO existe — o Main recusa cwd fora da
-  raiz e a worktree gerenciada mora fora dela. Desenho e bloqueios em
-  `docs/analysis/2026-09-23-abas-feature-worktree.md`; não contorne criando
-  worktree dentro da raiz do projeto.
+- F-162 (26/09): novas abas (+, Montar meus terminais e wizard) têm worktree
+  durável fora da raiz, criada de HEAD sem copiar WIP. Abas/missões legadas
+  não migram. `workspaceBinding` Main-owned entra no hash da review; a adoção
+  conserva a pasta do pane escolhido. `mission-execution-scope.ts` resolve
+  a pasta física; bancos/eventos/hub MCP continuam no scope de coordenação.
+  Retomada não recria worktree perdida; fechar aba não remove WIP/branch.
+- Primeira onda, retomada, sensores mecânicos, revisão, artefatos e push usam
+  a execução da missão. Mtime do checkout novo não prova entrega: use o
+  SHA-base da aba. PREVC mutável/sensores congelados e `isolatedWriter` ainda
+  são recusados explicitamente na aba; jamais caia em main. Estado e limites
+  em `docs/analysis/2026-09-23-abas-feature-worktree.md`. Não crie worktree
+  dentro da raiz do projeto.
 
 ## Conversas Grok/Kimi por checkout (F-566)
 

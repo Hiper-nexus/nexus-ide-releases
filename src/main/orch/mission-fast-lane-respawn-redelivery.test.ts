@@ -1,3 +1,8 @@
+vi.mock('./mission-orchestrator-runtime', () => ({ resolveProductionMissionOrchestratorRuntime: () => ({ adapterId: 'codex', readOnly: false, nativeReadOnly: false }) }));
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PaneSessionState } from '../../shared/surface-payload-types';
 import type { Mission, SquadAgent } from '../../shared/orch-types';
@@ -24,6 +29,7 @@ const harness = vi.hoisted(() => ({
     adapterId?: string;
   }>,
   spawnCount: 0,
+  spawnOptions: [] as Array<{ cwd: string; scope: ReturnType<typeof testProjectScope>; executionScope: ReturnType<typeof testProjectScope> }>,
   redeliver: vi.fn((): number => 0),
   handoffsOfSession: undefined as string | undefined,
 }));
@@ -67,7 +73,8 @@ vi.mock('./pane-registry', () => ({
       ...pane,
       state: harness.sessionStates.get(pane.sessionId) ?? 'idle',
     })),
-  requestPaneSpawn: async () => {
+  requestPaneSpawn: async (options: typeof harness.spawnOptions[number]) => {
+    harness.spawnOptions.push(options);
     harness.spawnCount += 1;
     const sessionId = `session-${harness.spawnCount}`;
     const paneId = `pane-${harness.spawnCount}`;
@@ -98,7 +105,8 @@ const mission: Mission = {
 
 let liveMission: Mission = mission;
 
-vi.mock('./project-domain-store-registry', () => ({
+vi.mock('./project-domain-store-registry', async (importOriginal) => ({
+  ...await importOriginal<typeof import('./project-domain-store-registry')>(),
   getProjectDomainStores: () => ({
     missions: {
       get: () => liveMission,
@@ -170,8 +178,9 @@ const squadAgents: SquadAgent[] = [
   } as SquadAgent,
 ];
 
+let reviewedSquad: import('../../shared/orch-types').Squad | undefined;
 vi.mock('./squad-store', () => ({
-  getSquad: () => ({ id: 'squad-1', agents: squadAgents }),
+  getSquad: () => reviewedSquad ?? ({ id: 'squad-1', agents: squadAgents }),
 }));
 
 vi.mock('./mission-engine-registry', () => ({
@@ -218,9 +227,11 @@ beforeEach(async () => {
   harness.sessionStates.clear();
   harness.snapshots.length = 0;
   harness.spawnCount = 0;
+  harness.spawnOptions.length = 0;
   harness.redeliver.mockClear();
   harness.handoffsOfSession = undefined;
   liveMission = mission;
+  reviewedSquad = undefined;
   vi.resetModules();
   fastLane = await import('./mission-fast-lane');
 });
@@ -230,6 +241,77 @@ afterEach(() => {
 });
 
 describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
+  it('keeps a new mission in its durable tab on bootstrap and Retomar; deleted tab never falls back to main', async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-resume-tab-')));
+    const repository = path.join(root, 'repo'); fs.mkdirSync(repository);
+    const git = (...args: string[]) => execFileSync('git', ['-C', repository, ...args], { stdio: 'pipe' });
+    git('init', '-q'); git('config', 'user.name', 'Nexus Fixture'); git('config', 'user.email', 'fixture@example.invalid');
+    fs.writeFileSync(path.join(repository, 'file.txt'), 'main'); git('add', 'file.txt'); git('commit', '-qm', 'baseline');
+    const { ProjectRuntimeManager } = await import('../runtime/project-runtime-manager');
+    const registry = await import('../runtime/worktree-runtime-registry');
+    const manager = new ProjectRuntimeManager({ baseDir: path.join(root, 'runtime'), appVersion: 'test' });
+    registry.configureWorktreeRuntimeRegistry(manager);
+    const coordination = testProjectScope({ rootRealPath: repository });
+    try {
+      const { MainMissionEngine } = await import('./mission-engine');
+      const { createMissionEnginePreparationPorts } = await import('./mission-engine-preparation');
+      const { prepareMissionExecutionScope, missionExecutionScope } = await import('./mission-execution-scope');
+      const roster = [...squadAgents, { id: 'review', agentName: 'Review', category: 'reviewer' as const, cli: 'codex' }]
+        .map(agent => ({ ...agent, allowedTools: null, allowedSkills: null }));
+      reviewedSquad = { id: 'squad-1', name: 'Fixture', createdAt: '1', builtin: false, agents: roster, orchestratorInstructions: '' };
+      const preparation = createMissionEnginePreparationPorts({
+        scope: coordination,
+        missions: {
+          create: input => { liveMission = { ...mission, ...input, status: 'pending', learnings: '' }; return liveMission; },
+          get: () => liveMission,
+          bindMissionRuntimeSquad: (_id, _expected, squadId, intentContract) => { liveMission = { ...liveMission, squadId, intentContract }; return liveMission; },
+          removeIfUnchanged: () => 'removed',
+        },
+        deps: {
+          routeIntent: async () => null, persistRuntimeSquad: () => reviewedSquad!, getSquad: () => reviewedSquad!,
+          resolveRuntime: () => ({ adapterId: 'codex', readOnly: false, nativeReadOnly: false }), discardRuntimeSquad: () => true,
+        },
+      });
+      const engine = new MainMissionEngine(coordination, {
+        ...preparation,
+        readReviewFence: async missionId => ({ missionId, reviewSha256: liveMission.intentContract!.approvalReviewSha256! }),
+        seal: async () => {
+          await prepareMissionExecutionScope(coordination, liveMission);
+          liveMission = { ...liveMission, status: 'running', intentState: 'dispatched', intentContract: { ...liveMission.intentContract!, dispatchedAt: Date.now() } };
+        },
+        bootstrap: async missionId => { await fastLane.fastLaneBootstrap(coordination, missionId); },
+        retryKickoff: async () => {}, resume: async () => {}, stop: async () => {}, direct: async () => {}, answerQuestion: async () => {},
+        blockUser: () => {}, blockTechnical: () => {}, resumeTechnical: () => {}, completeVerified: () => {},
+        listSnapshotViews: async () => [],
+        readSnapshotView: async missionId => ({ mission: { id: missionId, title: liveMission.title, objective: liveMission.description ?? '', workspaceLabel: repository, status: liveMission.status, version: 1, updatedAt: liveMission.updatedAt },
+          hasDispatchAuthority: true, hasCurrentKickoffReceipt: true, orchestratorLive: true, tasks: [], handoffs: [], panes: [], roster }),
+      });
+      const review = await engine.prepare(coordination, { title: 'Nova entrega', objective: 'Implemente source.ts e valide a entrega', contextPaths: [], roster, advanced: { lane: 'standard', freeAgentChoice: true } });
+      expect(review.workspaceBinding?.spaceId).toMatch(/^space-/);
+      expect(review.workspaceBinding).toEqual(liveMission.intentContract!.workspaceBinding);
+      await engine.start(coordination, { missionId: review.missionId, reviewSha256: review.reviewSha256 });
+      const tab = { cwd: missionExecutionScope(coordination, liveMission).rootRealPath };
+      expect(harness.spawnOptions.length).toBeGreaterThan(0);
+      for (const options of harness.spawnOptions) {
+        expect(options.cwd).toBe(tab.cwd);
+        expect(options.executionScope.rootRealPath).toBe(tab.cwd);
+        expect(options.scope.rootRealPath).toBe(repository);
+      }
+      for (const sessionId of harness.sessionStates.keys()) harness.sessionStates.set(sessionId, 'exited');
+      const prior = harness.spawnOptions.length;
+      await fastLane.resumeFastLaneMission(coordination, mission.id, { remountKind: 'operator' });
+      expect(harness.spawnOptions.length).toBeGreaterThan(prior);
+      expect(harness.spawnOptions.at(-1)?.cwd).toBe(tab.cwd);
+      for (const sessionId of harness.sessionStates.keys()) harness.sessionStates.set(sessionId, 'exited');
+      fs.rmSync(tab.cwd, { recursive: true });
+      const beforeFailure = harness.spawnOptions.length;
+      await expect(fastLane.resumeFastLaneMission(coordination, mission.id, { remountKind: 'operator' })).rejects.toThrow();
+      expect(harness.spawnOptions).toHaveLength(beforeFailure);
+    } finally {
+      registry.disposeWorktreeRuntimeRegistry(); manager.closeAll(); fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('encerra retries esgotados em bloqueio técnico visível, preservando objetivo e handoffs', async () => {
     await fastLane.fastLaneBootstrap(scope, 'mission-1');
     for (let attempt = 0; attempt < 11; attempt += 1) {

@@ -87,6 +87,7 @@ export function missionDeliveryRosterIssue(
 
 export const missionPrepareRequestSchema = z
   .object({
+    adoptOrchestratorPaneId: z.string().min(1).max(128).optional(),
     objective: z.string().trim().min(1).max(MISSION_INTENT_GOAL_MAX_CHARS),
     title: z
       .string()
@@ -134,6 +135,7 @@ export type MissionPermission = z.infer<typeof missionPermissionSchema>;
 
 export const missionReviewSchema = z
   .object({
+    workspaceBinding: missionIntentContractSchema.shape.workspaceBinding,
     missionId: idSchema,
     title: labelSchema,
     objective: z.string().trim().min(1).max(65_536),

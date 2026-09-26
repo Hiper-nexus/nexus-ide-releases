@@ -386,6 +386,27 @@ describe("MCP dispatch effect safety", () => {
     fs.rmSync(testDir, { recursive: true, force: true });
   });
 
+  it.each([undefined, 'nested'])('prepares undo in the execution worktree for cwd %s, never in the coordination checkout', async (cwd) => {
+    const executionRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-reversal-tab-')));
+    fs.mkdirSync(path.join(executionRoot, 'nested'));
+    const ctx = userContext();
+    ctx.executionScope = { ...ctx.scope, rootRealPath: executionRoot };
+    const handler = vi.fn(async () => ({ exitCode: 0 }));
+    const prepareDestructiveReversibility = vi.fn(async () => ({ reversible: true, revertPath: 'private-recovery' }));
+    try {
+      const result = await dispatchToolCall('http-mcp', registryWith({
+        name: 'nexus_terminal_run', description: 'terminal', inputSchema: { type: 'object' }, handler,
+      }), 'nexus_terminal_run', { command: 'git reset --hard HEAD~1', ...(cwd ? { cwd } : {}) }, ctx, {
+        confirm: async () => true, prepareDestructiveReversibility,
+      });
+      expect(result.ok).toBe(true);
+      expect(prepareDestructiveReversibility).toHaveBeenCalledWith({
+        command: 'git reset --hard HEAD~1', cwd: path.join(executionRoot, cwd ?? ''),
+      });
+      expect(handler).toHaveBeenCalledTimes(1);
+    } finally { fs.rmSync(executionRoot, { recursive: true, force: true }); }
+  });
+
   it("denies workspace and process effects for read-only agents before handlers run", async () => {
     const confirm = vi.fn(async () => true);
     const deniedCases: Array<{

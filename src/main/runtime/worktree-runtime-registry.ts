@@ -304,7 +304,7 @@ export class WorktreeRuntimeRegistry {
         // dentro do worktree seguia vivo escrevendo num diretório já dado como
         // livre — a origem do worktree órfão que trava a próxima missão.
         for (const record of released) {
-          sweepPtysInsideWorktree(record.rootRealPath);
+          sweepPtysInsideWorktree(record.worktreePath);
         }
       }
       return Object.freeze(released);

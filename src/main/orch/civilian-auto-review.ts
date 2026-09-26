@@ -1,3 +1,4 @@
+import { missionExecutionScope, missionExecutionBaseSha } from './mission-execution-scope';
 import { createHash } from 'node:crypto';
 import type { Mission } from '../../shared/orch-types';
 import type { ProjectExecutionScope } from '../../shared/types';
@@ -260,7 +261,8 @@ export async function enforceCivilianAutoReview(
     return { kind: 'repair-dispatched' };
   }
 
-  const root = input.scope.rootRealPath;
+  const executionScope = missionExecutionScope(input.scope, input.mission);
+  const root = executionScope.rootRealPath;
   const git = dependencies.git ?? new AsyncProcessGitRunner();
 
   const observedHead = await currentHeadSha(git, root);
@@ -269,7 +271,7 @@ export async function enforceCivilianAutoReview(
   // precisa revalidar o código e os sensores sobre a entrega atual.
 
   const baseSha = observedHead
-    ? await resolveAutoReviewBaseSha(git, root, input.mission.createdAt) ?? observedHead
+    ? missionExecutionBaseSha(input.scope, input.mission) ?? await resolveAutoReviewBaseSha(git, root, input.mission.createdAt) ?? observedHead
     : NO_GIT_REVISION;
 
   const changedFiles = [...new Set(input.productFiles)].slice(0, 512);
@@ -281,7 +283,7 @@ export async function enforceCivilianAutoReview(
   try {
     analysis = await (dependencies.analyze ?? runCandidateQualityAnalysis)(
       {
-        scope: input.scope,
+        scope: executionScope,
         checkoutPath: root,
         baseSha,
         headSha,

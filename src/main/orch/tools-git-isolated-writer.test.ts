@@ -36,6 +36,13 @@ afterEach(() => fs.rmSync(temp, { recursive: true, force: true }));
 function tool(name: string) { return buildGitTools().find((t) => t.name === `nexus_git_${name}`)!; }
 
 describe('isolated writer MCP Git policy', () => {
+  it('a Main-verified shared tab worker uses its own Git root without pretending to be a task allocation', async () => {
+    h.records = [];
+    ctx.sharedTabWorktree = true;
+    await tool('status').handler({}, ctx);
+    expect(h.run.mock.calls.every(([cwd]) => cwd === root)).toBe(true);
+    expect(h.run.mock.calls.at(-1)?.[1][0]).toBe('status');
+  });
   it.each(['push', 'pull', 'sync', 'branch_create', 'branch_switch', 'branch_list'])('denies %s before any git execution', async (name) => {
     await expect(tool(name).handler({ name: 'other', remote: 'origin' }, ctx)).rejects.toThrow(/isolated_worktree/);
     expect(h.run).not.toHaveBeenCalled();

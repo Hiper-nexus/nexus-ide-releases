@@ -333,7 +333,16 @@ export const missionProjectContextPathSchema = z
   }, 'context path must be project-relative')
   .transform((value) => value.replaceAll('\\', '/'));
 
+/** Main-issued workspace choice, included in the reviewed authority. Never a filesystem path. */
+export const missionWorkspaceBindingSchema = z.object({
+  version: z.literal(1),
+  spaceId: z.string().regex(/^space-[a-z0-9-]{1,120}$/).optional(),
+  adoptedPaneId: z.string().min(1).max(128).optional(),
+}).strict().refine(value => Boolean(value.spaceId || value.adoptedPaneId), 'workspace binding is empty');
+export type MissionWorkspaceBinding = z.infer<typeof missionWorkspaceBindingSchema>;
+
 export const missionIntentContractSchema = z.object({
+  workspaceBinding: missionWorkspaceBindingSchema.optional(),
   version: z.literal(1),
   source: missionIntentSourceSchema,
   // PREVC's compiler canonicalizes these same human-authored fields with

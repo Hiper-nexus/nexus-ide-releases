@@ -1,3 +1,4 @@
+import { missionExecutionScope } from './mission-execution-scope';
 /**
  * Teardown híbrido no done da missão (F-106, decisão de produto 23/08).
  *
@@ -146,7 +147,7 @@ export function productionMissionDoneTeardownDeps(): Omit<
           missionId,
           objective: mission.intentContract?.goal ?? '',
           artifactRefs: mission.result?.artifactRefs,
-          workspaceRoot: scope.rootRealPath,
+          workspaceRoot: missionExecutionScope(scope, mission).rootRealPath,
           missionStartedAtMs: mission.createdAt,
         },
       );

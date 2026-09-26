@@ -118,6 +118,14 @@ afterEach(() => {
  * herda o modo vibe e a pane-authz do operador.
  */
 describe('nexus_pane_spawn — pane filho da mão do operador', () => {
+  it('inherits the parent tab execution root instead of returning a helper to the shared checkout', async () => {
+    const ctx = userPane();
+    ctx.executionScope = { ...ctx.scope, rootRealPath: '/private/worktrees/tab-a' };
+    await paneSpawnTool.handler({ adapterId: 'codex' }, ctx);
+    expect(harness.spawnPaneAndMaybePrompt.mock.calls[0]?.[0]).toMatchObject({
+      scope: ctx.scope, executionScope: ctx.executionScope, cwd: ctx.executionScope.rootRealPath,
+    });
+  });
   it('omite role no spawn ad-hoc (main minta user)', async () => {
     await paneSpawnTool.handler({ adapterId: 'codex' }, userPane());
     expect(harness.spawnPaneAndMaybePrompt).toHaveBeenCalledTimes(1);

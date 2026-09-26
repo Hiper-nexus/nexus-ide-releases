@@ -1485,7 +1485,7 @@ export function spawnAgentSession(
         req.paneId &&
         adapter.spawn.resumeIdArgs?.length
           ? (resumeSessionLookup?.(
-              authority.scope,
+              authority.coordinationScope ?? authority.scope,
               req.paneId,
               adapter.id,
               req.accountId,
@@ -1512,7 +1512,7 @@ export function spawnAgentSession(
         req.paneId &&
         adapter.spawn.resumeIdArgs?.length
           ? (resumeSessionLookup?.(
-              authority.scope,
+              authority.coordinationScope ?? authority.scope,
               req.paneId,
               adapter.id,
               req.accountId,

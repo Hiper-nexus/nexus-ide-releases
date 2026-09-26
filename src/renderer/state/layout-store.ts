@@ -121,6 +121,8 @@ interface LayoutState {
   claimStructuralPlaceholder(paneId: string): void;
   focus(paneId: string): void;
   setTitle(paneId: string, title: string): void;
+  setPaneCwd(paneId: string, cwd: string): void;
+  syncMissionSpaces(): void;
   /** User rename — pins the title so shell escapes stop overriding it. */
   renameTitle(paneId: string, title: string): void;
   setBrowserUrl(paneId: string, url: string): void;
@@ -133,7 +135,7 @@ interface LayoutState {
    * dentro de um espaço quer o pane NAQUELE espaço — sem o carimbo o pane
    * nasceria solto e pularia para outra aba no próximo restart.
    */
-  assignPaneSpace(paneId: string, spaceId: string, spaceTitle: string): void;
+  assignPaneSpace(paneId: string, spaceId: string, spaceTitle: string, isolated?: boolean): void;
   /**
    * Renomeia o espaço do operador inteiro: todos os panes carimbados com
    * `spaceId` passam a exibir o novo título na aba. Panes adotados por uma
@@ -761,6 +763,20 @@ function rootWithoutVacancyResidue(root: LayoutNode): LayoutNode {
  *       I1 only asks WHETHER the placeholder may stay; I6 asks what it may
  *       LOOK like while it legitimately does.
  */
+function bindMissionSpaces(root: LayoutNode): LayoutNode {
+  const { missions, paneMissions } = useOrchStore.getState();
+  let next = root;
+  for (const pane of listPanes(root)) {
+    const mission = missions.find(item => item.id === (pane.missionId ?? paneMissions[pane.id]));
+    const spaceId = mission?.intentContract?.workspaceBinding?.spaceId;
+    if (!spaceId || (pane.spaceId === spaceId && pane.isolateSpace && pane.missionHost)) continue;
+    next = updatePane(next, pane.id, { spaceId,
+      spaceTitle: pane.spaceId === spaceId ? pane.spaceTitle ?? mission!.title : mission!.title,
+      isolateSpace: true, missionHost: true });
+  }
+  return next;
+}
+
 export function enforceLayoutInvariants(
   previous: Pick<LayoutState, 'root' | 'focusedPaneId' | 'maximizedPaneId'> & {
     readonly stagePaneId?: string | null;
@@ -807,7 +823,7 @@ export function enforceLayoutInvariants(
   }
   // I6 runs FIRST: the panes read below must already be residue-free, or a
   // surviving vacancy would be re-published carrying a dead session's output.
-  const proposedRoot = rootWithoutVacancyResidue(partial.root);
+  const proposedRoot = bindMissionSpaces(rootWithoutVacancyResidue(partial.root));
   const proposed = listPanes(proposedRoot);
   const durable = proposed.filter((pane) => !isStructuralPlaceholderPane(pane));
   const reclaimsVacancy = durable.length > 0 && durable.length < proposed.length;
@@ -882,8 +898,8 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
       source?.missionId ?? useOrchStore.getState().paneMissions[paneId],
     );
     const inheritedSpace =
-      !sourceHasMission && source?.spaceId
-        ? { spaceId: source.spaceId, spaceTitle: source.spaceTitle }
+      (!sourceHasMission || source?.isolateSpace) && source?.spaceId
+        ? { spaceId: source.spaceId, spaceTitle: source.spaceTitle, isolateSpace: source.isolateSpace }
         : {};
     const newPane: PaneModel = {
       ...createPane('shell', getActiveWorkspacePath() ?? undefined),
@@ -939,7 +955,7 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
     );
     const inheritedSpace =
       parent?.spaceId && !parentHasMission && !req.missionId
-        ? { spaceId: parent.spaceId, spaceTitle: parent.spaceTitle }
+        ? { spaceId: parent.spaceId, spaceTitle: parent.spaceTitle, isolateSpace: parent.isolateSpace }
         : {};
     const newPane: PaneModel = {
       ...base,
@@ -1379,12 +1395,26 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
     persist();
   },
 
-  assignPaneSpace: (paneId, spaceId, spaceTitle) => {
+  setPaneCwd: (paneId, cwd) => {
+    const root = updatePane(get().root, paneId, { cwd });
+    set({ root });
+    persist();
+  },
+
+  syncMissionSpaces: () => {
+    const root = bindMissionSpaces(get().root);
+    if (root === get().root) return;
+    set({ root });
+    persist();
+  },
+
+  assignPaneSpace: (paneId, spaceId, spaceTitle, isolated = false) => {
     const pane = listPanes(get().root).find((item) => item.id === paneId);
     // Missão vence espaço: um pane já adotado por uma missão não é recarimbado
     // aqui, senão ele sairia da aba da missão que lidera.
     if (!pane || pane.missionId) return;
-    const root = updatePane(get().root, paneId, { spaceId, spaceTitle });
+    const isolateSpace = isolated || listPanes(get().root).some((p) => p.spaceId === spaceId && p.isolateSpace);
+    const root = updatePane(get().root, paneId, { spaceId, spaceTitle, isolateSpace: isolateSpace ? true : undefined });
     set({ root });
     persist();
   },
@@ -1637,4 +1667,12 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
     persist();
   },
   };
+});
+
+// Mission metadata can arrive after the first pane presentation. Persist the
+// same association in either arrival order, without rebuilding grid geometry.
+useOrchStore.subscribe((state, previous) => {
+  if (state.missions !== previous.missions || state.paneMissions !== previous.paneMissions) {
+    useLayoutStore.getState().syncMissionSpaces();
+  }
 });

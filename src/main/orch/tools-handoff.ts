@@ -17,7 +17,7 @@ import {
   enforceScopeRules,
   writeSwarmMailboxMessage,
 } from "./swarm-protocol";
-import { markHandoffSubmitted, type GateRole } from "./gate";
+import { markHandoffSubmitted, executionScopeFor, type GateRole } from "./gate";
 import { requireMissionLeaderSession } from "./mission-leader-gate";
 import { onHandoffSubmitted } from "./idle-delivery";
 import {
@@ -584,7 +584,7 @@ const handoffSubmitTool: McpToolDef = {
         : null;
     if (ctx.missionId && !replayed) {
       try {
-        const diskFiles = collectFilesModified(ctx.scope.rootRealPath);
+        const diskFiles = collectFilesModified(executionScopeFor(ctx).rootRealPath);
         const filesModified =
           declaredFiles.length > 0 ? declaredFiles : diskFiles;
         if (filesModified.length > 0) {

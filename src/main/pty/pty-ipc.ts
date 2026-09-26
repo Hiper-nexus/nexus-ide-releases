@@ -9,7 +9,8 @@ import {
   ptyAcknowledgeSchema,
   ptyRecoverSchema,
 } from "../../shared/ipc";
-import type { SpawnResult } from "../../shared/types";
+import type { SpawnResult, ProjectExecutionScope } from "../../shared/types";
+import { preparePaneSpaceWorktree } from './pane-space-worktree';
 import {
   spawnSession,
   spawnAgentSession,
@@ -40,7 +41,7 @@ import {
   prepareProviderSpawnAuthoritative,
   type ProviderSpawnPreparation,
 } from "../persistence/provider-config-store";
-import { requireRendererWorkspaceScope } from "../persistence/renderer-workspace-scope";
+import { requireRendererWorkspaceScope, requireLiveRendererWorkspaceScope } from "../persistence/renderer-workspace-scope";
 import { trackManagedSession } from "../adapters/managed-credentials";
 import { isFileAuthAdapter } from "../adapters/managed-credentials";
 import { recordAccountChoiceReceipt } from "../persistence/account-choice-receipts";
@@ -428,6 +429,11 @@ function spawnCliPtyAgentPane(
       pending,
       recovery,
     });
+    // Auth refresh / CLI update above may outlive the operator's workspace.
+    if (authority.source === 'direct-user' && authority.coordinationScope &&
+        authority.scope.rootRealPath !== authority.coordinationScope.rootRealPath) {
+      requireLiveRendererWorkspaceScope(sender, authority.coordinationScope);
+    }
     const { sessionId, resumeMode } = spawnAgentSession(
       sender,
       authorizedRequest,
@@ -488,7 +494,7 @@ function spawnCliPtyAgentPane(
     // não tinha scope no registro: `nexus_pane_list` devolvia [] até para o
     // próprio pane e read/write nele caía em "pane belongs to another project
     // checkout" (campo 09/09). O shell direto já fazia este bind.
-    attachSessionScope(sessionId, authority.scope);
+    attachSessionScope(sessionId, authority.coordinationScope ?? authority.scope);
     return {
       ok: true,
       sessionId,
@@ -545,9 +551,11 @@ export function registerPtyIpc(): void {
         if (!adapter) {
           return { ok: false, error: `unknown adapter: ${adapterId}` };
         }
+        const isolatedTab = req.worktreeSpaceId && !envelope.pending &&
+          !envelope.persistedPane && !req.missionId;
         const spawn = resolveMainOwnedAgentSpawn(
           event.sender,
-          envelope,
+          isolatedTab ? { ...envelope, request: { ...envelope.request, cwd: undefined } } : envelope,
           projectRuntimeManager,
         );
         if (adapter.kind !== "cli-pty") {
@@ -555,6 +563,23 @@ export function registerPtyIpc(): void {
             ok: false,
             error: `adapter ${adapterId} is not a cli-pty adapter`,
           };
+        }
+        if (isolatedTab && spawn.authority.source !== 'direct-user') {
+          return { ok: false, error: 'Esta abertura já tem uma pasta definida pelo Nexus. Abra um novo pane comum na aba isolada.' };
+        }
+        if (isolatedTab && spawn.authority.source === 'direct-user') {
+          const coordinationScope = spawn.authority.scope;
+          return preparePaneSpaceWorktree(coordinationScope, req.worktreeSpaceId!, req.cwd)
+            .then(async (worktree): Promise<SpawnResult> => {
+              requireLiveRendererWorkspaceScope(event.sender, coordinationScope);
+              const result = await spawnCliPtyAgentPane(event.sender, adapter, {
+                ...spawn,
+                request: { ...spawn.request, cwd: worktree.cwd },
+                authority: { ...spawn.authority, scope: worktree.scope, cwd: worktree.cwd, coordinationScope },
+              });
+              return result.ok ? { ...result, cwd: worktree.cwd } : result;
+            })
+            .catch((error) => ({ ok: false, error: `Não foi possível abrir a pasta isolada da aba: ${error instanceof Error ? error.message : String(error)}` }));
         }
         return spawnCliPtyAgentPane(event.sender, adapter, spawn);
       } catch (err) {
@@ -569,27 +594,37 @@ export function registerPtyIpc(): void {
 
     try {
       const scope = requireRendererWorkspaceScope(event.sender);
-      const cwd = resolveCwdForScope(scope, req.cwd);
       const shell = resolveConfiguredShell(
         req.shell,
         getTerminalSettings().shell,
         listAvailableShells(),
       );
-      const { sessionId } = spawnSession(
-        event.sender,
-        { ...req, cwd, shell },
-        { scope, cwd, shell },
-      );
-      attachSessionScope(sessionId, scope);
-      registerCommandBlockScope(sessionId, scope);
-      getCommandBlockTracker()?.bindSession(sessionId, {
-        paneId: req.paneId ?? sessionId,
-        workspaceId: scope.checkoutId,
-        shell,
-        cwd,
-        projectRoot: scope.rootRealPath,
-      });
-      return { ok: true, sessionId };
+      const startShell = (executionScope: ProjectExecutionScope, cwd: string): SpawnResult => {
+        const { sessionId } = spawnSession(
+          event.sender,
+          { ...req, cwd, shell },
+          { scope: executionScope, cwd, shell },
+        );
+        attachSessionScope(sessionId, scope);
+        registerCommandBlockScope(sessionId, executionScope);
+        getCommandBlockTracker()?.bindSession(sessionId, {
+          paneId: req.paneId ?? sessionId,
+          workspaceId: scope.checkoutId,
+          shell,
+          cwd,
+          projectRoot: executionScope.rootRealPath,
+        });
+        return { ok: true, sessionId, ...(req.worktreeSpaceId ? { cwd } : {}) };
+      };
+      if (req.worktreeSpaceId) {
+        return preparePaneSpaceWorktree(scope, req.worktreeSpaceId, req.cwd)
+          .then((worktree) => {
+            requireLiveRendererWorkspaceScope(event.sender, scope);
+            return startShell(worktree.scope, worktree.cwd);
+          })
+          .catch((error) => ({ ok: false, error: `Não foi possível abrir a pasta isolada da aba: ${error instanceof Error ? error.message : String(error)}` }));
+      }
+      return startShell(scope, resolveCwdForScope(scope, req.cwd));
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "failed to spawn shell";

@@ -1,3 +1,4 @@
+import { useOrchStore } from './orch-store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PaneModel, WorkspaceLayout } from '../../shared/types';
 import { defaultCanvasLayout } from '../lib/canvas-layout';
@@ -1251,6 +1252,38 @@ describe('layout-store stage focus mode', () => {
 // ── F-560: o ESPAÇO do operador acompanha o pane ────────────────────────────
 
 describe('espaço do pane (F-560)', () => {
+  it('persists a wizard mission space regardless of metadata arrival order and shares it with manual panes', () => {
+    useLayoutStore.setState({ root: initialTree(), focusedPaneId: null, hydrated: true });
+    const layout = useLayoutStore.getState();
+    const host = layout.spawnOrchPane({ paneId: 'pane-wizard', adapterId: 'codex', missionId: 'mission-wizard', role: 'orchestrator', orchRequestId: 'request-wizard' });
+    useOrchStore.setState({ missions: [{ id: 'mission-wizard', title: 'Nova entrega', intentContract: { workspaceBinding: { version: 1, spaceId: 'space-wizard' } } } as import('../../shared/orch-types').Mission] });
+    const marked = listPanes(useLayoutStore.getState().root).find(p => p.id === host)!;
+    expect(marked).toMatchObject({ spaceId: 'space-wizard', isolateSpace: true, missionHost: true });
+    layout.split(host, 'row');
+    const manual = layout.addShellPane();
+    layout.assignPaneSpace(manual, 'space-wizard', 'Nova entrega');
+    const members = listPanes(useLayoutStore.getState().root).filter(p => p.spaceId === 'space-wizard');
+    expect(members).toHaveLength(3);
+    expect(members.every(p => p.isolateSpace)).toBe(true);
+    expect(members.filter(p => p.id !== host).every(p => !p.missionId)).toBe(true);
+    useOrchStore.setState({ missions: [] });
+  });
+
+  it('new isolated tabs pass isolation to added/split panes without migrating legacy tabs', () => {
+    useLayoutStore.setState({ root: initialTree(), focusedPaneId: null, hydrated: true });
+    const store = useLayoutStore.getState();
+    const legacy = store.addShellPane();
+    store.assignPaneSpace(legacy, 'space-legacy', 'Antiga');
+    const first = store.addShellPane();
+    store.assignPaneSpace(first, 'space-new', 'Nova', true);
+    const extra = store.addShellPane();
+    store.assignPaneSpace(extra, 'space-new', 'Nova');
+    store.split(first, 'row');
+    const panes = listPanes(useLayoutStore.getState().root);
+    expect(panes.find(p => p.id === legacy)?.isolateSpace).toBeUndefined();
+    expect(panes.filter(p => p.spaceId === 'space-new')).toHaveLength(3);
+    expect(panes.filter(p => p.spaceId === 'space-new').every(p => p.isolateSpace)).toBe(true);
+  });
   beforeEach(() => {
     useLayoutStore.setState({
       root: initialTree(),

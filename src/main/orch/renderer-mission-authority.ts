@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { WebContents } from "electron";
+import { missionExecutionScope } from './mission-execution-scope';
 import {
   hasCurrentApprovedDispatchContract,
   hasCurrentDispatchAuthority,
@@ -259,7 +260,7 @@ function sameScope(
 function ownedPaneSession(
   owner: WebContents,
   paneRef: string,
-): { paneId: string; sessionId: string; info: OwnedAgentSessionInfo } {
+): { paneId: string; sessionId: string; info: OwnedAgentSessionInfo; scope: ProjectExecutionScope } {
   const pane = findPaneOwnedBy(owner, paneRef);
   if (!pane?.sessionId || pane.kind !== "cli-agent") {
     throw new Error(
@@ -273,10 +274,12 @@ function ownedPaneSession(
     );
   }
   const rendererScope = requireRendererWorkspaceScope(owner);
-  if (!sameScope(rendererScope, info.scope)) {
+  const context = getContextBySession(pane.sessionId);
+  if (!sameScope(rendererScope, context?.scope ?? info.scope) ||
+      !sameScope(context?.executionScope ?? context?.scope ?? info.scope, info.scope)) {
     throw new Error("agent session is outside renderer workspace scope");
   }
-  return { paneId: pane.paneId, sessionId: pane.sessionId, info };
+  return { paneId: pane.paneId, sessionId: pane.sessionId, info, scope: rendererScope };
 }
 
 function hasMatchingGateContext(
@@ -289,7 +292,7 @@ function hasMatchingGateContext(
     context &&
     context.role === info.role &&
     context.role === "orchestrator" &&
-    sameScope(context.scope, info.scope) &&
+    sameScope(context.executionScope ?? context.scope, info.scope) &&
     (missionId === undefined || context.missionId === missionId),
   );
 }
@@ -310,7 +313,7 @@ function matchesPersistedRuntime(
     info.effort === spec.effort &&
     info.workerIncarnationId === spec.workerIncarnationId &&
     (info.readOnly === true) === (spec.readOnly === true) &&
-    Boolean(spec.scope && sameScope(info.scope, spec.scope))
+    Boolean(spec.scope && sameScope(info.scope, spec.executionScope ?? spec.scope))
   );
 }
 
@@ -624,7 +627,7 @@ export class RendererMissionAuthority {
     } catch {
       return false;
     }
-    const suite = this.#stores.forScope(owned.info.scope);
+    const suite = this.#stores.forScope(owned.scope);
     const paneStore = suite.missionPanes;
     const spec = paneStore.findByPaneId(owned.paneId);
     const mission = spec ? suite.missions.get(spec.missionId) : null;
@@ -632,13 +635,14 @@ export class RendererMissionAuthority {
       !spec ||
       !mission ||
       !hasCurrentDispatchAuthority(mission) ||
+      (mission.intentContract?.workspaceBinding !== undefined && !sameScope(owned.info.scope, missionExecutionScope(owned.scope, mission))) ||
       !matchesPersistedRuntime(owned.info, spec) ||
       !hasMatchingGateContext(owned.sessionId, owned.info, spec.missionId)
     ) {
       return false;
     }
     const contextRevision = this.#resolveContextRevision(
-      owned.info.scope,
+      owned.scope,
       spec.missionId,
     );
     if (
@@ -661,7 +665,8 @@ export class RendererMissionAuthority {
       agentName: spec.agentName,
       workerIncarnationId: spec.workerIncarnationId,
       role: spec.role,
-      scope: owned.info.scope,
+      scope: owned.scope,
+      executionScope: owned.info.scope,
       allowedTools: spec.allowedTools,
       allowedSkills: spec.allowedSkills,
       ...(spec.readOnly === true ? { readOnly: true } : {}),
@@ -693,6 +698,7 @@ export class RendererMissionAuthority {
     } catch {
       return null;
     }
+    if (!sameScope(owned.info.scope, missionExecutionScope(rendererScope, mission))) return null;
     if (
       mission.orchestratorSessionId === sessionId &&
       owned.info.missionId === missionId &&
@@ -765,7 +771,7 @@ export class RendererMissionAuthority {
       return { ok: false, error: "pane_unavailable" };
     }
     if (
-      !sameScope(rendererScope, owned.info.scope) ||
+      !sameScope(missionExecutionScope(rendererScope, mission), owned.info.scope) ||
       (owned.info.missionId && owned.info.missionId !== missionId)
     ) {
       return { ok: false, error: "pane_mission_mismatch" };
@@ -786,6 +792,7 @@ export class RendererMissionAuthority {
           accountId: owned.info.accountId,
           effort: owned.info.effort,
           cwd: owned.info.cwd,
+          executionScope: owned.info.scope,
         });
       } catch {
         spec = null;
@@ -823,7 +830,7 @@ export class RendererMissionAuthority {
     }
 
     const contextRevision = this.#resolveContextRevision(
-      owned.info.scope,
+      owned.scope,
       missionId,
     );
     attachOrchMeta(owner, owned.paneId, {
@@ -831,7 +838,8 @@ export class RendererMissionAuthority {
       contextRevision,
       agentName: spec.agentName ?? owned.info.agentName,
       role: "orchestrator",
-      scope: owned.info.scope,
+      scope: owned.scope,
+      executionScope: owned.info.scope,
       allowedTools: null,
       allowedSkills: null,
       ...(spec.readOnly === true ? { readOnly: true } : {}),

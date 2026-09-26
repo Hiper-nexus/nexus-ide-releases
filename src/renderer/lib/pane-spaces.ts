@@ -23,6 +23,7 @@ export interface PaneScopeMission {
 }
 
 export interface PaneScopeEntry {
+  readonly isolated?: true;
   /** Chave opaca do escopo — é o que a aba guarda e o filtro compara. */
   readonly key: string;
   readonly kind: PaneScopeKind;
@@ -290,6 +291,7 @@ export function listPaneScopes(input: ListPaneScopesInput): PaneScopeEntry[] {
         : undefined;
     return {
       ...entry,
+      ...(input.panes.some((pane) => scopeOf(pane) === key && pane.isolateSpace) ? { isolated: true as const } : {}),
       ...(entry.state === undefined && hostedState !== undefined
         ? { state: hostedState }
         : {}),
@@ -367,11 +369,8 @@ function scopeEntryFor(
   };
 }
 
-let spaceSeq = 0;
-
 export function newPaneSpaceId(): string {
-  spaceSeq += 1;
-  return `space-${Date.now().toString(36)}-${spaceSeq}`;
+  return `space-${crypto.randomUUID()}`;
 }
 
 /**

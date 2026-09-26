@@ -11,6 +11,11 @@ const writer = (over: Partial<DelegatedPaneFact> = {}): DelegatedPaneFact => ({
 });
 
 describe('decideDelegatedWriterSpawn', () => {
+  it('serializes writers within a tab, while independent tab worktrees can run together', () => {
+    const panes = [writer({ executionRoot: '/worktrees/tab-a' })];
+    expect(decideDelegatedWriterSpawn({ spawnReadOnly: false, checkoutId: 'ck', executionRoot: '/worktrees/tab-b', panes }).allowed).toBe(true);
+    expect(decideDelegatedWriterSpawn({ spawnReadOnly: false, checkoutId: 'ck', executionRoot: '/worktrees/tab-a', panes }).allowed).toBe(false);
+  });
   it('writer × writer delegado vivo no mesmo checkout: recusa nomeando o pane', () => {
     const out = decideDelegatedWriterSpawn({ spawnReadOnly: false, checkoutId: 'ck', panes: [writer()] });
     expect(out).toEqual({

@@ -101,8 +101,10 @@ vi.mock("../pty/pty-manager", () => ({
           paneId:
             sessionId === "pty-claimed" ? "pane-renderer-created" : pty.paneId,
           adapterId: "codex",
-          cwd: rootRealPath,
-          scope,
+          cwd: sessionId === "pty-headless-1" && pty.authority
+            ? (pty.authority as { cwd: string }).cwd : rootRealPath,
+          scope: sessionId === "pty-headless-1" && pty.authority
+            ? (pty.authority as { scope: typeof scope }).scope : scope,
           source: "pending",
           role: "worker",
           missionId: "mission-headless",
@@ -519,7 +521,7 @@ describe("main-owned mission pane spawn", () => {
         pane: {
           adapterId: "codex",
           model: "gpt-5.6-sol",
-          cwd: rootRealPath,
+          cwd: executionScope.rootRealPath,
           title: "Worker Headless",
           agentName: "Worker Headless",
           role: "worker",

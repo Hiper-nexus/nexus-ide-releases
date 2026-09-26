@@ -338,6 +338,12 @@ function serializeMissionResult(
   return result == null ? null : JSON.stringify(missionResultSchema.parse(result));
 }
 
+function assertWorkspaceBindingUnchanged(previous: MissionIntentContract | undefined, next: MissionIntentContract | undefined): void {
+  if (JSON.stringify(previous?.workspaceBinding) !== JSON.stringify(next?.workspaceBinding)) {
+    throw new Error('mission workspace binding is immutable');
+  }
+}
+
 function assertIntentContractRevision(
   contract: MissionIntentContract | undefined,
   intentVersion: number,
@@ -1118,6 +1124,7 @@ export class ScopedMissionStore {
     ) {
       throw new Error('plan promotion revision contract is invalid');
     }
+    assertWorkspaceBindingUnchanged(expected.intentContract, contract);
     assertIntentContractRevision(contract, contract.intentVersion);
 
     const db = this.#binding.writeDatabase();
@@ -1257,6 +1264,7 @@ export class ScopedMissionStore {
       rawContract === undefined
         ? expected.intentContract
         : missionIntentContractSchema.parse(rawContract);
+    assertWorkspaceBindingUnchanged(expected.intentContract, nextContract);
     assertIntentContractRevision(nextContract, expected.intentVersion ?? 0);
     if (expected.id !== id) {
       throw new Error('mission runtime squad binding target mismatch');
@@ -1529,6 +1537,7 @@ export class ScopedMissionStore {
         if (!existing) return null;
         const nextIntentContract =
           patch.intentContract ?? existing.intentContract;
+        assertWorkspaceBindingUnchanged(existing.intentContract, nextIntentContract);
         assertIntentContractRevision(
           nextIntentContract,
           expectation.intentVersion,
@@ -1669,6 +1678,7 @@ export class ScopedMissionStore {
             : patch.intentContract === null
               ? undefined
               : patch.intentContract;
+        assertWorkspaceBindingUnchanged(existing.intentContract, nextIntentContract);
         let next: ScopedMission = {
           ...existing,
           ...(patch.title !== undefined ? { title: patch.title } : {}),

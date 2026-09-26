@@ -1,4 +1,7 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { configureWorktreeRuntimeRegistry, disposeWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
+import { preparePaneSpaceWorktree } from '../pty/pane-space-worktree';
+import { mkdtempSync, rmSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -46,15 +49,15 @@ vi.mock('./pane-registry', () => ({
     agentName: info.agentName, title: info.agentName, role: info.role, state: 'idle',
   })),
   requestPaneSpawn: async (options: {
-    agentName: string; missionId: string; adapterId: string; scope: OwnedAgentSessionInfo['scope']; readOnly: boolean;
+    agentName: string; missionId: string; adapterId: string; scope: OwnedAgentSessionInfo['scope']; executionScope?: OwnedAgentSessionInfo['scope']; readOnly: boolean;
   }) => {
     const mission = state.stores!.missions.get(options.missionId)!;
     const sessionId = `session-${options.agentName}`;
     const paneId = `pane-${options.agentName}`;
     const issued: OwnedAgentSessionInfo = {
-      sessionId, paneId, adapterId: options.adapterId, cwd: options.scope.rootRealPath,
+      sessionId, paneId, adapterId: options.adapterId, cwd: (options.executionScope ?? options.scope).rootRealPath,
       accountId: `main-selected-${options.agentName}`,
-      scope: options.scope, source: 'pending', role: 'worker', missionId: options.missionId,
+      scope: options.executionScope ?? options.scope, source: 'pending', role: 'worker', missionId: options.missionId,
       agentName: options.agentName, readOnly: options.readOnly, allowedTools: ['nexus_handoff_submit'], allowedSkills: [],
       workerIncarnationId: `main-minted-${options.agentName}`,
       authoritySeal: {
@@ -73,6 +76,7 @@ import { dispatchFastLaneFirstWave } from './mission-fast-lane';
 const managers: ProjectRuntimeManager[] = [];
 const roots: string[] = [];
 afterEach(() => {
+  disposeWorktreeRuntimeRegistry();
   managers.splice(0).forEach((manager) => manager.closeAll());
   roots.splice(0).forEach((root) => rmSync(root, { recursive: true, force: true }));
   state.physical.clear();
@@ -80,12 +84,12 @@ afterEach(() => {
   state.transport = 'pty';
 });
 
-function prepare() {
+function prepare(requestedScope = testProjectScope()) {
   const root = mkdtempSync(join(tmpdir(), 'nexus-first-wave-binding-'));
   roots.push(root);
   const manager = new ProjectRuntimeManager({ baseDir: root, appVersion: 'test' });
   managers.push(manager);
-  const scope = testProjectScope();
+  const scope = requestedScope;
   const stored = createScopedMissionStore(manager, scope).create({ title: 'Pergunte aos panes quanto é 2 + 2.' });
   const squad = {
     id: 'team', name: 'Team', createdAt: '1', builtin: false, orchestratorInstructions: '',
@@ -114,6 +118,25 @@ function prepare() {
 }
 
 describe('first-wave physical pane binding', () => {
+  it('spawns and persists the default first wave inside the mission tab, keeping database coordination in main', async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'nexus-first-wave-tab-')));
+    roots.push(root);
+    const git = (...args: string[]) => execFileSync('git', ['-C', root, ...args], { stdio: 'pipe' });
+    git('init', '-q'); git('config', 'user.name', 'Nexus Fixture'); git('config', 'user.email', 'fixture@example.invalid');
+    writeFileSync(join(root, 'source.txt'), 'baseline'); git('add', 'source.txt'); git('commit', '-qm', 'baseline');
+    const { manager, scope, mission, panes } = prepare(testProjectScope({ rootRealPath: root }));
+    configureWorktreeRuntimeRegistry(manager);
+    const tab = await preparePaneSpaceWorktree(scope, 'space-first-wave');
+    mission.intentContract!.workspaceBinding = { version: 1, spaceId: 'space-first-wave' };
+    expect(await dispatchFastLaneFirstWave(scope, mission.id)).toBe(3);
+    for (const spec of panes.list(mission.id)) {
+      expect(spec.scope.rootRealPath).toBe(root);
+      expect(spec.executionScope.rootRealPath).toBe(tab.cwd);
+      expect(spec.cwd).toBe(tab.cwd);
+      expect(state.physical.get(`session-${spec.agentName}`)?.scope.rootRealPath).toBe(tab.cwd);
+    }
+  });
+
   it.each([
     ['missing nonce', (info: OwnedAgentSessionInfo) => ({ ...info, workerIncarnationId: undefined })],
     ['missing seal', (info: OwnedAgentSessionInfo) => ({ ...info, authoritySeal: undefined })],

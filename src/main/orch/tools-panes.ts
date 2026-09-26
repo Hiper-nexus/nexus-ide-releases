@@ -1,3 +1,4 @@
+import { assertTabSupportsOperation, missionExecutionScope } from './mission-execution-scope';
 import {
   assertMcpInvocationCurrent,
   type McpToolDef,
@@ -858,12 +859,21 @@ const paneSpawn: McpToolDef = {
       );
     }
     options = coerceSpawnReadOnly(options, ctx.readOnly);
+    const executionMission = options.missionId ? getProjectDomainStores(ctx.scope).missions.get(options.missionId) : null;
+    const callerExecutionScope = options.missionId
+      ? (executionMission ? missionExecutionScope(ctx.scope, executionMission) : ctx.scope)
+      : ctx.executionScope ?? ctx.scope;
+    if (!options.missionId && callerExecutionScope.rootRealPath !== ctx.scope.rootRealPath) {
+      options = { ...options, executionScope: callerExecutionScope,
+        cwd: options.cwd ?? callerExecutionScope.rootRealPath };
+    }
     // C3 (25/09): na mão do operador, writer delegado entra um por vez no
     // checkout; helpers de leitura seguem em paralelo.
     if (operatorHand && !options.missionId) {
       const writerDecision = decideDelegatedWriterSpawn({
         spawnReadOnly: options.readOnly === true,
         checkoutId: ctx.scope.checkoutId,
+        executionRoot: callerExecutionScope.rootRealPath,
         panes: delegatedPaneFacts(
           listPaneSnapshots(),
           (sessionId) =>
@@ -1096,6 +1106,7 @@ const paneSpawn: McpToolDef = {
         const workflowService = getContextWorkflowService(ctx.scope);
         const missionWorkflow = workflowService.getMissionWorkflow(missionId);
         if (missionWorkflow.contract) {
+          assertTabSupportsOperation(ctx.scope, callerExecutionScope, 'PREVC com worktrees de tarefas', ctx.sharedTabWorktree);
           executionMode = 'isolated_worktree';
           const taskId = str(args, 'taskId');
           if (!taskId) {
@@ -1129,6 +1140,7 @@ const paneSpawn: McpToolDef = {
               options.prompt;
           }
         } else if (args.isolatedWriter === true && !options.readOnly && options.executionMode !== 'read_only') {
+          assertTabSupportsOperation(ctx.scope, callerExecutionScope, 'isolatedWriter', ctx.sharedTabWorktree);
           isolatedWriter = await allocateIsolatedWriterWorktree(ctx.scope, missionId);
           executionMode = 'isolated_worktree';
           options = {
@@ -1147,7 +1159,7 @@ const paneSpawn: McpToolDef = {
               options.executionMode === 'read_only',
             activeWorker: activeSameCheckoutWorker(
               listPaneSnapshots(),
-              ctx.scope.rootRealPath,
+              callerExecutionScope.rootRealPath,
             ),
           });
           if (!decision.allowed) {
@@ -1155,8 +1167,8 @@ const paneSpawn: McpToolDef = {
           }
           options = {
             ...options,
-            cwd: ctx.scope.rootRealPath,
-            executionScope: ctx.scope,
+            cwd: callerExecutionScope.rootRealPath,
+            executionScope: callerExecutionScope,
             prompt: withSameCheckoutWorkerContract(
               options.prompt ?? 'Inspecione o estado atual e aguarde uma tarefa com escopo explícito.',
             ),

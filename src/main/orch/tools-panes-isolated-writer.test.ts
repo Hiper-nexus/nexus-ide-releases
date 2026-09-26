@@ -108,6 +108,12 @@ afterEach(() => {
 });
 
 describe('Via Rápida isolated writers', () => {
+  it('uses the target mission root even when its caller is currently in another tab worktree', async () => {
+    ctx.executionScope = { ...ctx.scope, rootRealPath: path.join(temp, 'another-tab') };
+    await paneSpawnTool.handler({ agentName: 'Executor' }, ctx);
+    expect(h.spawn.mock.calls[0][0]).toMatchObject({ cwd: ctx.scope.rootRealPath, executionScope: ctx.scope });
+  });
+
   it('fans out concurrently with distinct registered worktrees/branches at HEAD, preserving WIP', async () => {
     fs.writeFileSync(path.join(ctx.scope.rootRealPath, 'base.txt'), 'operator WIP\n');
     await Promise.all([1, 2].map(() => paneSpawnTool.handler({ agentName: 'Executor', isolatedWriter: true, prompt: 'Implement feature' }, ctx)));

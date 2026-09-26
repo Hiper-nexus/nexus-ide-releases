@@ -459,6 +459,8 @@ export interface PaneModel {
    * O renderer é o dono; o main não deriva autoridade nenhuma daqui.
    */
   spaceId?: string;
+  /** New tabs opt into a Main-owned worktree; absent on legacy shared tabs. */
+  isolateSpace?: true;
   /**
    * Rótulo do espaço, desnormalizado no pane de propósito. O espaço É o
    * conjunto dos seus panes — sem registro paralelo para dessincronizar, e o
@@ -531,6 +533,8 @@ export interface WorkspaceLayout {
 /** Payload to open a PTY session for a pane. */
 export interface SpawnRequest {
   cwd?: string;
+  /** Opaque tab id; Main allocates/verifies the worktree in the active scope. */
+  worktreeSpaceId?: string;
   shell?: string;
   cols: number;
   rows: number;
@@ -570,6 +574,8 @@ export type SpawnResult =
   | {
       ok: true;
       sessionId: string;
+      /** Effective working directory resolved by Main for an isolated tab. */
+      cwd?: string;
       /** Main-selected account to retain in the trusted renderer's pane layout. */
       accountId?: string;
       resumeMode?: 'exact' | 'latest' | 'unsupported' | 'fresh-context';

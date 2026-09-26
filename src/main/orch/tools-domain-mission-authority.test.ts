@@ -1,3 +1,10 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
+import { configureWorktreeRuntimeRegistry, disposeWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
+import { preparePaneSpaceWorktree } from '../pty/pane-space-worktree';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentGateContext } from './gate';
 import { testProjectScope } from './__tests__/scope-fixture';
@@ -101,6 +108,7 @@ import { hasCurrentDispatchAuthority } from '../../shared/mission-intent';
 import type { Mission } from '../../shared/orch-types';
 
 const scope = testProjectScope();
+const realGitRun = ProcessGitRunner.prototype.run;
 
 function context(role: 'worker' | 'orchestrator'): AgentGateContext {
   return {
@@ -164,6 +172,7 @@ function completionPushFixture(status = 'running') {
   });
   return {
     finish: () => { stored = { ...stored, status: 'done', result }; },
+    bindSpace: (spaceId: string) => { stored.intentContract = Object.assign({}, stored.intentContract, { workspaceBinding: { version: 1, spaceId } }); },
     replaceSession: (sessionId = 'new-session') => { stored = { ...stored, orchestratorSessionId: sessionId }; },
   };
 }
@@ -211,6 +220,35 @@ describe('mission creation authority', () => {
     expect(result).toMatchObject({ status: 'running', pushExecuted: false, pushPending: true });
     expect((result as { message: string }).message).toMatch(/tente novamente|nova tentativa/iu);
     expect(mocks.gitRun).not.toHaveBeenCalled();
+  });
+
+  it('pushes only the current tab branch, without upstream, and refuses a different main ref', async () => {
+    const directory = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-tab-push-')));
+    const root = path.join(directory, 'repo'); fs.mkdirSync(root);
+    const git = (...args: string[]) => execFileSync('git', ['-C', root, ...args], { stdio: 'pipe' });
+    git('init', '-q'); git('config', 'user.name', 'Nexus Fixture'); git('config', 'user.email', 'fixture@example.invalid');
+    fs.writeFileSync(path.join(root, 'file.txt'), 'baseline'); git('add', 'file.txt'); git('commit', '-qm', 'baseline');
+    const coordination = testProjectScope({ rootRealPath: root });
+    const manager = new ProjectRuntimeManager({ baseDir: path.join(directory, 'runtime'), appVersion: 'test' });
+    configureWorktreeRuntimeRegistry(manager);
+    mocks.gitRun.mockImplementation((cwd, args, options) => args[0] === 'push'
+      ? { status: 0, stdout: 'Fixture push accepted', stderr: '' }
+      : realGitRun.call(new ProcessGitRunner(), cwd, args, options));
+    try {
+      const tab = await preparePaneSpaceWorktree(coordination, 'space-push');
+      const f = completionPushFixture('done'); f.bindSpace('space-push');
+      const ctx = { ...context('orchestrator'), scope: coordination, executionScope: tab.scope };
+      const result = await missionSetStatusTool().handler({ missionId: 'mission-existing', status: 'done', push: {} }, ctx);
+      expect(result).toMatchObject({ pushExecuted: true });
+      const pushes = mocks.gitRun.mock.calls.filter(call => call[1][0] === 'push');
+      expect(pushes).toHaveLength(1);
+      expect(pushes[0]![0]).toBe(tab.cwd);
+      expect(pushes[0]![1]).toEqual(['push', 'origin', expect.stringMatching(/^nexus\//)]);
+      await expect(missionSetStatusTool().handler({ missionId: 'mission-existing', status: 'done', push: { branch: 'main' } }, ctx)).rejects.toThrow('branch atual');
+      expect(mocks.gitRun.mock.calls.filter(call => call[1][0] === 'push')).toHaveLength(1);
+    } finally {
+      disposeWorktreeRuntimeRegistry(); manager.closeAll(); fs.rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it('honors a fresh explicit push request for an already completed mission', async () => {

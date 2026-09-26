@@ -2589,6 +2589,24 @@ describe("cli-agent spawn argv hardening", () => {
     }
   });
 
+  it.each(['direct-user', 'persisted-pane'] as const)('resumes %s in a tab using the coordination transcript ledger', (source) => {
+    const temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tab-resume-')));
+    const tab = path.join(temp, 'tab');
+    fs.mkdirSync(tab);
+    const base = source === 'direct-user' ? trustedSpawn(tab) : persistedMissionGrant(tab);
+    const authority = { ...base, coordinationScope: { ...base.scope, rootRealPath: temp } };
+    const lookup = vi.fn((seen) => seen.rootRealPath === temp ? 'provider-tab-exact' : null);
+    const h = fakeHost(); setPtyHost(h.host); setResumeSessionLookup(lookup);
+    const adapter = makeAdapter({ static: {}, passthrough: [], ephemeralHome: false }, { resumeIdArgs: ['--resume'] });
+    try {
+      const spawned = spawnAgentSession(fakeWc(), { kind: 'cli-agent', paneId: 'pane-tab', resume: true, cols: 80, rows: 24 }, adapter, {}, authority);
+      expect(spawned.resumeMode).toBe('exact');
+      expect(h.specFor(spawned.sessionId).args).toContain('provider-tab-exact');
+      expect(lookup).toHaveBeenCalledWith(authority.coordinationScope, 'pane-tab', adapter.id, undefined);
+      orchKillSession(spawned.sessionId);
+    } finally { setResumeSessionLookup(null); fs.rmSync(temp, { recursive: true, force: true }); }
+  });
+
   it("opens a fresh direct-user session when no exact session exists", () => {
     const h = fakeHost();
     setPtyHost(h.host);

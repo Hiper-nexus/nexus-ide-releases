@@ -11,6 +11,7 @@ export interface DelegatedPaneFact {
   readonly state: PaneRuntimeState;
   readonly readOnly: boolean;
   readonly checkoutId?: string;
+  readonly executionRoot?: string;
   /** Aberto por agente do operador (tem operatorParentSessionId). */
   readonly delegated: boolean;
 }
@@ -27,6 +28,7 @@ export function delegatedPaneFacts(
     state: snapshot.state,
     readOnly: snapshot.readOnly === true,
     ...(snapshot.scope?.checkoutId ? { checkoutId: snapshot.scope.checkoutId } : {}),
+    executionRoot: (snapshot.executionScope ?? snapshot.scope)?.rootRealPath,
     delegated: Boolean(snapshot.sessionId && parentOf(snapshot.sessionId)),
   }));
 }
@@ -34,6 +36,7 @@ export function delegatedPaneFacts(
 export function decideDelegatedWriterSpawn(input: {
   spawnReadOnly: boolean;
   checkoutId: string;
+  executionRoot?: string;
   panes: readonly DelegatedPaneFact[];
 }): { allowed: true } | { allowed: false; reason: string } {
   if (input.spawnReadOnly) return { allowed: true };
@@ -42,6 +45,7 @@ export function decideDelegatedWriterSpawn(input: {
       pane.delegated &&
       !pane.readOnly &&
       pane.checkoutId === input.checkoutId &&
+      (!input.executionRoot || !pane.executionRoot || pane.executionRoot === input.executionRoot) &&
       !INACTIVE.has(pane.state),
   );
   if (!active) return { allowed: true };

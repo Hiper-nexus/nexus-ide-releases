@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ProjectExecutionScope } from "../../shared/types";
 import { ProjectRuntimeManager } from "./project-runtime-manager";
 import { WorktreeRuntimeRegistry } from "./worktree-runtime-registry";
@@ -12,6 +12,9 @@ import {
   worktreeTaskKey,
 } from "./worktree-manager";
 import { ScopedStoreBinding } from "../orch/scoped-store";
+
+const sweep = vi.hoisted(() => vi.fn());
+vi.mock('./worktree-pty-sweep', () => ({ sweepPtysInsideWorktree: sweep }));
 
 const roots: string[] = [];
 const managers: ProjectRuntimeManager[] = [];
@@ -119,6 +122,7 @@ function seedWorkState(
 }
 
 afterEach(() => {
+  sweep.mockClear();
   for (const manager of managers.splice(0)) manager.closeAll();
   for (const root of roots.splice(0))
     fs.rmSync(root, { recursive: true, force: true });
@@ -982,6 +986,10 @@ describe("project worktree runtime registry", () => {
       },
     ]);
     expect(fs.existsSync(wedged.worktreePath)).toBe(true);
+    // A new tab/dispatch may retire an old task: never reap the operator's
+    // processes in the coordination checkout while releasing that task.
+    expect(sweep).toHaveBeenCalledWith(wedged.worktreePath);
+    expect(sweep).not.toHaveBeenCalledWith(scope.rootRealPath);
   });
 
   it("keeps blocking an overlapping dispatch while the owning mission is active", async () => {

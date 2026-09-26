@@ -22,6 +22,8 @@ export interface PtySpawnRequestInput {
     | 'effort'
     | 'orchRequestId'
     | 'id'
+    | 'spaceId'
+    | 'isolateSpace'
   >;
   readonly cols: number;
   readonly rows: number;
@@ -46,6 +48,7 @@ export function buildPtySpawnRequest(
   const { pane } = input;
   return {
     cwd: clean(input.cwd ?? pane.cwd),
+    ...(pane.isolateSpace && pane.spaceId ? { worktreeSpaceId: pane.spaceId } : {}),
     shell: clean(input.shell),
     cols: input.cols,
     rows: input.rows,

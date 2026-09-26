@@ -1,3 +1,4 @@
+import { missionExecutionScope, missionExecutionBaseSha } from './mission-execution-scope';
 import { execFile } from 'node:child_process';
 import { holdsAwaitingOperatorAdjustment } from '../../shared/mission-recovery-policy';
 import {
@@ -597,11 +598,11 @@ function collectArtifactFiles(root: string, handoffs: readonly Handoff[]): strin
   return [...found];
 }
 
-async function listGitProductFiles(root: string): Promise<string[]> {
+async function listGitProductFiles(root: string, baseSha?: string): Promise<string[]> {
   if (!existsSync(join(root, '.git'))) return [];
   const found = new Set<string>();
   for (const args of [
-    ['diff', '--name-only', '--diff-filter=ACMR'],
+    ['diff', '--name-only', '--diff-filter=ACMR', ...(baseSha ? [baseSha] : [])],
     ['diff', '--cached', '--name-only', '--diff-filter=ACMR'],
     ['ls-files', '--others', '--exclude-standard'],
   ] as const) {
@@ -629,10 +630,11 @@ export async function listDeliveredProductFiles(
   handoffs: readonly Handoff[],
   kickoffText = '',
   createdAt?: number,
+  baseSha?: string,
 ): Promise<string[]> {
   const found = new Set<string>([
     ...collectArtifactFiles(root, handoffs),
-    ...(await listGitProductFiles(root)),
+    ...(await listGitProductFiles(root, baseSha)),
   ]);
   for (const requested of extractKickoffRequestedFiles(kickoffText)) {
     const absolute = resolveWorkspaceFile(root, requested);
@@ -1044,7 +1046,7 @@ async function defaultSpawnReviewers(
       adapterId: agent.cli,
       model: agent.model || undefined,
       effort: agent.effort || undefined,
-      cwd: scope.rootRealPath,
+      cwd: missionExecutionScope(scope, mission).rootRealPath,
       title: agent.agentName,
       missionId: mission.id,
       agentName: agent.agentName,
@@ -1052,7 +1054,7 @@ async function defaultSpawnReviewers(
       allowedSkills: agent.allowedSkills ? [...agent.allowedSkills] : [],
       role: 'worker',
       scope,
-      executionScope: scope,
+      executionScope: missionExecutionScope(scope, mission),
       executionMode: 'same_checkout',
       initialPrompt: prompt,
     });
@@ -1065,14 +1067,14 @@ async function defaultSpawnReviewers(
       // loop inteiro depois do pane já ter nascido (gate 0.62).
       model: agent.model || undefined,
       effort: agent.effort || undefined,
-      cwd: scope.rootRealPath,
+      cwd: missionExecutionScope(scope, mission).rootRealPath,
       title: agent.agentName,
       agentName: agent.agentName,
       role: 'worker',
       allowedTools: agent.allowedTools ? [...agent.allowedTools] : null,
       allowedSkills: agent.allowedSkills ? [...agent.allowedSkills] : [],
       readOnly: true,
-      executionScope: scope,
+      executionScope: missionExecutionScope(scope, mission),
     });
     spawned.push(agent.agentName);
   }
@@ -1399,16 +1401,17 @@ async function reconcileCivilianCompletionAttempt(
   const rawFiles = teamQuestion.applicable ? [] : [
     ...new Set(
       await (deps.listProductFiles?.(
-        scope.rootRealPath,
+        missionExecutionScope(scope, mission).rootRealPath,
         handoffs,
         mission.description ?? '',
-        mission.createdAt,
+        mission.intentContract?.workspaceBinding?.spaceId ? undefined : mission.createdAt,
       ) ??
         listDeliveredProductFiles(
-          scope.rootRealPath,
+          missionExecutionScope(scope, mission).rootRealPath,
           handoffs,
           mission.description ?? '',
-          mission.createdAt,
+          mission.intentContract?.workspaceBinding?.spaceId ? undefined : mission.createdAt,
+          missionExecutionBaseSha(scope, mission),
         )),
     ),
   ];
@@ -1514,10 +1517,10 @@ async function reconcileCivilianCompletionAttempt(
   );
   const stateBeforeReview = completionState(stores, missionId, panes);
   const reviewBaseSha = shouldCaptureCandidate && !deps.captureCandidate
-    ? await resolveAutoReviewBaseSha(new AsyncProcessGitRunner(), scope.rootRealPath, mission.createdAt) ?? undefined
+    ? missionExecutionBaseSha(scope, mission) ?? await resolveAutoReviewBaseSha(new AsyncProcessGitRunner(), missionExecutionScope(scope, mission).rootRealPath, mission.createdAt) ?? undefined
     : undefined;
   const candidateBefore = shouldCaptureCandidate
-    ? await captureCompletionCandidate(scope, deps, reviewBaseSha) : null;
+    ? await captureCompletionCandidate(missionExecutionScope(scope, mission), deps, reviewBaseSha) : null;
   const deletedCount = candidateBefore?.complete ? candidateBefore.deletedPaths?.length ?? 0 : 0;
   const action = deletedCount > 0
     ? decideCivilianDeliveryAction({ ...decisionInput, hasExpectedDelivery: true, productFileCount: productFiles.length + deletedCount })
@@ -1642,7 +1645,7 @@ async function reconcileCivilianCompletionAttempt(
     };
   }
   const candidateAfter = shouldCaptureCandidate
-    ? await captureCompletionCandidate(scope, deps, reviewBaseSha) : null;
+    ? await captureCompletionCandidate(missionExecutionScope(scope, mission), deps, reviewBaseSha) : null;
   const currentPanes = deps.listPanes?.() ??
     (typeof listPaneSnapshots === 'function' ? listPaneSnapshots() : []);
   if (

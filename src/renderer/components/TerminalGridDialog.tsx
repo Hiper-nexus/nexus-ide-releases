@@ -132,7 +132,7 @@ function TerminalGridSetup({ initialCount, close }: { initialCount: number; clos
         const base = intent.kind !== 'agent'
           ? createPane('shell', cwd)
           : { ...createPane('cli-agent', cwd, intent.adapterId, intent.model), ...(intent.accountId ? { accountId: intent.accountId } : {}) };
-        return { ...base, spaceId, spaceTitle };
+        return { ...base, spaceId, spaceTitle, isolateSpace: true as const };
       });
       const layout = useLayoutStore.getState();
       layout.setPanes([...existing, ...panes]);

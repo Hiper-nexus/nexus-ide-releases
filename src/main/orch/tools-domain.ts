@@ -1,3 +1,5 @@
+import { missionExecutionScope } from './mission-execution-scope';
+import { sharedPaneSpaceId } from '../pty/pane-space-worktree';
 import {
   describeCronReversal,
   type CronChange,
@@ -334,6 +336,9 @@ const missionCreateTool: McpToolDef = {
       ? undefined
       : (listSquads().find((s) => s.id === 'nexus-fullstack')?.id ??
         listSquads().find((s) => s.id !== PET_STUDIO_SQUAD_ID)?.id);
+    const spaceId = ctx.executionScope ? sharedPaneSpaceId(ctx.scope, ctx.executionScope) : undefined;
+    const operatorContract = operatorHandMissionContract(title, description, milestones);
+    if (spaceId) operatorContract.workspaceBinding = { version: 1, spaceId };
     const created = stores.missions.create({
       title,
       description,
@@ -344,13 +349,16 @@ const missionCreateTool: McpToolDef = {
         ? {
             intentState: 'dispatched' as const,
             intentVersion: 1,
-            intentContract: operatorHandMissionContract(
-              title,
-              description,
-              milestones,
-            ),
+            intentContract: operatorContract,
           }
-        : {}),
+        : spaceId ? {
+            intentState: 'awaiting_approval' as const,
+            intentVersion: 1,
+            intentContract: {
+              ...compileIntentContract({ goal: description?.trim() || title, source: 'typed', intentVersion: 1 }),
+              workspaceBinding: { version: 1 as const, spaceId },
+            },
+          } : {}),
     });
     const mission = autopilot
       ? (stores.missions.update(created.id, { status: 'running' }) ?? created)
@@ -374,6 +382,9 @@ const missionCreateTool: McpToolDef = {
         // to another mission pane". O fallback do store (adapterId) é estável.
         role: 'orchestrator',
         paneId: orchPane.paneId,
+        ...(ctx.executionScope && ctx.executionScope.rootRealPath !== ctx.scope.rootRealPath
+          ? { cwd: ctx.executionScope.rootRealPath, executionScope: ctx.executionScope }
+          : {}),
         allowedTools: ctx.allowedTools,
         allowedSkills: ctx.allowedSkills,
       });
@@ -466,7 +477,16 @@ function pushCompletedMission(
     throw new Error('requested push requires an explicit current orchestrator session');
   }
   assertCurrentMissionOrchestratorSession(ctx, completed);
-  const pushed = safeGitPush(ctx.scope, push);
+  const execution = missionExecutionScope(ctx.scope, completed);
+  let effectivePush = push;
+  if (completed.intentContract?.workspaceBinding?.spaceId) {
+    const branch = gitRunner.run(execution.rootRealPath, ['symbolic-ref', '--quiet', '--short', 'HEAD']).stdout.trim();
+    if (!branch || (push.branch !== undefined && push.branch !== branch)) {
+      throw new Error('O push da missão deve publicar a branch atual da própria aba.');
+    }
+    effectivePush = { ...push, branch };
+  }
+  const pushed = safeGitPush(execution, effectivePush);
   if (!pushed.ok) {
     console.warn(`[mission-set-status] git push falhou para ${expected.id}: ${pushed.error}`);
   }

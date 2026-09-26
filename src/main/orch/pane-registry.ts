@@ -785,7 +785,7 @@ function retainRenderedMissionPaneHeadless(
           role: agent.role,
           allowedTools: agent.allowedTools,
           allowedSkills: agent.allowedSkills,
-          scope: agent.scope,
+          scope: getContextBySession(sessionId!)?.scope ?? scopeBySession.get(sessionId!) ?? agent.scope,
           executionScope: agent.scope,
           readOnly: agent.readOnly,
           nativeReadOnly: agent.nativeReadOnly,
@@ -820,7 +820,7 @@ function retainRenderedMissionPaneHeadless(
   const detached = Boolean(
     agent?.missionId === meta.missionId &&
       agent.role === meta.role &&
-      sameProjectScope(agent.scope, previousScope) &&
+      sameProjectScope(agent.scope, meta.executionScope ?? meta.scope) &&
       detachOwnedMissionAgentSession(owner, sessionId),
   );
   if (!detached) {
@@ -1295,7 +1295,8 @@ export function reclaimDetachedMissionSession(
   const detached = getMainOwnedPane(paneId);
   if (!detached || detached.entry.sessionId !== sessionId) return false;
   const scope = getRendererWorkspaceScope(owner);
-  if (!scope || !sameProjectScope(agent.scope, scope)) return false;
+  if (!scope || !detached.meta.scope || !sameProjectScope(detached.meta.scope, scope) ||
+      !sameProjectScope(agent.scope, detached.meta.executionScope ?? detached.meta.scope)) return false;
   if (!reattachDetachedMissionAgentSession(owner, sessionId, paneId)) {
     return false;
   }
@@ -1454,6 +1455,8 @@ function snapshotOf(registered: RegisteredPane): PaneSnapshot {
     state: parked ? "parked" : paneState(entry),
     ...meta,
     ...(scope ? { scope } : {}),
+    ...(entry.sessionId && getAgentSessionInfo(entry.sessionId)
+      ? { executionScope: getAgentSessionInfo(entry.sessionId)!.scope } : {}),
     ...(parked ? { parkedAt: parked.parkedAt, parkedSessionId: parked.sessionId } : {}),
   };
 }

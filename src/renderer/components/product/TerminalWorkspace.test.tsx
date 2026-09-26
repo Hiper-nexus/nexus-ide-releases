@@ -427,6 +427,23 @@ describe('TerminalWorkspace em missão — "+ Pane" do operador', () => {
     );
   }
 
+  it('new wizard mission keeps manual panes in the same isolated space after remount', () => {
+    useOrchStore.setState({ missions: [{ id: 'm-1', title: 'Entrega isolada', intentContract: { workspaceBinding: { version: 1, spaceId: 'space-wizard-view' } } } as import('../../../shared/orch-types').Mission] });
+    useLayoutStore.setState({ viewKind: 'canvas' });
+    const first = mount(<TerminalWorkspace missionId="m-1" />);
+    let paneId = '';
+    act(() => {
+      paneId = useLayoutStore.getState().addShellPane();
+      canvasViewProps().onPaneCreated?.(paneId);
+    });
+    expect(listPanes(useLayoutStore.getState().root).find(p => p.id === paneId)).toMatchObject({ spaceId: 'space-wizard-view', isolateSpace: true });
+    unmount(first);
+    mount(<TerminalWorkspace missionId="m-1" />);
+    // All panes in the isolated space remain visible without volatile pins.
+    const visible = canvasViewProps().visiblePaneIds;
+    expect(visible === undefined || visible.has(paneId)).toBe(true);
+  });
+
   it('mostra só o pane da missão antes do operador criar algo', () => {
     mount(<TerminalWorkspace missionId="m-1" />);
 

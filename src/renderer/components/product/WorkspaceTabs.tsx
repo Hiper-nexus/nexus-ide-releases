@@ -121,6 +121,7 @@ function tabGlyph(scope: PaneScopeEntry): PixelIconName {
 
 function tabTooltip(scope: PaneScopeEntry, side: boolean): string {
   const lines = [scope.title];
+  if (scope.isolated) lines.push('Pasta isolada desta aba');
   const label = stateLabel(scope.state);
   if (scope.kind === 'mission') {
     if (label) lines.push(`Missão · ${label}`);

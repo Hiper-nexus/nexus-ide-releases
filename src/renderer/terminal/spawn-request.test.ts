@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildPtySpawnRequest } from './spawn-request';
+import { spawnRequestSchema } from '../../shared/ipc';
 
 const basePane = {
   kind: 'cli-agent' as const,
@@ -87,6 +88,15 @@ describe('buildPtySpawnRequest', () => {
     expect(req.missionId).toBeUndefined();
     expect(req.shell).toBeUndefined();
     expect(req.resume).toBe(true);
+  });
+
+  it('requests isolation only for new tabs and carries their stable id on resume', () => {
+    const input = { pane: { ...basePane, spaceId: 'space-a' }, cols: 80, rows: 24,
+      resume: true, resumeLatestOnly: false, restorePersistedAuthority: false };
+    expect(buildPtySpawnRequest(input).worktreeSpaceId).toBeUndefined();
+    const req = buildPtySpawnRequest({ ...input, pane: { ...input.pane, isolateSpace: true } });
+    expect(req.worktreeSpaceId).toBe('space-a');
+    expect(spawnRequestSchema.safeParse(req).success).toBe(true);
   });
 
   it('pane shell nunca viaja como cli-agent', () => {

@@ -12,6 +12,7 @@ const DIMENSION = z.number().int().positive().max(2000);
 
 export const spawnRequestSchema = z.object({
   cwd: z.string().min(1).max(4096).optional(),
+  worktreeSpaceId: z.string().regex(/^space-[a-z0-9-]{1,120}$/).optional(),
   // A caller-supplied shell must be an absolute path — never a bare command name
   // resolved against PATH — so the renderer cannot coax the main process into
   // launching an arbitrary binary off the search path.
@@ -103,6 +104,7 @@ const paneModelSchema = z.object({
    * espaços diferentes num mosaico só.
    */
   spaceId: z.string().min(1).max(128).optional(),
+  isolateSpace: z.literal(true).optional(),
   spaceTitle: z.string().min(1).max(256).optional(),
   /** Mesma razão: sem a entrada, a missão hospedada voltaria à aba própria no restart. */
   missionHost: z.literal(true).optional(),

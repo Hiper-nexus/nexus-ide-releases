@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { adoptedMissionWorkspaceBinding, newMissionWorkspaceBinding } from './mission-execution-scope';
+import { sameProjectExecutionScope } from './project-domain-store-registry';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import {
@@ -542,6 +544,16 @@ export function createMissionEnginePreparationPorts(input: {
       // The classifier may yield while the operator switches projects. No
       // attachment, squad or mission may be persisted under the old authority.
       assertCurrentScope?.();
+      let workspaceBinding = newMissionWorkspaceBinding();
+      if (parsedRequest.adoptOrchestratorPaneId) {
+        const { getPaneAuthzInfo } = await import('./pane-registry');
+        assertCurrentScope?.();
+        const pane = getPaneAuthzInfo(parsedRequest.adoptOrchestratorPaneId);
+        if (!pane?.sessionId || !pane.scope || !sameProjectExecutionScope(pane.scope, scope)) {
+          throw new Error('O painel escolhido para liderar não está mais disponível neste projeto.');
+        }
+        workspaceBinding = adoptedMissionWorkspaceBinding(scope, pane.executionScope ?? pane.scope, pane.paneId);
+      }
       const petSnapshot =
         parsedRequest.profile?.kind === 'pet-studio'
           ? requireSealedPetStudioSnapshot(
@@ -632,6 +644,7 @@ export function createMissionEnginePreparationPorts(input: {
               }
           : { ...baseContract, routingAdvice },
       );
+      contract.workspaceBinding = workspaceBinding;
       let mission: Mission;
       try {
         mission = missions.create({
@@ -705,6 +718,7 @@ export function createMissionEnginePreparationPorts(input: {
       );
       return {
         title: mission.title,
+        workspaceBinding: mission.intentContract.workspaceBinding,
         objective: mission.intentContract.goal,
         contextPaths: [...(mission.intentContract.contextPaths ?? [])],
         acceptanceCriteria: [...mission.intentContract.acceptanceCriteria],

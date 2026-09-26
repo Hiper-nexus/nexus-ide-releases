@@ -3,13 +3,43 @@
 O operador pediu abas nos Terminais em que cada aba é uma feature: os panes
 dela, a missão que um deles começou e, ao abrir uma aba nova, uma branch e
 uma worktree próprias. A 0.76.94 entrega a aba como feature (agrupamento,
-missão hospedada, lado a lado, visão geral). **Branch + worktree por aba não
+missão hospedada, lado a lado, visão geral). **Na versão de 23/09, branch + worktree por aba não
 entrou**: exige autoridade nova no Main, fronteira de segurança
 (`src/main/orch`, `src/main/pty`, `src/main/runtime`), e não se faz às
 pressas antes de release. Este documento registra o que o código mostra e o
 desenho proposto.
 
-## O que existe hoje
+## Implementação de 26/09/2026 — F-162
+
+As novas abas do +, Montar meus terminais e wizard de missão agora recebem uma
+worktree durável fora do projeto, criada do HEAD sem copiar WIP. Abas e missões
+anteriores permanecem onde estavam. Fechar uma aba não remove sua pasta/branch.
+
+O Main guarda a referência opaca `workspaceBinding.spaceId` no contrato das
+novas missões e no hash da review. A adoção de pane existente é resolvida antes
+da revisão e conserva a pasta dele. `mission-execution-scope.ts` é o resolvedor
+físico; o escopo original continua sendo a identidade do banco, dos eventos e
+das permissões. Um registro ou diretório perdido/substituído recusa a operação,
+sem fallback para main. O `.git` precisa apontar para um admin de worktree cujo
+back-pointer corresponde à própria aba.
+
+O fluxo normal usa essa raiz no spawn, primeira onda, retomada, revisão civil,
+sensores mecânicos, fingerprint de candidato, gate de artefatos, abertura da
+entrega e push. O baseline Git da aba evita que os mtimes do checkout inicial
+sejam contados como entrega. A UI persiste o espaço da missão para que panes
+manuais e splits compartilhem a mesma pasta. O serviço reaproveita os registros
+`ownerKind: pane`/`taskId: tab`; o status `failed` de recovery libera apenas a
+reserva e não invalida a pasta durável.
+
+PREVC mutável, sensores do workflow congelado e sub-worktrees de tarefas ainda
+assumem o checkout de coordenação; esses caminhos recebem recusa explícita nas
+abas isoladas. A revisão automática do fluxo standard/free funciona na aba.
+Não há merge automático nem alegação de sandbox das ferramentas nativas.
+
+A análise abaixo descreve o estado de 23/09 e explica as fronteiras que levaram
+a esse desenho. A publicação depende da validação do candidato.
+
+## O que existia em 23/09
 
 - **`WorktreeManager`** (`src/main/runtime/worktree-manager.ts`) cria
   worktree fora da árvore do projeto:

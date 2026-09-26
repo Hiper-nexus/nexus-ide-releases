@@ -1,3 +1,4 @@
+import { assertTabSupportsOperation } from './mission-execution-scope';
 import { z } from 'zod';
 import {
   getContextKnowledgeService,
@@ -886,5 +887,10 @@ export function buildContextTools(): McpToolDef[] {
     worktreeGetTool,
     mergeReviewSubmitTool,
     mergeStatusTool,
-  ];
+  ].map(tool => ({ ...tool, handler: async (args, ctx, invocation) => {
+    if (![doctorTool, systemDoctorTool, contextDraftListTool, contextDraftGetTool, statusTool, worktreeGetTool, mergeStatusTool].includes(tool)) {
+      assertTabSupportsOperation(ctx.scope, executionScopeFor(ctx), tool.name, ctx.sharedTabWorktree);
+    }
+    return tool.handler(args, ctx, invocation);
+  } }));
 }

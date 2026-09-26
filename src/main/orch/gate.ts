@@ -83,6 +83,8 @@ export interface AgentGateContext {
   scope: Readonly<ProjectExecutionScope>;
   /** Filesystem checkout granted to this agent (task worktree when present). */
   executionScope?: Readonly<ProjectExecutionScope>;
+  /** Main verified a durable tab record, distinct from an isolated task writer. */
+  sharedTabWorktree?: true;
   allowedTools: string[] | null;
   allowedSkills: string[] | null;
   /**
@@ -322,6 +324,7 @@ export interface MintTokenInput {
   readOnly?: boolean;
   scope: ProjectExecutionScope;
   executionScope?: ProjectExecutionScope;
+  sharedTabWorktree?: true;
   allowedTools?: string[] | null;
   allowedSkills?: string[] | null;
   /**
@@ -446,6 +449,7 @@ export function mintToken(input: MintTokenInput): AgentGateContext {
     readOnly: input.readOnly === true,
     scope: Object.freeze({ ...input.scope }),
     executionScope: Object.freeze({ ...executionScope }),
+    ...(input.sharedTabWorktree === true ? { sharedTabWorktree: true as const } : {}),
     // Snapshot caller-owned arrays at the mint boundary. Mutating spawn
     // metadata afterwards must never widen an already-issued bearer.
     allowedTools:

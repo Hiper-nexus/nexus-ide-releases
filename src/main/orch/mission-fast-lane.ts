@@ -1,3 +1,4 @@
+import { missionExecutionScope } from './mission-execution-scope';
 import { resolveWorkspaceDesignContract } from './design-system-reader';
 import { isPaneMetaTask, extractMetaPaneQuestion } from '../../shared/pane-meta-task';
 import { getMissionRoutingHints } from '../../shared/mission-routing-advice';
@@ -224,13 +225,14 @@ function bindSpawnedMissionPane(
     readOnly?: boolean;
   },
 ): void {
+  const executionScope = missionExecutionScope(scope, mission);
   const spawnedSession = getAgentSessionInfo(spawn.sessionId)
     ?? getAcpDriverSession(spawn.sessionId)?.agent;
   const physical = role === 'worker' ? spawnedSession : undefined;
   if (role === 'worker' && (!physical || physical.sessionId !== spawn.sessionId ||
     physical.paneId !== spawn.paneId || physical.missionId !== mission.id ||
     physical.role !== role || physical.agentName !== agent.agentName ||
-    physical.adapterId !== agent.cli || !isDeepStrictEqual(physical.scope, scope) ||
+    physical.adapterId !== agent.cli || !isDeepStrictEqual(physical.scope, executionScope) ||
     !physical.workerIncarnationId || !physical.authoritySeal ||
     physical.authoritySeal.intentVersion !== mission.intentVersion ||
     !mission.intentContract ||
@@ -245,7 +247,7 @@ function bindSpawnedMissionPane(
     accountId: spawnedSession?.accountId,
     model: agent.model || undefined,
     effort: agent.effort || undefined,
-    cwd: scope.rootRealPath,
+    cwd: executionScope.rootRealPath,
     title,
     agentName: agent.agentName,
     workerIncarnationId: physical?.workerIncarnationId,
@@ -254,7 +256,7 @@ function bindSpawnedMissionPane(
     allowedTools: physical ? physical.allowedTools : agent.allowedTools ? [...agent.allowedTools] : null,
     allowedSkills: physical ? physical.allowedSkills : agent.allowedSkills ? [...agent.allowedSkills] : null,
     readOnly: physical ? physical.readOnly : spawn.readOnly === true,
-    executionScope: scope,
+    executionScope,
   });
 }
 
@@ -768,9 +770,9 @@ export function agentPrompt(
     mission.intentContract?.attachmentSnapshots?.length
       ? [
           '### Anexos da missão',
-          'PRIMEIRO ATO: abra cada arquivo abaixo com a ferramenta Read ANTES de planejar ou delegar. São prints/áudios/documentos que o operador colou na tela de início — o caminho selado fora do checkout é invisível para você; use só estes caminhos do projeto:',
+          'PRIMEIRO ATO: abra cada arquivo abaixo com a ferramenta Read ANTES de planejar ou delegar. São os anexos autorizados pelo operador; use os caminhos indicados:',
           ...mission.intentContract.attachmentSnapshots.map((snapshot, index) => {
-            return `${index + 1}. ${readableMissionAttachmentPath(snapshot)}`;
+            return `${index + 1}. ${mission.intentContract?.workspaceBinding?.spaceId ? snapshot.path : readableMissionAttachmentPath(snapshot)}`;
           }),
         ].join('\n')
       : '';
@@ -1025,6 +1027,7 @@ async function spawnAgentPane(
   paneTitle?: string,
   spawnOpts?: { readonly readOnly?: boolean },
 ): Promise<SpawnedAgent | { error: string }> {
+  const executionScope = missionExecutionScope(scope, mission);
   const role: 'orchestrator' | 'worker' =
     agent.category === 'orchestrator' ? 'orchestrator' : 'worker';
   const title = paneTitle?.trim() || agent.agentName;
@@ -1057,7 +1060,7 @@ async function spawnAgentPane(
     adapterId: agent.cli,
     model: agent.model || undefined,
     effort: agent.effort || undefined,
-    cwd: scope.rootRealPath,
+    cwd: executionScope.rootRealPath,
     title,
     missionId: mission.id,
     agentName: agent.agentName,
@@ -1067,7 +1070,7 @@ async function spawnAgentPane(
     allowedSkills: agent.allowedSkills ? [...agent.allowedSkills] : null,
     role,
     scope,
-    executionScope: scope,
+    executionScope,
     executionMode: readOnly ? 'read_only' : 'same_checkout',
     ...(readOnly ? { readOnly: true, nativeReadOnly: true } : {}),
     resume: false,
@@ -1383,7 +1386,7 @@ async function tickWatcher(state: WatcherState): Promise<void> {
   // — MENOS quando o HEAD novo bate na escada de SHAs das entregas da própria
   // missão (worker do same_checkout commitou): isso é trabalho interno, não
   // exclusividade violada (A6).
-  const currentHead = await readCheckoutHead(state.scope.rootRealPath);
+  const currentHead = await readCheckoutHead(missionExecutionScope(state.scope, mission).rootRealPath);
   const missionShaLadder = new Set<string>();
   try {
     for (const handoff of stores.handoffs.list({
@@ -1458,7 +1461,7 @@ async function tickWatcher(state: WatcherState): Promise<void> {
     const disk = reconcileSealedBoardFromDisk({
       stores,
       missionId: state.missionId,
-      cwd: state.scope.rootRealPath,
+      cwd: missionExecutionScope(state.scope, mission).rootRealPath,
     });
     if (disk.advancedTaskIds.length > 0) {
       console.info(
@@ -1638,6 +1641,8 @@ function recordWorkerMortalityTick(
     title?: string;
   }[],
 ): void {
+  const mission = getProjectDomainStores(scope).missions.get(missionId);
+  if (!mission) return;
   const workers = missionPanes.filter((p) => p.role === 'worker');
   if (workers.length === 0) return;
   let deliveredHandoffs: readonly {
@@ -1662,7 +1667,7 @@ function recordWorkerMortalityTick(
     }
     const cwd =
       (pane.sessionId ? getSessionCwd(pane.sessionId) : null) ??
-      scope.rootRealPath;
+      missionExecutionScope(scope, mission).rootRealPath;
     const filesModified = collectFilesModified(cwd);
     const idleOrDead =
       pane.state === 'idle' ||
@@ -1741,6 +1746,8 @@ function startWatcher(
   const key = watcherKey(scope, missionId);
   // Idempotente: já tem watcher rodando.
   if (watchers.has(key)) return;
+  const mission = getProjectDomainStores(scope).missions.get(missionId);
+  if (!mission) return;
 
   const state: WatcherState = {
     scope,
@@ -1753,7 +1760,7 @@ function startWatcher(
     baselineHeadSha: null,
     lastProgressSignature: null,
   };
-  void readCheckoutHead(scope.rootRealPath).then((head) => {
+  void readCheckoutHead(missionExecutionScope(scope, mission).rootRealPath).then((head) => {
     if (!watchers.has(key)) return;
     state.baselineHeadSha = head;
   });
@@ -1858,7 +1865,7 @@ async function respawnFastLaneOrchestrator(
       live,
       roster.map((agent) => agent.agentName),
       true,
-      missionDesignContext(scope.rootRealPath),
+      missionDesignContext(missionExecutionScope(scope, live).rootRealPath),
       squad,
       sealedPlanTitles,
     ),
@@ -1900,7 +1907,7 @@ async function respawnFastLaneOrchestrator(
     paneId: spawned.paneId,
     sessionId: spawned.sessionId,
     adapterId: spawned.adapterId,
-    cwd: scope.rootRealPath,
+    cwd: missionExecutionScope(scope, live).rootRealPath,
     title: orchestrator.agentName,
     agentName: orchestrator.agentName,
   });
@@ -2392,7 +2399,7 @@ export async function fastLaneBootstrap(
 
   const teamNames = roster.map((agent) => agent.agentName);
   const designContext = missionDesignContext(
-    scope.rootRealPath,
+    missionExecutionScope(scope, live).rootRealPath,
     undefined,
     mission.description ?? '',
   );
@@ -2420,7 +2427,7 @@ export async function fastLaneBootstrap(
         sessionId: adoption.sessionId,
         adapterId:
           getAgentSessionInfo(adoption.sessionId)?.adapterId ?? orchestrator.cli,
-        cwd: scope.rootRealPath,
+        cwd: missionExecutionScope(scope, live).rootRealPath,
         title: orchestrator.agentName,
         agentName: orchestrator.agentName,
       });
@@ -2496,7 +2503,7 @@ export async function fastLaneBootstrap(
       paneId: spawned.paneId,
       sessionId: spawned.sessionId,
       adapterId: spawned.adapterId,
-      cwd: scope.rootRealPath,
+      cwd: missionExecutionScope(scope, live).rootRealPath,
       title: orchestrator.agentName,
       agentName: orchestrator.agentName,
     });

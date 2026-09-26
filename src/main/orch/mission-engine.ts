@@ -54,6 +54,7 @@ const missionCompilationSchema = missionReviewPayloadSchema
     permissions: true,
     warnings: true,
     attachments: true,
+    workspaceBinding: true,
   })
   .strict();
 
@@ -147,6 +148,7 @@ export interface MissionEngine {
   start(
     scope: ProjectExecutionScope,
     input: MissionStartInput,
+    assertCurrentScope?: () => void,
   ): Promise<MissionSnapshot>;
   command(
     scope: ProjectExecutionScope,
@@ -194,7 +196,7 @@ export interface MainMissionEnginePorts {
   readonly revalidatePetStudioAttachments?: (
     snapshots: readonly MissionAttachmentSnapshot[],
   ) => readonly MissionAttachmentSnapshot[];
-  readonly seal: (input: MissionStartInput) => Promise<void>;
+  readonly seal: (input: MissionStartInput, assertCurrentScope?: () => void) => Promise<void>;
   readonly bootstrap: (missionId: string) => Promise<void>;
   readonly retryKickoff: (command: RetryKickoffCommand) => Promise<void>;
   readonly resume: (command: ResumeCommand) => Promise<void>;
@@ -393,6 +395,7 @@ export class MainMissionEngine implements MissionEngine {
   async start(
     scope: ProjectExecutionScope,
     input: MissionStartInput,
+    assertCurrentScope?: () => void,
   ): Promise<MissionSnapshot> {
     this.#assertScope(scope);
     const parsedInput = missionStartInputSchema.parse(input);
@@ -445,7 +448,9 @@ export class MainMissionEngine implements MissionEngine {
     }
 
 
-    await this.#ports.seal(parsedInput);
+    assertCurrentScope?.();
+    await (assertCurrentScope ? this.#ports.seal(parsedInput, assertCurrentScope) : this.#ports.seal(parsedInput));
+    assertCurrentScope?.();
     await this.#ports.bootstrap(parsedInput.missionId);
     const snapshot = await this.#readFreshSnapshot(parsedInput.missionId);
     this.#preparedPetAttachments.delete(parsedInput.missionId);

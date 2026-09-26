@@ -981,6 +981,7 @@ function startSpawn(
         useLayoutStore.getState().setAccountId(pane.id, res.accountId);
       }
       setHostSession(host, pane.id, res.sessionId);
+      if (res.cwd) useLayoutStore.getState().setPaneCwd(pane.id, res.cwd);
       clearPaneSpawnError(pane.id);
       const spawnedAt = Date.now();
       // Session boundary: a NEW session attaching to a pane that already shows

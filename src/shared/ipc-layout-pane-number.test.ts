@@ -99,6 +99,7 @@ describe('workspaceLayoutSchema preserva o espaço do pane', () => {
           title: 'Codex',
           adapterId: 'codex',
           spaceId: 'space-7',
+          isolateSpace: true,
           spaceTitle: 'Meus terminais 2',
         },
       },
@@ -109,6 +110,7 @@ describe('workspaceLayoutSchema preserva o espaço do pane', () => {
     );
     if (parsed.root.kind !== 'leaf') throw new Error('esperava folha');
     expect(parsed.root.pane.spaceId).toBe('space-7');
+    expect(parsed.root.pane.isolateSpace).toBe(true);
     expect(parsed.root.pane.spaceTitle).toBe('Meus terminais 2');
   });
 

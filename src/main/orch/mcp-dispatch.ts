@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { resolveCwdForScope } from './workspace-path';
 import { resolveWorkspaceHandoffParent } from "./workspace-handoff-authority";
 import { emitDestructiveReversalEvent } from "./mission-event-emit";
 import {
@@ -19,6 +20,7 @@ import {
 import { consumePermission } from "../jarvis/permissions";
 import {
   bindContextRevision,
+  executionScopeFor,
   canonicalToolName,
   gateContextAbortSignal,
   isInternalPrevcReviewerToolAllowed,
@@ -1583,10 +1585,8 @@ export async function dispatchToolCall(
     // Trocar pergunta por perda de dados seria pior do que a fricção original.
     if (options.prepareDestructiveReversibility && isDestructiveEffect(tool.name, args)) {
       const command = typeof args.command === "string" ? args.command : "";
-      const cwd =
-        typeof args.cwd === "string" && args.cwd.length > 0
-          ? args.cwd
-          : ctx.scope.rootRealPath;
+      const cwd = resolveCwdForScope(executionScopeFor(ctx),
+        typeof args.cwd === 'string' && args.cwd.length > 0 ? args.cwd : undefined);
       const reversal = await options.prepareDestructiveReversibility({
         command,
         cwd,

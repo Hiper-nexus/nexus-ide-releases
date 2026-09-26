@@ -1,4 +1,5 @@
 import http from "node:http";
+import { isSharedPaneSpaceWorktree } from '../pty/pane-space-worktree';
 import { FEATURE_FLAG_IDS } from "../../shared/feature-flags";
 import { getFeatureFlagRegistry } from "../feature-flags/feature-flag-registry";
 import { createDestructiveReversibilityPreparer } from "./destructive-reversibility-production";
@@ -920,7 +921,7 @@ function missionAttachmentReadPathsForSpawn(
   if (!missionId) return undefined;
   let mission: Mission | null;
   try {
-    mission = getProjectDomainStores(authority.scope).missions.get(missionId);
+    mission = getProjectDomainStores(authority.coordinationScope ?? authority.scope).missions.get(missionId);
   } catch {
     // Legacy Pet authority has no sealed external artifact to grant. A new
     // governed mission always has the strict snapshot below and reaches this
@@ -949,12 +950,12 @@ function missionAttachmentReadPathsForSpawn(
   }
   assertMissionSpawnAuthorityCurrent({
     missionId,
-    scope: authority.scope,
+    scope: authority.coordinationScope ?? authority.scope,
     contextRevision: authority.context?.contextRevision,
     authoritySeal: authority.context?.authoritySeal,
   });
   const snapshots = revalidateSealedAttachmentSnapshots(attachments, {
-    workspaceRootAuthority: workspaceRootAuthorityFromScope(authority.scope),
+    workspaceRootAuthority: workspaceRootAuthorityFromScope(authority.coordinationScope ?? authority.scope),
     checkoutId: authority.scope.checkoutId,
   });
   if (
@@ -1075,6 +1076,8 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
       allowedSkills: meta?.allowedSkills ?? null,
       scope: authority.coordinationScope ?? authority.scope,
       executionScope: authority.scope,
+      ...(isSharedPaneSpaceWorktree(authority.coordinationScope ?? authority.scope, authority.scope)
+        ? { sharedTabWorktree: true as const } : {}),
       // Jev dispatch guard (modo operator-child): o brief do spawn é o
       // objetivo contra o qual as tool calls do helper são julgadas —
       // só injeção, nunca modal. Não é persistido nem devolvido a callers.
@@ -1122,7 +1125,7 @@ export const prepareAgentSpawnDecoration: AgentSpawnHook = (
     // outra ferramenta e nunca falha o spawn (hub quebrado ⇒ lista vazia).
     // Helper aberto por agente sem missão só leva os que o allowlist pede.
     const hubServers = selectHubServersForSpawn(
-      loadMcpHubServersForSpawn(authority.scope.rootRealPath),
+      loadMcpHubServersForSpawn((authority.coordinationScope ?? authority.scope).rootRealPath),
       { operatorChild, allowedTools: meta?.allowedTools ?? null },
     );
     // Delegação VISÍVEL (benchmark §4.5): Claude recebe o hard-deny de Task

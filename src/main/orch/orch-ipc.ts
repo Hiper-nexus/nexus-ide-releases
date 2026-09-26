@@ -1863,6 +1863,9 @@ export function registerOrchIpc(): void {
   ipcMain.handle(ORCH_CHANNELS.missionPrepare, async (event, raw) => {
     const request = missionPrepareRequestSchema.parse(raw);
     const scope = requireLiveRendererWorkspaceScope(event.sender);
+    if (request.adoptOrchestratorPaneId && !requireMissionAuthority().resolveOwnedPaneForAdoption(event.sender, request.adoptOrchestratorPaneId)) {
+      throw new Error('O painel escolhido para liderar não está disponível neste projeto.');
+    }
     const review = await missionEngineForScope(scope).prepare(scope, request, () => {
       requireLiveRendererWorkspaceScope(event.sender, scope);
     });
@@ -1873,6 +1876,10 @@ export function registerOrchIpc(): void {
     const scope = requireLiveRendererWorkspaceScope(event.sender);
     const stores = getProjectDomainStores(scope);
     const mission = stores.missions.get(input.missionId);
+    if (mission?.intentContract?.workspaceBinding &&
+        mission.intentContract.workspaceBinding.adoptedPaneId !== input.adoptOrchestratorPaneId) {
+      throw new Error('O painel escolhido mudou depois da revisão. Revise a missão novamente.');
+    }
     if (mission?.squadId === PET_STUDIO_SQUAD.id) {
       if (
         mission.intentContract?.approvalReviewSha256 !== input.reviewSha256
@@ -1942,7 +1949,7 @@ export function registerOrchIpc(): void {
           missionEngineForScope(scope).start(scope, {
             missionId: input.missionId,
             reviewSha256: input.reviewSha256,
-          }),
+          }, () => { requireLiveRendererWorkspaceScope(event.sender, scope); }),
       );
       return missionSnapshotSchema.parse(snapshot);
     } finally {

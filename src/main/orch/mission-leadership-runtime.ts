@@ -1,3 +1,4 @@
+import { missionExecutionScope } from './mission-execution-scope';
 /**
  * Production adapter only; no callers are rewired here.
  *
@@ -82,6 +83,16 @@ function snapshotGate(sessionId: string, ctx: AgentGateContext): GateSnapshot {
   return { sessionId, fields };
 }
 
+function sessionCoordinationScope(info: NonNullable<ReturnType<typeof getAgentSessionInfo>>): ProjectExecutionScope {
+  const ctx = getContextBySession(info.sessionId);
+  // Foreign physical sessions are ignored by observations; exact targets are
+  // checked again by requireTarget/requireGate before any leadership mutation.
+  return ctx && sameLeadershipScope(info.scope, ctx.executionScope ?? ctx.scope) &&
+    info.scope.installationId === ctx.scope.installationId &&
+    info.scope.projectId === ctx.scope.projectId && info.scope.checkoutId === ctx.scope.checkoutId
+    ? ctx.scope : info.scope;
+}
+
 export function createMissionLeadershipPorts(
   rawScope: ProjectExecutionScope,
 ): MissionLeadershipPorts<RuntimeSnapshot> {
@@ -120,7 +131,8 @@ export function createMissionLeadershipPorts(
   function requireTarget(missionId: string, leader: LeaderIdentity) {
     const info = getAgentSessionInfo(leader.sessionId);
     if (!info || info.paneId !== leader.paneId ||
-        !sameLeadershipScope(info.scope, scope) ||
+        !sameLeadershipScope(sessionCoordinationScope(info), scope) ||
+        !sameLeadershipScope(info.scope, missionExecutionScope(scope, suite.missions.get(missionId) ?? {})) ||
         (info.missionId !== undefined && info.missionId !== missionId)) {
       throw new MissionLeadershipError('scope_mismatch', { reason: 'leadership_runtime_scope_mismatch' });
     }
@@ -138,14 +150,14 @@ export function createMissionLeadershipPorts(
   }
 
   function observations(missionId: string) {
-    const agents = listAgentSessions().filter((s) => sameLeadershipScope(s.scope, scope));
+    const agents = listAgentSessions().filter((s) => sameLeadershipScope(sessionCoordinationScope(s), scope));
     const candidates = new Set(agents.map((s) => s.sessionId));
     const claims: LeadershipClaim[] = [];
     const durable = suite.missions.get(missionId)?.orchestratorSessionId;
     if (durable) candidates.add(durable);
     for (const registered of registeredOrchestratorSessionsForMission(missionId)) {
       const info = getAgentSessionInfo(registered.sessionId);
-      if (info && sameLeadershipScope(info.scope, scope)) candidates.add(registered.sessionId);
+      if (info && sameLeadershipScope(sessionCoordinationScope(info), scope)) candidates.add(registered.sessionId);
     }
     const specs = suite.missionPanes.list(missionId);
     for (const spec of specs.filter((p) => p.role === 'orchestrator')) {
@@ -161,7 +173,7 @@ export function createMissionLeadershipPorts(
     if (fast) {
       const info = getAgentSessionInfo(fast.sessionId);
       const ctx = getContextBySession(fast.sessionId);
-      const ownerScope = info?.scope ?? ctx?.scope;
+      const ownerScope = info ? sessionCoordinationScope(info) : ctx?.scope;
       const belongs = ownerScope
         ? sameLeadershipScope(ownerScope, scope)
         : specs.some((spec) => spec.paneId === fast.paneId);
@@ -219,7 +231,7 @@ export function createMissionLeadershipPorts(
       // Registered but lacking a pane is not physical proof of absence.
       if (!info.paneId) throw new MissionLeadershipError('scope_mismatch', { reason: 'leadership_runtime_pane_missing' });
       return {
-        sessionId: info.sessionId, paneId: info.paneId, scope: info.scope,
+        sessionId: info.sessionId, paneId: info.paneId, scope: sessionCoordinationScope(info),
         missionId: info.missionId, state: getSessionState(sessionId),
         // MissionLeadership uses classifySessionLiveness on this raw state.
       };
@@ -384,7 +396,7 @@ function authorizeOperatorTakeover(
   const liveScope = operatorScope(grant.owner, grant.scope);
   const session = getOwnedAgentSessionInfo(grant.owner, input.sessionId);
   return Boolean(session && session.paneId === input.paneId &&
-    sameLeadershipScope(session.scope, liveScope) &&
+    sameLeadershipScope(sessionCoordinationScope(session), liveScope) &&
     (session.missionId === undefined || session.missionId === missionId));
 }
 
@@ -402,7 +414,7 @@ export function takeoverMissionLeadershipFromRenderer(
   if (operatorTakeover) throw new MissionLeadershipError('busy', { missionId });
   const scope = operatorScope(owner);
   const session = getOwnedAgentSessionInfo(owner, input.sessionId);
-  if (!session || session.paneId !== input.paneId || !sameLeadershipScope(session.scope, scope) ||
+  if (!session || session.paneId !== input.paneId || !sameLeadershipScope(sessionCoordinationScope(session), scope) ||
       (session.missionId !== undefined && session.missionId !== missionId)) {
     throw new MissionLeadershipError('scope_mismatch', { missionId, reason: 'takeover_requires_owned_pane' });
   }

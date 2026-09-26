@@ -560,7 +560,11 @@ export function MissionSetup({
     setReviewError(null);
 
     try {
-      const review = await window.nexus.mission.prepare(requestResult.data);
+      const review = await window.nexus.mission.prepare({
+        ...requestResult.data,
+        ...(usePendingOrchestratorAdoptionStore.getState().pending
+          ? { adoptOrchestratorPaneId: usePendingOrchestratorAdoptionStore.getState().pending!.paneId } : {}),
+      });
       const latestSetup = useMissionSetupStore.getState();
       const latestWorkspace = useWorkspaceStore.getState().current?.path ?? null;
       const latestKey = missionSetupAuthorityKey(latestSetup);
@@ -755,7 +759,7 @@ export function MissionSetup({
       // Adoção (F-561): se o operador marcou um painel para liderar, a missão
       // nasce COM ele — o motor não sobe um Maestro em branco. `take()` é de um
       // uso só: um start falho não deixa a marca pendurada para a próxima.
-      const adopted = usePendingOrchestratorAdoptionStore.getState().take();
+      const adopted = usePendingOrchestratorAdoptionStore.getState().take() ?? (capturedReview.workspaceBinding?.adoptedPaneId ? { paneId: capturedReview.workspaceBinding.adoptedPaneId, paneTitle: null } : null);
       const snapshot = await window.nexus.mission.start({
         missionId: capturedReview.missionId,
         reviewSha256: capturedReview.reviewSha256,
@@ -970,7 +974,11 @@ export function MissionSetup({
     setExpressError(null);
 
     try {
-      const review = await window.nexus.mission.prepare(requestResult.data);
+      const review = await window.nexus.mission.prepare({
+        ...requestResult.data,
+        ...(usePendingOrchestratorAdoptionStore.getState().pending
+          ? { adoptOrchestratorPaneId: usePendingOrchestratorAdoptionStore.getState().pending!.paneId } : {}),
+      });
       const latestSetup = useMissionSetupStore.getState();
       const latestWorkspace =
         useWorkspaceStore.getState().current?.path ?? null;
@@ -985,7 +993,7 @@ export function MissionSetup({
         discardPreparedReview(review);
         return;
       }
-      const adopted = usePendingOrchestratorAdoptionStore.getState().take();
+      const adopted = usePendingOrchestratorAdoptionStore.getState().take() ?? (review.workspaceBinding?.adoptedPaneId ? { paneId: review.workspaceBinding.adoptedPaneId, paneTitle: null } : null);
       const snapshot = await window.nexus.mission.start({
         missionId: review.missionId,
         reviewSha256: review.reviewSha256,

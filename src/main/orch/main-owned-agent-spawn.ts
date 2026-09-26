@@ -618,7 +618,7 @@ function attachSpawnedSessionAuthority(input: {
   readonly authority: BoundSpawnAuthority;
   readonly persistedPane: ScopedMissionPaneSpec | null;
 }): void {
-  attachSessionScope(input.sessionId, input.authority.scope);
+  attachSessionScope(input.sessionId, input.authority.coordinationScope ?? input.authority.scope);
   const paneId = input.persistedPane?.paneId;
   if (!input.persistedPane || !paneId) return;
   attachOrchMeta(input.owner, paneId, {
