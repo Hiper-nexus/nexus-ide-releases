@@ -473,6 +473,10 @@ function readNativeClaudeAuthIdentity(
 export const CLAUDE_FAMILY_ZERO_CLICK_SETTINGS = Object.freeze({
   skipDangerousModePermissionPrompt: true,
   skipWorkflowUsageWarning: true,
+  // F-161: Bash's checkout-wide snapshots include edits from sibling panes
+  // even during a read-only command (e.g. gh pr checks). They cannot prove
+  // authorship here; keep native Edit/Write diffs without this attribution.
+  bashEditDiffEnabled: false,
 });
 
 /**

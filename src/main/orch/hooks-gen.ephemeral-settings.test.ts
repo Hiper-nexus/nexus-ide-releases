@@ -15,6 +15,21 @@ afterEach(() => {
 });
 
 describe('Claude-family zero-click settings (system default)', () => {
+  it.each(['ephemeral-home', 'flag-settings'] as const)(
+    'does not attribute concurrent checkout edits to this pane (%s)',
+    (source) => {
+      const file = source === 'ephemeral-home'
+        ? path.join(prepareEphemeralHome(TOKEN, {}).dir, '.claude', 'settings.json')
+        : writeClaudeFamilyZeroClickSettings(TOKEN);
+      const settings = JSON.parse(fs.readFileSync(file, 'utf8'));
+      // Bash snapshots observe every writer in the checkout, including a
+      // sibling pane while this one merely waits for CI. Edit/Write diffs
+      // remain native; only this unowned before/after attribution is disabled.
+      expect(settings.bashEditDiffEnabled).toBe(false);
+      expect(settings.hooks.PostToolUse).toBeDefined();
+    },
+  );
+
   it('skips the Bypass Permissions dialog in ephemeral HOME (gated GLM/Claude)', () => {
     const home = prepareEphemeralHome(TOKEN, { mcpServers: {} });
     const settingsPath = path.join(home.dir, '.claude', 'settings.json');
