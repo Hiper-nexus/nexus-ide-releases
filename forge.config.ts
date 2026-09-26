@@ -1,6 +1,8 @@
+import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import { signAsync } from '@electron/osx-sign';
 import { notarize } from '@electron/notarize';
 import type { ForgeConfig, ForgeMakeResult } from '@electron-forge/shared-types';
@@ -19,9 +21,11 @@ import type { WindowsSignOptions } from '@electron/packager';
 import { pruneNativePayload } from './build/prune-native-payload';
 import { removeUnusedMacPrivacyDescriptions } from './build/macos-info-plist';
 import {
+  APPLE_TIMESTAMP_AUTHORITY_URL,
   assertMacPublishReleaseEnvironment,
   createMacSignOptions,
   isAppleReleaseSigning,
+  macTimestampAuthority,
 } from './build/mac-signing';
 
 /**
@@ -145,6 +149,35 @@ export function createMacNotarizeCredentials(
   return { keychainProfile };
 }
 
+/**
+ * F-652: o codesign do appdmg tem argumentos fixos e sempre usa o carimbo
+ * padrão da Apple. Com autoridade alternativa definida, o appdmg não assina e
+ * `notarizeMacDmgArtifacts` assina o DMG antes de notarizar.
+ */
+function hasMacTimestampOverride(environment: NodeJS.ProcessEnv): boolean {
+  return macTimestampAuthority(environment) !== APPLE_TIMESTAMP_AUTHORITY_URL;
+}
+
+type SignMacDmg = (input: {
+  path: string;
+  identity: string;
+  identifier: string;
+  timestamp: string;
+}) => Promise<void>;
+
+const execFileAsync = promisify(execFile);
+
+const codesignMacDmg: SignMacDmg = async (input) => {
+  await execFileAsync('/usr/bin/codesign', [
+    '--sign',
+    input.identity,
+    '--identifier',
+    input.identifier,
+    `--timestamp=${input.timestamp}`,
+    input.path,
+  ]);
+};
+
 export function createMacDmgMakerConfig(
   environment: NodeJS.ProcessEnv,
 ): MakerDMGConfig {
@@ -152,7 +185,7 @@ export function createMacDmgMakerConfig(
   return {
     format: 'ULFO',
     icon: 'assets/icon.icns',
-    ...(isAppleReleaseSigning(teamId)
+    ...(isAppleReleaseSigning(teamId) && !hasMacTimestampOverride(environment)
       ? {
           additionalDMGOptions: {
             'code-sign': {
@@ -177,6 +210,7 @@ export async function notarizeMacDmgArtifacts(
   makeResults: ForgeMakeResult[],
   environment: NodeJS.ProcessEnv,
   notarizeArtifact: NotarizeArtifact = notarize,
+  signDmg: SignMacDmg = codesignMacDmg,
 ): Promise<ForgeMakeResult[]> {
   const credentials = createMacNotarizeCredentials(environment);
   if (!credentials) return makeResults;
@@ -186,6 +220,14 @@ export async function notarizeMacDmgArtifacts(
     .filter((artifact) => artifact.toLowerCase().endsWith('.dmg'));
   if (dmgs.length !== 1) {
     throw new Error(`macOS release must produce exactly one DMG; found ${dmgs.length}.`);
+  }
+  if (hasMacTimestampOverride(environment)) {
+    await signDmg({
+      path: path.resolve(dmgs[0]),
+      identity: createMacSignOptions(environment.APPLE_TEAM_ID).identity as string,
+      identifier: APP_BUNDLE_ID,
+      timestamp: macTimestampAuthority(environment),
+    });
   }
   await notarizeArtifact({ appPath: path.resolve(dmgs[0]), ...credentials });
   return makeResults;

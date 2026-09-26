@@ -51,13 +51,51 @@ describe('macOS signing modes', () => {
       arch: 'arm64' as const,
     }];
 
+    const signDmg = vi.fn(async () => undefined);
     await expect(
-      notarizeMacDmgArtifacts(makeResults, environment, notarizeArtifact),
+      notarizeMacDmgArtifacts(makeResults, environment, notarizeArtifact, signDmg),
     ).resolves.toBe(makeResults);
     expect(notarizeArtifact).toHaveBeenCalledWith({
       appPath: '/tmp/NexusIDE.dmg',
       keychainProfile: 'nexus-notary',
     });
+    expect(signDmg).not.toHaveBeenCalled();
+  });
+
+  it('com autoridade de carimbo alternativa, assina o DMG antes de notarizar (F-652)', async () => {
+    const environment = {
+      APPLE_TEAM_ID: '35P5XL3JN6',
+      APPLE_KEYCHAIN_PROFILE: 'nexus-notary',
+      NEXUS_MAC_PUBLISH_RELEASE: '1',
+      NEXUS_MAC_TIMESTAMP_URL: 'http://17.32.213.161/ts01',
+    };
+    // O codesign do appdmg não aceita URL de carimbo; nesse modo ele não assina.
+    expect(createMacDmgMakerConfig(environment)).not.toHaveProperty(
+      'additionalDMGOptions',
+    );
+    const order: string[] = [];
+    const signDmg = vi.fn(async () => {
+      order.push('sign');
+    });
+    const notarizeArtifact = vi.fn(async () => {
+      order.push('notarize');
+    });
+    const makeResults = [{
+      artifacts: ['/tmp/NexusIDE.dmg', '/tmp/NexusIDE.zip'],
+      packageJSON: {},
+      platform: 'darwin' as const,
+      arch: 'arm64' as const,
+    }];
+
+    await notarizeMacDmgArtifacts(makeResults, environment, notarizeArtifact, signDmg);
+
+    expect(signDmg).toHaveBeenCalledWith({
+      path: '/tmp/NexusIDE.dmg',
+      identity: `${EXPECTED_DEVELOPER_ID_IDENTITY} (35P5XL3JN6)`,
+      identifier: 'com.nexuside.app',
+      timestamp: 'http://17.32.213.161/ts01',
+    });
+    expect(order).toEqual(['sign', 'notarize']);
   });
 
   it('makes the publish release mode impossible without the exact local identity contract', () => {
