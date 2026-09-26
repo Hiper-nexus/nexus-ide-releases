@@ -93,6 +93,7 @@ import type { ProjectExecutionScope } from '../../shared/types';
 import type { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import {
   getRendererWorkspaceScope,
+  onRendererWorkspaceForgotten,
   onRendererWorkspaceScopeChange,
   requireLiveRendererWorkspaceScope,
   requireRendererWorkspaceScope,
@@ -130,7 +131,7 @@ import {
   onDesignEvent,
   prepareDesignModeTransition,
 } from './design-session';
-import { clampScreenshotClip } from './screenshot-clip';
+import { captureWithWakeRetry, clampScreenshotClip } from './screenshot-clip';
 import {
   sendDesignAnnotationsToAgent,
   sendDesignSelectionToAgent,
@@ -138,9 +139,12 @@ import {
 import { readWorkspaceDesignSystem } from '../orch/design-system-reader';
 import { searchWorkspaceForSelection } from '../orch/design-code-search';
 import {
+  forgetParkedBrowserPane,
   getDevServerForPane,
   getPaneAuthzInfoOwnedBy,
   getPaneAuthzInfoOwnedByPane,
+  registerParkedBrowserCloser,
+  wasParkedBrowserClosed,
 } from '../orch/pane-registry';
 import { injectPastedPrompt } from '../orch/tool-util';
 import { resolveCwdForScope } from '../orch/workspace-path';
@@ -159,6 +163,12 @@ interface BrowserEntry {
   profileMode: 'personal' | 'isolated';
   disconnectProfile?: () => Promise<void>;
   lastBounds?: BrowserPaneBounds;
+  /**
+   * A janela foi para outro projeto: a vista está escondida, mas a página, o
+   * login e as ferramentas do agente seguem vivos. Some quando o renderer
+   * do projeto volta e readota a vista.
+   */
+  parkedAt?: number;
   /** Exact main-owned URL fence for an automated read-only design review. */
   exactNavigationLock?: string;
   restoringExactNavigation: boolean;
@@ -984,6 +994,11 @@ export async function ensureBrowser(
   const key = browserKey(scope, paneId);
   let entry = browsers.get(key);
   if (!entry) {
+    // Fechado pelo agente enquanto o projeto estava fora da tela: o layout
+    // salvo ainda o traz, e o pedido de fechamento chega junto do espelho.
+    if (wasParkedBrowserClosed(owner, paneId)) {
+      throw new Error('browser pane was closed while its project was in the background');
+    }
     let creation = browserCreations.get(key);
     if (!creation) {
       creation = createEntry(owner, scope, paneId).finally(() => {
@@ -998,6 +1013,14 @@ export async function ensureBrowser(
     assertOwner(entry, owner);
     assertEntryScope(entry, scope);
     applyPendingBounds(entry);
+  }
+  // Volta do projeto: o layout salvo traz a URL de quando a janela saiu, mas
+  // a página viva (talvez navegada pelo agente enquanto isso) é a verdade.
+  const readopted = entry.parkedAt !== undefined;
+  entry.parkedAt = undefined;
+  if (readopted) {
+    emitState(entry);
+    return stateOf(paneId, entry);
   }
   if (url && url.trim() && url.trim() !== (entry.view.webContents.getURL() || entry.url)) {
     void loadBrowserForEntry(paneId, entry, url).catch((err) => {
@@ -1221,7 +1244,10 @@ export async function captureBrowserScreenshot(
         padding: ELEMENT_SHOT_PADDING,
       })
     : null;
-  const image = await (clip ? wc.capturePage(clip) : wc.capturePage());
+  const image = await captureWithWakeRetry(
+    () => (clip ? wc.capturePage(clip) : wc.capturePage()),
+    assertCurrentAuthority,
+  );
   assertCurrentAuthority();
   const size = image.getSize();
   if (size.width <= 0 || size.height <= 0) {
@@ -2490,6 +2516,7 @@ function detachBrowserEntry(
   assertEntryScope(entry, scope);
   browsers.delete(key);
   pendingBoundsByKey.delete(key);
+  forgetParkedBrowserPane(entry.owner, paneId, scope);
   // Notifies the renderer too (when the owner window survives the pane, e.g.
   // a workspace-scope change) so the design bar/tray don't go ghost.
   resetDesignPaneState(entry, key, { sameDocument: false });
@@ -2611,6 +2638,65 @@ export function destroyBrowsersFor(wc: WebContents): void {
   }
 }
 
+/**
+ * Trocar de projeto AFASTA o navegador, como os terminais: a vista some da
+ * janela, mas a página e o login continuam, e o agente do projeto segue
+ * usando-o (F-168). Antes a vista era destruída e o agente caía em "unknown
+ * pane" até o operador voltar — e voltava sem a página.
+ */
+function parkBrowserEntry(entry: BrowserEntry): void {
+  if (entry.parkedAt !== undefined) return;
+  entry.parkedAt = Date.now();
+  const key = browserKey(entry.scope, entry.paneId);
+  pendingBoundsByKey.delete(key);
+  // A barra de design e a bandeja são da tela que saiu; a página sobrevive,
+  // então o seletor dentro dela é desarmado.
+  resetDesignPaneState(entry, key, { sameDocument: true });
+  setBrowserBounds(entry, {
+    ...(entry.lastBounds ?? { x: 0, y: 0, width: 0, height: 0 }),
+    visible: false,
+  });
+}
+
+function reconcileBrowsersForScopeChange(
+  owner: { id: number },
+  previous: ProjectExecutionScope | null,
+  next: ProjectExecutionScope | null,
+): void {
+  for (const entry of [...browsers.values()]) {
+    if (entry.owner.id !== owner.id) continue;
+    if (next && sameProjectScope(entry.scope, next)) continue;
+    if (next) {
+      // A revisão automática trava a vista numa URL exata; ela encerra como
+      // antes, sem ficar viva fora da tela.
+      if (entry.exactNavigationLock) destroyBrowser(entry.paneId, entry.scope);
+      else parkBrowserEntry(entry);
+      continue;
+    }
+    // Fechar o projeto encerra só os navegadores dele; os afastados de outros
+    // projetos seguem esperando a volta, como os terminais estacionados.
+    if (previous && sameProjectScope(entry.scope, previous)) {
+      destroyBrowser(entry.paneId, entry.scope);
+    }
+  }
+}
+
+/** O operador tirou o projeto da lista: o que ficou afastado dele encerra. */
+function destroyParkedBrowsersOfWorkspace(
+  owner: { id: number },
+  rootRealPath: string,
+): void {
+  for (const entry of [...browsers.values()]) {
+    if (
+      entry.owner.id === owner.id &&
+      entry.parkedAt !== undefined &&
+      entry.scope.rootRealPath === rootRealPath
+    ) {
+      destroyBrowser(entry.paneId, entry.scope);
+    }
+  }
+}
+
 export function getBrowserViewCount(): number {
   return browsers.size;
 }
@@ -2712,16 +2798,19 @@ function designTargetInjector(
 export function registerBrowserIpc(runtimeManager: ProjectRuntimeManager): void {
   browserRuntimeManager = runtimeManager;
   unsubscribeBrowserScopeChanges?.();
-  unsubscribeBrowserScopeChanges = onRendererWorkspaceScopeChange(
-    (owner, _previous, next) => {
-      for (const entry of [...browsers.values()]) {
-        if (entry.owner.id !== owner.id) continue;
-        if (!next || !sameProjectScope(entry.scope, next)) {
-          destroyBrowser(entry.paneId, entry.scope);
-        }
-      }
-    },
+  const offScopeChange = onRendererWorkspaceScopeChange(
+    reconcileBrowsersForScopeChange,
   );
+  const offWorkspaceForgotten = onRendererWorkspaceForgotten(
+    destroyParkedBrowsersOfWorkspace,
+  );
+  unsubscribeBrowserScopeChanges = () => {
+    offScopeChange();
+    offWorkspaceForgotten();
+  };
+  registerParkedBrowserCloser((_owner, paneId, scope) => {
+    destroyBrowser(paneId, scope);
+  });
   registerBrowserAutomationResponseHandler();
 
   const profileChangeSchema = z.object({

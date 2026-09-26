@@ -181,7 +181,7 @@ describe('in-mission pane observation (Overclock parity)', () => {
     await expect(
       tool('nexus_pane_read').handler({ paneId: 'browser-gone' }, context()),
     ).rejects.toThrow(
-      /unknown pane: browser-gone \(.*project is not open in the Nexus window.*nexus_browser_open/,
+      /unknown pane: browser-gone \(the browser pane was closed; .*nexus_browser_open/,
     );
   });
 

@@ -217,14 +217,14 @@ export function strArray(args: Record<string, unknown>, key: string): string[] {
  * Por isso não existe fallback para "o pane focado" em lugar nenhum.
  */
 function unknownPaneMessage(paneRef: string): string {
-  // Navegador só existe enquanto o projeto dele está aberto na janela. Sem a
-  // pista, o agente concluía que o Nexus o bloqueou e pedia credenciais no
-  // chat (campo 26/09).
+  // O navegador sobrevive à troca de projeto (fica afastado); se não resolve,
+  // foi fechado. Sem a pista, o agente concluía que o Nexus o bloqueou e
+  // pedia credenciais no chat (campo 26/09).
   if (paneRef.startsWith('browser-')) {
     return (
-      `unknown pane: ${paneRef} (the browser pane was closed or its project is ` +
-      'not open in the Nexus window right now; ask the operator to switch back ' +
-      'to this project, or open a new one with nexus_browser_open)'
+      `unknown pane: ${paneRef} (the browser pane was closed; open a new one ` +
+      'with nexus_browser_open, which needs this project on screen in the ' +
+      'Nexus window)'
     );
   }
   if (parsePaneNumberRef(paneRef) === null) return `unknown pane: ${paneRef}`;

@@ -30,6 +30,7 @@ vi.mock('electron', () => ({
 vi.mock('./renderer-workspace-scope', () => ({
   bindRendererWorkspaceScope: vi.fn(),
   clearRendererWorkspaceScope: vi.fn(),
+  forgetRendererWorkspace: vi.fn(),
 }));
 
 vi.mock('../context/orientation/orientation-bootstrap', () => ({
@@ -101,6 +102,13 @@ describe('workspace-store purga provider-state ao remover o workspace (F-570)', 
 
     expect(fs.existsSync(providerStateDir('grok', 'checkout-alfa'))).toBe(false);
     expect(fs.existsSync(providerStateDir('grok', 'checkout-beta'))).toBe(true);
+    // Tirar da lista é fechamento explícito: o que ficou afastado do projeto
+    // na troca de workspace (navegadores) encerra junto.
+    const { forgetRendererWorkspace } = await import('./renderer-workspace-scope');
+    expect(forgetRendererWorkspace).toHaveBeenCalledWith(
+      sender,
+      fs.realpathSync(workspaceA),
+    );
   });
 
   it('still removes the workspace from the registry when the checkout cannot be resolved', async () => {

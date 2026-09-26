@@ -35,3 +35,34 @@ export function clampScreenshotClip(
   if (width < 1 || height < 1) return null;
   return { x: x0, y: y0, width, height };
 }
+
+/** Structural slice of Electron's NativeImage that a capture needs. */
+export interface CapturedImage {
+  getSize(): { width: number; height: number };
+}
+
+export const HIDDEN_CAPTURE_RETRY_MS = 150;
+
+/**
+ * Página que carregou com a vista escondida (projeto fora da tela, F-168;
+ * painel sob um overlay) ainda não tem quadro: a primeira captura falha na
+ * hora ("UnknownVizError") e acorda o renderer; a seguinte, logo depois, sai
+ * com a página atual — medido no Electron, sem quadro velho.
+ */
+export async function captureWithWakeRetry<T extends CapturedImage>(
+  capture: () => Promise<T>,
+  beforeRetry: () => void = () => {},
+  wait: (ms: number) => Promise<void> = (ms) =>
+    new Promise((resolve) => setTimeout(resolve, ms)),
+): Promise<T> {
+  try {
+    const image = await capture();
+    const size = image.getSize();
+    if (size.width > 0 && size.height > 0) return image;
+  } catch {
+    // Sem quadro ainda: a segunda tentativa decide e propaga o próprio erro.
+  }
+  await wait(HIDDEN_CAPTURE_RETRY_MS);
+  beforeRetry();
+  return capture();
+}

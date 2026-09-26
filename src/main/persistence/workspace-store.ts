@@ -14,6 +14,7 @@ import {
 import {
   bindRendererWorkspaceScope,
   clearRendererWorkspaceScope,
+  forgetRendererWorkspace,
 } from './renderer-workspace-scope';
 import { resolveProjectExecutionScopeCached } from './project-identity';
 import { purgeProviderStateForCheckout } from './provider-state-purge';
@@ -362,6 +363,7 @@ export function registerWorkspaceIpc(): void {
     if (removedCurrent) missingReported = null;
     persist();
     broadcast();
+    forgetRendererWorkspace(event.sender, parsed.data.path);
     purgeCheckoutProviderStateQuietly(parsed.data.path);
     return state;
   });

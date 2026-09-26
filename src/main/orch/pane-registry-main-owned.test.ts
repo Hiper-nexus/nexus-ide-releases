@@ -260,6 +260,7 @@ vi.mock("./mission-pane-authority", () => ({
 
 import {
   attachOrchMeta,
+  forgetParkedBrowserPane,
   getPaneAuthzInfo,
   getPaneRuntimeAuthorityBySession,
   bindPendingSpawnSession,
@@ -273,10 +274,12 @@ import {
   PENDING_SPAWN_RESULT,
   resolvePaneSpawn,
   reclaimDetachedMissionSession,
+  registerParkedBrowserCloser,
   syncPanes,
   takePendingPaneSpawnResult,
   unregisterOrchRenderer,
   wasOrchestratorOperatorDismissed,
+  wasParkedBrowserClosed,
 } from "./pane-registry";
 
 describe("main-owned mission pane spawn", () => {
@@ -748,6 +751,170 @@ describe("main-owned mission pane spawn", () => {
     expect(getPaneAuthzInfo(browser.paneId)?.scope).toEqual(scope);
 
     syncPanes([], owner, "renderer-generation-round-trip");
+    unregisterOrchRenderer(owner);
+    clearRendererWorkspaceScope(owner);
+  });
+
+  it("keeps the project's browsers addressable while the window shows another project", () => {
+    const owner = {
+      id: 937,
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      send: vi.fn(),
+    } as unknown as WebContents;
+    const otherScope = {
+      ...scope,
+      projectId: "project-other-window",
+      checkoutId: "checkout-other-window",
+    };
+    const agentBrowser = {
+      paneId: "browser-agent-parked",
+      sessionId: null,
+      title: "Servers | Coolify",
+      kind: "browser" as const,
+      paneNumber: 41,
+    };
+    const handBrowser = {
+      paneId: "browser-hand-parked",
+      sessionId: null,
+      title: "hPanel",
+      kind: "browser" as const,
+      paneNumber: 42,
+    };
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerOrchRenderer(owner);
+    syncPanes([agentBrowser, handBrowser], owner, "renderer-generation-parked");
+    attachOrchMeta(owner, agentBrowser.paneId, {
+      scope,
+      missionId: "mission-parked-browser",
+      role: "orchestrator",
+    });
+
+    // Campo 26/09: com a janela noutro projeto, o agente ouvia "unknown pane"
+    // e concluía que o Nexus o bloqueava.
+    bindResolvedRendererWorkspaceScope(owner, otherScope);
+    syncPanes([], owner, "renderer-generation-parked");
+
+    expect(getPaneAuthzInfo(agentBrowser.paneId)).toMatchObject({
+      scope,
+      missionId: "mission-parked-browser",
+    });
+    // "+ Browser" sem meta fica com o projeto de onde saiu, não o da tela.
+    expect(getPaneAuthzInfo(handBrowser.paneId)?.scope).toEqual(scope);
+    // O número do header é da tela que saiu: afastado, só o id resolve.
+    expect(getPaneAuthzInfo("42")).toBeNull();
+    const listed = listPaneSnapshots().find(
+      (pane) => pane.paneId === handBrowser.paneId,
+    );
+    expect(listed?.scope).toEqual(scope);
+    expect(listed?.paneNumber).toBeUndefined();
+
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    syncPanes([agentBrowser, handBrowser], owner, "renderer-generation-parked");
+    expect(
+      listPaneSnapshots().filter((pane) => pane.paneId === handBrowser.paneId),
+    ).toHaveLength(1);
+    expect(getPaneAuthzInfo("42")?.paneId).toBe(handBrowser.paneId);
+    expect(getPaneAuthzInfo(agentBrowser.paneId)?.scope).toEqual(scope);
+
+    syncPanes([], owner, "renderer-generation-parked");
+    unregisterOrchRenderer(owner);
+    clearRendererWorkspaceScope(owner);
+  });
+
+  it("does not keep a browser around when its project is closed", () => {
+    const owner = {
+      id: 938,
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      send: vi.fn(),
+    } as unknown as WebContents;
+    const browser = {
+      paneId: "browser-project-closed",
+      sessionId: null,
+      title: "docs",
+      kind: "browser" as const,
+    };
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerOrchRenderer(owner);
+    syncPanes([browser], owner, "renderer-generation-closed");
+
+    clearRendererWorkspaceScope(owner);
+    syncPanes([], owner, "renderer-generation-closed");
+
+    expect(getPaneAuthzInfo(browser.paneId)).toBeNull();
+    unregisterOrchRenderer(owner);
+  });
+
+  it("closes a parked browser now and drops its pane when the project returns", async () => {
+    const owner = {
+      id: 939,
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      send: vi.fn(),
+    } as unknown as WebContents;
+    const browser = {
+      paneId: "browser-closed-off-screen",
+      sessionId: null,
+      title: "Deploy",
+      kind: "browser" as const,
+    };
+    const closer = vi.fn();
+    registerParkedBrowserCloser(closer);
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerOrchRenderer(owner);
+    syncPanes([browser], owner, "renderer-generation-close-parked");
+    bindResolvedRendererWorkspaceScope(owner, {
+      ...scope,
+      checkoutId: "checkout-close-parked-other",
+    });
+    syncPanes([], owner, "renderer-generation-close-parked");
+
+    await expect(requestPaneClose(browser.paneId)).resolves.toBe(true);
+    expect(closer).toHaveBeenCalledWith(owner, browser.paneId, scope);
+    expect(getPaneAuthzInfo(browser.paneId)).toBeNull();
+    expect(wasParkedBrowserClosed(owner, browser.paneId)).toBe(true);
+
+    // O layout salvo do projeto ainda traz o pane: ele sai no primeiro espelho.
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    syncPanes([browser], owner, "renderer-generation-close-parked");
+    expect(owner.send).toHaveBeenCalledWith(
+      ORCH_CHANNELS.paneCloseRequest,
+      browser.paneId,
+    );
+    expect(wasParkedBrowserClosed(owner, browser.paneId)).toBe(false);
+
+    syncPanes([], owner, "renderer-generation-close-parked");
+    unregisterOrchRenderer(owner);
+    clearRendererWorkspaceScope(owner);
+  });
+
+  it("forgets a parked browser once its view is destroyed", () => {
+    const owner = {
+      id: 940,
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      send: vi.fn(),
+    } as unknown as WebContents;
+    const browser = {
+      paneId: "browser-view-destroyed",
+      sessionId: null,
+      title: "Grafana",
+      kind: "browser" as const,
+    };
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerOrchRenderer(owner);
+    syncPanes([browser], owner, "renderer-generation-forget-parked");
+    bindResolvedRendererWorkspaceScope(owner, {
+      ...scope,
+      checkoutId: "checkout-forget-parked-other",
+    });
+    syncPanes([], owner, "renderer-generation-forget-parked");
+    expect(getPaneAuthzInfo(browser.paneId)?.scope).toEqual(scope);
+
+    forgetParkedBrowserPane(owner, browser.paneId, scope);
+
+    expect(getPaneAuthzInfo(browser.paneId)).toBeNull();
     unregisterOrchRenderer(owner);
     clearRendererWorkspaceScope(owner);
   });

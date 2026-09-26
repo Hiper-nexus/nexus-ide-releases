@@ -122,3 +122,29 @@ export function onRendererWorkspaceScopeChange(
   scopeChangeListeners.add(listener);
   return () => scopeChangeListeners.delete(listener);
 }
+
+type WorkspaceForgottenListener = (
+  owner: RendererWorkspaceOwner,
+  rootRealPath: string,
+) => void;
+const workspaceForgottenListeners = new Set<WorkspaceForgottenListener>();
+
+/**
+ * O operador tirou o projeto da lista: é fechamento explícito, então o que
+ * ficou afastado dele na troca de workspace (navegadores) encerra aqui.
+ */
+export function forgetRendererWorkspace(
+  owner: RendererWorkspaceOwner,
+  rootRealPath: string,
+): void {
+  for (const listener of [...workspaceForgottenListeners]) {
+    listener(owner, rootRealPath);
+  }
+}
+
+export function onRendererWorkspaceForgotten(
+  listener: WorkspaceForgottenListener,
+): () => void {
+  workspaceForgottenListeners.add(listener);
+  return () => workspaceForgottenListeners.delete(listener);
+}

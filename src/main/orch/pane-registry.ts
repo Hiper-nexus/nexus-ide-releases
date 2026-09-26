@@ -142,6 +142,107 @@ function paneMetaKey(owner: WebContents, paneId: string): string {
   return `${owner.id}:${paneId}`;
 }
 
+/**
+ * Navegador de um projeto que saiu da tela (o operador trocou de workspace).
+ * O browser-manager mantém a vista viva e escondida; aqui ela segue
+ * endereçável pelo id para o agente do projeto dela (F-168). Sai quando o
+ * renderer volta a espelhá-la, quando a vista é destruída ou com a janela.
+ */
+interface ParkedBrowserPane {
+  entry: PaneRegistryEntry;
+  owner: WebContents;
+  scope: Readonly<ProjectExecutionScope>;
+}
+const parkedBrowserPanes = new Map<string, ParkedBrowserPane>();
+/** Afastados que o agente fechou: o layout salvo do projeto ainda os traz. */
+const closedParkedBrowserPanes = new Set<string>();
+type ParkedBrowserCloser = (
+  owner: WebContents,
+  paneId: string,
+  scope: Readonly<ProjectExecutionScope>,
+) => void;
+let parkedBrowserCloser: ParkedBrowserCloser | null = null;
+
+/** O browser-manager encerra a vista (sem import circular). */
+export function registerParkedBrowserCloser(closer: ParkedBrowserCloser): void {
+  parkedBrowserCloser = closer;
+}
+
+/** A vista foi destruída: o navegador afastado deixa de ser endereçável. */
+export function forgetParkedBrowserPane(
+  owner: WebContents,
+  paneId: string,
+  scope: Readonly<ProjectExecutionScope>,
+): void {
+  const key = paneMetaKey(owner, paneId);
+  const parked = parkedBrowserPanes.get(key);
+  if (!parked || !sameProjectScope(parked.scope, scope)) return;
+  parkedBrowserPanes.delete(key);
+  orchMetaByPane.delete(key);
+  panesVersion += 1;
+}
+
+export function wasParkedBrowserClosed(
+  owner: WebContents,
+  paneId: string,
+): boolean {
+  return closedParkedBrowserPanes.has(paneMetaKey(owner, paneId));
+}
+
+function parkedBrowserPanesById(paneId: string): ParkedBrowserPane[] {
+  return [...parkedBrowserPanes.values()].filter(
+    (parked) => parked.entry.paneId === paneId,
+  );
+}
+
+function parkedBrowserAuthzInfo(parked: ParkedBrowserPane): PaneAuthzInfo {
+  return { ...authzInfoOf(parked), scope: parked.scope };
+}
+
+function parkedBrowserSnapshot(parked: ParkedBrowserPane): PaneSnapshot {
+  // O número do header é da tela que saiu; na janela atual ele já pode ser
+  // de outro pane. Afastado, o navegador é endereçado só pelo id.
+  const { paneNumber: _paneNumber, ...snapshot } = snapshotOf(parked);
+  return { ...snapshot, scope: parked.scope };
+}
+
+function parkBrowserPanesOfPreviousWorkspace(
+  owner: WebContents,
+  previousScope: ProjectExecutionScope,
+): void {
+  const parkedIds = new Set<string>();
+  for (const registered of panes) {
+    if (registered.owner !== owner || registered.entry.kind !== "browser") {
+      continue;
+    }
+    const key = paneMetaKey(owner, registered.entry.paneId);
+    const meta = orchMetaByPane.get(key);
+    parkedBrowserPanes.set(key, {
+      entry: { ...registered.entry },
+      owner,
+      scope: Object.freeze({ ...(meta?.scope ?? previousScope) }),
+    });
+    parkedIds.add(registered.entry.paneId);
+  }
+  if (parkedIds.size === 0) return;
+  panes = panes.filter(
+    (registered) =>
+      registered.owner !== owner || !parkedIds.has(registered.entry.paneId),
+  );
+  panesVersion += 1;
+}
+
+function closeParkedBrowserPane(parked: ParkedBrowserPane): boolean {
+  const key = paneMetaKey(parked.owner, parked.entry.paneId);
+  if (parkedBrowserPanes.get(key) !== parked) return false;
+  parkedBrowserPanes.delete(key);
+  orchMetaByPane.delete(key);
+  closedParkedBrowserPanes.add(key);
+  panesVersion += 1;
+  parkedBrowserCloser?.(parked.owner, parked.entry.paneId, parked.scope);
+  return true;
+}
+
 interface PendingSpawn {
   resolve: (result: OrchPaneSpawnResult) => void;
   timer: ReturnType<typeof setTimeout>;
@@ -552,9 +653,15 @@ export function unregisterOrchRenderer(wc: WebContents): void {
     wokeAtByPane.delete(paneId);
   }
   // Metas de panes de outros projetos (retidas na troca de workspace) morrem
-  // com a janela.
+  // com a janela, junto dos navegadores afastados.
   for (const key of [...orchMetaByPane.keys()]) {
     if (key.startsWith(`${wc.id}:`)) orchMetaByPane.delete(key);
+  }
+  for (const key of [...parkedBrowserPanes.keys()]) {
+    if (key.startsWith(`${wc.id}:`)) parkedBrowserPanes.delete(key);
+  }
+  for (const key of [...closedParkedBrowserPanes]) {
+    if (key.startsWith(`${wc.id}:`)) closedParkedBrowserPanes.delete(key);
   }
   // Sem renderer não há como o spawn completar — resolver já, senão cada
   // nexus_pane_spawn pendura o orquestrador por 30s até o timeout.
@@ -992,7 +1099,11 @@ async function settlePendingSpawnFailure(
 function handleRendererWorkspaceScopeChange(
   owner: WebContents,
   previousScope: ProjectExecutionScope,
+  nextScope: ProjectExecutionScope | null,
 ): void {
+  // Troca de projeto afasta os navegadores (o browser-manager esconde a
+  // vista); fechar o projeto (sem próximo) os encerra como antes.
+  if (nextScope) parkBrowserPanesOfPreviousWorkspace(owner, previousScope);
   const removedPaneIds = new Set<string>();
   for (const registered of panes) {
     if (
@@ -1072,7 +1183,7 @@ onRendererWorkspaceScopeChange((scopeOwner, previous, next) => {
     return;
   }
   const owner = webContentsForScopeOwner(scopeOwner);
-  if (owner) handleRendererWorkspaceScopeChange(owner, previous);
+  if (owner) handleRendererWorkspaceScopeChange(owner, previous, next);
 });
 
 function beginRendererPaneGeneration(
@@ -1403,6 +1514,18 @@ export function syncPanes(
     ...panes.filter((registered) => registered.owner !== owner),
     ...accepted.map((entry) => ({ entry, owner })),
   ];
+  for (const entry of accepted) {
+    const key = paneMetaKey(owner, entry.paneId);
+    // O projeto voltou à tela: o navegador afastado volta ao espelho.
+    parkedBrowserPanes.delete(key);
+    if (closedParkedBrowserPanes.delete(key)) {
+      try {
+        owner.send(ORCH_CHANNELS.paneCloseRequest, entry.paneId);
+      } catch {
+        // Janela morrendo: o layout some com ela.
+      }
+    }
+  }
   for (const registered of dropped) {
     retireOperatorDismissedRendererPane(owner, registered);
   }
@@ -1512,7 +1635,11 @@ function snapshotOf(registered: RegisteredPane): PaneSnapshot {
 }
 
 export function listPaneSnapshots(): PaneSnapshot[] {
-  return [...panes.map(snapshotOf), ...listMainOwnedPaneSnapshots(paneState)];
+  return [
+    ...panes.map(snapshotOf),
+    ...listMainOwnedPaneSnapshots(paneState),
+    ...[...parkedBrowserPanes.values()].map(parkedBrowserSnapshot),
+  ];
 }
 
 /** nexus_pane_list scoped to what the caller may see (SEC#5 info disclosure):
@@ -1522,7 +1649,10 @@ export function listVisiblePaneSnapshots(caller: CallerCtx): PaneSnapshot[] {
     .filter((registered) => canListPane(caller, authzInfoOf(registered)))
     .map(snapshotOf);
   const detached = listVisibleMainOwnedPaneSnapshots(caller, paneState);
-  return [...rendered, ...detached];
+  const parkedBrowsers = [...parkedBrowserPanes.values()]
+    .filter((parked) => canListPane(caller, parkedBrowserAuthzInfo(parked)))
+    .map(parkedBrowserSnapshot);
+  return [...rendered, ...detached, ...parkedBrowsers];
 }
 
 export function findPane(paneIdOrSessionId: string): PaneRegistryEntry | null {
@@ -1534,7 +1664,10 @@ export function findPane(paneIdOrSessionId: string): PaneRegistryEntry | null {
     )
     .map(({ entry }) => entry);
   const detached = findMainOwnedPaneEntries(paneIdOrSessionId);
-  const matches = [...rendered, ...detached];
+  const parkedBrowsers = parkedBrowserPanesById(paneIdOrSessionId).map(
+    (parked) => parked.entry,
+  );
+  const matches = [...rendered, ...detached, ...parkedBrowsers];
   return matches.length === 1 ? matches[0] : null;
 }
 
@@ -1612,6 +1745,8 @@ export function getPaneAuthzInfo(paneRef: string): PaneAuthzInfo | null {
       )
       .map(authzInfoOf),
     ...findMainOwnedPaneAuthz(paneRef),
+    // Navegador do projeto que saiu da tela: só pelo id, nunca pelo número.
+    ...parkedBrowserPanesById(paneRef).map(parkedBrowserAuthzInfo),
   ];
   if (byIdentity.length > 0) {
     return byIdentity.length === 1 ? byIdentity[0]! : null;
@@ -2470,7 +2605,13 @@ export function requestBrowserPane(options: {
     return Promise.resolve({
       requestId: "",
       ok: false,
-      error: "browser renderer workspace scope changed",
+      // O agente precisa de um caminho, não de um bloqueio mudo: os
+      // navegadores que o projeto já tem seguem vivos fora da tela.
+      error:
+        "the Nexus window is showing another project right now, so a new " +
+        "browser pane cannot open; keep using a browser pane this project " +
+        "already has (nexus_pane_list, then nexus_browser_navigate), or ask " +
+        "the operator to switch back to this project",
     });
   }
   const requestId = makeId("browseropen");
@@ -2515,7 +2656,9 @@ export function resolvePaneSpawn(
   try {
     requireLiveRendererWorkspaceScope(owner, pending.meta.scope);
   } catch {
-    handleRendererWorkspaceScopeChange(owner, pending.meta.scope);
+    // Limpeza de um spawn atrasado, não uma troca: os navegadores no espelho
+    // já são do projeto atual e não podem ser afastados aqui.
+    handleRendererWorkspaceScopeChange(owner, pending.meta.scope, null);
     return true;
   }
   if (result.pending === true) {
@@ -3186,6 +3329,12 @@ export async function requestPaneClose(
   );
   const detached = getMainOwnedPane(paneId);
   if (detached && owners.size > 0) return false;
+  if (!detached && owners.size === 0 && !expectedSessionId) {
+    // Navegador de projeto fora da tela: a vista encerra agora e o pane sai
+    // do layout quando o projeto voltar (o renderer não o tem montado).
+    const parked = parkedBrowserPanesById(paneId);
+    if (parked.length === 1) return closeParkedBrowserPane(parked[0]!);
+  }
   if (detached) {
     const sessionId = detached.entry.sessionId;
     if (expectedSessionId && sessionId !== expectedSessionId) return false;

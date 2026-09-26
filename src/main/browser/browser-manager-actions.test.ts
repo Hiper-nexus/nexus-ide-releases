@@ -164,6 +164,9 @@ vi.mock('../orch/preview-server', () => ({
 
 vi.mock('../orch/pane-registry', () => ({
   isAgentRequestedBrowser: vi.fn(() => false),
+  forgetParkedBrowserPane: vi.fn(),
+  registerParkedBrowserCloser: vi.fn(),
+  wasParkedBrowserClosed: vi.fn(() => false),
   getPaneAuthzInfoOwnedBy: state.paneInfo,
   getPaneAuthzInfoOwnedByPane: state.paneInfo,
   getDevServerForPane: vi.fn(() => null),

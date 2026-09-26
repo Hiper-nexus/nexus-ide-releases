@@ -88,6 +88,7 @@ const state = vi.hoisted(() => {
     assertMutationAllowed: vi.fn(),
     fromWebContents: vi.fn(() => win),
     webContentsAvailable: true,
+    views: [] as Array<{ setVisible: ReturnType<typeof vi.fn> }>,
   };
 });
 
@@ -104,6 +105,7 @@ vi.mock('electron', () => ({
     constructor(options: { webPreferences: Record<string, unknown> }) {
       state.order.push('view');
       state.webPreferences = options.webPreferences;
+      state.views.push(this);
     }
   },
   dialog: { showMessageBox: vi.fn() },
@@ -128,6 +130,9 @@ vi.mock('../orch/preview-server', () => ({
 
 vi.mock('../orch/pane-registry', () => ({
   isAgentRequestedBrowser: vi.fn(() => false),
+  forgetParkedBrowserPane: vi.fn(),
+  registerParkedBrowserCloser: vi.fn(),
+  wasParkedBrowserClosed: vi.fn(() => false),
   getPaneAuthzInfoOwnedBy: state.paneInfo,
   getPaneAuthzInfoOwnedByPane: state.paneInfo,
   getDevServerForPane: vi.fn(() => null),
@@ -177,12 +182,19 @@ import {
 import {
   bindResolvedRendererWorkspaceScope,
   clearRendererWorkspaceScope,
+  forgetRendererWorkspace,
 } from '../persistence/renderer-workspace-scope';
+import {
+  forgetParkedBrowserPane,
+  registerParkedBrowserCloser,
+  wasParkedBrowserClosed,
+} from '../orch/pane-registry';
 
 describe('browser manager pinned network boundary', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     state.order.length = 0;
+    state.views.length = 0;
     state.handlers.clear();
     state.webContentsAvailable = true;
     state.guest.getURL.mockReturnValue('about:blank');
@@ -204,8 +216,125 @@ describe('browser manager pinned network boundary', () => {
     profileHarness.mode = 'personal';
     await ensureBrowser(state.owner as never, scope, 'pane-outgoing-profile');
     bindResolvedRendererWorkspaceScope(state.owner, scopeB);
+    // A troca só afasta a vista (F-168); o perfil ainda descarrega quando ela
+    // encerra, com a janela já noutro projeto.
+    expect(state.guest.close).not.toHaveBeenCalled();
     expect(() => profileHarness.assertConnection?.()).not.toThrow();
+    destroyBrowser('pane-outgoing-profile', scope);
     await vi.waitFor(() => expect(state.guest.close).toHaveBeenCalled());
+    clearRendererWorkspaceScope(state.owner);
+  });
+
+  it('parks a browser when the window switches project and hands the live page back', async () => {
+    installPinnedBrowserProxy.mockResolvedValue(state.proxy);
+    bindResolvedRendererWorkspaceScope(state.owner, scope);
+    registerBrowserIpc({} as never);
+    await ensureBrowser(state.owner as never, scope, 'pane-parked');
+    const view = state.views.at(-1)!;
+
+    // Campo 26/09: o operador foi a outro projeto e o agente perdeu o painel
+    // do Coolify ("unknown pane") até voltar — e voltava sem a página.
+    bindResolvedRendererWorkspaceScope(state.owner, scopeB);
+    expect(view.setVisible).toHaveBeenLastCalledWith(false);
+    expect(state.guest.close).not.toHaveBeenCalled();
+    expect(getBrowserViewCount()).toBe(1);
+
+    // O agente do projeto segue navegando com a janela noutro projeto.
+    await loadBrowser('pane-parked', 'https://app.coolify.io/servers', { scope });
+    expect(state.guest.loadURL).toHaveBeenCalledWith('https://app.coolify.io/servers');
+
+    // Na volta, o layout salvo traz a URL de quando a janela saiu; a página
+    // viva vence e nada recarrega.
+    state.guest.getURL.mockReturnValue('https://app.coolify.io/servers');
+    state.guest.loadURL.mockClear();
+    bindResolvedRendererWorkspaceScope(state.owner, scope);
+    const back = await ensureBrowser(
+      state.owner as never,
+      scope,
+      'pane-parked',
+      'https://app.coolify.io/projects',
+    );
+    expect(state.guest.loadURL).not.toHaveBeenCalled();
+    expect(back.url).toBe('https://app.coolify.io/servers');
+    expect(state.owner.send).toHaveBeenCalledWith(
+      BROWSER_CHANNELS.state,
+      expect.objectContaining({
+        paneId: 'pane-parked',
+        url: 'https://app.coolify.io/servers',
+      }),
+    );
+
+    // Readotada, a vista volta a seguir a URL que o renderer pedir.
+    await ensureBrowser(
+      state.owner as never,
+      scope,
+      'pane-parked',
+      'https://app.coolify.io/projects',
+    );
+    await vi.waitFor(() =>
+      expect(state.guest.loadURL).toHaveBeenCalledWith('https://app.coolify.io/projects'),
+    );
+    destroyBrowser('pane-parked', scope);
+    expect(forgetParkedBrowserPane).toHaveBeenCalledWith(
+      state.owner,
+      'pane-parked',
+      scope,
+    );
+    clearRendererWorkspaceScope(state.owner);
+  });
+
+  it('ends only the closed project browsers and keeps the ones parked from another project', async () => {
+    installPinnedBrowserProxy.mockResolvedValue(state.proxy);
+    bindResolvedRendererWorkspaceScope(state.owner, scope);
+    registerBrowserIpc({} as never);
+    await ensureBrowser(state.owner as never, scope, 'pane-kept');
+    bindResolvedRendererWorkspaceScope(state.owner, scopeB);
+    await ensureBrowser(state.owner as never, scopeB, 'pane-closed');
+    expect(getBrowserViewCount()).toBe(2);
+
+    // Fechar o projeto B encerra os navegadores dele, como os terminais.
+    clearRendererWorkspaceScope(state.owner);
+    expect(getBrowserViewCount()).toBe(1);
+
+    // Tirar A da lista é fechamento explícito do que ficou afastado dele.
+    forgetRendererWorkspace(state.owner, scope.rootRealPath);
+    expect(getBrowserViewCount()).toBe(0);
+  });
+
+  it('closes a parked browser when the agent closes it with the project off screen', async () => {
+    installPinnedBrowserProxy.mockResolvedValue(state.proxy);
+    bindResolvedRendererWorkspaceScope(state.owner, scope);
+    registerBrowserIpc({} as never);
+    await ensureBrowser(state.owner as never, scope, 'pane-agent-closed');
+    bindResolvedRendererWorkspaceScope(state.owner, scopeB);
+    const closer = vi.mocked(registerParkedBrowserCloser).mock.calls.at(-1)?.[0];
+    expect(closer).toBeTypeOf('function');
+
+    closer!(state.owner as never, 'pane-agent-closed', scope);
+    expect(getBrowserViewCount()).toBe(0);
+
+    // O layout salvo de A ainda traz o pane; na volta ele não renasce.
+    vi.mocked(wasParkedBrowserClosed).mockReturnValueOnce(true);
+    bindResolvedRendererWorkspaceScope(state.owner, scope);
+    await expect(
+      ensureBrowser(state.owner as never, scope, 'pane-agent-closed', 'https://example.com/'),
+    ).rejects.toThrow(/closed while its project was in the background/);
+    expect(getBrowserViewCount()).toBe(0);
+    clearRendererWorkspaceScope(state.owner);
+  });
+
+  it('still ends an automated review browser when the window switches project', async () => {
+    installPinnedBrowserProxy.mockResolvedValue(state.proxy);
+    bindResolvedRendererWorkspaceScope(state.owner, scope);
+    registerBrowserIpc({} as never);
+    await ensureBrowser(state.owner as never, scope, 'pane-review-switch');
+    const approved = 'http://127.0.0.1:43112/';
+    state.guest.getURL.mockReturnValue(approved);
+    lockBrowserToExactUrl('pane-review-switch', scope, approved);
+
+    bindResolvedRendererWorkspaceScope(state.owner, scopeB);
+    expect(getBrowserViewCount()).toBe(0);
+    expect(state.guest.close).toHaveBeenCalled();
     clearRendererWorkspaceScope(state.owner);
   });
 

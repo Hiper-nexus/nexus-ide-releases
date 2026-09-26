@@ -1,5 +1,9 @@
-import { describe, expect, it } from 'vitest';
-import { clampScreenshotClip } from './screenshot-clip';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  HIDDEN_CAPTURE_RETRY_MS,
+  captureWithWakeRetry,
+  clampScreenshotClip,
+} from './screenshot-clip';
 
 const VIEW = { width: 1280, height: 800 };
 
@@ -40,5 +44,58 @@ describe('clampScreenshotClip', () => {
     expect(
       clampScreenshotClip({ x: 0, y: 0, width: 10, height: 10 }, { width: 0, height: 0 }),
     ).toBeNull();
+  });
+});
+
+describe('captureWithWakeRetry', () => {
+  const image = (width: number, height: number) => ({
+    getSize: () => ({ width, height }),
+  });
+  const noWait = vi.fn(async () => {});
+
+  it('retries once when a page loaded while hidden has no frame yet', async () => {
+    // Medido no Electron: navegar com a vista escondida faz a primeira
+    // captura falhar na hora; a seguinte sai com a página atual.
+    const capture = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('UnknownVizError'))
+      .mockResolvedValueOnce(image(1280, 960));
+    const shot = await captureWithWakeRetry(capture, undefined, noWait);
+    expect(shot.getSize()).toEqual({ width: 1280, height: 960 });
+    expect(capture).toHaveBeenCalledTimes(2);
+    expect(noWait).toHaveBeenLastCalledWith(HIDDEN_CAPTURE_RETRY_MS);
+  });
+
+  it('retries an empty frame and keeps the first good one', async () => {
+    const empty = vi
+      .fn()
+      .mockResolvedValueOnce(image(0, 0))
+      .mockResolvedValueOnce(image(640, 480));
+    await expect(captureWithWakeRetry(empty, undefined, noWait)).resolves.toBeTruthy();
+    expect(empty).toHaveBeenCalledTimes(2);
+
+    const good = vi.fn().mockResolvedValue(image(640, 480));
+    await captureWithWakeRetry(good, undefined, noWait);
+    expect(good).toHaveBeenCalledTimes(1);
+  });
+
+  it('surfaces the second failure and stops when authority is revoked', async () => {
+    const failing = vi.fn().mockRejectedValue(new Error('UnknownVizError'));
+    await expect(captureWithWakeRetry(failing, undefined, noWait)).rejects.toThrow(
+      'UnknownVizError',
+    );
+    expect(failing).toHaveBeenCalledTimes(2);
+
+    const revoked = vi.fn().mockRejectedValue(new Error('UnknownVizError'));
+    await expect(
+      captureWithWakeRetry(
+        revoked,
+        () => {
+          throw new Error('session_authority_revoked');
+        },
+        noWait,
+      ),
+    ).rejects.toThrow('session_authority_revoked');
+    expect(revoked).toHaveBeenCalledTimes(1);
   });
 });

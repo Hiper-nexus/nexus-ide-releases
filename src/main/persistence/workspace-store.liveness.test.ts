@@ -28,6 +28,7 @@ vi.mock('electron', () => ({
 vi.mock('./renderer-workspace-scope', () => ({
   bindRendererWorkspaceScope: vi.fn(),
   clearRendererWorkspaceScope: vi.fn(),
+  forgetRendererWorkspace: vi.fn(),
 }));
 
 vi.mock('../context/orientation/orientation-bootstrap', () => ({
