@@ -196,6 +196,23 @@ describe('decideCivilianDeliveryAction', () => {
     ).toBe('wait');
   });
 
+  it('board all-done com writer ainda busy → wait (disco no meio do turno não é entrega)', () => {
+    // Campo 26/09: o reconcile do disco marcou a única story done quando o
+    // Codex gravou os primeiros testes; com o Maestro ocioso a missão fechou
+    // e o worker morreu no meio do turno.
+    expect(
+      decideCivilianDeliveryAction(
+        decision({
+          boardAllDone: true,
+          orchestratorBusy: false,
+          activeWriterCount: 1,
+          hasSuccessHandoff: false,
+          workersDelivered: false,
+        }),
+      ),
+    ).toBe('wait');
+  });
+
   it('board all-done + orchestrator idle → Pronto', () => {
     expect(
       decideCivilianDeliveryAction(

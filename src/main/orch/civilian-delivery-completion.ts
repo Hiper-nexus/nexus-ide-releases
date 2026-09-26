@@ -483,6 +483,10 @@ export function decideCivilianDeliveryAction(
   if (input.awaitingOperatorAdjustment) return 'wait';
   if (input.hasQueuedHandoffs && !input.boardAllDone) return 'wait';
   if (input.idleWorkersWithoutHandoff > 0 && input.boardAllDone) return 'wait';
+  // Writer ainda no teclado vence o board N/N, como em decideCivilianPronto:
+  // o reconcile do disco marca a story done nos primeiros arquivos do turno,
+  // e fechar aqui matava o worker no meio do trabalho (F-166).
+  if (input.boardAllDone && input.activeWriterCount > 0) return 'wait';
   // Orchestrator busy: ele pode spawnar mais workers — não fechar a missão
   // só porque o board selado está N/N (tasks marcadas done pelo handoff do
   // primeiro worker antes de o Maestro pedir o segundo).
