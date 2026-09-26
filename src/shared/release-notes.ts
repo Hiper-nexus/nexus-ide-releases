@@ -7173,7 +7173,7 @@ export const RELEASE_076105: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076106: AppRelease = {
   version: '0.76.106',
   date: '2026-09-26',
   codename: 'Navegador em segundo plano',
@@ -7207,6 +7207,35 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'Com a janela noutro projeto, abrir um navegador novo explica que dá ' +
         'para seguir no navegador que o projeto já tem.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.107',
+  date: '2026-09-26',
+  codename: 'Abas no Windows',
+  summary:
+    'As abas com pasta própria também funcionam no Windows: a worktree de cada ' +
+    'aba nova nasce num caminho que o Git para Windows aceita. Inclui tudo da ' +
+    '0.76.103 à 0.76.106 (diff sem confusão, missão até o fim, perfil e logins, ' +
+    'navegador em segundo plano).',
+  highlights: [
+    {
+      title: 'Abas com pasta própria no Windows',
+      detail:
+        'Cada aba nova ganha a própria worktree também no Windows. Antes o Git ' +
+        'recusava o caminho, longo demais, e nenhuma aba nova conseguia abrir a ' +
+        'pasta; escritor isolado e missão planejada também passam a funcionar.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Worktree com caminho curto no Windows',
+      detail:
+        'O Git para Windows recusa worktree com mais de ~215 caracteres, e o ' +
+        'caminho montado pelo Nexus passava de 400. No Windows as worktrees ' +
+        'moram agora numa raiz curta dentro dos dados do app; no macOS nada muda.',
     },
   ],
 };

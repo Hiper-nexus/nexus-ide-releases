@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.107 — Abas no Windows
+
+As abas com pasta própria (F-162) também funcionam no Windows. Inclui tudo da 0.76.103 à 0.76.106 (Diff sem confusão, Missão até o fim, Perfil e logins, Navegador em segundo plano). A importação de sessões do Chrome segue só no macOS; no Windows, entre nos sites pelo Perfil Nexus.
+
+- **Worktree que o Git aceita no Windows (F-654).** O Git para Windows recusa criar uma worktree com mais de ~215 caracteres ("'$GIT_DIR' too big"), e o caminho montado pelo Nexus passava de 400. Toda aba nova do "+" falhava ao abrir a pasta, e escritor isolado e missão planejada nunca tinham funcionado no Windows. Agora elas moram numa raiz curta dentro dos dados do app (~110 caracteres). No macOS e no Linux o caminho não muda.
+
 ## 0.76.106 — Navegador em segundo plano
 
 O navegador do agente continua vivo quando você troca de projeto, e o agente segue usando-o enquanto você trabalha noutro lugar.
