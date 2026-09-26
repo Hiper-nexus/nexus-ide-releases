@@ -85,7 +85,7 @@ afterEach(() => {
 });
 
 function prepare(requestedScope = testProjectScope()) {
-  const root = mkdtempSync(join(tmpdir(), 'nexus-first-wave-binding-'));
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'nexus-first-wave-binding-')));
   roots.push(root);
   const manager = new ProjectRuntimeManager({ baseDir: root, appVersion: 'test' });
   managers.push(manager);
@@ -119,7 +119,7 @@ function prepare(requestedScope = testProjectScope()) {
 
 describe('first-wave physical pane binding', () => {
   it('spawns and persists the default first wave inside the mission tab, keeping database coordination in main', async () => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), 'nexus-first-wave-tab-')));
+    const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'nexus-first-wave-tab-')));
     roots.push(root);
     const git = (...args: string[]) => execFileSync('git', ['-C', root, ...args], { stdio: 'pipe' });
     git('init', '-q'); git('config', 'user.name', 'Nexus Fixture'); git('config', 'user.email', 'fixture@example.invalid');

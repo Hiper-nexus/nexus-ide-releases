@@ -223,7 +223,7 @@ describe('mission creation authority', () => {
   });
 
   it('pushes only the current tab branch, without upstream, and refuses a different main ref', async () => {
-    const directory = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-tab-push-')));
+    const directory = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-tab-push-')));
     const root = path.join(directory, 'repo'); fs.mkdirSync(root);
     const git = (...args: string[]) => execFileSync('git', ['-C', root, ...args], { stdio: 'pipe' });
     git('init', '-q'); git('config', 'user.name', 'Nexus Fixture'); git('config', 'user.email', 'fixture@example.invalid');

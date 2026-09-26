@@ -36,7 +36,7 @@ afterEach(() => {
 });
 
 function fixture(options: { git?: boolean; goal?: string; lane?: 'standard' | 'consult' } = {}) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-autopilot-integration-')));
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-autopilot-integration-')));
   roots.push(root);
   const git = new ProcessGitRunner();
   const runGit = (...args: string[]) => git.run(root, args).stdout.trim();
@@ -123,7 +123,7 @@ function fixture(options: { git?: boolean; goal?: string; lane?: 'standard' | 'c
     fs.writeFileSync(path.join(target, 'src/bookings.ts'), body);
   };
   const isolate = async () => {
-    const runtime = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-completion-tab-runtime-')));
+    const runtime = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-completion-tab-runtime-')));
     roots.push(runtime);
     const manager = new ProjectRuntimeManager({ baseDir: runtime, appVersion: 'test' });
     managers.push(manager);

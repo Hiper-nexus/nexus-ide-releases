@@ -42,6 +42,7 @@ import {
   type MergeQueueClaim,
 } from './merge-queue-state-controller';
 import { MergeQueueRecovery } from './merge-queue-recovery';
+import { managedCandidateRelativePath } from './managed-worktree-layout';
 import { cowCopyHeavyDirs } from './worktree-cow';
 
 export * from './merge-queue-contract';
@@ -166,10 +167,12 @@ export class MergeQueue {
       throw new Error('a worktree manager is required');
     }
     this.runtimeRoot = ensureDirectory(path.resolve(options.runtimeRoot));
-    this.candidatesRoot = ensureDirectory(
-      path.join(this.runtimeRoot, 'merge-candidates'),
-      this.runtimeRoot,
-    );
+    this.candidatesRoot = options.candidatesRoot
+      ? ensureDirectory(path.resolve(options.candidatesRoot))
+      : ensureDirectory(
+          path.join(this.runtimeRoot, 'merge-candidates'),
+          this.runtimeRoot,
+        );
     this.#state = new MergeQueueStateController(options.stateStore);
     this.#worktrees = options.worktreeManager;
     this.#git = options.gitRunner ?? new ProcessGitRunner();
@@ -869,19 +872,19 @@ export class MergeQueue {
       },
     );
     const candidateSha = assertSha(commit.stdout.trim(), 'candidate commit SHA');
-    const scopeDirectory = ensureDirectory(
-      path.join(this.candidatesRoot, `scope-${scopeKey}`),
-      this.candidatesRoot,
-    );
     const candidatePath = path.join(
-      scopeDirectory,
-      `candidate-${this.#candidateKey(
+      this.candidatesRoot,
+      managedCandidateRelativePath(
         scopeKey,
-        prepared.record.taskKey,
-        integrationHeadSha,
-        prepared.taskHeadSha,
-      )}`,
+        this.#candidateKey(
+          scopeKey,
+          prepared.record.taskKey,
+          integrationHeadSha,
+          prepared.taskHeadSha,
+        ),
+      ),
     );
+    ensureDirectory(path.dirname(candidatePath), this.candidatesRoot);
     try {
       fs.lstatSync(candidatePath);
       throw new MergeQueueStateError('derived candidate path already exists');

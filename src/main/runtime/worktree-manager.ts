@@ -33,6 +33,10 @@ import {
   type WorktreeStateStore,
 } from "./worktree-contract";
 import { validateWorktreeStateSnapshot } from "./worktree-state";
+import {
+  legacyWorktreesRoot,
+  managedWorktreeRelativePath,
+} from "./managed-worktree-layout";
 import { materializeGitWorktree } from "./worktree-cow";
 import { DEAD_OWNER_WORKTREE_RELEASE_MARKER } from "./worktree-manager-markers";
 import {
@@ -104,6 +108,8 @@ function ensureDirectory(directory: string, parent?: string): string {
 export class WorktreeManager {
   readonly runtimeRoot: string;
   readonly worktreesRoot: string;
+  /** Raiz histórica; no win32 só valida registros de antes do F-654. */
+  readonly legacyWorktreesRoot: string;
   readonly #stateStore: WorktreeStateStore;
   readonly #git: GitRunner;
   readonly #now: () => number;
@@ -117,10 +123,13 @@ export class WorktreeManager {
       throw new Error("a durable worktree state store is required");
     }
     this.runtimeRoot = ensureDirectory(path.resolve(options.runtimeRoot));
-    this.worktreesRoot = ensureDirectory(
-      path.join(this.runtimeRoot, "worktrees"),
-      this.runtimeRoot,
-    );
+    this.worktreesRoot = options.worktreesRoot
+      ? ensureDirectory(path.resolve(options.worktreesRoot))
+      : ensureDirectory(
+          path.join(this.runtimeRoot, "worktrees"),
+          this.runtimeRoot,
+        );
+    this.legacyWorktreesRoot = legacyWorktreesRoot(this.runtimeRoot);
     this.#stateStore = options.stateStore;
     this.#git = options.gitRunner ?? new ProcessGitRunner();
     this.#now = options.now ?? Date.now;
@@ -196,6 +205,7 @@ export class WorktreeManager {
           {
             git: this.#git,
             worktreesRoot: this.worktreesRoot,
+            legacyWorktreesRoot: this.legacyWorktreesRoot,
             snapshot: (key) => this.#snapshot(key),
             compareAndSwap: (key, rev, records) =>
               this.#stateStore.compareAndSwap(key, rev, records),
@@ -263,21 +273,15 @@ export class WorktreeManager {
       throw new Error("a task cannot depend on itself");
     }
 
-    const projectKey = digest("worktree-project", input.scope.projectId);
-    const checkoutKey = digest(
-      "worktree-checkout",
-      input.scope.projectId,
-      input.scope.checkoutId,
-    );
-    const taskDirectory = ensureDirectory(
-      path.join(
-        this.worktreesRoot,
-        `project-${projectKey}`,
-        `checkout-${checkoutKey}`,
-      ),
+    const worktreePath = path.join(
       this.worktreesRoot,
+      managedWorktreeRelativePath(
+        input.scope.projectId,
+        input.scope.checkoutId,
+        taskKey,
+      ),
     );
-    const worktreePath = path.join(taskDirectory, `task-${taskKey}`);
+    ensureDirectory(path.dirname(worktreePath), this.worktreesRoot);
     const branchRef = worktreeBranchRef({ ...input, projectId: input.scope.projectId });
     const now = this.#timestamp();
     const candidate = cloneRecord({
@@ -933,6 +937,7 @@ export class WorktreeManager {
       return validateWorktreeStateSnapshot(this.#stateStore.read(scopeKey), {
         scopeKey,
         worktreesRoot: this.worktreesRoot,
+        legacyWorktreesRoot: this.legacyWorktreesRoot,
       });
     } catch (error) {
       throw new WorktreeStateConflictError(
@@ -958,7 +963,11 @@ export class WorktreeManager {
       try {
         records = validateWorktreeStateSnapshot(
           { revision: snapshot.revision, records: next.records },
-          { scopeKey, worktreesRoot: this.worktreesRoot },
+          {
+            scopeKey,
+            worktreesRoot: this.worktreesRoot,
+            legacyWorktreesRoot: this.legacyWorktreesRoot,
+          },
         ).records;
       } catch (error) {
         throw new WorktreeStateConflictError(

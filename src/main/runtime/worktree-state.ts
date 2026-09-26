@@ -17,10 +17,13 @@ import {
   type WorktreeRecord,
   type WorktreeStateSnapshot,
 } from './worktree-contract';
+import { acceptedWorktreePaths } from './managed-worktree-layout';
 
 interface WorktreeStateValidationOptions {
   readonly scopeKey: string;
   readonly worktreesRoot: string;
+  /** Raiz histórica do checkout; no win32 aceita registros de antes do F-654. */
+  readonly legacyWorktreesRoot?: string;
 }
 
 function invalidState(message = 'invalid worktree state record'): never {
@@ -95,17 +98,11 @@ function validateRecord(
     record.projectId,
     record.checkoutId,
   );
-  const projectKey = digest('worktree-project', record.projectId);
-  const checkoutKey = digest(
-    'worktree-checkout',
+  const acceptedPaths = acceptedWorktreePaths(
+    options,
     record.projectId,
     record.checkoutId,
-  );
-  const expectedPath = path.join(
-    options.worktreesRoot,
-    `project-${projectKey}`,
-    `checkout-${checkoutKey}`,
-    `task-${expectedTaskKey}`,
+    expectedTaskKey,
   );
   const expectedBranch = worktreeBranchRef(record);
   const dependencies = record.dependencies;
@@ -116,7 +113,7 @@ function validateRecord(
     record.scopeKey !== expectedScopeKey ||
     record.taskKey !== expectedTaskKey ||
     record.id !== `worktree-${expectedTaskKey}` ||
-    record.worktreePath !== expectedPath ||
+    !acceptedPaths.includes(record.worktreePath) ||
     record.branchRef !== expectedBranch ||
     typeof record.rootRealPath !== 'string' ||
     !path.isAbsolute(record.rootRealPath) ||

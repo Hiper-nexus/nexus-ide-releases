@@ -195,6 +195,11 @@ export interface MergeQueueResult {
 
 export interface MergeQueueOptions {
   readonly runtimeRoot: string;
+  /**
+   * Raiz dos candidatos quando ela não é `<runtimeRoot>/merge-candidates` — no
+   * win32 é a raiz curta de `managedCandidatesRoot` (F-654).
+   */
+  readonly candidatesRoot?: string;
   readonly stateStore: MergeQueueStateStore;
   readonly worktreeManager: WorktreeManager;
   readonly gitRunner?: GitRunner;

@@ -16,6 +16,7 @@ import {
   type RetryMergeInput,
 } from './merge-queue-contract';
 import { cloneMergeQueueEntry as cloneEntry } from './merge-queue-state';
+import { managedCandidateRelativePath } from './managed-worktree-layout';
 import {
   stalledMergeReason,
   type MergeReconcileStallContext,
@@ -784,13 +785,15 @@ export class MergeQueueRecovery {
     ) return;
     const candidatePath = path.join(
       this.#candidatesRoot,
-      `scope-${scopeKey}`,
-      `candidate-${this.#candidateKey(
+      managedCandidateRelativePath(
         scopeKey,
-        entry.taskKey,
-        entry.integrationBaseSha,
-        entry.taskHeadSha,
-      )}`,
+        this.#candidateKey(
+          scopeKey,
+          entry.taskKey,
+          entry.integrationBaseSha,
+          entry.taskHeadSha,
+        ),
+      ),
     );
     try {
       if (!fs.existsSync(candidatePath)) return;

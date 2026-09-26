@@ -179,6 +179,7 @@ export function assertTaskWorktree(
 export interface ReservationReconcileDeps {
   readonly git: GitRunner;
   readonly worktreesRoot: string;
+  readonly legacyWorktreesRoot?: string;
   snapshot(scopeKey: string): WorktreeStateSnapshot;
   compareAndSwap(
     scopeKey: string,
@@ -258,7 +259,11 @@ export function reconcileInterruptedReservation(
     );
     const validated = validateWorktreeStateSnapshot(
       { revision: snapshot.revision, records },
-      { scopeKey, worktreesRoot: deps.worktreesRoot },
+      {
+        scopeKey,
+        worktreesRoot: deps.worktreesRoot,
+        legacyWorktreesRoot: deps.legacyWorktreesRoot,
+      },
     ).records;
     if (
       deps.compareAndSwap(scopeKey, snapshot.revision, validated)

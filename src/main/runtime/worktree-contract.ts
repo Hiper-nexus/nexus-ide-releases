@@ -116,6 +116,11 @@ export interface IntegrationCheckoutInspection extends IntegrationCheckoutSnapsh
 
 export interface WorktreeManagerOptions {
   readonly runtimeRoot: string;
+  /**
+   * Raiz das worktrees quando ela não é `<runtimeRoot>/worktrees` — no win32 é
+   * a raiz curta de `managedWorktreesRoot` (F-654).
+   */
+  readonly worktreesRoot?: string;
   readonly stateStore: WorktreeStateStore;
   readonly gitRunner?: GitRunner;
   readonly now?: () => number;

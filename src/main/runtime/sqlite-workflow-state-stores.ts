@@ -14,6 +14,11 @@ import {
   type WorktreeStateStore,
 } from './worktree-contract';
 import { validateWorktreeStateSnapshot } from './worktree-state';
+import {
+  acceptedWorktreeRelativePaths,
+  legacyWorktreesRoot,
+  managedWorktreesRoot,
+} from './managed-worktree-layout';
 import type {
   MergeQueueStateSnapshot,
   MergeQueueStateStore,
@@ -75,7 +80,8 @@ interface RecoverableWorktreeIdentity {
   readonly taskId: string;
   readonly status: string;
   readonly worktreePath: string;
-  readonly expectedRelativePath: string;
+  /** Mesmo conjunto que a validação aceita (F-654: no win32, atual + histórico). */
+  readonly expectedRelativePaths: readonly string[];
 }
 
 const TERMINAL_WORKTREE_STATUSES = new Set([
@@ -141,12 +147,6 @@ function recoverableIdentities(
     return null;
   }
 
-  const projectKey = digest('worktree-project', scope.projectId);
-  const checkoutKey = digest(
-    'worktree-checkout',
-    scope.projectId,
-    scope.checkoutId,
-  );
   const identities: RecoverableWorktreeIdentity[] = [];
   for (const value of parsed) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -168,10 +168,10 @@ function recoverableIdentities(
       return null;
     }
     const taskKey = worktreeTaskKey(record.missionId, record.taskId);
-    const expectedRelativePath = path.join(
-      `project-${projectKey}`,
-      `checkout-${checkoutKey}`,
-      `task-${taskKey}`,
+    const expectedRelativePaths = acceptedWorktreeRelativePaths(
+      scope.projectId,
+      scope.checkoutId,
+      taskKey,
     );
     const worktreePath = record.worktreePath;
     const expectedBranch = worktreeBranchRef({
@@ -196,7 +196,7 @@ function recoverableIdentities(
       taskId: record.taskId,
       status: record.status,
       worktreePath,
-      expectedRelativePath,
+      expectedRelativePaths,
     });
   }
   return Object.freeze(identities);
@@ -204,12 +204,13 @@ function recoverableIdentities(
 
 function isCanonicalRelocatedBinding(
   identity: RecoverableWorktreeIdentity,
-  worktreesRoot: string,
+  localRoots: readonly string[],
 ): boolean {
+  // F-654: a raiz histórica desta instalação é local, não um runtime copiado.
   return (
-    !isInside(worktreesRoot, identity.worktreePath) &&
-    identity.worktreePath.endsWith(
-      `${path.sep}${identity.expectedRelativePath}`,
+    !localRoots.some((root) => isInside(root, identity.worktreePath)) &&
+    identity.expectedRelativePaths.some((relative) =>
+      identity.worktreePath.endsWith(`${path.sep}${relative}`),
     )
   );
 }
@@ -252,13 +253,19 @@ function hasOnlyTerminalDurableAuthority(
 export class SqliteWorktreeStateStore implements WorktreeStateStore {
   readonly #binding: ScopedStoreBinding;
   readonly #worktreesRoot: string;
+  readonly #legacyWorktreesRoot: string;
 
   constructor(
     runtimeManager: ProjectRuntimeManager,
     scope: ProjectExecutionScope,
   ) {
     this.#binding = new ScopedStoreBinding(runtimeManager, scope);
-    this.#worktreesRoot = path.join(runtimeManager.locationFor(scope).directory, 'worktrees');
+    const runtimeDirectory = runtimeManager.locationFor(scope).directory;
+    this.#worktreesRoot = managedWorktreesRoot({
+      runtimeDirectory,
+      baseDirectory: runtimeManager.baseDirectory,
+    });
+    this.#legacyWorktreesRoot = legacyWorktreesRoot(runtimeDirectory);
   }
 
   /**
@@ -308,7 +315,10 @@ export class SqliteWorktreeStateStore implements WorktreeStateStore {
       });
     }
     const relocated = identities.every((identity) =>
-      isCanonicalRelocatedBinding(identity, this.#worktreesRoot),
+      isCanonicalRelocatedBinding(identity, [
+        this.#worktreesRoot,
+        this.#legacyWorktreesRoot,
+      ]),
     );
     const terminal =
       !relocated && hasOnlyTerminalDurableAuthority(readDb, identities);
@@ -472,7 +482,11 @@ export class SqliteWorktreeStateStore implements WorktreeStateStore {
     try {
       return validateWorktreeStateSnapshot(
         { revision: row.revision, records: parseJson(row.records_json, 'worktree state') },
-        { scopeKey, worktreesRoot: this.#worktreesRoot },
+        {
+          scopeKey,
+          worktreesRoot: this.#worktreesRoot,
+          legacyWorktreesRoot: this.#legacyWorktreesRoot,
+        },
       );
     } catch (error) {
       if (error instanceof ScopedStoreCorruptionError) throw error;
@@ -491,7 +505,11 @@ export class SqliteWorktreeStateStore implements WorktreeStateStore {
     }
     const candidate = validateWorktreeStateSnapshot(
       { revision: expectedRevision + 1, records },
-      { scopeKey, worktreesRoot: this.#worktreesRoot },
+      {
+        scopeKey,
+        worktreesRoot: this.#worktreesRoot,
+        legacyWorktreesRoot: this.#legacyWorktreesRoot,
+      },
     );
     const db = this.#binding.writeDatabase();
     return db.transaction(() => {

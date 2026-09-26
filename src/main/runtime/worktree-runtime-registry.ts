@@ -26,6 +26,10 @@ import {
 } from "./sqlite-workflow-state-stores";
 import { ScopedStoreBinding } from "../orch/scoped-store";
 import { sweepPtysInsideWorktree } from "./worktree-pty-sweep";
+import {
+  managedCandidatesRoot,
+  managedWorktreesRoot,
+} from "./managed-worktree-layout";
 import { inspectGitBinding } from "../context/git-binding";
 import type { IntegratedMissionResult } from "../context/context-workflow-service";
 
@@ -85,6 +89,12 @@ export class WorktreeRuntimeRegistry {
     }
     const immutableScope = Object.freeze({ ...scope });
     const runtimeRoot = this.#manager.locationFor(scope).directory;
+    // F-654: no win32 as worktrees saem do diretório de runtime (~219 chars)
+    // para raízes curtas; o layout é o mesmo que o estado valida.
+    const layoutLocation = {
+      runtimeDirectory: runtimeRoot,
+      baseDirectory: this.#manager.baseDirectory,
+    };
     const worktreeState = new SqliteWorktreeStateStore(
       this.#manager,
       immutableScope,
@@ -95,6 +105,7 @@ export class WorktreeRuntimeRegistry {
     );
     const worktrees = new WorktreeManager({
       runtimeRoot,
+      worktreesRoot: managedWorktreesRoot(layoutLocation),
       stateStore: worktreeState,
     });
     const worktreeRecovery = worktreeState.recoverInvalidState(
@@ -109,6 +120,7 @@ export class WorktreeRuntimeRegistry {
     }
     const queue = new MergeQueue({
       runtimeRoot,
+      candidatesRoot: managedCandidatesRoot(layoutLocation),
       stateStore: mergeState,
       worktreeManager: worktrees,
     });

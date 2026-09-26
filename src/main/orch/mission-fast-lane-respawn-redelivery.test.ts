@@ -242,7 +242,7 @@ afterEach(() => {
 
 describe('respawn do orquestrador re-entrega handoffs pendentes (A3)', () => {
   it('keeps a new mission in its durable tab on bootstrap and Retomar; deleted tab never falls back to main', async () => {
-    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-resume-tab-')));
+    const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-resume-tab-')));
     const repository = path.join(root, 'repo'); fs.mkdirSync(repository);
     const git = (...args: string[]) => execFileSync('git', ['-C', repository, ...args], { stdio: 'pipe' });
     git('init', '-q'); git('config', 'user.name', 'Nexus Fixture'); git('config', 'user.email', 'fixture@example.invalid');

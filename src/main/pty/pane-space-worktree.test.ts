@@ -12,9 +12,16 @@ let temp: string;
 let manager: ProjectRuntimeManager;
 let scope: ReturnType<typeof testProjectScope>;
 const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' }).trim();
+// O Git para Windows marca o `.git` da worktree como oculto, e o Windows recusa
+// sobrescrever arquivo oculto com a flag 'w' (EPERM). 'r+' + truncar funciona
+// nas duas plataformas.
+function rewriteGitPointer(worktree: string, content: string): void {
+  const fd = fs.openSync(path.join(worktree, '.git'), 'r+');
+  try { fs.ftruncateSync(fd); fs.writeSync(fd, content); } finally { fs.closeSync(fd); }
+}
 
 beforeEach(() => {
-  temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-tab-worktree-')));
+  temp = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-tab-worktree-')));
   const root = path.join(temp, 'repo');
   fs.mkdirSync(root);
   git(root, 'init', '-q');
@@ -63,7 +70,7 @@ it.each(['main', 'sibling'])('rejects a .git pointer replaced with %s HEAD/index
   const a = await preparePaneSpaceWorktree(scope, 'space-a');
   const b = await preparePaneSpaceWorktree(scope, 'space-b');
   const admin = git(target === 'main' ? scope.rootRealPath : b.cwd, 'rev-parse', '--absolute-git-dir');
-  fs.writeFileSync(path.join(a.cwd, '.git'), `gitdir: ${admin}\n`);
+  rewriteGitPointer(a.cwd, `gitdir: ${admin}\n`);
   await expect(preparePaneSpaceWorktree(scope, 'space-a')).rejects.toThrow();
   expect(() => isSharedPaneSpaceWorktree(scope, a.scope)).toThrow();
 });

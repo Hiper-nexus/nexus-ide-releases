@@ -14,10 +14,17 @@ let directory: string;
 let manager: ProjectRuntimeManager;
 let scope: ReturnType<typeof testProjectScope>;
 const git = (root: string, ...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8' }).trim();
+// O Git para Windows marca o `.git` da worktree como oculto, e o Windows recusa
+// sobrescrever arquivo oculto com a flag 'w' (EPERM). 'r+' + truncar funciona
+// nas duas plataformas.
+function rewriteGitPointer(worktree: string, content: string): void {
+  const fd = fs.openSync(path.join(worktree, '.git'), 'r+');
+  try { fs.ftruncateSync(fd); fs.writeSync(fd, content); } finally { fs.closeSync(fd); }
+}
 const contract = () => ({ ...compileIntentContract({ goal: 'Implementar a tarefa da aba', source: 'typed', intentVersion: 1 }), workspaceBinding: newMissionWorkspaceBinding() });
 
 beforeEach(() => {
-  directory = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mission-execution-')));
+  directory = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mission-execution-')));
   const root = path.join(directory, 'repo'); fs.mkdirSync(root);
   git(root, 'init', '-q'); git(root, 'config', 'user.name', 'Nexus Fixture'); git(root, 'config', 'user.email', 'fixture@example.invalid');
   fs.writeFileSync(path.join(root, 'source.txt'), 'committed');
@@ -57,7 +64,7 @@ it('does not recreate a missing record on resume or accept another checkout Git 
   delete mission.intentContract.dispatchedAt;
   const execution = await prepareMissionExecutionScope(scope, mission);
   mission.intentContract.dispatchedAt = 100;
-  fs.writeFileSync(path.join(execution.rootRealPath, '.git'), `gitdir: ${path.join(scope.rootRealPath, '.git')}\n`);
+  rewriteGitPointer(execution.rootRealPath, `gitdir: ${path.join(scope.rootRealPath, '.git')}\n`);
   await expect(prepareMissionExecutionScope(scope, mission)).rejects.toThrow('mudou no disco');
 });
 

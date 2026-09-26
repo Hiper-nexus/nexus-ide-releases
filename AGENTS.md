@@ -257,6 +257,14 @@ saber isto antes de mexer:
   são recusados explicitamente na aba; jamais caia em main. Estado e limites
   em `docs/analysis/2026-09-23-abas-feature-worktree.md`. Não crie worktree
   dentro da raiz do projeto.
+- F-654: o Git para Windows recusa `git worktree add` com `<worktree>\.git`
+  acima de 220 caracteres (`'$GIT_DIR' too big`; `core.longpaths` não ajuda),
+  e o runtime do checkout em `%APPDATA%` já tem ~219. Por isso, no win32,
+  worktrees e candidatos de merge moram em `<project-runtime>\wt` e `\mc` com
+  nomes compactos. Todo caminho físico de worktree sai de
+  `managed-worktree-layout.ts` (criação, validação, recuperação, fila de
+  merge); macOS/Linux mantêm o layout histórico byte a byte. Não monte esse
+  caminho à mão em outro lugar.
 
 ## Conversas Grok/Kimi por checkout (F-566)
 
