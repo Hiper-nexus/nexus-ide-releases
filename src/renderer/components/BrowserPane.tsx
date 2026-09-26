@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import type { BrowserPaneState, PaneModel } from '../../shared/types';
 import { attachBrowserPane } from '../browser/browser-host';
+import { browserAddressInput } from '../browser/address-input';
 import { useLayoutStore } from '../state/layout-store';
 import { PixelIcon } from './PixelIcon';
 import { BrowserDesignBar } from './BrowserDesignBar';
 import { DesignSidebar } from './DesignSidebar';
 import { PaneToolbar } from './PaneToolbar';
+import { BrowserProfilePanel } from './BrowserProfilePanel';
 
 interface Props {
   pane: PaneModel;
@@ -31,6 +33,7 @@ export function BrowserPane({ pane, isCanvas }: Props) {
   });
   const [draftUrl, setDraftUrl] = useState(state.url);
   const [stylesOpen, setStylesOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
 
   useEffect(() => {
     const slot = slotRef.current;
@@ -45,7 +48,7 @@ export function BrowserPane({ pane, isCanvas }: Props) {
     const clean = url.trim();
     if (!clean) return;
     try {
-      const next = await window.nexus.browser.load(pane.id, clean);
+      const next = await window.nexus.browser.load(pane.id, browserAddressInput(clean));
       setState(next);
       setDraftUrl(next.url);
     } catch (err) {
@@ -115,9 +118,12 @@ export function BrowserPane({ pane, isCanvas }: Props) {
           spellCheck={false}
           onChange={(e) => setDraftUrl(e.target.value)}
           onFocus={(e) => e.currentTarget.select()}
-          aria-label="URL do browser"
+          aria-label="Buscar ou digitar endereço"
+          placeholder="Buscar ou digitar endereço"
         />
+        <button type="button" className="browser-profile-toggle" aria-expanded={profileOpen} onClick={() => setProfileOpen((open) => !open)}>Perfil e logins</button>
       </form>
+      {profileOpen && <BrowserProfilePanel paneId={pane.id} onClose={() => setProfileOpen(false)} />}
       {state.loading && (
         <div className="browser-bar__progress nodrag" aria-hidden="true" />
       )}

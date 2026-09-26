@@ -352,6 +352,12 @@ interface PendingBrowserOpen {
 }
 const pendingBrowserOpens = new Map<string, PendingBrowserOpen>();
 
+/** Browser origin is recorded in Main before the renderer creates the view. */
+export function isAgentRequestedBrowser(owner: WebContents, paneId: string): boolean {
+  return [...pendingBrowserOpens.values()].some((pending) => pending.owner === owner && pending.paneId === paneId) ||
+    orchMetaByPane.has(paneMetaKey(owner, paneId));
+}
+
 interface ExpiredBrowserOpen {
   owner: WebContents;
   paneId: string;

@@ -22,6 +22,7 @@ import {
   getOwnedPaneAuthzInfo,
   getPaneAuthzInfoOwnedBy,
   getPaneAuthzInfoOwnedByPane,
+  isAgentRequestedBrowser,
   registerOrchRenderer,
   requestBrowserPane,
   requestMissionPaneClose,
@@ -264,12 +265,15 @@ describe("pending pane spawn authority", () => {
     });
     const request = owner.send.mock.calls[0]?.[1] as BrowserPaneOpenRequest;
     expect(request.paneId).toMatch(/^browser-/);
+    expect(isAgentRequestedBrowser(owner, request.paneId)).toBe(true);
+    expect(isAgentRequestedBrowser(renderer(), request.paneId)).toBe(false);
 
     await vi.advanceTimersByTimeAsync(30 * 60_000 + 1_000);
     await expect(pending).resolves.toMatchObject({
       ok: false,
       error: "browser open timed out",
     });
+    expect(isAgentRequestedBrowser(owner, request.paneId)).toBe(false);
 
     expect(resolveBrowserOpen({
       requestId: request.requestId,

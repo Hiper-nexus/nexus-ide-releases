@@ -127,6 +127,7 @@ vi.mock('../orch/preview-server', () => ({
 }));
 
 vi.mock('../orch/pane-registry', () => ({
+  isAgentRequestedBrowser: vi.fn(() => false),
   getPaneAuthzInfoOwnedBy: state.paneInfo,
   getPaneAuthzInfoOwnedByPane: state.paneInfo,
   getDevServerForPane: vi.fn(() => null),
@@ -144,6 +145,18 @@ vi.mock('../context/context-workflow-registry', () => ({
 
 const sendDesignSelectionToAgent = vi.hoisted(() => vi.fn());
 vi.mock('../orch/design-send', () => ({ sendDesignSelectionToAgent }));
+const profileHarness = vi.hoisted(() => ({
+  mode: 'isolated' as 'isolated' | 'personal',
+  assertConnection: undefined as (() => void) | undefined,
+}));
+vi.mock('./browser-personal-profile', () => ({
+  browserProfileMode: () => profileHarness.mode,
+  rememberAgentBrowser: vi.fn(),
+  connectPersonalProfile: async (_contents: unknown, assertConnection: () => void) => {
+    profileHarness.assertConnection = assertConnection;
+    return async () => { assertConnection(); };
+  },
+}));
 
 import {
   assertBrowserAtExactUrl,
@@ -180,6 +193,20 @@ describe('browser manager pinned network boundary', () => {
     state.proxy.close.mockResolvedValue(undefined);
     state.paneInfo.mockReturnValue(null);
     state.getMissionWorkflow.mockReturnValue({ contract: null, workflow: null });
+    profileHarness.mode = 'isolated';
+    profileHarness.assertConnection = undefined;
+  });
+
+  it('lets the outgoing personal profile flush its immutable view after a workspace switch', async () => {
+    installPinnedBrowserProxy.mockResolvedValue(state.proxy);
+    bindResolvedRendererWorkspaceScope(state.owner, scope);
+    registerBrowserIpc({} as never);
+    profileHarness.mode = 'personal';
+    await ensureBrowser(state.owner as never, scope, 'pane-outgoing-profile');
+    bindResolvedRendererWorkspaceScope(state.owner, scopeB);
+    expect(() => profileHarness.assertConnection?.()).not.toThrow();
+    await vi.waitFor(() => expect(state.guest.close).toHaveBeenCalled());
+    clearRendererWorkspaceScope(state.owner);
   });
 
   it('locks an automated review WebContents to the exact approved URL', async () => {

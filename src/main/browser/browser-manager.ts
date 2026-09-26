@@ -5,6 +5,10 @@ import {
   ipcMain,
   session as electronSession,
 } from 'electron';
+import type { BrowserProfileStatus } from '../../shared/browser-profile';
+import { browserProfileMode, changeBrowserProfile, connectPersonalProfile, getBrowserProfilePreferences, personalCookieProfile, rememberAgentBrowser } from './browser-personal-profile';
+import { listChromeProfiles, listChromeSites, readChromeImport } from './chrome-cookie-import';
+import { isAgentRequestedBrowser } from '../orch/pane-registry';
 import type { IpcMainInvokeEvent, Session, WebContents } from 'electron';
 import { createHash, randomUUID } from 'node:crypto';
 import path from 'node:path';
@@ -152,6 +156,9 @@ interface BrowserEntry {
   title: string;
   loading: boolean;
   error?: string;
+  profileMode: 'personal' | 'isolated';
+  disconnectProfile?: () => Promise<void>;
+  lastBounds?: BrowserPaneBounds;
   /** Exact main-owned URL fence for an automated read-only design review. */
   exactNavigationLock?: string;
   restoringExactNavigation: boolean;
@@ -720,7 +727,11 @@ async function createEntry(
   const win = liveOwnerWindow(owner);
   if (!win) throw new Error('browser owner window is gone');
 
-  const partition = browserPartition(scope, paneId);
+  const key = browserKey(scope, paneId);
+  const agentOwned = isAgentRequestedBrowser(owner, paneId);
+  if (agentOwned) rememberAgentBrowser(key);
+  const profileMode = browserProfileMode(key, agentOwned);
+  const partition = browserPartition(scope, paneId) + (profileMode === 'personal' ? '-personal' : '');
   const browserSession = electronSession.fromPartition(partition);
   const allowedPrivateTargets = new Map<string, Set<string>>();
   const resolveHostname = createChromiumResolver(browserSession);
@@ -770,6 +781,7 @@ async function createEntry(
   view.setBackgroundColor('#0a0e15');
   const entry: BrowserEntry = {
     paneId,
+    profileMode,
     scope: Object.freeze({ ...scope }),
     owner,
     view,
@@ -787,7 +799,6 @@ async function createEntry(
     errorSeq: 0,
     errorWindowStart: 0,
   };
-  const key = browserKey(scope, paneId);
   browsers.set(key, entry);
   win.contentView.addChildView(view);
   configureSessionSecurity(entry);
@@ -945,6 +956,21 @@ async function createEntry(
   });
   // Hide until the first real geometry arrives — avoids a 0×0 flash.
   view.setVisible(false);
+  if (profileMode === 'personal') {
+    try {
+      entry.disconnectProfile = await connectPersonalProfile(wc, () => {
+        // Cookie teardown belongs to this immutable view/session, even after
+        // the owner switches workspace. Imports still require the live scope.
+        if (wc.isDestroyed() || wc.session !== browserSession) throw new Error('Browser profile authority changed');
+      }, (message) => { if (browsers.get(key) === entry) { entry.error = message; emitState(entry); } });
+      requireLiveRendererWorkspaceScope(owner, scope);
+      if (browsers.get(key) !== entry) throw new Error('Browser profile authority changed');
+    } catch (error) {
+      await entry.disconnectProfile?.();
+      destroyBrowser(paneId, scope);
+      throw error;
+    }
+  }
   applyPendingBounds(entry);
   return entry;
 }
@@ -2428,6 +2454,7 @@ function withOwnedEntry(
 }
 
 function setBrowserBounds(entry: BrowserEntry, bounds: BrowserPaneBounds): void {
+  entry.lastBounds = bounds;
   const visible =
     bounds.visible !== false && bounds.width >= 16 && bounds.height >= 16;
   entry.view.setVisible(visible);
@@ -2481,16 +2508,17 @@ export function destroyBrowser(
 ): void {
   const entry = detachBrowserEntry(paneId, scope);
   if (!entry) return;
-  try {
-    entry.view.webContents.close();
-  } catch {
-    // Already destroyed.
-  }
-  void entry.networkProxy.close();
+  const close = () => {
+    try { entry.view.webContents.close(); } catch { /* Already destroyed. */ }
+    void entry.networkProxy.close();
+  };
+  if (entry.disconnectProfile) void entry.disconnectProfile().finally(close);
+  else close();
 }
 
-function closeWebContentsWithProof(entry: BrowserEntry): Promise<void> {
+async function closeWebContentsWithProof(entry: BrowserEntry): Promise<void> {
   const webContents = entry.view.webContents;
+  await entry.disconnectProfile?.();
   if (webContents.isDestroyed()) return Promise.resolve();
   return new Promise<void>((resolve, reject) => {
     let settled = false;
@@ -2695,6 +2723,114 @@ export function registerBrowserIpc(runtimeManager: ProjectRuntimeManager): void 
     },
   );
   registerBrowserAutomationResponseHandler();
+
+  const profileChangeSchema = z.object({
+    paneId: paneIdSchema,
+    mode: z.enum(['personal', 'isolated']).optional(),
+    shareWithAgents: z.boolean().optional(),
+  }).strict();
+  const chromeProfileSchema = z.object({ paneId: paneIdSchema, profileId: z.string().regex(/^[a-f0-9]{24}$/) }).strict();
+  const chromeImportSchema = chromeProfileSchema.extend({ domains: z.array(z.string().min(1).max(253)).min(1).max(200) });
+  const profileStatus = (entry: BrowserEntry): BrowserProfileStatus => {
+    const settings = getBrowserProfilePreferences();
+    let storedCookies: number | null = null;
+    let notice: string | undefined;
+    try { storedCookies = personalCookieProfile().size; }
+    catch { notice = 'O cofre do perfil está indisponível. Seus dados continuam guardados.'; }
+    return { mode: entry.profileMode, enabled: settings.enabled, shareWithAgents: settings.shareWithAgents,
+      storedCookies, importSupported: process.platform === 'darwin', ...(notice ? { notice } : {}) };
+  };
+  const switchProfile = async (entry: BrowserEntry, mode: 'personal' | 'isolated'): Promise<BrowserEntry> => {
+    const { owner, scope, paneId } = entry;
+    const key = browserKey(scope, paneId);
+    requireLiveRendererWorkspaceScope(owner, scope);
+    if (browsers.get(key) !== entry) throw new Error('A aba do navegador mudou. Tente novamente.');
+    if (entry.profileMode === mode) {
+      changeBrowserProfile(key, { mode });
+      return entry;
+    }
+    if (mode === 'personal') personalCookieProfile();
+    const bounds = entry.lastBounds;
+    const url = entry.view.webContents.getURL() || entry.url;
+    await destroyBrowserWithProof(paneId, scope);
+    requireLiveRendererWorkspaceScope(owner, scope);
+    changeBrowserProfile(key, { mode });
+    let replacement: BrowserEntry | undefined;
+    const restorePage = async () => {
+      await ensureBrowser(owner, scope, paneId);
+      requireLiveRendererWorkspaceScope(owner, scope);
+      const current = withOwnedEntry(owner, scope, paneId);
+      replacement = current;
+      // Same owner, scope and pane: carry only its exact existing network
+      // grants. Navigation still resolves DNS and verifies those IP pins.
+      for (const [target, addresses] of entry.allowedPrivateTargets) {
+        current.allowedPrivateTargets.set(target, new Set(addresses));
+      }
+      current.exactNavigationLock = entry.exactNavigationLock;
+      if (bounds) setBrowserBounds(current, bounds);
+      const assertCurrentAuthority = () => {
+        requireLiveRendererWorkspaceScope(owner, scope);
+        if (browsers.get(key) !== current) throw new Error('A aba mudou durante a troca de perfil.');
+      };
+      await loadBrowserForEntry(paneId, current, url, { assertCurrentAuthority });
+      assertCurrentAuthority();
+      emitState(current);
+      return current;
+    };
+    try {
+      return await restorePage();
+    } catch (error) {
+      if (browsers.has(key) && browsers.get(key) !== replacement) throw error;
+      if (replacement && browsers.get(key) === replacement) await destroyBrowserWithProof(paneId, scope);
+      requireLiveRendererWorkspaceScope(owner, scope);
+      changeBrowserProfile(key, { mode: entry.profileMode });
+      await restorePage();
+      throw error;
+    }
+  };
+  ipcMain.handle(BROWSER_CHANNELS.profileStatus, (event, raw) => {
+    const { paneId } = paneSchema.strict().parse(raw);
+    return profileStatus(withOwnedEntry(event.sender, requireLiveRendererWorkspaceScope(event.sender), paneId));
+  });
+  ipcMain.handle(BROWSER_CHANNELS.profileChange, async (event, raw) => {
+    const { paneId, mode, shareWithAgents } = profileChangeSchema.parse(raw);
+    const scope = requireLiveRendererWorkspaceScope(event.sender);
+    let entry = withOwnedEntry(event.sender, scope, paneId);
+    if (mode) entry = await switchProfile(entry, mode);
+    requireLiveRendererWorkspaceScope(event.sender, scope);
+    if (shareWithAgents !== undefined) changeBrowserProfile(browserKey(scope, paneId), { shareWithAgents });
+    return profileStatus(entry);
+  });
+  ipcMain.handle(BROWSER_CHANNELS.chromeProfiles, (event, raw) => {
+    const { paneId } = paneSchema.strict().parse(raw);
+    withOwnedEntry(event.sender, requireLiveRendererWorkspaceScope(event.sender), paneId);
+    return process.platform === 'darwin' ? listChromeProfiles() : [];
+  });
+  ipcMain.handle(BROWSER_CHANNELS.chromeSites, (event, raw) => {
+    const { paneId, profileId } = chromeProfileSchema.parse(raw);
+    withOwnedEntry(event.sender, requireLiveRendererWorkspaceScope(event.sender), paneId);
+    if (process.platform !== 'darwin') throw new Error('A importação do Chrome está disponível no macOS. Você pode entrar nos sites pelo Perfil Nexus.');
+    return listChromeSites(profileId);
+  });
+  ipcMain.handle(BROWSER_CHANNELS.chromeImport, async (event, raw) => {
+    const { paneId, profileId, domains } = chromeImportSchema.parse(raw);
+    const scope = requireLiveRendererWorkspaceScope(event.sender);
+    const entry = withOwnedEntry(event.sender, scope, paneId);
+    if (process.platform !== 'darwin') throw new Error('A importação do Chrome está disponível no macOS.');
+    const assertCurrent = () => {
+      requireLiveRendererWorkspaceScope(event.sender, scope);
+      if (withOwnedEntry(event.sender, scope, paneId) !== entry) throw new Error('A aba mudou durante a importação.');
+    };
+    const imported = await readChromeImport(profileId, domains, assertCurrent);
+    await personalCookieProfile().importCookies(imported.cookies, assertCurrent);
+    assertCurrent();
+    if (imported.result.importedCookies > 0) {
+      try { await switchProfile(entry, 'personal'); }
+      catch { throw new Error('Os dados de sessão foram importados, mas não foi possível recarregar esta aba. Abra Perfil e logins para reconectar o Perfil Nexus.'); }
+    }
+    requireLiveRendererWorkspaceScope(event.sender, scope);
+    return imported.result;
+  });
 
   ipcMain.on(BROWSER_DESIGN_CHANNELS.event, (event, raw) => {
     const resolved = browserEntryForWebContents(event.sender);

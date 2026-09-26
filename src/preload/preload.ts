@@ -761,6 +761,11 @@ const api: NexusApi = {
     onStateChange: (sessionId, cb) => subscribe(stateSubs, sessionId, cb),
   },
   browser: {
+    profileStatus: (paneId) => ipcRenderer.invoke(BROWSER_CHANNELS.profileStatus, { paneId }),
+    profileChange: (paneId, change) => ipcRenderer.invoke(BROWSER_CHANNELS.profileChange, { paneId, ...change }),
+    chromeProfiles: (paneId) => ipcRenderer.invoke(BROWSER_CHANNELS.chromeProfiles, { paneId }),
+    chromeSites: (paneId, profileId) => ipcRenderer.invoke(BROWSER_CHANNELS.chromeSites, { paneId, profileId }),
+    chromeImport: (paneId, profileId, domains) => ipcRenderer.invoke(BROWSER_CHANNELS.chromeImport, { paneId, profileId, domains }),
     create: (paneId: string, url?: string) =>
       ipcRenderer.invoke(BROWSER_CHANNELS.create, { paneId, url }),
     destroy: (paneId: string) =>

@@ -460,6 +460,11 @@ export interface NexusApi {
     ): Unsubscribe;
   };
   browser: {
+    profileStatus(paneId: string): Promise<import('./browser-profile').BrowserProfileStatus>;
+    profileChange(paneId: string, change: import('./browser-profile').BrowserProfileChange): Promise<import('./browser-profile').BrowserProfileStatus>;
+    chromeProfiles(paneId: string): Promise<import('./browser-profile').ChromeProfileSummary[]>;
+    chromeSites(paneId: string, profileId: string): Promise<import('./browser-profile').ChromeSiteSummary[]>;
+    chromeImport(paneId: string, profileId: string, domains: string[]): Promise<import('./browser-profile').ChromeImportResult>;
     create(paneId: string, url?: string): Promise<BrowserPaneState>;
     destroy(paneId: string): void;
     setBounds(paneId: string, bounds: BrowserPaneBounds): void;

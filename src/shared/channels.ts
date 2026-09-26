@@ -18,6 +18,11 @@ export const PTY_CHANNELS = {
 } as const;
 
 export const BROWSER_CHANNELS = {
+  profileStatus: 'browser:profileStatus',
+  profileChange: 'browser:profileChange',
+  chromeProfiles: 'browser:chromeProfiles',
+  chromeSites: 'browser:chromeSites',
+  chromeImport: 'browser:chromeImport',
   create: 'browser:create',
   destroy: 'browser:destroy',
   bounds: 'browser:bounds',

@@ -163,12 +163,17 @@ vi.mock('../orch/preview-server', () => ({
 }));
 
 vi.mock('../orch/pane-registry', () => ({
+  isAgentRequestedBrowser: vi.fn(() => false),
   getPaneAuthzInfoOwnedBy: state.paneInfo,
   getPaneAuthzInfoOwnedByPane: state.paneInfo,
   getDevServerForPane: vi.fn(() => null),
   listPaneSnapshots: vi.fn(() => []),
   requestMissionPaneClose: vi.fn(async () => true),
   requestPaneClose: vi.fn(async () => true),
+}));
+vi.mock('./browser-personal-profile', () => ({
+  browserProfileMode: () => 'isolated',
+  rememberAgentBrowser: vi.fn(),
 }));
 
 vi.mock('../context/context-workflow-registry', () => ({
