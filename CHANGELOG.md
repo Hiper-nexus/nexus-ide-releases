@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.76.106 — Navegador em segundo plano
+
+O navegador do agente continua vivo quando você troca de projeto, e o agente segue usando-o enquanto você trabalha noutro lugar.
+
+- **Navegador sobrevive à troca de projeto (F-168).** Antes, ir a outro projeto destruía o navegador: o agente recebia "unknown pane" e, na volta, a página tinha recomeçado. Agora o navegador fica afastado, como os terminais: a página e o login continuam, o agente do projeto segue navegando, lendo e clicando, e na volta você encontra a página onde ela estiver, sem recarregar.
+- **Screenshot com o navegador fora da tela.** A primeira captura de uma página carregada com a vista escondida falhava; o Nexus agora tenta de novo uma vez e a imagem sai com a página atual (medido no Electron). Vale também para navegador escondido por um painel aberto por cima.
+- **Encerramento previsível.** Fechar o projeto encerra os navegadores dele; tirar o projeto da lista encerra os que ficaram afastados; fechar pelo agente um navegador afastado o tira do layout quando o projeto volta. A revisão automática de design continua encerrando na troca.
+- **Mensagens que apontam o caminho.** Com a janela noutro projeto, `nexus_browser_open` explica que dá para seguir no navegador que o projeto já tem; "unknown pane" de navegador agora significa pane fechado.
+
 ## 0.76.105 — Perfil e logins
 
 O navegador interno ganha um perfil próprio com importação seletiva de sessões compatíveis do Chrome. Reúne também as correções de panes e missões da 0.76.104.

@@ -7122,7 +7122,7 @@ export const RELEASE_076104: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076105: AppRelease = {
   version: '0.76.105',
   date: '2026-09-26',
   codename: 'Perfil e logins',
@@ -7170,5 +7170,43 @@ export const CURRENT_RELEASE: AppRelease = {
         'Ao terminar as tentativas, deixa de prometer uma recuperação já vencida.',
     },
     ...RELEASE_076104.fixes,
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.106',
+  date: '2026-09-26',
+  codename: 'Navegador em segundo plano',
+  summary:
+    'O navegador do agente continua vivo quando você troca de projeto: o ' +
+    'agente segue usando-o e, na volta, a página está onde ficou.',
+  highlights: [
+    {
+      title: 'Navegador que espera a sua volta',
+      detail:
+        'Ir a outro projeto não fecha mais o navegador. A página e o login ' +
+        'continuam, o agente do projeto segue navegando, lendo e clicando, e ' +
+        'na volta você encontra a página onde ela estiver, sem recarregar.',
+    },
+    {
+      title: 'Screenshot com o navegador fora da tela',
+      detail:
+        'A captura de uma página carregada com o navegador escondido tenta de ' +
+        'novo uma vez e sai com a página atual, também sob painéis abertos por cima.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Fim do "unknown pane" ao trocar de projeto',
+      detail:
+        'O agente não perde mais o navegador do projeto enquanto você está ' +
+        'noutro. Fechar o projeto ou tirá-lo da lista encerra os navegadores dele.',
+    },
+    {
+      title: 'Mensagens que apontam o caminho',
+      detail:
+        'Com a janela noutro projeto, abrir um navegador novo explica que dá ' +
+        'para seguir no navegador que o projeto já tem.',
+    },
   ],
 };
