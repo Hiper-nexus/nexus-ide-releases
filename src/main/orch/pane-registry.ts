@@ -545,6 +545,11 @@ export function unregisterOrchRenderer(wc: WebContents): void {
     parkedByPane.delete(paneMetaKey(wc, paneId));
     wokeAtByPane.delete(paneId);
   }
+  // Metas de panes de outros projetos (retidas na troca de workspace) morrem
+  // com a janela.
+  for (const key of [...orchMetaByPane.keys()]) {
+    if (key.startsWith(`${wc.id}:`)) orchMetaByPane.delete(key);
+  }
   // Sem renderer não há como o spawn completar — resolver já, senão cada
   // nexus_pane_spawn pendura o orquestrador por 30s até o timeout.
   for (const [requestId, pending] of [...pendingSpawns]) {
@@ -1396,11 +1401,20 @@ export function syncPanes(
     retireOperatorDismissedRendererPane(owner, registered);
   }
   const liveIds = new Set(accepted.map((entry) => entry.paneId));
-  for (const key of [...orchMetaByPane.keys()]) {
+  const ownerScope = getRendererWorkspaceScope(owner);
+  for (const [key, meta] of [...orchMetaByPane]) {
     const prefix = `${owner.id}:`;
-    if (key.startsWith(prefix) && !liveIds.has(key.slice(prefix.length))) {
-      orchMetaByPane.delete(key);
+    if (!key.startsWith(prefix) || liveIds.has(key.slice(prefix.length))) {
+      continue;
     }
+    // Pane de OUTRO projeto saiu do espelho porque o operador trocou de
+    // workspace, não porque o fechou. Apagar a meta tirava do navegador aberto
+    // pelo agente o escopo dele e, na volta, toda ferramenta caía em "pane
+    // belongs to another project checkout" (F-168).
+    if (ownerScope && meta.scope && !sameProjectScope(meta.scope, ownerScope)) {
+      continue;
+    }
+    orchMetaByPane.delete(key);
   }
   requestMainOwnedPanePresentations(owner);
   // React/HMR may remount after main emitted the one-shot spawn event. Treat

@@ -260,6 +260,7 @@ vi.mock("./mission-pane-authority", () => ({
 
 import {
   attachOrchMeta,
+  getPaneAuthzInfo,
   getPaneRuntimeAuthorityBySession,
   bindPendingSpawnSession,
   claimPendingSpawnMeta,
@@ -711,6 +712,42 @@ describe("main-owned mission pane spawn", () => {
 
     unregisterOrchRenderer(elsewhere);
     clearRendererWorkspaceScope(elsewhere);
+    unregisterOrchRenderer(owner);
+    clearRendererWorkspaceScope(owner);
+  });
+
+  it("keeps an agent-opened browser pane's scope across a workspace round trip", () => {
+    const owner = {
+      id: 935,
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      send: vi.fn(),
+    } as unknown as WebContents;
+    const browser = {
+      paneId: "browser-round-trip",
+      sessionId: null,
+      title: "API Tokens | Coolify",
+      kind: "browser" as const,
+    };
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerOrchRenderer(owner);
+    syncPanes([browser], owner, "renderer-generation-round-trip");
+    attachOrchMeta(owner, browser.paneId, { scope });
+    expect(getPaneAuthzInfo(browser.paneId)?.scope).toEqual(scope);
+
+    // Campo 26/09: o operador foi a outro projeto e voltou; o agente do
+    // projeto passou a receber "pane belongs to another project checkout".
+    bindResolvedRendererWorkspaceScope(owner, {
+      ...scope,
+      checkoutId: "checkout-other-workspace",
+    });
+    syncPanes([], owner, "renderer-generation-round-trip");
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    syncPanes([browser], owner, "renderer-generation-round-trip");
+
+    expect(getPaneAuthzInfo(browser.paneId)?.scope).toEqual(scope);
+
+    syncPanes([], owner, "renderer-generation-round-trip");
     unregisterOrchRenderer(owner);
     clearRendererWorkspaceScope(owner);
   });
