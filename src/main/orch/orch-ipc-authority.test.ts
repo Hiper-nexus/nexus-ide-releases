@@ -1130,7 +1130,11 @@ describe('canonical MissionEngine IPC boundary', () => {
       CANONICAL_PREPARE_REQUEST,
       expect.any(Function),
     );
-    expect(engine.start).toHaveBeenCalledWith(SCOPE_A, startInput);
+    expect(engine.start).toHaveBeenCalledWith(
+      SCOPE_A,
+      startInput,
+      expect.any(Function),
+    );
     expect(engine.command).toHaveBeenCalledWith(SCOPE_A, command);
     expect(engine.snapshot).toHaveBeenCalledWith(
       SCOPE_A,
@@ -1274,10 +1278,14 @@ describe('canonical MissionEngine IPC boundary', () => {
       { ...startInput, adoptOrchestratorPaneId: 'pane-vivo' },
     );
 
-    expect(engine.start).toHaveBeenCalledWith(SCOPE_A, {
-      missionId: startInput.missionId,
-      reviewSha256: startInput.reviewSha256,
-    });
+    expect(engine.start).toHaveBeenCalledWith(
+      SCOPE_A,
+      {
+        missionId: startInput.missionId,
+        reviewSha256: startInput.reviewSha256,
+      },
+      expect.any(Function),
+    );
   });
 
   it('painel que não resolve não vira reserva e não impede o start', async () => {

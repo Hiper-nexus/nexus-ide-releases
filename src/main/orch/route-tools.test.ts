@@ -287,9 +287,12 @@ describe('nexus_route_task — Jev fora e desempate interno', () => {
     mocks.listProviderSettings.mockReturnValue(providers);
     mocks.classifyTaskForRouting.mockResolvedValue({
       kind: 'classified',
+      // Desde o F-163 o Jev também classifica o esforço; 'jev' exige as três
+      // dimensões confiantes (sem esforço a origem honesta é 'mixed').
       classification: {
         tier: 'medium', tierConfidence: 0.9, specialty: 'feature',
-        specialtyConfidence: 0.9, escalate: 0.1, model: 'jev-test',
+        specialtyConfidence: 0.9, effort: 'medium', effortConfidence: 0.9,
+        escalate: 0.1, model: 'jev-test',
       },
     });
     const decision = (await tool('nexus_route_task').handler(
