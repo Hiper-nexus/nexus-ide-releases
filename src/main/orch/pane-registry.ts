@@ -582,18 +582,23 @@ export function unregisterOrchRenderer(wc: WebContents): void {
   }
 }
 
-function rendererAvailable(): boolean {
-  return (
-    orchRenderer !== null &&
-    !orchRenderer.isDestroyed() &&
-    !orchRenderer.isCrashed()
-  );
-}
-
 function rendererForMission(
   missionId?: string,
   scope?: ProjectExecutionScope,
+  operatorParentSessionId?: string,
 ): WebContents | null {
+  if (operatorParentSessionId) {
+    // A helper belongs to the operator's grid, even when another window
+    // opened later (including a second window of the same project).
+    const owner = liveOwnerForSession(operatorParentSessionId);
+    if (!owner) return null;
+    try {
+      requireLiveRendererWorkspaceScope(owner, scope);
+      return owner;
+    } catch {
+      return null;
+    }
+  }
   if (missionId) {
     const owners = new Set<WebContents>();
     for (const registered of panes) {
@@ -613,12 +618,20 @@ function rendererForMission(
     }
     if (owners.size === 1) return [...owners][0];
   }
-  if (!rendererAvailable()) return null;
-  if (!scope) return orchRenderer;
-  const rendererScope = getRendererWorkspaceScope(orchRenderer!);
-  return rendererScope && sameProjectScope(rendererScope, scope)
-    ? orchRenderer
-    : null;
+  // Auxiliary windows can register last and have no workspace/grid at all.
+  // Reuse the actual layout owners, including an empty mirrored grid, and
+  // revalidate their live scope instead of losing the target to that window.
+  const candidates = new Set(mirroredOwners.values());
+  if (orchRenderer) candidates.add(orchRenderer);
+  for (const owner of [...candidates].reverse()) {
+    try {
+      requireLiveRendererWorkspaceScope(owner, scope);
+      return owner;
+    } catch {
+      // A parked, closed or foreign grid cannot receive this request.
+    }
+  }
+  return null;
 }
 
 export function initPaneRegistry(): void {
@@ -2220,7 +2233,7 @@ export function requestPaneSpawn(
         role: options.role,
       });
   }
-  const owner = rendererForMission(options.missionId, options.scope);
+  const owner = rendererForMission(options.missionId, options.scope, options.operatorParentSessionId);
   if (!owner) {
     if (
       options.missionId &&

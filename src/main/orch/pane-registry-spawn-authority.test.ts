@@ -11,6 +11,7 @@ import {
   clearRendererWorkspaceScope,
 } from "../persistence/renderer-workspace-scope";
 import { testProjectScope } from "./__tests__/scope-fixture";
+import * as ptyManager from "../pty/pty-manager";
 import {
   attachOrchMeta,
   bindPendingSpawnSession,
@@ -100,19 +101,141 @@ function bindScope(owner: WebContents, scope = testProjectScope()): void {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
   if (registered) unregisterOrchRenderer(registered);
-  for (const owner of scopedRenderers) clearRendererWorkspaceScope(owner);
+  for (const owner of scopedRenderers) {
+    unregisterOrchRenderer(owner);
+    clearRendererWorkspaceScope(owner);
+  }
   scopedRenderers.clear();
   registered = null;
 });
 
 describe("pending pane spawn authority", () => {
+  it.each(["unbound", "other-project", "closed"])(
+    "opens helpers in the live workspace after a %s window registered last",
+    async (lastWindow) => {
+      const owner = renderer();
+      const unrelated = renderer();
+      const scope = testProjectScope();
+      bindScope(owner, scope);
+      registerOrchRenderer(owner);
+      syncPanes([], owner);
+      registered = unrelated;
+      registerOrchRenderer(unrelated);
+      if (lastWindow === "other-project") {
+        bindScope(unrelated, testProjectScope({ projectId: "project-other" }));
+      }
+      if (lastWindow === "closed") unregisterOrchRenderer(unrelated);
+
+      const pending = requestPaneSpawn({ adapterId: "codex", scope });
+      const request = owner.send.mock.calls[0]?.[1] as OrchPaneSpawnRequest;
+      expect(request).toMatchObject({ adapterId: "codex", cwd: scope.rootRealPath });
+      expect(unrelated.send).not.toHaveBeenCalled();
+      expect(claimPendingSpawnMeta(request.requestId, owner)?.scope).toEqual(scope);
+      resolvePaneSpawn({ requestId: request.requestId, ok: false, error: "test cleanup" }, owner);
+      await pending;
+    },
+  );
+
+  it("opens browser panes in the workspace grid after an auxiliary window registered", async () => {
+    const owner = renderer();
+    const auxiliary = renderer();
+    const scope = testProjectScope();
+    bindScope(owner, scope);
+    registerOrchRenderer(owner);
+    syncPanes([], owner);
+    registered = auxiliary;
+    registerOrchRenderer(auxiliary);
+
+    const pending = requestBrowserPane({ scope, url: "https://example.com" });
+    const request = owner.send.mock.calls[0]?.[1] as BrowserPaneOpenRequest;
+    expect(request).toMatchObject({ url: "https://example.com" });
+    expect(auxiliary.send).not.toHaveBeenCalled();
+    resolveBrowserOpen({ requestId: request.requestId, ok: false, error: "test cleanup" }, owner);
+    await pending;
+  });
+
+  it("keeps operator helpers in their parent's window when two grids share a workspace", async () => {
+    const owner = renderer();
+    const sibling = renderer();
+    const scope = testProjectScope();
+    bindScope(owner, scope);
+    bindScope(sibling, scope);
+    registerOrchRenderer(owner);
+    vi.spyOn(ptyManager, "isSessionOwnedBy").mockImplementation(
+      (candidate, sessionId) => candidate.id === owner.id && sessionId === "operator-parent",
+    );
+    syncPanes([{ paneId: "operator-pane", sessionId: "operator-parent", kind: "cli-agent", title: "Operator" }], owner);
+    registered = sibling;
+    registerOrchRenderer(sibling);
+    syncPanes([], sibling);
+
+    const pending = requestPaneSpawn({ adapterId: "claude", scope, operatorParentSessionId: "operator-parent" });
+    const request = owner.send.mock.calls[0]?.[1] as OrchPaneSpawnRequest;
+    expect(request).toMatchObject({ parentPaneId: "operator-pane" });
+    expect(sibling.send).not.toHaveBeenCalled();
+    resolvePaneSpawn({ requestId: request.requestId, ok: false, error: "test cleanup" }, owner);
+    await pending;
+  });
+
+  it("does not use a mirrored grid after it changes workspace", async () => {
+    const owner = renderer();
+    const auxiliary = renderer();
+    const scope = testProjectScope();
+    bindScope(owner, scope);
+    registerOrchRenderer(owner);
+    syncPanes([], owner);
+    bindScope(owner, testProjectScope({ projectId: "project-other" }));
+    registered = auxiliary;
+    registerOrchRenderer(auxiliary);
+
+    await expect(requestPaneSpawn({ adapterId: "codex", scope })).resolves.toMatchObject({ ok: false });
+    expect(owner.send).not.toHaveBeenCalledWith(ORCH_CHANNELS.paneSpawnRequest, expect.anything());
+    expect(auxiliary.send).not.toHaveBeenCalled();
+  });
+
+  it.each(["switched", "crashed", "missing"])(
+    "does not redirect an operator helper to another grid when its parent is %s",
+    async (parentState) => {
+      const owner = renderer();
+      const sibling = renderer();
+      const scope = testProjectScope();
+      bindScope(owner, scope);
+      bindScope(sibling, scope);
+      registerOrchRenderer(owner);
+      vi.spyOn(ptyManager, "isSessionOwnedBy").mockImplementation(
+        (candidate, sessionId) => candidate.id === owner.id && sessionId === "operator-parent",
+      );
+      syncPanes([{ paneId: "operator-pane", sessionId: "operator-parent", kind: "cli-agent", title: "Operator" }], owner);
+      if (parentState === "switched") {
+        bindScope(owner, testProjectScope({ projectId: "project-other" }));
+      } else if (parentState === "crashed") {
+        vi.spyOn(owner, "isCrashed").mockReturnValue(true);
+      } else {
+        syncPanes([], owner);
+      }
+      registered = sibling;
+      registerOrchRenderer(sibling);
+      syncPanes([], sibling);
+
+      await expect(requestPaneSpawn({ adapterId: "codex", scope, operatorParentSessionId: "operator-parent" }))
+        .resolves.toMatchObject({ ok: false });
+      expect(owner.send).not.toHaveBeenCalledWith(ORCH_CHANNELS.paneSpawnRequest, expect.anything());
+      expect(sibling.send).not.toHaveBeenCalled();
+    },
+  );
+
   it("retains the operator spawner in Main metadata, outside the renderer request", async () => {
     const owner = renderer();
     registered = owner;
     registerOrchRenderer(owner);
     const scope = testProjectScope();
     bindScope(owner, scope);
+    vi.spyOn(ptyManager, "isSessionOwnedBy").mockImplementation(
+      (candidate, sessionId) => candidate.id === owner.id && sessionId === "operator-parent",
+    );
+    syncPanes([{ paneId: "operator-pane", sessionId: "operator-parent", kind: "cli-agent", title: "Operator" }], owner);
     const pending = requestPaneSpawn({
       adapterId: "codex", scope, operatorParentSessionId: "operator-parent",
     });
