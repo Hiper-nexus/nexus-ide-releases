@@ -670,8 +670,7 @@ async function performSwitch(req: SwitchRequest): Promise<void> {
     });
     let scheduledRetryAtMs: number | undefined;
     if (retryTarget !== undefined && attempt < MAX_SCHEDULED_RETRIES) {
-      scheduledRetryAtMs = retryTarget + RETRY_BUFFER_MS;
-      scheduleFailoverRetry(key, authority, hit, scheduledRetryAtMs, attempt + 1);
+      scheduledRetryAtMs = scheduleFailoverRetry(key, authority, hit, retryTarget + RETRY_BUFFER_MS, attempt + 1);
     }
     console.info(
       '[failover]',
@@ -688,9 +687,8 @@ async function performSwitch(req: SwitchRequest): Promise<void> {
         attempt,
       }),
     );
-    // Retries agendados falham em silêncio (o evento original já informou a
-    // UI); só o hit original emite switched:false.
-    if (attempt > 0) return;
+    // Publish the new schedule (or its exhaustion), so the UI never keeps
+    // promising the original retry time after that attempt has already run.
     emitFailover(authority, {
       paneId,
       fromAccountLabel: fromLabel,
@@ -781,13 +779,14 @@ function scheduleFailoverRetry(
   hit: LimitHit,
   retryAtMs: number,
   attempt: number,
-): void {
+): number {
   cancelScheduledRetry(key);
   // Primeiro agendamento respeita o instante exato (+buffer); re-agendamentos
   // têm piso de 30s — integração com o rearm: nunca mais cedo que o menor
   // entre o rearm e a liberação real.
   const minDelay = attempt <= 1 ? RETRY_BUFFER_MS : RETRY_MIN_RESCHEDULE_MS;
-  const delay = Math.max(retryAtMs - Date.now(), minDelay);
+  const scheduledAt = Date.now();
+  const delay = Math.max(retryAtMs - scheduledAt, minDelay);
   const timer = setTimeout(() => {
     pendingRetries.delete(key);
     try {
@@ -798,6 +797,7 @@ function scheduleFailoverRetry(
   }, delay);
   timer.unref?.();
   pendingRetries.set(key, { timer, authority });
+  return scheduledAt + delay;
 }
 
 /**

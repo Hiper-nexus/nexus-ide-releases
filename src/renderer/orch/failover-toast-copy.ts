@@ -15,7 +15,7 @@ function effectiveKind(event: FailoverEvent): FailoverReasonKind {
 export function blockedFailoverToastCopy(
   event: FailoverEvent,
 ): FailoverToastCopy {
-  const retryNote = event.scheduledRetryAtMs
+  const retryNote = event.scheduledRetryAtMs && event.scheduledRetryAtMs > Date.now()
     ? ` Nova tentativa automática às ${new Date(
         event.scheduledRetryAtMs,
       ).toLocaleTimeString()}.`

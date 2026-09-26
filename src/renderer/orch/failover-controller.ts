@@ -38,13 +38,16 @@ export function useFailoverController(): void {
         // aviso, não erro, e sem botão que manda o operador procurar culpa
         // na conta.
         if (event.kind === 'transient') {
-          push(event.transientPhase === 'nudged' ? 'info' : 'warn', copy.title, copy.detail);
+          push(event.transientPhase === 'nudged' ? 'info' : 'warn', copy.title, {
+            detail: copy.detail, dedupeKey: `failover:${event.paneId}`,
+          });
           return;
         }
         // O texto já diz "Configurações → Providers" — a ação leva até lá
         // (toast com ação ganha TTL de 20s em vez de 7s).
         push('error', copy.title, {
           detail: copy.detail,
+          dedupeKey: `failover:${event.paneId}`,
           action: {
             label: 'Abrir Providers',
             onClick: () =>

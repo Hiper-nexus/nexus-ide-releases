@@ -20,6 +20,10 @@ function event(
 }
 
 describe('blockedFailoverToastCopy', () => {
+  it('does not promise an automatic retry at an already expired time', () => {
+    const copy = blockedFailoverToastCopy({ ...event('rate-limit', 'HTTP 429'), scheduledRetryAtMs: 1 });
+    expect(copy.detail).not.toMatch(/Nova tentativa automática às/);
+  });
   it('never presents a 401 authentication failure as quota exhaustion', () => {
     const copy = blockedFailoverToastCopy(
       event('auth', 'HTTP 401: OAuth token expired'),

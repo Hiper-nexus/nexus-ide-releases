@@ -4,6 +4,7 @@ import type { WebContents } from 'electron';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { ACCOUNT_CHANNELS, type Account } from '../../shared/account-types';
 import { testProjectScope } from './__tests__/scope-fixture';
+import { pickAvailableForFailover } from '../persistence/account-store';
 
 const ptyMocks = vi.hoisted(() => ({
   dataTaps: [] as Array<(sessionId: string, data: string) => void>,
@@ -201,6 +202,7 @@ async function settleFailover(): Promise<void> {
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(100_000);
+  vi.mocked(pickAvailableForFailover).mockReset().mockImplementation(() => ({ account: accountMocks.next, probe: false }));
   ptyMocks.dataTaps.length = 0;
   ptyMocks.exitTaps.length = 0;
   ptyMocks.agentSessions.clear();
@@ -788,6 +790,24 @@ describe('espera-pela-irmã + cooldown escopado (C1, derivado do oh-my-pi)', () 
         scheduledRetryAtMs: 161_000,
       }),
     );
+  });
+
+  it('reports the real rescheduled time and clears the promise when retries are exhausted', async () => {
+    const { pickAvailableForFailover } = await import('../persistence/account-store');
+    const owner = armPane(819);
+    vi.mocked(pickAvailableForFailover).mockReturnValue({ account: null, probe: false, nextUnblockAtMs: 101_000 });
+    ptyMocks.dataTaps[0]!('sess-819', 'LIMIT');
+    await settleFailover();
+    const events = () => owner.send.mock.calls.filter(([channel]) => channel === ACCOUNT_CHANNELS.failover).map(([, event]) => event as { scheduledRetryAtMs?: number; switched: boolean });
+    expect(events().at(-1)?.scheduledRetryAtMs).toBe(102_000);
+    await vi.advanceTimersByTimeAsync(2_000);
+    await settleFailover();
+    expect(events()).toHaveLength(2);
+    expect(events().at(-1)?.scheduledRetryAtMs).toBe(132_000);
+    await vi.advanceTimersByTimeAsync(7 * 30_000);
+    await settleFailover();
+    expect(events().at(-1)?.switched).toBe(false);
+    expect(events().at(-1)?.scheduledRetryAtMs).toBeUndefined();
   });
 
   it('sondagem last-resort: evento marca probe e não grava coalesce', async () => {
