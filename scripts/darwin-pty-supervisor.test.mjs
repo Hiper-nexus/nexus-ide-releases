@@ -1026,4 +1026,52 @@ suite("Darwin PTY native responsibility supervisor", () => {
       /private responsibility.*unavailable|not its own signed/i,
     );
   }, 60_000);
+
+  it("proves the cohort empty while an unrelated setuid process born after the anchor denies lookup", async () => {
+    // Campo 26/09: o /usr/bin/login de uma janela do Ghostty nasceu depois do
+    // pane e respondia EPERM à consulta de responsabilidade; o supervisor
+    // ficava em laço para sempre depois que a CLI saía. Um sudo esperando
+    // senha, filho deste teste, é o mesmo vizinho setuid fora da coorte.
+    const readyFile = path.join(fixtureRoot, "setuid-neighbor.ready");
+    const releaseFile = path.join(fixtureRoot, "setuid-neighbor.release");
+    const python = [
+      "import os,sys,time",
+      `ready_file=${JSON.stringify(readyFile)}`,
+      `release_file=${JSON.stringify(releaseFile)}`,
+      'with open(ready_file,"w") as f: f.write("ready")',
+      "while not os.path.exists(release_file): time.sleep(0.02)",
+      "sys.exit(0)",
+    ].join("\n");
+    const supervised = spawn(
+      helper,
+      ["supervise", "--", "/usr/bin/python3", "-c", python],
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+    const neighbor = { process: null };
+    try {
+      await waitFor(() => existsSync(readyFile));
+      neighbor.process = spawn("/usr/bin/sudo", ["-k", "-S", "-v"], {
+        stdio: ["pipe", "ignore", "ignore"],
+      });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      writeFileSync(releaseFile, "release");
+      const exit = await new Promise((resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error("supervisor never proved its cohort empty")),
+          10_000,
+        );
+        supervised.once("error", reject);
+        supervised.once("exit", (code, signal) => {
+          clearTimeout(timer);
+          resolve({ code, signal });
+        });
+      });
+      expect(exit).toEqual({ code: 0, signal: null });
+    } finally {
+      neighbor.process?.stdin.end();
+      if (supervised.exitCode === null && supervised.signalCode === null) {
+        supervised.kill("SIGKILL");
+      }
+    }
+  }, 60_000);
 });

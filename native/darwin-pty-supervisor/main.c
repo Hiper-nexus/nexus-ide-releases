@@ -22,6 +22,7 @@
 #include <sys/proc.h>
 #include <sys/proc_info.h>
 #include <sys/ptrace.h>
+#include <sys/sysctl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -372,6 +373,54 @@ stable_identity_predates_anchor(pid_t pid,
          first.p_uniqueid < anchor->process_unique_id;
 }
 
+static bool read_parent_pid(pid_t pid, pid_t *parent) {
+  int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, pid};
+  struct kinfo_proc info;
+  size_t size = sizeof(info);
+  memset(&info, 0, sizeof(info));
+  if (sysctl(mib, 4, &info, &size, NULL, 0) != 0 || size != sizeof(info) ||
+      info.kp_proc.p_pid != pid) {
+    return false;
+  }
+  *parent = info.kp_eproc.e_ppid;
+  return true;
+}
+
+/*
+ * Second negative-membership proof for a PID whose responsibility cannot be
+ * read.  Setuid binaries owned by the user's real UID answer EPERM: the
+ * /usr/bin/login of a terminal window or a sudo waiting for a password.  Born
+ * after the anchor, they kept every later teardown proof incomplete, and each
+ * helper whose CLI exited stayed in this loop forever (field report 26/09).
+ *
+ * Responsibility is fixed at spawn: inherited from the spawning parent or,
+ * with a disclaim, the process itself.  XNU reparents orphans to launchd, so
+ * a parent other than launchd is still the spawner.  A spawner whose own
+ * responsibility is readable and outside the anchor proves the PID never
+ * joined this cohort.  Reading the PPID again after the parent lookup rejects
+ * a parent that exited, and whose PID could be reused, in between.
+ */
+static bool
+parent_proves_outside_cohort(const struct responsibility_api *api, pid_t pid,
+                             const struct responsibility_anchor *anchor) {
+  pid_t parent = 0;
+  if (!read_parent_pid(pid, &parent) || parent <= 1) {
+    return false;
+  }
+  pid_t parent_responsible_pid = 0;
+  uint64_t parent_responsible_unique_id = 0;
+  if (!query_responsibility(api, parent, &parent_responsible_pid,
+                            &parent_responsible_unique_id)) {
+    return false;
+  }
+  pid_t parent_again = 0;
+  if (!read_parent_pid(pid, &parent_again) || parent_again != parent) {
+    return false;
+  }
+  return parent_responsible_pid != anchor->responsible_pid ||
+         parent_responsible_unique_id != anchor->responsible_unique_id;
+}
+
 static bool append_record(struct process_list *list,
                           const struct process_record *record) {
   size_t next_count = list->count + 1;
@@ -537,7 +586,8 @@ inventory_processes(const struct responsibility_api *api,
         if (responsibility_errno == ESRCH || !process_still_exists(pid)) {
           continue;
         }
-        if (stable_identity_predates_anchor(pid, filter)) {
+        if (stable_identity_predates_anchor(pid, filter) ||
+            parent_proves_outside_cohort(api, pid, filter)) {
           continue;
         }
         {
