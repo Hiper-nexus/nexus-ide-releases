@@ -228,6 +228,8 @@ function releaseBuildEnvironment(environment) {
     'HTTPS_PROXY',
     'NO_PROXY',
     'NEXUS_MAC_PUBLISH_RELEASE',
+    // Autoridade de carimbo alternativa do codesign (F-652, build/mac-signing.ts).
+    'NEXUS_MAC_TIMESTAMP_URL',
     'APPLE_TEAM_ID',
     'APPLE_KEYCHAIN_PROFILE',
   ]);

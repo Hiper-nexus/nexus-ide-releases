@@ -222,6 +222,8 @@ describe('publishable macOS build target', () => {
           NEXUS_MAC_PUBLISH_RELEASE: '1',
           APPLE_TEAM_ID: '35P5XL3JN6',
           APPLE_KEYCHAIN_PROFILE: 'nexus-notary',
+          NEXUS_MAC_TIMESTAMP_URL: 'http://17.32.213.161/ts01',
+          UNRELATED_SECRET: 'nao-passa',
         },
         authority,
         repository,
@@ -229,6 +231,15 @@ describe('publishable macOS build target', () => {
         runCommand,
         verifyReleaseCredentials: vi.fn(),
       });
+      // F-652: a autoridade de carimbo alternativa chega ao Forge; o resto do
+      // ambiente continua filtrado.
+      const forgeEnv = runCommand.mock.calls.find(
+        ([command, args]) =>
+          command === process.execPath &&
+          args.some((value) => /electron-forge\.js$/u.test(value)),
+      )[2].env;
+      expect(forgeEnv.NEXUS_MAC_TIMESTAMP_URL).toBe('http://17.32.213.161/ts01');
+      expect(forgeEnv.UNRELATED_SECRET).toBeUndefined();
       expect(calls.some(([, args]) =>
         args.slice(0, 3).join(' ') === 'worktree add --detach',
       )).toBe(true);
