@@ -752,6 +752,32 @@ describe("main-owned mission pane spawn", () => {
     clearRendererWorkspaceScope(owner);
   });
 
+  it("gives a browser opened by the operator the project its window shows", () => {
+    const owner = {
+      id: 936,
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      send: vi.fn(),
+    } as unknown as WebContents;
+    const browser = {
+      paneId: "browser-opened-by-hand",
+      sessionId: null,
+      title: "hPanel",
+      kind: "browser" as const,
+    };
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerOrchRenderer(owner);
+    syncPanes([browser], owner, "renderer-generation-hand");
+
+    // "+ Browser" não passa pelo nexus_browser_open: sem meta, o agente do
+    // próprio projeto ouvia "pane belongs to another project checkout".
+    expect(getPaneAuthzInfo(browser.paneId)?.scope).toEqual(scope);
+
+    syncPanes([], owner, "renderer-generation-hand");
+    unregisterOrchRenderer(owner);
+    clearRendererWorkspaceScope(owner);
+  });
+
   it("does not hand a detached session to a renderer in another workspace", async () => {
     const result = await requestPaneSpawn({
       adapterId: "codex",

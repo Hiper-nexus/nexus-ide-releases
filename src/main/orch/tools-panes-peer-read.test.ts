@@ -175,6 +175,16 @@ describe('in-mission pane observation (Overclock parity)', () => {
     expect(h.readSessionOutput).not.toHaveBeenCalled();
   });
 
+  it('tells the agent why a browser pane is gone instead of a bare refusal', async () => {
+    // Campo 26/09: sem a pista, o agente concluiu que o Nexus o bloqueou e
+    // pediu ao operador para colar um token no chat.
+    await expect(
+      tool('nexus_pane_read').handler({ paneId: 'browser-gone' }, context()),
+    ).rejects.toThrow(
+      /unknown pane: browser-gone \(.*project is not open in the Nexus window.*nexus_browser_open/,
+    );
+  });
+
   it('refuses a pane from another mission', async () => {
     registerPane({
       paneId: 'pane-foreign',

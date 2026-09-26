@@ -1573,7 +1573,13 @@ function authzInfoOf(registered: RegisteredPane): PaneAuthzInfo {
     operatorParentSessionId: meta?.operatorParentSessionId,
     scope:
       context?.scope ?? meta?.scope ??
-      (entry.sessionId ? scopeBySession.get(entry.sessionId) : undefined),
+      (entry.sessionId ? scopeBySession.get(entry.sessionId) : undefined) ??
+      // Navegador aberto pelo operador ("+ Browser") não tem meta: o espelho
+      // só traz panes do projeto que a janela mostra. O browser-manager ainda
+      // busca a vista pelo par (escopo do agente, pane) em cada ferramenta.
+      (entry.kind === "browser"
+        ? getRendererWorkspaceScope(owner) ?? undefined
+        : undefined),
     executionScope: context ? context.executionScope ?? context.scope : physical?.scope ?? meta?.executionScope,
   };
 }
