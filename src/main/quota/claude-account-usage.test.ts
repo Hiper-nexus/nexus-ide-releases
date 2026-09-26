@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QuotaWindow } from '../../shared/quota-types';
 
 const mocks = vi.hoisted(() => ({
+  spawnSync: vi.fn(),
   getAccount: vi.fn(),
   claudeAccountIsNativeLogin: vi.fn((_account: unknown) => false),
   ensureFreshClaudeSubscription: vi.fn(async () => false),
@@ -29,6 +30,11 @@ const mocks = vi.hoisted(() => ({
     email?: string,
     options?: { expectedAccountUuid?: string; now?: number },
   ) => Promise<'match' | 'mismatch' | 'auth-expired' | 'unavailable'>>(async () => 'match'),
+}));
+
+vi.mock('node:child_process', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  spawnSync: mocks.spawnSync,
 }));
 
 vi.mock('../persistence/account-store', () => ({
@@ -86,6 +92,7 @@ import {
 import { CLAUDE_MANAGED_AUTH_ENV } from '../adapters/managed-claude-auth';
 
 const NOW = Date.parse('2026-09-20T20:00:00Z');
+const HOST_PLATFORM = Object.getOwnPropertyDescriptor(process, 'platform')!;
 
 const tempHomes: string[] = [];
 
@@ -146,6 +153,13 @@ function usagePayload(percent: number, fetchedAtMs: number) {
 }
 
 beforeEach(() => {
+  Object.defineProperty(process, 'platform', { value: 'darwin' });
+  vi.spyOn(os, 'homedir').mockReturnValue(makeHome());
+  // Keychain fixtures must never inspect the developer's real login or depend
+  // on the host OS. Scoped items exist only when a test supplies keychainProbe.
+  mocks.spawnSync.mockReset().mockImplementation((_command: string, args: string[]) => ({
+    status: args.at(-1) === 'Claude Code-credentials' ? 0 : 1,
+  }));
   clearClaudeConfigSnapshotCache();
   mocks.getAccount.mockReset();
   mocks.ensureFreshClaudeSubscription.mockReset().mockResolvedValue(false);
@@ -182,6 +196,8 @@ function cliReturns(windows: QuotaWindow[] | null): void {
 }
 
 afterEach(() => {
+  Object.defineProperty(process, 'platform', HOST_PLATFORM);
+  vi.restoreAllMocks();
   for (const home of tempHomes.splice(0)) {
     fs.rmSync(home, { recursive: true, force: true });
   }
@@ -282,6 +298,26 @@ describe('readClaudeConfigSnapshot', () => {
 });
 
 describe('fetchClaudeAccountUsageWindows', () => {
+  it.each(['linux', 'win32'])('reads the native credential file on %s without consulting Keychain', async (platform) => {
+    Object.defineProperty(process, 'platform', { value: platform });
+    const home = makeHome();
+    fs.mkdirSync(path.join(home, '.claude'));
+    writeClaudeJson(path.join(home, '.claude.json'), {
+      oauthAccount: { emailAddress: 'owner@example.test' },
+    });
+    fs.writeFileSync(path.join(home, '.claude', '.credentials.json'), credentialBlob('native-file-token'));
+    mocks.getAccount.mockReturnValue({ adapterId: 'claude', email: 'owner@example.test' });
+    mocks.probeClaudeOauthUsage.mockResolvedValue({ windows: [cliWindow('Semanal', 0.2)] });
+    const keychainProbe = vi.fn(() => true);
+
+    expect((await fetchClaudeAccountUsageWindows('owner', { now: NOW, home, keychainProbe })).windows?.[0]?.usedRatio)
+      .toBe(0.2);
+    expect(mocks.probeClaudeOauthUsage).toHaveBeenCalledWith('native-file-token', expect.objectContaining({ now: NOW }));
+    expect(keychainProbe).not.toHaveBeenCalled();
+    expect(mocks.readNativeOAuthCredential).not.toHaveBeenCalled();
+    expect(mocks.spawnSync).not.toHaveBeenCalled();
+  });
+
   it('returns no-credential for non-claude or missing accounts', async () => {
     mocks.getAccount.mockReturnValue({ adapterId: 'kimi' });
     expect(
