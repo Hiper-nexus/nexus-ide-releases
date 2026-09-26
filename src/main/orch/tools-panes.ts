@@ -748,7 +748,7 @@ const paneSpawn: McpToolDef = {
             adHocAdapterId,
           )
         : null;
-      const squadAgent = !uniqueSealed && !adHocModel
+      const squadAgent = !autoRoute && !uniqueSealed && !adHocModel
         ? findAgentInAnySquad(adHocAdapterId)?.agent
         : undefined;
       const selectedAdHocModel = uniqueSealed?.model ?? adHocModel ?? squadAgent?.model;
@@ -1284,7 +1284,9 @@ const paneSpawn: McpToolDef = {
       const briefingWarn = briefingPointerWarning(
         options.prompt ?? str(args, 'prompt') ?? null,
       );
-      const taskHarnessReceipt = harnessReceiptForTask(str(args, 'task'), {
+      // The structured route already describes this spawn; a table receipt
+      // would invent medium for a CLI with no native effort control (F-163).
+      const taskHarnessReceipt = autoRoute ? null : harnessReceiptForTask(str(args, 'task'), {
         ...(options.model ? { model: options.model } : {}),
         ...(options.effort ? { effort: options.effort as 'low' | 'medium' | 'high' } : {}),
       });

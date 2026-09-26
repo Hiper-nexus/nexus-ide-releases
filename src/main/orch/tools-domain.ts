@@ -1581,6 +1581,7 @@ export async function routeTaskForCaller(
             missionId: missionId ?? undefined,
           }),
         models,
+        efforts: a.efforts,
       };
     });
   let adapters = buildAdapters(new Set([...excluded, ...quotaExcluded]));
@@ -1647,6 +1648,7 @@ export async function routeTaskForCaller(
       multiScore: Boolean(missionId),
       specialtyBenchmark: loadSpecialtyBenchmark(),
       specialtyOverride: routing.specialtyOverride,
+      effortOverride: routing.effortOverride,
       ...(internal.tieBreakUseCounts
         ? { tieBreakUseCounts: internal.tieBreakUseCounts }
         : {}),

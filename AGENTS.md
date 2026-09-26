@@ -644,9 +644,11 @@ saber isto antes de mexer:
   (`setToolPickRegistry`). Medido: "ver o que outro pane está fazendo" →
   pane_read 0.84; "rodar os testes" → terminal_run 1.00.
 - **`nexus_route_task` com Jev** (`orch/jev-task-routing.ts`, surface
-  `taskRouting`): tier e especialidade julgados numa chamada, cada campo
+  `taskRouting`): tier, especialidade e esforço julgados numa chamada, cada campo
   aceito só com confiança ≥ 0.6 (senão a heurística de palavras-chave, por
-  campo); `tier` passado pelo chamador continua mandando;
+  campo); `tier` passado pelo chamador continua mandando na complexidade/modelo;
+  o esforço é uma decisão independente sobre a tarefa, sem piso por especialidade.
+  Pin humano/roster continua prevalecendo; esforço automático respeita a CLI;
   `specialtyOverride` é seam aditivo do `RouteContext` (política/benchmark/
   catálogo/reserva intocados). Resultado ganha `classifierSource`
   (`jev|heuristic|mixed`) e `escalate` (0..1) — informação para o Maestro,

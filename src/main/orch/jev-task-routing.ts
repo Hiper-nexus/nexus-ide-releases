@@ -4,7 +4,7 @@
  *
  * O router continua dono da decisão (tabela de custo/capacidade, catálogo,
  * reserva, roster). O Jev só troca a HEURÍSTICA de palavras-chave por um
- * julgamento calibrado em dois campos — tier e especialidade —, cada um
+ * julgamento calibrado de tier, especialidade e esforço por turno, cada um
  * aceito só com confiança ≥ 0.6 e caindo para a heurística quando não.
  * `escalate` é um sinal adicional para o Maestro ("isto pede o modelo mais
  * forte ou revisão humana?"), nunca uma decisão. FAIL-OPEN: sem chave,
@@ -24,7 +24,9 @@ import {
   recordJevDecision,
 } from '../jev/jev-decision-log';
 import {
+  isRouteEffort,
   ROUTE_SPECIALTIES,
+  type RouteEffort,
   type RouteSpecialty,
 } from '../../shared/mission-route-specialty';
 import type { TaskTier } from './task-router';
@@ -79,6 +81,25 @@ const TASK_ROUTING_QUESTIONS: Record<string, JevQuestion> = {
       general: 'none of the above clearly applies or the task mixes several',
     },
   },
+  effort: {
+    type: 'choice',
+    instructions:
+      'Choose the reasoning effort needed per turn to complete this software task reliably. ' +
+      'Judge the actual reasoning work, independently of the work specialty, project importance, ' +
+      'prompt length or model/provider. Choose the lowest effort that can solve it; mentioning ' +
+      'auth, security or deployment does not by itself require deep reasoning.',
+    criteria: {
+      low: 'Mechanical inspection or a small obvious edit with an established solution: ' +
+        'lookup, list, typo, rename, one-line fix, documentation or label change.',
+      medium: 'Ordinary scoped implementation or diagnosis using established patterns; ' +
+        'a few related files and straightforward checks, without subtle cross-system interactions.',
+      high: 'Subtle debugging, architecture, algorithms or changes with interacting constraints ' +
+        'across components; requires tracing alternatives and checking non-obvious failure modes.',
+      xhigh: 'Exceptionally difficult or ambiguous reasoning with multiple coupled systems and ' +
+        'serious failure consequences; deep design, adversarial analysis or complex recovery ' +
+        'where high effort is insufficient.',
+    },
+  },
   escalate: {
     type: 'noul',
     instructions:
@@ -96,6 +117,8 @@ export interface JevTaskClassification {
   tierConfidence: number;
   specialty: RouteSpecialty;
   specialtyConfidence: number;
+  effort?: RouteEffort;
+  effortConfidence?: number;
   escalate: number;
   model: string;
 }
@@ -150,6 +173,9 @@ export async function classifyTaskForRouting(
   const tierAnswer = result.answers.tier;
   const specialtyAnswer = result.answers.specialty;
   const escalateAnswer = result.answers.escalate;
+  const effortAnswer = result.answers.effort;
+  const effort = effortAnswer?.type === 'choice' && isRouteEffort(effortAnswer.choice)
+    ? effortAnswer.choice : undefined;
   if (
     tierAnswer?.type !== 'choice' ||
     specialtyAnswer?.type !== 'choice' ||
@@ -164,6 +190,8 @@ export async function classifyTaskForRouting(
     tierConfidence: tierAnswer.confidence,
     specialty: specialtyAnswer.choice,
     specialtyConfidence: specialtyAnswer.confidence,
+    effort,
+    effortConfidence: effort && effortAnswer?.type === 'choice' ? effortAnswer.confidence : undefined,
     escalate: escalateAnswer?.type === 'noul' ? escalateAnswer.noul : 0,
     model: result.model,
   };
@@ -201,6 +229,7 @@ export function routingOverridesFrom(
 ): {
   tierOverride: TaskTier | undefined;
   specialtyOverride: RouteSpecialty | undefined;
+  effortOverride: RouteEffort | undefined;
   classifierSource: ClassifierSource;
   escalate: number | undefined;
 } {
@@ -208,6 +237,7 @@ export function routingOverridesFrom(
     return {
       tierOverride: callerTier,
       specialtyOverride: undefined,
+      effortOverride: undefined,
       classifierSource: 'heuristic',
       escalate: undefined,
     };
@@ -217,11 +247,14 @@ export function routingOverridesFrom(
     classification.tierConfidence >= TASK_ROUTING_MIN_CONFIDENCE;
   const specialtyFromJev =
     classification.specialtyConfidence >= TASK_ROUTING_MIN_CONFIDENCE;
-  const usedJev = Number(tierFromJev) + Number(specialtyFromJev);
+  const effortFromJev = isRouteEffort(classification.effort) &&
+    (classification.effortConfidence ?? 0) >= TASK_ROUTING_MIN_CONFIDENCE;
+  const usedJev = Number(tierFromJev) + Number(specialtyFromJev) + Number(effortFromJev);
   return {
     tierOverride: callerTier ?? (tierFromJev ? classification.tier : undefined),
     specialtyOverride: specialtyFromJev ? classification.specialty : undefined,
-    classifierSource: usedJev === 2 ? 'jev' : usedJev === 1 ? 'mixed' : 'heuristic',
+    effortOverride: effortFromJev ? classification.effort : undefined,
+    classifierSource: usedJev === 3 ? 'jev' : usedJev > 0 ? 'mixed' : 'heuristic',
     escalate: classification.escalate,
   };
 }

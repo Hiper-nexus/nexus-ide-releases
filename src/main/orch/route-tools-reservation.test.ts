@@ -10,6 +10,7 @@ import {
   getProjectDomainStores,
 } from './project-domain-store-registry';
 import { testProjectScope } from './__tests__/scope-fixture';
+import type { JevTaskRoutingResult } from './jev-task-routing';
 
 const mocks = vi.hoisted(() => ({
   listProviderSettings: vi.fn(),
@@ -17,6 +18,12 @@ const mocks = vi.hoisted(() => ({
   providerReadiness: vi.fn(() => ({ ready: true, reason: 'ready' })),
   hasAvailableAccount: vi.fn(() => true),
   routableWorkerCliIds: new Set<string>(['codex']),
+  classifyTaskForRouting: vi.fn(async (): Promise<JevTaskRoutingResult> => ({ kind: 'skipped' })),
+}));
+
+vi.mock('./jev-task-routing', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./jev-task-routing')>()),
+  classifyTaskForRouting: mocks.classifyTaskForRouting,
 }));
 
 vi.mock('../persistence/provider-config-store', () => ({
@@ -102,6 +109,34 @@ afterAll(() => {
 });
 
 describe('nexus_route_task RouteReservation durável', () => {
+  it.each([
+    { effort: 'low' as const, confidence: 0.9, efforts: ['low', 'medium', 'high'], expected: 'low' },
+    { effort: 'xhigh' as const, confidence: 0.9, efforts: ['low', 'medium', 'high'], expected: 'high' },
+    { effort: 'xhigh' as const, confidence: 0.45, efforts: ['low', 'medium', 'high'], expected: 'high' },
+    { effort: 'high' as const, confidence: 0.9, efforts: [], expected: undefined },
+  ])('persists native effort $expected from Jev $effort at confidence $confidence', async ({ effort, confidence, efforts, expected }) => {
+    mocks.classifyTaskForRouting.mockResolvedValueOnce({ kind: 'classified', classification: {
+      tier: 'hard', tierConfidence: 0.9, specialty: 'bug', specialtyConfidence: 0.9,
+      effort, effortConfidence: confidence, escalate: 0.2, model: 'jev-test',
+    } });
+    const previousProviders = mocks.listProviderSettings();
+    mocks.listProviderSettings.mockReturnValue([{
+      adapterId: 'codex', enabled: true, installed: true, authStrategy: 'oauth',
+      models: ['gpt-5.6-sol'], efforts,
+    }]);
+    const routeTool = buildDomainTools().find((tool) => tool.name === 'nexus_route_task')!;
+    try {
+      const result = await routeTool.handler({ task: 'Diagnose the reported failure' }, context()) as {
+        effort?: string; routeReservationId: string; reason: string;
+      };
+      expect(result.effort).toBe(expected);
+      expect(result.reason).toContain(`source=${confidence >= 0.6 ? 'jev' : 'tier'}`);
+      expect(getProjectDomainStores(scope).missions.getRouteReservation(result.routeReservationId)?.decision.effort).toBe(expected);
+    } finally {
+      mocks.listProviderSettings.mockReturnValue(previousProviders);
+    }
+  });
+
   it('reserva rota somente para o orquestrador, nunca para worker', async () => {
     const routeTool = buildDomainTools().find(
       (candidate) => candidate.name === 'nexus_route_task',

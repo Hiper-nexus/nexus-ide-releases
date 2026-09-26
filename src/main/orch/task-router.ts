@@ -26,11 +26,12 @@ import {
   type ModelCatalog,
 } from '../adapters/model-catalog';
 import {
-  applyEffortFloor,
+  ROUTE_EFFORTS,
   classifyRouteSpecialty,
   preferAdapterOrder,
   resolveSpecialtyPolicy,
   type RoutePolicySource,
+  type RouteEffort,
   type RouteSpecialty,
   type SpecialtyBenchmark,
 } from '../../shared/mission-route-specialty';
@@ -40,6 +41,8 @@ import {
   preferOperationalBand,
 } from '../../shared/model-operational-bands';
 import { CODEX_FRONTIER_MODEL, migrateModelId } from '../../shared/model-defaults';
+import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
+import { adapterSchema } from '../../shared/adapter-types';
 import { adapterCircuitBreakers } from './circuit-breaker';
 import { multiScoreRerank, tieBreakByUse } from './route-pipeline';
 
@@ -80,6 +83,8 @@ export interface RouteContext {
    * substitui só a heurística de palavras-chave; política/benchmark seguem.
    */
   specialtyOverride?: RouteSpecialty;
+  /** Reasoning per turn judged independently of model rank and specialty. */
+  effortOverride?: RouteEffort;
   /**
    * Spawn da mão do operador (25/09): CLIs já abertas pelo mesmo agente pai.
    * Só desempata dentro de TIE_MARGIN (route-pipeline.tieBreakByUse); ausente
@@ -298,6 +303,27 @@ export interface AdapterAvailability {
   installed: boolean;
   /** Optional resolved model list; when present, candidates outside it are skipped. */
   models?: string[];
+  /** Live native capabilities; [] = no effort control, absent = bundled contract. */
+  efforts?: readonly string[];
+}
+
+const BUNDLED_EFFORTS = new Map(BUILTIN_ADAPTERS.map((raw) => {
+  const adapter = adapterSchema.parse(raw);
+  return [adapter.id, adapter.kind === 'cli-pty' ? adapter.control?.effort?.levels ?? [] : []];
+}));
+
+function effortForTier(tier: TaskTier): RouteEffort {
+  return tier === 'critical' ? 'xhigh' : tier === 'hard' ? 'high' : tier === 'medium' ? 'medium' : 'low';
+}
+
+/** Automatic routes never claim a knob the CLI cannot receive. */
+function nativeRouteEffort(effort: RouteEffort, adapter: AdapterAvailability): RouteEffort | undefined {
+  const levels = adapter.efforts ?? BUNDLED_EFFORTS.get(adapter.id) ?? [];
+  if (levels.includes(effort)) return effort;
+  const supported = ROUTE_EFFORTS.filter((level) => levels.includes(level));
+  // Clamp to the nearest supported depth, respecting the CLI's minimum too.
+  return supported.filter((level) => ROUTE_EFFORTS.indexOf(level) <= ROUTE_EFFORTS.indexOf(effort)).at(-1)
+    ?? supported[0];
 }
 
 /**
@@ -416,13 +442,7 @@ function evaluatedCandidates(
   catalog: ModelCatalog,
 ): RouteCandidate[] {
   const dimension = qualityDimension(specialty, tier);
-  const effort = tier === 'critical'
-    ? 'xhigh'
-    : tier === 'hard'
-      ? 'high'
-      : tier === 'medium'
-        ? 'medium'
-        : 'low';
+  const effort = effortForTier(tier);
   return [...available.values()]
     .flatMap((adapter) => (adapter.models ?? []).flatMap((model) => {
       const info = modelCatalogInfo(catalog, adapter.id, model);
@@ -471,6 +491,11 @@ export function routeTask(
 
   const classification = classifyTask(taskText);
   const tier = tierOverride ?? classification.tier;
+  const requestedEffort = context.effortOverride ?? effortForTier(tier);
+  const effortFor = (adapterId: string) => nativeRouteEffort(requestedEffort, available.get(adapterId)!);
+  const effortNoteFor = (adapterId: string) =>
+    `; effort=${effortFor(adapterId) ?? 'cli-default'} requested=${requestedEffort}` +
+    ` source=${context.effortOverride ? 'jev' : 'tier'}`;
   const heuristicSpecialty = classifyRouteSpecialty(taskText);
   const specialtyVerdict = context.specialtyOverride
     ? {
@@ -659,7 +684,7 @@ export function routeTask(
       if (alt) chosen = alt;
     }
     const pick = chosen.c;
-    const effort = applyEffortFloor(pick.effort, policy.effortFloor);
+    const effort = effortFor(pick.adapterId);
     const policySource: RoutePolicySource = chosen.evaluated
       ? 'nexus-eval'
       : policy.source;
@@ -695,8 +720,8 @@ export function routeTask(
       adapterId: pick.adapterId,
       model: pick.model,
       effort,
-      reason: `${tier}${borrowed}${specialtyNote}; ${why}${costNote}${evaluationNote}${riskNote}${bandNote}${multiScoreNote}${tieBreakNote}${preferNote}`,
-      alternatives: ranked.filter((r) => r.c !== pick).map((r) => r.c),
+      reason: `${tier}${borrowed}${specialtyNote}; ${why}${costNote}${evaluationNote}${riskNote}${bandNote}${multiScoreNote}${tieBreakNote}${preferNote}${effortNoteFor(pick.adapterId)}`,
+      alternatives: ranked.filter((r) => r.c !== pick).map(({ c }) => ({ ...c, effort: effortFor(c.adapterId) })),
       specialty: specialtyVerdict.specialty,
       policySource,
     };
@@ -716,8 +741,8 @@ export function routeTask(
   return {
     tier,
     adapterId: fallback,
-    effort: applyEffortFloor(table[tier][0]?.effort, policy.effortFloor),
-    reason: `${tier}; specialty=${specialtyVerdict.specialty} source=${policy.source}; ${why}; nenhum candidato da tabela instalado — usando ${fallback} (menos usado na missão)`,
+    effort: effortFor(fallback),
+    reason: `${tier}; specialty=${specialtyVerdict.specialty} source=${policy.source}; ${why}; nenhum candidato da tabela instalado — usando ${fallback} (menos usado na missão)${effortNoteFor(fallback)}`,
     alternatives: [],
     specialty: specialtyVerdict.specialty,
     policySource: policy.source,

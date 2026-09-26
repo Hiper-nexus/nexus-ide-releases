@@ -25,6 +25,8 @@ function answer(
   specialty: string,
   specialtyConfidence: number,
   escalate = 0.1,
+  effort = 'medium',
+  effortConfidence = 0.9,
 ): JevResult {
   return {
     model: 'jev-test',
@@ -37,6 +39,7 @@ function answer(
         confidence: specialtyConfidence,
       },
       escalate: { type: 'noul', noul: escalate },
+      effort: { type: 'choice', choice: effort, probabilities: { [effort]: 0.9 }, confidence: effortConfidence },
     },
     usage: { input_tokens: 80, output_tokens: 12 },
   };
@@ -51,6 +54,8 @@ describe('classifyTaskWithJev', () => {
       tierConfidence: 0.8,
       specialty: 'bug',
       specialtyConfidence: 0.7,
+      effort: 'medium',
+      effortConfidence: 0.9,
       escalate: 0.4,
       model: 'jev-test',
     });
@@ -81,6 +86,24 @@ describe('classifyTaskWithJev', () => {
 });
 
 describe('classifyTaskForRouting', () => {
+  it('asks for independent effort and keeps other fields if that answer is missing or invalid', async () => {
+    const judge = vi.fn<JudgeMock>(async () => answer('critical', 0.9, 'security', 0.9, 0.1, 'low'));
+    expect(await classifyTaskForRouting('Read an auth setting', { judge })).toMatchObject({
+      kind: 'classified', classification: { tier: 'critical', effort: 'low', effortConfidence: 0.9 },
+    });
+    expect(judge.mock.calls[0]![0].questions.effort).toMatchObject({
+      type: 'choice', criteria: { low: expect.any(String), medium: expect.any(String), high: expect.any(String), xhigh: expect.any(String) },
+    });
+    for (const effort of ['invalid', undefined]) {
+      const result = answer('easy', 0.9, 'doc', 0.8);
+      if (effort) result.answers.effort = { type: 'choice', choice: effort, confidence: 0.9, probabilities: {} };
+      else delete result.answers.effort;
+      expect(await classifyTaskForRouting('Fix a typo', { judge: async () => result })).toMatchObject({
+        kind: 'classified', classification: { tier: 'easy', specialty: 'doc', effort: undefined },
+      });
+    }
+  });
+
   it('classified quando o Jev responde', async () => {
     const judge = vi.fn<JudgeMock>(async () => answer('hard', 0.8, 'bug', 0.7));
     const out = await classifyTaskForRouting('corrigir race', { judge });
@@ -126,14 +149,17 @@ describe('routingOverridesFrom', () => {
     tierConfidence: 0.9,
     specialty: 'security',
     specialtyConfidence: 0.8,
+    effort: 'high',
+    effortConfidence: 0.9,
     escalate: 0.7,
     model: 'jev-test',
   };
 
-  it('uses both Jev fields when confident (source jev)', () => {
+  it('uses all three Jev fields when confident (source jev)', () => {
     expect(routingOverridesFrom(full, undefined)).toEqual({
       tierOverride: 'critical',
       specialtyOverride: 'security',
+      effortOverride: 'high',
       classifierSource: 'jev',
       escalate: 0.7,
     });
@@ -146,7 +172,7 @@ describe('routingOverridesFrom', () => {
       classifierSource: 'mixed',
     });
     expect(
-      routingOverridesFrom({ ...full, tierConfidence: 0.3, specialtyConfidence: 0.2 }, undefined),
+      routingOverridesFrom({ ...full, tierConfidence: 0.3, specialtyConfidence: 0.2, effortConfidence: 0.2 }, undefined),
     ).toMatchObject({ tierOverride: undefined, specialtyOverride: undefined, classifierSource: 'heuristic' });
   });
 
@@ -161,8 +187,21 @@ describe('routingOverridesFrom', () => {
     expect(routingOverridesFrom(null, 'medium')).toEqual({
       tierOverride: 'medium',
       specialtyOverride: undefined,
+      effortOverride: undefined,
       classifierSource: 'heuristic',
       escalate: undefined,
+    });
+  });
+
+  it('confidence fallback is independent for effort and preserves a confident low judgment', () => {
+    expect(routingOverridesFrom({ ...full, effort: 'low' }, undefined)).toMatchObject({
+      tierOverride: 'critical', specialtyOverride: 'security', effortOverride: 'low', classifierSource: 'jev',
+    });
+    expect(routingOverridesFrom({ ...full, effortConfidence: 0.45 }, undefined)).toMatchObject({
+      tierOverride: 'critical', effortOverride: undefined, classifierSource: 'mixed',
+    });
+    expect(routingOverridesFrom({ ...full, tierConfidence: 0.2, specialtyConfidence: 0.2 }, undefined)).toMatchObject({
+      tierOverride: undefined, specialtyOverride: undefined, effortOverride: 'high', classifierSource: 'mixed',
     });
   });
 });

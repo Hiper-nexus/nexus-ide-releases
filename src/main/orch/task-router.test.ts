@@ -246,7 +246,7 @@ describe('routeTask', () => {
   it('promotes a newly discovered model only from task-specific evaluation evidence', () => {
     const decision = routeTask(
       'crie uma landing page responsiva com design excepcional',
-      [{ id: 'future-cli', installed: true, models: ['future-model-1'] }],
+      [{ id: 'future-cli', installed: true, models: ['future-model-1'], efforts: ['low', 'medium', 'high'] }],
       DEFAULT_ROUTING_TABLE,
       'hard',
       false,
@@ -292,7 +292,7 @@ describe('routeTask specialty + diversidade de onda', () => {
     expect(decision!.reason).toContain('specialty=visual');
   });
 
-  it('honra benchmark da especialidade quando a tabela tem linhas', () => {
+  it('honra a escolha de CLI do benchmark sem impor seu esforço à tarefa', () => {
     const decision = routeTask(
       'criar a nova tela de onboarding com estados vazios e acessibilidade',
       adapters('glm', 'agy', 'claude', 'codex'),
@@ -314,7 +314,7 @@ describe('routeTask specialty + diversidade de onda', () => {
     );
     expect(decision!.policySource).toBe('benchmark');
     expect(decision!.adapterId).toBe('codex');
-    expect(decision!.effort).toBe('high');
+    expect(decision!.effort).toBe('medium');
   });
 
   it('não trata tabela de fixture como benchmark', () => {

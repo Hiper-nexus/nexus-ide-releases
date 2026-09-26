@@ -53,7 +53,12 @@ vi.mock('./squad-store', async (importOriginal) => ({
             model: 'gemini-sealed',
           },
         }
-      : null,
+      : ref === 'kimi'
+        ? { squad: { id: 'squad-test', name: 'Teste', agents: [] }, agent: {
+            id: 'kimi-persona', agentName: 'Kimi persona', category: 'executor',
+            cli: 'kimi', model: 'kimi-code/k3', effort: 'high',
+          } }
+        : null,
   ),
 }));
 vi.mock('../persistence/settings-store', async (importOriginal) => ({
@@ -325,6 +330,25 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
     expect(harness.spawnPaneAndMaybePrompt.mock.calls[0]?.[0]).toMatchObject({
       spawnRoute: { source: 'heuristic', jevUnavailable: 'no-key' },
     });
+  });
+
+  it('auto-route without native effort keeps a null receipt instead of table medium', async () => {
+    setOperatorRouteResolver(async () => ({ adapterId: 'kimi', model: 'kimi-code/k3', classifierSource: 'jev' }));
+    const result = await paneSpawnTool.handler({ task: 'Read the file names only' }, userPane()) as {
+      harness: { effort: unknown; receipt?: string };
+    };
+    expect(result.harness.effort).toBeNull();
+    expect(result.harness.receipt).toBeUndefined();
+    expect(harness.spawnPaneAndMaybePrompt.mock.calls[0]?.[0].effort).toBeUndefined();
+  });
+
+  it('auto-route fallback without a model never inherits a persona effort', async () => {
+    setOperatorRouteResolver(async () => ({ adapterId: 'kimi' }));
+    const result = await paneSpawnTool.handler({ task: 'Read the file names only' }, userPane()) as {
+      harness: { effort: unknown };
+    };
+    expect(result.harness.effort).toBeNull();
+    expect(harness.spawnPaneAndMaybePrompt.mock.calls[0]?.[0].effort).toBeUndefined();
   });
 
   it('desempate recebe as CLIs do pai e dos filhos vivos dele', async () => {
