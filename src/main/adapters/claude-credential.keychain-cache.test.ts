@@ -1,4 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+const fixture = vi.hoisted(() => ({ home: '' }));
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>();
+  const homedir = () => fixture.home;
+  return { ...actual, homedir, default: { ...actual.default, homedir } };
+});
 
 /**
  * Regressão de campo (21/09): "fica pedindo o tempo inteiro permissão para o
@@ -33,6 +43,9 @@ function absent(): Error & { status: number } {
 let credential: typeof import('./claude-credential');
 
 beforeEach(async () => {
+  // Keychain denial falls back to ~/.claude/.credentials.json. A real HOME
+  // makes the assertions machine-dependent and can print a real login blob.
+  fixture.home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-keychain-cache-'));
   vi.resetModules();
   execFileSync.mockReset();
   vi.useFakeTimers();
@@ -43,6 +56,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   vi.useRealTimers();
+  fs.rmSync(fixture.home, { recursive: true, force: true });
 });
 
 const onMac = process.platform === 'darwin';
