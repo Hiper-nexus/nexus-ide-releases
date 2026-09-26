@@ -747,6 +747,8 @@ export function WorkspaceRail({
   const taskBoardSelected = isSelected(selection, 'task-board');
   const memorySelected = isSelected(selection, 'memory');
   const settingsSelected = isSelected(selection, 'settings');
+  // Início e Projeto dividem a primeira linha da grade; sozinho, ocupa a linha.
+  const pairedStart = Boolean(onOpenLauncher && projectEnabled && onOpenProject);
 
   const layoutRoot = useLayoutStore((s) => s.root);
   const totalPanes = listPanes(layoutRoot).length;
@@ -804,11 +806,23 @@ export function WorkspaceRail({
             </span>
           </span>
         </button>
+        {/* As duas entradas de trabalho lado a lado: criar ou abrir o que já existe. */}
+        {onOpenWorkspace ? (
+          <button
+            type="button"
+            className="workspace-rail__open-project"
+            aria-label="Abrir projeto existente"
+            title="Abrir projeto"
+            onClick={onOpenWorkspace}
+          >
+            <PixelIcon name="files" size={12} />
+          </button>
+        ) : null}
       </div>
 
       <ul className="workspace-rail__fixed" aria-label="Destinos fixos">
         {onOpenLauncher ? (
-          <li>
+          <li className={pairedStart ? undefined : 'workspace-rail__fixed-item--wide'}>
             <button
               type="button"
               className={`workspace-rail__row workspace-rail__fixed-row${
@@ -823,21 +837,8 @@ export function WorkspaceRail({
             </button>
           </li>
         ) : null}
-        {onOpenWorkspace ? (
-          <li>
-            <button
-              type="button"
-              className="workspace-rail__row workspace-rail__fixed-row"
-              aria-label="Abrir projeto existente"
-              onClick={onOpenWorkspace}
-            >
-              <PixelIcon name="files" size={12} />
-              <span className="workspace-rail__row-label">Abrir projeto</span>
-            </button>
-          </li>
-        ) : null}
         {projectEnabled && onOpenProject ? (
-          <li>
+          <li className={pairedStart ? undefined : 'workspace-rail__fixed-item--wide'}>
             <button
               type="button"
               className={`workspace-rail__row workspace-rail__fixed-row${
@@ -852,7 +853,7 @@ export function WorkspaceRail({
             </button>
           </li>
         ) : null}
-        <li>
+        <li className="workspace-rail__fixed-item--wide">
           <div className="workspace-rail__fixed-row-wrap">
             <button
               type="button"

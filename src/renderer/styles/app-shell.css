@@ -229,6 +229,10 @@
     auto auto auto auto
     minmax(var(--rail-projects-min), 1fr)
     minmax(0, auto);
+  /* Coluna presa à largura do rail: sem isto a faixa crescia até o conteúdo
+     mínimo do rodapé (~280px) e o overflow cortava a borda direita (⌘K, o +
+     dos Terminais, o chip Local) no rail padrão de 250px. */
+  grid-template-columns: minmax(0, 1fr);
   width: 100%;
   height: 100%;
   min-height: 0;
@@ -375,7 +379,47 @@
 }
 
 .workspace-rail__actions {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-1);
   padding: 0 var(--space-3) var(--space-2);
+}
+
+.workspace-rail__actions .workspace-rail__mission-cta {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+}
+
+/* Abrir projeto: secundário ao lado do Novo pedido, mesma altura (40px). */
+.workspace-rail__open-project {
+  appearance: none;
+  font: inherit;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: calc(var(--space-6) + var(--space-2));
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-overlay);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition:
+    background-color 120ms var(--ease-out-quart),
+    border-color 120ms var(--ease-out-quart),
+    color 120ms var(--ease-out-quart);
+}
+
+.workspace-rail__open-project:hover {
+  background: var(--surface-hover);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.workspace-rail__open-project:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* One persistent creation action, outside the scrolling project history. */
@@ -1223,12 +1267,23 @@
   flex-shrink: 0;
 }
 
+/* Destinos em grade de duas colunas: a altura que sobra vai para projetos e
+   missões. Terminais (trabalho vivo, contador e grade) ocupa a linha inteira. */
 .workspace-rail__fixed {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-1);
   padding: var(--space-2) var(--space-3);
   margin: 0;
   border-bottom: 1px solid var(--border);
+}
+
+.workspace-rail__fixed > li {
+  min-width: 0;
+}
+
+.workspace-rail__fixed-item--wide {
+  grid-column: 1 / -1;
 }
 
 .workspace-rail__fixed-row-wrap {
@@ -1278,9 +1333,25 @@
   gap: var(--space-2);
 }
 
+/* Célula da grade: alvo de 32px (piso de secundário no desktop), sem folga
+   vertical extra. */
+.workspace-rail__fixed-row {
+  gap: var(--space-1-5);
+  min-height: var(--space-6);
+  padding: 0 var(--space-1-5);
+}
+
+/* Em rail estreito quem cede é o texto (ellipsis), nunca o ícone. */
+.workspace-rail__row > svg {
+  flex-shrink: 0;
+}
+
 .workspace-rail__footer {
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
+  /* Mesma trava da navegação: o label de Configurações encolhe com ellipsis
+     em vez de empurrar o chip Local para fora do rail. */
+  grid-template-columns: minmax(0, 1fr);
   min-height: 0;
   padding: var(--space-2) var(--space-3);
   border-top: 1px solid var(--border);
@@ -1640,7 +1711,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-2);
+  gap: var(--space-1);
 }
 
 .workspace-rail__cockpit-status .workspace-rail__settings {

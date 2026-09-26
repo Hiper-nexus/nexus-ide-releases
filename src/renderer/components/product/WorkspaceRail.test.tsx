@@ -117,6 +117,24 @@ describe('WorkspaceRail', () => {
     expect(request.querySelector('.workspace-rail__mission-branch')).toBeNull();
   });
 
+  it('groups the entry actions and packs destinations in a compact grid', () => {
+    const { host } = renderRail({ onOpenLauncher: vi.fn(), onOpenWorkspace: vi.fn() });
+    const actions = host.querySelector('.workspace-rail__actions')!;
+    const destinations = host.querySelector('[aria-label="Destinos fixos"]')!;
+    const open = host.querySelector('[aria-label="Abrir projeto existente"]')!;
+    expect(actions.contains(open)).toBe(true);
+    expect(destinations.contains(open)).toBe(false);
+    const wide = (label: string) =>
+      host
+        .querySelector(`[aria-label="${label}"]`)!
+        .closest('li')!
+        .classList.contains('workspace-rail__fixed-item--wide');
+    expect(wide('Abrir Terminais')).toBe(true);
+    // Sem Projeto, Início não deixa buraco na primeira linha da grade.
+    expect(wide('Voltar ao Início')).toBe(true);
+    expect(wide('Abrir Quadro')).toBe(false);
+  });
+
   it('opens an existing project without entering the creation flow', () => {
     const onOpenWorkspace = vi.fn();
     const { host, handlers } = renderRail({ onOpenWorkspace });
