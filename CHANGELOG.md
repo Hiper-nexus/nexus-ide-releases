@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.103 — Diff sem confusão
+
+O Claude deixa de atribuir ao próprio comando alterações feitas por outro pane na mesma pasta. Inclui tudo da 0.76.102 (Mão livre), agora também na distribuição macOS.
+
+- **Diff com autoria correta (F-161).** A comparação automática de arquivos ao redor de comandos Bash captava edições concorrentes de outros agentes, até durante uma consulta de CI. A configuração privada do pane desativa essa atribuição. Hooks e diffs de edições explícitas continuam funcionando; o perfil global não é alterado.
+- **Limite do isolamento.** As abas organizam os panes; arquivos e branch continuam compartilhados quando os agentes usam a mesma pasta. Para trabalhos independentes, use worktrees distintas. A correção vale para panes iniciados ou retomados com esta versão e não apaga o histórico já mostrado.
+
 ## 0.76.102 — Mão livre
 
 O pane que você abre pelo "+ Pane" nunca mais fica preso a uma missão. Se o agente dele criar uma missão, ela nasce pronta para abrir workers, e quando termina, falha ou para, o pane volta a ser seu. Inclui tudo da 0.76.101 (Motor leve).

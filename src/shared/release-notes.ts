@@ -7042,13 +7042,12 @@ export const RELEASE_076101: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.102',
-  date: '2026-09-25',
-  codename: 'Mão livre',
+  version: '0.76.103',
+  date: '2026-09-26',
+  codename: 'Diff sem confusão',
   summary:
-    'O pane que você abre pelo "+ Pane" nunca mais fica preso a uma missão: ' +
-    'se o agente dele criar uma, ela já abre workers, e quando termina, falha ' +
-    'ou para, o pane volta a ser seu. Inclui tudo da 0.76.101 (Motor leve).',
+    'O Claude deixa de atribuir ao seu comando alterações feitas por outro ' +
+    'pane na mesma pasta. Inclui as melhorias da 0.76.102 (Mão livre).',
   highlights: [
     {
       title: 'Missão criada pelo pane abre workers',
@@ -7066,6 +7065,14 @@ export const CURRENT_RELEASE: AppRelease = {
     },
   ],
   fixes: [
+    {
+      title: 'Diff de outro pane não aparece como edição do Claude',
+      detail:
+        'A comparação automática de arquivos antes e depois de comandos ' +
+        'do terminal podia captar alterações de outro agente. Desativamos ' +
+        'essa atribuição; os diffs de edições explícitas continuam. Abas na ' +
+        'mesma pasta ainda compartilham arquivos e branch.',
+    },
     {
       title: 'Missão encerrada devolve o pane',
       detail:
