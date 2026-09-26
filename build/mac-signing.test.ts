@@ -14,6 +14,7 @@ import {
   EXPECTED_DEVELOPER_ID_IDENTITY,
   assertMacPublishReleaseEnvironment,
   isAppleReleaseSigning,
+  macTimestampAuthority,
   shouldIgnoreMacSigningFile,
 } from './mac-signing';
 import {
@@ -111,6 +112,17 @@ describe('macOS signing modes', () => {
       APPLE_TIMESTAMP_AUTHORITY_URL,
     );
     expect(options.identityValidation).toBeUndefined();
+  });
+
+  it('troca a autoridade de carimbo só por URL (rota IPv6 quebrada, 26/09)', () => {
+    expect(macTimestampAuthority({})).toBe(APPLE_TIMESTAMP_AUTHORITY_URL);
+    expect(
+      macTimestampAuthority({ NEXUS_MAC_TIMESTAMP_URL: ' http://17.32.213.161/ts01 ' }),
+    ).toBe('http://17.32.213.161/ts01');
+    // Desligar o carimbo quebraria a notarização: não é uma troca aceita.
+    expect(macTimestampAuthority({ NEXUS_MAC_TIMESTAMP_URL: 'none' })).toBe(
+      APPLE_TIMESTAMP_AUTHORITY_URL,
+    );
   });
 
   it('does not send packaged data resources through codesign', () => {

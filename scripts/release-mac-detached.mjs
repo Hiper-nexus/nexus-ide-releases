@@ -256,7 +256,13 @@ export async function runDetachedRelease(options, deps) {
       programArguments: ['/bin/zsh', '-lc', command],
       workingDirectory: deps.repoRoot,
       logPath,
-      environment: { HOME: deps.realHome, NEXUS_RELEASE_NODE: deps.nodePath },
+      environment: {
+        HOME: deps.realHome,
+        NEXUS_RELEASE_NODE: deps.nodePath,
+        // Autoridade de carimbo alternativa (build/mac-signing.ts): o job do
+        // launchd não herda o ambiente de quem disparou a release.
+        ...(deps.timestampUrl ? { NEXUS_MAC_TIMESTAMP_URL: deps.timestampUrl } : {}),
+      },
     }),
   );
 
@@ -341,6 +347,7 @@ async function main(argv) {
     nodePath,
     nodeVersion,
     expectedNodeVersion: packageJson.nexusRelease?.node,
+    timestampUrl: process.env.NEXUS_MAC_TIMESTAMP_URL?.trim() || undefined,
     makeWorkDir: () => fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-release-mac-')),
     nonce: () => randomBytes(4).toString('hex'),
     launchdList: () => spawnSync('launchctl', ['list'], { encoding: 'utf8' }).stdout ?? '',

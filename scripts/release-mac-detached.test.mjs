@@ -209,6 +209,20 @@ describe('runDetachedRelease', () => {
     expect(calls.at(-1)).toEqual(['bootout', 'gui/501/com.nexuside.release.0.76.99.abcd']);
   });
 
+  it('repassa a autoridade de carimbo alternativa ao job do launchd', async () => {
+    const { deps } = fakeDeps({ jobExitCode: 0 });
+    let plist = '';
+    const launchctl = deps.launchctl;
+    deps.launchctl = (args) => {
+      if (args[0] === 'bootstrap') plist = fs.readFileSync(args[2], 'utf8');
+      return launchctl(args);
+    };
+    deps.timestampUrl = 'http://17.32.213.161/ts01';
+    await runDetachedRelease({ from: 'build', publish: false }, deps);
+    expect(plist).toContain('<key>NEXUS_MAC_TIMESTAMP_URL</key>');
+    expect(plist).toContain('<string>http://17.32.213.161/ts01</string>');
+  });
+
   it('job vermelho: bootout mesmo assim e o código volta', async () => {
     const { deps, calls } = fakeDeps({ jobExitCode: 7 });
     expect(await runDetachedRelease({ from: 'candidate', publish: true }, deps)).toBe(7);

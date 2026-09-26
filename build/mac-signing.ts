@@ -138,6 +138,22 @@ function isNexusRedlineSigningTarget(filePath: string): boolean {
 export const APPLE_TIMESTAMP_AUTHORITY_URL =
   'http://timestamp.apple.com/ts01';
 
+/**
+ * `NEXUS_MAC_TIMESTAMP_URL` troca a autoridade de carimbo só na execução que
+ * a define. Em 26/09 o timestamp.apple.com respondia por IPv4 e travava por
+ * IPv6, a rota preferida do macOS, e toda release morria em "A timestamp was
+ * expected but was not found". Aponte para o IPv4 da mesma autoridade da
+ * Apple: a notarização exige carimbo seguro, por isso só URL é aceita.
+ */
+export function macTimestampAuthority(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): string {
+  const override = env.NEXUS_MAC_TIMESTAMP_URL?.trim();
+  return override && /^https?:\/\/\S+$/u.test(override)
+    ? override
+    : APPLE_TIMESTAMP_AUTHORITY_URL;
+}
+
 export function createMacSignOptions(teamId: string | undefined) {
   if (teamId !== undefined && !isAppleReleaseSigning(teamId)) {
     throw new Error('Apple Team ID must contain exactly 10 uppercase letters or digits.');
@@ -177,7 +193,7 @@ export function createMacSignOptions(teamId: string | undefined) {
           : {}),
       // Usa a autoridade oficial de carimbo de tempo da Apple com URL explícita
       // para evitar falhas de timeout ("A timestamp was expected but was not found").
-      timestamp: isRelease ? APPLE_TIMESTAMP_AUTHORITY_URL : 'none',
+      timestamp: isRelease ? macTimestampAuthority() : 'none',
     }),
   };
 }
