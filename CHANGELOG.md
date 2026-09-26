@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.76.105 — Perfil e logins
+
+O navegador interno ganha um perfil próprio com importação seletiva de sessões compatíveis do Chrome. Reúne também as correções de panes e missões da 0.76.104.
+
+- **Perfil e logins.** Botão na barra do navegador para escolher Perfil Nexus ou Isolado, selecionar o perfil do Chrome e os sites. Importação compatível no macOS, sem modificar o Chrome; resultados parciais são explícitos. Senhas, extensões e Google Sync não são importados.
+- **Compartilhar com agentes é uma escolha.** A opção vale para novos navegadores dos agentes. Panes existentes preservam seu modo; sessões ficam no cofre cifrado e cada pane mantém sua própria política de rede.
+- **Busca na barra (F-362).** Palavras como `coolify` viram pesquisa; URLs, domínios e localhost continuam navegando com a validação de segurança do Main.
+- **Helpers na janela correta (F-164/F-165).** A abertura segue o pane pai e o projeto autorizado, mesmo com outra janela em foco.
+- **Alertas falsos removidos (F-169).** `internal_error` mencionado no pedido e rótulos como `Failure|rate-limit` não são mais tratados como falhas do provider.
+- **Retentativa com horário real (F-170).** Avisos acompanham cada agendamento e deixam de prometer horários vencidos.
+- **Verificação.** Suíte completa: 1.533 arquivos, 16.309 testes aprovados e 10 skips. Fluxo do navegador verificado no Electron com banco Chrome e sessões sintéticos.
+
 ## 0.76.104 — Missão até o fim
 
 A missão só conclui quando o worker termina, e o pane de uma missão pronta volta a aceitar o seu ajuste. Inclui tudo da 0.76.102 (Mão livre) e da 0.76.103 (Diff sem confusão), que não chegaram a ser publicadas.

@@ -35,6 +35,20 @@ feita na sessão original; isso não satisfez o pedido de pane visível.
 
 ## Próximos passos autorizados
 
+Atualização da execução: perfil/importação/busca implementados (`554d9ef8`) e validados com
+SQLite sintético e Electron real, inclusive página autenticada e troca para
+Isolado. A revisão interna apontou corridas de logout e opt-in; as regressões
+foram corrigidas e a revisão aprovou. F-169 remove falsos alertas de provider;
+F-170 (`ae0ba965`) corrige a publicação do horário real das retentativas; F-169
+está em `561b6ec1`. Detalhes em
+`docs/analysis/2026-09-26-browser-profile.md`. Restam consolidação dos commits,
+push e gate da release 0.76.105. A rodada final, em job one-shot do launchd,
+passou os 1.533 arquivos: 16.309 testes aprovados e 10 skips. Os testes nativos
+precisam nascer fora de um PTY supervisionado, como o gate da release. O teste
+de cache do Keychain também passou a usar HOME sintético (`9b5dac09`), evitando
+ler o arquivo de sessão real como fallback. Typecheck do app/servidor e auditoria
+de renderer sinks passaram.
+
 1. Concluir o perfil persistente próprio do Nexus no navegador interno. Botão
    **Perfil e logins** abre escolha de perfil do Chrome e sites; importa só
    sessões compatíveis, preservando o perfil Chrome original e mostrando

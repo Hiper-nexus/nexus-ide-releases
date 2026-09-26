@@ -7041,7 +7041,7 @@ export const RELEASE_076101: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076104: AppRelease = {
   version: '0.76.104',
   date: '2026-09-26',
   codename: 'Missão até o fim',
@@ -7119,5 +7119,56 @@ export const CURRENT_RELEASE: AppRelease = {
         'preso a ela, sem abrir panes nem criar outra missão. Agora volta a ser ' +
         'a sua mão na chamada seguinte.',
     },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.105',
+  date: '2026-09-26',
+  codename: 'Perfil e logins',
+  summary:
+    'O navegador ganha um Perfil Nexus com importação de sessões compatíveis ' +
+    'do Chrome e busca na barra. A entrega também reúne as correções de panes, ' +
+    'missões, isolamento de abas e escolha de esforço.',
+  highlights: [
+    {
+      title: 'Seus logins no navegador do Nexus',
+      detail:
+        'Abra Perfil e logins, escolha um perfil do Chrome e marque os sites. ' +
+        'No macOS, o Nexus importa as sessões compatíveis sem alterar o Chrome. ' +
+        'Alguns sites podem exigir novo login; senhas e extensões não são importadas.',
+    },
+    {
+      title: 'Compartilhamento escolhido por você',
+      detail:
+        'Use o Perfil Nexus ou mantenha uma aba isolada. Você pode permitir ' +
+        'o perfil em novos navegadores dos agentes; abas já existentes conservam a escolha anterior.',
+    },
+    {
+      title: 'Busca na barra de endereço',
+      detail: 'Palavras como coolify viram pesquisa; endereços continuam abrindo diretamente.',
+    },
+    ...RELEASE_076104.highlights,
+  ],
+  fixes: [
+    {
+      title: 'Helpers na janela do seu pane',
+      detail:
+        'Outra janela aberta não faz o agente perder o destino de novos panes. ' +
+        'O helper segue a janela do pane que fez o pedido e o projeto autorizado.',
+    },
+    {
+      title: 'Alertas de provider com evidência',
+      detail:
+        'Mencionar internal_error no pedido ou citar Failure|rate-limit não ' +
+        'dispara mais aviso de provider instável nem cooldown indevido.',
+    },
+    {
+      title: 'Nova tentativa com horário atual',
+      detail:
+        'Quando ainda não há conta disponível, o aviso mostra o próximo horário real. ' +
+        'Ao terminar as tentativas, deixa de prometer uma recuperação já vencida.',
+    },
+    ...RELEASE_076104.fixes,
   ],
 };
