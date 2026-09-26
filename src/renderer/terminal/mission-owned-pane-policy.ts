@@ -57,6 +57,22 @@ export function shouldKickMissionEngineOnDeadPaneKey(input: {
   return input.isOrchestrator !== true;
 }
 
+/**
+ * Exceção à regra acima: Maestro de missão CONCLUÍDA. O main só religa a CLI
+ * de missão running (a cerca de autoridade recusa o spawn e o reconciliador
+ * mata em 1s), então religar no pane era beco sem saída. A tecla faz o mesmo
+ * que "Pedir um ajuste" no Quadro: o main reabre e religa o Maestro (F-167).
+ */
+export function deadMaestroKeyRequestsAdjustment(input: {
+  readonly isOrchestrator: boolean;
+  readonly missionDone: boolean;
+}): boolean {
+  return input.isOrchestrator && input.missionDone;
+}
+
+export const DONE_MAESTRO_ADJUSTMENT_NOTICE =
+  '[nexus] missão reaberta para o seu ajuste. O Maestro volta em instantes; escreva o ajuste nele.';
+
 /** Exit 0 de missão: o quadro/rail avisa. O PTY não vira mural. */
 export function shouldPrintMissionPaneExitNotice(exitCode: number): boolean {
   return exitCode !== 0;

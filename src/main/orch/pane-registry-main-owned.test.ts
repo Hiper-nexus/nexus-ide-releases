@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { WebContents } from "electron";
 import { ORCH_CHANNELS } from "../../shared/orch-channels";
+import { PTY_CHANNELS } from "../../shared/channels";
 import { testProjectScope } from "./__tests__/scope-fixture";
 import {
   bindResolvedRendererWorkspaceScope,
@@ -642,6 +643,74 @@ describe("main-owned mission pane spawn", () => {
 
     await expect(requestPaneClose(paneId)).resolves.toBe(true);
     syncPanes([], owner, "renderer-generation-return");
+    unregisterOrchRenderer(owner);
+    clearRendererWorkspaceScope(owner);
+  });
+
+  it("delivers the lost exit when the renderer returns holding a session that died headless", async () => {
+    const result = await requestPaneSpawn({
+      adapterId: "codex",
+      model: "gpt-5.6-sol",
+      cwd: executionScope.rootRealPath,
+      missionId: "mission-headless",
+      agentName: "Worker Headless",
+      workerIncarnationId: "worker-incarnation-main",
+      role: "worker",
+      allowedTools: [],
+      allowedSkills: null,
+      scope,
+      executionScope,
+    });
+    const paneId = result.paneId!;
+    // Campo 26/09: a missão concluiu com o operador noutro projeto e o
+    // reconciliador matou o PTY headless; o xterm estacionado guardou o id.
+    pty.live.delete("pty-headless-1");
+    const entry = {
+      paneId,
+      sessionId: "pty-headless-1",
+      title: "Worker Headless",
+      kind: "cli-agent" as const,
+      adapterId: "codex",
+      model: "gpt-5.6-sol",
+      state: "idle" as const,
+    };
+    const elsewhere = {
+      id: 933,
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      send: vi.fn(),
+    } as unknown as WebContents & { send: ReturnType<typeof vi.fn> };
+    bindResolvedRendererWorkspaceScope(elsewhere, {
+      ...scope,
+      checkoutId: "checkout-other-workspace",
+    });
+    registerOrchRenderer(elsewhere);
+    syncPanes([], elsewhere, "renderer-generation-elsewhere");
+    const owner = {
+      id: 934,
+      isDestroyed: () => false,
+      isCrashed: () => false,
+      send: vi.fn(),
+    } as unknown as WebContents & { send: ReturnType<typeof vi.fn> };
+    bindResolvedRendererWorkspaceScope(owner, scope);
+    registerOrchRenderer(owner);
+
+    syncPanes([entry], owner, "renderer-generation-return");
+
+    await vi.waitFor(() => {
+      expect(owner.send).toHaveBeenCalledWith(PTY_CHANNELS.exit, {
+        sessionId: "pty-headless-1",
+        exitCode: 0,
+      });
+      expect(getMainOwnedPane(paneId)).toBeUndefined();
+    });
+    expect(elsewhere.send).not.toHaveBeenCalledWith(
+      PTY_CHANNELS.exit,
+      expect.anything(),
+    );
+
+    unregisterOrchRenderer(elsewhere);
+    clearRendererWorkspaceScope(elsewhere);
     unregisterOrchRenderer(owner);
     clearRendererWorkspaceScope(owner);
   });

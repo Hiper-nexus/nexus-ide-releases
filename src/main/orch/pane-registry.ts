@@ -20,7 +20,7 @@ import { ORCH_CHANNELS } from "../../shared/orch-channels";
 import { copyProviderPaneSession } from "../persistence/provider-session-store";
 import { currentMimoSessionOwnerKey } from "../adapters/mimo-session-owner";
 import { providerAuthStrategy, resolveRuntimeApiKey } from "../persistence/provider-config-store";
-import { DEV_SERVER_CHANNELS } from "../../shared/channels";
+import { DEV_SERVER_CHANNELS, PTY_CHANNELS } from "../../shared/channels";
 import {
   detachOwnedMissionAgentSession,
   getAgentSessionInfo,
@@ -1229,6 +1229,7 @@ function staleMainOwnedPaneRetirementKey(pane: MainOwnedPane): string {
 function retireStaleMainOwnedPane(
   pane: MainOwnedPane,
   reason: string,
+  presenter: WebContents,
 ): void {
   const key = staleMainOwnedPaneRetirementKey(pane);
   if (staleMainOwnedPaneRetirements.has(key)) return;
@@ -1251,6 +1252,22 @@ function retireStaleMainOwnedPane(
         current.entry.sessionId !== sessionId
       ) {
         return;
+      }
+      // O processo morreu headless (ex.: missão concluída com o operador
+      // noutro projeto) e o exit não teve a quem ir. O xterm estacionado
+      // voltou com o id morto e cada tecla virava "o main recusou a
+      // digitação neste pane" (F-167). Entrega o exit ao renderer que
+      // apresenta o workspace dela.
+      const presenterScope = getRendererWorkspaceScope(presenter);
+      if (
+        sessionId &&
+        !presenter.isDestroyed() &&
+        !presenter.isCrashed() &&
+        presenterScope &&
+        pane.meta.scope &&
+        sameExactProjectScope(presenterScope, pane.meta.scope)
+      ) {
+        presenter.send(PTY_CHANNELS.exit, { sessionId, exitCode: 0 });
       }
       if (deleteMainOwnedPane(paneId)) {
         mainOwnedPaneHooks.panesChanged();
@@ -1275,7 +1292,7 @@ function requestMainOwnedPanePresentations(owner: WebContents): void {
     const resolution = resolveMainOwnedPanePresentation(scope, pane);
     if (resolution.kind === "skip") continue;
     if (resolution.kind === "stale") {
-      retireStaleMainOwnedPane(pane, resolution.reason);
+      retireStaleMainOwnedPane(pane, resolution.reason, owner);
       continue;
     }
     const { request } = resolution;

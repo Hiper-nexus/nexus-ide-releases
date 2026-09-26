@@ -3,6 +3,7 @@ import {
   BLOCKED_RESUME_NOTICE,
   DEAD_PANE_REVIVE_ATTEMPT_NOTICE,
   DEAD_PANE_REVIVE_COOLDOWN_NOTICE,
+  deadMaestroKeyRequestsAdjustment,
   decideDeadPaneReviveRespawn,
   decideExitedPaneKey,
   decideTerminalMissionDeadPaneKey,
@@ -217,6 +218,20 @@ describe('Maestro no fim do turno (F-006) — pane vivo, sem recado, sem restart
     expect(
       shouldKickMissionEngineOnDeadPaneKey({ isOrchestrator: false }),
     ).toBe(true);
+  });
+
+  it('tecla no Maestro morto de missão concluída pede ajuste (F-167)', () => {
+    // O main recusa religar CLI de missão fora de running; religar no pane
+    // era beco sem saída. A tecla faz o mesmo que "Pedir um ajuste".
+    expect(
+      deadMaestroKeyRequestsAdjustment({ isOrchestrator: true, missionDone: true }),
+    ).toBe(true);
+    expect(
+      deadMaestroKeyRequestsAdjustment({ isOrchestrator: true, missionDone: false }),
+    ).toBe(false);
+    expect(
+      deadMaestroKeyRequestsAdjustment({ isOrchestrator: false, missionDone: true }),
+    ).toBe(false);
   });
 
   it('exit 0 de worker não imprime recado no PTY — o quadro avisa', () => {

@@ -75,6 +75,8 @@ import {
 import {
   DEAD_PANE_REVIVE_ATTEMPT_NOTICE,
   DEAD_PANE_REVIVE_COOLDOWN_NOTICE,
+  DONE_MAESTRO_ADJUSTMENT_NOTICE,
+  deadMaestroKeyRequestsAdjustment,
   type TerminalMissionLink,
 } from './mission-owned-pane-policy';
 import { TERMINAL_THEMES } from '../styles/terminal-theme';
@@ -701,6 +703,18 @@ async function requestDeadMissionPaneRevive(
     // Fala DEPOIS do aceite: anunciar "revivendo…" antes da cerca do main
     // recusar (missão encerrada pelo operador) lia como promessa quebrada —
     // sucesso ganha UMA linha, recusa ganha só a linha acionável do catch.
+    if (
+      deadMaestroKeyRequestsAdjustment({
+        isOrchestrator: pane.role === 'orchestrator',
+        missionDone: missionOfPaneIsDoneById(missionId),
+      })
+    ) {
+      // Só o resume: o main religa o Maestro (noutro pane) esperando o
+      // ajuste. Religar também aqui criaria dois Maestros na missão.
+      await requestMissionRuntimeResume(missionId, operatorInitiated);
+      host.term.writeln(`\r\n\x1b[36m${DONE_MAESTRO_ADJUSTMENT_NOTICE}\x1b[0m`);
+      return;
+    }
     if (
       !shouldKickMissionEngineOnDeadPaneKey({
         isOrchestrator: pane.role === 'orchestrator',
