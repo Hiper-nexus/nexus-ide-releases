@@ -7042,13 +7042,39 @@ export const RELEASE_076101: AppRelease = {
 };
 
 export const CURRENT_RELEASE: AppRelease = {
-  version: '0.76.103',
+  version: '0.76.104',
   date: '2026-09-26',
-  codename: 'Diff sem confusão',
+  codename: 'Missão até o fim',
   summary:
-    'O Claude deixa de atribuir ao seu comando alterações feitas por outro ' +
-    'pane na mesma pasta. Inclui as melhorias da 0.76.102 (Mão livre).',
+    'A missão só conclui quando o worker termina, e o pane de uma missão ' +
+    'pronta volta a aceitar o seu ajuste. Inclui as melhorias da 0.76.102 ' +
+    '(Mão livre) e da 0.76.103 (Diff sem confusão).',
   highlights: [
+    {
+      title: 'Missão só conclui quando o worker termina',
+      detail:
+        'A Via Rápida fechava a missão nos primeiros arquivos gravados, com o ' +
+        'worker ainda trabalhando. Agora espera todo worker ativo parar.',
+    },
+    {
+      title: 'Pane de missão pronta aceita o seu ajuste',
+      detail:
+        'Se a missão concluía com você noutro projeto, o pane voltava preso e ' +
+        'recusava cada tecla. Agora mostra a sessão encerrada, e digitar no ' +
+        'Maestro faz o mesmo que "Pedir um ajuste".',
+    },
+    {
+      title: 'Barra lateral compacta',
+      detail:
+        'Início, Projeto, Quadro e Memória em duas colunas e "Abrir projeto" ' +
+        'ao lado de "Novo pedido": sobra mais espaço para projetos e missões.',
+    },
+    {
+      title: 'Cada aba nova com pasta própria',
+      detail:
+        'Abas criadas pelo + ganham pasta e branch próprias; os panes da mesma ' +
+        'aba compartilham essa pasta. Abas antigas seguem na pasta do projeto.',
+    },
     {
       title: 'Missão criada pelo pane abre workers',
       detail:
@@ -7066,12 +7092,25 @@ export const CURRENT_RELEASE: AppRelease = {
   ],
   fixes: [
     {
+      title: 'Navegador do agente volta com o projeto',
+      detail:
+        'Depois de trocar de projeto e voltar, o agente perdia o acesso ao ' +
+        'navegador que ele mesmo abriu. O navegador aberto por você também ' +
+        'passa a servir aos seus agentes do mesmo projeto.',
+    },
+    {
+      title: 'Nenhum vigia de terminal preso',
+      detail:
+        'Com uma janela do Ghostty ou do Terminal aberta, o processo que vigia ' +
+        'cada pane podia ficar vivo para sempre gastando CPU depois que a CLI ' +
+        'saía.',
+    },
+    {
       title: 'Diff de outro pane não aparece como edição do Claude',
       detail:
         'A comparação automática de arquivos antes e depois de comandos ' +
         'do terminal podia captar alterações de outro agente. Desativamos ' +
-        'essa atribuição; os diffs de edições explícitas continuam. Abas na ' +
-        'mesma pasta ainda compartilham arquivos e branch.',
+        'essa atribuição; os diffs de edições explícitas continuam.',
     },
     {
       title: 'Missão encerrada devolve o pane',

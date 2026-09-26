@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.76.104 — Missão até o fim
+
+A missão só conclui quando o worker termina, e o pane de uma missão pronta volta a aceitar o seu ajuste. Inclui tudo da 0.76.102 (Mão livre) e da 0.76.103 (Diff sem confusão), que não chegaram a ser publicadas.
+
+- **Missão não conclui no meio do trabalho (F-166).** A Via Rápida marcava a story como feita nos primeiros arquivos gravados e fechava a missão com o worker ainda trabalhando. Agora o Pronto espera todo worker ativo parar.
+- **Pane de missão pronta aceita intervenção (F-167).** Se a missão concluía com você noutro projeto, o pane voltava preso a uma sessão encerrada e cada tecla virava "o main recusou a digitação". O encerramento agora chega ao pane, e digitar no Maestro de uma missão concluída faz o mesmo que "Pedir um ajuste".
+- **Navegador do agente volta com o projeto (F-168).** Depois de trocar de projeto e voltar, o agente perdia o acesso ao navegador que ele mesmo abriu. O navegador aberto por você pelo "+ Browser" também passa a servir aos seus agentes do mesmo projeto; workers de missão continuam sem acesso.
+- **Nenhum vigia de terminal preso (F-208).** Com uma janela do Ghostty ou do Terminal aberta, o processo que vigia cada pane podia ficar vivo para sempre gastando CPU depois que a CLI saía.
+- **Barra lateral compacta (F-533).** Início, Projeto, Quadro e Memória em duas colunas, Terminais na linha inteira e "Abrir projeto" ao lado de "Novo pedido". Sobra mais altura para projetos e missões, e a borda direita não é mais cortada em barras estreitas.
+- **Abas com pasta própria (F-162).** Cada aba nova ganha uma worktree com pasta e branch próprias; panes da mesma aba compartilham essa pasta. Abas antigas continuam na pasta do projeto.
+- **Esforço pela tarefa (F-163), helpers na janela certa (F-164) e leitura da interface do projeto certo (F-165).**
+
 ## 0.76.103 — Diff sem confusão
 
 O Claude deixa de atribuir ao próprio comando alterações feitas por outro pane na mesma pasta. Inclui tudo da 0.76.102 (Mão livre), agora também na distribuição macOS.
