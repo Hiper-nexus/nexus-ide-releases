@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { claudeProjectSlug } from './claude-transcript';
 import { ClaudeTranscriptWatcher } from './claude-transcript-watcher';
 import { ClaudeTranscriptResumeStore } from './claude-transcript-resume-store';
+import * as resumeState from './codex-rollout-resume-state';
 
 const tempRoots: string[] = [];
 const liveWatchers: ClaudeTranscriptWatcher[] = [];
@@ -25,8 +26,9 @@ function transcriptLine(sessionId: string): string {
   })}\n`;
 }
 
-afterEach(() => {
-  for (const watcher of liveWatchers.splice(0)) watcher.stop();
+afterEach(async () => {
+  await Promise.all(liveWatchers.splice(0).map((watcher) => watcher.stop()));
+  vi.restoreAllMocks();
   for (const root of tempRoots.splice(0)) {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -210,6 +212,36 @@ describe('ClaudeTranscriptWatcher boot cost', () => {
     vi.restoreAllMocks();
   });
 
+  it('stop waits for an in-flight checkpoint and persists it before restarting', async () => {
+    const project = tempProject();
+    const file = path.join(project.projectDir, 'session.jsonl');
+    const resumeFile = path.join(project.stateDir, 'resume.json');
+    writeTranscript(file, 200, 'x'.repeat(200));
+    const readDigests = resumeState.readPrefixDigests;
+    let releaseCheckpoint!: () => void;
+    const checkpointGate = new Promise<void>((resolve) => { releaseCheckpoint = resolve; });
+    let checkpointStarted!: () => void;
+    const started = new Promise<void>((resolve) => { checkpointStarted = resolve; });
+    vi.spyOn(resumeState, 'readPrefixDigests').mockImplementationOnce(async (...args) => {
+      checkpointStarted();
+      await checkpointGate;
+      return readDigests(...args);
+    });
+    const watcher = watcherFor(project, [], new ClaudeTranscriptResumeStore(resumeFile));
+    watcher.start();
+    await started;
+    let stopped = false;
+    const stopping = Promise.resolve(watcher.stop()).then(() => { stopped = true; });
+    try {
+      await Promise.resolve();
+      expect(stopped).toBe(false);
+    } finally {
+      releaseCheckpoint();
+      await stopping;
+    }
+    expect(new ClaudeTranscriptResumeStore(resumeFile).get(file)?.offset).toBe(fs.statSync(file).size);
+  });
+
   it('resumes after a restart without replaying what it already read', async () => {
     const project = tempProject();
     const file = path.join(project.projectDir, 'session.jsonl');
@@ -222,7 +254,7 @@ describe('ClaudeTranscriptWatcher boot cost', () => {
     );
     firstWatcher.start();
     await vi.waitFor(() => expect(first).toHaveLength(200), { timeout: 5_000, interval: 20 });
-    firstWatcher.stop();
+    await firstWatcher.stop();
 
     fs.appendFileSync(file, numberedLine('session-boot', 200));
     const second: string[] = [];
@@ -233,6 +265,39 @@ describe('ClaudeTranscriptWatcher boot cost', () => {
     ).start();
 
     await vi.waitFor(() => expect(second).toEqual(['message-200']), { timeout: 5_000, interval: 20 });
+  });
+
+  it.each([192, 64, 63])('checkpoints only delivered chunks when stopped on message %s', async (stopAfter) => {
+    const project = tempProject();
+    const file = path.join(project.projectDir, 'session.jsonl');
+    const resumeFile = path.join(project.stateDir, 'resume.json');
+    writeTranscript(file, 192, 'x'.repeat(200));
+    // Make slice boundaries deterministic; the production clock is unchanged.
+    vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    const seen: string[] = [];
+    let stopped!: Promise<void> | void;
+    let delivered!: () => void;
+    const ready = new Promise<void>((resolve) => { delivered = resolve; });
+    const watcher = new ClaudeTranscriptWatcher({
+      workspacePath: project.workspace,
+      configDirs: [project.configDir],
+      resumeStore: new ClaudeTranscriptResumeStore(resumeFile),
+      onEvent: (event) => {
+        seen.push(event.messageId ?? '');
+        if (seen.length === stopAfter) {
+          stopped = watcher.stop();
+          delivered();
+        }
+      },
+    });
+    liveWatchers.push(watcher);
+    watcher.start();
+    await ready;
+    await stopped;
+    expect(seen).toHaveLength(stopAfter);
+    const saved = new ClaudeTranscriptResumeStore(resumeFile).get(file);
+    if (stopAfter === 192) expect(saved?.offset).toBe(fs.statSync(file).size);
+    else expect(saved).toBeNull(); // Never skip undelivered lines in this chunk.
   });
 
   it('replays from the start when the transcript was rewritten', async () => {
@@ -247,7 +312,7 @@ describe('ClaudeTranscriptWatcher boot cost', () => {
     );
     firstWatcher.start();
     await vi.waitFor(() => expect(first).toHaveLength(200), { timeout: 5_000, interval: 20 });
-    firstWatcher.stop();
+    await firstWatcher.stop();
 
     writeTranscript(file, 210, 'y'.repeat(200));
     const second: string[] = [];

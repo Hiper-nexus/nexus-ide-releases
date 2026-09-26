@@ -124,7 +124,7 @@ export class ClaudeTranscriptWatcher {
     this.scheduleScan();
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     this.stopped = true;
     for (const watcher of this.watchers.values()) {
       try {
@@ -136,6 +136,10 @@ export class ClaudeTranscriptWatcher {
     this.watchers.clear();
     if (this.pollTimer) clearInterval(this.pollTimer);
     this.pollTimer = null;
+    this.opts.resumeStore?.save();
+    // onEvent runs before the asynchronous digest/checkpoint completes. A
+    // replacement watcher must not load its cursor until that work is saved.
+    await this.queueTail;
     this.opts.resumeStore?.save();
   }
 
@@ -277,7 +281,6 @@ export class ClaudeTranscriptWatcher {
         const bytes = buffer.subarray(0, bytesRead);
         state.offset = readOffset + bytesRead;
         const boundary = findLastLineBoundary(bytes);
-        if (boundary >= 0) state.committedOffset = readOffset + boundary;
 
         const { lines, remainder } = splitTailChunk(
           state.remainder,
@@ -285,11 +288,14 @@ export class ClaudeTranscriptWatcher {
         );
         state.remainder = remainder;
         if (!(await this.deliverLines(lines, file, slice))) return;
+        if (boundary >= 0) state.committedOffset = readOffset + boundary;
       }
     } finally {
       await fh.close().catch(() => undefined);
+      // Even an interrupted read may have fully delivered earlier chunks.
+      // committedOffset advances only after every line in a chunk is delivered.
+      await this.checkpoint(file, state);
     }
-    await this.checkpoint(file, state);
   }
 
   /** Entrega as linhas cedendo o event loop a cada fatia; false = watcher parado. */
@@ -298,10 +304,14 @@ export class ClaudeTranscriptWatcher {
     file: string,
     slice: { lines: number; startedAt: number },
   ): Promise<boolean> {
-    for (const line of lines) {
+    for (let index = 0; index < lines.length; index += 1) {
+      if (this.stopped) return false;
+      const line = lines[index]!;
       const event = parseTranscriptLine(line);
       if (event) this.emit(event, file);
       slice.lines += 1;
+      // A stop from the final onEvent must still commit this complete chunk.
+      if (index === lines.length - 1) return true;
       if (slice.lines < MAX_LINES_PER_SLICE && Date.now() - slice.startedAt < MAX_SLICE_MS) {
         continue;
       }
