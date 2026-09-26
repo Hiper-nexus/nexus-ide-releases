@@ -7,7 +7,7 @@ const fixture = vi.hoisted(() => ({ home: '' }));
 vi.mock('node:os', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:os')>();
   const homedir = () => fixture.home;
-  return { ...actual, homedir, default: { ...actual.default, homedir } };
+  return { ...actual, homedir, default: { ...actual, homedir } };
 });
 
 /**
