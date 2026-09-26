@@ -71,6 +71,27 @@ describe('Nexus UI MCP tools', () => {
     expect(stubs.read).toHaveBeenCalledWith(owner.webContents);
   });
 
+  it.each(['other-project', 'unbound'])(
+    'reads its project window when the focused window is %s',
+    async (focusedState) => {
+      const { selectNexusWindow } = await vi.importActual<typeof import('../vision/ax-tree-reader')>('../vision/ax-tree-reader');
+      stubs.selectWindow.mockImplementation(selectNexusWindow);
+      const owner = nexusWindow(7);
+      const unrelated = nexusWindow(8);
+      stubs.focusedWindow.mockReturnValue(unrelated);
+      stubs.allWindows.mockReturnValue([owner, unrelated]);
+      stubs.getScope.mockImplementation((contents) => contents.id === owner.webContents.id
+        ? scope
+        : focusedState === 'unbound' ? null : { ...scope, projectId: 'project-b' });
+      stubs.read.mockResolvedValue({ tag: 'body', role: null, aria: {}, text: null, children: [] });
+      const tool = buildVisionTools().find((item) => item.name === 'nexus_ui_read')!;
+
+      await expect(tool.handler({}, gateContext())).resolves.toMatchObject({ surface: 'nexus-ui' });
+      expect(stubs.read).toHaveBeenCalledWith(owner.webContents);
+      expect(stubs.read).not.toHaveBeenCalledWith(unrelated.webContents);
+    },
+  );
+
   it.each([
     ['installationId', 'installation-b'],
     ['projectId', 'project-b'],

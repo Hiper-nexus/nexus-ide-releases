@@ -47,9 +47,16 @@ function hasExactScope(
 function resolveAuthorizedWebContents(
   scope: Readonly<ProjectExecutionScope>,
 ): WebContents {
+  const candidates = BrowserWindow.getAllWindows().filter((win) =>
+    !win.isDestroyed() &&
+    !win.webContents.isDestroyed() &&
+    !win.webContents.isCrashed() &&
+    hasExactScope(scope, getRendererWorkspaceScope(win.webContents)),
+  );
+  const focused = BrowserWindow.getFocusedWindow();
   const selected = selectNexusWindow(
-    BrowserWindow.getFocusedWindow(),
-    BrowserWindow.getAllWindows(),
+    focused && candidates.includes(focused) ? focused : null,
+    candidates,
   );
   if (!selected) {
     throw new Error('No healthy authorized Nexus window is available.');
