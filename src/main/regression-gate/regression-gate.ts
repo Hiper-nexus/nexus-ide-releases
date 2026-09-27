@@ -1234,9 +1234,16 @@ async function evaluate(
     );
   }
   const ownRun = testsRun.filter(owned);
+  // Aprovação só com TODOS os impactados do agente executados: um que passou
+  // não cobre o que ficou de fora (config, prazo, sandbox, sem runner).
+  const ownNotRun = testsNotRun.filter(owned);
+  if (ownNotRun.length > 0 && ownFailures.length === 0) {
+    warnings.push(`execução parcial: ${ownRun.length} rodaram, ${ownNotRun.length} não — resultado NÃO verificado`);
+  }
   return finish({
     // Nenhum teste executado de verdade nunca é aprovação.
-    status: ownFailures.length > 0 ? 'failed' : ownRun.length > 0 ? 'passed' : 'unavailable',
+    status:
+      ownFailures.length > 0 ? 'failed' : ownRun.length > 0 && ownNotRun.length === 0 ? 'passed' : 'unavailable',
     testsRun,
     testsNotRun,
     failures: ownFailures,

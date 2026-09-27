@@ -119,6 +119,33 @@ describe('runRegressionGate', () => {
     expect(formatRegressionGateReport(result)).toContain('Seu diff quebrou 1');
   });
 
+  it('execução parcial (um passou, outro impactado não rodou) não vira passed nem entra no cache', async () => {
+    const { root, scope } = project();
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    // Runner que só executa a.test.ts (b.test.ts excluído pela config/prazo).
+    const exec = vi.fn<RegressionExec>(async (_file, args, options) => {
+      const outFile = args.find((arg) => arg.startsWith('--outputFile='))!.slice('--outputFile='.length);
+      fs.writeFileSync(outFile, JSON.stringify({
+        testResults: [{
+          name: path.join(options.cwd, 'src/a.test.ts'),
+          status: 'passed',
+          assertionResults: [{ status: 'passed', fullName: 'ok' }],
+        }],
+      }));
+      return { exitCode: 0, timedOut: false, stdout: '', stderr: '' };
+    });
+
+    const first = await runRegressionGate({ scope }, { exec });
+    const second = await runRegressionGate({ scope }, { exec });
+
+    expect(first.status).toBe('unavailable');
+    expect(first.testsRun).toEqual(['src/a.test.ts']);
+    expect(first.testsNotRun).toEqual(['src/b.test.ts']);
+    expect(first.warnings.join('\n')).toContain('execução parcial');
+    expect(second.cached).toBe(false);
+    expect(exec.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
   it('teste instável que passa na 2ª tentativa não barra; falha que se repete barra', async () => {
     const { root, scope } = project();
     write(root, 'src/a.ts', 'export const a = 2;\n');
