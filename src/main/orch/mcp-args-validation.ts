@@ -391,6 +391,7 @@ const schemas = new Map<string, z.ZodType<Record<string, unknown>>>([
         url: z.string().min(1).max(4096),
         read: browserInlineReadSchema,
         judge: browserJudgeArg,
+        device: z.enum(['mobile', 'tablet', 'desktop']).optional(),
       })
       .strict(),
   ],

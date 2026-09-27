@@ -124,6 +124,34 @@ function normalizedText(value: string): string {
   return value.replace(/[\t\r\n ]+/g, ' ').trim();
 }
 
+// Wikipedia-style infobox labels prefix repeated rows with a bullet, e.g.
+// "• Presidente" / "• Vice-presidente" — stripping it lets a field
+// query for "presidente" match only the exact row instead of both.
+function stripLabelMarker(value: string): string {
+  return value.replace(/^[•\-*·]+[\s ]*/, '');
+}
+
+/**
+ * ponytail: text up to the first *direct-child* `<br>` only — a table cell
+ * like `<td><a>Brasília</a><br><span>15° 47' S ...</span></td>` otherwise
+ * glues the coordinates onto the place name via plain `.textContent`. Does
+ * not look inside descendants for a nested `<br>`; widen if that turns out
+ * to matter for another site's markup.
+ */
+function firstLineText(win: BrowserDomWindow, element: Element): string {
+  let out = '';
+  for (const node of element.childNodes) {
+    if (node.nodeType === win.Node.TEXT_NODE) {
+      out += node.textContent ?? '';
+      continue;
+    }
+    if (!(node instanceof win.Element)) continue;
+    if (node.tagName === 'BR') break;
+    out += node.textContent ?? '';
+  }
+  return out;
+}
+
 function elementHasSensitiveMarker(element: Element): boolean {
   if (element.tagName.toLowerCase() === 'input') {
     const type = (element.getAttribute('type') ?? 'text').toLowerCase();
@@ -596,7 +624,7 @@ export function createBrowserAutomation(
       element?: Element,
     ): void => {
       if (pairs.length >= EXTRACT_PAIRS_MAX) return;
-      const l = redactBrowserText(normalizedText(label)).slice(
+      const l = redactBrowserText(normalizedText(stripLabelMarker(label))).slice(
         0,
         PAIR_LABEL_CHARS,
       );
@@ -623,7 +651,7 @@ export function createBrowserAutomation(
         dd = dd.nextElementSibling;
       }
       if (!dd || isSensitiveTree(dd)) continue;
-      pushPair(dt.textContent ?? '', dd.textContent ?? '', dd);
+      pushPair(dt.textContent ?? '', firstLineText(win, dd), dd);
     }
 
     // tables: th → td, or first cell → remaining cells.
@@ -636,7 +664,7 @@ export function createBrowserAutomation(
         cells[0].textContent ?? '',
         cells
           .slice(1)
-          .map((cell) => cell.textContent ?? '')
+          .map((cell) => firstLineText(win, cell))
           .join(' · '),
         cells[1],
       );
@@ -709,7 +737,13 @@ export function createBrowserAutomation(
       'date',
       /\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}[/.\-]\d{1,2}[/.\-]\d{2,4}\b|\b\d{1,2} de (?:janeiro|fevereiro|março|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro) de \d{4}\b|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]* \d{1,2},? \d{4}\b/gi,
     );
-    collectTokens('number', /\b\d{1,3}(?:[.,]\d{3})+[.,]\d+\b|\b\d+[.,]\d+\b|\b\d{4,}\b/g);
+    // pt-BR groups thousands with a (non-breaking) space instead of a dot —
+    // e.g. "213 421 037" or "8 510 417,771" — which a
+    // dot/comma-only pattern never matches (each group alone is < 4 digits).
+    collectTokens(
+      'number',
+      /\b\d{1,3}(?:[.,]\d{3})+[.,]\d+\b|\b\d{1,3}(?:[  ]\d{3})+(?:[.,]\d+)?\b|\b\d+[.,]\d+\b|\b\d{4,}\b/g,
+    );
     return { jsonLd, pairs, tokens };
   }
 

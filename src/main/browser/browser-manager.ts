@@ -151,7 +151,7 @@ import { resolveCwdForScope } from '../orch/workspace-path';
 import { getContextWorkflowService } from '../context/context-workflow-registry';
 import { z } from 'zod';
 
-interface BrowserEntry {
+export interface BrowserEntry {
   paneId: string;
   scope: ProjectExecutionScope;
   owner: WebContents;
@@ -160,6 +160,8 @@ interface BrowserEntry {
   title: string;
   loading: boolean;
   error?: string;
+  /** Opened via nexus_browser_open/an agent pane, not the operator's own tab. */
+  agentOwned: boolean;
   profileMode: 'personal' | 'isolated';
   disconnectProfile?: () => Promise<void>;
   lastBounds?: BrowserPaneBounds;
@@ -223,6 +225,52 @@ const TABLET_EMULATION_USER_AGENT =
   'Mozilla/5.0 (iPad; CPU OS 17_5 like Mac OS X) ' +
   'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
 const originalUserAgents = new Map<string, string>();
+
+export type BrowserDeviceKind = 'mobile' | 'tablet' | 'desktop';
+/** Representative CSS width per breakpoint; null disables emulation. */
+const DEVICE_EMULATION_WIDTH: Record<BrowserDeviceKind, number | null> = {
+  mobile: 390,
+  tablet: 800,
+  desktop: null,
+};
+
+/** Shared by the renderer's device-emulation IPC and `nexus_browser_navigate`'s `device` param. */
+function applyBrowserDeviceEmulation(
+  entry: BrowserEntry,
+  key: string,
+  width: number | null,
+): boolean {
+  const wc = entry.view.webContents;
+  const tablet =
+    width !== null &&
+    width > MOBILE_EMULATION_MAX_WIDTH &&
+    width <= TABLET_EMULATION_MAX_WIDTH;
+  const emulate = width !== null && (width <= MOBILE_EMULATION_MAX_WIDTH || tablet);
+  if (emulate) {
+    // Guarda o UA original UMA vez por pane para restaurar no desligamento.
+    if (!originalUserAgents.has(key)) {
+      originalUserAgents.set(key, wc.getUserAgent());
+    }
+    wc.setUserAgent(tablet ? TABLET_EMULATION_USER_AGENT : MOBILE_EMULATION_USER_AGENT);
+    const emulatedHeight = tablet ? TABLET_EMULATION_HEIGHT : MOBILE_EMULATION_HEIGHT;
+    wc.enableDeviceEmulation({
+      screenPosition: 'mobile',
+      screenSize: { width: width as number, height: emulatedHeight },
+      viewPosition: { x: 0, y: 0 },
+      viewSize: { width: width as number, height: emulatedHeight },
+      deviceScaleFactor: 0,
+      scale: 1,
+    });
+  } else {
+    wc.disableDeviceEmulation();
+    const original = originalUserAgents.get(key);
+    if (original) {
+      wc.setUserAgent(original);
+      originalUserAgents.delete(key);
+    }
+  }
+  return emulate;
+}
 const BROWSER_DESTROY_PROOF_TIMEOUT_MS = 2_000;
 let browserRuntimeManager: ProjectRuntimeManager | null = null;
 let unsubscribeBrowserScopeChanges: (() => void) | null = null;
@@ -791,6 +839,7 @@ async function createEntry(
   view.setBackgroundColor('#0a0e15');
   const entry: BrowserEntry = {
     paneId,
+    agentOwned,
     profileMode,
     scope: Object.freeze({ ...scope }),
     owner,
@@ -1086,6 +1135,8 @@ export async function loadBrowser(
     sessionId?: string;
     missionId?: string;
     deps?: BrowserActionDeps;
+    /** Emulate a device breakpoint before this navigation loads. */
+    device?: BrowserDeviceKind;
   },
 ): Promise<
   BrowserPaneState & {
@@ -1098,6 +1149,13 @@ export async function loadBrowser(
   }
 > {
   const entry = withEntry(paneId, options.scope);
+  if (options.device && !entry.view.webContents.isDestroyed()) {
+    applyBrowserDeviceEmulation(
+      entry,
+      browserKey(options.scope, paneId),
+      DEVICE_EMULATION_WIDTH[options.device],
+    );
+  }
   const before = snapshotBrowserBefore(entry);
   const state = await loadBrowserForEntry(
     paneId,
@@ -2479,8 +2537,32 @@ function withOwnedEntry(
   return entry;
 }
 
-function setBrowserBounds(entry: BrowserEntry, bounds: BrowserPaneBounds): void {
+// A pane opened via nexus_browser_open/an agent may land in a tiny or
+// not-yet-laid-out UI slot (F-... "+ Pane": screenshots came back 356x138
+// CSS px, unusable for visual analysis). Below this floor the render is
+// useless regardless of what the operator's own layout looks like, so give
+// agent-owned panes a decent viewport off-window instead — invisible either
+// way, since this exact pane isn't the one the operator is looking at.
+const DEGENERATE_VIEWPORT_PX = 400;
+const AGENT_VIEWPORT_FLOOR_WIDTH = 1280;
+const AGENT_VIEWPORT_FLOOR_HEIGHT = 800;
+const AGENT_VIEWPORT_OFFSCREEN = 50_000;
+
+export function setBrowserBounds(entry: BrowserEntry, bounds: BrowserPaneBounds): void {
   entry.lastBounds = bounds;
+  if (
+    entry.agentOwned &&
+    (bounds.width < DEGENERATE_VIEWPORT_PX || bounds.height < DEGENERATE_VIEWPORT_PX)
+  ) {
+    entry.view.setVisible(true);
+    entry.view.setBounds({
+      x: AGENT_VIEWPORT_OFFSCREEN,
+      y: AGENT_VIEWPORT_OFFSCREEN,
+      width: AGENT_VIEWPORT_FLOOR_WIDTH,
+      height: AGENT_VIEWPORT_FLOOR_HEIGHT,
+    });
+    return;
+  }
   const visible =
     bounds.visible !== false && bounds.width >= 16 && bounds.height >= 16;
   entry.view.setVisible(visible);
@@ -2953,43 +3035,11 @@ export function registerBrowserIpc(runtimeManager: ProjectRuntimeManager): void 
     const wc = entry.view.webContents;
     if (wc.isDestroyed()) throw new Error('browser pane is unavailable');
     const key = browserKey(scope, parsed.data.paneId);
-    const width = parsed.data.width;
-    const tablet =
-      width !== null &&
-      width > MOBILE_EMULATION_MAX_WIDTH &&
-      width <= TABLET_EMULATION_MAX_WIDTH;
-    const emulate = width !== null && (width <= MOBILE_EMULATION_MAX_WIDTH || tablet);
-    if (emulate) {
-      // Guarda o UA original UMA vez por pane para restaurar no desligamento.
-      if (!originalUserAgents.has(key)) {
-        originalUserAgents.set(key, wc.getUserAgent());
-      }
-      wc.setUserAgent(
-        tablet ? TABLET_EMULATION_USER_AGENT : MOBILE_EMULATION_USER_AGENT,
-      );
-      const emulatedHeight = tablet
-        ? TABLET_EMULATION_HEIGHT
-        : MOBILE_EMULATION_HEIGHT;
-      wc.enableDeviceEmulation({
-        screenPosition: 'mobile',
-        screenSize: { width, height: emulatedHeight },
-        viewPosition: { x: 0, y: 0 },
-        viewSize: { width, height: emulatedHeight },
-        deviceScaleFactor: 0,
-        scale: 1,
-      });
-    } else {
-      wc.disableDeviceEmulation();
-      const original = originalUserAgents.get(key);
-      if (original) {
-        wc.setUserAgent(original);
-        originalUserAgents.delete(key);
-      }
-    }
+    const emulating = applyBrowserDeviceEmulation(entry, key, parsed.data.width);
     // UA só vale a partir da próxima navegação — o reload faz o site servir o
     // layout certo (menu hambúrguer, media queries, etc.) imediatamente.
     wc.reload();
-    return { paneId: parsed.data.paneId, emulating: emulate };
+    return { paneId: parsed.data.paneId, emulating };
   });
 
   ipcMain.handle(BROWSER_CHANNELS.designMode, async (event, raw) => {

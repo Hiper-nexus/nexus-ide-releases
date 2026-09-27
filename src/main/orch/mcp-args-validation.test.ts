@@ -91,6 +91,27 @@ describe('browser MCP argument validation', () => {
     ).toThrow();
   });
 
+  it('accepts a device breakpoint on browser_navigate and rejects unknown values', () => {
+    expect(
+      validateToolArgs('nexus_browser_navigate', {
+        paneId: 'browser-1',
+        url: 'https://example.test',
+        device: 'mobile',
+      }),
+    ).toEqual({
+      paneId: 'browser-1',
+      url: 'https://example.test',
+      device: 'mobile',
+    });
+    expect(() =>
+      validateToolArgs('nexus_browser_navigate', {
+        paneId: 'browser-1',
+        url: 'https://example.test',
+        device: 'phone',
+      }),
+    ).toThrow();
+  });
+
   it('accepts read/judge/format options and bounds extraction fields', () => {
     expect(
       validateToolArgs('nexus_browser_read', {

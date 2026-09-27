@@ -210,6 +210,16 @@ const browserOpenTool: McpToolDef = {
   },
 };
 
+const DEVICE_ARG_PROP = {
+  type: 'string',
+  enum: ['mobile', 'tablet', 'desktop'],
+  description:
+    'Emulate a device breakpoint before loading (real UA + viewport metrics, ' +
+    'reused from the operator\'s responsive-preview toggle) — "mobile"/"tablet" ' +
+    'serve the real mobile/tablet layout, "desktop" turns emulation back off. ' +
+    'Combine with nexus_browser_screenshot per breakpoint to check responsiveness.',
+};
+
 const browserNavigateTool: McpToolDef = {
   name: 'nexus_browser_navigate',
   requiresConfirm: true,
@@ -224,12 +234,14 @@ const browserNavigateTool: McpToolDef = {
       url: { type: 'string' },
       read: READ_ARG_PROP,
       judge: JUDGE_ARG_PROP,
+      device: DEVICE_ARG_PROP,
     },
     required: ['paneId', 'url'],
   },
   handler: async (args, ctx, invocation) => {
     const paneId = requireStr(args, 'paneId');
     authorizePaneRef(ctx, paneId, 'write');
+    const device = str(args, 'device');
     return loadBrowser(paneId, requireStr(args, 'url'), {
       scope: ctx.scope,
       privateAccessConfirmed: false,
@@ -239,6 +251,9 @@ const browserNavigateTool: McpToolDef = {
       judge: args.judge === true,
       sessionId: ctx.sessionId,
       missionId: ctx.missionId,
+      ...(device === 'mobile' || device === 'tablet' || device === 'desktop'
+        ? { device }
+        : {}),
     });
   },
 };
