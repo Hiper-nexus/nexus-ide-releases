@@ -550,7 +550,7 @@ const paneSpawn: McpToolDef = {
     // nunca no handoff do worker, que não tem como consertar o schema.
     const deliveryContract = parseExpectArg(args.expect);
     const agentRef = str(args, 'agentName');
-    const routeReservationId = str(args, 'routeReservationId');
+    let routeReservationId = str(args, 'routeReservationId');
     let options: SpawnToolOptions;
     let executionMode: 'same_checkout' | 'isolated_worktree' | undefined;
     let rosterRouteAuthorized = false;
@@ -731,15 +731,37 @@ const paneSpawn: McpToolDef = {
         autoRoute = await resolveOperatorRoute();
         adHocAdapterId = routeString(autoRoute, 'adapterId');
       }
+      // C (0.76.110): paridade com o + Pane — dentro da missão, sem
+      // adapterId, o Nexus roteia `task` pelo mesmo nexus_route_task da
+      // missão (roster selado, política de CLI e RouteReservation inclusos).
+      const missionAutoRoute =
+        adHocAdapterId === undefined &&
+        !resumeRef &&
+        !routeReservationId &&
+        Boolean(ctx.missionId) &&
+        operatorRouteResolver !== null;
+      if (missionAutoRoute) {
+        const task = operatorRouteTask(args);
+        if (!task) {
+          throw new Error(
+            'nexus_pane_spawn: descreva a tarefa em `task` (ou `prompt`/`title`) ' +
+              'ou passe adapterId — o Nexus roteia a tarefa dentro da missão',
+          );
+        }
+        autoRoute = await operatorRouteResolver!(task, ctx, {});
+        adHocAdapterId = routeString(autoRoute, 'adapterId');
+        routeReservationId =
+          typeof autoRoute.routeReservationId === 'string' ? autoRoute.routeReservationId : undefined;
+      }
       if (adHocAdapterId === undefined) {
         adHocAdapterId = requireStr(args, 'adapterId');
       }
       assertMcpInvocationCurrent(invocation);
       const adHocModel =
-        (forceOperatorRoute ? undefined : str(args, 'model')) ??
+        (forceOperatorRoute || missionAutoRoute ? undefined : str(args, 'model')) ??
         routeString(autoRoute, 'model');
       const adHocEffort =
-        (forceOperatorRoute ? undefined : str(args, 'effort')) ??
+        (forceOperatorRoute || missionAutoRoute ? undefined : str(args, 'effort')) ??
         routeString(autoRoute, 'effort');
       const adHocMissionId = childMissionId(ctx, str(args, 'missionId'));
       const uniqueSealed = adHocMissionId
