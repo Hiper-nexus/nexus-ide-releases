@@ -7,6 +7,7 @@ import {
   mergeClaudeStatusHooks,
   mergeKimiStatusHooks,
 } from './hook-status-config';
+import { REGRESSION_HOOK_TIMEOUT_SECONDS } from './hook-regression-command';
 
 const MARKER = 'NEXUS_HOOK_STATUS';
 
@@ -44,7 +45,7 @@ describe('mergeClaudeStatusHooks (Claude JSON settings)', () => {
     expect(regression.command).toContain('$NEXUS_HOOK_REGRESSION_URL');
     expect(regression.command).not.toContain('/dev/null');
     expect(regression.command).toContain('|| true');
-    expect(regression.timeout).toBe(180);
+    expect(regression.timeout).toBe(REGRESSION_HOOK_TIMEOUT_SECONDS);
     // User hook intact, ours appended: status + conselho de delegação (C2).
     expect(merged.UserPromptSubmit![0]).toEqual(USER_PROMPT_HOOK);
     expect(merged.UserPromptSubmit).toHaveLength(3);
@@ -200,6 +201,11 @@ describe('mergeKimiStatusHooks (Kimi TOML flat array)', () => {
     expect(JSON.stringify(reparsed)).toContain(MARKER);
   });
 
+  it('Stop também chama o portão de regressão', () => {
+    const hooks = mergeKimiStatusHooks({}).hooks as Array<{ event: string; command: string }>;
+    expect(hooks.some((hook) => hook.event === 'Stop' && hook.command.includes('$NEXUS_HOOK_REGRESSION_URL'))).toBe(true);
+  });
+
   it('second spawn rewrite does not duplicate Nexus entries', () => {
     const once = mergeKimiStatusHooks({});
     const twice = mergeKimiStatusHooks(once);
@@ -218,5 +224,6 @@ describe('grokStatusHooksDocument (Grok hooks/nexus.json)', () => {
     expect(serialized).toContain(MARKER);
     expect(serialized).toContain('X-Nexus-Hook-Flavor: grok');
     expect(GROK_STATUS_HOOKS_FILE).toBe('nexus.json');
+    expect(JSON.stringify(hooks.Stop)).toContain('$NEXUS_HOOK_REGRESSION_URL');
   });
 });

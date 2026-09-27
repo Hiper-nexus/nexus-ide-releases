@@ -6,7 +6,12 @@ import {
   __resetHookRegressionForTests,
   handleHookRegressionRequest,
   MAX_CONSECUTIVE_STOP_BLOCKS,
+  STOP_HOOK_BUDGET_MS,
 } from './hook-regression-endpoint';
+import {
+  REGRESSION_HOOK_TIMEOUT_SECONDS,
+  REGRESSION_HOOK_TRANSPORT_SECONDS,
+} from './hook-regression-command';
 
 const scope = testProjectScope();
 const git: GitRunner = {
@@ -18,10 +23,14 @@ function result(partial: Partial<RegressionGateResult>): RegressionGateResult {
     version: 'regression-gate-v1',
     status: 'passed',
     diffHash: 'hash-1',
+    headSha: null,
+    baseSha: null,
+    baseSource: null,
     changedFiles: ['src/a.ts'],
     testsRun: ['src/a.test.ts'],
     testsNotRun: [],
     failures: [],
+    inheritedFailures: [],
     untestedFiles: [],
     invariantsTouched: [],
     runner: 'vitest',
@@ -102,18 +111,64 @@ describe('handleHookRegressionRequest (Stop do pane do operador)', () => {
     expect(run).not.toHaveBeenCalled();
   });
 
-  it('commits feitos depois do último Stop entram no diff (base = HEAD anterior)', async () => {
+  it('base da sessão: HEAD no spawn (reflog); sem spawn conhecido, o primeiro HEAD visto', async () => {
+    const run = vi.fn(async (_input: { baseSha?: string; startedAtMs?: number }) =>
+      result({ status: 'clean', changedFiles: [] }),
+    );
+    await handleHookRegressionRequest(operator, {}, { run: run as never, git, enabled: () => true, startedAtMs: () => 1_000 });
+    expect(run.mock.calls[0]![0]).toMatchObject({ startedAtMs: 1_000, baseSha: undefined });
+
     const heads = ['a'.repeat(40), 'b'.repeat(40)];
     const movingGit = {
       run: () => ({ status: 0, stdout: `${heads.shift()}\n`, stderr: '' }),
     } as unknown as GitRunner;
-    const run = vi.fn(async (_input: { baseSha?: string }) =>
-      result({ status: 'clean', changedFiles: [] }),
-    );
-    await handleHookRegressionRequest(operator, {}, { run: run as never, git: movingGit, enabled: () => true });
-    await handleHookRegressionRequest(operator, {}, { run: run as never, git: movingGit, enabled: () => true });
-    expect(run.mock.calls[0]![0]).toMatchObject({ baseSha: undefined });
+    const deps = { run: run as never, git: movingGit, enabled: () => true, startedAtMs: () => null };
+    const other = { ...operator, sessionId: 'op-2' };
+    await handleHookRegressionRequest(other, {}, deps);
+    await handleHookRegressionRequest(other, {}, deps);
+    // A base não anda com o HEAD: commits de turnos anteriores continuam no diff.
     expect(run.mock.calls[1]![0]).toMatchObject({ baseSha: 'a'.repeat(40) });
+    expect(run.mock.calls[2]![0]).toMatchObject({ baseSha: 'a'.repeat(40) });
+  });
+
+  it('árvore limpa zera os bloqueios consecutivos', async () => {
+    let n = 0;
+    const run = vi.fn(async () => ({ ...failed, diffHash: `hash-${(n += 1)}` }));
+    const clean = vi.fn(async () => result({ status: 'clean', changedFiles: [] }));
+    const decisions: unknown[] = [];
+    for (let i = 0; i < MAX_CONSECUTIVE_STOP_BLOCKS + 1; i += 1) {
+      decisions.push((await handleHookRegressionRequest(operator, {}, { run, git, enabled: () => true })).payload.decision);
+      await handleHookRegressionRequest(operator, {}, { run: clean, git, enabled: () => true });
+    }
+    expect(decisions).toEqual(Array.from({ length: MAX_CONSECUTIVE_STOP_BLOCKS + 1 }, () => 'block'));
+  });
+
+  it('transporte que desistiu não gasta o relato: o próximo Stop do mesmo diff ainda bloqueia', async () => {
+    const controller = new AbortController();
+    const run = vi.fn(async () => {
+      controller.abort(); // curl estourou o --max-time enquanto os testes rodavam
+      return failed;
+    });
+    const lost = await handleHookRegressionRequest(operator, {}, { run, git, enabled: () => true, signal: controller.signal });
+    expect(lost.payload).toEqual({});
+
+    const next = await handleHookRegressionRequest(operator, {}, { run: async () => failed, git, enabled: () => true });
+    expect(next.payload).toMatchObject({ decision: 'block' });
+  });
+
+  it('orçamento do Stop cabe no transporte do hook, com folga para git e resposta', async () => {
+    const run = vi.fn(async (_input: { timeoutMs?: number }) => result({ status: 'clean', changedFiles: [] }));
+    await handleHookRegressionRequest(operator, {}, { run: run as never, git, enabled: () => true });
+    const budget = run.mock.calls[0]![0].timeoutMs!;
+    expect(budget).toBe(STOP_HOOK_BUDGET_MS);
+    expect(budget + 20_000).toBeLessThanOrEqual(REGRESSION_HOOK_TRANSPORT_SECONDS * 1000);
+    expect(REGRESSION_HOOK_TRANSPORT_SECONDS).toBeLessThan(REGRESSION_HOOK_TIMEOUT_SECONDS);
+  });
+
+  it('helper do "+ Pane" (tem pai operador) não passa pelo portão de novo no Stop', async () => {
+    const run = vi.fn(async () => failed);
+    await handleHookRegressionRequest({ ...operator, operatorParentSessionId: 'op-pai' }, {}, { run, git, enabled: () => true });
+    expect(run).not.toHaveBeenCalled();
   });
 
   it('erro no portão responde {} (o hook nunca atrapalha o CLI)', async () => {

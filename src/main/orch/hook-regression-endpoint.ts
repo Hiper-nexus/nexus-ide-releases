@@ -1,5 +1,5 @@
 // POST /hook/regression — portão de regressão no fim do turno do pane do
-// operador sem missão (hook `Stop`, Claude e Codex). Mesmo servidor loopback
+// operador sem missão (hook `Stop`: Claude, Codex, Kimi e Grok). Mesmo servidor loopback
 // e bearer do /hook/delegate. Se o diff do checkout mudou desde o último
 // relato e um teste impactado falhou, responde `decision: "block"` com as
 // falhas: o agente continua e corrige antes de encerrar. Missão e helpers
@@ -8,6 +8,7 @@
 // Anti-laço: o mesmo diff (hash do conteúdo) é relatado uma vez; no máximo
 // {@link MAX_CONSECUTIVE_STOP_BLOCKS} bloqueios seguidos sem um verde. Fora
 // do caminho feliz, sempre `{}` com 200 — o hook nunca atrapalha o CLI.
+// Árvore limpa zera a sequência de bloqueios.
 import type http from 'node:http';
 import type { AgentGateContext } from './gate';
 import { handleHookJsonPost } from './hook-http';
@@ -17,17 +18,25 @@ import {
   runRegressionGate,
 } from '../regression-gate/regression-gate';
 import { ProcessGitRunner, type GitRunner } from '../runtime/git-command';
+import { getSessionSpawnedAtMs } from '../pty/pty-manager';
 
 export const HOOK_REGRESSION_MAX_BODY_BYTES = 64 * 1024;
 export const MAX_CONSECUTIVE_STOP_BLOCKS = 3;
-const STOP_HOOK_TEST_TIMEOUT_MS = 120_000;
+/**
+ * Orçamento TOTAL do portão no Stop (mapa + testes + retentativa), bem abaixo
+ * do `--max-time` do curl: resposta que chega depois do transporte desistir
+ * é bloqueio perdido. Também é quanto o fim do turno pode esperar.
+ */
+export const STOP_HOOK_BUDGET_MS = 60_000;
+const STOP_HOOK_MAX_TEST_FILES = 20;
+const MAX_LEDGERS = 256;
 
 type HookContext = Pick<AgentGateContext, 'role' | 'missionId' | 'sessionId'> &
-  Partial<Pick<AgentGateContext, 'scope' | 'executionScope' | 'providerId' | 'readOnly'>>;
+  Partial<Pick<AgentGateContext, 'scope' | 'executionScope' | 'providerId' | 'readOnly' | 'operatorParentSessionId'>>;
 
 interface SessionLedger {
-  /** HEAD visto no último Stop: commits feitos depois entram no diff. */
-  lastHead?: string;
+  /** Sem spawn conhecido: o primeiro HEAD visto é a base da sessão. */
+  firstHead?: string;
   /** Último diff já relatado ao agente (não repete o mesmo aviso). */
   reportedHash?: string;
   blocks: number;
@@ -37,6 +46,20 @@ const ledgers = new Map<string, SessionLedger>();
 
 export function __resetHookRegressionForTests(): void {
   ledgers.clear();
+}
+
+function ledgerFor(sessionId: string): SessionLedger {
+  const existing = ledgers.get(sessionId);
+  if (existing) {
+    // LRU: sessão ativa vai para o fim; as mais antigas saem primeiro.
+    ledgers.delete(sessionId);
+    ledgers.set(sessionId, existing);
+    return existing;
+  }
+  const created: SessionLedger = { blocks: 0 };
+  ledgers.set(sessionId, created);
+  while (ledgers.size > MAX_LEDGERS) ledgers.delete(ledgers.keys().next().value!);
+  return created;
 }
 
 function headSha(git: GitRunner, root: string): string | undefined {
@@ -56,29 +79,42 @@ export async function handleHookRegressionRequest(
     readonly run?: typeof runRegressionGate;
     readonly enabled?: () => boolean;
     readonly git?: GitRunner;
+    readonly startedAtMs?: (sessionId: string) => number | null;
+    /** Abortado quando o transporte do hook desistiu (curl fechou). */
+    readonly signal?: AbortSignal;
   } = {},
 ): Promise<{ statusCode: 200; payload: Record<string, unknown> }> {
   void body;
   try {
-    if (ctx.role !== 'user' || ctx.missionId || ctx.readOnly === true || !ctx.sessionId) {
+    // Helper do "+ Pane" (tem pai operador) já passa pelo portão no handoff.
+    if (ctx.role !== 'user' || ctx.missionId || ctx.readOnly === true || !ctx.sessionId || ctx.operatorParentSessionId) {
       return { statusCode: 200, payload: {} };
     }
     if (!(deps.enabled ?? isRegressionGateEnabled)()) return { statusCode: 200, payload: {} };
     const scope = ctx.executionScope ?? ctx.scope;
     if (!scope) return { statusCode: 200, payload: {} };
-    const git = deps.git ?? new ProcessGitRunner();
-    const ledger = ledgers.get(ctx.sessionId) ?? { blocks: 0 };
-    ledgers.set(ctx.sessionId, ledger);
-    const head = headSha(git, scope.rootRealPath);
+    const ledger = ledgerFor(ctx.sessionId);
+    const startedAtMs = (deps.startedAtMs ?? getSessionSpawnedAtMs)(ctx.sessionId) ?? undefined;
+    if (startedAtMs === undefined) {
+      ledger.firstHead ??= headSha(deps.git ?? new ProcessGitRunner(), scope.rootRealPath);
+    }
     const result = await (deps.run ?? runRegressionGate)({
       scope,
-      baseSha: ledger.lastHead && ledger.lastHead !== head ? ledger.lastHead : undefined,
-      timeoutMs: STOP_HOOK_TEST_TIMEOUT_MS,
+      startedAtMs,
+      baseSha: startedAtMs === undefined ? ledger.firstHead : undefined,
+      timeoutMs: STOP_HOOK_BUDGET_MS,
+      maxTestFiles: STOP_HOOK_MAX_TEST_FILES,
+      signal: deps.signal,
     });
-    ledger.lastHead = head;
-    if (result.status === 'clean' || result.diffHash === ledger.reportedHash) {
+    // Ninguém mais escuta: não gasta o relato nem a cota de bloqueios.
+    if (deps.signal?.aborted) return { statusCode: 200, payload: {} };
+    if (result.status === 'clean') {
+      // Árvore limpa encerra a sequência de bloqueios.
+      ledger.blocks = 0;
+      ledger.reportedHash = undefined;
       return { statusCode: 200, payload: {} };
     }
+    if (result.diffHash === ledger.reportedHash) return { statusCode: 200, payload: {} };
     ledger.reportedHash = result.diffHash;
     const report = formatRegressionGateReport(result);
     if (result.status === 'failed') {
@@ -98,8 +134,8 @@ export async function handleHookRegressionRequest(
       return { statusCode: 200, payload: {} };
     }
     console.info(`[regression-gate] ${report.replace(/\n/g, ' | ')}`);
-    // Aviso (área sem teste, invariante tocado) não bloqueia: o Claude o
-    // mostra ao operador; o Codex fica só com o registro no log.
+    // Aviso (não verificado, área sem teste, invariante tocado) não bloqueia:
+    // o Claude o mostra ao operador; o Codex fica só com o registro no log.
     return {
       statusCode: 200,
       payload: ctx.providerId === 'codex' ? {} : { systemMessage: report },
@@ -114,7 +150,13 @@ export async function handleHookRegressionHttp(
   res: http.ServerResponse,
   ctx: AgentGateContext | null,
 ): Promise<void> {
+  // O curl desiste no `--max-time` do hook: conexão fechada
+  // antes da resposta cancela os testes (o grupo de processos morre junto).
+  const controller = new AbortController();
+  res.once('close', () => {
+    if (!res.writableEnded) controller.abort();
+  });
   await handleHookJsonPost(req, res, ctx, HOOK_REGRESSION_MAX_BODY_BYTES, (body) =>
-    handleHookRegressionRequest(ctx!, body),
+    handleHookRegressionRequest(ctx!, body, { signal: controller.signal }),
   );
 }
