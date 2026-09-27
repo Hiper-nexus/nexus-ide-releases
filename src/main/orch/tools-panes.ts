@@ -602,6 +602,8 @@ const paneSpawn: McpToolDef = {
     let options: SpawnToolOptions;
     let executionMode: 'same_checkout' | 'isolated_worktree' | undefined;
     let rosterRouteAuthorized = false;
+    // Reserva criada pelo auto-roteamento em missão (C, 0.76.110).
+    let autoRouteReservation = false;
     let autoRoute: Record<string, unknown> | undefined;
     let routeSkill: { name: string; pkg: string; confidence: number } | null =
       null;
@@ -805,6 +807,7 @@ const paneSpawn: McpToolDef = {
         adHocAdapterId = routeString(autoRoute, 'adapterId');
         routeReservationId =
           typeof autoRoute.routeReservationId === 'string' ? autoRoute.routeReservationId : undefined;
+        autoRouteReservation = routeReservationId !== undefined;
       }
       if (adHocAdapterId === undefined) {
         adHocAdapterId = requireStr(args, 'adapterId');
@@ -1073,13 +1076,16 @@ const paneSpawn: McpToolDef = {
         // Gate (c) — uma missão em execução exige routeReservationId de
         // nexus_route_task, salvo rota sticky do roster ou modo livre. No modo
         // livre a auditoria é preservada com um registro no route_log (spawn
-        // sem reserva continua "ver para crer").
+        // sem reserva continua "ver para crer"). A reserva que o próprio
+        // auto-roteamento criou é consumida também no modo livre — senão fica
+        // pendurada contando como "CLI já usada" até expirar.
         if (
           requiresRouteReservation({
             missionRunning: missionRow.status === 'running',
             rosterRouteAuthorized,
             freeAgentChoice,
-          })
+          }) ||
+          (autoRouteReservation && Boolean(ctx.sessionId))
         ) {
           if (!routeReservationId) {
             throw new Error(

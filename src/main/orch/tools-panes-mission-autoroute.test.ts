@@ -81,6 +81,22 @@ describe('nexus_pane_spawn dentro da missão sem adapterId', () => {
     expect(receipt.route.tier).toBe('medium');
   });
 
+  it('no modo livre a reserva criada pelo auto-roteamento é consumida, não fica pendurada', async () => {
+    h.mission = {
+      ...h.mission,
+      intentContract: { ...(h.mission.intentContract as object), freeAgentChoice: true },
+    };
+    setOperatorRouteResolver(vi.fn(async () => ({
+      adapterId: 'codex', model: 'gpt-5.4', effort: 'high', routeReservationId: 'rr-free',
+    })));
+    await paneSpawnTool.handler({ task: 'implementar o login', prompt: 'faça o login' }, ctx);
+    expect(h.spawn).toHaveBeenCalledTimes(1);
+    expect(h.consumeRouteReservation).toHaveBeenCalledWith(
+      expect.objectContaining({ reservationId: 'rr-free', adapterId: 'codex', model: 'gpt-5.4' }),
+      'orch-session',
+    );
+  });
+
   it('adapterId explícito continua aceito e não aciona o roteador', async () => {
     const resolver = vi.fn(async () => ({ adapterId: 'kimi' }));
     setOperatorRouteResolver(resolver);
