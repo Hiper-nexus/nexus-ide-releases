@@ -142,6 +142,24 @@ describe('WorkspaceTabs', () => {
     expect(props.onToggleBeside).toHaveBeenCalledWith('__loose__');
   });
 
+  it('Shift+F10 abre as ações da aba e Escape devolve o foco', () => {
+    const { host } = render();
+    const tab = host.querySelector<HTMLButtonElement>('[role="tab"]')!;
+    tab.focus();
+
+    act(() => {
+      tab.dispatchEvent(new KeyboardEvent('keydown', { key: 'F10', shiftKey: true, bubbles: true }));
+    });
+    expect(document.querySelector('[role="menu"]')).not.toBeNull();
+    expect(document.activeElement?.getAttribute('role')).toBe('menuitem');
+
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(tab);
+  });
+
   it('a aba da missão viva não oferece fechar — o menu aponta o Quadro', () => {
     const { host } = render();
     const missionTab = host.querySelector('.workspace-tab[data-scope-kind="mission"]')!;
