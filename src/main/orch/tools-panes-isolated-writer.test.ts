@@ -378,6 +378,23 @@ describe('revisão cruzada 0.76.110: corrida, retomada, WIP e GC', () => {
     expect(h.spawn).toHaveBeenCalledTimes(3);
   });
 
+  it('Fable P2-8: mão do operador retoma o writer isolado de missão encerrada; de missão viva, não', async () => {
+    await paneSpawnTool.handler({ agentName: 'Executor', isolatedWriter: true }, ctx);
+    const [record] = registry.listMission(ctx.scope, ctx.missionId!);
+    fs.writeFileSync(path.join(record.worktreePath, 'base.txt'), 'writer\n');
+    git(record.worktreePath, 'commit', '-qam', 'writer output');
+    h.panes[0].state = 'exited';
+    exitPane(h.panes[0]);
+    await expect(paneSpawnTool.handler({ adapterId: 'codex', resume: 'pane-0' }, op))
+      .rejects.toThrow(/pertence a outro escopo/);
+    h.mission = { ...h.mission, status: 'done' };
+    const receipt = await paneSpawnTool.handler({ adapterId: 'codex', resume: 'pane-0' }, op) as Record<string, any>;
+    expect(h.spawn.mock.calls.at(-1)![0]).toMatchObject({ cwd: record.worktreePath, isolatedWriter: true });
+    expect(receipt.isolatedWorktree.branch).toBe(record.branchRef.slice('refs/heads/'.length));
+    expect(registry.listMission(ctx.scope, ctx.missionId!)[0].status).toBe('ready');
+    expect(opRecords()).toHaveLength(0);
+  });
+
   it('P1-4: resume cujo spawn falha solta a reserva', async () => {
     await paneSpawnTool.handler({ adapterId: 'codex', isolatedWriter: true }, op);
     fs.writeFileSync(path.join(opRecords()[0].worktreePath, 'base.txt'), 'writer\n');

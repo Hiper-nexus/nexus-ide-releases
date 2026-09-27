@@ -5,6 +5,7 @@ import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-regi
 import { tapSessionExit } from '../pty/pty-manager';
 import { getPaneRuntimeAuthorityBySession, listPaneSnapshots } from './pane-registry';
 import { claimSameCheckoutWriter, hasPendingWriterClaim } from './delegated-writer-gate';
+import { getProjectDomainStores } from './project-domain-store-registry';
 
 /**
  * Chave do registry para writers isolados da mão do operador (sem missão).
@@ -127,9 +128,17 @@ export function resumeIsolatedWriterWorktree(
   const registry = requireWorktreeRuntimeRegistry();
   const linked = registry.findPaneWriter(scope, { paneId: fromPaneId });
   if (!linked) return null;
-  const registryKey = missionId ?? OPERATOR_HAND_WORKTREE_KEY;
+  let registryKey = missionId ?? OPERATOR_HAND_WORKTREE_KEY;
   if (linked.missionId !== registryKey) {
-    throw new Error(`resume: o writer isolado ${fromPaneId} pertence a outro escopo (missão) — retome-o de lá`);
+    // Missão dona encerrada (ou apagada): o pane voltou à mão do operador e
+    // o trabalho não integrado da worktree tem que continuar alcançável.
+    const owner = !missionId && linked.missionId !== OPERATOR_HAND_WORKTREE_KEY
+      ? getProjectDomainStores(scope).missions.get(linked.missionId)
+      : undefined;
+    if (owner === undefined || (owner && owner.status !== 'done' && owner.status !== 'failed')) {
+      throw new Error(`resume: o writer isolado ${fromPaneId} pertence a outro escopo (missão) — retome-o de lá`);
+    }
+    registryKey = linked.missionId;
   }
   let record: WorktreeRecord;
   // Reserva síncrona (mesmo claim dos writers novos): o spawn tem awaits
