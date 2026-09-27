@@ -267,6 +267,13 @@ export interface RunRegressionGateInput {
   readonly signal?: AbortSignal;
   /** Autoridade MCP revalidada imediatamente antes de cada spawn. */
   readonly authority?: McpToolInvocation;
+  /**
+   * Checkout principal do projeto, resolvido pelo Main (escopo da sessão, não
+   * o de execução). Único lugar de onde um `node_modules` symlinkado da
+   * worktree pode vir; sem ele, qualquer destino externo deixa os testes
+   * "não verificados".
+   */
+  readonly trustedDependencyRoot?: string;
 }
 
 export interface RegressionGateDependencies {
@@ -911,23 +918,51 @@ function parseJestLikeReport(root: string, cwd: string, raw: string): ParsedRepo
   return { failures, ran };
 }
 
-/** Diretórios de dependências fora do checkout (node_modules symlinkado) que o sandbox precisa ler. */
-function externalDependencyReads(root: string, cwd: string): string[] {
+function isInside(parent: string, child: string): boolean {
+  const rel = path.relative(parent, child);
+  return rel === '' || (!rel.startsWith(`..${path.sep}`) && rel !== '..' && !path.isAbsolute(rel));
+}
+
+function realOrNull(target: string): string | null {
+  try {
+    return fs.realpathSync(target);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Diretórios de dependências fora do checkout (node_modules symlinkado) que o
+ * sandbox precisa ler. O destino é escolhido pelo conteúdo da worktree, então
+ * só vale o validado pelo Main: o `node_modules` na MESMA posição do checkout
+ * principal (`trustedRoot`), real dentro dele. Qualquer outro (ex.: um link
+ * para o HOME, com a rede liberada) vira `rejected` e os testes não rodam.
+ */
+function externalDependencyReads(
+  root: string,
+  cwd: string,
+  trustedRoot: string | undefined,
+): { readonly reads: string[]; readonly rejected: string | null } {
   const out: string[] = [];
+  const trustedReal = trustedRoot ? realOrNull(trustedRoot) : null;
   for (let dir = cwd; ; dir = path.dirname(dir)) {
     const candidate = path.join(dir, 'node_modules');
+    let real: string | null = null;
     try {
-      if (fs.lstatSync(candidate).isSymbolicLink()) {
-        const real = fs.realpathSync(candidate);
-        const rel = path.relative(root, real);
-        if (rel.startsWith('..') || path.isAbsolute(rel)) out.push(real);
-      }
+      if (fs.lstatSync(candidate).isSymbolicLink()) real = fs.realpathSync(candidate);
     } catch {
-      // sem node_modules neste nível
+      // sem node_modules neste nível (ou link quebrado: nada a ler)
+    }
+    if (real && !isInside(root, real)) {
+      const mirror = trustedReal ? realOrNull(path.join(trustedReal, path.relative(root, candidate))) : null;
+      if (!mirror || mirror !== real || !isInside(trustedReal!, mirror)) {
+        return { reads: [], rejected: path.relative(root, candidate).replace(/\\/g, '/') };
+      }
+      out.push(real);
     }
     if (dir === root || path.dirname(dir) === dir) break;
   }
-  return out;
+  return { reads: out, rejected: null };
 }
 
 interface RunnerGroup {
@@ -948,12 +983,22 @@ async function runTests(
   group: RunnerGroup,
   timeoutMs: number,
   exec: RegressionExec,
-  control: Pick<RunRegressionGateInput, 'signal' | 'authority'>,
+  control: Pick<RunRegressionGateInput, 'signal' | 'authority' | 'trustedDependencyRoot'>,
 ): Promise<GroupOutcome> {
   const root = scope.rootRealPath;
   const cwd = group.dir ? path.join(root, group.dir) : root;
   const { runner } = group;
   const relTests = group.tests.map((test) => (group.dir ? path.posix.relative(group.dir, test) : test));
+  const dependencies = externalDependencyReads(root, cwd, control.trustedDependencyRoot);
+  if (dependencies.rejected) {
+    return {
+      failures: [],
+      ran: [],
+      warning:
+        `${dependencies.rejected} aponta para fora do projeto (destino não validado pelo Nexus): ` +
+        'testes não executados',
+    };
+  }
   const sandbox = createScopedSandboxHome(scope);
   const options = {
     cwd,
@@ -961,7 +1006,7 @@ async function runTests(
     sandboxDir: sandbox.dir,
     timeoutMs,
     env: sanitizedTestEnv(),
-    extraReadPaths: externalDependencyReads(root, cwd),
+    extraReadPaths: dependencies.reads,
     signal: control.signal,
     authority: control.authority,
   };
@@ -1182,7 +1227,11 @@ async function evaluate(
   const deadline = started + (input.timeoutMs ?? DEFAULT_REGRESSION_TEST_TIMEOUT_MS);
   const remaining = () => deadline - now();
   const exec = deps.exec ?? execSandboxed;
-  const control = { signal: input.signal, authority: input.authority };
+  const control = {
+    signal: input.signal,
+    authority: input.authority,
+    trustedDependencyRoot: input.trustedDependencyRoot,
+  };
   const failures: RegressionTestFailure[] = [];
   const ran = new Set<string>();
   const failuresByGroup = new Map<RunnerGroup, RegressionTestFailure[]>();
@@ -1294,6 +1343,7 @@ export async function runRegressionGate(
     before.diffHash,
     before.changed.foreign.join(','),
     input.maxTestFiles ?? '',
+    input.trustedDependencyRoot ?? '',
   ].join('\0');
   const cacheable = !before.changed.truncated;
   const hit = cacheable ? cache.get(key) : undefined;

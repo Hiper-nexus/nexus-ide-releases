@@ -115,6 +115,8 @@ export async function handleHookRegressionRequest(
       timeoutMs: STOP_HOOK_BUDGET_MS,
       maxTestFiles: STOP_HOOK_MAX_TEST_FILES,
       signal: deps.signal,
+      // Escopo do Main (checkout do projeto), nunca o de execução.
+      trustedDependencyRoot: ctx.scope?.rootRealPath,
     });
     // Ninguém mais escuta: não gasta o relato nem a cota de bloqueios.
     if (deps.signal?.aborted) return { statusCode: 200, payload: {} };

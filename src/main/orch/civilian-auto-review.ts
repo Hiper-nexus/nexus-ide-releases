@@ -91,6 +91,7 @@ export interface CivilianAutoReviewDependencies {
         readonly scope: ProjectExecutionScope;
         readonly declaredFiles: readonly string[];
         readonly baseSha?: string;
+        readonly trustedDependencyRoot?: string;
       }) => Promise<RegressionGateResult>)
     | null;
   readonly deliverRepair?: (
@@ -380,6 +381,7 @@ export async function enforceCivilianAutoReview(
         scope: executionScope,
         declaredFiles: changedFiles,
         baseSha,
+        trustedDependencyRoot: input.scope.rootRealPath,
       });
     } catch (error) {
       console.warn('[civilian-auto-review] portão de regressão falhou (ignorado):', error);
