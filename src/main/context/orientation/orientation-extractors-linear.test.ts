@@ -30,6 +30,10 @@ describe('orientation extractors: linear worst case', () => {
   it('import scan: many `import` words without from/quotes (was quadratic)', () => {
     const content = 'import '.repeat(40_000);
     expect(timed(() => extractOrientationImportSpecifiers(content))).toBeLessThan(BUDGET_MS);
+    // Regex-literal and template paths of the lexer: unclosed classes/braces.
+    for (const adversarial of ['(/['.repeat(100_000), '`${'.repeat(100_000), "('".repeat(100_000)]) {
+      expect(timed(() => extractOrientationImportSpecifiers(adversarial))).toBeLessThan(BUDGET_MS);
+    }
   });
 
   it('SQL trigger/function scan: unterminated clauses (was polynomial)', () => {
@@ -67,6 +71,16 @@ describe('orientation extractors: lexical correctness', () => {
   it('keeps a multi-line import whose comment contains an apostrophe', () => {
     const content = "import {\n  Foo, // Don't remove this type\n  Bar,\n} from './foo';\n";
     expect(extractOrientationImportSpecifiers(content)).toEqual(['./foo']);
+  });
+
+  it('reads regex literals so /^\\// or /[\'"]/ do not derail later imports', () => {
+    // Shape of media-generation.ts: without regex literals, `//` inside
+    // /^\\// read as a comment and the closing `}` resumed the template.
+    const content =
+      "function url(op) {\n  return `${base}/${op.replace(/^\\//, '')}`;\n}\n" +
+      "const q = /['\"]/g.test(s) ? 1 : 2 / 3;\n" +
+      "const { k } = require('./media-keys') as typeof import('./media-keys');\n";
+    expect(extractOrientationImportSpecifiers(content)).toEqual(['./media-keys', './media-keys']);
   });
 
   it('ignores import-looking text inside comments and strings', () => {

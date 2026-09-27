@@ -5,19 +5,33 @@
  * so the cost is linear in the input no matter how adversarial it is (the
  * regex scanners it replaces could backtrack exponentially).
  *
- * Regex literals are not recognized; a quote inside one may open a bogus
- * string, but ' and " strings stop at the end of the line, which bounds the
- * damage to that line.
+ * A `/` starts a regex literal when the previous token cannot end an
+ * operand (the usual lexer heuristic), so `/^\//` or /['"]/ do not derail
+ * the scan; ' and " strings and regexes stop at the end of the line, which
+ * bounds the damage of any misread to that line.
  */
 export type JsToken =
   | { readonly kind: 'ident'; readonly value: string }
   | { readonly kind: 'string'; readonly value: string }
   /** Template text with every `${...}` replaced by a single `?`. */
   | { readonly kind: 'template'; readonly value: string }
-  | { readonly kind: 'punct'; readonly value: string };
+  | { readonly kind: 'punct'; readonly value: string }
+  | { readonly kind: 'regex'; readonly value: string };
 
 const IDENT_START = /[A-Za-z_$]/;
 const IDENT_PART = /[\w$]/;
+// After these keywords an expression (hence a regex) may start.
+const REGEX_PREFIX_KEYWORDS = new Set([
+  'return', 'typeof', 'case', 'do', 'else', 'in', 'of', 'new', 'delete',
+  'void', 'throw', 'instanceof', 'yield', 'await',
+]);
+
+function regexMayStart(previous: JsToken | undefined): boolean {
+  if (!previous) return true;
+  if (previous.kind === 'punct') return !')]}'.includes(previous.value);
+  if (previous.kind === 'ident') return REGEX_PREFIX_KEYWORDS.has(previous.value);
+  return false;
+}
 
 interface TemplateFrame {
   text: string;
@@ -78,6 +92,25 @@ export function scanJsTokens(content: string): readonly JsToken[] {
     if (ch === '/' && content[i + 1] === '*') {
       const end = content.indexOf('*/', i + 2);
       i = end < 0 ? n : end + 2;
+      continue;
+    }
+    if (ch === '/' && regexMayStart(tokens[tokens.length - 1])) {
+      const start = i;
+      let inClass = false;
+      i += 1;
+      while (i < n && content[i] !== '\n') {
+        const c = content[i];
+        if (c === '\\') {
+          i += 2;
+          continue;
+        }
+        i += 1;
+        if (c === '[') inClass = true;
+        else if (c === ']') inClass = false;
+        else if (c === '/' && !inClass) break;
+      }
+      while (i < n && IDENT_PART.test(content[i])) i += 1;
+      tokens.push({ kind: 'regex', value: content.slice(start, i) });
       continue;
     }
     if (ch === "'" || ch === '"') {
