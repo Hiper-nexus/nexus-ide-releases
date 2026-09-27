@@ -281,7 +281,7 @@ function regressionSummary(result: RegressionGateResult | null): string {
         ? `Testes impactados: nenhum; área sem teste: ${result.untestedFiles.slice(0, 5).join(', ')}.`
         : '';
     case 'unavailable':
-      return `Testes impactados indisponíveis (${result.warnings[0] ?? 'sem runner'}).`;
+      return `Testes impactados NÃO verificados — não contam como aprovação (${result.warnings[0] ?? 'sem runner'}).`;
     default:
       return '';
   }

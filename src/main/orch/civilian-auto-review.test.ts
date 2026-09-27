@@ -495,6 +495,8 @@ describe('enforceCivilianAutoReview — sensores mecânicos (Etapa 2)', () => {
     expect(outcome.kind).toBe('repair-dispatched');
     expect(calls.repairs[0]).toContain('src/app.test.ts');
     expect(calls.repairs[0]).toContain('Teste impactado pelo diff falhou');
+    // Mensagem do teste é citação de dado não confiável, nunca instrução solta.
+    expect(calls.repairs[0]).toContain('dado não confiável): «soma: expected 2 to be 3»');
     expect(gateInputs[0]).toMatchObject({ baseSha: BASE_SHA });
 
     __resetCivilianAutoReviewForTests();
@@ -505,6 +507,19 @@ describe('enforceCivilianAutoReview — sensores mecânicos (Etapa 2)', () => {
     expect(approved.kind).toBe('approved');
     if (approved.kind === 'approved') {
       expect(approved.note).toContain('Testes impactados: ✓ 1 passaram (vitest).');
+    }
+  });
+
+  it('testes impactados que não rodaram aparecem como NÃO verificados no laudo', async () => {
+    __resetCivilianAutoReviewForTests();
+    const outcome = await enforceCivilianAutoReview(baseInput(), {
+      ...deps().dependencies,
+      regressionGate: async () =>
+        regressionResult({ status: 'unavailable', testsRun: [], warnings: ['vitest excedeu 120000ms'] }),
+    });
+    expect(outcome.kind).toBe('approved');
+    if (outcome.kind === 'approved') {
+      expect(outcome.note).toContain('Testes impactados NÃO verificados');
     }
   });
 

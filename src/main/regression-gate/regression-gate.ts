@@ -9,10 +9,13 @@
  *     → runner do PROJETO ALVO (vitest/jest; pytest trivial)
  *     → resultado estruturado: passou | falhou | sem teste para a área X.
  *
- * Custo: cache por hash do conteúdo do diff (o mesmo diff nunca roda duas
- * vezes), teto de arquivos de teste e timeout; nunca a suíte inteira.
- * Fail-open: sem runner, sem git ou erro de infraestrutura devolvem
- * `unavailable` com aviso — o portão só bloqueia com teste que FALHOU.
+ * Custo: cache pelo estado verificado (conteúdo do diff + HEAD + base +
+ * dependências), teto de arquivos de teste e um prazo total; nunca a suíte
+ * inteira. O runner roda no sandbox do writer (process-sandbox).
+ * Nunca aprova sem validar: sem runner, teste que não rodou, prazo, sandbox
+ * indisponível ou checkout que mudou durante a execução viram `unavailable`
+ * ("não verificado", explícito para agente e orquestrador) — não bloqueia por
+ * infraestrutura, mas também nunca vira `passed`. Só bloqueia teste que FALHOU.
  */
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -1237,8 +1240,8 @@ async function evaluate(
 }
 
 /**
- * Roda o portão sobre o diff atual do checkout do escopo. Mesmo diff (hash do
- * conteúdo) → resultado em cache; chamadas concorrentes compartilham a mesma
+ * Roda o portão sobre o diff atual do checkout do escopo. Mesmo estado
+ * verificado → resultado em cache; chamadas concorrentes compartilham a mesma
  * execução. `unavailable` não entra no cache: a próxima tentativa reavalia.
  */
 export async function runRegressionGate(
