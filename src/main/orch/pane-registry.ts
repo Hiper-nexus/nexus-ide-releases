@@ -905,6 +905,9 @@ function retainRenderedMissionPaneHeadless(
   const sessionId = entry.sessionId;
   const declaredMeta = orchMetaByPane.get(paneMetaKey(owner, entry.paneId));
   const agent = sessionId ? getAgentSessionInfo(sessionId) : null;
+  // Pane aberto pelo operador que virou orquestrador continua do renderer:
+  // não existe versão headless dele, e "reter" aqui o encerrava.
+  if (agent?.source === "direct-user") return false;
   const meta: OrchMeta | undefined =
     declaredMeta ??
     (agent?.missionId &&

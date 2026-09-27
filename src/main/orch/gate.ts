@@ -669,6 +669,39 @@ export function restoreSessionAuthority(
   return true;
 }
 
+/**
+ * O ÚNICO caminho que adota a mão do operador (`user` sem missão) como
+ * orquestradora de uma missão: `nexus_mission_create`, "Tornar orquestrador"
+ * e a missão sob demanda do primeiro helper passam por aqui. Mantém allowlists
+ * (nunca alarga o que o pane tinha) e marca `promotedFromUserSession` para a
+ * devolução ao operador quando a missão acabar. `false` = nada mudou.
+ */
+export function adoptUserSessionAsMissionOrchestrator(
+  sessionId: string,
+  missionId: string,
+  contextRevision?: string,
+): boolean {
+  const ctx = contextBySession.get(sessionId);
+  const target = missionId.trim();
+  if (!ctx || !target || ctx.role !== "user" || ctx.missionId) return false;
+  return adoptUserContextAsMissionOrchestrator(ctx, target, contextRevision);
+}
+
+/** Mesma adoção sobre o contexto já resolvido do chamador MCP. */
+export function adoptUserContextAsMissionOrchestrator(
+  ctx: AgentGateContext,
+  missionId: string,
+  contextRevision?: string,
+): boolean {
+  if (ctx.role !== "user" || ctx.missionId || !missionId.trim()) return false;
+  ctx.missionId = missionId.trim();
+  ctx.role = "orchestrator";
+  ctx.promotedFromUserSession = true;
+  ctx.handoffSubmitted = false;
+  if (contextRevision) bindContextRevision(ctx, contextRevision);
+  return true;
+}
+
 export interface PromoteMissionSessionAuthorityInput {
   missionId: string;
   promotedSessionId: string;
@@ -699,20 +732,28 @@ export function promoteMissionSessionAuthority(
     previousSessionId &&
     previousSessionId !== input.promotedSessionId
   ) {
-    const previous = contextBySession.get(previousSessionId);
-    if (
-      previous &&
-      previous.missionId === missionId &&
-      previous.role === "orchestrator"
-    ) {
-      previous.role = "worker";
-      previous.allowedTools = [];
-      previous.allowedSkills = null;
-      previous.handoffSubmitted = false;
-      delete previous.workerIncarnationId;
-    }
+    demoteMissionOrchestratorSession(missionId, previousSessionId);
   }
   return true;
+}
+
+/** Rebaixa o orquestrador anterior da missão a worker (troca de liderança). */
+export function demoteMissionOrchestratorSession(
+  missionId: string,
+  sessionId: string,
+): void {
+  const previous = contextBySession.get(sessionId);
+  if (
+    previous &&
+    previous.missionId === missionId &&
+    previous.role === "orchestrator"
+  ) {
+    previous.role = "worker";
+    previous.allowedTools = [];
+    previous.allowedSkills = null;
+    previous.handoffSubmitted = false;
+    delete previous.workerIncarnationId;
+  }
 }
 
 /** Compensation for a failed cross-store mission creation commit. */

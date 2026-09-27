@@ -9,6 +9,7 @@ import { emitPersistentChangeReversalEvent } from './mission-event-emit';
 import { rankCapabilitiesByNeed } from './capability-need-ranking';
 import type { ProjectExecutionScope } from '../../shared/project-identity-types';
 import {
+  adoptUserContextAsMissionOrchestrator,
   assertCurrentMissionOrchestratorSession,
   assertOrchestratorMission,
 } from './gate';
@@ -21,6 +22,7 @@ import {
 import type { AgentGateContext } from './gate';
 import { z } from 'zod';
 import { findPane, readSessionOutput, waitForIdle } from './pane-registry';
+import { adoptUserAgentSessionAsMissionOrchestrator } from '../pty/pty-manager';
 import { listProviderSettings } from '../persistence/provider-config-store';
 import { routeTask, type TaskTier } from './task-router';
 import {
@@ -333,11 +335,10 @@ const missionCreateTool: McpToolDef = {
     const mission = autopilot
       ? (stores.missions.update(created.id, { status: 'running' }) ?? created)
       : created;
-    ctx.missionId = mission.id;
-    ctx.role = 'orchestrator';
-    // Marca a promoção para que ela possa ser desfeita se a missão for
-    // descartada. Sem isto o pane fica estéril para sempre.
-    ctx.promotedFromUserSession = true;
+    // Marca a promoção (promotedFromUserSession) para que ela possa ser
+    // desfeita se a missão for descartada. Sem isto o pane fica estéril.
+    adoptUserContextAsMissionOrchestrator(ctx, mission.id);
+    if (ctx.sessionId) adoptUserAgentSessionAsMissionOrchestrator(ctx.sessionId, mission.id);
     // The creator's own pane is part of the mission composition too, so a
     // history reopen restores the orchestrator alongside the workers.
     const orchPane = ctx.sessionId ? findPane(ctx.sessionId) : null;

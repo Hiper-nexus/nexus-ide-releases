@@ -12,6 +12,8 @@ const deps = vi.hoisted(() => ({
   getContextBySession: vi.fn(),
   restoreSessionAuthority: vi.fn(),
   promoteMissionSessionAuthority: vi.fn(),
+  adoptUserSessionAsMissionOrchestrator: vi.fn(),
+  adoptUserAgentSessionAsMissionOrchestrator: vi.fn(),
   getMission: vi.fn(),
   rebindMissionOrchestratorSession: vi.fn(),
   promotePaneToOrchestrator: vi.fn(),
@@ -37,6 +39,8 @@ vi.mock("./pane-registry", () => ({
 vi.mock("../pty/pty-manager", () => ({
   getOwnedAgentSessionInfo: deps.getOwnedAgentSessionInfo,
   updateOwnedAgentSessionRole: deps.updateOwnedAgentSessionRole,
+  adoptUserAgentSessionAsMissionOrchestrator: deps.adoptUserAgentSessionAsMissionOrchestrator,
+  returnAdoptedAgentSessionToUser: vi.fn(),
 }));
 
 vi.mock("../persistence/renderer-workspace-scope", () => ({
@@ -47,6 +51,9 @@ vi.mock("./gate", () => ({
   getContextBySession: deps.getContextBySession,
   restoreSessionAuthority: deps.restoreSessionAuthority,
   promoteMissionSessionAuthority: deps.promoteMissionSessionAuthority,
+  adoptUserSessionAsMissionOrchestrator: deps.adoptUserSessionAsMissionOrchestrator,
+  demoteMissionOrchestratorSession: vi.fn(),
+  rollbackSessionAuthorityMission: vi.fn(),
 }));
 
 vi.mock("../adapters/adapter-registry", () => ({
@@ -170,6 +177,8 @@ beforeEach(() => {
   deps.restoreSessionAuthority.mockReturnValue(true);
   deps.promoteMissionSessionAuthority.mockReturnValue(true);
   deps.updateOwnedAgentSessionRole.mockReturnValue(true);
+  deps.adoptUserSessionAsMissionOrchestrator.mockReturnValue(true);
+  deps.adoptUserAgentSessionAsMissionOrchestrator.mockReturnValue(true);
   deps.getMission.mockReturnValue(mission);
   deps.rebindMissionOrchestratorSession.mockReturnValue(mission);
   deps.promotePaneToOrchestrator.mockReturnValue({
@@ -399,6 +408,13 @@ describe("renderer mission authority", () => {
       workerIncarnationId: "worker-incarnation-opencode",
       allowedTools: ["nexus_handoff_submit"],
     });
+    deps.getContextBySession.mockReturnValue({
+      role: "worker",
+      missionId: "mission-a",
+      scope,
+      allowedTools: ["nexus_handoff_submit"],
+      allowedSkills: null,
+    });
     deps.getAdapter.mockReturnValue({ id: "opencode", kind: "cli-pty" });
     deps.isBuiltinAdapter.mockReturnValue(false);
     deps.orchestrationEvidenceForAdapter.mockReturnValue("experimental");
@@ -494,11 +510,14 @@ describe("renderer mission authority", () => {
         return stored;
       });
       const remove = vi.fn(() => true);
+      deps.listMissionPanes.mockReturnValue([]);
+      deps.getContextBySession.mockReturnValue({ role: "user", scope, allowedTools: null, allowedSkills: null });
       deps.getMission.mockImplementation((id: string) => (id === "mission-light" ? stored : null));
       deps.rebindMissionOrchestratorSession.mockImplementation(() => stored);
       deps.forScope.mockReturnValue({
         missions: {
           get: deps.getMission,
+          list: () => [],
           create,
           update,
           remove,
@@ -507,6 +526,7 @@ describe("renderer mission authority", () => {
         missionPanes: {
           findByPaneId: deps.findMissionPaneByPaneId,
           list: deps.listMissionPanes,
+          remove: vi.fn(),
           promotePaneToOrchestrator: deps.promotePaneToOrchestrator,
         },
       });
@@ -547,17 +567,20 @@ describe("renderer mission authority", () => {
         workspaceBinding: { version: 1, adoptedPaneId: "pane-b" },
       });
       expect(store.update).toHaveBeenCalledWith("mission-light", { status: "running" });
-      expect(deps.promoteMissionSessionAuthority).toHaveBeenCalledWith({
-        missionId: "mission-light",
-        promotedSessionId: "pty-b",
-        previousSessionId: "pty-b",
-      });
-      // Só o pane promovido muda de papel: nenhum outro orquestrador é tocado.
-      expect(deps.updateOwnedAgentSessionRole).toHaveBeenCalledTimes(1);
-      expect(deps.updateOwnedAgentSessionRole).toHaveBeenCalledWith(
+      // A sessão `user` é ADOTADA (gate + ficha PTY), não "trocada de papel":
+      // a primitiva de troca recusa `user` (P1 da revisão cruzada).
+      expect(deps.adoptUserSessionAsMissionOrchestrator).toHaveBeenCalledWith(
         "pty-b",
-        expect.objectContaining({ role: "orchestrator", missionId: "mission-light" }),
+        "mission-light",
+        "context-revision-a",
       );
+      expect(deps.adoptUserAgentSessionAsMissionOrchestrator).toHaveBeenCalledWith(
+        "pty-b",
+        "mission-light",
+      );
+      expect(deps.promoteMissionSessionAuthority).not.toHaveBeenCalled();
+      // Nenhum outro orquestrador é tocado.
+      expect(deps.updateOwnedAgentSessionRole).not.toHaveBeenCalled();
       expect(store.remove).not.toHaveBeenCalled();
     });
 

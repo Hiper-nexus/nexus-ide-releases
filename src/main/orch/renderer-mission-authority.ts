@@ -26,15 +26,20 @@ import type { ProjectExecutionScope } from "../../shared/types";
 import { requireRendererWorkspaceScope } from "../persistence/renderer-workspace-scope";
 import { requireWorktreeRuntimeRegistry } from "../runtime/worktree-runtime-registry";
 import {
+  adoptUserAgentSessionAsMissionOrchestrator,
   getOwnedAgentSessionInfo,
+  returnAdoptedAgentSessionToUser,
   updateOwnedAgentSessionRole,
   type OwnedAgentSessionInfo,
 } from "../pty/pty-manager";
 import {
+  adoptUserSessionAsMissionOrchestrator,
+  demoteMissionOrchestratorSession,
   getContextBySession,
   promoteMissionSessionAuthority,
   restoreSessionAuthority,
   rollbackMissionSessionAuthorities,
+  rollbackSessionAuthorityMission,
 } from "./gate";
 import { attachOrchMeta, findPaneOwnedBy } from "./pane-registry";
 import type {
@@ -320,6 +325,8 @@ function matchesPersistedRuntime(
 
 export class RendererMissionAuthority {
   readonly #stores: ProjectDomainStoreRegistry;
+  /** Aba (chave do renderer + worktree) → missão leve que ela já criou. */
+  readonly #tabMissions = new Map<string, string>();
   readonly #resolveContextRevision: (
     scope: ProjectExecutionScope,
     missionId: string,
@@ -757,7 +764,12 @@ export class RendererMissionAuthority {
    */
   createPaneMissionFromRenderer(
     owner: WebContents,
-    input: { readonly paneId: string; readonly title: string },
+    input: {
+      readonly paneId: string;
+      readonly title: string;
+      /** Aba no renderer: só desempata criação/reuso, nunca concede nada. */
+      readonly tabKey?: string;
+    },
   ): PromoteMissionOrchestratorResult {
     let owned: ReturnType<typeof ownedPaneSession>;
     try {
@@ -765,8 +777,14 @@ export class RendererMissionAuthority {
     } catch {
       return { ok: false, error: "pane_unavailable" };
     }
+    owned = this.#releaseReturnedOperatorHand(owner, owned);
     // Pane que já lidera/serve outra missão não é arrancado dela.
     if (owned.info.missionId) return { ok: false, error: "pane_mission_mismatch" };
+    try {
+      assertMissionAuthorityTitle(input.title);
+    } catch {
+      return { ok: false, error: "invalid_payload" };
+    }
     let workspaceBinding: ReturnType<typeof adoptedMissionWorkspaceBinding>;
     try {
       workspaceBinding = adoptedMissionWorkspaceBinding(
@@ -778,6 +796,18 @@ export class RendererMissionAuthority {
       return { ok: false, error: "pane_unavailable" };
     }
     const suite = this.#stores.forScope(owned.scope);
+    // Uma missão por aba: a segunda promoção (ou o segundo clique antes da
+    // primeira resposta) reusa a que já nasceu. Tudo aqui é síncrono no Main,
+    // então procurar e criar é atômico.
+    const tabKey = input.tabKey
+      ? `${owned.scope.checkoutId}\0${owned.info.scope.rootRealPath}\0${input.tabKey}`
+      : undefined;
+    const existing = this.#liveTabMission(suite, owned, workspaceBinding.spaceId, tabKey);
+    if (existing) {
+      return this.promoteOrchestratorFromRenderer(owner, existing.id, {
+        paneId: owned.paneId,
+      });
+    }
     const created = suite.missions.create({
       title: input.title,
       milestones: [],
@@ -790,12 +820,92 @@ export class RendererMissionAuthority {
       },
     });
     suite.missions.update(created.id, { status: "running" });
-    const result = this.promoteOrchestratorFromRenderer(owner, created.id, {
-      paneId: owned.paneId,
-    });
+    if (tabKey) this.#tabMissions.set(tabKey, created.id);
+    let result: PromoteMissionOrchestratorResult;
+    try {
+      result = this.promoteOrchestratorFromRenderer(owner, created.id, {
+        paneId: owned.paneId,
+      });
+    } catch (error) {
+      console.warn("[mission-authority] promoção da missão da aba falhou", error);
+      result = { ok: false, error: "promotion_failed" };
+    }
     // Sem orquestrador a missão não existe para o operador: nada fica pendurado.
-    if (!result.ok) suite.missions.remove(created.id);
+    if (!result.ok) {
+      if (tabKey) this.#tabMissions.delete(tabKey);
+      this.#discardPaneMission(suite, created.id, owned.sessionId);
+    }
     return result;
+  }
+
+  /** Missão viva desta aba: a da worktree dela, ou a que a aba já criou. */
+  #liveTabMission(
+    suite: ProjectDomainStoreSuite,
+    owned: ReturnType<typeof ownedPaneSession>,
+    spaceId: string | undefined,
+    tabKey: string | undefined,
+  ): Mission | null {
+    const live = (mission: Mission | null | undefined): mission is Mission =>
+      Boolean(
+        mission &&
+          (mission.status === "running" || mission.status === "blocked") &&
+          hasCurrentDispatchAuthority(mission) &&
+          sameScope(missionExecutionScope(owned.scope, mission), owned.info.scope),
+      );
+    if (spaceId) {
+      const bound = suite.missions
+        .list()
+        .find(
+          (mission) =>
+            mission.intentContract?.workspaceBinding?.spaceId === spaceId &&
+            live(mission),
+        );
+      if (bound) return bound;
+    }
+    if (!tabKey) return null;
+    const remembered = this.#tabMissions.get(tabKey);
+    const mission = remembered ? suite.missions.get(remembered) : null;
+    if (live(mission)) return mission;
+    this.#tabMissions.delete(tabKey);
+    return null;
+  }
+
+  /** Desfaz a missão leve que não ganhou orquestrador (compensação). */
+  #discardPaneMission(
+    suite: ProjectDomainStoreSuite,
+    missionId: string,
+    sessionId: string,
+  ): void {
+    for (const spec of suite.missionPanes.list(missionId)) {
+      suite.missionPanes.remove(spec.id);
+    }
+    suite.missions.remove(missionId);
+    rollbackSessionAuthorityMission(sessionId, missionId);
+    returnAdoptedAgentSessionToUser(sessionId, missionId);
+  }
+
+  /**
+   * A missão que adotou este pane acabou e o gate já devolveu a mão do
+   * operador (`user` sem missão), mas a ficha PTY ainda aponta a missão
+   * morta. Alinha a ficha antes de adotar de novo — sem isto o pane seria
+   * recusado como "de outra missão" para sempre.
+   */
+  #releaseReturnedOperatorHand(
+    owner: WebContents,
+    owned: ReturnType<typeof ownedPaneSession>,
+  ): ReturnType<typeof ownedPaneSession> {
+    const ctx = getContextBySession(owned.sessionId);
+    if (
+      !owned.info.promotedFromUser ||
+      !owned.info.missionId ||
+      ctx?.role !== "user" ||
+      ctx.missionId ||
+      !returnAdoptedAgentSessionToUser(owned.sessionId, owned.info.missionId)
+    ) {
+      return owned;
+    }
+    const info = getOwnedAgentSessionInfo(owner, owned.sessionId);
+    return info ? { ...owned, info } : owned;
   }
 
   promoteOrchestratorFromRenderer(
@@ -822,17 +932,46 @@ export class RendererMissionAuthority {
     } catch {
       return { ok: false, error: "pane_unavailable" };
     }
+    owned = this.#releaseReturnedOperatorHand(owner, owned);
     if (
       !sameScope(missionExecutionScope(rendererScope, mission), owned.info.scope) ||
       (owned.info.missionId && owned.info.missionId !== missionId)
     ) {
       return { ok: false, error: "pane_mission_mismatch" };
     }
+    // Quem vai liderar: a mão do operador (`user` sem missão) é ADOTADA pelo
+    // mesmo caminho do nexus_mission_create; um pane da missão troca de papel.
+    // Conferido ANTES de gravar: gate e ficha PTY precisam aceitar, senão o
+    // banco diria orquestrador enquanto o MCP continua `user` sem missão.
+    const gateCtx = getContextBySession(owned.sessionId);
+    const adopting =
+      gateCtx?.role === "user" &&
+      !gateCtx.missionId &&
+      owned.info.role === "user" &&
+      !owned.info.missionId;
+    // Criadora via nexus_mission_create de antes desta release: gate já é a
+    // orquestradora, só a ficha PTY ficou `user`.
+    const alignCreatorPty =
+      gateCtx?.missionId === missionId &&
+      gateCtx.role === "orchestrator" &&
+      gateCtx.promotedFromUserSession === true &&
+      owned.info.role === "user" &&
+      !owned.info.missionId;
+    const switching =
+      gateCtx?.missionId === missionId &&
+      (gateCtx.role === "worker" || gateCtx.role === "orchestrator") &&
+      (owned.info.role !== "user" || alignCreatorPty);
+    if (!adopting && !switching) return { ok: false, error: "promotion_failed" };
     let spec = suite.missionPanes.promotePaneToOrchestrator(
       missionId,
       owned.paneId,
     );
     if (!spec) {
+      const squad = mission.squadId ? getSquad(mission.squadId) : null;
+      const authoritySeal =
+        squad || !mission.squadId
+          ? resolveMissionPaneAuthoritySeal(rendererScope, mission, squad)
+          : null;
       try {
         spec = suite.missionPanes.record({
           missionId,
@@ -845,6 +984,8 @@ export class RendererMissionAuthority {
           effort: owned.info.effort,
           cwd: owned.info.cwd,
           executionScope: owned.info.scope,
+          // Selo gravado na composição: é ele que a retomada confere.
+          ...(authoritySeal ? { authoritySeal } : {}),
         });
       } catch {
         spec = null;
@@ -858,20 +999,38 @@ export class RendererMissionAuthority {
     );
     if (!rebound) return { ok: false, error: "mission_unavailable" };
 
+    const contextRevision = this.#resolveContextRevision(
+      owned.scope,
+      missionId,
+    );
     const previousSessionId = mission.orchestratorSessionId ?? null;
-    promoteMissionSessionAuthority({
-      missionId,
-      promotedSessionId: owned.sessionId,
-      previousSessionId,
-    });
-    updateOwnedAgentSessionRole(owned.sessionId, {
-      role: "orchestrator",
-      missionId,
-      allowedTools: null,
-      allowedSkills: null,
-      workerIncarnationId: null,
-    });
+    const granted = adopting
+      ? adoptUserSessionAsMissionOrchestrator(owned.sessionId, missionId, contextRevision) &&
+        adoptUserAgentSessionAsMissionOrchestrator(owned.sessionId, missionId)
+      : promoteMissionSessionAuthority({
+          missionId,
+          promotedSessionId: owned.sessionId,
+          previousSessionId,
+        }) &&
+        (alignCreatorPty
+          ? adoptUserAgentSessionAsMissionOrchestrator(owned.sessionId, missionId)
+          : updateOwnedAgentSessionRole(owned.sessionId, {
+              role: "orchestrator",
+              missionId,
+              allowedTools: null,
+              allowedSkills: null,
+              workerIncarnationId: null,
+            }));
+    if (!granted) {
+      // Falha fechada: nenhuma autoridade pela metade.
+      if (adopting) {
+        rollbackSessionAuthorityMission(owned.sessionId, missionId);
+        returnAdoptedAgentSessionToUser(owned.sessionId, missionId);
+      }
+      return { ok: false, error: "promotion_failed" };
+    }
     if (previousSessionId && previousSessionId !== owned.sessionId) {
+      if (adopting) demoteMissionOrchestratorSession(missionId, previousSessionId);
       updateOwnedAgentSessionRole(previousSessionId, {
         role: "worker",
         missionId,
@@ -881,10 +1040,6 @@ export class RendererMissionAuthority {
       });
     }
 
-    const contextRevision = this.#resolveContextRevision(
-      owned.scope,
-      missionId,
-    );
     attachOrchMeta(owner, owned.paneId, {
       missionId,
       contextRevision,
