@@ -146,6 +146,46 @@ describe('runRegressionGate', () => {
     expect(exec.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
+  it('pytest ausente (python3 sai 1 sem resumo do pytest) é NÃO verificado, nunca teste falhando', async () => {
+    const { root, scope } = project();
+    write(root, 'pytest.ini', '[pytest]\n');
+    write(root, 'calc.py', 'def soma(a, b):\n    return a + b\n');
+    write(root, 'test_calc.py', 'from calc import soma\n');
+    fs.rmSync(path.join(root, 'package.json'));
+    const exec = vi.fn<RegressionExec>(async () => ({
+      exitCode: 1,
+      timedOut: false,
+      stdout: '',
+      stderr: '/usr/bin/python3: No module named pytest',
+    }));
+
+    const result = await runRegressionGate({ scope }, { exec });
+
+    expect(exec).toHaveBeenCalled();
+    expect(result.status).toBe('unavailable');
+    expect(result.failures).toEqual([]);
+    expect(result.testsNotRun).toContain('test_calc.py');
+  });
+
+  it('pytest com teste que falhou (resumo "1 failed") continua failed', async () => {
+    const { root, scope } = project();
+    write(root, 'pytest.ini', '[pytest]\n');
+    write(root, 'calc.py', 'def soma(a, b):\n    return a - b\n');
+    write(root, 'test_calc.py', 'from calc import soma\n');
+    fs.rmSync(path.join(root, 'package.json'));
+    const exec = vi.fn<RegressionExec>(async () => ({
+      exitCode: 1,
+      timedOut: false,
+      stdout: 'FAILED test_calc.py::test_soma - assert -1 == 3\n1 failed in 0.01s\n',
+      stderr: '',
+    }));
+
+    const result = await runRegressionGate({ scope }, { exec });
+
+    expect(result.status).toBe('failed');
+    expect(result.failures.map((failure) => failure.file)).toEqual(['test_calc.py']);
+  });
+
   it('teste instável que passa na 2ª tentativa não barra; falha que se repete barra', async () => {
     const { root, scope } = project();
     write(root, 'src/a.ts', 'export const a = 2;\n');

@@ -1084,7 +1084,9 @@ async function runTests(
       if (result.exitCode === 0 && /\b\d+ passed\b/u.test(result.stdout)) {
         return { failures: [], ran: [...group.tests] };
       }
-      if (result.exitCode !== 1) {
+      // Saída 1 também é "python3 sem pytest" (No module named pytest): só é
+      // falha de teste com o resumo do pytest dizendo que algo falhou.
+      if (result.exitCode !== 1 || !/\b\d+ (?:failed|errors?)\b/u.test(result.stdout)) {
         return notVerified(`pytest não rodou os testes (${neutralizeRunnerText(result.stderr || result.stdout, 160)})`);
       }
       const failures = [...result.stdout.matchAll(/^FAILED (\S+?)(?:::(\S+))?(?: - (.*))?$/gmu)].map((match) => ({
