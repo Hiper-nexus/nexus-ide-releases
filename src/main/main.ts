@@ -211,6 +211,7 @@ import {
   ensureCommandBlockTracking,
   setCommandBlockPersistHook,
 } from "./terminal/command-block-tracker";
+import { ensureSessionExitMemoryDistiller } from "./memory/session-exit-memory";
 import { createCommandBlockPersister } from "./terminal/command-block-persist";
 import { configureMissionEventEmit } from "./orch/mission-event-emit";
 import { installObserverMissionEventProjector } from "./orch/observer-mission-event-projector";
@@ -555,6 +556,9 @@ function bootstrap(): void {
     }),
   );
   ensureCommandBlockTracking();
+  // Fim de sessão de pane: digere os handoffs da sessão em memória trusted
+  // (best-effort; teto diário e dedupe FTS5 dentro do próprio módulo).
+  ensureSessionExitMemoryDistiller();
   configureMissionEventEmit(projectRuntimeManager);
   installObserverMissionEventProjector();
   installMissionDiskProjection();

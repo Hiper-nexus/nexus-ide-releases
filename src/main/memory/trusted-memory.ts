@@ -18,6 +18,7 @@ export const TRUSTED_MEMORY_EVENT_TYPES = [
   'resolved-problem',
   'architecture-rule',
   'approved-merge',
+  'session-digest',
 ] as const;
 
 export const trustedMemoryEventSchema = z
@@ -148,6 +149,11 @@ const TRUSTED_MEMORY_POLICY: Readonly<
     kind: 'fact',
     importance: 5,
   },
+  'session-digest': {
+    label: 'Session digest',
+    kind: 'fact',
+    importance: 3,
+  },
 };
 
 const TRUSTED_CONTENT_MAX_BYTES = 7_800;
@@ -240,6 +246,7 @@ function requireTrustedMemoryEnabled(): void {
 export function retainTrustedMemory(
   scope: ProjectExecutionScope,
   rawEvent: TrustedMemoryEvent,
+  options: { supersedes?: string } = {},
 ): RetainResult {
   requireTrustedMemoryEnabled();
   const event = trustedMemoryEventSchema.parse(rawEvent);
@@ -248,12 +255,13 @@ export function retainTrustedMemory(
       'accepted-handoff memory requires the canonical Main-owned projection',
     );
   }
-  return retainParsedTrustedMemory(scope, event);
+  return retainParsedTrustedMemory(scope, event, options);
 }
 
 function retainParsedTrustedMemory(
   scope: ProjectExecutionScope,
   event: TrustedMemoryEvent,
+  options: { supersedes?: string } = {},
 ): RetainResult {
   const policy = TRUSTED_MEMORY_POLICY[event.type];
   return getWorkspaceMemoryStore(scope).retain({
@@ -262,6 +270,7 @@ function retainParsedTrustedMemory(
     importance: policy.importance,
     scope: 'workspace',
     source: `trusted:${event.type}`,
+    ...(options.supersedes ? { supersedes: options.supersedes } : {}),
   });
 }
 
@@ -338,6 +347,7 @@ export async function retainAcceptedHandoffMemoryDistilledBestEffort(
 export function retainTrustedMemoryBestEffort(
   scope: ProjectExecutionScope,
   rawEvent: TrustedMemoryEvent,
+  options: { supersedes?: string } = {},
 ): RetainResult | null {
   if (
     !getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.workspaceMemory)
@@ -345,7 +355,7 @@ export function retainTrustedMemoryBestEffort(
     return null;
   }
   try {
-    return retainTrustedMemory(scope, rawEvent);
+    return retainTrustedMemory(scope, rawEvent, options);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (!message.includes('requires configureWorkspaceMemory')) {

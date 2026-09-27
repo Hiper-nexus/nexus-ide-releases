@@ -1083,6 +1083,23 @@ export class WorkspaceMemoryStore {
     });
   }
 
+  /**
+   * Linhas ativas do workspace de uma fonte criadas desde um instante —
+   * usado pelo teto diário de gravações automáticas (session digest).
+   */
+  countActiveSince(source: string, sinceMs: number): number {
+    this.#assertOpen();
+    const row = this.#workspaceDb
+      .prepare(
+        `SELECT COUNT(*) AS n
+         FROM memories
+         WHERE scope = 'workspace' AND source = ?
+           AND created_at >= ? AND superseded_by IS NULL`,
+      )
+      .get(source, sinceMs) as { n: number };
+    return row.n;
+  }
+
   /** Counts only, and only from the stat cache when nothing moved on disk. */
   #projectionStats(): ProjectionCounts {
     const root = this.#projectionRoots.values().next().value as
