@@ -61,14 +61,34 @@ function num(v: unknown): number {
  * NUNCA lança — transcript é formato de terceiro e muda sem aviso.
  */
 export function parseTranscriptLine(line: string): UsageEvent | null {
+  return readTranscriptLine(line).usage;
+}
+
+/**
+ * Uma linha do JSONL: o uso (turno de assistant) ou, em linha `user` (prompt
+ * ou resultado de ferramenta), o instante em que a próxima requisição ao
+ * modelo começou — o início honesto da janela de geração da mensagem seguinte.
+ */
+export function readTranscriptLine(line: string): {
+  usage: UsageEvent | null;
+  requestAt: number | null;
+} {
   const trimmed = line.trim();
-  if (!trimmed) return null;
+  if (!trimmed) return { usage: null, requestAt: null };
   let obj: TranscriptLine;
   try {
     obj = JSON.parse(trimmed) as TranscriptLine;
   } catch {
-    return null;
+    return { usage: null, requestAt: null };
   }
+  if (obj.type === 'user') {
+    const at = obj.timestamp ? Date.parse(obj.timestamp) : NaN;
+    return { usage: null, requestAt: Number.isFinite(at) ? at : null };
+  }
+  return { usage: usageOf(obj), requestAt: null };
+}
+
+function usageOf(obj: TranscriptLine): UsageEvent | null {
   if (obj.type !== 'assistant') return null;
   const usage = obj.message?.usage;
   if (!usage || typeof obj.sessionId !== 'string' || !obj.sessionId) return null;

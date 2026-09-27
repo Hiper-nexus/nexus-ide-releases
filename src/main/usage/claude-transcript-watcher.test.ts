@@ -325,3 +325,61 @@ describe('ClaudeTranscriptWatcher boot cost', () => {
     await vi.waitFor(() => expect(second).toHaveLength(210), { timeout: 5_000, interval: 20 });
   });
 });
+
+describe('ClaudeTranscriptWatcher janela de geração por mensagem', () => {
+  const T0 = Date.parse('2026-09-27T17:40:54.935Z');
+
+  function line(value: Record<string, unknown>): string {
+    return `${JSON.stringify({ sessionId: 's-orq', ...value })}\n`;
+  }
+  const user = (offsetMs: number) =>
+    line({ type: 'user', timestamp: new Date(T0 + offsetMs).toISOString(), message: { role: 'user' } });
+  const assistant = (id: string, offsetMs: number, outputTokens: number) =>
+    line({
+      type: 'assistant',
+      timestamp: new Date(T0 + offsetMs).toISOString(),
+      message: { id, model: 'claude-opus-5-5', usage: { input_tokens: 2, output_tokens: outputTokens } },
+    });
+
+  it('marca o início da requisição e não o reinicia nos resultados de tool intercalados', async () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-watcher-timing-'));
+    tempRoots.push(tempRoot);
+    const configDir = path.join(tempRoot, 'claude-config');
+    const workspace = path.join(tempRoot, 'checkout');
+    const projectDir = path.join(configDir, 'projects', claudeProjectSlug(workspace));
+    fs.mkdirSync(projectDir, { recursive: true });
+    // Padrão do transcript real: a mensagem grava linhas, uma tool roda no
+    // meio (linha `user` com o resultado) e a MESMA mensagem segue gravando.
+    fs.writeFileSync(
+      path.join(projectDir, 's-orq.jsonl'),
+      [
+        user(0),
+        assistant('msg-a', 8_196, 1_109),
+        assistant('msg-a', 8_199, 1_109),
+        user(8_304),
+        assistant('msg-a', 10_111, 1_109),
+        user(10_199),
+        assistant('msg-b', 18_000, 875),
+      ].join(''),
+    );
+
+    const seen: Array<{ id: string | null; at: number | null; startedAt: number | null }> = [];
+    const watcher = new ClaudeTranscriptWatcher({
+      workspacePath: workspace,
+      configDirs: [configDir],
+      pollMs: 10,
+      onEvent: (event, _file, timing) =>
+        seen.push({ id: event.messageId, at: event.timestamp, startedAt: timing.requestStartedAt }),
+    });
+    liveWatchers.push(watcher);
+    watcher.start();
+    await vi.waitFor(() => expect(seen).toHaveLength(4), { timeout: 1_000, interval: 10 });
+
+    expect(seen.map((entry) => [entry.id, entry.startedAt])).toEqual([
+      ['msg-a', T0],
+      ['msg-a', T0],
+      ['msg-a', T0],
+      ['msg-b', T0 + 10_199],
+    ]);
+  });
+});
