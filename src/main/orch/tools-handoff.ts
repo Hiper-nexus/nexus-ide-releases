@@ -77,12 +77,10 @@ import {
   type JevReviewVerdict,
 } from "./jev-handoff-review";
 import {
-  evaluateHandoffRegressionGate,
   REGRESSION_UNVERIFIED_PREFIX,
   type RegressionHandoffVerdict,
 } from "../regression-gate/regression-gate-handoff";
-import { getSessionSpawnedAtMs } from "../pty/pty-manager";
-import { missionExecutionBaseSha } from "./mission-execution-scope";
+import { evaluateWriterHandoffRegression } from "./handoff-regression-gate";
 
 function buildOverclockArtifacts(
   args: Record<string, unknown>,
@@ -413,22 +411,10 @@ const handoffSubmitTool: McpToolDef = {
       contractVerdict.kind !== "exhausted"
     ) {
       assertMcpInvocationCurrent(invocation);
-      let baseSha: string | undefined;
-      try {
-        baseSha = missionExecutionBaseSha(ctx.scope, mission);
-      } catch {
-        baseSha = undefined;
-      }
-      regressionVerdict = await evaluateHandoffRegressionGate({
-        sessionId: ctx.sessionId,
-        scope: executionScopeFor(ctx),
+      regressionVerdict = await evaluateWriterHandoffRegression(ctx, {
         declaredFiles,
-        baseSha,
-        startedAtMs: ctx.sessionId
-          ? (getSessionSpawnedAtMs(ctx.sessionId) ?? undefined)
-          : undefined,
-        signal: invocation?.signal,
-        authority: invocation,
+        mission,
+        invocation,
       });
       if (regressionVerdict.kind === "retry") {
         throw new Error(regressionVerdict.message);

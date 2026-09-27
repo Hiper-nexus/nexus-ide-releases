@@ -91,6 +91,14 @@ export async function evaluateHandoffRegressionGate(
     readonly startedAtMs?: number;
     readonly signal?: AbortSignal;
     readonly authority?: McpToolInvocation;
+    /** Checkout principal do projeto (escopo do Main): ver RunRegressionGateInput. */
+    readonly trustedDependencyRoot?: string;
+    /**
+     * false quando o transporte não devolve erro ao agente (bloco no PTY,
+     * fechamento mecânico): falha entra direto como `exhausted` (blocked),
+     * nunca como success.
+     */
+    readonly returnable?: boolean;
   },
   deps: RegressionGateDependencies & { readonly enabled?: () => boolean } = {},
 ): Promise<RegressionHandoffVerdict> {
@@ -108,6 +116,7 @@ export async function evaluateHandoffRegressionGate(
         timeoutMs: HANDOFF_REGRESSION_BUDGET_MS,
         signal: input.signal,
         authority: input.authority,
+        trustedDependencyRoot: input.trustedDependencyRoot,
       },
       deps,
     );
@@ -135,7 +144,7 @@ export async function evaluateHandoffRegressionGate(
   }
   const report = formatRegressionGateReport(result);
   const used = input.sessionId ? bouncesBySession.get(input.sessionId) ?? 0 : 0;
-  if (input.sessionId && used < REGRESSION_GATE_BOUNCES_PER_SESSION) {
+  if (input.returnable !== false && input.sessionId && used < REGRESSION_GATE_BOUNCES_PER_SESSION) {
     bouncesBySession.delete(input.sessionId);
     bouncesBySession.set(input.sessionId, used + 1);
     while (bouncesBySession.size > MAX_TRACKED_SESSIONS) {

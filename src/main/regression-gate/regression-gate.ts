@@ -39,8 +39,9 @@ import {
 import {
   DEFAULT_ORIENTATION_LIMITS,
   type OrientationLimits,
+  type ProjectOrientationMap,
 } from '../context/orientation/orientation-types';
-import { ensureBlastRadius } from '../context/orientation/orientation-blast-radius';
+import { computeBlastRadius } from '../context/orientation/orientation-blast-radius';
 import { tryGetProjectOrientationService } from '../context/orientation/orientation-service';
 import { readWorkspaceTextFile } from '../orch/workspace-file';
 import { assertMcpInvocationCurrent, type McpToolInvocation } from '../orch/mcp-protocol';
@@ -95,6 +96,11 @@ export interface RegressionBlastRadiusExtension {
   readonly tests?: readonly string[];
   /** Nomes (qualificado e simples) das entidades `db:table:`/`db:function:` do raio. */
   readonly dbEntities?: readonly string[];
+  /**
+   * Arquivos que usam as tabelas/funções que o diff toca (outra feature, sem
+   * import em comum): os testes deles entram como os de um importador.
+   */
+  readonly dbConsumers?: readonly string[];
 }
 
 export interface RegressionInvariantTouched {
@@ -134,10 +140,54 @@ function stringList(value: unknown): string[] {
 }
 
 const DB_NODE_RE = /^db:(?:table|function):(.+)$/u;
+/** Saltos entre entidades de banco (função → tabela que ela escreve → …). */
+const DB_ENTITY_HOPS = 3;
+const MAX_DB_CONSUMERS = 64;
 
 /**
- * Default do contrato do codemap-banco: `tests` do BlastRadiusResult e as
- * entidades de banco do raio (nós `db:table:`/`db:function:` em `dbEntities`).
+ * arquivo do diff → tabela/função → arquivo de OUTRA feature que a usa: o
+ * `depth: 1` do raio para na entidade e perde esse consumidor (comanda →
+ * comissão). Anda só pelas arestas de banco, com limite explícito, e para no
+ * consumidor — os testes dele o portão acha pelo grafo de imports.
+ */
+function dbConsumersOf(
+  map: ProjectOrientationMap,
+  changedFiles: readonly string[],
+): { readonly consumers: string[]; readonly dbNodes: string[] } {
+  const adjacency = map.graph.adjacency ?? {};
+  const reverse = map.graph.reverse ?? {};
+  const neighbors = (node: string) => [...(adjacency[node] ?? []), ...(reverse[node] ?? [])];
+  const changed = new Set(changedFiles);
+  const seen = new Set<string>();
+  let frontier: string[] = [];
+  const visit = (node: string) => {
+    if (!node.startsWith('db:') || seen.has(node)) return;
+    seen.add(node);
+    frontier.push(node);
+  };
+  for (const file of changedFiles) neighbors(file).forEach(visit);
+  // Migration/schema do diff: alcança quem usa o que ela define.
+  for (const entity of map.graph.dbEntities ?? []) {
+    if (entity.definedIn.some((file) => changed.has(file))) visit(entity.nodeId);
+  }
+  const consumers = new Set<string>();
+  for (let hop = 0; hop < DB_ENTITY_HOPS && frontier.length > 0; hop += 1) {
+    const current = frontier;
+    frontier = [];
+    for (const node of current) {
+      for (const next of neighbors(node)) {
+        if (next.startsWith('db:')) visit(next);
+        else if (!changed.has(next) && consumers.size < MAX_DB_CONSUMERS) consumers.add(next);
+      }
+    }
+  }
+  return { consumers: [...consumers].sort((a, b) => a.localeCompare(b)), dbNodes: [...seen] };
+}
+
+/**
+ * Default do contrato do codemap-banco: `tests` do BlastRadiusResult, as
+ * entidades de banco do raio (nós `db:table:`/`db:function:` em `dbEntities`)
+ * e os consumidores dessas entidades em outras features.
  * Sem serviço de orientação → null, o portão segue só com o grafo.
  */
 export async function orientationBlastRadiusExtension(input: {
@@ -146,17 +196,16 @@ export async function orientationBlastRadiusExtension(input: {
 }): Promise<RegressionBlastRadiusExtension | null> {
   const service = tryGetProjectOrientationService();
   if (!service) return null;
-  const radius: object = await ensureBlastRadius(
-    input.scope,
-    { seedFiles: input.changedFiles, depth: 1 },
-    service,
-  );
+  const map = await service.ensure(input.scope, { reason: 'mcp', waitMs: 5_000 });
+  const radius: object = computeBlastRadius(map, { seedFiles: input.changedFiles, depth: 1 });
   const tests = stringList((radius as { tests?: unknown }).tests);
+  const viaDb = dbConsumersOf(map, input.changedFiles);
   // O code map expõe os nós de banco em `dbEntities` (rodada 4b); `files`
   // fica como fallback para mapas antigos que ainda os misturavam.
   const dbNodes = [
     ...stringList((radius as { dbEntities?: unknown }).dbEntities),
     ...stringList((radius as { files?: unknown }).files),
+    ...viaDb.dbNodes,
   ];
   const dbEntities = [...new Set(dbNodes)].flatMap((node) => {
     const qualified = DB_NODE_RE.exec(node)?.[1];
@@ -164,7 +213,10 @@ export async function orientationBlastRadiusExtension(input: {
     const dot = qualified.indexOf('.');
     return dot >= 0 ? [qualified, qualified.slice(dot + 1)] : [qualified];
   });
-  return tests.length > 0 || dbEntities.length > 0 ? { tests, dbEntities } : null;
+  const dbConsumers = viaDb.consumers;
+  return tests.length > 0 || dbEntities.length > 0 || dbConsumers.length > 0
+    ? { tests, dbEntities, dbConsumers }
+    : null;
 }
 
 /** Default do contrato do modelo de negócio: invariantes do `.context` do checkout. */
@@ -267,6 +319,13 @@ export interface RunRegressionGateInput {
   readonly signal?: AbortSignal;
   /** Autoridade MCP revalidada imediatamente antes de cada spawn. */
   readonly authority?: McpToolInvocation;
+  /**
+   * Checkout principal do projeto, resolvido pelo Main (escopo da sessão, não
+   * o de execução). Único lugar de onde um `node_modules` symlinkado da
+   * worktree pode vir; sem ele, qualquer destino externo deixa os testes
+   * "não verificados".
+   */
+  readonly trustedDependencyRoot?: string;
 }
 
 export interface RegressionGateDependencies {
@@ -277,7 +336,8 @@ export interface RegressionGateDependencies {
 }
 
 const cache = new Map<string, RegressionGateResult>();
-const inflight = new Map<string, Promise<RegressionGateResult>>();
+/** Execução em curso + o signal de quem a iniciou (o cancelamento é dele). */
+const inflight = new Map<string, { readonly promise: Promise<RegressionGateResult>; readonly signal?: AbortSignal }>();
 
 export function __resetRegressionGateForTests(): void {
   cache.clear();
@@ -638,6 +698,8 @@ export async function computeImpactedTests(
   scope: ProjectExecutionScope,
   changedFiles: readonly string[],
   extraTests: readonly string[] = [],
+  /** Consumidores via banco: seus testes entram, mas eles não são "área sem teste". */
+  dbConsumers: readonly string[] = [],
 ): Promise<ImpactedTests> {
   const { reverse, files, truncated } = await buildReverseGraph(scope, changedFiles);
   const fileSet = new Set(files);
@@ -656,13 +718,10 @@ export async function computeImpactedTests(
     return true;
   };
   const untested: string[] = [];
-  for (const file of changedFiles) {
-    if (TEST_FILE_RE.test(file) || PY_TEST_RE.test(file)) addTest(file, file);
-  }
-  for (const file of changedFiles) {
-    if (TEST_FILE_RE.test(file) || PY_TEST_RE.test(file)) continue;
+  /** Testes co-localizados e importadores (até REVERSE_DEPTH saltos) de `file`. */
+  const testsOf = (file: string, source: string): boolean => {
     let found = false;
-    for (const test of colocatedTests(file, files)) found = addTest(test, file) || found;
+    for (const test of colocatedTests(file, files)) found = addTest(test, source) || found;
     const seen = new Set<string>([file]);
     let frontier = [file];
     let visits = 0;
@@ -672,15 +731,28 @@ export async function computeImpactedTests(
         for (const importer of reverse.get(node) ?? []) {
           if (seen.has(importer) || ++visits > MAX_REVERSE_VISITS) continue;
           seen.add(importer);
-          if (TEST_FILE_RE.test(importer)) found = addTest(importer, file) || found;
+          if (TEST_FILE_RE.test(importer)) found = addTest(importer, source) || found;
           else next.push(importer);
         }
       }
       frontier = next;
     }
-    if (!found && isSourceNeedingTest(file) && fileSet.has(file)) {
+    return found;
+  };
+  for (const file of changedFiles) {
+    if (TEST_FILE_RE.test(file) || PY_TEST_RE.test(file)) addTest(file, file);
+  }
+  for (const file of changedFiles) {
+    if (TEST_FILE_RE.test(file) || PY_TEST_RE.test(file)) continue;
+    if (!testsOf(file, file) && isSourceNeedingTest(file) && fileSet.has(file)) {
       untested.push(file);
     }
+  }
+  for (const consumer of dbConsumers) {
+    const normalized = normalizeRelative(consumer);
+    if (!normalized) continue;
+    if (TEST_FILE_RE.test(normalized) || PY_TEST_RE.test(normalized)) addTest(normalized, '(banco)');
+    else testsOf(normalized, '(banco)');
   }
   for (const test of extraTests) {
     const normalized = normalizeRelative(test);
@@ -739,6 +811,11 @@ function killTree(proc: ChildProcess, signal: NodeJS.Signals): void {
 }
 
 const OUTPUT_LIMIT_BYTES = 4 * 1024 * 1024;
+/**
+ * Depois que o runner sai, espera isto pelo fim do stdout/stderr. Um filho que
+ * saiu do grupo (setsid/daemon) e herdou o pipe nunca deixa o `close` vir.
+ */
+const EXIT_STDIO_GRACE_MS = 2_000;
 
 /**
  * Runner no MESMO isolamento do terminal do writer (process-sandbox): cwd no
@@ -795,6 +872,7 @@ const execSandboxed: RegressionExec = (file, args, options) =>
     let aborted = false;
     let settled = false;
     let forceKill: NodeJS.Timeout | null = null;
+    let exitGrace: NodeJS.Timeout | null = null;
     const capture = (stream: 'out' | 'err', chunk: Buffer) => {
       const room = OUTPUT_LIMIT_BYTES - captured;
       if (room <= 0) return;
@@ -823,6 +901,7 @@ const execSandboxed: RegressionExec = (file, args, options) =>
       settled = true;
       clearTimeout(timer);
       if (forceKill) clearTimeout(forceKill);
+      if (exitGrace) clearTimeout(exitGrace);
       options.signal?.removeEventListener('abort', onAbort);
       // Descendentes que sobraram (servidor aberto pelo teste) morrem junto.
       killTree(proc, 'SIGKILL');
@@ -838,6 +917,9 @@ const execSandboxed: RegressionExec = (file, args, options) =>
     proc.stderr?.on('data', (chunk: Buffer) => capture('err', chunk));
     proc.once('error', (error) => finish(null, `\n${error.message}`));
     proc.once('close', (code) => finish(code));
+    proc.once('exit', (code) => {
+      exitGrace = setTimeout(() => finish(code), EXIT_STDIO_GRACE_MS);
+    });
     options.signal?.addEventListener('abort', onAbort, { once: true });
     if (options.signal?.aborted) onAbort();
   });
@@ -911,23 +993,51 @@ function parseJestLikeReport(root: string, cwd: string, raw: string): ParsedRepo
   return { failures, ran };
 }
 
-/** Diretórios de dependências fora do checkout (node_modules symlinkado) que o sandbox precisa ler. */
-function externalDependencyReads(root: string, cwd: string): string[] {
+function isInside(parent: string, child: string): boolean {
+  const rel = path.relative(parent, child);
+  return rel === '' || (!rel.startsWith(`..${path.sep}`) && rel !== '..' && !path.isAbsolute(rel));
+}
+
+function realOrNull(target: string): string | null {
+  try {
+    return fs.realpathSync(target);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Diretórios de dependências fora do checkout (node_modules symlinkado) que o
+ * sandbox precisa ler. O destino é escolhido pelo conteúdo da worktree, então
+ * só vale o validado pelo Main: o `node_modules` na MESMA posição do checkout
+ * principal (`trustedRoot`), real dentro dele. Qualquer outro (ex.: um link
+ * para o HOME, com a rede liberada) vira `rejected` e os testes não rodam.
+ */
+function externalDependencyReads(
+  root: string,
+  cwd: string,
+  trustedRoot: string | undefined,
+): { readonly reads: string[]; readonly rejected: string | null } {
   const out: string[] = [];
+  const trustedReal = trustedRoot ? realOrNull(trustedRoot) : null;
   for (let dir = cwd; ; dir = path.dirname(dir)) {
     const candidate = path.join(dir, 'node_modules');
+    let real: string | null = null;
     try {
-      if (fs.lstatSync(candidate).isSymbolicLink()) {
-        const real = fs.realpathSync(candidate);
-        const rel = path.relative(root, real);
-        if (rel.startsWith('..') || path.isAbsolute(rel)) out.push(real);
-      }
+      if (fs.lstatSync(candidate).isSymbolicLink()) real = fs.realpathSync(candidate);
     } catch {
-      // sem node_modules neste nível
+      // sem node_modules neste nível (ou link quebrado: nada a ler)
+    }
+    if (real && !isInside(root, real)) {
+      const mirror = trustedReal ? realOrNull(path.join(trustedReal, path.relative(root, candidate))) : null;
+      if (!mirror || mirror !== real || !isInside(trustedReal!, mirror)) {
+        return { reads: [], rejected: path.relative(root, candidate).replace(/\\/g, '/') };
+      }
+      out.push(real);
     }
     if (dir === root || path.dirname(dir) === dir) break;
   }
-  return out;
+  return { reads: out, rejected: null };
 }
 
 interface RunnerGroup {
@@ -948,12 +1058,22 @@ async function runTests(
   group: RunnerGroup,
   timeoutMs: number,
   exec: RegressionExec,
-  control: Pick<RunRegressionGateInput, 'signal' | 'authority'>,
+  control: Pick<RunRegressionGateInput, 'signal' | 'authority' | 'trustedDependencyRoot'>,
 ): Promise<GroupOutcome> {
   const root = scope.rootRealPath;
   const cwd = group.dir ? path.join(root, group.dir) : root;
   const { runner } = group;
   const relTests = group.tests.map((test) => (group.dir ? path.posix.relative(group.dir, test) : test));
+  const dependencies = externalDependencyReads(root, cwd, control.trustedDependencyRoot);
+  if (dependencies.rejected) {
+    return {
+      failures: [],
+      ran: [],
+      warning:
+        `${dependencies.rejected} aponta para fora do projeto (destino não validado pelo Nexus): ` +
+        'testes não executados',
+    };
+  }
   const sandbox = createScopedSandboxHome(scope);
   const options = {
     cwd,
@@ -961,7 +1081,7 @@ async function runTests(
     sandboxDir: sandbox.dir,
     timeoutMs,
     env: sanitizedTestEnv(),
-    extraReadPaths: externalDependencyReads(root, cwd),
+    extraReadPaths: dependencies.reads,
     signal: control.signal,
     authority: control.authority,
   };
@@ -975,7 +1095,9 @@ async function runTests(
       if (result.exitCode === 0 && /\b\d+ passed\b/u.test(result.stdout)) {
         return { failures: [], ran: [...group.tests] };
       }
-      if (result.exitCode !== 1) {
+      // Saída 1 também é "python3 sem pytest" (No module named pytest): só é
+      // falha de teste com o resumo do pytest dizendo que algo falhou.
+      if (result.exitCode !== 1 || !/\b\d+ (?:failed|errors?)\b/u.test(result.stdout)) {
         return notVerified(`pytest não rodou os testes (${neutralizeRunnerText(result.stderr || result.stdout, 160)})`);
       }
       const failures = [...result.stdout.matchAll(/^FAILED (\S+?)(?:::(\S+))?(?: - (.*))?$/gmu)].map((match) => ({
@@ -1017,7 +1139,12 @@ async function runTests(
         ran,
       };
     }
-    return { failures: parsed.failures, ran };
+    // O vitest filtra por substring: um arquivo que o portão não pediu pode
+    // rodar junto. Falha dele não é deste diff (só a de arquivo sem nome conta).
+    return {
+      failures: parsed.failures.filter((failure) => requested.has(failure.file) || failure.file.startsWith('(')),
+      ran,
+    };
   } finally {
     fs.rmSync(sandbox.dir, { recursive: true, force: true });
   }
@@ -1137,7 +1264,7 @@ async function evaluate(
 
   let impacted: ImpactedTests;
   try {
-    impacted = await computeImpactedTests(input.scope, changedFiles, extraTests);
+    impacted = await computeImpactedTests(input.scope, changedFiles, extraTests, radius?.dbConsumers ?? []);
   } catch (error) {
     warnings.push(`mapa de testes indisponível: ${error instanceof Error ? error.message : String(error)}`.slice(0, 200));
     return finish({
@@ -1160,6 +1287,8 @@ async function evaluate(
   const invariantsTouched = touchedSummary(new Set());
   const maxTests = input.maxTestFiles ?? DEFAULT_REGRESSION_MAX_TEST_FILES;
   const tests = impacted.tests.slice(0, maxTests);
+  // Cortados pelo teto não rodaram: contam como não verificados, não como aprovados.
+  const overflow = impacted.tests.slice(maxTests);
   if (impacted.tests.length > maxTests) {
     warnings.push(
       `raio grande: ${impacted.tests.length} testes impactados, rodando os ${maxTests} mais próximos do diff`,
@@ -1172,7 +1301,7 @@ async function evaluate(
   const { groups, orphans } = planRunnerGroups(root, tests);
   if (groups.length === 0) {
     warnings.push('nenhum runner de teste detectado (vitest/jest/pytest): testes impactados NÃO verificados');
-    return finish({ status: 'unavailable', testsRun: [], testsNotRun: tests, failures: [], inheritedFailures: [], runner: null, ...common });
+    return finish({ status: 'unavailable', testsRun: [], testsNotRun: [...tests, ...overflow], failures: [], inheritedFailures: [], runner: null, ...common });
   }
   if (orphans.length > 0) {
     warnings.push(`sem runner para ${orphans.length} teste(s): ${orphans.slice(0, 5).join(', ')}`);
@@ -1182,7 +1311,11 @@ async function evaluate(
   const deadline = started + (input.timeoutMs ?? DEFAULT_REGRESSION_TEST_TIMEOUT_MS);
   const remaining = () => deadline - now();
   const exec = deps.exec ?? execSandboxed;
-  const control = { signal: input.signal, authority: input.authority };
+  const control = {
+    signal: input.signal,
+    authority: input.authority,
+    trustedDependencyRoot: input.trustedDependencyRoot,
+  };
   const failures: RegressionTestFailure[] = [];
   const ran = new Set<string>();
   const failuresByGroup = new Map<RunnerGroup, RegressionTestFailure[]>();
@@ -1216,7 +1349,7 @@ async function evaluate(
     }
   }
   const testsRun = tests.filter((test) => ran.has(test));
-  const testsNotRun = tests.filter((test) => !ran.has(test));
+  const testsNotRun = [...tests.filter((test) => !ran.has(test)), ...overflow];
   if (testsNotRun.length > 0) {
     warnings.push(
       `${testsNotRun.length} teste(s) impactado(s) NÃO rodaram (excluídos pela config do runner, prazo ou sandbox): ${testsNotRun.slice(0, 5).join(', ')}`,
@@ -1234,9 +1367,16 @@ async function evaluate(
     );
   }
   const ownRun = testsRun.filter(owned);
+  // Aprovação só com TODOS os impactados do agente executados: um que passou
+  // não cobre o que ficou de fora (config, prazo, sandbox, sem runner).
+  const ownNotRun = testsNotRun.filter(owned);
+  if (ownNotRun.length > 0 && ownFailures.length === 0) {
+    warnings.push(`execução parcial: ${ownRun.length} rodaram, ${ownNotRun.length} não — resultado NÃO verificado`);
+  }
   return finish({
     // Nenhum teste executado de verdade nunca é aprovação.
-    status: ownFailures.length > 0 ? 'failed' : ownRun.length > 0 ? 'passed' : 'unavailable',
+    status:
+      ownFailures.length > 0 ? 'failed' : ownRun.length > 0 && ownNotRun.length === 0 ? 'passed' : 'unavailable',
     testsRun,
     testsNotRun,
     failures: ownFailures,
@@ -1260,9 +1400,15 @@ export async function runRegressionGate(
   const git = deps.git ?? new ProcessGitRunner();
   const before = observeState(root, input, git);
   if (before.changed.files.length === 0) {
+    // Diff vazio só é "limpo" se o git respondeu: erro nele (lock, índice
+    // corrompido) devolve lista vazia e não pode passar por árvore limpa.
+    const gitAnswered =
+      !before.base.head ||
+      (gitText(git, root, ['status', '--porcelain', '--untracked-files=all']) !== null &&
+        (!before.base.sha || gitText(git, root, ['diff', '--quiet', `${before.base.sha}...HEAD`]) !== null));
     return Object.freeze({
       version: GATE_VERSION,
-      status: 'clean',
+      status: gitAnswered ? 'clean' : 'unavailable',
       diffHash: before.diffHash,
       headSha: before.base.head,
       baseSha: before.base.sha,
@@ -1275,7 +1421,7 @@ export async function runRegressionGate(
       untestedFiles: [],
       invariantsTouched: [],
       runner: null,
-      warnings: [],
+      warnings: gitAnswered ? [] : ['git não respondeu ao listar o diff: nada verificado'],
       cached: false,
       durationMs: 0,
     });
@@ -1287,12 +1433,18 @@ export async function runRegressionGate(
     before.diffHash,
     before.changed.foreign.join(','),
     input.maxTestFiles ?? '',
+    input.trustedDependencyRoot ?? '',
   ].join('\0');
   const cacheable = !before.changed.truncated;
   const hit = cacheable ? cache.get(key) : undefined;
   if (hit) return Object.freeze({ ...hit, cached: true });
   const running = inflight.get(key);
-  if (running) return running;
+  if (running) {
+    const shared = await running.promise;
+    // Cancelada por quem a iniciou (sessão fechada, transporte desistiu):
+    // não vale para este chamador, que roda a própria.
+    if (!running.signal?.aborted || input.signal?.aborted) return shared;
+  }
   const promise = evaluate(input, root, before, deps).then((result) => {
     // Edição concorrente durante a execução: o verde (ou vermelho) é de um
     // conteúdo que não existe mais — não vale para o estado atual.
@@ -1313,11 +1465,12 @@ export async function runRegressionGate(
     }
     return result;
   });
-  inflight.set(key, promise);
+  const entry = { promise, signal: input.signal };
+  inflight.set(key, entry);
   try {
     return await promise;
   } finally {
-    inflight.delete(key);
+    if (inflight.get(key) === entry) inflight.delete(key);
   }
 }
 

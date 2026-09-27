@@ -6,12 +6,13 @@ import { ProcessGitRunner } from '../runtime/git-command';
 import { testProjectScope } from '../orch/__tests__/scope-fixture';
 
 vi.mock('../context/orientation/orientation-service', () => ({
-  tryGetProjectOrientationService: () => ({}),
+  tryGetProjectOrientationService: () => ({ ensure: async () => ({ graph: {} }) }),
 }));
 vi.mock('../context/orientation/orientation-blast-radius', () => ({
   // Forma real do BlastRadiusResult do code map (rodada 4b): `files` só com
-  // caminhos reais; os nós de banco vêm à parte em `dbEntities`.
-  ensureBlastRadius: vi.fn(async () => ({
+  // caminhos reais; os nós de banco vêm à parte em `dbEntities`. A descoberta
+  // pelo grafo real está em regression-gate-db-consumers.test.ts.
+  computeBlastRadius: vi.fn(() => ({
     files: ['src/orders.ts', 'tests/db/orders.test.ts'],
     dbEntities: ['db:table:public.orders', 'db:function:fechar_comanda'],
     symbols: [],
@@ -45,6 +46,7 @@ describe('blast radius estendido (contrato do codemap-banco)', () => {
     expect(radius).toEqual({
       tests: ['tests/db/orders.test.ts'],
       dbEntities: ['public.orders', 'orders', 'fechar_comanda'],
+      dbConsumers: [],
     });
   });
 

@@ -3,7 +3,9 @@
 // e bearer do /hook/delegate. Se o diff do checkout mudou desde o último
 // relato e um teste impactado falhou, responde `decision: "block"` com as
 // falhas: o agente continua e corrige antes de encerrar. Missão e helpers
-// passam pelo portão no handoff; aqui é só o pane "+" do operador.
+// passam pelo portão no handoff; aqui é só o pane "+" do operador — inclusive
+// depois de promovido a orquestrador (missão sob demanda do primeiro helper):
+// o diff dele não tem handoff que o verifique.
 //
 // Anti-laço: o mesmo diff (hash do conteúdo) é relatado uma vez; no máximo
 // {@link MAX_CONSECUTIVE_STOP_BLOCKS} bloqueios seguidos sem um verde. Fora
@@ -11,7 +13,7 @@
 // Árvore limpa zera a sequência de bloqueios.
 import type http from 'node:http';
 import type { AgentGateContext } from './gate';
-import { handleHookJsonPost } from './hook-http';
+import { sendHookJson } from './hook-http';
 import {
   formatRegressionGateReport,
   isRegressionGateEnabled,
@@ -20,7 +22,6 @@ import {
 import { ProcessGitRunner, type GitRunner } from '../runtime/git-command';
 import { getSessionSpawnedAtMs } from '../pty/pty-manager';
 
-export const HOOK_REGRESSION_MAX_BODY_BYTES = 64 * 1024;
 export const MAX_CONSECUTIVE_STOP_BLOCKS = 3;
 /**
  * Orçamento TOTAL do portão no Stop (mapa + testes + retentativa), bem abaixo
@@ -32,7 +33,14 @@ const STOP_HOOK_MAX_TEST_FILES = 20;
 const MAX_LEDGERS = 256;
 
 type HookContext = Pick<AgentGateContext, 'role' | 'missionId' | 'sessionId'> &
-  Partial<Pick<AgentGateContext, 'scope' | 'executionScope' | 'providerId' | 'readOnly' | 'operatorParentSessionId'>>;
+  Partial<Pick<AgentGateContext,
+    'scope' | 'executionScope' | 'providerId' | 'readOnly' | 'operatorParentSessionId' | 'promotedFromUserSession'>>;
+
+/** Pane do próprio operador: `user` sem missão, ou promovido a orquestrador de uma. */
+function isOperatorHand(ctx: HookContext): boolean {
+  if (ctx.role === 'user') return !ctx.missionId;
+  return ctx.role === 'orchestrator' && ctx.promotedFromUserSession === true;
+}
 
 interface SessionLedger {
   /** Sem spawn conhecido: o primeiro HEAD visto é a base da sessão. */
@@ -86,8 +94,9 @@ export async function handleHookRegressionRequest(
 ): Promise<{ statusCode: 200; payload: Record<string, unknown> }> {
   void body;
   try {
-    // Helper do "+ Pane" (tem pai operador) já passa pelo portão no handoff.
-    if (ctx.role !== 'user' || ctx.missionId || ctx.readOnly === true || !ctx.sessionId || ctx.operatorParentSessionId) {
+    // Helper do "+ Pane" (tem pai operador) e workers de missão já passam
+    // pelo portão no handoff.
+    if (!isOperatorHand(ctx) || ctx.readOnly === true || !ctx.sessionId || ctx.operatorParentSessionId) {
       return { statusCode: 200, payload: {} };
     }
     if (!(deps.enabled ?? isRegressionGateEnabled)()) return { statusCode: 200, payload: {} };
@@ -105,6 +114,8 @@ export async function handleHookRegressionRequest(
       timeoutMs: STOP_HOOK_BUDGET_MS,
       maxTestFiles: STOP_HOOK_MAX_TEST_FILES,
       signal: deps.signal,
+      // Escopo do Main (checkout do projeto), nunca o de execução.
+      trustedDependencyRoot: ctx.scope?.rootRealPath,
     });
     // Ninguém mais escuta: não gasta o relato nem a cota de bloqueios.
     if (deps.signal?.aborted) return { statusCode: 200, payload: {} };
@@ -149,14 +160,30 @@ export async function handleHookRegressionHttp(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   ctx: AgentGateContext | null,
+  deps: Omit<NonNullable<Parameters<typeof handleHookRegressionRequest>[2]>, 'signal'> = {},
 ): Promise<void> {
+  if (!ctx) {
+    sendHookJson(res, 401, { ok: false, error: 'missing or unknown bearer token' });
+    return;
+  }
+  if (req.method !== 'POST') {
+    sendHookJson(res, 405, { ok: false, error: 'method not allowed' });
+    return;
+  }
+  // O corpo do Stop (última mensagem do agente) não é usado: é drenado sem
+  // teto. Com o teto dos outros hooks, uma resposta longa virava 400 e o
+  // `curl … || true` desligava o portão em silêncio.
+  await new Promise<void>((resolve) => {
+    req.once('end', resolve);
+    req.once('error', () => resolve());
+    req.resume();
+  });
   // O curl desiste no `--max-time` do hook: conexão fechada
   // antes da resposta cancela os testes (o grupo de processos morre junto).
   const controller = new AbortController();
   res.once('close', () => {
     if (!res.writableEnded) controller.abort();
   });
-  await handleHookJsonPost(req, res, ctx, HOOK_REGRESSION_MAX_BODY_BYTES, (body) =>
-    handleHookRegressionRequest(ctx!, body, { signal: controller.signal }),
-  );
+  const result = await handleHookRegressionRequest(ctx, {}, { ...deps, signal: controller.signal });
+  sendHookJson(res, result.statusCode, result.payload);
 }

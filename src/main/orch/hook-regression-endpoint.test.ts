@@ -1,9 +1,19 @@
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RegressionGateResult } from '../regression-gate/regression-gate';
 import type { GitRunner } from '../runtime/git-command';
 import { testProjectScope } from './__tests__/scope-fixture';
 import {
+  adoptUserSessionAsMissionOrchestrator,
+  bindTokenToSession,
+  getContextBySession,
+  mintToken,
+  resetGateForTests,
+} from './gate';
+import {
   __resetHookRegressionForTests,
+  handleHookRegressionHttp,
   handleHookRegressionRequest,
   MAX_CONSECUTIVE_STOP_BLOCKS,
   STOP_HOOK_BUDGET_MS,
@@ -47,7 +57,10 @@ const failed = result({
   failures: [{ file: 'src/b.test.ts', message: 'soma: expected 2 to be 3' }],
 });
 
-afterEach(() => __resetHookRegressionForTests());
+afterEach(() => {
+  __resetHookRegressionForTests();
+  resetGateForTests();
+});
 
 describe('handleHookRegressionRequest (Stop do pane do operador)', () => {
   it('diff que quebra teste impactado bloqueia o fim do turno com as falhas', async () => {
@@ -109,6 +122,46 @@ describe('handleHookRegressionRequest (Stop do pane do operador)', () => {
     await handleHookRegressionRequest({ ...operator, readOnly: true }, {}, deps);
     await handleHookRegressionRequest(operator, {}, { ...deps, enabled: () => false });
     expect(run).not.toHaveBeenCalled();
+  });
+
+  it('operador promovido a orquestrador (missão sob demanda do 1º helper) continua com o portão no Stop', async () => {
+    const run = vi.fn(async () => failed);
+    const deps = { run, git, enabled: () => true };
+    const minted = mintToken({ label: 'operador', role: 'user', scope });
+    bindTokenToSession(minted.token, 'op-promovido');
+    expect(adoptUserSessionAsMissionOrchestrator('op-promovido', 'm-sob-demanda')).toBe(true);
+    const promoted = getContextBySession('op-promovido')!;
+    expect(promoted).toMatchObject({ role: 'orchestrator', missionId: 'm-sob-demanda' });
+
+    const response = await handleHookRegressionRequest(promoted, {}, deps);
+
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(response.payload).toMatchObject({ decision: 'block' });
+    // Maestro que não veio da mão do operador segue fora (o dele é o handoff).
+    await handleHookRegressionRequest({ ...operator, role: 'orchestrator', missionId: 'm-1' }, {}, deps);
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it('Stop com corpo grande (resposta longa do agente) ainda passa pelo portão via HTTP', async () => {
+    const run = vi.fn(async () => failed);
+    const ctx = { ...operator, token: 't', label: 'op', allowedTools: null, allowedSkills: null,
+      stopAttempts: 0, handoffSubmitted: false } as unknown as Parameters<typeof handleHookRegressionHttp>[2];
+    const server = http.createServer((req, res) => {
+      void handleHookRegressionHttp(req, res, ctx, { run, git, enabled: () => true });
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    try {
+      const { port } = server.address() as AddressInfo;
+      const response = await fetch(`http://127.0.0.1:${port}/hook/regression`, {
+        method: 'POST',
+        body: JSON.stringify({ last_assistant_message: 'x'.repeat(256 * 1024) }),
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ decision: 'block' });
+      expect(run).toHaveBeenCalledTimes(1);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
   });
 
   it('base da sessão: HEAD no spawn (reflog); sem spawn conhecido, o primeiro HEAD visto', async () => {

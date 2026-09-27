@@ -119,6 +119,135 @@ describe('runRegressionGate', () => {
     expect(formatRegressionGateReport(result)).toContain('Seu diff quebrou 1');
   });
 
+  it('execução parcial (um passou, outro impactado não rodou) não vira passed nem entra no cache', async () => {
+    const { root, scope } = project();
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    // Runner que só executa a.test.ts (b.test.ts excluído pela config/prazo).
+    const exec = vi.fn<RegressionExec>(async (_file, args, options) => {
+      const outFile = args.find((arg) => arg.startsWith('--outputFile='))!.slice('--outputFile='.length);
+      fs.writeFileSync(outFile, JSON.stringify({
+        testResults: [{
+          name: path.join(options.cwd, 'src/a.test.ts'),
+          status: 'passed',
+          assertionResults: [{ status: 'passed', fullName: 'ok' }],
+        }],
+      }));
+      return { exitCode: 0, timedOut: false, stdout: '', stderr: '' };
+    });
+
+    const first = await runRegressionGate({ scope }, { exec });
+    const second = await runRegressionGate({ scope }, { exec });
+
+    expect(first.status).toBe('unavailable');
+    expect(first.testsRun).toEqual(['src/a.test.ts']);
+    expect(first.testsNotRun).toEqual(['src/b.test.ts']);
+    expect(first.warnings.join('\n')).toContain('execução parcial');
+    expect(second.cached).toBe(false);
+    expect(exec.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('pytest ausente (python3 sai 1 sem resumo do pytest) é NÃO verificado, nunca teste falhando', async () => {
+    const { root, scope } = project();
+    write(root, 'pytest.ini', '[pytest]\n');
+    write(root, 'calc.py', 'def soma(a, b):\n    return a + b\n');
+    write(root, 'test_calc.py', 'from calc import soma\n');
+    fs.rmSync(path.join(root, 'package.json'));
+    const exec = vi.fn<RegressionExec>(async () => ({
+      exitCode: 1,
+      timedOut: false,
+      stdout: '',
+      stderr: '/usr/bin/python3: No module named pytest',
+    }));
+
+    const result = await runRegressionGate({ scope }, { exec });
+
+    expect(exec).toHaveBeenCalled();
+    expect(result.status).toBe('unavailable');
+    expect(result.failures).toEqual([]);
+    expect(result.testsNotRun).toContain('test_calc.py');
+  });
+
+  it('pytest com teste que falhou (resumo "1 failed") continua failed', async () => {
+    const { root, scope } = project();
+    write(root, 'pytest.ini', '[pytest]\n');
+    write(root, 'calc.py', 'def soma(a, b):\n    return a - b\n');
+    write(root, 'test_calc.py', 'from calc import soma\n');
+    fs.rmSync(path.join(root, 'package.json'));
+    const exec = vi.fn<RegressionExec>(async () => ({
+      exitCode: 1,
+      timedOut: false,
+      stdout: 'FAILED test_calc.py::test_soma - assert -1 == 3\n1 failed in 0.01s\n',
+      stderr: '',
+    }));
+
+    const result = await runRegressionGate({ scope }, { exec });
+
+    expect(result.status).toBe('failed');
+    expect(result.failures.map((failure) => failure.file)).toEqual(['test_calc.py']);
+  });
+
+  it('impactado cortado pelo teto de arquivos conta como não verificado, nunca como aprovado', async () => {
+    const { root, scope } = project();
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    const { exec, calls } = fakeVitest();
+
+    const result = await runRegressionGate({ scope, maxTestFiles: 1 }, { exec });
+
+    expect(calls[0]!.filter((arg) => arg.endsWith('.test.ts'))).toHaveLength(1);
+    expect(result.status).toBe('unavailable');
+    expect(result.testsRun).toHaveLength(1);
+    expect(result.testsNotRun).toHaveLength(1);
+  });
+
+  it('falha de arquivo que o portão não pediu (filtro por substring do vitest) não bloqueia', async () => {
+    const { root, scope } = project();
+    write(root, 'src/c.ts', 'export const c = 4;\n');
+    const exec = vi.fn<RegressionExec>(async (_file, args, options) => {
+      const outFile = args.find((arg) => arg.startsWith('--outputFile='))!.slice('--outputFile='.length);
+      fs.writeFileSync(outFile, JSON.stringify({
+        testResults: [
+          { name: path.join(options.cwd, 'src/c.test.ts'), status: 'passed', assertionResults: [{ status: 'passed' }] },
+          {
+            name: path.join(options.cwd, 'lib/src/c.test.ts'),
+            status: 'failed',
+            assertionResults: [{ status: 'failed', fullName: 'alheio', failureMessages: ['quebrado antes'] }],
+          },
+        ],
+      }));
+      return { exitCode: 1, timedOut: false, stdout: '', stderr: '' };
+    });
+
+    const result = await runRegressionGate({ scope }, { exec });
+
+    expect(result.status).toBe('passed');
+    expect(result.failures).toEqual([]);
+  });
+
+  it('execução compartilhada cancelada por quem a iniciou não vira "não verificado" para o outro chamador', async () => {
+    const { root, scope } = project();
+    write(root, 'src/c.ts', 'export const c = 4;\n');
+    const passing = fakeVitest();
+    let release!: () => void;
+    const started = new Promise<void>((resolve) => { release = resolve; });
+    const exec = vi.fn<RegressionExec>(async (file, args, options) => {
+      if (options.signal) {
+        release();
+        await new Promise((resolve) => options.signal!.addEventListener('abort', resolve, { once: true }));
+        return { exitCode: null, timedOut: false, aborted: true, stdout: '', stderr: '' };
+      }
+      return passing.exec(file, args, options);
+    });
+    const controller = new AbortController();
+
+    const first = runRegressionGate({ scope, signal: controller.signal }, { exec });
+    await started;
+    const second = runRegressionGate({ scope }, { exec });
+    controller.abort();
+
+    expect((await first).status).toBe('unavailable');
+    expect((await second).status).toBe('passed');
+  });
+
   it('teste instável que passa na 2ª tentativa não barra; falha que se repete barra', async () => {
     const { root, scope } = project();
     write(root, 'src/a.ts', 'export const a = 2;\n');
@@ -422,6 +551,24 @@ describe('runRegressionGate', () => {
 
     expect(calls[0]).toContain('src/c.test.ts');
     expect(result.invariantsTouched.map((invariant) => invariant.id)).toEqual(['INV-T']);
+  });
+
+  it('git que falha ao listar o diff não passa por árvore limpa', async () => {
+    const { root, scope } = project();
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    const real = new ProcessGitRunner();
+    const git = {
+      run: (cwd: string, args: readonly string[], options?: { allowFailure?: boolean }) =>
+        args[0] === 'status'
+          ? { status: 128, stdout: '', stderr: 'fatal: index.lock' }
+          : real.run(cwd, args, options),
+    } as unknown as ProcessGitRunner;
+    const { exec } = fakeVitest();
+
+    const result = await runRegressionGate({ scope }, { exec, git });
+
+    expect(result.status).toBe('unavailable');
+    expect(result.warnings.join('\n')).toContain('git não respondeu');
   });
 
   it('checkout limpo não roda nada', async () => {
