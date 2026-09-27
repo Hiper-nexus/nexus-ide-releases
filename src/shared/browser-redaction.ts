@@ -7,20 +7,23 @@ import { redactVisibleSecrets } from './vision-ipc';
  * page-side `read` output.
  */
 
-// ponytail: `otp`/`session` are short enough to appear embedded inside
-// unrelated words when doubled onto the preceding letter — MediaWiki's
-// `rootpage-<Title>` body class ("ro-otp-age") and English words like
-// "obsession"/"possession" ("s-session"). A negative lookbehind for that
-// exact doubled letter clears the false positive without requiring real
-// word-boundary tokenization (which would also need to accept camelCase/
-// snake_case compounds like "sessionId" or "user_token"). Ceiling: only
-// covers the doubled-letter collision, not every possible embedding — widen
-// with real boundary logic if another marker collides the same way.
+// `otp`/`session` are short enough to appear embedded inside unrelated
+// words when doubled onto the preceding letter — MediaWiki's
+// `rootpage-<Title>` body class ("ro-otp-age") and "possession"
+// ("s-session"). The lookbehinds skip that collision, but only INSIDE a
+// token: camelCase boundaries are split first, so `ssoOtp`/`expressSession`
+// still read as "sso otp"/"express session" and stay sensitive (kebab/snake
+// separators already break the lookbehind). Ceiling: an all-lowercase or
+// all-caps glued compound like "ssootp" is not split and reads as benign.
 const SENSITIVE_MARKER =
   /(?:password|passwd|secret|token|api[_ -]?key|access[_ -]?key|private[_ -]?key|authorization|credential|one[_ -]?time|(?<!o)otp|cookie|(?<!s)session)/i;
 
+function splitCamelBoundaries(value: string): string {
+  return value.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Z])([A-Z][a-z])/g, '$1 $2');
+}
+
 export function isSensitiveBrowserMarker(value: string): boolean {
-  return SENSITIVE_MARKER.test(value);
+  return SENSITIVE_MARKER.test(splitCamelBoundaries(value));
 }
 
 export function redactBrowserText(value: string): string {
@@ -35,11 +38,11 @@ export function redactPageUrl(raw: string): string {
     const keys = [...new Set([...url.searchParams.keys()])];
     url.search = '';
     keys.slice(0, 32).forEach((key) => {
-      url.searchParams.append(key, SENSITIVE_MARKER.test(key) ? '[REDACTED]' : '');
+      url.searchParams.append(key, isSensitiveBrowserMarker(key) ? '[REDACTED]' : '');
     });
     if (
       url.hash.length > 129 ||
-      SENSITIVE_MARKER.test(url.hash) ||
+      isSensitiveBrowserMarker(url.hash) ||
       !/^#[#/a-z0-9._-]*$/i.test(url.hash)
     ) {
       url.hash = url.hash ? '#[REDACTED]' : '';

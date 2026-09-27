@@ -151,6 +151,31 @@ describe('isolated browser automation', () => {
     ).rejects.toThrow(/refusing/);
   });
 
+  it('hides camelCase OTP/session subtrees from read and refuses fill, but not MediaWiki rootpage', async () => {
+    const dom = new JSDOM(
+      `<!doctype html>
+        <html><body class="skin-vector rootpage-Brasil">
+          <a class="mw-jump-link" href="#conteudo">Ir para o conteúdo</a>
+          <div class="ssoOtp"><span>otp-value-424242</span></div>
+          <div id="expressSession">session-value-abcdef</div>
+          <input id="ssoOtpInput" type="text">
+        </body></html>`,
+      { url: 'https://example.test/', pretendToBeVisual: true },
+    );
+    const automation = createBrowserAutomation(dom.window as unknown as BrowserDomWindow);
+    const read = (await automation.run('read', {})) as {
+      bodyText: string;
+      elements: Array<{ ref: string; name: string; inputType?: string }>;
+    };
+    expect(read.bodyText).toContain('Ir para o conteúdo');
+    expect(read.bodyText).not.toContain('otp-value-424242');
+    expect(read.bodyText).not.toContain('session-value-abcdef');
+    const input = read.elements.find((element) => element.inputType === 'text');
+    await expect(automation.run('fill', { ref: input!.ref, text: '123456' })).rejects.toThrow(
+      /refusing/,
+    );
+  });
+
   it('waits for visible text and enforces output bounds', async () => {
     const { dom, automation } = fixture();
     dom.window.setTimeout(() => {
