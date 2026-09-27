@@ -99,6 +99,7 @@ import {
   requireProjectDomainStoreRegistry,
 } from "./project-domain-store-registry";
 import { authorizeMainOwnedAgentSpawn } from "./main-owned-agent-spawn";
+import { requireMissionLeaderSession } from "./mission-leader-gate";
 import {
   getPaneAuthzInfo,
   resolveCurrentMissionSpawnAuthoritySeal,
@@ -364,7 +365,7 @@ describe("missão leve da aba — adoção da mão do operador", () => {
     expect(getContextBySession(second)).toMatchObject({ role: "user" });
   });
 
-  it("missão sob demanda no checkout principal: panes da mesma aba dividem uma missão, outra aba ganha a sua", async () => {
+  it("missão sob demanda no checkout principal: cada pane que delega ganha a sua, ninguém toma a coroa", async () => {
     const first = operatorPane("pane-a");
     const second = operatorPane("pane-b");
     const other = operatorPane("pane-c");
@@ -383,11 +384,97 @@ describe("missão leve da aba — adoção da mão do operador", () => {
     const c = main.adoptOperatorHandForSpawn(other, "revise o pagamento");
 
     expect(a.ok && b.ok && c.ok).toBe(true);
-    expect(b.mission!.id).toBe(a.mission!.id);
-    expect(c.mission!.id).not.toBe(a.mission!.id);
-    expect(requireProjectDomainStoreRegistry().forScope(scope).missions.list()).toHaveLength(2);
+    expect(new Set([a.mission!.id, b.mission!.id, c.mission!.id]).size).toBe(3);
+    expect(requireProjectDomainStoreRegistry().forScope(scope).missions.list()).toHaveLength(3);
+    expect(getContextBySession(first)).toMatchObject({ role: "orchestrator", missionId: a.mission!.id });
+    expect(getContextBySession(second)).toMatchObject({ role: "orchestrator", missionId: b.mission!.id });
+    // O clique explícito na aba continua achando a 1ª missão dela (a do A).
+    const d = operatorPane("pane-d");
+    syncPanes(
+      [
+        { paneId: "pane-a", sessionId: first, tabKey: "__loose__" },
+        { paneId: "pane-b", sessionId: second, tabKey: "__loose__" },
+        { paneId: "pane-c", sessionId: other, tabKey: "space:pagamento" },
+        { paneId: "pane-d", sessionId: d, tabKey: "__loose__" },
+      ].map((entry) => ({ ...entry, title: entry.paneId, kind: "cli-agent" as const, adapterId: "test-cli" })),
+      owner,
+    );
+    const explicit = main.createPaneMissionFromRenderer(owner, { paneId: "pane-d", title: "Missão · Terminais", tabKey: "__loose__" });
+    expect(explicit).toMatchObject({ ok: true, mission: { id: a.mission!.id } });
     // A aba viaja no espelho, mas não vaza no nexus_pane_list.
     expect(panes.listPaneSnapshots().find((pane) => pane.paneId === "pane-a")).not.toHaveProperty("tabKey");
+  });
+
+  it("dois panes da mesma aba delegam: cada helper entrega ao pane que o abriu e a coroa só muda no clique", async () => {
+    const paneA = operatorPane("pane-a");
+    const paneB = operatorPane("pane-b");
+    syncPanes(
+      [
+        { paneId: "pane-a", sessionId: paneA, tabKey: "space:login" },
+        { paneId: "pane-b", sessionId: paneB, tabKey: "space:login" },
+      ].map((entry) => ({ ...entry, title: entry.paneId, kind: "cli-agent" as const, adapterId: "test-cli" })),
+      owner,
+    );
+    const main = authority();
+    useTabMissionProvider(main);
+    const ctxA = getContextBySession(paneA)!;
+    const ctxB = getContextBySession(paneB)!;
+    const suite = requireProjectDomainStoreRegistry().forScope(scope);
+    const leaderOf = (missionId: string) => {
+      const leader = requireMissionLeaderSession(scope, missionId, {});
+      return leader.ok ? leader.leader.sessionId : null;
+    };
+
+    const helperA = (await paneSpawnTool.handler(
+      { adapterId: "codex", prompt: "Revise o login", readOnly: true },
+      ctxA,
+    )) as { tabMission: { missionId: string } };
+    const missionA = helperA.tabMission.missionId;
+    const helperB = (await paneSpawnTool.handler(
+      { adapterId: "codex", prompt: "Teste o login", readOnly: true },
+      ctxB,
+    )) as { tabMission: { missionId: string } };
+    const missionB = helperB.tabMission.missionId;
+
+    expect(missionB).not.toBe(missionA);
+    expect(ctxA).toMatchObject({ role: "orchestrator", missionId: missionA });
+    expect(ctxB).toMatchObject({ role: "orchestrator", missionId: missionB });
+    expect(suite.missions.get(missionA)).toMatchObject({ status: "running", orchestratorSessionId: paneA });
+    expect(suite.missions.get(missionB)).toMatchObject({ status: "running", orchestratorSessionId: paneB });
+    expect(physical.spawned.map((spawn) => spawn.missionId)).toEqual([missionA, missionB]);
+    // A entrega do helper vai ao líder da missão DELE (o alvo do idle-delivery).
+    expect(leaderOf(missionA)).toBe(paneA);
+    expect(leaderOf(missionB)).toBe(paneB);
+    expect(getPaneAuthzInfo("pane-a")).toMatchObject({ missionId: missionA, role: "orchestrator" });
+    expect(getPaneAuthzInfo("pane-b")).toMatchObject({ missionId: missionB, role: "orchestrator" });
+
+    // 2º helper do A reusa a missão do A.
+    const again = (await paneSpawnTool.handler(
+      { adapterId: "codex", prompt: "Revise a sessão", readOnly: true },
+      ctxA,
+    )) as Record<string, unknown>;
+    expect(again.tabMission).toBeUndefined();
+    expect(physical.spawned[2]).toMatchObject({ missionId: missionA, role: "worker" });
+    expect(suite.missions.list()).toHaveLength(2);
+    expect(leaderOf(missionB)).toBe(paneB);
+
+    // "Tornar orquestrador" explícito do B na missão do A: aí sim a coroa muda.
+    const swapped = main.promoteOrchestratorFromRenderer(owner, missionA, { paneId: "pane-b" });
+    expect(swapped).toMatchObject({ ok: false, error: "pane_mission_mismatch" });
+    const paneC = operatorPane("pane-c");
+    syncPanes(
+      [
+        { paneId: "pane-a", sessionId: paneA, tabKey: "space:login" },
+        { paneId: "pane-b", sessionId: paneB, tabKey: "space:login" },
+        { paneId: "pane-c", sessionId: paneC, tabKey: "space:login" },
+      ].map((entry) => ({ ...entry, title: entry.paneId, kind: "cli-agent" as const, adapterId: "test-cli" })),
+      owner,
+    );
+    expect(main.promoteOrchestratorFromRenderer(owner, missionA, { paneId: "pane-c" })).toMatchObject({ ok: true });
+    expect(leaderOf(missionA)).toBe(paneC);
+    expect(ctxA).toMatchObject({ role: "user" });
+    expect(ctxA.missionId).toBeUndefined();
+    expect(leaderOf(missionB)).toBe(paneB);
   });
 
   it("spawn com argumento inválido ou que falha não deixa missão da aba vazia nem pane promovido", async () => {

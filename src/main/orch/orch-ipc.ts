@@ -1300,7 +1300,7 @@ export function configureRendererMissionAuthority(
   projectDomainStores = configureProjectDomainStoreRegistry(runtimeManager);
   rendererMissionAuthority = new RendererMissionAuthority(projectDomainStores);
   const authority = rendererMissionAuthority;
-  // Missão sob demanda: o 1º helper do pane "+ Pane" cria a missão da aba.
+  // Missão sob demanda: o 1º helper do pane "+ Pane" cria a missão DELE.
   setOperatorTabMissionProvider((ctx, task) => {
     if (!ctx.sessionId) return null;
     const sessionId = ctx.sessionId;

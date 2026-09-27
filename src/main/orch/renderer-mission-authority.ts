@@ -777,6 +777,12 @@ export class RendererMissionAuthority {
       readonly title: string;
       /** Aba no renderer: só desempata criação/reuso, nunca concede nada. */
       readonly tabKey?: string;
+      /**
+       * Missão sob demanda: a missão é do GRUPO do pane (ele + helpers dele).
+       * Nunca entra na missão viva da aba — isso tomaria a coroa de outro pane
+       * implicitamente; a coroa só muda pelo "Tornar orquestrador" explícito.
+       */
+      readonly ownGroup?: boolean;
     },
   ): PromoteMissionOrchestratorResult {
     let owned: ReturnType<typeof ownedPaneSession>;
@@ -811,7 +817,7 @@ export class RendererMissionAuthority {
       ? `${owned.scope.checkoutId}\0${owned.info.scope.rootRealPath}\0${input.tabKey}`
       : undefined;
     const existing = this.#liveTabMission(suite, owned, workspaceBinding.spaceId, tabKey);
-    if (existing) {
+    if (existing && !input.ownGroup) {
       return this.promoteOrchestratorFromRenderer(owner, existing.id, {
         paneId: owned.paneId,
       });
@@ -828,7 +834,9 @@ export class RendererMissionAuthority {
       },
     });
     suite.missions.update(created.id, { status: "running" });
-    if (tabKey) this.#tabMissions.set(tabKey, created.id);
+    // A 1ª missão da aba segue sendo "a da aba" para o clique explícito.
+    const remembered = Boolean(tabKey && !existing);
+    if (remembered) this.#tabMissions.set(tabKey!, created.id);
     let result: PromoteMissionOrchestratorResult;
     try {
       result = this.promoteOrchestratorFromRenderer(owner, created.id, {
@@ -840,7 +848,7 @@ export class RendererMissionAuthority {
     }
     // Sem orquestrador a missão não existe para o operador: nada fica pendurado.
     if (!result.ok) {
-      if (tabKey) this.#tabMissions.delete(tabKey);
+      if (remembered) this.#tabMissions.delete(tabKey!);
       this.#discardPaneMission(suite, created.id, owned.sessionId);
       return result;
     }
@@ -872,8 +880,10 @@ export class RendererMissionAuthority {
 
   /**
    * Missão SOB DEMANDA: o primeiro helper que um pane do "+ Pane" abre cria a
-   * missão leve da aba e adota o pane — o mesmo caminho do "Tornar
+   * missão leve DESTE pane e o adota — o mesmo caminho do "Tornar
    * orquestrador", achando a janela dona pela sessão (autoridade do Main).
+   * Outro pane da mesma aba que delega ganha a sua: a aba pode ter várias
+   * missões, uma por grupo, e ninguém perde a coroa (nem as entregas).
    */
   adoptOperatorHandForSpawn(
     sessionId: string,
@@ -890,12 +900,13 @@ export class RendererMissionAuthority {
       .slice(0, 60)
       .trim();
     // A aba vem do espelho do renderer: no checkout principal (sem worktree da
-    // aba) é ela que faz os panes da mesma aba dividirem uma missão.
+    // aba) é ela que marca a 1ª missão como a da aba para o clique explícito.
     const tabKey = getRenderedPaneTabKey(runtime.owner, runtime.paneId);
     return this.createPaneMissionFromRenderer(runtime.owner, {
       paneId: runtime.paneId,
       title: summary ? `Missão · ${summary}` : "Missão da aba",
       ...(tabKey ? { tabKey } : {}),
+      ownGroup: true,
     });
   }
 
