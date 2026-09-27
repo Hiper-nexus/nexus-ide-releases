@@ -23,6 +23,7 @@ import {
   getAgentSemanticStatus,
   isSessionInjectableIdle,
   isSessionIdleForCleanup,
+  isSessionInAbandonedDialog,
   paneStateForStatus,
   resetAgentStatusOnExit,
   semanticStatusForEvent,
@@ -300,21 +301,19 @@ describe('isSessionIdleForCleanup — silêncio não autoriza encerrar trabalho'
     expect(isSessionIdleForCleanup('pty-1')).toBe(true);
   });
 
-  it('diálogo abandonado há 10+ min libera o FECHAMENTO (guardian), mas nunca a INJEÇÃO', () => {
-    // Pane guardian F-572: um helper cujo diálogo permission/elicitation
-    // nunca foi respondido (operador nunca digitou, CLI nunca soltou stop)
-    // ficava aberto para sempre — isSessionIdleForCleanup herdava o veto de
-    // isSessionInjectableIdle, que existe para nunca ESCREVER num diálogo
-    // aberto. Fechar não escreve nada: um diálogo velho está abandonado, não
-    // em uso, e o TTL do guardian já é a prova de abandono.
+  it('diálogo abandonado há 10+ min continua vetado para limpeza e injeção; só é SINALIZADO ao guardian', () => {
+    // Worker esperando aprovação ou pane humano com diálogo aberto está em uso
+    // mesmo sem resposta há 10 min. O guardian decide quem pode perdê-lo
+    // (helper que já entregou) a partir de isSessionInAbandonedDialog.
     vi.useFakeTimers();
     try {
       applyCanonicalHookEvent({ sessionId: 'pty-1', event: permission });
       harness.state = 'idle';
-      expect(isSessionIdleForCleanup('pty-1')).toBe(false);
+      expect(isSessionInAbandonedDialog('pty-1')).toBe(false);
       vi.advanceTimersByTime(10 * 60_000 + 1_000);
-      expect(isSessionIdleForCleanup('pty-1')).toBe(true);
+      expect(isSessionIdleForCleanup('pty-1')).toBe(false);
       expect(isSessionInjectableIdle('pty-1')).toBe(false);
+      expect(isSessionInAbandonedDialog('pty-1')).toBe(true);
     } finally {
       vi.useRealTimers();
     }

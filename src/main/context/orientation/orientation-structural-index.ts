@@ -21,6 +21,10 @@ import {
   type DbGraphBuildResult,
   type DbGraphInputFile,
 } from './orientation-db-graph';
+import {
+  MAX_DB_FACT_STRING_LENGTH,
+  MAX_DB_FACTS_PER_FILE,
+} from './orientation-structural-index-cache';
 import type { TsconfigAliasMap } from './orientation-tsconfig';
 import {
   filterOrientationChangedPaths,
@@ -108,7 +112,39 @@ function freezeFile(
 }
 
 /** Extract schema/usage db facts for one already-read source file. */
+/**
+ * O que o leitor do índice persistido aceita: sem repetição e no teto por
+ * arquivo. Uma migration grande (dump do Supabase) passava do teto e o índice
+ * inteiro era descartado em toda leitura — rebuild completo a cada `ensure`.
+ */
+function persistableDbFacts<T extends object>(facts: readonly T[]): readonly T[] {
+  const seen = new Set<string>();
+  const kept: T[] = [];
+  for (const fact of facts) {
+    if (kept.length >= MAX_DB_FACTS_PER_FILE) break;
+    const values = Object.values(fact);
+    if (values.some((value) => typeof value === 'string' && value.length > MAX_DB_FACT_STRING_LENGTH)) continue;
+    const key = JSON.stringify(fact);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    kept.push(fact);
+  }
+  return kept.length === facts.length ? facts : Object.freeze(kept);
+}
+
 function extractDbFacts(
+  relativePath: string,
+  ext: string,
+  content: string,
+): { schemaFacts: readonly SchemaEntityFact[]; usageEdges: readonly DbUsageEdge[] } {
+  const facts = extractRawDbFacts(relativePath, ext, content);
+  return {
+    schemaFacts: persistableDbFacts(facts.schemaFacts),
+    usageEdges: persistableDbFacts(facts.usageEdges),
+  };
+}
+
+function extractRawDbFacts(
   relativePath: string,
   ext: string,
   content: string,

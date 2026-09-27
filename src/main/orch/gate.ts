@@ -744,7 +744,13 @@ export function promoteMissionSessionAuthority(
   return true;
 }
 
-/** Rebaixa o orquestrador anterior da missão a worker (troca de liderança). */
+/**
+ * Troca de liderança: o orquestrador anterior deixa de liderar a missão.
+ *
+ * Troca de coroa NÃO é adoção: quem foi promovido a partir de `user` (a mão do
+ * operador) volta a `user` com o que tinha, nunca vira worker sem tools. Só o
+ * líder nascido na missão (missão selada) é rebaixado a worker.
+ */
 export function demoteMissionOrchestratorSession(
   missionId: string,
   sessionId: string,
@@ -755,6 +761,7 @@ export function demoteMissionOrchestratorSession(
     previous.missionId === missionId &&
     previous.role === "orchestrator"
   ) {
+    if (returnOperatorHandFromEndedMission(previous)) return;
     previous.role = "worker";
     previous.allowedTools = [];
     previous.allowedSkills = null;
@@ -804,10 +811,11 @@ export function rollbackSessionAuthorityMission(
  * respondia "only a user-owned session may create a mission", e o agente pedia
  * ao operador um despacho que o Quadro de missão falha nem oferece.
  *
- * Devolve SÓ quem `nexus_mission_create` promoveu de `user` e continua
- * orquestrador. A promoção não mexeu no allowlist, então a devolução também não
- * mexe — nunca alarga o que o pane tinha. Quem uma troca de liderança rebaixou a
- * worker fica como está: essa é autoridade da missão, não da mão do operador.
+ * Devolve SÓ quem foi promovido de `user` e continua orquestrador. A promoção
+ * não mexeu no allowlist, então a devolução também não mexe — nunca alarga o
+ * que o pane tinha. A troca de liderança usa a mesma devolução
+ * (`demoteMissionOrchestratorSession`), então um worker com essa marca só pode
+ * vir de autoridade da missão e fica como está.
  */
 export function returnOperatorHandFromEndedMission(
   ctx: AgentGateContext,

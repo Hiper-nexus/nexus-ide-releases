@@ -6,6 +6,11 @@ import { createHash } from 'node:crypto';
 import type { ProjectExecutionScope } from '../../../../shared/types';
 import { testProjectScope } from '../../../orch/__tests__/scope-fixture';
 import { createContextAttestation, writeContextAttestation } from '../../context-attestation';
+import {
+  configureBusinessModelAttestedStore,
+  isBusinessModelAttestedStoreConfigured,
+  recordAttestedBusinessModelHash,
+} from '../business-model-attested-store';
 import { BUSINESS_MODEL_EXTRACTOR } from '../business-model-bootstrap';
 import { BUSINESS_MODEL_TARGET_PATH } from '../business-model-contract';
 import { extractBusinessModel } from '../business-model-extract';
@@ -134,4 +139,9 @@ export async function applyAttestedBusinessModel(
     reviewedAt: new Date(0).toISOString(),
     nexusVersion: 'test',
   }));
+  // O que o bootstrap do Main grava ao aplicar (fora do checkout).
+  if (!isBusinessModelAttestedStoreConfigured()) {
+    configureBusinessModelAttestedStore(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-bm-attested-')));
+  }
+  recordAttestedBusinessModelHash(scope, createHash('sha256').update(content).digest('hex'));
 }

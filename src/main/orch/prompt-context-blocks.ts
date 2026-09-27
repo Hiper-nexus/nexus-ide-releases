@@ -2,16 +2,38 @@
  * Ponto de montagem dos blocos de contexto do projeto no brief/primeiro
  * prompt dos panes (`<business-model>`, `<workspace-memory>`, …). Cada bloco
  * vem de uma função própria; aqui só se junta, na ordem dada, pulando vazio e
- * bloco cuja primeira linha o prompt já traz (re-spawn/resume não duplica).
+ * bloco que uma montagem anterior já pôs na FRENTE do prompt (re-spawn/resume
+ * não duplica).
  */
 export type PromptContextBlock = string | null | undefined;
 
+function openingOf(block: string): string {
+  return block.trimStart().split('\n', 1)[0]!;
+}
+
+/**
+ * Aberturas dos blocos `<tag …>…</tag>` que abrem o texto, em sequência — o
+ * que uma montagem anterior deixou. Só o cabeçalho conta: uma tarefa que cita
+ * `<business-model fonte=…>` no meio do texto não suprime o bloco.
+ */
+function mountedOpenings(text: string): Set<string> {
+  const found = new Set<string>();
+  let rest = text.trimStart();
+  for (;;) {
+    const opening = openingOf(rest);
+    const tag = /^<([a-z][\w-]*)[\s>]/.exec(opening)?.[1];
+    const close = tag ? rest.indexOf(`</${tag}>`) : -1;
+    if (!tag || close < 0) return found;
+    found.add(opening);
+    rest = rest.slice(close + tag.length + 3).trimStart();
+  }
+}
+
 function freshBlocks(text: string, blocks: readonly PromptContextBlock[]): string[] {
-  return blocks.filter((block): block is string => {
-    if (!block?.trim()) return false;
-    const opening = block.trimStart().split('\n', 1)[0]!;
-    return !text.includes(opening);
-  });
+  const mounted = mountedOpenings(text);
+  return blocks.filter(
+    (block): block is string => Boolean(block?.trim()) && !mounted.has(openingOf(block!)),
+  );
 }
 
 /** Blocos antes do prompt (contexto primeiro, tarefa depois). */

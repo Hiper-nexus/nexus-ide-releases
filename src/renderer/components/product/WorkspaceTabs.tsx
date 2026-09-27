@@ -96,9 +96,18 @@ function stateLabel(state: string | undefined): string | null {
   return missionLifecycleLabel(state as MissionLifecycleState);
 }
 
-/** Missão da aba que ainda pode receber um orquestrador. */
+const TERMINAL_MISSION_STATES: ReadonlySet<string> = new Set<MissionLifecycleState>([
+  'completed',
+  'failed',
+]);
+
+/**
+ * Missão da aba que ainda pode receber um orquestrador. O campo é o estado do
+ * lifecycle (o mesmo de `workspaceTabTone`): só terminal libera criar outra —
+ * `blocked_user` ou `recovering` ainda é a missão viva da aba.
+ */
 function isActiveTabMission(mission: { readonly state?: string }): boolean {
-  return mission.state === undefined || ['setup', 'running', 'blocked'].includes(mission.state);
+  return mission.state === undefined || !TERMINAL_MISSION_STATES.has(mission.state);
 }
 
 const CLOSABLE_MISSION_STATES: ReadonlySet<string> = new Set([

@@ -729,6 +729,8 @@ export interface PaneRegistryEntry {
   model?: string;
   accountId?: string;
   state?: PaneRuntimeState;
+  /** Aba do renderer: só desempata a missão da aba, nunca concede nada. */
+  tabKey?: string;
 }
 
 /** Pane snapshot returned by nexus_pane_list (registry + live state). */
@@ -922,6 +924,7 @@ export const paneRegistryEntrySchema = z.object({
   state: z
     .enum(['spawning', 'busy', 'idle', 'exited', 'hibernated', 'unknown'])
     .optional(),
+  tabKey: z.string().min(1).max(256).optional(),
 });
 
 export const panesSyncSchema = z.array(paneRegistryEntrySchema).max(256);

@@ -19,6 +19,34 @@ const WORD_PART = /[\w$\u0080-￿]/;
 const DOLLAR_TAG_RE = /^\$([A-Za-z_][\w]{0,62})?\$/;
 
 export function scanSqlTokens(content: string): SqlToken[] {
+  return lexSql(content, null, 0);
+}
+
+/**
+ * O texto com os comentários trocados por espaço (quebras de linha mantidas),
+ * pelas mesmas regras do lexer: `--` e `/* *\/` dentro de aspas não são
+ * comentário, e corpos `$tag$` são SQL (plpgsql) com os comentários deles
+ * mascarados também. Offsets e linhas não mudam — para quem ainda casa padrões
+ * sobre o texto e precisa de `arquivo:linha`.
+ */
+export function maskSqlComments(content: string): string {
+  const comments: Array<readonly [number, number]> = [];
+  lexSql(content, comments, 0);
+  if (comments.length === 0) return content;
+  const chars = content.split('');
+  for (const [start, end] of comments) {
+    for (let index = start; index < end; index += 1) {
+      if (chars[index] !== '\n' && chars[index] !== '\r') chars[index] = ' ';
+    }
+  }
+  return chars.join('');
+}
+
+function lexSql(
+  content: string,
+  comments: Array<readonly [number, number]> | null,
+  base: number,
+): SqlToken[] {
   const tokens: SqlToken[] = [];
   const n = content.length;
   let i = 0;
@@ -29,11 +57,14 @@ export function scanSqlTokens(content: string): SqlToken[] {
       continue;
     }
     if (ch === '-' && content[i + 1] === '-') {
+      const start = i;
       const end = content.indexOf('\n', i + 2);
       i = end < 0 ? n : end + 1;
+      comments?.push([base + start, base + i]);
       continue;
     }
     if (ch === '/' && content[i + 1] === '*') {
+      const start = i;
       // PostgreSQL block comments nest.
       let depth = 1;
       i += 2;
@@ -48,6 +79,7 @@ export function scanSqlTokens(content: string): SqlToken[] {
           i += 1;
         }
       }
+      comments?.push([base + start, base + i]);
       continue;
     }
     if (ch === "'" || ch === '"') {
@@ -80,7 +112,9 @@ export function scanSqlTokens(content: string): SqlToken[] {
         const bodyStart = i + tag.length;
         const close = content.indexOf(tag, bodyStart);
         const bodyEnd = close < 0 ? n : close;
-        tokens.push({ kind: 'string', value: content.slice(bodyStart, bodyEnd), dollar: true });
+        const value = content.slice(bodyStart, bodyEnd);
+        if (comments) lexSql(value, comments, base + bodyStart);
+        tokens.push({ kind: 'string', value, dollar: true });
         i = close < 0 ? n : close + tag.length;
         continue;
       }

@@ -1596,6 +1596,18 @@ export function attachOrchMeta(
   orchMetaByPane.set(paneMetaKey(owner, paneId), meta);
 }
 
+/** A mão do operador saiu da missão (troca de coroa): some a meta dela. */
+export function detachOrchMissionMeta(
+  owner: WebContents,
+  paneId: string,
+  missionId: string,
+): void {
+  const key = paneMetaKey(owner, paneId);
+  if (orchMetaByPane.get(key)?.missionId !== missionId) return;
+  orchMetaByPane.delete(key);
+  panesVersion += 1;
+}
+
 /** Trusted main-side binding for direct panes that have no pending OrchMeta. */
 export function attachSessionScope(
   sessionId: string,
@@ -1638,8 +1650,18 @@ function forgetParkedRecords(paneId: string): void {
   wokeAtByPane.delete(paneId);
 }
 
+/** A aba que o renderer declarou para o pane (desempate, nunca autoridade). */
+export function getRenderedPaneTabKey(
+  owner: WebContents,
+  paneId: string,
+): string | undefined {
+  return panes.find(
+    (registered) => registered.owner === owner && registered.entry.paneId === paneId,
+  )?.entry.tabKey;
+}
+
 function snapshotOf(registered: RegisteredPane): PaneSnapshot {
-  const { entry, owner } = registered;
+  const { entry: { tabKey: _tabKey, ...entry }, owner } = registered;
   const meta = orchMetaByPane.get(paneMetaKey(owner, entry.paneId));
   const sessionScope = entry.sessionId
     ? scopeBySession.get(entry.sessionId)

@@ -43,8 +43,10 @@ import {
 } from "./gate";
 import {
   attachOrchMeta,
+  detachOrchMissionMeta,
   findPaneOwnedBy,
   getPaneRuntimeAuthorityBySession,
+  getRenderedPaneTabKey,
 } from "./pane-registry";
 import type {
   ProjectDomainStoreRegistry,
@@ -137,6 +139,8 @@ export interface PromoteMissionOrchestratorResult {
   readonly mission?: Mission;
   readonly warning?: string;
   readonly error?: string;
+  /** A missão da aba nasceu nesta chamada (não foi reusada). */
+  readonly created?: true;
 }
 
 interface MissionApprovalFenceInput {
@@ -838,8 +842,32 @@ export class RendererMissionAuthority {
     if (!result.ok) {
       if (tabKey) this.#tabMissions.delete(tabKey);
       this.#discardPaneMission(suite, created.id, owned.sessionId);
+      return result;
     }
-    return result;
+    return { ...result, created: true };
+  }
+
+  /**
+   * O spawn que motivou a missão sob demanda falhou: a missão que nasceu para
+   * ele some e o pane volta a ser a mão do operador — desde que ninguém mais
+   * tenha entrado nela (worker gravado = a missão já é de verdade).
+   */
+  discardUnusedTabMission(sessionId: string, missionId: string): boolean {
+    const ctx = getContextBySession(sessionId);
+    if (!ctx || ctx.missionId !== missionId || !ctx.promotedFromUserSession) return false;
+    const suite = this.#stores.forScope(ctx.scope);
+    const mission = suite.missions.get(missionId);
+    if (!mission || mission.orchestratorSessionId !== sessionId) return false;
+    const runtime = getPaneRuntimeAuthorityBySession(sessionId);
+    if (suite.missionPanes.list(missionId).some((spec) => spec.paneId !== runtime?.paneId)) {
+      return false;
+    }
+    for (const [key, id] of this.#tabMissions) {
+      if (id === missionId) this.#tabMissions.delete(key);
+    }
+    this.#discardPaneMission(suite, missionId, sessionId);
+    if (runtime?.owner) detachOrchMissionMeta(runtime.owner, runtime.paneId, missionId);
+    return true;
   }
 
   /**
@@ -861,9 +889,13 @@ export class RendererMissionAuthority {
       .trim()
       .slice(0, 60)
       .trim();
+    // A aba vem do espelho do renderer: no checkout principal (sem worktree da
+    // aba) é ela que faz os panes da mesma aba dividirem uma missão.
+    const tabKey = getRenderedPaneTabKey(runtime.owner, runtime.paneId);
     return this.createPaneMissionFromRenderer(runtime.owner, {
       paneId: runtime.paneId,
       title: summary ? `Missão · ${summary}` : "Missão da aba",
+      ...(tabKey ? { tabKey } : {}),
     });
   }
 
@@ -897,6 +929,23 @@ export class RendererMissionAuthority {
     if (live(mission)) return mission;
     this.#tabMissions.delete(tabKey);
     return null;
+  }
+
+  /**
+   * Ficha PTY, composição da missão e meta do pane acompanham a devolução do
+   * gate: sem isto a retomada restauraria o pane como worker da missão.
+   */
+  #releasePreviousOperatorHand(
+    suite: ProjectDomainStoreSuite,
+    missionId: string,
+    sessionId: string,
+  ): void {
+    returnAdoptedAgentSessionToUser(sessionId, missionId);
+    const runtime = getPaneRuntimeAuthorityBySession(sessionId);
+    if (!runtime) return;
+    const spec = suite.missionPanes.findByPaneId(runtime.paneId);
+    if (spec?.missionId === missionId) suite.missionPanes.remove(spec.id);
+    if (runtime.owner) detachOrchMissionMeta(runtime.owner, runtime.paneId, missionId);
   }
 
   /** Desfaz a missão leve que não ganhou orquestrador (compensação). */
@@ -1060,13 +1109,20 @@ export class RendererMissionAuthority {
     }
     if (previousSessionId && previousSessionId !== owned.sessionId) {
       if (adopting) demoteMissionOrchestratorSession(missionId, previousSessionId);
-      updateOwnedAgentSessionRole(previousSessionId, {
-        role: "worker",
-        missionId,
-        allowedTools: [],
-        allowedSkills: null,
-        workerIncarnationId: null,
-      });
+      // Troca de coroa não é adoção: a mão do operador que liderava volta a
+      // `user` com o que tinha (o gate já devolveu); nunca vira worker estéril.
+      const previousCtx = getContextBySession(previousSessionId);
+      if (previousCtx?.role === "user" && !previousCtx.missionId) {
+        this.#releasePreviousOperatorHand(suite, missionId, previousSessionId);
+      } else {
+        updateOwnedAgentSessionRole(previousSessionId, {
+          role: "worker",
+          missionId,
+          allowedTools: [],
+          allowedSkills: null,
+          workerIncarnationId: null,
+        });
+      }
     }
 
     attachOrchMeta(owner, owned.paneId, {

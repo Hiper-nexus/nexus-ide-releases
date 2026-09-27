@@ -4,6 +4,7 @@ import path from 'node:path';
 import { AsyncProcessGitRunner, type AsyncGitRunner } from '../../runtime/git-command';
 import { isSafeBootstrapSourceLocator } from '../orientation/orientation-bootstrap-context';
 import type { BootstrapDocProposal } from '../orientation/orientation-bootstrap-types';
+import { maskSqlComments } from '../orientation/orientation-sql-scan';
 import {
   BUSINESS_MODEL_JSON_MARKER,
   BUSINESS_MODEL_TARGET_PATH,
@@ -162,7 +163,10 @@ function collectNames(body: string, pattern: RegExp, tables: ReadonlySet<string>
   return [...names].sort();
 }
 
-function parseSqlFiles(files: readonly { path: string; text: string }[]): SqlModel {
+function parseSqlFiles(sources: readonly { path: string; text: string }[]): SqlModel {
+  // Os padrões abaixo casam sobre o texto: comentário (`-- drop function x`,
+  // `/* create function y( */`) não pode virar fluxo, drop nem regra.
+  const files = sources.map((file) => ({ path: file.path, text: maskSqlComments(file.text) }));
   const tables = new Map<string, string>();
   const functions = new Map<string, SqlFunction>();
   const constraints = new Map<string, SqlConstraint>();

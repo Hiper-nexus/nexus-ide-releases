@@ -1303,11 +1303,21 @@ export function configureRendererMissionAuthority(
   // Missão sob demanda: o 1º helper do pane "+ Pane" cria a missão da aba.
   setOperatorTabMissionProvider((ctx, task) => {
     if (!ctx.sessionId) return null;
-    const result = authority.adoptOperatorHandForSpawn(ctx.sessionId, task);
+    const sessionId = ctx.sessionId;
+    const result = authority.adoptOperatorHandForSpawn(sessionId, task);
     if (!result.ok || !result.mission) return null;
-    redeliverPendingHandoffs(ctx.scope, result.mission.id);
+    const missionId = result.mission.id;
+    redeliverPendingHandoffs(ctx.scope, missionId);
     broadcastProjectStore(ctx.scope, "missions");
-    return result.mission.id;
+    return {
+      missionId,
+      discardIfUnused: () => {
+        if (!result.created) return;
+        if (authority.discardUnusedTabMission(sessionId, missionId)) {
+          broadcastProjectStore(ctx.scope, "missions");
+        }
+      },
+    };
   });
   projectDomainStores.onChange((scope, store) => {
     broadcastProjectStore(scope, store);

@@ -7,6 +7,10 @@ import { createHash } from 'node:crypto';
 import { ProcessGitRunner } from '../runtime/git-command';
 import { createContextAttestation, writeContextAttestation } from '../context/context-attestation';
 import { BUSINESS_MODEL_EXTRACTOR } from '../context/business-model/business-model-bootstrap';
+import {
+  configureBusinessModelAttestedStore,
+  recordAttestedBusinessModelHash,
+} from '../context/business-model/business-model-attested-store';
 import { BUSINESS_MODEL_TARGET_PATH } from '../context/business-model/business-model-contract';
 import {
   __resetRegressionGateForTests,
@@ -517,6 +521,9 @@ describe('runRegressionGate', () => {
       reviewedAt: new Date(0).toISOString(),
       nexusVersion: 'test',
     }));
+    // Quem autoriza é o registro do Main (fora do checkout), não a atestação do repo.
+    configureBusinessModelAttestedStore(fs.mkdtempSync(path.join(os.tmpdir(), 'gate-bm-attested-')));
+    recordAttestedBusinessModelHash(scope, createHash('sha256').update(content).digest('hex'));
     const git = new ProcessGitRunner();
     git.run(root, ['add', '-A']);
     git.run(root, ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-qm', 'modelo']);
