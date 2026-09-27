@@ -29,6 +29,11 @@ import {
 import { walkOrientationTreeAsync } from '../context/orientation/orientation-walker';
 import { loadTsconfigAliases } from '../context/orientation/orientation-tsconfig';
 import {
+  invariantsTouchedBy,
+  readBusinessModelInvariants,
+  type BusinessInvariant,
+} from '../context/business-model/business-model-contract';
+import {
   DEFAULT_ORIENTATION_LIMITS,
   type OrientationLimits,
 } from '../context/orientation/orientation-types';
@@ -67,10 +72,10 @@ export const DEFAULT_REGRESSION_TEST_TIMEOUT_MS = 120_000;
 export const DEFAULT_REGRESSION_MAX_TEST_FILES = 40;
 
 /**
- * Contrato do modelo-negócio (writer 3): invariante estruturado. Os campos em
- * português espelham o `.context` de negócio. Só `id`, `regra` e `arquivos`
- * são usados hoje; `tabelas` casam com as tabelas que o blast radius
- * estendido (writer 4) apontar.
+ * Contrato do modelo-negócio: invariante estruturado (mesma forma do
+ * BusinessInvariant do `.context`). Tocado quando o diff mexe em `arquivos`/
+ * `testes` ou quando o blast radius alcança uma das `tabelas`/`funcoes`;
+ * então os `testes` entram no conjunto e falha neles = invariante violado.
  */
 export interface RegressionInvariant {
   readonly id: string;
@@ -82,10 +87,18 @@ export interface RegressionInvariant {
   readonly testes?: readonly string[];
 }
 
-/** Contrato do codemap-banco (writer 4): blast radius estendido. */
+/** Contrato do codemap-banco: testes e entidades de banco (tabelas/funções) alcançados. */
 export interface RegressionBlastRadiusExtension {
   readonly tests?: readonly string[];
-  readonly tables?: readonly string[];
+  /** Nomes (qualificado e simples) das entidades `db:table:`/`db:function:` do raio. */
+  readonly dbEntities?: readonly string[];
+}
+
+export interface RegressionInvariantTouched {
+  readonly id: string;
+  readonly regra: string;
+  /** Um teste do invariante falhou neste diff. */
+  readonly violated: boolean;
 }
 
 /**
@@ -117,10 +130,12 @@ function stringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
 }
 
+const DB_NODE_RE = /^db:(?:table|function):(.+)$/u;
+
 /**
- * Default do contrato do codemap-banco: lê `tests`/`tables` do blast radius
- * da orientação quando existirem (o writer 4 os acrescenta ao
- * BlastRadiusResult). Sem serviço ou sem os campos → null, portão segue.
+ * Default do contrato do codemap-banco: `tests` do BlastRadiusResult e as
+ * entidades de banco do raio (nós `db:table:`/`db:function:` em `files`).
+ * Sem serviço de orientação → null, o portão segue só com o grafo.
  */
 export async function orientationBlastRadiusExtension(input: {
   readonly scope: ProjectExecutionScope;
@@ -134,8 +149,20 @@ export async function orientationBlastRadiusExtension(input: {
     service,
   );
   const tests = stringList((radius as { tests?: unknown }).tests);
-  const tables = stringList((radius as { tables?: unknown }).tables);
-  return tests.length > 0 || tables.length > 0 ? { tests, tables } : null;
+  const dbEntities = stringList((radius as { files?: unknown }).files).flatMap((node) => {
+    const qualified = DB_NODE_RE.exec(node)?.[1];
+    if (!qualified) return [];
+    const dot = qualified.indexOf('.');
+    return dot >= 0 ? [qualified, qualified.slice(dot + 1)] : [qualified];
+  });
+  return tests.length > 0 || dbEntities.length > 0 ? { tests, dbEntities } : null;
+}
+
+/** Default do contrato do modelo de negócio: invariantes do `.context` do checkout. */
+export function businessModelInvariantsExtension(input: {
+  readonly scope: ProjectExecutionScope;
+}): readonly RegressionInvariant[] {
+  return readBusinessModelInvariants(input.scope.rootRealPath);
 }
 
 /** Writers 3/4 registram aqui seus provedores, sem acoplar este módulo a eles. */
@@ -177,7 +204,7 @@ export interface RegressionGateResult {
   readonly inheritedFailures: readonly RegressionTestFailure[];
   /** Arquivos-fonte tocados sem nenhum teste mapeado — aviso, não bloqueia. */
   readonly untestedFiles: readonly string[];
-  readonly invariantsTouched: readonly Pick<RegressionInvariant, 'id' | 'regra'>[];
+  readonly invariantsTouched: readonly RegressionInvariantTouched[];
   readonly runner: RegressionRunnerKind | null;
   readonly warnings: readonly string[];
   readonly cached: boolean;
@@ -1067,17 +1094,34 @@ async function evaluate(
   const blastRadius = extensions.blastRadius ?? orientationBlastRadiusExtension;
   const radius = await safeExtension('blast radius estendido', warnings, () =>
     blastRadius({ scope: input.scope, changedFiles }));
-  const invariants = extensions.invariants
-    ? (await safeExtension('invariantes do modelo de negócio', warnings, () =>
-        extensions.invariants!({ scope: input.scope }))) ?? []
-    : [];
-  const changedSet = new Set(changedFiles);
-  const tables = new Set(radius?.tables ?? []);
+  const invariantsProvider = extensions.invariants ?? businessModelInvariantsExtension;
+  const invariants: BusinessInvariant[] = (
+    (await safeExtension('invariantes do modelo de negócio', warnings, () =>
+      invariantsProvider({ scope: input.scope }))) ?? []
+  ).map((invariant) => ({
+    id: invariant.id,
+    fluxo: invariant.fluxo ?? '',
+    regra: invariant.regra,
+    origem: '',
+    arquivos: invariant.arquivos ?? [],
+    tabelas: invariant.tabelas ?? [],
+    funcoes: invariant.funcoes ?? [],
+    testes: invariant.testes ?? [],
+  }));
+  const dbEntities = new Set((radius?.dbEntities ?? []).map((name) => name.toLowerCase()));
+  const byFiles = new Set(invariantsTouchedBy(invariants, changedFiles));
   const touched = invariants.filter(
     (invariant) =>
-      (invariant.arquivos ?? []).some((file) => changedSet.has(file.replace(/\\/g, '/'))) ||
-      (invariant.tabelas ?? []).some((table) => tables.has(table)),
+      byFiles.has(invariant) ||
+      [...invariant.tabelas, ...invariant.funcoes].some((name) => dbEntities.has(name.toLowerCase())),
   );
+  const touchedSummary = (failedTests: ReadonlySet<string>): RegressionInvariantTouched[] =>
+    touched.map((invariant) => ({
+      id: invariant.id,
+      // A regra é copiada do código do projeto: dado, não instrução.
+      regra: neutralizeRunnerText(invariant.regra, 200),
+      violated: invariant.testes.some((test) => failedTests.has(test)),
+    }));
   const extraTests = [...(radius?.tests ?? []), ...touched.flatMap((invariant) => invariant.testes ?? [])];
 
   let impacted: ImpactedTests;
@@ -1092,7 +1136,7 @@ async function evaluate(
       failures: [],
       inheritedFailures: [],
       untestedFiles: [],
-      invariantsTouched: touched.map(({ id, regra }) => ({ id, regra })),
+      invariantsTouched: touchedSummary(new Set()),
       runner: null,
     });
   }
@@ -1102,7 +1146,7 @@ async function evaluate(
       `e2e impactado não executado (exige servidor/navegador): ${impacted.e2eSkipped.slice(0, 5).join(', ')}`,
     );
   }
-  const invariantsTouched = touched.map(({ id, regra }) => ({ id, regra }));
+  const invariantsTouched = touchedSummary(new Set());
   const maxTests = input.maxTestFiles ?? DEFAULT_REGRESSION_MAX_TEST_FILES;
   const tests = impacted.tests.slice(0, maxTests);
   if (impacted.tests.length > maxTests) {
@@ -1187,7 +1231,8 @@ async function evaluate(
     failures: ownFailures,
     inheritedFailures,
     runner: groups[0]!.runner.kind,
-    ...common,
+    untestedFiles: impacted.untestedFiles,
+    invariantsTouched: touchedSummary(new Set(ownFailures.map((failure) => failure.file))),
   });
 }
 
@@ -1302,11 +1347,21 @@ export function formatRegressionGateReport(result: RegressionGateResult): string
       `Aviso: área tocada sem teste — ${result.untestedFiles.slice(0, 8).join(', ')}. Considere um teste pequeno que falhe se a lógica quebrar.`,
     );
   }
-  if (result.invariantsTouched.length > 0) {
+  const violated = result.invariantsTouched.filter((invariant) => invariant.violated);
+  if (violated.length > 0) {
     lines.push(
-      `Invariantes de negócio tocados: ${result.invariantsTouched
+      `Invariantes de negócio VIOLADOS (um teste deles falhou): ${violated
         .slice(0, 6)
-        .map((invariant) => `${invariant.id} (${invariant.regra})`)
+        .map((invariant) => `${invariant.id} «${invariant.regra}»`)
+        .join('; ')}.`,
+    );
+  }
+  const touchedOnly = result.invariantsTouched.filter((invariant) => !invariant.violated);
+  if (touchedOnly.length > 0) {
+    lines.push(
+      `Invariantes de negócio tocados: ${touchedOnly
+        .slice(0, 6)
+        .map((invariant) => `${invariant.id} «${invariant.regra}»`)
         .join('; ')}.`,
     );
   }

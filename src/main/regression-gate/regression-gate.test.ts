@@ -219,7 +219,7 @@ describe('runRegressionGate', () => {
     );
 
     expect(result.status).toBe('passed');
-    expect(result.invariantsTouched).toEqual([{ id: 'INV-1', regra: 'c nunca muda com a' }]);
+    expect(result.invariantsTouched).toEqual([{ id: 'INV-1', regra: 'c nunca muda com a', violated: false }]);
     expect(calls[0]).toContain('src/c.test.ts');
     expect(result.warnings.join(' ')).toContain('blast radius estendido indisponível');
   });
@@ -347,6 +347,65 @@ describe('runRegressionGate', () => {
     await runRegressionGate({ scope }, { exec });
 
     expect(calls[0]).toContain('src/d.test.ts');
+  });
+
+  it('invariante do modelo de negócio (.context) tocado: seus testes rodam e a violação aparece', async () => {
+    const { root, scope } = project();
+    const doc = {
+      schemaVersion: 1,
+      flows: [],
+      invariants: [
+        {
+          id: 'fechar_comanda#1',
+          fluxo: 'fechar_comanda',
+          regra: 'comanda fechada não recebe item',
+          origem: 'supabase/migrations/001.sql:10',
+          arquivos: ['src/a.ts'],
+          tabelas: ['comandas'],
+          funcoes: [],
+          testes: ['src/c.test.ts'],
+        },
+      ],
+    };
+    write(
+      root,
+      '.context/docs/business-model.md',
+      `# Modelo\n\n<!-- nexus:business-model:v1 -->\n\n\`\`\`json\n${JSON.stringify(doc)}\n\`\`\`\n`,
+    );
+    const git = new ProcessGitRunner();
+    git.run(root, ['add', '-A']);
+    git.run(root, ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-qm', 'modelo']);
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    const { exec, calls } = fakeVitest(['src/c.test.ts']);
+
+    const result = await runRegressionGate({ scope }, { exec });
+
+    expect(calls[0]).toContain('src/c.test.ts');
+    expect(result.status).toBe('failed');
+    expect(result.invariantsTouched).toEqual([
+      { id: 'fechar_comanda#1', regra: 'comanda fechada não recebe item', violated: true },
+    ]);
+    expect(formatRegressionGateReport(result)).toContain('Invariantes de negócio VIOLADOS');
+  });
+
+  it('invariante alcançado pela tabela do blast radius (dbEntities) também entra', async () => {
+    const { root, scope } = project();
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    const { exec, calls } = fakeVitest();
+
+    const result = await runRegressionGate(
+      { scope },
+      {
+        exec,
+        extensions: {
+          blastRadius: () => ({ tests: [], dbEntities: ['public.comandas', 'comandas'] }),
+          invariants: () => [{ id: 'INV-T', regra: 'total confere', tabelas: ['comandas'], testes: ['src/c.test.ts'] }],
+        },
+      },
+    );
+
+    expect(calls[0]).toContain('src/c.test.ts');
+    expect(result.invariantsTouched.map((invariant) => invariant.id)).toEqual(['INV-T']);
   });
 
   it('checkout limpo não roda nada', async () => {
