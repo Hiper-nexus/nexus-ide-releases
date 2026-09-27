@@ -1098,21 +1098,21 @@ export function WorkspaceRail({
           </button>
           <button
             type="button"
-            className="workspace-rail__quick-icon-btn"
+            className="workspace-rail__row-grid-action"
             title="Chaves de API (Gemini, Grok, Groq, OpenAI...)"
             aria-label="Chaves de API"
             onClick={onOpenApiKeys ?? (() => useProductNavigationStore.getState().openSettings('api-keys'))}
           >
-            <PixelIcon name="key" size={11} />
+            <PixelIcon name="key" size={12} />
           </button>
           <button
             type="button"
-            className="workspace-rail__quick-icon-btn"
+            className="workspace-rail__row-grid-action"
             title="Jarvis & Voz"
             aria-label="Jarvis & Voz"
             onClick={onOpenVoiceSettings ?? (() => useProductNavigationStore.getState().openSettings('voice'))}
           >
-            <PixelIcon name="mic" size={11} />
+            <PixelIcon name="mic" size={12} />
           </button>
           <div
             className="workspace-rail__cockpit-conn"

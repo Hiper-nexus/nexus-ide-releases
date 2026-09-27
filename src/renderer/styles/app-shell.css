@@ -1719,42 +1719,24 @@
   /* Em rail estreito o label encolhe com ellipsis para não empurrar o
      indicador "Local" para fora da tela. */
   min-width: 0;
+  /* Uma altura só na faixa: Configurações mede o mesmo alvo de 32px dos
+     atalhos ao lado (.workspace-rail__row-grid-action), em qualquer altura
+     de janela, em vez de 40px contra 24px. O respiro lateral menor devolve
+     ao rótulo a largura que os atalhos de 32px ocupam: no rail de ~275px
+     "Configurações" continua inteiro. */
+  min-height: var(--space-6);
+  padding-block: var(--space-1);
+  padding-inline: var(--space-1-5);
 }
 
-.workspace-rail__cockpit-status .workspace-rail__quick-icon-btn,
+/* Status do runtime, não controle: sem caixa, para não parecer um terceiro
+   botão desalinhado; o LED e o rótulo centram na faixa de 32px. */
 .workspace-rail__cockpit-conn {
+  display: inline-flex;
   flex-shrink: 0;
-}
-
-.workspace-rail__quick-icon-btn {
-  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border-radius: var(--radius-xs, 3px);
-  background: transparent;
-  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
-  color: var(--text-dim);
-  cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
-}
-
-.workspace-rail__quick-icon-btn:hover {
-  background: var(--surface-overlay, rgba(255, 255, 255, 0.08));
-  color: var(--text-bright, #fff);
-  border-color: var(--border-medium, rgba(255, 255, 255, 0.2));
-}
-
-.workspace-rail__cockpit-conn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 7px;
-  border-radius: var(--radius-xs, 3px);
-  background: var(--surface-overlay, rgba(255, 255, 255, 0.04));
-  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  gap: var(--space-1-5);
+  padding-left: var(--space-1);
 }
 
 .workspace-rail__cockpit-led {
@@ -2074,7 +2056,8 @@
 
 @media (pointer: coarse) {
   .workspace-rail__new,
-  .workspace-rail__row {
+  .workspace-rail__row,
+  .workspace-rail__cockpit-status .workspace-rail__settings {
     min-height: calc(var(--space-6) + var(--space-3));
   }
 }

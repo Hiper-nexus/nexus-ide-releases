@@ -299,6 +299,32 @@ describe('Nexus V2 shell and product workspace style contracts', () => {
     ).toBe('none');
   });
 
+  it('keeps Configurações and its shortcuts on one 32px strip at any window height', () => {
+    // Regressão do rodapé: Configurações media 40px (32px em janela baixa)
+    // enquanto chave/mic ficavam presos em 24px e o selo Local em ~20px.
+    for (const viewport of [
+      { width: 1_400, height: 900 },
+      { width: 1_280, height: 800 },
+    ]) {
+      const style = installStyleContract(productStyles, viewport);
+      const host = render(<ProductShellFixture />, viewport.width, viewport.height);
+      const strip = host.querySelector<HTMLElement>('.workspace-rail__cockpit-status');
+      if (!strip) throw new Error('Rail footer strip did not render');
+      const settings = strip.querySelector<HTMLElement>('.workspace-rail__settings');
+      const shortcuts = strip.querySelectorAll<HTMLElement>('button:not(.workspace-rail__settings)');
+      if (!settings) throw new Error('Configurações did not render in the strip');
+
+      expect(shortcuts).toHaveLength(2);
+      expect(styleLengthPx(settings, 'min-height')).toBe(32);
+      for (const shortcut of shortcuts) {
+        expect(shortcut.classList.contains('workspace-rail__row-grid-action')).toBe(true);
+        expect(styleLengthPx(shortcut, 'height')).toBe(32);
+        expect(styleLengthPx(shortcut, 'width')).toBe(32);
+      }
+      style.remove();
+    }
+  });
+
   it('keeps the rail resize handle inside the 200-480px band', () => {
     installStyleContract(productStyles, { width: 1_400, height: 900 });
     const host = render(<ProductShellFixture />, 1_400, 900);
