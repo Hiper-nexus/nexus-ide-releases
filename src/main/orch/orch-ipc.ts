@@ -223,6 +223,8 @@ import {
 } from './mission-runtime-termination';
 import { BoundedAsyncOperationPool } from './bounded-async-operation-pool';
 import { missionControlPlaneSnapshot } from "./mission-control-plane-ipc";
+import { announceTabMissionLeader } from "./operator-hand-mission";
+import { injectPrompt } from "./tool-util";
 import {
   ORCHESTRATOR_ADOPTION_TTL_MS,
   clearOrchestratorAdoption,
@@ -2169,6 +2171,7 @@ export function registerOrchIpc(): void {
     .object({
       paneId: z.string().min(1).max(128),
       title: z.string().trim().min(1).max(120),
+      tabKey: z.string().min(1).max(256).optional(),
     })
     .strict();
   ipcMain.handle(ORCH_CHANNELS.missionCreateForPane, (event, raw) => {
@@ -2187,6 +2190,8 @@ export function registerOrchIpc(): void {
       const scope = requireRendererWorkspaceScope(event.sender);
       redeliverPendingHandoffs(scope, result.mission.id);
       broadcastProjectStore(scope, "missions");
+      const leader = result.mission.orchestratorSessionId;
+      if (leader) void announceTabMissionLeader(leader, result.mission.title, injectPrompt);
     }
     return result;
   });
