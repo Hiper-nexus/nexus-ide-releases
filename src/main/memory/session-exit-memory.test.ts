@@ -271,4 +271,28 @@ describe('session-exit memory distillation', () => {
     expect(outcome.supersededId).toBeUndefined();
     expect(store.activeWorkspaceSource(other.id)).toBe('trusted:session-digest');
   });
+
+  it('o digest fica com os resumos mais recentes da sessão', async () => {
+    const outcome = await distillSessionExitMemory(
+      { sessionId: 'pty-session-1', agent: agent({ scope }) },
+      {
+        getStores: () =>
+          stores([
+            handoff('h-1', 'Rascunho inicial do parser.'),
+            handoff('h-2', 'Parser cobre fuso horário.'),
+            handoff('h-3', 'Parser cobre ano bissexto.'),
+            handoff('h-4', 'Parser publicado no pacote shared.'),
+          ]),
+        distill: approve,
+      },
+    );
+    expect(outcome).toMatchObject({ retained: true });
+    const [hit] = getWorkspaceMemoryStore(scope).recall({
+      query: 'parser pacote shared',
+      includeGlobal: false,
+      trustedOnly: true,
+    });
+    expect(hit.content).toContain('publicado no pacote shared');
+    expect(hit.content).not.toContain('Rascunho inicial');
+  });
 });

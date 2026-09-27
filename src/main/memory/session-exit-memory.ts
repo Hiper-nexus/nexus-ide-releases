@@ -121,7 +121,8 @@ export async function distillSessionExitMemory(
   if (delivered.length === 0) return { retained: false, reason: 'trivial' };
   const summaries = delivered
     .filter((handoff) => handoff.evidenceTrust === 'nexus-trusted')
-    .slice(0, DIGEST_MAX_HANDOFFS)
+    // list() vem em created_at ASC: os mais recentes são o fim da sessão.
+    .slice(-DIGEST_MAX_HANDOFFS)
     .map((handoff) => handoff.summary!.trim());
   if (summaries.length === 0) return { retained: false, reason: 'unverified' };
 
