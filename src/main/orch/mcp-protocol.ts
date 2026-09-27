@@ -6,6 +6,7 @@ import type { AgentTransportPhysicalReceipt } from "./http-mcp-boundary";
 import { operatorDelegationInstructions } from "./operator-delegation-doctrine";
 import { operatorBusinessModelContext } from "./operator-business-model";
 import { joinPromptContextBlocks } from "./prompt-context-blocks";
+import { operatorWorkspaceMemoryContext } from "./operator-workspace-memory";
 
 /**
  * Minimal MCP (Model Context Protocol) server core: JSON-RPC 2.0 message
@@ -193,6 +194,7 @@ export async function handleMcpMessage(
       const instructions = joinPromptContextBlocks([
         operatorDelegationInstructions(ctx),
         operatorBusinessModelContext(ctx, "mcp"),
+        operatorWorkspaceMemoryContext(ctx, "mcp"),
       ]);
       return ok(id, {
         protocolVersion: version,

@@ -154,8 +154,8 @@ export const orchSettingsSchema = z.object({
     })
     .prefault({}),
   /**
-   * Injeta o bloco <workspace-memory> no primeiro prompt dos panes "+" de
-   * todas as CLIs com hook UserPromptSubmit. Default ligado; desligar aqui
+   * Injeta o bloco <workspace-memory> no brief de spawn, nas instructions do
+   * MCP do "+ Pane" e no hook do Codex. Default ligado; desligar aqui
    * mantém o restante do sistema de memória intacto.
    */
   workspaceMemoryInjection: z.boolean().default(true),

@@ -11,7 +11,7 @@ import {
   parseUserPrompt,
 } from './hook-delegate-endpoint';
 import type { distillOperatorPreferenceMemory } from '../memory/operator-preference-memory';
-import type { workspaceMemoryContextBlock } from '../memory/workspace-memory-context';
+import type { operatorWorkspaceMemoryContext } from './operator-workspace-memory';
 
 const operator = { role: 'user' as const, sessionId: 's1' };
 const LONG = 'Implemente a tela de login, escreva os testes e revise a segurança do fluxo.';
@@ -368,7 +368,7 @@ describe('preferência do operador (fatia 3 da memória)', () => {
   });
 });
 
-describe('bloco <workspace-memory> no primeiro prompt (fatia 4)', () => {
+describe('bloco <workspace-memory> no primeiro prompt do Codex (fatia 4)', () => {
   const scope = {
     version: 1,
     installationId: 'i',
@@ -378,14 +378,14 @@ describe('bloco <workspace-memory> no primeiro prompt (fatia 4)', () => {
     identitySource: 'manifest',
   } as never;
 
-  const block = vi.fn<typeof workspaceMemoryContextBlock>(
+  const block = vi.fn<typeof operatorWorkspaceMemoryContext>(
     () => '<workspace-memory phase="execution">x</workspace-memory>',
   );
 
   it('entrega o bloco uma única vez por sessão', async () => {
     __resetLeanRemindersForTests();
     const first = await handleHookDelegateRequest(
-      { role: 'user', sessionId: 'mem-1', scope },
+      { role: 'user', sessionId: 'mem-1', scope, providerId: 'codex' },
       { prompt: 'Implemente o fluxo de login.' },
       { advise: vi.fn(async () => null), memoryBlock: block },
     );
@@ -394,7 +394,7 @@ describe('bloco <workspace-memory> no primeiro prompt (fatia 4)', () => {
     expect(firstText).toContain('<workspace-memory');
 
     const second = await handleHookDelegateRequest(
-      { role: 'user', sessionId: 'mem-1', scope },
+      { role: 'user', sessionId: 'mem-1', scope, providerId: 'codex' },
       { prompt: 'Agora os testes do fluxo.' },
       { advise: vi.fn(async () => null), memoryBlock: block },
     );
@@ -403,17 +403,17 @@ describe('bloco <workspace-memory> no primeiro prompt (fatia 4)', () => {
 
   it('banco vazio (bloco null) não marca a sessão: entrega depois quando houver', async () => {
     __resetLeanRemindersForTests();
-    const empty = vi.fn<typeof workspaceMemoryContextBlock>(() => null);
-    const filled = vi.fn<typeof workspaceMemoryContextBlock>(
+    const empty = vi.fn<typeof operatorWorkspaceMemoryContext>(() => null);
+    const filled = vi.fn<typeof operatorWorkspaceMemoryContext>(
       () => '<workspace-memory phase="execution">y</workspace-memory>',
     );
     await handleHookDelegateRequest(
-      { role: 'user', sessionId: 'mem-2', scope },
+      { role: 'user', sessionId: 'mem-2', scope, providerId: 'codex' },
       { prompt: 'Implemente o fluxo.' },
       { advise: vi.fn(async () => null), memoryBlock: empty },
     );
     const later = await handleHookDelegateRequest(
-      { role: 'user', sessionId: 'mem-2', scope },
+      { role: 'user', sessionId: 'mem-2', scope, providerId: 'codex' },
       { prompt: 'Implemente o fluxo.' },
       { advise: vi.fn(async () => null), memoryBlock: filled },
     );
@@ -422,13 +422,15 @@ describe('bloco <workspace-memory> no primeiro prompt (fatia 4)', () => {
     ).toContain('<workspace-memory');
   });
 
-  it('sem scope não tenta montar o bloco', async () => {
-    const memoryBlock = vi.fn<typeof workspaceMemoryContextBlock>(() => null);
+  it('pede o bloco pelo canal do hook com o prompt da mensagem', async () => {
+    __resetLeanRemindersForTests();
+    const memoryBlock = vi.fn<typeof operatorWorkspaceMemoryContext>(() => null);
+    const ctx = { role: 'user' as const, sessionId: 'mem-3', providerId: 'codex' };
     await handleHookDelegateRequest(
-      { role: 'user', sessionId: 'mem-3' },
+      ctx,
       { prompt: 'Implemente o fluxo.' },
       { advise: vi.fn(async () => null), memoryBlock },
     );
-    expect(memoryBlock).not.toHaveBeenCalled();
+    expect(memoryBlock).toHaveBeenCalledWith(ctx, 'hook', 'Implemente o fluxo.');
   });
 });

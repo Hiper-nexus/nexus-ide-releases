@@ -17,10 +17,7 @@ import { WORKSPACE_HANDOFF_DELIVERY_PREFIX } from './workspace-handoff-delivery'
 import { OPERATOR_DELEGATION_DOCTRINE } from './operator-delegation-doctrine';
 import { operatorBusinessModelContext } from './operator-business-model';
 import { distillOperatorPreferenceMemory } from '../memory/operator-preference-memory';
-import {
-  workspaceMemoryContextBlock,
-} from '../memory/workspace-memory-context';
-import { getOrchSettings } from '../persistence/settings-store';
+import { operatorWorkspaceMemoryContext } from './operator-workspace-memory';
 import { FAILOVER_HANDOFF_HEADER } from '../../shared/failover-handoff';
 
 export const HOOK_DELEGATE_MAX_BODY_BYTES = 64 * 1024;
@@ -89,8 +86,7 @@ const designRemindedAt = new Map<string, number>();
 const doctrineDeliveredAt = new Map<string, number>();
 const businessModelDeliveredAt = new Map<string, number>();
 const browserHintDeliveredAt = new Map<string, number>();
-/** Sessões que já receberam o bloco <workspace-memory> (uma vez por sessão). */
-const memoryDeliveredAt = new Set<string>();
+const memoryDeliveredAt = new Map<string, number>();
 
 function remindedRecently(ledger: Map<string, number>, sessionId: string, now: number): boolean {
   const last = ledger.get(sessionId);
@@ -120,30 +116,22 @@ export function __resetLeanRemindersForTests(): void {
   memoryDeliveredAt.clear();
 }
 
-type MemoryBlockFn = typeof workspaceMemoryContextBlock;
+type MemoryBlockFn = typeof operatorWorkspaceMemoryContext;
 
 /**
- * Bloco de memória do workspace no primeiro prompt da sessão (panes "+" de
- * todas as CLIs com hook UserPromptSubmit). Setting desligado, banco vazio
- * ou flag off → nada; a entrega acontece uma única vez por sessão.
+ * `<workspace-memory>` do Codex "+ Pane" (os demais recebem pelo MCP), como o
+ * modelo de negócio: uma vez por sessão a cada 30 min. Banco sem hit não
+ * marca a sessão — tenta de novo no próximo prompt.
  */
 function memoryContextFor(
   ctx: HookContext,
   prompt: string,
+  now: number,
   block: MemoryBlockFn,
 ): string | null {
-  const scope = ctx.executionScope ?? ctx.scope;
-  if (!scope || !ctx.sessionId) return null;
-  if (memoryDeliveredAt.has(ctx.sessionId)) return null;
-  let enabled = true;
-  try {
-    enabled = getOrchSettings().workspaceMemoryInjection !== false;
-  } catch {
-    // settings indisponíveis: default ligado
-  }
-  if (!enabled) return null;
-  const context = block(scope, prompt, 'execution');
-  if (context) memoryDeliveredAt.add(ctx.sessionId);
+  if (!ctx.sessionId || remindedRecently(memoryDeliveredAt, ctx.sessionId, now)) return null;
+  const context = block(ctx, 'hook', prompt);
+  if (context) markReminded(memoryDeliveredAt, ctx.sessionId, now);
   return context;
 }
 
@@ -202,7 +190,7 @@ export async function handleHookDelegateRequest(
     design?: DesignContextFn;
     /** Destilação de preferência (fatia 3); default fire-and-forget. */
     distillPreference?: typeof distillOperatorPreferenceMemory;
-    /** Bloco <workspace-memory> do primeiro prompt (fatia 4). */
+    /** Bloco <workspace-memory> do primeiro prompt do Codex (fatia 4). */
     memoryBlock?: MemoryBlockFn;
   } = {},
 ): Promise<{ statusCode: 200; payload: Record<string, unknown> }> {
@@ -259,7 +247,7 @@ export async function handleHookDelegateRequest(
     }
     const design = designContextFor(ctx, prompt, now, deps.design ?? operatorDesignContext);
     if (design) parts.push(design);
-    const memory = memoryContextFor(ctx, prompt, deps.memoryBlock ?? workspaceMemoryContextBlock);
+    const memory = memoryContextFor(ctx, prompt, now, deps.memoryBlock ?? operatorWorkspaceMemoryContext);
     if (memory) parts.push(memory);
     if (parts.length === 0) return { statusCode: 200, payload: {} };
     const context = parts.join('\n');
