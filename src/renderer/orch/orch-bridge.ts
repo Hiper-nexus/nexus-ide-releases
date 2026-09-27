@@ -761,7 +761,12 @@ export function useOrchBridge(): void {
       window.nexus.orch.onPaneCloseRequest((request) => {
         const paneId = typeof request === 'string' ? request : request.paneId;
         if (typeof request !== 'string' && 'expectedSessionId' in request) {
-          if (getPaneSessionId(paneId) !== request.expectedSessionId) return;
+          // O main encerra a sessão ANTES de pedir o fechamento (prova de
+          // saída), e o exit zera o host: sem sessão é o mesmo pane, já morto.
+          // Recusar aí deixava todo helper com autoCloseOnHandoff aberto.
+          // Só uma sessão NOVA e viva (pane reaproveitado) segura o pane.
+          const current = getPaneSessionId(paneId);
+          if (current !== null && current !== request.expectedSessionId) return;
         } else if (typeof request !== 'string') {
           const pane = listPanes(useLayoutStore.getState().root).find(
             (candidate) => candidate.id === request.paneId,

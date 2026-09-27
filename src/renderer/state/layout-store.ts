@@ -1006,18 +1006,29 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
         : canvasNodeLayouts;
 
     bumpTreeVersion();
+    const livePanes = listPanes(root);
     // Modo foco (F-521): com um pane ampliado ATIVO (o operador colocou o
     // orquestrador em foco), o worker novo NÃO rouba o foco nem derruba o
     // zoom — o orquestrador permanece em foco e o worker entra no grid por
-    // trás. Sem maximize ativo, mantém o comportamento legado: foco no pane
+    // trás.
+    const keepMaximize =
+      maximizedPaneId !== null &&
+      livePanes.some((pane) => pane.id === maximizedPaneId);
+    // Worker (helper ou worker de missão) aberto por agente é trabalho de
+    // fundo: o foco fica onde o operador está, e com ele a aba — o
+    // TerminalWorkspace segue focusedPaneId até o escopo do pane. Mesma regra
+    // de focusFreshlyPresentedPane (orch-bridge), onde worker nunca toma foco.
+    // Orquestrador novo e grade sem foco vivo mantêm o legado: foco no pane
     // recém-apresentado, que também encerra qualquer maximize stale.
     const keepFocus =
-      maximizedPaneId !== null &&
-      listPanes(root).some((pane) => pane.id === maximizedPaneId);
+      keepMaximize ||
+      ((req.role ?? 'worker') === 'worker' &&
+        focusedPaneId !== null &&
+        livePanes.some((pane) => pane.id === focusedPaneId));
     set({
       root,
       focusedPaneId: keepFocus ? focusedPaneId : newPane.id,
-      maximizedPaneId: keepFocus ? maximizedPaneId : null,
+      maximizedPaneId: keepMaximize ? maximizedPaneId : null,
       canvasNodeLayouts: updatedLayouts,
     });
     persist();

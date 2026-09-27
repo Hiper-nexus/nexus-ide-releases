@@ -1533,4 +1533,42 @@ describe('orchestration bridge pane recovery', () => {
     expect(listPanes(useLayoutStore.getState().root).some((candidate) => candidate.id === pane.id)).toBe(false);
     act(() => mounted.root.unmount());
   });
+
+  it('fecha o helper cuja sessão esperada já saiu (autoCloseOnHandoff)', () => {
+    // O main mata a sessão e só então pede o fechamento; quando o pedido
+    // chega, o exit já zerou o host. Antes disso o pedido era ignorado e o
+    // helper que entregou ficava aberto em "process exited".
+    let closeHandler: ((request: PaneCloseRequest) => void) | null = null;
+    const syncPanes = vi.fn();
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        mission: missionBridge(),
+        orch: {
+          onPaneSpawnRequest: listener(),
+          onPaneRecoveryRequest: listener(),
+          onBrowserOpenRequest: listener(),
+          onPaneCloseRequest: vi.fn((cb: (request: PaneCloseRequest) => void) => {
+            closeHandler = cb;
+            return vi.fn();
+          }),
+          onPaneParkRequest: listener(),
+          onMissionsChanged: listener(),
+          onHandoffsChanged: listener(),
+          onTodosChanged: listener(),
+          onSquadsChanged: listener(),
+          syncPanes,
+        },
+      },
+    });
+    const pane = { id: 'pane-helper-done', kind: 'cli-agent' as const, title: 'Helper', adapterId: 'codex' };
+    useLayoutStore.setState({ root: { kind: 'leaf', id: 'leaf-helper-done', pane }, focusedPaneId: pane.id });
+    terminal.getPaneSessionId.mockReturnValue(null);
+    const mounted = mount();
+
+    act(() => closeHandler?.({ paneId: pane.id, expectedSessionId: 'session-delivered' }));
+    expect(listPanes(useLayoutStore.getState().root).some((candidate) => candidate.id === pane.id)).toBe(false);
+    expect(syncPanes).toHaveBeenCalled();
+    act(() => mounted.root.unmount());
+  });
 });

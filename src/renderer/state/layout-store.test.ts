@@ -149,16 +149,37 @@ describe('layout-store pane maximize', () => {
     expect(useLayoutStore.getState().focusedPaneId).toBe('pane-a');
   });
 
-  it('foca o novo pane da orquestração quando não há maximize ativo', () => {
+  it('mantém o foco do operador quando um agente abre um worker de fundo', () => {
+    // O operador trabalha em pane-b; o orquestrador (pane-a) abre um helper.
+    // O TerminalWorkspace segue focusedPaneId até a aba do pane, então foco
+    // roubado aqui tirava o operador da aba em que ele estava.
+    useLayoutStore.getState().focus('pane-b');
+
     const workerId = useLayoutStore.getState().spawnOrchPane({
       orchRequestId: 'req-focus-2',
       paneId: 'pane-worker-2',
       adapterId: 'codex',
       title: 'Worker 2',
       role: 'worker',
+      parentPaneId: 'pane-a',
     });
 
-    expect(useLayoutStore.getState().focusedPaneId).toBe(workerId);
+    expect(listPanes(useLayoutStore.getState().root).map((pane) => pane.id)).toContain(workerId);
+    expect(useLayoutStore.getState().focusedPaneId).toBe('pane-b');
+    expect(useLayoutStore.getState().maximizedPaneId).toBeNull();
+  });
+
+  it('foca o novo orquestrador quando não há maximize ativo', () => {
+    const orchestratorId = useLayoutStore.getState().spawnOrchPane({
+      orchRequestId: 'req-focus-3',
+      paneId: 'pane-orchestrator-3',
+      adapterId: 'codex',
+      title: 'Orquestrador',
+      missionId: 'm-focus-3',
+      role: 'orchestrator',
+    });
+
+    expect(useLayoutStore.getState().focusedPaneId).toBe(orchestratorId);
     expect(useLayoutStore.getState().maximizedPaneId).toBeNull();
   });
 
