@@ -698,3 +698,145 @@ describe('TokenSpeedMeter — agregação por LLM', () => {
     expect(models.map((entry) => entry.model)).toEqual(['gpt-5'])
   })
 })
+
+/**
+ * Padrão real do orquestrador do operador (27/09, claude-opus-5-5, $120.59 e
+ * 2200 tok/s no cabeçalho). Números derivados do transcript, sem conteúdo:
+ * a mensagem de 1.109 tokens de saída começa no resultado de ferramenta
+ * (t=0) e grava linhas em +8.196, +8.198, +8.199, +8.837, +9.639 e +10.111 ms
+ * (tools executam no meio da MESMA mensagem). Real: 1.109 / 10,111 s ≈ 110
+ * tok/s. Enquanto isso a TUI despeja na tela os resultados das ferramentas.
+ */
+describe('TokenSpeedMeter — orquestrador longo com saída de ferramenta (27/09)', () => {
+  const T0 = 1_000_000
+  const LINES_AT = [8_196, 8_198, 8_199, 8_837, 9_639, 10_111]
+  const KEY = 'claude:sessao:msg-1109'
+
+  /** ~330 tokens de texto NOVO num só chunk: resultado de Bash/Read na tela. */
+  let dumpSeq = 0
+  function toolDump(): string {
+    dumpSeq += 1
+    return Array.from(
+      { length: 33 },
+      (_, line) => `saida ${String(dumpSeq).padStart(3, '0')} linha ${String(line).padStart(4, '0')} xxxxxxxxxxxxxxxx`,
+    ).join('\n')
+  }
+
+  /** O pane do orquestrador já existia: o prompt do operador entrou antes. */
+  function orchestrator() {
+    const m = meter()
+    m.noteSubmit('p1', T0 - 500, 'orquestre')
+    return m
+  }
+
+  function orchestratorScreen(m: TokenSpeedMeter) {
+    m.noteOutput('p1', T0 + 8_300, toolDump(), 'claude-opus-5-5')
+    m.noteOutput('p1', T0 + 8_600, toolDump())
+    m.noteOutput('p1', T0 + 9_700, chunk())
+    m.noteOutput('p1', T0 + 10_150, chunk())
+  }
+
+  it('sem uso real, despejo de saída de ferramenta vira "—", nunca 2200 tok/s', () => {
+    const m = meter()
+    orchestratorScreen(m)
+    const snap = m.snapshot(T0 + 20_000)
+    expect(snap.last?.source).toBe('estimated')
+    expect(snap.last?.tokensPerSecond).toBeNull()
+    expect(snap.peakTokensPerSecond).toBeNull()
+  })
+
+  it('também zera o ao vivo da rodada que recebeu despejo', () => {
+    const m = meter()
+    m.noteOutput('p1', T0 + 8_300, toolDump())
+    m.noteOutput('p1', T0 + 8_600, chunk())
+    expect(m.snapshot(T0 + 8_700).streaming).toBe(true)
+    expect(m.snapshot(T0 + 8_700).liveTokensPerSecond).toBeNull()
+  })
+
+  it('mensagem real com janela própria: saída ÷ (última linha − início) ≈ 110 tok/s', () => {
+    const m = orchestrator()
+    orchestratorScreen(m)
+    for (const offset of LINES_AT) {
+      m.noteUsage('p1', T0 + offset, {
+        key: KEY,
+        outputTokens: 1_109,
+        model: 'claude-opus-5-5',
+        startedAt: T0,
+      })
+    }
+    const snap = m.snapshot(T0 + 20_000)
+    expect(snap.panes[0].history).toHaveLength(1)
+    expect(snap.last).toMatchObject({
+      source: 'real',
+      outputTokens: 1_109,
+      rateWindowMs: 10_111,
+      tokensPerSecond: 109.7,
+      model: 'claude-opus-5-5',
+    })
+    expect(snap.turns).toBe(1)
+  })
+
+  it('a 1ª linha (tokens finais, janela curta) não vira pico falso', () => {
+    const m = orchestrator()
+    m.noteOutput('p1', T0 + 8_150, chunks(2))
+    m.noteUsage('p1', T0 + 8_196, { key: KEY, outputTokens: 1_109, startedAt: T0 })
+    const during = m.snapshot(T0 + 8_300)
+    // 1.109 / 8,196 s daria 135 tok/s agora e 1.800 no caso de 11 mil tokens.
+    expect(during.last).toBeNull()
+    expect(during.liveTokensPerSecond).toBeNull()
+    m.noteOutput('p1', T0 + 9_000, chunk())
+    m.noteUsage('p1', T0 + 10_111, { key: KEY, outputTokens: 1_109, startedAt: T0 })
+    expect(m.snapshot(T0 + 20_000).last?.tokensPerSecond).toBe(109.7)
+  })
+
+  it('linha atrasada da mesma mensagem estende a janela da amostra já fechada', () => {
+    const m = orchestrator()
+    m.noteOutput('p1', T0 + 8_150, chunks(2))
+    m.noteUsage('p1', T0 + 8_196, { key: KEY, outputTokens: 1_109, startedAt: T0 })
+    m.flushIdle(T0 + 9_500)
+    m.noteUsage('p1', T0 + 10_111, { key: KEY, outputTokens: 1_109, startedAt: T0 })
+    const snap = m.snapshot(T0 + 20_000)
+    expect(snap.panes[0].history).toHaveLength(1)
+    expect(snap.last?.tokensPerSecond).toBe(109.7)
+  })
+
+  it('mensagem seguinte fecha a anterior e vira o ao vivo da rodada', () => {
+    const m = orchestrator()
+    for (const offset of [8_150, 9_000, 9_900, 10_500, 11_200, 12_100]) {
+      m.noteOutput('p1', T0 + offset, chunk())
+    }
+    m.noteUsage('p1', T0 + 10_111, { key: KEY, outputTokens: 1_109, startedAt: T0 })
+    m.noteUsage('p1', T0 + 12_000, { key: 'claude:sessao:msg-2', outputTokens: 200, startedAt: T0 + 10_300 })
+    const live = m.snapshot(T0 + 12_200)
+    expect(live.streaming).toBe(true)
+    expect(live.liveTokensPerSecond).toBe(109.7)
+    expect(live.last?.outputTokens).toBe(1_109)
+  })
+
+  it('pane com uso real descarta as estimativas da tela (render, não geração)', () => {
+    const m = meter()
+    m.noteSubmit('p1', T0 - 60_000, 'a')
+    m.noteOutput('p1', T0 - 59_000, chunk())
+    m.noteOutput('p1', T0 - 58_500, chunk())
+    m.flushIdle(T0 - 50_000)
+    expect(m.snapshot(T0 - 50_000).last?.source).toBe('estimated')
+    m.noteOutput('p1', T0 + 8_150, chunks(2))
+    m.noteUsage('p1', T0 + 10_111, { key: KEY, outputTokens: 1_109, startedAt: T0 })
+    const snap = m.snapshot(T0 + 20_000)
+    expect(snap.panes[0].history.map((sample) => sample.source)).toEqual(['real'])
+    expect(snap.turns).toBe(1)
+  })
+
+  it('mensagens de antes do pane existir (transcript relido) não entram', () => {
+    const m = meter()
+    m.noteOutput('p1', T0, chunks(2))
+    expect(
+      m.noteUsage('p1', T0 - 3_600_000 + 5_000, {
+        key: 'claude:sessao:antiga',
+        outputTokens: 900,
+        startedAt: T0 - 3_600_000,
+      }),
+    ).toBe(false)
+    expect(m.snapshot(T0 + 5_000).panes[0].history.every((s) => s.source === 'estimated')).toBe(true)
+  })
+})

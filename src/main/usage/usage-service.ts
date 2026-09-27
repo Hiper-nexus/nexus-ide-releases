@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { app, BrowserWindow, ipcMain } from 'electron';
 import type { ProjectExecutionScope } from '../../shared/types';
@@ -117,6 +118,36 @@ function claudeResumeStoreFor(
   return new ClaudeTranscriptResumeStore(
     path.join(userData, 'usage', `claude-resume-${scopeId}.json`),
   );
+}
+
+/**
+ * Roots de config do Claude onde as sessões deste checkout gravam transcript.
+ * Panes Claude rodam com HOME privado e as conversas moram no estado por
+ * checkout (`linkProviderSessionState`): `<userData>/provider-state/claude/
+ * <checkoutId>/claude/projects`. Olhar só `~/.claude` deixava todo pane sem
+ * uso real desde a mudança — o badge caía na heurística por bytes ($120.59
+ * para ~$48 reais) e o tok/s na estimativa da tela (27/09).
+ */
+export function claudeConfigDirsFor(
+  scope: ProjectExecutionScope,
+  userData: string | null,
+  home = os.homedir(),
+): string[] {
+  const dirs = [path.join(home, '.claude')];
+  if (userData && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/.test(scope.checkoutId)) {
+    dirs.push(
+      path.join(userData, 'provider-state', 'claude', scope.checkoutId, 'claude'),
+    );
+  }
+  return dirs;
+}
+
+function electronUserData(): string | null {
+  try {
+    return app.getPath('userData') || null;
+  } catch {
+    return null;
+  }
 }
 
 function scopeKey(scope: ProjectExecutionScope): string {
@@ -289,7 +320,9 @@ export class UsageTelemetryService {
       const watcher = new ClaudeTranscriptWatcher({
         workspacePath: state.scope.rootRealPath,
         workspacePaths: () => state.executionRoots,
-        onEvent: (event) => this.#onClaudeEvent(state, event),
+        configDirs: claudeConfigDirsFor(state.scope, electronUserData()),
+        onEvent: (event, _file, timing) =>
+          this.#onClaudeEvent(state, event, timing.requestStartedAt),
         ...(resumeStore ? { resumeStore } : {}),
       });
       watcher.start();
@@ -539,7 +572,11 @@ export class UsageTelemetryService {
     this.#scheduleBroadcast(state);
   }
 
-  #onClaudeEvent(state: ScopeTelemetryState, event: UsageEvent): void {
+  #onClaudeEvent(
+    state: ScopeTelemetryState,
+    event: UsageEvent,
+    requestStartedAt: number | null = null,
+  ): void {
     if (!this.#acceptProviderEvent(state, 'claude', event)) return;
     const attribution = this.#attributionForEvent(
       state,
@@ -553,7 +590,12 @@ export class UsageTelemetryService {
       accountId: attribution?.accountId ?? null,
     });
     if (isNew) this.#awardAgentTurn(state, 'claude', event);
-    this.#feedTokenSpeed('claude', event, attribution?.paneId ?? null);
+    this.#feedTokenSpeed(
+      'claude',
+      event,
+      attribution?.paneId ?? null,
+      requestStartedAt,
+    );
     this.#scheduleBroadcast(state);
   }
 
@@ -616,6 +658,7 @@ export class UsageTelemetryService {
     provider: string,
     event: UsageEvent,
     paneId: string | null,
+    startedAt: number | null = null,
   ): void {
     if (!paneId || event.outputTokens <= 0) return;
     try {
@@ -624,6 +667,7 @@ export class UsageTelemetryService {
         outputTokens: event.outputTokens,
         model: event.model,
         timestamp: event.timestamp,
+        startedAt,
       });
     } catch (error) {
       console.warn('[usage] token speed correction failed:', error);

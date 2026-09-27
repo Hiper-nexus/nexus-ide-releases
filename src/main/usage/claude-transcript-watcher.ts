@@ -4,7 +4,7 @@ import path from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import {
   claudeProjectSlug,
-  parseTranscriptLine,
+  readTranscriptLine,
   splitTailChunk,
   type UsageEvent,
 } from './claude-transcript';
@@ -47,7 +47,16 @@ export interface WatcherOptions {
    * are granted after it starts without scanning unrelated checkouts.
    */
   workspacePaths?: () => Iterable<string>;
-  onEvent: (event: UsageEvent, file: string) => void;
+  /**
+   * `requestStartedAt`: início da requisição que gerou a mensagem (última
+   * linha `user` antes da 1ª linha dela), ou null quando o watcher não viu
+   * esse começo (retomada por offset).
+   */
+  onEvent: (
+    event: UsageEvent,
+    file: string,
+    timing: { requestStartedAt: number | null },
+  ) => void;
   /** Roots de config do Claude (multi-conta). Default: ~/.claude. */
   configDirs?: string[];
   /** Intervalo do rescan de segurança (fs.watch perde eventos). */
@@ -69,6 +78,11 @@ interface FileState {
   remainder: string;
   decoder: StringDecoder;
   restored: boolean;
+  /** Última linha `user` (prompt/resultado de tool) vista neste arquivo. */
+  requestAt: number | null;
+  /** Mensagem em curso: tools rodam no meio dela e não reiniciam a janela. */
+  messageId: string | null;
+  messageStartedAt: number | null;
 }
 
 const DEFAULT_POLL_MS = 5_000;
@@ -90,6 +104,9 @@ function freshFileState(): FileState {
     remainder: '',
     decoder: new StringDecoder('utf8'),
     restored: false,
+    requestAt: null,
+    messageId: null,
+    messageStartedAt: null,
   };
 }
 
@@ -287,7 +304,7 @@ export class ClaudeTranscriptWatcher {
           state.decoder.write(bytes),
         );
         state.remainder = remainder;
-        if (!(await this.deliverLines(lines, file, slice))) return;
+        if (!(await this.deliverLines(lines, file, state, slice))) return;
         if (boundary >= 0) state.committedOffset = readOffset + boundary;
       }
     } finally {
@@ -302,13 +319,21 @@ export class ClaudeTranscriptWatcher {
   private async deliverLines(
     lines: readonly string[],
     file: string,
+    state: FileState,
     slice: { lines: number; startedAt: number },
   ): Promise<boolean> {
     for (let index = 0; index < lines.length; index += 1) {
       if (this.stopped) return false;
       const line = lines[index]!;
-      const event = parseTranscriptLine(line);
-      if (event) this.emit(event, file);
+      const { usage: event, requestAt } = readTranscriptLine(line);
+      if (requestAt !== null) state.requestAt = requestAt;
+      if (event) {
+        if (event.messageId === null || event.messageId !== state.messageId) {
+          state.messageId = event.messageId;
+          state.messageStartedAt = state.requestAt;
+        }
+        this.emit(event, file, state.messageStartedAt);
+      }
       slice.lines += 1;
       // A stop from the final onEvent must still commit this complete chunk.
       if (index === lines.length - 1) return true;
@@ -323,9 +348,9 @@ export class ClaudeTranscriptWatcher {
     return true;
   }
 
-  private emit(event: NonNullable<ReturnType<typeof parseTranscriptLine>>, file: string): void {
+  private emit(event: UsageEvent, file: string, requestStartedAt: number | null): void {
     try {
-      this.opts.onEvent(event, file);
+      this.opts.onEvent(event, file, { requestStartedAt });
     } catch {
       // Consumidor nunca pode derrubar o watcher.
     }
