@@ -154,3 +154,27 @@ export function isolatedWriterPaneOfSession(
 ): string | undefined {
   return requireWorktreeRuntimeRegistry().findPaneWriter(scope, { sessionId })?.paneIds?.at(-1);
 }
+
+/**
+ * Base durável do writer isolado que roda nesta sessão: o commit de onde a
+ * worktree nasceu (registro do Main), não o HEAD no spawn — `resume` depois de
+ * reiniciar reabre a mesma branch, e os commits anteriores continuam no diff.
+ * Sessão ainda sem vínculo (ACK pendente) cai no vínculo do pane.
+ */
+export function isolatedWriterBaseShaOfSession(
+  scope: ProjectExecutionScope,
+  executionRoot: string,
+  sessionId: string,
+): string | undefined {
+  try {
+    const registry = requireWorktreeRuntimeRegistry();
+    let record = registry.findPaneWriter(scope, { sessionId });
+    if (!record) {
+      const paneId = getPaneRuntimeAuthorityBySession(sessionId)?.paneId;
+      record = paneId ? registry.findPaneWriter(scope, { paneId }) : null;
+    }
+    return record && record.worktreePath === executionRoot ? record.baseSha : undefined;
+  } catch {
+    return undefined;
+  }
+}

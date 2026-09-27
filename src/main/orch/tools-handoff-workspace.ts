@@ -32,12 +32,10 @@ import {
   type JevReviewVerdict,
 } from "./jev-handoff-review";
 import {
-  evaluateHandoffRegressionGate,
   REGRESSION_UNVERIFIED_PREFIX,
   type RegressionHandoffVerdict,
 } from "../regression-gate/regression-gate-handoff";
-import { getSessionSpawnedAtMs } from "../pty/pty-manager";
-import { executionScopeFor } from "./gate";
+import { evaluateWriterHandoffRegression } from "./handoff-regression-gate";
 
 /** Workspace delivery is untrusted correspondence, never mission completion evidence. */
 export async function submitWorkspaceHandoff(
@@ -90,17 +88,11 @@ export async function submitWorkspaceHandoff(
     verdict.kind !== "exhausted"
   ) {
     assertMcpInvocationCurrent(invocation);
-    regressionVerdict = await evaluateHandoffRegressionGate({
-      sessionId: ctx.sessionId,
-      scope: executionScopeFor(ctx),
+    // Base: a do writer isolado (registro durável, sobrevive a `resume`);
+    // sem ela, o HEAD no spawn do helper.
+    regressionVerdict = await evaluateWriterHandoffRegression(ctx, {
       declaredFiles,
-      // Sem missão não há base registrada: o HEAD no spawn do helper é a
-      // base, e o WIP do operador (sujo antes do spawn) não é cobrado dele.
-      startedAtMs: ctx.sessionId
-        ? (getSessionSpawnedAtMs(ctx.sessionId) ?? undefined)
-        : undefined,
-      signal: invocation?.signal,
-      authority: invocation,
+      invocation,
     });
     if (regressionVerdict.kind === "retry")
       throw new Error(regressionVerdict.message);

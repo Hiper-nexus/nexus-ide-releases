@@ -52,6 +52,9 @@ import {
   extractLegacyHandoffsFromText,
   isPlaceholderSummary,
 } from "./legacy-handoff";
+import { evaluateWriterHandoffRegression } from "./handoff-regression-gate";
+import { normalizeFilesModified } from "./worker-files-modified";
+import { REGRESSION_UNVERIFIED_PREFIX } from "../regression-gate/regression-gate-handoff";
 
 const ptyStreamHandoffPayloadSchema = z
   .object({
@@ -134,6 +137,9 @@ interface PreparedPtyHandoff {
   readonly missionId: string;
   readonly dispatch: TaskDispatchRecord | undefined;
   readonly payload: PtyStreamHandoffPayload;
+  /** O que é persistido: `payload` depois do portão de regressão. */
+  readonly status: PtyStreamHandoffPayload["status"];
+  readonly artifacts: readonly unknown[];
   readonly rawArgs: PtyStreamHandoffPayload;
   readonly rawPayloadSha256: string;
   readonly summary: string;
@@ -344,6 +350,30 @@ async function preparePtyHandoff(
       worktreeHeadSha,
     });
   }
+  const isPlanHandoff = mission.intentContract?.lane === "plan";
+  let summary = summarizeForPersistence(payload.summary, isPlanHandoff);
+  // Portão de regressão: a MESMA etapa do handoff MCP. Bloco no PTY e
+  // fechamento mecânico (que nasce `success`) não têm canal de devolução:
+  // teste impactado falhando entra como blocked, nunca como success — nem
+  // depois de o MCP ter recusado a mesma entrega.
+  const regression =
+    payload.status === "success" && !isPlanHandoff && ctx.readOnly !== true
+      ? await evaluateWriterHandoffRegression(ctx, {
+          declaredFiles: normalizeFilesModified({ artifacts: payload.artifacts }),
+          mission,
+          returnable: false,
+        })
+      : null;
+  if (regression?.kind === "exhausted") {
+    summary = `[testes impactados falhando] ${summary}`;
+  } else if (regression?.kind === "accepted" && regression.unverified) {
+    summary = `${REGRESSION_UNVERIFIED_PREFIX} ${summary}`;
+  }
+  const regressionArtifact =
+    (regression?.kind === "accepted" || regression?.kind === "exhausted") &&
+    regression.artifact
+      ? [regression.artifact]
+      : [];
   return Object.freeze({
     sessionId,
     ctx,
@@ -351,12 +381,11 @@ async function preparePtyHandoff(
     missionId: mission.id,
     dispatch,
     payload,
+    status: regression?.kind === "exhausted" ? "blocked" : payload.status,
+    artifacts: [...payload.artifacts, ...regressionArtifact],
     rawArgs,
     rawPayloadSha256: handoffRawPayloadSha256(rawArgs),
-    summary: summarizeForPersistence(
-      payload.summary,
-      mission.intentContract?.lane === "plan",
-    ),
+    summary,
     worktreeHeadSha,
     invocationId: `pty-handoff-${randomUUID()}`,
     startedAt: Date.now(),
@@ -372,7 +401,7 @@ function commitPhysicalPtyHandoff(
   prepared: PreparedPtyHandoff,
   physicalReceipt: ReturnType<typeof mintAgentTransportPhysicalReceipt>,
 ) {
-  const { ctx, dispatch, missionId, payload, sessionId, suite } = prepared;
+  const { ctx, dispatch, missionId, sessionId, suite } = prepared;
   const fromAgent = dispatch?.workerId ?? ctx.agentName ?? ctx.label;
   const manager = getMissionEventRuntimeManager();
   let attestation:
@@ -403,9 +432,9 @@ function commitPhysicalPtyHandoff(
     }
   }
   const handoffInput = {
-    status: payload.status,
+    status: prepared.status,
     summary: prepared.summary,
-    artifacts: payload.artifacts,
+    artifacts: [...prepared.artifacts],
     missionId,
     sessionId,
     workerIncarnationId: ctx.workerIncarnationId,
@@ -423,7 +452,7 @@ function commitPhysicalPtyHandoff(
       {
         sessionId,
         workerIncarnationId: ctx.workerIncarnationId,
-        detail: `${payload.status}: ${prepared.summary}`,
+        detail: `${prepared.status}: ${prepared.summary}`,
       },
       attestation,
     );
@@ -498,10 +527,8 @@ async function persistPtyHandoff(
           fromAgent: committed.handoff.fromAgent,
           summary: prepared.summary,
           preferredTaskId: prepared.dispatch?.taskId,
-          handoffStatus: prepared.payload.status,
-          requireMatch:
-            typeof prepared.summary === "string" &&
-            prepared.summary.startsWith(MECHANICAL_HANDOFF_MARK),
+          handoffStatus: prepared.status,
+          requireMatch: prepared.payload.summary.startsWith(MECHANICAL_HANDOFF_MARK),
         });
       } catch (error) {
         console.warn(
