@@ -69,7 +69,8 @@ export interface RouteContext {
   preferAdapters?: readonly string[];
   /**
    * When true (default if mission has history or any circuit open), re-rank
-   * with multi-score (x-algorithm pattern). False preserves pure table order.
+   * with multi-score (x-algorithm pattern). False preserves table order while
+   * circuits are healthy; a failed CLI must still yield to a healthy route.
    */
   multiScore?: boolean;
   /**
@@ -87,8 +88,8 @@ export interface RouteContext {
   effortOverride?: RouteEffort;
   /**
    * Spawn da mão do operador (25/09): CLIs já abertas pelo mesmo agente pai.
-   * Só desempata dentro de TIE_MARGIN (route-pipeline.tieBreakByUse); ausente
-   * = decisão de hoje. Nunca vem de argumento MCP.
+   * Desempata opções heurísticas do mesmo tier por carga, sem tratar posição
+   * na tabela como qualidade medida. Nunca vem de argumento MCP.
    */
   tieBreakUseCounts?: ReadonlyMap<string, number>;
 }
@@ -138,6 +139,9 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-flash' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M2.7-highspeed' },
     { adapterId: 'claude', model: 'claude-sonnet-4-6', effort: 'low' },
+    { adapterId: 'opencode', model: 'opencode/deepseek-v4-flash-free' },
+    { adapterId: 'openclaude', model: 'haiku' },
+    { adapterId: 'aider', model: 'claude-haiku-4-5' },
   ],
   medium: [
     { adapterId: 'glm', model: 'glm-5.3', effort: 'medium' },
@@ -150,6 +154,14 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'codex', model: 'gpt-5.6-luna', effort: 'medium' },
     { adapterId: 'codex', model: 'gpt-5.4', effort: 'medium' },
     { adapterId: 'claude', model: 'claude-sonnet-5', effort: 'medium' },
+    // Catálogo builtin: priors de capacidade, não notas de benchmark.
+    // Auth/modelos disponíveis continuam filtrados antes da escolha.
+    { adapterId: 'devin', model: 'swe-2-medium' },
+    { adapterId: 'muse', model: 'muse-spark-1.3' },
+    { adapterId: 'muse-claude', model: 'muse-spark-1.3' },
+    { adapterId: 'openclaude', model: 'sonnet' },
+    { adapterId: 'aider', model: 'claude-sonnet-5' },
+    { adapterId: 'opencode', model: 'openrouter/anthropic/claude-sonnet-5' },
   ],
   hard: [
     { adapterId: 'claude', model: 'claude-opus-5-5', effort: 'high' },
@@ -165,6 +177,10 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-pro' },
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-pro-ultraspeed' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3' },
+    { adapterId: 'devin', model: 'swe-2-high' },
+    { adapterId: 'openclaude', model: 'opus' },
+    { adapterId: 'aider', model: 'claude-opus-4-8' },
+    { adapterId: 'opencode', model: 'openrouter/anthropic/claude-opus-4.8' },
   ],
   critical: [
     { adapterId: 'claude', model: 'claude-fable-5', effort: 'xhigh' },
@@ -213,6 +229,7 @@ const HARD_SIGNALS = [
   'design de sistema', 'system design', 'distributed', 'distribuído',
   'distribuido', 'protocolo', 'protocol', 'parser', 'compiler', 'engine',
   'motor', 'integração', 'integracao', 'integration',
+  'diagnos', 'diagnós', 'investig', 'root cause', 'causa raiz',
 ];
 
 const EASY_SIGNALS = [
@@ -268,7 +285,11 @@ export interface TaskClassification {
  * a one-liner drops a level, a long multi-part description raises one.
  */
 export function classifyTask(taskText: string): TaskClassification {
-  const text = taskText.toLowerCase();
+  // Permissão de escrita não mede dificuldade: uma investigação read-only
+  // pode exigir tanto raciocínio quanto uma alteração de código.
+  const text = taskText.toLowerCase().replace(
+    /\bread[ -]only\b|\b(?:somente|apenas)\s+leitura\b/gu, ' ',
+  );
   const words = text.split(/\s+/).filter((w) => w.length > 0).length;
 
   const critical = matchSignals(text, CRITICAL_SIGNALS);
@@ -653,8 +674,9 @@ export function routeTask(
     (context.missionUsedAdapters?.size ?? 0) > 0 ||
     (context.missionUseCounts?.size ?? 0) > 0;
   const runMultiScore =
+    anyCircuitOpen ||
     context.multiScore === true ||
-    (context.multiScore !== false && (hasMissionHistory || anyCircuitOpen));
+    (context.multiScore !== false && hasMissionHistory);
   let multiScoreNote = '';
   if (runMultiScore && ranked.length > 1) {
     const scored = multiScoreRerank({
@@ -669,7 +691,8 @@ export function routeTask(
     multiScoreNote = scored.note;
   }
   let tieBreakNote = '';
-  if (context.tieBreakUseCounts && ranked.length > 1) {
+  if (context.tieBreakUseCounts && ranked.length > 1 &&
+      policy.source !== 'benchmark' && evaluated.length === 0) {
     const tie = tieBreakByUse({
       ranked,
       useCounts: context.tieBreakUseCounts,

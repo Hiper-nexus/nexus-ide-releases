@@ -197,12 +197,32 @@ describe('tieBreakByUse', () => {
     expect(run({ grok: 1, agy: 1 }).ranked[0]!.c.adapterId).toBe('kimi');
   });
 
-  it('fora da margem o melhor vence mesmo repetindo', () => {
-    // codex está a 12 pontos do topo (> TIE_MARGIN = 8).
+  it('posição heurística não exclui uma quarta CLI do mesmo tier', () => {
     expect(TIE_MARGIN).toBe(8);
     const out = run({ grok: 1, agy: 1, kimi: 1 });
+    expect(out.ranked[0]!.c.adapterId).toBe('codex');
+    expect(out.note).toContain('desempate');
+  });
+
+  it('não empresta um tier menor só para variar a CLI', () => {
+    const out = tieBreakByUse({
+      ranked: [entry('codex', 'strong', 'hard'), entry('grok', 'fast', 'trivial')],
+      useCounts: new Map([['codex', 3]]), tier: 'hard', modelCatalog: flat,
+    });
+    expect(out.ranked[0]!.c.adapterId).toBe('codex');
+  });
+
+  it('não escolhe circuito aberto nem gasto muito maior por variedade', () => {
+    const out = tieBreakByUse({
+      ranked: [entry('grok', 'free'), entry('agy'), entry('claude', 'expensive')],
+      useCounts: new Map([['grok', 2]]), tier: 'trivial',
+      circuitOpen: (id) => id === 'agy',
+      modelCatalog: { adapters: {
+        grok: { models: [{ id: 'free', availability: 'free', costTier: 'free' }] },
+        claude: { models: [{ id: 'expensive', availability: 'paid', costTier: 'high' }] },
+      } },
+    });
     expect(out.ranked[0]!.c.adapterId).toBe('grok');
-    expect(out.note).toBe('');
   });
 
   it('sem contagem ou topo ainda não usado: ordem intacta, mesmo array', () => {

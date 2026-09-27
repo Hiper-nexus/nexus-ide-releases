@@ -7,6 +7,9 @@ import {
   describePreferAdaptersOutcome,
 } from './task-router';
 import { countAdapterUses } from './route-pipeline';
+import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
+import { adapterSchema } from '../../shared/adapter-types';
+import { adapterCircuitBreakers } from './circuit-breaker';
 import type { ModelCatalog } from '../adapters/model-catalog';
 
 function adapters(...installed: string[]): AdapterAvailability[] {
@@ -24,6 +27,18 @@ function adapters(...installed: string[]): AdapterAvailability[] {
 }
 
 describe('classifyTask', () => {
+  it.each([
+    'Read-only: implement a new endpoint returning the daily activity summary',
+    'Somente leitura: mapear o fluxo entre catálogo, seleção e abertura dos panes',
+  ])('permissão de leitura não determina complexidade: %s', (task) => {
+    expect(classifyTask(task).tier).toBe('medium');
+  });
+
+  it('diagnóstico de roteamento continua substancial mesmo em leitura', () => {
+    expect(classifyTask('Read-only diagnosis of CLI orchestration diversity across available providers').tier).toBe('hard');
+    expect(classifyTask('Investigação somente leitura das causas de concentração dos panes no roteador').tier).toBe('hard');
+    expect(classifyTask('read README').tier).toBe('trivial');
+  });
   it('flags security/payment/migration work as critical', () => {
     expect(classifyTask('implementar autenticação com refresh token').tier).toBe(
       'critical',
@@ -464,6 +479,57 @@ describe('describePreferAdaptersOutcome (bug F — prefer não é silêncio)', (
 describe('routeTask — desempate por uso (tieBreakUseCounts)', () => {
   const flat = { adapters: {} } as ModelCatalog;
   const installed = adapters('grok', 'agy', 'kimi', 'codex', 'claude');
+
+  it('rota sem missão evita a CLI com falhas mesmo com multi-score desativado', () => {
+    for (let i = 0; i < 3; i += 1) adapterCircuitBreakers.recordFailure('grok');
+    try {
+      const route = routeTask('listar arquivos', installed, DEFAULT_ROUTING_TABLE,
+        'trivial', false, flat, { multiScore: false, tieBreakUseCounts: new Map([['claude', 1]]) })!;
+      expect(route.adapterId).not.toBe('grok');
+      expect(route.alternatives.some((c) => c.adapterId === 'grok')).toBe(false);
+    } finally {
+      adapterCircuitBreakers.reset('grok');
+    }
+  });
+
+  it.each(['claude', 'codex', 'glm', 'grok', 'agy', 'kimi', 'mimo-code'])(
+    'distribui entre CLIs aptas com %s como orquestrador', (parent) => {
+      const peers = ['claude', 'codex', 'glm', 'grok', 'agy', 'kimi', 'mimo-code'];
+      const counts = new Map([[parent, 1]]);
+      const picked: string[] = [];
+      for (let i = 0; i < peers.length - 1; i += 1) {
+        const route = routeTask('implementar a tarefa descrita', peers.map((id) => ({ id, installed: true })),
+          DEFAULT_ROUTING_TABLE, 'medium', false, flat, { tieBreakUseCounts: counts })!;
+        picked.push(route.adapterId);
+        counts.set(route.adapterId, (counts.get(route.adapterId) ?? 0) + 1);
+      }
+      expect(new Set(picked)).toEqual(new Set(peers.filter((id) => id !== parent)));
+    },
+  );
+
+  it('catalogo builtin completo tem candidatos com modelos reais na tabela', () => {
+    const candidates = Object.values(DEFAULT_ROUTING_TABLE).flat();
+    for (const input of BUILTIN_ADAPTERS) {
+      const raw = adapterSchema.parse(input);
+      if (raw.kind !== 'cli-pty') continue;
+      const adapterCandidates = candidates.filter((c) => c.adapterId === raw.id);
+      expect(adapterCandidates.length, raw.id).toBeGreaterThan(0);
+      // Entradas antigas podem migrar; as CLIs antes ausentes usam ids do catálogo.
+      if (['devin', 'muse', 'muse-claude', 'openclaude', 'aider', 'opencode'].includes(raw.id)) {
+        for (const c of adapterCandidates) expect(raw.models.list, raw.id).toContain(c.model);
+      }
+    }
+  });
+
+  it('benchmark explícito não perde seu vencedor só porque ele já está aberto', () => {
+    const route = routeTask('implementar a tarefa descrita', installed, DEFAULT_ROUTING_TABLE,
+      'medium', false, flat, { tieBreakUseCounts: new Map([['claude', 4]]),
+        specialtyBenchmark: { schemaVersion: 1, source: 'nexus-benchmark/v1',
+          specialties: { feature: [{ adapterId: 'claude', score: 99 }, { adapterId: 'grok', score: 30 }] } },
+        specialtyOverride: 'feature',
+      })!;
+    expect(route.adapterId).toBe('claude');
+  });
 
   it('sem contagens a decisão é idêntica à de hoje', () => {
     const base = routeTask('listar arquivos', installed, DEFAULT_ROUTING_TABLE, 'trivial', false, flat, {});

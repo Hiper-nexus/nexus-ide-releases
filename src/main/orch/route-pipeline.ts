@@ -159,8 +159,8 @@ export function multiScoreRerank(input: MultiScoreInput): {
 }
 
 /**
- * Faixa de empate do desempate por uso (spawn da mão do operador, 25/09):
- * ~2 posições da tabela, que desce 4 pontos por posição.
+ * Margem de custo/qualidade entre candidatos do mesmo tier. Posição na
+ * tabela heurística não é uma medida de capacidade.
  */
 export const TIE_MARGIN = 8;
 
@@ -177,8 +177,8 @@ export interface TieBreakInput {
 
 /**
  * "Melhor por tarefa, espalha no empate": entre os candidatos a até `margin`
- * pontos do topo, vence o menos usado; fora da faixa ninguém sobe. Diferente
- * da atenuação de missão (−18 por uso), nunca troca um vencedor claro.
+ * pontos do topo e do mesmo tier, vence o menos usado. O chamador preserva
+ * rankings medidos; aqui a ordem heurística só desempata uso equivalente.
  */
 export function tieBreakByUse(input: TieBreakInput): {
   ranked: RankedRouteEntry[];
@@ -199,19 +199,24 @@ export function tieBreakByUse(input: TieBreakInput): {
       : undefined,
   };
   const totals = input.ranked.map(
-    (candidate, index) => scoreRouteCandidate(candidate, index, scoreInput).total,
+    (candidate) => scoreRouteCandidate(candidate, 0, scoreInput).total,
   );
+  const head = input.ranked[0]!;
   const floor = totals[0]! - margin;
   const uses = (adapterId: string): number => input.useCounts.get(adapterId) ?? 0;
   let best = 0;
   for (let index = 1; index < input.ranked.length; index += 1) {
+    const candidate = input.ranked[index]!;
+    if (candidate.fromTier !== head.fromTier) continue;
+    if (isCircuitOpen(candidate.c.adapterId, input.circuitOpen)) continue;
+    if (input.context?.preferAdapters?.includes(head.c.adapterId) &&
+        !input.context.preferAdapters.includes(candidate.c.adapterId)) continue;
     if (totals[index]! < floor) continue;
     if (uses(input.ranked[index]!.c.adapterId) < uses(input.ranked[best]!.c.adapterId)) {
       best = index;
     }
   }
   if (best === 0) return { ranked: input.ranked, note: '' };
-  const head = input.ranked[0]!;
   const chosen = input.ranked[best]!;
   return {
     ranked: [chosen, ...input.ranked.filter((_, index) => index !== best)],

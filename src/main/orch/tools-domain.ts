@@ -1766,9 +1766,9 @@ const routeTaskTool: McpToolDef = {
     'for a mission, pass routeReservationId and adapterId/model/effort straight ' +
     'into nexus_pane_spawn. Call it for every delegation and trust the ' +
     'returned runtime snapshot so removed, deprecated or unavailable models are never forced by a stale playbook. ' +
-    'Inside a running mission, candidates are restricted to release-qualified ' +
-    'governed workers (Codex in this release). Other CLIs remain available ' +
-    'for direct/manual Terminal use, never through a mission RouteReservation. ' +
+    'Inside a running mission, candidates follow the active squad CLI policy: ' +
+    'Autopilot admits ready handoff-capable CLIs (MCP or PTY); Hardened requires ' +
+    'release-qualified autonomous writers. Installed alone does not imply eligible. ' +
     'When the mission has a sealed task plan, routing is closed: the task must ' +
     'match a planned task (by title or taskId) and the answer is exactly that ' +
     "task's roster cli/model/effort — never an adapter outside the sealed " +
