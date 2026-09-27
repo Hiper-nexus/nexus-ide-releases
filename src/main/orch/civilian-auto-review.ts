@@ -19,6 +19,11 @@ import {
 } from '../context/mechanical-sensors';
 import type { ReviewCategory, ReviewFindingInput } from '../context/review-council';
 import { deliverAgentPrompt } from './tool-util';
+import {
+  isRegressionGateEnabled,
+  runRegressionGate,
+  type RegressionGateResult,
+} from '../regression-gate/regression-gate';
 
 /**
  * Revisão automática main-owned da Via Rápida civil (Etapa 1 do plano
@@ -80,6 +85,14 @@ export interface CivilianAutoReviewDependencies {
     root: string,
     files: readonly string[],
   ) => Promise<MechanicalCheckResult>;
+  /** Portão de regressão (testes impactados pelo diff); null = desligado. */
+  readonly regressionGate?:
+    | ((input: {
+        readonly scope: ProjectExecutionScope;
+        readonly declaredFiles: readonly string[];
+        readonly baseSha?: string;
+      }) => Promise<RegressionGateResult>)
+    | null;
   readonly deliverRepair?: (
     sessionId: string,
     prompt: string,
@@ -238,6 +251,41 @@ function mechanicalToReviewFindings(
   );
 }
 
+/** Teste impactado que falhou é achado bloqueante — volta ao Maestro para reparo. */
+function regressionToReviewFindings(
+  result: RegressionGateResult | null,
+): readonly ReviewFindingInput[] {
+  if (!result || result.status !== 'failed') return [];
+  return result.failures.slice(0, 16).map((failure) => ({
+    severity: 'high',
+    category: 'correctness' as ReviewCategory,
+    file: failure.file,
+    criterionRefs: [],
+    invariantRefs: ['tested-change'],
+    evidence: `Teste impactado pelo diff falhou: ${failure.message}`,
+    recommendation:
+      'Corrija o código (ou o teste, se a regra mudou de propósito) até os testes impactados passarem.',
+  }));
+}
+
+function regressionSummary(result: RegressionGateResult | null): string {
+  if (!result) return '';
+  switch (result.status) {
+    case 'passed':
+      return `Testes impactados: ✓ ${result.testsRun.length} passaram (${result.runner}).`;
+    case 'failed':
+      return `Testes impactados: ✗ ${result.failures.length} falharam.`;
+    case 'no-tests':
+      return result.untestedFiles.length > 0
+        ? `Testes impactados: nenhum; área sem teste: ${result.untestedFiles.slice(0, 5).join(', ')}.`
+        : '';
+    case 'unavailable':
+      return `Testes impactados indisponíveis (${result.warnings[0] ?? 'sem runner'}).`;
+    default:
+      return '';
+  }
+}
+
 function sensorSummaries(
   results: readonly MechanicalCheckResult[],
 ): string {
@@ -318,12 +366,34 @@ export async function enforceCivilianAutoReview(
     (dependencies.testCoverage ?? runTestCoverageSensor)(root, changedFiles),
   ]);
   const mechanicalBlocking = mechanicalToReviewFindings(mechanical);
-  const blocking = [...blockingFindingsOf(analysis), ...mechanicalBlocking];
+  const regressionGate =
+    dependencies.regressionGate !== undefined
+      ? dependencies.regressionGate
+      : isRegressionGateEnabled()
+        ? runRegressionGate
+        : null;
+  let regression: RegressionGateResult | null = null;
+  if (regressionGate && observedHead) {
+    try {
+      regression = await regressionGate({
+        scope: executionScope,
+        declaredFiles: changedFiles,
+        baseSha,
+      });
+    } catch (error) {
+      console.warn('[civilian-auto-review] portão de regressão falhou (ignorado):', error);
+    }
+  }
+  const blocking = [
+    ...blockingFindingsOf(analysis),
+    ...mechanicalBlocking,
+    ...regressionToReviewFindings(regression),
+  ];
   if (blocking.length === 0) {
     const outcome: CivilianAutoReviewOutcome = {
       kind: 'approved',
       evidenceId: `nexus-auto-review:${analysis.analysisHash}`,
-      note: [civilianAutoReviewEvidenceNote(analysis), sensorSummaries(mechanical),
+      note: [civilianAutoReviewEvidenceNote(analysis), sensorSummaries(mechanical), regressionSummary(regression),
         !observedHead ? 'Arquivos atuais analisados sem comparação com histórico Git.' : '',
       ].filter(Boolean).join('\n'),
     };
