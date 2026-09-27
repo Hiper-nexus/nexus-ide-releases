@@ -116,6 +116,7 @@ const state = vi.hoisted(() => {
     ),
     fromPartition: vi.fn((_partition: string) => browserSession),
     handlers: new Map<string, (...args: any[]) => unknown>(),
+    onHandlers: new Map<string, (...args: any[]) => unknown>(),
     paneInfo: vi.fn(),
     getMissionWorkflow: vi.fn(),
     assertMutationAllowed: vi.fn(),
@@ -149,7 +150,8 @@ vi.mock('electron', () => ({
   ipcMain: {
     handle: (channel: string, handler: (...args: any[]) => unknown) =>
       state.handlers.set(channel, handler),
-    on: vi.fn(),
+    on: (channel: string, handler: (...args: any[]) => unknown) =>
+      state.onHandlers.set(channel, handler),
   },
   session: { fromPartition: state.fromPartition },
 }));
@@ -205,8 +207,10 @@ import {
   loadBrowser,
   pressBrowserKey,
   readBrowserPage,
-  setBrowserBounds,
+  registerBrowserIpc,
 } from './browser-manager';
+import { BROWSER_CHANNELS } from '../../shared/channels';
+import { bindResolvedRendererWorkspaceScope } from '../persistence/renderer-workspace-scope';
 import { isAgentRequestedBrowser } from '../orch/pane-registry';
 
 const PANE = 'pane-actions-test';
@@ -601,6 +605,23 @@ describe('loadBrowser device emulation', () => {
     destroyBrowser(PANE, scope);
   });
 
+  it('a refused navigation (file:// or private address) does not touch the device', async () => {
+    await boot();
+    await expect(
+      loadBrowser(PANE, 'file:///etc/hosts', { scope, device: 'mobile' }),
+    ).rejects.toThrow();
+    state.browserSession.resolveHost.mockResolvedValueOnce({
+      endpoints: [{ address: '10.0.0.5', port: 0 }],
+    });
+    await expect(
+      loadBrowser(PANE, 'https://intranet.example.test/', { scope, device: 'mobile' }),
+    ).rejects.toThrow();
+    expect(state.guest.setUserAgent).not.toHaveBeenCalled();
+    expect(state.guest.enableDeviceEmulation).not.toHaveBeenCalled();
+    expect(state.guest.loadURL).not.toHaveBeenCalled();
+    destroyBrowser(PANE, scope);
+  });
+
   it('leaves emulation untouched when no device is requested', async () => {
     await boot();
     await loadBrowser(PANE, 'https://example.test/app', { scope });
@@ -610,17 +631,31 @@ describe('loadBrowser device emulation', () => {
   });
 });
 
-describe('setBrowserBounds viewport floor for agent-owned panes', () => {
-  it('gives an agent-owned pane a decent off-window viewport instead of a degenerate UI slot', async () => {
+describe('agent pane viewport floor via the real bounds IPC', () => {
+  function sendBounds(bounds: Record<string, unknown>): void {
+    registerBrowserIpc({} as never);
+    bindResolvedRendererWorkspaceScope(state.owner, scope);
+    const onBounds = state.onHandlers.get(BROWSER_CHANNELS.bounds)!;
+    onBounds({ sender: state.owner }, { paneId: PANE, bounds });
+  }
+
+  it('keeps a visible agent pane at the operator geometry (Mobile 375px preset)', async () => {
     vi.mocked(isAgentRequestedBrowser).mockReturnValue(true);
     await boot();
     const view = state.views.at(-1)!;
-    setBrowserBounds(
-      { view, agentOwned: true } as never,
-      { x: 10, y: 10, width: 356, height: 138 },
-    );
-    expect(view.setVisible).toHaveBeenCalledWith(true);
-    expect(view.setBounds).toHaveBeenCalledWith({
+    sendBounds({ x: 120, y: 40, width: 375, height: 700, visible: true });
+    expect(view.setVisible).toHaveBeenLastCalledWith(true);
+    expect(view.setBounds).toHaveBeenLastCalledWith({ x: 120, y: 40, width: 375, height: 700 });
+    destroyBrowser(PANE, scope);
+  });
+
+  it('gives a hidden agent pane a decent off-window viewport', async () => {
+    vi.mocked(isAgentRequestedBrowser).mockReturnValue(true);
+    await boot();
+    const view = state.views.at(-1)!;
+    sendBounds({ x: 0, y: 0, width: 0, height: 0, visible: false });
+    expect(view.setVisible).toHaveBeenLastCalledWith(true);
+    expect(view.setBounds).toHaveBeenLastCalledWith({
       x: 50_000,
       y: 50_000,
       width: 1280,
@@ -629,20 +664,13 @@ describe('setBrowserBounds viewport floor for agent-owned panes', () => {
     destroyBrowser(PANE, scope);
   });
 
-  it('leaves the operator-owned pane untouched at its real, small size', async () => {
+  it('keeps hiding a hidden operator-owned pane', async () => {
     vi.mocked(isAgentRequestedBrowser).mockReturnValue(false);
     await boot();
     const view = state.views.at(-1)!;
-    setBrowserBounds(
-      { view, agentOwned: false } as never,
-      { x: 10, y: 10, width: 356, height: 138 },
-    );
-    expect(view.setBounds).toHaveBeenCalledWith({
-      x: 10,
-      y: 10,
-      width: 356,
-      height: 138,
-    });
+    sendBounds({ x: 0, y: 0, width: 0, height: 0, visible: false });
+    expect(view.setVisible).toHaveBeenLastCalledWith(false);
+    expect(view.setBounds).not.toHaveBeenCalled();
     destroyBrowser(PANE, scope);
   });
 });
