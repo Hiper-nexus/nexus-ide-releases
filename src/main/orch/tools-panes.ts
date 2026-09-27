@@ -496,10 +496,14 @@ const paneSpawn: McpToolDef = {
     'model on the same CLI. If the sealed model cannot be applied, spawn fails ' +
     'visibly. In a running mission, pass routeReservationId when the CLI is ' +
     'not the sticky roster route. Prompt is delivered in the CLI argv AT BIRTH. ' +
-    'From the operator\'s own pane without a mission, Nexus ALWAYS routes: ' +
-    'describe the work in `task` (or prompt/title) — adapterId, model and ' +
-    'effort are ignored there (the receipt lists them under route.ignored), ' +
-    'resume keeps the resumed pane\'s CLI, and a confident Jev skill ' +
+    'From the operator\'s own pane without a mission, omit adapterId and ' +
+    'describe the work in `task` (or prompt/title) to let Nexus route it ' +
+    '(a model/effort without adapterId is listed under route.ignored); pass ' +
+    'adapterId (+ model/effort) to pick the CLI/model yourself — it is ' +
+    'validated against the installed catalog (an unknown model fails listing ' +
+    'the valid ones; a CLI without Nexus MCP is refused) and the receipt says ' +
+    'harness.source explicit vs auto-route. resume keeps the resumed ' +
+    'pane\'s CLI, and a confident Jev skill ' +
     'suggestion adds one hint line to the prompt. Inside a mission, omit ' +
     'adapterId and describe `task` to get the same automatic routing (roster, ' +
     'CLI policy and route reservation applied). Writers run in parallel: ' +
@@ -519,17 +523,17 @@ const paneSpawn: McpToolDef = {
       adapterId: {
         type: 'string',
         description:
-          'Adapter id (cli) to run. Ignored from the operator pane without a ' +
-          'mission (Nexus routes the task); optional in a mission — omit it and ' +
-          'Nexus routes `task` through nexus_route_task.',
+          'Adapter id (cli) to run. Optional: omit it and Nexus routes `task` ' +
+          '(operator pane: Jev + cost table; mission: nexus_route_task). When ' +
+          'given, it is honored together with model/effort.',
       },
       agentName: { type: 'string', description: 'Squad agent name or id' },
       task: {
         type: 'string',
         description:
-          'What this pane will do. From the operator pane — or in a mission ' +
-          'without adapterId — Nexus routes it (Jev tier/specialty + cost ' +
-          'table) to a CLI/model; prompt/title are used when task is absent.',
+          'What this pane will do. Without adapterId Nexus routes it (Jev ' +
+          'tier/specialty + cost table) to a CLI/model; prompt/title are used ' +
+          'when task is absent.',
       },
       model: { type: 'string' },
       effort: {

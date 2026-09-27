@@ -338,6 +338,14 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
     expect(result.route).toBeUndefined();
   });
 
+  it('a descrição da tool não promete mais ignorar adapterId na mão do operador', () => {
+    const adapterDoc = (paneSpawnTool.inputSchema.properties as Record<string, { description?: string }>)
+      .adapterId.description ?? '';
+    expect(paneSpawnTool.description).not.toMatch(/ignored there|ALWAYS routes/);
+    expect(adapterDoc).not.toMatch(/Ignored from the operator pane/);
+    expect(paneSpawnTool.description).toMatch(/pass adapterId \(\+ model\/effort\)/);
+  });
+
   it('modelo inexistente na CLI explícita falha com as opções válidas', async () => {
     setOperatorRouteResolver(vi.fn(async () => ({ adapterId: 'codex' })));
     await expect(paneSpawnTool.handler(
