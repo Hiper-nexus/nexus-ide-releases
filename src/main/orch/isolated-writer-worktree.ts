@@ -4,16 +4,24 @@ import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-regi
 import { tapSessionExit } from '../pty/pty-manager';
 import { getPaneRuntimeAuthorityBySession } from './pane-registry';
 
+/**
+ * Chave do registry para writers isolados da mão do operador (sem missão).
+ * O registry já é por projeto/checkout; registros `ownerKind: 'pane'` não
+ * dependem de linha de task/missão, então uma chave fixa basta.
+ */
+export const OPERATOR_HAND_WORKTREE_KEY = 'operator-hand';
+
 /** Allocate through the same durable CAS + Git + optional CoW as sealed tasks. */
 export async function allocateIsolatedWriterWorktree(
   scope: ProjectExecutionScope,
-  missionId: string,
+  missionId: string | undefined,
 ) {
   const workerId = randomUUID();
   const registry = requireWorktreeRuntimeRegistry();
+  const registryKey = missionId ?? OPERATOR_HAND_WORKTREE_KEY;
   const record = await registry.create({
     scope,
-    missionId,
+    missionId: registryKey,
     taskId: `pane-${workerId}`,
     workerId,
     ownerKind: 'pane',
@@ -23,7 +31,7 @@ export async function allocateIsolatedWriterWorktree(
   let released = false;
   const release = () => {
     if (released) return;
-    registry.markFailed(scope, missionId, record.taskId,
+    registry.markFailed(scope, registryKey, record.taskId,
       'pane writer closed or spawn failed; worktree and branch retained for integration');
     released = true;
     untap();

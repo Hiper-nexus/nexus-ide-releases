@@ -1909,10 +1909,10 @@ export function resolveCurrentMissionSpawnAuthoritySeal(
   const squads = listSquads().filter(
     (candidate) => candidate.id === mission?.squadId,
   );
-  const authoritySeal =
-    mission && squads.length === 1
-      ? resolveMissionPaneAuthoritySeal(scope, mission, squads[0])
-      : null;
+  // Sem squad só vale para missão livre (checado no selo).
+  const authoritySeal = mission
+    ? resolveMissionPaneAuthoritySeal(scope, mission, squads.length === 1 ? squads[0] : null)
+    : null;
   if (!authoritySeal) {
     throw new Error(
       "mission pane authority seal is unavailable; replane and approve " +

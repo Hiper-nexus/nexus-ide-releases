@@ -935,7 +935,7 @@ export class RendererMissionAuthority {
     // trabalhando INVISÍVEL ("nenhum pane foi aberto ainda" com 8 CLIs vivas).
     if (!spec.authoritySeal) return true;
     const squad = mission.squadId ? getSquad(mission.squadId) : null;
-    if (!squad) return false;
+    if (!squad && mission.squadId) return false;
     const currentSeal = resolveMissionPaneAuthoritySeal(
       rendererScope,
       mission,

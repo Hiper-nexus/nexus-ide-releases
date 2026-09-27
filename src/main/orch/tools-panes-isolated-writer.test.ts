@@ -18,6 +18,7 @@ const h = vi.hoisted(() => ({
   spawn: vi.fn(),
   pending: vi.fn(),
   mission: {} as Record<string, unknown>,
+  parents: {} as Record<string, string>,
 }));
 vi.mock('./tool-util', async (original) => ({
   ...(await original<typeof import('./tool-util')>()),
@@ -27,6 +28,8 @@ vi.mock('./pane-registry', async (original) => ({
   ...(await original<typeof import('./pane-registry')>()),
   listPaneSnapshots: () => h.panes,
   takePendingPaneSpawnResult: h.pending,
+  getPaneRuntimeAuthorityBySession: (sessionId: string) =>
+    h.parents[sessionId] ? { operatorParentSessionId: h.parents[sessionId] } : null,
 }));
 vi.mock('../pty/pty-manager', async (original) => ({
   ...(await original<typeof import('../pty/pty-manager')>()),
@@ -53,6 +56,7 @@ vi.mock('./squad-store', () => ({
 }));
 
 import { paneSpawnTool } from './tools-panes';
+import { OPERATOR_HAND_WORKTREE_KEY } from './isolated-writer-worktree';
 
 let temp: string;
 let manager: ProjectRuntimeManager;
@@ -72,6 +76,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.pending.mockReturnValue(null);
   h.panes = [];
+  h.parents = {};
   temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-pane-writer-')));
   const root = path.join(temp, 'repo');
   fs.mkdirSync(root);
@@ -95,7 +100,10 @@ beforeEach(() => {
     const paneId = `pane-${h.panes.length}`;
     const sessionId = `session-${paneId}`;
     h.panes.push({ paneId, sessionId, kind: 'cli-agent', title: 'worker', state: 'busy', role: 'worker',
-      missionId: options.missionId, executionScope: options.executionScope, readOnly: options.readOnly });
+      missionId: options.missionId, scope: options.scope, executionScope: options.executionScope ?? options.scope,
+      readOnly: options.readOnly });
+    const parent = (options as { operatorParentSessionId?: string }).operatorParentSessionId;
+    if (parent) h.parents[sessionId] = parent;
     hooks.onPaneCreated?.(paneId, sessionId);
     return { paneId, sessionId };
   });
@@ -197,5 +205,66 @@ describe('Via Rápida isolated writers', () => {
     })).rejects.toThrow('authority revoked');
     expect(h.spawn).not.toHaveBeenCalled();
     expect(registry.listMission(ctx.scope, ctx.missionId!)[0].status).toBe('failed');
+  });
+});
+
+describe('mão do operador sem missão: writers paralelos isolados', () => {
+  let op: AgentGateContext;
+  beforeEach(() => {
+    op = { ...ctx, token: 'op', label: 'operador', role: 'user', sessionId: 'op-session', missionId: undefined };
+  });
+  const records = () => registry.listMission(op.scope, OPERATOR_HAND_WORKTREE_KEY);
+
+  it('dois writers com isolatedWriter coexistem, cada um na sua worktree/branch', async () => {
+    const receipts = await Promise.all([1, 2].map(() =>
+      paneSpawnTool.handler({ adapterId: 'codex', isolatedWriter: true, prompt: 'edite X' }, op))) as Array<Record<string, any>>;
+    expect(records()).toHaveLength(2);
+    for (const [options] of h.spawn.mock.calls as [SpawnToolOptions][]) {
+      expect(options).toMatchObject({ executionMode: 'isolated_worktree', isolatedWriter: true });
+      expect(options.cwd).not.toBe(op.scope.rootRealPath);
+      expect(options.executionScope?.rootRealPath).toBe(options.cwd);
+      expect(options.prompt).toContain('isolated_worktree');
+    }
+    for (const receipt of receipts) {
+      expect(receipt.executionMode).toBe('isolated_worktree');
+      expect(git(op.scope.rootRealPath, 'rev-parse', '--verify', receipt.isolatedWorktree.branch)).toMatch(/^[a-f0-9]{40}$/);
+      expect(records().map((r) => r.worktreePath)).toContain(receipt.isolatedWorktree.worktreePath);
+    }
+    // Um terceiro writer comum também passa: os isolados não ocupam o checkout.
+    await paneSpawnTool.handler({ adapterId: 'codex', prompt: 'edite Y' }, op);
+    expect(h.spawn.mock.calls[2][0].cwd).toBeUndefined();
+    expect(records()).toHaveLength(2);
+  });
+
+  it('writer comum com outro ativo no checkout é auto-isolado e o recibo diz o motivo', async () => {
+    await paneSpawnTool.handler({ adapterId: 'codex', prompt: 'edite X' }, op);
+    expect(records()).toHaveLength(0);
+    const receipt = await paneSpawnTool.handler({ adapterId: 'codex', prompt: 'edite Y' }, op) as Record<string, any>;
+    expect(receipt.executionMode).toBe('isolated_worktree');
+    expect(receipt.isolatedWorktree.reason).toMatch(/auto-isolado: writer pane-0 ainda ativo/);
+    expect(records()).toHaveLength(1);
+    expect(h.spawn.mock.calls[1][0].cwd).toBe(records()[0].worktreePath);
+  });
+
+  it('readOnly segue no checkout, sem worktree, mesmo com writer ativo', async () => {
+    await paneSpawnTool.handler({ adapterId: 'codex', prompt: 'edite X' }, op);
+    const receipt = await paneSpawnTool.handler({ adapterId: 'codex', isolatedWriter: true, readOnly: true }, op) as Record<string, any>;
+    expect(receipt.executionMode).toBeUndefined();
+    expect(h.spawn.mock.calls[1][0]).toMatchObject({ readOnly: true });
+    expect(h.spawn.mock.calls[1][0].isolatedWriter).toBeUndefined();
+    expect(records()).toHaveLength(0);
+  });
+
+  it('retém worktree e branch para integração quando o pane fecha', async () => {
+    await paneSpawnTool.handler({ adapterId: 'codex', isolatedWriter: true }, op);
+    const [record] = records();
+    for (const tap of [...h.exits]) tap(h.panes[0].sessionId!, {
+      sessionId: h.panes[0].sessionId!, adapterId: 'codex', cwd: record.worktreePath,
+      scope: h.panes[0].executionScope!, source: 'pending', role: 'user',
+      readOnly: false, allowedTools: [], allowedSkills: null,
+    });
+    expect(records()[0].status).toBe('failed');
+    expect(fs.existsSync(record.worktreePath)).toBe(true);
+    expect(git(op.scope.rootRealPath, 'rev-parse', '--verify', record.branchRef)).toMatch(/^[a-f0-9]{40}$/);
   });
 });

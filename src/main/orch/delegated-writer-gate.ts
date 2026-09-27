@@ -1,8 +1,9 @@
 import type { PaneRuntimeState, PaneSnapshot } from '../../shared/orch-types';
 
 /**
- * Fila de writers delegados (C3, 25/09): na mão do operador, helpers que só
- * leem rodam em paralelo; quem ESCREVE entra um por vez no mesmo checkout.
+ * Colisão de writers delegados (C3, 25/09): na mão do operador, helpers que só
+ * leem rodam em paralelo; dois writers nunca dividem o mesmo checkout — o
+ * spawn auto-isola o segundo numa worktree própria (0.76.110).
  * Panes que o operador abriu na mão não contam — isolamento entre abas é o B3.
  */
 export interface DelegatedPaneFact {
