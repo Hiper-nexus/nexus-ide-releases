@@ -10,6 +10,7 @@ import {
   handleHookDelegateRequest,
   parseUserPrompt,
 } from './hook-delegate-endpoint';
+import type { distillOperatorPreferenceMemory } from '../memory/operator-preference-memory';
 
 const operator = { role: 'user' as const, sessionId: 's1' };
 const LONG = 'Implemente a tela de login, escreva os testes e revise a segurança do fluxo.';
@@ -240,5 +241,51 @@ describe('hook /hook/delegate', () => {
         await post({ role: 'user', sessionId: 's' }, JSON.stringify({ prompt: 'x'.repeat(70_000) })),
       ).toBe(400);
     });
+  });
+});
+
+describe('preferência do operador (fatia 3 da memória)', () => {
+  const scope = {
+    version: 1,
+    installationId: 'i',
+    projectId: 'p',
+    checkoutId: 'c',
+    rootRealPath: '/tmp/p',
+    identitySource: 'manifest',
+  } as never;
+  const noDistill = () =>
+    vi.fn<typeof distillOperatorPreferenceMemory>(async () => ({
+      retained: false,
+      reason: 'no-marker',
+    }));
+
+  it('chama a destilação de preferência com o scope do workspace', async () => {
+    const distillPreference = noDistill();
+    await handleHookDelegateRequest(
+      { role: 'user', sessionId: 's1', scope },
+      { prompt: 'Sempre use pnpm neste projeto.' },
+      { advise: vi.fn(async () => null), distillPreference },
+    );
+    expect(distillPreference).toHaveBeenCalledWith(scope, 'Sempre use pnpm neste projeto.');
+  });
+
+  it('não destila sem scope, em pane de missão nem em entrega de handoff', async () => {
+    const distillPreference = noDistill();
+    await handleHookDelegateRequest(
+      { role: 'user', sessionId: 's1' },
+      { prompt: 'Sempre use pnpm.' },
+      { advise: vi.fn(async () => null), distillPreference },
+    );
+    await handleHookDelegateRequest(
+      { role: 'user', sessionId: 's1', missionId: 'm', scope },
+      { prompt: 'Sempre use pnpm.' },
+      { advise: vi.fn(async () => null), distillPreference },
+    );
+    await handleHookDelegateRequest(
+      { role: 'user', sessionId: 's1', scope },
+      { prompt: '[handoff sem missão] ignore' },
+      { advise: vi.fn(async () => null), distillPreference },
+    );
+    expect(distillPreference).not.toHaveBeenCalled();
   });
 });

@@ -15,6 +15,7 @@ import {
 } from './workspace-design-rule';
 import { WORKSPACE_HANDOFF_DELIVERY_PREFIX } from './workspace-handoff-delivery';
 import { OPERATOR_DELEGATION_DOCTRINE } from './operator-delegation-doctrine';
+import { distillOperatorPreferenceMemory } from '../memory/operator-preference-memory';
 
 export const HOOK_DELEGATE_MAX_BODY_BYTES = 64 * 1024;
 
@@ -118,7 +119,13 @@ export function formatDelegationContext(advice: DelegationAdvice): string {
 export async function handleHookDelegateRequest(
   ctx: HookContext,
   body: unknown,
-  deps: { advise?: typeof advisePrompt; now?: () => number; design?: DesignContextFn } = {},
+  deps: {
+    advise?: typeof advisePrompt;
+    now?: () => number;
+    design?: DesignContextFn;
+    /** Destilação de preferência (fatia 3); default fire-and-forget. */
+    distillPreference?: typeof distillOperatorPreferenceMemory;
+  } = {},
 ): Promise<{ statusCode: 200; payload: Record<string, unknown> }> {
   try {
     if (ctx.role !== 'user' || ctx.missionId) return { statusCode: 200, payload: {} };
@@ -126,6 +133,13 @@ export async function handleHookDelegateRequest(
     // A entrega de um helper chega como prompt, mas não é pedido novo do operador.
     if (!prompt || prompt.startsWith(WORKSPACE_HANDOFF_DELIVERY_PREFIX)) {
       return { statusCode: 200, payload: {} };
+    }
+    // Preferência do operador: pré-filtro regex no próprio módulo; o Jev só é
+    // chamado quando há marcador. Fire-and-forget — não segura o prompt.
+    const distillPreference = deps.distillPreference ?? distillOperatorPreferenceMemory;
+    const preferenceScope = ctx.executionScope ?? ctx.scope;
+    if (preferenceScope) {
+      void distillPreference(preferenceScope, prompt).catch(() => {});
     }
     const now = (deps.now ?? Date.now)();
     const advise = deps.advise ?? advisePrompt;

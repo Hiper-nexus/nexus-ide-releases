@@ -7,6 +7,7 @@
  * como nasce hoje (só identificadores Main-owned).
  */
 import {
+  capText,
   judge,
   USD_PER_INPUT_TOKEN,
   type JevQuestion,
@@ -48,6 +49,62 @@ export interface DistillHandoffSummaryDeps {
   hasKey?: () => boolean;
   /** Abort externo combinado ao timeout interno. */
   signal?: AbortSignal;
+}
+
+const PREFERENCE_QUESTIONS: Record<string, JevQuestion> = {
+  is_preference: {
+    type: 'noul',
+    instructions:
+      'Is this sentence a durable operator preference about how to work in ' +
+      'this project (tools, style, workflow, conventions to always or never ' +
+      'follow)? One-off task instructions and questions are not preferences.',
+    criteria: {
+      true: 'a durable preference the operator wants followed from now on',
+      false: 'a one-off task instruction, question, or temporary detail',
+    },
+  },
+};
+
+/**
+ * Confirma com o Jev que um trecho do prompt do operador é preferência
+ * duradoura de projeto. Fail-open: null mantém o comportamento atual
+ * (nenhuma gravação automática).
+ */
+export async function confirmOperatorPreference(
+  input: { candidate: string },
+  deps: DistillHandoffSummaryDeps = {},
+): Promise<boolean> {
+  const judgeFn = deps.judge ?? judge;
+  const enabled = deps.enabled ?? (() => isJevSurfaceEnabled('memoryDistill'));
+  const hasKeyFn = deps.hasKey ?? hasJevCredential;
+
+  if (!enabled() || !hasKeyFn()) return false;
+
+  const result = await judgeFn({
+    state: { candidate: capText(input.candidate, 500) },
+    questions: PREFERENCE_QUESTIONS,
+    timeoutMs: DISTILL_TIMEOUT_MS,
+    signal: deps.signal,
+    surface: 'memoryDistill',
+  });
+  if (!result) return false;
+
+  const answer = result.answers.is_preference;
+  if (answer?.type !== 'noul') return false;
+  const isPreference = answer.noul >= RETAIN_THRESHOLD;
+
+  recordJevDecision({
+    surface: 'memoryDistill',
+    model: result.model,
+    questions: Object.keys(PREFERENCE_QUESTIONS),
+    probabilities: jevAnswerProbabilities(result.answers),
+    confidence: jevAnswerConfidences(result.answers),
+    decision: isPreference ? 'preference:retain' : 'preference:skip',
+    inputTokens: result.usage.input_tokens,
+    usd: result.usage.input_tokens * USD_PER_INPUT_TOKEN,
+  });
+
+  return isPreference;
 }
 
 /**

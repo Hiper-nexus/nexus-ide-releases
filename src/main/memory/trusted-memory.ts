@@ -19,6 +19,7 @@ export const TRUSTED_MEMORY_EVENT_TYPES = [
   'architecture-rule',
   'approved-merge',
   'session-digest',
+  'operator-preference',
 ] as const;
 
 export const trustedMemoryEventSchema = z
@@ -153,6 +154,11 @@ const TRUSTED_MEMORY_POLICY: Readonly<
     label: 'Session digest',
     kind: 'fact',
     importance: 3,
+  },
+  'operator-preference': {
+    label: 'Operator preference',
+    kind: 'preference',
+    importance: 4,
   },
 };
 

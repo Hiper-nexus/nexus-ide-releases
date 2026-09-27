@@ -76,6 +76,7 @@ describe('trusted automatic memory retention', () => {
       'architecture-rule',
       'approved-merge',
       'session-digest',
+      'operator-preference',
     ]);
     expect(() =>
       trustedMemoryEventSchema.parse({
