@@ -1090,6 +1090,32 @@ export async function ensureBrowser(
   return stateOf(paneId, entry);
 }
 
+class BrowserLoadTimeoutError extends Error {}
+
+/**
+ * Deadline for one page load (responsive runs only). A load that never
+ * settles is stopped, so the pane does not keep a half-loaded navigation.
+ */
+async function loadURLWithDeadline(entry: BrowserEntry, url: string, timeoutMs: number): Promise<void> {
+  const wc = entry.view.webContents;
+  const load = wc.loadURL(url);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([load, new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new BrowserLoadTimeoutError(
+        `page load timed out after ${Math.round(timeoutMs / 1000)}s`)), timeoutMs);
+    })]);
+  } catch (error) {
+    if (error instanceof BrowserLoadTimeoutError) {
+      load.catch(() => {});
+      if (!wc.isDestroyed()) wc.stop();
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function loadBrowserForEntry(
   paneId: string,
   entry: BrowserEntry,
@@ -1099,6 +1125,8 @@ async function loadBrowserForEntry(
     signal?: AbortSignal;
     assertCurrentAuthority?: () => void;
     device?: BrowserDeviceKind;
+    /** Only `nexus_browser_responsive`: ordinary navigation has no deadline. */
+    loadTimeoutMs?: number;
   } = {},
 ): Promise<BrowserPaneState> {
   entry.loadGeneration += 1;
@@ -1136,7 +1164,8 @@ async function loadBrowserForEntry(
   if (url === 'about:blank') {
     entry.view.webContents.loadURL(url).catch(() => {});
   } else {
-    await entry.view.webContents.loadURL(url);
+    if (options.loadTimeoutMs === undefined) await entry.view.webContents.loadURL(url);
+    else await loadURLWithDeadline(entry, url, options.loadTimeoutMs);
     assertCurrentAuthority();
   }
   return stateOf(paneId, entry);
@@ -1361,18 +1390,24 @@ export async function captureBrowserScreenshot(
 }
 
 const RESPONSIVE_DEVICES: readonly BrowserDeviceKind[] = ['mobile', 'tablet', 'desktop'];
+/** Per-load deadline of a responsive run (each breakpoint and the restore). */
+export const RESPONSIVE_LOAD_TIMEOUT_MS = 30_000;
 
-export interface BrowserResponsiveBreakpoint {
-  device: BrowserDeviceKind;
-  audit: BrowserLayoutAudit;
-  screenshot: BrowserScreenshotResult;
-}
+export type BrowserResponsiveBreakpoint =
+  | {
+    device: BrowserDeviceKind;
+    audit: BrowserLayoutAudit;
+    screenshot: BrowserScreenshotResult;
+  }
+  | { device: BrowserDeviceKind; loadTimedOut: true; error: string };
 
 /**
  * `nexus_browser_responsive`: the page already open in the pane, reloaded
  * once per breakpoint through the same guarded navigation as navigate
  * (origin, DNS pins, exact-URL lock) with the same device emulation as the
  * operator's preview toggle, then audited (`layout_audit`) and captured.
+ * Each load has a deadline: a breakpoint whose page never loads is reported
+ * as `loadTimedOut` and the run moves on.
  * The original emulation and page are restored at the end — also on error.
  */
 export async function analyzeBrowserResponsive(
@@ -1403,6 +1438,7 @@ export async function analyzeBrowserResponsive(
   const authority = {
     signal: options.signal,
     assertCurrentAuthority: options.assertCurrentAuthority,
+    loadTimeoutMs: RESPONSIVE_LOAD_TIMEOUT_MS,
   };
   const breakpoints: BrowserResponsiveBreakpoint[] = [];
   let restoreError: string | undefined;
@@ -1421,6 +1457,10 @@ export async function analyzeBrowserResponsive(
       ownLoadGeneration = entry.loadGeneration;
       try {
         await load;
+      } catch (error) {
+        if (!(error instanceof BrowserLoadTimeoutError)) throw error;
+        breakpoints.push({ device, loadTimedOut: true, error: error.message });
+        continue;
       } finally {
         ownNavSeq = entry.navSeq;
         ownWidth = entry.emulatedViewport?.width ?? null;

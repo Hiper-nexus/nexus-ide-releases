@@ -304,7 +304,9 @@ const browserResponsiveTool: McpToolDef = {
     'viewport, same guarded navigation as nexus_browser_navigate), captures a ' +
     'PNG artifact and audits the layout — layout width, horizontal overflow ' +
     '(scrollWidth > clientWidth), elements straddling the viewport edge and ' +
-    'elements cut by overflow:hidden. The original device and page are ' +
+    'elements cut by overflow:hidden. Each page load has a 30s deadline: a ' +
+    'breakpoint that does not load comes back as { loadTimedOut: true, error } ' +
+    'and the run continues. The original device and page are ' +
     'restored at the end, even on error.',
   inputSchema: {
     type: 'object',
