@@ -311,7 +311,7 @@ describe('pane-admission: limites proporcionais à RAM da máquina (0.76.44)', (
     expect(isUnderMemoryPressure(null, limits)).toBe(false);
   });
 
-  it('spawn pedido por agente do operador vira trava dura; o do renderer só avisa', async () => {
+  it('spawn delegado e manual avisam no teto; só opt-in explícito pode bloquear', async () => {
     const { admitAgentSpawnSync, readPaneAdmissionLimits, registerPaneAdmissionAdvisor, primeSystemMemoryCacheForTest } =
       await import('./pane-admission');
     primeSystemMemoryCacheForTest({ freeMB: 64_000, swapUsedMB: 0 });
@@ -319,11 +319,18 @@ describe('pane-admission: limites proporcionais à RAM da máquina (0.76.44)', (
     // O teto real desta máquina (env vazio), não o default: o gate lê a RAM.
     const atCap = readPaneAdmissionLimits({}).maxAgentPanes;
     const byAgent = admitAgentSpawnSync(atCap, Date.now(), {}, { agentRequested: true });
-    expect(byAgent.ok).toBe(false);
     const byHand = admitAgentSpawnSync(atCap, Date.now(), {});
+    expect(byAgent).toEqual(byHand);
     expect(byHand.ok).toBe(true);
     expect(byHand.ok && byHand.warning).toBeTruthy();
     const off = admitAgentSpawnSync(atCap, Date.now(), { NEXUS_PANE_GUARD: 'off' }, { agentRequested: true });
     expect(off.ok).toBe(true);
+    for (const env of [{ NEXUS_PANE_CAP_HARD: '1' }, { NEXUS_PANE_GUARD: 'hard' }]) {
+      expect(admitAgentSpawnSync(atCap, Date.now(), env, { agentRequested: true }).ok).toBe(false);
+      expect(admitAgentSpawnSync(atCap, Date.now(), env).ok).toBe(false);
+    }
+    primeSystemMemoryCacheForTest({ freeMB: 1, swapUsedMB: 0 });
+    const lowMemory = admitAgentSpawnSync(0, Date.now(), {}, { agentRequested: true });
+    expect(lowMemory).toMatchObject({ ok: true, warning: expect.stringContaining('Memória livre baixa') });
   });
 });

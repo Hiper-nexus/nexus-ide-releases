@@ -439,15 +439,13 @@ export function admitAgentSpawnSync(
   liveAgentPanes: number,
   now = Date.now(),
   env: NodeJS.ProcessEnv = process.env,
-  request: { readonly agentRequested?: boolean } = {},
+  _request: { readonly agentRequested?: boolean } = {},
 ): PaneAdmissionVerdict {
   try {
-    const base = readPaneAdmissionLimits(env);
-    if (!base.enabled) return { ok: true };
-    // C3 (25/09): delegação automática sem limite de profundidade pode abrir
-    // panes em cascata (F-572: 33 panes, Mac em swap). Spawn pedido por AGENTE
-    // do operador recusa no teto/pressão; o "+" do operador segue só avisando.
-    const limits = request.agentRequested ? { ...base, hardBlocks: true } : base;
+    const limits = readPaneAdmissionLimits(env);
+    if (!limits.enabled) return { ok: true };
+    // F-572: a origem do pedido não ativa trava dura. Delegação também segue
+    // o opt-in do operador; o guardian continua tratando pressão real.
     let idleCandidates: readonly IdlePaneCandidate[] = [];
     try {
       idleCandidates = advisor?.idleCandidates(now) ?? [];
