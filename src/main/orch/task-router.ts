@@ -150,7 +150,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3' },
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'medium' },
     { adapterId: 'grok', model: GROK_FRONTIER_MODEL, effort: 'medium' },
-    { adapterId: 'agy', model: 'gemini-3.1-pro-high', effort: 'medium' },
+    { adapterId: 'agy', model: 'gemini-3.8-flash-high', effort: 'medium' },
     { adapterId: 'codex', model: 'gpt-5.6-luna', effort: 'medium' },
     { adapterId: 'codex', model: 'gpt-5.4', effort: 'medium' },
     { adapterId: 'claude', model: 'claude-sonnet-5', effort: 'medium' },
@@ -171,7 +171,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'codex', model: CODEX_FRONTIER_MODEL, effort: 'high' },
     { adapterId: 'codex', model: 'gpt-5.6-sol', effort: 'high' },
     { adapterId: 'codex', model: 'gpt-5.6-terra', effort: 'high' },
-    { adapterId: 'agy', model: 'gemini-3.1-pro-high', effort: 'high' },
+    { adapterId: 'agy', model: 'gemini-3.8-flash-high', effort: 'high' },
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'high' },
     { adapterId: 'grok', model: GROK_FRONTIER_MODEL, effort: 'high' },
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-pro' },
@@ -193,8 +193,9 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     // Diversidade também no crítico: sem estes, uma máquina sem claude/codex/
     // glm empresta de outro tier e o worker crítico colapsa num só provider.
     // agy antes de kimi preserva a preferência efetiva anterior (o empréstimo
-    // do tier hard escolhia gemini-3.1-pro-high quando ambos instalados).
-    { adapterId: 'agy', model: 'gemini-3.1-pro-high', effort: 'xhigh' },
+    // do tier hard escolhia o agy quando ambos instalados). O id é o que a
+    // migração antiga de gemini-3.1-pro-high já entregava na prática.
+    { adapterId: 'agy', model: 'gemini-3.8-flash-high', effort: 'xhigh' },
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'xhigh' },
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-pro' },
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-pro-ultraspeed' },
