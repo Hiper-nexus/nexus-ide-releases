@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { makeRegressionHookCommand } from './hook-regression-command';
+import { makeRegressionHookCommand, REGRESSION_HOOK_TRANSPORT_SECONDS } from './hook-regression-command';
 
 describe('makeRegressionHookCommand', () => {
   it('posix: posta o payload, devolve a resposta e nunca falha', () => {
@@ -7,7 +7,7 @@ describe('makeRegressionHookCommand', () => {
     expect(cmd).toContain('$NEXUS_HOOK_REGRESSION_URL');
     expect(cmd).toContain('Bearer $NEXUS_GATE_TOKEN');
     expect(cmd).toContain('--data-binary @-');
-    expect(cmd).toContain('--max-time 170');
+    expect(cmd).toContain(`--max-time ${REGRESSION_HOOK_TRANSPORT_SECONDS}`);
     expect(cmd).not.toContain('/dev/null');
     expect(cmd.trim().endsWith('|| true')).toBe(true);
   });

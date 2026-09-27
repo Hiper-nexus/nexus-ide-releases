@@ -6,6 +6,7 @@
  * `blocked` com as falhas em artifact — nunca como `success`.
  */
 import type { ProjectExecutionScope } from '../../shared/types';
+import type { McpToolInvocation } from '../orch/mcp-protocol';
 import {
   formatRegressionGateReport,
   isRegressionGateEnabled,
@@ -15,15 +16,28 @@ import {
 } from './regression-gate';
 
 export const REGRESSION_GATE_BOUNCES_PER_SESSION = 2;
+/**
+ * Orçamento TOTAL do portão no handoff (mapa + testes + retentativa): abaixo
+ * do `tool_timeout_sec=120` do Codex, senão o worker vê erro de tool enquanto
+ * o servidor consome a devolução (ou persiste o handoff) sem ele saber.
+ */
+export const HANDOFF_REGRESSION_BUDGET_MS = 100_000;
+/** Prefixo no resumo quando os testes impactados não rodaram. */
+export const REGRESSION_UNVERIFIED_PREFIX = '[testes impactados não verificados]';
+const MAX_TRACKED_SESSIONS = 512;
 
 export interface RegressionGateArtifact {
   readonly kind: 'nexus.regressionGate';
   readonly payload: {
     readonly status: RegressionGateResult['status'];
     readonly diffHash: string;
+    readonly headSha: string | null;
+    readonly baseSha: string | null;
     readonly runner: RegressionGateResult['runner'];
     readonly testsRun: readonly string[];
+    readonly testsNotRun: readonly string[];
     readonly failures: RegressionGateResult['failures'];
+    readonly inheritedFailures: RegressionGateResult['inheritedFailures'];
     readonly untestedFiles: readonly string[];
     readonly invariantsTouched: RegressionGateResult['invariantsTouched'];
     readonly warnings: readonly string[];
@@ -33,7 +47,12 @@ export interface RegressionGateArtifact {
 export type RegressionHandoffVerdict =
   | { readonly kind: 'skipped'; readonly reason: string }
   | { readonly kind: 'retry'; readonly message: string }
-  | { readonly kind: 'accepted'; readonly artifact?: RegressionGateArtifact }
+  | {
+      readonly kind: 'accepted';
+      readonly artifact?: RegressionGateArtifact;
+      /** Havia testes impactados e eles não rodaram: aceito, mas NÃO verificado. */
+      readonly unverified?: boolean;
+    }
   | { readonly kind: 'exhausted'; readonly artifact: RegressionGateArtifact; readonly report: string };
 
 const bouncesBySession = new Map<string, number>();
@@ -48,9 +67,13 @@ function artifactOf(result: RegressionGateResult): RegressionGateArtifact {
     payload: {
       status: result.status,
       diffHash: result.diffHash,
+      headSha: result.headSha,
+      baseSha: result.baseSha,
       runner: result.runner,
       testsRun: result.testsRun.slice(0, 64),
+      testsNotRun: result.testsNotRun.slice(0, 64),
       failures: result.failures.slice(0, 16),
+      inheritedFailures: result.inheritedFailures.slice(0, 16),
       untestedFiles: result.untestedFiles.slice(0, 32),
       invariantsTouched: result.invariantsTouched.slice(0, 16),
       warnings: result.warnings.slice(0, 8),
@@ -64,6 +87,10 @@ export async function evaluateHandoffRegressionGate(
     readonly scope: ProjectExecutionScope;
     readonly declaredFiles?: readonly string[];
     readonly baseSha?: string;
+    /** Spawn da sessão que entrega: base do diff e corte do WIP alheio. */
+    readonly startedAtMs?: number;
+    readonly signal?: AbortSignal;
+    readonly authority?: McpToolInvocation;
   },
   deps: RegressionGateDependencies & { readonly enabled?: () => boolean } = {},
 ): Promise<RegressionHandoffVerdict> {
@@ -77,6 +104,10 @@ export async function evaluateHandoffRegressionGate(
         scope: input.scope,
         declaredFiles: input.declaredFiles,
         baseSha: input.baseSha,
+        startedAtMs: input.startedAtMs,
+        timeoutMs: HANDOFF_REGRESSION_BUDGET_MS,
+        signal: input.signal,
+        authority: input.authority,
       },
       deps,
     );
@@ -91,8 +122,11 @@ export async function evaluateHandoffRegressionGate(
     if (result.untestedFiles.length > 0 || result.warnings.length > 0) {
       console.info(`[regression-gate] ${formatRegressionGateReport(result).replace(/\n/g, ' | ')}`);
     }
-    // Só registra no handoff o que o portão de fato apurou; indisponível
-    // (sem runner, sem árvore legível) fica no log, fail-open.
+    // Não bloqueia por infraestrutura (sem runner, prazo, sandbox), mas o
+    // "não verificado" fica explícito no handoff — nunca passa por aprovado.
+    if (result.status === 'unavailable') {
+      return { kind: 'accepted', artifact: artifactOf(result), unverified: true };
+    }
     const recorded =
       result.status === 'passed' ||
       result.untestedFiles.length > 0 ||
@@ -102,7 +136,11 @@ export async function evaluateHandoffRegressionGate(
   const report = formatRegressionGateReport(result);
   const used = input.sessionId ? bouncesBySession.get(input.sessionId) ?? 0 : 0;
   if (input.sessionId && used < REGRESSION_GATE_BOUNCES_PER_SESSION) {
+    bouncesBySession.delete(input.sessionId);
     bouncesBySession.set(input.sessionId, used + 1);
+    while (bouncesBySession.size > MAX_TRACKED_SESSIONS) {
+      bouncesBySession.delete(bouncesBySession.keys().next().value!);
+    }
     return {
       kind: 'retry',
       message:

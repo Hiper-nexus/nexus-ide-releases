@@ -33,8 +33,10 @@ import {
 } from "./jev-handoff-review";
 import {
   evaluateHandoffRegressionGate,
+  REGRESSION_UNVERIFIED_PREFIX,
   type RegressionHandoffVerdict,
 } from "../regression-gate/regression-gate-handoff";
+import { getSessionSpawnedAtMs } from "../pty/pty-manager";
 import { executionScopeFor } from "./gate";
 
 /** Workspace delivery is untrusted correspondence, never mission completion evidence. */
@@ -92,6 +94,13 @@ export async function submitWorkspaceHandoff(
       sessionId: ctx.sessionId,
       scope: executionScopeFor(ctx),
       declaredFiles,
+      // Sem missão não há base registrada: o HEAD no spawn do helper é a
+      // base, e o WIP do operador (sujo antes do spawn) não é cobrado dele.
+      startedAtMs: ctx.sessionId
+        ? (getSessionSpawnedAtMs(ctx.sessionId) ?? undefined)
+        : undefined,
+      signal: invocation?.signal,
+      authority: invocation,
     });
     if (regressionVerdict.kind === "retry")
       throw new Error(regressionVerdict.message);
@@ -152,6 +161,11 @@ export async function submitWorkspaceHandoff(
   }
   if (regressionVerdict.kind === "exhausted") {
     reviewedSummary = `[testes impactados falhando] ${condensed.summary}`;
+  } else if (
+    regressionVerdict.kind === "accepted" &&
+    regressionVerdict.unverified
+  ) {
+    reviewedSummary = `${REGRESSION_UNVERIFIED_PREFIX} ${reviewedSummary}`;
   }
   const telemetry = sanitizeHandoffTelemetry(args.telemetry);
   const artifacts = [

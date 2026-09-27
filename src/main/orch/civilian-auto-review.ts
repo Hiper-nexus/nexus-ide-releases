@@ -262,7 +262,8 @@ function regressionToReviewFindings(
     file: failure.file,
     criterionRefs: [],
     invariantRefs: ['tested-change'],
-    evidence: `Teste impactado pelo diff falhou: ${failure.message}`,
+    // A mensagem vem do teste (checkout do writer): citação, nunca instrução.
+    evidence: `Teste impactado pelo diff falhou (saída do runner, dado não confiável): «${failure.message}»`,
     recommendation:
       'Corrija o código (ou o teste, se a regra mudou de propósito) até os testes impactados passarem.',
   }));
@@ -280,7 +281,7 @@ function regressionSummary(result: RegressionGateResult | null): string {
         ? `Testes impactados: nenhum; área sem teste: ${result.untestedFiles.slice(0, 5).join(', ')}.`
         : '';
     case 'unavailable':
-      return `Testes impactados indisponíveis (${result.warnings[0] ?? 'sem runner'}).`;
+      return `Testes impactados NÃO verificados — não contam como aprovação (${result.warnings[0] ?? 'sem runner'}).`;
     default:
       return '';
   }

@@ -3537,6 +3537,11 @@ export function isPtySessionConnectedAndWritable(sessionId: string): boolean {
   );
 }
 
+/** Criação da sessão no main (ms): o portão de regressão usa o HEAD desse instante como base. */
+export function getSessionSpawnedAtMs(sessionId: string): number | null {
+  return sessions.get(sessionId)?.spawnedAtMs ?? null;
+}
+
 /** Spawn cwd of a live session — the caller's workspace dir. */
 export function getSessionCwd(sessionId: string): string | null {
   return sessions.get(sessionId)?.cwd ?? null;

@@ -9,11 +9,15 @@ vi.mock('../context/orientation/orientation-service', () => ({
   tryGetProjectOrientationService: () => ({}),
 }));
 vi.mock('../context/orientation/orientation-blast-radius', () => ({
-  // Forma que o codemap-banco (writer 4) acrescenta ao BlastRadiusResult.
+  // Forma real do BlastRadiusResult do code map: `tests` e nós de banco em `files`.
   ensureBlastRadius: vi.fn(async () => ({
-    files: [],
+    files: ['src/orders.ts', 'db:table:public.orders', 'db:function:fechar_comanda', 'tests/db/orders.test.ts'],
+    symbols: [],
+    domains: [],
+    hubs: [],
     tests: ['tests/db/orders.test.ts', 42],
-    tables: ['orders'],
+    mapHash: 'h',
+    source: 'orientation',
   })),
 }));
 
@@ -31,12 +35,15 @@ afterEach(() => {
 });
 
 describe('blast radius estendido (contrato do codemap-banco)', () => {
-  it('usa tests/tables do blast radius quando existirem', async () => {
+  it('usa tests e as entidades de banco (dbEntities) do blast radius', async () => {
     const radius = await orientationBlastRadiusExtension({
       scope: testProjectScope(),
       changedFiles: ['src/orders.ts'],
     });
-    expect(radius).toEqual({ tests: ['tests/db/orders.test.ts'], tables: ['orders'] });
+    expect(radius).toEqual({
+      tests: ['tests/db/orders.test.ts'],
+      dbEntities: ['public.orders', 'orders', 'fechar_comanda'],
+    });
   });
 
   it('teste de banco que não importa o módulo entra no portão pelo blast radius', async () => {
@@ -57,12 +64,17 @@ describe('blast radius estendido (contrato do codemap-banco)', () => {
     run('add', '-A');
     run('-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-qm', 'fixture');
     write('src/orders.ts', 'export const total = 2;\n');
-    const exec = vi.fn<RegressionExec>(async () => ({
-      exitCode: 0,
-      timedOut: false,
-      stdout: '',
-      stderr: '',
-    }));
+    const exec = vi.fn<RegressionExec>(async (_file, args, options) => {
+      const outFile = args.find((arg) => arg.startsWith('--outputFile='))!.slice('--outputFile='.length);
+      fs.writeFileSync(outFile, JSON.stringify({
+        testResults: [{
+          name: path.join(options.cwd, 'tests/db/orders.test.ts'),
+          status: 'passed',
+          assertionResults: [{ status: 'passed', fullName: 'fecha comanda' }],
+        }],
+      }));
+      return { exitCode: 0, timedOut: false, stdout: '', stderr: '' };
+    });
 
     const result = await runRegressionGate(
       { scope: testProjectScope({ rootRealPath: root }) },

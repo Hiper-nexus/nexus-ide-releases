@@ -78,8 +78,10 @@ import {
 } from "./jev-handoff-review";
 import {
   evaluateHandoffRegressionGate,
+  REGRESSION_UNVERIFIED_PREFIX,
   type RegressionHandoffVerdict,
 } from "../regression-gate/regression-gate-handoff";
+import { getSessionSpawnedAtMs } from "../pty/pty-manager";
 import { missionExecutionBaseSha } from "./mission-execution-scope";
 
 function buildOverclockArtifacts(
@@ -422,6 +424,11 @@ const handoffSubmitTool: McpToolDef = {
         scope: executionScopeFor(ctx),
         declaredFiles,
         baseSha,
+        startedAtMs: ctx.sessionId
+          ? (getSessionSpawnedAtMs(ctx.sessionId) ?? undefined)
+          : undefined,
+        signal: invocation?.signal,
+        authority: invocation,
       });
       if (regressionVerdict.kind === "retry") {
         throw new Error(regressionVerdict.message);
@@ -493,6 +500,11 @@ const handoffSubmitTool: McpToolDef = {
         : declaredStatus;
     if (regressionVerdict.kind === "exhausted") {
       summary = `[testes impactados falhando] ${summary}`;
+    } else if (
+      regressionVerdict.kind === "accepted" &&
+      regressionVerdict.unverified
+    ) {
+      summary = `${REGRESSION_UNVERIFIED_PREFIX} ${summary}`;
     }
     assertMcpInvocationCurrent(invocation);
     const fromAgent = ctx.agentName ?? ctx.label;
@@ -554,7 +566,9 @@ const handoffSubmitTool: McpToolDef = {
       ...(contractVerdict.kind === "exhausted"
         ? [deliveryContractExhaustedArtifact(contractVerdict, declaredStatus)]
         : []),
-      ...(regressionVerdict.kind === "exhausted"
+      ...((regressionVerdict.kind === "accepted" ||
+        regressionVerdict.kind === "exhausted") &&
+      regressionVerdict.artifact
         ? [regressionVerdict.artifact]
         : []),
       ...(telemetry ? [embedTelemetryArtifact(telemetry)] : []),

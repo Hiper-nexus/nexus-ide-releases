@@ -77,7 +77,7 @@ function fakeVitest(failing: readonly string[] = []) {
           status: failing.includes(file) ? 'failed' : 'passed',
           assertionResults: failing.includes(file)
             ? [{ status: 'failed', fullName: 'soma', failureMessages: ['expected 2 to be 3'] }]
-            : [],
+            : [{ status: 'passed', fullName: 'ok' }],
         })),
       }),
     );
@@ -134,6 +134,26 @@ describe('runRegressionGate', () => {
     expect(result.warnings.join(' ')).toContain('instável(is), passaram na 2ª tentativa: src/b.test.ts');
   });
 
+  it('retentativa respeita o prazo total: nunca ganha um timeout novo inteiro', async () => {
+    const { root, scope } = project();
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    let clock = 0;
+    const failing = fakeVitest(['src/b.test.ts']);
+    const timeouts: number[] = [];
+    const exec = vi.fn<RegressionExec>(async (file, args, options) => {
+      timeouts.push(options.timeoutMs);
+      clock += 100_000; // primeira execução falha depois de 100s
+      return failing.exec(file, args, options);
+    });
+
+    const result = await runRegressionGate({ scope, timeoutMs: 120_000 }, { exec, now: () => clock });
+
+    expect(timeouts[0]).toBeLessThanOrEqual(120_000);
+    // O que sobra (20s) é o teto da retentativa — não outros 120s.
+    for (const timeout of timeouts.slice(1)) expect(timeout).toBeLessThanOrEqual(20_000);
+    expect(result.status).toBe('failed');
+  });
+
   it('sem runner no projeto alvo: fail-open com aviso, sem executar nada', async () => {
     const { root, scope } = project({ runner: 'none' });
     write(root, 'src/a.ts', 'export const a = 2;\n');
@@ -143,6 +163,7 @@ describe('runRegressionGate', () => {
 
     expect(result.status).toBe('unavailable');
     expect(result.warnings.join(' ')).toContain('nenhum runner de teste detectado');
+    expect(formatRegressionGateReport(result)).toContain('NÃO VERIFICADO');
     expect(exec).not.toHaveBeenCalled();
   });
 
@@ -198,9 +219,193 @@ describe('runRegressionGate', () => {
     );
 
     expect(result.status).toBe('passed');
-    expect(result.invariantsTouched).toEqual([{ id: 'INV-1', regra: 'c nunca muda com a' }]);
+    expect(result.invariantsTouched).toEqual([{ id: 'INV-1', regra: 'c nunca muda com a', violated: false }]);
     expect(calls[0]).toContain('src/c.test.ts');
     expect(result.warnings.join(' ')).toContain('blast radius estendido indisponível');
+  });
+
+  it('commit de outro writer invalida o cache mesmo com o mesmo arquivo sujo', async () => {
+    const { root, scope } = project();
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    const { exec } = fakeVitest();
+    await runRegressionGate({ scope }, { exec });
+
+    write(root, 'src/b.test.ts', "import { b } from './b';\n// mudou\n");
+    const git = new ProcessGitRunner();
+    git.run(root, ['add', 'src/b.test.ts']);
+    git.run(root, ['-c', 'user.name=o', '-c', 'user.email=o@example.invalid', 'commit', '-qm', 'outro writer']);
+    const second = await runRegressionGate({ scope }, { exec });
+
+    expect(second.cached).toBe(false);
+    expect(exec).toHaveBeenCalledTimes(2);
+    expect(second.headSha).toMatch(/^[a-f0-9]{40}$/u);
+  });
+
+  it('npm ci sem mudar o diff invalida o cache (dependências fazem parte do estado)', async () => {
+    const { root, scope } = project();
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    write(root, 'node_modules/.package-lock.json', '{}');
+    const { exec } = fakeVitest();
+    await runRegressionGate({ scope }, { exec });
+    const later = new Date(Date.now() + 5_000);
+    fs.utimesSync(path.join(root, 'node_modules/.package-lock.json'), later, later);
+
+    const second = await runRegressionGate({ scope }, { exec });
+
+    expect(second.cached).toBe(false);
+    expect(exec).toHaveBeenCalledTimes(2);
+  });
+
+  it('edição concorrente durante os testes descarta o resultado e não entra no cache', async () => {
+    const { root, scope } = project();
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    const inner = fakeVitest();
+    let edits = 0;
+    const exec = vi.fn<RegressionExec>(async (file, args, options) => {
+      const out = await inner.exec(file, args, options);
+      if (edits++ === 0) write(root, 'src/a.ts', 'export const a = 99;\n'); // outro writer
+      return out;
+    });
+
+    const first = await runRegressionGate({ scope }, { exec });
+    expect(first.status).toBe('unavailable');
+    expect(first.warnings.join(' ')).toContain('o checkout mudou durante a verificação');
+
+    const second = await runRegressionGate({ scope }, { exec });
+    expect(second.cached).toBe(false);
+    expect(second.status).toBe('passed');
+  });
+
+  it('trabalho commitado depois do spawn entra no diff mesmo com a árvore limpa', async () => {
+    const { root, scope } = project();
+    const startedAtMs = Date.now();
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    const git = new ProcessGitRunner();
+    git.run(root, ['add', '-A']);
+    git.run(root, ['-c', 'user.name=w', '-c', 'user.email=w@example.invalid', 'commit', '-qm', 'writer']);
+    const { exec } = fakeVitest(['src/b.test.ts']);
+
+    const result = await runRegressionGate({ scope, startedAtMs }, { exec });
+
+    expect(result.baseSource).toBe('spawn');
+    expect(result.changedFiles).toEqual(['src/a.ts']);
+    expect(result.status).toBe('failed');
+  });
+
+  it('WIP que já estava sujo antes do spawn não é cobrado de quem entrega', async () => {
+    const { root, scope } = project();
+    write(root, 'src/c.ts', 'export const c = 30;\n'); // WIP de outra pessoa
+    const old = new Date(Date.now() - 60_000);
+    fs.utimesSync(path.join(root, 'src/c.ts'), old, old);
+    const startedAtMs = Date.now() - 1_000;
+    write(root, 'src/a.ts', 'export const a = 2;\n'); // o delta de quem entrega
+    const { exec } = fakeVitest(['src/c.test.ts']);
+
+    const result = await runRegressionGate({ scope, startedAtMs }, { exec });
+
+    expect(result.status).toBe('passed');
+    expect(result.failures).toEqual([]);
+    expect(result.inheritedFailures.map((failure) => failure.file)).toEqual(['src/c.test.ts']);
+    expect(result.warnings.join(' ')).toContain('WIP anterior ao seu spawn');
+  });
+
+  it('dois arquivos relacionados mudando juntos não viram "área sem teste"', async () => {
+    const { root, scope } = project();
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    write(root, 'src/b.ts', "import { a } from './a';\nexport const b = a + 2;\n");
+    const { exec } = fakeVitest();
+
+    const result = await runRegressionGate({ scope }, { exec });
+
+    expect(result.untestedFiles).toEqual([]);
+  });
+
+  it('módulo removido: os testes de quem ainda o importa entram no conjunto', async () => {
+    const { root, scope } = project();
+    fs.rmSync(path.join(root, 'src/a.ts'));
+    fs.rmSync(path.join(root, 'src/a.test.ts'));
+    const { exec, calls } = fakeVitest(['src/b.test.ts']);
+
+    const result = await runRegressionGate({ scope }, { exec });
+
+    expect(result.changedFiles).toEqual(['src/a.test.ts', 'src/a.ts']);
+    expect(calls[0]).toContain('src/b.test.ts');
+    expect(result.status).toBe('failed');
+  });
+
+  it('import por alias do tsconfig (`@/…`) também puxa o teste de quem importa', async () => {
+    const { root, scope } = project();
+    write(root, 'tsconfig.json', JSON.stringify({ compilerOptions: { baseUrl: '.', paths: { '@/*': ['src/*'] } } }));
+    write(root, 'src/d.ts', "import { c } from '@/c';\nexport const d = c;\n");
+    write(root, 'src/d.test.ts', "import { d } from './d';\n");
+    const git = new ProcessGitRunner();
+    git.run(root, ['add', '-A']);
+    git.run(root, ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-qm', 'alias']);
+    write(root, 'src/c.ts', 'export const c = 4;\n');
+    const { exec, calls } = fakeVitest();
+
+    await runRegressionGate({ scope }, { exec });
+
+    expect(calls[0]).toContain('src/d.test.ts');
+  });
+
+  it('invariante do modelo de negócio (.context) tocado: seus testes rodam e a violação aparece', async () => {
+    const { root, scope } = project();
+    const doc = {
+      schemaVersion: 1,
+      flows: [],
+      invariants: [
+        {
+          id: 'fechar_comanda#1',
+          fluxo: 'fechar_comanda',
+          regra: 'comanda fechada não recebe item',
+          origem: 'supabase/migrations/001.sql:10',
+          arquivos: ['src/a.ts'],
+          tabelas: ['comandas'],
+          funcoes: [],
+          testes: ['src/c.test.ts'],
+        },
+      ],
+    };
+    write(
+      root,
+      '.context/docs/business-model.md',
+      `# Modelo\n\n<!-- nexus:business-model:v1 -->\n\n\`\`\`json\n${JSON.stringify(doc)}\n\`\`\`\n`,
+    );
+    const git = new ProcessGitRunner();
+    git.run(root, ['add', '-A']);
+    git.run(root, ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-qm', 'modelo']);
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    const { exec, calls } = fakeVitest(['src/c.test.ts']);
+
+    const result = await runRegressionGate({ scope }, { exec });
+
+    expect(calls[0]).toContain('src/c.test.ts');
+    expect(result.status).toBe('failed');
+    expect(result.invariantsTouched).toEqual([
+      { id: 'fechar_comanda#1', regra: 'comanda fechada não recebe item', violated: true },
+    ]);
+    expect(formatRegressionGateReport(result)).toContain('Invariantes de negócio VIOLADOS');
+  });
+
+  it('invariante alcançado pela tabela do blast radius (dbEntities) também entra', async () => {
+    const { root, scope } = project();
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    const { exec, calls } = fakeVitest();
+
+    const result = await runRegressionGate(
+      { scope },
+      {
+        exec,
+        extensions: {
+          blastRadius: () => ({ tests: [], dbEntities: ['public.comandas', 'comandas'] }),
+          invariants: () => [{ id: 'INV-T', regra: 'total confere', tabelas: ['comandas'], testes: ['src/c.test.ts'] }],
+        },
+      },
+    );
+
+    expect(calls[0]).toContain('src/c.test.ts');
+    expect(result.invariantsTouched.map((invariant) => invariant.id)).toEqual(['INV-T']);
   });
 
   it('checkout limpo não roda nada', async () => {
@@ -234,14 +439,15 @@ describe('evaluateHandoffRegressionGate', () => {
     expect(exec).toHaveBeenCalledTimes(2);
   });
 
-  it('sem runner aceita (fail-open) sem artifact; passou registra em artifact', async () => {
+  it('sem runner aceita (não bloqueia por infra) mas marca NÃO verificado; passou registra em artifact', async () => {
     const { root, scope } = project({ runner: 'none' });
     write(root, 'src/a.ts', 'export const a = 2;\n');
     const verdict = await evaluateHandoffRegressionGate(
       { sessionId: 'sess-2', scope },
       { enabled: () => true },
     );
-    expect(verdict).toEqual({ kind: 'accepted' });
+    expect(verdict).toMatchObject({ kind: 'accepted', unverified: true });
+    expect(verdict.kind === 'accepted' && verdict.artifact?.payload.status).toBe('unavailable');
 
     const withRunner = project();
     write(withRunner.root, 'src/a.ts', 'export const a = 2;\n');

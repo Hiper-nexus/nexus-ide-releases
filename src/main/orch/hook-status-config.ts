@@ -17,6 +17,9 @@
 //    KIMI_CODE_HOME overlay's config.toml (excluded from auth sync-back).
 //  - Grok: dedicated `hooks/nexus.json` inside the private GROK_HOME overlay
 //    (user hooks in the real hooks/ dir are symlinked through).
+//  - Stop também chama o portão de regressão (/hook/regression) nos quatro.
+//    Claude e Codex honram `decision: block`; se Kimi/Grok ignorarem o JSON,
+//    o hook só não bloqueia (o endpoint é fail-open).
 //
 // Every command carries the NEXUS_HOOK_STATUS marker, references
 // $NEXUS_HOOK_URL / $NEXUS_GATE_TOKEN (never a literal secret), and ends in
@@ -163,6 +166,10 @@ export function mergeKimiStatusHooks(
     event: spec.hookKey,
     command: spec.command,
   }));
+  // Stop → /hook/regression, como no Claude/Codex. O comando carrega o marker,
+  // então a reescrita por spawn continua idempotente. Sem campo de timeout
+  // (o schema do Kimi não o documenta): o curl limita a espera sozinho.
+  nexusEntries.push({ event: 'Stop', command: makeRegressionHookCommand() });
   return { ...config, hooks: [...userEntries, ...nexusEntries] };
 }
 
@@ -181,5 +188,7 @@ export function grokStatusHooksDocument(): Record<string, unknown> {
   for (const spec of grokHookSpecs()) {
     hooks[spec.hookKey] = [buildNestedEntry(spec.command)];
   }
+  // Stop → /hook/regression, depois do status (mesma ordem do Claude).
+  hooks.Stop = [...(hooks.Stop ?? []), buildNestedEntry(makeRegressionHookCommand())];
   return { hooks };
 }

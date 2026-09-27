@@ -80,7 +80,10 @@ const regressionGate = vi.hoisted(() => ({
   >(async () => ({ kind: "skipped", reason: "mocked" })),
 }));
 
-vi.mock("../regression-gate/regression-gate-handoff", () => regressionGate);
+vi.mock("../regression-gate/regression-gate-handoff", () => ({
+  ...regressionGate,
+  REGRESSION_UNVERIFIED_PREFIX: "[testes impactados não verificados]",
+}));
 
 import { buildDomainTools } from "./tools-domain";
 import {
@@ -386,6 +389,51 @@ describe("handoff MCP stop receipt", () => {
     expect(jevReview.reviewMissionHandoff).not.toHaveBeenCalled();
   });
 
+  it("portão de regressão sem verificar: aceita, mas o resumo e o artifact dizem 'não verificado'", async () => {
+    regressionGate.evaluateHandoffRegressionGate.mockResolvedValueOnce({
+      kind: "accepted",
+      unverified: true,
+      artifact: {
+        kind: "nexus.regressionGate",
+        payload: {
+          status: "unavailable",
+          diffHash: "h",
+          headSha: null,
+          baseSha: null,
+          runner: "vitest",
+          testsRun: [],
+          testsNotRun: ["src/a.test.ts"],
+          failures: [],
+          inheritedFailures: [],
+          untestedFiles: [],
+          invariantsTouched: [],
+          warnings: ["vitest excedeu 100000ms"],
+        },
+      },
+    });
+    mocks.submit.mockReturnValue(handoff("unverified"));
+
+    await submitTool().handler(
+      {
+        status: "success",
+        summary: "Worker reports that implementation is complete.",
+      },
+      context(),
+      invocation(),
+    );
+
+    const persisted = mocks.submit.mock.calls[0]?.[0] as {
+      status?: string;
+      summary?: string;
+      artifacts?: Array<{ kind: string }>;
+    };
+    expect(persisted?.status).toBe("success");
+    expect(persisted?.summary).toMatch(/^\[testes impactados não verificados\] /);
+    expect(persisted?.artifacts).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: "nexus.regressionGate" })]),
+    );
+  });
+
   it("portão de regressão esgotado: persiste como blocked com as falhas em artifact", async () => {
     regressionGate.evaluateHandoffRegressionGate.mockResolvedValueOnce({
       kind: "exhausted",
@@ -395,9 +443,13 @@ describe("handoff MCP stop receipt", () => {
         payload: {
           status: "failed",
           diffHash: "h",
+          headSha: null,
+          baseSha: null,
           runner: "vitest",
           testsRun: ["src/a.test.ts"],
+          testsNotRun: [],
           failures: [{ file: "src/a.test.ts", message: "soma" }],
+          inheritedFailures: [],
           untestedFiles: [],
           invariantsTouched: [],
           warnings: [],
