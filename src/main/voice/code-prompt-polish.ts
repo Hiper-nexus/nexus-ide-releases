@@ -24,7 +24,10 @@ export const CODE_PROMPT_POLISH_TIMEOUT_MS = 8_000;
 const XAI_CHAT_ENDPOINT = 'https://api.x.ai/v1/chat/completions';
 // xAI aposentou o grok-4-fast (`grok models` na CLI instalada, 2026-09-27:
 // só grok-4.7/grok-4.7-build-fast/grok-4.6/grok-4.5 continuam na conta).
-const XAI_POLISH_MODEL = 'grok-4.7';
+// Polimento é sensível a latência (timeout de 8 s, até 1.200 tokens): o
+// grok-4.7 roda ~82 tok/s (docs/models/estudo-2026-09.md) e estouraria o prazo
+// em textos longos; o build-fast tem ~2× a velocidade a custo irrelevante aqui.
+const XAI_POLISH_MODEL = 'grok-4.7-build-fast';
 const MAX_POLISH_TOKENS = 1_200;
 
 export const CODE_PROMPT_POLISH_INSTRUCTIONS = [
