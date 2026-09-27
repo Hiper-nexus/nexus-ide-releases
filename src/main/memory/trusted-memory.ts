@@ -3,6 +3,10 @@ import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import {
+  distillHandoffSummary,
+  type DistillHandoffSummaryDeps,
+} from '../jev/jev-memory-distill';
+import {
   getWorkspaceMemoryStore,
   type MemoryKind,
   type RetainResult,
@@ -14,6 +18,8 @@ export const TRUSTED_MEMORY_EVENT_TYPES = [
   'resolved-problem',
   'architecture-rule',
   'approved-merge',
+  'session-digest',
+  'operator-preference',
 ] as const;
 
 export const trustedMemoryEventSchema = z
@@ -51,6 +57,19 @@ export const acceptedHandoffMemoryInputSchema = z
     dispatchId: trustedIdentifierSchema,
     status: z.literal('success'),
     acceptedAt: z.number().int().nonnegative().max(8_640_000_000_000_000),
+    /**
+     * Resumo destilado do handoff (texto do agente, Main-validado pelo aceite).
+     * Só entra quando o Jev (superfície memoryDistill) aprova; colapsado em
+     * uma linha e limitado a 400 caracteres.
+     */
+    distilledSummary: z
+      .string()
+      .trim()
+      .min(1)
+      .max(400)
+      .transform((value) => value.replace(/\s+/g, ' ').trim())
+      .refine((value) => value.length > 0)
+      .optional(),
     evidenceIds: z
       .array(trustedIdentifierSchema)
       .max(32)
@@ -131,6 +150,16 @@ const TRUSTED_MEMORY_POLICY: Readonly<
     kind: 'fact',
     importance: 5,
   },
+  'session-digest': {
+    label: 'Session digest',
+    kind: 'fact',
+    importance: 3,
+  },
+  'operator-preference': {
+    label: 'Operator preference',
+    kind: 'preference',
+    importance: 4,
+  },
 };
 
 const TRUSTED_CONTENT_MAX_BYTES = 7_800;
@@ -166,7 +195,8 @@ function trustedContent(
 
 /**
  * Converts a physically accepted handoff into a closed Main-owned projection.
- * There is intentionally no summary/artifact/free-text field in this input.
+ * The only free text is `distilledSummary`: agent text that the Jev
+ * memoryDistill surface approved, sanitized to one line of at most 400 chars.
  */
 export function buildAcceptedHandoffTrustedEvent(
   rawInput: AcceptedHandoffMemoryInput,
@@ -194,6 +224,9 @@ export function buildAcceptedHandoffTrustedEvent(
       `Workflow revision: ${input.evidenceBinding.workflowRevision}`,
     );
   }
+  if (input.distilledSummary) {
+    lines.push(`Summary: ${input.distilledSummary}`);
+  }
   return trustedMemoryEventSchema.parse({
     type: 'accepted-handoff',
     title: 'Accepted task handoff',
@@ -219,6 +252,7 @@ function requireTrustedMemoryEnabled(): void {
 export function retainTrustedMemory(
   scope: ProjectExecutionScope,
   rawEvent: TrustedMemoryEvent,
+  options: { supersedes?: string } = {},
 ): RetainResult {
   requireTrustedMemoryEnabled();
   const event = trustedMemoryEventSchema.parse(rawEvent);
@@ -227,37 +261,49 @@ export function retainTrustedMemory(
       'accepted-handoff memory requires the canonical Main-owned projection',
     );
   }
-  return retainParsedTrustedMemory(scope, event);
+  return retainParsedTrustedMemory(scope, event, options);
 }
 
 function retainParsedTrustedMemory(
   scope: ProjectExecutionScope,
   event: TrustedMemoryEvent,
+  options: { supersedes?: string } = {},
 ): RetainResult {
   const policy = TRUSTED_MEMORY_POLICY[event.type];
-  return getWorkspaceMemoryStore(scope).retain({
+  const store = getWorkspaceMemoryStore(scope);
+  const source = `trusted:${event.type}`;
+  // Evento trusted só substitui linha da própria classe: nunca nota do
+  // operador, memória de agente ou outra classe trusted.
+  if (options.supersedes && store.activeWorkspaceSource(options.supersedes) !== source) {
+    throw new Error(`trusted ${event.type} can only supersede an active ${source} memory`);
+  }
+  return store.retain({
     content: trustedContent(event, policy),
     kind: policy.kind,
     importance: policy.importance,
     scope: 'workspace',
-    source: `trusted:${event.type}`,
+    source,
+    ...(options.supersedes ? { supersedes: options.supersedes } : {}),
   });
 }
 
 export function retainAcceptedHandoffMemory(
   scope: ProjectExecutionScope,
   rawInput: AcceptedHandoffMemoryInput,
+  options: { supersedes?: string } = {},
 ): RetainResult {
   requireTrustedMemoryEnabled();
   return retainParsedTrustedMemory(
     scope,
     buildAcceptedHandoffTrustedEvent(rawInput),
+    options,
   );
 }
 
 export function retainAcceptedHandoffMemoryBestEffort(
   scope: ProjectExecutionScope,
   rawInput: AcceptedHandoffMemoryInput,
+  options: { supersedes?: string } = {},
 ): RetainResult | null {
   if (
     !getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.workspaceMemory)
@@ -265,7 +311,7 @@ export function retainAcceptedHandoffMemoryBestEffort(
     return null;
   }
   try {
-    return retainAcceptedHandoffMemory(scope, rawInput);
+    return retainAcceptedHandoffMemory(scope, rawInput, options);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (!message.includes('requires configureWorkspaceMemory')) {
@@ -279,12 +325,50 @@ export function retainAcceptedHandoffMemoryBestEffort(
 }
 
 /**
+ * Retenção do handoff aceito com destilação do resumo: a linha de
+ * identificadores nasce na hora (no mesmo tick do aceite, como antes do
+ * Jev); depois o Jev (superfície memoryDistill) decide se o resumo do agente
+ * vale memória e, se sim, uma linha com o `Summary:` destilado substitui a
+ * primeira. Fail-open total — sair do app ou Jev fora do ar mantém a linha
+ * de identificadores. Nunca lança.
+ */
+export async function retainAcceptedHandoffMemoryDistilledBestEffort(
+  scope: ProjectExecutionScope,
+  rawInput: AcceptedHandoffMemoryInput,
+  agentSummary: string | null | undefined,
+  deps: DistillHandoffSummaryDeps = {},
+): Promise<RetainResult | null> {
+  if (
+    !getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.workspaceMemory)
+  ) {
+    return null;
+  }
+  const base = retainAcceptedHandoffMemoryBestEffort(scope, rawInput);
+  if (!base || !agentSummary?.trim()) return base;
+  let distilled: string | null = null;
+  try {
+    distilled = await distillHandoffSummary({ summary: agentSummary }, deps);
+  } catch {
+    // fail-open: fica a linha de identificadores.
+  }
+  if (!distilled) return base;
+  return (
+    retainAcceptedHandoffMemoryBestEffort(
+      scope,
+      { ...rawInput, distilledSummary: distilled },
+      { supersedes: base.id },
+    ) ?? base
+  );
+}
+
+/**
  * Trusted retention is derived bookkeeping. Disk/native-module failure must
  * never roll back a handoff or keep an agent mission waiting.
  */
 export function retainTrustedMemoryBestEffort(
   scope: ProjectExecutionScope,
   rawEvent: TrustedMemoryEvent,
+  options: { supersedes?: string } = {},
 ): RetainResult | null {
   if (
     !getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.workspaceMemory)
@@ -292,7 +376,7 @@ export function retainTrustedMemoryBestEffort(
     return null;
   }
   try {
-    return retainTrustedMemory(scope, rawEvent);
+    return retainTrustedMemory(scope, rawEvent, options);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (!message.includes('requires configureWorkspaceMemory')) {

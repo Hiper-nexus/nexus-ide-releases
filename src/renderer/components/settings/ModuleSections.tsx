@@ -437,8 +437,10 @@ export function SquadsSection() {
     browserTool: true,
     researchTriage: true,
     delegation: true,
+    memoryDistill: true,
   });
   const [designPro, setDesignPro] = useState(true);
+  const [memoryInjection, setMemoryInjection] = useState(true);
   const [designDirection, setDesignDirection] = useState<DesignDirection>('auto');
   const [designVariance, setDesignVariance] = useState(5);
   const [designMotion, setDesignMotion] = useState(5);
@@ -461,8 +463,10 @@ export function SquadsSection() {
         browserTool: o.jevSurfaces?.browserTool !== false,
         researchTriage: o.jevSurfaces?.researchTriage !== false,
         delegation: o.jevSurfaces?.delegation !== false,
+        memoryDistill: o.jevSurfaces?.memoryDistill !== false,
       });
       setDesignPro(o.designPro);
+      setMemoryInjection(o.workspaceMemoryInjection !== false);
       setDesignDirection(o.designDirection ?? 'auto');
       setDesignVariance(o.designVariance ?? 5);
       setDesignMotion(o.designMotion ?? 5);
@@ -856,6 +860,10 @@ export function SquadsSection() {
               ['browserTool', 'Navegador do agente (desempate, julgamento, extração)'],
               ['researchTriage', 'Pesquisa de dados (melhor resposta + falta pesquisar)'],
               ['delegation', 'Delegação automática (dividir pedidos em panes)'],
+              [
+                'memoryDistill',
+                'Destilação de memória (handoff aceito, fim de sessão, preferência do operador)',
+              ],
             ] as const
           ).map(([surface, label]) => (
             <OrchestrationToggle
@@ -881,6 +889,15 @@ export function SquadsSection() {
           onChange={(checked) => {
             setDesignPro(checked);
             void window.nexus.settings.orchSet({ designPro: checked });
+          }}
+        />
+        <OrchestrationToggle
+          checked={memoryInjection}
+          title="Memória do projeto nos prompts"
+          detail="Anexa as memórias confiáveis do projeto ao início de cada pane. Desligar não apaga nem deixa de gravar memórias."
+          onChange={(checked) => {
+            setMemoryInjection(checked);
+            void window.nexus.settings.orchSet({ workspaceMemoryInjection: checked });
           }}
         />
         <OrchestrationToggle

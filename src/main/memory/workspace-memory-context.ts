@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
+import { getOrchSettings } from '../persistence/settings-store';
+import { mountPromptContextBlocks } from '../orch/prompt-context-blocks';
 import {
   getWorkspaceMemoryStore,
   type MemoryRecallHit,
@@ -115,7 +117,7 @@ export function formatAutoRecallContext(
     const source = hit.source ? `; source=${hit.source}` : '';
     const prefix =
       `- [${hit.kind}; ${hit.scope}; importance=${hit.importance}${source}] `;
-    const line = `${prefix}${sanitizeMemoryLine(hit.content)}\n`;
+    const line = `${sanitizeMemoryLine(`${prefix}${hit.content}`)}\n`;
     const usedBytes = Buffer.byteLength(`${header}${body}${footer}`, 'utf8');
     const availableBytes = maxBytes - usedBytes;
     if (availableBytes <= 0) break;
@@ -133,6 +135,78 @@ export function formatAutoRecallContext(
 }
 
 /**
+ * Injeção automática do bloco: flag de memória ligada e a opção
+ * `workspaceMemoryInjection` (desligar só tira o bloco dos prompts; o resto
+ * da memória segue). Settings indisponíveis: default ligado.
+ */
+function injectionEnabled(): boolean {
+  if (!getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.workspaceMemory)) return false;
+  try {
+    return getOrchSettings().workspaceMemoryInjection !== false;
+  } catch {
+    return true;
+  }
+}
+
+function blockFrom(
+  recall: () => readonly MemoryRecallHit[],
+  phase: AutoRecallPhase,
+  maxBytes: number,
+): string | null {
+  try {
+    return formatAutoRecallContext(recall(), phase, maxBytes) || null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    // Vitest/utility processes intentionally have no Electron userData unless
+    // they configure a test bank. This is availability, not corruption.
+    if (!message.includes('requires configureWorkspaceMemory')) {
+      console.warn('[memory] automatic recall unavailable:', message);
+    }
+    return null;
+  }
+}
+
+/**
+ * Bloco `<workspace-memory>` com as memórias trusted relevantes ao prompt,
+ * para o ponto de montagem de contexto (prompt-context-blocks): brief de
+ * spawn e hook UserPromptSubmit. null com a injeção desligada, prompt que já
+ * traz o bloco, banco vazio/sem hits ou falha — nunca bloqueia o prompt.
+ */
+export function workspaceMemoryContextBlock(
+  scope: ProjectExecutionScope,
+  prompt: string,
+  phase: AutoRecallPhase = 'execution',
+): string | null {
+  if (prompt.includes(AUTO_RECALL_MARKER) || !injectionEnabled()) return null;
+  const query = buildRecallQuery(prompt);
+  if (!query) return null;
+  return blockFrom(
+    () =>
+      getWorkspaceMemoryStore(scope).recall({
+        query,
+        limit: AUTO_RECALL_LIMIT,
+        trustedOnly: true,
+      }),
+    phase,
+    AUTO_RECALL_DEFAULT_MAX_BYTES,
+  );
+}
+
+/**
+ * Bloco para quem ainda não tem prompt (instructions do MCP do "+ Pane"):
+ * as memórias trusted do workspace por importância e recência, no teto
+ * mínimo de bytes — as instructions já levam doutrina e modelo de negócio.
+ */
+export function standingWorkspaceMemoryBlock(scope: ProjectExecutionScope): string | null {
+  if (!injectionEnabled()) return null;
+  return blockFrom(
+    () => getWorkspaceMemoryStore(scope).topTrustedWorkspace(AUTO_RECALL_LIMIT),
+    'execution',
+    AUTO_RECALL_MIN_BYTES,
+  );
+}
+
+/**
  * Adds at most 3 KB of relevant memory before an agent brief. Memory lookup is
  * auxiliary: a disabled/unavailable bank never blocks planning or execution.
  */
@@ -141,29 +215,5 @@ export function withAutoRecalledWorkspaceMemory(
   prompt: string,
   phase: AutoRecallPhase,
 ): string {
-  if (
-    prompt.includes(AUTO_RECALL_MARKER) ||
-    !getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.workspaceMemory)
-  ) {
-    return prompt;
-  }
-  const query = buildRecallQuery(prompt);
-  if (!query) return prompt;
-  try {
-    const hits = getWorkspaceMemoryStore(scope).recall({
-      query,
-      limit: AUTO_RECALL_LIMIT,
-      trustedOnly: true,
-    });
-    const context = formatAutoRecallContext(hits, phase);
-    return context ? `${context}\n\n${prompt}` : prompt;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    // Vitest/utility processes intentionally have no Electron userData unless
-    // they configure a test bank. This is availability, not corruption.
-    if (!message.includes('requires configureWorkspaceMemory')) {
-      console.warn('[memory] automatic recall unavailable:', message);
-    }
-    return prompt;
-  }
+  return mountPromptContextBlocks(prompt, [workspaceMemoryContextBlock(scope, prompt, phase)]);
 }

@@ -23,7 +23,7 @@ import { parseReviewReport } from "../context/review-council";
 import { parseTrustedEvidence } from "../context/sensor-broker";
 import type { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
 import type { MissionEngine } from "./mission-engine";
-import { retainAcceptedHandoffMemoryBestEffort } from "../memory/trusted-memory";
+import { retainAcceptedHandoffMemoryDistilledBestEffort } from "../memory/trusted-memory";
 import {
   encodeJsonArray,
   parseJsonArray,
@@ -843,24 +843,30 @@ export class ScopedHandoffStore {
         committed.taskDispatch?.handoffId === committed.handoff.id &&
         committed.taskDispatch.handoffAcceptedAt !== undefined
       ) {
-        retainAcceptedHandoffMemoryBestEffort(this.#binding.scope, {
-          handoffId: committed.handoff.id,
-          missionId: committed.taskDispatch.missionId,
-          taskId: committed.taskDispatch.taskId,
-          dispatchId: committed.taskDispatch.id,
-          status: committed.handoff.status,
-          acceptedAt: committed.taskDispatch.handoffAcceptedAt,
-          ...(committed.handoff.evidenceTrust === "nexus-trusted" &&
-          committed.handoff.evidenceBinding
-            ? {
-                evidenceIds: committed.handoff.evidenceIds.slice(0, 32),
-                evidenceBinding: committed.handoff.evidenceBinding,
-              }
-            : {}),
-          ...(committed.handoff.mcpProvenance
-            ? { mcpReceiptId: committed.handoff.mcpProvenance.receiptId }
-            : {}),
-        });
+        // Best-effort e assíncrono de propósito: a destilação do resumo é uma
+        // chamada remota ao Jev e não pode segurar o aceite do handoff.
+        void retainAcceptedHandoffMemoryDistilledBestEffort(
+          this.#binding.scope,
+          {
+            handoffId: committed.handoff.id,
+            missionId: committed.taskDispatch.missionId,
+            taskId: committed.taskDispatch.taskId,
+            dispatchId: committed.taskDispatch.id,
+            status: committed.handoff.status,
+            acceptedAt: committed.taskDispatch.handoffAcceptedAt,
+            ...(committed.handoff.evidenceTrust === "nexus-trusted" &&
+            committed.handoff.evidenceBinding
+              ? {
+                  evidenceIds: committed.handoff.evidenceIds.slice(0, 32),
+                  evidenceBinding: committed.handoff.evidenceBinding,
+                }
+              : {}),
+            ...(committed.handoff.mcpProvenance
+              ? { mcpReceiptId: committed.handoff.mcpProvenance.receiptId }
+              : {}),
+          },
+          committed.handoff.summary,
+        ).catch(() => {});
       }
     }
     return {

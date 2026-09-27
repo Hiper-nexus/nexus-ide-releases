@@ -24,7 +24,8 @@ export type JevSurface =
   | 'taskRouting'
   | 'browserTool'
   | 'researchTriage'
-  | 'delegation';
+  | 'delegation'
+  | 'memoryDistill';
 
 const JEV_SURFACES: readonly JevSurface[] = [
   'handoffReview',
@@ -38,6 +39,7 @@ const JEV_SURFACES: readonly JevSurface[] = [
   'browserTool',
   'researchTriage',
   'delegation',
+  'memoryDistill',
 ];
 
 /**

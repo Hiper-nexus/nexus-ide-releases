@@ -82,7 +82,7 @@ import type { MissionPaneAuthoritySeal } from '../../shared/orch-types';
 import { sanitizeMissionOrchestratorExitOutput } from './mission-orchestrator-exit-policy';
 import {
   autoRecallPhaseForAgent,
-  withAutoRecalledWorkspaceMemory,
+  workspaceMemoryContextBlock,
 } from '../memory/workspace-memory-context';
 import { getOrchSettings } from '../persistence/settings-store';
 import { isOperatorChoicePolicy } from '../../shared/squad-cli-policy';
@@ -1027,7 +1027,7 @@ export async function proveNativeArgvBriefAccepted(
 /**
  * Memória do workspace no brief: worker/orquestrador de missão e o helper da
  * mão do operador (sem papel, sem missão), que também nasce com um brief. Só
- * memória trusted, com teto de bytes (withAutoRecalledWorkspaceMemory). Pane
+ * memória trusted, com teto de bytes (workspaceMemoryContextBlock). Pane
  * interno transitório não recebe.
  */
 type RecallCandidate = Pick<SpawnToolOptions, 'prompt' | 'missionId' | 'role' | 'transient'>;
@@ -1040,17 +1040,31 @@ export function recallsWorkspaceMemory(
   return options.role === undefined && options.transient !== true;
 }
 
-type BriefCandidate = Pick<SpawnToolOptions, 'prompt' | 'transient' | 'scope' | 'executionScope'>;
+type BriefCandidate = Pick<
+  SpawnToolOptions,
+  | 'prompt'
+  | 'transient'
+  | 'scope'
+  | 'executionScope'
+  | 'missionId'
+  | 'role'
+  | 'readOnly'
+  | 'agentCategory'
+>;
 
 /**
  * Blocos de contexto do projeto no brief de TODA CLI (worker, helper,
- * orquestrador): hoje `<business-model>`; outros blocos entram na mesma lista.
- * Pane interno transitório (revisor automático) não recebe.
+ * orquestrador): `<business-model>` e `<workspace-memory>` (este só para
+ * quem recallsWorkspaceMemory). Pane interno transitório (revisor
+ * automático) não recebe.
  */
 export function withProjectContextBlocks(options: BriefCandidate): string | undefined {
   if (!options.prompt || options.transient === true) return options.prompt;
   return mountPromptContextBlocks(options.prompt, [
     businessModelContextBlock(options.executionScope ?? options.scope),
+    recallsWorkspaceMemory(options)
+      ? workspaceMemoryContextBlock(options.scope, options.prompt, autoRecallPhaseForAgent(options))
+      : null,
   ]);
 }
 
@@ -1402,16 +1416,6 @@ export async function spawnPaneAndMaybePrompt(
       scope: options.scope,
       agentId: options.agentName?.trim() || adapter.id,
     });
-  }
-  if (recallsWorkspaceMemory(options)) {
-    options = {
-      ...options,
-      prompt: withAutoRecalledWorkspaceMemory(
-        options.scope,
-        options.prompt,
-        autoRecallPhaseForAgent(options),
-      ),
-    };
   }
   if (options.prompt) options = { ...options, prompt: withProjectContextBlocks(options) };
   const omitHandoff =

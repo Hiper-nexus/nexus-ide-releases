@@ -1083,6 +1083,121 @@ export class WorkspaceMemoryStore {
     });
   }
 
+  /**
+   * Linhas do workspace de uma fonte criadas desde um instante, inclusive as
+   * já substituídas — o teto diário de gravações automáticas (session digest)
+   * conta gravações, não linhas vivas.
+   */
+  countCreatedSince(source: string, sinceMs: number): number {
+    this.#assertOpen();
+    const row = this.#workspaceDb
+      .prepare(
+        `SELECT COUNT(*) AS n
+         FROM memories
+         WHERE scope = 'workspace' AND source = ? AND created_at >= ?`,
+      )
+      .get(source, sinceMs) as { n: number };
+    return row.n;
+  }
+
+  /** Fonte de uma linha ativa do workspace; null se não existe ou já saiu. */
+  activeWorkspaceSource(id: string): string | null {
+    this.#assertOpen();
+    const row = this.#workspaceDb
+      .prepare(
+        `SELECT source FROM memories
+         WHERE id = ? AND scope = 'workspace' AND superseded_by IS NULL`,
+      )
+      .get(id) as { source: string | null } | undefined;
+    return row?.source ?? null;
+  }
+
+  /**
+   * Linha ativa mais recente do workspace de uma fonte que tem `line` como
+   * linha inteira (ex.: `Mission: m-1`) — identidade estruturada, sem FTS.
+   */
+  latestActiveWithLine(source: string, line: string): string | null {
+    this.#assertOpen();
+    const row = this.#workspaceDb
+      .prepare(
+        `SELECT id FROM memories
+         WHERE scope = 'workspace' AND source = ? AND superseded_by IS NULL
+           AND instr(char(10) || content || char(10), char(10) || ? || char(10)) > 0
+         ORDER BY created_at DESC, id DESC
+         LIMIT 1`,
+      )
+      .get(source, line) as { id: string } | undefined;
+    return row?.id ?? null;
+  }
+
+  /**
+   * Memórias trusted ativas do workspace por importância e recência, sem
+   * consulta textual: o contexto de quem ainda não tem prompt (instructions
+   * do MCP do "+ Pane").
+   */
+  topTrustedWorkspace(limit: number): MemoryRecallHit[] {
+    this.#assertOpen();
+    const rows = this.#workspaceDb
+      .prepare(
+        `SELECT id, content, kind, scope, importance, source,
+                created_at, updated_at, recall_count, 0 AS rank
+         FROM memories
+         WHERE scope = 'workspace' AND superseded_by IS NULL
+           AND source LIKE 'trusted:%'
+         ORDER BY importance DESC, updated_at DESC, id ASC
+         LIMIT ?`,
+      )
+      .all(Math.max(0, Math.min(limit, 32)))
+      .map((raw) => memoryRowSchema.parse(raw));
+    return rows.map((row) =>
+      Object.freeze({
+        id: row.id,
+        content: row.content,
+        kind: row.kind,
+        scope: row.scope,
+        importance: row.importance,
+        source: row.source,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        recallCount: row.recall_count,
+        score: row.importance,
+      }),
+    );
+  }
+
+  /**
+   * Índice de provenance das linhas ativas do workspace (id → source/datas),
+   * para a tela de Memória mostrar origem e data sem ler a projeção.
+   */
+  activeWorkspaceMetas(): ReadonlyMap<
+    string,
+    { source: string | null; createdAt: number; updatedAt: number }
+  > {
+    this.#assertOpen();
+    const rows = this.#workspaceDb
+      .prepare(
+        `SELECT id, source, created_at, updated_at
+         FROM memories
+         WHERE scope = 'workspace' AND superseded_by IS NULL`,
+      )
+      .all() as Array<{
+      id: string;
+      source: string | null;
+      created_at: number;
+      updated_at: number;
+    }>;
+    return new Map(
+      rows.map((row) => [
+        row.id,
+        {
+          source: row.source,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
+        },
+      ]),
+    );
+  }
+
   /** Counts only, and only from the stat cache when nothing moved on disk. */
   #projectionStats(): ProjectionCounts {
     const root = this.#projectionRoots.values().next().value as
