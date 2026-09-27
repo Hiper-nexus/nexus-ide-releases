@@ -6,6 +6,11 @@ import { ProjectRuntimeManager } from '../runtime/project-runtime-manager';
 import { testProjectScope } from './__tests__/scope-fixture';
 import { createScopedMissionPaneStore } from './mission-pane-store';
 import { createScopedMissionStore } from './mission-store';
+import { compileIntentContract } from '../../shared/mission-intent';
+import {
+  createMissionPaneAuthoritySeal,
+  sameMissionPaneAuthoritySeal,
+} from './mission-pane-authority';
 
 let baseDir = '';
 const managers: ProjectRuntimeManager[] = [];
@@ -464,6 +469,29 @@ describe('scoped mission pane store', () => {
     expect(() =>
       panes.record({ missionId: third.id, adapterId: 'claude', role: 'orchestrator', paneId: 'op' }),
     ).toThrow(/already belongs/i);
+  });
+
+  it('missão livre sem squad: selo → record persistido → restauração', () => {
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const mission = createScopedMissionStore(runtimeManager, scope).create({ title: 'Livre' });
+    const contract = compileIntentContract({ goal: 'Missão livre', intentVersion: 1 });
+    const seal = createMissionPaneAuthoritySeal({
+      mission: {
+        ...mission, status: 'running', squadId: undefined, intentState: 'executing', intentVersion: 1,
+        intentContract: { ...contract, approvedAt: 10, dispatchedAt: 11, freeAgentChoice: true },
+      },
+      squad: null,
+    });
+    expect(seal).not.toBeNull();
+    const panes = createScopedMissionPaneStore(runtimeManager, scope);
+    panes.record({
+      missionId: mission.id, adapterId: 'codex', role: 'worker', paneId: 'free-pane', authoritySeal: seal!,
+    });
+    runtimeManager.close(scope);
+    const restored = createScopedMissionPaneStore(runtimeManager, scope).findByPaneId('free-pane');
+    expect(restored?.missionId).toBe(mission.id);
+    expect(sameMissionPaneAuthoritySeal(restored?.authoritySeal, seal)).toBe(true);
   });
 
   it('fails closed when corrupted persisted rows reuse a pane id', () => {
