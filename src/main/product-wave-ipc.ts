@@ -413,8 +413,19 @@ export function registerProductWaveIpc(): void {
 
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.memoryList, (event) => {
     requireFlag(FEATURE_FLAG_IDS.nexusMemory, 'feature.memory.nexusMemory');
-    const { root } = canonicalMemoryView(event.sender);
-    return listMemoryNotes(root);
+    const { root, store } = canonicalMemoryView(event.sender);
+    // Origem e data vêm do SQLite canônico: a projeção Markdown nunca lê
+    // provenance de volta (contrato de autoridade do nexus-memory).
+    const metas = store.activeWorkspaceMetas();
+    return listMemoryNotes(root).map((note) => {
+      const meta = metas.get(note.id);
+      return {
+        ...note,
+        source: meta?.source ?? null,
+        createdAt: meta?.createdAt ?? note.updatedAt,
+        updatedAt: meta?.updatedAt ?? note.updatedAt,
+      };
+    });
   });
 
   ipcMain.handle(PRODUCT_WAVE_CHANNELS.memoryRemember, async (event, raw) => {
