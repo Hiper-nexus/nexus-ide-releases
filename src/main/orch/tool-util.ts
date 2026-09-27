@@ -1035,8 +1035,9 @@ type BriefCandidate = Pick<SpawnToolOptions, 'prompt' | 'transient' | 'scope' | 
  */
 export function withProjectContextBlocks(options: BriefCandidate): string | undefined {
   if (!options.prompt || options.transient === true) return options.prompt;
-  const root = options.executionScope?.rootRealPath ?? options.scope.rootRealPath;
-  return mountPromptContextBlocks(options.prompt, [businessModelContextBlock(root)]);
+  return mountPromptContextBlocks(options.prompt, [
+    businessModelContextBlock(options.executionScope ?? options.scope),
+  ]);
 }
 
 export interface SpawnToolOptions {

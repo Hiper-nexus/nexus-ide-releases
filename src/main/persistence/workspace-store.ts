@@ -24,7 +24,6 @@ import {
   stopOrientationForWorkspace,
 } from '../context/orientation/orientation-bootstrap';
 import { cleanRegisteredWorkspaceHooks } from '../agent-hooks/handoff-hook-installer';
-import { scheduleBusinessModelRefreshForWorkspace } from '../context/business-model/business-model-refresh';
 
 /**
  * Workspace store: current + recent workspaces, persisted in
@@ -246,9 +245,6 @@ function openWorkspace(dir: string, owner: WebContents): WorkspaceState {
   cleanWorkspaceHooksQuietly([canonical]);
   // L1 structural map — async, never blocks open, never mutates the repo.
   scheduleOrientationForWorkspace(canonical);
-  // Modelo de negócio do .context em dia com as fontes — só em projeto que já
-  // adotou o .context; draft revisado por re-derivação, nunca commit aqui.
-  scheduleBusinessModelRefreshForWorkspace(canonical);
   return state;
 }
 

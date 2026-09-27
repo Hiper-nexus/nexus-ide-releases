@@ -1,9 +1,13 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ContextDraftRecord } from '../context-draft-store';
+import os from 'node:os';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { testProjectScope } from '../../orch/__tests__/scope-fixture';
+import { ProjectRuntimeManager } from '../../runtime/project-runtime-manager';
+import { inspectContextAttestations } from '../context-attestation';
+import { ensureContextScaffold } from '../context-doctor';
+import { ContextKnowledgeService } from '../context-knowledge-service';
 import {
   BUSINESS_MODEL_TARGET_PATH,
   invariantsTouchedBy,
@@ -16,11 +20,17 @@ import {
 import {
   BUSINESS_MODEL_EXTRACTOR,
   runBusinessModelBootstrap,
-  type BusinessModelKnowledge,
 } from './business-model-bootstrap';
-import { createBarbershopRepo, git, writeFixtureFile } from './__fixtures__/barbershop';
+import {
+  applyAttestedBusinessModel,
+  createBarbershopRepo,
+  git,
+  writeFixtureFile,
+} from './__fixtures__/barbershop';
 
 const roots: string[] = [];
+const managers: ProjectRuntimeManager[] = [];
+let baseDir = '';
 
 function repo(): string {
   const root = createBarbershopRepo();
@@ -33,15 +43,25 @@ function lineAt(root: string, origem: string): string {
   return fs.readFileSync(path.join(root, file), 'utf8').split('\n')[line - 1] ?? '';
 }
 
-beforeEach(() => __clearBusinessModelExtractionCacheForTests());
+beforeEach(() => {
+  __clearBusinessModelExtractionCacheForTests();
+  baseDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-bm-runtime-'));
+});
 afterEach(() => {
+  for (const manager of managers.splice(0)) manager.closeAll();
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true });
+  fs.rmSync(baseDir, { recursive: true, force: true });
 });
 
+function commitAll(root: string, message: string): void {
+  git(root, 'add', '-A');
+  git(root, 'commit', '-qm', message);
+}
+
 describe('extractBusinessModel', () => {
-  it('liga comanda → comissão: tabelas, trigger acoplado, chamador, teste e regra do AGENTS.md', () => {
+  it('liga comanda → comissão: tabelas, trigger acoplado, chamador, teste e regra do AGENTS.md', async () => {
     const root = repo();
-    const extraction = extractBusinessModel(root)!;
+    const extraction = (await extractBusinessModel(root))!;
     const flow = extraction.document.flows.find((item) => item.fluxo === 'close_commanda')!;
 
     expect(flow.escreve).toEqual(['appointments', 'commission_entries']);
@@ -61,9 +81,9 @@ describe('extractBusinessModel', () => {
     expect(extraction.document.invariants.some((item) => item.regra.includes('bloco de código'))).toBe(false);
   });
 
-  it('não inventa: toda regra cita arquivo:linha cuja linha contém a evidência', () => {
+  it('não inventa: toda regra cita arquivo:linha cuja linha contém a evidência', async () => {
     const root = repo();
-    const { document, proposal } = extractBusinessModel(root)!;
+    const { document, proposal } = (await extractBusinessModel(root))!;
     for (const invariant of document.invariants) {
       const line = lineAt(root, invariant.origem).toLowerCase();
       expect(line, invariant.id).toMatch(/raise exception|check|unique|create trigger|nunca/);
@@ -78,23 +98,71 @@ describe('extractBusinessModel', () => {
     }
   });
 
-  it('ignora fonte com alteração local não commitada (o commit do .context exige fonte no HEAD)', () => {
+  it('ignora fonte com alteração local não commitada (o commit do .context exige fonte no HEAD)', async () => {
     const root = repo();
     writeFixtureFile(
       root,
       'supabase/migrations/20260102000000_close_commanda.sql',
       'create or replace function public.close_commanda(p uuid) returns void as $$ begin update public.appointments set total = 0; end; $$;\n',
     );
-    const extraction = extractBusinessModel(root)!;
+    const extraction = (await extractBusinessModel(root))!;
     expect(extraction.document.flows.map((flow) => flow.fluxo)).not.toContain('close_commanda');
     expect(extraction.proposal.sources.map((source) => source.locator))
-      .not.toContain('supabase/migrations/20260102000000_close_commanda.sql');
+      .not.toContain('supabase/migrations/20260102000000_close_commanda.sql');    // …mas não em silêncio: a fonte relevante fica pendente e o bootstrap adia.
+    expect(extraction.pendingSources).toEqual(['supabase/migrations/20260102000000_close_commanda.sql']);
   });
 
-  it('não re-extrai sem mudança de fonte e re-extrai quando um commit muda a migration', () => {
+  it('DROP … IF EXISTS seguido de CREATE na mesma migration mantém trigger e constraint vigentes', async () => {
     const root = repo();
-    const first = extractBusinessModel(root);
-    expect(extractBusinessModel(root)).toBe(first);
+    writeFixtureFile(root, 'supabase/migrations/20260104000000_recreate.sql', [
+      'drop trigger if exists trg_commission_totals on public.commission_entries;',
+      'create trigger trg_commission_totals after insert on public.commission_entries',
+      '  for each row execute function public.sync_commission_totals();',
+      'alter table public.appointments drop constraint if exists appointments_total_positive;',
+      'alter table public.appointments add constraint appointments_total_positive check (total >= 0);',
+      '',
+    ].join('\n'));
+    commitAll(root, 'recreate');
+    const rules = (await extractBusinessModel(root))!.document.invariants
+      .filter((item) => item.fluxo === 'close_commanda')
+      .map((item) => item.regra);
+    expect(rules).toEqual(expect.arrayContaining([
+      expect.stringContaining('dispara o trigger trg_commission_totals'),
+      expect.stringContaining('appointments_total_positive check (total >= 0)'),
+    ]));
+
+    // E o DROP depois do CREATE continua removendo.
+    writeFixtureFile(root, 'supabase/migrations/20260105000000_drop.sql',
+      'drop trigger if exists trg_commission_totals on public.commission_entries;\n');
+    commitAll(root, 'drop');
+    expect((await extractBusinessModel(root))!.document.invariants.map((item) => item.regra).join('\n'))
+      .not.toContain('trg_commission_totals');
+  });
+
+  it('bullet de regra quebrado em várias linhas entra inteiro, citando a linha do bullet', async () => {
+    const root = createBarbershopRepo({
+      'AGENTS.md': [
+        '# Regras',
+        '',
+        '- Esse caminho nunca emite recibo de missão, ACK, avanço de task ou',
+        '  evidência de entrega sem o handoff assinado.',
+        '- Outra regra: sempre rode os testes de banco.',
+        '',
+      ].join('\n'),
+    });
+    roots.push(root);
+    const rules = (await extractBusinessModel(root))!.document.invariants;
+    expect(rules[0]).toMatchObject({
+      regra: 'Esse caminho nunca emite recibo de missão, ACK, avanço de task ou evidência de entrega sem o handoff assinado.',
+      origem: 'AGENTS.md:3',
+    });
+    expect(rules[1]).toMatchObject({ origem: 'AGENTS.md:5' });
+  });
+
+  it('não re-extrai sem mudança de fonte e re-extrai quando um commit muda a migration', async () => {
+    const root = repo();
+    const first = await extractBusinessModel(root);
+    expect((await extractBusinessModel(root))?.proposal).toBe(first?.proposal);
 
     writeFixtureFile(root, 'supabase/migrations/20260103000000_guard.sql', [
       'create or replace function public.close_commanda(p_id uuid) returns void as $$',
@@ -105,29 +173,45 @@ describe('extractBusinessModel', () => {
       '$$;',
       '',
     ].join('\n'));
-    git(root, 'add', '-A');
-    git(root, 'commit', '-qm', 'guard');
+    commitAll(root, 'guard');
 
-    const second = extractBusinessModel(root)!;
-    expect(second).not.toBe(first);
+    const second = (await extractBusinessModel(root))!;
+    expect(second.proposal).not.toBe(first?.proposal);
     expect(second.document.invariants.map((item) => item.regra))
       .toContain('close_commanda recusa: caixa do dia fechado');
   });
 
-  it('sem git ou sem fonte de regra não propõe nada', () => {
+  it('cede o event loop durante a extração (main segue atendendo IPC/PTY)', async () => {
+    const root = repo();
+    let turns = 0;
+    let running = true;
+    const spin = (): void => {
+      if (!running) return;
+      turns += 1;
+      setImmediate(spin);
+    };
+    setImmediate(spin);
+    const extraction = await extractBusinessModel(root, { fresh: true });
+    running = false;
+    expect(extraction).not.toBeNull();
+    expect(turns).toBeGreaterThan(3);
+  });
+
+  it('sem git ou sem fonte de regra não propõe nada', async () => {
     const root = fs.realpathSync(fs.mkdtempSync(path.join(path.dirname(repo()), 'nexus-bm-nogit-')));
     roots.push(root);
-    expect(extractBusinessModel(root)).toBeNull();
+    expect(await extractBusinessModel(root)).toBeNull();
   });
 });
 
 describe('contrato do portão de regressão', () => {
-  it('lê invariantes estruturados do doc aplicado e filtra pelos arquivos alterados', () => {
+  it('lê invariantes estruturados do doc aplicado e filtra pelos arquivos alterados', async () => {
     const root = repo();
-    expect(readBusinessModelInvariants(root)).toEqual([]);
-    writeFixtureFile(root, BUSINESS_MODEL_TARGET_PATH, extractBusinessModel(root)!.proposal.content);
+    const scope = testProjectScope({ rootRealPath: root });
+    expect(readBusinessModelInvariants(scope)).toEqual([]);
+    await applyAttestedBusinessModel(root, scope);
 
-    const invariants = readBusinessModelInvariants(root);
+    const invariants = readBusinessModelInvariants(scope);
     const raise = invariants.find((item) => item.regra.startsWith('close_commanda recusa'))!;
     expect(raise).toEqual({
       id: 'close_commanda#1',
@@ -146,130 +230,157 @@ describe('contrato do portão de regressão', () => {
     expect(invariantsTouchedBy(invariants, ['README.md'])).toEqual([]);
   });
 
-  it('doc escrito à mão (sem bloco estruturado) devolve lista vazia, sem lançar', () => {
+  it('doc escrito à mão (sem bloco estruturado) devolve lista vazia, sem lançar', async () => {
     const root = repo();
     writeFixtureFile(root, BUSINESS_MODEL_TARGET_PATH, '# Business\nUsage billing.\n');
-    expect(readBusinessModelInvariants(root)).toEqual([]);
+    expect(readBusinessModelInvariants(testProjectScope({ rootRealPath: root }))).toEqual([]);
   });
 });
 
-function fakeKnowledge(root: string) {
-  const drafts = new Map<string, ContextDraftRecord>();
-  let next = 0;
-  const knowledge: BusinessModelKnowledge = {
-    list: vi.fn(({ status } = {}) => [...drafts.values()].filter((item) => !status || item.status === status)),
-    get: vi.fn((id: string) => drafts.get(id) ?? null),
-    propose: vi.fn((input, author) => {
-      const record = {
-        id: `draft-${++next}`,
-        missionId: input.missionId ?? null,
-        targetPath: input.targetPath,
-        content: input.content,
-        contentHash: 'h',
-        expectedTargetHash: input.expectedTargetHash ?? null,
-        sources: input.sources,
-        status: 'proposed',
-        author,
-        reviewer: null,
-      } as unknown as ContextDraftRecord;
-      drafts.set(record.id, record);
-      return record;
-    }),
-    review: vi.fn((id, input) => {
-      const current = drafts.get(id)!;
-      // Mesma guarda do store: autor nunca se aprova.
-      if (current.author.id === input.reviewer.id || current.author.sessionId === input.reviewer.sessionId) {
-        throw new Error('self review');
-      }
-      const reviewed = {
-        ...current,
-        status: input.decision === 'approve' ? 'approved' : 'rejected',
-        reviewer: input.reviewer,
-      } as ContextDraftRecord;
-      drafts.set(id, reviewed);
-      return reviewed;
-    }),
-    apply: vi.fn((id: string) => {
-      const current = drafts.get(id)!;
-      if (current.status !== 'approved') throw new Error('not approved');
-      writeFixtureFile(root, current.targetPath, current.content);
-      const applied = { ...current, status: 'applied' } as ContextDraftRecord;
-      drafts.set(id, applied);
-      return { draft: applied } as ReturnType<BusinessModelKnowledge['apply']>;
-    }),
-  };
-  return knowledge;
+
+function knowledgeFor(root: string) {
+  const scope = testProjectScope({ rootRealPath: root });
+  const manager = new ProjectRuntimeManager({ baseDir, appVersion: 'test' });
+  managers.push(manager);
+  ensureContextScaffold(scope);
+  const knowledge = new ContextKnowledgeService(manager, scope, { appVersion: '0.76.110-test' });
+  return { scope, knowledge };
 }
 
-describe('runBusinessModelBootstrap', () => {
-  it('propõe como extrator Nexus, revisa por re-derivação com outra identidade e aplica; 2ª passada fica em dia', () => {
+function attestationProblems(scope: ReturnType<typeof testProjectScope>): string[] {
+  return inspectContextAttestations(scope).diagnostics.map((item) => `${item.code}: ${item.message}`);
+}
+
+const GUARD_MIGRATION = 'supabase/migrations/20260102000000_close_commanda.sql';
+
+describe('runBusinessModelBootstrap (store e atestações reais)', () => {
+  it('propõe como extrator, revisa com outra identidade, aplica com atestação; 2ª passada fica em dia', async () => {
     const root = repo();
-    fs.mkdirSync(path.join(root, '.context', 'docs'), { recursive: true });
-    const knowledge = fakeKnowledge(root);
-    const scope = testProjectScope({ rootRealPath: root });
+    const { scope, knowledge } = knowledgeFor(root);
 
-    const first = runBusinessModelBootstrap({ scope, knowledge });
-    expect(first.status).toBe('applied');
-    expect(knowledge.propose).toHaveBeenCalledWith(
-      expect.objectContaining({ targetPath: BUSINESS_MODEL_TARGET_PATH, expectedTargetHash: null }),
-      BUSINESS_MODEL_EXTRACTOR,
-    );
-    expect(readBusinessModelInvariants(root).length).toBe(first.invariants);
+    const first = await runBusinessModelBootstrap({ scope, knowledge });
+    expect(first).toMatchObject({ status: 'applied' });
+    const draft = knowledge.get(first.draftId!)!;
+    expect(draft.author.id).toBe(BUSINESS_MODEL_EXTRACTOR.id);
+    expect(draft.reviewer?.id).not.toBe(BUSINESS_MODEL_EXTRACTOR.id);
+    expect(attestationProblems(scope)).toEqual([]);
+    expect(readBusinessModelInvariants(scope).length).toBe(first.invariants);
 
-    const second = runBusinessModelBootstrap({ scope, knowledge });
-    expect(second.status).toBe('up-to-date');
-    expect(knowledge.propose).toHaveBeenCalledTimes(1);
+    expect((await runBusinessModelBootstrap({ scope, knowledge })).status).toBe('up-to-date');
   });
 
-  it('rejeita quando a re-derivação não reproduz os bytes', () => {
+  it('fonte muda sem mudar o texto do doc: re-atesta com os hashes novos (não fica "em dia" com atestação velha)', async () => {
     const root = repo();
-    const knowledge = fakeKnowledge(root);
-    const real = extractBusinessModel(root)!;
-    const result = runBusinessModelBootstrap({
-      scope: testProjectScope({ rootRealPath: root }),
+    const { scope, knowledge } = knowledgeFor(root);
+    expect((await runBusinessModelBootstrap({ scope, knowledge })).status).toBe('applied');
+
+    fs.appendFileSync(path.join(root, GUARD_MIGRATION), '-- comentário que não muda regra\n');
+    commitAll(root, 'comentário');
+    expect(attestationProblems(scope).join('\n')).toContain('source-hash-mismatch');
+
+    const second = await runBusinessModelBootstrap({ scope, knowledge });
+    expect(second.status).toBe('applied');
+    expect(attestationProblems(scope)).toEqual([]);
+    expect((await runBusinessModelBootstrap({ scope, knowledge })).status).toBe('up-to-date');
+  });
+
+  it('regra muda depois do primeiro apply: o novo draft substitui a atestação velha do próprio alvo', async () => {
+    const root = repo();
+    const { scope, knowledge } = knowledgeFor(root);
+    expect((await runBusinessModelBootstrap({ scope, knowledge })).status).toBe('applied');
+
+    const migration = path.join(root, GUARD_MIGRATION);
+    fs.writeFileSync(migration, fs.readFileSync(migration, 'utf8').replace('comanda ja fechada', 'comanda encerrada'));
+    commitAll(root, 'mensagem');
+
+    const second = await runBusinessModelBootstrap({ scope, knowledge });
+    expect(second).toMatchObject({ status: 'applied' });
+    expect(attestationProblems(scope)).toEqual([]);
+    expect(readBusinessModelInvariants(scope).map((item) => item.regra))
+      .toContain('close_commanda recusa: comanda encerrada: %');
+  });
+
+  it('draft do próprio extrator preso em approved (apply que falhou) é superado quando as fontes mudam', async () => {
+    const root = repo();
+    const { scope, knowledge } = knowledgeFor(root);
+    const stale = (await extractBusinessModel(root))!.proposal;
+    const stuck = knowledge.propose({ ...stale, expectedTargetHash: null }, BUSINESS_MODEL_EXTRACTOR);
+    knowledge.review(stuck.id, {
+      decision: 'approve',
+      reviewer: { id: 'nexus-business-model-reviewer', sessionId: 'r', provider: 'nexus-mechanical-review' },
+      rationale: 'aprovado; o apply falhou em seguida',
+    });
+
+    const migration = path.join(root, GUARD_MIGRATION);
+    fs.writeFileSync(migration, fs.readFileSync(migration, 'utf8').replace('comanda ja fechada', 'comanda encerrada'));
+    commitAll(root, 'mensagem');
+
+    const result = await runBusinessModelBootstrap({ scope, knowledge });
+    expect(result.status).toBe('applied');
+    expect(knowledge.get(stuck.id)!.status).toBe('rejected');
+    expect(readBusinessModelInvariants(scope).map((item) => item.regra))
+      .toContain('close_commanda recusa: comanda encerrada: %');
+  });
+
+  it('draft ativo de outro autor não é disputado', async () => {
+    const root = repo();
+    const { scope, knowledge } = knowledgeFor(root);
+    const proposal = (await extractBusinessModel(root))!.proposal;
+    knowledge.propose(
+      { ...proposal, content: '# Business\nRegras do dono.\n', expectedTargetHash: null },
+      { id: 'humano', sessionId: 'h', provider: 'claude' },
+    );
+    expect((await runBusinessModelBootstrap({ scope, knowledge })).status).toBe('skipped');
+  });
+
+  it('fonte relevante suja (chamador da RPC) adia e preserva o modelo anterior em vez de publicar sem ela', async () => {
+    const root = repo();
+    const { scope, knowledge } = knowledgeFor(root);
+    fs.appendFileSync(path.join(root, 'src/commanda.ts'), '// wip\n');
+
+    const deferred = await runBusinessModelBootstrap({ scope, knowledge });
+    expect(deferred.status).toBe('skipped');
+    expect(deferred.message).toContain('src/commanda.ts');
+    expect(fs.existsSync(path.join(root, BUSINESS_MODEL_TARGET_PATH))).toBe(false);
+
+    // Arquivo sujo que não toca nenhum fluxo não segura o modelo.
+    git(root, 'checkout', '--', 'src/commanda.ts');
+    fs.writeFileSync(path.join(root, 'package.json'), '{ "name": "x" }\n');
+    const applied = await runBusinessModelBootstrap({ scope, knowledge });
+    expect(applied.status).toBe('applied');
+    expect(invariantsTouchedBy(readBusinessModelInvariants(scope), ['src/commanda.ts']).length).toBeGreaterThan(0);
+  });
+
+  it('rejeita quando a re-derivação não reproduz os bytes', async () => {
+    const root = repo();
+    const { scope, knowledge } = knowledgeFor(root);
+    const real = (await extractBusinessModel(root))!;
+    const result = await runBusinessModelBootstrap({
+      scope,
       knowledge,
       extract: (_root, options) => options.fresh
         ? { ...real, proposal: { ...real.proposal, content: `${real.proposal.content}\ninjetado\n` } }
         : real,
     });
     expect(result.status).toBe('rejected');
-    expect(knowledge.apply).not.toHaveBeenCalled();
     expect(fs.existsSync(path.join(root, BUSINESS_MODEL_TARGET_PATH))).toBe(false);
   });
 
-  it('não sobrescreve business-model.md escrito à mão, mas substitui o esqueleto do bootstrap antigo', () => {
+  it('não sobrescreve doc escrito à mão nem a cópia source-bound do PRODUCT.md; substitui só o esqueleto TODO', async () => {
     const root = repo();
-    const scope = testProjectScope({ rootRealPath: root });
+    const { scope, knowledge } = knowledgeFor(root);
     writeFixtureFile(root, BUSINESS_MODEL_TARGET_PATH, '# Business\nRegras do dono.\n');
-    expect(runBusinessModelBootstrap({ scope, knowledge: fakeKnowledge(root) }).status).toBe('skipped');
+    expect((await runBusinessModelBootstrap({ scope, knowledge })).status).toBe('skipped');
+
+    writeFixtureFile(root, BUSINESS_MODEL_TARGET_PATH,
+      '# Business model\n\n> Source-bound product context copied from `PRODUCT.md`.\n\nClientes: barbearias; preço por cadeira.\n');
+    expect((await runBusinessModelBootstrap({ scope, knowledge })).status).toBe('skipped');
 
     const skeleton = '# Business model\n\n> Auto-proposed skeleton from orientation (abc).\n';
     writeFixtureFile(root, BUSINESS_MODEL_TARGET_PATH, skeleton);
-    const knowledge = fakeKnowledge(root);
-    expect(runBusinessModelBootstrap({ scope, knowledge }).status).toBe('applied');
-    expect(knowledge.propose).toHaveBeenCalledWith(
-      expect.objectContaining({
-        expectedTargetHash: createHash('sha256').update(skeleton).digest('hex'),
-      }),
-      BUSINESS_MODEL_EXTRACTOR,
-    );
-  });
-});
-
-describe('scheduleBusinessModelRefreshForWorkspace', () => {
-  it('projeto sem .context/docs não é tocado nem agenda trabalho', async () => {
-    const { scheduleBusinessModelRefreshForWorkspace } = await import('./business-model-refresh');
-    const root = repo();
-    vi.useFakeTimers();
-    try {
-      scheduleBusinessModelRefreshForWorkspace(root);
-      expect(vi.getTimerCount()).toBe(0);
-      fs.mkdirSync(path.join(root, '.context', 'docs'), { recursive: true });
-      scheduleBusinessModelRefreshForWorkspace(root);
-      expect(vi.getTimerCount()).toBe(1);
-      vi.clearAllTimers();
-    } finally {
-      vi.useRealTimers();
-    }
+    const applied = await runBusinessModelBootstrap({ scope, knowledge });
+    expect(applied.status).toBe('applied');
+    expect(knowledge.get(applied.draftId!)!.expectedTargetHash)
+      .toBe(createHash('sha256').update(skeleton).digest('hex'));
   });
 });

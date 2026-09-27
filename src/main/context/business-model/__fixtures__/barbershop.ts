@@ -2,6 +2,13 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
+import type { ProjectExecutionScope } from '../../../../shared/types';
+import { testProjectScope } from '../../../orch/__tests__/scope-fixture';
+import { createContextAttestation, writeContextAttestation } from '../../context-attestation';
+import { BUSINESS_MODEL_EXTRACTOR } from '../business-model-bootstrap';
+import { BUSINESS_MODEL_TARGET_PATH } from '../business-model-contract';
+import { extractBusinessModel } from '../business-model-extract';
 
 /**
  * Projeto mínimo no formato do piloto (SaaS de barbearia): comanda fecha e
@@ -105,4 +112,26 @@ export function createBarbershopRepo(
   git(root, 'add', '-A');
   git(root, 'commit', '-qm', 'fixture');
   return root;
+}
+
+/**
+ * Grava o doc extraído com uma atestação real do extrator (o que o apply do
+ * `.context` faria), para testes de consumidor do bloco/contrato.
+ */
+export async function applyAttestedBusinessModel(
+  root: string,
+  scope: ProjectExecutionScope = testProjectScope({ rootRealPath: root }),
+): Promise<void> {
+  const extraction = (await extractBusinessModel(root))!;
+  const { content, sources } = extraction.proposal;
+  writeFixtureFile(root, BUSINESS_MODEL_TARGET_PATH, content);
+  writeContextAttestation(scope, createContextAttestation(scope, {
+    targetPath: BUSINESS_MODEL_TARGET_PATH,
+    targetHash: createHash('sha256').update(content).digest('hex'),
+    sources,
+    author: BUSINESS_MODEL_EXTRACTOR,
+    reviewer: { id: 'nexus-business-model-reviewer', sessionId: 'deterministic-rederive-v1', provider: 'nexus-mechanical-review' },
+    reviewedAt: new Date(0).toISOString(),
+    nexusVersion: 'test',
+  }));
 }

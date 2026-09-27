@@ -52,6 +52,8 @@ vi.mock('./context-workflow-registry', () => ({
     review: mocks.review,
     apply: mocks.apply,
     commitApplied: mocks.commitApplied,
+    activeForTarget: () => null,
+    supersedeActiveForTarget: () => null,
   }),
 }));
 
@@ -841,6 +843,7 @@ describe('runContextBootstrapAutopilot', () => {
       fingerprint: 'f',
       document: { schemaVersion: 1 as const, flows: [], invariants: [] },
       proposal: extracted,
+      pendingSources: [],
     };
     const businessDraft = Object.freeze({
       ...draft('bm-1', 'proposed'),

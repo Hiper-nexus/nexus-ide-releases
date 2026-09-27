@@ -680,14 +680,14 @@ export async function runContextBootstrapAutopilot(
   throwIfBootstrapAborted(options.signal);
   const businessModel = options.businessModel === null
     ? null
-    : runBusinessModelBootstrap({
+    : await runBusinessModelBootstrap({
         scope: options.scope,
         knowledge,
         extract: options.businessModel?.extract,
       });
   const businessModelOwnsTarget =
     businessModel !== null &&
-    ['applied', 'up-to-date', 'proposed'].includes(businessModel.status);
+    ['applied', 'up-to-date'].includes(businessModel.status);
 
   // DESIGN BRANCH. Resolved before the readiness fast-path on purpose: a
   // project can have a perfectly green context corpus and still have no design
