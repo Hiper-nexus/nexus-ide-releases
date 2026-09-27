@@ -1522,11 +1522,14 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
     let changed = false;
     // Adoção de um pane do operador: a coroa local que a aba já tinha sai, ou
     // a aba ficaria com duas (e o indicador poderia apontar a errada).
+    // O broadcast do Main já pode ter vinculado o pane à missão: a aba dele é
+    // a de ANTES da adoção.
     const adopted = panes.find(
       (pane) => pane.id === leaderPaneId && pane.missionId === undefined,
     );
-    if (adopted && !useOrchStore.getState().paneMissions[adopted.id]) {
-      const crowned = crownLocalLeader(root, adopted.id, useOrchStore.getState().paneMissions);
+    if (adopted) {
+      const { [adopted.id]: _adopting, ...paneMissions } = useOrchStore.getState().paneMissions;
+      const crowned = crownLocalLeader(root, adopted.id, paneMissions);
       changed = crowned !== root;
       root = crowned;
     }

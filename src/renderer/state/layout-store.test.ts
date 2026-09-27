@@ -1218,6 +1218,28 @@ describe('layout-store role assignment and promotion', () => {
     expect(roles.get('a1')).toBe('orchestrator');
   });
 
+  it('missão criada pelo Main (broadcast vincula antes de refletir) também tira a coroa local', () => {
+    useOrchStore.setState({ paneMissions: { b2: 'mB' } });
+    seedLayout({
+      root: buildGridTree([
+        { id: 'b1', kind: 'cli-agent', title: 'B1', spaceId: 'space-b', spaceTitle: 'B', role: 'orchestrator' },
+        { id: 'b2', kind: 'cli-agent', title: 'B2', spaceId: 'space-b', spaceTitle: 'B' },
+      ]),
+      focusedPaneId: 'b2',
+      maximizedPaneId: null,
+      hydrated: true,
+      viewKind: 'grid',
+      canvasNodeLayouts: {},
+      canvasViewport: { x: 0, y: 0, zoom: 1 },
+    });
+
+    useLayoutStore.getState().reflectMissionLeader('mB', 'b2');
+
+    const panes = new Map(listPanes(useLayoutStore.getState().root).map((p) => [p.id, p]));
+    expect(panes.get('b2')).toMatchObject({ role: 'orchestrator', missionId: 'mB', missionHost: true });
+    expect(panes.get('b1')?.role).toBe('worker');
+  });
+
   it('coroar um pane solto não o faz migrar para a aba de outro coordenador', () => {
     useOrchStore.setState({ paneMissions: {} });
     seedLayout({
