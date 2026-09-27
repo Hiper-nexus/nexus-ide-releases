@@ -1,0 +1,85 @@
+{
+  "kind": "cli-pty",
+  "id": "minimax-code",
+  "label": "MiniMax Code",
+  "version": "1.0.0",
+  "icon": "MM",
+  "bin": "mcode",
+  "detect": "mcode --version",
+  "install": {
+    "method": "npm",
+    "command": "npm install -g @minimax-ai/code --allow-scripts=@minimax-ai/code,better-sqlite3 --registry=https://registry.npmjs.org/"
+  },
+  "auth": {
+    "method": "oauth",
+    "loginCommand": "mcode login --region global",
+    "loginHint": "Entre com a conta MiniMax (Token Plan); conta da China: `mcode login --region cn`. Com chave própria: `mcode provider set-minimax-key`."
+  },
+  "spawn": {
+    "interactive": [
+      "mcode"
+    ],
+    "headless": [
+      "mcode",
+      "exec",
+      "--output-format",
+      "text",
+      "--model",
+      "{{MODEL}}",
+      "--",
+      "{{PROMPT}}"
+    ],
+    "ptyRequired": true,
+    "resumeArgs": [],
+    "resumeIdArgs": [
+      "--session"
+    ],
+    "extraArgs": [],
+    "initialPrompt": "positional"
+  },
+  "env": {
+    "static": {},
+    "passthrough": [],
+    "ephemeralHome": false
+  },
+  "models": {
+    "flag": "--model",
+    "list": [
+      "minimax/MiniMax-M3",
+      "minimax/MiniMax-M3.1-Flash-Preview",
+      "minimax/MiniMax-M2.7-highspeed",
+      "minimax/MiniMax-M2.7"
+    ],
+    "default": "minimax/MiniMax-M3"
+  },
+  "promptInjection": {
+    "method": "arg",
+    "trailingNewline": false,
+    "bracketedPaste": false
+  },
+  "stateParsing": {
+    "idle": {
+      "type": "timeout",
+      "ms": 800
+    },
+    "shellIntegration": false,
+    "exitCodes": {
+      "0": "ok",
+      "1": "error"
+    }
+  },
+  "quirks": {
+    "altScreen": true,
+    "requiresNoAutoUpdate": false,
+    "mcpAutoload": false,
+    "nexusMcp": "none"
+  },
+  "control": {
+    "permission": {
+      "arg": "",
+      "modes": {},
+      "yolo": [],
+      "default": ""
+    }
+  }
+}

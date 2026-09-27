@@ -108,4 +108,16 @@ describe('fetchWindowsForApiKey', () => {
     expect(w?.find((x) => x.kind === 'hours')?.usedRatio).toBeCloseTo(0.11);
     expect(w?.find((x) => x.kind === 'weekly')?.usedRatio).toBeCloseTo(0.22);
   });
+  it('routes MiniMax only when declared as the credential owner', async () => {
+    const fetchImpl = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({
+      base_resp: { status_code: 0 },
+      model_remains: [{ current_interval_remaining_percent: 60, current_weekly_remaining_percent: 90 }],
+    }), text: async () => '' }));
+    const windows = await fetchWindowsForApiKey('minimax-subscription-key', {
+      fetchImpl, adapterHint: 'minimax-code',
+    });
+    expect(windows?.[0]?.usedRatio).toBeCloseTo(0.4);
+    expect(windows?.[1]?.usedRatio).toBeCloseTo(0.1);
+    expect(fetchImpl).toHaveBeenCalledWith('https://www.minimax.io/v1/token_plan/remains', expect.anything());
+  });
 });

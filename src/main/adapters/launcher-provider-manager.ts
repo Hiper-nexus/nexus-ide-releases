@@ -66,6 +66,8 @@ const GLM_FLASH_EXTRA: Record<string, string> = {
   ANTHROPIC_DEFAULT_OPUS_MODEL: GLM_FLASH_MODEL,
 };
 
+const MINIMAX_MODEL = 'MiniMax-M3[1m]';
+
 const THIRD_PARTY_EXTRA: Record<string, string> = {
   CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
   API_TIMEOUT_MS: '600000',
@@ -114,12 +116,23 @@ export const UPSTREAM_PROVIDERS: Record<string, UpstreamProvider> = {
     requiresToken: true,
     local: false,
   },
+  // Token Plan da MiniMax no Claude Code — valores da doc oficial
+  // (platform.minimax.io/docs/token-plan/claude-code, conferida em 2026-09-27).
+  // O domínio antigo api.minimax.chat e o modelo minimax-m1 saíram de linha.
+  // A CLI própria da MiniMax é outro adapter: `minimax-code` (`mcode`).
   minimax: {
     id: 'minimax',
     label: 'MiniMax',
-    baseUrl: 'https://api.minimax.chat/anthropic',
-    defaultModel: 'minimax-m1',
-    extraEnv: THIRD_PARTY_EXTRA,
+    baseUrl: 'https://api.minimax.io/anthropic',
+    defaultModel: MINIMAX_MODEL,
+    extraEnv: {
+      ...THIRD_PARTY_EXTRA,
+      CLAUDE_CODE_AUTO_COMPACT_WINDOW: '1000000',
+      ANTHROPIC_MODEL: MINIMAX_MODEL,
+      ANTHROPIC_DEFAULT_SONNET_MODEL: MINIMAX_MODEL,
+      ANTHROPIC_DEFAULT_OPUS_MODEL: MINIMAX_MODEL,
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: MINIMAX_MODEL,
+    },
     requiresToken: true,
     local: false,
   },

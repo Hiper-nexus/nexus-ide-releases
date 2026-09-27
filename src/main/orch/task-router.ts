@@ -124,6 +124,9 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     // Cost-based onboarding prior, not a measured quality rank. MiMo exposes
     // no verified effort argv; let its CLI use the model's native default.
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-flash' },
+    // Same cost-based prior for MiniMax: the `mcode` TUI takes no effort argv
+    // (only headless `exec` does), so the model's native default stands.
+    { adapterId: 'minimax-code', model: 'minimax/MiniMax-M2.7-highspeed' },
     { adapterId: 'claude', model: 'claude-haiku-4-5', effort: 'low' },
   ],
   easy: [
@@ -133,12 +136,14 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'codex', model: 'gpt-5.4-mini', effort: 'low' },
     { adapterId: 'glm-flash', model: 'glm-5.3-flash[1m]', effort: 'low' },
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-flash' },
+    { adapterId: 'minimax-code', model: 'minimax/MiniMax-M2.7-highspeed' },
     { adapterId: 'claude', model: 'claude-sonnet-4-6', effort: 'low' },
   ],
   medium: [
     { adapterId: 'glm', model: 'glm-5.3', effort: 'medium' },
     { adapterId: 'longcat', model: 'LongCat-2.0', effort: 'medium' },
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-flash' },
+    { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3' },
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'medium' },
     { adapterId: 'grok', model: 'grok-4.1', effort: 'medium' },
     { adapterId: 'agy', model: 'gemini-3.1-pro-high', effort: 'medium' },
@@ -159,6 +164,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'grok', model: 'grok-4.1', effort: 'high' },
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-pro' },
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-pro-ultraspeed' },
+    { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3' },
   ],
   critical: [
     { adapterId: 'claude', model: 'claude-fable-5', effort: 'xhigh' },
@@ -176,6 +182,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'xhigh' },
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-pro' },
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-pro-ultraspeed' },
+    { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3' },
   ],
 };
 

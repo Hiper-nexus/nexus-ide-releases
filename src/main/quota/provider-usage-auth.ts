@@ -264,6 +264,18 @@ export function resolveProviderApiKeyCandidates(
     pushUnique(out, declaredAnthropicToken(adapterId));
   }
 
+  if (adapterId === 'minimax-code') {
+    // A Subscription Key do Token Plan é a mesma chave da rota `minimax`
+    // (Claude no endpoint Anthropic da MiniMax): cofre/launcher antes do env.
+    pushUnique(out, safeGetKey('minimax'));
+    try {
+      pushUnique(out, loadLauncherProviderKey('minimax'));
+    } catch {
+      // ignore
+    }
+    pushUnique(out, process.env.MINIMAX_API_KEY);
+  }
+
   if (adapterId === 'grok') {
     pushUnique(out, process.env.XAI_API_KEY);
   }

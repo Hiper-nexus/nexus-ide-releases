@@ -109,14 +109,17 @@ export function jarvisActionFastPath(
 
   const openAgentMatch =
     t.match(
-      /\b(?:abre|abra|abrir|inicia|inicie|iniciar|sobe|suba|novo|cria|crie|criar)\b(?:\s+(?:o|a|um|uma))?(?:\s+pane\s+(?:com|de|do)?\s*)?(?:\s+(?:agente|cli))?\s*(codex|agy|antigravity|kimi|devin|claude|grok|glm|cursor)(?:\s+(?:no|em|na)\s+pane)?(?:\s+com\s+(.+))?\s*$/,
+      /\b(?:abre|abra|abrir|inicia|inicie|iniciar|sobe|suba|novo|cria|crie|criar)\b(?:\s+(?:o|a|um|uma))?(?:\s+pane\s+(?:com|de|do)?\s*)?(?:\s+(?:agente|cli))?\s*(codex|agy|antigravity|kimi|devin|claude|grok|glm|cursor|minimax|mini max)(?:\s+(?:no|em|na)\s+pane)?(?:\s+com\s+(.+))?\s*$/,
     ) ??
     t.match(
-      /\b(?:no|em|na)\s+pane\s+(?:mando|mande)?\s*(?:ele)?\s*(?:abrir|abre|iniciar|inicia)\s+(codex|agy|antigravity|kimi|devin|claude|grok|glm|cursor)\b/,
+      /\b(?:no|em|na)\s+pane\s+(?:mando|mande)?\s*(?:ele)?\s*(?:abrir|abre|iniciar|inicia)\s+(codex|agy|antigravity|kimi|devin|claude|grok|glm|cursor|minimax|mini max)\b/,
     );
   if (openAgentMatch) {
     const rawAgent = openAgentMatch[1].toLowerCase();
-    const agentId = rawAgent === 'antigravity' ? 'agy' : rawAgent;
+    // O STT escreve "MiniMax" colado ou separado; o adapter é o `minimax-code`.
+    const agentId = rawAgent === 'antigravity'
+      ? 'agy'
+      : rawAgent === 'minimax' || rawAgent === 'mini max' ? 'minimax-code' : rawAgent;
     if (agentId === 'codex') {
       return {
         say: say(ctx, 'Abrindo o Codex com modelo Luna.'),
@@ -143,6 +146,13 @@ export function jarvisActionFastPath(
         say: say(ctx, 'Abrindo o Devin no modelo SWE-2.'),
         expectReply: false,
         action: { type: 'open_agent', agentId: 'devin', model: 'swe-2-high' },
+      };
+    }
+    if (agentId === 'minimax-code') {
+      return {
+        say: say(ctx, 'Abrindo o MiniMax Code no modelo M3.'),
+        expectReply: false,
+        action: { type: 'open_agent', agentId: 'minimax-code', model: 'minimax/MiniMax-M3' },
       };
     }
     return {

@@ -360,6 +360,13 @@ describe('jarvisActionFastPath', () => {
     });
   });
 
+  it('abre o MiniMax Code no M3, com o nome colado ou separado pelo STT', () => {
+    const expected = { type: 'open_agent', agentId: 'minimax-code', model: 'minimax/MiniMax-M3' };
+    expect(jarvisActionFastPath('abre o minimax', CTX)?.action).toEqual(expected);
+    expect(jarvisActionFastPath('Abre o Mini Max.', CTX)?.action).toEqual(expected);
+    expect(jarvisActionFastPath('no pane mando ele abrir minimax', CTX)?.action).toEqual(expected);
+  });
+
   it('conversa aberta não intercepta', () => {
     expect(jarvisActionFastPath('vamos dominar o mundo', CTX)).toBeNull();
     expect(jarvisActionFastPath('o que você acha?', CTX)).toBeNull();

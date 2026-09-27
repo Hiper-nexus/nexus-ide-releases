@@ -118,6 +118,23 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
       default: MIMO_CODE_DEFAULT_MODEL,
       models: MIMO_CODE_MODEL_IDS.map(id => ({ id, availability: id.endsWith('ultraspeed') ? 'api-only' : 'paid', costTier: id.endsWith('ultraspeed') ? 'high' : 'low', source: 'bundled' })),
     },
+    // MiniMax Code (`mcode`, Token Plan). Sem nota medida: entra como não
+    // avaliado; a banda operacional sai do costTier.
+    'minimax-code': {
+      default: 'minimax/MiniMax-M3',
+      models: [
+        { id: 'minimax/MiniMax-M3', availability: 'paid', costTier: 'medium', source: 'bundled' },
+        {
+          id: 'minimax/MiniMax-M3.1-Flash-Preview',
+          availability: 'paid',
+          costTier: 'low',
+          source: 'bundled',
+          warning: 'Preview model: verify tier/pricing before routing it by default.',
+        },
+        { id: 'minimax/MiniMax-M2.7-highspeed', availability: 'paid', costTier: 'low', source: 'bundled' },
+        { id: 'minimax/MiniMax-M2.7', availability: 'paid', costTier: 'low', source: 'bundled' },
+      ],
+    },
     grok: {
       default: GROK_FRONTIER_MODEL,
       models: [

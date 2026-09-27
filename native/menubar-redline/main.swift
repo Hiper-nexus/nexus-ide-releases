@@ -81,6 +81,7 @@ let providerGlyphs: [String: String] = [
     "claude": "✳", "codex": "❋", "openai": "❋", "grok": "𝕏",
     "kimi": "K", "gemini": "✦", "glm": "G", "antigravity": "▲", "agy": "▲",
     "cursor": "▣", "opencode": "⌘", "aider": "A", "longcat": "L",
+    "minimax-code": "M",
 ]
 
 func glyph(for adapterId: String) -> String {

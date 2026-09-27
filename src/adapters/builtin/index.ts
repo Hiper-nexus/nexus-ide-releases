@@ -9,6 +9,7 @@ import aiderRaw from './aider.json';
 import agyRaw from './agy.json';
 import opencodeRaw from './opencode.json';
 import mimoCodeRaw from './mimo-code.json';
+import minimaxCodeRaw from './minimax-code.json';
 import openclaudeRaw from './openclaude.json';
 import museRaw from './muse.json';
 import museClaudeRaw from './muse-claude.json';
@@ -29,6 +30,10 @@ export const BUILTIN_ADAPTERS: unknown[] = [
   agyRaw,
   opencodeRaw,
   mimoCodeRaw,
+  // minimax-code: CLI nativa `mcode` (@minimax-ai/code). Worker PTY sem MCP
+  // do Nexus — a TUI só lê MCP do config.yaml do data dir ou do `.mcp.json`
+  // do checkout; o caminho com MCP é o harness ACP (`mcode acp`).
+  minimaxCodeRaw,
   openclaudeRaw,
   museRaw,
   // Opcional: Muse Spark dentro do Claude Code (ANTHROPIC_BASE_URL Meta).

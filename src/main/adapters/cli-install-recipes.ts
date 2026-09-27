@@ -31,6 +31,14 @@
  *             $XDG_DATA_HOME/devin/cli/_versions/<versão> e cria o link
  *             ~/.local/bin/devin. No Windows, a documentação oficial usa
  *             https://static.devin.ai/cli/setup.ps1 via PowerShell.
+ *
+ * Canais verificados em 2026-09-27:
+ * - minimax-code: npm @minimax-ai/code (README oficial MiniMax-AI/minimax-code).
+ *             O npm 12 bloqueia scripts de instalação por padrão e a CLI
+ *             precisa do better-sqlite3 nativo: o comando do README libera
+ *             os dois pacotes. Atualização é `mcode update`, que refaz esse
+ *             mesmo passo — o `npm install -g --prefix` genérico perderia
+ *             as flags e deixaria o SQLite quebrado.
  */
 
 interface ArgvInstallRecipe {
@@ -88,6 +96,23 @@ function npmRecipe(pkg: string): ArgvInstallRecipe {
   return Object.freeze({
     kind: 'argv' as const,
     argv: Object.freeze(['npm', 'install', '-g', pkg]),
+    runner: 'npm',
+    runnerHint: NPM_HINT,
+  });
+}
+
+/** O pacote fica por último: o updater lê o alvo npm do fim do argv. */
+function minimaxCodeNpmRecipe(): ArgvInstallRecipe {
+  return Object.freeze({
+    kind: 'argv' as const,
+    argv: Object.freeze([
+      'npm', 'install', '-g',
+      '--registry=https://registry.npmjs.org/',
+      '--ignore-scripts=false',
+      '--include=optional',
+      '--allow-scripts=@minimax-ai/code,better-sqlite3',
+      '@minimax-ai/code',
+    ]),
     runner: 'npm',
     runnerHint: NPM_HINT,
   });
@@ -179,6 +204,11 @@ const RECIPES: Readonly<Record<string, PlatformRecipes>> = Object.freeze({
     darwin: [npmRecipe('@mimo-ai/cli')],
     linux: [npmRecipe('@mimo-ai/cli')],
     win32: [npmRecipe('@mimo-ai/cli')],
+  },
+  'minimax-code': {
+    darwin: [minimaxCodeNpmRecipe()],
+    linux: [minimaxCodeNpmRecipe()],
+    win32: [minimaxCodeNpmRecipe()],
   },
   opencode: {
     darwin: [brewRecipe('opencode'), npmRecipe('opencode-ai')],
@@ -368,6 +398,9 @@ export function selectCliUpdateRecipe(input: {
     return selfUpdate(['upgrade', '--yes']);
   }
   if (input.adapterId === 'grok' && /\/\.grok\/bin\/grok(?:-[^/]+)?$/u.test(realPath)) {
+    return selfUpdate(['update']);
+  }
+  if (input.adapterId === 'minimax-code') {
     return selfUpdate(['update']);
   }
   if (input.adapterId === 'agy') {

@@ -72,6 +72,16 @@ describe('launcher provider routing (ported from ~/ai-launcher)', () => {
     expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('mimo-v2.6-flash');
   });
 
+  it('routes MiniMax through its current Anthropic endpoint and M3 1M model', () => {
+    const env = buildProviderRoutingEnv('minimax', 'sk-minimax-fixture');
+    expect(env.ANTHROPIC_BASE_URL).toBe('https://api.minimax.io/anthropic');
+    expect(UPSTREAM_PROVIDERS.minimax.defaultModel).toBe('MiniMax-M3[1m]');
+    for (const slot of ['ANTHROPIC_MODEL', 'ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL']) {
+      expect(env[slot]).toBe('MiniMax-M3[1m]');
+    }
+    expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('1000000');
+  });
+
   it('refuses to route a token-required provider without a token', () => {
     expect(buildProviderRoutingEnv('glm', null)).toEqual({});
     expect(buildProviderRoutingEnv('sakana', null)).toEqual({});

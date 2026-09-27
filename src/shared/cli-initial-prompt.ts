@@ -38,6 +38,7 @@ export type InitialPromptChannel =
  *   muse     → `muse [OPTIONS] [PROMPT]`
  *   qodercli → `qodercli [options] [command] [query...]`
  *   devin    → `devin [OPTIONS] [PATH]... [-- <PROMPT>...]`
+ *   mcode    → `mcode [options] [command] [prompt]` (MiniMax Code)
  */
 const POSITIONAL_BINARIES: ReadonlySet<string> = new Set([
   'claude',
@@ -49,6 +50,16 @@ const POSITIONAL_BINARIES: ReadonlySet<string> = new Set([
   'muse',
   'qodercli',
   'devin',
+  'mcode',
+]);
+
+/**
+ * Binários cujo prompt posicional precisa de `--` antes: devin (clap) e mcode
+ * (commander) leem um prompt que começa com `-` como opção.
+ */
+const SEPARATED_POSITIONAL_BINARIES: ReadonlySet<string> = new Set([
+  'devin',
+  'mcode',
 ]);
 
 export interface InitialPromptSource {
@@ -110,8 +121,10 @@ export function applyInitialPromptToArgv(
 ): string[] {
   const next = [...args];
   if (channel.kind === 'positional') {
-    const isDevin = next.some((a) => a === 'devin' || a.endsWith('/devin'));
-    if (isDevin && !next.includes('--')) {
+    const needsSeparator = next.some((a) =>
+      SEPARATED_POSITIONAL_BINARIES.has(spawnBinaryName([a])),
+    );
+    if (needsSeparator && !next.includes('--')) {
       next.push('--', prompt);
     } else {
       next.push(prompt);

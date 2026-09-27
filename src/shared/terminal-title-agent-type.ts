@@ -193,6 +193,10 @@ function computeAgentLabel(title: string): string | null {
   if (titleHasAgentName(title, 'mimo')) {
     return 'MiMo Code'
   }
+  // Why: `mcode` titles a fresh session "Minimax Code" (later the session title).
+  if (titleHasAgentName(title, 'minimax')) {
+    return 'MiniMax Code'
+  }
   if (titleHasAgentName(title, 'aider')) {
     return 'Aider'
   }
@@ -233,6 +237,7 @@ const TITLE_LABEL_TO_AGENT: Partial<Record<string, TuiAgent>> = {
   Antigravity: 'antigravity',
   OpenCode: 'opencode',
   'MiMo Code': 'mimo-code',
+  'MiniMax Code': 'minimax-code',
   Aider: 'aider',
   Cursor: 'cursor',
   Droid: 'droid',

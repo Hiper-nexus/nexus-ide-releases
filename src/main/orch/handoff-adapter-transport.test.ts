@@ -28,7 +28,7 @@ const MCP_BUILTIN_IDS = new Set([
   "mimo-code",
 ]);
 
-const PTY_FALLBACK_BUILTIN_IDS = new Set(["agy", "aider", "devin", "muse"]);
+const PTY_FALLBACK_BUILTIN_IDS = new Set(["agy", "aider", "devin", "minimax-code", "muse"]);
 
 function loadCliAdapters(
   rawList: readonly unknown[],
@@ -77,7 +77,7 @@ describe("handoffTransportForAdapter catalog", () => {
     expect(builtins.map((adapter) => adapter.id).sort()).toEqual(
       [...MCP_BUILTIN_IDS, ...PTY_FALLBACK_BUILTIN_IDS].sort(),
     );
-    expect(builtins).toHaveLength(15);
+    expect(builtins).toHaveLength(16);
   });
 
   it.each(builtins)(

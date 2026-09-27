@@ -12,6 +12,7 @@ import { QuotaService } from './quota-service';
 import type { AccountInfo } from '../../shared/account-types';
 import type { ProviderSettingsInfo } from '../../shared/provider-settings-types';
 import { CLAUDE_OAUTH_USAGE_URL } from './claude-oauth-usage';
+import { buildRedlineSnapshotFile } from './redline-sink';
 
 const HIT_AT = 1_000_000;
 const COOLDOWN_MS = 60_000;
@@ -714,6 +715,37 @@ describe('QuotaService live Claude OAuth usage', () => {
     expect(glm?.windows.find((w) => w.kind === 'weekly')?.usedRatio).toBe(0.12);
     // Grok mock has no billing response — honest unknown, not fake 0
     expect(grok?.windows.every((w) => w.usedRatio === null)).toBe(true);
+    svc.stop();
+  });
+
+  it('publishes MiniMax 5h and weekly usage to Redline and leaves failures unknown', async () => {
+    let healthy = true;
+    let published: ReturnType<typeof buildRedlineSnapshotFile> | undefined;
+    const fetchImpl = vi.fn(async () => ({
+      ok: healthy, status: healthy ? 200 : 401,
+      json: async () => ({ base_resp: { status_code: 0 }, model_remains: [{
+        current_interval_remaining_percent: 70,
+        current_weekly_total_count: 100,
+        current_weekly_usage_count: 20,
+      }] }),
+      text: async () => '',
+    }));
+    const svc = new QuotaService({
+      listProviders: () => [provider('minimax-code', 'MiniMax Code')],
+      listAccounts: () => [],
+      resolveGenericApiKeyCandidates: (adapterId) => adapterId === 'minimax-code' ? ['subscription-key'] : [],
+      fetchImpl,
+      persistSnapshot: (snapshot, accounts) => { published = buildRedlineSnapshotFile(snapshot, accounts, HIT_AT); },
+    });
+    const snapshot = await svc.snapshot(HIT_AT);
+    expect(snapshot.entries[0]?.windows[0]?.usedRatio).toBeCloseTo(0.3);
+    expect(snapshot.entries[0]?.windows[1]?.usedRatio).toBeCloseTo(0.8);
+    expect(published?.entries[0]?.adapterId).toBe('minimax-code');
+    expect(published?.entries[0]?.excludedReason).toBeUndefined();
+    healthy = false;
+    const failed = await svc.refresh();
+    expect(failed.entries[0]?.windows.every((w) => w.usedRatio === null)).toBe(true);
+    expect(published?.entries[0]?.excludedReason).toBe('unknown-usage');
     svc.stop();
   });
 

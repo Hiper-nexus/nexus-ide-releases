@@ -514,6 +514,7 @@ std::string glyphFor(const std::string& adapterId) {
   if (adapterId == "opencode") return "\xE2\x8C\x98";             // ⌘
   if (adapterId == "aider") return "A";
   if (adapterId == "longcat") return "L";
+  if (adapterId == "minimax-code") return "M";
   return "\xE2\x97\x8F";  // ●
 }
 
@@ -523,6 +524,7 @@ std::string providerName(const std::string& adapterId) {
   if (adapterId == "glm") return "GLM";
   if (adapterId == "opencode") return "OpenCode";
   if (adapterId == "agy" || adapterId == "antigravity") return "Antigravity";
+  if (adapterId == "minimax-code") return "MiniMax Code";
   if (adapterId.empty()) return adapterId;
   std::string out = adapterId;
   out[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(out[0])));
@@ -814,6 +816,8 @@ bool runSelfTests(std::string& reportOut) {
     check(glyphFor("desconhecido") == "\xE2\x97\x8F", "glifo padrao");
     check(providerName("agy") == "Antigravity", "nome agy");
     check(providerName("kimi") == "Kimi", "nome kimi capitalizado");
+    check(glyphFor("minimax-code") == "M", "glifo minimax-code");
+    check(providerName("minimax-code") == "MiniMax Code", "nome minimax-code");
     check(accountState(snap->entries[0], now).empty(), "conta saudavel sem estado");
     std::string st = accountState(snap->entries[1], 1780000000000LL);
     check(st.find("Em espera") != std::string::npos, "cooldown vira Em espera");

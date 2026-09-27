@@ -201,6 +201,24 @@ terminal/worker CLI, but is not advertised as a Nexus MCP orchestrator.
   checkout isolation.
 - Analysis: `docs/analysis/2026-07-18-analise-senior-kimi-cli-vs-nexus.md`.
 
+### MiniMax Code (`minimax-code`) notes
+
+- **Package:** `@minimax-ai/code` (bin `mcode`), Node 22.19+ or 24–26.
+- **Install:** `npm install -g @minimax-ai/code --allow-scripts=@minimax-ai/code,better-sqlite3 --registry=https://registry.npmjs.org/`.
+  npm 12 blocks install scripts by default and the CLI needs the native
+  `better-sqlite3`. Update with `mcode update`.
+- **Auth:** `mcode login --region global` (or `--region cn`), or the CLI's own
+  key via `mcode provider set-minimax-key`. Data dir `~/.minimax`
+  (`MINIMAX_DATA_DIR` overrides it).
+- **Interactive:** `mcode [-m provider/model] -- "<prompt>"`. No permission or
+  effort flag in the TUI — both come from `~/.minimax/config.yaml`.
+- **Headless:** `mcode exec --output-format text --model {{MODEL}} -- {{PROMPT}}`
+  (`--permission smart|full|off`, `--effort`, `--timeout` also exist).
+- **Resume:** `--session <id>` only; `--continue` would pick another pane's
+  latest session in the same folder.
+- **MCP:** worker-only in a PTY (`nexusMcp: none`). The Nexus MCP reaches it
+  through the ACP preset (`mcode acp`).
+
 ## Overriding a builtin adapter
 
 User adapters with the same `id` as a builtin silently replace it. To tweak

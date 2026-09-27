@@ -10,6 +10,8 @@ import { fetchClaudeOauthUsageWindows } from './claude-oauth-usage';
 import { fetchGlmUsageWindows } from './glm-usage';
 import { fetchKimiCodingUsageWindows } from './kimi-usage';
 import { fetchGrokUsageWindows } from './grok-usage';
+import { fetchMinimaxTokenPlan } from './minimax-code-usage';
+import { minimaxCodeSignedInRegion } from '../adapters/minimax-code-auth';
 import { knownWindow } from './quota-normalize';
 
 export type KeyShape =
@@ -37,13 +39,14 @@ export function classifyKeyShape(key: string): KeyShape {
   return 'unknown';
 }
 
-type QuotaProvider = 'claude' | 'kimi' | 'grok' | 'glm' | 'longcat';
+type QuotaProvider = 'claude' | 'kimi' | 'grok' | 'glm' | 'longcat' | 'minimax-code';
 const DECLARED_PROVIDERS = new Map<string, QuotaProvider>([
   ['claude', 'claude'], ['anthropic', 'claude'],
   ['kimi', 'kimi'], ['kimi-for-coding', 'kimi'], ['moonshotai', 'kimi'],
   ['grok', 'grok'], ['xai', 'grok'],
   ['glm', 'glm'], ['glm-flash', 'glm'], ['zai', 'glm'], ['zai-coding-plan', 'glm'], ['zhipu', 'glm'],
   ['longcat', 'longcat'],
+  ['minimax-code', 'minimax-code'],
 ]);
 
 function prefixProvider(shape: KeyShape): QuotaProvider | 'openai' | null {
@@ -83,6 +86,9 @@ export async function fetchWindowsForApiKey(
     case 'grok': return fetchGrokUsageWindows(token, { fetchImpl, now });
     case 'longcat': return fetchLongcatUsageWindows(token, { fetchImpl, now });
     case 'glm': return fetchGlmUsageWindows(token, { fetchImpl, now, platform: hint === 'zhipu' ? 'zhipu' : 'zai' });
+    case 'minimax-code': return fetchMinimaxTokenPlan(token, {
+      fetchImpl, now, region: minimaxCodeSignedInRegion() === 'cn' ? 'cn' : 'overseas',
+    });
   }
 }
 

@@ -764,6 +764,37 @@ saber isto antes de mexer:
   Reescrita da mensagem atualiza uma linha. Custo reportado pela CLI é estimativa,
   não fatura do Token Plan. Nenhum texto de prompt entra na telemetria.
 
+## MiniMax Code (F-655)
+
+- Adapter `minimax-code`, binário oficial `mcode` (`@minimax-ai/code`), não o
+  Claude no endpoint da MiniMax — essa rota continua sendo o upstream
+  `minimax` do launcher (`api.minimax.io/anthropic`, `MiniMax-M3[1m]`).
+- Instalação exige os scripts nativos: `--allow-scripts=@minimax-ai/code,better-sqlite3`
+  (o npm 12 bloqueia por padrão e o SQLite da CLI quebra). Atualização é
+  `mcode update`, nunca o `npm install -g --prefix` genérico, que perde as flags.
+- Login: `mcode login --region global` (China: `--region cn`) ou chave própria
+  da CLI (`mcode provider set-minimax-key`). A prova de sessão lê só
+  `~/.minimax/auth/prod/<en|cn>/mcode-public/auth-state.json` (status público,
+  sem token) ou a linha `minimaxModelSource: minimax_api_key` do `config.yaml`.
+  Nunca ler `auth.json` (access/refresh). Sem multi-conta: uma sessão nativa.
+- PTY é worker sem MCP do Nexus (`nexusMcp: none`): a TUI só lê MCP do
+  `config.yaml` do data dir ou do `.mcp.json` do checkout, e nenhum dos dois
+  pode ser escrito por spawn. O MCP chega pelo harness ACP (`mcode acp`,
+  preset `minimax-code`), que recebe `mcpServers` no `session/new`.
+- A TUI não tem flag de permissão nem de esforço: vêm do `config.yaml`
+  (`permissionMode`, `defaultModelThinking.effort`). Worker autônomo precisa de
+  Full access escolhido na própria CLI. O Jev roteia sem `effort`.
+- Prompt inicial posicional depois de `--` (commander lê `-x` como opção).
+  Resume só por id exato (`--session <id>`); sem hooks não há id capturado,
+  então `--continue` (última sessão do cwd) fica proibido.
+- Cota Token Plan: `GET /v1/token_plan/remains` com a Subscription Key (a mesma
+  chave do upstream `minimax`, cofre/launcher, ou `MINIMAX_API_KEY`). Região
+  preferida = região do `mcode login`; chave recusada tenta a outra uma vez.
+  `*_usage_count` é o RESTANTE (igual ao cliente oficial). Nunca usar o
+  endpoint privado `coding_plan/remains` nem os headers assinados do cliente.
+- Benchmark headless: `mcode exec --output-format text --model {{MODEL}} -- {{PROMPT}}`,
+  sem `--permission` (padrão smart). Modelos entram NÃO avaliados.
+
 ## Helpers do operador sem missão (F-156/F-157)
 
 - O handoff de workspace só fecha um helper armado após `markSubmitted` confirmar

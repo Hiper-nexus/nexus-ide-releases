@@ -75,6 +75,14 @@
     "file": "mimo-code.png",
     "mono": false
   },
+  "minimax": {
+    "file": "minimax-code.png",
+    "mono": false
+  },
+  "minimax-code": {
+    "file": "minimax-code.png",
+    "mono": false
+  },
   "muse": {
     "file": "muse.png",
     "mono": false

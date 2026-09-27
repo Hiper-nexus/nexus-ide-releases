@@ -10,6 +10,7 @@ import {
 import { realUserHome, resolveCliBinary } from '../path-resolver';
 import { hasNativeFileAuth, captureNativeAuth } from './managed-credentials';
 import { mimoCredentialSupportsModel } from './mimo-auth';
+import { minimaxCodeHasCredential } from './minimax-code-auth';
 import {
   openClaudeKeychainService,
   readNativeOAuthCredential,
@@ -1030,6 +1031,12 @@ export function detectSubscriptionAuth(
       const capture = captureNativeAuth(adapterId, home);
       return capture ? mimoCredentialSupportsModel(capture.blob, _model) : false;
     }
+    case 'minimax-code':
+      // `mcode login` grava o status público em auth-state.json (sem token);
+      // `mcode provider set-minimax-key` troca a fonte no config.yaml. Sem este
+      // case o default `false` faria o gate pré-spawn recusar o pane de uma
+      // CLI pronta, igual aconteceu com o devin.
+      return minimaxCodeHasCredential(home);
     case 'devin':
       // Sessão em TOML plano ($XDG_DATA_HOME/devin/credentials.toml). Sem este
       // case o switch caía no default `false`, a estratégia virava

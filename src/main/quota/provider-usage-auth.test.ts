@@ -67,7 +67,7 @@ beforeEach(() => {
   vi.spyOn(os, 'homedir').mockReturnValue(home);
   for (const key of ['ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'XAI_API_KEY',
     'ZAI_API_KEY', 'ZHIPU_API_KEY', 'ZHIPUAI_API_KEY', 'LONGCAT_API_KEY', 'KIMI_MODEL_API_KEY',
-    'KIMI_API_KEY', 'KIMI_CODING_API_KEY', 'MOONSHOT_API_KEY']) vi.stubEnv(key, '');
+    'KIMI_API_KEY', 'KIMI_CODING_API_KEY', 'MOONSHOT_API_KEY', 'MINIMAX_API_KEY']) vi.stubEnv(key, '');
 });
 
 function credentialBlob(token: string): string {
@@ -247,6 +247,21 @@ describe('multi-account credential scoping', () => {
     expect(resolveProviderApiKeyCandidates(adapterId).length).toBe(0);
     vi.stubEnv('ANTHROPIC_BASE_URL', matchingBaseUrl);
     expect(resolveProviderApiKeyCandidates(adapterId)).toEqual(['opaque-test-token']);
+  });
+  it('reads MiniMax key from its vault or dedicated environment only', () => {
+    vi.stubEnv('MINIMAX_API_KEY', 'minimax-subscription-key');
+    expect(resolveProviderApiKeyCandidates('minimax-code')).toEqual(['minimax-subscription-key']);
+    // The launcher `minimax` route stores the same Token Plan Subscription Key.
+    mocks.getKey.mockImplementation((id) => id === 'minimax' ? 'vault-minimax-key' : null);
+    mocks.loadLauncherProviderKey.mockImplementation((id: string) => id === 'minimax' ? 'launcher-minimax-key' : null);
+    expect(resolveProviderApiKeyCandidates('minimax-code')).toEqual([
+      'vault-minimax-key', 'launcher-minimax-key', 'minimax-subscription-key',
+    ]);
+    mocks.getKey.mockReset();
+    mocks.loadLauncherProviderKey.mockReset();
+    mocks.getAccount.mockReturnValue({ adapterId: 'minimax-code' });
+    mocks.getSecret.mockReturnValue(null);
+    expect(resolveProviderApiKeyCandidates('minimax-code', 'missing-account')).toEqual([]);
   });
   it('never substitutes the system Codex session for a missing pinned credential, even when email matches', () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-quota-identity-'));

@@ -25,6 +25,7 @@ import {
   emailFromAuthDetail,
 } from '../../shared/auth-detail-identity';
 import { claudeCredentialFingerprint } from './claude-credential';
+import { minimaxCodeSignedInRegion, minimaxCodeUsesOwnApiKey } from './minimax-code-auth';
 
 /**
  * Sonda de login das CLIs — SEM navegador. Cada CLI guarda a sessão OAuth
@@ -166,6 +167,14 @@ const OAUTH_PROBES: Record<
     hasNativeFileAuth('mimo-code')
       ? { state: 'ok', detail: 'credencial Xiaomi MiMo salva pela CLI' }
       : { state: 'missing', detail: 'entre com sua conta Xiaomi MiMo' },
+  // Só o estado público (auth-state.json) e a fonte no config.yaml; o
+  // auth.json com token e a chave salva pela CLI não são lidos.
+  'minimax-code': async () =>
+    minimaxCodeSignedInRegion()
+      ? { state: 'ok', detail: 'sessão MiniMax Code local (mcode login)' }
+      : minimaxCodeUsesOwnApiKey()
+        ? { state: 'ok', detail: 'chave MiniMax salva na própria CLI (mcode provider)' }
+        : { state: 'missing', detail: 'sem sessão — rode `mcode login --region global`' },
   opencode: async () =>
     hasNativeFileAuth('opencode')
       ? { state: 'ok', detail: 'credencial OpenCode local' }

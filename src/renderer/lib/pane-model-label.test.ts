@@ -128,6 +128,15 @@ describe('resolveModelChipLabel', () => {
       expect(label!.medium).toBe('Kimi K3');
     });
 
+    it('minimax-code + minimax/MiniMax-M3.1-Flash-Preview', () => {
+      const label = resolveModelChipLabel('minimax-code', 'minimax/MiniMax-M3.1-Flash-Preview', undefined);
+      expect(label!.family).toBe('MiniMax');
+      expect(label!.version).toBe('M3.1 Flash Preview');
+      expect(label!.medium).toBe('MiniMax M3.1');
+      expect(resolveModelChipLabel('minimax-code', 'minimax/MiniMax-M2.7-highspeed', undefined)!.full)
+        .toBe('MiniMax M2.7 Highspeed');
+    });
+
     it('kimi + kimi-code/k3', () => {
       const label = resolveModelChipLabel('kimi', 'kimi-code/k3', undefined);
       expect(label!.family).toBe('Kimi');

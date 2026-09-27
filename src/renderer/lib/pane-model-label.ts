@@ -13,6 +13,7 @@ const FAMILY_MAP: readonly [pattern: string, family: string][] = [
   ['cursor-grok', 'Grok'],
   ['cursor-agent', 'Cursor'],
   ['prime-agent', 'Prime'],
+  ['minimax-code', 'MiniMax'],
   ['openai-codex', 'GPT'],
   ['claude-code', 'Claude'],
   ['opencode', 'OpenCode'],
@@ -28,6 +29,7 @@ const FAMILY_MAP: readonly [pattern: string, family: string][] = [
   ['glm', 'GLM'],
   ['aider', 'Aider'],
   ['muse', 'Muse'],
+  ['minimax', 'MiniMax'],
   ['omp', 'OMP'],
   ['agy', 'AGY'],
 ];
@@ -177,6 +179,12 @@ function parseModelVersion(model: string): ParsedModel {
   if (lower.startsWith('qwen')) {
     const parts = clean.slice(4).split('-');
     return { version: normalizeVersionParts(parts) };
+  }
+
+  // MiniMax Code: "minimax/MiniMax-M3.1-Flash-Preview" → "M3.1 Flash Preview"
+  if (lower.startsWith('minimax/')) {
+    const id = clean.slice('minimax/'.length).replace(/^minimax-/i, '');
+    return { version: normalizeVersionParts(id.split('-')) };
   }
 
   // Fallback genérico: retorna o model como está

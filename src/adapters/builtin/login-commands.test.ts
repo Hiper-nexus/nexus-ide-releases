@@ -12,6 +12,7 @@ const SESSION_LOGIN_IDS = [
   'grok',
   'kimi',
   'mimo-code',
+  'minimax-code',
   'muse',
   'opencode',
   'openclaude',

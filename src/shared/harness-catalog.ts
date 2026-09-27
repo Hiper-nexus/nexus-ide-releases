@@ -270,6 +270,20 @@ export const PRESET_HARNESSES: readonly HarnessDefinition[] = Object.freeze([
     installInstructionsUrl: 'https://cli.devin.ai/install.sh',
     installHint: 'Install the Devin CLI and ensure `devin` is on your PATH',
   }),
+  // `mcode acp` é o servidor ACP nativo da CLI. É o caminho do MiniMax Code
+  // com o MCP do Nexus: a sessão ACP recebe os mcpServers no session/new,
+  // coisa que a TUI em PTY não aceita por argv/env.
+  deepFreezeDefinition({
+    id: 'minimax-code',
+    label: 'MiniMax Code (ACP)',
+    command: 'mcode',
+    args: ['acp'],
+    env: {},
+    tier: 'preset',
+    canAutoInstall: false,
+    installInstructionsUrl: 'https://github.com/MiniMax-AI/minimax-code',
+    installHint: 'npm install -g @minimax-ai/code --allow-scripts=@minimax-ai/code,better-sqlite3',
+  }),
 ]);
 
 /**
