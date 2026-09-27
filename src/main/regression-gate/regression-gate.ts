@@ -1400,9 +1400,15 @@ export async function runRegressionGate(
   const git = deps.git ?? new ProcessGitRunner();
   const before = observeState(root, input, git);
   if (before.changed.files.length === 0) {
+    // Diff vazio só é "limpo" se o git respondeu: erro nele (lock, índice
+    // corrompido) devolve lista vazia e não pode passar por árvore limpa.
+    const gitAnswered =
+      !before.base.head ||
+      (gitText(git, root, ['status', '--porcelain', '--untracked-files=all']) !== null &&
+        (!before.base.sha || gitText(git, root, ['diff', '--quiet', `${before.base.sha}...HEAD`]) !== null));
     return Object.freeze({
       version: GATE_VERSION,
-      status: 'clean',
+      status: gitAnswered ? 'clean' : 'unavailable',
       diffHash: before.diffHash,
       headSha: before.base.head,
       baseSha: before.base.sha,
@@ -1415,7 +1421,7 @@ export async function runRegressionGate(
       untestedFiles: [],
       invariantsTouched: [],
       runner: null,
-      warnings: [],
+      warnings: gitAnswered ? [] : ['git não respondeu ao listar o diff: nada verificado'],
       cached: false,
       durationMs: 0,
     });

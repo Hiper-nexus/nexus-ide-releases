@@ -553,6 +553,24 @@ describe('runRegressionGate', () => {
     expect(result.invariantsTouched.map((invariant) => invariant.id)).toEqual(['INV-T']);
   });
 
+  it('git que falha ao listar o diff não passa por árvore limpa', async () => {
+    const { root, scope } = project();
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    const real = new ProcessGitRunner();
+    const git = {
+      run: (cwd: string, args: readonly string[], options?: { allowFailure?: boolean }) =>
+        args[0] === 'status'
+          ? { status: 128, stdout: '', stderr: 'fatal: index.lock' }
+          : real.run(cwd, args, options),
+    } as unknown as ProcessGitRunner;
+    const { exec } = fakeVitest();
+
+    const result = await runRegressionGate({ scope }, { exec, git });
+
+    expect(result.status).toBe('unavailable');
+    expect(result.warnings.join('\n')).toContain('git não respondeu');
+  });
+
   it('checkout limpo não roda nada', async () => {
     const { scope } = project();
     const { exec } = fakeVitest();
