@@ -13,7 +13,7 @@
 // Árvore limpa zera a sequência de bloqueios.
 import type http from 'node:http';
 import type { AgentGateContext } from './gate';
-import { handleHookJsonPost } from './hook-http';
+import { sendHookJson } from './hook-http';
 import {
   formatRegressionGateReport,
   isRegressionGateEnabled,
@@ -22,7 +22,6 @@ import {
 import { ProcessGitRunner, type GitRunner } from '../runtime/git-command';
 import { getSessionSpawnedAtMs } from '../pty/pty-manager';
 
-export const HOOK_REGRESSION_MAX_BODY_BYTES = 64 * 1024;
 export const MAX_CONSECUTIVE_STOP_BLOCKS = 3;
 /**
  * Orçamento TOTAL do portão no Stop (mapa + testes + retentativa), bem abaixo
@@ -161,14 +160,30 @@ export async function handleHookRegressionHttp(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   ctx: AgentGateContext | null,
+  deps: Omit<NonNullable<Parameters<typeof handleHookRegressionRequest>[2]>, 'signal'> = {},
 ): Promise<void> {
+  if (!ctx) {
+    sendHookJson(res, 401, { ok: false, error: 'missing or unknown bearer token' });
+    return;
+  }
+  if (req.method !== 'POST') {
+    sendHookJson(res, 405, { ok: false, error: 'method not allowed' });
+    return;
+  }
+  // O corpo do Stop (última mensagem do agente) não é usado: é drenado sem
+  // teto. Com o teto dos outros hooks, uma resposta longa virava 400 e o
+  // `curl … || true` desligava o portão em silêncio.
+  await new Promise<void>((resolve) => {
+    req.once('end', resolve);
+    req.once('error', () => resolve());
+    req.resume();
+  });
   // O curl desiste no `--max-time` do hook: conexão fechada
   // antes da resposta cancela os testes (o grupo de processos morre junto).
   const controller = new AbortController();
   res.once('close', () => {
     if (!res.writableEnded) controller.abort();
   });
-  await handleHookJsonPost(req, res, ctx, HOOK_REGRESSION_MAX_BODY_BYTES, (body) =>
-    handleHookRegressionRequest(ctx!, body, { signal: controller.signal }),
-  );
+  const result = await handleHookRegressionRequest(ctx, {}, { ...deps, signal: controller.signal });
+  sendHookJson(res, result.statusCode, result.payload);
 }
