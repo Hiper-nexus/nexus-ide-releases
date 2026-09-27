@@ -32,6 +32,14 @@ export const RETIRED_MODEL_MIGRATIONS: Readonly<Record<string, string>> = Object
   // Muse 1.3: o id "muse" era placeholder do adapter — o CLI recusa e o
   // chip virava "Muse muse". Default real do binário 1.3.0: muse-spark-1.3.
   muse: 'muse-spark-1.3',
+  // xAI aposentou estes quatro (`grok models` na CLI instalada, 2026-09-27:
+  // só grok-4.7/grok-4.7-build-fast/grok-4.6/grok-4.5 continuam na conta) —
+  // o roteamento oferecia grok-4.1 para o operador achar "grok já é o 4.7".
+  'grok-4.1': GROK_FRONTIER_MODEL,
+  'grok-4': GROK_FRONTIER_MODEL,
+  'grok-4-fast': GROK_FRONTIER_MODEL,
+  'grok-code-fast-1': GROK_FRONTIER_MODEL,
+  'grok-3': GROK_FRONTIER_MODEL,
 });
 
 export function migrateModelId(modelId: string | undefined): string | undefined {

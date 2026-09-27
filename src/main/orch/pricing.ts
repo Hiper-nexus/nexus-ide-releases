@@ -159,6 +159,8 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   // === xAI Grok (docs.x.ai/docs/overview#pricing) ===
   // Base rates: https://docs.x.ai/developers/grok-4-7 (2026-09-21).
   'grok-4.7': { inputPerM: 2.0, outputPerM: 6.0 },
+  // CLI descreve como "Fast variant. 2x the price." do grok-4.7 (models_cache.json, 2026-09-27).
+  'grok-4.7-build-fast': { inputPerM: 4.0, outputPerM: 12.0 },
   'grok-code-fast-1': { inputPerM: 0.2, outputPerM: 1.5, cacheReadPerM: 0.02 },
   'grok-composer-2.5-fast': { inputPerM: 0.2, outputPerM: 1.5, cacheReadPerM: 0.02 },
   'grok-4-fast': { inputPerM: 0.2, outputPerM: 0.5, cacheReadPerM: 0.05 },

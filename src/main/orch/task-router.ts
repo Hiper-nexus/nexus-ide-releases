@@ -40,7 +40,7 @@ import {
   classifyOperationalBand,
   preferOperationalBand,
 } from '../../shared/model-operational-bands';
-import { CODEX_FRONTIER_MODEL, migrateModelId } from '../../shared/model-defaults';
+import { CODEX_FRONTIER_MODEL, GROK_FRONTIER_MODEL, migrateModelId } from '../../shared/model-defaults';
 import { BUILTIN_ADAPTERS } from '../../adapters/builtin';
 import { adapterSchema } from '../../shared/adapter-types';
 import { adapterCircuitBreakers } from './circuit-breaker';
@@ -118,7 +118,7 @@ export type RankedRouteEntry = {
  */
 export const DEFAULT_ROUTING_TABLE: RoutingTable = {
   trivial: [
-    { adapterId: 'grok', model: 'grok-code-fast-1', effort: 'low' },
+    { adapterId: 'grok', model: GROK_FRONTIER_MODEL, effort: 'low' },
     { adapterId: 'agy', model: 'gemini-3.7-flash-low', effort: 'low' },
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'low' },
     { adapterId: 'glm-flash', model: 'glm-5.3-flash[1m]', effort: 'low' },
@@ -132,14 +132,14 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
   ],
   easy: [
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'low' },
-    { adapterId: 'grok', model: 'grok-4-fast', effort: 'low' },
+    { adapterId: 'grok', model: GROK_FRONTIER_MODEL, effort: 'low' },
     { adapterId: 'agy', model: 'gemini-3.7-flash-low', effort: 'low' },
     { adapterId: 'codex', model: 'gpt-5.4-mini', effort: 'low' },
     { adapterId: 'glm-flash', model: 'glm-5.3-flash[1m]', effort: 'low' },
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-flash' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M2.7-highspeed' },
     { adapterId: 'claude', model: 'claude-sonnet-4-6', effort: 'low' },
-    { adapterId: 'opencode', model: 'opencode/deepseek-v4-flash-free' },
+    { adapterId: 'opencode', model: 'opencode/deepseek-v4-flash' },
     { adapterId: 'openclaude', model: 'haiku' },
     { adapterId: 'aider', model: 'claude-haiku-4-5' },
   ],
@@ -149,7 +149,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-flash' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3' },
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'medium' },
-    { adapterId: 'grok', model: 'grok-4.1', effort: 'medium' },
+    { adapterId: 'grok', model: GROK_FRONTIER_MODEL, effort: 'medium' },
     { adapterId: 'agy', model: 'gemini-3.1-pro-high', effort: 'medium' },
     { adapterId: 'codex', model: 'gpt-5.6-luna', effort: 'medium' },
     { adapterId: 'codex', model: 'gpt-5.4', effort: 'medium' },
@@ -173,7 +173,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'codex', model: 'gpt-5.6-terra', effort: 'high' },
     { adapterId: 'agy', model: 'gemini-3.1-pro-high', effort: 'high' },
     { adapterId: 'kimi', model: 'kimi-code/k3', effort: 'high' },
-    { adapterId: 'grok', model: 'grok-4.1', effort: 'high' },
+    { adapterId: 'grok', model: GROK_FRONTIER_MODEL, effort: 'high' },
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-pro' },
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-pro-ultraspeed' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M3' },

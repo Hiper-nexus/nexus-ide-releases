@@ -22,7 +22,9 @@ import {
 
 export const CODE_PROMPT_POLISH_TIMEOUT_MS = 8_000;
 const XAI_CHAT_ENDPOINT = 'https://api.x.ai/v1/chat/completions';
-const XAI_POLISH_MODEL = 'grok-4-fast';
+// xAI aposentou o grok-4-fast (`grok models` na CLI instalada, 2026-09-27:
+// só grok-4.7/grok-4.7-build-fast/grok-4.6/grok-4.5 continuam na conta).
+const XAI_POLISH_MODEL = 'grok-4.7';
 const MAX_POLISH_TOKENS = 1_200;
 
 export const CODE_PROMPT_POLISH_INSTRUCTIONS = [

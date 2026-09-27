@@ -137,8 +137,18 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
     },
     grok: {
       default: GROK_FRONTIER_MODEL,
+      // `grok models` na CLI instalada (2026-09-27) só lista estes quatro —
+      // xAI aposentou 4.1/4/4-fast/code-fast-1/3 (RETIRED_MODEL_MIGRATIONS
+      // remapeia panes/squads antigos que ainda pedirem esses ids).
       models: [
         { id: GROK_FRONTIER_MODEL, availability: 'paid', costTier: 'high', source: 'bundled' },
+        {
+          id: 'grok-4.7-build-fast',
+          availability: 'paid',
+          costTier: 'high',
+          source: 'bundled',
+          warning: 'Variante fast do 4.7 — 2x o preço, não é opção barata.',
+        },
         { id: 'grok-4.6', availability: 'paid', costTier: 'high', source: 'bundled' },
         {
           id: 'grok-4.5',
@@ -147,9 +157,6 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
           source: 'bundled',
           warning: 'New xAI model; verify tier/pricing before making it the default.',
         },
-        { id: 'grok-4.1', availability: 'paid', costTier: 'medium', source: 'bundled' },
-        { id: 'grok-4-fast', availability: 'cheap', costTier: 'low', source: 'bundled' },
-        { id: 'grok-code-fast-1', availability: 'cheap', costTier: 'low', source: 'bundled' },
       ],
     },
     glm: {

@@ -122,6 +122,13 @@
           "source": "remote"
         },
         {
+          "id": "grok-4.7-build-fast",
+          "availability": "paid",
+          "costTier": "high",
+          "source": "remote",
+          "warning": "Variante fast do 4.7 — 2x o preço, não é opção barata."
+        },
+        {
           "id": "grok-4.6",
           "availability": "paid",
           "costTier": "high",
@@ -133,30 +140,6 @@
           "costTier": "high",
           "source": "remote",
           "warning": "Modelo novo da xAI — confirme pricing/tier antes de tornar default."
-        },
-        {
-          "id": "grok-4.1",
-          "availability": "paid",
-          "costTier": "medium",
-          "source": "nexus-eval"
-        },
-        {
-          "id": "grok-4",
-          "availability": "paid",
-          "costTier": "medium",
-          "source": "remote"
-        },
-        {
-          "id": "grok-4-fast",
-          "availability": "cheap",
-          "costTier": "low",
-          "source": "nexus-eval"
-        },
-        {
-          "id": "grok-code-fast-1",
-          "availability": "cheap",
-          "costTier": "low",
-          "source": "remote"
         },
         {
           "id": "grok-composer-2.5-fast",

@@ -48,7 +48,7 @@
     "flag": "--model",
     "list": [
       "opencode/big-pickle",
-      "opencode/deepseek-v4-flash-free",
+      "opencode/deepseek-v4-flash",
       "opencode/mimo-v2.5-free",
       "opencode/nemotron-3-ultra-free",
       "openrouter/anthropic/claude-sonnet-5",

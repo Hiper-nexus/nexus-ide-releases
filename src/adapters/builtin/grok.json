@@ -47,14 +47,10 @@
     "flag": "--model",
     "list": [
       "grok-4.7",
+      "grok-4.7-build-fast",
       "grok-4.6",
       "grok-composer-2.5-fast",
-      "grok-4.5",
-      "grok-4.1",
-      "grok-4",
-      "grok-4-fast",
-      "grok-code-fast-1",
-      "grok-3"
+      "grok-4.5"
     ],
     "default": "grok-4.7"
   },

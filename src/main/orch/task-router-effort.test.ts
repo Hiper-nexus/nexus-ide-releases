@@ -26,10 +26,13 @@ describe('task effort survives model selection (F-163)', () => {
   });
 
   it('critical work keeps its effort when only a cheaper-tier model is installed', () => {
+    // LongCat só está na tabela `hard` (ausente de `critical`) — grok deixou
+    // de servir este caso depois que o catálogo unificou seus modelos no
+    // grok-4.7 vigente (xAI aposentou o restante da linhagem, 2026-09-27).
     const decision = routeTask('Repair recovery', [{
-      id: 'grok', installed: true, models: ['grok-4.1'], efforts: supported,
+      id: 'longcat', installed: true, models: ['LongCat-2.0'], efforts: supported,
     }], undefined, 'critical', false, BUILTIN_MODEL_CATALOG);
-    expect(decision).toMatchObject({ model: 'grok-4.1', effort: 'xhigh' });
+    expect(decision).toMatchObject({ model: 'LongCat-2.0', effort: 'xhigh' });
   });
 
   it.each(['low', 'medium', 'high', 'xhigh'] as const)(
