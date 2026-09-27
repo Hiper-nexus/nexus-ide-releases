@@ -237,6 +237,24 @@ type WindowsReleaseSignOptions = WindowsSignOptions & {
   continueOnError: false;
 };
 
+export const DIGICERT_TIMESTAMP_SERVER_URL = 'http://timestamp.digicert.com';
+
+/**
+ * F-656: `NEXUS_WINDOWS_TIMESTAMP_URL` troca o servidor RFC 3161 do SignTool
+ * só na execução que a define. Em 27/09 o timestamp.digicert.com respondia com
+ * atraso ou truncado e todo build morria em "SignerSign() failed"
+ * (0x80093102) num arquivo diferente a cada tentativa. Qualquer TSA RFC 3161
+ * serve ao Authenticode (ex.: http://timestamp.sectigo.com); só URL é aceita.
+ */
+export function windowsTimestampServer(
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): string {
+  const override = environment.NEXUS_WINDOWS_TIMESTAMP_URL?.trim();
+  return override && /^https?:\/\/\S+$/u.test(override)
+    ? override
+    : DIGICERT_TIMESTAMP_SERVER_URL;
+}
+
 export function createWindowsSignOptions(
   environment: NodeJS.ProcessEnv,
 ): WindowsReleaseSignOptions | undefined {
@@ -265,7 +283,7 @@ export function createWindowsSignOptions(
     hashes: [
       'sha256' as NonNullable<WindowsSignOptions['hashes']>[number],
     ],
-    timestampServer: 'http://timestamp.digicert.com',
+    timestampServer: windowsTimestampServer(environment),
   };
 
   if (hasStoreModeValue) {
