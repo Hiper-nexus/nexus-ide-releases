@@ -728,6 +728,17 @@ export interface NexusApi {
       error?: string;
     }>;
     /**
+     * "Tornar orquestrador" num pane solto: cria a missão leve da aba
+     * (Autopilot, livre, sem squad) liderada por ele. `error: 'hardened'`
+     * quando a política exige despacho explícito.
+     */
+    createPaneMission(input: { paneId: string; title: string }): Promise<{
+      ok: boolean;
+      mission?: Mission;
+      warning?: string;
+      error?: string;
+    }>;
+    /**
      * Retry the orchestrator bootstrap of a mission the bootstrap itself
      * blocked (blocked_technical + marker). Main re-arms and re-validates.
      */

@@ -480,6 +480,131 @@ describe("renderer mission authority", () => {
     ).toEqual({ ok: false, error: "pane_mission_mismatch" });
   });
 
+  describe("createPaneMissionFromRenderer (missão leve da aba)", () => {
+    function wireLightMissionStore() {
+      const created: Record<string, unknown>[] = [];
+      let stored: Record<string, unknown> | null = null;
+      const create = vi.fn((input: Record<string, unknown>) => {
+        stored = { ...mission, ...input, id: "mission-light", status: "pending", squadId: undefined };
+        created.push(input);
+        return stored;
+      });
+      const update = vi.fn((_id: string, patch: Record<string, unknown>) => {
+        stored = { ...stored!, ...patch };
+        return stored;
+      });
+      const remove = vi.fn(() => true);
+      deps.getMission.mockImplementation((id: string) => (id === "mission-light" ? stored : null));
+      deps.rebindMissionOrchestratorSession.mockImplementation(() => stored);
+      deps.forScope.mockReturnValue({
+        missions: {
+          get: deps.getMission,
+          create,
+          update,
+          remove,
+          rebindOrchestratorSession: deps.rebindMissionOrchestratorSession,
+        },
+        missionPanes: {
+          findByPaneId: deps.findMissionPaneByPaneId,
+          list: deps.listMissionPanes,
+          promotePaneToOrchestrator: deps.promotePaneToOrchestrator,
+        },
+      });
+      return { created, create, update, remove };
+    }
+
+    it("cria missão Autopilot livre, sem squad, liderada pelo pane solto", () => {
+      const store = wireLightMissionStore();
+      deps.findPaneOwnedBy.mockReturnValue({
+        paneId: "pane-b",
+        sessionId: "pty-b",
+        title: "Claude",
+        kind: "cli-agent",
+      });
+      deps.getOwnedAgentSessionInfo.mockReturnValue({
+        ...session,
+        sessionId: "pty-b",
+        paneId: "pane-b",
+        role: "user",
+        missionId: undefined,
+        squadId: undefined,
+      });
+
+      const result = authority.createPaneMissionFromRenderer(owner, {
+        paneId: "pane-b",
+        title: "Missão · Checkout",
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.mission?.id).toBe("mission-light");
+      const input = store.created[0]!;
+      expect(input.title).toBe("Missão · Checkout");
+      expect(input.squadId).toBeUndefined();
+      expect(input.orchestratorSessionId).toBe("pty-b");
+      expect(input.intentContract).toMatchObject({
+        executionMode: "autopilot",
+        freeAgentChoice: true,
+        workspaceBinding: { version: 1, adoptedPaneId: "pane-b" },
+      });
+      expect(store.update).toHaveBeenCalledWith("mission-light", { status: "running" });
+      expect(deps.promoteMissionSessionAuthority).toHaveBeenCalledWith({
+        missionId: "mission-light",
+        promotedSessionId: "pty-b",
+        previousSessionId: "pty-b",
+      });
+      // Só o pane promovido muda de papel: nenhum outro orquestrador é tocado.
+      expect(deps.updateOwnedAgentSessionRole).toHaveBeenCalledTimes(1);
+      expect(deps.updateOwnedAgentSessionRole).toHaveBeenCalledWith(
+        "pty-b",
+        expect.objectContaining({ role: "orchestrator", missionId: "mission-light" }),
+      );
+      expect(store.remove).not.toHaveBeenCalled();
+    });
+
+    it("não arranca pane de outra missão e não cria nada", () => {
+      const store = wireLightMissionStore();
+      deps.findPaneOwnedBy.mockReturnValue({
+        paneId: "pane-a",
+        sessionId: "pty-a",
+        kind: "cli-agent",
+      });
+      deps.getOwnedAgentSessionInfo.mockReturnValue({ ...session, missionId: "mission-a" });
+
+      expect(
+        authority.createPaneMissionFromRenderer(owner, { paneId: "pane-a", title: "Missão · A" }),
+      ).toEqual({ ok: false, error: "pane_mission_mismatch" });
+      expect(store.create).not.toHaveBeenCalled();
+      expect(deps.updateOwnedAgentSessionRole).not.toHaveBeenCalled();
+    });
+
+    it("promoção recusada desfaz a missão recém-criada", () => {
+      const store = wireLightMissionStore();
+      deps.findPaneOwnedBy.mockReturnValue({
+        paneId: "pane-b",
+        sessionId: "pty-b",
+        kind: "cli-agent",
+      });
+      deps.getOwnedAgentSessionInfo.mockReturnValue({
+        ...session,
+        sessionId: "pty-b",
+        paneId: "pane-b",
+        role: "user",
+        missionId: undefined,
+      });
+      deps.promotePaneToOrchestrator.mockReturnValue(null);
+      deps.findMissionPaneByPaneId.mockReturnValue(null);
+      store.create.mockImplementationOnce(() => ({ ...mission, id: "mission-light" }));
+      deps.rebindMissionOrchestratorSession.mockReturnValue(null);
+
+      const result = authority.createPaneMissionFromRenderer(owner, {
+        paneId: "pane-b",
+        title: "Missão · B",
+      });
+      expect(result.ok).toBe(false);
+      expect(store.remove).toHaveBeenCalledWith("mission-light");
+    });
+  });
+
   it("lists reopen specs only inside the renderer main-owned scope", () => {
     const spec = {
       id: "mpane-a",

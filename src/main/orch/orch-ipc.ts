@@ -101,6 +101,8 @@ import {
   RendererMissionAuthority,
   type RendererMissionLifecycleCandidate,
 } from "./renderer-mission-authority";
+import { getOrchSettings } from "../persistence/settings-store";
+import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
 import { deleteMissionPromptQueue } from "./mission-prompt-queue-registry";
 import { withMissionLifecycleLock } from "./mission-lifecycle-lock";
 import {
@@ -2154,6 +2156,32 @@ export function registerOrchIpc(): void {
         paneId: parsed.data.paneId,
         sessionId: parsed.data.sessionId,
       },
+    );
+    if (result.ok && result.mission) {
+      const scope = requireRendererWorkspaceScope(event.sender);
+      redeliverPendingHandoffs(scope, result.mission.id);
+      broadcastProjectStore(scope, "missions");
+    }
+    return result;
+  });
+
+  const missionCreateForPaneSchema = z
+    .object({
+      paneId: z.string().min(1).max(128),
+      title: z.string().trim().min(1).max(120),
+    })
+    .strict();
+  ipcMain.handle(ORCH_CHANNELS.missionCreateForPane, (event, raw) => {
+    const parsed = missionCreateForPaneSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false, error: "invalid_payload" };
+    // Hardened mantém a missão com despacho explícito na interface: aqui só o
+    // Autopilot abre missão sem revisão (mesma regra do nexus_mission_create).
+    if (!isOperatorChoicePolicy(getOrchSettings().squadCliPolicy)) {
+      return { ok: false, error: "hardened" };
+    }
+    const result = requireMissionAuthority().createPaneMissionFromRenderer(
+      event.sender,
+      parsed.data,
     );
     if (result.ok && result.mission) {
       const scope = requireRendererWorkspaceScope(event.sender);
