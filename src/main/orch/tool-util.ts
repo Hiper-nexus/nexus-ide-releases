@@ -299,10 +299,25 @@ const NO_BRACKETED_PASTE_ADAPTERS: ReadonlySet<string> = new Set(['kimi', 'agy',
  */
 function injectedPromptInput(sessionId: string, safePrompt: string): string {
   const adapterId = getAgentSessionInfo(sessionId)?.adapterId;
-  if (adapterId && NO_BRACKETED_PASTE_ADAPTERS.has(adapterId)) return safePrompt;
-  return safePrompt.includes('\n') || adapterId
+  if (!adapterId) {
+    return safePrompt.includes('\n') ? `\x1b[200~${safePrompt}\x1b[201~` : safePrompt;
+  }
+  if (NO_BRACKETED_PASTE_ADAPTERS.has(adapterId)) return safePrompt;
+  // Linha única só vira colagem quando o adapter declara que aceita o
+  // marcador (Codex); um adapter personalizado que recusa recebe texto cru.
+  return safePrompt.includes('\n') || adapterAcceptsBracketedPaste(adapterId)
     ? `\x1b[200~${safePrompt}\x1b[201~`
     : safePrompt;
+}
+
+/** Capacidade declarada em `promptInjection.bracketedPaste`; a lista F-537 só cobre adapter sem declaração. */
+function adapterAcceptsBracketedPaste(adapterId: string | undefined): boolean {
+  if (!adapterId) return true;
+  const adapter = getAdapter(adapterId);
+  return (
+    (adapter && adapter.kind === 'cli-pty' ? adapter.promptInjection?.bracketedPaste : undefined) ??
+    !NO_BRACKETED_PASTE_ADAPTERS.has(adapterId)
+  );
 }
 
 /** Type text into a pane's PTY, then press Enter (as a user would). */
@@ -645,11 +660,9 @@ async function injectWithBusyProof(
 
   try {
     const safePrompt = assertSafePtyPrompt(prompt);
-    const agent = getAgentSessionInfo(sessionId);
-    const adapter = agent?.adapterId ? getAdapter(agent.adapterId) : null;
-    const allowsBracketedPaste =
-      (adapter && adapter.kind === 'cli-pty' ? adapter.promptInjection?.bracketedPaste : undefined) ??
-      (agent?.adapterId ? !NO_BRACKETED_PASTE_ADAPTERS.has(agent.adapterId) : true);
+    const allowsBracketedPaste = adapterAcceptsBracketedPaste(
+      getAgentSessionInfo(sessionId)?.adapterId,
+    );
     const input =
       safePrompt.includes('\n') && allowsBracketedPaste
         ? `\x1b[200~${safePrompt}\x1b[201~`

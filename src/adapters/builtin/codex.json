@@ -60,7 +60,7 @@
   "promptInjection": {
     "method": "arg",
     "trailingNewline": false,
-    "bracketedPaste": false
+    "bracketedPaste": true
   },
   "stateParsing": {
     "idle": {

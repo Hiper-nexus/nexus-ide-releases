@@ -1392,6 +1392,38 @@ describe('agent prompt injection', () => {
     }
   });
 
+  it.each([
+    // Declarações reais do builtin: a política do Codex vem do contrato.
+    ['codex', async () => (await import('../../adapters/builtin/codex.json')).default.promptInjection, '\x1b[200~avisa quando começar\x1b[201~'],
+    // Adapter personalizado rodando Kimi com outro id: declarou que não aceita.
+    ['kimi-fork', async () => ({ method: 'arg', trailingNewline: false, bracketedPaste: false }), 'avisa quando começar'],
+  ] as const)('linha única em pane %s segue a capacidade de colagem declarada pelo adapter', async (adapterId, promptInjection, expected) => {
+    const { getAdapter } = await import('../adapters/adapter-registry');
+    const declared = await promptInjection();
+    const original = vi.mocked(getAdapter).getMockImplementation();
+    vi.mocked(getAdapter).mockImplementation(((id: string) =>
+      id === adapterId
+        ? { id, kind: 'cli-pty', bin: id, spawn: { interactive: [id], extraArgs: [] }, models: { default: 'm', list: ['m'] }, quirks: {}, promptInjection: declared }
+        : original?.(id)) as typeof getAdapter);
+    vi.useFakeTimers();
+    try {
+      stubs.physicalSessionInfo.mockReturnValue({ adapterId });
+      const pending = injectPrompt('session-1', 'avisa quando começar');
+      await vi.advanceTimersByTimeAsync(900);
+      await pending;
+      expect(stubs.writeSession).toHaveBeenNthCalledWith(
+        1,
+        'session-1',
+        expected,
+        { markInputBusy: false },
+      );
+    } finally {
+      if (original) vi.mocked(getAdapter).mockImplementation(original);
+      stubs.physicalSessionInfo.mockReset().mockReturnValue(null);
+      vi.useRealTimers();
+    }
+  });
+
   it('sends second Enter even when session was busy during paste echo if it is idle after first Enter', async () => {
     vi.useFakeTimers();
     try {
