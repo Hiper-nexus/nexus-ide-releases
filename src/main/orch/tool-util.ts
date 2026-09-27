@@ -285,6 +285,25 @@ export function authorizedSessionIdOf(
   return info.sessionId;
 }
 
+/** TUIs que não entendem bracketed paste: o marcador viraria texto (F-537). */
+const NO_BRACKETED_PASTE_ADAPTERS: ReadonlySet<string> = new Set(['kimi', 'agy', 'devin']);
+
+/**
+ * Bytes que digitam o prompt. Briefs com várias linhas viram UMA colagem
+ * (bracketed paste): como teclas soltas a TUI executa/repinta cada linha.
+ * Em pane de AGENTE a colagem vale mesmo para uma linha só: o Codex trata
+ * uma rajada de teclas cruas como paste-burst e o Enter que chega logo
+ * depois vira quebra de linha no composer — o texto ficava digitado e nunca
+ * era enviado (print do operador 27/09, gpt-6-sol).
+ */
+function injectedPromptInput(sessionId: string, safePrompt: string): string {
+  const adapterId = getAgentSessionInfo(sessionId)?.adapterId;
+  if (adapterId && NO_BRACKETED_PASTE_ADAPTERS.has(adapterId)) return safePrompt;
+  return safePrompt.includes('\n') || adapterId
+    ? `\x1b[200~${safePrompt}\x1b[201~`
+    : safePrompt;
+}
+
 /** Type text into a pane's PTY, then press Enter (as a user would). */
 export async function injectPrompt(
   sessionId: string,
@@ -293,13 +312,7 @@ export async function injectPrompt(
 ): Promise<void> {
   clearAdaptiveEnterTimers(sessionId);
   const safePrompt = assertSafePtyPrompt(prompt);
-  // Agent briefs routinely contain Markdown and many newlines. Sending those
-  // bytes as ordinary keypresses makes interactive TUIs execute/repaint each
-  // line independently, producing the mashed, apparently frozen terminal.
-  // Bracketed paste makes the entire brief one editor transaction.
-  const input = safePrompt.includes('\n')
-    ? `\x1b[200~${safePrompt}\x1b[201~`
-    : safePrompt;
+  const input = injectedPromptInput(sessionId, safePrompt);
   assertMcpInvocationCurrent(invocation);
   if (!orchWriteSession(sessionId, input, { markInputBusy: false })) {
     throw new Error('session is gone');
@@ -635,7 +648,7 @@ async function injectWithBusyProof(
     const adapter = agent?.adapterId ? getAdapter(agent.adapterId) : null;
     const allowsBracketedPaste =
       (adapter && adapter.kind === 'cli-pty' ? adapter.promptInjection?.bracketedPaste : undefined) ??
-      (agent?.adapterId ? !['kimi', 'agy', 'devin'].includes(agent.adapterId) : true);
+      (agent?.adapterId ? !NO_BRACKETED_PASTE_ADAPTERS.has(agent.adapterId) : true);
     const input =
       safePrompt.includes('\n') && allowsBracketedPaste
         ? `\x1b[200~${safePrompt}\x1b[201~`

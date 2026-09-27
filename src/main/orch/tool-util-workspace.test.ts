@@ -1314,6 +1314,35 @@ describe('agent prompt injection', () => {
     }
   });
 
+  it.each([
+    ['codex', '\x1b[200~avisa quando começar\x1b[201~'],
+    ['kimi', 'avisa quando começar'],
+    [null, 'avisa quando começar'],
+  ])('linha única em pane %s: agente com colagem recebe bracketed paste (Enter não vira newline)', async (adapterId, expected) => {
+    vi.useFakeTimers();
+    try {
+      stubs.physicalSessionInfo.mockReturnValue(adapterId ? { adapterId } : null);
+      const pending = injectPrompt('session-1', 'avisa quando começar');
+      await vi.advanceTimersByTimeAsync(900);
+      await pending;
+      expect(stubs.writeSession).toHaveBeenNthCalledWith(
+        1,
+        'session-1',
+        expected,
+        { markInputBusy: false },
+      );
+      expect(stubs.writeSession).toHaveBeenNthCalledWith(
+        2,
+        'session-1',
+        '\r',
+        { markInputBusy: false },
+      );
+    } finally {
+      stubs.physicalSessionInfo.mockReset().mockReturnValue(null);
+      vi.useRealTimers();
+    }
+  });
+
   it('sends second Enter even when session was busy during paste echo if it is idle after first Enter', async () => {
     vi.useFakeTimers();
     try {
