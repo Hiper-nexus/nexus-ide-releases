@@ -10,6 +10,7 @@ import {
   requestPaneSpawn,
   waitForIdle,
   listPaneSnapshots,
+  pendingSpawnAttemptSession,
 } from './pane-registry';
 import { parsePaneNumberRef } from '../../shared/pane-number';
 import {
@@ -1526,10 +1527,15 @@ export async function spawnPaneAndMaybePrompt(
     // brief de argv já viajou no grant; o de COLAGEM (Kimi) não tem canal
     // nenhum — sem isto o helper abria mudo, sem o briefing.
     void deliverPromptAfterPendingSpawn(
-      result.paneId,
+      { requestId: result.requestId, paneId: result.paneId },
       finalPrompt,
       adapter.id,
       hooks.invocation,
+      {
+        scope: options.scope,
+        missionId: options.missionId,
+        title: options.agentName ?? options.title,
+      },
     );
   }
   if (!result.ok || !result.paneId || !result.sessionId) {
@@ -1727,29 +1733,44 @@ const PENDING_SPAWN_SESSION_POLL_MS = 500;
 
 /**
  * Entrega pós-boot de um brief de colagem cujo pane nasceu com ACK pendente.
- * Espera a sessão do próprio pane (a mesma janela do grant de spawn), o
- * primeiro idle e então o mesmo `deliverAgentPrompt` do caminho síncrono.
+ * O destinatário é a sessão que o Main vinculou a ESTA tentativa (requestId),
+ * nunca "a sessão atual do paneId" — um pane reciclado mantém o id. A tool já
+ * respondeu sucesso pendente, então falha aqui é visível: fecha o pane se a
+ * sessão ainda for desta tentativa e avisa o operador; nunca helper mudo.
  */
 export async function deliverPromptAfterPendingSpawn(
-  paneId: string,
+  attempt: { readonly requestId: string; readonly paneId: string },
   prompt: string,
   adapterId: string,
-  invocation?: McpToolInvocation,
+  invocation: McpToolInvocation | undefined,
+  notice: {
+    readonly scope: SpawnToolOptions['scope'];
+    readonly missionId?: string;
+    readonly title?: string;
+  },
 ): Promise<boolean> {
+  const { paneId } = attempt;
   const deadline = Date.now() + ORCH_SPAWN_GRANT_TTL_MS;
   let sessionId: string | null = null;
   try {
     while (!sessionId) {
       assertMcpInvocationCurrent(invocation);
-      const candidate = getPaneAuthzInfo(paneId)?.sessionId ?? null;
-      if (
-        candidate &&
-        getAgentSessionInfo(candidate)?.paneId === paneId
-      ) {
-        sessionId = candidate;
-        break;
+      const bound = pendingSpawnAttemptSession(attempt.requestId);
+      // Tentativa encerrada sem sessão: o registry já limpou o spawn falho.
+      if (bound.state === 'gone') return false;
+      if (bound.state === 'bound') {
+        const info = getAgentSessionInfo(bound.sessionId);
+        if (info?.paneId === paneId) {
+          sessionId = bound.sessionId;
+          break;
+        }
+        if (getSessionState(bound.sessionId) === null) {
+          throw new Error('spawned session exited before the brief was delivered');
+        }
       }
-      if (Date.now() >= deadline) return false;
+      if (Date.now() >= deadline) {
+        throw new Error('pending pane session never became deliverable');
+      }
       await delay(PENDING_SPAWN_SESSION_POLL_MS);
     }
     const boot = await waitForIdle(
@@ -1757,7 +1778,7 @@ export async function deliverPromptAfterPendingSpawn(
       AGENT_BOOT_TIMEOUT_MS,
       invocation?.signal,
     );
-    if (boot === 'exited') return false;
+    if (boot === 'exited') throw agentBootExitError(sessionId);
     assertMcpInvocationCurrent(invocation);
     const accepted = await deliverAgentPrompt(sessionId, prompt, invocation, {
       adapterId,
@@ -1768,6 +1789,34 @@ export async function deliverPromptAfterPendingSpawn(
     return true;
   } catch (error) {
     logAgentPromptFailure(adapterId, sessionId ?? paneId, error);
+    // Só fecha se o pane ainda roda a sessão desta tentativa: um substituto
+    // (resume) no mesmo paneId não é nosso.
+    const bound = pendingSpawnAttemptSession(attempt.requestId);
+    const attemptSessionId =
+      sessionId ?? (bound.state === 'bound' ? bound.sessionId : null);
+    if (attemptSessionId && getPaneAuthzInfo(paneId)?.sessionId === attemptSessionId) {
+      try {
+        await requestPaneClose(paneId);
+      } catch {
+        // best effort — o aviso abaixo é o que importa
+      }
+    }
+    if (!invocation?.signal?.aborted) {
+      try {
+        emitWorkerSpawnFailed({
+          missionId: notice.missionId ?? '',
+          deadAdapterId: adapterId,
+          message:
+            'o briefing não foi entregue ao pane recém-aberto: ' +
+            (error instanceof Error ? error.message : String(error)),
+          title: notice.title,
+          at: Date.now(),
+          scope: notice.scope,
+        });
+      } catch {
+        // aviso best-effort
+      }
+    }
     return false;
   }
 }
