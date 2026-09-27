@@ -524,7 +524,8 @@ describe('browser manager actions (after/changed, errors, judge, text)', () => {
     });
     expect(jev.mock.calls[0][0]).toMatchObject({
       surface: 'browserTool',
-      timeoutMs: 2_000,
+      timeoutMs: 4_000,
+      retryOnTimeout: false,
     });
 
     const disabled = await readBrowserPage(PANE, scope, {

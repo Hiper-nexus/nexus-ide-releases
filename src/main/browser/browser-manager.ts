@@ -1511,9 +1511,9 @@ async function inlinePageRead(
   });
 }
 
-// judge() retries once on timeout (jev-client.ts): 4s here meant up to ~8.4s
-// before failing open on this "auto-on, never blocks" read judgment.
-const BROWSER_JUDGE_TIMEOUT_MS = 2_000;
+// Single attempt (retryOnTimeout:false): judge()'s retry after a timeout
+// made this "never blocks" read judgment fail open only after ~8.4s.
+const BROWSER_JUDGE_TIMEOUT_MS = 4_000;
 
 /**
  * §8 Jev page judgment (opt-in): three nouls + a page-kind choice over
@@ -1584,6 +1584,7 @@ async function judgeBrowserPage(
       },
       questions,
       timeoutMs: BROWSER_JUDGE_TIMEOUT_MS,
+      retryOnTimeout: false,
       surface: 'browserTool',
       sessionId: options?.sessionId,
       missionId: options?.missionId,

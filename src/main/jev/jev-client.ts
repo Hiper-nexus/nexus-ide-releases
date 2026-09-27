@@ -188,6 +188,11 @@ export interface JudgeInput {
    * caiu no caminho determinístico sem mudar o retorno `null`.
    */
   onNoAnswer?: (reason: JevNoAnswerReason) => void;
+  /**
+   * `false` = um timeout encerra na hora (fail-open), sem a 2ª tentativa.
+   * Para superfícies auto-on com teto próprio: o retry dobrava o pior caso.
+   */
+  retryOnTimeout?: boolean;
 }
 
 export interface JudgeDeps {
@@ -308,6 +313,7 @@ export async function judge(
         : name === 'AbortError' || name === 'TimeoutError'
           ? 'timeout'
           : 'network';
+      if (lastReason === 'timeout' && input.retryOnTimeout === false) break;
       if (attempt === 0) {
         await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
         continue;
