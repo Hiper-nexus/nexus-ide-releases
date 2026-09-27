@@ -110,6 +110,19 @@ describe('nexus_pane_spawn dentro da missão sem adapterId', () => {
     );
   });
 
+  it('só com task, o worker recebe a task como tarefa (não nasce sem brief)', async () => {
+    h.mission = {
+      ...h.mission,
+      intentContract: { ...(h.mission.intentContract as object), freeAgentChoice: true },
+    };
+    setOperatorRouteResolver(vi.fn(async () => ({
+      adapterId: 'codex', model: 'gpt-5.4', effort: 'high', routeReservationId: 'rr-task',
+    })));
+    await paneSpawnTool.handler({ task: 'implementar o login com OTP' }, ctx);
+    expect(h.spawn).toHaveBeenCalledTimes(1);
+    expect(String(h.spawn.mock.calls[0][0].prompt)).toContain('implementar o login com OTP');
+  });
+
   it('adapterId explícito continua aceito e não aciona o roteador', async () => {
     const resolver = vi.fn(async () => ({ adapterId: 'kimi' }));
     setOperatorRouteResolver(resolver);

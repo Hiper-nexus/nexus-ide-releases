@@ -793,7 +793,9 @@ const paneSpawn: McpToolDef = {
         // operador nasce `user` (ver `operatorHand`).
         role: operatorHand ? undefined : role,
         readOnly: args.readOnly === true,
-        prompt: str(args, 'prompt'),
+        // Sem `prompt`, a `task` (que também roteia) é a tarefa do worker —
+        // senão ele nasceria sem brief.
+        prompt: str(args, 'prompt') ?? str(args, 'task'),
         scope: ctx.scope,
         resume: str(args, 'resume') ? true : undefined,
         resumeFromPaneId: resumePaneRefOf(str(args, 'resume')),
@@ -876,7 +878,7 @@ const paneSpawn: McpToolDef = {
       // o router devolveu uma sugestão.
       const adHocAllowedSkills = attenuateSkills(ctx.allowedSkills, null);
       routeSkill = skillSuggestionFromRoute(autoRoute);
-      let adHocPrompt = str(args, 'prompt');
+      let adHocPrompt = str(args, 'prompt') ?? str(args, 'task');
       if (
         adHocPrompt &&
         routeSkill &&

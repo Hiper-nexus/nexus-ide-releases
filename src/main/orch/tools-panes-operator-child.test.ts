@@ -609,7 +609,7 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
     expect(options.prompt).toBe('implemente X');
   });
 
-  it('skill sugerida sem prompt não inventa prompt', async () => {
+  it('só com task, o filho recebe a task como tarefa (a skill sugerida vai junto, nunca sozinha)', async () => {
     setOperatorRouteResolver(
       vi.fn(async () => ({
         adapterId: 'codex',
@@ -620,7 +620,9 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
     const options = harness.spawnPaneAndMaybePrompt.mock.calls[0]?.[0] as {
       prompt?: unknown;
     };
-    expect(options.prompt).toBeUndefined();
+    // 0.76.110: antes o filho nascia sem brief (a task só roteava).
+    expect(String(options.prompt)).toMatch(/^implemente X/);
+    expect(String(options.prompt)).toContain('Skill sugerida pelo Nexus: ponytail');
   });
 
   it('resolver que falha vira erro de roteamento automático', async () => {
