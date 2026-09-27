@@ -1,7 +1,8 @@
 import fs from "node:fs";
+import { execFileSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { compileIntentContract } from "../../shared/mission-intent";
 import type { Handoff } from "../../shared/orch-types";
 import {
@@ -50,7 +51,13 @@ vi.mock("./worker-delivery-board", () => ({
   shutdownWorkerDeliveryBoard: vi.fn(),
 }));
 
-const scope = testProjectScope();
+// O portão de regressão roda no handoff: um repositório vazio de verdade é
+// "limpo" (sem commits, sem arquivos); uma raiz inexistente seria "NÃO
+// verificado" e mudaria o summary — git segue fora do que este arquivo prova.
+const repoRoot = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "nexus-late-handoff-repo-")));
+execFileSync("git", ["-C", repoRoot, "init", "-q"], { stdio: "pipe" });
+const scope = testProjectScope({ rootRealPath: repoRoot });
+afterAll(() => fs.rmSync(repoRoot, { recursive: true, force: true }));
 const SESSION_ID = "late-worker-session";
 const INCARNATION_ID = "late-worker-incarnation";
 const REPLY = "A resposta real do worker chegou após o diagnóstico.";
