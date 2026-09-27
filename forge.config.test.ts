@@ -8,6 +8,7 @@ import forgeConfig, {
   createLinuxRpmMakerConfig,
   createWindowsInstallerBrandingConfig,
   createWindowsSignOptions,
+  windowsTimestampServer,
 } from './forge.config';
 
 describe('Windows release signing', () => {
@@ -43,6 +44,20 @@ describe('Windows release signing', () => {
       ],
       timestampServer: 'http://timestamp.digicert.com',
     });
+  });
+
+  it('troca o servidor de carimbo só com uma URL explícita (F-656)', () => {
+    const storeMode = {
+      NEXUS_WINDOWS_RELEASE_SIGNING: '1',
+      WINDOWS_CERTIFICATE_SHA1: 'E44D98FF840B1DF78D87F6768D177B5719952CAB',
+    };
+    expect(createWindowsSignOptions({
+      ...storeMode,
+      NEXUS_WINDOWS_TIMESTAMP_URL: ' http://timestamp.sectigo.com ',
+    })?.timestampServer).toBe('http://timestamp.sectigo.com');
+    expect(windowsTimestampServer({ NEXUS_WINDOWS_TIMESTAMP_URL: '/tr evil' }))
+      .toBe('http://timestamp.digicert.com');
+    expect(windowsTimestampServer({})).toBe('http://timestamp.digicert.com');
   });
 
   it.each([
