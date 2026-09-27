@@ -180,6 +180,7 @@ export function WorkspaceTabs({
   onStartTabMission,
 }: WorkspaceTabsProps) {
   const railRef = useRef<HTMLDivElement>(null);
+  const menuReturnFocusRef = useRef<HTMLButtonElement>(null);
   const [menu, setMenu] = useState<TabMenuState | null>(null);
 
   // A aba ativa nunca fica escondida atrás da rolagem da barra.
@@ -294,6 +295,13 @@ export function WorkspaceTabs({
                   tabIndex={active || (!activeScopeKey && scope === scopes[0]) ? 0 : -1}
                   title={tabTooltip(scope, side)}
                   onClick={() => onFocusScope(scope.key)}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
+                    event.preventDefault();
+                    const bounds = event.currentTarget.getBoundingClientRect();
+                    menuReturnFocusRef.current = event.currentTarget;
+                    setMenu({ scope, x: bounds.left, y: bounds.bottom });
+                  }}
                   onDoubleClick={
                     scope.kind !== 'mission'
                       ? (event) => {
@@ -373,6 +381,10 @@ export function WorkspaceTabs({
           side={!overview && menu.scope.key === sideScopeKey}
           canShowBeside={!overview && Boolean(activeScopeKey)}
           onClose={() => setMenu(null)}
+          onEscape={() => {
+            setMenu(null);
+            menuReturnFocusRef.current?.focus();
+          }}
           onToggleBeside={() => onToggleBeside(menu.scope.key)}
           onRename={() => onStartRename(menu.scope)}
           onCloseTab={() => onCloseTab(menu.scope)}
@@ -391,6 +403,7 @@ interface WorkspaceTabMenuProps {
   readonly side: boolean;
   readonly canShowBeside: boolean;
   readonly onClose: () => void;
+  readonly onEscape: () => void;
   readonly onToggleBeside: () => void;
   readonly onRename: () => void;
   readonly onCloseTab: () => void;
@@ -407,6 +420,7 @@ function WorkspaceTabMenu({
   side,
   canShowBeside,
   onClose,
+  onEscape,
   onToggleBeside,
   onRename,
   onCloseTab,
@@ -422,7 +436,7 @@ function WorkspaceTabMenu({
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        onClose();
+        onEscape();
         return;
       }
       if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
@@ -444,7 +458,7 @@ function WorkspaceTabMenu({
       document.removeEventListener('mousedown', onPointerDown);
       document.removeEventListener('keydown', onKeyDown);
     };
-  }, [onClose]);
+  }, [onClose, onEscape]);
 
   const items: Array<{
     readonly id: string;
