@@ -12,7 +12,9 @@ vi.mock('../runtime/git-command', () => ({
   assertSafeLocalGitConfig: vi.fn(),
 }));
 vi.mock('../runtime/worktree-runtime-registry', () => ({
-  requireWorktreeRuntimeRegistry: () => ({ listMission: () => h.records }),
+  requireWorktreeRuntimeRegistry: () => ({
+    listMission: (_scope: unknown, key: string) => h.records.filter((record) => record.missionId === key),
+  }),
 }));
 import { buildGitTools } from './tools-git';
 
@@ -71,6 +73,15 @@ describe('isolated writer MCP Git policy', () => {
       await expect(tool('add').handler({ paths: [file] }, ctx)).rejects.toThrow();
     }
     expect(h.run.mock.calls.some(([, args]) => args[0] === 'add')).toBe(false);
+  });
+  it('writer isolado da mão do operador commita na worktree registrada sob operator-hand', async () => {
+    const op: AgentGateContext = { ...ctx, role: 'user', missionId: undefined, isolatedWriter: true };
+    await expect(tool('commit').handler({ message: 'No' }, op)).rejects.toThrow(/isolated_worktree/);
+    h.records = [{ missionId: 'operator-hand', ownerKind: 'pane', worktreePath: root,
+      branchRef: 'refs/heads/nexus/writer', status: 'ready' }];
+    await tool('commit').handler({ message: 'Writer change' }, op);
+    expect(h.run.mock.calls.at(-1)?.[1][0]).toBe('commit');
+    await expect(tool('push').handler({ remote: 'origin' }, op)).rejects.toThrow(/isolated_worktree/);
   });
   it('retains the existing user policy', async () => {
     await tool('branch_create').handler({ name: 'feature' }, { ...ctx, role: 'user' });

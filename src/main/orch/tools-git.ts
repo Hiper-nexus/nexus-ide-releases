@@ -5,6 +5,7 @@ import path from 'node:path';
 import type { AgentGateContext } from './gate';
 import { assertIsolatedWriterGitTool, isIsolatedWriterContext, isolatedWriterPolicyError } from './isolated-writer-policy';
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
+import { OPERATOR_HAND_WORKTREE_KEY } from './isolated-writer-worktree';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { executionScopeFor } from './gate';
 import {
@@ -21,12 +22,16 @@ const gitRunner = new ProcessGitRunner();
 
 function assertIsolatedGitAuthority(ctx: AgentGateContext, cwd: string): void {
   const execution = executionScopeFor(ctx);
-  if (!ctx.missionId || execution.installationId !== ctx.scope.installationId ||
+  // Writer isolado da mão do operador (sem missão): o registro do Main vive
+  // sob a chave fixa operator-hand e precisa ser de pane.
+  const registryKey = ctx.missionId ?? (ctx.isolatedWriter === true ? OPERATOR_HAND_WORKTREE_KEY : undefined);
+  if (!registryKey || execution.installationId !== ctx.scope.installationId ||
       execution.projectId !== ctx.scope.projectId || execution.checkoutId !== ctx.scope.checkoutId) {
     throw isolatedWriterPolicyError();
   }
-  const records = requireWorktreeRuntimeRegistry().listMission(ctx.scope, ctx.missionId)
-    .filter((record) => record.worktreePath === execution.rootRealPath && record.status === 'ready');
+  const records = requireWorktreeRuntimeRegistry().listMission(ctx.scope, registryKey)
+    .filter((record) => record.worktreePath === execution.rootRealPath && record.status === 'ready' &&
+      (ctx.missionId !== undefined || record.ownerKind === 'pane'));
   if (records.length !== 1 || !records[0].branchRef.startsWith('refs/heads/')) throw isolatedWriterPolicyError();
   assertSafeLocalGitConfig(gitRunner, cwd);
   try {
