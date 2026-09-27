@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { TEAM_READ_ONLY_FANOUT_DOMAIN } from "../../shared/mission-topology";
 import type { ProjectExecutionScope } from "../../shared/types";
-import type { GitRunner } from "./git-command";
+import type { AsyncGitRunner, GitRunner } from "./git-command";
 
 export const SHA_PATTERN = /^[a-f0-9]{40,64}$/;
 export const DIGEST_PATTERN = /^[a-f0-9]{64}$/;
@@ -130,6 +130,8 @@ export interface WorktreeManagerOptions {
   readonly worktreesRoot?: string;
   readonly stateStore: WorktreeStateStore;
   readonly gitRunner?: GitRunner;
+  /** Git fora do thread principal para trabalho de fundo (GC de writers de pane). */
+  readonly asyncGitRunner?: AsyncGitRunner;
   readonly now?: () => number;
 }
 

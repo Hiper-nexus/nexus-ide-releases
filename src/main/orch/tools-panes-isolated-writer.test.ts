@@ -58,7 +58,7 @@ vi.mock('./squad-store', () => ({
 }));
 
 import { paneSpawnTool } from './tools-panes';
-import { OPERATOR_HAND_WORKTREE_KEY } from './isolated-writer-worktree';
+import { OPERATOR_HAND_WORKTREE_KEY, operatorHandGcIdle } from './isolated-writer-worktree';
 
 let temp: string;
 let manager: ProjectRuntimeManager;
@@ -111,8 +111,9 @@ beforeEach(() => {
     return { paneId, sessionId };
   });
 });
-afterEach(() => {
+afterEach(async () => {
   for (const pane of h.panes) exitPane(pane);
+  await operatorHandGcIdle();
   disposeWorktreeRuntimeRegistry();
   manager.closeAll();
   fs.rmSync(temp, { recursive: true, force: true });
@@ -457,6 +458,7 @@ describe('revisão cruzada 0.76.110: corrida, retomada, WIP e GC', () => {
     for (const pane of [...h.panes]) closePane(pane);
     h.panes = [];
     await paneSpawnTool.handler({ adapterId: 'codex', isolatedWriter: true }, op);
+    await operatorHandGcIdle();
     const kept = opRecords().map((r) => r.taskId);
     expect(kept).not.toContain(merged.taskId);
     expect(fs.existsSync(merged.worktreePath)).toBe(false);
@@ -465,6 +467,39 @@ describe('revisão cruzada 0.76.110: corrida, retomada, WIP e GC', () => {
     expect(fs.existsSync(unmerged.worktreePath)).toBe(true);
     expect(fs.readFileSync(path.join(dirty.worktreePath, 'scratch.txt'), 'utf8')).toBe('só existe aqui');
     expect(opRecords()).toHaveLength(3);
+  });
+});
+
+describe('GC de worktrees fora do caminho do spawn/fechamento (Fable P2-9)', () => {
+  it('spawn e fechamento não esperam o GC; nunca dois GCs no mesmo repo, pedidos no meio viram uma rodada extra', async () => {
+    const op: AgentGateContext = { ...ctx, token: 'op', label: 'operador', role: 'user', sessionId: 'op-session', missionId: undefined };
+    let finish!: () => void;
+    const collect = vi.spyOn(registry, 'collectIntegratedPaneWorktrees')
+      .mockImplementation(() => new Promise((resolve) => { finish = () => resolve([]); }));
+    await paneSpawnTool.handler({ adapterId: 'codex', isolatedWriter: true }, op);
+    expect(collect).not.toHaveBeenCalled();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(collect).toHaveBeenCalledTimes(1);
+    // Com a coleta pendurada, spawn e fechamento seguem livres e não empilham GCs.
+    await paneSpawnTool.handler({ adapterId: 'codex', isolatedWriter: true }, op);
+    for (const pane of h.panes) {
+      pane.state = 'exited';
+      for (const tap of [...h.exits]) tap(pane.sessionId!, {
+        sessionId: pane.sessionId!, adapterId: 'codex', cwd: pane.executionScope!.rootRealPath,
+        scope: pane.executionScope!, source: 'pending', role: 'user',
+        readOnly: false, allowedTools: [], allowedSkills: null,
+      });
+    }
+    h.panes = [];
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(collect).toHaveBeenCalledTimes(1);
+    finish();
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(collect).toHaveBeenCalledTimes(2);
+    finish();
+    await operatorHandGcIdle();
+    expect(collect).toHaveBeenCalledTimes(2);
   });
 });
 

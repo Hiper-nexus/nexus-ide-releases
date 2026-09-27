@@ -52,6 +52,7 @@ const state = vi.hoisted(() => {
     isCrashed: vi.fn(() => false),
     setWebRTCIPHandlingPolicy: vi.fn(),
     loadURL: vi.fn(async () => {}),
+    stop: vi.fn(),
     close: vi.fn(),
     getUserAgent: vi.fn(() => 'desktop-ua'),
     setUserAgent: vi.fn(),
@@ -221,6 +222,7 @@ vi.mock('../orch/design-send', () => ({
 
 import {
   analyzeBrowserResponsive,
+  RESPONSIVE_LOAD_TIMEOUT_MS,
   clickBrowserElement,
   destroyBrowser,
   ensureBrowser,
@@ -727,14 +729,14 @@ describe('analyzeBrowserResponsive (nexus_browser_responsive)', () => {
     await boot();
     const result = await analyzeBrowserResponsive(PANE, scope);
     expect(result.breakpoints.map((b) => b.device)).toEqual(['mobile', 'tablet', 'desktop']);
-    expect(result.breakpoints[0].audit).toEqual(AUDIT);
+    expect(result.breakpoints[0]).toMatchObject({ audit: AUDIT });
     // Emulated breakpoints are captured at their own viewport (clamped to the view).
     expect(state.guest.capturePage.mock.calls.map((call) => call[0])).toEqual([
       { x: 0, y: 0, width: 390, height: 800 },
       { x: 0, y: 0, width: 800, height: 800 },
       undefined,
     ]);
-    expect(result.breakpoints.map((b) => b.screenshot.width)).toEqual([390, 800, 1280]);
+    expect(result.breakpoints.map((b) => 'screenshot' in b && b.screenshot.width)).toEqual([390, 800, 1280]);
     expect(result.restored).toBe(true);
     // 3 breakpoints + 1 restore, all through the guarded navigation.
     expect(state.guest.loadURL).toHaveBeenCalledTimes(4);
@@ -851,6 +853,76 @@ describe('analyzeBrowserResponsive (nexus_browser_responsive)', () => {
       state.browserSession.resolveHost.mockResolvedValue({
         endpoints: [{ address: '93.184.216.34', port: 0 }],
       });
+      destroyBrowser(PANE, scope);
+    }
+  });
+
+  it('P2-18: a breakpoint whose load never settles times out explicitly; the run and the restore go on', async () => {
+    await boot();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      let loads = 0;
+      state.guest.loadURL.mockImplementation(() => {
+        loads += 1;
+        // Breakpoint "tablet" hangs forever; every other load settles.
+        return loads === 2 ? new Promise<void>(() => {}) : Promise.resolve();
+      });
+      const run = analyzeBrowserResponsive(PANE, scope);
+      await vi.advanceTimersByTimeAsync(RESPONSIVE_LOAD_TIMEOUT_MS);
+      const result = await run;
+      expect(result.breakpoints.map((b) => b.device)).toEqual(['mobile', 'tablet', 'desktop']);
+      expect(result.breakpoints[1]).toEqual({
+        device: 'tablet', loadTimedOut: true, error: expect.stringMatching(/timed out after 30s/),
+      });
+      expect('audit' in result.breakpoints[2]).toBe(true);
+      expect(state.guest.stop).toHaveBeenCalledTimes(1);
+      expect(result.restored).toBe(true);
+      expect(state.guest.loadURL).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+      state.guest.loadURL.mockImplementation(async () => {});
+      destroyBrowser(PANE, scope);
+    }
+  });
+
+  it('P2-18: a restore reload that hangs is reported, not awaited forever', async () => {
+    await boot();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      let loads = 0;
+      state.guest.loadURL.mockImplementation(() => {
+        loads += 1;
+        return loads === 2 ? new Promise<void>(() => {}) : Promise.resolve();
+      });
+      const run = analyzeBrowserResponsive(PANE, scope, { devices: ['desktop'] });
+      await vi.advanceTimersByTimeAsync(RESPONSIVE_LOAD_TIMEOUT_MS);
+      const result = await run;
+      expect(result.breakpoints).toHaveLength(1);
+      expect(result.restored).toBe(false);
+      expect(result.restoreError).toMatch(/timed out/);
+    } finally {
+      vi.useRealTimers();
+      state.guest.loadURL.mockImplementation(async () => {});
+      destroyBrowser(PANE, scope);
+    }
+  });
+
+  it('ordinary navigation keeps no load deadline', async () => {
+    await boot();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      let settle!: () => void;
+      state.guest.loadURL.mockImplementation(() => new Promise<void>((resolve) => { settle = resolve; }));
+      let failed = false;
+      void loadBrowser(PANE, 'https://example.test/slow', { scope }).catch(() => { failed = true; });
+      await vi.advanceTimersByTimeAsync(RESPONSIVE_LOAD_TIMEOUT_MS * 4);
+      expect(state.guest.loadURL).toHaveBeenCalledWith('https://example.test/slow');
+      expect(failed).toBe(false);
+      expect(state.guest.stop).not.toHaveBeenCalled();
+      settle();
+    } finally {
+      vi.useRealTimers();
+      state.guest.loadURL.mockImplementation(async () => {});
       destroyBrowser(PANE, scope);
     }
   });

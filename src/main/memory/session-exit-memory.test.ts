@@ -90,7 +90,7 @@ describe('session-exit memory distillation', () => {
     expect(distill).not.toHaveBeenCalled();
   });
 
-  it('skips when the daily project cap is reached, without Jev', async () => {
+  it('sem teto diário: 10 digests no dia não impedem o próximo', async () => {
     const store = getWorkspaceMemoryStore(scope);
     for (let i = 0; i < 10; i++) {
       store.retain({
@@ -100,7 +100,7 @@ describe('session-exit memory distillation', () => {
         source: 'trusted:session-digest',
       });
     }
-    const distill = vi.fn<typeof distillHandoffSummary>();
+    const distill = vi.fn<typeof distillHandoffSummary>(approve);
     const outcome = await distillSessionExitMemory(
       { sessionId: 'pty-session-1', agent: agent({ scope }) },
       {
@@ -108,8 +108,8 @@ describe('session-exit memory distillation', () => {
         distill,
       },
     );
-    expect(outcome).toMatchObject({ retained: false, reason: 'daily-cap' });
-    expect(distill).not.toHaveBeenCalled();
+    expect(outcome).toMatchObject({ retained: true, reason: 'ok' });
+    expect(distill).toHaveBeenCalledTimes(1);
   });
 
   it('retains one digest line from the session handoff summaries', async () => {
@@ -202,33 +202,27 @@ describe('session-exit memory distillation', () => {
     ).toHaveLength(1);
   });
 
-  it('holds the daily cap under concurrent exits', async () => {
+  it('saídas simultâneas: conteúdo distinto grava tudo; o mesmo digest vai ao Jev uma vez só', async () => {
     const store = getWorkspaceMemoryStore(scope);
-    for (let i = 0; i < 9; i++) {
-      store.retain({
-        content: `# Session digest\n\ncap filler ${i}`,
-        kind: 'fact',
-        scope: 'workspace',
-        source: 'trusted:session-digest',
-      });
-    }
-    const outcomes = await Promise.all(
-      ['alpha parser', 'beta router', 'gamma cache'].map((topic, index) =>
-        distillSessionExitMemory(
-          { sessionId: `pty-session-${index}`, agent: agent({ scope }) },
-          {
-            getStores: () =>
-              stores([handoff(`h-${index}`, `Shipped the ${topic} rewrite.`, `pty-session-${index}`)]),
-            distill: approve,
-          },
-        ),
-      ),
-    );
-    expect(outcomes.filter((outcome) => outcome.retained)).toHaveLength(1);
-    expect(store.stats().workspace.total).toBe(10);
+    const exit = (sessionId: string, summary: string, distill: typeof distillHandoffSummary) =>
+      distillSessionExitMemory(
+        { sessionId, agent: agent({ scope }) },
+        { getStores: () => stores([handoff(`h-${sessionId}`, summary, sessionId)]), distill },
+      );
+    const distinct = await Promise.all(['alpha parser', 'beta router', 'gamma cache'].map((topic, index) =>
+      exit(`pty-session-${index}`, `Shipped the ${topic} rewrite.`, approve)));
+    expect(distinct.every((outcome) => outcome.retained)).toBe(true);
+    expect(store.stats().workspace.total).toBe(3);
+
+    const distill = vi.fn<typeof distillHandoffSummary>(approve);
+    const storm = await Promise.all([1, 2, 3, 4].map((index) =>
+      exit(`pty-storm-${index}`, 'Rebuilt the delta indexer.', distill)));
+    expect(distill).toHaveBeenCalledTimes(1);
+    expect(storm.filter((outcome) => outcome.retained)).toHaveLength(1);
+    expect(storm.filter((outcome) => outcome.reason === 'dedupe')).toHaveLength(3);
   });
 
-  it('counts superseded digests against the daily cap', async () => {
+  it('substituições do dia não bloqueiam o próximo digest da missão', async () => {
     const store = getWorkspaceMemoryStore(scope);
     let previous = store.retain({
       content: '# Session digest\n\nSession digest:\nMission: mission-7\nSummary: first',
@@ -245,13 +239,11 @@ describe('session-exit memory distillation', () => {
         supersedes: previous.id,
       });
     }
-    const distill = vi.fn<typeof distillHandoffSummary>();
     const outcome = await distillSessionExitMemory(
       { sessionId: 'pty-session-1', agent: agent({ scope, missionId: 'mission-7' }) },
-      { getStores: () => stores([handoff('h-1', 'Eleventh write of the day.')]), distill },
+      { getStores: () => stores([handoff('h-1', 'Eleventh write of the day.')]), distill: approve },
     );
-    expect(outcome).toMatchObject({ retained: false, reason: 'daily-cap' });
-    expect(distill).not.toHaveBeenCalled();
+    expect(outcome).toMatchObject({ retained: true, supersededId: previous.id });
   });
 
   it('não substitui o digest de outra missão com id de prefixo igual', async () => {

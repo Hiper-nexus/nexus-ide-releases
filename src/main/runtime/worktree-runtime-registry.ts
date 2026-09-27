@@ -400,7 +400,7 @@ export class WorktreeRuntimeRegistry {
     scope: ProjectExecutionScope,
     missionId: string,
     inUse: (worktreePath: string) => boolean,
-  ): readonly WorktreeRecord[] {
+  ): Promise<readonly WorktreeRecord[]> {
     return this.forScope(scope).worktrees.collectIntegratedPaneWorktrees(scope, missionId, inUse);
   }
 

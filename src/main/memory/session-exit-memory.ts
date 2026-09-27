@@ -5,9 +5,11 @@
  * viram UMA linha trusted `session-digest` — se o Jev aprovar. Declaração do
  * agente sem evidência nunca vira memória trusted.
  *
- * Ordens de custo: sessão trivial (sem handoff com resumo), teto diário
- * atingido e duplicata contra o top-3 do FTS5 pulam com ZERO chamadas ao
- * Jev. Fail-open: qualquer falha apenas não grava.
+ * Ordens de custo: sessão trivial (sem handoff com resumo), duplicata contra
+ * o top-3 do FTS5 e o mesmo digest já aguardando o Jev pulam com ZERO
+ * chamadas ao Jev. Sem teto diário (decisão do operador, 2026-09-27): o que
+ * segura tempestade de saídas simultâneas é o dedupe por conteúdo, não uma
+ * cota. Fail-open: qualquer falha apenas não grava.
  */
 import type { ProjectExecutionScope } from '../../shared/types';
 import { getProjectDomainStores } from '../orch/project-domain-store-registry';
@@ -22,9 +24,6 @@ import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import { retainTrustedMemoryBestEffort } from './trusted-memory';
 import { getWorkspaceMemoryStore } from './workspace-memory';
 
-/** Teto de digests gravados por dia, por projeto (banco do workspace). */
-export const DAILY_SESSION_DIGEST_CAP = 10;
-
 /** Resumos por sessão que entram no digest. */
 const DIGEST_MAX_HANDOFFS = 3;
 
@@ -38,7 +37,6 @@ export interface SessionDigestOutcome {
     | 'store-unavailable'
     | 'trivial'
     | 'unverified'
-    | 'daily-cap'
     | 'dedupe'
     | 'jev-skip'
     | 'ok';
@@ -66,14 +64,8 @@ export interface SessionExitMemoryDeps {
   readonly now?: () => number;
 }
 
-function startOfDay(now: number): number {
-  const date = new Date(now);
-  date.setHours(0, 0, 0, 0);
-  return date.getTime();
-}
-
-/** Digests aguardando o Jev, por banco de workspace (reserva do teto diário). */
-const pendingDigests = new WeakMap<object, number>();
+/** Digests aguardando o Jev, por banco de workspace (dedupe em voo). */
+const pendingDigests = new WeakMap<object, Set<string>>();
 
 /** Query FTS: as primeiras palavras do digest bastam para achar duplicatas. */
 function digestQuery(digest: string): string {
@@ -130,17 +122,12 @@ export async function distillSessionExitMemory(
   if (!digest) return { retained: false, reason: 'trivial' };
 
   const store = getWorkspaceMemoryStore(scope);
-  const now = deps.now ?? Date.now;
-  // A vaga é reservada antes da chamada ao Jev: saídas simultâneas não
-  // passam todas pelo mesmo "9 de 10".
-  const pending = pendingDigests.get(store) ?? 0;
-  if (
-    store.countCreatedSince(SESSION_DIGEST_SOURCE, startOfDay(now())) + pending >=
-    DAILY_SESSION_DIGEST_CAP
-  ) {
-    return { retained: false, reason: 'daily-cap' };
-  }
-  pendingDigests.set(store, pending + 1);
+  // Saídas simultâneas com o mesmo conteúdo: só a primeira vai ao Jev (o FTS
+  // ainda não vê a linha que ela vai gravar).
+  const pending = pendingDigests.get(store) ?? new Set<string>();
+  if (pending.has(digest)) return { retained: false, reason: 'dedupe' };
+  pending.add(digest);
+  pendingDigests.set(store, pending);
   try {
     // Dedupe contra o top-3 do FTS5 do próprio workspace.
     const hits = store.recall({
@@ -180,9 +167,8 @@ export async function distillSessionExitMemory(
       ...(stale ? { supersededId: stale } : {}),
     };
   } finally {
-    const left = (pendingDigests.get(store) ?? 1) - 1;
-    if (left > 0) pendingDigests.set(store, left);
-    else pendingDigests.delete(store);
+    pending.delete(digest);
+    if (pending.size === 0) pendingDigests.delete(store);
   }
 }
 

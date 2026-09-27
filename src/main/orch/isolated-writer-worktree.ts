@@ -34,12 +34,47 @@ function inUseByPane(worktreePath: string): boolean {
   );
 }
 
-/** GC seguro dos writers da mão do operador já integrados (ver registry). */
-function collectIntegratedOperatorHandWorktrees(scope: ProjectExecutionScope): void {
-  try {
-    requireWorktreeRuntimeRegistry().collectIntegratedPaneWorktrees(scope, OPERATOR_HAND_WORKTREE_KEY, inUseByPane);
-  } catch (error) {
-    console.warn('[isolated-writer] GC de worktrees integradas adiado', error);
+interface OperatorHandGc {
+  scope: ProjectExecutionScope;
+  again: boolean;
+  done: Promise<void>;
+}
+const operatorHandGcByRepo = new Map<string, OperatorHandGc>();
+
+/**
+ * GC seguro dos writers da mão do operador já integrados (ver registry).
+ * Agendado fora do caminho do spawn/fechamento (Git assíncrono, depois do
+ * turno atual) e nunca dois no mesmo repo: pedidos durante uma coleta viram
+ * uma única rodada extra ao fim dela.
+ */
+function scheduleOperatorHandGc(scope: ProjectExecutionScope): void {
+  const running = operatorHandGcByRepo.get(scope.rootRealPath);
+  if (running) {
+    running.scope = scope;
+    running.again = true;
+    return;
+  }
+  const gc: OperatorHandGc = { scope, again: true, done: Promise.resolve() };
+  operatorHandGcByRepo.set(scope.rootRealPath, gc);
+  gc.done = (async () => {
+    while (gc.again) {
+      gc.again = false;
+      await new Promise((resolve) => setImmediate(resolve));
+      try {
+        await requireWorktreeRuntimeRegistry()
+          .collectIntegratedPaneWorktrees(gc.scope, OPERATOR_HAND_WORKTREE_KEY, inUseByPane);
+      } catch (error) {
+        console.warn('[isolated-writer] GC de worktrees integradas adiado', error);
+      }
+    }
+    operatorHandGcByRepo.delete(scope.rootRealPath);
+  })();
+}
+
+/** Testes: espera as coletas agendadas terminarem. */
+export async function operatorHandGcIdle(): Promise<void> {
+  while (operatorHandGcByRepo.size > 0) {
+    await Promise.all([...operatorHandGcByRepo.values()].map((gc) => gc.done));
   }
 }
 
@@ -67,7 +102,7 @@ function trackAllocation(
       'pane writer closed or spawn failed; worktree and branch retained for integration');
     released = true;
     untap();
-    if (!missionId) collectIntegratedOperatorHandWorktrees(scope);
+    if (!missionId) scheduleOperatorHandGc(scope);
   };
   // PTY taps run only after physical process-tree exit is proven. This covers
   // user close, natural exit and the existing mission termination/teardown.
@@ -101,7 +136,7 @@ export async function allocateIsolatedWriterWorktree(
 ): Promise<IsolatedWriterAllocation> {
   const workerId = randomUUID();
   const registryKey = missionId ?? OPERATOR_HAND_WORKTREE_KEY;
-  if (!missionId) collectIntegratedOperatorHandWorktrees(scope);
+  if (!missionId) scheduleOperatorHandGc(scope);
   const record = await requireWorktreeRuntimeRegistry().create({
     scope,
     missionId: registryKey,
