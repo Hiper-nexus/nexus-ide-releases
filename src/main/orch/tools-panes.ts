@@ -56,8 +56,10 @@ import {
   spawnRouteFrom,
 } from './operator-spawn-route';
 import {
+  claimSameCheckoutWriter,
   decideDelegatedWriterSpawn,
   delegatedPaneFacts,
+  hasPendingWriterClaim,
 } from './delegated-writer-gate';
 import {
   isFreeAgentChoiceContract,
@@ -100,7 +102,11 @@ import {
   isTaskQueueManagedMission,
   viaRapidaAllowsOrchestratorWorkerSpawn,
 } from './task-dispatch-authority';
-import { allocateIsolatedWriterWorktree } from './isolated-writer-worktree';
+import {
+  allocateIsolatedWriterWorktree,
+  resumeIsolatedWriterWorktree,
+  type IsolatedWriterAllocation,
+} from './isolated-writer-worktree';
 import { requireWorktreeRuntimeRegistry } from '../runtime/worktree-runtime-registry';
 import { getProjectDomainStores } from './project-domain-store-registry';
 import { missionControlPlaneSnapshot } from './mission-control-plane-ipc';
@@ -363,13 +369,32 @@ export function decideSameCheckoutSpawn(input: {
   };
 }
 
+/** Aviso do auto-isolamento: a worktree sai do HEAD, sem o WIP do operador. */
+export const ISOLATED_WORKTREE_NOTE =
+  'não contém alterações não commitadas do checkout principal';
+
+function isolatedWriterOptions(
+  options: SpawnToolOptions,
+  scope: ProjectExecutionScope,
+  writer: IsolatedWriterAllocation,
+): SpawnToolOptions {
+  return {
+    ...options,
+    executionMode: 'isolated_worktree',
+    isolatedWriter: true,
+    cwd: writer.worktreePath,
+    executionScope: Object.freeze({ ...scope, rootRealPath: writer.worktreePath }),
+    prompt: withIsolatedWriterContract(options.prompt ?? 'Execute a tarefa delegada.', writer),
+  };
+}
+
 export function withSameCheckoutWorkerContract(prompt: string): string {
   return (
     '## Nexus execution authority\n' +
     'executionMode=`same_checkout`: esta tarefa depende do WIP atual e roda no ' +
     'checkout já aberto. Preserve integralmente o trabalho existente: não use stash, ' +
-    'reset, checkout, clean nem troque de branch. Há no máximo um worker escrevendo ' +
-    'por vez; limite mudanças ao escopo pedido, inspecione o git status antes de editar ' +
+    'reset, checkout, clean nem troque de branch. Você é o único writer neste checkout ' +
+    '(outros writers rodam em worktrees próprias); limite mudanças ao escopo pedido, inspecione o git status antes de editar ' +
     'e não reverta arquivos que você não criou. Ao terminar, chame nexus_handoff_submit ' +
     'uma vez com arquivos tocados, validações e qualquer bloqueio.\n\n' +
     prompt
@@ -378,11 +403,13 @@ export function withSameCheckoutWorkerContract(prompt: string): string {
 
 export function withIsolatedWriterContract(
   prompt: string,
-  workspace: { branch: string; worktreePath: string },
+  workspace: { branch: string; worktreePath: string; baseSha?: string },
 ): string {
   return '## Nexus execution authority\n' +
     `executionMode=\`isolated_worktree\`: esta tarefa roda na worktree própria ${workspace.worktreePath}, ` +
-    `na branch ${workspace.branch}. Commit na própria branch é permitido e esperado. ` +
+    `na branch ${workspace.branch}. ` +
+    `A worktree nasce do commit ${workspace.baseSha ?? 'HEAD'} do checkout de coordenação e ${ISOLATED_WORKTREE_NOTE}. ` +
+    'Commit na própria branch é permitido e esperado. ' +
     'A branch não pode ser publicada: não use push, pull, stash, checkout, reset ou clean; ' +
     'não toque em outras branches nem no checkout de coordenação. ' +
     'Não há reserva exclusiva de arquivos: outros escritores podem editar o mesmo arquivo e gerar conflitos. ' +
@@ -559,7 +586,7 @@ const paneSpawn: McpToolDef = {
       },
       isolatedWriter: {
         type: 'boolean',
-        description: 'Spawn this writer in its own git worktree/branch so several writers run in parallel (with or without a mission); the orchestrator integrates the branch afterwards. The worktree and branch are kept for integration after the pane closes',
+        description: 'Spawn this writer in its own git worktree/branch so several writers run in parallel (with or without a mission); the orchestrator integrates the branch afterwards. The worktree and branch are kept for integration after the pane closes; a merged, clean one is garbage-collected. It starts at the checkout HEAD without uncommitted changes (the receipt carries baseSha). Resuming such a pane reuses its original worktree. Errors in a tab with its own shared worktree (open writers there one at a time)',
       },
       autoCloseOnHandoff: {
         type: 'boolean',
@@ -642,7 +669,7 @@ const paneSpawn: McpToolDef = {
       !resumeRef &&
       !str(args, 'missionId') &&
       operatorRouteResolver !== null;
-    const ignoredChoice = forceOperatorRoute ? ignoredRouteChoice(args) : null;
+    let ignoredChoice = forceOperatorRoute ? ignoredRouteChoice(args) : null;
     const resolveOperatorRoute = async (): Promise<Record<string, unknown>> => {
       const task = operatorRouteTask(args);
       if (!task) {
@@ -809,6 +836,8 @@ const paneSpawn: McpToolDef = {
         }
         autoRoute = await operatorRouteResolver!(task, ctx, {});
         adHocAdapterId = routeString(autoRoute, 'adapterId');
+        // model/effort soltos não valem aqui: o recibo diz o que foi ignorado.
+        ignoredChoice = ignoredRouteChoice(args);
         routeReservationId =
           typeof autoRoute.routeReservationId === 'string' ? autoRoute.routeReservationId : undefined;
         autoRouteReservation = routeReservationId !== undefined;
@@ -949,48 +978,59 @@ const paneSpawn: McpToolDef = {
       options = { ...options, executionScope: callerExecutionScope,
         cwd: options.cwd ?? callerExecutionScope.rootRealPath };
     }
-    let isolatedWriter: Awaited<ReturnType<typeof allocateIsolatedWriterWorktree>> | undefined;
+    let isolatedWriter: IsolatedWriterAllocation | undefined;
     let isolatedWriterReason: string | undefined;
+    // Claim síncrono do checkout (ver delegated-writer-gate): tomado no mesmo
+    // bloco da decisão, antes de qualquer await; solto no finally.
+    let writerClaim: ReturnType<typeof claimSameCheckoutWriter> | undefined;
+    let spawnedPaneId: string | undefined;
     // C3 (25/09) → 0.76.110: na mão do operador, dois writers nunca dividem o
     // mesmo checkout. `isolatedWriter:true` ganha worktree/branch própria; um
     // writer comum que colidiria com outro ativo é auto-isolado (em vez de
-    // recusado). Helpers de leitura seguem em paralelo no checkout.
-    if (operatorHand && !options.missionId && options.readOnly !== true) {
-      let isolate = args.isolatedWriter === true;
-      if (!isolate) {
-        const writerDecision = decideDelegatedWriterSpawn({
-          spawnReadOnly: false,
-          checkoutId: ctx.scope.checkoutId,
-          executionRoot: callerExecutionScope.rootRealPath,
-          panes: delegatedPaneFacts(
-            listPaneSnapshots(),
-            (sessionId) =>
-              getPaneRuntimeAuthorityBySession(sessionId)?.operatorParentSessionId,
-          ),
-        });
-        if (!writerDecision.allowed) {
-          // Aba em pasta compartilhada não suporta worktree: mantém a fila.
+    // recusado). Helpers de leitura seguem em paralelo no checkout. `resume`
+    // de um writer isolado volta à worktree/branch original.
+    if (operatorHand && !options.missionId) {
+      const resumed = resumeIsolatedWriterWorktree(ctx.scope, undefined, options.resumeFromPaneId);
+      if (resumed) {
+        isolatedWriter = resumed;
+      } else if (options.readOnly !== true) {
+        const checkoutRoot = callerExecutionScope.rootRealPath;
+        let blockedBy: string | undefined;
+        if (args.isolatedWriter !== true) {
+          const snapshots = listPaneSnapshots();
+          const writerDecision = decideDelegatedWriterSpawn({
+            spawnReadOnly: false,
+            checkoutId: ctx.scope.checkoutId,
+            executionRoot: checkoutRoot,
+            panes: delegatedPaneFacts(
+              snapshots,
+              (sessionId) =>
+                getPaneRuntimeAuthorityBySession(sessionId)?.operatorParentSessionId,
+            ),
+          });
+          blockedBy = !writerDecision.allowed
+            ? writerDecision.reason
+            : hasPendingWriterClaim(checkoutRoot, snapshots)
+              ? 'writer em spawn ainda ativo — espere a entrega dele ou abra este como readOnly'
+              : undefined;
+          if (blockedBy === undefined) writerClaim = claimSameCheckoutWriter(checkoutRoot);
+        }
+        if (args.isolatedWriter === true || blockedBy !== undefined) {
           try {
             assertTabSupportsOperation(ctx.scope, callerExecutionScope, 'isolatedWriter', ctx.sharedTabWorktree);
-          } catch {
-            throw new Error(writerDecision.reason);
+          } catch (error) {
+            // Aba em pasta compartilhada não suporta worktree: mantém a fila.
+            throw blockedBy !== undefined ? new Error(blockedBy) : error;
           }
-          isolate = true;
-          isolatedWriterReason = `auto-isolado: ${writerDecision.reason.replace(/ — .*$/, '')} no mesmo checkout`;
+          if (blockedBy !== undefined) {
+            isolatedWriterReason = `auto-isolado: ${blockedBy.replace(/ — .*$/, '')} no mesmo checkout`;
+          }
+          isolatedWriter = await allocateIsolatedWriterWorktree(ctx.scope, undefined);
         }
       }
-      if (isolate) {
-        assertTabSupportsOperation(ctx.scope, callerExecutionScope, 'isolatedWriter', ctx.sharedTabWorktree);
-        isolatedWriter = await allocateIsolatedWriterWorktree(ctx.scope, undefined);
+      if (isolatedWriter) {
         executionMode = 'isolated_worktree';
-        options = {
-          ...options,
-          executionMode,
-          isolatedWriter: true,
-          cwd: isolatedWriter.worktreePath,
-          executionScope: Object.freeze({ ...ctx.scope, rootRealPath: isolatedWriter.worktreePath }),
-          prompt: withIsolatedWriterContract(options.prompt ?? 'Execute a tarefa delegada.', isolatedWriter),
-        };
+        options = isolatedWriterOptions(options, ctx.scope, isolatedWriter);
       }
     }
     let isolatedWriterPending = false;
@@ -999,12 +1039,15 @@ const paneSpawn: McpToolDef = {
       ? { isolatedWorktree: {
           branch: isolatedWriter.branch,
           worktreePath: isolatedWriter.worktreePath,
+          baseSha: isolatedWriter.baseSha,
+          note: ISOLATED_WORKTREE_NOTE,
           ...(isolatedWriterReason ? { reason: isolatedWriterReason } : {}),
         } }
       : {};
     let releaseWorkerSlot: (() => void) | undefined;
     let spawnedWorkerPaneId: string | undefined;
     let consumeReservedRoute: (() => void) | undefined;
+    let reservedRouteConsumed = false;
     try {
       let missionSuite: ReturnType<typeof getProjectDomainStores> | undefined;
       let missionRow: ReturnType<
@@ -1118,6 +1161,7 @@ const paneSpawn: McpToolDef = {
               expectedRoute,
               ctx.sessionId!,
             );
+            reservedRouteConsumed = true;
           };
         }
         // Auditoria do modo livre: um spawn que atravessou o gate de reserva por
@@ -1260,40 +1304,54 @@ const paneSpawn: McpToolDef = {
               `Task ownership: ${JSON.stringify(worktree.ownership)}\n\n` +
               options.prompt;
           }
-        } else if (args.isolatedWriter === true && !options.readOnly && options.executionMode !== 'read_only') {
-          assertTabSupportsOperation(ctx.scope, callerExecutionScope, 'isolatedWriter', ctx.sharedTabWorktree);
-          isolatedWriter = await allocateIsolatedWriterWorktree(ctx.scope, missionId);
-          executionMode = 'isolated_worktree';
-          options = {
-            ...options,
-            executionMode,
-            isolatedWriter: true,
-            cwd: isolatedWriter.worktreePath,
-            executionScope: Object.freeze({ ...ctx.scope, rootRealPath: isolatedWriter.worktreePath }),
-            prompt: withIsolatedWriterContract(options.prompt ?? 'Execute a tarefa delegada.', isolatedWriter),
-          };
         } else {
-          executionMode = 'same_checkout';
-          const decision = decideSameCheckoutSpawn({
-            spawnReadOnly:
-              options.readOnly === true ||
-              options.executionMode === 'read_only',
-            activeWorker: activeSameCheckoutWorker(
-              listPaneSnapshots(),
-              callerExecutionScope.rootRealPath,
-            ),
-          });
-          if (!decision.allowed) {
-            throw new Error(decision.reason);
+          const checkoutRoot = callerExecutionScope.rootRealPath;
+          const spawnReadOnly =
+            options.readOnly === true || options.executionMode === 'read_only';
+          isolatedWriter = resumeIsolatedWriterWorktree(ctx.scope, missionId, options.resumeFromPaneId) ?? undefined;
+          if (!isolatedWriter && !spawnReadOnly) {
+            let blockedBy: string | undefined;
+            if (args.isolatedWriter !== true) {
+              const snapshots = listPaneSnapshots();
+              const decision = decideSameCheckoutSpawn({
+                spawnReadOnly,
+                activeWorker:
+                  activeSameCheckoutWorker(snapshots, checkoutRoot) ??
+                  (hasPendingWriterClaim(checkoutRoot, snapshots)
+                    ? { paneId: 'em spawn', state: 'spawning' }
+                    : null),
+              });
+              blockedBy = decision.allowed ? undefined : decision.reason;
+              if (blockedBy === undefined) writerClaim = claimSameCheckoutWriter(checkoutRoot);
+            }
+            // Paridade com a mão do operador: o segundo writer comum é
+            // auto-isolado numa worktree própria em vez de recusado.
+            if (args.isolatedWriter === true || blockedBy !== undefined) {
+              try {
+                assertTabSupportsOperation(ctx.scope, callerExecutionScope, 'isolatedWriter', ctx.sharedTabWorktree);
+              } catch (error) {
+                throw blockedBy !== undefined ? new Error(blockedBy) : error;
+              }
+              if (blockedBy !== undefined) {
+                isolatedWriterReason = `auto-isolado: ${blockedBy} no mesmo checkout`;
+              }
+              isolatedWriter = await allocateIsolatedWriterWorktree(ctx.scope, missionId);
+            }
           }
-          options = {
-            ...options,
-            cwd: callerExecutionScope.rootRealPath,
-            executionScope: callerExecutionScope,
-            prompt: withSameCheckoutWorkerContract(
-              options.prompt ?? 'Inspecione o estado atual e aguarde uma tarefa com escopo explícito.',
-            ),
-          };
+          if (isolatedWriter) {
+            executionMode = 'isolated_worktree';
+            options = isolatedWriterOptions(options, ctx.scope, isolatedWriter);
+          } else {
+            executionMode = 'same_checkout';
+            options = {
+              ...options,
+              cwd: checkoutRoot,
+              executionScope: callerExecutionScope,
+              prompt: withSameCheckoutWorkerContract(
+                options.prompt ?? 'Inspecione o estado atual e aguarde uma tarefa com escopo explícito.',
+              ),
+            };
+          }
         }
       }
       // A read-only caller can delegate/spawn, but the spawned pane itself must
@@ -1390,6 +1448,8 @@ const paneSpawn: McpToolDef = {
         // o handoff da sessão que nascer nele o encontra.
         if (autoClose && pending.paneId) armAutoCloseOnHandoffForPane(pending.paneId);
         isolatedWriterPending = Boolean(isolatedWriter);
+        spawnedPaneId = pending.paneId ?? undefined;
+        if (isolatedWriter && pending.paneId) isolatedWriter.link(pending.paneId);
         return {
           ...pending,
           ...(executionMode ? { executionMode } : {}),
@@ -1405,6 +1465,8 @@ const paneSpawn: McpToolDef = {
       // Declarado no nascimento (registro, não pergunta): o pane se fecha
       // sozinho no handoff SUCCESS — paridade Bridge, libera a vaga sem
       // segurar slot da onda seguinte; falha preserva pane para diagnóstico.
+      spawnedPaneId = spawned.paneId;
+      isolatedWriter?.link(spawned.paneId);
       if (autoClose && spawned.sessionId) {
         armAutoCloseOnHandoff(spawned.sessionId, spawned.paneId);
       }
@@ -1439,6 +1501,26 @@ const paneSpawn: McpToolDef = {
           : {}),
       };
     } finally {
+      writerClaim?.settle(spawnedPaneId);
+      // Tentativa abortada antes do consumo: a reserva que o próprio
+      // auto-roteamento criou é fechada aqui — senão conta como "CLI já usada"
+      // no desempate até expirar (30 min), sem pane algum.
+      if (autoRouteReservation && !reservedRouteConsumed && routeReservationId &&
+          options.missionId && ctx.sessionId) {
+        try {
+          const routeModel = routeString(autoRoute, 'model');
+          const routeEffort = routeString(autoRoute, 'effort');
+          getProjectDomainStores(ctx.scope).missions.consumeRouteReservation({
+            reservationId: routeReservationId,
+            missionId: options.missionId,
+            adapterId: routeString(autoRoute, 'adapterId')!,
+            ...(routeModel ? { model: routeModel } : {}),
+            ...(routeEffort ? { effort: routeEffort } : {}),
+          }, ctx.sessionId);
+        } catch (error) {
+          console.warn('[tools-panes] reserva do auto-roteamento não pôde ser fechada', error);
+        }
+      }
       if (isolatedWriter && !isolatedWriterPending && !spawnedWorkerPaneId && !listPaneSnapshots().some(
         (pane) => pane.executionScope?.rootRealPath === isolatedWriter!.worktreePath && pane.state !== 'exited',
       )) isolatedWriter.release();

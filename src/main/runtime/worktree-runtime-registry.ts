@@ -361,6 +361,22 @@ export class WorktreeRuntimeRegistry {
     );
   }
 
+  reopenPaneWriter(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    taskId: string,
+  ): WorktreeRecord {
+    return this.forScope(scope).worktrees.reopenPaneWriter(scope, missionId, taskId);
+  }
+
+  collectIntegratedPaneWorktrees(
+    scope: ProjectExecutionScope,
+    missionId: string,
+    inUse: (worktreePath: string) => boolean,
+  ): readonly WorktreeRecord[] {
+    return this.forScope(scope).worktrees.collectIntegratedPaneWorktrees(scope, missionId, inUse);
+  }
+
   listMission(
     scope: ProjectExecutionScope,
     missionId: string,

@@ -17,7 +17,7 @@ const harness = vi.hoisted(() => ({
   parentBySession: {} as Record<string, string>,
   panesByRef: {} as Record<string, { paneId: string; adapterId?: string }>,
   allocateIsolatedWriterWorktree: vi.fn(async () => ({
-    worktreePath: '/tmp/nexus-wt/op-1', branch: 'nexus/op/1', release: vi.fn(),
+    worktreePath: '/tmp/nexus-wt/op-1', branch: 'nexus/op/1', baseSha: 'a'.repeat(40), release: vi.fn(), link: vi.fn(),
   })),
 }));
 
