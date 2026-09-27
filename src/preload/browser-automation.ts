@@ -625,7 +625,7 @@ export function createBrowserAutomation(
       element?: Element,
     ): void => {
       if (pairs.length >= EXTRACT_PAIRS_MAX) return;
-      const l = redactBrowserText(normalizedText(stripLabelMarker(label))).slice(
+      const l = redactBrowserText(stripLabelMarker(normalizedText(label))).slice(
         0,
         PAIR_LABEL_CHARS,
       );

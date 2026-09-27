@@ -427,6 +427,9 @@ describe('isolated browser automation', () => {
         <table>
           <tr><th><div>•<span> </span>Presidente</div></th><td>Lula da Silva</td></tr>
           <tr><th><div>•<span> </span>Vice-presidente</div></th><td>Geraldo Alckmin</td></tr>
+          <tr><th>
+            •&nbsp;Governador
+          </th><td>Fulano</td></tr>
         </table>
       </body>`,
       { url: 'https://example.test/', pretendToBeVisual: true },
@@ -439,6 +442,8 @@ describe('isolated browser automation', () => {
     expect(
       result.pairs.some((p) => p.label === 'Vice-presidente' && p.value === 'Geraldo Alckmin'),
     ).toBe(true);
+    // Indented markup: whitespace before the bullet must not keep it.
+    expect(result.pairs.some((p) => p.label === 'Governador' && p.value === 'Fulano')).toBe(true);
   });
 
   it('keeps multi-line <br> values whole and offers the first line as an extra candidate', async () => {
