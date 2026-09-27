@@ -174,6 +174,43 @@ darwinOnly('runner real no sandbox do writer', () => {
     expect(() => process.kill(pid, 0)).toThrow();
   }, 60_000);
 
+  it('filho que escapa do grupo (setsid) segurando o stdout não prende o portão', async () => {
+    const root = tempDir('nexus-regression-escape-');
+    const write = (file: string, content: string, mode?: number) => {
+      fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+      fs.writeFileSync(path.join(root, file), content, mode ? { mode } : undefined);
+    };
+    write('package.json', JSON.stringify({ devDependencies: { vitest: '*' } }));
+    write('.gitignore', 'node_modules\n');
+    write('src/a.ts', 'export const a = 1;\n');
+    write('src/a.test.ts', "import { a } from './a';\n");
+    const git = new ProcessGitRunner();
+    git.run(root, ['init', '-q']);
+    git.run(root, ['add', '-A']);
+    git.run(root, ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-qm', 'fixture']);
+    // "Runner": grava o relatório, deixa um daemon em outra sessão com o
+    // stdout herdado e sai.
+    write(
+      'node_modules/.bin/vitest',
+      [
+        '#!/bin/sh',
+        'for a in "$@"; do case "$a" in --outputFile=*) out="${a#--outputFile=}" ;; esac; done',
+        `printf '{"testResults":[{"name":"%s/src/a.test.ts","status":"passed","assertionResults":[{"status":"passed"}]}]}' "$PWD" > "$out"`,
+        "/usr/bin/perl -e 'use POSIX; exit if fork; POSIX::setsid(); sleep 30' &",
+        'exit 0',
+        '',
+      ].join('\n'),
+      0o755,
+    );
+    write('src/a.ts', 'export const a = 2;\n');
+    const started = Date.now();
+
+    const result = await runRegressionGate({ scope: testProjectScope({ rootRealPath: root }), timeoutMs: 30_000 });
+
+    expect(Date.now() - started).toBeLessThan(15_000);
+    expect(result.status).toBe('passed');
+  }, 60_000);
+
   it('título de teste com instruções vira citação neutralizada, nunca linha própria', async () => {
     const { write, scope, trustedDependencyRoot } = realProject({ 'src/a.test.ts': '' });
     write(

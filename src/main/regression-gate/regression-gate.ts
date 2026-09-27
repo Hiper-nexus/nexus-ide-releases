@@ -810,6 +810,11 @@ function killTree(proc: ChildProcess, signal: NodeJS.Signals): void {
 }
 
 const OUTPUT_LIMIT_BYTES = 4 * 1024 * 1024;
+/**
+ * Depois que o runner sai, espera isto pelo fim do stdout/stderr. Um filho que
+ * saiu do grupo (setsid/daemon) e herdou o pipe nunca deixa o `close` vir.
+ */
+const EXIT_STDIO_GRACE_MS = 2_000;
 
 /**
  * Runner no MESMO isolamento do terminal do writer (process-sandbox): cwd no
@@ -866,6 +871,7 @@ const execSandboxed: RegressionExec = (file, args, options) =>
     let aborted = false;
     let settled = false;
     let forceKill: NodeJS.Timeout | null = null;
+    let exitGrace: NodeJS.Timeout | null = null;
     const capture = (stream: 'out' | 'err', chunk: Buffer) => {
       const room = OUTPUT_LIMIT_BYTES - captured;
       if (room <= 0) return;
@@ -894,6 +900,7 @@ const execSandboxed: RegressionExec = (file, args, options) =>
       settled = true;
       clearTimeout(timer);
       if (forceKill) clearTimeout(forceKill);
+      if (exitGrace) clearTimeout(exitGrace);
       options.signal?.removeEventListener('abort', onAbort);
       // Descendentes que sobraram (servidor aberto pelo teste) morrem junto.
       killTree(proc, 'SIGKILL');
@@ -909,6 +916,9 @@ const execSandboxed: RegressionExec = (file, args, options) =>
     proc.stderr?.on('data', (chunk: Buffer) => capture('err', chunk));
     proc.once('error', (error) => finish(null, `\n${error.message}`));
     proc.once('close', (code) => finish(code));
+    proc.once('exit', (code) => {
+      exitGrace = setTimeout(() => finish(code), EXIT_STDIO_GRACE_MS);
+    });
     options.signal?.addEventListener('abort', onAbort, { once: true });
     if (options.signal?.aborted) onAbort();
   });
