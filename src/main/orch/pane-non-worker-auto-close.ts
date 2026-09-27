@@ -38,7 +38,13 @@ import {
 } from './pane-registry';
 import { getAgentSessionInfo } from '../pty/pty-manager';
 import { getAdapter } from '../adapters/adapter-registry';
-import { isSessionIdleForCleanup, tapAgentSemanticStatus } from './agent-status';
+import {
+  isSessionIdleForCleanup,
+  isSessionInAbandonedDialog,
+  tapAgentSemanticStatus,
+} from './agent-status';
+import { getContextBySession } from './gate';
+import { getProjectDomainStores } from './project-domain-store-registry';
 import { armedDeliveryContract } from './delivery-contract';
 import {
   getCachedSystemMemory,
@@ -83,6 +89,10 @@ export interface NonWorkerAutoCloseDeps {
   readonly now?: () => number;
   /** Contrato de entrega armado (`expect` do spawn) ainda por cumprir. */
   readonly hasPendingDelivery?: (sessionId: string) => boolean;
+  /** Diálogo sem resposta há muito tempo num PTY parado (ver agent-status). */
+  readonly isAbandonedDialog?: (sessionId: string) => boolean;
+  /** A sessão já entregou um handoff de sucesso. */
+  readonly hasDeliveredSuccess?: (sessionId: string) => boolean;
   /**
    * Registra o conselheiro do gate de admissão (quem NOMEIA os panes
    * ociosos). Mora aqui, e não no pty-ipc, para o pty-ipc não importar este
@@ -138,6 +148,18 @@ function productionDeps(): NonWorkerAutoCloseDeps {
     },
     isIdle: (sessionId) => isSessionIdleForCleanup(sessionId),
     hasPendingDelivery: (sessionId) => armedDeliveryContract(sessionId) !== null,
+    isAbandonedDialog: (sessionId) => isSessionInAbandonedDialog(sessionId),
+    hasDeliveredSuccess: (sessionId) => {
+      const scope = getContextBySession(sessionId)?.scope;
+      if (!scope) return false;
+      try {
+        return getProjectDomainStores(scope)
+          .handoffs.list({ sessionIds: [sessionId], includeDelivered: true })
+          .some((handoff) => handoff.status === 'success');
+      } catch {
+        return false;
+      }
+    },
     closePane: (paneId) => requestPaneClose(paneId),
     // 0.76.45: estacionar (pane fica, memória vai a zero); main-owned sem
     // renderer cai no fechamento dentro de requestPanePark.
@@ -238,12 +260,17 @@ function paneIsClosable(
   sessionId: string,
 ): NonWorkerPaneRef | null {
   if (!deps.isEnabled()) return null;
-  if (!deps.isIdle(sessionId)) return null;
   if (deps.hasPendingDelivery?.(sessionId)) return null;
   const ref = deps.getPaneRef(sessionId);
   if (!ref) return null;
   if (!isGuardianEligiblePane(ref)) return null;
-  return ref;
+  if (deps.isIdle(sessionId)) return ref;
+  // Diálogo abandonado só libera o helper que JÁ entregou com sucesso (o
+  // diálogo é resto do turno depois da entrega). Pane humano, worker de missão
+  // e orquestrador já ficaram de fora acima; o reaper de pressão nunca usa isto.
+  return deps.isAbandonedDialog?.(sessionId) && deps.hasDeliveredSuccess?.(sessionId)
+    ? ref
+    : null;
 }
 
 export function paneIsParkableUnderPressure(

@@ -220,25 +220,36 @@ export function isSessionInjectableIdle(sessionId: string): boolean {
  * process. Cleanup keeps a working session protected until an explicit idle
  * or completion signal, even when a long tool produces no terminal output.
  *
- * `awaiting-input` is the one exception: `isSessionInjectableIdle` latches it
- * at any age because injecting text would write into an open dialog. Closing
- * a pane writes nothing — a dialog nobody answered in
- * `SEMANTIC_WORKING_VETO_MS` is abandoned, not in use, and the pane guardian
- * (F-572) needs to reclaim it like any other idle orphan instead of holding
- * it open forever (operator had to close these by hand).
+ * `awaiting-input` stays vetoed at any age here: a worker waiting for a
+ * permission answer or a human pane with an open dialog is in use even when
+ * nobody answered for a while. The one narrow exception is
+ * `isSessionInAbandonedDialog`, which the pane guardian applies only to a
+ * helper that already delivered a successful handoff.
  */
 export function isSessionIdleForCleanup(sessionId: string): boolean {
   if (getSessionState(sessionId) !== 'idle') return false;
-  const semantic = getAgentSemanticStatusBySession(sessionId);
-  switch (semantic?.status) {
+  switch (getAgentSemanticStatusBySession(sessionId)?.status) {
     case 'working':
     case 'error':
-      return false;
     case 'awaiting-input':
-      return Date.now() - (semantic.updatedAt ?? 0) > SEMANTIC_WORKING_VETO_MS;
+      return false;
     default:
       return true;
   }
+}
+
+/**
+ * Diálogo (permissão/pergunta) sem resposta há mais de
+ * `SEMANTIC_WORKING_VETO_MS` num PTY parado. Fechar não escreve nada, mas só o
+ * guardian decide QUEM pode perder o diálogo: helper que já entregou.
+ */
+export function isSessionInAbandonedDialog(sessionId: string): boolean {
+  if (getSessionState(sessionId) !== 'idle') return false;
+  const semantic = getAgentSemanticStatusBySession(sessionId);
+  return (
+    semantic?.status === 'awaiting-input' &&
+    Date.now() - (semantic.updatedAt ?? 0) > SEMANTIC_WORKING_VETO_MS
+  );
 }
 
 function resolvePaneId(sessionId: string): string {
