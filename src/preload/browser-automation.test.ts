@@ -441,14 +441,17 @@ describe('isolated browser automation', () => {
     ).toBe(true);
   });
 
-  it('stops a table-row value at the first <br>, not the whole cell text', async () => {
+  it('keeps multi-line <br> values whole and offers the first line as an extra candidate', async () => {
     // pt.wikipedia.org/wiki/Brasil infobox "Capital" cell: name, then <br>,
     // then unrelated geocoordinate markup glued on by .textContent.
     const dom = new JSDOM(
       `<!doctype html><body>
         <table>
           <tr><th>Capital</th><td><a href="/wiki/Brasília">Brasília</a><br><span>15° 47' S 47° 52' O</span></td></tr>
+          <tr><th>Endereço</th><td>Rua das Flores<br>São Paulo, SP</td></tr>
+          <tr><th>Sede</th><td><br>Recife</td></tr>
         </table>
+        <dl><dt>Entrega</dt><dd>Av. Paulista, 1000<br>Bela Vista</dd></dl>
       </body>`,
       { url: 'https://example.test/', pretendToBeVisual: true },
     );
@@ -456,8 +459,12 @@ describe('isolated browser automation', () => {
     const result = (await automation.run('extract_candidates', {})) as {
       pairs: Array<{ label: string; value: string }>;
     };
-    const capital = result.pairs.find((p) => p.label === 'Capital');
-    expect(capital?.value).toBe('Brasília');
+    const valuesOf = (label: string): string[] =>
+      result.pairs.filter((p) => p.label === label).map((p) => p.value);
+    expect(valuesOf('Capital')).toEqual(["Brasília / 15° 47' S 47° 52' O", 'Brasília']);
+    expect(valuesOf('Endereço')).toEqual(['Rua das Flores / São Paulo, SP', 'Rua das Flores']);
+    expect(valuesOf('Sede')).toEqual(['Recife']);
+    expect(valuesOf('Entrega')).toEqual(['Av. Paulista, 1000 / Bela Vista', 'Av. Paulista, 1000']);
   });
 
   it('tokenizes space/nbsp-grouped pt-BR thousands as number candidates', async () => {

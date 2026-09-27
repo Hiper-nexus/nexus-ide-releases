@@ -132,24 +132,25 @@ function stripLabelMarker(value: string): string {
 }
 
 /**
- * ponytail: text up to the first *direct-child* `<br>` only — a table cell
- * like `<td><a>Brasília</a><br><span>15° 47' S ...</span></td>` otherwise
- * glues the coordinates onto the place name via plain `.textContent`. Does
- * not look inside descendants for a nested `<br>`; widen if that turns out
- * to matter for another site's markup.
+ * Text split on `<br>` (at any depth), one normalized entry per non-empty
+ * line. Plain `.textContent` glues lines together — the pt.wikipedia
+ * infobox "Capital" cell `<a>Brasília</a><br><span>15° 47' S…</span>`
+ * reads as "Brasília15° 47′ S…" — while an address cell legitimately
+ * spans lines. Callers keep every line and may offer the first alone.
  */
-function firstLineText(win: BrowserDomWindow, element: Element): string {
+function textLines(win: BrowserDomWindow, element: Element): string[] {
   let out = '';
-  for (const node of element.childNodes) {
-    if (node.nodeType === win.Node.TEXT_NODE) {
-      out += node.textContent ?? '';
-      continue;
+  const walk = (node: Node): void => {
+    for (const child of node.childNodes) {
+      if (child.nodeType === win.Node.TEXT_NODE) out += child.textContent ?? '';
+      else if (child instanceof win.Element) {
+        if (child.tagName === 'BR') out += '\n';
+        else walk(child);
+      }
     }
-    if (!(node instanceof win.Element)) continue;
-    if (node.tagName === 'BR') break;
-    out += node.textContent ?? '';
-  }
-  return out;
+  };
+  walk(element);
+  return out.split('\n').map(normalizedText).filter(Boolean);
 }
 
 function elementHasSensitiveMarker(element: Element): boolean {
@@ -651,7 +652,11 @@ export function createBrowserAutomation(
         dd = dd.nextElementSibling;
       }
       if (!dd || isSensitiveTree(dd)) continue;
-      pushPair(dt.textContent ?? '', firstLineText(win, dd), dd);
+      const lines = textLines(win, dd);
+      pushPair(dt.textContent ?? '', lines.join(' / '), dd);
+      // A multi-line value is kept whole; its first line is offered as an
+      // extra candidate (e.g. a place name above its coordinates).
+      if (lines.length > 1) pushPair(dt.textContent ?? '', lines[0], dd);
     }
 
     // tables: th → td, or first cell → remaining cells.
@@ -660,14 +665,15 @@ export function createBrowserAutomation(
       if (isSensitiveTree(row) || !isElementVisible(win, row)) continue;
       const cells = [...row.querySelectorAll('th,td')];
       if (cells.length < 2) continue;
+      const valueLines = cells.slice(1).map((cell) => textLines(win, cell));
       pushPair(
         cells[0].textContent ?? '',
-        cells
-          .slice(1)
-          .map((cell) => firstLineText(win, cell))
-          .join(' · '),
+        valueLines.map((lines) => lines.join(' / ')).join(' · '),
         cells[1],
       );
+      if (valueLines.length === 1 && valueLines[0].length > 1) {
+        pushPair(cells[0].textContent ?? '', valueLines[0][0], cells[1]);
+      }
     }
 
     // label[for] / wrapping label → campo: só <select> (a opção escolhida é
