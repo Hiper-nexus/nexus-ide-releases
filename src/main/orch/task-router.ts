@@ -139,7 +139,7 @@ export const DEFAULT_ROUTING_TABLE: RoutingTable = {
     { adapterId: 'mimo-code', model: 'xiaomi/mimo-v2.6-flash' },
     { adapterId: 'minimax-code', model: 'minimax/MiniMax-M2.7-highspeed' },
     { adapterId: 'claude', model: 'claude-sonnet-4-6', effort: 'low' },
-    { adapterId: 'opencode', model: 'opencode/deepseek-v4-flash-free' },
+    { adapterId: 'opencode', model: 'opencode/deepseek-v4-flash' },
     { adapterId: 'openclaude', model: 'haiku' },
     { adapterId: 'aider', model: 'claude-haiku-4-5' },
   ],

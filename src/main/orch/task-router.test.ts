@@ -568,4 +568,11 @@ describe('catálogo grok na tabela de roteamento', () => {
       }
     }
   });
+
+  it('opencode/easy usa o id real do DeepSeek V4 Flash (`opencode models`: sem sufixo -free)', () => {
+    const easyOpencode = DEFAULT_ROUTING_TABLE.easy.find(
+      (candidate) => candidate.adapterId === 'opencode',
+    );
+    expect(easyOpencode?.model).toBe('opencode/deepseek-v4-flash');
+  });
 });
