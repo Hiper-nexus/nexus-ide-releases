@@ -40,6 +40,18 @@ export const RETIRED_MODEL_MIGRATIONS: Readonly<Record<string, string>> = Object
   'grok-4-fast': GROK_FRONTIER_MODEL,
   'grok-code-fast-1': GROK_FRONTIER_MODEL,
   'grok-3': GROK_FRONTIER_MODEL,
+  // `agy models` (2026-09-27) só tem as linhas 3.6/3.7/3.8 com esforço; a
+  // 3.5 saiu. Chave com sufixo de esforço só existe no agy.
+  'gemini-3.5-flash-low': 'gemini-3.8-flash-low',
+  'gemini-3.5-flash-medium': 'gemini-3.8-flash-medium',
+  'gemini-3.5-flash-high': 'gemini-3.8-flash-high',
+  // Free sem credencial que saíram de `opencode models` (2026-09-27): vão
+  // para o default credentialless do adapter, nunca para um id pago.
+  'opencode/deepseek-v4-flash-free': 'opencode/big-pickle',
+  'opencode/mimo-v2.5-free': 'opencode/big-pickle',
+  'opencode/north-mini-code-free': 'opencode/big-pickle',
+  'opencode/laguna-s-2.1-free': 'opencode/big-pickle',
+  'opencode/ling-3.0-flash-free': 'opencode/big-pickle',
 });
 
 export function migrateModelId(modelId: string | undefined): string | undefined {

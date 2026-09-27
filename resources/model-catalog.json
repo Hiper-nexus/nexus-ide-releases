@@ -277,24 +277,6 @@
           "source": "remote"
         },
         {
-          "id": "gemini-3.5-flash-low",
-          "availability": "free",
-          "costTier": "free",
-          "source": "remote"
-        },
-        {
-          "id": "gemini-3.5-flash-high",
-          "availability": "cheap",
-          "costTier": "low",
-          "source": "remote"
-        },
-        {
-          "id": "gemini-3.5-flash-medium",
-          "availability": "cheap",
-          "costTier": "low",
-          "source": "remote"
-        },
-        {
           "id": "gemini-3.1-pro-high",
           "availability": "paid",
           "costTier": "medium",
