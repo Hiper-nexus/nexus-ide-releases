@@ -35,6 +35,14 @@ describe('squad model defaults', () => {
     expect(migrateModelId(undefined)).toBeUndefined();
   });
 
+  it('migra grok aposentado (4.1/4/4-fast/code-fast-1/3) para o grok-4.7 vigente (confirmado via `grok models` instalado, 2026-09-27)', () => {
+    expect(migrateModelId('grok-4.1')).toBe('grok-4.7');
+    expect(migrateModelId('grok-4')).toBe('grok-4.7');
+    expect(migrateModelId('grok-4-fast')).toBe('grok-4.7');
+    expect(migrateModelId('grok-code-fast-1')).toBe('grok-4.7');
+    expect(migrateModelId('grok-3')).toBe('grok-4.7');
+  });
+
   it('não migra superseded que ainda roda (claude-opus-5) nem solta genérica (1.6)', () => {
     // Superseded ≠ retired: o 5.5 lidera a lista/routing, mas o 5 continua
     // executável em CLIs mais antigos — migrar descartaria o candidato.

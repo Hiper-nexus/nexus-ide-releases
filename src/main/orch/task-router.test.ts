@@ -103,7 +103,9 @@ describe('routeTask', () => {
     expect(decision).not.toBeNull();
     expect(decision!.tier).toBe('easy');
     expect(decision!.adapterId).toBe('grok');
-    expect(decision!.model).toBe('grok-4-fast');
+    // xAI aposentou o grok-4-fast (`grok models` só lista 4.7/4.7-build-fast/
+    // 4.6/4.5, 2026-09-27) — o catálogo unificou o grok no vigente.
+    expect(decision!.model).toBe('grok-4.7');
     expect(decision!.effort).toBe('low');
   });
 
@@ -547,5 +549,23 @@ describe('routeTask — desempate por uso (tieBreakUseCounts)', () => {
     })!;
     expect(tie.adapterId).toBe(runnerUp.adapterId);
     expect(tie.reason).toContain('desempate');
+  });
+});
+
+describe('catálogo grok na tabela de roteamento', () => {
+  it('nunca oferece modelo grok aposentado pelo provedor (confirmado via `grok models`: só 4.7/4.7-build-fast/4.6/4.5 existem)', () => {
+    const retiredGrokModels = new Set([
+      'grok-4.1',
+      'grok-4',
+      'grok-4-fast',
+      'grok-code-fast-1',
+      'grok-3',
+    ]);
+    for (const candidates of Object.values(DEFAULT_ROUTING_TABLE)) {
+      for (const candidate of candidates) {
+        if (candidate.adapterId !== 'grok') continue;
+        expect(retiredGrokModels.has(candidate.model ?? '')).toBe(false);
+      }
+    }
   });
 });
