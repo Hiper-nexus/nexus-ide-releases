@@ -298,9 +298,11 @@ const missionCreateTool: McpToolDef = {
     'without any mission. The calling session becomes the orchestrator and ' +
     'receives worker handoffs when idle. In Autopilot the mission starts ' +
     'running in free agent choice (any installed CLI; no squad unless squadId ' +
-    'is given), so you can spawn its workers right away, and once it is done ' +
-    'or failed this pane is the operator hand again. In Hardened it waits for ' +
-    'the operator to dispatch it.',
+    'is given — Nexus routes each worker, no squad needed), so you can spawn ' +
+    'its workers right away (writers in parallel with isolatedWriter), and ' +
+    'once it is done or failed this pane is the operator hand again and may ' +
+    'create another mission. In Hardened it waits for the operator to ' +
+    'dispatch it.',
   inputSchema: {
     type: 'object',
     properties: {

@@ -460,7 +460,14 @@ const paneSpawn: McpToolDef = {
     'describe the work in `task` (or prompt/title) — adapterId, model and ' +
     'effort are ignored there (the receipt lists them under route.ignored), ' +
     'resume keeps the resumed pane\'s CLI, and a confident Jev skill ' +
-    'suggestion adds one hint line to the prompt. ' +
+    'suggestion adds one hint line to the prompt. Inside a mission, omit ' +
+    'adapterId and describe `task` to get the same automatic routing (roster, ' +
+    'CLI policy and route reservation applied). Writers run in parallel: ' +
+    'isolatedWriter gives each one its own git worktree/branch, and from the ' +
+    'operator pane a writer that would share the checkout with another active ' +
+    'writer is isolated automatically (receipt: executionMode ' +
+    'isolated_worktree + isolatedWorktree {branch, worktreePath, reason}); the ' +
+    'orchestrator integrates the branches. ' +
     'Returns {paneId, sessionId} or {paneId, sessionId:null, pending:true} ' +
     'while the CLI session is still starting; use nexus_pane_wait_idle next. ' +
     '`harness.account` diz qual conta o pane usa, quem decidiu (regra de ' +
@@ -473,15 +480,16 @@ const paneSpawn: McpToolDef = {
         type: 'string',
         description:
           'Adapter id (cli) to run. Ignored from the operator pane without a ' +
-          'mission (Nexus routes the task); required elsewhere.',
+          'mission (Nexus routes the task); optional in a mission — omit it and ' +
+          'Nexus routes `task` through nexus_route_task.',
       },
       agentName: { type: 'string', description: 'Squad agent name or id' },
       task: {
         type: 'string',
         description:
-          'What this pane will do. From the operator pane without a mission ' +
-          'Nexus routes it (Jev tier/specialty + cost table) to a CLI/model; ' +
-          'prompt/title are used when task is absent.',
+          'What this pane will do. From the operator pane — or in a mission ' +
+          'without adapterId — Nexus routes it (Jev tier/specialty + cost ' +
+          'table) to a CLI/model; prompt/title are used when task is absent.',
       },
       model: { type: 'string' },
       effort: {
@@ -507,7 +515,7 @@ const paneSpawn: McpToolDef = {
       },
       isolatedWriter: {
         type: 'boolean',
-        description: 'Spawn this writer in its own git worktree/branch so several writers run in parallel; the orchestrator integrates the branch afterwards',
+        description: 'Spawn this writer in its own git worktree/branch so several writers run in parallel (with or without a mission); the orchestrator integrates the branch afterwards. The worktree and branch are kept for integration after the pane closes',
       },
       autoCloseOnHandoff: {
         type: 'boolean',

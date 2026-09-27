@@ -7,12 +7,14 @@ import {
 describe('doutrina de delegação da mão do operador', () => {
   it('cabe em 1,5 KB e cobre os pontos da spec', () => {
     expect(Buffer.byteLength(OPERATOR_DELEGATION_DOCTRINE, 'utf8')).toBeLessThanOrEqual(1536);
-    for (const needle of ['nexus_pane_spawn', 'readOnly: true', 'um helper por vez', 'encerre o turno', 'nexus_handoff_submit', 'não insista', 'ponytail', 'DESIGN.md', 'nexus_design_system_local_list', 'cara de IA']) {
+    for (const needle of ['nexus_pane_spawn', 'readOnly: true', 'isolatedWriter: true', 'worktree/branch própria', 'encerre o turno', 'nexus_handoff_submit', 'não insista', 'ponytail', 'DESIGN.md', 'nexus_design_system_local_list', 'cara de IA']) {
       expect(OPERATOR_DELEGATION_DOCTRINE).toContain(needle);
     }
     // Não existe spawn em lote (`panes: [...]`) — a doutrina não pode prometer.
     expect(OPERATOR_DELEGATION_DOCTRINE).not.toContain('panes:');
     expect(OPERATOR_DELEGATION_DOCTRINE).not.toContain('adapterId:');
+    // 0.76.110: writers não são mais serializados na mão do operador.
+    expect(OPERATOR_DELEGATION_DOCTRINE).not.toContain('um helper por vez');
   });
 
   it('Codex não recebe pelo MCP: ele cola as instructions em cada tool (vai pelo hook)', () => {
