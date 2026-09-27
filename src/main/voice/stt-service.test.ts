@@ -453,6 +453,9 @@ describe('transcribe — Gemini 3.5 Transcribe (Interactions API)', () => {
     // de "palavra que eu falei não entrou no texto".
     expect(tc.mode).toEqual({ type: 'verbatim' });
     expect(tc.custom_vocabulary).toContain('worktree');
+    // Nomes canônicos no viés: "JEV" ditado não pode voltar "JAV"/"Java".
+    expect(tc.custom_vocabulary).toContain('Jev');
+    expect(tc.custom_vocabulary).toContain('Nexus');
     // Sem language_codes: omitir habilita auto-detecção/code-switching, que é
     // a força do modelo para PT com jargão técnico em inglês.
     expect(tc.language_codes).toBeUndefined();
@@ -762,6 +765,9 @@ describe('transcribe — Grok Voice Transcribe 2.0 (xAI)', () => {
     expect(keyterms.length).toBeGreaterThan(0);
     expect(keyterms.length).toBeLessThanOrEqual(100);
     expect(keyterms).toContain('worktree');
+    // Nomes canônicos como keyterm: mesmo viés do Gemini/Whisper no xAI.
+    expect(keyterms).toContain('Jev');
+    expect(keyterms).toContain('Nexus');
     expect(form.has('prompt')).toBe(false);
     const file = form.get('file') as File;
     expect(file.name).toBe('audio.wav');

@@ -34,6 +34,42 @@ export const DICTATION_CODE_VOCABULARY: readonly string[] = [
   'squad',
   'pull request',
   'release',
+  'CLI',
+  'MCP',
+];
+
+/**
+ * Nomes canônicos de produto/provider que o operador fala e o reconhecedor
+ * costuma mutilar (JEV ouvido como "JAV"/"Java", Nexus como "nexo"). Viajam
+ * no MESMO viés de vocabulário dos engines e, na reescrita (code-prompt-
+ * polish), dizem qual é a grafia canônica — nunca autorizam trocar palavra
+ * incerta: Java dito de verdade continua Java.
+ */
+export const DICTATION_CANONICAL_NAMES: readonly string[] = [
+  'Nexus',
+  'Jev',
+  'Claude',
+  'Codex',
+  'Gemini',
+  'Grok',
+  'Groq',
+  'MiMo',
+  'Antigravity',
+  'Kimi',
+  'GLM',
+  'MiniMax',
+  'Devin',
+  'Muse',
+  'OpenCode',
+  'OpenAI',
+  'xAI',
+  'Whisper',
+];
+
+/** O que os engines recebem como viés: jargão de código + nomes canônicos. */
+export const DICTATION_ENGINE_VOCABULARY: readonly string[] = [
+  ...DICTATION_CODE_VOCABULARY,
+  ...DICTATION_CANONICAL_NAMES,
 ];
 
 /**
@@ -45,6 +81,8 @@ export const DICTATION_CODE_PRIMING_PROMPT =
   'Software engineering dictation for a coding agent, translated to clear ' +
   'imperative English without commentary. Technical vocabulary: ' +
   DICTATION_CODE_VOCABULARY.join(', ') +
+  '. Product names: ' +
+  DICTATION_CANONICAL_NAMES.join(', ') +
   '.';
 
 /**
@@ -57,4 +95,6 @@ export const DICTATION_CODE_PRIMING_PROMPT =
 export const DICTATION_CODE_LITERAL_PRIMING_PROMPT =
   'Ditado técnico em português para um agente de programação. Termos: ' +
   DICTATION_CODE_VOCABULARY.join(', ') +
+  '. Nomes: ' +
+  DICTATION_CANONICAL_NAMES.join(', ') +
   '.';

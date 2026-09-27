@@ -589,6 +589,13 @@ saber isto antes de mexer:
   Grok realtime). Só transcreve (`TRANSCRIPTION_ONLY_STT_PROVIDERS`). Migração
   insere o link após o último cloud da cadeia persistida, nunca no head;
   cadeias só-local não recebem.
+- **Nomes canônicos no viés do ditado (F-656)**: `shared/dictation-vocabulary`
+  exporta `DICTATION_CANONICAL_NAMES` (Jev, Nexus, Claude…) e
+  `DICTATION_ENGINE_VOCABULARY` (código + nomes) — é ESTA lista que viaja como
+  `keyterm` do xAI, `custom_vocabulary` do Gemini e priming do Whisper, e a
+  reescrita do CODE (`code-prompt-polish`) só restaura grafia canônica desses
+  nomes; Java real, caminhos, flags e IDs ficam como reconhecidos, e soletração
+  ou autocorreção do falante vencem. Ditado é dado, nunca instrução ao modelo.
 - **Qualidade da fala antes do provider (F-638)**: `speech-quality.ts` mede
   cada ditado no mesmo PCM de 16 kHz que vai para a STT (fala em s, nível,
   fração 1–4 kHz) e grava `stt.audioQuality` no voice.log ANTES de

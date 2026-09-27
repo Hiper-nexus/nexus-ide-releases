@@ -12,7 +12,7 @@ import type {
   TranscribeResult,
   SttAttempt,
 } from '../../shared/voice-ipc';
-import { DICTATION_CODE_VOCABULARY } from '../../shared/dictation-vocabulary';
+import { DICTATION_ENGINE_VOCABULARY } from '../../shared/dictation-vocabulary';
 import { classifyKind, flattenChain, type ProviderProbes } from './provider-select';
 import { resolveVoiceApiKey } from './voice-secrets';
 
@@ -342,7 +342,7 @@ function geminiCustomVocabulary(req: TranscribeRequest): string[] {
   // checagem o Gemini enviesaria o vocabulário no CHAT — onde o caminho Whisper
   // de propósito não enviesa — e os dois engines discordariam sobre o que o
   // modo significa.
-  return req.prompt ? [...DICTATION_CODE_VOCABULARY] : [];
+  return req.prompt ? [...DICTATION_ENGINE_VOCABULARY] : [];
 }
 
 /**
@@ -580,8 +580,8 @@ export const XAI_KEYTERM_MAX_CHARS = 50;
 
 /**
  * Viés de vocabulário por finalidade: a wake word no passive-wake, ou o
- * jargão do modo CODE (via `req.prompt`) — cada `keyterm` ≤ 50 chars, no
- * máximo 100 por requisição.
+ * jargão + nomes canônicos do modo CODE (via `req.prompt`) — cada `keyterm`
+ * ≤ 50 chars, no máximo 100 por requisição.
  */
 export function xaiKeyterms(req: TranscribeRequest): string[] {
   if (req.purpose === 'passive-wake') {
@@ -589,9 +589,9 @@ export function xaiKeyterms(req: TranscribeRequest): string[] {
     return word ? [word] : [];
   }
   if (req.prompt) {
-    return [...DICTATION_CODE_VOCABULARY]
-      .filter((term) => term.length <= XAI_KEYTERM_MAX_CHARS)
-      .slice(0, XAI_KEYTERM_MAX);
+    return DICTATION_ENGINE_VOCABULARY.filter(
+      (term) => term.length <= XAI_KEYTERM_MAX_CHARS,
+    ).slice(0, XAI_KEYTERM_MAX);
   }
   return [];
 }

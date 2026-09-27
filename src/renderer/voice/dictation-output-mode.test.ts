@@ -30,6 +30,10 @@ describe('dictationSttRequestParams', () => {
     expect(prompt).toContain('English');
     expect(prompt).toContain('commit');
     expect(prompt).toContain('worktree');
+    // Nomes canônicos também são vocabulário: "JEV" ditado não pode virar
+    // "JAV" no caminho sem reescrita (STT traduzindo direto).
+    expect(prompt).toContain('Jev');
+    expect(prompt).toContain('Nexus');
   });
 
   it('portuguese: transcrição literal, sem tradução e sem priming', () => {
