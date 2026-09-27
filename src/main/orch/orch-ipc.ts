@@ -225,6 +225,7 @@ import { BoundedAsyncOperationPool } from './bounded-async-operation-pool';
 import { missionControlPlaneSnapshot } from "./mission-control-plane-ipc";
 import { announceTabMissionLeader } from "./operator-hand-mission";
 import { injectPrompt } from "./tool-util";
+import { setOperatorTabMissionProvider } from "./tools-panes";
 import {
   ORCHESTRATOR_ADOPTION_TTL_MS,
   clearOrchestratorAdoption,
@@ -1298,6 +1299,16 @@ export function configureRendererMissionAuthority(
   missionSummaryBroadcastVersions.clear();
   projectDomainStores = configureProjectDomainStoreRegistry(runtimeManager);
   rendererMissionAuthority = new RendererMissionAuthority(projectDomainStores);
+  const authority = rendererMissionAuthority;
+  // Missão sob demanda: o 1º helper do pane "+ Pane" cria a missão da aba.
+  setOperatorTabMissionProvider((ctx, task) => {
+    if (!ctx.sessionId) return null;
+    const result = authority.adoptOperatorHandForSpawn(ctx.sessionId, task);
+    if (!result.ok || !result.mission) return null;
+    redeliverPendingHandoffs(ctx.scope, result.mission.id);
+    broadcastProjectStore(ctx.scope, "missions");
+    return result.mission.id;
+  });
   projectDomainStores.onChange((scope, store) => {
     broadcastProjectStore(scope, store);
     if (store === 'missions' || store === 'mission-panes') {

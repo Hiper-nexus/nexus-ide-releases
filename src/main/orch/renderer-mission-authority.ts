@@ -41,7 +41,11 @@ import {
   rollbackMissionSessionAuthorities,
   rollbackSessionAuthorityMission,
 } from "./gate";
-import { attachOrchMeta, findPaneOwnedBy } from "./pane-registry";
+import {
+  attachOrchMeta,
+  findPaneOwnedBy,
+  getPaneRuntimeAuthorityBySession,
+} from "./pane-registry";
 import type {
   ProjectDomainStoreRegistry,
   ProjectDomainStoreSuite,
@@ -836,6 +840,31 @@ export class RendererMissionAuthority {
       this.#discardPaneMission(suite, created.id, owned.sessionId);
     }
     return result;
+  }
+
+  /**
+   * Missão SOB DEMANDA: o primeiro helper que um pane do "+ Pane" abre cria a
+   * missão leve da aba e adota o pane — o mesmo caminho do "Tornar
+   * orquestrador", achando a janela dona pela sessão (autoridade do Main).
+   */
+  adoptOperatorHandForSpawn(
+    sessionId: string,
+    task: string | null,
+  ): PromoteMissionOrchestratorResult {
+    const runtime = getPaneRuntimeAuthorityBySession(sessionId);
+    if (!runtime?.owner || runtime.kind !== "cli-agent") {
+      return { ok: false, error: "pane_unavailable" };
+    }
+    const summary = (task ?? "")
+      .replace(new RegExp(INVISIBLE_AUTHORITY_TEXT.source, "g"), " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 60)
+      .trim();
+    return this.createPaneMissionFromRenderer(runtime.owner, {
+      paneId: runtime.paneId,
+      title: summary ? `Missão · ${summary}` : "Missão da aba",
+    });
   }
 
   /** Missão viva desta aba: a da worktree dela, ou a que a aba já criou. */

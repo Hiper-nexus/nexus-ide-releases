@@ -43,12 +43,34 @@ vi.mock("../persistence/persistent-session-store", () => ({
   upsertPersistentPty: vi.fn(() => true),
   deletePersistentPty: vi.fn(),
 }));
+const physical = vi.hoisted(() => ({
+  spawned: [] as Array<Record<string, unknown>>,
+  allocateIsolatedWriterWorktree: vi.fn(async () => ({
+    worktreePath: "/tmp/nexus-wt/aba-1", branch: "nexus/aba/1", release: () => {},
+  })),
+}));
+// Só o spawn físico do helper e a alocação de worktree git são falsos aqui.
+vi.mock("./tool-util", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./tool-util")>()),
+  spawnPaneAndMaybePrompt: vi.fn(async (options: Record<string, unknown>) => {
+    physical.spawned.push(options);
+    return { paneId: `helper-${physical.spawned.length}`, sessionId: `pty-helper-${physical.spawned.length}` };
+  }),
+}));
+vi.mock("./isolated-writer-worktree", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./isolated-writer-worktree")>()),
+  allocateIsolatedWriterWorktree: physical.allocateIsolatedWriterWorktree,
+}));
 vi.mock("../feature-flags/feature-flag-registry", () => ({
   getFeatureFlagRegistry: () => ({ isEnabled: () => false }),
 }));
 import type { CliPtyAdapter } from "../../shared/adapter-types";
 import type { ProjectExecutionScope } from "../../shared/types";
 import { ProjectRuntimeManager } from "../runtime/project-runtime-manager";
+import {
+  configureContextWorkflowRegistry,
+  disposeContextWorkflowRegistry,
+} from "../context/context-workflow-registry";
 import {
   bindResolvedRendererWorkspaceScope,
   clearRendererWorkspaceScope,
@@ -81,6 +103,9 @@ import {
   syncPanes,
 } from "./pane-registry";
 import { RendererMissionAuthority } from "./renderer-mission-authority";
+import * as panes from "./pane-registry";
+import { authorizePaneRef } from "./tool-util";
+import { paneSpawnTool, setOperatorTabMissionProvider } from "./tools-panes";
 
 function fakeHost(): PtyHost {
   return {
@@ -179,13 +204,18 @@ beforeEach(() => {
   bindResolvedRendererWorkspaceScope(owner, scope);
   manager = new ProjectRuntimeManager({ baseDir: path.join(dir, ".runtime"), appVersion: "test" });
   configureProjectDomainStoreRegistry(manager);
+  configureContextWorkflowRegistry(manager, { appVersion: "test" });
 });
 
 afterEach(async () => {
+  setOperatorTabMissionProvider(null);
+  physical.spawned.length = 0;
+  vi.restoreAllMocks();
   for (const sessionId of sessions.splice(0)) await orchTerminateSession(sessionId);
   syncPanes([], owner);
   clearRendererWorkspaceScope(owner);
   setSquadCliPolicyLookupForTests(null);
+  disposeContextWorkflowRegistry();
   disposeProjectDomainStoreRegistry();
   manager.closeAll();
   fs.rmSync(dir, { recursive: true, force: true });
@@ -322,5 +352,66 @@ describe("missão leve da aba — adoção da mão do operador", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     expect(getAgentSessionInfo(sessionId)).not.toBeNull();
+  });
+
+  it("missão sob demanda: o 1º helper cria a missão da aba, o 2º reusa e o pane segue lendo a outra aba", async () => {
+    const sessionId = operatorPane("pane-a");
+    const otherTab = operatorPane("pane-outra-aba");
+    register([
+      { paneId: "pane-a", sessionId },
+      { paneId: "pane-outra-aba", sessionId: otherTab },
+    ]);
+    const main = authority();
+    setOperatorTabMissionProvider((ctx, task) => {
+      const result = main.adoptOperatorHandForSpawn(ctx.sessionId!, task);
+      return result.ok ? result.mission!.id : null;
+    });
+    const ctx = getContextBySession(sessionId)!;
+    const missions = () => requireProjectDomainStoreRegistry().forScope(scope).missions.list();
+    // Conversar (ler outro pane) não cria missão.
+    expect(() => authorizePaneRef(ctx, "pane-outra-aba", "read")).not.toThrow();
+    expect(missions()).toEqual([]);
+
+    const first = (await paneSpawnTool.handler(
+      { adapterId: "codex", prompt: "Revise o fluxo de login", readOnly: true },
+      ctx,
+    )) as Record<string, unknown>;
+
+    expect(missions()).toHaveLength(1);
+    const missionId = missions()[0]!.id;
+    expect(missions()[0]).toMatchObject({ status: "running", orchestratorSessionId: sessionId });
+    expect(first).toMatchObject({ tabMission: { missionId } });
+    expect(ctx).toMatchObject({ role: "orchestrator", missionId, promotedFromUserSession: true });
+    // O helper nasce na missão da aba, como worker dela (handoffs vão ao pane).
+    expect(physical.spawned[0]).toMatchObject({ missionId, role: "worker" });
+    // O pane não perdeu o alcance que tinha como mão do operador.
+    expect(() => authorizePaneRef(ctx, "pane-outra-aba", "read")).not.toThrow();
+    expect(panes.listVisiblePaneSnapshots(ctx).map((pane) => pane.paneId)).toContain("pane-outra-aba");
+
+    // 2º helper, writer, com um writer ativo no mesmo checkout: reusa a missão
+    // e vai para worktree própria em vez de ser recusado.
+    const snapshots = panes.listPaneSnapshots();
+    vi.spyOn(panes, "listPaneSnapshots").mockReturnValue([
+      ...snapshots,
+      {
+        paneId: "helper-writer",
+        sessionId: "pty-helper-writer",
+        title: "writer",
+        kind: "cli-agent",
+        state: "busy",
+        role: "worker",
+        missionId,
+        executionScope: scope,
+      } as ReturnType<typeof panes.listPaneSnapshots>[number],
+    ]);
+    const second = (await paneSpawnTool.handler(
+      { adapterId: "codex", prompt: "Implemente a validação do login" },
+      ctx,
+    )) as Record<string, unknown>;
+
+    expect(missions()).toHaveLength(1);
+    expect(physical.spawned[1]).toMatchObject({ missionId, role: "worker", isolatedWriter: true });
+    expect(second).toMatchObject({ isolatedWorktree: { branch: "nexus/aba/1" } });
+    expect(second.tabMission).toBeUndefined();
   });
 });
