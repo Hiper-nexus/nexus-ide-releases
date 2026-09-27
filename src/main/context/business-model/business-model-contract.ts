@@ -9,6 +9,7 @@ import {
   parseContextAttestation,
   type ContextAttestation,
 } from '../context-attestation';
+import { isAttestedBusinessModelHash } from './business-model-attested-store';
 
 /**
  * CONTRATO do modelo de negócio do projeto (`.context/docs/business-model.md`).
@@ -20,11 +21,13 @@ import {
  * Consumidores: o bloco `<business-model>` do brief/primeiro prompt e o portão
  * de regressão (que cruza arquivos alterados com `arquivos`/`testes`).
  *
- * Só vale o doc REVISADO: os bytes em disco precisam ter uma atestação deste
- * projeto, de autoria do extrator Nexus, para exatamente esse hash. Um doc
- * editado à mão ou plantado por um worker (mesmo com marcador e JSON válidos)
- * não vira instrução de nenhum pane. A leitura é escopada ao projeto: symlink
- * em qualquer componente do caminho (`.context`, `.context/docs`) é recusado.
+ * Só vale o doc REVISADO: o hash dos bytes em disco precisa estar no registro
+ * do Main (`business-model-attested-store`, fora do checkout), gravado só pelo
+ * caminho do extrator+revisor. A atestação em `.context/nexus/attestations/` é
+ * espelho informativo: o agente escreve ali, então ela não autoriza nada. Um doc
+ * editado à mão ou plantado por um worker (mesmo com marcador, JSON e atestação
+ * válidos) não vira instrução de nenhum pane. A leitura é escopada ao projeto:
+ * symlink em qualquer componente do caminho (`.context`, `.context/docs`) é recusado.
  */
 
 export const BUSINESS_MODEL_TARGET_PATH = '.context/docs/business-model.md';
@@ -161,9 +164,9 @@ function scopeFor(target: ProjectExecutionScope | string): ProjectExecutionScope
 }
 
 /**
- * Atestação do extrator que vincula `targetHash` ao doc do modelo neste
- * projeto. Não re-hasheia as fontes: um doc revisado continua valendo quando
- * uma fonte muda depois (o autopilot re-extrai); o que não vale é doc sem revisão.
+ * Atestação (espelho no repo) do extrator que vincula `targetHash` ao doc do
+ * modelo neste projeto. Só informa o bootstrap (fontes citadas); quem autoriza
+ * a injeção é o registro do Main (`isAttestedBusinessModelHash`).
  */
 export function findBusinessModelAttestation(
   scope: ProjectExecutionScope,
@@ -219,7 +222,7 @@ export function readBusinessModelTarget(
 
 /**
  * Lê o doc REVISADO do projeto. Ausente, fora do escopo, grande demais, sem
- * bloco estruturado ou sem atestação do extrator para estes bytes → null.
+ * bloco estruturado ou com bytes que o Main não aplicou → null.
  * Nunca lança: quem consome é spawn/portão, que seguem sem modelo em vez de
  * quebrar. Aceita a raiz (resolve o escopo) ou o escopo já resolvido.
  */
@@ -229,7 +232,7 @@ export function readBusinessModelDocument(
   try {
     const scope = scopeFor(target);
     const doc = readBusinessModelTarget(scope);
-    if (!doc || !findBusinessModelAttestation(scope, doc.hash)) return null;
+    if (!doc || !isAttestedBusinessModelHash(scope, doc.hash)) return null;
     return parseBusinessModelDocument(doc.content);
   } catch {
     return null;

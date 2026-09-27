@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { ProjectExecutionScope } from '../../../shared/types';
 import type { ContextKnowledgeService } from '../context-knowledge-service';
 import {
@@ -6,6 +7,7 @@ import {
   findBusinessModelAttestation,
   readBusinessModelTarget,
 } from './business-model-contract';
+import { recordAttestedBusinessModelHash } from './business-model-attested-store';
 import {
   BUSINESS_MODEL_MARKER_LINE,
   extractBusinessModel,
@@ -129,6 +131,10 @@ export async function runBusinessModelBootstrap(
       // (um comentário novo na migration muda o hash sem mudar o doc).
       const attestation = findBusinessModelAttestation(input.scope, current.hash);
       if (attestation && sameSources(attestation.sources, proposal.sources)) {
+        // Bytes idênticos à extração das fontes atuais: o Main (re)atesta no
+        // registro dele — é assim que docs atestados antes deste registro
+        // continuam valendo. A atestação do repo sozinha não autoriza nada.
+        recordAttestedBusinessModelHash(input.scope, current.hash);
         return outcome('up-to-date', 'Modelo de negócio em dia com as fontes.', extraction);
       }
     } else if (current && !REPLACEABLE_HEADERS.some((header) => current.content.includes(header))) {
@@ -182,6 +188,11 @@ export async function runBusinessModelBootstrap(
       });
     }
     input.knowledge.apply(draftId);
+    // O hash vem da extração do próprio Main, não do draft nem do repo.
+    recordAttestedBusinessModelHash(
+      input.scope,
+      createHash('sha256').update(proposal.content).digest('hex'),
+    );
     return outcome(
       'applied',
       `Modelo de negócio aplicado: ${extraction.document.flows.length} fluxo(s), ${extraction.document.invariants.length} invariante(s).`,

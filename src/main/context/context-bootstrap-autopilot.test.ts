@@ -1,9 +1,13 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProjectExecutionScope } from '../../shared/types';
 import type { ContextDraftRecord } from './context-draft-store';
 import type { ContextReadinessReport } from './context-doctor';
 import type { BootstrapDocProposal } from './orientation/orientation-bootstrap-context';
 import type { ProjectOrientationMap } from './orientation/orientation-types';
+import { configureBusinessModelAttestedStore } from './business-model/business-model-attested-store';
 
 const mocks = vi.hoisted(() => ({
   readiness: {
@@ -160,6 +164,8 @@ function fileProposalSources(
 
 beforeEach(() => {
   vi.resetAllMocks();
+  // Registro do Main (fora do checkout) que o ramo do modelo de negócio grava.
+  configureBusinessModelAttestedStore(fs.mkdtempSync(path.join(os.tmpdir(), 'bootstrap-bm-attested-')));
   mocks.proposals = [];
   mocks.list.mockReturnValue([]);
   mocks.readDraft.mockReturnValue(null);
