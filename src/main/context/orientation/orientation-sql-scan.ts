@@ -55,16 +55,15 @@ export function scanSqlTokens(content: string): SqlToken[] {
       let segmentStart = i + 1;
       i += 1;
       while (i < n) {
-        if (content[i] === ch) {
-          if (content[i + 1] === ch) {
-            value += content.slice(segmentStart, i + 1);
-            i += 2;
-            segmentStart = i;
-            continue;
-          }
-          break;
+        if (content[i] !== ch) {
+          i += 1;
+          continue;
         }
-        i += 1;
+        if (content[i + 1] !== ch) break;
+        // Doubled quote: an escaped quote inside the literal/identifier.
+        value += content.slice(segmentStart, i + 1);
+        i += 2;
+        segmentStart = i;
       }
       value += content.slice(segmentStart, Math.min(i, n));
       i += 1;
