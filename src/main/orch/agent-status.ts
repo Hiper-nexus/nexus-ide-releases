@@ -219,12 +219,26 @@ export function isSessionInjectableIdle(sessionId: string): boolean {
  * Receiving a handoff after a stale hook is not permission to terminate the
  * process. Cleanup keeps a working session protected until an explicit idle
  * or completion signal, even when a long tool produces no terminal output.
+ *
+ * `awaiting-input` is the one exception: `isSessionInjectableIdle` latches it
+ * at any age because injecting text would write into an open dialog. Closing
+ * a pane writes nothing — a dialog nobody answered in
+ * `SEMANTIC_WORKING_VETO_MS` is abandoned, not in use, and the pane guardian
+ * (F-572) needs to reclaim it like any other idle orphan instead of holding
+ * it open forever (operator had to close these by hand).
  */
 export function isSessionIdleForCleanup(sessionId: string): boolean {
-  return (
-    getAgentSemanticStatusBySession(sessionId)?.status !== 'working' &&
-    isSessionInjectableIdle(sessionId)
-  );
+  if (getSessionState(sessionId) !== 'idle') return false;
+  const semantic = getAgentSemanticStatusBySession(sessionId);
+  switch (semantic?.status) {
+    case 'working':
+    case 'error':
+      return false;
+    case 'awaiting-input':
+      return Date.now() - (semantic.updatedAt ?? 0) > SEMANTIC_WORKING_VETO_MS;
+    default:
+      return true;
+  }
 }
 
 function resolvePaneId(sessionId: string): string {
