@@ -246,6 +246,7 @@ import {
   withHandoffContract,
 } from './tool-util';
 import { cliPromptAutoResponder } from './cli-prompt-autoresponder';
+import { getPaneAuthzInfo } from './pane-registry';
 import { testProjectScope } from './__tests__/scope-fixture';
 import fs from 'node:fs';
 import { applyAttestedBusinessModel, createBarbershopRepo } from '../context/business-model/__fixtures__/barbershop';
@@ -1339,6 +1340,54 @@ describe('agent prompt injection', () => {
       );
     } finally {
       stubs.physicalSessionInfo.mockReset().mockReturnValue(null);
+      vi.useRealTimers();
+    }
+  });
+
+  it('helper Kimi com ACK pendente recebe o brief por colagem quando a sessão nasce', async () => {
+    vi.useFakeTimers();
+    try {
+      stubs.sessionState.mockReturnValue('idle');
+      stubs.waitForIdle.mockResolvedValue('idle');
+      stubs.requestPaneSpawn.mockResolvedValueOnce({
+        ok: true,
+        pending: true,
+        paneId: 'pane-kimi',
+        sessionId: null,
+      } as never);
+      vi.mocked(getPaneAuthzInfo).mockReturnValue(null as never);
+      stubs.writeSession.mockImplementation(
+        ((sessionId: string, data: string) => {
+          if (data === '\r') {
+            queueMicrotask(() => {
+              stubs.sessionState.mockReturnValue('busy');
+              for (const tap of [...stubs.stateTaps]) tap(sessionId, 'busy');
+              for (const tap of [...stubs.dataTaps]) tap(sessionId, 'working');
+            });
+          }
+          return true;
+        }) as typeof stubs.writeSession,
+      );
+
+      await expect(
+        spawnPaneAndMaybePrompt({ adapterId: 'kimi', prompt: 'revise o diff', scope }),
+      ).rejects.toThrow();
+      expect(stubs.writeSession).not.toHaveBeenCalled();
+
+      // A sessão do pane nasce depois da resposta da tool.
+      vi.mocked(getPaneAuthzInfo).mockReturnValue({ sessionId: 'session-kimi' } as never);
+      stubs.physicalSessionInfo.mockReturnValue({ paneId: 'pane-kimi', adapterId: 'kimi' });
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      const typed = (
+        stubs.writeSession.mock.calls as unknown as Array<readonly [string, string]>
+      ).filter(([sessionId]) => sessionId === 'session-kimi');
+      expect(typed[0]?.[1]).toContain('revise o diff');
+      expect(typed.some(([, data]) => data === '\r')).toBe(true);
+    } finally {
+      stubs.physicalSessionInfo.mockReset().mockReturnValue(null);
+      vi.mocked(getPaneAuthzInfo).mockReset();
+      stubs.writeSession.mockReset().mockReturnValue(true);
       vi.useRealTimers();
     }
   });

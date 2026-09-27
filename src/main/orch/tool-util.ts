@@ -88,6 +88,7 @@ import { getOrchSettings } from '../persistence/settings-store';
 import { isOperatorChoicePolicy } from '../../shared/squad-cli-policy';
 import { issueAgentIdentityBestEffort } from './agent-identity-spawn';
 import { initialPromptChannel, spawnBinaryName } from '../../shared/cli-initial-prompt';
+import { ORCH_SPAWN_GRANT_TTL_MS } from './orch-spawn-grant-recovery';
 
 export { assertSafePtyPrompt } from './pty-prompt-safety';
 
@@ -1497,6 +1498,23 @@ export async function spawnPaneAndMaybePrompt(
       ? { abortSignal: hooks.invocation.signal }
       : {}),
   });
+  if (
+    result.ok &&
+    result.pending === true &&
+    result.paneId &&
+    finalPrompt &&
+    initialPrompt === undefined
+  ) {
+    // ACK pendente: o chamador recebe o paneId antes de a sessão existir. O
+    // brief de argv já viajou no grant; o de COLAGEM (Kimi) não tem canal
+    // nenhum — sem isto o helper abria mudo, sem o briefing.
+    void deliverPromptAfterPendingSpawn(
+      result.paneId,
+      finalPrompt,
+      adapter.id,
+      hooks.invocation,
+    );
+  }
   if (!result.ok || !result.paneId || !result.sessionId) {
     adapterCircuitBreakers.recordFailure(options.adapterId);
     throw new Error(result.error ?? 'pane spawn failed');
@@ -1686,6 +1704,55 @@ export async function spawnPaneAndMaybePrompt(
     }
   }
   return { paneId: result.paneId, sessionId: result.sessionId };
+}
+
+const PENDING_SPAWN_SESSION_POLL_MS = 500;
+
+/**
+ * Entrega pós-boot de um brief de colagem cujo pane nasceu com ACK pendente.
+ * Espera a sessão do próprio pane (a mesma janela do grant de spawn), o
+ * primeiro idle e então o mesmo `deliverAgentPrompt` do caminho síncrono.
+ */
+export async function deliverPromptAfterPendingSpawn(
+  paneId: string,
+  prompt: string,
+  adapterId: string,
+  invocation?: McpToolInvocation,
+): Promise<boolean> {
+  const deadline = Date.now() + ORCH_SPAWN_GRANT_TTL_MS;
+  let sessionId: string | null = null;
+  try {
+    while (!sessionId) {
+      assertMcpInvocationCurrent(invocation);
+      const candidate = getPaneAuthzInfo(paneId)?.sessionId ?? null;
+      if (
+        candidate &&
+        getAgentSessionInfo(candidate)?.paneId === paneId
+      ) {
+        sessionId = candidate;
+        break;
+      }
+      if (Date.now() >= deadline) return false;
+      await delay(PENDING_SPAWN_SESSION_POLL_MS);
+    }
+    const boot = await waitForIdle(
+      sessionId,
+      AGENT_BOOT_TIMEOUT_MS,
+      invocation?.signal,
+    );
+    if (boot === 'exited') return false;
+    assertMcpInvocationCurrent(invocation);
+    const accepted = await deliverAgentPrompt(sessionId, prompt, invocation, {
+      adapterId,
+    });
+    if (!accepted) {
+      throw new Error('agent prompt remained live without physical acceptance proof');
+    }
+    return true;
+  } catch (error) {
+    logAgentPromptFailure(adapterId, sessionId ?? paneId, error);
+    return false;
+  }
 }
 
 export { waitOutBootPrompts } from './boot-prompt-hold';
