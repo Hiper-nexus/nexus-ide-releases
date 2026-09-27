@@ -74,7 +74,15 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
       models: [
         { id: 'claude-opus-5-5', availability: 'paid', costTier: 'high', source: 'bundled' },
         { id: 'claude-opus-5', availability: 'paid', costTier: 'high', source: 'bundled' },
-        { id: 'claude-fable-5-1', availability: 'paid', costTier: 'high', source: 'bundled' },
+        // Roda pela assinatura (`claude -p --model claude-fable-5-1`, 2026-09-27):
+        // Max/Team Premium, até 50% da cota semanal; fora do Pro.
+        {
+          id: 'claude-fable-5-1',
+          availability: 'paid',
+          costTier: 'high',
+          source: 'bundled',
+          warning: 'Assinatura Max: até 50% da cota semanal (não incluso no Pro) — rota automática só em revisão cruzada e fallback do crítico.',
+        },
         {
           id: 'claude-mythos-5-1',
           availability: 'api-only',
@@ -101,13 +109,16 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
       models: [
         { id: 'gpt-6-sol', availability: 'paid', costTier: 'high', source: 'bundled' },
         { id: 'gpt-6-luna', availability: 'paid', costTier: 'medium', source: 'bundled' },
+        // ~/.codex/models_cache.json (2026-09-27) lista o Astra como visível
+        // na conta — o rollout trusted-access acabou; roda pela assinatura do
+        // Codex (gasta a mesma cota, mais rápido). Topo da OpenAI: o roteador
+        // só o usa em critical, hard de alto risco e revisão cruzada.
         {
           id: 'gpt-6-astra',
-          availability: 'api-only',
+          availability: 'paid',
           costTier: 'high',
           source: 'bundled',
-          warning:
-            'Trusted-access rollout (2026-09-03): not used for automatic routing unless the user selects it manually.',
+          warning: 'Topo da OpenAI: gasta a cota do Codex mais rápido — rota automática só em crítico, alto risco e revisão cruzada.',
         },
         { id: 'gpt-5.6-sol', availability: 'paid', costTier: 'high', source: 'bundled' },
         { id: 'gpt-5.6-terra', availability: 'paid', costTier: 'high', source: 'bundled' },
@@ -229,9 +240,12 @@ export const BUILTIN_MODEL_CATALOG: ModelCatalog = {
       ],
     },
     muse: {
-      default: 'muse',
+      // 'muse' era placeholder e está em RETIRED_MODEL_MIGRATIONS; o binário
+      // 1.3 abre em muse-spark-1.3 (mesmo default do catálogo publicado).
+      default: 'muse-spark-1.3',
       models: [
-        { id: 'muse', availability: 'free', costTier: 'free', source: 'bundled' },
+        { id: 'muse-spark-1.3', availability: 'free', costTier: 'free', source: 'bundled' },
+        { id: 'muse-spark-1.2', availability: 'free', costTier: 'free', source: 'bundled' },
       ],
     },
   },

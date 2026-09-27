@@ -33,7 +33,8 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   'claude-mythos': { inputPerM: 10, outputPerM: 50, cacheReadPerM: 1, cacheWritePerM: 12.5 },
 
   // Claude Opus family (Opus 5.5/5 & 4.x: $5/M in, $25/M out; Opus 3 legacy: $15/M in, $75/M out)
-  'claude-opus-5-5': { inputPerM: 5, outputPerM: 25, cacheReadPerM: 0.5, cacheWritePerM: 6.25 },
+  // Opus 5.5: $4/$20 (anthropic.com/claude-opus-5-5, 2026-09-22; `devin models list` 2026-09-27).
+  'claude-opus-5-5': { inputPerM: 4, outputPerM: 20, cacheReadPerM: 0.4, cacheWritePerM: 5 },
   'claude-opus-5': { inputPerM: 5, outputPerM: 25, cacheReadPerM: 0.5, cacheWritePerM: 6.25 },
   'claude-opus-4-8': { inputPerM: 5, outputPerM: 25, cacheReadPerM: 0.5, cacheWritePerM: 6.25 },
   'claude-opus-4-7': { inputPerM: 5, outputPerM: 25, cacheReadPerM: 0.5, cacheWritePerM: 6.25 },
@@ -64,13 +65,16 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   haiku: { inputPerM: 1, outputPerM: 5, cacheReadPerM: 0.1, cacheWritePerM: 1.25 },
 
   // === OpenAI / Codex (openai.com/api/pricing & models-rich.json) ===
-  'gpt-6-astra': { inputPerM: 10, outputPerM: 60, cacheReadPerM: 2.5 },
-  'gpt-6': { inputPerM: 10, outputPerM: 60, cacheReadPerM: 2.5 },
-  'gpt-6-sol': { inputPerM: 5, outputPerM: 30, cacheReadPerM: 0.5, cacheWritePerM: 6.25 },
-  'gpt-6-luna': { inputPerM: 1.0, outputPerM: 6, cacheReadPerM: 0.1, cacheWritePerM: 1.25 },
+  // Estudo 2026-09 (docs/models/estudo-2026-09.md): só mudou preço com duas
+  // fontes concordantes — docs/anúncio + `devin models list` (2026-09-27).
+  // gpt-5.6-sol ficou como estava: fontes conflitam ($4/$20 × $1,20/$6).
+  'gpt-6-astra': { inputPerM: 10, outputPerM: 50, cacheReadPerM: 1 },
+  'gpt-6': { inputPerM: 10, outputPerM: 50, cacheReadPerM: 1 },
+  'gpt-6-sol': { inputPerM: 2, outputPerM: 10, cacheReadPerM: 0.2 },
+  'gpt-6-luna': { inputPerM: 0.1, outputPerM: 0.5, cacheReadPerM: 0.01 },
   'gpt-5.6-sol': { inputPerM: 5, outputPerM: 30, cacheReadPerM: 0.5, cacheWritePerM: 6.25 },
-  'gpt-5.6-terra': { inputPerM: 2.5, outputPerM: 15, cacheReadPerM: 0.25, cacheWritePerM: 3.125 },
-  'gpt-5.6-luna': { inputPerM: 1.0, outputPerM: 6, cacheReadPerM: 0.1, cacheWritePerM: 1.25 },
+  'gpt-5.6-terra': { inputPerM: 2, outputPerM: 12, cacheReadPerM: 0.2 },
+  'gpt-5.6-luna': { inputPerM: 0.2, outputPerM: 1.2, cacheReadPerM: 0.02 },
   'gpt-5.6': { inputPerM: 2.5, outputPerM: 15, cacheReadPerM: 0.25 },
   'gpt-5.4-mini': { inputPerM: 0.75, outputPerM: 4.5, cacheReadPerM: 0.075 },
   'gpt-5.4-nano': { inputPerM: 0.2, outputPerM: 1.25, cacheReadPerM: 0.02 },
@@ -101,11 +105,13 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
 
   // === Google Gemini / AGY (ai.google.dev/pricing) ===
   'gemini-3.8-pro': { inputPerM: 2.0, outputPerM: 10.0, cacheReadPerM: 0.2 },
-  'gemini-3.8-flash': { inputPerM: 0.3, outputPerM: 1.5, cacheReadPerM: 0.03 },
+  // 3.8 Flash: $0,75/$3,75 introdutório até 2026-12-31, depois $1,50/$7,50
+  // (ai.google.dev, 2026-09-23). 3.1 Pro: $2/$12 até 200k (model card + Devin).
+  'gemini-3.8-flash': { inputPerM: 0.75, outputPerM: 3.75, cacheReadPerM: 0.075 },
   'gemini-3.7-flash': { inputPerM: 0.75, outputPerM: 3.75, cacheReadPerM: 0.075 },
   'gemini-3.6-flash': { inputPerM: 1.5, outputPerM: 7.5, cacheReadPerM: 0.15 },
   'gemini-3.5-flash': { inputPerM: 1.5, outputPerM: 7.5, cacheReadPerM: 0.15 },
-  'gemini-3.1-pro': { inputPerM: 2.0, outputPerM: 10.0, cacheReadPerM: 0.2 },
+  'gemini-3.1-pro': { inputPerM: 2.0, outputPerM: 12.0, cacheReadPerM: 0.2 },
   'gemini-2.5-pro': { inputPerM: 1.25, outputPerM: 10.0, cacheReadPerM: 0.125 },
   'gemini-2.5-flash-lite': { inputPerM: 0.1, outputPerM: 0.4, cacheReadPerM: 0.01 },
   'gemini-2.5-flash': { inputPerM: 0.3, outputPerM: 2.5, cacheReadPerM: 0.03 },
@@ -119,9 +125,10 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   gemma: { inputPerM: 0, outputPerM: 0 },
 
   // === Kimi / Moonshot AI (kimi.com & api.moonshot.cn/pricing) ===
-  'kimi-code/k3': { inputPerM: 1.2, outputPerM: 5.0, cacheReadPerM: 0.24 },
-  'kimi-k3': { inputPerM: 1.2, outputPerM: 5.0, cacheReadPerM: 0.24 },
-  k3: { inputPerM: 1.2, outputPerM: 5.0, cacheReadPerM: 0.24 },
+  // K3: $3/$15 (morphllm 2026 + `devin models list` 2026-09-27).
+  'kimi-code/k3': { inputPerM: 3, outputPerM: 15, cacheReadPerM: 0.3 },
+  'kimi-k3': { inputPerM: 3, outputPerM: 15, cacheReadPerM: 0.3 },
+  k3: { inputPerM: 3, outputPerM: 15, cacheReadPerM: 0.3 },
   'kimi-k2.8': { inputPerM: 0.95, outputPerM: 4.0, cacheReadPerM: 0.19 },
   'kimi-k2.7-code-highspeed': { inputPerM: 1.9, outputPerM: 8.0, cacheReadPerM: 0.38 },
   'kimi-k2.7': { inputPerM: 0.95, outputPerM: 4.0, cacheReadPerM: 0.19 },
@@ -165,7 +172,8 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   'grok-composer-2.5-fast': { inputPerM: 0.2, outputPerM: 1.5, cacheReadPerM: 0.02 },
   'grok-4-fast': { inputPerM: 0.2, outputPerM: 0.5, cacheReadPerM: 0.05 },
   'grok-4.5': { inputPerM: 2.0, outputPerM: 6.0, cacheReadPerM: 0.5 },
-  'grok-4.6': { inputPerM: 3.0, outputPerM: 15.0, cacheReadPerM: 0.75 },
+  // 4.6: $2/$6 (docs.x.ai release notes + `devin models list` 2026-09-27).
+  'grok-4.6': { inputPerM: 2.0, outputPerM: 6.0, cacheReadPerM: 0.3 },
   'grok-4.1': { inputPerM: 1.25, outputPerM: 2.5, cacheReadPerM: 0.2 },
   'grok-4': { inputPerM: 3.0, outputPerM: 15.0, cacheReadPerM: 0.75 },
   'grok-3-mini': { inputPerM: 0.3, outputPerM: 0.5, cacheReadPerM: 0.075 },
@@ -175,7 +183,8 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
 
   // === Zhipu AI / GLM (bigmodel.cn/pricing) ===
   'glm-5.3-flash': { inputPerM: 0.07, outputPerM: 0.25, cacheReadPerM: 0.01 },
-  'glm-5.3': { inputPerM: 0.6, outputPerM: 2.2 },
+  // GLM-5.3: $1,40/$4,40 (docs.z.ai + `devin models list` 2026-09-27).
+  'glm-5.3': { inputPerM: 1.4, outputPerM: 4.4, cacheReadPerM: 0.26 },
   'glm-5.2': { inputPerM: 0.6, outputPerM: 2.2 },
   'glm-4.7-flash': { inputPerM: 0.07, outputPerM: 0.25, cacheReadPerM: 0.01 },
   'glm-4.7': { inputPerM: 0.6, outputPerM: 2.2 },
