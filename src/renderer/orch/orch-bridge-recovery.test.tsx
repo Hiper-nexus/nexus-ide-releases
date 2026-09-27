@@ -19,6 +19,7 @@ const terminal = vi.hoisted(() => ({
   cancelPaneRecovery: vi.fn(),
   getPaneSessionId: vi.fn((_paneId: string) => null as string | null),
   isPaneSessionHealthy: vi.fn(() => true),
+  markPaneClosingDeliberately: vi.fn(),
   markPersistedAuthorityOnSpawn: vi.fn(),
   onPaneSessionChange: vi.fn(() => vi.fn()),
   respawnMissionPaneFresh: vi.fn(async () => 'session-new'),
@@ -1569,6 +1570,40 @@ describe('orchestration bridge pane recovery', () => {
     act(() => closeHandler?.({ paneId: pane.id, expectedSessionId: 'session-delivered' }));
     expect(listPanes(useLayoutStore.getState().root).some((candidate) => candidate.id === pane.id)).toBe(false);
     expect(syncPanes).toHaveBeenCalled();
+    act(() => mounted.root.unmount());
+  });
+
+  it('aviso de fechamento marca a sessão e NÃO fecha o pane antes do exit', () => {
+    let closeHandler: ((request: PaneCloseRequest) => void) | null = null;
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: {
+        mission: missionBridge(),
+        orch: {
+          onPaneSpawnRequest: listener(),
+          onPaneRecoveryRequest: listener(),
+          onBrowserOpenRequest: listener(),
+          onPaneCloseRequest: vi.fn((cb: (request: PaneCloseRequest) => void) => {
+            closeHandler = cb;
+            return vi.fn();
+          }),
+          onPaneParkRequest: listener(),
+          onMissionsChanged: listener(),
+          onHandoffsChanged: listener(),
+          onTodosChanged: listener(),
+          onSquadsChanged: listener(),
+          syncPanes: vi.fn(),
+        },
+      },
+    });
+    const pane = { id: 'pane-helper-closing', kind: 'cli-agent' as const, title: 'Helper', adapterId: 'codex' };
+    useLayoutStore.setState({ root: { kind: 'leaf', id: 'leaf-helper-closing', pane }, focusedPaneId: pane.id });
+    terminal.getPaneSessionId.mockReturnValue('session-closing');
+    const mounted = mount();
+
+    act(() => closeHandler?.({ paneId: pane.id, closingSessionId: 'session-closing' }));
+    expect(terminal.markPaneClosingDeliberately).toHaveBeenCalledWith(pane.id, 'session-closing');
+    expect(listPanes(useLayoutStore.getState().root).some((candidate) => candidate.id === pane.id)).toBe(true);
     act(() => mounted.root.unmount());
   });
 });

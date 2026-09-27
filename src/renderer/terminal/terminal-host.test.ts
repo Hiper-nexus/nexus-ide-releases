@@ -100,6 +100,7 @@ import {
   getPaneSessionId,
   hibernateHost,
   holdSpawnUntilApproved,
+  markPaneClosingDeliberately,
   orchAutoReliveGate,
   reconcileHosts,
   refitAllPanesBeforePaint,
@@ -1205,5 +1206,63 @@ describe('paste de mídia no pane (F-582)', () => {
       .toasts.find((item) => item.title === 'Pane sem sessão ativa');
     expect(toast).toBeDefined();
     expect(toast?.detail).toContain('foi copiado');
+  });
+});
+
+describe('fechamento deliberado pelo main — helper não reabre como shell vazio', () => {
+  const helper: PaneModel = { id: 'helper-auto-close', kind: 'cli-agent', adapterId: 'codex', title: 'Helper' };
+
+  async function openHelper() {
+    useLayoutStore.setState({ root: buildGridTree([helper]), focusedPaneId: helper.id });
+    spawn.mockResolvedValueOnce({ ok: true, sessionId: 'pty-helper' });
+    const host = getOrCreateHost(helper);
+    setHostSize(host.element, 1200, 800);
+    const slot = document.createElement('div');
+    document.body.appendChild(slot);
+    attachHost(helper, slot);
+    expect(await waitForSession(helper.id, 1000)).toBe('pty-helper');
+    spawn.mockClear();
+    return host;
+  }
+
+  function pressKey(): void {
+    for (const listener of [...xtermEvents.onData]) listener('x');
+  }
+
+  afterEach(() => discardPaneSpawnState(helper.id));
+
+  it('exit antes do closeRequest + tecla no meio: não oferece nem abre shell', async () => {
+    const host = await openHelper();
+    const writeln = vi.spyOn(host.term, 'writeln');
+    markPaneClosingDeliberately(helper.id, 'pty-helper');
+
+    ptyExitListeners.get('pty-helper')!({ exitCode: 0 });
+    pressKey();
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(spawn).not.toHaveBeenCalled();
+    expect(writeln.mock.calls.flat().join('\n')).not.toMatch(/Digite qualquer tecla/);
+  });
+
+  it('se o closeRequest nunca chegar, volta ao convite normal de shell', async () => {
+    const host = await openHelper();
+    const writeln = vi.spyOn(host.term, 'writeln');
+    markPaneClosingDeliberately(helper.id, 'pty-helper');
+    ptyExitListeners.get('pty-helper')!({ exitCode: 0 });
+
+    await vi.advanceTimersByTimeAsync(5_100);
+
+    expect(writeln.mock.calls.flat().join('\n')).toMatch(/Digite qualquer tecla/);
+    expect(host.awaitingDeliberateClose).toBe(false);
+  });
+
+  it('saída inesperada (sem aviso) segue oferecendo o shell como hoje', async () => {
+    const host = await openHelper();
+    const writeln = vi.spyOn(host.term, 'writeln');
+
+    ptyExitListeners.get('pty-helper')!({ exitCode: 1 });
+
+    expect(writeln.mock.calls.flat().join('\n')).toMatch(/Digite qualquer tecla/);
+    expect(host.awaitingDeliberateClose).toBeFalsy();
   });
 });

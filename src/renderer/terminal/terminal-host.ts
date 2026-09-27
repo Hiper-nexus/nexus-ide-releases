@@ -193,6 +193,13 @@ interface Host {
   spawnGeneration: number;
   opened: boolean;
   spawnStarted: boolean;
+  /**
+   * Sessão que o main avisou que vai encerrar para FECHAR o pane. O exit
+   * dela não oferece shell nem religa: o closeRequest vem logo atrás.
+   */
+  closingSessionId?: string;
+  /** Pane morto aguardando o closeRequest; teclas não viram shell. */
+  awaitingDeliberateClose?: boolean;
   hibernated: boolean;
   /**
    * Estacionado: o workspace dono deste pane saiu de cena, mas o processo
@@ -424,6 +431,7 @@ function setHostSession(
   sessionId: string | null,
 ): void {
   host.sessionId = sessionId;
+  if (sessionId) host.awaitingDeliberateClose = false;
   host.reportedGrid = sessionId
     ? { cols: host.term.cols, rows: host.term.rows }
     : null;
@@ -1107,9 +1115,13 @@ function startSpawn(
           // TUI morta com mouse-tracking ligado deixaria o xterm emitindo
           // SGR de mouse como input durante a fase "digite qualquer tecla".
           host.term.write(TERMINAL_INPUT_MODE_RESET);
+          const deliberateClose = host.closingSessionId === res.sessionId;
+          host.closingSessionId = undefined;
           if (terminalShutdownNoticeMode) {
             // Shutdown: o aviso único do grid já falou; banner por pane é
             // ruído (bug I).
+          } else if (deliberateClose) {
+            awaitDeliberatePaneClose(host);
           } else if (
             decideOrchestratorProcessExit({
               isOrchestrator: pane.role === 'orchestrator',
@@ -1324,6 +1336,7 @@ function startSpawn(
         }
 
         if (!host.sessionId) {
+          if (host.awaitingDeliberateClose) return;
           // Pós-missão (ou pane sem vínculo): estado preso nunca silencia a
           // tecla. Missão viva ou desconhecida segue pela rota antiga, com
           // todas as proteções.
@@ -3455,6 +3468,34 @@ export function markPaneParked(request: PaneParkRequest): void {
 }
 
 /** The live PTY session id backing a pane, or null if not spawned yet. */
+/** Aviso do main: esta sessão vai ser encerrada para fechar o pane. */
+export function markPaneClosingDeliberately(
+  paneId: string,
+  sessionId: string,
+): void {
+  const host = hosts.get(paneId);
+  if (host && host.sessionId === sessionId) host.closingSessionId = sessionId;
+}
+
+/**
+ * Se o closeRequest não chegar (término falhou depois do exit, escopo mudou),
+ * o pane não pode ficar mudo para sempre: volta ao convite normal de shell.
+ */
+export const DELIBERATE_CLOSE_FALLBACK_MS = 5_000;
+
+function awaitDeliberatePaneClose(host: Host): void {
+  host.awaitingDeliberateClose = true;
+  host.term.writeln('\r\n\x1b[90m[nexus] pane encerrado; fechando.\x1b[0m');
+  setTimeout(() => {
+    if (host.disposed || !host.awaitingDeliberateClose) return;
+    host.awaitingDeliberateClose = false;
+    if (host.sessionId || host.spawnStarted) return;
+    host.term.writeln(
+      '\x1b[36m[nexus] sessão encerrada. Digite qualquer tecla para abrir um shell neste pane.\x1b[0m',
+    );
+  }, DELIBERATE_CLOSE_FALLBACK_MS);
+}
+
 export function getPaneSessionId(paneId: string): string | null {
   return hosts.get(paneId)?.sessionId ?? null;
 }

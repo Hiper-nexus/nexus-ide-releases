@@ -883,7 +883,9 @@ export type BrowserPaneCleanupRequest = PaneAttemptCleanupRequest;
 export type PaneCloseRequest =
   | string
   | PaneAttemptCleanupRequest
-  | { paneId: string; expectedSessionId: string };
+  | { paneId: string; expectedSessionId: string }
+  /** Aviso prévio: o main vai encerrar esta sessão para fechar o pane. */
+  | { paneId: string; closingSessionId: string };
 
 /**
  * Main → renderer (0.76.45): o guardian estacionou este pane. A sessão PTY

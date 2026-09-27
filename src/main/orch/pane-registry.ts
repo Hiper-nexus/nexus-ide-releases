@@ -3130,6 +3130,7 @@ export async function requestMissionPaneClose(
   }
   const sessionId = target.entry.sessionId;
   if (sessionId) {
+    announceDeliberatePaneClose(owner, expected.paneId, sessionId);
     const exited = await terminateOwnedMissionSession(sessionId);
     if (!exited) return refuse('sessao-nao-terminou');
   }
@@ -3317,6 +3318,25 @@ export async function requestPanePark(
   return "parked";
 }
 
+/**
+ * O exit do PTY chega ao renderer por outro canal e ANTES do closeRequest.
+ * Sem este aviso o pane recém-morto oferecia "digite qualquer tecla para
+ * abrir um shell"; uma tecla nessa janela trocava o pane por um shell com
+ * sessão nova e o closeRequest era recusado — helper reaberto vazio.
+ */
+function announceDeliberatePaneClose(
+  owner: WebContents,
+  paneId: string,
+  closingSessionId: string,
+): void {
+  try {
+    if (owner.isDestroyed() || owner.isCrashed()) return;
+    owner.send(ORCH_CHANNELS.paneCloseRequest, { paneId, closingSessionId });
+  } catch {
+    // Aviso de apresentação: nunca impede o término físico que vem a seguir.
+  }
+}
+
 export async function requestPaneClose(
   paneId: string,
   expectedSessionId?: string,
@@ -3379,6 +3399,7 @@ export async function requestPaneClose(
     }
   }
   if (sessionId) {
+    announceDeliberatePaneClose(owner, paneId, sessionId);
     const exited = await terminateOwnedMissionSession(sessionId);
     if (!exited) return false;
   }
