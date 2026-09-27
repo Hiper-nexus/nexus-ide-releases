@@ -3,6 +3,10 @@ import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import type { ProjectExecutionScope } from '../../shared/types';
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import {
+  distillHandoffSummary,
+  type DistillHandoffSummaryDeps,
+} from '../jev/jev-memory-distill';
+import {
   getWorkspaceMemoryStore,
   type MemoryKind,
   type RetainResult,
@@ -51,6 +55,19 @@ export const acceptedHandoffMemoryInputSchema = z
     dispatchId: trustedIdentifierSchema,
     status: z.literal('success'),
     acceptedAt: z.number().int().nonnegative().max(8_640_000_000_000_000),
+    /**
+     * Resumo destilado do handoff (texto do agente, Main-validado pelo aceite).
+     * Só entra quando o Jev (superfície memoryDistill) aprova; colapsado em
+     * uma linha e limitado a 400 caracteres.
+     */
+    distilledSummary: z
+      .string()
+      .trim()
+      .min(1)
+      .max(400)
+      .transform((value) => value.replace(/\s+/g, ' ').trim())
+      .refine((value) => value.length > 0)
+      .optional(),
     evidenceIds: z
       .array(trustedIdentifierSchema)
       .max(32)
@@ -166,7 +183,8 @@ function trustedContent(
 
 /**
  * Converts a physically accepted handoff into a closed Main-owned projection.
- * There is intentionally no summary/artifact/free-text field in this input.
+ * The only free text is `distilledSummary`: agent text that the Jev
+ * memoryDistill surface approved, sanitized to one line of at most 400 chars.
  */
 export function buildAcceptedHandoffTrustedEvent(
   rawInput: AcceptedHandoffMemoryInput,
@@ -193,6 +211,9 @@ export function buildAcceptedHandoffTrustedEvent(
       `Diff: ${input.evidenceBinding.diffHash}`,
       `Workflow revision: ${input.evidenceBinding.workflowRevision}`,
     );
+  }
+  if (input.distilledSummary) {
+    lines.push(`Summary: ${input.distilledSummary}`);
   }
   return trustedMemoryEventSchema.parse({
     type: 'accepted-handoff',
@@ -276,6 +297,38 @@ export function retainAcceptedHandoffMemoryBestEffort(
     }
     return null;
   }
+}
+
+/**
+ * Retenção do handoff aceito com destilação do resumo: pergunta ao Jev
+ * (superfície memoryDistill) se o resumo do agente vale memória e, se sim,
+ * grava a linha trusted já com o `Summary:` destilado. Fail-open total —
+ * Jev fora do ar mantém a linha de identificadores de hoje. Nunca lança.
+ */
+export async function retainAcceptedHandoffMemoryDistilledBestEffort(
+  scope: ProjectExecutionScope,
+  rawInput: AcceptedHandoffMemoryInput,
+  agentSummary: string | null | undefined,
+  deps: DistillHandoffSummaryDeps = {},
+): Promise<RetainResult | null> {
+  if (
+    !getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.workspaceMemory)
+  ) {
+    return null;
+  }
+  let input = rawInput;
+  if (agentSummary && agentSummary.trim()) {
+    try {
+      const distilled = await distillHandoffSummary(
+        { summary: agentSummary },
+        deps,
+      );
+      if (distilled) input = { ...rawInput, distilledSummary: distilled };
+    } catch {
+      // fail-open: sem destilação, a linha nasce só com identificadores.
+    }
+  }
+  return retainAcceptedHandoffMemoryBestEffort(scope, input);
 }
 
 /**

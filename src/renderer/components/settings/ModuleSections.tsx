@@ -437,6 +437,7 @@ export function SquadsSection() {
     browserTool: true,
     researchTriage: true,
     delegation: true,
+    memoryDistill: true,
   });
   const [designPro, setDesignPro] = useState(true);
   const [designDirection, setDesignDirection] = useState<DesignDirection>('auto');
@@ -461,6 +462,7 @@ export function SquadsSection() {
         browserTool: o.jevSurfaces?.browserTool !== false,
         researchTriage: o.jevSurfaces?.researchTriage !== false,
         delegation: o.jevSurfaces?.delegation !== false,
+        memoryDistill: o.jevSurfaces?.memoryDistill !== false,
       });
       setDesignPro(o.designPro);
       setDesignDirection(o.designDirection ?? 'auto');
@@ -856,6 +858,7 @@ export function SquadsSection() {
               ['browserTool', 'Navegador do agente (desempate, julgamento, extração)'],
               ['researchTriage', 'Pesquisa de dados (melhor resposta + falta pesquisar)'],
               ['delegation', 'Delegação automática (dividir pedidos em panes)'],
+              ['memoryDistill', 'Destilação de memória (resumo de handoff aceito)'],
             ] as const
           ).map(([surface, label]) => (
             <OrchestrationToggle

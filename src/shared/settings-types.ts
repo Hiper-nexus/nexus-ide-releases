@@ -149,6 +149,8 @@ export const orchSettingsSchema = z.object({
       researchTriage: z.boolean().default(true),
       /** Conselho de delegação por mensagem nos panes do operador (hook). */
       delegation: z.boolean().default(true),
+      /** Destilação de memória: resumo de handoff aceito vira linha trusted. */
+      memoryDistill: z.boolean().default(true),
     })
     .prefault({}),
   /** Carta de Design anti-genérico (Impeccable) para tarefas com UI. */
