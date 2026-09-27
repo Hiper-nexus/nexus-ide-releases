@@ -4,7 +4,12 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ProjectExecutionScope } from '../../../shared/types';
 import { computeBlastRadius, expandOwnershipWithBlastRadius } from './orientation-blast-radius';
+import { orientationCurrentPath } from './orientation-cache';
 import { ProjectOrientationService } from './orientation-service';
+import {
+  orientationStructuralIndexPath,
+  readOrientationStructuralIndex,
+} from './orientation-structural-index-cache';
 
 const roots: string[] = [];
 
@@ -195,5 +200,57 @@ describe('code map <-> banco: grafo sem imports, seed de migration e reservas', 
     // depth 0: only what the goal itself seeds (the audit.ts symbol hub may
     // still pull the file in, but the usage-only table is not a seed).
     expect(computeBlastRadius(map, { goal: 'rotate audit_log', depth: 0 }).dbEntities).toEqual([]);
+  });
+});
+
+describe('code map <-> banco: caches gravados por versoes anteriores', () => {
+  function fixture() {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-db-cache-')));
+    const cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-db-cache-root-'));
+    roots.push(root, cacheRoot);
+    write(root, 'package.json', JSON.stringify({ name: 'db-cache' }));
+    write(root, 'supabase/migrations/20260101000000_users.sql', 'CREATE TABLE users (id uuid);');
+    write(root, 'src/users.ts', "export const listUsers = () => supabase.from('users').select('*');");
+    return { root, cacheRoot, scope: scopeFor(root) };
+  }
+
+  it('rebuilds a map cached by the previous extractors even when HEAD did not move', async () => {
+    const { cacheRoot, scope } = fixture();
+    await new ProjectOrientationService({ cacheRoot, includeContextSummary: false })
+      .ensure(scope, { reason: 'workspace-open' });
+    // Rewrite current.json as the previous release left it: no extractor
+    // generation and no db graph.
+    const file = orientationCurrentPath(cacheRoot, scope);
+    const old = JSON.parse(fs.readFileSync(file, 'utf8'));
+    delete old.extractorVersion;
+    delete old.graph.dbEntities;
+    delete old.graph.dbEdgeCount;
+    fs.writeFileSync(file, JSON.stringify(old));
+
+    const upgraded = await new ProjectOrientationService({ cacheRoot, includeContextSummary: false })
+      .ensure(scope, { reason: 'workspace-open' });
+    expect(upgraded.graph.dbEntities?.map((e) => e.nodeId)).toEqual(['db:table:public.users']);
+  });
+
+  it('round-trips db facts through the structural index and rejects an index without them', async () => {
+    const { cacheRoot, scope } = fixture();
+    await new ProjectOrientationService({ cacheRoot, includeContextSummary: false })
+      .ensure(scope, { reason: 'workspace-open' });
+    const index = readOrientationStructuralIndex(cacheRoot, scope);
+    const users = index?.files.find((f) => f.relativePath === 'src/users.ts');
+    expect(users?.dbUsageEdges).toEqual([
+      expect.objectContaining({ toQualifiedName: 'public.users', relation: 'reads' }),
+    ]);
+    const migration = index?.files.find((f) => f.relativePath.endsWith('_users.sql'));
+    expect(migration?.dbSchemaFacts.map((f) => f.qualifiedName)).toEqual(['public.users']);
+
+    const file = orientationStructuralIndexPath(cacheRoot, scope);
+    const old = JSON.parse(fs.readFileSync(file, 'utf8'));
+    for (const entry of old.files) {
+      delete entry.dbSchemaFacts;
+      delete entry.dbUsageEdges;
+    }
+    fs.writeFileSync(file, JSON.stringify(old));
+    expect(readOrientationStructuralIndex(cacheRoot, scope)).toBeNull();
   });
 });

@@ -163,6 +163,12 @@ export interface OrientationEnsureOptions {
 /** Serializable map without the in-memory symbol Set. */
 export interface ProjectOrientationMapJson {
   readonly schemaVersion: 1;
+  /**
+   * Generation of the extractors that built the map (see
+   * ORIENTATION_EXTRACTOR_VERSION). A cache from another generation is
+   * rebuilt even when HEAD did not move.
+   */
+  readonly extractorVersion?: number;
   readonly projectId: string;
   readonly checkoutId: string;
   readonly headSha: string | null;
