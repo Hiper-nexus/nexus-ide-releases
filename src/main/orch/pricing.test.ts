@@ -97,6 +97,19 @@ describe('estimateCost', () => {
     expect(estimateCost('xiaomi/mimo-v2.6-pro-ultraspeed', 1_000_000, 1_000_000)).toBeCloseTo(13.05);
   });
 
+  it('usa os preços do estudo 2026-09 (docs/models/estudo-2026-09.md)', () => {
+    const inOut = (model: string) => estimateCost(model, 1_000_000, 1_000_000);
+    expect(inOut('claude-opus-5-5')).toBeCloseTo(24);
+    expect(inOut('gpt-6-astra')).toBeCloseTo(60);
+    expect(inOut('gpt-6-sol')).toBeCloseTo(12);
+    expect(inOut('gpt-6-luna')).toBeCloseTo(0.6);
+    expect(inOut('gemini-3.8-flash-high')).toBeCloseTo(4.5);
+    expect(inOut('gemini-3.1-pro-high')).toBeCloseTo(14);
+    expect(inOut('kimi-code/k3')).toBeCloseTo(18);
+    expect(inOut('grok-4.6')).toBeCloseTo(8);
+    expect(inOut('glm-5.3')).toBeCloseTo(5.8);
+  });
+
   it('prices input and output tokens separately', () => {
     // claude-opus-5: $5/M in, $25/M out.
     const cost = estimateCost('claude-opus-5', 1_000_000, 1_000_000);

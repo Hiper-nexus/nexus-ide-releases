@@ -21,7 +21,8 @@
           "id": "claude-fable-5-1",
           "availability": "paid",
           "costTier": "high",
-          "source": "remote"
+          "source": "remote",
+          "warning": "Assinatura Max: até 50% da cota semanal (não incluso no Pro) — rota automática só em revisão cruzada e fallback do crítico."
         },
         {
           "id": "claude-mythos-5-1",
@@ -86,10 +87,10 @@
         },
         {
           "id": "gpt-6-astra",
-          "availability": "api-only",
+          "availability": "paid",
           "costTier": "high",
           "source": "remote",
-          "warning": "Trusted-access rollout (2026-09-03): o roteador automático evita este modelo. Só use se escolher manualmente."
+          "warning": "Topo da OpenAI: gasta a cota do Codex mais rápido — rota automática só em crítico, alto risco e revisão cruzada."
         },
         {
           "id": "gpt-5.6-sol",

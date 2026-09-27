@@ -198,7 +198,7 @@ describe('published catalog JSON', () => {
     ).toBe(false);
   });
 
-  it('ships gpt-6-sol/luna (2026) como paid e mantém gpt-6-astra trusted-access', () => {
+  it('ships gpt-6-sol/luna/astra (2026) como paid — astra saiu do trusted-access', () => {
     for (const catalog of [BUILTIN_MODEL_CATALOG, PUBLISHED_MODEL_CATALOG]) {
       expect(modelCatalogInfo(catalog, 'codex', 'gpt-6-sol')).toMatchObject({
         id: 'gpt-6-sol',
@@ -211,11 +211,12 @@ describe('published catalog JSON', () => {
         costTier: 'medium',
       });
       const astra = modelCatalogInfo(catalog, 'codex', 'gpt-6-astra');
-      expect(astra?.availability).toBe('api-only');
+      // ~/.codex/models_cache.json (2026-09-27) lista o Astra como visível.
+      expect(astra?.availability).toBe('paid');
       expect(astra?.costTier).toBe('high');
-      expect(isModelBlockedForAutoRouting(astra)).toBe(true);
+      expect(isModelBlockedForAutoRouting(astra)).toBe(false);
     }
-    // O rollout restrito não vira default, mas o melhor modelo GA vira.
+    // Astra custa 5× o Sol: o default segue no Sol (docs/models/estudo-2026-09.md).
     expect(BUILTIN_MODEL_CATALOG.adapters?.codex?.default).toBe(
       'gpt-6-sol',
     );
