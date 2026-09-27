@@ -251,13 +251,24 @@ type ProductMemoryNote = {
   updatedAt?: number;
 };
 
+const TRUSTED_MEMORY_SOURCE_LABELS: Readonly<Record<string, string>> = {
+  'trusted:operator-decision': 'decisão do operador',
+  'trusted:accepted-handoff': 'handoff aceito',
+  'trusted:resolved-problem': 'problema resolvido',
+  'trusted:architecture-rule': 'regra de arquitetura',
+  'trusted:approved-merge': 'merge aprovado',
+  'trusted:session-digest': 'resumo de sessão',
+  'trusted:operator-preference': 'preferência do operador',
+};
+
 /** Rótulo curto da origem para a linha de meta da nota. */
 function memorySourceLabel(source: string | null | undefined): string | null {
   if (!source) return null;
   if (source === 'operator:note' || source === 'operator:agent:manual') {
     return 'manual';
   }
-  return source;
+  if (source.startsWith('agent-authored:')) return 'agente';
+  return TRUSTED_MEMORY_SOURCE_LABELS[source] ?? source;
 }
 
 type ProductMemoryFailure = {

@@ -518,4 +518,17 @@ describe('Settings → Squads retained management capability', () => {
     expect(host.querySelector('#settings-squads-saved-title')?.textContent).toBe('Equipes salvas');
     expect(autopilot!.compareDocumentPosition(saved!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
+
+  it('desliga a memória do projeto nos prompts pelo toggle do Estilo de trabalho', async () => {
+    const host = renderSquads();
+    await settle();
+
+    const row = [...host.querySelectorAll('label.settings-toggle-row')].find((label) =>
+      label.textContent?.includes('Memória do projeto nos prompts'),
+    );
+    const input = row?.querySelector('input[type="checkbox"]') as HTMLInputElement | null;
+    expect(input?.checked).toBe(true);
+    act(() => input!.click());
+    expect(window.nexus.settings.orchSet).toHaveBeenCalledWith({ workspaceMemoryInjection: false });
+  });
 });
