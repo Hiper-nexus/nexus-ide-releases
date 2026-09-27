@@ -54,6 +54,8 @@ interface OrchState {
   hydrateCrossWorkspace(paths: readonly string[]): Promise<void>;
   resetProjectState(): void;
   bindPaneMission(paneId: string, missionId: string | undefined): void;
+  /** O pane saiu desta missão (a mão do operador devolvida pelo Main). */
+  unbindPaneMission(paneId: string, missionId: string): void;
   /** Remove bindings de panes que não existem mais no layout. */
   pruneMissionBindings(livePaneIds: Set<string>): void;
 
@@ -259,6 +261,13 @@ export const useOrchStore = create<OrchState>((set, get) => ({
       // toolbar, canvas) sem nada ter mudado.
       if (s.paneMissions[paneId] === missionId) return s;
       return { paneMissions: { ...s.paneMissions, [paneId]: missionId } };
+    }),
+
+  unbindPaneMission: (paneId, missionId) =>
+    set((s) => {
+      if (s.paneMissions[paneId] !== missionId) return s;
+      const { [paneId]: _released, ...paneMissions } = s.paneMissions;
+      return { paneMissions };
     }),
 
   // Sem o prune, os bindings de panes mortos marcavam a missão deslocada como

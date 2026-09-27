@@ -1533,12 +1533,25 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
       changed = crowned !== root;
       root = crowned;
     }
+    const released: string[] = [];
     for (const pane of panes) {
       const isLeader = leaderPaneId !== null && pane.id === leaderPaneId;
       // F-527: o líder nomeado é promovido mesmo sem vínculo prévio (é a
       // adoção); os demais só entram na conta se já forem DESTA missão. Panes
       // soltos (shells do operador, outra missão) nunca são tocados.
       if (!isLeader && !belongsToMission(pane)) continue;
+      // Coroa foi para outro pane: o anfitrião adotado volta a ser a mão do
+      // operador (o Main já o devolveu a `user`), não um worker da missão.
+      if (!isLeader && leaderPaneId !== null && pane.missionHost) {
+        root = updatePane(root, pane.id, {
+          role: undefined,
+          missionId: undefined,
+          missionHost: undefined,
+        });
+        released.push(pane.id);
+        changed = true;
+        continue;
+      }
       const needsWrite = isLeader
         ? pane.role !== 'orchestrator' || pane.missionId === undefined
         : pane.role !== 'worker';
@@ -1557,6 +1570,8 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
     }
     // Replay do mesmo snapshot: nada mudou, nada é escrito.
     if (!changed) return;
+    // Antes do set: bindMissionSpaces re-carimbaria o anfitrião pelo índice.
+    for (const paneId of released) useOrchStore.getState().unbindPaneMission(paneId, missionId);
     set({ root });
     persist();
   },

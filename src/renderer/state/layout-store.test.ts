@@ -1663,6 +1663,46 @@ describe('layout-store — a missão mora na aba do pane que a começou', () => 
     });
   });
 
+  it('troca de coroa explícita devolve o anfitrião anterior à mão do operador na hora', () => {
+    const hostA: PaneModel = {
+      id: 'pane-a', kind: 'cli-agent', title: 'claude', adapterId: 'claude',
+      spaceId: 'space-api', spaceTitle: 'API',
+      role: 'orchestrator', missionId: 'mission-epic', missionHost: true,
+    };
+    const paneB: PaneModel = {
+      id: 'pane-b', kind: 'cli-agent', title: 'codex', adapterId: 'codex',
+      spaceId: 'space-api', spaceTitle: 'API',
+    };
+    const helper: PaneModel = {
+      id: 'helper-a', kind: 'cli-agent', title: 'helper', adapterId: 'codex',
+      role: 'worker', missionId: 'mission-epic',
+    };
+    useOrchStore.setState({ paneMissions: { 'pane-a': 'mission-epic', 'helper-a': 'mission-epic' } });
+    seedLayout({
+      root: buildGridTree([hostA, paneB, helper]),
+      focusedPaneId: hostA.id,
+      maximizedPaneId: null,
+      hydrated: true,
+      viewKind: 'grid',
+      canvasNodeLayouts: {},
+      canvasViewport: { x: 0, y: 0, zoom: 1 },
+    });
+
+    useLayoutStore.getState().reflectMissionLeader('mission-epic', paneB.id);
+
+    const byId = new Map(listPanes(useLayoutStore.getState().root).map((pane) => [pane.id, pane]));
+    expect(byId.get('pane-b')).toMatchObject({ role: 'orchestrator', missionId: 'mission-epic', missionHost: true });
+    const previous = byId.get('pane-a')!;
+    expect(previous.role).toBeUndefined();
+    expect(previous.missionId).toBeUndefined();
+    expect(previous.missionHost).toBeUndefined();
+    expect(previous.spaceId).toBe('space-api');
+    expect(useOrchStore.getState().paneMissions['pane-a']).toBeUndefined();
+    // O helper nascido na missão continua worker dela.
+    expect(byId.get('helper-a')).toMatchObject({ role: 'worker', missionId: 'mission-epic' });
+    useOrchStore.setState({ paneMissions: {} });
+  });
+
   it('o pane que o motor abriu para a missão não hospeda nada', () => {
     const maestro: PaneModel = {
       id: 'pane-maestro',
