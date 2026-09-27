@@ -31,6 +31,7 @@ import {
   type OrientationStructuralIndex,
 } from './orientation-structural-index';
 import { mergeDbGraphWithImportGraph } from './orientation-db-graph';
+import { loadTsconfigAliases } from './orientation-tsconfig';
 import {
   DEFAULT_ORIENTATION_LIMITS,
   REQUIRED_CONTEXT_DOCS,
@@ -530,10 +531,11 @@ export class ProjectOrientationService {
     if (root !== scope.rootRealPath) throw new Error('project root identity changed');
 
     const walk = await orientationWalkFromStructuralIndexAsync(index, signal);
+    const aliases = loadTsconfigAliases(scope);
     const [inventory, symbolSummary, importGraph, dbGraph] = await Promise.all([
       buildOrientationInventoryAsync(scope, walk, signal),
       buildSymbolsFromStructuralIndexAsync(index, this.#limits, signal),
-      buildImportGraphFromStructuralIndexAsync(index, this.#limits, signal),
+      buildImportGraphFromStructuralIndexAsync(index, this.#limits, aliases, signal),
       buildDbGraphFromStructuralIndexAsync(index, this.#limits, signal),
     ]);
     const symbols = Object.freeze({

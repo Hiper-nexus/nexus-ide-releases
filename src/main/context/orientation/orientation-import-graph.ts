@@ -12,9 +12,20 @@ import {
   throwIfOrientationAborted,
   yieldOrientationWork,
 } from './orientation-cooperative';
+import {
+  loadTsconfigAliases,
+  resolveAliasCandidateBases,
+  type TsconfigAliasMap,
+} from './orientation-tsconfig';
 
+// The "junk" between `import`/`export` and `from` excludes `;`/quotes so a
+// bare side-effect import (`import './side';`, no `from` clause) can never
+// be swallowed as part of a *later* import statement's from-clause — before
+// this fix, `[\s\S]*?` could span across a whole side-effect import into the
+// next statement's `from '...'`, dropping the side-effect specifier entirely.
+// The trailing `import\s+` alternative then captures that bare form directly.
 const IMPORT_RE =
-  /(?:import\s+(?:type\s+)?(?:[\s\S]*?)\s+from\s+|export\s+(?:type\s+)?[\s\S]*?\s+from\s+|require\s*\(\s*|import\s*\(\s*)['"]([^'"]+)['"]/g;
+  /(?:import\s+(?:type\s+)?[^;'"]*?\s+from\s+|export\s+(?:type\s+)?[^;'"]*?\s+from\s+|require\s*\(\s*|import\s*\(\s*|import\s+)['"]([^'"]+)['"]/g;
 
 const TS_JS_EXT = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
 
@@ -29,6 +40,13 @@ export function isOrientationImportSource(ext: string): boolean {
   return TS_JS_EXT.has(ext);
 }
 
+/**
+ * Extract every import/require/dynamic-import specifier, relative or not.
+ * Bare package specifiers (e.g. "react") are kept too — resolveImport simply
+ * returns null for anything it cannot resolve (no known alias, no relative
+ * match), so they never become graph edges; keeping them here means an alias
+ * like "@/foo" is available for resolution once tsconfig paths are loaded.
+ */
 export function extractOrientationImportSpecifiers(
   content: string,
 ): readonly string[] {
@@ -36,7 +54,7 @@ export function extractOrientationImportSpecifiers(
   IMPORT_RE.lastIndex = 0;
   for (const match of content.matchAll(IMPORT_RE)) {
     const specifier = match[1];
-    if (specifier?.startsWith('.')) specifiers.push(specifier);
+    if (specifier) specifiers.push(specifier);
   }
   return Object.freeze(specifiers);
 }
@@ -99,31 +117,47 @@ function stripExt(relative: string): string {
   return relative.replace(/\.(?:tsx?|jsx?|mjs|cjs)$/i, '');
 }
 
-function resolveImport(
-  fromFile: string,
-  spec: string,
+function tryResolveBase(
+  base: string,
   index: ReadonlyMap<string, string>,
 ): string | null {
-  if (!spec.startsWith('.')) return null;
-  const fromDir = path.posix.dirname(fromFile);
-  const joined = path.posix.normalize(path.posix.join(fromDir, spec));
   const candidates = [
-    joined,
-    `${joined}.ts`,
-    `${joined}.tsx`,
-    `${joined}.js`,
-    `${joined}.jsx`,
-    `${joined}.mjs`,
-    `${joined}.cjs`,
-    path.posix.join(joined, 'index.ts'),
-    path.posix.join(joined, 'index.tsx'),
-    path.posix.join(joined, 'index.js'),
+    base,
+    `${base}.ts`,
+    `${base}.tsx`,
+    `${base}.js`,
+    `${base}.jsx`,
+    `${base}.mjs`,
+    `${base}.cjs`,
+    path.posix.join(base, 'index.ts'),
+    path.posix.join(base, 'index.tsx'),
+    path.posix.join(base, 'index.js'),
   ];
   for (const candidate of candidates) {
     const hit = index.get(candidate) ?? index.get(stripExt(candidate));
     if (hit) return hit;
   }
-  return index.get(stripExt(joined)) ?? null;
+  return index.get(stripExt(base)) ?? null;
+}
+
+function resolveImport(
+  fromFile: string,
+  spec: string,
+  index: ReadonlyMap<string, string>,
+  aliases?: TsconfigAliasMap | null,
+): string | null {
+  if (spec.startsWith('.')) {
+    const fromDir = path.posix.dirname(fromFile);
+    const joined = path.posix.normalize(path.posix.join(fromDir, spec));
+    return tryResolveBase(joined, index);
+  }
+  if (aliases) {
+    for (const base of resolveAliasCandidateBases(spec, aliases)) {
+      const hit = tryResolveBase(base, index);
+      if (hit) return hit;
+    }
+  }
+  return null;
 }
 
 export interface ImportGraphBuildResult {
@@ -163,12 +197,13 @@ export function buildOrientationImportGraph(
       continue;
     }
   }
-  return buildOrientationImportGraphFromFacts(facts, limits);
+  return buildOrientationImportGraphFromFacts(facts, limits, loadTsconfigAliases(scope));
 }
 
 export function buildOrientationImportGraphFromFacts(
   sources: readonly OrientationImportFileFact[],
   limits: OrientationLimits,
+  aliases?: TsconfigAliasMap | null,
 ): ImportGraphBuildResult {
   const index = new Map<string, string>();
   for (const file of sources) {
@@ -182,7 +217,7 @@ export function buildOrientationImportGraphFromFacts(
 
   for (const file of sources) {
     for (const spec of file.importSpecifiers) {
-      const target = resolveImport(file.relativePath, spec, index);
+      const target = resolveImport(file.relativePath, spec, index, aliases);
       if (!target || target === file.relativePath) continue;
       if (!adjacency.has(file.relativePath)) adjacency.set(file.relativePath, new Set());
       if (!reverse.has(target)) reverse.set(target, new Set());
@@ -260,6 +295,7 @@ function insertBounded<T>(
 export async function buildOrientationImportGraphFromFactsAsync(
   sources: readonly OrientationImportFileFact[],
   limits: OrientationLimits,
+  aliases?: TsconfigAliasMap | null,
   signal?: AbortSignal,
 ): Promise<ImportGraphBuildResult> {
   throwIfOrientationAborted(signal);
@@ -279,7 +315,7 @@ export async function buildOrientationImportGraphFromFactsAsync(
   let specifiers = 0;
   for (const file of sources) {
     for (const spec of file.importSpecifiers) {
-      const target = resolveImport(file.relativePath, spec, index);
+      const target = resolveImport(file.relativePath, spec, index, aliases);
       if (target && target !== file.relativePath) {
         if (!adjacency.has(file.relativePath)) {
           adjacency.set(file.relativePath, new Set());

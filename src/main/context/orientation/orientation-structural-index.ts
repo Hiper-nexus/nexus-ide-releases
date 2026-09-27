@@ -21,6 +21,7 @@ import {
   type DbGraphBuildResult,
   type DbGraphInputFile,
 } from './orientation-db-graph';
+import type { TsconfigAliasMap } from './orientation-tsconfig';
 import {
   filterOrientationChangedPaths,
   filterOrientationChangedPathsAsync,
@@ -643,6 +644,7 @@ export function buildImportGraphFromStructuralIndex(
 export async function buildImportGraphFromStructuralIndexAsync(
   index: OrientationStructuralIndex,
   limits: OrientationLimits,
+  aliases?: TsconfigAliasMap | null,
   signal?: AbortSignal,
 ): Promise<ImportGraphBuildResult> {
   const facts: OrientationImportFileFact[] = [];
@@ -660,7 +662,7 @@ export async function buildImportGraphFromStructuralIndexAsync(
       await yieldOrientationWork(signal);
     }
   }
-  return buildOrientationImportGraphFromFactsAsync(facts, limits, signal);
+  return buildOrientationImportGraphFromFactsAsync(facts, limits, aliases, signal);
 }
 
 export async function buildDbGraphFromStructuralIndexAsync(
