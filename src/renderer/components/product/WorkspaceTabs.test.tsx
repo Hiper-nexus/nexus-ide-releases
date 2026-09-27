@@ -142,6 +142,31 @@ describe('WorkspaceTabs', () => {
     expect(props.onToggleBeside).toHaveBeenCalledWith('__loose__');
   });
 
+  it('aba sem missão oferece "Criar missão desta aba"; aba com missão não', () => {
+    const onStartTabMission = vi.fn();
+    const { host } = render({ onStartTabMission });
+    const spaceTab = host.querySelector('.workspace-tab[data-scope-kind="space"]')!;
+
+    act(() => {
+      spaceTab.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+    });
+    const labels = () =>
+      [...document.querySelectorAll('[role="menuitem"] strong')].map((item) => item.textContent);
+    expect(labels()).toContain('Criar missão desta aba');
+    act(() => {
+      [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
+        .find((item) => item.textContent?.includes('Criar missão desta aba'))!
+        .click();
+    });
+    expect(onStartTabMission).toHaveBeenCalledWith(SCOPES[0]);
+
+    const missionTab = host.querySelector('.workspace-tab[data-scope-kind="mission"]')!;
+    act(() => {
+      missionTab.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+    });
+    expect(labels()).not.toContain('Criar missão desta aba');
+  });
+
   it('a aba da missão viva não oferece fechar — o menu aponta o Quadro', () => {
     const { host } = render();
     const missionTab = host.querySelector('.workspace-tab[data-scope-kind="mission"]')!;

@@ -39,6 +39,11 @@ export interface WorkspaceTabsProps {
   /** Pane criado pelo "+" da barra: ele nasce numa aba nova. */
   readonly onTabPaneCreated: (paneId: string) => void;
   readonly onNewMission: () => void;
+  /**
+   * Aba sem missão: o orquestrador dela (ou a primeira IA) passa a liderar a
+   * missão leve da aba — um clique, sem assistente.
+   */
+  readonly onStartTabMission?: (scope: PaneScopeEntry) => void;
 }
 
 const LIFECYCLE_STATES: ReadonlySet<string> = new Set<MissionLifecycleState>([
@@ -167,6 +172,7 @@ export function WorkspaceTabs({
   onCloseTab,
   onTabPaneCreated,
   onNewMission,
+  onStartTabMission,
 }: WorkspaceTabsProps) {
   const railRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<TabMenuState | null>(null);
@@ -365,6 +371,9 @@ export function WorkspaceTabs({
           onToggleBeside={() => onToggleBeside(menu.scope.key)}
           onRename={() => onStartRename(menu.scope)}
           onCloseTab={() => onCloseTab(menu.scope)}
+          onStartTabMission={
+            onStartTabMission ? () => onStartTabMission(menu.scope) : undefined
+          }
         />
       ) : null}
     </header>
@@ -380,10 +389,11 @@ interface WorkspaceTabMenuProps {
   readonly onToggleBeside: () => void;
   readonly onRename: () => void;
   readonly onCloseTab: () => void;
+  readonly onStartTabMission?: () => void;
 }
 
 const MENU_WIDTH = 268;
-const MENU_HEIGHT = 190;
+const MENU_HEIGHT = 240;
 
 /** Mesmo vocabulário do menu de contexto do pane — nada de segunda linguagem. */
 function WorkspaceTabMenu({
@@ -395,6 +405,7 @@ function WorkspaceTabMenu({
   onToggleBeside,
   onRename,
   onCloseTab,
+  onStartTabMission,
 }: WorkspaceTabMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const { scope } = menu;
@@ -446,6 +457,15 @@ function WorkspaceTabMenu({
         ? 'Volta a mostrar só a aba ativa.'
         : 'Divide a tela entre a aba ativa e esta.',
       run: onToggleBeside,
+    });
+  }
+  if (onStartTabMission && scope.kind !== 'mission' && scope.missions.length === 0) {
+    items.push({
+      id: 'start-mission',
+      icon: 'crown',
+      label: 'Criar missão desta aba',
+      detail: 'O orquestrador da aba lidera; os painéis dela ficam juntos.',
+      run: onStartTabMission,
     });
   }
   if (scope.kind !== 'mission') {
