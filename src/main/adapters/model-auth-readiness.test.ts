@@ -33,7 +33,7 @@ describe("OpenCode credentialless model policy", () => {
   it("keeps authenticated catalogs intact but filters login-needed OpenCode exactly", () => {
     const models = [
       "opencode/big-pickle",
-      "opencode/north-mini-code-free",
+      "opencode/nemotron-3-ultra-free",
       "openrouter/openai/gpt-5",
       "opencode/unreviewed-free",
     ];
@@ -44,7 +44,7 @@ describe("OpenCode credentialless model policy", () => {
       ),
     ).toEqual([
       "opencode/big-pickle",
-      "opencode/north-mini-code-free",
+      "opencode/nemotron-3-ultra-free",
     ]);
     expect(
       authReadyModelsForProvider(

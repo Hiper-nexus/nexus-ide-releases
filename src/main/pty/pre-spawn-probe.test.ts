@@ -295,7 +295,7 @@ describe('probePreSpawn — credentialless OpenCode', () => {
       await runProbe(
         'opencode',
         withOpenCode(),
-        'opencode/north-mini-code-free',
+        'opencode/nemotron-3-ultra-free',
       ),
     ).toBeNull();
   });

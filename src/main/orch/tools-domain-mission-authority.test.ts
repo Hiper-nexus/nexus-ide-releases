@@ -97,6 +97,7 @@ vi.mock('../remote/remote-spawn', () => ({
 }));
 
 import { buildDomainTools } from './tools-domain';
+import * as paneRegistry from './pane-registry';
 import { assertMissionIntentAllowsTool } from './mission-intent-gate';
 import { listSquads } from './squad-store';
 import {
@@ -390,6 +391,64 @@ describe('mission creation authority', () => {
       ]);
     });
     afterEach(() => vi.mocked(listSquads).mockReturnValue([]));
+
+    it('criar é atômico: pane de outra missão viva recusa SEM gravar a missão', async () => {
+      mocks.getOrchSettings.mockReturnValue({ squadCliPolicy: 'operator-choice' });
+      vi.spyOn(paneRegistry, 'findPane').mockReturnValue({
+        paneId: 'pane-operator', adapterId: 'codex',
+      } as never);
+      const create = vi.fn();
+      const record = vi.fn();
+      mocks.getProjectDomainStores.mockReturnValue({
+        missions: {
+          create,
+          update: vi.fn(),
+          remove: vi.fn(),
+          get: (id: string) => (id === 'mission-live' ? { id, status: 'running' } : null),
+        },
+        missionPanes: {
+          record,
+          findByPaneId: () => ({ missionId: 'mission-live', role: 'orchestrator' }),
+        },
+      });
+      const ctx = operatorHand();
+
+      await expect(
+        missionCreateTool().handler({ title: 'Lote duplicado' }, ctx),
+      ).rejects.toThrow(/mission-live.*nenhuma missão nova foi criada/);
+
+      expect(create).not.toHaveBeenCalled();
+      expect(record).not.toHaveBeenCalled();
+      expect(ctx.role).toBe('user');
+    });
+
+    it('criar é atômico: falha ao gravar o pane remove a missão e não a põe para rodar', async () => {
+      mocks.getOrchSettings.mockReturnValue({ squadCliPolicy: 'operator-choice' });
+      vi.spyOn(paneRegistry, 'findPane').mockReturnValue({
+        paneId: 'pane-operator', adapterId: 'codex',
+      } as never);
+      const { create, update } = missionStores();
+      const stores = mocks.getProjectDomainStores() as {
+        missions: Record<string, unknown>;
+        missionPanes: Record<string, unknown>;
+      };
+      const remove = vi.fn(() => true);
+      stores.missions.remove = remove;
+      stores.missionPanes.findByPaneId = () => null;
+      stores.missionPanes.record = vi.fn(() => {
+        throw new Error('pane id already belongs to another mission pane');
+      });
+      const ctx = operatorHand();
+
+      await expect(
+        missionCreateTool().handler({ title: 'Lote duplicado' }, ctx),
+      ).rejects.toThrow(/already belongs/);
+
+      expect(create).toHaveBeenCalledOnce();
+      expect(remove).toHaveBeenCalledWith('mission-new');
+      expect(update).not.toHaveBeenCalled();
+      expect(ctx.role).toBe('user');
+    });
 
     it('Autopilot: a missão nasce rodando e a mão continua abrindo panes', async () => {
       // O pane do operador já abria panes sem missão. Criar a missão o

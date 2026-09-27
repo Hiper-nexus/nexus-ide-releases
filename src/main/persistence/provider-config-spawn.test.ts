@@ -139,7 +139,7 @@ const opencodeAdapter = {
     flag: '--model',
     list: [
       'opencode/big-pickle',
-      'opencode/north-mini-code-free',
+      'opencode/nemotron-3-ultra-free',
       'openrouter/openai/gpt-5',
     ],
     default: 'opencode/big-pickle',
@@ -514,7 +514,7 @@ describe('prepareProviderSpawn with a pane-pinned account', () => {
     ).toBe('login-needed');
     expect(
       prepareProviderSpawn('opencode', {
-        model: 'opencode/north-mini-code-free',
+        model: 'opencode/nemotron-3-ultra-free',
       }),
     ).toMatchObject({
       ok: true,

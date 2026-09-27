@@ -110,42 +110,32 @@ export function buildPrimaryCommitMessageAgentSpecs({
       // by version so the frontier model lands on top and legacy models trail.
       models: [
         {
+          id: 'gpt-6-sol',
+          label: 'GPT-6 Sol',
+          thinkingLevels: OPENAI_THINKING_LEVELS,
+          defaultThinkingLevel: 'low'
+        },
+        {
+          id: 'gpt-6-luna',
+          label: 'GPT-6 Luna',
+          thinkingLevels: OPENAI_THINKING_LEVELS,
+          defaultThinkingLevel: 'low'
+        },
+        {
+          id: 'gpt-5.6-sol',
+          label: 'GPT-5.6 Sol',
+          thinkingLevels: OPENAI_THINKING_LEVELS,
+          defaultThinkingLevel: 'low'
+        },
+        {
+          id: 'gpt-5.6-terra',
+          label: 'GPT-5.6 Terra',
+          thinkingLevels: OPENAI_THINKING_LEVELS,
+          defaultThinkingLevel: 'low'
+        },
+        {
           id: 'gpt-5.6-luna',
           label: 'GPT-5.6 Luna',
-          thinkingLevels: OPENAI_THINKING_LEVELS,
-          defaultThinkingLevel: 'low'
-        },
-        {
-          id: 'gpt-5.4',
-          label: 'GPT-5.4',
-          thinkingLevels: OPENAI_THINKING_LEVELS,
-          defaultThinkingLevel: 'low'
-        },
-        {
-          id: 'gpt-5.4-mini',
-          label: 'GPT-5.4 Mini',
-          thinkingLevels: OPENAI_THINKING_LEVELS,
-          defaultThinkingLevel: 'low'
-        },
-        {
-          id: 'gpt-5.3-codex',
-          label: 'GPT-5.3 Codex',
-          thinkingLevels: OPENAI_THINKING_LEVELS,
-          defaultThinkingLevel: 'low'
-        },
-        {
-          // Why: Codex's Spark variant accepts `model_reasoning_effort` (the
-          // CLI banner reports "reasoning effort: medium" by default); the
-          // gating that surfaces "model not supported" is on the account
-          // tier, not the effort flag.
-          id: 'gpt-5.3-codex-spark',
-          label: 'GPT-5.3 Codex Spark',
-          thinkingLevels: OPENAI_THINKING_LEVELS,
-          defaultThinkingLevel: 'low'
-        },
-        {
-          id: 'gpt-5.2',
-          label: 'GPT-5.2',
           thinkingLevels: OPENAI_THINKING_LEVELS,
           defaultThinkingLevel: 'low'
         }
@@ -177,8 +167,8 @@ export function buildPrimaryCommitMessageAgentSpecs({
           // Why: OpenCode's hosted GPT models can require workspace billing even
           // when `opencode models` lists them. This free model is available in
           // discovery and works as a usable out-of-the-box default.
-          id: 'opencode/deepseek-v4-flash-free',
-          label: 'OpenCode DeepSeek V4 Flash Free'
+          id: 'opencode/big-pickle',
+          label: 'OpenCode Big Pickle'
         },
         {
           id: 'opencode/gpt-5.4-mini',
@@ -186,7 +176,7 @@ export function buildPrimaryCommitMessageAgentSpecs({
           ...withOpenAiThinking('gpt-5.4-mini')
         }
       ],
-      defaultModelId: 'opencode/deepseek-v4-flash-free'
+      defaultModelId: 'opencode/big-pickle'
     },
     pi: {
       id: 'pi',

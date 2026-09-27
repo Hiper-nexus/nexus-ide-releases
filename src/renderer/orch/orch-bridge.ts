@@ -27,6 +27,7 @@ import {
   getPaneSessionId,
   holdSpawnUntilApproved,
   isPaneSessionHealthy,
+  markPaneClosingDeliberately,
   markPaneParked,
   markPersistedAuthorityOnSpawn,
   onPaneSessionChange,
@@ -760,6 +761,11 @@ export function useOrchBridge(): void {
 
       window.nexus.orch.onPaneCloseRequest((request) => {
         const paneId = typeof request === 'string' ? request : request.paneId;
+        if (typeof request !== 'string' && 'closingSessionId' in request) {
+          // Aviso prévio: o exit que vem a seguir não pode oferecer shell.
+          markPaneClosingDeliberately(paneId, request.closingSessionId);
+          return;
+        }
         if (typeof request !== 'string' && 'expectedSessionId' in request) {
           // O main encerra a sessão ANTES de pedir o fechamento (prova de
           // saída), e o exit zera o host: sem sessão é o mesmo pane, já morto.

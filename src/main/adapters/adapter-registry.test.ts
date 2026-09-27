@@ -309,11 +309,12 @@ describe('builtin adapters', () => {
         'gemini-3.6-flash-high',
         'gemini-3.6-flash-medium',
         'gemini-3.6-flash-low',
-        'gemini-3.5-flash-medium',
         'claude-sonnet-4-6',
       ]),
     );
     expect(models).not.toContain('claude-sonnet-4-6-thinking');
+    // `agy models` (2026-09-27) não tem mais a linha 3.5.
+    expect(models.filter((id) => id.startsWith('gemini-3.5-'))).toEqual([]);
   });
 
   it('agy yolo flag matches the installed Antigravity CLI', () => {
@@ -443,6 +444,10 @@ describe('builtin adapters', () => {
     expect(codex?.models?.list?.[0]).toBe('gpt-6-sol');
     expect(codex?.models?.list).toContain('gpt-6-luna');
     expect(codex?.models?.list).toContain('gpt-5.6-sol');
+    // Ausentes de ~/.codex/models_cache.json (2026-09-27).
+    for (const retired of ['gpt-5.2', 'o4-mini', 'o3', 'o3-mini', 'gpt-4.1', 'gpt-4o']) {
+      expect(codex?.models?.list).not.toContain(retired);
+    }
   });
 
   it('uses the xAI CLI official API-key variable for Grok', () => {

@@ -308,6 +308,21 @@ const missionCreateTool: McpToolDef = {
       ? undefined
       : (listSquads().find((s) => s.id === 'nexus-fullstack')?.id ??
         listSquads().find((s) => s.id !== PET_STUDIO_SQUAD_ID)?.id);
+    // Criar é atômico: o pane do criador entra na composição da missão, e o
+    // vínculo que falharia depois (pane de outra missão viva) é recusado ANTES
+    // de gravar. Antes a missão ficava gravada com o erro na resposta, e o
+    // Nexus subia um orquestrador para ela (lote duplicado, 27/09).
+    const orchPane = ctx.sessionId ? findPane(ctx.sessionId) : null;
+    if (orchPane?.adapterId) {
+      const owner = stores.missionPanes.findByPaneId(orchPane.paneId);
+      const ownerStatus = owner ? stores.missions.get(owner.missionId)?.status : undefined;
+      if (owner && ownerStatus !== 'done' && ownerStatus !== 'failed') {
+        throw new Error(
+          `este pane já coordena a missão ${owner.missionId} (${ownerStatus ?? 'sem registro'}); ` +
+            'conclua-a (done/failed) ou continue nela — nenhuma missão nova foi criada',
+        );
+      }
+    }
     const spaceId = ctx.executionScope ? sharedPaneSpaceId(ctx.scope, ctx.executionScope) : undefined;
     const operatorContract = operatorHandMissionContract(title, description, milestones);
     if (spaceId) operatorContract.workspaceBinding = { version: 1, spaceId };
@@ -332,6 +347,32 @@ const missionCreateTool: McpToolDef = {
             },
           } : {}),
     });
+    // The creator's own pane is part of the mission composition too, so a
+    // history reopen restores the orchestrator alongside the workers. Gravado
+    // ANTES de a missão rodar: se falhar, a missão sai e nada sobe para ela.
+    if (orchPane?.adapterId) {
+      try {
+        stores.missionPanes.record({
+          missionId: created.id,
+          adapterId: orchPane.adapterId,
+          model: orchPane.model,
+          // Sem `title` de propósito: o título do registry é mutável (o próprio
+          // CLI o reescreve via OSC escapes) e gravá-lo na chave de dedup do
+          // store faz um re-record futuro falhar com "pane id already belongs
+          // to another mission pane". O fallback do store (adapterId) é estável.
+          role: 'orchestrator',
+          paneId: orchPane.paneId,
+          ...(ctx.executionScope && ctx.executionScope.rootRealPath !== ctx.scope.rootRealPath
+            ? { cwd: ctx.executionScope.rootRealPath, executionScope: ctx.executionScope }
+            : {}),
+          allowedTools: ctx.allowedTools,
+          allowedSkills: ctx.allowedSkills,
+        });
+      } catch (error) {
+        stores.missions.remove(created.id);
+        throw error;
+      }
+    }
     const mission = autopilot
       ? (stores.missions.update(created.id, { status: 'running' }) ?? created)
       : created;
@@ -339,27 +380,6 @@ const missionCreateTool: McpToolDef = {
     // desfeita se a missão for descartada. Sem isto o pane fica estéril.
     adoptUserContextAsMissionOrchestrator(ctx, mission.id);
     if (ctx.sessionId) adoptUserAgentSessionAsMissionOrchestrator(ctx.sessionId, mission.id);
-    // The creator's own pane is part of the mission composition too, so a
-    // history reopen restores the orchestrator alongside the workers.
-    const orchPane = ctx.sessionId ? findPane(ctx.sessionId) : null;
-    if (orchPane?.adapterId) {
-      stores.missionPanes.record({
-        missionId: mission.id,
-        adapterId: orchPane.adapterId,
-        model: orchPane.model,
-        // Sem `title` de propósito: o título do registry é mutável (o próprio
-        // CLI o reescreve via OSC escapes) e gravá-lo na chave de dedup do
-        // store faz um re-record futuro falhar com "pane id already belongs
-        // to another mission pane". O fallback do store (adapterId) é estável.
-        role: 'orchestrator',
-        paneId: orchPane.paneId,
-        ...(ctx.executionScope && ctx.executionScope.rootRealPath !== ctx.scope.rootRealPath
-          ? { cwd: ctx.executionScope.rootRealPath, executionScope: ctx.executionScope }
-          : {}),
-        allowedTools: ctx.allowedTools,
-        allowedSkills: ctx.allowedSkills,
-      });
-    }
     return mission;
   },
 };

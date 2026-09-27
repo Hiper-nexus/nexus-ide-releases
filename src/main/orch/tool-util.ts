@@ -88,6 +88,7 @@ import { getOrchSettings } from '../persistence/settings-store';
 import { isOperatorChoicePolicy } from '../../shared/squad-cli-policy';
 import { issueAgentIdentityBestEffort } from './agent-identity-spawn';
 import { initialPromptChannel, spawnBinaryName } from '../../shared/cli-initial-prompt';
+import { ORCH_SPAWN_GRANT_TTL_MS } from './orch-spawn-grant-recovery';
 
 export { assertSafePtyPrompt } from './pty-prompt-safety';
 
@@ -285,6 +286,25 @@ export function authorizedSessionIdOf(
   return info.sessionId;
 }
 
+/** TUIs que não entendem bracketed paste: o marcador viraria texto (F-537). */
+const NO_BRACKETED_PASTE_ADAPTERS: ReadonlySet<string> = new Set(['kimi', 'agy', 'devin']);
+
+/**
+ * Bytes que digitam o prompt. Briefs com várias linhas viram UMA colagem
+ * (bracketed paste): como teclas soltas a TUI executa/repinta cada linha.
+ * Em pane de AGENTE a colagem vale mesmo para uma linha só: o Codex trata
+ * uma rajada de teclas cruas como paste-burst e o Enter que chega logo
+ * depois vira quebra de linha no composer — o texto ficava digitado e nunca
+ * era enviado (print do operador 27/09, gpt-6-sol).
+ */
+function injectedPromptInput(sessionId: string, safePrompt: string): string {
+  const adapterId = getAgentSessionInfo(sessionId)?.adapterId;
+  if (adapterId && NO_BRACKETED_PASTE_ADAPTERS.has(adapterId)) return safePrompt;
+  return safePrompt.includes('\n') || adapterId
+    ? `\x1b[200~${safePrompt}\x1b[201~`
+    : safePrompt;
+}
+
 /** Type text into a pane's PTY, then press Enter (as a user would). */
 export async function injectPrompt(
   sessionId: string,
@@ -293,13 +313,7 @@ export async function injectPrompt(
 ): Promise<void> {
   clearAdaptiveEnterTimers(sessionId);
   const safePrompt = assertSafePtyPrompt(prompt);
-  // Agent briefs routinely contain Markdown and many newlines. Sending those
-  // bytes as ordinary keypresses makes interactive TUIs execute/repaint each
-  // line independently, producing the mashed, apparently frozen terminal.
-  // Bracketed paste makes the entire brief one editor transaction.
-  const input = safePrompt.includes('\n')
-    ? `\x1b[200~${safePrompt}\x1b[201~`
-    : safePrompt;
+  const input = injectedPromptInput(sessionId, safePrompt);
   assertMcpInvocationCurrent(invocation);
   if (!orchWriteSession(sessionId, input, { markInputBusy: false })) {
     throw new Error('session is gone');
@@ -635,7 +649,7 @@ async function injectWithBusyProof(
     const adapter = agent?.adapterId ? getAdapter(agent.adapterId) : null;
     const allowsBracketedPaste =
       (adapter && adapter.kind === 'cli-pty' ? adapter.promptInjection?.bracketedPaste : undefined) ??
-      (agent?.adapterId ? !['kimi', 'agy', 'devin'].includes(agent.adapterId) : true);
+      (agent?.adapterId ? !NO_BRACKETED_PASTE_ADAPTERS.has(agent.adapterId) : true);
     const input =
       safePrompt.includes('\n') && allowsBracketedPaste
         ? `\x1b[200~${safePrompt}\x1b[201~`
@@ -1484,6 +1498,23 @@ export async function spawnPaneAndMaybePrompt(
       ? { abortSignal: hooks.invocation.signal }
       : {}),
   });
+  if (
+    result.ok &&
+    result.pending === true &&
+    result.paneId &&
+    finalPrompt &&
+    initialPrompt === undefined
+  ) {
+    // ACK pendente: o chamador recebe o paneId antes de a sessão existir. O
+    // brief de argv já viajou no grant; o de COLAGEM (Kimi) não tem canal
+    // nenhum — sem isto o helper abria mudo, sem o briefing.
+    void deliverPromptAfterPendingSpawn(
+      result.paneId,
+      finalPrompt,
+      adapter.id,
+      hooks.invocation,
+    );
+  }
   if (!result.ok || !result.paneId || !result.sessionId) {
     adapterCircuitBreakers.recordFailure(options.adapterId);
     throw new Error(result.error ?? 'pane spawn failed');
@@ -1673,6 +1704,55 @@ export async function spawnPaneAndMaybePrompt(
     }
   }
   return { paneId: result.paneId, sessionId: result.sessionId };
+}
+
+const PENDING_SPAWN_SESSION_POLL_MS = 500;
+
+/**
+ * Entrega pós-boot de um brief de colagem cujo pane nasceu com ACK pendente.
+ * Espera a sessão do próprio pane (a mesma janela do grant de spawn), o
+ * primeiro idle e então o mesmo `deliverAgentPrompt` do caminho síncrono.
+ */
+export async function deliverPromptAfterPendingSpawn(
+  paneId: string,
+  prompt: string,
+  adapterId: string,
+  invocation?: McpToolInvocation,
+): Promise<boolean> {
+  const deadline = Date.now() + ORCH_SPAWN_GRANT_TTL_MS;
+  let sessionId: string | null = null;
+  try {
+    while (!sessionId) {
+      assertMcpInvocationCurrent(invocation);
+      const candidate = getPaneAuthzInfo(paneId)?.sessionId ?? null;
+      if (
+        candidate &&
+        getAgentSessionInfo(candidate)?.paneId === paneId
+      ) {
+        sessionId = candidate;
+        break;
+      }
+      if (Date.now() >= deadline) return false;
+      await delay(PENDING_SPAWN_SESSION_POLL_MS);
+    }
+    const boot = await waitForIdle(
+      sessionId,
+      AGENT_BOOT_TIMEOUT_MS,
+      invocation?.signal,
+    );
+    if (boot === 'exited') return false;
+    assertMcpInvocationCurrent(invocation);
+    const accepted = await deliverAgentPrompt(sessionId, prompt, invocation, {
+      adapterId,
+    });
+    if (!accepted) {
+      throw new Error('agent prompt remained live without physical acceptance proof');
+    }
+    return true;
+  } catch (error) {
+    logAgentPromptFailure(adapterId, sessionId ?? paneId, error);
+    return false;
+  }
 }
 
 export { waitOutBootPrompts } from './boot-prompt-hold';

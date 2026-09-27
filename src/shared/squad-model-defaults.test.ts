@@ -43,6 +43,19 @@ describe('squad model defaults', () => {
     expect(migrateModelId('grok-3')).toBe('grok-4.7');
   });
 
+  it('migra agy 3.5 e OpenCode free que saíram das CLIs instaladas (2026-09-27)', () => {
+    expect(migrateModelId('gemini-3.5-flash-low')).toBe('gemini-3.8-flash-low');
+    expect(migrateModelId('gemini-3.5-flash-medium')).toBe('gemini-3.8-flash-medium');
+    expect(migrateModelId('gemini-3.5-flash-high')).toBe('gemini-3.8-flash-high');
+    expect(migrateModelId('opencode/deepseek-v4-flash-free')).toBe('opencode/big-pickle');
+    expect(migrateModelId('opencode/north-mini-code-free')).toBe('opencode/big-pickle');
+    // A Gemini API (voz/STT) usa o id sem sufixo de esforço: fica intacto.
+    expect(migrateModelId('gemini-3.5-flash')).toBe('gemini-3.5-flash');
+    // Copilot/OpenCode ainda servem gpt-5.2 e o Aider usa o3/gpt-4o: sem chave global.
+    expect(migrateModelId('gpt-5.2')).toBe('gpt-5.2');
+    expect(migrateModelId('o3')).toBe('o3');
+  });
+
   it('não migra superseded que ainda roda (claude-opus-5) nem solta genérica (1.6)', () => {
     // Superseded ≠ retired: o 5.5 lidera a lista/routing, mas o 5 continua
     // executável em CLIs mais antigos — migrar descartaria o candidato.

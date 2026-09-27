@@ -4,16 +4,13 @@
  *
  * This is intentionally an exact, release-pinned allowlist. Do not infer
  * credentialless access from the `opencode/` namespace or a `-free` suffix.
- * Verified against OpenCode 1.18.0's first-party catalog on 2026-07-25.
+ * Verified against OpenCode 1.18.0's first-party catalog on 2026-07-25;
+ * ids ausentes de `opencode models` em 2026-09-27 foram removidos (só
+ * estreita — ids novos exigem prova de uso sem credencial).
  */
 export const CREDENTIALLESS_OPENCODE_MODEL_IDS = Object.freeze([
   "opencode/big-pickle",
-  "opencode/deepseek-v4-flash-free",
-  "opencode/laguna-s-2.1-free",
-  "opencode/ling-3.0-flash-free",
-  "opencode/mimo-v2.5-free",
   "opencode/nemotron-3-ultra-free",
-  "opencode/north-mini-code-free",
 ] as const);
 
 const credentiallessOpenCodeModels = new Set<string>(

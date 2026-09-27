@@ -26,6 +26,7 @@ import {
   registerOrchRenderer,
   requestBrowserPane,
   requestMissionPaneClose,
+  requestPaneClose,
   requestPaneSpawn,
   requestMissionPaneRecovery,
   resolveBrowserOpen,
@@ -931,5 +932,45 @@ describe("pending pane spawn authority", () => {
       error: "test cleanup",
     }, owner);
     await expect(promise).resolves.toMatchObject({ ok: false });
+  });
+});
+
+describe("deliberate pane close", () => {
+  it("warns the renderer BEFORE terminating, so the exit never offers a shell", async () => {
+    const owner = renderer();
+    bindScope(owner);
+    registerOrchRenderer(owner);
+    registered = owner;
+    vi.spyOn(ptyManager, "isSessionOwnedBy").mockImplementation(
+      (candidate, sessionId) => candidate.id === owner.id && sessionId === "pty-helper",
+    );
+    syncPanes(
+      [{ paneId: "pane-helper", sessionId: "pty-helper", kind: "cli-agent", title: "Helper" }],
+      owner,
+    );
+    owner.send.mockClear();
+    let live = true;
+    vi.spyOn(ptyManager, "getSessionState").mockImplementation(() =>
+      live ? ("idle" as ReturnType<typeof ptyManager.getSessionState>) : null,
+    );
+    let sendsBeforeTerminate: unknown[][] = [];
+    vi.spyOn(ptyManager, "orchTerminateSession").mockImplementation(async () => {
+      sendsBeforeTerminate = [...owner.send.mock.calls];
+      live = false;
+      return true;
+    });
+
+    await expect(requestPaneClose("pane-helper", "pty-helper")).resolves.toBe(true);
+
+    expect(sendsBeforeTerminate).toEqual([
+      [
+        ORCH_CHANNELS.paneCloseRequest,
+        { paneId: "pane-helper", closingSessionId: "pty-helper" },
+      ],
+    ]);
+    expect(owner.send).toHaveBeenLastCalledWith(ORCH_CHANNELS.paneCloseRequest, {
+      paneId: "pane-helper",
+      expectedSessionId: "pty-helper",
+    });
   });
 });

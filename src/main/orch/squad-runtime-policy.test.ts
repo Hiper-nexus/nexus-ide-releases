@@ -318,7 +318,7 @@ describe("assessStandardSquadReadiness (doutrina fluxo-por-padrão)", () => {
           {
             category: "executor",
             cli: "opencode",
-            model: "opencode/north-mini-code-free",
+            model: "opencode/nemotron-3-ultra-free",
           },
           {
             category: "reviewer",
