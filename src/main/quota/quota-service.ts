@@ -178,6 +178,10 @@ export interface QuotaServiceDeps {
     adapterId: string,
     accountId?: string,
   ) => string[] | Promise<string[]>;
+  /** Prova pública de login do `mcode` (estado sem token). */
+  minimaxCodeSignedIn?: () => boolean;
+  /** Access token vigente do `mcode login` e sua região, só para a cota. */
+  resolveMinimaxCodeLogin?: () => { accessToken: string; region: 'en' | 'cn' } | null;
   /**
    * Detecção de plano de assinatura por linha (tier do provider → USD/mês de
    * lista quando mapeado). Produção liga `detectProviderPlan`; testes omitem
@@ -576,6 +580,8 @@ export class QuotaService {
       resolveLongcatApiKey: this.#deps.resolveLongcatApiKey,
       resolveLongcatApiKeyCandidates: this.#deps.resolveLongcatApiKeyCandidates,
       resolveGenericApiKeyCandidates: this.#deps.resolveGenericApiKeyCandidates,
+      minimaxCodeSignedIn: this.#deps.minimaxCodeSignedIn,
+      resolveMinimaxCodeLogin: this.#deps.resolveMinimaxCodeLogin,
       fetchImpl: this.#deps.fetchImpl,
     };
   }

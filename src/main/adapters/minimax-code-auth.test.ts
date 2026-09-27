@@ -6,6 +6,7 @@ import {
   minimaxCodeAuthStateFiles,
   minimaxCodeDataDir,
   minimaxCodeHasCredential,
+  minimaxCodeLoginAccessToken,
   minimaxCodeSignedInRegion,
   minimaxCodeUsesOwnApiKey,
 } from './minimax-code-auth';
@@ -79,6 +80,28 @@ it('accepts the CLI own API key source without reading the key', () => {
   fs.writeFileSync(path.join(data, 'config.yaml'), 'minimax_api:\n  apiKey: fixture\nminimaxModelSource: "minimax_api_key"\n');
   expect(minimaxCodeUsesOwnApiKey(operator, {})).toBe(true);
   expect(minimaxCodeHasCredential(operator, {})).toBe(true);
+});
+
+it('reads the current login access token only for quota, never an expired one', () => {
+  const operator = home();
+  const data = path.join(operator, '.minimax');
+  const now = 1_800_000_000_000;
+  const writeAuth = (record: Record<string, unknown>) => {
+    const dir = path.join(data, 'auth', 'prod', 'en', 'mcode-public');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'auth.json'), JSON.stringify({
+      schemaVersion: 1,
+      records: { 'com.minimax.mcode.oauth.prod.en\u0000fixture': record },
+    }));
+  };
+  writeAuth({ accessToken: 'fixture-access', expiresAtMs: now + 60_000 });
+  // Token sem o estado público autenticado não é sessão.
+  expect(minimaxCodeLoginAccessToken(operator, {}, now)).toBeNull();
+  writeState(data, 'en', JSON.stringify({ status: 'authenticated' }));
+  expect(minimaxCodeLoginAccessToken(operator, {}, now)).toEqual({ accessToken: 'fixture-access', region: 'en' });
+  // Vencido: renovar é da CLI, o Nexus não usa nem gira o refresh.
+  writeAuth({ accessToken: 'fixture-access', expiresAtMs: now - 1 });
+  expect(minimaxCodeLoginAccessToken(operator, {}, now)).toBeNull();
 });
 
 it('honors an isolated data dir instead of the operator home', () => {

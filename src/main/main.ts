@@ -275,6 +275,10 @@ import {
   resolveKimiOauthCreds,
   resolveProviderApiKeyCandidates,
 } from "./quota/provider-usage-auth";
+import {
+  minimaxCodeHasCredential,
+  minimaxCodeLoginAccessToken,
+} from "./adapters/minimax-code-auth";
 import { closeDb } from "./persistence/db";
 import {
   getOrchSettings,
@@ -731,6 +735,10 @@ function bootstrap(): void {
     // OpenCode / Aider / any future CLI: vault + launcher + env keys.
     resolveGenericApiKeyCandidates: (adapterId, accountId) =>
       resolveProviderApiKeyCandidates(adapterId, accountId),
+    // `mcode login`: estado público prova a conta; o access token vigente
+    // (decisão do operador) lê a cota sem Subscription Key, só leitura.
+    minimaxCodeSignedIn: () => minimaxCodeHasCredential(),
+    resolveMinimaxCodeLogin: () => minimaxCodeLoginAccessToken(),
     // Plano de assinatura por linha (tier Claude/Codex/AGY → USD/mês de
     // lista). Reusa os mesmos resolvers de credencial do probe de uso.
     detectProviderPlan: (adapterId, accountId) =>

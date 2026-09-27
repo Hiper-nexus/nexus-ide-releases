@@ -249,9 +249,11 @@ function EntryCard({
           ? entry.accountId
             ? 'Sem credencial'
             : 'Sem conta conectada'
-          : entry.readHint === 'cli-missing'
-            ? 'CLI não encontrada'
-            : 'Sem informação';
+          : entry.readHint === 'quota-key-required'
+            ? 'Conectado · cota indisponível'
+            : entry.readHint === 'cli-missing'
+              ? 'CLI não encontrada'
+              : 'Sem informação';
   const label = entry.accountId
     ? entry.label
     : entry.label.replace(/\s*·\s*CLI nativo$/u, '');
@@ -412,7 +414,9 @@ function EntryCard({
             ? 'A sessão desta conta expirou e não foi possível renovar — reautentique para voltar a ver os limites.'
             : entry.readHint === 'no-credential'
               ? 'Nenhuma credencial válida foi encontrada para esta linha.'
-              : entry.readHint === 'cli-missing'
+              : entry.readHint === 'quota-key-required'
+                ? 'A CLI está conectada, mas a sessão dela está sem token válido agora. Abra o MiniMax Code para renovar a sessão, ou cadastre a Subscription Key do Token Plan como chave MiniMax em Conta e acesso a IAs.'
+                : entry.readHint === 'cli-missing'
                 ? 'O executável do CLI não foi encontrado nesta máquina.'
                 : 'Sem percentual disponível. Isso não significa que a conta está sem uso ou sem saldo.'}
         </p>

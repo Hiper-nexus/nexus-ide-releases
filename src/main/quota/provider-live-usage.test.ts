@@ -97,6 +97,40 @@ describe('fetchLiveProviderWindows', () => {
     });
     expect(origins).toEqual(['api.z.ai']);
   });
+  it('minimax-code: CLI logada sem Subscription Key é conta conectada, não "sem conta"', async () => {
+    const fetchImpl = vi.fn();
+    const deps = { resolveGenericApiKeyCandidates: () => [], fetchImpl };
+    expect(
+      await fetchLiveProviderWindows('minimax-code', undefined, { ...deps, minimaxCodeSignedIn: () => true }),
+    ).toEqual({ windows: null, hint: 'quota-key-required' });
+    expect(
+      await fetchLiveProviderWindows('minimax-code', undefined, { ...deps, minimaxCodeSignedIn: () => false }),
+    ).toEqual({ windows: null, hint: 'no-credential' });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('minimax-code: sem Subscription Key, a linha nativa lê a cota pelo mcode login', async () => {
+    const plan = {
+      base_resp: { status_code: 0 },
+      model_remains: [{ model_name: 'general', current_interval_status: 1, current_interval_remaining_percent: 90, current_weekly_status: 1, current_weekly_remaining_percent: 99 }],
+    };
+    const fetchImpl = vi.fn(async (_url: string) => ({ ok: true, status: 200, json: async (): Promise<unknown> => plan, text: async () => '' }));
+    const resolveMinimaxCodeLogin = vi.fn(() => ({ accessToken: 'login-access', region: 'en' as const }));
+    const deps = { resolveGenericApiKeyCandidates: () => [], minimaxCodeSignedIn: () => true, resolveMinimaxCodeLogin, fetchImpl };
+    const probe = await fetchLiveProviderWindows('minimax-code', undefined, deps);
+    expect(probe.windows?.map((window) => Math.round((window.usedRatio ?? 0) * 100))).toEqual([10, 1]);
+    expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
+      'https://platform.minimax.io/v1/api/openplatform/coding_plan/remains',
+    ]);
+    // Login recusado: leitura indisponível, nunca «sem conta».
+    fetchImpl.mockImplementation(async () => ({ ok: false, status: 401, json: async () => ({}), text: async () => '' }));
+    expect(await fetchLiveProviderWindows('minimax-code', undefined, deps)).toEqual({ windows: null, hint: 'unavailable' });
+    // Linha de conta salva nunca usa o login nativo.
+    resolveMinimaxCodeLogin.mockClear();
+    await fetchLiveProviderWindows('minimax-code', 'saved-account', deps);
+    expect(resolveMinimaxCodeLogin).not.toHaveBeenCalled();
+  });
+
   it('never reads native OpenCode keys for an account-bound quota row', async () => {
     nativeOpenCode.mockClear();
     const result = await fetchLiveProviderWindows('opencode', 'saved-account', {

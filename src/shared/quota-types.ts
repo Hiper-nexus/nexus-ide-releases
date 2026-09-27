@@ -79,13 +79,17 @@ export interface AccountPlan {
  *  - 'cli-missing': a sonda depende do binário do CLI e ele não existe.
  *  - 'unavailable': credencial consultada, provider não devolveu janelas
  *    (rede, 429, endpoint sem dados para o plano — ex.: tier free).
+ *  - 'quota-key-required': a CLI está logada, mas a cota está sem fonte agora
+ *    (token da sessão vencido e nenhuma chave do plano, ex.: Subscription Key
+ *    do Token Plan da MiniMax). Conta conectada — nunca «sem conta».
  */
 export type QuotaReadHint =
   | 'auth-expired'
   | 'identity-mismatch'
   | 'no-credential'
   | 'cli-missing'
-  | 'unavailable';
+  | 'unavailable'
+  | 'quota-key-required';
 
 export interface ProviderQuotaEntry {
   /** Stable list key: adapterId or adapterId:accountId */

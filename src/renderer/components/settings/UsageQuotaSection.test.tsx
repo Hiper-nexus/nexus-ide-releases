@@ -429,6 +429,29 @@ describe('UsageQuotaSection', () => {
     act(() => root.unmount());
   });
 
+  it('MiniMax Code logado sem chave de cota aparece conectado, nunca "sem conta"', async () => {
+    useAccountStore.setState({ accounts: [] });
+    const snapshot: QuotaFleetSnapshot = { ...sampleSnapshot, entries: [{
+      id: 'minimax-code', adapterId: 'minimax-code', label: 'MiniMax Code · CLI nativo',
+      installed: true, onCooldown: false, readHint: 'quota-key-required', updatedAt: 1,
+      windows: [
+        { kind: 'hours', label: '5 Horas', usedRatio: null, source: 'unknown', confidence: 'low' },
+        { kind: 'weekly', label: 'Semanal', usedRatio: null, source: 'unknown', confidence: 'low' },
+      ],
+    }] };
+    Object.defineProperty(window, 'nexus', { configurable: true, value: {
+      quota: { snapshot: vi.fn(async () => snapshot), refresh: vi.fn(async () => snapshot) },
+      providers: { authStatus: vi.fn(async () => []) },
+    } });
+    const { host, root } = mount();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(host.textContent).toContain('Conectado · cota indisponível');
+    expect(host.textContent).toContain('Abra o MiniMax Code para renovar a sessão');
+    expect(host.textContent).not.toContain('Sem conta conectada');
+    expect(host.textContent).not.toContain('Nenhuma credencial válida');
+    act(() => root.unmount());
+  });
+
   it('reabre o login da conta salva pelo botão da linha de cota', async () => {
     useAccountStore.setState({
       accounts: [

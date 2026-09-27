@@ -1,4 +1,8 @@
-/** MiniMax Token Plan quota. Only a user-supplied Subscription Key is sent. */
+/**
+ * MiniMax Token Plan quota. A user-supplied Subscription Key goes to the public
+ * endpoint; without a key, the `mcode login` access token goes to the same
+ * plain Bearer GET the CLI makes (never the client's signed headers).
+ */
 import type { QuotaWindow, QuotaWindowKind } from '../../shared/quota-types';
 import type { FetchLike } from './claude-oauth-usage';
 import { knownWindow, unknownWindow } from './quota-normalize';
@@ -6,6 +10,12 @@ import { knownWindow, unknownWindow } from './quota-normalize';
 const URLS = {
   overseas: 'https://www.minimax.io/v1/token_plan/remains',
   cn: 'https://www.minimaxi.com/v1/token_plan/remains',
+} as const;
+
+/** Endpoint de cota da própria CLI por região do login (`en` global, `cn` China). */
+const LOGIN_URLS = {
+  en: 'https://platform.minimax.io/v1/api/openplatform/coding_plan/remains',
+  cn: 'https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains',
 } as const;
 
 type RecordValue = Record<string, unknown>;
@@ -54,7 +64,12 @@ function windowFromPlan(
 export function parseMinimaxTokenPlan(body: unknown, now = Date.now()): QuotaWindow[] {
   const root = object(body);
   if (!root || object(root.base_resp)?.status_code !== 0 || !Array.isArray(root.model_remains)) return [];
-  const item = object(root.model_remains[0]);
+  // A resposta traz também a linha de vídeo (ilimitada); a cota de texto é a
+  // outra. Mesma escolha do cliente oficial.
+  const item = object(
+    root.model_remains.find((entry) => !/video/iu.test(String(object(entry)?.model_name ?? ''))) ??
+      root.model_remains[0],
+  );
   if (!item) return [];
   return [
     windowFromPlan(item, 'hours', '5 Horas', 'current_interval', 'end_time', now),
@@ -118,4 +133,19 @@ export async function fetchMinimaxTokenPlan(
     if (attempt.kind === 'failed') return null;
   }
   return null;
+}
+
+/**
+ * Cota pelo `mcode login`: o token vale só na região do login, então não há
+ * troca de região. Token recusado ou vencido = null (renovar é da CLI).
+ */
+export async function fetchMinimaxLoginPlan(
+  accessToken: string,
+  opts: { region: keyof typeof LOGIN_URLS; fetchImpl?: FetchLike; now?: number; timeoutMs?: number },
+): Promise<QuotaWindow[] | null> {
+  const token = accessToken.trim();
+  const fetchImpl = opts.fetchImpl ?? (globalThis.fetch as FetchLike);
+  if (!token || typeof fetchImpl !== 'function') return null;
+  const attempt = await fetchRegion(LOGIN_URLS[opts.region], token, fetchImpl, opts.now, opts.timeoutMs ?? 8_000);
+  return attempt.kind === 'ok' ? attempt.windows : null;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { fetchMinimaxTokenPlan, parseMinimaxTokenPlan } from './minimax-code-usage';
+import { fetchMinimaxLoginPlan, fetchMinimaxTokenPlan, parseMinimaxTokenPlan } from './minimax-code-usage';
 
 const NOW = 1_800_000_000_000;
 const body = {
@@ -81,5 +81,25 @@ describe('MiniMax Token Plan', () => {
     const fetchImpl = vi.fn(async () => ({ ok: true, status: 200, json: async () => body, text: async () => '' }));
     expect((await fetchMinimaxTokenPlan('key', { fetchImpl, region: 'cn', now: NOW }))?.[0]?.usedRatio).toBeCloseTo(0.2);
     expect(fetchImpl).toHaveBeenCalledWith('https://www.minimaxi.com/v1/token_plan/remains', expect.anything());
+  });
+
+  it('reads the text plan, not the unlimited video line listed first', () => {
+    const video = { model_name: 'video', current_interval_status: 3, current_weekly_status: 3 };
+    const windows = parseMinimaxTokenPlan({ ...body, model_remains: [video, body.model_remains[0]] }, NOW);
+    expect(windows[0]?.usedRatio).toBeCloseTo(0.2);
+  });
+
+  it('login quota: the CLI endpoint of the login region, no region switch', async () => {
+    const fetchImpl = vi.fn(async (_url: string) => response(200, body));
+    expect((await fetchMinimaxLoginPlan('login-access', { region: 'en', fetchImpl, now: NOW }))?.[0]?.usedRatio).toBeCloseTo(0.2);
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://platform.minimax.io/v1/api/openplatform/coding_plan/remains',
+      expect.objectContaining({ method: 'GET', headers: expect.objectContaining({ Authorization: 'Bearer login-access' }) }),
+    );
+    const refused = vi.fn(async (_url: string) => response(401, {}));
+    expect(await fetchMinimaxLoginPlan('stale', { region: 'cn', fetchImpl: refused })).toBeNull();
+    expect(refused.mock.calls.map(([url]) => url)).toEqual([
+      'https://www.minimaxi.com/v1/api/openplatform/coding_plan/remains',
+    ]);
   });
 });

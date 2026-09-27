@@ -7,9 +7,14 @@ import path from 'node:path';
  *
  * A CLI separa o segredo do estado: `auth.json` guarda access/refresh token e
  * `auth-state.json` guarda só status/região/expiração — a própria CLI recusa
- * gravar campo sensível ali. O Nexus lê SOMENTE o estado público; o token
- * nunca sai do arquivo da CLI. Expiração do access não é logout: a CLI renova
- * sozinha, então o status `authenticated` é a prova.
+ * gravar campo sensível ali. Login e roteamento leem SOMENTE o estado
+ * público. Expiração do access não é logout: a CLI renova sozinha, então o
+ * status `authenticated` é a prova.
+ *
+ * Única exceção (decisão do operador, 2026-09-27): a cota do plano lê o
+ * access token vigente para o mesmo GET de cota que a CLI faz. Só leitura e
+ * só em memória: o Nexus nunca renova (o refresh é da CLI), nunca grava e
+ * nunca registra o token.
  *
  * Layout: `<data>/auth/prod/<região>/mcode-public/auth-state.json`, com
  * `<data>` = `$MINIMAX_DATA_DIR` (alias legado `MAVIS_DATA_DIR`) ou
@@ -75,6 +80,36 @@ export function minimaxCodeSignedInRegion(
     } catch {
       // Ausente ou ilegível: sem sessão nessa região.
     }
+  }
+  return null;
+}
+
+/**
+ * Access token vigente do `mcode login`, para a cota do plano. Vencido ou
+ * ausente = null: renovar é da CLI (renovar aqui giraria o refresh dela).
+ */
+export function minimaxCodeLoginAccessToken(
+  home = os.homedir(),
+  env: NodeJS.ProcessEnv = process.env,
+  now = Date.now(),
+): { accessToken: string; region: MinimaxCodeRegion } | null {
+  const region = minimaxCodeSignedInRegion(home, env);
+  if (!region) return null;
+  try {
+    const file = path.join(
+      minimaxCodeDataDir(home, env), 'auth', 'prod', region, 'mcode-public', 'auth.json',
+    );
+    const records = (JSON.parse(fs.readFileSync(file, 'utf8')) as {
+      records?: Record<string, { accessToken?: unknown; expiresAtMs?: unknown }>;
+    } | null)?.records;
+    for (const [key, record] of Object.entries(records ?? {})) {
+      if (!key.startsWith('com.minimax.mcode.oauth.')) continue;
+      const token = typeof record?.accessToken === 'string' ? record.accessToken.trim() : '';
+      const expiresAt = typeof record?.expiresAtMs === 'number' ? record.expiresAtMs : 0;
+      if (token && expiresAt > now) return { accessToken: token, region };
+    }
+  } catch {
+    // Ausente ou ilegível: sem token de cota.
   }
   return null;
 }

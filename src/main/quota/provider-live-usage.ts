@@ -36,6 +36,7 @@ import {
 } from './key-shape-usage';
 import { loadOpenCodeAuthKeys } from './opencode-auth';
 import { knownWindow } from './quota-normalize';
+import { fetchMinimaxLoginPlan } from './minimax-code-usage';
 
 export interface ApiQuotaKeyRequest {
   adapterId: string;
@@ -145,6 +146,10 @@ export interface LiveUsageAuthResolvers {
     adapterId: string,
     accountId?: string,
   ) => string[] | Promise<string[]>;
+  /** Prova pública de login do `mcode` (estado sem token); default lê o disco. */
+  minimaxCodeSignedIn?: () => boolean;
+  /** Access token vigente do `mcode login` e sua região, só para a cota. */
+  resolveMinimaxCodeLogin?: () => { accessToken: string; region: 'en' | 'cn' } | null;
   fetchImpl?: FetchLike;
 }
 
@@ -451,6 +456,34 @@ export async function fetchLiveProviderWindows(
         fetchImpl,
         now,
       );
+    }
+    case 'minimax-code': {
+      // Subscription Key primeiro (API pública). Sem janela por ela, a linha
+      // nativa usa o `mcode login`: o mesmo GET de cota da CLI, só leitura.
+      const probe = await fetchMultiKeyWindows(
+        adapterId,
+        deps,
+        accountId,
+        fetchImpl,
+        now,
+      );
+      if (probe.windows?.length) return probe;
+      const login = accountId ? null : deps.resolveMinimaxCodeLogin?.() ?? null;
+      if (login) {
+        return asProbe(
+          await fetchMinimaxLoginPlan(login.accessToken, {
+            region: login.region,
+            fetchImpl,
+            now,
+          }),
+          'unavailable',
+        );
+      }
+      // CLI logada sem token vigente nem chave: conta conectada, cota sem
+      // fonte — nunca «sem conta».
+      return probe.hint === 'no-credential' && deps.minimaxCodeSignedIn?.()
+        ? { windows: null, hint: 'quota-key-required' }
+        : probe;
     }
     default: {
       // Any future / custom CLI: generic vault+launcher key routing.
