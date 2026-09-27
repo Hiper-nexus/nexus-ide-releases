@@ -129,7 +129,7 @@ describe("OrchestratorDefaults", () => {
     const adapters = [
       adapter("claude", "Claude", ["claude-opus-5", "claude-sonnet"]),
       adapter("codex", "Codex", ["gpt-5.4", "gpt-5.3-codex"]),
-      adapter("agy", "Gemini", ["gemini-3.1-pro"], false),
+      adapter("agy", "Gemini", ["gemini-3.8-flash-high"], false),
       adapter("grok", "Grok", ["grok-code"]),
       adapter("aider", "Aider", ["aider-default"]),
     ];

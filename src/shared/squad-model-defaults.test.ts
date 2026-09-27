@@ -29,8 +29,10 @@ describe('squad model defaults', () => {
   });
 
   it('migrates retired/legacy model ids to the active lineage at spawn time', () => {
-    // Ainda listado por `agy models`: superseded ≠ retired, não migra.
-    expect(migrateModelId('gemini-3.1-pro-high')).toBe('gemini-3.1-pro-high');
+    // Decisão do operador (docs/models/estudo-2026-09.md): 3.1 Pro sai da
+    // lista oferecida do agy — mesmo `agy models` ainda aceitando o id.
+    expect(migrateModelId('gemini-3.1-pro-high')).toBe('gemini-3.8-flash-high');
+    expect(migrateModelId('gemini-3.1-pro-low')).toBe('gemini-3.8-flash-low');
     expect(migrateModelId('gpt-5.5')).toBe('gpt-5.6-luna');
     expect(migrateModelId('gpt-5.4-pro')).toBe('gpt-5.6-sol');
     expect(migrateModelId('gpt-5.6-sol')).toBe('gpt-5.6-sol');

@@ -30,6 +30,12 @@ export const RETIRED_MODEL_MIGRATIONS: Readonly<Record<string, string>> = Object
   // gemini-3.8-pro não existe no Google Gemini — o modelo correto da linhagem 3.8 é gemini-3.8-flash-high
   'gemini-3.8-pro-high': 'gemini-3.8-flash-high',
   'gemini-3.8-pro': 'gemini-3.8-flash-high',
+  // Decisão do operador (2026-09-27, docs/models/estudo-2026-09.md): 3.1 Pro
+  // é pior e ~3× mais caro que o 3.8 Flash (TB2.1 70,8 × 81,3; AA 30 × 41).
+  // Sai da lista OFERECIDA do agy (agy.json/model-catalog.ts) mesmo a CLI
+  // ainda aceitando o id — por isso volta a migrar em silêncio.
+  'gemini-3.1-pro-high': 'gemini-3.8-flash-high',
+  'gemini-3.1-pro-low': 'gemini-3.8-flash-low',
   // Muse 1.3: o id "muse" era placeholder do adapter — o CLI recusa e o
   // chip virava "Muse muse". Default real do binário 1.3.0: muse-spark-1.3.
   muse: 'muse-spark-1.3',
