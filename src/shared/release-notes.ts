@@ -7211,7 +7211,7 @@ export const RELEASE_076106: AppRelease = {
   ],
 };
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076107: AppRelease = {
   version: '0.76.107',
   date: '2026-09-26',
   codename: 'Abas no Windows',
@@ -7236,6 +7236,39 @@ export const CURRENT_RELEASE: AppRelease = {
         'O Git para Windows recusa worktree com mais de ~215 caracteres, e o ' +
         'caminho montado pelo Nexus passava de 400. No Windows as worktrees ' +
         'moram agora numa raiz curta dentro dos dados do app; no macOS nada muda.',
+    },
+  ],
+};
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.108',
+  date: '2026-09-27',
+  codename: 'MiniMax Code',
+  summary:
+    'O MiniMax Code, a CLI oficial mcode, entra como provedor nativo: login, ' +
+    'panes com os modelos oficiais, escolha pelo Jev e cota do Token Plan no ' +
+    'Redline. Inclui a 0.76.107 (abas no Windows).',
+  highlights: [
+    {
+      title: 'MiniMax Code como provedor nativo',
+      detail:
+        'O Nexus detecta, instala e atualiza a CLI mcode, mostra o login e abre ' +
+        'panes com M3, M3.1 Flash Preview, M2.7 Highspeed e M2.7. O Jev pode ' +
+        'escolhê-la e o benchmark roda o modo headless.',
+    },
+    {
+      title: 'Cota do Token Plan no Redline',
+      detail:
+        'Com a Subscription Key da MiniMax, o Redline mostra quanto resta do ' +
+        'Token Plan, consultando a API pública da sua região.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Rota MiniMax via Claude atualizada',
+      detail:
+        'O upstream minimax do launcher usava endpoint e modelo fora de linha; ' +
+        'agora usa os valores oficiais atuais.',
     },
   ],
 };

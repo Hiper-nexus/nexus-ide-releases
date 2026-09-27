@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.108 — MiniMax Code
+
+O MiniMax Code (a CLI oficial `mcode`) entra no Nexus como provedor nativo. Inclui a 0.76.107 (Abas no Windows).
+
+- **MiniMax Code nos Providers, no "+ Pane" e no Jev (F-655).** O Nexus detecta a CLI `mcode`, instala e atualiza com os scripts nativos que ela exige, mostra o login (`mcode login`) e abre panes com os modelos oficiais (M3, M3.1 Flash Preview, M2.7 Highspeed e M2.7). O Jev pode escolhê-la, o benchmark roda o modo headless e o Redline mostra a cota do Token Plan quando há Subscription Key. A rota antiga "MiniMax via Claude" passa a usar o endpoint e o modelo atuais. Limites: sem MCP do Nexus no pane (só via ACP), uma conta por máquina e modelos ainda não avaliados no ranking.
+
 ## 0.76.107 — Abas no Windows
 
 As abas com pasta própria (F-162) também funcionam no Windows. Inclui tudo da 0.76.103 à 0.76.106 (Diff sem confusão, Missão até o fim, Perfil e logins, Navegador em segundo plano). A importação de sessões do Chrome segue só no macOS; no Windows, entre nos sites pelo Perfil Nexus.
