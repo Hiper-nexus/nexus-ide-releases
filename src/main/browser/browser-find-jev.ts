@@ -30,7 +30,9 @@ export const FIND_JEV_MAX_SCORE_GAP = 0.15;
 export const FIND_JEV_MIN_SCORE = 0.5;
 export const FIND_JEV_MIN_CONFIDENCE = 0.7;
 
-const FIND_JEV_TIMEOUT_MS = 4_000;
+// See browser-extract.ts EXTRACT_JUDGE_TIMEOUT_MS: judge() retries once on
+// timeout, so 4s here meant ~8.4s worst case before failing open.
+const FIND_JEV_TIMEOUT_MS = 2_000;
 const FIND_JEV_CRITERIA_CHARS = 256;
 const FIND_JEV_QUERY_CHARS = 200;
 const FIND_JEV_TITLE_CHARS = 256;

@@ -1508,7 +1508,9 @@ async function inlinePageRead(
   });
 }
 
-const BROWSER_JUDGE_TIMEOUT_MS = 4_000;
+// judge() retries once on timeout (jev-client.ts): 4s here meant up to ~8.4s
+// before failing open on this "auto-on, never blocks" read judgment.
+const BROWSER_JUDGE_TIMEOUT_MS = 2_000;
 
 /**
  * §8 Jev page judgment (opt-in): three nouls + a page-kind choice over
