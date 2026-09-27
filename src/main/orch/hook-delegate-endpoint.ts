@@ -15,6 +15,7 @@ import {
 } from './workspace-design-rule';
 import { WORKSPACE_HANDOFF_DELIVERY_PREFIX } from './workspace-handoff-delivery';
 import { OPERATOR_DELEGATION_DOCTRINE } from './operator-delegation-doctrine';
+import { operatorBusinessModelContext } from './operator-business-model';
 
 export const HOOK_DELEGATE_MAX_BODY_BYTES = 64 * 1024;
 
@@ -54,6 +55,7 @@ export const LEAN_CODE_REMINDER =
 const leanRemindedAt = new Map<string, number>();
 const designRemindedAt = new Map<string, number>();
 const doctrineDeliveredAt = new Map<string, number>();
+const businessModelDeliveredAt = new Map<string, number>();
 
 function remindedRecently(ledger: Map<string, number>, sessionId: string, now: number): boolean {
   const last = ledger.get(sessionId);
@@ -78,6 +80,7 @@ export function __resetLeanRemindersForTests(): void {
   leanRemindedAt.clear();
   designRemindedAt.clear();
   doctrineDeliveredAt.clear();
+  businessModelDeliveredAt.clear();
 }
 
 type HookContext = Pick<AgentGateContext, 'role' | 'missionId' | 'sessionId'> &
@@ -137,6 +140,14 @@ export async function handleHookDelegateRequest(
     if (ctx.providerId === 'codex' && ctx.sessionId && !remindedRecently(doctrineDeliveredAt, ctx.sessionId, now)) {
       markReminded(doctrineDeliveredAt, ctx.sessionId, now);
       parts.push(OPERATOR_DELEGATION_DOCTRINE);
+    }
+    // Idem o modelo de negócio do projeto (os demais recebem pelo MCP).
+    if (ctx.sessionId && !remindedRecently(businessModelDeliveredAt, ctx.sessionId, now)) {
+      const businessModel = operatorBusinessModelContext(ctx, 'hook');
+      if (businessModel) {
+        markReminded(businessModelDeliveredAt, ctx.sessionId, now);
+        parts.push(businessModel);
+      }
     }
     if (advice?.delegation) parts.push(formatDelegationContext(advice.delegation));
     if (

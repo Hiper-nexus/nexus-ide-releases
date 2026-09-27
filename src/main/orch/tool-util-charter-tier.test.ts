@@ -35,7 +35,17 @@ vi.mock('../persistence/settings-store', () => ({
   })),
 }));
 
-import { charterTierForWorker, recallsWorkspaceMemory, withHandoffContract } from './tool-util';
+import fs from 'node:fs';
+import { testProjectScope } from './__tests__/scope-fixture';
+import { BUSINESS_MODEL_TARGET_PATH } from '../context/business-model/business-model-contract';
+import { extractBusinessModel } from '../context/business-model/business-model-extract';
+import { createBarbershopRepo, writeFixtureFile } from '../context/business-model/__fixtures__/barbershop';
+import {
+  charterTierForWorker,
+  recallsWorkspaceMemory,
+  withHandoffContract,
+  withProjectContextBlocks,
+} from './tool-util';
 
 const mcpAdapter = { quirks: { nexusMcp: 'opencode' } };
 
@@ -177,5 +187,31 @@ describe('recallsWorkspaceMemory', () => {
   it('no brief, or an internal transient pane, recalls nothing', () => {
     expect(recallsWorkspaceMemory({ missionId: 'm1', role: 'worker' })).toBe(false);
     expect(recallsWorkspaceMemory({ prompt: brief, transient: true })).toBe(false);
+  });
+});
+
+describe('withProjectContextBlocks (brief de spawn de toda CLI)', () => {
+  it('põe <business-model> antes da tarefa; pane transitório e spawn sem brief ficam de fora', () => {
+    const root = createBarbershopRepo();
+    try {
+      writeFixtureFile(root, BUSINESS_MODEL_TARGET_PATH, extractBusinessModel(root)!.proposal.content);
+      const scope = testProjectScope({ rootRealPath: root });
+      const prompt = withProjectContextBlocks({ prompt: 'Mexa no fechamento da comanda', scope })!;
+      expect(prompt.startsWith('<business-model fonte=')).toBe(true);
+      expect(prompt.endsWith('Mexa no fechamento da comanda')).toBe(true);
+      expect(prompt).toContain('close_commanda#1');
+      // Worktree isolado: lê o doc da raiz de execução.
+      expect(
+        withProjectContextBlocks({
+          prompt: 'x',
+          scope: testProjectScope({ rootRealPath: '/nao/existe' }),
+          executionScope: scope,
+        }),
+      ).toContain('<business-model');
+      expect(withProjectContextBlocks({ prompt: 'x', scope, transient: true })).toBe('x');
+      expect(withProjectContextBlocks({ scope })).toBeUndefined();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });

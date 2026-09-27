@@ -1,4 +1,6 @@
 import { withWorkspaceDesignRule } from './workspace-design-rule';
+import { mountPromptContextBlocks } from './prompt-context-blocks';
+import { businessModelContextBlock } from '../context/business-model/business-model-context-block';
 import type { SpawnRouteInfo } from '../../shared/spawn-route';
 import {
   getPaneAuthzInfo,
@@ -1024,6 +1026,19 @@ export function recallsWorkspaceMemory(
   return options.role === undefined && options.transient !== true;
 }
 
+type BriefCandidate = Pick<SpawnToolOptions, 'prompt' | 'transient' | 'scope' | 'executionScope'>;
+
+/**
+ * Blocos de contexto do projeto no brief de TODA CLI (worker, helper,
+ * orquestrador): hoje `<business-model>`; outros blocos entram na mesma lista.
+ * Pane interno transitório (revisor automático) não recebe.
+ */
+export function withProjectContextBlocks(options: BriefCandidate): string | undefined {
+  if (!options.prompt || options.transient === true) return options.prompt;
+  const root = options.executionScope?.rootRealPath ?? options.scope.rootRealPath;
+  return mountPromptContextBlocks(options.prompt, [businessModelContextBlock(root)]);
+}
+
 export interface SpawnToolOptions {
   adapterId: string;
   /** Origem da rota (A, 25/09) exibida no cabeçalho do pane; nunca autoridade. */
@@ -1384,6 +1399,7 @@ export async function spawnPaneAndMaybePrompt(
       ),
     };
   }
+  if (options.prompt) options = { ...options, prompt: withProjectContextBlocks(options) };
   const omitHandoff =
     options.omitHandoffContract === true ||
     options.role === 'orchestrator' ||
