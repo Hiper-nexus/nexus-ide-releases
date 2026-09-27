@@ -15,6 +15,14 @@ import { isOperatorChoicePolicy } from "../../shared/squad-cli-policy";
 import { getOrchSettings } from "../persistence/settings-store";
 import { getContextWorkflowService } from "../context/context-workflow-registry";
 import { snapshotSquadAuthority } from "./squad-authority-snapshot";
+import { isFreeAgentChoiceContract } from "./free-agent-choice";
+
+/**
+ * Missão em modo livre sem squad ("o Jev monta o squad"): o selo amarra a
+ * intenção aprovada + workflow; a metade de squad é esta constante. Missão
+ * COM squad nunca cai aqui — continua exigindo o hash do roster aprovado.
+ */
+export const FREE_MODE_NO_SQUAD_REVISION_HASH = "free-agent-choice:no-squad";
 
 function canonicalJson(value: unknown): string {
   if (value === undefined) return '"<undefined>"';
@@ -62,7 +70,7 @@ function hasPendingMainOwnedStartAuthority(mission: Mission): boolean {
 
 export function createMissionPaneAuthoritySeal(input: {
   readonly mission: Mission;
-  readonly squad: Squad;
+  readonly squad: Squad | null;
   readonly contextRevision?: string;
   readonly contractHash?: string;
 }): MissionPaneAuthoritySeal | null {
@@ -77,14 +85,21 @@ export function createMissionPaneAuthoritySeal(input: {
   ) {
     return null;
   }
-  const squadRevisionHash = snapshotSquadAuthority(squad).hash;
-  if (!mission.squadId || squad.id !== mission.squadId) {
+  if (!squad) {
+    if (mission.squadId || !isFreeAgentChoiceContract(intentContract)) {
+      return null;
+    }
+  } else if (!mission.squadId || squad.id !== mission.squadId) {
     return null;
   }
+  const squadRevisionHash = squad
+    ? snapshotSquadAuthority(squad).hash
+    : FREE_MODE_NO_SQUAD_REVISION_HASH;
   // Hardened: seal dies if the approved squad hash drifted (reapprove).
   // Autopilot libre: bind to the live squad hash so the first pane is not
   // blocked by catalog churn after the operator already approved the mission.
   if (
+    squad &&
     intentContract.squadRevisionHash !== squadRevisionHash &&
     !isOperatorChoicePolicy(getOrchSettings().squadCliPolicy)
   ) {
@@ -106,7 +121,7 @@ export function createMissionPaneAuthoritySeal(input: {
 export function resolveMissionPaneAuthoritySeal(
   scope: Readonly<ProjectExecutionScope>,
   mission: Mission,
-  squad: Squad,
+  squad: Squad | null,
 ): MissionPaneAuthoritySeal | null {
   let contextRevision: string | undefined;
   let contractHash: string | undefined;

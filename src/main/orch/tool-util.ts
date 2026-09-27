@@ -1113,10 +1113,9 @@ function requireMissionPaneAuthoritySeal(options: SpawnToolOptions) {
   const squads = listSquads().filter(
     (candidate) => candidate.id === mission?.squadId,
   );
-  const seal =
-    mission && squads.length === 1
-      ? resolveMissionPaneAuthoritySeal(options.scope, mission, squads[0])
-      : null;
+  const seal = mission
+    ? resolveMissionPaneAuthoritySeal(options.scope, mission, squads.length === 1 ? squads[0] : null)
+    : null;
   const autopilot = isOperatorChoicePolicy(
     getOrchSettings().squadCliPolicy,
   );

@@ -4,6 +4,7 @@ import { compileIntentContract } from "../../shared/mission-intent";
 import type { Mission, Squad } from "../../shared/orch-types";
 import {
   createMissionPaneAuthoritySeal,
+  FREE_MODE_NO_SQUAD_REVISION_HASH,
   sameMissionPaneApprovalSeal,
 } from "./mission-pane-authority";
 import { snapshotSquadAuthority } from "./squad-authority-snapshot";
@@ -118,5 +119,38 @@ describe("mission pane authority", () => {
         expected,
       ),
     ).toBe(false);
+  });
+});
+
+describe("missão livre sem squad (o Jev monta o squad)", () => {
+  function freeMission(overrides: Partial<Mission> = {}): Mission {
+    const mission = approvedMission();
+    return {
+      ...mission,
+      squadId: undefined,
+      intentContract: { ...mission.intentContract!, freeAgentChoice: true, squadRevisionHash: undefined },
+      ...overrides,
+    };
+  }
+
+  it("sela a missão livre sem squad e ainda revoga quando a intenção muda", () => {
+    const mission = freeMission();
+    const seal = createMissionPaneAuthoritySeal({ mission, squad: null });
+    expect(seal?.squadRevisionHash).toBe(FREE_MODE_NO_SQUAD_REVISION_HASH);
+    const changed = createMissionPaneAuthoritySeal({
+      mission: { ...mission, intentContract: { ...mission.intentContract!, goal: "Outro objetivo" } },
+      squad: null,
+    });
+    expect(sameMissionPaneApprovalSeal(changed, seal)).toBe(false);
+  });
+
+  it("sem modo livre, ou com squad declarado mas ausente, continua sem selo", () => {
+    const mission = freeMission();
+    expect(createMissionPaneAuthoritySeal({
+      mission: { ...mission, intentContract: { ...mission.intentContract!, freeAgentChoice: undefined } },
+      squad: null,
+    })).toBeNull();
+    expect(createMissionPaneAuthoritySeal({ mission: { ...mission, squadId: squad.id }, squad: null })).toBeNull();
+    expect(createMissionPaneAuthoritySeal({ mission: approvedMission(), squad: null })).toBeNull();
   });
 });

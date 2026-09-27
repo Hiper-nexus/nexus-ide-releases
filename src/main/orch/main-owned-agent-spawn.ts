@@ -341,14 +341,13 @@ function assertCurrentPersistedPaneAuthority(
   const squads = listSquads().filter(
     (candidate) => candidate.id === targetSquadId,
   );
-  const currentSeal =
-    mission && squads.length === 1
-      ? resolveMissionPaneAuthoritySeal(
-          persisted.scope,
-          mission,
-          squads[0],
-        )
-      : null;
+  const currentSeal = mission
+    ? resolveMissionPaneAuthoritySeal(
+        persisted.scope,
+        mission,
+        mission.squadId && squads.length === 1 ? squads[0] : null,
+      )
+    : null;
   if (sameMissionPaneAuthoritySeal(persisted.authoritySeal, currentSeal)) {
     return persisted;
   }
@@ -372,7 +371,7 @@ function assertCurrentPersistedPaneAuthority(
     ? "missão ausente no store"
     : mission.status !== "running"
       ? `status=${mission.status}/${mission.intentState ?? "?"} — missão precisa estar running`
-      : squads.length !== 1
+      : mission.squadId && squads.length !== 1
         ? `squad '${mission.squadId ?? targetSquadId ?? "?"}' indisponível`
         : !currentSeal
           ? `seal atual nulo (status=${mission.status}/${mission.intentState ?? "?"} — missão precisa estar running)`
