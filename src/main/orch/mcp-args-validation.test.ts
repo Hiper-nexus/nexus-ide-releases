@@ -145,6 +145,36 @@ describe('browser MCP argument validation', () => {
       }),
     ).toThrow();
   });
+
+  it('accepts description as a hint synonym without keeping both keys', () => {
+    expect(
+      validateToolArgs('nexus_browser_extract', {
+        paneId: 'browser-1',
+        fields: [{ name: 'presidente', type: 'string', description: 'chefe de estado' }],
+      }),
+    ).toEqual({
+      paneId: 'browser-1',
+      fields: [{ name: 'presidente', type: 'string', hint: 'chefe de estado' }],
+    });
+    // hint wins when both are present.
+    expect(
+      validateToolArgs('nexus_browser_extract', {
+        paneId: 'browser-1',
+        fields: [
+          { name: 'presidente', type: 'string', hint: 'certo', description: 'ignorado' },
+        ],
+      }),
+    ).toEqual({
+      paneId: 'browser-1',
+      fields: [{ name: 'presidente', type: 'string', hint: 'certo' }],
+    });
+    expect(() =>
+      validateToolArgs('nexus_browser_extract', {
+        paneId: 'browser-1',
+        fields: [{ name: 'x', type: 'string', unexpectedKey: 'nope' }],
+      }),
+    ).toThrow();
+  });
 });
 
 describe('Nexus UI MCP argument validation', () => {

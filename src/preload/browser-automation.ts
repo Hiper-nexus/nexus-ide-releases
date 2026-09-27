@@ -43,6 +43,11 @@ const MAX_DOM_NODES = 50_000;
 const MAX_LIVE_REFS = 2_000;
 const MAX_FILL_CHARS = 8_192;
 const MAX_WAIT_MS = 15_000;
+// Input types that render as buttons/checkboxes/pickers rather than free
+// text — `descriptor.editable` must never be true for these.
+const NON_EDITABLE_INPUT_TYPES = new Set([
+  'button', 'submit', 'reset', 'image', 'checkbox', 'radio', 'range', 'color', 'file',
+]);
 const MAX_SCROLL_OFFSET = 100_000;
 
 /** Named keyboard keys accepted by `press` (KeyboardEvent.key values). */
@@ -377,7 +382,7 @@ export function createBrowserAutomation(
       descriptor.checked = (element as HTMLInputElement).checked;
     }
     if (
-      tag === 'input' ||
+      (tag === 'input' && !NON_EDITABLE_INPUT_TYPES.has(type)) ||
       tag === 'textarea' ||
       element.getAttribute('contenteditable') === 'true'
     ) {

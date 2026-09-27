@@ -125,6 +125,25 @@ const scope: ProjectExecutionScope = {
 
 const context = { role: 'orchestrator', scope } as never;
 
+describe('nexus_browser_extract MCP schema', () => {
+  it('publishes a full JSON Schema for fields items, not a bare array', () => {
+    const tool = buildBrowserTools().find(
+      (item) => item.name === 'nexus_browser_extract',
+    )!;
+    const properties = tool.inputSchema.properties as Record<string, unknown>;
+    const fields = properties.fields as {
+      type: string;
+      items?: { type: string; properties?: Record<string, unknown>; required?: string[] };
+    };
+    expect(fields.items).toBeDefined();
+    expect(fields.items!.type).toBe('object');
+    expect(fields.items!.required).toEqual(['name', 'type']);
+    expect(fields.items!.properties).toHaveProperty('enum');
+    expect(fields.items!.properties).toHaveProperty('hint');
+    expect(fields.items!.properties).toHaveProperty('description');
+  });
+});
+
 describe('preview tool workspace confinement', () => {
   beforeEach(() => {
     vi.clearAllMocks();

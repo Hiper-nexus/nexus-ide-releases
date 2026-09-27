@@ -115,6 +115,31 @@ describe('isolated browser automation', () => {
     await expect(automation.run('click', { ref: '#save' })).rejects.toThrow(/reference/);
   });
 
+  it('never marks buttons, checkboxes or radios as editable', async () => {
+    const dom = new JSDOM(
+      `<!doctype html>
+        <html><body>
+          <input type="submit" value="Buscar">
+          <input type="checkbox" id="aceite">
+          <input type="radio" name="opcao" value="a">
+          <input type="text" id="nome">
+        </body></html>`,
+      { url: 'https://example.test/formulario', pretendToBeVisual: true },
+    );
+    const automation = createBrowserAutomation(dom.window as unknown as BrowserDomWindow);
+    const read = (await automation.run('read', {})) as {
+      elements: Array<{ inputType?: string; editable?: boolean }>;
+    };
+    const submit = read.elements.find((element) => element.inputType === 'submit');
+    const checkbox = read.elements.find((element) => element.inputType === 'checkbox');
+    const radio = read.elements.find((element) => element.inputType === 'radio');
+    const text = read.elements.find((element) => element.inputType === 'text');
+    expect(submit?.editable).toBeUndefined();
+    expect(checkbox?.editable).toBeUndefined();
+    expect(radio?.editable).toBeUndefined();
+    expect(text?.editable).toBe(true);
+  });
+
   it('refuses password and sensitive fields even when the ref is valid', async () => {
     const { automation } = fixture();
     const read = (await automation.run('read', {})) as {

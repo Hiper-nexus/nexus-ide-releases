@@ -380,7 +380,37 @@ const browserExtractTool: McpToolDef = {
     type: 'object',
     properties: {
       paneId: { type: 'string' },
-      fields: { type: 'array' },
+      fields: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 20,
+        items: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: 'Field key; ≤64 chars.' },
+            type: {
+              type: 'string',
+              enum: ['string', 'number', 'boolean', 'date', 'enum'],
+            },
+            enum: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'Required options when type is "enum".',
+            },
+            hint: {
+              type: 'string',
+              description:
+                'Short disambiguation hint (also accepted as `description`).',
+            },
+            description: {
+              type: 'string',
+              description: 'Synonym for `hint`.',
+            },
+          },
+          required: ['name', 'type'],
+          additionalProperties: false,
+        },
+      },
     },
     required: ['paneId', 'fields'],
   },
