@@ -12,7 +12,7 @@ import {
 import { canonicalJson } from './canonical-json';
 import type { ContextSourceType } from './context-types';
 
-const ATTESTATION_ROOT = '.context/nexus/attestations';
+export const ATTESTATION_ROOT = '.context/nexus/attestations';
 const MAX_ATTESTATIONS = 4_096;
 const MAX_ATTESTATION_BYTES = 1024 * 1024;
 const HASH_PATTERN = /^[a-f0-9]{64}$/;

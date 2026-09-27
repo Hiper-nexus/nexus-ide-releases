@@ -312,7 +312,17 @@ function hintFor(result: Omit<ContextBootstrapAutopilotResult, 'autopilotHint'>)
     : design.status === 'applied' && design.hint
       ? `${design.hint} `
       : `${design.message} `;
-  return `${lead}${structuralHintFor(result)}`;
+  return `${lead}${structuralHintFor(result)}${businessModelHintFor(result.businessModel)}`;
+}
+
+/**
+ * O ramo do modelo de negócio só fala quando o agente precisa agir: falhou,
+ * foi rejeitado ou ficou adiado. Aplicado/em dia/sem fonte é silencioso.
+ */
+function businessModelHintFor(outcome: BusinessModelBootstrapOutcome | null): string {
+  if (!outcome || outcome.status === 'applied' || outcome.status === 'up-to-date') return '';
+  if (outcome.status === 'skipped' && outcome.flows === 0 && outcome.invariants === 0) return '';
+  return ` Business model (${outcome.targetPath}) ${outcome.status}: ${outcome.message}`;
 }
 
 function structuralHintFor(
@@ -321,7 +331,8 @@ function structuralHintFor(
   if (result.blockingError) {
     return (
       `Workflow binding blocked: ${result.blockingError}. ` +
-      'Use delegated workers in `same_checkout` mode, one writer at a time. ' +
+      'Delegate writers in isolated worktrees (`isolated_worktree`): parallel writers are fine, ' +
+      'each on its own worktree and branch, merged through the queue. ' +
       'Do not ask the user to stash, reset, clean, or switch branches.'
     );
   }
@@ -680,14 +691,14 @@ export async function runContextBootstrapAutopilot(
   throwIfBootstrapAborted(options.signal);
   const businessModel = options.businessModel === null
     ? null
-    : runBusinessModelBootstrap({
+    : await runBusinessModelBootstrap({
         scope: options.scope,
         knowledge,
         extract: options.businessModel?.extract,
       });
   const businessModelOwnsTarget =
     businessModel !== null &&
-    ['applied', 'up-to-date', 'proposed'].includes(businessModel.status);
+    ['applied', 'up-to-date'].includes(businessModel.status);
 
   // DESIGN BRANCH. Resolved before the readiness fast-path on purpose: a
   // project can have a perfectly green context corpus and still have no design

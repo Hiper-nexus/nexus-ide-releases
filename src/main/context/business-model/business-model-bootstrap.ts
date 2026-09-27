@@ -1,11 +1,11 @@
-import { createHash } from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
 import type { ProjectExecutionScope } from '../../../shared/types';
-import { resolveProjectExecutionScopeCached } from '../../persistence/project-identity';
 import type { ContextKnowledgeService } from '../context-knowledge-service';
-import { getContextKnowledgeService } from '../context-workflow-registry';
-import { BUSINESS_MODEL_TARGET_PATH } from './business-model-contract';
+import {
+  BUSINESS_MODEL_EXTRACTOR_ID,
+  BUSINESS_MODEL_TARGET_PATH,
+  findBusinessModelAttestation,
+  readBusinessModelTarget,
+} from './business-model-contract';
 import {
   BUSINESS_MODEL_MARKER_LINE,
   extractBusinessModel,
@@ -21,7 +21,7 @@ import {
  */
 
 export const BUSINESS_MODEL_EXTRACTOR = Object.freeze({
-  id: 'nexus-business-model-extractor',
+  id: BUSINESS_MODEL_EXTRACTOR_ID,
   sessionId: 'deterministic-extract-v1',
   provider: 'nexus-extractor',
 });
@@ -31,27 +31,24 @@ const BUSINESS_MODEL_MECHANICAL_REVIEWER = Object.freeze({
   provider: 'nexus-mechanical-review',
 });
 
-/** Cabeçalhos dos docs que o próprio bootstrap já gerava: podem ser substituídos. */
+/**
+ * Cabeçalhos dos docs que o próprio bootstrap já gerava sem conteúdo real: podem
+ * ser substituídos. A cópia source-bound do PRODUCT.md NÃO entra: é contexto de
+ * produto revisado (clientes, preço, tenancy) que o modelo extraído não repõe.
+ */
 const REPLACEABLE_HEADERS = [
   BUSINESS_MODEL_MARKER_LINE,
-  '> Source-bound product context copied from',
   '> Auto-proposed skeleton from orientation',
 ];
 
 export type BusinessModelKnowledge = Pick<
   ContextKnowledgeService,
-  'list' | 'get' | 'propose' | 'review' | 'apply'
+  'get' | 'propose' | 'review' | 'apply' | 'activeForTarget' | 'supersedeActiveForTarget'
 >;
 
 export interface BusinessModelBootstrapOutcome {
   readonly targetPath: string;
-  readonly status:
-    | 'applied'
-    | 'up-to-date'
-    | 'proposed'
-    | 'rejected'
-    | 'skipped'
-    | 'failed';
+  readonly status: 'applied' | 'up-to-date' | 'rejected' | 'skipped' | 'failed';
   readonly draftId: string | null;
   readonly flows: number;
   readonly invariants: number;
@@ -63,7 +60,10 @@ export interface BusinessModelBootstrapInput {
   readonly knowledge: BusinessModelKnowledge;
   readonly missionId?: string | null;
   /** Seam de teste: extração (a revisão chama com `fresh: true`). */
-  readonly extract?: (root: string, options: { fresh?: boolean }) => BusinessModelExtraction | null;
+  readonly extract?: (
+    root: string,
+    options: { fresh?: boolean },
+  ) => Promise<BusinessModelExtraction | null> | BusinessModelExtraction | null;
 }
 
 function outcome(
@@ -82,81 +82,89 @@ function outcome(
   });
 }
 
-function readTarget(root: string): { content: string; hash: string } | null {
-  try {
-    const absolute = path.join(root, BUSINESS_MODEL_TARGET_PATH);
-    const stat = fs.lstatSync(absolute);
-    if (!stat.isFile() || stat.isSymbolicLink()) return null;
-    const bytes = fs.readFileSync(absolute);
-    return {
-      content: bytes.toString('utf8'),
-      hash: createHash('sha256').update(bytes).digest('hex'),
-    };
-  } catch {
-    return null;
-  }
+function sameSources(
+  left: readonly { locator: string; sourceHash: string }[],
+  right: readonly { locator: string; sourceHash: string }[],
+): boolean {
+  return left.length === right.length &&
+    left.every((source, index) =>
+      source.locator === right[index]?.locator &&
+      source.sourceHash === right[index]?.sourceHash);
 }
 
 function sameProposal(
   left: BusinessModelExtraction['proposal'],
   right: { content: string; sources: readonly { locator: string; sourceHash: string }[] },
 ): boolean {
-  return left.content === right.content &&
-    left.sources.length === right.sources.length &&
-    left.sources.every((source, index) =>
-      source.locator === right.sources[index]?.locator &&
-      source.sourceHash === right.sources[index]?.sourceHash);
+  return left.content === right.content && sameSources(left.sources, right.sources);
 }
 
-export function runBusinessModelBootstrap(
+export async function runBusinessModelBootstrap(
   input: BusinessModelBootstrapInput,
-): BusinessModelBootstrapOutcome {
+): Promise<BusinessModelBootstrapOutcome> {
   const root = input.scope.rootRealPath;
   const extract = input.extract ?? ((dir, options) => extractBusinessModel(dir, options));
   let extraction: BusinessModelExtraction | null = null;
   try {
-    extraction = extract(root, {});
+    extraction = await extract(root, {});
     if (!extraction) {
       return outcome('skipped', 'Sem fontes versionadas de regra de negócio (SQL com fluxo, AGENTS.md, specs) para extrair.', null);
     }
-    const { proposal } = extraction;
-    const current = readTarget(root);
-    if (current?.content === proposal.content) {
-      return outcome('up-to-date', 'Modelo de negócio em dia com as fontes.', extraction);
-    }
-    if (current && !REPLACEABLE_HEADERS.some((header) => current.content.includes(header))) {
+    if (extraction.pendingSources.length > 0) {
+      // Sem essas fontes o modelo sairia "completo" sem fluxos/testes/chamadores
+      // que o portão de regressão precisa: adia e mantém o doc anterior.
+      const shown = extraction.pendingSources.slice(0, 5).join(', ');
+      const more = extraction.pendingSources.length > 5 ? ` e mais ${extraction.pendingSources.length - 5}` : '';
       return outcome(
         'skipped',
-        `${BUSINESS_MODEL_TARGET_PATH} foi escrito à mão; o Nexus não o sobrescreve. Renomeie-o para receber o modelo extraído.`,
+        `Modelo de negócio adiado: fonte(s) do modelo com alteração local não commitada (${shown}${more}). ` +
+          'O modelo anterior fica valendo até elas serem commitadas.',
         extraction,
       );
     }
-    const active = [
-      ...input.knowledge.list({ status: 'proposed' }),
-      ...input.knowledge.list({ status: 'approved' }),
-    ].find((draft) => draft.targetPath === BUSINESS_MODEL_TARGET_PATH);
-    let draftId: string;
-    if (active) {
-      if (active.author.id !== BUSINESS_MODEL_EXTRACTOR.id || !sameProposal(proposal, active)) {
-        return outcome('skipped', 'Outro draft ativo já ocupa o modelo de negócio; o Nexus não disputa o alvo.', extraction);
+    const { proposal } = extraction;
+    const current = readBusinessModelTarget(input.scope);
+    if (current?.content === proposal.content) {
+      // Mesmo texto não basta: a atestação precisa citar as fontes ATUAIS
+      // (um comentário novo na migration muda o hash sem mudar o doc).
+      const attestation = findBusinessModelAttestation(input.scope, current.hash);
+      if (attestation && sameSources(attestation.sources, proposal.sources)) {
+        return outcome('up-to-date', 'Modelo de negócio em dia com as fontes.', extraction);
       }
-      draftId = active.id;
-    } else {
-      draftId = input.knowledge.propose(
-        {
-          missionId: input.missionId ?? null,
-          targetPath: proposal.targetPath,
-          content: proposal.content,
-          expectedTargetHash: current?.hash ?? null,
-          sources: proposal.sources,
-        },
-        BUSINESS_MODEL_EXTRACTOR,
-      ).id;
+    } else if (current && !REPLACEABLE_HEADERS.some((header) => current.content.includes(header))) {
+      return outcome(
+        'skipped',
+        `${BUSINESS_MODEL_TARGET_PATH} foi escrito à mão (ou copiado do PRODUCT.md); o Nexus não o sobrescreve. ` +
+          'Renomeie-o para receber o modelo extraído.',
+        extraction,
+      );
     }
+    let active = input.knowledge.activeForTarget(BUSINESS_MODEL_TARGET_PATH);
+    if (active && active.author.id !== BUSINESS_MODEL_EXTRACTOR.id) {
+      return outcome('skipped', 'Outro draft ativo já ocupa o modelo de negócio; o Nexus não disputa o alvo.', extraction);
+    }
+    if (active && !sameProposal(proposal, active)) {
+      // Draft do próprio extrator que ficou para trás (apply falhou, fontes
+      // mudaram): sem superá-lo o alvo ficaria travado para sempre.
+      input.knowledge.supersedeActiveForTarget(BUSINESS_MODEL_TARGET_PATH);
+      active = null;
+    }
+    const draftId = active
+      ? active.id
+      : input.knowledge.propose(
+          {
+            missionId: input.missionId ?? null,
+            targetPath: proposal.targetPath,
+            content: proposal.content,
+            expectedTargetHash: current?.hash ?? null,
+            sources: proposal.sources,
+          },
+          BUSINESS_MODEL_EXTRACTOR,
+        ).id;
     const draft = input.knowledge.get(draftId);
     if (draft?.status === 'proposed') {
       // Revisão independente: re-deriva do zero e exige os mesmos bytes e fontes.
-      const reDerived = extract(root, { fresh: true });
+      const reDerived = await extract(root, { fresh: true });
       if (!reDerived || !sameProposal(reDerived.proposal, draft)) {
         input.knowledge.review(draftId, {
           decision: 'reject',
@@ -182,19 +190,5 @@ export function runBusinessModelBootstrap(
     );
   } catch (error) {
     return outcome('failed', error instanceof Error ? error.message : String(error), extraction);
-  }
-}
-
-/** Chamado por `business-model-refresh` depois de confirmar `.context/docs`. */
-export function refreshBusinessModelForWorkspace(workspacePath: string): void {
-  try {
-    const scope = resolveProjectExecutionScopeCached(workspacePath);
-    const result = runBusinessModelBootstrap({
-      scope,
-      knowledge: getContextKnowledgeService(scope),
-    });
-    if (result.status === 'failed') console.warn('[business-model] refresh failed:', result.message);
-  } catch (error) {
-    console.warn('[business-model] refresh unavailable:', error instanceof Error ? error.message : String(error));
   }
 }

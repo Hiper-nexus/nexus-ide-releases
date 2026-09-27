@@ -1,5 +1,14 @@
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import type { ProjectExecutionScope } from '../../../shared/types';
+import { openWorkspaceFileForRead, readWorkspaceTextFile } from '../../orch/workspace-file';
+import { resolveProjectExecutionScopeCached } from '../../persistence/project-identity';
+import {
+  ATTESTATION_ROOT,
+  parseContextAttestation,
+  type ContextAttestation,
+} from '../context-attestation';
 
 /**
  * CONTRATO do modelo de negócio do projeto (`.context/docs/business-model.md`).
@@ -10,11 +19,20 @@ import path from 'node:path';
  * depois de `BUSINESS_MODEL_JSON_MARKER`; é esse bloco que este módulo lê.
  * Consumidores: o bloco `<business-model>` do brief/primeiro prompt e o portão
  * de regressão (que cruza arquivos alterados com `arquivos`/`testes`).
+ *
+ * Só vale o doc REVISADO: os bytes em disco precisam ter uma atestação deste
+ * projeto, de autoria do extrator Nexus, para exatamente esse hash. Um doc
+ * editado à mão ou plantado por um worker (mesmo com marcador e JSON válidos)
+ * não vira instrução de nenhum pane. A leitura é escopada ao projeto: symlink
+ * em qualquer componente do caminho (`.context`, `.context/docs`) é recusado.
  */
 
 export const BUSINESS_MODEL_TARGET_PATH = '.context/docs/business-model.md';
 export const BUSINESS_MODEL_JSON_MARKER = '<!-- nexus:business-model:v1 -->';
+/** Autor (extrator) das atestações que o contrato aceita. */
+export const BUSINESS_MODEL_EXTRACTOR_ID = 'nexus-business-model-extractor';
 const MAX_DOC_BYTES = 1024 * 1024;
+const MAX_ATTESTATION_BYTES = 1024 * 1024;
 
 export interface BusinessInvariant {
   /** Estável enquanto a regra não muda de posição dentro do fluxo. */
@@ -138,25 +156,91 @@ export function parseBusinessModelDocument(content: string): BusinessModelDocume
   });
 }
 
+function scopeFor(target: ProjectExecutionScope | string): ProjectExecutionScope {
+  return typeof target === 'string' ? resolveProjectExecutionScopeCached(target) : target;
+}
+
 /**
- * Lê o doc aplicado do projeto. Ausente, symlink, grande demais ou sem bloco
- * estruturado → null. Nunca lança: quem consome é spawn/portão, que seguem
- * sem modelo em vez de quebrar.
+ * Atestação do extrator que vincula `targetHash` ao doc do modelo neste
+ * projeto. Não re-hasheia as fontes: um doc revisado continua valendo quando
+ * uma fonte muda depois (o autopilot re-extrai); o que não vale é doc sem revisão.
  */
-export function readBusinessModelDocument(projectRoot: string): BusinessModelDocument | null {
+export function findBusinessModelAttestation(
+  scope: ProjectExecutionScope,
+  targetHash: string,
+): ContextAttestation | null {
+  let names: string[];
   try {
-    const absolute = path.join(projectRoot, BUSINESS_MODEL_TARGET_PATH);
-    const stat = fs.lstatSync(absolute);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_DOC_BYTES) return null;
-    return parseBusinessModelDocument(fs.readFileSync(absolute, 'utf8'));
+    names = fs.readdirSync(path.join(scope.rootRealPath, ATTESTATION_ROOT)).filter((name) => name.endsWith('.json')).sort();
+  } catch {
+    return null;
+  }
+  for (const name of names) {
+    try {
+      const read = readWorkspaceTextFile(scope, `${ATTESTATION_ROOT}/${name}`);
+      if (read.size > MAX_ATTESTATION_BYTES) continue;
+      const attestation = parseContextAttestation(JSON.parse(read.content) as unknown);
+      if (
+        name === `${attestation.id}.json` &&
+        attestation.projectId === scope.projectId &&
+        attestation.targetPath === BUSINESS_MODEL_TARGET_PATH &&
+        attestation.targetHash === targetHash &&
+        attestation.author.id === BUSINESS_MODEL_EXTRACTOR_ID
+      ) {
+        return attestation;
+      }
+    } catch {
+      // Atestação ilegível/inválida não concede nada.
+    }
+  }
+  return null;
+}
+
+/** Bytes do doc lidos pelo escopo do projeto (sem seguir symlink em nenhum componente). */
+export function readBusinessModelTarget(
+  scope: ProjectExecutionScope,
+): { content: string; hash: string } | null {
+  try {
+    const handle = openWorkspaceFileForRead(scope, BUSINESS_MODEL_TARGET_PATH);
+    try {
+      if (handle.stat.size > MAX_DOC_BYTES) return null;
+      const bytes = fs.readFileSync(handle.fd);
+      return {
+        content: bytes.toString('utf8'),
+        hash: createHash('sha256').update(bytes).digest('hex'),
+      };
+    } finally {
+      handle.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Lê o doc REVISADO do projeto. Ausente, fora do escopo, grande demais, sem
+ * bloco estruturado ou sem atestação do extrator para estes bytes → null.
+ * Nunca lança: quem consome é spawn/portão, que seguem sem modelo em vez de
+ * quebrar. Aceita a raiz (resolve o escopo) ou o escopo já resolvido.
+ */
+export function readBusinessModelDocument(
+  target: ProjectExecutionScope | string,
+): BusinessModelDocument | null {
+  try {
+    const scope = scopeFor(target);
+    const doc = readBusinessModelTarget(scope);
+    if (!doc || !findBusinessModelAttestation(scope, doc.hash)) return null;
+    return parseBusinessModelDocument(doc.content);
   } catch {
     return null;
   }
 }
 
 /** Invariantes estruturados do projeto ({id, fluxo, regra, arquivos, tabelas, funcoes, testes}). */
-export function readBusinessModelInvariants(projectRoot: string): readonly BusinessInvariant[] {
-  return readBusinessModelDocument(projectRoot)?.invariants ?? Object.freeze([]);
+export function readBusinessModelInvariants(
+  target: ProjectExecutionScope | string,
+): readonly BusinessInvariant[] {
+  return readBusinessModelDocument(target)?.invariants ?? Object.freeze([]);
 }
 
 /**

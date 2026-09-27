@@ -52,6 +52,8 @@ vi.mock('./context-workflow-registry', () => ({
     review: mocks.review,
     apply: mocks.apply,
     commitApplied: mocks.commitApplied,
+    activeForTarget: () => null,
+    supersedeActiveForTarget: () => null,
   }),
 }));
 
@@ -345,7 +347,7 @@ describe('runContextBootstrapAutopilot', () => {
     expect(mocks.propose).not.toHaveBeenCalled();
   });
 
-  it('reports dirty workflow binding as blocked and routes to same-checkout delegation', async () => {
+  it('reports dirty workflow binding as blocked and routes to parallel isolated-worktree writers', async () => {
     const ready: ContextReadinessReport = Object.freeze({
       ready: true,
       blockers: Object.freeze([]),
@@ -366,7 +368,9 @@ describe('runContextBootstrapAutopilot', () => {
 
     expect(result.phase).toBe('blocked');
     expect(result.blockingError).toMatch(/clean committed checkout/i);
-    expect(result.autopilotHint).toMatch(/same_checkout/i);
+    expect(result.autopilotHint).toMatch(/isolated_worktree/);
+    expect(result.autopilotHint).toMatch(/parallel writers/i);
+    expect(result.autopilotHint).not.toMatch(/one writer at a time/i);
     expect(result.autopilotHint).toMatch(/do not ask.*stash/i);
   });
 
@@ -841,6 +845,7 @@ describe('runContextBootstrapAutopilot', () => {
       fingerprint: 'f',
       document: { schemaVersion: 1 as const, flows: [], invariants: [] },
       proposal: extracted,
+      pendingSources: [],
     };
     const businessDraft = Object.freeze({
       ...draft('bm-1', 'proposed'),
@@ -875,5 +880,23 @@ describe('runContextBootstrapAutopilot', () => {
     expect(mocks.propose.mock.calls[0]![0]).toMatchObject({ content: extracted.content });
     expect(result.bootstrapProposals.map((item) => item.targetPath))
       .not.toContain('.context/docs/business-model.md');
+  });
+
+  it('modelo de negócio que falha chega ao hint (não é engolido)', async () => {
+    const result = await runContextBootstrapAutopilot({
+      scope,
+      author,
+      autoCommit: false,
+      createReviewer: () => ({ run: mocks.reviewerRun }),
+      businessModel: {
+        extract: () => {
+          throw new Error('context attestation tree is not ready: drift em outro doc');
+        },
+      },
+    });
+    expect(result.businessModel?.status).toBe('failed');
+    expect(result.autopilotHint).toContain(
+      'Business model (.context/docs/business-model.md) failed: context attestation tree is not ready',
+    );
   });
 });

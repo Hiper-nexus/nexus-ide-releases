@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ProcessGitRunner, type GitRunner } from '../../runtime/git-command';
+import { AsyncProcessGitRunner, type AsyncGitRunner } from '../../runtime/git-command';
 import { isSafeBootstrapSourceLocator } from '../orientation/orientation-bootstrap-context';
 import type { BootstrapDocProposal } from '../orientation/orientation-bootstrap-types';
 import {
@@ -24,7 +24,12 @@ import {
  *  - testes e código: arquivos que citam a função (`rpc('fn')`, nome no teste).
  *
  * Só arquivos rastreados e sem alteração local entram: o commit do `.context`
- * exige cada fonte commitada no HEAD com o hash atestado.
+ * exige cada fonte commitada no HEAD com o hash atestado. Fonte relevante com
+ * alteração local vai para `pendingSources` (o bootstrap adia em vez de
+ * publicar um modelo que parece completo sem ela).
+ *
+ * Roda no processo main: git assíncrono e leitura de arquivo com `await`, então
+ * a varredura cede o event loop a cada arquivo (IPC/PTY seguem atendidos).
  */
 
 export const BUSINESS_MODEL_MARKER_LINE =
@@ -97,6 +102,8 @@ export interface BusinessModelExtraction {
   readonly fingerprint: string;
   readonly document: BusinessModelDocument;
   readonly proposal: BootstrapDocProposal;
+  /** Fontes relevantes (SQL, regra, código/teste que cita um fluxo) com alteração local. */
+  readonly pendingSources: readonly string[];
 }
 
 function normalizeName(raw: string): string {
@@ -121,8 +128,9 @@ function lineIndex(text: string): (offset: number) => number {
   };
 }
 
+/** Uma linha só, sem caractere de controle (ESC/BEL cru da fonte derrubaria o prompt do PTY). */
 function collapse(text: string, max = MAX_RULE_CHARS): string {
-  const flat = text.replace(/\s+/g, ' ').trim();
+  const flat = text.replace(/[\s\u0000-\u001f\u007f-\u009f]+/g, ' ').trim();
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
 
@@ -174,6 +182,13 @@ function parseSqlFiles(files: readonly { path: string; text: string }[]): SqlMod
   for (const file of files) {
     const { text } = file;
     const lineOf = lineIndex(text);
+    // Cada CREATE/DROP vira um evento no seu offset e os eventos são aplicados
+    // na ordem do arquivo: `DROP TRIGGER IF EXISTS x; CREATE TRIGGER x` (e o
+    // mesmo com constraint/função) termina com o objeto vigente, não apagado.
+    const events: { offset: number; apply: () => void }[] = [];
+    const at = (offset: number, apply: () => void): void => {
+      events.push({ offset, apply });
+    };
     const fnHeader = new RegExp(String.raw`\bcreate\s+(?:or\s+replace\s+)?function\s+${NAME}\s*\(`, 'gi');
     for (const match of text.matchAll(fnHeader)) {
       const name = normalizeName(match[1]!);
@@ -187,32 +202,32 @@ function parseSqlFiles(files: readonly { path: string; text: string }[]): SqlMod
         raises.push({ line: lineOf(body.start + raise.index), message });
       }
       // Ordem das migrations: a última definição é a vigente.
-      functions.set(name, Object.freeze({
+      const fn = Object.freeze({
         name,
         file: file.path,
         line: lineOf(match.index),
         writes: collectNames(source, writes, known),
         reads: collectNames(source, reads, known),
         raises: Object.freeze(raises),
-      }));
+      });
+      at(match.index, () => functions.set(name, fn));
     }
     const dropFn = new RegExp(String.raw`\bdrop\s+function\s+(?:if\s+exists\s+)?${NAME}`, 'gi');
     for (const match of text.matchAll(dropFn)) {
       const name = normalizeName(match[1]!);
-      const current = functions.get(name);
-      if (current && current.file === file.path && current.line > lineOf(match.index)) continue;
-      functions.delete(name);
+      at(match.index, () => functions.delete(name));
     }
+    const setConstraint = (offset: number, constraint: SqlConstraint): void =>
+      at(offset, () => constraints.set(constraint.key, constraint));
     const alter = new RegExp(
       String.raw`\balter\s+table\s+(?:if\s+exists\s+)?(?:only\s+)?${NAME}\s+add\s+constraint\s+("?\w+"?)\s+(check|unique|exclude)\b`,
       'gi',
     );
     for (const match of text.matchAll(alter)) {
       const table = normalizeName(match[1]!);
-      const key = `${table}.${match[2]!.replaceAll('"', '').toLowerCase()}`;
-      constraints.set(key, Object.freeze({
+      setConstraint(match.index, Object.freeze({
         table,
-        key,
+        key: `${table}.${match[2]!.replaceAll('"', '').toLowerCase()}`,
         file: file.path,
         line: lineOf(match.index),
         text: statementAt(text, match.index),
@@ -223,7 +238,8 @@ function parseSqlFiles(files: readonly { path: string; text: string }[]): SqlMod
       'gi',
     );
     for (const match of text.matchAll(dropConstraint)) {
-      constraints.delete(`${normalizeName(match[1]!)}.${match[2]!.replaceAll('"', '').toLowerCase()}`);
+      const key = `${normalizeName(match[1]!)}.${match[2]!.replaceAll('"', '').toLowerCase()}`;
+      at(match.index, () => constraints.delete(key));
     }
     const uniqueIndex = new RegExp(
       String.raw`\bcreate\s+unique\s+index\s+(?:concurrently\s+)?(?:if\s+not\s+exists\s+)?("?\w+"?)\s+on\s+(?:only\s+)?${NAME}`,
@@ -231,10 +247,9 @@ function parseSqlFiles(files: readonly { path: string; text: string }[]): SqlMod
     );
     for (const match of text.matchAll(uniqueIndex)) {
       const table = normalizeName(match[2]!);
-      const key = `${table}.${match[1]!.replaceAll('"', '').toLowerCase()}`;
-      constraints.set(key, Object.freeze({
+      setConstraint(match.index, Object.freeze({
         table,
-        key,
+        key: `${table}.${match[1]!.replaceAll('"', '').toLowerCase()}`,
         file: file.path,
         line: lineOf(match.index),
         text: statementAt(text, match.index),
@@ -257,10 +272,9 @@ function parseSqlFiles(files: readonly { path: string; text: string }[]): SqlMod
       for (const rawLine of block.split('\n')) {
         if (/\b(check\s*\(|unique\b)/i.test(rawLine)) {
           const text2 = collapse(rawLine.replace(/,\s*$/, ''));
-          const key = `${table}#${text2}`;
-          constraints.set(key, Object.freeze({
+          setConstraint(start + lineStart, Object.freeze({
             table,
-            key,
+            key: `${table}#${text2}`,
             file: file.path,
             line: lineOf(start + lineStart),
             text: text2,
@@ -276,18 +290,22 @@ function parseSqlFiles(files: readonly { path: string; text: string }[]): SqlMod
     for (const match of text.matchAll(trigger)) {
       const table = normalizeName(match[2]!);
       const name = match[1]!.replaceAll('"', '').toLowerCase();
-      triggers.set(`${table}.${name}`, Object.freeze({
+      const record = Object.freeze({
         name,
         table,
         fn: normalizeName(match[3]!),
         file: file.path,
         line: lineOf(match.index),
-      }));
+      });
+      at(match.index, () => triggers.set(`${table}.${name}`, record));
     }
     const dropTrigger = new RegExp(String.raw`\bdrop\s+trigger\s+(?:if\s+exists\s+)?("?\w+"?)\s+on\s+${NAME}`, 'gi');
     for (const match of text.matchAll(dropTrigger)) {
-      triggers.delete(`${normalizeName(match[2]!)}.${match[1]!.replaceAll('"', '').toLowerCase()}`);
+      const key = `${normalizeName(match[2]!)}.${match[1]!.replaceAll('"', '').toLowerCase()}`;
+      at(match.index, () => triggers.delete(key));
     }
+    events.sort((left, right) => left.offset - right.offset);
+    for (const event of events) event.apply();
   }
   return { tables, functions, constraints, triggers };
 }
@@ -298,6 +316,10 @@ function isRuleDoc(file: string): boolean {
   const segments = file.split('/');
   return (segments[0] === 'docs' || segments.includes('specs')) &&
     RULE_DOC_BASENAME.test(segments.at(-1) ?? '');
+}
+
+function isBulletContinuation(line: string): boolean {
+  return /^\s+\S/.test(line) && !/^\s*(?:[-*+]|\d+[.)])\s+/.test(line) && !/^\s*```/.test(line);
 }
 
 function parseRules(files: readonly { path: string; text: string }[]): ProjectRule[] {
@@ -313,24 +335,37 @@ function parseRules(files: readonly { path: string; text: string }[]): ProjectRu
         continue;
       }
       if (fenced) continue;
+      const start = index;
       const bullet = /^\s*(?:[-*+]|\d+[.)])\s+(.*)$/.exec(line);
-      if (!bullet || !RULE_WORD.test(bullet[1]!)) continue;
-      const text = collapse(bullet[1]!.replace(/\*\*|__|`/g, ''));
+      if (!bullet) continue;
+      // Bullet quebrado em várias linhas: as linhas indentadas seguintes continuam a regra.
+      let body = bullet[1]!;
+      while (index + 1 < lines.length && isBulletContinuation(lines[index + 1]!)) {
+        body += ` ${lines[index + 1]!}`;
+        index += 1;
+      }
+      if (!RULE_WORD.test(body)) continue;
+      const text = collapse(body.replace(/\*\*|__|`/g, ''));
       const dedupe = text.toLowerCase();
       if (text.length < 12 || text.endsWith('?') || seen.has(dedupe)) continue;
       seen.add(dedupe);
-      rules.push({ file: file.path, line: index + 1, text });
+      rules.push({ file: file.path, line: start + 1, text });
     }
   }
   return rules;
 }
 
-function listTrackedCleanFiles(root: string, git: GitRunner): TrackedFile[] | null {
+interface TrackedFiles {
+  readonly clean: TrackedFile[];
+  readonly dirty: string[];
+}
+
+async function listTrackedFiles(root: string, git: AsyncGitRunner): Promise<TrackedFiles | null> {
   try {
-    const inside = git.run(root, ['rev-parse', '--is-inside-work-tree'], { allowFailure: true });
+    const inside = await git.run(root, ['rev-parse', '--is-inside-work-tree'], { allowFailure: true });
     if (inside.status !== 0 || inside.stdout.trim() !== 'true') return null;
     const dirty = new Set<string>();
-    const records = git.run(root, ['--no-optional-locks', 'status', '--porcelain=v1', '-z', '--untracked-files=no']).stdout.split('\0');
+    const records = (await git.run(root, ['--no-optional-locks', 'status', '--porcelain=v1', '-z', '--untracked-files=no'])).stdout.split('\0');
     for (let index = 0; index < records.length; index += 1) {
       const record = records[index]!;
       if (record.length < 4) continue;
@@ -338,27 +373,32 @@ function listTrackedCleanFiles(root: string, git: GitRunner): TrackedFile[] | nu
       // Rename/cópia traz o caminho de origem no registro seguinte.
       if (/[RC]/.test(record.slice(0, 2))) dirty.add(records[++index] ?? '');
     }
-    const files: TrackedFile[] = [];
-    for (const record of git.run(root, ['ls-files', '-s', '-z']).stdout.split('\0')) {
+    const clean: TrackedFile[] = [];
+    for (const record of (await git.run(root, ['ls-files', '-s', '-z'])).stdout.split('\0')) {
       const match = /^\d+ ([0-9a-f]+) 0\t(.+)$/.exec(record);
       if (!match || dirty.has(match[2]!)) continue;
       const file = match[2]!;
       if (!isSafeBootstrapSourceLocator(file) || file.split('/').some((part) => NOISE_SEGMENT.test(part))) continue;
-      files.push({ path: file, blob: match[1]! });
-      if (files.length >= MAX_SCANNED_FILES) break;
+      clean.push({ path: file, blob: match[1]! });
+      if (clean.length >= MAX_SCANNED_FILES) break;
     }
-    return files.sort((left, right) => left.path.localeCompare(right.path));
+    return {
+      clean: clean.sort((left, right) => left.path.localeCompare(right.path)),
+      dirty: [...dirty]
+        .filter((file) => file && isSafeBootstrapSourceLocator(file) && !file.split('/').some((part) => NOISE_SEGMENT.test(part)))
+        .sort(),
+    };
   } catch {
     return null;
   }
 }
 
-function readText(root: string, relative: string): string | null {
+async function readText(root: string, relative: string): Promise<string | null> {
   try {
     const absolute = path.join(root, relative);
-    const stat = fs.lstatSync(absolute);
+    const stat = await fs.promises.lstat(absolute);
     if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_SOURCE_BYTES) return null;
-    const bytes = fs.readFileSync(absolute);
+    const bytes = await fs.promises.readFile(absolute);
     if (bytes.includes(0)) return null;
     return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
   } catch {
@@ -381,19 +421,29 @@ interface FlowDraft {
   tests: string[];
 }
 
-function relatedFiles(
+function flowNamePattern(flows: readonly FlowDraft[]): RegExp | null {
+  if (flows.length === 0) return null;
+  const names = [...new Set(flows.map((flow) => flow.fn.name.split('.').at(-1)!))];
+  return new RegExp(`\\b(${names.map(escapeRegExp).join('|')})\\b`, 'g');
+}
+
+function isReferenceFile(file: string): boolean {
+  const extension = path.extname(file).toLowerCase();
+  return CODE_EXTENSIONS.has(extension) || (TEST_PATH.test(file) && extension === '.sql');
+}
+
+async function relatedFiles(
   root: string,
   files: readonly TrackedFile[],
   flows: readonly FlowDraft[],
-): void {
-  if (flows.length === 0) return;
+): Promise<void> {
+  const pattern = flowNamePattern(flows);
+  if (!pattern) return;
   const byName = new Map(flows.map((flow) => [flow.fn.name.split('.').at(-1)!, flow]));
-  const pattern = new RegExp(`\\b(${[...byName.keys()].map(escapeRegExp).join('|')})\\b`, 'g');
   for (const file of files) {
-    const extension = path.extname(file.path).toLowerCase();
+    if (!isReferenceFile(file.path)) continue;
     const isTest = TEST_PATH.test(file.path);
-    if (!CODE_EXTENSIONS.has(extension) && !(isTest && extension === '.sql')) continue;
-    const text = readText(root, file.path);
+    const text = await readText(root, file.path);
     if (!text) continue;
     const lineOf = lineIndex(text);
     const hit = new Set<string>();
@@ -567,7 +617,11 @@ export function renderBusinessModelDocument(document: BusinessModelDocument): st
   return lines.join('\n');
 }
 
-const cache = new Map<string, { fingerprint: string; result: BusinessModelExtraction | null }>();
+const cache = new Map<string, {
+  fingerprint: string;
+  result: Omit<BusinessModelExtraction, 'pendingSources'> | null;
+  flows: readonly FlowDraft[];
+}>();
 
 /** Test-only. */
 export function __clearBusinessModelExtractionCacheForTests(): void {
@@ -577,7 +631,33 @@ export function __clearBusinessModelExtractionCacheForTests(): void {
 export interface ExtractBusinessModelOptions {
   /** Ignora o cache por fingerprint (a revisão mecânica re-deriva do zero). */
   readonly fresh?: boolean;
-  readonly git?: GitRunner;
+  readonly git?: AsyncGitRunner;
+}
+
+/**
+ * Fontes que mudariam o modelo mas estão com alteração local: SQL de schema,
+ * doc de regra, ou código/teste que cita um fluxo pelo nome. Fica fora do
+ * cache (o conteúdo sujo muda sem mudar o fingerprint).
+ */
+async function pendingSourcesOf(
+  root: string,
+  dirty: readonly string[],
+  flows: readonly FlowDraft[],
+): Promise<string[]> {
+  const pattern = flowNamePattern(flows);
+  const pending: string[] = [];
+  for (const file of dirty) {
+    const extension = path.extname(file).toLowerCase();
+    if ((extension === '.sql' && !TEST_PATH.test(file)) || isRuleDoc(file)) {
+      pending.push(file);
+      continue;
+    }
+    if (!pattern || !isReferenceFile(file)) continue;
+    const text = await readText(root, file);
+    pattern.lastIndex = 0;
+    if (text !== null && pattern.test(text)) pending.push(file);
+  }
+  return pending;
 }
 
 /**
@@ -585,36 +665,42 @@ export interface ExtractBusinessModelOptions {
  * há git, nem SQL com fluxo, nem regra do projeto. Sem mudança no fingerprint
  * (blobs git das fontes candidatas + conjunto sujo) não re-extrai.
  */
-export function extractBusinessModel(
+export async function extractBusinessModel(
   root: string,
   options: ExtractBusinessModelOptions = {},
-): BusinessModelExtraction | null {
-  const git = options.git ?? new ProcessGitRunner();
-  const tracked = listTrackedCleanFiles(root, git);
+): Promise<BusinessModelExtraction | null> {
+  const git = options.git ?? new AsyncProcessGitRunner();
+  const tracked = await listTrackedFiles(root, git);
   if (!tracked) return null;
-  const candidates = tracked.filter((file) => {
+  const withPending = async (
+    core: { result: Omit<BusinessModelExtraction, 'pendingSources'> | null; flows: readonly FlowDraft[] },
+  ): Promise<BusinessModelExtraction | null> =>
+    core.result
+      ? Object.freeze({ ...core.result, pendingSources: Object.freeze(await pendingSourcesOf(root, tracked.dirty, core.flows)) })
+      : null;
+  const candidates = tracked.clean.filter((file) => {
     const extension = path.extname(file.path).toLowerCase();
     return extension === '.sql' || isRuleDoc(file.path) || CODE_EXTENSIONS.has(extension);
   });
   const fingerprint = sha256(candidates.map((file) => `${file.path}\0${file.blob}`).join('\n'));
   const cached = cache.get(root);
-  if (!options.fresh && cached?.fingerprint === fingerprint) return cached.result;
+  if (!options.fresh && cached?.fingerprint === fingerprint) return withPending(cached);
 
-  const sqlFiles = candidates
-    .filter((file) => file.path.toLowerCase().endsWith('.sql') && !TEST_PATH.test(file.path))
-    .flatMap((file) => {
-      const text = readText(root, file.path);
-      return text ? [{ path: file.path, text }] : [];
-    });
-  const sql = parseSqlFiles(sqlFiles);
-  const ruleFiles = [
+  const readAll = async (paths: readonly string[]): Promise<{ path: string; text: string }[]> => {
+    const read: { path: string; text: string }[] = [];
+    for (const file of paths) {
+      const text = await readText(root, file);
+      if (text !== null) read.push({ path: file, text });
+    }
+    return read;
+  };
+  const sql = parseSqlFiles(await readAll(candidates
+    .map((file) => file.path)
+    .filter((file) => file.toLowerCase().endsWith('.sql') && !TEST_PATH.test(file))));
+  const rules = parseRules(await readAll([
     ...ROOT_RULE_DOCS.filter((file) => candidates.some((candidate) => candidate.path === file)),
     ...candidates.map((file) => file.path).filter((file) => !ROOT_RULE_DOCS.includes(file) && isRuleDoc(file)),
-  ].flatMap((file) => {
-    const text = readText(root, file);
-    return text ? [{ path: file, text }] : [];
-  });
-  const rules = parseRules(ruleFiles);
+  ]));
 
   const ranked: FlowDraft[] = [...sql.functions.values()]
     .filter((fn) => fn.writes.length > 0)
@@ -627,7 +713,7 @@ export function extractBusinessModel(
     }))
     .sort((left, right) => right.score - left.score || left.fn.name.localeCompare(right.fn.name))
     .slice(0, MAX_CANDIDATE_FLOWS);
-  relatedFiles(root, candidates, ranked);
+  await relatedFiles(root, candidates, ranked);
   const flows = ranked
     .map((flow) => ({
       flow,
@@ -638,7 +724,7 @@ export function extractBusinessModel(
     .slice(0, MAX_FLOWS)
     .map((item) => item.flow);
 
-  let result: BusinessModelExtraction | null = null;
+  let result: Omit<BusinessModelExtraction, 'pendingSources'> | null = null;
   if (flows.length > 0 || rules.length > 0) {
     let kept = flows;
     let document = buildDocument(sql, kept, rules);
@@ -648,10 +734,8 @@ export function extractBusinessModel(
       document = buildDocument(sql, kept, rules);
       locators = citedFiles(document);
     }
-    const sources = locators.slice(0, MAX_ATTESTED_SOURCES).flatMap((locator) => {
-      const text = readText(root, locator);
-      return text === null ? [] : [{ type: 'file' as const, locator, sourceHash: sha256(Buffer.from(text, 'utf8')) }];
-    });
+    const sources = (await readAll(locators.slice(0, MAX_ATTESTED_SOURCES))).map(({ path: locator, text }) =>
+      ({ type: 'file' as const, locator, sourceHash: sha256(Buffer.from(text, 'utf8')) }));
     if (sources.length > 0) {
       result = Object.freeze({
         fingerprint,
@@ -665,8 +749,9 @@ export function extractBusinessModel(
       });
     }
   }
-  cache.set(root, { fingerprint, result });
-  return result;
+  const core = { fingerprint, result, flows: ranked };
+  cache.set(root, core);
+  return withPending(core);
 }
 
 function citedFiles(document: BusinessModelDocument): string[] {

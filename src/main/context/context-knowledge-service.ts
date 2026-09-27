@@ -287,10 +287,13 @@ export class ContextKnowledgeService {
     const targetState = assertTargetHash(this.scope, current, true);
 
     const inspection = inspectContextAttestations(this.scope);
+    // A atestação anterior DO PRÓPRIO alvo é substituída por esta: ela pode ter
+    // ficado velha pelo alvo ou por uma fonte que mudou (é justamente por isso
+    // que há uma nova revisão). Drift de qualquer outro doc continua bloqueando.
     const recoverableDiagnostics = inspection.diagnostics.filter(
       (item) =>
         item.targetPath === current.targetPath &&
-        item.code === 'target-hash-mismatch' &&
+        (item.code === 'target-hash-mismatch' || item.code === 'source-hash-mismatch') &&
         item.attestationPath,
     );
     const blockers = inspection.diagnostics.filter(

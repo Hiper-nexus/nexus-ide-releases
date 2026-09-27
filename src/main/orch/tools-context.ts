@@ -271,6 +271,9 @@ const doctorTool: McpToolDef = {
       // or deliberately skipped (with the reason). A UI mission must not have
       // to guess whether it has an authority to build against.
       designContract: result.designContract,
+      // Modelo de negócio extraído das fontes: aplicado, em dia, adiado,
+      // rejeitado ou falho (com a mensagem) — nunca engolido.
+      businessModel: result.businessModel,
       autopilotHint: result.autopilotHint,
     });
   },

@@ -61,7 +61,10 @@ const stubs = vi.hoisted(() => ({
   issueAgentIdentityBestEffort: vi.fn(),
 }));
 
-vi.mock('./workspace-path', () => ({ resolveCwdForScope: stubs.resolveCwdForScope }));
+vi.mock('./workspace-path', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./workspace-path')>()),
+  resolveCwdForScope: stubs.resolveCwdForScope,
+}));
 vi.mock('./pane-registry', () => ({
   getPaneAuthzInfo: vi.fn(),
   requestPaneClose: stubs.requestPaneClose,
@@ -245,9 +248,7 @@ import {
 import { cliPromptAutoResponder } from './cli-prompt-autoresponder';
 import { testProjectScope } from './__tests__/scope-fixture';
 import fs from 'node:fs';
-import { BUSINESS_MODEL_TARGET_PATH } from '../context/business-model/business-model-contract';
-import { extractBusinessModel } from '../context/business-model/business-model-extract';
-import { createBarbershopRepo, writeFixtureFile } from '../context/business-model/__fixtures__/barbershop';
+import { applyAttestedBusinessModel, createBarbershopRepo } from '../context/business-model/__fixtures__/barbershop';
 
 const DEVIN_TRUST_SCREEN = `
 Do you trust the authors of this directory?
@@ -630,7 +631,7 @@ describe('agent pane workspace confinement', () => {
   it('nasce com o <business-model> do projeto no brief, antes da tarefa', async () => {
     const root = createBarbershopRepo();
     try {
-      writeFixtureFile(root, BUSINESS_MODEL_TARGET_PATH, extractBusinessModel(root)!.proposal.content);
+      await applyAttestedBusinessModel(root, { ...taskExecutionScope, rootRealPath: root });
       stubs.sessionState.mockReturnValue('busy');
       await spawnPaneAndMaybePrompt({
         adapterId: 'codex',

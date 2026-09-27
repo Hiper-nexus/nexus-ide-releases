@@ -7,7 +7,10 @@ import { describe, expect, it, vi } from 'vitest';
  * and the design charter only rides along when the task actually touches UI.
  */
 
-vi.mock('./workspace-path', () => ({ resolveCwdForScope: vi.fn() }));
+vi.mock('./workspace-path', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./workspace-path')>()),
+  resolveCwdForScope: vi.fn(),
+}));
 vi.mock('./pane-registry', () => ({
   getPaneAuthzInfo: vi.fn(),
   listPaneSnapshots: vi.fn(() => []),
@@ -37,9 +40,7 @@ vi.mock('../persistence/settings-store', () => ({
 
 import fs from 'node:fs';
 import { testProjectScope } from './__tests__/scope-fixture';
-import { BUSINESS_MODEL_TARGET_PATH } from '../context/business-model/business-model-contract';
-import { extractBusinessModel } from '../context/business-model/business-model-extract';
-import { createBarbershopRepo, writeFixtureFile } from '../context/business-model/__fixtures__/barbershop';
+import { applyAttestedBusinessModel, createBarbershopRepo } from '../context/business-model/__fixtures__/barbershop';
 import {
   charterTierForWorker,
   recallsWorkspaceMemory,
@@ -191,10 +192,10 @@ describe('recallsWorkspaceMemory', () => {
 });
 
 describe('withProjectContextBlocks (brief de spawn de toda CLI)', () => {
-  it('põe <business-model> antes da tarefa; pane transitório e spawn sem brief ficam de fora', () => {
+  it('põe <business-model> antes da tarefa; pane transitório e spawn sem brief ficam de fora', async () => {
     const root = createBarbershopRepo();
     try {
-      writeFixtureFile(root, BUSINESS_MODEL_TARGET_PATH, extractBusinessModel(root)!.proposal.content);
+      await applyAttestedBusinessModel(root);
       const scope = testProjectScope({ rootRealPath: root });
       const prompt = withProjectContextBlocks({ prompt: 'Mexa no fechamento da comanda', scope })!;
       expect(prompt.startsWith('<business-model fonte=')).toBe(true);
