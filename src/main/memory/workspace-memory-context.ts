@@ -133,6 +133,43 @@ export function formatAutoRecallContext(
 }
 
 /**
+ * Monta o bloco `<workspace-memory>` para injetar como contexto adicional no
+ * hook do primeiro prompt (panes "+", todas as CLIs com hook instalado).
+ * Este é o PONTO ÚNICO de montagem do contexto do workspace no hook — outros
+ * blocos de contexto do projeto são acrescentados pelo chamador, ao lado.
+ * Retorna null com a flag desligada, banco vazio/sem hits ou falha — nunca
+ * bloqueia o prompt.
+ */
+export function workspaceMemoryContextBlock(
+  scope: ProjectExecutionScope,
+  prompt: string,
+  phase: AutoRecallPhase = 'execution',
+): string | null {
+  if (
+    prompt.includes(AUTO_RECALL_MARKER) ||
+    !getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.workspaceMemory)
+  ) {
+    return null;
+  }
+  const query = buildRecallQuery(prompt);
+  if (!query) return null;
+  try {
+    const hits = getWorkspaceMemoryStore(scope).recall({
+      query,
+      limit: AUTO_RECALL_LIMIT,
+      trustedOnly: true,
+    });
+    return formatAutoRecallContext(hits, phase) || null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.includes('requires configureWorkspaceMemory')) {
+      console.warn('[memory] hook context block unavailable:', message);
+    }
+    return null;
+  }
+}
+
+/**
  * Adds at most 3 KB of relevant memory before an agent brief. Memory lookup is
  * auxiliary: a disabled/unavailable bank never blocks planning or execution.
  */

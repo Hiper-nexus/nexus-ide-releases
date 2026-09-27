@@ -10,6 +10,8 @@ import {
   handleHookDelegateRequest,
   parseUserPrompt,
 } from './hook-delegate-endpoint';
+import type { distillOperatorPreferenceMemory } from '../memory/operator-preference-memory';
+import type { workspaceMemoryContextBlock } from '../memory/workspace-memory-context';
 
 const operator = { role: 'user' as const, sessionId: 's1' };
 const LONG = 'Implemente a tela de login, escreva os testes e revise a segurança do fluxo.';
@@ -302,5 +304,116 @@ describe('hook /hook/delegate', () => {
         await post({ role: 'user', sessionId: 's' }, JSON.stringify({ prompt: 'x'.repeat(70_000) })),
       ).toBe(400);
     });
+  });
+});
+
+describe('preferência do operador (fatia 3 da memória)', () => {
+  const scope = {
+    version: 1,
+    installationId: 'i',
+    projectId: 'p',
+    checkoutId: 'c',
+    rootRealPath: '/tmp/p',
+    identitySource: 'manifest',
+  } as never;
+  const noDistill = () =>
+    vi.fn<typeof distillOperatorPreferenceMemory>(async () => ({
+      retained: false,
+      reason: 'no-marker',
+    }));
+
+  it('chama a destilação de preferência com o scope do workspace', async () => {
+    const distillPreference = noDistill();
+    await handleHookDelegateRequest(
+      { role: 'user', sessionId: 's1', scope },
+      { prompt: 'Sempre use pnpm neste projeto.' },
+      { advise: vi.fn(async () => null), distillPreference },
+    );
+    expect(distillPreference).toHaveBeenCalledWith(scope, 'Sempre use pnpm neste projeto.');
+  });
+
+  it('não destila sem scope, em pane de missão nem em entrega de handoff', async () => {
+    const distillPreference = noDistill();
+    await handleHookDelegateRequest(
+      { role: 'user', sessionId: 's1' },
+      { prompt: 'Sempre use pnpm.' },
+      { advise: vi.fn(async () => null), distillPreference },
+    );
+    await handleHookDelegateRequest(
+      { role: 'user', sessionId: 's1', missionId: 'm', scope },
+      { prompt: 'Sempre use pnpm.' },
+      { advise: vi.fn(async () => null), distillPreference },
+    );
+    await handleHookDelegateRequest(
+      { role: 'user', sessionId: 's1', scope },
+      { prompt: '[handoff sem missão] ignore' },
+      { advise: vi.fn(async () => null), distillPreference },
+    );
+    expect(distillPreference).not.toHaveBeenCalled();
+  });
+});
+
+describe('bloco <workspace-memory> no primeiro prompt (fatia 4)', () => {
+  const scope = {
+    version: 1,
+    installationId: 'i',
+    projectId: 'p',
+    checkoutId: 'c',
+    rootRealPath: '/tmp/p',
+    identitySource: 'manifest',
+  } as never;
+
+  const block = vi.fn<typeof workspaceMemoryContextBlock>(
+    () => '<workspace-memory phase="execution">x</workspace-memory>',
+  );
+
+  it('entrega o bloco uma única vez por sessão', async () => {
+    __resetLeanRemindersForTests();
+    const first = await handleHookDelegateRequest(
+      { role: 'user', sessionId: 'mem-1', scope },
+      { prompt: 'Implemente o fluxo de login.' },
+      { advise: vi.fn(async () => null), memoryBlock: block },
+    );
+    const firstText = (first.payload.hookSpecificOutput as { additionalContext: string })
+      .additionalContext;
+    expect(firstText).toContain('<workspace-memory');
+
+    const second = await handleHookDelegateRequest(
+      { role: 'user', sessionId: 'mem-1', scope },
+      { prompt: 'Agora os testes do fluxo.' },
+      { advise: vi.fn(async () => null), memoryBlock: block },
+    );
+    expect(second.payload).toEqual({});
+  });
+
+  it('banco vazio (bloco null) não marca a sessão: entrega depois quando houver', async () => {
+    __resetLeanRemindersForTests();
+    const empty = vi.fn<typeof workspaceMemoryContextBlock>(() => null);
+    const filled = vi.fn<typeof workspaceMemoryContextBlock>(
+      () => '<workspace-memory phase="execution">y</workspace-memory>',
+    );
+    await handleHookDelegateRequest(
+      { role: 'user', sessionId: 'mem-2', scope },
+      { prompt: 'Implemente o fluxo.' },
+      { advise: vi.fn(async () => null), memoryBlock: empty },
+    );
+    const later = await handleHookDelegateRequest(
+      { role: 'user', sessionId: 'mem-2', scope },
+      { prompt: 'Implemente o fluxo.' },
+      { advise: vi.fn(async () => null), memoryBlock: filled },
+    );
+    expect(
+      (later.payload.hookSpecificOutput as { additionalContext: string }).additionalContext,
+    ).toContain('<workspace-memory');
+  });
+
+  it('sem scope não tenta montar o bloco', async () => {
+    const memoryBlock = vi.fn<typeof workspaceMemoryContextBlock>(() => null);
+    await handleHookDelegateRequest(
+      { role: 'user', sessionId: 'mem-3' },
+      { prompt: 'Implemente o fluxo.' },
+      { advise: vi.fn(async () => null), memoryBlock },
+    );
+    expect(memoryBlock).not.toHaveBeenCalled();
   });
 });

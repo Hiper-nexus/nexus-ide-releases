@@ -149,8 +149,16 @@ export const orchSettingsSchema = z.object({
       researchTriage: z.boolean().default(true),
       /** Conselho de delegação por mensagem nos panes do operador (hook). */
       delegation: z.boolean().default(true),
+      /** Destilação de memória: resumo de handoff aceito vira linha trusted. */
+      memoryDistill: z.boolean().default(true),
     })
     .prefault({}),
+  /**
+   * Injeta o bloco <workspace-memory> no primeiro prompt dos panes "+" de
+   * todas as CLIs com hook UserPromptSubmit. Default ligado; desligar aqui
+   * mantém o restante do sistema de memória intacto.
+   */
+  workspaceMemoryInjection: z.boolean().default(true),
   /** Carta de Design anti-genérico (Impeccable) para tarefas com UI. */
   designPro: z.boolean().default(true),
   /** Direção estética aplicada pelo motor de design junto com a carta. */

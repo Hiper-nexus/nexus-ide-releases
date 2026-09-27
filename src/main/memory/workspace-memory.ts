@@ -1083,6 +1083,56 @@ export class WorkspaceMemoryStore {
     });
   }
 
+  /**
+   * Linhas ativas do workspace de uma fonte criadas desde um instante —
+   * usado pelo teto diário de gravações automáticas (session digest).
+   */
+  countActiveSince(source: string, sinceMs: number): number {
+    this.#assertOpen();
+    const row = this.#workspaceDb
+      .prepare(
+        `SELECT COUNT(*) AS n
+         FROM memories
+         WHERE scope = 'workspace' AND source = ?
+           AND created_at >= ? AND superseded_by IS NULL`,
+      )
+      .get(source, sinceMs) as { n: number };
+    return row.n;
+  }
+
+  /**
+   * Índice de provenance das linhas ativas do workspace (id → source/datas),
+   * para a tela de Memória mostrar origem e data sem ler a projeção.
+   */
+  activeWorkspaceMetas(): ReadonlyMap<
+    string,
+    { source: string | null; createdAt: number; updatedAt: number }
+  > {
+    this.#assertOpen();
+    const rows = this.#workspaceDb
+      .prepare(
+        `SELECT id, source, created_at, updated_at
+         FROM memories
+         WHERE scope = 'workspace' AND superseded_by IS NULL`,
+      )
+      .all() as Array<{
+      id: string;
+      source: string | null;
+      created_at: number;
+      updated_at: number;
+    }>;
+    return new Map(
+      rows.map((row) => [
+        row.id,
+        {
+          source: row.source,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
+        },
+      ]),
+    );
+  }
+
   /** Counts only, and only from the stat cache when nothing moved on disk. */
   #projectionStats(): ProjectionCounts {
     const root = this.#projectionRoots.values().next().value as

@@ -16,6 +16,11 @@ import {
 import { WORKSPACE_HANDOFF_DELIVERY_PREFIX } from './workspace-handoff-delivery';
 import { OPERATOR_DELEGATION_DOCTRINE } from './operator-delegation-doctrine';
 import { operatorBusinessModelContext } from './operator-business-model';
+import { distillOperatorPreferenceMemory } from '../memory/operator-preference-memory';
+import {
+  workspaceMemoryContextBlock,
+} from '../memory/workspace-memory-context';
+import { getOrchSettings } from '../persistence/settings-store';
 
 export const HOOK_DELEGATE_MAX_BODY_BYTES = 64 * 1024;
 
@@ -83,6 +88,8 @@ const designRemindedAt = new Map<string, number>();
 const doctrineDeliveredAt = new Map<string, number>();
 const businessModelDeliveredAt = new Map<string, number>();
 const browserHintDeliveredAt = new Map<string, number>();
+/** Sessões que já receberam o bloco <workspace-memory> (uma vez por sessão). */
+const memoryDeliveredAt = new Set<string>();
 
 function remindedRecently(ledger: Map<string, number>, sessionId: string, now: number): boolean {
   const last = ledger.get(sessionId);
@@ -109,6 +116,34 @@ export function __resetLeanRemindersForTests(): void {
   doctrineDeliveredAt.clear();
   businessModelDeliveredAt.clear();
   browserHintDeliveredAt.clear();
+  memoryDeliveredAt.clear();
+}
+
+type MemoryBlockFn = typeof workspaceMemoryContextBlock;
+
+/**
+ * Bloco de memória do workspace no primeiro prompt da sessão (panes "+" de
+ * todas as CLIs com hook UserPromptSubmit). Setting desligado, banco vazio
+ * ou flag off → nada; a entrega acontece uma única vez por sessão.
+ */
+function memoryContextFor(
+  ctx: HookContext,
+  prompt: string,
+  block: MemoryBlockFn,
+): string | null {
+  const scope = ctx.executionScope ?? ctx.scope;
+  if (!scope || !ctx.sessionId) return null;
+  if (memoryDeliveredAt.has(ctx.sessionId)) return null;
+  let enabled = true;
+  try {
+    enabled = getOrchSettings().workspaceMemoryInjection !== false;
+  } catch {
+    // settings indisponíveis: default ligado
+  }
+  if (!enabled) return null;
+  const context = block(scope, prompt, 'execution');
+  if (context) memoryDeliveredAt.add(ctx.sessionId);
+  return context;
 }
 
 type HookContext = Pick<AgentGateContext, 'role' | 'missionId' | 'sessionId'> &
@@ -149,7 +184,15 @@ export function formatDelegationContext(advice: DelegationAdvice): string {
 export async function handleHookDelegateRequest(
   ctx: HookContext,
   body: unknown,
-  deps: { advise?: typeof advisePrompt; now?: () => number; design?: DesignContextFn } = {},
+  deps: {
+    advise?: typeof advisePrompt;
+    now?: () => number;
+    design?: DesignContextFn;
+    /** Destilação de preferência (fatia 3); default fire-and-forget. */
+    distillPreference?: typeof distillOperatorPreferenceMemory;
+    /** Bloco <workspace-memory> do primeiro prompt (fatia 4). */
+    memoryBlock?: MemoryBlockFn;
+  } = {},
 ): Promise<{ statusCode: 200; payload: Record<string, unknown> }> {
   try {
     if (ctx.role !== 'user' || ctx.missionId) return { statusCode: 200, payload: {} };
@@ -157,6 +200,13 @@ export async function handleHookDelegateRequest(
     // A entrega de um helper chega como prompt, mas não é pedido novo do operador.
     if (!prompt || prompt.startsWith(WORKSPACE_HANDOFF_DELIVERY_PREFIX)) {
       return { statusCode: 200, payload: {} };
+    }
+    // Preferência do operador: pré-filtro regex no próprio módulo; o Jev só é
+    // chamado quando há marcador. Fire-and-forget — não segura o prompt.
+    const distillPreference = deps.distillPreference ?? distillOperatorPreferenceMemory;
+    const preferenceScope = ctx.executionScope ?? ctx.scope;
+    if (preferenceScope) {
+      void distillPreference(preferenceScope, prompt).catch(() => {});
     }
     const now = (deps.now ?? Date.now)();
     const advise = deps.advise ?? advisePrompt;
@@ -197,6 +247,8 @@ export async function handleHookDelegateRequest(
     }
     const design = designContextFor(ctx, prompt, now, deps.design ?? operatorDesignContext);
     if (design) parts.push(design);
+    const memory = memoryContextFor(ctx, prompt, deps.memoryBlock ?? workspaceMemoryContextBlock);
+    if (memory) parts.push(memory);
     if (parts.length === 0) return { statusCode: 200, payload: {} };
     const context = parts.join('\n');
     return {

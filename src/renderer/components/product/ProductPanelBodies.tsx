@@ -245,7 +245,20 @@ type ProductMemoryNote = {
   title: string;
   body: string;
   kind?: string;
+  /** Provenance canônica do SQLite (ex.: trusted:operator-preference). */
+  source?: string | null;
+  createdAt?: number;
+  updatedAt?: number;
 };
+
+/** Rótulo curto da origem para a linha de meta da nota. */
+function memorySourceLabel(source: string | null | undefined): string | null {
+  if (!source) return null;
+  if (source === 'operator:note' || source === 'operator:agent:manual') {
+    return 'manual';
+  }
+  return source;
+}
 
 type ProductMemoryFailure = {
   operation: 'load' | 'remember' | 'forget';
@@ -439,6 +452,19 @@ export function MemoryPanelBody({
                   <span className="product-pane__sub">
                     {MEMORY_KIND_LABELS[note.kind] ?? note.kind}
                   </span>
+                ) : null}
+                {note.source !== undefined ||
+                note.updatedAt !== undefined ? (
+                  <p className="product-pane__meta">
+                    {[
+                      memorySourceLabel(note.source),
+                      note.updatedAt
+                        ? new Date(note.updatedAt).toLocaleDateString('pt-BR')
+                        : null,
+                    ]
+                      .filter((part) => part !== null)
+                      .join(' · ')}
+                  </p>
                 ) : null}
                 <p
                   className={
