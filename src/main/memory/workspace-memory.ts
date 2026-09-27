@@ -1100,6 +1100,18 @@ export class WorkspaceMemoryStore {
     return row.n;
   }
 
+  /** Fonte de uma linha ativa do workspace; null se não existe ou já saiu. */
+  activeWorkspaceSource(id: string): string | null {
+    this.#assertOpen();
+    const row = this.#workspaceDb
+      .prepare(
+        `SELECT source FROM memories
+         WHERE id = ? AND scope = 'workspace' AND superseded_by IS NULL`,
+      )
+      .get(id) as { source: string | null } | undefined;
+    return row?.source ?? null;
+  }
+
   /**
    * Linha ativa mais recente do workspace de uma fonte que tem `line` como
    * linha inteira (ex.: `Mission: m-1`) — identidade estruturada, sem FTS.

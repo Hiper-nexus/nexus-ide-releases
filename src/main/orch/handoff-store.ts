@@ -866,7 +866,7 @@ export class ScopedHandoffStore {
               : {}),
           },
           committed.handoff.summary,
-        );
+        ).catch(() => {});
       }
     }
     return {

@@ -206,6 +206,7 @@ describe('trusted automatic memory retention', () => {
       usage: { input_tokens: 150, output_tokens: 4 },
       answers: {
         worth_retaining: { type: 'noul', noul: 0.9 },
+        instruction_free: { type: 'noul', noul: 0.95 },
       },
     }));
 
@@ -244,5 +245,50 @@ describe('trusted automatic memory retention', () => {
     });
     expect(hit.content).toContain('Handoff: handoff-7');
     expect(hit.content).not.toContain('should NOT be retained');
+  });
+
+  it('a linha de identificadores nasce no mesmo tick, sem esperar o Jev', async () => {
+    let release: (value: Awaited<ReturnType<typeof jevJudge>>) => void = () => {};
+    const judge = vi.fn<typeof jevJudge>(
+      () => new Promise((resolve) => { release = resolve; }),
+    );
+    const pending = retainAcceptedHandoffMemoryDistilledBestEffort(
+      scope,
+      input,
+      'Parser de datas aceita fuso horário explícito.',
+      { judge, enabled: () => true, hasKey: () => true },
+    );
+    const store = getWorkspaceMemoryStore(scope);
+    expect(store.stats().workspace.active).toBe(1);
+
+    release({
+      model: 'jev-1.13.0',
+      usage: { input_tokens: 10, output_tokens: 2 },
+      answers: {
+        worth_retaining: { type: 'noul', noul: 0.9 },
+        instruction_free: { type: 'noul', noul: 0.95 },
+      },
+    });
+    await pending;
+    expect(store.stats().workspace.active).toBe(1);
+    const [hit] = store.recall({ query: 'parser datas fuso', includeGlobal: false, trustedOnly: true });
+    expect(hit.content).toContain('Handoff: handoff-7');
+    expect(hit.content).toContain('Summary: Parser de datas');
+  });
+
+  it('evento trusted só substitui linha ativa da própria classe', () => {
+    const note = getWorkspaceMemoryStore(scope).retain({
+      content: 'Nota do operador: deploy só às sextas.',
+      kind: 'note',
+      scope: 'workspace',
+    });
+    expect(() =>
+      retainTrustedMemory(
+        scope,
+        { type: 'operator-preference', summary: 'Sempre use pnpm.' },
+        { supersedes: note.id },
+      ),
+    ).toThrow(/can only supersede/);
+    expect(getWorkspaceMemoryStore(scope).stats().workspace.active).toBe(1);
   });
 });

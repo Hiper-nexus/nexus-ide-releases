@@ -270,12 +270,19 @@ function retainParsedTrustedMemory(
   options: { supersedes?: string } = {},
 ): RetainResult {
   const policy = TRUSTED_MEMORY_POLICY[event.type];
-  return getWorkspaceMemoryStore(scope).retain({
+  const store = getWorkspaceMemoryStore(scope);
+  const source = `trusted:${event.type}`;
+  // Evento trusted só substitui linha da própria classe: nunca nota do
+  // operador, memória de agente ou outra classe trusted.
+  if (options.supersedes && store.activeWorkspaceSource(options.supersedes) !== source) {
+    throw new Error(`trusted ${event.type} can only supersede an active ${source} memory`);
+  }
+  return store.retain({
     content: trustedContent(event, policy),
     kind: policy.kind,
     importance: policy.importance,
     scope: 'workspace',
-    source: `trusted:${event.type}`,
+    source,
     ...(options.supersedes ? { supersedes: options.supersedes } : {}),
   });
 }
@@ -283,17 +290,20 @@ function retainParsedTrustedMemory(
 export function retainAcceptedHandoffMemory(
   scope: ProjectExecutionScope,
   rawInput: AcceptedHandoffMemoryInput,
+  options: { supersedes?: string } = {},
 ): RetainResult {
   requireTrustedMemoryEnabled();
   return retainParsedTrustedMemory(
     scope,
     buildAcceptedHandoffTrustedEvent(rawInput),
+    options,
   );
 }
 
 export function retainAcceptedHandoffMemoryBestEffort(
   scope: ProjectExecutionScope,
   rawInput: AcceptedHandoffMemoryInput,
+  options: { supersedes?: string } = {},
 ): RetainResult | null {
   if (
     !getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.workspaceMemory)
@@ -301,7 +311,7 @@ export function retainAcceptedHandoffMemoryBestEffort(
     return null;
   }
   try {
-    return retainAcceptedHandoffMemory(scope, rawInput);
+    return retainAcceptedHandoffMemory(scope, rawInput, options);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (!message.includes('requires configureWorkspaceMemory')) {
@@ -315,10 +325,12 @@ export function retainAcceptedHandoffMemoryBestEffort(
 }
 
 /**
- * Retenção do handoff aceito com destilação do resumo: pergunta ao Jev
- * (superfície memoryDistill) se o resumo do agente vale memória e, se sim,
- * grava a linha trusted já com o `Summary:` destilado. Fail-open total —
- * Jev fora do ar mantém a linha de identificadores de hoje. Nunca lança.
+ * Retenção do handoff aceito com destilação do resumo: a linha de
+ * identificadores nasce na hora (no mesmo tick do aceite, como antes do
+ * Jev); depois o Jev (superfície memoryDistill) decide se o resumo do agente
+ * vale memória e, se sim, uma linha com o `Summary:` destilado substitui a
+ * primeira. Fail-open total — sair do app ou Jev fora do ar mantém a linha
+ * de identificadores. Nunca lança.
  */
 export async function retainAcceptedHandoffMemoryDistilledBestEffort(
   scope: ProjectExecutionScope,
@@ -331,19 +343,22 @@ export async function retainAcceptedHandoffMemoryDistilledBestEffort(
   ) {
     return null;
   }
-  let input = rawInput;
-  if (agentSummary && agentSummary.trim()) {
-    try {
-      const distilled = await distillHandoffSummary(
-        { summary: agentSummary },
-        deps,
-      );
-      if (distilled) input = { ...rawInput, distilledSummary: distilled };
-    } catch {
-      // fail-open: sem destilação, a linha nasce só com identificadores.
-    }
+  const base = retainAcceptedHandoffMemoryBestEffort(scope, rawInput);
+  if (!base || !agentSummary?.trim()) return base;
+  let distilled: string | null = null;
+  try {
+    distilled = await distillHandoffSummary({ summary: agentSummary }, deps);
+  } catch {
+    // fail-open: fica a linha de identificadores.
   }
-  return retainAcceptedHandoffMemoryBestEffort(scope, input);
+  if (!distilled) return base;
+  return (
+    retainAcceptedHandoffMemoryBestEffort(
+      scope,
+      { ...rawInput, distilledSummary: distilled },
+      { supersedes: base.id },
+    ) ?? base
+  );
 }
 
 /**

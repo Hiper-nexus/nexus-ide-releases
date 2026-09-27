@@ -81,6 +81,12 @@ describe('<workspace-memory> no "+ Pane" pelos canais do <business-model>', () =
     expect(JSON.stringify(first.payload)).toContain('<workspace-memory');
     const again = await handleHookDelegateRequest(codex, { prompt: 'pnpm de novo' }, deps);
     expect(JSON.stringify(again.payload)).not.toContain('<workspace-memory');
+    // Pane longevo (/clear na mesma pty): volta depois da janela de 30 min.
+    const later = await handleHookDelegateRequest(codex, { prompt: 'pnpm depois do clear' }, {
+      ...deps,
+      now: () => 1_000 + 30 * 60_000,
+    });
+    expect(JSON.stringify(later.payload)).toContain('<workspace-memory');
   });
 
   it('a opção de desligar a injeção vale para o MCP e para o brief de spawn', async () => {

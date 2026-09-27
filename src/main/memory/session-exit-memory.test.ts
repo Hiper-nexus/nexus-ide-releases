@@ -253,4 +253,22 @@ describe('session-exit memory distillation', () => {
     expect(outcome).toMatchObject({ retained: false, reason: 'daily-cap' });
     expect(distill).not.toHaveBeenCalled();
   });
+
+  it('não substitui o digest de outra missão com id de prefixo igual', async () => {
+    const store = getWorkspaceMemoryStore(scope);
+    const other = store.retain({
+      content:
+        '# Session digest\n\nSession digest:\nMission: mission-10\nSummary: Windows paths normalized.',
+      kind: 'fact',
+      scope: 'workspace',
+      source: 'trusted:session-digest',
+    });
+    const outcome = await distillSessionExitMemory(
+      { sessionId: 'pty-session-1', agent: agent({ scope, missionId: 'mission-1' }) },
+      { getStores: () => stores([handoff('h-1', 'Windows paths normalized again.')]), distill: approve },
+    );
+    expect(outcome).toMatchObject({ retained: true });
+    expect(outcome.supersededId).toBeUndefined();
+    expect(store.activeWorkspaceSource(other.id)).toBe('trusted:session-digest');
+  });
 });

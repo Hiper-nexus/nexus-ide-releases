@@ -153,4 +153,31 @@ describe('operator preference memory', () => {
       context: prompt,
     });
   });
+
+  it('duplicata e teto diário saem antes do Jev', async () => {
+    const approve = judge(0.95);
+    expect(
+      await distillOperatorPreferenceMemory(scope, 'Sempre use pnpm neste projeto.', deps(approve)),
+    ).toMatchObject({ retained: true });
+    const again = judge(0.95);
+    expect(
+      await distillOperatorPreferenceMemory(scope, 'Sempre use pnpm neste projeto.', deps(again)),
+    ).toMatchObject({ retained: false, reason: 'dedupe' });
+    expect(again).not.toHaveBeenCalled();
+
+    for (const tool of ['biome', 'vitest', 'zod', 'tsx']) {
+      await distillOperatorPreferenceMemory(scope, `Sempre use ${tool} neste projeto.`, deps(judge(0.95)));
+    }
+    const capped = judge(0.95);
+    expect(
+      await distillOperatorPreferenceMemory(scope, 'Nunca use yarn aqui.', deps(capped)),
+    ).toMatchObject({ retained: false, reason: 'daily-cap' });
+    expect(capped).not.toHaveBeenCalled();
+  });
+
+  it('prompt longo (texto colado) não é fonte de preferência', () => {
+    expect(
+      extractPreferenceCandidate(`${'log da CI '.repeat(200)}\nAlways run the migration before tests.`),
+    ).toBeNull();
+  });
 });

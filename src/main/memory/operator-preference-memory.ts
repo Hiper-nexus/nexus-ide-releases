@@ -14,6 +14,7 @@ import {
 import { getFeatureFlagRegistry } from '../feature-flags/feature-flag-registry';
 import { FEATURE_FLAG_IDS } from '../../shared/feature-flags';
 import { retainTrustedMemoryBestEffort } from './trusted-memory';
+import { getWorkspaceMemoryStore } from './workspace-memory';
 
 /** Marcadores pt-BR/EN de preferência duradoura. */
 export const PREFERENCE_MARKER_RE =
@@ -22,8 +23,22 @@ export const PREFERENCE_MARKER_RE =
 /** Teto do candidato extraído do prompt. */
 const CANDIDATE_MAX_CHARS = 300;
 
-/** Teto do prompt que vai junto ao Jev como contexto do candidato. */
+/**
+ * Teto do prompt que vai ao Jev como contexto. Prompt maior quase sempre é
+ * texto colado (saída de agente, issue, log): não é fonte de preferência.
+ */
 const CONTEXT_MAX_CHARS = 1_500;
+
+/** Preferências gravadas por dia, por projeto. */
+export const DAILY_OPERATOR_PREFERENCE_CAP = 5;
+
+const PREFERENCE_SOURCE = 'trusted:operator-preference';
+
+function startOfDay(now: number): number {
+  const date = new Date(now);
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
+}
 
 /**
  * Moldura em que a frase com marcador não é regra do operador: exemplo,
@@ -44,7 +59,14 @@ function withoutQuotedText(prompt: string): string {
 export type OperatorPreferenceOutcome =
   | {
       retained: false;
-      reason: 'flag-off' | 'no-marker' | 'not-adopted' | 'jev-skip' | 'store-unavailable';
+      reason:
+        | 'flag-off'
+        | 'no-marker'
+        | 'not-adopted'
+        | 'daily-cap'
+        | 'dedupe'
+        | 'jev-skip'
+        | 'store-unavailable';
     }
   | { retained: true; reason: 'ok' };
 
@@ -54,7 +76,7 @@ export type OperatorPreferenceOutcome =
  * prompt cita/nega a regra em vez de adotá-la.
  */
 export function extractPreferenceCandidate(prompt: string): string | null {
-  if (NOT_ADOPTED_RE.test(prompt)) return null;
+  if (prompt.length > CONTEXT_MAX_CHARS || NOT_ADOPTED_RE.test(prompt)) return null;
   const sentences = withoutQuotedText(prompt)
     .split(/(?<=[.!?\n])\s+|\n+/)
     .map((sentence) => sentence.replace(/\s+/g, ' ').trim())
@@ -67,7 +89,7 @@ export function extractPreferenceCandidate(prompt: string): string | null {
 export async function distillOperatorPreferenceMemory(
   scope: ProjectExecutionScope,
   prompt: string,
-  deps: DistillHandoffSummaryDeps = {},
+  deps: DistillHandoffSummaryDeps & { now?: () => number } = {},
 ): Promise<OperatorPreferenceOutcome> {
   if (
     !getFeatureFlagRegistry().isEnabled(FEATURE_FLAG_IDS.workspaceMemory)
@@ -77,6 +99,22 @@ export async function distillOperatorPreferenceMemory(
   if (!PREFERENCE_MARKER_RE.test(prompt)) return { retained: false, reason: 'no-marker' };
   const candidate = extractPreferenceCandidate(prompt);
   if (!candidate) return { retained: false, reason: 'not-adopted' };
+
+  // Teto diário e duplicata saem antes do Jev: "never/always" é comum em
+  // prompt trivial e cada chamada custa.
+  try {
+    const store = getWorkspaceMemoryStore(scope);
+    const since = startOfDay((deps.now ?? Date.now)());
+    if (store.countCreatedSince(PREFERENCE_SOURCE, since) >= DAILY_OPERATOR_PREFERENCE_CAP) {
+      return { retained: false, reason: 'daily-cap' };
+    }
+    const hits = store.recall({ query: candidate, limit: 3, includeGlobal: false, trustedOnly: true });
+    if (hits.some((hit) => hit.source === PREFERENCE_SOURCE && hit.content.includes(candidate))) {
+      return { retained: false, reason: 'dedupe' };
+    }
+  } catch {
+    return { retained: false, reason: 'store-unavailable' };
+  }
 
   // O Jev vê a frase E a mensagem de onde ela saiu: o recorte sozinho
   // esconderia negação, citação ou exemplo.
