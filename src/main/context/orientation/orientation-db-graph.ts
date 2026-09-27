@@ -37,7 +37,7 @@ interface MergedEntity {
   readonly qualifiedName: string;
   readonly name: string;
   readonly definedIn: string[];
-  rlsEnabled: boolean;
+  rlsEnabled: boolean | undefined;
 }
 
 const DB_NODE_ID_RE = /^db:(table|function):(.+)$/;
@@ -79,37 +79,69 @@ export function buildDbGraphFromFiles(
       const existing = merged.get(key);
       if (existing) {
         if (!existing.definedIn.includes(fact.definedIn)) existing.definedIn.push(fact.definedIn);
-        if (fact.rlsEnabled) existing.rlsEnabled = true;
+        // Files are visited oldest-first, so the last explicit toggle wins.
+        if (fact.rlsEnabled !== undefined) existing.rlsEnabled = fact.rlsEnabled;
       } else {
         merged.set(key, {
           kind: fact.kind,
           qualifiedName: fact.qualifiedName,
           name: fact.name,
           definedIn: [fact.definedIn],
-          rlsEnabled: Boolean(fact.rlsEnabled),
+          rlsEnabled: fact.rlsEnabled,
         });
       }
     }
   }
 
-  const byLowerBareName = new Map<string, MergedEntity[]>();
+  const byBareName = new Map<string, MergedEntity[]>();
+  const byPrismaModel = new Map<string, MergedEntity>();
+  const drizzleBindings = new Map<string, { readonly file: string; readonly entity: MergedEntity }[]>();
   for (const entity of merged.values()) {
-    const lowerKey = `${entity.kind}:${entity.name.toLowerCase()}`;
-    const list = byLowerBareName.get(lowerKey) ?? [];
+    const bareKey = `${entity.kind}:${entity.name}`;
+    const list = byBareName.get(bareKey) ?? [];
     list.push(entity);
-    byLowerBareName.set(lowerKey, list);
+    byBareName.set(bareKey, list);
+  }
+  for (const file of files) {
+    for (const fact of file.schemaFacts) {
+      const entity = merged.get(`${fact.kind}:${fact.qualifiedName}`);
+      if (!entity) continue;
+      // Prisma client accessors are the model name in lowerCamel case.
+      if (fact.modelName) byPrismaModel.set(fact.modelName.toLowerCase(), entity);
+      if (fact.drizzleBinding) {
+        const list = drizzleBindings.get(fact.drizzleBinding) ?? [];
+        list.push({ file: file.relativePath, entity });
+        drizzleBindings.set(fact.drizzleBinding, list);
+      }
+    }
   }
 
-  function resolveNodeId(kind: OrientationDbEntityKind, qualifiedName: string): string {
-    const exact = merged.get(`${kind}:${qualifiedName}`);
+  // Identifiers are already normalized by the extractors (PostgreSQL folding
+  // for unquoted SQL, verbatim for quoted/ORM names), so matching is exact;
+  // only the schema may differ (unqualified reference vs `auth.x` definition).
+  function resolveNodeId(usage: DbUsageEdge): string | null {
+    if (usage.drizzleBinding) {
+      const candidates = drizzleBindings.get(usage.drizzleBinding) ?? [];
+      const local = candidates.find((candidate) => candidate.file === usage.from);
+      // A binding defined in exactly one schema file is taken as the imported
+      // one; ambiguous or unknown bindings (e.g. Array.from(items)) are dropped.
+      const target = local ?? (candidates.length === 1 ? candidates[0] : null);
+      return target ? dbNodeId(target.entity.kind, target.entity.qualifiedName) : null;
+    }
+    if (usage.prismaModel) {
+      const model = byPrismaModel.get(usage.prismaModel.toLowerCase());
+      if (model) return dbNodeId(model.kind, model.qualifiedName);
+    }
+    const kind = usage.toKind;
+    const exact = merged.get(`${kind}:${usage.toQualifiedName}`);
     if (exact) return dbNodeId(exact.kind, exact.qualifiedName);
-    const candidates = byLowerBareName.get(`${kind}:${bareNameOf(qualifiedName).toLowerCase()}`);
+    const candidates = byBareName.get(`${kind}:${bareNameOf(usage.toQualifiedName)}`);
     if (candidates && candidates.length > 0) {
       return dbNodeId(candidates[0].kind, candidates[0].qualifiedName);
     }
     // Usage-only reference: no schema definition found for this name, but the
     // edge is still worth surfacing (it may indicate schema drift).
-    return dbNodeId(kind, qualifiedName);
+    return dbNodeId(kind, usage.toQualifiedName);
   }
 
   const adjacency = new Map<string, Set<string>>();
@@ -131,7 +163,8 @@ export function buildDbGraphFromFiles(
 
   for (const file of files) {
     for (const usageEdge of file.usageEdges) {
-      addEdge(usageEdge.from, resolveNodeId(usageEdge.toKind, usageEdge.toQualifiedName), usageEdge.relation);
+      const target = resolveNodeId(usageEdge);
+      if (target) addEdge(usageEdge.from, target, usageEdge.relation);
     }
   }
 
@@ -155,7 +188,7 @@ export function buildDbGraphFromFiles(
       name: known?.name ?? bareNameOf(parsed.qualifiedName),
       qualifiedName: parsed.qualifiedName,
       definedIn: Object.freeze(known ? [...known.definedIn] : []),
-      rlsEnabled: known?.rlsEnabled ? true : undefined,
+      rlsEnabled: known?.rlsEnabled,
     }));
   }
 
