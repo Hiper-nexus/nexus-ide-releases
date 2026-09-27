@@ -40,6 +40,12 @@ import {
   describeDesignContractSkip,
   type DesignContractSkipReason,
 } from '../../shared/design-contract-policy';
+import {
+  runBusinessModelBootstrap,
+  type BusinessModelBootstrapInput,
+  type BusinessModelBootstrapOutcome,
+} from './business-model/business-model-bootstrap';
+import { BUSINESS_MODEL_TARGET_PATH } from './business-model/business-model-contract';
 
 export type BootstrapAutopilotPhase =
   | 'ready'
@@ -107,6 +113,8 @@ export interface ContextBootstrapAutopilotResult {
   readonly blockingError: string | null;
   readonly quorumAvailable: boolean;
   readonly designContract: DesignContractBootstrapOutcome | null;
+  /** Modelo de negócio extraído das fontes; null só quando o ramo está desligado. */
+  readonly businessModel: BusinessModelBootstrapOutcome | null;
   readonly autopilotHint: string;
 }
 
@@ -138,6 +146,8 @@ export interface ContextBootstrapAutopilotOptions {
    * each `undefined` field resolves from the live mission / settings.
    */
   readonly designContract?: DesignContractBootstrapOptions | null;
+  /** `null` desliga o ramo do modelo de negócio; `extract` é seam de teste. */
+  readonly businessModel?: Pick<BusinessModelBootstrapInput, 'extract'> | null;
 }
 
 export interface DesignContractBootstrapOptions {
@@ -665,6 +675,20 @@ export async function runContextBootstrapAutopilot(
     // scaffold may fail if scope root is read-only; propose path will surface blockers
   }
 
+  // BUSINESS-MODEL BRANCH. Também antes do fast-path: um corpus verde não
+  // impede que migrations/regras mudem, e o modelo precisa acompanhar.
+  throwIfBootstrapAborted(options.signal);
+  const businessModel = options.businessModel === null
+    ? null
+    : runBusinessModelBootstrap({
+        scope: options.scope,
+        knowledge,
+        extract: options.businessModel?.extract,
+      });
+  const businessModelOwnsTarget =
+    businessModel !== null &&
+    ['applied', 'up-to-date', 'proposed'].includes(businessModel.status);
+
   // DESIGN BRANCH. Resolved before the readiness fast-path on purpose: a
   // project can have a perfectly green context corpus and still have no design
   // contract at all, which is precisely the state in which a UI mission starts
@@ -756,6 +780,7 @@ export async function runContextBootstrapAutopilot(
         ),
       ),
       designContract: designSkipOutcome(),
+      businessModel,
     };
     return Object.freeze({ ...base, autopilotHint: hintFor(base) });
   }
@@ -770,7 +795,10 @@ export async function runContextBootstrapAutopilot(
       ? buildContextBootstrapProposals(options.scope, map, proposalOptions)
       : []),
     ...(designProposal ? [designProposal] : []),
-  ];
+  ].filter(
+    (proposal) =>
+      !businessModelOwnsTarget || proposal.targetPath !== BUSINESS_MODEL_TARGET_PATH,
+  );
   const isDesignProposal = (proposal: BootstrapDocProposal): boolean =>
     designProposal !== null && proposal.targetPath === designProposal.targetPath;
   // The design contract is mechanically reviewable by construction: it was
@@ -797,7 +825,10 @@ export async function runContextBootstrapAutopilot(
   const outcomes: BootstrapDraftOutcome[] = [];
   const autoReviewQueue: string[] = [];
   const mechanicalReviewQueue: string[] = [];
-  const appliedDraftIds: string[] = [];
+  const appliedDraftIds: string[] =
+    businessModel?.status === 'applied' && businessModel.draftId
+      ? [businessModel.draftId]
+      : [];
   const rejectedDraftIds: string[] = [];
 
   // A previous Doctor run may have proposed drafts and then lost its CLI
@@ -1254,6 +1285,7 @@ export async function runContextBootstrapAutopilot(
           designReviewDeferredError,
         )
       : null,
+    businessModel,
   };
   return Object.freeze({
     ...base,

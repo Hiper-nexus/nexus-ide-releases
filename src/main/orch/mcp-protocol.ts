@@ -4,6 +4,8 @@ import { dispatchToolCall, type McpDispatchOptions } from "./mcp-dispatch";
 import { isToolAllowedForReadOnlyContext } from "./mcp-effect-policy";
 import type { AgentTransportPhysicalReceipt } from "./http-mcp-boundary";
 import { operatorDelegationInstructions } from "./operator-delegation-doctrine";
+import { operatorBusinessModelContext } from "./operator-business-model";
+import { joinPromptContextBlocks } from "./prompt-context-blocks";
 
 /**
  * Minimal MCP (Model Context Protocol) server core: JSON-RPC 2.0 message
@@ -188,7 +190,10 @@ export async function handleMcpMessage(
       const version = SUPPORTED_VERSIONS.has(requested)
         ? requested
         : MCP_PROTOCOL_VERSION;
-      const instructions = operatorDelegationInstructions(ctx);
+      const instructions = joinPromptContextBlocks([
+        operatorDelegationInstructions(ctx),
+        operatorBusinessModelContext(ctx, "mcp"),
+      ]);
       return ok(id, {
         protocolVersion: version,
         capabilities: { tools: { listChanged: false } },

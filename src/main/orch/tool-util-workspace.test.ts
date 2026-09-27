@@ -244,6 +244,10 @@ import {
 } from './tool-util';
 import { cliPromptAutoResponder } from './cli-prompt-autoresponder';
 import { testProjectScope } from './__tests__/scope-fixture';
+import fs from 'node:fs';
+import { BUSINESS_MODEL_TARGET_PATH } from '../context/business-model/business-model-contract';
+import { extractBusinessModel } from '../context/business-model/business-model-extract';
+import { createBarbershopRepo, writeFixtureFile } from '../context/business-model/__fixtures__/barbershop';
 
 const DEVIN_TRUST_SCREEN = `
 Do you trust the authors of this directory?
@@ -621,6 +625,33 @@ describe('agent pane workspace confinement', () => {
       'session-1',
       spawnOptions?.initialPrompt,
     );
+  });
+
+  it('nasce com o <business-model> do projeto no brief, antes da tarefa', async () => {
+    const root = createBarbershopRepo();
+    try {
+      writeFixtureFile(root, BUSINESS_MODEL_TARGET_PATH, extractBusinessModel(root)!.proposal.content);
+      stubs.sessionState.mockReturnValue('busy');
+      await spawnPaneAndMaybePrompt({
+        adapterId: 'codex',
+        missionId: 'm1',
+        role: 'worker',
+        prompt: 'Ajuste o cálculo de comissão no fechamento.',
+        scope,
+        executionScope: { ...taskExecutionScope, rootRealPath: root },
+      });
+      const spawnCalls = stubs.requestPaneSpawn.mock.calls as unknown as Array<
+        [{ initialPrompt?: string }]
+      >;
+      const brief = spawnCalls.at(-1)?.[0].initialPrompt ?? '';
+      expect(brief).toContain('<business-model fonte=');
+      expect(brief).toContain('close_commanda#1');
+      expect(brief.indexOf('</business-model>')).toBeLessThan(
+        brief.indexOf('Ajuste o cálculo de comissão no fechamento.'),
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('starts an OpenCode mission worker with its final brief in main-owned argv', async () => {
