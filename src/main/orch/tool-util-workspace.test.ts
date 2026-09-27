@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const stubs = vi.hoisted(() => ({
   resolveCwdForScope: vi.fn<(_scope: unknown, value?: string) => string>(),
@@ -67,6 +67,7 @@ vi.mock('./workspace-path', async (importOriginal) => ({
 }));
 vi.mock('./pane-registry', () => ({
   getPaneAuthzInfo: vi.fn(),
+  pendingSpawnAttemptSession: vi.fn(() => ({ state: 'waiting' })),
   requestPaneClose: stubs.requestPaneClose,
   requestPaneSpawn: stubs.requestPaneSpawn,
   readSessionOutput: stubs.readSessionOutput,
@@ -246,7 +247,9 @@ import {
   withHandoffContract,
 } from './tool-util';
 import { cliPromptAutoResponder } from './cli-prompt-autoresponder';
-import { getPaneAuthzInfo } from './pane-registry';
+import { getPaneAuthzInfo, pendingSpawnAttemptSession } from './pane-registry';
+import { onWorkerSpawnFailed } from './spawn-fail-events';
+import { adapterCircuitBreakers } from './circuit-breaker';
 import { testProjectScope } from './__tests__/scope-fixture';
 import fs from 'node:fs';
 import { applyAttestedBusinessModel, createBarbershopRepo } from '../context/business-model/__fixtures__/barbershop';
@@ -1344,18 +1347,8 @@ describe('agent prompt injection', () => {
     }
   });
 
-  it('helper Kimi com ACK pendente recebe o brief por colagem quando a sessão nasce', async () => {
-    vi.useFakeTimers();
-    try {
-      stubs.sessionState.mockReturnValue('idle');
-      stubs.waitForIdle.mockResolvedValue('idle');
-      stubs.requestPaneSpawn.mockResolvedValueOnce({
-        ok: true,
-        pending: true,
-        paneId: 'pane-kimi',
-        sessionId: null,
-      } as never);
-      vi.mocked(getPaneAuthzInfo).mockReturnValue(null as never);
+  describe('brief de colagem com ACK pendente', () => {
+    const answerEnterWithTurn = () =>
       stubs.writeSession.mockImplementation(
         ((sessionId: string, data: string) => {
           if (data === '\r') {
@@ -1368,28 +1361,135 @@ describe('agent prompt injection', () => {
           return true;
         }) as typeof stubs.writeSession,
       );
-
+    const spawnPendingKimi = async () => {
+      stubs.sessionState.mockReturnValue('idle');
+      stubs.waitForIdle.mockResolvedValue('idle');
+      stubs.requestPaneSpawn.mockResolvedValueOnce({
+        requestId: 'req-kimi',
+        ok: true,
+        pending: true,
+        paneId: 'pane-kimi',
+        sessionId: null,
+      } as never);
+      vi.mocked(getPaneAuthzInfo).mockReturnValue(null as never);
+      vi.mocked(pendingSpawnAttemptSession).mockReturnValue({ state: 'waiting' });
       await expect(
         spawnPaneAndMaybePrompt({ adapterId: 'kimi', prompt: 'revise o diff', scope }),
       ).rejects.toThrow();
       expect(stubs.writeSession).not.toHaveBeenCalled();
+    };
+    const bindAttempt = (sessionId: string) => {
+      vi.mocked(pendingSpawnAttemptSession).mockReturnValue({ state: 'bound', sessionId });
+      vi.mocked(getPaneAuthzInfo).mockReturnValue({ sessionId } as never);
+      stubs.physicalSessionInfo.mockImplementation(((id: string) =>
+        id === sessionId ? { paneId: 'pane-kimi', adapterId: 'kimi' } : null) as never);
+    };
+    const typedInto = (sessionId: string) =>
+      (stubs.writeSession.mock.calls as unknown as Array<readonly [string, string]>)
+        .filter(([id]) => id === sessionId);
+    let failures: Array<{ message: string }> = [];
+    let unsubscribe: () => void = () => {};
 
-      // A sessão do pane nasce depois da resposta da tool.
-      vi.mocked(getPaneAuthzInfo).mockReturnValue({ sessionId: 'session-kimi' } as never);
-      stubs.physicalSessionInfo.mockReturnValue({ paneId: 'pane-kimi', adapterId: 'kimi' });
-      await vi.advanceTimersByTimeAsync(3_000);
-
-      const typed = (
-        stubs.writeSession.mock.calls as unknown as Array<readonly [string, string]>
-      ).filter(([sessionId]) => sessionId === 'session-kimi');
-      expect(typed[0]?.[1]).toContain('revise o diff');
-      expect(typed.some(([, data]) => data === '\r')).toBe(true);
-    } finally {
+    beforeEach(() => {
+      vi.useFakeTimers();
+      failures = [];
+      unsubscribe = onWorkerSpawnFailed((event) => failures.push(event));
+    });
+    afterEach(() => {
+      unsubscribe();
       stubs.physicalSessionInfo.mockReset().mockReturnValue(null);
       vi.mocked(getPaneAuthzInfo).mockReset();
+      vi.mocked(pendingSpawnAttemptSession).mockReset().mockReturnValue({ state: 'waiting' });
       stubs.writeSession.mockReset().mockReturnValue(true);
       vi.useRealTimers();
-    }
+    });
+
+    it('helper Kimi recebe o brief por colagem quando a sessão da tentativa nasce', async () => {
+      answerEnterWithTurn();
+      await spawnPendingKimi();
+      // A sessão do pane nasce depois da resposta da tool.
+      bindAttempt('session-kimi');
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      const typed = typedInto('session-kimi');
+      expect(typed[0]?.[1]).toContain('revise o diff');
+      expect(typed.some(([, data]) => data === '\r')).toBe(true);
+      expect(stubs.requestPaneClose).not.toHaveBeenCalled();
+      expect(failures).toEqual([]);
+    });
+
+    it('ACK pendente não conta como falha do adapter no circuit breaker', async () => {
+      adapterCircuitBreakers.reset('kimi');
+      await spawnPendingKimi();
+      expect(adapterCircuitBreakers.snapshot('kimi').recentFailures).toBe(0);
+    });
+
+    it('sessão da tentativa com outro adapter não recebe o brief', async () => {
+      answerEnterWithTurn();
+      await spawnPendingKimi();
+      bindAttempt('session-kimi');
+      stubs.physicalSessionInfo.mockImplementation(((id: string) =>
+        id === 'session-kimi' ? { paneId: 'pane-kimi', adapterId: 'codex' } : null) as never);
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      expect(typedInto('session-kimi')).toEqual([]);
+      expect(stubs.requestPaneClose).toHaveBeenCalledWith('pane-kimi');
+      expect(failures).toHaveLength(1);
+    });
+
+    it('brief não aceito fecha o pane da tentativa e avisa — nunca helper mudo', async () => {
+      // Diálogo de boot engole o brief: nenhum Enter abre turno.
+      await spawnPendingKimi();
+      bindAttempt('session-kimi');
+      await vi.advanceTimersByTimeAsync(120_000);
+
+      expect(typedInto('session-kimi').length).toBeGreaterThan(0);
+      expect(stubs.requestPaneClose).toHaveBeenCalledWith('pane-kimi');
+      expect(failures).toHaveLength(1);
+      expect(failures[0]?.message).toContain('briefing não foi entregue');
+    });
+
+    it('pane reciclado no mesmo paneId não recebe o brief da tentativa anterior nem é fechado', async () => {
+      answerEnterWithTurn();
+      await spawnPendingKimi();
+      // A sessão da tentativa nasceu e morreu; o pane foi reaberto (resume)
+      // com outra sessão no mesmo paneId.
+      vi.mocked(pendingSpawnAttemptSession).mockReturnValue({ state: 'bound', sessionId: 'session-morta' });
+      vi.mocked(getPaneAuthzInfo).mockReturnValue({ sessionId: 'session-substituta' } as never);
+      stubs.physicalSessionInfo.mockImplementation(((id: string) =>
+        id === 'session-substituta' ? { paneId: 'pane-kimi', adapterId: 'kimi' } : null) as never);
+      stubs.sessionState.mockImplementation((() => null) as never);
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      expect(stubs.writeSession).not.toHaveBeenCalled();
+      expect(stubs.requestPaneClose).not.toHaveBeenCalled();
+      expect(failures).toHaveLength(1);
+      stubs.sessionState.mockReset().mockReturnValue('busy');
+    });
+
+    it('autoridade do chamador revogada depois do nascimento fecha o pane sem aviso extra', async () => {
+      answerEnterWithTurn();
+      const controller = new AbortController();
+      stubs.sessionState.mockReturnValue('idle');
+      stubs.waitForIdle.mockResolvedValue('idle');
+      stubs.requestPaneSpawn.mockResolvedValueOnce({
+        requestId: 'req-kimi', ok: true, pending: true, paneId: 'pane-kimi', sessionId: null,
+      } as never);
+      vi.mocked(getPaneAuthzInfo).mockReturnValue(null as never);
+      await expect(
+        spawnPaneAndMaybePrompt(
+          { adapterId: 'kimi', prompt: 'revise o diff', scope },
+          { invocation: { signal: controller.signal } },
+        ),
+      ).rejects.toThrow();
+      bindAttempt('session-kimi');
+      controller.abort('session_authority_revoked');
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      expect(typedInto('session-kimi')).toEqual([]);
+      expect(stubs.requestPaneClose).toHaveBeenCalledWith('pane-kimi');
+      expect(failures).toEqual([]);
+    });
   });
 
   it('sends second Enter even when session was busy during paste echo if it is idle after first Enter', async () => {

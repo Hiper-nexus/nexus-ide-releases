@@ -264,6 +264,8 @@ import {
   getPaneAuthzInfo,
   getPaneRuntimeAuthorityBySession,
   bindPendingSpawnSession,
+  pendingSpawnAttemptSession,
+  remintOrchSpawnGrant,
   claimPendingSpawnMeta,
   listPaneSnapshots,
   registerOrchRenderer,
@@ -434,8 +436,11 @@ describe("main-owned mission pane spawn", () => {
       pending: true,
     });
 
+    expect(pendingSpawnAttemptSession(request.requestId)).toEqual({ state: "waiting" });
     expect(bindPendingSpawnSession(request.requestId, owner, "pty-claimed"))
       .toBe(true);
+    expect(pendingSpawnAttemptSession(request.requestId))
+      .toEqual({ state: "bound", sessionId: "pty-claimed" });
     expect(
       resolvePaneSpawn(
         {
@@ -444,6 +449,20 @@ describe("main-owned mission pane spawn", () => {
           paneId: request.paneId,
           sessionId: "pty-claimed",
         },
+        owner,
+      ),
+    ).toBe(true);
+    // Consumida a tentativa, um remint do mesmo grant (pane reciclado) não
+    // troca o destinatário da entrega adiada.
+    expect(remintOrchSpawnGrant(request.requestId, owner)).not.toBeNull();
+    expect(bindPendingSpawnSession(request.requestId, owner, "pty-substituta"))
+      .toBe(true);
+    expect(pendingSpawnAttemptSession(request.requestId))
+      .toEqual({ state: "bound", sessionId: "pty-claimed" });
+    expect(pendingSpawnAttemptSession("request-desconhecido")).toEqual({ state: "gone" });
+    expect(
+      resolvePaneSpawn(
+        { requestId: request.requestId, ok: true, paneId: request.paneId, sessionId: "pty-substituta" },
         owner,
       ),
     ).toBe(true);

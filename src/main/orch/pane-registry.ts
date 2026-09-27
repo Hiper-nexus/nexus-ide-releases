@@ -343,6 +343,28 @@ function liveSessionIdForPane(paneId: string): string | null {
   return listAgentSessionsForPane(paneId)[0]?.sessionId ?? null;
 }
 
+/**
+ * Sessão física que o Main vinculou a UMA tentativa de spawn (requestId). A
+ * entrega adiada de um brief segue esta identidade, nunca o paneId: um pane
+ * reciclado (resume/remint) mantém o id mas é outra sessão.
+ */
+export function pendingSpawnAttemptSession(
+  requestId: string,
+):
+  | { readonly state: "waiting" }
+  | { readonly state: "bound"; readonly sessionId: string }
+  | { readonly state: "gone" } {
+  // A primeira vinculação vence: um remint com o mesmo requestId não troca o
+  // destinatário da entrega que já estava amarrada.
+  const tomb = orchSpawnGrantTombstones.get(requestId);
+  if (tomb?.sessionId) return { state: "bound", sessionId: tomb.sessionId };
+  const pending = pendingSpawns.get(requestId);
+  if (!pending || pending.settled) return { state: "gone" };
+  return pending.claimedSessionId
+    ? { state: "bound", sessionId: pending.claimedSessionId }
+    : { state: "waiting" };
+}
+
 export function hasOrchSpawnGrantTombstone(
   requestId: string,
   owner: WebContents,

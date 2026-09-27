@@ -2,6 +2,9 @@ import mimoRaw from '../../adapters/builtin/mimo-code.json';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const spawnDeps = vi.hoisted(() => ({
+  providersFile: { version: 3, providers: {
+    claude: { upstream: 'glm' }, opencode: { upstream: 'glm' }, aider: { upstream: 'glm' },
+  } } as { version: number; providers: Record<string, Record<string, unknown>> },
   prepareAccount: vi.fn(),
   runtimeKey: vi.fn<() => string | null>(() => 'sk-global-other-account'),
   hasSecret: vi.fn(() => false),
@@ -59,9 +62,7 @@ vi.mock('node:os', async (importOriginal) => {
 vi.mock('node:fs', async (importOriginal) => {
   const mock = {
     ...(await importOriginal<typeof import('node:fs')>()),
-    readFileSync: () => JSON.stringify({ version: 3, providers: {
-      claude: { upstream: 'glm' }, opencode: { upstream: 'glm' }, aider: { upstream: 'glm' },
-    } }),
+    readFileSync: () => JSON.stringify(spawnDeps.providersFile),
     writeFileSync: vi.fn(), mkdirSync: vi.fn(), chmodSync: vi.fn(),
   };
   return { ...mock, default: mock };
@@ -1206,6 +1207,37 @@ describe('G3 — pane sem conta pinada nasce na conta com folga', () => {
 
     // Sem conta e sem pick: o store resolve pelo providers.conf (runtimeKey).
     expect(prepareProviderSpawn('kimi')).toMatchObject({ ok: true });
+  });
+});
+
+describe('default salvo aposentado do OpenCode (atualização com config antiga)', () => {
+  it('migra o default salvo antes da checagem de credencial — sem login continua pronto', async () => {
+    vi.clearAllMocks();
+    spawnDeps.subscriptionAuthed.mockReturnValue(false);
+    spawnDeps.subscriptionStatusAuthed.mockReturnValue(false);
+    spawnDeps.runtimeKey.mockReturnValue(null);
+    spawnDeps.hasSecret.mockReturnValue(false);
+    spawnDeps.listAccounts.mockReturnValue([]);
+    spawnDeps.resolveAuthStrategy.mockReturnValue({
+      strategy: 'login-needed', injectKey: false, suppressKeyEnv: false,
+    });
+    const previous = spawnDeps.providersFile;
+    spawnDeps.providersFile = { version: 3, providers: {
+      opencode: { defaultModel: 'opencode/deepseek-v4-flash-free' },
+    } };
+    try {
+      vi.resetModules();
+      const store = await import('./provider-config-store');
+      store.initializeProviderConfigStore();
+      expect(store.providerReadiness('opencode')).toEqual({ ready: true, reason: 'ready' });
+      expect(store.prepareProviderSpawn('opencode', {})).toMatchObject({
+        ok: true,
+        overrides: { defaultModel: 'opencode/big-pickle', keyEnv: {} },
+      });
+    } finally {
+      spawnDeps.providersFile = previous;
+      vi.resetModules();
+    }
   });
 });
 

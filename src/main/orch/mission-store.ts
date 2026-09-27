@@ -67,6 +67,7 @@ import {
   type ScopedEntity,
   type ScopedStoreChangeListener,
   type ScopedStoreOptions,
+  withDeferredStoreChanges,
 } from './scoped-store';
 
 export { ROUTE_RESERVATION_TTL_MS };
@@ -619,6 +620,16 @@ export class ScopedMissionStore {
       throw new Error(`mission drive state missing for ${id}`);
     }
     return this.getDriveRuntimeState(id)!;
+  }
+
+  /**
+   * Uma transação IMMEDIATE no banco do projeto (o mesmo dos outros stores do
+   * escopo): tudo em `fn` commita junto ou nada fica, e as notificações dos
+   * stores só saem depois do commit.
+   */
+  atomically<T>(fn: () => T): T {
+    const db = this.#binding.writeDatabase();
+    return withDeferredStoreChanges(() => db.transaction(fn).immediate());
   }
 
   create(rawInput: CreateMissionInput): ScopedMission {

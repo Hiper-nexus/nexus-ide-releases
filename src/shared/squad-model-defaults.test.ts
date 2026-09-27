@@ -1,5 +1,7 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { migrateModelId } from './model-defaults';
+import { migrateModelId, RETIRED_MODEL_MIGRATIONS } from './model-defaults';
 import {
   applySquadModelDefault,
   defaultSquadModelForAdapter,
@@ -27,7 +29,8 @@ describe('squad model defaults', () => {
   });
 
   it('migrates retired/legacy model ids to the active lineage at spawn time', () => {
-    expect(migrateModelId('gemini-3.1-pro-high')).toBe('gemini-3.8-flash-high');
+    // Ainda listado por `agy models`: superseded ≠ retired, não migra.
+    expect(migrateModelId('gemini-3.1-pro-high')).toBe('gemini-3.1-pro-high');
     expect(migrateModelId('gpt-5.5')).toBe('gpt-5.6-luna');
     expect(migrateModelId('gpt-5.4-pro')).toBe('gpt-5.6-sol');
     expect(migrateModelId('gpt-5.6-sol')).toBe('gpt-5.6-sol');
@@ -64,5 +67,21 @@ describe('squad model defaults', () => {
     // Chave global solta reescreveria modelo de qualquer provider.
     expect(migrateModelId('1.6')).toBe('1.6');
     expect(migrateModelId('swe-2')).toBe('swe-2');
+  });
+});
+
+describe('RETIRED_MODEL_MIGRATIONS × catálogos builtin', () => {
+  it('nenhum id que o adapter ainda oferece é migrado para outro modelo em silêncio', () => {
+    const dir = path.join(__dirname, '../adapters/builtin');
+    const conflicts: string[] = [];
+    for (const file of fs.readdirSync(dir).filter((name) => name.endsWith('.json'))) {
+      const adapter = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8')) as {
+        models?: { list?: string[]; default?: string };
+      };
+      for (const model of [...(adapter.models?.list ?? []), adapter.models?.default]) {
+        if (model && RETIRED_MODEL_MIGRATIONS[model]) conflicts.push(`${file}: ${model}`);
+      }
+    }
+    expect(conflicts).toEqual([]);
   });
 });

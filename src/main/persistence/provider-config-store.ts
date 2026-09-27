@@ -1,4 +1,5 @@
 import { mimoCredentialSupportsModel } from '../adapters/mimo-auth';
+import { migrateModelId } from '../../shared/model-defaults';
 import fs from 'node:fs';
 import { z } from 'zod';
 import os from 'node:os';
@@ -428,10 +429,13 @@ function effectiveProviderModel(
   selectedModel?: string,
 ): string | undefined {
   const adapter = getAdapter(adapterId);
-  return (
+  // Migra antes da checagem de credencial: um default salvo que saiu do
+  // catálogo (ex.: OpenCode free aposentado) não pode travar o spawn em
+  // "sem login" quando o id para onde migra roda sem credencial.
+  return migrateModelId(
     selectedModel?.trim() ||
     configFor(adapterId).defaultModel.trim() ||
-    adapter?.models.default
+    adapter?.models.default,
   );
 }
 
@@ -1208,7 +1212,7 @@ export function effectiveDefaultModel(
   knownModels: readonly string[],
   adapterDefault: string,
 ): string {
-  const saved = savedDefault.trim();
+  const saved = migrateModelId(savedDefault.trim()) ?? '';
   if (!saved) return adapterDefault;
   if (knownModels.includes(saved)) return saved;
   const warnKey = `${adapterId}:${saved}`;

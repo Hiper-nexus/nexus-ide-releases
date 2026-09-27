@@ -10,6 +10,7 @@ import {
   requestPaneSpawn,
   waitForIdle,
   listPaneSnapshots,
+  pendingSpawnAttemptSession,
 } from './pane-registry';
 import { parsePaneNumberRef } from '../../shared/pane-number';
 import {
@@ -299,10 +300,25 @@ const NO_BRACKETED_PASTE_ADAPTERS: ReadonlySet<string> = new Set(['kimi', 'agy',
  */
 function injectedPromptInput(sessionId: string, safePrompt: string): string {
   const adapterId = getAgentSessionInfo(sessionId)?.adapterId;
-  if (adapterId && NO_BRACKETED_PASTE_ADAPTERS.has(adapterId)) return safePrompt;
-  return safePrompt.includes('\n') || adapterId
+  if (!adapterId) {
+    return safePrompt.includes('\n') ? `\x1b[200~${safePrompt}\x1b[201~` : safePrompt;
+  }
+  if (NO_BRACKETED_PASTE_ADAPTERS.has(adapterId)) return safePrompt;
+  // Linha única só vira colagem quando o adapter declara que aceita o
+  // marcador (Codex); um adapter personalizado que recusa recebe texto cru.
+  return safePrompt.includes('\n') || adapterAcceptsBracketedPaste(adapterId)
     ? `\x1b[200~${safePrompt}\x1b[201~`
     : safePrompt;
+}
+
+/** Capacidade declarada em `promptInjection.bracketedPaste`; a lista F-537 só cobre adapter sem declaração. */
+function adapterAcceptsBracketedPaste(adapterId: string | undefined): boolean {
+  if (!adapterId) return true;
+  const adapter = getAdapter(adapterId);
+  return (
+    (adapter && adapter.kind === 'cli-pty' ? adapter.promptInjection?.bracketedPaste : undefined) ??
+    !NO_BRACKETED_PASTE_ADAPTERS.has(adapterId)
+  );
 }
 
 /** Type text into a pane's PTY, then press Enter (as a user would). */
@@ -645,11 +661,9 @@ async function injectWithBusyProof(
 
   try {
     const safePrompt = assertSafePtyPrompt(prompt);
-    const agent = getAgentSessionInfo(sessionId);
-    const adapter = agent?.adapterId ? getAdapter(agent.adapterId) : null;
-    const allowsBracketedPaste =
-      (adapter && adapter.kind === 'cli-pty' ? adapter.promptInjection?.bracketedPaste : undefined) ??
-      (agent?.adapterId ? !NO_BRACKETED_PASTE_ADAPTERS.has(agent.adapterId) : true);
+    const allowsBracketedPaste = adapterAcceptsBracketedPaste(
+      getAgentSessionInfo(sessionId)?.adapterId,
+    );
     const input =
       safePrompt.includes('\n') && allowsBracketedPaste
         ? `\x1b[200~${safePrompt}\x1b[201~`
@@ -1513,14 +1527,23 @@ export async function spawnPaneAndMaybePrompt(
     // brief de argv já viajou no grant; o de COLAGEM (Kimi) não tem canal
     // nenhum — sem isto o helper abria mudo, sem o briefing.
     void deliverPromptAfterPendingSpawn(
-      result.paneId,
+      { requestId: result.requestId, paneId: result.paneId },
       finalPrompt,
       adapter.id,
       hooks.invocation,
+      {
+        scope: options.scope,
+        missionId: options.missionId,
+        title: options.agentName ?? options.title,
+      },
     );
   }
   if (!result.ok || !result.paneId || !result.sessionId) {
-    adapterCircuitBreakers.recordFailure(options.adapterId);
+    // ACK pendente não é falha do adapter: o chamador traduz em sucesso e o
+    // pane ainda vai nascer. Contar aqui abria o breaker com canvas oculto.
+    if (!(result.ok && result.pending === true)) {
+      adapterCircuitBreakers.recordFailure(options.adapterId);
+    }
     throw new Error(result.error ?? 'pane spawn failed');
   }
   try {
@@ -1714,29 +1737,48 @@ const PENDING_SPAWN_SESSION_POLL_MS = 500;
 
 /**
  * Entrega pós-boot de um brief de colagem cujo pane nasceu com ACK pendente.
- * Espera a sessão do próprio pane (a mesma janela do grant de spawn), o
- * primeiro idle e então o mesmo `deliverAgentPrompt` do caminho síncrono.
+ * O destinatário é a sessão que o Main vinculou a ESTA tentativa (requestId),
+ * nunca "a sessão atual do paneId" — um pane reciclado mantém o id. A tool já
+ * respondeu sucesso pendente, então falha aqui é visível: fecha o pane se a
+ * sessão ainda for desta tentativa e avisa o operador; nunca helper mudo.
  */
 export async function deliverPromptAfterPendingSpawn(
-  paneId: string,
+  attempt: { readonly requestId: string; readonly paneId: string },
   prompt: string,
   adapterId: string,
-  invocation?: McpToolInvocation,
+  invocation: McpToolInvocation | undefined,
+  notice: {
+    readonly scope: SpawnToolOptions['scope'];
+    readonly missionId?: string;
+    readonly title?: string;
+  },
 ): Promise<boolean> {
+  const { paneId } = attempt;
   const deadline = Date.now() + ORCH_SPAWN_GRANT_TTL_MS;
   let sessionId: string | null = null;
   try {
     while (!sessionId) {
       assertMcpInvocationCurrent(invocation);
-      const candidate = getPaneAuthzInfo(paneId)?.sessionId ?? null;
-      if (
-        candidate &&
-        getAgentSessionInfo(candidate)?.paneId === paneId
-      ) {
-        sessionId = candidate;
-        break;
+      const bound = pendingSpawnAttemptSession(attempt.requestId);
+      // Tentativa encerrada sem sessão: o registry já limpou o spawn falho.
+      if (bound.state === 'gone') return false;
+      if (bound.state === 'bound') {
+        const info = getAgentSessionInfo(bound.sessionId);
+        if (info?.paneId === paneId) {
+          // O brief leva contrato de handoff do adapter pedido.
+          if (info.adapterId !== adapterId) {
+            throw new Error(`spawned session runs ${info.adapterId}, not ${adapterId}`);
+          }
+          sessionId = bound.sessionId;
+          break;
+        }
+        if (getSessionState(bound.sessionId) === null) {
+          throw new Error('spawned session exited before the brief was delivered');
+        }
       }
-      if (Date.now() >= deadline) return false;
+      if (Date.now() >= deadline) {
+        throw new Error('pending pane session never became deliverable');
+      }
       await delay(PENDING_SPAWN_SESSION_POLL_MS);
     }
     const boot = await waitForIdle(
@@ -1744,7 +1786,7 @@ export async function deliverPromptAfterPendingSpawn(
       AGENT_BOOT_TIMEOUT_MS,
       invocation?.signal,
     );
-    if (boot === 'exited') return false;
+    if (boot === 'exited') throw agentBootExitError(sessionId);
     assertMcpInvocationCurrent(invocation);
     const accepted = await deliverAgentPrompt(sessionId, prompt, invocation, {
       adapterId,
@@ -1755,6 +1797,34 @@ export async function deliverPromptAfterPendingSpawn(
     return true;
   } catch (error) {
     logAgentPromptFailure(adapterId, sessionId ?? paneId, error);
+    // Só fecha se o pane ainda roda a sessão desta tentativa: um substituto
+    // (resume) no mesmo paneId não é nosso.
+    const bound = pendingSpawnAttemptSession(attempt.requestId);
+    const attemptSessionId =
+      sessionId ?? (bound.state === 'bound' ? bound.sessionId : null);
+    if (attemptSessionId && getPaneAuthzInfo(paneId)?.sessionId === attemptSessionId) {
+      try {
+        await requestPaneClose(paneId);
+      } catch {
+        // best effort — o aviso abaixo é o que importa
+      }
+    }
+    if (!invocation?.signal?.aborted) {
+      try {
+        emitWorkerSpawnFailed({
+          missionId: notice.missionId ?? '',
+          deadAdapterId: adapterId,
+          message:
+            'o briefing não foi entregue ao pane recém-aberto: ' +
+            (error instanceof Error ? error.message : String(error)),
+          title: notice.title,
+          at: Date.now(),
+          scope: notice.scope,
+        });
+      } catch {
+        // aviso best-effort
+      }
+    }
     return false;
   }
 }

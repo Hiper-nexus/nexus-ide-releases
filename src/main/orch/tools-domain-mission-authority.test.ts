@@ -97,6 +97,8 @@ vi.mock('../remote/remote-spawn', () => ({
 }));
 
 import { buildDomainTools } from './tools-domain';
+import { createScopedMissionStore } from './mission-store';
+import { createScopedMissionPaneStore } from './mission-pane-store';
 import * as paneRegistry from './pane-registry';
 import { assertMissionIntentAllowsTool } from './mission-intent-gate';
 import { listSquads } from './squad-store';
@@ -377,7 +379,7 @@ describe('mission creation authority', () => {
         id === created.id ? { ...created, ...patch, updatedAt: 2 } : null,
       );
       mocks.getProjectDomainStores.mockReturnValue({
-        missions: { create, update },
+        missions: { create, update, atomically: <T>(fn: () => T) => fn() },
         missionPanes: { record: vi.fn() },
       });
       return { create, update };
@@ -422,32 +424,54 @@ describe('mission creation authority', () => {
       expect(ctx.role).toBe('user');
     });
 
-    it('criar é atômico: falha ao gravar o pane remove a missão e não a põe para rodar', async () => {
+    it.each([
+      ['no registro do pane', 'record'],
+      ['no update para running (SQLITE_FULL)', 'update'],
+    ] as const)('criar é atômico em SQLite real: falha %s não deixa missão, pane nem aviso', async (_label, failing) => {
       mocks.getOrchSettings.mockReturnValue({ squadCliPolicy: 'operator-choice' });
       vi.spyOn(paneRegistry, 'findPane').mockReturnValue({
         paneId: 'pane-operator', adapterId: 'codex',
       } as never);
-      const { create, update } = missionStores();
-      const stores = mocks.getProjectDomainStores() as {
-        missions: Record<string, unknown>;
-        missionPanes: Record<string, unknown>;
-      };
-      const remove = vi.fn(() => true);
-      stores.missions.remove = remove;
-      stores.missionPanes.findByPaneId = () => null;
-      stores.missionPanes.record = vi.fn(() => {
-        throw new Error('pane id already belongs to another mission pane');
-      });
-      const ctx = operatorHand();
+      const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-mission-create-'));
+      const manager = new ProjectRuntimeManager({ baseDir: directory, appVersion: 'test' });
+      try {
+        const missions = createScopedMissionStore(manager, scope);
+        const missionPanes = createScopedMissionPaneStore(manager, scope);
+        mocks.getProjectDomainStores.mockReturnValue({ missions, missionPanes });
+        const changes: string[] = [];
+        missions.onChange(() => changes.push('missions'));
+        missionPanes.onChange(() => changes.push('mission-panes'));
+        const diskFull = () => {
+          throw Object.assign(new Error('database or disk is full'), { code: 'SQLITE_FULL' });
+        };
+        const fail = failing === 'record'
+          ? vi.spyOn(missionPanes, 'record').mockImplementationOnce(diskFull)
+          : vi.spyOn(missions, 'update').mockImplementationOnce(diskFull);
+        const ctx = operatorHand();
 
-      await expect(
-        missionCreateTool().handler({ title: 'Lote duplicado' }, ctx),
-      ).rejects.toThrow(/already belongs/);
+        await expect(
+          missionCreateTool().handler({ title: 'Lote duplicado' }, ctx),
+        ).rejects.toThrow(/disk is full/);
 
-      expect(create).toHaveBeenCalledOnce();
-      expect(remove).toHaveBeenCalledWith('mission-new');
-      expect(update).not.toHaveBeenCalled();
-      expect(ctx.role).toBe('user');
+        expect(fail).toHaveBeenCalledOnce();
+        expect(missions.list()).toEqual([]);
+        expect(missionPanes.findByPaneId('pane-operator')).toBeNull();
+        expect(changes).toEqual([]);
+        expect(ctx.role).toBe('user');
+        expect(ctx.missionId).toBeUndefined();
+
+        // A próxima tentativa não fica bloqueada por uma missão fantasma.
+        const mission = (await missionCreateTool().handler(
+          { title: 'Lote duplicado' }, ctx,
+        )) as { id: string; status: string };
+        expect(mission.status).toBe('running');
+        expect(missionPanes.findByPaneId('pane-operator')?.missionId).toBe(mission.id);
+        expect(changes).toContain('missions');
+        expect(ctx).toMatchObject({ role: 'orchestrator', missionId: mission.id });
+      } finally {
+        manager.closeAll();
+        fs.rmSync(directory, { recursive: true, force: true });
+      }
     });
 
     it('Autopilot: a missão nasce rodando e a mão continua abrindo panes', async () => {
