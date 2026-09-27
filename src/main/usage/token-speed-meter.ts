@@ -72,6 +72,22 @@ export interface TokenSpeedUsageEvent {
   model?: string | null
   /** epoch ms do evento no transcript, quando o provider expõe. */
   timestamp?: number | null
+  /**
+   * epoch ms em que a requisição desta mensagem começou (última linha de
+   * entrada do transcript antes dela: prompt ou resultado de ferramenta).
+   * Presente = a mensagem carrega a própria janela de geração e vira amostra
+   * real sozinha, sem depender do texto que a TUI pintou na tela.
+   */
+  startedAt?: number | null
+}
+
+/** Mensagem real ainda recebendo linhas do transcript: fora do histórico. */
+interface RealMessage {
+  key: string
+  startedAt: number
+  endedAt: number
+  outputTokens: number
+  model: string | null
 }
 
 interface PendingUsage {
@@ -90,6 +106,8 @@ interface OpenTurn {
   echo: string | null
   /** Uso real pode chegar antes do timer que fecha a rodada. */
   pendingUsage: PendingUsage | null
+  /** Um chunk despejou texto demais de uma vez: render, não geração. */
+  dumped: boolean
 }
 
 /**
@@ -111,6 +129,15 @@ interface PaneState {
   open: OpenTurn | null
   /** Linhas já vistas no pane (LRU pela ordem de inserção). */
   seenLines: Map<string, true>
+  /** 1º evento do pane: mensagem real anterior a isto é histórico alheio. */
+  createdAt: number
+  /**
+   * O provider entrega mensagens com janela própria (`startedAt`). A partir
+   * daí a estimativa da tela é velocidade de RENDER, não de geração, e sai.
+   */
+  realTimed: boolean
+  /** Mensagem real que ainda pode ganhar linhas (streaming de tools). */
+  provisional: RealMessage | null
 }
 
 /**
@@ -132,6 +159,13 @@ const MIN_DEDUPED_LINE_CHARS = 8
 const MAX_SEEN_LINES = 4_000
 /** Saída sem submit só abre rodada com geração de verdade, não com sobra de repaint. */
 export const MIN_UNPROMPTED_OPEN_TOKENS = 12
+/**
+ * Streaming de modelo chega em poucos tokens por quadro. Um chunk com mais
+ * texto NOVO que isto é despejo de tela — saída de ferramenta (Bash/Read), bloco
+ * pronto, scroll — e a rodada estimada fica sem tok/s: o orquestrador do
+ * operador mostrou 2200 tok/s assim (27/09), com o modelo a ~100 tok/s.
+ */
+export const MAX_STREAMED_CHUNK_TOKENS = 256
 
 function unseenVisibleText(state: PaneState, visible: string): string {
   const kept: string[] = []
@@ -274,7 +308,7 @@ export class TokenSpeedMeter {
     )
   }
 
-  #state(paneId: string): PaneState {
+  #state(paneId: string, at: number): PaneState {
     const existing = this.#panes.get(paneId)
     if (existing) return existing
     const created: PaneState = {
@@ -284,6 +318,9 @@ export class TokenSpeedMeter {
       history: [],
       open: null,
       seenLines: new Map(),
+      createdAt: at,
+      realTimed: false,
+      provisional: null,
     }
     this.#panes.set(paneId, created)
     return created
@@ -295,7 +332,7 @@ export class TokenSpeedMeter {
    */
   noteSubmit(paneId: string, at: number, promptText = ''): boolean {
     if (!paneId || !Number.isFinite(at)) return false
-    const state = this.#state(paneId)
+    const state = this.#state(paneId, at)
     const closed = this.#closeTurn(state)
     state.open = {
       submittedAt: at,
@@ -305,6 +342,7 @@ export class TokenSpeedMeter {
       model: state.model,
       echo: normalizeForEcho(promptText).slice(0, PROMPT_ECHO_MEMORY_CHARS),
       pendingUsage: null,
+      dumped: false,
     }
     return closed
   }
@@ -317,7 +355,7 @@ export class TokenSpeedMeter {
     model?: string | null,
   ): boolean {
     if (!paneId || !Number.isFinite(at) || chunk.length === 0) return false
-    const state = this.#state(paneId)
+    const state = this.#state(paneId, at)
     if (typeof model === 'string' && model.length > 0) state.model = model
 
     const visible = visibleText(chunk)
@@ -355,6 +393,7 @@ export class TokenSpeedMeter {
         model: state.model,
         echo: null,
         pendingUsage: null,
+        dumped: tokens > MAX_STREAMED_CHUNK_TOKENS,
       }
       return true
     }
@@ -363,6 +402,7 @@ export class TokenSpeedMeter {
       open.firstTokenAt = at
       open.echo = null
     }
+    if (tokens > MAX_STREAMED_CHUNK_TOKENS) open.dumped = true
     open.tokens += tokens
     open.lastTokenAt = Math.max(open.lastTokenAt, at)
     open.model = state.model ?? open.model
@@ -383,6 +423,13 @@ export class TokenSpeedMeter {
     if (!state) return false
     const outputTokens = Math.round(event.outputTokens)
     const key = event.key || null
+    if (
+      key &&
+      typeof event.startedAt === 'number' &&
+      Number.isFinite(event.startedAt)
+    ) {
+      return this.#noteTimedUsage(state, at, event.startedAt, key, outputTokens, event.model)
+    }
 
     const ownedIndex = key
       ? state.history.findIndex((entry) => entry.usageKey === key)
@@ -431,6 +478,114 @@ export class TokenSpeedMeter {
       outputTokens,
       event.model,
     )
+  }
+
+  /**
+   * Mensagem real com janela própria: tok/s = tokens de saída ÷ (última linha
+   * da mensagem − início da requisição). O CLI grava uma linha por bloco e
+   * executa tools no meio da mesma mensagem, então ela só está completa quando
+   * outra mensagem começa ou o pane emudece — até lá fica provisória, fora do
+   * histórico, para a 1ª linha (tokens já finais, janela ainda curta) não
+   * virar um pico falso.
+   */
+  #noteTimedUsage(
+    state: PaneState,
+    at: number,
+    startedAt: number,
+    key: string,
+    outputTokens: number,
+    model: string | null | undefined,
+  ): boolean {
+    // Transcript relido desde o começo: mensagens anteriores ao pane não são
+    // geração que este pane viu, e sessões antigas não entram na conta.
+    if (startedAt < state.createdAt || at < startedAt) return false
+    this.#becomeRealTimed(state)
+
+    const provisional = state.provisional
+    if (provisional?.key === key) {
+      provisional.endedAt = Math.max(provisional.endedAt, at)
+      provisional.outputTokens = outputTokens
+      provisional.model = model ?? provisional.model
+      return true
+    }
+    const owned = state.history.findIndex((entry) => entry.usageKey === key)
+    if (owned >= 0) {
+      const current = state.history[owned].sample
+      return this.#pushRealMessage(state, {
+        key,
+        startedAt: current.startedAt,
+        endedAt: Math.max(current.at, at),
+        outputTokens,
+        model: model ?? current.model,
+      }, owned)
+    }
+
+    this.#finalizeProvisional(state)
+    const message: RealMessage = {
+      key,
+      startedAt,
+      endedAt: at,
+      outputTokens,
+      model: model ?? state.open?.model ?? state.model,
+    }
+    if (this.#paneStreaming(state, at)) {
+      state.provisional = message
+      return true
+    }
+    // Pane já quieto: nenhuma linha nova desta mensagem virá.
+    return this.#pushRealMessage(state, message)
+  }
+
+  #becomeRealTimed(state: PaneState): void {
+    if (state.realTimed) return
+    state.realTimed = true
+    // Estimativas da tela até aqui eram render (saída de tool, repaint).
+    state.history = state.history.filter((entry) => entry.sample.source === 'real')
+    state.turns = state.history.length
+  }
+
+  #finalizeProvisional(state: PaneState): boolean {
+    const provisional = state.provisional
+    state.provisional = null
+    return provisional ? this.#pushRealMessage(state, provisional) : false
+  }
+
+  #pushRealMessage(
+    state: PaneState,
+    message: RealMessage,
+    replaceIndex = -1,
+  ): boolean {
+    const rateWindowMs = message.endedAt - message.startedAt
+    const sample: TokenSpeedSample = {
+      paneId: state.paneId,
+      at: message.endedAt,
+      startedAt: message.startedAt,
+      outputTokens: message.outputTokens,
+      generationMs: rateWindowMs,
+      rateWindowMs,
+      tokensPerSecond: this.#speedOf(message.outputTokens, rateWindowMs),
+      ttftMs: null,
+      model: message.model,
+      source: 'real',
+    }
+    const entry: HistoryEntry = { sample, usageKey: message.key }
+    if (replaceIndex >= 0) {
+      const current = state.history[replaceIndex].sample
+      if (
+        current.at === sample.at &&
+        current.outputTokens === sample.outputTokens &&
+        current.model === sample.model
+      ) {
+        return false
+      }
+      state.history = state.history.map((existing, index) =>
+        index === replaceIndex ? entry : existing,
+      )
+      return true
+    }
+    state.history = [...state.history, entry].slice(-this.historyLimit)
+    state.turns += 1
+    return true
   }
 
   #updateHistoryUsage(
@@ -726,6 +881,13 @@ export class TokenSpeedMeter {
     const open = state.open
     if (!open || open.firstTokenAt === null) return null
     if (this.#isSilent(open.lastTokenAt, now)) return null
+    if (state.realTimed) {
+      // Ao vivo = a última mensagem real JÁ fechada desta rodada; a que ainda
+      // transmite não tem janela final.
+      const turnStart = open.submittedAt ?? open.firstTokenAt
+      const last = state.history.at(-1)?.sample
+      return last && last.at >= turnStart ? last.tokensPerSecond : null
+    }
     const tokens = open.pendingUsage?.outputTokens ?? open.tokens
     if (tokens < this.minTurnTokens) return null
     const ttftMs =
@@ -737,6 +899,7 @@ export class TokenSpeedMeter {
       Math.max(0, now - open.firstTokenAt),
       ttftMs,
       open.pendingUsage !== null,
+      open.dumped,
     ).tokensPerSecond
   }
 
@@ -766,11 +929,15 @@ export class TokenSpeedMeter {
     generationMs: number,
     ttftMs: number | null,
     real: boolean,
+    dumped = false,
   ): { rateWindowMs: number | null; tokensPerSecond: number | null } {
     if (!real) {
       return {
         rateWindowMs: generationMs,
-        tokensPerSecond: this.#speedOf(outputTokens, generationMs),
+        // Despejo de tela na rodada: a conta mediria o terminal, não o modelo.
+        tokensPerSecond: dumped
+          ? null
+          : this.#speedOf(outputTokens, generationMs),
       }
     }
     if (ttftMs === null) return { rateWindowMs: null, tokensPerSecond: null }
@@ -784,6 +951,7 @@ export class TokenSpeedMeter {
   #closeTurn(state: PaneState): boolean {
     const open = state.open
     state.open = null
+    if (state.realTimed) return this.#finalizeProvisional(state)
     if (!open || open.firstTokenAt === null) return false
     if (!open.pendingUsage && open.tokens < this.minTurnTokens) return false
 
@@ -807,6 +975,7 @@ export class TokenSpeedMeter {
         generationMs,
         ttftMs,
         open.pendingUsage !== null,
+        open.dumped,
       ),
       ttftMs,
       model: open.pendingUsage?.model ?? open.model ?? state.model,
