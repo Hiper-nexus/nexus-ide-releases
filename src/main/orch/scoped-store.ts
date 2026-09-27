@@ -37,6 +37,27 @@ function immutableScope(scope: ProjectExecutionScope): ProjectExecutionScope {
   return Object.freeze(projectExecutionScopeSchema.parse({ ...scope }));
 }
 
+let deferredChanges: Set<ScopedStoreBinding> | null = null;
+
+/**
+ * Segura as notificações dos stores durante `fn` (uma transação SQLite do
+ * chamador) e só as publica se `fn` retornar: um rollback não deixa o
+ * renderer ver uma missão que nunca foi commitada.
+ */
+export function withDeferredStoreChanges<T>(fn: () => T): T {
+  if (deferredChanges) return fn();
+  const pending = new Set<ScopedStoreBinding>();
+  deferredChanges = pending;
+  let result: T;
+  try {
+    result = fn();
+  } finally {
+    deferredChanges = null;
+  }
+  for (const binding of pending) binding.emitChange();
+  return result;
+}
+
 /**
  * Synchronous scope binding shared by the project-domain stores. It never
  * retains a DB handle, so ProjectRuntimeManager remains free to enforce LRU.
@@ -101,6 +122,10 @@ export class ScopedStoreBinding {
   }
 
   emitChange(): void {
+    if (deferredChanges) {
+      deferredChanges.add(this);
+      return;
+    }
     for (const listener of [...this.#listeners]) {
       try {
         listener(this.coordinates);

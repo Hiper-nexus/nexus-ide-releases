@@ -12,6 +12,7 @@ import {
   adoptUserContextAsMissionOrchestrator,
   assertCurrentMissionOrchestratorSession,
   assertOrchestratorMission,
+  returnOperatorHandFromEndedMission,
 } from './gate';
 import { requireMissionLeaderSession } from './mission-leader-gate';
 import {
@@ -22,7 +23,10 @@ import {
 import type { AgentGateContext } from './gate';
 import { z } from 'zod';
 import { findPane, readSessionOutput, waitForIdle } from './pane-registry';
-import { adoptUserAgentSessionAsMissionOrchestrator } from '../pty/pty-manager';
+import {
+  adoptUserAgentSessionAsMissionOrchestrator,
+  returnAdoptedAgentSessionToUser,
+} from '../pty/pty-manager';
 import { listProviderSettings } from '../persistence/provider-config-store';
 import { routeTask, type TaskTier } from './task-router';
 import {
@@ -326,32 +330,33 @@ const missionCreateTool: McpToolDef = {
     const spaceId = ctx.executionScope ? sharedPaneSpaceId(ctx.scope, ctx.executionScope) : undefined;
     const operatorContract = operatorHandMissionContract(title, description, milestones);
     if (spaceId) operatorContract.workspaceBinding = { version: 1, spaceId };
-    const created = stores.missions.create({
-      title,
-      description,
-      squadId: rawSquadId || defaultSquadId,
-      milestones,
-      orchestratorSessionId: ctx.sessionId,
-      ...(autopilot
-        ? {
-            intentState: 'dispatched' as const,
-            intentVersion: 1,
-            intentContract: operatorContract,
-          }
-        : spaceId ? {
-            intentState: 'awaiting_approval' as const,
-            intentVersion: 1,
-            intentContract: {
-              ...compileIntentContract({ goal: description?.trim() || title, source: 'typed', intentVersion: 1 }),
-              workspaceBinding: { version: 1 as const, spaceId },
-            },
-          } : {}),
-    });
-    // The creator's own pane is part of the mission composition too, so a
-    // history reopen restores the orchestrator alongside the workers. Gravado
-    // ANTES de a missão rodar: se falhar, a missão sai e nada sobe para ela.
-    if (orchPane?.adapterId) {
-      try {
+    // Criação + pane do criador + running numa transação só: qualquer falha
+    // (inclusive no update para running) desfaz tudo e nada é publicado.
+    const mission = stores.missions.atomically(() => {
+      const created = stores.missions.create({
+        title,
+        description,
+        squadId: rawSquadId || defaultSquadId,
+        milestones,
+        orchestratorSessionId: ctx.sessionId,
+        ...(autopilot
+          ? {
+              intentState: 'dispatched' as const,
+              intentVersion: 1,
+              intentContract: operatorContract,
+            }
+          : spaceId ? {
+              intentState: 'awaiting_approval' as const,
+              intentVersion: 1,
+              intentContract: {
+                ...compileIntentContract({ goal: description?.trim() || title, source: 'typed', intentVersion: 1 }),
+                workspaceBinding: { version: 1 as const, spaceId },
+              },
+            } : {}),
+      });
+      // The creator's own pane is part of the mission composition too, so a
+      // history reopen restores the orchestrator alongside the workers.
+      if (orchPane?.adapterId) {
         stores.missionPanes.record({
           missionId: created.id,
           adapterId: orchPane.adapterId,
@@ -368,18 +373,24 @@ const missionCreateTool: McpToolDef = {
           allowedTools: ctx.allowedTools,
           allowedSkills: ctx.allowedSkills,
         });
-      } catch (error) {
-        stores.missions.remove(created.id);
-        throw error;
       }
-    }
-    const mission = autopilot
-      ? (stores.missions.update(created.id, { status: 'running' }) ?? created)
-      : created;
+      return autopilot
+        ? (stores.missions.update(created.id, { status: 'running' }) ?? created)
+        : created;
+    });
     // Marca a promoção (promotedFromUserSession) para que ela possa ser
     // desfeita se a missão for descartada. Sem isto o pane fica estéril.
-    adoptUserContextAsMissionOrchestrator(ctx, mission.id);
-    if (ctx.sessionId) adoptUserAgentSessionAsMissionOrchestrator(ctx.sessionId, mission.id);
+    // Falhou a promoção: a missão commitada sai (cascata leva o pane) e a mão
+    // volta a ser do operador — nunca missão órfã sem orquestrador.
+    try {
+      adoptUserContextAsMissionOrchestrator(ctx, mission.id);
+      if (ctx.sessionId) adoptUserAgentSessionAsMissionOrchestrator(ctx.sessionId, mission.id);
+    } catch (error) {
+      if (ctx.sessionId) returnAdoptedAgentSessionToUser(ctx.sessionId, mission.id);
+      returnOperatorHandFromEndedMission(ctx);
+      stores.missions.remove(mission.id);
+      throw error;
+    }
     return mission;
   },
 };
