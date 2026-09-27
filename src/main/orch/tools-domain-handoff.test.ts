@@ -72,6 +72,16 @@ const jevReview = vi.hoisted(() => ({
 
 vi.mock("./jev-handoff-review", () => jevReview);
 
+const regressionGate = vi.hoisted(() => ({
+  evaluateHandoffRegressionGate: vi.fn<
+    () => Promise<
+      import("../regression-gate/regression-gate-handoff").RegressionHandoffVerdict
+    >
+  >(async () => ({ kind: "skipped", reason: "mocked" })),
+}));
+
+vi.mock("../regression-gate/regression-gate-handoff", () => regressionGate);
+
 import { buildDomainTools } from "./tools-domain";
 import {
   armDeliveryContract,
@@ -353,6 +363,71 @@ describe("handoff MCP stop receipt", () => {
       ),
     ).rejects.toThrow(/revisão de evidência \(Jev\) — devolução 1\/1/);
     expect(mocks.submit).not.toHaveBeenCalled();
+  });
+
+  it("portão de regressão: teste impactado falhando devolve o handoff ao worker", async () => {
+    regressionGate.evaluateHandoffRegressionGate.mockResolvedValueOnce({
+      kind: "retry",
+      message:
+        "handoff NÃO aceito pelo portão de regressão (devolução 1/2).\n- src/a.test.ts: soma",
+    });
+
+    await expect(
+      submitTool().handler(
+        {
+          status: "success",
+          summary: "Worker reports that implementation is complete.",
+        },
+        context(),
+        invocation(),
+      ),
+    ).rejects.toThrow(/portão de regressão \(devolução 1\/2\)/);
+    expect(mocks.submit).not.toHaveBeenCalled();
+    expect(jevReview.reviewMissionHandoff).not.toHaveBeenCalled();
+  });
+
+  it("portão de regressão esgotado: persiste como blocked com as falhas em artifact", async () => {
+    regressionGate.evaluateHandoffRegressionGate.mockResolvedValueOnce({
+      kind: "exhausted",
+      report: "Seu diff quebrou 1 arquivo(s)",
+      artifact: {
+        kind: "nexus.regressionGate",
+        payload: {
+          status: "failed",
+          diffHash: "h",
+          runner: "vitest",
+          testsRun: ["src/a.test.ts"],
+          failures: [{ file: "src/a.test.ts", message: "soma" }],
+          untestedFiles: [],
+          invariantsTouched: [],
+          warnings: [],
+        },
+      },
+    });
+    mocks.submit.mockReturnValue({ ...handoff("unverified"), status: "blocked" });
+
+    await submitTool().handler(
+      {
+        status: "success",
+        summary: "Worker reports that implementation is complete.",
+      },
+      context(),
+      invocation(),
+    );
+
+    const persisted = mocks.submit.mock.calls[0]?.[0] as {
+      status?: string;
+      summary?: string;
+      artifacts?: Array<{ kind: string }>;
+    };
+    expect(persisted?.status).toBe("blocked");
+    expect(persisted?.summary).toMatch(/^\[testes impactados falhando\] /);
+    expect(persisted?.artifacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "nexus.regressionGate" }),
+      ]),
+    );
+    expect(jevReview.reviewMissionHandoff).not.toHaveBeenCalled();
   });
 
   it("accepts a weak handoff flagged when the Jev budget is exhausted", async () => {

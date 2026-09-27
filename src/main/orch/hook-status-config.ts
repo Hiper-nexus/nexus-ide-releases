@@ -36,6 +36,10 @@ import {
 import { filterUserHooks } from '../../vendor/emdash/hooks/hook-commands';
 import { makeClaudeTriageHookCommand } from './hook-triage-command';
 import { makeDelegateHookCommand } from './hook-delegate-command';
+import {
+  REGRESSION_HOOK_TIMEOUT_SECONDS,
+  makeRegressionHookCommand,
+} from './hook-regression-command';
 
 // ── Claude (family: claude/glm/glm-flash/longcat) ───────────────────────────
 
@@ -81,6 +85,21 @@ export function mergeClaudeStatusHooks(existing: ClaudeHooksMap): ClaudeHooksMap
       ],
     },
   ];
+  // Stop → POST /hook/regression: testes impactados pelo diff no fim do
+  // turno; a resposta (`decision: block`) devolve as falhas ao agente.
+  const stop = Array.isArray(next.Stop) ? next.Stop : [];
+  next.Stop = [
+    ...stop,
+    {
+      hooks: [
+        {
+          type: 'command',
+          command: makeRegressionHookCommand(),
+          timeout: REGRESSION_HOOK_TIMEOUT_SECONDS,
+        },
+      ],
+    },
+  ];
   return next;
 }
 
@@ -112,10 +131,13 @@ export function codexStatusHookArgs(): string[] {
   for (const spec of codexHookSpecs()) {
     // UserPromptSubmit também pede contexto ao /hook/delegate, no MESMO array:
     // um segundo `-c` com a mesma chave sombrearia o hook de status.
+    // Stop idem com o portão de regressão (/hook/regression).
     const commands =
       spec.hookKey === 'UserPromptSubmit'
         ? [spec.command, makeDelegateHookCommand()]
-        : [spec.command];
+        : spec.hookKey === 'Stop'
+          ? [spec.command, makeRegressionHookCommand()]
+          : [spec.command];
     const hooks = commands
       .map((command) => `{type="command",command=${tomlBasicString(command)}}`)
       .join(',');

@@ -16,6 +16,7 @@ import {
   enforceCivilianAutoReview,
   resolveAutoReviewBaseSha,
 } from './civilian-auto-review';
+import type { RegressionGateResult } from '../regression-gate/regression-gate';
 
 const scope = testProjectScope({ rootRealPath: '/workspace/loja' });
 
@@ -147,7 +148,29 @@ const healthySensors = {
     summary: 'Auditoria: ✓ nenhuma vulnerabilidade conhecida.',
     findings: [],
   }),
+  // Portão de regressão fora dos testes de fluxo; coberto abaixo.
+  regressionGate: null,
 };
+
+function regressionResult(
+  partial: Partial<RegressionGateResult>,
+): RegressionGateResult {
+  return {
+    version: 'regression-gate-v1',
+    status: 'passed',
+    diffHash: 'hash',
+    changedFiles: ['src/app.ts'],
+    testsRun: ['src/app.test.ts'],
+    failures: [],
+    untestedFiles: [],
+    invariantsTouched: [],
+    runner: 'vitest',
+    warnings: [],
+    cached: false,
+    durationMs: 1,
+    ...partial,
+  };
+}
 
 describe('resolveAutoReviewBaseSha', () => {
   it('usa o último commit anterior ao nascimento da missão', async () => {
@@ -445,6 +468,39 @@ describe('enforceCivilianAutoReview — sensores mecânicos (Etapa 2)', () => {
     if (outcome.kind !== 'approved') return;
     expect(outcome.note).toContain('Typecheck: ✓');
     expect(outcome.note).toContain('Auditoria: ✓');
+  });
+
+  it('teste impactado falhando bloqueia e volta ao Maestro; verde entra no laudo', async () => {
+    __resetCivilianAutoReviewForTests();
+    const { dependencies, calls } = deps();
+    const gateInputs: unknown[] = [];
+    const outcome = await enforceCivilianAutoReview(
+      { ...baseInput(), liveOrchestratorSessionId: 'orch-session-1' },
+      {
+        ...dependencies,
+        regressionGate: async (input) => {
+          gateInputs.push(input);
+          return regressionResult({
+            status: 'failed',
+            failures: [{ file: 'src/app.test.ts', message: 'soma: expected 2 to be 3' }],
+          });
+        },
+      },
+    );
+    expect(outcome.kind).toBe('repair-dispatched');
+    expect(calls.repairs[0]).toContain('src/app.test.ts');
+    expect(calls.repairs[0]).toContain('Teste impactado pelo diff falhou');
+    expect(gateInputs[0]).toMatchObject({ baseSha: BASE_SHA });
+
+    __resetCivilianAutoReviewForTests();
+    const approved = await enforceCivilianAutoReview(baseInput(), {
+      ...deps().dependencies,
+      regressionGate: async () => regressionResult({}),
+    });
+    expect(approved.kind).toBe('approved');
+    if (approved.kind === 'approved') {
+      expect(approved.note).toContain('Testes impactados: ✓ 1 passaram (vitest).');
+    }
   });
 
   it('erro de compilação bloqueia como finding high — vira reparo com Maestro vivo', async () => {

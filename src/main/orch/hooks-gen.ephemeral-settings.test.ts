@@ -66,7 +66,8 @@ describe('Claude-family zero-click settings (system default)', () => {
       'Stop',
       'UserPromptSubmit',
     ]);
-    expect(settings.hooks?.Stop).toHaveLength(2);
+    // skill-gate + status + portão de regressão (/hook/regression).
+    expect(settings.hooks?.Stop).toHaveLength(3);
     expect(gateCommands).toContain('NEXUS_HOOK_STATUS');
     expect(home.dir.startsWith(path.join(os.homedir(), '.nexus', 'ephemeral'))).toBe(
       true,

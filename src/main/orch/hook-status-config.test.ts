@@ -34,9 +34,17 @@ describe('mergeClaudeStatusHooks (Claude JSON settings)', () => {
       'Stop',
       'UserPromptSubmit',
     ]);
-    // Skill-gate Stop entry intact, ours appended alongside.
-    expect(merged.Stop).toHaveLength(2);
+    // Skill-gate Stop entry intact, ours appended alongside: status +
+    // portão de regressão (/hook/regression, resposta = saída do hook).
+    expect(merged.Stop).toHaveLength(3);
     expect(merged.Stop![0]).toEqual(SKILL_GATE_STOP);
+    const regression = (merged.Stop as Array<{
+      hooks: Array<{ command: string; timeout?: number }>;
+    }>)[2]!.hooks[0]!;
+    expect(regression.command).toContain('$NEXUS_HOOK_REGRESSION_URL');
+    expect(regression.command).not.toContain('/dev/null');
+    expect(regression.command).toContain('|| true');
+    expect(regression.timeout).toBe(180);
     // User hook intact, ours appended: status + conselho de delegação (C2).
     expect(merged.UserPromptSubmit![0]).toEqual(USER_PROMPT_HOOK);
     expect(merged.UserPromptSubmit).toHaveLength(3);
@@ -69,8 +77,8 @@ describe('mergeClaudeStatusHooks (Claude JSON settings)', () => {
 
     expect(twice).toEqual(once);
     // 6 status hooks (claudeHookSpecs) + 1 hook de triagem PostToolUseFailure
-    // + 1 hook de delegação UserPromptSubmit (C2).
-    expect(JSON.stringify(twice).match(new RegExp(MARKER, 'g'))).toHaveLength(8);
+    // + 1 hook de delegação UserPromptSubmit (C2) + 1 portão de regressão Stop.
+    expect(JSON.stringify(twice).match(new RegExp(MARKER, 'g'))).toHaveLength(9);
   });
 });
 
@@ -117,8 +125,11 @@ describe('codexStatusHookArgs (Codex TOML -c overrides)', () => {
       };
       const [event, entries] = Object.entries(parsed.hooks)[0]!;
       expect(entries).toHaveLength(1);
-      // UserPromptSubmit also carries the delegate hook (next test); status is first.
-      expect(entries[0]!.hooks).toHaveLength(event === 'UserPromptSubmit' ? 2 : 1);
+      // UserPromptSubmit also carries the delegate hook and Stop the regression
+      // gate (tests below); status is first.
+      expect(entries[0]!.hooks).toHaveLength(
+        event === 'UserPromptSubmit' || event === 'Stop' ? 2 : 1,
+      );
       const [hook] = entries[0]!.hooks;
       expect(hook!.type).toBe('command');
       expect(hook!.command).toContain(MARKER);
@@ -143,6 +154,21 @@ describe('codexStatusHookArgs (Codex TOML -c overrides)', () => {
     expect(delegate).toContain('$NEXUS_HOOK_DELEGATE_URL');
     expect(delegate).not.toContain('/dev/null');
     expect(delegate).toContain(MARKER);
+  });
+
+  it('Stop runs status and the regression gate in ONE array', () => {
+    const values = codexStatusHookArgs().filter(
+      (arg, index) => index % 2 === 1 && arg.startsWith('hooks.Stop='),
+    );
+    expect(values).toHaveLength(1);
+    const parsed = parseOverride(values[0]!) as {
+      hooks: { Stop: Array<{ hooks: Array<{ command: string }> }> };
+    };
+    const [status, regression] = parsed.hooks.Stop[0]!.hooks.map((hook) => hook.command);
+    expect(status).toContain('X-Nexus-Hook-Event: stop');
+    expect(regression).toContain('$NEXUS_HOOK_REGRESSION_URL');
+    expect(regression).not.toContain('/dev/null');
+    expect(regression).toContain(MARKER);
   });
 
   it('is deterministic — a second spawn produces identical argv (no accumulation)', () => {
