@@ -13,6 +13,7 @@ import {
   whenWorkspaceLayoutSettled,
 } from '../state/layout-store';
 import { getActiveWorkspacePath } from '../state/active-workspace';
+import { paneScopeResolver } from '../lib/pane-spaces';
 import { useOrchStore } from '../state/orch-store';
 import { useSessionStateStore } from '../state/session-state-store';
 import { useWorkspaceStore } from '../state/workspace-store';
@@ -57,7 +58,9 @@ import {
 function snapshotPanes(): PaneRegistryEntry[] {
   const { root } = useLayoutStore.getState();
   const paneStates = useSessionStateStore.getState().paneStates;
-  return listPanes(root).map((pane) => ({
+  const panes = listPanes(root);
+  const tabOf = paneScopeResolver(panes, useOrchStore.getState().paneMissions);
+  return panes.map((pane) => ({
     paneId: pane.id,
     sessionId: getPaneSessionId(pane.id),
     // O número que o operador lê no header viaja junto para o Main poder
@@ -69,6 +72,8 @@ function snapshotPanes(): PaneRegistryEntry[] {
     model: pane.model,
     accountId: pane.accountId,
     state: paneStates.get(pane.id),
+    // A aba do pane: a missão sob demanda do checkout principal é uma por aba.
+    tabKey: tabOf(pane),
   }));
 }
 

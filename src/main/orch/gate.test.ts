@@ -10,6 +10,7 @@ vi.mock('./mission-leader-gate', () => ({
 }));
 
 const {
+  adoptUserSessionAsMissionOrchestrator,
   assertCurrentMissionOrchestratorSession,
   assertOrchestratorMission,
   bindContextRevision,
@@ -332,8 +333,8 @@ describe('token registry + stop gate', () => {
     expect(returnOperatorHandFromEndedMission(workerCtx)).toBe(false);
     expect(workerCtx).toMatchObject({ role: 'worker', missionId: 'mission-falhou' });
 
-    // Promovido pelo operador mas rebaixado a worker por troca de liderança:
-    // essa autoridade é da missão, não volta sozinha para a mão do operador.
+    // Worker com a marca de promoção: a troca de coroa não produz mais esse
+    // estado (devolve a `user`), então só autoridade da missão chega aqui.
     const pane = mintToken({ label: 'pane', role: 'user', scope, allowedTools: null });
     bindTokenToSession(pane.token, 'pty-rebaixado');
     const demoted = getContextBySession('pty-rebaixado')!;
@@ -342,6 +343,25 @@ describe('token registry + stop gate', () => {
     demoted.promotedFromUserSession = true;
     expect(returnOperatorHandFromEndedMission(demoted)).toBe(false);
     expect(demoted.role).toBe('worker');
+  });
+
+  it('troca de coroa devolve a `user` o líder que era a mão do operador, com o allowlist que tinha', () => {
+    const scope = testProjectScope();
+    const hand = mintToken({ label: 'hand', role: 'user', scope, allowedTools: ['nexus_pane_list'] });
+    bindTokenToSession(hand.token, 'pty-hand');
+    expect(adoptUserSessionAsMissionOrchestrator('pty-hand', 'mission-a')).toBe(true);
+    const worker = mintToken({ label: 'w', role: 'worker', missionId: 'mission-a', scope, allowedTools: [] });
+    bindTokenToSession(worker.token, 'pty-w');
+
+    expect(
+      promoteMissionSessionAuthority({ missionId: 'mission-a', promotedSessionId: 'pty-w', previousSessionId: 'pty-hand' }),
+    ).toBe(true);
+
+    const previous = getContextBySession('pty-hand')!;
+    expect(previous.role).toBe('user');
+    expect(previous.missionId).toBeUndefined();
+    expect(previous.promotedFromUserSession).toBeUndefined();
+    expect(previous.allowedTools).toEqual(['nexus_pane_list']);
   });
 
   it('refuses to promote a session from another mission', () => {

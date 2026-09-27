@@ -2,6 +2,7 @@ import { assertTabSupportsOperation, missionExecutionScope } from './mission-exe
 import {
   assertMcpInvocationCurrent,
   type McpToolDef,
+  type McpToolInvocation,
 } from './mcp-protocol';
 import type { PaneSnapshot } from '../../shared/orch-types';
 import {
@@ -484,10 +485,16 @@ export function setOperatorRouteResolver(
  * orquestrador dela, pelo mesmo caminho do "Tornar orquestrador". Devolve o id
  * da missão, ou `null` quando não deu (o pane segue mão do operador).
  */
+export interface OperatorTabMission {
+  readonly missionId: string;
+  /** Spawn falhou: desfaz a missão que nasceu para ele, se ainda vazia. */
+  readonly discardIfUnused: () => void;
+}
+
 export type OperatorTabMissionProvider = (
   ctx: AgentGateContext,
   task: string | null,
-) => string | null;
+) => OperatorTabMission | null;
 
 let operatorTabMissionProvider: OperatorTabMissionProvider | null = null;
 
@@ -657,13 +664,17 @@ const paneSpawn: McpToolDef = {
   handler: async (args, ctx, invocation) => {
     assertMcpInvocationCurrent(invocation);
     assertCallerMaySpawnPane(ctx.role);
+    // Contrato de entrega inválido falha AQUI, visível para quem declarou —
+    // nunca no handoff do worker, que não tem como consertar o schema. Antes
+    // da missão da aba: argumento inválido não deixa missão nem pane promovido.
+    const deliveryContract = parseExpectArg(args.expect);
     // Missão SOB DEMANDA (0.76.110, decisão do operador): o primeiro helper que
     // um pane do "+ Pane" abre cria a missão leve da aba e adota o pane como
     // orquestrador dela — o helper nasce nela e as entregas chegam ao pane, que
     // não perde o alcance de mão do operador (pane-authz). Pane que só conversa
     // não vira missão; filho do operador e Hardened seguem como antes. Se não
     // der, nada muda: o spawn segue pela mão do operador.
-    let tabMissionId: string | null = null;
+    let tabMission: OperatorTabMission | null = null;
     if (
       operatorTabMissionProvider &&
       ctx.role === 'user' &&
@@ -674,11 +685,34 @@ const paneSpawn: McpToolDef = {
       !str(args, 'resume') &&
       isOperatorChoicePolicy(getOrchSettings().squadCliPolicy)
     ) {
-      tabMissionId = operatorTabMissionProvider(ctx, operatorRouteTask(args));
+      tabMission = operatorTabMissionProvider(ctx, operatorRouteTask(args));
     }
-    // Contrato de entrega inválido falha AQUI, visível para quem declarou —
-    // nunca no handoff do worker, que não tem como consertar o schema.
-    const deliveryContract = parseExpectArg(args.expect);
+    try {
+      return await paneSpawnAfterTabMission.handler(
+        args,
+        ctx,
+        invocation,
+        tabMission?.missionId ?? null,
+        deliveryContract,
+      );
+    } catch (error) {
+      // Spawn que não saiu não deixa a missão da aba que nasceu para ele:
+      // missão running vazia e pane promovido sem helper nenhum.
+      tabMission?.discardIfUnused();
+      throw error;
+    }
+  },
+};
+
+/** O spawn depois da missão sob demanda (falha aqui desfaz a missão vazia). */
+const paneSpawnAfterTabMission = {
+  handler: async (
+    args: Record<string, unknown>,
+    ctx: AgentGateContext,
+    invocation: McpToolInvocation | undefined,
+    tabMissionId: string | null,
+    deliveryContract: ReturnType<typeof parseExpectArg>,
+  ): Promise<unknown> => {
     const agentRef = str(args, 'agentName');
     let routeReservationId = str(args, 'routeReservationId');
     let options: SpawnToolOptions;

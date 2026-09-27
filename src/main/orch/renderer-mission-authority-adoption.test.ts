@@ -224,6 +224,21 @@ afterEach(async () => {
   resetGateForTests();
 });
 
+/** O provider de produção (orch-ipc), sem os broadcasts de janela. */
+function useTabMissionProvider(main: RendererMissionAuthority): void {
+  setOperatorTabMissionProvider((ctx, task) => {
+    const result = main.adoptOperatorHandForSpawn(ctx.sessionId!, task);
+    if (!result.ok || !result.mission) return null;
+    const missionId = result.mission.id;
+    return {
+      missionId,
+      discardIfUnused: () => {
+        if (result.created) main.discardUnusedTabMission(ctx.sessionId!, missionId);
+      },
+    };
+  });
+}
+
 function authority(
   resolveContextRevision: () => string | undefined = () => undefined,
 ): RendererMissionAuthority {
@@ -316,6 +331,90 @@ describe("missão leve da aba — adoção da mão do operador", () => {
     expect(c.mission!.id).not.toBe(a.mission!.id);
   });
 
+  it("troca de coroa na aba devolve o líder anterior a `user` com tudo que tinha, nunca worker sem tools", () => {
+    const first = operatorPane("pane-a");
+    const second = operatorPane("pane-b");
+    register([
+      { paneId: "pane-a", sessionId: first },
+      { paneId: "pane-b", sessionId: second },
+    ]);
+    getContextBySession(first)!.allowedTools = ["nexus_pane_list"];
+    const main = authority();
+    const a = main.createPaneMissionFromRenderer(owner, { paneId: "pane-a", title: "Missão · Login", tabKey: "space:login" });
+    const missionId = a.mission!.id;
+
+    const b = main.createPaneMissionFromRenderer(owner, { paneId: "pane-b", title: "Missão · Login", tabKey: "space:login" });
+
+    expect(b).toMatchObject({ ok: true, mission: { id: missionId } });
+    expect(getContextBySession(second)).toMatchObject({ role: "orchestrator", missionId });
+    const previous = getContextBySession(first)!;
+    expect(previous.role).toBe("user");
+    expect(previous.missionId).toBeUndefined();
+    expect(previous.promotedFromUserSession).toBeUndefined();
+    expect(previous.allowedTools).toEqual(["nexus_pane_list"]);
+    expect(getOwnedAgentSessionInfo(owner, first)).toMatchObject({ role: "user" });
+    expect(getOwnedAgentSessionInfo(owner, first)?.missionId).toBeUndefined();
+    // Nem a composição da missão nem a meta do pane o prendem: a retomada não o
+    // restaura como worker e a autorização não o vê como pane da missão.
+    expect(requireProjectDomainStoreRegistry().forScope(scope).missionPanes.findByPaneId("pane-a")).toBeNull();
+    expect(getPaneAuthzInfo("pane-a")?.missionId).toBeUndefined();
+    // E ele pode liderar de novo (a coroa volta sem ficar preso).
+    const again = main.createPaneMissionFromRenderer(owner, { paneId: "pane-a", title: "Missão · Login", tabKey: "space:login" });
+    expect(again).toMatchObject({ ok: true, mission: { id: missionId } });
+    expect(getContextBySession(second)).toMatchObject({ role: "user" });
+  });
+
+  it("missão sob demanda no checkout principal: panes da mesma aba dividem uma missão, outra aba ganha a sua", async () => {
+    const first = operatorPane("pane-a");
+    const second = operatorPane("pane-b");
+    const other = operatorPane("pane-c");
+    syncPanes(
+      [
+        { paneId: "pane-a", sessionId: first, tabKey: "__loose__" },
+        { paneId: "pane-b", sessionId: second, tabKey: "__loose__" },
+        { paneId: "pane-c", sessionId: other, tabKey: "space:pagamento" },
+      ].map((entry) => ({ ...entry, title: entry.paneId, kind: "cli-agent" as const, adapterId: "test-cli" })),
+      owner,
+    );
+    const main = authority();
+
+    const a = main.adoptOperatorHandForSpawn(first, "revise o login");
+    const b = main.adoptOperatorHandForSpawn(second, "teste o login");
+    const c = main.adoptOperatorHandForSpawn(other, "revise o pagamento");
+
+    expect(a.ok && b.ok && c.ok).toBe(true);
+    expect(b.mission!.id).toBe(a.mission!.id);
+    expect(c.mission!.id).not.toBe(a.mission!.id);
+    expect(requireProjectDomainStoreRegistry().forScope(scope).missions.list()).toHaveLength(2);
+    // A aba viaja no espelho, mas não vaza no nexus_pane_list.
+    expect(panes.listPaneSnapshots().find((pane) => pane.paneId === "pane-a")).not.toHaveProperty("tabKey");
+  });
+
+  it("spawn com argumento inválido ou que falha não deixa missão da aba vazia nem pane promovido", async () => {
+    const sessionId = operatorPane("pane-a");
+    register([{ paneId: "pane-a", sessionId }]);
+    useTabMissionProvider(authority());
+    const ctx = getContextBySession(sessionId)!;
+    const missions = () => requireProjectDomainStoreRegistry().forScope(scope).missions.list();
+
+    await expect(
+      paneSpawnTool.handler({ adapterId: "codex", prompt: "Revise o login", readOnly: true, expect: "json" }, ctx),
+    ).rejects.toThrow(/expect inválido/);
+    expect(missions()).toEqual([]);
+    expect(ctx).toMatchObject({ role: "user" });
+
+    const { spawnPaneAndMaybePrompt } = await import("./tool-util");
+    vi.mocked(spawnPaneAndMaybePrompt).mockRejectedValueOnce(new Error("CLI não abriu"));
+    await expect(
+      paneSpawnTool.handler({ adapterId: "codex", prompt: "Revise o login", readOnly: true }, ctx),
+    ).rejects.toThrow(/CLI não abriu/);
+    expect(missions()).toEqual([]);
+    expect(ctx.role).toBe("user");
+    expect(ctx.missionId).toBeUndefined();
+    expect(getOwnedAgentSessionInfo(owner, sessionId)).toMatchObject({ role: "user" });
+    expect(getPaneAuthzInfo("pane-a")?.missionId).toBeUndefined();
+  });
+
   it("missão encerrada devolve a mão e o pane pode liderar a próxima", () => {
     const sessionId = operatorPane("pane-a");
     register([{ paneId: "pane-a", sessionId }]);
@@ -364,10 +463,7 @@ describe("missão leve da aba — adoção da mão do operador", () => {
       { paneId: "pane-outra-aba", sessionId: otherTab },
     ]);
     const main = authority();
-    setOperatorTabMissionProvider((ctx, task) => {
-      const result = main.adoptOperatorHandForSpawn(ctx.sessionId!, task);
-      return result.ok ? result.mission!.id : null;
-    });
+    useTabMissionProvider(main);
     const ctx = getContextBySession(sessionId)!;
     const missions = () => requireProjectDomainStoreRegistry().forScope(scope).missions.list();
     // Conversar (ler outro pane) não cria missão.
