@@ -99,14 +99,14 @@ export interface CappedAdjacency {
   readonly nodeCount: number;
 }
 
-const AVG_PERSISTED_EDGE_BYTES = 24;
-
 /**
  * Persist a degree-capped adjacency for blast-radius after cache reload.
  * Nodes are kept in degree-descending order until either the configured node
- * cap or the (estimated) byte budget is reached, whichever comes first. The
- * byte estimate uses degree as a proxy for edge-array size so the cutoff can
- * be decided in one pass, without depending on which neighbors also survive.
+ * cap or the byte budget is reached, whichever comes first. Each node is
+ * charged the compact-JSON size of its key in both records plus every
+ * neighbor string it could carry, so the serialized adjacency+reverse never
+ * exceeds maxPersistedGraphBytes (neighbors that do not survive only shrink
+ * it). The first node is always kept.
  */
 export function capPersistedAdjacency(
   adjacency: ReadonlyMap<string, ReadonlySet<string> | readonly string[]>,
@@ -119,15 +119,23 @@ export function capPersistedAdjacency(
   const candidates = [...new Set([...adjacency.keys(), ...reverse.keys()])].sort(
     (a, b) => degree(b) - degree(a) || a.localeCompare(b),
   );
+  // `"key":[` + `]` + `,` in each record, plus `"neighbor",` per entry.
+  const persistedBytes = (node: string): number => {
+    let bytes = 2 * (JSON.stringify(node).length + 4);
+    for (const neighbor of adjacency.get(node) ?? []) bytes += JSON.stringify(neighbor).length + 1;
+    for (const neighbor of reverse.get(node) ?? []) bytes += JSON.stringify(neighbor).length + 1;
+    return bytes;
+  };
 
   const keptNodes: string[] = [];
-  let estimatedBytes = 0;
+  // `{"adjacency":{},"reverse":{}}` envelope.
+  let bytes = 29;
   for (const node of candidates) {
     if (keptNodes.length >= limits.maxPersistedGraphNodes) break;
-    const cost = node.length + 4 + degree(node) * AVG_PERSISTED_EDGE_BYTES;
-    if (keptNodes.length > 0 && estimatedBytes + cost > limits.maxPersistedGraphBytes) break;
+    const cost = persistedBytes(node);
+    if (keptNodes.length > 0 && bytes + cost > limits.maxPersistedGraphBytes) break;
     keptNodes.push(node);
-    estimatedBytes += cost;
+    bytes += cost;
   }
   const keptSet = new Set(keptNodes);
 
