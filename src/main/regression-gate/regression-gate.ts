@@ -27,6 +27,7 @@ import {
   type OrientationImportFileFact,
 } from '../context/orientation/orientation-import-graph';
 import { walkOrientationTreeAsync } from '../context/orientation/orientation-walker';
+import { loadTsconfigAliases } from '../context/orientation/orientation-tsconfig';
 import {
   DEFAULT_ORIENTATION_LIMITS,
   type OrientationLimits,
@@ -525,9 +526,19 @@ interface ImpactedTests {
 
 async function buildReverseGraph(
   scope: ProjectExecutionScope,
+  changedFiles: readonly string[],
 ): Promise<{ reverse: ReadonlyMap<string, readonly string[]>; files: readonly string[]; truncated: boolean }> {
   const walk = await walkOrientationTreeAsync(scope, GRAPH_LIMITS);
   const facts: OrientationImportFileFact[] = [];
+  // Módulo removido/renomeado continua nó resolvível: quem ainda o importa
+  // (e agora quebra) entra no conjunto com os seus testes.
+  const present = new Set(walk.files.map((file) => file.relativePath));
+  for (const file of changedFiles) {
+    const ext = path.posix.extname(file).toLowerCase();
+    if (!present.has(file) && isOrientationImportSource(ext) && !fs.existsSync(path.join(scope.rootRealPath, file))) {
+      facts.push({ relativePath: file, ext, size: 0, importSpecifiers: [] });
+    }
+  }
   for (const file of walk.files) {
     if (!file.isSource || !isOrientationImportSource(file.ext)) continue;
     try {
@@ -543,7 +554,8 @@ async function buildReverseGraph(
     }
     if (facts.length % 256 === 0) await new Promise<void>((resolve) => setImmediate(resolve));
   }
-  const graph = buildOrientationImportGraphFromFacts(facts, GRAPH_LIMITS);
+  // Aliases do tsconfig (`@/…`) com o mesmo resolvedor do code map.
+  const graph = buildOrientationImportGraphFromFacts(facts, GRAPH_LIMITS, loadTsconfigAliases(scope));
   return {
     reverse: graph.reverse,
     files: walk.files.map((file) => file.relativePath),
@@ -589,7 +601,7 @@ export async function computeImpactedTests(
   changedFiles: readonly string[],
   extraTests: readonly string[] = [],
 ): Promise<ImpactedTests> {
-  const { reverse, files, truncated } = await buildReverseGraph(scope);
+  const { reverse, files, truncated } = await buildReverseGraph(scope, changedFiles);
   const fileSet = new Set(files);
   const ordered: string[] = [];
   const sources = new Map<string, Set<string>>();

@@ -320,6 +320,35 @@ describe('runRegressionGate', () => {
     expect(result.untestedFiles).toEqual([]);
   });
 
+  it('módulo removido: os testes de quem ainda o importa entram no conjunto', async () => {
+    const { root, scope } = project();
+    fs.rmSync(path.join(root, 'src/a.ts'));
+    fs.rmSync(path.join(root, 'src/a.test.ts'));
+    const { exec, calls } = fakeVitest(['src/b.test.ts']);
+
+    const result = await runRegressionGate({ scope }, { exec });
+
+    expect(result.changedFiles).toEqual(['src/a.test.ts', 'src/a.ts']);
+    expect(calls[0]).toContain('src/b.test.ts');
+    expect(result.status).toBe('failed');
+  });
+
+  it('import por alias do tsconfig (`@/…`) também puxa o teste de quem importa', async () => {
+    const { root, scope } = project();
+    write(root, 'tsconfig.json', JSON.stringify({ compilerOptions: { baseUrl: '.', paths: { '@/*': ['src/*'] } } }));
+    write(root, 'src/d.ts', "import { c } from '@/c';\nexport const d = c;\n");
+    write(root, 'src/d.test.ts', "import { d } from './d';\n");
+    const git = new ProcessGitRunner();
+    git.run(root, ['add', '-A']);
+    git.run(root, ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-qm', 'alias']);
+    write(root, 'src/c.ts', 'export const c = 4;\n');
+    const { exec, calls } = fakeVitest();
+
+    await runRegressionGate({ scope }, { exec });
+
+    expect(calls[0]).toContain('src/d.test.ts');
+  });
+
   it('checkout limpo não roda nada', async () => {
     const { scope } = project();
     const { exec } = fakeVitest();
