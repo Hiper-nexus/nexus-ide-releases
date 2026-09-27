@@ -41,6 +41,60 @@ export function extractOrientationImportSpecifiers(
   return Object.freeze(specifiers);
 }
 
+export interface CappedAdjacency {
+  readonly adjacencyRecord: Readonly<Record<string, readonly string[]>>;
+  readonly reverseRecord: Readonly<Record<string, readonly string[]>>;
+  readonly nodeCount: number;
+}
+
+const AVG_PERSISTED_EDGE_BYTES = 24;
+
+/**
+ * Persist a degree-capped adjacency for blast-radius after cache reload.
+ * Nodes are kept in degree-descending order until either the configured node
+ * cap or the (estimated) byte budget is reached, whichever comes first. The
+ * byte estimate uses degree as a proxy for edge-array size so the cutoff can
+ * be decided in one pass, without depending on which neighbors also survive.
+ */
+export function capPersistedAdjacency(
+  adjacency: ReadonlyMap<string, ReadonlySet<string> | readonly string[]>,
+  reverse: ReadonlyMap<string, ReadonlySet<string> | readonly string[]>,
+  limits: Pick<OrientationLimits, 'maxPersistedGraphNodes' | 'maxPersistedGraphBytes'>,
+): CappedAdjacency {
+  const countOf = (value: ReadonlySet<string> | readonly string[] | undefined): number =>
+    value ? ('size' in value ? value.size : value.length) : 0;
+  const degree = (node: string) => countOf(adjacency.get(node)) + countOf(reverse.get(node));
+  const candidates = [...new Set([...adjacency.keys(), ...reverse.keys()])].sort(
+    (a, b) => degree(b) - degree(a) || a.localeCompare(b),
+  );
+
+  const keptNodes: string[] = [];
+  let estimatedBytes = 0;
+  for (const node of candidates) {
+    if (keptNodes.length >= limits.maxPersistedGraphNodes) break;
+    const cost = node.length + 4 + degree(node) * AVG_PERSISTED_EDGE_BYTES;
+    if (keptNodes.length > 0 && estimatedBytes + cost > limits.maxPersistedGraphBytes) break;
+    keptNodes.push(node);
+    estimatedBytes += cost;
+  }
+  const keptSet = new Set(keptNodes);
+
+  const adjacencyRecord: Record<string, readonly string[]> = {};
+  const reverseRecord: Record<string, readonly string[]> = {};
+  for (const node of keptNodes) {
+    const outs = [...(adjacency.get(node) ?? [])].filter((t) => keptSet.has(t)).sort();
+    const ins = [...(reverse.get(node) ?? [])].filter((t) => keptSet.has(t)).sort();
+    if (outs.length > 0) adjacencyRecord[node] = Object.freeze(outs);
+    if (ins.length > 0) reverseRecord[node] = Object.freeze(ins);
+  }
+
+  return Object.freeze({
+    adjacencyRecord: Object.freeze(adjacencyRecord),
+    reverseRecord: Object.freeze(reverseRecord),
+    nodeCount: keptNodes.length,
+  });
+}
+
 function stripExt(relative: string): string {
   return relative.replace(/\.(?:tsx?|jsx?|mjs|cjs)$/i, '');
 }
@@ -173,21 +227,7 @@ export function buildOrientationImportGraphFromFacts(
     frozenRev.set(key, Object.freeze([...value].sort()));
   }
 
-  // Persist a degree-capped adjacency for blast-radius after cache reload.
-  const degree = (file: string) =>
-    (adjacency.get(file)?.size ?? 0) + (reverse.get(file)?.size ?? 0);
-  const topNodes = [...new Set([...adjacency.keys(), ...reverse.keys()])]
-    .sort((a, b) => degree(b) - degree(a) || a.localeCompare(b))
-    .slice(0, 200);
-  const topSet = new Set(topNodes);
-  const adjacencyRecord: Record<string, readonly string[]> = {};
-  const reverseRecord: Record<string, readonly string[]> = {};
-  for (const node of topNodes) {
-    const outs = [...(adjacency.get(node) ?? [])].filter((t) => topSet.has(t));
-    const ins = [...(reverse.get(node) ?? [])].filter((t) => topSet.has(t));
-    if (outs.length > 0) adjacencyRecord[node] = Object.freeze(outs.sort());
-    if (ins.length > 0) reverseRecord[node] = Object.freeze(ins.sort());
-  }
+  const capped = capPersistedAdjacency(adjacency, reverse, limits);
 
   return Object.freeze({
     graph: Object.freeze({
@@ -196,8 +236,8 @@ export function buildOrientationImportGraphFromFacts(
       edgeCount,
       sampleEdges: Object.freeze(sampleEdges),
       enricher: 'none' as const,
-      adjacency: Object.freeze(adjacencyRecord),
-      reverse: Object.freeze(reverseRecord),
+      adjacency: capped.adjacencyRecord,
+      reverse: capped.reverseRecord,
     }),
     adjacency: frozenAdj,
     reverse: frozenRev,
@@ -324,31 +364,8 @@ export async function buildOrientationImportGraphFromFactsAsync(
     if (processed % 512 === 0) await yieldOrientationWork(signal);
   }
 
-  const degree = (file: string) =>
-    (adjacency.get(file)?.size ?? 0) + (reverse.get(file)?.size ?? 0);
-  const graphNodes = [...new Set([...adjacency.keys(), ...reverse.keys()])];
-  const sortedNodes = await sortOrientationItems(
-    graphNodes,
-    (left, right) =>
-      degree(right) - degree(left) || left.localeCompare(right),
-    signal,
-  );
-  const topNodes = sortedNodes.slice(0, 200);
-  const topSet = new Set(topNodes);
-  const adjacencyRecord: Record<string, readonly string[]> = {};
-  const reverseRecord: Record<string, readonly string[]> = {};
-  for (let nodeIndex = 0; nodeIndex < topNodes.length; nodeIndex += 1) {
-    const node = topNodes[nodeIndex];
-    const outs = [...(adjacency.get(node) ?? [])].filter((target) =>
-      topSet.has(target));
-    const ins = [...(reverse.get(node) ?? [])].filter((target) =>
-      topSet.has(target));
-    if (outs.length > 0) adjacencyRecord[node] = Object.freeze(outs.sort());
-    if (ins.length > 0) reverseRecord[node] = Object.freeze(ins.sort());
-    if (nodeIndex > 0 && nodeIndex % 64 === 0) {
-      await yieldOrientationWork(signal);
-    }
-  }
+  await yieldOrientationWork(signal);
+  const capped = capPersistedAdjacency(adjacency, reverse, limits);
 
   return Object.freeze({
     graph: Object.freeze({
@@ -357,8 +374,8 @@ export async function buildOrientationImportGraphFromFactsAsync(
       edgeCount,
       sampleEdges: Object.freeze(sampleEdges),
       enricher: 'none' as const,
-      adjacency: Object.freeze(adjacencyRecord),
-      reverse: Object.freeze(reverseRecord),
+      adjacency: capped.adjacencyRecord,
+      reverse: capped.reverseRecord,
     }),
     adjacency: frozenAdj,
     reverse: frozenRev,

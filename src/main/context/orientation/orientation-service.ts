@@ -21,6 +21,7 @@ import {
   writeOrientationStructuralIndexAsync,
 } from './orientation-structural-index-cache';
 import {
+  buildDbGraphFromStructuralIndexAsync,
   buildImportGraphFromStructuralIndexAsync,
   buildOrientationStructuralIndexAsync,
   buildSymbolsFromStructuralIndexAsync,
@@ -29,6 +30,7 @@ import {
   updateOrientationStructuralIndexAsync,
   type OrientationStructuralIndex,
 } from './orientation-structural-index';
+import { mergeDbGraphWithImportGraph } from './orientation-db-graph';
 import {
   DEFAULT_ORIENTATION_LIMITS,
   REQUIRED_CONTEXT_DOCS,
@@ -528,10 +530,11 @@ export class ProjectOrientationService {
     if (root !== scope.rootRealPath) throw new Error('project root identity changed');
 
     const walk = await orientationWalkFromStructuralIndexAsync(index, signal);
-    const [inventory, symbolSummary, importGraph] = await Promise.all([
+    const [inventory, symbolSummary, importGraph, dbGraph] = await Promise.all([
       buildOrientationInventoryAsync(scope, walk, signal),
       buildSymbolsFromStructuralIndexAsync(index, this.#limits, signal),
       buildImportGraphFromStructuralIndexAsync(index, this.#limits, signal),
+      buildDbGraphFromStructuralIndexAsync(index, this.#limits, signal),
     ]);
     const symbols = Object.freeze({
       ...symbolSummary,
@@ -541,7 +544,7 @@ export class ProjectOrientationService {
         this.#limits.maxHubs,
       ),
     });
-    const graph = importGraph.graph;
+    const graph = mergeDbGraphWithImportGraph(importGraph, dbGraph, this.#limits);
     await yieldOrientationWork(signal);
 
     const rootDocStates = await Promise.all(
