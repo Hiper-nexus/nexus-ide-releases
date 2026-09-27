@@ -378,6 +378,23 @@ describe("workspace handoff", () => {
     expect(reviewMissionHandoff).not.toHaveBeenCalled();
   });
 
+  it("portão de regressão sem verificar aceita com '[testes impactados não verificados]'", async () => {
+    caller("parent");
+    const child = caller("child");
+    regressionGate.evaluateHandoffRegressionGate.mockResolvedValue({
+      kind: "accepted",
+      unverified: true,
+      artifact: { kind: "nexus.regressionGate", payload: { status: "unavailable" } },
+    });
+    await tool("submit").handler(args, child);
+    const rows = getProjectDomainStores(scope).handoffs.list({ includeDelivered: true });
+    expect(rows[0]?.status).toBe("success");
+    expect(rows[0]?.summary).toMatch(/^\[testes impactados não verificados\] /);
+    expect(rows[0]?.artifacts).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: "nexus.regressionGate" })]),
+    );
+  });
+
   it("portão de regressão esgotado entra como blocked com as falhas em artifact", async () => {
     caller("parent");
     const child = caller("child");

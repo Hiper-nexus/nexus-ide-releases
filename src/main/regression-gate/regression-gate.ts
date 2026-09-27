@@ -162,12 +162,18 @@ export interface RegressionGateResult {
   readonly version: typeof GATE_VERSION;
   readonly status: RegressionGateStatus;
   readonly diffHash: string;
+  /** Carimbo do que foi testado: HEAD e base do diff. */
+  readonly headSha: string | null;
+  readonly baseSha: string | null;
+  readonly baseSource: RegressionBaseSource | null;
   readonly changedFiles: readonly string[];
   /** Testes que o runner DE FATO executou (conferido no relatório). */
   readonly testsRun: readonly string[];
   /** Impactados que não rodaram (config do runner, prazo, sandbox): não verificados. */
   readonly testsNotRun: readonly string[];
   readonly failures: readonly RegressionTestFailure[];
+  /** Falhas só em testes impactados por WIP anterior ao spawn (não do agente): aviso. */
+  readonly inheritedFailures: readonly RegressionTestFailure[];
   /** Arquivos-fonte tocados sem nenhum teste mapeado — aviso, não bloqueia. */
   readonly untestedFiles: readonly string[];
   readonly invariantsTouched: readonly Pick<RegressionInvariant, 'id' | 'regra'>[];
@@ -209,6 +215,12 @@ export interface RunRegressionGateInput {
   readonly declaredFiles?: readonly string[];
   /** Base para somar os commits do worktree isolado (`base...HEAD`). */
   readonly baseSha?: string;
+  /**
+   * Spawn da sessão (ms). Sem `baseSha`, o HEAD desse instante vira a base; e
+   * sujo com mtime anterior (não declarado/commitado) é WIP de outra pessoa:
+   * falha só nele vira aviso, não devolução.
+   */
+  readonly startedAtMs?: number;
   /** Prazo TOTAL (mapa + execução + retentativa), não por execução. */
   readonly timeoutMs?: number;
   readonly maxTestFiles?: number;
@@ -262,33 +274,160 @@ function gitNames(git: GitRunner, cwd: string, args: readonly string[]): string[
   }
 }
 
+const COMMIT_RE = /^[a-f0-9]{40,64}$/iu;
+
+function gitText(git: GitRunner, cwd: string, args: readonly string[]): string | null {
+  try {
+    const result = git.run(cwd, args, { allowFailure: true });
+    return result.status === 0 ? result.stdout.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function commitOf(git: GitRunner, root: string, rev: string): string | null {
+  const sha = gitText(git, root, ['rev-parse', '--verify', '--quiet', `${rev}^{commit}`]);
+  return sha && COMMIT_RE.test(sha) ? sha.toLowerCase() : null;
+}
+
+/** HEAD do checkout no instante do spawn, pelo reflog (entradas mais novas primeiro). */
+function headAtSpawn(git: GitRunner, root: string, startedAtMs: number): string | null {
+  const log = gitText(git, root, ['reflog', 'show', '--date=unix', '--format=%H %gd', '-n', '10000', 'HEAD']);
+  if (!log) return null;
+  // Mesmo segundo do spawn conta como depois: na dúvida, a base fica mais
+  // antiga e o diff maior — nunca o contrário.
+  const spawnSecond = Math.floor(startedAtMs / 1000);
+  let oldest: string | null = null;
+  for (const line of log.split('\n')) {
+    const match = /^([a-f0-9]{40,64}) \S*@\{(\d+)\}$/iu.exec(line.trim());
+    if (!match) continue;
+    if (Number(match[2]) < spawnSecond) return match[1]!.toLowerCase();
+    oldest = match[1]!;
+  }
+  // Reflog inteiro depois do spawn: o pai da entrada mais antiga (se houver).
+  return oldest ? commitOf(git, root, `${oldest}~1`) ?? oldest.toLowerCase() : null;
+}
+
+export type RegressionBaseSource = 'informada' | 'spawn' | 'upstream';
+
+export interface RegressionBase {
+  readonly head: string | null;
+  /** Ponto de partida real do writer, já ancorado no HEAD (merge-base). */
+  readonly sha: string | null;
+  readonly source: RegressionBaseSource | null;
+}
+
+/**
+ * Base do diff: a informada (worktree da missão) → o HEAD no spawn da sessão
+ * (reflog) → o merge-base com o upstream. Commits desde a base entram no
+ * diff; sem base alguma, só o working tree (e isso vira aviso).
+ */
+export function resolveRegressionBase(
+  root: string,
+  input: Pick<RunRegressionGateInput, 'baseSha' | 'startedAtMs'>,
+  git: GitRunner = new ProcessGitRunner(),
+): RegressionBase {
+  const head = commitOf(git, root, 'HEAD');
+  if (!head) return { head: null, sha: null, source: null };
+  const anchor = (candidate: string | null): string | null => {
+    if (!candidate) return null;
+    const base = gitText(git, root, ['merge-base', candidate, head]);
+    return base && COMMIT_RE.test(base) ? base.toLowerCase() : null;
+  };
+  const informed =
+    input.baseSha && /^[a-f0-9]{7,64}$/iu.test(input.baseSha) ? anchor(commitOf(git, root, input.baseSha)) : null;
+  if (informed) return { head, sha: informed, source: 'informada' };
+  const spawned =
+    input.startedAtMs !== undefined && Number.isFinite(input.startedAtMs)
+      ? anchor(headAtSpawn(git, root, input.startedAtMs))
+      : null;
+  if (spawned) return { head, sha: spawned, source: 'spawn' };
+  const upstream = anchor(commitOf(git, root, '@{upstream}'));
+  if (upstream) return { head, sha: upstream, source: 'upstream' };
+  return { head, sha: null, source: null };
+}
+
+interface ChangedSnapshot {
+  readonly files: readonly string[];
+  readonly truncated: boolean;
+  /**
+   * Sujos que já estavam assim antes do spawn (mtime anterior) e que o agente
+   * não declarou nem commitou: WIP de outra pessoa no mesmo checkout.
+   */
+  readonly foreign: readonly string[];
+}
+
+function collectChanged(
+  root: string,
+  input: Pick<RunRegressionGateInput, 'declaredFiles' | 'startedAtMs'>,
+  base: RegressionBase,
+  git: GitRunner,
+): ChangedSnapshot {
+  const dirty = listDirtyPathsUnderCwd(root, git);
+  const committed = base.sha
+    ? gitNames(git, root, ['diff', '--name-only', '--no-renames', `${base.sha}...HEAD`])
+    : [];
+  const declared = input.declaredFiles ?? [];
+  const out = new Set<string>();
+  let truncated = false;
+  for (const file of [...dirty, ...committed, ...declared]) {
+    const normalized = normalizeRelative(file);
+    if (!normalized || out.has(normalized)) continue;
+    if (out.size >= MAX_CHANGED_FILES) {
+      truncated = true;
+      break;
+    }
+    out.add(normalized);
+  }
+  const owned = new Set(
+    [...committed, ...declared].map(normalizeRelative).filter((file): file is string => file !== null),
+  );
+  const foreign: string[] = [];
+  if (input.startedAtMs !== undefined && Number.isFinite(input.startedAtMs)) {
+    for (const file of out) {
+      if (owned.has(file)) continue;
+      try {
+        if (fs.lstatSync(path.join(root, file)).mtimeMs < input.startedAtMs) foreign.push(file);
+      } catch {
+        // removido: sem como datar, conta como do agente
+      }
+    }
+  }
+  return {
+    files: [...out].sort((a, b) => a.localeCompare(b)),
+    truncated,
+    foreign: foreign.sort((a, b) => a.localeCompare(b)),
+  };
+}
+
 /** Diff observado: sujo + não rastreado + commits desde a base + declarados. */
 export function collectRegressionChangedFiles(
   root: string,
-  input: Pick<RunRegressionGateInput, 'declaredFiles' | 'baseSha'>,
+  input: Pick<RunRegressionGateInput, 'declaredFiles' | 'baseSha' | 'startedAtMs'>,
   git: GitRunner = new ProcessGitRunner(),
 ): string[] {
-  const committed =
-    input.baseSha && /^[a-f0-9]{7,64}$/iu.test(input.baseSha)
-      ? gitNames(git, root, ['diff', '--name-only', '--no-renames', `${input.baseSha}...HEAD`])
-      : [];
-  const all = [
-    ...listDirtyPathsUnderCwd(root, git),
-    ...committed,
-    ...(input.declaredFiles ?? []),
-  ];
-  const out = new Set<string>();
-  for (const file of all) {
-    const normalized = normalizeRelative(file);
-    if (normalized) out.add(normalized);
-    if (out.size >= MAX_CHANGED_FILES) break;
-  }
-  return [...out].sort((a, b) => a.localeCompare(b));
+  return [...collectChanged(root, input, resolveRegressionBase(root, input, git), git).files];
 }
 
-/** Hash do CONTEÚDO do diff: mesmo conjunto de arquivos com os mesmos bytes → cache. */
-export function regressionDiffHash(root: string, changedFiles: readonly string[]): string {
-  const hash = createHash('sha256').update(GATE_VERSION);
+/** Estado das dependências instaladas: `npm ci` sem mudar o diff invalida o cache. */
+function dependencyStamp(root: string): string {
+  return ['.package-lock.json', '.modules.yaml', '.yarn-state.yml', '.yarn-integrity']
+    .map((name) => {
+      try {
+        return String(fs.statSync(path.join(root, 'node_modules', name)).mtimeMs);
+      } catch {
+        return '-';
+      }
+    })
+    .join(':');
+}
+
+/**
+ * Hash do estado verificado: conteúdo dos arquivos do diff + `stamp` (HEAD,
+ * base, dependências). Mesmo hash ⇒ exatamente o mesmo conteúdo testado.
+ */
+export function regressionDiffHash(root: string, changedFiles: readonly string[], stamp = ''): string {
+  const hash = createHash('sha256').update(GATE_VERSION).update(`\0${stamp}\0`);
   for (const file of [...changedFiles].sort((a, b) => a.localeCompare(b))) {
     hash.update(`\0${file}\0`);
     try {
@@ -304,6 +443,19 @@ export function regressionDiffHash(root: string, changedFiles: readonly string[]
     }
   }
   return hash.digest('hex');
+}
+
+interface ObservedState {
+  readonly base: RegressionBase;
+  readonly changed: ChangedSnapshot;
+  readonly diffHash: string;
+}
+
+function observeState(root: string, input: RunRegressionGateInput, git: GitRunner): ObservedState {
+  const base = resolveRegressionBase(root, input, git);
+  const changed = collectChanged(root, input, base, git);
+  const stamp = `${base.head ?? '-'}\0${base.sha ?? '-'}\0${dependencyStamp(root)}`;
+  return { base, changed, diffHash: regressionDiffHash(root, changed.files, stamp) };
 }
 
 interface RunnerDetection {
@@ -364,6 +516,8 @@ export function detectRegressionRunner(dir: string, root: string = dir): RunnerD
 
 interface ImpactedTests {
   readonly tests: readonly string[];
+  /** Teste → arquivos do diff que o puxaram (extensões: `(extensão)`). */
+  readonly sources: ReadonlyMap<string, ReadonlySet<string>>;
   readonly untestedFiles: readonly string[];
   readonly e2eSkipped: readonly string[];
   readonly warnings: readonly string[];
@@ -438,20 +592,27 @@ export async function computeImpactedTests(
   const { reverse, files, truncated } = await buildReverseGraph(scope);
   const fileSet = new Set(files);
   const ordered: string[] = [];
-  const seenTests = new Set<string>();
-  const addTest = (test: string) => {
-    if (!fileSet.has(test) || seenTests.has(test)) return;
-    seenTests.add(test);
+  const sources = new Map<string, Set<string>>();
+  /** true se o teste existe (mesmo já selecionado por outro arquivo do diff). */
+  const addTest = (test: string, source: string): boolean => {
+    if (!fileSet.has(test)) return false;
+    const from = sources.get(test);
+    if (from) {
+      from.add(source);
+      return true;
+    }
+    sources.set(test, new Set([source]));
     ordered.push(test);
+    return true;
   };
   const untested: string[] = [];
   for (const file of changedFiles) {
-    if (TEST_FILE_RE.test(file) || PY_TEST_RE.test(file)) addTest(file);
+    if (TEST_FILE_RE.test(file) || PY_TEST_RE.test(file)) addTest(file, file);
   }
   for (const file of changedFiles) {
     if (TEST_FILE_RE.test(file) || PY_TEST_RE.test(file)) continue;
-    const before = seenTests.size;
-    for (const test of colocatedTests(file, files)) addTest(test);
+    let found = false;
+    for (const test of colocatedTests(file, files)) found = addTest(test, file) || found;
     const seen = new Set<string>([file]);
     let frontier = [file];
     let visits = 0;
@@ -461,23 +622,24 @@ export async function computeImpactedTests(
         for (const importer of reverse.get(node) ?? []) {
           if (seen.has(importer) || ++visits > MAX_REVERSE_VISITS) continue;
           seen.add(importer);
-          if (TEST_FILE_RE.test(importer)) addTest(importer);
+          if (TEST_FILE_RE.test(importer)) found = addTest(importer, file) || found;
           else next.push(importer);
         }
       }
       frontier = next;
     }
-    if (seenTests.size === before && isSourceNeedingTest(file) && fileSet.has(file)) {
+    if (!found && isSourceNeedingTest(file) && fileSet.has(file)) {
       untested.push(file);
     }
   }
   for (const test of extraTests) {
     const normalized = normalizeRelative(test);
-    if (normalized) addTest(normalized);
+    if (normalized) addTest(normalized, '(extensão)');
   }
   const e2eSkipped = ordered.filter((test) => E2E_FILE_RE.test(test));
   return {
     tests: ordered.filter((test) => !E2E_FILE_RE.test(test)),
+    sources,
     untestedFiles: untested,
     e2eSkipped,
     warnings: truncated ? ['índice do projeto truncado: o grafo de imports pode estar incompleto'] : [],
@@ -864,15 +1026,29 @@ async function safeExtension<T>(label: string, warnings: string[], call: () => P
 async function evaluate(
   input: RunRegressionGateInput,
   root: string,
-  changedFiles: readonly string[],
-  diffHash: string,
+  state: ObservedState,
   deps: RegressionGateDependencies,
 ): Promise<RegressionGateResult> {
   const now = deps.now ?? Date.now;
   const started = now();
   const warnings: string[] = [];
   const extensions = deps.extensions ?? registeredExtensions;
-  const base = { version: GATE_VERSION, diffHash, changedFiles, cached: false } as const;
+  const changedFiles = state.changed.files;
+  const base = {
+    version: GATE_VERSION,
+    diffHash: state.diffHash,
+    headSha: state.base.head,
+    baseSha: state.base.sha,
+    baseSource: state.base.source,
+    changedFiles,
+    cached: false,
+  } as const;
+  if (state.changed.truncated) {
+    warnings.push(`diff com mais de ${MAX_CHANGED_FILES} arquivos: seleção de testes parcial (e sem cache)`);
+  }
+  if (state.base.head && !state.base.sha) {
+    warnings.push('sem base conhecida (spawn/upstream): commits anteriores não entram — só o working tree e os declarados');
+  }
   const finish = (partial: Omit<RegressionGateResult, keyof typeof base | 'durationMs' | 'warnings'>) =>
     Object.freeze({ ...base, ...partial, warnings: Object.freeze([...warnings]), durationMs: now() - started });
 
@@ -902,6 +1078,7 @@ async function evaluate(
       testsRun: [],
       testsNotRun: [],
       failures: [],
+      inheritedFailures: [],
       untestedFiles: [],
       invariantsTouched: touched.map(({ id, regra }) => ({ id, regra })),
       runner: null,
@@ -923,12 +1100,12 @@ async function evaluate(
   }
   const common = { untestedFiles: impacted.untestedFiles, invariantsTouched };
   if (tests.length === 0) {
-    return finish({ status: 'no-tests', testsRun: [], testsNotRun: [], failures: [], runner: null, ...common });
+    return finish({ status: 'no-tests', testsRun: [], testsNotRun: [], failures: [], inheritedFailures: [], runner: null, ...common });
   }
   const { groups, orphans } = planRunnerGroups(root, tests);
   if (groups.length === 0) {
     warnings.push('nenhum runner de teste detectado (vitest/jest/pytest): testes impactados NÃO verificados');
-    return finish({ status: 'unavailable', testsRun: [], testsNotRun: tests, failures: [], runner: null, ...common });
+    return finish({ status: 'unavailable', testsRun: [], testsNotRun: tests, failures: [], inheritedFailures: [], runner: null, ...common });
   }
   if (orphans.length > 0) {
     warnings.push(`sem runner para ${orphans.length} teste(s): ${orphans.slice(0, 5).join(', ')}`);
@@ -978,12 +1155,25 @@ async function evaluate(
       `${testsNotRun.length} teste(s) impactado(s) NÃO rodaram (excluídos pela config do runner, prazo ou sandbox): ${testsNotRun.slice(0, 5).join(', ')}`,
     );
   }
+  // Quem entrega responde pelo próprio delta: teste puxado SÓ por WIP que já
+  // estava sujo antes do spawn (outro writer, o operador) não o devolve.
+  const foreign = new Set(state.changed.foreign);
+  const owned = (test: string) => [...(impacted.sources.get(test) ?? [])].some((source) => !foreign.has(source));
+  const ownFailures = failures.filter((failure) => !ran.has(failure.file) || owned(failure.file));
+  const inheritedFailures = failures.filter((failure) => ran.has(failure.file) && !owned(failure.file));
+  if (inheritedFailures.length > 0) {
+    warnings.push(
+      `falha em teste puxado só por WIP anterior ao seu spawn (não conta contra você): ${[...new Set(inheritedFailures.map((failure) => failure.file))].slice(0, 5).join(', ')}`,
+    );
+  }
+  const ownRun = testsRun.filter(owned);
   return finish({
     // Nenhum teste executado de verdade nunca é aprovação.
-    status: failures.length > 0 ? 'failed' : testsRun.length > 0 ? 'passed' : 'unavailable',
+    status: ownFailures.length > 0 ? 'failed' : ownRun.length > 0 ? 'passed' : 'unavailable',
     testsRun,
     testsNotRun,
-    failures,
+    failures: ownFailures,
+    inheritedFailures,
     runner: groups[0]!.runner.kind,
     ...common,
   });
@@ -999,17 +1189,21 @@ export async function runRegressionGate(
   deps: RegressionGateDependencies = {},
 ): Promise<RegressionGateResult> {
   const root = input.scope.rootRealPath;
-  const changedFiles = collectRegressionChangedFiles(root, input, deps.git);
-  const diffHash = regressionDiffHash(root, changedFiles);
-  if (changedFiles.length === 0) {
+  const git = deps.git ?? new ProcessGitRunner();
+  const before = observeState(root, input, git);
+  if (before.changed.files.length === 0) {
     return Object.freeze({
       version: GATE_VERSION,
       status: 'clean',
-      diffHash,
+      diffHash: before.diffHash,
+      headSha: before.base.head,
+      baseSha: before.base.sha,
+      baseSource: before.base.source,
       changedFiles: [],
       testsRun: [],
       testsNotRun: [],
       failures: [],
+      inheritedFailures: [],
       untestedFiles: [],
       invariantsTouched: [],
       runner: null,
@@ -1018,13 +1212,34 @@ export async function runRegressionGate(
       durationMs: 0,
     });
   }
-  const key = `${root}\0${diffHash}`;
-  const hit = cache.get(key);
+  // A chave carrega HEAD, base e dependências (via diffHash) e o que o
+  // chamador pede: mesmo conteúdo verificado e mesma seleção, ou roda de novo.
+  const key = [
+    root,
+    before.diffHash,
+    before.changed.foreign.join(','),
+    input.maxTestFiles ?? '',
+  ].join('\0');
+  const cacheable = !before.changed.truncated;
+  const hit = cacheable ? cache.get(key) : undefined;
   if (hit) return Object.freeze({ ...hit, cached: true });
   const running = inflight.get(key);
   if (running) return running;
-  const promise = evaluate(input, root, changedFiles, diffHash, deps).then((result) => {
-    if (result.status !== 'unavailable') {
+  const promise = evaluate(input, root, before, deps).then((result) => {
+    // Edição concorrente durante a execução: o verde (ou vermelho) é de um
+    // conteúdo que não existe mais — não vale para o estado atual.
+    const after = observeState(root, input, git);
+    if (after.diffHash !== before.diffHash) {
+      return Object.freeze({
+        ...result,
+        status: 'unavailable' as const,
+        warnings: Object.freeze([
+          ...result.warnings,
+          'o checkout mudou durante a verificação: resultado descartado, reavalie o estado atual',
+        ]),
+      });
+    }
+    if (cacheable && result.status !== 'unavailable') {
       cache.set(key, result);
       while (cache.size > CACHE_LIMIT) cache.delete(cache.keys().next().value!);
     }
