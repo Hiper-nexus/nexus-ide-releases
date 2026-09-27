@@ -1091,6 +1091,8 @@ export async function ensureBrowser(
 }
 
 class BrowserLoadTimeoutError extends Error {}
+/** A load discarded before touching the page: a newer navigation won the race. */
+class BrowserLoadSupersededError extends Error {}
 
 /**
  * Deadline for one page load (responsive runs only). A load that never
@@ -1116,6 +1118,9 @@ async function loadURLWithDeadline(entry: BrowserEntry, url: string, timeoutMs: 
   }
 }
 
+/** `nexus_browser_responsive`: the operator's (or the page's) navigation wins over ours. */
+const NAVIGATED_ELSEWHERE = 'the pane navigated elsewhere during the run';
+
 async function loadBrowserForEntry(
   paneId: string,
   entry: BrowserEntry,
@@ -1127,9 +1132,17 @@ async function loadBrowserForEntry(
     device?: BrowserDeviceKind;
     /** Only `nexus_browser_responsive`: ordinary navigation has no deadline. */
     loadTimeoutMs?: number;
+    /**
+     * Only `nexus_browser_responsive`: the pane's navigation counter the
+     * caller saw before calling. The URL/DNS checks above await; if the
+     * operator (or the page) navigated meanwhile, this load is stale and must
+     * not be emulated nor loaded over the newer navigation.
+     */
+    expectedNavSeq?: number;
   } = {},
 ): Promise<BrowserPaneState> {
   entry.loadGeneration += 1;
+  const ownLoadGeneration = entry.loadGeneration;
   const assertCurrentAuthority = (): void => {
     options.assertCurrentAuthority?.();
     if (options.signal?.aborted) {
@@ -1149,6 +1162,12 @@ async function loadBrowserForEntry(
     );
   }
   assertCurrentAuthority();
+  if (
+    options.expectedNavSeq !== undefined &&
+    (entry.navSeq !== options.expectedNavSeq || entry.loadGeneration !== ownLoadGeneration)
+  ) {
+    throw new BrowserLoadSupersededError(`${NAVIGATED_ELSEWHERE}; stale load discarded`);
+  }
   entry.url = url;
   entry.error = undefined;
   assertCurrentAuthority();
@@ -1449,21 +1468,30 @@ export async function analyzeBrowserResponsive(
   let ownWidth = entry.emulatedViewport?.width ?? null;
   const superseded = () =>
     entry.loadGeneration !== ownLoadGeneration || entry.navSeq !== ownNavSeq;
-  const SUPERSEDED = 'the pane navigated elsewhere during the run';
+  const SUPERSEDED = NAVIGATED_ELSEWHERE;
   try {
     for (const device of devices) {
       if (superseded()) throw new Error(`${SUPERSEDED}; responsive analysis stopped`);
-      const load = loadBrowserForEntry(paneId, entry, url, { ...authority, device });
+      // `expectedNavSeq`: the check above is not enough — the load awaits
+      // DNS/pins before emulating, and a navigation in that gap must win.
+      const load = loadBrowserForEntry(paneId, entry, url, { ...authority, device, expectedNavSeq: ownNavSeq });
       ownLoadGeneration = entry.loadGeneration;
+      let ours = true;
       try {
         await load;
       } catch (error) {
+        // Discarded before touching the page: the operator's navigation is
+        // the current one and must stay the baseline, so the restore below
+        // sees it as "superseded" and leaves it alone.
+        if (error instanceof BrowserLoadSupersededError) ours = false;
         if (!(error instanceof BrowserLoadTimeoutError)) throw error;
         breakpoints.push({ device, loadTimedOut: true, error: error.message });
         continue;
       } finally {
-        ownNavSeq = entry.navSeq;
-        ownWidth = entry.emulatedViewport?.width ?? null;
+        if (ours) {
+          ownNavSeq = entry.navSeq;
+          ownWidth = entry.emulatedViewport?.width ?? null;
+        }
       }
       const audit = browserLayoutAuditSchema.parse(
         await runBrowserAutomationForPane(paneId, scope, 'layout_audit', {}),
@@ -1489,7 +1517,7 @@ export async function analyzeBrowserResponsive(
         if (superseded()) {
           restoreError = `page not reloaded: ${SUPERSEDED}`;
         } else {
-          await loadBrowserForEntry(paneId, entry, url, authority);
+          await loadBrowserForEntry(paneId, entry, url, { ...authority, expectedNavSeq: ownNavSeq });
         }
       }
     } catch (error) {

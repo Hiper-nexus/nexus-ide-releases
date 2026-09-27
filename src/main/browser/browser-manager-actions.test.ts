@@ -839,6 +839,50 @@ describe('analyzeBrowserResponsive (nexus_browser_responsive)', () => {
     destroyBrowser(PANE, scope);
   });
 
+  // Astra 5 (P2): the check before the load is not enough — prepareNavigation
+  // awaits DNS/pins, and a navigation in that gap must not be overwritten.
+  const navigateDuringDns = (onCall: number) => {
+    let calls = 0;
+    state.browserSession.resolveHost.mockImplementation(async () => {
+      calls += 1;
+      if (calls === onCall) fire('did-start-navigation', {}, 'https://example.test/next', false, true);
+      return { endpoints: [{ address: '93.184.216.34', port: 0 }] };
+    });
+  };
+  const restoreDns = () => {
+    state.browserSession.resolveHost.mockReset();
+    state.browserSession.resolveHost.mockResolvedValue({ endpoints: [{ address: '93.184.216.34', port: 0 }] });
+  };
+
+  it('does not load nor emulate a breakpoint over a navigation that happened while its DNS check awaited', async () => {
+    await boot();
+    navigateDuringDns(1);
+    try {
+      await expect(analyzeBrowserResponsive(PANE, scope)).rejects.toThrow(/navigated elsewhere/);
+      expect(state.guest.loadURL).not.toHaveBeenCalled();
+      expect(state.guest.enableDeviceEmulation).not.toHaveBeenCalled();
+    } finally {
+      restoreDns();
+      destroyBrowser(PANE, scope);
+    }
+  });
+
+  it('does not reload the original page over a navigation that happened while the restore awaited DNS', async () => {
+    await boot();
+    // 1st resolve: the desktop breakpoint; 2nd: the restore reload.
+    navigateDuringDns(2);
+    try {
+      const result = await analyzeBrowserResponsive(PANE, scope, { devices: ['desktop'] });
+      expect(result.breakpoints).toHaveLength(1);
+      expect(result.restored).toBe(false);
+      expect(result.restoreError).toMatch(/navigated elsewhere/);
+      expect(state.guest.loadURL).toHaveBeenCalledTimes(1);
+    } finally {
+      restoreDns();
+      destroyBrowser(PANE, scope);
+    }
+  });
+
   it('keeps the DNS guard: a host now resolving privately is never loaded or emulated', async () => {
     await boot();
     state.browserSession.resolveHost.mockResolvedValue({

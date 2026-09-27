@@ -1075,7 +1075,7 @@ type BriefCandidate = Pick<
 export function withProjectContextBlocks(options: BriefCandidate): string | undefined {
   if (!options.prompt || options.transient === true) return options.prompt;
   return mountPromptContextBlocks(options.prompt, [
-    businessModelContextBlock(options.executionScope ?? options.scope),
+    businessModelContextBlock(options.executionScope ?? options.scope, options.scope),
     recallsWorkspaceMemory(options)
       ? workspaceMemoryContextBlock(options.scope, options.prompt, autoRecallPhaseForAgent(options))
       : null,

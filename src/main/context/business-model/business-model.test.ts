@@ -302,6 +302,30 @@ describe('runBusinessModelBootstrap (store e atestações reais)', () => {
     expect((await runBusinessModelBootstrap({ scope, knowledge })).status).toBe('up-to-date');
   });
 
+  it('pane em worktree sem o doc (bootstrap ainda não commitado) recebe o <business-model> do checkout principal', async () => {
+    const root = repo();
+    const project = testProjectScope({ rootRealPath: root });
+    await applyAttestedBusinessModel(root, project);
+    // Worktree criada do HEAD: o .context do bootstrap não está lá.
+    const worktreeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-bm-worktree-'));
+    roots.push(worktreeRoot);
+    const worktree = testProjectScope({ rootRealPath: worktreeRoot });
+
+    expect(businessModelContextBlock(worktree)).toBeNull();
+    const block = businessModelContextBlock(worktree, project);
+    expect(block).toContain('<business-model fonte=');
+    expect(block).toContain('close_commanda#1');
+    // Outro projeto não empresta o seu modelo.
+    expect(businessModelContextBlock(worktree, { ...project, projectId: 'outro-projeto' })).toBeNull();
+    // O doc atestado da própria worktree vence o do projeto.
+    const own = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-bm-worktree-own-'));
+    roots.push(own);
+    fs.cpSync(root, own, { recursive: true });
+    const ownScope = testProjectScope({ rootRealPath: fs.realpathSync.native(own) });
+    await applyAttestedBusinessModel(ownScope.rootRealPath, ownScope);
+    expect(businessModelContextBlock(ownScope, project)).toBe(businessModelContextBlock(ownScope));
+  });
+
   it('atestação forjada no repo por um agente com shell não faz o doc editado virar contexto', async () => {
     const root = repo();
     const { scope, knowledge } = knowledgeFor(root);

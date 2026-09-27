@@ -578,6 +578,145 @@ describe('runRegressionGate', () => {
     expect(result.warnings.join('\n')).toContain('git não respondeu');
   });
 
+  it('diff com mais de 256 arquivos: a regressão no arquivo 300 é selecionada e barra', async () => {
+    const { root, scope } = project();
+    for (let index = 0; index < 300; index += 1) {
+      write(root, `src/aa/f${String(index).padStart(3, '0')}.ts`, `export const v${index} = ${index};\n`);
+    }
+    // O último em ordem: fora dos 256 primeiros.
+    write(root, 'src/zz.ts', "import { c } from './c';\nexport const z = c;\n");
+    write(root, 'src/zz.test.ts', "import { z } from './zz';\n");
+    const { exec, calls } = fakeVitest(['src/zz.test.ts']);
+
+    const result = await runRegressionGate({ scope }, { exec });
+
+    expect(result.changedFiles.length).toBeGreaterThan(300);
+    expect(calls.flat()).toContain('src/zz.test.ts');
+    expect(result.status).toBe('failed');
+  });
+
+  it('diff acima do limite de robustez nunca aprova: NÃO verificado, preservando falhas', async () => {
+    const { root, scope } = project();
+    write(root, 'src/a.ts', 'export const a = 2;\n');
+    const declaredFiles = Array.from({ length: 20_001 }, (_, index) => `zz/gone-${index}.md`);
+
+    const passing = await runRegressionGate({ scope, declaredFiles }, { exec: fakeVitest().exec });
+    expect(passing.status).toBe('unavailable');
+    expect(passing.warnings.join('\n')).toContain('NÃO verificado');
+
+    const failing = await runRegressionGate({ scope, declaredFiles }, { exec: fakeVitest(['src/b.test.ts']).exec });
+    expect(failing.status).toBe('failed');
+  }, 60_000);
+
+  it('pytest: test_a passou e test_b foi todo ignorado (relatório JUnit) — não é passed', async () => {
+    const { root, scope } = project();
+    write(root, 'pytest.ini', '[pytest]\n');
+    write(root, 'test_a.py', 'def test_a():\n    assert True\n');
+    write(root, 'test_b.py', 'import pytest\n@pytest.mark.skip\ndef test_b():\n    assert True\n');
+    fs.rmSync(path.join(root, 'package.json'));
+    const exec = vi.fn<RegressionExec>(async (_file, args) => {
+      const junit = args.find((arg) => arg.startsWith('--junitxml='))!.slice('--junitxml='.length);
+      fs.writeFileSync(
+        junit,
+        '<?xml version="1.0" encoding="utf-8"?><testsuites><testsuite name="pytest" tests="2" skipped="1">' +
+          '<testcase classname="test_a" name="test_a" file="test_a.py" line="0" time="0.001" />' +
+          '<testcase classname="test_b" name="test_b" file="test_b.py" line="1" time="0.000">' +
+          '<skipped type="pytest.skip" message="unconditional skip">test_b.py:1: unconditional skip</skipped></testcase>' +
+          '</testsuite></testsuites>',
+      );
+      return { exitCode: 0, timedOut: false, stdout: '1 passed, 1 skipped in 0.01s\n', stderr: '' };
+    });
+
+    const result = await runRegressionGate({ scope }, { exec });
+
+    expect(exec.mock.calls[0]![1]).toContain('junit_family=xunit1');
+    expect(result.status).toBe('unavailable');
+    expect(result.testsRun).toEqual(['test_a.py']);
+    expect(result.testsNotRun).toEqual(['test_b.py']);
+  });
+
+  it('pytest: falha no relatório JUnit aponta o arquivo', async () => {
+    const { root, scope } = project();
+    write(root, 'pytest.ini', '[pytest]\n');
+    write(root, 'test_a.py', 'def test_a():\n    assert False\n');
+    fs.rmSync(path.join(root, 'package.json'));
+    const exec = vi.fn<RegressionExec>(async (_file, args) => {
+      const junit = args.find((arg) => arg.startsWith('--junitxml='))!.slice('--junitxml='.length);
+      fs.writeFileSync(
+        junit,
+        '<testsuites><testsuite name="pytest"><testcase classname="test_a" name="test_a" file="test_a.py">' +
+          '<failure message="assert False">trace</failure></testcase></testsuite></testsuites>',
+      );
+      return { exitCode: 1, timedOut: false, stdout: '1 failed\n', stderr: '' };
+    });
+
+    const result = await runRegressionGate({ scope }, { exec });
+
+    expect(result.status).toBe('failed');
+    expect(result.failures).toEqual([{ file: 'test_a.py', message: 'test_a assert False' }]);
+  });
+
+  it('git que falha também no rev-parse HEAD (128) não vira árvore limpa', async () => {
+    const { scope } = project();
+    const git = {
+      run: () => ({ status: 128, stdout: '', stderr: 'fatal: bad object HEAD' }),
+    } as unknown as ProcessGitRunner;
+    const { exec } = fakeVitest();
+
+    const result = await runRegressionGate({ scope }, { exec, git });
+
+    expect(result.status).toBe('unavailable');
+    expect(result.warnings.join('\n')).toContain('git não respondeu');
+  });
+
+  it('repositório sem commits e sem arquivos continua limpo', async () => {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-regression-')));
+    roots.push(root);
+    new ProcessGitRunner().run(root, ['init', '-q']);
+    const scope: ProjectExecutionScope = {
+      version: 1,
+      installationId: 'install-a',
+      projectId: 'project-a',
+      checkoutId: 'checkout-a',
+      rootRealPath: root,
+      identitySource: 'manifest',
+    };
+
+    const result = await runRegressionGate({ scope }, { exec: fakeVitest().exec });
+
+    expect(result.status).toBe('clean');
+  });
+
+  it('cancelamento compartilhado com dois consumidores dispara UMA substituta', async () => {
+    const { root, scope } = project();
+    write(root, 'src/c.ts', 'export const c = 4;\n');
+    const passing = fakeVitest();
+    let release!: () => void;
+    const started = new Promise<void>((resolve) => { release = resolve; });
+    let substitutes = 0;
+    const exec = vi.fn<RegressionExec>(async (file, args, options) => {
+      if (options.signal) {
+        release();
+        await new Promise((resolve) => options.signal!.addEventListener('abort', resolve, { once: true }));
+        return { exitCode: null, timedOut: false, aborted: true, stdout: '', stderr: '' };
+      }
+      substitutes += 1;
+      return passing.exec(file, args, options);
+    });
+    const controller = new AbortController();
+
+    const first = runRegressionGate({ scope, signal: controller.signal }, { exec });
+    await started;
+    const second = runRegressionGate({ scope }, { exec });
+    const third = runRegressionGate({ scope }, { exec });
+    controller.abort();
+
+    expect((await first).status).toBe('unavailable');
+    expect((await second).status).toBe('passed');
+    expect((await third).status).toBe('passed');
+    expect(substitutes).toBe(1);
+  });
+
   it('checkout limpo não roda nada', async () => {
     const { scope } = project();
     const { exec } = fakeVitest();

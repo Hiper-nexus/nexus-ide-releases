@@ -333,8 +333,6 @@ function matchesPersistedRuntime(
 
 export class RendererMissionAuthority {
   readonly #stores: ProjectDomainStoreRegistry;
-  /** Aba (chave do renderer + worktree) → missão leve que ela já criou. */
-  readonly #tabMissions = new Map<string, string>();
   readonly #resolveContextRevision: (
     scope: ProjectExecutionScope,
     missionId: string,
@@ -812,16 +810,16 @@ export class RendererMissionAuthority {
     const suite = this.#stores.forScope(owned.scope);
     // Uma missão por aba: a segunda promoção (ou o segundo clique antes da
     // primeira resposta) reusa a que já nasceu. Tudo aqui é síncrono no Main,
-    // então procurar e criar é atômico.
-    const tabKey = input.tabKey
-      ? `${owned.scope.checkoutId}\0${owned.info.scope.rootRealPath}\0${input.tabKey}`
-      : undefined;
-    const existing = this.#liveTabMission(suite, owned, workspaceBinding.spaceId, tabKey);
+    // então procurar e criar é atômico. A aba fica gravada no vínculo da
+    // missão (não num mapa em memória): sobrevive ao reinício do Main.
+    const existing = this.#liveTabMission(suite, owned, workspaceBinding.spaceId, input.tabKey);
     if (existing && !input.ownGroup) {
       return this.promoteOrchestratorFromRenderer(owner, existing.id, {
         paneId: owned.paneId,
       });
     }
+    // A 1ª missão da aba segue sendo "a da aba" para o clique explícito.
+    const tabKey = input.tabKey && !existing ? input.tabKey : undefined;
     const created = suite.missions.create({
       title: input.title,
       milestones: [],
@@ -830,13 +828,10 @@ export class RendererMissionAuthority {
       intentVersion: 1,
       intentContract: {
         ...operatorHandMissionContract(input.title, undefined, []),
-        workspaceBinding,
+        workspaceBinding: tabKey ? { ...workspaceBinding, tabKey } : workspaceBinding,
       },
     });
     suite.missions.update(created.id, { status: "running" });
-    // A 1ª missão da aba segue sendo "a da aba" para o clique explícito.
-    const remembered = Boolean(tabKey && !existing);
-    if (remembered) this.#tabMissions.set(tabKey!, created.id);
     let result: PromoteMissionOrchestratorResult;
     try {
       result = this.promoteOrchestratorFromRenderer(owner, created.id, {
@@ -848,7 +843,6 @@ export class RendererMissionAuthority {
     }
     // Sem orquestrador a missão não existe para o operador: nada fica pendurado.
     if (!result.ok) {
-      if (remembered) this.#tabMissions.delete(tabKey!);
       this.#discardPaneMission(suite, created.id, owned.sessionId);
       return result;
     }
@@ -869,9 +863,6 @@ export class RendererMissionAuthority {
     const runtime = getPaneRuntimeAuthorityBySession(sessionId);
     if (suite.missionPanes.list(missionId).some((spec) => spec.paneId !== runtime?.paneId)) {
       return false;
-    }
-    for (const [key, id] of this.#tabMissions) {
-      if (id === missionId) this.#tabMissions.delete(key);
     }
     this.#discardPaneMission(suite, missionId, sessionId);
     if (runtime?.owner) detachOrchMissionMeta(runtime.owner, runtime.paneId, missionId);
@@ -910,7 +901,7 @@ export class RendererMissionAuthority {
     });
   }
 
-  /** Missão viva desta aba: a da worktree dela, ou a que a aba já criou. */
+  /** Missão viva desta aba: a da worktree dela, ou a que a aba já criou (vínculo persistido). */
   #liveTabMission(
     suite: ProjectDomainStoreSuite,
     owned: ReturnType<typeof ownedPaneSession>,
@@ -935,11 +926,16 @@ export class RendererMissionAuthority {
       if (bound) return bound;
     }
     if (!tabKey) return null;
-    const remembered = this.#tabMissions.get(tabKey);
-    const mission = remembered ? suite.missions.get(remembered) : null;
-    if (live(mission)) return mission;
-    this.#tabMissions.delete(tabKey);
-    return null;
+    // O checkout (suite) e a raiz (`live` → mesmo escopo) já isolam a aba;
+    // a chave do renderer é o que resta para distinguir abas do mesmo checkout.
+    return (
+      suite.missions
+        .list()
+        .find(
+          (mission) =>
+            mission.intentContract?.workspaceBinding?.tabKey === tabKey && live(mission),
+        ) ?? null
+    );
   }
 
   /**

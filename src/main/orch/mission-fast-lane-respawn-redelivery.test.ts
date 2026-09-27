@@ -62,10 +62,17 @@ vi.mock('../adapters/adapter-registry', () => ({
 }));
 
 // Composição de contexto REAL (withProjectContextBlocks): só o transporte é dublê.
-vi.mock('./tool-util', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('./tool-util')>()),
-  deliverAgentPrompt: harness.deliver,
-}));
+// A fábrica é re-registrada em cada beforeEach (vi.doMock): vi.resetModules()
+// não refaz um mock já avaliado, e a cadeia original presa na 1ª época lia o
+// store de atestação de outra instância — o P2-8 passava sozinho e falhava no
+// arquivo inteiro.
+const toolUtilMock = vi.hoisted(
+  () => async (importOriginal: () => Promise<typeof import('./tool-util')>) => ({
+    ...(await importOriginal()),
+    deliverAgentPrompt: harness.deliver,
+  }),
+);
+vi.mock('./tool-util', toolUtilMock);
 
 vi.mock('./pane-registry', () => ({
   readSessionOutput: () => '',
@@ -243,6 +250,7 @@ beforeEach(async () => {
   liveMission = mission;
   reviewedSquad = undefined;
   vi.resetModules();
+  vi.doMock('./tool-util', toolUtilMock);
   fastLane = await import('./mission-fast-lane');
 });
 

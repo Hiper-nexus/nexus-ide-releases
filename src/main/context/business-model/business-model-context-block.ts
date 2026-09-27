@@ -47,9 +47,19 @@ function interleaveByFlow(invariants: readonly BusinessInvariant[]): BusinessInv
  * Bloco `<business-model>` (~2 KB, invariantes primeiro) para o brief/primeiro
  * prompt dos panes. Só lê o doc com atestação do extrator para os bytes atuais
  * (ver o contrato); sem isso, null — nenhum pane recebe regra não revisada.
+ * Pane em worktree (aba/missão/writer isolado): o doc do bootstrap fica no
+ * checkout principal até ser commitado, então sem doc atestado na execução
+ * vale o do projeto (`projectScope`); o da worktree, quando existe, vence.
  */
-export function businessModelContextBlock(scope: ProjectExecutionScope): string | null {
-  const document = readBusinessModelDocument(scope);
+export function businessModelContextBlock(
+  scope: ProjectExecutionScope,
+  projectScope?: ProjectExecutionScope,
+): string | null {
+  const document =
+    readBusinessModelDocument(scope) ??
+    (projectScope && projectScope.projectId === scope.projectId && projectScope.rootRealPath !== scope.rootRealPath
+      ? readBusinessModelDocument(projectScope)
+      : null);
   if (!document || (document.invariants.length === 0 && document.flows.length === 0)) return null;
   const open = `${BUSINESS_MODEL_BLOCK_TAG} fonte="${BUSINESS_MODEL_TARGET_PATH}">`;
   const close = '</business-model>';

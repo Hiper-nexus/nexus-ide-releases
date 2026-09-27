@@ -338,6 +338,12 @@ export const missionWorkspaceBindingSchema = z.object({
   version: z.literal(1),
   spaceId: z.string().regex(/^space-[a-z0-9-]{1,120}$/).optional(),
   adoptedPaneId: z.string().min(1).max(128).optional(),
+  /**
+   * Aba do renderer que criou a missão leve no checkout principal (sem
+   * `spaceId`): persistida para "uma missão por aba" sobreviver ao reinício
+   * do Main. Chave opaca do renderer, nunca um caminho.
+   */
+  tabKey: z.string().min(1).max(256).optional(),
 }).strict().refine(value => Boolean(value.spaceId || value.adoptedPaneId), 'workspace binding is empty');
 export type MissionWorkspaceBinding = z.infer<typeof missionWorkspaceBindingSchema>;
 
