@@ -84,7 +84,7 @@ vi.mock('../persistence/settings-store', async (importOriginal) => ({
   })),
 }));
 
-import { paneSpawnTool, setOperatorRouteResolver } from './tools-panes';
+import { paneSpawnTool, setOperatorRouteResolver, setOperatorTabMissionProvider } from './tools-panes';
 import {
   forgetAccountChoiceReceipt,
   recordAccountChoiceReceipt,
@@ -123,6 +123,7 @@ beforeEach(() => {
 
 afterEach(() => {
   setOperatorRouteResolver(null);
+  setOperatorTabMissionProvider(null);
 });
 
 /**
@@ -635,5 +636,26 @@ describe('nexus_pane_spawn — pane filho da mão do operador', () => {
       paneSpawnTool.handler({ prompt: 'implemente X' }, userPane()),
     ).rejects.toThrow(/roteamento automático falhou/);
     expect(harness.spawnPaneAndMaybePrompt).not.toHaveBeenCalled();
+  });
+});
+
+describe('nexus_pane_spawn — missão sob demanda da aba', () => {
+  it('só o pane do operador em Autopilot pede a missão; Hardened e filho do operador não', async () => {
+    const provider = vi.fn(() => null);
+    setOperatorTabMissionProvider(provider);
+
+    await paneSpawnTool.handler({ adapterId: 'codex', task: 'revise o login' }, userPane());
+    expect(provider).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'session-user' }), 'revise o login');
+
+    provider.mockClear();
+    harness.settings.squadCliPolicy = 'governed';
+    await paneSpawnTool.handler({ adapterId: 'codex' }, userPane());
+    expect(provider).not.toHaveBeenCalled();
+
+    harness.settings.squadCliPolicy = 'operator-choice';
+    await paneSpawnTool.handler({ adapterId: 'codex' }, userPane({ operatorParentSessionId: 'session-pai' }));
+    expect(provider).not.toHaveBeenCalled();
+    // Sem missão criada, o spawn segue pela mão do operador (filho `user`).
+    expect(spawnedRole()).toBeUndefined();
   });
 });

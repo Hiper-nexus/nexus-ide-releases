@@ -96,6 +96,11 @@ function stateLabel(state: string | undefined): string | null {
   return missionLifecycleLabel(state as MissionLifecycleState);
 }
 
+/** Missão da aba que ainda pode receber um orquestrador. */
+function isActiveTabMission(mission: { readonly state?: string }): boolean {
+  return mission.state === undefined || ['setup', 'running', 'blocked'].includes(mission.state);
+}
+
 const CLOSABLE_MISSION_STATES: ReadonlySet<string> = new Set([
   'completed',
   'failed',
@@ -459,7 +464,9 @@ function WorkspaceTabMenu({
       run: onToggleBeside,
     });
   }
-  if (onStartTabMission && scope.kind !== 'mission' && scope.missions.length === 0) {
+  // Só missão ATIVA conta — a mesma regra de "Tornar orquestrador": aba cuja
+  // missão encerrou pode começar outra.
+  if (onStartTabMission && scope.kind !== 'mission' && !scope.missions.some(isActiveTabMission)) {
     items.push({
       id: 'start-mission',
       icon: 'crown',

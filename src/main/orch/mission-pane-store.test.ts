@@ -576,3 +576,34 @@ describe('scoped mission pane store', () => {
     expect(() => panes.findByPaneId('pane-a')).toThrow(/invalid mission pane scope/i);
   });
 });
+
+describe('selo da missão livre sem squad', () => {
+  it('persiste na composição e volta igual na retomada', async () => {
+    const { compileIntentContract } = await import('../../shared/mission-intent');
+    const { createMissionPaneAuthoritySeal, sameMissionPaneAuthoritySeal } = await import('./mission-pane-authority');
+    const runtimeManager = manager();
+    const scope = testProjectScope();
+    const missions = createScopedMissionStore(runtimeManager, scope);
+    const contract = compileIntentContract({ goal: 'Missão · Login', intentVersion: 1 });
+    const created = missions.create({
+      title: 'Missão · Login',
+      intentState: 'dispatched',
+      intentVersion: 1,
+      intentContract: { ...contract, approvedAt: 10, dispatchedAt: 11, freeAgentChoice: true },
+    });
+    const mission = missions.update(created.id, { status: 'running' })!;
+    const seal = createMissionPaneAuthoritySeal({ mission, squad: null });
+    expect(seal).not.toBeNull();
+
+    createScopedMissionPaneStore(runtimeManager, scope).record({
+      missionId: mission.id,
+      adapterId: 'claude',
+      paneId: 'pane-lider',
+      role: 'orchestrator',
+      authoritySeal: seal!,
+    });
+    runtimeManager.close(scope);
+    const reopened = createScopedMissionPaneStore(runtimeManager, scope).findByPaneId('pane-lider');
+    expect(sameMissionPaneAuthoritySeal(reopened?.authoritySeal, seal)).toBe(true);
+  });
+});

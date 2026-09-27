@@ -85,12 +85,20 @@ export async function promotePaneToMissionOrchestrator(
   missionId: string,
   paneId: string,
 ): Promise<boolean> {
+  return (await promoteToMission(missionId, paneId)).ok;
+}
+
+/** Igual, devolvendo o motivo da recusa do main para a mensagem certa. */
+async function promoteToMission(
+  missionId: string,
+  paneId: string,
+): Promise<{ readonly ok: boolean; readonly error?: string }> {
   const promote = window.nexus?.orch?.promoteMissionOrchestrator;
   if (!promote) {
     console.warn(
       `[promote] sem bridge de missão — pane=${paneId} mission=${missionId}`,
     );
-    return false;
+    return { ok: false };
   }
   let result: { ok?: boolean; error?: string } | undefined;
   try {
@@ -102,18 +110,18 @@ export async function promotePaneToMissionOrchestrator(
       `[promote] IPC falhou pane=${paneId} mission=${missionId}:`,
       error,
     );
-    return false;
+    return { ok: false };
   }
   if (result?.ok !== true) {
     console.warn(
       `[promote] main recusou pane=${paneId} mission=${missionId} ` +
         `motivo=${result?.error ?? 'desconhecido'}`,
     );
-    return false;
+    return { ok: false, error: result?.error };
   }
   useLayoutStore.getState().promoteMissionPaneRole(missionId, paneId);
   useOrchStore.getState().bindPaneMission(paneId, missionId);
-  return true;
+  return { ok: true };
 }
 
 /** Nome automático da missão leve: o da aba, que é o nome da feature. */
@@ -125,9 +133,12 @@ export function tabMissionTitle(tabTitle: string): string {
  * A aba do pane: o nome dela e a missão viva que ela já hospeda (a de algum
  * pane do mesmo escopo). `null` quando o pane não está no layout.
  */
-function paneTabContext(
-  paneId: string,
-): { readonly title: string; readonly missionId: string | null } | null {
+function paneTabContext(paneId: string): {
+  readonly key: string;
+  readonly title: string;
+  readonly missionId: string | null;
+  readonly hostedMissionIds: readonly string[];
+} | null {
   const panes = listPanes(useLayoutStore.getState().root);
   const pane = panes.find((candidate) => candidate.id === paneId);
   if (!pane) return null;
@@ -145,36 +156,71 @@ function paneTabContext(
         (m) => m.id === hosted.id && ACTIVE_MISSION_STATUSES.has(m.status),
       ),
     )?.id ?? null;
-  return { title: entry?.title ?? 'Terminais', missionId };
+  return {
+    key,
+    title: entry?.title ?? 'Terminais',
+    missionId,
+    hostedMissionIds: entry?.missions.map((hosted) => hosted.id) ?? [],
+  };
 }
 
 type TabMissionOutcome =
   | { readonly kind: 'created'; readonly missionId: string }
-  | { readonly kind: 'refused' }
+  | { readonly kind: 'refused'; readonly error?: string }
+  /** Hardened: missão só com despacho explícito na interface. */
+  | { readonly kind: 'hardened' }
+  /** O painel não tem sessão de IA viva (morreu, reiniciando, shell). */
+  | { readonly kind: 'pane-unavailable' }
+  /** Janela sem a bridge de missão. */
   | { readonly kind: 'unavailable' };
 
-/** Recusas do main que só dizem "este caminho não vale aqui", não "falhou". */
-const TAB_MISSION_UNAVAILABLE = new Set(['hardened', 'pane_unavailable']);
+/**
+ * Pedidos em voo por aba: a segunda promoção na MESMA aba espera a primeira e
+ * reusa a missão dela. O Main já resolve isso de forma atômica; aqui é só para
+ * não disparar dois pedidos à toa.
+ */
+const tabMissionsInFlight = new Map<string, Promise<TabMissionOutcome>>();
 
-/** Cria a missão leve da aba no main e reflete o líder no layout. */
+/** Cria (ou reusa) a missão leve da aba no main e reflete o líder no layout. */
 async function createTabMission(
   paneId: string,
-  tabTitle: string,
+  tab: { readonly key: string; readonly title: string },
+): Promise<TabMissionOutcome> {
+  const pending = tabMissionsInFlight.get(tab.key);
+  if (pending) {
+    const first = await pending;
+    if (first.kind !== 'created') return first;
+    return (await promotePaneToMissionOrchestrator(first.missionId, paneId))
+      ? first
+      : { kind: 'refused' };
+  }
+  const request = requestTabMission(paneId, tab);
+  tabMissionsInFlight.set(tab.key, request);
+  try {
+    return await request;
+  } finally {
+    tabMissionsInFlight.delete(tab.key);
+  }
+}
+
+async function requestTabMission(
+  paneId: string,
+  tab: { readonly key: string; readonly title: string },
 ): Promise<TabMissionOutcome> {
   const create = window.nexus?.orch?.createPaneMission;
   if (!create) return { kind: 'unavailable' };
   let result: Awaited<ReturnType<typeof create>> | undefined;
   try {
-    result = await create({ paneId, title: tabMissionTitle(tabTitle) });
+    result = await create({ paneId, title: tabMissionTitle(tab.title), tabKey: tab.key });
   } catch (error) {
     console.warn(`[promote] missão da aba falhou pane=${paneId}:`, error);
-    return { kind: 'unavailable' };
+    return { kind: 'refused' };
   }
   const missionId = result?.ok === true ? result.mission?.id : undefined;
   if (!missionId) {
-    return TAB_MISSION_UNAVAILABLE.has(result?.error ?? '')
-      ? { kind: 'unavailable' }
-      : { kind: 'refused' };
+    if (result?.error === 'hardened') return { kind: 'hardened' };
+    if (result?.error === 'pane_unavailable') return { kind: 'pane-unavailable' };
+    return { kind: 'refused', error: result?.error };
   }
   useLayoutStore.getState().promoteMissionPaneRole(missionId, paneId);
   useOrchStore.getState().bindPaneMission(paneId, missionId);
@@ -203,21 +249,25 @@ export async function promotePaneWithMissionChoice(input: {
   const paneMissionId = listPanes(useLayoutStore.getState().root).find(
     (pane) => pane.id === input.paneId,
   )?.missionId;
+  const tab = paneTabContext(input.paneId);
+  // A página de missão aberta (⌘K com a missão X na tela) só vincula um pane
+  // que já mora na aba de X — nunca prende o pane de OUTRA aba à X.
+  const destinationMissionId =
+    destination.kind === 'mission' &&
+    (!tab || tab.hostedMissionIds.includes(destination.missionId))
+      ? destination.missionId
+      : undefined;
   const target = resolvePanePromoteTarget({
     paneMissionId,
-    destinationMissionId:
-      destination.kind === 'mission' ? destination.missionId : undefined,
+    destinationMissionId,
     boundMissionId: orch.paneMissions[input.paneId],
     missions: orch.missions,
   });
 
   if (target.kind === 'mission') {
-    const promoted = await promotePaneToMissionOrchestrator(
-      target.missionId,
-      input.paneId,
-    );
-    if (!promoted) {
-      toastPromoteRefused();
+    const promoted = await promoteToMission(target.missionId, input.paneId);
+    if (!promoted.ok) {
+      toastPromoteRefused(promoted.error);
       return null;
     }
     return target.missionId;
@@ -227,27 +277,27 @@ export async function promotePaneWithMissionChoice(input: {
   // panes dela. Aba que já hospeda uma missão viva a reusa; aba sem missão
   // ganha a sua, leve, na hora — sem diálogo com as missões das OUTRAS abas
   // (escolher uma delas era o que misturava os trabalhos).
-  const tab = paneTabContext(input.paneId);
   if (tab?.missionId) {
-    const promoted = await promotePaneToMissionOrchestrator(
-      tab.missionId,
-      input.paneId,
-    );
-    if (!promoted) {
-      toastPromoteRefused();
+    const promoted = await promoteToMission(tab.missionId, input.paneId);
+    if (!promoted.ok) {
+      toastPromoteRefused(promoted.error);
       return null;
     }
     return tab.missionId;
   }
   if (tab) {
-    const created = await createTabMission(input.paneId, tab.title);
+    const created = await createTabMission(input.paneId, tab);
     if (created.kind === 'created') return created.missionId;
     if (created.kind === 'refused') {
-      toastPromoteRefused();
+      toastPromoteRefused(created.error);
       return null;
     }
-    // 'unavailable' (Hardened, shell sem agente, janela sem bridge): segue o
-    // fluxo de antes, com escolha explícita.
+    if (created.kind === 'pane-unavailable') {
+      toastPaneWithoutLiveAgent();
+      return null;
+    }
+    // Hardened ou janela sem bridge: segue o fluxo de antes, com escolha
+    // explícita.
   }
 
   if (target.kind === 'no-mission') {
@@ -298,13 +348,62 @@ export async function promotePaneWithMissionChoice(input: {
  * assim mesmo, e o operador ficava com uma estrela de orquestrador que não
  * comandava nada.
  */
-export function toastPromoteRefused(): void {
+export function toastPromoteRefused(error?: string): void {
   useToastStore.getState().push(
     'error',
     'Não foi possível definir o orquestrador',
-    'A missão não aceitou este painel como líder. Abra a missão pelo Quadro e ' +
-      'tente de novo, ou crie uma nova missão.',
+    error === 'pane_mission_mismatch'
+      ? 'Este painel ainda pertence a outra missão. Encerre-a pelo Quadro ou ' +
+          'use outro painel desta aba.'
+      : 'A missão não aceitou este painel como líder. Abra a missão pelo Quadro e ' +
+          'tente de novo, ou crie uma nova missão.',
   );
+}
+
+function toastPaneWithoutLiveAgent(): void {
+  useToastStore.getState().push(
+    'info',
+    'O painel não tem sessão de IA viva',
+    'Espere a IA do painel terminar de abrir (ou reabra-a) e tente de novo.',
+  );
+}
+
+/**
+ * "Criar missão desta aba" (menu da aba): cria ou reusa a missão DESTA aba,
+ * liderada por `paneId`. Sem os desvios de "Tornar orquestrador" — nada de
+ * diálogo com missões de outras abas nem coroa local: só anuncia sucesso com
+ * missão real. No Hardened abre o fluxo explícito de criação com este painel
+ * reservado para liderar.
+ */
+export async function startTabMissionFor(input: {
+  readonly paneId: string;
+  readonly paneTitle?: string;
+}): Promise<string | null> {
+  const tab = paneTabContext(input.paneId);
+  if (!tab) return null;
+  if (tab.missionId) {
+    const promoted = await promoteToMission(tab.missionId, input.paneId);
+    if (promoted.ok) return tab.missionId;
+    toastPromoteRefused(promoted.error);
+    return null;
+  }
+  const created = await createTabMission(input.paneId, tab);
+  switch (created.kind) {
+    case 'created':
+      return created.missionId;
+    case 'hardened':
+      requestPaneAdoptionForNextMission(input.paneId, input.paneTitle);
+      return null;
+    case 'pane-unavailable':
+      toastPaneWithoutLiveAgent();
+      return null;
+    case 'refused':
+      toastPromoteRefused(created.error);
+      return null;
+    case 'unavailable':
+      toastPromoteRefused();
+      return null;
+  }
 }
 
 /**

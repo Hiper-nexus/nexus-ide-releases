@@ -230,6 +230,8 @@ export interface OwnedAgentSessionInfo {
   allowedTools: string[] | null;
   allowedSkills: string[] | null;
   authoritySeal?: MissionPaneAuthoritySeal;
+  /** Mão do operador adotada como orquestradora; volta a `user` no fim. */
+  promotedFromUser?: true;
 }
 
 const sessions = new Map<string, Session>();
@@ -2942,6 +2944,42 @@ export function updateOwnedAgentSessionRole(
           ? null
           : [...input.allowedSkills],
   };
+  return true;
+}
+
+/**
+ * Variante EXPLÍCITA da ficha PTY para a adoção da mão do operador (`user` sem
+ * missão) como orquestradora — par de `adoptUserSessionAsMissionOrchestrator`
+ * no gate. `updateOwnedAgentSessionRole` continua recusando `user`; só este
+ * caminho aceita, e mantém as allowlists que o pane já tinha. Chame DEPOIS do
+ * gate: uma ficha já adotada antes (missão que acabou) é readotada porque o
+ * gate, que é a autoridade, já devolveu a mão ao operador.
+ */
+export function adoptUserAgentSessionAsMissionOrchestrator(
+  sessionId: string,
+  missionId: string,
+): boolean {
+  const session = sessions.get(sessionId);
+  const info = session?.agent;
+  const operatorHand =
+    info?.role === "user" ? !info.missionId : info?.promotedFromUser === true;
+  if (!session || !info || !operatorHand || !missionId) return false;
+  session.agent = { ...info, role: "orchestrator", missionId, promotedFromUser: true };
+  return true;
+}
+
+/** Desfaz a adoção acima (missão removida ou adoção incompleta). */
+export function returnAdoptedAgentSessionToUser(
+  sessionId: string,
+  missionId: string,
+): boolean {
+  const session = sessions.get(sessionId);
+  const info = session?.agent;
+  if (!session || !info || !info.promotedFromUser || info.missionId !== missionId) {
+    return false;
+  }
+  const { missionId: _mission, promotedFromUser: _promoted, workerIncarnationId: _worker, ...rest } = info;
+  session.agent = { ...rest, role: "user" };
   return true;
 }
 

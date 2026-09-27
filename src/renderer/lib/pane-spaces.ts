@@ -65,6 +65,11 @@ export function spaceScopeKey(spaceId: string): string {
   return `${SPACE_SCOPE_PREFIX}${spaceId}`;
 }
 
+/** O espaço de uma chave `space:<id>`; `null` para missão/soltos. */
+export function spaceIdOfScopeKey(key: string): string | null {
+  return key.startsWith(SPACE_SCOPE_PREFIX) ? key.slice(SPACE_SCOPE_PREFIX.length) : null;
+}
+
 /** Rótulo neutro de missão que o renderer ainda não projetou. */
 const UNKNOWN_MISSION_TITLE = 'Missão';
 /** A aba dos panes sem espaço: é a casa padrão do checkout. */

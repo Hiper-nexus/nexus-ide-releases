@@ -35,7 +35,7 @@ import {
 } from '../lib/canvas-layout';
 import { getActiveWorkspacePath } from './active-workspace';
 import { useOrchStore } from './orch-store';
-import { paneScopeResolver } from '../lib/pane-spaces';
+import { paneScopeResolver, spaceIdOfScopeKey } from '../lib/pane-spaces';
 import { notifyIfLastMissionPaneClosed } from '../orch/mission-last-pane-notify';
 import { stashPendingContinuity } from '../orch/stranded-mission-handoff';
 import { isAutomatedReviewerPaneIdentity } from '../../shared/automated-reviewer-pane';
@@ -867,6 +867,46 @@ export function enforceLayoutInvariants(
   return { ...partial, root, focusedPaneId, maximizedPaneId, stagePaneId };
 }
 
+/**
+ * Uma coroa só POR ABA entre os panes que o operador governa, e ninguém muda
+ * de aba por causa dela. Antes de coroar `leaderId`:
+ *  - os panes soltos (sem espaço e sem missão) que hoje moram num espaço só
+ *    porque o coordenador local está lá ganham o carimbo desse espaço — a casa
+ *    deles não pode depender de qual coordenador vem primeiro na árvore;
+ *  - as outras coroas sem missão do MESMO escopo viram worker. Panes de
+ *    missão ficam de fora — a estrela deles é do Main.
+ */
+function crownLocalLeader(
+  root: LayoutNode,
+  leaderId: string,
+  paneMissions: Readonly<Record<string, string>>,
+): LayoutNode {
+  const panes = listPanes(root);
+  const leader = panes.find((pane) => pane.id === leaderId);
+  if (!leader) return root;
+  const scopeOf = paneScopeResolver(panes, paneMissions);
+  const targetScope = scopeOf(leader);
+  const unbound = (pane: PaneModel): boolean => !(pane.missionId ?? paneMissions[pane.id]);
+  let next = root;
+  for (const pane of panes) {
+    if (pane.spaceId || !unbound(pane)) continue;
+    const spaceId = spaceIdOfScopeKey(scopeOf(pane));
+    if (!spaceId) continue;
+    const sibling = panes.find((candidate) => candidate.spaceId === spaceId);
+    next = updatePane(next, pane.id, {
+      spaceId,
+      spaceTitle: sibling?.spaceTitle,
+      isolateSpace: sibling?.isolateSpace,
+    });
+  }
+  for (const pane of panes) {
+    if (pane.id === leaderId || pane.role !== 'orchestrator' || !unbound(pane)) continue;
+    if (scopeOf(pane) !== targetScope) continue;
+    next = updatePane(next, pane.id, { role: 'worker' });
+  }
+  return next;
+}
+
 export const useLayoutStore = create<LayoutState>((rawSet, get) => {
   /**
    * Single write seam. Not a convenience: it is what makes the invariant a
@@ -1480,6 +1520,19 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
         useOrchStore.getState().paneMissions[pane.id] === missionId);
     let root = get().root;
     let changed = false;
+    // Adoção de um pane do operador: a coroa local que a aba já tinha sai, ou
+    // a aba ficaria com duas (e o indicador poderia apontar a errada).
+    // O broadcast do Main já pode ter vinculado o pane à missão: a aba dele é
+    // a de ANTES da adoção.
+    const adopted = panes.find(
+      (pane) => pane.id === leaderPaneId && pane.missionId === undefined,
+    );
+    if (adopted) {
+      const { [adopted.id]: _adopting, ...paneMissions } = useOrchStore.getState().paneMissions;
+      const crowned = crownLocalLeader(root, adopted.id, paneMissions);
+      changed = crowned !== root;
+      root = crowned;
+    }
     for (const pane of panes) {
       const isLeader = leaderPaneId !== null && pane.id === leaderPaneId;
       // F-527: o líder nomeado é promovido mesmo sem vínculo prévio (é a
@@ -1530,19 +1583,9 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
     }
     let root = get().root;
     if (role === 'orchestrator') {
-      // Invariante VISUAL: uma coroa só POR ABA entre os panes que o operador
-      // governa. Panes de missão ficam de fora — a estrela deles não é minha.
       // Rebaixar em todas as abas era o "promover na aba B troca o
       // orquestrador geral": o coordenador da aba A perdia a coroa.
-      const paneMissions = useOrchStore.getState().paneMissions;
-      const scopeOf = paneScopeResolver(panes, paneMissions);
-      const targetScope = scopeOf(target);
-      for (const pane of panes) {
-        if (pane.id === paneId || pane.role !== 'orchestrator') continue;
-        if (pane.missionId || paneMissions[pane.id]) continue;
-        if (scopeOf(pane) !== targetScope) continue;
-        root = updatePane(root, pane.id, { role: 'worker' });
-      }
+      root = crownLocalLeader(root, paneId, useOrchStore.getState().paneMissions);
     }
     root = updatePane(root, paneId, { role });
     set({ root });

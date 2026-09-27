@@ -730,9 +730,10 @@ export interface NexusApi {
     /**
      * "Tornar orquestrador" num pane solto: cria a missão leve da aba
      * (Autopilot, livre, sem squad) liderada por ele. `error: 'hardened'`
-     * quando a política exige despacho explícito.
+     * quando a política exige despacho explícito. `tabKey` só desempata
+     * criação/reuso da missão da aba no main; não concede nada.
      */
-    createPaneMission(input: { paneId: string; title: string }): Promise<{
+    createPaneMission(input: { paneId: string; title: string; tabKey?: string }): Promise<{
       ok: boolean;
       mission?: Mission;
       warning?: string;

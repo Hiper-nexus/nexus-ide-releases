@@ -469,6 +469,24 @@ export function setOperatorRouteResolver(
   operatorRouteResolver = resolver;
 }
 
+/**
+ * Cria (ou reusa) a missão leve da aba do pane chamador e o adota como
+ * orquestrador dela, pelo mesmo caminho do "Tornar orquestrador". Devolve o id
+ * da missão, ou `null` quando não deu (o pane segue mão do operador).
+ */
+export type OperatorTabMissionProvider = (
+  ctx: AgentGateContext,
+  task: string | null,
+) => string | null;
+
+let operatorTabMissionProvider: OperatorTabMissionProvider | null = null;
+
+export function setOperatorTabMissionProvider(
+  provider: OperatorTabMissionProvider | null,
+): void {
+  operatorTabMissionProvider = provider;
+}
+
 export function attenuateSkills(
   parent: string[] | null,
   requested: string[] | null,
@@ -538,7 +556,11 @@ const paneSpawn: McpToolDef = {
     'operator pane a writer that would share the checkout with another active ' +
     'writer is isolated automatically (receipt: executionMode ' +
     'isolated_worktree + isolatedWorktree {branch, worktreePath, reason}); the ' +
-    'orchestrator integrates the branches. ' +
+    'orchestrator integrates the branches. In Autopilot the FIRST helper a ' +
+    '"+ Pane" pane opens creates that tab\'s light mission (free agent ' +
+    'choice, no squad) with this pane as its orchestrator: helpers join it, ' +
+    'their handoffs come back here, and this pane keeps reading/listing the ' +
+    'panes it already could (receipt: tabMission {missionId}). ' +
     'Returns {paneId, sessionId} or {paneId, sessionId:null, pending:true} ' +
     'while the CLI session is still starting; use nexus_pane_wait_idle next. ' +
     '`harness.account` diz qual conta o pane usa, quem decidiu (regra de ' +
@@ -625,6 +647,25 @@ const paneSpawn: McpToolDef = {
   handler: async (args, ctx, invocation) => {
     assertMcpInvocationCurrent(invocation);
     assertCallerMaySpawnPane(ctx.role);
+    // Missão SOB DEMANDA (0.76.110, decisão do operador): o primeiro helper que
+    // um pane do "+ Pane" abre cria a missão leve da aba e adota o pane como
+    // orquestrador dela — o helper nasce nela e as entregas chegam ao pane, que
+    // não perde o alcance de mão do operador (pane-authz). Pane que só conversa
+    // não vira missão; filho do operador e Hardened seguem como antes. Se não
+    // der, nada muda: o spawn segue pela mão do operador.
+    let tabMissionId: string | null = null;
+    if (
+      operatorTabMissionProvider &&
+      ctx.role === 'user' &&
+      !ctx.missionId &&
+      ctx.sessionId &&
+      !ctx.operatorParentSessionId &&
+      !str(args, 'missionId') &&
+      !str(args, 'resume') &&
+      isOperatorChoicePolicy(getOrchSettings().squadCliPolicy)
+    ) {
+      tabMissionId = operatorTabMissionProvider(ctx, operatorRouteTask(args));
+    }
     // Contrato de entrega inválido falha AQUI, visível para quem declarou —
     // nunca no handoff do worker, que não tem como consertar o schema.
     const deliveryContract = parseExpectArg(args.expect);
@@ -1456,6 +1497,7 @@ const paneSpawn: McpToolDef = {
           ...pending,
           ...(executionMode ? { executionMode } : {}),
           ...isolatedReceipt(),
+          ...(tabMissionId ? { tabMission: { missionId: tabMissionId } } : {}),
           // ACK pendente: ainda não há sessionId para buscar o recibo.
           harness: { ...harness, account: null },
           ...routeReceipt,
@@ -1492,6 +1534,7 @@ const paneSpawn: McpToolDef = {
         ...spawned,
         ...(executionMode ? { executionMode } : {}),
         ...isolatedReceipt(),
+        ...(tabMissionId ? { tabMission: { missionId: tabMissionId } } : {}),
         harness: {
           ...harness,
           account: getAccountChoiceReceipt(spawned.sessionId) ?? null,

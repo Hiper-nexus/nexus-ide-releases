@@ -10,7 +10,8 @@ import type { ProjectExecutionScope } from '../../shared/types';
  * Pure logic, no electron/node imports, unit-tested directly (pane-registry.ts
  * resolves the live PaneAuthzInfo and calls in here). The rule set:
  *  - you may always act on your OWN pane;
- *  - the human's own agents (role 'user') are unrestricted — they act for the user;
+ *  - the human's own agents (role 'user') are unrestricted — they act for the user,
+ *    and keep that reach while leading a mission they were adopted into;
  *  - a worker may never touch a shell pane (the user's terminal);
  *  - every other cross-pane access must stay inside the caller's OWN mission;
  *  - a worker may read/wait on but never write/close the orchestrator pane.
@@ -31,6 +32,8 @@ export interface CallerCtx {
   contextRevision?: string;
   /** The caller's own PTY session — acting on it is always allowed. */
   sessionId?: string;
+  /** Main-owned: this orchestrator is the operator's pane adopted by a mission. */
+  promotedFromUserSession?: true;
 }
 
 export interface PaneAuthzInfo {
@@ -135,8 +138,13 @@ export function authorizePaneAccess(
   if (caller.sessionId && pane.sessionId && caller.sessionId === pane.sessionId) {
     return { allow: true };
   }
-  // The user's directly-opened agents act on the user's behalf.
+  // The user's directly-opened agents act on the user's behalf — also after a
+  // mission adopted one as its orchestrator: leading a mission never takes
+  // away what the operator's pane already reached (0.76.110).
   if (caller.role === 'user') return { allow: true };
+  if (caller.role === 'orchestrator' && caller.promotedFromUserSession === true) {
+    return { allow: true };
+  }
 
   // A worker must never reach the user's shell/browser — read (secret capture)
   // or write/navigate.

@@ -388,7 +388,7 @@ describe('promotePaneWithMissionChoice — missão leve por aba', () => {
     expect(await promotePaneWithMissionChoice({ paneId: 'b1' })).toBe('mB');
     // Sem diálogo com a missão da outra aba.
     expect(useChoiceStore.getState().pending).toBeNull();
-    expect(createPaneMission).toHaveBeenCalledWith({ paneId: 'b1', title: 'Missão · Login' });
+    expect(createPaneMission).toHaveBeenCalledWith({ paneId: 'b1', title: 'Missão · Login', tabKey: 'space:space-b' });
     expect(promoteMissionOrchestrator).not.toHaveBeenCalled();
 
     const panes = new Map(listPanes(useLayoutStore.getState().root).map((p) => [p.id, p]));
@@ -423,5 +423,89 @@ describe('promotePaneWithMissionChoice — missão leve por aba', () => {
     await vi.waitFor(() => expect(useChoiceStore.getState().pending).not.toBeNull());
     useChoiceStore.getState().decide(null);
     expect(await pending).toBeNull();
+  });
+
+  it('duas promoções simultâneas na mesma aba pedem UMA missão; a segunda a reusa', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const createPaneMission = vi.fn(async () => {
+      await gate;
+      return { ok: true, mission: { id: 'mB' } };
+    });
+    const promoteMissionOrchestrator = vi.fn(async () => ({ ok: true }));
+    const { promotePaneWithMissionChoice } = await setupTabs({ createPaneMission, promoteMissionOrchestrator });
+
+    const first = promotePaneWithMissionChoice({ paneId: 'b1' });
+    const second = promotePaneWithMissionChoice({ paneId: 'b2' });
+    release();
+
+    expect(await Promise.all([first, second])).toEqual(['mB', 'mB']);
+    expect(createPaneMission).toHaveBeenCalledTimes(1);
+    expect(promoteMissionOrchestrator).toHaveBeenCalledWith({ missionId: 'mB', paneId: 'b2' });
+  });
+
+  it('pane sem sessão de IA viva: toast próprio, sem diálogo e sem coroa local', async () => {
+    const createPaneMission = vi.fn(async () => ({ ok: false, error: 'pane_unavailable' }));
+    const { promotePaneWithMissionChoice, useChoiceStore, useLayoutStore } = await setupTabs({
+      createPaneMission,
+      promoteMissionOrchestrator: vi.fn(),
+    });
+    const { useToastStore } = await import('../state/toast-store');
+
+    expect(await promotePaneWithMissionChoice({ paneId: 'b1' })).toBeNull();
+    expect(useChoiceStore.getState().pending).toBeNull();
+    expect(listPanes(useLayoutStore.getState().root).find((p) => p.id === 'b1')?.role).toBeUndefined();
+    expect(JSON.stringify(useToastStore.getState())).toContain('O painel não tem sessão de IA viva');
+  });
+
+  it('página da missão da aba A aberta não prende o pane da aba B à missão A', async () => {
+    const createPaneMission = vi.fn(async () => ({ ok: true, mission: { id: 'mB' } }));
+    const promoteMissionOrchestrator = vi.fn(async () => ({ ok: true }));
+    const { promotePaneWithMissionChoice } = await setupTabs({ createPaneMission, promoteMissionOrchestrator });
+    const { useProductNavigationStore } = await import('../state/product-navigation-store');
+    useProductNavigationStore.setState({ destination: { kind: 'mission', missionId: 'mA' } } as never);
+
+    expect(await promotePaneWithMissionChoice({ paneId: 'b1' })).toBe('mB');
+    expect(promoteMissionOrchestrator).not.toHaveBeenCalled();
+  });
+});
+
+describe('startTabMissionFor — "Criar missão desta aba"', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  async function setup(bridge: Record<string, unknown>) {
+    const mod = await import('./pane-mission-promote');
+    const { useOrchStore } = await import('../state/orch-store');
+    const { useLayoutStore } = await import('../state/layout-store');
+    const { buildGridTree } = await import('./split-tree');
+    useLayoutStore.setState({
+      root: buildGridTree([
+        { id: 'b1', kind: 'cli-agent', title: 'Codex B', adapterId: 'codex', spaceId: 'space-b', spaceTitle: 'Login' },
+      ]),
+    });
+    useOrchStore.setState({ missions: [], paneMissions: {} });
+    Object.defineProperty(window, 'nexus', { configurable: true, value: { orch: bridge } });
+    return { ...mod, useLayoutStore };
+  }
+
+  it('Hardened abre o fluxo explícito de criação e não anuncia missão', async () => {
+    const { startTabMissionFor, useLayoutStore } = await setup({
+      createPaneMission: vi.fn(async () => ({ ok: false, error: 'hardened' })),
+    });
+    const { usePendingOrchestratorAdoptionStore } = await import('../state/pending-orchestrator-adoption-store');
+
+    expect(await startTabMissionFor({ paneId: 'b1', paneTitle: 'Codex B' })).toBeNull();
+    expect(usePendingOrchestratorAdoptionStore.getState().take()).toMatchObject({ paneId: 'b1' });
+    // Nada de coroa local fingindo missão.
+    expect(listPanes(useLayoutStore.getState().root)[0]?.role).toBeUndefined();
+  });
+
+  it('só devolve id de missão real', async () => {
+    const { startTabMissionFor } = await setup({
+      createPaneMission: vi.fn(async () => ({ ok: true, mission: { id: 'mB' } })),
+    });
+    expect(await startTabMissionFor({ paneId: 'b1' })).toBe('mB');
   });
 });

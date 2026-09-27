@@ -167,6 +167,25 @@ describe('WorkspaceTabs', () => {
     expect(labels()).not.toContain('Criar missão desta aba');
   });
 
+  it('aba cuja missão encerrou volta a oferecer "Criar missão desta aba"', () => {
+    const scopes = [
+      space({
+        key: 'space:a',
+        id: 'a',
+        title: 'Checkout',
+        missions: [{ id: 'm-old', title: 'Missão · Checkout', state: 'done' }],
+      }),
+    ];
+    const { host } = render({ scopes, onStartTabMission: vi.fn() });
+    act(() => {
+      host.querySelector('.workspace-tab[data-scope-kind="space"]')!
+        .dispatchEvent(new MouseEvent('contextmenu', { bubbles: true }));
+    });
+    expect(
+      [...document.querySelectorAll('[role="menuitem"] strong')].map((item) => item.textContent),
+    ).toContain('Criar missão desta aba');
+  });
+
   it('a aba da missão viva não oferece fechar — o menu aponta o Quadro', () => {
     const { host } = render();
     const missionTab = host.querySelector('.workspace-tab[data-scope-kind="mission"]')!;

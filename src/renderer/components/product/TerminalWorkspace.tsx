@@ -21,7 +21,7 @@ import {
 } from '../../lib/pane-spaces';
 import { usePaneScopeStore } from '../../state/pane-scope-store';
 import { useToastStore } from '../../state/toast-store';
-import { promotePaneWithMissionChoice, toastPromoted } from '../../lib/pane-mission-promote';
+import { startTabMissionFor, toastPromoted } from '../../lib/pane-mission-promote';
 import { askConfirm, useConfirmStore } from '../../state/confirm-store';
 import { WorkspaceTabs, workspaceTabIsClosable } from './WorkspaceTabs';
 import { missionLifecycleLabel } from '../../lib/mission-lifecycle-copy';
@@ -329,7 +329,7 @@ export function TerminalWorkspace({
       );
       return;
     }
-    const missionId = await promotePaneWithMissionChoice({
+    const missionId = await startTabMissionFor({
       paneId: leader.id,
       paneTitle: leader.title,
     });

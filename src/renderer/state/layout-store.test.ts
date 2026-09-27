@@ -1194,6 +1194,85 @@ describe('layout-store role assignment and promotion', () => {
     expect(roles.get('b1')).toBe('orchestrator');
   });
 
+  it('missão leve adotada na aba B tira a coroa local da B e mantém a da A', () => {
+    useOrchStore.setState({ paneMissions: {} });
+    seedLayout({
+      root: buildGridTree([
+        { id: 'a1', kind: 'cli-agent', title: 'A1', spaceId: 'space-a', spaceTitle: 'A', role: 'orchestrator' },
+        { id: 'b1', kind: 'cli-agent', title: 'B1', spaceId: 'space-b', spaceTitle: 'B', role: 'orchestrator' },
+        { id: 'b2', kind: 'cli-agent', title: 'B2', spaceId: 'space-b', spaceTitle: 'B' },
+      ]),
+      focusedPaneId: 'b2',
+      maximizedPaneId: null,
+      hydrated: true,
+      viewKind: 'grid',
+      canvasNodeLayouts: {},
+      canvasViewport: { x: 0, y: 0, zoom: 1 },
+    });
+
+    useLayoutStore.getState().promoteMissionPaneRole('mB', 'b2');
+
+    const roles = new Map(listPanes(useLayoutStore.getState().root).map((p) => [p.id, p.role]));
+    expect(roles.get('b2')).toBe('orchestrator');
+    expect(roles.get('b1')).toBe('worker');
+    expect(roles.get('a1')).toBe('orchestrator');
+  });
+
+  it('missão criada pelo Main (broadcast vincula antes de refletir) também tira a coroa local', () => {
+    useOrchStore.setState({ paneMissions: { b2: 'mB' } });
+    seedLayout({
+      root: buildGridTree([
+        { id: 'b1', kind: 'cli-agent', title: 'B1', spaceId: 'space-b', spaceTitle: 'B', role: 'orchestrator' },
+        { id: 'b2', kind: 'cli-agent', title: 'B2', spaceId: 'space-b', spaceTitle: 'B' },
+      ]),
+      focusedPaneId: 'b2',
+      maximizedPaneId: null,
+      hydrated: true,
+      viewKind: 'grid',
+      canvasNodeLayouts: {},
+      canvasViewport: { x: 0, y: 0, zoom: 1 },
+    });
+
+    useLayoutStore.getState().reflectMissionLeader('mB', 'b2');
+
+    const panes = new Map(listPanes(useLayoutStore.getState().root).map((p) => [p.id, p]));
+    expect(panes.get('b2')).toMatchObject({ role: 'orchestrator', missionId: 'mB', missionHost: true });
+    expect(panes.get('b1')?.role).toBe('worker');
+  });
+
+  it('coroar um pane solto não o faz migrar para a aba de outro coordenador', () => {
+    useOrchStore.setState({ paneMissions: {} });
+    seedLayout({
+      root: buildGridTree([
+        { id: 'a1', kind: 'cli-agent', title: 'A1', spaceId: 'space-a', spaceTitle: 'A', role: 'orchestrator' },
+        { id: 'b1', kind: 'cli-agent', title: 'B1', spaceId: 'space-b', spaceTitle: 'B', role: 'orchestrator' },
+        { id: 'solto', kind: 'cli-agent', title: 'Solto' },
+        { id: 'solto2', kind: 'shell', title: 'Shell' },
+      ]),
+      focusedPaneId: 'solto',
+      maximizedPaneId: null,
+      hydrated: true,
+      viewKind: 'grid',
+      canvasNodeLayouts: {},
+      canvasViewport: { x: 0, y: 0, zoom: 1 },
+    });
+    const scopeNow = () => {
+      const panes = listPanes(useLayoutStore.getState().root);
+      const scopeOf = paneScopeResolver(panes, {});
+      return new Map(panes.map((p) => [p.id, scopeOf(p)]));
+    };
+    expect(scopeNow().get('solto')).toBe('space:space-a');
+
+    useLayoutStore.getState().setPaneRole('solto', 'orchestrator');
+
+    const scopes = scopeNow();
+    expect(scopes.get('solto')).toBe('space:space-a');
+    expect(scopes.get('solto2')).toBe('space:space-a');
+    const roles = new Map(listPanes(useLayoutStore.getState().root).map((p) => [p.id, p.role]));
+    expect(roles.get('a1')).toBe('worker');
+    expect(roles.get('b1')).toBe('orchestrator');
+  });
+
   it('helper do orquestrador da missão da aba B nasce na B sem tirar o foco da A', () => {
     useOrchStore.setState({ paneMissions: { b1: 'mB' } });
     seedLayout({

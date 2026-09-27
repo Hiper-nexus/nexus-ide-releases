@@ -109,6 +109,17 @@ describe('authorizePaneAccess', () => {
     expect(authorizePaneAccess(user, anything, 'write').allow).toBe(true);
   });
 
+  it('mão do operador adotada por missão mantém o alcance de antes; worker rebaixado não', () => {
+    const adopted: CallerCtx = { ...orchestrator, promotedFromUserSession: true };
+    const otherTab = pane({ missionId: undefined, role: undefined, kind: 'cli-agent' });
+    expect(authorizePaneAccess(adopted, otherTab, 'read').allow).toBe(true);
+    expect(authorizePaneAccess(adopted, pane({ missionId: 'm2' }), 'read').allow).toBe(true);
+    expect(canListPane(adopted, otherTab)).toBe(true);
+    const demoted: CallerCtx = { ...worker, promotedFromUserSession: true };
+    expect(authorizePaneAccess(demoted, otherTab, 'read').allow).toBe(false);
+    expect(authorizePaneAccess(orchestrator, otherTab, 'read').allow).toBe(false);
+  });
+
   it('blocks another checkout before own-session and user-role shortcuts', () => {
     const foreignScope = testProjectScope({
       projectId: 'project-a',
