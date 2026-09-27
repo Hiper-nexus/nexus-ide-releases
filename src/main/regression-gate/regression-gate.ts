@@ -39,8 +39,9 @@ import {
 import {
   DEFAULT_ORIENTATION_LIMITS,
   type OrientationLimits,
+  type ProjectOrientationMap,
 } from '../context/orientation/orientation-types';
-import { ensureBlastRadius } from '../context/orientation/orientation-blast-radius';
+import { computeBlastRadius } from '../context/orientation/orientation-blast-radius';
 import { tryGetProjectOrientationService } from '../context/orientation/orientation-service';
 import { readWorkspaceTextFile } from '../orch/workspace-file';
 import { assertMcpInvocationCurrent, type McpToolInvocation } from '../orch/mcp-protocol';
@@ -95,6 +96,11 @@ export interface RegressionBlastRadiusExtension {
   readonly tests?: readonly string[];
   /** Nomes (qualificado e simples) das entidades `db:table:`/`db:function:` do raio. */
   readonly dbEntities?: readonly string[];
+  /**
+   * Arquivos que usam as tabelas/funções que o diff toca (outra feature, sem
+   * import em comum): os testes deles entram como os de um importador.
+   */
+  readonly dbConsumers?: readonly string[];
 }
 
 export interface RegressionInvariantTouched {
@@ -134,10 +140,54 @@ function stringList(value: unknown): string[] {
 }
 
 const DB_NODE_RE = /^db:(?:table|function):(.+)$/u;
+/** Saltos entre entidades de banco (função → tabela que ela escreve → …). */
+const DB_ENTITY_HOPS = 3;
+const MAX_DB_CONSUMERS = 64;
 
 /**
- * Default do contrato do codemap-banco: `tests` do BlastRadiusResult e as
- * entidades de banco do raio (nós `db:table:`/`db:function:` em `dbEntities`).
+ * arquivo do diff → tabela/função → arquivo de OUTRA feature que a usa: o
+ * `depth: 1` do raio para na entidade e perde esse consumidor (comanda →
+ * comissão). Anda só pelas arestas de banco, com limite explícito, e para no
+ * consumidor — os testes dele o portão acha pelo grafo de imports.
+ */
+function dbConsumersOf(
+  map: ProjectOrientationMap,
+  changedFiles: readonly string[],
+): { readonly consumers: string[]; readonly dbNodes: string[] } {
+  const adjacency = map.graph.adjacency ?? {};
+  const reverse = map.graph.reverse ?? {};
+  const neighbors = (node: string) => [...(adjacency[node] ?? []), ...(reverse[node] ?? [])];
+  const changed = new Set(changedFiles);
+  const seen = new Set<string>();
+  let frontier: string[] = [];
+  const visit = (node: string) => {
+    if (!node.startsWith('db:') || seen.has(node)) return;
+    seen.add(node);
+    frontier.push(node);
+  };
+  for (const file of changedFiles) neighbors(file).forEach(visit);
+  // Migration/schema do diff: alcança quem usa o que ela define.
+  for (const entity of map.graph.dbEntities ?? []) {
+    if (entity.definedIn.some((file) => changed.has(file))) visit(entity.nodeId);
+  }
+  const consumers = new Set<string>();
+  for (let hop = 0; hop < DB_ENTITY_HOPS && frontier.length > 0; hop += 1) {
+    const current = frontier;
+    frontier = [];
+    for (const node of current) {
+      for (const next of neighbors(node)) {
+        if (next.startsWith('db:')) visit(next);
+        else if (!changed.has(next) && consumers.size < MAX_DB_CONSUMERS) consumers.add(next);
+      }
+    }
+  }
+  return { consumers: [...consumers].sort((a, b) => a.localeCompare(b)), dbNodes: [...seen] };
+}
+
+/**
+ * Default do contrato do codemap-banco: `tests` do BlastRadiusResult, as
+ * entidades de banco do raio (nós `db:table:`/`db:function:` em `dbEntities`)
+ * e os consumidores dessas entidades em outras features.
  * Sem serviço de orientação → null, o portão segue só com o grafo.
  */
 export async function orientationBlastRadiusExtension(input: {
@@ -146,17 +196,16 @@ export async function orientationBlastRadiusExtension(input: {
 }): Promise<RegressionBlastRadiusExtension | null> {
   const service = tryGetProjectOrientationService();
   if (!service) return null;
-  const radius: object = await ensureBlastRadius(
-    input.scope,
-    { seedFiles: input.changedFiles, depth: 1 },
-    service,
-  );
+  const map = await service.ensure(input.scope, { reason: 'mcp', waitMs: 5_000 });
+  const radius: object = computeBlastRadius(map, { seedFiles: input.changedFiles, depth: 1 });
   const tests = stringList((radius as { tests?: unknown }).tests);
+  const viaDb = dbConsumersOf(map, input.changedFiles);
   // O code map expõe os nós de banco em `dbEntities` (rodada 4b); `files`
   // fica como fallback para mapas antigos que ainda os misturavam.
   const dbNodes = [
     ...stringList((radius as { dbEntities?: unknown }).dbEntities),
     ...stringList((radius as { files?: unknown }).files),
+    ...viaDb.dbNodes,
   ];
   const dbEntities = [...new Set(dbNodes)].flatMap((node) => {
     const qualified = DB_NODE_RE.exec(node)?.[1];
@@ -164,7 +213,10 @@ export async function orientationBlastRadiusExtension(input: {
     const dot = qualified.indexOf('.');
     return dot >= 0 ? [qualified, qualified.slice(dot + 1)] : [qualified];
   });
-  return tests.length > 0 || dbEntities.length > 0 ? { tests, dbEntities } : null;
+  const dbConsumers = viaDb.consumers;
+  return tests.length > 0 || dbEntities.length > 0 || dbConsumers.length > 0
+    ? { tests, dbEntities, dbConsumers }
+    : null;
 }
 
 /** Default do contrato do modelo de negócio: invariantes do `.context` do checkout. */
@@ -645,6 +697,8 @@ export async function computeImpactedTests(
   scope: ProjectExecutionScope,
   changedFiles: readonly string[],
   extraTests: readonly string[] = [],
+  /** Consumidores via banco: seus testes entram, mas eles não são "área sem teste". */
+  dbConsumers: readonly string[] = [],
 ): Promise<ImpactedTests> {
   const { reverse, files, truncated } = await buildReverseGraph(scope, changedFiles);
   const fileSet = new Set(files);
@@ -663,13 +717,10 @@ export async function computeImpactedTests(
     return true;
   };
   const untested: string[] = [];
-  for (const file of changedFiles) {
-    if (TEST_FILE_RE.test(file) || PY_TEST_RE.test(file)) addTest(file, file);
-  }
-  for (const file of changedFiles) {
-    if (TEST_FILE_RE.test(file) || PY_TEST_RE.test(file)) continue;
+  /** Testes co-localizados e importadores (até REVERSE_DEPTH saltos) de `file`. */
+  const testsOf = (file: string, source: string): boolean => {
     let found = false;
-    for (const test of colocatedTests(file, files)) found = addTest(test, file) || found;
+    for (const test of colocatedTests(file, files)) found = addTest(test, source) || found;
     const seen = new Set<string>([file]);
     let frontier = [file];
     let visits = 0;
@@ -679,15 +730,28 @@ export async function computeImpactedTests(
         for (const importer of reverse.get(node) ?? []) {
           if (seen.has(importer) || ++visits > MAX_REVERSE_VISITS) continue;
           seen.add(importer);
-          if (TEST_FILE_RE.test(importer)) found = addTest(importer, file) || found;
+          if (TEST_FILE_RE.test(importer)) found = addTest(importer, source) || found;
           else next.push(importer);
         }
       }
       frontier = next;
     }
-    if (!found && isSourceNeedingTest(file) && fileSet.has(file)) {
+    return found;
+  };
+  for (const file of changedFiles) {
+    if (TEST_FILE_RE.test(file) || PY_TEST_RE.test(file)) addTest(file, file);
+  }
+  for (const file of changedFiles) {
+    if (TEST_FILE_RE.test(file) || PY_TEST_RE.test(file)) continue;
+    if (!testsOf(file, file) && isSourceNeedingTest(file) && fileSet.has(file)) {
       untested.push(file);
     }
+  }
+  for (const consumer of dbConsumers) {
+    const normalized = normalizeRelative(consumer);
+    if (!normalized) continue;
+    if (TEST_FILE_RE.test(normalized) || PY_TEST_RE.test(normalized)) addTest(normalized, '(banco)');
+    else testsOf(normalized, '(banco)');
   }
   for (const test of extraTests) {
     const normalized = normalizeRelative(test);
@@ -1182,7 +1246,7 @@ async function evaluate(
 
   let impacted: ImpactedTests;
   try {
-    impacted = await computeImpactedTests(input.scope, changedFiles, extraTests);
+    impacted = await computeImpactedTests(input.scope, changedFiles, extraTests, radius?.dbConsumers ?? []);
   } catch (error) {
     warnings.push(`mapa de testes indisponível: ${error instanceof Error ? error.message : String(error)}`.slice(0, 200));
     return finish({
