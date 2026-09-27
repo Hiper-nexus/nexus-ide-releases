@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.76.110 — Nexus consciente
+
+Tudo que o operador pediu em 27/09, revisado em cruz por GPT-6 Astra e Claude Fable 5.1 (por frente e no conjunto) e corrigido antes de sair. Inclui a 0.76.109.
+
+- **Portão de regressão (ligado).** Antes de aceitar qualquer entrega de escrita — handoff de missão, "+ Pane", encerramento mecânico e fim de turno do pane do operador — o Nexus roda só os testes impactados pelo diff (inclusive os alcançados pelo banco: arquivo → tabela → teste de outra feature), no mesmo sandbox do writer, sem credenciais. Falhou → volta ao agente. Nunca aprova o que não rodou: diff grande não é cortado, pytest é lido por arquivo (JUnit), falha do git nunca vira árvore limpa e uma execução cancelada gera uma única substituta.
+- **Modelo de negócio no `.context`.** Fluxos, invariantes, tabelas e testes extraídos de forma determinística (migrations, funções, AGENTS.md, specs), atestados pelo Main (fora do checkout) e injetados em todo pane de toda CLI como dado citado — também nos panes que rodam em worktree antes de o doc ser commitado. Invariante tocado entra no portão.
+- **Code map ligado ao banco.** Tabelas, funções, triggers e RLS de migrations/Prisma/Drizzle, arestas código↔tabela, blast radius com testes, alias do tsconfig — com lexers lineares.
+- **Memória automática pelo Jev.** O Jev decide o que guardar (resumos aceitos, fim de sessão com evidência do Main, preferências digitadas pelo operador) e todo pane recebe a memória do projeto — inclusive Kimi e Grok. Sem teto diário. Texto de agente só vira memória confiável sem diretivas.
+- **"+ Pane" com poder de missão.** Writers em paralelo em worktrees isolados, escolha explícita de CLI/modelo respeitada, missão livre sem squad, missão sob demanda no 1º helper (do grupo do pane, sem roubar a coroa de ninguém), um orquestrador por aba que sobrevive ao reinício, retomada na worktree original. Trocar de coroa devolve o anterior à mão do operador com tudo que tinha.
+- **Navegador do Jev.** `nexus_browser_responsive` (celular/tablet/desktop num chamado, com overflow e prazo por carga), emulação de dispositivo por MCP, viewport decente para agentes, extração pt-BR, redação de OTP/sessão corrigida. Uma navegação sua durante a análise nunca é sobrescrita.
+- **Modelos estudados.** Roteamento com ids vivos (Grok 4.7, Gemini 3.8 Flash no lugar do 3.1 Pro, que sai do catálogo do agy), política de modelos de topo (Astra/Fable 5.1 em revisão e alto risco) e trava contra tabela velha. Estudo datado em `docs/models/estudo-2026-09.md`. Polimento do ditado no grok-4.7-build-fast.
+- **Failover no limite de sessão da CLI Claude.** "You've hit your session limit · resets 8:10pm" — também quando vem de um `claude -p` filho, emoldurado pela ferramenta de shell — agora troca de conta em vez de deixar o pane preso; o reset é lido no horário e fuso impressos. Sem leitura de cota fresca a quarentena é curta (15 min), não uma supressão da troca.
+- **Tokens e custo honestos.** O Nexus volta a ler o uso real dos panes Claude (pasta certa); tok/s mede o modelo, não o despejo da tela.
+- **Correções de pane.** Helper concluído não reabre como shell vazio; Enter chega no Codex; Kimi recebe o brief também no "+ Pane"; `nexus_mission_create` atômico; painel lateral sem corte nem rolagem; ações da aba pelo teclado (F-363); GC de worktrees assíncrono; reaper respeita diálogo aberto.
+
 ## 0.76.109 — Sessões estáveis
 
 - **Failover sem repetir o próprio erro (F-511).** O motivo do handoff é sanitizado como o histórico. A linha antiga do Nexus também é reconhecida sem cabeçalho, evitando que um erro citado seja tratado como falha da nova conta. Erros novos continuam detectáveis.

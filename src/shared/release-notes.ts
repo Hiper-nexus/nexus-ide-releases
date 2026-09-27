@@ -7274,7 +7274,7 @@ export const RELEASE_076108: AppRelease = {
 };
 
 
-export const CURRENT_RELEASE: AppRelease = {
+export const RELEASE_076109: AppRelease = {
   version: '0.76.109',
   date: '2026-09-27',
   codename: 'Sessões estáveis',
@@ -7324,6 +7324,72 @@ export const CURRENT_RELEASE: AppRelease = {
       detail:
         'Configurações, chaves e voz usam a mesma altura e os controles ' +
         'existentes do sistema visual.',
+    },
+  ],
+};
+
+
+export const CURRENT_RELEASE: AppRelease = {
+  version: '0.76.110',
+  date: '2026-09-27',
+  codename: 'Nexus consciente',
+  summary:
+    'Portão de regressão, modelo de negócio no .context, code map ligado ao ' +
+    'banco e memória automática do Jev: o agente lê o projeto antes de mexer ' +
+    'e nada é aceito sem os testes impactados passarem. "+ Pane" com poder ' +
+    'de missão e writers em paralelo. Failover no limite de sessão do Claude.',
+  highlights: [
+    {
+      title: 'Portão de regressão',
+      detail:
+        'Toda entrega de escrita roda os testes impactados pelo diff (inclusive ' +
+        'os alcançados pelo banco) no sandbox do writer. Falhou, volta ao ' +
+        'agente. Nunca aprova o que não rodou: diff grande, pytest por arquivo ' +
+        'e falha do git contam como não verificado.',
+    },
+    {
+      title: 'Modelo de negócio e code map do banco',
+      detail:
+        'Fluxos, invariantes e tabelas extraídos do repo, atestados pelo Main e ' +
+        'injetados em todo pane, inclusive em worktree. O code map liga código ' +
+        'a tabelas, triggers e RLS, com blast radius até os testes.',
+    },
+    {
+      title: '"+ Pane" com poder de missão',
+      detail:
+        'Writers em paralelo em worktrees isolados, missão livre sem squad, ' +
+        'missão sob demanda no primeiro helper sem roubar a coroa, um ' +
+        'orquestrador por aba que sobrevive ao reinício.',
+    },
+  ],
+  fixes: [
+    {
+      title: 'Failover no limite de sessão do Claude',
+      detail:
+        '"You\'ve hit your session limit · resets 8:10pm", inclusive vindo de ' +
+        'um claude -p filho, troca de conta em vez de prender o pane. O reset ' +
+        'é lido no horário e fuso impressos; sem cota fresca a quarentena é ' +
+        'curta, não uma supressão.',
+    },
+    {
+      title: 'Navegador do Jev',
+      detail:
+        'nexus_browser_responsive com prazo por carga; uma navegação do ' +
+        'operador durante a análise nunca é sobrescrita, nem na restauração.',
+    },
+    {
+      title: 'Modelos com ids vivos',
+      detail:
+        'Grok 4.7 e Gemini 3.8 Flash no roteamento; 3.1 Pro sai do catálogo do ' +
+        'agy; política de modelos de topo para revisão e alto risco; trava ' +
+        'contra tabela velha.',
+    },
+    {
+      title: 'Memória e panes',
+      detail:
+        'Memória do Jev sem teto diário; helper concluído não reabre como shell ' +
+        'vazio; Enter chega no Codex; Kimi recebe o brief no "+ Pane"; ' +
+        'nexus_mission_create atômico; GC de worktrees assíncrono.',
     },
   ],
 };
