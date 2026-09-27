@@ -56,7 +56,7 @@ export function buildContinuityPack(input: ContinuityPackInput): string {
   const role = input.role === 'orchestrator' ? 'orchestrator' : 'agent';
   const lines = [
     FAILOVER_HANDOFF_HEADER,
-    `Account "${input.fromAccountLabel}" hit a provider limit (${clip(input.reason, 160)}).`,
+    `Account "${input.fromAccountLabel}" hit a provider limit (${sanitizeHandoffExcerptForDetector(clip(input.reason, 160))}).`,
     `You are now running on account "${input.toAccountLabel}" in a NEW provider session.`,
     `Terminal scrollback above is historical context only — the previous conversation id is NOT transferable across accounts.`,
     `Continue as the ${role} from the next pending step. Do not re-do completed work. Prefer files/MCP mission state over guessing.`,
@@ -72,7 +72,8 @@ export function buildContinuityPack(input: ContinuityPackInput): string {
     // morte da sessão anterior — 401/429/quota verbatim. Sem as máscaras, o
     // detector recasa esse texto citado como sinal vivo assim que o header
     // do pack sai da janela rolante (4000 chars) e o failover entra em
-    // ping-pong entre contas saudáveis. O motivo preciso segue na 2ª linha.
+    // ping-pong entre contas saudáveis. O motivo na 2ª linha recebe o mesmo
+    // tratamento: a TUI pode redesenhá-la sem o header.
     const excerpt = sanitizeHandoffExcerptForDetector(
       clip(stripNestedHandoffPacks(input.scrollbackExcerpt), MAX_EXCERPT),
     );

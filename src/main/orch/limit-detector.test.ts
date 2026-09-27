@@ -305,6 +305,12 @@ describe('detectLimit', () => {
     expect(detectLimit(s)?.kind).toBe('rate-limit');
   });
 
+  it('ignores a legacy handoff reason redrawn without its header', () => {
+    const historical = '  Account "Conta Claude" hit a provider limit (status: 401).';
+    expect(detectLimit(`${historical}\nContinuando a tarefa.`)).toBeNull();
+    expect(detectLimit(`${historical}\nAPI Error: 401 Unauthorized`)?.kind).toBe('auth');
+  });
+
   it('detects Codex/ChatGPT and Grok limit signatures', () => {
     expect(
       detectLimit('codex: ChatGPT usage limit reached — try again later')?.kind,

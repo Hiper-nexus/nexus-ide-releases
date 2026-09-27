@@ -30,7 +30,7 @@ export const FAILOVER_HANDOFF_FOOTER = 'Execute the next concrete step now.';
  *
  * Por isso o excerpt é sanitizado NO BUILD: as formas de erro viram citação
  * marcada, ilegíveis para o detector mas legíveis para o agente. O motivo
- * preciso continua intacto na 2ª linha do pack (fora do excerpt). Se um
+ * na 2ª linha também precisa das máscaras quando o header sai da tela. Se um
  * padrão novo entrar no detector, a máscara correspondente entra aqui — o
  * teste anti-drift (`failover-phantom` no lado main) quebra se divergirem.
  */

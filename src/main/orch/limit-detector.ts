@@ -293,7 +293,13 @@ function stripFailoverHandoffPack(text: string): string {
     }
     out = out.slice(0, start) + out.slice(footerAt + FAILOVER_HANDOFF_FOOTER.length);
   }
-  return out;
+  // F-511: packs antigos já persistidos ainda têm o motivo cru. A TUI pode
+  // redesenhar só essa linha após um resume, sem header. Reconheça apenas a
+  // frase exata produzida pelo Nexus; um erro vivo na linha seguinte fica.
+  return out.replace(
+    /^[ \t]*Account "[^\r\n]*" hit a provider limit \([^\r\n]*\)\.[ \t]*$/gm,
+    '',
+  );
 }
 
 interface MarkdownFence {
