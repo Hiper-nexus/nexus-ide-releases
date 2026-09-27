@@ -249,6 +249,7 @@ import {
 import { cliPromptAutoResponder } from './cli-prompt-autoresponder';
 import { getPaneAuthzInfo, pendingSpawnAttemptSession } from './pane-registry';
 import { onWorkerSpawnFailed } from './spawn-fail-events';
+import { adapterCircuitBreakers } from './circuit-breaker';
 import { testProjectScope } from './__tests__/scope-fixture';
 import fs from 'node:fs';
 import { applyAttestedBusinessModel, createBarbershopRepo } from '../context/business-model/__fixtures__/barbershop';
@@ -1415,6 +1416,25 @@ describe('agent prompt injection', () => {
       expect(typed.some(([, data]) => data === '\r')).toBe(true);
       expect(stubs.requestPaneClose).not.toHaveBeenCalled();
       expect(failures).toEqual([]);
+    });
+
+    it('ACK pendente não conta como falha do adapter no circuit breaker', async () => {
+      adapterCircuitBreakers.reset('kimi');
+      await spawnPendingKimi();
+      expect(adapterCircuitBreakers.snapshot('kimi').recentFailures).toBe(0);
+    });
+
+    it('sessão da tentativa com outro adapter não recebe o brief', async () => {
+      answerEnterWithTurn();
+      await spawnPendingKimi();
+      bindAttempt('session-kimi');
+      stubs.physicalSessionInfo.mockImplementation(((id: string) =>
+        id === 'session-kimi' ? { paneId: 'pane-kimi', adapterId: 'codex' } : null) as never);
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      expect(typedInto('session-kimi')).toEqual([]);
+      expect(stubs.requestPaneClose).toHaveBeenCalledWith('pane-kimi');
+      expect(failures).toHaveLength(1);
     });
 
     it('brief não aceito fecha o pane da tentativa e avisa — nunca helper mudo', async () => {

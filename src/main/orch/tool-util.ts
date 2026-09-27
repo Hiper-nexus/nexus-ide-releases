@@ -1539,7 +1539,11 @@ export async function spawnPaneAndMaybePrompt(
     );
   }
   if (!result.ok || !result.paneId || !result.sessionId) {
-    adapterCircuitBreakers.recordFailure(options.adapterId);
+    // ACK pendente não é falha do adapter: o chamador traduz em sucesso e o
+    // pane ainda vai nascer. Contar aqui abria o breaker com canvas oculto.
+    if (!(result.ok && result.pending === true)) {
+      adapterCircuitBreakers.recordFailure(options.adapterId);
+    }
     throw new Error(result.error ?? 'pane spawn failed');
   }
   try {
@@ -1761,6 +1765,10 @@ export async function deliverPromptAfterPendingSpawn(
       if (bound.state === 'bound') {
         const info = getAgentSessionInfo(bound.sessionId);
         if (info?.paneId === paneId) {
+          // O brief leva contrato de handoff do adapter pedido.
+          if (info.adapterId !== adapterId) {
+            throw new Error(`spawned session runs ${info.adapterId}, not ${adapterId}`);
+          }
           sessionId = bound.sessionId;
           break;
         }
