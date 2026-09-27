@@ -473,7 +473,7 @@ describe("main-owned mission pane spawn", () => {
   it("revalidates AGY auth before a headless main-owned PTY spawn", async () => {
     const result = await requestPaneSpawn({
       adapterId: "agy",
-      model: "gemini-3.1-pro-high",
+      model: "gemini-3.8-flash-high",
       cwd: executionScope.rootRealPath,
       missionId: "mission-headless",
       agentName: "Reviewer Headless",
@@ -495,7 +495,7 @@ describe("main-owned mission pane spawn", () => {
     expect(provider.prepareAuthoritative).toHaveBeenCalledWith("agy", {
       effort: undefined,
       accountId: undefined,
-      model: "gemini-3.1-pro-high",
+      model: "gemini-3.8-flash-high",
       isolatedHome: expect.any(Boolean),
     });
     expect(provider.prepare).not.toHaveBeenCalled();
@@ -1762,7 +1762,7 @@ describe("main-owned mission pane spawn", () => {
     try {
       const resultPromise = requestPaneSpawn({
         adapterId: "agy",
-        model: "gemini-3.1-pro-high",
+        model: "gemini-3.8-flash-high",
         missionId: "mission-headless",
         agentName: "Reviewer Headless",
         workerIncarnationId: "worker-incarnation-agy-fallback",
@@ -1782,7 +1782,7 @@ describe("main-owned mission pane spawn", () => {
       expect(provider.prepareAuthoritative).toHaveBeenCalledWith("agy", {
         effort: undefined,
         accountId: undefined,
-        model: "gemini-3.1-pro-high",
+        model: "gemini-3.8-flash-high",
         isolatedHome: expect.any(Boolean),
       });
       expect(provider.prepare).not.toHaveBeenCalled();

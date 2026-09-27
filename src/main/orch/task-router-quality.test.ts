@@ -44,7 +44,7 @@ describe('diversidade com cobertura parcial de avaliação (regressão: só code
     {
       id: 'agy',
       installed: true,
-      models: ['gemini-3.1-pro-high', 'gemini-3.5-flash-low'],
+      models: ['gemini-3.8-flash-high', 'gemini-3.5-flash-low'],
     },
   ];
 
