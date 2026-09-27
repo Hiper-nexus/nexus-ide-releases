@@ -238,6 +238,31 @@ describe('contrato do portão de regressão', () => {
     expect(invariantsTouchedBy(invariants, ['README.md'])).toEqual([]);
   });
 
+  it('SQL comentado não vira fluxo, drop nem regra (mesmo lexer do code map)', async () => {
+    const root = repo();
+    writeFixtureFile(root, 'supabase/migrations/20260109000000_comentarios.sql', [
+      '-- drop function if exists public.close_commanda(uuid);',
+      "/* create or replace function public.fantasma() returns void language plpgsql as -- don't */",
+      'create or replace function public.reabrir_comanda(p_id uuid) returns void language plpgsql as $$',
+      'begin',
+      "  -- raise exception 'regra comentada';",
+      "  /* insert into commission_entries (appointment_id) values (p_id); */",
+      "  update appointments set status = 'open' where id = p_id;",
+      'end;',
+      '$$;',
+      '',
+    ].join('\n'));
+    commitAll(root, 'comentários');
+
+    const { document } = (await extractBusinessModel(root))!;
+    const flows = document.flows.map((flow) => flow.fluxo);
+    expect(flows).toContain('close_commanda');
+    expect(flows).toContain('reabrir_comanda');
+    expect(flows).not.toContain('fantasma');
+    expect(document.flows.find((flow) => flow.fluxo === 'reabrir_comanda')!.escreve).toEqual(['appointments']);
+    expect(document.invariants.map((item) => item.regra).join('\n')).not.toContain('regra comentada');
+  });
+
   it('doc escrito à mão (sem bloco estruturado) devolve lista vazia, sem lançar', async () => {
     const root = repo();
     writeFixtureFile(root, BUSINESS_MODEL_TARGET_PATH, '# Business\nUsage billing.\n');
