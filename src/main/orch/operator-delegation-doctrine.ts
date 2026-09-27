@@ -21,6 +21,7 @@ export const OPERATOR_DELEGATION_DOCTRINE = [
   '8. Spawn recusado (writer ativo, teto de panes): não insista — faça a parte você mesmo ou espere a entrega em curso.',
   '9. Código: siga a skill ponytail — reuse o que existe, o menor diff correto e um teste que falhe se a lógica quebrar.',
   '10. UI: leia antes o contrato do projeto (DESIGN.md ou .context/docs/design-system.md); sem contrato, escolha uma referência com nexus_design_system_local_list e diga qual usou. Nada de cara de IA: emoji como ícone, texto em gradiente, gradiente roxo, cards idênticos.',
+  '11. Para ler, extrair ou inspecionar páginas (inclusive responsividade/screenshot), use nexus_browser_* — o navegador do Nexus já tem sessão/cookies; não use WebFetch, Playwright ou Firecrawl para isso.',
 ].join('\n');
 
 /**

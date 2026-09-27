@@ -51,9 +51,24 @@ export const LEAN_CODE_REMINDER =
   'reuse o que já existe, nada de abstração que ninguém pediu, o menor diff ' +
   'correto e um teste pequeno que falhe se a lógica quebrar.';
 
+/**
+ * Pré-filtro barato (regex, sem chamada ao Jev) para pedidos de página/
+ * extração/responsividade/screenshot: sem isto o pane "+" usa WebFetch,
+ * Playwright ou Firecrawl mesmo quando o navegador do Nexus já está aberto
+ * com sessão e cookies.
+ */
+const BROWSER_REQUEST_PATTERN =
+  /\bextra(ir|ia|indo|[cç][aã]o)\b|\bscrape\b|\bscreenshot\b|\bcaptur(a|e|ar)\s+(a\s+|de\s+)?tela\b|\bresponsiv(idade|o|a|eness)\b|\banalis(e|ar)\s+.{0,20}\b(p[aá]gina|site|url)\b|\bp[aá]gina[s]?\s+web\b/i;
+
+export const BROWSER_TOOL_HINT =
+  '[Nexus · Jev] Para analisar páginas, extrair dados ou testar responsividade, ' +
+  'use nexus_browser_* (o navegador do Nexus já está aberto, com sessão) — não ' +
+  'WebFetch, Playwright ou Firecrawl para uma URL que será aberta agora.';
+
 const leanRemindedAt = new Map<string, number>();
 const designRemindedAt = new Map<string, number>();
 const doctrineDeliveredAt = new Map<string, number>();
+const browserHintDeliveredAt = new Map<string, number>();
 
 function remindedRecently(ledger: Map<string, number>, sessionId: string, now: number): boolean {
   const last = ledger.get(sessionId);
@@ -78,6 +93,7 @@ export function __resetLeanRemindersForTests(): void {
   leanRemindedAt.clear();
   designRemindedAt.clear();
   doctrineDeliveredAt.clear();
+  browserHintDeliveredAt.clear();
 }
 
 type HookContext = Pick<AgentGateContext, 'role' | 'missionId' | 'sessionId'> &
@@ -139,6 +155,14 @@ export async function handleHookDelegateRequest(
       parts.push(OPERATOR_DELEGATION_DOCTRINE);
     }
     if (advice?.delegation) parts.push(formatDelegationContext(advice.delegation));
+    if (
+      BROWSER_REQUEST_PATTERN.test(prompt) &&
+      ctx.sessionId &&
+      !remindedRecently(browserHintDeliveredAt, ctx.sessionId, now)
+    ) {
+      markReminded(browserHintDeliveredAt, ctx.sessionId, now);
+      parts.push(BROWSER_TOOL_HINT);
+    }
     if (
       advice &&
       advice.writesCode >= LEAN_REMINDER_MIN_WRITES_CODE &&
