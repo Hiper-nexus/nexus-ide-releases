@@ -31,6 +31,13 @@ export const ALL_WORKTREE_STATUSES = new Set<WorktreeStatus>([
 export interface WorktreeRecord {
   /** Via Rápida ownership follows a pane, without a sealed task row. */
   readonly ownerKind?: "pane";
+  /**
+   * Writer de pane: panes/sessões (mintados pelo Main) que já rodaram nesta
+   * worktree, para `resume` voltar a ela mesmo depois de reiniciar o app.
+   * Ausentes em registros antigos e em tasks seladas.
+   */
+  readonly paneIds?: readonly string[];
+  readonly sessionIds?: readonly string[];
   readonly id: string;
   readonly scopeKey: string;
   readonly projectId: string;
@@ -488,6 +495,9 @@ export function sameValues(
   );
 }
 
+/** Teto de panes/sessões lembrados por worktree de writer (mais recentes). */
+export const MAX_PANE_BINDINGS = 32;
+
 export function cloneWorktreeRecord(record: WorktreeRecord): WorktreeRecord {
   return Object.freeze({
     ...record,
@@ -497,6 +507,8 @@ export function cloneWorktreeRecord(record: WorktreeRecord): WorktreeRecord {
       domains: Object.freeze([...record.ownership.domains]),
     }),
     dependencies: Object.freeze([...record.dependencies]),
+    ...(record.paneIds ? { paneIds: Object.freeze([...record.paneIds]) } : {}),
+    ...(record.sessionIds ? { sessionIds: Object.freeze([...record.sessionIds]) } : {}),
   });
 }
 
