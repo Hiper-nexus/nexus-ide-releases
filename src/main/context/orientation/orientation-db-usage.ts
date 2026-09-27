@@ -1,4 +1,12 @@
-import { qualifyName } from './orientation-schema';
+import { scanJsTokens } from './orientation-js-scan';
+import { matchSqlCreate, qualifyName } from './orientation-schema';
+import {
+  extractSqlTableRefs,
+  isSqlWord,
+  readSqlQualifiedName,
+  scanSqlTokens,
+  splitSqlStatements,
+} from './orientation-sql-scan';
 import type { OrientationDbEntityKind } from './orientation-types';
 
 export type DbUsageRelation = 'reads' | 'writes' | 'calls';
@@ -13,6 +21,10 @@ export interface DbUsageEdge {
   readonly toKind: OrientationDbEntityKind;
   readonly toQualifiedName: string;
   readonly relation: DbUsageRelation;
+  /** `prisma.<accessor>.*` — resolved through the model's @@map when known. */
+  readonly prismaModel?: string;
+  /** Drizzle table variable — only kept when it resolves to a pgTable(...). */
+  readonly drizzleBinding?: string;
 }
 
 function edge(
@@ -33,6 +45,15 @@ function relationAfterFrom(content: string, matchEnd: number): DbUsageRelation {
   return WRITE_VERB_AFTER_FROM_RE.test(tail) ? 'writes' : 'reads';
 }
 
+// Drizzle query builder: db.select().from(t), .innerJoin(t, ...), db.insert(t),
+// db.update(t), db.delete(t). `t` is a variable; the graph resolves it to the
+// pgTable(...) it is bound to (see buildDbGraphFromFiles) and drops it if none.
+const DRIZZLE_USAGE_RES: readonly (readonly [RegExp, DbUsageRelation])[] = [
+  [/\)\s*\.\s*from\(\s*([A-Za-z_$][\w$]*)\s*\)/g, 'reads'],
+  [/\.\s*(?:inner|left|right|full|cross)Join\(\s*([A-Za-z_$][\w$]*)\s*,/g, 'reads'],
+  [/\.\s*(?:insert|update|delete)\(\s*([A-Za-z_$][\w$]*)\s*\)/g, 'writes'],
+];
+
 const PRISMA_CALL_RE =
   /\bprisma\s*\.\s*([A-Za-z_]\w*)\s*\.\s*(findMany|findFirst|findFirstOrThrow|findUnique|findUniqueOrThrow|count|aggregate|groupBy|create|createMany|update|updateMany|upsert|delete|deleteMany)\s*\(/g;
 const PRISMA_READ_VERBS = new Set([
@@ -45,18 +66,6 @@ const PRISMA_READ_VERBS = new Set([
   'aggregate',
   'groupBy',
 ]);
-
-const TEMPLATE_LITERAL_RE = /`(?:\\.|\$\{[^}]*\}|[^`\\])*`/g;
-const SQL_TABLE_REF_RE = /\b(FROM|INTO|UPDATE|JOIN)\s+"?([A-Za-z_][\w.]*)"?/gi;
-
-function relationForSqlKeyword(keyword: string): DbUsageRelation {
-  return /^(?:INTO|UPDATE)$/i.test(keyword) ? 'writes' : 'reads';
-}
-
-/** `raw` may already be schema-qualified (contains a dot) from the regex capture. */
-function qualifyRawSqlRef(raw: string): string {
-  return raw.includes('.') ? raw : qualifyName(undefined, raw);
-}
 
 /**
  * Extract code→table/function edges from a TS/JS source: supabase.from/rpc,
@@ -83,74 +92,75 @@ export function extractTsDbUsageEdges(
   PRISMA_CALL_RE.lastIndex = 0;
   for (const match of content.matchAll(PRISMA_CALL_RE)) {
     const relation: DbUsageRelation = PRISMA_READ_VERBS.has(match[2]) ? 'reads' : 'writes';
-    edges.push(edge(relativePath, 'table', qualifyName(undefined, match[1]), relation));
+    edges.push(Object.freeze({
+      ...edge(relativePath, 'table', qualifyName(undefined, match[1]), relation),
+      prismaModel: match[1],
+    }));
   }
 
-  TEMPLATE_LITERAL_RE.lastIndex = 0;
-  for (const literal of content.matchAll(TEMPLATE_LITERAL_RE)) {
-    SQL_TABLE_REF_RE.lastIndex = 0;
-    for (const tableMatch of literal[0].matchAll(SQL_TABLE_REF_RE)) {
-      edges.push(
-        edge(
-          relativePath,
-          'table',
-          qualifyRawSqlRef(tableMatch[2]),
-          relationForSqlKeyword(tableMatch[1]),
-        ),
-      );
+  for (const token of scanJsTokens(content)) {
+    if (token.kind !== 'template') continue;
+    for (const ref of extractSqlTableRefs(scanSqlTokens(token.value))) {
+      edges.push(edge(relativePath, 'table', ref.qualifiedName, ref.relation));
+    }
+  }
+
+  for (const [re, relation] of DRIZZLE_USAGE_RES) {
+    re.lastIndex = 0;
+    for (const match of content.matchAll(re)) {
+      edges.push(Object.freeze({
+        ...edge(relativePath, 'table', qualifyName(undefined, match[1]), relation),
+        drizzleBinding: match[1],
+      }));
     }
   }
 
   return Object.freeze(edges);
 }
 
-const IDENT = `[A-Za-z_]\\w*`;
-const QUALIFIED_IDENT = `(?:"?(${IDENT})"?\\.)?"?(${IDENT})"?`;
-const CREATE_FUNCTION_BODY_RE = new RegExp(
-  `\\bCREATE\\s+(?:OR\\s+REPLACE\\s+)?FUNCTION\\s+${QUALIFIED_IDENT}\\s*\\([^)]*\\)[\\s\\S]*?\\bAS\\s+(\\$[A-Za-z_]*\\$)([\\s\\S]*?)\\3`,
-  'gi',
-);
-const CREATE_TRIGGER_FULL_RE = new RegExp(
-  `\\bCREATE\\s+TRIGGER\\s+"?${IDENT}"?\\s+(?:BEFORE|AFTER|INSTEAD\\s+OF)\\s+[\\s\\S]*?\\bON\\s+${QUALIFIED_IDENT}[\\s\\S]*?\\bEXECUTE\\s+(?:PROCEDURE|FUNCTION)\\s+${QUALIFIED_IDENT}`,
-  'gi',
-);
-
 /**
  * Extract edges internal to .sql schema sources: table references inside a
  * CREATE FUNCTION body (function→table reads/writes), and the table→function
  * "calls" edge implied by CREATE TRIGGER ... ON table ... EXECUTE FUNCTION fn.
+ * Uses the same lexer as the schema detectors, so quoting/case rules match.
  */
 export function extractSqlDbUsageEdges(
   _relativePath: string,
   content: string,
 ): readonly DbUsageEdge[] {
   const edges: DbUsageEdge[] = [];
-
-  CREATE_FUNCTION_BODY_RE.lastIndex = 0;
-  for (const match of content.matchAll(CREATE_FUNCTION_BODY_RE)) {
-    const functionQualifiedName = qualifyName(match[1], match[2]);
-    const functionNodeId = `db:function:${functionQualifiedName}`;
-    const body = match[4] ?? '';
-    SQL_TABLE_REF_RE.lastIndex = 0;
-    for (const tableMatch of body.matchAll(SQL_TABLE_REF_RE)) {
-      edges.push(
-        edge(
-          functionNodeId,
-          'table',
-          qualifyRawSqlRef(tableMatch[2]),
-          relationForSqlKeyword(tableMatch[1]),
-        ),
-      );
+  for (const statement of splitSqlStatements(scanSqlTokens(content))) {
+    let index = matchSqlCreate(statement, 'FUNCTION');
+    if (index >= 0) {
+      const name = readSqlQualifiedName(statement, index);
+      if (!name) continue;
+      const functionNodeId = `db:function:${name.qualifiedName}`;
+      for (let at = name.next; at < statement.length - 1; at += 1) {
+        const body = statement[at + 1];
+        if (!isSqlWord(statement[at], 'AS') || body.kind !== 'string') continue;
+        for (const ref of extractSqlTableRefs(scanSqlTokens(body.value))) {
+          edges.push(edge(functionNodeId, 'table', ref.qualifiedName, ref.relation));
+        }
+        break;
+      }
+      continue;
+    }
+    index = matchSqlCreate(statement, 'TRIGGER', ['CONSTRAINT']);
+    if (index < 0) continue;
+    let table: string | null = null;
+    for (let at = index + 1; at < statement.length; at += 1) {
+      if (!table && isSqlWord(statement[at], 'ON')) {
+        table = readSqlQualifiedName(statement, at + 1)?.qualifiedName ?? null;
+      } else if (
+        table &&
+        isSqlWord(statement[at], 'EXECUTE') &&
+        isSqlWord(statement[at + 1], 'PROCEDURE', 'FUNCTION')
+      ) {
+        const fn = readSqlQualifiedName(statement, at + 2);
+        if (fn) edges.push(edge(`db:table:${table}`, 'function', fn.qualifiedName, 'calls'));
+        break;
+      }
     }
   }
-
-  CREATE_TRIGGER_FULL_RE.lastIndex = 0;
-  for (const match of content.matchAll(CREATE_TRIGGER_FULL_RE)) {
-    const tableQualifiedName = qualifyName(match[1], match[2]);
-    const tableNodeId = `db:table:${tableQualifiedName}`;
-    const functionQualifiedName = qualifyName(match[3], match[4]);
-    edges.push(edge(tableNodeId, 'function', functionQualifiedName, 'calls'));
-  }
-
   return Object.freeze(edges);
 }

@@ -17,15 +17,7 @@ import {
   resolveAliasCandidateBases,
   type TsconfigAliasMap,
 } from './orientation-tsconfig';
-
-// The "junk" between `import`/`export` and `from` excludes `;`/quotes so a
-// bare side-effect import (`import './side';`, no `from` clause) can never
-// be swallowed as part of a *later* import statement's from-clause — before
-// this fix, `[\s\S]*?` could span across a whole side-effect import into the
-// next statement's `from '...'`, dropping the side-effect specifier entirely.
-// The trailing `import\s+` alternative then captures that bare form directly.
-const IMPORT_RE =
-  /(?:import\s+(?:type\s+)?[^;'"]*?\s+from\s+|export\s+(?:type\s+)?[^;'"]*?\s+from\s+|require\s*\(\s*|import\s*\(\s*|import\s+)['"]([^'"]+)['"]/g;
+import { scanJsTokens } from './orientation-js-scan';
 
 const TS_JS_EXT = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
 
@@ -50,13 +42,55 @@ export function isOrientationImportSource(ext: string): boolean {
 export function extractOrientationImportSpecifiers(
   content: string,
 ): readonly string[] {
+  // Token-based (see orientation-js-scan.ts): linear in the input, ignores
+  // comments/strings, and keeps bare side-effect imports.
+  const tokens = scanJsTokens(content);
   const specifiers: string[] = [];
-  IMPORT_RE.lastIndex = 0;
-  for (const match of content.matchAll(IMPORT_RE)) {
-    const specifier = match[1];
-    if (specifier) specifiers.push(specifier);
+  const isPunct = (index: number, value: string) =>
+    tokens[index]?.kind === 'punct' && tokens[index].value === value;
+  const stringAt = (index: number): string | null =>
+    tokens[index]?.kind === 'string' ? tokens[index].value : null;
+  // After `import x`/`export {...}`, the next `from '...'` closes the clause.
+  let pendingFrom = false;
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    const afterDot = isPunct(index - 1, '.');
+    if (token.kind === 'ident' && !afterDot) {
+      if (token.value === 'import') {
+        const bare = stringAt(index + 1);
+        const dynamic = isPunct(index + 1, '(') ? stringAt(index + 2) : null;
+        if (bare !== null || dynamic !== null) {
+          specifiers.push((bare ?? dynamic)!);
+          pendingFrom = false;
+        } else {
+          pendingFrom = !isPunct(index + 1, '.') && !isPunct(index + 1, '(');
+        }
+        continue;
+      }
+      if (token.value === 'export') {
+        pendingFrom = true;
+        continue;
+      }
+      if (token.value === 'require' && isPunct(index + 1, '(')) {
+        const required = stringAt(index + 2);
+        if (required !== null) specifiers.push(required);
+        continue;
+      }
+      if (pendingFrom && token.value === 'from') {
+        const from = stringAt(index + 1);
+        if (from !== null) specifiers.push(from);
+        pendingFrom = false;
+        continue;
+      }
+    }
+    if (
+      pendingFrom &&
+      (token.kind === 'string' || token.kind === 'template' || isPunct(index, ';'))
+    ) {
+      pendingFrom = false;
+    }
   }
-  return Object.freeze(specifiers);
+  return Object.freeze(specifiers.filter((specifier) => specifier.length > 0));
 }
 
 export interface CappedAdjacency {
