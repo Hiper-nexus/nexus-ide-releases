@@ -2,6 +2,7 @@ import { useOrchStore } from './orch-store';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PaneModel, WorkspaceLayout } from '../../shared/types';
 import { defaultCanvasLayout } from '../lib/canvas-layout';
+import { paneScopeResolver } from '../lib/pane-spaces';
 import {
   buildGridTree,
   initialTree,
@@ -1159,6 +1160,75 @@ describe('layout-store role assignment and promotion', () => {
     panes = listPanes(useLayoutStore.getState().root);
     expect(panes.find((p) => p.id === 'p2')?.role).toBe('orchestrator');
     expect(panes.find((p) => p.id === 'p1')?.role).toBe('worker');
+  });
+
+  it('setPaneRole na aba B não rebaixa o orquestrador da aba A', () => {
+    // Campo 27/09: "tornar orquestrador" num terminal de outra aba trocava o
+    // orquestrador geral. Cada aba tem o seu coordenador.
+    useOrchStore.setState({ paneMissions: {} });
+    seedLayout({
+      root: buildGridTree([
+        { id: 'a1', kind: 'cli-agent', title: 'A1', spaceId: 'space-a', spaceTitle: 'A' },
+        { id: 'a2', kind: 'cli-agent', title: 'A2', spaceId: 'space-a', spaceTitle: 'A' },
+        { id: 'b1', kind: 'cli-agent', title: 'B1', spaceId: 'space-b', spaceTitle: 'B' },
+      ]),
+      focusedPaneId: 'a1',
+      maximizedPaneId: null,
+      hydrated: true,
+      viewKind: 'grid',
+      canvasNodeLayouts: {},
+      canvasViewport: { x: 0, y: 0, zoom: 1 },
+    });
+
+    useLayoutStore.getState().setPaneRole('a1', 'orchestrator');
+    useLayoutStore.getState().setPaneRole('b1', 'orchestrator');
+    let roles = new Map(listPanes(useLayoutStore.getState().root).map((p) => [p.id, p.role]));
+    expect(roles.get('a1')).toBe('orchestrator');
+    expect(roles.get('b1')).toBe('orchestrator');
+
+    // Dentro da MESMA aba continua uma coroa só.
+    useLayoutStore.getState().setPaneRole('a2', 'orchestrator');
+    roles = new Map(listPanes(useLayoutStore.getState().root).map((p) => [p.id, p.role]));
+    expect(roles.get('a2')).toBe('orchestrator');
+    expect(roles.get('a1')).toBe('worker');
+    expect(roles.get('b1')).toBe('orchestrator');
+  });
+
+  it('helper do orquestrador da missão da aba B nasce na B sem tirar o foco da A', () => {
+    useOrchStore.setState({ paneMissions: { b1: 'mB' } });
+    seedLayout({
+      root: buildGridTree([
+        { id: 'a1', kind: 'cli-agent', title: 'A1', spaceId: 'space-a', spaceTitle: 'A', role: 'orchestrator' },
+        {
+          id: 'b1', kind: 'cli-agent', title: 'B1', spaceId: 'space-b', spaceTitle: 'B',
+          missionId: 'mB', missionHost: true, role: 'orchestrator',
+        },
+      ]),
+      focusedPaneId: 'a1',
+      maximizedPaneId: null,
+      hydrated: true,
+      viewKind: 'grid',
+      canvasNodeLayouts: {},
+      canvasViewport: { x: 0, y: 0, zoom: 1 },
+    });
+
+    useLayoutStore.getState().spawnOrchPane({
+      paneId: 'b-helper',
+      adapterId: 'codex',
+      orchRequestId: 'req-b',
+      missionId: 'mB',
+      role: 'worker',
+      parentPaneId: 'b1',
+    });
+
+    const state = useLayoutStore.getState();
+    expect(state.focusedPaneId).toBe('a1');
+    const panes = listPanes(state.root);
+    const scopeOf = paneScopeResolver(panes, useOrchStore.getState().paneMissions);
+    const helper = panes.find((p) => p.id === 'b-helper')!;
+    expect(scopeOf(helper)).toBe('space:space-b');
+    expect(panes.find((p) => p.id === 'a1')?.role).toBe('orchestrator');
+    expect(panes.find((p) => p.id === 'b1')?.role).toBe('orchestrator');
   });
 
   it('promoteMissionPaneRole binds missionId and promotes target', () => {

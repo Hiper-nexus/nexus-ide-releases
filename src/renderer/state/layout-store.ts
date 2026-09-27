@@ -35,6 +35,7 @@ import {
 } from '../lib/canvas-layout';
 import { getActiveWorkspacePath } from './active-workspace';
 import { useOrchStore } from './orch-store';
+import { paneScopeResolver } from '../lib/pane-spaces';
 import { notifyIfLastMissionPaneClosed } from '../orch/mission-last-pane-notify';
 import { stashPendingContinuity } from '../orch/stranded-mission-handoff';
 import { isAutomatedReviewerPaneIdentity } from '../../shared/automated-reviewer-pane';
@@ -1529,16 +1530,17 @@ export const useLayoutStore = create<LayoutState>((rawSet, get) => {
     }
     let root = get().root;
     if (role === 'orchestrator') {
-      // Invariante VISUAL: uma coroa só na tela entre os panes que o operador
+      // Invariante VISUAL: uma coroa só POR ABA entre os panes que o operador
       // governa. Panes de missão ficam de fora — a estrela deles não é minha.
+      // Rebaixar em todas as abas era o "promover na aba B troca o
+      // orquestrador geral": o coordenador da aba A perdia a coroa.
+      const paneMissions = useOrchStore.getState().paneMissions;
+      const scopeOf = paneScopeResolver(panes, paneMissions);
+      const targetScope = scopeOf(target);
       for (const pane of panes) {
         if (pane.id === paneId || pane.role !== 'orchestrator') continue;
-        if (
-          pane.missionId ||
-          useOrchStore.getState().paneMissions[pane.id]
-        ) {
-          continue;
-        }
+        if (pane.missionId || paneMissions[pane.id]) continue;
+        if (scopeOf(pane) !== targetScope) continue;
         root = updatePane(root, pane.id, { role: 'worker' });
       }
     }

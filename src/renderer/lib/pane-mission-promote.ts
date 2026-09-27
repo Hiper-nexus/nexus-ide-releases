@@ -4,6 +4,7 @@ import { useProductNavigationStore } from '../state/product-navigation-store';
 import { askChoice } from '../state/choice-store';
 import { useToastStore } from '../state/toast-store';
 import { listPanes } from './split-tree';
+import { listPaneScopes, paneScopeResolver } from './pane-spaces';
 import { usePendingOrchestratorAdoptionStore } from '../state/pending-orchestrator-adoption-store';
 
 /**
@@ -17,6 +18,10 @@ import { usePendingOrchestratorAdoptionStore } from '../state/pending-orchestrat
  *  - pane solto com missões ativas → DIÁLOGO: escolher a missão ou abrir uma
  *    nova (separada por construção);
  *  - sem missões ativas → confirma e abre o caminho expresso de nova missão.
+ *
+ * 0.76.110 — orquestrador POR ABA: antes do diálogo, a aba do pane decide. Aba
+ * com missão viva a reusa; aba sem missão ganha a sua, leve (Autopilot, livre,
+ * sem squad), liderada por este pane. O diálogo acima só sobra no Hardened.
  */
 
 /** Valor sentinel da opção "abrir nova missão" no diálogo. */
@@ -111,6 +116,71 @@ export async function promotePaneToMissionOrchestrator(
   return true;
 }
 
+/** Nome automático da missão leve: o da aba, que é o nome da feature. */
+export function tabMissionTitle(tabTitle: string): string {
+  return `Missão · ${tabTitle.trim() || 'Terminais'}`.slice(0, 120);
+}
+
+/**
+ * A aba do pane: o nome dela e a missão viva que ela já hospeda (a de algum
+ * pane do mesmo escopo). `null` quando o pane não está no layout.
+ */
+function paneTabContext(
+  paneId: string,
+): { readonly title: string; readonly missionId: string | null } | null {
+  const panes = listPanes(useLayoutStore.getState().root);
+  const pane = panes.find((candidate) => candidate.id === paneId);
+  if (!pane) return null;
+  const orch = useOrchStore.getState();
+  const scopeOf = paneScopeResolver(panes, orch.paneMissions);
+  const key = scopeOf(pane);
+  const entry = listPaneScopes({
+    panes,
+    paneMissions: orch.paneMissions,
+    missions: orch.missions.map((m) => ({ id: m.id, title: m.title, state: m.status })),
+  }).find((scope) => scope.key === key);
+  const missionId =
+    entry?.missions.find((hosted) =>
+      orch.missions.some(
+        (m) => m.id === hosted.id && ACTIVE_MISSION_STATUSES.has(m.status),
+      ),
+    )?.id ?? null;
+  return { title: entry?.title ?? 'Terminais', missionId };
+}
+
+type TabMissionOutcome =
+  | { readonly kind: 'created'; readonly missionId: string }
+  | { readonly kind: 'refused' }
+  | { readonly kind: 'unavailable' };
+
+/** Recusas do main que só dizem "este caminho não vale aqui", não "falhou". */
+const TAB_MISSION_UNAVAILABLE = new Set(['hardened', 'pane_unavailable']);
+
+/** Cria a missão leve da aba no main e reflete o líder no layout. */
+async function createTabMission(
+  paneId: string,
+  tabTitle: string,
+): Promise<TabMissionOutcome> {
+  const create = window.nexus?.orch?.createPaneMission;
+  if (!create) return { kind: 'unavailable' };
+  let result: Awaited<ReturnType<typeof create>> | undefined;
+  try {
+    result = await create({ paneId, title: tabMissionTitle(tabTitle) });
+  } catch (error) {
+    console.warn(`[promote] missão da aba falhou pane=${paneId}:`, error);
+    return { kind: 'unavailable' };
+  }
+  const missionId = result?.ok === true ? result.mission?.id : undefined;
+  if (!missionId) {
+    return TAB_MISSION_UNAVAILABLE.has(result?.error ?? '')
+      ? { kind: 'unavailable' }
+      : { kind: 'refused' };
+  }
+  useLayoutStore.getState().promoteMissionPaneRole(missionId, paneId);
+  useOrchStore.getState().bindPaneMission(paneId, missionId);
+  return { kind: 'created', missionId };
+}
+
 const MISSION_STATUS_LABEL: Record<string, string> = {
   setup: 'preparando',
   running: 'em andamento',
@@ -151,6 +221,33 @@ export async function promotePaneWithMissionChoice(input: {
       return null;
     }
     return target.missionId;
+  }
+
+  // Orquestrador POR ABA: a aba é a feature, e a missão dela é a do grupo de
+  // panes dela. Aba que já hospeda uma missão viva a reusa; aba sem missão
+  // ganha a sua, leve, na hora — sem diálogo com as missões das OUTRAS abas
+  // (escolher uma delas era o que misturava os trabalhos).
+  const tab = paneTabContext(input.paneId);
+  if (tab?.missionId) {
+    const promoted = await promotePaneToMissionOrchestrator(
+      tab.missionId,
+      input.paneId,
+    );
+    if (!promoted) {
+      toastPromoteRefused();
+      return null;
+    }
+    return tab.missionId;
+  }
+  if (tab) {
+    const created = await createTabMission(input.paneId, tab.title);
+    if (created.kind === 'created') return created.missionId;
+    if (created.kind === 'refused') {
+      toastPromoteRefused();
+      return null;
+    }
+    // 'unavailable' (Hardened, shell sem agente, janela sem bridge): segue o
+    // fluxo de antes, com escolha explícita.
   }
 
   if (target.kind === 'no-mission') {

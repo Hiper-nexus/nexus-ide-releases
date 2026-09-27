@@ -20,6 +20,8 @@ import {
   type PaneScopeEntry,
 } from '../../lib/pane-spaces';
 import { usePaneScopeStore } from '../../state/pane-scope-store';
+import { useToastStore } from '../../state/toast-store';
+import { promotePaneWithMissionChoice, toastPromoted } from '../../lib/pane-mission-promote';
 import { askConfirm, useConfirmStore } from '../../state/confirm-store';
 import { WorkspaceTabs, workspaceTabIsClosable } from './WorkspaceTabs';
 import { missionLifecycleLabel } from '../../lib/mission-lifecycle-copy';
@@ -306,6 +308,35 @@ export function TerminalWorkspace({
     layout.focus(paneId);
   }, []);
 
+  // "Criar missão desta aba": quem lidera é o orquestrador da aba, senão a IA
+  // focada nela, senão a primeira — o mesmo caminho de "Tornar orquestrador".
+  const startTabMission = useCallback(async (scope: PaneScopeEntry) => {
+    const agents = selectScopePanes(
+      listPanes(useLayoutStore.getState().root),
+      scope.key,
+      useOrchStore.getState().paneMissions,
+    ).filter((pane) => pane.kind === 'cli-agent');
+    const focused = useLayoutStore.getState().focusedPaneId;
+    const leader =
+      agents.find((pane) => pane.id === scope.orchestrator?.paneId) ??
+      agents.find((pane) => pane.id === focused) ??
+      agents[0];
+    if (!leader) {
+      useToastStore.getState().push(
+        'info',
+        'Abra uma IA nesta aba',
+        'A missão da aba é liderada por um painel de IA. Use o + Pane e tente de novo.',
+      );
+      return;
+    }
+    const missionId = await promotePaneWithMissionChoice({
+      paneId: leader.id,
+      paneTitle: leader.title,
+    });
+    if (!missionId) return;
+    toastPromoted(useOrchStore.getState().missions.find((m) => m.id === missionId)?.title);
+  }, []);
+
   const closeTab = useCallback(
     async (scope: PaneScopeEntry) => {
       if (!workspaceTabIsClosable(scope)) return;
@@ -540,6 +571,7 @@ export function TerminalWorkspace({
           onCloseTab={(scope) => void closeTab(scope)}
           onTabPaneCreated={handleTabPaneCreated}
           onNewMission={() => useProductNavigationStore.getState().openNewMission()}
+          onStartTabMission={(scope) => void startTabMission(scope)}
         />
       )}
 

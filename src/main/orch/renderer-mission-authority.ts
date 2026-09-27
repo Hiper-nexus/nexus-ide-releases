@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { WebContents } from "electron";
-import { missionExecutionScope } from './mission-execution-scope';
+import { adoptedMissionWorkspaceBinding, missionExecutionScope } from './mission-execution-scope';
+import { operatorHandMissionContract } from './operator-hand-mission';
 import {
   hasCurrentApprovedDispatchContract,
   hasCurrentDispatchAuthority,
@@ -744,6 +745,57 @@ export class RendererMissionAuthority {
       sessionId: owned.sessionId,
       adapterId: owned.info.adapterId,
     };
+  }
+
+  /**
+   * Missão LEVE da aba: "Tornar orquestrador" num pane solto cria a missão
+   * daquele grupo de panes, como se o operador a tivesse iniciado — Autopilot,
+   * Escolha livre de agentes, sem squad e sem revisão (é o próprio operador
+   * clicando). O pane vira o orquestrador DELA e só dela: missões e
+   * orquestradores de outras abas não são tocados. A aba (worktree isolada,
+   * quando houver) vem da proveniência main-owned da sessão, nunca do renderer.
+   */
+  createPaneMissionFromRenderer(
+    owner: WebContents,
+    input: { readonly paneId: string; readonly title: string },
+  ): PromoteMissionOrchestratorResult {
+    let owned: ReturnType<typeof ownedPaneSession>;
+    try {
+      owned = ownedPaneSession(owner, input.paneId);
+    } catch {
+      return { ok: false, error: "pane_unavailable" };
+    }
+    // Pane que já lidera/serve outra missão não é arrancado dela.
+    if (owned.info.missionId) return { ok: false, error: "pane_mission_mismatch" };
+    let workspaceBinding: ReturnType<typeof adoptedMissionWorkspaceBinding>;
+    try {
+      workspaceBinding = adoptedMissionWorkspaceBinding(
+        owned.scope,
+        owned.info.scope,
+        owned.paneId,
+      );
+    } catch {
+      return { ok: false, error: "pane_unavailable" };
+    }
+    const suite = this.#stores.forScope(owned.scope);
+    const created = suite.missions.create({
+      title: input.title,
+      milestones: [],
+      orchestratorSessionId: owned.sessionId,
+      intentState: "dispatched",
+      intentVersion: 1,
+      intentContract: {
+        ...operatorHandMissionContract(input.title, undefined, []),
+        workspaceBinding,
+      },
+    });
+    suite.missions.update(created.id, { status: "running" });
+    const result = this.promoteOrchestratorFromRenderer(owner, created.id, {
+      paneId: owned.paneId,
+    });
+    // Sem orquestrador a missão não existe para o operador: nada fica pendurado.
+    if (!result.ok) suite.missions.remove(created.id);
+    return result;
   }
 
   promoteOrchestratorFromRenderer(

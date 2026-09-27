@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Mission } from '../../shared/orch-types';
+import { listPanes } from './split-tree';
 import {
   PROMOTE_NEW_MISSION,
   resolvePanePromoteTarget,
@@ -337,5 +338,90 @@ describe('marcação de adoção (F-561)', () => {
       'pane-1',
     );
     expect(usePendingOrchestratorAdoptionStore.getState().take()).toBeNull();
+  });
+});
+
+// ── Orquestrador por aba: missão leve da aba (0.76.110) ─────────────────────
+
+describe('promotePaneWithMissionChoice — missão leve por aba', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  async function setupTabs(bridge: Record<string, unknown>) {
+    const mod = await import('./pane-mission-promote');
+    const { useOrchStore } = await import('../state/orch-store');
+    const { useLayoutStore } = await import('../state/layout-store');
+    const { useChoiceStore } = await import('../state/choice-store');
+    const { buildGridTree } = await import('./split-tree');
+    useLayoutStore.setState({
+      root: buildGridTree([
+        // Aba A: orquestrador da missão mA (anfitrião) + um shell.
+        {
+          id: 'a1', kind: 'cli-agent', title: 'Claude A', adapterId: 'claude',
+          spaceId: 'space-a', spaceTitle: 'Checkout', missionId: 'mA',
+          missionHost: true, role: 'orchestrator',
+        },
+        { id: 'a2', kind: 'shell', title: 'shell', spaceId: 'space-a', spaceTitle: 'Checkout' },
+        // Aba B: dois panes soltos, sem missão.
+        { id: 'b1', kind: 'cli-agent', title: 'Codex B', adapterId: 'codex', spaceId: 'space-b', spaceTitle: 'Login' },
+        { id: 'b2', kind: 'cli-agent', title: 'GLM B', adapterId: 'glm', spaceId: 'space-b', spaceTitle: 'Login' },
+      ]),
+    });
+    useOrchStore.setState({
+      missions: [mission('mA', 'running')] as Mission[],
+      paneMissions: { a1: 'mA' },
+    });
+    Object.defineProperty(window, 'nexus', {
+      configurable: true,
+      value: { orch: bridge },
+    });
+    return { ...mod, useLayoutStore, useChoiceStore };
+  }
+
+  it('promover na aba B cria a missão da B e NÃO mexe no orquestrador da A', async () => {
+    const createPaneMission = vi.fn(async () => ({ ok: true, mission: { id: 'mB' } }));
+    const promoteMissionOrchestrator = vi.fn(async () => ({ ok: true }));
+    const { promotePaneWithMissionChoice, useLayoutStore, useChoiceStore } =
+      await setupTabs({ createPaneMission, promoteMissionOrchestrator });
+
+    expect(await promotePaneWithMissionChoice({ paneId: 'b1' })).toBe('mB');
+    // Sem diálogo com a missão da outra aba.
+    expect(useChoiceStore.getState().pending).toBeNull();
+    expect(createPaneMission).toHaveBeenCalledWith({ paneId: 'b1', title: 'Missão · Login' });
+    expect(promoteMissionOrchestrator).not.toHaveBeenCalled();
+
+    const panes = new Map(listPanes(useLayoutStore.getState().root).map((p) => [p.id, p]));
+    expect(panes.get('b1')).toMatchObject({ role: 'orchestrator', missionId: 'mB', missionHost: true });
+    expect(panes.get('a1')).toMatchObject({ role: 'orchestrator', missionId: 'mA' });
+    // A missão nova mora na aba B: o pane continua no espaço dela.
+    expect(panes.get('b1')?.spaceId).toBe('space-b');
+    expect(panes.get('b2')?.role).toBeUndefined();
+  });
+
+  it('promover outro pane numa aba que já tem missão reusa a missão dela', async () => {
+    const createPaneMission = vi.fn();
+    const promoteMissionOrchestrator = vi.fn(async () => ({ ok: true }));
+    const { promotePaneWithMissionChoice } = await setupTabs({
+      createPaneMission,
+      promoteMissionOrchestrator,
+    });
+
+    expect(await promotePaneWithMissionChoice({ paneId: 'a2' })).toBe('mA');
+    expect(promoteMissionOrchestrator).toHaveBeenCalledWith({ missionId: 'mA', paneId: 'a2' });
+    expect(createPaneMission).not.toHaveBeenCalled();
+  });
+
+  it('Hardened: o main recusa a missão leve e o fluxo de escolha explícita continua', async () => {
+    const createPaneMission = vi.fn(async () => ({ ok: false, error: 'hardened' }));
+    const { promotePaneWithMissionChoice, useChoiceStore } = await setupTabs({
+      createPaneMission,
+      promoteMissionOrchestrator: vi.fn(async () => ({ ok: true })),
+    });
+
+    const pending = promotePaneWithMissionChoice({ paneId: 'b1' });
+    await vi.waitFor(() => expect(useChoiceStore.getState().pending).not.toBeNull());
+    useChoiceStore.getState().decide(null);
+    expect(await pending).toBeNull();
   });
 });
