@@ -336,7 +336,8 @@ export interface RegressionGateDependencies {
 }
 
 const cache = new Map<string, RegressionGateResult>();
-const inflight = new Map<string, Promise<RegressionGateResult>>();
+/** Execução em curso + o signal de quem a iniciou (o cancelamento é dele). */
+const inflight = new Map<string, { readonly promise: Promise<RegressionGateResult>; readonly signal?: AbortSignal }>();
 
 export function __resetRegressionGateForTests(): void {
   cache.clear();
@@ -1432,7 +1433,12 @@ export async function runRegressionGate(
   const hit = cacheable ? cache.get(key) : undefined;
   if (hit) return Object.freeze({ ...hit, cached: true });
   const running = inflight.get(key);
-  if (running) return running;
+  if (running) {
+    const shared = await running.promise;
+    // Cancelada por quem a iniciou (sessão fechada, transporte desistiu):
+    // não vale para este chamador, que roda a própria.
+    if (!running.signal?.aborted || input.signal?.aborted) return shared;
+  }
   const promise = evaluate(input, root, before, deps).then((result) => {
     // Edição concorrente durante a execução: o verde (ou vermelho) é de um
     // conteúdo que não existe mais — não vale para o estado atual.
@@ -1453,11 +1459,12 @@ export async function runRegressionGate(
     }
     return result;
   });
-  inflight.set(key, promise);
+  const entry = { promise, signal: input.signal };
+  inflight.set(key, entry);
   try {
     return await promise;
   } finally {
-    inflight.delete(key);
+    if (inflight.get(key) === entry) inflight.delete(key);
   }
 }
 

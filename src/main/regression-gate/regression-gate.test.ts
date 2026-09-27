@@ -223,6 +223,31 @@ describe('runRegressionGate', () => {
     expect(result.failures).toEqual([]);
   });
 
+  it('execução compartilhada cancelada por quem a iniciou não vira "não verificado" para o outro chamador', async () => {
+    const { root, scope } = project();
+    write(root, 'src/c.ts', 'export const c = 4;\n');
+    const passing = fakeVitest();
+    let release!: () => void;
+    const started = new Promise<void>((resolve) => { release = resolve; });
+    const exec = vi.fn<RegressionExec>(async (file, args, options) => {
+      if (options.signal) {
+        release();
+        await new Promise((resolve) => options.signal!.addEventListener('abort', resolve, { once: true }));
+        return { exitCode: null, timedOut: false, aborted: true, stdout: '', stderr: '' };
+      }
+      return passing.exec(file, args, options);
+    });
+    const controller = new AbortController();
+
+    const first = runRegressionGate({ scope, signal: controller.signal }, { exec });
+    await started;
+    const second = runRegressionGate({ scope }, { exec });
+    controller.abort();
+
+    expect((await first).status).toBe('unavailable');
+    expect((await second).status).toBe('passed');
+  });
+
   it('teste instável que passa na 2ª tentativa não barra; falha que se repete barra', async () => {
     const { root, scope } = project();
     write(root, 'src/a.ts', 'export const a = 2;\n');
