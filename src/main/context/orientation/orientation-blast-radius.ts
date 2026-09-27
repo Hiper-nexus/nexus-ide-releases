@@ -16,6 +16,12 @@ export interface BlastRadiusInput {
   readonly seedSymbols?: readonly string[];
   readonly depth?: number;
   readonly maxFiles?: number;
+  /**
+   * Walk table/function edges (default true). Ownership expansion turns the
+   * radius into exclusive worktree claims, so it walks imports only: two
+   * writers that merely query the same table must not block each other.
+   */
+  readonly followDbEdges?: boolean;
 }
 
 export interface BlastRadiusResult {
@@ -30,6 +36,11 @@ export interface BlastRadiusResult {
    * to be green before allowing a merge.
    */
   readonly tests: readonly string[];
+  /**
+   * Schema nodes (`db:table:...`/`db:function:...`) crossed by the radius.
+   * Kept apart from `files`/`domains`, which only carry real repo paths.
+   */
+  readonly dbEntities: readonly string[];
   readonly mapHash: string | null;
   readonly source: 'orientation' | 'empty';
 }
@@ -120,6 +131,7 @@ export function computeBlastRadius(
     ];
     for (const candidate of corpus) {
       if (!candidate.includes('/') && !candidate.includes('.')) continue;
+      if (candidate.startsWith('db:')) continue; // db ids seed only via dbEntities below
       const lower = candidate.toLowerCase();
       const tokens = goal.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length > 3);
       if (tokens.some((t) => lower.includes(t))) seedFiles.add(candidate);
@@ -137,11 +149,16 @@ export function computeBlastRadius(
   // Seed from db entities (tables/functions) separately from symbol hubs:
   // schemas can have far more tables than the maxHubs cap allows, so they get
   // their own uncapped registry (see OrientationGraphSummary.dbEntities).
-  const dbEntities = map.graph.dbEntities ?? [];
-  const goalLower = goal.toLowerCase();
+  const followDbEdges = input.followDbEdges !== false;
+  const dbEntities = followDbEdges ? map.graph.dbEntities ?? [] : [];
+  const goalWords = new Set(goal.toLowerCase().split(/[^a-z0-9_]+/));
   for (const entity of dbEntities) {
+    // A seeded migration/schema file reaches the code using what it defines.
+    if (entity.definedIn.some((file) => seedFiles.has(file))) seedFiles.add(entity.nodeId);
     const nameLower = entity.name.toLowerCase();
-    if (goalLower && goalLower.includes(nameLower) && nameLower.length > 2) {
+    // Goal text seeds only schema-defined entities, by whole word: a usage-only
+    // name ("orders" typed in some query) is too weak to widen the radius on.
+    if (entity.definedIn.length > 0 && nameLower.length > 2 && goalWords.has(nameLower)) {
       seedFiles.add(entity.nodeId);
     }
     for (const symbol of input.seedSymbols ?? []) {
@@ -153,21 +170,18 @@ export function computeBlastRadius(
 
   // If graph has edges, expand; else use seeds + top hubs as weak radius.
   const hasGraph =
-    map.graph.edgeCount > 0 &&
+    map.graph.edgeCount + (map.graph.dbEdgeCount ?? 0) > 0 &&
     (Boolean(map.graph.adjacency) || map.graph.sampleEdges.length > 0);
-  let files: string[];
+  let reached: string[];
   if (hasGraph && seedFiles.size > 0) {
     const adjacency = new Map<string, readonly string[]>();
     const reverse = new Map<string, readonly string[]>();
-    if (map.graph.adjacency) {
-      for (const [from, tos] of Object.entries(map.graph.adjacency)) {
-        adjacency.set(from, tos);
-      }
+    const keep = (node: string) => followDbEdges || !node.startsWith('db:');
+    for (const [from, tos] of Object.entries(map.graph.adjacency ?? {})) {
+      if (keep(from)) adjacency.set(from, followDbEdges ? tos : tos.filter(keep));
     }
-    if (map.graph.reverse) {
-      for (const [to, froms] of Object.entries(map.graph.reverse)) {
-        reverse.set(to, froms);
-      }
+    for (const [to, froms] of Object.entries(map.graph.reverse ?? {})) {
+      if (keep(to)) reverse.set(to, followDbEdges ? froms : froms.filter(keep));
     }
     if (adjacency.size === 0) {
       for (const edge of map.graph.sampleEdges) {
@@ -178,7 +192,7 @@ export function computeBlastRadius(
         reverse.set(edge.to, Object.freeze([...ins, edge.from]));
       }
     }
-    files = [
+    reached = [
       ...expandImportBlastRadius(
         [...seedFiles],
         adjacency,
@@ -188,13 +202,15 @@ export function computeBlastRadius(
       ),
     ];
   } else if (seedFiles.size > 0) {
-    files = [...seedFiles].sort((a, b) => a.localeCompare(b)).slice(0, input.maxFiles ?? 64);
+    reached = [...seedFiles].sort((a, b) => a.localeCompare(b)).slice(0, input.maxFiles ?? 64);
   } else {
-    files = map.symbols.hubs
+    reached = map.symbols.hubs
       .flatMap((h) => h.samplePaths)
       .filter((p) => p.includes('/'))
       .slice(0, 16);
   }
+  const files = reached.filter((node) => !node.startsWith('db:'));
+  const reachedDb = reached.filter((node) => node.startsWith('db:'));
 
   const hubs = map.symbols.hubs
     .filter((h) => h.samplePaths.some((p) => files.includes(p)))
@@ -212,6 +228,7 @@ export function computeBlastRadius(
     domains: Object.freeze(domainsFromFiles(files)),
     hubs: Object.freeze(hubs),
     tests: Object.freeze(tests),
+    dbEntities: Object.freeze(reachedDb),
     mapHash: map.mapHash,
     source: 'orientation' as const,
   });
@@ -231,6 +248,7 @@ export async function ensureBlastRadius(
       domains: Object.freeze([]),
       hubs: Object.freeze([]),
       tests: Object.freeze([]),
+      dbEntities: Object.freeze([]),
       mapHash: null,
       source: 'empty' as const,
     });
@@ -261,6 +279,7 @@ export function expandOwnershipWithBlastRadius(
     seedSymbols: ownership.symbols,
     depth: 1,
     maxFiles: 48,
+    followDbEdges: false,
   });
   const files = Object.freeze(
     [...new Set([...ownership.files, ...radius.files])]

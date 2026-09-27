@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { buildDbGraphFromFiles, type DbGraphInputFile } from './orientation-db-graph';
-import { extractSchemaEntitiesFromSql } from './orientation-schema';
+import {
+  extractSchemaEntitiesFromDrizzle,
+  extractSchemaEntitiesFromPrisma,
+  extractSchemaEntitiesFromSql,
+} from './orientation-schema';
 import { extractSqlDbUsageEdges, extractTsDbUsageEdges } from './orientation-db-usage';
 import { DEFAULT_ORIENTATION_LIMITS } from './orientation-types';
 
@@ -91,5 +95,88 @@ describe('orientation-db-graph: buildDbGraphFromFiles', () => {
     const result = buildDbGraphFromFiles(files, DEFAULT_ORIENTATION_LIMITS);
     const orphan = result.dbEntities.find((e) => e.qualifiedName === 'public.orphan_table');
     expect(orphan?.definedIn).toEqual([]);
+  });
+});
+
+describe('orientation-db-graph: ORM name resolution and RLS history', () => {
+  it('resolves prisma.<model> through @@map to the mapped table', () => {
+    const result = buildDbGraphFromFiles(
+      [
+        {
+          relativePath: 'prisma/schema.prisma',
+          schemaFacts: extractSchemaEntitiesFromPrisma(
+            'prisma/schema.prisma',
+            'model Commission {\n  id String @id\n  @@map("commission_entries")\n}\n',
+          ),
+          usageEdges: [],
+        },
+        fileFor('src/commission.ts', 'await prisma.commission.findMany();', 'ts'),
+      ],
+      DEFAULT_ORIENTATION_LIMITS,
+    );
+    expect(result.adjacency.get('src/commission.ts')).toEqual(
+      new Set(['db:table:public.commission_entries']),
+    );
+    expect(result.dbEntities.map((e) => e.qualifiedName)).toEqual(['public.commission_entries']);
+  });
+
+  it('resolves drizzle table variables to the pgTable in the same or the imported file', () => {
+    const schema = "export const commissionEntries = pgTable('commission_entries', {});";
+    const result = buildDbGraphFromFiles(
+      [
+        {
+          relativePath: 'src/db/schema.ts',
+          schemaFacts: extractSchemaEntitiesFromDrizzle('src/db/schema.ts', schema),
+          usageEdges: extractTsDbUsageEdges('src/db/schema.ts', schema),
+        },
+        fileFor(
+          'src/report.ts',
+          "import { commissionEntries } from './db/schema';\n" +
+            'const rows = await db.select().from(commissionEntries);\n' +
+            'await db.insert(commissionEntries).values(row);\n' +
+            'const copy = Array.from(items);\n',
+          'ts',
+        ),
+      ],
+      DEFAULT_ORIENTATION_LIMITS,
+    );
+    expect(result.adjacency.get('src/report.ts')).toEqual(
+      new Set(['db:table:public.commission_entries']),
+    );
+    expect(result.dbEntities.map((e) => e.nodeId)).toEqual(['db:table:public.commission_entries']);
+  });
+
+  it('drops a drizzle variable bound to pgTable in more than one other file (ambiguous)', () => {
+    const def = (name: string) => ({
+      relativePath: name,
+      schemaFacts: extractSchemaEntitiesFromDrizzle(name, `const users = pgTable('${name.includes('a') ? 'a_users' : 'b_users'}', {});`),
+      usageEdges: [],
+    });
+    const result = buildDbGraphFromFiles(
+      [def('src/a.ts'), def('src/b.ts'), fileFor('src/c.ts', 'db.select().from(users);', 'ts')],
+      DEFAULT_ORIENTATION_LIMITS,
+    );
+    expect(result.adjacency.get('src/c.ts')).toBeUndefined();
+  });
+
+  it('applies the latest migration RLS toggle (enable then disable => false)', () => {
+    const result = buildDbGraphFromFiles(
+      [
+        fileFor(
+          'supabase/migrations/20260102000000_off.sql',
+          'ALTER TABLE users DISABLE ROW LEVEL SECURITY;',
+          'sql',
+        ),
+        fileFor(
+          'supabase/migrations/20260101000000_on.sql',
+          'CREATE TABLE users (id int); ALTER TABLE users ENABLE ROW LEVEL SECURITY;',
+          'sql',
+        ),
+      ],
+      DEFAULT_ORIENTATION_LIMITS,
+    );
+    expect(result.dbEntities.find((e) => e.qualifiedName === 'public.users')?.rlsEnabled).toBe(
+      false,
+    );
   });
 });

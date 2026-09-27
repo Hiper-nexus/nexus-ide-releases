@@ -3,8 +3,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ProjectExecutionScope } from '../../../shared/types';
-import { computeBlastRadius } from './orientation-blast-radius';
+import { computeBlastRadius, expandOwnershipWithBlastRadius } from './orientation-blast-radius';
+import { orientationCurrentPath } from './orientation-cache';
 import { ProjectOrientationService } from './orientation-service';
+import {
+  orientationStructuralIndexPath,
+  readOrientationStructuralIndex,
+} from './orientation-structural-index-cache';
 
 const roots: string[] = [];
 
@@ -105,13 +110,147 @@ describe('code map <-> banco: comanda alcanca comissao e seu teste', () => {
     expect(radius.files).toEqual(
       expect.arrayContaining([
         'src/comanda/close-commanda.ts',
-        'db:function:public.close_commanda_internal',
-        'db:table:public.appointments',
-        'db:table:public.commission_entries',
         'src/commission/commission-service.ts',
         'src/commission/commission-service.test.ts',
       ]),
     );
+    expect(radius.dbEntities).toEqual(
+      expect.arrayContaining([
+        'db:function:public.close_commanda_internal',
+        'db:table:public.appointments',
+        'db:table:public.commission_entries',
+      ]),
+    );
     expect(radius.tests).toContain('src/commission/commission-service.test.ts');
+  });
+});
+
+describe('code map <-> banco: grafo sem imports, seed de migration e reservas', () => {
+  async function buildMap(withImport = false) {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-db-only-')));
+    const cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-db-only-cache-'));
+    roots.push(root, cacheRoot);
+    write(root, 'package.json', JSON.stringify({ name: 'db-only' }));
+    write(root, 'supabase/migrations/20260101000000_users.sql', 'CREATE TABLE users (id uuid);');
+    // No file imports another one: every link goes through the users table.
+    write(root, 'src/billing/invoices.ts', "export const listInvoices = () => supabase.from('users').select('*');");
+    write(root, 'src/profile/profile.ts', "export const saveProfile = () => supabase.from('users').update({});");
+    write(root, 'src/audit/audit.ts', "export const writeAudit = () => supabase.from('audit_log').insert({});");
+    write(root, 'src/profile/profile.test.ts', "afterEach(() => supabase.from('users').delete());");
+    if (withImport) {
+      write(root, 'src/billing/money.ts', 'export const cents = 100;');
+      write(root, 'src/billing/totals.ts', "import { cents } from './money';\nexport const t = cents;");
+    }
+    const service = new ProjectOrientationService({ cacheRoot, includeContextSummary: false });
+    return service.ensure(scopeFor(root), { reason: 'workspace-open' });
+  }
+
+  it('walks a graph made only of db edges (no import edge at all)', async () => {
+    const map = await buildMap();
+    expect(map.graph.edgeCount).toBe(0);
+    const radius = computeBlastRadius(map, { seedFiles: ['src/billing/invoices.ts'], depth: 2 });
+    expect(radius.files).toEqual([
+      'src/billing/invoices.ts',
+      'src/profile/profile.test.ts',
+      'src/profile/profile.ts',
+    ]);
+    expect(radius.dbEntities).toEqual(['db:table:public.users']);
+    expect(radius.tests).toEqual(['src/profile/profile.test.ts']);
+  });
+
+  it('seeding the migration reaches the code and tests that use what it defines', async () => {
+    const map = await buildMap();
+    const radius = computeBlastRadius(map, {
+      seedFiles: ['supabase/migrations/20260101000000_users.sql'],
+      depth: 1,
+    });
+    expect(radius.files).toEqual(
+      expect.arrayContaining(['src/billing/invoices.ts', 'src/profile/profile.ts']),
+    );
+    expect(radius.tests).toContain('src/profile/profile.test.ts');
+  });
+
+  it('keeps db nodes out of domains and never turns a shared table into an ownership claim', async () => {
+    // One unrelated import edge makes the graph walkable, as in real projects.
+    const map = await buildMap(true);
+    expect(map.graph.edgeCount).toBe(1);
+    const radius = computeBlastRadius(map, { seedFiles: ['src/billing/invoices.ts'], depth: 1 });
+    expect(radius.files).toEqual(['src/billing/invoices.ts']);
+    expect(radius.domains).toEqual(['billing']);
+
+    const owned = expandOwnershipWithBlastRadius(
+      { files: ['src/billing/invoices.ts'], symbols: [], domains: ['billing'] },
+      map,
+    );
+    const other = expandOwnershipWithBlastRadius(
+      { files: ['src/profile/profile.ts'], symbols: [], domains: ['profile'] },
+      map,
+    );
+    expect(owned.files).toEqual(['src/billing/invoices.ts']);
+    expect(owned.domains).toEqual(['billing']);
+    expect(other.files.filter((f) => owned.files.includes(f))).toEqual([]);
+    expect(other.domains.filter((d) => owned.domains.includes(d))).toEqual([]);
+  });
+
+  it('goal text seeds schema-defined tables, never usage-only names', async () => {
+    const map = await buildMap();
+    expect(computeBlastRadius(map, { goal: 'fix users sync', depth: 1 }).dbEntities).toEqual([
+      'db:table:public.users',
+    ]);
+    // depth 0: only what the goal itself seeds (the audit.ts symbol hub may
+    // still pull the file in, but the usage-only table is not a seed).
+    expect(computeBlastRadius(map, { goal: 'rotate audit_log', depth: 0 }).dbEntities).toEqual([]);
+  });
+});
+
+describe('code map <-> banco: caches gravados por versoes anteriores', () => {
+  function fixture() {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-db-cache-')));
+    const cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'nexus-db-cache-root-'));
+    roots.push(root, cacheRoot);
+    write(root, 'package.json', JSON.stringify({ name: 'db-cache' }));
+    write(root, 'supabase/migrations/20260101000000_users.sql', 'CREATE TABLE users (id uuid);');
+    write(root, 'src/users.ts', "export const listUsers = () => supabase.from('users').select('*');");
+    return { root, cacheRoot, scope: scopeFor(root) };
+  }
+
+  it('rebuilds a map cached by the previous extractors even when HEAD did not move', async () => {
+    const { cacheRoot, scope } = fixture();
+    await new ProjectOrientationService({ cacheRoot, includeContextSummary: false })
+      .ensure(scope, { reason: 'workspace-open' });
+    // Rewrite current.json as the previous release left it: no extractor
+    // generation and no db graph.
+    const file = orientationCurrentPath(cacheRoot, scope);
+    const old = JSON.parse(fs.readFileSync(file, 'utf8'));
+    delete old.extractorVersion;
+    delete old.graph.dbEntities;
+    delete old.graph.dbEdgeCount;
+    fs.writeFileSync(file, JSON.stringify(old));
+
+    const upgraded = await new ProjectOrientationService({ cacheRoot, includeContextSummary: false })
+      .ensure(scope, { reason: 'workspace-open' });
+    expect(upgraded.graph.dbEntities?.map((e) => e.nodeId)).toEqual(['db:table:public.users']);
+  });
+
+  it('round-trips db facts through the structural index and rejects an index without them', async () => {
+    const { cacheRoot, scope } = fixture();
+    await new ProjectOrientationService({ cacheRoot, includeContextSummary: false })
+      .ensure(scope, { reason: 'workspace-open' });
+    const index = readOrientationStructuralIndex(cacheRoot, scope);
+    const users = index?.files.find((f) => f.relativePath === 'src/users.ts');
+    expect(users?.dbUsageEdges).toEqual([
+      expect.objectContaining({ toQualifiedName: 'public.users', relation: 'reads' }),
+    ]);
+    const migration = index?.files.find((f) => f.relativePath.endsWith('_users.sql'));
+    expect(migration?.dbSchemaFacts.map((f) => f.qualifiedName)).toEqual(['public.users']);
+
+    const file = orientationStructuralIndexPath(cacheRoot, scope);
+    const old = JSON.parse(fs.readFileSync(file, 'utf8'));
+    for (const entry of old.files) {
+      delete entry.dbSchemaFacts;
+      delete entry.dbUsageEdges;
+    }
+    fs.writeFileSync(file, JSON.stringify(old));
+    expect(readOrientationStructuralIndex(cacheRoot, scope)).toBeNull();
   });
 });

@@ -17,15 +17,7 @@ import {
   resolveAliasCandidateBases,
   type TsconfigAliasMap,
 } from './orientation-tsconfig';
-
-// The "junk" between `import`/`export` and `from` excludes `;`/quotes so a
-// bare side-effect import (`import './side';`, no `from` clause) can never
-// be swallowed as part of a *later* import statement's from-clause — before
-// this fix, `[\s\S]*?` could span across a whole side-effect import into the
-// next statement's `from '...'`, dropping the side-effect specifier entirely.
-// The trailing `import\s+` alternative then captures that bare form directly.
-const IMPORT_RE =
-  /(?:import\s+(?:type\s+)?[^;'"]*?\s+from\s+|export\s+(?:type\s+)?[^;'"]*?\s+from\s+|require\s*\(\s*|import\s*\(\s*|import\s+)['"]([^'"]+)['"]/g;
+import { scanJsTokens } from './orientation-js-scan';
 
 const TS_JS_EXT = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
 
@@ -50,13 +42,55 @@ export function isOrientationImportSource(ext: string): boolean {
 export function extractOrientationImportSpecifiers(
   content: string,
 ): readonly string[] {
+  // Token-based (see orientation-js-scan.ts): linear in the input, ignores
+  // comments/strings, and keeps bare side-effect imports.
+  const tokens = scanJsTokens(content);
   const specifiers: string[] = [];
-  IMPORT_RE.lastIndex = 0;
-  for (const match of content.matchAll(IMPORT_RE)) {
-    const specifier = match[1];
-    if (specifier) specifiers.push(specifier);
+  const isPunct = (index: number, value: string) =>
+    tokens[index]?.kind === 'punct' && tokens[index].value === value;
+  const stringAt = (index: number): string | null =>
+    tokens[index]?.kind === 'string' ? tokens[index].value : null;
+  // After `import x`/`export {...}`, the next `from '...'` closes the clause.
+  let pendingFrom = false;
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    const afterDot = isPunct(index - 1, '.');
+    if (token.kind === 'ident' && !afterDot) {
+      if (token.value === 'import') {
+        const bare = stringAt(index + 1);
+        const dynamic = isPunct(index + 1, '(') ? stringAt(index + 2) : null;
+        if (bare !== null || dynamic !== null) {
+          specifiers.push((bare ?? dynamic)!);
+          pendingFrom = false;
+        } else {
+          pendingFrom = !isPunct(index + 1, '.') && !isPunct(index + 1, '(');
+        }
+        continue;
+      }
+      if (token.value === 'export') {
+        pendingFrom = true;
+        continue;
+      }
+      if (token.value === 'require' && isPunct(index + 1, '(')) {
+        const required = stringAt(index + 2);
+        if (required !== null) specifiers.push(required);
+        continue;
+      }
+      if (pendingFrom && token.value === 'from') {
+        const from = stringAt(index + 1);
+        if (from !== null) specifiers.push(from);
+        pendingFrom = false;
+        continue;
+      }
+    }
+    if (
+      pendingFrom &&
+      (token.kind === 'string' || token.kind === 'template' || isPunct(index, ';'))
+    ) {
+      pendingFrom = false;
+    }
   }
-  return Object.freeze(specifiers);
+  return Object.freeze(specifiers.filter((specifier) => specifier.length > 0));
 }
 
 export interface CappedAdjacency {
@@ -65,14 +99,14 @@ export interface CappedAdjacency {
   readonly nodeCount: number;
 }
 
-const AVG_PERSISTED_EDGE_BYTES = 24;
-
 /**
  * Persist a degree-capped adjacency for blast-radius after cache reload.
  * Nodes are kept in degree-descending order until either the configured node
- * cap or the (estimated) byte budget is reached, whichever comes first. The
- * byte estimate uses degree as a proxy for edge-array size so the cutoff can
- * be decided in one pass, without depending on which neighbors also survive.
+ * cap or the byte budget is reached, whichever comes first. Each node is
+ * charged the compact-JSON size of its key in both records plus every
+ * neighbor string it could carry, so the serialized adjacency+reverse never
+ * exceeds maxPersistedGraphBytes (neighbors that do not survive only shrink
+ * it). The first node is always kept.
  */
 export function capPersistedAdjacency(
   adjacency: ReadonlyMap<string, ReadonlySet<string> | readonly string[]>,
@@ -85,15 +119,23 @@ export function capPersistedAdjacency(
   const candidates = [...new Set([...adjacency.keys(), ...reverse.keys()])].sort(
     (a, b) => degree(b) - degree(a) || a.localeCompare(b),
   );
+  // `"key":[` + `]` + `,` in each record, plus `"neighbor",` per entry.
+  const persistedBytes = (node: string): number => {
+    let bytes = 2 * (JSON.stringify(node).length + 4);
+    for (const neighbor of adjacency.get(node) ?? []) bytes += JSON.stringify(neighbor).length + 1;
+    for (const neighbor of reverse.get(node) ?? []) bytes += JSON.stringify(neighbor).length + 1;
+    return bytes;
+  };
 
   const keptNodes: string[] = [];
-  let estimatedBytes = 0;
+  // `{"adjacency":{},"reverse":{}}` envelope.
+  let bytes = 29;
   for (const node of candidates) {
     if (keptNodes.length >= limits.maxPersistedGraphNodes) break;
-    const cost = node.length + 4 + degree(node) * AVG_PERSISTED_EDGE_BYTES;
-    if (keptNodes.length > 0 && estimatedBytes + cost > limits.maxPersistedGraphBytes) break;
+    const cost = persistedBytes(node);
+    if (keptNodes.length > 0 && bytes + cost > limits.maxPersistedGraphBytes) break;
     keptNodes.push(node);
-    estimatedBytes += cost;
+    bytes += cost;
   }
   const keptSet = new Set(keptNodes);
 

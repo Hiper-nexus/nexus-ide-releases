@@ -29,9 +29,17 @@ export function orientationCurrentPath(
   return path.join(orientationCacheDirectory(cacheRoot, scope), 'current.json');
 }
 
+/**
+ * Bump whenever extractor output changes shape or meaning (2: db schema/usage
+ * graph, 800-node persisted adjacency), so an upgraded Nexus does not keep
+ * serving a map built by the previous extractors until HEAD happens to move.
+ */
+export const ORIENTATION_EXTRACTOR_VERSION = 2;
+
 export function toOrientationJson(map: ProjectOrientationMap): ProjectOrientationMapJson {
   return Object.freeze({
     schemaVersion: 1,
+    extractorVersion: ORIENTATION_EXTRACTOR_VERSION,
     projectId: map.projectId,
     checkoutId: map.checkoutId,
     headSha: map.headSha,
@@ -97,6 +105,7 @@ export function readOrientationCache(
     const content = fs.readFileSync(file, 'utf8');
     const parsed = JSON.parse(content) as ProjectOrientationMapJson;
     if (parsed.schemaVersion !== 1) return null;
+    if (parsed.extractorVersion !== ORIENTATION_EXTRACTOR_VERSION) return null;
     if (parsed.projectId !== scope.projectId || parsed.checkoutId !== scope.checkoutId) {
       return null;
     }

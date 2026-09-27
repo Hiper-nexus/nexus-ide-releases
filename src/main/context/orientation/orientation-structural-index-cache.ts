@@ -8,6 +8,8 @@ import type {
   OrientationStructuralFile,
   OrientationStructuralIndex,
 } from './orientation-structural-index';
+import type { DbUsageEdge } from './orientation-db-usage';
+import type { SchemaEntityFact } from './orientation-schema';
 import {
   throwIfOrientationAborted,
   yieldOrientationWork,
@@ -46,6 +48,32 @@ function stringArray(
   return Object.freeze([...value] as string[]);
 }
 
+const MAX_DB_FACTS_PER_FILE = 4_096;
+
+function optionalString(value: unknown): boolean {
+  return value === undefined || (typeof value === 'string' && value.length <= 1_024);
+}
+
+function boundedString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 1_024;
+}
+
+/** Validate a persisted array of plain records; null when anything is off. */
+function recordArray<T>(
+  value: unknown,
+  isValid: (item: Record<string, unknown>) => boolean,
+): readonly T[] | null {
+  if (!Array.isArray(value) || value.length > MAX_DB_FACTS_PER_FILE) return null;
+  for (const item of value) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+    if (!isValid(item as Record<string, unknown>)) return null;
+  }
+  return Object.freeze(value.map((item) => Object.freeze({ ...item }))) as readonly T[];
+}
+
+const DB_KINDS = new Set(['table', 'function']);
+const DB_RELATIONS = new Set(['reads', 'writes', 'calls']);
+
 function parseFile(value: unknown): OrientationStructuralFile | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const raw = value as Record<string, unknown>;
@@ -63,7 +91,26 @@ function parseFile(value: unknown): OrientationStructuralFile | null {
     MAX_IMPORTS_PER_FILE,
     1_024,
   );
+  // Indexes written before the db graph existed lack these fields: reject
+  // them (forcing a rebuild) instead of silently dropping every db fact.
+  const dbSchemaFacts = recordArray<SchemaEntityFact>(raw.dbSchemaFacts, (fact) =>
+    DB_KINDS.has(fact.kind as string) &&
+    boundedString(fact.qualifiedName) &&
+    boundedString(fact.name) &&
+    boundedString(fact.definedIn) &&
+    (fact.rlsEnabled === undefined || typeof fact.rlsEnabled === 'boolean') &&
+    optionalString(fact.modelName) &&
+    optionalString(fact.drizzleBinding));
+  const dbUsageEdges = recordArray<DbUsageEdge>(raw.dbUsageEdges, (edge) =>
+    boundedString(edge.from) &&
+    DB_KINDS.has(edge.toKind as string) &&
+    boundedString(edge.toQualifiedName) &&
+    DB_RELATIONS.has(edge.relation as string) &&
+    optionalString(edge.prismaModel) &&
+    optionalString(edge.drizzleBinding));
   if (
+    !dbSchemaFacts ||
+    !dbUsageEdges ||
     !relativePath ||
     relativePath !== raw.relativePath ||
     typeof raw.ext !== 'string' ||
@@ -91,6 +138,8 @@ function parseFile(value: unknown): OrientationStructuralFile | null {
     isContentIndexed: raw.isContentIndexed,
     declarations,
     importSpecifiers,
+    dbSchemaFacts,
+    dbUsageEdges,
   }) as OrientationStructuralFile;
 }
 
